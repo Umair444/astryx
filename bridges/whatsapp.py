@@ -85,8 +85,13 @@ def jid_str(v) -> str:
 async def wacli(*args: str) -> str:
     proc = await asyncio.create_subprocess_exec(
         *WA_CLI, *args,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-    out, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    out, err = await asyncio.wait_for(proc.communicate(), timeout=60)
+    if proc.returncode != 0:
+        # a failed call must FAIL, loudly: silent exit-1s cost us a night of
+        # invisible replies (the store-lock incident)
+        raise RuntimeError(f"wacli {' '.join(args[:2])}: "
+                           f"{err.decode(errors='replace').strip()[:200]}")
     return out.decode(errors="replace")
 
 
