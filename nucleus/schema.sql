@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS steps (
   id          bigserial PRIMARY KEY,
   ts          timestamptz NOT NULL DEFAULT now(),
   agent       text        NOT NULL,
-  kind        text        NOT NULL,          -- tool | response | milestone | error | heartbeat
+  kind        text        NOT NULL,          -- tool | tool_done | response | milestone | error | heartbeat
   content     text        NOT NULL,
   goal_id     bigint,
   tokens_in   integer,

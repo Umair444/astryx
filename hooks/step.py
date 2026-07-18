@@ -1,7 +1,17 @@
 #!/home/umair/astryx/venv/bin/python
 """ASTRYX step writer — every agent step lands in pg. Fail-silent, never blocks the agent.
-Wired as PreToolUse + Stop hooks in each home's settings.json. Agent from ASTRYX_AGENT env."""
+Wired as PreToolUse + PostToolUse + Stop hooks in each home's settings.json. These hooks
+ARE the org's monitoring instrument: watch-streams, the observatory, and chat-surface
+progress all render this one stream. Agent from ASTRYX_AGENT env."""
 import json, os, sys
+
+def brief(v, n=400) -> str:
+    if isinstance(v, str):
+        return v[:n]
+    try:
+        return json.dumps(v)[:n]
+    except Exception:
+        return str(v)[:n]
 
 def main():
     agent = os.environ.get("ASTRYX_AGENT")
@@ -11,16 +21,28 @@ def main():
         h = json.load(sys.stdin)
     except Exception:
         return
+    ev = h.get("hook_event_name")
     kind, content, tin, tout = None, None, None, None
 
-    if h.get("hook_event_name") == "PreToolUse" or "tool_name" in h and "tool_response" not in h:
+    if ev == "PreToolUse":
         tool = h.get("tool_name", "?")
         ti = h.get("tool_input") or {}
         detail = ti.get("description") or ti.get("command") or ti.get("file_path") \
             or ti.get("to") or ti.get("target") or ""
-        kind, content = "tool", f"{tool}: {str(detail)[:400]}"
+        kind, content = "tool", f"{tool}: {brief(detail)}"
 
-    elif h.get("hook_event_name") == "Stop":
+    elif ev == "PostToolUse":
+        tool = h.get("tool_name", "?")
+        r = h.get("tool_response")
+        err = ""
+        if isinstance(r, dict):
+            err = r.get("error") or ("" if r.get("success", True) else "failed")
+        if err:
+            kind, content = "error", f"{tool}: {brief(err, 300)}"
+        else:
+            kind, content = "tool_done", f"{tool} done"
+
+    elif ev == "Stop":
         # last assistant message text + usage from the transcript (the tokens ledger)
         try:
             with open(h["transcript_path"]) as f:

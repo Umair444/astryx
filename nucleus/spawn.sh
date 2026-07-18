@@ -32,6 +32,8 @@ cat > "$HOME_D/.claude/settings.json" <<EOF
   "hooks": {
     "PreToolUse": [ { "matcher": "", "hooks": [
       { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/step.py", "timeout": 5 } ] } ],
+    "PostToolUse": [ { "matcher": "", "hooks": [
+      { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/step.py", "timeout": 5 } ] } ],
     "Stop": [ { "hooks": [
       { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/step.py", "timeout": 10 } ] } ]
   }
