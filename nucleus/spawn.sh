@@ -48,7 +48,9 @@ if [ -n "$latest" ]; then
 fi
 
 tmux new-session -d -s "$SESS" -c "$HOME_D"
-tmux send-keys -t "=$SESS:" "claude ${RESUME}--model sonnet --permission-mode bypassPermissions --dangerously-load-development-channels server:astryx" Enter
+# --strict-mcp-config: a resident's world is its own .mcp.json, nothing inherited.
+# Without it, user-scope MCP servers leak in and agents can bypass the wire.
+tmux send-keys -t "=$SESS:" "claude ${RESUME}--model sonnet --permission-mode bypassPermissions --strict-mcp-config --dangerously-load-development-channels server:astryx" Enter
 
 # boot-dialog drain (research-preview channel confirmation + any first-run dialogs)
 for i in $(seq 1 30); do
