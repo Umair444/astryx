@@ -88,6 +88,7 @@ BEGIN
   ELSE
     PERFORM pg_notify('astryx_outbound', NEW.id::text);
   END IF;
+  PERFORM pg_notify('astryx_wire', NEW.id::text);  -- global doorbell (observatory)
   RETURN NEW;
 END $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS messages_notify ON messages;

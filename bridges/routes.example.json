@@ -1,0 +1,19 @@
+[
+  {
+    "chat": "<whatsapp group or chat JID, e.g. 1203...@g.us>",
+    "agent": "seed",
+    "trusted_jids": ["<your jid, e.g. 92300...@s.whatsapp.net>", "<your group lid, if any>"],
+    "live_steps": true,
+    "open": false,
+    "enabled": false,
+    "note": "owner surface: trusted senders write as `owner`; live_steps edits a progress message while agents work"
+  },
+  {
+    "chat": "<another chat JID>",
+    "agent": "<agent who serves this chat>",
+    "trusted_jids": [],
+    "open": true,
+    "enabled": false,
+    "note": "open surface: untrusted senders write as wa-<number>, name prefixed in body"
+  }
+]

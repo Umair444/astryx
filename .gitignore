@@ -6,3 +6,11 @@ local.md
 PLAN.md
 agents/*
 !agents/seed.md
+!agents/vega.example.md
+memory/
+observatory/web/node_modules/
+observatory/web/dist/
+*.tsbuildinfo
+bridges/routes.json
+units/
+__pycache__/
