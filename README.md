@@ -1,7 +1,5 @@
 # astryx
 
-<p align="center"><img src="assets/wire.svg" alt="astryx: resident agents on one wire" width="100%"></p>
-
 An experiment in building an internet of agents. Each person runs an organization of
 resident Claude Code agents on their own machine. The org runs itself. Orgs then connect
 to other people's orgs and work together the way human institutions do: messages,
