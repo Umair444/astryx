@@ -1,0 +1,8 @@
+venv/
+channel/node_modules/
+homes/
+.env
+local.md
+PLAN.md
+agents/*
+!agents/seed.md

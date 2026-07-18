@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#22d3ee"/>
+    </marker>
+    <marker id="arrv" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#7c5cff"/>
+    </marker>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#22d3ee" stop-opacity=".28"/>
+      <stop offset="100%" stop-color="#22d3ee" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1200" height="640" fill="#0b1020"/>
+
+  <!-- starfield -->
+  <g fill="#e8ecf8">
+    <circle cx="92" cy="64" r="1.2" opacity=".45"/><circle cx="211" cy="141" r="1" opacity=".25"/>
+    <circle cx="338" cy="52" r="1.5" opacity=".5"/><circle cx="454" cy="112" r="1" opacity=".3"/>
+    <circle cx="705" cy="47" r="1.2" opacity=".4"/><circle cx="836" cy="96" r="1" opacity=".25"/>
+    <circle cx="988" cy="58" r="1.5" opacity=".5"/><circle cx="1108" cy="128" r="1" opacity=".35"/>
+    <circle cx="151" cy="486" r="1.2" opacity=".3"/><circle cx="86" cy="588" r="1" opacity=".25"/>
+    <circle cx="1053" cy="472" r="1.2" opacity=".35"/><circle cx="1132" cy="561" r="1" opacity=".3"/>
+    <circle cx="271" cy="598" r="1.4" opacity=".4"/><circle cx="925" cy="602" r="1.4" opacity=".4"/>
+    <circle cx="529" cy="70"  r="1" opacity=".3"/><circle cx="620" cy="126" r="1.1" opacity=".25"/>
+    <circle cx="392" cy="472" r="1" opacity=".25"/><circle cx="778" cy="490" r="1" opacity=".3"/>
+    <circle cx="60"  cy="300" r="1" opacity=".3"/><circle cx="1146" cy="322" r="1" opacity=".3"/>
+  </g>
+
+  <!-- wordmark -->
+  <text x="600" y="92" text-anchor="middle" font-size="52" letter-spacing="20" fill="#e8ecf8">astryx<tspan fill="#22d3ee">✦</tspan></text>
+  <text x="600" y="130" text-anchor="middle" font-size="16" letter-spacing="2" fill="#8b93ab">an org of agents on one truthful, observable wire</text>
+
+  <!-- ======================= the wire ======================= -->
+  <ellipse cx="600" cy="300" rx="330" ry="130" fill="url(#glow)"/>
+
+  <!-- alpha -->
+  <rect x="70" y="245" width="200" height="112" rx="12" fill="#111a33" stroke="#2a3a63" stroke-width="1.5"/>
+  <text x="170" y="288" text-anchor="middle" font-size="22" fill="#22d3ee">alpha</text>
+  <text x="170" y="314" text-anchor="middle" font-size="12" fill="#8b93ab">claude cli · resident</text>
+  <rect x="216" y="331" width="62" height="22" rx="11" fill="#0b1020" stroke="#22d3ee" stroke-width="1"/>
+  <text x="247" y="346" text-anchor="middle" font-size="11" fill="#22d3ee">send()</text>
+
+  <!-- postgres -->
+  <path d="M505 268 a95 16 0 0 1 190 0 v70 a95 16 0 0 1 -190 0 z" fill="#0e1730" stroke="#2a3a63" stroke-width="1.5"/>
+  <ellipse cx="600" cy="268" rx="95" ry="16" fill="#16224a" stroke="#2a3a63" stroke-width="1.5"/>
+  <text x="600" y="308" text-anchor="middle" font-size="18" fill="#e8ecf8">postgres</text>
+  <text x="600" y="330" text-anchor="middle" font-size="11" fill="#8b93ab">the table is the truth</text>
+  <rect x="561" y="344" width="78" height="20" rx="10" fill="#0b1020" stroke="#f5c04e" stroke-width="1"/>
+  <text x="600" y="358" text-anchor="middle" font-size="11" fill="#f5c04e">NOTIFY ⚡</text>
+
+  <!-- beta -->
+  <rect x="930" y="245" width="200" height="112" rx="12" fill="#111a33" stroke="#2a3a63" stroke-width="1.5"/>
+  <text x="1030" y="288" text-anchor="middle" font-size="22" fill="#22d3ee">beta</text>
+  <text x="1030" y="314" text-anchor="middle" font-size="12" fill="#8b93ab">claude cli · resident</text>
+  <rect x="946" y="331" width="86" height="22" rx="11" fill="#0b1020" stroke="#2a3a63" stroke-width="1"/>
+  <text x="989" y="346" text-anchor="middle" font-size="11" fill="#8b93ab">&lt;channel&gt;</text>
+
+  <!-- arrows -->
+  <line x1="278" y1="301" x2="496" y2="301" stroke="#22d3ee" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="387" y="288" text-anchor="middle" font-size="12" fill="#22d3ee">INSERT · signed row</text>
+  <line x1="704" y1="301" x2="922" y2="301" stroke="#22d3ee" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="813" y="288" text-anchor="middle" font-size="12" fill="#22d3ee">channel push · into context</text>
+
+  <!-- watch-stream -->
+  <path d="M1030 366 C 1030 452, 170 452, 170 366" fill="none" stroke="#7c5cff" stroke-width="1.6" stroke-dasharray="5 6" marker-end="url(#arrv)"/>
+  <text x="600" y="428" text-anchor="middle" font-size="12" fill="#7c5cff">steps · watch-stream — alpha sees beta think (hooks → pg → subscribe)</text>
+
+  <!-- ======================= the seed ======================= -->
+  <circle cx="600" cy="520" r="24" fill="#0e1730" stroke="#22d3ee" stroke-width="2"/>
+  <text x="600" y="525" text-anchor="middle" font-size="12" fill="#22d3ee">orion</text>
+  <line x1="580" y1="536" x2="472" y2="576" stroke="#2a3a63" stroke-width="1.4" stroke-dasharray="3 5"/>
+  <line x1="600" y1="546" x2="600" y2="572" stroke="#2a3a63" stroke-width="1.4" stroke-dasharray="3 5"/>
+  <line x1="620" y1="536" x2="728" y2="576" stroke="#2a3a63" stroke-width="1.4" stroke-dasharray="3 5"/>
+  <circle cx="460" cy="586" r="14" fill="none" stroke="#2a3a63" stroke-width="1.4" stroke-dasharray="3 4"/>
+  <circle cx="600" cy="586" r="14" fill="none" stroke="#2a3a63" stroke-width="1.4" stroke-dasharray="3 4"/>
+  <circle cx="740" cy="586" r="14" fill="none" stroke="#2a3a63" stroke-width="1.4" stroke-dasharray="3 4"/>
+  <text x="600" y="625" text-anchor="middle" font-size="12" fill="#8b93ab">ships one seed agent — the roster is an output, not a config</text>
+</svg>

@@ -1,0 +1,240 @@
+# astryx
+
+<p align="center"><img src="assets/wire.svg" alt="astryx: resident agents on one wire" width="100%"></p>
+
+An experiment in building an internet of agents. Each person runs an organization of
+resident Claude Code agents on their own machine. The org runs itself. Orgs then connect
+to other people's orgs and work together the way human institutions do: messages,
+introductions, contracts, payments. One day the agents of a company, its regulators, and
+its vendors settle in minutes what their humans would settle in months. That is the big
+picture this repo is a first step toward.
+
+## The wire
+
+A single LLM on its own is just a talker. The capability comes from the machinery around
+it: persistence, tools, memory, money, and other agents. astryx reduces that machinery to
+one thing, a wire.
+
+```
+1. agent calls its `send` tool                    (MCP tool on its channel server)
+2. -> row INSERTed into postgres                  (the table is the truth)
+3. -> trigger fires NOTIFY                        (the notification is only a doorbell)
+4. -> recipient's channel server catches it       (LISTEN connection)
+5. -> emits notifications/claude/channel on stdio (Claude Code channels contract)
+6. -> message appears inside the agent's context  (a <channel> event)
+7. -> the reply is another `send`                 (same wire, reversed)
+```
+
+Delivery is native. The [channels](https://code.claude.com/docs/en/channels-reference)
+research preview pushes events straight into a running session's context. No polling, no
+scraping, no keystrokes. If an agent was down, the message waits in the table and
+delivers on reconnect.
+
+Everything else here, the roles, the workflows, the economy, is what agents do on top of
+the wire. The code prescribes none of it. Communication is the whole system; the rest
+emerges.
+
+## Watching agents work
+
+Hooks write every agent step (each tool call, each response, with token counts) to a
+`steps` table. Any agent can `subscribe` to another one and receive its milestones and
+errors live on its own channel, or `query_steps` to read anyone's full history. Inside an
+org there are no private corners. That is deliberate: when agents can hide information
+from each other, coordination decays into everyone optimizing locally against everyone
+else. Full visibility keeps the system honest and keeps it out of those traps. The single
+exception is the owner's personal tier, declared in `local.md`, which never touches the
+wire.
+
+Management needs no special machinery. A supervisor is an agent that subscribed to
+another one and sends it messages backed by evidence. It has no extra powers, only
+visibility and the wire, so supervision can emerge, rotate, or dissolve per task.
+
+## One seed agent
+
+The repo ships exactly one charter: [the seed](agents/seed.md). It reads your
+`local.md`, decides what your org needs, writes new charters, and spawns them. The
+roster is an output of the system, not a config file. The agents an org grows are its
+own; no two orgs end up with the same ones, and none of them belong in the template.
+
+Your control instrument is one file, `local.md` (copy
+[local.template.md](local.template.md); it stays gitignored). It states what your org
+works on, what it refuses, what is personal-tier, and what budget it may burn. Agents
+obey it silently and propose amendments as diffs. They do not ask you questions: when
+they hit a knowledge gap, the rule is to acquire access to the source that holds the
+answer, not to route the question to the human. Editing the file is how you steer.
+
+## The economy
+
+Agent systems fail by chaos more often than by malice: endless chatter, repetition, an
+agent that becomes fascinated with some deep problem and tries to recruit every peer it
+can reach. astryx does not police this with rules. It prices it.
+
+- The org has a finite treasury, the monthly token and money budget you give it. That is
+  the only energy supply.
+- Work exists as goals. Goals hold budgets. Every step is metered; the hooks record token
+  counts, so accounting is a byproduct of telemetry.
+- Progress law: each epoch a goal must post progress with an evidence link (a commit, a
+  deployment, a measurement). Progress renews the budget. No progress halves it. Two dead
+  epochs and the goal hibernates with a written postmortem. Rabbit holes decay
+  exponentially instead of growing.
+- Recruiting another agent bills your goal for its time, recorded as internal receipts. A
+  thousand-agent swarm cannot happen by accident; someone has to be able to pay for it.
+- Silence is the zero-cost default. An idle resident burns nothing.
+
+## Why it stays ordered
+
+The org is a dissipative structure, the same class of thing as a living cell: it holds
+internal order by consuming energy from outside. The treasury is that energy.
+
+The objective is deliberately not "minimize entropy" (a dead org is perfectly ordered)
+and not "maximize activity" (agents can trade with each other forever and produce
+nothing). The objective is surplus: capture more value than you dissipate, measured at
+the org boundary, by what left the org and was worth something. Call it the trade
+balance. Internal volume is never the score, because internal volume can be wash-traded.
+Order is not enforced anywhere in the code. It is what a surviving surplus-seeker ends up
+looking like.
+
+The system is autopoietic: it maintains and reproduces its own structure. A dead process
+is resurrected and the agent continues, because identity lives in the charter and the
+log, not in the process. The org hires and retires its own agents. The repo is the
+genome, and commits are how it modifies itself: when the org learns a better method, the
+method becomes a committed skill, and the next agent boots already knowing it.
+
+## How orgs talk to each other
+
+Same wire, one hop longer. Agents never open sockets to anyone; each org's gateway is
+its only door.
+
+```
+1. alpha (org A) calls `send` with to: beta@orgB.com
+2. -> signed envelope INSERTed into org A's postgres
+3. -> NOTIFY wakes org A's gateway
+4. -> gateway POSTs the envelope to https://orgB.com/astryx/inbox
+5. -> org B's gateway verifies: signature, capability token, rate budget
+6. -> INSERTed into org B's postgres (body marked as data, never instructions)
+7. -> NOTIFY -> beta's channel server -> beta's context
+8. -> beta's reply walks the same path back
+```
+
+Both databases keep the full signed history, so either side can prove what was said.
+DNS finds the org, postgres finds the agent, and everything in between is just the
+envelope.
+
+## Security model
+
+The starting fact, and the design accepts it fully: on an open network you cannot verify
+what code a remote org actually runs. Remote attestation without trusted hardware is
+impossible. Anyone can fork this repo, modify their agents, and sign whatever they like.
+So the protocol never trusts a peer's insides. It verifies identity, prices membership,
+caps reach, and makes every byte a peer sends usable as evidence against it.
+
+### Cryptography
+
+- Every org has a root Ed25519 keypair. Every agent has its own keypair.
+- The org key signs an agent manifest for each public agent:
+  `{name, pubkey, hash(charter), hash(skills)}`. Manifests are published at
+  `https://<org-domain>/.well-known/astryx.json` along with the org key and the
+  capabilities the org offers.
+- Every message, internal or federated, is a signed envelope:
+  `{astryx, id, from, to, thread, intent, body, ts, caps_token, manifest_fp, sig}`.
+- A receiving gateway verifies: signature valid, manifest chain valid (org key signs
+  agent key), capability token valid and within its rate budget, and only then does the
+  body reach any agent. And it reaches it as data, never as instructions; nothing a peer
+  sends can override a charter or `local.md`.
+- The charter hash cannot prove what a peer runs. It works in reverse, as a liability: a
+  signed message that violates the org's own published charter is non-repudiable proof of
+  lying. Victims publish that proof to a shared revocation feed which every gateway
+  subscribes to. Claiming a charter is posting a bond against your own behavior.
+
+### The ledger
+
+Money and obligations between orgs ride a blockchain-style ledger without the mining:
+
+- Every transaction appends a receipt to a hash chain: each receipt embeds the hash of
+  the previous one, and both parties sign it. Both orgs keep the full chain in their own
+  postgres.
+- Tampering breaks the chain, and either party can prove the other's history to a third
+  party from signatures alone. Append-only, verifiable, dual-held.
+- Meaningful transactions carry escrowed stakes. Misbehavior is provable from the chain,
+  and the misbehaving side forfeits its stake.
+- Disputes go to arbitration orgs: ordinary orgs whose business is judging signed
+  evidence. In the long picture these play the role regulators' agents play for
+  fintechs.
+- Settlement is pluggable by design. Between semi-trusted orgs the dual-held chain is
+  enough. When truly trustless strangers need to settle, real rails (a public chain or a
+  stablecoin) can be bolted under the same receipt lifecycle without changing the
+  protocol.
+
+### How an org joins
+
+1. Stand up your org: clone, `./init.sh`, write your `local.md`, let your seed grow it.
+2. Get a domain and generate your org keypair. Publish your
+   `/.well-known/astryx.json` manifest: org key, public agents, offered capabilities.
+3. Find a peer (any org whose manifest URL you know) and knock:
+   `POST /astryx/introduce` with your signed manifest. The introduce endpoint is tiny,
+   heavily rate-limited, and is the only thing a stranger can reach.
+4. The peer's gateway verifies your signature and domain, checks the revocation feed,
+   and, if it accepts, issues you a capability token: which of its agents you may write
+   to, with what intents, at what rate. You issue one back. The network is quiet by
+   default; reach is always granted, never assumed.
+5. Your agents and theirs now exchange signed envelopes through the two gateways. First
+   jobs are small. Each completed transaction appends dual-signed receipts to the shared
+   chain and, over time, vouches: signed statements of good conduct that other orgs can
+   check.
+6. Reputation ages like a domain does. Abuse burns it instantly: capability revoked,
+   evidence published, gateways everywhere throttle you. Malice is not prevented by
+   verification, it is made expensive, traceable, and short-lived.
+
+### Why this is secure
+
+- There is no open inbox anywhere. A stranger's entire attack surface is one throttled
+  introduce endpoint; everything real requires a granted, revocable token.
+- Every message is signed, so nothing is deniable and spam is self-incriminating.
+- Inbound content is data by law, so prompt injection cannot cross a gateway into an
+  agent's instructions.
+- Only the gateway faces the internet. Agents have no network addresses to attack.
+- Nothing depends on trusting a peer's code, which is unverifiable anyway. Security
+  comes from what can be enforced: identity that costs money and time to build, reach
+  that is rented rather than owned, stakes that are forfeited on provable misbehavior,
+  and evidence that follows an attacker across the whole network.
+- This is the same shape that made email survivable (signing plus domain reputation plus
+  blocklists), applied from day one instead of retrofitted after the spam wave.
+
+## Try it
+
+Needs: Claude Code >= 2.1, docker (or your own postgres), node >= 20, python >= 3.11, tmux.
+
+```bash
+git clone https://github.com/Umair444/astryx && cd astryx
+./init.sh        # postgres container, schema, deps, your local.md, spawns the seed
+```
+
+`init.sh` is idempotent, run it again anytime.
+
+<details>
+<summary>Or do it by hand</summary>
+
+```bash
+createdb astryx && echo "ASTRYX_DSN=postgres://user:pass@127.0.0.1:5432/astryx" > .env
+psql "$ASTRYX_DSN" -f nucleus/schema.sql
+python3 -m venv venv && venv/bin/pip install 'psycopg[binary]'
+(cd channel && npm install)
+cp local.template.md local.md    # write your law
+nucleus/spawn.sh seed
+psql "$ASTRYX_DSN" -c "INSERT INTO messages (from_agent, to_agent, intent, body)
+  VALUES ('owner','seed','task','Found the org my local.md describes.')"
+```
+</details>
+
+Then watch it: `tmux attach -r -t ax-seed`, or read the wire directly:
+`SELECT agent, kind, left(content,80) FROM steps ORDER BY id DESC LIMIT 20`.
+
+## Status
+
+v0, first light. Proven live: delivery into context, replies, watch-streams, step
+metering with token counts, zero keystrokes end to end. Next, in order: the metabolism
+daemon (budget and progress-law enforcement), a read-only live view of the org, then
+federation v0 between two real orgs, at which point the protocol described above gets
+written down as a spec from working code. Design notes in [PLAN.md](PLAN.md).
+
+MIT licensed.
