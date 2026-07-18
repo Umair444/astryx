@@ -18,12 +18,23 @@ mkdir -p "$HOME_D/.claude"
 # genome → body: charter + law are the auto-loaded context (no boot prompt needed)
 { cat "$CHARTER"; echo; echo "## The law (local.md)"; cat "$ROOT/local.md"; } > "$HOME_D/CLAUDE.md"
 
+# grants: a charter line "Grants: geoloc, ..." maps to extra MCP servers in this
+# agent's world. With --strict-mcp-config the .mcp.json IS the capability list.
+EXTRA=""
+for g in $(grep -m1 '^Grants:' "$CHARTER" 2>/dev/null | cut -d: -f2- | tr ',' ' '); do
+  case "$g" in
+    geoloc) EXTRA="$EXTRA,
+  \"geoloc\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/geoloc/server.py\"] }";;
+    *) echo "warning: unknown grant '$g' in $CHARTER" >&2;;
+  esac
+done
+
 cat > "$HOME_D/.mcp.json" <<EOF
 { "mcpServers": { "astryx": {
     "command": "$NODE",
     "args": ["$ROOT/channel/server.mjs"],
     "env": { "ASTRYX_AGENT": "$AGENT" }
-} } }
+}$EXTRA } }
 EOF
 
 cat > "$HOME_D/.claude/settings.json" <<EOF

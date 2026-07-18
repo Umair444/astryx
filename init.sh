@@ -36,6 +36,20 @@ User=$USER
 [Install]
 WantedBy=multi-user.target
 EOF
+  cat > units/astryx-geoloc.service <<EOF
+[Unit]
+Description=astryx geoloc bridge — phone location intake on :8766
+After=network.target
+[Service]
+WorkingDirectory=$PWD/bridges
+EnvironmentFile=$PWD/.env
+ExecStart=$PWD/venv/bin/uvicorn geoloc:app --host 0.0.0.0 --port 8766
+Restart=always
+RestartSec=5
+User=$USER
+[Install]
+WantedBy=multi-user.target
+EOF
 }
 
 if [ "${1:-}" = "whatsapp" ]; then
