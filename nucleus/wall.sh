@@ -22,9 +22,15 @@ REBUILD=""
 if [ $# -gt 0 ]; then
   AGENTS=$(echo "$*" | tr 'A-Z' 'a-z')
 else
-  AGENTS=$(tmux ls -F '#{session_name}' 2>/dev/null | grep '^ax-' | sed 's/^ax-//' | sort)
+  # roster from the TABLE, not from tmux: an agent is whoever stepped recently
+  # (a CLI-bodied agent has no ax-* session), plus any body alive right now.
+  DSN=$(grep '^ASTRYX_DSN=' "$ROOT/.env" | cut -d= -f2-)
+  AGENTS=$( { psql "$DSN" -At -c \
+      "SELECT DISTINCT agent FROM steps WHERE ts > now() - interval '7 days'" 2>/dev/null;
+      tmux ls -F '#{session_name}' 2>/dev/null | grep '^ax-' | sed 's/^ax-//'; } \
+    | grep -v '^$' | sort -u)
 fi
-[ -n "$AGENTS" ] || { echo "no residents alive (no ax-* tmux sessions)"; exit 1; }
+[ -n "$AGENTS" ] || { echo "no agents found (no recent steps, no ax-* sessions)"; exit 1; }
 
 # JOIN an existing wall instead of killing it: running wall.sh twice must never
 # crash the first viewer. Rebuild only when the roster changed or --rebuild.
