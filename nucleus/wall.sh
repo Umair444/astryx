@@ -17,12 +17,25 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+REBUILD=""
+[ "${1:-}" = "--rebuild" ] && { REBUILD=1; shift; }
 if [ $# -gt 0 ]; then
   AGENTS=$(echo "$*" | tr 'A-Z' 'a-z')
 else
   AGENTS=$(tmux ls -F '#{session_name}' 2>/dev/null | grep '^ax-' | sed 's/^ax-//' | sort)
 fi
 [ -n "$AGENTS" ] || { echo "no residents alive (no ax-* tmux sessions)"; exit 1; }
+
+# JOIN an existing wall instead of killing it: running wall.sh twice must never
+# crash the first viewer. Rebuild only when the roster changed or --rebuild.
+if [ -z "$REBUILD" ] && tmux has-session -t =wall 2>/dev/null; then
+  have=$(tmux list-panes -t wall -F '#{pane_title}' 2>/dev/null | sort | xargs)
+  want=$(echo "$AGENTS" | xargs -n1 | sort | xargs)
+  if [ "$have" = "$want" ]; then
+    if [ -n "${TMUX:-}" ]; then exec tmux switch-client -t wall
+    else exec tmux attach -t wall; fi
+  fi
+fi
 
 tmux kill-session -t wall 2>/dev/null || true
 tmux new-session -d -s wall
