@@ -159,6 +159,7 @@ else docker exec astryx-pg psql -U astryx -d astryx -c "$FOUND" >/dev/null; fi
 
 say "done. the seed is awake and reading your law."
 say "observatory:      sudo systemctl enable --now $PWD/units/astryx-observatory.service   (public :8090)"
+say "the pulse:        sudo systemctl link $PWD/units/astryx-pulse.service && sudo systemctl enable --now $PWD/units/astryx-pulse.timer"
 say "whatsapp surface: ./init.sh whatsapp"
 say "watch it think:   tmux attach -r -t ax-seed"
 say "watch the wire:   psql \"\$ASTRYX_DSN\" -c 'SELECT agent, kind, left(content,80) FROM steps ORDER BY id DESC LIMIT 20'"
