@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 # astryx · wall — every resident body, live, in one tmux grid. Eyes only.
 #
-#   nucleus/wall.sh            all residents (ax-* sessions), read-only panes
+#   nucleus/wall.sh              all residents (ax-* sessions)
 #   nucleus/wall.sh seed memory  only the named ones
 #
-# There is no write mode. Talking to an agent means the wire: press Ctrl-b m
-# on a focused pane and type; your line is INSERTed as an owner message to
-# that agent and delivered through its channel like any other. Keystrokes
-# never touch a pane (the lesson is law).
+# Panes MIRROR each agent's screen (capture-pane once a second) instead of
+# attaching to it. A mirror always fills its pane at any size on any monitor,
+# never fights other viewers over window size, and leaves the agent sessions
+# completely untouched, so `tmux attach -rt ax-<name>` stays native and
+# full-fidelity whenever you want the real thing.
 #
-# Ctrl-b d leaves the wall; agents are unaffected. Rebuild any time.
+# Talking to an agent means the wire: Ctrl-b m on a focused pane prompts for
+# one line and INSERTs it as an owner message to that agent. Keystrokes never
+# touch a pane (the lesson is law). Ctrl-b z zooms, Ctrl-b d leaves.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -21,7 +24,7 @@ fi
 [ -n "$AGENTS" ] || { echo "no residents alive (no ax-* tmux sessions)"; exit 1; }
 
 tmux kill-session -t wall 2>/dev/null || true
-tmux new-session -d -s wall -x "${COLUMNS:-220}" -y "${LINES:-50}"
+tmux new-session -d -s wall
 placeholder=$(tmux display-message -p -t wall '#{pane_id}')
 
 tmux set -t wall pane-border-status top
@@ -29,24 +32,28 @@ tmux set -t wall pane-border-format " #[bold]#{pane_title} "
 tmux set -t wall pane-border-style "fg=colour237"
 tmux set -t wall pane-active-border-style "fg=cyan,bold"
 tmux set -t wall status-style "bg=colour233,fg=cyan"
-tmux set -t wall status-left " ✦ astryx wall │ eyes only │ C-b m = message focused agent "
+tmux set -t wall status-left " ✦ astryx wall │ mirror │ C-b m = message focused agent "
 tmux set -t wall status-left-length 60
 tmux set -t wall status-right " %a %H:%M "
 tmux set -w -t wall allow-set-title off 2>/dev/null || true
 
-# C-b m: one line -> wire message to the agent under focus (pane title = agent)
+# C-b m: one line -> wire message (as owner) to the agent under focus
 tmux bind-key -T prefix m command-prompt -p "wire → #{pane_title}:" \
   "run-shell '$ROOT/nucleus/doorbell.sh #{pane_title} \"%1\" owner >/dev/null 2>&1 || true'"
 
 for a in $AGENTS; do
-  # Self-healing pane: attach while the session lives, wait when it does not.
-  # TMUX= clears the env so tmux allows the nested attach; '=ax-name' is an
-  # EXACT session match; detach-on-destroy keeps a respawn from hopping this
-  # viewer onto some other agent's session (GENESIS wall lessons, kept).
-  # A read-only client never counts for window-size sizing, so force it:
-  # manual size, resized to exactly this pane before every attach. status off
-  # inside: one status bar is enough.
-  cmd="while :; do if tmux has-session -t =ax-$a 2>/dev/null; then W=\$(tmux display -p '#{pane_width}'); H=\$(tmux display -p '#{pane_height}'); tmux set -t =ax-$a status off 2>/dev/null; tmux set -t =ax-$a window-size manual 2>/dev/null; tmux resize-window -t =ax-$a -x \$W -y \$H 2>/dev/null; TMUX= tmux attach -r -t =ax-$a \\; set detach-on-destroy on; else clear; echo '  [$a is down — the nucleus can respawn it]'; sleep 2; fi; done"
+  # Mirror loop: home the cursor, repaint the last pane-height lines of the
+  # agent's screen (colors kept, each line erased to EOL), wipe the rest.
+  # $TMUX_PANE pins the size query to THIS pane, whatever monitor it is on.
+  cmd='while :; do
+    H=$(tmux display -p -t "$TMUX_PANE" "#{pane_height}" 2>/dev/null || echo 20)
+    if out=$(tmux capture-pane -pe -t "=ax-'"$a"'" 2>/dev/null); then
+      printf "\033[H%s\033[0m\033[J" "$(printf "%s\n" "$out" | sed -e "s/\$/\x1b[K/" | tail -n "$H")"
+    else
+      printf "\033[H\033[J  ['"$a"' is down — the nucleus can respawn it]"
+    fi
+    sleep 1
+  done'
   pane=$(tmux split-window -t wall -P -F '#{pane_id}' "$cmd")
   tmux select-pane -t "$pane" -T "$a"
   tmux select-layout -t wall tiled >/dev/null
@@ -54,10 +61,8 @@ done
 tmux kill-pane -t "$placeholder" 2>/dev/null || true
 tmux select-layout -t wall tiled >/dev/null
 
-# keep inner windows glued to their panes: re-fit on every terminal resize
-# (and once now). Raw tmux, no scripts: walk the panes, resize each window.
-REFIT='tmux list-panes -t wall -F "#{pane_title} #{pane_width} #{pane_height}" | while read a w h; do tmux resize-window -t "=ax-$a" -x "$w" -y "$h" 2>/dev/null; done'
-tmux set-hook -t wall client-resized "run-shell '$REFIT'"
-tmux set-hook -t wall client-attached "run-shell '$REFIT'"
-
-exec tmux attach -t wall
+if [ -n "${TMUX:-}" ]; then
+  exec tmux switch-client -t wall     # already inside tmux: switch, never nest
+else
+  exec tmux attach -t wall
+fi
