@@ -43,7 +43,9 @@ for a in $AGENTS; do
   # TMUX= clears the env so tmux allows the nested attach; '=ax-name' is an
   # EXACT session match; detach-on-destroy keeps a respawn from hopping this
   # viewer onto some other agent's session (GENESIS wall lessons, kept).
-  cmd="while :; do if tmux has-session -t =ax-$a 2>/dev/null; then TMUX= tmux attach -r -t =ax-$a \\; set detach-on-destroy on; else clear; echo '  [$a is down — the nucleus can respawn it]'; sleep 2; fi; done"
+  # window-size latest: the agent session resizes to THIS pane (kills the
+  # dotted dead space); status off inside: one status bar is enough.
+  cmd="while :; do if tmux has-session -t =ax-$a 2>/dev/null; then tmux set -t =ax-$a window-size latest 2>/dev/null; tmux set -t =ax-$a status off 2>/dev/null; TMUX= tmux attach -r -t =ax-$a \\; set detach-on-destroy on; else clear; echo '  [$a is down — the nucleus can respawn it]'; sleep 2; fi; done"
   pane=$(tmux split-window -t wall -P -F '#{pane_id}' "$cmd")
   tmux select-pane -t "$pane" -T "$a"
   tmux select-layout -t wall tiled >/dev/null
