@@ -8,7 +8,7 @@ relations.md
 owner.md
 agents/*
 !agents/seed.md
-!agents/vega.example.md
+!agents/*.example.md
 memory/
 observatory/web/node_modules/
 observatory/web/dist/
