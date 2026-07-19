@@ -54,6 +54,17 @@ OBS_KEY = _env("OBS_KEY")          # owner key: unlocks the composer (POST /api/
 VEGA_MD = REPO / "agents" / "vega.md"
 VEGA_HOME = REPO / "homes" / "vega-station"   # bare cwd so claude -p loads no project files
 
+# Public = the NETWORK face only (org card, peers, cross-org traffic, vega).
+# The agents themselves (steps, wire, charters, goals, economy, tools, ops) are
+# the owner's; every other endpoint needs the key. One gate, enforced centrally;
+# /api/messages and /api/events additionally filter content per-row for anonymous.
+PUBLIC_PATHS = {"/api/overview", "/api/peers", "/api/vega", "/api/whoami",
+                "/api/events", "/api/messages", "/favicon.svg"}
+
+
+def is_owner(request: Request) -> bool:
+    return bool(OBS_KEY) and request.headers.get("x-obs-key", "") == OBS_KEY
+
 pool: asyncpg.Pool | None = None
 sse_clients: set[asyncio.Queue] = set()
 
@@ -112,6 +123,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.middleware("http")
+async def privacy_gate(request: Request, call_next):
+    p = request.url.path
+    if p.startswith("/api/") and p not in PUBLIC_PATHS and not is_owner(request):
+        return Response(status_code=403)
+    return await call_next(request)
 
 
 # ---------------------------------------------------------------- shapers
@@ -200,10 +219,12 @@ async def agents():
 
 
 @app.get("/api/messages")
-async def messages(limit: int = 100, before_id: int | None = None,
+async def messages(request: Request, limit: int = 100, before_id: int | None = None,
                    thread: str | None = None, agent: str | None = None):
     limit = min(limit, 500)
     cond, args = [], []
+    if not is_owner(request):        # anonymous sees only boundary traffic
+        cond.append("(from_org <> 'local' OR to_org <> 'local')")
     if before_id:
         args.append(before_id); cond.append(f"id < ${len(args)}")
     if thread:
@@ -509,6 +530,17 @@ async def vega(m: VegaMsg, request: Request):
 
 @app.get("/api/events")
 async def events(request: Request):
+    # EventSource cannot send headers, so owner mode rides ?key=. Anonymous
+    # streams carry ONLY boundary-crossing message events; steps/dags are the
+    # agents' insides and stay owner-only.
+    owner = bool(OBS_KEY) and request.query_params.get("key", "") == OBS_KEY
+
+    def visible(data: dict) -> bool:
+        if owner:
+            return True
+        return (data.get("type") == "message" and
+                (data.get("from_org") != "local" or data.get("to_org") != "local"))
+
     async def stream():
         q: asyncio.Queue = asyncio.Queue()
         sse_clients.add(q)
@@ -517,7 +549,8 @@ async def events(request: Request):
             while True:
                 try:
                     data = await asyncio.wait_for(q.get(), timeout=25)
-                    yield f"data: {json.dumps(data)}\n\n"
+                    if visible(data):
+                        yield f"data: {json.dumps(data)}\n\n"
                 except asyncio.TimeoutError:
                     yield ": ping\n\n"
                 if await request.is_disconnected():

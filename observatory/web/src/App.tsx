@@ -107,12 +107,50 @@ function KeyBadge() {
   )
 }
 
+/* What an anonymous visitor sees on the private tabs: a quiet lock with the
+   same key door the KeyBadge offers. saveObsKey + recheckWho flips everything. */
+function LockPanel() {
+  const { recheckWho } = useStore()
+  const [val, setVal] = useState('')
+
+  return (
+    <div className="h-full grid place-items-center starfield">
+      <div className="text-center px-6 py-8 rounded-xl border border-line bg-deck-2/80 max-w-sm">
+        <div className="text-2xl text-ink-mute mb-3">⊘</div>
+        <div className="text-sm text-ink-dim">the agents are private</div>
+        <div className="text-xs text-ink-mute mt-1">this is the network face of the org</div>
+        <form
+          className="mt-5"
+          onSubmit={async (e) => {
+            e.preventDefault()
+            if (!val.trim()) return
+            saveObsKey(val.trim())
+            setVal('')
+            await recheckWho()
+          }}
+        >
+          <TextInput
+            type="password"
+            value={val}
+            onChange={(e) => setVal(e.currentTarget.value)}
+            placeholder="owner key"
+            size="xs"
+            styles={{ input: { background: '#141c3a', border: '1px solid #1d2647', textAlign: 'center' } }}
+          />
+        </form>
+      </div>
+    </div>
+  )
+}
+
 function Shell() {
   const [route, setRoute] = useState<Route>(parseHash())
   const [agentOpen, setAgentOpen] = useState<string | null>(null)
   const [navOpened, { toggle, close }] = useDisclosure()
   const isDesktop = useMediaQuery('(min-width: 48em)', true)
-  const { overview } = useStore()
+  const { overview, who, whoChecked } = useStore()
+  const tabs = who.owner ? TABS : TABS.filter((t) => t.key === 'network')
+  const locked = !who.owner && route.tab !== 'network'
 
   useEffect(() => {
     const f = () => {
@@ -141,7 +179,7 @@ function Shell() {
             · observatory
           </Text>
           <div className="hidden sm:flex items-center gap-1 ml-4">
-            {TABS.map((t) => (
+            {tabs.map((t) => (
               <button
                 key={t.key}
                 onClick={() => nav({ tab: t.key } as Route)}
@@ -174,18 +212,26 @@ function Shell() {
 
       <AppShell.Main className="h-dvh" style={{ display: 'flex', flexDirection: 'column' }}>
         <div className="flex-1 min-h-0">
-          {route.tab === 'network' && <NetworkView onOpenAgent={setAgentOpen} />}
-          {route.tab === 'wire' && <WireView route={route} onOpenAgent={setAgentOpen} />}
-          {route.tab === 'goals' && <GoalsView />}
-          {route.tab === 'economy' && <EconomyView />}
-          {route.tab === 'tools' && <ToolsView />}
+          {locked ? (
+            whoChecked ? ( // hold blank until whoami answers so the owner never flashes the lock
+              <LockPanel />
+            ) : null
+          ) : (
+            <>
+              {route.tab === 'network' && <NetworkView onOpenAgent={setAgentOpen} />}
+              {route.tab === 'wire' && <WireView route={route} onOpenAgent={setAgentOpen} />}
+              {route.tab === 'goals' && <GoalsView />}
+              {route.tab === 'economy' && <EconomyView />}
+              {route.tab === 'tools' && <ToolsView />}
+            </>
+          )}
         </div>
       </AppShell.Main>
 
       {/* mobile bottom nav */}
       <AppShell.Footer hiddenFrom="sm" className="!bg-deck-2 !border-line">
         <div className="flex h-full pb-[env(safe-area-inset-bottom)]">
-          {TABS.map((t) => (
+          {tabs.map((t) => (
             <button
               key={t.key}
               onClick={() => nav({ tab: t.key } as Route)}

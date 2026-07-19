@@ -43,20 +43,39 @@ function agentEl(
 }
 
 export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) => void }) {
-  const { overview, agents, peers, flash } = useStore()
+  const { overview, agents, peers, flash, who } = useStore()
   const isMobile = useMediaQuery('(max-width: 48em)')
   const [flashEdges, setFlashEdges] = useState<Edge[]>([])
 
   const known = useMemo(() => new Set(agents.map((a) => a.agent)), [agents])
+  const peerOrgs = useMemo(() => new Set(peers.map((p) => p.org)), [peers])
 
-  // a message on the wire → light the from→to edge for ~3s
+  // a message on the wire → light an edge for ~3s. Owner sees agent→agent;
+  // anonymous only ever receives boundary traffic and animates org<->peer.
   useEffect(() => {
-    if (!flash || !known.has(flash.from)) return
-    const target = flash.to && known.has(flash.to) ? flash.to : 'org'
+    if (!flash) return
+    let source: string
+    let target: string
+    if (who.owner) {
+      if (!known.has(flash.from)) return
+      source = flash.from
+      target = flash.to && known.has(flash.to) ? flash.to : 'org'
+    } else {
+      const remote =
+        flash.from_org && flash.from_org !== 'local'
+          ? flash.from_org
+          : flash.to_org && flash.to_org !== 'local'
+            ? flash.to_org
+            : null
+      if (!remote || !peerOrgs.has(remote)) return
+      const inbound = flash.from_org === remote
+      source = inbound ? `peer:${remote}` : 'org'
+      target = inbound ? 'org' : `peer:${remote}`
+    }
     const id = `flash-${flash.key}`
     const edge: Edge = {
       id,
-      source: flash.from,
+      source,
       target,
       animated: true,
       zIndex: 10,
@@ -65,7 +84,7 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
     setFlashEdges((es) => [...es.filter((e) => e.id !== id), edge])
     const t = setTimeout(() => setFlashEdges((es) => es.filter((e) => e.id !== id)), 3000)
     return () => clearTimeout(t)
-  }, [flash, known])
+  }, [flash, known, peerOrgs, who.owner])
 
   const flow = useMemo(() => {
     const nodes: Node[] = []
@@ -101,10 +120,12 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
       selectable: false,
     })
 
-    // agents on the inner ring
-    const n = Math.max(agents.length, 1)
-    const r1 = Math.max(280, 60 * n * 0.9)
-    agents.forEach((a, i) => {
+    // agents on the inner ring — the owner's view only; to visitors the org
+    // is one sealed node and the agents stay private
+    const ring = who.owner ? agents : []
+    const n = Math.max(ring.length, 1)
+    const r1 = ring.length ? Math.max(280, 60 * n * 0.9) : 100
+    ring.forEach((a, i) => {
       const ang = (i / n) * 2 * Math.PI - Math.PI / 2
       const col = agentColor(a.agent)
       nodes.push({
@@ -155,7 +176,7 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
     })
 
     return { nodes, edges }
-  }, [overview, agents, peers, onOpenAgent])
+  }, [overview, agents, peers, onOpenAgent, who.owner])
 
   if (isMobile) {
     return (
@@ -167,6 +188,11 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
               {overview ? `${overview.agents} agents · ${overview.live} live · ${overview.peers} peers` : ''}
             </div>
           </div>
+          {!who.owner && (
+            <div className="px-1 mb-3 text-[11px] text-ink-mute">
+              ⊘ the agents are private · this is the network face of the org
+            </div>
+          )}
           {agents.map((a) => (
             <button
               key={a.agent}

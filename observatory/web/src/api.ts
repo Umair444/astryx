@@ -1,7 +1,8 @@
 import type { WhoAmI } from './types'
 
 export async function api<T>(path: string): Promise<T> {
-  const r = await fetch('/api' + path)
+  const key = obsKey()
+  const r = await fetch('/api' + path, { headers: key ? { 'x-obs-key': key } : {} })
   if (!r.ok) throw new Error(`${path}: ${r.status}`)
   return r.json()
 }
@@ -9,6 +10,12 @@ export async function api<T>(path: string): Promise<T> {
 /* obs key — lives in localStorage; empty string means anonymous reader */
 export function obsKey(): string {
   return localStorage.getItem('obs_key') ?? ''
+}
+
+/* SSE cannot send headers — owner mode rides ?key= (server just filters if wrong) */
+export function eventsUrl(): string {
+  const key = obsKey()
+  return '/api/events' + (key ? `?key=${encodeURIComponent(key)}` : '')
 }
 
 export function saveObsKey(key: string) {

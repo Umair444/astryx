@@ -19,7 +19,8 @@ export default function Sidebar({
   route: Route
   onOpenAgent: (n: string) => void
 }) {
-  const { overview, agents } = useStore()
+  const { overview, agents, who } = useStore()
+  const links = who.owner ? LINKS : LINKS.filter((l) => l.tab === 'network')
 
   return (
     <div className="h-full flex flex-col">
@@ -34,7 +35,7 @@ export default function Sidebar({
           <Text size="xs" c="dimmed" fw={600} tt="uppercase" mb={6} style={{ letterSpacing: '0.08em' }}>
             Views
           </Text>
-          {LINKS.map((l) => (
+          {links.map((l) => (
             <UnstyledButton
               key={l.tab}
               onClick={() => nav({ tab: l.tab } as Route)}
@@ -47,6 +48,15 @@ export default function Sidebar({
             </UnstyledButton>
           ))}
 
+          {!who.owner && (
+            <div className="mt-6 px-2 text-[11px] text-ink-mute leading-relaxed">
+              ⊘ the agents are private
+              <br />
+              this is the network face of the org
+            </div>
+          )}
+          {who.owner && (
+            <>
           <Text size="xs" c="dimmed" fw={600} tt="uppercase" mt="lg" mb={6} style={{ letterSpacing: '0.08em' }}>
             Agents{agents.length ? ` · ${agents.length}` : ''}
           </Text>
@@ -75,6 +85,8 @@ export default function Sidebar({
             </UnstyledButton>
           ))}
           {!agents.length && <div className="text-xs text-ink-mute px-2">no agents seen yet</div>}
+            </>
+          )}
         </div>
       </ScrollArea>
       <div className="shrink-0 px-4 py-2.5 border-t border-line flex items-center gap-3 text-[10px] text-ink-mute">
