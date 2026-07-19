@@ -1,0 +1,17 @@
+{
+  "name": "owner_presence",
+  "description": "Where things stand: last fix and zone presence fetched in parallel, then distance from the first defined zone computed from both. Demo of parallel + sequential wiring.",
+  "args": {},
+  "nodes": [
+    { "id": "last",  "tool": "geoloc.locate", "args": { "fresh": false } },
+    { "id": "zones", "tool": "geoloc.zones",  "args": {} },
+    { "id": "dist",  "tool": "geoloc.distance_between",
+      "args": { "lat1": "$node.last.lat", "lon1": "$node.last.lon",
+                "lat2": "$node.zones.0.lat", "lon2": "$node.zones.0.lon" } }
+  ],
+  "returns": {
+    "fix": "$node.last",
+    "nearest_named_zone_distance": "$node.dist",
+    "zone_count": "$node.zones"
+  }
+}

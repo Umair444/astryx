@@ -1,0 +1,55 @@
+{
+  "servers": [
+    {
+      "server": "geoloc",
+      "tools": [
+        {
+          "name": "locate",
+          "description": "The owner's location \u2014 one tool, last-known or fresh by the `fresh` flag."
+        },
+        {
+          "name": "location_history",
+          "description": "Recent location fixes, newest first. PRIVATE data."
+        },
+        {
+          "name": "where_is_owner",
+          "description": "The owner's presence by ZONE (home/office/...) \u2014 the privacy-safe answer for"
+        },
+        {
+          "name": "zones",
+          "description": "List the defined geofence zones (name, center, radius, privacy tier)."
+        },
+        {
+          "name": "zone_add",
+          "description": "Define or update a geofence zone (e.g. 'office', 'parents'). Presence updates"
+        },
+        {
+          "name": "distance_between",
+          "description": "Geodesic distance in meters between two lat/lon points (PostGIS geography)."
+        }
+      ]
+    },
+    {
+      "server": "compose",
+      "tools": [
+        {
+          "name": "dag_list",
+          "description": "List the org's composite DAGs (name, description, args, node count)."
+        },
+        {
+          "name": "dag_describe",
+          "description": "Full definition of one DAG: nodes, wiring, returns."
+        },
+        {
+          "name": "dag_run",
+          "description": "Run a composite DAG by name. Independent nodes run in parallel;"
+        },
+        {
+          "name": "owner_presence",
+          "description": "Where things stand: last fix and zone presence fetched in parallel, then distance from the first defined zone computed from both. Demo of parallel + sequential wiring."
+        }
+      ]
+    }
+  ],
+  "total_tools": 10
+}

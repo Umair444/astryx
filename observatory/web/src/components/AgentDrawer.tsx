@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Badge, Drawer, ScrollArea } from '@mantine/core'
+import { Badge, Drawer, ScrollArea, Tabs } from '@mantine/core'
 import { api, agentColor, fmtAgo, fmtTime, fmtTokens } from '../api'
 import { useStore } from '../store'
 import type { Step } from '../types'
@@ -14,15 +14,20 @@ const KIND_COLOR: Record<string, string> = {
 
 export default function AgentDrawer({ name, onClose }: { name: string; onClose: () => void }) {
   const [steps, setSteps] = useState<Step[] | null>(null)
+  const [charter, setCharter] = useState<string | null>(null)
   const { agents } = useStore()
   const row = agents.find((a) => a.agent === name)
   const col = agentColor(name)
 
   useEffect(() => {
     setSteps(null)
+    setCharter(null)
     api<Step[]>(`/steps?agent=${encodeURIComponent(name)}&limit=50`)
       .then((s) => setSteps([...s].reverse())) // newest first
       .catch(() => setSteps([]))
+    api<{ charter: string }>(`/agents/${encodeURIComponent(name)}/charter`)
+      .then((c) => setCharter(c.charter))
+      .catch(() => setCharter(''))
   }, [name])
 
   return (
@@ -62,28 +67,42 @@ export default function AgentDrawer({ name, onClose }: { name: string; onClose: 
           </div>
         </div>
       )}
-      <div className="text-[11px] uppercase tracking-wider text-ink-dim mb-1.5">Recent steps</div>
-      <ScrollArea h={row ? 'calc(100dvh - 220px)' : 'calc(100dvh - 140px)'}>
-        {steps === null && <div className="text-xs text-ink-mute py-4">loading…</div>}
-        {steps?.map((s) => (
-          <div key={s.id} className="py-1.5 border-b border-line/50">
-            <div className="flex items-center gap-2 text-[11px] text-ink-mute">
-              <Badge size="xs" variant="light" color={KIND_COLOR[s.kind] ?? 'gray'}>
-                {s.kind}
-              </Badge>
-              <span>{fmtTime(s.ts)}</span>
-              {s.goal_id != null && <span className="font-mono">goal #{s.goal_id}</span>}
-              {(s.tokens_in || s.tokens_out) ? (
-                <span className="ml-auto font-mono">
-                  ↓{fmtTokens(s.tokens_in)} ↑{fmtTokens(s.tokens_out)}
-                </span>
-              ) : null}
-            </div>
-            {s.content && <div className="text-[13px] text-ink-dim line-clamp-3 mt-0.5">{s.content}</div>}
-          </div>
-        ))}
-        {steps?.length === 0 && <div className="text-xs text-ink-mute py-4">no steps recorded</div>}
-      </ScrollArea>
+      <Tabs defaultValue="steps" color="cyan" keepMounted={false}>
+        <Tabs.List mb="xs">
+          <Tabs.Tab value="steps" className="text-xs">steps</Tabs.Tab>
+          {charter ? <Tabs.Tab value="charter" className="text-xs">charter</Tabs.Tab> : null}
+        </Tabs.List>
+        <Tabs.Panel value="steps">
+          <ScrollArea h={row ? 'calc(100dvh - 260px)' : 'calc(100dvh - 180px)'}>
+            {steps === null && <div className="text-xs text-ink-mute py-4">loading…</div>}
+            {steps?.map((s) => (
+              <div key={s.id} className="py-1.5 border-b border-line/50">
+                <div className="flex items-center gap-2 text-[11px] text-ink-mute">
+                  <Badge size="xs" variant="light" color={KIND_COLOR[s.kind] ?? 'gray'}>
+                    {s.kind}
+                  </Badge>
+                  <span>{fmtTime(s.ts)}</span>
+                  {s.goal_id != null && <span className="font-mono">goal #{s.goal_id}</span>}
+                  {(s.tokens_in || s.tokens_out) ? (
+                    <span className="ml-auto font-mono">
+                      ↓{fmtTokens(s.tokens_in)} ↑{fmtTokens(s.tokens_out)}
+                    </span>
+                  ) : null}
+                </div>
+                {s.content && <div className="text-[13px] text-ink-dim line-clamp-3 mt-0.5">{s.content}</div>}
+              </div>
+            ))}
+            {steps?.length === 0 && <div className="text-xs text-ink-mute py-4">no steps recorded</div>}
+          </ScrollArea>
+        </Tabs.Panel>
+        <Tabs.Panel value="charter">
+          <ScrollArea h={row ? 'calc(100dvh - 260px)' : 'calc(100dvh - 180px)'}>
+            <pre className="text-[12px] leading-relaxed text-ink-dim whitespace-pre-wrap font-mono bg-deck border border-line rounded-lg p-3">
+              {charter}
+            </pre>
+          </ScrollArea>
+        </Tabs.Panel>
+      </Tabs>
     </Drawer>
   )
 }

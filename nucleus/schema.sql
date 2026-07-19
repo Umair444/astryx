@@ -104,3 +104,26 @@ END $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS steps_notify ON steps;
 CREATE TRIGGER steps_notify AFTER INSERT ON steps
   FOR EACH ROW EXECUTE FUNCTION notify_step();
+
+-- DAG traces (mcp/compose runner writes these; doorbell 'astryx_dag' for the observatory)
+CREATE TABLE IF NOT EXISTS dag_runs (
+  run_id   bigserial PRIMARY KEY,
+  dag      text NOT NULL,
+  args     jsonb,
+  status   text NOT NULL DEFAULT 'running',   -- running | ok | error
+  started  timestamptz NOT NULL DEFAULT now(),
+  finished timestamptz,
+  result   jsonb
+);
+CREATE TABLE IF NOT EXISTS dag_steps (
+  id       bigserial PRIMARY KEY,
+  run_id   bigint REFERENCES dag_runs(run_id),
+  node     text NOT NULL,
+  tool     text NOT NULL,
+  status   text NOT NULL DEFAULT 'running',
+  started  timestamptz NOT NULL DEFAULT now(),
+  finished timestamptz,
+  output   jsonb,
+  error    text
+);
+CREATE INDEX IF NOT EXISTS dag_steps_run ON dag_steps (run_id);

@@ -9,6 +9,7 @@ const LINKS: { tab: Route['tab']; label: string; icon: string }[] = [
   { tab: 'wire', label: 'The Wire', icon: '✦' },
   { tab: 'goals', label: 'Goals', icon: '◎' },
   { tab: 'economy', label: 'Economy', icon: '⬡' },
+  { tab: 'tools', label: 'Tools', icon: 'ƒ' },
 ]
 
 export default function Sidebar({

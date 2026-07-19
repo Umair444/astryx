@@ -65,7 +65,7 @@ async def listen_task():
         try:
             conn = await asyncpg.connect(DSN)
             q: asyncio.Queue = asyncio.Queue()
-            for ch in ("astryx_wire", "astryx_steps"):
+            for ch in ("astryx_wire", "astryx_steps", "astryx_dag"):
                 await conn.add_listener(
                     ch, lambda c, p, chan, payload: q.put_nowait((chan, payload)))
             conn.add_termination_listener(lambda c: q.put_nowait(("__dead__", "")))
@@ -82,6 +82,11 @@ async def listen_task():
                 if chan == "astryx_steps":
                     try:
                         data = {"type": "step", **json.loads(payload)}
+                    except Exception:
+                        continue
+                elif chan == "astryx_dag":
+                    try:
+                        data = {"type": "dag", **json.loads(payload)}
                     except Exception:
                         continue
                 elif chan == "astryx_wire":
@@ -152,9 +157,9 @@ def tmux_alive() -> set[str]:
 # ---------------------------------------------------------------- endpoints
 @app.get("/api/overview")
 async def overview():
+    stepped = {r["agent"] for r in await pool.fetch("SELECT DISTINCT agent FROM steps")}
     r = await pool.fetchrow("""
         SELECT
-          (SELECT count(DISTINCT agent) FROM steps)                          AS agents,
           (SELECT count(*) FROM messages WHERE ts > now() - interval '24h')  AS messages_24h,
           (SELECT count(*) FROM steps    WHERE ts > now() - interval '24h')  AS steps_24h,
           (SELECT coalesce(sum(tokens_in),  0) FROM steps
@@ -165,7 +170,10 @@ async def overview():
           (SELECT count(*) FROM goals WHERE state = 'done')                  AS goals_done,
           (SELECT count(*) FROM peers WHERE status <> 'revoked')             AS peers
     """)
-    return {"org": ORG, "live": len(tmux_alive()), **dict(r)}
+    alive = tmux_alive()
+    # an agent is an agent whether it has logged steps yet or not: union of
+    # everyone who ever stepped and every body alive right now
+    return {"org": ORG, "live": len(alive), "agents": len(stepped | alive), **dict(r)}
 
 
 @app.get("/api/agents")
@@ -181,8 +189,14 @@ async def agents():
         FROM steps GROUP BY agent ORDER BY max(ts) DESC
     """)
     alive = tmux_alive()
-    return [{**dict(r), "last_seen": r["last_seen"].isoformat(),
-             "alive": r["agent"] in alive} for r in rows]
+    out = [{**dict(r), "last_seen": r["last_seen"].isoformat(),
+            "alive": r["agent"] in alive} for r in rows]
+    seen = {r["agent"] for r in rows}
+    for a in sorted(alive - seen):     # alive bodies that have not stepped yet
+        out.append({"agent": a, "last_seen": None, "steps": 0, "tokens_in": 0,
+                    "tokens_out": 0, "last_kind": None, "last_content": None,
+                    "alive": True})
+    return out
 
 
 @app.get("/api/messages")
@@ -269,6 +283,75 @@ async def economy():
         "receipts": [{**dict(r), "ts": r["ts"].isoformat(),
                       "amount_money": float(r["amount_money"])} for r in receipts],
     }
+
+
+@app.get("/api/tools")
+async def tools():
+    """The org's toolbox: wire tools, registry servers (from mcp/manifest.json,
+    regenerate with mcp/scan.py), and composite DAGs with their wiring."""
+    servers = [{"server": "astryx (the wire)", "tools": [
+        {"name": "send", "description": "Send a message on the wire (every agent holds this)."},
+        {"name": "subscribe", "description": "Watch another agent's milestones and errors."},
+        {"name": "query_steps", "description": "Read any agent's step history."}]}]
+    manifest = REPO / "mcp" / "manifest.json"
+    if manifest.is_file():
+        try:
+            servers += json.loads(manifest.read_text()).get("servers", [])
+        except Exception:
+            pass
+    dags = []
+    for f in sorted((REPO / "mcp" / "compose" / "dags").glob("*.json")):
+        try:
+            d = json.loads(f.read_text())
+            dags.append({"name": d["name"], "description": d.get("description", ""),
+                         "args": d.get("args", {}),
+                         "nodes": [{"id": n["id"], "tool": n["tool"],
+                                    "deps": sorted({v.split(".")[1]
+                                                    for v in json.dumps(n.get("args", {})).split('"')
+                                                    if v.startswith("$node.")})}
+                                   for n in d["nodes"]]})
+        except Exception:
+            pass
+    return {"servers": servers,
+            "total_tools": sum(len(s["tools"]) for s in servers),
+            "dags": dags}
+
+
+@app.get("/api/dags/runs")
+async def dag_runs(limit: int = 50):
+    rows = await pool.fetch(
+        "SELECT run_id, dag, status, started, finished FROM dag_runs "
+        "ORDER BY run_id DESC LIMIT $1", min(limit, 200))
+    return [{**dict(r), "started": r["started"].isoformat(),
+             "finished": r["finished"].isoformat() if r["finished"] else None}
+            for r in rows]
+
+
+@app.get("/api/dags/runs/{run_id}")
+async def dag_run_detail(run_id: int):
+    run = await pool.fetchrow("SELECT * FROM dag_runs WHERE run_id=$1", run_id)
+    if not run:
+        return Response(status_code=404)
+    steps = await pool.fetch(
+        "SELECT node, tool, status, started, finished, output, error "
+        "FROM dag_steps WHERE run_id=$1 ORDER BY id", run_id)
+    return {"run": {**dict(run), "started": run["started"].isoformat(),
+                    "finished": run["finished"].isoformat() if run["finished"] else None,
+                    "args": run["args"], "result": run["result"]},
+            "steps": [{**dict(s), "started": s["started"].isoformat(),
+                       "finished": s["finished"].isoformat() if s["finished"] else None}
+                      for s in steps]}
+
+
+@app.get("/api/agents/{name}/charter")
+async def charter(name: str):
+    """An agent's instructions file. Org work is transparent; charters are org
+    work. Only files inside agents/ are served, never local.md."""
+    safe = "".join(c for c in name if c.isalnum() or c in "-_").lower()
+    f = REPO / "agents" / f"{safe}.md"
+    if not safe or not f.is_file():
+        return Response(status_code=404)
+    return {"name": safe, "charter": f.read_text()}
 
 
 @app.get("/api/peers")

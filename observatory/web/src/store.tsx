@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { api, apiPost, fetchWhoami } from './api'
-import type { AgentRow, Goal, Msg, Overview, Peer, WhoAmI, WireEvent } from './types'
+import type { AgentRow, DagEvent, Goal, Msg, Overview, Peer, WhoAmI, WireEvent } from './types'
 
 /* one wire pulse — the network view animates the from→to edge for a moment */
 export interface Flash {
@@ -18,6 +18,7 @@ interface Store {
   goals: Goal[]
   peers: Peer[]
   flash: Flash | null
+  dagEvent: DagEvent | null // latest {type:'dag'} pulse — tools view refetches on it
   loadOlder: () => Promise<number>
   who: WhoAmI // owner unlocks the composer, vega gates the concierge
   recheckWho: () => Promise<WhoAmI>
@@ -35,6 +36,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [goals, setGoals] = useState<Goal[]>([])
   const [peers, setPeers] = useState<Peer[]>([])
   const [flash, setFlash] = useState<Flash | null>(null)
+  const [dagEvent, setDagEvent] = useState<DagEvent | null>(null)
   const [who, setWho] = useState<WhoAmI>({ owner: false, vega: false })
 
   const recheckWho = useCallback(async () => {
@@ -109,6 +111,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setFlash({ key: m.id, from: m.from, to: m.to })
         return
       }
+      if (e.type === 'dag') {
+        setDagEvent({ ...e }) // fresh identity every pulse so effects re-fire
+        return
+      }
       if (e.type === 'step') {
         const { agent, kind } = e
         setAgents((cur) =>
@@ -126,8 +132,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value = useMemo(
-    () => ({ overview, agents, messages, loadMax, goals, peers, flash, loadOlder, who, recheckWho, send }),
-    [overview, agents, messages, loadMax, goals, peers, flash, loadOlder, who, recheckWho, send],
+    () => ({ overview, agents, messages, loadMax, goals, peers, flash, dagEvent, loadOlder, who, recheckWho, send }),
+    [overview, agents, messages, loadMax, goals, peers, flash, dagEvent, loadOlder, who, recheckWho, send],
   )
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

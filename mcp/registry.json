@@ -1,0 +1,10 @@
+{
+  "geoloc": {
+    "command": "venv/bin/python",
+    "args": ["mcp/geoloc/server.py"]
+  },
+  "compose": {
+    "command": "venv/bin/python",
+    "args": ["mcp/compose/server.py"]
+  }
+}

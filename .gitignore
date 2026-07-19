@@ -14,3 +14,4 @@ observatory/web/dist/
 bridges/routes.json
 units/
 __pycache__/
+media/

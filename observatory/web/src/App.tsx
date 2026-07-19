@@ -8,6 +8,7 @@ import NetworkView from './components/NetworkView'
 import WireView from './components/WireView'
 import GoalsView from './components/GoalsView'
 import EconomyView from './components/EconomyView'
+import ToolsView from './components/ToolsView'
 import AgentDrawer from './components/AgentDrawer'
 import VegaChat from './components/VegaChat'
 
@@ -16,6 +17,7 @@ export type Route =
   | { tab: 'wire'; thread?: string }
   | { tab: 'goals' }
   | { tab: 'economy' }
+  | { tab: 'tools' }
 
 function parseHash(): Route {
   const h = location.hash.replace(/^#\/?/, '')
@@ -23,6 +25,7 @@ function parseHash(): Route {
   if (tab === 'wire') return { tab: 'wire', thread: a || undefined }
   if (tab === 'goals') return { tab: 'goals' }
   if (tab === 'economy') return { tab: 'economy' }
+  if (tab === 'tools') return { tab: 'tools' }
   return { tab: 'network' }
 }
 
@@ -37,6 +40,7 @@ const TABS: { key: Route['tab']; label: string; icon: string }[] = [
   { key: 'wire', label: 'Wire', icon: '✦' },
   { key: 'goals', label: 'Goals', icon: '◎' },
   { key: 'economy', label: 'Economy', icon: '⬡' },
+  { key: 'tools', label: 'Tools', icon: 'ƒ' },
 ]
 
 /* The read-only badge doubles as the discreet door: clicking it lets the
@@ -174,6 +178,7 @@ function Shell() {
           {route.tab === 'wire' && <WireView route={route} onOpenAgent={setAgentOpen} />}
           {route.tab === 'goals' && <GoalsView />}
           {route.tab === 'economy' && <EconomyView />}
+          {route.tab === 'tools' && <ToolsView />}
         </div>
       </AppShell.Main>
 

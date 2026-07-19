@@ -57,6 +57,8 @@ SECRET = _env("WA_WEBHOOK_SECRET").encode()
 WA_CLI = shlex.split(_env("WA_CLI", "docker exec wacli-sync wacli"))
 DATA_HOST = _env("WA_DATA_HOST")      # wacli store dir on the host (media on/off switch)
 DATA_CTR = _env("WA_DATA_CTR", "/data")   # same dir as the wacli process sees it
+WA_DOCKER = WA_CLI[2] if WA_CLI[:2] == ["docker", "exec"] else ""
+MEDIA_DIR = REPO / "media"            # copied-out inbound attachments (gitignored)
 ROUTES_FILE = HERE / "routes.json"
 
 JOB_TIMEOUT = 1800    # lifecycle GC only: forget a job nobody answered in 30 min
@@ -114,22 +116,41 @@ def find_id(obj) -> str | None:
 
 # ---------------------------------------------------------------------- media
 async def fetch_media(chat: str, msgid: str, media: str) -> str:
-    """Download an inbound attachment; return body text carrying its host path."""
+    """Inbound attachment -> host path in the body. sync --download-media already
+    saves every file under store/media/<chat>/<msgid>/, so no second download
+    (and no store-lock contention): we just wait for the file to land."""
     if not DATA_HOST:
         return f"<{media} attached, media dir not configured>"
-    try:
-        out = await wacli("media", "download", "--chat", chat, "--id", msgid,
-                          "--output", f"{DATA_CTR}/astryx-media/")
-        path = next((w for w in out.split() if w.startswith(DATA_CTR + "/")), None)
-        if path is None:  # fall back to newest file in the dir
-            d = Path(DATA_HOST) / "astryx-media"
-            files = sorted(d.glob("*"), key=lambda p: p.stat().st_mtime, reverse=True)
-            return (f"<{media} attached: {files[0]}>" if files
-                    else f"<{media} attached, download failed>")
-        host = path.replace(DATA_CTR, DATA_HOST, 1)
-        return f"<{media} attached: {host}>"
-    except Exception:
-        return f"<{media} attached, download failed>"
+    rel = f"store/media/{chat.replace('@', '_')}/{msgid}"
+    base = Path(DATA_HOST) / rel
+    for _ in range(20):
+        try:
+            files = [p for p in base.rglob("message-*") if os.access(p, os.R_OK)]
+        except PermissionError:
+            files = []
+        if files:
+            return f"<{media} attached: {files[0]}>"
+        if WA_DOCKER:                      # store unreadable from host: copy out
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "docker", "exec", WA_DOCKER, "sh", "-c",
+                    f"ls {DATA_CTR}/{rel}/*/message-* 2>/dev/null | head -1",
+                    stdout=asyncio.subprocess.PIPE)
+                out, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+                ctr_path = out.decode().strip()
+                if ctr_path:
+                    MEDIA_DIR.mkdir(exist_ok=True)
+                    dst = MEDIA_DIR / Path(ctr_path).name
+                    with open(dst, "wb") as f:
+                        proc = await asyncio.create_subprocess_exec(
+                            "docker", "exec", WA_DOCKER, "cat", ctr_path, stdout=f)
+                        await asyncio.wait_for(proc.wait(), timeout=30)
+                    if dst.stat().st_size > 0:
+                        return f"<{media} attached: {dst}>"
+            except Exception:
+                pass
+        await asyncio.sleep(1)
+    return f"<{media} attached, file never landed in the store>"
 
 
 def split_files(text: str) -> tuple[str, list[str]]:
@@ -200,7 +221,8 @@ async def hook(request: Request):
     seen_msgids[msgid] = now
 
     text = (m.get("Text") or "").strip()
-    media = (m.get("MediaType") or "").strip()
+    # media rides as a nested object in the webhook payload: Media.Type
+    media = ((m.get("Media") or {}).get("Type") or m.get("MediaType") or "").strip()
     if media and msgid:
         got = await fetch_media(chat, msgid, media)
         text = f"{text}\n{got}" if text else got

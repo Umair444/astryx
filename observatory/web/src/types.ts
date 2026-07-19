@@ -122,6 +122,71 @@ export interface Peer {
   reputation: number
 }
 
+/* GET /api/tools — the org's toolbox: servers of tools + composite DAGs */
+export interface ToolInfo {
+  name: string
+  description: string
+}
+
+export interface ToolServer {
+  server: string
+  tools: ToolInfo[]
+}
+
+export interface DagNode {
+  id: string
+  tool: string
+  deps: string[]
+}
+
+export interface DagDef {
+  name: string
+  description: string
+  args: Record<string, unknown>
+  nodes: DagNode[]
+}
+
+export interface ToolsResponse {
+  servers: ToolServer[]
+  total_tools: number
+  dags: DagDef[]
+}
+
+/* GET /api/dags/runs — recent composite runs */
+export type DagRunStatus = 'running' | 'ok' | 'error'
+
+export interface DagRun {
+  run_id: number
+  dag: string
+  status: DagRunStatus | string
+  started: string
+  finished: string | null
+}
+
+export interface DagRunStep {
+  node: string
+  tool: string
+  status: string
+  started: string
+  finished: string | null
+  output: string | null
+  error: string | null
+}
+
+export interface DagRunDetail {
+  run: DagRun
+  steps: DagRunStep[]
+}
+
+/* SSE {type:'dag'} — a run or one of its nodes changed status */
+export interface DagEvent {
+  type: 'dag'
+  run_id: number
+  dag: string
+  node?: string
+  status: string
+}
+
 /* GET /api/whoami — owner unlocks the composer, vega gates the concierge */
 export interface WhoAmI {
   owner: boolean
@@ -132,3 +197,4 @@ export interface WhoAmI {
 export type WireEvent =
   | ({ type: 'message' } & Msg)
   | { type: 'step'; id: number; agent: string; kind: string }
+  | DagEvent
