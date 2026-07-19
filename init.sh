@@ -71,6 +71,44 @@ WantedBy=timers.target
 EOF
 }
 
+if [ "${1:-}" = "doctor" ]; then
+  ok() { echo -e "  \033[32m✓\033[0m $*"; }
+  bad() { echo -e "  \033[31m✗\033[0m $*"; FAIL=1; }
+  FAIL=""
+  # install hint per platform
+  if command -v pacman >/dev/null; then PKG="sudo pacman -S"
+  elif command -v apt >/dev/null; then PKG="sudo apt install"
+  elif command -v brew >/dev/null; then PKG="brew install"
+  else PKG="your package manager:"; fi
+  for c in node python3 tmux psql docker; do
+    command -v "$c" >/dev/null && ok "$c" || bad "$c missing — $PKG $c"
+  done
+  command -v claude >/dev/null && ok "claude ($(claude --version 2>/dev/null | head -c 20))" \
+    || bad "claude missing — https://claude.com/claude-code"
+  if [ -f .env ]; then
+    DSN=$(grep '^ASTRYX_DSN=' .env | cut -d= -f2-)
+    psql "$DSN" -c 'SELECT 1' >/dev/null 2>&1 && ok "postgres reachable" || bad "postgres unreachable (docker start astryx-pg?)"
+    psql "$DSN" -c 'SELECT 1 FROM triggers LIMIT 1' >/dev/null 2>&1 && ok "schema applied" || bad "schema missing — rerun ./init.sh"
+  else
+    bad ".env missing — run ./init.sh"
+  fi
+  [ -f local.md ] && ok "local.md exists" || bad "local.md missing — the owner's law; run ./init.sh"
+  [ -d venv ] && venv/bin/python -c 'import psycopg, fastapi, croniter' 2>/dev/null && ok "python deps" || bad "python deps — rerun ./init.sh"
+  [ -d channel/node_modules ] && ok "channel deps" || bad "channel deps — rerun ./init.sh"
+  [ -d observatory/web/dist ] && ok "observatory built" || bad "observatory not built — rerun ./init.sh"
+  if [ -d /run/systemd/system ]; then
+    ok "systemd available"
+    for u in astryx-observatory.service astryx-pulse.timer; do
+      systemctl is-active "$u" >/dev/null 2>&1 && ok "$u active" || echo -e "  \033[33m○\033[0m $u not running — see init.sh output for the enable command"
+    done
+  else
+    bad "no systemd (WSL? add [boot] systemd=true to /etc/wsl.conf; macOS? run the pulse from cron)"
+  fi
+  tmux has-session -t =ax-seed 2>/dev/null && ok "seed resident alive" || echo -e "  \033[33m○\033[0m seed not resident — nucleus/spawn.sh seed"
+  [ -z "$FAIL" ] && say "doctor: healthy" || say "doctor: fix the ✗ lines above (sudo lines are for your human)"
+  exit 0
+fi
+
 if [ "${1:-}" = "whatsapp" ]; then
   command -v docker >/dev/null || die "whatsapp surface needs docker (wacli container)"
   grep -q '^WA_WEBHOOK_SECRET=' .env 2>/dev/null || {
