@@ -88,7 +88,11 @@ docker image from wacli main (or any release after 0.13.0). Older wacli still wo
 edits just fall back to separate messages.
 
 Routes live in `bridges/routes.json` (gitignored; `routes.example.json` shows the
-shape). A route binds one chat to one agent. Senders you list as trusted write to the
+shape). A route binds one chat to one agent, and any number of chats can point at
+the same agent: the shipped [gemini example](agents/gemini.example.md) is the
+household voice — route the family group to it, grant it what the household needs
+(the classic case: `Grants: geoloc`, so a worried parent gets a zone-level answer
+at night), and it speaks with the persona pages you give it. Senders you list as trusted write to the
 wire as `owner`; in chats marked open, anyone else writes as `wa-<number>`, so agents
 always know who is speaking and your law decides who is obeyed. Set it up with
 `./init.sh whatsapp`.
