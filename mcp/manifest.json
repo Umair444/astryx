@@ -49,7 +49,28 @@
           "description": "Where things stand: last fix and zone presence fetched in parallel, then distance from the first defined zone computed from both. Demo of parallel + sequential wiring."
         }
       ]
+    },
+    {
+      "server": "gmail",
+      "tools": [
+        {
+          "name": "mail_search",
+          "description": "Search the mailbox with Gmail's own syntax (from:, subject:, newer_than:2d,"
+        },
+        {
+          "name": "mail_recent",
+          "description": "The newest inbox messages: id, from, subject, date, unread."
+        },
+        {
+          "name": "mail_read",
+          "description": "One full message by id (from mail_search/mail_recent): headers + plain body."
+        },
+        {
+          "name": "mail_send",
+          "description": "Send a plain-text email from the owner's address. OUTWARD ACT: unless your"
+        }
+      ]
     }
   ],
-  "total_tools": 10
+  "total_tools": 14
 }

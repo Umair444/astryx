@@ -34,6 +34,8 @@ for g in $(grep -m1 '^Grants:' "$CHARTER" 2>/dev/null | cut -d: -f2- | tr ',' ' 
   case "$g" in
     geoloc) EXTRA="$EXTRA,
   \"geoloc\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/geoloc/server.py\"] }";;
+    gmail) EXTRA="$EXTRA,
+  \"gmail\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/gmail/server.py\"] }";;
     compose) EXTRA="$EXTRA,
   \"compose\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/compose/server.py\"] }";;
     *) echo "warning: unknown grant '$g' in $CHARTER" >&2;;
