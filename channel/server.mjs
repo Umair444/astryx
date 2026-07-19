@@ -222,10 +222,16 @@ async function listen() {
       if (n.channel === `astryx_msg_${AGENT}`) deliverMessage(Number(n.payload)).catch(() => {})
       else maybePushStep(n.payload).catch(() => {})
     })
-    // drain: the table is the truth; anything missed while down delivers now
-    const pend = await pool.query(
-      `SELECT id FROM messages WHERE to_agent=$1 AND to_org='local' AND status='pending' ORDER BY id`, [AGENT])
-    for (const row of pend.rows) await deliverMessage(row.id)
+    // drain: the table is the truth; anything missed while down delivers now.
+    // Delayed: a push during the host session's boot is claimed-but-unseen
+    // (marked delivered into a void) — 15s lets claude finish waking first.
+    setTimeout(async () => {
+      try {
+        const pend = await pool.query(
+          `SELECT id FROM messages WHERE to_agent=$1 AND to_org='local' AND status='pending' ORDER BY id`, [AGENT])
+        for (const row of pend.rows) await deliverMessage(row.id)
+      } catch {}
+    }, 15_000)
     await refreshSubs()
     setInterval(refreshSubs, 60_000)
   } catch {
