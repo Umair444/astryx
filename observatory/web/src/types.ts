@@ -187,6 +187,33 @@ export interface DagEvent {
   status: string
 }
 
+/* GET /api/services — host services under observation */
+export interface ServiceRow {
+  unit: string
+  active: boolean
+  state: string
+  description: string
+  since: string | null
+}
+
+/* POST /api/services/{unit}/{action} — owner only; row state rides along */
+export interface ServiceActionResult extends ServiceRow {
+  ok: boolean
+  error: string | null
+}
+
+/* GET /api/triggers — the org's alarm clock */
+export interface TriggerRow {
+  agent: string
+  name: string
+  schedule: string
+  kind: 'heartbeat' | 'sql' | 'python' | string
+  enabled: boolean
+  last_fired: string | null
+  next_fire: string | null
+  note: string | null
+}
+
 /* GET /api/whoami — owner unlocks the composer, vega gates the concierge */
 export interface WhoAmI {
   owner: boolean

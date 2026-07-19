@@ -2,9 +2,17 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ScrollArea } from '@mantine/core'
 import { ReactFlow, Position, type Node, type Edge } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { api, fmtAgo } from '../api'
+import { agentColor, api, apiPost, fmtAgo } from '../api'
 import { useStore } from '../store'
-import type { DagDef, DagRun, DagRunDetail, ToolsResponse } from '../types'
+import type {
+  DagDef,
+  DagRun,
+  DagRunDetail,
+  ServiceActionResult,
+  ServiceRow,
+  ToolsResponse,
+  TriggerRow,
+} from '../types'
 
 const NODE_W = 168
 const NODE_H = 52
@@ -17,6 +25,38 @@ function fmtDur(started: string, finished: string | null): string {
   if (s < 60) return `${s.toFixed(1)}s`
   if (s < 3600) return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`
   return `${(s / 3600).toFixed(1)}h`
+}
+
+/* timestamps: pg rows are ISO, systemd's are "Sat 2026-07-18 22:10:11 PKT" */
+function parseTs(ts: string | null): number | null {
+  if (!ts) return null
+  let t = +new Date(ts)
+  if (!Number.isNaN(t)) return t
+  const m = ts.match(/(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/)
+  if (m) {
+    t = +new Date(`${m[1]}T${m[2]}`)
+    if (!Number.isNaN(t)) return t
+  }
+  return null
+}
+
+function fmtSpan(s: number): string {
+  if (s < 90) return `${Math.max(1, Math.round(s))}s`
+  if (s < 3600) return `${Math.round(s / 60)}m`
+  if (s < 86400) return `${Math.round(s / 3600)}h`
+  return `${Math.round(s / 86400)}d`
+}
+
+function fmtSince(ts: string | null): string {
+  const t = parseTs(ts)
+  return t === null ? '—' : fmtSpan((Date.now() - t) / 1000)
+}
+
+function fmtUntil(ts: string | null): string {
+  const t = parseTs(ts)
+  if (t === null) return '—'
+  const s = (t - Date.now()) / 1000
+  return s <= 0 ? 'due' : fmtSpan(s)
 }
 
 function StatusBadge({ s }: { s: string }) {
@@ -34,6 +74,103 @@ function SectionHead({ label, aside }: { label: string; aside?: string }) {
     <div className="flex items-baseline gap-2 mb-2 px-1">
       <span className="text-xs font-semibold uppercase tracking-widest text-ink-dim">{label}</span>
       {aside && <span className="text-[11px] font-mono text-ink-mute">{aside}</span>}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------- services */
+const SERVICE_ACTIONS = ['restart', 'stop', 'start'] as const
+
+function ServiceItem({
+  s,
+  owner,
+  onPatch,
+}: {
+  s: ServiceRow
+  owner: boolean
+  onPatch: (r: ServiceRow) => void
+}) {
+  const [busy, setBusy] = useState<string | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  // the API only drives systemd units; the docker row is status-only
+  const actionable = /\.(service|timer)$/.test(s.unit)
+
+  const act = async (action: (typeof SERVICE_ACTIONS)[number]) => {
+    setBusy(action)
+    setErr(null)
+    try {
+      const r = await apiPost<ServiceActionResult>(`/services/${encodeURIComponent(s.unit)}/${action}`, {})
+      onPatch({ unit: r.unit, active: r.active, state: r.state, description: r.description, since: r.since })
+      if (!r.ok) setErr(r.error ?? 'action failed')
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    }
+    setBusy(null)
+  }
+
+  return (
+    <div className="border-b border-line/50 last:border-b-0">
+      <div className="flex items-center gap-2.5 px-3 py-2 min-w-0">
+        <span
+          className={`w-2 h-2 rounded-full shrink-0 ${
+            s.active ? 'bg-emerald-400 animate-pulse shadow-[0_0_6px_2px_rgba(52,211,153,0.5)]' : 'bg-red-400'
+          }`}
+        />
+        <span className="text-[12px] font-mono text-ink shrink-0">{s.unit}</span>
+        <span className="text-[11px] text-ink-mute truncate">{s.description}</span>
+        <span className="ml-auto shrink-0 text-[10px] font-mono text-ink-mute">{s.state}</span>
+        <span className="w-10 shrink-0 text-right text-[10px] font-mono text-ink-mute">{fmtSince(s.since)}</span>
+        {owner && actionable && (
+          <span className="flex gap-1 shrink-0">
+            {SERVICE_ACTIONS.map((a) => (
+              <button
+                key={a}
+                onClick={() => act(a)}
+                disabled={busy !== null}
+                className="px-1.5 py-px rounded border border-line text-[10px] font-mono text-ink-mute hover:text-cyan-soft hover:border-cyan/40 disabled:opacity-40 transition-colors duration-75"
+              >
+                {busy === a ? '…' : a}
+              </button>
+            ))}
+          </span>
+        )}
+      </div>
+      {err && (
+        <div className="px-3 pb-1.5 -mt-1 text-[10px] font-mono text-red-400/90 whitespace-pre-wrap break-words">
+          {err}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------- triggers */
+function KindBadge({ k }: { k: string }) {
+  const cls =
+    k === 'sql'
+      ? 'text-violet-400 border-violet-400/40 bg-violet-400/10'
+      : k === 'python'
+        ? 'text-cyan border-cyan/40 bg-cyan/10'
+        : 'text-ink-dim border-line bg-deck-3'
+  return <span className={`px-1.5 py-px rounded border text-[10px] font-mono ${cls}`}>{k}</span>
+}
+
+function TriggerItem({ t }: { t: TriggerRow }) {
+  return (
+    <div className="flex items-center gap-2 px-3 py-1.5 border-b border-line/50 last:border-b-0 min-w-0">
+      <span className={`shrink-0 text-[10px] leading-none ${t.enabled ? 'text-emerald-400' : 'text-ink-mute/60'}`}>
+        {t.enabled ? '●' : '○'}
+      </span>
+      <span className="text-[12px] font-mono text-ink shrink-0">{t.name}</span>
+      <KindBadge k={t.kind} />
+      <span className="text-[10px] font-mono text-ink-dim shrink-0">{t.schedule}</span>
+      {t.note && <span className="text-[10px] text-ink-mute truncate">{t.note}</span>}
+      <span className="ml-auto shrink-0 text-[10px] font-mono text-ink-mute">
+        next <span className="text-ink-dim">{fmtUntil(t.next_fire)}</span>
+      </span>
+      <span className="w-16 shrink-0 text-right text-[10px] font-mono text-ink-mute">
+        last <span className="text-ink-dim">{t.last_fired ? fmtAgo(t.last_fired) : 'never'}</span>
+      </span>
     </div>
   )
 }
@@ -160,11 +297,13 @@ function RunSteps({ detail }: { detail: DagRunDetail | null }) {
 
 /* ---------------------------------------------------------------- view */
 export default function ToolsView() {
-  const { dagEvent } = useStore()
+  const { dagEvent, who } = useStore()
   const [tools, setTools] = useState<ToolsResponse | null>(null)
   const [runs, setRuns] = useState<DagRun[]>([])
   const [expanded, setExpanded] = useState<number | null>(null)
   const [detail, setDetail] = useState<DagRunDetail | null>(null)
+  const [services, setServices] = useState<ServiceRow[]>([])
+  const [triggers, setTriggers] = useState<TriggerRow[]>([])
 
   const loadRuns = useCallback(() => {
     api<DagRun[]>('/dags/runs').then(setRuns).catch(() => {})
@@ -177,6 +316,32 @@ export default function ToolsView() {
     api<ToolsResponse>('/tools').then(setTools).catch(() => {})
     loadRuns()
   }, [loadRuns])
+
+  // services + triggers ride one 15s poll while the view is mounted
+  useEffect(() => {
+    const loadOps = () => {
+      api<ServiceRow[]>('/services').then(setServices).catch(() => {})
+      api<TriggerRow[]>('/triggers').then(setTriggers).catch(() => {})
+    }
+    loadOps()
+    const t = setInterval(loadOps, 15_000)
+    return () => clearInterval(t)
+  }, [])
+
+  const patchService = useCallback((r: ServiceRow) => {
+    setServices((cur) => cur.map((s) => (s.unit === r.unit ? r : s)))
+  }, [])
+
+  // stable agent grouping — rows arrive ordered by agent, name
+  const triggerGroups = useMemo(() => {
+    const m = new Map<string, TriggerRow[]>()
+    for (const t of triggers) {
+      const arr = m.get(t.agent)
+      if (arr) arr.push(t)
+      else m.set(t.agent, [t])
+    }
+    return [...m.entries()]
+  }, [triggers])
 
   // a dag pulse on the wire → freshen the list, and the open run if it's the one
   useEffect(() => {
@@ -199,6 +364,41 @@ export default function ToolsView() {
   return (
     <ScrollArea className="h-full">
       <div className="p-3 md:p-4 max-w-6xl mx-auto space-y-6">
+        {/* ------------------------------------------------- services */}
+        <section>
+          <SectionHead
+            label="Services"
+            aside={services.length ? `${services.filter((s) => s.active).length}/${services.length} up` : undefined}
+          />
+          <div className="bg-deck-2 border border-line rounded-lg overflow-hidden">
+            {services.map((s) => (
+              <ServiceItem key={s.unit} s={s} owner={who.owner} onPatch={patchService} />
+            ))}
+            {!services.length && <div className="px-3 py-2 text-xs text-ink-mute">no services reported</div>}
+          </div>
+        </section>
+
+        {/* ------------------------------------------------- triggers */}
+        <section>
+          <SectionHead label="Triggers" aside={triggers.length ? `${triggers.length} alarms set` : undefined} />
+          <div className="space-y-3">
+            {triggerGroups.map(([agent, rows]) => (
+              <div key={agent} className="bg-deck-2 border border-line rounded-lg overflow-hidden">
+                <div className="flex items-baseline gap-2 px-3 py-1.5 border-b border-line">
+                  <span className="text-[12px] font-mono font-semibold" style={{ color: agentColor(agent) }}>
+                    {agent}
+                  </span>
+                  <span className="ml-auto text-[10px] font-mono text-ink-mute">{rows.length}</span>
+                </div>
+                {rows.map((t) => (
+                  <TriggerItem key={`${t.agent}:${t.name}`} t={t} />
+                ))}
+              </div>
+            ))}
+            {!triggers.length && <div className="text-xs text-ink-mute px-1">no triggers — the org wakes itself</div>}
+          </div>
+        </section>
+
         {/* -------------------------------------------------- toolbox */}
         <section>
           <SectionHead label="Toolbox" aside={tools ? `${tools.servers.length} servers` : undefined} />

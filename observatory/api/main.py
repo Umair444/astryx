@@ -354,6 +354,66 @@ async def charter(name: str):
     return {"name": safe, "charter": f.read_text()}
 
 
+# ------------------------------------------------------------ services
+SERVICE_UNITS = ["astryx-observatory.service", "astryx-whatsapp.service",
+                 "astryx-geoloc.service", "astryx-pulse.timer"]
+SERVICE_ACTIONS = {"start", "stop", "restart"}
+
+
+def unit_state(unit: str) -> dict:
+    try:
+        r = subprocess.run(["systemctl", "show", unit, "--property",
+                            "ActiveState,SubState,Description,ExecMainStartTimestamp"],
+                           capture_output=True, text=True, timeout=5)
+        props = dict(l.split("=", 1) for l in r.stdout.splitlines() if "=" in l)
+        return {"unit": unit, "active": props.get("ActiveState") == "active",
+                "state": f"{props.get('ActiveState', '?')}/{props.get('SubState', '?')}",
+                "description": props.get("Description", ""),
+                "since": props.get("ExecMainStartTimestamp") or None}
+    except Exception as e:
+        return {"unit": unit, "active": False, "state": "unknown",
+                "description": str(e)[:80], "since": None}
+
+
+@app.get("/api/services")
+async def services():
+    out = [unit_state(u) for u in SERVICE_UNITS]
+    try:
+        r = subprocess.run(["docker", "inspect", "wacli-sync",
+                            "--format", "{{.State.Status}} {{.State.StartedAt}}"],
+                           capture_output=True, text=True, timeout=5)
+        status, _, since = r.stdout.strip().partition(" ")
+        out.append({"unit": "wacli-sync (docker)", "active": status == "running",
+                    "state": status or "absent",
+                    "description": "WhatsApp sync daemon (wacli)", "since": since or None})
+    except Exception:
+        pass
+    return out
+
+
+@app.post("/api/services/{unit}/{action}")
+async def service_action(unit: str, action: str, request: Request):
+    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+        return Response(status_code=403)
+    if unit not in SERVICE_UNITS or action not in SERVICE_ACTIONS:
+        return Response(status_code=400)
+    r = subprocess.run(["sudo", "-n", "systemctl", action, unit],
+                       capture_output=True, text=True, timeout=20)
+    return {"ok": r.returncode == 0, "error": r.stderr.strip()[:300] or None,
+            **unit_state(unit)}
+
+
+@app.get("/api/triggers")
+async def triggers():
+    rows = await pool.fetch(
+        "SELECT agent, name, schedule, kind, enabled, last_fired, next_fire, note "
+        "FROM triggers ORDER BY agent, name")
+    return [{**dict(r),
+             "last_fired": r["last_fired"].isoformat() if r["last_fired"] else None,
+             "next_fire": r["next_fire"].isoformat() if r["next_fire"] else None}
+            for r in rows]
+
+
 @app.get("/api/peers")
 async def peers():
     rows = await pool.fetch(

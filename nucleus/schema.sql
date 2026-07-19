@@ -127,3 +127,25 @@ CREATE TABLE IF NOT EXISTS dag_steps (
   error    text
 );
 CREATE INDEX IF NOT EXISTS dag_steps_run ON dag_steps (run_id);
+
+-- Triggers: agents author their own wake-ups. The pulse daemon evaluates each
+-- schedule and, when a check fires, INSERTs an ordinary wire message to the
+-- owning agent. kind: heartbeat (always fires) | sql (fires when the query's
+-- result is non-empty AND different from last fire) | python (check(ctx) in
+-- triggers/<agent>/<name>.py returns None or the message body).
+CREATE TABLE IF NOT EXISTS triggers (
+  id         bigserial PRIMARY KEY,
+  agent      text NOT NULL,
+  name       text NOT NULL,
+  schedule   text NOT NULL,               -- cron expression: when to evaluate
+  kind       text NOT NULL DEFAULT 'heartbeat',
+  check_src  text,                        -- SQL text, or python file path
+  state      jsonb NOT NULL DEFAULT '{}',
+  enabled    boolean NOT NULL DEFAULT true,
+  last_eval  timestamptz,
+  last_fired timestamptz,
+  next_fire  timestamptz NOT NULL DEFAULT now(),
+  note       text,
+  UNIQUE (agent, name)
+);
+CREATE INDEX IF NOT EXISTS triggers_due ON triggers (next_fire) WHERE enabled;

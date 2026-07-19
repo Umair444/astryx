@@ -50,6 +50,25 @@ User=$USER
 [Install]
 WantedBy=multi-user.target
 EOF
+  cat > units/astryx-pulse.service <<EOF
+[Unit]
+Description=astryx pulse — one tick of the trigger clock
+[Service]
+Type=oneshot
+WorkingDirectory=$PWD
+ExecStart=$PWD/venv/bin/python $PWD/nucleus/pulse.py
+User=$USER
+EOF
+  cat > units/astryx-pulse.timer <<EOF
+[Unit]
+Description=astryx pulse — every minute (cron resolution; the OS owns the clock)
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=1s
+Persistent=true
+[Install]
+WantedBy=timers.target
+EOF
 }
 
 if [ "${1:-}" = "whatsapp" ]; then

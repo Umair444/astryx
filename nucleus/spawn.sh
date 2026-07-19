@@ -12,6 +12,15 @@ SESS="ax-$AGENT"
 HOME_D="$ROOT/homes/$AGENT"
 NODE=/home/umair/.local/share/mise/installs/node/26.2.0/bin/node
 
+# Default heartbeat: every agent wakes on its own rhythm (charter line
+# "Heartbeat: <cron>", default daily 09:00) and retunes it with trigger_set.
+# Runs before the residency check so existing residents gain it too.
+HB=$(grep -m1 '^Heartbeat:' "$CHARTER" | cut -d: -f2- | xargs || true)
+DSN=$(grep '^ASTRYX_DSN=' "$ROOT/.env" | cut -d= -f2-)
+psql "$DSN" -qc "INSERT INTO triggers (agent, name, schedule, kind)
+  VALUES ('$AGENT', 'heartbeat', '${HB:-0 9 * * *}', 'heartbeat')
+  ON CONFLICT (agent, name) DO NOTHING" 2>/dev/null || true
+
 if tmux has-session -t "=$SESS" 2>/dev/null; then echo "$AGENT already resident"; exit 0; fi
 
 mkdir -p "$HOME_D/.claude"

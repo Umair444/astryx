@@ -88,6 +88,41 @@ wire as `owner`; in chats marked open, anyone else writes as `wa-<number>`, so a
 always know who is speaking and your law decides who is obeyed. Set it up with
 `./init.sh whatsapp`.
 
+## The pulse
+
+A resident that only reacts is a mind that exists only when spoken to. The pulse makes
+agents self-directed: each agent authors its own wake-up triggers and the org's clock
+fires them. A trigger is a row: a cron schedule for when to look, a check for what
+counts as interesting, and a state dict the check remembers things in. Three kinds:
+
+- heartbeat: fires every tick of its schedule. Every agent gets one at spawn (cadence
+  from its charter, default daily) so nothing sleeps forever; agents retune their own
+  rhythm with the trigger_set tool.
+- sql: a query against the org's postgres; fires when the result is non-empty and
+  different from last time, so a standing condition alerts once, not forever.
+- python: a decorated function in `triggers/<agent>/`, the full authoring surface:
+
+```python
+from astryx import trigger
+
+@trigger("*/15 9-17 * * 1-5", note="volume anomaly vs yearly baseline")
+def spike(ctx):
+    n = ctx.sql("SELECT count(*) n FROM ...")[0]["n"]
+    hist = ctx.state.setdefault("history", [])       # persisted between runs
+    fire = hist and n > 1.2 * max(hist)
+    ctx.state["history"] = (hist + [n])[-365:]
+    return f"volume {n}, 1.2x over yearly max" if fire else None
+```
+
+There is no scheduler daemon. A systemd timer (the OS clock, one minute, cron's own
+resolution) runs `nucleus/pulse.py` once: it claims due rows atomically (FOR UPDATE
+SKIP LOCKED, so any number of concurrent ticks never double-fire), evaluates each
+check in a killable subprocess (a hung or broken check loses its process and its
+owner gets an error message; the clock is untouchable from agent code), and each
+firing is an ordinary wire message to the owning agent. Unanswered alarms coalesce
+instead of stacking. Waking yourself and being messaged are the same event, so
+everything downstream, watch-streams, chat surfaces, the observatory, already works.
+
 ## One seed agent
 
 The repo ships exactly one charter: [the seed](agents/seed.md). It reads your

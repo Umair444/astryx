@@ -69,6 +69,34 @@ const TOOLS = [
       required: ['agent'],
     },
   },
+  {
+    name: 'trigger_set',
+    description: 'Author or amend one of YOUR wake-up triggers. kinds: heartbeat (fires every '
+      + 'schedule tick), sql (fires when the query returns a new non-empty result), python '
+      + '(pass code: a triggers file with @trigger functions; schedule then lives in the code). '
+      + 'The pulse evaluates schedules every minute; a firing arrives as a wire message.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name:     { type: 'string', description: 'trigger name (or file name for python code)' },
+        schedule: { type: 'string', description: "cron expression, e.g. '0 * * * *' (hourly)" },
+        kind:     { type: 'string', description: 'heartbeat | sql | python; default heartbeat' },
+        check:    { type: 'string', description: 'sql: the query. python: full file content importing astryx' },
+        note:     { type: 'string', description: 'what this watches (heartbeats fire this text)' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'trigger_list',
+    description: 'List your triggers: schedule, kind, last fired, next due.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'trigger_rm',
+    description: 'Disable one of your triggers by name.',
+    inputSchema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
+  },
 ]
 
 async function handleTool(name, a) {
@@ -94,6 +122,37 @@ async function handleTool(name, a) {
       ? await pool.query(`SELECT ts, kind, content FROM steps WHERE agent=$1 AND kind=$2 ORDER BY id DESC LIMIT $3`, [a.agent, a.kind, lim])
       : await pool.query(`SELECT ts, kind, content FROM steps WHERE agent=$1 ORDER BY id DESC LIMIT $2`, [a.agent, lim])
     return r.rows.map(x => `[${x.ts.toISOString()}] ${x.kind}: ${x.content}`.slice(0, 500)).join('\n') || '(no steps)'
+  }
+  if (name === 'trigger_set') {
+    if (a.kind === 'python' && a.check) {
+      const dir = new URL(`../triggers/${AGENT}/`, import.meta.url)
+      await import('node:fs/promises').then(fs => fs.mkdir(dir, { recursive: true })
+        .then(() => fs.writeFile(new URL(`${a.name}.py`, dir), a.check)))
+      return `triggers/${AGENT}/${a.name}.py written — the pulse registers its @trigger `
+        + `functions within a minute (schedules come from the decorators in the file)`
+    }
+    if (!a.schedule) throw new Error('schedule required for heartbeat/sql triggers')
+    await pool.query(
+      `INSERT INTO triggers (agent, name, schedule, kind, check_src, note, next_fire)
+       VALUES ($1,$2,$3,$4,$5,$6, now())
+       ON CONFLICT (agent, name) DO UPDATE
+         SET schedule=$3, kind=$4, check_src=$5, note=$6, enabled=true, next_fire=now()`,
+      [AGENT, a.name, a.schedule, a.kind || 'heartbeat', a.check || null, a.note || null])
+    return `trigger ${a.name} set: ${a.kind || 'heartbeat'} on '${a.schedule}'`
+  }
+  if (name === 'trigger_list') {
+    const r = await pool.query(
+      `SELECT name, schedule, kind, enabled, last_fired, next_fire, note
+       FROM triggers WHERE agent=$1 ORDER BY name`, [AGENT])
+    return r.rows.map(t =>
+      `${t.enabled ? '●' : '○'} ${t.name} [${t.kind}] '${t.schedule}' `
+      + `next ${t.next_fire?.toISOString() ?? '-'} last ${t.last_fired?.toISOString() ?? 'never'}`
+      + `${t.note ? ' — ' + t.note : ''}`).join('\n') || '(no triggers; you never wake yourself)'
+  }
+  if (name === 'trigger_rm') {
+    await pool.query(`UPDATE triggers SET enabled=false WHERE agent=$1 AND name=$2`,
+      [AGENT, a.name])
+    return `trigger ${a.name} disabled`
   }
   throw new Error(`unknown tool ${name}`)
 }
