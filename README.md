@@ -82,6 +82,11 @@ shows a typing indicator and one progress message that keeps editing itself with
 agent's latest step, until the final reply replaces it. The same stream a supervisor
 agent subscribes to is the stream your phone renders.
 
+One upstream note: the live-editing progress message needs a wacli fix that is
+pending as [openclaw/wacli#310](https://github.com/openclaw/wacli/pull/310); until it
+merges, build wacli from [the fork](https://github.com/Umair444/wacli/tree/delegate-messages-edit)
+(without it, edits fall back to separate messages, everything else works).
+
 Routes live in `bridges/routes.json` (gitignored; `routes.example.json` shows the
 shape). A route binds one chat to one agent. Senders you list as trusted write to the
 wire as `owner`; in chats marked open, anyone else writes as `wa-<number>`, so agents
