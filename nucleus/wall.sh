@@ -42,13 +42,21 @@ tmux bind-key -T prefix m command-prompt -p "wire → #{pane_title}:" \
   "run-shell '$ROOT/nucleus/doorbell.sh #{pane_title} \"%1\" owner >/dev/null 2>&1 || true'"
 
 for a in $AGENTS; do
-  # Mirror loop: home the cursor, repaint the last pane-height lines of the
-  # agent's screen (colors kept, each line erased to EOL), wipe the rest.
-  # $TMUX_PANE pins the size query to THIS pane, whatever monitor it is on.
-  cmd='while :; do
+  # Mirror loop: keep the agent's window the same size as this pane (nobody
+  # is attached to it, so nothing fights; skipped whenever a real client IS
+  # attached), then repaint its screen: colors kept, lines erased to EOL,
+  # leftovers wiped. $TMUX_PANE pins size queries to THIS pane on any monitor.
+  cmd='S="=ax-'"$a"':"
+  while :; do
+    W=$(tmux display -p -t "$TMUX_PANE" "#{pane_width}" 2>/dev/null || echo 80)
     H=$(tmux display -p -t "$TMUX_PANE" "#{pane_height}" 2>/dev/null || echo 20)
-    if out=$(tmux capture-pane -pe -t "=ax-'"$a"':" 2>/dev/null); then
-      printf "\033[H%s\033[0m\033[J" "$(printf "%s\n" "$out" | sed -e "s/\$/\x1b[K/" | tail -n "$H")"
+    if tmux has-session -t "=ax-'"$a"'" 2>/dev/null; then
+      if [ "$(tmux display -p -t "$S" "#{session_attached}")" = "0" ] &&
+         [ "$(tmux display -p -t "$S" "#{window_width}x#{window_height}")" != "${W}x${H}" ]; then
+        tmux resize-window -t "$S" -x "$W" -y "$H" 2>/dev/null
+        sleep 1   # let the TUI redraw at the new size before mirroring it
+      fi
+      printf "\033[H%s\033[0m\033[J" "$(tmux capture-pane -pe -t "$S" 2>/dev/null | sed -e "s/\$/\x1b[K/" | tail -n "$H")"
     else
       printf "\033[H\033[J  ['"$a"' is down — the nucleus can respawn it]"
     fi
@@ -57,6 +65,8 @@ for a in $AGENTS; do
   pane=$(tmux split-window -t wall -P -F '#{pane_id}' "$cmd")
   tmux select-pane -t "$pane" -T "$a"
   tmux select-layout -t wall tiled >/dev/null
+  # a real viewer reclaims sizing the moment it attaches directly
+  tmux set-hook -t "=ax-$a" client-attached "set window-size latest" 2>/dev/null || true
 done
 tmux kill-pane -t "$placeholder" 2>/dev/null || true
 tmux select-layout -t wall tiled >/dev/null
