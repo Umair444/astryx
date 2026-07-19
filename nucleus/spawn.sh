@@ -21,6 +21,14 @@ psql "$DSN" -qc "INSERT INTO triggers (agent, name, schedule, kind)
   VALUES ('$AGENT', 'heartbeat', '${HB:-0 9 * * *}', 'heartbeat')
   ON CONFLICT (agent, name) DO NOTHING" 2>/dev/null || true
 
+# Standard nightly self-review: the growth law made mechanical. Staggered by a
+# hash of the name (02:00-03:59 window) so the org does not wake all at once.
+CK=$(printf '%s' "$AGENT" | cksum | cut -d' ' -f1)
+psql "$DSN" -qc "INSERT INTO triggers (agent, name, schedule, kind, note)
+  VALUES ('$AGENT', 'night-review', '$((CK % 60)) $((2 + CK % 2)) * * *', 'heartbeat',
+  'nightly review: read your own day (query_steps yourself), ask what you should have done better and what tool, trigger, or skill you lack, then take ONE concrete growth action: build it, file it as a goal, or propose it to seed. The org grows because you do.')
+  ON CONFLICT (agent, name) DO NOTHING" 2>/dev/null || true
+
 if tmux has-session -t "=$SESS" 2>/dev/null; then echo "$AGENT already resident"; exit 0; fi
 
 mkdir -p "$HOME_D/.claude"
