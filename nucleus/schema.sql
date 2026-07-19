@@ -57,7 +57,9 @@ CREATE TABLE IF NOT EXISTS goals (
 );
 
 CREATE TABLE IF NOT EXISTS peers (
-  org        text PRIMARY KEY,               -- domain
+  org        text PRIMARY KEY,               -- org name (domain when it has one)
+  url        text,                           -- gateway base url; null = they poll us
+  last_pickup bigint NOT NULL DEFAULT 0,     -- highest message id they collected
   pubkey     text,
   status     text NOT NULL DEFAULT 'stranger', -- stranger|introduced|trusted|revoked
   reputation real NOT NULL DEFAULT 0,

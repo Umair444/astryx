@@ -69,6 +69,36 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 EOF
+  cat > units/astryx-gateway.service <<EOF
+[Unit]
+Description=astryx gateway — the org's one door to other orgs (:8845)
+After=network.target
+[Service]
+WorkingDirectory=$PWD/bridges
+ExecStart=$PWD/venv/bin/uvicorn gateway:app --host 0.0.0.0 --port 8845
+Restart=always
+RestartSec=5
+User=$USER
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+org_identity() {  # federation identity: org name + Ed25519 keypair, once
+  grep -q '^ASTRYX_ORG=' .env 2>/dev/null || {
+    echo "ASTRYX_ORG=$(hostname -s | tr 'A-Z' 'a-z')" >> .env
+    say "org name set to '$(hostname -s | tr 'A-Z' 'a-z')' — edit ASTRYX_ORG in .env (your domain, once you have one)"; }
+  grep -q '^ASTRYX_SECRET_KEY=' .env 2>/dev/null || {
+    venv/bin/python - <<'PYEOF' >> .env
+from nacl.signing import SigningKey
+from nacl.encoding import HexEncoder
+k = SigningKey.generate()
+print("ASTRYX_SECRET_KEY=" + k.encode(HexEncoder).decode())
+PYEOF
+    say "org keypair generated (ASTRYX_SECRET_KEY in .env — this IS your org's identity, guard it)"; }
+  grep -q '^ASTRYX_URL=' .env 2>/dev/null || {
+    echo "ASTRYX_URL=" >> .env
+    say "ASTRYX_URL empty: NAT mode (your gateway will long-poll peers). Set it when you have a public address."; }
 }
 
 if [ "${1:-}" = "doctor" ]; then
@@ -119,9 +149,14 @@ if [ "${1:-}" = "whatsapp" ]; then
     say "created bridges/routes.json — EDIT IT: your chat JIDs and trusted senders"; }
   units
   SECRET=$(grep '^WA_WEBHOOK_SECRET=' .env | cut -d= -f2-)
-  say "wacli (wacli.sh) does the WhatsApp side. Once authed (wacli auth), run sync as:"
-  say "  wacli sync --follow --download-media \\"
-  say "    --webhook http://172.17.0.1:8477/hook --webhook-secret $SECRET --webhook-allow-private"
+  say "wacli does the WhatsApp side and it runs IN DOCKER (native installs misbehave; this is opinionated):"
+  say "  git clone -b delegate-messages-edit https://github.com/Umair444/wacli && cd wacli"
+  say "  docker build -t astryx/wacli ."
+  say "  docker run -it --rm -v $PWD/wacli-data:/data astryx/wacli auth      # scan the QR"
+  say "  docker run -d --name wacli-sync --restart unless-stopped -v $PWD/wacli-data:/data astryx/wacli \\"
+  say "    sync --follow --download-media --webhook http://172.17.0.1:8477/hook \\"
+  say "    --webhook-secret $SECRET --webhook-allow-private"
+  grep -q '^WA_DATA_HOST=' .env || echo "WA_DATA_HOST=$PWD/wacli-data" >> .env
   say "then install the bridge:  sudo systemctl enable --now $PWD/units/astryx-whatsapp.service"
   exit 0
 fi
@@ -169,14 +204,15 @@ else docker exec -i astryx-pg psql -U astryx -d astryx < nucleus/schema.sql >/de
 # --- 2. runtimes -----------------------------------------------------------
 [ -d venv ] || { say "python venv"; python3 -m venv venv; }
 venv/bin/python -c 'import psycopg' 2>/dev/null || venv/bin/pip -q install 'psycopg[binary]'
-venv/bin/python -c 'import fastapi, uvicorn, asyncpg' 2>/dev/null || \
-  venv/bin/pip -q install fastapi 'uvicorn[standard]' asyncpg
+venv/bin/python -c 'import fastapi, uvicorn, asyncpg, croniter, requests, nacl, httpx' 2>/dev/null || \
+  venv/bin/pip -q install fastapi 'uvicorn[standard]' asyncpg croniter requests pynacl httpx
 [ -d channel/node_modules ] || { say "npm install (channel server)"; (cd channel && npm install --no-fund --no-audit >/dev/null); }
 if [ ! -d observatory/web/dist ]; then
   say "building the observatory (this is the public portal on :8090)"
   (cd observatory/web && npm install --no-fund --no-audit >/dev/null && npm run build >/dev/null)
 fi
 grep -q '^OBS_KEY=' .env || echo "OBS_KEY=$(head -c 24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)" >> .env
+org_identity
 units
 
 # --- 3. your law -----------------------------------------------------------

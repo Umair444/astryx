@@ -313,8 +313,12 @@ Then watch it: `tmux attach -r -t ax-seed`, or read the wire directly:
 v0, first light. Proven live: delivery into context, replies, watch-streams, step
 metering with token counts, zero keystrokes end to end; the observatory with its live
 map, owner composer, and stationed public voice; the WhatsApp surface with typing and
-live progress edits. Next, in order: the metabolism daemon (budget and progress-law
-enforcement), then federation v0 between two real orgs, at which point the protocol
-described above gets written down as a spec from working code.
+live progress edits; the pulse (agents waking themselves); and federation v0, tested
+end to end: Ed25519 org identities, introduction-first joining, signed envelopes both
+ways, and NAT-friendly long-poll pickup so an org on a laptop needs no inbound port.
+Join someone with `nucleus/introduce.py <their-gateway>`, prove your own gateway with
+`nucleus/fedtest.py`. Next: the metabolism daemon (budget and progress-law
+enforcement), receipts across orgs, and the protocol written down as a spec from
+working code.
 
 MIT licensed.
