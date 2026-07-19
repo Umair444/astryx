@@ -42,12 +42,16 @@ tmux set -w -t wall allow-set-title off 2>/dev/null || true
 tmux bind-key -T prefix m command-prompt -p "wire → #{pane_title}:" \
   "run-shell '$ROOT/nucleus/doorbell.sh #{pane_title} \"%1\" owner >/dev/null 2>&1 || true'"
 
+# dead panes freeze visibly instead of collapsing the session
+tmux set -w -t wall remain-on-exit on 2>/dev/null || true
+
 for a in $AGENTS; do
   # A pane is the agent's step stream rendered from the table (wallpane.sh).
   # No attaching, no screen scraping, no sizing: the wire is the truth and
-  # already records everything. Scales to dozens of tiny panes; C-b z zooms
-  # one to full screen and it grows its line count automatically.
-  pane=$(tmux split-window -t wall -P -F '#{pane_id}' "exec $ROOT/nucleus/wallpane.sh $a")
+  # already records everything. The restart wrap + stderr log mean a dying
+  # renderer restarts in 2s and leaves evidence in /tmp/astryx-wall.log.
+  pane=$(tmux split-window -t wall -P -F '#{pane_id}' \
+    "while :; do $ROOT/nucleus/wallpane.sh $a 2>>/tmp/astryx-wall.log; echo \"[$a renderer died \$(date +%H:%M:%S), restarting — see /tmp/astryx-wall.log]\"; sleep 2; done")
   tmux select-pane -t "$pane" -T "$a"
   tmux select-layout -t wall tiled >/dev/null
 done
