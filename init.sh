@@ -150,7 +150,7 @@ if [ "${1:-}" = "whatsapp" ]; then
   units
   SECRET=$(grep '^WA_WEBHOOK_SECRET=' .env | cut -d= -f2-)
   say "wacli does the WhatsApp side and it runs IN DOCKER (native installs misbehave; this is opinionated):"
-  say "  git clone -b delegate-messages-edit https://github.com/Umair444/wacli && cd wacli"
+  say "  git clone https://github.com/openclaw/wacli && cd wacli"
   say "  docker build -t astryx/wacli ."
   say "  docker run -it --rm -v $PWD/wacli-data:/data astryx/wacli auth      # scan the QR"
   say "  docker run -d --name wacli-sync --restart unless-stopped -v $PWD/wacli-data:/data astryx/wacli \\"

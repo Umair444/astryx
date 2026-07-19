@@ -51,10 +51,10 @@ exists to avoid, so hold them even when a local alternative looks easier:
   server the human explicitly points you at). Do not install a system postgres.
 - **wacli runs in docker, always.** Do NOT install wacli natively even though it is
   a single binary and looks simpler — native installs misbehave in practice (store
-  runtime issues observed in the field). Build the image from the astryx fork (it
-  carries a required edit-delegation fix) and run sync as a container:
+  runtime issues observed in the field). Build the image from wacli main
+  (edit delegation merged in openclaw/wacli#310) and run sync as a container:
 
-      git clone -b delegate-messages-edit https://github.com/Umair444/wacli
+      git clone https://github.com/openclaw/wacli
       cd wacli && docker build -t astryx/wacli .
       docker run -d --name wacli-sync --restart unless-stopped \
         -v <astryx>/wacli-data:/data astryx/wacli \
