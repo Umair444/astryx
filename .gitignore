@@ -4,6 +4,8 @@ homes/
 .env
 local.md
 PLAN.md
+relations.md
+owner.md
 agents/*
 !agents/seed.md
 !agents/vega.example.md
