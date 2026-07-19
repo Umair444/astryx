@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ScrollArea } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
-import { ReactFlow, Background, type Node, type Edge } from '@xyflow/react'
+import { ReactFlow, Background, MarkerType, Position, type Node, type Edge } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { agentColor, agentColorA, fmtTokens } from '../api'
 import { useStore } from '../store'
+import type { AgentRow } from '../types'
 
 const AGENT_W = 168
 const AGENT_H = 96
@@ -12,6 +13,37 @@ const ORG_W = 190
 const ORG_H = 96
 const PEER_W = 140
 const PEER_H = 56
+
+/* composite organ geometry */
+const GROUP_PAD_X = 22
+const GROUP_PAD_TOP = 36 // room for the group label
+const GROUP_PAD_BOT = 18
+const GROUP_GAP = 26 // gap between chained members
+const GROUP_COL_GAP = 44 // vertical gap between stacked group containers
+
+/* Split the roster into composite organs and free agents. One level today;
+   when groups someday nest, this is the seam where the tree gets built. */
+function buildGroups(agents: AgentRow[]): {
+  solo: AgentRow[]
+  groups: { name: string; members: AgentRow[] }[]
+} {
+  const solo: AgentRow[] = []
+  const byName = new Map<string, AgentRow[]>()
+  for (const a of agents) {
+    if (a.composite?.group) {
+      const list = byName.get(a.composite.group) ?? []
+      list.push(a)
+      byName.set(a.composite.group, list)
+    } else solo.push(a)
+  }
+  const groups = [...byName.entries()]
+    .map(([name, members]) => ({
+      name,
+      members: members.sort((x, y) => (x.composite?.rank ?? 0) - (y.composite?.rank ?? 0)),
+    }))
+    .sort((x, y) => x.name.localeCompare(y.name))
+  return { solo, groups }
+}
 
 function agentEl(
   name: string,
@@ -120,22 +152,27 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
       selectable: false,
     })
 
-    // agents on the inner ring — the owner's view only; to visitors the org
-    // is one sealed node and the agents stay private
-    const ring = who.owner ? agents : []
+    const agentNode = (a: AgentRow, pos: { x: number; y: number }, extra?: Partial<Node>): Node => ({
+      id: a.agent,
+      position: pos,
+      data: {
+        label: agentEl(a.agent, a.alive, a.last_kind, a.tokens_in + a.tokens_out, agentColor(a.agent), () =>
+          onOpenAgent(a.agent),
+        ),
+      },
+      style: style(a.alive ? agentColorA(a.agent, 0.45) : '#1d2647', AGENT_W, AGENT_H),
+      ...extra,
+    })
+
+    // agents — the owner's view only; to visitors the org is one sealed node
+    // and the agents stay private. Composite groups leave the ring and render
+    // as one labeled organ each; free agents keep the ring.
+    const { solo: ring, groups } = buildGroups(who.owner ? agents : [])
     const n = Math.max(ring.length, 1)
     const r1 = ring.length ? Math.max(280, 60 * n * 0.9) : 100
     ring.forEach((a, i) => {
       const ang = (i / n) * 2 * Math.PI - Math.PI / 2
-      const col = agentColor(a.agent)
-      nodes.push({
-        id: a.agent,
-        position: { x: r1 * Math.cos(ang) - AGENT_W / 2, y: r1 * Math.sin(ang) - AGENT_H / 2 },
-        data: {
-          label: agentEl(a.agent, a.alive, a.last_kind, a.tokens_in + a.tokens_out, col, () => onOpenAgent(a.agent)),
-        },
-        style: style(a.alive ? agentColorA(a.agent, 0.45) : '#1d2647', AGENT_W, AGENT_H),
-      })
+      nodes.push(agentNode(a, { x: r1 * Math.cos(ang) - AGENT_W / 2, y: r1 * Math.sin(ang) - AGENT_H / 2 }))
       edges.push({
         id: `e-org-${a.agent}`,
         source: 'org',
@@ -144,9 +181,73 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
       })
     })
 
+    // composite organs — a column of labeled blobs to the right of the rings.
+    // Inside each: the members chained by rank, arrows running down the ranks
+    // (rank4 -> … -> rank1), and rank 1 alone speaks to the org.
+    const r2 = r1 + 240 // peer ring radius; groups clear it entirely
+    const groupW = (m: number) => GROUP_PAD_X * 2 + m * AGENT_W + (m - 1) * GROUP_GAP
+    const GROUP_H = GROUP_PAD_TOP + AGENT_H + GROUP_PAD_BOT
+    const colH = groups.length * GROUP_H + Math.max(groups.length - 1, 0) * GROUP_COL_GAP
+    let gy = -colH / 2
+    for (const g of groups) {
+      const gid = `group:${g.name}`
+      const gx = r2 + 110
+      nodes.push({
+        id: gid,
+        position: { x: gx, y: gy },
+        data: {
+          label: (
+            <span className="absolute top-2.5 left-4 text-[10px] font-mono uppercase tracking-[0.2em] text-ink-mute">
+              {g.name}
+            </span>
+          ),
+        },
+        style: {
+          width: groupW(g.members.length),
+          height: GROUP_H,
+          background: '#141c3a99',
+          border: '1px solid #26305c',
+          borderRadius: 16,
+          padding: 0,
+        },
+        selectable: false,
+        zIndex: -1,
+      })
+      g.members.forEach((a, i) => {
+        nodes.push(
+          agentNode(a, { x: GROUP_PAD_X + i * (AGENT_W + GROUP_GAP), y: GROUP_PAD_TOP }, {
+            parentId: gid,
+            extent: 'parent',
+            sourcePosition: Position.Left,
+            targetPosition: Position.Right,
+          }),
+        )
+        if (i > 0)
+          // chain: rank(i+1) -> rank(i), thin and dim, pointing down the ranks
+          edges.push({
+            id: `e-chain-${gid}-${a.agent}`,
+            source: a.agent,
+            target: g.members[i - 1].agent,
+            zIndex: 1,
+            style: { stroke: '#3b4677', strokeWidth: 1 },
+            markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: '#3b4677' },
+          })
+      })
+      // the organ's mouth: only rank 1 talks to the org
+      const head = g.members[0]
+      edges.push({
+        id: `e-org-${gid}`,
+        source: head.agent,
+        target: 'org',
+        zIndex: 1,
+        style: { stroke: head.alive ? '#22d3ee44' : '#1d2647' },
+        markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: head.alive ? '#22d3ee66' : '#1d2647' },
+      })
+      gy += GROUP_H + GROUP_COL_GAP
+    }
+
     // peer orgs on the outer ring
     const np = Math.max(peers.length, 1)
-    const r2 = r1 + 240
     peers.forEach((p, i) => {
       const ang = (i / np) * 2 * Math.PI - Math.PI / 2 + Math.PI / np
       const id = `peer:${p.org}`

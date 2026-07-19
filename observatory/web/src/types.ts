@@ -13,6 +13,13 @@ export interface Overview {
   peers: number
 }
 
+/* Agents sharing a composite group render as one organ on the network map.
+   Owner-only in practice — anonymous readers never see the agent ring. */
+export interface CompositeRef {
+  group: string
+  rank: number
+}
+
 export interface AgentRow {
   agent: string
   alive: boolean
@@ -22,6 +29,7 @@ export interface AgentRow {
   steps: number
   tokens_in: number
   tokens_out: number
+  composite?: CompositeRef | null
 }
 
 export interface Msg {

@@ -195,6 +195,24 @@ async def overview():
     return {"org": ORG, "live": len(alive), "agents": len(stepped | alive), **dict(r)}
 
 
+def composites() -> dict[str, dict]:
+    """Charter line 'Composite: <group> <rank>' -> {agent: {group, rank}}.
+    Compositions are how related agents render as one organ on the map."""
+    out = {}
+    for f in (REPO / "agents").glob("*.md"):
+        if f.name.endswith(".example.md"):
+            continue
+        for line in f.read_text().splitlines():
+            if line.startswith("Composite:"):
+                parts = line.split(":", 1)[1].split()
+                if parts:
+                    out[f.stem] = {"group": parts[0],
+                                   "rank": int(parts[1]) if len(parts) > 1 and
+                                   parts[1].isdigit() else 0}
+                break
+    return out
+
+
 @app.get("/api/agents")
 async def agents():
     rows = await pool.fetch("""
@@ -208,13 +226,15 @@ async def agents():
         FROM steps GROUP BY agent ORDER BY max(ts) DESC
     """)
     alive = tmux_alive()
+    comp = composites()
     out = [{**dict(r), "last_seen": r["last_seen"].isoformat(),
-            "alive": r["agent"] in alive} for r in rows]
+            "alive": r["agent"] in alive,
+            "composite": comp.get(r["agent"])} for r in rows]
     seen = {r["agent"] for r in rows}
     for a in sorted(alive - seen):     # alive bodies that have not stepped yet
         out.append({"agent": a, "last_seen": None, "steps": 0, "tokens_in": 0,
                     "tokens_out": 0, "last_kind": None, "last_content": None,
-                    "alive": True})
+                    "alive": True, "composite": comp.get(a)})
     return out
 
 

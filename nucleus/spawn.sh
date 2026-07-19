@@ -81,14 +81,16 @@ if [ -n "$latest" ]; then
   if [ "$age" -lt 259200 ] && [ "$size" -lt 10485760 ]; then RESUME="--continue "; fi
 fi
 
-# model: charter line "Model: haiku|sonnet|opus" (default sonnet)
+# model: charter line "Model: haiku|sonnet|opus" (default opus — owner's call;
+# philosophers pin haiku in their charters, idle residents cost nothing anyway)
 MODEL=$(grep -m1 '^Model:' "$CHARTER" | cut -d: -f2- | xargs || true)
+MODEL=${MODEL:-opus}
 
 tmux new-session -d -s "$SESS" -c "$HOME_D"
 # --strict-mcp-config + explicit --mcp-config: a resident's world is EXACTLY its
 # own .mcp.json, nothing inherited. (strict alone ignores even the project file —
 # that deafened the whole org once; the explicit flag is load-bearing.)
-tmux send-keys -t "=$SESS:" "claude ${RESUME}--model ${MODEL:-sonnet} --permission-mode bypassPermissions --strict-mcp-config --mcp-config $HOME_D/.mcp.json --dangerously-load-development-channels server:astryx" Enter
+tmux send-keys -t "=$SESS:" "claude ${RESUME}--model $MODEL --permission-mode bypassPermissions --strict-mcp-config --mcp-config $HOME_D/.mcp.json --dangerously-load-development-channels server:astryx" Enter
 
 # boot-dialog drain (research-preview channel confirmation + any first-run dialogs)
 for i in $(seq 1 30); do
