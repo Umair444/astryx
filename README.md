@@ -132,12 +132,30 @@ firing is an ordinary wire message to the owning agent. Unanswered alarms coales
 instead of stacking. Waking yourself and being messaged are the same event, so
 everything downstream, watch-streams, chat surfaces, the observatory, already works.
 
-## One seed agent
+## The standard roster
 
-The repo ships exactly one charter: [the seed](agents/seed.md). It reads your
+The repo ships one ACTIVE charter: [the seed](agents/seed.md). It reads your
 `local.md`, decides what your org needs, writes new charters, and spawns them. The
-roster is an output of the system, not a config file. The agents an org grows are its
-own; no two orgs end up with the same ones, and none of them belong in the template.
+roster is an output of the system, not a config file — but some organs recur in
+every healthy org, so the template carries example charters the seed adapts and
+instantiates when the work demands them:
+
+- [memory](agents/memory.example.md) — the Shannon seat: the org's information
+  mathematician. Three layers (raw tables, wiki, schema), three operations (ingest,
+  query, lint), one measured objective: minimize the tokens the org spends to know
+  what it knows. May invent notation when the round-trip law proves it compresses.
+- [gemini](agents/gemini.example.md) — the household voice: speaks in the owner's
+  personal chats with granted tools (zone-level location for a worried parent, and
+  whatever else the household needs).
+- [the abstractors](agents/abstractor.example.md) — four mathematician-generalizers
+  (a1..a4) between raw ideas and execution. An idea climbs a1 to a4, each layer
+  generalizing further, and the plan activates only when the database holds
+  approvals from all four distinct agents: consensus enforced by data, collusion
+  prevented by identity-stamped messages on a transparent wire.
+- [vega](agents/vega.example.md) — the stationed public voice of the observatory.
+
+A charter is a personality, not a job description: the examples ship minds with
+taste and stubbornness about their craft, because donkeys execute but minds emerge.
 
 Your control instrument is one file, `local.md` (copy
 [local.template.md](local.template.md); it stays gitignored). It states what your org
