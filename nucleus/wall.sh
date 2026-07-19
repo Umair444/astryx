@@ -47,7 +47,7 @@ for a in $AGENTS; do
   # $TMUX_PANE pins the size query to THIS pane, whatever monitor it is on.
   cmd='while :; do
     H=$(tmux display -p -t "$TMUX_PANE" "#{pane_height}" 2>/dev/null || echo 20)
-    if out=$(tmux capture-pane -pe -t "=ax-'"$a"'" 2>/dev/null); then
+    if out=$(tmux capture-pane -pe -t "=ax-'"$a"':" 2>/dev/null); then
       printf "\033[H%s\033[0m\033[J" "$(printf "%s\n" "$out" | sed -e "s/\$/\x1b[K/" | tail -n "$H")"
     else
       printf "\033[H\033[J  ['"$a"' is down — the nucleus can respawn it]"
