@@ -12,12 +12,19 @@ Env:  ASTRYX_DSN via ../../.env or environment.
 import asyncio
 import json
 import os
+import platform
+import shutil
 import subprocess
 import time
 from contextlib import asynccontextmanager
+from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
+from uuid import UUID
 
 import asyncpg
+import psutil
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -195,21 +202,27 @@ async def overview():
     return {"org": ORG, "live": len(alive), "agents": len(stepped | alive), **dict(r)}
 
 
-def composites() -> dict[str, dict]:
-    """Charter line 'Composite: <group> <rank>' -> {agent: {group, rank}}.
-    Compositions are how related agents render as one organ on the map."""
-    out = {}
-    for f in (REPO / "agents").glob("*.md"):
-        if f.name.endswith(".example.md"):
+def agent_meta() -> dict[str, dict]:
+    """The `agents/` directory tree IS the org structure. A .md file is an agent
+    (its stem is the canonical name); every enclosing directory is a composite
+    group, and directories nest for composites-of-composites. Returns
+    {name: {"group_path": [outer, ..., inner], "rank": int|None}} — group_path is
+    the chain of composite labels from the root down to the agent's own folder, and
+    rank (charter line 'Rank: <n>') orders members inside their group; peers omit it.
+    Examples (*.example.md files and *.example/ directories) are skipped."""
+    root = REPO / "agents"
+    out: dict[str, dict] = {}
+    for f in root.rglob("*.md"):
+        parts = f.relative_to(root).parts
+        if f.name.endswith(".example.md") or any(p.endswith(".example") for p in parts):
             continue
+        rank = None
         for line in f.read_text().splitlines():
-            if line.startswith("Composite:"):
-                parts = line.split(":", 1)[1].split()
-                if parts:
-                    out[f.stem] = {"group": parts[0],
-                                   "rank": int(parts[1]) if len(parts) > 1 and
-                                   parts[1].isdigit() else 0}
+            if line.startswith("Rank:"):
+                v = line.split(":", 1)[1].strip()
+                rank = int(v) if v.lstrip("-").isdigit() else None
                 break
+        out[f.stem] = {"group_path": list(parts[:-1]), "rank": rank}
     return out
 
 
@@ -226,15 +239,16 @@ async def agents():
         FROM steps GROUP BY agent ORDER BY max(ts) DESC
     """)
     alive = tmux_alive()
-    comp = composites()
+    meta = agent_meta()
+    nogroup = {"group_path": [], "rank": None}
     out = [{**dict(r), "last_seen": r["last_seen"].isoformat(),
             "alive": r["agent"] in alive,
-            "composite": comp.get(r["agent"])} for r in rows]
+            **meta.get(r["agent"], nogroup)} for r in rows]
     seen = {r["agent"] for r in rows}
     for a in sorted(alive - seen):     # alive bodies that have not stepped yet
         out.append({"agent": a, "last_seen": None, "steps": 0, "tokens_in": 0,
                     "tokens_out": 0, "last_kind": None, "last_content": None,
-                    "alive": True, "composite": comp.get(a)})
+                    "alive": True, **meta.get(a, nogroup)})
     return out
 
 
@@ -546,6 +560,334 @@ async def vega(m: VegaMsg, request: Request):
     except Exception:
         reply = "I lost my train of thought. Ask me again."
     return {"reply": reply[:4000]}
+
+
+# ============================================================ system monitor
+def _gpu() -> list[dict]:
+    out = []
+    try:
+        r = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu",
+             "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=3)
+        for line in r.stdout.strip().splitlines():
+            name, util, mu, mt, temp = [x.strip() for x in line.split(",")]
+            out.append({"name": name, "util": float(util), "mem_used": float(mu) * 1e6,
+                        "mem_total": float(mt) * 1e6, "temp": float(temp)})
+    except Exception:
+        pass
+    if not out:                                    # integrated GPU: name only
+        try:
+            r = subprocess.run(["lspci"], capture_output=True, text=True, timeout=3)
+            for line in r.stdout.splitlines():
+                if "VGA compatible controller" in line or "3D controller" in line:
+                    out.append({"name": line.split(":", 2)[-1].strip(), "util": None,
+                                "mem_used": None, "mem_total": None, "temp": None})
+        except Exception:
+            pass
+    return out
+
+
+def _wifi() -> dict:
+    try:
+        for line in open("/proc/net/wireless").read().splitlines()[2:]:
+            p = line.split()
+            if p:
+                return {"iface": p[0].rstrip(":"), "quality": round(float(p[2].rstrip(".")) / 70 * 100),
+                        "signal_dbm": float(p[3].rstrip(".")) if len(p) > 3 else None}
+    except Exception:
+        pass
+    return {"iface": None, "quality": None, "signal_dbm": None}
+
+
+def _temps() -> list[dict]:
+    out = []
+    try:
+        for name, entries in (psutil.sensors_temperatures() or {}).items():
+            for e in entries:
+                out.append({"label": e.label or name, "current": e.current, "high": e.high})
+    except Exception:
+        pass
+    return out
+
+
+_CPU_MODEL: str | None = None
+
+
+def _cpu_model() -> str:
+    global _CPU_MODEL
+    if _CPU_MODEL is None:
+        _CPU_MODEL = platform.processor() or "?"
+        try:
+            for line in open("/proc/cpuinfo"):
+                if line.startswith("model name"):
+                    _CPU_MODEL = line.split(":", 1)[1].strip()
+                    break
+        except Exception:
+            pass
+    return _CPU_MODEL
+
+
+@app.get("/api/system")
+async def system():
+    vm, sw, net, freq = (psutil.virtual_memory(), psutil.swap_memory(),
+                         psutil.net_io_counters(), psutil.cpu_freq())
+    disks = []
+    for part in psutil.disk_partitions(all=False):
+        try:
+            u = psutil.disk_usage(part.mountpoint)
+            disks.append({"mount": part.mountpoint, "fstype": part.fstype,
+                          "total": u.total, "used": u.used, "percent": u.percent})
+        except Exception:
+            pass
+    try:
+        load = list(psutil.getloadavg())
+    except Exception:
+        load = [0, 0, 0]
+    return {
+        "specs": {"hostname": platform.node(), "os": f"{platform.system()} {platform.release()}",
+                  "cpu": _cpu_model(), "cores": psutil.cpu_count(logical=False),
+                  "threads": psutil.cpu_count(logical=True), "ram_total": vm.total,
+                  "boot_time": psutil.boot_time()},
+        "cpu": {"percent": psutil.cpu_percent(interval=None),
+                "per_core": psutil.cpu_percent(interval=None, percpu=True),
+                "freq_mhz": freq.current if freq else None, "load": load},
+        "mem": {"total": vm.total, "used": vm.used, "available": vm.available, "percent": vm.percent,
+                "swap_total": sw.total, "swap_used": sw.used, "swap_percent": sw.percent},
+        "disks": disks, "net": {"sent": net.bytes_sent, "recv": net.bytes_recv},
+        "gpu": _gpu(), "wifi": _wifi(), "temps": _temps(),
+        "uptime": time.time() - psutil.boot_time(), "ts": time.time(),
+    }
+
+
+_PROC_CACHE: dict[int, psutil.Process] = {}    # persistent handles: cpu_percent needs two reads from the SAME Process
+
+
+@app.get("/api/system/processes")
+async def processes(sort: str = "cpu", limit: int = 40):
+    seen = set()
+    procs = []
+    ncpu = psutil.cpu_count() or 1
+    for p in psutil.process_iter(["pid", "name", "username", "memory_percent"]):
+        pid = p.info["pid"]
+        seen.add(pid)
+        proc = _PROC_CACHE.get(pid)
+        if proc is None:
+            try:
+                proc = psutil.Process(pid)
+                proc.cpu_percent(None)          # prime; real value lands on the next poll
+                _PROC_CACHE[pid] = proc
+            except Exception:
+                continue
+        try:
+            cpu = proc.cpu_percent(None) / ncpu   # normalize to whole-machine %
+        except Exception:
+            cpu = 0.0
+        procs.append({"pid": pid, "name": p.info["name"], "user": p.info["username"],
+                      "cpu": round(cpu, 1), "mem": round(p.info["memory_percent"] or 0, 1)})
+    for dead in set(_PROC_CACHE) - seen:          # prune exited processes
+        _PROC_CACHE.pop(dead, None)
+    procs.sort(key=lambda x: x.get("mem" if sort == "mem" else "cpu") or 0, reverse=True)
+    return procs[:min(limit, 200)]
+
+
+# ============================================================ db workbench
+def _jsonify(v):
+    if v is None or isinstance(v, (bool, int, float, str)):
+        return v
+    if isinstance(v, (datetime, date)):
+        return v.isoformat()
+    if isinstance(v, Decimal):
+        return float(v)
+    if isinstance(v, UUID):
+        return str(v)
+    if isinstance(v, (bytes, bytearray, memoryview)):
+        return bytes(v).hex()
+    if isinstance(v, (list, tuple)):
+        return [_jsonify(x) for x in v]
+    if isinstance(v, dict):
+        return {k: _jsonify(x) for k, x in v.items()}
+    return str(v)
+
+
+def _db_dsn(database: str) -> str:
+    u = urlsplit(DSN)
+    return urlunsplit((u.scheme, u.netloc, "/" + database, u.query, u.fragment))
+
+
+async def _databases() -> list[str]:
+    rows = await pool.fetch(
+        "SELECT datname FROM pg_database WHERE NOT datistemplate AND datallowconn ORDER BY datname")
+    return [r["datname"] for r in rows]
+
+
+def _is_read(sql: str) -> bool:
+    head = (sql.strip().lstrip("(").split(None, 1) or [""])[0].lower()
+    return head in ("select", "with", "table", "values", "show", "explain")
+
+
+@app.get("/api/db/databases")
+async def db_databases():
+    return {"databases": await _databases(), "current": urlsplit(DSN).path.lstrip("/")}
+
+
+@app.get("/api/db/schema")
+async def db_schema(database: str):
+    if database not in await _databases():
+        return Response("unknown database", status_code=404)
+    conn = await asyncpg.connect(_db_dsn(database))
+    try:
+        rows = await conn.fetch("""
+            SELECT table_schema AS schema, table_name AS name, table_type AS type
+            FROM information_schema.tables
+            WHERE table_schema NOT IN ('pg_catalog','information_schema')
+            ORDER BY table_schema, table_name""")
+    finally:
+        await conn.close()
+    schemas: dict = {}
+    for r in rows:
+        schemas.setdefault(r["schema"], []).append(
+            {"name": r["name"], "type": "view" if "VIEW" in r["type"] else "table"})
+    return {"database": database, "schemas": schemas}
+
+
+@app.get("/api/db/columns")
+async def db_columns(database: str, schema: str, table: str):
+    if database not in await _databases():
+        return Response("unknown database", status_code=404)
+    conn = await asyncpg.connect(_db_dsn(database))
+    try:
+        rows = await conn.fetch("""
+            SELECT column_name AS name, data_type AS type, is_nullable AS nullable
+            FROM information_schema.columns WHERE table_schema=$1 AND table_name=$2
+            ORDER BY ordinal_position""", schema, table)
+    finally:
+        await conn.close()
+    return [dict(r) for r in rows]
+
+
+class Query(BaseModel):
+    database: str
+    sql: str
+    limit: int | None = None
+    offset: int | None = None
+
+
+@app.post("/api/db/query")
+async def db_query(q: Query):
+    if q.database not in await _databases():
+        return Response("unknown database", status_code=404)
+    read = _is_read(q.sql)
+    sql = q.sql.strip().rstrip(";")
+    if read and (q.limit is not None or q.offset is not None):
+        lim = f" LIMIT {int(q.limit)}" if q.limit is not None else ""
+        off = f" OFFSET {int(q.offset)}" if q.offset else ""
+        sql = f"SELECT * FROM (\n{sql}\n) _q{lim}{off}"
+    conn = await asyncpg.connect(_db_dsn(q.database))
+    t0 = time.perf_counter()
+    try:
+        await conn.execute("SET statement_timeout = '30s'")
+        if read:
+            stmt = await conn.prepare(sql)
+            cols = [a.name for a in stmt.get_attributes()]
+            rows = await stmt.fetch()
+            data = [[_jsonify(r[c]) for c in cols] for r in rows]
+            return {"columns": cols, "rows": data, "rowCount": len(data),
+                    "elapsed_ms": round((time.perf_counter() - t0) * 1000, 1), "command": "SELECT"}
+        status = await conn.execute(sql)
+        return {"columns": [], "rows": [], "rowCount": 0,
+                "elapsed_ms": round((time.perf_counter() - t0) * 1000, 1), "command": status}
+    except Exception as e:
+        return {"error": str(e), "elapsed_ms": round((time.perf_counter() - t0) * 1000, 1)}
+    finally:
+        await conn.close()
+
+
+@app.post("/api/db/count")
+async def db_count(q: Query):
+    if q.database not in await _databases():
+        return Response("unknown database", status_code=404)
+    if not _is_read(q.sql):
+        return {"error": "count applies to read queries only"}
+    conn = await asyncpg.connect(_db_dsn(q.database))
+    try:
+        await conn.execute("SET statement_timeout = '30s'")
+        n = await conn.fetchval(f"SELECT count(*) FROM (\n{q.sql.strip().rstrip(';')}\n) _c")
+        return {"count": n}
+    except Exception as e:
+        return {"error": str(e)}
+    finally:
+        await conn.close()
+
+
+# ---------------------------------------------- saved SQL files (astryx/assets)
+ASSETS = REPO / "assets"
+
+
+def _safe_asset(rel: str) -> Path:
+    p = (ASSETS / rel).resolve()
+    if not str(p).startswith(str(ASSETS.resolve())):
+        raise ValueError("path escape")
+    return p
+
+
+class SqlFile(BaseModel):
+    path: str
+    content: str = ""
+    kind: str = "file"
+
+
+@app.get("/api/sqlfiles")
+async def sqlfiles():
+    ASSETS.mkdir(exist_ok=True)
+
+    def walk(d: Path) -> list:
+        out = []
+        for c in sorted(d.iterdir(), key=lambda x: (x.is_file(), x.name.lower())):
+            rel = str(c.relative_to(ASSETS))
+            if c.is_dir():
+                out.append({"name": c.name, "path": rel, "dir": True, "children": walk(c)})
+            elif c.suffix == ".sql":
+                out.append({"name": c.name, "path": rel, "dir": False})
+        return out
+    return walk(ASSETS)
+
+
+@app.get("/api/sqlfile")
+async def sqlfile_get(path: str):
+    p = _safe_asset(path)
+    if not p.is_file():
+        return Response("not found", status_code=404)
+    return {"path": path, "content": p.read_text()}
+
+
+@app.put("/api/sqlfile")
+async def sqlfile_put(f: SqlFile):
+    p = _safe_asset(f.path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(f.content)
+    return {"ok": True, "path": f.path}
+
+
+@app.post("/api/sqlfile")
+async def sqlfile_new(f: SqlFile):
+    p = _safe_asset(f.path)
+    if f.kind == "dir":
+        p.mkdir(parents=True, exist_ok=True)
+    else:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        if not p.exists():
+            p.write_text(f.content or "-- new query\n")
+    return {"ok": True, "path": f.path}
+
+
+@app.delete("/api/sqlfile")
+async def sqlfile_del(path: str):
+    p = _safe_asset(path)
+    if p.is_dir():
+        shutil.rmtree(p)
+    elif p.is_file():
+        p.unlink()
+    return {"ok": True}
 
 
 @app.get("/api/events")

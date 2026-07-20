@@ -123,7 +123,7 @@ if [ "${1:-}" = "doctor" ]; then
     bad ".env missing — run ./init.sh"
   fi
   [ -f local.md ] && ok "local.md exists" || bad "local.md missing — the owner's law; run ./init.sh"
-  [ -d venv ] && venv/bin/python -c 'import psycopg, fastapi, croniter' 2>/dev/null && ok "python deps" || bad "python deps — rerun ./init.sh"
+  [ -d venv ] && venv/bin/python -c 'import psycopg, fastapi, croniter, psutil' 2>/dev/null && ok "python deps" || bad "python deps — rerun ./init.sh"
   [ -d channel/node_modules ] && ok "channel deps" || bad "channel deps — rerun ./init.sh"
   [ -d observatory/web/dist ] && ok "observatory built" || bad "observatory not built — rerun ./init.sh"
   if [ -d /run/systemd/system ]; then
@@ -204,8 +204,8 @@ else docker exec -i astryx-pg psql -U astryx -d astryx < nucleus/schema.sql >/de
 # --- 2. runtimes -----------------------------------------------------------
 [ -d venv ] || { say "python venv"; python3 -m venv venv; }
 venv/bin/python -c 'import psycopg' 2>/dev/null || venv/bin/pip -q install 'psycopg[binary]'
-venv/bin/python -c 'import fastapi, uvicorn, asyncpg, croniter, requests, nacl, httpx' 2>/dev/null || \
-  venv/bin/pip -q install fastapi 'uvicorn[standard]' asyncpg croniter requests pynacl httpx
+venv/bin/python -c 'import fastapi, uvicorn, asyncpg, croniter, requests, nacl, httpx, psutil' 2>/dev/null || \
+  venv/bin/pip -q install fastapi 'uvicorn[standard]' asyncpg croniter requests pynacl httpx psutil
 [ -d channel/node_modules ] || { say "npm install (channel server)"; (cd channel && npm install --no-fund --no-audit >/dev/null); }
 if [ ! -d observatory/web/dist ]; then
   say "building the observatory (this is the public portal on :8090)"

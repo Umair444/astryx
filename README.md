@@ -147,15 +147,26 @@ instantiates when the work demands them:
 - [gemini](agents/gemini.example.md) — the household voice: speaks in the owner's
   personal chats with granted tools (zone-level location for a worried parent, and
   whatever else the household needs).
-- [the abstractors](agents/abstractor.example.md) — four mathematician-generalizers
-  (a1..a4) between raw ideas and execution. An idea climbs a1 to a4, each layer
-  generalizing further, and the plan activates only when the database holds
-  approvals from all four distinct agents: consensus enforced by data, collusion
-  prevented by identity-stamped messages on a transparent wire.
+- [the abstractors](agents/abstractors.example/abstractor.example.md) — four
+  mathematician-generalizers (abstractor-1..4) between raw ideas and execution. An
+  idea climbs rank 1 to rank 4, each layer generalizing further, and the plan
+  activates only when the database holds approvals from all four distinct agents:
+  consensus enforced by data, collusion prevented by identity-stamped messages on a
+  transparent wire. They ship as a *composite* — see below.
 - [vega](agents/vega.example.md) — the stationed public voice of the observatory.
 
 A charter is a personality, not a job description: the examples ship minds with
 taste and stubbornness about their craft, because donkeys execute but minds emerge.
+
+**The `agents/` tree is the org structure.** A `.md` file is one agent — its filename
+stem is the canonical name (wire identity, home dir, tmux session, and the label the
+observatory shows, prettified). A *directory* is a **composite**: the folder name is
+the organ's label on the network map, and every charter inside is a member. Directories
+nest, so a composite can contain composites to any depth, and the map renders the
+nesting as organs within organs. An optional `Rank:` line orders members into a chain
+(the abstractors' 1→4 pipeline); without it, members are peers in one organ (the
+philosophers). Examples ship as `<name>.example.md` files or `<group>.example/`
+directories; everything else under `agents/` stays private.
 
 Your control instrument is one file, `local.md` (copy
 [local.template.md](local.template.md); it stays gitignored). It states what your org

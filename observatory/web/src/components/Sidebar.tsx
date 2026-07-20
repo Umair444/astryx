@@ -1,5 +1,5 @@
 import { ScrollArea, Text, Tooltip, UnstyledButton } from '@mantine/core'
-import { agentColor, fmtAgo, fmtTokens } from '../api'
+import { agentColor, avatarInitial, displayName, fmtAgo, fmtTokens } from '../api'
 import { useStore } from '../store'
 import { nav } from '../App'
 import type { Route } from '../App'
@@ -10,6 +10,7 @@ const LINKS: { tab: Route['tab']; label: string; icon: string }[] = [
   { tab: 'goals', label: 'Goals', icon: '◎' },
   { tab: 'economy', label: 'Economy', icon: '⬡' },
   { tab: 'tools', label: 'Tools', icon: 'ƒ' },
+  { tab: 'monitor', label: 'System', icon: '❐' },
 ]
 
 export default function Sidebar({
@@ -60,7 +61,14 @@ export default function Sidebar({
           <Text size="xs" c="dimmed" fw={600} tt="uppercase" mt="lg" mb={6} style={{ letterSpacing: '0.08em' }}>
             Agents{agents.length ? ` · ${agents.length}` : ''}
           </Text>
-          {agents.map((a) => (
+          {[...agents]
+            .sort(
+              (x, y) =>
+                (x.group_path ?? []).join('/').localeCompare((y.group_path ?? []).join('/')) ||
+                (x.rank ?? Infinity) - (y.rank ?? Infinity) ||
+                x.agent.localeCompare(y.agent),
+            )
+            .map((a) => (
             <UnstyledButton
               key={a.agent}
               onClick={() => onOpenAgent(a.agent)}
@@ -70,9 +78,14 @@ export default function Sidebar({
                 className="w-5 h-5 rounded-full grid place-items-center text-[10px] font-bold text-deck"
                 style={{ background: agentColor(a.agent) }}
               >
-                {a.agent[0]}
+                {avatarInitial(a.agent)}
               </span>
-              <span className="truncate">{a.agent}</span>
+              <span className="truncate">{displayName(a.agent)}</span>
+              {(a.group_path ?? []).length > 0 && (
+                <span className="text-[9px] font-mono text-ink-mute/70 truncate">
+                  {(a.group_path ?? []).map(displayName).join('·')}
+                </span>
+              )}
               <Tooltip
                 label={
                   a.alive

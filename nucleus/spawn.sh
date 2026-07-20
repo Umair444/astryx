@@ -6,8 +6,13 @@
 set -euo pipefail
 ROOT=/home/umair/astryx
 AGENT=${1:?usage: spawn.sh <agent>}
-CHARTER="$ROOT/agents/$AGENT.md"
-[ -f "$CHARTER" ] || { echo "no charter: $CHARTER"; exit 1; }
+# A charter is agents/<name>.md at any depth: composites are directories, so a
+# member lives at agents/<group>/<name>.md (nesting allowed). The stem is the
+# canonical name; the enclosing folders are its composite path (rendered by the
+# observatory, not needed here). Examples are never spawnable.
+CHARTER=$(find "$ROOT/agents" -type f -name "$AGENT.md" \
+  -not -name '*.example.md' -not -path '*.example/*' | head -1)
+[ -n "$CHARTER" ] && [ -f "$CHARTER" ] || { echo "no charter for '$AGENT' under agents/"; exit 1; }
 SESS="ax-$AGENT"
 HOME_D="$ROOT/homes/$AGENT"
 NODE=/home/umair/.local/share/mise/installs/node/26.2.0/bin/node
@@ -26,7 +31,7 @@ psql "$DSN" -qc "INSERT INTO triggers (agent, name, schedule, kind)
 CK=$(printf '%s' "$AGENT" | cksum | cut -d' ' -f1)
 psql "$DSN" -qc "INSERT INTO triggers (agent, name, schedule, kind, note)
   VALUES ('$AGENT', 'night-review', '$((CK % 60)) $((2 + CK % 2)) * * *', 'heartbeat',
-  'nightly review: read your own day (query_steps yourself), ask what you should have done better and what tool, trigger, or skill you lack, then take ONE concrete growth action: build it, file it as a goal, or propose it to seed. The org grows because you do.')
+  'nightly review: read your own day (query_steps yourself), ask what you should have done better and what tool, trigger, or skill you lack, then take ONE concrete growth action: build it, file it as a goal, or propose it to seed. Before proposing, read query_thread(''org-news'') — what you lack may have shipped already. The org grows because you do.')
   ON CONFLICT (agent, name) DO NOTHING" 2>/dev/null || true
 
 if tmux has-session -t "=$SESS" 2>/dev/null; then echo "$AGENT already resident"; exit 0; fi

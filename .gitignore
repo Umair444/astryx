@@ -9,6 +9,8 @@ owner.md
 agents/*
 !agents/seed.md
 !agents/*.example.md
+!agents/*.example/
+!agents/*.example/**
 memory/
 observatory/web/node_modules/
 observatory/web/dist/

@@ -34,6 +34,21 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
   return r.json()
 }
 
+/* PUT/DELETE with the owner key — for the SQL workbench's saved files */
+export async function apiSend<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const key = obsKey()
+  const r = await fetch('/api' + path, {
+    method,
+    headers: {
+      ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+      ...(key ? { 'x-obs-key': key } : {}),
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  })
+  if (!r.ok) throw new Error(`${path}: ${r.status}`)
+  return r.json()
+}
+
 export async function fetchWhoami(): Promise<WhoAmI> {
   const key = obsKey()
   const r = await fetch('/api/whoami', { headers: key ? { 'x-obs-key': key } : {} })
@@ -42,6 +57,22 @@ export async function fetchWhoami(): Promise<WhoAmI> {
 }
 
 /* deterministic per-agent hue — no departments in astryx, the name is the identity */
+/* The filename stem is the canonical name (wire id, home, tmux); the dashboard
+   shows it prettified — separators to spaces, each word capitalized. So
+   'abstractor-1' -> 'Abstractor 1', 'seed' -> 'Seed'. Display-only. */
+export function displayName(name: string): string {
+  return (name || '')
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+/* the mark in an agent's avatar chip: a trailing number distinguishes ranked
+   members (abstractor-1 -> '1'), otherwise the first letter */
+export function avatarInitial(name: string): string {
+  const num = (name || '').match(/(\d+)$/)
+  return num ? num[1] : (name || '?')[0].toUpperCase()
+}
+
 export function agentColor(name: string): string {
   let h = 0
   for (const c of (name || '?').toUpperCase()) h = (h * 31 + c.charCodeAt(0)) >>> 0

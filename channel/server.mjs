@@ -70,6 +70,31 @@ const TOOLS = [
     },
   },
   {
+    name: 'query_thread',
+    description: 'Read a thread\'s messages from the wire, oldest first. The table is the '
+      + 'truth — check thread state here before replying, nudging, or re-asking; your context '
+      + 'window only holds what happened to arrive in it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        thread: { type: 'string', description: 'thread key' },
+        limit:  { type: 'number', description: 'most recent N, default 50, max 200' },
+      },
+      required: ['thread'],
+    },
+  },
+  {
+    name: 'plan_quorum',
+    description: 'Approval state of a plan thread: each voter\'s latest verdict '
+      + '(approve/revise) and the goal\'s state. The canonical quorum check — read this, '
+      + 'never guess from addressees (verdicts bind by thread, not by who they were sent to).',
+    inputSchema: {
+      type: 'object',
+      properties: { thread: { type: 'string', description: "thread key, e.g. 'plan-1'" } },
+      required: ['thread'],
+    },
+  },
+  {
     name: 'trigger_set',
     description: 'Author or amend one of YOUR wake-up triggers. kinds: heartbeat (fires every '
       + 'schedule tick), sql (fires when the query returns a new non-empty result), python '
@@ -122,6 +147,34 @@ async function handleTool(name, a) {
       ? await pool.query(`SELECT ts, kind, content FROM steps WHERE agent=$1 AND kind=$2 ORDER BY id DESC LIMIT $3`, [a.agent, a.kind, lim])
       : await pool.query(`SELECT ts, kind, content FROM steps WHERE agent=$1 ORDER BY id DESC LIMIT $2`, [a.agent, lim])
     return r.rows.map(x => `[${x.ts.toISOString()}] ${x.kind}: ${x.content}`.slice(0, 500)).join('\n') || '(no steps)'
+  }
+  if (name === 'query_thread') {
+    const lim = Math.min(a.limit || 50, 200)
+    const r = await pool.query(
+      `SELECT * FROM (SELECT id, ts, from_agent, from_org, to_agent, to_org, intent, body
+       FROM messages WHERE thread=$1 ORDER BY id DESC LIMIT $2) t ORDER BY id`,
+      [a.thread, lim])
+    return r.rows.map(m => {
+      const from = m.from_org === 'local' ? m.from_agent : `${m.from_agent}@${m.from_org}`
+      const to = m.to_org === 'local' ? m.to_agent : `${m.to_agent}@${m.to_org}`
+      return `#${m.id} [${m.ts.toISOString()}] ${from} → ${to} (${m.intent}): ${m.body}`.slice(0, 600)
+    }).join('\n') || '(empty thread)'
+  }
+  if (name === 'plan_quorum') {
+    const r = await pool.query(
+      `SELECT DISTINCT ON (from_agent) from_agent, intent, ts
+       FROM messages WHERE thread=$1 AND intent IN ('approve','revise')
+       ORDER BY from_agent, id DESC`, [a.thread])
+    const gid = /^plan-(\d+)$/.exec(a.thread)?.[1]
+    const goal = gid
+      ? (await pool.query(`SELECT state FROM goals WHERE id=$1`, [gid])).rows[0]
+      : null
+    return r.rows.map(v =>
+      `${v.intent === 'approve' ? '✔' : '✗'} ${v.from_agent}: ${v.intent} [${v.ts.toISOString()}]`)
+      .join('\n')
+      + `\napprovals: ${r.rows.filter(v => v.intent === 'approve').length}`
+      + (goal ? ` — goal ${gid} is ${goal.state}` : '')
+      || '(no verdicts on this thread yet)'
   }
   if (name === 'trigger_set') {
     if (a.kind === 'python' && a.check) {

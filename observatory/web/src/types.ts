@@ -13,13 +13,6 @@ export interface Overview {
   peers: number
 }
 
-/* Agents sharing a composite group render as one organ on the network map.
-   Owner-only in practice — anonymous readers never see the agent ring. */
-export interface CompositeRef {
-  group: string
-  rank: number
-}
-
 export interface AgentRow {
   agent: string
   alive: boolean
@@ -29,7 +22,12 @@ export interface AgentRow {
   steps: number
   tokens_in: number
   tokens_out: number
-  composite?: CompositeRef | null
+  /* The agents/ directory tree is the org structure: group_path is the chain of
+     composite folder labels from the root down to this agent (empty = a free agent
+     on the ring), and rank orders members inside their group (null = a peer, no
+     chain arrow). Nested paths render as nested organs. Owner-only in practice. */
+  group_path?: string[]
+  rank?: number | null
 }
 
 export interface Msg {
@@ -233,3 +231,32 @@ export type WireEvent =
   | ({ type: 'message' } & Msg)
   | { type: 'step'; id: number; agent: string; kind: string }
   | DagEvent
+
+/* GET /api/system — host stats for the Monitor tab */
+export interface SysInfo {
+  specs: { hostname: string; os: string; cpu: string; cores: number; threads: number; ram_total: number; boot_time: number }
+  cpu: { percent: number; per_core: number[]; freq_mhz: number | null; load: number[] }
+  mem: { total: number; used: number; available: number; percent: number; swap_total: number; swap_used: number; swap_percent: number }
+  disks: { mount: string; fstype: string; total: number; used: number; percent: number }[]
+  net: { sent: number; recv: number }
+  gpu: { name: string; util: number | null; mem_used: number | null; mem_total: number | null; temp: number | null }[]
+  wifi: { iface: string | null; quality: number | null; signal_dbm: number | null }
+  temps: { label: string; current: number; high: number | null }[]
+  uptime: number
+  ts: number
+}
+export interface Proc { pid: number; name: string; user: string; cpu: number; mem: number }
+
+/* SQL workbench (Monitor's DBeaver-like sibling) */
+export interface DbList { databases: string[]; current: string }
+export interface DbSchema { database: string; schemas: Record<string, { name: string; type: string }[]> }
+export type Cell = string | number | boolean | null
+export interface QueryResult {
+  columns?: string[]
+  rows?: Cell[][]
+  rowCount?: number
+  elapsed_ms?: number
+  command?: string
+  error?: string
+}
+export interface SqlNode { name: string; path: string; dir: boolean; children?: SqlNode[] }

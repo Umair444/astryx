@@ -70,6 +70,15 @@ exists to avoid, so hold them even when a local alternative looks easier:
   with polling loops.
 - **agents talk only through the wire**; never add a side channel between
   components. If two things need to communicate, the answer is a row in postgres.
+- **the `agents/` tree IS the org structure.** A `.md` file is one agent; its
+  filename stem is the canonical name — the wire identity (`ASTRYX_AGENT`), the home
+  dir (`homes/<name>`), the tmux session (`ax-<name>`), and the observatory label
+  (prettified). A *directory* is a composite: the folder name labels the organ, each
+  charter inside is a member, and directories nest for composites-of-composites — the
+  network map renders the nesting. An optional `Rank: <n>` line orders members into a
+  chain; without it they are peers. Never encode composition in a charter line or a
+  database table; the filesystem is the source of truth. spawn.sh finds a charter by
+  name at any depth, so members can be moved between groups by moving their file.
 
 ## Joining another org (federation)
 

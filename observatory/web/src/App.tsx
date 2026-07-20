@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AppShell, Burger, Group, Popover, Text, TextInput } from '@mantine/core'
+import { AppShell, Burger, Group, Popover, Text, TextInput, Tooltip } from '@mantine/core'
 import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import { saveObsKey } from './api'
 import { StoreProvider, useStore } from './store'
@@ -9,6 +9,7 @@ import WireView from './components/WireView'
 import GoalsView from './components/GoalsView'
 import EconomyView from './components/EconomyView'
 import ToolsView from './components/ToolsView'
+import SystemView from './components/SystemView'
 import AgentDrawer from './components/AgentDrawer'
 import VegaChat from './components/VegaChat'
 
@@ -18,6 +19,7 @@ export type Route =
   | { tab: 'goals' }
   | { tab: 'economy' }
   | { tab: 'tools' }
+  | { tab: 'monitor' }
 
 function parseHash(): Route {
   const h = location.hash.replace(/^#\/?/, '')
@@ -26,6 +28,7 @@ function parseHash(): Route {
   if (tab === 'goals') return { tab: 'goals' }
   if (tab === 'economy') return { tab: 'economy' }
   if (tab === 'tools') return { tab: 'tools' }
+  if (tab === 'monitor') return { tab: 'monitor' }
   return { tab: 'network' }
 }
 
@@ -41,6 +44,7 @@ const TABS: { key: Route['tab']; label: string; icon: string }[] = [
   { key: 'goals', label: 'Goals', icon: '◎' },
   { key: 'economy', label: 'Economy', icon: '⬡' },
   { key: 'tools', label: 'Tools', icon: 'ƒ' },
+  { key: 'monitor', label: 'System', icon: '❐' },
 ]
 
 /* The read-only badge doubles as the discreet door: clicking it lets the
@@ -147,6 +151,12 @@ function Shell() {
   const [route, setRoute] = useState<Route>(parseHash())
   const [agentOpen, setAgentOpen] = useState<string | null>(null)
   const [navOpened, { toggle, close }] = useDisclosure()
+  const [deskNav, setDeskNav] = useState(() => localStorage.getItem('nav_hidden') !== '1')
+  const toggleDeskNav = () =>
+    setDeskNav((v) => {
+      localStorage.setItem('nav_hidden', v ? '1' : '0')
+      return !v
+    })
   const isDesktop = useMediaQuery('(min-width: 48em)', true)
   const { overview, who, whoChecked } = useStore()
   const tabs = who.owner ? TABS : TABS.filter((t) => t.key === 'network')
@@ -164,7 +174,7 @@ function Shell() {
   return (
     <AppShell
       header={{ height: 48 }}
-      navbar={{ width: 264, breakpoint: 'sm', collapsed: { mobile: !navOpened } }}
+      navbar={{ width: 264, breakpoint: 'sm', collapsed: { mobile: !navOpened, desktop: !deskNav } }}
       footer={{ height: 54, collapsed: !!isDesktop }}
       padding={0}
       className="h-full"
@@ -172,6 +182,9 @@ function Shell() {
       <AppShell.Header className="starfield !bg-deck !border-line">
         <Group h="100%" px="md" gap="sm">
           <Burger opened={navOpened} onClick={toggle} hiddenFrom="sm" size="sm" />
+          <Tooltip label={deskNav ? 'Hide sidebar' : 'Show sidebar'} openDelay={400}>
+            <Burger opened={deskNav} onClick={toggleDeskNav} visibleFrom="sm" size="sm" />
+          </Tooltip>
           <Text c="cyan.4" fw={600} style={{ letterSpacing: '0.05em' }}>
             astryx
           </Text>
@@ -223,6 +236,7 @@ function Shell() {
               {route.tab === 'goals' && <GoalsView />}
               {route.tab === 'economy' && <EconomyView />}
               {route.tab === 'tools' && <ToolsView />}
+              {route.tab === 'monitor' && <SystemView />}
             </>
           )}
         </div>
