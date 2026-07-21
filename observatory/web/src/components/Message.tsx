@@ -1,7 +1,9 @@
+import { useState } from 'react'
 import { motion } from 'motion/react'
-import { agentColor, fmtTime } from '../api'
+import { agentColor, avatarInitial, displayName, fmtTime } from '../api'
 import { useStore } from '../store'
 import type { Msg } from '../types'
+import TurnPeek from './TurnPeek'
 
 /* markdown-lite: **bold**, `code`, and bare URLs — enough for agent chatter */
 function rich(text: string) {
@@ -32,9 +34,10 @@ export default function Message({
   onOpenAgent?: (n: string) => void
 }) {
   const { overview } = useStore()
+  const [peek, setPeek] = useState<number | null>(null)
   const home = overview?.org
   const col = agentColor(m.from)
-  const fromLabel = m.from_org && m.from_org !== home ? `${m.from}@${m.from_org}` : m.from
+  const fromLabel = m.from_org && m.from_org !== home ? `${displayName(m.from)}@${m.from_org}` : displayName(m.from)
   const toLabel = m.to ? (m.to_org && m.to_org !== home ? `${m.to}@${m.to_org}` : m.to) : null
   const anim = fresh
     ? { initial: { opacity: 0, y: 10, scale: 0.99 }, animate: { opacity: 1, y: 0, scale: 1 }, transition: { duration: 0.18, ease: 'easeOut' as const } }
@@ -52,7 +55,7 @@ export default function Message({
               className="w-8 h-8 rounded-lg grid place-items-center text-[13px] font-bold text-deck"
               style={{ background: col }}
             >
-              {m.from[0]}
+              {avatarInitial(m.from)}
             </button>
           )}
         </div>
@@ -79,16 +82,28 @@ export default function Message({
             </button>
           )}
         </div>
-        {onThread && !replies && m.thread && (
-          <button
-            onClick={onThread}
-            className="opacity-0 group-hover:opacity-100 self-start text-xs text-ink-mute hover:text-cyan px-1"
-            title="View thread"
-          >
-            🧵
-          </button>
-        )}
+        <span className="self-start flex items-center gap-0.5">
+          {m.turn_id != null && (
+            <button
+              onClick={() => setPeek(m.turn_id!)}
+              className="opacity-0 group-hover:opacity-100 text-xs text-ink-mute hover:text-cyan px-1"
+              title={`open the turn that produced this (#${m.turn_id})`}
+            >
+              ◉
+            </button>
+          )}
+          {onThread && !replies && m.thread && (
+            <button
+              onClick={onThread}
+              className="opacity-0 group-hover:opacity-100 text-xs text-ink-mute hover:text-cyan px-1"
+              title="View thread"
+            >
+              🧵
+            </button>
+          )}
+        </span>
       </div>
+      {peek != null && <TurnPeek turnId={peek} onClose={() => setPeek(null)} />}
     </motion.div>
   )
 }

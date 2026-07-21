@@ -27,6 +27,7 @@ interface Store {
   whoChecked: boolean // false until the first /whoami answer — gates the lock panels
   recheckWho: () => Promise<WhoAmI>
   send: (to: string, body: string, thread?: string) => Promise<Msg>
+  refreshGoals: () => void
 }
 
 const Ctx = createContext<Store>(null as unknown as Store)
@@ -110,6 +111,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [whoChecked, who])
 
+  const refreshGoals = useCallback(() => {
+    if (who.owner) api<Goal[]>('/goals').then(setGoals).catch(() => {})
+  }, [who.owner])
+
   // one SSE pipe: new messages land in the feed, steps freshen the agent roster.
   // Reconnects whenever recheckWho lands (key saved/forgotten) so the ?key= is current.
   useEffect(() => {
@@ -149,8 +154,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [whoChecked, who])
 
   const value = useMemo(
-    () => ({ overview, agents, messages, loadMax, goals, peers, flash, dagEvent, loadOlder, who, whoChecked, recheckWho, send }),
-    [overview, agents, messages, loadMax, goals, peers, flash, dagEvent, loadOlder, who, whoChecked, recheckWho, send],
+    () => ({ overview, agents, messages, loadMax, goals, peers, flash, dagEvent, loadOlder, who, whoChecked, recheckWho, send, refreshGoals }),
+    [overview, agents, messages, loadMax, goals, peers, flash, dagEvent, loadOlder, who, whoChecked, recheckWho, send, refreshGoals],
   )
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

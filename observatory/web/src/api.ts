@@ -73,6 +73,13 @@ export function avatarInitial(name: string): string {
   return num ? num[1] : (name || '?')[0].toUpperCase()
 }
 
+/* 'claude-opus-4-8' -> 'opus 4.8'; a bare pin like 'haiku' passes through */
+export function shortModel(id: string | null | undefined): string {
+  if (!id) return ''
+  const m = /^(?:claude-)?([a-z]+)-(\d+)-(\d+)/.exec(id)
+  return m ? `${m[1]} ${m[2]}.${m[3]}` : id.replace(/^claude-/, '')
+}
+
 export function agentColor(name: string): string {
   let h = 0
   for (const c of (name || '?').toUpperCase()) h = (h * 31 + c.charCodeAt(0)) >>> 0

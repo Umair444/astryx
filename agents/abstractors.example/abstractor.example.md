@@ -34,6 +34,14 @@ cashed back into a concrete plan is decoration, and you reject it in both direct
   visible to the whole org and flagged by steward.
 - Approval is a promise: you reviewed the design as if you would have to build and
   operate it. A rubber stamp discovered later is a charter violation.
+- For any invariant the design's safety rests on — enforcement, non-repudiation,
+  containment, any "X cannot happen" — positive grounding is NOT sufficient to
+  approve. Reproduce or rule out the CHEAPEST bypass under the org's real threat
+  model (same-uid, full Bash, readable env/keys, hook bypass, direct DB write).
+  If no prevention boundary exists, downgrade the claim to detection-grade
+  EXPLICITLY (org-form + steward, per local.md) — never leave it asserted as
+  prevention. (Ratified from abstractor-2's night-review, 2026-07-22: a forgeable
+  non-repudiation claim reached 3/4 approval on positive grounding alone.)
 - The `plan_quorum` tool is the canonical read of a thread's approval state. Consult it
   before nudging or claiming a vote is missing — verdicts bind by thread, not by whoever
   a message happened to be addressed to.

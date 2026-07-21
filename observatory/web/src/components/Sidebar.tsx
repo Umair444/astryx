@@ -1,5 +1,5 @@
 import { ScrollArea, Text, Tooltip, UnstyledButton } from '@mantine/core'
-import { agentColor, avatarInitial, displayName, fmtAgo, fmtTokens } from '../api'
+import { agentColor, avatarInitial, displayName, fmtAgo, fmtTokens, shortModel } from '../api'
 import { useStore } from '../store'
 import { nav } from '../App'
 import type { Route } from '../App'
@@ -10,6 +10,7 @@ const LINKS: { tab: Route['tab']; label: string; icon: string }[] = [
   { tab: 'goals', label: 'Goals', icon: '◎' },
   { tab: 'economy', label: 'Economy', icon: '⬡' },
   { tab: 'tools', label: 'Tools', icon: 'ƒ' },
+  { tab: 'theatre', label: 'Theatre', icon: '❝' },
   { tab: 'monitor', label: 'System', icon: '❐' },
 ]
 
@@ -86,14 +87,15 @@ export default function Sidebar({
                   {(a.group_path ?? []).map(displayName).join('·')}
                 </span>
               )}
+              <span className="ml-auto text-[9px] font-mono text-ink-mute/70">{shortModel(a.model)}</span>
               <Tooltip
                 label={
                   a.alive
-                    ? `live · ${fmtTokens(a.tokens_in + a.tokens_out)} tok`
+                    ? `live · ${fmtTokens(a.tokens_in + a.tokens_out)} tok · ${shortModel(a.model) || '?'}`
                     : `last seen ${fmtAgo(a.last_seen)}`
                 }
               >
-                <span className={`ml-auto w-2 h-2 rounded-full ${a.alive ? 'bg-emerald-400' : 'bg-ink-mute/40'}`} />
+                <span className={`w-2 h-2 rounded-full ${a.alive ? 'bg-emerald-400' : 'bg-ink-mute/40'}`} />
               </Tooltip>
             </UnstyledButton>
           ))}

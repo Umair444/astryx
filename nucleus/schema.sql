@@ -8,12 +8,65 @@ CREATE TABLE IF NOT EXISTS steps (
   kind        text        NOT NULL,          -- tool | tool_done | response | milestone | error | heartbeat
   content     text        NOT NULL,
   goal_id     bigint,
+  turn_id     bigint,                         -- FK to turns(id); back-filled by the Stop hook
   tokens_in   integer,
   tokens_out  integer,
   meta        jsonb
 );
+ALTER TABLE steps ADD COLUMN IF NOT EXISTS turn_id bigint;   -- migration for pre-turns installs
 CREATE INDEX IF NOT EXISTS steps_agent_ts ON steps (agent, ts DESC);
 CREATE INDEX IF NOT EXISTS steps_goal     ON steps (goal_id) WHERE goal_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS steps_turn     ON steps (turn_id) WHERE turn_id IS NOT NULL;
+
+-- turns: one row per prompt (an agent turn). The Stop hook reconstructs the whole
+-- turn from the transcript and writes it here — the raw of everything Claude
+-- generated for that prompt. steps.turn_id links each tool/response event back.
+CREATE TABLE IF NOT EXISTS turns (
+  id            bigserial PRIMARY KEY,
+  agent         text        NOT NULL,
+  session_id    text,
+  started_at    timestamptz,                    -- ts of the opening prompt (from transcript)
+  ended_at      timestamptz NOT NULL DEFAULT now(),
+  duration_ms   integer,
+  source        text,                            -- wire | trigger | heartbeat | user
+  input_prompt  text,                            -- the raw prompt that opened the turn
+  input_msg_id  bigint,                          -- messages.id when it came off the wire
+  num_responses integer NOT NULL DEFAULT 0,      -- assistant text generations
+  num_tools     integer NOT NULL DEFAULT 0,      -- tool calls in the turn
+  num_steps     integer NOT NULL DEFAULT 0,      -- steps rows linked to this turn
+  char_count    integer NOT NULL DEFAULT 0,      -- characters of generated text
+  tokens_in     bigint  NOT NULL DEFAULT 0,
+  tokens_out    bigint  NOT NULL DEFAULT 0,
+  tokens_total  bigint  GENERATED ALWAYS AS (tokens_in + tokens_out) STORED,
+  model         text,
+  stop_reason   text,
+  raw_payload   jsonb   NOT NULL DEFAULT '{}'::jsonb,   -- verbatim: {"messages":[...],"usage":{...}}
+  messages      jsonb   GENERATED ALWAYS AS (raw_payload -> 'messages') VIRTUAL  -- not stored
+);
+CREATE INDEX IF NOT EXISTS turns_agent_time ON turns (agent, ended_at DESC);
+CREATE INDEX IF NOT EXISTS turns_msg        ON turns (input_msg_id) WHERE input_msg_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS turns_raw_gin    ON turns USING gin (raw_payload);
+
+-- steps -> turns FK (steps is defined above turns, so add it post-hoc, idempotent)
+DO $$ BEGIN
+  ALTER TABLE steps ADD CONSTRAINT steps_turn_fk
+    FOREIGN KEY (turn_id) REFERENCES turns(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- turns_v: the "generated but not stored" text — a view, because a generated
+-- COLUMN may not aggregate. response_text concatenates every assistant text block
+-- of the turn from the verbatim raw_payload; response_texts is one element per block.
+CREATE OR REPLACE VIEW turns_v AS
+SELECT t.*,
+  (SELECT string_agg(c->>'text', E'\n\n' ORDER BY mo, co)
+     FROM jsonb_array_elements(t.raw_payload->'messages') WITH ORDINALITY AS m(msg, mo),
+          jsonb_array_elements(msg->'message'->'content')  WITH ORDINALITY AS x(c,  co)
+    WHERE msg->>'type' = 'assistant' AND c->>'type' = 'text') AS response_text,
+  (SELECT array_agg(c->>'text' ORDER BY mo, co)
+     FROM jsonb_array_elements(t.raw_payload->'messages') WITH ORDINALITY AS m(msg, mo),
+          jsonb_array_elements(msg->'message'->'content')  WITH ORDINALITY AS x(c,  co)
+    WHERE msg->>'type' = 'assistant' AND c->>'type' = 'text') AS response_texts
+FROM turns t;
 
 CREATE TABLE IF NOT EXISTS messages (
   id          bigserial PRIMARY KEY,
@@ -28,9 +81,19 @@ CREATE TABLE IF NOT EXISTS messages (
   caps_token  text,
   sig         text,
   status      text NOT NULL DEFAULT 'pending', -- pending | delivered | dead
-  delivered_at timestamptz
+  delivered_at timestamptz,
+  turn_id     bigint                            -- the turn that PRODUCED this message (back-filled at Stop)
 );
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS turn_id bigint;   -- migration for pre-turns installs
 CREATE INDEX IF NOT EXISTS messages_inbox ON messages (to_agent, status, id);
+CREATE INDEX IF NOT EXISTS messages_turn  ON messages (turn_id) WHERE turn_id IS NOT NULL;
+DO $$ BEGIN
+  ALTER TABLE messages ADD CONSTRAINT messages_turn_fk
+    FOREIGN KEY (turn_id) REFERENCES turns(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+-- The full causal graph: messages.turn_id -> the turn that emitted it;
+-- turns.input_msg_id -> the message that triggered it (soft link). One message is
+-- thus the sender-turn's output and the receiver-turn's input, chaining turns across agents.
 
 CREATE TABLE IF NOT EXISTS subscriptions (
   id       bigserial PRIMARY KEY,

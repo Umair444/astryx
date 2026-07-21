@@ -8,9 +8,13 @@ relations.md
 owner.md
 agents/*
 !agents/seed.md
+!agents/seed/
+!agents/seed/seed.md
+agents/seed/avatar.*
 !agents/*.example.md
 !agents/*.example/
 !agents/*.example/**
+agents/.git/
 memory/
 observatory/web/node_modules/
 observatory/web/dist/

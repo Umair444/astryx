@@ -1,7 +1,95 @@
-import { Badge, Progress, ScrollArea, Tooltip } from '@mantine/core'
-import { agentColor, fmtAgo, fmtTokens } from '../api'
+import { useState } from 'react'
+import { Badge, Button, Modal, NumberInput, Progress, ScrollArea, Select, TextInput, Textarea, Tooltip } from '@mantine/core'
+import { agentColor, apiPost, displayName, fmtAgo, fmtTokens } from '../api'
 import { useStore } from '../store'
 import type { Goal } from '../types'
+
+/* owner files a goal; the assignment rides the wire as a task message */
+function NewGoalButton() {
+  const { agents, refreshGoals } = useStore()
+  const [open, setOpen] = useState(false)
+  const [title, setTitle] = useState('')
+  const [assignee, setAssignee] = useState<string | null>(null)
+  const [note, setNote] = useState('')
+  const [budget, setBudget] = useState<string | number>('')
+  const [busy, setBusy] = useState(false)
+
+  const file = async () => {
+    if (!title.trim() || !assignee) return
+    setBusy(true)
+    try {
+      await apiPost('/goals', {
+        title: title.trim(),
+        assignee,
+        scope_note: note.trim() || null,
+        budget_tokens: typeof budget === 'number' ? budget : null,
+      })
+      setOpen(false)
+      setTitle(''); setNote(''); setBudget(''); setAssignee(null)
+      refreshGoals()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <Button size="compact-sm" color="cyan" variant="light" onClick={() => setOpen(true)}>
+        ＋ File goal
+      </Button>
+      <Modal opened={open} onClose={() => setOpen(false)} title="File a goal" centered size="md">
+        <div className="space-y-3">
+          <TextInput
+            label="Title"
+            placeholder="what should get done"
+            value={title}
+            onChange={(e) => setTitle(e.currentTarget.value)}
+            data-autofocus
+          />
+          <Select
+            label="Assign to"
+            placeholder="the responsible agent"
+            searchable
+            data={[...agents]
+              .sort((x, y) => x.agent.localeCompare(y.agent))
+              .map((a) => ({ value: a.agent, label: displayName(a.agent) }))}
+            value={assignee}
+            onChange={setAssignee}
+          />
+          <Textarea
+            label="Scope note"
+            placeholder="boundaries, context, what done looks like (optional)"
+            autosize
+            minRows={2}
+            value={note}
+            onChange={(e) => setNote(e.currentTarget.value)}
+          />
+          <NumberInput
+            label="Budget (tokens)"
+            placeholder="0 = unbudgeted"
+            min={0}
+            step={100_000}
+            thousandSeparator=","
+            value={budget}
+            onChange={setBudget}
+          />
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="subtle" color="gray" onClick={() => setOpen(false)}>
+              cancel
+            </Button>
+            <Button color="cyan" loading={busy} disabled={!title.trim() || !assignee} onClick={file}>
+              file → wire
+            </Button>
+          </div>
+          <div className="text-[11px] text-ink-mute">
+            Filing inserts the goal (proposed) and sends the assignment to the agent on thread{' '}
+            <span className="font-mono">goal-&lt;id&gt;</span> — the doorbell wakes them immediately.
+          </div>
+        </div>
+      </Modal>
+    </>
+  )
+}
 
 const COLS: { key: string; label: string; color: string }[] = [
   { key: 'proposed', label: 'proposed', color: '#9aa7c7' },
@@ -58,6 +146,12 @@ export default function GoalsView() {
 
   return (
     <ScrollArea className="h-full">
+      <div className="flex items-center justify-between px-3 pt-3">
+        <span className="text-xs text-ink-mute">
+          goals are the org's funded purposes — assignment travels the wire
+        </span>
+        <NewGoalButton />
+      </div>
       <div className="p-3 grid gap-3 md:grid-cols-5">
         {COLS.map((col) => {
           const items = goals.filter((g) => (g.state || 'proposed') === col.key)

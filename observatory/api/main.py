@@ -13,6 +13,7 @@ import asyncio
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import time
@@ -70,7 +71,9 @@ PUBLIC_PATHS = {"/api/overview", "/api/peers", "/api/vega", "/api/whoami",
 
 
 def is_owner(request: Request) -> bool:
-    return bool(OBS_KEY) and request.headers.get("x-obs-key", "") == OBS_KEY
+    # header for fetch(); ?key= for elements that cannot send headers (img, EventSource)
+    supplied = request.headers.get("x-obs-key", "") or request.query_params.get("key", "")
+    return bool(OBS_KEY) and supplied == OBS_KEY
 
 pool: asyncpg.Pool | None = None
 sse_clients: set[asyncio.Queue] = set()
@@ -148,6 +151,7 @@ def msg(r) -> dict:
         "to": r["to_agent"], "to_org": r["to_org"],
         "thread": r["thread"], "intent": r["intent"],
         "body": r["body"], "status": r["status"],
+        "turn_id": r["turn_id"] if "turn_id" in r.keys() else None,
     }
 
 
@@ -216,13 +220,22 @@ def agent_meta() -> dict[str, dict]:
         parts = f.relative_to(root).parts
         if f.name.endswith(".example.md") or any(p.endswith(".example") for p in parts):
             continue
+        if f.name in (".organ.md", "README.md"):
+            continue                    # reserved names are never charters (plan-2 §1)
+        # self-folder form: agents/<name>/<name>.md — the folder is the agent's own
+        # home, not a composite level, so it drops out of the group path
+        if len(parts) >= 2 and parts[-2] == f.stem:
+            parts = parts[:-1]
         rank = None
+        model_pin = None
         for line in f.read_text().splitlines():
-            if line.startswith("Rank:"):
+            if line.startswith("Rank:") and rank is None:
                 v = line.split(":", 1)[1].strip()
                 rank = int(v) if v.lstrip("-").isdigit() else None
-                break
-        out[f.stem] = {"group_path": list(parts[:-1]), "rank": rank}
+            elif line.startswith("Model:") and model_pin is None:
+                model_pin = line.split(":", 1)[1].split()[0].strip() or None
+        out[f.stem] = {"group_path": list(parts[:-1]), "rank": rank,
+                       "model_pin": model_pin}
     return out
 
 
@@ -240,15 +253,23 @@ async def agents():
     """)
     alive = tmux_alive()
     meta = agent_meta()
-    nogroup = {"group_path": [], "rank": None}
+    nogroup = {"group_path": [], "rank": None, "model_pin": None}
+    # actual model per agent from its latest turn; charter Model: pin as fallback
+    actual = {r["agent"]: r["model"] for r in await pool.fetch(
+        "SELECT DISTINCT ON (agent) agent, model FROM turns "
+        "WHERE model IS NOT NULL ORDER BY agent, id DESC")}
+
+    def enrich(a: str) -> dict:
+        m = meta.get(a, nogroup)
+        return {"group_path": m["group_path"], "rank": m["rank"],
+                "model": actual.get(a) or m.get("model_pin") or "opus"}
     out = [{**dict(r), "last_seen": r["last_seen"].isoformat(),
-            "alive": r["agent"] in alive,
-            **meta.get(r["agent"], nogroup)} for r in rows]
+            "alive": r["agent"] in alive, **enrich(r["agent"])} for r in rows]
     seen = {r["agent"] for r in rows}
     for a in sorted(alive - seen):     # alive bodies that have not stepped yet
         out.append({"agent": a, "last_seen": None, "steps": 0, "tokens_in": 0,
                     "tokens_out": 0, "last_kind": None, "last_content": None,
-                    "alive": True, **meta.get(a, nogroup)})
+                    "alive": True, **enrich(a)})
     return out
 
 
@@ -476,6 +497,36 @@ async def peers():
     return [dict(r) for r in rows]
 
 
+# ------------------------------------------------------------ goals: owner files one
+class NewGoal(BaseModel):
+    title: str
+    assignee: str                      # goals.owner = the agent responsible
+    scope_note: str | None = None
+    budget_tokens: int | None = None
+
+
+@app.post("/api/goals")
+async def goal_create(g: NewGoal, request: Request):
+    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+        return Response(status_code=403)
+    if not g.title.strip() or not g.assignee.strip():
+        return Response(status_code=400)
+    gid = await pool.fetchval(
+        "INSERT INTO goals (title, owner, state, scope_note, budget_tokens) "
+        "VALUES ($1, $2, 'proposed', $3, $4) RETURNING id",
+        g.title.strip(), g.assignee.strip(), g.scope_note, g.budget_tokens or 0)
+    # the assignment IS a message — the wire doorbell wakes the assignee
+    body = (f"Goal #{gid} assigned to you by the owner: {g.title.strip()}"
+            + (f"\n\n{g.scope_note}" if g.scope_note else "")
+            + f"\n\nThread goal-{gid} is this goal's ledger. File progress as steps; "
+              "route through the abstractors first if the scope is beyond trivial (seed law).")
+    await pool.execute(
+        "INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, intent, body) "
+        "VALUES ('owner', 'local', $1, 'local', $2, 'task', $3)",
+        g.assignee.strip(), f"goal-{gid}", body)
+    return {"id": gid}
+
+
 # ------------------------------------------------------------ chat: owner
 class OwnerMsg(BaseModel):
     to: str
@@ -560,6 +611,153 @@ async def vega(m: VegaMsg, request: Request):
     except Exception:
         reply = "I lost my train of thought. Ask me again."
     return {"reply": reply[:4000]}
+
+
+# ============================================================ turns: the peek
+def _turn_events(payload: dict) -> list[dict]:
+    """Ordered [response|tool] events of a turn, projected from the verbatim raw."""
+    out = []
+    for m in (payload or {}).get("messages", []):
+        if m.get("type") != "assistant":
+            continue
+        for c in (m.get("message", {}).get("content") or []):
+            if not isinstance(c, dict):
+                continue
+            if c.get("type") == "text" and c.get("text", "").strip():
+                out.append({"kind": "response", "text": c["text"]})
+            elif c.get("type") == "tool_use":
+                inp = c.get("input") or {}
+                brief = inp.get("description") or inp.get("command") or inp.get("to") \
+                    or inp.get("path") or inp.get("thread") or ""
+                out.append({"kind": "tool", "name": c.get("name", "?"),
+                            "brief": str(brief)[:160]})
+    return out
+
+
+def _subtree_agents(prefix: str) -> list[str]:
+    """Leaf agents whose composite path starts with the given tree path."""
+    want = [p for p in prefix.split("/") if p]
+    return [a for a, m in agent_meta().items()
+            if m["group_path"][:len(want)] == want]
+
+
+@app.get("/api/turns")
+async def turns_list(agent: str | None = None, thread: str | None = None,
+                     subtree: str | None = None, limit: int = 60,
+                     before_id: int | None = None):
+    limit = min(limit, 200)
+    cond, args = [], []
+
+    def arg(v):
+        args.append(v)
+        return f"${len(args)}"
+    if agent:
+        cond.append(f"t.agent = {arg(agent)}")
+    if subtree is not None:
+        names = _subtree_agents(subtree)
+        if not names:
+            return []
+        cond.append(f"t.agent = ANY({arg(names)})")
+    if thread:
+        ph = arg(thread)
+        cond.append(f"""(EXISTS (SELECT 1 FROM messages mi WHERE mi.id = t.input_msg_id
+                          AND mi.thread = {ph})
+                      OR EXISTS (SELECT 1 FROM messages mo WHERE mo.turn_id = t.id
+                          AND mo.thread = {ph}))""")
+    if before_id:
+        cond.append(f"t.id < {arg(before_id)}")
+    where = ("WHERE " + " AND ".join(cond)) if cond else ""
+    rows = await pool.fetch(f"""
+        SELECT t.id, t.agent, t.started_at, t.ended_at, t.duration_ms, t.source,
+               t.num_responses, t.num_tools, t.num_steps, t.char_count,
+               t.tokens_in, t.tokens_out, t.model, t.input_msg_id,
+               left(t.input_prompt, 500) AS input_prompt,
+               v.response_text,
+               (SELECT array_agg(mo.id) FROM messages mo WHERE mo.turn_id = t.id) AS output_msg_ids
+        FROM turns t JOIN turns_v v ON v.id = t.id
+        {where} ORDER BY t.id DESC LIMIT {limit}""", *args)
+    return [{**dict(r), "started_at": r["started_at"].isoformat() if r["started_at"] else None,
+             "ended_at": r["ended_at"].isoformat()} for r in rows][::-1]
+
+
+@app.get("/api/turns/{turn_id}")
+async def turn_detail(turn_id: int):
+    t = await pool.fetchrow("SELECT * FROM turns WHERE id = $1", turn_id)
+    if not t:
+        return Response(status_code=404)
+    payload = json.loads(t["raw_payload"])
+    trigger = await pool.fetchrow(
+        "SELECT id, from_agent, from_org, to_agent, thread, intent, body FROM messages WHERE id = $1",
+        t["input_msg_id"]) if t["input_msg_id"] else None
+    outputs = await pool.fetch(
+        "SELECT id, to_agent, to_org, thread, intent, left(body, 300) AS body "
+        "FROM messages WHERE turn_id = $1 ORDER BY id", turn_id)
+    return {"id": t["id"], "agent": t["agent"], "source": t["source"],
+            "started_at": t["started_at"].isoformat() if t["started_at"] else None,
+            "ended_at": t["ended_at"].isoformat(), "duration_ms": t["duration_ms"],
+            "tokens_in": t["tokens_in"], "tokens_out": t["tokens_out"], "model": t["model"],
+            "input_prompt": t["input_prompt"], "trigger": dict(trigger) if trigger else None,
+            "outputs": [dict(o) for o in outputs], "events": _turn_events(payload)}
+
+
+# ============================================================ profiles
+@app.get("/api/agents/{name}/profile")
+async def agent_profile(name: str):
+    meta = agent_meta()
+    if name not in meta:
+        return Response(status_code=404)
+    hits = [p for p in (REPO / "agents").rglob(f"{name}.md")
+            if not p.name.endswith(".example.md")
+            and not any(x.endswith(".example") for x in p.relative_to(REPO / "agents").parts)]
+    if not hits:
+        return Response(status_code=404)
+    charter = hits[0]
+    text = charter.read_text()
+    # italic one-liner directly under the title = the bio
+    bio = None
+    for line in text.splitlines()[1:6]:
+        s = line.strip()
+        if s.startswith("*") and s.endswith("*") and len(s) > 2:
+            bio = s.strip("*").strip()
+            break
+    # ## headings = profile sections (CORE Law included — it's public-to-owner anyway)
+    sections = []
+    for m in re.finditer(r"^## (.+)$", text, re.M):
+        start = m.end()
+        nxt = text.find("\n## ", start)
+        sections.append({"heading": m.group(1).strip(),
+                         "body": text[start:nxt if nxt > 0 else len(text)].strip()})
+    avatar = next((p for p in charter.parent.glob("avatar.*")
+                   if charter.parent.name == name), None)
+    stats = await pool.fetchrow("""
+        SELECT (SELECT count(*) FROM turns WHERE agent=$1)                        AS turns,
+               (SELECT coalesce(sum(tokens_out),0) FROM turns WHERE agent=$1)     AS tokens_out,
+               (SELECT count(*) FROM messages WHERE from_agent=$1 AND from_org='local') AS messages_sent,
+               (SELECT count(*) FROM steps WHERE agent=$1)                        AS steps,
+               (SELECT min(ts) FROM steps WHERE agent=$1)                         AS first_seen""", name)
+    # identity history: this self's commits in the private log
+    log_path = str(charter.parent.relative_to(REPO / "agents")) \
+        if charter.parent.name == name else str(charter.relative_to(REPO / "agents"))
+    hist = subprocess.run(
+        ["git", "log", "--format=%h|%an|%ad|%s", "--date=format:%Y-%m-%d %H:%M", "-15",
+         "--", log_path],
+        cwd=REPO / "agents", capture_output=True, text=True).stdout.strip()
+    history = [dict(zip(("hash", "author", "date", "subject"), l.split("|", 3)))
+               for l in hist.splitlines() if l]
+    return {"agent": name, "bio": bio, "sections": sections,
+            "avatar": bool(avatar), "group_path": meta[name]["group_path"],
+            "rank": meta[name]["rank"],
+            "stats": {**{k: (v.isoformat() if hasattr(v, "isoformat") else v)
+                         for k, v in dict(stats).items()}},
+            "history": history}
+
+
+@app.get("/api/agents/{name}/avatar")
+async def agent_avatar(name: str):
+    for p in (REPO / "agents").rglob("avatar.*"):
+        if p.parent.name == name:
+            return FileResponse(p, headers={"cache-control": "max-age=300"})
+    return Response(status_code=404)
 
 
 # ============================================================ system monitor

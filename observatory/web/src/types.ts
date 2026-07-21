@@ -28,6 +28,8 @@ export interface AgentRow {
      chain arrow). Nested paths render as nested organs. Owner-only in practice. */
   group_path?: string[]
   rank?: number | null
+  /* actual model from the agent's latest turn (charter Model: pin as fallback) */
+  model?: string | null
 }
 
 export interface Msg {
@@ -41,6 +43,7 @@ export interface Msg {
   intent: string | null
   body: string
   status: string | null
+  turn_id?: number | null // the turn that produced this message (peel-open)
 }
 
 export interface ThreadInfo {
@@ -260,3 +263,59 @@ export interface QueryResult {
   error?: string
 }
 export interface SqlNode { name: string; path: string; dir: boolean; children?: SqlNode[] }
+
+/* the Turn atom (plan-2 §5) — one contract for Theatre, Threads, Profiles */
+export interface Turn {
+  id: number
+  agent: string
+  started_at: string | null
+  ended_at: string
+  duration_ms: number | null
+  source: string | null
+  num_responses: number
+  num_tools: number
+  num_steps: number
+  char_count: number
+  tokens_in: number
+  tokens_out: number
+  model: string | null
+  input_msg_id: number | null
+  input_prompt: string | null
+  response_text: string | null
+  output_msg_ids: number[] | null
+}
+
+export interface TurnEvent {
+  kind: 'response' | 'tool'
+  text?: string
+  name?: string
+  brief?: string
+}
+
+export interface TurnDetail {
+  id: number
+  agent: string
+  source: string | null
+  started_at: string | null
+  ended_at: string
+  duration_ms: number | null
+  tokens_in: number
+  tokens_out: number
+  model: string | null
+  input_prompt: string | null
+  trigger: { id: number; from_agent: string; from_org: string; to_agent: string; thread: string | null; intent: string | null; body: string } | null
+  outputs: { id: number; to_agent: string; to_org: string; thread: string | null; intent: string | null; body: string }[]
+  events: TurnEvent[]
+}
+
+/* GET /api/agents/{name}/profile — the self, parsed from the charter md */
+export interface Profile {
+  agent: string
+  bio: string | null
+  sections: { heading: string; body: string }[]
+  avatar: boolean
+  group_path: string[]
+  rank: number | null
+  stats: { turns: number; tokens_out: number; messages_sent: number; steps: number; first_seen: string | null }
+  history: { hash: string; author: string; date: string; subject: string }[]
+}

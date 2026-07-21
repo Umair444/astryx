@@ -6,13 +6,20 @@
 set -euo pipefail
 ROOT=/home/umair/astryx
 AGENT=${1:?usage: spawn.sh <agent>}
-# A charter is agents/<name>.md at any depth: composites are directories, so a
-# member lives at agents/<group>/<name>.md (nesting allowed). The stem is the
-# canonical name; the enclosing folders are its composite path (rendered by the
-# observatory, not needed here). Examples are never spawnable.
-CHARTER=$(find "$ROOT/agents" -type f -name "$AGENT.md" \
-  -not -name '*.example.md' -not -path '*.example/*' | head -1)
-[ -n "$CHARTER" ] && [ -f "$CHARTER" ] || { echo "no charter for '$AGENT' under agents/"; exit 1; }
+# A charter is agents/<name>.md at any depth: composites are directories, a
+# self-form agent is agents/<name>/<name>.md, members live inside composite dirs
+# (nesting allowed). The stem is the canonical name and a GLOBAL key (plan-2 §4):
+# a duplicated stem is a corrupted registry and refuses to spawn — the tree is
+# the registry, so the collision must be resolved in the tree, not raced past.
+# Tombstoned charters (## Tombstone, owner-authored) hold their name forever but
+# never spawn. Examples and reserved names are never charters.
+MATCHES=$(find "$ROOT/agents" -type f -name "$AGENT.md" \
+  -not -name '*.example.md' -not -path '*.example/*' -not -path '*/.git/*')
+N=$(echo "$MATCHES" | grep -c . || true)
+[ "$N" -ge 1 ] || { echo "no charter for '$AGENT' under agents/"; exit 1; }
+[ "$N" -eq 1 ] || { echo "REGISTRY COLLISION: '$AGENT' has $N charters:"; echo "$MATCHES"; exit 1; }
+CHARTER=$MATCHES
+grep -q '^## Tombstone' "$CHARTER" && { echo "'$AGENT' is tombstoned — the name rests"; exit 1; }
 SESS="ax-$AGENT"
 HOME_D="$ROOT/homes/$AGENT"
 NODE=/home/umair/.local/share/mise/installs/node/26.2.0/bin/node

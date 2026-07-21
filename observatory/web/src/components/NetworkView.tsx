@@ -3,7 +3,7 @@ import { ScrollArea } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { ReactFlow, Background, MarkerType, Position, type Node, type Edge } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { agentColor, agentColorA, avatarInitial, displayName, fmtTokens } from '../api'
+import { agentColor, agentColorA, avatarInitial, displayName, fmtTokens, shortModel } from '../api'
 import { useStore } from '../store'
 import type { AgentRow } from '../types'
 
@@ -106,6 +106,7 @@ function agentEl(
   lastKind: string | null,
   tokens: number,
   color: string,
+  model: string | null | undefined,
   onClick: () => void,
 ) {
   return (
@@ -125,7 +126,7 @@ function agentEl(
         {displayName(name)}
       </div>
       <div className="text-[10px] text-ink-mute truncate font-mono">
-        {lastKind ?? '—'} · {fmtTokens(tokens)} tok
+        {lastKind ?? '—'} · {fmtTokens(tokens)} tok{model ? ` · ${shortModel(model)}` : ''}
       </div>
     </button>
   )
@@ -213,7 +214,7 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
       id: a.agent,
       position: pos,
       data: {
-        label: agentEl(a.agent, a.alive, a.last_kind, a.tokens_in + a.tokens_out, agentColor(a.agent), () =>
+        label: agentEl(a.agent, a.alive, a.last_kind, a.tokens_in + a.tokens_out, agentColor(a.agent), a.model, () =>
           onOpenAgent(a.agent),
         ),
       },
