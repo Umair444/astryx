@@ -45,6 +45,11 @@ SESSION_DB = f"{_cfg.get('WA_DATA_CTR', '/data')}/store/session.db"
 
 mcp = FastMCP("astryx-contacts")
 
+# Never echo the caller's id/query back: it may itself be a phone number or a
+# number-bearing jid, and the tool result is logged to the RAG-reachable step
+# stream. Unknowns get a fixed, numberless answer.
+_UNKNOWN = "unknown sender — not in the owner's known contacts"
+
 
 def _wacli(*args: str) -> list[dict]:
     r = subprocess.run([*WA, "contacts", *args, "--json"],
@@ -133,7 +138,7 @@ def contact_search(query: str) -> str:
     stranger. (Numbers are personal-tier and are never returned.)"""
     rows = _wacli("search", query)
     if not rows:
-        return f"no contact matches '{query}'"
+        return "no matching contact"
     seen, names = set(), []
     for c in rows[:20]:
         n = _label(c)
@@ -151,7 +156,7 @@ def contact_resolve(id: str) -> str:
     never returned."""
     key = id.split("@")[0].split(":")[0]  # strip @lid/@s.whatsapp.net and :device
     if not key:
-        return f"{id} is not in the owner's known contacts (unknown sender)"
+        return _UNKNOWN
     # 1) the contact store already knows this jid or number
     hit = _find(id, key)
     if hit:
@@ -165,7 +170,7 @@ def contact_resolve(id: str) -> str:
                 return _label(hit)
             return ("recognized WhatsApp device, but the number behind this @lid "
                     "isn't a named contact (unknown sender)")
-    return f"{id} is not in the owner's known contacts (unknown sender)"
+    return _UNKNOWN
 
 
 if __name__ == "__main__":
