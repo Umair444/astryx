@@ -16,6 +16,12 @@ isolated subprocess. ctx gives a check its world:
     ctx.http(url)               a page or API body, 15s timeout
     ctx.state                   dict persisted between runs: baselines, seen
                                 ids, yesterday's numbers. Mutate it freely.
+
+The pulse is AT-LEAST-ONCE: a firing's side effect (a send, a row it writes) can
+run more than once if the run is interrupted between the effect and the ctx.state
+write-back. ctx.state is safe for throttling and baselines; for a side effect that
+must not duplicate, dedup on durable state — query the effect itself, or a column —
+not ctx.state.
 """
 
 _registry: list[dict] = []
