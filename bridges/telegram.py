@@ -35,7 +35,8 @@ import asyncpg
 import httpx
 from fastapi import FastAPI
 
-from .common import (HERE, describe_media, env, listen, load_routes, media_path,
+from .common import (HERE, address_agent, describe_media, env, listen,
+                     load_routes, media_path,
                      record_poll, split_files, split_polls, step_line,
                      update_poll_votes, vote_body, wire_insert)
 from .providers.telegram import TelegramProvider
@@ -191,11 +192,7 @@ async def on_message(msg: dict):
             return
         who = f"tg-{uid}"
         text = f"{sender.get('first_name') or uid}: {text}"
-    agent = route["agent"]
-    if text.startswith("@"):                       # "@forge fix x" addresses an agent
-        head, _, rest = text.partition(" ")
-        if rest and head[1:].isalnum():
-            agent, text = head[1:].lower(), rest
+    agent, text = address_agent(text, route["agent"])
     await wire_insert(pool, who, "telegram", agent, f"tg:{chat}", "chat", text)
     if route.get("live_steps") and trusted:
         jobs[agent] = {"chat": chat, "ph_id": None, "sent": ""}

@@ -40,7 +40,8 @@ from pathlib import Path
 import asyncpg
 from fastapi import FastAPI, Request, Response
 
-from .common import (HERE, MEDIA_DIR, describe_media, env, listen, load_routes,
+from .common import (HERE, MEDIA_DIR, address_agent, describe_media,
+                     env, listen, load_routes,
                      record_poll, split_files, split_polls, step_line,
                      update_poll_votes, vote_body, vote_changes, wire_insert)
 from .providers.whatsapp import WhatsAppProvider
@@ -286,11 +287,7 @@ async def hook(request: Request):
         sender = f"wa-{digits or 'unknown'}"
         text = f"{m.get('PushName') or sender_jid}: {text}"
 
-    agent = route["agent"]
-    if text.startswith("@"):                      # "@forge fix x" addresses an agent
-        head, _, rest = text.partition(" ")
-        if rest and head[1:].isalnum():
-            agent, text = head[1:].lower(), rest
+    agent, text = address_agent(text, route["agent"])
 
     await wire_insert(pool, sender, "whatsapp", agent, f"wa:{chat}", "chat", text)
 

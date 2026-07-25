@@ -67,6 +67,26 @@ def load_routes(path: Path) -> list[dict]:
         return []
 
 
+AGENTS_DIR = REPO / "agents"
+_MENTION = re.compile(r"(?:^|\s)@([a-z][a-z0-9_-]*)", re.I)
+
+
+def address_agent(text: str, default: str) -> tuple[str, str]:
+    """Route a message to an @mentioned agent, wherever the mention sits.
+
+    "Hi @canopus" and "@canopus hi" both reach canopus (a human mentions naturally,
+    not always at the start); the mention token is stripped from the delivered text.
+    The @ must open a word, so "a@b.com" is not a mention, and an @name with no
+    matching charter falls back to the default surface agent — a typo never eats
+    the message. Returns (agent, cleaned_text)."""
+    for m in _MENTION.finditer(text):
+        name = m.group(1).lower()
+        if any(AGENTS_DIR.rglob(f"{name}.md")):
+            cleaned = (text[:m.start()] + " " + text[m.end():]).strip()
+            return name, cleaned or text
+    return default, text
+
+
 # ---------------------------------------------------------------------- embeds
 def split_files(text: str) -> tuple[str, list[str]]:
     """Pull [[file:/abs/path]] tokens out of an outbound body."""
