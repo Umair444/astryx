@@ -28,7 +28,9 @@ class Ctx:
             self._conn = psycopg.connect(DSN, autocommit=True)
         with self._conn.cursor() as cur:
             cur.execute(query, params)
-            cols = [d.name for d in cur.description] if cur.description else []
+            if cur.description is None:      # INSERT/UPDATE/etc. — no result set
+                return []
+            cols = [d.name for d in cur.description]
             return [dict(zip(cols, r)) for r in cur.fetchall()]
 
     def http(self, url, **kw):
