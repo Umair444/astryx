@@ -81,6 +81,26 @@ async def hook_edit(url: str, msg_id: str, text: str) -> bool:
         return r.status_code < 300
 
 
+async def hook_file(url: str, agent: str, path: Path) -> str | None:
+    """Post a file through the webhook, so media carries the agent's name too."""
+    async with httpx.AsyncClient() as hx:
+        r = await hx.post(url, params={"wait": "true"},
+                          data={"payload_json": json.dumps({"username": display_name(agent)})},
+                          files={"files[0]": (path.name, path.read_bytes())}, timeout=120)
+        return (r.json() or {}).get("id") if r.status_code < 300 else None
+
+
+async def hook_poll(url: str, agent: str, q: str, opts: list, multi: int) -> str | None:
+    """Post a poll through the webhook, under the agent's name."""
+    payload = {"username": display_name(agent),
+               "poll": {"question": {"text": q[:300]},
+                        "answers": [{"poll_media": {"text": o[:55]}} for o in opts],
+                        "duration": 168, "allow_multiselect": multi > 1}}
+    async with httpx.AsyncClient() as hx:
+        r = await hx.post(url, params={"wait": "true"}, json=payload, timeout=60)
+        return (r.json() or {}).get("id") if r.status_code < 300 else None
+
+
 # ------------------------------------------------------------------- outbound
 async def deliver(row):
     thread = row["thread"] or ""
@@ -119,19 +139,22 @@ async def deliver(row):
         for f in files:
             p = Path(f)
             if p.is_file():
-                try:
-                    await ch.send(file=discord.File(str(p)))
+                try:                               # webhook so media carries the agent's name
+                    if not (hook and await hook_file(hook, agent, p)):
+                        await ch.send(file=discord.File(str(p)))
                 except Exception:
                     await ch.send(f"(file {p.name} failed to send)")
         for q, opts, multi in polls:
             try:
-                poll = discord.Poll(question=q[:300],
-                                    duration=datetime.timedelta(days=7),
-                                    multiple=multi > 1)
-                for o in opts:
-                    poll.add_answer(text=o[:55])
-                msg = await ch.send(poll=poll)
-                await record_poll(pool, str(msg.id), f"dc:{cid}", agent, q, opts, multi)
+                pid = await hook_poll(hook, agent, q, opts, multi) if hook else None
+                if not pid:                        # webhook poll unsupported/failed: bot poll
+                    poll = discord.Poll(question=q[:300],
+                                        duration=datetime.timedelta(days=7),
+                                        multiple=multi > 1)
+                    for o in opts:
+                        poll.add_answer(text=o[:55])
+                    pid = str((await ch.send(poll=poll)).id)
+                await record_poll(pool, pid, f"dc:{cid}", agent, q, opts, multi)
             except Exception as e:
                 await ch.send(f"(poll failed: {e})")
     except Exception as e:
