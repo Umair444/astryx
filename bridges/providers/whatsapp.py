@@ -1,4 +1,4 @@
-"""WhatsApp provider — the one home for the wacli-backed channel logic.
+"""WhatsApp provider — wacli-backed implementation of the channel protocol.
 
 Wraps the wacli CLI (run inside the wacli-sync container). This is the single
 place the send/contact logic lives; the bridge daemon and the MCP channel tools

@@ -46,7 +46,7 @@ from .common import (HERE, MEDIA_DIR, route_target, describe_media,
                      update_poll_votes, vote_body, vote_changes, wire_insert)
 from .providers.whatsapp import WhatsAppProvider
 
-PROVIDER = WhatsAppProvider()          # the one home for the wacli send logic
+PROVIDER = WhatsAppProvider()          # wacli send logic
 
 DSN = env("ASTRYX_DSN")
 SECRET = env("WA_WEBHOOK_SECRET").encode()
@@ -79,8 +79,7 @@ async def wacli(*args: str) -> str:
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     out, err = await asyncio.wait_for(proc.communicate(), timeout=60)
     if proc.returncode != 0:
-        # a failed call must FAIL, loudly: silent exit-1s cost us a night of
-        # invisible replies (the store-lock incident)
+        # a failed call must fail loudly; a silent non-zero exit hides a lost send
         raise RuntimeError(f"wacli {' '.join(args[:2])}: "
                            f"{err.decode(errors='replace').strip()[:200]}")
     return out.decode(errors="replace")
@@ -274,9 +273,8 @@ async def hook(request: Request):
         got = await describe_media(got, media) if isinstance(got, Path) else got
         text = f"{text}\n{got}" if text else got
     if not text:
-        # Reactions arrive as non-text events; wacli's payload shape for them is not
-        # yet confirmed. Log one when it appears so the handler can be wired exactly
-        # (the cross-channel reaction standard; Discord/Telegram already covered).
+        # Reactions arrive as non-text events; wacli's payload shape isn't confirmed
+        # yet — log one so the handler can be wired to the real shape.
         blob = json.dumps(m)
         if "eact" in blob:
             print(f"wa reaction webhook — keys={list(m)} payload={blob[:400]}", flush=True)
@@ -391,7 +389,7 @@ async def deliver(row):
             except Exception:
                 pass
         if text and not sent:
-            res = await PROVIDER.send(chat, text)  # the one place the send lives
+            res = await PROVIDER.send(chat, text)
             ok, message_id, error = res.ok, res.message_id, res.error
         await send_files(chat, files)
         for q, opts, multi in polls:

@@ -35,13 +35,13 @@ import asyncpg
 import httpx
 from fastapi import FastAPI
 
-from .common import (HERE, reaction_signal, route_target, describe_media, env, listen,
+from .common import (HERE, reacted_message, reaction_signal, route_target, describe_media, env, listen,
                      load_routes, media_path,
                      record_poll, split_files, split_polls, step_line,
                      update_poll_votes, vote_body, wire_insert)
 from .providers.telegram import TelegramProvider
 
-PROVIDER = TelegramProvider()          # the one home for the Bot API send logic
+PROVIDER = TelegramProvider()          # Bot API send logic
 
 DSN = env("ASTRYX_DSN")
 TOKEN = env("TG_BOT_TOKEN")
@@ -92,7 +92,7 @@ async def deliver(row):
             except Exception:
                 pass
         if text and not sent:
-            res = await PROVIDER.send(chat, text)  # the one place the send lives
+            res = await PROVIDER.send(chat, text)
             ok, message_id, error = res.ok, res.message_id, res.error
         for f in files:
             p = Path(f)
@@ -243,12 +243,13 @@ async def on_message_reaction(mr: dict):
     if not trusted and not route.get("open"):
         return
     new = mr.get("new_reaction") or []
-    if not new:                                    # reaction removed, not added
+    if not new:                                    # reaction cleared, not added
         return
     emoji = " ".join(r.get("emoji", "") for r in new if r.get("type") == "emoji") or "reacted"
     who = "owner" if trusted else f"tg-{uid}"
-    await reaction_signal(pool, "telegram", f"tg:{chat}", who,
-                          emoji, str(mr.get("message_id", "")), route["agent"])
+    agent, snippet = await reacted_message(pool, f"tg:{chat}", mr.get("message_id"))
+    await reaction_signal(pool, "telegram", f"tg:{chat}", who, emoji,
+                          agent or route["agent"], snippet)
 
 
 async def poll_updates():

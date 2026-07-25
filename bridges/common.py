@@ -4,17 +4,21 @@ Scope: the chat-bridge family (whatsapp, telegram, discord) ONLY. gateway.py
 (federation door) and geoloc.py (sensor intake) are deliberately independent
 loose scripts — folding them in would couple the federation/sensor graphs to
 the chat+ASR dependency tree for ~10 shared lines. Duplication beats coupling
-at that size (plan-14 review, affirmed).
+at that size.
 
 A chat bridge translates ONE platform to the wire; anything that isn't
-platform translation lives here. The org standard (owner decree 2026-07-25):
+platform translation lives here:
 
   config       env() reads .env; load_routes() re-reads a routes file per use
+  routing      address_agent / route_target — deliver to the @mentioned agent, or
+               the last agent tagged on the thread (sticky); agent_exists() checks
+               the agents/ tree
+  reactions    reaction_signal — a reaction becomes a wire signal to the agent whose
+               message was reacted to; the bridge supplies who + what (platform truth)
   embeds       split_files / split_polls — the [[file:]] and [[poll:]] grammar
   polls        one `polls` table for all surfaces (chat prefixed wa:/tg:/dc:),
                record on send, votes refreshed per event, DELTA reporting
-               (never match webhook sender ids against store voter lists —
-               the lid-vs-number lesson)
+               (never match webhook sender ids against store voter lists)
   media        describe_media() — bridge-side processing exists ONLY for
                senses agents lack: audio gets a transcript inline (models
                can't hear); images get clean delivery (agents see natively)
@@ -67,6 +71,7 @@ def load_routes(path: Path) -> list[dict]:
         return []
 
 
+# --------------------------------------------------------------------- routing
 AGENTS_DIR = REPO / "agents"
 _MENTION = re.compile(r"(?:^|\s)@([a-z][a-z0-9_-]*)", re.I)
 
@@ -113,22 +118,6 @@ async def route_target(pool, thread: str, text: str, default: str) -> tuple[str,
     return default, text
 
 
-async def reaction_signal(pool, channel: str, thread: str, reactor: str,
-                          emoji: str, target_msg_id: str, default_agent: str) -> None:
-    """Deliver a reaction as a lightweight wire signal — the standard every channel
-    shares. It reaches the agent whose message was reacted to (matched by the
-    delivery id we stored when we sent it), falling back to the channel's default.
-    Each bridge just maps its platform's reaction event onto this one call."""
-    rec = await pool.fetchrow(
-        "SELECT from_agent, body FROM messages WHERE thread=$1 "
-        "AND delivery->>'message_id'=$2 ORDER BY id DESC LIMIT 1",
-        thread, str(target_msg_id))
-    agent = (rec and rec["from_agent"]) or default_agent
-    snippet = ((rec["body"] if rec else "") or "your message").strip()[:80]
-    await wire_insert(pool, reactor, channel, agent, thread, "reaction",
-                      f'reacted {emoji} to: "{snippet}"')
-
-
 # ---------------------------------------------------------------------- embeds
 def split_files(text: str) -> tuple[str, list[str]]:
     """Pull [[file:/abs/path]] tokens out of an outbound body."""
@@ -165,6 +154,27 @@ async def wire_insert(pool, from_agent: str, from_org: str, to_agent: str,
     await pool.execute(
         "INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body) "
         "VALUES ($1,$2,$3,$4,$5,$6)", from_agent, from_org, to_agent, thread, intent, body)
+
+
+# -------------------------------------------------------------------- reactions
+async def reacted_message(pool, thread: str, target_msg_id: str) -> tuple:
+    """(agent, snippet) for the message a reaction targets, from the delivery id we
+    stored when we sent it — or (None, None) if we never recorded it. For channels
+    that can't fetch the message back from the platform."""
+    rec = await pool.fetchrow(
+        "SELECT from_agent, body FROM messages WHERE thread=$1 "
+        "AND delivery->>'message_id'=$2 ORDER BY id DESC LIMIT 1", thread, str(target_msg_id))
+    return (rec["from_agent"], rec["body"]) if rec else (None, None)
+
+
+async def reaction_signal(pool, channel: str, thread: str, reactor: str,
+                          emoji: str, agent: str, snippet: str | None) -> None:
+    """Deliver a reaction as a wire signal to `agent`, quoting the message reacted
+    to. A pure formatter: the bridge resolves who sent the message and what it said
+    from its platform (the source of truth), since that differs per channel."""
+    quoted = (snippet or "a message").strip().replace("\n", " ")[:100]
+    await wire_insert(pool, reactor, channel, agent, thread, "reaction",
+                      f'reacted {emoji} to: "{quoted}"')
 
 
 # ----------------------------------------------------------------------- polls

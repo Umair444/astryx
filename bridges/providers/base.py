@@ -1,4 +1,4 @@
-"""Channel provider protocol — the law every channel obeys.
+"""Channel provider protocol — the uniform interface each channel implements.
 
 A provider is the single, uniform interface to one messaging platform
 (WhatsApp, Telegram, Discord; Slack and others slot in the same way). Both
