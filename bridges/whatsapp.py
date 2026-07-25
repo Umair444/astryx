@@ -1,28 +1,29 @@
 """astryx whatsapp bridge — WhatsApp as an owner surface on the wire.
 
-One daemon, one translation, zero new concepts:
+Platform translation ONLY; everything shared lives in common.py:
 
-  inbound   wacli webhook -> signed row INSERT into messages -> native channel
-            delivery wakes the agent (the wire's own doorbell, nothing else)
-  outbound  agent `send`s to the surface identity -> global wire doorbell ->
-            this bridge -> wacli send -> row marked delivered
-  progress  the agent's own hooks (PreToolUse, PostToolUse, Stop) write every
-            step to the wire; this bridge renders that stream to the chat as a
-            typing indicator plus one message it edits on every hook event,
-            until the real reply replaces it. Purely event-driven: a hook
-            firing is the only clock. Edits are serialized per chat and
-            coalesced to the latest step, so WhatsApp itself provides the
-            pacing, not a timer in this file.
-  media     inbound attachments are downloaded and their host path is put in
-            the body, so agents can open them. Outbound, an agent embeds
-            [[file:/abs/path]] in a reply and the bridge ships the file.
+  inbound   wacli webhook (HMAC-signed) -> row INSERT into messages -> native
+            channel delivery wakes the agent
+  outbound  agent `send`s to the surface identity -> wire doorbell -> wacli
+            send -> row marked delivered. WhatsApp is the owner's HOME surface:
+            un-threaded owner-bound messages deliver here (tg:/dc: threads are
+            the other bridges' and are skipped).
+  progress  the agent's hook steps render as a typing indicator plus one
+            message edited per event. Purely event-driven; edits serialized
+            per job and coalesced to the latest step (WhatsApp round-trip is
+            the pacing, not a timer). Edits only work ~15 min — deliver()
+            falls back to a fresh message.
+  media     inbound attachments land in media/; audio arrives transcribed.
+            Outbound [[file:/abs/path]] ships the file via the store outbox.
+  polls     [[poll:]] -> wacli send poll; creations AND votes recorded in the
+            shared `polls` table whoever sent them (FromMe included — a vote
+            from the linked phone must still count); votes wake the ASKING
+            agent with the delta.
 
-Config (never in the repo): .env for secrets and paths, routes.json for chats.
-A route maps one WhatsApp chat to one agent. Senders listed in trusted_jids
-write as `owner`; anyone else writes as `wa-<number>` with their name prefixed
-in the body. Disabled routes are recorded but inert.
+Config: .env for secrets, routes-whatsapp.json for chats (trusted_jids =
+sender JIDs stamped `owner`; others are `wa-<number>` on open routes).
 
-Run: uvicorn whatsapp:app --host 172.17.0.1 --port 8477   (from bridges/)
+Run: uvicorn bridges.whatsapp:app --host 172.17.0.1 --port 8477  (repo root)
 """
 
 import asyncio
@@ -39,27 +40,20 @@ from pathlib import Path
 import asyncpg
 from fastapi import FastAPI, Request, Response
 
-HERE = Path(__file__).resolve().parent
-REPO = HERE.parent
+from .common import (HERE, MEDIA_DIR, describe_media, env, listen, load_routes,
+                     record_poll, split_files, split_polls, step_line,
+                     update_poll_votes, vote_body, vote_changes, wire_insert)
+from .providers.whatsapp import WhatsAppProvider
 
-def _env(key: str, default: str = "") -> str:
-    if os.environ.get(key):
-        return os.environ[key]
-    env = REPO / ".env"
-    if env.is_file():
-        for line in env.read_text().splitlines():
-            if line.startswith(key + "="):
-                return line.split("=", 1)[1].strip()
-    return default
+PROVIDER = WhatsAppProvider()          # the one home for the wacli send logic
 
-DSN = _env("ASTRYX_DSN")
-SECRET = _env("WA_WEBHOOK_SECRET").encode()
-WA_CLI = shlex.split(_env("WA_CLI", "docker exec wacli-sync wacli"))
-DATA_HOST = _env("WA_DATA_HOST")      # wacli store dir on the host (media on/off switch)
-DATA_CTR = _env("WA_DATA_CTR", "/data")   # same dir as the wacli process sees it
+DSN = env("ASTRYX_DSN")
+SECRET = env("WA_WEBHOOK_SECRET").encode()
+WA_CLI = shlex.split(env("WA_CLI", "docker exec wacli-sync wacli"))
+DATA_HOST = env("WA_DATA_HOST")       # wacli store dir on the host (media on/off switch)
+DATA_CTR = env("WA_DATA_CTR", "/data")    # same dir as the wacli process sees it
 WA_DOCKER = WA_CLI[2] if WA_CLI[:2] == ["docker", "exec"] else ""
-MEDIA_DIR = REPO / "media"            # copied-out inbound attachments (gitignored)
-ROUTES_FILE = HERE / "routes.json"
+ROUTES_FILE = HERE / "routes-whatsapp.json"
 
 JOB_TIMEOUT = 1800    # lifecycle GC only: forget a job nobody answered in 30 min
 
@@ -67,15 +61,9 @@ pool: asyncpg.Pool | None = None
 seen_msgids: dict[str, float] = {}       # webhook dedup (wacli retries)
 jobs: dict[str, dict] = {}               # agent -> live progress job
 
-MARK = {"tool": "◌", "tool_done": "●", "error": "⚠", "response": "◌"}
-
 
 def routes() -> list[dict]:
-    """Re-read per request so routes can be edited live, no restart."""
-    try:
-        return [r for r in json.loads(ROUTES_FILE.read_text()) if r.get("enabled")]
-    except Exception:
-        return []
+    return load_routes(ROUTES_FILE)
 
 
 def jid_str(v) -> str:
@@ -115,10 +103,10 @@ def find_id(obj) -> str | None:
 
 
 # ---------------------------------------------------------------------- media
-async def fetch_media(chat: str, msgid: str, media: str) -> str:
-    """Inbound attachment -> host path in the body. sync --download-media already
-    saves every file under store/media/<chat>/<msgid>/, so no second download
-    (and no store-lock contention): we just wait for the file to land."""
+async def fetch_media(chat: str, msgid: str, media: str) -> Path | str:
+    """Inbound attachment -> host Path (or an excuse string). sync
+    --download-media already saves every file under store/media/<chat>/<msgid>/,
+    so no second download (and no store-lock contention): we wait for it."""
     if not DATA_HOST:
         return f"<{media} attached, media dir not configured>"
     rel = f"store/media/{chat.replace('@', '_')}/{msgid}"
@@ -129,7 +117,7 @@ async def fetch_media(chat: str, msgid: str, media: str) -> str:
         except PermissionError:
             files = []
         if files:
-            return f"<{media} attached: {files[0]}>"
+            return files[0]
         if WA_DOCKER:                      # store unreadable from host: copy out
             try:
                 proc = await asyncio.create_subprocess_exec(
@@ -146,24 +134,11 @@ async def fetch_media(chat: str, msgid: str, media: str) -> str:
                             "docker", "exec", WA_DOCKER, "cat", ctr_path, stdout=f)
                         await asyncio.wait_for(proc.wait(), timeout=30)
                     if dst.stat().st_size > 0:
-                        return f"<{media} attached: {dst}>"
+                        return dst
             except Exception:
                 pass
         await asyncio.sleep(1)
     return f"<{media} attached, file never landed in the store>"
-
-
-def split_files(text: str) -> tuple[str, list[str]]:
-    """Pull [[file:/abs/path]] tokens out of an outbound body."""
-    files, keep = [], text
-    while "[[file:" in keep:
-        pre, _, rest = keep.partition("[[file:")
-        path, sep, post = rest.partition("]]")
-        if not sep:
-            break
-        files.append(path.strip())
-        keep = pre + post
-    return keep.strip(), files
 
 
 async def send_files(chat: str, files: list[str]):
@@ -182,6 +157,40 @@ async def send_files(chat: str, files: list[str]):
                         "--file", f"{DATA_CTR}/astryx-outbox/{dst.name}")
         except Exception:
             pass
+
+
+# ---------------------------------------------------------------------- polls
+async def send_poll(chat: str, agent: str, question: str, options: list[str], multi: int):
+    args = ["--json", "send", "poll", "--to", chat, "--question", question]
+    for o in options:
+        args += ["--option", o]
+    if multi != 1:
+        args += ["--multi", str(multi)]
+    pid = find_id(json.loads(await wacli(*args)))
+    if pid:
+        await record_poll(pool, pid, chat, agent, question, options, multi)
+
+
+async def refresh_poll(chat: str, pid: str) -> tuple[dict, dict] | None:
+    """Pull live state from wacli's store and persist it; returns
+    (new_state, previous_votes) for delta reporting."""
+    try:
+        d = (json.loads(await wacli("--json", "poll", "show", "--to", chat,
+                                    "--id", pid)) or {}).get("data")
+    except Exception:
+        d = None
+    if not d:
+        return None
+    await pool.execute(
+        """INSERT INTO polls (msg_id, chat, agent, question, options, multi, votes)
+           VALUES ($1,$2,NULL,$3,$4,$5,'{}')
+           ON CONFLICT (msg_id) DO UPDATE SET question=EXCLUDED.question,
+             options=EXCLUDED.options, multi=EXCLUDED.multi""",
+        pid, chat, d.get("question", ""), json.dumps(d.get("options", [])),
+        d.get("selectable_count", 1) or 1)
+    old = await update_poll_votes(pool, pid, d.get("aggregates", {}),
+                                  d.get("voters", []))
+    return d, old
 
 
 # -------------------------------------------------------------------- inbound
@@ -205,8 +214,6 @@ async def hook(request: Request):
     except json.JSONDecodeError:
         return Response(status_code=400)
 
-    if m.get("FromMe"):
-        return {"ok": True}                       # our own sends echo back; drop
     chat = jid_str(m.get("Chat"))
     route = next((r for r in routes() if r.get("chat") == chat), None)
     if route is None:
@@ -220,11 +227,50 @@ async def hook(request: Request):
         return {"ok": True}
     seen_msgids[msgid] = now
 
+    # ---- polls: bookkeeping runs BEFORE the FromMe drop — a vote cast from the
+    # linked phone itself arrives as FromMe and must still count.
+    pv = m.get("PollVote") or {}
+    if pv.get("PollMessageID"):
+        pid = pv["PollMessageID"]
+        res = await refresh_poll(chat, pid)
+        if res:
+            d, old = res
+            rec = await pool.fetchrow("SELECT agent FROM polls WHERE msg_id=$1", pid)
+            ask = (rec and rec["agent"]) or route["agent"]
+            changes = vote_changes(old, d.get("voters", []))
+            voter_jid = jid_str(m.get("SenderJID"))
+            sender = "owner" if voter_jid in route.get("trusted_jids", []) \
+                else f"wa-{''.join(c for c in voter_jid.split('@')[0] if c.isdigit()) or 'x'}"
+            await wire_insert(pool, sender, "whatsapp", ask, f"wa:{chat}", "poll",
+                              vote_body(d.get("question", "?"), changes,
+                                        d.get("aggregates", {})))
+        return {"ok": True}
+    pc = m.get("Poll") or {}
+    if pc.get("Question") and msgid:
+        # record any poll posted on a routed surface, whoever created it
+        await record_poll(pool, msgid, chat, None, pc.get("Question", ""),
+                          pc.get("Options", []), pc.get("SelectableCount", 1) or 1)
+        if m.get("FromMe"):
+            return {"ok": True}
+        # a human posted a poll at the agent: deliver it as readable chat
+        sender_jid = jid_str(m.get("SenderJID"))
+        await wire_insert(
+            pool,
+            "owner" if sender_jid in route.get("trusted_jids", []) else "wa-x",
+            "whatsapp", route["agent"], f"wa:{chat}", "poll",
+            f'posted a poll ({msgid}): "{pc.get("Question")}" — '
+            + " | ".join(pc.get("Options", [])))
+        return {"ok": True}
+
+    if m.get("FromMe"):
+        return {"ok": True}                       # our own sends echo back; drop
+
     text = (m.get("Text") or "").strip()
     # media rides as a nested object in the webhook payload: Media.Type
     media = ((m.get("Media") or {}).get("Type") or m.get("MediaType") or "").strip()
     if media and msgid:
         got = await fetch_media(chat, msgid, media)
+        got = await describe_media(got, media) if isinstance(got, Path) else got
         text = f"{text}\n{got}" if text else got
     if not text:
         return {"ok": True}
@@ -246,10 +292,7 @@ async def hook(request: Request):
         if rest and head[1:].isalnum():
             agent, text = head[1:].lower(), rest
 
-    await pool.execute(
-        "INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body) "
-        "VALUES ($1, 'whatsapp', $2, $3, 'chat', $4)",
-        sender, agent, f"wa:{chat}", text)
+    await wire_insert(pool, sender, "whatsapp", agent, f"wa:{chat}", "chat", text)
 
     if route.get("live_steps") and trusted:
         jobs[agent] = {"chat": chat, "thread": f"wa:{chat}", "opened": now,
@@ -266,20 +309,20 @@ async def typing(chat: str):
 
 
 # ------------------------------------------------------------------- progress
-async def progress(agent: str, kind: str, step_id: int):
+async def on_step(ev: dict):
     """A hook event landed for an agent with an open job. No clocks here: every
     event updates the target line and pokes the worker; the worker coalesces."""
+    agent = ev.get("agent", "")
     job = jobs.get(agent)
-    if not job or kind == "heartbeat":
+    if not job:
         return
     if time.time() - job["opened"] > JOB_TIMEOUT:
         jobs.pop(agent, None)
         return
-    row = await pool.fetchrow("SELECT content FROM steps WHERE id=$1", step_id)
-    if not row:
+    line = await step_line(pool, int(ev.get("id", 0)), ev.get("kind", ""), agent)
+    if not line:
         return
-    content = "writing a reply" if kind == "response" else row["content"][:140]
-    job["latest"] = f"{MARK.get(kind, '◌')} {agent} · {content}"
+    job["latest"] = line
     if not job["busy"]:
         asyncio.get_event_loop().create_task(worker(agent))
 
@@ -315,10 +358,14 @@ async def worker(agent: str):
 
 # ------------------------------------------------------------------- outbound
 async def deliver(row):
-    """A local agent wrote to a surface identity: send it to WhatsApp."""
+    """Deliver a wire message to WhatsApp and record the outcome in the row's
+    `delivery` field, so a send awaiting this result can read where it landed."""
     thread = row["thread"] or ""
-    chat = thread[3:] if thread.startswith("wa:") else None
-    if chat is None:
+    if thread[:3] in ("tg:", "dc:") or (row["to_agent"] or "")[:3] in ("tg-", "dc-"):
+        return                       # another bridge's surface (telegram/discord)
+    if thread.startswith("wa:"):
+        chat = thread[3:]            # the thread carries the destination
+    else:                            # home surface: route by the sending agent
         route = next((r for r in routes() if r["agent"] == row["from_agent"]), None) \
             or next(iter(routes()), None)
         chat = route and route["chat"]
@@ -326,70 +373,49 @@ async def deliver(row):
         return
     agent = row["from_agent"]
     text, files = split_files(row["body"])
-    job = jobs.pop(agent, None)
-    while job and job["busy"]:                    # let an in-flight edit finish
-        await asyncio.sleep(0.2)
-    sent = False
-    if text and job and job["chat"] == chat and job["ph_id"] and len(text) < 3500:
+    text, polls = split_polls(text, max_options=12)
+    ok, message_id, error = True, None, None
+    try:
+        job = jobs.pop(agent, None)
+        while job and job["busy"]:                # let an in-flight edit finish
+            await asyncio.sleep(0.2)
+        sent = False
+        if text and job and job["chat"] == chat and job["ph_id"] and len(text) < 3500:
+            try:                                  # reuse the live progress bubble
+                await wacli("messages", "edit", "--chat", chat,
+                            "--id", job["ph_id"], "--message", text)
+                message_id, sent = job["ph_id"], True
+            except Exception:
+                pass
+        if text and not sent:
+            res = await PROVIDER.send(chat, text)  # the one place the send lives
+            ok, message_id, error = res.ok, res.message_id, res.error
+        await send_files(chat, files)
+        for q, opts, multi in polls:
+            try:
+                await send_poll(chat, agent, q, opts, multi)
+            except Exception:
+                pass
         try:
-            await wacli("messages", "edit", "--chat", chat,
-                        "--id", job["ph_id"], "--message", text)
-            sent = True
+            await wacli("presence", "paused", "--to", chat)
         except Exception:
             pass
-    if text and not sent:
-        await wacli("send", "text", "--to", chat, "--message", text)
-    await send_files(chat, files)
-    try:
-        await wacli("presence", "paused", "--to", chat)
-    except Exception:
-        pass
+    except Exception as e:
+        ok, error = False, str(e)[:200]
     await pool.execute(
-        "UPDATE messages SET status='delivered', delivered_at=now() WHERE id=$1",
-        row["id"])
+        "UPDATE messages SET status=$2, delivered_at=now(), delivery=$3 WHERE id=$1",
+        row["id"], "delivered" if ok else "dead",
+        json.dumps({"ok": ok, "handle": f"whatsapp:{chat}",
+                    "message_id": message_id, "rendered": text, "error": error}))
 
 
-async def listen_task():
-    while True:
-        try:
-            conn = await asyncpg.connect(DSN)
-            q: asyncio.Queue = asyncio.Queue()
-            for ch in ("astryx_wire", "astryx_steps"):
-                await conn.add_listener(
-                    ch, lambda c, p, chan, payload: q.put_nowait((chan, payload)))
-            conn.add_termination_listener(lambda c: q.put_nowait(("__dead__", "")))
-            while True:
-                try:
-                    chan, payload = await asyncio.wait_for(q.get(), timeout=60)
-                except asyncio.TimeoutError:
-                    if conn.is_closed():
-                        raise ConnectionError("pg lost")
-                    continue
-                if chan == "__dead__":
-                    raise ConnectionError("pg terminated")
-                if chan == "astryx_steps":
-                    try:
-                        ev = json.loads(payload)
-                    except Exception:
-                        continue
-                    await progress(ev.get("agent", ""), ev.get("kind", ""),
-                                   int(ev.get("id", 0)))
-                    continue
-                row = await conn.fetchrow(
-                    "SELECT * FROM messages WHERE id=$1 AND status='pending' "
-                    "AND to_org='local' AND (to_agent='owner' OR to_agent LIKE 'wa-%')",
-                    int(payload))
-                if row:
-                    await deliver(row)
-        except Exception:
-            await asyncio.sleep(5)
-
-
+# ---------------------------------------------------------------------- app
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global pool
     pool = await asyncpg.create_pool(DSN, min_size=1, max_size=2)
-    task = asyncio.create_task(listen_task())
+    task = asyncio.create_task(listen(
+        DSN, "(to_agent='owner' OR to_agent LIKE 'wa-%')", deliver, on_step))
     yield
     task.cancel()
     await pool.close()

@@ -82,9 +82,11 @@ CREATE TABLE IF NOT EXISTS messages (
   sig         text,
   status      text NOT NULL DEFAULT 'pending', -- pending | delivered | dead
   delivered_at timestamptz,
+  delivery    jsonb,                            -- outcome the deliverer wrote back: {ok, handle, message_id, rendered, error}
   turn_id     bigint                            -- the turn that PRODUCED this message (back-filled at Stop)
 );
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS turn_id bigint;   -- migration for pre-turns installs
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivery jsonb;   -- migration: awaitable send reads the deliverer's result here
 CREATE INDEX IF NOT EXISTS messages_inbox ON messages (to_agent, status, id);
 CREATE INDEX IF NOT EXISTS messages_turn  ON messages (turn_id) WHERE turn_id IS NOT NULL;
 DO $$ BEGIN
@@ -214,3 +216,19 @@ CREATE TABLE IF NOT EXISTS triggers (
   UNIQUE (agent, name)
 );
 CREATE INDEX IF NOT EXISTS triggers_due ON triggers (next_fire) WHERE enabled;
+
+-- polls: every WhatsApp poll seen on a routed surface — agent-embedded
+-- ([[poll: q | a | b | multi=N]] in any outbound body), CLI-sent, or
+-- human-posted. votes refreshes from wacli on every vote event, so the row is
+-- always the poll's current truth; agent is the asker (NULL = external).
+CREATE TABLE IF NOT EXISTS polls (
+  msg_id     text PRIMARY KEY,
+  chat       text NOT NULL,
+  agent      text,
+  question   text NOT NULL,
+  options    jsonb NOT NULL DEFAULT '[]',
+  multi      int NOT NULL DEFAULT 1,
+  votes      jsonb NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);

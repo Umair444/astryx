@@ -6,6 +6,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js'
+import { z } from 'zod'
 import pg from 'pg'
 import { readFileSync } from 'node:fs'
 
@@ -17,7 +18,7 @@ const DSN = readFileSync(new URL('../.env', import.meta.url), 'utf8')
 const mcp = new Server(
   { name: 'astryx', version: '0.1.0' },
   {
-    capabilities: { experimental: { 'claude/channel': {} }, tools: {} },
+    capabilities: { experimental: { 'claude/channel': {}, 'claude/channel/permission': {} }, tools: {} },
     instructions:
       `You are the resident agent "${AGENT}" on the ASTRYX wire. ` +
       `Org messages arrive as <channel source="astryx" from="..." thread="..." intent="...">. ` +
@@ -75,7 +76,8 @@ const TOOLS = [
     name: 'query_thread',
     description: 'Read a thread\'s messages from the wire, oldest first. The table is the '
       + 'truth — check thread state here before replying, nudging, or re-asking; your context '
-      + 'window only holds what happened to arrive in it.',
+      + 'window only holds what happened to arrive in it. Bodies are TRUNCATED for scanning; '
+      + 'use read_message for the full text of a specific one.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -83,6 +85,18 @@ const TOOLS = [
         limit:  { type: 'number', description: 'most recent N, default 50, max 200' },
       },
       required: ['thread'],
+    },
+  },
+  {
+    name: 'read_message',
+    description: 'Read ONE wire message in FULL, untruncated — the lossless peek by id. '
+      + 'query_thread/query_steps truncate for scanning; reach here to read a consolidated '
+      + 'design, a long receipt, a federation envelope in its entirety. Bounded single-row '
+      + 'read — this is why you never need psql to read the wire.',
+    inputSchema: {
+      type: 'object',
+      properties: { msg_id: { type: 'number', description: 'the message id' } },
+      required: ['msg_id'],
     },
   },
   {
@@ -147,11 +161,30 @@ async function handleTool(name, a) {
   if (name === 'send') {
     const [toAgent, toOrg = 'local'] = String(a.to).split('@')
     const thread = a.thread || `t-${Date.now().toString(36)}`
-    await pool.query(
+    const ins = await pool.query(
       `INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, intent, body)
-       VALUES ($1,'local',$2,$3,$4,$5,$6)`,
+       VALUES ($1,'local',$2,$3,$4,$5,$6) RETURNING id`,
       [AGENT, toAgent, toOrg, thread, a.intent || 'chat', a.body])
-    return `sent to ${a.to} (thread ${thread})`
+    const id = ins.rows[0].id
+    // A channel surface (owner / wa-/tg-/dc-) is delivered by a bridge, which writes
+    // the outcome back into the row. Await it, so the caller sees where the message
+    // landed instead of walking away after the insert — the feedback loop. Internal
+    // agent-to-agent messages have no such receipt and return immediately.
+    const channelBound = toOrg === 'local' &&
+      (toAgent === 'owner' || /^(wa|tg|dc)-/.test(toAgent))
+    if (!channelBound) return `sent to ${a.to} (thread ${thread}, msg ${id})`
+    const deadline = Date.now() + 20_000
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 300))
+      const r = await pool.query(`SELECT status, delivery FROM messages WHERE id=$1`, [id])
+      const row = r.rows[0]
+      if (!row || row.status === 'pending') continue
+      const d = row.delivery || {}
+      if (d.ok === false) return `send FAILED · msg ${id} · ${d.error || row.status}`
+      return `delivered · ${d.handle || a.to} · msg ${id}`
+        + (d.message_id ? ` · id ${d.message_id}` : '')
+    }
+    return `sent · msg ${id} · still in flight (track msg ${id})`
   }
   if (name === 'subscribe') {
     await pool.query(
@@ -178,6 +211,17 @@ async function handleTool(name, a) {
       const to = m.to_org === 'local' ? m.to_agent : `${m.to_agent}@${m.to_org}`
       return `#${m.id} [${m.ts.toISOString()}] ${from} → ${to} (${m.intent}): ${m.body}`.slice(0, 600)
     }).join('\n') || '(empty thread)'
+  }
+  if (name === 'read_message') {
+    const r = await pool.query(
+      `SELECT id, ts, from_agent, from_org, to_agent, to_org, thread, intent, body
+       FROM messages WHERE id=$1`, [a.msg_id])
+    if (!r.rows.length) return `no message #${a.msg_id}`
+    const m = r.rows[0]
+    const from = m.from_org === 'local' ? m.from_agent : `${m.from_agent}@${m.from_org}`
+    const to = m.to_org === 'local' ? m.to_agent : `${m.to_agent}@${m.to_org}`
+    return `#${m.id} [${m.ts.toISOString()}] ${from} → ${to} (${m.intent})`
+      + (m.thread ? ` thread=${m.thread}` : '') + `\n\n${m.body}`
   }
   if (name === 'plan_quorum') {
     const r = await pool.query(
@@ -262,6 +306,37 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
   }
 })
 
+// ---------- permission relay: approvals ride the wire to the owner surface ----------
+// When this agent runs WITHOUT bypassPermissions (charter line "Permissions: relay"),
+// Claude Code forwards every tool-approval prompt here. We post it to the owner as a
+// wire message (the whatsapp bridge lands it in this agent's routed chat); the owner's
+// "yes <id>" / "no <id>" reply comes back through deliverMessage below and resolves it.
+// Terminal dialog stays live in parallel — first answer wins (channels-reference).
+const openPermits = new Set()
+const PermissionRequestSchema = z.object({
+  method: z.literal('notifications/claude/channel/permission_request'),
+  params: z.object({
+    request_id: z.string(), tool_name: z.string(),
+    description: z.string(), input_preview: z.string(),
+  }).passthrough(),
+})
+const VERDICT_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
+
+mcp.setNotificationHandler(PermissionRequestSchema, async ({ params: p }) => {
+  openPermits.add(p.request_id)
+  const preview = p.input_preview.length > 900
+    ? p.input_preview.slice(0, 450) + ' … ' + p.input_preview.slice(-450) : p.input_preview
+  // ASTRYX_PERMIT_THREAD steers prompts to a specific surface (e.g. tg:<chat>);
+  // unset -> no thread -> the whatsapp bridge's home-surface fallback delivers it
+  await pool.query(
+    `INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, intent, body)
+     VALUES ($1,'local','owner','local',$2,'permission',$3)`,
+    [AGENT, process.env.ASTRYX_PERMIT_THREAD || null,
+     `🔐 ${AGENT} asks — ${p.tool_name}: ${p.description}\n` +
+     `${preview}\n` +
+     `Reply "yes ${p.request_id}" or "no ${p.request_id}"`])
+})
+
 // ---------- inbound: pg → channel events ----------
 const pool = new pg.Pool({ connectionString: DSN, max: 3 })
 let subs = []                       // this agent's active watch list (refreshed on NOTIFY use)
@@ -287,7 +362,22 @@ async function deliverMessage(id) {
   const r = await pool.query(
     `UPDATE messages SET status='delivered', delivered_at=now()
      WHERE id=$1 AND status='pending' AND to_agent=$2 RETURNING *`, [id, AGENT])
-  if (r.rows[0]) await pushMessage(r.rows[0])
+  const row = r.rows[0]
+  if (!row) return
+  // owner's "yes <id>" / "no <id>" on an open permission prompt is a VERDICT for
+  // Claude Code, not chat for Claude. Only intercept ids we actually issued —
+  // anything else falls through as a normal message (channels-reference contract).
+  const v = VERDICT_RE.exec(row.body || '')
+  if (v && row.from_agent === 'owner' && openPermits.has(v[2].toLowerCase())) {
+    const reqId = v[2].toLowerCase()
+    openPermits.delete(reqId)
+    await mcp.notification({
+      method: 'notifications/claude/channel/permission',
+      params: { request_id: reqId, behavior: v[1].toLowerCase().startsWith('y') ? 'allow' : 'deny' },
+    })
+    return
+  }
+  await pushMessage(row)
 }
 
 async function maybePushStep(payload) {
