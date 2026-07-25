@@ -35,7 +35,7 @@ import discord
 import httpx
 from fastapi import FastAPI
 
-from .common import (HERE, route_target, describe_media, env, listen,
+from .common import (HERE, reaction_signal, route_target, describe_media, env, listen,
                      load_routes, media_path,
                      record_poll, split_files, split_polls, step_line,
                      update_poll_votes, vote_body, vote_changes, wire_insert)
@@ -111,9 +111,11 @@ async def deliver(row):
         if text and not sent:
             for i in range(0, len(text), 2000):    # discord hard message cap
                 chunk = text[i:i + 2000]
-                if not (hook and await hook_send(hook, agent, chunk)):
+                mid = await hook_send(hook, agent, chunk) if hook else None
+                if not mid:                        # no webhook (or it failed): bot sends
                     m = await ch.send(chunk)
-                    message_id = str(getattr(m, "id", "") or "") or message_id
+                    mid = str(getattr(m, "id", "") or "")
+                message_id = mid or message_id     # id enables reaction attribution
         for f in files:
             p = Path(f)
             if p.is_file():
@@ -258,6 +260,25 @@ async def on_raw_poll_vote_add(payload):
 @client.event
 async def on_raw_poll_vote_remove(payload):
     await _poll_event(payload)
+
+
+@client.event
+async def on_raw_reaction_add(payload):
+    """A reaction on a message is a lightweight signal — deliver it to the agent
+    whose message was reacted to (matched by the stored delivery id), falling back
+    to the channel's routed agent. Reactions the org itself made are ignored."""
+    if payload.user_id == client.user.id:
+        return
+    cid = str(payload.channel_id)
+    route = next((r for r in routes() if str(r.get("chat")) == cid), None)
+    if route is None:
+        return
+    trusted = payload.user_id in route.get("trusted_ids", [])
+    if not trusted and not route.get("open"):
+        return
+    who = "owner" if trusted else f"dc-{payload.user_id}"
+    await reaction_signal(pool, "discord", f"dc:{cid}", who,
+                          str(payload.emoji), str(payload.message_id), route["agent"])
 
 
 # ---------------------------------------------------------------------- app

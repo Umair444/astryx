@@ -108,6 +108,22 @@ async def route_target(pool, thread: str, text: str, default: str) -> tuple[str,
     return default, text
 
 
+async def reaction_signal(pool, channel: str, thread: str, reactor: str,
+                          emoji: str, target_msg_id: str, default_agent: str) -> None:
+    """Deliver a reaction as a lightweight wire signal — the standard every channel
+    shares. It reaches the agent whose message was reacted to (matched by the
+    delivery id we stored when we sent it), falling back to the channel's default.
+    Each bridge just maps its platform's reaction event onto this one call."""
+    rec = await pool.fetchrow(
+        "SELECT from_agent, body FROM messages WHERE thread=$1 "
+        "AND delivery->>'message_id'=$2 ORDER BY id DESC LIMIT 1",
+        thread, str(target_msg_id))
+    agent = (rec and rec["from_agent"]) or default_agent
+    snippet = ((rec["body"] if rec else "") or "your message").strip()[:80]
+    await wire_insert(pool, reactor, channel, agent, thread, "reaction",
+                      f'reacted {emoji} to: "{snippet}"')
+
+
 # ---------------------------------------------------------------------- embeds
 def split_files(text: str) -> tuple[str, list[str]]:
     """Pull [[file:/abs/path]] tokens out of an outbound body."""

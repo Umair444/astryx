@@ -274,6 +274,12 @@ async def hook(request: Request):
         got = await describe_media(got, media) if isinstance(got, Path) else got
         text = f"{text}\n{got}" if text else got
     if not text:
+        # Reactions arrive as non-text events; wacli's payload shape for them is not
+        # yet confirmed. Log one when it appears so the handler can be wired exactly
+        # (the cross-channel reaction standard; Discord/Telegram already covered).
+        blob = json.dumps(m)
+        if "eact" in blob:
+            print(f"wa reaction webhook — keys={list(m)} payload={blob[:400]}", flush=True)
         return {"ok": True}
 
     sender_jid = jid_str(m.get("SenderJID"))

@@ -35,7 +35,7 @@ import asyncpg
 import httpx
 from fastapi import FastAPI
 
-from .common import (HERE, route_target, describe_media, env, listen,
+from .common import (HERE, reaction_signal, route_target, describe_media, env, listen,
                      load_routes, media_path,
                      record_poll, split_files, split_polls, step_line,
                      update_poll_votes, vote_body, wire_insert)
@@ -231,18 +231,40 @@ async def on_poll_answer(pa: dict):
         vote_body(rec["question"], changes, agg))
 
 
+async def on_message_reaction(mr: dict):
+    """A Telegram message_reaction update -> a wire signal to the message's agent.
+    (Groups deliver these only if the bot is an admin; DMs work directly.)"""
+    chat = str((mr.get("chat") or {}).get("id", ""))
+    route = next((r for r in routes() if str(r.get("chat")) == chat), None)
+    if route is None:
+        return
+    uid = (mr.get("user") or {}).get("id")
+    trusted = uid in route.get("trusted_ids", [])
+    if not trusted and not route.get("open"):
+        return
+    new = mr.get("new_reaction") or []
+    if not new:                                    # reaction removed, not added
+        return
+    emoji = " ".join(r.get("emoji", "") for r in new if r.get("type") == "emoji") or "reacted"
+    who = "owner" if trusted else f"tg-{uid}"
+    await reaction_signal(pool, "telegram", f"tg:{chat}", who,
+                          emoji, str(mr.get("message_id", "")), route["agent"])
+
+
 async def poll_updates():
     offset = 0
     while True:
         try:
             ups = await tg("getUpdates", offset=offset, timeout=50,
-                           allowed_updates=["message", "poll_answer"])
+                           allowed_updates=["message", "poll_answer", "message_reaction"])
             for u in ups:
                 offset = u["update_id"] + 1
                 if u.get("message"):
                     await on_message(u["message"])
                 elif u.get("poll_answer"):
                     await on_poll_answer(u["poll_answer"])
+                elif u.get("message_reaction"):
+                    await on_message_reaction(u["message_reaction"])
         except Exception as e:
             print(f"telegram: getUpdates error: {e}", flush=True)
             await asyncio.sleep(5)
