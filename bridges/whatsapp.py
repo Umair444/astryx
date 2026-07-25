@@ -40,7 +40,7 @@ from pathlib import Path
 import asyncpg
 from fastapi import FastAPI, Request, Response
 
-from .common import (HERE, MEDIA_DIR, address_agent, describe_media,
+from .common import (HERE, MEDIA_DIR, route_target, describe_media,
                      env, listen, load_routes,
                      record_poll, split_files, split_polls, step_line,
                      update_poll_votes, vote_body, vote_changes, wire_insert)
@@ -287,7 +287,7 @@ async def hook(request: Request):
         sender = f"wa-{digits or 'unknown'}"
         text = f"{m.get('PushName') or sender_jid}: {text}"
 
-    agent, text = address_agent(text, route["agent"])
+    agent, text = await route_target(pool, f"wa:{chat}", text, route["agent"])
 
     await wire_insert(pool, sender, "whatsapp", agent, f"wa:{chat}", "chat", text)
 

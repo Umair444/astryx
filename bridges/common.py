@@ -87,6 +87,27 @@ def address_agent(text: str, default: str) -> tuple[str, str]:
     return default, text
 
 
+async def route_target(pool, thread: str, text: str, default: str) -> tuple[str, str]:
+    """Resolve which agent an inbound message routes to, and clean the text.
+
+    The conversation is sticky: an @mention wins for this message and — because it
+    becomes the message's to_agent on the wire — sets the thread's target going
+    forward. With no mention, the message continues to the LAST agent addressed on
+    this thread, so a chat stays with whoever you last tagged until you tag someone
+    else. A fresh thread falls back to `default` (the surface's own agent). The wire
+    is the state: "last tagged" is just the previous inbound message's to_agent.
+    Standard on every channel."""
+    agent, cleaned = address_agent(text, "")
+    if agent:                                    # explicit @mention on this message
+        return agent, cleaned
+    row = await pool.fetchrow(
+        "SELECT to_agent FROM messages WHERE thread=$1 AND intent='chat' "
+        "AND from_org<>'local' AND to_org='local' ORDER BY id DESC LIMIT 1", thread)
+    if row and row["to_agent"] and any(AGENTS_DIR.rglob(f"{row['to_agent']}.md")):
+        return row["to_agent"], text
+    return default, text
+
+
 # ---------------------------------------------------------------------- embeds
 def split_files(text: str) -> tuple[str, list[str]]:
     """Pull [[file:/abs/path]] tokens out of an outbound body."""

@@ -35,7 +35,7 @@ import discord
 import httpx
 from fastapi import FastAPI
 
-from .common import (HERE, address_agent, describe_media, env, listen,
+from .common import (HERE, route_target, describe_media, env, listen,
                      load_routes, media_path,
                      record_poll, split_files, split_polls, step_line,
                      update_poll_votes, vote_body, vote_changes, wire_insert)
@@ -202,7 +202,7 @@ async def on_message(msg: discord.Message):
             return
         who = f"dc-{msg.author.id}"
         text = f"{msg.author.display_name}: {text}"
-    agent, text = address_agent(text, route["agent"])
+    agent, text = await route_target(pool, f"dc:{cid}", text, route["agent"])
     await wire_insert(pool, who, "discord", agent, f"dc:{cid}", "chat", text)
     if route.get("live_steps") and trusted:
         jobs[agent] = {"chat": cid, "ph": None, "sent": ""}

@@ -35,7 +35,7 @@ import asyncpg
 import httpx
 from fastapi import FastAPI
 
-from .common import (HERE, address_agent, describe_media, env, listen,
+from .common import (HERE, route_target, describe_media, env, listen,
                      load_routes, media_path,
                      record_poll, split_files, split_polls, step_line,
                      update_poll_votes, vote_body, wire_insert)
@@ -192,7 +192,7 @@ async def on_message(msg: dict):
             return
         who = f"tg-{uid}"
         text = f"{sender.get('first_name') or uid}: {text}"
-    agent, text = address_agent(text, route["agent"])
+    agent, text = await route_target(pool, f"tg:{chat}", text, route["agent"])
     await wire_insert(pool, who, "telegram", agent, f"tg:{chat}", "chat", text)
     if route.get("live_steps") and trusted:
         jobs[agent] = {"chat": chat, "ph_id": None, "sent": ""}
