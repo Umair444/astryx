@@ -71,6 +71,11 @@ AGENTS_DIR = REPO / "agents"
 _MENTION = re.compile(r"(?:^|\s)@([a-z][a-z0-9_-]*)", re.I)
 
 
+def agent_exists(name: str) -> bool:
+    """True if `name` is a charter anywhere in the agents/ tree."""
+    return bool(name) and any(AGENTS_DIR.rglob(f"{name}.md"))
+
+
 def address_agent(text: str, default: str) -> tuple[str, str]:
     """Route a message to an @mentioned agent, wherever the mention sits.
 
@@ -81,7 +86,7 @@ def address_agent(text: str, default: str) -> tuple[str, str]:
     the message. Returns (agent, cleaned_text)."""
     for m in _MENTION.finditer(text):
         name = m.group(1).lower()
-        if any(AGENTS_DIR.rglob(f"{name}.md")):
+        if agent_exists(name):
             cleaned = (text[:m.start()] + " " + text[m.end():]).strip()
             return name, cleaned or text
     return default, text
@@ -103,7 +108,7 @@ async def route_target(pool, thread: str, text: str, default: str) -> tuple[str,
     row = await pool.fetchrow(
         "SELECT to_agent FROM messages WHERE thread=$1 AND intent='chat' "
         "AND from_org<>'local' AND to_org='local' ORDER BY id DESC LIMIT 1", thread)
-    if row and row["to_agent"] and any(AGENTS_DIR.rglob(f"{row['to_agent']}.md")):
+    if row and agent_exists(row["to_agent"]):
         return row["to_agent"], text
     return default, text
 

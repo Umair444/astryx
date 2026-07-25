@@ -35,7 +35,7 @@ import discord
 import httpx
 from fastapi import FastAPI
 
-from .common import (HERE, reaction_signal, route_target, describe_media, env, listen,
+from .common import (HERE, agent_exists, reaction_signal, route_target, describe_media, env, listen,
                      load_routes, media_path,
                      record_poll, split_files, split_polls, step_line,
                      update_poll_votes, vote_body, vote_changes, wire_insert)
@@ -277,8 +277,21 @@ async def on_raw_reaction_add(payload):
     if not trusted and not route.get("open"):
         return
     who = "owner" if trusted else f"dc-{payload.user_id}"
+    # Attribute to whoever actually sent the reacted message. Discord is the source
+    # of truth — agents post under their own name via webhook — so this is right
+    # even for messages whose id we never stored. Default only if unresolvable.
+    target = route["agent"]
+    try:
+        ch = client.get_channel(payload.channel_id) or await client.fetch_channel(payload.channel_id)
+        msg = await ch.fetch_message(payload.message_id)
+        if msg.webhook_id and msg.author:
+            name = msg.author.name.lower().replace(" ", "-")
+            if agent_exists(name):
+                target = name
+    except Exception:
+        pass
     await reaction_signal(pool, "discord", f"dc:{cid}", who,
-                          str(payload.emoji), str(payload.message_id), route["agent"])
+                          str(payload.emoji), str(payload.message_id), target)
 
 
 # ---------------------------------------------------------------------- app
