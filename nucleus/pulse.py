@@ -23,7 +23,7 @@ import hashlib
 import json
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 import psycopg
@@ -131,7 +131,10 @@ def evaluate(t: dict, conn) -> tuple[str | None, dict]:
 
 
 def tick():
-    now = datetime.now(timezone.utc)
+    # LOCAL time, tz-aware: cron fields mean the server's own wall clock, so a
+    # "3am review" is 3am wherever this org lives — never UTC (owner decree
+    # 2026-07-25; the night-review fired at 7-9am PKT for two days).
+    now = datetime.now().astimezone()
     with psycopg.connect(DSN, autocommit=True) as conn:
         reconcile(conn)
         with conn.transaction():

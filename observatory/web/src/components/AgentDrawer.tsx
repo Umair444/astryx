@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Badge, Drawer, ScrollArea, Tabs } from '@mantine/core'
-import { api, agentColor, avatarInitial, displayName, fmtAgo, fmtTime, fmtTokens, obsKey, shortModel } from '../api'
+import { api, apiSend, agentColor, avatarInitial, displayName, fmtAgo, fmtTime, fmtTokens, obsKey, shortModel } from '../api'
 import { useStore } from '../store'
 import type { Profile, Step, Turn } from '../types'
 import TurnPeek from './TurnPeek'
@@ -22,7 +22,7 @@ export default function AgentDrawer({ name, onClose }: { name: string; onClose: 
   const [profile, setProfile] = useState<Profile | null>(null)
   const [turns, setTurns] = useState<Turn[] | null>(null)
   const [peek, setPeek] = useState<number | null>(null)
-  const { agents } = useStore()
+  const { agents, who } = useStore()
   const row = agents.find((a) => a.agent === name)
   const col = agentColor(name)
 
@@ -210,13 +210,69 @@ export default function AgentDrawer({ name, onClose }: { name: string; onClose: 
 
         <Tabs.Panel value="charter">
           <ScrollArea h="calc(100dvh - 280px)">
-            <pre className="text-[12px] leading-relaxed text-ink-dim whitespace-pre-wrap font-mono bg-deck border border-line rounded-lg p-3">
-              {charter}
-            </pre>
+            {who.owner ? (
+              <CharterEditor name={name} initial={charter ?? ''} live={!!row?.alive} />
+            ) : (
+              <pre className="text-[12px] leading-relaxed text-ink-dim whitespace-pre-wrap font-mono bg-deck border border-line rounded-lg p-3">
+                {charter}
+              </pre>
+            )}
           </ScrollArea>
         </Tabs.Panel>
       </Tabs>
       <TurnPeek turnId={peek} onClose={() => setPeek(null)} />
     </Drawer>
+  )
+}
+
+/* Owner-only charter editor. The charter IS the agent's identity and law; edits
+   write the file, but a running body only inherits them at respawn (spawn.sh
+   rebuilds its CLAUDE.md from charter + law), so the save note says so plainly. */
+function CharterEditor({ name, initial, live }: { name: string; initial: string; live: boolean }) {
+  const [text, setText] = useState(initial)
+  const [saving, setSaving] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+  useEffect(() => {
+    setText(initial)
+    setNote(null)
+  }, [initial, name])
+  const dirty = text !== initial
+
+  async function save() {
+    setSaving(true)
+    setNote(null)
+    try {
+      const r = await apiSend<{ note: string }>('PUT', `/agents/${encodeURIComponent(name)}/charter`, { content: text })
+      setNote(r.note)
+    } catch (e) {
+      setNote('save failed — ' + (e as Error).message)
+    }
+    setSaving(false)
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="text-[11px] text-ink-mute leading-relaxed">
+        {displayName(name)}'s charter — its identity and law. Edits write the file; a running body
+        inherits them only when it respawns{live ? ' (it is live now).' : '.'}
+      </div>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.currentTarget.value)}
+        spellCheck={false}
+        className="w-full h-[calc(100dvh-400px)] min-h-[240px] text-[12px] font-mono leading-relaxed text-ink-dim bg-deck border border-line rounded-lg p-3 resize-none focus:outline-none focus:border-cyan/40"
+      />
+      <div className="flex items-center gap-3">
+        <button
+          onClick={save}
+          disabled={!dirty || saving}
+          className="px-3 py-1 rounded-md text-xs bg-cyan/15 text-cyan-soft border border-cyan/30 hover:bg-cyan/25 disabled:opacity-40 transition-colors duration-75"
+        >
+          {saving ? 'saving…' : 'save charter'}
+        </button>
+        {dirty && <span className="text-[11px] text-amber-300">unsaved changes</span>}
+        {note && !dirty && <span className="text-[11px] text-ink-mute">{note}</span>}
+      </div>
+    </div>
   )
 }

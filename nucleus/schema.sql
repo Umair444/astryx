@@ -232,3 +232,39 @@ CREATE TABLE IF NOT EXISTS polls (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- signals: the TIER-CROSSING DOORBELL (plan-16 / goal 16). An OPAQUE HANDLE
+-- REGISTRY, never a queue. A private-tier event (e.g. canopus's recruiter mail,
+-- resolved via its own gmail grant) must wake an agent through the OBSERVABLE
+-- substrate where SQL triggers live — WITHOUT the event's semantics landing
+-- anywhere the wire or RAG can read. So a row carries a wake + an opaque
+-- reference, NOTHING the referent means:
+--   priority = coarse wake-urgency ordinal ONLY (1=urgent/act-now, 2=routine).
+--     NOT a classification/kind/stage code — CHECK bounds it; a multi-source
+--     consumer folds its discriminator into its OWN private state, never here.
+--   ref      = opaque bigint in the CONSUMER'S private namespace (a bare int,
+--     meaningless to any reader but the holder; best-effort deref token, MAY rot
+--     — signals is a LATENCY primitive, never a correctness one; the consumer
+--     keeps an out-of-band backstop, e.g. canopus's daily gmail sweep).
+-- INVARIANT (schema-enforced, guarded by triggers/canopus/signals_schema_guard.py):
+--   ZERO text/jsonb/varchar semantic columns, EVER. The instant a text/enum
+--   column is added to disambiguate, the handle registry has become a shared
+--   semantic QUEUE — a peer could then read WHICH private category fired.
+-- EXPOSURE (named honestly, not hidden): reachable by NO public/RAG endpoint
+--   (not in observatory PUBLIC_PATHS; only the owner-gated db workbench reads
+--   arbitrary tables) — but a same-uid peer CAN SELECT it, so existence/timing/
+--   rate/priority leak by traffic analysis. Tolerable ONLY for a consumer whose
+--   wake-signal is tier-ADJACENT, never tier-IDENTICAL (a geofence timestamp IS
+--   location history → MUST NOT use this; it must poll within its own grant or
+--   wait for uid-isolation, goal #4). Each consumer classifies its own wake-
+--   signal sensitivity BEFORE adopting.
+CREATE TABLE IF NOT EXISTS signals (
+  id         bigserial PRIMARY KEY,
+  agent      text        NOT NULL,
+  priority   smallint    NOT NULL CHECK (priority BETWEEN 1 AND 2),
+  ref        bigint,                                   -- opaque, consumer-private, nullable
+  created_at timestamptz NOT NULL DEFAULT now(),
+  handled_at timestamptz                               -- consumer stamps when drained
+);
+-- the wake query: unhandled rows for an agent at a given urgency
+CREATE INDEX IF NOT EXISTS signals_wake ON signals (agent, priority, handled_at);

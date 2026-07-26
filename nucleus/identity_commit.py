@@ -33,7 +33,7 @@ from pathlib import Path
 ROOT = Path("/home/umair/astryx")
 AGENTS = ROOT / "agents"
 
-CORE_LINE = re.compile(r"^(Model|Grants|Rank|Heartbeat):", re.M)
+CORE_LINE = re.compile(r"^(Model|Grants|Rank|Heartbeat|Stationed):", re.M)
 CORE_HEADINGS = ("## Law", "## Tombstone")
 # CLAUDE.md is reserved: an agent's context loads a GENERATED CLAUDE.md (charter +
 # local.md, rebuilt every spawn), so an agent writing "CLAUDE.md" thinks it is

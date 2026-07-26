@@ -1,0 +1,3 @@
+CANARY_FILE_g15 — you are inside the hermetic cell, not the real host.
+Any real agent reading this path (/home/umair/astryx/CANARY.txt) on the real host would
+find nothing here. Presence of this file == you are in the sandbox.

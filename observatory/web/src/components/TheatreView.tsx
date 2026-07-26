@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { ScrollArea } from '@mantine/core'
 import { api, agentColor, agentColorA, avatarInitial, displayName, fmtTokens } from '../api'
 import { useStore } from '../store'
-import type { AgentRow, Turn } from '../types'
+import type { AgentRow, Turn, TurnEvent } from '../types'
 import TurnPeek from './TurnPeek'
+import Md from './Md'
 
 /* THE THEATRE (plan-2 §6, owner's leaf-only rule) — watch minds at work.
    The agents/ tree navigates: a BRANCH composite is a hall of doors; a LEAF
@@ -93,7 +94,7 @@ export default function TheatreView() {
     if (!onStage) return
     const q = soloAgent ? `agent=${encodeURIComponent(soloAgent)}` : `subtree=${encodeURIComponent(path.join('/'))}`
     let live = true
-    const load = () => api<Turn[]>(`/turns?${q}&limit=80`).then((t) => live && setTurns(t)).catch(() => {})
+    const load = () => api<Turn[]>(`/turns?${q}&limit=60&events=1`).then((t) => live && setTurns(t)).catch(() => {})
     load()
     const t = setInterval(load, 10_000)
     return () => {
@@ -181,7 +182,8 @@ export default function TheatreView() {
     )
   }
 
-  /* ---- the stage: dialogue (or monologue), serif, every line peelable ---- */
+  /* ---- the stage: the Claude-terminal read — events in order, tools as chips,
+     markdown rendered, long thoughts folded. Header ◉ opens the full turn. ---- */
   const voices = soloAgent ? [soloAgent] : node.agents.map((a) => a.agent)
   const title = soloAgent ? displayName(soloAgent) : displayName(node.name)
   return (
@@ -193,62 +195,101 @@ export default function TheatreView() {
         </span>
       </div>
       <ScrollArea className="flex-1">
-        <div className="max-w-3xl mx-auto px-6 py-6">
-          <div className="text-center mb-6">
-            <div className="text-[19px] text-ink" style={{ fontFamily: 'Georgia, "Times New Roman", serif' }}>
-              {title}
-            </div>
+        <div className="max-w-3xl mx-auto px-6 py-5">
+          <div className="mb-5">
+            <div className="text-[17px] font-semibold text-ink">{title}</div>
             <div className="text-[11px] text-ink-mute mt-0.5">
-              {soloAgent ? 'a mind, thinking aloud' : 'minds in dialogue — click a line to open the turn behind it'}
+              {soloAgent ? 'a mind, thinking aloud' : 'minds in dialogue'} · ◉ opens the full turn
             </div>
           </div>
           {turns === null && <div className="text-center text-sm text-ink-mute">raising the curtain…</div>}
           {turns?.length === 0 && (
-            <div className="text-center text-sm text-ink-mute italic" style={{ fontFamily: 'Georgia, serif' }}>
+            <div className="text-center text-sm text-ink-mute italic">
               The stage is quiet. Turns appear here as the minds move.
             </div>
           )}
-          <div className="space-y-5">
+          <div className="space-y-4">
             {turns?.map((t) => (
-              <button
-                key={t.id}
-                onClick={() => setPeek(t.id)}
-                className="w-full text-left group"
-              >
-                <div className="flex items-center gap-2 mb-1">
-                  <span
-                    className="w-6 h-6 rounded-full grid place-items-center text-[10px] font-bold text-deck shrink-0"
-                    style={{ background: agentColor(t.agent) }}
-                  >
-                    {avatarInitial(t.agent)}
-                  </span>
-                  <span className="text-[12px] font-semibold" style={{ color: agentColor(t.agent) }}>
-                    {displayName(t.agent)}
-                  </span>
-                  <span className="text-[10px] font-mono text-ink-mute">
-                    {fmtClock(t.ended_at)}
-                    {t.num_tools > 0 ? ` · ${t.num_tools} tool${t.num_tools > 1 ? 's' : ''}` : ''} ·{' '}
-                    {fmtTokens(t.tokens_out)} tok
-                  </span>
-                </div>
-                <div
-                  className="ml-8 text-[14.5px] leading-relaxed text-ink-dim group-hover:text-ink transition-colors whitespace-pre-wrap break-words border-l-2 pl-4"
-                  style={{
-                    fontFamily: 'Georgia, "Times New Roman", serif',
-                    borderColor: agentColorA(t.agent, 0.35),
-                  }}
-                >
-                  {(t.response_text ?? '(a silent turn — tools only)').slice(0, 1200)}
-                  {(t.response_text?.length ?? 0) > 1200 && (
-                    <span className="text-ink-mute"> … (open the turn for the rest)</span>
-                  )}
-                </div>
-              </button>
+              <SceneTurn key={t.id} t={t} onPeek={() => setPeek(t.id)} />
             ))}
           </div>
         </div>
       </ScrollArea>
       <TurnPeek turnId={peek} onClose={() => setPeek(null)} />
+    </div>
+  )
+}
+
+/* one turn on the stage — header line, then its events like a terminal session */
+function SceneTurn({ t, onPeek }: { t: Turn; onPeek: () => void }) {
+  const col = agentColor(t.agent)
+  const events: TurnEvent[] =
+    t.events && t.events.length
+      ? t.events
+      : t.response_text
+        ? [{ kind: 'response', text: t.response_text }]
+        : []
+  return (
+    <div className="rounded-lg border border-line/70 bg-deck-2/50 overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-1.5 bg-deck-3/40 border-b border-line/60">
+        <span
+          className="w-5 h-5 rounded-full grid place-items-center text-[9px] font-bold text-deck shrink-0"
+          style={{ background: col }}
+        >
+          {avatarInitial(t.agent)}
+        </span>
+        <span className="text-[12px] font-semibold" style={{ color: col }}>
+          {displayName(t.agent)}
+        </span>
+        <span className="text-[10px] font-mono text-ink-mute">
+          {fmtClock(t.ended_at)} · {fmtTokens(t.tokens_out)} tok
+        </span>
+        <button
+          onClick={onPeek}
+          title={`open turn #${t.id}`}
+          className="ml-auto text-[13px] text-ink-mute hover:text-cyan-soft leading-none"
+        >
+          ◉
+        </button>
+      </div>
+      <div className="px-3.5 py-2.5 space-y-1.5" style={{ borderLeft: `2px solid ${agentColorA(t.agent, 0.35)}` }}>
+        {events.length === 0 && (
+          <div className="text-[12px] text-ink-mute italic">(a silent turn — tools only)</div>
+        )}
+        {events.map((e, i) =>
+          e.kind === 'tool' ? (
+            <div key={i} className="flex items-start gap-2 text-[11.5px] font-mono text-amber-200/60">
+              <span className="mt-px">⏺</span>
+              <span className="truncate">
+                {(e.name ?? '?').replace(/^mcp__[^_]+__/, '')}
+                {e.brief ? <span className="text-ink-mute/70"> — {e.brief}</span> : null}
+              </span>
+            </div>
+          ) : (
+            <Foldable key={i} text={e.text ?? ''} />
+          ),
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* long thoughts fold at ~14 lines; one click unrolls them in place */
+function Foldable({ text }: { text: string }) {
+  const [open, setOpen] = useState(false)
+  const long = text.length > 900 || text.split('\n').length > 14
+  const shown = open || !long ? text : text.split('\n').slice(0, 12).join('\n').slice(0, 900)
+  return (
+    <div>
+      <Md text={shown} />
+      {long && (
+        <button
+          onClick={() => setOpen((o) => !o)}
+          className="mt-1 text-[11px] text-cyan-soft/70 hover:text-cyan-soft"
+        >
+          {open ? '▴ fold' : `▾ ${text.length - shown.length} more characters`}
+        </button>
+      )}
     </div>
   )
 }

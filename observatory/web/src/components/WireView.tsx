@@ -9,6 +9,8 @@ import type { Route } from '../App'
 import type { Msg } from '../types'
 import Message from './Message'
 import Composer from './Composer'
+import OrgNewsView from './OrgNewsView'
+import RoutesView from './RoutesView'
 
 /* Thread grouping — named-thread model. A thread key groups every message
    carrying it; the earliest message acts as the root card in the feed. */
@@ -62,6 +64,10 @@ function ThreadPane({ thread, onOpenAgent }: { thread: string; onOpenAgent: (n: 
 export default function WireView({ route, onOpenAgent }: { route: Route & { tab: 'wire' }; onOpenAgent: (n: string) => void }) {
   const { messages, loadMax, loadOlder, who } = useStore()
   const isMobile = useMediaQuery('(max-width: 48em)')
+  // Feed / Press (org-news) / Wiring (routes) — ?press=1 deep-links to the Press
+  const [view, setView] = useState<'feed' | 'press' | 'wiring'>(() =>
+    new URLSearchParams(location.search).has('press') ? 'press' : 'feed',
+  )
   const [query, setQuery] = useState('')
   const [pill, setPill] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -119,18 +125,55 @@ export default function WireView({ route, onOpenAgent }: { route: Route & { tab:
     <div className="h-full flex flex-col min-w-0 relative">
       <div className="px-4 py-1.5 border-b border-line shrink-0 flex items-center gap-2">
         <span className="font-semibold text-ink">The Wire</span>
-        <span className="text-xs text-ink-mute">{msgs.length} messages</span>
-        <TextInput
-          value={query}
-          onChange={(e) => setQuery(e.currentTarget.value)}
-          placeholder="search…"
-          size="xs"
-          variant="filled"
-          ml="auto"
-          w={isMobile ? 130 : 220}
-          styles={{ input: { background: '#141c3a', border: '1px solid #1d2647' } }}
-        />
+        <div className="flex rounded-lg border border-line overflow-hidden ml-1">
+          <button
+            onClick={() => setView('feed')}
+            className={`text-[11px] px-2.5 py-1 transition-colors duration-75 ${view === 'feed' ? 'bg-cyan/15 text-cyan' : 'text-ink-mute hover:text-ink'}`}
+          >
+            Feed
+          </button>
+          <button
+            onClick={() => setView('press')}
+            className={`text-[11px] px-2.5 py-1 border-l border-line transition-colors duration-75 ${view === 'press' ? 'bg-cyan/15 text-cyan' : 'text-ink-mute hover:text-ink'}`}
+          >
+            📰 Press
+          </button>
+          {who.owner && (
+            <button
+              onClick={() => setView('wiring')}
+              className={`text-[11px] px-2.5 py-1 border-l border-line transition-colors duration-75 ${view === 'wiring' ? 'bg-cyan/15 text-cyan' : 'text-ink-mute hover:text-ink'}`}
+            >
+              ⚙ Wiring
+            </button>
+          )}
+        </div>
+        {view === 'feed' && <span className="text-xs text-ink-mute">{msgs.length} messages</span>}
+        {view === 'press' && <span className="text-xs text-ink-mute">org-news</span>}
+        {view === 'wiring' && <span className="text-xs text-ink-mute">channels &amp; routes</span>}
+        {view === 'feed' && (
+          <TextInput
+            value={query}
+            onChange={(e) => setQuery(e.currentTarget.value)}
+            placeholder="search…"
+            size="xs"
+            variant="filled"
+            ml="auto"
+            w={isMobile ? 130 : 220}
+            styles={{ input: { background: '#141c3a', border: '1px solid #1d2647' } }}
+          />
+        )}
       </div>
+      {view === 'press' && (
+        <div className="flex-1 min-h-0">
+          <OrgNewsView />
+        </div>
+      )}
+      {view === 'wiring' && (
+        <div className="flex-1 min-h-0">
+          <RoutesView />
+        </div>
+      )}
+      {view === 'feed' && (
       <div ref={boxRef} onScroll={onScroll} className="flex-1 overflow-y-auto pb-2 relative">
         {!query.trim() && messages.length > 0 && (
           <div className="text-center py-2">
@@ -179,8 +222,9 @@ export default function WireView({ route, onOpenAgent }: { route: Route & { tab:
           )
         })}
       </div>
+      )}
       <AnimatePresence>
-        {pill && (
+        {pill && view === 'feed' && (
           <motion.button
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
@@ -197,7 +241,7 @@ export default function WireView({ route, onOpenAgent }: { route: Route & { tab:
         )}
       </AnimatePresence>
       {/* owner composer — thread pane owns it while a thread is open */}
-      {who.owner && !route.thread && <Composer />}
+      {who.owner && !route.thread && view === 'feed' && <Composer />}
     </div>
   )
 

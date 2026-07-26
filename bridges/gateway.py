@@ -163,6 +163,37 @@ async def introduce(request: Request):
                  "ts": time.time()})
 
 
+def reach(caps_raw, status: str, req_to: str, req_intent: str):
+    """Rung-1 capability attenuation. PURE: (caps_granted jsonb|None, peer status,
+    requested to_agent, requested intent) -> (to_agent, intent, rate_per_hour, intent_ok).
+
+    The gateway is the org's ONE off-uid door, so this is real PREVENTION, not
+    detection — a peer cannot land a row its grant forbids. caps_granted=NULL keeps
+    the historic choke EXACTLY (trusted = any agent/intent, introduced = seed only),
+    so every existing peer is unchanged; a grant widens/narrows it explicitly:
+        {"to_agents": ["seed","forge"], "intents": ["chat","task"], "rate_per_hour": 120}
+    """
+    caps = caps_raw
+    if isinstance(caps, str):                        # asyncpg hands jsonb back as text
+        try:
+            caps = json.loads(caps or "null")
+        except Exception:
+            caps = None
+    if not isinstance(caps, dict):
+        caps = {}
+    allowed = caps.get("to_agents")
+    if not allowed:                                  # no explicit grant → historic default
+        allowed = None if status == "trusted" else ["seed"]
+    to_agent = req_to or "seed"
+    if allowed is not None and to_agent not in allowed:
+        to_agent = allowed[0]                        # clamp to the first granted recipient
+    intents = caps.get("intents")
+    intent = req_intent or "chat"
+    intent_ok = intents is None or intent in intents
+    rate = caps.get("rate_per_hour") or INBOX_RATE
+    return to_agent, intent, rate, intent_ok
+
+
 @app.post("/astryx/inbox")
 async def inbox(request: Request):
     try:
@@ -170,7 +201,8 @@ async def inbox(request: Request):
     except Exception:
         return Response(status_code=400)
     from_agent, _, from_org = str(e.get("from", "")).partition("@")
-    peer = await pool.fetchrow("SELECT pubkey, status FROM peers WHERE org=$1", from_org)
+    peer = await pool.fetchrow(
+        "SELECT pubkey, status, caps_granted FROM peers WHERE org=$1", from_org)
     if not peer or peer["status"] in ("stranger", "revoked"):
         return Response(status_code=403)
     if not fresh(e.get("ts")) or not verify(e, peer["pubkey"]):
@@ -182,11 +214,15 @@ async def inbox(request: Request):
     if not eid or eid in seen_ids:
         return {"ok": True}                      # replay: acknowledged, ignored
     seen_ids[eid] = now
-    if rated(f"inbox:{from_org}", INBOX_RATE):
+    # Rung 1 — per-peer capability attenuation, enforced at the one off-uid door.
+    to_agent, intent, rate, intent_ok = reach(
+        peer["caps_granted"], peer["status"],
+        str(e.get("to", "")).partition("@")[0][:64],
+        str(e.get("intent", "chat"))[:32])
+    if not intent_ok:
+        return Response(status_code=403)         # intent not granted to this peer
+    if rated(f"inbox:{from_org}", rate):
         return Response(status_code=429)
-    to_agent = str(e.get("to", "")).partition("@")[0][:64] or "seed"
-    if peer["status"] != "trusted" and to_agent != "seed":
-        to_agent = "seed"                        # introduced = public agent only
     body = str(e.get("body", ""))[:BODY_MAX]
     if not body:
         return Response(status_code=400)
@@ -195,7 +231,7 @@ async def inbox(request: Request):
                                  intent, body, sig)
            VALUES ($1, $2, $3, 'local', $4, $5, $6, $7)""",
         from_agent[:64], from_org, to_agent, e.get("thread"),
-        str(e.get("intent", "chat"))[:32], body, e.get("sig"))
+        intent, body, e.get("sig"))
     return {"ok": True, "id": eid}
 
 

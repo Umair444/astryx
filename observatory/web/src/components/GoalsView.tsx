@@ -94,8 +94,8 @@ function NewGoalButton() {
 const COLS: { key: string; label: string; color: string }[] = [
   { key: 'proposed', label: 'proposed', color: '#9aa7c7' },
   { key: 'active', label: 'active', color: '#22d3ee' },
+  { key: 'shipped', label: 'shipped', color: '#2fbf71' },
   { key: 'hibernated', label: 'hibernated', color: '#7c5cff' },
-  { key: 'done', label: 'done', color: '#2fbf71' },
   { key: 'refused', label: 'refused', color: '#ff5c7a' },
 ]
 

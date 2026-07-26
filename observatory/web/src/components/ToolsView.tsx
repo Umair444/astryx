@@ -100,7 +100,7 @@ function ServiceItem({
     setErr(null)
     try {
       const r = await apiPost<ServiceActionResult>(`/services/${encodeURIComponent(s.unit)}/${action}`, {})
-      onPatch({ unit: r.unit, active: r.active, state: r.state, description: r.description, since: r.since })
+      onPatch({ unit: r.unit, active: r.active, state: r.state, enabled: r.enabled, description: r.description, since: r.since })
       if (!r.ok) setErr(r.error ?? 'action failed')
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
@@ -117,6 +117,19 @@ function ServiceItem({
           }`}
         />
         <span className="text-[12px] font-mono text-ink shrink-0">{s.unit}</span>
+        {actionable && s.enabled === false && (
+          <span
+            className="shrink-0 text-[10px] font-mono px-1.5 py-px rounded border border-amber-400/40 bg-amber-400/10 text-amber-300"
+            title="disabled — this service will NOT come back after a reboot"
+          >
+            ⚠ no-boot
+          </span>
+        )}
+        {actionable && s.enabled === true && (
+          <span className="shrink-0 text-[10px] font-mono text-emerald-400/70" title="enabled — survives reboot">
+            ⏻
+          </span>
+        )}
         <span className="text-[11px] text-ink-mute truncate">{s.description}</span>
         <span className="ml-auto shrink-0 text-[10px] font-mono text-ink-mute">{s.state}</span>
         <span className="w-10 shrink-0 text-right text-[10px] font-mono text-ink-mute">{fmtSince(s.since)}</span>

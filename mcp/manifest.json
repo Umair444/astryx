@@ -70,7 +70,20 @@
           "description": "Send a plain-text email from the owner's address. OUTWARD ACT: unless your"
         }
       ]
+    },
+    {
+      "server": "contacts",
+      "tools": [
+        {
+          "name": "contact_search",
+          "description": "Find people in the owner's WhatsApp contacts by name, alias, or number."
+        },
+        {
+          "name": "contact_resolve",
+          "description": "Resolve one WhatsApp jid, phone number, or privacy @lid to who it is."
+        }
+      ]
     }
   ],
-  "total_tools": 14
+  "total_tools": 16
 }

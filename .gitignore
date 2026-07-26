@@ -19,8 +19,22 @@ memory/
 observatory/web/node_modules/
 observatory/web/dist/
 *.tsbuildinfo
-bridges/routes.json
+**/routes*.json
+!**/routes*.example.json
+**/runners*.conf
+!**/runners*.example.conf
 units/
 __pycache__/
 media/
 triggers/
+wacli-data/
+# harness (goal 15) toxic-artifact tier: the probe corpus is live exploits and a
+# success-transcript is a working exploit — never commit them, never let a real
+# agent's context/RAG ingest them. Name-anchored so a relocation can't un-ignore.
+harness/corpus/
+harness/results/
+**/*.probe.jsonl
+**/*.toxic.*
+
+# real-PII test fixtures — re-add only with certified-fake data (leak scrub 2026-07-27)
+mcp/contacts/test_server.py

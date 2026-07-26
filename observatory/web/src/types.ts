@@ -196,11 +196,12 @@ export interface DagEvent {
   status: string
 }
 
-/* GET /api/services — host services under observation */
+/* GET /api/services — every astryx unit (filesystem-derived from units/) */
 export interface ServiceRow {
   unit: string
   active: boolean
   state: string
+  enabled?: boolean // enabled/static = survives reboot; false = won't come back
   description: string
   since: string | null
 }
@@ -283,6 +284,7 @@ export interface Turn {
   input_prompt: string | null
   response_text: string | null
   output_msg_ids: number[] | null
+  events?: TurnEvent[] // present when the list is fetched with events=1 (Theatre)
 }
 
 export interface TurnEvent {
@@ -306,6 +308,36 @@ export interface TurnDetail {
   trigger: { id: number; from_agent: string; from_org: string; to_agent: string; thread: string | null; intent: string | null; body: string } | null
   outputs: { id: number; to_agent: string; to_org: string; thread: string | null; intent: string | null; body: string }[]
   events: TurnEvent[]
+}
+
+/* GET/PUT /api/wire/routes — a channel's inbound map (bridges/routes-<ch>.json).
+   Extra keys (a discord webhook) ride the index signature and are preserved. */
+export interface WireRoute {
+  chat: string
+  agent: string
+  enabled?: boolean
+  open?: boolean
+  live_steps?: boolean
+  note?: string
+  webhook?: string
+  trusted_jids?: string[]
+  trusted_ids?: number[]
+  [k: string]: unknown
+}
+
+export interface ChannelRoutes {
+  channel: string
+  routes: WireRoute[]
+  trusted_key: 'trusted_jids' | 'trusted_ids'
+}
+
+/* GET /api/wire/contacts — every match for a name, so the owner resolves conflicts */
+export interface ContactMatch {
+  channel: string
+  label: string
+  number: string | null
+  handle: string
+  native: string // the platform chat id (handle minus the channel: prefix)
 }
 
 /* GET /api/agents/{name}/profile — the self, parsed from the charter md */
