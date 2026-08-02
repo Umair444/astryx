@@ -65,5 +65,26 @@ for e in * .[!.]*; do
   fi
 done
 
-[ "$fail" -eq 0 ] && echo "privacy gate: CLEAN ($(git ls-files | wc -l) tracked files)"
+# ---- (c) CONTENT scan: no personal-tier VALUE embedded in a tracked file ----
+# (a)/(b) prove files are CLASSIFIED right; they do NOT prove a legitimately-tracked
+# code file is free of personal-tier CONTENT. That gap shipped a family JID + career
+# targets in tracked .py files on 2026-07-27 (seed's push), past the file-level checks.
+# This is the coverage half (declaration-vs-coverage): scan tracked CONTENT for the
+# DISTINCTIVE personal-tier value patterns — a messaging JID, or an owner-country
+# phone. Distinctive-only, so near-zero false-positive (bare digit runs = epochs/ids
+# are NOT matched); examples/canary/schema excluded. Runs off-uid in CI = real
+# prevention. NOTE: career/family TERM scanning (employer names) is the harder second
+# half — it needs steward's independent `Tier:` declaration + a curated list, so it is
+# a NAMED follow-up, not faked here (verify-the-oracle: no term list exists yet).
+val_files=$(git ls-files -z \
+  | grep -zivE '\.example(\.|/)|/canary/|(^|/)schema\.sql$|test_server\.py' \
+  | xargs -0 grep -lEI '[0-9]{7,}@(s\.whatsapp\.net|lid|c\.us|g\.us)|\b92[0-9]{9,10}\b' 2>/dev/null \
+  || true)
+if [ -n "$val_files" ]; then
+  echo "FAIL (c): tracked file(s) contain a personal-tier VALUE (phone/JID) — scrub before push:"
+  echo "$val_files" | sed 's/^/  /'   # FILENAMES only — never echo the value itself
+  fail=1
+fi
+
+[ "$fail" -eq 0 ] && echo "privacy gate: CLEAN ($(git ls-files | wc -l) tracked files, content-scanned)"
 exit "$fail"
