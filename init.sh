@@ -214,6 +214,200 @@ PYEOF
     say "ASTRYX_URL empty: NAT mode (your gateway will long-poll peers). Set it when you have a public address."; }
 }
 
+# ============================================================ the reconciler
+# setup is a RE-ENTRANT RECONCILER, not a linear todo-script. Each precondition is a
+# NODE with a CHECK (the terminal observable — same shape doctor uses) and, if the org
+# can drive it, an ACTUATE. The loop converges toward all-green; PROGRESS IS DERIVED
+# (how many checks pass), never a cursor — so it is idempotent AND resumable by
+# construction (a re-run re-checks every node, actuates only the red). Nodes sit on the
+# 2×2 (actuatability × persistence), mirroring spawn-all.sh's two quadrants:
+#   interior — the org can actuate → converge (idempotent). A NON-persistent interior
+#              node (a crashed seed body) is re-checked+re-actuated EVERY pass = the
+#              re-entrancy (spawn-all's has-session re-spawn is exactly this).
+#   wait     — a TRANSIENT boundary (postgres accepting connections) → bounded re-probe.
+#   halt     — a PERMANENT boundary the org can't drive (missing tool, human login) →
+#              report, don't spin. Interior converges around it; the human resolves it.
+dsn() { grep '^ASTRYX_DSN=' .env 2>/dev/null | cut -d= -f2-; }
+psql_q() { if command -v psql >/dev/null; then psql "$(dsn)" "$@"
+  else docker exec -i astryx-pg psql -U astryx -d astryx "$@"; fi; }
+
+_chk_tools() { command -v node >/dev/null && command -v python3 >/dev/null \
+  && command -v tmux >/dev/null && command -v claude >/dev/null \
+  && { command -v docker >/dev/null || command -v psql >/dev/null; }; }
+
+_chk_pg() { [ -f .env ] && grep -q '^ASTRYX_DSN=' .env; }
+_act_pg() {
+  if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx astryx-pg; then
+    docker start astryx-pg >/dev/null
+    [ -f .env ] || die "astryx-pg exists but no .env — write ASTRYX_DSN=... to .env"
+  elif command -v docker >/dev/null; then
+    local pw; pw=$(head -c 24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)
+    say "starting postgres container astryx-pg"
+    docker run -d --name astryx-pg --restart unless-stopped \
+      -e POSTGRES_USER=astryx -e POSTGRES_PASSWORD="$pw" -e POSTGRES_DB=astryx \
+      -p 127.0.0.1:5433:5432 -v astryx-pgdata:/var/lib/postgresql/data postgres:17 >/dev/null
+    echo "ASTRYX_DSN=postgres://astryx:$pw@127.0.0.1:5433/astryx" > .env && chmod 600 .env
+  else die "no .env and no docker — create the db yourself and write ASTRYX_DSN=... to .env"; fi; }
+
+_chk_pgready() { psql_q -c 'SELECT 1' >/dev/null 2>&1; }          # wait (transient boundary)
+
+_chk_schema() { psql_q -c 'SELECT 1 FROM triggers LIMIT 1' >/dev/null 2>&1; }
+_act_schema() { say "applying schema"
+  if command -v psql >/dev/null; then psql "$(dsn)" -f nucleus/schema.sql >/dev/null
+  else docker exec -i astryx-pg psql -U astryx -d astryx < nucleus/schema.sql >/dev/null; fi; }
+
+_chk_venv() { [ -d venv ]; }
+_act_venv() { say "python venv"; python3 -m venv venv; }
+
+_chk_deps() { venv/bin/python nucleus/deps.py check $(active_dep_groups) >/dev/null 2>&1; }
+_act_deps() { local g; g=$(active_dep_groups); say "python deps ($g)"
+  venv/bin/pip -q install $(venv/bin/python nucleus/deps.py install-list $g); }
+
+_chk_chan() { [ -d channel/node_modules ]; }
+_act_chan() { say "npm install (channel server)"; (cd channel && npm install --no-fund --no-audit >/dev/null); }
+
+_chk_obs() { [ -d observatory/web/dist ]; }
+_act_obs() { say "building the observatory (the public portal on :8090)"
+  (cd observatory/web && npm install --no-fund --no-audit >/dev/null && npm run build >/dev/null); }
+
+_chk_obskey() { grep -q '^OBS_KEY=' .env 2>/dev/null; }
+_act_obskey() { echo "OBS_KEY=$(head -c 24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)" >> .env; }
+
+_chk_ident() { grep -q '^ASTRYX_ORG=' .env 2>/dev/null && grep -q '^ASTRYX_SECRET_KEY=' .env 2>/dev/null \
+  && grep -q '^ASTRYX_URL=' .env 2>/dev/null; }
+_act_ident() { org_identity; }
+
+_chk_units() { ls units/astryx-*.service >/dev/null 2>&1; }
+_act_units() { units; }
+
+_chk_law() { [ -f local.md ]; }
+_act_law() { cp local.template.md local.md; say "created local.md from template — EDIT IT: it is your org's law"; }
+
+# login: NOT-actuatable boundary — the terminal observable is an AUTHENTICATED call
+# succeeding (not reachability). A human logs in; halt-report, converge around it.
+_chk_login() { printf 'reply with exactly: ok' | timeout 30 claude -p --model haiku \
+  --strict-mcp-config --tools "" 2>/dev/null | grep -q .; }
+
+# seed: interior but NON-PERSISTENT (the body can crash) → re-checked & re-spawned every
+# pass. spawn.sh is idempotent (has-session guard), so re-actuation is safe.
+_chk_seed() { tmux has-session -t "=ax-seed" 2>/dev/null; }
+_act_seed() { say "spawning the seed"; nucleus/spawn.sh seed >/dev/null; }
+
+# initial prompt DELIVERED ON THE WIRE (a messages row → the doorbell), never send-keys.
+_chk_prompt() { [ "$(psql_q -tAc "SELECT count(*) FROM messages WHERE to_agent='seed' AND from_agent='owner'" 2>/dev/null | tr -d '[:space:]')" != "0" ]; }
+_act_prompt() { psql_q -c "INSERT INTO messages (from_agent,to_agent,intent,body) VALUES ('owner','seed','task','You have just been initialized. Read local.md and found the org it describes.')" >/dev/null; }
+
+# model cache: ACTUATABLE + NON-PERSISTENT (org prefetches; the OS can evict). Gated on
+# media (a voice channel present) — prefetched UNDER the reconciler at init OR at later
+# channel-enablement, IDENTICALLY, never on the message path (transcribe.py uses
+# local_files_only=True, so it never fetches at runtime — the runtime-silent path the
+# design forbids). Re-checked every pass → re-fetched if evicted. Needs the media deps.
+_chk_model() {
+  echo " $(active_dep_groups) " | grep -q ' media ' || return 0   # no voice channel → nothing to cache
+  venv/bin/python -c 'from faster_whisper import WhisperModel; WhisperModel("small", device="cpu", compute_type="int8", local_files_only=True)' 2>/dev/null; }
+_act_model() {
+  say "prefetching the transcription model (once, under the reconciler — never on the message path)"
+  venv/bin/python -c 'from faster_whisper import WhisperModel; WhisperModel("small", device="cpu", compute_type="int8")' >/dev/null 2>&1; }
+
+# the precondition DAG, in dependency order (top depends on nothing).  name|class
+RECONCILE_NODES=(
+  "pg|interior" "pgready|wait" "schema|interior" "venv|interior" "deps|interior"
+  "model|interior" "chan|interior" "obs|interior" "obskey|interior" "ident|interior"
+  "units|interior" "law|interior" "login|halt" "seed|interior" "prompt|interior")
+
+reconcile() {
+  local maxpass=4 pass=0
+  while :; do
+    pass=$((pass + 1))
+    local total=$((${#RECONCILE_NODES[@]} + 1)) green=1   # +1: tools, asserted below
+    local interior_red=0 acted=0 boundary_red=""
+    for entry in "${RECONCILE_NODES[@]}"; do
+      local name=${entry%%|*} class=${entry##*|}
+      if _chk_"$name" >/dev/null 2>&1; then green=$((green + 1)); continue; fi
+      case "$class" in
+        interior)
+          _act_"$name" || true
+          if _chk_"$name" >/dev/null 2>&1; then green=$((green + 1)); acted=$((acted + 1))
+          else interior_red=$((interior_red + 1)); fi ;;
+        wait)
+          local w=0
+          until _chk_"$name" >/dev/null 2>&1 || [ "$w" -ge 60 ]; do w=$((w + 1)); sleep 2; done
+          if _chk_"$name" >/dev/null 2>&1; then green=$((green + 1))
+          else boundary_red="$boundary_red $name(transient-timeout)"; fi ;;
+        halt) boundary_red="$boundary_red $name" ;;
+      esac
+    done
+    say "reconcile pass $pass — $green/$total green"
+    if [ "$interior_red" -eq 0 ]; then
+      [ -n "$boundary_red" ] && say "boundary (yours to resolve — the org can't drive these):$boundary_red"
+      return 0
+    fi
+    if [ "$acted" -eq 0 ] || [ "$pass" -ge "$maxpass" ]; then
+      say "setup stalled (interior nodes not converging) — see ./init.sh doctor"; return 1
+    fi
+  done
+}
+
+# ── maintainer referral — TRANSPARENT + OPT-IN + STATIC, never silent/baked-in ──
+# local.md forbids growth-hacks / deception / anything that embarrasses Umair; a hidden
+# monetization in an OSS installer is that exact line. So three guards, all asserted in
+# CI (nucleus/referral_guard.sh): shown ONLY interactively (a non-TTY default/CI/headless
+# run never reaches it), default No, and the id below is a STATIC LITERAL — never fetched
+# or env-templated, so the audited source IS the runtime value. Empty = OFF (the default);
+# the maintainer opts IN by setting their own static referral code here.
+REFERRAL_ID=""
+referral_optin() {
+  [ -t 0 ] || return 0              # not a TTY → default/non-interactive → NEVER prompt
+  [ -n "$REFERRAL_ID" ] || return 0 # no code set → nothing to offer
+  echo
+  say "astryx is free & open-source. If you're creating a NEW Claude subscription you may"
+  say "use the maintainer's referral — it credits the maintainer, costs you nothing, and is"
+  say "entirely optional (the only monetization, opt-in by design)."
+  printf '\033[36m[astryx]\033[0m   show the referral link? [y/N] '
+  read -r _ans
+  case "$_ans" in
+    y|Y|yes|YES) say "  referral: https://claude.ai/referral/$REFERRAL_ID — thank you for supporting astryx." ;;
+    *) say "  skipped — no referral." ;;
+  esac
+}
+
+setup() {
+  # tools are the hard halt-boundary: nothing converges without them.
+  _chk_tools || die "missing a required tool — need Claude Code>=2.1, node>=20, python3, tmux, and docker OR psql"
+  reconcile || true
+  # terminal green-gate: the doctor is the single source of truth for "done".
+  echo; say "— doctor (the terminal green-gate) —"; "$0" doctor || true
+  echo; say "the seed is awake and reading your law."
+  referral_optin       # opt-in, interactive-only (see the function's CI-asserted guards)
+  # install dance — unit NAMES derived from the generated units/ (never a hardcoded
+  # subset); install by COPY to /etc (deploy.sh units), never a symlink into /home.
+  local inst=""
+  for u in $(ls units 2>/dev/null); do grep -q '^\[Install\]' "units/$u" && inst="$inst $u"; done
+  say "install the org's services (sudo; residents.service among them = reboot-safety):"
+  say "  sudo ./nucleus/deploy.sh units          # cp units/*.{service,timer} → /etc + daemon-reload"
+  say "  sudo systemctl enable --now$inst"
+  # OBS_KEY is a CREDENTIAL: shown in the TERMINAL and copied to the CLIPBOARD only —
+  # it never touches the wire, a step, or a committed file (it lives in .env, gitignored;
+  # this code reads it at runtime, no key literal in tracked source).
+  local key url copied=""
+  key=$(grep '^OBS_KEY=' .env 2>/dev/null | cut -d= -f2-)
+  url="http://localhost:8090/?key=$key"
+  if   command -v wl-copy >/dev/null 2>&1; then printf '%s' "$key" | wl-copy 2>/dev/null && copied=1
+  elif command -v xclip   >/dev/null 2>&1; then printf '%s' "$key" | xclip -selection clipboard 2>/dev/null && copied=1
+  elif command -v pbcopy  >/dev/null 2>&1; then printf '%s' "$key" | pbcopy 2>/dev/null && copied=1; fi
+  echo; say "observatory (your private dashboard): $url"
+  [ -n "$copied" ] && say "  ↳ OBS_KEY copied to your clipboard."
+  say "  that key lives in .env (gitignored) — it's a credential: guard it, never paste it in chat or commit it."
+  # `astryx` from anywhere — link the one dispatcher onto PATH (no file clutter, one surface).
+  ln -sf "$PWD/init.sh" "$PWD/astryx" 2>/dev/null
+  if [ -d "$HOME/.local/bin" ]; then
+    ln -sf "$PWD/init.sh" "$HOME/.local/bin/astryx" 2>/dev/null \
+      && say "linked: astryx → this repo (run 'astryx doctor' / 'astryx wall' from anywhere)"
+  fi
+  say "watch it think:   astryx wall        (or: astryx connect seed  — read-only)"
+  say "whatsapp surface: astryx channels"
+}
+
 if [ "${1:-}" = "doctor" ]; then
   ok() { echo -e "  \033[32m✓\033[0m $*"; }
   bad() { echo -e "  \033[31m✗\033[0m $*"; FAIL=1; }
@@ -228,6 +422,19 @@ if [ "${1:-}" = "doctor" ]; then
   done
   command -v claude >/dev/null && ok "claude ($(claude --version 2>/dev/null | head -c 20))" \
     || bad "claude missing — https://claude.com/claude-code"
+  # LOGIN (boundary node — 2×2 NOT-actuatable × NON-persistent): the terminal observable
+  # is an AUTHENTICATED model call SUCCEEDING, not `claude` on PATH (present≠logged-in)
+  # and not mere reachability (a reachable box with an EXPIRED token is the silent
+  # login-shaped fresh-box break). Fail-closed haiku call, no tools/MCP. The org can't
+  # actuate this (a human logs in) → re-probe every pass, halt-REPORT if down.
+  if command -v claude >/dev/null; then
+    if printf 'reply with exactly: ok' | timeout 30 claude -p --model haiku \
+         --strict-mcp-config --tools "" 2>/dev/null | grep -q .; then
+      ok "claude login: an authenticated model call succeeds"
+    else
+      bad "claude reachable but NOT authenticated — run 'claude' then /login (token missing/expired)"
+    fi
+  fi
   if [ -f .env ]; then
     DSN=$(grep '^ASTRYX_DSN=' .env | cut -d= -f2-)
     psql "$DSN" -c 'SELECT 1' >/dev/null 2>&1 && ok "postgres reachable" || bad "postgres unreachable (docker start astryx-pg?)"
@@ -254,6 +461,11 @@ if [ "${1:-}" = "doctor" ]; then
       venv/bin/python nucleus/media_probe.py >/dev/null 2>&1 \
         && ok "media: in-process decode works (libav, no ffmpeg shell-out)" \
         || bad "media stack can't decode — voice notes would SILENTLY drop (nucleus/media_probe.py)"
+      # the transcription MODEL is a separate node from decode: cached (loads offline) or
+      # the first voice note is a silent None. Prefetched under the reconciler, not at runtime.
+      venv/bin/python -c 'from faster_whisper import WhisperModel; WhisperModel("small", device="cpu", compute_type="int8", local_files_only=True)' 2>/dev/null \
+        && ok "media: transcription model cached (loads offline)" \
+        || bad "media: transcription model NOT cached — voice → silent None (prefetched by ./init.sh setup)"
     fi
   else
     bad "python venv missing — rerun ./init.sh"
@@ -338,7 +550,7 @@ if [ "${1:-}" = "doctor" ]; then
   exit 0
 fi
 
-if [ "${1:-}" = "whatsapp" ]; then
+if [ "${1:-}" = "whatsapp" ] || [ "${1:-}" = "channels" ]; then
   command -v docker >/dev/null || die "whatsapp surface needs docker (wacli container)"
   grep -q '^WA_WEBHOOK_SECRET=' .env 2>/dev/null || {
     echo "WA_WEBHOOK_SECRET=$(head -c 32 /dev/urandom | sha256sum | cut -d' ' -f1)" >> .env
@@ -361,100 +573,15 @@ if [ "${1:-}" = "whatsapp" ]; then
   exit 0
 fi
 
-# --- 0. deps ---------------------------------------------------------------
-for c in node python3 tmux claude; do
-  command -v "$c" >/dev/null || die "missing: $c (need Claude Code >= 2.1, node >= 20, python3, tmux)"
-done
-command -v docker >/dev/null || command -v psql >/dev/null || die "need docker (for postgres) or a local psql"
-
-# --- 1. postgres -----------------------------------------------------------
-if [ -f .env ]; then
-  DSN=$(grep '^ASTRYX_DSN=' .env | cut -d= -f2-)
-  say "using existing .env"
-else
-  if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx astryx-pg; then
-    docker start astryx-pg >/dev/null
-  elif command -v docker >/dev/null; then
-    PW=$(head -c 24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)
-    say "starting postgres container astryx-pg"
-    docker run -d --name astryx-pg --restart unless-stopped \
-      -e POSTGRES_USER=astryx -e POSTGRES_PASSWORD="$PW" -e POSTGRES_DB=astryx \
-      -p 127.0.0.1:5433:5432 -v astryx-pgdata:/var/lib/postgresql/data \
-      postgres:17 >/dev/null
-    DSN="postgres://astryx:$PW@127.0.0.1:5433/astryx"
-  else
-    die "no .env and no docker — create the db yourself and write ASTRYX_DSN=... to .env"
-  fi
-  [ -n "${DSN:-}" ] || die "astryx-pg exists but no .env — write ASTRYX_DSN=... to .env"
-  echo "ASTRYX_DSN=$DSN" > .env && chmod 600 .env
-fi
-DSN=$(grep '^ASTRYX_DSN=' .env | cut -d= -f2-)
-
-say "waiting for postgres"
-for i in $(seq 1 30); do
-  if command -v psql >/dev/null; then psql "$DSN" -c 'SELECT 1' >/dev/null 2>&1 && break
-  else docker exec astryx-pg pg_isready -U astryx >/dev/null 2>&1 && break; fi
-  sleep 1; [ "$i" = 30 ] && die "postgres never came up"
-done
-
-say "applying schema"
-if command -v psql >/dev/null; then psql "$DSN" -f nucleus/schema.sql >/dev/null
-else docker exec -i astryx-pg psql -U astryx -d astryx < nucleus/schema.sql >/dev/null; fi
-
-# --- 2. runtimes -----------------------------------------------------------
-[ -d venv ] || { say "python venv"; python3 -m venv venv; }
-# python deps DERIVE from the ONE manifest (nucleus/deps.conf) — install core + the
-# optional groups this org's channels activate. Idempotent: only install when the
-# functional import-check (deps.py check, the terminal observable) reports a miss.
-# media (av/faster-whisper wheels; libav bundled, no ffmpeg CLI) rides in when a voice
-# channel is present. NEVER install the ffmpeg meta-package: 0-ffmpeg by absence.
-DGROUPS=$(active_dep_groups)
-if ! venv/bin/python nucleus/deps.py check $DGROUPS >/dev/null 2>&1; then
-  say "python deps ($DGROUPS)"
-  venv/bin/pip -q install $(venv/bin/python nucleus/deps.py install-list $DGROUPS)
-fi
-[ -d channel/node_modules ] || { say "npm install (channel server)"; (cd channel && npm install --no-fund --no-audit >/dev/null); }
-if [ ! -d observatory/web/dist ]; then
-  say "building the observatory (this is the public portal on :8090)"
-  (cd observatory/web && npm install --no-fund --no-audit >/dev/null && npm run build >/dev/null)
-fi
-grep -q '^OBS_KEY=' .env || echo "OBS_KEY=$(head -c 24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)" >> .env
-org_identity
-units
-
-# --- 3. your law -----------------------------------------------------------
-if [ ! -f local.md ]; then
-  cp local.template.md local.md
-  say "created local.md from template — EDIT IT: it is your org's law"
-fi
-
-# --- 4. the seed -----------------------------------------------------------
-say "spawning the seed"
-nucleus/spawn.sh seed
-
-FOUND="INSERT INTO messages (from_agent, to_agent, intent, body)
-  SELECT 'owner','seed','task','You have just been initialized. Read local.md and found the org it describes.'
-  WHERE NOT EXISTS (SELECT 1 FROM messages WHERE to_agent='seed' AND from_agent='owner')"
-if command -v psql >/dev/null; then psql "$DSN" -c "$FOUND" >/dev/null
-else docker exec astryx-pg psql -U astryx -d astryx -c "$FOUND" >/dev/null; fi
-
-say "done. the seed is awake and reading your law."
-# install dance — the unit NAMES to enable are DERIVED from the generated units/,
-# never a hardcoded subset (a new channel/sense/runner shows up automatically). The
-# install is by COPY to /etc, never a symlink: on a host where /home is a separate
-# mount, /etc/systemd/system/<u> → /home/... dangles at boot (units load before /home
-# mounts) and the whole org orphans — the 2026-07-23 reboot incident. deploy.sh's
-# `units` mode is the one cp idiom; the [Install]-bearing units are then enabled BY
-# NAME against the /etc copy (root fs, never dangles); static oneshots ride the cp and
-# are found by name when their timer fires. These need sudo — your box, your call.
-_inst=""
-for u in $(ls units 2>/dev/null); do grep -q '^\[Install\]' "units/$u" && _inst="$_inst $u"; done
-say "install the org's services (sudo; residents.service among them = reboot-safety —"
-say "  enable it and the whole org comes back after a reboot):"
-say "  sudo ./nucleus/deploy.sh units          # cp units/*.{service,timer} → /etc + daemon-reload"
-say "  sudo systemctl enable --now$_inst"
-say "verify anytime:   ./init.sh doctor"
-say "whatsapp surface: ./init.sh whatsapp"
-say "watch it think:   tmux attach -r -t ax-seed"
-say "watch the wire:   psql \"\$ASTRYX_DSN\" -c 'SELECT agent, kind, left(content,80) FROM steps ORDER BY id DESC LIMIT 20'"
-say "talk to it:       psql \"\$ASTRYX_DSN\" -c \"INSERT INTO messages (from_agent,to_agent,intent,body) VALUES ('owner','seed','chat','...')\""
+# --- dispatch (the verb router; doctor + channels handled above) -----------
+# init.sh IS the whole surface — a thin verb-dispatcher, no file clutter. `astryx`
+# symlinks here so `astryx <verb>` works from anywhere.
+case "${1:-setup}" in
+  setup|"") setup ;;
+  wall)     exec nucleus/wall.sh ;;
+  # connect attaches READ-ONLY (-r): a resident's only input is the wire, never
+  # send-keys — read-only preserves that invariant while you watch it think.
+  connect)  a=${2:?usage: ./init.sh connect <agent>}; exec tmux attach -r -t "=ax-$a" ;;
+  join)     u=${2:?usage: ./init.sh join <peer-url>}; exec venv/bin/python nucleus/introduce.py "$u" ;;
+  *) die "unknown command '$1' — usage: ./init.sh [setup|doctor|wall|connect <agent>|channels|join <url>]" ;;
+esac
