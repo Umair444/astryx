@@ -75,7 +75,28 @@ def reconcile(conn):
         except Exception as e:
             found = str(e)
         if isinstance(found, str):                      # broken file: tell the owner
-            say(agent, f"[trigger file {f.name}] failed to load: {found}", conn)
+            # WHAT THIS MESSAGE MUST SAY, and did not (memory, msg 3046). A file that fails
+            # to load is skipped here, so its triggers never enter `seen` — and the retirement
+            # loop below then sets enabled=false on every one of them. A syntax error does not
+            # merely fail to reload a trigger: it SWITCHES THE AGENT'S GUARDS OFF, for as long
+            # as the file stays broken. It self-heals on the next clean parse (the upsert sets
+            # enabled=true), so the damage is not durable — but an agent told only "failed to
+            # load" has no way to know its watchers went dark, which is the difference between
+            # a compile error and an unguarded window. So name them.
+            try:
+                dark = [r[0] for r in conn.execute(
+                    "SELECT name FROM triggers WHERE kind='python' AND enabled "
+                    "AND check_src LIKE %s ORDER BY name",
+                    (f"triggers/{agent}/{f.name}::%",)).fetchall()]
+            except Exception:
+                dark = []                               # never let the diagnostic break reconcile
+            detail = (f" — this DISABLES your trigger(s) until it parses: {', '.join(dark)}"
+                      if dark else "")
+            # coalesce_key: the only alarm in the pulse that lacked one. The timer runs every
+            # 60s, so a file left broken overnight sent ~480 identical wakes. The key matches
+            # the body already being sent ([trigger <key>]%), so no format change.
+            say(agent, f"[trigger file {f.name}] failed to load: {found}{detail}", conn,
+                coalesce_key=f"file {f.name}")
             continue
         for t in found:
             seen.add((agent, t["name"]))
