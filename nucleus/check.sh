@@ -36,6 +36,11 @@ run "referral opt-in + static-literal" bash nucleus/referral_guard.sh
 # estate skip on a clean checkout (memory/ is gitignored), and the PyYAML cross-check arm
 # runs only where PyYAML happens to be importable — it is not a dependency.
 run "OKF frontmatter additivity"      "$PY" nucleus/test_okf.py
+# The recall-graph compiler. Its load-bearing arm is CONFORMANCE: the page-link set it
+# extracts must equal link_integrity.py's edge for edge, or the graph and the lint watching
+# the same files disagree with nothing to arbitrate. Pure stdlib; the estate arms skip
+# loudly on a clean checkout, and the wire layer is never touched here.
+run "recall-graph compiler"           "$PY" nucleus/test_memgraph.py
 run "A2A card canonicalisation (JCS)" "$PY" nucleus/test_card_canon.py
 # Needs psycopg + a live org DB; SKIPS loudly otherwise. Fixtures go in a rolled-back
 # transaction (messages_notify is a pure pg_notify, so a rollback wakes nobody).
