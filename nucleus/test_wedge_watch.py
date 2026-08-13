@@ -66,36 +66,46 @@ def check(name, got, want):
 # steward, measured from the wire at 21:17 on 2026-08-13: 11 dropped wakes, newest
 # 19:00, last step 08-12 11:00:21, nothing since. Latched on the limit modal.
 STEWARD_WEDGED = {"agent": "steward", "drops": 11,
+                  "oldest": datetime(2026, 8, 12, 11, 0, tzinfo=UTC),
                   "newest": datetime(2026, 8, 13, 19, 0, tzinfo=UTC),
                   "last_step": datetime(2026, 8, 12, 11, 0, 21, tzinfo=UTC),
-                  "steps_after": 0}
+                  "steps_after": 0, "steps_inside": 2}
 
 # forge, same night, HEALTHY: once-daily heartbeat, idle at a ready prompt. Its streak
 # comes from a compacted session that wrote no turn row. It stepped 04:20:52, ninety
 # seconds after its newest dropped wake.
 FORGE_HEALTHY = {"agent": "forge", "drops": 6,
+                 "oldest": datetime(2026, 8, 12, 21, 25, tzinfo=UTC),
                  "newest": datetime(2026, 8, 13, 4, 19, tzinfo=UTC),
                  "last_step": datetime(2026, 8, 13, 4, 20, 52, tzinfo=UTC),
-                 "steps_after": 1}
+                 "steps_after": 88, "steps_inside": 149}
+
+# THE THIRD STATE, found by steward being it (msg 4236). Same run as STEWARD_WEDGED, read
+# AFTER the respawn: steps_after is now >0, so the two-state classifier called this a
+# marker gap and asserted "they were working" — false. It was wedged for 32.3h. The
+# discriminator is steps INSIDE the run: 2 over 32.3h (0.06/h) vs forge's 149 over 6.9h
+# (21.6/h). Measured on the live wire, not chosen.
+STEWARD_RECOVERED = dict(STEWARD_WEDGED, steps_after=40,
+                         last_step=datetime(2026, 8, 13, 21, 31, tzinfo=UTC))
 
 print("RED — the case the guard exists for (steward, pre-respawn):")
-wedged, gaps = classify([STEWARD_WEDGED], BODIES, NOW)
+wedged, recovered, gaps = classify([STEWARD_WEDGED], BODIES, NOW)
 check("steward is WEDGED", [a for a, _, _ in wedged], ["steward"])
 check("steward is not filed as a marker gap", gaps, [])
 check("quiet hours ~34.3", round(wedged[0][2], 1) if wedged else None, 34.3)
 
 print("\nGREEN — the healthy agent a streak-only guard would have nagged:")
-wedged, gaps = classify([FORGE_HEALTHY], BODIES, NOW)
+wedged, recovered, gaps = classify([FORGE_HEALTHY], BODIES, NOW)
 check("forge is NOT wedged", wedged, [])
 check("forge is filed as a marker gap", gaps, [("forge", 6)])
 
 print("\nBOTH AT ONCE — the discriminator must split them in a single pass:")
-wedged, gaps = classify([STEWARD_WEDGED, FORGE_HEALTHY], BODIES, NOW)
+wedged, recovered, gaps = classify([STEWARD_WEDGED, FORGE_HEALTHY], BODIES, NOW)
 check("only steward alarms", [a for a, _, _ in wedged], ["steward"])
 check("only forge is a gap", [a for a, _ in gaps], ["forge"])
 
 print("\nANCHOR — the wrong anchor must produce the false negative it is accused of:")
-wedged, _ = classify([dict(STEWARD_WEDGED, steps_after=2)], BODIES, NOW)
+wedged, _, _ = classify([dict(STEWARD_WEDGED, steps_after=2)], BODIES, NOW)
 check("anchored on the OLDEST wake, steward reads healthy (the inversion)", wedged, [])
 
 print("\nBOUNDARIES:")
