@@ -124,11 +124,19 @@ run "OKF frontmatter additivity"      "$PY" nucleus/test_okf.py
 # the same files disagree with nothing to arbitrate. Pure stdlib; the estate arms skip
 # loudly on a clean checkout, and the wire layer is never touched here.
 run "recall-graph compiler"           "$PY" nucleus/test_memgraph.py
+# Every name a trigger file references must resolve. Earned when three agents edited one
+# trigger file in two hours and a dropped helper left another author's function throwing
+# on every tick — a defect no per-proposal oracle can see, because each tests its own
+# function against its own staged copy. SKIPS where triggers/ or pyflakes is absent.
+run "trigger bodies resolve"          "$PY" nucleus/test_trigger_smoke.py
 run "A2A card canonicalisation (JCS)" "$PY" nucleus/test_card_canon.py
 # Needs psycopg + a live org DB; SKIPS loudly otherwise. Fixtures go in a rolled-back
 # transaction (messages_notify is a pure pg_notify, so a rollback wakes nobody).
 run "wake-audit classifier"           "$PY" nucleus/test_wake_audit.py
 run "wedge-watch discriminator"       "$PY" nucleus/test_wedge_watch.py
+# Pure stdlib (processes and files are injected; a tmpdir stands in for the repo), but the
+# trigger BODY is gitignored, so it SKIPS loudly on a fresh clone rather than passing.
+run "spawn-pinned deployment drift"   "$PY" nucleus/test_spawn_drift.py
 # Door (orgname) is pure stdlib; the peers-derivation check needs the DB and skips loudly.
 run "org identity / peer name policy" "$PY" nucleus/test_org_identity.py
 # Needs psycopg + a live org DB + the (gitignored) trigger bodies; it SKIPS loudly rather
