@@ -105,9 +105,41 @@ def test_link_set_equals_link_integrity():
     assert len(mine) > 50, f"only {len(mine)} edges — one of the two has gone blind"
 
 
+LINT_SRC = REPO / "triggers" / "memory" / "link_integrity.py"
+
+
+def test_copy_equals_the_original():
+    """The copy must equal the ORIGINAL, not merely still match the estate.
+
+    memory (msg 5186) caught that the old version of this arm was conformance-to-self in
+    a subtle dress: it asserted the copied regex still matched pages, which proves the
+    copy matches SOMETHING, never that it equals the thing it copied. And it had ALREADY
+    silently diverged — link_integrity now reads okf.strip(text) so frontmatter is removed
+    before matching, while this file matched the raw bytes. The old arm stayed green for a
+    reason unrelated to equality: frontmatter cannot contain `[[` because okf.py forbids
+    it. A guard passing for the wrong reason is the failure it exists to prevent.
+
+    triggers/ is gitignored, so this SKIPS on a clean clone — but where the original
+    exists, compare against it rather than around it.
+    """
+    if not LINT_SRC.is_file():
+        print("SKIP: triggers/memory/link_integrity.py absent (gitignored) — "
+              "copy-vs-original not verified")
+        globals()["_UNVERIFIED"] = True
+        return
+    m = re.search(r"^LINK_RE\s*=\s*re\.compile\((r?[\"'].*?[\"'])\)",
+                  LINT_SRC.read_text(), re.M)
+    assert m, "LINK_RE not found in link_integrity.py — the copy check is blind; re-point it"
+    original = eval(m.group(1))                      # the literal, not a re-derivation
+    assert original == LINT_LINK_RE.pattern, (
+        f"the copied regex has DRIFTED from the lint:\n"
+        f"  lint : {original!r}\n  copy : {LINT_LINK_RE.pattern!r}")
+
+
 def test_copy_has_not_rotted():
-    """If the real pages stop matching the copied regex, every proof above is vacuous."""
+    """Belt: even equal, both could have gone blind against the real estate."""
     if not WIKI.is_dir():
+        globals()["_UNVERIFIED"] = True
         return
     hits = sum(len(LINT_LINK_RE.findall(p.read_text())) for p in WIKI.glob("*.md"))
     assert hits > 50, f"copied LINK_RE matched {hits} on the live estate — it has drifted"
