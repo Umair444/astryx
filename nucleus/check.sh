@@ -10,16 +10,63 @@
 #
 # The three unit tests + coverage are PURE-STDLIB — they run on a bare python3, so CI
 # needs no pip install. The media probe runs only where the media stack is installed.
+#
+# ── A SKIP IS NOT A PASS (08-14) ────────────────────────────────────────────────────
+# The second blind spot in this file, the same shape as the first one level down. The
+# first was "is every oracle INVOKED" (test_check_coverage.py). This is "did every
+# invoked oracle actually RUN." Reproduced on a clean checkout of HEAD: five gates
+# verified NOTHING — two of them because the trigger BODY under test was absent from the
+# artifact entirely — and this printed `ALL CODE INVARIANTS PASS` and exited 0. Each
+# oracle announced its skip honestly on stdout; the AGGREGATE verdict, the one line a
+# human or a CI badge reads, out-claimed every one of them.
+#
+# The protocol: an oracle that verified LESS THAN IT CLAIMS exits 77 (the GNU automake
+# SKIP convention — a standard, not an invention). A partial skip is a 77 too: a suite
+# that checked eight things and could not check the ninth is not a pass, because the
+# unverified part is exactly where a regression hides.
+#
+# DEFAULT IS STRICT — an unverified gate is RED. That is the fail-safe polarity for a
+# detector (unknown -> WATCHED): on a developer machine or a live org there is no
+# legitimate reason for a gate to observe nothing, so a vanished trigger body or a
+# broken venv now goes red instead of green. Set CHECK_ALLOW_SKIP=1 to downgrade skips
+# to amber — that is for a bare CI clone, where the gitignored bodies genuinely are not
+# there. Even then the verdict NAMES every unverified gate and never claims ALL PASS.
+# There is no manifest of what-may-skip-where to rot: the caller opts out, visibly.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 PY=${PY:-venv/bin/python}; [ -x "$PY" ] || PY=python3
+EXIT_SKIP=77
 fail=0
+verified=0
+declare -a UNVERIFIED=()
+declare -a FAILED=()
+declare -a LIARS=()
 run() {
   local label=$1; shift
   printf '\033[36m▶\033[0m %s\n' "$label"
-  if "$@"; then printf '\033[32m  ✓ %s\033[0m\n' "$label"
-  else fail=1; printf '\033[31m  ✗ %s\033[0m\n' "$label"; fi
+  local out rc
+  out=$("$@" 2>&1); rc=$?
+  printf '%s\n' "$out"
+  # The belt. A gate that ANNOUNCES a skip and still exits 0 has broken the protocol —
+  # it is the exact defect this accounting exists to catch, so it is reported as a
+  # violation rather than quietly trusted. Narrow by construction: only a line whose
+  # first non-space token is SKIP or ○ counts, so a passing test whose NAME contains
+  # "skipped" (test_plan_lifecycle has one) can never trip it. This belt can only ever
+  # ADD strictness — it cannot turn a real skip into a pass — so both the exit code and
+  # the announcement must fail before a vacuous gate reads green.
+  if [ "$rc" = 0 ] && printf '%s\n' "$out" | grep -qE '^[[:space:]]*(SKIP|○)'; then
+    rc=$EXIT_SKIP; LIARS+=("$label")
+  fi
+  case $rc in
+    0)  verified=$((verified+1)); printf '\033[32m  ✓ %s\033[0m\n' "$label" ;;
+    "$EXIT_SKIP")
+        UNVERIFIED+=("$label")
+        printf '\033[33m  ○ %s — VERIFIED NOTHING this run\033[0m\n' "$label" ;;
+    *)  fail=1; FAILED+=("$label"); printf '\033[31m  ✗ %s\033[0m\n' "$label" ;;
+  esac
 }
+# A gate whose PREREQUISITE is absent is itself unverified — never silently omitted.
+skip() { UNVERIFIED+=("$1"); printf '\033[33m○\033[0m %s — VERIFIED NOTHING (%s)\n' "$1" "$2"; }
 
 run "charter resolver invariants"      "$PY" nucleus/test_charter.py
 run "tier floor invariants"            "$PY" nucleus/test_tier.py
@@ -45,6 +92,7 @@ run "A2A card canonicalisation (JCS)" "$PY" nucleus/test_card_canon.py
 # Needs psycopg + a live org DB; SKIPS loudly otherwise. Fixtures go in a rolled-back
 # transaction (messages_notify is a pure pg_notify, so a rollback wakes nobody).
 run "wake-audit classifier"           "$PY" nucleus/test_wake_audit.py
+run "wedge-watch discriminator"       "$PY" nucleus/test_wedge_watch.py
 # Door (orgname) is pure stdlib; the peers-derivation check needs the DB and skips loudly.
 run "org identity / peer name policy" "$PY" nucleus/test_org_identity.py
 # Needs psycopg + a live org DB + the (gitignored) trigger bodies; it SKIPS loudly rather
@@ -56,9 +104,30 @@ run "gemini ear-dark trigger oracle"  "$PY" nucleus/test_ear_dark.py
 if "$PY" -c 'import av' 2>/dev/null; then
   run "media in-process decode"        "$PY" nucleus/media_probe.py
 else
-  printf '\033[33m○\033[0m media decode probe skipped (av not installed here)\n'
+  skip "media in-process decode" "av not installed here"
 fi
 
 echo
-if [ "$fail" = 0 ]; then echo "check: ALL CODE INVARIANTS PASS"
-else echo "check: FAILURES above — a committed invariant regressed"; exit 1; fi
+for l in "${LIARS[@]}"; do
+  printf '\033[31mPROTOCOL\033[0m %s announced a skip and exited 0 — counted as UNVERIFIED.\n' "$l"
+done
+if [ "${#FAILED[@]}" != 0 ]; then
+  printf 'FAILED (%d):\n' "${#FAILED[@]}"; printf '  ✗ %s\n' "${FAILED[@]}"
+fi
+if [ "${#UNVERIFIED[@]}" != 0 ]; then
+  printf 'UNVERIFIED (%d) — this run did NOT check these; they are not evidence of anything:\n' "${#UNVERIFIED[@]}"
+  printf '  ○ %s\n' "${UNVERIFIED[@]}"
+fi
+echo
+# The verdict may never out-claim its parts. "ALL" is spoken only when nothing skipped.
+if [ "$fail" != 0 ]; then
+  echo "check: FAILURES above — a committed invariant regressed"; exit 1
+elif [ "${#UNVERIFIED[@]}" = 0 ]; then
+  echo "check: ALL CODE INVARIANTS PASS ($verified gates verified)"
+elif [ -n "${CHECK_ALLOW_SKIP:-}" ]; then
+  echo "check: $verified verified, ${#UNVERIFIED[@]} UNVERIFIED (skips allowed here) — NOT a full pass"
+else
+  echo "check: $verified verified, ${#UNVERIFIED[@]} UNVERIFIED — a gate that observes nothing is RED here."
+  echo "       Set CHECK_ALLOW_SKIP=1 only where the missing prerequisites are expected (a bare CI clone)."
+  exit 1
+fi

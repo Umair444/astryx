@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ScrollArea, SegmentedControl, Loader } from '@mantine/core'
+import { ScrollArea, SegmentedControl, Loader, Textarea } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
-import { api, fmtAgo } from '../api'
+import { api, apiPost, fmtAgo } from '../api'
 import Md from './Md'
 
 /* The Memory tab — the org's recall system, rendered.
@@ -23,6 +23,15 @@ type Node = {
 }
 type Claim = { entity: string; rel: string; value: string; evidence: string; confidence: string; contra: boolean }
 type Edge = { src: string; dst: string; cls: 'semantic' | 'entity' | 'temporal' | 'causal'; rel: string }
+/* What the server ACTUALLY read to answer. Computed before the model was called, so this
+ * is evidence rather than the model's report of itself — which is what makes lighting it
+ * up honest instead of decorative. */
+type Retrieved = {
+  nodes: string[]; regions: string[]; hops: Record<string, 0 | 1>
+  path: { src: string; dst: string; cls: Edge['cls']; rel: string }[]
+  scores: Record<string, number>
+}
+type Answer = { answer: string; retrieved: Retrieved | null; proposal?: string | null }
 type Graph = {
   nodes: Node[]; edges: Edge[]; regions: string[]
   stats: { nodes: number; edges: number; claims: number; system1: number; system2: number; by_kind: Record<string, number>; by_class: Record<string, number> }
@@ -58,6 +67,11 @@ export default function MemoryView() {
   const [lens, setLens] = useState<'cortex' | 'split'>('cortex')
   const [classes, setClasses] = useState<Set<string>>(new Set(['semantic', 'entity', 'temporal', 'causal']))
   const [hover, setHover] = useState<string | null>(null)
+  const [q, setQ] = useState('')
+  const [asking, setAsking] = useState(false)
+  const [ans, setAns] = useState<Answer | null>(null)
+  const [blink, setBlink] = useState(0)        // 1 = ignition, 0.6 = warm, 0 = idle
+  const [proposed, setProposed] = useState(false)
   const [view, setView] = useState({ x: 0, y: 0, k: 1 })
   const drag = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null)
   const mobile = useMediaQuery('(max-width: 48em)')
@@ -76,6 +90,37 @@ export default function MemoryView() {
   }, [sel])
 
   const byId = useMemo(() => new Map((g?.nodes ?? []).map((n) => [n.id, n])), [g])
+
+  /* THE BLINK. Ignite to full, then settle to 60% rather than fading out — the retrieved
+   * set stays warm until the next question so the answer remains anchored to its evidence
+   * while you read it. Respects prefers-reduced-motion by skipping straight to warm. */
+  async function ask() {
+    const text = q.trim()
+    if (!text || asking) return
+    setAsking(true); setProposed(false)
+    try {
+      const r = await apiPost<Answer>('/memory/chat', {
+        message: text,
+        history: ans ? [{ role: 'user', text: q }, { role: 'memory', text: ans.answer }] : [],
+      })
+      setAns(r)
+      setQ('')
+      if (r.retrieved?.nodes.length) {
+        const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+        if (reduced) setBlink(0.6)
+        else { setBlink(1); setTimeout(() => setBlink(0.6), 2500) }
+      } else setBlink(0)
+    } catch (e) {
+      setAns({ answer: `chat failed — ${String(e)}`, retrieved: null })
+    } finally { setAsking(false) }
+  }
+
+  const ret = ans?.retrieved ?? null
+  const hops = ret?.hops ?? null
+  const pathKeys = useMemo(
+    () => new Set((ret?.path ?? []).map((p) => `${p.src}|${p.dst}`)),
+    [ret],
+  )
 
   /* Split lens moves the two layers apart on x. The compiler's coordinates are the
    * cortex layout; this is a pure transform of them, so a node keeps its identity and
@@ -191,6 +236,7 @@ export default function MemoryView() {
         <div className="ml-auto"><Header g={g} stale={stale} /></div>
       </div>
 
+      <div className="flex-1 min-h-0 flex flex-col">
       <div className="flex-1 min-h-0 flex">
         <svg
           className="flex-1 starfield cursor-grab active:cursor-grabbing"
@@ -218,10 +264,16 @@ export default function MemoryView() {
           <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
             {/* the cortical blobs */}
             <g filter="url(#blob)" opacity={0.5}>
-              {blobs.map((b) => (
-                <circle key={b.region} cx={b.cx} cy={b.cy} r={b.r}
-                  fill={`hsl(${hue(b.region)} 70% 52% / ${b.region === 'system1' ? 0.1 : 0.2})`} />
-              ))}
+              {blobs.map((b) => {
+                // a region that contributed to the answer ignites; the rest recede
+                const on = ret?.regions.includes(b.region)
+                const a = blink && ret ? (on ? 0.2 + 0.28 * blink : 0.03) : 0.2
+                return (
+                  <circle key={b.region} cx={b.cx} cy={b.cy} r={b.r}
+                    fill={`hsl(${hue(b.region)} 70% 52% / ${a})`}
+                    style={{ transition: 'fill .5s ease-out' }} />
+                )
+              })}
             </g>
 
             {lens === 'split' && (
@@ -240,13 +292,17 @@ export default function MemoryView() {
                 const a = pos.get(e.src), b = pos.get(e.dst)
                 if (!a || !b) return null
                 const lit = !neighbours || (neighbours.has(e.src) && neighbours.has(e.dst))
+                const onPath = pathKeys.has(`${e.src}|${e.dst}`) || pathKeys.has(`${e.dst}|${e.src}`)
                 const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2
                 const nx = -(b.y - a.y) * 0.13, ny = (b.x - a.x) * 0.13
+                const op = blink && ret ? (onPath ? 0.85 : 0.04)
+                  : neighbours ? (lit ? 0.75 : 0.05) : 0.22
                 return (
                   <path key={i} d={`M${a.x},${a.y} Q${mx + nx},${my + ny} ${b.x},${b.y}`}
                     stroke={CLASS_STYLE[e.cls].c}
-                    strokeWidth={lit && neighbours ? 1.5 : 0.7}
-                    opacity={neighbours ? (lit ? 0.75 : 0.05) : 0.22} />
+                    strokeWidth={onPath && blink ? 1.8 : lit && neighbours ? 1.5 : 0.7}
+                    opacity={op}
+                    style={{ transition: 'opacity .45s ease-out, stroke-width .45s' }} />
                 )
               })}
             </g>
@@ -256,15 +312,25 @@ export default function MemoryView() {
               {g.nodes.map((n) => {
                 const p = pos.get(n.id)!
                 const lit = !neighbours || neighbours.has(n.id)
-                const r = (KIND_R[n.kind] ?? 3) + Math.min(5, n.degree * 0.16)
+                const base = (KIND_R[n.kind] ?? 3) + Math.min(5, n.degree * 0.16)
                 const isSel = sel?.id === n.id
+                // hop 0 = a seed the query actually matched; hop 1 = reached by one edge.
+                // Rendering them differently is what lets you SEE the one-hop expansion
+                // policy rather than be told about it.
+                const h = hops ? hops[n.id] : undefined
+                const hot = blink > 0 && h !== undefined
+                const r = isSel ? base * 1.7 : hot && h === 0 ? base * (1 + 0.6 * blink) : base
+                const op = blink && hops
+                  ? h === 0 ? 1 : h === 1 ? 0.4 + 0.25 * blink : 0.07
+                  : lit ? (n.layer === 'system2' ? 0.98 : 0.72) : 0.12
                 return (
-                  <circle key={n.id} cx={p.x} cy={p.y} r={isSel ? r * 1.7 : r}
+                  <circle key={n.id} cx={p.x} cy={p.y} r={r}
                     fill={`hsl(${hue(n.region)} ${n.layer === 'system2' ? 78 : 45}% ${n.layer === 'system2' ? 66 : 52}%)`}
-                    stroke={isSel ? '#fff' : 'none'} strokeWidth={1.4}
-                    opacity={lit ? (n.layer === 'system2' ? 0.98 : 0.72) : 0.12}
-                    filter={n.degree > 12 || isSel ? 'url(#glow)' : undefined}
-                    style={{ cursor: 'pointer', transition: 'opacity .25s, r .18s' }}
+                    stroke={isSel ? '#fff' : hot && h === 0 ? '#fff' : 'none'}
+                    strokeWidth={hot && h === 0 ? 1.1 : 1.4}
+                    opacity={op}
+                    filter={n.degree > 12 || isSel || (hot && h === 0) ? 'url(#glow)' : undefined}
+                    style={{ cursor: 'pointer', transition: 'opacity .45s ease-out, r .45s ease-out' }}
                     onMouseEnter={() => setHover(n.id)} onMouseLeave={() => setHover(null)}
                     onClick={() => setSel(n)}>
                     <title>{`${n.label} · ${n.kind} · ${n.region} · deg ${n.degree}`}</title>
@@ -350,6 +416,59 @@ export default function MemoryView() {
             </ScrollArea>
           </div>
         )}
+      </div>
+
+      {/* ── ask the estate ─────────────────────────────────────────────────────────
+        * Retrieval ran server-side BEFORE the model was called, so the graph above is
+        * lighting up what was actually read — evidence, not the model's self-report. */}
+      <div className="border-t border-line bg-deck-2 shrink-0">
+        {ans && (
+          <ScrollArea className="max-h-[38vh]">
+            <div className="px-4 py-3">
+              <Md text={ans.answer.replace(/^PROPOSE:.*$/m, '')} />
+              {ret && (
+                <div className="mt-2 text-[11px] text-ink-mute font-mono">
+                  read {Object.values(ret.hops).filter((h) => h === 0).length} directly,
+                  {' '}{Object.values(ret.hops).filter((h) => h === 1).length} by one hop ·
+                  {' '}{ret.regions.join(' · ')}
+                </div>
+              )}
+              {ans.proposal && (
+                <div className="mt-3 p-2 rounded border border-[#e8b339]/40 bg-[#e8b339]/5">
+                  <div className="text-[11px] uppercase tracking-wider text-[#e8b339] mb-1">proposal</div>
+                  <div className="text-sm mb-2">{ans.proposal}</div>
+                  <button
+                    disabled={proposed}
+                    onClick={async () => {
+                      await apiPost('/memory/propose', { text: ans.proposal, nodes: ret?.nodes ?? [] })
+                      setProposed(true)
+                    }}
+                    className="text-xs px-2 py-1 rounded border border-line hover:border-cyan disabled:opacity-50">
+                    {proposed ? 'sent to memory — it decides' : 'send to memory'}
+                  </button>
+                  {/* never writes memory/ — memory is the only writer of its estate */}
+                </div>
+              )}
+            </div>
+          </ScrollArea>
+        )}
+        <div className="flex items-end gap-2 px-3 py-2">
+          <Textarea
+            className="flex-1" autosize minRows={1} maxRows={4} size="xs"
+            placeholder="ask the estate — answers come only from what's compiled"
+            value={q} onChange={(e) => setQ(e.currentTarget.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask() } }}
+          />
+          <button onClick={ask} disabled={asking || !q.trim()}
+            className="text-xs px-3 py-2 rounded border border-line hover:border-cyan disabled:opacity-40 shrink-0">
+            {asking ? 'reading…' : 'ask'}
+          </button>
+          {ret && (
+            <button onClick={() => { setAns(null); setBlink(0) }}
+              className="text-xs px-2 py-2 text-ink-mute hover:text-ink shrink-0">clear</button>
+          )}
+        </div>
+      </div>
       </div>
     </div>
   )

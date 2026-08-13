@@ -683,6 +683,118 @@ def write(graph: dict, out_dir: Path = OUT_DIR) -> Path:
     return final
 
 
+# ─────────────────────────────────────────────────────────── retrieval
+# Lexical scoring + ONE-HOP graph expansion. No embeddings, no vector store, and that is
+# a measured choice rather than a shortcut: over ~340 claims an inverted index is exact,
+# instant, deterministic, and explains itself — every hit can be shown to the asker. An
+# ANN index would add a dependency, a model, and a spend line to beat brute force on a
+# corpus that fits in a mobile phone's L2 cache.
+#
+# THE ONE-HOP RULE IS NOT A GUESS. exp-001 measured it: a page read ALONE scores 80% of
+# the raw source, and the 20% gap is purely scope — facts the notation deliberately routed
+# to siblings. The round-trip unit is the page PLUS its one-hop [[links]]. So the retrieval
+# policy is the org's own measured law turned into machinery, not a hyperparameter.
+STOP = frozenset("""a an and are as at be but by для for from has have how in into is it its
+of on or that the their then there these this to was were what when where which who why will
+with you your do does did can could should would""".split())
+
+
+def _terms(text: str) -> list[str]:
+    return [t for t in re.findall(r"[a-z0-9_-]+", (text or "").lower())
+            if len(t) > 2 and t not in STOP]
+
+
+def retrieve(graph: dict, question: str, k: int = 10, hop_cap: int = 26,
+             expand_from: int = 5) -> dict:
+    """Seed by lexical score, expand one hop, return the set AND the path.
+
+    The path is the point. Because retrieval runs before the model is called, what comes
+    back is what was ACTUALLY read — so the UI can light up those exact regions and the
+    asker sees the evidence trail rather than the model's account of its own reasoning.
+    """
+    q = set(_terms(question))
+    if not q:
+        return {"nodes": [], "claims": [], "regions": [], "hops": {}, "path": [], "scores": {}}
+
+    by_id = {n["id"]: n for n in graph["nodes"]}
+    scored: list[tuple[float, str, list]] = []
+    for n in graph["nodes"]:
+        hay_parts = [n.get("label", ""), n.get("title", ""), n.get("region", ""),
+                     n.get("state", ""), n.get("type", "")]
+        claims = n.get("claims") or []
+        hits = []
+        for c in claims:
+            ct = set(_terms(f"{c['entity']} {c['rel']} {c['value']} {c['evidence']}"))
+            overlap = len(q & ct)
+            if overlap:
+                hits.append((overlap, c))
+        meta_terms = set(_terms(" ".join(hay_parts)))
+        # A label match is worth more than a claim match: the asker is usually naming a
+        # THING. Claim matches then rank which of that thing's facts to show.
+        score = 2.4 * len(q & meta_terms) + sum(h[0] for h in hits) * 0.85
+        if score > 0:
+            hits.sort(key=lambda h: -h[0])
+            scored.append((score, n["id"], [h[1] for h in hits[:6]]))
+
+    scored.sort(key=lambda s: (-s[0], s[1]))
+    seeds = scored[:k]
+    if not seeds:
+        return {"nodes": [], "claims": [], "regions": [], "hops": {}, "path": [], "scores": {}}
+
+    hops = {nid: 0 for _, nid, _ in seeds}
+    scores = {nid: round(sc, 2) for sc, nid, _ in seeds}
+    path: list[dict] = []
+    # Expand from the TOP seeds only, not all of them. On a graph this dense, one hop off
+    # every seed reaches most of the org and the blink lights up 8 regions of 10 — which
+    # is indistinguishable from lighting up nothing. A retrieval trail that always looks
+    # the same tells the asker nothing, and a highlight that means everything means
+    # nothing. Narrow is what makes the picture informative.
+    expand_ids = {nid for _, nid, _ in seeds[:expand_from]}
+    for e in graph["edges"]:
+        for a, b in ((e["src"], e["dst"]), (e["dst"], e["src"])):
+            if a in expand_ids and b not in hops and len(hops) < hop_cap:
+                hops[b] = 1
+                path.append({"src": a, "dst": b, "cls": e["cls"], "rel": e["rel"]})
+
+    claims = []
+    for _, nid, cs in seeds:
+        for c in cs:
+            claims.append({"node": nid, **c})
+
+    return {
+        "nodes": sorted(hops, key=lambda n: (hops[n], -scores.get(n, 0), n)),
+        "claims": claims[:40],
+        "regions": sorted({by_id[n]["region"] for n in hops if n in by_id}),
+        "hops": hops, "path": path[:70], "scores": scores,
+    }
+
+
+def render_context(graph: dict, r: dict, budget: int = 14000) -> str:
+    """The retrieved set, rendered in the estate's OWN `·` notation.
+
+    Measured 41% cheaper than prose at identical cold-read recall (exp-001 F3), so the
+    org's compression law pays for itself again at retrieval time. Values are truncated:
+    a claim is a fact, not a paragraph, and a short field is also a poor carrier for an
+    injected instruction.
+    """
+    by_id = {n["id"]: n for n in graph["nodes"]}
+    out, size = [], 0
+    for nid in r["nodes"]:
+        n = by_id.get(nid)
+        if not n:
+            continue
+        head = f"[{n['kind']}] {n.get('title') or n['label']} · region {n['region']}"
+        cs = [c for c in r["claims"] if c["node"] == nid]
+        block = head + "".join(
+            f"\n  {c['rel']} · {str(c['value'])[:300]}" + (f" [{c['evidence'][:80]}]" if c.get("evidence") else "")
+            for c in cs)
+        if size + len(block) > budget:
+            break
+        out.append(block)
+        size += len(block)
+    return "\n".join(out)
+
+
 def main() -> int:
     args = sys.argv[1:]
     verb = args[0] if args else "stats"
