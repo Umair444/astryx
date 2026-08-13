@@ -1,0 +1,16 @@
+#!/usr/bin/env sh
+# astryx pre-push privacy gate — installed by init.sh's reconciler from THIS tracked
+# template. .git/hooks isn't version-controlled, so a re-clone / `.git` reset / fresh
+# machine would silently drop a hand-installed hook and privacy_gate would "run nowhere"
+# again (the resurrecting-invisibly gap). Version-controlling the hook body here + a
+# reconciler node that idempotently copies it makes the floor DURABLE and gives every
+# fresh clone privacy-by-default straight from ./init.sh.
+#
+# Runs the gate before every push; a personal-tier file / value / DB-dump in the tree
+# BLOCKS the push (the 07-27 leak class).
+#
+# HONEST GRADE (built-vs-live discipline): SAME-UID DETECTION — bypassable with
+# `git push --no-verify`, and LOCAL to this clone. NOT prevention. Off-uid CI (.github,
+# once Umair grants workflow scope) is the real ceiling; this is the automatic-vs-
+# manual-nowhere floor, and it guards the high-stakes deploy-push.
+exec "$(git rev-parse --show-toplevel)/nucleus/privacy_gate.sh"

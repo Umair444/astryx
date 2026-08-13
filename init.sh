@@ -151,26 +151,32 @@ WantedBy=multi-user.target
 EOF
   fi
 
-  # ── 4. runners — per-agent pollers from nucleus/runners.conf ─────────────────
+  # ── 4. runners — periodic jobs from nucleus/runners.conf ─────────────────────
   # <stem> | <agent> | <OnCalendar> | <exec from repo root> | <description>
-  # Gated on the agent resolving in the roster (the ONE resolver) so a decl for a
-  # departed agent generates nothing; doctor flags such an orphan decl.
+  # A per-agent poller is gated on its agent resolving (the ONE resolver) so a decl for
+  # a departed agent generates nothing. agent="org" is ORG-INFRA (backup, etc.) — always
+  # generated, no per-agent gate. A .py exec runs under venv python; a .sh exec runs
+  # directly (executable + shebang), so org-infra bash jobs (pg_dump) are first-class.
   if [ -f nucleus/runners.conf ]; then
     while IFS='|' read -r stem agent oncal execp desc; do
       stem=$(echo "$stem" | xargs); [ -z "$stem" ] && continue
       case "$stem" in \#*) continue;; esac
       agent=$(echo "$agent" | xargs); oncal=$(echo "$oncal" | xargs)
       execp=$(echo "$execp" | xargs); desc=$(echo "$desc" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-      if ! venv/bin/python nucleus/charter.py "$agent" >/dev/null 2>&1; then
+      if [ "$agent" != org ] && ! venv/bin/python nucleus/charter.py "$agent" >/dev/null 2>&1; then
         echo "  runner '$stem': agent '$agent' not in roster — no unit generated" >&2; continue
       fi
+      case "$execp" in
+        *.sh) rexec="$PWD/$execp" ;;
+        *)    rexec="$PWD/venv/bin/python $PWD/$execp" ;;
+      esac
       cat > "$UD/astryx-$stem.service" <<EOF
 [Unit]
 Description=astryx $stem — $desc
 [Service]
 Type=oneshot
 WorkingDirectory=$PWD
-ExecStart=$PWD/venv/bin/python $PWD/$execp
+ExecStart=$rexec
 User=$USER
 EOF
       cat > "$UD/astryx-$stem.timer" <<EOF
@@ -277,7 +283,23 @@ _chk_ident() { grep -q '^ASTRYX_ORG=' .env 2>/dev/null && grep -q '^ASTRYX_SECRE
   && grep -q '^ASTRYX_URL=' .env 2>/dev/null; }
 _act_ident() { org_identity; }
 
-_chk_units() { ls units/astryx-*.service >/dev/null 2>&1; }
+# units: the precondition is SET EQUALITY with the derived set, not "some unit exists".
+# `ls units/astryx-*.service` was satisfied by ANY one unit, so once units/ was non-empty
+# this node could never go red again — and adding backup + restore-verify to
+# nucleus/runners.conf generated nothing, while doctor (which DOES derive the full set,
+# below) reported the drift and told you to "rerun ./init.sh to regenerate". Rerunning
+# could not fix it: the reconciler skipped the node it was telling you to re-run.
+# A check cannot cover what it cannot OBSERVE — this one derives the expected set exactly
+# the way doctor does, into a throwaway dir, and diffs. Cheap (units() only writes files).
+_chk_units() {
+  local gen rc=1
+  gen=$(mktemp -d) || return 1
+  if UNITS_DIR="$gen" units >/dev/null 2>&1; then
+    diff <(cd "$gen" && ls | sort) <(cd units 2>/dev/null && ls | sort) >/dev/null 2>&1 && rc=0
+  fi
+  rm -rf "$gen"
+  return "$rc"
+}
 _act_units() { units; }
 
 _chk_law() { [ -f local.md ]; }
@@ -297,6 +319,22 @@ _act_seed() { say "spawning the seed"; nucleus/spawn.sh seed >/dev/null; }
 _chk_prompt() { [ "$(psql_q -tAc "SELECT count(*) FROM messages WHERE to_agent='seed' AND from_agent='owner'" 2>/dev/null | tr -d '[:space:]')" != "0" ]; }
 _act_prompt() { psql_q -c "INSERT INTO messages (from_agent,to_agent,intent,body) VALUES ('owner','seed','task','You have just been initialized. Read local.md and found the org it describes.')" >/dev/null; }
 
+# pre-push privacy hook: ACTUATABLE + NON-PERSISTENT (.git/hooks isn't version-controlled,
+# so a re-clone/reset drops it and privacy_gate reverts to running nowhere). Install it
+# IDEMPOTENTLY from the TRACKED template (hooks/pre-push): re-entrant, install-if-missing-
+# or-different (cmp byte-match), no-op if present-and-matching. Gives a fresh clone the
+# privacy floor by DEFAULT. Same-uid DETECTION (--no-verify-bypassable, local) — NOT
+# prevention; off-uid CI on workflow scope is the ceiling.
+_chk_prehook() {
+  [ -d .git ] || return 0        # not a git checkout (tarball deploy) → no hook to install
+  [ -f .git/hooks/pre-push ] && [ -x .git/hooks/pre-push ] && cmp -s hooks/pre-push .git/hooks/pre-push
+}
+_act_prehook() {
+  [ -d .git ] || return 0
+  mkdir -p .git/hooks
+  cp hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+}
+
 # model cache: ACTUATABLE + NON-PERSISTENT (org prefetches; the OS can evict). Gated on
 # media (a voice channel present) — prefetched UNDER the reconciler at init OR at later
 # channel-enablement, IDENTICALLY, never on the message path (transcribe.py uses
@@ -313,7 +351,7 @@ _act_model() {
 RECONCILE_NODES=(
   "pg|interior" "pgready|wait" "schema|interior" "venv|interior" "deps|interior"
   "model|interior" "chan|interior" "obs|interior" "obskey|interior" "ident|interior"
-  "units|interior" "law|interior" "login|halt" "seed|interior" "prompt|interior")
+  "units|interior" "law|interior" "prehook|interior" "login|halt" "seed|interior" "prompt|interior")
 
 reconcile() {
   local maxpass=4 pass=0
@@ -545,6 +583,48 @@ if [ "${1:-}" = "doctor" ]; then
   done
   [ -z "$routebad" ] && ok "every enabled route targets a real agent" \
     || bad "enabled routes to UNKNOWN agents (mis-route risk):$routebad"
+  # durability: the org's whole state is one docker volume — a recent dump is the only
+  # thing that makes "production ready" true. Terminal observable = a fresh backup on
+  # disk (reads local file mtimes only, never the dump's PII content). Red if stale/absent.
+  newest_bk=$(ls -1t backups/astryx-*.dump 2>/dev/null | head -1)
+  if [ -z "$newest_bk" ]; then
+    bad "NO database backup — org state is a single docker volume (run ./nucleus/backup.sh; enable astryx-backup.timer)"
+  elif [ "$(( $(date +%s) - $(stat -c %Y "$newest_bk") ))" -gt 90000 ]; then
+    bad "database backup STALE (>25h): ${newest_bk##*/} — is astryx-backup.timer enabled & firing?"
+  else
+    ok "database backup fresh (${newest_bk##*/}, <25h)"
+  fi
+  # restore-verify: a fresh dump that won't pg_restore is backup THEATER — this asserts
+  # the newest dump was proven-restorable recently (weekly), so a silently-unrestorable
+  # backup goes RED instead of freshness-green. Reads the stamp only (never restores here).
+  if [ -f backups/.last-restore-ok ]; then
+    if [ "$(( $(date +%s) - $(stat -c %Y backups/.last-restore-ok) ))" -gt 691200 ]; then
+      bad "backup restore-verify STALE (>8d): a dump may have stopped restoring (nucleus/restore_verify.sh)"
+    else
+      ok "backup restore-verified ($(cat backups/.last-restore-ok), <8d — proven-restorable)"
+    fi
+  elif [ -n "$newest_bk" ]; then
+    warn "backup never restore-verified — run nucleus/restore_verify.sh (a dump you can't restore is a hope, not a backup)"
+  fi
+  # A2A card (plan-20): assert the SERVED /.well-known/agent-card.json exposes EXACTLY the
+  # public roster (== the fail-closed tier oracle) with zero tier-private agents, signed with
+  # the introduce key. Runs against the live gateway on the SERVED bytes — the grade-1 check
+  # that a new public endpoint can't silently leak a tier-private agent to the world.
+  if [ -d venv ]; then
+    rc=0; venv/bin/python nucleus/card_assert.py http://127.0.0.1:8845 >/dev/null 2>&1 || rc=$?
+    if [ "$rc" = 0 ]; then ok "A2A card: roster ≡ public oracle, zero tier-private, signed"
+    elif [ "$rc" = 2 ]; then warn "A2A card not served yet — gateway not redeployed with plan-20"
+    else bad "A2A card LEAK/mismatch — tier-private agent or wrong key on the PUBLIC card (nucleus/card_assert.py :8845)"; fi
+  fi
+  # pre-push privacy hook installed & matching the tracked template (built-vs-live: the
+  # gate must actually RUN on push, not just exist — a re-clone drops the un-versioned hook).
+  if [ -d .git ]; then
+    if [ -f .git/hooks/pre-push ] && cmp -s hooks/pre-push .git/hooks/pre-push 2>/dev/null; then
+      ok "pre-push privacy hook installed (same-uid detection; off-uid CI is the ceiling)"
+    else
+      bad "pre-push privacy hook missing/stale — privacy_gate won't run on push (./init.sh installs it)"
+    fi
+  fi
   tmux has-session -t =ax-seed 2>/dev/null && ok "seed resident alive" || warn "seed not resident — nucleus/spawn.sh seed"
   [ -z "$FAIL" ] && say "doctor: healthy" || say "doctor: fix the ✗ lines above (sudo lines are for your human)"
   exit 0
