@@ -87,8 +87,21 @@ VEGA_HOME = Path(tempfile.gettempdir()) / "astryx-vega-conjure"
 # (nucleus/tier.py, fail-closed). A content-class path must NOT be added here without
 # applying that floor — the grade-3 assert (nucleus/test_tier.py) fails if it is.
 PUBLIC_PATHS = {"/api/overview", "/api/peers", "/api/vega", "/api/whoami",
-                "/api/events", "/api/messages", "/api/agents", "/api/steps",
+                "/api/events", "/api/messages", "/api/agents",
                 "/favicon.svg"}
+# /api/steps REMOVED from the anonymous allowlist 2026-08-13, on Umair's explicit
+# instruction ("gate it for now; we will discuss why it is public tomorrow").
+# WHY, so the decision is legible rather than silent: step CONTENT is the verbatim body
+# of everything an agent does, including work an agent does ON the owner's behalf with
+# his own material. Publishing it made the org's whole reasoning stream anonymously
+# readable from the internet — which is defensible for org work and indefensible the
+# moment a task touches anything personal, because the agent cannot tell the surface
+# apart at the moment it writes. This is a PAUSE pending that conversation, NOT a ruling
+# that transparency is wrong: local.md still says org work is public, and the counts,
+# liveness, goals, peers and the wire remain public. If the answer tomorrow is "publish
+# steps again", the change is to put the path back on this line.
+# The web UI does not call /api/steps (it uses /api/wire, /api/agents, /api/events), so
+# the public dashboard keeps working.
 
 # TABLE-EXPOSURE NOTE (plan-16 / goal 16). This allowlist is default-DENY: only the
 # paths above are anonymous, and they read a FIXED set of tables (messages/steps/
@@ -100,6 +113,104 @@ PUBLIC_PATHS = {"/api/overview", "/api/peers", "/api/vega", "/api/whoami",
 # no semantic columns; guarded by triggers/canopus/signals_schema_guard.py), but a
 # public read would still expose career-activity TIMING/RATE across the tier line.
 # Keep signals owner-gated-only.
+
+
+# ---- goal-state vocabulary: ONE writer for the terminal set ---------------------
+# `goals.state` is free text with NO CHECK constraint, so every reader has to name states
+# by hand — and hand-written lists drift. Two proofs, both live: the public overview counted
+# `state='done'` and reported goals_done=0 for weeks while the table held 8 'shipped' (the
+# org's own face under-reporting its finished work), and steward's patrol filtered on the
+# positive list `state IN ('active','proposed')`, so parking a goal in any new state would
+# have removed it from the metabolism entirely.
+# So the sets live here ONCE and every query renders from them. GOAL_DONE carries BOTH
+# vocabularies so neither is lost; IN-FLIGHT is derived as the COMPLEMENT of terminal, so a
+# state added later (an owner-blocked goal, say) counts as live by default instead of
+# silently vanishing.
+# HONEST LIMIT, and it is the interesting half: this makes the duplicate a single writer, it
+# does NOT make the vocabulary enforced. The recursion only bottoms out at a fact the
+# SUBSTRATE enforces — a CHECK constraint or enum on goals.state — and there is none, so a
+# typo state ('shiped') would still be counted as live work forever. That constraint is a
+# schema change touching every writer of the column; routed to steward as a decision rather
+# than slipped in here. Until it exists, this level is soft and knowingly so.
+GOAL_DONE = ("shipped", "done")
+GOAL_TERMINAL = GOAL_DONE + ("hibernated", "refused")
+_SQL_DONE = "(" + ",".join(f"'{s}'" for s in GOAL_DONE) + ")"
+_SQL_TERMINAL = "(" + ",".join(f"'{s}'" for s in GOAL_TERMINAL) + ")"
+
+_peer_cache: tuple = (0.0, frozenset())
+
+
+async def peer_orgs(max_age: float = 30.0) -> frozenset:
+    """Orgs someone deliberately introduced. Fails CLOSED: if the query fails we
+    return the empty set, so anonymous sees nothing rather than everything.
+
+    STATUS IS DELIBERATELY NOT FILTERED, and this is a ruling rather than an oversight
+    (abstractor-4 flagged that it was previously accidental, msg 2275). /api/overview
+    counts peers as `status <> 'revoked'` and that is CORRECT THERE — the two queries
+    answer different questions and must not be "harmonised":
+      - overview asks WHO ARE OUR PEERS NOW. Revoked orgs are not, so it excludes them.
+      - this asks WHOSE TRAFFIC IS ORG-TO-ORG WORK. Revoking a peer governs what we
+        accept FROM IT IN FUTURE; it does not retroactively make work we already did
+        together private. local.md: "org work is public." Hiding past federation traffic
+        on revocation would be revising the public record, which is the opposite of the
+        transparency the law asks for — and it would do it silently.
+    So a revoked org's PAST traffic stays visible, on purpose. What revocation stops is
+    new traffic ever being accepted, which the gateway enforces upstream of this.
+    If that ruling is ever reversed, change it HERE — this is the single writer for
+    "whose traffic anonymous may see", and its input deserves the same one-writer
+    discipline as the rule itself."""
+    global _peer_cache
+    now = time.monotonic()
+    if now - _peer_cache[0] > max_age:
+        try:
+            rows = await pool.fetch("SELECT org FROM peers")
+            _peer_cache = (now, frozenset(r["org"] for r in rows))
+        except Exception:
+            return frozenset()
+    return _peer_cache[1]
+
+
+# THE rule's content, written once: a message is anonymously visible when ANY of these
+# columns names a known peer. Both renderings below iterate this tuple, so adding a column
+# (or a condition) changes every anonymous path at once instead of one of them.
+ANON_PEER_COLUMNS = ("from_org", "to_org")
+
+
+def anonymous_can_see_sql(param: str) -> str:
+    """The SQL rendering of anonymous_can_see(), derived from the SAME tuple.
+
+    Exists because a comment is not a call. The first version of this collapse left
+    /api/messages hand-rendering the rule as SQL with only a comment pointing at the
+    python authority — so the peer SET had one writer while the PREDICATE still had two,
+    and steward's coverage assert went red on exactly that: "each such path re-expresses
+    the visibility rule in its own words." The assert walks the AST for a real Call node
+    precisely because its own first draft was fooled by the comment."""
+    return "(" + " OR ".join(f"{c} = ANY({param})" for c in ANON_PEER_COLUMNS) + ")"
+
+
+def anonymous_can_see(from_org, to_org, peers: frozenset) -> bool:
+    """THE definition of what an anonymous caller may see — ONE writer, called by
+    every anonymous message-bearing path (/api/messages renders it as SQL, /api/events
+    evaluates it per event).
+
+    Anonymous sees FEDERATION traffic only: a counterpart org that is a known PEER.
+    It must never see the PERSONAL-CHANNEL boundary (whatsapp/discord/telegram), which
+    carries the owner's own messages, group JIDs and family/career content — local.md
+    puts that in the human-personal tier ("org work is public; the human-personal tier
+    is not").
+
+    WHY THIS FUNCTION EXISTS AT ALL, since a one-line predicate looks like it does not
+    need one: this rule was written TWICE — once as SQL in /api/messages, once as Python
+    in /api/events' visible() — and hand-synchronised. On 2026-08-12 I fixed the SQL copy
+    and the Python copy kept the old rule, so the historical rows went private while the
+    LIVE STREAM kept pushing every WhatsApp/Discord/Telegram message, body and all, to any
+    anonymous SSE client. It drifted within four hours of being touched. A two-writer fact
+    with a promise between the sites is a defect waiting for its first edit; the comment at
+    the top of PUBLIC_PATHS even NAMED both paths, and a comment cannot fail a build.
+    So: one definition, no second copy to forget. If a third anonymous path is ever added,
+    it calls this."""
+    row = {"from_org": from_org, "to_org": to_org}
+    return any(row[c] in peers for c in ANON_PEER_COLUMNS)
 
 
 def is_owner(request: Request) -> bool:
@@ -220,7 +331,7 @@ def tmux_alive() -> set[str]:
 @app.get("/api/overview")
 async def overview():
     stepped = {r["agent"] for r in await pool.fetch("SELECT DISTINCT agent FROM steps")}
-    r = await pool.fetchrow("""
+    r = await pool.fetchrow(f"""
         SELECT
           (SELECT count(*) FROM messages WHERE ts > now() - interval '24h')  AS messages_24h,
           (SELECT count(*) FROM steps    WHERE ts > now() - interval '24h')  AS steps_24h,
@@ -228,8 +339,10 @@ async def overview():
              WHERE ts > now() - interval '24h')                              AS tokens_in_24h,
           (SELECT coalesce(sum(tokens_out), 0) FROM steps
              WHERE ts > now() - interval '24h')                              AS tokens_out_24h,
-          (SELECT count(*) FROM goals WHERE state = 'active')                AS goals_active,
-          (SELECT count(*) FROM goals WHERE state = 'done')                  AS goals_done,
+          -- Both counters render from GOAL_DONE / GOAL_TERMINAL (module constants) — see
+          -- their definition for why they are not written inline here.
+          (SELECT count(*) FROM goals WHERE state NOT IN {_SQL_TERMINAL})    AS goals_active,
+          (SELECT count(*) FROM goals WHERE state IN {_SQL_DONE})            AS goals_done,
           (SELECT count(*) FROM peers WHERE status <> 'revoked')             AS peers
     """)
     alive = tmux_alive()
@@ -312,8 +425,13 @@ async def agents(request: Request):
         # polarity as the content floor — driven by the one tier authority.
         from nucleus.tier import is_content_public
         for row in out:
+            # last_content is a 120-char slice of the agent's most recent STEP BODY, so
+            # it is the same content /api/steps was just gated for — a second door to the
+            # thing we closed. Nulled for EVERY agent while that gate stands, not only for
+            # tier-private ones; gating one path and leaving its excerpt on another is the
+            # two-writer leak we already paid for once today.
+            row["last_content"] = None
             if not is_content_public(row["agent"]):
-                row["last_content"] = None
                 row["last_kind"] = None
                 row["last_seen"] = None
                 row["steps"] = 0
@@ -327,8 +445,13 @@ async def messages(request: Request, limit: int = 100, before_id: int | None = N
                    thread: str | None = None, agent: str | None = None):
     limit = min(limit, 500)
     cond, args = [], []
-    if not is_owner(request):        # anonymous sees only boundary traffic
-        cond.append("(from_org <> 'local' OR to_org <> 'local')")
+    if not is_owner(request):
+        # The rule is EMITTED by the authority, not restated here — see
+        # anonymous_can_see_sql(). Passing the peer set as a parameter (rather than an
+        # IN-subquery) keeps both anonymous paths reading the same python source of truth.
+        peers = list(await peer_orgs())
+        args.append(peers)
+        cond.append(anonymous_can_see_sql(f"${len(args)}"))
     if before_id:
         args.append(before_id); cond.append(f"id < ${len(args)}")
     if thread:
@@ -1325,11 +1448,15 @@ async def events(request: Request):
     # agents' insides and stay owner-only.
     owner = bool(OBS_KEY) and request.query_params.get("key", "") == OBS_KEY
 
-    def visible(data: dict) -> bool:
+    async def visible(data: dict) -> bool:
         if owner:
             return True
-        return (data.get("type") == "message" and
-                (data.get("from_org") != "local" or data.get("to_org") != "local"))
+        # Same ONE rule as /api/messages — see anonymous_can_see(). This site previously
+        # carried its own copy of the predicate and kept the old, leaking version after
+        # the SQL side was fixed; it now has no copy to keep.
+        if data.get("type") != "message":
+            return False          # steps/dags are the agents' insides: owner-only
+        return anonymous_can_see(data.get("from_org"), data.get("to_org"), await peer_orgs())
 
     async def stream():
         q: asyncio.Queue = asyncio.Queue()
@@ -1339,7 +1466,7 @@ async def events(request: Request):
             while True:
                 try:
                     data = await asyncio.wait_for(q.get(), timeout=25)
-                    if visible(data):
+                    if await visible(data):
                         yield f"data: {json.dumps(data)}\n\n"
                 except asyncio.TimeoutError:
                     yield ": ping\n\n"

@@ -30,7 +30,7 @@ fi
 # The manifest of what must never reach the public repo. Route files are
 # derived from the live bridge layout; the rest is the fixed personal tier.
 SURFACES=(.env local.md relations.md owner.md homes memory triggers media
-          wacli-data/ bridges/routes-whatsapp.json bridges/routes-telegram.json
+          backups/ wacli-data/ bridges/routes-whatsapp.json bridges/routes-telegram.json
           bridges/routes-discord.json)
 for s in "${SURFACES[@]}"; do
   if ! git check-ignore --no-index -q "$s" 2>/dev/null; then
@@ -83,6 +83,57 @@ val_files=$(git ls-files -z \
 if [ -n "$val_files" ]; then
   echo "FAIL (c): tracked file(s) contain a personal-tier VALUE (phone/JID) — scrub before push:"
   echo "$val_files" | sed 's/^/  /'   # FILENAMES only — never echo the value itself
+  fail=1
+fi
+
+# ---- (d) NEVER-COMMIT FILE TYPES: data dumps + private keys, by extension -----
+# The org now emits full-PII BINARY artifacts (backups/*.dump = the WHOLE DB). (a)/(b)
+# only cover DECLARED surfaces (backups/ is covered, but a dump written+committed
+# ANYWHERE ELSE — nested, or a stray ./x.dump — is not), and (c) is a TEXT regex blind
+# to a binary dump. So a full-DB dump committed outside backups/ would push GREEN: the
+# irreversible, catastrophic leak. This closes the residual by TYPE — FAIL if any
+# TRACKED file carries a data/secret extension that is unambiguously never-committed
+# (DB dumps + private keys). High-confidence, zero-curation, ~zero false-positive
+# (baseline matches none, verified 2026-08-03); off-uid in CI = prevention, not just
+# detection. Legit gitignored dumps (backups/*.dump) are UNTRACKED so never match here.
+type_files=$(git ls-files | grep -iE '\.(dump|sqlite|sqlite3|db|bak|pem|key|pfx|p12)$|(^|/)id_rsa' || true)
+if [ -n "$type_files" ]; then
+  echo "FAIL (d): tracked file(s) of a never-commit data/secret type (DB dump / private key):"
+  echo "$type_files" | sed 's/^/  /'
+  fail=1
+fi
+
+# ---- (d.state) OUR OPERATIONAL-STATE ARTIFACT, by NAME (not extension) -----------
+# backup.sh writes the org's non-regenerable operational state (triggers/ + memory/) to
+# backups/astryx-<ts>.state.tgz. The real artifacts are UNTRACKED (backups/ is gitignored), so
+# they never appear in git ls-files here — this fires ONLY on a state-tar COMMITTED somewhere
+# else, the one leak the backups/ directory rule can't reach.
+# A bare `*.tgz` rule was CONSIDERED AND DECLINED (steward, 2026-08-12): privacy_gate is a
+# BLOCKING pre-push gate, and .tgz is a common legit archive extension — a false FAIL here would
+# not merely spend credibility, it would train `git push --no-verify`, the one bypass that turns
+# the gate into theater. The NAME `*.state.tgz` is OUR convention, so it has zero false-positive
+# surface, and it is MONOTONE: if a future writer renames the output we fall back to exactly the
+# directory-level coverage we have today (no hole created) — unlike a name-anchor that REPLACES
+# broader coverage (the un-ignore-on-rename footgun). The anchor is only meaningful while
+# backup.sh still emits that name; the writer-assert below turns that from a promise into a fact.
+name_files=$(git ls-files | grep -iE '(^|/)[^/]*\.state\.tgz$' || true)
+if [ -n "$name_files" ]; then
+  echo "FAIL (d.state): tracked operational-state tar(s) committed outside gitignored backups/:"
+  echo "$name_files" | sed 's/^/  /'
+  fail=1
+fi
+# writer-assert: keep (d.state) non-vacuous. If backup.sh is renamed to emit a different name,
+# the anchor above silently covers nothing — so FAIL until (d.state) is updated in the SAME
+# change, forcing declaration and coverage to move together at the single place that can break it.
+# PRESENCE-GUARDED: backup.sh is untracked and rides the owner batch, so it is ABSENT from an
+# off-uid CI checkout until it lands — no writer present means no promise to keep, so skip rather
+# than fire (the script-before-workflow trap: a gate that fails for a reason unrelated to what it
+# guards teaches people to ignore it). Goes live automatically the moment backup.sh lands beside
+# this rule in the same batch.
+if [ -f nucleus/backup.sh ] && ! grep -q '\.state\.tgz' nucleus/backup.sh; then
+  echo "FAIL (d.state): nucleus/backup.sh no longer contains the literal '.state.tgz' — the"
+  echo "  (d.state) name-anchor now covers a name nothing writes. Update the anchor in the SAME"
+  echo "  change as the rename so declared coverage tracks the real artifact name."
   fail=1
 fi
 

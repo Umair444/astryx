@@ -14,6 +14,7 @@ observatory silently took the first match on a duplicated stem while spawn.sh
 refused (plan-17 build-confirm).
 
 Library:  resolve(name) -> Path | None      (raises Collision on a dup stem)
+          roster() -> list[str]             (every real charter name, any depth)
 CLI:      python nucleus/charter.py NAME     prints the path, or errors nonzero.
 """
 import sys
@@ -30,6 +31,23 @@ def _is_example(p: Path, agents_dir: Path) -> bool:
     rel = p.relative_to(agents_dir)
     return p.name.endswith(".example.md") or any(
         part.endswith(".example") for part in rel.parts)
+
+
+NON_CHARTERS = (".organ.md", "README.md")
+
+
+def roster(agents_dir: Path = AGENTS) -> list[str]:
+    """Every real agent name in the tree, at any depth — the ONE roster derivation.
+
+    Same exclusion rule as resolve() (examples, .git) plus the structural files a
+    directory-composite carries (.organ.md, README.md), which are not charters.
+    Derive-at-use: callers that need "who is in this org" must read the tree here
+    rather than keep a list, because a hardcoded roster silently goes wrong the
+    moment an agent is created, retired, or moved between composites.
+    """
+    return sorted(p.stem for p in agents_dir.rglob("*.md")
+                  if ".git" not in p.parts and not _is_example(p, agents_dir)
+                  and p.name not in NON_CHARTERS)
 
 
 def resolve(name: str, agents_dir: Path = AGENTS) -> Path | None:

@@ -134,10 +134,18 @@ def main() -> None:
                         f"{'owner' if owner_act else agent}: {rel}"],
                        cwd=AGENTS, capture_output=True, text=True)
     if r.returncode != 0:
-        if "nothing to commit" in r.stdout + r.stderr:
+        # git phrases "no-op" differently by tree state: "nothing to commit, working
+        # tree clean" when all clean, but "no changes added to commit" / "nothing added
+        # to commit" when OTHER files in the agents/ repo are dirty (e.g. another agent's
+        # pending charter edit). All three mean "this content is already committed" — a
+        # benign no-op, not a failure. Matching only the first made a re-apply of an
+        # unchanged charter falsely REFUSE with an empty "commit failed:" (2026-08-02).
+        low = (r.stdout + r.stderr).lower()
+        if any(s in low for s in ("nothing to commit", "no changes added to commit",
+                                  "nothing added to commit")):
             print(f"no change: {rel} is already exactly that")
             return
-        die(f"commit failed: {r.stderr.strip()[:200]}")
+        die(f"commit failed: {r.stderr.strip()[:200] or r.stdout.strip()[:200]}")
     print(f"committed: {rel} (author {author.split(' ')[0]})")
 
     # Ratified amendments must not ship silently (steward, 2026-07-22): every

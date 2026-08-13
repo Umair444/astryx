@@ -75,6 +75,180 @@ def test_content_public_agents_is_positive_subset():
     assert pub == {"seed", "memory"}                    # private + unknown excluded
 
 
+# ---------------------------------------------------------------- COVERAGE (plan-18)
+# Everything above proves the tier AUTHORITY behaves. This section proves the authority
+# is actually REACHED by every anonymous path that can carry a message — a different
+# question, and the one that was live-leaking for four hours on 2026-08-12.
+#
+# WHAT HAPPENED: the anonymous-visibility rule was written TWICE — as SQL in
+# /api/messages and as Python in /api/events' visible(). Seed fixed the SQL copy; the
+# Python copy kept the old rule and every WhatsApp/Discord/Telegram message kept pushing
+# with full body to any anonymous SSE client. The comment at the top of PUBLIC_PATHS
+# NAMED both paths, and a comment cannot fail a build.
+#
+# WHY THIS IS A COVERAGE CHECK AND NOT ANOTHER CONFORMANCE ONE (abstractor-4's spec):
+# the path list is ENUMERATED FROM PUBLIC_PATHS in the real source, never hand-written
+# here. A fourth anonymous path added later is caught BY CONSTRUCTION — nobody has to
+# remember to extend a list. A check that derives its own subject from a hand-list can
+# only ever prove conformance for the members somebody remembered.
+#
+# AND IT MATCHES CALLS, NOT TEXT. The first draft of this assert grepped the handler
+# source for "anonymous_can_see" and passed /api/messages — on the strength of a COMMENT
+# mentioning the function. That is the same defect this file exists to catch, committed
+# inside the catcher: the check could not observe the thing it claimed to cover. It now
+# walks the AST for an actual Call node.
+import ast  # noqa: E402
+
+MAIN_PY = Path(__file__).resolve().parent.parent / "observatory" / "api" / "main.py"
+# The shared ROOT the rule's content lives in. Authorities are DISCOVERED as the
+# functions that derive from it — never a hard-coded name list here, because a name
+# list is the same hand-kept-set defect one level up, and it would have to be edited
+# every time a rendering is added. First version of this check DID hard-code
+# "anonymous_can_see" and went red on correct code the moment the sanctioned
+# `anonymous_can_see_sql` sibling appeared: the assert was narrower than its own design.
+RULE_ROOT = "ANON_PEER_COLUMNS"
+PERSONAL_ORGS = ("whatsapp", "discord", "telegram")   # local.md human-personal tier
+
+
+def _main_ast():
+    src = MAIN_PY.read_text()
+    return src, ast.parse(src)
+
+
+def _public_paths(tree):
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Assign) and any(
+                getattr(t, "id", None) == "PUBLIC_PATHS" for t in n.targets):
+            return {e.value for e in n.value.elts if isinstance(e, ast.Constant)}
+    raise AssertionError("PUBLIC_PATHS not found in main.py — the allowlist moved or "
+                         "was renamed; this check is blind until it is re-pointed")
+
+
+def _public_handlers(src, tree):
+    """(path, method, funcnode) for every route registered on a PUBLIC_PATHS path."""
+    pub = _public_paths(tree)
+    out = []
+    for n in ast.walk(tree):
+        if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for d in n.decorator_list:
+            if not (isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute)):
+                continue
+            if getattr(d.func.value, "id", None) != "app":
+                continue
+            if d.args and isinstance(d.args[0], ast.Constant) and d.args[0].value in pub:
+                out.append((d.args[0].value, d.func.attr, n))
+    return out
+
+
+def _calls(node, name) -> bool:
+    """A real Call to `name` — not the name appearing in a comment or a docstring."""
+    return any(isinstance(c, ast.Call) and
+               (getattr(c.func, "id", None) == name or
+                getattr(c.func, "attr", None) == name)
+               for c in ast.walk(node))
+
+
+def _carries_message_content(node) -> bool:
+    """Does this handler hand message ROWS/BODIES to the caller (vs counting them)?"""
+    if _calls(node, "msg"):                       # the message row serializer
+        return True
+    for c in ast.walk(node):                      # an SSE path filtering event types
+        if isinstance(c, ast.Constant) and c.value == "message":
+            return True
+    return False
+
+
+def _authorities(tree):
+    """Every module-level function that DERIVES from the shared rule root.
+
+    Discovered structurally, so the check follows a rename and admits a new rendering
+    (python predicate, SQL emitter, a future one) without being edited — while a
+    function that merely restates the rule in its own words is NOT an authority and
+    cannot satisfy the coverage assert."""
+    out = set()
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
+                isinstance(x, ast.Name) and x.id == RULE_ROOT for x in ast.walk(n)):
+            out.add(n.name)
+    return out
+
+
+def test_the_rule_has_one_root_with_more_than_one_rendering():
+    """The collapse is real: the rule's CONTENT lives in one constant, and the
+    renderings derive from it rather than from each other."""
+    src, tree = _main_ast()
+    assert any(isinstance(n, ast.Assign) and
+               any(getattr(t, "id", None) == RULE_ROOT for t in n.targets)
+               for n in ast.walk(tree)), f"{RULE_ROOT} is gone — this check is blind"
+    auth = _authorities(tree)
+    assert len(auth) >= 2, (
+        f"expected >=2 renderings deriving from {RULE_ROOT}, found {auth or 'none'} — "
+        "if a rendering stopped deriving from the root it is restating the rule again")
+
+
+def test_public_paths_are_enumerable():
+    # If this fails, every assert below is silently checking nothing.
+    src, tree = _main_ast()
+    pub = _public_paths(tree)
+    assert "/api/messages" in pub and "/api/events" in pub, pub
+    assert _public_handlers(src, tree), "no public route handlers resolved"
+
+
+def test_every_anonymous_message_path_routes_through_the_authority():
+    """THE coverage assert. Enumerated from PUBLIC_PATHS, so a path added later is
+    covered without anyone extending a list here."""
+    src, tree = _main_ast()
+    auth = _authorities(tree)
+    offenders = []
+    for path, method, fn in _public_handlers(src, tree):
+        if method != "get":                # POST/PUT carry their own key gate, not a read surface
+            continue
+        if not _carries_message_content(fn):
+            continue
+        if not any(_calls(fn, a) for a in auth):
+            offenders.append(f"{method.upper()} {path} (line {fn.lineno})")
+    assert not offenders, (
+        "anonymous message-bearing path(s) that call no rendering of the visibility "
+        "rule (authorities deriving from " + RULE_ROOT + ": " + ", ".join(sorted(auth))
+        + "): " + "; ".join(offenders) + ". Each such path re-expresses the rule in its "
+        "own words, which is the two-writer defect that leaked the personal tier to the "
+        "live SSE stream on 2026-08-12. Route it through an authority.")
+
+
+def test_authority_denies_the_personal_channel_orgs():
+    """The rule itself: personal channels are never anonymous-visible, whatever the
+    peer set says. Guards the inversion (a denylist that forgets a channel) AND the
+    pathological case of an org introduced under a channel's own name."""
+    sys.path.insert(0, str(MAIN_PY.parent.parent.parent))
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_obs_main_probe", MAIN_PY)
+    try:
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    except BaseException:
+        # BaseException, not Exception, and that distinction is the whole arm: main.py:53
+        # does `raise SystemExit("no ASTRYX_DSN ...")` at import time, and SystemExit does
+        # NOT inherit from Exception. So on any machine without a .env — every CI runner,
+        # every fresh clone — the fallback below was unreachable and this oracle died
+        # instead of degrading. check.sh then went RED on correct code, which would have
+        # made the .github workflows red on arrival. Found by checking out the index into
+        # a temp dir and running check.sh there, which is the only way to see what a clean
+        # clone sees. Fall back to proving the SHAPE.
+        src, tree = _main_ast()
+        auth = _authorities(tree)
+        assert auth, "no rendering derives from " + RULE_ROOT
+        for name in auth:
+            fn = next(n for n in ast.walk(tree)
+                      if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                      and n.name == name)
+            assert RULE_ROOT in (ast.get_source_segment(src, fn) or "")
+        return
+    for org in PERSONAL_ORGS:
+        assert not mod.anonymous_can_see(org, "local", frozenset()), org
+        assert not mod.anonymous_can_see("local", org, frozenset()), org
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

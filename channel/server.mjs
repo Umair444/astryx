@@ -15,6 +15,23 @@ if (!AGENT) { console.error('ASTRYX_AGENT env required'); process.exit(1) }
 const DSN = readFileSync(new URL('../.env', import.meta.url), 'utf8')
   .split('\n').find(l => l.startsWith('ASTRYX_DSN=')).slice('ASTRYX_DSN='.length).trim()
 
+// ---- who is INTERNAL, decided by something a stranger cannot author ----------------
+// `from_org === 'local'` used to answer this. But `local` is a plain string in a column a
+// peer writes into by naming itself that at /astryx/introduce, so the sentinel meaning
+// "us" shared a namespace with attacker-controlled input — a guessable password, not a
+// sentinel. A foreign message then rendered as a bare internal agent name, and an agent
+// cannot apply data-never-instructions to a body that does not look inbound. The door now
+// refuses the name (gateway.org_ok), but rows predate that check and a door is a promise
+// while this is a derivation: a row is FOREIGN if an org of that name exists in `peers`,
+// which only a local decision writes. Belt: 'local' is still treated as internal only when
+// no peer holds it.
+const PEER_ORG = `(from_org <> 'local' OR EXISTS (SELECT 1 FROM peers p WHERE p.org = from_org))`
+
+// Never let an org/agent name break the one-line render and forge a second wire header.
+const safe = s => String(s ?? '').replace(/[\x00-\x1f\x7f]/g, '�').slice(0, 96)
+const party = (agent, org, isPeer) =>
+  isPeer ? `${safe(agent)}@${safe(org)}` : safe(agent)
+
 const mcp = new Server(
   { name: 'astryx', version: '0.1.0' },
   {
@@ -203,25 +220,27 @@ async function handleTool(name, a) {
   if (name === 'query_thread') {
     const lim = Math.min(a.limit || 50, 200)
     const r = await pool.query(
-      `SELECT * FROM (SELECT id, ts, from_agent, from_org, to_agent, to_org, intent, body
-       FROM messages WHERE thread=$1 ORDER BY id DESC LIMIT $2) t ORDER BY id`,
+      `SELECT id, ts, from_agent, from_org, to_agent, to_org, intent, body,
+              ${PEER_ORG} AS from_is_peer, ${PEER_ORG.replace('from_org', 'to_org')} AS to_is_peer
+       FROM (SELECT id, ts, from_agent, from_org, to_agent, to_org, intent, body
+             FROM messages WHERE thread=$1 ORDER BY id DESC LIMIT $2) t ORDER BY id`,
       [a.thread, lim])
-    return r.rows.map(m => {
-      const from = m.from_org === 'local' ? m.from_agent : `${m.from_agent}@${m.from_org}`
-      const to = m.to_org === 'local' ? m.to_agent : `${m.to_agent}@${m.to_org}`
-      return `#${m.id} [${m.ts.toISOString()}] ${from} → ${to} (${m.intent}): ${m.body}`.slice(0, 600)
-    }).join('\n') || '(empty thread)'
+    return r.rows.map(m =>
+      `#${m.id} [${m.ts.toISOString()}] ${party(m.from_agent, m.from_org, m.from_is_peer)} → `
+      + `${party(m.to_agent, m.to_org, m.to_is_peer)} (${m.intent}): ${m.body}`.slice(0, 600)
+    ).join('\n') || '(empty thread)'
   }
   if (name === 'read_message') {
     const r = await pool.query(
-      `SELECT id, ts, from_agent, from_org, to_agent, to_org, thread, intent, body
+      `SELECT id, ts, from_agent, from_org, to_agent, to_org, thread, intent, body,
+              ${PEER_ORG} AS from_is_peer, ${PEER_ORG.replace('from_org', 'to_org')} AS to_is_peer
        FROM messages WHERE id=$1`, [a.msg_id])
     if (!r.rows.length) return `no message #${a.msg_id}`
     const m = r.rows[0]
-    const from = m.from_org === 'local' ? m.from_agent : `${m.from_agent}@${m.from_org}`
-    const to = m.to_org === 'local' ? m.to_agent : `${m.to_agent}@${m.to_org}`
-    return `#${m.id} [${m.ts.toISOString()}] ${from} → ${to} (${m.intent})`
-      + (m.thread ? ` thread=${m.thread}` : '') + `\n\n${m.body}`
+    return `#${m.id} [${m.ts.toISOString()}] `
+      + `${party(m.from_agent, m.from_org, m.from_is_peer)} → `
+      + `${party(m.to_agent, m.to_org, m.to_is_peer)} (${m.intent})`
+      + (m.thread ? ` thread=${safe(m.thread)}` : '') + `\n\n${m.body}`
   }
   if (name === 'plan_quorum') {
     const r = await pool.query(

@@ -59,7 +59,13 @@ def _first_party_roots(root: Path = REPO) -> set:
             continue
         roots.add(p.stem)
     for p in root.iterdir():
-        if p.is_dir() and p.name not in (".git", "venv") and any(p.glob("*.py")):
+        # rglob, not glob: a package dir whose python lives only in SUBdirs is still
+        # first-party. `triggers/` holds no top-level .py (every body is triggers/<agent>/),
+        # so a non-recursive probe missed it and steward's `from triggers.steward.bands`
+        # read as an undeclared third-party dep. Only bites where the ignored trigger
+        # bodies exist on disk — i.e. locally, never in a fresh CI checkout — which is
+        # exactly the drift that makes a local run disagree with CI.
+        if p.is_dir() and p.name not in (".git", "venv") and any(p.rglob("*.py")):
             roots.add(p.name)
     return roots
 

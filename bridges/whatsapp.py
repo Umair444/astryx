@@ -31,6 +31,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import shlex
 import shutil
 import time
@@ -65,6 +66,16 @@ jobs: dict[str, dict] = {}               # agent -> live progress job
 
 def routes() -> list[dict]:
     return load_routes(ROUTES_FILE)
+
+
+#: A destination we can address DETERMINISTICALLY: a WhatsApp JID, or a bare phone number.
+#: Anything else is a NAME, and a name is resolved by wacli against the mutable contact
+#: store — impure, and the vector for the 2026-07-25 misdelivery. See deliver().
+_ADDRESSABLE = re.compile(r"^\d{5,20}(@(s\.whatsapp\.net|g\.us|lid))?$")
+
+
+def _is_addressable(chat: str) -> bool:
+    return bool(_ADDRESSABLE.match((chat or "").strip()))
 
 
 def jid_str(v) -> str:
@@ -366,6 +377,32 @@ async def deliver(row):
         return                       # another bridge's surface (telegram/discord)
     if thread.startswith("wa:"):
         chat = thread[3:]            # the thread carries the destination
+        if not _is_addressable(chat):
+            # REFUSE a name. wacli's --to accepts "recipient JID, phone, OR contact/group/
+            # chat name" and FUZZY-MATCHES the last kind against the mutable contact store.
+            # On 2026-07-25 `thread='wa:owner'` therefore resolved to a saved contact whose
+            # name merely contained "owner", and a career-tier brief was delivered to a THIRD
+            # PARTY. Everything upstream of this line is honest — the routes table matches
+            # agents exactly — but this branch never consults it: the destination arrives
+            # verbatim in the thread and went straight to the CLI unvalidated.
+            # A JID or a bare phone number is a PURE FUNCTION of its input; a name is resolved
+            # against a store that changes underneath us, so the same string can address a
+            # different person tomorrow. Refusing here converts the org's worst outbound
+            # failure from detection-after-the-fact into prevention, at the only place that
+            # can see it. Fail CLOSED: we do not guess a destination for a message we cannot
+            # address safely — a misdelivered tier-private message cannot be recalled.
+            err = (f"unaddressable destination {chat!r}: not a JID or phone number. wacli "
+                   f"would fuzzy-match it against saved contacts and could deliver to the "
+                   f"wrong person (as it did 2026-07-25). Address explicitly — "
+                   f"wa:<digits>@s.whatsapp.net or wa:<digits>@g.us — or send un-threaded "
+                   f"to use the sending agent's home route.")
+            print(f"whatsapp: REFUSED outbound msg {row['id']} — {err}", flush=True)
+            await pool.execute(
+                "UPDATE messages SET status=$2, delivered_at=now(), delivery=$3 WHERE id=$1",
+                row["id"], "dead",
+                json.dumps({"ok": False, "handle": f"whatsapp:{chat}",
+                            "message_id": None, "rendered": None, "error": err}))
+            return
     else:                            # home surface: route by the sending agent
         route = next((r for r in routes() if r["agent"] == row["from_agent"]), None) \
             or next(iter(routes()), None)
