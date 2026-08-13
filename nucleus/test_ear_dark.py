@@ -27,7 +27,7 @@ if not TRIGGER.exists():
     # file exists to prevent.
     print("SKIP: triggers/gemini/ear_dark.py not present (gitignored body, e.g. a CI "
           "clone). Nothing was verified here.")
-    sys.exit(0)
+    sys.exit(77)          # 77 = SKIP (automake convention); check.sh counts it UNVERIFIED
 runpy.run_path(str(TRIGGER), run_name="ear_dark_mod")
 # run_path hands back a COPY of the namespace, so patching that dict would be a silent
 # no-op and every case below would quietly test the live wacli instead. Patch the

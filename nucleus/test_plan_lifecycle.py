@@ -42,7 +42,7 @@ TRIGGER = REPO / "triggers/seed/plan_consensus.py"
 
 def skip(why):
     print(f"  ○ plan-lifecycle oracle skipped: {why}")
-    sys.exit(0)
+    sys.exit(77)          # 77 = SKIP (automake convention); check.sh counts it UNVERIFIED
 
 
 try:

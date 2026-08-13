@@ -118,15 +118,22 @@ check("names are control-char scrubbed before rendering",
 # ---------------------------------------------------------------- (3) live SQL semantics
 def skip(why: str) -> None:
     print(f"  ○ live peers-predicate check skipped: {why}")
-    _finish()
+    _finish(partial=True)
 
 
-def _finish() -> None:
+def _finish(partial: bool = False) -> None:
     if fails:
         print("ORG-IDENTITY ORACLE FAILED:", file=sys.stderr)
         for f_ in fails:
             print(f"  ✗ {f_}", file=sys.stderr)
         sys.exit(1)
+    if partial:
+        # The door checks passed but the live peers-predicate did NOT run, so this is not
+        # a pass — the unverified half is exactly where a regression would hide. 77 = SKIP
+        # (automake convention); check.sh counts it UNVERIFIED and names it in the verdict.
+        print("  ○ PARTIAL: the source-level door checks held, the live SQL semantics of "
+              "the peers predicate were NOT verified this run")
+        sys.exit(77)
     print("org identity: 'local' unclaimable at the door, url cast+capped+scheme-checked, "
           "internal-ness derived from peers (not from an authorable string) ✓")
     sys.exit(0)

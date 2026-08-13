@@ -68,6 +68,38 @@ run() {
 # A gate whose PREREQUISITE is absent is itself unverified — never silently omitted.
 skip() { UNVERIFIED+=("$1"); printf '\033[33m○\033[0m %s — VERIFIED NOTHING (%s)\n' "$1" "$2"; }
 
+verdict() {
+  echo
+  for l in "${LIARS[@]}"; do
+    printf '\033[31mPROTOCOL\033[0m %s announced a skip and exited 0 — counted as UNVERIFIED.\n' "$l"
+  done
+  if [ "${#FAILED[@]}" != 0 ]; then
+    printf 'FAILED (%d):\n' "${#FAILED[@]}"; printf '  ✗ %s\n' "${FAILED[@]}"
+  fi
+  if [ "${#UNVERIFIED[@]}" != 0 ]; then
+    printf 'UNVERIFIED (%d) — this run did NOT check these; they are not evidence of anything:\n' "${#UNVERIFIED[@]}"
+    printf '  ○ %s\n' "${UNVERIFIED[@]}"
+  fi
+  echo
+  # The verdict may never out-claim its parts. "ALL" is spoken only when nothing skipped.
+  if [ "$fail" != 0 ]; then
+    echo "check: FAILURES above — a committed invariant regressed"; return 1
+  elif [ "${#UNVERIFIED[@]}" = 0 ]; then
+    echo "check: ALL CODE INVARIANTS PASS ($verified gates verified)"; return 0
+  elif [ -n "${CHECK_ALLOW_SKIP:-}" ]; then
+    echo "check: $verified verified, ${#UNVERIFIED[@]} UNVERIFIED (skips allowed here) — NOT a full pass"; return 0
+  else
+    echo "check: $verified verified, ${#UNVERIFIED[@]} UNVERIFIED — a gate that observes nothing is RED here."
+    echo "       Set CHECK_ALLOW_SKIP=1 only where the missing prerequisites are expected (a bare CI clone)."
+    return 1
+  fi
+}
+
+# Sourcing hook for nucleus/test_check_verdict.py, which drives run()/skip()/verdict()
+# against SYNTHETIC gates so the accounting is proven against THIS file rather than a
+# copy of it. Everything above is definitions; everything below runs the real gates.
+[ -n "${CHECK_LIB_ONLY:-}" ] && return 0
+
 run "charter resolver invariants"      "$PY" nucleus/test_charter.py
 run "tier floor invariants"            "$PY" nucleus/test_tier.py
 run "dep coverage invariants"          "$PY" nucleus/test_deps.py
@@ -77,6 +109,10 @@ run "dep manifest covers all imports"  "$PY" nucleus/deps.py coverage
 # 08-13). Derives the expected set from the nucleus/test_*.py glob — a new oracle must
 # be wired here or this goes RED. Pure stdlib, no DB.
 run "check.sh runs every committed oracle" "$PY" nucleus/test_check_coverage.py
+# The SECOND blind spot in this file, the same shape one level down: the gate above proves
+# every oracle is INVOKED; this one proves an invoked oracle actually RAN. Drives this
+# file's own run()/verdict() against synthetic gates. Pure stdlib, no DB.
+run "a skip is not a pass (verdict accounting)" "$PY" nucleus/test_check_verdict.py
 run "referral opt-in + static-literal" bash nucleus/referral_guard.sh
 # OKF frontmatter for the memory estate. The invariant is ADDITIVITY: attaching metadata
 # must change nothing the three live lints read. Pure stdlib; the arms that touch the real
@@ -107,27 +143,4 @@ else
   skip "media in-process decode" "av not installed here"
 fi
 
-echo
-for l in "${LIARS[@]}"; do
-  printf '\033[31mPROTOCOL\033[0m %s announced a skip and exited 0 — counted as UNVERIFIED.\n' "$l"
-done
-if [ "${#FAILED[@]}" != 0 ]; then
-  printf 'FAILED (%d):\n' "${#FAILED[@]}"; printf '  ✗ %s\n' "${FAILED[@]}"
-fi
-if [ "${#UNVERIFIED[@]}" != 0 ]; then
-  printf 'UNVERIFIED (%d) — this run did NOT check these; they are not evidence of anything:\n' "${#UNVERIFIED[@]}"
-  printf '  ○ %s\n' "${UNVERIFIED[@]}"
-fi
-echo
-# The verdict may never out-claim its parts. "ALL" is spoken only when nothing skipped.
-if [ "$fail" != 0 ]; then
-  echo "check: FAILURES above — a committed invariant regressed"; exit 1
-elif [ "${#UNVERIFIED[@]}" = 0 ]; then
-  echo "check: ALL CODE INVARIANTS PASS ($verified gates verified)"
-elif [ -n "${CHECK_ALLOW_SKIP:-}" ]; then
-  echo "check: $verified verified, ${#UNVERIFIED[@]} UNVERIFIED (skips allowed here) — NOT a full pass"
-else
-  echo "check: $verified verified, ${#UNVERIFIED[@]} UNVERIFIED — a gate that observes nothing is RED here."
-  echo "       Set CHECK_ALLOW_SKIP=1 only where the missing prerequisites are expected (a bare CI clone)."
-  exit 1
-fi
+verdict

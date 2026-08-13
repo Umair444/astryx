@@ -97,6 +97,7 @@ def _mine_edges() -> set:
 def test_link_set_equals_link_integrity():
     if not WIKI.is_dir():
         print("SKIP: memory/wiki absent (gitignored) — link conformance not verified")
+        globals()["_UNVERIFIED"] = True
         return
     lint, mine = _lint_edges(), _mine_edges()
     assert lint == mine, (f"link sets DIVERGED\n  lint-only: {sorted(lint - mine)}\n"
@@ -284,4 +285,11 @@ if __name__ == "__main__":
             print(f"  ✗ {fn.__name__}")
             traceback.print_exc()
     print(f"\n{len(fns) - failed}/{len(fns)} passed")
-    sys.exit(1 if failed else 0)
+    # Exit 77 (automake's SKIP convention) when the LOAD-BEARING arm — conformance against
+    # the live estate — could not run at all. forge found that check.sh printed ALL PASS
+    # while five gates verified nothing, because "announced a skip" and "exit 0" are
+    # different channels and only the exit code reaches an aggregator. Its belt catches
+    # this file either way; 77 makes the signal primary rather than backstopped.
+    if failed:
+        sys.exit(1)
+    sys.exit(77 if globals().get("_UNVERIFIED") else 0)

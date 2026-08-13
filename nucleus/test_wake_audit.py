@@ -26,7 +26,7 @@ sys.path.insert(0, str(REPO))
 
 def skip(why: str) -> None:
     print(f"  ○ wake-audit oracle skipped: {why}")
-    sys.exit(0)
+    sys.exit(77)          # 77 = SKIP (automake convention); check.sh counts it UNVERIFIED
 
 
 try:
