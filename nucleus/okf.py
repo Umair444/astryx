@@ -23,12 +23,21 @@ THE TWO RULES THAT PROTECT THE EXISTING LINTS (both machine-checked below, becau
 convention that is only written down is not a guarantee):
 
   1. NO FORBIDDEN KEY. A frontmatter field may never restate a fact the body already
-     holds — `state`, `status`, `links`, `inbound`, `compiled-through`. memory spent
-     compiles #11 and #12 discovering that goal state had TWO writers (goal-N.md and
-     index.md) and drifted silently within hours; a `state:` key would make it three.
-     Worse, it would be SILENT: wiki_drift's STATE_RE searches the whole page text and
-     takes the FIRST match, and frontmatter sits above line 1. goal-4.md already has two
-     `state ·` lines whose order is load-bearing.
+     holds — `state`, `status`, `links`, `inbound`, `compiled-through`. The reason is the
+     TWO-WRITER LAW and nothing else: memory spent compiles #11 and #12 discovering that
+     goal state had two writers (goal-N.md and index.md) and drifted silently within
+     hours; a `state:` key would make it three.
+
+     CORRECTION (memory, msg 3822, verified 2026-08-13): this rule originally cited a
+     second, more dramatic reason — that a `state:` key would SHADOW wiki_drift's
+     first-match STATE_RE. That mechanism does not hold. STATE_RE is
+     `state\s*·\s*([a-z-]+)`; `state: shipped` carries a colon, not a `·`, so it never
+     matches and the body line is still the first hit. Probed and confirmed. Worse, the
+     story was circular: the only way a frontmatter value COULD contain a `·` is if
+     rule 2 did not exist, so rule 1's cited mechanism silently depended on rule 2.
+     The rule stays — it was right — but a correct rule with a false reason is a
+     liability, because the reason is exactly what a future reader audits when deciding
+     whether the rule can be relaxed.
   2. NO `·` AND NO `[[` IN ANY VALUE. `·` (U+00B7) is the notation's field separator, so a
      value containing one could be read as a fact line by a naive body splitter. `[[`
      would be harvested by link_integrity's LINK_RE as a real edge from a metadata field.

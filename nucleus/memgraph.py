@@ -89,7 +89,32 @@ SEMANTIC, ENTITY, TEMPORAL, CAUSAL = "semantic", "entity", "temporal", "causal"
 # ontology in prose for a month. Used only as the FALLBACK order when memory has not yet
 # declared regions in frontmatter; it never overrides an explicit x-region.
 FALLBACK_REGIONS = ("org-identity", "architecture", "goals", "identity", "roster",
-                    "system1", "unassigned")
+                    "residents", "plans", "channels", "timeline", "unassigned")
+
+
+def system1_region(kind: str, label: str, group: str = "") -> str:
+    """A System-1 node's region, as a TOTAL FUNCTION OF ONE FIELD — so it is as
+    deterministic as a declared one and no clustering is involved.
+
+    Dumping all of System 1 into a single `system1` region was the first thing that made
+    the picture lie: 266 of 285 nodes in one undifferentiated mass beside five specks is
+    not a brain, it is a blob. The org already carries the structure — agents/ nests into
+    composites, `plan-N` threads belong to their goal, channel threads are prefixed by
+    surface — so these regions are read off what exists rather than invented.
+    """
+    if kind == "agent":
+        return group.split("/")[0] if group else "residents"
+    if kind == "goal":
+        return "goals"
+    if kind == "thread":
+        if re.match(r"^plan-\d+$", label):
+            return "plans"
+        if ":" in label:                       # wa:/dc:/tg: — an inbound surface
+            return "channels"
+        return "plans"
+    if kind in ("day", "milestone", "compile", "message"):
+        return "timeline"
+    return "unassigned"
 
 
 # ─────────────────────────────────────────────────────────── notation parsing
@@ -157,6 +182,12 @@ def parse_claims(body: str, dialect: str, entity: str | None) -> list[dict]:
     """
     if dialect == "prose":
         return []
+    # Strip code and comments FIRST. page_links did this and parse_claims did not, so a
+    # notation line inside a fence — SCHEMA.md's own ⚡CONTRA example is exactly one —
+    # was harvestable as a real claim. Unbitten today only because no wiki page fences
+    # notation and SCHEMA.md is not routed here; that is the estate's contents keeping us
+    # safe, not the design (memory, msg 3822).
+    body = _strip_code_and_comments(body)
     claims = []
     for lineno, line in _logical_lines(body):
         s = line.strip()
@@ -187,8 +218,16 @@ def parse_claims(body: str, dialect: str, entity: str | None) -> list[dict]:
 
 
 def page_links(text: str) -> list[str]:
-    """Wikilink targets, exactly as link_integrity.py sees them (self-links included;
-    the caller drops self-edges, as the lint does)."""
+    """Wikilink targets. Self-links included; the caller drops self-edges, as the lint does.
+
+    NOT byte-identical logic to link_integrity.py, and the difference is deliberate: this
+    strips fenced/inline code and HTML comments first, the lint does not. Measured across
+    all 18 live pages the two agree exactly (0 disagreements), and test_memgraph.py asserts
+    that equality on every run — so the divergence is GUARDED rather than assumed. If a
+    page ever fences a real `[[link]]`, the conformance arm goes red and someone chooses,
+    instead of the graph and the lint quietly disagreeing. (Docstring corrected after
+    memory pointed out it claimed a parity the code does not have — msg 3822.)
+    """
     return LINK_RE.findall(_strip_code_and_comments(text))
 
 
@@ -277,7 +316,7 @@ def build_system2(g: Graph) -> None:
             m = EVIDENCE_DATE_RE.search(c["evidence"] or c["value"])
             if m:
                 g.node(f"day:{m.group(1)}", kind="day", label=m.group(1),
-                       layer="system1", region="system1")
+                       layer="system1", region=system1_region("day", m.group(1)))
                 g.edge(nid, f"day:{m.group(1)}", TEMPORAL, "observed-at")
 
     _briefs(g)
@@ -397,9 +436,10 @@ def _log_chain(g: Graph, stems: set) -> None:
     prev = None
     for e in entries:
         nid = g.node(f"compile:{e['cid']}", kind="compile", label=e["cid"], layer="system2",
-                     type="log", date=e["date"], trigger=e["kind"], region="system1")
+                     type="log", date=e["date"], trigger=e["kind"],
+                     region=system1_region("compile", e["cid"]))
         g.node(f"day:{e['date']}", kind="day", label=e["date"], layer="system1",
-               region="system1")
+               region=system1_region("day", e["date"]))
         g.edge(nid, f"day:{e['date']}", TEMPORAL, "compiled-on")
         if prev:
             g.edge(prev, nid, TEMPORAL, "precedes")
@@ -407,7 +447,7 @@ def _log_chain(g: Graph, stems: set) -> None:
         # CAUSAL: what woke this compile, and which pages it produced
         for msg in LOG_MSG_RE.findall(e["text"])[:6]:
             g.node(f"msg:{msg}", kind="message", label=f"msg {msg}", layer="system1",
-                   region="system1")
+                   region=system1_region("message", msg))
             g.edge(f"msg:{msg}", nid, CAUSAL, "caused")
         for stem in sorted(set(re.findall(r"\b(goal-\d+|[a-z][a-z-]{3,})\.md", e["text"]))):
             s = stem[:-3] if stem.endswith(".md") else stem
@@ -433,9 +473,14 @@ def build_system1(g: Graph, dsn: str | None = None) -> None:
             path = resolve(name, AGENTS)
         except Collision:
             path = None
+        parts = path.relative_to(AGENTS).parts[:-1] if path else ()
+        # Collapse the SELF-FOLDER form: agents/<n>/<n>.md is a lone agent, not a
+        # composite of one. Without this every solo resident becomes its own region and
+        # the roster shatters into nine two-node specks. Same collapse the observatory's
+        # agent_meta() does — the tree is the org chart, and `<n>/<n>.md` is not a nesting.
+        grp = "/".join(parts) if parts and parts[-1] != name else ""
         g.node(f"agent:{name}", kind="agent", label=name, layer="system1",
-               type="agent", region="system1",
-               group="/".join(path.relative_to(AGENTS).parts[:-1]) if path else "")
+               type="agent", region=system1_region("agent", name, grp), group=grp)
 
     try:
         import psycopg
@@ -451,7 +496,8 @@ def build_system1(g: Graph, dsn: str | None = None) -> None:
             for gid, title, state, owner in conn.execute(
                     "SELECT id, title, state, owner FROM goals ORDER BY id").fetchall():
                 nid = g.node(f"goal:{gid}", kind="goal", label=f"goal-{gid}", layer="system1",
-                             type="goal", state=state, region="system1", title=title)
+                             type="goal", state=state, title=title,
+                             region=system1_region("goal", f"goal-{gid}"))
                 if owner:
                     g.node(f"agent:{owner}", **_implied(f"agent:{owner}"))
                     g.edge(nid, f"agent:{owner}", ENTITY, "owner")
@@ -465,7 +511,7 @@ def build_system1(g: Graph, dsn: str | None = None) -> None:
                     "       array_agg(DISTINCT from_agent) FROM messages "
                     "WHERE thread IS NOT NULL GROUP BY thread ORDER BY thread").fetchall():
                 tid = g.node(f"thread:{thread}", kind="thread", label=thread, layer="system1",
-                             region="system1", size=n, last=str(last))
+                             region=system1_region("thread", thread), size=n, last=str(last))
                 for a in sorted(x for x in (who or []) if x):
                     if f"agent:{a}" in g.nodes:
                         g.edge(tid, f"agent:{a}", ENTITY, "spoke-in")
@@ -478,10 +524,12 @@ def build_system1(g: Graph, dsn: str | None = None) -> None:
                 m = NEWS_RE.search(body or "")
                 if m:
                     g.node(f"milestone:{m.group(1)}", kind="milestone",
-                           label=f"org-news #{m.group(1)}", layer="system1", region="system1")
+                           label=f"org-news #{m.group(1)}", layer="system1",
+                           region=system1_region("milestone", m.group(1)))
             for (d,) in conn.execute(
                     "SELECT DISTINCT ts::date FROM steps ORDER BY 1").fetchall():
-                g.node(f"day:{d}", kind="day", label=str(d), layer="system1", region="system1")
+                g.node(f"day:{d}", kind="day", label=str(d), layer="system1",
+                       region=system1_region("day", str(d)))
     except Exception as e:
         g.notes.append(f"System 1 wire layer skipped: {type(e).__name__}: {e}")
 
@@ -540,12 +588,20 @@ def layout(g: Graph, regions: list[str]) -> None:
         members.setdefault(g.nodes[nid]["region"], []).append(nid)
 
     n_reg = max(1, len(regions))
-    ring = 420.0
+    ring = 560.0
     for i, r in enumerate(regions):
         theta = 2 * math.pi * i / n_reg
         cx, cy = ring * math.cos(theta), ring * math.sin(theta)
         mem = members.get(r, [])
-        spread = 34.0 + 5.0 * math.sqrt(max(1, len(mem)))
+        # BOUND the disc, don't scale the step. The first version set a per-node step and
+        # let the radius grow as sqrt(n), so a 266-node region reached ~1900px and
+        # swallowed the canvas while five-node regions were specks. Target radius grows
+        # sub-linearly and CAPS, so a region that gains nodes gets denser rather than
+        # eating its neighbours — which is also what makes the picture stay legible as the
+        # org grows, rather than only today.
+        n_mem = max(1, len(mem))
+        target = min(300.0, 60.0 + 26.0 * math.sqrt(n_mem))
+        spread = 0.0 if n_mem == 1 else target / math.sqrt(n_mem)
         for j, nid in enumerate(sorted(mem, key=lambda x: (-_degree(g, x), x))):
             seed = int(hashlib.sha256(nid.encode()).hexdigest()[:8], 16)
             a = 2.399963 * j + (seed % 360) * math.pi / 180.0     # golden angle + jitter

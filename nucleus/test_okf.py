@@ -238,7 +238,13 @@ def test_every_live_page_survives_attach_unchanged():
     for p in sorted(WIKI.glob("*.md")):
         original = p.read_text()
         withfm = attach(original, GOOD)
-        assert strip(withfm) == original, f"{p.name}: body changed"
+        # strip(original), NOT original. This assertion originally compared against the
+        # whole file, which could only hold while no page HAD frontmatter — so it expired
+        # the moment the migration it was written to validate actually ran (16/16 -> 15/16,
+        # caught by memory, msg 3822). A test whose passing depends on its subject never
+        # being used is not a test of the invariant; the invariant is that the BODY is
+        # preserved, at any number of re-applications.
+        assert strip(withfm) == strip(original), f"{p.name}: body changed"
         assert _lint_view(withfm) == _lint_view(original), f"{p.name}: lint view changed"
 
 

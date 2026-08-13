@@ -186,6 +186,34 @@ def test_poll_example_never_becomes_a_node():
     assert mg.page_links("see [[org]] and [[goal-4]]") == ["org", "goal-4"]
 
 
+def test_claims_are_not_harvested_from_code_fences():
+    """Regression, memory msg 3822: parse_claims received the UNSTRIPPED body while
+    page_links got the stripped one, so a notation line inside a fence — SCHEMA.md's own
+    ⚡CONTRA example is exactly one — was harvestable as a real claim. It had never bitten
+    only because no wiki page fences notation: safe by what the estate happens to contain,
+    not by design."""
+    fenced = "# x\n```\nFORGE · status · hibernated\n```\nREAL · a · b\n"
+    claims = mg.parse_claims(fenced, "a", None)
+    assert [c["entity"] for c in claims] == ["REAL"], claims
+
+
+def test_no_region_swallows_the_canvas():
+    """A region's disc must stay bounded as it grows, or one big region eats its
+    neighbours and the map stops being readable. The first layout let radius grow as
+    sqrt(n) without a cap: 266 System-1 nodes reached ~1900px beside five-node specks."""
+    g = mg.compile_graph(with_system1=False)
+    if len(g["nodes"]) < 3:
+        return
+    for r in g["regions"]:
+        mem = [n for n in g["nodes"] if n["region"] == r]
+        if len(mem) < 2:
+            continue
+        cx = sum(n["x"] for n in mem) / len(mem)
+        cy = sum(n["y"] for n in mem) / len(mem)
+        rad = max(((n["x"] - cx) ** 2 + (n["y"] - cy) ** 2) ** 0.5 for n in mem)
+        assert rad <= 340, f"region {r} spans {rad:.0f}px — it will swallow its neighbours"
+
+
 def test_fenced_and_inline_code_is_stripped():
     assert mg.page_links("```\n[[org]]\n```\n") == []
     assert mg.page_links("`[[org]]`") == []

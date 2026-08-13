@@ -1441,6 +1441,101 @@ async def wire_contacts(q: str, channel: str = ""):
     return {"matches": matches, "count": len(matches)}
 
 
+# ---------------------------------------------------------------- memory / recall graph
+# The org's recall system: a typed knowledge graph compiled from BOTH layers — System 1
+# (the raw wire) and System 2 (memory's compiled wiki) — by nucleus/memgraph.py.
+#
+# EVERY PATH HERE IS OWNER-ONLY, and deliberately so. The middleware is default-DENY on
+# exact string match, so simply not adding these to PUBLIC_PATHS gates them; there is no
+# positive act required and no parameterised path can leak by prefix. A public
+# graph-SHAPE endpoint is designed (labels gated by an explicit `x-visibility: public`
+# opt-in, fail-closed) but is NOT shipped here: /api/steps was pulled from the allowlist
+# on 2026-08-13 pending a conversation about what should be public at all, and adding a
+# new public surface before that conversation would be answering it unilaterally.
+#
+# Two composition hazards worth naming in code, because neither is caught by anything:
+#  - The gate matches on request.url.path, which EXCLUDES the query string. So a public
+#    endpoint here must never take a parameter that can widen its output; widening lives
+#    at a different path.
+#  - nucleus/tier.py keys AGENT content and does not reach the wiki at all. A page body is
+#    memory's compiled content, and goal TITLES (goal-16 is "low-latency recruiter-reply
+#    signal") are owner-career-adjacent. No wiki body or goal title is public at any tier.
+MEMGRAPH_JSON = REPO / "memory" / ".graph" / "current.json"
+MEMORY_WIKI = REPO / "memory" / "wiki"
+
+
+def _memgraph_read() -> dict | None:
+    try:
+        return json.loads(MEMGRAPH_JSON.read_text())
+    except Exception:
+        return None
+
+
+@app.get("/api/memory/graph")
+async def memory_graph(fresh: int = 0):
+    """The compiled recall graph. Serves the artifact on disk; `?fresh=1` recompiles
+    first (owner-only path, so this is a deliberate button, not an open recompile)."""
+    if fresh:
+        try:
+            sys.path.insert(0, str(REPO))
+            from nucleus import memgraph
+            memgraph.write(memgraph.compile_graph())
+        except Exception as e:
+            return {"error": f"compile failed: {type(e).__name__}: {e}", "nodes": [], "edges": []}
+    g = _memgraph_read()
+    if g is None:
+        return {"nodes": [], "edges": [], "regions": [], "stats": {},
+                "notes": ["no compiled graph yet — run: venv/bin/python nucleus/memgraph.py build"]}
+    try:
+        g["age_s"] = int(time.time() - MEMGRAPH_JSON.stat().st_mtime)
+    except Exception:
+        g["age_s"] = None
+    return g
+
+
+@app.get("/api/memory/page/{slug}")
+async def memory_page(slug: str):
+    """One wiki page's markdown. Owner-only.
+
+    Path-escape guarded the same way _safe_asset does for assets/: resolve, then assert
+    the result is still under the root. A slug is never trusted to be a filename.
+    """
+    if not MEMORY_WIKI.is_dir():
+        return Response(status_code=404)
+    try:
+        f = (MEMORY_WIKI / f"{slug}.md").resolve()
+        if not str(f).startswith(str(MEMORY_WIKI.resolve()) + os.sep) or not f.is_file():
+            return Response(status_code=404)
+    except Exception:
+        return Response(status_code=404)
+    raw = f.read_text()
+    meta = {}
+    try:
+        sys.path.insert(0, str(REPO))
+        from nucleus import okf
+        meta, _ = okf.parse(raw)
+    except Exception:
+        pass
+    return {"slug": slug, "markdown": raw, "meta": meta}
+
+
+@app.get("/api/memory/build")
+async def memory_build():
+    """Compile freshness. A graph that goes stale while staying beautiful is the silent
+    failure this surface is most prone to, so the age is a first-class field the UI shows
+    rather than something a reader has to infer."""
+    g = _memgraph_read()
+    if g is None:
+        return {"built": False, "age_s": None, "stats": {}, "notes": []}
+    try:
+        age = int(time.time() - MEMGRAPH_JSON.stat().st_mtime)
+    except Exception:
+        age = None
+    return {"built": True, "age_s": age, "digest": g.get("digest"),
+            "stats": g.get("stats", {}), "regions": g.get("regions", []),
+            "notes": g.get("notes", [])}
+
+
 @app.get("/api/events")
 async def events(request: Request):
     # EventSource cannot send headers, so owner mode rides ?key=. Anonymous

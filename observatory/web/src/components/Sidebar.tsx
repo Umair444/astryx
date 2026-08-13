@@ -11,6 +11,7 @@ const LINKS: { tab: Route['tab']; label: string; icon: string }[] = [
   { tab: 'economy', label: 'Economy', icon: '⬡' },
   { tab: 'tools', label: 'Tools', icon: 'ƒ' },
   { tab: 'theatre', label: 'Theatre', icon: '❝' },
+  { tab: 'memory', label: 'Memory', icon: '⬢' },
   { tab: 'monitor', label: 'System', icon: '❐' },
 ]
 
