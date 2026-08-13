@@ -28,6 +28,9 @@ __pycache__/
 media/
 triggers/
 wacli-data/
+# database backups — a pg_dump is the org's WHOLE state, full owner-PII; personal-tier,
+# never pushed (asserted by privacy_gate.sh SURFACES). Offsite is an owner-decision.
+backups/
 # harness (goal 15) toxic-artifact tier: the probe corpus is live exploits and a
 # success-transcript is a working exploit — never commit them, never let a real
 # agent's context/RAG ingest them. Name-anchored so a relocation can't un-ignore.
@@ -38,3 +41,4 @@ harness/results/
 
 # real-PII test fixtures — re-add only with certified-fake data (leak scrub 2026-07-27)
 mcp/contacts/test_server.py
+tier/
