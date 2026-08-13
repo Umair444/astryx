@@ -87,6 +87,19 @@ def handle_stop(cur, agent, h):
     turn = [e for e in events[start:] if e.get("type") in ("user", "assistant")]
     messages, num_responses, num_tools, char_count = [], 0, 0, 0
     tin = tout = 0
+    # TOKEN ACCOUNTING — two corrections, 2026-08-13, after Umair said "anthropic doesn't
+    # give me this much" and was right.
+    # (1) DE-DUPLICATION. A transcript carries MULTIPLE lines per assistant message id
+    #     (streaming/iteration entries repeat the same usage block verbatim). Summing every
+    #     line counted the same API call ~2.2x — measured on canopus: 320 usage-bearing
+    #     lines, 144 distinct ids, 39.9M inflated to 18.1M real. Bill by message ID, once.
+    # (2) THE SPLIT IS THE COST. input_tokens, cache_read and cache_creation price roughly
+    #     1 : 0.1 : 1.25, and this org runs at ~96% CACHE READ (fresh was 0.0% of canopus's
+    #     turn). Collapsing them into one `tokens_in` threw away the only distinction that
+    #     tracks money, which is why a mostly-cached day read as a catastrophic one.
+    # tokens_in stays the deduped total so every existing reader keeps working; the split
+    # goes in raw_payload.usage, which needs no migration.
+    seen_usage: dict = {}
     model = stop_reason = None
     last_text = ""
     for e in turn:
@@ -107,13 +120,43 @@ def handle_stop(cur, agent, h):
         if has_text:
             num_responses += 1
         u = m.get("usage", {}) or {}
-        tin += (u.get("input_tokens") or 0) + (u.get("cache_read_input_tokens") or 0) \
-            + (u.get("cache_creation_input_tokens") or 0)
-        tout += u.get("output_tokens") or 0
+        if u:
+            # key on the message id; fall back to a content signature when absent, so an
+            # id-less entry still cannot be counted twice
+            key = m.get("id") or f"anon:{u.get('input_tokens')}:{u.get('output_tokens')}:{len(messages)}"
+            seen_usage[key] = u
         model = m.get("model") or model
         stop_reason = m.get("stop_reason") or stop_reason
 
-    payload = {"messages": messages, "usage": {"tokens_in": tin, "tokens_out": tout}}
+    # Fold the de-duplicated usage blocks into totals + the cost-bearing split.
+    fresh = cache_read = cache_create = cc_1h = cc_5m = 0
+    for u in seen_usage.values():
+        fresh        += u.get("input_tokens") or 0
+        cache_read   += u.get("cache_read_input_tokens") or 0
+        cache_create += u.get("cache_creation_input_tokens") or 0
+        tout         += u.get("output_tokens") or 0
+        # A cache WRITE has two price tiers and they differ by 60%: a 5-minute write is
+        # 1.25x base input, a 1-HOUR write is 2x (verified on platform.claude.com pricing,
+        # 2026-08-13). This org writes 1-hour caches exclusively, so collapsing the two
+        # under-prices every write. Kept separate so the rate table can price them apart.
+        cc = u.get("cache_creation") or {}
+        cc_1h += cc.get("ephemeral_1h_input_tokens") or 0
+        cc_5m += cc.get("ephemeral_5m_input_tokens") or 0
+    tin = fresh + cache_read + cache_create
+    # Fresh-equivalent: cache reads bill ~0.1x and cache writes ~1.25x, so this is the
+    # number that tracks the bill. Published multipliers, stated here so a future reader
+    # can correct them in one place rather than re-deriving the arithmetic.
+    # Multipliers relative to BASE INPUT, from platform.claude.com/docs/en/about-claude/pricing
+    # (verified 2026-08-13): 5m write 1.25x, 1h write 2x, cache read 0.1x. Output is priced
+    # separately per model and is NOT folded in here.
+    billable = round(fresh + cc_5m * 1.25 + cc_1h * 2.0 + cache_read * 0.1
+                     + max(0, cache_create - cc_5m - cc_1h) * 1.25)
+    payload = {"messages": messages,
+               "usage": {"tokens_in": tin, "tokens_out": tout,
+                         "api_calls": len(seen_usage), "input_fresh": fresh,
+                         "cache_read": cache_read, "cache_creation": cache_create,
+                         "cache_write_1h": cc_1h, "cache_write_5m": cc_5m,
+                         "billable_equiv_in": billable}}
 
     duration_ms = None
     try:
