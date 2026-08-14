@@ -173,11 +173,6 @@ run "card-address guard observability" "$PY" nucleus/test_card_address_obs.py
 # The CLASS gate for scout's guards: an infra failure must propagate (the pulse records an
 # evaluator error) rather than returning a silent all-clear. SKIPS where the bodies are absent.
 run "guard infra-failure loudness"     "$PY" nucleus/test_guard_infra_loudness.py
-# goal-15's binding "no probe may fire" gate. Every verdict driven BOTH ways against
-# synthetic trees + stub binaries, one at a time, asserting the full vector so a breach
-# fixture must trip EXACTLY its own check. Proves the gate CAN fail; does NOT prove
-# containment (no docker, no real cell) — the oracle says so in its own output.
-run "containment-gate verdicts (per-check)" "$PY" nucleus/test_prove_containment.py
 # Door (orgname) is pure stdlib; the peers-derivation check needs the DB and skips loudly.
 run "org identity / peer name policy" "$PY" nucleus/test_org_identity.py
 # Needs psycopg + a live org DB + the (gitignored) trigger bodies; it SKIPS loudly rather

@@ -42,7 +42,34 @@ PRISTINE = {k: MOD[k] for k in ("_route", "_store_latest_inbound",
                                 "_wacli_running", "subprocess")}
 
 NOW = datetime.now(timezone.utc)
-CHAT = "1203" + "63429174873644@" + "g.us"  # split: no JID-shaped literal in tracked text (privacy gate c)
+# NO JID IN THIS FILE, in any form. It briefly held the family group's real JID as a
+# literal, then as a split literal to get it past the privacy gate's pattern (c). The
+# split did what its comment claimed — origin/main's tree has no JID-shaped string — but
+# a split literal is still the value to anyone READING the file, and the gate is a
+# regex, not the invariant. Satisfying the checker is not satisfying the property.
+#
+# The real fix is that this file never needed the value. 33 of the 35 cases drive stubs
+# that never parse it, so they take a synthetic name; only the two live probes need the
+# real chat, and they now derive it at use from the ONE authority the trigger itself
+# reads — bridges/routes-whatsapp.json, which is gitignored (`**/routes*.json`,
+# name-anchored) and stays that way. Absent it, the live section skips loudly.
+#
+# Note the direction is opposite to INSTALLED in the trigger, and the discriminator is
+# worth keeping: a fact ABOUT THE GUARD (when it began watching) belongs in the guard's
+# source, where it cannot be forgotten. A fact about the SUBJECT it watches — who the
+# family is, which chat — belongs in config, where it cannot be published.
+CHAT = "stub-chat-not-a-jid"
+
+
+def _live_chat():
+    """The real group JID, from config, never from this file. None if unavailable."""
+    try:
+        chat, _why = PRISTINE["_route"]()
+        return chat
+    except Exception:
+        return None
+
+
 fails = []
 # Skips are tracked, not just printed. The live-shape cases reach outside this process
 # and can legitimately go unrun, and until 2026-08-14 this file still signed off "all
@@ -304,17 +331,29 @@ check("a window of only-filtered-out messages is quiet, NOT drift",
 # own reading of wacli, so the parser and the test agree with each other and would go on
 # agreeing after upstream changed. This case is the only one that pins either to reality.
 print("\nlive shape (the fixtures are my reading of wacli; this asks wacli):")
-
+_LIVE = _live_chat()
 _probe = PRISTINE["subprocess"].run
-try:
-    _r = _probe(MOD["WACLI"] + ["messages", "list", "--chat", CHAT, "--limit", "3", "--json"],
-                capture_output=True, text=True, timeout=25)
-    _live = json.loads(_r.stdout) if _r.returncode == 0 else None
-except Exception:
+if not _LIVE:
+    # Report the reason that actually held. The first draft skipped here and then fell
+    # through into the probe, which skipped AGAIN saying "wacli unreachable" — untrue,
+    # and wacli was never contacted. A skip names what stopped it or it is one more
+    # check reporting a cause it did not observe.
+    skip("no routed chat in bridges/routes-whatsapp.json (gitignored; absent in a "
+         "clone) — the live shape was NOT verified this run")
     _live = None
+else:
+    try:
+        _r = _probe(MOD["WACLI"] + ["messages", "list", "--chat", _LIVE,
+                                    "--limit", "3", "--json"],
+                    capture_output=True, text=True, timeout=25)
+        _live = json.loads(_r.stdout) if _r.returncode == 0 else None
+    except Exception:
+        _live = None
+    if _live is None:
+        skip("wacli unreachable here — the live shape was NOT verified this run")
 
 if _live is None:
-    skip("wacli unreachable here — the live shape was NOT verified this run")
+    pass          # both paths above already reported the reason that actually held
 else:
     # Everything below reaches OUTSIDE this process, so it has three outcomes, not two.
     # It had two until 2026-08-14, and that is why this was the one case in check.sh
@@ -339,7 +378,7 @@ else:
             for _f in ("Timestamp", "FromMe", "MsgID", "Text"):
                 check(f"live message still carries `{_f}`", _f in _keys,
                       f"keys are {sorted(_keys)[:12] or repr(_msgs[0])[:80]}")
-            _st, _, _, _detail = PRISTINE["_store_latest_inbound"](CHAT)
+            _st, _, _, _detail = PRISTINE["_store_latest_inbound"](_LIVE)
             if _st == MOD["FLAKE"]:
                 skip(f"the reader's own wacli call did not complete ({_detail}) "
                      f"— it was NOT proven against the real store this run")
