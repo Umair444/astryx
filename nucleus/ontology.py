@@ -116,13 +116,26 @@ def _pages() -> list[dict]:
             meta, body = okf.parse(p.read_text())
         except okf.OKFError:
             meta, body = {}, p.read_text()
-        rels = set()
-        for line in body.split("\n"):
-            s = line.strip().lstrip("- ")
-            if " · " in s and not s.startswith(("#", "*", ">", "|")):
-                bits = [b.strip() for b in s.split(" · ")]
-                # dialect a is `entity · rel · value`; dialect b is `rel · value`
-                rels.add(bits[1] if len(bits) >= 3 else bits[0])
+        # CALL THE REAL PARSER, never a second copy of it. This block used to reimplement
+        # claim parsing with `len(bits) >= 3 → take bits[1]`, and ignored the page's
+        # DECLARED x-dialect entirely. A dialect-b line carrying an evidence slot also has
+        # three bits, so goal-15's `state · active [...] · STALLED...` yielded the relation
+        # "active [routed to the abstractor ladder as plan-15; 2026-07-26]" and lost `state`
+        # — which is what produced the false [incomplete-infobox] finding memory reported.
+        # Measured blast radius: 6 of 18 pages parsed differently, 13 spurious relations,
+        # and verification.md (declared `prose`, meaning DO NOT SPLIT) was split anyway.
+        #
+        # A verifier that recomputes with its own copy of the producer's logic proves
+        # conformance to ITSELF. Same defect class as the pii_sweep scan that skipped
+        # _is_wire_email, on the same day. The declared dialect is authoritative; inference
+        # is only the fallback for a page that declares nothing.
+        try:
+            from nucleus import memgraph as _mg
+            dialect = meta.get("x-dialect") or _mg.infer_dialect(body)
+            claims = _mg.parse_claims(_mg._strip_code_and_comments(body), dialect, p.stem)
+            rels = {c["rel"] for c in claims}
+        except Exception:
+            rels = set()          # a parser failure is no relations, never invented ones
         cats = meta.get("x-categories") or []
         if isinstance(cats, str):
             cats = [cats]

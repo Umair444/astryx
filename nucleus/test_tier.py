@@ -98,6 +98,7 @@ def test_content_public_agents_is_positive_subset():
 # inside the catcher: the check could not observe the thing it claimed to cover. It now
 # walks the AST for an actual Call node.
 import ast  # noqa: E402
+import re   # noqa: E402
 
 MAIN_PY = Path(__file__).resolve().parent.parent / "observatory" / "api" / "main.py"
 # The shared ROOT the rule's content lives in. Authorities are DISCOVERED as the
@@ -214,6 +215,57 @@ def test_every_anonymous_message_path_routes_through_the_authority():
         + "): " + "; ".join(offenders) + ". Each such path re-expresses the rule in its "
         "own words, which is the two-writer defect that leaked the personal tier to the "
         "live SSE stream on 2026-08-12. Route it through an authority.")
+
+
+# Owner-tier SOURCES — artifacts whose CONTENT is the owner's private material.
+# NOT `nucleus.tier`: that is the AUTHORITY, the classifier that decides what may be shown,
+# and a public handler importing it is doing the right thing. The first draft of this list
+# said ("people", "tier") and immediately flagged GET /api/agents for importing
+# `is_content_public` — which would have driven a "fix" REMOVING the very gate that keeps
+# that path safe. A false predicate attached to a real gap, inverting on the one case that
+# matters most. Source and authority are opposites here; the word is the same.
+TIER_SOURCE_PATTERNS = (
+    r"['\"]tier/",                                  # the tier/ artifact directory
+    r"\bfrom\s+nucleus\s+import\s+people\b",         # the people cache module
+    r"\bnucleus\.people\b",
+    r"people-graph",
+)
+
+
+def test_no_public_path_reads_an_owner_tier_source():
+    """SIBLING COVERAGE ASSERT — TIER-BEARING IS NOT THE SAME AS MESSAGE-BEARING, and the
+    assert above only sees the second.
+
+    Found 2026-08-14 by probing a NEW surface rather than re-reading this file: seed shipped
+    a People lens over `tier/people-graph.json` — 736 contacts with display names. It is
+    correctly owner-gated (verified live: /api/people and /api/people/graph both 403 to
+    anonymous). But `_carries_message_content` looks for the message serializer or the
+    "message" event constant, so a handler serving PEOPLE returns False, is skipped, and the
+    coverage assert above would have passed it silently had anyone added it to PUBLIC_PATHS.
+
+    The gap is structural rather than an oversight: that assert was built from the SSE
+    incident, so its subject is message bodies. The org has since grown tier-bearing surfaces
+    that carry no messages at all, and nothing in check.sh would catch one being routed
+    publicly. This closes that, narrowly and by derivation — a handler that reads an
+    owner-tier SOURCE must not sit on a PUBLIC_PATHS route.
+
+    Names are not a regex, so no scanner can police this content
+    ([[project_people_graph_tier_surface]]). Placement IS the protection, which is exactly
+    why it needs a standing assert rather than a discipline someone remembers."""
+    src, tree = _main_ast()
+    offenders = []
+    for path, method, fn in _public_handlers(src, tree):
+        seg = ast.get_source_segment(src, fn) or ""
+        for pat in TIER_SOURCE_PATTERNS:
+            if re.search(pat, seg):
+                offenders.append(f"{method.upper()} {path} reads an owner-tier source "
+                                 f"(/{pat}/, line {fn.lineno})")
+                break
+    assert not offenders, (
+        "PUBLIC_PATHS route(s) reading an owner-tier source: " + "; ".join(offenders)
+        + ". Owner-tier content is not detectable by pattern — a contact's name is "
+        "indistinguishable from any other word — so PLACEMENT is the only protection and a "
+        "public route over it cannot be walked back. Gate the path, or serve a meta-shape.")
 
 
 def test_authority_denies_the_personal_channel_orgs():

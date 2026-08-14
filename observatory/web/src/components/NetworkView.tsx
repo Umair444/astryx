@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import PeopleGraph from './PeopleGraph'
 import { ScrollArea } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { ReactFlow, Background, MarkerType, Position, type Node, type Edge } from '@xyflow/react'
@@ -134,6 +135,10 @@ function agentEl(
 
 export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) => void }) {
   const { overview, agents, peers, flash, who } = useStore()
+  /* Two layers of one network: AGENTS (orgs and residents) and PEOPLE — the social
+   * graph the network has observed, the FB shape. Owner-only for now: it carries real
+   * names; the anonymized public form is a separate ruling. */
+  const [layer, setLayer] = useState<'agents' | 'people'>('agents')
   const isMobile = useMediaQuery('(max-width: 48em)')
   const [flashEdges, setFlashEdges] = useState<Edge[]>([])
 
@@ -439,12 +444,26 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
     <div className="h-full flex flex-col">
       <div className="shrink-0 px-4 py-2 border-b border-line flex items-baseline gap-2">
         <span className="font-semibold text-ink">Network</span>
+        {who.owner && (
+          <span className="flex gap-1 ml-2">
+            {(['agents', 'people'] as const).map((l) => (
+              <button key={l} onClick={() => setLayer(l)}
+                className={`text-[11px] px-2 py-[2px] rounded border ${layer === l
+                  ? 'border-cyan text-cyan' : 'border-line text-ink-mute hover:text-ink'}`}>
+                {l === 'agents' ? 'Agents' : 'People'}
+              </button>
+            ))}
+          </span>
+        )}
         <span className="text-xs text-ink-mute">
           {overview
             ? `${overview.agents} agents · ${overview.live} live · ${overview.peers} peers · ${overview.messages_24h} messages / 24h`
             : 'connecting…'}
         </span>
       </div>
+      {who.owner && layer === 'people' ? (
+        <div className="flex-1 min-h-0"><PeopleGraph /></div>
+      ) : (
       <div className="flex-1 min-h-0">
         <ReactFlow
           key={layoutKey}
@@ -462,6 +481,7 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
           <Background color="#1d2647" gap={28} />
         </ReactFlow>
       </div>
+      )}
     </div>
   )
 }

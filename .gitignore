@@ -42,3 +42,4 @@ harness/results/
 # real-PII test fixtures — re-add only with certified-fake data (leak scrub 2026-07-27)
 mcp/contacts/test_server.py
 tier/
+var/

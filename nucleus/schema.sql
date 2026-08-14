@@ -268,3 +268,40 @@ CREATE TABLE IF NOT EXISTS signals (
 );
 -- the wake query: unhandled rows for an agent at a given urgency
 CREATE INDEX IF NOT EXISTS signals_wake ON signals (agent, priority, handled_at);
+
+-- ── the social graph (owner ruling 2026-08-14: "postgres for everything") ──────────
+-- The network's people, FB-shaped: we record THAT two people are related, never what
+-- the relation is (married/cousins is deliberately not representable here — that
+-- judgement lives in the owner's curated instruments, and the network layer is
+-- structure only). One row per person PER ORG: `org` is the provenance column, so a
+-- federation peer's people can replicate in and render locally without a schema
+-- change — new joiners copy structure, exactly like the wire copies messages.
+-- Identity is a SALTED HASH of the channel id (nucleus/people.py) — no raw JID or
+-- number is ever a key here, and `label` is display-masked at write time. The rows
+-- are DERIVED (rebuilt from the channels nightly), so the table is disposable per
+-- org: DELETE WHERE org='<self>' + rescan is a full recovery.
+CREATE TABLE IF NOT EXISTS social_person (
+  org        text NOT NULL,                       -- which org observed this person
+  id         text NOT NULL,                       -- salted-hash pid (p…) or group gid (g…)
+  kind       text NOT NULL DEFAULT 'person'
+             CHECK (kind IN ('person','group')),  -- groups are contexts, not people
+  label      text NOT NULL DEFAULT 'unknown',     -- masked display name; NEVER a number
+  direct     boolean NOT NULL DEFAULT false,      -- has a DM with the org's owner
+  relation   text,                                -- model-derived class (close-friend…)
+  who        text,                                -- one derived sentence; never a quote
+  shape      text,                                -- behavioural summary (persona.py)
+  confidence text,
+  seen_at    timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (org, id)
+);
+-- Edges: "related at all" — co-membership or a direct thread. Weight = evidence
+-- count (shared groups), so a rendering can threshold without the storage lying.
+CREATE TABLE IF NOT EXISTS social_edge (
+  org    text NOT NULL,
+  src    text NOT NULL,
+  dst    text NOT NULL,
+  rel    text NOT NULL DEFAULT 'member-of',
+  weight int  NOT NULL DEFAULT 1,
+  PRIMARY KEY (org, src, dst, rel)
+);
+CREATE INDEX IF NOT EXISTS social_edge_src ON social_edge (org, src);

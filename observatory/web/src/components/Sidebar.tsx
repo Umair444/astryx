@@ -6,7 +6,6 @@ import type { Route } from '../App'
 
 const LINKS: { tab: Route['tab']; label: string; icon: string }[] = [
   { tab: 'network', label: 'Network', icon: '☉' },
-  { tab: 'hil', label: 'Waiting on you', icon: '◈' },
   { tab: 'wire', label: 'The Wire', icon: '✦' },
   { tab: 'goals', label: 'Goals', icon: '◎' },
   { tab: 'economy', label: 'Economy', icon: '⬡' },

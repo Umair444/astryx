@@ -369,6 +369,9 @@ async def worker(agent: str):
 
 
 # ------------------------------------------------------------------- outbound
+_skipped_threads: set = set()
+
+
 async def deliver(row):
     """Deliver a wire message to WhatsApp and record the outcome in the row's
     `delivery` field, so a send awaiting this result can read where it landed."""
@@ -403,7 +406,46 @@ async def deliver(row):
                 json.dumps({"ok": False, "handle": f"whatsapp:{chat}",
                             "message_id": None, "rendered": None, "error": err}))
             return
-    else:                            # home surface: route by the sending agent
+    elif thread and not thread.startswith("t-"):
+        # `t-…` is EXEMPT because it is not a named surface: the wire's send tool
+        # auto-mints a t-thread when an agent names none, so "send to the owner,
+        # un-threaded" arrives here AS a t-thread. The first cut of this fix skipped
+        # those too — and the very message announcing the fix was refused by it (msg
+        # 8125, caught by its own delivery probe): every owner escalation, org-news
+        # drop and decision request would have silently stopped reaching his phone.
+        # The doorbell to the owner's configured org surface (owner.md: he reads the
+        # org in the group) is a DESIGNED route, not a guess.
+        #
+        # A NAMED thread that is not wa: is a conversation happening SOMEWHERE ELSE —
+        # an internal wire thread (t-…), the observatory's estate chat (obs:estate-…),
+        # a proposals thread. Delivering it here means INVENTING a destination for a
+        # message that named none, and the destination this branch invents is a GROUP.
+        #
+        # memory proved the consequence (2026-08-14, msgs 7988/8123): its reply on
+        # `memory-proposals` — addressed to nobody on WhatsApp — landed in the ASTRYX
+        # group (delivery record on msg 7987), and every estate-chat answer would have
+        # taken the same path. The other two bridges already refuse threads that are
+        # not theirs (telegram.py:75, discord.py:107); this branch was the one
+        # bridge that guessed. Measured before removing: 3 messages in 14 days rode
+        # this fallthrough, every one an internal thread that had no business on a
+        # multi-party surface.
+        #
+        # Fail CLOSED, same law as the name-refusal above: an actuator that delivers
+        # to humans does not act on an unknown destination. The cost of refusing is a
+        # skipped delivery with a reason; the cost of guessing is an unrecallable
+        # broadcast to the wrong audience. The UNTHREADED doorbell below is untouched —
+        # a message with no thread at all is the designed "reach the owner" path.
+        # The watcher re-fetches ALL pending rows on every wire event, so without
+        # memory this line would repeat for the row's whole life. Once per process is
+        # enough for a human reading the log; the row itself stays pending because its
+        # consumer is the observatory (which marks it on serve), not this bridge.
+        if row["id"] not in _skipped_threads:
+            _skipped_threads.add(row["id"])
+            print(f"whatsapp: skipped outbound msg {row['id']} — thread {thread!r} names "
+                  f"no WhatsApp destination (internal/other-surface thread; send "
+                  f"un-threaded or wa:<jid> to reach WhatsApp)", flush=True)
+        return
+    else:                            # UNTHREADED: the owner doorbell, by design.
         route = next((r for r in routes() if r["agent"] == row["from_agent"]), None) \
             or next(iter(routes()), None)
         chat = route and route["chat"]

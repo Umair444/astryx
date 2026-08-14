@@ -82,7 +82,14 @@ FORBIDDEN = {
 }
 
 ENUMS = {
-    "type":         {"concept", "goal", "brief", "experiment", "schema", "index", "log", "note"},
+    # EXTENDED 2026-08-14 on memory's measured ruling. It found that `concept` was not
+    # a type at all but four incompatible SLOT-USAGES under one word — a registry
+    # enumerates members, a subject is one entity with many properties, a roster is
+    # typed at the entity level, a law is prose that must never be split. Searching for
+    # shared FIELDS found nothing; the real shape was structural. `mixed` exists so a
+    # page can be honestly UNRULED rather than given a type nobody can defend.
+    "type":         {"concept", "goal", "brief", "experiment", "schema", "index", "log",
+                     "note", "registry", "subject", "roster", "law", "mixed"},
     "x-layer":      {"system1", "system2"},
     "x-dialect":    {"a", "b", "prose"},
     "x-visibility": {"public", "org"},

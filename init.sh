@@ -416,6 +416,27 @@ setup() {
   # terminal green-gate: the doctor is the single source of truth for "done".
   echo; say "— doctor (the terminal green-gate) —"; "$0" doctor || true
   echo; say "the seed is awake and reading your law."
+
+  # PEOPLE BOOTSTRAP — generic, opt-in, and skipped silently when no channel is connected.
+  # A new org's People lens is empty until something has read a channel, which reads as a
+  # broken feature rather than an unstarted one. This does the first pass so the graph
+  # exists on day one; seed's nightly people_sweep keeps it current thereafter.
+  #
+  # NOTE ON THE INTERMEDIATE FILES: there are none. Chat samples stream from the channel to
+  # the classifier in memory and are never written to disk, so there is no transcript to
+  # delete afterwards. Write-then-delete is the weaker design — a deleted file is
+  # recoverable, can be captured by a backup that runs mid-pass, and lives in the page cache
+  # meanwhile. A file never written has none of those problems. What lands on disk is
+  # tier/personas.json: relationship LABELS, no message content.
+  if [ -n "${WA_CLI:-}" ] && venv/bin/python -c "import sys" 2>/dev/null; then
+    say "building the people graph from your connected channels (first pass)"
+    venv/bin/python nucleus/people.py  >/dev/null 2>&1 || true
+    venv/bin/python nucleus/persona.py >/dev/null 2>&1 || true
+    # The labelling pass costs model calls, so it is bounded here and left for the nightly
+    # sweep to extend. Failure is non-fatal: an unlabelled graph is still a useful graph.
+    venv/bin/python nucleus/persona_llm.py 25 >/dev/null 2>&1 || true
+    ok "people graph built — open the observatory Memory tab, People lens"
+  fi
   referral_optin       # opt-in, interactive-only (see the function's CI-asserted guards)
   # install dance — unit NAMES derived from the generated units/ (never a hardcoded
   # subset); install by COPY to /etc (deploy.sh units), never a symlink into /home.

@@ -277,14 +277,23 @@ def test_edges_are_deduped():
 def test_absent_estate_is_an_empty_graph_not_a_crash():
     """A clean checkout has no memory/ at all. The compiler must return an empty graph
     with a NOTE saying so — never crash, and never silently look healthy."""
-    real = mg.WIKI
+    # TWO sources now, so BOTH must be absent to simulate a clean checkout. The world
+    # layer (relations.md / owner.md) was added 2026-08-14 and this test kept patching
+    # only WIKI — it went red on the real machine, where the instruments exist. That is
+    # the test working: a compiler that grew a source and a test that still described the
+    # old one. Both files are gitignored, so on an actual clean checkout both are absent
+    # and the assertion below is unchanged in intent.
+    from nucleus import world
+    real, real_world = mg.WIKI, world.REPO
     try:
         mg.WIKI = REPO / "does" / "not" / "exist"
+        world.REPO = REPO / "does" / "not" / "exist"
         g = mg.compile_graph(with_system1=False)
         assert g["stats"]["nodes"] == 0
         assert any("absent" in n for n in g["notes"]), g["notes"]
     finally:
         mg.WIKI = real
+        world.REPO = real_world
 
 
 def test_log_chain_sorts_by_date_not_file_order():

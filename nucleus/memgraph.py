@@ -88,6 +88,29 @@ EVIDENCE_DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
 
 SEMANTIC, ENTITY, TEMPORAL, CAUSAL = "semantic", "entity", "temporal", "causal"
 
+# THE ONE PLACE a relation's dimension is decided. Derived from here at edge() time, never
+# passed in — see Graph.edge for the incident. Adding a relation without adding it here is
+# not silently wrong: it lands as SEMANTIC and the compiler emits a note naming it, so a
+# vocabulary gap surfaces instead of being absorbed.
+REL_CLASS = {
+    # entity — a thing standing in a stated relation to another thing
+    "spoke-in": ENTITY, "owner": ENTITY, "about": ENTITY, "covers": ENTITY,
+    "plans": ENTITY, "briefs": ENTITY, "status": ENTITY, "relation": ENTITY,
+    "platform": ENTITY, "place": ENTITY, "timezone": ENTITY, "member-of": ENTITY,
+    # semantic — meaning and membership rather than a factual link between things
+    "links": SEMANTIC, "in-category": SEMANTIC,
+    # temporal — when, or in what order
+    "observed-at": TEMPORAL, "compiled-on": TEMPORAL, "precedes": TEMPORAL,
+    # causal — one thing brought another about. NEVER inferred from co-occurrence:
+    # A-related-to-B is not A-causes-B, and only explicitly causal relations belong here.
+    "caused": CAUSAL, "produced": CAUSAL,
+    # identity — two nodes, one referent. NOT a similarity edge: same-as asserts that the
+    # endpoints ARE the same thing, which is why it gets its own relation rather than being
+    # folded into `links`. Without it a curated person and a channel-derived person stay
+    # strangers and neither inherits what the other knows.
+    "same-as": ENTITY,
+}
+
 # index.md's `###` headings ARE the org's regions — memory has been maintaining an
 # ontology in prose for a month. Used only as the FALLBACK order when memory has not yet
 # declared regions in frontmatter; it never overrides an explicit x-region.
@@ -249,9 +272,38 @@ class Graph:
         return nid
 
     def edge(self, src, dst, cls, rel):
+        """Record an edge. `cls` is DERIVED from `rel`, never taken from the caller.
+
+        WHY (2026-08-14). cls was passed by hand at every call site alongside rel — and
+        measured across the live graph, all 18 relations mapped to exactly one class, zero
+        exceptions. That is a fact with ONE true value being written in TWO places, kept
+        consistent only by every caller remembering. It is the writer-count-2 defect this
+        module's own design notes warn about, in the module that warns about it.
+
+        It is also the modelling error: semantic/entity/temporal/causal are DIMENSIONS of a
+        relation, not categories a relation belongs to. They are a property OF the relation
+        type, so `links` is semantic by nature and cannot be anything else. Deriving makes
+        that structural — a caller can no longer file the same relation two ways.
+
+        The passed value is kept as a CHECK rather than discarded: a mismatch means the
+        caller believed something the mapping denies, and that disagreement is worth seeing.
+        """
         if src == dst or src not in self.nodes or dst not in self.nodes:
             return
-        self.edges.append({"src": src, "dst": dst, "cls": cls, "rel": rel})
+        derived = REL_CLASS.get(rel)
+        if derived is None:
+            # Unknown relation: default to the least-claiming class and SAY SO. Silently
+            # inventing a classification is how a taxonomy rots — an unmapped relation is a
+            # vocabulary gap, and it should be visible rather than absorbed.
+            derived = SEMANTIC
+            note = f"unmapped relation '{rel}' — classed {SEMANTIC} by default; add it to REL_CLASS"
+            if note not in self.notes:
+                self.notes.append(note)
+        elif cls and cls != derived:
+            note = f"caller classed '{rel}' as {cls}; REL_CLASS says {derived} — mapping wins"
+            if note not in self.notes:
+                self.notes.append(note)
+        self.edges.append({"src": src, "dst": dst, "cls": derived, "rel": rel})
 
 
 def _read(p: Path) -> str:
@@ -626,9 +678,67 @@ def compute_degrees(g: Graph) -> None:
 
 
 # ─────────────────────────────────────────────────────────── compile + emit
+def build_world(g: Graph) -> None:
+    """The HUMAN layer: people, the categories they sit in, and the facets that cut
+    across them — derived from the owner's instruments by nucleus/world.py.
+
+    Why it is a THIRD layer rather than more System 2: system1/system2 are both the org
+    observing ITSELF (its wire, its pages, its own compiles). The graph had 336 nodes and
+    not one was about a person. This layer is the org's model of the world OUTSIDE it,
+    which is the half that makes a recall system worth querying.
+
+    NOTHING IDENTIFYING CROSSES. world.redact() strips values at parse time, so the only
+    forms that exist here are names, categories and facets. Nodes are marked
+    visibility='org' by the compiler default like everything else, and the memory API is
+    owner-gated — but the real guarantee is structural: the values were never handed to
+    this function. See nucleus/test_world.py, whose privacy assertion is derived from the
+    live instruments rather than from a pattern someone maintains.
+    """
+    try:
+        from nucleus import world
+    except Exception as e:                      # a broken world layer must not take the
+        g.notes.append(f"world layer skipped: {e}")   # whole graph compile down with it
+        return
+    tax = world.taxonomy()
+    if not tax["categories"]:
+        g.notes.append("world layer empty: no owner instruments present (gitignored)")
+        return
+    for cat, members in tax["categories"].items():
+        cid = g.node(f"world:cat:{world._slug(cat)}", kind="category", label=cat,
+                     layer="world", region="World")
+        for m in members:
+            # No `claims` here on purpose. kg.claim's row shape requires an `entity`, and a
+            # facet is already carried as a node plus an edge below — emitting it twice
+            # would be a second writer for the same fact, in a module whose whole design
+            # rule is writer-count-1. (First cut emitted claims without `entity`, which
+            # would have aborted the write transaction rather than degrading.)
+            pid = g.node(f"world:person:{m['slug']}", kind="person", label=m["name"],
+                         layer="world", region="World", facets=m["facets"])
+            g.edge(pid, cid, "semantic", "in-category")
+            # IDENTITY: the channel-graph twin is recorded as an ATTRIBUTE, not a stub
+            # node. The channel-derived social graph lives in the `social` schema now
+            # (owner ruling 2026-08-14: postgres for everything, one store); a kg stub
+            # for every matched contact would be a second copy of that store's nodes.
+            # social.person.curated_slug is the join point, written by the loader.
+            for raw in m.get("_ids", []):
+                try:
+                    from nucleus import people as _pp
+                    g.nodes[pid]["channel_id"] = _pp.pid(raw)
+                except Exception:
+                    continue
+            # Facets become nodes too: they are the AXES a human browses by, and as nodes
+            # they show which people share a place, a platform, a status. As bare
+            # attributes they would be invisible in a graph view.
+            for k, v in m["facets"].items():
+                fid = g.node(f"world:facet:{k}:{world._slug(v)}", kind="facet",
+                             label=f"{k}: {v}", layer="world", region="World")
+                g.edge(pid, fid, "entity", k)
+
+
 def compile_graph(dsn: str | None = None, with_system1: bool = True) -> dict:
     g = Graph()
     build_system2(g)
+    build_world(g)
     if with_system1:
         build_system1(g, dsn)
     # VISIBILITY DEFAULTS IN THE COMPILER, not in the column. It was set only on nodes

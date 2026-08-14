@@ -169,6 +169,23 @@ run "plan-lifecycle trigger oracle"   "$PY" nucleus/test_plan_lifecycle.py
 # Pure stdlib and needs no DB (the wire + wacli are stubbed), but the trigger BODY it
 # tests is gitignored, so it SKIPS loudly on a fresh clone rather than passing.
 run "gemini ear-dark trigger oracle"  "$PY" nucleus/test_ear_dark.py
+# Same gitignored-body caveat: SKIPs (77) on a clone. Guards the DEDUP specifically —
+# the key must carry an escalation band, or a standing condition warns once and goes
+# silent (which is how p1 degraded unobserved at 59h, 2026-08-14).
+run "session-refresh dedup oracle"    "$PY" nucleus/test_session_refresh.py
+# The human ontology. Its lead assertion is the PRIVACY one and it is derived from the
+# live owner instruments, so a new PII shape in relations.md goes red without anyone
+# remembering to update a pattern list.
+run "world layer / PII never crosses" "$PY" nucleus/test_world.py
+# The social graph walks the owner's address book — hundreds of third parties who
+# never consented and cannot be asked. Two fields carry a number (the jid AND the
+# display name), and the salt must actually reach the digest or pseudonymity is
+# nominal. All three are asserted here.
+run "people graph / no jid escapes"  "$PY" nucleus/test_people.py
+# Personas read the owner's private conversations. The lead assertion is that NO
+# message text survives into the output — fixtures carry sentinel strings and the
+# whole result is searched for them, so a future "topic" field turns this red.
+run "persona / no chat text stored"  "$PY" nucleus/test_persona.py
 if "$PY" -c 'import av' 2>/dev/null; then
   run "media in-process decode"        "$PY" nucleus/media_probe.py
 else

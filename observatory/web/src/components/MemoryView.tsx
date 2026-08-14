@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ScrollArea, SegmentedControl, Loader, Textarea } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { api, apiPost, fmtAgo } from '../api'
@@ -57,6 +57,9 @@ const CLASS_STYLE: Record<Edge['cls'], { c: string; label: string; hint: string 
 const KIND_R: Record<string, number> = {
   page: 7, brief: 5, goal: 6, agent: 6.5, compile: 4, milestone: 4.5,
   thread: 2.6, day: 2.2, message: 2.6,
+  // World layer: a person is the biggest thing on the People lens on purpose — the
+  // categories are scaffolding, the people are the subject.
+  person: 8, category: 6, facet: 4,
 }
 
 export default function MemoryView() {
@@ -64,16 +67,23 @@ export default function MemoryView() {
   const [err, setErr] = useState<string>('')
   const [sel, setSel] = useState<Node | null>(null)
   const [page, setPage] = useState<{ slug: string; markdown: string } | null>(null)
-  const [lens, setLens] = useState<'cortex' | 'split' | 'ontology'>('cortex')
+  const [lens, setLens] = useState<'cortex' | 'split' | 'ontology' | 'world'>('cortex')
+  const [world, setWorld] = useState<Graph | null>(null)
   const [onto, setOnto] = useState<Graph | null>(null)
   const [classes, setClasses] = useState<Set<string>>(new Set(['semantic', 'entity', 'temporal', 'causal']))
   const [hover, setHover] = useState<string | null>(null)
   const [q, setQ] = useState('')
   const [asking, setAsking] = useState(false)
+  const [thread, setThread] = useState<string | null>(null)
   const [ans, setAns] = useState<Answer | null>(null)
   const [blink, setBlink] = useState(0)        // 1 = ignition, 0.6 = warm, 0 = idle
-  const [proposed, setProposed] = useState(false)
   const [view, setView] = useState({ x: 0, y: 0, k: 1 })
+  const fitRef = useRef({ x: 0, y: 0, k: 1 })
+  // Float equality is the wrong test — panning a pixel and back leaves k at 0.9999999.
+  // Near-identity counts as default, so the reset control does not linger forever.
+  // 'Default' is now the FITTED view, not k=1 — k=1 means a different thing on each lens.
+  const atDefault = Math.abs(view.k - fitRef.current.k) < 1e-3 &&
+    Math.abs(view.x - fitRef.current.x) < 0.5 && Math.abs(view.y - fitRef.current.y) < 0.5
   const drag = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null)
   const svgRef = useRef<SVGSVGElement | null>(null)
   const mobile = useMediaQuery('(max-width: 48em)')
@@ -91,6 +101,15 @@ export default function MemoryView() {
     api<Graph>('/memory/ontology').then(setOnto).catch(() => {})
   }, [lens, onto])
 
+  /* The WORLD lens: people, their categories, the facets that cut across them. The other
+   * three lenses are all the org describing itself — this is the only one about anyone
+   * outside it, which is why it exists. Derived from the owner's instruments; identifying
+   * values are stripped before compile, never here. */
+  useEffect(() => {
+    if (lens !== 'world' || world) return
+    api<Graph>('/memory/world').then(setWorld).catch(() => {})
+  }, [lens, world])
+
   useEffect(() => {
     if (!sel || (sel.kind !== 'page' && sel.kind !== 'brief')) { setPage(null); return }
     const slug = sel.id.split(':')[1]
@@ -98,7 +117,7 @@ export default function MemoryView() {
     api<{ slug: string; markdown: string }>(`/memory/page/${slug}`).then(setPage).catch(() => setPage(null))
   }, [sel])
 
-  const view_g = lens === 'ontology' ? onto : g
+  const view_g = lens === 'ontology' ? onto : lens === 'world' ? world : g
   const byId = useMemo(() => new Map((view_g?.nodes ?? []).map((n) => [n.id, n])), [view_g])
 
   /* Zoom must be SCOPED TO THIS CANVAS, which means preventDefault() on the wheel — and
@@ -112,11 +131,31 @@ export default function MemoryView() {
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
       const f = e.deltaY > 0 ? 0.9 : 1.1
-      setView((v) => ({ ...v, k: Math.min(3, Math.max(0.35, v.k * f)) }))
+      /* UNBOUNDED. The old clamp (0.35..3) meant a 16-node lens like People could never
+       * be filled and a 300-node cortex could never be read. The only real limits are
+       * numerical: k must stay a positive finite float, so guard THAT and nothing else.
+       * Zoom holds toward the POINTER rather than the origin — aiming at a cluster and
+       * watching it slide away is what makes a canvas feel broken. */
+      const u = toUser(e.clientX, e.clientY)
+      setView((v) => {
+        const k = v.k * f
+        if (!Number.isFinite(k) || k <= 1e-6 || k >= 1e6) return v
+        if (!u) return { ...v, k }
+        // Keep the world point under the cursor fixed: x' = c - f*(c - x), with c and x
+        // both in USER units. Anchoring to the pointer is what makes a canvas feel like
+        // you are moving through it rather than operating it from outside.
+        return { k, x: u.x - (u.x - v.x) * f, y: u.y - (u.y - v.y) * f }
+      })
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
-  }, [g])
+    /* Depends on view_g, NOT g. The lens switch early-returns a loading state, which
+     * unmounts the svg and takes the listener with it; the remount is a NEW element, and
+     * with [g] the effect never re-ran to bind it. That is why Cortex and System 1↔2
+     * zoomed while Ontology and People did not — same symptom as the passive-listener
+     * bug, entirely different cause. A listener bound to a ref must depend on whatever
+     * can remount that ref. */
+  }, [view_g])
 
   /* THE BLINK. Ignite to full, then settle to 60% rather than fading out — the retrieved
    * set stays warm until the next question so the answer remains anchored to its evidence
@@ -124,21 +163,43 @@ export default function MemoryView() {
   async function ask() {
     const text = q.trim()
     if (!text || asking) return
-    setAsking(true); setProposed(false)
+    setAsking(true)
     try {
-      const r = await apiPost<Answer>('/memory/chat', {
-        message: text,
-        history: ans ? [{ role: 'user', text: q }, { role: 'memory', text: ans.answer }] : [],
-      })
-      setAns(r)
+      /* THE WIRE, not a conjure (owner ruling 2026-08-14). The question becomes a message
+       * row to the resident memory agent; the answer arrives on the same thread when
+       * memory sends it. The blink fires immediately from the server-side retrieval
+       * PREVIEW — what the estate holds on this question — while the authoritative words
+       * come from the agent that owns the organ. */
+      const r = await apiPost<{ sent: number; thread: string; retrieved: Answer['retrieved'] }>(
+        '/memory/chat', { message: text, thread: thread ?? undefined })
+      setThread(r.thread)
       setQ('')
+      setAns({ answer: '…asked memory on the wire — waiting for the agent', retrieved: r.retrieved })
       if (r.retrieved?.nodes.length) {
         const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
         if (reduced) setBlink(0.6)
         else { setBlink(1); setTimeout(() => setBlink(0.6), 2500) }
       } else setBlink(0)
+      /* Poll for the reply. A resident answers on its own clock; 3s × 60 is a generous
+       * window, and timing out SAYS so instead of pretending silence is an answer. */
+      let got = false
+      for (let i = 0; i < 60 && !got; i++) {
+        await new Promise((res) => setTimeout(res, 3000))
+        try {
+          const rep = await api<{ replies: { id: number; body: string }[] }>(
+            `/memory/chat?thread=${encodeURIComponent(r.thread)}&after=${r.sent}`)
+          if (rep.replies.length) {
+            setAns((a) => ({ answer: rep.replies.map((x) => x.body).join('\n\n'),
+                             retrieved: a?.retrieved ?? null }))
+            got = true
+          }
+        } catch { /* poll errors are transient; the loop is the retry */ }
+      }
+      if (!got) setAns((a) => ({ answer: 'memory has not replied within this window — the question ' +
+        'is on the wire and the answer will land in its thread; a resident may be mid-task.',
+        retrieved: a?.retrieved ?? null }))
     } catch (e) {
-      setAns({ answer: `chat failed — ${String(e)}`, retrieved: null })
+      setAns({ answer: `send failed — ${String(e)}`, retrieved: null })
     } finally { setAsking(false) }
   }
 
@@ -154,14 +215,190 @@ export default function MemoryView() {
    * its region colour and you can watch it belong to both pictures. */
   const pos = useMemo(() => {
     const m = new Map<string, { x: number; y: number }>()
-    for (const n of view_g?.nodes ?? []) {
+    const nodes = view_g?.nodes ?? []
+
+    /* SCHEMA LENSES GET THEIR OWN GEOMETRY. Ontology and People were reusing the cortex
+     * force coordinates, which is exactly why they read as an undifferentiated blob:
+     * those positions encode SEMANTIC neighbourhood, while a schema's structure is
+     * HIERARCHICAL — hubs and the members that hang off them. Right data, wrong geometry.
+     *
+     * So: hubs (types, categories, facets) on a generous ring, members orbiting their own
+     * hub, and orphans pushed to an outer ring where being unattached is VISIBLE instead
+     * of buried mid-hairball. Fully deterministic — ring index from sorted order, orbit
+     * angle from member index — because a picture that rearranges itself between renders
+     * destroys the mental map it exists to build. */
+    if (lens === 'ontology' || lens === 'world') {
+      /* PACKED BY CONTENT, not by count. The first cut set the ring radius to
+       * 96 * hubCount, so 58 hubs produced an 11136px world; auto-fit then chose k=0.081
+       * and a node of radius 8 rendered at 0.65 PIXELS. That is the whole "sparse" report
+       * — 58 near-invisible specks on an enormous empty ring — and it was arithmetic, not
+       * taste. A layout must be sized by what it has to FIT, never by how many things
+       * there are.
+       *
+       * So each cluster gets a radius from its own membership (sqrt, because members fill
+       * an AREA), and the ring circumference is the sum of cluster diameters — clusters
+       * end up just touching, at any scale, for 3 hubs or 300. Members fill their disc by
+       * phyllotaxis rather than sitting on one fixed-radius circle, so a 66-member cluster
+       * looks like a cluster instead of a ring of dots. */
+      const HUB = new Set(['type', 'category', 'facet'])
+      const hubs = nodes.filter((n) => HUB.has(n.kind)).sort((a, b) => a.id.localeCompare(b.id))
+      const rest = nodes.filter((n) => !HUB.has(n.kind))
+      const parent = new Map<string, string>()
+      for (const e of view_g?.edges ?? []) {
+        if (HUB.has(byId.get(e.dst)?.kind ?? '') && !parent.has(e.src)) parent.set(e.src, e.dst)
+        if (HUB.has(byId.get(e.src)?.kind ?? '') && !parent.has(e.dst)) parent.set(e.dst, e.src)
+      }
+
+      /* Unattached nodes get their OWN cluster rather than an outer exile ring. 218 of the
+       * 741 people here are direct contacts with no shared group — they are not noise, they
+       * are the people he talks to one-to-one, and banishing them to R*1.9 was inflating
+       * the world by nearly double to hold the least-connected nodes furthest out. */
+      const ORPHAN = '~unattached'
+      const members = new Map<string, string[]>()
+      for (const h of hubs) members.set(h.id, [])
+      members.set(ORPHAN, [])
+      for (const n of rest) {
+        const h = parent.get(n.id)
+        ;(members.get(h && members.has(h) ? h! : ORPHAN) as string[]).push(n.id)
+      }
+      const cells = [...members.entries()].filter(([, v], i) => v.length > 0 || i < hubs.length)
+
+      const PAD = 16
+      const radiusOf = (n: number) => Math.max(42, Math.sqrt(Math.max(1, n)) * 22)
+
+      /* PACK THE AREA, NOT THE PERIMETER. A single ring of 59 clusters forced a 4160px
+       * world for a 900px viewport — the whole interior sat empty while everything fought
+       * for circumference. Clusters are laid into CONCENTRIC BANDS instead, largest first,
+       * each band filled before the next opens. Area grows as r^2 while a ring grows as r,
+       * so this is the difference between a wall of dots and something you can read.
+       * Deterministic: sorted by size then id, so the picture is stable across renders. */
+      const ordered = cells.slice().sort((a, b) =>
+        b[1].length - a[1].length || a[0].localeCompare(b[0]))
+      const placed: Array<{ id: string; mem: string[]; cr: number; x: number; y: number }> = []
+      let bandR = 0
+      let i = 0
+      while (i < ordered.length) {
+        const first = radiusOf(ordered[i][1].length)
+        if (placed.length === 0) {                        // largest cluster anchors the centre
+          placed.push({ id: ordered[i][0], mem: ordered[i][1], cr: first, x: 0, y: 0 })
+          bandR = first + PAD
+          i += 1
+          continue
+        }
+        // Fill this band with as many clusters as its circumference allows.
+        const band: Array<[string, string[]]> = []
+        let used = 0
+        let maxR = 0
+        while (i < ordered.length) {
+          const cr = radiusOf(ordered[i][1].length)
+          const need = 2 * (cr + PAD)
+          if (band.length && used + need > 2 * Math.PI * (bandR + cr)) break
+          band.push(ordered[i]); used += need; maxR = Math.max(maxR, cr); i += 1
+        }
+        const ringR = bandR + maxR
+        let a2 = 0
+        for (const [hid2, mem2] of band) {
+          const cr = radiusOf(mem2.length)
+          const span = 2 * (cr + PAD)
+          const ang2 = ((a2 + span / 2) / Math.max(used, 1)) * Math.PI * 2
+          a2 += span
+          placed.push({ id: hid2, mem: mem2, cr,
+                        x: Math.cos(ang2) * ringR, y: Math.sin(ang2) * ringR * 0.88 })
+        }
+        bandR = ringR + maxR + PAD
+      }
+
+      const GOLDEN = Math.PI * (3 - Math.sqrt(5))
+      for (const c of placed) {
+        if (members.has(c.id) && c.id !== ORPHAN) m.set(c.id, { x: c.x, y: c.y })
+        c.mem.forEach((id, j) => {
+          const rr = c.cr * Math.sqrt((j + 0.5) / c.mem.length)
+          const th = j * GOLDEN
+          m.set(id, { x: c.x + Math.cos(th) * rr, y: c.y + Math.sin(th) * rr })
+        })
+      }
+      return m
+    }
+
+    for (const n of nodes) {
       if (lens === 'split') {
         const dx = n.layer === 'system2' ? -520 : 520
         m.set(n.id, { x: n.x * 0.55 + dx, y: n.y * 0.92 })
       } else m.set(n.id, { x: n.x, y: n.y })
     }
     return m
-  }, [view_g, lens])
+  }, [view_g, lens, byId])
+
+  /* SCREEN PIXELS ARE NOT USER UNITS, and conflating them was the zoom bug.
+   *
+   * The svg is viewBox="-900 -700 1800 1400" with preserveAspectRatio="xMidYMid meet", so
+   * the viewBox is SCALED to fit the element and letterboxed. The old anchor maths measured
+   * the cursor in CSS pixels (clientX - rect.left - rect.width/2) and applied that straight
+   * to view.x, which lives in user units. With a ~1200px-wide element showing 1800 units,
+   * every correction was ~0.67 of what it should be — so the point under the cursor drifted
+   * toward the origin on every notch, which reads exactly as "it always zooms to the centre
+   * no matter where my cursor is".
+   *
+   * getScreenCTM() is the browser's own answer to this question: it accounts for the
+   * viewBox, the aspect-ratio letterboxing, and any CSS transform on an ancestor. Using it
+   * means the conversion cannot drift from how the element is actually laid out — the same
+   * reason this codebase derives rather than hardcodes everywhere else.
+   *
+   * The pan handler's magic `* 1.6` was the FINGERPRINT of this bug: someone measured the
+   * mismatch empirically and multiplied it away at one call site. It is gone now, because
+   * the conversion is correct rather than compensated. */
+  const toUser = (clientX: number, clientY: number) => {
+    const el = svgRef.current
+    if (!el) return null
+    const ctm = el.getScreenCTM()
+    if (!ctm) return null
+    const pt = el.createSVGPoint()
+    pt.x = clientX
+    pt.y = clientY
+    const u = pt.matrixTransform(ctm.inverse())
+    return { x: u.x, y: u.y }
+  }
+
+  /* DEFAULT SCALE IS PER-LENS AND CONSTANT — it must not depend on mount timing.
+   *
+   * THE BUG THIS REPLACES: the fit was computed in a useMemo that read svgRef.current. On a
+   * fresh page load the ref is still null at that point, so it fell back to {0,0,k:1} — the
+   * compiler's own layout, untouched, which is the scale that looked right. Switching lenses
+   * recomputed it AFTER the ref existed and produced a different answer. Identical code, two
+   * results, decided by whether the element happened to be mounted yet. A default that varies
+   * with render order is not a default.
+   *
+   * The rule now: cortex and split are laid out BY THE COMPILER, which already sizes them
+   * well — they keep k=1 and are never auto-fitted. Only the schema lenses, whose geometry
+   * this component invents, are fitted to the viewport, because nothing else has sized them.
+   * Fitting is done in a layout effect after mount, so the measurement is always real. */
+  const DEFAULT_VIEW = { x: 0, y: 0, k: 1 }
+  const isSchema = lens === 'ontology' || lens === 'world'
+
+  const computeFit = () => {
+    const el = svgRef.current
+    const pts = [...pos.values()]
+    if (!isSchema || !pts.length || !el) return DEFAULT_VIEW
+    const r = el.getBoundingClientRect()
+    if (!r.width || !r.height) return DEFAULT_VIEW
+    const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y)
+    const w = Math.max(1, Math.max(...xs) - Math.min(...xs))
+    const h = Math.max(1, Math.max(...ys) - Math.min(...ys))
+    const cx = (Math.max(...xs) + Math.min(...xs)) / 2
+    const cy = (Math.max(...ys) + Math.min(...ys)) / 2
+    const k = Math.min(2.4, Math.max(0.05, Math.min((r.width - 100) / w, (r.height - 100) / h)))
+    return { k, x: -cx * k, y: -cy * k }
+  }
+
+  const fitted = useRef('')
+  useLayoutEffect(() => {
+    const key = `${lens}:${view_g?.nodes.length ?? 0}`
+    if (fitted.current === key || !view_g?.nodes.length) return
+    fitted.current = key
+    const v = computeFit()
+    fitRef.current = v
+    setView(v)
+  }, [lens, view_g, pos])
 
   /* Region hulls as soft blurred blobs — the "parts of the brain". A blob is drawn from
    * its members' centroid and spread rather than a convex hull: with declared regions the
@@ -201,6 +438,8 @@ export default function MemoryView() {
 
   if (err) return <div className="p-6 text-sm text-ink-dim">memory graph unavailable — {err}</div>
   if (!g) return <div className="h-full grid place-items-center"><Loader color="cyan" /></div>
+  if (lens === 'world' && !world)
+    return <div className="h-full grid place-items-center text-ink-mute text-sm">loading the world…</div>
   if (lens === 'ontology' && !onto)
     return <div className="h-full grid place-items-center"><Loader color="cyan" /></div>
 
@@ -243,9 +482,19 @@ export default function MemoryView() {
   return (
     <div className="h-full flex flex-col">
       <div className="px-3 pt-2 pb-1 flex items-center gap-3 flex-wrap">
-        <SegmentedControl size="xs" value={lens} onChange={(v) => setLens(v as 'cortex' | 'split')}
+        {/* Shows only when the view is OFF-DEFAULT: a control that is always there is
+            chrome; one that appears exactly when it can do something is a hint. */}
+        {atDefault ? null : (
+          <button onClick={() => setView(fitRef.current)}
+            title="Reset zoom and pan"
+            className="text-[11px] font-mono px-2 py-[3px] rounded border border-cyan/40 text-cyan hover:bg-cyan/10 transition-colors shrink-0">
+            reset · {view.k.toFixed(2)}×
+          </button>
+        )}
+        <SegmentedControl size="xs" value={lens} onChange={(v) => setLens(v as 'cortex' | 'split' | 'ontology' | 'world')}
           data={[{ label: 'Cortex', value: 'cortex' }, { label: 'System 1 ↔ 2', value: 'split' },
-                 { label: 'Ontology', value: 'ontology' }]} />
+                 { label: 'Ontology', value: 'ontology' },
+                 { label: 'People', value: 'world' }]} />
         <div className="flex gap-1">
           {(Object.keys(CLASS_STYLE) as Edge['cls'][]).map((c) => {
             const on = classes.has(c)
@@ -278,7 +527,11 @@ export default function MemoryView() {
           onMouseMove={(e) => {
             if (!drag.current) return
             const d = drag.current
-            setView((v) => ({ ...v, x: d.vx + (e.clientX - d.x) * 1.6, y: d.vy + (e.clientY - d.y) * 1.6 }))
+            // 1:1 with the cursor, in USER units. The old `* 1.6` was this same
+            // screen-vs-user confusion patched by measurement at one call site.
+            const a = toUser(d.x, d.y), b = toUser(e.clientX, e.clientY)
+            if (!a || !b) return
+            setView((v) => ({ ...v, x: d.vx + (b.x - a.x), y: d.vy + (b.y - a.y) }))
           }}
         >
           <defs>
@@ -342,7 +595,15 @@ export default function MemoryView() {
               {view_g!.nodes.map((n) => {
                 const p = pos.get(n.id)!
                 const lit = !neighbours || neighbours.has(n.id)
-                const base = (KIND_R[n.kind] ?? 3) + Math.min(5, n.degree * 0.16)
+                /* SCREEN-SPACE FLOOR. Radii are world units, so at k=0.081 an r=8 node
+                 * drew at 0.65px — technically present, visually absent. A node must stay
+                 * legible at any zoom, so the floor is expressed in SCREEN pixels and
+                 * converted back into world units by the current scale. Fixes the other
+                 * half of "sparse": packing put the clusters together, this makes the
+                 * things inside them visible. */
+                const MIN_PX = 2.6
+                const base = Math.max((KIND_R[n.kind] ?? 3) + Math.min(5, n.degree * 0.16),
+                                      MIN_PX / Math.max(0.02, view.k))
                 const isSel = sel?.id === n.id
                 // hop 0 = a seed the query actually matched; hop 1 = reached by one edge.
                 // Rendering them differently is what lets you SEE the one-hop expansion
@@ -454,32 +715,23 @@ export default function MemoryView() {
       {/* ── ask the estate ─────────────────────────────────────────────────────────
         * Retrieval ran server-side BEFORE the model was called, so the graph above is
         * lighting up what was actually read — evidence, not the model's self-report. */}
-      <div className="border-t border-line bg-deck-2 shrink-0">
+      <div className="border-t border-line bg-deck-2 shrink-0 relative">
+        {/* The cross the owner asked for: the answer panel could be summoned but not
+          * dismissed — the old 'clear' rendered only when retrieval succeeded, so a
+          * no-retrieval or failed answer had no way out. Visible whenever the panel is. */}
+        {ans && (
+          <button onClick={() => { setAns(null); setBlink(0) }} title="close"
+            className="absolute top-1.5 right-2 z-10 text-ink-mute hover:text-ink text-[15px] leading-none px-1.5 py-0.5">✕</button>
+        )}
         {ans && (
           <ScrollArea className="max-h-[38vh]">
-            <div className="px-4 py-3">
+            <div className="px-4 py-3 pr-8">
               <Md text={ans.answer.replace(/^PROPOSE:.*$/m, '')} />
               {ret && (
                 <div className="mt-2 text-[11px] text-ink-mute font-mono">
                   read {Object.values(ret.hops).filter((h) => h === 0).length} directly,
                   {' '}{Object.values(ret.hops).filter((h) => h === 1).length} by one hop ·
                   {' '}{ret.regions.join(' · ')}
-                </div>
-              )}
-              {ans.proposal && (
-                <div className="mt-3 p-2 rounded border border-[#e8b339]/40 bg-[#e8b339]/5">
-                  <div className="text-[11px] uppercase tracking-wider text-[#e8b339] mb-1">proposal</div>
-                  <div className="text-sm mb-2">{ans.proposal}</div>
-                  <button
-                    disabled={proposed}
-                    onClick={async () => {
-                      await apiPost('/memory/propose', { text: ans.proposal, nodes: ret?.nodes ?? [] })
-                      setProposed(true)
-                    }}
-                    className="text-xs px-2 py-1 rounded border border-line hover:border-cyan disabled:opacity-50">
-                    {proposed ? 'sent to memory — it decides' : 'send to memory'}
-                  </button>
-                  {/* never writes memory/ — memory is the only writer of its estate */}
                 </div>
               )}
             </div>
@@ -496,10 +748,6 @@ export default function MemoryView() {
             className="text-xs px-3 py-2 rounded border border-line hover:border-cyan disabled:opacity-40 shrink-0">
             {asking ? 'reading…' : 'ask'}
           </button>
-          {ret && (
-            <button onClick={() => { setAns(null); setBlink(0) }}
-              className="text-xs px-2 py-2 text-ink-mute hover:text-ink shrink-0">clear</button>
-          )}
         </div>
       </div>
       </div>

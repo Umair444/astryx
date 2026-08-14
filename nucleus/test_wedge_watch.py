@@ -26,13 +26,18 @@ come back silently.
 GRADE THIS HONESTLY: the RED arm is proven on FIXTURES, not against a live wedge. The
 guard has never yet fired on a real one — steward was already fixed when it was installed.
 """
+import os
 import runpy
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-TRIGGER = REPO / "triggers" / "seed" / "wedge_watch.py"
+# The subject is overridable so nucleus/mutation_probe.py can point this oracle at a
+# deliberately-wrong copy and check that it NOTICES. Defaults to the real trigger, so
+# check.sh and a by-hand run are unaffected.
+TRIGGER = Path(os.environ.get("WEDGE_WATCH_SRC",
+                              REPO / "triggers" / "seed" / "wedge_watch.py"))
 
 EXIT_SKIP = 77          # check.sh's protocol: verified-less-than-claimed is NOT a pass
 
@@ -92,17 +97,57 @@ print("RED — the case the guard exists for (steward, pre-respawn):")
 wedged, recovered, gaps = classify([STEWARD_WEDGED], BODIES, NOW)
 check("steward is WEDGED", [a for a, _, _ in wedged], ["steward"])
 check("steward is not filed as a marker gap", gaps, [])
+check("steward is not double-filed as recovered", recovered, [])
 check("quiet hours ~34.3", round(wedged[0][2], 1) if wedged else None, 34.3)
 
 print("\nGREEN — the healthy agent a streak-only guard would have nagged:")
 wedged, recovered, gaps = classify([FORGE_HEALTHY], BODIES, NOW)
 check("forge is NOT wedged", wedged, [])
 check("forge is filed as a marker gap", gaps, [("forge", 6)])
+check("forge is NOT filed as recovered", recovered, [])
 
 print("\nBOTH AT ONCE — the discriminator must split them in a single pass:")
 wedged, recovered, gaps = classify([STEWARD_WEDGED, FORGE_HEALTHY], BODIES, NOW)
 check("only steward alarms", [a for a, _, _ in wedged], ["steward"])
 check("only forge is a gap", [a for a, _ in gaps], ["forge"])
+
+# ---------------------------------------------------------------- THE RECOVERED BRANCH
+# This branch had NO assertion until 08-14: STEWARD_RECOVERED was defined and never
+# exercised, and `recovered` was unpacked three times and never checked, so any behaviour
+# here passed. That is the same vacuous-green shape the suite exists to prevent, sitting
+# in the newest and most defect-prone branch — the one steward proved near-unfireable
+# (msg 4465). A fixture that no assertion reads is documentation, not coverage.
+print("\nRECOVERED — a body that WAS wedged and has come back (the third state):")
+wedged, recovered, gaps = classify([STEWARD_RECOVERED], BODIES, NOW)
+check("steward-recovered is RECOVERED", [a for a, _, _, _, _ in recovered], ["steward"])
+check("steward-recovered is NOT a marker gap (the affirmative mis-description)", gaps, [])
+check("steward-recovered does not also alarm as wedged", wedged, [])
+check("its span is the RUN's span, ~32.0h, not time-since-last-step",
+      round(recovered[0][2], 1) if recovered else None, 32.0)
+
+# The discriminator, pinned by counterexample exactly as the anchor is. steps_after is >0
+# for BOTH recovered and gap, so a classifier that splits on it cannot tell a returning
+# outage from a working agent — and it fails toward "they were working," which is the
+# affirmative false statement rather than mere silence. Only steps INSIDE the run
+# separates them: 0.06/h against 21.6/h.
+print("\nDISCRIMINATOR — steps INSIDE the run, not after it:")
+check("a low in-run rate is a recovered outage",
+      [a for a, _, _, _, _ in classify([STEWARD_RECOVERED], BODIES, NOW)[1]], ["steward"])
+# steps_inside HIGH and steps_after LOW: the only shape that separates the two candidate
+# discriminators. With steps_after as the numerator this row flips to recovered, so this
+# assertion binds M3. (The first version used steps_after=40 and caught nothing — both
+# numerators read "working" and the row was a gap either way. Found by mutation-testing my
+# own assertions after steward's tell, msg 5798.)
+check("the SAME row at a working in-run rate is a gap, not an outage",
+      classify([dict(STEWARD_RECOVERED, steps_inside=600, steps_after=1)],
+               BODIES, NOW)[2], [("steward", 11)])
+# steps_inside=0 so the RATE gate cannot be what excludes it — only the span floor can.
+# (The first version inherited steps_inside=2 over a 2h span = exactly 1.0/h, excluded by
+# the rate test, so dropping the span condition entirely changed nothing and the mutant
+# survived. A fixture that is excluded by the wrong clause tests the wrong clause.)
+check("a short run does not become an outage on rate alone",
+      classify([dict(STEWARD_RECOVERED, steps_inside=0,
+                     newest=datetime(2026, 8, 12, 13, 0, tzinfo=UTC))], BODIES, NOW)[1], [])
 
 print("\nANCHOR — the wrong anchor must produce the false negative it is accused of:")
 wedged, _, _ = classify([dict(STEWARD_WEDGED, steps_after=2)], BODIES, NOW)
