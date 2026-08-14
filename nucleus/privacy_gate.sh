@@ -86,6 +86,20 @@ if [ -n "$val_files" ]; then
   fail=1
 fi
 
+# ---- (c2) ORPHANED NUCLEUS FILES: a new sibling left untracked by a gated commit ----
+# Third instance of the shape (goal-19 spine, test_spawn_drift.py, mutants_ear_survival.py):
+# a multi-file merge stages the MODIFIED files and leaves the NEW sibling behind, because
+# `git add <named files>` only takes what the author remembered. The loss is silent — the
+# tree works, gates pass, and the file vanishes on the next clean checkout or restore.
+# WARN, not fail: an untracked nucleus/*.py may be legitimate WIP mid-build; the warning
+# makes it a decision at push time instead of a discovery at restore time.
+orphans=$(git ls-files --others --exclude-standard nucleus/*.py 2>/dev/null || true)
+if [ -n "$orphans" ]; then
+  echo "WARN: untracked nucleus/*.py at push time — WIP or forgotten? A gated commit has"
+  echo "      dropped a new sibling three times (2026-08). Track it or name it WIP:"
+  echo "$orphans" | sed 's/^/  /'
+fi
+
 # ---- (d) NEVER-COMMIT FILE TYPES: data dumps + private keys, by extension -----
 # The org now emits full-PII BINARY artifacts (backups/*.dump = the WHOLE DB). (a)/(b)
 # only cover DECLARED surfaces (backups/ is covered, but a dump written+committed
