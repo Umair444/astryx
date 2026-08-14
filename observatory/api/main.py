@@ -1513,6 +1513,76 @@ async def memory_graph(fresh: int = 0):
     return g
 
 
+@app.get("/api/memory/ontology")
+async def memory_ontology():
+    """The ontology AS A GRAPH, in the same node/edge shape as /api/memory/graph.
+
+    The recall graph shows the org's FACTS; this shows the SCHEMA over them — which types
+    exist, which categories, and which pages belong to what. Same shape on purpose: one
+    renderer, three lenses, so the ontology inherits the layout, the hover isolation and
+    the blob hulls rather than growing a second visual language.
+
+    The lint's findings ride ON the nodes (a bucket type, a thin category, a page missing
+    a field its siblings carry) instead of living only in terminal output — a defect you
+    can see in the map is one you can act on; a defect in a log is one you have to go
+    looking for.
+    """
+    import math
+    sys.path.insert(0, str(REPO))
+    from nucleus import ontology as ont
+    pages = ont._pages()
+    if not pages:
+        return {"nodes": [], "edges": [], "regions": [], "stats": {},
+                "notes": ["memory/wiki absent"]}
+    findings = ont.findings(pages)
+    gaps = {f["page"]: f["detail"] for f in findings if f["kind"] == "incomplete-infobox"}
+    buckets = {f["type"] for f in findings if f["kind"] == "catch-all-type"}
+    thin = {f["category"] for f in findings if f["kind"] == "thin-category"}
+    uncat = {f["page"] for f in findings if f["kind"] == "uncategorised"}
+
+    types = sorted({p["type"] or "(untyped)" for p in pages})
+    cats = sorted({c for p in pages for c in p["categories"]})
+    nodes, edges = [], []
+
+    # Deterministic tripartite-radial layout: types anchor the ring, their pages orbit,
+    # categories sit on an inner ring. Same stability rule as the cortex — positions are a
+    # pure function of the set, so the map does not reshuffle between visits.
+    for i, t in enumerate(types):
+        th = 2 * math.pi * i / max(1, len(types))
+        nodes.append({"id": f"type:{t}", "kind": "type", "label": t, "layer": "system2",
+                      "region": "types", "degree": sum(1 for p in pages if (p["type"] or "(untyped)") == t),
+                      "x": round(560 * math.cos(th), 2), "y": round(560 * math.sin(th), 2),
+                      "bucket": t in buckets,
+                      "expects": sorted(ont.expected_fields(t, pages))})
+    for i, c in enumerate(cats):
+        th = 2 * math.pi * i / max(1, len(cats))
+        nodes.append({"id": f"cat:{c}", "kind": "category", "label": c, "layer": "system1",
+                      "region": "categories",
+                      "degree": sum(1 for p in pages if c in p["categories"]),
+                      "x": round(230 * math.cos(th), 2), "y": round(230 * math.sin(th), 2),
+                      "thin": c in thin})
+    for i, p in enumerate(sorted(pages, key=lambda x: x["slug"])):
+        th = 2 * math.pi * i / max(1, len(pages))
+        nodes.append({"id": f"page:{p['slug']}", "kind": "page", "label": p["slug"],
+                      "layer": "system2", "region": (p["categories"] or ["unassigned"])[0],
+                      "degree": len(p["rels"]),
+                      "x": round(880 * math.cos(th), 2), "y": round(880 * math.sin(th), 2),
+                      "gap": gaps.get(p["slug"]), "uncategorised": p["slug"] in uncat,
+                      "type": p["type"]})
+        edges.append({"src": f"page:{p['slug']}", "dst": f"type:{p['type'] or '(untyped)'}",
+                      "cls": "entity", "rel": "is-a"})
+        for c in p["categories"]:
+            edges.append({"src": f"page:{p['slug']}", "dst": f"cat:{c}",
+                          "cls": "semantic", "rel": "in"})
+    return {"nodes": nodes, "edges": edges,
+            "regions": ["types", "categories"] + cats,
+            "findings": findings,
+            "stats": {"nodes": len(nodes), "edges": len(edges),
+                      "types": len(types), "categories": len(cats), "pages": len(pages),
+                      "findings": len(findings)},
+            "notes": []}
+
+
 @app.get("/api/memory/page/{slug}")
 async def memory_page(slug: str):
     """One wiki page's markdown. Owner-only.

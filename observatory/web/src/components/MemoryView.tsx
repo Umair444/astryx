@@ -64,7 +64,8 @@ export default function MemoryView() {
   const [err, setErr] = useState<string>('')
   const [sel, setSel] = useState<Node | null>(null)
   const [page, setPage] = useState<{ slug: string; markdown: string } | null>(null)
-  const [lens, setLens] = useState<'cortex' | 'split'>('cortex')
+  const [lens, setLens] = useState<'cortex' | 'split' | 'ontology'>('cortex')
+  const [onto, setOnto] = useState<Graph | null>(null)
   const [classes, setClasses] = useState<Set<string>>(new Set(['semantic', 'entity', 'temporal', 'causal']))
   const [hover, setHover] = useState<string | null>(null)
   const [q, setQ] = useState('')
@@ -83,6 +84,13 @@ export default function MemoryView() {
       .catch((e) => setErr(String(e)))
   }, [])
 
+  /* The ontology is the SCHEMA over the facts, fetched as the same node/edge shape so it
+   * reuses this renderer entirely — one visual language, three lenses. */
+  useEffect(() => {
+    if (lens !== 'ontology' || onto) return
+    api<Graph>('/memory/ontology').then(setOnto).catch(() => {})
+  }, [lens, onto])
+
   useEffect(() => {
     if (!sel || (sel.kind !== 'page' && sel.kind !== 'brief')) { setPage(null); return }
     const slug = sel.id.split(':')[1]
@@ -90,7 +98,8 @@ export default function MemoryView() {
     api<{ slug: string; markdown: string }>(`/memory/page/${slug}`).then(setPage).catch(() => setPage(null))
   }, [sel])
 
-  const byId = useMemo(() => new Map((g?.nodes ?? []).map((n) => [n.id, n])), [g])
+  const view_g = lens === 'ontology' ? onto : g
+  const byId = useMemo(() => new Map((view_g?.nodes ?? []).map((n) => [n.id, n])), [view_g])
 
   /* Zoom must be SCOPED TO THIS CANVAS, which means preventDefault() on the wheel — and
    * React registers onWheel as PASSIVE, where preventDefault is a no-op (it warns and the
@@ -145,23 +154,23 @@ export default function MemoryView() {
    * its region colour and you can watch it belong to both pictures. */
   const pos = useMemo(() => {
     const m = new Map<string, { x: number; y: number }>()
-    for (const n of g?.nodes ?? []) {
+    for (const n of view_g?.nodes ?? []) {
       if (lens === 'split') {
         const dx = n.layer === 'system2' ? -520 : 520
         m.set(n.id, { x: n.x * 0.55 + dx, y: n.y * 0.92 })
       } else m.set(n.id, { x: n.x, y: n.y })
     }
     return m
-  }, [g, lens])
+  }, [view_g, lens])
 
   /* Region hulls as soft blurred blobs — the "parts of the brain". A blob is drawn from
    * its members' centroid and spread rather than a convex hull: with declared regions the
    * membership is stable, so a soft cloud reads as an organ where a polygon reads as a
    * chart. */
   const blobs = useMemo(() => {
-    if (!g) return []
+    if (!view_g) return []
     const acc = new Map<string, { xs: number[]; ys: number[] }>()
-    for (const n of g.nodes) {
+    for (const n of view_g.nodes) {
       const p = pos.get(n.id)!
       const a = acc.get(n.region) ?? { xs: [], ys: [] }
       a.xs.push(p.x); a.ys.push(p.y); acc.set(n.region, a)
@@ -172,11 +181,11 @@ export default function MemoryView() {
       const r = Math.max(70, Math.sqrt(a.xs.reduce((s, v, i) => s + (v - cx) ** 2 + (a.ys[i] - cy) ** 2, 0) / a.xs.length) * 1.9)
       return { region, cx, cy, r, n: a.xs.length }
     })
-  }, [g, pos])
+  }, [view_g, pos])
 
   const shownEdges = useMemo(
-    () => (g?.edges ?? []).filter((e) => classes.has(e.cls)),
-    [g, classes],
+    () => (view_g?.edges ?? []).filter((e) => classes.has(e.cls)),
+    [view_g, classes],
   )
 
   const neighbours = useMemo(() => {
@@ -192,6 +201,8 @@ export default function MemoryView() {
 
   if (err) return <div className="p-6 text-sm text-ink-dim">memory graph unavailable — {err}</div>
   if (!g) return <div className="h-full grid place-items-center"><Loader color="cyan" /></div>
+  if (lens === 'ontology' && !onto)
+    return <div className="h-full grid place-items-center"><Loader color="cyan" /></div>
 
   if (!g.nodes.length) {
     return (
@@ -233,7 +244,8 @@ export default function MemoryView() {
     <div className="h-full flex flex-col">
       <div className="px-3 pt-2 pb-1 flex items-center gap-3 flex-wrap">
         <SegmentedControl size="xs" value={lens} onChange={(v) => setLens(v as 'cortex' | 'split')}
-          data={[{ label: 'Cortex', value: 'cortex' }, { label: 'System 1 ↔ 2', value: 'split' }]} />
+          data={[{ label: 'Cortex', value: 'cortex' }, { label: 'System 1 ↔ 2', value: 'split' },
+                 { label: 'Ontology', value: 'ontology' }]} />
         <div className="flex gap-1">
           {(Object.keys(CLASS_STYLE) as Edge['cls'][]).map((c) => {
             const on = classes.has(c)
@@ -327,7 +339,7 @@ export default function MemoryView() {
 
             {/* nodes */}
             <g>
-              {g.nodes.map((n) => {
+              {view_g!.nodes.map((n) => {
                 const p = pos.get(n.id)!
                 const lit = !neighbours || neighbours.has(n.id)
                 const base = (KIND_R[n.kind] ?? 3) + Math.min(5, n.degree * 0.16)
@@ -344,8 +356,11 @@ export default function MemoryView() {
                 return (
                   <circle key={n.id} cx={p.x} cy={p.y} r={r}
                     fill={`hsl(${hue(n.region)} ${n.layer === 'system2' ? 78 : 45}% ${n.layer === 'system2' ? 66 : 52}%)`}
-                    stroke={isSel ? '#fff' : hot && h === 0 ? '#fff' : 'none'}
-                    strokeWidth={hot && h === 0 ? 1.1 : 1.4}
+                    stroke={
+                      (n as any).bucket || (n as any).thin || (n as any).gap || (n as any).uncategorised
+                        ? '#ff5c7a'
+                        : isSel ? '#fff' : hot && h === 0 ? '#fff' : 'none'}
+                    strokeWidth={(n as any).bucket || (n as any).thin || (n as any).gap || (n as any).uncategorised ? 1.6 : hot && h === 0 ? 1.1 : 1.4}
                     opacity={op}
                     filter={n.degree > 12 || isSel || (hot && h === 0) ? 'url(#glow)' : undefined}
                     style={{ cursor: 'pointer', transition: 'opacity .45s ease-out, r .45s ease-out' }}
@@ -359,7 +374,7 @@ export default function MemoryView() {
 
             {/* labels: only what can be read — hubs, and whatever is focused */}
             <g pointerEvents="none">
-              {g.nodes.filter((n) => n.degree > 9 || n.id === hover || n.id === sel?.id).map((n) => {
+              {view_g!.nodes.filter((n) => n.degree > 9 || n.id === hover || n.id === sel?.id || n.kind === 'type' || n.kind === 'category').map((n) => {
                 const p = pos.get(n.id)!
                 return (
                   <text key={n.id} x={p.x} y={p.y - 12} textAnchor="middle" fontSize="12"
