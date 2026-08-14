@@ -1691,6 +1691,55 @@ async def memory_propose(p: MemoryProposal, request: Request):
     return {"ok": True}
 
 
+# ---------------------------------------------------------------- HIL: what waits on him
+# The org has three HUMAN GATES and had no surface for any of them, which is exactly how
+# three decisions sat 20, 14 and 8 days without ever being asked: `.github/`'s workflow
+# grant, goal-15's spend signature, and forge's OSS pick. Each was ready, each was blocked
+# on one answer, and each was invisible — agents believed "it's in the owner queue" while
+# the queue was a belief rather than a place.
+#
+# DELIBERATELY NOT CLASSIFYING ask-vs-report. Deciding which messages "really" need an
+# answer is a guess, and a guess here drops the one that mattered. Everything addressed to
+# him without a reply is shown, ranked by age, with its intent — unknown falls through to
+# VISIBLE. He triages; the surface does not pre-empt him.
+@app.get("/api/hil")
+async def hil():
+    """Everything waiting on a human, oldest first."""
+    async with pool.acquire() as c:
+        # 1. permission-relay polls with no vote — the unambiguous gates
+        polls = await c.fetch(
+            "SELECT question, agent, options, votes, created_at, chat FROM polls "
+            "WHERE votes IS NULL OR votes = '{}'::jsonb OR jsonb_typeof(votes)='null' "
+            "ORDER BY created_at")
+        # 2. asks to the owner with no message FROM him afterwards in the same thread.
+        #    An un-threaded ask counts as unanswered until any owner message postdates it.
+        asks = await c.fetch(
+            """SELECT m.id, m.from_agent, m.intent, m.thread, m.status, m.ts,
+                      left(m.body, 400) AS body
+               FROM messages m
+               WHERE m.to_agent = 'owner' AND m.ts > now() - interval '60 days'
+                 AND NOT EXISTS (
+                   SELECT 1 FROM messages r WHERE r.from_agent = 'owner' AND r.ts > m.ts
+                     AND (r.thread IS NOT DISTINCT FROM m.thread OR m.thread IS NULL))
+               ORDER BY m.ts""")
+        # 3. goals not yet terminal — the metabolism's own view of what is unfinished
+        goals = await c.fetch(
+            "SELECT id, title, state, owner, last_progress FROM goals "
+            f"WHERE state <> ALL($1) ORDER BY last_progress NULLS FIRST", list(GOAL_TERMINAL))
+    now = datetime.now(timezone.utc)
+    age = lambda t: int((now - t).total_seconds()) if t else None
+    return {
+        "polls": [{"question": p["question"], "agent": p["agent"],
+                   "options": p["options"], "chat": p["chat"],
+                   "age_s": age(p["created_at"])} for p in polls],
+        "asks": [{"id": a["id"], "from": a["from_agent"], "intent": a["intent"],
+                  "thread": a["thread"], "status": a["status"], "body": a["body"],
+                  "age_s": age(a["ts"])} for a in asks],
+        "goals": [{"id": g["id"], "title": g["title"], "state": g["state"],
+                   "owner": g["owner"], "age_s": age(g["last_progress"])} for g in goals],
+    }
+
+
 @app.get("/api/events")
 async def events(request: Request):
     # EventSource cannot send headers, so owner mode rides ?key=. Anonymous

@@ -12,6 +12,7 @@ import ToolsView from './components/ToolsView'
 import SystemView from './components/SystemView'
 import TheatreView from './components/TheatreView'
 import MemoryView from './components/MemoryView'
+import HilView from './components/HilView'
 import AgentDrawer from './components/AgentDrawer'
 import VegaChat from './components/VegaChat'
 
@@ -24,6 +25,7 @@ export type Route =
   | { tab: 'monitor' }
   | { tab: 'theatre' }
   | { tab: 'memory' }
+  | { tab: 'hil' }
 
 function parseHash(): Route {
   const h = location.hash.replace(/^#\/?/, '')
@@ -35,6 +37,7 @@ function parseHash(): Route {
   if (tab === 'monitor') return { tab: 'monitor' }
   if (tab === 'theatre') return { tab: 'theatre' }
   if (tab === 'memory') return { tab: 'memory' }
+  if (tab === 'hil') return { tab: 'hil' }
   return { tab: 'network' }
 }
 
@@ -46,6 +49,7 @@ export function nav(r: Route) {
 
 const TABS: { key: Route['tab']; label: string; icon: string }[] = [
   { key: 'network', label: 'Network', icon: '☉' },
+  { key: 'hil', label: 'You', icon: '◈' },
   { key: 'wire', label: 'Wire', icon: '✦' },
   { key: 'goals', label: 'Goals', icon: '◎' },
   { key: 'economy', label: 'Economy', icon: '⬡' },
@@ -247,6 +251,7 @@ function Shell() {
               {route.tab === 'monitor' && <SystemView />}
               {route.tab === 'theatre' && <TheatreView />}
               {route.tab === 'memory' && <MemoryView />}
+              {route.tab === 'hil' && <HilView />}
             </>
           )}
         </div>
