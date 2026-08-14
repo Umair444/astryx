@@ -21,7 +21,7 @@ import sys
 import tempfile
 import time
 from contextlib import asynccontextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
@@ -1461,13 +1461,35 @@ async def wire_contacts(q: str, channel: str = ""):
 #  - nucleus/tier.py keys AGENT content and does not reach the wiki at all. A page body is
 #    memory's compiled content, and goal TITLES (goal-16 is "low-latency recruiter-reply
 #    signal") are owner-career-adjacent. No wiki body or goal title is public at any tier.
-MEMGRAPH_JSON = REPO / "memory" / ".graph" / "current.json"
 MEMORY_WIKI = REPO / "memory" / "wiki"
 
 
 def _memgraph_read() -> dict | None:
+    """The stored graph, from kg.* — three tables written whole in one transaction.
+
+    It used to be a JSON file read off disk. The move is the owner's call and the reason
+    is scale: this graph exists to carry an ontology over products, tables and rules, and
+    at 10^4+ nodes a blob means full load per process and full scan per query. Because the
+    graph is DERIVED, the move cost no migration — only the compiler's sink changed.
+    """
     try:
-        return json.loads(MEMGRAPH_JSON.read_text())
+        sys.path.insert(0, str(REPO))
+        from nucleus import memgraph
+        g = memgraph.read_pg()
+        return g if g.get("nodes") or g.get("notes") else None
+    except Exception:
+        return None
+
+
+def _graph_age(g: dict) -> int | None:
+    """Seconds since the graph was built, from kg.node.built_at — every row of a build
+    shares one transaction timestamp, so max(built_at) IS the build time."""
+    b = g.get("built_at")
+    if not b:
+        return None
+    try:
+        return int((datetime.now(timezone.utc)
+                    - datetime.fromisoformat(b)).total_seconds())
     except Exception:
         return None
 
@@ -1487,10 +1509,7 @@ async def memory_graph(fresh: int = 0):
     if g is None:
         return {"nodes": [], "edges": [], "regions": [], "stats": {},
                 "notes": ["no compiled graph yet — run: venv/bin/python nucleus/memgraph.py build"]}
-    try:
-        g["age_s"] = int(time.time() - MEMGRAPH_JSON.stat().st_mtime)
-    except Exception:
-        g["age_s"] = None
+    g["age_s"] = _graph_age(g)
     return g
 
 
@@ -1528,11 +1547,7 @@ async def memory_build():
     g = _memgraph_read()
     if g is None:
         return {"built": False, "age_s": None, "stats": {}, "notes": []}
-    try:
-        age = int(time.time() - MEMGRAPH_JSON.stat().st_mtime)
-    except Exception:
-        age = None
-    return {"built": True, "age_s": age, "digest": g.get("digest"),
+    return {"built": True, "age_s": _graph_age(g), "digest": g.get("digest"),
             "stats": g.get("stats", {}), "regions": g.get("regions", []),
             "notes": g.get("notes", [])}
 

@@ -304,6 +304,75 @@ def test_log_chain_sorts_by_date_not_file_order():
             f"compile chain runs backwards: {e['src']} -> {e['dst']}"
 
 
+# ── the postgres sink ─────────────────────────────────────────────────────────────────
+def test_round_trip_through_postgres_is_lossless():
+    """compile -> write_pg -> read_pg must reproduce the graph EXACTLY. Anything the store
+    silently normalises is a second writer of that field: `visibility` defaulted in the
+    COLUMN while the compiler left it None (286 nodes), and `n_claims` was a count derived
+    in two places. Both were found by this assertion and fixed at the single writer —
+    visibility now defaults in the compiler, n_claims was deleted as redundant with
+    len(claims). SKIPS without a DB rather than passing."""
+    if not mg._dsn():
+        print("SKIP: no ASTRYX_DSN — the postgres sink was NOT verified this run")
+        globals()["_UNVERIFIED"] = True
+        return
+    g = mg.compile_graph()
+    mg.write_pg(g)
+    b = mg.read_pg()
+    a_nodes = {n["id"]: n for n in g["nodes"]}
+    b_nodes = {n["id"]: n for n in b["nodes"]}
+    assert set(a_nodes) == set(b_nodes), "node id sets differ"
+    for k in a_nodes:
+        A = {x: y for x, y in a_nodes[k].items() if x != "claims"}
+        B = {x: y for x, y in b_nodes[k].items() if x != "claims"}
+        # compare KEY PRESENCE too, not just values — `differs: []` was this assertion
+        # failing while naming nothing, because a key present-with-None reads equal under
+        # .get() on both sides. A diff message that can print an empty list is a diff
+        # message that can hide the defect it exists to show.
+        assert A == B, (f"{k} differs: values="
+                        f"{[f for f in set(A) & set(B) if A[f] != B[f]]} "
+                        f"only-compiled={sorted(set(A) - set(B))} "
+                        f"only-stored={sorted(set(B) - set(A))}")
+    assert (sorted((e["src"], e["dst"], e["cls"], e["rel"]) for e in g["edges"])
+            == sorted((e["src"], e["dst"], e["cls"], e["rel"]) for e in b["edges"]))
+    assert g["stats"] == b["stats"], "stats differ"
+    assert g["regions"] == b["regions"], "region order differs"
+
+
+def test_a_rebuild_replaces_rather_than_accumulates():
+    """DELETE-then-INSERT, not upsert. A node that vanishes upstream must vanish here —
+    an upsert would silently accumulate everything the graph ever contained, which is the
+    drift a derived store exists to prevent."""
+    if not mg._dsn():
+        globals()["_UNVERIFIED"] = True
+        return
+    g = mg.compile_graph()
+    mg.write_pg(g)
+    full = len(mg.read_pg()["nodes"])
+    trimmed = dict(g, nodes=g["nodes"][:10],
+                   edges=[e for e in g["edges"]
+                          if e["src"] in {n["id"] for n in g["nodes"][:10]}
+                          and e["dst"] in {n["id"] for n in g["nodes"][:10]}])
+    mg.write_pg(trimmed)
+    assert len(mg.read_pg()["nodes"]) == 10, "a shrunken graph did not shrink the store"
+    mg.write_pg(g)                                   # restore
+    assert len(mg.read_pg()["nodes"]) == full
+
+
+def test_one_build_shares_one_timestamp():
+    """built_at is the freshness signal the file sink got free from its mtime. now() is
+    transaction-start, so a whole build carries ONE value — if a build ever spanned two,
+    the store was not written atomically."""
+    if not mg._dsn():
+        globals()["_UNVERIFIED"] = True
+        return
+    import psycopg
+    mg.write_pg(mg.compile_graph())
+    with psycopg.connect(mg._dsn()) as c:
+        n = c.execute("SELECT count(DISTINCT built_at) FROM kg.node").fetchone()[0]
+    assert n == 1, f"{n} distinct built_at values in one build — not atomic"
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

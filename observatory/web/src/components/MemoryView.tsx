@@ -18,7 +18,7 @@ type Node = {
   id: string; kind: string; label: string; layer: 'system1' | 'system2'
   region: string; region_i?: number; x: number; y: number; degree: number
   type?: string; title?: string; state?: string; dialect?: string
-  n_claims?: number; compiled?: string; size?: number; date?: string
+  compiled?: string; size?: number; date?: string
   claims?: Claim[]
 }
 type Claim = { entity: string; rel: string; value: string; evidence: string; confidence: string; contra: boolean }
