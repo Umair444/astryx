@@ -141,6 +141,12 @@ run "outbound-stuck classifier"       "$PY" nucleus/test_outbound_stuck.py
 # Pure stdlib (processes and files are injected; a tmpdir stands in for the repo), but the
 # trigger BODY is gitignored, so it SKIPS loudly on a fresh clone rather than passing.
 run "spawn-pinned deployment drift"   "$PY" nucleus/test_spawn_drift.py
+# Narrow by design: asserts only that this guard's state distinguishes "observed, all clear"
+# from "could not observe" — the property its 08-14 edit exists for. SKIPS on a bare clone.
+run "card-address guard observability" "$PY" nucleus/test_card_address_obs.py
+# The CLASS gate for scout's guards: an infra failure must propagate (the pulse records an
+# evaluator error) rather than returning a silent all-clear. SKIPS where the bodies are absent.
+run "guard infra-failure loudness"     "$PY" nucleus/test_guard_infra_loudness.py
 # Door (orgname) is pure stdlib; the peers-derivation check needs the DB and skips loudly.
 run "org identity / peer name policy" "$PY" nucleus/test_org_identity.py
 # Needs psycopg + a live org DB + the (gitignored) trigger bodies; it SKIPS loudly rather
