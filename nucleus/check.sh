@@ -134,6 +134,10 @@ run "A2A card canonicalisation (JCS)" "$PY" nucleus/test_card_canon.py
 # transaction (messages_notify is a pure pg_notify, so a rollback wakes nobody).
 run "wake-audit classifier"           "$PY" nucleus/test_wake_audit.py
 run "wedge-watch discriminator"       "$PY" nucleus/test_wedge_watch.py
+# Pure stdlib (rows are injected), but the trigger BODY is gitignored, so it SKIPS loudly
+# on a fresh clone. Carries a counterexample arm: the allowlist polarity is proven to be
+# load-bearing by showing the blocklist version go silent on the same fixture.
+run "outbound-stuck classifier"       "$PY" nucleus/test_outbound_stuck.py
 # Pure stdlib (processes and files are injected; a tmpdir stands in for the repo), but the
 # trigger BODY is gitignored, so it SKIPS loudly on a fresh clone rather than passing.
 run "spawn-pinned deployment drift"   "$PY" nucleus/test_spawn_drift.py

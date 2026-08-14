@@ -21,6 +21,7 @@ Run: venv/bin/python nucleus/test_outbound_stuck.py
 """
 import sys
 from datetime import datetime, timedelta, timezone
+import runpy
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -34,7 +35,14 @@ if not (REPO / "triggers" / "steward" / "outbound_stuck.py").exists():
           "the outbound-stuck classifier was NOT verified this run")
     sys.exit(77)
 
-from triggers.steward.outbound_stuck import classify, SETTLED, BANDS  # noqa: E402
+# Import by PATH, not as a package. `from triggers...` made `triggers` read as an
+# UNDECLARED THIRD-PARTY import on a clean checkout — deps.py derives first-party roots
+# from what exists on disk, and triggers/ is gitignored, so the dep-coverage gate went red
+# on a clone while passing locally. runpy is the precedent already set by
+# test_plan_lifecycle.py and test_ear_dark.py for exactly this: a body that may be absent
+# is addressed as a file, never as a module.
+_MOD = runpy.run_path(str(REPO / "triggers" / "steward" / "outbound_stuck.py"))  # noqa: E402
+classify, SETTLED, BANDS = _MOD["classify"], _MOD["SETTLED"], _MOD["BANDS"]
 
 NOW = datetime(2026, 8, 14, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -117,8 +125,16 @@ def test_late_joiner_fires_despite_an_older_throttle():
 
 
 def test_settled_row_heals_and_regains_the_full_ladder():
+    # The band is asserted as a LITERAL, independently derived from BANDS rather than
+    # recomputed by calling classify() again. The first version of this line read
+    #   assert state == {"1": classify([row(1, "pending", 200)], NOW, {})[1]["1"]}
+    # which calls the function under test on both sides of ==. That is a TAUTOLOGY: it
+    # passes for any implementation, correct or garbage, and was proven to pass against a
+    # classify() stubbed to return band 99999. Conformance-to-self, in the oracle, written
+    # by the agent who filed the law against it two hours earlier.
+    # 200h with BANDS=(1,6,24,72,168): past the last rung, so 4 + floor(log2(200/168)) = 4.
     fire, state = classify([row(1, "pending", 200)], NOW, {})
-    assert state == {"1": classify([row(1, "pending", 200)], NOW, {})[1]["1"]}
+    assert state == {"1": 4}, state
     fire, state = classify([], NOW, state)          # it settled: gone from the query
     assert state == {}, "a settled row must drop out of state entirely"
     fire, _ = classify([row(1, "pending", 2)], NOW, state)
