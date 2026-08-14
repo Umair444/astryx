@@ -16,11 +16,29 @@ therefore assumed to need wiring — forgetting fails RED. There is deliberately
 exemption allowlist; an oracle that genuinely should not run in the suite is a
 decision someone should have to argue for, not a default.
 
+TWO INSTRUMENTS, because one was not enough (2026-08-14). `invoked_oracles` reads the
+SYNTAX of check.sh; `executed_oracles` runs it with $PY shimmed and reads which oracles
+bash ACTUALLY REACHES. They fail differently — delete a `run` line and only the parser
+notices; disable the block around it and only the runtime does — and a third assertion
+requires them to AGREE on the live file, because a disagreement means one of them has gone
+wrong about check.sh rather than about a mutant.
+
+WHY THE SECOND ONE EXISTS, and it is not a hypothetical: `nucleus/mutation_probe.py`
+(abstractor-4) with the authored mutants in `nucleus/mutants_check_coverage.py`. Mutant M4
+wrapped a live `run` line in `if false; then ... fi` — still a line, never a gate — and
+EVERY assertion in this file passed. The gate certified an oracle that could not execute,
+which is lens 8 (a proxy reported as the terminal observable) inside the tool built to
+enforce coverage. My first instinct was to write it up as a declared limit; the org's own
+law forbids that, because a declared residual is the one everybody stops reading and it
+functions as an alibi. M4 is now caught. Parsing bash control flow would have been the
+cleverer-regex trap warned about below; observing the runtime is the honest answer.
+
 GRADED HONESTLY, two limits:
 
-1. This proves each oracle is WIRED AS AN INVOCATION LINE, not that it EXECUTED and
-   passed. That is one notch below the terminal observable (which would mean running
-   the suite and watching each oracle report), and it is the notch this file claims.
+1. This proves each oracle is REACHED when check.sh runs — not that it PASSED. A gate
+   that executes and reports a wrong verdict is `test_check_verdict.py`'s question, not
+   this file's. (Before 08-14 this limit was larger and read "wired as an invocation
+   line, not that it executed"; M4 is what closed the gap between those two claims.)
 
 2. Its authority is a NAMING CONVENTION — `nucleus/test_*.py` — which is itself
    hand-kept, one level up from the hand-kept list this file replaced. A check named
@@ -36,12 +54,18 @@ GRADED HONESTLY, two limits:
 
 Run: venv/bin/python nucleus/test_check_coverage.py   (also wired into nucleus/check.sh)
 """
+import os
 import re
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-CHECK_SH = REPO / "nucleus" / "check.sh"
+# Env-overridable so nucleus/mutation_probe.py can run this oracle against a deliberately
+# WRONG check.sh and record which assertion notices. Defaults to the real file, so nothing
+# changes for check.sh or a human run. (Opted in 2026-08-14; see nucleus/mutants_check_coverage.py.)
+CHECK_SH = Path(os.environ.get("CHECK_SH_SRC", REPO / "nucleus" / "check.sh"))
 
 # A shell line only counts if it is a live `run` invocation. Comments are stripped
 # first: commenting a test out is the realistic drift (someone silences a red test
@@ -75,6 +99,42 @@ def invoked_oracles(text):
 def oracles_on_disk():
     """THE authority. One derivation, from the place oracles really live."""
     return {p.name for p in (REPO / "nucleus").glob("test_*.py")}
+
+
+def executed_oracles(check_sh):
+    """Which oracles does check.sh ACTUALLY REACH when it runs? The second instrument.
+
+    The parser above reads SYNTAX; this reads EXECUTION. It runs check.sh with $PY replaced
+    by a recording shim, so every gate becomes a no-op that logs the arguments it was handed
+    — nothing real executes, and bash's own control flow decides what gets recorded. A `run`
+    line inside `if false`, in a function nobody calls, or after an early exit is invisible
+    here exactly as it is to bash.
+
+    Added 2026-08-14 because mutation-probe M4 proved the syntactic reading insufficient:
+    wrapping a live `run` line in `if false; then ... fi` left every assertion in this file
+    passing, so the gate certified an oracle that could never execute. That is lens 8 — a
+    proxy reported as the terminal observable — inside the tool built to enforce coverage.
+    Parsing bash control flow instead would be the cleverer-regex trap this file's own limits
+    section warns about; observing the runtime is the honest answer.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        log, shim = Path(d) / "rec.log", Path(d) / "pyshim"
+        shim.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$@" >> "$REC"\nexit 0\n')
+        shim.chmod(0o755)
+        # CHECK_ALLOW_SKIP so a shimmed run never exits nonzero on skip accounting; we read
+        # the log, never the verdict. cwd lands wherever check.sh's own `cd` puts it, which
+        # is harmless: run() passes its arguments through literally and nothing real runs.
+        subprocess.run(["bash", str(check_sh)],
+                       env=dict(os.environ, PY=str(shim), REC=str(log), CHECK_ALLOW_SKIP="1"),
+                       capture_output=True, timeout=180)
+        if not log.exists():
+            return set()
+        found = set()
+        for line in log.read_text().splitlines():
+            m = re.search(r"(?:^|/)(test_[A-Za-z0-9_]+\.py)$", line.strip())
+            if m:
+                found.add(m.group(1))
+        return found
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +178,41 @@ def test_every_invoked_oracle_exists_on_disk():
     instead of leaving a bare python 'No such file' in the log."""
     stale = sorted(invoked_oracles(CHECK_SH.read_text()) - oracles_on_disk())
     assert not stale, f"check.sh invokes oracle(s) that no longer exist: {stale}"
+
+
+def test_every_oracle_is_actually_REACHED_when_check_sh_runs():
+    """THE terminal observable, and the second instrument on the same question.
+
+    The syntactic assert above proves a `run` line is PRESENT; this proves the line is
+    REACHED. Both are needed and they fail differently: delete a line and the parser
+    notices, disable the block around it and only this does. Two instruments on one
+    question, where the disagreement is the finding.
+    """
+    executed = executed_oracles(CHECK_SH)
+    # Anti-vacuity, same discipline as the parser's: if the shim recorded nothing at all,
+    # the comparison below would pass by having nothing to compare.
+    assert executed, (
+        f"runtime probe recorded no invocations from {CHECK_SH} — the shim never ran, so "
+        f"this assertion verified nothing rather than finding nothing")
+    unreached = sorted(oracles_on_disk() - executed)
+    assert not unreached, (
+        "committed oracle(s) present in check.sh but NEVER REACHED when it runs: "
+        + ", ".join(unreached)
+        + " — a `run` line inside a disabled block, an uncalled function, or after an "
+          "early exit is a line, not a gate.")
+
+
+def test_the_two_instruments_agree_on_the_real_check_sh():
+    """Where syntax and execution disagree, one of them is wrong about the live file — so
+    say so here rather than letting each assertion pass on its own reading. Parsed-but-never-
+    reached is the M4 shape; reached-but-never-parsed means the parser has gone blind to a
+    form check.sh actually uses."""
+    parsed, executed = invoked_oracles(CHECK_SH.read_text()), executed_oracles(CHECK_SH)
+    assert parsed and executed, "anti-vacuity: both instruments must have read something"
+    ghost = sorted(parsed - executed)
+    unseen = sorted(executed - parsed)
+    assert not ghost, f"parsed as invoked but never reached at runtime: {ghost}"
+    assert not unseen, f"reached at runtime but the parser cannot see them: {unseen}"
 
 
 def test_a_commented_out_invocation_does_not_count():

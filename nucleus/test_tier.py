@@ -268,6 +268,47 @@ def test_no_public_path_reads_an_owner_tier_source():
         "public route over it cannot be walked back. Gate the path, or serve a meta-shape.")
 
 
+def test_internal_traffic_is_not_anonymously_visible():
+    """PINS THE PREDICATE A STANDING RULING DEPENDS ON — `local` ↔ `local` must be False.
+
+    Added 2026-08-15. I declined to add `dc:`/`tg:` surface-address patterns to pii_sweep on
+    REACH rather than count: those ids live in internal agent traffic, and internal traffic is
+    not anonymously visible, so 45 true-but-routine flags a month would buy nothing. gemini
+    then tested the load-bearing half rather than accepting it — I had measured reach at
+    `/api/messages`, which is ONE of two anonymous message-bearing paths, and `/api/events`
+    had drifted from this very predicate once before.
+
+    It holds, and for a better reason than checking twice: both paths now call one authority,
+    so the question is a property of a single function rather than a per-endpoint survey.
+    gemini's improvement to the trip condition follows from that — **if this predicate ever
+    returns True for local↔local, every anonymous path changes at once and the pii_sweep
+    ruling flips on its own terms.**
+
+    Which is exactly why it needs an ASSERT rather than a note: a trip condition nobody
+    evaluates is a discipline someone must remember. The sibling test below pins the personal
+    CHANNEL orgs; nothing pinned internal traffic, so the ruling rested on an unguarded fact.
+    Asserted under BOTH an empty and a populated peer set, because federation visibility is
+    peer-dependent and internal visibility must not be."""
+    sys.path.insert(0, str(MAIN_PY.parent.parent.parent))
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_obs_main_internal", MAIN_PY)
+    try:
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    except BaseException:
+        print("SKIP: observatory main.py not importable here (no .env) — internal-visibility "
+              "predicate was NOT verified this run")
+        sys.exit(77)
+    for peers in (frozenset(), frozenset({"partnerorg"})):
+        assert mod.anonymous_can_see("local", "local", peers) is False, (
+            "INTERNAL AGENT TRAFFIC IS ANONYMOUSLY VISIBLE. Every dc:/tg: channel id, every "
+            "thread reference and every internal deliberation is now public. This also FLIPS "
+            "a standing ruling: pii_sweep declined surface-address patterns because these ids "
+            "had no anonymous reach — that premise is gone, so add them.")
+        # federation stays visible; the two must not be collapsed into one rule
+        assert mod.anonymous_can_see("local", "partnerorg", frozenset({"partnerorg"})) is True
+
+
 def test_authority_denies_the_personal_channel_orgs():
     """The rule itself: personal channels are never anonymous-visible, whatever the
     peer set says. Guards the inversion (a denylist that forgets a channel) AND the
