@@ -1702,6 +1702,16 @@ async def memory_propose(p: MemoryProposal, request: Request):
 # answer is a guess, and a guess here drops the one that mattered. Everything addressed to
 # him without a reply is shown, ranked by age, with its intent — unknown falls through to
 # VISIBLE. He triages; the surface does not pre-empt him.
+def _jsonb(v):
+    """jsonb -> python. asyncpg returns it as text unless a codec is set."""
+    if isinstance(v, str):
+        try:
+            return json.loads(v)
+        except Exception:
+            return None
+    return v
+
+
 @app.get("/api/hil")
 async def hil():
     """Everything waiting on a human, oldest first."""
@@ -1729,8 +1739,13 @@ async def hil():
     now = datetime.now(timezone.utc)
     age = lambda t: int((now - t).total_seconds()) if t else None
     return {
+        # asyncpg hands back jsonb as a STRING unless a codec is registered, so
+        # `options` arrived as '["a","b"]' — truthy, with a .length, and no .join. The tab
+        # rendered blank because the whole component threw. Decoded HERE so the API has one
+        # shape rather than every consumer guessing; a client-side parse would have been a
+        # second reader of the same ambiguity.
         "polls": [{"question": p["question"], "agent": p["agent"],
-                   "options": p["options"], "chat": p["chat"],
+                   "options": _jsonb(p["options"]), "chat": p["chat"],
                    "age_s": age(p["created_at"])} for p in polls],
         "asks": [{"id": a["id"], "from": a["from_agent"], "intent": a["intent"],
                   "thread": a["thread"], "status": a["status"], "body": a["body"],
