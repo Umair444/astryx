@@ -133,6 +133,11 @@ run "OKF frontmatter additivity"      "$PY" nucleus/test_okf.py
 # the same files disagree with nothing to arbitrate. Pure stdlib; the estate arms skip
 # loudly on a clean checkout, and the wire layer is never touched here.
 run "recall-graph compiler"           "$PY" nucleus/test_memgraph.py
+# The typed layer's lint. Every finding must be FALSIFIABLE and every expected field set
+# DERIVED from the corpus — a hand-kept list would be the drift class this org has hit
+# five ways. Named for the false positive it prevents: the lint's first version condemned
+# `goal`, a type with a real shared core AND a long narrative tail, as a bucket.
+run "ontology lint invariants"        "$PY" nucleus/test_ontology.py
 # Every name a trigger file references must resolve. Earned when three agents edited one
 # trigger file in two hours and a dropped helper left another author's function throwing
 # on every tick — a defect no per-proposal oracle can see, because each tests its own
