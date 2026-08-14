@@ -47,7 +47,20 @@ fi
 # SURFACES + the (d) never-commit-type assert), so this adds NO new push surface.
 state="${out%.dump}.state.tgz"
 state_dirs=""
-for d in triggers memory; do
+# agents/ ADDED 2026-08-14, and its absence was the same defect this artifact exists to fix,
+# one directory over. The .state.tgz was created because the pg_dump captures the triggers
+# TABLE while its rows point at FILES in no repo. Charters are worse off than that: they are
+# in no repo WITH A REMOTE (agents/ has zero remotes), in no database (there is no charters
+# table), and were in no backup. So every agent's identity — and every reflection each agent
+# has written into itself via the scribe, 128 signed commits — existed on exactly one disk.
+# 2.5M including .git, which carries the signed authorship history that makes a charter
+# attributable at all. Found when offdisk_exposure named the missing remote and I checked
+# whether the LOCAL artifact covered it either; it did not.
+# NOT an offsite copy: that stays the owner's call, because the working tree holds .env, the
+# personal tier and wacli's keys, so exporting it is a credential-and-tier export. This is the
+# same local artifact that already holds triggers/ and memory/, at the same tier, gitignored
+# and in privacy_gate's SURFACES.
+for d in triggers memory agents; do
   if [ -d "$d" ]; then state_dirs="$state_dirs $d"; fi
 done
 if [ -n "$state_dirs" ]; then
