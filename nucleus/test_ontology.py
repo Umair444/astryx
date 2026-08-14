@@ -116,12 +116,61 @@ def test_indexed_relations_are_recognised_as_one_relation():
     assert f and f[0]["stem"] == "verdict", f
 
 
+def test_subject_pages_do_not_count_toward_the_tail():
+    """memory's ruling made mechanical: a subject page's properties are one-use BY
+    CONSTRUCTION (an org has one founded date), so they must not read as vocabulary
+    drift. A corpus that is ALL unique-subject facts plus a healthy shared core must be
+    silent — under the old metric it fired at 100% tail."""
+    pages = [_page(f"g{i}", "goal", {"state", "title"}) for i in (1, 2, 3)]
+    pages.append(_page("org", "subject", {"founded", "treasury", "charter-count",
+                                          "first-peer", "pulse-cadence"}))
+    f = [x for x in ont.findings(pages) if x["kind"] == "vocabulary-tail"]
+    assert f == [], f"one-use-by-construction properties counted as drift: {f}"
+
+
 def test_a_healthy_vocabulary_raises_no_tail_finding():
     """The tail check fires on a TREND, not on any single word — so a corpus where
     relations recur must be silent."""
     pages = [_page(f"p{i}", "goal", {"state", "title", "owner"}) for i in range(5)]
     f = [x for x in ont.findings(pages) if x["kind"] == "vocabulary-tail"]
     assert f == [], f
+
+
+def test_declared_facets_are_PARSED_not_silently_dropped():
+    """memory's finding (2026-08-15, msg 8335): the trigger instructed 'declare facet axes
+    under ## facets' while load() had no branch for that section — a declaration that
+    reads as accepted and is discarded looks deployed and is not. This asserts the
+    instruction and the implementation agree, including the regex-with-separator case:
+    a facet VALUE is a regex and may contain the notation separator, so it must not be
+    truncated at the second slot."""
+    import tempfile, os
+    body = """---
+type: schema
+---
+# vocabulary
+
+## facets
+- place · (?:lives in|based in)\\s+([A-Z]\\w+)
+- weird · a · b
+
+## types
+- goal · a funded outcome
+"""
+    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
+        f.write(body)
+        path = f.name
+    real = ont.ONTOLOGY_MD
+    try:
+        ont.ONTOLOGY_MD = Path(path)
+        v = ont.load()
+        assert "facets" in v, "load() returns no facets key — the section is still dropped"
+        assert "place" in v["facets"]
+        assert v["facets"]["weird"] == "a · b", \
+            "a regex containing the separator was truncated at the second slot"
+        assert v["types"].get("goal") == "a funded outcome"
+    finally:
+        ont.ONTOLOGY_MD = real
+        os.unlink(path)
 
 
 def test_load_is_absent_not_broken_without_the_file():

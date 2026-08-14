@@ -29,9 +29,16 @@ AGENT=$(basename "$CHARTER" .md)        # canonical stem from the resolved chart
 # Seed carve-out (session_refresh's rule, made mechanical): seed is the restart-ACTOR,
 # so refreshing seed in-band kills the process doing the killing mid-run. Refuse it;
 # seed self-refreshes at a quiet point of its own judgment, or the owner restarts it.
-if [ "$AGENT" = "seed" ]; then
+if [ "$AGENT" = "seed" ] && [ -z "${REFRESH_SEED_BY_OWNER:-}" ]; then
+  # The refusal is about WHO runs it, not about seed being special: seed invoking this
+  # in-band kills the process doing the killing mid-run. The OWNER's shell has no such
+  # problem, and hand-rolling the kill from his side would reintroduce the shutdown-
+  # flush race this script exists to prevent. So the owner opts in explicitly, from a
+  # terminal OUTSIDE tmux (killing ax-seed drops an attached pane):
+  #     REFRESH_SEED_BY_OWNER=1 bash nucleus/refresh.sh seed
   echo "refuse: seed cannot refresh itself in-band (it would kill the killer mid-run)."
-  echo "        seed self-refreshes at a quiet point, or the owner restarts it."
+  echo "        seed self-refreshes at a quiet point, or the owner runs:"
+  echo "        REFRESH_SEED_BY_OWNER=1 bash nucleus/refresh.sh seed   (outside tmux)"
   exit 1
 fi
 

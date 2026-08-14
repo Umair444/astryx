@@ -84,6 +84,7 @@ def load() -> dict:
     types: dict[str, str] = {}
     aliases: dict[str, str] = {}
     categories: dict[str, str] = {}
+    facets: dict[str, str] = {}
     section = None
     for line in body.split("\n"):
         s = line.strip()
@@ -102,7 +103,18 @@ def load() -> dict:
             aliases[key] = val
         elif section and ("categor" in section or "region" in section):
             categories[key] = val
-    return {"meta": meta, "types": types, "aliases": aliases, "categories": categories}
+        elif section and "facet" in section:
+            # ADDED 2026-08-15 after memory reported the section was SILENTLY DROPPED:
+            # the trigger's instruction said "declare facet axes under ## facets" while
+            # this loader had no branch for them, so a declaration that read as accepted
+            # was discarded — the instruction and the implementation disagreed, and
+            # world.facet_patterns()'s override path was dead code from birth.
+            # A facet value is a REGEX, and a regex may legitimately contain the ` · `
+            # separator — so the value is everything after the FIRST slot, not parts[1],
+            # which would truncate at the next separator.
+            facets[key] = " · ".join(parts[1:])
+    return {"meta": meta, "types": types, "aliases": aliases,
+            "categories": categories, "facets": facets}
 
 
 def _pages() -> list[dict]:
@@ -224,7 +236,13 @@ def findings(pages: list[dict] | None = None) -> list[dict]:
     # (4) UNVOCABULARISED RELATIONS. Reported as a COUNT with examples, never as a list of
     # 235 items: an alarm nobody can act on is an alarm nobody reads. The threshold is the
     # tail's share, so it fires on a trend rather than on any single word.
-    rel_all = Counter(r for p in pages for r in p["rels"])
+    #
+    # `subject` PAGES ARE EXCLUDED (memory's ruling, 2026-08-15): a subject page is one
+    # entity with many properties, and its properties are one-use BY CONSTRUCTION — an org
+    # has exactly one `founded`. Counting those as tail asks the estate to hold fewer
+    # unique facts, which inverts the lint's purpose. What remains measurable is drift in
+    # pages that SHOULD share vocabulary; that is what this now measures.
+    rel_all = Counter(r for p in pages if p["type"] != "subject" for r in p["rels"])
     singles = [r for r, n in rel_all.items() if n == 1]
     if rel_all and len(singles) / len(rel_all) > 0.7:
         known = set(voc.get("aliases", {})) | set(voc.get("aliases", {}).values())
