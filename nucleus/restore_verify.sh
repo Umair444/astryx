@@ -69,8 +69,16 @@ else
   # the distinct file paths the RESTORED db's enabled python triggers point at (from scratch, not live)
   need=$(q_scratch -tAc "SELECT DISTINCT split_part(check_src,'::',1) FROM triggers WHERE enabled AND check_src ~ '\.py::'" 2>/dev/null)
   missing=""
+  # HERE-STRING, NOT A PIPE, and this is a correctness fix rather than style.
+  # `printf ... | grep -qxF` under `set -o pipefail` is a RACE: grep -q exits the instant
+  # it matches, printf takes SIGPIPE mid-write, and pipefail reports the pipeline as FAILED
+  # even though grep succeeded — so `|| missing=` fired on timing. Measured 2026-08-14 with
+  # the inputs held constant (members=751, need=25 on every run): 3 failures in 5 runs, each
+  # naming a DIFFERENT random subset of trigger bodies. It fails SAFE (false RED, never false
+  # green) which is why it survived — but a verifier that cries wolf at random is one whose
+  # alarms get skimmed, and .last-restore-ok was being stamped only on the lucky runs.
   for p in $need; do
-    printf '%s\n' "$members" | grep -qxF "$p" || missing="$missing $p"
+    grep -qxF "$p" <<<"$members" || missing="$missing $p"
   done
   if [ -n "$missing" ]; then
     echo "  ✗ triggers-bodies: the restored triggers table references python bodies ABSENT from the backup:" >&2

@@ -64,7 +64,10 @@ for d in triggers memory agents; do
   if [ -d "$d" ]; then state_dirs="$state_dirs $d"; fi
 done
 if [ -n "$state_dirs" ]; then
-  if ! tar -czf "$state" $state_dirs 2>/dev/null; then
+  # Exclude compiled bytecode: it is regenerated on import, it is python-version
+  # specific (so it is actively WRONG after an interpreter upgrade), and it was 22 of the
+  # entries in every artifact. A backup should carry what cannot be reproduced.
+  if ! tar -czf "$state" --exclude='__pycache__' --exclude='*.pyc' $state_dirs 2>/dev/null; then
     echo "backup: FAILED to capture operational state ($state_dirs) — the DB dump $out is intact," >&2
     echo "  but restoring it alone would lose the trigger/memory bodies. Fix before trusting." >&2
     rm -f "$state"
