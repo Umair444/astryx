@@ -15,8 +15,22 @@ else bad "A .env is NOT the canary"; fi
 if grep -Eq 'genesis|127\.0\.0\.1|192\.168\.1\.9' "$ENVF"; then
   bad "A real DB user/host identifier leaked into cell .env"
 else pass "A no real DB user/host identifier in cell .env"; fi
-if grep -rEl 'genesis:|192\.168\.1\.9' /home/umair /etc /tmp 2>/dev/null | grep -q .; then
-  bad "A real DB identifier found somewhere in cell filesystem"
+# No pipe into `grep -q`, deliberately, and this is the ONE check in this file where the
+# form matters. Every other verdict here reads TRUE => pass, so a `pipefail`/SIGPIPE race
+# (grep -q exits on the first line, the producer keeps scanning, takes SIGPIPE, and
+# `set -o pipefail` reports the pipeline failed although the consumer SUCCEEDED — the race
+# seed measured in restore_verify.sh, 2026-08-14) could only ever cost a false ALARM there.
+# This one is inverted: TRUE => bad. A race here reads a real leak as
+# "absent from entire cell filesystem" — a silent FALSE GREEN on the containment gate.
+# I could not reproduce the race in this shape (27 synthetic runs), and that is precisely
+# why the form is changed rather than left pending a reproduction: the substitution is
+# behaviourally identical, costs nothing, and removes the question permanently, while the
+# failure it guards against is silent and lands on a security verdict. Evidence needed to
+# DIAGNOSE a defect is not the evidence needed to REMOVE a free hazard.
+# It also fixes a real diagnostic gap: the old form could only say "somewhere".
+leaked=$(grep -rEl 'genesis:|192\.168\.1\.9' /home/umair /etc /tmp 2>/dev/null)
+if [ -n "$leaked" ]; then
+  bad "A real DB identifier found in cell filesystem: $(echo "$leaked" | tr '\n' ' ')"
 else pass "A real DB identifier absent from entire cell filesystem"; fi
 
 echo "== ESCAPE B — astryx MCP DSN resolution (server.mjs:15 logic, unconditional grant) =="
