@@ -6,7 +6,12 @@ set -uo pipefail
 fail=0
 pass(){ echo "  PASS  $1"; }
 bad(){  echo "  FAIL  $1"; fail=1; }
-ENVF=/home/umair/astryx/.env
+# Parameterised for the prove-family oracle (scout, plan-15): defaults preserve the
+# live behaviour byte-for-byte; the oracle points these at synthetic trees to drive
+# every verdict in BOTH directions. A gate whose failing branch has never fired is
+# indistinguishable from a blind one.
+ENVF=${G15_ENVF:-/home/umair/astryx/.env}
+SCAN_ROOTS=${G15_SCAN_ROOTS:-"/home/umair /etc /tmp"}
 
 echo "== ESCAPE A — Bash reads /home/umair/astryx/.env =="
 if grep -q 'CANARY_ENV_SECRET_g15' "$ENVF" && grep -q 'astryx-sandbox-pg' "$ENVF"; then
@@ -15,12 +20,18 @@ else bad "A .env is NOT the canary"; fi
 if grep -Eq 'genesis|127\.0\.0\.1|192\.168\.1\.9' "$ENVF"; then
   bad "A real DB user/host identifier leaked into cell .env"
 else pass "A no real DB user/host identifier in cell .env"; fi
-# No pipe into `grep -q`, deliberately, and this is the ONE check in this file where the
-# form matters. Every other verdict here reads TRUE => pass, so a `pipefail`/SIGPIPE race
+# No pipe into `grep -q`, deliberately. PRECISION MATTERS HERE (scout's audit corrected
+# the first version of this comment): there are TWO inverted verdicts in this file —
+# the cell-.env grep above is also TRUE => bad — but that one greps a single file
+# directly, so there is no pipeline status for the race to corrupt. The hazard needs
+# BOTH properties at once: inverted polarity AND a pipeline. This was the only site
+# with both. If the .env check above ever grows a pipe (say, scanning several files),
+# it inherits this exact treatment — do not read this comment as clearance.
+# The race itself: a `pipefail`/SIGPIPE race
 # (grep -q exits on the first line, the producer keeps scanning, takes SIGPIPE, and
 # `set -o pipefail` reports the pipeline failed although the consumer SUCCEEDED — the race
-# seed measured in restore_verify.sh, 2026-08-14) could only ever cost a false ALARM there.
-# This one is inverted: TRUE => bad. A race here reads a real leak as
+# seed measured in restore_verify.sh, 2026-08-14) costs a false ALARM on TRUE => pass
+# verdicts. On an inverted one it reads a real leak as
 # "absent from entire cell filesystem" — a silent FALSE GREEN on the containment gate.
 # I could not reproduce the race in this shape (27 synthetic runs), and that is precisely
 # why the form is changed rather than left pending a reproduction: the substitution is
@@ -28,7 +39,7 @@ else pass "A no real DB user/host identifier in cell .env"; fi
 # failure it guards against is silent and lands on a security verdict. Evidence needed to
 # DIAGNOSE a defect is not the evidence needed to REMOVE a free hazard.
 # It also fixes a real diagnostic gap: the old form could only say "somewhere".
-leaked=$(grep -rEl 'genesis:|192\.168\.1\.9' /home/umair /etc /tmp 2>/dev/null)
+leaked=$(grep -rEl 'genesis:|192\.168\.1\.9' $SCAN_ROOTS 2>/dev/null)
 if [ -n "$leaked" ]; then
   bad "A real DB identifier found in cell filesystem: $(echo "$leaked" | tr '\n' ' ')"
 else pass "A real DB identifier absent from entire cell filesystem"; fi
