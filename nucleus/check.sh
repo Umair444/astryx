@@ -54,7 +54,16 @@ run() {
   # "skipped" (test_plan_lifecycle has one) can never trip it. This belt can only ever
   # ADD strictness — it cannot turn a real skip into a pass — so both the exit code and
   # the announcement must fail before a vacuous gate reads green.
-  if [ "$rc" = 0 ] && printf '%s\n' "$out" | grep -qE '^[[:space:]]*(SKIP|○)'; then
+  # here-string, NOT `printf | grep -q`: the pipe form is the SIGPIPE/pipefail race seed
+  # fixed in restore_verify.sh (2026-08-14). grep -q exits on the first match, printf takes
+  # SIGPIPE, and `set -o pipefail` reports the pipeline FAILED though grep succeeded — so the
+  # belt silently does not fire and the gate is counted verified on its own exit code. That
+  # is the fail-OPEN direction, the inverse of restore_verify's false-RED. Measured on this
+  # construct: 0/200 misses at 200 lines, 198/200 at 2000, 200/200 at 20000 (deterministic
+  # once output exceeds the 64KB pipe buffer with the SKIP line early). Latent today — the
+  # largest real gate emits 3956 bytes — but it fails silently, so it is fixed by shape
+  # rather than left to a margin. (abstractor-1)
+  if [ "$rc" = 0 ] && grep -qE '^[[:space:]]*(SKIP|○)' <<<"$out"; then
     rc=$EXIT_SKIP; LIARS+=("$label")
   fi
   case $rc in
