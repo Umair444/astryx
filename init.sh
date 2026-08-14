@@ -598,7 +598,13 @@ if [ "${1:-}" = "doctor" ]; then
   # the newest dump was proven-restorable recently (weekly), so a silently-unrestorable
   # backup goes RED instead of freshness-green. Reads the stamp only (never restores here).
   if [ -f backups/.last-restore-ok ]; then
-    if [ "$(( $(date +%s) - $(stat -c %Y backups/.last-restore-ok) ))" -gt 691200 ]; then
+    # Read the OUTCOME first, then the age. A stamp whose freshness was the only thing
+    # checked reported "proven-restorable" for 8 days after verification began failing,
+    # because a failing run left the previous success's stamp untouched. Unknown content
+    # falls through to RED — detector polarity: a stamp we cannot interpret is not evidence.
+    if [ "$(cut -d" " -f1 backups/.last-restore-ok)" = "FAILED" ]; then
+      bad "backup restore-verify FAILED on its last run ($(cut -d" " -f2 backups/.last-restore-ok)) — the newest dump does NOT restore"
+    elif [ "$(( $(date +%s) - $(stat -c %Y backups/.last-restore-ok) ))" -gt 691200 ]; then
       bad "backup restore-verify STALE (>8d): a dump may have stopped restoring (nucleus/restore_verify.sh)"
     else
       ok "backup restore-verified ($(cat backups/.last-restore-ok), <8d — proven-restorable)"

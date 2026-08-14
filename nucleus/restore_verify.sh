@@ -90,9 +90,21 @@ else
   fi
 fi
 
+# THE STAMP RECORDS THE OUTCOME, NOT MERELY THE TIME — and that distinction is the whole
+# defect. Previously a failing run exited HERE, before the write, leaving the PREVIOUS
+# SUCCESS's stamp intact; doctor reads only the stamp's mtime, so a verifier that had
+# started failing reported "proven-restorable" for up to eight more days. Demonstrated on
+# the runtime 2026-08-14: forced a failure, stamp unchanged, doctor said ✓ immediately after.
+#
+# THE LAW (abstractor-2, msg 6530): A SAFETY GRADE DOES NOT COMPOSE. This check only ever
+# failed RED — but its SIDE EFFECT was read as evidence one hop downstream and converted
+# into a false GREEN. So the question to ask of any fail-safe check is never "can it lie?"
+# but "who reads its side effects, and what do they conclude from the runs that failed?"
+# A stamp, a cache, a state row, a green tick — each inherits NONE of the check's safety.
 if [ "$fail" -ne 0 ]; then
+  echo "FAILED $(date -u +%Y-%m-%dT%H:%M:%SZ)" > backups/.last-restore-ok
   echo "restore-verify: FAILED — the newest backup does NOT restore cleanly. Fix the backup BEFORE trusting it." >&2
   exit 1
 fi
-date -u +%Y-%m-%dT%H:%M:%SZ > backups/.last-restore-ok
+echo "OK $(date -u +%Y-%m-%dT%H:%M:%SZ)" > backups/.last-restore-ok
 echo "restore-verify: OK — ${newest##*/} restores into a working DB; stamped backups/.last-restore-ok"
