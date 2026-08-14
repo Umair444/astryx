@@ -74,6 +74,7 @@ export default function MemoryView() {
   const [proposed, setProposed] = useState(false)
   const [view, setView] = useState({ x: 0, y: 0, k: 1 })
   const drag = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null)
+  const svgRef = useRef<SVGSVGElement | null>(null)
   const mobile = useMediaQuery('(max-width: 48em)')
 
   useEffect(() => {
@@ -90,6 +91,23 @@ export default function MemoryView() {
   }, [sel])
 
   const byId = useMemo(() => new Map((g?.nodes ?? []).map((n) => [n.id, n])), [g])
+
+  /* Zoom must be SCOPED TO THIS CANVAS, which means preventDefault() on the wheel — and
+   * React registers onWheel as PASSIVE, where preventDefault is a no-op (it warns and the
+   * browser scrolls/zooms the page anyway). So the listener is attached natively with
+   * {passive:false}. That is the whole bug: the handler ran, the state updated, and the
+   * page zoomed underneath it because nothing stopped the default. */
+  useEffect(() => {
+    const el = svgRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      const f = e.deltaY > 0 ? 0.9 : 1.1
+      setView((v) => ({ ...v, k: Math.min(3, Math.max(0.35, v.k * f)) }))
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [g])
 
   /* THE BLINK. Ignite to full, then settle to 60% rather than fading out — the retrieved
    * set stays warm until the next question so the answer remains anchored to its evidence
@@ -239,7 +257,8 @@ export default function MemoryView() {
       <div className="flex-1 min-h-0 flex flex-col">
       <div className="flex-1 min-h-0 flex">
         <svg
-          className="flex-1 starfield cursor-grab active:cursor-grabbing"
+          ref={svgRef}
+          className="flex-1 starfield cursor-grab active:cursor-grabbing touch-none"
           viewBox="-900 -700 1800 1400" preserveAspectRatio="xMidYMid meet"
           onMouseDown={(e) => { drag.current = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y } }}
           onMouseUp={() => { drag.current = null }}
@@ -249,7 +268,6 @@ export default function MemoryView() {
             const d = drag.current
             setView((v) => ({ ...v, x: d.vx + (e.clientX - d.x) * 1.6, y: d.vy + (e.clientY - d.y) * 1.6 }))
           }}
-          onWheel={(e) => setView((v) => ({ ...v, k: Math.min(3, Math.max(0.35, v.k * (e.deltaY > 0 ? 0.9 : 1.1))) }))}
         >
           <defs>
             <filter id="blob" x="-60%" y="-60%" width="220%" height="220%">

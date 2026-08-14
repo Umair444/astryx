@@ -269,7 +269,11 @@ function Shell() {
       </AppShell.Footer>
 
       {agentOpen && <AgentDrawer name={agentOpen} onClose={() => setAgentOpen(null)} />}
-      <VegaChat />
+      {/* VEGA is the PUBLIC concierge and floats bottom-right on every view; the Memory
+          tab is owner-only and docks its own ask box in that exact corner, so the two
+          buttons overlapped. Hidden here rather than nudged — a public greeter on a
+          private tab is redundant, not merely mispositioned. */}
+      {route.tab !== 'memory' && <VegaChat />}
     </AppShell>
   )
 }
