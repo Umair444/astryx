@@ -144,6 +144,18 @@ run "ontology lint invariants"        "$PY" nucleus/test_ontology.py
 # function against its own staged copy. SKIPS where triggers/ or pyflakes is absent.
 run "trigger bodies resolve"          "$PY" nucleus/test_trigger_smoke.py
 run "A2A card canonicalisation (JCS)" "$PY" nucleus/test_card_canon.py
+# The ear must outlive a database blip. Runs the REAL channel/server.mjs against a
+# THROWAWAY database (created, then dropped — the org's own is never written to), breaks
+# the database underneath it the two ways an ordinary `docker restart` does, and proves it
+# both SURVIVED and still DELIVERS. Earned by forge going deaf 8h49m on 2026-08-14 while
+# its body sat at a healthy prompt. Slow by nature (~35s: it waits out the server's own 15s
+# startup drain, or a permanently deaf ear passes on that one-shot). SKIPS loudly without
+# node, channel/node_modules, a reachable DB, or CREATE DATABASE rights — i.e. a bare clone.
+run "channel ear survives a db blip"  "$PY" nucleus/test_ear_survival.py
+# Class-1 of the prove-family oracle (scout, plan-15): drives all seven containment
+# verdicts BOTH ways against synthetic trees via G15_ENVF/G15_SCAN_ROOTS. Its output
+# states its own limit — decision logic only, not the real cell.
+run "containment gate decision logic"  "$PY" nucleus/test_prove_containment.py
 # Needs psycopg + a live org DB; SKIPS loudly otherwise. Fixtures go in a rolled-back
 # transaction (messages_notify is a pure pg_notify, so a rollback wakes nobody).
 run "wake-audit classifier"           "$PY" nucleus/test_wake_audit.py
@@ -161,6 +173,11 @@ run "card-address guard observability" "$PY" nucleus/test_card_address_obs.py
 # The CLASS gate for scout's guards: an infra failure must propagate (the pulse records an
 # evaluator error) rather than returning a silent all-clear. SKIPS where the bodies are absent.
 run "guard infra-failure loudness"     "$PY" nucleus/test_guard_infra_loudness.py
+# goal-15's binding "no probe may fire" gate. Every verdict driven BOTH ways against
+# synthetic trees + stub binaries, one at a time, asserting the full vector so a breach
+# fixture must trip EXACTLY its own check. Proves the gate CAN fail; does NOT prove
+# containment (no docker, no real cell) — the oracle says so in its own output.
+run "containment-gate verdicts (per-check)" "$PY" nucleus/test_prove_containment.py
 # Door (orgname) is pure stdlib; the peers-derivation check needs the DB and skips loudly.
 run "org identity / peer name policy" "$PY" nucleus/test_org_identity.py
 # Needs psycopg + a live org DB + the (gitignored) trigger bodies; it SKIPS loudly rather

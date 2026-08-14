@@ -358,6 +358,31 @@ mcp.setNotificationHandler(PermissionRequestSchema, async ({ params: p }) => {
 
 // ---------- inbound: pg → channel events ----------
 const pool = new pg.Pool({ connectionString: DSN, max: 3 })
+
+// ── the ear must outlive a database blip ────────────────────────────────────────────
+// A dead channel server is the worst failure this file has, because it does not look
+// like one: the claude body stays alive at a healthy prompt, the tmux pane is fine, and
+// every inbound message sits `pending` forever. It is the FOURTH liveness state (body
+// alive, turns possible, ear gone) and it is invisible to agent_dark (the body exists)
+// and to wedge_watch (whose subjects are DELIVERED rows). On 2026-08-14 the org restarted
+// its own postgres to load AGE — a clean, ordinary `docker restart` — and forge went deaf
+// for 8h49m while 22 other LISTEN connections reconnected two seconds later.
+//   (1) pg.Pool emits 'error' when a POOLED-BUT-IDLE client's backend goes away, and a
+//       restart sends every open backend 57P01. An EventEmitter 'error' with no listener
+//       is an uncaught exception. Swallowing it is the library's own documented contract:
+//       the pool discards the dead client and the next query dials a fresh one.
+//   (2) an async fn handed straight to setInterval has nowhere to put a rejection, and
+//       node's default for an unhandled rejection is exit(1). refreshSubs queries the pool
+//       once a minute forever, so any minute the database is unreachable is a coin flip.
+// Deliberately NOT a blanket process.on('uncaughtException'): that trades a dead ear for a
+// WEDGED one, which is worse — a dead ear at least stops marking messages delivered, so a
+// sender-side watcher can see it, while a wedged one is indistinguishable from health.
+// These two faults are recoverable by construction (the pool redials, the LISTEN client
+// already reconnects below); nothing else here is known to be, so nothing else is caught.
+// Proven red-then-green against a real postgres by nucleus/test_ear_survival.py.
+pool.on('error', e => console.error('[channel] pooled client died, discarding it:', e.message))
+const SUBS_REFRESH_MS = Number(process.env.ASTRYX_SUBS_REFRESH_MS) || 60_000
+
 let subs = []                       // this agent's active watch list (refreshed on NOTIFY use)
 async function refreshSubs() {
   const r = await pool.query(`SELECT target, filter FROM subscriptions WHERE watcher=$1 AND active`, [AGENT])
@@ -437,7 +462,9 @@ async function listen() {
       } catch {}
     }, 15_000)
     await refreshSubs()
-    setInterval(refreshSubs, 60_000)
+    setInterval(() => refreshSubs().catch(e =>
+      console.error('[channel] subscription refresh failed, keeping the ear:', e.message)),
+      SUBS_REFRESH_MS)
   } catch {
     try { await client.end() } catch {}
     setTimeout(listen, 3000)
