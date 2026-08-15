@@ -118,6 +118,13 @@ run "dep manifest covers all imports"  "$PY" nucleus/deps.py coverage
 # 08-13). Derives the expected set from the nucleus/test_*.py glob — a new oracle must
 # be wired here or this goes RED. Pure stdlib, no DB.
 run "check.sh runs every committed oracle" "$PY" nucleus/test_check_coverage.py
+# The coverage gate's own trip condition, fired (its §2 predicted the case): an oracle
+# outside the test_*.py glob — or any nucleus script — can land invoked-by-nothing and
+# every gate stays green. This derives the population from git, parses real invocation
+# syntax across tracked+out-of-tree surfaces (units, runners, triggers classified via
+# check-ignore, never assumed), and fails any script neither reached nor exempted with
+# a reason. Exit 77 when a surface is unreadable: it never accuses while blind.
+run "every committed nucleus script is invoked" "$PY" nucleus/test_reachability.py
 # The interim ratchet for the mutation estate (steward's ruling 08-15: the FULL probe run
 # costs 100.6s and belongs in CI, not in the interactive loop — a gate slow enough to skip
 # gets skipped). This is the sub-second structural half: every nucleus/mutants_*.py imports,
