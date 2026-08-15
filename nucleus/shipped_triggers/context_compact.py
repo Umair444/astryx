@@ -30,10 +30,13 @@ MECHANICS, and what each choice is for:
 
 WHICH CLASS IS THE REMEDY FALSE FOR (named at write time, per the narrow-sample law):
 a WEDGED session — body alive, stdin latched on a modal — eats the keystrokes and
-compacts nothing. This trigger cannot see that state and does not try; it re-sends
-after each cooldown (a standing failure must re-nag), and an agent that stays over
-threshold across consecutive fires is called out in the fire text as a probable
-wedge, whose remedy (kill + spawn) belongs to wedge_watch, not here.
+compacts nothing. This trigger re-sends after each cooldown (a standing failure must
+re-nag), and the WEDGE TEST is "I sent a compact and no DROP followed" (memory's
+sharpening, msg 9897): a landed compact is observable as tokens falling below the
+at-send reading (192,903 -> 85,375 measured), so an agent whose context dropped and
+then re-climbed past threshold is the healthiest possible behaviour — a fresh send,
+never an accusation. Only a send followed by NO drop accuses, and the remedy for a
+true wedge (kill + spawn) belongs to wedge_watch, not here.
 """
 from __future__ import annotations
 
@@ -67,7 +70,11 @@ def context_compact(ctx):
         if prev and now - prev["ts"] < COOLDOWN_S:
             continue                     # compact already queued; let it land
         if tokenwatch.send_compact(a):
-            n = (prev or {}).get("n", 0) + 1
+            # Wedge test: a drop below the at-send reading proves the prior compact
+            # LANDED (context only falls via compact/respawn), so this is a fresh
+            # climb, not a latched modal — the counter resets instead of accusing.
+            landed = bool(prev) and row["tokens"] < prev["tokens"]
+            n = 1 if (not prev or landed) else prev["n"] + 1
             sent[a] = {"ts": now, "tokens": row["tokens"], "n": n}
             line = f"{a} ({row['tokens']:,} tok, {row['pct']:.0f}%)"
             (standing if n > 1 else fired).append(line)

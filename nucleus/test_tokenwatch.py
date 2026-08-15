@@ -236,6 +236,24 @@ def test_trigger_cooldown_then_wedge_escalation():
          cc.tokenwatch.send_compact) = real
 
 
+def test_trigger_drop_then_climb_is_not_a_wedge():
+    # memory's sharpening (msg 9897): a landed compact is observable as a DROP below
+    # the at-send reading; an agent that dropped and climbed back over threshold is
+    # the healthiest possible behaviour. Only "sent AND no drop followed" accuses.
+    real = (tokenwatch.fleet_context, tokenwatch.live_sessions, tokenwatch.send_compact)
+    sends, ctx = [], _Ctx({"sent": {"hot": {"ts": 0, "tokens": 190_000, "n": 1}}})
+    try:
+        # cooldown long expired; 165k is over threshold but BELOW the 190k at-send
+        _stub([_row("hot", 165_000)], {"hot"}, sends)
+        fire = cc.context_compact(ctx)
+        assert sends == ["hot"]                       # re-send: over the line again
+        assert ctx.state["sent"]["hot"]["n"] == 1     # fresh send, counter reset
+        assert fire and "WEDGE" not in fire
+    finally:
+        (cc.tokenwatch.fleet_context, cc.tokenwatch.live_sessions,
+         cc.tokenwatch.send_compact) = real
+
+
 def test_trigger_rearms_when_back_under():
     real = (tokenwatch.fleet_context, tokenwatch.live_sessions, tokenwatch.send_compact)
     sends, ctx = [], _Ctx({"sent": {"hot": {"ts": 0, "tokens": 190_000, "n": 1}}})
