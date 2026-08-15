@@ -83,6 +83,46 @@ export default function EconomyView() {
           <StatCard label="Messages · 24h" value={fmtTokens(overview?.messages_24h)} />
         </div>
 
+        {/* live context load + burn — the usage monitor (tokenwatch) */}
+        <div className="bg-deck-2 border border-line rounded-lg p-3">
+          <div className="flex items-baseline gap-3 mb-2">
+            <div className="text-[11px] uppercase tracking-wider text-ink-dim">Context load · live</div>
+            {econ?.burn && (
+              <div className="text-[10px] font-mono text-ink-mute ml-auto">
+                burn {fmtTokens(econ.burn.tokens_per_min)}/min · today {fmtTokens(econ.burn.today_tokens)} tok
+                {' '}≈ ${econ.burn.today_cost_usd.toFixed(2)}
+                <Tooltip label="cost floor — steps carry no cache split, so input is priced at the cache-read rate" withArrow openDelay={300}>
+                  <span className="cursor-help"> (floor)</span>
+                </Tooltip>
+              </div>
+            )}
+          </div>
+          <div className="space-y-1.5">
+            {(econ?.usage ?? []).filter((u) => u.found).map((u) => {
+              const color = u.pct >= 85 ? '#f43f5e' : u.pct >= 70 ? '#facc15' : '#34d399'
+              return (
+                <div key={u.agent} className="flex items-center gap-2 text-[12px]">
+                  <span
+                    className="w-2 h-2 rounded-full shrink-0"
+                    style={{ background: u.live ? '#34d399' : '#5b6890' }}
+                    title={u.live ? 'session live' : 'no tmux body'}
+                  />
+                  <span className="text-ink w-28 truncate">{u.agent}</span>
+                  <div className="flex-1 h-1.5 rounded bg-deck overflow-hidden">
+                    <div className="h-full rounded" style={{ width: `${Math.min(100, u.pct)}%`, background: color }} />
+                  </div>
+                  <span className="font-mono text-ink-mute whitespace-nowrap w-44 text-right">
+                    {fmtTokens(u.tokens)} / {fmtTokens(u.limit ?? 200000)} · {u.pct.toFixed(0)}%
+                  </span>
+                </div>
+              )
+            })}
+            {!econ?.usage?.filter((u) => u.found).length && (
+              <div className="text-xs text-ink-mute">no transcripts found</div>
+            )}
+          </div>
+        </div>
+
         {/* 30-day token flow */}
         <div className="bg-deck-2 border border-line rounded-lg p-3">
           <div className="text-[11px] uppercase tracking-wider text-ink-dim mb-2">Token flow · 30 days</div>

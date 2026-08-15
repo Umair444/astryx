@@ -335,6 +335,24 @@ _act_prehook() {
   cp hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
 }
 
+# context-compact: a fresh org gets context hygiene from day one — a thin shim under the
+# seed's triggers imports the TRACKED reference (nucleus/shipped_triggers/), so the logic
+# has one writer and `git pull` updates it. DEFERENTIAL: in a grown org agents author
+# their own triggers, so if ANY agent already owns a context_compact the installer stands
+# down (a duplicated actuator would double-send /compact — the cross-agent dedup law).
+_chk_ccompact() { ls triggers/*/context_compact.py >/dev/null 2>&1; }
+_act_ccompact() {
+  mkdir -p triggers/seed
+  cat > triggers/seed/context_compact.py <<'EOF'
+"""Live install of the shipped context-compact trigger. The logic lives TRACKED in
+nucleus/shipped_triggers/context_compact.py (one writer; this shim only deploys it).
+Installed by init.sh at founding; the org may replace it with an agent-authored one —
+delete this file and the pulse retires it on the next tick."""
+from nucleus.shipped_triggers.context_compact import context_compact  # noqa: F401
+EOF
+  say "installed context-compact trigger (seed) — /compact for any session past 80% of its window"
+}
+
 # model cache: ACTUATABLE + NON-PERSISTENT (org prefetches; the OS can evict). Gated on
 # media (a voice channel present) — prefetched UNDER the reconciler at init OR at later
 # channel-enablement, IDENTICALLY, never on the message path (transcribe.py uses
@@ -351,7 +369,8 @@ _act_model() {
 RECONCILE_NODES=(
   "pg|interior" "pgready|wait" "schema|interior" "venv|interior" "deps|interior"
   "model|interior" "chan|interior" "obs|interior" "obskey|interior" "ident|interior"
-  "units|interior" "law|interior" "prehook|interior" "login|halt" "seed|interior" "prompt|interior")
+  "units|interior" "law|interior" "prehook|interior" "ccompact|interior" "login|halt"
+  "seed|interior" "prompt|interior")
 
 reconcile() {
   local maxpass=4 pass=0

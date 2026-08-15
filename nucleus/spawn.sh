@@ -110,7 +110,9 @@ cat > "$HOME_D/.claude/settings.json" <<EOF
     "PostToolUse": [ { "matcher": "", "hooks": [
       { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/step.py", "timeout": 5 } ] } ],
     "Stop": [ { "hooks": [
-      { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/step.py", "timeout": 10 } ] } ]
+      { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/step.py", "timeout": 10 } ] } ],
+    "UserPromptSubmit": [ { "hooks": [
+      { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/usage.py", "timeout": 5 } ] } ]
   }
 }
 EOF

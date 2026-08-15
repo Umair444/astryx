@@ -143,6 +143,11 @@ run "ontology lint invariants"        "$PY" nucleus/test_ontology.py
 # on every tick — a defect no per-proposal oracle can see, because each tests its own
 # function against its own staged copy. SKIPS where triggers/ or pyflakes is absent.
 run "trigger bodies resolve"          "$PY" nucleus/test_trigger_smoke.py
+
+# tokenwatch + shipped context-compact: the usage layer that keeps the fleet from
+# burning its window blind (owner directive 2026-08-15) — window inference, tail
+# parsing, and the actuator's fire/cooldown/wedge/re-arm decisions.
+run "usage meter + context-compact"   "$PY" nucleus/test_tokenwatch.py
 run "A2A card canonicalisation (JCS)" "$PY" nucleus/test_card_canon.py
 # The ear must outlive a database blip. Runs the REAL channel/server.mjs against a
 # THROWAWAY database (created, then dropped — the org's own is never written to), breaks
@@ -156,6 +161,11 @@ run "channel ear survives a db blip"  "$PY" nucleus/test_ear_survival.py
 # verdicts BOTH ways against synthetic trees via G15_ENVF/G15_SCAN_ROOTS. Its output
 # states its own limit — decision logic only, not the real cell.
 run "containment gate decision logic"  "$PY" nucleus/test_prove_containment.py
+# Class 2: the two HOST-SIDE prove scripts at the logic layer, docker stubbed. A weaker claim
+# than the gate above and it prints that limit in its own output — it proves these scripts CAN
+# fail when they should, never that the cell is contained. Carries the RED-proof for the
+# cell-liveness verdict added to prove_egress.sh (plan-15, granted msg 8846).
+run "host-side prove scripts (logic)"  "$PY" nucleus/test_prove_hostside.py
 # Needs psycopg + a live org DB; SKIPS loudly otherwise. Fixtures go in a rolled-back
 # transaction (messages_notify is a pure pg_notify, so a rollback wakes nobody).
 run "wake-audit classifier"           "$PY" nucleus/test_wake_audit.py

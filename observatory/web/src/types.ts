@@ -118,11 +118,30 @@ export interface Receipt {
   memo: string | null
 }
 
+/* live context load per agent, read from transcript tails (nucleus/tokenwatch) */
+export interface EconUsage {
+  agent: string
+  tokens: number
+  limit?: number      // inferred window: 200k, or 1M once observed load proves it
+  pct: number
+  found: boolean
+  live?: boolean      // has a tmux body right now
+  age_s?: number
+}
+
+export interface EconBurn {
+  tokens_per_min: number
+  today_tokens: number
+  today_cost_usd: number // floor estimate — input priced at the cache-read rate
+}
+
 export interface Economy {
   daily: EconDaily[]
   agents: EconAgent[]
   goals: EconGoal[]
   receipts: Receipt[]
+  usage: EconUsage[]
+  burn: EconBurn
 }
 
 export interface Peer {
