@@ -128,6 +128,13 @@ run "mutants files still point at something real" "$PY" nucleus/test_mutants_wel
 # every oracle is INVOKED; this one proves an invoked oracle actually RAN. Drives this
 # file's own run()/verdict() against synthetic gates. Pure stdlib, no DB.
 run "a skip is not a pass (verdict accounting)" "$PY" nucleus/test_check_verdict.py
+# The gate on the OTHER actuator. .git/hooks/pre-push is a COPY of the tracked hooks/pre-push,
+# so the reviewed artifact and the executed one are two writers of one fact with no reconciler
+# — and privacy_gate already rides on that copy. Proves the installed hook matches byte for
+# byte AND is executable (git skips a non-executable hook silently: byte-identical and inert).
+# SKIPs loudly where no hook is installed — a fresh clone or CI legitimately has none, and
+# that is not a pass: it means nothing gates a push there. Pure stdlib, no DB.
+run "installed pre-push hook is the reviewed one" "$PY" nucleus/test_hook_integrity.py
 run "referral opt-in + static-literal" bash nucleus/referral_guard.sh
 # OKF frontmatter for the memory estate. The invariant is ADDITIVITY: attaching metadata
 # must change nothing the three live lints read. Pure stdlib; the arms that touch the real
