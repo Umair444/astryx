@@ -135,6 +135,13 @@ run "a skip is not a pass (verdict accounting)" "$PY" nucleus/test_check_verdict
 # SKIPs loudly where no hook is installed — a fresh clone or CI legitimately has none, and
 # that is not a pass: it means nothing gates a push there. Pure stdlib, no DB.
 run "installed pre-push hook is the reviewed one" "$PY" nucleus/test_hook_integrity.py
+# The org's PII detector, gated on the two properties that failed in the field: a finding
+# is silenced only by REPAIR or by an explicit ruling (warn-once let a live finding sit
+# unmentioned for 22 days), and the guard never emits the shape it hunts (an unmasked
+# `messages.thread` put a group JID into its own alarm, msg#344). Hermetic — synthetic
+# fixtures, no DB, no live estate. SKIPs by name where triggers/ is absent, which is every
+# clean checkout: there the guard is not here to be verified. ~0.3s.
+run "pii_sweep cannot forget a finding or print a routing id" "$PY" nucleus/test_pii_sweep_ledger.py
 run "referral opt-in + static-literal" bash nucleus/referral_guard.sh
 # OKF frontmatter for the memory estate. The invariant is ADDITIVITY: attaching metadata
 # must change nothing the three live lints read. Pure stdlib; the arms that touch the real
