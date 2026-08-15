@@ -10,11 +10,19 @@ nucleus/test_probe_unwired.py that exits 1 by construction left check.sh green,
 exit 0. The drift is one forgotten line away, and it fails OPEN — the direction
 that matters, because the missing signal looks exactly like a passing one.
 
-The fix is a single derivation: the expected set comes from the FILESYSTEM (where
-oracles actually live), never from a second list beside the first. A new oracle is
-therefore assumed to need wiring — forgetting fails RED. There is deliberately no
-exemption allowlist; an oracle that genuinely should not run in the suite is a
-decision someone should have to argue for, not a default.
+The fix is a single derivation: the expected set comes from where oracles actually live,
+never from a second list beside the first. A new oracle is therefore assumed to need
+wiring — forgetting fails RED. There is deliberately no exemption allowlist; an oracle
+that genuinely should not run in the suite is a decision someone should have to argue
+for, not a default.
+
+That derivation is `git ls-files`, not a bare glob, and the difference is the difference
+between COMMITTED and merely present (steward, 2026-08-15). Five agents share one working
+tree here, so an untracked half-built oracle is the normal state of an evening, and while
+the expected-set came off the filesystem it turned the whole suite red on somebody's
+draft. A suite that is red for a reason unrelated to what it guards is a suite people
+stop reading — the failure mode that costs more than the gap it was covering. The law
+attaches at COMMIT; drafts stay VISIBLE (a WARN line) without being fatal.
 
 TWO INSTRUMENTS, because one was not enough (2026-08-14). `invoked_oracles` reads the
 SYNTAX of check.sh; `executed_oracles` runs it with $PY shimmed and reads which oracles
@@ -101,6 +109,33 @@ def oracles_on_disk():
     return {p.name for p in (REPO / "nucleus").glob("test_*.py")}
 
 
+def tracked_oracles():
+    """The authority for the COVERAGE asserts: oracles that are COMMITTED.
+
+    Both asserts below say "committed oracle(s)" and both derived their expected-set from
+    a filesystem glob, which is not the same set on a machine where work happens. This org
+    runs five agents in ONE shared working tree, so a half-built oracle sitting untracked
+    for an evening turned the whole suite red — for a reason unrelated to what these gates
+    guard, which is the surest way to teach people to stop reading a suite (steward,
+    2026-08-15: `bash nucleus/check.sh` on the live tree, red on WIP alone).
+
+    The law these gates enforce — a test nothing runs proves only its last manual
+    invocation — ATTACHES AT COMMIT, because that is when the oracle starts appearing in
+    every clone and claiming to be part of the floor. Until then it is a draft, and drafts
+    are already covered elsewhere: privacy_gate.sh WARNs on untracked nucleus/*.py at push
+    time, and pushed_tree_check.sh runs check.sh in a clone where the draft does not exist.
+
+    FALL BACK BROADER, NEVER NARROWER. If git cannot answer (not a checkout, git absent),
+    return the on-disk set: over-strict is a false red someone will investigate, while an
+    empty expected-set is a green tick certifying nothing — the exact vacuity
+    test_the_authority_is_not_empty exists to prevent.
+    """
+    r = subprocess.run(["git", "ls-files", "nucleus/test_*.py"],
+                       cwd=REPO, capture_output=True, text=True)
+    names = {Path(p).name for p in r.stdout.split() if p.strip()}
+    return names or oracles_on_disk()
+
+
 def executed_oracles(check_sh):
     """Which oracles does check.sh ACTUALLY REACH when it runs? The second instrument.
 
@@ -148,6 +183,16 @@ def test_the_authority_is_not_empty():
     disk = oracles_on_disk()
     assert disk, "no nucleus/test_*.py found at all — the glob authority is broken"
     assert Path(__file__).name in disk, "this file must be visible to its own authority"
+    tracked = tracked_oracles()
+    assert tracked, "the tracked-oracle authority is empty — the coverage asserts below "\
+                    "would pass by having nothing to check"
+    assert Path(__file__).name in tracked, "this file must be visible to its own authority"
+    wip = sorted(disk - tracked)
+    if wip:
+        # Visible, not fatal. An untracked oracle is a draft, not a hole in the floor —
+        # but a draft nobody can see is how one gets left behind (three times in 08-2026).
+        print(f"  WARN: {len(wip)} untracked oracle(s) in nucleus/ — drafts, not yet part "
+              f"of the floor: {', '.join(wip)}")
 
 
 def test_the_parser_recognises_the_real_check_sh():
@@ -163,7 +208,7 @@ def test_every_oracle_in_nucleus_is_invoked_by_check_sh():
     """THE coverage assert. Expected-set derived from the filesystem, independent of
     the artifact being checked — so it proves COMPLETENESS, not merely that check.sh
     is internally consistent with itself."""
-    missing = sorted(oracles_on_disk() - invoked_oracles(CHECK_SH.read_text()))
+    missing = sorted(tracked_oracles() - invoked_oracles(CHECK_SH.read_text()))
     assert not missing, (
         "committed oracle(s) that nucleus/check.sh never runs: "
         + ", ".join(missing)
@@ -194,7 +239,7 @@ def test_every_oracle_is_actually_REACHED_when_check_sh_runs():
     assert executed, (
         f"runtime probe recorded no invocations from {CHECK_SH} — the shim never ran, so "
         f"this assertion verified nothing rather than finding nothing")
-    unreached = sorted(oracles_on_disk() - executed)
+    unreached = sorted(tracked_oracles() - executed)
     assert not unreached, (
         "committed oracle(s) present in check.sh but NEVER REACHED when it runs: "
         + ", ".join(unreached)

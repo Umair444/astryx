@@ -122,6 +122,15 @@ EXEMPT = {
     "nucleus/mutants_check_coverage.py":   "data: mutant spec, read by mutation_probe.py when pointed at it",
     "nucleus/mutants_ear_survival.py":     "data: mutant spec, read by mutation_probe.py when pointed at it",
     "nucleus/mutants_pii_sweep_ledger.py": "data: mutant spec, read by mutation_probe.py when pointed at it",
+    # FOURTH of its kind, and it arrived within hours of this file landing (8c543a9) —
+    # caught by the gate on its first day, which is the fail-closed polarity working. But
+    # four one-at-a-time exemptions of ONE class is the churn seed named as the trip
+    # condition for the `# Kind:` question, and there is a derivation waiting: every
+    # nucleus/mutants_*.py is already the SUBJECT of test_mutants_wellformed.py, the
+    # committed ratchet that keeps these specs pointing at something real. This gate has no
+    # READ-AS-DATA edge — only invocation — so a file watched by a committed gate still
+    # reads as unreached. That edge, not a fifth exemption, is the fix. Proposed, not built.
+    "nucleus/mutants_pre_push_contract.py": "data: mutant spec, read by mutation_probe.py when pointed at it",
     "nucleus/__init__.py":    "library: package marker, imported implicitly by `from nucleus import X`",
     # REACHED, but through a construction no line parser can follow — this is the
     # declared residual made concrete, and the reason exemptions carry a file:line.
