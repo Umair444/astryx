@@ -46,7 +46,16 @@ cd "$REPO" || exit 77
 REF="${1:-HEAD}"
 TMP="$(mktemp -d -t pushedtree-XXXXXX)" || {
   echo "pushed-tree check: no temp dir — VERIFIED NOTHING"; exit 77; }
-trap 'rm -rf "$TMP"' EXIT
+# KEEP_TREE=1 leaves the checkout and the full log on disk. The red path tells you to
+# use it, so it has to exist: when the pushed tree is red and your working tree is not,
+# the next thing you need is to stand IN the failing tree and run the oracle by hand.
+if [ -n "${KEEP_TREE:-}" ]; then
+  # ${..:-} because an early exit (clone failed) leaves these unset and `set -u` would
+  # turn the trap itself into an error, hiding the real reason we bailed.
+  trap 'echo; echo "KEEP_TREE — checkout: ${TREE:-(never created)}"; echo "            full log: ${LOG:-(never created)}"' EXIT
+else
+  trap 'rm -rf "$TMP"' EXIT
+fi
 
 # A real clone: committed content only (nothing from the working tree, nothing
 # gitignored) AND a working .git, which the absence-classifiers need. This is what a
@@ -81,6 +90,6 @@ if [ "$rc" -ne 0 ]; then
   git diff --name-only "$REF" -- | sed 's/^/  M /'
   git ls-files --others --exclude-standard | sed 's/^/  ? /'
   echo
-  echo "Full log: re-run with the tree kept, or read it inline above."
+  echo "To stand in the failing tree yourself: KEEP_TREE=1 $0 $REF"
 fi
 exit "$rc"
