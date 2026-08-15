@@ -142,6 +142,7 @@ run "a skip is not a pass (verdict accounting)" "$PY" nucleus/test_check_verdict
 # SKIPs loudly where no hook is installed — a fresh clone or CI legitimately has none, and
 # that is not a pass: it means nothing gates a push there. Pure stdlib, no DB.
 run "installed pre-push hook is the reviewed one" "$PY" nucleus/test_hook_integrity.py
+run "...and the reviewed one still does the job" "$PY" nucleus/test_pre_push_contract.py
 # The org's PII detector, gated on the two properties that failed in the field: a finding
 # is silenced only by REPAIR or by an explicit ruling (warn-once let a live finding sit
 # unmentioned for 22 days), and the guard never emits the shape it hunts (an unmasked

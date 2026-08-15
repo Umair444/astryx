@@ -35,6 +35,12 @@
 #    environment: unknown -> watched, not blocked. A missing /tmp must never be able to
 #    stop the org from pushing, and the alternative silently trains people to --no-verify.
 #
+# TWO ORACLES GUARD THIS FILE, and they cover different halves. test_hook_integrity.py
+# proves the INSTALLED copy is this one byte for byte and is executable — conformance to
+# ITSELF. test_pre_push_contract.py runs this body against stubbed gates and asserts what
+# it must DO (blocks red, allows 77, checks the pushed shas) — conformance to an
+# INDEPENDENT declaration. A checksum alone would report green on a gutted hook forever.
+#
 # HONEST GRADE (built-vs-live discipline): SAME-UID DETECTION — bypassable with
 # `git push --no-verify`, and LOCAL to this clone. NOT prevention. Off-uid CI (.github,
 # once Umair grants workflow scope) is the real ceiling; this is the automatic-vs-
@@ -42,21 +48,38 @@
 set -u
 REPO="$(git rev-parse --show-toplevel)" || exit 1
 
+# STDIN FIRST, before any child runs. The hook's stdin is a one-shot stream carrying the
+# refs being pushed, and ANY child that reads it consumes them — after which the loop below
+# sees nothing, silently falls back to HEAD, and checks a commit nobody is pushing while
+# printing a perfectly healthy report. privacy_gate.sh does not read stdin today, but it
+# pipes into `xargs` and two `--stdin` readers; that it stays harmless rests on GNU xargs
+# nulling its child's stdin — a property of that tool, not a promise this hook can keep.
+# Capturing before the first call makes the ref list unreachable by anything downstream,
+# so no future edit to either gate can quietly repoint what gets checked.
+refs_in="$(cat)"
+
 "$REPO/nucleus/privacy_gate.sh" || exit 1
 
-# The refs actually being pushed, from the hook's stdin (local_ref local_sha remote_ref
-# remote_sha). HEAD is the right answer for this single-branch org but not for a push of
-# some other branch, and a hook that checks the wrong commit is a hook that reads as
-# covered while covering nothing. A deletion is all-zero and has no tree to check.
+# The refs actually being pushed (local_ref local_sha remote_ref remote_sha). HEAD is the
+# right answer for this single-branch org but not for a push of some other branch, and a
+# hook that checks the wrong commit is a hook that reads as covered while covering nothing.
+# A deletion is all-zero and has no tree to check.
 refs=""
+saw_line=""
 while read -r _local_ref local_sha _remote_ref _remote_sha; do
+  [ -n "$_local_ref$local_sha" ] && saw_line=1
   case "$local_sha" in
     ""|0000000000000000000000000000000000000000) continue ;;
   esac
   case " $refs " in *" $local_sha "*) continue ;; esac
   refs="$refs $local_sha"
-done
-[ -n "$refs" ] || refs="HEAD"       # run by hand, or nothing on stdin
+done <<REFS
+$refs_in
+REFS
+# Nothing on stdin = run by hand -> HEAD is what the operator meant. But stdin that
+# yielded no shas (a branch DELETION) is not the same state: there is no tree being
+# pushed, so checking HEAD would spend the window proving something nobody asked about.
+[ -n "$refs" ] || [ -n "$saw_line" ] || refs="HEAD"
 
 rc=0
 for sha in $refs; do
