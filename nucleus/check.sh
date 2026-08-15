@@ -197,6 +197,12 @@ run "host-side prove scripts (logic)"  "$PY" nucleus/test_prove_hostside.py
 # transaction (messages_notify is a pure pg_notify, so a rollback wakes nobody).
 run "wake-audit classifier"           "$PY" nucleus/test_wake_audit.py
 run "wedge-watch discriminator"       "$PY" nucleus/test_wedge_watch.py
+# The DUTY-OUTPUT floor under wedge_watch, and the pair is the point: wedge_watch counts
+# dropped WAKES (MIN_DROPS=2, measured and correct), but the exchange rate into TIME is the
+# agent's wake frequency — for a once-daily seat two drops is two days. This asserts the
+# guard that watches the OUTPUT instead. Fully hermetic (the ctx is injected, no DB), but
+# the trigger BODY is gitignored, so it SKIPS loudly on a fresh clone.
+run "brief-silence duty floor"        "$PY" nucleus/test_brief_silence.py
 # Pure stdlib (rows are injected), but the trigger BODY is gitignored, so it SKIPS loudly
 # on a fresh clone. Carries a counterexample arm: the allowlist polarity is proven to be
 # load-bearing by showing the blocklist version go silent on the same fixture.
