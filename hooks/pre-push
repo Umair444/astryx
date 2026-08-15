@@ -1,16 +1,71 @@
 #!/usr/bin/env sh
-# astryx pre-push privacy gate — installed by init.sh's reconciler from THIS tracked
-# template. .git/hooks isn't version-controlled, so a re-clone / `.git` reset / fresh
-# machine would silently drop a hand-installed hook and privacy_gate would "run nowhere"
-# again (the resurrecting-invisibly gap). Version-controlling the hook body here + a
-# reconciler node that idempotently copies it makes the floor DURABLE and gives every
-# fresh clone privacy-by-default straight from ./init.sh.
+# astryx pre-push gate — installed by init.sh's reconciler from THIS tracked template.
+# .git/hooks isn't version-controlled, so a re-clone / `.git` reset / fresh machine would
+# silently drop a hand-installed hook and the gates would "run nowhere" again (the
+# resurrecting-invisibly gap). Version-controlling the hook body here + a reconciler node
+# that idempotently copies it makes the floor DURABLE and gives every fresh clone
+# privacy-by-default straight from ./init.sh. nucleus/test_hook_integrity.py proves the
+# INSTALLED copy is this one, byte for byte, and executable.
 #
-# Runs the gate before every push; a personal-tier file / value / DB-dump in the tree
-# BLOCKS the push (the 07-27 leak class).
+# TWO GATES, cheapest and highest-stakes first.
+#
+# 1. PRIVACY. A personal-tier file / value / DB-dump in the tree BLOCKS the push (the
+#    07-27 leak class). ~1s.
+#
+# 2. THE PUSHED TREE. Runs the real check.sh against a real clone of the commits being
+#    pushed — the exact bytes CI and every other machine will receive. It closes a class
+#    nothing else can see: an oracle committed while the SUBJECT it reads was left
+#    uncommitted. On the authoring machine both are in the working tree, so it is green;
+#    everywhere else the subject is present but STALE, and the oracle correctly fails.
+#    `exists()` is true, so every absent-subject classifier in the org is blind to it, and
+#    the red surfaces days later as "CI is broken" rather than as its cause. Live
+#    instance: HEAD was red in every clean clone for 7 commits (a2, msg 10000).
+#
+#    STEWARD'S RULING ON THE PUSH WINDOW (2026-08-16, asked by a4 msg 10053 / seed 10189).
+#    Wire it. Measured here rather than taken: 7s / 6s / 7s warm on three consecutive
+#    runs, against a window that was ~1s. Cold it is ~22s (seed's single run). The org
+#    committed 49 times in the last 7 days, peak 22 in a day — so the whole fleet pays
+#    about two and a half minutes a day for a defect class that otherwise fails only where
+#    nobody is looking. The nightly-cron alternative was declined for one reason: a day's
+#    lag is a day in which every clone and CI run inherits a red HEAD, and the live
+#    instance already proved the window is measured in commits, not hours.
+#
+#    A 77 (VERIFIED NOTHING — no temp dir, not a repo, no check.sh at that ref) WARNS and
+#    ALLOWS. That is the fail-safe polarity for a detector whose subject is the
+#    environment: unknown -> watched, not blocked. A missing /tmp must never be able to
+#    stop the org from pushing, and the alternative silently trains people to --no-verify.
 #
 # HONEST GRADE (built-vs-live discipline): SAME-UID DETECTION — bypassable with
 # `git push --no-verify`, and LOCAL to this clone. NOT prevention. Off-uid CI (.github,
 # once Umair grants workflow scope) is the real ceiling; this is the automatic-vs-
 # manual-nowhere floor, and it guards the high-stakes deploy-push.
-exec "$(git rev-parse --show-toplevel)/nucleus/privacy_gate.sh"
+set -u
+REPO="$(git rev-parse --show-toplevel)" || exit 1
+
+"$REPO/nucleus/privacy_gate.sh" || exit 1
+
+# The refs actually being pushed, from the hook's stdin (local_ref local_sha remote_ref
+# remote_sha). HEAD is the right answer for this single-branch org but not for a push of
+# some other branch, and a hook that checks the wrong commit is a hook that reads as
+# covered while covering nothing. A deletion is all-zero and has no tree to check.
+refs=""
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+  case "$local_sha" in
+    ""|0000000000000000000000000000000000000000) continue ;;
+  esac
+  case " $refs " in *" $local_sha "*) continue ;; esac
+  refs="$refs $local_sha"
+done
+[ -n "$refs" ] || refs="HEAD"       # run by hand, or nothing on stdin
+
+rc=0
+for sha in $refs; do
+  "$REPO/nucleus/pushed_tree_check.sh" "$sha"
+  case $? in
+    0)  ;;
+    77) echo "pre-push: pushed-tree check VERIFIED NOTHING for $sha (exit 77) — allowing"
+        echo "          the push. Nothing was proven about what other machines receive." ;;
+    *)  rc=1 ;;
+  esac
+done
+exit "$rc"
