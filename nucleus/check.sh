@@ -118,6 +118,12 @@ run "dep manifest covers all imports"  "$PY" nucleus/deps.py coverage
 # 08-13). Derives the expected set from the nucleus/test_*.py glob — a new oracle must
 # be wired here or this goes RED. Pure stdlib, no DB.
 run "check.sh runs every committed oracle" "$PY" nucleus/test_check_coverage.py
+# The interim ratchet for the mutation estate (steward's ruling 08-15: the FULL probe run
+# costs 100.6s and belongs in CI, not in the interactive loop — a gate slow enough to skip
+# gets skipped). This is the sub-second structural half: every nucleus/mutants_*.py imports,
+# declares SUBJECT/ORACLE/ENV/MUTANTS, points at files that exist, and still has patterns
+# that apply. It asserts APPLICABILITY and never discrimination. Pure stdlib, no DB, ~0.1s.
+run "mutants files still point at something real" "$PY" nucleus/test_mutants_wellformed.py
 # The SECOND blind spot in this file, the same shape one level down: the gate above proves
 # every oracle is INVOKED; this one proves an invoked oracle actually RAN. Drives this
 # file's own run()/verdict() against synthetic gates. Pure stdlib, no DB.
