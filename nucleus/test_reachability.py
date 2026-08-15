@@ -76,7 +76,10 @@ row, or inside a subprocess call. Comment lines are stripped first. This distinc
 load-bearing and was measured, not assumed: a mention-grep "proves" privacy_gate.sh is
 invoked by init.sh, check.sh and backup.sh — all three are COMMENTS — and by
 `observatory/api/main.py`, which defines an unrelated middleware function of the same
-name. Its one real invoker is hooks/pre-push:16. A grep for the name answers a different
+name. Its one real invoker is the exec line in hooks/pre-push. (That citation said
+":16" for about four hours and the line is now :61 — a2 caught it. A LINE NUMBER IN PROSE
+IS A MECHANICAL CLAIM WITH NO RUNNER, and this hook is actively growing, so the file name
+and the invocation form are the parts worth asserting.) A grep for the name answers a different
 question than this file asks, and answers it in the covered-looking direction. (Same
 reason d0bfbbd exists: prove a gate RUNS, not that its line exists.)
 
@@ -358,7 +361,7 @@ FIXTURES = [
      "nucleus/tokenwatch.py"),
     ("package-relative, several names on the line", True,
      [("triggers/x.py", "        from nucleus import charter, world")], "nucleus/world.py"),
-    # The live miss. steward wired pushed_tree_check.sh into hooks/pre-push:63 and this
+    # The live miss. steward wired pushed_tree_check.sh into hooks/pre-push and this
     # gate STILL accused it: the line runs a quoted, variable-prefixed path directly, with
     # no interpreter token and no line-initial path. The gate built to find unwired files
     # false-accused the one file it had just been proven on. A command word is the FIRST
@@ -414,6 +417,28 @@ def main():
         for p in stale:
             print(f"  {p} — {'no longer in nucleus/' if p not in pop else 'is now invoked; delete the exemption'}")
         return 1
+
+    # ── INHERITED REACHABILITY FROM A DEAD PARENT (abstractor-2's hypothesis) ──────────
+    # This gate asks "does any line RUN this file", not "is the INVOKER itself live", so a
+    # script whose only caller is an EXEMPT manual tool inherits reachability from a parent
+    # that runs nowhere. a2 measured it as latent-not-live (zero instances across 63 reached)
+    # and proposed a line in the header naming the trip condition. A trip condition written
+    # in prose is a test with no runner, and it is zero TODAY — which is exactly when a
+    # standing assert is free to add. Re-measured on the grown manifest before adding it:
+    # 77 scripts, 11 exempt/unreached, still zero. Skipped when blind, like every other
+    # accusation here: an absent surface inflates `unreached` and would manufacture parents.
+    if not missing:
+        dead = set(EXEMPT) | set(unreached)
+        inherited = [(f, sorted({lbl for lbl, _ in hits}))
+                     for f, hits in reached.items()
+                     if {lbl for lbl, _ in hits} <= dead and hits]
+        if inherited:
+            print("reachability: REACHED ONLY BY A PARENT THAT RUNS NOWHERE —")
+            for f, parents in inherited:
+                print(f"  {f}  <- {', '.join(parents)}")
+            print("Every invoker of these is itself exempt or unreached, so the chain")
+            print("bottoms out in nothing automatic. Wire the parent or the child.")
+            return 1
 
     if accused and missing:
         # NEVER ACCUSE WHILE BLIND. A file whose only invoker lives on an absent surface
