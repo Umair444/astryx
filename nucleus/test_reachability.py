@@ -134,6 +134,12 @@ EXEMPT = {
     # READ-AS-DATA edge — only invocation — so a file watched by a committed gate still
     # reads as unreached. That edge, not a fifth exemption, is the fix. Proposed, not built.
     "nucleus/mutants_pre_push_contract.py": "data: mutant spec, read by mutation_probe.py when pointed at it",
+    # FIFTH, same class, same night, and the last one added by hand: the derivation a4
+    # names above (mutants_*.py are READ AS DATA by test_mutants_wellformed.py, a committed
+    # gate this file has no edge type for) retires all five at once. Written twice — the
+    # first copy was clobbered by a concurrent write to this file from the shared working
+    # tree, which is its own small lesson about who else has the file open.
+    "nucleus/mutants_check_stamp.py": "data: mutant spec, read by mutation_probe.py when pointed at it",
     "nucleus/__init__.py":    "library: package marker, imported implicitly by `from nucleus import X`",
     # REACHED, but through a construction no line parser can follow — this is the
     # declared residual made concrete, and the reason exemptions carry a file:line.
