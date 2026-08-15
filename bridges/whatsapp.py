@@ -41,7 +41,7 @@ from pathlib import Path
 import asyncpg
 from fastapi import FastAPI, Request, Response
 
-from .common import (HERE, MEDIA_DIR, route_target, describe_media,
+from .common import (HERE, MEDIA_DIR, Outcome, route_target, describe_media,
                      env, listen, load_routes,
                      record_poll, split_files, split_polls, step_line,
                      update_poll_votes, vote_body, vote_changes, wire_insert)
@@ -152,22 +152,37 @@ async def fetch_media(chat: str, msgid: str, media: str) -> Path | str:
     return f"<{media} attached, file never landed in the store>"
 
 
-async def send_files(chat: str, files: list[str]):
+async def send_files(chat: str, files: list[str], out: Outcome | None = None):
+    """Attachments. `out` is optional so existing callers keep working; when supplied,
+    every skipped or failed upload reaches the receipt instead of vanishing."""
+    def _fail(detail):
+        if out is not None:
+            out.failed("file", detail)
     if not DATA_HOST:
+        if files and out is not None:
+            # NOT a failure: WA_DATA_HOST unset is the documented media on/off switch for
+            # this surface (see :55), i.e. an operator decision, not broken config. The
+            # text portion genuinely delivered, so failing the row here would install a
+            # false failure. But the caller did attach something that was silently
+            # dropped, so it is REPORTED. (gemini, msg 5981.)
+            out.noted("file", f"media disabled on this surface (WA_DATA_HOST unset) — "
+                              f"{len(files)} attachment(s) not sent")
         return
     outbox = Path(DATA_HOST) / "astryx-outbox"
     outbox.mkdir(exist_ok=True)
     for f in files:
         src = Path(f)
         if not src.is_file():
+            # Was a silent `continue`, while the body still said "attached".
+            _fail(f"path not found: {f}")
             continue
         dst = outbox / f"{int(time.time())}-{src.name}"
         try:
             shutil.copy(src, dst)
             await wacli("send", "file", "--to", chat,
                         "--file", f"{DATA_CTR}/astryx-outbox/{dst.name}")
-        except Exception:
-            pass
+        except Exception as e:
+            _fail(e)
 
 
 # ---------------------------------------------------------------------- polls
@@ -178,8 +193,14 @@ async def send_poll(chat: str, agent: str, question: str, options: list[str], mu
     if multi != 1:
         args += ["--multi", str(multi)]
     pid = find_id(json.loads(await wacli(*args)))
-    if pid:
-        await record_poll(pool, pid, chat, agent, question, options, multi)
+    # GEMINI, msg 4669 (its hunk, kept verbatim in intent): a poll that lands but never
+    # records is one whose votes can never come back to its author — the vote-return path
+    # keys on the polls row, so `if pid:` silently conditioned the entire feedback loop on
+    # a value that can be absent without error.
+    if not pid:
+        raise RuntimeError("wacli returned no message id for the poll — not recorded, "
+                           "so its votes can never return to the sender")
+    await record_poll(pool, pid, chat, agent, question, options, multi)
 
 
 async def refresh_poll(chat: str, pid: str) -> tuple[dict, dict] | None:
@@ -454,7 +475,7 @@ async def deliver(row):
     agent = row["from_agent"]
     text, files = split_files(row["body"])
     text, polls = split_polls(text, max_options=12)
-    ok, message_id, error = True, None, None
+    out = Outcome()
     try:
         job = jobs.pop(agent, None)
         while job and job["busy"]:                # let an in-flight edit finish
@@ -464,29 +485,55 @@ async def deliver(row):
             try:                                  # reuse the live progress bubble
                 await wacli("messages", "edit", "--chat", chat,
                             "--id", job["ph_id"], "--message", text)
-                message_id, sent = job["ph_id"], True
+                out.sent(job["ph_id"])
+                sent = True
             except Exception:
-                pass
+                pass                              # falls through to a normal send below
         if text and not sent:
             res = await PROVIDER.send(chat, text)
-            ok, message_id, error = res.ok, res.message_id, res.error
-        await send_files(chat, files)
+            if res.ok:
+                out.sent(res.message_id)
+            else:
+                out.failed("text", res.error or "provider reported not-ok")
+        await send_files(chat, files, out)
         for q, opts, multi in polls:
             try:
                 await send_poll(chat, agent, q, opts, multi)
-            except Exception:
-                pass
+            except Exception as e:
+                # GEMINI, msg 4669: was `except Exception: pass`, so a failed poll left
+                # the group a question with no options and the row said delivered.
+                out.failed("poll", e)
+                # NO RETRACTION HERE, and the verb is not the reason — it exists.
+                # `wacli messages revoke --chat <jid> --id <msgid>` is real (gemini
+                # verified it against --help, msg 5981; confirmed independently here).
+                # Two better reasons, both surface-specific:
+                #  1. UNREACHABLE IN THIS FAILURE MODE. The trigger is find_id() returning
+                #     nothing, and --id is required — so there is no id to revoke exactly
+                #     when we would want to. Retraction is only reachable in the narrower
+                #     case where the poll came back WITH an id and the DB write then
+                #     failed, which is a different bug from the one this patch repairs.
+                #  2. A REVOKE IS VISIBLE. It leaves a "This message was deleted"
+                #     tombstone in the family group, in Umair's voice, in front of his
+                #     family. A quietly orphaned poll is a strictly better failure on this
+                #     surface than a tombstone they watch appear. Even where reachable,
+                #     retraction stays OFF here by decision, not by omission.
+                # Warn instead — best-effort, and its own failure must not mask the real
+                # one above.
+                try:
+                    await PROVIDER.send(chat, (
+                        f"⚠️ that poll did not register — votes on it cannot reach "
+                        f"{agent}. Please reply in text instead. ({type(e).__name__})"))
+                except Exception:
+                    pass
         try:
             await wacli("presence", "paused", "--to", chat)
         except Exception:
-            pass
+            pass                                  # cosmetic only — never fails the row
     except Exception as e:
-        ok, error = False, str(e)[:200]
+        out.failed("deliver", e)
     await pool.execute(
         "UPDATE messages SET status=$2, delivered_at=now(), delivery=$3 WHERE id=$1",
-        row["id"], "delivered" if ok else "dead",
-        json.dumps({"ok": ok, "handle": f"whatsapp:{chat}",
-                    "message_id": message_id, "rendered": text, "error": error}))
+        row["id"], out.status, out.receipt(f"whatsapp:{chat}", text))
 
 
 # ---------------------------------------------------------------------- app

@@ -35,7 +35,7 @@ import asyncpg
 import httpx
 from fastapi import FastAPI
 
-from .common import (HERE, reacted_message, reaction_signal, route_target, describe_media, env, listen,
+from .common import (HERE, Outcome, reacted_message, reaction_signal, route_target, describe_media, env, listen,
                      load_routes, media_path,
                      record_poll, split_files, split_polls, step_line,
                      update_poll_votes, vote_body, wire_insert)
@@ -80,7 +80,7 @@ async def deliver(row):
     agent = row["from_agent"]
     text, files = split_files(row["body"])
     text, polls = split_polls(text, max_options=10)
-    ok, message_id, error = True, None, None
+    out = Outcome()
     try:
         job = jobs.pop(agent, None)
         sent = False
@@ -88,38 +88,70 @@ async def deliver(row):
             try:                                   # replace the progress bubble
                 await tg("editMessageText", chat_id=int(chat),
                          message_id=job["ph_id"], text=text[:4096])
-                message_id, sent = str(job["ph_id"]), True
+                out.sent(job["ph_id"])
+                sent = True
             except Exception:
-                pass
+                pass                               # falls through to a normal send below
         if text and not sent:
             res = await PROVIDER.send(chat, text)
-            ok, message_id, error = res.ok, res.message_id, res.error
+            if res.ok:
+                out.sent(res.message_id)
+            else:
+                out.failed("text", res.error or "provider reported not-ok")
         for f in files:
             p = Path(f)
-            if p.is_file():
-                method, field = ("sendPhoto", "photo") if p.suffix.lower() in (
-                    ".png", ".jpg", ".jpeg", ".webp") else ("sendDocument", "document")
+            if not p.is_file():
+                out.failed("file", f"path not found: {f}")
+                await tg("sendMessage", chat_id=int(chat),
+                         text=f"(file {p.name} was NOT sent — path not found)")
+                continue
+            method, field = ("sendPhoto", "photo") if p.suffix.lower() in (
+                ".png", ".jpg", ".jpeg", ".webp") else ("sendDocument", "document")
+            try:
                 r = await http.post(f"{API}/{method}", data={"chat_id": chat},
                                     files={field: (p.name, p.read_bytes())}, timeout=300)
                 if not r.json().get("ok"):
-                    await tg("sendMessage", chat_id=int(chat),
-                             text=f"(file {p.name} failed to send)")
+                    raise RuntimeError(str(r.json().get("description", "sendfile not ok"))[:120])
+            except Exception as e:
+                out.failed("file", e)
+                await tg("sendMessage", chat_id=int(chat),
+                         text=f"(file {p.name} failed to send)")
         for q, opts, multi in polls:
+            pid = None
             try:
                 msg = await tg("sendPoll", chat_id=int(chat), question=q[:300],
                                options=[o[:100] for o in opts], is_anonymous=False,
                                allows_multiple_answers=multi > 1)
-                await record_poll(pool, msg["poll"]["id"], f"tg:{chat}", agent,
-                                  q, opts, multi)
-            except Exception:
-                pass
+                pid = msg["poll"]["id"]
+            except Exception as e:
+                out.failed("poll", e)
+                continue
+            # Poll is live and tappable; votes reach the agent only via the `polls` row.
+            # Cannot record before posting (no id until the platform assigns one), so an
+            # unrecorded poll is made LOUD rather than left silently uncounted. Telegram
+            # deletion needs the CHAT message id, not the poll id — msg["message_id"] —
+            # so retraction rides that and degrades to a warning if it fails.
+            try:
+                await record_poll(pool, pid, f"tg:{chat}", agent, q, opts, multi)
+            except Exception as e:
+                out.failed("poll-record", e)
+                retracted = False
+                try:
+                    await tg("deleteMessage", chat_id=int(chat),
+                             message_id=msg["message_id"])
+                    retracted = True
+                except Exception:
+                    pass
+                await tg("sendMessage", chat_id=int(chat),
+                         text=(f"⚠️ that poll was not recorded — votes on it cannot reach "
+                               f"{agent}." + (" It has been removed."
+                                              if retracted else " DO NOT VOTE ON IT.")
+                               + f" Please reply in text instead. ({type(e).__name__})"))
     except Exception as e:
-        ok, error = False, str(e)[:200]
+        out.failed("deliver", e)
     await pool.execute(
         "UPDATE messages SET status=$2, delivered_at=now(), delivery=$3 WHERE id=$1",
-        row["id"], "delivered" if ok else "dead",
-        json.dumps({"ok": ok, "handle": f"telegram:{chat}",
-                    "message_id": message_id, "rendered": text, "error": error}))
+        row["id"], out.status, out.receipt(f"telegram:{chat}", text))
 
 
 async def on_step(ev: dict):

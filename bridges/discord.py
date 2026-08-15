@@ -35,7 +35,7 @@ import discord
 import httpx
 from fastapi import FastAPI
 
-from .common import (HERE, agent_exists, reacted_message, reaction_signal, route_target, describe_media, env, listen,
+from .common import (HERE, Outcome, agent_exists, reacted_message, reaction_signal, route_target, describe_media, env, listen,
                      load_routes, media_path,
                      record_poll, split_files, split_polls, step_line,
                      update_poll_votes, vote_body, vote_changes, wire_insert)
@@ -112,7 +112,7 @@ async def deliver(row):
     agent = row["from_agent"]
     text, files = split_files(row["body"])
     text, polls = split_polls(text, max_options=10)
-    ok, message_id, error = True, None, None
+    out = Outcome()
     try:
         ch = client.get_channel(int(cid)) or await client.fetch_channel(int(cid))
         route = next((r for r in routes() if str(r.get("chat")) == cid), None)
@@ -135,15 +135,26 @@ async def deliver(row):
                 if not mid:                        # no webhook (or it failed): bot sends
                     m = await ch.send(chunk)
                     mid = str(getattr(m, "id", "") or "")
-                message_id = mid or message_id     # id enables reaction attribution
+                if not mid:                        # neither path produced an id
+                    out.failed("text", "no message id returned by webhook or bot send")
+                out.sent(mid)                      # id enables reaction attribution
         for f in files:
             p = Path(f)
-            if p.is_file():
-                try:                               # webhook so media carries the agent's name
-                    if not (hook and await hook_file(hook, agent, p)):
-                        await ch.send(file=discord.File(str(p)))
-                except Exception:
-                    await ch.send(f"(file {p.name} failed to send)")
+            if not p.is_file():
+                # Was a silent `continue`. The body still says "screenshot below", so a
+                # mistyped or moved path told the reader an artifact was attached that
+                # never left. On the Law-6 submit checkpoint the owner approves an
+                # IRREVERSIBLE act on the strength of that image, so a skipped upload
+                # must never be indistinguishable from a delivered one.
+                out.failed("file", f"path not found: {f}")
+                await ch.send(f"(file {p.name} was NOT sent — path not found)")
+                continue
+            try:                                   # webhook so media carries the agent's name
+                if not (hook and await hook_file(hook, agent, p)):
+                    await ch.send(file=discord.File(str(p)))
+            except Exception as e:
+                out.failed("file", e)
+                await ch.send(f"(file {p.name} failed to send)")
         for q, opts, multi in polls:
             try:
                 pid = await hook_poll(hook, agent, q, opts, multi) if hook else None
@@ -154,16 +165,40 @@ async def deliver(row):
                     for o in opts:
                         poll.add_answer(text=o[:55])
                     pid = str((await ch.send(poll=poll)).id)
+            except Exception as e:
+                out.failed("poll", e)
+                await ch.send(f"(poll failed: {e})")
+                continue
+            # The poll is now LIVE AND TAPPABLE, and its votes reach the asking agent
+            # ONLY through the `polls` row: _poll_event opens with SELECT ... WHERE
+            # msg_id and returns on `if not rec`. An unrecorded poll therefore discards
+            # every vote in silence while Discord's own UI confirms the tap to the voter
+            # — the owner sees his answer registered, the agent never hears it and waits
+            # inside its own no-nag guard for a decision he believes he gave.
+            # We cannot record BEFORE posting: the id does not exist until the platform
+            # assigns it. So the failure is made LOUD instead — retract the orphan if we
+            # can, shout if we cannot, and fail the row either way.
+            try:
                 await record_poll(pool, pid, f"dc:{cid}", agent, q, opts, multi)
             except Exception as e:
-                await ch.send(f"(poll failed: {e})")
+                out.failed("poll-record", e)
+                retracted = False
+                try:
+                    await (await ch.fetch_message(int(pid))).delete()
+                    retracted = True
+                except Exception:
+                    pass
+                await ch.send(
+                    f"⚠️ that poll was not recorded — votes on it cannot reach "
+                    f"{display_name(agent)}."
+                    + (" It has been removed." if retracted
+                       else " DO NOT VOTE ON IT.")
+                    + f" Please reply in text instead. ({type(e).__name__})")
     except Exception as e:
-        ok, error = False, str(e)[:200]
+        out.failed("deliver", e)
     await pool.execute(
         "UPDATE messages SET status=$2, delivered_at=now(), delivery=$3 WHERE id=$1",
-        row["id"], "delivered" if ok else "dead",
-        json.dumps({"ok": ok, "handle": f"discord:{cid}",
-                    "message_id": message_id, "rendered": text, "error": error}))
+        row["id"], out.status, out.receipt(f"discord:{cid}", text))
 
 
 async def on_step(ev: dict):

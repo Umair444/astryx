@@ -178,6 +178,84 @@ async def reaction_signal(pool, channel: str, thread: str, reactor: str,
 
 
 # ----------------------------------------------------------------------- polls
+class Outcome:
+    """The delivery receipt's producer — it reports THE WORK, not the wrapper.
+
+    Every bridge's `deliver()` used to open with `ok, message_id, error = True, None, None`
+    and wrap the whole body in one try, while each inner step swallowed its own failure
+    (`except Exception: pass`, a silent `if p.is_file():`, a `(poll failed)` note that
+    never touched `ok`). So the row stamped `delivered` whenever the OUTER try didn't
+    throw — i.e. it recorded that the wrapper survived, not that anything arrived. Three
+    separate reports in 24h (canopus msgs 3468/4510/5707, gemini 4669) were that one
+    sentence in three costumes.
+
+    `ok` is the AND of every part, so ANY failed part marks the row `dead` and canopus's
+    existing `outbound_undelivered` guard sees it within the hour. That is deliberate:
+    the repair routes failure into the detector the org already has instead of adding a
+    second one — a detector cannot witness its own producer being wrong, so a falsely
+    settled row is invisible to every guard of that shape by construction.
+
+    PARTIAL SUCCESS IS PRESERVED, NOT FLATTENED. A body whose text lands and whose poll
+    fails is not the same event as nothing arriving, and collapsing them loses what the
+    reader needs. `message_id` still records the text that landed and `error` names each
+    failed part in order, so the receipt distinguishes "nothing arrived" (`message_id`
+    null) from "text arrived, poll didn't" (`message_id` set, `error` names the poll).
+
+    The receipt SCHEMA is unchanged — same five keys. Only its honesty changes.
+    """
+
+    def __init__(self):
+        self.message_id: str | None = None
+        self._entries: list[tuple[bool, str]] = []   # (is_failure, text), in order
+
+    def sent(self, message_id=None) -> None:
+        """A part succeeded; keep the first real platform id (the text's) for the row."""
+        if message_id and not self.message_id:
+            self.message_id = str(message_id)
+
+    def failed(self, part: str, detail) -> None:
+        """A part FAILED — something was attempted and did not arrive. Fails the row."""
+        self._entries.append((True, f"{part}: {self._say(detail)}"[:200]))
+
+    def noted(self, part: str, detail) -> None:
+        """A part was DELIBERATELY NOT ATTEMPTED — reported, but does NOT fail the row.
+
+        gemini's catch (msg 5981), and it is the mirror of the bug this class exists for.
+        `WA_DATA_HOST` unset is not broken configuration: `whatsapp.py:55` documents it as
+        the surface's media on/off switch. Treating an operator's deliberate setting as a
+        hard failure would install a FALSE FAILURE in the same breath as we removed a false
+        success — and it would fail rows whose text genuinely delivered. But a caller who
+        attached a file still had it silently dropped, which deserves a receipt. So the two
+        cases get different answers rather than one of them getting the wrong one.
+        """
+        self._entries.append((False, f"note: {part}: {self._say(detail)}"[:200]))
+
+    @staticmethod
+    def _say(detail) -> str:
+        return (f"{type(detail).__name__}: {detail}"
+                if isinstance(detail, BaseException) else str(detail))
+
+    @property
+    def ok(self) -> bool:
+        return not any(is_failure for is_failure, _ in self._entries)
+
+    @property
+    def error(self) -> str | None:
+        # Failures first so the reason a row is `dead` is never buried behind a note.
+        ordered = ([t for f, t in self._entries if f]
+                   + [t for f, t in self._entries if not f])
+        return "; ".join(ordered)[:500] or None
+
+    @property
+    def status(self) -> str:
+        return "delivered" if self.ok else "dead"
+
+    def receipt(self, handle: str, rendered: str | None) -> str:
+        return json.dumps({"ok": self.ok, "handle": handle,
+                           "message_id": self.message_id,
+                           "rendered": rendered, "error": self.error})
+
+
 async def record_poll(pool, msg_id: str, chat: str, agent: str | None,
                       question: str, options: list[str], multi: int):
     """Record a poll the moment it exists (agent-sent or externally seen)."""
