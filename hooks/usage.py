@@ -36,7 +36,22 @@ try:
                          + u.get("cache_read_input_tokens", 0)
                          + u.get("cache_creation_input_tokens", 0))
     if total:
-        limit = 1_000_000 if total > 200_000 else 200_000
+        # The window is inferred from EVIDENCE, not just the current load: tokenwatch
+        # keeps a per-agent high-water mark (an observed load of N proves the window is
+        # >= N), so an agent the compact trigger keeps under 200k still knows its real
+        # ceiling. Fallback is the amnesiac rule — early warning, the cheap direction.
+        limit = 0
+        try:
+            from pathlib import Path
+            sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+            slug = os.path.basename(os.path.dirname(tp))
+            if "-homes-" in slug:
+                from nucleus import tokenwatch
+                limit = tokenwatch.infer_limit(total, slug.rsplit("-homes-", 1)[-1])
+        except Exception:
+            pass
+        if not limit:
+            limit = 1_000_000 if total > 200_000 else 200_000
         pct = 100.0 * total / limit
         # Advice scales with load; above 85% the agent is told to act, because the
         # compact trigger may be minutes away and the agent is zero minutes away.

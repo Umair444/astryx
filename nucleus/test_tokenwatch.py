@@ -16,6 +16,7 @@ All fixture agents and token counts are CERTIFIED FAKE — no owner-shaped value
 Run: venv/bin/python nucleus/test_tokenwatch.py   (also collected by pytest).
 """
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -42,6 +43,10 @@ def _fake_project(agent: str, lines: list[str]) -> Path:
     d = root / f"-home-umair-astryx-homes-{agent}"
     d.mkdir()
     (d / "session.jsonl").write_text("\n".join(lines) + "\n")
+    # Every fixture gets a FRESH high-water store: the mark is deliberately durable
+    # state, and durable state leaking between tests would let one fixture's proof
+    # decide another test's limit (or, worse, pollute the org's real var/ store).
+    tokenwatch.HIGHWATER = Path(tempfile.mkdtemp()) / "highwater.json"
     return root
 
 
@@ -89,6 +94,68 @@ def test_no_transcript_reads_honest_zero():
     try:
         r = tokenwatch.context_tokens("testagent")
         assert not r["found"] and r["tokens"] == 0
+    finally:
+        tokenwatch.PROJECTS = old
+
+
+# ---------------------------------------------------------------- the high-water mark
+def test_high_water_defeats_the_compaction_amnesia():
+    # memory's 2026-08-15 false positive, pinned: a PAST transcript proved the 1M
+    # window, the current session reads 178k — the amnesiac rule rendered that as 89%
+    # of 200k and compacted the seed at 18% of its real window. The mark remembers
+    # what the current reading cannot show.
+    old = tokenwatch.PROJECTS
+    root = _fake_project("testagent", [_usage_line(990_000)])    # historical proof
+    d = root / "-home-umair-astryx-homes-testagent"
+    os.utime(d / "session.jsonl", (1_000_000_000, 1_000_000_000))
+    (d / "zz-current.jsonl").write_text(_usage_line(178_000) + "\n")   # newest by mtime
+    tokenwatch.PROJECTS = root
+    try:
+        r = tokenwatch.context_tokens("testagent")
+        assert r["tokens"] == 178_000, r          # current load: the newest transcript
+        assert r["limit"] == 1_000_000, r         # window: proven by the OLD transcript
+        assert r["pct"] == 17.8, r                # not 89.0
+    finally:
+        tokenwatch.PROJECTS = old
+
+
+def test_high_water_delta_scan_and_monotonic_mark():
+    old = tokenwatch.PROJECTS
+    root = _fake_project("testagent", [_usage_line(50_000)])
+    tokenwatch.PROJECTS = root
+    f = root / "-home-umair-astryx-homes-testagent" / "session.jsonl"
+    try:
+        assert tokenwatch.high_water("testagent") == 50_000
+        store = json.loads(tokenwatch.HIGHWATER.read_text())
+        assert store["testagent"]["files"]["session.jsonl"]["scanned"] == f.stat().st_size
+        # Rewrite the HEAD in place (same byte length) to a larger value, then append a
+        # smaller one: a full rescan would answer 90_000, a true delta scan answers
+        # 70_000 — the offset, not luck, decides which ran.
+        head = f.read_bytes().replace(b"50000", b"90000", 1)
+        f.write_bytes(head)
+        with open(f, "a") as fh:
+            fh.write(_usage_line(70_000) + "\n")
+        assert tokenwatch.high_water("testagent") == 70_000
+        # past 200k the mark proves the window, and it survives the file's deletion
+        with open(f, "a") as fh:
+            fh.write(_usage_line(300_000) + "\n")
+        assert tokenwatch.high_water("testagent") == 300_000
+        f.unlink()
+        assert tokenwatch.high_water("testagent") == 300_000
+        assert tokenwatch.infer_limit(120_000, "testagent") == 1_000_000
+        assert tokenwatch.infer_limit(120_000) == 200_000    # agentless stays pure
+    finally:
+        tokenwatch.PROJECTS = old
+
+
+def test_high_water_fails_open_on_corrupt_store():
+    old = tokenwatch.PROJECTS
+    root = _fake_project("testagent", [_usage_line(250_000)])
+    tokenwatch.PROJECTS = root
+    tokenwatch.HIGHWATER.parent.mkdir(parents=True, exist_ok=True)
+    tokenwatch.HIGHWATER.write_text("not json {{{")
+    try:
+        assert tokenwatch.high_water("testagent") == 250_000   # rebuilt from transcripts
     finally:
         tokenwatch.PROJECTS = old
 

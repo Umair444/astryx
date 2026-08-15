@@ -36,15 +36,103 @@ sys.path.insert(0, str(REPO))
 
 PROJECTS = Path.home() / ".claude" / "projects"
 CONTEXT_LIMIT = 200_000          # default window; % figures are against the INFERRED one
+HIGHWATER = REPO / "var" / "tokenwatch_highwater.json"   # var/ is gitignored, derived state
 
 
-def infer_limit(tokens: int) -> int:
+def infer_limit(tokens: int, agent: str | None = None) -> int:
     """A session cannot exceed a window it does not have: an observed load past 200k is
-    PROOF of the extended (1M) window, and the seed's own 656k session was rendering as
-    328% before this existed — a percentage that cannot be true is worse than no number.
-    Under 200k the small window is assumed; that can under-claim an idle 1M session's
-    headroom, which is the safe direction for a meter that feeds a compaction actuator."""
-    return 1_000_000 if tokens > 200_000 else CONTEXT_LIMIT
+    PROOF of the extended (1M) window. Under 200k alone, the small window is assumed —
+    the safe direction for a meter that feeds a compaction actuator.
+
+    THE MARK (memory's finding, 2026-08-15): reading only the CURRENT load gives the
+    inference amnesia, and the actuator makes it self-sealing — it compacts at 80% of
+    the assumed 200k, so a session it clamps can never again produce the >200k reading
+    that would prove its real window. The seed was compacted at 18% of a 1M window its
+    own transcript had already demonstrated (999,318 observed 08-14). So with an agent
+    named, the evidence is max(current, high_water(agent)): an observed load of N is
+    DURABLE proof the window is >= N. Per-agent, never fleet-wide — spawn.sh pins
+    --model per charter, so one agent's tier proves nothing about another's.
+    Polarity: a stale-high mark after an account DOWNGRADE errs toward compacting late,
+    which degrades to the pre-tokenwatch world (hooks/usage.py still warns); the
+    amnesiac rule imposed a certain, recurring 5x-too-frequent compaction tax today."""
+    evidence = max(tokens, high_water(agent)) if agent else tokens
+    return 1_000_000 if evidence > 200_000 else CONTEXT_LIMIT
+
+
+def _hw_load() -> dict:
+    try:
+        return json.loads(HIGHWATER.read_text())
+    except Exception:
+        return {}
+
+
+def _hw_save(store: dict) -> None:
+    HIGHWATER.parent.mkdir(parents=True, exist_ok=True)
+    tmp = HIGHWATER.with_suffix(".tmp")
+    tmp.write_text(json.dumps(store))
+    tmp.replace(HIGHWATER)          # atomic: concurrent readers see old or new, never torn
+
+
+def high_water(agent: str) -> int:
+    """The largest context load ever OBSERVED in this agent's transcripts — durable
+    proof of the window it demonstrably had. Incremental so three consumers can afford
+    it: per-file byte offsets live in HIGHWATER; the first call pays one full scan
+    (~1.5s on a 20MB transcript), every later call reads only the appended delta, and
+    only up to the last complete line (a partial tail line is re-read next call, never
+    half-parsed). The agent's mark is MONOTONIC: a deleted transcript's proof outlives
+    the file. Fail-open: any error returns what is already proved (worst case 0, which
+    restores the pre-mark behaviour — compact early, the cheap direction)."""
+    try:
+        store = _hw_load()
+        rec = store.get(agent) or {"max": 0, "files": {}}
+        d = _project_dir(agent)
+        changed = False
+        seen: set[str] = set()
+        for f in (d.glob("*.jsonl") if d else ()):
+            seen.add(f.name)
+            try:
+                size = f.stat().st_size
+            except OSError:
+                continue
+            ent = rec["files"].get(f.name) or {"scanned": 0, "max": 0}
+            start = ent["scanned"] if 0 <= ent["scanned"] <= size else 0  # shrunk → rescan
+            if start >= size:
+                continue
+            try:
+                with open(f, "rb") as fh:
+                    fh.seek(start)
+                    data = fh.read()
+            except OSError:
+                continue
+            nl = data.rfind(b"\n")
+            if nl < 0:
+                continue
+            mx = ent["max"]
+            for line in data[:nl + 1].splitlines():
+                try:
+                    u = (json.loads(line).get("message") or {}).get("usage")
+                except (json.JSONDecodeError, AttributeError):
+                    continue
+                if u and "input_tokens" in u:
+                    t = (u.get("input_tokens", 0)
+                         + u.get("cache_read_input_tokens", 0)
+                         + u.get("cache_creation_input_tokens", 0))
+                    mx = max(mx, t)
+            rec["files"][f.name] = {"scanned": start + nl + 1, "max": mx}
+            changed = True
+        peak = max([rec["max"], *(e["max"] for e in rec["files"].values())])
+        if peak != rec["max"]:
+            rec["max"] = peak
+            changed = True
+        for name in [n for n in rec["files"] if n not in seen]:
+            rec["files"].pop(name)      # file gone; its proof lives on in rec["max"]
+            changed = True
+        if changed:
+            store[agent] = rec
+            _hw_save(store)
+        return rec["max"]
+    except Exception:
+        return 0
 
 # $/MTok, mirrored from hooks/step.py's accounting (Opus-class default the fleet runs).
 # If step.py's rates move, these move with them — one source would be better, but step.py
@@ -97,7 +185,7 @@ def context_tokens(agent: str) -> dict:
     total = (last.get("input_tokens", 0)
              + last.get("cache_read_input_tokens", 0)
              + last.get("cache_creation_input_tokens", 0))
-    limit = infer_limit(total)
+    limit = infer_limit(total, agent)
     return {"agent": agent, "tokens": total, "limit": limit,
             "pct": round(100.0 * total / limit, 1),
             "found": True, "transcript": f.name,
