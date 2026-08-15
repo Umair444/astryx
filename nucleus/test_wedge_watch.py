@@ -164,5 +164,17 @@ check("quiet under the threshold does not alarm",
 check("an agent that never stepped is not this check's subject",
       classify([dict(STEWARD_WEDGED, last_step=None)], BODIES, NOW)[0], [])
 
+print("\nALARM LINE — each count tied to its window (steward, msg 10331):")
+# The old line rendered the 72h-window count beside 'body silent 7.6h', and steward
+# audited 18 against the silence, found 4, and had to ask which number lied. Neither
+# did — the LINE did. Both windows now named, and the silence count leads.
+_lines = ww["_wedge_lines"]([("steward", 18, 7.6)], {"steward": 4}, 72)
+check("silence count leads, window count named with its window",
+      "4 wake(s) eaten during this silence, 18 unconsumed over the 72h window" in _lines[0],
+      True)
+check("dedup marker survives the reformat", "<wedge-watch:steward>" in _lines[0], True)
+check("a missing silence count falls back to the window count, never crashes",
+      "7 wake(s)" in ww["_wedge_lines"]([("p2", 7, 3.0)], {}, 72)[0], True)
+
 print("\n" + ("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)
