@@ -156,8 +156,18 @@ check("anchored on the OLDEST wake, steward reads healthy (the inversion)", wedg
 print("\nBOUNDARIES:")
 check("a body-less agent is left to agent_dark (different remedy)",
       classify([STEWARD_WEDGED], {"forge"}, NOW)[0], [])
-check("a single dropped wake is noise, not a state",
+check("a single RECENT dropped wake is noise, not a state",
       classify([dict(STEWARD_WEDGED, drops=1)], BODIES, NOW)[0], [])
+# canopus's unit conversion (msg 10430): MIN_DROPS counts WAKES, damage accrues in TIME,
+# and the rate is the agent's wake frequency — a once-daily seat at drops=1 was blind for
+# ~2 days (live: the 08-15 restart ate one heartbeat from five low-cadence seats, all
+# under the bar). A single drop that has sat unconsumed past the floor IS a state.
+_old_single = dict(STEWARD_WEDGED, drops=1,
+                   newest=datetime(2026, 8, 12, 13, 0, tzinfo=UTC))   # ~32h unconsumed
+check("a single drop AGED past the floor is a state (low-cadence seat)",
+      [a for a, _, _ in classify([_old_single], BODIES, NOW)[0]], ["steward"])
+check("the floor is a parameter the oracle can move (age just under -> noise)",
+      classify([_old_single], BODIES, NOW, single_drop_floor_h=33)[0], [])
 check("quiet under the threshold does not alarm",
       classify([dict(STEWARD_WEDGED,
                      last_step=datetime(2026, 8, 13, 20, 0, tzinfo=UTC))], BODIES, NOW)[0], [])
