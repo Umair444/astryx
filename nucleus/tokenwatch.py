@@ -129,9 +129,14 @@ def burn(dsn: str | None = None, hours: float = 1.0) -> dict:
             "FROM steps WHERE ts > now() - make_interval(mins => %s) "
             "AND agent IS NOT NULL GROUP BY agent ORDER BY 2 DESC",
             (int(hours * 60),))
+        win_in = win_out = 0
         for a, tin, tout in cur.fetchall():
             out["agents"].append({"agent": a, "in": int(tin), "out": int(tout)})
             out["total_tokens"] += int(tin) + int(tout)
+            win_in += int(tin)
+            win_out += int(tout)
+        out["cost_per_min"] = round(
+            (win_in * RATE_CACHE_READ + win_out * RATE_OUT) / 1_000_000 / (hours * 60), 4)
         cur.execute(
             "SELECT COALESCE(SUM(tokens_in),0), COALESCE(SUM(tokens_out),0) "
             "FROM steps WHERE ts > date_trunc('day', now())")
@@ -144,6 +149,149 @@ def burn(dsn: str | None = None, hours: float = 1.0) -> dict:
             (int(tin) * RATE_CACHE_READ + int(tout) * RATE_OUT) / 1_000_000, 2)
     out["tokens_per_min"] = round(out["total_tokens"] / (hours * 60), 1)
     return out
+
+
+def _segment(rows, window_h: float) -> list[dict]:
+    """Fold time-ordered (ts, tin, tout) rows into Anthropic-style session blocks: a
+    block OPENS at the first row after the previous block's expiry and lasts window_h
+    hours from its opening row — the Usage Monitor's model, and the property the oracle
+    pins: a row inside the window joins the block even after a long lull; a row one
+    second past expiry opens a new one."""
+    blocks: list[dict] = []
+    for ts, tin, tout in rows:
+        if not blocks or (ts - blocks[-1]["start"]).total_seconds() > window_h * 3600:
+            blocks.append({"start": ts, "tin": 0, "tout": 0, "steps": 0})
+        b = blocks[-1]
+        b["tin"] += tin
+        b["tout"] += tout
+        b["steps"] += 1
+    return blocks
+
+
+def window_stats(dsn: str | None = None, window_h: float = 5.0,
+                 history_days: int = 14) -> dict:
+    """The Anthropic-style rolling session window, inferred from the org's own steps.
+
+    STATED APPROXIMATION: the true window lives account-side and is unqueryable (there
+    is no usage API) — so, exactly like the Usage Monitor, we infer. A window OPENS at
+    the first step after the previous window expired and lasts `window_h` hours; every
+    step inside it counts. Ceilings are P90 of HISTORICAL window totals — "the biggest
+    window this org has survived", the Monitor's P90-limit idea — never a quota from
+    Anthropic. A young org's ceiling therefore starts low and grows honest.
+    """
+    import math
+
+    import psycopg
+    from nucleus import people
+    dsn = dsn or people._dsn()
+    if not dsn:
+        return {}
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT ts, coalesce(tokens_in,0), coalesce(tokens_out,0) FROM steps "
+            "WHERE ts > now() - make_interval(days => %s) ORDER BY ts",
+            (history_days,))
+        rows = cur.fetchall()
+    blocks = _segment(rows, window_h)
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+
+    def _cost(b):
+        return (b["tin"] * RATE_CACHE_READ + b["tout"] * RATE_OUT) / 1_000_000
+
+    cur_b = None
+    if blocks and (now - blocks[-1]["start"]).total_seconds() < window_h * 3600:
+        cur_b = blocks[-1]
+    hist = [b for b in blocks if b is not cur_b and (b["tin"] + b["tout"]) > 0]
+
+    def _p90(vals):
+        s = sorted(vals)
+        return s[max(0, math.ceil(0.9 * len(s)) - 1)] if s else 0
+
+    out = {
+        "window_h": window_h,
+        "windows_measured": len(hist),
+        "token_ceiling": _p90([b["tin"] + b["tout"] for b in hist]),
+        "step_ceiling": _p90([b["steps"] for b in hist]),
+        "cost_ceiling": round(_p90([_cost(b) for b in hist]), 2),
+        "active": bool(cur_b),
+    }
+    if cur_b:
+        reset = cur_b["start"].timestamp() + window_h * 3600
+        out.update({
+            "start": cur_b["start"].isoformat(),
+            "reset_at": datetime.fromtimestamp(reset, timezone.utc).isoformat(),
+            "remaining_s": round(reset - now.timestamp()),
+            "tokens": cur_b["tin"] + cur_b["tout"],
+            "steps": cur_b["steps"],
+            "cost": round(_cost(cur_b), 2),
+        })
+        # prediction, the Monitor's headline: at the last hour's burn, when does this
+        # window cross the observed ceiling — before or after the reset?
+        b = burn(dsn)
+        rate = b["tokens_per_min"]
+        left = out["token_ceiling"] - out["tokens"]
+        if rate > 0 and left > 0:
+            eta = now.timestamp() + (left / rate) * 60
+            out["runout_at"] = datetime.fromtimestamp(eta, timezone.utc).isoformat()
+        elif out["token_ceiling"] and left <= 0:
+            out["runout_at"] = now.isoformat()   # already past the observed ceiling
+        else:
+            out["runout_at"] = None
+    return out
+
+
+def _pretty_model(m: str) -> str:
+    """claude-opus-4-1-20250805 -> opus 4.1 ; claude-fable-5 -> fable 5"""
+    parts = m.removeprefix("claude-").split("-")
+    if parts and len(parts[-1]) == 8 and parts[-1].isdigit():
+        parts = parts[:-1]                       # drop the date stamp
+    name = [parts[0]] if parts else []
+    ver = ".".join(p for p in parts[1:] if p.isdigit())
+    return " ".join(name + ([ver] if ver else [])) or m
+
+
+def model_mix(agents: list[str] | None = None) -> list[dict]:
+    """Which models the fleet is actually generating with, weighted by OUTPUT tokens,
+    from the same transcript tails context_tokens reads. A tail is a RECENT sample by
+    construction (the last ~256KB per agent), and the result says so via 'sample'."""
+    if agents is None:
+        from nucleus.charter import roster
+        agents = roster()
+    weight: dict[str, int] = {}
+    records = 0
+    for a in agents:
+        d = _project_dir(a)
+        if not d:
+            continue
+        files = sorted(d.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if not files:
+            continue
+        try:
+            size = files[0].stat().st_size
+            with open(files[0], "rb") as fh:
+                if size > 262_144:
+                    fh.seek(-262_144, os.SEEK_END)
+                tail = fh.read().decode(errors="replace")
+        except OSError:
+            continue
+        for line in tail.splitlines():
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            msg = rec.get("message") or {}
+            u = msg.get("usage")
+            m = msg.get("model")
+            if not (u and m) or m == "<synthetic>":
+                continue
+            records += 1
+            weight[m] = weight.get(m, 0) + u.get("output_tokens", 0) + 1
+    total = sum(weight.values()) or 1
+    return sorted(
+        ({"model": _pretty_model(m), "share": round(100.0 * w / total, 1),
+          "sample": records} for m, w in weight.items()),
+        key=lambda r: -r["share"])
 
 
 def live_sessions() -> set[str]:

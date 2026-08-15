@@ -535,39 +535,37 @@ async def economy():
         FROM receipts ORDER BY id DESC LIMIT 100
     """)
     # live usage (owner directive 2026-08-15, Usage-Monitor-style): per-agent CONTEXT
-    # load from transcript tails via nucleus/tokenwatch — filesystem reads, so off the
-    # event loop — plus burn rate and today's cost floor from the steps table, computed
-    # here on the pool (tokenwatch.burn is sync-psycopg for pulse use; same SQL).
+    # load, burn/cost, the inferred 5h session window with its P90 ceilings and run-out
+    # prediction, and the model mix — all from nucleus/tokenwatch, run off the event
+    # loop (transcript-tail reads + its own short-lived sync DB connections; this
+    # endpoint is polled once a minute, so a thread is the right price for ONE writer
+    # of the window/burn logic instead of a second SQL copy here).
     from nucleus import tokenwatch
-    usage = await asyncio.to_thread(tokenwatch.fleet_context)
-    live = await asyncio.to_thread(tokenwatch.live_sessions)
-    for u in usage:
-        u["live"] = u["agent"] in live
-    hour = await pool.fetch("""
-        SELECT coalesce(sum(tokens_in),0) AS tin, coalesce(sum(tokens_out),0) AS tout
-        FROM steps WHERE ts > now() - interval '1 hour'
-    """)
-    today = await pool.fetchrow("""
-        SELECT coalesce(sum(tokens_in),0) AS tin, coalesce(sum(tokens_out),0) AS tout
-        FROM steps WHERE ts > date_trunc('day', now())
-    """)
-    hr = hour[0]
-    burn = {
-        "tokens_per_min": round((hr["tin"] + hr["tout"]) / 60, 1),
-        "today_tokens": today["tin"] + today["tout"],
-        # floor estimate: steps carry no cache split, so input is priced at the
-        # cache-read rate (the dominant class in a cached fleet); labelled as such in UI
-        "today_cost_usd": round((today["tin"] * tokenwatch.RATE_CACHE_READ
-                                 + today["tout"] * tokenwatch.RATE_OUT) / 1_000_000, 2),
-    }
+
+    def _snapshot():
+        usage = tokenwatch.fleet_context()
+        live = tokenwatch.live_sessions()
+        for u in usage:
+            u["live"] = u["agent"] in live
+        b = tokenwatch.burn()
+        return {
+            "usage": sorted(usage, key=lambda u: -u["tokens"]),
+            "burn": {"tokens_per_min": b["tokens_per_min"],
+                     "cost_per_min": b["cost_per_min"],
+                     "today_tokens": b["today_tokens"],
+                     "today_cost_usd": b["today_cost_usd"]},
+            "window": tokenwatch.window_stats(),
+            "models": tokenwatch.model_mix(),
+        }
+
+    snap = await asyncio.to_thread(_snapshot)
     return {
         "daily": [dict(r) for r in daily],
         "agents": [dict(r) for r in by_agent],
         "goals": [dict(r) for r in goals_rows],
         "receipts": [{**dict(r), "ts": r["ts"].isoformat(),
                       "amount_money": float(r["amount_money"])} for r in receipts],
-        "usage": sorted(usage, key=lambda u: -u["tokens"]),
-        "burn": burn,
+        **snap,
     }
 
 

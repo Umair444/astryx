@@ -131,8 +131,33 @@ export interface EconUsage {
 
 export interface EconBurn {
   tokens_per_min: number
+  cost_per_min: number
   today_tokens: number
   today_cost_usd: number // floor estimate — input priced at the cache-read rate
+}
+
+/* the inferred 5h session window (no usage API exists — blocks are derived from step
+   timestamps; ceilings are P90 of this org's own measured windows) */
+export interface EconWindow {
+  window_h: number
+  windows_measured: number
+  token_ceiling: number
+  step_ceiling: number
+  cost_ceiling: number
+  active: boolean
+  start?: string
+  reset_at?: string
+  remaining_s?: number
+  tokens?: number
+  steps?: number
+  cost?: number
+  runout_at?: string | null
+}
+
+export interface EconModel {
+  model: string
+  share: number // % of recent output tokens
+  sample: number
 }
 
 export interface Economy {
@@ -142,6 +167,8 @@ export interface Economy {
   receipts: Receipt[]
   usage: EconUsage[]
   burn: EconBurn
+  window: EconWindow
+  models: EconModel[]
 }
 
 export interface Peer {

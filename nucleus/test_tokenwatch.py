@@ -93,6 +93,31 @@ def test_no_transcript_reads_honest_zero():
         tokenwatch.PROJECTS = old
 
 
+# ---------------------------------------------------------------- session windows
+def test_segment_splits_on_expiry_not_on_lull():
+    from datetime import datetime, timedelta, timezone
+    t0 = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+    rows = [
+        (t0, 100, 10),
+        (t0 + timedelta(hours=4, minutes=59), 200, 20),   # long lull, still inside 5h
+        (t0 + timedelta(hours=5, seconds=1), 50, 5),      # one second past expiry
+    ]
+    blocks = tokenwatch._segment(rows, 5.0)
+    assert len(blocks) == 2
+    assert blocks[0]["tin"] == 300 and blocks[0]["steps"] == 2
+    assert blocks[1]["start"] == rows[2][0] and blocks[1]["tin"] == 50
+
+
+def test_segment_empty_is_empty():
+    assert tokenwatch._segment([], 5.0) == []
+
+
+def test_pretty_model_drops_date_and_joins_version():
+    assert tokenwatch._pretty_model("claude-opus-4-1-20250805") == "opus 4.1"
+    assert tokenwatch._pretty_model("claude-haiku-4-5-20251001") == "haiku 4.5"
+    assert tokenwatch._pretty_model("claude-fable-5") == "fable 5"
+
+
 # ---------------------------------------------------------------- the trigger
 class _Ctx:
     def __init__(self, state=None):

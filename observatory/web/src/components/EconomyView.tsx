@@ -17,6 +17,33 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub?: s
   )
 }
 
+/* Usage-Monitor-style gauge: a labelled bar against a (P90-inferred) ceiling */
+function Gauge({ label, pct, right, color }: { label: string; pct: number; right: string; color?: string }) {
+  const c = color ?? (pct >= 85 ? '#f43f5e' : pct >= 70 ? '#facc15' : '#34d399')
+  return (
+    <div className="flex items-center gap-2 text-[12px]">
+      <span className="text-ink-dim w-32 shrink-0">{label}</span>
+      <div className="flex-1 h-2 rounded bg-deck overflow-hidden">
+        <div className="h-full rounded" style={{ width: `${Math.min(100, Math.max(0, pct))}%`, background: c }} />
+      </div>
+      <span className="font-mono text-ink-mute whitespace-nowrap w-56 text-right">{right}</span>
+    </div>
+  )
+}
+
+const MODEL_COLORS = ['#7c5cff', '#22d3ee', '#34d399', '#facc15', '#f43f5e']
+
+function fmtCountdown(s: number) {
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  return h > 0 ? `${h}h ${m}m` : `${m}m`
+}
+
+function fmtClock(iso?: string | null) {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
 /* hand-rolled 30-day token bars — no chart dep, same spirit as the old sparklines */
 function DailyBars({ daily }: { daily: Economy['daily'] }) {
   const W = 660
@@ -82,6 +109,76 @@ export default function EconomyView() {
           <StatCard label="Steps · 24h" value={fmtTokens(overview?.steps_24h)} />
           <StatCard label="Messages · 24h" value={fmtTokens(overview?.messages_24h)} />
         </div>
+
+        {/* the session window — Usage-Monitor-style gauges against P90-inferred limits */}
+        {econ?.window && (
+          <div className="bg-deck-2 border border-line rounded-lg p-3">
+            <div className="flex items-baseline gap-2 mb-2">
+              <div className="text-[11px] uppercase tracking-wider text-ink-dim">Session window · {econ.window.window_h}h</div>
+              <Tooltip
+                label={`no usage API exists — windows are inferred from step timestamps; ceilings are P90 of this org's own ${econ.window.windows_measured} measured windows`}
+                withArrow openDelay={200} multiline w={340}
+              >
+                <span className="text-[10px] text-ink-mute cursor-help">P90-inferred · {econ.window.windows_measured} windows measured</span>
+              </Tooltip>
+            </div>
+            {econ.window.active ? (
+              <div className="space-y-1.5">
+                <Gauge
+                  label="Token usage"
+                  pct={econ.window.token_ceiling ? (100 * (econ.window.tokens ?? 0)) / econ.window.token_ceiling : 0}
+                  right={`${fmtTokens(econ.window.tokens)} / ${fmtTokens(econ.window.token_ceiling)} · ${econ.window.token_ceiling ? ((100 * (econ.window.tokens ?? 0)) / econ.window.token_ceiling).toFixed(1) : '—'}%`}
+                />
+                <Gauge
+                  label="Cost usage"
+                  pct={econ.window.cost_ceiling ? (100 * (econ.window.cost ?? 0)) / econ.window.cost_ceiling : 0}
+                  right={`$${(econ.window.cost ?? 0).toFixed(2)} / $${econ.window.cost_ceiling.toFixed(2)} (floor)`}
+                />
+                <Gauge
+                  label="Steps usage"
+                  pct={econ.window.step_ceiling ? (100 * (econ.window.steps ?? 0)) / econ.window.step_ceiling : 0}
+                  right={`${fmtTokens(econ.window.steps)} / ${fmtTokens(econ.window.step_ceiling)}`}
+                />
+                <Gauge
+                  label="Time to reset"
+                  pct={100 * (1 - (econ.window.remaining_s ?? 0) / (econ.window.window_h * 3600))}
+                  color="#22d3ee"
+                  right={fmtCountdown(econ.window.remaining_s ?? 0)}
+                />
+                {econ.models?.length > 0 && (
+                  <div className="flex items-center gap-2 text-[12px]">
+                    <span className="text-ink-dim w-32 shrink-0">Model mix</span>
+                    <div className="flex-1 h-2 rounded bg-deck overflow-hidden flex">
+                      {econ.models.map((m, i) => (
+                        <div key={m.model} style={{ width: `${m.share}%`, background: MODEL_COLORS[i % MODEL_COLORS.length] }} />
+                      ))}
+                    </div>
+                    <span className="font-mono text-ink-mute whitespace-nowrap text-[10px]">
+                      {econ.models.map((m) => `${m.model} ${m.share.toFixed(1)}%`).join(' | ')}
+                    </span>
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-x-6 gap-y-1 pt-1.5 text-[11px] font-mono">
+                  <span className="text-amber-400">🔥 {fmtTokens(econ.burn?.tokens_per_min)} tokens/min</span>
+                  <span className="text-emerald-400">$ {econ.burn?.cost_per_min?.toFixed(4)} /min</span>
+                  <span className="text-ink-mute">
+                    tokens run out:{' '}
+                    <span className={econ.window.runout_at && econ.window.reset_at && econ.window.runout_at < econ.window.reset_at ? 'text-rose-400' : 'text-ink-dim'}>
+                      {econ.window.runout_at
+                        ? `${fmtClock(econ.window.runout_at)}${econ.window.reset_at && econ.window.runout_at >= econ.window.reset_at ? ' (after reset — safe)' : ''}`
+                        : 'not at current burn'}
+                    </span>
+                  </span>
+                  <span className="text-ink-mute">
+                    window resets: <span className="text-ink-dim">{fmtClock(econ.window.reset_at)}</span>
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="text-xs text-ink-mute">no active session window — the fleet has been quiet for over {econ.window.window_h}h</div>
+            )}
+          </div>
+        )}
 
         {/* live context load + burn — the usage monitor (tokenwatch) */}
         <div className="bg-deck-2 border border-line rounded-lg p-3">
