@@ -261,15 +261,24 @@ def findings(pages: list[dict] | None = None) -> list[dict]:
     # Scans ALL pages regardless of type: (4)'s member-enum exclusion briefly applied
     # here too and would have blinded this check to registry pages — the exact type
     # where the live P0..P5 instance was found.
+    # CASE-BLIND in detection (memory, msg 10283): the live instance was `P0`..`P5` with
+    # a capital P, and a lowercase-only lookbehind missed the exact form that motivated
+    # the branch — while both fixtures, retyped from the code instead of copied from the
+    # page, stayed green. Grouping keys on the stripped stem as-is, so a mixed-case
+    # family still groups only where the stems agree.
+    # KNOWN FALSE-POSITIVE SHAPE, a decision not an oversight: `sha256` + `sha512` would
+    # group as stem `sha` and be accused — two genuinely different algorithms. Not live
+    # in the corpus (sha256 appears alone); if it ever fires, prefer renaming the check's
+    # verdict wording over growing an exception list on evidence we do not have.
     stems: dict[str, list[str]] = defaultdict(list)
     for r in {r for p in pages for r in p["rels"]}:
-        stem = re.sub(r"^(a[1-4]|abstractor-[1-4])-|-\d+$", "", r)
+        stem = re.sub(r"^(a[1-4]|abstractor-[1-4])-|-\d+$", "", r, flags=re.IGNORECASE)
         if stem == r:
             # The index can BE the entire name (build-order's P0..P5): the one form the
             # prefix/suffix patterns cannot see — the blind spot inside the check's own
             # class, found by memory (msg 10050). Grouping still requires >1 variants
             # on the same alpha stem, so a lone `sha256`-style name never fires.
-            stem = re.sub(r"(?<=[a-z])\d+$", "", r)
+            stem = re.sub(r"(?<=[A-Za-z])\d+$", "", r)
         if stem != r:
             stems[stem].append(r)
     for stem, variants in sorted(stems.items()):

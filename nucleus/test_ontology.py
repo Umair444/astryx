@@ -119,13 +119,28 @@ def test_indexed_relations_are_recognised_as_one_relation():
 def test_whole_name_index_is_still_an_indexed_relation():
     """The index can BE the entire relation name (build-order's P0..P5) — the one form
     the prefix/suffix patterns cannot see, found by memory inside the check's own class
-    (msg 10050). A lone digit-suffixed name must NOT fire; the family must."""
-    pages = [_page("a", "goal", {"state", "title", "p0", "p1", "p2"}),
-             _page("b", "goal", {"state", "title", "sha256"}),
-             _page("c", "goal", {"state", "title"})]
+    (msg 10050). A lone digit-suffixed name must NOT fire; the family must.
+
+    THE UPPERCASE ARM IS THE REAL INSTANCE, COPIED not retyped (msg 10283): the live
+    page spelled it `P0` and a lowercase-only lookbehind missed it while this fixture —
+    retyped as p0 from the code's shape — stayed green. A fixture that names a real
+    instance must be copied from that instance; both case families stay covered."""
+    for family, stem in ((("P0", "P1", "P2"), "P"), (("p0", "p1", "p2"), "p")):
+        pages = [_page("a", "goal", {"state", "title", *family}),
+                 _page("b", "goal", {"state", "title", "sha256"}),
+                 _page("c", "goal", {"state", "title"})]
+        f = [x for x in ont.findings(pages) if x["kind"] == "indexed-relation"]
+        assert len(f) == 1 and f[0]["stem"] == stem, (family, f)
+        assert not any("sha" in str(x) for x in f), "lone sha256 accused"
+
+
+def test_indexed_prefix_is_case_blind_too():
+    """Correction-scope applied at fix time: the prefix alternation shares the same
+    line and the same lowercase assumption as the whole-name branch — A1-/A2- must
+    group exactly as a1-/a2- do."""
+    pages = [_page(f"p{i}", "goal", {"state", "title", f"A{i}-verdict"}) for i in (1, 2, 3)]
     f = [x for x in ont.findings(pages) if x["kind"] == "indexed-relation"]
-    assert len(f) == 1 and f[0]["stem"] == "p", f
-    assert not any("sha" in str(x) for x in f), "lone sha256 accused"
+    assert f and f[0]["stem"] == "verdict", f
 
 
 def test_vocabulary_tail_is_retired_and_its_signal_lives_in_the_core_test():
@@ -155,11 +170,11 @@ def test_indexed_relations_are_seen_on_member_enumerating_pages():
     member-enum exclusion fed check (5) too, blinding it to registry pages — the exact
     type where the live P0..P5 instance was found (build-order). The indexed check
     scans ALL pages regardless of type."""
-    pages = [_page("build-order", "registry", {"desc", "p0", "p1", "p2"}),
+    pages = [_page("build-order", "registry", {"desc", "P0", "P1", "P2"}),
              _page("b", "goal", {"state", "title"}),
              _page("c", "goal", {"state", "title"})]
     f = [x for x in ont.findings(pages) if x["kind"] == "indexed-relation"]
-    assert len(f) == 1 and f[0]["stem"] == "p", f
+    assert len(f) == 1 and f[0]["stem"] == "P", f
 
 
 def test_declared_facets_are_PARSED_not_silently_dropped():
