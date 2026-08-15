@@ -150,6 +150,14 @@ run "...and the reviewed one still does the job" "$PY" nucleus/test_pre_push_con
 # fixtures, no DB, no live estate. SKIPs by name where triggers/ is absent, which is every
 # clean checkout: there the guard is not here to be verified. ~0.3s.
 run "pii_sweep cannot forget a finding or print a routing id" "$PY" nucleus/test_pii_sweep_ledger.py
+# The guard that reads THIS suite's own live-tree result. check.sh runs automatically in
+# exactly two places and both are clones, where the gitignored estate cannot exist — so
+# nucleus/check_watch.sh runs it here on a timer and stamps the outcome, and the guard
+# reads the stamp. Gated on the three ways such a guard goes quiet: a standing red that
+# warns once, a stopped runner whose silence reads as health, and an unparseable stamp
+# read as all-clear. Hermetic (temp stamp, fake ctx); SKIPs by name where triggers/ is
+# absent. ~0.2s.
+run "live-tree check guard can't go quiet" "$PY" nucleus/test_check_stamp.py
 run "referral opt-in + static-literal" bash nucleus/referral_guard.sh
 # OKF frontmatter for the memory estate. The invariant is ADDITIVITY: attaching metadata
 # must change nothing the three live lints read. Pure stdlib; the arms that touch the real
