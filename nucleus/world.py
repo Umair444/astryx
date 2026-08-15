@@ -206,8 +206,14 @@ def facet_patterns() -> dict:
     for name, pat in declared.items():
         try:
             out[name] = re.compile(pat, re.I)
-        except re.error:
-            continue        # a bad regex from a data file must not break the compile
+        except re.error as e:
+            # LOUD, then continue: a declared axis that fails to compile is "looks
+            # deployed and is not" on the consumer side, and silence is why memory's
+            # accidentally-declared axis sat undetected for a day (msg 10050). One line
+            # names the refusal; a bad regex still must not break the build.
+            print(f"world: declared facet '{name}' REFUSED ({e}) — axis not built",
+                  file=sys.stderr)
+            continue
     return out
 
 

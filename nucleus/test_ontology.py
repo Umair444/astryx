@@ -116,6 +116,39 @@ def test_indexed_relations_are_recognised_as_one_relation():
     assert f and f[0]["stem"] == "verdict", f
 
 
+def test_whole_name_index_is_still_an_indexed_relation():
+    """The index can BE the entire relation name (build-order's P0..P5) — the one form
+    the prefix/suffix patterns cannot see, found by memory inside the check's own class
+    (msg 10050). A lone digit-suffixed name must NOT fire; the family must."""
+    pages = [_page("a", "goal", {"state", "title", "p0", "p1", "p2"}),
+             _page("b", "goal", {"state", "title", "sha256"}),
+             _page("c", "goal", {"state", "title"})]
+    f = [x for x in ont.findings(pages) if x["kind"] == "indexed-relation"]
+    assert len(f) == 1 and f[0]["stem"] == "p", f
+    assert not any("sha" in str(x) for x in f), "lone sha256 accused"
+
+
+def test_roster_vocabulary_is_one_page_by_construction_and_wording_says_pages():
+    """memory's msg 10050: a roster's 11-way-shared `role` lives on ONE page because the
+    enumerating page is the only page with reason to state member properties — it must
+    not read as tail. And the counter counts PAGES (rels is a per-page set), so the
+    finding's text must say 'one page', never 'used once' — the old wording told memory
+    its own declared evidence was false."""
+    pages = [_page(f"g{i}", "goal", {"state", "title"}) for i in (1, 2, 3)]
+    pages.append(_page("agents", "roster", {"role", "charter", "home", "method", "grants"}))
+    pages.append(_page("build-order", "registry", {"desc", "phase-goal", "landed"}))
+    f = [x for x in ont.findings(pages) if x["kind"] == "vocabulary-tail"]
+    assert f == [], f"member-enumerating vocabulary counted as drift: {f}"
+    # and when the tail DOES fire, the wording is pages, not uses
+    pages = [_page("a", "goal", {"state", "title", "x1", "x2", "x3", "x4", "x5", "x6",
+                                 "x7", "x8"}),
+             _page("b", "goal", {"state", "title"}),
+             _page("c", "goal", {"state", "title"})]
+    f = [x for x in ont.findings(pages) if x["kind"] == "vocabulary-tail"]
+    assert f and "exactly one page" in f[0]["detail"], f
+    assert "used exactly once" not in f[0]["detail"], f
+
+
 def test_subject_pages_do_not_count_toward_the_tail():
     """memory's ruling made mechanical: a subject page's properties are one-use BY
     CONSTRUCTION (an org has one founded date), so they must not read as vocabulary

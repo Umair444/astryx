@@ -186,6 +186,30 @@ def test_a_bad_regex_from_memory_cannot_break_the_compile():
         world._FACETS = real
 
 
+def test_a_refused_facet_is_refused_LOUDLY():
+    """memory's msg 10050: their prose accidentally became a declared axis and sat
+    inert-by-defect for a day because the refusal was `continue` with no witness — a
+    declared-and-dropped facet is 'looks deployed and is not' on the consumer side.
+    The skip must survive (a typo cannot break the build) AND leave one line naming
+    the axis it refused, so the declarer learns the moment the reader ships."""
+    import contextlib
+    import io
+    from nucleus import ontology as ont
+    real = ont.load
+    ont.load = lambda: {"facets": {"goodaxis": r"\b(alpha|beta)\b",
+                                   "badaxis": r"(unbalanced"}}
+    try:
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            pats = world.facet_patterns()
+        assert "goodaxis" in pats and hasattr(pats["goodaxis"], "search")
+        assert "badaxis" not in pats                      # still skipped, no raise
+        assert "badaxis" in err.getvalue(), "refusal left no witness"
+        assert "REFUSED" in err.getvalue()
+    finally:
+        ont.load = real
+
+
 def test_taxonomy_groups_by_category_and_derives_facets():
     t = world.taxonomy(world.parse(FAKE))
     assert "People" in t["categories"]

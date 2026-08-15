@@ -237,19 +237,28 @@ def findings(pages: list[dict] | None = None) -> list[dict]:
     # 235 items: an alarm nobody can act on is an alarm nobody reads. The threshold is the
     # tail's share, so it fires on a trend rather than on any single word.
     #
-    # `subject` PAGES ARE EXCLUDED (memory's ruling, 2026-08-15): a subject page is one
-    # entity with many properties, and its properties are one-use BY CONSTRUCTION — an org
-    # has exactly one `founded`. Counting those as tail asks the estate to hold fewer
-    # unique facts, which inverts the lint's purpose. What remains measurable is drift in
-    # pages that SHOULD share vocabulary; that is what this now measures.
-    rel_all = Counter(r for p in pages if p["type"] != "subject" for r in p["rels"])
+    # `subject`, `roster` AND `registry` PAGES ARE EXCLUDED — two constructions, one
+    # generalisation (memory's rulings, 2026-08-15 and msg 10050): a subject's properties
+    # are one-USE by construction (an org has exactly one `founded`); a member-enumerating
+    # page's vocabulary is one-PAGE by construction — the page that lists the members is
+    # the only page with reason to state a member's properties, so a `role` shared 11 ways
+    # across entities still counts 1 here. Counting either as tail asks the estate to hold
+    # fewer facts, which inverts the lint's purpose. What remains measurable is drift in
+    # pages that SHOULD share vocabulary across pages.
+    #
+    # AND THE COUNTER COUNTS PAGES, NOT USES: p["rels"] is a per-page SET, so rel_all[r]
+    # is "how many pages carry r". The finding must say so — "used exactly once" about a
+    # relation visibly used eleven times on one page reads as falsified evidence to the
+    # very agent the finding is addressed to (it did, msg 10050).
+    _member_enum = ("subject", "roster", "registry")
+    rel_all = Counter(r for p in pages if p["type"] not in _member_enum for r in p["rels"])
     singles = [r for r, n in rel_all.items() if n == 1]
     if rel_all and len(singles) / len(rel_all) > 0.7:
         known = set(voc.get("aliases", {})) | set(voc.get("aliases", {}).values())
         unknown = [r for r in singles if r not in known]
         out.append({"kind": "vocabulary-tail",
-                    "detail": (f"{len(singles)} of {len(rel_all)} relations are used exactly once "
-                               f"({len(unknown)} with no alias declared) — facts written in a "
+                    "detail": (f"{len(singles)} of {len(rel_all)} relations appear on exactly one "
+                               f"page ({len(unknown)} with no alias declared) — facts written in a "
                                f"one-off relation cannot be queried across pages"),
                     "examples": sorted(unknown)[:8]})
 
@@ -259,6 +268,12 @@ def findings(pages: list[dict] | None = None) -> list[dict]:
     stems: dict[str, list[str]] = defaultdict(list)
     for r in rel_all:
         stem = re.sub(r"^(a[1-4]|abstractor-[1-4])-|-\d+$", "", r)
+        if stem == r:
+            # The index can BE the entire name (build-order's P0..P5): the one form the
+            # prefix/suffix patterns cannot see — the blind spot inside the check's own
+            # class, found by memory (msg 10050). Grouping still requires >1 variants
+            # on the same alpha stem, so a lone `sha256`-style name never fires.
+            stem = re.sub(r"(?<=[a-z])\d+$", "", r)
         if stem != r:
             stems[stem].append(r)
     for stem, variants in sorted(stems.items()):
