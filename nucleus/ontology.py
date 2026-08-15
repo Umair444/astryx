@@ -181,7 +181,6 @@ def findings(pages: list[dict] | None = None) -> list[dict]:
     go red. Retrieval quality is measurable; tidiness is not.
     """
     pages = _pages() if pages is None else pages
-    voc = load()
     out: list[dict] = []
     if not pages:
         return out
@@ -233,40 +232,37 @@ def findings(pages: list[dict] | None = None) -> list[dict]:
             out.append({"kind": "thin-category", "category": c,
                         "detail": f"only {len(members)} member(s) ({members[0]}) — a tag, not a category"})
 
-    # (4) UNVOCABULARISED RELATIONS. Reported as a COUNT with examples, never as a list of
-    # 235 items: an alarm nobody can act on is an alarm nobody reads. The threshold is the
-    # tail's share, so it fires on a trend rather than on any single word.
-    #
-    # `subject`, `roster` AND `registry` PAGES ARE EXCLUDED — two constructions, one
-    # generalisation (memory's rulings, 2026-08-15 and msg 10050): a subject's properties
-    # are one-USE by construction (an org has exactly one `founded`); a member-enumerating
-    # page's vocabulary is one-PAGE by construction — the page that lists the members is
-    # the only page with reason to state a member's properties, so a `role` shared 11 ways
-    # across entities still counts 1 here. Counting either as tail asks the estate to hold
-    # fewer facts, which inverts the lint's purpose. What remains measurable is drift in
-    # pages that SHOULD share vocabulary across pages.
-    #
-    # AND THE COUNTER COUNTS PAGES, NOT USES: p["rels"] is a per-page SET, so rel_all[r]
-    # is "how many pages carry r". The finding must say so — "used exactly once" about a
-    # relation visibly used eleven times on one page reads as falsified evidence to the
-    # very agent the finding is addressed to (it did, msg 10050).
-    _member_enum = ("subject", "roster", "registry")
-    rel_all = Counter(r for p in pages if p["type"] not in _member_enum for r in p["rels"])
-    singles = [r for r, n in rel_all.items() if n == 1]
-    if rel_all and len(singles) / len(rel_all) > 0.7:
-        known = set(voc.get("aliases", {})) | set(voc.get("aliases", {}).values())
-        unknown = [r for r in singles if r not in known]
-        out.append({"kind": "vocabulary-tail",
-                    "detail": (f"{len(singles)} of {len(rel_all)} relations appear on exactly one "
-                               f"page ({len(unknown)} with no alias declared) — facts written in a "
-                               f"one-off relation cannot be queried across pages"),
-                    "examples": sorted(unknown)[:8]})
+    # (4) VOCABULARY-TAIL — RETIRED (memory's ruling, msg 10192), record kept because the
+    # grave marker is the argument against rebuilding it casually:
+    #   - Its proxy (share of relations appearing on one page) was ALREADY superseded in
+    #     check (1), whose comment documents keying on this exact ratio, flagging `goal`,
+    #     and being replaced because a long tail is normal and NO SHARED CORE is the
+    #     defect. The correction was applied upstairs and never here — the identical
+    #     proxy survived ninety lines down, flagging the same type for the same wrong
+    #     reason. When a check is corrected, the correction's scope is every check
+    #     sharing its proxy, not the file (or line) it was found in.
+    #   - The ratio is CONFOUNDED: a high one-page share is produced by no-shared-core
+    #     (the true defect — (1) catches it) AND by a shared core plus rich per-page
+    #     narrative (health — live: goal had the strongest core in the corpus, 4 fields
+    #     on 10/10 pages, while this check condemned the same cohort at 62/68).
+    #   - The exemption ladder proved it: subject, roster, registry each needed excusing
+    #     on one-use/one-page-by-construction grounds, `goal` was next on identical
+    #     grounds, and with it the counted population is one law page with zero
+    #     relations — silence from an empty scope, indistinguishable from health.
+    #     An exemption is evidence about the METRIC; count the ladder before adding a rung.
+    # TRIP CONDITION to rebuild (with fresh evidence, not this code): a cohort showing a
+    # shared core AND cross-page synonym drift simultaneously — the one pattern the core
+    # test cannot see. If rebuilt, gate on expected_fields(t) being non-empty so it can
+    # only fire where a core exists to be drifted from.
 
     # (5) INDEXED RELATIONS — one relation with a subject baked into its name
     # (a1-verdict / a2-verdict, corpus-type-1 / corpus-type-2). Mechanical to spot and
     # mechanical to fix: the index belongs in the entity slot, not the relation name.
+    # Scans ALL pages regardless of type: (4)'s member-enum exclusion briefly applied
+    # here too and would have blinded this check to registry pages — the exact type
+    # where the live P0..P5 instance was found.
     stems: dict[str, list[str]] = defaultdict(list)
-    for r in rel_all:
+    for r in {r for p in pages for r in p["rels"]}:
         stem = re.sub(r"^(a[1-4]|abstractor-[1-4])-|-\d+$", "", r)
         if stem == r:
             # The index can BE the entire name (build-order's P0..P5): the one form the
