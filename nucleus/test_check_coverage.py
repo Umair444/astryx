@@ -136,6 +136,22 @@ def tracked_oracles():
     return names or oracles_on_disk()
 
 
+class Unverified(Exception):
+    """The instrument could not OBSERVE its subject this run — a THIRD state, never a RED.
+
+    abstractor-3 measured three different verdicts over identical bytes (msg 10971): the
+    nested check.sh run below really executes every non-$PY gate, and on a loaded host the
+    180s budget expires; TimeoutExpired then surfaced as a failure indistinguishable from
+    a coverage regression. memory's escalation (msg 11063) names the real cost: a gate
+    that goes red without a defect trains re-run-until-green, which is precisely the
+    procedure by which a true regression gets waved through — an authoritative-but-
+    unreliable gate is worse than an absent one. The org's own protocol already covers
+    this: a not-run gate is exit 77, and the aggregate may not out-claim what ran."""
+
+
+_EXECUTED_CACHE: dict = {}
+
+
 def executed_oracles(check_sh):
     """Which oracles does check.sh ACTUALLY REACH when it runs? The second instrument.
 
@@ -152,6 +168,15 @@ def executed_oracles(check_sh):
     Parsing bash control flow instead would be the cleverer-regex trap this file's own limits
     section warns about; observing the runtime is the honest answer.
     """
+    # Memoised: two tests ask this question, and the nested run is the expensive,
+    # flake-exposed part — one observation per process, both readers share it (and a
+    # timeout is not retried into a different answer within one run).
+    key = str(check_sh)
+    if key in _EXECUTED_CACHE:
+        val = _EXECUTED_CACHE[key]
+        if isinstance(val, Unverified):
+            raise val
+        return val
     with tempfile.TemporaryDirectory() as d:
         log, shim = Path(d) / "rec.log", Path(d) / "pyshim"
         shim.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$@" >> "$REC"\nexit 0\n')
@@ -159,16 +184,25 @@ def executed_oracles(check_sh):
         # CHECK_ALLOW_SKIP so a shimmed run never exits nonzero on skip accounting; we read
         # the log, never the verdict. cwd lands wherever check.sh's own `cd` puts it, which
         # is harmless: run() passes its arguments through literally and nothing real runs.
-        subprocess.run(["bash", str(check_sh)],
-                       env=dict(os.environ, PY=str(shim), REC=str(log), CHECK_ALLOW_SKIP="1"),
-                       capture_output=True, timeout=180)
+        try:
+            subprocess.run(["bash", str(check_sh)],
+                           env=dict(os.environ, PY=str(shim), REC=str(log),
+                                    CHECK_ALLOW_SKIP="1"),
+                           capture_output=True, timeout=180)
+        except subprocess.TimeoutExpired:
+            val = Unverified("nested check.sh run exceeded 180s (loaded host) — "
+                             "execution-reach was NOT observed this run")
+            _EXECUTED_CACHE[key] = val
+            raise val
         if not log.exists():
+            _EXECUTED_CACHE[key] = set()
             return set()
         found = set()
         for line in log.read_text().splitlines():
             m = re.search(r"(?:^|/)(test_[A-Za-z0-9_]+\.py)$", line.strip())
             if m:
                 found.add(m.group(1))
+        _EXECUTED_CACHE[key] = found
         return found
 
 
@@ -275,14 +309,25 @@ def test_a_commented_out_invocation_does_not_count():
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    failed = 0
+    failed = unverified = 0
     for fn in fns:
         try:
             fn()
             print(f"  ✓ {fn.__name__}")
+        except Unverified as e:
+            unverified += 1
+            print(f"  ○ {fn.__name__} — VERIFIED NOTHING: {e}")
         except Exception:
             failed += 1
             print(f"  ✗ {fn.__name__}")
             traceback.print_exc()
-    print(f"\n{len(fns) - failed}/{len(fns)} passed")
-    sys.exit(1 if failed else 0)
+    print(f"\n{len(fns) - failed - unverified}/{len(fns)} passed"
+          + (f", {unverified} UNVERIFIED" if unverified else ""))
+    if failed:
+        sys.exit(1)
+    if unverified:
+        # A partial skip is a 77 too: the syntactic half may have passed, but this run
+        # did not observe execution-reach, and the verdict may not out-claim its parts.
+        print("SKIP: the runtime-reach instrument was not observed this run")
+        sys.exit(77)
+    sys.exit(0)
