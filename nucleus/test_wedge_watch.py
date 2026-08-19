@@ -200,5 +200,103 @@ check("empty wedged set -> no escalation", _dead(set()), False)
 check("the reader is a parameter, not a constant",
       _dead({"steward"}, alarm_recipient="steward"), True)
 
+print("\nRECIPIENT DERIVED FROM THE SUBJECT — never a constant (a1 (1), msg 11626):")
+# THE INVARIANT, one rung above alarm_surface_dead: the alarm's recipient is a FUNCTION of
+# the wedged set and the live bodies, never a hardcoded name. seed stays the preferred
+# reader because restarting a body is a seed act; what changes is that an unreadable seed
+# no longer swallows the alarm silently.
+_pick = ww["choose_alarm_recipient"]
+LIVE = {"seed", "steward", "forge", "memory"}
+STEP = {"seed": datetime(2026, 8, 19, 14, 9, tzinfo=UTC),
+        "steward": datetime(2026, 8, 19, 13, 0, tzinfo=UTC),
+        "forge": datetime(2026, 8, 19, 12, 0, tzinfo=UTC),
+        "memory": datetime(2026, 8, 15, 22, 16, tzinfo=UTC)}
+check("healthy seed keeps the alarm — org-form unchanged",
+      _pick({"forge"}, LIVE, STEP), "seed")
+check("seed WEDGED -> the most-recently-stepped live reader, not seed",
+      _pick({"seed", "forge"}, LIVE, STEP), "steward")
+# THE FAILING ARM seed named: an alarm routed to a wedged agent must never be produced.
+check("no pick is ever inside the wedged set",
+      _pick({"seed", "steward"}, LIVE, STEP) in (None, "forge", "memory"), True)
+check("and it picks the freshest survivor",
+      _pick({"seed", "steward"}, LIVE, STEP), "forge")
+check("whole roster wedged -> None, and the out-of-band floor owns it",
+      _pick(LIVE, LIVE, STEP), None)
+
+# THE HOLE THIS CLOSES, and it is why (1) is not cosmetic. classify() skips any agent with
+# no body ("if agent not in bodies: continue" — that is agent_dark's case), so a seed that
+# is DEAD rather than wedged never enters the wedged set at all: alarm_surface_dead() reads
+# False, no escalation fires, and the in-band alarm is still addressed to a mailbox with no
+# process behind it. Deriving the recipient from LIVE BODIES catches what deriving it from
+# the wedged set alone cannot.
+check("seed DEAD (no body) is also an unreadable reader",
+      _pick(set(), {"steward", "forge"}, STEP), "steward")
+check("seed dead AND nobody else alive -> None, floor fires",
+      _pick(set(), set(), STEP), None)
+check("deterministic when step times are unknown (alphabetical, never arbitrary)",
+      _pick({"seed"}, {"seed", "forge", "memory"}, {}), "forge")
+
+print("\nTHE WIRING, not just the predicate — the trigger must actually ROUTE (a1, 08-19):")
+# A pure function proved in isolation is the "line exists vs gate runs" trap: on 08-15 my
+# own coverage gate passed against a check.sh that could not execute the oracle. So this
+# arm drives the REAL wedge_watch() with a stub ctx and asserts where the alarm LANDS.
+# It matters here more than usual because the recipient was never a decision anyone made —
+# the pulse posts a returned body to the trigger's OWNING agent (pulse.py:186), so for 42
+# alarms the address was a property of which folder the file sits in.
+class _Ctx:
+    def __init__(self, rows):
+        self.rows, self.calls = rows, []
+    def sql(self, q, params=()):
+        self.calls.append((" ".join(q.split()), params))
+        return self.rows if "FROM agg" in q else []
+
+SEED_WEDGED = dict(STEWARD_WEDGED, agent="seed")
+_fn = ww["wedge_watch"]
+_fn.__globals__["_bodies"] = lambda: {"seed", "steward", "forge"}
+_ctx = _Ctx([SEED_WEDGED])
+_ret = _fn(_ctx)
+_inserts = [(q, pr) for q, pr in _ctx.calls if q.startswith("INSERT")]
+_relay = [pr for q, pr in _inserts if pr and pr[0] == "forge"]
+
+check("the out-of-band floor still fires when seed is wedged",
+      any("'owner','local'" in q for q, _ in _inserts), True)
+check("the in-band alarm is INSERTed to a live reader, not returned to wedged seed",
+      len(_relay), 1)
+check("and it carries the AGENT WEDGED payload", "AGENT WEDGED" in _relay[0][1], True)
+check("the relay is told it is not newly authorised",
+      "YOU ARE THE RELAY, NOT THE ACTOR" in _relay[0][1], True)
+check("no in-band alarm is addressed to the wedged reader",
+      [pr[0] for _, pr in _inserts if pr and pr[0] == "seed"], [])
+check("the return value no longer carries the alarm to seed",
+      "AGENT WEDGED" in (_ret or ""), False)
+
+# THE FAILING DIRECTION, which is the arm seed asked for by name: with seed healthy the
+# behaviour must be byte-identical to before this change — alarm RETURNED, nothing routed.
+_fn.__globals__["_bodies"] = lambda: {"seed", "steward", "forge"}
+_ctx2 = _Ctx([dict(STEWARD_WEDGED, agent="forge")])
+_ret2 = _fn(_ctx2)
+check("healthy seed -> the alarm rides the return path exactly as before",
+      "AGENT WEDGED" in (_ret2 or ""), True)
+check("healthy seed -> nothing is routed to a relay",
+      [pr for q, pr in _ctx2.calls if q.startswith("INSERT") and pr and pr[0] != "forge"
+       or (q.startswith("INSERT") and "'owner','local'" in q)], [])
+
+# SEED DEAD, WIRED — the widened floor clause's ONLY distinguishing case, and a mutation
+# probe (seed, 08-20) proved every arm above leaves it unobserved: with the
+# `ALARM_RECIPIENT not in bodies` clause deleted, the whole file stayed green. In the
+# seed-wedged arm the floor already fires via alarm_surface_dead(); only here — seed GONE
+# from bodies, someone else wedged, a live relay resolvable — does that clause alone stand
+# between the org and a silent floor.
+_fn.__globals__["_bodies"] = lambda: {"steward", "forge"}
+_ctx3 = _Ctx([dict(STEWARD_WEDGED, agent="forge")])
+_ret3 = _fn(_ctx3)
+_inserts3 = [(q, pr) for q, pr in _ctx3.calls if q.startswith("INSERT")]
+check("seed DEAD (no body, not wedged) -> the out-of-band floor still fires",
+      any("'owner','local'" in q for q, _ in _inserts3), True)
+check("seed DEAD -> the in-band alarm is INSERTed to the live relay",
+      [pr[0] for q, pr in _inserts3 if pr and "'owner','local'" not in q], ["steward"])
+check("seed DEAD -> nothing is returned to the dead reader",
+      "AGENT WEDGED" in (_ret3 or ""), False)
+
 print("\n" + ("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)
