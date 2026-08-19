@@ -50,13 +50,28 @@ mkdir -p "$(dirname "$STAMP")" "$(dirname "$LOG")"
 # it does so silently, from a test run nobody would think to attribute. The seams exist to
 # make this script testable; they must not make it dangerous. Refuse, loudly, before the
 # suite runs at all.
-if [ -n "${CHECK_WATCH_SUITE:-}${CHECK_WATCH_CGROUP:-}" ] && \
-   [ "$STAMP" = "backups/.last-check" ]; then
-  echo "check-watch: REFUSING TO RUN — a test seam is set (CHECK_WATCH_SUITE and/or" >&2
-  echo "  CHECK_WATCH_CGROUP) while CHECK_WATCH_STAMP still points at the production" >&2
-  echo "  stamp. A stubbed run must never write the file the pulse guard reads: it would" >&2
-  echo "  forge an outcome, and a forged by=timer would close an owner gate." >&2
-  exit 2
+# PATH IDENTITY, NOT STRING EQUALITY (memory, msg 11952, reproduced before changing
+# anything: `CHECK_WATCH_STAMP=/home/umair/astryx/backups/.last-check` names the same file
+# in a different spelling, sailed through the first version of this gate, and a stub wrote
+# a forged RED-UNPARSED into production — I restored the bytes). The property wanted is
+# "the file this run will write IS the file the pulse guard reads"; a literal comparison
+# tests a SPELLING instead, and `./backups/...`, a doubled slash and a symlink all get in.
+# The LOG is in the check too, for a reason I earned in the same minute: the repro also
+# clobbered backups/.last-check.log, which is the evidence a red points at.
+if [ -n "${CHECK_WATCH_SUITE:-}${CHECK_WATCH_CGROUP:-}" ]; then
+  _same() {
+    a=$(readlink -f -- "$1" 2>/dev/null || echo "$1")
+    b=$(readlink -f -- "$2" 2>/dev/null || echo "$2")
+    [ "$a" = "$b" ]
+  }
+  if _same "$STAMP" backups/.last-check || _same "$LOG" backups/.last-check.log; then
+    echo "check-watch: REFUSING TO RUN — a test seam is set (CHECK_WATCH_SUITE and/or" >&2
+    echo "  CHECK_WATCH_CGROUP) while CHECK_WATCH_STAMP/CHECK_WATCH_LOG still resolve to" >&2
+    echo "  the production stamp or log. A stubbed run must never write the files the" >&2
+    echo "  pulse guard reads: it would forge an outcome, and a forged by=timer would" >&2
+    echo "  close an owner gate." >&2
+    exit 2
+  fi
 fi
 
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }

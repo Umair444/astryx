@@ -190,5 +190,39 @@ with tempfile.TemporaryDirectory() as d:
     check("...and the live stamp is untouched by the attempt",
           after == before, "a forged by=timer in the real stamp would close an owner gate")
 
+    # THE SPELLINGS ARE THE ASSERTION, not the refusal (memory, msg 11952). The first
+    # version of the gate compared the STRING to its own default, so it recognised the
+    # production stamp in exactly one spelling — and an absolute path naming the same file
+    # sailed through and wrote a forged RED-UNPARSED. A test that only exercises the
+    # spelling the bug was found in cannot see the spelling it was not.
+    # Each case restores the live bytes if the guard lets one through, and FAILS: a
+    # regression here writes production, so the oracle must not quietly leave it written.
+    for label, stamp_spelling, log_spelling in (
+            ("an ABSOLUTE path to the same file", str(live), str(tmp / "log")),
+            ("a ./-prefixed path", "./backups/.last-check", str(tmp / "log")),
+            ("a doubled separator", "backups//.last-check", str(tmp / "log")),
+            ("the production LOG, with the stamp diverted",
+             str(tmp / "stamp"), "backups/.last-check.log")):
+        log_live = REPO / "backups" / ".last-check.log"
+        log_before = log_live.read_text() if log_live.exists() else None
+        env2 = dict(os.environ)
+        env2["CHECK_WATCH_CGROUP"] = str(tmp / "cgroup")
+        env2["CHECK_WATCH_SUITE"] = "exit 9"
+        env2["CHECK_WATCH_STAMP"] = stamp_spelling
+        env2["CHECK_WATCH_LOG"] = log_spelling
+        q = subprocess.run(["bash", str(RUNNER)], cwd=REPO, env=env2,
+                           capture_output=True, text=True)
+        stamp_now = live.read_text() if live.exists() else None
+        log_now = log_live.read_text() if log_live.exists() else None
+        clean = stamp_now == before and log_now == log_before
+        if not clean:                       # put production back before reporting
+            if before is not None:
+                live.write_text(before)
+            if log_before is not None:
+                log_live.write_text(log_before)
+        check(f"{label} naming a production file is refused too — identity, not spelling",
+              q.returncode == 2 and clean,
+              f"rc={q.returncode} untouched={clean} stderr={q.stderr[:120]!r}")
+
 print("\n" + ("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)

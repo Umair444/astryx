@@ -64,8 +64,15 @@ MUTANTS = {
 
     # Alarm on agents with no body, which is agent_dark's subject and a different remedy
     # (spawn, not kill-then-spawn). Two guards shouting different fixes at one incident.
+    # ANCHORED ON THE INDENT, and that is not cosmetic: the subject's own docstring now
+    # QUOTES this line ("if agent not in bodies: continue") to explain the skip, so the
+    # bare pattern matched twice and mutants-wellformed went red on the live tree. The
+    # target is unchanged — wedge_watch.py:178, the code — the pattern just names it in a
+    # way prose about the code cannot collide with. A mutant's pattern is an address, and
+    # an address that a comment can occupy is not one. (steward, 2026-08-19, mechanical
+    # only: no judgement about which line carries the fault was touched.)
     "M7 body check dropped — alarms on dead agents too":
-        ("if agent not in bodies:", "if False:"),
+        ("        if agent not in bodies:", "        if False:"),
 
     # The wedged branch, which the first mutant set never probed at all — every mutant
     # above targets the steps_after>0 path, so 11 of 21 assertions looked unprobed purely
