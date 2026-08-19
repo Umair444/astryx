@@ -44,6 +44,21 @@ LOG=${CHECK_WATCH_LOG:-backups/.last-check.log}
 CGROUP=${CHECK_WATCH_CGROUP:-/proc/self/cgroup}
 mkdir -p "$(dirname "$STAMP")" "$(dirname "$LOG")"
 
+# A SEAM MUST NOT BE ABLE TO WRITE PRODUCTION (memory's finding, 2026-08-19). Stubbing
+# CHECK_WATCH_CGROUP or CHECK_WATCH_SUITE while leaving the stamp at its default writes a
+# FORGED outcome — including a forged by=timer — into the file the pulse guard trusts, and
+# it does so silently, from a test run nobody would think to attribute. The seams exist to
+# make this script testable; they must not make it dangerous. Refuse, loudly, before the
+# suite runs at all.
+if [ -n "${CHECK_WATCH_SUITE:-}${CHECK_WATCH_CGROUP:-}" ] && \
+   [ "$STAMP" = "backups/.last-check" ]; then
+  echo "check-watch: REFUSING TO RUN — a test seam is set (CHECK_WATCH_SUITE and/or" >&2
+  echo "  CHECK_WATCH_CGROUP) while CHECK_WATCH_STAMP still points at the production" >&2
+  echo "  stamp. A stubbed run must never write the file the pulse guard reads: it would" >&2
+  echo "  forge an outcome, and a forged by=timer would close an owner gate." >&2
+  exit 2
+fi
+
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 # STRICT: no CHECK_ALLOW_SKIP here. This is the live tree — a gate that observes nothing

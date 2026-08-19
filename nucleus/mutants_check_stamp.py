@@ -31,14 +31,15 @@ MUTANTS = {
     # and then never again, however long it stands. This is the exact shape that let a
     # live PII finding sit unmentioned for 22 days, and it reads as a working guard.
     "M1 a standing red never re-nags (band clock ignored)":
-        ('        if key == st.get("red_key") and b <= st.get("red_band", -1):',
-         '        if key == st.get("red_key"):'),
+        ('        if key != st.get("red_key") or b > st.get("red_band", -1):',
+         '        if key != st.get("red_key"):'),
 
     # The staleness arm dies. Every assertion about RED still passes, so the guard looks
     # healthy — but a runner that stopped four days ago now produces exactly the same
     # observable as a suite that ran clean an hour ago: silence.
     "M2 a stopped runner is indistinguishable from a clean one":
-        ("    if age > STALE_DAYS:", "    if age > 99999:"),
+        ("    if age > STALE_DAYS:\n        b = band(age, BANDS)",
+         "    if age > 99999:\n        b = band(age, BANDS)"),
 
     # Garbage in the stamp becomes an all-clear. Unknown must resolve to WATCHED for a
     # detector; here it resolves to silence, which is the one direction that cannot be
@@ -64,7 +65,7 @@ MUTANTS = {
     # three says nothing, because it is still just "RED". Dedup on the entity set, not the
     # transition — a coarse key drops late joiners.
     "M5 dedup key ignores WHICH gates failed":
-        ('        key = f"{status}|{body}"', "        key = status"),
+        ('        key = f"{status}|{body}|{qual_k}"', '        key = f"{status}|{qual_k}"'),
 
     # The positive-observation record disappears. The guard still behaves correctly, so
     # nothing fires — but its state no longer proves it ever looked, and a guard whose
@@ -99,7 +100,8 @@ MUTANTS = {
     # satisfied by it. Delete this and a by-hand run reads as automation — the actuator
     # suppressing the evidence its own alarm rests on, restored.
     "M10 a hand-run green stamp reads as an automatic one (owner gate closes itself)":
-        ('    if not st.get("last_timer_ts"):', "    if False:"),
+        ('    if not st.get("last_timer_ts"):\n        first = st.get("manual_first")',
+         '    if False:\n        first = st.get("manual_first")'),
 
     # Same arm, poisoned at the input instead of the branch: every stamp records automation
     # evidence, so the flag that was ADDED to carry provenance now proves nothing. This is
@@ -112,4 +114,15 @@ MUTANTS = {
     # The diligent human becomes the mask.
     "M12 a dead timer stays hidden as long as someone runs it by hand":
         ("    if timer_age > STALE_DAYS:", "    if timer_age > 99999:"),
+
+    # The qualifiers still computed and still attached, but dropped from the dedup key: a
+    # standing red that CROSSES INTO stale is then invisible, because the failing set has
+    # not changed and the band clock has not moved.
+    "M14 the reading's qualifiers are not part of the dedup key":
+        ('        key = f"{status}|{body}|{qual_k}"', '        key = f"{status}|{body}"'),
+
+    # The staleness qualifier is never computed, so every message about a failing suite
+    # implies it is current. The alarm still fires, still names gates, still looks right.
+    "M15 an old reading is reported as a current one":
+        ("    if age > STALE_DAYS:\n        quals.append(", "    if False:\n        quals.append("),
 }

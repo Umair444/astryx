@@ -165,16 +165,25 @@ with tempfile.TemporaryDirectory() as d:
           out3 is not None and "world layer" in out3,
           "dedup on the entity SET, not the transition — a coarse key drops late joiners")
 
-    aged_red = dict(st_red, red_band=0)
-    out4, _ = run(mod, tmp, aged_red,
-                  (f"RED {iso(5)} rc=1 verified=34 failed=2 unverified=0\n"
-                   "FAILED:\n  ontology lint invariants\n  tier floor invariants\n"))
-    check("...and an OLD standing red crosses a band and re-nags",
+    # BOTH READINGS STALE, so the qualifier set is identical and the KEY cannot be what
+    # speaks — only the band can. (A fixture where the qualifiers also change would pass
+    # even with the band clock deleted, which is the mutant this discriminates.)
+    stale_red = lambda d: (f"RED {iso(d)} rc=1 verified=34 failed=2 unverified=0 by=timer\n"
+                           "FAILED:\n  ontology lint invariants\n  tier floor invariants\n")
+    _, st_s = run(mod, tmp, {"last_timer_ts": iso(4)}, stale_red(4))
+    out4, _ = run(mod, tmp, st_s, stale_red(10))
+    check("...and an OLD standing red crosses a band and re-nags on the SAME key",
           out4 is not None, "a standing failure that warns once is the 22-day defect")
 
     # ── discharge, then recurrence ─────────────────────────────────────────────────
-    _, st_clean = run(mod, tmp, st_red, ok_now)
-    out5, _ = run(mod, tmp, st_clean, red_a)
+    # TIMER-STAMPED THROUGHOUT: ok_now records automation evidence, so a red without a
+    # by= field would come back carrying a different qualifier set and be announced for
+    # that reason alone — passing this assertion while the band reset was gone.
+    timer_red = (f"RED {iso(0.1)} rc=1 verified=34 failed=2 unverified=0 by=timer\n"
+                 "FAILED:\n  ontology lint invariants\n  tier floor invariants\n")
+    _, st_t0 = run(mod, tmp, {}, timer_red)
+    _, st_clean = run(mod, tmp, st_t0, ok_now)
+    out5, _ = run(mod, tmp, st_clean, timer_red)
     check("a red that returns AFTER a clean run is announced again, not deduped away",
           out5 is not None, "state from the last red must be cleared by the repair")
 
@@ -255,6 +264,51 @@ with tempfile.TemporaryDirectory() as d:
     check("a DEAD timer kept green by hand is announced — the diligent human is the mask",
           out6 and "TIMER HAS STOPPED" in out6,
           "staleness measured on the newest stamp alone lets manual runs hide a dead unit")
+
+    # ── the reading is not the suite (abstractor-2, msg 11875) ─────────────────────
+    # RED was absorbing: both arms that describe the READING — how old it is, whether
+    # anything automatic produced it — sat below it in a first-match ladder. For four days
+    # this guard emitted the same RED naming a gate that had been green since 546bb14, and
+    # never once said "this reading is four days old". A stale OK escalates correctly; a
+    # stale RED could not, because only a run clears a red and the arm carrying the sudo
+    # line for the runner sat underneath.
+    old_red = (f"RED {iso(4)} rc=1 verified=34 failed=2 unverified=0 by=timer\n"
+               "FAILED:\n  ontology lint invariants\n  tier floor invariants\n")
+    out, _ = run(mod, tmp, {"last_timer_ts": iso(4)}, old_red)
+    check("a STALE red still reports the failure",
+          out and "ontology lint invariants" in out, f"out={out!r}")
+    check("...AND says the reading is old, instead of implying it is current",
+          out and "LAST KNOWN" in out and "4.0d OLD" in out,
+          "only a run can clear a red, so a red that cannot escalate on age is a lie "
+          "that repeats on the band clock")
+
+    fresh_red = (f"RED {iso(0.1)} rc=1 verified=34 failed=2 unverified=0 by=timer\n"
+                 "FAILED:\n  ontology lint invariants\n  tier floor invariants\n")
+    out, _ = run(mod, tmp, {"last_timer_ts": iso(0.1)}, fresh_red)
+    check("...while a FRESH red claims no such thing",
+          out and "LAST KNOWN" not in out, f"out={out!r}")
+
+    # BY HAND, deliberately: the point is a red on a host where nothing is scheduled to
+    # produce the next run. A by=timer stamp is itself the evidence that something is.
+    hand_red = (f"RED {iso(0.1)} rc=1 verified=34 failed=2 unverified=0 by=hand\n"
+                "FAILED:\n  ontology lint invariants\n  tier floor invariants\n")
+    out, _ = run(mod, tmp, {}, hand_red)
+    check("a red on a host where nothing is scheduled carries the sudo line with it",
+          out and "systemctl enable" in out and "NOTHING AUTOMATIC" in out,
+          "the timer is what MAKES the run that would clear this red")
+
+    # THE QUALIFIERS MUST BE IN THE DEDUP KEY, and this fixture is built so that nothing
+    # ELSE can carry the signal: 1.2d and 2.0d sit in the SAME band (rungs are 0/1/3/7/14)
+    # while STALE_DAYS is 1.5, so the band clock does not move and the failing set does not
+    # change. The only difference between the two readings is that the second one is stale.
+    band_red = lambda d: (f"RED {iso(d)} rc=1 verified=34 failed=2 unverified=0 by=timer\n"
+                          "FAILED:\n  ontology lint invariants\n  tier floor invariants\n")
+    _, st_r = run(mod, tmp, {"last_timer_ts": iso(1.2)}, band_red(1.2))
+    out, _ = run(mod, tmp, st_r, band_red(2.0))
+    check("a standing red that CROSSES INTO stale speaks again — same set, same band",
+          out is not None and "LAST KNOWN" in out,
+          "the qualifiers of a reading have to be part of its dedup key, or the moment "
+          "the reading stops being current is invisible")
 
     # ── unreadable ─────────────────────────────────────────────────────────────────
     out, st_bad = run(mod, tmp, {}, "")

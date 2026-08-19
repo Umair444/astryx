@@ -170,5 +170,25 @@ with tempfile.TemporaryDirectory() as d:
           "restore_verify.sh died before its write, left the last SUCCESS stamp intact, "
           "and doctor read mtime and called it proven for eight more days")
 
+    # ── a seam must not be able to write production ────────────────────────────────
+    # The hazard memory found on this file: stub the cgroup, forget the stamp, and a test
+    # writes a forged by=timer into the file the pulse guard trusts — silently, from a run
+    # nobody would think to attribute. The seams make this script testable; they must not
+    # make it dangerous.
+    live = REPO / "backups" / ".last-check"
+    before = live.read_text() if live.exists() else None
+    env = dict(os.environ)
+    env["CHECK_WATCH_CGROUP"] = str(tmp / "cgroup")
+    env.pop("CHECK_WATCH_STAMP", None)
+    env.pop("CHECK_WATCH_LOG", None)
+    env["CHECK_WATCH_SUITE"] = "echo stub"
+    p = subprocess.run(["bash", str(RUNNER)], cwd=REPO, env=env,
+                       capture_output=True, text=True)
+    after = live.read_text() if live.exists() else None
+    check("a stubbed run with the PRODUCTION stamp still selected refuses to run",
+          p.returncode == 2 and "REFUSING" in p.stderr, f"rc={p.returncode} {p.stderr!r}")
+    check("...and the live stamp is untouched by the attempt",
+          after == before, "a forged by=timer in the real stamp would close an owner gate")
+
 print("\n" + ("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)
