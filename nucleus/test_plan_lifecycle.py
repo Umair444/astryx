@@ -179,7 +179,11 @@ def a_baton_dropped(ctx):
 def b_mid_thought_grace(ctx):
     """rank 1 posted 10m ago -> inside the grace, silent."""
     gid, thread = seed_plan(ctx, [("abstractor-1", "chat", "10 minutes")])
-    assert MOD["plan_climb_due"](ctx) is None
+    # SCOPED, not `is None`: the guard reads the whole live estate, so its global return
+    # is not a property of this fixture — a real thread qualifying anywhere flips it
+    # (steward, msg 12200: plan-2470 crossed its threshold and turned this file red with
+    # nothing edited). "This fixture must not wake anyone" is pings(thread) == [].
+    MOD["plan_climb_due"](ctx)
     assert pings(ctx, thread) == []
 
 
@@ -190,15 +194,16 @@ def c_consolidated_hands_off(ctx):
                                   ("abstractor-2", "chat", "4 hours"),
                                   ("abstractor-3", "chat", "3 hours"),
                                   ("abstractor-4", "chat", "2 hours")], goal_age="6 hours")
-    assert MOD["plan_climb_due"](ctx) is None, "climb net must stand down at consolidation"
-    assert pings(ctx, thread) == []
+    MOD["plan_climb_due"](ctx)
+    assert pings(ctx, thread) == [], "climb net must stand down at consolidation"
     # pin the fix to its cause: with no derivable rank the guard falls back to the OLD
     # predicate (needs a first voter) and this same fixture goes silent — the hole.
     g = MOD["plan_verdict_due"].__globals__
     real, g["ranked_members"] = g["ranked_members"], lambda: []
     try:
-        assert MOD["plan_verdict_due"](ctx) is None, "pre-fix behaviour should be silent here"
-        assert pings(ctx, thread, "plan_verdict_due") == []
+        MOD["plan_verdict_due"](ctx)
+        assert pings(ctx, thread, "plan_verdict_due") == [], \
+            "pre-fix behaviour should be silent here"
     finally:
         g["ranked_members"] = real
     fire = MOD["plan_verdict_due"](ctx)
@@ -214,6 +219,7 @@ def d_revise_reopen_not_derivable(ctx):
                             revise_ago="3 hours", goal_age="10 hours")
     fire = MOD["plan_climb_due"](ctx)
     assert fire and "NEEDS YOUR ROUTING" in fire and "reopened by a revise" in fire, fire
+    assert str(gid) in fire, "the fixture's goal must be in the summary, not just a live one's"
     assert pings(ctx, thread) == [], "must not invent the reopen rank"
 
 
@@ -223,14 +229,16 @@ def e_never_routed(ctx):
     gid, thread = seed_plan(ctx, [], goal_age="5 hours", make_thread=False)
     fire = MOD["plan_climb_due"](ctx)
     assert fire and "no plan-" in fire and "NEEDS YOUR ROUTING" in fire, fire
+    assert str(gid) in fire, "the fixture's goal must be in the summary, not just a live one's"
     assert pings(ctx, thread) == []
 
 
 @case
 def e2_never_routed_inside_grace(ctx):
     """same, but only 30m old -> silent (seed may be mid-route)."""
-    seed_plan(ctx, [], goal_age="30 minutes", make_thread=False)
-    assert MOD["plan_climb_due"](ctx) is None
+    gid, thread = seed_plan(ctx, [], goal_age="30 minutes", make_thread=False)
+    fire = MOD["plan_climb_due"](ctx)
+    assert not (fire and str(gid) in fire), "inside the grace the fixture must not be named"
 
 
 @case
@@ -249,16 +257,20 @@ def g_cooldown_and_pending(ctx):
     ctx.sql("INSERT INTO messages (from_agent,to_agent,thread,intent,body,ts,status) VALUES "
             "('pulse','abstractor-2',%s,'trigger',%s, now() - interval '10 minutes','read')",
             (thread, f"[trigger plan_climb_due {thread}] earlier"))
-    assert MOD["plan_climb_due"](ctx) is None, "cooldown must hold"
+    MOD["plan_climb_due"](ctx)
+    assert pings(ctx, thread) == ["abstractor-2"], "cooldown must hold (only the seeded row)"
     ctx.sql("UPDATE messages SET ts = now() - interval '90 minutes' WHERE body LIKE %s",
             (f"[trigger plan_climb_due {thread}] earlier%",))
-    assert MOD["plan_climb_due"](ctx), "past cooldown it must re-fire (standing condition)"
+    MOD["plan_climb_due"](ctx)
+    assert pings(ctx, thread) == ["abstractor-2", "abstractor-2"], \
+        "past cooldown it must re-fire (standing condition)"
     ctx.sql("DELETE FROM messages WHERE body LIKE %s",
             (f"[trigger plan_climb_due {thread}]%",))
     ctx.sql("INSERT INTO messages (from_agent,to_agent,thread,intent,body,ts,status) VALUES "
             "('pulse','abstractor-2',%s,'trigger',%s, now() - interval '90 minutes','pending')",
             (thread, f"[trigger plan_climb_due {thread}] unread"))
-    assert MOD["plan_climb_due"](ctx) is None, "an unread alarm must not stack"
+    MOD["plan_climb_due"](ctx)
+    assert pings(ctx, thread) == ["abstractor-2"], "an unread alarm must not stack"
 
 
 @case
@@ -269,7 +281,7 @@ def h_unranked_group_is_silent(ctx):
     real, g["ranked_members"] = g["ranked_members"], lambda: []
     try:
         gid, thread = seed_plan(ctx, [("abstractor-1", "chat", "3 hours")], goal_age="4 hours")
-        assert MOD["plan_climb_due"](ctx) is None
+        MOD["plan_climb_due"](ctx)
         assert pings(ctx, thread) == []
     finally:
         g["ranked_members"] = real
@@ -289,16 +301,17 @@ def j_non_proposed_goal_ignored(ctx):
     """an active/refused goal is not this net's business (plan_orphan owns the dead)."""
     gid, thread = seed_plan(ctx, [("abstractor-1", "chat", "3 hours")], goal_age="4 hours")
     ctx.sql("UPDATE goals SET state='active' WHERE id=%s", (gid,))
-    assert MOD["plan_climb_due"](ctx) is None
+    MOD["plan_climb_due"](ctx)
     assert pings(ctx, thread) == []
 
 
 @case
 def k_regression_siblings_still_silent(ctx):
     """the three untouched nets keep their climb-phase silence on the same fixture."""
-    seed_plan(ctx, [("abstractor-1", "chat", "3 hours")], goal_age="4 hours")
+    gid, thread = seed_plan(ctx, [("abstractor-1", "chat", "3 hours")], goal_age="4 hours")
     for name in ("plan_consensus", "plan_stall", "plan_orphan", "plan_verdict_due"):
-        assert MOD[name](ctx) is None, f"{name} must stay silent mid-climb"
+        MOD[name](ctx)
+        assert pings(ctx, thread, name) == [], f"{name} must stay silent mid-climb"
 
 
 def main():
