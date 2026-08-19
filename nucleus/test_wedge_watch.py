@@ -186,5 +186,19 @@ check("dedup marker survives the reformat", "<wedge-watch:steward>" in _lines[0]
 check("a missing silence count falls back to the window count, never crashes",
       "7 wake(s)" in ww["_wedge_lines"]([("p2", 7, 3.0)], {}, 72)[0], True)
 
+print("\nOUT-OF-BAND FLOOR — the alarm surface is dead when its reader is wedged (a1, msg 11572):")
+# 08-16: 39 fires in 3.5 days, 10 naming seed, all delivered TO seed, zero read. The
+# invariant: a detector must not route its alarm through a carrier the detected
+# condition disables. Escalation keys on the CONDITION (seed in the wedged set), never
+# on which per-agent rungs happen to be spent.
+_dead = ww["alarm_surface_dead"]
+check("seed wedged -> surface dead, escalate out-of-band",
+      _dead({"seed", "forge", "memory"}), True)
+check("everyone else wedged but seed reading -> in-band alarm suffices",
+      _dead({"forge", "memory", "steward"}), False)
+check("empty wedged set -> no escalation", _dead(set()), False)
+check("the reader is a parameter, not a constant",
+      _dead({"steward"}, alarm_recipient="steward"), True)
+
 print("\n" + ("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)
