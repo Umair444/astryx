@@ -158,6 +158,7 @@ run "pii_sweep cannot forget a finding or print a routing id" "$PY" nucleus/test
 # read as all-clear. Hermetic (temp stamp, fake ctx); SKIPs by name where triggers/ is
 # absent. ~0.2s.
 run "live-tree check guard can't go quiet" "$PY" nucleus/test_check_stamp.py
+run "live-tree stamp says what ran it" "$PY" nucleus/test_check_watch.py
 run "referral opt-in + static-literal" bash nucleus/referral_guard.sh
 # OKF frontmatter for the memory estate. The invariant is ADDITIVITY: attaching metadata
 # must change nothing the three live lints read. Pure stdlib; the arms that touch the real

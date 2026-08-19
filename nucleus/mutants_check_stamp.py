@@ -93,4 +93,23 @@ MUTANTS = {
     # that distinguishes the two.
     "M9 an unverified gate is treated as a passing one":
         ('    if status == "AMBER":', "    if False:"),
+
+    # The arm that exists because I silenced this guard with my own hands: running the
+    # suite manually to test the runner wrote a fresh green stamp, and every other arm was
+    # satisfied by it. Delete this and a by-hand run reads as automation — the actuator
+    # suppressing the evidence its own alarm rests on, restored.
+    "M10 a hand-run green stamp reads as an automatic one (owner gate closes itself)":
+        ('    if not st.get("last_timer_ts"):', "    if False:"),
+
+    # Same arm, poisoned at the input instead of the branch: every stamp records automation
+    # evidence, so the flag that was ADDED to carry provenance now proves nothing. This is
+    # the quieter half of M10 — the branch still exists and reads as live.
+    "M11 provenance is recorded for every stamp, so it discriminates nothing":
+        ('    if by == "timer":', "    if by != \"timer\":"),
+
+    # The symmetric hole re-opened: a timer that ran once and died, with somebody keeping
+    # the stamp fresh by hand. Fresh, green, provenance seen — and nothing is scheduled.
+    # The diligent human becomes the mask.
+    "M12 a dead timer stays hidden as long as someone runs it by hand":
+        ("    if timer_age > STALE_DAYS:", "    if timer_age > 99999:"),
 }

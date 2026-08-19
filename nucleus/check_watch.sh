@@ -29,18 +29,31 @@
 # parsed" must never become "OK". So the STATUS is decided by check.sh's EXIT CODE, and
 # the names are decoration. A nonzero rc with nothing parsed is RED-UNPARSED, which is
 # louder than a normal red, not quieter.
+#
+# THE TEST SEAMS BELOW are deliberate and they are the reason this file has an oracle at
+# all. Two of its bugs reached the live stamp — a verdict parse that reported 0 verified
+# over a run where 35 gates passed, and the INVOCATION_ID provenance error described
+# further down — because a producer nothing runs in a fixture gets debugged in production.
+# Every override defaults to the real path, so the deployed behaviour is byte-identical to
+# having no seam; what they buy is that nucleus/test_check_watch.py can drive this script
+# against a stub suite without touching the live stamp.
 set -uo pipefail
 cd "$(dirname "$0")/.."
-STAMP=backups/.last-check
-LOG=backups/.last-check.log
-mkdir -p backups
+STAMP=${CHECK_WATCH_STAMP:-backups/.last-check}
+LOG=${CHECK_WATCH_LOG:-backups/.last-check.log}
+CGROUP=${CHECK_WATCH_CGROUP:-/proc/self/cgroup}
+mkdir -p "$(dirname "$STAMP")" "$(dirname "$LOG")"
 
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 # STRICT: no CHECK_ALLOW_SKIP here. This is the live tree — a gate that observes nothing
 # on the host where every prerequisite exists is a real finding, and the whole reason this
 # runner exists is that the two blind invokers have to allow skips.
-bash nucleus/check.sh > "$LOG" 2>&1
+if [ -n "${CHECK_WATCH_SUITE:-}" ]; then
+  sh -c "$CHECK_WATCH_SUITE" > "$LOG" 2>&1
+else
+  bash nucleus/check.sh > "$LOG" 2>&1
+fi
 rc=$?
 
 failed=$(grep -c '^  ✗ ' "$LOG" || true)
@@ -81,8 +94,28 @@ else
   status=OK
 fi
 
+# WHO RAN IT, and this field exists because I blinded my own guard with it. check_stamp's
+# loudest arm is the owner-gate one: "this suite has NEVER run automatically, here is the
+# sudo line". Running the suite BY HAND to test it wrote a fresh OK stamp, which silenced
+# that arm — the actuator suppressing the evidence its own alarm is built on. A hand run
+# proves the gates are green right now; it proves NOTHING about whether anything automatic
+# runs them. systemd sets INVOCATION_ID for every unit-started process, so the stamp can
+# carry the distinction and the reader can hold the owner-gate item open through any
+# number of manual runs.
+# NOT INVOCATION_ID, and the first version of this line was wrong in the loudest possible
+# direction. systemd sets INVOCATION_ID for a unit's process AND every child inherits it —
+# and every resident body in this org runs inside astryx-residents.service, so a run I
+# typed by hand in an agent pane stamped by=timer and closed the owner gate on itself. A
+# provenance marker that is INHERITED identifies an ancestor, not the actor. The cgroup
+# line names the unit this process is actually in, so it cannot be inherited from a
+# different one. If /proc is absent the answer is `hand`, which is the safe direction: the
+# guard nags about automation it cannot see, rather than certifying automation that is not
+# there.
+by=hand
+grep -qs 'astryx-check\.service' "$CGROUP" && by=timer
+
 {
-  echo "$status $(now) rc=$rc verified=$verified failed=$failed unverified=$unverified"
+  echo "$status $(now) rc=$rc verified=$verified failed=$failed unverified=$unverified by=$by"
   [ "$failed" -gt 0 ]     && { printf 'FAILED:'; sed -n 's/^  ✗ /\n  /p' "$LOG"; echo; }
   [ "$unverified" -gt 0 ] && { printf 'UNVERIFIED:'; sed -n 's/^  ○ /\n  /p' "$LOG"; echo; }
   true

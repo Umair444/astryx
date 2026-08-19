@@ -127,7 +127,7 @@ with tempfile.TemporaryDirectory() as d:
           out3 is not None, "an unenabled runner that goes permanently quiet is warn-once")
 
     # ── clean and fresh ────────────────────────────────────────────────────────────
-    ok_now = f"OK {iso(0.1)} rc=0 verified=36 failed=0 unverified=0\n"
+    ok_now = f"OK {iso(0.1)} rc=0 verified=36 failed=0 unverified=0 by=timer\n"
     out, st = run(mod, tmp, {}, ok_now)
     check("a fresh clean run is silent", out is None, f"out={out!r}")
     check("...and leaves POSITIVE evidence of the observation in state",
@@ -217,6 +217,45 @@ with tempfile.TemporaryDirectory() as d:
     check("a stamp with BOTH a failure and a skip is reported as RED, not amber",
           out5 and "tier floor invariants" in out5 and "RED" in out5, f"out={out5!r}")
 
+    # ── green, and still not automatic ─────────────────────────────────────────────
+    # The arm that exists because running the suite BY HAND to test the runner silenced the
+    # arm above it. Provenance decides this one, not freshness: a hand run proves the gates
+    # are green at that instant and proves nothing about whether anything runs them again.
+    hand_now = f"OK {iso(0.1)} rc=0 verified=39 failed=0 unverified=0 by=hand\n"
+    out, st_h = run(mod, tmp, {}, hand_now)
+    check("a fresh GREEN stamp written BY HAND still says the suite is not automatic",
+          out and "NEVER RUN AUTOMATICALLY" in out, f"out={out!r}")
+    check("...and carries the one line that fixes it",
+          out and "systemctl enable" in out and "astryx-check.timer" in out, f"out={out!r}")
+    check("...while saying the green itself is real, not a failure",
+          out and "39 gates verified" in out and "RED" not in out, f"out={out!r}")
+
+    out2, _ = run(mod, tmp, st_h, hand_now)
+    check("the same by-hand stamp is silent on the next tick (slow ladder, not a drumbeat)",
+          out2 is None, f"out={out2!r}")
+
+    legacy = f"OK {iso(0.1)} rc=0 verified=36 failed=0 unverified=0\n"
+    out3, st_l = run(mod, tmp, {}, legacy)
+    check("a stamp with NO provenance field parses, and does NOT count as automation",
+          out3 is not None and "NEVER RUN AUTOMATICALLY" in out3,
+          "unknown provenance must not prove the thing the field was added to prove")
+    check("...and the legacy stamp is still read for its OUTCOME (a format change is a "
+          "migration; the first tick runs against the predecessor's format)",
+          st_l.get("last_ok_verified") == 36, f"state={st_l}")
+
+    out4, st_t = run(mod, tmp, {}, ok_now)
+    check("a TIMER-written green stamp is silent and records the automation evidence",
+          out4 is None and st_t.get("last_timer_ts"), f"out={out4!r} state={st_t}")
+    out5, _ = run(mod, tmp, st_t, hand_now)
+    check("...and a later hand run does not re-open a gate the owner already cleared",
+          out5 is None, f"out={out5!r}")
+
+    stale_timer = dict(st_t, last_timer_ts=iso(6))
+    out6, _ = run(mod, tmp, stale_timer, hand_now)
+    check("a DEAD timer kept green by hand is announced — the diligent human is the mask",
+          out6 and "TIMER HAS STOPPED" in out6,
+          "staleness measured on the newest stamp alone lets manual runs hide a dead unit")
+
     # ── unreadable ─────────────────────────────────────────────────────────────────
     out, st_bad = run(mod, tmp, {}, "")
     check("an EMPTY stamp is WATCHED, never read as all-clear",
@@ -231,6 +270,48 @@ with tempfile.TemporaryDirectory() as d:
                  f"RED-UNPARSED {iso(0.1)} rc=2 verified=0 failed=0 unverified=0\n")
     check("a run that died before printing a verdict is RED, not a clean zero-failure pass",
           out is not None and "RED" in out, f"out={out!r}")
+
+    # ── THE SEAM: real bytes out of the producer, into this real reader ────────────
+    # Every assertion above feeds this guard a stamp I wrote by hand, which tests my BELIEF
+    # about the format. The seam belongs to no contributor: nucleus/test_check_watch.py
+    # proves the runner writes what it intends, this file proves the guard reads what it
+    # expects, and neither notices if the two intentions differ by one token. So here the
+    # producer is actually executed and its output goes in unedited.
+    runner = REPO / "nucleus" / "check_watch.sh"
+
+    def produce(suite, cgroup_text="0::/system.slice/astryx-residents.service\n"):
+        env = dict(os.environ)
+        cg = tmp / "seam-cgroup"
+        cg.write_text(cgroup_text)
+        env.update(CHECK_WATCH_SUITE=suite,
+                   CHECK_WATCH_STAMP=str(tmp / "seam-stamp"),
+                   CHECK_WATCH_LOG=str(tmp / "seam-log"),
+                   CHECK_WATCH_CGROUP=str(cg))
+        subprocess.run(["bash", str(runner)], cwd=REPO, env=env, capture_output=True)
+        return (tmp / "seam-stamp").read_text()
+
+    if not runner.exists():
+        check("the live-tree runner exists to be read from", False,
+              f"{runner} is tracked; its absence is a finding, not a skip")
+    else:
+        real_red = produce('printf "  \\342\\234\\227 tier floor invariants\\n"; '
+                           'echo "check: FAILURES above"; exit 1')
+        out, _ = run(mod, tmp, {}, real_red)
+        check("SEAM: a stamp the REAL runner wrote for a failing suite alarms here",
+              out and "tier floor invariants" in out, f"stamp={real_red!r} out={out!r}")
+
+        real_hand = produce('echo "check: ALL CODE INVARIANTS PASS (39 gates verified)"')
+        out, _ = run(mod, tmp, {}, real_hand)
+        check("SEAM: a REAL by-hand green stamp still says the suite is not automatic",
+              out and "NEVER RUN AUTOMATICALLY" in out,
+              f"stamp={real_hand!r} out={out!r}")
+
+        real_timer = produce('echo "check: ALL CODE INVARIANTS PASS (39 gates verified)"',
+                             "0::/system.slice/astryx-check.service\n")
+        out, st_seam = run(mod, tmp, {}, real_timer)
+        check("SEAM: a REAL timer-written green stamp is silent — one token, both sides",
+              out is None and st_seam.get("last_timer_ts"),
+              f"stamp={real_timer!r} out={out!r} state={st_seam}")
 
 print("\n" + ("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)
