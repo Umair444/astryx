@@ -72,4 +72,25 @@ MUTANTS = {
     # that has never run.
     "M6 a clean run leaves no evidence that anything was observed":
         ('    st["last_ok"] = ts_s', "    pass"),
+
+    # The persistence discriminator removed, so every transient skip wakes someone.
+    # check.sh is not deterministic over identical bytes — a nested 180s probe times out on
+    # a loaded host — and a guard that alarms on that teaches people to re-run until green,
+    # which is the failure a3's 77-instead-of-FAILED fix had just prevented one layer down.
+    "M7 a single transient skip alarms (persistence discriminator gone)":
+        ("        if not persist:", "        if False:"),
+
+    # Intersection becomes union, so ANY gate skipped in either of two runs reads as
+    # persistent. The alarm still fires, still names gates, still looks right — and now
+    # says "this host can no longer observe X" about a one-off timeout.
+    "M8 persistence is a UNION, so a transient skip reads as standing":
+        ('        st["amber_persist"] = sorted(cur & prev)',
+         '        st["amber_persist"] = sorted(cur | prev)'),
+
+    # UNVERIFIED silently rejoins the pass path: a gate that reported it could check
+    # NOTHING, on the one machine where its subject exists, produces no alarm at all. This
+    # is A SKIP IS NOT A PASS deleted from the one guard whose whole subject is a suite
+    # that distinguishes the two.
+    "M9 an unverified gate is treated as a passing one":
+        ('    if status == "AMBER":', "    if False:"),
 }

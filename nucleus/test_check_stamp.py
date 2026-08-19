@@ -178,6 +178,45 @@ with tempfile.TemporaryDirectory() as d:
     check("a red that returns AFTER a clean run is announced again, not deduped away",
           out5 is not None, "state from the last red must be cleared by the repair")
 
+    # ── amber: unverified, which is neither a pass nor a failure ───────────────────
+    amber1 = (f"AMBER {iso(1.0)} rc=1 verified=35 failed=0 unverified=1\n"
+              "UNVERIFIED:\n  ontology lint invariants\n")
+    out, st_a1 = run(mod, tmp, {}, amber1)
+    check("ONE unverified gate is not an alarm (a loaded host times a nested probe out)",
+          out is None, f"out={out!r}")
+    check("...but it is REMEMBERED, so a second run can tell persistent from transient",
+          st_a1.get("amber_set") == ["ontology lint invariants"], f"state={st_a1}")
+
+    amber2 = (f"AMBER {iso(0.1)} rc=1 verified=35 failed=0 unverified=1\n"
+              "UNVERIFIED:\n  ontology lint invariants\n")
+    out, st_a2 = run(mod, tmp, st_a1, amber2)
+    check("the SAME gate unverified on two consecutive runs IS announced",
+          out and "ontology lint invariants" in out, f"out={out!r}")
+    check("...and says explicitly that nothing FAILED — a skip is a third state",
+          out and "Nothing FAILED" in out, f"out={out!r}")
+
+    out2, _ = run(mod, tmp, st_a2, amber2)
+    check("re-reading the SAME stamp does not count as another run",
+          out2 is None, "the trigger fires 6x/day and the runner once — a stamp is one run")
+
+    amber_other = (f"AMBER {iso(0.1)} rc=1 verified=35 failed=0 unverified=1\n"
+                   "UNVERIFIED:\n  media in-process decode\n")
+    out3, _ = run(mod, tmp, st_a1, amber_other)
+    check("a DIFFERENT gate unverified next run is transient, not persistent",
+          out3 is None, f"out={out3!r}")
+
+    _, st_ok = run(mod, tmp, st_a2, ok_now)
+    out4, _ = run(mod, tmp, st_ok, amber1)
+    check("a clean run re-arms amber too (no stale persistence carried past a repair)",
+          out4 is None, f"out={out4!r}")
+
+    mixed = (f"RED {iso(0.1)} rc=1 verified=34 failed=1 unverified=1\n"
+             "FAILED:\n  tier floor invariants\n"
+             "UNVERIFIED:\n  ontology lint invariants\n")
+    out5, _ = run(mod, tmp, {}, mixed)
+    check("a stamp with BOTH a failure and a skip is reported as RED, not amber",
+          out5 and "tier floor invariants" in out5 and "RED" in out5, f"out={out5!r}")
+
     # ── unreadable ─────────────────────────────────────────────────────────────────
     out, st_bad = run(mod, tmp, {}, "")
     check("an EMPTY stamp is WATCHED, never read as all-clear",

@@ -16,7 +16,7 @@ wiring — forgetting fails RED. There is deliberately no exemption allowlist; a
 that genuinely should not run in the suite is a decision someone should have to argue
 for, not a default.
 
-That derivation is `git ls-files`, not a bare glob, and the difference is the difference
+That derivation is `git ls-tree HEAD`, not a bare glob, and the difference is the difference
 between COMMITTED and merely present (steward, 2026-08-15). Five agents share one working
 tree here, so an untracked half-built oracle is the normal state of an evening, and while
 the expected-set came off the filesystem it turned the whole suite red on somebody's
@@ -109,8 +109,17 @@ def oracles_on_disk():
     return {p.name for p in (REPO / "nucleus").glob("test_*.py")}
 
 
-def tracked_oracles():
+def committed_oracles():
     """The authority for the COVERAGE asserts: oracles that are COMMITTED.
+
+    HEAD, NOT THE INDEX (abstractor-2, msg 11118, reproduced before changing anything: a
+    `git add`-only draft is counted by ls-files and absent from ls-tree HEAD). The first
+    version of this used `git ls-files`, which lists the INDEX — so the stated law said
+    COMMIT and the implementation said `git add`, one command apart. A staged draft exists
+    in no clone either, so it fails the same test the docstring below uses to justify the
+    boundary. The function was already named for the right thing while the code did
+    something narrower; the name, this docstring and the assertion messages now agree,
+    because the next reader will trust the sentence over the call.
 
     Both asserts below say "committed oracle(s)" and both derived their expected-set from
     a filesystem glob, which is not the same set on a machine where work happens. This org
@@ -130,9 +139,10 @@ def tracked_oracles():
     empty expected-set is a green tick certifying nothing — the exact vacuity
     test_the_authority_is_not_empty exists to prevent.
     """
-    r = subprocess.run(["git", "ls-files", "nucleus/test_*.py"],
+    r = subprocess.run(["git", "ls-tree", "-r", "--name-only", "HEAD", "nucleus/"],
                        cwd=REPO, capture_output=True, text=True)
-    names = {Path(p).name for p in r.stdout.split() if p.strip()}
+    names = {Path(p).name for p in r.stdout.split()
+             if Path(p).name.startswith("test_") and p.endswith(".py")}
     return names or oracles_on_disk()
 
 
@@ -217,15 +227,17 @@ def test_the_authority_is_not_empty():
     disk = oracles_on_disk()
     assert disk, "no nucleus/test_*.py found at all — the glob authority is broken"
     assert Path(__file__).name in disk, "this file must be visible to its own authority"
-    tracked = tracked_oracles()
-    assert tracked, "the tracked-oracle authority is empty — the coverage asserts below "\
-                    "would pass by having nothing to check"
-    assert Path(__file__).name in tracked, "this file must be visible to its own authority"
-    wip = sorted(disk - tracked)
+    committed = committed_oracles()
+    assert committed, "the committed-oracle authority is empty — the coverage asserts "\
+                      "below would pass by having nothing to check"
+    assert Path(__file__).name in committed, "this file must be visible to its own authority"
+    wip = sorted(disk - committed)
     if wip:
-        # Visible, not fatal. An untracked oracle is a draft, not a hole in the floor —
+        # Visible, not fatal. An uncommitted oracle is a draft, not a hole in the floor —
         # but a draft nobody can see is how one gets left behind (three times in 08-2026).
-        print(f"  WARN: {len(wip)} untracked oracle(s) in nucleus/ — drafts, not yet part "
+        # "Uncommitted", not "untracked": a `git add`-only file is equally absent from
+        # every clone, and calling it tracked is what put the boundary in the wrong place.
+        print(f"  WARN: {len(wip)} uncommitted oracle(s) in nucleus/ — drafts, not yet part "
               f"of the floor: {', '.join(wip)}")
 
 
@@ -242,7 +254,7 @@ def test_every_oracle_in_nucleus_is_invoked_by_check_sh():
     """THE coverage assert. Expected-set derived from the filesystem, independent of
     the artifact being checked — so it proves COMPLETENESS, not merely that check.sh
     is internally consistent with itself."""
-    missing = sorted(tracked_oracles() - invoked_oracles(CHECK_SH.read_text()))
+    missing = sorted(committed_oracles() - invoked_oracles(CHECK_SH.read_text()))
     assert not missing, (
         "committed oracle(s) that nucleus/check.sh never runs: "
         + ", ".join(missing)
@@ -273,7 +285,7 @@ def test_every_oracle_is_actually_REACHED_when_check_sh_runs():
     assert executed, (
         f"runtime probe recorded no invocations from {CHECK_SH} — the shim never ran, so "
         f"this assertion verified nothing rather than finding nothing")
-    unreached = sorted(tracked_oracles() - executed)
+    unreached = sorted(committed_oracles() - executed)
     assert not unreached, (
         "committed oracle(s) present in check.sh but NEVER REACHED when it runs: "
         + ", ".join(unreached)

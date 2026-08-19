@@ -56,14 +56,29 @@ if [ -z "$verified" ]; then
 fi
 verified=${verified:-0}
 
-if [ "$rc" -eq 0 ]; then
-  status=OK
-elif [ "$failed" -eq 0 ] && [ "$unverified" -eq 0 ]; then
-  # check.sh went red but printed no verdict block we could read: it died early, the venv
-  # is broken, or the format moved. The one thing this must not do is report a clean count.
+# THREE OUTCOMES, NOT TWO — and the middle one exists because of abstractor-3's finding
+# (seed, msg 11112): check.sh is not deterministic over identical bytes. The coverage gate
+# runs a nested 180s probe, and on a loaded host that timeout renders as a gate that
+# verified nothing. a3's fix routes it to 77 (UNVERIFIED) instead of FAILED, which is
+# right — but this runner is deliberately STRICT, so check.sh's own exit code is 1 for a
+# skip too, and deriving the status from rc alone would convert every one of those back
+# into a RED alarm. That is the noise a3 just removed, re-introduced one layer up, and a
+# guard that reds without a defect trains people to re-run until green.
+#
+# So: FAILED means a defect. UNVERIFIED means the host could not observe a gate it is
+# supposed to be able to observe — a real finding, but a different one, and a single
+# load-induced instance is not worth waking anyone. The stamp carries both counts AND both
+# name-lists; deciding what a standing amber means is the reader's job, not the runner's.
+if [ "$failed" -gt 0 ]; then
+  status=RED
+elif [ "$unverified" -gt 0 ]; then
+  status=AMBER
+elif [ "$rc" -ne 0 ]; then
+  # Nonzero with nothing parsed: it died early, the venv is broken, or the verdict format
+  # moved out from under this parser. Never report a clean count for a run that failed.
   status=RED-UNPARSED
 else
-  status=RED
+  status=OK
 fi
 
 {
