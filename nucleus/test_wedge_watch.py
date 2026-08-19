@@ -29,7 +29,7 @@ guard has never yet fired on a real one — steward was already fixed when it wa
 import os
 import runpy
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -314,7 +314,8 @@ class _ProseQuoteCtx(_Ctx):
         if flat.startswith("SELECT") and "org-dark-escalation" in str(params):
             if "from_agent = 'seed'" in flat and "to_agent = 'owner'" in flat:
                 return []      # the prose row is a1 -> a4; a pinned query cannot see it
-            return [{"?": 1}]  # an unpinned query matches it and suppresses the rung
+            # an unpinned query sees the prose row: delivered, recent — it would bind
+            return [{"status": "delivered", "ts": NOW - timedelta(minutes=30)}]
         return []
 
 _fn.__globals__["_bodies"] = lambda: {"seed", "steward", "forge"}
@@ -322,6 +323,27 @@ _ctx4 = _ProseQuoteCtx([SEED_WEDGED])
 _fn(_ctx4)
 check("a prose quote of the escalation marker does not silence the owner doorbell",
       any("'owner','local'" in q for q, _ in _ctx4.calls if q.startswith("INSERT")), True)
+
+# THE STATUS DISCRIMINATOR (a2 via a4, msg 12345): the escalation INSERT writes
+# 'pending' and only the bridge flips it to 'delivered' — so emission must not stand
+# in for delivery on the org's last alarm. The polarity table, driven pure: a row that
+# LEFT the box binds the re-nag window; a row still plausibly in flight binds; a row
+# that sat undelivered past the delivery grace does NOT — the guard retries, at a
+# cadence the grace bounds (dead bridge = 4/hour, not 60/hour, not zero).
+print("\nESCALATION DEDUP vs UNDELIVERED ROWS (a2/a4, msg 12345):")
+_binds = ww["_esc_binds"]
+check("a DELIVERED escalation row binds (it left the box; re-nag owns the rest)",
+      _binds([{"status": "delivered", "ts": NOW - timedelta(hours=3)}], NOW), True)
+check("a PENDING row still inside the delivery grace binds (in flight, not stuck)",
+      _binds([{"status": "pending", "ts": NOW - timedelta(minutes=5)}], NOW), True)
+check("a PENDING row PAST the grace does NOT bind — the guard retries",
+      _binds([{"status": "pending", "ts": NOW - timedelta(hours=2)}], NOW), False)
+check("an ABANDONED row past the grace does NOT bind — same rule, no special case",
+      _binds([{"status": "abandoned", "ts": NOW - timedelta(hours=2)}], NOW), False)
+check("no prior rows -> does not bind", _binds([], NOW), False)
+check("one delivered among stale pendings still binds (any successful emission counts)",
+      _binds([{"status": "pending", "ts": NOW - timedelta(hours=2)},
+              {"status": "delivered", "ts": NOW - timedelta(hours=9)}], NOW), True)
 
 print("\n" + ("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)
