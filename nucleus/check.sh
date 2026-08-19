@@ -160,6 +160,7 @@ run "pii_sweep cannot forget a finding or print a routing id" "$PY" nucleus/test
 run "live-tree check guard can't go quiet" "$PY" nucleus/test_check_stamp.py
 run "live-tree stamp says what ran it" "$PY" nucleus/test_check_watch.py
 run "metabolism patrol invariants" "$PY" nucleus/test_stale_goals.py
+run "out-of-band doorbell is watched" "$PY" nucleus/test_doorbell_proof.py
 run "referral opt-in + static-literal" bash nucleus/referral_guard.sh
 # OKF frontmatter for the memory estate. The invariant is ADDITIVITY: attaching metadata
 # must change nothing the three live lints read. Pure stdlib; the arms that touch the real
