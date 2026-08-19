@@ -45,6 +45,15 @@ case "$what" in
   bridge) restart astryx-whatsapp ;;                              # routes.json / whatsapp.py change
   tg)     restart astryx-telegram ;;                              # routes-telegram.json / telegram.py change
   dc)     restart astryx-discord ;;                               # routes-discord.json / discord.py change
+  gw)     # gateway.py / orgname.py / charter-resolver change. This verb exists because
+          # its absence cost six days: the gateway ran pre-commit federation code
+          # 08-13→08-19 and the operator reaching for the sanctioned actuator found no
+          # case covering it (gemini, msg 11785). Verified serving after restart — the
+          # A2A card answering is the gateway's own health surface.
+          restart astryx-gateway
+          sleep 2 && curl -sf -m 5 localhost:8845/.well-known/agent-card.json >/dev/null \
+            && echo "  ✓ gateway serving the A2A card" \
+            || { echo "  ✗ gateway restarted but the card is NOT answering"; exit 1; } ;;
   units)  # units/*.{service,timer} changed — /etc holds COPIES, not symlinks: /home is a
           # separate subvolume mounted after systemd loads units, so symlinks dangle at
           # boot and the whole org orphans (found the hard way, reboot of 2026-07-23).
@@ -53,6 +62,6 @@ case "$what" in
   all)    build_web && restart astryx-observatory && restart astryx-whatsapp ;;
   reload) shift; bs=("$@"); [ ${#bs[@]} -eq 0 ] && bs=(whatsapp telegram discord)
           rc=0; for b in "${bs[@]}"; do reload "$b" || rc=1; done; exit $rc ;;
-  *) echo "usage: deploy.sh [web|obs|api|bridge|tg|dc|units|all|reload [bridge...]]  (default: all)"; exit 1 ;;
+  *) echo "usage: deploy.sh [web|obs|api|bridge|tg|dc|gw|units|all|reload [bridge...]]  (default: all)"; exit 1 ;;
 esac
 echo "deploy: $what done."
