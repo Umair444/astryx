@@ -298,5 +298,30 @@ check("seed DEAD -> the in-band alarm is INSERTed to the live relay",
 check("seed DEAD -> nothing is returned to the dead reader",
       "AGENT WEDGED" in (_ret3 or ""), False)
 
+# THE DEDUP PIN (a4, msg 12018, found LIVE): an agent QUOTING `<org-dark-escalation>` in
+# prose must not silence the terminal rung. On 08-19 a plan-2457 revise quoting the marker
+# had the owner escalation suppressed for 24h, and a4's report of the suppression became
+# the SECOND suppressing row — review of the alarm kept the alarm off. The fixture models
+# that exact table: one prose row, agent-to-agent. Only an UNPINNED dedup query can match
+# it; the pinned query (from_agent='seed' AND to_agent='owner', what the INSERT writes)
+# returns nothing, so the doorbell must still fire.
+class _ProseQuoteCtx(_Ctx):
+    def sql(self, q, params=()):
+        flat = " ".join(q.split())
+        self.calls.append((flat, params))
+        if "FROM agg" in q:
+            return self.rows
+        if flat.startswith("SELECT") and "org-dark-escalation" in str(params):
+            if "from_agent = 'seed'" in flat and "to_agent = 'owner'" in flat:
+                return []      # the prose row is a1 -> a4; a pinned query cannot see it
+            return [{"?": 1}]  # an unpinned query matches it and suppresses the rung
+        return []
+
+_fn.__globals__["_bodies"] = lambda: {"seed", "steward", "forge"}
+_ctx4 = _ProseQuoteCtx([SEED_WEDGED])
+_fn(_ctx4)
+check("a prose quote of the escalation marker does not silence the owner doorbell",
+      any("'owner','local'" in q for q, _ in _ctx4.calls if q.startswith("INSERT")), True)
+
 print("\n" + ("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}"))
 sys.exit(1 if fails else 0)
