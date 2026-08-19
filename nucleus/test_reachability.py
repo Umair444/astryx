@@ -482,8 +482,20 @@ def main():
     if stale:
         print("reachability: STALE EXEMPTION(S) — the manifest outlived its subject. An")
         print("exemption that no longer applies is a lie the next reader inherits:")
+        # THREE absence states, named apart (memory, msg 11674): since the population is
+        # HEAD, "not in pop" covers both gone-from-disk and present-but-uncommitted, and
+        # the old single sentence lied about the second — it told memory a file sitting
+        # right there, untracked, was "no longer in nucleus/", the same misdirection a2
+        # paid for at 03:04. A fix that removes a diagnostic's trigger leaves its WORDING
+        # behind, and the wording is the part the next reader inherits.
         for p in stale:
-            print(f"  {p} — {'no longer in nucleus/' if p not in pop else 'is now invoked; delete the exemption'}")
+            if p in pop:
+                why = "is now invoked; delete the exemption"
+            elif (REPO / p).exists():
+                why = "present on disk but not in HEAD — uncommitted, not gone; the exemption lands WITH its subject"
+            else:
+                why = "no longer in nucleus/"
+            print(f"  {p} — {why}")
         return 1
 
     # ── INHERITED REACHABILITY FROM A DEAD PARENT (abstractor-2's hypothesis) ──────────
