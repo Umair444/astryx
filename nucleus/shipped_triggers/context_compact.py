@@ -58,11 +58,14 @@ def context_compact(ctx):
     sent = ctx.state.get("sent", {})     # agent -> {"ts": epoch, "tokens": at-send, "n": sends}
     fired, standing = [], []
     scanned = 0
+    keyless = []
     for row in tokenwatch.fleet_context():
         a = row["agent"]
         if not row.get("found") or a not in live:
             continue
         scanned += 1
+        if row.get("model") is None:
+            keyless.append(a)            # see the fallback note below
         if row["pct"] < THRESH_PCT:
             sent.pop(a, None)            # back under the line: re-arm
             continue
@@ -76,15 +79,27 @@ def context_compact(ctx):
             landed = bool(prev) and row["tokens"] < prev["tokens"]
             n = 1 if (not prev or landed) else prev["n"] + 1
             sent[a] = {"ts": now, "tokens": row["tokens"], "n": n}
-            line = f"{a} ({row['tokens']:,} tok, {row['pct']:.0f}%)"
+            # An ASSUMED window is a guess about the denominator, and a compaction fired
+            # against a guess is a different claim from one fired against a measurement.
+            # It stays a fire either way (200k-for-unproven is the cheap direction), but
+            # the reader is told which, or the two are indistinguishable in the record.
+            of = "" if row.get("limit_proven", True) else " of an ASSUMED 200k"
+            line = f"{a} ({row['tokens']:,} tok, {row['pct']:.0f}%{of})"
             (standing if n > 1 else fired).append(line)
     ctx.state["sent"] = sent
     # positive evidence of the last look — so this guard's silence is provably
     # "scanned and found nothing", never "never ran" (guard-state law)
     ctx.state["last_scan"] = {"ts": round(now), "live": len(live), "read": scanned}
-    if not fired and not standing:
+    if not fired and not standing and not keyless:
         return None
     segs = []
+    if keyless:
+        # The window mark is keyed on the MODEL; a row with no model id fell back to the
+        # per-agent key, which is very nearly dead code (7,601/7,601 records carry one).
+        # A fallback nobody can see cannot be seen to rot, so it is named the day it runs
+        # — and costs nothing on every other day, because the list is empty.
+        segs.append("no model id on the newest record, so the window fell back to the "
+                    "per-agent mark: " + ", ".join(sorted(keyless)))
     if fired:
         segs.append("/compact queued to " + ", ".join(fired))
     if standing:

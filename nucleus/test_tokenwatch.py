@@ -50,12 +50,25 @@ def _fake_project(agent: str, lines: list[str]) -> Path:
     return root
 
 
-def _usage_line(tokens_in: int, cache_read: int = 0, cache_create: int = 0) -> str:
-    return json.dumps({"message": {"usage": {
+def _usage_line(tokens_in: int, cache_read: int = 0, cache_create: int = 0,
+                model: str | None = None) -> str:
+    msg = {"usage": {
         "input_tokens": tokens_in,
         "cache_read_input_tokens": cache_read,
         "cache_creation_input_tokens": cache_create,
-    }}})
+    }}
+    if model:
+        msg["model"] = model
+    return json.dumps({"message": msg})
+
+
+def _add_agent(root: Path, agent: str, lines: list[str]) -> Path:
+    """A second agent inside an existing fixture root, sharing its high-water store —
+    which is the whole point of the model-keyed mark: two carriers, one window."""
+    d = root / f"-home-umair-astryx-homes-{agent}"
+    d.mkdir()
+    (d / "session.jsonl").write_text("\n".join(lines) + "\n")
+    return d
 
 
 def test_context_is_last_record_all_three_classes():
@@ -127,7 +140,8 @@ def test_high_water_delta_scan_and_monotonic_mark():
     try:
         assert tokenwatch.high_water("testagent") == 50_000
         store = json.loads(tokenwatch.HIGHWATER.read_text())
-        assert store["testagent"]["files"]["session.jsonl"]["scanned"] == f.stat().st_size
+        assert (store["agents"]["testagent"]["files"]["session.jsonl"]["scanned"]
+                == f.stat().st_size)
         # Rewrite the HEAD in place (same byte length) to a larger value, then append a
         # smaller one: a full rescan would answer 90_000, a true delta scan answers
         # 70_000 — the offset, not luck, decides which ran.
@@ -144,6 +158,129 @@ def test_high_water_delta_scan_and_monotonic_mark():
         assert tokenwatch.high_water("testagent") == 300_000
         assert tokenwatch.infer_limit(120_000, "testagent") == 1_000_000
         assert tokenwatch.infer_limit(120_000) == 200_000    # agentless stays pure
+    finally:
+        tokenwatch.PROJECTS = old
+
+
+# ------------------------------------------------- the mark is keyed on the MODEL
+# The window is a property of the model; the agent is only its carrier. Keying the proof
+# on the carrier was wrong in both directions at once (abstractor-3, 2026-08-15) — it
+# would not transfer between siblings on one model, and it stayed attached to an agent
+# that had since moved to another. All four cases below are RED against the per-agent key.
+def test_window_proof_transfers_between_siblings_on_one_model():
+    # MEASURED INSTANCE: claude-opus-5 was proven to 999,318 by seed (and past 200k again
+    # by steward and abstractor-4), while forge sat at 76.1% "of 200k" on the same model
+    # id and the same account — four points from a compact at 16% of its real window. The
+    # clamp is exactly what stops a clamped agent ever earning its own proof, so the
+    # self-sealing property survived its own fix until the evidence learned to transfer.
+    old = tokenwatch.PROJECTS
+    root = _fake_project("prover", [_usage_line(300_000, model="fake-model-5")])
+    _add_agent(root, "sibling", [_usage_line(120_000, model="fake-model-5")])
+    tokenwatch.PROJECTS = root
+    try:
+        assert tokenwatch.context_tokens("sibling")["limit"] == 200_000   # no proof yet
+        tokenwatch.high_water("prover")            # a tick scans the roster; proof lands
+        r = tokenwatch.context_tokens("sibling")
+        assert r["tokens"] == 120_000 and r["limit"] == 1_000_000, r
+        assert r["pct"] == 12.0, r                 # not 60.0, and never a compact
+    finally:
+        tokenwatch.PROJECTS = old
+
+
+def test_window_proof_does_not_leak_across_models():
+    # The anti-case, or the fix becomes the fleet-wide rule that was correctly rejected:
+    # this org runs opus 5, fable 5 and haiku 4.5 side by side, so a proof carries only
+    # to the id that earned it.
+    old = tokenwatch.PROJECTS
+    root = _fake_project("prover", [_usage_line(300_000, model="fake-big-5")])
+    _add_agent(root, "stranger", [_usage_line(120_000, model="fake-small-4")])
+    tokenwatch.PROJECTS = root
+    try:
+        tokenwatch.high_water("prover")
+        assert tokenwatch.context_tokens("stranger")["limit"] == 200_000
+    finally:
+        tokenwatch.PROJECTS = old
+
+
+def test_model_evidence_beats_a_stale_agent_mark():
+    # The other direction of the same key error, pinned BEFORE it has an instance: seed
+    # earned 999,318 on claude-opus-5 and now runs claude-fable-5, which happens to be
+    # proven past 200k in its own right — so nothing is mis-lifted today. A mark that
+    # outlives the model it was earned on describes nothing the agent runs, and it errs
+    # toward never compacting a session that has no such window.
+    old = tokenwatch.PROJECTS
+    root = _fake_project("mover", [_usage_line(300_000, model="fake-old-5")])
+    tokenwatch.PROJECTS = root
+    d = root / "-home-umair-astryx-homes-mover"
+    os.utime(d / "session.jsonl", (1_000_000_000, 1_000_000_000))
+    (d / "zz-now.jsonl").write_text(_usage_line(120_000, model="fake-new-4") + "\n")
+    try:
+        assert tokenwatch.high_water("mover") == 300_000     # the agent mark stands
+        r = tokenwatch.context_tokens("mover")               # but the window is the
+        assert r["tokens"] == 120_000 and r["limit"] == 200_000, r   # NEW model's
+    finally:
+        tokenwatch.PROJECTS = old
+
+
+def test_store_migration_rescans_rather_than_inheriting_starved_offsets():
+    # A format change is a migration: a v1 store carries byte offsets at EOF and no model
+    # marks, so inheriting it would leave every proof already scanned invisible to the key
+    # that now decides. Discarding the old version is what makes the fix retroactive.
+    old = tokenwatch.PROJECTS
+    root = _fake_project("legacy", [_usage_line(300_000, model="fake-model-5")])
+    tokenwatch.PROJECTS = root
+    f = root / "-home-umair-astryx-homes-legacy" / "session.jsonl"
+    tokenwatch.HIGHWATER.parent.mkdir(parents=True, exist_ok=True)
+    tokenwatch.HIGHWATER.write_text(json.dumps({           # v1 shape: agents at top level
+        "legacy": {"max": 300_000,
+                   "files": {"session.jsonl": {"scanned": f.stat().st_size,
+                                               "max": 300_000}}}}))
+    try:
+        assert tokenwatch.model_water("fake-model-5") == 0          # v1 knows no models
+        assert tokenwatch.high_water("legacy") == 300_000           # rescanned, not read
+        assert tokenwatch.model_water("fake-model-5") == 300_000    # proof now transfers
+    finally:
+        tokenwatch.PROJECTS = old
+
+
+def test_an_assumed_window_never_renders_as_a_measured_one():
+    # memory's ruling (msg 11062): keying on the model REDISTRIBUTES proof, it does not
+    # create a way to EARN it — a model with no mark is clamped at 160k and unlocking
+    # needs a reading past 200k, so a 1M model joining tomorrow starts sealed and stays
+    # sealed. The ruling is not to widen the assumption but to stop the seal being
+    # invisible: a guess and a measurement must not print the same number the same way.
+    old = tokenwatch.PROJECTS
+    root = _fake_project("guessed", [_usage_line(120_000, model="fake-unproven-1")])
+    _add_agent(root, "measured", [_usage_line(300_000, model="fake-proven-9")])
+    tokenwatch.PROJECTS = root
+    try:
+        tokenwatch.high_water("measured")
+        assert tokenwatch.context_tokens("measured")["limit_proven"] is True
+        assert tokenwatch.context_tokens("guessed")["limit_proven"] is False
+        # ...and it is derived from the EVIDENCE, not from `limit == 200_000`, so a third
+        # tier could never make the shorthand quietly lie.
+        assert tokenwatch.window(120_000, model="fake-proven-9") == (1_000_000, True)
+        assert tokenwatch.window(120_000, model="fake-unproven-1") == (200_000, False)
+        assert tokenwatch.window(300_000) == (1_000_000, True)   # its own reading proves it
+    finally:
+        tokenwatch.PROJECTS = old
+
+
+def test_a_synthetic_record_is_not_the_session_load_and_never_a_model():
+    # `<synthetic>` is stamped by the client, not the API, and every one of them carries a
+    # ZERO-token usage block (16/16 measured). Read as the last usage record it reports a
+    # full session as 0% — an actuator skipping a session that may be full — and it would
+    # otherwise enter the marks map as if it were a model.
+    old = tokenwatch.PROJECTS
+    root = _fake_project("interrupted", [
+        _usage_line(190_000, model="fake-model-5"),
+        _usage_line(0, model="<synthetic>"),          # an interrupt lands last
+    ])
+    tokenwatch.PROJECTS = root
+    try:
+        r = tokenwatch.context_tokens("interrupted")
+        assert r["tokens"] == 190_000 and r["model"] == "fake-model-5", r
+        assert tokenwatch.model_water("<synthetic>") == 0
     finally:
         tokenwatch.PROJECTS = old
 
@@ -198,10 +335,14 @@ def _stub(rows, live, sent_log):
     cc.tokenwatch.send_compact = lambda a: (sent_log.append(a), True)[1]
 
 
-def _row(agent, tokens, found=True):
-    limit = tokenwatch.infer_limit(tokens)
-    return {"agent": agent, "tokens": tokens, "limit": limit,
-            "pct": round(100.0 * tokens / limit, 1), "found": found}
+def _row(agent, tokens, found=True, model="fake-model-5"):
+    """A stub row must carry the fields context_tokens ACTUALLY emits — a stub is a model
+    of the world and is wrong in both directions when it drifts from the emitter. `model`
+    is always present (None when the record had no id); `limit_proven` says whether
+    anything ever measured the window or the 200k floor was assumed."""
+    limit, proven = tokenwatch.window(tokens)
+    return {"agent": agent, "tokens": tokens, "limit": limit, "limit_proven": proven,
+            "pct": round(100.0 * tokens / limit, 1), "found": found, "model": model}
 
 
 def test_trigger_fires_and_sends_over_threshold():
@@ -213,6 +354,45 @@ def test_trigger_fires_and_sends_over_threshold():
         assert sends == ["hot"], sends            # 95% sent, 20% left alone
         assert fire and "hot" in fire and "cool" not in fire
         assert ctx.state["sent"]["hot"]["n"] == 1
+    finally:
+        (cc.tokenwatch.fleet_context, cc.tokenwatch.live_sessions,
+         cc.tokenwatch.send_compact) = real
+
+
+def test_trigger_names_an_assumed_window_when_it_fires_on_one():
+    # A compaction fired against a GUESSED denominator is a different claim from one
+    # fired against a measured window. It fires either way — 200k-for-unproven is the
+    # cheap direction — but the record has to say which, or the two are the same record.
+    real = (tokenwatch.fleet_context, tokenwatch.live_sessions, tokenwatch.send_compact)
+    sends, ctx = [], _Ctx()
+    try:
+        guessed = _row("guessed", 190_000)
+        guessed["limit_proven"] = False
+        measured = _row("measured", 900_000)
+        measured.update(limit=1_000_000, limit_proven=True, pct=90.0)
+        _stub([guessed, measured], {"guessed", "measured"}, sends)
+        fire = cc.context_compact(ctx)
+        assert sorted(sends) == ["guessed", "measured"], sends
+        assert "guessed (190,000 tok, 95% of an ASSUMED 200k)" in fire, fire
+        assert "measured (900,000 tok, 90%)" in fire, fire
+    finally:
+        (cc.tokenwatch.fleet_context, cc.tokenwatch.live_sessions,
+         cc.tokenwatch.send_compact) = real
+
+
+def test_trigger_names_a_row_that_fell_back_to_the_per_agent_key():
+    # The per-agent mark is now reached only when a record carries no model id, which is
+    # very nearly dead code — and a fallback nobody can observe cannot be observed to rot.
+    # It costs nothing while healthy: with every row keyed, the trigger stays silent.
+    real = (tokenwatch.fleet_context, tokenwatch.live_sessions, tokenwatch.send_compact)
+    sends, ctx = [], _Ctx()
+    try:
+        _stub([_row("keyed", 40_000)], {"keyed"}, sends)
+        assert cc.context_compact(ctx) is None          # healthy fleet, still silent
+        _stub([_row("keyless", 40_000, model=None)], {"keyless"}, sends)
+        out = cc.context_compact(_Ctx())
+        assert out and "keyless" in out and "per-agent mark" in out, out
+        assert sends == [], sends                       # a notice, never a compaction
     finally:
         (cc.tokenwatch.fleet_context, cc.tokenwatch.live_sessions,
          cc.tokenwatch.send_compact) = real
