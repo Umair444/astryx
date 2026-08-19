@@ -193,6 +193,15 @@ run "A2A card canonicalisation (JCS)" "$PY" nucleus/test_card_canon.py
 # startup drain, or a permanently deaf ear passes on that one-shot). SKIPS loudly without
 # node, channel/node_modules, a reachable DB, or CREATE DATABASE rights — i.e. a bare clone.
 run "channel ear survives a db blip"  "$PY" nucleus/test_ear_survival.py
+# The other half of the same file: a wake DELIVERED into a void is lost forever, because
+# `delivered` is set by the ear the instant it pushes, not by the body when it reads, and
+# the startup drain sweeps `pending` only. Measured over 21 days: 69 messages reached no
+# turn and no step before their agent's next boot; one roster respawn (08-15 07:37Z) ate
+# nine agents' morning heartbeat, two of steward's losses being guard alarms. Recovery has
+# TWO failure directions, so this drives both: the wake comes back, and nothing a turn or
+# a step could have covered is ever served twice. Same cost and same skip conditions as
+# the gate above, times three (it runs three server generations, ~35s each).
+run "lost wakes recovered at spawn"   "$PY" nucleus/test_wake_recovery.py
 # Class-1 of the prove-family oracle (scout, plan-15): drives all seven containment
 # verdicts BOTH ways against synthetic trees via G15_ENVF/G15_SCAN_ROOTS. Its output
 # states its own limit — decision logic only, not the real cell.
@@ -233,6 +242,11 @@ run "plan-lifecycle trigger oracle"   "$PY" nucleus/test_plan_lifecycle.py
 # Pure stdlib and needs no DB (the wire + wacli are stubbed), but the trigger BODY it
 # tests is gitignored, so it SKIPS loudly on a fresh clone rather than passing.
 run "gemini ear-dark trigger oracle"  "$PY" nucleus/test_ear_dark.py
+# The mouth-side mirror, and the same gitignored-body caveat. Its live-shape case reaches
+# the wacli container, so it SKIPs (77) rather than passing wherever that is unreachable —
+# a parser checked only against fixtures I wrote is checked against my own beliefs, which
+# is exactly how its empty-window case was wrong on the day it shipped.
+run "gemini mouth-dark trigger oracle" "$PY" nucleus/test_mouth_dark.py
 # Same gitignored-body caveat: SKIPs (77) on a clone. Guards the DEDUP specifically —
 # the key must carry an escalation band, or a standing condition warns once and goes
 # silent (which is how p1 degraded unobserved at 59h, 2026-08-14).

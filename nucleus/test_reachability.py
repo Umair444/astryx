@@ -140,6 +140,12 @@ EXEMPT = {
     # first copy was clobbered by a concurrent write to this file from the shared working
     # tree, which is its own small lesson about who else has the file open.
     "nucleus/mutants_check_stamp.py": "data: mutant spec, read by mutation_probe.py when pointed at it",
+    # SIXTH, still the same night. The trip condition a4 set at four is now doubled, and
+    # this one is evidence the churn is STRUCTURAL rather than a burst: it arrived from a
+    # different author, for an unrelated subject (channel/server.mjs), by the ordinary act
+    # of shipping an oracle with mutants beside it. Every future authored mutant set costs
+    # a hand-written line here. Build the READ-AS-DATA edge; do not add a seventh. (forge)
+    "nucleus/mutants_wake_recovery.py": "data: mutant spec, read by mutation_probe.py when pointed at it",
     "nucleus/__init__.py":    "library: package marker, imported implicitly by `from nucleus import X`",
     # REACHED, but through a construction no line parser can follow — this is the
     # declared residual made concrete, and the reason exemptions carry a file:line.
@@ -156,8 +162,24 @@ def _git(*args, cwd=None):
 
 
 def population():
-    """Committed nucleus scripts. Derived from git, not from a naming convention."""
-    return sorted(p for p in _git("ls-files", "nucleus/")
+    """COMMITTED nucleus scripts. Derived from git, not from a naming convention.
+
+    `ls-tree -r HEAD`, NOT `ls-files`. ls-files lists the INDEX, so a file between
+    `git add` and `git commit` is in it — and this gate then prints "all N COMMITTED
+    nucleus scripts" about files that are not committed. a2 did not deduce this, they
+    HIT it: at 03:04 the gate returned rc 1 with "STALE EXEMPTION — mutants_check_stamp.py
+    no longer in nucleus/", because the exemption was in the file while its subject was
+    mid-`git add`; at 03:05 the identical command returned 0. Proven deterministically
+    after the live window healed: stage one file in a clone and ls-files says 81 while
+    ls-tree HEAD says 80.
+
+    It is urgent rather than tidy because it COMPOSES with the remedy this gate is headed
+    for. A scheduled run belongs on the live host — the one machine where someone is
+    always mid-edit — so an index-authored population makes the first thing the org learns
+    about this gate be that it reddens for no reason. A flaky red is how a gate gets
+    bypassed, and a bypassed gate is off forever.
+    """
+    return sorted(p for p in _git("ls-tree", "-r", "--name-only", "HEAD", "nucleus/")
                   if p.endswith((".py", ".sh")))
 
 
@@ -381,12 +403,52 @@ FIXTURES = [
 ]
 
 
+def inherited_from_dead(reached, dead):
+    """Files whose ENTIRE invoker set is exempt-or-unreached. Pure, so it is testable.
+
+    It was NOT testable when it landed, and a2 found that out by trying to fire it from
+    outside: the STALE arm preempts every attempt, because any parent you can add to
+    EXEMPT is by definition reached, so the run fails as stale before reaching this check.
+    An arm whose RED path cannot be driven is the exact defect this whole thread is about
+    — "never fired" and "cannot fire" are indistinguishable from the outside. Lifting the
+    logic out of main() into a pure function over (reached, dead) is what makes the
+    counterexample expressible at all.
+    """
+    out = []
+    for f, hits in reached.items():
+        invokers = {lbl for lbl, _ in hits}
+        if invokers and invokers <= dead:
+            out.append((f, sorted(invokers)))
+    return sorted(out)
+
+
+# (name, reached, dead, expect_flagged) — the RED arm a2 could not reach from outside.
+INHERITED_FIXTURES = [
+    ("child invoked only by an exempt parent",
+     {"nucleus/child.sh": [("nucleus/deploy.sh", "bash nucleus/child.sh")]},
+     {"nucleus/deploy.sh"}, True),
+    ("one live parent among dead ones is enough",
+     {"nucleus/child.sh": [("nucleus/deploy.sh", "x"), ("nucleus/check.sh", "y")]},
+     {"nucleus/deploy.sh"}, False),
+    ("a live parent alone",
+     {"nucleus/child.sh": [("nucleus/check.sh", "bash nucleus/child.sh")]},
+     {"nucleus/deploy.sh"}, False),
+    ("a chain two deep still bottoms out in nothing",
+     {"nucleus/child.sh": [("nucleus/mid.sh", "bash nucleus/child.sh")]},
+     {"nucleus/mid.sh", "nucleus/deploy.sh"}, True),
+]
+
+
 def self_test():
     bad = []
     for name, want, texts, path in FIXTURES:
         got = bool(invocations(path, texts))
         if got != want:
             bad.append(f"  {'MISSED' if want else 'FALSE POSITIVE'}: {name}")
+    for name, reached, dead, want in INHERITED_FIXTURES:
+        got = bool(inherited_from_dead(reached, dead))
+        if got != want:
+            bad.append(f"  {'MISSED' if want else 'FALSE POSITIVE'}: inherited — {name}")
     return bad
 
 
@@ -434,10 +496,7 @@ def main():
     # 77 scripts, 11 exempt/unreached, still zero. Skipped when blind, like every other
     # accusation here: an absent surface inflates `unreached` and would manufacture parents.
     if not missing:
-        dead = set(EXEMPT) | set(unreached)
-        inherited = [(f, sorted({lbl for lbl, _ in hits}))
-                     for f, hits in reached.items()
-                     if {lbl for lbl, _ in hits} <= dead and hits]
+        inherited = inherited_from_dead(reached, set(EXEMPT) | set(unreached))
         if inherited:
             print("reachability: REACHED ONLY BY A PARENT THAT RUNS NOWHERE —")
             for f, parents in inherited:

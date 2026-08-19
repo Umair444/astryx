@@ -390,13 +390,24 @@ async function refreshSubs() {
 }
 
 async function pushMessage(row) {
+  // A recovered wake must never masquerade as a fresh one. The body is being handed a
+  // message whose real send time is in the past — sometimes hours — so it gets the send
+  // timestamp and the reason, and decides for itself whether the wake is still worth
+  // acting on. A heuristic that guessed staleness here would be guessing about a
+  // judgement the reader can make with the facts.
+  const again = Number(row.delivery?.recovered || 0)
+  const content = again
+    ? `[redelivered wake · sent ${new Date(row.ts).toISOString()} · the session it was ` +
+      `first delivered to ended before taking any turn, so nothing read it]\n${row.body}`
+    : row.body
   await mcp.notification({
     method: 'notifications/claude/channel',
     params: {
-      content: row.body,
+      content,
       meta: {
         from: `${row.from_agent}@${row.from_org}`, thread: row.thread || '',
         intent: row.intent, msg_id: String(row.id),
+        ...(again ? { redelivered: String(again) } : {}),
       },
     },
   })
@@ -440,6 +451,78 @@ async function maybePushStep(payload) {
   })
 }
 
+// ── a wake delivered into a void is lost FOREVER, so recover it at spawn ────────────
+// `delivered` is set by the EAR, not by the body: deliverMessage() flips the row the
+// instant it pushes the MCP notification, before any turn has read a word of it. The
+// drain below only ever sweeps `pending`, so a message claimed by a body that then dies
+// — respawned, killed, wedged then restarted — is never offered to anything again. The
+// comment on that drain has named this since it was written ("marked delivered into a
+// void"); the 15s delay only covers the boot race, not the death of the previous body.
+//
+// This is not hypothetical and it is not rare. Measured 2026-08-15 over 21 days on the
+// org's own tables, under the strict predicate below: 69 messages provably reached no
+// turn and no step before their agent's next boot, 24 of them within 12h of it. On
+// 2026-08-15 a single roster-wide respawn at 07:37Z ate the 04:00Z heartbeat of NINE
+// agents at once. Two of steward's were guard alarms (pii_sweep, outbound_stuck) — a
+// detector fired, and the finding was thrown away by the restart.
+//
+// Worse, the org's own prescribed remedy for a WEDGED agent is `tmux kill-session` then
+// `spawn.sh` (triggers/seed/wedge_watch.py, which fires ON delivered-and-unconsumed
+// rows). So the standard cure for a wedge destroys exactly the wakes that proved it.
+//
+// THE PREDICATE IS TIMID BY CONSTRUCTION, because the wrong side here is a DUPLICATE:
+// re-running a peer's task is worse than losing a heartbeat. A message is recovered only
+// if the agent produced NO turn and NO step that could have seen it — no turn alive at
+// or after the delivery instant, and no step at all between delivery and this boot. Any
+// sign of life in that window means the old body may have read it, and "may have" is not
+// proof, so it stays put. The steps clause is not belt-and-braces: turns rows are
+// INSERTed at turn END by hooks/step.py and `ended_at` is NOT NULL, so a body killed
+// mid-turn leaves NO turn row at all and the turns clause alone would see an innocent
+// silence. Steps are what testify for a turn that never finished.
+// Absence of a turn proves nothing on its own; absence of BOTH, bounded to a window that
+// ends when this process began, proves nobody was home. Same lesson as the wake_audit
+// classifier (08-13): only claim what the substrate can prove.
+const BOOTED_AT = new Date()
+const RECOVERY_HOURS = Number(process.env.ASTRYX_WAKE_RECOVERY_HOURS ?? 12)
+const RECOVERY_CAP = Number(process.env.ASTRYX_WAKE_RECOVERY_CAP ?? 25)
+const RECOVERY_TRIES = 3        // a permanently-wedged agent must not loop forever
+
+async function recoverLostWakes() {
+  if (!(RECOVERY_HOURS > 0)) return
+  const cand = await pool.query(
+    `SELECT m.id FROM messages m
+      WHERE m.to_agent = $1 AND m.to_org = 'local' AND m.status = 'delivered'
+        AND m.delivered_at < $2
+        AND m.delivered_at > $2::timestamptz - make_interval(hours => $3)
+        AND coalesce((m.delivery->>'recovered')::int, 0) < $4
+        AND NOT EXISTS (SELECT 1 FROM turns t
+                         WHERE t.agent = m.to_agent AND t.started_at < $2
+                           AND t.ended_at > m.delivered_at)
+        AND NOT EXISTS (SELECT 1 FROM steps s
+                         WHERE s.agent = m.to_agent AND s.kind <> 'boot'
+                           AND s.ts > m.delivered_at AND s.ts < $2)
+      ORDER BY m.delivered_at DESC`,
+    [AGENT, BOOTED_AT, RECOVERY_HOURS, RECOVERY_TRIES])
+  if (!cand.rowCount) return
+  // No silent caps: if the flood guard drops any, it says which. A count nobody can act
+  // on is how a truncation reads as full coverage.
+  const take = cand.rows.slice(0, RECOVERY_CAP).map(r => r.id)
+  const dropped = cand.rows.slice(RECOVERY_CAP).map(r => r.id)
+  if (dropped.length) {
+    console.error(`[channel] wake recovery capped at ${RECOVERY_CAP}; NOT redelivering ` +
+                  `${dropped.length} older lost message(s): ${dropped.join(',')}`)
+  }
+  const back = await pool.query(
+    `UPDATE messages SET status = 'pending',
+            delivery = jsonb_set(coalesce(delivery, '{}'::jsonb), '{recovered}',
+                                 to_jsonb(coalesce((delivery->>'recovered')::int, 0) + 1), true)
+      WHERE id = ANY($1::bigint[]) AND status = 'delivered' RETURNING id`, [take])
+  if (back.rowCount) {
+    console.error(`[channel] recovered ${back.rowCount} wake(s) delivered into a void ` +
+                  `before this session started: ${back.rows.map(r => r.id).join(',')}`)
+  }
+}
+
 async function listen() {
   const client = new pg.Client({ connectionString: DSN })
   client.on('error', () => setTimeout(listen, 3000))       // dead conn → fresh client (v1 bus-listen lesson)
@@ -456,10 +539,19 @@ async function listen() {
     // (marked delivered into a void) — 15s lets claude finish waking first.
     setTimeout(async () => {
       try {
+        // Recovery first, and deliberately through the SAME door: it puts provably-unread
+        // rows back to `pending` and the one sweep below delivers them, so there is one
+        // delivery path to reason about rather than two that can drift apart.
+        // Its own try: recovery is a BONUS, and a bonus that can take the ordinary drain
+        // down with it has made the ear worse than it was before I touched it.
+        try { await recoverLostWakes() }
+        catch (e) { console.error('[channel] wake recovery failed, draining anyway:', e.message) }
         const pend = await pool.query(
           `SELECT id FROM messages WHERE to_agent=$1 AND to_org='local' AND status='pending' ORDER BY id`, [AGENT])
         for (const row of pend.rows) await deliverMessage(row.id)
-      } catch {}
+      } catch (e) {
+        console.error('[channel] startup drain failed, the ear lives on:', e.message)
+      }
     }, 15_000)
     await refreshSubs()
     setInterval(() => refreshSubs().catch(e =>
