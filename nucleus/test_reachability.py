@@ -95,6 +95,10 @@ A SURFACE IT CAN READ; it does not prove the invocation ever executes (a `run` l
 Run: venv/bin/python nucleus/test_reachability.py   (also wired into nucleus/check.sh)
      venv/bin/python nucleus/test_reachability.py --report   (classification, no asserts)
 """
+import ast
+import textwrap
+import warnings
+import importlib.util
 import os
 import re
 import subprocess
@@ -121,31 +125,26 @@ EXEMPT = {
     "nucleus/wallpane.sh":    "manual: single-pane variant of wall.sh, invoked by an operator",
     "nucleus/refresh.sh":     "manual: operator session refresh",
     "nucleus/deploy.sh":      "manual: operator deploy step",
-    # data read by a tool, never executed
-    "nucleus/mutants_check_coverage.py":   "data: mutant spec, read by mutation_probe.py when pointed at it",
-    "nucleus/mutants_ear_survival.py":     "data: mutant spec, read by mutation_probe.py when pointed at it",
-    "nucleus/mutants_pii_sweep_ledger.py": "data: mutant spec, read by mutation_probe.py when pointed at it",
-    # FOURTH of its kind, and it arrived within hours of this file landing (8c543a9) —
-    # caught by the gate on its first day, which is the fail-closed polarity working. But
-    # four one-at-a-time exemptions of ONE class is the churn seed named as the trip
-    # condition for the `# Kind:` question, and there is a derivation waiting: every
-    # nucleus/mutants_*.py is already the SUBJECT of test_mutants_wellformed.py, the
-    # committed ratchet that keeps these specs pointing at something real. This gate has no
-    # READ-AS-DATA edge — only invocation — so a file watched by a committed gate still
-    # reads as unreached. That edge, not a fifth exemption, is the fix. Proposed, not built.
-    "nucleus/mutants_pre_push_contract.py": "data: mutant spec, read by mutation_probe.py when pointed at it",
-    # FIFTH, same class, same night, and the last one added by hand: the derivation a4
-    # names above (mutants_*.py are READ AS DATA by test_mutants_wellformed.py, a committed
-    # gate this file has no edge type for) retires all five at once. Written twice — the
-    # first copy was clobbered by a concurrent write to this file from the shared working
-    # tree, which is its own small lesson about who else has the file open.
-    "nucleus/mutants_check_stamp.py": "data: mutant spec, read by mutation_probe.py when pointed at it",
-    # SIXTH, still the same night. The trip condition a4 set at four is now doubled, and
-    # this one is evidence the churn is STRUCTURAL rather than a burst: it arrived from a
-    # different author, for an unrelated subject (channel/server.mjs), by the ordinary act
-    # of shipping an oracle with mutants beside it. Every future authored mutant set costs
-    # a hand-written line here. Build the READ-AS-DATA edge; do not add a seventh. (forge)
-    "nucleus/mutants_wake_recovery.py": "data: mutant spec, read by mutation_probe.py when pointed at it",
+    # SIX EXEMPTIONS USED TO LIVE HERE — one per nucleus/mutants_*.py, added one at a
+    # time over eight days by three different authors, each correctly reasoned and each
+    # a symptom of the same missing edge. DATA_READERS retires all of them: the specs are
+    # reached by test_mutants_wellformed.py, which reads them, and this file's own STALE
+    # arm named all six as "is now invoked; delete the exemption" before they were cut.
+    # A seventh, mutants_wedge_watch.py, never needed an exemption at all — it was being
+    # granted reachability by a docstring, which is the hole the Python-surface rule closes.
+    #
+    # NEWLY VISIBLE, NOT NEWLY TRUE. Both entries below were unreached all along and were
+    # hidden by that same docstring hole: mutation_probe.py's `Run:` line reached every
+    # spec, and their `Run:` lines reached it back — a mutual-citation ring. Making them
+    # visible is the fix working; whether they should instead be WIRED is a call for
+    # whoever owns them, and the exemption is what forces that call to be made out loud.
+    "nucleus/mutation_probe.py":
+        "manual: authoring-time instrument, deliberately NOT gated in check.sh (steward's "
+        "ruling, msg 5934 — the full run is 100.6s and a slow gate gets skipped). "
+        "nucleus/probe_all.sh invokes it but is UNTRACKED; when it lands, this goes stale.",
+    "nucleus/smoke.sh":
+        "manual: doctor-class post-deploy probe, self-declared (`# Usage: nucleus/smoke.sh "
+        "[observatory-port]`) and already classified as manual by test_check_coverage.py:56",
     "nucleus/__init__.py":    "library: package marker, imported implicitly by `from nucleus import X`",
     # REACHED, but through a construction no line parser can follow — this is the
     # declared residual made concrete, and the reason exemptions carry a file:line.
@@ -153,6 +152,10 @@ EXEMPT = {
 }
 
 INTERP = r"(?:bash|sh|zsh|exec|source|\.|python3?|\$PY|\$\{PY\}|venv/bin/python3?|uv\s+run|/usr/bin/env\s+\S+)"
+
+
+# .py surfaces that would not parse this run; blind, never empty. See _py_invocations.
+UNPARSEABLE = set()
 
 
 def _git(*args, cwd=None):
@@ -258,6 +261,98 @@ def _command_word(line, cmd_tail):
     return bool(cmd_tail.search(t))
 
 
+# ── A SURFACE IS PARSED IN ITS OWN LANGUAGE ──────────────────────────────────────────
+# Shell grammar inside a .py file is not an invocation, it is prose. That is not a
+# heuristic — Python has no syntax under which `venv/bin/python nucleus/x.py` executes
+# anything, so a line-oriented shell parser reading a .py surface is answering with a
+# grammar the file cannot speak. Measured cost of getting this wrong, on the live tree:
+#
+#   mutants_wedge_watch.py   reached ONLY by mutation_probe.py's `Run:` docstring line
+#   mutation_probe.py        reached ONLY by the seven mutants files' `Run:` docstrings
+#
+# — a mutual-citation ring of USAGE EXAMPLES that granted a whole subsystem reachability
+# it did not have. It is the same rule this file's own EXEMPT header already states ("a
+# doc mention is too weak to silence this gate"), silently not applied to a second doc
+# surface. A docstring is documentation wherever it lives.
+#
+# The first draft of this fix was line-based (skip shell tokens on .py surfaces) and it
+# FALSE-ACCUSED social_age.py, whose real caller is
+#     subprocess.run(
+#         [str(REPO / "venv" / "bin" / "python"), str(REPO / "nucleus" / "social_age.py")],
+# — a genuine invocation whose call and whose path sit on different LINES. A line is the
+# wrong unit for Python; the statement is. So: parse it. ast.walk finds the Call whatever
+# it is spelled with and however it wraps, and finds no Call at all inside a docstring.
+#
+# UNPARSEABLE IS BLIND, NOT EMPTY. A .py surface that will not parse contributes no edges,
+# which would silently convict whatever it alone invokes — so it is reported as an absent
+# surface and routes into the never-accuse-while-blind branch, exactly like a missing unit
+# directory. Residual, declared: a call whose path is built entirely from variables has no
+# string constant to match and reads as unreached. Loud and fail-closed, which is the side
+# to be wrong on.
+_EXEC_ATTRS = {"run", "Popen", "call", "check_call", "check_output", "system", "popen",
+               "execv", "execvp", "spawnv", "create_subprocess_exec", "create_subprocess_shell"}
+
+
+def _is_exec_call(func):
+    if isinstance(func, ast.Attribute):
+        return func.attr in _EXEC_ATTRS
+    if isinstance(func, ast.Name):
+        return func.id in _EXEC_ATTRS
+    return False
+
+
+# PARSE ONCE PER SURFACE, NOT ONCE PER QUESTION. The first working version parsed every
+# .py surface afresh for each of the 83 candidate paths — ~16,000 whole-file parses, and
+# the gate went from under a second to not finishing inside two minutes. The line-based
+# parser got away with it because `base not in line` rejected 99% of lines before any work;
+# an AST has no such prefilter, so the index has to be built once and then queried.
+_PY_INDEX = {}
+
+
+def _py_index(label, text):
+    """-> ({imported dotted names}, [(lineno, (string constants,))]) for one .py surface.
+
+    Raises SyntaxError if the surface will not parse; the caller records that as BLIND.
+    """
+    if label not in _PY_INDEX:
+        with warnings.catch_warnings():      # other people's escapes are not our finding
+            warnings.simplefilter("ignore", SyntaxWarning)
+            tree = ast.parse(textwrap.dedent(text))
+        imports, calls = set(), []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for a in node.names:
+                    imports.add(a.name)
+            elif isinstance(node, ast.ImportFrom):
+                mod = node.module or ""
+                imports.add(mod)
+                for a in node.names:
+                    imports.add(f"{mod}.{a.name}")
+            elif isinstance(node, ast.Call) and _is_exec_call(node.func):
+                consts = tuple(s.value for s in ast.walk(node)
+                               if isinstance(s, ast.Constant) and isinstance(s.value, str))
+                if consts:
+                    calls.append((node.lineno, consts))
+        _PY_INDEX[label] = (imports, calls)
+    return _PY_INDEX[label]
+
+
+def _py_invocations(text, comp, stem, label="<fixture>"):
+    """-> list of (lineno, why). Raises SyntaxError if the surface is unparseable."""
+    imports, calls = _py_index(label, text)
+    out = []
+    if stem:
+        for form, name in (("import", stem), ("import", f"nucleus.{stem}"),
+                           ("package-relative import", f"nucleus.{stem}")):
+            if name in imports:
+                out.append((1, form))
+                break
+    for lineno, consts in calls:
+        if any(comp.search(c) for c in consts):
+            out.append((lineno, "subprocess"))
+    return out
+
+
 def invocations(path, texts):
     """Lines that RUN `path`, as (surface, line). Invocation position, never mention.
 
@@ -296,6 +391,15 @@ def invocations(path, texts):
     for label, text in texts:
         if label == path:
             continue                  # a file does not invoke itself into reachability
+        if label.endswith(".py"):
+            try:
+                rows = text.splitlines()
+                for lineno, why in _py_invocations(text, comp, stem, label):
+                    line = rows[lineno - 1].strip() if lineno <= len(rows) else ""
+                    hits.append((label, f"{line[:120]}   [{why}]"))
+            except SyntaxError:
+                UNPARSEABLE.add(label)
+            continue
         is_conf = label.endswith(".conf")
         for raw in text.splitlines():
             line = _strip_comment(raw, is_conf)
@@ -323,10 +427,68 @@ def invocations(path, texts):
     return hits
 
 
-def classify(pop, texts):
+# ── READ-AS-DATA: an edge type, derived from the READER's own domain expression ───────
+# A file can be REACHED without ever being executed: nucleus/mutants_*.py are read,
+# imported and validated by test_mutants_wellformed.py, a gate check.sh runs (line 133).
+# This parser saw only invocation, so six healthy specs read as unreached and cost six
+# hand-written exemptions in eight days — one per authored oracle, from three different
+# authors. Six exemptions of ONE class is not a manifest doing its job, it is a missing
+# derivation wearing a manifest's clothes.
+#
+# THE SET IS THE READER'S, NOT MINE. a2's condition, and it is the whole design: this
+# calls the reader's own mutants_files() rather than re-globbing "mutants_*.py" here.
+# Re-globbing would make two writers of one set — the drift this gate exists to catch,
+# committed inside the gate itself. It also means there is no glob literal to mis-parse.
+#
+# The edge is attributed to the READER, so it inherits every property an invocation edge
+# has: if test_mutants_wellformed.py is ever unwired from check.sh, all six specs become
+# reached-only-by-a-parent-that-runs-nowhere and inherited_from_dead() reddens. That
+# safety came free from spelling the edge as a normal parent, and is the reason not to
+# special-case it into a second exemption list.
+#
+# An unknown data class still defaults to ACCUSED: nothing here grants blanket coverage
+# to "files something reads." One row per reader, and the reader must declare its domain.
+DATA_READERS = [
+    ("nucleus/test_mutants_wellformed.py", "mutants_files",
+     "read as data: the committed ratchet imports and validates every mutants spec"),
+]
+
+
+def data_edges():
+    """-> ({path: [(reader, why)]}, [problems]). The reader names its own domain.
+
+    A reader that is GONE simply stops granting the edge and its data files fall to
+    ACCUSED — loud, correct, no special case. A reader that is PRESENT but unimportable
+    is a different thing: the edge is unverifiable, so it is reported and fails rather
+    than silently withdrawing coverage.
+    """
+    edges, problems = {}, []
+    for rel, fn_name, why in DATA_READERS:
+        f = REPO / rel
+        if not f.is_file():
+            continue
+        try:
+            spec = importlib.util.spec_from_file_location(f"_dr_{f.stem}", f)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            domain = getattr(mod, fn_name)()
+        except Exception as e:
+            problems.append(f"{rel}.{fn_name}() — {type(e).__name__}: {e}")
+            continue
+        for d in domain:
+            try:
+                key = str(Path(d).resolve().relative_to(REPO))
+            except ValueError:
+                continue                       # outside the repo: not our population
+            edges.setdefault(key, []).append((rel, why))
+    return edges, problems
+
+
+def classify(pop, texts, data=None):
     reached, unreached = {}, []
+    data = data or {}
     for path in pop:
-        hits = invocations(path, texts)
+        hits = invocations(path, texts) + data.get(path, [])
         if hits:
             reached[path] = hits
         else:
@@ -368,21 +530,45 @@ FIXTURES = [
     ("full-line comment with a real command in it", False,
      [("nucleus/runners.example.conf", "#   backup | org | x | nucleus/backup.sh | note")],
      "nucleus/backup.sh"),
+    # These three were VALID-PYTHON'd when .py surfaces started being parsed. As raw
+    # fragments they were unparseable, so they passed by falling into the blind bucket
+    # instead of by the discrimination they name — a fixture excluded by the wrong clause
+    # tests the wrong clause, which is a lesson this file already carries one arm below.
     ("homonymous function definition", False,
-     [("observatory/api/main.py", "async def privacy_gate(request: Request, call_next):")],
+     [("observatory/api/main.py", "async def privacy_gate(request):\n    return 1\n")],
      "nucleus/privacy_gate.sh"),
     ("error-message string naming the script", False,
      [("init.sh", '    bad "pre-push hook missing — privacy_gate.sh will not run"')],
      "nucleus/privacy_gate.sh"),
     ("prose naming the file in a docstring", False,
-     [("nucleus/x.py", "  it, and pushed_tree_check.sh is the instrument that answers it")],
+     [("nucleus/x.py", '"""it, and pushed_tree_check.sh is the instrument that answers it"""')],
      "nucleus/pushed_tree_check.sh"),
+    # THE HOLE THIS RULE CLOSES, and it was live: mutation_probe.py's own `Run:` line
+    # granted every mutants spec reachability, and their `Run:` lines granted it back.
+    ("a Run: usage example in a docstring is not an invocation", False,
+     [("nucleus/mutation_probe.py",
+       '"""probe.\n\nRun:\n    venv/bin/python nucleus/mutation_probe.py nucleus/mutants_x.py\n"""')],
+     "nucleus/mutants_x.py"),
+    # smoke.sh's live edge: a prose line whose FIRST TOKEN is a basename satisfied
+    # _command_word, the rule written for real shell. In a .py surface there is no
+    # command position at all.
+    ("a bare basename first on a line is prose in python", False,
+     [("nucleus/test_check_coverage.py",
+       '"""x\n\n   smoke.sh / fedtest.py / doctor-class tools, self-declared MANUAL\n"""')],
+     "nucleus/smoke.sh"),
+    # ...and the true call the line-based draft of this rule false-accused. The Call and
+    # the path are on different LINES, which is why the unit had to become the statement.
+    ("a subprocess call whose path is on a later line", True,
+     [("triggers/seed/people_sweep.py",
+       'subprocess.run(\n    [str(REPO / "venv" / "bin" / "python"),\n'
+       '     str(REPO / "nucleus" / "social_age.py")],\n    check=True)')],
+     "nucleus/social_age.py"),
     ("a library is reached by an import", True,
      [("nucleus/test_okf.py", "from okf import parse_frontmatter")], "nucleus/okf.py"),
     ("import of the packaged path", True,
      [("bridges/gateway.py", "import nucleus.orgname")], "nucleus/orgname.py"),
     ("the stem appearing in prose is not an import", False,
-     [("nucleus/x.py", "    # the tier floor and world layer disagree here")],
+     [("nucleus/x.py", "# the tier floor and world layer disagree here")],
      "nucleus/tier.py"),
     ("package-relative import form", True,
      [("hooks/usage.py", "                from nucleus import tokenwatch")],
@@ -439,12 +625,43 @@ INHERITED_FIXTURES = [
 ]
 
 
+# (name, data, expect_reached) — the FOLD is pure, so the read-as-data edge is provable
+# without touching disk. That the live domain is non-empty is asserted separately, in
+# main(), against the substrate: a fold that works over a set nobody fills is decoration.
+DATA_FOLD_FIXTURES = [
+    ("a data edge reaches a file no line invokes",
+     {"nucleus/m.py": [("nucleus/reader.py", "read as data")]}, True),
+    ("no data edge leaves it unreached", {}, False),
+    ("a data edge for some OTHER file does not reach this one",
+     {"nucleus/other.py": [("nucleus/reader.py", "read as data")]}, False),
+]
+
+
 def self_test():
     bad = []
+    seen_blind = set(UNPARSEABLE)
+    _PY_INDEX.clear()             # fixtures reuse labels with DIFFERENT text; see below
     for name, want, texts, path in FIXTURES:
         got = bool(invocations(path, texts))
         if got != want:
             bad.append(f"  {'MISSED' if want else 'FALSE POSITIVE'}: {name}")
+    for name, data, want in DATA_FOLD_FIXTURES:
+        r, _ = classify(["nucleus/m.py"], [], data)
+        if bool(r) != want:
+            bad.append(f"  {'MISSED' if want else 'FALSE POSITIVE'}: data edge — {name}")
+    # A .py surface that will not parse must land in the blind bucket, not be silently
+    # read as "invokes nothing" — that difference is the whole never-accuse-while-blind
+    # branch, and nothing else in this suite drives it.
+    probe = set(UNPARSEABLE)
+    invocations("nucleus/x.py", [("nucleus/broken.py", "def f(:\n")])
+    if "nucleus/broken.py" not in UNPARSEABLE - probe:
+        bad.append("  MISSED: an unparseable .py surface must be recorded as blind")
+    # The cache is keyed by LABEL, which is unique per surface in a real run but reused
+    # across fixtures ("nucleus/x.py" appears in four of them with different bodies). Both
+    # ends of the self-test clear it, so a fixture can neither read nor leave a stale parse.
+    _PY_INDEX.clear()
+    UNPARSEABLE.clear()
+    UNPARSEABLE.update(seen_blind)     # fixtures must not pollute the live verdict
     for name, reached, dead, want in INHERITED_FIXTURES:
         got = bool(inherited_from_dead(reached, dead))
         if got != want:
@@ -465,7 +682,27 @@ def main():
         print("reachability: no committed nucleus scripts found — VERIFIED NOTHING")
         return 77
     texts, missing = surfaces()
-    reached, unreached = classify(pop, texts)
+    data, dproblems = data_edges()
+    if dproblems:
+        print("reachability: A READ-AS-DATA READER WOULD NOT ANSWER — the edge it grants")
+        print("is unverifiable, so files it covers cannot be judged this run:")
+        for pr in dproblems:
+            print(f"  {pr}")
+        return 1
+    # The fold is fixtured; that the DOMAIN is non-empty is a fact about the live tree and
+    # is asserted here. A reader declaring an empty domain grants nothing while looking
+    # exactly like one that works — the same silent-zero this gate was built to refuse.
+    declared = [r for r, _, _ in DATA_READERS if (REPO / r).is_file()]
+    if declared and not data:
+        print("reachability: every declared read-as-data reader returned an EMPTY domain —")
+        for r in declared:
+            print(f"  {r}")
+        print("Either the reader's domain expression broke, or its data files are gone.")
+        return 1
+    reached, unreached = classify(pop, texts, data)
+    for label in sorted(UNPARSEABLE):
+        missing.append(("py-unparseable", label,
+                        "will not parse, so the edges it declares could not be read"))
     accused = [p for p in unreached if p not in EXEMPT]
     stale = [p for p in EXEMPT if p not in pop or p in reached]
 
