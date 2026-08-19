@@ -62,6 +62,42 @@ def main() -> int:
               "Nothing was verified here — `venv/bin/pip install pyflakes` to run it.")
         return 77
 
+    # DUPLICATE MODULE-LEVEL DEFINITIONS red here too, same seam (a1, msg 12205): on
+    # 08-19 tool_ship_watch.py turned out to be THREE concatenated copies of itself —
+    # merge residue. Python binds last-wins, so behaviour stayed correct while the copy
+    # a reader meets FIRST was 200 lines of dead code missing two paid-for fixes; anyone
+    # editing it ships a silent no-op that a live-path oracle passes. pyflakes cannot
+    # see this (a redefinition is legal python), and it is a property of the merged
+    # file, so it lives in the seam gate. AST, not regex: a name is module-level only
+    # if its statement is a direct child of Module.
+    import ast
+    from collections import defaultdict
+    dup_bad = []
+    for f in files:
+        try:
+            tree = ast.parse(f.read_text())
+        except SyntaxError as e:
+            dup_bad.append(f"{f}: will not parse ({e}) — the pulse runs this file")
+            continue
+        seen = defaultdict(list)
+        for n in tree.body:
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                seen[n.name].append(n.lineno)
+            elif isinstance(n, ast.Assign):
+                for t in n.targets:
+                    if isinstance(t, ast.Name):
+                        seen[t.id].append(n.lineno)
+        for name, ls in seen.items():
+            if len(ls) > 1:
+                dup_bad.append(f"{f}: `{name}` defined {len(ls)}x at lines {ls} — "
+                               f"last-wins hides all but line {ls[-1]}")
+    if dup_bad:
+        for ln in dup_bad:
+            print(f"  \033[31m✗\033[0m {ln}")
+        print(f"\n{len(dup_bad)} duplicate module-level definition(s): the earlier copies "
+              f"are dead code a reader will edit as if live.")
+        return 1
+
     r = subprocess.run([sys.executable, "-m", "pyflakes", *[str(f) for f in files]],
                        capture_output=True, text=True)
 
