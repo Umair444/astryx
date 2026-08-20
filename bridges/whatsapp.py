@@ -392,6 +392,18 @@ async def worker(agent: str):
 # ------------------------------------------------------------------- outbound
 _skipped_threads: set = set()
 
+# The owner doorbell's HOME surface, pinned by NAME (forge, plan-2457 msg 13041). The
+# un-routed fallback used to be `next(iter(routes()))` — the FIRST route positionally —
+# so reordering routes-whatsapp.json (an edit that looks like formatting) would have
+# silently moved every un-routed owner-bound message: both org-dark alarms redirecting
+# to the career seat's direct number, or worse, the FAMILY group at index 2. Nothing
+# pinned it. Same family as the 2026-07-25 name-fuzzy misdelivery documented above,
+# arriving through ordering instead of matching. The seed route IS the designed owner
+# surface (owner.md: he reads the org in the group); if it is ever absent, this
+# REFUSES rather than guesses — a doorbell rotting pending is caught by
+# doorbell_proof, a doorbell delivered to the family group is caught by nobody.
+HOME_AGENT = "seed"
+
 
 async def deliver(row):
     """Deliver a wire message to WhatsApp and record the outcome in the row's
@@ -468,8 +480,13 @@ async def deliver(row):
         return
     else:                            # UNTHREADED: the owner doorbell, by design.
         route = next((r for r in routes() if r["agent"] == row["from_agent"]), None) \
-            or next(iter(routes()), None)
+            or next((r for r in routes() if r["agent"] == HOME_AGENT), None)
         chat = route and route["chat"]
+        if not chat and row["id"] not in _skipped_threads:
+            _skipped_threads.add(row["id"])
+            print(f"whatsapp: REFUSED un-routed doorbell msg {row['id']} — no route for "
+                  f"sender {row['from_agent']!r} and no {HOME_AGENT!r} home route in "
+                  f"routes-whatsapp.json; refusing to guess a destination", flush=True)
     if not chat:
         return
     agent = row["from_agent"]
