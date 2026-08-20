@@ -108,8 +108,28 @@ def probe(spec_path: Path, verbose: bool = True) -> int:
               f"(exit {base}). Fix the oracle first; mutation results would be noise.")
         return 1
 
+    # THE CANARY (memory, msg 13203; forge's instance msg 13200). The BASELINE above asks
+    # "does this oracle pass against the RIGHT code" — it cannot see an oracle that is not
+    # reading the subject this tool hands it, because such an oracle reads the real module
+    # both times and passes both times. forge's escalation suite was 33/33 with positive
+    # controls in every arm and ALL TEN mutants survived: the oracle did a bare
+    # `from nucleus import escalation` and ignored the env, so it graded ten broken copies
+    # it never opened. A scattered survivor is a coverage hole; a CLEAN SWEEP of survivors
+    # is a wiring fault — and without this control the reader audits every assertion
+    # before questioning the harness. So: one mutant the oracle cannot possibly pass — a
+    # syntactically destroyed copy — and if the oracle PASSES it, the oracle is not
+    # looking. Refuse to grade; every verdict after that point is meaningless BOTH ways.
     caught, survived, skipped = [], [], []
     with tempfile.TemporaryDirectory() as td:
+        canary = Path(td) / subject.name
+        canary.write_text("def ( this file is deliberately not python — the canary\n")
+        if _run_oracle(oracle, spec.ENV, canary) == 0:
+            print(f"WIRING FAULT: {oracle.name} PASSED against a syntactically destroyed "
+                  f"subject.\n  The oracle is not reading the path {spec.ENV} hands it — "
+                  f"likely a bare import or a\n  hardcoded subject. Every mutant verdict "
+                  f"would be meaningless in both directions;\n  refusing to grade. Fix the "
+                  f"oracle's subject wiring first.")
+            return 1
         for name, (old, new) in spec.MUTANTS.items():
             if old not in src:
                 # The mutation did not apply — the subject moved under the mutant list.
