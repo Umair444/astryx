@@ -314,6 +314,32 @@ def k_regression_siblings_still_silent(ctx):
         assert pings(ctx, thread, name) == [], f"{name} must stay silent mid-climb"
 
 
+@case
+def l_stall_clock_ignores_facility_nudges(ctx):
+    """A thread being NAGGED must still be able to look quiet (forge, msg 12555):
+    plan_verdict_due writes a nudge to the same thread every 15m, so an unfiltered
+    max(ts) staleness clock could NEVER accumulate the 2h grace — measured on
+    plan-2470's real 3.4h stall, the largest gap all night was 45 min and every one
+    was closed by the sibling's own row. The clock must count HUMAN AND AGENT
+    movement only. Pre-fix this fixture is silent; the fix makes it fire."""
+    gid, thread = seed_plan(ctx, [("abstractor-1", "approve", "5 hours")],
+                            goal_age="10 hours")
+    ctx.sql("INSERT INTO messages (from_agent,to_agent,thread,intent,body,ts) VALUES "
+            "('pulse','abstractor-2',%s,'trigger','[trigger plan_verdict_due] nudge', "
+            "now() - interval '10 minutes')", (thread,))
+    fire = MOD["plan_stall"](ctx)
+    assert fire and f"#{gid}" in fire, \
+        f"a nagged stall must still fire naming the fixture goal (got: {fire!r})"
+    # and the control: genuine agent movement inside the grace still silences it
+    ctx.sql("INSERT INTO messages (from_agent,to_agent,thread,intent,body,ts) VALUES "
+            "('abstractor-2','abstractor-4',%s,'chat','working on it', "
+            "now() - interval '10 minutes')", (thread,))
+    ctx.state["flagged"] = {}
+    fire2 = MOD["plan_stall"](ctx)
+    assert not (fire2 and f"#{gid}" in fire2), \
+        "real agent movement inside the grace must silence the stall"
+
+
 def main():
     preflight_isolation_premise()      # fail-closed: never write until rollback is proven
     ok = True
