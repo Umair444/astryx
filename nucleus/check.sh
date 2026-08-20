@@ -251,6 +251,14 @@ run "wedge-watch discriminator"       "$PY" nucleus/test_wedge_watch.py
 # guard that watches the OUTPUT instead. Fully hermetic (the ctx is injected, no DB), but
 # the trigger BODY is gitignored, so it SKIPS loudly on a fresh clone.
 run "brief-silence duty floor"        "$PY" nucleus/test_brief_silence.py
+# A search whose EMPTY answer carries its own coverage. `grep` in a resident session is a
+# shell FUNCTION wrapping ugrep with --ignore-files, so it honours .gitignore — and homes/
+# is line 3 of it. For any seat working under homes/ (canopus, gemini, p1, p2, vega) a
+# root-anchored typed grep returns a STRUCTURAL ZERO over that agent's own files: measured
+# 0 vs 17. The gate is not "grep works"; it is that three states stay distinguishable —
+# found (0), searched-and-empty (1), NOT SEARCHED (2) — because a bare 0 collapses the last
+# two, and 0 is the most convincing possible answer. Fully hermetic (builds its own corpus).
+run "estate-grep coverage states"     "$PY" nucleus/test_estate_grep.py
 # Pure stdlib (rows are injected), but the trigger BODY is gitignored, so it SKIPS loudly
 # on a fresh clone. Carries a counterexample arm: the allowlist polarity is proven to be
 # load-bearing by showing the blocklist version go silent on the same fixture.
