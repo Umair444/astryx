@@ -21,6 +21,18 @@ running it against real substrate rather than by reading it:
        and the by-hand case is the likelier state of the two: a unit written and never
        enabled is exactly where astryx-check.timer has sat since it was generated.
 
+THIS ORACLE IS PERMANENTLY SPLIT ACROSS THE GIT BOUNDARY, and a reader who sees it green
+in CI must not conclude both halves were checked. `nucleus/pulse_watch.py` is committed;
+`triggers/scout/clock_stamp.py` and `units/` are gitignored estate that exists only in the
+live tree. So in a clone — which is where hooks/pre-push and .github run check.sh — §5 and
+§6b verify NOTHING, and §5b (the regression for the guard reading HEALTHY off a stamp my own
+hand-run wrote) is asserted by nothing at all. Those arms SKIP with exit 77, never pass:
+absence is classified, not inherited. Absent-and-gitignored is UNVERIFIED and the verdict
+says which arms; absent-and-TRACKED is a real finding and fails. (steward, msg 13038, after
+this file failed in the pushed tree and blocked every agent's push — including his, which
+he diagnosed rather than clobbered. He named §5; §6b had the same defect and is fixed with
+it, because the unit of the fix is the class "assertions whose subject is gitignored".)
+
 NOT A COMPLETENESS CLAIM. The mutant set in nucleus/mutants_pulse_watch.py bounds what
 these assertions are known to kill; run it with nucleus/mutation_probe.py.
 """
@@ -46,6 +58,44 @@ SUBJECT = Path(os.environ.get("PULSE_WATCH_SRC", REPO / "nucleus" / "pulse_watch
 pw = types.SimpleNamespace(**runpy.run_path(str(SUBJECT), run_name="_oracle"))
 
 FAILS: list[str] = []
+SKIPS: list[str] = []
+EXIT_SKIP = 77          # check.sh renders this as UNVERIFIED and never as a pass
+
+
+def estate(path: Path, arms: str) -> bool:
+    """Is this gitignored subject present? Absence is CLASSIFIED, never inherited.
+
+    A clone of the pushed commit carries no gitignored estate, so the guard bodies under
+    triggers/ and the generated units/ simply are not there — and an oracle that treats
+    that as a failure blocks every push, while one that treats it as a pass tells CI it
+    verified something it never saw. Both are wrong in the same place: not-run is a THIRD
+    state. Absent-and-ignored -> SKIP, naming the arms. Absent-and-TRACKED -> a tracked
+    subject has vanished, which is a real finding."""
+    if path.exists():
+        return True
+    import subprocess
+
+    def _ignored(q: str) -> bool:
+        return subprocess.run(["git", "check-ignore", "-q", q],
+                              cwd=REPO, capture_output=True).returncode == 0
+
+    # THE TRAILING SLASH IS LOAD-BEARING. A `units/` pattern matches directories only, and
+    # git cannot tell that a path which does not exist WAS one — so `check-ignore units`
+    # returns "not ignored" for a directory the .gitignore plainly covers. The first
+    # version of this classifier therefore reported "a tracked subject has vanished" in
+    # every clone: a fail-closed default is right, but a classifier that is wrong invents
+    # findings instead of catching them, and this one accused the repo of losing a file
+    # that is exactly where it belongs. Verified against the clone, both spellings.
+    ignored = _ignored(str(path)) or _ignored(str(path) + "/")
+    if ignored:
+        SKIPS.append(f"{arms} (subject {path.relative_to(REPO)} is gitignored estate, "
+                     f"absent from this checkout)")
+        print(f"  SKIP  {arms} — {path.relative_to(REPO)} is absent and GITIGNORED; "
+              f"nothing was verified here")
+        return False
+    check(f"{arms}: subject {path.relative_to(REPO)} exists", False,
+          "absent and NOT ignored — a tracked subject has vanished")
+    return False
 
 
 def check(name: str, cond: bool, detail: str = "") -> None:
@@ -176,75 +226,76 @@ def run_trigger(stamp_path: Path, state=None):
     return fn(ctx), ctx.state
 
 
-with tempfile.TemporaryDirectory() as td:
-    tmp = Path(td)
-    missing = tmp / "absent.json"
+if estate(TRIG, "§5a-§5f  the stamp reader"):
+  with tempfile.TemporaryDirectory() as td:
+      tmp = Path(td)
+      missing = tmp / "absent.json"
 
-    fire, st = run_trigger(missing)
-    check("§5a  no stamp at all -> fires on the FIRST evaluation (rung 0), no grace period",
-          bool(fire) and "NOT DEPLOYED" in fire and st.get("missing_rung") == 0, str(fire)[:60])
-    check("§5a' ...and the alarm names the temp path it was actually pointed at, so this "
-          "test is exercising the patch rather than the live file",
-          "absent.json" in fire or str(missing) in fire, fire[:80])
-    fire2, _ = run_trigger(missing, st)
-    check("§5a\" ...and does not re-nag on the very next tick (rung already spent)",
-          fire2 is None, str(fire2)[:60])
+      fire, st = run_trigger(missing)
+      check("§5a  no stamp at all -> fires on the FIRST evaluation (rung 0), no grace period",
+            bool(fire) and "NOT DEPLOYED" in fire and st.get("missing_rung") == 0, str(fire)[:60])
+      check("§5a' ...and the alarm names the temp path it was actually pointed at, so this "
+            "test is exercising the patch rather than the live file",
+            "absent.json" in fire or str(missing) in fire, fire[:80])
+      fire2, _ = run_trigger(missing, st)
+      check("§5a\" ...and does not re-nag on the very next tick (rung already spent)",
+            fire2 is None, str(fire2)[:60])
 
-    hand = tmp / "hand.json"
-    hand.write_text(json.dumps({"last_run": datetime.now(timezone.utc).isoformat(),
-                                "by": "hand", "code": "OK", "note": "fine"}))
-    fire, st = run_trigger(hand)
-    check("§5b  a FRESH stamp with no systemd run behind it is still NOT DEPLOYED",
-          bool(fire) and "NOT DEPLOYED" in fire, str(fire)[:60])
-    check("§5b' ...and says why, so nobody reads it as the clock being broken",
-          "hand" in (fire or "").lower(), (fire or "")[:80])
+      hand = tmp / "hand.json"
+      hand.write_text(json.dumps({"last_run": datetime.now(timezone.utc).isoformat(),
+                                  "by": "hand", "code": "OK", "note": "fine"}))
+      fire, st = run_trigger(hand)
+      check("§5b  a FRESH stamp with no systemd run behind it is still NOT DEPLOYED",
+            bool(fire) and "NOT DEPLOYED" in fire, str(fire)[:60])
+      check("§5b' ...and says why, so nobody reads it as the clock being broken",
+            "hand" in (fire or "").lower(), (fire or "")[:80])
 
-    live = tmp / "live.json"
-    now_iso = datetime.now(timezone.utc).isoformat()
-    live.write_text(json.dumps({"last_run": now_iso, "by": "systemd", "code": "OK",
-                                "note": "fine", "last_systemd_run": now_iso}))
-    fire, st = run_trigger(live)
-    check("§5c  a fresh SYSTEMD stamp is silent", fire is None, str(fire)[:60])
-    check("§5c' ...and records positive evidence that it looked (a skip is not a pass)",
-          "last_ok" in st and st["last_ok"].get("stamp_by") == "systemd", json.dumps(st)[:80])
+      live = tmp / "live.json"
+      now_iso = datetime.now(timezone.utc).isoformat()
+      live.write_text(json.dumps({"last_run": now_iso, "by": "systemd", "code": "OK",
+                                  "note": "fine", "last_systemd_run": now_iso}))
+      fire, st = run_trigger(live)
+      check("§5c  a fresh SYSTEMD stamp is silent", fire is None, str(fire)[:60])
+      check("§5c' ...and records positive evidence that it looked (a skip is not a pass)",
+            "last_ok" in st and st["last_ok"].get("stamp_by") == "systemd", json.dumps(st)[:80])
 
-    stale = tmp / "stale.json"
-    old = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
-    stale.write_text(json.dumps({"last_run": datetime.now(timezone.utc).isoformat(),
-                                 "by": "hand", "code": "OK", "note": "fine",
-                                 "last_systemd_run": old}))
-    fire, st = run_trigger(stale)
-    check("§5d  a stamp kept fresh BY HAND over a dead timer is still STALE — the clock "
-          "this reader runs on cannot be advanced by a human",
-          bool(fire) and "STALE" in fire, str(fire)[:60])
+      stale = tmp / "stale.json"
+      old = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+      stale.write_text(json.dumps({"last_run": datetime.now(timezone.utc).isoformat(),
+                                   "by": "hand", "code": "OK", "note": "fine",
+                                   "last_systemd_run": old}))
+      fire, st = run_trigger(stale)
+      check("§5d  a stamp kept fresh BY HAND over a dead timer is still STALE — the clock "
+            "this reader runs on cannot be advanced by a human",
+            bool(fire) and "STALE" in fire, str(fire)[:60])
 
-    corrupt = tmp / "corrupt.json"
-    corrupt.write_text("{not json at all")
-    raised = False
-    try:
-        run_trigger(corrupt)
-    except Exception:
-        raised = True
-    check("§5e  an unparseable stamp RAISES (the pulse's loud path), never returns silence",
-          raised)
+      corrupt = tmp / "corrupt.json"
+      corrupt.write_text("{not json at all")
+      raised = False
+      try:
+          run_trigger(corrupt)
+      except Exception:
+          raised = True
+      check("§5e  an unparseable stamp RAISES (the pulse's loud path), never returns silence",
+            raised)
 
-    noky = tmp / "nokey.json"
-    noky.write_text(json.dumps({"code": "OK"}))
-    raised = False
-    try:
-        run_trigger(noky)
-    except Exception:
-        raised = True
-    check("§5f  a stamp whose format drifted out from under this reader RAISES", raised)
+      noky = tmp / "nokey.json"
+      noky.write_text(json.dumps({"code": "OK"}))
+      raised = False
+      try:
+          run_trigger(noky)
+      except Exception:
+          raised = True
+      check("§5f  a stamp whose format drifted out from under this reader RAISES", raised)
 
-print("\n§5g provenance: the stamp must say who wrote it")
+  print("\n§5g provenance: the stamp must say who wrote it")
 
-# The gap mutation_probe found in the first version of this file (M7 survived): every §5
-# case above drives the reader with FIXTURE stamps, so nothing could notice pulse_watch
-# lying about who invoked it — and a hand run claiming to be a timer run makes an
-# undeployed watchdog look deployed to its own reader. systemd exports INVOCATION_ID into
-# every service it starts and nothing else does, so this is an observed fact about the
-# invoker, not an inference from timing.
+  # The gap mutation_probe found in the first version of this file (M7 survived): every §5
+  # case above drives the reader with FIXTURE stamps, so nothing could notice pulse_watch
+  # lying about who invoked it — and a hand run claiming to be a timer run makes an
+  # undeployed watchdog look deployed to its own reader. systemd exports INVOCATION_ID into
+  # every service it starts and nothing else does, so this is an observed fact about the
+  # invoker, not an inference from timing.
 # Regression for a defect that reproduced LIVE on this host (2026-08-20 01:49): the first
 # fix read INVOCATION_ID, which systemd sets for a unit and EVERY CHILD INHERITS. Every
 # resident body here runs inside astryx-residents.service, so a hand-typed run stamped
@@ -274,17 +325,23 @@ with tempfile.TemporaryDirectory() as td:
 print("\n§6  the two halves are not in one failure domain")
 
 src_watch = (REPO / "nucleus" / "pulse_watch.py").read_text()
-src_trig = TRIG.read_text()
 check("§6a  the watchdog is NOT a trigger (a watcher of the pulse must not run in it)",
       "from astryx import trigger" not in src_watch and "@trigger" not in src_watch)
-check("§6b  a unit exists that invokes it, so it is not by-hand-only",
-      any("pulse_watch.py" in p.read_text()
-          for p in (REPO / "units").glob("*.service")),
-      "no unit ExecStart names nucleus/pulse_watch.py")
+
+# §6c is the one arm of this section that survives a clone, and it is deliberately the
+# arm that matters most there: init.sh is TRACKED, so a fresh org provably still generates
+# the unit even when this checkout cannot see the generated file.
 check("§6c  init.sh regenerates that unit, so a fresh org gets the watchdog too",
       "astryx-pulse-watch.timer" in (REPO / "init.sh").read_text())
-check("§6d  the pulse-side reader keys on the SYSTEMD run, not merely on freshness",
-      "last_systemd_run" in src_trig)
+
+if estate(REPO / "units", "§6b  a unit invokes the watchdog"):
+    check("§6b  a unit exists that invokes it, so it is not by-hand-only",
+          any("pulse_watch.py" in u.read_text()
+              for u in (REPO / "units").glob("*.service")),
+          "no unit ExecStart names nucleus/pulse_watch.py")
+if estate(TRIG, "§6d  the reader keys on the systemd run"):
+    check("§6d  the pulse-side reader keys on the SYSTEMD run, not merely on freshness",
+          "last_systemd_run" in TRIG.read_text())
 
 print()
 if FAILS:
@@ -292,4 +349,13 @@ if FAILS:
     for f in FAILS:
         print("  -", f)
     sys.exit(1)
-print("PASS: clock watchdog pair")
+if SKIPS:
+    # THE VERDICT MAY NOT OUT-CLAIM WHAT RAN. A skip is not a pass: exit 77 tells check.sh
+    # this arm is UNVERIFIED, and the corpus is named so nobody has to guess which half of
+    # a split oracle a green line actually covered.
+    print(f"SKIP: {len(SKIPS)} arm(s) could not run in this checkout — the committed half "
+          f"(§1-§4, §5g, §6a, §6c) passed and is all this run may claim:")
+    for k in SKIPS:
+        print("  -", k)
+    sys.exit(EXIT_SKIP)
+print("PASS: clock watchdog pair (both halves — this checkout carries the guard estate)")
