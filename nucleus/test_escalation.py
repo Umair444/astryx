@@ -31,7 +31,13 @@ sys.path.insert(0, str(REPO))
 # that it does.
 _override = os.environ.get("ESCALATION_SRC")
 if not _override:
-    from nucleus import escalation as esc       # noqa: E402 — the invoker the gate reads
+    # The STATIC DEFAULT is the real dependency: without an env override this oracle
+    # tests the real module, and the import IS that binding. The reachability gate
+    # seeing it is a consequence, not the reason — and the mutation path below never
+    # takes this import, so the probe stays honest. (Wording per a4, msg 13613:
+    # explain a line by what it DOES, not by what observes it, or the next copier
+    # inherits gate-appeasement.)
+    from nucleus import escalation as esc       # noqa: E402
     SUBJECT = Path(esc.__file__)
 else:
     SUBJECT = Path(_override)
