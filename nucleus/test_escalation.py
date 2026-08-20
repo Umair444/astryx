@@ -45,6 +45,7 @@ sys.modules[_spec.name] = esc
 _spec.loader.exec_module(esc)   # under mutation this REPLACES the imported module above
 
 FAIL = []
+SKIPPED = []    # arms that VERIFIED NOTHING (e.g. no DB in a clone) — exit 77, never red
 
 
 def check(name, cond, detail=""):
@@ -179,9 +180,15 @@ def main():
             gaps = [float(r[0]) for r in c.execute(esc.ORG_SILENCE_EPISODES_SQL,
                                                    {"days": 35})]
     except Exception as e:                                   # noqa: BLE001
+        # PARTIAL SKIP, not failure (caught by the push gate's clone on this file's first
+        # push attempt): a clone has no .env and no wire, and a drift arm that cannot
+        # reach the DB verified NOTHING — which per check.sh's protocol is exit 77, never
+        # a red. Filing it in FAIL turned a normal clone condition into an org-wide push
+        # block, the exact class scout fixed in test_pulse_watch (3d55bdf) a day earlier.
+        # Red still beats skip: if any REAL arm failed, the suite exits 1 below.
         print(f"  SKIP  the recorded violator still matches the wire — no DB "
-              f"({type(e).__name__})")
-        FAIL.append("__skip__the recorded violator still matches the wire")
+              f"({type(e).__name__}). Nothing was verified by this arm.")
+        SKIPPED.append("violator drift (no DB)")
     else:
         worst = esc.innocent_worst(gaps)
         check("the wire still yields an innocent worst at all (sample is not empty)",
@@ -198,6 +205,10 @@ def main():
     if FAIL:
         print(f"FAILED ({len(FAIL)}): " + "; ".join(FAIL))
         return 1
+    if SKIPPED:
+        print(f"the polarity table holds; {len(SKIPPED)} arm(s) VERIFIED NOTHING: "
+              + "; ".join(SKIPPED))
+        return 77
     print("the facility's polarity table holds, and the seam fails open")
     return 0
 
