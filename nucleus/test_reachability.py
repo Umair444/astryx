@@ -315,6 +315,45 @@ def _is_exec_call(func):
 _PY_INDEX = {}
 
 
+# THE PROBE CHANNEL IS AN INVOCATION EDGE. An oracle here deliberately does NOT write
+# `from nucleus import X`: a bare import makes mutation_probe mutate a copy while the oracle
+# loads the REAL module, and every mutant reports NOT PROBED — ten did on escalation.py in one
+# morning (the canary in 43b6277 exists because of it). The org's standard shape is a subject
+# path bound to a name and loaded dynamically:
+#
+#     SUBJECT = Path(os.environ.get("ESCALATION_SRC", REPO / "nucleus" / "escalation.py"))
+#     _spec = importlib.util.spec_from_file_location("under_test", SUBJECT)
+#
+# This parser could not see it, so escalation.py read as reached only by an EXEMPT manual tool
+# and the ROOTED assert fired — correct by its own rule, false about the world. It is the case
+# I flagged as latent with a trip condition when I built the gate; it fired eight days later,
+# and it fires MORE often as MORE oracles adopt the correct shape.
+#
+# THE COST OF LEAVING IT: a false red is not neutral, because the cheapest way to silence one is
+# to change the SUBJECT. test_escalation.py now carries `from nucleus import escalation as esc
+# # noqa: E402 — the invoker the gate reads` — a line whose stated purpose is to be seen by this
+# gate, in the file whose own comment explains that a bare import is the wiring fault that let
+# ten mutants survive. It was written carefully (guarded by `if not _override`, so the mutation
+# path never imports) and it is still the instrument shaping the subject. WHEN A GUARD CANNOT SEE
+# A CORRECT IDIOM, THE CHEAPEST FIX IS ALWAYS TO CHANGE THE CODE, AND THAT IS THE WRONG DIRECTION.
+#
+# THE RULE: a name bound to a path and later handed to a dynamic loader is an invocation of that
+# path. Two passes — collect the Names any loader call receives, then collect string constants
+# from the assignments that bind them. Not a file-level "there is a loader somewhere" heuristic:
+# my first attempt was, and it silently required the default to sit INSIDE an `os.environ.get`
+# call, so it missed the spelling where the override is read in a separate statement — which is
+# exactly the shape test_escalation.py has today. The fixture for that spelling is what caught it.
+_LOADER_ATTRS = {"spec_from_file_location", "run_path", "load_source", "SourceFileLoader"}
+
+
+def _is_loader_call(func):
+    if isinstance(func, ast.Attribute):
+        return func.attr in _LOADER_ATTRS
+    if isinstance(func, ast.Name):
+        return func.id in _LOADER_ATTRS
+    return False
+
+
 def _py_index(label, text):
     """-> ({imported dotted names}, [(lineno, (string constants,))]) for one .py surface.
 
@@ -325,6 +364,27 @@ def _py_index(label, text):
             warnings.simplefilter("ignore", SyntaxWarning)
             tree = ast.parse(textwrap.dedent(text))
         imports, calls = set(), []
+        # pass 1: every Name a dynamic loader is handed, plus constants inside the call itself
+        loader_names, loader_consts = set(), []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and _is_loader_call(node.func):
+                consts = tuple(c.value for c in ast.walk(node)
+                               if isinstance(c, ast.Constant) and isinstance(c.value, str))
+                if consts:
+                    loader_consts.append((node.lineno, consts, "dynamic load"))
+                for a in ast.walk(node):
+                    if isinstance(a, ast.Name):
+                        loader_names.add(a.id)
+        calls.extend(loader_consts)
+        # pass 2: the assignments that bind those names carry the subject path
+        if loader_names:
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Assign) and any(
+                        isinstance(t, ast.Name) and t.id in loader_names for t in node.targets):
+                    consts = tuple(c.value for c in ast.walk(node)
+                                   if isinstance(c, ast.Constant) and isinstance(c.value, str))
+                    if consts:
+                        calls.append((node.lineno, consts, "dynamic load: subject bound here"))
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for a in node.names:
@@ -338,7 +398,7 @@ def _py_index(label, text):
                 consts = tuple(s.value for s in ast.walk(node)
                                if isinstance(s, ast.Constant) and isinstance(s.value, str))
                 if consts:
-                    calls.append((node.lineno, consts))
+                    calls.append((node.lineno, consts, "subprocess"))
         _PY_INDEX[label] = (imports, calls)
     return _PY_INDEX[label]
 
@@ -353,9 +413,9 @@ def _py_invocations(text, comp, stem, label="<fixture>"):
             if name in imports:
                 out.append((1, form))
                 break
-    for lineno, consts in calls:
+    for lineno, consts, why in calls:
         if any(comp.search(c) for c in consts):
-            out.append((lineno, "subprocess"))
+            out.append((lineno, why))
     return out
 
 
@@ -589,6 +649,41 @@ FIXTURES = [
     ("quoted variable-prefixed command word", True,
      [("hooks/pre-push", '  "$REPO/nucleus/pushed_tree_check.sh" "$sha"')],
      "nucleus/pushed_tree_check.sh"),
+    # THE PROBE CHANNEL — one arm per SPELLING, because an edge type is not covered until
+    # every spelling of it is, and the third arm is the one that caught my first attempt.
+    ("subject bound with a two-arg env default, loaded dynamically", True,
+     [("nucleus/test_escalation.py",
+       'SUBJECT = Path(os.environ.get("ESCALATION_SRC", REPO / "nucleus" / "escalation.py"))\n'
+       '_spec = importlib.util.spec_from_file_location("under_test", SUBJECT)\n')],
+     "nucleus/escalation.py"),
+    ("subject bound with an or-form default, runpy loader", True,
+     [("nucleus/test_stale_goals.py",
+       'SUBJECT = Path(os.environ.get("STALE_GOALS_SRC") or (REPO / "nucleus" / "stale_goals.py"))\n'
+       'runpy.run_path(str(SUBJECT))\n')],
+     "nucleus/stale_goals.py"),
+    # THE SPELLING THAT BROKE MY FIRST RULE: the override is read in a SEPARATE statement, so
+    # the binding assignment contains no `os.environ.get` at all. A file-level "does this module
+    # load anything" heuristic passed the other two arms and missed this one.
+    ("subject bound in a branch, override read separately", True,
+     [("nucleus/test_escalation.py",
+       '_override = os.environ.get("ESCALATION_SRC")\n'
+       'if not _override:\n'
+       '    SUBJECT = Path(REPO / "nucleus" / "escalation.py")\n'
+       'else:\n'
+       '    SUBJECT = Path(_override)\n'
+       '_spec = importlib.util.spec_from_file_location("under_test", SUBJECT)\n')],
+     "nucleus/escalation.py"),
+    # THE GUARD: same binding, nothing loads it. Delete the loader_names condition and this fails.
+    ("a path bound to a name nothing loads is not an invocation", False,
+     [("nucleus/x.py",
+       'DOC = Path(REPO / "nucleus" / "escalation.py")\n'
+       'print(DOC)\n')],
+     "nucleus/escalation.py"),
+    ("a loader fed some OTHER subject does not reach this one", False,
+     [("nucleus/test_other.py",
+       'SUBJECT = Path(REPO / "nucleus" / "other.py")\n'
+       '_spec = importlib.util.spec_from_file_location("u", SUBJECT)\n')],
+     "nucleus/escalation.py"),
     ("the same path as an ARGUMENT is not a command word", False,
      [("nucleus/x.sh", '  echo "see $REPO/nucleus/pushed_tree_check.sh for details"')],
      "nucleus/pushed_tree_check.sh"),
