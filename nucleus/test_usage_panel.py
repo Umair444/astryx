@@ -277,6 +277,22 @@ def main():
     check("SHAPE-CHANGED still fires on a genuinely absent structural key",
           "seven_day" in usage_refresh.shape_missing({"five_hour": {}}, full))
 
+    # ── READER PARITY: the cache may not carry a field the reader silently drops ────
+    # `read_cache` dropped `observed_keys` while its docstring claimed to serve the same
+    # content, and memory's whole baseline derivation runs on that field. Omission is the
+    # accused direction: a cache key absent from the reader FAILS unless declared here.
+    WITHHELD = {}      # {field: reason} — deliberately empty; nothing is withheld today
+    live = json.loads(usage_refresh.CACHE.read_text()) if usage_refresh.CACHE.exists() else None
+    if not live:
+        skip("reader parity with the cache", "no live cache to compare against")
+    else:
+        served = set(usage_view.read_cache())
+        dropped = sorted(set(live) - served - set(WITHHELD))
+        check("reader surfaces every field the cache carries (or declares it withheld)",
+              not dropped, f"dropped silently: {dropped}")
+        check("observed_keys specifically reaches the reader (memory's baseline runs on it)",
+              usage_view.read_cache().get("observed_keys") == live.get("observed_keys"))
+
     # ── the baseline contract, which already rotted once IN SILENCE ─────────────────
     # The first implementation globbed `*.json` against an archive declared `*.jsonl` and
     # whole-file-parsed a line-delimited series. It read nothing, reported "none", and

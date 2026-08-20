@@ -15,6 +15,76 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 KEEP=${1:-14}
 
+# ── what the paired .state.tgz will carry ──────────────────────────────────────────
+# Computed BEFORE the dump so `--list-state` can answer without touching postgres. It was
+# briefly placed after, and asking the script what it would capture therefore ran a full
+# 43MB pg_dump and left an ORPHAN dump with no paired .state.tgz — breaking the very
+# pairing invariant the rotation below depends on. A query must not have the side effect
+# of the command.
+state_dirs=""
+# agents/ ADDED 2026-08-14, and its absence was the same defect this artifact exists to fix,
+# one directory over. The .state.tgz was created because the pg_dump captures the triggers
+# TABLE while its rows point at FILES in no repo. Charters are worse off than that: they are
+# in no repo WITH A REMOTE (agents/ has zero remotes), in no database (there is no charters
+# table), and were in no backup. So every agent's identity — and every reflection each agent
+# has written into itself via the scribe, 128 signed commits — existed on exactly one disk.
+# 2.5M including .git, which carries the signed authorship history that makes a charter
+# attributable at all. Found when offdisk_exposure named the missing remote and I checked
+# whether the LOCAL artifact covered it either; it did not.
+# NOT an offsite copy: that stays the owner's call, because the working tree holds .env, the
+# personal tier and wacli's keys, so exporting it is a credential-and-tier export. This is the
+# same local artifact that already holds triggers/ and memory/, at the same tier, gitignored
+# and in privacy_gate's SURFACES.
+for d in triggers memory agents; do
+  if [ -d "$d" ]; then state_dirs="$state_dirs $d"; fi
+done
+# AUTHORED FILES ADDED 2026-08-20 — the same defect a THIRD time, and the loop above is
+# why it kept recurring: capture was DIRECTORIES-ONLY, so every authored file that lives
+# at the top level was invisible to an artifact whose whole purpose is un-regenerable
+# state. Found while checking whether nucleus/runners.conf survives a restore. It does not,
+# and neither did these:
+#
+#   local.md      THE ORG'S LAW. Every agent reads it at boot; only Umair amends it. It was
+#                 in no repo (gitignored) and no backup — one disk, no copy.
+#   .env          ASTRYX_SECRET_KEY is the org's Ed25519 FEDERATION IDENTITY. Credentials
+#                 regenerate; an identity peers have already introduced themselves to does
+#                 NOT — losing it is unrecoverable in a way no other file here is.
+#   runners.conf  every timer declaration. units/ is generated FROM it, so a restore
+#                 regenerates nothing and units() faithfully emits the nothing it was told.
+#                 Includes the `backup` timer itself: a restored org silently stops backing
+#                 up, and the backup system cannot restore its own scheduler.
+#   routes-*.json channel routing (the .example.json siblings are tracked; these are not).
+#   owner/relations/PLAN.md   authored, in no repo.
+#
+# NO NEW PUSH SURFACE, verified rather than assumed: privacy_gate.sh:32-33 already declares
+# .env, local.md, relations.md, owner.md and backups/ as personal-tier surfaces asserted
+# ignored-AND-untracked, so these files are moving between two locations at the SAME tier.
+# This remains a LOCAL artifact; an offsite copy is still the owner's call, and it matters
+# more now — this tarball holds the org's identity key.
+#
+# The oracle that keeps this honest is nucleus/test_backup_inputs.py: it derives the
+# expected set from `git status --ignored` MINUS a manifest of regenerable paths, so a new
+# gitignored authored file that nobody adds here goes RED. Omission is the accused
+# direction; forgetting is what produced all three instances of this defect.
+for f in local.md .env owner.md relations.md PLAN.md nucleus/runners.conf \
+         bridges/routes-whatsapp.json bridges/routes-telegram.json \
+         bridges/routes-discord.json mcp/contacts/test_server.py; do
+  if [ -f "$f" ]; then state_dirs="$state_dirs $f"; fi
+done
+for d in tier wacli-data; do   # present only on orgs that use them; both un-regenerable
+  if [ -d "$d" ]; then state_dirs="$state_dirs $d"; fi
+done
+# `--list-state` prints exactly what this script WOULD capture and exits. It exists so
+# nucleus/test_backup_inputs.py can ask the emitter rather than re-parse it: the oracle
+# derives what SHOULD be captured from `git status --ignored` minus a regenerable manifest
+# — a different authority entirely — and compares. A verifier that read this list out of
+# the source would only ever prove the file agrees with itself.
+if [ "${1:-}" = "--list-state" ]; then
+  for x in $state_dirs; do echo "$x"; done
+  exit 0
+fi
+
+
 DSN=$(grep '^ASTRYX_DSN=' .env 2>/dev/null | cut -d= -f2-)
 [ -n "$DSN" ] || { echo "backup: no ASTRYX_DSN in .env" >&2; exit 1; }
 
@@ -46,23 +116,6 @@ fi
 # small enough to stay honest. backups/ is already personal-tier (gitignored + privacy_gate
 # SURFACES + the (d) never-commit-type assert), so this adds NO new push surface.
 state="${out%.dump}.state.tgz"
-state_dirs=""
-# agents/ ADDED 2026-08-14, and its absence was the same defect this artifact exists to fix,
-# one directory over. The .state.tgz was created because the pg_dump captures the triggers
-# TABLE while its rows point at FILES in no repo. Charters are worse off than that: they are
-# in no repo WITH A REMOTE (agents/ has zero remotes), in no database (there is no charters
-# table), and were in no backup. So every agent's identity — and every reflection each agent
-# has written into itself via the scribe, 128 signed commits — existed on exactly one disk.
-# 2.5M including .git, which carries the signed authorship history that makes a charter
-# attributable at all. Found when offdisk_exposure named the missing remote and I checked
-# whether the LOCAL artifact covered it either; it did not.
-# NOT an offsite copy: that stays the owner's call, because the working tree holds .env, the
-# personal tier and wacli's keys, so exporting it is a credential-and-tier export. This is the
-# same local artifact that already holds triggers/ and memory/, at the same tier, gitignored
-# and in privacy_gate's SURFACES.
-for d in triggers memory agents; do
-  if [ -d "$d" ]; then state_dirs="$state_dirs $d"; fi
-done
 if [ -n "$state_dirs" ]; then
   # Exclude compiled bytecode: it is regenerated on import, it is python-version
   # specific (so it is actively WRONG after an interpreter upgrade), and it was 22 of the

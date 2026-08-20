@@ -211,6 +211,12 @@ run "lost wakes recovered at spawn"   "$PY" nucleus/test_wake_recovery.py
 # arms name themselves SKIP (77) rather than passing quietly. Also drives the modal
 # NOT-CONFIGURED path, which is what most installs of this will actually be.
 run "usage panel: one credential reader" "$PY" nucleus/test_usage_panel.py
+# The THIRD instance of "authored state in no repo and no backup" (triggers/ bodies,
+# then agents/, then runners.conf + local.md + .env). This gate guards the CLASS: it
+# derives the expected set from `git status --ignored` minus a manifest of the genuinely
+# regenerable, so a NEW gitignored authored file that nobody adds to backup.sh goes RED.
+# Membership in that manifest grants EXEMPTION, so forgetting accuses rather than excuses.
+run "backup captures every gitignored input" "$PY" nucleus/test_backup_inputs.py
 
 # memory's oracles (msg 12486) — the lint family's first oracle, and the history half of
 # goal #2470. Both live over the gitignored estate, so on a clean clone they exit 77

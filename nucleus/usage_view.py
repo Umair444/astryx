@@ -109,6 +109,13 @@ def read_cache() -> dict:
         "hint": st.get("hint"),
         "baseline_source": c.get("baseline_source"),
         "missing_structural_keys": c.get("missing_structural_keys") or [],
+        # memory's baseline derivation runs on THIS field, and the first version of this
+        # reader dropped it while the docstring claimed to be "the same content". Same
+        # shape as every other defect on this build: no error, nothing raises, the
+        # dependency simply never arms. `test_usage_panel` now asserts PARITY — every
+        # top-level key the cache carries must surface here or be declared withheld — so
+        # the next field cannot go missing quietly.
+        "observed_keys": c.get("observed_keys") or [],
         # numbers ONLY when the state permits drawing them
         "data": c.get("data") if renderable else None,
     }
