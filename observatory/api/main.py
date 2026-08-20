@@ -569,6 +569,25 @@ async def economy():
     }
 
 
+@app.get("/api/usage")
+async def usage():
+    """Authoritative plan-limit gauges (goal #2470).
+
+    GATED BY OMISSION, DELIBERATELY. `/api/usage` is absent from PUBLIC_PATHS, so the
+    default-DENY middleware at the top of this file already owner-gates it. There is no
+    second check here on purpose: two authorities for one fact is how a gate ends up
+    enforced in one place and forgotten in the other.
+
+    THE CREDENTIAL IS NOT REACHABLE FROM THIS PROCESS. We import `usage_view`, which
+    reads `var/` and nothing else; the module that opens ~/.claude/.credentials.json is
+    `nucleus/usage_refresh.py`, which runs on its own timer and is deliberately NOT in
+    this app's import graph (BC-2). Import the refresher here and you have re-created
+    exactly the reachability this design was shaped to prevent.
+    """
+    from nucleus import usage_view
+    return await asyncio.to_thread(usage_view.read_cache)
+
+
 @app.get("/api/tools")
 async def tools():
     """The org's toolbox: wire tools, registry servers (from mcp/manifest.json,

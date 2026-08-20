@@ -411,6 +411,44 @@ def window_stats(dsn: str | None = None, window_h: float = 5.0,
         "cost_ceiling": round(_p90([_cost(b) for b in hist]), 2),
         "active": bool(cur_b),
     }
+
+    # ── REPOINTED, NOT DELETED (goal #2470) ──────────────────────────────────────────
+    # The docstring above states the premise this plan falsified: "the true window lives
+    # account-side and is unqueryable — there is no usage API". There is one, and where it
+    # answers, the ACCOUNT-level gauge is authoritative and this module's P90-of-our-own-
+    # history is a guess about the same quantity.
+    #
+    # What moves is the CEILING, and only that. The segmentation of the org's own steps
+    # above is this module's own measurement, it is not superseded by anything, and it
+    # stays exactly as it was. What is superseded is PLAN-QUOTA proximity per ACCOUNT.
+    # CONTEXT-WINDOW proximity per SESSION (`infer_limit`) is a different quantity on a
+    # different axis and this plan does not touch it.
+    #
+    # EXACTLY ONE INSTRUMENT IS EVER SHOWN AND THE OUTPUT SAYS WHICH. Two gauges of one
+    # fact rendered side by side is how a reader ends up believing the wrong one; `source`
+    # is what lets the panel label the fallback rather than quietly serving it as fact.
+    #
+    # FAIL-SOFT TO INFERRED, ALWAYS. A NOT-CONFIGURED install — the modal case in the
+    # population this ships to — must behave exactly as it did before this plan, so every
+    # failure here is swallowed and leaves `source: inferred` standing. usage_view reads
+    # var/ and never the credential, so importing it here keeps BC-2 intact.
+    auth = None
+    try:
+        from nucleus import usage_view
+        auth = usage_view.authoritative_ceiling()
+    except Exception:
+        auth = None
+    out["source"] = "authoritative" if auth else "inferred"
+    if auth:
+        out["authoritative"] = auth
+    else:
+        # Say WHY the fallback is showing, so the panel can label it truthfully instead
+        # of implying the authoritative gauge simply reads this way today.
+        try:
+            from nucleus import usage_view
+            out["fallback_reason"] = usage_view.read_cache().get("state")
+        except Exception:
+            out["fallback_reason"] = "unavailable"
     if cur_b:
         reset = cur_b["start"].timestamp() + window_h * 3600
         out.update({

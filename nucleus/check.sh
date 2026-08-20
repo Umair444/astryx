@@ -205,6 +205,12 @@ run "channel ear survives a db blip"  "$PY" nucleus/test_ear_survival.py
 # a step could have covered is ever served twice. Same cost and same skip conditions as
 # the gate above, times three (it runs three server generations, ~35s each).
 run "lost wakes recovered at spawn"   "$PY" nucleus/test_wake_recovery.py
+# goal #2470. The load-bearing gate is BC-2: the OAuth credential has EXACTLY ONE reader
+# estate-wide and that module is not reachable in the observatory's import graph. Both
+# halves are static, so this runs green on a clone with no credential; the live-token
+# arms name themselves SKIP (77) rather than passing quietly. Also drives the modal
+# NOT-CONFIGURED path, which is what most installs of this will actually be.
+run "usage panel: one credential reader" "$PY" nucleus/test_usage_panel.py
 # Class-1 of the prove-family oracle (scout, plan-15): drives all seven containment
 # verdicts BOTH ways against synthetic trees via G15_ENVF/G15_SCAN_ROOTS. Its output
 # states its own limit — decision logic only, not the real cell.
