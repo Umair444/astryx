@@ -340,6 +340,31 @@ def l_stall_clock_ignores_facility_nudges(ctx):
         "real agent movement inside the grace must silence the stall"
 
 
+@case
+def m_climb_clock_ignores_facility_nudges(ctx):
+    """The SIBLING clock, same law (a1, msg 13067): plan_climb_due was safe only by
+    circumstance — phase-disjointness plus cooldown ≥ grace — and either coincidence
+    being tuned away would blind it silently. A mid-climb thread carrying a fresh
+    facility nag must still read as agent-quiet: pre-filter this fixture is silent
+    (quiet=10min < 45min grace off the nag row), post-filter it pings the next rank."""
+    gid, thread = seed_plan(ctx, [("abstractor-1", "chat", "3 hours")], goal_age="4 hours")
+    ctx.sql("INSERT INTO messages (from_agent,to_agent,thread,intent,body,ts) VALUES "
+            "('pulse','abstractor-2',%s,'trigger','[trigger plan_verdict_due] stray nudge', "
+            "now() - interval '10 minutes')", (thread,))
+    MOD["plan_climb_due"](ctx)
+    assert pings(ctx, thread) == ["abstractor-2"], \
+        "a nagged mid-climb thread must still ping the next rank"
+    # control: genuine agent movement inside the grace still holds the climb net
+    gid2, thread2 = seed_plan(ctx, [("abstractor-1", "chat", "10 minutes")],
+                              goal_age="4 hours")
+    ctx.sql("INSERT INTO messages (from_agent,to_agent,thread,intent,body,ts) VALUES "
+            "('pulse','abstractor-2',%s,'trigger','[trigger plan_verdict_due] stray nudge', "
+            "now() - interval '5 minutes')", (thread2,))
+    MOD["plan_climb_due"](ctx)
+    assert pings(ctx, thread2) == [], \
+        "real agent movement inside the grace must hold, nag or no nag"
+
+
 def main():
     preflight_isolation_premise()      # fail-closed: never write until rollback is proven
     ok = True
