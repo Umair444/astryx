@@ -277,6 +277,12 @@ run "gemini ear-dark trigger oracle"  "$PY" nucleus/test_ear_dark.py
 # a parser checked only against fixtures I wrote is checked against my own beliefs, which
 # is exactly how its empty-window case was wrong on the day it shipped.
 run "gemini mouth-dark trigger oracle" "$PY" nucleus/test_mouth_dark.py
+# The systemd half of deployment drift (gemini, granted by seed 08-19): is a live service
+# still holding code the repo replaced. Its two counterexample arms are the point — a
+# directory-shaped root and an mtime-based comparison are the two obvious wrong guards, and
+# each is run here and shown to convict a service that is fine. Same gitignored-body caveat:
+# SKIPs (77) on a clone. The live arm reaches real systemd and skips loudly without it.
+run "service deploy drift oracle"     "$PY" nucleus/test_service_deploy_drift.py
 # Same gitignored-body caveat: SKIPs (77) on a clone. Guards the DEDUP specifically —
 # the key must carry an escalation band, or a standing condition warns once and goes
 # silent (which is how p1 degraded unobserved at 59h, 2026-08-14).
