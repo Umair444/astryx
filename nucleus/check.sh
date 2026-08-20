@@ -161,6 +161,15 @@ run "live-tree check guard can't go quiet" "$PY" nucleus/test_check_stamp.py
 run "live-tree stamp says what ran it" "$PY" nucleus/test_check_watch.py
 run "metabolism patrol invariants" "$PY" nucleus/test_stale_goals.py
 run "out-of-band doorbell is watched" "$PY" nucleus/test_doorbell_proof.py
+
+# THE INSTRUMENT, NOT THE ESTATE. nucleus/glob_vacuity.py runs the whole suite under a
+# shim to find globs that match nothing and pass anyway (forge's *.json against a
+# *.jsonl archive, dormant for the life of the org). That sweep is minutes long and
+# needs the live estate, so it stays a manual tool — but its SELFTEST is ~1s and plants
+# a dormant glob it must find. Gating the selftest keeps the instrument from rotting
+# without putting a multi-minute sweep in the fast loop; a tool that can no longer find
+# a planted defect reports "none dormant" in exactly the same words as a clean estate.
+run "glob-vacuity can still find a planted dormant glob" "$PY" nucleus/glob_vacuity.py --selftest
 # The clock under every other guard. nucleus/pulse_watch.py runs OUTSIDE the pulse (its own
 # systemd timer) because a watcher of the pulse scheduled BY the pulse shares its silence;
 # triggers/scout/clock_stamp.py reads its stamp from inside. Gated on the two defects that
