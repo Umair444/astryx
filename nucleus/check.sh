@@ -217,6 +217,13 @@ run "usage panel: one credential reader" "$PY" nucleus/test_usage_panel.py
 # regenerable, so a NEW gitignored authored file that nobody adds to backup.sh goes RED.
 # Membership in that manifest grants EXEMPTION, so forgetting accuses rather than excuses.
 run "backup captures every gitignored input" "$PY" nucleus/test_backup_inputs.py
+# goal #2457. wake_marker is the ONE definition of "was this wake consumed", replacing
+# three copies that agreed only by promise (wake_audit held it, wedge_watch reproduced it
+# in SQL while its docstring cited wake_audit as authoritative). The load-bearing gate is
+# the CROSS: the SQL and the pure-python renderings are two forms of one decision and
+# nothing but this makes them agree — driven over live rows, with a positive control that
+# the sample exercises both verdicts.
+run "wake_marker: one definition, two renderings" "$PY" nucleus/test_wake_marker.py
 
 # memory's oracles (msg 12486) — the lint family's first oracle, and the history half of
 # goal #2470. Both live over the gitignored estate, so on a clean clone they exit 77

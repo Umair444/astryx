@@ -59,11 +59,30 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO))               # run as a script, the repo root is not on the path
+
+from nucleus import wake_marker as _wm      # noqa: E402 — the ONE definition (goal #2457)
 
 # The one definition, shared by every caller so a guard cannot drift from the audit.
 # Parameters: %(hours)s window, %(grace)s hours a message must be old before it counts
 # (a wake delivered minutes ago has not been dropped — the turn that reads it has not
 # reached its Stop hook yet, and without this every run reports the wake it rode in on).
+# THE PREDICATE IS NOT DEFINED HERE ANY MORE — nucleus/wake_marker.py owns it, and this
+# module is now a CALLER. Until 2026-08-20 this file held the definition while
+# wedge_watch.py reproduced its semantics in SQL and declared THIS file "the one
+# definition" in its docstring: an authority that is cited and not imported is a promise,
+# and three copies of a predicate agree only until one of them is edited.
+#
+# The stated blocker — "a trigger subprocess should not import a CLI module" — was real
+# about CLI-ness and not about importability (triggers already import okf, world, charter,
+# usage_view). So the predicate moved to a module with no argparse and no main, which a
+# trigger can import as cheaply as this CLI can.
+#
+# The bounds stay HERE because they are this caller's question: an audit must not accuse,
+# so its later-turn clause is UNBOUNDED ("could ANY later turn have held this?"). That is
+# exactly inverted for wedge_watch's liveness question, which is why the bound is an
+# argument rather than a shared constant. Equivalence to the previous hardcoded SQL was
+# proved on the live wire before this switch: identical 27-row set over 168h.
 _DROPPED_SQL = """
 WITH turn_takers AS (SELECT DISTINCT agent FROM turns)
 SELECT m.id, m.ts, m.to_agent, m.from_agent, m.intent, left(m.body, 120) AS body
@@ -73,13 +92,7 @@ WHERE m.status = 'delivered'
   AND m.ts > now() - make_interval(hours => %(hours)s)
   AND m.ts < now() - make_interval(hours => %(grace)s)
   AND (%(agent)s::text IS NULL OR m.to_agent = %(agent)s)
-  AND NOT EXISTS (SELECT 1 FROM turns t WHERE t.input_msg_id = m.id)
-  AND NOT EXISTS (SELECT 1 FROM turns t                       -- folded into a running turn
-                   WHERE t.agent = m.to_agent
-                     AND m.ts BETWEEN t.started_at AND t.ended_at)
-  AND NOT EXISTS (SELECT 1 FROM turns t                       -- ANY later turn could hold it
-                   WHERE t.agent = m.to_agent
-                     AND t.started_at > m.ts)
+  AND """ + _wm.dropped_expr("m") + """
 ORDER BY m.id
 """
 
