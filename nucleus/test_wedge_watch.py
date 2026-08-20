@@ -312,9 +312,17 @@ class _ProseQuoteCtx(_Ctx):
         if "FROM agg" in q:
             return self.rows
         if flat.startswith("SELECT") and "org-dark-escalation" in str(params):
-            if "from_agent = 'seed'" in flat and "to_agent = 'owner'" in flat:
-                return []      # the prose row is a1 -> a4; a pinned query cannot see it
-            # an unpinned query sees the prose row: delivered, recent — it would bind
+            # THE TABLE THIS STUB MODELS: one prose row QUOTING the marker in its BODY
+            # (a1's plan revise — delivered, recent, thread auto-minted `t-mt0abc`),
+            # and NO row on the guard's own ESC_THREAD. A thread-keyed dedup
+            # (`thread = %s` with the dedicated thread as a param) cannot see the
+            # prose row -> returns nothing -> the doorbell fires. A content-keyed
+            # dedup (body LIKE) DOES see it -> binds -> the rung is silenced by
+            # discussion, which is the mutant this arm exists to kill (msg 12018
+            # live, 12541 the structural fix).
+            if "thread = " in flat and any("t-org-dark-escalation" in str(p)
+                                           for p in params):
+                return []      # no row was ever addressed to the guard's thread
             return [{"status": "delivered", "ts": NOW - timedelta(minutes=30)}]
         return []
 
