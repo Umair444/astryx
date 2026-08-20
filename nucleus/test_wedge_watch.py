@@ -320,9 +320,22 @@ class _ProseQuoteCtx(_Ctx):
             # dedup (body LIKE) DOES see it -> binds -> the rung is silenced by
             # discussion, which is the mutant this arm exists to kill (msg 12018
             # live, 12541 the structural fix).
+            # AND a FOREIGN row ON the guard's own thread — §1(i), the authorship
+            # property. The thread key answers "is this row about my duty"; it does not
+            # answer "did MY act discharge it", and any agent can address a thread. So
+            # the stub also models one delivered row on ESC_THREAD authored by a PEER.
+            # The pinned query the INSERT mirrors (from_agent='seed') cannot see it and
+            # the doorbell fires; an UNPINNED query sees it, binds, and the org's last
+            # alarm is silenced by somebody else's row. Without this row the authorship
+            # mutant was NOT PROBED — the stub keyed only on thread-vs-content, so
+            # widening the pin changed the SQL text and nothing observable.
+            pinned = "from_agent = 'seed'" in flat
             if "thread = " in flat and any("t-org-dark-escalation" in str(p)
                                            for p in params):
-                return []      # no row was ever addressed to the guard's thread
+                if pinned:
+                    return []  # no row from the guard was ever addressed to its thread
+                return [{"status": "delivered", "ts": NOW - timedelta(minutes=30),
+                         "from_agent": "forge"}]        # the peer's row, seen only unpinned
             return [{"status": "delivered", "ts": NOW - timedelta(minutes=30)}]
         return []
 

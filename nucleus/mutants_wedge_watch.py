@@ -90,4 +90,70 @@ MUTANTS = {
     "M10 null last_step no longer skipped":
         ("        if last is None:\n            continue",
          "        if last is None:\n            pass"),
+
+    # ═══ BC-2, goal #2457 — one mutant per property of §1's dedup form ═══════════════
+    # A DEDUP PREDICATE HAS THREE PROPERTIES: who it MATCHES, that it is EXCLUSIVE to
+    # them, and that it is conditioned on the act having SUCCEEDED. Each arm below kills
+    # exactly one, so a green run locates the property that rotted rather than reporting
+    # "the dedup broke".
+    #
+    # ON "LAST OBSERVED RED AT <sha>", which this set follows and must adapt: the design
+    # asks each build-confirm to name the commit where its mutant was last seen RED, so a
+    # green run is legible instead of ambiguous. The subject here is `triggers/seed/
+    # wedge_watch.py`, which is GITIGNORED — a trigger body has no sha to name. So each
+    # arm cites the ORACLE's commit plus a date. Naming a sha the subject does not have
+    # would be the same rot the convention was written to stop, one level over.
+
+    # (i) MATCHES the discharging set. Widen authorship and any writer's row silences the
+    #     org's last alarm. Proves the dedup counts only rows from the set whose emission
+    #     legitimately discharges the duty.
+    #     Last observed RED: pre-BC-0 (before the from_agent pin landed).
+    "BC2(i) dedup admits any author — a non-guard row binds":
+        ("SELECT status, ts FROM messages WHERE from_agent = 'seed' ",
+         "SELECT status, ts FROM messages WHERE from_agent IS NOT NULL "),
+
+    # (ii) EXCLUSIVE to that set. THE LIVE HALF of BC-2 until 2026-08-20: reverting to the
+    #      content key restores the defect where the org DISCUSSING its own dark-org alarm
+    #      silences it — observed live (a4 msg 12018), where a plan revise quoting the
+    #      marker suppressed the rung and the report of the suppression became the second
+    #      suppressing row. A pin naming an identity the guard SHARES (seed writes 118
+    #      rows to this same address) is §1(i) applied exactly and still not sufficient.
+    #      Last observed RED: oracle 93a25c8, 2026-08-20 — the first commit at which the
+    #      thread key made this a red-to-green demonstration rather than a wish.
+    "BC2(ii) dedup keyed on CONTENT — discussing the alarm silences it":
+        ('                "AND to_agent = \'owner\' AND thread = %s AND ts > %s",\n'
+         '                (ESC_THREAD, now - timedelta(hours=ESCALATE_RENAG_H)))',
+         '                "AND to_agent = \'owner\' AND body LIKE %s AND ts > %s",\n'
+         '                ("%<org-dark-escalation>%", now - timedelta(hours=ESCALATE_RENAG_H)))'),
+
+    # (iii) CONDITIONED ON SUCCESS, both directions. A dedup asks "did my act already
+    #       LAND", so emission-time evidence makes the retry defeat itself exactly when
+    #       the carrier is broken — the state the retry exists for. Two arms, because the
+    #       property has two failure directions and a set that probed one would licence
+    #       the other: too loud (a delivered row stops binding) and silent forever (an
+    #       undelivered row binds past any grace, which is the pre-448bf8f defect).
+    #       Last observed RED: pre-448bf8f.
+    "BC2(iii-a) a DELIVERED row no longer suppresses — owner pinged every tick":
+        ('        if r.get("status") == "delivered":\n            return True',
+         '        if False:\n            return True'),
+
+    "BC2(iii-b) an UNDELIVERED row suppresses forever — one dead row, silence for good":
+        ("        if ts is not None and (now - ts) < timedelta(minutes=grace_min):",
+         "        if ts is not None:"),
+
+    # a3's amendment to BC-2: the subject-injection arm must cover the TERMINAL rung, not
+    # only an in-band one. `unconsumed(owner)` is TRUE BY CONSTRUCTION — turns.input_msg_id
+    # is written by agent sessions and Umair reads on WhatsApp — so if the terminal address
+    # ever entered subject formation the escalation would be monotonically self-feeding
+    # with no exit state, aimed at the owner's phone. Today it cannot: subjects come from
+    # tmux (`_bodies()`), and there is no ax-owner session. That is a fact about how the
+    # live set HAPPENS to be derived, not a stated exclusion — which is exactly why a3
+    # refused to let it stand as the protection. This mutant injects the terminal address
+    # into the subject set and asks whether ANYTHING objects.
+    #     A DETECTOR MUST EXCLUDE ANY SUBJECT FOR WHICH ITS PREDICATE IS A TAUTOLOGY.
+    #     Last observed RED: never — this arm has not yet been demonstrated red anywhere,
+    #     and if it SURVIVES the probe that is the finding, not a pass.
+    "BC2(a3) terminal address injected into the subject set":
+        ("    bodies = _bodies()\n    if bodies is None:",
+         "    bodies = _bodies()\n    if bodies is not None:\n        bodies = bodies | {\'owner\'}\n    if bodies is None:"),
 }
