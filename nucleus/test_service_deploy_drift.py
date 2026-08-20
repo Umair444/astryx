@@ -47,13 +47,18 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-TRIGGER = REPO / "triggers" / "seed" / "service_deploy_drift.py"
+# SERVICE_DEPLOY_DRIFT_SRC is the mutation probe's channel to this oracle, not a
+# user-facing override: nucleus/mutation_probe.py writes a mutated copy of the trigger
+# and points this here. Without it the probe would silently drive the REAL trigger and
+# report every mutant caught.
+TRIGGER = Path(os.environ.get("SERVICE_DEPLOY_DRIFT_SRC")
+               or (REPO / "triggers" / "seed" / "service_deploy_drift.py"))
 if not TRIGGER.exists():
     # triggers/ is gitignored, so a fresh clone (CI) has no body to test. Skip LOUDLY
     # rather than pass — a green tick for a test that never ran is the lie this whole
     # file exists to prevent.
-    print("SKIP: triggers/seed/service_deploy_drift.py not present (gitignored body, "
-          "e.g. a CI clone). Nothing was verified here.")
+    print(f"SKIP: {TRIGGER} not present (gitignored body, e.g. a CI clone). "
+          "Nothing was verified here.")
     sys.exit(77)
 runpy.run_path(str(TRIGGER), run_name="service_deploy_drift_mod")
 from astryx import _registry                                        # noqa: E402
