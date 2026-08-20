@@ -211,6 +211,14 @@ run "lost wakes recovered at spawn"   "$PY" nucleus/test_wake_recovery.py
 # arms name themselves SKIP (77) rather than passing quietly. Also drives the modal
 # NOT-CONFIGURED path, which is what most installs of this will actually be.
 run "usage panel: one credential reader" "$PY" nucleus/test_usage_panel.py
+
+# memory's oracles (msg 12486) — the lint family's first oracle, and the history half of
+# goal #2470. Both live over the gitignored estate, so on a clean clone they exit 77
+# with a named reason (amber-by-construction in CI); green only on the live host, which
+# is what check_watch.sh exists for. The lints watched everyone's drift and nothing
+# watched theirs until the index parser condemned a healthy line over one capital letter.
+run "wiki index state parser"  "$PY" nucleus/test_wiki_drift.py
+run "usage series is honest"   "$PY" nucleus/test_usage_sample.py
 # Class-1 of the prove-family oracle (scout, plan-15): drives all seven containment
 # verdicts BOTH ways against synthetic trees via G15_ENVF/G15_SCAN_ROOTS. Its output
 # states its own limit — decision logic only, not the real cell.
