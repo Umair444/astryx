@@ -168,6 +168,33 @@ check("a single drop AGED past the floor is a state (low-cadence seat)",
       [a for a, _, _ in classify([_old_single], BODIES, NOW)[0]], ["steward"])
 check("the floor is a parameter the oracle can move (age just under -> noise)",
       classify([_old_single], BODIES, NOW, single_drop_floor_h=33)[0], [])
+
+# ── §1b(b): A SUBJECT WHOSE PREDICATE IS A TAUTOLOGY IS EXCLUDED, BY STATEMENT ────────
+# `unconsumed(owner)` can never be false: turns.input_msg_id is written by agent sessions
+# and Umair reads on WhatsApp, so the terminal address is unconsumed FOREVER by
+# construction. Including it measures nothing about it and guarantees the alarm — and the
+# escalation's own emission is addressed there, so a self-feeding loop aimed at the
+# owner's phone with no exit state.
+#
+# WHY THIS ARM EXISTS AT ALL, which is the part worth keeping: the mutant that injects the
+# terminal address was already reading CAUGHT before this check was written. It died on
+# `seed DEAD -> the in-band alarm is INSERTed to the live relay` — a RELAY-SELECTION
+# assertion that noticed `bodies` had changed. Nothing objected to the SUBJECT. A mutant
+# dying on an unrelated assertion is the same failure mode as a green gate that never ran,
+# so the arm is pointed at SUBJECT_EXCLUDE itself and nothing else.
+_OWNER_WEDGED = dict(STEWARD_WEDGED, agent="owner")
+_bodies_with_owner = BODIES | {"owner"}
+_w, _r, _g = classify([_OWNER_WEDGED], _bodies_with_owner, NOW)
+check("the terminal address is never a wedge SUBJECT (tautological predicate)",
+      [_w, _r, _g], [[], [], []])
+# POSITIVE CONTROL, same generation: the identical row under any other name IS filed.
+# Without it, "all three lists are empty" is equally what a classify() that returns
+# nothing produces, and the arm would pass against a corpse.
+_w2, _, _ = classify([dict(_OWNER_WEDGED, agent="steward")], _bodies_with_owner, NOW)
+check("POSITIVE CONTROL: the same row under a non-excluded name IS wedged",
+      [a for a, _, _ in _w2], ["steward"])
+check("the exclusion is a STATED set, not an incidental derivation",
+      "owner" in ww["SUBJECT_EXCLUDE"], True)
 check("quiet under the threshold does not alarm",
       classify([dict(STEWARD_WEDGED,
                      last_step=datetime(2026, 8, 13, 20, 0, tzinfo=UTC))], BODIES, NOW)[0], [])

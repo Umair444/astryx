@@ -153,7 +153,13 @@ MUTANTS = {
     #     A DETECTOR MUST EXCLUDE ANY SUBJECT FOR WHICH ITS PREDICATE IS A TAUTOLOGY.
     #     Last observed RED: never — this arm has not yet been demonstrated red anywhere,
     #     and if it SURVIVES the probe that is the finding, not a pass.
-    "BC2(a3) terminal address injected into the subject set":
-        ("    bodies = _bodies()\n    if bodies is None:",
-         "    bodies = _bodies()\n    if bodies is not None:\n        bodies = bodies | {\'owner\'}\n    if bodies is None:"),
+    #     RE-POINTED 2026-08-20 after this arm read CAUGHT for the wrong reason. The old
+    #     form injected the terminal address into `bodies`, which perturbed RELAY SELECTION
+    #     and died on "seed DEAD -> the in-band alarm is INSERTed to the live relay" — an
+    #     assertion about the recipient, not about subject formation. It certified a clause
+    #     that was entirely unenforced. It now deletes the STATED exclusion itself, so the
+    #     only thing that can catch it is the arm written for it.
+    #     Last observed RED: oracle d3eb14a + this re-point, 2026-08-20.
+    "BC2(a3) SUBJECT_EXCLUDE emptied — a tautological subject is admitted":
+        ('SUBJECT_EXCLUDE = {"owner"}', "SUBJECT_EXCLUDE = set()"),
 }

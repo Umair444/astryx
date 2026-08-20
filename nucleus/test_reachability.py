@@ -121,6 +121,7 @@ EXEMPT = {
     # documented in CLAUDE.md is deliberately NOT auto-granted reachability: a doc mention
     # is too weak to silence this gate, so a human writes one line here instead.
     "nucleus/fedtest.py":     "manual: federation end-to-end probe; CLAUDE.md documents the human command",
+    "nucleus/esc_latency.py":  "manual: MIN_QUIET_H calibration measurement, run on demand; reports and never recommends, so a timer would only manufacture noise",
     "nucleus/doorbell.sh":    "manual: operator notify helper, self-declared Usage line",
     "nucleus/wallpane.sh":    "manual: single-pane variant of wall.sh, invoked by an operator",
     "nucleus/refresh.sh":     "manual: operator session refresh",
