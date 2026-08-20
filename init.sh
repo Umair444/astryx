@@ -54,6 +54,30 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 EOF
+  # pulse-watch: the ONE guard that cannot live in the pulse. It watches the clock that
+  # runs every other guard in the org, so it must not be scheduled by that clock — a
+  # watcher of the pulse running IN the pulse has the same two causes for its silence as
+  # the condition it watches. Persistent=true is load-bearing: after a host-down window it
+  # fires immediately on boot, which is how the org gets told how long it was blind.
+  cat > "$UD/astryx-pulse-watch.service" <<EOF
+[Unit]
+Description=astryx pulse-watch — is the org's clock still ticking? (the one guard outside the pulse)
+[Service]
+Type=oneshot
+WorkingDirectory=$PWD
+ExecStart=$PWD/venv/bin/python $PWD/nucleus/pulse_watch.py
+User=$USER
+EOF
+  cat > "$UD/astryx-pulse-watch.timer" <<EOF
+[Unit]
+Description=astryx pulse-watch — every 5 minutes, deliberately NOT on the org's own clock
+[Timer]
+OnCalendar=*-*-* *:0/5:20
+AccuracySec=5s
+Persistent=true
+[Install]
+WantedBy=timers.target
+EOF
   cat > "$UD/astryx-gateway.service" <<EOF
 [Unit]
 Description=astryx gateway — the org's one door to other orgs (:8845)
