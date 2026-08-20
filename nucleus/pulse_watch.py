@@ -65,10 +65,18 @@ around that question, not around severity:
     outside both the pulse's and every agent's failure domain). This rung exists because
     of the case rung 1 cannot serve: seed dark. Half an hour of a stopped clock with no
     one having restarted it means either he did not read it or he cannot, and the second
-    is the 88-hour case. HONEST LIMIT: steward/doorbell_proof is currently RED on exactly
-    this join — the bridge half and the pulse half are each proven, a machine-authored
-    row reaching the owner's phone has never been OBSERVED end to end. So rung 2 is a
-    claim until it fires once. It is not the load-bearing rung; rung 1 is.
+    is the 88-hour case. DISCHARGED 2026-08-20 (forge, plan-2457 msg 13041, citing 12554),
+    and worth stating precisely because the transfer is narrower than it looks: what was
+    proven end to end is the DOORBELL FALLBACK, not a route. An un-threaded owner-bound row
+    takes `routes()[from_agent] or routes()[HOME_AGENT]`, and neither `pulse` nor
+    `pulse-watch` has a route of its own (verified: the only routed agents are canopus,
+    gemini, seed), so both land on the identical HOME_AGENT branch — the proof transfers
+    because the code path is literally the same one, not because anyone tested this sender.
+    Two conditions carry it, and if either changes the discharge lapses: (i) as of 9a38f86
+    the fallback is pinned to HOME_AGENT BY NAME rather than positionally, so reordering
+    routes-whatsapp.json can no longer silently move it; (ii) the moment anyone gives
+    `pulse-watch` a route of its own, this rung stops using the proven fallback and takes
+    an untested per-sender branch. Rung 1 remains the load-bearing one regardless.
   * re-nag: an open ladder (bit_length), never warn-once. A stopped clock is a CONDITION,
     not an event, and a condition that dedups to silence is the failure this org keeps
     re-learning. Sentinel for "never reported" is -1, deliberately NOT 0, so the lowest
