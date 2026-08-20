@@ -126,6 +126,11 @@ EXEMPT = {
     "nucleus/wallpane.sh":    "manual: single-pane variant of wall.sh, invoked by an operator",
     "nucleus/refresh.sh":     "manual: operator session refresh",
     "nucleus/deploy.sh":      "manual: operator deploy step",
+    # Landed 6efc7f2 and red on the FIRST live-tree run after it — the gate working, not
+    # failing. Its ORACLE is wired into check.sh; the TOOL is typed by an agent at a
+    # prompt, which is the whole point of it (the standing rule it serves is about
+    # what a human TYPES; the shell wrapper that lies is not present in scripts).
+    "nucleus/estate_grep.sh": "manual: the estate search an agent TYPES — org-news #12934 names it as the rule's implementation; its oracle test_estate_grep.py is what check.sh runs",
     # SIX EXEMPTIONS USED TO LIVE HERE — one per nucleus/mutants_*.py, added one at a
     # time over eight days by three different authors, each correctly reasoned and each
     # a symptom of the same missing edge. DATA_READERS retires all of them: the specs are
