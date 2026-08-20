@@ -231,6 +231,10 @@ run "backup captures every gitignored input" "$PY" nucleus/test_backup_inputs.py
 # nothing but this makes them agree — driven over live rows, with a positive control that
 # the sample exercises both verdicts.
 run "wake_marker: one definition, two renderings" "$PY" nucleus/test_wake_marker.py
+# goal #2457, the facility's pure decision layer. Drives the whole polarity table directly
+# (pure subject, no DB) and asserts BC-4: the escalation layer may fail but may never take
+# its caller down, so the worst case is today's in-band alarm and never silence.
+run "escalation facility: polarity + collapse" "$PY" nucleus/test_escalation.py
 
 # memory's oracles (msg 12486) — the lint family's first oracle, and the history half of
 # goal #2470. Both live over the gitignored estate, so on a clean clone they exit 77
