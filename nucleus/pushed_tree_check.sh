@@ -89,6 +89,51 @@ if [ "$rc" -ne 0 ]; then
   echo "that differ between your working tree and $REF (any of these could be the subject):"
   git diff --name-only "$REF" -- | sed 's/^/  M /'
   git ls-files --others --exclude-standard | sed 's/^/  ? /'
+
+  # WHOSE COMMIT, AND HAS IT EVER BEEN GATED? Added 2026-08-20 after an org-wide push
+  # freeze that cost six commands to diagnose. On a SHARED WORKING TREE a local commit's
+  # blast radius is every other agent's push: the author who introduced the failing gate
+  # had not pushed, so this check never ran for THEM — it ran for the next agent to try,
+  # who then owns an alarm about someone else's defect. Detection was never the problem;
+  # the READER was. Naming the commit, and whether it has ever faced this gate, turns that
+  # diagnosis into one line the blocked pusher can route.
+  #
+  # Deliberately no regex over the label: labels carry spaces, quotes and apostrophes, and
+  # a sed expression built from one is a quoting bug waiting for the first gate named with
+  # a `/`. grep -F on the literal, then pick the nucleus/ word out of the line.
+  fails=$(sed -n '/^FAILED (/,/^UNVERIFIED (/p' "$LOG" | sed -n 's/^  ✗ //p')
+  if [ -n "$fails" ]; then
+    echo
+    echo "WHO LAST TOUCHED EACH FAILING GATE (usually the only person who can fix it):"
+    printf '%s\n' "$fails" | while IFS= read -r label; do
+      [ -n "$label" ] || continue
+      echo "  ✗ $label"
+      script=$(grep -F -- "$label" "$TREE/nucleus/check.sh" | head -1 | tr ' "' '\n\n' \
+               | grep -m1 '^nucleus/')
+      if [ -z "$script" ]; then
+        echo "      (could not map this label to a script — read nucleus/check.sh)"
+        continue
+      fi
+      # THE REF'S history, not the pusher's HEAD. Looking it up in $REPO answered a
+      # different question — "who last touched this on MY branch" — and reported a
+      # pushed commit while the ref carried an unpushed one. Caught by testing the
+      # NOT-PUSHED direction, which is the whole reason this block exists.
+      sha=$(git -C "$REPO" log -1 --format=%H "$REF" -- "$script" 2>/dev/null)
+      if [ -z "$sha" ]; then
+        echo "      $script — no commit touches it (untracked?)"
+        continue
+      fi
+      if git -C "$REPO" merge-base --is-ancestor "$sha" origin/main 2>/dev/null; then
+        state="already on origin/main"
+      else
+        state="NOT PUSHED — its author has never had this gate run against their commit"
+      fi
+      echo "      $script"
+      echo "      $(git -C "$REPO" log -1 --format='%h  %an  %s' "$REF" -- "$script")"
+      echo "      [$state]"
+    done
+  fi
+
   echo
   echo "To stand in the failing tree yourself: KEEP_TREE=1 $0 $REF"
 fi
