@@ -77,6 +77,48 @@ SUBJECT_EXCLUDE = frozenset({"owner"})
 ORG_DARK_FLOOR_H = 12.0
 INNOCENT_WORST_H = 8.42          # the violator, kept next to the floor it justifies
 
+# ── ONE DERIVATION OF "HOW QUIET IS THE ORG" ─────────────────────────────────────────
+# The number that TRIGGERS this rung and the number that JUSTIFIES its floor must come
+# from the same definition, or the justification silently stops describing the trigger.
+# Three ad-hoc versions of this existed by the time it was noticed: the shim would compute
+# one, esc_latency derived episodes its own way, and I ran a third by hand to check the
+# 8.42h violator. Same writer-count defect that produced three copies of the consumption
+# predicate, caught one day later in a number instead of a predicate.
+#
+# ORG-WIDE silence is the gap since ANY agent last stepped — not per-agent quiet, which is
+# a different quantity with a different floor (wedge_watch's MIN_QUIET_H = 6h, per seat).
+# Conflating them is the error this constant pair exists to prevent, so they are named
+# apart here rather than left for a reader to infer.
+ORG_QUIET_SQL = """
+SELECT EXTRACT(epoch FROM (now() - max(ts))) / 3600.0 AS quiet_h FROM steps
+"""
+
+# The distribution the floor is a bet against. `esc_latency` runs THIS to re-derive
+# INNOCENT_WORST_H rather than restating it, and its gate fails if the constant above has
+# drifted from what the wire actually shows — a violator that stops being the violator is
+# a justification that has quietly expired.
+ORG_SILENCE_EPISODES_SQL = """
+WITH s AS (SELECT ts, lag(ts) OVER (ORDER BY ts) AS prev
+             FROM (SELECT DISTINCT ts FROM steps
+                    WHERE ts > now() - make_interval(days => %(days)s)) x)
+SELECT EXTRACT(epoch FROM (ts - prev)) / 3600.0 AS gap_h
+  FROM s WHERE prev IS NOT NULL ORDER BY gap_h DESC
+"""
+
+
+def innocent_worst(gaps_h, floor_h: float = ORG_DARK_FLOOR_H) -> float | None:
+    """The largest org-wide silence that did NOT deserve an alarm — the violator.
+
+    Pure over its input so the oracle can drive it. 'Innocent' is defined as BELOW the
+    floor, which is deliberately circular and is the honest form: the floor's claim is
+    exactly "nothing under me was real", so the number that would violate it is the worst
+    case it currently clears. A gap ABOVE the floor is the rung's subject, not a false
+    positive, and pooling the two would let one true outage inflate the very number that
+    justifies staying silent.
+    """
+    innocent = [g for g in gaps_h if g is not None and g < floor_h]
+    return max(innocent) if innocent else None
+
 WATCH, ESCALATE, QUIET = "watch", "escalate", "quiet"
 
 

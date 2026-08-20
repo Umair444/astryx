@@ -92,7 +92,8 @@ def wakes_into(cur, ep):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=30)
-    ap.add_argument("--floor", type=float, default=6.0, help="MIN_QUIET_H under test")
+    ap.add_argument("--floor", type=float, default=6.0,
+                    help="wedge_watch's PER-AGENT MIN_QUIET_H under test (not the org floor)")
     a = ap.parse_args()
 
     dsn = _dsn()
@@ -148,6 +149,29 @@ def main():
               f"  was set against n=1. But only ONE of the two falsifiers is answered above;\n"
               f"  moving the floor on the evaluable half alone trades a measured miss for an\n"
               f"  UNMEASURED false-alarm cost. This tool reports and does not recommend.")
+    # ── THE ORG-WIDE FLOOR, from the ONE derivation the rung itself uses ────────────
+    # Not a second opinion: `nucleus.escalation` owns both the SQL and the constants, so
+    # the number that JUSTIFIES the aggregate floor is re-derived here by exactly the code
+    # that TRIGGERS on it. Three ad-hoc versions of "how quiet is the org" existed before
+    # this was factored — the shim's, this tool's, and one I ran by hand to check 8.42h.
+    from nucleus import escalation as esc
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute(esc.ORG_SILENCE_EPISODES_SQL, {"days": a.days})
+        gaps = [float(r[0]) for r in cur.fetchall()]   # EXTRACT yields Decimal
+    worst = esc.innocent_worst(gaps)
+    over = [g for g in gaps if g >= esc.ORG_DARK_FLOOR_H]
+    print(f"\n  ORG-WIDE floor {esc.ORG_DARK_FLOOR_H}h (the AGGREGATE rung, distinct from the"
+          f" per-agent floor above)")
+    print(f"    worst INNOCENT org-wide silence in {a.days}d : "
+          f"{worst:.2f}h" if worst is not None else "    no innocent gap measured")
+    print(f"    constant recorded in escalation.py           : {esc.INNOCENT_WORST_H}h")
+    if worst is not None:
+        drift = abs(worst - esc.INNOCENT_WORST_H)
+        print(f"    DRIFT                                        : {drift:.2f}h"
+              + ("   <- the justification has expired; re-derive it" if drift > 0.5 else ""))
+    print(f"    gaps at or above the org floor               : {len(over)} "
+          f"({'the outage(s) — the rung SUBJECT, not false positives' if over else 'none'})")
+
     print("\n  CEILING: a gap with no unconsumed wake in it is idleness, not a wedge, and is\n"
           "  excluded. 'Closed by a fresh process' is a fact about the process, never about\n"
           "  whether a human was needed — that fact is not in these tables at all.")

@@ -22,7 +22,19 @@ sys.path.insert(0, str(REPO))
 # reported NOT PROBED. Ten survivors is not ten holes; it is the signature of a test that
 # never read the thing it was pointed at. An oracle that ignores its own subject argument
 # is green against every wrong implementation there is.
-SUBJECT = Path(os.environ.get("ESCALATION_SRC", REPO / "nucleus" / "escalation.py"))
+# ORDINARY IMPORT BY DEFAULT, dynamic load ONLY under mutation. The first version loaded
+# dynamically in both cases, which hid the dependency from the reachability parser: the
+# only STATIC parent of escalation.py was esc_latency.py, itself exempt as a manual tool,
+# so the gate correctly reported a module reached only by a chain that bottoms out in
+# nothing automatic. The fix is to make the real dependency visible rather than to exempt
+# it — check.sh genuinely exercises this module on every run, and now the parser can see
+# that it does.
+_override = os.environ.get("ESCALATION_SRC")
+if not _override:
+    from nucleus import escalation as esc       # noqa: E402 — the invoker the gate reads
+    SUBJECT = Path(esc.__file__)
+else:
+    SUBJECT = Path(_override)
 _spec = importlib.util.spec_from_file_location("escalation_under_test", SUBJECT)
 esc = importlib.util.module_from_spec(_spec)
 # Register BEFORE exec: `escalation.py` uses dataclasses under
@@ -30,7 +42,7 @@ esc = importlib.util.module_from_spec(_spec)
 # sys.modules while the class body runs. Omit this and the load dies on a NoneType
 # __dict__ — which reads like a bug in the subject and is a bug in the loader.
 sys.modules[_spec.name] = esc
-_spec.loader.exec_module(esc)
+_spec.loader.exec_module(esc)   # under mutation this REPLACES the imported module above
 
 FAIL = []
 
@@ -151,6 +163,36 @@ def main():
     dgood = esc.safe_decide([S(refired=True)], quiet_h=0.0, live_peers=["forge"], roster_size=13)
     check("POSITIVE CONTROL: safe_decide still escalates on good input",
           dgood.verdict == esc.ESCALATE and dgood.rung["to"] == "forge", str(dgood.rung))
+
+    # ── THE VIOLATOR MUST STILL BE THE VIOLATOR ─────────────────────────────────────
+    # A floor's justification is an empirical claim, so it can EXPIRE. This re-derives the
+    # worst innocent org-wide silence from the wire using the facility's own SQL and fails
+    # if the recorded constant has drifted — otherwise 8.42h becomes a number that was true
+    # once, sitting next to a floor that still cites it.
+    try:
+        from nucleus import wake_audit as _wa
+        import psycopg
+        with psycopg.connect(_wa.dsn(), connect_timeout=5) as c:
+            # float(), not the raw row: postgres EXTRACT returns Decimal, and Decimal
+            # minus float raises. A gate that dies on its own type coercion reports a
+            # failure of the subject when the fault is in the harness.
+            gaps = [float(r[0]) for r in c.execute(esc.ORG_SILENCE_EPISODES_SQL,
+                                                   {"days": 35})]
+    except Exception as e:                                   # noqa: BLE001
+        print(f"  SKIP  the recorded violator still matches the wire — no DB "
+              f"({type(e).__name__})")
+        FAIL.append("__skip__the recorded violator still matches the wire")
+    else:
+        worst = esc.innocent_worst(gaps)
+        check("the wire still yields an innocent worst at all (sample is not empty)",
+              worst is not None, f"{len(gaps)} gaps")
+        if worst is not None:
+            check("the recorded violator still matches the wire (the justification has not expired)",
+                  abs(worst - esc.INNOCENT_WORST_H) <= 0.5,
+                  f"recorded {esc.INNOCENT_WORST_H}h vs measured {worst:.2f}h")
+            check("POSITIVE CONTROL: the outage is NOT pooled into the violator",
+                  worst < esc.ORG_DARK_FLOOR_H <= max(gaps),
+                  f"worst {worst:.2f} floor {esc.ORG_DARK_FLOOR_H} max {max(gaps):.2f}")
 
     print()
     if FAIL:

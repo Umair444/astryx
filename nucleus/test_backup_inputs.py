@@ -148,6 +148,55 @@ def main():
         check(f"the newest artifact ({arts[-1].name}) carries every input",
               not missing, "missing from the tarball: " + ", ".join(missing))
 
+    # ── AGENT MEMORY, COUNT-MATCHED, DENOMINATOR FROM THE ROSTER ────────────────────
+    # Agent memory lives OUTSIDE the repo, so the git-derived population above is
+    # structurally blind to it however correct that gate is — the third instance of the
+    # one-disk defect, and the first that the previous fix could never have caught.
+    #
+    # THE DENOMINATOR COMES FROM THE ROSTER, NOT FROM THE CAPTURE GLOB. A gate whose
+    # denominator is the same glob whose failure it exists to catch cannot tell
+    # nothing-found from everything-found — it would read a glob that matched zero
+    # directories as a clean pass. The roster is the substrate that knows which agents
+    # exist; the glob is the thing being measured.
+    home = Path.home()
+    try:
+        sys.path.insert(0, str(REPO))
+        from nucleus import charter
+        roster = charter.roster()
+    except Exception as e:                                   # noqa: BLE001
+        skip("agent memory is captured", f"roster unavailable ({type(e).__name__})")
+        roster = None
+
+    if roster is not None and arts:
+        newest = arts[-1]
+        try:
+            with tarfile.open(newest) as t:
+                names = set(t.getnames())
+        except Exception as e:                               # noqa: BLE001
+            skip("agent memory is captured", f"tarball unreadable ({type(e).__name__})")
+        else:
+            proj = home / ".claude" / "projects"
+            # roster-derived candidates: the repo-root project plus one per resident
+            cands = [proj / "-home-umair-astryx"] + \
+                    [proj / f"-home-umair-astryx-homes-{a}" for a in roster]
+            existing = [c / "memory" for c in cands if (c / "memory").is_dir()]
+            check("the roster-derived memory set is NON-EMPTY (a glob matching nothing "
+                  "must not read as a pass)", bool(existing), "no memory dir found at all")
+            for d in existing:
+                rel = str(d.relative_to(home))
+                on_disk = [f for f in d.rglob("*") if f.is_file()]
+                in_tar = [n for n in names if n.startswith(rel + "/") and not n.endswith("/")]
+                if not on_disk:
+                    # EMPTY IS A LEGAL, DISTINCT STATE. A gate that can never go green on a
+                    # legitimately empty directory is a gate somebody disables.
+                    print(f"  EMPTY {rel} — 0 files on disk, nothing to capture (legal)")
+                    continue
+                # COUNT-MATCHED, not presence: one file of 185 must read as FAILURE, or the
+                # container-vs-content trap comes back wearing a backup's clothes.
+                check(f"agent memory captured in full: {rel}",
+                      len(in_tar) == len(on_disk),
+                      f"{len(on_disk)} files on disk vs {len(in_tar)} in the tarball")
+
     return verdict()
 
 

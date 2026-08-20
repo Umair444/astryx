@@ -74,6 +74,27 @@ done
 for d in tier wacli-data; do   # present only on orgs that use them; both un-regenerable
   if [ -d "$d" ]; then state_dirs="$state_dirs $d"; fi
 done
+# AGENT MEMORY ADDED 2026-08-20 (scout msg 13261, seed's ruling 13322/13326). This is the
+# same one-disk defect a THIRD time, and structurally invisible to the previous fix: the
+# gate above derives its population from `git status --ignored`, and agent memory lives
+# OUTSIDE the repo tree, so a git-derived manifest cannot see it however correct it is.
+# scout paid for it with an unrecoverable overwrite of one of their own law files.
+#
+# NAME-ANCHORED, and the anchor is a RULING rather than a pattern choice, because the two
+# obvious globs disagree on exactly one directory:
+#   INCLUDED  -home-umair-astryx*  — the repo-root project and every homes-* project.
+#   EXCLUDED  -home-umair/memory   — THE OWNER'S OWN Claude project. The org does not
+#             quietly assimilate his personal data into its tarball; its unbacked state is
+#             named to him for HIS decision.
+#   EXCLUDED  -home-umair-genesis-* — the predecessor org's dead residents. The org backs
+#             up the org; a retired estate is not ours to adopt.
+# GLOB-DERIVED at backup time, never a hand list: membership-grants-capture fails OPEN, and
+# that polarity is precisely why one-disk recurred three times.
+mem_dirs=""
+for m in "$HOME"/.claude/projects/-home-umair-astryx*/memory; do
+  [ -d "$m" ] || continue                      # unmatched glob expands to itself
+  mem_dirs="$mem_dirs ${m#"$HOME"/}"           # $HOME-relative, tarred via -C below
+done
 # `--list-state` prints exactly what this script WOULD capture and exits. It exists so
 # nucleus/test_backup_inputs.py can ask the emitter rather than re-parse it: the oracle
 # derives what SHOULD be captured from `git status --ignored` minus a regenerable manifest
@@ -81,6 +102,10 @@ done
 # the source would only ever prove the file agrees with itself.
 if [ "${1:-}" = "--list-state" ]; then
   for x in $state_dirs; do echo "$x"; done
+  # Memory dirs are $HOME-relative (tarred via -C), so they are printed with the same
+  # prefix they will carry INSIDE the artifact. An emitter that reports a path in one
+  # form and writes it in another sends its own verifier looking in the wrong place.
+  for x in $mem_dirs; do echo "$x"; done
   exit 0
 fi
 
@@ -120,7 +145,11 @@ if [ -n "$state_dirs" ]; then
   # Exclude compiled bytecode: it is regenerated on import, it is python-version
   # specific (so it is actively WRONG after an interpreter upgrade), and it was 22 of the
   # entries in every artifact. A backup should carry what cannot be reproduced.
-  if ! tar -czf "$state" --exclude='__pycache__' --exclude='*.pyc' $state_dirs 2>/dev/null; then
+  # `-C "$HOME"` switches the base for the memory dirs only; everything before it stays
+  # repo-relative. Whole directories, never a partial capture — a memory dir half in the
+  # tarball is the container-vs-content trap wearing a backup's clothes.
+  if ! tar -czf "$state" --exclude='__pycache__' --exclude='*.pyc' $state_dirs \
+        ${mem_dirs:+-C "$HOME" $mem_dirs} 2>/dev/null; then
     echo "backup: FAILED to capture operational state ($state_dirs) — the DB dump $out is intact," >&2
     echo "  but restoring it alone would lose the trigger/memory bodies. Fix before trusting." >&2
     rm -f "$state"
