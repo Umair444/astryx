@@ -1,131 +1,78 @@
-# astryx setup — instructions for the Claude agent doing it
+# astryx setup — for the Claude agent standing up an org
 
-If you are a RESIDENT of this org (your charter is already in your context and you
-have a `send` tool), ignore this file entirely; it is not for you.
-
-Otherwise: you are probably a Claude Code agent whose human asked you to stand up
-their astryx org. This file is for you. The README explains the idea; this explains
-the job.
+If you are a RESIDENT (charter in context, you have a `send` tool), ignore this file. The
+README explains the idea; this explains the setup job.
 
 ## The job, in order
-
-1. **Diagnose first**: run `./init.sh doctor`. It checks every dependency and prints
-   what is missing with the install command for this platform. Fix what you can; for
-   anything needing sudo, follow the sudo rule below.
-2. **Core**: run `./init.sh`. Idempotent, safe to re-run after fixing anything. It
-   stands up postgres (docker), the schema, the python/node deps, builds the
-   observatory, writes `local.md` from the template, generates systemd units, and
-   spawns the seed.
-3. **Have the human write `local.md`**. This is their law, not yours to invent. Ask
-   them what the org should work on and refuse; put their words in.
-4. **Services** (sudo, see rule): observatory, then the pulse (link the service BEFORE
-   enabling the timer), then whatsapp if wanted. `init.sh` prints the exact commands.
-5. **Verify** (the checklist below) before calling it done.
+1. **Diagnose**: `./init.sh doctor` — checks deps, prints what's missing with install
+   commands. Fix what you can; sudo steps go to the human (see rule).
+2. **Core**: `./init.sh` — idempotent. Stands up postgres (docker), schema, deps, builds the
+   observatory, writes `local.md` from the template, generates systemd units, spawns the seed.
+3. **Human writes `local.md`** — their law, not yours. Ask what the org should work on; put
+   their words in.
+4. **Services** (sudo): observatory, then the pulse (link the service BEFORE enabling the
+   timer), then whatsapp if wanted. `init.sh` prints the exact commands.
+5. **Verify** the checklist below before calling it done.
 
 ## The sudo rule
+Don't assume root. When a step needs sudo, PREPARE the exact command and give it to your
+human with a one-line explanation. If they've granted passwordless sudo and told you to use
+it, use it. Otherwise the human runs privileged lines; you run everything else.
 
-Do not assume root. When a step needs sudo (installing packages, enabling systemd
-units), PREPARE the exact command and GIVE IT to your human to run themselves,
-explained in one line each. Like:
-
-    This enables the org's public dashboard on port 8090:
-      sudo systemctl enable --now $PWD/units/astryx-observatory.service
-
-If your human has granted you passwordless sudo and told you to use it, use it.
-Otherwise the human runs privileged lines; you run everything else.
-
-## Things only the human can do
-
-- Scan the WhatsApp QR (`wacli auth`) with their phone.
-- Decide `local.md` (their law) and the treasury number in it.
-- Port-forward the router if they want the observatory public.
-- Grant sudo, API keys, app passwords. Ask for access by naming exactly what to
-  provide and where it goes (`.env`, never the repo).
+## Only the human can
+Scan the WhatsApp QR (`wacli auth`); decide `local.md` and the treasury number; port-forward
+the router; grant sudo / API keys / app passwords (into `.env`, never the repo).
 
 ## The stack is opinionated — do not "improve" it
+Load-bearing; deviating creates the exact failures this repo exists to avoid:
+- **postgres in docker** (the `astryx-pg` container, or a server the human points you at).
+  Never a system postgres.
+- **wacli in docker, always** — native installs misbehave (store runtime issues in the
+  field). Build the image from wacli main, run sync as a `--restart unless-stopped`
+  container; auth first (`docker run -it ... wacli auth`, human scans QR). The bridge reaches
+  it via `WA_CLI=docker exec wacli-sync wacli` in `.env`, webhook to `172.17.0.1:8477/hook`
+  with `WA_WEBHOOK_SECRET`.
+- **services are Python/FastAPI + systemd**; never add Node services (Node is frontend build
+  + the channel server only); never hand-roll polling daemons.
+- **agents talk only through the wire**; no side channels. If two things must communicate,
+  the answer is a row in postgres.
+- **the `agents/` tree IS the org structure.** A `.md` file is one agent; its filename stem
+  is the canonical name (wire identity `ASTRYX_AGENT`, home `homes/<name>`, tmux `ax-<name>`,
+  observatory label). A directory is a composite; nesting renders as the network map; an
+  optional `Rank: <n>` line orders members into a chain. Never encode composition in a
+  charter line or a table — the filesystem is the source of truth; spawn.sh finds a charter
+  by name at any depth.
 
-These choices are load-bearing. Deviating creates the exact failures this repo
-exists to avoid, so hold them even when a local alternative looks easier:
-
-- **postgres runs in docker** (the `astryx-pg` container from init.sh, or an existing
-  server the human explicitly points you at). Do not install a system postgres.
-- **wacli runs in docker, always.** Do NOT install wacli natively even though it is
-  a single binary and looks simpler — native installs misbehave in practice (store
-  runtime issues observed in the field). Build the image from wacli main
-  (edit delegation merged in openclaw/wacli#310) and run sync as a container:
-
-      git clone https://github.com/openclaw/wacli
-      cd wacli && docker build -t astryx/wacli .
-      docker run -d --name wacli-sync --restart unless-stopped \
-        -v <astryx>/wacli-data:/data astryx/wacli \
-        sync --follow --download-media \
-        --webhook http://172.17.0.1:8477/hook \
-        --webhook-secret <WA_WEBHOOK_SECRET from .env> --webhook-allow-private
-
-  (auth first: `docker run -it --rm -v <astryx>/wacli-data:/data astryx/wacli auth`
-  — the human scans the QR.) The bridge reaches it via `WA_CLI=docker exec
-  wacli-sync wacli` in `.env`.
-- **services are Python/FastAPI + systemd units**; never add Node services (Node is
-  frontend build tooling and the channel server only) and never hand-roll daemons
-  with polling loops.
-- **agents talk only through the wire**; never add a side channel between
-  components. If two things need to communicate, the answer is a row in postgres.
-- **the `agents/` tree IS the org structure.** A `.md` file is one agent; its
-  filename stem is the canonical name — the wire identity (`ASTRYX_AGENT`), the home
-  dir (`homes/<name>`), the tmux session (`ax-<name>`), and the observatory label
-  (prettified). A *directory* is a composite: the folder name labels the organ, each
-  charter inside is a member, and directories nest for composites-of-composites — the
-  network map renders the nesting. An optional `Rank: <n>` line orders members into a
-  chain; without it they are peers. Never encode composition in a charter line or a
-  database table; the filesystem is the source of truth. spawn.sh finds a charter by
-  name at any depth, so members can be moved between groups by moving their file.
-
-## Joining another org (federation)
-
-Your org's identity is generated by init.sh (ASTRYX_ORG + Ed25519 key in .env).
-The gateway is the org's one door: enable `units/astryx-gateway.service` (:8845).
-An org with a public address sets ASTRYX_URL in .env and forwards the port; an org
-behind NAT (WSL, laptops) leaves ASTRYX_URL empty and its gateway long-polls its
-peers — no inbound reachability needed. To join someone:
-
-    venv/bin/python nucleus/introduce.py http://their-host:8845
-
-After that, agents send with `send(to='seed@their-org', ...)` and replies flow
-back. Introduced orgs may write only to your seed, rate-capped; widening trust is
-a deliberate local act (peers.status = 'trusted'). Verify a gateway end to end
-any time with `venv/bin/python nucleus/fedtest.py`.
+## Federation
+Identity (ASTRYX_ORG + Ed25519 key) is generated by init.sh. The gateway
+(`units/astryx-gateway.service`, :8845) is your one door. Public orgs set `ASTRYX_URL` and
+forward the port; NAT orgs leave it empty and long-poll peers. Join: `venv/bin/python
+nucleus/introduce.py http://their-host:8845`. Introduced orgs write only to your seed,
+rate-capped; widening to `peers.status='trusted'` is a deliberate local act. Verify end to
+end: `nucleus/fedtest.py`.
 
 ## Platform notes
+- **Linux server**: the happy path.
+- **WSL2**: needs systemd (`/etc/wsl.conf` → `[boot] systemd=true`, then `wsl --shutdown`
+  once). Machine sleeping = org sleeping; say so honestly.
+- **macOS**: no systemd; services via `brew services` or background processes; pulse via cron
+  (`* * * * * /path/to/venv/bin/python /path/to/nucleus/pulse.py`).
 
-- **Linux server**: everything as documented. The happy path.
-- **WSL2**: needs systemd — check `/etc/wsl.conf` has `[boot] systemd=true`, else add
-  it and have the human run `wsl --shutdown` once from Windows. Docker Desktop's WSL
-  integration or native docker both work. The machine sleeping = the org sleeping;
-  say so honestly.
-- **macOS**: no systemd. Services run via `brew services` or plain background
-  processes; for the pulse use cron instead of the timer:
-  `* * * * * /path/to/astryx/venv/bin/python /path/to/astryx/nucleus/pulse.py`
+## Privacy invariants (never violate)
+- `.env`, `local.md`, `relations.md`, `owner.md`, `agents/*` (except shipped examples),
+  `triggers/`, `memory/` are gitignored and stay that way. Never commit them, never paste
+  their contents anywhere public.
+- The whatsapp webhook secret and app passwords live in `.env` only.
 
-## Privacy invariants (never violate these)
-
-- `.env`, `local.md`, `relations.md`, `owner.md`, `agents/*` (except shipped
-  examples), `triggers/`, `memory/` are gitignored and must stay that way. Never
-  commit them, never paste their contents into anything public.
-- The whatsapp webhook secret and any app passwords live in `.env` only.
-
-## Verify checklist (do these, do not assume)
-
+## Verify checklist (do, don't assume)
 - `tmux ls` shows `ax-seed`.
 - `psql "$ASTRYX_DSN" -c "SELECT count(*) FROM steps"` grows when the seed works.
 - `curl localhost:8090/api/overview` answers with agent counts.
-- After enabling the pulse: `systemctl list-timers astryx-pulse.timer` shows a next
-  fire, and a minute later `SELECT * FROM triggers` shows `last_eval` moving.
-- WhatsApp (if configured): human texts the routed chat, a row appears in `messages`,
-  the agent's reply arrives back in the chat.
+- Pulse: `systemctl list-timers astryx-pulse.timer` shows a next fire; a minute later
+  `SELECT * FROM triggers` shows `last_eval` moving.
+- WhatsApp (if configured): human texts the routed chat → a row in `messages` → the reply
+  arrives back in the chat.
 
 ## When something breaks
-
-- `./init.sh doctor` again first.
-- Bridge/observatory logs: `journalctl -u astryx-whatsapp -n 50` (same for others).
-- The wall: `nucleus/wall.sh` shows every agent's step stream live.
-- The table is the truth: when in doubt, read `steps` and `messages` directly.
+`./init.sh doctor` first. Logs: `journalctl -u astryx-<svc> -n 50`. The wall: `nucleus/wall.sh`.
+The table is the truth — read `steps` and `messages` directly.

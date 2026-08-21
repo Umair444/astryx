@@ -30,6 +30,8 @@ export interface AgentRow {
   rank?: number | null
   /* actual model from the agent's latest turn (charter Model: pin as fallback) */
   model?: string | null
+  /* agent kind from the charter tree: resident | stationed | worker | envoy */
+  type?: string
 }
 
 export interface Msg {
@@ -85,18 +87,18 @@ export interface Goal {
   scope_note: string | null
 }
 
-export interface EconDaily {
+export interface EconDay {
   day: string
-  tokens_in: number
-  tokens_out: number
-  steps: number
+  bill: number // billable-equivalent tokens (real cost), NOT raw
+  out: number
+  turns: number
 }
 
 export interface EconAgent {
   agent: string
-  tokens_in: number
-  tokens_out: number
-  steps: number
+  bill: number
+  out: number
+  turns: number
 }
 
 export interface EconGoal {
@@ -118,57 +120,63 @@ export interface Receipt {
   memo: string | null
 }
 
-/* live context load per agent, read from transcript tails (nucleus/tokenwatch) */
-export interface EconUsage {
-  agent: string
-  tokens: number
-  limit?: number      // inferred window: 200k, or 1M once observed load proves it
-  pct: number
-  found: boolean
-  live?: boolean      // has a tmux body right now
-  age_s?: number
+/* live usage %, authoritative from the /usage API — captured on each agent turn */
+export interface EconAuthoritative {
+  measured_at: string
+  measured_by: string
+  subscription: string | null
+  five_hour_pct: number | null
+  seven_day_pct: number | null
+  seven_day_opus_pct: number | null
+  five_hour_reset: string | null // ISO8601
+  seven_day_reset: string | null // ISO8601
+  five_hour_eta_100: string | null // ISO, or null if not rising
+  five_hour_rate_pp_h: number // percentage-points per hour
+  seven_day_eta_100: string | null
+  seven_day_rate_pp_h: number
+}
+
+export interface EconSeriesPoint {
+  t: string
+  five: number | null
+  seven: number | null
+}
+
+export interface EconHeatCell {
+  day: string // 'YYYY-MM-DD'
+  bill: number // billable-equivalent tokens
+  out: number
+  turns: number
 }
 
 export interface EconBurn {
-  tokens_per_min: number
-  cost_per_min: number
-  today_tokens: number
-  today_cost_usd: number // floor estimate — input priced at the cache-read rate
-}
-
-/* the inferred 5h session window (no usage API exists — blocks are derived from step
-   timestamps; ceilings are P90 of this org's own measured windows) */
-export interface EconWindow {
-  window_h: number
-  windows_measured: number
-  token_ceiling: number
-  step_ceiling: number
-  cost_ceiling: number
-  active: boolean
-  start?: string
-  reset_at?: string
-  remaining_s?: number
-  tokens?: number
-  steps?: number
-  cost?: number
-  runout_at?: string | null
+  bill_per_min: number
+  bill_24h: number
 }
 
 export interface EconModel {
   model: string
-  share: number // % of recent output tokens
-  sample: number
+  turns: number
+}
+
+export interface EconSummary {
+  bill_24h: number
+  out_24h: number
+  turns_24h: number
+  agents_24h: number
 }
 
 export interface Economy {
-  daily: EconDaily[]
+  authoritative: EconAuthoritative | null
+  series: EconSeriesPoint[]
+  heatmap: EconHeatCell[]
+  daily: EconDay[]
   agents: EconAgent[]
+  models: EconModel[]
+  summary: EconSummary
+  burn: EconBurn
   goals: EconGoal[]
   receipts: Receipt[]
-  usage: EconUsage[]
-  burn: EconBurn
-  window: EconWindow
-  models: EconModel[]
 }
 
 export interface Peer {
@@ -201,9 +209,18 @@ export interface DagDef {
   nodes: DagNode[]
 }
 
+/* a sense — one afferent endpoint (sensors/<agent>/<name>.py, served on :8460) */
+export interface Sense {
+  agent: string
+  name: string
+  path: string
+  description: string
+}
+
 export interface ToolsResponse {
   servers: ToolServer[]
   total_tools: number
+  senses?: Sense[]
   dags: DagDef[]
 }
 

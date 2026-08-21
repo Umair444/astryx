@@ -22,6 +22,22 @@ from pathlib import Path
 
 AGENTS = Path(__file__).resolve().parent.parent / "agents"
 
+# ── AGENT TYPES ──────────────────────────────────────────────────────────────────────
+# The org has more than one KIND of agent. The type is declared by a `Type:` directive
+# line in the charter (sits with Model:/Rank:/Heartbeat:/Grants:), and this module is the
+# ONE place that reads it — spawn.sh, station.py and the observatory all resolve through
+# here, so the taxonomy can never drift between a shell copy and a python copy.
+#
+#   resident   the citizen: persistent, embodied (tmux), on the wire, remembers, initiates.
+#              The DEFAULT — an un-typed charter is a resident, so the whole existing tree
+#              keeps its meaning with no edit.
+#   stationed  the API worker: stateless `claude -p` per request, no body, no wire, no
+#              memory, tools off by default. Invoked via nucleus/station.py, never spawned.
+#   worker     RESERVED — ephemeral but stateful for one bounded job, then dies.
+#   envoy      RESERVED — this org's face to a peer org across federation.
+TYPES = ("resident", "stationed", "worker", "envoy")
+DEFAULT_TYPE = "resident"
+
 
 class Collision(Exception):
     """A duplicated stem — a corrupted registry; resolve it in the tree."""
@@ -66,10 +82,45 @@ def resolve(name: str, agents_dir: Path = AGENTS) -> Path | None:
     return hits[0] if hits else None
 
 
+def agent_type(name: str, agents_dir: Path = AGENTS) -> str | None:
+    """The agent's TYPE, read from its charter's `Type:` line. Returns DEFAULT_TYPE
+    (resident) for a charter with no line, or None if the agent has no charter at all —
+    'unknown type' and 'absent' are different answers and must not collapse. An
+    unrecognised value degrades to resident (the safe, embodied default), never crashes."""
+    p = resolve(name, agents_dir)
+    if p is None:
+        return None
+    for line in p.read_text().splitlines():
+        if line.startswith("Type:"):
+            t = line.split(":", 1)[1].strip().lower()
+            return t if t in TYPES else DEFAULT_TYPE
+    return DEFAULT_TYPE
+
+
+def typed_roster(agents_dir: Path = AGENTS) -> list[dict]:
+    """[{name, type}, ...] for the whole tree — the roster the observatory renders."""
+    return [{"name": n, "type": agent_type(n, agents_dir)} for n in roster(agents_dir)]
+
+
+def roster_of_type(kind: str, agents_dir: Path = AGENTS) -> list[str]:
+    """Names of one type only. `roster_of_type('resident')` is the set that gets a body,
+    a heartbeat, and a vote — the thing most callers that today say roster() actually mean,
+    now that a stationed agent is in the tree but is NOT an embodied wire citizen."""
+    return [n for n in roster(agents_dir) if agent_type(n, agents_dir) == kind]
+
+
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("usage: charter.py <name>", file=sys.stderr)
+    if len(sys.argv) not in (2, 3):
+        print("usage: charter.py <name> [--type]", file=sys.stderr)
         sys.exit(2)
+    if len(sys.argv) == 3 and sys.argv[2] == "--type":
+        try:
+            t = agent_type(sys.argv[1])
+        except Collision as exc:
+            print(exc, file=sys.stderr); sys.exit(1)
+        if t is None:
+            print(f"no charter for '{sys.argv[1]}' under agents/", file=sys.stderr); sys.exit(1)
+        print(t); sys.exit(0)
     try:
         path = resolve(sys.argv[1])
     except Collision as exc:

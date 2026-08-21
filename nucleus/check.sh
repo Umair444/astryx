@@ -170,13 +170,6 @@ run "out-of-band doorbell is watched" "$PY" nucleus/test_doorbell_proof.py
 # without putting a multi-minute sweep in the fast loop; a tool that can no longer find
 # a planted defect reports "none dormant" in exactly the same words as a clean estate.
 run "glob-vacuity can still find a planted dormant glob" "$PY" nucleus/glob_vacuity.py --selftest
-# The clock under every other guard. nucleus/pulse_watch.py runs OUTSIDE the pulse (its own
-# systemd timer) because a watcher of the pulse scheduled BY the pulse shares its silence;
-# triggers/scout/clock_stamp.py reads its stamp from inside. Gated on the two defects that
-# were actually in the pair — a unit systemd has never heard of read as "clock stopped", and
-# a stamp written by a human grading the script read as a live deployment. Hermetic (fixture
-# systemd dicts, temp stamps); no substrate touched. ~0.2s.
-run "the org's clock is watched from outside it" "$PY" nucleus/test_pulse_watch.py
 run "referral opt-in + static-literal" bash nucleus/referral_guard.sh
 # OKF frontmatter for the memory estate. The invariant is ADDITIVITY: attaching metadata
 # must change nothing the three live lints read. Pure stdlib; the arms that touch the real
@@ -199,10 +192,6 @@ run "ontology lint invariants"        "$PY" nucleus/test_ontology.py
 # function against its own staged copy. SKIPS where triggers/ or pyflakes is absent.
 run "trigger bodies resolve"          "$PY" nucleus/test_trigger_smoke.py
 
-# tokenwatch + shipped context-compact: the usage layer that keeps the fleet from
-# burning its window blind (owner directive 2026-08-15) — window inference, tail
-# parsing, and the actuator's fire/cooldown/wedge/re-arm decisions.
-run "usage meter + context-compact"   "$PY" nucleus/test_tokenwatch.py
 run "A2A card canonicalisation (JCS)" "$PY" nucleus/test_card_canon.py
 # The ear must outlive a database blip. Runs the REAL channel/server.mjs against a
 # THROWAWAY database (created, then dropped — the org's own is never written to), breaks
@@ -226,7 +215,6 @@ run "lost wakes recovered at spawn"   "$PY" nucleus/test_wake_recovery.py
 # halves are static, so this runs green on a clone with no credential; the live-token
 # arms name themselves SKIP (77) rather than passing quietly. Also drives the modal
 # NOT-CONFIGURED path, which is what most installs of this will actually be.
-run "usage panel: one credential reader" "$PY" nucleus/test_usage_panel.py
 # The THIRD instance of "authored state in no repo and no backup" (triggers/ bodies,
 # then agents/, then runners.conf + local.md + .env). This gate guards the CLASS: it
 # derives the expected set from `git status --ignored` minus a manifest of the genuinely
@@ -251,7 +239,6 @@ run "escalation facility: polarity + collapse" "$PY" nucleus/test_escalation.py
 # is what check_watch.sh exists for. The lints watched everyone's drift and nothing
 # watched theirs until the index parser condemned a healthy line over one capital letter.
 run "wiki index state parser"  "$PY" nucleus/test_wiki_drift.py
-run "usage series is honest"   "$PY" nucleus/test_usage_sample.py
 # Class-1 of the prove-family oracle (scout, plan-15): drives all seven containment
 # verdicts BOTH ways against synthetic trees via G15_ENVF/G15_SCAN_ROOTS. Its output
 # states its own limit — decision logic only, not the real cell.

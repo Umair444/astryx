@@ -2,104 +2,111 @@
 
 WHY (owner directive, 2026-08-15). The fleet burned its entire usage window overnight
 and the first signal was fourteen frozen bodies. Context size was invisible at every
-level; nucleus/tokenwatch.py made it visible, hooks/usage.py made each agent aware of
-its OWN load per prompt, and this trigger is the actuator: when a live session nears
-its context ceiling, queue `/compact` into it before the ceiling does the compacting
-by force (or the spend does it by outage).
+level; this trigger is the actuator: when a live session nears its context ceiling,
+queue `/compact` into it before the ceiling does the compacting by force.
 
-OWNERSHIP. This file is the TRACKED reference implementation, shipped for new orgs:
-init.sh installs a thin import shim into triggers/seed/ at founding, so a fresh org
-has context hygiene from day one. In a grown org, triggers belong to agents — the
-estate-owning agent (memory, here) is expected to author its OWN trigger, using
-nucleus/tokenwatch directly or importing this module; agents develop their triggers,
-the nucleus only ships the starting instinct.
+SOURCE = THE TABLE (owner restructure 2026-08-21; replaced the deleted tokenwatch
+transcript-scanning engine). The Stop hook writes each turn's `context` — the input side
+of the turn's LAST api call, the true /context number — into turns.raw_payload->usage.
+This trigger reads per-agent latest context + all-time high-water from the DB via
+ctx.sql. The high-water is the WINDOW PROOF: an observed load of N is durable proof the
+window is >= N, so past 200k proves the 1M window; under it the small window is assumed,
+which can compact a 1M session early — the cheap direction for an actuator whose action
+is always safe. A turn's context is a turn-boundary reading; that is exactly when
+/compact lands anyway.
 
-MECHANICS, and what each choice is for:
-- fires every 10 minutes; one tick reads ~15 transcript TAILS (256KB each), well
-  inside the pulse's 30s kill budget.
-- threshold 80% of the INFERRED window (tokenwatch.infer_limit): past 200k observed
-  proves the 1M window; under it the small window is assumed, which can compact a 1M
-  session early — the cheap direction for an actuator whose action is always safe.
-- `/compact` QUEUES: tmux types it into the session's input box, so a mid-turn agent
-  compacts at its next turn boundary. It never kills, never loses in-flight work —
-  which is why seed is NOT exempted here the way session_refresh exempts it.
-- cooldown 45 min per agent: a compact takes minutes to land and tokens stay high
-  until it does; without the cooldown every tick would re-send. Dropping back under
-  threshold RE-ARMS the agent (state is safe to lose: the condition re-accrues, and
-  a duplicate /compact costs one summarisation turn, not an outage).
+MECHANICS:
+- fires every 10 minutes; one ctx.sql GROUP BY, no file reads — trivially inside the
+  pulse's 30s kill budget.
+- `/compact` QUEUES: tmux types it into the session's input box (the owner-sanctioned
+  send-keys exception: the literal maintenance keystroke, nothing else), so a mid-turn
+  agent compacts at its next turn boundary. Never kills, never loses in-flight work.
+- cooldown 45 min per agent; dropping back under threshold RE-ARMS (state is safe to
+  lose: the condition re-accrues; a duplicate /compact costs one summarisation turn).
 
-WHICH CLASS IS THE REMEDY FALSE FOR (named at write time, per the narrow-sample law):
-a WEDGED session — body alive, stdin latched on a modal — eats the keystrokes and
-compacts nothing. This trigger re-sends after each cooldown (a standing failure must
-re-nag), and the WEDGE TEST is "I sent a compact and no DROP followed" (memory's
-sharpening, msg 9897): a landed compact is observable as tokens falling below the
-at-send reading (192,903 -> 85,375 measured), so an agent whose context dropped and
-then re-climbed past threshold is the healthiest possible behaviour — a fresh send,
-never an accusation. Only a send followed by NO drop accuses, and the remedy for a
-true wedge (kill + spawn) belongs to wedge_watch, not here.
+WHICH CLASS THE REMEDY IS FALSE FOR: a WEDGED session — body alive, stdin latched on a
+modal — eats the keystrokes and compacts nothing. The WEDGE TEST is "I sent a compact
+and no DROP followed": context only falls via compact/respawn, so a drop below the
+at-send reading proves the prior compact LANDED; a send followed by NO drop accuses, and
+the remedy for a true wedge (kill + spawn) belongs to wedge_watch, not here.
 """
 from __future__ import annotations
 
+import subprocess
 import time
 
 from astryx import trigger
-from nucleus import tokenwatch
 
-THRESH_PCT = 80.0        # act at 80%; hooks/usage.py starts warning the agent at 85
+THRESH_PCT = 80.0
 COOLDOWN_S = 45 * 60
+
+_CTX_SQL = """
+SELECT agent,
+       (array_agg((raw_payload->'usage'->>'context')::bigint ORDER BY ended_at DESC))[1]
+           AS context,
+       max((raw_payload->'usage'->>'context')::bigint) AS high
+FROM turns
+WHERE raw_payload->'usage' ? 'context'
+GROUP BY agent
+"""
+
+
+def _live() -> set[str]:
+    try:
+        r = subprocess.run(["tmux", "ls", "-F", "#{session_name}"],
+                           capture_output=True, text=True, timeout=10)
+        return {s[3:] for s in r.stdout.split() if s.startswith("ax-")}
+    except Exception:
+        return set()
+
+
+def _send_compact(agent: str) -> bool:
+    try:
+        subprocess.run(["tmux", "send-keys", "-t", f"ax-{agent}", "/compact", "Enter"],
+                       capture_output=True, timeout=10, check=True)
+        return True
+    except Exception:
+        return False
 
 
 @trigger("*/10 * * * *",
          note="context-compact: /compact any live session past 80% of its window "
-              "(tokenwatch-inferred); cooldown 45m; repeated fires = probable wedge")
+              "(DB-derived: turns usage.context + high-water proof); cooldown 45m; "
+              "repeated fires = probable wedge")
 def context_compact(ctx):
-    live = tokenwatch.live_sessions()
+    live = _live()
     now = time.time()
     sent = ctx.state.get("sent", {})     # agent -> {"ts": epoch, "tokens": at-send, "n": sends}
     fired, standing = [], []
     scanned = 0
-    keyless = []
-    for row in tokenwatch.fleet_context():
-        a = row["agent"]
-        if not row.get("found") or a not in live:
+    for row in ctx.sql(_CTX_SQL):
+        a, context, high = row["agent"], int(row["context"] or 0), int(row["high"] or 0)
+        if a not in live or not context:
             continue
         scanned += 1
-        if row.get("model") is None:
-            keyless.append(a)            # see the fallback note below
-        if row["pct"] < THRESH_PCT:
+        evidence = max(context, high)
+        limit = 1_000_000 if evidence > 200_000 else 200_000
+        proven = evidence > 200_000
+        pct = 100.0 * context / limit
+        if pct < THRESH_PCT:
             sent.pop(a, None)            # back under the line: re-arm
             continue
         prev = sent.get(a)
         if prev and now - prev["ts"] < COOLDOWN_S:
             continue                     # compact already queued; let it land
-        if tokenwatch.send_compact(a):
-            # Wedge test: a drop below the at-send reading proves the prior compact
-            # LANDED (context only falls via compact/respawn), so this is a fresh
-            # climb, not a latched modal — the counter resets instead of accusing.
-            landed = bool(prev) and row["tokens"] < prev["tokens"]
+        if _send_compact(a):
+            landed = bool(prev) and context < prev["tokens"]
             n = 1 if (not prev or landed) else prev["n"] + 1
-            sent[a] = {"ts": now, "tokens": row["tokens"], "n": n}
-            # An ASSUMED window is a guess about the denominator, and a compaction fired
-            # against a guess is a different claim from one fired against a measurement.
-            # It stays a fire either way (200k-for-unproven is the cheap direction), but
-            # the reader is told which, or the two are indistinguishable in the record.
-            of = "" if row.get("limit_proven", True) else " of an ASSUMED 200k"
-            line = f"{a} ({row['tokens']:,} tok, {row['pct']:.0f}%{of})"
+            sent[a] = {"ts": now, "tokens": context, "n": n}
+            of = "" if proven else " of an ASSUMED 200k"
+            line = f"{a} ({context:,} tok, {pct:.0f}%{of})"
             (standing if n > 1 else fired).append(line)
     ctx.state["sent"] = sent
-    # positive evidence of the last look — so this guard's silence is provably
-    # "scanned and found nothing", never "never ran" (guard-state law)
+    # positive evidence of the last look — silence is provably "scanned, nothing found"
     ctx.state["last_scan"] = {"ts": round(now), "live": len(live), "read": scanned}
-    if not fired and not standing and not keyless:
+    if not fired and not standing:
         return None
     segs = []
-    if keyless:
-        # The window mark is keyed on the MODEL; a row with no model id fell back to the
-        # per-agent key, which is very nearly dead code (7,601/7,601 records carry one).
-        # A fallback nobody can see cannot be seen to rot, so it is named the day it runs
-        # — and costs nothing on every other day, because the list is empty.
-        segs.append("no model id on the newest record, so the window fell back to the "
-                    "per-agent mark: " + ", ".join(sorted(keyless)))
     if fired:
         segs.append("/compact queued to " + ", ".join(fired))
     if standing:

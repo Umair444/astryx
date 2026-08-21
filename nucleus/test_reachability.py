@@ -120,6 +120,13 @@ EXEMPT = {
     # operator diagnostics — running nowhere automatically IS the design. A command
     # documented in CLAUDE.md is deliberately NOT auto-granted reachability: a doc mention
     # is too weak to silence this gate, so a human writes one line here instead.
+    # The pulse-runner class (owner ruling 2026-08-21: one timer, the pulse; scheduled jobs
+    # are triggers). Their invokers live in triggers/steward/org_runners.py, which is
+    # GITIGNORED — a git-derived reachability scan is blind exactly there (the oracle-split
+    # class), so the edge is declared here by hand, with its location.
+    "nucleus/check_watch.sh":    "invoked by triggers/steward/org_runners.py (gitignored estate; pulse trigger, daily 05:20)",
+    "nucleus/restore_verify.sh": "invoked by triggers/steward/org_runners.py (gitignored estate; pulse trigger, weekly Sun 03:00)",
+    "nucleus/station.py":     "on-demand: the stationed-agent runtime — a backend or operator invokes it per request (claude -p API); nothing schedules it by design",
     "nucleus/fedtest.py":     "manual: federation end-to-end probe; CLAUDE.md documents the human command",
     "nucleus/esc_latency.py":  "manual: MIN_QUIET_H calibration measurement, run on demand; reports and never recommends, so a timer would only manufacture noise",
     "nucleus/doorbell.sh":    "manual: operator notify helper, self-declared Usage line",
@@ -637,8 +644,8 @@ FIXTURES = [
      [("nucleus/x.py", "# the tier floor and world layer disagree here")],
      "nucleus/tier.py"),
     ("package-relative import form", True,
-     [("hooks/usage.py", "                from nucleus import tokenwatch")],
-     "nucleus/tokenwatch.py"),
+     [("hooks/usage.py", "                from nucleus import wake_audit")],
+     "nucleus/wake_audit.py"),
     ("package-relative, several names on the line", True,
      [("triggers/x.py", "        from nucleus import charter, world")], "nucleus/world.py"),
     # The live miss. steward wired pushed_tree_check.sh into hooks/pre-push and this

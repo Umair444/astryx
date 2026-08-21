@@ -27,6 +27,7 @@ units/
 __pycache__/
 media/
 triggers/
+sensors/
 wacli-data/
 # database backups — a pg_dump is the org's WHOLE state, full owner-PII; personal-tier,
 # never pushed (asserted by privacy_gate.sh SURFACES). Offsite is an owner-decision.

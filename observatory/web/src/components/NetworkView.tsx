@@ -108,6 +108,7 @@ function agentEl(
   tokens: number,
   color: string,
   model: string | null | undefined,
+  type: string | undefined,
   onClick: () => void,
 ) {
   return (
@@ -117,6 +118,11 @@ function agentEl(
           alive ? 'bg-emerald-400 animate-pulse shadow-[0_0_6px_2px_rgba(52,211,153,0.5)]' : 'bg-ink-mute/40'
         }`}
       />
+      {type && type !== 'resident' && (
+        <span className="absolute top-1.5 left-2 text-[8px] font-mono uppercase tracking-wide px-1 py-px rounded border border-line bg-deck-2 text-amber-300/80">
+          {type}
+        </span>
+      )}
       <span
         className="mx-auto w-8 h-8 rounded-xl grid place-items-center text-[14px] font-bold text-deck"
         style={{ background: color, opacity: alive ? 1 : 0.55 }}
@@ -219,7 +225,7 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
       id: a.agent,
       position: pos,
       data: {
-        label: agentEl(a.agent, a.alive, a.last_kind, a.tokens_in + a.tokens_out, agentColor(a.agent), a.model, () =>
+        label: agentEl(a.agent, a.alive, a.last_kind, a.tokens_in + a.tokens_out, agentColor(a.agent), a.model, a.type, () =>
           onOpenAgent(a.agent),
         ),
       },

@@ -35,7 +35,10 @@ state_dirs=""
 # personal tier and wacli's keys, so exporting it is a credential-and-tier export. This is the
 # same local artifact that already holds triggers/ and memory/, at the same tier, gitignored
 # and in privacy_gate's SURFACES.
-for d in triggers memory agents; do
+# sensors/ ADDED 2026-08-21 with the senses layer (the afferent twin of triggers/):
+# agent-authored endpoint code, gitignored by the same law, unbacked by the same defect
+# class the day it was born — this line is the fix landing WITH the feature, not after it.
+for d in triggers sensors memory agents; do
   if [ -d "$d" ]; then state_dirs="$state_dirs $d"; fi
 done
 # AUTHORED FILES ADDED 2026-08-20 — the same defect a THIRD time, and the loop above is
@@ -114,20 +117,75 @@ DSN=$(grep '^ASTRYX_DSN=' .env 2>/dev/null | cut -d= -f2-)
 [ -n "$DSN" ] || { echo "backup: no ASTRYX_DSN in .env" >&2; exit 1; }
 
 mkdir -p backups
-out="backups/astryx-$(date +%Y%m%dT%H%M%S).dump"
+ts=$(date +%Y%m%dT%H%M%S)
+out="backups/astryx-$ts.dump"
+state="backups/astryx-$ts.state.tgz"
+
+# ── STAGE, VALIDATE, THEN PUBLISH ──────────────────────────────────────────────────
+# Everything is built under a `.part` suffix and renamed into place only once it is known
+# good, so no path — not an error, not a signal, not a full disk — can leave a file named
+# `*.dump` that was never validated. This replaces a post-hoc `rm` that COULD NOT RUN:
+#
+#   pg_dump -Fc "$DSN" > "$out"      # the shell creates $out (0 bytes) BEFORE pg_dump runs
+#                                    # pg_dump exits 1 -> `set -e` exits HERE
+#   if [ ! -s "$out" ] ...; rm -f "$out"   # <- never reached
+#
+# The discarded comment named "db down?" as the case it existed for, and that is exactly the
+# case it could not catch: an error exit is the only way pg_dump produces a bad file, and an
+# error exit is what `set -e` short-circuits. Measured 2026-08-21T10:08:18Z — the boot-time
+# catch-up run fired 4s after boot, before docker had started astryx-pg, and left
+# backups/astryx-20260821T150818.dump at 0 bytes. Consequences, all reproduced:
+#   · init.sh doctor picks `ls -1t *.dump | head -1` and reads MTIME only, so it printed
+#     `ok  database backup fresh (astryx-20260821T150818.dump, <25h)` over an EMPTY file —
+#     the org's whole durability signal, green on nothing.
+#   · restore_verify.sh selects the same newest dump, so the weekly proof-of-restore would
+#     have spent itself on the junk artifact instead of the real one.
+#   · rotation keeps the newest 14 BY MTIME, so the junk file holds a keep slot permanently
+#     and pushes a real dump out; the dump and .state.tgz lists desynchronise (15 vs 14).
+# A guard that runs after the failure it guards against is decoration. Stage-and-rename
+# moves the guarantee from "we clean up afterwards" to "it was never there to clean up".
+part="$out.part"
+statepart="$state.part"
+trap 'rm -f "$part" "$statepart"' EXIT
+
+# ── wait for the database, bounded ─────────────────────────────────────────────────
+# The timer is Persistent=true, so a missed 04:00 run fires at boot — which means the run
+# that exists PRECISELY to cover an outage is the one most likely to find postgres not yet
+# up (docker had not started astryx-pg 4s into boot). Without this the org takes no backup
+# at all until the next 04:00, i.e. an overnight outage costs up to two days of durability.
+# FAIL-OPEN by design: if no probe tool exists we do not block — the dump itself is the
+# authority and its own failure is already reported. `pg_isready` ships beside pg_dump.
+: "${BACKUP_DB_WAIT_S:=90}"
+if [ "$BACKUP_DB_WAIT_S" -gt 0 ]; then
+  if command -v pg_isready >/dev/null;  then ready() { pg_isready -q -d "$DSN"; }
+  elif command -v docker >/dev/null;    then ready() { docker exec astryx-pg pg_isready -q -U astryx; }
+  else                                       ready() { return 0; }
+  fi
+  waited=0
+  until ready 2>/dev/null; do
+    if [ "$waited" -ge "$BACKUP_DB_WAIT_S" ]; then
+      echo "backup: database still not accepting connections after ${waited}s — dumping anyway to get the real error" >&2
+      break
+    fi
+    [ "$waited" = 0 ] && echo "backup: database not ready yet — waiting up to ${BACKUP_DB_WAIT_S}s (boot catch-up run?)" >&2
+    sleep 3
+    waited=$((waited + 3))
+  done
+fi
 
 # host pg_dump if present, else the container's (mirrors init.sh's psql/docker split)
 if command -v pg_dump >/dev/null; then
-  pg_dump -Fc "$DSN" > "$out"
+  pg_dump -Fc "$DSN" > "$part"
 else
-  docker exec astryx-pg pg_dump -Fc -U astryx astryx > "$out"
+  docker exec astryx-pg pg_dump -Fc -U astryx astryx > "$part"
 fi
 
-# integrity: a pg_dump custom archive begins with the "PGDMP" magic — a truncated or
-# error dump (e.g. the DB was down) must NOT count as a backup or silently rotate a good one out.
-if [ ! -s "$out" ] || ! head -c 5 "$out" | grep -q 'PGDMP'; then
-  echo "backup: dump looks invalid (db down?) — discarding $out" >&2
-  rm -f "$out"
+# integrity: a pg_dump custom archive begins with the "PGDMP" magic. This now catches only
+# the case it can actually see — pg_dump exiting 0 over truncated/garbage bytes — because
+# the error exit above is handled by `set -e` plus the trap, which is what an error exit
+# needs. Either way nothing named *.dump exists yet.
+if [ ! -s "$part" ] || ! head -c 5 "$part" | grep -q 'PGDMP'; then
+  echo "backup: dump looks invalid (truncated or not a pg_dump archive) — discarding" >&2
   exit 1
 fi
 
@@ -140,7 +198,6 @@ fi
 # is regenerated by spawn.sh and the transcripts are large, so excluding them keeps the artifact
 # small enough to stay honest. backups/ is already personal-tier (gitignored + privacy_gate
 # SURFACES + the (d) never-commit-type assert), so this adds NO new push surface.
-state="${out%.dump}.state.tgz"
 if [ -n "$state_dirs" ]; then
   # Exclude compiled bytecode: it is regenerated on import, it is python-version
   # specific (so it is actively WRONG after an interpreter upgrade), and it was 22 of the
@@ -148,17 +205,30 @@ if [ -n "$state_dirs" ]; then
   # `-C "$HOME"` switches the base for the memory dirs only; everything before it stays
   # repo-relative. Whole directories, never a partial capture — a memory dir half in the
   # tarball is the container-vs-content trap wearing a backup's clothes.
-  if ! tar -czf "$state" --exclude='__pycache__' --exclude='*.pyc' $state_dirs \
+  if ! tar -czf "$statepart" --exclude='__pycache__' --exclude='*.pyc' $state_dirs \
         ${mem_dirs:+-C "$HOME" $mem_dirs} 2>/dev/null; then
-    echo "backup: FAILED to capture operational state ($state_dirs) — the DB dump $out is intact," >&2
-    echo "  but restoring it alone would lose the trigger/memory bodies. Fix before trusting." >&2
-    rm -f "$state"
+    echo "backup: FAILED to capture operational state ($state_dirs) — no backup written." >&2
+    echo "  A dump alone would restore the triggers TABLE without the trigger BODIES: an org that" >&2
+    echo "  boots looking healthy with its whole immune layer absent. The pair ships or neither does." >&2
     exit 1
   fi
 else
   state=""   # fresh org with neither dir — nothing operational to pair (restore check is vacuous)
   echo "backup: note — no triggers/ or memory/ present to capture" >&2
 fi
+
+# PUBLISH. Both artifacts are complete and validated; these renames are what makes them
+# visible to doctor, to restore_verify, and to the rotation below. Two renames are not one
+# atomic act, but each input is already whole, so the only reachable partial state is a
+# sub-millisecond window in which the pair is incomplete — versus the previous design, where
+# an orphan dump was the NORMAL outcome of both failure paths.
+# No `|| true` on these: a rename that fails is a real failure, and letting `set -e` take
+# it means the trap fires and NOTHING is published — which is the whole point of staging.
+# if/then, NOT `[ -n "$state" ] && mv ...`: under `set -e` a trailing && list that
+# evaluates false is itself a non-zero command, so the fresh-org path (no state to pair)
+# would have exited 1 right here — a guard clause that aborts the thing it was guarding.
+if [ -n "$state" ]; then mv "$statepart" "$state"; fi
+mv "$part" "$out"
 
 # rotate: keep the newest N of EACH artifact; dump + state share a timestamp so they rotate paired
 ls -1t backups/astryx-*.dump      2>/dev/null | tail -n +$((KEEP + 1)) | xargs -r rm -f

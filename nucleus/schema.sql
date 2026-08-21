@@ -41,7 +41,21 @@ CREATE TABLE IF NOT EXISTS turns (
   model         text,
   stop_reason   text,
   raw_payload   jsonb   NOT NULL DEFAULT '{}'::jsonb,   -- verbatim: {"messages":[...],"usage":{...}}
-  messages      jsonb   GENERATED ALWAYS AS (raw_payload -> 'messages') VIRTUAL  -- not stored
+  messages      jsonb   GENERATED ALWAYS AS (raw_payload -> 'messages') VIRTUAL,  -- not stored
+  -- ACCOUNT USAGE SNAPSHOT. The Stop hook calls /api/oauth/usage once per turn (throttled)
+  -- and writes the ALLOWLISTED projection here — dollar/spend fields are stripped upstream
+  -- (nucleus/usage_refresh.USAGE_ALLOWLIST) because `turns` is wire-readable and local.md
+  -- puts finances in the human-personal tier. NULL when throttled/unconfigured/auth-rejected:
+  -- a missing snapshot is never a zero reading. Shape: {fetched_at, state, subscription,
+  -- rate_limit_tier, data:{five_hour_utilization, seven_day_utilization, ...resets_at, limits[]}}.
+  usage_snapshot jsonb,
+  usage_state              text    GENERATED ALWAYS AS (usage_snapshot ->> 'state') STORED,
+  usage_subscription       text    GENERATED ALWAYS AS (usage_snapshot ->> 'subscription') STORED,
+  usage_five_hour_pct      numeric GENERATED ALWAYS AS ((usage_snapshot #>> '{data,five_hour_utilization}')::numeric) STORED,
+  usage_seven_day_pct      numeric GENERATED ALWAYS AS ((usage_snapshot #>> '{data,seven_day_utilization}')::numeric) STORED,
+  usage_seven_day_opus_pct numeric GENERATED ALWAYS AS ((usage_snapshot #>> '{data,seven_day_opus_utilization}')::numeric) STORED,
+  usage_five_hour_reset    text    GENERATED ALWAYS AS (usage_snapshot #>> '{data,five_hour_resets_at}') STORED,
+  usage_seven_day_reset    text    GENERATED ALWAYS AS (usage_snapshot #>> '{data,seven_day_resets_at}') STORED
 );
 CREATE INDEX IF NOT EXISTS turns_agent_time ON turns (agent, ended_at DESC);
 CREATE INDEX IF NOT EXISTS turns_msg        ON turns (input_msg_id) WHERE input_msg_id IS NOT NULL;

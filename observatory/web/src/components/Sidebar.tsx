@@ -83,6 +83,11 @@ export default function Sidebar({
                 {avatarInitial(a.agent)}
               </span>
               <span className="truncate">{displayName(a.agent)}</span>
+              {a.type && a.type !== 'resident' && (
+                <span className="text-[8px] font-mono uppercase tracking-wide px-1 py-px rounded border border-line bg-deck-2 text-amber-300/80">
+                  {a.type}
+                </span>
+              )}
               {(a.group_path ?? []).length > 0 && (
                 <span className="text-[9px] font-mono text-ink-mute/70 truncate">
                   {(a.group_path ?? []).map(displayName).join('·')}

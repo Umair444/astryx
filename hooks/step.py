@@ -18,7 +18,16 @@ nothing else reads it — every consumer reads the tables.
 import json, os, re, sys
 from datetime import datetime, timezone
 
-DSN_FILE = "/home/umair/astryx/.env"
+REPO = "/home/umair/astryx"
+DSN_FILE = REPO + "/.env"
+sys.path.insert(0, REPO)                 # so the Stop hook can reuse nucleus.usage_refresh
+
+# One /api/oauth/usage call at most this often across the WHOLE org. The gauge is
+# account-global — every agent shares one Claude account, so a single fresh read serves the
+# fleet; there is no reason for 13 agents to each hit the endpoint on every turn. Activity
+# drives the cadence: when the org is busy (burning) it refreshes often, when idle it does
+# not refresh because nothing is changing. Tune here; this is the org's only usage-poll knob.
+USAGE_THROTTLE_S = 120
 
 
 def brief(v, n=400) -> str:
@@ -51,6 +60,29 @@ def parse_source(prompt):
     it = intent.group(1) if intent else ""
     src = "trigger" if (f.startswith("pulse") or it == "trigger") else "wire"
     return src, (int(mid.group(1)) if mid else None)
+
+
+def usage_snapshot(cur):
+    """Throttled, wire-safe account-usage snapshot for this turn -> Jsonb | None.
+
+    THROTTLE on the last snapshot's age across the whole org (any state counts, so a down
+    endpoint is not retried every turn either). Any failure returns None so the turn still
+    writes — usage telemetry must never cost an agent its turn record."""
+    try:
+        cur.execute("SELECT ended_at FROM turns WHERE usage_snapshot IS NOT NULL "
+                    "ORDER BY ended_at DESC LIMIT 1")
+        row = cur.fetchone()
+        if row and row[0]:
+            if (datetime.now(timezone.utc) - row[0]).total_seconds() < USAGE_THROTTLE_S:
+                return None
+        from nucleus.usage_refresh import snapshot
+        snap = snapshot(timeout=4)
+        if not snap:
+            return None
+        from psycopg.types.json import Jsonb
+        return Jsonb(snap)
+    except Exception:
+        return None
 
 
 def handle_stop(cur, agent, h):
@@ -129,8 +161,16 @@ def handle_stop(cur, agent, h):
         stop_reason = m.get("stop_reason") or stop_reason
 
     # Fold the de-duplicated usage blocks into totals + the cost-bearing split.
-    fresh = cache_read = cache_create = cc_1h = cc_5m = 0
+    # `context` = the input side of the LAST api call in the turn — what the model actually
+    # carried into its final response. This is the /context number, distinct from tokens_in
+    # (which SUMS input across every call in a multi-tool turn and overstates the load).
+    # Written per turn so awareness (hooks/usage.py) and the compact actuator read the DB,
+    # not transcripts.
+    fresh = cache_read = cache_create = cc_1h = cc_5m = context = 0
     for u in seen_usage.values():
+        context = ((u.get("input_tokens") or 0)
+                   + (u.get("cache_read_input_tokens") or 0)
+                   + (u.get("cache_creation_input_tokens") or 0))  # last one wins
         fresh        += u.get("input_tokens") or 0
         cache_read   += u.get("cache_read_input_tokens") or 0
         cache_create += u.get("cache_creation_input_tokens") or 0
@@ -156,7 +196,7 @@ def handle_stop(cur, agent, h):
                          "api_calls": len(seen_usage), "input_fresh": fresh,
                          "cache_read": cache_read, "cache_creation": cache_create,
                          "cache_write_1h": cc_1h, "cache_write_5m": cc_5m,
-                         "billable_equiv_in": billable}}
+                         "billable_equiv_in": billable, "context": context}}
 
     duration_ms = None
     try:
@@ -167,15 +207,16 @@ def handle_stop(cur, agent, h):
         pass
 
     from psycopg.types.json import Jsonb
+    usnap = usage_snapshot(cur)          # throttled /api/oauth/usage; None most turns
     row = cur.execute(
         """INSERT INTO turns (agent, session_id, started_at, ended_at, duration_ms, source,
              input_prompt, input_msg_id, num_responses, num_tools, char_count,
-             tokens_in, tokens_out, model, stop_reason, raw_payload)
-           VALUES (%s,%s,%s::timestamptz, now(), %s, %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+             tokens_in, tokens_out, model, stop_reason, raw_payload, usage_snapshot)
+           VALUES (%s,%s,%s::timestamptz, now(), %s, %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
            RETURNING id""",
         (agent, h.get("session_id"), started_at, duration_ms, source,
          input_prompt, input_msg_id, num_responses, num_tools, char_count,
-         tin, tout, model, stop_reason, Jsonb(payload))).fetchone()
+         tin, tout, model, stop_reason, Jsonb(payload), usnap)).fetchone()
     turn_id = row[0] if row else None
 
     # back-fill this turn's rows (scoped by start time so history is untouched):

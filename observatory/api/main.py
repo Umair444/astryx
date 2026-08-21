@@ -405,10 +405,13 @@ async def agents(request: Request):
         "SELECT DISTINCT ON (agent) agent, model FROM turns "
         "WHERE model IS NOT NULL ORDER BY agent, id DESC")}
 
+    from nucleus import charter
+
     def enrich(a: str) -> dict:
         m = meta.get(a, nogroup)
         return {"group_path": m["group_path"], "rank": m["rank"],
-                "model": actual.get(a) or m.get("model_pin") or "opus"}
+                "model": actual.get(a) or m.get("model_pin") or "opus",
+                "type": charter.agent_type(a) or "resident"}
     out = [{**dict(r), "last_seen": r["last_seen"].isoformat(),
             "alive": r["agent"] in alive, **enrich(r["agent"])} for r in rows]
     seen = {r["agent"] for r in rows}
@@ -416,6 +419,14 @@ async def agents(request: Request):
         out.append({"agent": a, "last_seen": None, "steps": 0, "tokens_in": 0,
                     "tokens_out": 0, "last_kind": None, "last_content": None,
                     "alive": True, **enrich(a)})
+    # Charter-tree agents with NO DB activity and NO body — a STATIONED agent writes no
+    # steps and is never embodied, so it would otherwise be invisible in the roster/map.
+    # The tree is the registry: every agent in it is a node, even a bodiless API worker.
+    listed = {o["agent"] for o in out}
+    for a in sorted(set(charter.roster()) - listed):
+        out.append({"agent": a, "last_seen": None, "steps": 0, "tokens_in": 0,
+                    "tokens_out": 0, "last_kind": None, "last_content": None,
+                    "alive": a in alive, **enrich(a)})
     if not is_owner(request):
         # CONTENT + RATE floor (plan-18, owner decision): a grant-derived-private
         # agent stays a NODE — name, group, rank, model, alive: existence + liveness,
@@ -511,20 +522,78 @@ async def goals():
     return [goal(r) for r in rows]
 
 
+#  BILLABLE, NOT RAW. steps.tokens_in / turns.tokens_in count cache reads at face value and
+#  overstate real cost ~7x (this org runs ~96% cache-read at 0.1x). The honest number is
+#  billable_equiv_in, written per turn in raw_payload.usage (hooks/step.py). Turns before the
+#  2026-08-13 split lack it, so those fall back to a rough estimate (input*0.12 + output).
+_BILL = ("COALESCE((raw_payload->'usage'->>'billable_equiv_in')::bigint,"
+         " (tokens_in*0.12)::bigint + tokens_out)")
+
+
+def _predict(series, reset_iso):
+    """Linear extrapolation of a utilization %-series to 100%. `series` is [(dt, pct), ...]
+    ascending. Returns (eta_iso|None, pp_per_hour). Uses the last ~90min of points so a
+    burst predicts, a long-idle tail does not. None when <2 points, flat, or falling."""
+    from datetime import datetime, timezone
+    pts = [(t, float(p)) for t, p in series if p is not None]
+    if len(pts) < 2:
+        return None, 0.0
+    t_last = pts[-1][0]
+    win = [(t, p) for t, p in pts if (t_last - t).total_seconds() <= 90 * 60]
+    if len(win) < 2:
+        win = pts[-2:]
+    t0 = win[0][0]
+    xs = [(t - t0).total_seconds() / 3600.0 for t, _ in win]      # hours
+    ys = [p for _, p in win]
+    n = len(xs); sx = sum(xs); sy = sum(ys)
+    denom = n * sum(x * x for x in xs) - sx * sx
+    if denom == 0:
+        return None, 0.0
+    slope = (n * sum(x * y for x, y in zip(xs, ys)) - sx * sy) / denom   # pp per hour
+    cur = ys[-1]
+    # A near-flat series has a float-noise slope; dividing by it yields an astronomical ETA
+    # (and an fromtimestamp overflow). Below 0.05 pp/h is "not rising"; beyond a two-week
+    # horizon a linear extrapolation is noise, not a forecast — both return no ETA.
+    MAX_HORIZON_H = 24 * 14
+    if slope < 0.05 or cur >= 100:
+        return None, round(slope, 2)
+    hours = (100 - cur) / slope
+    if hours > MAX_HORIZON_H:
+        return None, round(slope, 2)
+    eta = datetime.fromtimestamp(t_last.timestamp() + hours * 3600, timezone.utc)
+    return eta.isoformat(), round(slope, 2)
+
+
 @app.get("/api/economy")
 async def economy():
-    daily = await pool.fetch("""
-        SELECT date_trunc('day', ts)::date::text AS day,
-               coalesce(sum(tokens_in),  0) AS tokens_in,
-               coalesce(sum(tokens_out), 0) AS tokens_out,
-               count(*) AS steps
-        FROM steps WHERE ts > now() - interval '30 days'
+    # ── activity + cost, all from TURNS (the accurate ledger), all billable ──────────────
+    heat = await pool.fetch(f"""
+        SELECT date_trunc('day', ended_at)::date::text AS day,
+               sum({_BILL})::bigint AS bill, sum(tokens_out)::bigint AS out,
+               count(*) AS turns
+        FROM turns WHERE ended_at > now() - interval '365 days'
         GROUP BY 1 ORDER BY 1
     """)
-    by_agent = await pool.fetch("""
-        SELECT agent, coalesce(sum(tokens_in), 0) AS tokens_in,
-               coalesce(sum(tokens_out), 0) AS tokens_out, count(*) AS steps
-        FROM steps GROUP BY agent ORDER BY 2 DESC
+    by_agent = await pool.fetch(f"""
+        SELECT agent, sum({_BILL})::bigint AS bill, sum(tokens_out)::bigint AS out,
+               count(*) AS turns
+        FROM turns GROUP BY agent ORDER BY 2 DESC NULLS LAST LIMIT 50
+    """)
+    models = await pool.fetch("""
+        SELECT coalesce(model,'?') AS model, count(*) AS turns
+        FROM turns WHERE ended_at > now() - interval '7 days' AND model IS NOT NULL
+        GROUP BY 1 ORDER BY 2 DESC LIMIT 6
+    """)
+    # authoritative plan gauges + the fresh %-series that drives the prediction/sparkline
+    series = await pool.fetch("""
+        SELECT ended_at, usage_five_hour_pct AS five, usage_seven_day_pct AS seven
+        FROM turns WHERE usage_state='fresh' AND ended_at > now() - interval '6 hours'
+        ORDER BY ended_at
+    """)
+    latest = await pool.fetchrow("""
+        SELECT ended_at, agent, usage_subscription, usage_five_hour_pct, usage_seven_day_pct,
+               usage_seven_day_opus_pct, usage_five_hour_reset, usage_seven_day_reset
+        FROM turns WHERE usage_state='fresh' ORDER BY ended_at DESC LIMIT 1
     """)
     goals_rows = await pool.fetch("""
         SELECT id, title, owner, state, budget_tokens, spent_tokens
@@ -534,58 +603,118 @@ async def economy():
         SELECT id, ts, from_party, to_party, amount_tokens, amount_money, memo
         FROM receipts ORDER BY id DESC LIMIT 100
     """)
-    # live usage (owner directive 2026-08-15, Usage-Monitor-style): per-agent CONTEXT
-    # load, burn/cost, the inferred 5h session window with its P90 ceilings and run-out
-    # prediction, and the model mix — all from nucleus/tokenwatch, run off the event
-    # loop (transcript-tail reads + its own short-lived sync DB connections; this
-    # endpoint is polled once a minute, so a thread is the right price for ONE writer
-    # of the window/burn logic instead of a second SQL copy here).
-    from nucleus import tokenwatch
 
-    def _snapshot():
-        usage = tokenwatch.fleet_context()
-        live = tokenwatch.live_sessions()
-        for u in usage:
-            u["live"] = u["agent"] in live
-        b = tokenwatch.burn()
-        return {
-            "usage": sorted(usage, key=lambda u: -u["tokens"]),
-            "burn": {"tokens_per_min": b["tokens_per_min"],
-                     "cost_per_min": b["cost_per_min"],
-                     "today_tokens": b["today_tokens"],
-                     "today_cost_usd": b["today_cost_usd"]},
-            "window": tokenwatch.window_stats(),
-            "models": tokenwatch.model_mix(),
+    # 24h summary (billable) + burn, from the same accurate ledger
+    summ = await pool.fetchrow(f"""
+        SELECT coalesce(sum({_BILL}),0)::bigint AS bill_24h,
+               coalesce(sum(tokens_out),0)::bigint AS out_24h,
+               count(*) AS turns_24h, count(DISTINCT agent) AS agents_24h
+        FROM turns WHERE ended_at > now() - interval '24 hours'
+    """)
+    burn = await pool.fetchrow(f"""
+        SELECT coalesce(sum({_BILL}),0)::bigint AS bill FROM turns
+        WHERE ended_at > now() - interval '1 hour'
+    """)
+
+    authoritative = None
+    if latest:
+        eta5, rate5 = _predict([(r["ended_at"], r["five"]) for r in series],
+                               latest["usage_five_hour_reset"])
+        eta7, rate7 = _predict([(r["ended_at"], r["seven"]) for r in series],
+                               latest["usage_seven_day_reset"])
+        authoritative = {
+            "measured_at": latest["ended_at"].isoformat(),
+            "measured_by": latest["agent"],
+            "subscription": latest["usage_subscription"],
+            "five_hour_pct": float(latest["usage_five_hour_pct"]) if latest["usage_five_hour_pct"] is not None else None,
+            "seven_day_pct": float(latest["usage_seven_day_pct"]) if latest["usage_seven_day_pct"] is not None else None,
+            "seven_day_opus_pct": float(latest["usage_seven_day_opus_pct"]) if latest["usage_seven_day_opus_pct"] is not None else None,
+            "five_hour_reset": latest["usage_five_hour_reset"],
+            "seven_day_reset": latest["usage_seven_day_reset"],
+            "five_hour_eta_100": eta5, "five_hour_rate_pp_h": rate5,
+            "seven_day_eta_100": eta7, "seven_day_rate_pp_h": rate7,
         }
 
-    snap = await asyncio.to_thread(_snapshot)
     return {
-        "daily": [dict(r) for r in daily],
+        "authoritative": authoritative,
+        "series": [{"t": r["ended_at"].isoformat(),
+                    "five": float(r["five"]) if r["five"] is not None else None,
+                    "seven": float(r["seven"]) if r["seven"] is not None else None}
+                   for r in series],
+        "heatmap": [dict(r) for r in heat],
+        "daily": [dict(r) for r in heat[-30:]],
         "agents": [dict(r) for r in by_agent],
+        "models": [dict(r) for r in models],
+        "summary": dict(summ) if summ else {},
+        "burn": {"bill_per_min": round((burn["bill"] if burn else 0) / 60.0, 1),
+                 "bill_24h": summ["bill_24h"] if summ else 0},
         "goals": [dict(r) for r in goals_rows],
         "receipts": [{**dict(r), "ts": r["ts"].isoformat(),
                       "amount_money": float(r["amount_money"])} for r in receipts],
-        **snap,
     }
 
 
 @app.get("/api/usage")
 async def usage():
-    """Authoritative plan-limit gauges (goal #2470).
+    """Authoritative plan-limit gauges, read from the DB.
+
+    SOURCE: the Stop hook writes a throttled /api/oauth/usage snapshot onto each `turns`
+    row (nucleus/usage_refresh.snapshot()). The gauge is account-global, so the latest
+    FRESH snapshot from any agent's turn IS the org's current budget. No timer, no var/
+    cache — activity writes the number, this endpoint reads the newest one.
 
     GATED BY OMISSION, DELIBERATELY. `/api/usage` is absent from PUBLIC_PATHS, so the
-    default-DENY middleware at the top of this file already owner-gates it. There is no
-    second check here on purpose: two authorities for one fact is how a gate ends up
-    enforced in one place and forgotten in the other.
+    default-DENY middleware at the top of this file already owner-gates it. No second check
+    here on purpose: two authorities for one fact is how a gate is enforced in one place
+    and forgotten in the other.
 
-    THE CREDENTIAL IS NOT REACHABLE FROM THIS PROCESS. We import `usage_view`, which
-    reads `var/` and nothing else; the module that opens ~/.claude/.credentials.json is
-    `nucleus/usage_refresh.py`, which runs on its own timer and is deliberately NOT in
-    this app's import graph (BC-2). Import the refresher here and you have re-created
-    exactly the reachability this design was shaped to prevent.
+    THE CREDENTIAL IS NOT REACHABLE FROM THIS PROCESS. This reads `turns` and nothing else.
+    The only code that opens ~/.claude/.credentials.json is the Stop hook, which runs in
+    each AGENT's process — never in this web app. Dollar/spend fields never reach the DB:
+    USAGE_ALLOWLIST strips them before a snapshot is ever written.
     """
-    from nucleus import usage_view
-    return await asyncio.to_thread(usage_view.read_cache)
+    fresh = await pool.fetchrow("""
+        SELECT ended_at, agent, usage_snapshot, usage_subscription,
+               usage_five_hour_pct, usage_seven_day_pct, usage_seven_day_opus_pct,
+               usage_five_hour_reset, usage_seven_day_reset
+        FROM turns WHERE usage_state = 'fresh'
+        ORDER BY ended_at DESC LIMIT 1
+    """)
+    last = await pool.fetchrow("""
+        SELECT ended_at, agent, usage_state FROM turns
+        WHERE usage_snapshot IS NOT NULL ORDER BY ended_at DESC LIMIT 1
+    """)
+
+    def _iso(v):
+        return v.isoformat() if hasattr(v, "isoformat") else v
+
+    def _f(v):
+        return float(v) if v is not None else None
+
+    health = {"last_attempt": _iso(last["ended_at"]) if last else None,
+              "last_state": last["usage_state"] if last else "never",
+              "last_by": last["agent"] if last else None}
+    if not fresh:
+        # no good reading yet — say so honestly, never invent a zero
+        return {"state": health["last_state"], "source": "turns", "data": None, **health}
+
+    snap = fresh["usage_snapshot"]
+    if isinstance(snap, str):
+        snap = json.loads(snap)
+    return {
+        "state": "fresh",
+        "source": "turns",
+        "measured_at": _iso(fresh["ended_at"]),
+        "measured_by": fresh["agent"],
+        "subscription": fresh["usage_subscription"],
+        "five_hour_pct": _f(fresh["usage_five_hour_pct"]),
+        "seven_day_pct": _f(fresh["usage_seven_day_pct"]),
+        "seven_day_opus_pct": _f(fresh["usage_seven_day_opus_pct"]),
+        "five_hour_reset": fresh["usage_five_hour_reset"],
+        "seven_day_reset": fresh["usage_seven_day_reset"],
+        "data": (snap or {}).get("data"),   # utilization/resets/limits[] — backward compatible
+        **health,
+    }
 
 
 @app.get("/api/tools")
@@ -615,8 +744,17 @@ async def tools():
                                    for n in d["nodes"]]})
         except Exception:
             pass
+    # senses — the afferent layer (sensors/<agent>/*.py, served by astryx-senses on :8460).
+    # Derived from the tree via the ONE index in nucleus/senses.py; file reads only, no
+    # FastAPI import happens at module scope so this stays cheap and safe here.
+    try:
+        from nucleus.senses import senses_index
+        senses = senses_index()
+    except Exception:
+        senses = []
     return {"servers": servers,
             "total_tools": sum(len(s["tools"]) for s in servers),
+            "senses": senses,
             "dags": dags}
 
 

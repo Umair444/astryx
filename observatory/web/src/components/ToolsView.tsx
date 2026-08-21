@@ -412,6 +412,28 @@ export default function ToolsView() {
           </div>
         </section>
 
+        {/* ---------------------------------------------------- senses
+            the afferent twin of triggers: sensors/<agent>/*.py served as API endpoints
+            on :8460 — the world calls in at code speed, no resident wakes; a sense
+            escalates onto the wire (focus) only when its own threshold crosses. */}
+        <section>
+          <SectionHead label="Senses" aside={tools?.senses ? `${tools.senses.length} afferent endpoints · :8460` : undefined} />
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {(tools?.senses ?? []).map((s) => (
+              <div key={s.path} className="bg-deck-2 border border-line rounded-lg p-3 min-w-0">
+                <div className="flex items-baseline gap-2 mb-1">
+                  <span className="text-[12px] font-semibold text-ink truncate">{s.agent}</span>
+                  <span className="text-[11px] font-mono text-emerald-400 shrink-0">{s.path}</span>
+                </div>
+                <div className="text-[10px] text-ink-mute">{s.description || 'no description'}</div>
+              </div>
+            ))}
+            {tools && !(tools.senses ?? []).length && (
+              <div className="text-xs text-ink-mute px-1">no senses yet — an agent grows one by writing sensors/&lt;agent&gt;/&lt;name&gt;.py</div>
+            )}
+          </div>
+        </section>
+
         {/* -------------------------------------------------- toolbox */}
         <section>
           <SectionHead label="Toolbox" aside={tools ? `${tools.servers.length} servers` : undefined} />

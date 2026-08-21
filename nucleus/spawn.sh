@@ -20,12 +20,21 @@ AGENT=${1:?usage: spawn.sh <agent>}
 # took the first match on a dup stem while this refused).
 CHARTER=$("$ROOT/venv/bin/python" "$ROOT/nucleus/charter.py" "$AGENT") || exit 1
 grep -q '^## Tombstone' "$CHARTER" && { echo "'$AGENT' is tombstoned — the name rests"; exit 1; }
-# The "Stationed" pattern is RETIRED (plan-17): the org keeps no disposable, unopinionated
-# minds — ALL agents are residents that live on the wire and grow. A public surface (vega's
-# observatory /api/vega) is served by a fresh, tool-disabled read-only CONJURE of the
-# resident's charter, not by denying the agent a body. Do not re-introduce a stationed
-# branch here: containment of the public edge lives in the conjure's fail-closed flags
-# (--tools "" + --strict-mcp-config, observatory main.py), not in withholding residency.
+# AGENT TYPE (charter `Type:` line, resolved through the ONE resolver so shell and python
+# never disagree; default resident). A STATIONED agent has no body: it is a stateless
+# `claude -p` API invoked per request via nucleus/station.py — spawn.sh has nothing to
+# embody, so it says so and exits 0 (a skip, not a failure). This REINSTATES the stationed
+# pattern retired in plan-17: the retirement was right for vega (a public voice belongs to
+# a full resident, served by a contained conjure), but wrong as a blanket ban — an
+# app-facing, high-throughput, thinking-off API worker is a legitimate KIND of agent, and
+# denying it a lifecycle just meant re-implementing one ad hoc (the vega conjure was that).
+# The type is the honest place for the distinction; containment still lives in station.py's
+# fail-closed flags (--tools "" + --strict-mcp-config), never in withholding a body.
+ATYPE=$("$ROOT/venv/bin/python" "$ROOT/nucleus/charter.py" "$AGENT" --type 2>/dev/null || echo resident)
+if [ "$ATYPE" = "stationed" ]; then
+  echo "'$AGENT' is stationed — a stateless claude -p API, not a resident. Invoke it with nucleus/station.py; there is no body to spawn."
+  exit 0
+fi
 # One agent, ONE body: if a channel server already runs under this identity
 # anywhere (e.g. the founder CLI outside tmux), a second spawn would race it
 # on the same doorbell — messages split between bodies invisibly. That was
