@@ -385,6 +385,23 @@ EOF
   say "installed context-compact trigger (seed) — /compact for any session past 80% of its window"
 }
 
+# pr-review: the review half of the shipped self-healing loop (medic proposes via PR,
+# a reviewer accepts/rejects — never the same mind). Installed under seed at founding;
+# a grown org moves the seat (ours: steward). Deferential like ccompact: any existing
+# pr_review stands the installer down.
+_chk_prreview() { ls triggers/*/pr_review.py >/dev/null 2>&1; }
+_act_prreview() {
+  mkdir -p triggers/seed
+  cat > triggers/seed/pr_review.py <<'SHIM'
+"""Live install of the shipped pr-review trigger (one writer:
+nucleus/shipped_triggers/pr_review.py). Reviewer seat at founding is the seed; move this
+file to the immune-system agent (steward) once one exists — proposer and reviewer must
+never be the same mind."""
+from nucleus.shipped_triggers.pr_review import pr_review  # noqa: F401
+SHIM
+  say "installed pr-review trigger (seed) — open PRs / medic branches wake the reviewer"
+}
+
 # model cache: ACTUATABLE + NON-PERSISTENT (org prefetches; the OS can evict). Gated on
 # media (a voice channel present) — prefetched UNDER the reconciler at init OR at later
 # channel-enablement, IDENTICALLY, never on the message path (transcribe.py uses
@@ -401,7 +418,7 @@ _act_model() {
 RECONCILE_NODES=(
   "pg|interior" "pgready|wait" "schema|interior" "venv|interior" "deps|interior"
   "model|interior" "chan|interior" "obs|interior" "obskey|interior" "ident|interior"
-  "units|interior" "law|interior" "prehook|interior" "ccompact|interior" "login|halt"
+  "units|interior" "law|interior" "prehook|interior" "ccompact|interior" "prreview|interior" "login|halt"
   "seed|interior" "prompt|interior")
 
 reconcile() {
