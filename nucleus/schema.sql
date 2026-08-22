@@ -55,8 +55,13 @@ CREATE TABLE IF NOT EXISTS turns (
   usage_seven_day_pct      numeric GENERATED ALWAYS AS ((usage_snapshot #>> '{data,seven_day_utilization}')::numeric) STORED,
   usage_seven_day_opus_pct numeric GENERATED ALWAYS AS ((usage_snapshot #>> '{data,seven_day_opus_utilization}')::numeric) STORED,
   usage_five_hour_reset    text    GENERATED ALWAYS AS (usage_snapshot #>> '{data,five_hour_resets_at}') STORED,
-  usage_seven_day_reset    text    GENERATED ALWAYS AS (usage_snapshot #>> '{data,seven_day_resets_at}') STORED
+  usage_seven_day_reset    text    GENERATED ALWAYS AS (usage_snapshot #>> '{data,seven_day_resets_at}') STORED,
+  -- ECONOMY ATTRIBUTION (2026-08-22): which goal this turn served. Set by the Stop hook
+  -- from the opening message's thread (plan-<id>/goal-<id>); the join is the value-flow
+  -- edge — verified goal budgets propagate back over exactly these rows.
+  goal_id       bigint
 );
+CREATE INDEX IF NOT EXISTS turns_goal ON turns (goal_id) WHERE goal_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS turns_agent_time ON turns (agent, ended_at DESC);
 CREATE INDEX IF NOT EXISTS turns_msg        ON turns (input_msg_id) WHERE input_msg_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS turns_raw_gin    ON turns USING gin (raw_payload);
@@ -132,7 +137,31 @@ CREATE TABLE IF NOT EXISTS goals (
   spent_tokens  bigint NOT NULL DEFAULT 0,
   epoch_hours   integer NOT NULL DEFAULT 24,
   last_progress timestamptz,
-  dead_epochs   integer NOT NULL DEFAULT 0
+  dead_epochs   integer NOT NULL DEFAULT 0,
+  -- THE BOUNDARY EVENT (2026-08-22): when this goal shipped. Value enters the org economy
+  -- at exactly this timestamp (W = Σ budgets of goals with done_at in the window) — set by
+  -- the trigger below, never by hand, so the series cannot be backdated.
+  done_at       timestamptz
+);
+CREATE OR REPLACE FUNCTION goals_done_stamp() RETURNS trigger AS $$
+BEGIN
+  IF NEW.state IN ('shipped','done') AND (OLD.state IS DISTINCT FROM NEW.state)
+     AND NEW.done_at IS NULL THEN
+    NEW.done_at := now();
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS goals_done_stamp ON goals;
+CREATE TRIGGER goals_done_stamp BEFORE UPDATE ON goals
+  FOR EACH ROW EXECUTE FUNCTION goals_done_stamp();
+
+-- econ: the daily thermodynamic/economic rollup (one row per day, metrics jsonb).
+-- Computed by nucleus/econ.py (the ONE implementation of the equations; the observatory
+-- and the steward trigger both call it). Owner-approved table, 2026-08-22.
+CREATE TABLE IF NOT EXISTS econ (
+  day         date PRIMARY KEY,
+  computed_at timestamptz NOT NULL DEFAULT now(),
+  metrics     jsonb NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS peers (

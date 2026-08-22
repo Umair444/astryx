@@ -208,15 +208,27 @@ def handle_stop(cur, agent, h):
 
     from psycopg.types.json import Jsonb
     usnap = usage_snapshot(cur)          # throttled /api/oauth/usage; None most turns
+    # ECONOMY ATTRIBUTION: which goal did this turn serve? Derived from the opening
+    # message's thread (plan-<id>/goal-<id>) — the value-flow edge verified budgets
+    # propagate back over. NULL when the turn served no goal thread; never guessed.
+    goal_id = None
+    if input_msg_id is not None:
+        try:
+            r = cur.execute(
+                "SELECT (regexp_match(thread, '^(?:plan|goal)-(\\d+)$'))[1]::bigint "
+                "FROM messages WHERE id=%s", (input_msg_id,)).fetchone()
+            goal_id = r[0] if r else None
+        except Exception:
+            goal_id = None
     row = cur.execute(
         """INSERT INTO turns (agent, session_id, started_at, ended_at, duration_ms, source,
              input_prompt, input_msg_id, num_responses, num_tools, char_count,
-             tokens_in, tokens_out, model, stop_reason, raw_payload, usage_snapshot)
-           VALUES (%s,%s,%s::timestamptz, now(), %s, %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+             tokens_in, tokens_out, model, stop_reason, raw_payload, usage_snapshot, goal_id)
+           VALUES (%s,%s,%s::timestamptz, now(), %s, %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
            RETURNING id""",
         (agent, h.get("session_id"), started_at, duration_ms, source,
          input_prompt, input_msg_id, num_responses, num_tools, char_count,
-         tin, tout, model, stop_reason, Jsonb(payload), usnap)).fetchone()
+         tin, tout, model, stop_reason, Jsonb(payload), usnap, goal_id)).fetchone()
     turn_id = row[0] if row else None
 
     # back-fill this turn's rows (scoped by start time so history is untouched):

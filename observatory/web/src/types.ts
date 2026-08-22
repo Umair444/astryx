@@ -166,8 +166,102 @@ export interface EconSummary {
   agents_24h: number
 }
 
+/* ── the dissipative-system layer (nucleus/econ.py) — served under the `econ` key ──
+   The org as a measured dissipative structure. One law: G = W / (Φ·K).
+   Φ = billable flux, W = budgets of goals VERIFIED in window (value enters only at
+   the boundary), K = compressed self-description bytes, Q = heat = flux that
+   produced no boundary value. First law: Φ = W-attributable + Q. */
+
+/* one day of the daily series — ≤90 days ascending; MISSING DAYS ARE GAPS
+   (the org was dark) — render gaps, never zero-fill */
+export interface EconDissipativeDay {
+  day: string
+  phi: number | null
+  W: number | null
+  eta: number | null
+  G: number | null // ×1e9 scale (per-GB·tok)
+  heat_frac: number | null
+  attributed_frac: number | null
+  K: number | null // compressed self-description bytes
+  theil: number | null
+  turns: number | null
+}
+
+export interface EconThermo {
+  phi: number
+  turns: number
+  phi_goal_attributed: number
+  W: number
+  goals_shipped: number
+  heat_instant_turns: number
+  heat_instant_phi: number
+  heat_instant_frac: number | null
+  eta: number | null
+}
+
+/* live today-so-far reading — the day is still open */
+export interface EconToday extends EconThermo {
+  day: string
+}
+
+export interface EconPnlRow {
+  agent: string
+  burned: number
+  turns: number
+  value_earned: number
+  net: number
+}
+
+export interface EconTriggerTfp {
+  trigger: string
+  day: string
+  cost_per_fire: number
+  fires: number
+}
+
+export interface EconSenseRow {
+  sense: string
+  calls: number
+  first_call: string
+  saved_est: number | null // calls × median_wake_cost, tokens
+}
+
+export interface EconProductivity {
+  window_days: number
+  median_wake_cost: number | null
+  trigger_tfp: EconTriggerTfp[]
+  senses: EconSenseRow[]
+}
+
+/* the Goodhart detectors */
+export interface EconIntegrity {
+  budget_cpi: number | null
+  verify_latency_h_median: number | null
+  milestone_rate: number | null // fraction 0..1
+  unattributed_spend_note: string
+}
+
+export interface EconLatest {
+  day: string
+  G: number | null // ×1e9 scale (per-GB·tok)
+  K: { raw: number; compressed: number } // bytes
+  thermo: EconThermo
+  final_heat: { final_heat_phi: number }
+  pnl: EconPnlRow[]
+  theil_burn: number | null
+  productivity: EconProductivity
+  integrity: EconIntegrity
+}
+
+export interface EconDissipative {
+  series: EconDissipativeDay[]
+  latest: EconLatest | null
+  today: EconToday | null
+}
+
 export interface Economy {
   authoritative: EconAuthoritative | null
+  econ: EconDissipative
   series: EconSeriesPoint[]
   heatmap: EconHeatCell[]
   daily: EconDay[]
@@ -401,6 +495,52 @@ export interface ContactMatch {
   number: string | null
   handle: string
   native: string // the platform chat id (handle minus the channel: prefix)
+}
+
+/* GET /api/agents/{name}/profile — an agent AS A PERSON (main.py agent_profile).
+   Distinct from the older charter-parse Profile below, which a different view uses. */
+export interface AgentProfile {
+  name: string
+  exists: boolean
+  status: 'live' | 'dormant' | 'retired'
+  live: boolean
+  retired: boolean
+  group_path: string[]
+  department: string | null
+  rank: number | null
+  model: string | null
+  perspective: string
+  has_charter: boolean
+  stats: { steps: number; turns: number; billable_tokens: number; last_seen: string | null }
+  relations: { agent: string; messages: number }[]
+  peers: string[]
+}
+
+/* POST /api/agents — bring an agent into the world */
+export interface AgentCreateResult {
+  ok: boolean
+  name: string
+  charter_path: string
+  spawn_rc: number
+  spawn_out: string
+  live: boolean
+}
+
+/* POST /api/agents/{name}/retire */
+export interface AgentRetireResult {
+  ok: boolean
+  name: string
+  retired: boolean
+  body_stopped: boolean
+}
+
+/* POST /api/agents/{name}/spawn — respawn / revive */
+export interface AgentSpawnResult {
+  ok: boolean
+  name: string
+  rc: number
+  out: string
+  live: boolean
 }
 
 /* GET /api/agents/{name}/profile — the self, parsed from the charter md */

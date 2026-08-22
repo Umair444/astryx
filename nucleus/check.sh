@@ -193,6 +193,9 @@ run "ontology lint invariants"        "$PY" nucleus/test_ontology.py
 run "trigger bodies resolve"          "$PY" nucleus/test_trigger_smoke.py
 
 run "A2A card canonicalisation (JCS)" "$PY" nucleus/test_card_canon.py
+# the org economy: G = W/(Φ·K), value enters only at the boundary (goals.done_at),
+# heat <= flux, theil arms both ways, archived rollup self-consistent with its parts.
+run "the org economy is honest"       "$PY" nucleus/test_econ.py
 # The ear must outlive a database blip. Runs the REAL channel/server.mjs against a
 # THROWAWAY database (created, then dropped — the org's own is never written to), breaks
 # the database underneath it the two ways an ordinary `docker restart` does, and proves it

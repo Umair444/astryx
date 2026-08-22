@@ -91,6 +91,30 @@ def senses_index() -> list[dict]:
     return out
 
 
+def _dsn() -> str | None:
+    try:
+        return next(line.split("=", 1)[1].strip()
+                    for line in (REPO / ".env").read_text().splitlines()
+                    if line.startswith("ASTRYX_DSN="))
+    except Exception:
+        return None
+
+
+def _log_call(agent: str, name: str, ms: int, status: int) -> None:
+    """One steps row per sense call — the demand/pricing signal for the economy. The
+    steps NOTIFY fires like any other row; subscribers filtering 'sense' can watch."""
+    try:
+        import psycopg
+        dsn = _dsn()
+        if not dsn:
+            return
+        with psycopg.connect(dsn, connect_timeout=2) as conn:
+            conn.execute("INSERT INTO steps (agent, kind, content) VALUES (%s,'sense',%s)",
+                         (agent, f"{agent}/{name} {ms}ms http={status}"))
+    except Exception:
+        pass
+
+
 def focus(agent: str, body: str, thread: str = "", intent: str = "sense") -> int | None:
     """A sense escalating to ATTENTION: one row on the wire to its resident. The messages
     INSERT trigger notifies the agent's channel, which delivers it like any message —
@@ -98,9 +122,9 @@ def focus(agent: str, body: str, thread: str = "", intent: str = "sense") -> int
     (a sense must keep answering its caller even when the wire is down)."""
     try:
         import psycopg
-        dsn = next(line.split("=", 1)[1].strip()
-                   for line in (REPO / ".env").read_text().splitlines()
-                   if line.startswith("ASTRYX_DSN="))
+        dsn = _dsn()
+        if not dsn:
+            return None
         with psycopg.connect(dsn, connect_timeout=3) as conn:
             row = conn.execute(
                 "INSERT INTO messages (from_agent, to_agent, thread, intent, body) "
@@ -150,6 +174,11 @@ async def dispatch(agent: str, name: str, request: Request):
         status = 200
         if isinstance(result, tuple) and len(result) == 2:
             status, result = result
+        # ECONOMY: every sense call is an org event and gets PRICED (a sense answer is the
+        # cheapest request in the economy — the 1h→1min→~0 move — and its adoption is the
+        # demand signal). One steps row, kind='sense'; fail-silent: pricing must never
+        # cost the caller its answer.
+        _log_call(a, n, round((time.monotonic() - t0) * 1000), status)
         if isinstance(result, str):
             return Response(result, status, media_type="text/plain")
         return Response(json.dumps(result, default=str), status,

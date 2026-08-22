@@ -635,8 +635,50 @@ async def economy():
             "seven_day_eta_100": eta7, "seven_day_rate_pp_h": rate7,
         }
 
+    # ── the dissipative-system layer: daily econ rows (nucleus/econ.py, the ONE
+    # implementation of the equations) + a live today-so-far reading. The API serves the
+    # RAW series; the client holds the equations, so the playground's sliders recompute
+    # G/η locally without another request.
+    econ_rows = await pool.fetch(
+        "SELECT day::text AS day, metrics FROM econ ORDER BY day DESC LIMIT 90")
+    econ_series = []
+    for r in reversed(econ_rows):
+        m = r["metrics"] if isinstance(r["metrics"], dict) else json.loads(r["metrics"])
+        t = m.get("thermo") or {}
+        econ_series.append({
+            "day": r["day"], "phi": t.get("phi"), "W": t.get("W"),
+            "eta": t.get("eta"), "G": m.get("G"),
+            "heat_frac": t.get("heat_instant_frac"),
+            "attributed_frac": (round(t["phi_goal_attributed"] / t["phi"], 4)
+                                if t.get("phi") else None),
+            "K": (m.get("K") or {}).get("compressed"),
+            "theil": m.get("theil_burn"), "turns": t.get("turns"),
+        })
+    econ_latest = None
+    if econ_rows:
+        m = econ_rows[0]["metrics"]
+        econ_latest = {"day": econ_rows[0]["day"],
+                       **(m if isinstance(m, dict) else json.loads(m))}
+
+    def _today():
+        from datetime import datetime, timedelta, timezone
+
+        import psycopg
+        from nucleus import econ as E
+        day = datetime.now(timezone.utc).date().isoformat()
+        with psycopg.connect(E._dsn(), connect_timeout=3) as conn:
+            t = E.thermo(conn, f"{day}T00:00:00+00:00",
+                         (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat())
+        return {"day": day, **t}
+
+    try:
+        econ_today = await asyncio.to_thread(_today)
+    except Exception:
+        econ_today = None
+
     return {
         "authoritative": authoritative,
+        "econ": {"series": econ_series, "latest": econ_latest, "today": econ_today},
         "series": [{"t": r["ended_at"].isoformat(),
                     "five": float(r["five"]) if r["five"] is not None else None,
                     "seven": float(r["seven"]) if r["seven"] is not None else None}
@@ -829,6 +871,117 @@ async def charter_put(name: str, edit: CharterEdit, request: Request):
     return {"ok": True, "name": f.stem, "live": live,
             "note": ("saved — respawn the agent to apply" if live
                      else "saved — applies on next spawn")}
+
+
+# ---------------------------------------------------------- agent lifecycle & profile
+# An agent is a person: a charter (its perspective and law), a place in the org tree (its
+# department and peers), a body (live or retired), and a history on the wire. These
+# endpoints let the owner MEET one, bring one into the world, or retire it — the
+# observatory is astryx's face, so it shows agents as who they are, not rows in a table.
+
+AGENT_NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}$")
+
+
+class AgentCreate(BaseModel):
+    name: str
+    charter: str
+    group: str | None = None            # optional composite folder (must already exist)
+
+
+def _valid_name(name: str) -> bool:
+    return bool(AGENT_NAME_RE.match(name)) and "--" not in name
+
+
+def _perspective(charter_text: str) -> str:
+    """The agent's voice, distilled: the first substantive prose of the charter — the
+    italic subtitle or the opening identity line, markdown stripped. What the agent would
+    say it IS, not a field we invented for it."""
+    para: list[str] = []
+    for ln in charter_text.splitlines():
+        s = ln.strip()
+        if not s:
+            if para:
+                break
+            continue
+        if s.startswith("#"):            # skip heading lines
+            continue
+        para.append(s.strip("*_> `"))
+        if len(" ".join(para)) > 320:
+            break
+    return " ".join(para)[:400]
+
+
+@app.post("/api/agents")
+async def agent_create(body: AgentCreate, request: Request):
+    """Bring a new agent into the world: write its charter into the agents/ tree, then
+    spawn its body. Owner-only. The stem is the GLOBAL key — validated hard (no traversal,
+    no collision) because the tree IS the registry."""
+    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+        return Response(status_code=403)
+    name = (body.name or "").strip().lower()
+    if not _valid_name(name):
+        return Response("name must be lowercase a-z0-9- (2-31 chars, no --)", status_code=400)
+    if not body.charter.strip():
+        return Response("a charter is the agent — it cannot be empty", status_code=400)
+    if _charter_path(name):
+        return Response(f"'{name}' already exists — names are unique in the tree", status_code=409)
+    agents_dir = REPO / "agents"
+    if body.group:
+        g = body.group.strip().lower()
+        if not _valid_name(g) or not (agents_dir / g).is_dir():
+            return Response(f"group '{body.group}' is not an existing composite", status_code=400)
+        target = agents_dir / g / f"{name}.md"
+    else:
+        target = agents_dir / f"{name}.md"
+    try:
+        target.write_text(body.charter)
+    except Exception as e:
+        return Response(f"could not write charter: {e}", status_code=500)
+    r = subprocess.run(["bash", str(REPO / "nucleus" / "spawn.sh"), name],
+                       capture_output=True, text=True, timeout=90)
+    return {"ok": r.returncode == 0, "name": name,
+            "charter_path": str(target.relative_to(REPO)),
+            "spawn_rc": r.returncode, "spawn_out": (r.stdout + r.stderr)[-800:],
+            "live": name in tmux_alive()}
+
+
+@app.post("/api/agents/{name}/retire")
+async def agent_retire(name: str, request: Request):
+    """Retire an agent: tombstone its charter so the nucleus stops resurrecting it, and
+    stop its body. REVERSIBLE — the name rests, the history stays; remove the tombstone to
+    bring it back. Owner-only. (The org never hard-deletes a charter; identity is not
+    trash.)"""
+    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+        return Response(status_code=403)
+    f = _charter_path(name)
+    if not f:
+        return Response("no such charter", status_code=404)
+    text = f.read_text()
+    if not re.search(r"^## Tombstone", text, re.M):
+        stamp = datetime.now(timezone.utc).date().isoformat()
+        f.write_text(text.rstrip() + f"\n\n## Tombstone\nRetired via the observatory "
+                     f"{stamp}. The name rests; remove this section to revive.\n")
+    killed = False
+    if name in tmux_alive():
+        k = subprocess.run(["tmux", "kill-session", "-t", f"ax-{name}"],
+                           capture_output=True, text=True, timeout=10)
+        killed = k.returncode == 0
+    return {"ok": True, "name": name, "retired": True, "body_stopped": killed}
+
+
+@app.post("/api/agents/{name}/spawn")
+async def agent_spawn(name: str, request: Request):
+    """(Re)spawn a body — apply a charter edit, or revive a dormant agent. Refuses a
+    tombstoned charter (remove the tombstone first). Owner-only."""
+    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+        return Response(status_code=403)
+    f = _charter_path(name)
+    if not f:
+        return Response("no such charter", status_code=404)
+    r = subprocess.run(["bash", str(REPO / "nucleus" / "spawn.sh"), name],
+                       capture_output=True, text=True, timeout=90)
+    return {"ok": r.returncode == 0, "name": name, "rc": r.returncode,
+            "out": (r.stdout + r.stderr)[-800:], "live": name in tmux_alive()}
 
 
 # ------------------------------------------------------------ services
@@ -1284,12 +1437,33 @@ async def agent_profile(name: str):
                          "body": text[start:nxt if nxt > 0 else len(text)].strip()})
     avatar = next((p for p in charter.parent.glob("avatar.*")
                    if charter.parent.name == name), None)
-    stats = await pool.fetchrow("""
+    stats = await pool.fetchrow(f"""
         SELECT (SELECT count(*) FROM turns WHERE agent=$1)                        AS turns,
                (SELECT coalesce(sum(tokens_out),0) FROM turns WHERE agent=$1)     AS tokens_out,
+               (SELECT coalesce(sum({_BILL}),0)::bigint FROM turns WHERE agent=$1) AS billable_tokens,
                (SELECT count(*) FROM messages WHERE from_agent=$1 AND from_org='local') AS messages_sent,
                (SELECT count(*) FROM steps WHERE agent=$1)                        AS steps,
-               (SELECT min(ts) FROM steps WHERE agent=$1)                         AS first_seen""", name)
+               (SELECT min(ts) FROM steps WHERE agent=$1)                         AS first_seen,
+               (SELECT max(ts) FROM steps WHERE agent=$1)                         AS last_seen""", name)
+    a_model = await pool.fetchval(
+        "SELECT model FROM turns WHERE agent=$1 AND model IS NOT NULL "
+        "ORDER BY ended_at DESC LIMIT 1", name)
+    # who this agent actually talks to, both directions on the wire — its relationships
+    rel = await pool.fetch("""
+        SELECT peer, sum(n)::bigint AS n FROM (
+          SELECT to_agent   AS peer, count(*) AS n FROM messages
+            WHERE from_agent=$1 AND to_agent IS NOT NULL GROUP BY 1
+          UNION ALL
+          SELECT from_agent AS peer, count(*) AS n FROM messages
+            WHERE to_agent=$1 GROUP BY 1
+        ) x WHERE peer IS NOT NULL AND peer <> $1 GROUP BY peer ORDER BY 2 DESC LIMIT 10
+    """, name)
+    group_path = meta[name]["group_path"]
+    peers = sorted(a for a, mm in meta.items()
+                   if a != name and group_path
+                   and (mm.get("group_path") or [])[:len(group_path)] == group_path)
+    live = name in tmux_alive()
+    retired = bool(re.search(r"^## Tombstone", text, re.M))
     # identity history: this self's commits in the private log
     log_path = str(charter.parent.relative_to(REPO / "agents")) \
         if charter.parent.name == name else str(charter.relative_to(REPO / "agents"))
@@ -1299,11 +1473,19 @@ async def agent_profile(name: str):
         cwd=REPO / "agents", capture_output=True, text=True).stdout.strip()
     history = [dict(zip(("hash", "author", "date", "subject"), l.split("|", 3)))
                for l in hist.splitlines() if l]
-    return {"agent": name, "bio": bio, "sections": sections,
-            "avatar": bool(avatar), "group_path": meta[name]["group_path"],
+    return {"agent": name, "name": name, "bio": bio,
+            "perspective": bio or _perspective(text),
+            "sections": sections, "avatar": bool(avatar),
+            "group_path": group_path,
+            "department": group_path[-1] if group_path else None,
             "rank": meta[name]["rank"],
+            "model": meta[name].get("model_pin") or a_model,
+            "live": live, "retired": retired, "exists": True, "has_charter": True,
+            "status": "retired" if retired else ("live" if live else "dormant"),
             "stats": {**{k: (v.isoformat() if hasattr(v, "isoformat") else v)
                          for k, v in dict(stats).items()}},
+            "relations": [{"agent": r["peer"], "messages": r["n"]} for r in rel],
+            "peers": peers,
             "history": history}
 
 

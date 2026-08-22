@@ -76,6 +76,12 @@ AUDITED_TRIGGERS = {
     # Audited 2026-08-13 by reading pg_get_functiondef; re-read it if this hash moves.
     ("messages", "messages_notify"):
         "90dc3a1274f05949d212c2bcf9fe8dacf90180e37e869596154d63fcb8e1524c",
+    # BEFORE UPDATE row trigger stamping goals.done_at (the economy's boundary event).
+    # Audited 2026-08-22 by reading pg_get_functiondef: pure plpgsql, mutates NEW only —
+    # no NOTIFY, no dblink, no COPY, no external write; a NEW mutation is row data and
+    # rolls back with the transaction. Re-read it if this hash moves.
+    ("goals", "goals_done_stamp"):
+        "e7dddc10465aea3d1a657f01dde9c4c3eaaeb3026acb087d31ec65969c9f756a",
 }
 
 
