@@ -287,11 +287,19 @@ _act_schema() { say "applying schema"
   else docker exec -i astryx-pg psql -U astryx -d astryx < nucleus/schema.sql >/dev/null; fi; }
 
 _chk_venv() { [ -d venv ]; }
-_act_venv() { say "python venv"; python3 -m venv venv; }
+# uv when present (fast, modern), python3 -m venv otherwise — SAME venv/ layout either
+# way, so every unit/hook path (venv/bin/python) is identical regardless of the creator.
+_act_venv() { say "python venv"
+  if command -v uv >/dev/null; then uv venv venv --seed >/dev/null
+  else python3 -m venv venv; fi; }
 
 _chk_deps() { venv/bin/python nucleus/deps.py check $(active_dep_groups) >/dev/null 2>&1; }
 _act_deps() { local g; g=$(active_dep_groups); say "python deps ($g)"
-  venv/bin/pip -q install $(venv/bin/python nucleus/deps.py install-list $g); }
+  if command -v uv >/dev/null; then
+    uv pip install -q --python venv/bin/python $(venv/bin/python nucleus/deps.py install-list $g)
+  else
+    venv/bin/pip -q install $(venv/bin/python nucleus/deps.py install-list $g)
+  fi; }
 
 _chk_chan() { [ -d channel/node_modules ]; }
 _act_chan() { say "npm install (channel server)"; (cd channel && npm install --no-fund --no-audit >/dev/null); }

@@ -41,11 +41,18 @@ persistence, tools, memory, money, other agents. ASTRYX reduces that machinery t
 
 ## Quick start
 
+**Needs:** Claude Code ≥ 2.1 · node ≥ 20 · python ≥ 3.11 · tmux · docker (or your own
+postgres). [`uv`](https://docs.astral.sh/uv/) is used automatically when installed
+(recommended — much faster installs); plain `python3 -m venv` otherwise. Same `venv/`
+layout either way.
+
 ```bash
 git clone https://github.com/Umair444/astryx && cd astryx
-./init.sh doctor     # checks deps (Claude Code ≥2.1, node ≥20, python3, tmux, docker or psql)
-./init.sh            # postgres (docker), schema, observatory, systemd units, spawns the seed
+./init.sh doctor     # diagnoses missing deps and prints the exact install commands
+./init.sh            # venv + deps, postgres (docker), schema, observatory, systemd units, spawns the seed
 ```
+
+`init.sh` is idempotent — run it again anytime; it only does what's missing.
 
 Then:
 1. Write `local.md` — your law: what the org works on, what it must never do.
@@ -55,6 +62,44 @@ Then:
 
 Watch it work: `nucleus/wall.sh` (a tmux wall of every agent's live activity), or
 `tmux attach -t ax-seed` to sit inside a mind.
+
+<details>
+<summary><b>Manual setup</b> — every step by hand, if you'd rather see the machinery</summary>
+
+```bash
+# 1. python environment (uv shown; python3 -m venv + venv/bin/pip works identically)
+uv venv venv --seed
+uv pip install --python venv/bin/python $(venv/bin/python nucleus/deps.py install-list core)
+
+# 2. postgres — a container (or point ASTRYX_DSN at any server you already run, 17+)
+docker run -d --name astryx-pg --restart unless-stopped \
+  -e POSTGRES_USER=astryx -e POSTGRES_PASSWORD=changeme -e POSTGRES_DB=astryx \
+  -p 127.0.0.1:5433:5432 -v astryx-pgdata:/var/lib/postgresql/data postgres:18
+echo "ASTRYX_DSN=postgres://astryx:changeme@127.0.0.1:5433/astryx" > .env && chmod 600 .env
+
+# 3. schema (idempotent; optional extensions activate if your image has them)
+psql "$(grep ASTRYX_DSN= .env | cut -d= -f2-)" -f nucleus/schema.sql
+
+# 4. the channel client (the wire's MCP server) + the observatory frontend
+(cd channel && npm install)
+(cd observatory/web && npm install && npm run build)
+
+# 5. your law, then the founding agent
+cp local.template.md local.md    # edit it — this is YOUR org's constitution
+nucleus/spawn.sh seed            # a tmux session ax-seed, alive on the wire
+
+# 6. services (observatory + the pulse — init.sh generates units/, or run by hand:)
+venv/bin/uvicorn observatory.api.main:app --port 8090 &
+# the pulse is the org's one clock — cron works too: * * * * * venv/bin/python nucleus/pulse.py
+
+# 7. say hello through the wire itself
+psql "$(grep ASTRYX_DSN= .env | cut -d= -f2-)" -c "INSERT INTO messages (from_agent, to_agent, intent, body)
+  VALUES ('owner','seed','task','Found the org my local.md describes.')"
+```
+
+Read the org directly anytime:
+`SELECT agent, kind, left(content,80) FROM steps ORDER BY id DESC LIMIT 20`.
+</details>
 
 ## How it works
 
