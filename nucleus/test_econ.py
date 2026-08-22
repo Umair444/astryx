@@ -22,9 +22,15 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-import psycopg  # noqa: E402
+try:
+    import psycopg  # noqa: E402
 
-from nucleus import econ  # noqa: E402
+    from nucleus import econ  # noqa: E402
+except ImportError as exc:
+    # a bare clone/CI runs the system python (no venv): the oracle cannot even load its
+    # instruments, let alone observe the substrate — SKIP, same law as the missing .env
+    print(f"SKIP: {exc} — this tree has no venv (fresh clone); the econ oracle needs the org runtime")
+    sys.exit(77)
 
 fails = []
 
