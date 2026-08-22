@@ -83,7 +83,20 @@
           "description": "Resolve one WhatsApp jid, phone number, or privacy @lid to who it is."
         }
       ]
+    },
+    {
+      "server": "imagegen",
+      "tools": [
+        {
+          "name": "generate",
+          "description": "Generate image(s) from a prompt via OpenAI. `models`: optional list of model ids \u2014"
+        },
+        {
+          "name": "list_models",
+          "description": "Image-capable model ids currently visible to the org's OpenAI key (live query)."
+        }
+      ]
     }
   ],
-  "total_tools": 16
+  "total_tools": 18
 }
