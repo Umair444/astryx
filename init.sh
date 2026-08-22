@@ -275,7 +275,7 @@ _act_pg() {
     say "starting postgres container astryx-pg"
     docker run -d --name astryx-pg --restart unless-stopped \
       -e POSTGRES_USER=astryx -e POSTGRES_PASSWORD="$pw" -e POSTGRES_DB=astryx \
-      -p 127.0.0.1:5433:5432 -v astryx-pgdata:/var/lib/postgresql/data postgres:17 >/dev/null
+      -p 127.0.0.1:5433:5432 -v astryx-pgdata:/var/lib/postgresql/data postgres:18 >/dev/null
     echo "ASTRYX_DSN=postgres://astryx:$pw@127.0.0.1:5433/astryx" > .env && chmod 600 .env
   else die "no .env and no docker — create the db yourself and write ASTRYX_DSN=... to .env"; fi; }
 

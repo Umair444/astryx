@@ -48,7 +48,9 @@ CREATE TABLE IF NOT EXISTS turns (
   model         text,
   stop_reason   text,
   raw_payload   jsonb   NOT NULL DEFAULT '{}'::jsonb,   -- verbatim: {"messages":[...],"usage":{...}}
-  messages      jsonb   GENERATED ALWAYS AS (raw_payload -> 'messages') VIRTUAL,  -- not stored
+  -- (a VIRTUAL generated `messages` column lived here briefly — PG18-only syntax that
+  --  broke every fresh PG17 install, caught by an outside reader. raw_payload->'messages'
+  --  and turns_v serve every consumer; STORED generated columns below are PG12+.)
   -- ACCOUNT USAGE SNAPSHOT. The Stop hook calls /api/oauth/usage once per turn (throttled)
   -- and writes the ALLOWLISTED projection here — dollar/spend fields are stripped upstream
   -- (nucleus/usage_refresh.USAGE_ALLOWLIST) because `turns` is wire-readable and local.md
@@ -82,7 +84,13 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 -- turns_v: the "generated but not stored" text — a view, because a generated
 -- COLUMN may not aggregate. response_text concatenates every assistant text block
 -- of the turn from the verbatim raw_payload; response_texts is one element per block.
-CREATE OR REPLACE VIEW turns_v AS
+-- DROP-then-CREATE, never OR REPLACE: the view snapshots t.* at creation, so any new
+-- turns column makes OR REPLACE fail with "cannot change name of view column".
+-- (Also migrate away the short-lived PG18-only VIRTUAL `messages` column, view first —
+--  the view depends on it.)
+DROP VIEW IF EXISTS turns_v;
+ALTER TABLE turns DROP COLUMN IF EXISTS messages;
+CREATE VIEW turns_v AS
 SELECT t.*,
   (SELECT string_agg(c->>'text', E'\n\n' ORDER BY mo, co)
      FROM jsonb_array_elements(t.raw_payload->'messages') WITH ORDINALITY AS m(msg, mo),
