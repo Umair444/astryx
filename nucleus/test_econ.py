@@ -64,6 +64,24 @@ def main():
         check("theil singleton is None (no inequality to measure)",
               econ.theil([7]) is None)
 
+        # trigger ROI: the demand half. roi must equal value - cost per row, value can
+        # come ONLY from shipped funded goals (with none shipped in-window, every
+        # value_reached is exactly 0 — the unpriced-market state market_decay guards on).
+        roi = econ.trigger_roi(conn)
+        check("trigger_roi returns rows", len(roi) > 0)
+        check("roi == value_reached - cost on every row",
+              all(int(r["roi"]) == int(r["value_reached"]) - int(r["cost"]) for r in roi))
+        shipped = econ._one(conn, "SELECT count(*) FROM goals WHERE done_at > now() - "
+                             "interval '30 days' AND budget_tokens > 0")
+        if int(shipped[0]) == 0:
+            check("unpriced market: all value_reached are 0 (nothing shipped in 30d)",
+                  all(int(r["value_reached"]) == 0 for r in roi))
+        else:
+            check("priced market: total value_reached <= total shipped budgets",
+                  sum(int(r["value_reached"]) for r in roi) <= int(econ._one(conn,
+                      "SELECT coalesce(sum(budget_tokens),0) FROM goals WHERE done_at > "
+                      "now() - interval '30 days'")[0]))
+
         # rollup self-consistency on yesterday (writes/updates one econ row)
         m = econ.rollup(conn)
         g, th, kk = m["G"], m["thermo"], m["K"]

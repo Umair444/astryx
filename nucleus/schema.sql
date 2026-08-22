@@ -256,6 +256,12 @@ CREATE TABLE IF NOT EXISTS triggers (
   last_fired timestamptz,
   next_fire  timestamptz NOT NULL DEFAULT now(),
   note       text,
+  -- THE INSURANCE PREMIUM (2026-08-22): tokens/30d someone is willing to pay for this
+  -- trigger to exist regardless of its ROI. A guard's value is disasters that did not
+  -- happen — structurally invisible to goal attribution — so guards survive by being
+  -- FUNDED (steward prices, owner's treasury pays), never by a category exemption.
+  -- premium=0 + persistent negative ROI = the market retires the trigger (market_decay).
+  premium    bigint NOT NULL DEFAULT 0,
   UNIQUE (agent, name)
 );
 CREATE INDEX IF NOT EXISTS triggers_due ON triggers (next_fire) WHERE enabled;

@@ -248,6 +248,7 @@ export interface EconLatest {
   thermo: EconThermo
   final_heat: { final_heat_phi: number }
   pnl: EconPnlRow[]
+  trigger_roi?: { agent: string; trigger: string; fires: number; cost: number; value_reached: number; roi: number }[]
   theil_burn: number | null
   productivity: EconProductivity
   integrity: EconIntegrity

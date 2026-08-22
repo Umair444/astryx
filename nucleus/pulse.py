@@ -151,6 +151,47 @@ def evaluate(t: dict, conn) -> tuple[str | None, dict]:
     return None, state
 
 
+def shed(due: list[dict], conn) -> list[dict]:
+    """MARKET-ORDERED LOAD SHEDDING (owner ruling 2026-08-22: no categorical priorities —
+    the ladder is priced, not declared). When the account's 5h window runs hot, the org
+    modulates its own intake flux like any dissipative structure:
+
+      >= 70%  triggers with archived trailing roi<0 AND premium=0 sleep — the market's
+              losers shed first, by their own numbers (newest econ row's trigger_roi)
+      >= 85%  only premium>0 triggers evaluate — what someone PAYS FOR is, by the
+              market's own definition, what must survive scarcity
+
+    Shedding skips THIS evaluation only (clocks already advanced); nothing is disabled,
+    nothing is messaged — the condition is visible in the observatory, and a shed tick
+    costs nothing, which is the point. Fail-open: no gauge or no econ row = no shedding."""
+    try:
+        g = conn.execute(
+            "SELECT usage_five_hour_pct FROM turns WHERE usage_state='fresh' "
+            "ORDER BY ended_at DESC LIMIT 1").fetchone()
+        pct = float(g[0]) if g and g[0] is not None else None
+        if pct is None or pct < 70:
+            return due
+        if pct >= 85:
+            kept = [t for t in due if int(t.get("premium") or 0) > 0]
+        else:
+            row = conn.execute(
+                "SELECT metrics->'trigger_roi' FROM econ ORDER BY day DESC LIMIT 1"
+            ).fetchone()
+            roi = row[0] if row else None
+            if isinstance(roi, str):
+                roi = json.loads(roi)
+            losers = {(r["agent"], r["trigger"]) for r in (roi or [])
+                      if int(r["roi"]) < 0}
+            kept = [t for t in due if int(t.get("premium") or 0) > 0
+                    or (t["agent"], t["name"]) not in losers]
+        for t in due:
+            if t not in kept:
+                print(f"shed {t['agent']}/{t['name']} (5h {pct:.0f}%)")
+        return kept
+    except Exception:
+        return due
+
+
 def tick():
     # LOCAL time, tz-aware: cron fields mean the server's own wall clock, so a
     # "3am review" is 3am wherever this org lives — never UTC (owner decree
@@ -160,10 +201,11 @@ def tick():
         reconcile(conn)
         with conn.transaction():
             due = conn.execute(
-                """SELECT id, agent, name, schedule, kind, check_src, state, note
+                """SELECT id, agent, name, schedule, kind, check_src, state, note, premium
                    FROM triggers WHERE enabled AND next_fire <= now()
                    ORDER BY next_fire FOR UPDATE SKIP LOCKED""").fetchall()
-            cols = ["id", "agent", "name", "schedule", "kind", "check_src", "state", "note"]
+            cols = ["id", "agent", "name", "schedule", "kind", "check_src", "state",
+                    "note", "premium"]
             due = [dict(zip(cols, r)) for r in due]
             for t in due:                          # advance clocks inside the claim
                 try:
@@ -175,6 +217,7 @@ def tick():
                     continue
                 conn.execute("UPDATE triggers SET next_fire=%s, last_eval=%s WHERE id=%s",
                              (nxt, now, t["id"]))
+        due = shed(due, conn)                      # market-ordered flux modulation
         for t in due:                              # evaluate outside the lock
             try:
                 fired, state = evaluate(t, conn)

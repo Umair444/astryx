@@ -802,6 +802,51 @@ function ThermoTab({ d }: { d: EconDissipative }) {
   )
 }
 
+/* trailing-30d trigger P&L — rows arrive sorted ascending by roi (biggest losers first) */
+function TriggerMarketCard({ rows }: { rows: NonNullable<EconLatest['trigger_roi']> }) {
+  const shown = rows.slice(0, 15)
+  const unpriced = rows.length > 0 && rows.every((r) => r.value_reached === 0)
+  return (
+    <div className="bg-deck-2 border border-line rounded-lg p-3">
+      <div className="text-[11px] uppercase tracking-wider text-ink-dim mb-2">Trigger market · trailing 30d</div>
+      {unpriced && (
+        <div className="text-[11px] text-ink-mute mb-2">
+          market unpriced — no funded goal has shipped in-window; ROI shows cost only and nothing is auto-retired
+        </div>
+      )}
+      <div className="text-[11px] text-ink-mute mb-2">
+        a trigger earns by its wakes reaching shipped funded goals; guards survive by premium, not ROI — persistent
+        roi&lt;0 with no premium is retired by market_decay
+      </div>
+      <table className="w-full text-[12px]">
+        <thead>
+          <tr className="text-left text-[10px] uppercase tracking-wider text-ink-dim">
+            <th className="font-normal pb-1">trigger</th>
+            <th className="font-normal pb-1 text-right">fires</th>
+            <th className="font-normal pb-1 text-right">cost</th>
+            <th className="font-normal pb-1 text-right">value reached</th>
+            <th className="font-normal pb-1 text-right">roi</th>
+          </tr>
+        </thead>
+        <tbody>
+          {shown.map((r) => (
+            <tr key={`${r.agent}/${r.trigger}`}>
+              <td className="py-0.5 text-ink truncate max-w-[200px]">{r.agent}/{r.trigger}</td>
+              <td className="py-0.5 text-right font-mono text-ink-mute">{r.fires}</td>
+              <td className="py-0.5 text-right font-mono text-ink-mute">{fmtTokens(r.cost)}</td>
+              <td className="py-0.5 text-right font-mono text-ink-mute">{fmtTokens(r.value_reached)}</td>
+              <td className="py-0.5 text-right font-mono" style={{ color: r.roi < 0 ? ROSE : GREEN }}>
+                {fmtSigned(r.roi)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {!rows.length && <div className="text-xs text-ink-mute">no trigger fires in window — the daily econ job writes ROI rows</div>}
+    </div>
+  )
+}
+
 /* ── Market — per-agent P&L, concentration, attribution ────────────────────────────── */
 function MarketTab({ d }: { d: EconDissipative }) {
   const L = d.latest
@@ -854,6 +899,8 @@ function MarketTab({ d }: { d: EconDissipative }) {
           {!pnl.length && <div className="text-xs text-ink-mute">no P&L rows yet — the daily econ job writes them</div>}
         </div>
       </div>
+
+      <TriggerMarketCard rows={L?.trigger_roi ?? []} />
 
       <div className="bg-deck-2 border border-line rounded-lg p-3 text-[11px] text-ink-mute leading-relaxed">
         <span className="text-ink-dim uppercase tracking-wider text-[11px]">value law</span> — value enters only at

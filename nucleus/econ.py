@@ -206,6 +206,59 @@ def productivity(conn, days=30) -> dict:
             "window_days": days}
 
 
+def trigger_roi(conn, days=30) -> list[dict]:
+    """The demand half of the trigger economy: what did each trigger's wakes LEAD TO,
+    minus what its fires cost. Firing is production, not sales — a cron line proves
+    nothing — so value is traced from the wake to the boundary, two hops:
+
+      hop 1: the wake turn itself carries goal_id (a plan-thread nudge)
+      hop 2: the wake turn SENT messages into a goal thread (messages.turn_id -> thread)
+
+    and only goals that SHIPPED (done_at set) count, at their budget, shared equally
+    among the distinct wake-turns that touched them (first-order attribution, stated:
+    no Shapley, no deeper causality — a trigger that starts a chain three turns long
+    is under-credited today, which errs toward killing triggers LATE, the safe
+    direction, because the decay actuator also requires premium=0).
+
+    A guard's ROI is structurally <= 0 (its value is disasters that did not happen);
+    guards survive via triggers.premium, never via this number."""
+    return _all(conn, f"""
+        WITH wakes AS (
+          SELECT t.id, t.agent,
+                 (regexp_match(t.input_prompt, '\\[trigger ([a-z0-9_.-]+)\\]'))[1] AS trig,
+                 {BILL} AS cost, t.goal_id
+          FROM turns t
+          WHERE t.source='trigger' AND t.input_prompt ~ '\\[trigger '
+            AND t.ended_at > now() - interval '{int(days)} days'),
+        touched AS (                       -- (wake turn, goal) pairs, both hops, deduped
+          SELECT DISTINCT w.id AS turn_id, w.agent, w.trig, g.id AS goal_id,
+                 g.budget_tokens
+          FROM wakes w
+          JOIN LATERAL (
+            SELECT w.goal_id AS gid
+            UNION
+            SELECT (regexp_match(m.thread, '^(?:plan|goal)-(\\d+)$'))[1]::bigint
+            FROM messages m WHERE m.turn_id = w.id
+              AND m.thread ~ '^(?:plan|goal)-\\d+$'
+          ) hops ON hops.gid IS NOT NULL
+          JOIN goals g ON g.id = hops.gid AND g.done_at IS NOT NULL
+                       AND g.budget_tokens > 0),
+        credit AS (                        -- a shipped budget splits over its wake-turns
+          SELECT agent, trig,
+                 sum(budget_tokens / cnt)::bigint AS value_reached
+          FROM (SELECT t.*, count(*) OVER (PARTITION BY goal_id) AS cnt
+                FROM touched t) x
+          GROUP BY 1, 2)
+        SELECT w.agent, w.trig AS trigger, count(*) AS fires,
+               sum(w.cost)::bigint AS cost,
+               coalesce(max(c.value_reached), 0)::bigint AS value_reached,
+               (coalesce(max(c.value_reached), 0) - sum(w.cost))::bigint AS roi
+        FROM wakes w
+        LEFT JOIN credit c ON c.agent = w.agent AND c.trig = w.trig
+        WHERE w.trig IS NOT NULL
+        GROUP BY 1, 2 ORDER BY roi ASC""")
+
+
 def integrity(conn, since, until) -> dict:
     """The Goodhart panel: every metric's exploit, with its detector. A detector that
     cannot fire is decoration — each one names its denominator."""
@@ -261,6 +314,7 @@ def rollup(conn, day: str | None = None) -> dict:
         "pnl": flows,
         "theil_burn": theil(burn_shares),
         "productivity": productivity(conn),
+        "trigger_roi": trigger_roi(conn),
         "integrity": integrity(conn, since, until),
     }
     from psycopg.types.json import Jsonb
