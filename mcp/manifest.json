@@ -96,7 +96,24 @@
           "description": "Image-capable model ids currently visible to the org's OpenAI key (live query)."
         }
       ]
+    },
+    {
+      "server": "channels",
+      "tools": [
+        {
+          "name": "contact_search",
+          "description": "Find people across your channels (or one, via channel=\"telegram\"). Returns"
+        },
+        {
+          "name": "contact_resolve",
+          "description": "Resolve one channel-qualified handle (e.g. \"whatsapp:<jid>\") to who it is."
+        },
+        {
+          "name": "list_chats",
+          "description": "List conversations across your channels (or one). Returns send-ready handles."
+        }
+      ]
     }
   ],
-  "total_tools": 18
+  "total_tools": 21
 }

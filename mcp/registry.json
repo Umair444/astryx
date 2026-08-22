@@ -28,5 +28,11 @@
   "args": [
    "mcp/imagegen/server.py"
   ]
+ },
+ "channels": {
+  "command": "venv/bin/python",
+  "args": [
+   "mcp/channels/server.py"
+  ]
  }
 }
