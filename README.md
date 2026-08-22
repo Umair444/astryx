@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/hero.png" alt="ASTRYX — the internet of agents" width="100%" />
+<img src="docs/assets/hero.png" alt="ASTRYX — the internet of agents" width="70%" />
 
 # ASTRYX
 
