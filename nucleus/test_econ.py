@@ -36,7 +36,23 @@ def check(name, ok, detail=""):
 
 
 def main():
-    with psycopg.connect(econ._dsn(), connect_timeout=5) as conn:
+    # CLONE-SKIP (house law: a SKIP is not a PASS, and not a FAIL): this oracle's substrate
+    # is the live org DB, reached via the gitignored .env. In a fresh clone (CI, the push
+    # gate) neither exists — the gate cannot OBSERVE what it covers, so it names itself
+    # SKIPPED at 77 rather than red (which would block every normal clone) or green
+    # (which would vouch for nothing).
+    try:
+        dsn = econ._dsn()
+    except Exception:
+        print("SKIP: no .env in this tree (fresh clone) — the econ oracle needs the live org DB")
+        return 77
+    try:
+        probe = psycopg.connect(dsn, connect_timeout=5)
+    except Exception as exc:
+        print(f"SKIP: org DB unreachable ({type(exc).__name__}) — cannot observe the substrate")
+        return 77
+    probe.close()
+    with psycopg.connect(dsn, connect_timeout=5) as conn:
         now = datetime.now(timezone.utc)
         since = (now - timedelta(days=7)).isoformat()
         until = now.isoformat()
