@@ -5,6 +5,7 @@ import { saveObsKey } from './api'
 import { StoreProvider, useStore } from './store'
 import Sidebar from './components/Sidebar'
 import NetworkView from './components/NetworkView'
+import PeopleView from './components/PeopleView'
 import WireView from './components/WireView'
 import GoalsView from './components/GoalsView'
 import EconomyView from './components/EconomyView'
@@ -17,6 +18,7 @@ import VegaChat from './components/VegaChat'
 
 export type Route =
   | { tab: 'network' }
+  | { tab: 'agents' }
   | { tab: 'wire'; thread?: string }
   | { tab: 'goals' }
   | { tab: 'economy' }
@@ -28,6 +30,7 @@ export type Route =
 function parseHash(): Route {
   const h = location.hash.replace(/^#\/?/, '')
   const [tab, a] = h.split('/').map((s) => (s ? decodeURIComponent(s) : s))
+  if (tab === 'agents') return { tab: 'agents' }
   if (tab === 'wire') return { tab: 'wire', thread: a || undefined }
   if (tab === 'goals') return { tab: 'goals' }
   if (tab === 'economy') return { tab: 'economy' }
@@ -46,6 +49,7 @@ export function nav(r: Route) {
 
 const TABS: { key: Route['tab']; label: string; icon: string }[] = [
   { key: 'network', label: 'Network', icon: '☉' },
+  { key: 'agents', label: 'Agents', icon: '◍' },
   { key: 'wire', label: 'Wire', icon: '✦' },
   { key: 'goals', label: 'Goals', icon: '◎' },
   { key: 'economy', label: 'Economy', icon: '⬡' },
@@ -240,6 +244,7 @@ function Shell() {
           ) : (
             <>
               {route.tab === 'network' && <NetworkView onOpenAgent={setAgentOpen} />}
+              {route.tab === 'agents' && <PeopleView />}
               {route.tab === 'wire' && <WireView route={route} onOpenAgent={setAgentOpen} />}
               {route.tab === 'goals' && <GoalsView />}
               {route.tab === 'economy' && <EconomyView />}
