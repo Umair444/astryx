@@ -5,7 +5,7 @@
 # recurring friction is a capability, not a "be more careful" rule (seed night-review,
 # 2026-07-22 — the owner's capability-over-constraint steer, applied to myself).
 set -euo pipefail
-ROOT=/home/umair/astryx
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 what=${1:-all}
 
 build_web() {

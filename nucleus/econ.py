@@ -1,4 +1,4 @@
-#!/home/umair/astryx/venv/bin/python
+#!/usr/bin/env python3
 """ASTRYX · econ — the org as a dissipative structure, measured (owner design, 2026-08-22).
 
 Astryx is a communication system that works because of the economic principles in its core.

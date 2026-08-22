@@ -1,4 +1,4 @@
-#!/home/umair/astryx/venv/bin/python
+#!/usr/bin/env python3
 """ASTRYX · station — invoke a STATIONED agent as a stateless API (`claude -p`).
 
 A stationed agent (charter `Type: stationed`) is not a citizen; it is a function. It has

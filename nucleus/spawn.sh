@@ -4,7 +4,7 @@
 # inputs a resident ever receives are channel events. Boot dialogs are the sole send-keys
 # exception, and only until the CLI ships non-interactive acceptance.)
 set -euo pipefail
-ROOT=/home/umair/astryx
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 AGENT=${1:?usage: spawn.sh <agent>}
 # A charter is agents/<name>.md at any depth: composites are directories, a
 # self-form agent is agents/<name>/<name>.md, members live inside composite dirs
@@ -51,7 +51,8 @@ if ! tmux has-session -t "=ax-$AGENT" 2>/dev/null; then
 fi
 SESS="ax-$AGENT"
 HOME_D="$ROOT/homes/$AGENT"
-NODE=/home/umair/.local/share/mise/installs/node/26.2.0/bin/node
+NODE=${ASTRYX_NODE:-$(command -v node || true)}
+[ -n "$NODE" ] || { echo "spawn: node not found on PATH (set ASTRYX_NODE)"; exit 1; }
 
 # Default heartbeat: every agent wakes on its own rhythm (charter line
 # "Heartbeat: <cron>", default daily 09:00) and retunes it with trigger_set.
@@ -155,7 +156,10 @@ tmux new-session -d -s "$SESS" -c "$HOME_D"
 # --strict-mcp-config + explicit --mcp-config: a resident's world is EXACTLY its
 # own .mcp.json, nothing inherited. (strict alone ignores even the project file —
 # that deafened the whole org once; the explicit flag is load-bearing.)
-tmux send-keys -t "=$SESS:" "claude ${RESUME}--model $MODEL $PERMFLAG --strict-mcp-config --mcp-config $HOME_D/.mcp.json --dangerously-load-development-channels server:astryx" Enter
+# ASTRYX_CLI: the harness is swappable — any CLI that speaks the same flags (claude,
+# a fork, a wrapper that maps them). The org is agents-on-terminals, not a framework.
+CLI=${ASTRYX_CLI:-claude}
+tmux send-keys -t "=$SESS:" "$CLI ${RESUME}--model $MODEL $PERMFLAG --strict-mcp-config --mcp-config $HOME_D/.mcp.json --dangerously-load-development-channels server:astryx" Enter
 
 # boot-dialog drain (research-preview channel confirmation + any first-run dialogs)
 for i in $(seq 1 30); do

@@ -1,4 +1,4 @@
-#!/home/umair/astryx/venv/bin/python
+#!/usr/bin/env python3
 """ASTRYX step + turn writer. Every agent action lands in pg. Fail-silent, never blocks.
 Wired as PreToolUse + PostToolUse + Stop hooks in each home's settings.json.
 
@@ -18,7 +18,7 @@ nothing else reads it — every consumer reads the tables.
 import json, os, re, sys
 from datetime import datetime, timezone
 
-REPO = "/home/umair/astryx"
+REPO = str(__import__("pathlib").Path(__file__).resolve().parent.parent)
 DSN_FILE = REPO + "/.env"
 sys.path.insert(0, REPO)                 # so the Stop hook can reuse nucleus.usage_refresh
 

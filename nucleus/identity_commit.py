@@ -30,7 +30,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path("/home/umair/astryx")
+ROOT = Path(__file__).resolve().parents[1]
 AGENTS = ROOT / "agents"
 
 CORE_LINE = re.compile(r"^(Model|Grants|Rank|Heartbeat|Stationed):", re.M)

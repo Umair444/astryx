@@ -161,8 +161,11 @@ async def ingest(request: Request):
             "lat": rec["lat"], "lon": rec["lon"]}
 
 
-PRESENCE_FILE = "/home/umair/genesis/org/presence.json"
-SAY = "/home/umair/genesis/tools/say"
+# Legacy GENESIS integration (the predecessor org on the owner's machine). Both paths
+# are optional: absent = the presence/announce features quietly no-op, so a fresh install
+# carries no dependency on another repo. Point them elsewhere via env if you have one.
+PRESENCE_FILE = os.environ.get("GENESIS_PRESENCE", "/home/umair/genesis/org/presence.json")
+SAY = os.environ.get("GENESIS_SAY", "/home/umair/genesis/tools/say")
 
 
 async def update_presence(lat: float, lon: float) -> None:

@@ -1,4 +1,4 @@
-#!/home/umair/astryx/venv/bin/python
+#!/usr/bin/env python3
 """Gates for nucleus/escalation.py — the consumption-aware escalation facility (#2457).
 
 Exit 0 pass · 1 fail · 77 a gate could not run.

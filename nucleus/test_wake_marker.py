@@ -1,4 +1,4 @@
-#!/home/umair/astryx/venv/bin/python
+#!/usr/bin/env python3
 """Gates for nucleus/wake_marker.py — the ONE definition of "was this wake consumed".
 
 Exit 0 pass · 1 fail · 77 a gate could not run.

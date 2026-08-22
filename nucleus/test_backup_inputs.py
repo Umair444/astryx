@@ -1,4 +1,4 @@
-#!/home/umair/astryx/venv/bin/python
+#!/usr/bin/env python3
 """Every gitignored INPUT is captured by the backup — the class, not the instance.
 
 THE DEFECT THIS EXISTS FOR, THREE TIMES NOW. `backups/*.state.tgz` carries the state that

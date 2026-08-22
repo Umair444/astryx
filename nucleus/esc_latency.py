@@ -1,4 +1,4 @@
-#!/home/umair/astryx/venv/bin/python
+#!/usr/bin/env python3
 """Is MIN_QUIET_H a calibrated floor or an unmeasured hope? (goal #2457)
 
     venv/bin/python nucleus/esc_latency.py [--days 30] [--floor 6]

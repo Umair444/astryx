@@ -1,4 +1,4 @@
-#!/home/umair/astryx/venv/bin/python
+#!/usr/bin/env python3
 """ASTRYX · senses — the afferent nervous system (owner design, 2026-08-21).
 
 The org has TWO nervous systems, and they are twins:

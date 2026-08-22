@@ -21,7 +21,7 @@ import json
 import os
 import sys
 
-REPO = "/home/umair/astryx"
+REPO = str(__import__("pathlib").Path(__file__).resolve().parent.parent)
 
 try:
     payload = json.load(sys.stdin)

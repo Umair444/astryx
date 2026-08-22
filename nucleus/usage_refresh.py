@@ -1,4 +1,4 @@
-#!/home/umair/astryx/venv/bin/python
+#!/usr/bin/env python3
 """The ONE module in this estate that reads the Claude Code OAuth credential.
 
 HISTORY. Born as a 5-minute systemd-timer poller writing var/usage_cache.json (goal

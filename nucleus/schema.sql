@@ -1,4 +1,11 @@
 -- ASTRYX schema v0 — the wire's truth. Six tables, no more until pain demands them.
+-- OPTIONAL EXTENSIONS, activated when the server image carries them (stock postgres:17
+-- does not; pgvector/postgis/apache-age images do). Absence is fine — nothing in the core
+-- schema depends on them; they are the substrate for the memory RAG / geo / graph organs.
+DO $$ BEGIN CREATE EXTENSION IF NOT EXISTS vector;  EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'pgvector unavailable (ok)'; END $$;
+DO $$ BEGIN CREATE EXTENSION IF NOT EXISTS postgis; EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'postgis unavailable (ok)'; END $$;
+DO $$ BEGIN CREATE EXTENSION IF NOT EXISTS age;     EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'age unavailable (ok)'; END $$;
+
 -- db: astryx (in genesis-pg). Apply: psql "$ASTRYX_DSN" -f schema.sql
 
 CREATE TABLE IF NOT EXISTS steps (

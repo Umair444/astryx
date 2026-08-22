@@ -15,7 +15,7 @@
 # restart-sweep law: don't refresh an agent mid-task or watching an imminent event);
 # this tool only does the mechanics correctly once you've decided.
 set -uo pipefail
-ROOT=/home/umair/astryx
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Naive-path guard: accept a bare name OR a tree/home path (an uninstructed caller may
 # pass 'agents/canopus/canopus.md' or the stem). Normalise to a stem, then resolve

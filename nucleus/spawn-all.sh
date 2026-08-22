@@ -11,7 +11,7 @@
 # feeding each to spawn.sh is safe, re-runnable, and needs no separate list to drift.
 # Also runnable by hand any time: ./nucleus/spawn-all.sh
 set -uo pipefail
-ROOT=/home/umair/astryx
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 # Residents' channel servers need the org's postgres (docker container, ~50s to
