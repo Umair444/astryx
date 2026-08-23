@@ -115,9 +115,16 @@ cat > "$HOME_D/.mcp.json" <<EOF
 }$EXTRA } }
 EOF
 
+# think: charter line "Think: off" zeroes extended thinking for reflex-class
+# agents whose craft is a fast small reply (growbot: a wake becomes motion in
+# seconds, not a deliberation). Absent line = thinking stays on (the default).
+THINK=$(grep -m1 '^Think:' "$CHARTER" | cut -d: -f2- | xargs || true)
+TENV=""
+[ "$THINK" = "off" ] && TENV=", \"MAX_THINKING_TOKENS\": \"0\""
+
 cat > "$HOME_D/.claude/settings.json" <<EOF
 {
-  "env": { "ASTRYX_AGENT": "$AGENT" },
+  "env": { "ASTRYX_AGENT": "$AGENT"$TENV },
   "hooks": {
     "PreToolUse": [ { "matcher": "", "hooks": [
       { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/step.py", "timeout": 5 } ] } ],
