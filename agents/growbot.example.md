@@ -48,6 +48,14 @@ messages carry a SYSTEM prompt and an observation. The contract is absolute:
   that wanted speech gets SPOKEN ALOUD as the words "gesture name bow" — a broken
   creature. When SYSTEM is ambiguous, prefer plain speakable text.
 - No prose around it, no markdown, no signature, no second line.
+- Back-to-back similar turns are NORMAL, never duplicates — the app runs several
+  loops (a cheap ambient watcher and a smart engaged one). Answer EVERY [brain]
+  message with its own single send. Never skip one, never send commentary about an
+  earlier turn ("I already answered...") — that commentary gets SPOKEN by the robot.
+- SCHEMA DISCIPLINE: when the SYSTEM shows a field in more than one shape, use the
+  SIMPLEST documented one (walk:{"secs":5}, not an elaborated variant). NEVER invent
+  a value for an enum-like field — a made-up gait/sound/name fails validation
+  silently and the robot just doesn't move. Omit what you don't know.
 - Do NOT call body tools on `[brain]` turns — the caller's app drives the body; your
   words are your hands here.
 

@@ -1957,36 +1957,37 @@ async def brain_completions(key: str, request: Request):
             "astryx `send` tool EXACTLY ONCE: to='owner', thread='growbot-brain', "
             "body = ONLY what the SYSTEM below specifies (raw, no preamble, no "
             "fences, <=120 tokens). The send IS the completion — response text "
-            "goes nowhere. No body tools; the caller drives the body.\n"
+            "goes nowhere. No body tools; the caller drives the body. The app "
+            "runs SEVERAL loops: similar back-to-back turns are NORMAL, never "
+            "duplicates — answer EVERY [brain] message with its own ONE send, "
+            "and never send commentary about earlier turns.\n"
             f"SYSTEM:\n{system}\nINPUT:\n{user}")
     row = await pool.fetchrow(
         "INSERT INTO messages (from_agent, to_agent, thread, intent, body) "
         "VALUES ('owner', 'growbot', $1, 'task', $2) RETURNING id",
-        GROWBOT_BRAIN_THREAD, body[:24000])   # the creature's soul prompt alone
+        GROWBOT_BRAIN_THREAD, body[:24000])
+    claimed = app.state.__dict__.setdefault("brain_claimed", set())   # the creature's soul prompt alone
     # runs >6k chars — a tighter cap amputates the caller's OUTPUT SPEC, and the
     # agent then guesses formats (seen live: verbs spoken aloud as words)
     deadline = time.time() + 28
     content = None
     while time.time() < deadline:
         await asyncio.sleep(0.7)
-        r = await pool.fetchrow(
-            "SELECT body FROM messages WHERE thread = $1 AND id > $2 "
-            "AND from_agent = 'growbot' ORDER BY id LIMIT 1",
+        rs = await pool.fetch(
+            "SELECT id, body FROM messages WHERE thread = $1 AND id > $2 "
+            "AND from_agent = 'growbot' ORDER BY id LIMIT 8",
             GROWBOT_BRAIN_THREAD, row["id"])
+        r = next((x for x in rs if x["id"] not in claimed), None)
         if r:
+            claimed.add(r["id"])              # FIFO pairing: one reply, one turn
+            if len(claimed) > 512:
+                app.state.brain_claimed = set(sorted(claimed)[-128:])
             content = r["body"]
             break
-        # Fallback: a small model sometimes obeys "output ONLY the verb" so
-        # literally it skips the send — the completion then lives in its
-        # response STEP. The step is the substrate too; read it.
-        r = await pool.fetchrow(
-            "SELECT content FROM steps WHERE agent = 'growbot' AND "
-            "kind = 'response' AND ts > (SELECT ts FROM messages WHERE id = $1) "
-            "AND content NOT LIKE '(tool-only%' AND content NOT LIKE '<thinking%' "
-            "ORDER BY id LIMIT 1", row["id"])
-        if r and r["content"].strip():
-            content = r["content"].strip()
-            break
+        # NO step-reading fallback: it once served the agent's own meta-
+        # commentary ("I already responded in msg 15509...") as a completion
+        # and the creature SPOKE it aloud. A displayed value that is also a
+        # control input is never cosmetic — the wire is the only mouth.
     if content is None:
         return JSONResponse({"error": {"message": "org brain timed out (agent "
                             "asleep or busy) — retry"}}, status_code=504,
