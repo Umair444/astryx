@@ -178,8 +178,13 @@ EOF
   # ── 3b. growbot body — the org's PHYSICAL body (a GrowBot Pico on USB serial) ─
   # Presence signal = the body host organ + a LIVE charter granting the growbot
   # hands (.example.md excluded: shipping the example must not grow a servo
-  # service in an org that owns no robot).
+  # service in an org that owns no robot). And ONLY for a local body: astryx is
+  # an extension of the open GrowBot protocol, not a fork — a GROWBOT_BODY_URL
+  # in .env pointing at a remote body (Brit's own Wi-Fi firmware on a Pico W)
+  # means the chip serves the protocol itself and no host service must run.
+  gb_url=$(grep -m1 '^GROWBOT_BODY_URL=' .env 2>/dev/null | cut -d= -f2-)
   if [ -f nucleus/growbot_body.py ] && \
+     { [ -z "$gb_url" ] || echo "$gb_url" | grep -qE '127\.0\.0\.1|localhost'; } && \
      grep -rqsE '^Grants:.*\bgrowbot\b' --exclude='*.example.md' agents/; then
     cat > "$UD/astryx-growbot.service" <<EOF
 [Unit]

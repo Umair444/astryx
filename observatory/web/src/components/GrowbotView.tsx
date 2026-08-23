@@ -13,7 +13,8 @@ import type { Msg } from '../types'
 type Stats = {
   set_n: number; deadman: number; ws_rx: number; moving: boolean
   act: { active: boolean; queued_ms: number }
-  up_s: number; serial: boolean
+  up_s: number
+  serial?: boolean // USB body-host extension; Brit's Wi-Fi firmware omits it
 }
 
 async function gb(path: string, opts?: { method?: string; json?: unknown }): Promise<{ status: number; text: string; ms: number }> {
@@ -155,6 +156,9 @@ export default function GrowbotView() {
   }
 
   const online = !!stats
+  // "serial" is the USB body host's extension key. A body that answers /stats
+  // WITHOUT it is Brit's own Wi-Fi firmware — linked by definition (it answered).
+  const wifiBody = !!stats && !('serial' in stats)
   const serialUp = !!stats?.serial
 
   return (
@@ -164,7 +168,7 @@ export default function GrowbotView() {
           <div className="text-lg font-bold text-ink">growbot</div>
           <div className="text-xs text-ink-mute leading-relaxed">
             a <a className="text-cyan-soft hover:underline" href="https://github.com/britcruise9/GrowBot" target="_blank" rel="noreferrer">GrowBot</a> body
-            on the astryx wire — two servos, a Pico on USB, the org for a brain
+            on the astryx wire — two servo legs, a Pico for a spine, the org for a brain
           </div>
         </div>
 
@@ -175,8 +179,8 @@ export default function GrowbotView() {
             body host {online ? 'up' : 'down'}
           </span>
           <span className="flex items-center gap-1.5">
-            <span className={`w-2 h-2 rounded-full ${serialUp ? 'bg-emerald-400' : 'bg-ink-mute/40'}`} />
-            pico serial {serialUp ? 'linked' : 'unplugged'}
+            <span className={`w-2 h-2 rounded-full ${serialUp || wifiBody ? 'bg-emerald-400' : 'bg-ink-mute/40'}`} />
+            {wifiBody ? 'wi-fi body' : `pico serial ${serialUp ? 'linked' : 'unplugged'}`}
           </span>
           {stats && (
             <>

@@ -22,11 +22,29 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
-BODY = os.environ.get("GROWBOT_BODY_URL", "http://127.0.0.1:8470")
+REPO = Path(__file__).resolve().parents[2]
+
+
+def _body_url() -> str:
+    # astryx extends the GrowBot protocol, it never forks the body: the URL may
+    # name Brit's own Wi-Fi firmware on a Pico W, or the local USB body host.
+    if os.environ.get("GROWBOT_BODY_URL"):
+        return os.environ["GROWBOT_BODY_URL"].rstrip("/")
+    try:
+        for line in (REPO / ".env").read_text().splitlines():
+            if line.startswith("GROWBOT_BODY_URL="):
+                return line.split("=", 1)[1].strip().rstrip("/")
+    except OSError:
+        pass
+    return "http://127.0.0.1:8470"
+
+
+BODY = _body_url()
 
 mcp = FastMCP("growbot")
 

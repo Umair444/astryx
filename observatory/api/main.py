@@ -1860,12 +1860,16 @@ class RouteSet(BaseModel):
 
 
 # ------------------------------------------------------------ growbot body
-# The GrowBot tab's lever on the physical body (astryx-growbot.service, :8470 —
-# nucleus/growbot_body.py -> USB serial -> the Pico). A thin allowlisted proxy:
-# the observatory stays the one door the browser knows, and the global /api/*
-# owner gate covers moving real servos. The ask box does NOT come through here —
-# choreography rides the wire (POST /api/messages -> the growbot agent -> MCP).
-GROWBOT_BODY = os.environ.get("GROWBOT_BODY_URL", "http://127.0.0.1:8470")
+# The GrowBot tab's lever on the physical body. astryx is an EXTENSION of the
+# open GrowBot protocol, never a fork of its code: the body is whatever speaks
+# the protocol at GROWBOT_BODY_URL — Brit's own unmodified Wi-Fi firmware on a
+# Pico W (~/growbot, `git pull` + reflash and astryx needs nothing), or the
+# local USB body host (astryx-growbot.service :8470) for radio-less Picos.
+# A thin allowlisted proxy: the observatory stays the one door the browser
+# knows, and the global /api/* owner gate covers moving real servos. The ask
+# box does NOT come through here — choreography rides the wire (POST
+# /api/messages -> the growbot agent -> MCP).
+GROWBOT_BODY = (_env("GROWBOT_BODY_URL") or "http://127.0.0.1:8470").rstrip("/")
 GROWBOT_PATHS = {"stats", "act", "stop", "pose", "set", "routine", "servo", "seq"}
 
 

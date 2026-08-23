@@ -29,14 +29,39 @@ wakes an agent, the agent authors keyframes (it knows the body's mirror geometry
 its charter), the body glides. The reply comes back on the same thread. Every hop is a
 row — auditable like everything else on the wire.
 
-## Why USB serial
+## Extension, never a fork
 
-The reference GrowBot body is a Wi-Fi Pico 2 W. This port needs **no radio and no
-carrier board** — useful where the Pico W and Waveshare boards simply aren't sold. The
-chip stays deliberately dumb (apply the latest pose, limp when the line goes quiet);
-the host runs the glide engine and speaks the standard protocol, so Brit's own
-`conformance.html` passes against it unchanged — and the GrowBot tab embeds those same
-conformance checks, live.
+The law of this integration: **astryx couples to GrowBot only at the open protocol,
+never at the code.** The body is whatever answers `GROWBOT_BODY_URL` with the protocol;
+astryx keeps zero copies of upstream code (also what keeps licensing clean — GrowBot is
+PolyForm-NC, astryx implements the published spec). Upstream moving is therefore free:
+`git pull` in the GrowBot checkout, reflash the chip Brit's documented way, and nothing
+in astryx changes — the conformance suite is the contract, and the GrowBot tab runs it
+live against whatever body is attached.
+
+### Wi-Fi body (the reference path — Pico W / Pico 2 W)
+
+Brit's own firmware, unmodified, from a plain checkout of his repo (e.g. `~/growbot`):
+
+1. Flash `firmware/micropython-pico2w.uf2` (BOOTSEL drag-drop), then from `firmware/`:
+   `mpremote cp PicoRobotics_gpio.py :PicoRobotics.py && mpremote cp act_engine.py :act_engine.py && mpremote cp robot-server.py :main.py && mpremote reset`
+   (direct-wired servos on GP0/GP1; use `PicoRobotics.py` instead for a carrier board)
+2. On a phone, join the **`GrowBot-Setup`** hotspot → `http://192.168.4.1` → pick your
+   home Wi-Fi. The chip reboots onto the LAN and serves the protocol on port 80.
+3. In astryx `.env`: `GROWBOT_BODY_URL=http://<pico-ip>` → restart the observatory,
+   clean-restart the growbot agent (MCP reads the URL at spawn). Done — the tab, the
+   agent, and the MCP hands all follow the pointer. `init.sh` sees the remote URL and
+   generates no local body service.
+4. Updates forever after: `cd ~/growbot && git pull`, redo step 1. astryx untouched.
+
+### USB-serial body (the astryx port — radio-less Picos)
+
+The reference body needs a Wi-Fi chip. Where a Pico W or carrier board can't be had,
+this port runs the protocol host-side over USB with **no radio and no extra boards**:
+the chip stays deliberately dumb (apply the latest pose, limp when the line goes
+quiet); the host runs the glide engine and speaks the standard protocol, so Brit's
+`conformance.html` passes against it unchanged. It also makes a fine dev body — the
+whole brain stack was built and proven on it before any Wi-Fi hardware existed.
 
 ## Safety is engine-owned
 
