@@ -30,7 +30,7 @@ from uuid import UUID
 import asyncpg
 import psutil
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -1876,6 +1876,90 @@ class RouteSet(BaseModel):
 def growbot_body() -> str:
     return (_env("GROWBOT_BODY_URL") or "http://127.0.0.1:8470").rstrip("/")
 GROWBOT_PATHS = {"stats", "act", "stop", "pose", "set", "routine", "servo", "seq"}
+
+
+# ------------------------------------------------ the org as an OpenAI endpoint
+# GrowBot's /tester/custom.html (Brit's packaged controller) accepts ONE field:
+# an OpenAI-compatible base URL — GET {base}/models to discover, then a drive
+# loop of POST {base}/chat/completions (max_tokens 120; his SafeBody gateway
+# clamps whatever comes back). This surface makes the ORG that endpoint: a
+# completion request becomes a wire message to the growbot agent, its reply
+# becomes the completion. Brit's interface, astryx for a brain — coupling only
+# at his published contract, per the extension law.
+#
+# Gate: his page sends NO auth header, so the key rides the PATH —
+#   https://<tunnel>/brain/<OBS_KEY>/v1
+# (an open tunneled endpoint would let anyone on the internet spend org turns).
+# CORS is explicit here because these routes serve a foreign https origin.
+GROWBOT_BRAIN_THREAD = "growbot-brain"
+BRAIN_CORS = {"Access-Control-Allow-Origin": "*",
+              "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+              "Access-Control-Allow-Headers": "*",
+              "Access-Control-Max-Age": "86400"}
+
+
+def _brain_gate(key: str) -> bool:
+    return bool(OBS_KEY) and secrets.compare_digest(key, OBS_KEY)
+
+
+@app.api_route("/brain/{key}/v1/models", methods=["GET", "OPTIONS"])
+async def brain_models(key: str, request: Request):
+    if request.method == "OPTIONS":
+        return Response(status_code=204, headers=BRAIN_CORS)
+    if not _brain_gate(key):
+        return Response(status_code=403, headers=BRAIN_CORS)
+    return JSONResponse({"object": "list", "data": [
+        {"id": "astryx-growbot", "object": "model", "owned_by": ORG}]},
+        headers=BRAIN_CORS)
+
+
+@app.api_route("/brain/{key}/v1/chat/completions", methods=["POST", "OPTIONS"])
+async def brain_completions(key: str, request: Request):
+    if request.method == "OPTIONS":
+        return Response(status_code=204, headers=BRAIN_CORS)
+    if not _brain_gate(key):
+        return Response(status_code=403, headers=BRAIN_CORS)
+    try:
+        req = json.loads(await request.body())
+        msgs = req.get("messages", [])
+        system = next((m["content"] for m in msgs if m.get("role") == "system"), "")
+        user = next((m["content"] for m in reversed(msgs)
+                     if m.get("role") == "user"), "")
+    except Exception:
+        return JSONResponse({"error": {"message": "bad request"}}, status_code=400,
+                            headers=BRAIN_CORS)
+    body = ("[brain] You are the EXTERNAL BRAIN behind an OpenAI-compatible "
+            "endpoint — your reply text IS the completion, played by the "
+            "caller's own gateway. Reply with ONLY what the SYSTEM prompt "
+            "specifies (raw, no preamble, no fences, <=120 tokens). Do NOT "
+            "call body tools — the caller drives the body.\n"
+            f"SYSTEM:\n{system}\nINPUT:\n{user}")
+    row = await pool.fetchrow(
+        "INSERT INTO messages (from_agent, to_agent, thread, intent, body) "
+        "VALUES ('owner', 'growbot', $1, 'task', $2) RETURNING id",
+        GROWBOT_BRAIN_THREAD, body[:6000])
+    deadline = time.time() + 28
+    content = None
+    while time.time() < deadline:
+        await asyncio.sleep(0.7)
+        r = await pool.fetchrow(
+            "SELECT body FROM messages WHERE thread = $1 AND id > $2 "
+            "AND from_agent = 'growbot' ORDER BY id LIMIT 1",
+            GROWBOT_BRAIN_THREAD, row["id"])
+        if r:
+            content = r["body"]
+            break
+    if content is None:
+        return JSONResponse({"error": {"message": "org brain timed out (agent "
+                            "asleep or busy) — retry"}}, status_code=504,
+                            headers=BRAIN_CORS)
+    return JSONResponse({
+        "id": f"astryx-{row['id']}", "object": "chat.completion",
+        "created": int(time.time()), "model": "astryx-growbot",
+        "choices": [{"index": 0, "finish_reason": "stop",
+                     "message": {"role": "assistant", "content": content}}],
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+    }, headers=BRAIN_CORS)
 
 
 # The face's nervous system (observatory #/face on the mounted phone). Brit's
