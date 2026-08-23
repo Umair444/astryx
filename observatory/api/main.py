@@ -1962,7 +1962,9 @@ async def brain_completions(key: str, request: Request):
     row = await pool.fetchrow(
         "INSERT INTO messages (from_agent, to_agent, thread, intent, body) "
         "VALUES ('owner', 'growbot', $1, 'task', $2) RETURNING id",
-        GROWBOT_BRAIN_THREAD, body[:6000])
+        GROWBOT_BRAIN_THREAD, body[:24000])   # the creature's soul prompt alone
+    # runs >6k chars — a tighter cap amputates the caller's OUTPUT SPEC, and the
+    # agent then guesses formats (seen live: verbs spoken aloud as words)
     deadline = time.time() + 28
     content = None
     while time.time() < deadline:
