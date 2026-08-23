@@ -137,6 +137,8 @@ EXEMPT = {
     "nucleus/wallpane.sh":    "manual: single-pane variant of wall.sh, invoked by an operator",
     "nucleus/refresh.sh":     "manual: operator session refresh",
     "nucleus/deploy.sh":      "manual: operator deploy step",
+    "nucleus/growbot_flash.sh": "manual: operator flash step — copies the body firmware "
+        "onto the Pico over USB; run once per firmware change, documented in docs/growbot.md",
     # Landed 6efc7f2 and red on the FIRST live-tree run after it — the gate working, not
     # failing. Its ORACLE is wired into check.sh; the TOOL is typed by an agent at a
     # prompt, which is the whole point of it (the standing rule it serves is about
