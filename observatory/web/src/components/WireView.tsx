@@ -123,7 +123,7 @@ export default function WireView({ route, onOpenAgent }: { route: Route & { tab:
 
   const feed = (
     <div className="h-full flex flex-col min-w-0 relative">
-      <div className="px-4 py-1.5 border-b border-line shrink-0 flex items-center gap-2">
+      <div className="px-4 py-1.5 border-b border-line shrink-0 flex items-center gap-2 flex-wrap">
         <span className="font-semibold text-ink">The Wire</span>
         <div className="flex rounded-lg border border-line overflow-hidden ml-1">
           <button

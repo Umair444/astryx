@@ -1859,6 +1859,42 @@ class RouteSet(BaseModel):
     routes: list[dict]
 
 
+# ------------------------------------------------------------ growbot body
+# The GrowBot tab's lever on the physical body (astryx-growbot.service, :8470 —
+# nucleus/growbot_body.py -> USB serial -> the Pico). A thin allowlisted proxy:
+# the observatory stays the one door the browser knows, and the global /api/*
+# owner gate covers moving real servos. The ask box does NOT come through here —
+# choreography rides the wire (POST /api/messages -> the growbot agent -> MCP).
+GROWBOT_BODY = os.environ.get("GROWBOT_BODY_URL", "http://127.0.0.1:8470")
+GROWBOT_PATHS = {"stats", "act", "stop", "pose", "set", "routine", "servo", "seq"}
+
+
+@app.api_route("/api/growbot/{path}", methods=["GET", "POST"])
+async def growbot_proxy(path: str, request: Request):
+    if path not in GROWBOT_PATHS:
+        return Response(status_code=404)
+    body = await request.body()
+
+    def _fwd():
+        import urllib.error
+        import urllib.request as ur
+        url = f"{GROWBOT_BODY}/{path}"
+        if request.url.query:
+            url += f"?{request.url.query}"
+        req = ur.Request(url, data=body if request.method == "POST" else None,
+                         headers={"Content-Type": "application/json"})
+        try:
+            with ur.urlopen(req, timeout=5) as r:
+                return r.status, r.read(), r.headers.get("content-type", "text/plain")
+        except urllib.error.HTTPError as e:
+            return e.code, e.read(), e.headers.get("content-type", "text/plain")
+        except OSError:
+            return 503, b'{"err":"body host down"}', "application/json"
+
+    status, data, ctype = await asyncio.to_thread(_fwd)
+    return Response(content=data, status_code=status, media_type=ctype)
+
+
 @app.get("/api/wire/routes")
 async def wire_routes():
     """Every channel's full route table (enabled AND disabled — the owner manages

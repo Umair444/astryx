@@ -175,6 +175,28 @@ WantedBy=multi-user.target
 EOF
   fi
 
+  # ── 3b. growbot body — the org's PHYSICAL body (a GrowBot Pico on USB serial) ─
+  # Presence signal = the body host organ + a LIVE charter granting the growbot
+  # hands (.example.md excluded: shipping the example must not grow a servo
+  # service in an org that owns no robot).
+  if [ -f nucleus/growbot_body.py ] && \
+     grep -rqsE '^Grants:.*\bgrowbot\b' --exclude='*.example.md' agents/; then
+    cat > "$UD/astryx-growbot.service" <<EOF
+[Unit]
+Description=astryx growbot body — the open GrowBot body protocol over the USB-serial Pico (:8470)
+After=network.target
+[Service]
+WorkingDirectory=$PWD
+EnvironmentFile=-$PWD/.env
+ExecStart=$PWD/venv/bin/python $PWD/nucleus/growbot_body.py
+Restart=always
+RestartSec=3
+User=$USER
+[Install]
+WantedBy=multi-user.target
+EOF
+  fi
+
   # ── 4. runners — periodic jobs from nucleus/runners.conf ─────────────────────
   # <stem> | <agent> | <OnCalendar> | <exec from repo root> | <description>
   # A per-agent poller is gated on its agent resolving (the ONE resolver) so a decl for

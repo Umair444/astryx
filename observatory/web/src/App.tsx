@@ -13,6 +13,7 @@ import ToolsView from './components/ToolsView'
 import SystemView from './components/SystemView'
 import TheatreView from './components/TheatreView'
 import MemoryView from './components/MemoryView'
+import GrowbotView from './components/GrowbotView'
 import AgentDrawer from './components/AgentDrawer'
 import VegaChat from './components/VegaChat'
 
@@ -26,6 +27,7 @@ export type Route =
   | { tab: 'monitor' }
   | { tab: 'theatre' }
   | { tab: 'memory' }
+  | { tab: 'growbot' }
 
 function parseHash(): Route {
   const h = location.hash.replace(/^#\/?/, '')
@@ -38,6 +40,7 @@ function parseHash(): Route {
   if (tab === 'monitor') return { tab: 'monitor' }
   if (tab === 'theatre') return { tab: 'theatre' }
   if (tab === 'memory') return { tab: 'memory' }
+  if (tab === 'growbot') return { tab: 'growbot' }
   return { tab: 'network' }
 }
 
@@ -56,6 +59,7 @@ const TABS: { key: Route['tab']; label: string; icon: string }[] = [
   { key: 'tools', label: 'Tools', icon: 'ƒ' },
   { key: 'theatre', label: 'Theatre', icon: '❝' },
   { key: 'memory', label: 'Memory', icon: '⬢' },
+  { key: 'growbot', label: 'GrowBot', icon: '🤖' },
   { key: 'monitor', label: 'System', icon: '❐' },
 ]
 
@@ -252,6 +256,7 @@ function Shell() {
               {route.tab === 'monitor' && <SystemView />}
               {route.tab === 'theatre' && <TheatreView />}
               {route.tab === 'memory' && <MemoryView />}
+              {route.tab === 'growbot' && <GrowbotView />}
             </>
           )}
         </div>
@@ -259,12 +264,17 @@ function Shell() {
 
       {/* mobile bottom nav */}
       <AppShell.Footer hiddenFrom="sm" className="!bg-deck-2 !border-line">
-        <div className="flex h-full pb-[env(safe-area-inset-bottom)]">
+        {/* 10 tabs never fit 390px as flex-1 — the labels smear into each other.
+            Scrollable rail with fixed-width cells; the active tab keeps itself in view. */}
+        <div className="flex h-full pb-[env(safe-area-inset-bottom)] overflow-x-auto [scrollbar-width:none]">
           {tabs.map((t) => (
             <button
               key={t.key}
+              ref={(el) => {
+                if (el && route.tab === t.key) el.scrollIntoView({ inline: 'center', block: 'nearest' })
+              }}
               onClick={() => nav({ tab: t.key } as Route)}
-              className={`flex-1 text-center text-[11px] ${route.tab === t.key ? 'text-cyan' : 'text-ink-mute'}`}
+              className={`shrink-0 min-w-[64px] px-1 text-center text-[10px] ${route.tab === t.key ? 'text-cyan' : 'text-ink-mute'}`}
             >
               <div className="text-lg leading-6">{t.icon}</div>
               {t.label}

@@ -34,5 +34,11 @@
   "args": [
    "mcp/channels/server.py"
   ]
+ },
+ "growbot": {
+  "command": "venv/bin/python",
+  "args": [
+   "mcp/growbot/server.py"
+  ]
  }
 }

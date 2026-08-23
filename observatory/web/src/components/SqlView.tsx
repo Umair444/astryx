@@ -158,8 +158,16 @@ export default function SqlView() {
   // resizable / collapsible side panels (persisted)
   const [leftW, setLeftW] = useState(() => +(localStorage.getItem('sql_leftW') || 208))
   const [rightW, setRightW] = useState(() => +(localStorage.getItem('sql_rightW') || 208))
-  const [leftHidden, setLeftHidden] = useState(() => localStorage.getItem('sql_leftHidden') === '1')
-  const [rightHidden, setRightHidden] = useState(() => localStorage.getItem('sql_rightHidden') === '1')
+  const [leftHidden, setLeftHidden] = useState(() => {
+    const saved = localStorage.getItem('sql_leftHidden')
+    // no saved preference on a phone-width screen -> start collapsed (the editor
+    // gets crushed into vertical letter-stacks otherwise)
+    return saved === null ? window.innerWidth < 640 : saved === '1'
+  })
+  const [rightHidden, setRightHidden] = useState(() => {
+    const saved = localStorage.getItem('sql_rightHidden')
+    return saved === null ? window.innerWidth < 640 : saved === '1'
+  })
   useEffect(() => { localStorage.setItem('sql_leftW', String(leftW)) }, [leftW])
   useEffect(() => { localStorage.setItem('sql_rightW', String(rightW)) }, [rightW])
   useEffect(() => { localStorage.setItem('sql_leftHidden', leftHidden ? '1' : '0') }, [leftHidden])

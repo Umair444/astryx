@@ -90,6 +90,8 @@ for g in $(grep -m1 '^Grants:' "$CHARTER" 2>/dev/null | cut -d: -f2- | tr ',' ' 
   \"compose\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/compose/server.py\"] }";;
     imagegen) EXTRA="$EXTRA,
   \"imagegen\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/imagegen/server.py\"] }";;
+    growbot) EXTRA="$EXTRA,
+  \"growbot\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/growbot/server.py\"] }";;
     contacts) EXTRA="$EXTRA,
   \"contacts\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/contacts/server.py\"] }";;
     channels) EXTRA="$EXTRA,

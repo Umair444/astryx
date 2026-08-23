@@ -113,7 +113,32 @@
           "description": "List conversations across your channels (or one). Returns send-ready handles."
         }
       ]
+    },
+    {
+      "server": "growbot",
+      "tools": [
+        {
+          "name": "body_act",
+          "description": "Play a keyframe plan on the body. steps = [{\"l\":0-180,\"r\":0-180,\"ms\":N}, ...]"
+        },
+        {
+          "name": "body_routine",
+          "description": "Queue a canned gesture: wiggle | dance | shimmy | march | bow | stretch."
+        },
+        {
+          "name": "body_pose",
+          "description": "One absolute pose now (degrees, 90 = neutral). Auto-limps after 500 ms \u2014"
+        },
+        {
+          "name": "body_stop",
+          "description": "Instant hard stop: clear all queued motion, legs go limp."
+        },
+        {
+          "name": "body_stats",
+          "description": "Body telemetry: motion state, act queue, dead-man count, serial link"
+        }
+      ]
     }
   ],
-  "total_tools": 21
+  "total_tools": 26
 }

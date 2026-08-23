@@ -27,7 +27,7 @@ function Gauge({ label, pct, right, color }: { label: string; pct: number; right
       <div className="flex-1 h-2 rounded bg-deck overflow-hidden">
         <div className="h-full rounded" style={{ width: `${Math.min(100, Math.max(0, pct))}%`, background: c }} />
       </div>
-      <span className="font-mono text-ink-mute whitespace-nowrap w-56 text-right">{right}</span>
+      <span className="font-mono text-ink-mute sm:whitespace-nowrap sm:w-56 max-w-[45%] text-right">{right}</span>
     </div>
   )
 }
