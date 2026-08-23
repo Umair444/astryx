@@ -16,7 +16,7 @@ keys and over-long values, is the thing that keeps the block flat forever. A gen
 loader would cheerfully accept an estate that grows nesting one page at a time, and by
 then flatness can no longer be asserted. It also keeps this importable from the gitignored
 triggers/ lints with zero install coupling. Third-party confirmation without a third-party
-runtime, in the same idiom as the card verifier's rfc8785: nucleus/test_okf.py ALSO
+runtime, in the same idiom as the card verifier's rfc8785: tests/test_okf.py ALSO
 cross-checks every parse against yaml.safe_load WHEN PyYAML happens to be importable.
 
 THE TWO RULES THAT PROTECT THE EXISTING LINTS (both machine-checked below, because a
@@ -108,7 +108,7 @@ class OKFError(ValueError):
 # YAML 1.1 auto-typing is the one place a hand-rolled reader and a real YAML reader can
 # silently DISAGREE rather than one of them erroring: an unquoted `2026-08-12` is a
 # datetime.date to PyYAML and a string to us, and `3` is an int to one and "3" to the
-# other. Found by the cross-check arm in nucleus/test_okf.py on its first run — which is
+# other. Found by the cross-check arm in tests/test_okf.py on its first run — which is
 # exactly what a conformance-to-SPEC check is for, as opposed to conformance-to-self.
 # We emit strings, so render() QUOTES anything a YAML parser would coerce, and the bundle
 # reads identically to us and to any generic OKF tool. Word-like values stay bare so the
@@ -252,7 +252,7 @@ def strip(text: str) -> str:
 def attach(text: str, meta: dict) -> str:
     """A full file with frontmatter. Replaces an existing block; never touches the body.
 
-    The additivity guarantee lives here and is asserted by nucleus/test_okf.py against
+    The additivity guarantee lives here and is asserted by tests/test_okf.py against
     every real page in the estate: the bytes below the closing `---` are unchanged.
     """
     return render(meta) + strip(text)

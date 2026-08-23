@@ -14,7 +14,7 @@
 #   2. It fails LOUD, but only in an environment nobody runs — so the loudness buys
 #      nothing, and the red surfaces later as "CI is broken" rather than as its real
 #      cause, at exactly the moment the org is trying to establish trust in CI.
-#   Live instance: HEAD bd1e026 is RED in a clean clone. nucleus/test_prove_hostside.py
+#   Live instance: HEAD bd1e026 is RED in a clean clone. tests/test_prove_hostside.py
 #   landed in 50ccc61 ("host-side oracle lands with it") but harness/cell/prove.sh's
 #   update did not land with it — 8 assertions fail on any other machine, 7 commits deep.
 #

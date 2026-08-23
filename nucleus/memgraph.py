@@ -691,7 +691,7 @@ def build_world(g: Graph) -> None:
     forms that exist here are names, categories and facets. Nodes are marked
     visibility='org' by the compiler default like everything else, and the memory API is
     owner-gated — but the real guarantee is structural: the values were never handed to
-    this function. See nucleus/test_world.py, whose privacy assertion is derived from the
+    this function. See tests/test_world.py, whose privacy assertion is derived from the
     live instruments rather than from a pattern someone maintains.
     """
     try:

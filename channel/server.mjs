@@ -379,7 +379,7 @@ const pool = new pg.Pool({ connectionString: DSN, max: 3 })
 // sender-side watcher can see it, while a wedged one is indistinguishable from health.
 // These two faults are recoverable by construction (the pool redials, the LISTEN client
 // already reconnects below); nothing else here is known to be, so nothing else is caught.
-// Proven red-then-green against a real postgres by nucleus/test_ear_survival.py.
+// Proven red-then-green against a real postgres by tests/test_ear_survival.py.
 pool.on('error', e => console.error('[channel] pooled client died, discarding it:', e.message))
 const SUBS_REFRESH_MS = Number(process.env.ASTRYX_SUBS_REFRESH_MS) || 60_000
 

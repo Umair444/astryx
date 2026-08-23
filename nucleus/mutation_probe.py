@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """astryx · mutation-probe — WHICH WRONG IMPLEMENTATIONS DOES THIS ORACLE FAIL TO NOTICE?
 
-    venv/bin/python nucleus/mutation_probe.py nucleus/mutants_wedge_watch.py
+    venv/bin/python nucleus/mutation_probe.py tests/mutants_wedge_watch.py
     venv/bin/python nucleus/mutation_probe.py --self-test
 
 An authoring-time instrument, NOT a check.sh gate (steward's ruling, msg 5934: gating taxes
@@ -287,7 +287,7 @@ def self_test() -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("spec", nargs="?", help="a nucleus/mutants_<oracle>.py declaration")
+    ap.add_argument("spec", nargs="?", help="a tests/mutants_<oracle>.py declaration")
     ap.add_argument("--self-test", action="store_true",
                     help="prove the probe's own RED and GREEN arms")
     a = ap.parse_args()

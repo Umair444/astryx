@@ -65,7 +65,7 @@ done
 # This remains a LOCAL artifact; an offsite copy is still the owner's call, and it matters
 # more now — this tarball holds the org's identity key.
 #
-# The oracle that keeps this honest is nucleus/test_backup_inputs.py: it derives the
+# The oracle that keeps this honest is tests/test_backup_inputs.py: it derives the
 # expected set from `git status --ignored` MINUS a manifest of regenerable paths, so a new
 # gitignored authored file that nobody adds here goes RED. Omission is the accused
 # direction; forgetting is what produced all three instances of this defect.
@@ -99,7 +99,7 @@ for m in "$HOME"/.claude/projects/-home-umair-astryx*/memory; do
   mem_dirs="$mem_dirs ${m#"$HOME"/}"           # $HOME-relative, tarred via -C below
 done
 # `--list-state` prints exactly what this script WOULD capture and exits. It exists so
-# nucleus/test_backup_inputs.py can ask the emitter rather than re-parse it: the oracle
+# tests/test_backup_inputs.py can ask the emitter rather than re-parse it: the oracle
 # derives what SHOULD be captured from `git status --ignored` minus a regenerable manifest
 # — a different authority entirely — and compares. A verifier that read this list out of
 # the source would only ever prove the file agrees with itself.

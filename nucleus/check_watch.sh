@@ -35,7 +35,7 @@
 # over a run where 35 gates passed, and the INVOCATION_ID provenance error described
 # further down — because a producer nothing runs in a fixture gets debugged in production.
 # Every override defaults to the real path, so the deployed behaviour is byte-identical to
-# having no seam; what they buy is that nucleus/test_check_watch.py can drive this script
+# having no seam; what they buy is that tests/test_check_watch.py can drive this script
 # against a stub suite without touching the live stamp.
 set -uo pipefail
 cd "$(dirname "$0")/.."

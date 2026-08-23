@@ -86,7 +86,7 @@ VEGA_HOME = Path(tempfile.gettempdir()) / "astryx-vega-conjure"
 # are public but tier-FLOORED inside the handler (plan-18 LANE 2): metadata for every
 # agent, but step/last_content bodies only for grant-derived content-public agents
 # (nucleus/tier.py, fail-closed). A content-class path must NOT be added here without
-# applying that floor — the grade-3 assert (nucleus/test_tier.py) fails if it is.
+# applying that floor — the grade-3 assert (tests/test_tier.py) fails if it is.
 PUBLIC_PATHS = {"/api/overview", "/api/peers", "/api/vega", "/api/whoami",
                 "/api/events", "/api/messages", "/api/agents",
                 "/favicon.svg"}
@@ -1998,7 +1998,7 @@ async def memory_world():
 
     Identifying VALUES never reach here: world.redact() strips them at parse time, so the
     API is not the thing protecting them — the structure never received them. See
-    nucleus/test_world.py, whose assertion is derived from the live instruments.
+    tests/test_world.py, whose assertion is derived from the live instruments.
     """
     g = _memgraph_read()
     if g is None:

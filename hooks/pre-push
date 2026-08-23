@@ -4,7 +4,7 @@
 # silently drop a hand-installed hook and the gates would "run nowhere" again (the
 # resurrecting-invisibly gap). Version-controlling the hook body here + a reconciler node
 # that idempotently copies it makes the floor DURABLE and gives every fresh clone
-# privacy-by-default straight from ./init.sh. nucleus/test_hook_integrity.py proves the
+# privacy-by-default straight from ./init.sh. tests/test_hook_integrity.py proves the
 # INSTALLED copy is this one, byte for byte, and executable.
 #
 # TWO GATES, cheapest and highest-stakes first.
