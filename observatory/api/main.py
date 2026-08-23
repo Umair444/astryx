@@ -1869,7 +1869,12 @@ class RouteSet(BaseModel):
 # knows, and the global /api/* owner gate covers moving real servos. The ask
 # box does NOT come through here — choreography rides the wire (POST
 # /api/messages -> the growbot agent -> MCP).
-GROWBOT_BODY = (_env("GROWBOT_BODY_URL") or "http://127.0.0.1:8470").rstrip("/")
+# Resolved PER REQUEST (tiny .env read), never pinned at import: the Wi-Fi body's
+# IP is a DHCP lease and rots across router reboots — a stale module constant
+# would need a service restart for every lease change (2026-08-24: .7 became .2
+# overnight and the tab read "host down").
+def growbot_body() -> str:
+    return (_env("GROWBOT_BODY_URL") or "http://127.0.0.1:8470").rstrip("/")
 GROWBOT_PATHS = {"stats", "act", "stop", "pose", "set", "routine", "servo", "seq"}
 
 
@@ -1905,7 +1910,7 @@ async def growbot_event(ev: FaceEvent, request: Request):
         def _reflex():
             import urllib.request as ur
             try:
-                req = ur.Request(f"{GROWBOT_BODY}/act",
+                req = ur.Request(f"{growbot_body()}/act",
                                  data=json.dumps({"steps": body_plan}).encode(),
                                  headers={"Content-Type": "application/json"})
                 ur.urlopen(req, timeout=3).read()
@@ -1942,7 +1947,7 @@ async def growbot_proxy(path: str, request: Request):
     def _fwd():
         import urllib.error
         import urllib.request as ur
-        url = f"{GROWBOT_BODY}/{path}"
+        url = f"{growbot_body()}/{path}"
         if request.url.query:
             url += f"?{request.url.query}"
         req = ur.Request(url, data=body if request.method == "POST" else None,

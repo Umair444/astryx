@@ -44,19 +44,19 @@ def _body_url() -> str:
     return "http://127.0.0.1:8470"
 
 
-BODY = _body_url()
+# no module-level pin: the Wi-Fi body's IP is a DHCP lease; resolve per call
 
 mcp = FastMCP("growbot")
 
 
 def _get(path: str) -> str:
     try:
-        with urllib.request.urlopen(BODY + path, timeout=5) as r:
+        with urllib.request.urlopen(_body_url() + path, timeout=5) as r:
             return r.read().decode()
     except urllib.error.HTTPError as e:
         return f"[{e.code}] {e.read().decode()[:200]}"
     except OSError as e:
-        return f"body unreachable at {BODY}: {e}"
+        return f"body unreachable at {_body_url()}: {e}"
 
 
 @mcp.tool()
@@ -68,7 +68,7 @@ def body_act(steps: List[dict], mode: Optional[str] = None) -> str:
     on 409 back off and resend smaller."""
     payload = json.dumps({"steps": steps,
                           "mode": mode if mode in ("replace", "append") else "replace"})
-    req = urllib.request.Request(BODY + "/act", data=payload.encode(),
+    req = urllib.request.Request(_body_url() + "/act", data=payload.encode(),
                                  headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=5) as r:
@@ -76,7 +76,7 @@ def body_act(steps: List[dict], mode: Optional[str] = None) -> str:
     except urllib.error.HTTPError as e:
         return f"[{e.code}] {e.read().decode()[:200]}"
     except OSError as e:
-        return f"body unreachable at {BODY}: {e}"
+        return f"body unreachable at {_body_url()}: {e}"
 
 
 @mcp.tool()
