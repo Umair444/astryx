@@ -1953,11 +1953,11 @@ async def brain_completions(key: str, request: Request):
     except Exception:
         return JSONResponse({"error": {"message": "bad request"}}, status_code=400,
                             headers=BRAIN_CORS)
-    body = ("[brain] You are the EXTERNAL BRAIN behind an OpenAI-compatible "
-            "endpoint — your reply text IS the completion, played by the "
-            "caller's own gateway. Reply with ONLY what the SYSTEM prompt "
-            "specifies (raw, no preamble, no fences, <=120 tokens). Do NOT "
-            "call body tools — the caller drives the body.\n"
+    body = ("[brain] External-brain turn. Deliver your answer by calling the "
+            "astryx `send` tool EXACTLY ONCE: to='owner', thread='growbot-brain', "
+            "body = ONLY what the SYSTEM below specifies (raw, no preamble, no "
+            "fences, <=120 tokens). The send IS the completion — response text "
+            "goes nowhere. No body tools; the caller drives the body.\n"
             f"SYSTEM:\n{system}\nINPUT:\n{user}")
     row = await pool.fetchrow(
         "INSERT INTO messages (from_agent, to_agent, thread, intent, body) "
@@ -1973,6 +1973,17 @@ async def brain_completions(key: str, request: Request):
             GROWBOT_BRAIN_THREAD, row["id"])
         if r:
             content = r["body"]
+            break
+        # Fallback: a small model sometimes obeys "output ONLY the verb" so
+        # literally it skips the send — the completion then lives in its
+        # response STEP. The step is the substrate too; read it.
+        r = await pool.fetchrow(
+            "SELECT content FROM steps WHERE agent = 'growbot' AND "
+            "kind = 'response' AND ts > (SELECT ts FROM messages WHERE id = $1) "
+            "AND content NOT LIKE '(tool-only%' AND content NOT LIKE '<thinking%' "
+            "ORDER BY id LIMIT 1", row["id"])
+        if r and r["content"].strip():
+            content = r["content"].strip()
             break
     if content is None:
         return JSONResponse({"error": {"message": "org brain timed out (agent "
