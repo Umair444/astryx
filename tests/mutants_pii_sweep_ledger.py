@@ -18,7 +18,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 SUBJECT = REPO / "triggers" / "steward" / "pii_sweep.py"
-ORACLE = REPO / "nucleus" / "test_pii_sweep_ledger.py"
+ORACLE = REPO / "tests" / "test_pii_sweep_ledger.py"
 ENV = "PII_SWEEP_SRC"
 
 MUTANTS = {

@@ -137,10 +137,10 @@ target = fake / SERVER
 mod.REPO = fake
 mod._now = lambda: NOW
 
-# The real edit, 3 days before this guard ever ran. Deliberately NOT a sub-day gap: band 0 is
-# silent on purpose (a fix undeployed for a few hours is normal ops — agents respawn on their
-# own cadence, and a guard that fires inside that window is a guard nobody reads). The live
-# 08-14 estate sat at 21h and this trigger is correctly silent about it until tomorrow.
+# The real edit, 3 days before this guard ever ran — a multi-day gap, so the LADDER checks
+# below exercise rungs above the first. Rung 0 (a sub-day gap) is exercised separately and
+# must also speak; see "RUNG 0 IS REACHABLE" near the end of this file for why the original
+# sub-day grace was wrong and what measurement retired it.
 EDIT_AT = NOW - timedelta(days=3)
 
 
@@ -272,6 +272,47 @@ check("a caveat alone still breaks silence (it is a coverage claim, not a findin
                                 ctx6, unattributable=1) or ""), True)
 check("zero unattributable adds no noise",
       run([("seed", SERVER, NEW), ("vega", SERVER, NEW)], ctx6), None)
+
+print("\nRUNG 0 IS REACHABLE — a same-day drift must be REPORTED, not silently graced:")
+# THE DEFECT THIS PINS, found 2026-08-15 by forcing my own never-fired guard against the live
+# substrate instead of trusting its silence. The first version graced every drift younger than
+# 24h, and this file justified it: "a fix undeployed for a few hours is normal ops — agents
+# respawn on their own cadence." THAT PREMISE IS FALSE, measured on 30 days of `steps` boots:
+# the median inter-boot gap is 30-55h per agent and 49 of 58 gaps are >= 24h. Ordinary cadence
+# does not redeploy inside the grace window, so the grace was never skipping a self-healing
+# period — it was deferring EVERY report by a day, silently, including on the two watched files
+# that carry personal-tier data (mcp/geoloc, mcp/contacts), about which the guard's own
+# docstring says an undeployed tier redaction "cannot wait".
+#
+# The mechanism was a sentinel collision, which is why it read as intent rather than as a bug:
+# band(0) == 0 == the `reported.get(key, 0)` default for "never reported", so rung 0 was
+# unreachable and NO drift could be announced in its first 24h. Both live episodes since this
+# guard was registered (08-14, 08-15) were swallowed whole — each healed inside the window by
+# an unrelated roster-wide restart, so the guard has never once spoken.
+# Fixed in the shape steward's pii_sweep already proved: ARRIVAL is announced, and the ladder
+# governs only RE-nags. Run RED against the -1-less version before trusting the green below.
+FRESH_EDIT = NOW - timedelta(hours=6)
+write("FIXED", FRESH_EDIT)
+ctx7 = Ctx()
+P_FRESH = [("seed", SERVER, FRESH_EDIT - timedelta(hours=2)),
+           ("vega", SERVER, FRESH_EDIT - timedelta(hours=2))]
+first0 = run(P_FRESH, ctx7)
+check("a 6h-old drift is announced on arrival", first0 is not None, True)
+listed0 = [ln.split("old code:")[1].strip() for ln in (first0 or "").splitlines()
+           if "old code:" in ln]
+check("...naming both stale agents", listed0, ["seed, vega"])
+check("...and the report dates it honestly as 0d", "changed 0d ago" in (first0 or ""), True)
+check("...then holds inside rung 0 rather than drumming", run(P_FRESH, ctx7), None)
+mod._now = lambda: NOW + timedelta(days=1)
+check("...and still escalates at the next rung", run(P_FRESH, ctx7) is not None, True)
+mod._now = lambda: NOW
+print("  a HEALED agent re-arms rung 0 too — the sentinel must not resurrect as a floor:")
+ctx8 = Ctx()
+run(P_FRESH, ctx8)
+check("recorded at rung 0", ctx8.state["reported"], {f"{SERVER}|seed": 0, f"{SERVER}|vega": 0})
+run([("seed", SERVER, NOW), ("vega", SERVER, NOW)], ctx8)          # both respawn past the edit
+check("cleared when current", ctx8.state["reported"], {})
+check("and a fresh relapse speaks again at rung 0", run(P_FRESH, ctx8) is not None, True)
 
 print("\nPOSTURE — this guard must never be an actuator:")
 src = BODY.read_text()

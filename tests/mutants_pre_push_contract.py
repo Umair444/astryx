@@ -20,7 +20,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 SUBJECT = REPO / "hooks" / "pre-push"
-ORACLE = REPO / "nucleus" / "test_pre_push_contract.py"
+ORACLE = REPO / "tests" / "test_pre_push_contract.py"
 ENV = "PRE_PUSH_SRC"
 
 MUTANTS = {

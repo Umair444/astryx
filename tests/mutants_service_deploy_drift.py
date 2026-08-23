@@ -36,7 +36,7 @@ REPO = Path(__file__).resolve().parent.parent
 
 SUBJECT = Path(os.environ.get("SERVICE_DEPLOY_DRIFT_SRC",
                               REPO / "triggers" / "seed" / "service_deploy_drift.py"))
-ORACLE = REPO / "nucleus" / "test_service_deploy_drift.py"
+ORACLE = REPO / "tests" / "test_service_deploy_drift.py"
 ENV = "SERVICE_DEPLOY_DRIFT_SRC"
 
 MUTANTS = {

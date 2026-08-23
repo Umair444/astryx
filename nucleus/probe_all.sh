@@ -30,13 +30,18 @@ PY=${PY:-venv/bin/python}; [ -x "$PY" ] || PY=python3
 # Derived from the glob, never a hand-maintained list — the same rule check.sh had to learn
 # on 08-13 when a committed oracle sat un-run while the suite printed ALL PASS.
 shopt -s nullglob
-SPECS=(nucleus/mutants_*.py)
+SPECS=(tests/mutants_*.py)
 shopt -u nullglob
 
 if [ ${#SPECS[@]} -eq 0 ]; then
-  echo "probe-all: no nucleus/mutants_*.py present — nothing has opted in. Nothing verified."
+  echo "probe-all: no tests/mutants_*.py present — nothing has opted in. Nothing verified."
   exit 0
 fi
+
+# --smoke: ONE family (first in sorted glob) — the fast liveness edge check.sh runs so
+# the probe machinery is automatically REACHED daily; the full battery rides the monthly
+# trigger. A smoke pass claims the MACHINERY works, never that every mutant still catches.
+if [ "${1:-}" = "--smoke" ]; then SPECS=("${SPECS[0]}"); fi
 
 echo "probe-all: ${#SPECS[@]} authored mutant set(s)"
 fail=0

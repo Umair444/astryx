@@ -106,7 +106,7 @@ def invoked_oracles(text):
 
 def oracles_on_disk():
     """THE authority. One derivation, from the place oracles really live."""
-    return {p.name for p in (REPO / "nucleus").glob("test_*.py")}
+    return {p.name for p in (REPO / "tests").glob("test_*.py")}
 
 
 def committed_oracles():
@@ -139,7 +139,7 @@ def committed_oracles():
     empty expected-set is a green tick certifying nothing — the exact vacuity
     test_the_authority_is_not_empty exists to prevent.
     """
-    r = subprocess.run(["git", "ls-tree", "-r", "--name-only", "HEAD", "nucleus/"],
+    r = subprocess.run(["git", "ls-tree", "-r", "--name-only", "HEAD", "tests/"],
                        cwd=REPO, capture_output=True, text=True)
     names = {Path(p).name for p in r.stdout.split()
              if Path(p).name.startswith("test_") and p.endswith(".py")}

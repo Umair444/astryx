@@ -127,6 +127,10 @@ EXEMPT = {
     "nucleus/check_watch.sh":    "invoked by triggers/steward/org_runners.py (gitignored estate; pulse trigger, daily 05:20)",
     "nucleus/restore_verify.sh": "invoked by triggers/steward/org_runners.py (gitignored estate; pulse trigger, weekly Sun 03:00)",
     "nucleus/station.py":     "on-demand: the stationed-agent runtime — a backend or operator invokes it per request (claude -p API); nothing schedules it by design",
+    "nucleus/shipped_triggers/pr_review.py":
+        "shipped reference: deployed as a gitignored shim (init.sh heredoc at founding; "
+        "ours lives at triggers/steward/pr_review.py) — the import edge rides a shell "
+        "heredoc and the live estate, both outside this scanner's committed-python view",
     "nucleus/fedtest.py":     "manual: federation end-to-end probe; CLAUDE.md documents the human command",
     "nucleus/esc_latency.py":  "manual: MIN_QUIET_H calibration measurement, run on demand; reports and never recommends, so a timer would only manufacture noise",
     "nucleus/doorbell.sh":    "manual: operator notify helper, self-declared Usage line",
@@ -151,10 +155,6 @@ EXEMPT = {
     # spec, and their `Run:` lines reached it back — a mutual-citation ring. Making them
     # visible is the fix working; whether they should instead be WIRED is a call for
     # whoever owns them, and the exemption is what forces that call to be made out loud.
-    "nucleus/mutation_probe.py":
-        "manual: authoring-time instrument, deliberately NOT gated in check.sh (steward's "
-        "ruling, msg 5934 — the full run is 100.6s and a slow gate gets skipped). "
-        "nucleus/probe_all.sh invokes it but is UNTRACKED; when it lands, this goes stale.",
     "nucleus/smoke.sh":
         "manual: doctor-class post-deploy probe, self-declared (`# Usage: nucleus/smoke.sh "
         "[observatory-port]`) and already classified as manual by test_check_coverage.py:56",

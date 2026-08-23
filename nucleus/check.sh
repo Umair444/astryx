@@ -131,6 +131,9 @@ run "every committed nucleus script is invoked" "$PY" tests/test_reachability.py
 # declares SUBJECT/ORACLE/ENV/MUTANTS, points at files that exist, and still has patterns
 # that apply. It asserts APPLICABILITY and never discrimination. Pure stdlib, no DB, ~0.1s.
 run "mutants files still point at something real" "$PY" tests/test_mutants_wellformed.py
+# ...and the probe MACHINERY demonstrably runs (one family, ~4s). The full battery is the
+# monthly steward trigger; this edge is what keeps probe_all/mutation_probe auto-reached.
+run "mutant machinery smoke (one family)" bash nucleus/probe_all.sh --smoke
 # The SECOND blind spot in this file, the same shape one level down: the gate above proves
 # every oracle is INVOKED; this one proves an invoked oracle actually RAN. Drives this
 # file's own run()/verdict() against synthetic gates. Pure stdlib, no DB.

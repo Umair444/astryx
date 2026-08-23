@@ -322,6 +322,32 @@ check("timestamp becomes an epoch int -> DRIFT", st == DRIFT, f"got {st!r}")
 st, _, _, _ = _fake_wacli([])
 check("an empty window is a real answer, NOT drift", st == OK, f"got {st!r}")
 
+# `[]` above was my ASSUMPTION about an empty result. wacli is Go, and a nil slice
+# marshals to `null` — so the real empty answer read as DRIFT here for as long as this
+# reader has existed. It never surfaced because this reader asks for a fixed --limit
+# over a chat with history, so its window is never empty; gemini/mouth_dark, which
+# bounds its read with --after, hit it on its first evaluation under the pulse and
+# fired within a minute. Latent, not harmless: a store rebuilt by a re-auth answers
+# exactly this way, and the ear would cry "I cannot read my source" over a working one.
+st, _, _, _ = _fake_wacli(None)
+check("wacli's REAL empty-window bytes (messages:null) -> OK, not DRIFT",
+      st == OK, f"got {st!r}")
+
+
+def _raw_wacli(payload):
+    class R:
+        returncode, stdout, stderr = 0, payload, ""
+    MOD["subprocess"] = type("S", (), {"run": staticmethod(lambda *a, **k: R())})
+    try:
+        return _real_store(CHAT)
+    finally:
+        MOD["subprocess"] = _real_sub
+
+
+st, _, _, _ = _raw_wacli(json.dumps({"success": True, "data": {"fts": True}}))
+check("the messages key ABSENT (not null) is still DRIFT — absence is a shape change",
+      st == DRIFT, f"got {st!r}")
+
 st, _, _, _ = _fake_wacli(owner_only + reaction + system_evt)
 check("a window of only-filtered-out messages is quiet, NOT drift",
       st == OK, f"got {st!r}")

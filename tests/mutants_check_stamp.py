@@ -23,7 +23,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 SUBJECT = REPO / "triggers" / "steward" / "check_stamp.py"
-ORACLE = REPO / "nucleus" / "test_check_stamp.py"
+ORACLE = REPO / "tests" / "test_check_stamp.py"
 ENV = "CHECK_STAMP_SRC"
 
 MUTANTS = {

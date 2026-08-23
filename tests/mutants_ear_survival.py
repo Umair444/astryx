@@ -21,7 +21,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 SUBJECT = REPO / "channel" / "server.mjs"
-ORACLE = REPO / "nucleus" / "test_ear_survival.py"
+ORACLE = REPO / "tests" / "test_ear_survival.py"
 ENV = "CHANNEL_SERVER_SRC"
 
 MUTANTS = {

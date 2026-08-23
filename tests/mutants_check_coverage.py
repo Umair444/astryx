@@ -31,7 +31,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 SUBJECT = REPO / "nucleus" / "check.sh"
-ORACLE = REPO / "nucleus" / "test_check_coverage.py"
+ORACLE = REPO / "tests" / "test_check_coverage.py"
 ENV = "CHECK_SH_SRC"
 
 _CHARTER = 'run "charter resolver invariants"      "$PY" tests/test_charter.py'

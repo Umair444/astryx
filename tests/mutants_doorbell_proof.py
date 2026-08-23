@@ -17,7 +17,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 SUBJECT = REPO / "triggers" / "steward" / "doorbell_proof.py"
-ORACLE = REPO / "nucleus" / "test_doorbell_proof.py"
+ORACLE = REPO / "tests" / "test_doorbell_proof.py"
 ENV = "DOORBELL_PROOF_SRC"
 
 MUTANTS = {

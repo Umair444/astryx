@@ -22,7 +22,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 SUBJECT = REPO / "triggers" / "seed" / "wedge_watch.py"
-ORACLE = REPO / "nucleus" / "test_wedge_watch.py"
+ORACLE = REPO / "tests" / "test_wedge_watch.py"
 ENV = "WEDGE_WATCH_SRC"
 
 MUTANTS = {

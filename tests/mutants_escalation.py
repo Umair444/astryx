@@ -18,7 +18,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 SUBJECT = REPO / "nucleus" / "escalation.py"
-ORACLE = REPO / "nucleus" / "test_escalation.py"
+ORACLE = REPO / "tests" / "test_escalation.py"
 ENV = "ESCALATION_SRC"
 
 MUTANTS = {

@@ -392,13 +392,13 @@ EOF
 _chk_prreview() { ls triggers/*/pr_review.py >/dev/null 2>&1; }
 _act_prreview() {
   mkdir -p triggers/seed
-  cat > triggers/seed/pr_review.py <<'SHIM'
+  cat > triggers/seed/pr_review.py <<'EOF'
 """Live install of the shipped pr-review trigger (one writer:
 nucleus/shipped_triggers/pr_review.py). Reviewer seat at founding is the seed; move this
 file to the immune-system agent (steward) once one exists — proposer and reviewer must
 never be the same mind."""
 from nucleus.shipped_triggers.pr_review import pr_review  # noqa: F401
-SHIM
+EOF
   say "installed pr-review trigger (seed) — open PRs / medic branches wake the reviewer"
 }
 

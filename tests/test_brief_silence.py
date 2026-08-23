@@ -39,17 +39,34 @@ _fails: list[str] = []
 
 
 class Ctx:
-    """Fully injected. `last` is the fake max(ts) the guard's query would return;
-    None models "no delivered message to him at all"."""
+    """Fully injected. `last` is the fake max(ts) the guard's anchor query would return;
+    None models "no delivered message to him at all". `escalated_recently` models a prior
+    escalation row still inside the peer re-nag window. Writes are RECORDED, never executed —
+    the escalation path has a real INSERT, and a test that let it run would be writing live
+    wire rows every time the suite ran."""
 
-    def __init__(self, last, state=None):
+    def __init__(self, last, state=None, escalated_recently=False):
         self.state = {} if state is None else state
         self._last = last
+        self._escalated_recently = escalated_recently
+        self.writes = []          # every INSERT the guard attempted, as (query, params)
 
     def sql(self, q, params=()):
+        if q.lstrip().upper().startswith("INSERT"):
+            self.writes.append((q, params))
+            return []
+        if "body LIKE" in q:                      # the escalation dedup probe
+            assert params and params[0] == bs.ESCALATE_TO, \
+                "the dedup must probe the peer it actually writes to"
+            assert "from_agent='canopus'" in q, \
+                "the dedup must look for MY OWN prior escalation, not anyone's message"
+            return [{"?column?": 1}] if self._escalated_recently else []
         assert "status='delivered'" in q, "the guard must read the DELIVERY column"
         assert params and params[0] == bs.OWNER, "the guard must anchor on the wire identity"
         return [{"last_ts": self._last}]
+
+    def escalations(self):
+        return [(q, pr) for q, pr in self.writes if "INSERT" in q.upper()]
 
 
 def ago(hours):
@@ -118,6 +135,78 @@ check("no fire text names a surface, a channel id or a handle",
 check("no fire text carries a long digit run (a channel id or a phone shape)",
       all(not any(len(w.strip(".,()")) >= 11 and w.strip(".,()").isdigit()
                   for w in (b or "").split()) for b in bodies))
+
+# ── escalation: the 08-19 hole — a fire delivered to a dead body has no consumer ──
+# The guard fired correctly every 12h for 111h into a seat taking zero turns. Past
+# ESCALATE_H it must stop trusting itself as its own recipient.
+c = Ctx(ago(bs.ESCALATE_H - 2), {})
+bs.brief_silence(c)
+check("does NOT escalate while my own remedy is still plausible",
+      c.escalations() == [])
+
+c = Ctx(ago(bs.ESCALATE_H + 2), {})
+bs.brief_silence(c)
+esc = c.escalations()
+check("escalates past the bound", len(esc) == 1)
+check("and addresses a peer who is NOT me",
+      len(esc) == 1 and esc[0][1][0] == bs.ESCALATE_TO and bs.ESCALATE_TO != "canopus")
+check("and marks the row so its own dedup can find it",
+      len(esc) == 1 and esc[0][1][1].startswith(bs.ESCALATE_MARK))
+
+c = Ctx(ago(bs.ESCALATE_H + 2), {}, escalated_recently=True)
+bs.brief_silence(c)
+check("does not re-escalate inside the peer re-nag window",
+      c.escalations() == [])
+
+# THE PROPERTY THE WHOLE EXTENSION EXISTS FOR: a throttle on telling MYSELF must never
+# gate telling someone else. Fresh warned_at => the personal fire is suppressed; the
+# escalation must still be written.
+c = Ctx(ago(bs.ESCALATE_H + 2), {"warned_at": NOW.isoformat()})
+out = bs.brief_silence(c)
+check("personal throttle suppresses my own fire but NOT the escalation",
+      out is None and len(c.escalations()) == 1)
+
+# Dedup lives in the DB, not ctx.state — so a body that keeps losing state (the exact
+# condition this path exists for) still escalates rather than going quiet.
+c = Ctx(ago(bs.ESCALATE_H + 2), {})
+bs.brief_silence(c)
+check("state amnesia does not silence the escalation",
+      len(c.escalations()) == 1)
+
+c = Ctx(None, {})
+bs.brief_silence(c)
+check("a missing anchor escalates too (mute seat or moved identity)",
+      len(c.escalations()) == 1)
+
+# THE CONSTANT ITSELF, pinned to ABSOLUTE durations. Every assertion above derives its
+# fixture from bs.ESCALATE_H, so it moves with the constant and would pass at any value —
+# conformance-to-self, not to spec. A mutation run proved it: ESCALATE_H = 999999 survived
+# the whole escalation block ([[feedback_verifier_sharing_producer_code]]). These two bound
+# it from the duty instead. The duty is DAILY, so: one missed cycle is still mine to fix,
+# and three days of a principal hearing nothing must have reached someone else by now.
+c = Ctx(ago(30), {})
+bs.brief_silence(c)
+check("30h — one missed cycle — stays mine to fix, no peer spend",
+      c.escalations() == [], "(pins the bound above 30h)")
+
+c = Ctx(ago(72), {})
+bs.brief_silence(c)
+check("72h of a principal hearing nothing MUST have reached a peer",
+      len(c.escalations()) == 1, "(pins the bound at or below 72h)")
+
+# Tier floor on the ESCALATION specifically — it addresses a PEER, so the bar is the
+# peer-readable one: it may say the duty is unmet, never what the reports would contain.
+c = Ctx(ago(bs.ESCALATE_H + 2), {})
+bs.brief_silence(c)
+ebody = c.escalations()[0][1][1].lower()
+check("escalation body names no surface, channel or handle",
+      all(tok not in ebody for tok in leaks))
+check("escalation body carries no long digit run",
+      not any(len(w.strip(".,()")) >= 11 and w.strip(".,()").isdigit()
+              for w in ebody.split()))
+check("escalation body leaks no career specifics",
+      all(tok not in ebody for tok in
+          ("klarna", "revolut", "monzo", "cv", "salary", "recruiter", "£", "application")))
 
 print("ALL PASS" if not _fails else f"FAILURES: {_fails}")
 sys.exit(1 if _fails else 0)

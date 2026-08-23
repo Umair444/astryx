@@ -20,7 +20,7 @@ fixtures are derived from the subject proves only that the subject agrees with i
 import os, subprocess, sys, tempfile, pathlib
 
 HERE = pathlib.Path(__file__).resolve().parent
-SUBJECT = HERE / "estate_grep.sh"
+SUBJECT = HERE.parent / "nucleus" / "estate_grep.sh"   # oracle moved to tests/; subject stayed an organ
 if not SUBJECT.is_file():
     print(f"SKIP: {SUBJECT} absent"); sys.exit(77)
 

@@ -53,7 +53,7 @@ import traceback
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-NUCLEUS = REPO / "nucleus"
+NUCLEUS = REPO / "tests"      # mutants moved with the tests (2026-08-23)
 EXIT_SKIP = 77
 REQUIRED = ("SUBJECT", "ORACLE", "ENV", "MUTANTS")
 

@@ -25,7 +25,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 SUBJECT = REPO / "triggers" / "memory" / "wiki_drift.py"
-ORACLE = REPO / "nucleus" / "test_wiki_drift.py"
+ORACLE = REPO / "tests" / "test_wiki_drift.py"
 ENV = "WIKI_DRIFT_SRC"
 
 MUTANTS = {

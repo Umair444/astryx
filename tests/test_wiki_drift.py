@@ -24,12 +24,20 @@ admit everything the normaliser was written to absorb, or the normalisation is d
 Run: venv/bin/python tests/test_wiki_drift.py     (exit 0 pass, 1 fail, 77 skip)
 """
 import importlib.util
+import os
 import sys
 import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-TRIGGER = REPO / "triggers" / "memory" / "wiki_drift.py"
+# READ THE SUBJECT FROM THE ENVIRONMENT, defaulting to the real one — the mutation_probe
+# contract. forge lost a 33/33 suite to the opposite (2026-08-20): their oracle imported the
+# real module and ignored the path the probe handed it, so it passed against ten deliberately
+# broken copies it never opened. AN ORACLE THAT IGNORES ITS OWN SUBJECT ARGUMENT IS GREEN
+# AGAINST EVERY WRONG IMPLEMENTATION THERE IS, and the signature is a CLEAN SWEEP of
+# NOT PROBED: a scattered survivor is a hole, all of them is a wiring fault.
+TRIGGER = Path(os.environ.get("WIKI_DRIFT_SRC",
+                              REPO / "triggers" / "memory" / "wiki_drift.py"))
 EXIT_SKIP = 77
 
 
