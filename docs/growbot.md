@@ -43,7 +43,10 @@ live against whatever body is attached.
 
 Brit's own firmware, unmodified, from a plain checkout of his repo (e.g. `~/growbot`):
 
-1. Flash `firmware/micropython-pico2w.uf2` (BOOTSEL drag-drop), then from `firmware/`:
+1. Flash MicroPython (BOOTSEL drag-drop). ⚠️ Match the chip: the repo's
+   `firmware/micropython-pico2w.uf2` is the **Pico 2 W** (RP2350) build and will not
+   boot a **Pico W** (RP2040) — for a Pico W use the `RPI_PICO_W` build from
+   micropython.org. Then from `firmware/`:
    `mpremote cp PicoRobotics_gpio.py :PicoRobotics.py && mpremote cp act_engine.py :act_engine.py && mpremote cp robot-server.py :main.py && mpremote reset`
    (direct-wired servos on GP0/GP1; use `PicoRobotics.py` instead for a carrier board)
 2. On a phone, join the **`GrowBot-Setup`** hotspot → `http://192.168.4.1` → pick your
