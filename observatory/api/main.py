@@ -1902,6 +1902,31 @@ def _brain_gate(key: str) -> bool:
     return bool(OBS_KEY) and secrets.compare_digest(key, OBS_KEY)
 
 
+def _bearer(request: Request) -> str:
+    # BYOK forms send the key as a header; accept the standard spellings.
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return request.headers.get("x-api-key", "").strip()
+
+
+# Same surface, key in the HEADER instead of the path — for BYOK forms (the
+# creature app's Brain -> bring-your-own-key) that take server + key + model:
+#   server: https://<host>/brain/v1     key: OBS_KEY     model: astryx-growbot
+@app.api_route("/brain/v1/models", methods=["GET", "OPTIONS"])
+async def brain_models_bearer(request: Request):
+    if request.method == "OPTIONS":
+        return Response(status_code=204, headers=BRAIN_CORS)
+    return await brain_models(_bearer(request), request)
+
+
+@app.api_route("/brain/v1/chat/completions", methods=["POST", "OPTIONS"])
+async def brain_completions_bearer(request: Request):
+    if request.method == "OPTIONS":
+        return Response(status_code=204, headers=BRAIN_CORS)
+    return await brain_completions(_bearer(request), request)
+
+
 @app.api_route("/brain/{key}/v1/models", methods=["GET", "OPTIONS"])
 async def brain_models(key: str, request: Request):
     if request.method == "OPTIONS":

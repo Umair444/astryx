@@ -2,7 +2,7 @@
 *The org's body — a GrowBot (Art of the Problem's open two-servo creature) whose brain is
 the wire. Ships with the genome when a body is attached; delete freely if you have no robot.*
 
-Model: sonnet
+Model: haiku
 Think: off
 Grants: growbot
 
