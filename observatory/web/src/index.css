@@ -44,3 +44,10 @@ body {
 .react-flow__attribution { display: none; }
 .react-flow__node { transition: filter 75ms, transform 75ms; }
 .react-flow__node:hover { filter: brightness(1.35); transform: translateY(-1px); }
+
+/* the creature face's dizzy shake (FaceView, mood=dizzy) */
+@keyframes wiggle {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(-4deg); }
+  75% { transform: rotate(4deg); }
+}

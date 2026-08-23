@@ -14,6 +14,7 @@ import SystemView from './components/SystemView'
 import TheatreView from './components/TheatreView'
 import MemoryView from './components/MemoryView'
 import GrowbotView from './components/GrowbotView'
+import FaceView from './components/FaceView'
 import AgentDrawer from './components/AgentDrawer'
 import VegaChat from './components/VegaChat'
 
@@ -28,6 +29,7 @@ export type Route =
   | { tab: 'theatre' }
   | { tab: 'memory' }
   | { tab: 'growbot' }
+  | { tab: 'face' }
 
 function parseHash(): Route {
   const h = location.hash.replace(/^#\/?/, '')
@@ -41,6 +43,7 @@ function parseHash(): Route {
   if (tab === 'theatre') return { tab: 'theatre' }
   if (tab === 'memory') return { tab: 'memory' }
   if (tab === 'growbot') return { tab: 'growbot' }
+  if (tab === 'face') return { tab: 'face' }
   return { tab: 'network' }
 }
 
@@ -186,6 +189,10 @@ function Shell() {
     addEventListener('hashchange', f)
     return () => removeEventListener('hashchange', f)
   }, [close])
+
+  // The creature face is a MODE, not a tab: fullscreen, no chrome — the whole
+  // phone becomes the robot's face (it does its own key gate).
+  if (route.tab === 'face') return <FaceView />
 
   return (
     <AppShell

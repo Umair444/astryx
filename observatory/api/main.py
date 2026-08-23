@@ -1873,6 +1873,66 @@ GROWBOT_BODY = (_env("GROWBOT_BODY_URL") or "http://127.0.0.1:8470").rstrip("/")
 GROWBOT_PATHS = {"stats", "act", "stop", "pose", "set", "routine", "servo", "seq"}
 
 
+# The face's nervous system (observatory #/face on the mounted phone). Brit's
+# VERBS.md splits the creature into engine-owned REFLEXES (instant, no LLM) and
+# agent behavior; this endpoint is that split on the wire. A touch/shake/pickup
+# fires a canned reflex plan at the body IMMEDIATELY, and only escalates to the
+# growbot agent as a message when the event class has been quiet for a while —
+# perception is free, attention costs a wake (the senses law).
+GROWBOT_REFLEX = {
+    "tap":    [{"l": 100, "r": 80, "ms": 150}, {"l": 80, "r": 100, "ms": 150},
+               {"l": 90, "r": 90, "ms": 200}],
+    "shake":  [{"l": 60, "r": 120, "ms": 120}, {"l": 120, "r": 60, "ms": 120},
+               {"l": 60, "r": 120, "ms": 120}, {"l": 90, "r": 90, "ms": 250}],
+    "pickup": [{"l": 70, "r": 110, "ms": 300}, {"l": 90, "r": 90, "ms": 300}],
+}
+GROWBOT_ESCALATE_S = {"tap": 45, "shake": 30, "pickup": 60}
+growbot_last_esc: dict[str, float] = {}
+
+
+class FaceEvent(BaseModel):
+    kind: str                       # tap | shake | pickup | voice
+    text: str = ""                  # voice transcript
+
+
+@app.post("/api/growbot/event")
+async def growbot_event(ev: FaceEvent, request: Request):
+    kind = ev.kind if ev.kind in ("tap", "shake", "pickup", "voice") else None
+    if kind is None:
+        return Response(status_code=400)
+    body_plan = GROWBOT_REFLEX.get(kind)
+    if body_plan:                   # the reflex: instant, LLM-free
+        def _reflex():
+            import urllib.request as ur
+            try:
+                req = ur.Request(f"{GROWBOT_BODY}/act",
+                                 data=json.dumps({"steps": body_plan}).encode(),
+                                 headers={"Content-Type": "application/json"})
+                ur.urlopen(req, timeout=3).read()
+            except OSError:
+                pass                # body offline — the face still reacts on-screen
+        await asyncio.to_thread(_reflex)
+    escalated = False
+    if kind == "voice" and ev.text.strip():
+        await pool.fetchrow(
+            "INSERT INTO messages (from_agent, to_agent, thread, intent, body) "
+            "VALUES ('owner', 'growbot', 'growbot', 'chat', $1) RETURNING id",
+            ev.text.strip()[:2000])
+        escalated = True
+    elif kind != "voice":
+        now = time.time()
+        if now - growbot_last_esc.get(kind, 0) > GROWBOT_ESCALATE_S[kind]:
+            growbot_last_esc[kind] = now
+            await pool.fetchrow(
+                "INSERT INTO messages (from_agent, to_agent, thread, intent, body) "
+                "VALUES ('owner', 'growbot', 'growbot', 'chat', $1) RETURNING id",
+                {"tap": "[sense] someone just tapped you",
+                 "shake": "[sense] you are being shaken!",
+                 "pickup": "[sense] you were just picked up"}[kind])
+            escalated = True
+    return {"ok": True, "reflex": bool(body_plan), "escalated": escalated}
+
+
 @app.api_route("/api/growbot/{path}", methods=["GET", "POST"])
 async def growbot_proxy(path: str, request: Request):
     if path not in GROWBOT_PATHS:
