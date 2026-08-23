@@ -126,7 +126,6 @@ EXEMPT = {
     # class), so the edge is declared here by hand, with its location.
     "nucleus/check_watch.sh":    "invoked by triggers/steward/org_runners.py (gitignored estate; pulse trigger, daily 05:20)",
     "nucleus/restore_verify.sh": "invoked by triggers/steward/org_runners.py (gitignored estate; pulse trigger, weekly Sun 03:00)",
-    "nucleus/growbot_heal.py":   "invoked by triggers/steward/growbot_body_watch.py (gitignored estate; detached serial rescue) — also a hand tool",
     "nucleus/station.py":     "on-demand: the stationed-agent runtime — a backend or operator invokes it per request (claude -p API); nothing schedules it by design",
     "nucleus/shipped_triggers/pr_review.py":
         "shipped reference: deployed as a gitignored shim (init.sh heredoc at founding; "
