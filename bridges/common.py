@@ -1,10 +1,9 @@
 """bridges/common.py — everything every CHAT surface shares, written once.
 
 Scope: the chat-bridge family (whatsapp, telegram, discord) ONLY. gateway.py
-(federation door) and geoloc.py (sensor intake) are deliberately independent
-loose scripts — folding them in would couple the federation/sensor graphs to
-the chat+ASR dependency tree for ~10 shared lines. Duplication beats coupling
-at that size.
+(the federation door) is a deliberately independent loose script — folding it
+in would couple the federation graph to the chat+ASR dependency tree for ~10
+shared lines. Duplication beats coupling at that size.
 
 A chat bridge translates ONE platform to the wire; anything that isn't
 platform translation lives here:

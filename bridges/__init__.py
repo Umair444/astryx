@@ -8,8 +8,8 @@ its platform's translation.
 Layout grammar (plan-14): the package stays FLAT; a subdirectory is earned
 only when the package holds two or more mechanism FAMILIES that would
 otherwise interleave (not merely ≥2 files). Today: one chat family
-(whatsapp/telegram/discord + common + transcribe) plus two deliberately
-independent loose scripts (gateway = federation door, geoloc = sensor
-intake) — flat and legible. common.py is chat-family machinery, not
+(whatsapp/telegram/discord + common + transcribe) plus one deliberately
+independent loose script (gateway = the federation door) — flat and legible.
+common.py is chat-family machinery, not
 package-wide; see its docstring.
 """

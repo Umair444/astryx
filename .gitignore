@@ -18,6 +18,12 @@ agents/.git/
 memory/
 observatory/web/node_modules/
 observatory/web/dist/
+
+# geoloc — niche owner-personal location intake (Tasker→endpoint); removed from the
+# PUBLIC tree but kept on the owner's disk so the running service survives (goal
+# geoloc-remove). Name-anchored so a relocation can't silently un-ignore it.
+bridges/geoloc.py
+mcp/geoloc/
 *.tsbuildinfo
 **/routes*.json
 !**/routes*.example.json

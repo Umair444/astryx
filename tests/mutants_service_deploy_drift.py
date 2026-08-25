@@ -79,9 +79,9 @@ MUTANTS = {
     "M6 DRIFT returns None — blindness reads as an all-clear":
         ('        blind = f"', "        return None\n        blind = f\""),
 
-    # THE DESIGN, HALF ONE. gateway and geoloc share WorkingDirectory=bridges and neither
-    # imports bridges/common.py; a directory-shaped root convicts both over a file neither
-    # holds. This is the first implementation anyone reaches for.
+    # THE DESIGN, HALF ONE. two services under WorkingDirectory=bridges that do not import
+    # bridges/common.py — a directory-shaped root convicts them over a file neither holds.
+    # This is the first implementation anyone reaches for.
     "M7 closure widened to the entry DIRECTORY":
         ("        files, degraded = _closure(entry, wd)",
          '        files, degraded = {p for p in entry.parent.glob("*.py")}, ""'),

@@ -141,22 +141,8 @@ EOF
   # A sense is inbound PERCEPTION → org STATE, not the wire. Its presence signal is
   # its MODULE + a charter GRANT (NOT a routes file — a sense never routes to the
   # wire, so keying on routes*.json would read every sense as absent; plan-17 a1).
-  if [ -f bridges/geoloc.py ] && grep -rqsE '^Grants:.*\bgeoloc\b' agents/; then
-    cat > "$UD/astryx-geoloc.service" <<EOF
-[Unit]
-Description=astryx geoloc bridge — phone location intake on :8766
-After=network.target
-[Service]
-WorkingDirectory=$PWD/bridges
-EnvironmentFile=$PWD/.env
-ExecStart=$PWD/venv/bin/uvicorn geoloc:app --host 0.0.0.0 --port 8766
-Restart=always
-RestartSec=5
-User=$USER
-[Install]
-WantedBy=multi-user.target
-EOF
-  fi
+  # (no sense modules ship in the public tree; a sense adds its own module + grant here —
+  # presence-gated exactly like a channel, generating one astryx-<sense>.service unit.)
 
   # ── 3b. growbot body — the org's PHYSICAL body (a GrowBot Pico on USB serial) ─
   # Presence signal = the body host organ + a LIVE charter granting the growbot

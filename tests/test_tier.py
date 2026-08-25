@@ -45,8 +45,8 @@ def test_org_actuation_only_is_public():
 
 
 def test_any_pii_grant_is_private():
-    d = _tree({"canopus": "gmail, contacts, geoloc, browser",
-               "gemini": "geoloc, contacts",
+    d = _tree({"canopus": "gmail, contacts, browser",
+               "gemini": "contacts, gmail",
                "mixed": "compose, gmail"})   # one PII grant among actuation ones ⇒ private
     assert not is_content_public("canopus", d)
     assert not is_content_public("gemini", d)

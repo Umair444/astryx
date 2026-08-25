@@ -64,7 +64,7 @@ class Ctx:
 
 
 SERVER = "channel/server.mjs"
-GEO = "mcp/geoloc/server.py"
+GEO = "mcp/contacts/server.py"
 
 # The live 08-14 estate, reduced: server.mjs fixed ~21h ago, most agents older.
 LIVE = [
@@ -281,7 +281,7 @@ print("\nRUNG 0 IS REACHABLE — a same-day drift must be REPORTED, not silently
 # the median inter-boot gap is 30-55h per agent and 49 of 58 gaps are >= 24h. Ordinary cadence
 # does not redeploy inside the grace window, so the grace was never skipping a self-healing
 # period — it was deferring EVERY report by a day, silently, including on the two watched files
-# that carry personal-tier data (mcp/geoloc, mcp/contacts), about which the guard's own
+# that carry personal-tier data (mcp/contacts), about which the guard's own
 # docstring says an undeployed tier redaction "cannot wait".
 #
 # The mechanism was a sentinel collision, which is why it read as intent rather than as a bug:

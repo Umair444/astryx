@@ -8,7 +8,7 @@ is NOT this authority's concern — it keys content only.
 
 POLARITY IS THE WHOLE POINT (a2's guardrail, seed's build-note): content is public
 ONLY IF the agent holds no grant OUTSIDE a POSITIVE org-actuation allowlist. Any
-grant not on the allowlist — a known owner-PII-reading grant (gmail/contacts/geoloc/
+grant not on the allowlist — a known owner-PII-reading grant (gmail/contacts/
 browser) OR an UNKNOWN/new one (a future calendar/sms/drive) — floors the agent to
 private. Fail-closed by construction: a grant nobody has classified yet defaults
 PRIVATE, so a new capability can never silently make an agent's content public.

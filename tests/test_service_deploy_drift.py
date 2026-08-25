@@ -2,7 +2,7 @@
 is holding.
 
 WHY THIS FILE IS ADVERSARIAL RATHER THAN CONFIRMATORY. The guard was born out of a false
-ALL-CLEAR: gemini's hand sweep on 2026-08-19 told seed that gateway, geoloc and
+ALL-CLEAR: gemini's hand sweep on 2026-08-19 told seed that gateway and
 observatory were current, because `find` on a path that does not exist exits 0 and an
 empty result read as health. The service it cleared was the one running six-day-old code.
 So the failure mode this guard must not have is not "it is wrong", it is "it is quietly
@@ -13,9 +13,9 @@ reason it exists.
 TWO COUNTEREXAMPLE ARMS carry the load-bearing design choices, because an assertion that
 the guard is silent proves nothing unless a plausible WRONG guard would have spoken:
   · file-granularity — swap the import closure for the directory-shaped root anyone would
-    reach for first, and the arm that must stay silent convicts. gateway and geoloc really
-    do share `WorkingDirectory=/home/umair/astryx/bridges` and really do not import
-    `bridges/common.py`; a directory root convicts both over a file neither holds.
+    reach for first, and the arm that must stay silent convicts. gateway runs under
+    `WorkingDirectory=/home/umair/astryx/bridges` and does not import `bridges/common.py`;
+    a directory root convicts it (and any bridges/ sibling) over a file it never holds.
   · committed-state-only (seed's constraint (a)) — swap `git log` for file mtime, the
     other obvious implementation, and the dirty-working-tree arm convicts. That is the
     false red that would fire on every evening of shared-tree work until people stopped
@@ -97,8 +97,8 @@ class Ctx:
 
 # ── the synthetic estate ────────────────────────────────────────────────────────────
 # Shaped after the real one deliberately: two services sharing a WorkingDirectory, one
-# importing a common module and one not. That is the gateway/geoloc pair, and it is the
-# configuration a directory-shaped root gets wrong.
+# importing a common module and one not — the bridges/ shape a directory-shaped root
+# gets wrong.
 TMP = Path(tempfile.mkdtemp(prefix="sdd-oracle-")).resolve()
 (TMP / "bridges").mkdir()
 (TMP / "bridges" / "alpha.py").write_text("from common import helper\nimport shared\n")
