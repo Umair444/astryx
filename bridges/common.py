@@ -332,10 +332,18 @@ async def step_line(pool, step_id: int, kind: str, agent: str = "") -> str | Non
 
 
 # -------------------------------------------------------------------- doorbell
-async def listen(dsn: str, pending_where: str, deliver, on_step):
+async def listen(dsn: str, pending_where: str, deliver, on_step, on_idle=None):
     """The reconnecting wire tap every bridge runs: LISTEN astryx_wire +
     astryx_steps; on wire ring, claim this surface's pending rows via
-    `pending_where` and hand each to deliver(row); steps go to on_step(ev)."""
+    `pending_where` and hand each to deliver(row); steps go to on_step(ev).
+
+    on_idle (optional): an async no-arg callback invoked once per inner-loop pass —
+    at least every 60s (the q.get timeout), more often when the wire is busy. It rides
+    this existing periodic path so a bridge can run a lightweight watcher WITHOUT a
+    second timer or task. It is called inside a try/except that swallows everything: a
+    rider's fault must never break this bridge's message delivery. Only whatsapp passes
+    one today (the pulse-liveness witness, bridges/pulse_witness.py); the other bridges
+    leave it None and are unaffected."""
     while True:
         try:
             conn = await asyncpg.connect(dsn)
@@ -345,6 +353,11 @@ async def listen(dsn: str, pending_where: str, deliver, on_step):
                     ch, lambda c, p, chan, payload: q.put_nowait((chan, payload)))
             conn.add_termination_listener(lambda c: q.put_nowait(("__dead__", "")))
             while True:
+                if on_idle is not None:
+                    try:
+                        await on_idle()
+                    except Exception:
+                        pass          # the wire tap never breaks for a rider's fault
                 try:
                     chan, payload = await asyncio.wait_for(q.get(), timeout=60)
                 except asyncio.TimeoutError:
