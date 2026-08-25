@@ -165,7 +165,11 @@ EOF
   # an extension of the open GrowBot protocol, not a fork — a GROWBOT_BODY_URL
   # in .env pointing at a remote body (Brit's own Wi-Fi firmware on a Pico W)
   # means the chip serves the protocol itself and no host service must run.
-  gb_url=$(grep -m1 '^GROWBOT_BODY_URL=' .env 2>/dev/null | cut -d= -f2-)
+  # `|| true`: on a fresh clone .env is absent (grep rc=2) or lacks the line (rc=1); under
+  # `set -eo pipefail` a bare assignment from that pipe would abort the whole script. This is
+  # the ONE bare (set-e-active) units() call path — `./init.sh doctor` on a fresh clone — so
+  # the maintainer never saw it (their .env has GROWBOT_BODY_URL). Empty = no URL = local body.
+  gb_url=$(grep -m1 '^GROWBOT_BODY_URL=' .env 2>/dev/null | cut -d= -f2- || true)
   if [ -f nucleus/growbot_body.py ] && \
      { [ -z "$gb_url" ] || echo "$gb_url" | grep -qE '127\.0\.0\.1|localhost'; } && \
      grep -rqsE '^Grants:.*\bgrowbot\b' --exclude='*.example.md' agents/; then
@@ -283,9 +287,13 @@ _act_pg() {
   elif command -v docker >/dev/null; then
     local pw; pw=$(head -c 24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)
     say "starting postgres container astryx-pg"
+    # postgres:18 changed PGDATA: the volume must mount at /var/lib/postgresql (data lands in
+    # a versioned subdir). The old ≤17 path /var/lib/postgresql/data makes 18 EXIT 1 on a fresh
+    # volume ("PostgreSQL data ... (unused mount/volume)") and crash-loop — the DB a stranger
+    # never gets. The maintainer's custom pg18 image masked it. See docker-library/postgres#37.
     docker run -d --name astryx-pg --restart unless-stopped \
       -e POSTGRES_USER=astryx -e POSTGRES_PASSWORD="$pw" -e POSTGRES_DB=astryx \
-      -p 127.0.0.1:5433:5432 -v astryx-pgdata:/var/lib/postgresql/data postgres:18 >/dev/null
+      -p 127.0.0.1:5433:5432 -v astryx-pgdata:/var/lib/postgresql postgres:18 >/dev/null
     echo "ASTRYX_DSN=postgres://astryx:$pw@127.0.0.1:5433/astryx" > .env && chmod 600 .env
   else die "no .env and no docker — create the db yourself and write ASTRYX_DSN=... to .env"; fi; }
 
@@ -546,6 +554,13 @@ setup() {
 }
 
 if [ "${1:-}" = "doctor" ]; then
+  # A DIAGNOSTIC MUST COMPLETE. Every check below is explicitly guarded (ok/bad + FAIL),
+  # so errexit buys no safety here — it only TRUNCATES the report: a bare `x=$(ls … | head)`
+  # or `for s in $(tmux ls …)` returns nonzero on a FRESH CLONE (no backups/, no .env, no
+  # tmux server) and, under `set -eo pipefail`, aborted doctor mid-run at rc=2 — silently
+  # hiding every check after it. The maintainer never saw it (their box has those files).
+  # A doctor that stops early is the worst not-run: it reports nothing past the crash.
+  set +e +o pipefail
   ok() { echo -e "  \033[32m✓\033[0m $*"; }
   bad() { echo -e "  \033[31m✗\033[0m $*"; FAIL=1; }
   FAIL=""

@@ -74,7 +74,7 @@ uv pip install --python venv/bin/python $(venv/bin/python nucleus/deps.py instal
 # 2. postgres — a container (or point ASTRYX_DSN at any server you already run, 17+)
 docker run -d --name astryx-pg --restart unless-stopped \
   -e POSTGRES_USER=astryx -e POSTGRES_PASSWORD=changeme -e POSTGRES_DB=astryx \
-  -p 127.0.0.1:5433:5432 -v astryx-pgdata:/var/lib/postgresql/data postgres:18
+  -p 127.0.0.1:5433:5432 -v astryx-pgdata:/var/lib/postgresql postgres:18   # 18+ mounts the parent, not /data
 echo "ASTRYX_DSN=postgres://astryx:changeme@127.0.0.1:5433/astryx" > .env && chmod 600 .env
 
 # 3. schema (idempotent; optional extensions activate if your image has them)
