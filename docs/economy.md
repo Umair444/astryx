@@ -16,7 +16,7 @@ G = W / (Φ · K)
 | Term | Meaning | Source |
 |---|---|---|
 | **Φ** flux | billable tokens burned in the window | every `turns` row carries its true billable cost (cache-aware) |
-| **W** work | Σ budgets of goals **verified** in the window | `goals.done_at` — stamped by a DB trigger, never by hand |
+| **W** work | Σ `budget_tokens` of goals **verified** in the window | `goals.done_at` — stamped by a DB trigger, never by hand |
 | **K** self | compressed size (zlib-9) of the org's own code + charters + triggers + sensors | absolute size: **bloat divides G, deletion raises it** |
 | **Q** heat | flux that produced no boundary value | `Φ = W-attributable + Q`, the first law |
 
