@@ -45,6 +45,7 @@ from .common import (HERE, MEDIA_DIR, Outcome, route_target, describe_media,
                      env, listen, load_routes,
                      record_poll, split_files, split_polls, step_line,
                      update_poll_votes, vote_body, vote_changes, wire_insert)
+from .pulse_witness import PulseWitness
 from .providers.whatsapp import WhatsAppProvider
 
 PROVIDER = WhatsAppProvider()          # wacli send logic
@@ -558,8 +559,24 @@ async def deliver(row):
 async def lifespan(app: FastAPI):
     global pool
     pool = await asyncpg.create_pool(DSN, min_size=1, max_size=2)
+
+    # The pulse-liveness witness rides listen()'s own loop (no second timer). It reads
+    # max(triggers.last_eval) and, if the one clock looks dead, doorbells the owner
+    # UN-THREADED — the designed "reach the owner" path (deliver() refuses a named,
+    # non-wa thread; only a threadless/​t- message routes to his DM). See pulse_witness.py.
+    async def _read_pulse_age():
+        row = await pool.fetchrow(
+            "SELECT extract(epoch FROM now() - max(last_eval))::float AS age "
+            "FROM triggers WHERE enabled")
+        return row["age"] if row else None
+
+    async def _ring_owner(body: str):
+        await wire_insert(pool, "pulse-witness", "local", "owner", None, "chat", body)
+
+    witness = PulseWitness(_read_pulse_age, _ring_owner)
     task = asyncio.create_task(listen(
-        DSN, "(to_agent='owner' OR to_agent LIKE 'wa-%')", deliver, on_step))
+        DSN, "(to_agent='owner' OR to_agent LIKE 'wa-%')", deliver, on_step,
+        on_idle=witness.tick))
     yield
     task.cancel()
     await pool.close()

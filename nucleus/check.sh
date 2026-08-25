@@ -164,6 +164,14 @@ run "live-tree check guard can't go quiet" "$PY" tests/test_check_stamp.py
 run "live-tree stamp says what ran it" "$PY" tests/test_check_watch.py
 run "metabolism patrol invariants" "$PY" tests/test_stale_goals.py
 run "out-of-band doorbell is watched" "$PY" tests/test_doorbell_proof.py
+# The out-of-pulse clock witness — the guard that replaced the deleted nucleus/pulse_watch.py
+# after the one-clock ruling. It rides the whatsapp bridge's own loop (no second timer),
+# reads max(triggers.last_eval), and doorbells the owner when astryx-pulse.timer looks dead.
+# This proves the classifier's polarity (stale/fresh/UNKNOWN), the standing-condition re-nag
+# and re-arm, and the actuator's two lifeline properties: it CAN fire, and it fails OPEN (a
+# DB blip never rings, never clears the latch, never raises into the delivery loop). Pure
+# stdlib, no DB, no wire — the I/O seams are injected. ~0.1s.
+run "pulse witness: clock death stays learnable" "$PY" tests/test_pulse_witness.py
 
 # THE INSTRUMENT, NOT THE ESTATE. nucleus/glob_vacuity.py runs the whole suite under a
 # shim to find globs that match nothing and pass anyway (forge's *.json against a
