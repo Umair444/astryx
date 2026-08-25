@@ -198,11 +198,17 @@ def org_dark(quiet_h: float | None, floor_h: float = ORG_DARK_FLOOR_H) -> bool:
 
     WHAT IT SEES: org-wide silence past the floor, while the pulse still runs.
     WHAT IT CANNOT SEE: the pulse being dead — a rung evaluated IN the pulse is silent
-      exactly when the pulse is. `nucleus/pulse_watch.py` covers that half; it runs on its
-      own systemd timer outside the pulse, and its owner rung has a delivered row behind it
-      as of 2026-08-20 (msg 12554).
-    WHAT NOTHING COVERS: the HOST. pulse_watch is a timer on the same machine, so a host
-      failure takes the guard, its cover and the carrier together. UNTESTED, and named.
+      exactly when the pulse is. That half was covered by `nucleus/pulse_watch.py`, an
+      out-of-pulse systemd timer, until the "one clock" restructure RETIRED it (ruling A,
+      seed 2026-08-25, thread pulse-watch-orphaned): the org now permits exactly one timer,
+      so no second timer may watch the first. COMPENSATION IS PENDING, not present — the
+      replacement witness rides the always-on whatsapp bridge's OWN loop (a separate
+      process in a separate failure domain, no new clock): it checks max(triggers.last_eval)
+      staleness on its existing cadence and doorbells the owner. Built via medic PR; until
+      it lands, this rung has NO out-of-pulse compensator, which is a NAMED GAP and not a
+      covered one — do not read the paragraph below as satisfied.
+    WHAT NOTHING COVERS: the HOST. Even the bridge-witness runs on the same machine, so a
+      host failure takes the guard, its cover and the carrier together. UNTESTED, and named.
 
     UNKNOWN IS SILENT HERE, AND THAT IS THE ACTUATOR POLARITY, NOT AN OVERSIGHT. An
     earlier draft of this docstring claimed "unknown must not read as healthy", and the
@@ -212,11 +218,14 @@ def org_dark(quiet_h: float | None, floor_h: float = ORG_DARK_FLOOR_H) -> bool:
     is the most expensive wrong available and spends the credibility the true alarm runs
     on. So `None` returns False deliberately.
 
-    THE COST IS REAL AND IS PAID ELSEWHERE: a measurement that cannot be taken is invisible
-    to this rung by construction, so it must be visible to a DETECTOR that costs nothing
-    when it is wrong. `pulse_watch` is that detector — it is outside the pulse and reports
-    a stopped clock on its own timer. If that ever stops being true, this `return False`
-    becomes a silent all-clear and this paragraph is the reason to revisit it.
+    THE COST IS REAL AND IS PAID ELSEWHERE — OR, RIGHT NOW, NOT PAID AT ALL: a measurement
+    that cannot be taken is invisible to this rung by construction, so it must be visible to
+    a DETECTOR that costs nothing when it is wrong. That detector WAS `pulse_watch`; it is
+    retired (see above), and its replacement — the whatsapp-bridge staleness witness — does
+    not exist yet. So as of 2026-08-25 this `return False` IS a silent all-clear with no
+    out-of-pulse cover, exactly the condition this paragraph was written to flag. It closes
+    when the bridge-witness lands (medic PR); until then the gap is open and named, not
+    theoretical.
     """
     if quiet_h is None:
         return False
