@@ -113,6 +113,10 @@ run "charter resolver invariants"      "$PY" tests/test_charter.py
 run "tier floor invariants"            "$PY" tests/test_tier.py
 run "dep coverage invariants"          "$PY" tests/test_deps.py
 run "dep manifest covers all imports"  "$PY" nucleus/deps.py coverage
+# economy heat-definition drift (goal 3408, enforcement half): no live surface may compute
+# heat Q as flux−budget (Φ−W). The live gate scans the tree; the oracle proves it RED.
+run "economy heat-definition (legend)" "$PY" nucleus/legend_guard.py
+run "legend guard invariants"          "$PY" tests/test_legend_guard.py
 # This suite's own blind spot: the list below is hand-maintained, so a newly committed
 # tests/test_*.py was silently never run and this still printed ALL PASS (reproduced
 # 08-13). Derives the expected set from the tests/test_*.py glob — a new oracle must
