@@ -32,7 +32,9 @@ import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO / "memory" / "graph"))
+# resolvers.py is VENDORED beside this server (memory's admitted-only resolvers) so the
+# public tool survives a fresh clone — memory/graph/ is gitignored and absent in a clone.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import resolvers as R                                   # noqa: E402  memory's admitted-only resolvers
 
 try:

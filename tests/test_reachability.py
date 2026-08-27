@@ -165,9 +165,6 @@ EXEMPT = {
         "manual: doctor-class post-deploy probe, self-declared (`# Usage: nucleus/smoke.sh "
         "[observatory-port]`) and already classified as manual by test_check_coverage.py:56",
     "nucleus/__init__.py":    "library: package marker, imported implicitly by `from nucleus import X`",
-    # REACHED, but through a construction no line parser can follow — this is the
-    # declared residual made concrete, and the reason exemptions carry a file:line.
-    "nucleus/identity_commit.py": "service: channel/server.mjs:274 builds the path with new URL(...) and spawns it",
 }
 
 INTERP = r"(?:bash|sh|zsh|exec|source|\.|python3?|\$PY|\$\{PY\}|venv/bin/python3?|uv\s+run|/usr/bin/env\s+\S+)"
