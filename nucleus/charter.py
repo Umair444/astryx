@@ -49,7 +49,7 @@ def _is_example(p: Path, agents_dir: Path) -> bool:
         part.endswith(".example") for part in rel.parts)
 
 
-NON_CHARTERS = (".organ.md", "README.md")
+NON_CHARTERS = (".organ.md", "README.md", "onboard.md")
 
 
 def roster(agents_dir: Path = AGENTS) -> list[str]:
