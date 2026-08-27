@@ -243,6 +243,34 @@ def handle_stop(cur, agent, h):
             (turn_id, agent, started_at))
         cur.execute("UPDATE turns SET num_steps=(SELECT count(*) FROM steps WHERE turn_id=%s) WHERE id=%s",
                     (turn_id, turn_id))
+
+    # AUTO-DELIVER a forgotten reply. If an OWNER message opened this turn and the agent
+    # produced a response but sent NOTHING back to the owner — it wrote the answer in the
+    # terminal and forgot `send` (rare, but then the owner just sees the progress bubble
+    # frozen at the last step) — deliver that response for it: one wire row on the SAME
+    # surface the owner asked from (src thread), and the bridge's deliver() edits the live
+    # bubble into the answer (reusing ph_id, split_files/polls, the fallback-to-new). Guarded
+    # to OWNER-triggered turns so an internal/cron turn never auto-messages him. NO double
+    # send: the back-fill above stamped this turn's real sends with turn_id, so a turn that
+    # DID reply to the owner shows already>0 and is skipped.
+    if turn_id and input_msg_id and last_text and last_text.strip():
+        src = cur.execute("SELECT from_agent, from_org, thread FROM messages WHERE id=%s",
+                          (input_msg_id,)).fetchone()
+        # Fire for a HUMAN channel message — the owner OR anyone on wa/tg/discord. A person
+        # whose trusted_jid is off arrives as 'wa-<num>' (not 'owner') and shows NO progress
+        # bubble, so guarding on 'owner' would strand exactly them; guard on from_org being a
+        # channel instead. Internal ('local') agent turns and pulse triggers never match, so
+        # they can't auto-message anyone. No bubble is fine — deliver() falls back to a fresh
+        # send. Reply goes BACK to that same sender on that same surface (to_agent + thread).
+        if src and src[1] in ("whatsapp", "telegram", "discord"):
+            already = cur.execute(
+                "SELECT count(*) FROM messages WHERE turn_id=%s AND to_agent=%s",
+                (turn_id, src[0])).fetchone()[0]
+            if not already:
+                cur.execute(
+                    "INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, "
+                    "intent, body, turn_id) VALUES (%s,'local',%s,'local',%s,'chat',%s,%s)",
+                    (agent, src[0], src[2], last_text, turn_id))
     return turn_id, last_text, tin, tout
 
 

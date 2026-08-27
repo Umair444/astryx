@@ -43,8 +43,8 @@ from fastapi import FastAPI, Request, Response
 
 from .common import (HERE, MEDIA_DIR, Outcome, route_target, describe_media,
                      env, listen, load_routes,
-                     record_poll, split_files, split_polls, step_line,
-                     update_poll_votes, vote_body, vote_changes, wire_insert)
+                     record_poll, resolve_quoted_body, split_files, split_polls,
+                     step_line, update_poll_votes, vote_body, vote_changes, wire_insert)
 from .pulse_witness import PulseWitness
 from .providers.whatsapp import WhatsAppProvider
 
@@ -324,9 +324,24 @@ async def hook(request: Request):
         sender = f"wa-{digits or 'unknown'}"
         text = f"{m.get('PushName') or sender_jid}: {text}"
 
+    # INBOUND CONTEXT (carried in meta so an agent sees WHO sent it and WHAT it replied to;
+    # from_agent collapses a trusted sender to 'owner', so identity would otherwise be lost).
+    meta = {"sender_jid": sender_jid,
+            "phone": "".join(c for c in sender_jid.split("@")[0] if c.isdigit()),
+            "push_name": m.get("PushName") or ""}
+    # wacli FLATTENS a quoted reply to ReplyToID / ReplyToSenderJID / ReplyToDisplay (not
+    # whatsmeow's nested ContextInfo). ReplyToDisplay carries the quoted text; when it's empty
+    # we resolve the id against what we stored (our own sends carry it as delivery.message_id).
+    rid = m.get("ReplyToID") or ""
+    if rid:
+        meta["reply_to_id"] = str(rid)
+        meta["reply_to_sender_jid"] = jid_str(m.get("ReplyToSenderJID")) or ""
+        meta["reply_to_body"] = ((m.get("ReplyToDisplay") or "").strip()
+                                 or await resolve_quoted_body(pool, rid))
+
     agent, text = await route_target(pool, f"wa:{chat}", text, route["agent"])
 
-    await wire_insert(pool, sender, "whatsapp", agent, f"wa:{chat}", "chat", text)
+    await wire_insert(pool, sender, "whatsapp", agent, f"wa:{chat}", "chat", text, meta)
 
     if route.get("live_steps") and trusted:
         jobs[agent] = {"chat": chat, "thread": f"wa:{chat}", "opened": now,

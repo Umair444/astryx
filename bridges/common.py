@@ -46,6 +46,31 @@ REPO = HERE.parent
 MEDIA_DIR = REPO / "media"
 
 MARK = {"tool": "◌", "tool_done": "●", "error": "⚠", "response": "◌"}
+
+# ── THE POLL / PERMISSION-RELAY BRIDGE CONTRACT (goal 3406) ───────────────────────────
+# Native polls are a SHARED, channel-agnostic capability, not a per-bridge feature. Claude
+# Code's permission protocol (channels-reference) is binary allow/deny with no native poll;
+# astryx layers a poll UI on top, split at one seam so a NEW channel gets both for free:
+#
+#   channel/server.mjs (generic, zero per-channel code):
+#     · emits a permission prompt whose body carries `[[poll: 🔐 <request_id>: … | ✅ Approve | ⛔ Deny]]`
+#     · intercepts the vote-back and maps it to a `notifications/claude/channel/permission`
+#       verdict — keyed ONLY on intent='poll' + from_agent='owner' + an id it issued.
+#
+#   a bridge (this layer) implements the contract, using the helpers below:
+#     1. OUTBOUND: run split_polls() on every outgoing body; render each spec as a NATIVE
+#        poll via the platform API; record_poll(msg_id, chat, asking_agent, q, opts, multi).
+#     2. INBOUND vote: on a vote event, rebuild {aggregates, per-voter selected[]}, call
+#        update_poll_votes() for the delta, vote_changes(), and wire_insert the result back
+#        to the ASKING agent with intent='poll' and vote_body() as the text.
+#     3. SENDER-GATE (the security line — this gates real money via the permission relay):
+#        stamp from_agent='owner' ONLY when the voter's id is in the route's trusted set;
+#        every other voter is `<chan>-<id>` and is IGNORED by server.mjs. Gate on the VOTER
+#        identity, never the room. A bridge that skips this must NOT carry permission relays.
+#
+# Get these three right and permission-relay-as-polls + agent-initiated polls both work on
+# the new channel with no server.mjs change. A channel that can't do native polls still works
+# via Claude Code's own `yes <id>`/`no <id>` text fallback, which server.mjs also honors.
 POLL_RE = re.compile(r"\[\[poll:(.+?)\]\]", re.S)
 AUDIO_KINDS = {"voice", "audio", "ptt"}
 
@@ -149,10 +174,26 @@ def split_polls(text: str, max_options: int = 12) -> tuple[str, list[tuple[str, 
 
 # ----------------------------------------------------------------------- wire
 async def wire_insert(pool, from_agent: str, from_org: str, to_agent: str,
-                      thread: str | None, intent: str, body: str):
+                      thread: str | None, intent: str, body: str, meta: dict | None = None):
+    # `meta` carries INBOUND context the wire row otherwise loses: the real sender identity
+    # (jid/phone/push_name — from_agent collapses a trusted sender to 'owner') and reply/quote
+    # context (which message it answered, + that message's body). Stored in the `delivery`
+    # jsonb, which is unused on an inbound row. server.mjs surfaces it on the <channel> tag.
     await pool.execute(
-        "INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body) "
-        "VALUES ($1,$2,$3,$4,$5,$6)", from_agent, from_org, to_agent, thread, intent, body)
+        "INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body, delivery) "
+        "VALUES ($1,$2,$3,$4,$5,$6,$7)", from_agent, from_org, to_agent, thread, intent, body,
+        json.dumps(meta) if meta else None)
+
+
+async def resolve_quoted_body(pool, rid) -> str:
+    """A quoted reply carries an id; resolve it to the ORIGINAL message text from what we
+    stored — our own sends carry the platform message id in delivery.message_id, and an
+    inbound row's own id also matches. Empty if we never saw it. Channel-agnostic; every
+    bridge falls back to this when the platform payload doesn't include the quoted text."""
+    r = await pool.fetchrow(
+        "SELECT body FROM messages WHERE delivery->>'message_id'=$1 OR id::text=$1 "
+        "ORDER BY id DESC LIMIT 1", str(rid))
+    return r["body"] if r else ""
 
 
 # -------------------------------------------------------------------- reactions

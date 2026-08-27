@@ -37,8 +37,8 @@ from fastapi import FastAPI
 
 from .common import (HERE, Outcome, agent_exists, reacted_message, reaction_signal, route_target, describe_media, env, listen,
                      load_routes, media_path,
-                     record_poll, split_files, split_polls, step_line,
-                     update_poll_votes, vote_body, vote_changes, wire_insert)
+                     record_poll, resolve_quoted_body, split_files, split_polls,
+                     step_line, update_poll_votes, vote_body, vote_changes, wire_insert)
 
 DSN = env("ASTRYX_DSN")
 TOKEN = env("DISCORD_BOT_TOKEN")
@@ -262,8 +262,21 @@ async def on_message(msg: discord.Message):
             return
         who = f"dc-{msg.author.id}"
         text = f"{msg.author.display_name}: {text}"
+    # INBOUND CONTEXT (same shape as WhatsApp): sender identity + reply/quote in meta, so an
+    # agent sees WHO sent it (from_agent collapses a trusted sender to 'owner') and WHAT it
+    # replied to. Discord gives a reply as msg.reference; .resolved carries the quoted text
+    # when cached, else we resolve the id against what we stored.
+    meta = {"sender_id": str(msg.author.id),
+            "username": msg.author.name,
+            "display_name": msg.author.display_name}
+    ref = msg.reference
+    if ref and ref.message_id:
+        meta["reply_to_id"] = str(ref.message_id)
+        resolved = getattr(ref, "resolved", None)
+        rbody = resolved.content if isinstance(resolved, discord.Message) else ""
+        meta["reply_to_body"] = (rbody or "").strip() or await resolve_quoted_body(pool, ref.message_id)
     agent, text = await route_target(pool, f"dc:{cid}", text, route["agent"])
-    await wire_insert(pool, who, "discord", agent, f"dc:{cid}", "chat", text)
+    await wire_insert(pool, who, "discord", agent, f"dc:{cid}", "chat", text, meta)
     if route.get("live_steps") and trusted:
         jobs[agent] = {"chat": cid, "ph": None, "sent": ""}
         try:

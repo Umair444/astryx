@@ -37,8 +37,8 @@ from fastapi import FastAPI
 
 from .common import (HERE, Outcome, reacted_message, reaction_signal, route_target, describe_media, env, listen,
                      load_routes, media_path,
-                     record_poll, split_files, split_polls, step_line,
-                     update_poll_votes, vote_body, wire_insert)
+                     record_poll, resolve_quoted_body, split_files, split_polls,
+                     step_line, update_poll_votes, vote_body, wire_insert)
 from .providers.telegram import TelegramProvider
 
 PROVIDER = TelegramProvider()          # Bot API send logic
@@ -224,8 +224,21 @@ async def on_message(msg: dict):
             return
         who = f"tg-{uid}"
         text = f"{sender.get('first_name') or uid}: {text}"
+    # INBOUND CONTEXT (same shape as WhatsApp): sender identity + reply/quote, carried in meta
+    # so an agent sees WHO sent it (from_agent collapses a trusted sender to 'owner') and WHAT
+    # it replied to. Telegram gives the quoted message inline as reply_to_message.
+    meta = {"sender_id": str(uid) if uid is not None else "",
+            "username": sender.get("username") or "",
+            "display_name": " ".join(x for x in (sender.get("first_name"),
+                                                 sender.get("last_name")) if x)}
+    rep = msg.get("reply_to_message") or {}
+    rid = rep.get("message_id")
+    if rid:
+        meta["reply_to_id"] = str(rid)
+        meta["reply_to_body"] = ((rep.get("text") or rep.get("caption") or "").strip()
+                                 or await resolve_quoted_body(pool, rid))
     agent, text = await route_target(pool, f"tg:{chat}", text, route["agent"])
-    await wire_insert(pool, who, "telegram", agent, f"tg:{chat}", "chat", text)
+    await wire_insert(pool, who, "telegram", agent, f"tg:{chat}", "chat", text, meta)
     if route.get("live_steps") and trusted:
         jobs[agent] = {"chat": chat, "ph_id": None, "sent": ""}
         try:
