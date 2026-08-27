@@ -105,7 +105,45 @@
           "description": "Body telemetry: motion state, act queue, dead-man count, serial link"
         }
       ]
+    },
+    {
+      "server": "org",
+      "tools": [
+        {
+          "name": "propose_goal",
+          "description": "File a goal onto the board as 'proposed' \u2014 the state the plan pipeline gates."
+        },
+        {
+          "name": "goals",
+          "description": "Read the goal board \u2014 the read-back for propose_goal, and what an agent used to reach"
+        },
+        {
+          "name": "announce",
+          "description": "Post a line to the org-news thread \u2014 the shipping log every agent reads at"
+        },
+        {
+          "name": "economy",
+          "description": "The org's economic picture + your own standing + your usage, in one read, with a"
+        },
+        {
+          "name": "amend_charter",
+          "description": "Append a directive to an agent's charter under a managed section. You may always"
+        },
+        {
+          "name": "set_persona",
+          "description": "Set your OWN persona: a profile picture and/or a short blurb. avatar_path is a path"
+        }
+      ]
+    },
+    {
+      "server": "memory",
+      "tools": [
+        {
+          "name": "ask",
+          "description": "Ask the org's own MEMORY a question and get a short, CITED answer synthesized from the"
+        }
+      ]
     }
   ],
-  "total_tools": 19
+  "total_tools": 26
 }

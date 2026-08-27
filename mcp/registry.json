@@ -3,36 +3,56 @@
   "command": "venv/bin/python",
   "args": [
    "mcp/compose/server.py"
-  ]
+  ],
+  "author": "unknown"
  },
  "gmail": {
   "command": "venv/bin/python",
   "args": [
    "mcp/gmail/server.py"
-  ]
+  ],
+  "author": "unknown"
  },
  "contacts": {
   "command": "venv/bin/python",
   "args": [
    "mcp/contacts/server.py"
-  ]
+  ],
+  "author": "forge"
  },
  "imagegen": {
   "command": "venv/bin/python",
   "args": [
    "mcp/imagegen/server.py"
-  ]
+  ],
+  "author": "unknown"
  },
  "channels": {
   "command": "venv/bin/python",
   "args": [
    "mcp/channels/server.py"
-  ]
+  ],
+  "author": "unknown"
  },
  "growbot": {
   "command": "venv/bin/python",
   "args": [
    "mcp/growbot/server.py"
-  ]
+  ],
+  "author": "unknown"
+ },
+ "org": {
+  "command": "venv/bin/python",
+  "args": [
+   "mcp/org/server.py"
+  ],
+  "author": "seed"
+ },
+ "memory": {
+  "command": "venv/bin/python",
+  "args": [
+   "mcp/memory/server.py"
+  ],
+  "author": "forge"
  }
 }
