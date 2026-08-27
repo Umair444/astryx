@@ -86,17 +86,23 @@ def goals(state: str = "active", id: str = "") -> list[dict]:
     """Read the goal board — the read-back for propose_goal, and what an agent used to reach
     for `psql SELECT ... FROM goals` to see. Read-only (fails soft, returns what it has).
     `state` filters (active|proposed|hibernated|done|refused|all; default active); a non-empty
-    `id` returns just that goal and overrides `state`. Newest first; timestamps as strings."""
-    cols = ["id", "state", "owner", "title", "budget_tokens", "spent_tokens",
+    `id` returns just that goal — WITH its scope_note (the plan frame) — and overrides `state`.
+    Newest first; timestamps as strings."""
+    base = ["id", "state", "owner", "title", "budget_tokens", "spent_tokens",
             "last_progress", "done_at"]
     try:
         with _conn() as conn:
             if id.strip():
-                where, args = "WHERE id = %s", (id.strip(),)
+                # lossless single read: include scope_note — the verified diagnosis + design
+                # hypothesis a plan verdict is cast against — so reviewing a plan through the
+                # tool never forces a raw genesis-superuser psql session (a down-payment on the
+                # NOSUPERUSER migration, not just ergonomics). List view stays lean; mirrors
+                # query_thread(scan)/read_message(lossless). a1 night-review.
+                where, args, cols = "WHERE id = %s", (id.strip(),), base + ["scope_note"]
             elif state and state != "all":
-                where, args = "WHERE state = %s", (state,)
+                where, args, cols = "WHERE state = %s", (state,), base
             else:
-                where, args = "", ()
+                where, args, cols = "", (), base
             rows = conn.execute(
                 f"SELECT {', '.join(cols)} FROM goals {where} ORDER BY ts DESC", args).fetchall()
         out = []
