@@ -15,7 +15,7 @@ agents/seed/avatar.*
 !agents/*.example/
 !agents/*.example/**
 agents/.git/
-memory/
+/memory/
 observatory/web/node_modules/
 observatory/web/dist/
 
