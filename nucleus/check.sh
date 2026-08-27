@@ -273,7 +273,7 @@ run "escalation facility: polarity + collapse" "$PY" tests/test_escalation.py
 # with a named reason (amber-by-construction in CI); green only on the live host, which
 # is what check_watch.sh exists for. The lints watched everyone's drift and nothing
 # watched theirs until the index parser condemned a healthy line over one capital letter.
-run "wiki index state parser"  "$PY" tests/test_wiki_drift.py
+run "wiki/estate drift floor (5->1)"  "$PY" tests/test_drift.py
 # Class-1 of the prove-family oracle (scout, plan-15): drives all seven containment
 # verdicts BOTH ways against synthetic trees via G15_ENVF/G15_SCAN_ROOTS. Its output
 # states its own limit — decision logic only, not the real cell.
