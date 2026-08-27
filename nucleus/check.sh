@@ -127,6 +127,13 @@ run "attribution guard invariants"        "$PY" tests/test_attribution_guard.py
 # parks to house; wash = self-dealt-author-credit DETECTION. Live gate + RED-first oracle.
 run "pay-the-author conservation"         "$PY" nucleus/pay_the_author.py
 run "pay-the-author + wash invariants"    "$PY" tests/test_pay_the_author.py
+# mcp/memory ask() tier boundary (goal 3410): the SECOND wall for the ask server — an
+# independent black-box proof that tier-private (un-admitted) nodes reach NEITHER the
+# synthesized answer NOR the citations. Shares no code with memory's admit gate: it plants a
+# secret-bearing Person, drives the real ask() over a throwaway AGE graph, and (arm B) removes
+# the gate to confirm the secret WOULD leak — so the green means the gate, not a dead query.
+# SKIPs 77 without a createdb role / installable AGE.
+run "memory ask() hides tier-private data" "$PY" tests/test_memory_ask_tier.py
 # This suite's own blind spot: the list below is hand-maintained, so a newly committed
 # tests/test_*.py was silently never run and this still printed ALL PASS (reproduced
 # 08-13). Derives the expected set from the tests/test_*.py glob — a new oracle must
