@@ -117,6 +117,11 @@ run "dep manifest covers all imports"  "$PY" nucleus/deps.py coverage
 # heat Q as flux−budget (Φ−W). The live gate scans the tree; the oracle proves it RED.
 run "economy heat-definition (legend)" "$PY" nucleus/legend_guard.py
 run "legend guard invariants"          "$PY" tests/test_legend_guard.py
+# attribution conservation (goal 3408, guard-first): credited value never exceeds shipped
+# budgets and rides the ONE boundary join (turns.goal_id→shipped) — the invariant the
+# pay-the-author wiring is built against. Live gate SKIPs(77) without the DB; oracle proves RED.
+run "attribution conservation (boundary)" "$PY" nucleus/attribution_guard.py
+run "attribution guard invariants"        "$PY" tests/test_attribution_guard.py
 # This suite's own blind spot: the list below is hand-maintained, so a newly committed
 # tests/test_*.py was silently never run and this still printed ALL PASS (reproduced
 # 08-13). Derives the expected set from the tests/test_*.py glob — a new oracle must
