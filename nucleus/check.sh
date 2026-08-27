@@ -122,6 +122,11 @@ run "legend guard invariants"          "$PY" tests/test_legend_guard.py
 # pay-the-author wiring is built against. Live gate SKIPs(77) without the DB; oracle proves RED.
 run "attribution conservation (boundary)" "$PY" nucleus/attribution_guard.py
 run "attribution guard invariants"        "$PY" tests/test_attribution_guard.py
+# pay-the-author (goal 3408 P1): credit W to the DECLARED tool author, resharing the shipped
+# budget under the same boundary ceiling as value_flow (conservation, d62c858); unknown author
+# parks to house; wash = self-dealt-author-credit DETECTION. Live gate + RED-first oracle.
+run "pay-the-author conservation"         "$PY" nucleus/pay_the_author.py
+run "pay-the-author + wash invariants"    "$PY" tests/test_pay_the_author.py
 # This suite's own blind spot: the list below is hand-maintained, so a newly committed
 # tests/test_*.py was silently never run and this still printed ALL PASS (reproduced
 # 08-13). Derives the expected set from the tests/test_*.py glob — a new oracle must
