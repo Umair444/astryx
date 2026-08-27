@@ -165,6 +165,11 @@ EXEMPT = {
         "manual: doctor-class post-deploy probe, self-declared (`# Usage: nucleus/smoke.sh "
         "[observatory-port]`) and already classified as manual by test_check_coverage.py:56",
     "nucleus/__init__.py":    "library: package marker, imported implicitly by `from nucleus import X`",
+    # invoked by nucleus/spawn.sh (per-agent provider/auth override, read at each spawn) — a
+    # SHELL invocation, outside this scanner's committed-python view. charter.py sits in the
+    # same spawn.sh line and passes ONLY because python files (mcp/org, observatory) also call
+    # it; runtime_env.py has no python caller by design, so the shell invoker is its only one.
+    "nucleus/runtime_env.py": "invoked by nucleus/spawn.sh:133 (shell; outside the committed-python scan)",
 }
 
 INTERP = r"(?:bash|sh|zsh|exec|source|\.|python3?|\$PY|\$\{PY\}|venv/bin/python3?|uv\s+run|/usr/bin/env\s+\S+)"

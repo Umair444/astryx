@@ -214,8 +214,11 @@ def findings(pages: list[dict] | None = None) -> list[dict]:
     for t, ps in sorted(by_type.items()):
         exp = expected_fields(t, pages)
         for p in ps:
-            gap = exp - p["rels"]
-            if gap:
+            # a page with zero parsed relations declares (x-dialect: prose) that it carries no
+            # infobox — "missing a field" is a category error there, not a gap. Only pages that
+            # actually carry relations are held to their type's expected field set. This is
+            # narrower than a dialect check and fixes any prose/empty page (memory, msg 16664).
+            if p["rels"] and (gap := exp - p["rels"]):
                 out.append({"kind": "incomplete-infobox", "page": p["slug"], "type": t,
                             "detail": f"missing {sorted(gap)} — carried by most '{t}' pages"})
 

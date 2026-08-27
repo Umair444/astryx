@@ -95,6 +95,15 @@ with tempfile.TemporaryDirectory() as d:
     check("a run inside the check unit's own cgroup is stamped by=timer",
           m2 and m2.group(7) == "timer", f"m={m2 and m2.groups()}")
 
+    cg_pulse = tmp / "cgroup-pulse"
+    cg_pulse.write_text("0::/system.slice/astryx-pulse.service\n")
+    _, mp, _ = run(tmp, 'echo "check: ALL CODE INVARIANTS PASS (39 gates verified)"', cg_pulse)
+    check("a PULSE-launched run (astryx-pulse.service cgroup) is stamped by=timer too",
+          mp and mp.group(7) == "timer",
+          "post the Aug-21 timers->pulse migration the pulse launches check_watch, so a "
+          "healthy AUTOMATED run sits in astryx-pulse.service; matching only astryx-check."
+          "service stamped it by=hand and check_stamp cried 'nothing automatic ran' (08-27)")
+
     cg_other = tmp / "cgroup-other"
     cg_other.write_text("0::/system.slice/astryx-residents.service\n")
     _, m3, _ = run(tmp, 'echo "check: ALL CODE INVARIANTS PASS (39 gates verified)"',

@@ -142,7 +142,14 @@ fi
 # guard nags about automation it cannot see, rather than certifying automation that is not
 # there.
 by=hand
-grep -qs 'astryx-check\.service' "$CGROUP" && by=timer
+# by=timer means "an automated scheduler ran it", and post the 2026-08-21 timers->pulse
+# migration that scheduler is the PULSE, not a per-job timer: org_runners launches this from
+# inside astryx-pulse.service, so a pulse-launched run's cgroup is astryx-pulse.service, NOT
+# astryx-check.service. Matching only the latter stamped every AUTOMATED run by=hand, so
+# check_stamp cried "nothing automatic ran" on a healthy suite (2026-08-27). Recognize both.
+# The actor-not-ancestor property still holds: a hand run in an agent pane sits in
+# astryx-residents.service and matches NEITHER -> by=hand, so a manual run never forges auto.
+grep -qsE 'astryx-(check|pulse)\.service' "$CGROUP" && by=timer
 
 {
   echo "$status $(now) rc=$rc verified=$verified failed=$failed unverified=$unverified by=$by"

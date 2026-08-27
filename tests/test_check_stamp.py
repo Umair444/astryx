@@ -111,8 +111,8 @@ with tempfile.TemporaryDirectory() as d:
     out, st = run(mod, tmp, {})
     check("no stamp at all is announced as NEVER RUN, not as health",
           out and "NEVER RUN" in out, f"out={out!r}")
-    check("...and it carries the exact command that fixes it",
-          out and "systemctl enable" in out and "astryx-check.timer" in out, f"out={out!r}")
+    check("...and it names the real fix — the pulse's KillMode, not the retired timer",
+          out and "KillMode" in out and "astryx-pulse.service" in out, f"out={out!r}")
     check("...and it is framed as an owner gate, not an agent fault",
           out and "owner-gate" in out.lower(), f"out={out!r}")
 
@@ -234,8 +234,8 @@ with tempfile.TemporaryDirectory() as d:
     out, st_h = run(mod, tmp, {}, hand_now)
     check("a fresh GREEN stamp written BY HAND still says the suite is not automatic",
           out and "NEVER RUN AUTOMATICALLY" in out, f"out={out!r}")
-    check("...and carries the one line that fixes it",
-          out and "systemctl enable" in out and "astryx-check.timer" in out, f"out={out!r}")
+    check("...and names the real fix (pulse KillMode), not the retired timer",
+          out and "KillMode" in out and "astryx-pulse.service" in out, f"out={out!r}")
     check("...while saying the green itself is real, not a failure",
           out and "39 gates verified" in out and "RED" not in out, f"out={out!r}")
 
@@ -261,8 +261,8 @@ with tempfile.TemporaryDirectory() as d:
 
     stale_timer = dict(st_t, last_timer_ts=iso(6))
     out6, _ = run(mod, tmp, stale_timer, hand_now)
-    check("a DEAD timer kept green by hand is announced — the diligent human is the mask",
-          out6 and "TIMER HAS STOPPED" in out6,
+    check("a DEAD automation kept green by hand is announced — the diligent human is the mask",
+          out6 and "AUTOMATED CHECK HAS STOPPED" in out6,
           "staleness measured on the newest stamp alone lets manual runs hide a dead unit")
 
     # ── the reading is not the suite (abstractor-2, msg 11875) ─────────────────────
@@ -293,9 +293,9 @@ with tempfile.TemporaryDirectory() as d:
     hand_red = (f"RED {iso(0.1)} rc=1 verified=34 failed=2 unverified=0 by=hand\n"
                 "FAILED:\n  ontology lint invariants\n  tier floor invariants\n")
     out, _ = run(mod, tmp, {}, hand_red)
-    check("a red on a host where nothing is scheduled carries the sudo line with it",
-          out and "systemctl enable" in out and "NOTHING AUTOMATIC" in out,
-          "the timer is what MAKES the run that would clear this red")
+    check("a red on a host where nothing is scheduled names the automation fix",
+          out and "KillMode" in out and "NOTHING AUTOMATIC" in out,
+          "the pulse+KillMode is what MAKES the run that would clear this red")
 
     # THE QUALIFIERS MUST BE IN THE DEDUP KEY, and this fixture is built so that nothing
     # ELSE can carry the signal: 1.2d and 2.0d sit in the SAME band (rungs are 0/1/3/7/14)
