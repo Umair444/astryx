@@ -29,6 +29,15 @@ modal — eats the keystrokes and compacts nothing. The WEDGE TEST is "I sent a 
 and no DROP followed": context only falls via compact/respawn, so a drop below the
 at-send reading proves the prior compact LANDED; a send followed by NO drop accuses, and
 the remedy for a true wedge (kill + spawn) belongs to wedge_watch, not here.
+
+BUT "no DROP" only accuses if a TURN BOUNDARY occurred since the send. /compact lands —
+and a lower context reading is written to turns — only when a turn completes; an IDLE
+session (no turn since the send) has simply had no chance to land it, so its frozen
+high-water is not a wedge. Reading the same context back proves activity=0, not a modal.
+So the accusation is gated on `last_turn > sent_at`: a real wedge is a session that TURNED
+and still couldn't compact; an idle body at high-water is left to wait (measured false-
+positive, abstractor-2 2026-08-27: 20h idle at 175k tok, ready prompt, re-alarming every
+pulse). Turn-age is DB-derived and authoritative — no tmux capture needed.
 """
 from __future__ import annotations
 
@@ -44,7 +53,8 @@ _CTX_SQL = """
 SELECT agent,
        (array_agg((raw_payload->'usage'->>'context')::bigint ORDER BY ended_at DESC))[1]
            AS context,
-       max((raw_payload->'usage'->>'context')::bigint) AS high
+       max((raw_payload->'usage'->>'context')::bigint) AS high,
+       max(ended_at) AS last_turn
 FROM turns
 WHERE raw_payload->'usage' ? 'context'
 GROUP BY agent
@@ -94,6 +104,17 @@ def context_compact(ctx):
         prev = sent.get(a)
         if prev and now - prev["ts"] < COOLDOWN_S:
             continue                     # compact already queued; let it land
+        # A prior /compact is outstanding and context has NOT fallen. That accuses a wedge
+        # ONLY if the agent reached a TURN BOUNDARY since the send — a lower reading is
+        # written only when a turn completes. An IDLE session (no turn since the send) has
+        # had no chance to land it: not a wedge, nothing to do but wait. Refresh the clock
+        # so we neither re-queue keystrokes nor cry WEDGE at a quiet body (turn-age is the
+        # authoritative discriminator; no tmux capture).
+        lt = row["last_turn"]
+        turned = bool(prev) and lt is not None and lt.timestamp() > prev["ts"]
+        if prev and not turned and context >= prev["tokens"]:
+            sent[a]["ts"] = now          # idle at high-water: wait for a turn, stay silent
+            continue
         if _send_compact(a):
             landed = bool(prev) and context < prev["tokens"]
             n = 1 if (not prev or landed) else prev["n"] + 1
