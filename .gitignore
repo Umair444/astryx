@@ -53,4 +53,9 @@ harness/results/
 # real-PII test fixtures — re-add only with certified-fake data (leak scrub 2026-07-27)
 mcp/contacts/test_server.py
 tier/
+# career tier (owner-directed 2026-08-28) — the job-application funnel and every career
+# application specific (employers/roles/comp) is human-personal tier per local.md. Already
+# under the homes/ blanket; name-anchored here so a relocation or a homes/ negation can
+# never silently un-ignore it. Meta-reference only (a career tier exists), never content.
+**/career/
 var/
