@@ -257,7 +257,9 @@ export interface EconLatest {
 export interface EconDissipative {
   series: EconDissipativeDay[]
   latest: EconLatest | null
-  today: EconToday | null
+  // today-so-far: the SAME full bundle as `latest`, recomputed live per request (midnight→now)
+  // so every headline metric is realtime, not a day stale. Null only if the live compute fails.
+  today: EconLatest | null
 }
 
 export interface Economy {

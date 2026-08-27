@@ -27,6 +27,10 @@ mcp/geoloc/
 *.tsbuildinfo
 **/routes*.json
 !**/routes*.example.json
+# per-agent provider/auth override (base_url + token_env name + model map); observatory-written.
+# Real file is private (references .env token keys); the .example ships the schema for cloners.
+runtime.json
+!runtime.json.example
 **/runners*.conf
 !**/runners*.example.conf
 units/

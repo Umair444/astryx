@@ -43,6 +43,14 @@ Type=oneshot
 WorkingDirectory=$PWD
 ExecStart=$PWD/venv/bin/python $PWD/nucleus/pulse.py
 User=$USER
+# KillMode=process, NOT the default control-group: this oneshot BY DESIGN spawns detached
+# long jobs (org_runners _launch: backup/check/restore-verify/mutant-battery) that must
+# outlive the ~seconds tick. control-group kill reaps the whole cgroup when pulse.py exits,
+# murdering exactly those children (dead since the 2026-08-21 timer→trigger migration; a
+# start_new_session Popen escapes the session/pgroup but NOT the cgroup). The synchronous
+# trigger evals are subprocess.run(capture_output) — they COMPLETE before pulse.py exits, so
+# nothing here relies on cgroup cleanup; only the detached jobs linger, and they should.
+KillMode=process
 EOF
   cat > "$UD/astryx-pulse.timer" <<EOF
 [Unit]
@@ -363,12 +371,16 @@ _act_prompt() { psql_q -c "INSERT INTO messages (from_agent,to_agent,intent,body
 # prevention; off-uid CI on workflow scope is the ceiling.
 _chk_prehook() {
   [ -d .git ] || return 0        # not a git checkout (tarball deploy) → no hook to install
-  [ -f .git/hooks/pre-push ] && [ -x .git/hooks/pre-push ] && cmp -s hooks/pre-push .git/hooks/pre-push
+  [ -f .git/hooks/pre-push ] && [ -x .git/hooks/pre-push ] && cmp -s hooks/pre-push .git/hooks/pre-push \
+    && [ -f .git/hooks/pre-commit ] && [ -x .git/hooks/pre-commit ] && cmp -s hooks/pre-commit .git/hooks/pre-commit
 }
 _act_prehook() {
   [ -d .git ] || return 0
   mkdir -p .git/hooks
-  cp hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+  cp hooks/pre-push   .git/hooks/pre-push   && chmod +x .git/hooks/pre-push
+  # pre-commit: auto-regenerates mcp/manifest.json when a server/registry is staged, so the
+  # tool registry self-heals instead of drifting until someone runs scan.py by hand.
+  cp hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 }
 
 # context-compact: a fresh org gets context hygiene from day one — a thin shim under the

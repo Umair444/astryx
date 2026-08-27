@@ -1,0 +1,14 @@
+#!/usr/bin/env sh
+# astryx pre-commit — keep mcp/manifest.json in sync with the servers AUTOMATICALLY, so a
+# tool added to a server (or a new server) never leaves the registry stale and no one has to
+# remember `python mcp/scan.py`. Installed by init.sh's reconciler from this TRACKED template
+# (same durability story as hooks/pre-push: .git/hooks isn't version-controlled, so a fresh
+# clone would otherwise silently drop it). Only fires when a server or the registry is staged,
+# so ordinary commits pay nothing. Best-effort: a scan failure never blocks the commit.
+root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+if git diff --cached --name-only | grep -qE '^mcp/([^/]+/server\.py|registry\.json)$'; then
+  if "$root/venv/bin/python" "$root/mcp/scan.py" >/dev/null 2>&1; then
+    git add "$root/mcp/manifest.json" 2>/dev/null || true
+  fi
+fi
+exit 0

@@ -18,6 +18,7 @@ import type {
   AgentSpawnResult,
 } from '../types'
 import Avatar, { type AvatarStatus } from './Avatar'
+import RuntimeEditor from './RuntimeEditor'
 
 /* The People experience: an astryx agent is a PERSON. This is the org's cast page —
    every agent a character card, grouped into departments (the composite folders), with a
@@ -332,6 +333,29 @@ function CharterSection({ name, isOwner }: { name: string; isOwner: boolean }) {
   )
 }
 
+/* ------------------------------------------------------------------ runtime section */
+/* Same shared RuntimeEditor the agent side-drawer uses — so the Agents tab and the drawer
+   show one identical provider/key editor (owner-only, collapsible like the charter). */
+function RuntimeSection({ name, live }: { name: string; live: boolean }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="border border-line rounded-lg bg-deck">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-[0.15em] text-ink-mute hover:text-ink-dim"
+      >
+        <span className="w-3">{open ? '▾' : '▸'}</span> Runtime
+        <span className="ml-auto text-[10px] normal-case tracking-normal">provider · key · models</span>
+      </button>
+      {open && (
+        <div className="px-3 pb-3">
+          <RuntimeEditor name={name} live={live} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ------------------------------------------------------------------ profile modal */
 function StatusPill({ status }: { status: AvatarStatus }) {
   const cls =
@@ -509,6 +533,13 @@ function ProfileModal({
             <div className="mt-5">
               <CharterSection name={p.name} isOwner={who.owner} />
             </div>
+
+            {/* runtime — provider/key/model map (owner-only), the same editor as the drawer */}
+            {who.owner && (
+              <div className="mt-3">
+                <RuntimeSection name={p.name} live={status === 'live'} />
+              </div>
+            )}
 
             {/* owner action row */}
             {who.owner && (

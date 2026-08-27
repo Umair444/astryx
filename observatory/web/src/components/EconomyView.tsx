@@ -713,8 +713,11 @@ function EnergyFlow({ latest }: { latest: EconLatest }) {
 }
 
 function ThermoTab({ d }: { d: EconDissipative }) {
-  const L = d.latest
+  // headline reads TODAY (live, recomputed per request) so shipping a goal moves the needle
+  // now; falls back to the last completed rollup only when the live compute is unavailable.
+  const L = d.today ?? d.latest
   const today = d.today
+  const live = !!d.today
   const noWEver = d.series.length > 0 && d.series.every((p) => !p.W)
   const pt = (key: 'eta' | 'heat_frac' | 'phi' | 'K') => d.series.map((p) => ({ day: p.day, v: p[key] }))
 
@@ -725,6 +728,7 @@ function ThermoTab({ d }: { d: EconDissipative }) {
         <div className="bg-deck-2 border border-line rounded-lg p-3 col-span-2">
           <div className="text-[11px] uppercase tracking-wider text-ink-dim">
             G · dissipative yield {L ? <span className="text-ink-mute normal-case tracking-normal">· {L.day}</span> : null}
+            {live ? <span className="ml-1.5 normal-case tracking-normal text-emerald-400">● live</span> : null}
           </div>
           <div className="text-3xl font-bold text-ink mt-1 font-mono">{fmtG(L?.G)}</div>
           <div className="text-[11px] text-ink-dim mt-1.5 font-mono">G = W / (Φ · K)</div>
@@ -750,11 +754,11 @@ function ThermoTab({ d }: { d: EconDissipative }) {
             Today, incomplete <span className="text-ink-mute">· {today.day}</span>
           </div>
           <div className="flex flex-wrap gap-x-8 gap-y-1 text-[12px] font-mono">
-            <span className="text-ink-dim">Φ so far <span className="text-ink">{fmtTokens(today.phi)}</span></span>
-            <span className="text-ink-dim">turns <span className="text-ink">{today.turns}</span></span>
-            <span className="text-ink-dim">W <span className="text-ink">{fmtTokens(today.W)}</span></span>
-            <span className="text-ink-dim">heat so far <span className="text-ink">{fmtTokens(today.heat_instant_phi)}</span>{today.heat_instant_frac != null ? ` (${fmtPct(today.heat_instant_frac, 0)})` : ''}</span>
-            <span className="text-ink-dim">goals shipped <span className="text-ink">{today.goals_shipped}</span></span>
+            <span className="text-ink-dim">Φ so far <span className="text-ink">{fmtTokens(today.thermo.phi)}</span></span>
+            <span className="text-ink-dim">turns <span className="text-ink">{today.thermo.turns}</span></span>
+            <span className="text-ink-dim">W <span className="text-ink">{fmtTokens(today.thermo.W)}</span></span>
+            <span className="text-ink-dim">heat so far <span className="text-ink">{fmtTokens(today.thermo.heat_instant_phi)}</span>{today.thermo.heat_instant_frac != null ? ` (${fmtPct(today.thermo.heat_instant_frac, 0)})` : ''}</span>
+            <span className="text-ink-dim">goals shipped <span className="text-ink">{today.thermo.goals_shipped}</span></span>
           </div>
         </div>
       )}
@@ -772,7 +776,7 @@ function ThermoTab({ d }: { d: EconDissipative }) {
         {L ? <EnergyFlow latest={L} /> : <div className="text-xs text-ink-mute py-4 text-center">no daily reading yet</div>}
       </div>
 
-      {noWEver && (!today || !today.W) && (
+      {noWEver && (!today || !today.thermo.W) && (
         <div className="bg-deck-2 border border-line rounded-lg p-3 text-[11px] text-ink-mute leading-relaxed">
           no FUNDED goal has verified since instrumentation — W enters only when a budgeted goal ships
           (goals.done_at). Everything is heat until the boundary pays.
@@ -849,7 +853,7 @@ function TriggerMarketCard({ rows }: { rows: NonNullable<EconLatest['trigger_roi
 
 /* ── Market — per-agent P&L, concentration, attribution ────────────────────────────── */
 function MarketTab({ d }: { d: EconDissipative }) {
-  const L = d.latest
+  const L = d.today ?? d.latest
   const pnl = L ? [...L.pnl].sort((a, b) => b.burned - a.burned) : []
   const maxNet = Math.max(...pnl.map((p) => Math.abs(p.net)), 1)
   const lastAttr = [...d.series].reverse().find((p) => p.attributed_frac != null)?.attributed_frac ?? null
@@ -980,7 +984,7 @@ function TfpChart({ rows }: { rows: EconTriggerTfp[] }) {
 }
 
 function ProductivityTab({ d }: { d: EconDissipative }) {
-  const P = d.latest?.productivity
+  const P = (d.today ?? d.latest)?.productivity
   return (
     <div className="space-y-3">
       <div className="grid gap-3 grid-cols-2 md:grid-cols-3">
@@ -1043,9 +1047,9 @@ function Detector({ name, value, catches, note }: { name: string; value: string 
 }
 
 function IntegrityTab({ d }: { d: EconDissipative }) {
-  const I = d.latest?.integrity
+  const I = (d.today ?? d.latest)?.integrity
   const lastAttr = [...d.series].reverse().find((p) => p.attributed_frac != null)?.attributed_frac ?? null
-  const theil = d.latest?.theil_burn ?? null
+  const theil = (d.today ?? d.latest)?.theil_burn ?? null
   return (
     <div className="space-y-3">
       <div className="text-[11px] text-ink-mute">

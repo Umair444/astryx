@@ -51,26 +51,63 @@ K_ROOTS = ("nucleus", "hooks", "channel", "observatory/api", "observatory/web/sr
 K_EXCLUDE = ("__pycache__", "node_modules", ".git", "dist", ".browser-profile")
 
 
-def k_bytes() -> dict:
-    """-> {raw, compressed} bytes of the org's self-description."""
-    chunks: list[bytes] = []
-    raw = 0
+def _k_files() -> list:
+    """The K file set, in the FROZEN order (K_ROOTS order, sorted within each root). The
+    concatenation order is load-bearing — it must not change or the compressed series breaks
+    its own comparability. Kept separate so the fingerprint walk and the read walk agree."""
+    files: list = []
     for root in K_ROOTS:
         base = REPO / root
         if not base.exists():
             continue
-        files = [base] if base.is_file() else sorted(
-            p for p in base.rglob("*") if p.is_file()
-            and not any(x in p.parts for x in K_EXCLUDE))
-        for p in files:
-            try:
-                b = p.read_bytes()
-            except OSError:
-                continue
-            raw += len(b)
-            chunks.append(str(p.relative_to(REPO)).encode() + b"\x00" + b)
+        if base.is_file():
+            files.append(base)
+        else:
+            files.extend(sorted(
+                p for p in base.rglob("*") if p.is_file()
+                and not any(x in p.parts for x in K_EXCLUDE)))
+    return files
+
+
+# K is a zlib-9 pass over the whole self-description (~2MB) — cheap once a night, but the
+# live dashboard now calls it per request. Cache on a (count, total-size, max-mtime)
+# fingerprint: a stat-only walk is fast, and the read+compress runs ONLY when a file under
+# K_ROOTS actually changed. The compressed VALUE is byte-identical to the uncached path
+# (same files, same order, same level) — caching changes cost, never the number.
+_K_CACHE: dict = {"fp": None, "val": None}
+
+
+def k_bytes() -> dict:
+    """-> {raw, compressed} bytes of the org's self-description (fingerprint-cached)."""
+    files = _k_files()
+    total = 0
+    max_mtime = 0.0
+    for p in files:
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        total += st.st_size
+        if st.st_mtime > max_mtime:
+            max_mtime = st.st_mtime
+    fp = (len(files), total, round(max_mtime, 3))
+    if _K_CACHE["fp"] == fp and _K_CACHE["val"] is not None:
+        return _K_CACHE["val"]
+
+    chunks: list[bytes] = []
+    raw = 0
+    for p in files:
+        try:
+            b = p.read_bytes()
+        except OSError:
+            continue
+        raw += len(b)
+        chunks.append(str(p.relative_to(REPO)).encode() + b"\x00" + b)
     comp = len(zlib.compress(b"".join(chunks), 9)) if chunks else 0
-    return {"raw": raw, "compressed": comp}
+    val = {"raw": raw, "compressed": comp}
+    _K_CACHE["fp"] = fp
+    _K_CACHE["val"] = val
+    return val
 
 
 # ── the window queries (all pure reads; conn is a psycopg connection) ────────────────
@@ -88,7 +125,9 @@ def _all(conn, sql, args=()):
 
 
 def thermo(conn, since, until) -> dict:
-    """First law over the window: Φ = W + Q, with both heat readings."""
+    """First law over the window, both heat readings. NOTE: Q is measured from FLUX
+    (Φ − phi_goal_attributed), NOT Φ − W — W is a sum of budgets (a price), not flux, so
+    'Φ = W + Q' is a loose shorthand; read literally it mixes bases and Q can go negative."""
     flux = _one(conn, f"""
         SELECT coalesce(sum({BILL}),0)::bigint, count(*),
                coalesce(sum({BILL}) FILTER (WHERE goal_id IS NOT NULL),0)::bigint
@@ -162,6 +201,32 @@ def pnl(conn, since, until) -> list[dict]:
                     "turns": int(b["turns"]), "value_earned": v,
                     "net": v - int(b["burned"])})
     return out
+
+
+def econ_standing(conn, agent: str) -> dict | None:
+    """One agent's economic standing, read from the LATEST archived econ row (the nightly
+    rollup) — never recomputed, so it is cheap enough to run in every agent's wake hook.
+    Returns None when no econ row has been archived yet.
+
+    FACTS ONLY, by the goal-#3407 design (16042): `priced` (is the org's W>0 this window —
+    is there any standing to take at all), this agent's `net`, and its `rank` among all
+    burners by net (rank 1 = most net-positive). The RENDERER decides wording; it states a
+    factual position, NEVER an org verdict, and shows the neutral token while UNPRICED (W=0).
+    The disambiguating fact — is a negative net expected-in-flight or genuine waste — lives
+    at the agent, not here, so this returns the number and leaves the judgment to its reader."""
+    row = _one(conn, "SELECT day, metrics FROM econ ORDER BY day DESC LIMIT 1")
+    if not row:
+        return None
+    day, m = row[0], row[1] or {}
+    priced = bool((m.get("thermo") or {}).get("W"))
+    flows = m.get("pnl") or []
+    # rank 1 = most net-positive; deterministic tiebreak by agent name so a wake is stable
+    ordered = sorted(flows, key=lambda r: (-(r.get("net") or 0), r.get("agent") or ""))
+    mine = next((r for r in flows if r.get("agent") == agent), None)
+    rank = next((i + 1 for i, r in enumerate(ordered) if r.get("agent") == agent), None)
+    return {"day": str(day), "priced": priced, "n": len(flows),
+            "present": mine is not None,
+            "net": (mine or {}).get("net"), "rank": rank}
 
 
 def theil(shares: list[float]) -> float | None:
@@ -292,18 +357,17 @@ def integrity(conn, since, until) -> dict:
 
 # ── the daily rollup (steward's trigger and the CLI both land here) ──────────────────
 
-def rollup(conn, day: str | None = None) -> dict:
-    """Compute one day's metrics and upsert the econ row. day='YYYY-MM-DD' (default:
-    yesterday, so a day is only ever archived COMPLETE)."""
-    if day is None:
-        day = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
-    since = f"{day}T00:00:00+00:00"
-    until = (datetime.fromisoformat(since) + timedelta(days=1)).isoformat()
+def compute(conn, since, until) -> dict:
+    """The full metrics bundle for a window — PURE (no write). Shared by rollup (which
+    archives a COMPLETE day) and the live dashboard (which calls it for today-so-far,
+    since=midnight, until=now, on every request). Window metrics (thermo/pnl/integrity)
+    honour [since,until); the rolling ones (productivity/trigger_roi over 30d, final_heat
+    all-time) are as-of-now by design and don't depend on the window bounds."""
     t = thermo(conn, since, until)
     k = k_bytes()
     flows = pnl(conn, since, until)
     burn_shares = [f["burned"] for f in flows]
-    metrics = {
+    return {
         "thermo": t,
         "K": k,
         # G: None only when a DENOMINATOR is unmeasurable; a measured W=0 is a real 0.0
@@ -317,6 +381,16 @@ def rollup(conn, day: str | None = None) -> dict:
         "trigger_roi": trigger_roi(conn),
         "integrity": integrity(conn, since, until),
     }
+
+
+def rollup(conn, day: str | None = None) -> dict:
+    """Compute one day's metrics and upsert the econ row. day='YYYY-MM-DD' (default:
+    yesterday, so a day is only ever archived COMPLETE)."""
+    if day is None:
+        day = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
+    since = f"{day}T00:00:00+00:00"
+    until = (datetime.fromisoformat(since) + timedelta(days=1)).isoformat()
+    metrics = compute(conn, since, until)
     from psycopg.types.json import Jsonb
     conn.execute("INSERT INTO econ (day, metrics) VALUES (%s, %s) "
                  "ON CONFLICT (day) DO UPDATE SET metrics=EXCLUDED.metrics, "

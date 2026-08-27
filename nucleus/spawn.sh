@@ -90,6 +90,10 @@ for g in $(grep -m1 '^Grants:' "$CHARTER" 2>/dev/null | cut -d: -f2- | tr ',' ' 
   \"imagegen\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/imagegen/server.py\"] }";;
     growbot) EXTRA="$EXTRA,
   \"growbot\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/growbot/server.py\"] }";;
+    org) EXTRA="$EXTRA,
+  \"org\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/org/server.py\"] }";;
+    memory) EXTRA="$EXTRA,
+  \"memory\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/memory/server.py\"] }";;
     contacts) EXTRA="$EXTRA,
   \"contacts\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/contacts/server.py\"] }";;
     channels) EXTRA="$EXTRA,
@@ -120,9 +124,17 @@ THINK=$(grep -m1 '^Think:' "$CHARTER" | cut -d: -f2- | xargs || true)
 TENV=""
 [ "$THINK" = "off" ] && TENV=", \"MAX_THINKING_TOKENS\": \"0\""
 
+# per-agent provider/auth override (runtime.json, gitignored; observatory-written). Emits the
+# extra env keys — ANTHROPIC_BASE_URL/AUTH_TOKEN, the opus/sonnet/haiku model map, effort — to
+# splice into THIS agent's settings.json env block, or nothing when the agent has no entry (it
+# then falls through to the org's ambient default: "default = settings.json"). settings.json's
+# env WINS over process env, so this per-home file is the ONE correct seam; a shell export
+# before launch would be silently ignored. Token stays in .env; only its NAME is in runtime.json.
+RENV=$("$ROOT/venv/bin/python" "$ROOT/nucleus/runtime_env.py" "$AGENT") || RENV=""
+
 cat > "$HOME_D/.claude/settings.json" <<EOF
 {
-  "env": { "ASTRYX_AGENT": "$AGENT"$TENV },
+  "env": { "ASTRYX_AGENT": "$AGENT"$TENV$RENV },
   "hooks": {
     "PreToolUse": [ { "matcher": "", "hooks": [
       { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/step.py", "timeout": 5 } ] } ],
@@ -168,7 +180,12 @@ tmux new-session -d -s "$SESS" -c "$HOME_D"
 # ASTRYX_CLI: the harness is swappable — any CLI that speaks the same flags (claude,
 # a fork, a wrapper that maps them). The org is agents-on-terminals, not a framework.
 CLI=${ASTRYX_CLI:-claude}
-tmux send-keys -t "=$SESS:" "$CLI ${RESUME}--model $MODEL $PERMFLAG --strict-mcp-config --mcp-config $HOME_D/.mcp.json --dangerously-load-development-channels server:astryx" Enter
+# --disallowedTools AskUserQuestion: a resident lives in a headless tmux pane no human
+# watches, and AskUserQuestion is elicitation-class — it renders a terminal picker that
+# BLOCKS on stdin and cannot be relayed to a channel, so an agent that calls it LATCHES
+# its own body until someone opens the pane (cost the seed ~6h once). Deny it org-wide;
+# agents ask the owner through the wire (a channel poll), never a local picker.
+tmux send-keys -t "=$SESS:" "$CLI ${RESUME}--model $MODEL $PERMFLAG --disallowedTools AskUserQuestion --strict-mcp-config --mcp-config $HOME_D/.mcp.json --dangerously-load-development-channels server:astryx" Enter
 
 # boot-dialog drain (research-preview channel confirmation + any first-run dialogs)
 for i in $(seq 1 30); do

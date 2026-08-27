@@ -661,15 +661,19 @@ async def economy():
                        **(m if isinstance(m, dict) else json.loads(m))}
 
     def _today():
-        from datetime import datetime, timedelta, timezone
+        # The FULL metrics bundle for today-so-far (midnight→now), recomputed live per
+        # request — same shape as a rollup row, so the dashboard headline can read `today`
+        # and reflect a goal shipped minutes ago instead of waiting for the nightly tick.
+        # K is fingerprint-cached in econ, so this stays cheap despite running per load.
+        from datetime import datetime, timezone
 
         import psycopg
         from nucleus import econ as E
-        day = datetime.now(timezone.utc).date().isoformat()
+        now = datetime.now(timezone.utc)
+        day = now.date().isoformat()
         with psycopg.connect(E._dsn(), connect_timeout=3) as conn:
-            t = E.thermo(conn, f"{day}T00:00:00+00:00",
-                         (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat())
-        return {"day": day, **t}
+            m = E.compute(conn, f"{day}T00:00:00+00:00", now.isoformat())
+        return {"day": day, **m}
 
     try:
         econ_today = await asyncio.to_thread(_today)
@@ -869,6 +873,106 @@ async def charter_put(name: str, edit: CharterEdit, request: Request):
     f.write_text(edit.content)
     live = f.stem in tmux_alive()
     return {"ok": True, "name": f.stem, "live": live,
+            "note": ("saved — respawn the agent to apply" if live
+                     else "saved — applies on next spawn")}
+
+
+# ---------------------------------------------------------- per-agent runtime / provider
+# Each resident is its own `claude` process and may run on a different provider (Anthropic
+# direct, a GLM/Huawei endpoint, an OpenAI-compatible gateway) with its own key + model map.
+# The owner sets that here; spawn.sh injects it into homes/<name>/.claude/settings.json's env
+# block on the next respawn (see nucleus/runtime_env.py). SECRETS NEVER TRANSIT THIS API:
+# runtime.json stores the NAME of the .env key holding the token, never the value — read
+# redacts, write refuses a token value. No entry for an agent → it uses the org's default.
+RUNTIME_PATH = REPO / "runtime.json"
+
+
+def _load_runtime() -> dict:
+    if not RUNTIME_PATH.exists():
+        return {}
+    try:
+        d = json.loads(RUNTIME_PATH.read_text())
+        return d if isinstance(d, dict) else {}
+    except (ValueError, OSError):
+        return {}
+
+
+def _env_key_names() -> list[str]:
+    """NAMES only of .env keys (never values) — lets the UI pick which key holds the token."""
+    f = REPO / ".env"
+    if not f.exists():
+        return []
+    out: list[str] = []
+    for ln in f.read_text().splitlines():
+        ln = ln.strip()
+        if ln and not ln.startswith("#") and "=" in ln:
+            out.append(ln.split("=", 1)[0].strip())
+    return out
+
+
+class RuntimeEdit(BaseModel):
+    base_url: str | None = None
+    token_env: str | None = None
+    models: dict | None = None          # {opus, sonnet, haiku}
+    effort: str | None = None
+
+
+@app.get("/api/agents/{name}/runtime")
+async def agent_runtime(name: str):
+    """This agent's provider/auth override, TOKEN REDACTED. token_present says whether the
+    named .env key actually resolves; env_keys offers the .env key NAMES for the picker. No
+    entry → all-empty → the agent runs on the org's ambient default."""
+    f = _charter_path(name)
+    if not f:
+        return Response(status_code=404)
+    entry = _load_runtime().get(f.stem) or {}
+    token_env = entry.get("token_env") or ""
+    env_names = _env_key_names()
+    return {"name": f.stem,
+            "base_url": entry.get("base_url") or "",
+            "token_env": token_env,
+            "token_present": bool(token_env) and token_env in env_names,
+            "models": entry.get("models") or {},
+            "effort": entry.get("effort") or "",
+            "env_keys": env_names,
+            "configured": bool(entry),
+            "live": f.stem in tmux_alive()}
+
+
+@app.put("/api/agents/{name}/runtime")
+async def agent_runtime_put(name: str, edit: RuntimeEdit, request: Request):
+    """Owner sets an agent's provider/key/model map from the UI. Writes runtime.json
+    (gitignored); the token stays in .env, we store only token_env's NAME. An all-empty edit
+    REMOVES the entry (revert to the org default). Applies on the agent's next respawn."""
+    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+        return Response(status_code=403)
+    f = _charter_path(name)
+    if not f:
+        return Response("no such agent", status_code=404)
+    data = _load_runtime()
+    models = {k: v for k, v in (edit.models or {}).items()
+              if k in ("opus", "sonnet", "haiku") and v}
+    entry: dict = {}
+    if edit.base_url and edit.base_url.strip():
+        entry["base_url"] = edit.base_url.strip()
+    if edit.token_env and edit.token_env.strip():
+        entry["token_env"] = edit.token_env.strip()
+    if models:
+        entry["models"] = models
+    if edit.effort and edit.effort.strip():
+        entry["effort"] = edit.effort.strip()
+    # a base_url with no token_env is a half-config that would fail-safe to default at spawn —
+    # refuse it here so the owner gets an immediate honest error, not a silent fallback.
+    if entry.get("base_url") and not entry.get("token_env"):
+        return Response("a custom base_url needs token_env (the .env key holding its token)",
+                        status_code=400)
+    if entry:
+        data[f.stem] = entry
+    else:
+        data.pop(f.stem, None)          # all-empty → this agent reverts to the org default
+    RUNTIME_PATH.write_text(json.dumps(data, indent=2) + "\n")
+    live = f.stem in tmux_alive()
+    return {"ok": True, "name": f.stem, "configured": bool(entry), "live": live,
             "note": ("saved — respawn the agent to apply" if live
                      else "saved — applies on next spawn")}
 

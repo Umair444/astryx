@@ -4,6 +4,7 @@ import { api, apiSend, agentColor, avatarInitial, displayName, fmtAgo, fmtTime, 
 import { useStore } from '../store'
 import type { Profile, Step, Turn } from '../types'
 import TurnPeek from './TurnPeek'
+import RuntimeEditor from './RuntimeEditor'
 
 const KIND_COLOR: Record<string, string> = {
   tool: 'cyan',
@@ -114,6 +115,7 @@ export default function AgentDrawer({ name, onClose }: { name: string; onClose: 
           <Tabs.Tab value="steps" className="text-xs">steps</Tabs.Tab>
           <Tabs.Tab value="history" className="text-xs">identity</Tabs.Tab>
           {charter ? <Tabs.Tab value="charter" className="text-xs">charter</Tabs.Tab> : null}
+          {who.owner ? <Tabs.Tab value="runtime" className="text-xs">runtime</Tabs.Tab> : null}
         </Tabs.List>
 
         {/* the self: parsed ## sections of the charter */}
@@ -219,6 +221,14 @@ export default function AgentDrawer({ name, onClose }: { name: string; onClose: 
             )}
           </ScrollArea>
         </Tabs.Panel>
+
+        {who.owner && (
+          <Tabs.Panel value="runtime">
+            <ScrollArea h="calc(100dvh - 280px)">
+              <RuntimeEditor name={name} live={!!row?.alive} />
+            </ScrollArea>
+          </Tabs.Panel>
+        )}
       </Tabs>
       <TurnPeek turnId={peek} onClose={() => setPeek(null)} />
     </Drawer>

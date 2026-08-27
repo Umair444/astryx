@@ -1,0 +1,18 @@
+{
+  "_README": "Per-agent provider/auth override. Copy to runtime.json (gitignored) and edit, or let the observatory agent tab write it. Any agent NOT listed here falls through to the org's ambient default (your user-level login/settings) — that is the intended 'default = settings.json' behaviour. spawn.sh injects these into homes/<agent>/.claude/settings.json's env block on every spawn; takes effect on the agent's next respawn. SECRETS: put the actual token in .env under the name you give in token_env; NEVER put a token value in this file.",
+
+  "example-agent-on-huawei": {
+    "base_url": "https://api-ap-southeast-1.modelarts-maas.com/anthropic",
+    "token_env": "PROVIDER_HUAWEI_TOKEN",
+    "models": {
+      "opus": "glm-5.2",
+      "sonnet": "qwen3-32b",
+      "haiku": "deepseek-v3.1-terminus"
+    },
+    "effort": "high"
+  },
+
+  "example-agent-just-effort": {
+    "effort": "high"
+  }
+}
