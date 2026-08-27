@@ -71,6 +71,10 @@ sys.path.insert(0, str(REPO))
 from nucleus.tier import content_public_agents  # noqa: E402
 # the door's name policy — see nucleus/orgname.py for why a name is a trust label
 from nucleus.orgname import org_ok, peer_url_ok  # noqa: E402
+# WHO is an agent is charter.roster()'s call — the ONE exclusion authority (examples,
+# .git, NON_CHARTERS). The card only annotates; deriving names here keeps a runbook like
+# onboard.md from drifting onto the public card (card_assert.py's two-writers warning).
+from nucleus import charter  # noqa: E402
 
 SKEW = 600                      # seconds of envelope timestamp tolerance
 BODY_MAX = 16000
@@ -168,12 +172,11 @@ def _public_roster() -> list:
     only — name/group/rank, the plan-18 metadata line (existence/structure, never content).
     A tier-private agent cannot pass the oracle, so it can never reach the card."""
     agents_dir = REPO / "agents"
+    valid = set(charter.roster())            # the single source of the exclusion rule
     meta = {}
     for p in agents_dir.rglob("*.md"):
-        if p.name.endswith(".example.md") or ".git" in p.parts \
-                or any(x.endswith(".example") for x in p.parts) \
-                or p.name in (".organ.md", "README.md"):
-            continue
+        if p.stem not in valid:              # not an agent per the ONE authority (drops
+            continue                         # examples, .git, .organ/README, and onboard.md)
         parts = p.relative_to(agents_dir).parts
         if len(parts) >= 2 and parts[-2] == p.stem:      # self-folder form drops its own dir
             parts = parts[:-1]
