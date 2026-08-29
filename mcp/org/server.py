@@ -146,7 +146,7 @@ def economy() -> dict:
     raw 7-day burn and how much of it was goal-attributed (work) vs unattributed (heat)."""
     out = {"glossary": {
         "G": "grow ratio = W / (flux * self-bytes): value earned per token burned per byte of org; higher = leaner",
-        "W": "work = sum of budgets of goals VERIFIED in the window; value enters ONLY when a goal ships",
+        "W": "work = sum of budgets of goals VERIFIED in the window (goals.done_at). ATTRIBUTION-grade, not tamper-proof: a genesis superuser forges the stamp, and W is also materialized into econ.metrics (a second forgeable surface); funded_by names each mint's funder. Prevention (NOSUPERUSER over done_at + the econ rollup + turns.agent + messages/quorum) is deferred — goal 3499",
         "Q": "heat = flux - goal-attributed flux: tokens burned that shipped nothing (both flux, so never negative)",
         "flux": "billable tokens spent in the window (the org's energy in)",
     }}

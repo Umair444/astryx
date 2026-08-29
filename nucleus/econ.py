@@ -11,8 +11,13 @@ THE LAW (one functional, everything else is a projection of it):
 
   Φ  flux     Σ billable tokens burned in the window (turns.usage.billable_equiv_in)
   W  work     Σ budgets of goals VERIFIED in the window (goals.done_at) — value enters the
-              economy ONLY at the boundary; nothing internal can mint it (Baum's
-              conservation law; the anti-wash-trade axiom)
+              economy at this boundary (Baum's conservation law). ATTRIBUTION-GRADE, NOT
+              tamper-proof: done_at is auto-stamped on the shipped/done transition, but a
+              genesis superuser forges it (a direct UPDATE mints W with no work), and this W is
+              also MATERIALIZED into econ.metrics, a second forgeable surface. funded_by NAMES
+              each mint's funder. "nothing internal can mint it" is the GOAL; the guarantee
+              needs the NOSUPERUSER perimeter over the whole W-bearing set (done_at + this
+              rollup + turns.agent + messages/quorum) — deferred, goal 3499.
   K  self     compressed size of the org's own description (genome + charters + triggers +
               sensors) — ABSOLUTE size, so bloat divides G down and deletion raises it
   Q  heat     Φ − W-attributable spend; measured two ways because they answer different
@@ -133,6 +138,10 @@ def thermo(conn, since, until) -> dict:
                coalesce(sum({BILL}) FILTER (WHERE goal_id IS NOT NULL),0)::bigint
         FROM turns WHERE ended_at >= %s AND ended_at < %s""", (since, until))
     phi, n_turns, phi_goal = int(flux[0]), int(flux[1]), int(flux[2])
+    # W = Σ budgets of goals with done_at in-window. ATTRIBUTION-grade, NOT prevention: the
+    # done_at boundary is forgeable by a genesis superuser (funded_by names each mint's funder;
+    # goal 3499). This value is then MATERIALIZED into econ.metrics and consumed by economy() —
+    # a second W-bearing surface, equally attribution-grade.
     work = _one(conn, """
         SELECT coalesce(sum(budget_tokens),0)::bigint, count(*)
         FROM goals WHERE done_at >= %s AND done_at < %s""", (since, until))

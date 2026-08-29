@@ -154,15 +154,53 @@ CREATE TABLE IF NOT EXISTS goals (
   last_progress timestamptz,
   dead_epochs   integer NOT NULL DEFAULT 0,
   -- THE BOUNDARY EVENT (2026-08-22): when this goal shipped. Value enters the org economy
-  -- at exactly this timestamp (W = Σ budgets of goals with done_at in the window) — set by
-  -- the trigger below, never by hand, so the series cannot be backdated.
+  -- at exactly this timestamp (W = Σ budgets of goals with done_at in the window). The
+  -- trigger below auto-stamps it on the shipped/done transition — but this is ATTRIBUTION-
+  -- GRADE, NOT tamper-proof: a direct `UPDATE goals SET done_at=now()` or any genesis-
+  -- superuser write forges it, untouched by the trigger. Prevention needs the NOSUPERUSER
+  -- write perimeter (deferred); see goal 3499. funded_by (below) NAMES the mint's funder.
   done_at       timestamptz
 );
+-- 3499 economy-integrity (ATTRIBUTION, not prevention): funded_by NAMES the funder that
+-- authorized this goal's budget. Attribution-grade — a genesis superuser sets it to anything;
+-- it records and labels the funding boundary, it does not enforce it (prevention = the
+-- deferred NOSUPERUSER perimeter). NULL below the migration watermark = LEGACY (pre-feature,
+-- honestly unknown); NULL above it = a new goal not yet attributed; '(unfunded)' = shipped
+-- with no funder (named at W-birth by the trigger); '<agent>' = an attributed funder.
+ALTER TABLE goals ADD COLUMN IF NOT EXISTS funded_by text;
+-- the legacy watermark: the highest goal id that existed when funded_by was introduced.
+-- Captured ONCE (the WHERE-NOT-EXISTS guard) so re-running schema.sql never moves it; on a
+-- fresh clone (empty goals) it is 0 and nothing is legacy.
+-- single-row table: the singleton PRIMARY KEY makes a second watermark row structurally
+-- impossible, so a schema.sql re-run (or any stray insert) can never move or duplicate it —
+-- an aggregate SELECT always returns a row, so a WHERE/NOT-EXISTS guard would NOT stop it.
+CREATE TABLE IF NOT EXISTS funded_by_watermark (
+  singleton     boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+  legacy_max_id bigint NOT NULL
+);
+INSERT INTO funded_by_watermark (legacy_max_id)
+  SELECT COALESCE(max(id), 0) FROM goals
+  ON CONFLICT (singleton) DO NOTHING;
 CREATE OR REPLACE FUNCTION goals_done_stamp() RETURNS trigger AS $$
+DECLARE wm bigint;
 BEGIN
-  IF NEW.state IN ('shipped','done') AND (OLD.state IS DISTINCT FROM NEW.state)
-     AND NEW.done_at IS NULL THEN
-    NEW.done_at := now();
+  IF NEW.state IN ('shipped','done') AND (OLD.state IS DISTINCT FROM NEW.state) THEN
+    -- W-birth: stamp the boundary (UNCHANGED — this is the mint moment, and it runs FIRST so
+    -- the funder-naming below can never interfere with it).
+    IF NEW.done_at IS NULL THEN
+      NEW.done_at := now();
+    END IF;
+    -- 3499 ATTRIBUTION (NAMING, not prevention): name the funding state at W-birth. A NEW goal
+    -- (id past the migration watermark) shipped with no funder is recorded '(unfunded)' — a
+    -- visible unattributed mint. A LEGACY goal (id <= watermark) keeps NULL: pre-feature,
+    -- honestly unknown, never revised. A genesis superuser still forges any of this — hence
+    -- NAMING, never REJECT: the trigger records the funding state, it does not gate the write.
+    IF NEW.funded_by IS NULL THEN
+      SELECT legacy_max_id INTO wm FROM funded_by_watermark LIMIT 1;
+      IF wm IS NOT NULL AND NEW.id > wm THEN
+        NEW.funded_by := '(unfunded)';
+      END IF;
+    END IF;
   END IF;
   RETURN NEW;
 END $$ LANGUAGE plpgsql;

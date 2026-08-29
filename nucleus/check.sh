@@ -127,6 +127,14 @@ run "attribution guard invariants"        "$PY" tests/test_attribution_guard.py
 # parks to house; wash = self-dealt-author-credit DETECTION. Live gate + RED-first oracle.
 run "pay-the-author conservation"         "$PY" nucleus/pay_the_author.py
 run "pay-the-author + wash invariants"    "$PY" tests/test_pay_the_author.py
+# economy-integrity (goal 3499): funded_by ATTRIBUTION, not prevention. The migration is
+# idempotent, the legacy watermark separates pre-feature NULL from new-unfunded, the
+# goals_done_stamp trigger NAMES each W-mint's funder WITHOUT breaking done_at (W-birth) and
+# WITHOUT rejecting any write (a superuser is unstoppable in-DB), and every W-bearing surface
+# is labeled attribution-grade. Two oracles: the DB behaviour (throwaway-pg, RED-first) and
+# the source labeling-parity drift guard (pure stdlib).
+run "3499 funded_by attribution + W-birth intact" "$PY" tests/test_funded_by.py
+run "3499 econ honest-labeling parity"            "$PY" tests/test_econ_labeling.py
 # mcp/memory ask() tier boundary (goal 3410): the SECOND wall for the ask server — an
 # independent black-box proof that tier-private (un-admitted) nodes reach NEITHER the
 # synthesized answer NOR the citations. Shares no code with memory's admit gate: it plants a
