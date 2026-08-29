@@ -134,6 +134,11 @@ run "pay-the-author + wash invariants"    "$PY" tests/test_pay_the_author.py
 # the gate to confirm the secret WOULD leak — so the green means the gate, not a dead query.
 # SKIPs 77 without a createdb role / installable AGE.
 run "memory ask() hides tier-private data" "$PY" tests/test_memory_ask_tier.py
+# mcp/memory window() synthesis-span picker (goal 3438 item-1, memory msg 17231): the span fed
+# to the LLM must land on the RARE query discriminators, weighting each hit 1/page_freq so
+# stopwords/page-generics can't swamp it (a raw-count window landed on a stopword-dense decoy
+# and excluded the answer section). Hermetic, pure-stdlib, RED-first against count-based.
+run "memory window() picks rare-term mass" "$PY" tests/test_memory_window.py
 # This suite's own blind spot: the list below is hand-maintained, so a newly committed
 # tests/test_*.py was silently never run and this still printed ALL PASS (reproduced
 # 08-13). Derives the expected set from the tests/test_*.py glob — a new oracle must

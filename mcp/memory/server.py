@@ -95,21 +95,31 @@ def window(text: str, query: str, width: int = 2400) -> str:
     """The query-CENTRED span fed to synthesis — NOT the page head. The corpus-body widening
     (bodies 130→25k chars) put the matched section DEEP in a page, so text[:width] threw away
     exactly what retrieval ranked the page #1 for (memory's repro: K_ROOTS lives past char
-    ~2400). Pick the width-window holding the DENSEST run of query terms, so the LLM sees the
-    section that matched, wherever it sits on the page."""
+    ~2400). Pick the width-window holding the greatest RARITY-WEIGHTED mass of query terms —
+    each hit weighted 1/page_freq — so the rare DISCRIMINATORS decide the span and stopwords or
+    page-wide generics can't swamp it. No hardcoded stoplist: a term's own page-frequency
+    demotes it, which also catches page-SPECIFIC generics a global list would miss (memory
+    msg 17231: a raw-count window landed on a stopword-dense decoy @16629, excluding the
+    answer @4550; rarity weighting moves it to the discriminator cluster)."""
     if len(text) <= width:
         return text
     ql = set(toks(query))
     low = text.lower()
-    hits = [m.start() for m in _TOK.finditer(low) if m.group() in ql]
+    page = _TOK.findall(low)
+    if not page:
+        return text[:width]
+    pf: dict[str, int] = {}
+    for t in page:                              # page frequency → a term's hit weight is 1/pf
+        pf[t] = pf.get(t, 0) + 1
+    hits = [(m.start(), 1.0 / pf[m.group()]) for m in _TOK.finditer(low) if m.group() in ql]
     if not hits:
         return text[:width]                     # no term on the page → head is as good as any
-    best_start, best_count = max(0, hits[0] - 200), -1
-    for h in hits:                              # window that captures the most query-term hits
-        start = max(0, h - 200)
-        count = sum(1 for x in hits if start <= x < start + width)
-        if count > best_count:
-            best_count, best_start = count, start
+    best_start, best_mass = max(0, hits[0][0] - 200), -1.0
+    for pos, _wt in hits:                       # window with the greatest rare-term mass
+        start = max(0, pos - 200)
+        mass = sum(wt for p, wt in hits if start <= p < start + width)
+        if mass > best_mass:
+            best_mass, best_start = mass, start
     return text[best_start:best_start + width]
 
 
