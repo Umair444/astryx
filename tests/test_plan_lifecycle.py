@@ -77,11 +77,14 @@ AUDITED_TRIGGERS = {
     ("messages", "messages_notify"):
         "90dc3a1274f05949d212c2bcf9fe8dacf90180e37e869596154d63fcb8e1524c",
     # BEFORE UPDATE row trigger stamping goals.done_at (the economy's boundary event).
-    # Audited 2026-08-22 by reading pg_get_functiondef: pure plpgsql, mutates NEW only —
-    # no NOTIFY, no dblink, no COPY, no external write; a NEW mutation is row data and
-    # rolls back with the transaction. Re-read it if this hash moves.
+    # Re-audited 2026-08-29 (goal 3499) by reading pg_get_functiondef: still pure plpgsql,
+    # mutates NEW only (NEW.done_at + NEW.funded_by) plus one SELECT INTO read from
+    # funded_by_watermark — no NOTIFY, no dblink, no COPY, no write to any other table; a NEW
+    # mutation and a read are transaction-local and roll back with the transaction. The hash
+    # moved because 3499 added the funder-naming; the rollback-safety property is unchanged.
+    # Re-read it if this hash moves.
     ("goals", "goals_done_stamp"):
-        "e7dddc10465aea3d1a657f01dde9c4c3eaaeb3026acb087d31ec65969c9f756a",
+        "3b6883024b6ad417d2f338564c519ed4971b2e48c4254db76bcf2aa283025291",
 }
 
 
