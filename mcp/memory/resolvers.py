@@ -31,8 +31,12 @@ import sys
 
 try:
     import psycopg
-except ModuleNotFoundError:
-    sys.exit("psycopg not importable — run with the repo venv: venv/bin/python ...")
+except ModuleNotFoundError:                             # pragma: no cover
+    # A library module must NOT sys.exit on import — that raises SystemExit (BaseException),
+    # which escapes a caller's `except Exception` and hard-fails a runtime-less clone instead
+    # of skipping. Mirror server.py's guard: defer the real 'need psycopg' failure to when a
+    # resolver FUNCTION actually connects (the only line that uses psycopg, below).
+    psycopg = None
 
 GRAPH = "memory"
 

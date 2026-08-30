@@ -35,7 +35,10 @@ try:
     spec = importlib.util.spec_from_file_location("memask_server", SD / "server.py")
     S = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(S)
-except Exception as e:                                              # noqa: BLE001
+except (Exception, SystemExit) as e:                                # noqa: BLE001
+    # SystemExit is BaseException, not Exception: a module-level sys.exit anywhere in the
+    # import chain (a library that exits on a missing runtime dep) must SKIP a runtime-less
+    # clone, never hard-fail it. Catch it here so the gate degrades to 77, not rc=1.
     skip(f"{type(e).__name__}: {e} — the window oracle needs the ask server importable")
 
 fails = []
