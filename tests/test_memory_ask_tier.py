@@ -51,7 +51,11 @@ try:
     spec = importlib.util.spec_from_file_location("memask_server", SERVER_DIR / "server.py")
     S = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(S)
-except Exception as e:                                              # noqa: BLE001
+except (Exception, SystemExit) as e:                               # noqa: BLE001
+    # SystemExit is BaseException, not Exception: a module-level sys.exit in the same
+    # server→resolvers import chain (a library that exits on a missing runtime dep) must SKIP a
+    # runtime-less clone, never hard-fail it. Same broadening memory applied to
+    # test_memory_window.py (33f1a49); kept consistent since this test loads the identical chain.
     skip(f"{type(e).__name__}: {e} — the tier oracle needs the org runtime + the ask server")
 
 SECRET = "SECRETXYZLEAK"          # unique token; lives ONLY on the tier-private node
