@@ -185,17 +185,32 @@ def main():
             for d in existing:
                 rel = str(d.relative_to(home))
                 on_disk = [f for f in d.rglob("*") if f.is_file()]
-                in_tar = [n for n in names if n.startswith(rel + "/") and not n.endswith("/")]
                 if not on_disk:
                     # EMPTY IS A LEGAL, DISTINCT STATE. A gate that can never go green on a
                     # legitimately empty directory is a gate somebody disables.
                     print(f"  EMPTY {rel} — 0 files on disk, nothing to capture (legal)")
                     continue
-                # COUNT-MATCHED, not presence: one file of 185 must read as FAILURE, or the
-                # container-vs-content trap comes back wearing a backup's clothes.
+                # COVERAGE, GUARDED BY THE SNAPSHOT CLOCK — not equal counts. The tarball is
+                # a point-in-time snapshot; agent memory is written at ALL hours. A file whose
+                # mtime is NEWER than the artifact legitimately postdates the snapshot and
+                # cannot be in it (the next backup carries it) — counting it as a gap accuses
+                # the FUTURE, the exact mirror of the "accusing the past" guard on the artifact
+                # check above, and left this gate red for the whole window after every write.
+                # An equal-count test also mis-fires the other way: an edited-since file bumps
+                # its mtime past the snapshot while its captured old version still sits in the
+                # tarball. So the real question is coverage: every file that EXISTED WHEN THE
+                # BACKUP RAN (mtime <= snapshot) must be in the tarball — matched by its EXACT
+                # full path, never a prefix, so the container-vs-content trap the old count
+                # guarded against cannot return. Created-since, edited-since and deleted-since
+                # are all correctly ignored; only a snapshot-era file truly dropped reds.
+                snap = newest.stat().st_mtime
+                dropped = sorted(
+                    str(f.relative_to(home)) for f in on_disk
+                    if f.stat().st_mtime <= snap and str(f.relative_to(home)) not in names)
                 check(f"agent memory captured in full: {rel}",
-                      len(in_tar) == len(on_disk),
-                      f"{len(on_disk)} files on disk vs {len(in_tar)} in the tarball")
+                      not dropped,
+                      f"{len(dropped)} snapshot-era file(s) missing from the tarball: "
+                      + ", ".join(dropped[:5]) + (" …" if len(dropped) > 5 else ""))
 
     return verdict()
 
