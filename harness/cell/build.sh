@@ -32,4 +32,18 @@ if ! docker ps --format '{{.Names}}' | grep -qx "$PG"; then
     docker exec "$PG" pg_isready -U astryx >/dev/null 2>&1 && break; sleep 1; done
   docker exec -i "$PG" psql -U astryx -d astryx < "$ROOT/nucleus/schema.sql" >/dev/null
 fi
-echo "ready: image=$IMG net=$NET(internal) sandbox-pg=$PG"
+
+# 5. egress seam (milestone 1): a default-deny forward proxy, dual-homed. The cell stays
+#    on the INTERNAL net (no direct route out); the proxy alone bridges to an egress net
+#    with internet, and allow-lists ONLY the model-API host. The cell's one path out is
+#    the proxy; the proxy denies + logs everything but api.anthropic.com.
+EGRESS_NET=astryx-egress-net
+PROXY=astryx-egress-proxy
+docker build -t "$PROXY" proxy/
+docker network inspect "$EGRESS_NET" >/dev/null 2>&1 || docker network create "$EGRESS_NET"
+if ! docker ps --format '{{.Names}}' | grep -qx "$PROXY"; then
+  docker rm -f "$PROXY" 2>/dev/null || true
+  docker run -d --name "$PROXY" --network "$NET" "$PROXY" >/dev/null   # internal leg
+  docker network connect "$EGRESS_NET" "$PROXY"                        # egress leg
+fi
+echo "ready: image=$IMG net=$NET(internal) sandbox-pg=$PG proxy=$PROXY(model-API only)"
