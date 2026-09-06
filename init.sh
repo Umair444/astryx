@@ -578,12 +578,22 @@ if [ "${1:-}" = "doctor" ]; then
   # login-shaped fresh-box break). Fail-closed haiku call, no tools/MCP. The org can't
   # actuate this (a human logs in) → re-probe every pass, halt-REPORT if down.
   if command -v claude >/dev/null; then
-    if printf 'reply with exactly: ok' | timeout 30 claude -p --model haiku \
-         --strict-mcp-config --tools "" 2>/dev/null | grep -q .; then
+    # A fail-closed probe must still tell a TRANSIENT miss from a real auth rejection,
+    # or it cries "token expired" on every timeout/throttle and the genuine expiry gets
+    # waved off as noise. The observable stays "an authenticated call SUCCEEDS"; the exit
+    # code disambiguates WHY a miss happened — timeout(1) exits 124 on no-response, a
+    # rejected call exits fast and non-zero. Never assert a cause the probe cannot see.
+    _login_err=$(mktemp); _login_rc=0
+    _login_out=$(printf 'reply with exactly: ok' | timeout 30 claude -p --model haiku \
+         --strict-mcp-config --tools "" 2>"$_login_err") || _login_rc=$?
+    if [ -n "$_login_out" ]; then
       ok "claude login: an authenticated model call succeeds"
+    elif [ "$_login_rc" -eq 124 ]; then
+      bad "claude did not respond within 30s — transient (network/throttle/load), NOT proven a login problem; re-run doctor to confirm"
     else
-      bad "claude reachable but NOT authenticated — run 'claude' then /login (token missing/expired)"
+      bad "claude reachable but the authenticated call was REJECTED ($(head -1 "$_login_err" 2>/dev/null)) — likely token missing/expired, run 'claude' then /login"
     fi
+    rm -f "$_login_err"
   fi
   if [ -f .env ]; then
     DSN=$(grep '^ASTRYX_DSN=' .env | cut -d= -f2-)
