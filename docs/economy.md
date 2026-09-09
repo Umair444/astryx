@@ -55,15 +55,24 @@ Prices are not assigned; they emerge — and value flows backward from the bound
 
 ## Goodhart, taken seriously
 
-Every metric ships with its exploit and a detector for it, on the Integrity panel:
+Every metric names its exploit up front — and honesty about coverage is part of taking
+it seriously, so the table says what runs today versus what is designed but not yet
+built. Three integrity metrics are **observed** on the Integrity panel now (computed
+nightly; they inform the owner and the market, they do not auto-fire or enforce):
 
-| Exploit | Detector |
+| Exploit | Observed metric (today) |
+|---|---|
+| budget inflation | CPI: budget-per-shipped-outcome trending up (`budget_cpi`) |
+| lazy verification | time-to-verify collapsing (`verify_latency_h_median`) |
+| milestone spam | persistent-effect rate ≈ 100% (`milestone_rate`) |
+
+Two detectors are **designed, not yet implemented** — named here so the gap is a
+public commitment rather than a quiet omission:
+
+| Exploit | Designed detector (not built) |
 |---|---|
 | wash trading (internal demand loops) | value cycles with no path to the boundary → v=0 |
-| budget inflation | CPI: budget-per-shipped-outcome trending up |
 | structure farming | dK/dt vs dW/dt divergence |
-| lazy verification | time-to-verify collapsing |
-| milestone spam | persistent-effect rate ≈ 100% |
 
 And the deepest guard: **no score is wired to an automatic individual reward.** The
 market governs budgets and valves (mechanism); scores are observed (dashboard); the
@@ -74,6 +83,6 @@ owner is the court of appeal.
 The observatory's Economy tab: **Thermo** (G, the Φ→agents→W/Q energy-flow diagram,
 heat fraction), **Market** (P&L, GDP, Theil concentration, trigger ROI), **Productivity**
 (cost-per-task falling over time — recurring triggers are natural task classes),
-**Integrity** (the detectors), **Playground** (the equations run client-side; drag α
+**Integrity** (the observed integrity metrics above), **Playground** (the equations run client-side; drag α
 and windows and watch G recompute). One nightly rollup (`nucleus/econ.py` — the single
 implementation of all equations) archives every day into the `econ` table.
