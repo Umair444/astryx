@@ -130,6 +130,65 @@ with tempfile.TemporaryDirectory() as d:
           ["[drift-index-missing] index.md: the estate index is absent — "
            "goal-state cannot be verified against raw"])
 
+
+# ═══ link_integrity: broken + orphan wikilinks (the wiki graph IS the memory) ═══════════
+def link_findings_for(pages: dict, index_text: str = ""):
+    """Drive the REAL _link_integrity_findings against a fixture wiki dir + index.
+    pages: {stem: body}. Tests the CODE, never the live estate."""
+    with tempfile.TemporaryDirectory() as d:
+        w = Path(d) / "wiki"
+        w.mkdir()
+        for stem, body in pages.items():
+            (w / f"{stem}.md").write_text(body)
+        idx = Path(d) / "index.md"
+        idx.write_text(index_text)
+        return mod._link_integrity_findings(None, wiki_dir=w, index_path=idx)
+
+
+# ── RED: a link to a non-existent page fires (a↔b keep both off the orphan list) ──────
+check("broken link fires",
+      link_findings_for({"a": "see [[b]] and [[nonesuch]]", "b": "back to [[a]]"}),
+      ["[link-broken] a: links to [[nonesuch]] which is not a wiki page"])
+
+# ── CONTROL: the SAME graph with the target present is silent — proves the RED fired for
+# the missing target, not because extraction itself is broken ─────────────────────────
+check("broken CONTROL: target present is silent",
+      link_findings_for({"a": "see [[b]] and [[nonesuch]]", "b": "[[a]]", "nonesuch": "[[a]]"}),
+      [])
+
+# ── GREEN: a [[link]] shown as SYNTAX in an inline-code span is NOT harvested (the live
+# tools.md `[[poll: question]]` false-positive a naive check condemns) ─────────────────
+check("inline-code link is not harvested (fenced-example false-positive)",
+      link_findings_for({"a": "syntax: `[[poll: question | A | B]]` plus real [[b]]", "b": "[[a]]"}),
+      [])
+
+# ── GREEN: the fenced-block variant is likewise not harvested ─────────────────────────
+check("fenced-block link is not harvested",
+      link_findings_for({"a": "```\n[[poll: q]]\n```\nreal [[b]]", "b": "[[a]]"}),
+      [])
+
+# ── RED: a page nothing links to fires as an orphan ───────────────────────────────────
+check("orphan fires: a page no one links to",
+      link_findings_for({"a": "[[b]]", "b": "[[a]]", "lonely": "I link [[a]] but no one links me"}),
+      ["[link-orphan] lonely: no wiki page or index.md links to it"])
+
+# ── GREEN: a page reachable only from index.md is NOT an orphan (index is a link ROOT —
+# the live econ-model / goal-2789 / graph-admit-polarity case) ────────────────────────
+check("index-reachable page is not an orphan",
+      link_findings_for({"a": "[[b]]", "b": "[[a]]", "rooted": "reachable only from the index"},
+                        index_text="- [[rooted]] the entry page"),
+      [])
+
+# ── GREEN: a self-link is not incoming — orphanhood still fires (no self-rescue) ──────
+check("self-link is not incoming (orphan still fires)",
+      link_findings_for({"a": "[[b]]", "b": "[[a]]", "solo": "only [[solo]] myself"}),
+      ["[link-orphan] solo: no wiki page or index.md links to it"])
+
+# ── GREEN: a small faithful connected graph is entirely silent ────────────────────────
+check("faithful connected wiki is silent (GREEN)",
+      link_findings_for({"a": "[[b]] [[c]]", "b": "[[a]]", "c": "[[a]]"}),
+      [])
+
 print()
 
 # ── live smoke: exercise the real DB path, assert NOTHING (this reports, does not test) ─
