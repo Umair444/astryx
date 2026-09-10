@@ -189,6 +189,67 @@ check("faithful connected wiki is silent (GREEN)",
       link_findings_for({"a": "[[b]] [[c]]", "b": "[[a]]", "c": "[[a]]"}),
       [])
 
+
+# ═══ roster_drift: every live charter must be named on the roster page ═══════════════════
+def roster_findings_for(page_text: str, expected: set):
+    """Drive the REAL _roster_drift_findings against a fixture roster page + an injected
+    expected set (the charter.roster() stand-in). Tests the CODE, never the live estate."""
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "agents.md"
+        p.write_text(page_text)
+        return mod._roster_drift_findings(None, roster_page=p, expected=expected)
+
+
+# ── RED: a live agent absent from the roster body fires ───────────────────────────────
+check("roster-missing fires: a live agent the page never names",
+      roster_findings_for("# roster\n- seed\n- forge\n", {"seed", "forge", "zeta"}),
+      ["[roster-missing] zeta: a live charter not named on the roster page agents.md"])
+
+# ── CONTROL: the SAME expected set, all named — silent (proves RED fired for the omission,
+# not because membership matching itself is broken) ───────────────────────────────────
+check("roster CONTROL: all named is silent",
+      roster_findings_for("# roster\n- seed\n- forge\n- zeta\n", {"seed", "forge", "zeta"}),
+      [])
+
+# ── GREEN: frontmatter naming an agent does NOT satisfy membership — the prior roster_drift
+# bug read the whole FILE and failed OPEN; we read only the BODY region ────────────────
+check("frontmatter mention does not mask a body omission",
+      roster_findings_for('---\ndescription: "roster of ghost and seed"\n---\n# roster\n- seed\n',
+                          {"seed", "ghost"}),
+      ["[roster-missing] ghost: a live charter not named on the roster page agents.md"])
+
+# ── GREEN: composite-range shorthand covers its members (abstractor-1..4 names abstractor-2)
+# — a compression that trims the literal members line must not false-fire ──────────────
+check("composite range covers its members (no false-fire)",
+      roster_findings_for("# roster\nabstractors: abstractor-1..4 (composite)\n",
+                          {"abstractor-1", "abstractor-2", "abstractor-4"}),
+      [])
+
+# ── GREEN: word-boundary — 'p1' is not satisfied by 'p10' appearing in the body ───────
+check("substring is not membership (p10 does not name p1)",
+      roster_findings_for("# roster\n- p10 the imposter\n", {"p1"}),
+      ["[roster-missing] p1: a live charter not named on the roster page agents.md"])
+
+# ── RED: the roster page itself missing fires (not a silent pass) ─────────────────────
+with tempfile.TemporaryDirectory() as d:
+    check("absent roster page fires",
+          mod._roster_drift_findings(None, roster_page=Path(d) / "nope.md", expected={"seed"}),
+          ["[roster-page-missing] nope.md: the roster page is absent — "
+           "the live roster cannot be verified"])
+
+# ── GREEN: no agents/ tree ⇒ [] (a clean clone has nothing to verify; silence is EXPECTED) ─
+with tempfile.TemporaryDirectory() as d:
+    check("no agents tree is silent (clean-clone degrade)",
+          mod._roster_drift_findings(None, roster_page=Path(d) / "agents.md",
+                                     agents_dir=Path(d) / "no-such-agents"),
+          [])
+
+# ── GREEN: a faithful multi-agent roster (incl. a composite range) is entirely silent ──
+check("faithful roster is silent (GREEN)",
+      roster_findings_for("# roster\nresidents: seed, forge, memory; abstractor-1..4\n",
+                          {"seed", "forge", "memory", "abstractor-1", "abstractor-3"}),
+      [])
+
 print()
 
 # ── live smoke: exercise the real DB path, assert NOTHING (this reports, does not test) ─
