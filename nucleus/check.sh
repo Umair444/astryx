@@ -135,6 +135,11 @@ run "pay-the-author + wash invariants"    "$PY" tests/test_pay_the_author.py
 # the source labeling-parity drift guard (pure stdlib).
 run "3499 funded_by attribution + W-birth intact" "$PY" tests/test_funded_by.py
 run "3499 econ honest-labeling parity"            "$PY" tests/test_econ_labeling.py
+# disk-guard (09-05 ENOSPC remediation): hermetic band-ladder oracle — the guard itself
+# goes LIVE only when wired into the wa-bridge lifespan (BUILT ≠ DEPLOYED; wiring is a
+# separate deliberate act on the live owner-lifeline). This line keeps the committed
+# oracle invoked (coverage meta-oracle) and the ladder logic pinned meanwhile.
+run "disk-guard: resource + timer-health stays learnable" "$PY" tests/test_disk_guard.py
 # mcp/memory ask() tier boundary (goal 3410): the SECOND wall for the ask server — an
 # independent black-box proof that tier-private (un-admitted) nodes reach NEITHER the
 # synthesized answer NOR the citations. Shares no code with memory's admit gate: it plants a
