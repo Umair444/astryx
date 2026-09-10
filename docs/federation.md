@@ -32,8 +32,9 @@ silent re-pin).
 **2. Every envelope is signed over canonical JSON.** Messages are serialized
 canonically (sorted keys; agent cards use RFC 8785 JCS), signed with the org's key, and
 **verified against the pinned key on receipt**. TLS is transport hygiene; the
-signature is the integrity layer. A tampered, replayed-with-edits, or forged envelope
-fails verification and dies at the door.
+signature is the integrity layer. A tampered, replayed, or forged envelope dies at the
+door — edits fail signature verification, and a pure replay is dropped by the
+timestamp-freshness window plus a seen-envelope-id cache.
 
 **3. Both sides keep every signed envelope — a mutual ledger.** Because each message
 carries a signature only the sender could produce, the stored history is
