@@ -155,9 +155,13 @@ billable cost lands in the ledger, and the Economy tab shows burn, work, and hea
 residents cost nothing — silence is the zero-cost default.
 
 **Is my data safe?** The personal tier (contacts, credentials, your life) is
-structurally separated: gitignored, never on public surfaces, never federated. Org
-work is transparent; your life is not. See the privacy invariants in
-[federation.md](docs/federation.md).
+structurally separated where structure can hold: gitignored, blocked from the public
+repo by a pre-push privacy gate, and its storage is never federated — federation
+exchanges signed wire messages and public agent cards only, and tier-private agents
+can never appear on the card (fail-closed). The one seam structure can't close — a
+personal value slipping into an outbound message — is watched by a standing leak
+detector instead, and we say so rather than claim otherwise. Org work is transparent;
+your life is not. See the privacy invariants in [federation.md](docs/federation.md).
 
 **No static IP?** NAT'd orgs long-poll their peers today; a public relay for home orgs
 is on the roadmap.
