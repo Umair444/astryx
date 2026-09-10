@@ -101,10 +101,18 @@ for g in $(grep -m1 '^Grants:' "$CHARTER" 2>/dev/null | cut -d: -f2- | tr ',' ' 
     # browser: official @playwright/mcp (adopt-mature-OSS; the one sanctioned Node
     # MCP). Headless, system chromium, persistent per-agent profile so logins the
     # owner establishes survive respawns — the agent never sees a password.
+    # env = keyring reach: chromium cookies are v11-encrypted against the user's
+    # secret-service, so headless chromium must reach the session bus to decrypt
+    # them — without these two keys every owner-established login reads as logged
+    # OUT (cookie present, undecryptable). And since this file REGENERATES
+    # .mcp.json each spawn, a hand-fix in the home is clobbered on the next
+    # respawn: the fix lives here or nowhere. Derived from uid, never hardcoded.
     browser) EXTRA="$EXTRA,
   \"browser\": { \"command\": \"$(dirname "$NODE")/npx\", \"args\": [\"-y\", \"@playwright/mcp@latest\",
     \"--headless\", \"--executable-path\", \"/usr/bin/chromium\",
-    \"--user-data-dir\", \"$HOME_D/.browser-profile\"] }";;
+    \"--user-data-dir\", \"$HOME_D/.browser-profile\"],
+    \"env\": { \"XDG_RUNTIME_DIR\": \"/run/user/$(id -u)\",
+      \"DBUS_SESSION_BUS_ADDRESS\": \"unix:path=/run/user/$(id -u)/bus\" } }";;
     *) echo "warning: unknown grant '$g' in $CHARTER" >&2;;
   esac
 done
