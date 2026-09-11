@@ -326,6 +326,11 @@ run "outbound-stuck classifier"       "$PY" tests/test_outbound_stuck.py
 # Pure stdlib (processes and files are injected; a tmpdir stands in for the repo), but the
 # trigger BODY is gitignored, so it SKIPS loudly on a fresh clone rather than passing.
 run "spawn-pinned deployment drift"   "$PY" tests/test_spawn_drift.py
+# Drives the REAL ./init.sh doctor with a systemctl liveness-shim (hermetic: only the target
+# orphan's is-active is forced; every other call hits the real binary). Pins that a LIVE orphan
+# is routed to manual reconciliation, NOT told to "rerun ./init.sh to regenerate" (which would
+# DELETE the running unit). SKIPS loudly with no systemd / no on-disk orphan / block-not-reached.
+run "doctor units-drift: a live orphan is not told to self-delete" "$PY" tests/test_doctor_units_drift.py
 # Narrow by design: asserts only that this guard's state distinguishes "observed, all clear"
 # from "could not observe" — the property its 08-14 edit exists for. SKIPS on a bare clone.
 run "card-address guard observability" "$PY" tests/test_card_address_obs.py
