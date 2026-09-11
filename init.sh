@@ -646,9 +646,29 @@ if [ "${1:-}" = "doctor" ]; then
     if diff <(echo "$gen_list") <(cd units 2>/dev/null && ls | sort) >/dev/null 2>&1; then
       ok "units/ ≡ generated set ($(echo "$gen_list" | grep -c .) units, no drift)"
     else
-      bad "units/ has drifted from the generated set — rerun ./init.sh to regenerate:"
-      comm -23 <(cd units 2>/dev/null && ls|sort) <(echo "$gen_list") | sed 's/^/        orphan (on disk, nothing generates it): /'
-      comm -13 <(cd units 2>/dev/null && ls|sort) <(echo "$gen_list") | sed 's/^/        missing (derived but not on disk): /'
+      orphans=$(comm -23 <(cd units 2>/dev/null && ls|sort) <(echo "$gen_list"))
+      missing=$(comm -13 <(cd units 2>/dev/null && ls|sort) <(echo "$gen_list"))
+      # A LIVE orphan is the footgun: the derived set emits no block for it, so the naive
+      # remedy "rerun ./init.sh to regenerate" (+ a deploy) would DELETE a RUNNING service —
+      # geoloc/senses were the live case, and regenerating would take perception + location
+      # intake down. So prescribe the regenerate ONLY when no active unit would be dropped; a
+      # live orphan routes to manual reconciliation instead. Scope: the MESSAGE, never a mutation.
+      live_orphans=""
+      for u in $orphans; do
+        systemctl is-active --quiet "$u" 2>/dev/null && live_orphans="$live_orphans $u"
+      done
+      if [ -n "$live_orphans" ]; then
+        bad "units/ has drifted AND an orphan is a LIVE service — do NOT 'rerun ./init.sh to regenerate': the derivation emits no block for these, so a regenerate + deploy would DELETE the running unit(s) and take the service down. Reconcile by hand — declare it in the generator, or retire the service deliberately:"
+      else
+        bad "units/ has drifted from the generated set — rerun ./init.sh to regenerate:"
+      fi
+      for u in $orphans; do
+        case " $live_orphans " in
+          *" $u "*) echo "        orphan — LIVE (active), regenerate would DELETE it: $u" ;;
+          *)        echo "        orphan (on disk, nothing generates it): $u" ;;
+        esac
+      done
+      echo "$missing" | grep . | sed 's/^/        missing (derived but not on disk): /'
     fi
     # (ii) every derived unit is ENABLED (survives reboot) — a present-but-disabled
     # unit is the invisible-dead-service footgun; residents.service enabled IS the
