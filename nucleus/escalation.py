@@ -198,15 +198,17 @@ def org_dark(quiet_h: float | None, floor_h: float = ORG_DARK_FLOOR_H) -> bool:
 
     WHAT IT SEES: org-wide silence past the floor, while the pulse still runs.
     WHAT IT CANNOT SEE: the pulse being dead — a rung evaluated IN the pulse is silent
-      exactly when the pulse is. That half was covered by `nucleus/pulse_watch.py`, an
-      out-of-pulse systemd timer, until the "one clock" restructure RETIRED it (ruling A,
-      seed 2026-08-25, thread pulse-watch-orphaned): the org now permits exactly one timer,
-      so no second timer may watch the first. COMPENSATION IS PENDING, not present — the
-      replacement witness rides the always-on whatsapp bridge's OWN loop (a separate
-      process in a separate failure domain, no new clock): it checks max(triggers.last_eval)
-      staleness on its existing cadence and doorbells the owner. Built via medic PR; until
-      it lands, this rung has NO out-of-pulse compensator, which is a NAMED GAP and not a
-      covered one — do not read the paragraph below as satisfied.
+      exactly when the pulse is. That half was covered by `nucleus/pulse_watch.py` (a second
+      systemd timer) until the "one clock" restructure retired it; the org now permits
+      exactly one timer, so no second timer may watch the first. THE COMPENSATOR NOW EXISTS
+      AGAIN, without a second clock: `bridges/pulse_witness.py` rides the always-on whatsapp
+      bridge's OWN listen() loop (a separate process in a separate failure domain) and, on
+      idle, reads max(triggers.last_eval) from the DB — if the one clock looks dead while the
+      bridge is healthy, it doorbells the owner. Ruling A + build: seed/medic, thread
+      pulse-watch-orphaned; deployed 2026-08-25 (astryx-whatsapp restarted past e1aeac7,
+      verified by ExecMainStartTimestamp). ONE HONEST CAVEAT: it is LOADED but not yet PROVEN
+      — until it fires once on a real stale pulse and the owner receives it, it is an untested
+      cover, not a demonstrated one ([[a guard that has never fired is untested, not quiet]]).
     WHAT NOTHING COVERS: the HOST. Even the bridge-witness runs on the same machine, so a
       host failure takes the guard, its cover and the carrier together. UNTESTED, and named.
 
@@ -218,14 +220,17 @@ def org_dark(quiet_h: float | None, floor_h: float = ORG_DARK_FLOOR_H) -> bool:
     is the most expensive wrong available and spends the credibility the true alarm runs
     on. So `None` returns False deliberately.
 
-    THE COST IS REAL AND IS PAID ELSEWHERE — OR, RIGHT NOW, NOT PAID AT ALL: a measurement
-    that cannot be taken is invisible to this rung by construction, so it must be visible to
-    a DETECTOR that costs nothing when it is wrong. That detector WAS `pulse_watch`; it is
-    retired (see above), and its replacement — the whatsapp-bridge staleness witness — does
-    not exist yet. So as of 2026-08-25 this `return False` IS a silent all-clear with no
-    out-of-pulse cover, exactly the condition this paragraph was written to flag. It closes
-    when the bridge-witness lands (medic PR); until then the gap is open and named, not
-    theoretical.
+    THE COST IS REAL AND IS PAID ELSEWHERE: a measurement that cannot be taken is invisible
+    to this rung by construction, so it must be visible to a DETECTOR that costs nothing when
+    it is wrong. That detector WAS `pulse_watch` (retired with the one-clock restructure); it
+    is now `bridges/pulse_witness.py` on the whatsapp bridge's own loop (see above) — outside
+    the pulse, reporting a stopped clock without a second timer. So this `return False` is a
+    deliberate actuator-polarity choice again, not a silent all-clear: the out-of-pulse cover
+    exists. If that ever stops being true — the rider unloaded by a deploy that doesn't bounce
+    the bridge, the loop disabled, the query broken — this `return False` reverts to a silent
+    all-clear and this paragraph is again the reason to revisit it. And note it is loaded, not
+    yet proven live (above): treat the cover as present but on probation until its first real
+    fire.
     """
     if quiet_h is None:
         return False

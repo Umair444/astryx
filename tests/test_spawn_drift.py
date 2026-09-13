@@ -88,6 +88,26 @@ check("single-agent exec does NOT qualify as spawn-pinned", w1, [SERVER])
 _, w2, _ = mod.derive(LIVE + [("scout", GEO, t(1)), ("p1", GEO, t(1))], [])
 check("two agents DO qualify — a new server type is covered on arrival", w2, [SERVER, GEO])
 
+print("\n  DURABILITY GATE — a TRANSIENT hook exec'd by MANY agents must NOT qualify (the")
+print("  2026-08-26 defect: step.py runs under every agent for <10s, so the agent-count gate")
+print("  alone qualified it, and the next quiet scan reported it LOST forever). INVERSION —")
+print("  run RED against the pre-gate derive(), which had no now/min_age and let it in:")
+HOOK = "hooks/step.py"
+young = [("seed", HOOK, NOW - timedelta(seconds=5)),   # two distinct agents, both mid-hook
+         ("vega", HOOK, NOW - timedelta(seconds=5))]
+_, wg, lg = mod.derive(LIVE + young, [], NOW, mod.MIN_PROC_AGE)
+check("a short-lived hook under 2 agents does NOT qualify", wg, [SERVER])
+check("...and the pre-gate signature (no now/min_age) is the bug: it WOULD qualify it",
+      sorted(mod.derive(LIVE + young, [])[1]), sorted([HOOK, SERVER]))
+print("  ...but a young process still counts as PRESENT — a mass respawn where every server is")
+print("  briefly young must stay WATCHED, never read as coverage loss (the mass-respawn safety):")
+just_up = [("seed", SERVER, NOW - timedelta(seconds=5)), ("vega", SERVER, NOW - timedelta(seconds=5))]
+_, wj, lj = mod.derive(just_up, [SERVER], NOW, mod.MIN_PROC_AGE)
+check("all-young servers: not re-qualified, but present, so NOT lost", (SERVER in wj, lj), (True, []))
+print("  ...and a genuinely stopped file (no process at all) still reads LOST through the gate:")
+_, _, ls = mod.derive(LIVE, [SERVER, GEO], NOW, mod.MIN_PROC_AGE)
+check("a file exec'd by nobody is still reported LOST with the gate on", ls, [GEO])
+
 print("\n  coverage must persist once earned, and shrinkage must be reported:")
 _, w3, l3 = mod.derive(LIVE, [SERVER, GEO])
 check("a path exec'd by nobody this tick is reported LOST", l3, [GEO])

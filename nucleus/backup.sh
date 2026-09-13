@@ -69,12 +69,19 @@ done
 # expected set from `git status --ignored` MINUS a manifest of regenerable paths, so a new
 # gitignored authored file that nobody adds here goes RED. Omission is the accused
 # direction; forgetting is what produced all three instances of this defect.
+# geoloc (2026-08-27): LIVE-IN-USE but gitignored source — forge's geoloc-remove (425906b)
+# took it out of the public tree, but astryx-geoloc.service + 4 agents' MCP sessions still
+# run bridges/geoloc.py + mcp/geoloc/ (grep-clean on TRACKED code is process-BLIND; 5 live
+# procs prove it). Authored source, not regenerable, not PII (intake code, not location data).
+# git reports bridges/geoloc.py as an ignored FILE (captured below) and mcp/geoloc/ as an
+# ignored DIR (captured in the dir loop). Guards drop both cleanly if geoloc is fully removed.
 for f in local.md .env owner.md relations.md PLAN.md nucleus/runners.conf \
          bridges/routes-whatsapp.json bridges/routes-telegram.json \
-         bridges/routes-discord.json mcp/contacts/test_server.py; do
+         bridges/routes-discord.json mcp/contacts/test_server.py \
+         bridges/geoloc.py; do
   if [ -f "$f" ]; then state_dirs="$state_dirs $f"; fi
 done
-for d in tier wacli-data; do   # present only on orgs that use them; both un-regenerable
+for d in tier wacli-data mcp/geoloc; do   # present only on orgs that use them; un-regenerable
   if [ -d "$d" ]; then state_dirs="$state_dirs $d"; fi
 done
 # AGENT MEMORY ADDED 2026-08-20 (scout msg 13261, seed's ruling 13322/13326). This is the

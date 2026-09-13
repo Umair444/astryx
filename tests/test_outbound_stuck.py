@@ -43,6 +43,7 @@ if not (REPO / "triggers" / "steward" / "outbound_stuck.py").exists():
 # is addressed as a file, never as a module.
 _MOD = runpy.run_path(str(REPO / "triggers" / "steward" / "outbound_stuck.py"))  # noqa: E402
 classify, SETTLED, BANDS = _MOD["classify"], _MOD["SETTLED"], _MOD["BANDS"]
+bucket = _MOD["bucket"]
 
 NOW = datetime(2026, 8, 14, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -139,6 +140,65 @@ def test_settled_row_heals_and_regains_the_full_ladder():
     assert state == {}, "a settled row must drop out of state entirely"
     fire, _ = classify([row(1, "pending", 2)], NOW, state)
     assert fired_ids(fire) == {"1"}, "a returning row gets the ladder from the bottom"
+
+
+# ------------------------------------------------ (d) REMEDY ROUTING by mechanism
+# bucket() decides the REMEDY, and the remedies are opposite: a resident agent's stuck
+# inbound means "restart the recipient", but owner/wa-/dc-/tg- have no per-agent body —
+# they are bridge-delivered, and a pending row is usually a producer addressing fault.
+# Conflating them is the defect this guard fired on 2026-08-26 (growbot->owner x2, 3d).
+def _fentry(mid, status="pending", age_h=72, band=3):
+    return (str(mid), "growbot", status, age_h, band)
+
+
+def _meta(mid, **flags):
+    base = {"awaiting_peer": False, "bridge_delivered": False, "pend_server": False}
+    base.update(flags)
+    return {str(mid): base}
+
+
+def _ids(group):
+    return {f[0] for f in group}
+
+
+def test_owner_routes_to_bridge_not_deaf():
+    """THE invariant this fix adds. owner is carried by a bridge, not a server.mjs, so it
+    must never land in the DEAF class whose remedy is 'restart the recipient'."""
+    g = bucket([_fentry(15423, "pending", 72)], _meta(15423, bridge_delivered=True))
+    assert _ids(g["bridge"]) == {"15423"}, g["bridge"]
+    assert g["deaf"] == [], "owner has no per-agent body — must not be classed deaf"
+
+
+def test_resident_agent_still_routes_to_deaf():
+    """The carve-out must not swallow a real server.mjs agent: it still routes to deaf."""
+    g = bucket([_fentry(1, "pending", 72)], _meta(1, pend_server=True))
+    assert _ids(g["deaf"]) == {"1"}, g["deaf"]
+    assert g["bridge"] == []
+
+
+def test_counterexample_without_the_flag_owner_misclassifies_as_deaf():
+    """PROVES (d) CAN FAIL — the pre-fix state. With no bridge_delivered flag owner looks
+    like a server agent and falls into deaf, the exact wrong-remedy the carve-out removes.
+    If this ever stops landing in deaf, the counterexample is stale, not the fix."""
+    g = bucket([_fentry(15423, "pending", 72)], _meta(15423, pend_server=True))
+    assert _ids(g["deaf"]) == {"15423"}, g["deaf"]
+    assert g["bridge"] == []
+
+
+def test_awaiting_peer_outranks_bridge_and_deaf():
+    """A federated NAT peer is correct-pending; that carve-out must precede bridge/deaf."""
+    g = bucket([_fentry(2, "pending", 72)],
+               _meta(2, awaiting_peer=True, bridge_delivered=True, pend_server=True))
+    assert _ids(g["held"]) == {"2"}
+    assert g["bridge"] == [] and g["deaf"] == []
+
+
+def test_bridge_carve_out_is_pending_only():
+    """A bridge-delivered row that is 'dead' (not pending) is a real send failure, not a
+    thread refusal — it belongs in the age split, not the bridge advice."""
+    g = bucket([_fentry(3, "dead", 72)], _meta(3, bridge_delivered=True))
+    assert g["bridge"] == [], "dead is not a pending-refusal"
+    assert _ids(g["fresh"]) == {"3"}, g
 
 
 if __name__ == "__main__":

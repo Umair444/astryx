@@ -141,8 +141,9 @@ check("the state filter is NEGATIVE (<> ALL) — an unknown state defaults to WA
       "<> ALL" in cap.query and " IN (" not in cap.query,
       "goals.state is free text with no CHECK constraint; a positive allowlist lets a "
       "typo'd or newly-invented state exit the patrol entirely")
-check("...and the excluded set is exactly the closed terminal three",
-      tuple(mod["TERMINAL"]) == ("shipped", "hibernated", "refused")
+check("...and the excluded set is exactly the closed terminal four (shipped AND done — "
+      "the economy closes to 'done', not 'shipped')",
+      tuple(mod["TERMINAL"]) == ("shipped", "done", "hibernated", "refused")
       and cap.params and list(cap.params[0]) == list(mod["TERMINAL"]),
       f"TERMINAL={mod['TERMINAL']} params={cap.params}")
 

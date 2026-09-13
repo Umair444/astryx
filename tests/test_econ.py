@@ -119,6 +119,26 @@ def main():
                            "LIMIT 1").fetchone()
         check("econ row landed and carries thermo.phi", row is not None and row[0] is not None)
 
+        # goal #3407: econ_standing reads the archived pnl (never recomputes) and returns a
+        # FACT dict. It must agree with the row just archived; rank must be sane; and an
+        # unknown agent must resolve to present=False (a fact, not an error). Cross-checked
+        # against the raw jsonb independently of econ_standing's own parsing.
+        st = econ.econ_standing(conn, "steward")
+        check("econ_standing returns a fact dict (an econ row exists after rollup)",
+              isinstance(st, dict) and {"priced", "net", "rank", "present"} <= set(st))
+        if st and st["present"]:
+            check("econ_standing rank within [1, n]",
+                  isinstance(st["rank"], int) and 1 <= st["rank"] <= st["n"], f"{st}")
+            check("econ_standing net is int, priced is bool",
+                  isinstance(st["net"], int) and isinstance(st["priced"], bool), f"{st}")
+            raw = econ._one(conn,
+                "SELECT (e->>'net')::bigint FROM econ, jsonb_array_elements(metrics->'pnl') e "
+                "WHERE day=(SELECT max(day) FROM econ) AND e->>'agent'=%s", ("steward",))
+            check("econ_standing net matches the archived pnl row",
+                  raw is not None and int(raw[0]) == st["net"], f"st={st} raw={raw}")
+        check("econ_standing on a non-existent agent is present=False (not an error)",
+              (econ.econ_standing(conn, "no-such-agent-zzz") or {}).get("present") is False)
+
     print(f"\n{'FAILED (' + str(len(fails)) + '): ' + ', '.join(fails) if fails else 'all econ invariants hold'}")
     return 1 if fails else 0
 

@@ -173,6 +173,39 @@ def main():
           and mod["_mask"]("wa:15555550123@x") != mod["_mask"]("wa:15555550124@x"),
           "mask is unstable or collides — the ledger key would drift or two chats merge")
 
+    # ---- 3) email precision: a version/tag string is NOT an email -----------------
+    # An email domain's TLD is never all-numeric (RFC 3696 / RFC 1123 — the top label must
+    # contain a letter). `x@v1.0.1` (a version pin, ubiquitous once the org went v1.0) trips
+    # a naive localpart@dotted-domain regex; the guard must reject it while STILL catching a
+    # genuine alpha-TLD address — else the exclusion is a mute. Both directions, certified-
+    # fake fixtures: `.zzq` is a non-delegated TLD (registered to nobody, so a real email by
+    # shape yet owner-nothing), and the negatives are pure version/IP shapes.
+    def _emails(text):
+        return [s for lbl, s in mod["_scan"](text) if lbl == "email"]
+    check("a version/tag string (x@v1.0.1, y@v2.3.4) is NOT flagged as an email",
+          not _emails("shipped astryx@v1.0.1 and image@v2.3.4 and svc@1.2.3.4"),
+          "an all-numeric-TLD 'domain' (a version pin / IP literal) matched as an email — "
+          "the @v1.0.1 false-positive class that fired 3x on plan-2789 (2026-08-25)")
+    check("...and a real alpha-TLD address still IS flagged (the exclusion is not a mute)",
+          _emails("reach qa-fixture@nowhere.zzq for the build") == ["qa-fixture@nowhere.zzq"],
+          "the numeric-TLD exclusion swallowed a genuine alpha-TLD email — over-broad, the "
+          "flattering direction nobody reports")
+
+    # ---- 3b) a file:line source reference is NOT an email -------------------------
+    # `handler@server.py:42`, `util@spawn.sh:77` — `.py`/`.sh` ARE real TLDs, so the
+    # numeric-TLD rule above can't catch them; the `:<line>` SUFFIX is the tell. Recurred
+    # four times (25 rows hand-pinned) because agents cite file:line constantly. Both
+    # directions, and the negative uses the SAME domain minus the suffix so it proves the
+    # rule keys on the SHAPE, not the domain — a colon-free address must still flag.
+    check("a file:line source ref (server.py:42, spawn.sh:77) is NOT flagged as an email",
+          not _emails("see handler@server.py:42 and util@spawn.sh:77 in the trace"),
+          "the `file.ext:line` code-location shape matched as owner-email — the recurring "
+          "false positive that hand-pinned 25 rows before the :line suffix rule (2026-08-27)")
+    check("...and the SAME domain WITHOUT the :line suffix still flags (shape, not a mute)",
+          _emails("mail handler@server.py now") == ["handler@server.py"],
+          "the code-location exclusion swallowed a colon-free address — over-broad, the "
+          "UNDER-detection direction a PII guard must never take")
+
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         dirty = f"contact sheet: {FAKE_PHONE} and {FAKE_EMAIL}\n"
