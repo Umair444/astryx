@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Oracle for memory's consolidated drift-lint (memory/lints/drift.py).
 
-WHAT IT PINS. drift_findings() is the 5→1 restore of the drift floor; today it carries the
-wiki_drift core — the index's goal-state RESTATEMENT vs the raw goals table. The oracle pins
-the three directions this check can fail:
+WHAT IT PINS. drift_findings() is the 5→1 restore of the drift floor; it carries four checks
+today — wiki_drift (goal-state), link_integrity, roster_drift, frontmatter_drift (compile_lag
+is the fifth, deferred while org-news is frozen). Each has its own RED/CONTROL/GREEN block below.
+The wiki_drift core — the index's goal-state RESTATEMENT vs the raw goals table — pins the three
+directions it can fail:
   RED   a planted divergence FIRES (index says X, raw says Y)             -> [goal-state-drift]
   RED   an unreadable state line FIRES rather than failing silent          -> [goal-state-unparsed]
   RED   a goal the index names but the table lacks FIRES                   -> [goal-state-phantom]
@@ -250,6 +252,76 @@ check("faithful roster is silent (GREEN)",
                           {"seed", "forge", "memory", "abstractor-1", "abstractor-3"}),
       [])
 
+
+# ═══ frontmatter_drift: OKF identity fields vs the page's canonical identity (its stem) ═══
+def frontmatter_findings_for(pages: dict):
+    """Drive the REAL _frontmatter_drift_findings against a fixture wiki dir.
+    pages: {stem: full page text (frontmatter + body)}. Tests the CODE, never the live estate."""
+    with tempfile.TemporaryDirectory() as d:
+        w = Path(d) / "wiki"
+        w.mkdir()
+        for stem, text in pages.items():
+            (w / f"{stem}.md").write_text(text)
+        return mod._frontmatter_drift_findings(None, wiki_dir=w)
+
+
+# ── RED: x-entity naming a different entity than the page IS fires (title names stem, so ONLY
+# the entity condition can fire — isolates it) ─────────────────────────────────────────
+check("frontmatter entity-mismatch fires",
+      frontmatter_findings_for({"goal-14": '---\ntype: goal\ntitle: "goal-14 — x"\nx-entity: goal-99\n---\nbody\n'}),
+      ["[frontmatter-entity-mismatch] goal-14.md: x-entity='goal-99' contradicts the page identity 'goal-14'"])
+
+# ── RED: a title that does not name the page's own stem fires (no x-entity, so ONLY title) ─
+check("frontmatter title-mismatch fires",
+      frontmatter_findings_for({"goal-14": '---\ntype: goal\ntitle: "the bookmarking app"\n---\nbody\n'}),
+      ["[frontmatter-title-mismatch] goal-14.md: title 'the bookmarking app' does not name the page identity 'goal-14'"])
+
+# ── CONTROL: the SAME page with x-entity matching the stem is silent — proves the entity RED
+# fired for the disagreement, not because the field parser is broken ───────────────────
+check("frontmatter entity CONTROL: x-entity==stem is silent",
+      frontmatter_findings_for({"goal-14": '---\ntype: goal\ntitle: "goal-14 — x"\nx-entity: goal-14\n---\nbody\n'}),
+      [])
+
+# ── GREEN (load-bearing, the measurement's demand): an ABSENT x-entity must NOT fire — goal-1/2/4
+# carry none by convention; absence is a coverage gap, not a contradiction, and firing on it
+# would condemn a healthy page ─────────────────────────────────────────────────────────
+check("frontmatter: absent x-entity does not fire (absence != contradiction)",
+      frontmatter_findings_for({"goal-1": '---\ntype: goal\ntitle: "goal-1 — toy"\n---\nbody\n'}),
+      [])
+
+# ── GREEN: a page with no frontmatter block at all is silent (no crash, nothing to contradict) ─
+check("frontmatter: no block is silent",
+      frontmatter_findings_for({"raw": '# just a body\nno frontmatter here\n'}),
+      [])
+
+# ── GREEN: the SUBSTRING title edge fails toward SILENCE — 'goal-20' in a title satisfies the
+# 'goal-2' stem. A deliberate false-negative on the edge (silence-bias), pinned not hidden ─
+check("frontmatter title substring edge fails silent (documented)",
+      frontmatter_findings_for({"goal-2": '---\ntitle: "goal-20 — mislabeled"\n---\nb\n'}),
+      [])
+
+# ── GREEN: no wiki tree ⇒ [] (a clean clone has nothing to verify) ────────────────────
+with tempfile.TemporaryDirectory() as d:
+    check("frontmatter: no wiki tree is silent (clean-clone degrade)",
+          mod._frontmatter_drift_findings(None, wiki_dir=Path(d) / "no-such-wiki"),
+          [])
+
+# ── GREEN: a faithful multi-page fixture (x-entity==stem where present, title names stem) is
+# entirely silent ──────────────────────────────────────────────────────────────────────
+check("frontmatter: faithful pages are silent (GREEN)",
+      frontmatter_findings_for({
+          "agents": '---\ntype: roster\ntitle: "agents — roster"\n---\nb\n',
+          "goal-14": '---\ntype: goal\ntitle: "goal-14 — x"\nx-entity: goal-14\n---\nb\n'}),
+      [])
+
+# ── determinism: two contradicting pages fire in sorted-glob order, stable for the shared
+# fingerprint dedup (goal-14.md < goal-2.md lexically) ─────────────────────────────────
+check("frontmatter findings are sorted/stable across pages",
+      frontmatter_findings_for({"goal-2": '---\nx-entity: goal-9\n---\nb\n',
+                                "goal-14": '---\nx-entity: goal-99\n---\nb\n'}),
+      ["[frontmatter-entity-mismatch] goal-14.md: x-entity='goal-99' contradicts the page identity 'goal-14'",
+       "[frontmatter-entity-mismatch] goal-2.md: x-entity='goal-9' contradicts the page identity 'goal-2'"])
+
 print()
 
 # ── live smoke: exercise the real DB path, assert NOTHING (this reports, does not test) ─
@@ -271,5 +343,5 @@ if failures:
     for f in failures:
         print(f"  {f}")
     sys.exit(1)
-print("PASS — goal-state drift fires on divergence/unparsed/phantom and stays silent on a "
-      "faithful estate")
+print("PASS — the four drift checks (goal-state, link_integrity, roster, frontmatter) each fire "
+      "on their planted defect and stay silent on a faithful estate")
