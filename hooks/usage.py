@@ -65,9 +65,8 @@ try:
                     "FROM turns WHERE agent=%s", (agent,)).fetchone()
                 high = int(r[0]) if r else 0
             g = conn.execute(
-                "SELECT usage_five_hour_pct, usage_seven_day_pct, usage_five_hour_reset, "
-                "ended_at FROM turns WHERE usage_state='fresh' "
-                "ORDER BY ended_at DESC LIMIT 1").fetchone()
+                "SELECT five_hour_pct, seven_day_pct, five_hour_reset "
+                "FROM current_usage").fetchone()   # unified authority (goal 3833)
             if g and g[0] is not None:
                 reset = str(g[2] or "")[11:16]      # HH:MM of the ISO, blank if absent
                 plan = (f" · plan 5h {g[0]:.0f}%"

@@ -179,8 +179,7 @@ def economy() -> dict:
                           "turns_7d": turns,
                           "note": "single standing metric pending goal 3407"}
             g = conn.execute(
-                "SELECT usage_five_hour_pct, usage_seven_day_pct FROM turns "
-                "WHERE usage_state='fresh' ORDER BY ended_at DESC LIMIT 1").fetchone()
+                "SELECT five_hour_pct, seven_day_pct FROM current_usage").fetchone()  # 3833
             if g and g[0] is not None:
                 out["usage"] = {"plan_5h_pct": g[0], "plan_7d_pct": g[1]}
         return out

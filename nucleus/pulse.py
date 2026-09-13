@@ -166,8 +166,7 @@ def shed(due: list[dict], conn) -> list[dict]:
     costs nothing, which is the point. Fail-open: no gauge or no econ row = no shedding."""
     try:
         g = conn.execute(
-            "SELECT usage_five_hour_pct FROM turns WHERE usage_state='fresh' "
-            "ORDER BY ended_at DESC LIMIT 1").fetchone()
+            "SELECT five_hour_pct FROM current_usage").fetchone()   # unified authority (3833)
         pct = float(g[0]) if g and g[0] is not None else None
         if pct is None or pct < 70:
             return due

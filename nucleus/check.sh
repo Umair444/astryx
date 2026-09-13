@@ -140,6 +140,12 @@ run "3499 econ honest-labeling parity"            "$PY" tests/test_econ_labeling
 # separate deliberate act on the live owner-lifeline). This line keeps the committed
 # oracle invoked (coverage meta-oracle) and the ladder logic pinned meanwhile.
 run "disk-guard: resource + timer-health stays learnable" "$PY" tests/test_disk_guard.py
+# usage-authority (goal 3833): ONE FETCH/EXTRACT/SERVE for the account-usage gauge — the
+# idle-fallback poll + the current_usage/usage_readings views unify five hand-copied readers
+# and keep the gauge fresh when the org is idle. Hermetic (throwaway schema built from the
+# real schema.sql DDL); every arm ships its RED control — gate, newest-good, error-clock,
+# empty, tier(key-level/served/2 controls), read-census.
+run "usage-authority: fresh-when-idle + tier + read-census" "$PY" tests/test_usage_poll.py
 # mcp/memory ask() tier boundary (goal 3410): the SECOND wall for the ask server — an
 # independent black-box proof that tier-private (un-admitted) nodes reach NEITHER the
 # synthesized answer NOR the citations. Shares no code with memory's admit gate: it plants a

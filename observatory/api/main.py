@@ -585,15 +585,21 @@ async def economy():
         GROUP BY 1 ORDER BY 2 DESC LIMIT 6
     """)
     # authoritative plan gauges + the fresh %-series that drives the prediction/sparkline
+    # unified authority (goal 3833): the sparkline reads fresh readings from BOTH writers
+    # (turns ∪ usage_polls) so an idle stretch fills with poll points instead of a gap;
+    # `latest` is the single newest-good reading. Aliased to the legacy column names so the
+    # downstream consumer is untouched.
     series = await pool.fetch("""
-        SELECT ended_at, usage_five_hour_pct AS five, usage_seven_day_pct AS seven
-        FROM turns WHERE usage_state='fresh' AND ended_at > now() - interval '6 hours'
-        ORDER BY ended_at
+        SELECT fetched_at AS ended_at, five_hour_pct AS five, seven_day_pct AS seven
+        FROM usage_readings WHERE state='fresh' AND fetched_at > now() - interval '6 hours'
+        ORDER BY fetched_at
     """)
     latest = await pool.fetchrow("""
-        SELECT ended_at, agent, usage_subscription, usage_five_hour_pct, usage_seven_day_pct,
-               usage_seven_day_opus_pct, usage_five_hour_reset, usage_seven_day_reset
-        FROM turns WHERE usage_state='fresh' ORDER BY ended_at DESC LIMIT 1
+        SELECT fetched_at AS ended_at, measured_by AS agent, subscription AS usage_subscription,
+               five_hour_pct AS usage_five_hour_pct, seven_day_pct AS usage_seven_day_pct,
+               seven_day_opus_pct AS usage_seven_day_opus_pct,
+               five_hour_reset AS usage_five_hour_reset, seven_day_reset AS usage_seven_day_reset
+        FROM current_usage
     """)
     goals_rows = await pool.fetch("""
         SELECT id, title, owner, state, budget_tokens, spent_tokens
@@ -719,16 +725,20 @@ async def usage():
     each AGENT's process — never in this web app. Dollar/spend fields never reach the DB:
     USAGE_ALLOWLIST strips them before a snapshot is ever written.
     """
+    # unified authority (goal 3833): `fresh` is the newest-good reading across BOTH writers
+    # (turns ∪ usage_polls) with its age, so the gauge is fresh during idle and stale never
+    # reads as current; `last` is the newest ATTEMPT any-state (both arms) for honest health.
     fresh = await pool.fetchrow("""
-        SELECT ended_at, agent, usage_snapshot, usage_subscription,
-               usage_five_hour_pct, usage_seven_day_pct, usage_seven_day_opus_pct,
-               usage_five_hour_reset, usage_seven_day_reset
-        FROM turns WHERE usage_state = 'fresh'
-        ORDER BY ended_at DESC LIMIT 1
+        SELECT fetched_at AS ended_at, measured_by AS agent, src, age_seconds,
+               snapshot AS usage_snapshot, subscription AS usage_subscription,
+               five_hour_pct AS usage_five_hour_pct, seven_day_pct AS usage_seven_day_pct,
+               seven_day_opus_pct AS usage_seven_day_opus_pct,
+               five_hour_reset AS usage_five_hour_reset, seven_day_reset AS usage_seven_day_reset
+        FROM current_usage
     """)
     last = await pool.fetchrow("""
-        SELECT ended_at, agent, usage_state FROM turns
-        WHERE usage_snapshot IS NOT NULL ORDER BY ended_at DESC LIMIT 1
+        SELECT fetched_at AS ended_at, measured_by AS agent, state AS usage_state, src
+        FROM usage_readings ORDER BY fetched_at DESC LIMIT 1
     """)
 
     def _iso(v):
@@ -739,17 +749,19 @@ async def usage():
 
     health = {"last_attempt": _iso(last["ended_at"]) if last else None,
               "last_state": last["usage_state"] if last else "never",
-              "last_by": last["agent"] if last else None}
+              "last_by": last["agent"] if last else None,
+              "last_source": last["src"] if last else None}
     if not fresh:
         # no good reading yet — say so honestly, never invent a zero
-        return {"state": health["last_state"], "source": "turns", "data": None, **health}
+        return {"state": health["last_state"], "source": None, "data": None, **health}
 
     snap = fresh["usage_snapshot"]
     if isinstance(snap, str):
         snap = json.loads(snap)
     return {
         "state": "fresh",
-        "source": "turns",
+        "source": fresh["src"],
+        "age_seconds": _f(fresh["age_seconds"]),
         "measured_at": _iso(fresh["ended_at"]),
         "measured_by": fresh["agent"],
         "subscription": fresh["usage_subscription"],

@@ -102,6 +102,75 @@ SELECT t.*,
     WHERE msg->>'type' = 'assistant' AND c->>'type' = 'text') AS response_texts
 FROM turns t;
 
+-- >>> usage-authority (goal #3833) ─────────────────────────────────────────────────────
+-- ONE FETCH, ONE EXTRACT, ONE SERVE for the account-usage gauge. Before this, five readers
+-- each hand-copied `turns WHERE usage_state='fresh' ORDER BY ended_at DESC LIMIT 1` — the
+-- same fact re-derived five ways (drift class). And the gauge went STALE when the org was
+-- idle: the Stop hook writes a snapshot per TURN (activity-driven), so a quiet stretch left
+-- every reader on a stale number. This unifies the readers behind one authority and adds a
+-- second WRITER (triggers/seed/usage_poll.py, an idle-fallback poll) under the same freshness
+-- floor — activity drives cadence when active, the poll fills idle gaps only.
+--
+-- usage_polls: the idle-fallback poll's own history. Written ONLY via usage_refresh.snapshot()
+-- (the single credential reader + fail-closed allowlist — dollars/spend stripped upstream);
+-- this table is wire-readable, so a raw API body must never land here. Every attempt is
+-- recorded (fresh OR error) for observability; the authority GOOD-filters below.
+CREATE TABLE IF NOT EXISTS usage_polls (
+  id         bigserial   PRIMARY KEY,
+  fetched_at timestamptz NOT NULL DEFAULT now(),
+  state      text,                             -- fresh | auth_rejected | unavailable
+  snapshot   jsonb       NOT NULL              -- verbatim snapshot() output (allowlisted)
+);
+CREATE INDEX IF NOT EXISTS usage_polls_fetched ON usage_polls (fetched_at DESC);
+
+-- usage_readings: the ONE EXTRACT. Every account-usage attempt from BOTH writers — turns
+-- (activity-driven) ∪ usage_polls (idle-fallback) — projected identically FROM THE snapshot
+-- jsonb (turns' own generated usage_* columns go vestigial for these readers; the extraction
+-- now lives here, in one place, so the two arms can never drift). state carries fresh/error;
+-- fetched_at is the snapshot's own measurement time, uniform across arms.
+DROP VIEW IF EXISTS current_usage;
+DROP VIEW IF EXISTS usage_readings;
+CREATE VIEW usage_readings AS
+  SELECT (usage_snapshot ->> 'fetched_at')::timestamptz         AS fetched_at,
+         'turns'::text                                          AS src,
+         agent                                                  AS measured_by,
+         usage_snapshot ->> 'state'                             AS state,
+         usage_snapshot ->> 'subscription'                      AS subscription,
+         (usage_snapshot #>> '{data,five_hour_utilization}')::numeric      AS five_hour_pct,
+         (usage_snapshot #>> '{data,seven_day_utilization}')::numeric      AS seven_day_pct,
+         (usage_snapshot #>> '{data,seven_day_opus_utilization}')::numeric AS seven_day_opus_pct,
+         usage_snapshot #>> '{data,five_hour_resets_at}'        AS five_hour_reset,
+         usage_snapshot #>> '{data,seven_day_resets_at}'        AS seven_day_reset,
+         usage_snapshot                                         AS snapshot
+    FROM turns WHERE usage_snapshot IS NOT NULL
+  UNION ALL
+  SELECT (snapshot ->> 'fetched_at')::timestamptz,
+         'polls'::text,
+         'usage-poll'::text,
+         snapshot ->> 'state',
+         snapshot ->> 'subscription',
+         (snapshot #>> '{data,five_hour_utilization}')::numeric,
+         (snapshot #>> '{data,seven_day_utilization}')::numeric,
+         (snapshot #>> '{data,seven_day_opus_utilization}')::numeric,
+         snapshot #>> '{data,five_hour_resets_at}',
+         snapshot #>> '{data,seven_day_resets_at}',
+         snapshot
+    FROM usage_polls;
+
+-- current_usage: the ONE SERVE. The newest GOOD (state='fresh') reading across both arms,
+-- plus its age — so an error/None attempt can NEVER advance the clock (fail-toward-fetch:
+-- the poll gate reads age_seconds; a stale/absent authority → it fetches) and readers render
+-- honest staleness ("updated Xh ago") instead of a fake-fresh number. Empty ⇒ no reader ever
+-- shows a stale value as current; they get null. Deterministic tiebreak (src DESC) keeps the
+-- view a function on equal timestamps.
+CREATE VIEW current_usage AS
+  SELECT *, EXTRACT(EPOCH FROM (now() - fetched_at))::numeric AS age_seconds
+    FROM usage_readings
+   WHERE state = 'fresh'
+   ORDER BY fetched_at DESC, src DESC
+   LIMIT 1;
+-- <<< usage-authority ────────────────────────────────────────────────────────────────────
+
 CREATE TABLE IF NOT EXISTS messages (
   id          bigserial PRIMARY KEY,
   ts          timestamptz NOT NULL DEFAULT now(),
