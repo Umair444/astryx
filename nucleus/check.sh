@@ -332,6 +332,11 @@ run "outbound-stuck classifier"       "$PY" tests/test_outbound_stuck.py
 # Pure stdlib (processes and files are injected; a tmpdir stands in for the repo), but the
 # trigger BODY is gitignored, so it SKIPS loudly on a fresh clone rather than passing.
 run "spawn-pinned deployment drift"   "$PY" tests/test_spawn_drift.py
+# owner_queue_age restore-independent age (steward): the uncommitted-WIP age signal is a
+# content-first-seen ledger (ctx.state), not filesystem mtime — a working-tree restore resets
+# mtime to now() and would blind an mtime-based guard (false-staleness). RED-first: the oracle
+# recomputes the OLD mtime age for the restore case, so a regression back to mtime fails it.
+run "owner_queue_age content-first-seen age" "$PY" tests/test_owner_queue_age.py
 # Drives the REAL ./init.sh doctor with a systemctl liveness-shim (hermetic: only the target
 # orphan's is-active is forced; every other call hits the real binary). Pins that a LIVE orphan
 # is routed to manual reconciliation, NOT told to "rerun ./init.sh to regenerate" (which would
