@@ -113,6 +113,12 @@ run "charter resolver invariants"      "$PY" tests/test_charter.py
 run "tier floor invariants"            "$PY" tests/test_tier.py
 run "dep coverage invariants"          "$PY" tests/test_deps.py
 run "dep manifest covers all imports"  "$PY" nucleus/deps.py coverage
+# no committed .py static-imports a gitignored triggers module (2026-09-14, 3× recurring): such
+# an import fails the line above IN A CLEAN CLONE ONLY (triggers/ empty → not first-party →
+# reads as unmanifested third-party), an opaque push-blocker that points at the manifest not the
+# cause. This STATIC guard catches it on the live host, before the clone gate does. Fix = load
+# the gitignored body by path + skip-77 (test_spawn_drift), never static-import it.
+run "no committed static triggers import" "$PY" tests/test_no_committed_triggers_import.py
 # economy heat-definition drift (goal 3408, enforcement half): no live surface may compute
 # heat Q as flux−budget (Φ−W). The live gate scans the tree; the oracle proves it RED.
 run "economy heat-definition (legend)" "$PY" nucleus/legend_guard.py
