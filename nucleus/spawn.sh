@@ -105,6 +105,10 @@ for g in $(grep -m1 '^Grants:' "$CHARTER" 2>/dev/null | cut -d: -f2- | tr ',' ' 
   \"browser\": { \"command\": \"$(dirname "$NODE")/npx\", \"args\": [\"-y\", \"@playwright/mcp@latest\",
     \"--headless\", \"--executable-path\", \"/usr/bin/chromium\",
     \"--user-data-dir\", \"$HOME_D/.browser-profile\"] }";;
+    chat-sql) EXTRA="$EXTRA,
+  \"chat-sql\": { \"command\": \"/bin/bash\", \"args\": [\"$ROOT/mcp/chat-sql/run.sh\"] }";;
+    ocr) EXTRA="$EXTRA,
+  \"ocr\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/ocr/server.py\"] }";;
     *) echo "warning: unknown grant '$g' in $CHARTER" >&2;;
   esac
 done
@@ -154,7 +158,12 @@ TDIR="$HOME/.claude/projects/$(echo "$HOME_D" | tr / -)"
 latest=$(ls -t "$TDIR"/*.jsonl 2>/dev/null | grep -v '/agent-' | head -1 || true)
 if [ -n "$latest" ]; then
   age=$(( $(date +%s) - $(stat -c %Y "$latest") )); size=$(stat -c %s "$latest")
-  if [ "$age" -lt 259200 ] && [ "$size" -lt 10485760 ]; then RESUME="--continue "; fi
+  # Size cap 100MB: the age guard (3d) is the real freshness check; the size
+  # cap only guards against a pathological transcript. 10MB was too low — lending
+  # hit 20.8MB in normal operation and lost its full context to a fresh boot
+  # (09-14). --continue summarizes large transcripts; that is the designed
+  # mechanism, not a condition to pre-empt with a low cap.
+  if [ "$age" -lt 259200 ] && [ "$size" -lt 104857600 ]; then RESUME="--continue "; fi
 fi
 
 # model: charter line "Model: haiku|sonnet|opus" (default opus — owner's call;
