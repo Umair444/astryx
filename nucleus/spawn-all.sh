@@ -23,9 +23,12 @@ for _ in $(seq 1 60); do
   sleep 2
 done
 
-mapfile -t AGENTS < <(find agents -type f -name '*.md' \
-  -not -name '*.example.md' -not -path '*.example/*' -not -path '*/.git/*' \
-  -printf '%f\n' | sed 's/\.md$//' | sort -u)
+# The roster is charter.py's job — the ONE derivation, resident type only (the set
+# that gets a body). A raw find here re-derived it and got it WRONG: it spawned
+# NON_CHARTER side-files (onboard.md runbook, <agent>/persona.md) and collided stems
+# (two scouts) as phantom agent bodies (2026-09-16). roster_of_type('resident')
+# excludes non-charters, non-residents, and unresolvable collisions in one place.
+mapfile -t AGENTS < <(venv/bin/python -c "import sys; sys.path.insert(0,'nucleus'); import charter; print(chr(10).join(charter.roster_of_type('resident')))")
 
 echo "spawn-all: ${#AGENTS[@]} charters in the tree"
 for a in "${AGENTS[@]}"; do

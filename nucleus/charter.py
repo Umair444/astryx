@@ -49,7 +49,12 @@ def _is_example(p: Path, agents_dir: Path) -> bool:
         part.endswith(".example") for part in rel.parts)
 
 
-NON_CHARTERS = (".organ.md", "README.md", "onboard.md")
+# Structural / side-files that live under an agent's dir but are NOT themselves
+# agents: composite structure (.organ.md, README.md), the seed's onboarding runbook
+# (onboard.md), and an agent's extracted personality (<agent>/persona.md — written by
+# set_persona, loaded as part of that agent's context, not its own wire citizen). A
+# raw tree-walk that misses these spawns phantom bodies (spawn-all did, 2026-09-16).
+NON_CHARTERS = (".organ.md", "README.md", "onboard.md", "persona.md")
 
 
 def roster(agents_dir: Path = AGENTS) -> list[str]:
@@ -87,7 +92,10 @@ def agent_type(name: str, agents_dir: Path = AGENTS) -> str | None:
     (resident) for a charter with no line, or None if the agent has no charter at all —
     'unknown type' and 'absent' are different answers and must not collapse. An
     unrecognised value degrades to resident (the safe, embodied default), never crashes."""
-    p = resolve(name, agents_dir)
+    try:
+        p = resolve(name, agents_dir)
+    except Collision:
+        return None
     if p is None:
         return None
     for line in p.read_text().splitlines():
