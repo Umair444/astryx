@@ -46,6 +46,18 @@ def die(msg: str) -> None:
     sys.exit(1)
 
 
+def git_ignored(rel: str) -> bool:
+    """True if git ignores `rel` within the agents/ tree — the signal that this
+    deployment keeps agents/ private via .gitignore in the SHARED repo rather than as
+    its own private repo (the plan-2 design). When true there is no repo to commit
+    identity to, and `git add -f` would stage a private charter into the pushable
+    genome and leak it, so identity_commit stays working-tree-only. When false (agents/
+    is its own repo) the normal commit path runs — this keeps the scribe deployment-
+    adaptive instead of crashing with an uncaught CalledProcessError on the add."""
+    return subprocess.run(["git", "check-ignore", rel],
+                          cwd=AGENTS, capture_output=True).returncode == 0
+
+
 def find_charter(agent: str) -> Path:
     hits = [p for p in AGENTS.rglob(f"{agent}.md")
             if not p.name.endswith(".example.md")
@@ -85,11 +97,15 @@ def main() -> None:
     if charter.parent == AGENTS or charter.parent.name != agent:
         home = charter.parent / agent
         home.mkdir(exist_ok=True)
-        subprocess.run(["git", "mv", charter.name if charter.parent == AGENTS
-                        else str(charter.relative_to(AGENTS)),
-                        str((home / charter.name).relative_to(AGENTS))],
-                       cwd=AGENTS, check=True, capture_output=True)
-        charter = home / charter.name
+        src_rel = (charter.name if charter.parent == AGENTS
+                   else str(charter.relative_to(AGENTS)))
+        dst = home / charter.name
+        if git_ignored(src_rel):
+            charter.rename(dst)  # gitignored tree: plain fs move, nothing to track
+        else:
+            subprocess.run(["git", "mv", src_rel, str(dst.relative_to(AGENTS))],
+                           cwd=AGENTS, check=True, capture_output=True)
+        charter = dst
     home = charter.parent
 
     # Normalize the path an agent passes: agents address files RELATIVE TO THEIR OWN
@@ -129,24 +145,33 @@ def main() -> None:
     target.write_bytes(content)
     rel = str(target.relative_to(AGENTS))
     author = "owner <owner@astryx.local>" if owner_act else f"{agent} <{agent}@astryx.local>"
-    subprocess.run(["git", "add", rel], cwd=AGENTS, check=True, capture_output=True)
-    r = subprocess.run(["git", "commit", "--author", author, "-m",
-                        f"{'owner' if owner_act else agent}: {rel}"],
-                       cwd=AGENTS, capture_output=True, text=True)
-    if r.returncode != 0:
-        # git phrases "no-op" differently by tree state: "nothing to commit, working
-        # tree clean" when all clean, but "no changes added to commit" / "nothing added
-        # to commit" when OTHER files in the agents/ repo are dirty (e.g. another agent's
-        # pending charter edit). All three mean "this content is already committed" — a
-        # benign no-op, not a failure. Matching only the first made a re-apply of an
-        # unchanged charter falsely REFUSE with an empty "commit failed:" (2026-08-02).
-        low = (r.stdout + r.stderr).lower()
-        if any(s in low for s in ("nothing to commit", "no changes added to commit",
-                                  "nothing added to commit")):
-            print(f"no change: {rel} is already exactly that")
-            return
-        die(f"commit failed: {r.stderr.strip()[:200] or r.stdout.strip()[:200]}")
-    print(f"committed: {rel} (author {author.split(' ')[0]})")
+    if git_ignored(rel):
+        # agents/ is gitignored in the shared repo here (the privacy invariant: a private
+        # charter must never enter the pushable genome). There is no separate private
+        # agents/ repo to receive the commit, so identity is versioned in the WORKING
+        # TREE only — the edit is already applied above (spawn reads the working tree),
+        # we simply do not (and must not) commit it. NOT `git add -f`: that would leak
+        # the charter into the shared repo. The wire step-log is the audit trail here.
+        print(f"local-only: {rel} written to working tree (agents/ gitignored; not committed)")
+    else:
+        subprocess.run(["git", "add", rel], cwd=AGENTS, check=True, capture_output=True)
+        r = subprocess.run(["git", "commit", "--author", author, "-m",
+                            f"{'owner' if owner_act else agent}: {rel}"],
+                           cwd=AGENTS, capture_output=True, text=True)
+        if r.returncode != 0:
+            # git phrases "no-op" differently by tree state: "nothing to commit, working
+            # tree clean" when all clean, but "no changes added to commit" / "nothing added
+            # to commit" when OTHER files in the agents/ repo are dirty (e.g. another agent's
+            # pending charter edit). All three mean "this content is already committed" — a
+            # benign no-op, not a failure. Matching only the first made a re-apply of an
+            # unchanged charter falsely REFUSE with an empty "commit failed:" (2026-08-02).
+            low = (r.stdout + r.stderr).lower()
+            if any(s in low for s in ("nothing to commit", "no changes added to commit",
+                                      "nothing added to commit")):
+                print(f"no change: {rel} is already exactly that")
+                return
+            die(f"commit failed: {r.stderr.strip()[:200] or r.stdout.strip()[:200]}")
+        print(f"committed: {rel} (author {author.split(' ')[0]})")
 
     # Ratified amendments must not ship silently (steward, 2026-07-22): every
     # owner-path charter commit lands one org-news line so "read org-news before
