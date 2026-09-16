@@ -343,6 +343,12 @@ run "spawn-pinned deployment drift"   "$PY" tests/test_spawn_drift.py
 # mtime to now() and would blind an mtime-based guard (false-staleness). RED-first: the oracle
 # recomputes the OLD mtime age for the restore case, so a regression back to mtime fails it.
 run "owner_queue_age content-first-seen age" "$PY" tests/test_owner_queue_age.py
+# market_decay->advisory (steward): a FILE-BACKED trigger (check_src names an on-disk .py that
+# reconcile re-enables) routes to ADVISORY (report the verdict + real remedy) instead of flipping
+# enabled=false, which would only churn — so market_decay can no longer self-retire. DB-defined
+# triggers still retire durably. RED-first: a regression to unconditional-retire fails the
+# file-backed->advisory arm.
+run "market_decay advisory (no self-retire churn)" "$PY" tests/test_market_decay_advisory.py
 # Drives the REAL ./init.sh doctor with a systemctl liveness-shim (hermetic: only the target
 # orphan's is-active is forced; every other call hits the real binary). Pins that a LIVE orphan
 # is routed to manual reconciliation, NOT told to "rerun ./init.sh to regenerate" (which would
