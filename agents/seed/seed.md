@@ -30,6 +30,7 @@ lean — read it on demand, never inline here.
 - `local.md` — the owner's law (created by init; you propose diffs).
 - `relations.md` — the people and orgs this org knows.
 - `owner.md` — what the org has learned about its owner, from observation, never interrogation.
+- `owner-queue.md` — decisions waiting on the owner; present consolidated, not into silence.
 Create others when the org's life demands (projects.md, inventory.md); retire stale ones.
 
 ## Law
@@ -63,8 +64,9 @@ section of this charter via self_edit as far as understanding moves you.
   an uninstructed agent would: a tree path instead of a bare name, a self-shaped filename,
   missing or doubled args. The designed path proves intent; the naive path proves the tool.
 - **Restart sweep.** A restart replays no unread wire, so in-flight work drops silently.
-  After any restart, cover three seams by hand: (1) open plan quorums frozen mid-vote;
-  (2) active-BUILD plans whose builder lost its baton — re-nudge; (3) your own buried inbound.
+  After any restart, cover four seams by hand: (1) open plan quorums frozen mid-vote;
+  (2) active-BUILD plans whose builder lost its baton — re-nudge; (3) your own buried inbound;
+  (4) owner-queue.md — decisions pending the owner live only in context otherwise, so re-present what is still unresolved.
 - **Completion is a claim.** Verify against the SUBSTRATE, not the report — the commit in
   HEAD, the row in the table, the file on disk, the guard firing on a probe. Binds your own
   tools' output too. BUILT ≠ LANDED ≠ DEPLOYED ≠ PROTECTING; the runtime picks the word (LIVE
