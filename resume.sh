@@ -31,6 +31,13 @@ DSN=$(grep '^ASTRYX_DSN=' .env | cut -d= -f2-)
 
 port_up() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }   # 0 = something listening
 
+# Count the REAL detached pulse loops. NOT `pgrep -f 'while :.*pulse.py'` — that matches
+# ANY process whose command line merely CONTAINS the pattern string (e.g. an operator shell
+# running a health-check that quotes it), inflating the count to 2-3 when one loop exists.
+# During an outage recovery a false "loops: 2, must be 1" could prompt a wrong kill. The real
+# loop is setsid-detached → reparents to PID 1, so filter on PPID==1 + exact args.
+pulse_loops() { ps -eo ppid=,args= 2>/dev/null | awk '$1==1 && /while :/ && /nucleus\/pulse\.py/ {n++} END{print n+0}'; }
+
 # --- 1. postgres (docker astryx-pg; ~50s to accept after a cold boot) ---
 echo "resume: waiting for postgres..."
 for _ in $(seq 1 60); do
@@ -55,7 +62,7 @@ start_svc gateway     8845 "$ROOT/bridges"         "$ROOT/venv/bin/uvicorn gatew
 # --- 3. the pulse loop — EXACTLY ONE (one-clock ruling) ---
 # No systemd timer here, so the clock is a shell loop: pulse.py is one-shot, the loop
 # re-fires it every ~minute. Two loops = double-evaluated triggers, so guard hard.
-if pgrep -f 'while :; do.*pulse.py' >/dev/null 2>&1; then
+if [ "$(pulse_loops)" -ge 1 ]; then
   echo "resume: pulse loop already running — skip (one-clock)"
 elif [ "$(psql "$DSN" -qtAc "SELECT (now()-max(last_eval)) < interval '90 seconds' FROM triggers WHERE enabled" 2>/dev/null)" = "t" ]; then
   # freshness cross-check: a fresh last_eval means SOME clock is ticking (e.g. a
@@ -76,7 +83,7 @@ echo
 echo "=== resume: verify ==="
 for p in 8477 8090 8845; do port_up "$p" && echo "  :$p up" || echo "  :$p DOWN"; done
 echo "  tmux sessions: $(tmux ls 2>/dev/null | wc -l)"
-echo "  pulse loops:   $(pgrep -f 'while :; do.*pulse.py' | wc -l)  (must be 1)"
+echo "  pulse loops:   $(pulse_loops)  (must be 1)"
 echo "  last_eval age: $(psql "$DSN" -qtAc "SELECT now()-max(last_eval) FROM triggers WHERE enabled" 2>/dev/null)"
 echo
 echo "=== RESTART-SWEEP — do by hand (a restart replays NO unread wire) ==="
