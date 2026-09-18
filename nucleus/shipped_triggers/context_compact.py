@@ -123,15 +123,15 @@ def context_compact(ctx):
             line = f"{a} ({context:,} tok, {pct:.0f}%{of})"
             (standing if n > 1 else fired).append(line)
     ctx.state["sent"] = sent
-    # positive evidence of the last look — silence is provably "scanned, nothing found"
-    ctx.state["last_scan"] = {"ts": round(now), "live": len(live), "read": scanned}
-    if not fired and not standing:
+    # Routine /compact dispatches are TELEMETRY, not news: recorded here (non-waking,
+    # queryable trail) but never returned. MEASURED 2026-09-19: 27 routine vs 2 wedge to
+    # memory's channel over 14d, 0 acted on — the alarm-volume watch this trigger armed
+    # 2026-08-15 tripped (memory msg 19710). Only a probable WEDGE (a repeat fire) is news
+    # and wakes the seat. Actuation (send-keys above) is untouched; last_scan.fired is the trail.
+    ctx.state["last_scan"] = {"ts": round(now), "live": len(live), "read": scanned,
+                              "fired": fired}
+    if not standing:
         return None
-    segs = []
-    if fired:
-        segs.append("/compact queued to " + ", ".join(fired))
-    if standing:
-        segs.append("STILL over threshold after a prior /compact — probable WEDGE "
-                    "(latched modal eats keystrokes; remedy is wedge_watch's "
-                    "kill+spawn, not another compact): " + ", ".join(standing))
-    return "context-compact: " + " || ".join(segs)
+    return ("context-compact: STILL over threshold after a prior /compact — probable "
+            "WEDGE (latched modal eats keystrokes; remedy is wedge_watch's kill+spawn, "
+            "not another compact): " + ", ".join(standing))
