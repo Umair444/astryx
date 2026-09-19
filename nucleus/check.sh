@@ -215,6 +215,14 @@ run "live-tree check guard can't go quiet" "$PY" tests/test_check_stamp.py
 run "live-tree stamp says what ran it" "$PY" tests/test_check_watch.py
 run "metabolism patrol invariants" "$PY" tests/test_stale_goals.py
 run "out-of-band doorbell is watched" "$PY" tests/test_doorbell_proof.py
+# ship_watch (goal 3909): vanish and fresh are DECOUPLED (a standing removal no longer masks a
+# concurrent fresh ship, on both the shared _watch and the inline trigger_ship_watch), and a
+# removal is auto-ACK'd out of the standing nag ONLY on an independent positive trace
+# (grant/tool/mcp git commit, one-shot goal='done'); the traceless geoloc/hand-deleted set
+# stays flagged. Drives both bodies with a fake ctx; the discrimination arm's controls are real
+# git (grant:geoloc traced vs mcp:geoloc gitignored). Gitignored subject -> SKIP 77 on a clean
+# clone. ~0.5s.
+run "ship_watch decouple + traced auto-ACK" "$PY" tests/test_ship_watch.py
 # The out-of-pulse clock witness — the guard that replaced the deleted nucleus/pulse_watch.py
 # after the one-clock ruling. It rides the whatsapp bridge's own loop (no second timer),
 # reads max(triggers.last_eval), and doorbells the owner when astryx-pulse.timer looks dead.
