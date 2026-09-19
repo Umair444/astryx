@@ -349,6 +349,14 @@ run "owner_queue_age content-first-seen age" "$PY" tests/test_owner_queue_age.py
 # triggers still retire durably. RED-first: a regression to unconditional-retire fails the
 # file-backed->advisory arm.
 run "market_decay advisory (no self-retire churn)" "$PY" tests/test_market_decay_advisory.py
+# weekly_economic_review (steward, the banker's ledger reader — a SURFACE above market_decay,
+# never an actuator): LAYER 2 flags uninsured constitutive guards at reconcile-risk (in the
+# banker's manifest ∧ premium=0 ∧ roi<0) WITH prepared premium proposals; a funded one is insured
+# and not flagged; a new uninsured non-manifest trigger surfaces once (the manifest can't fail
+# open). LAYER 1 distributes per-agent P&L FYI-only, attribution-blind, with NO removal verb
+# (seed's rung-gating, 19713). RED-first: drop the premium gate → funded flagged (ARM1 fails);
+# verb the layer-1 line → ARM4 fails. SKIPs where the gitignored body is absent.
+run "weekly econ review: insures constitutive set, layer-1 stays FYI" "$PY" tests/test_weekly_econ_review.py
 # Drives the REAL ./init.sh doctor with a systemctl liveness-shim (hermetic: only the target
 # orphan's is-active is forced; every other call hits the real binary). Pins that a LIVE orphan
 # is routed to manual reconciliation, NOT told to "rerun ./init.sh to regenerate" (which would
