@@ -137,9 +137,12 @@ def main():
           f"floor {esc.ORG_DARK_FLOOR_H} vs violator {esc.INNOCENT_WORST_H}")
     # The floor must keep its VIOLATOR next to it. A floor justified by a comfortable
     # number is the defect a3 caught in ESC_DELIVERY_GRACE_MIN, one plan over.
+    # On the pulse-liveness measure the worst innocent silence is the org's densest guaranteed
+    # pulse fire — the ~4h heartbeat cadence — not a comfortable small number and not near the
+    # floor. A constant outside this band means it has stopped being the measured violator.
     check("the floor's justification cites the number that would violate it",
-          8.0 < esc.INNOCENT_WORST_H < esc.ORG_DARK_FLOOR_H,
-          f"{esc.INNOCENT_WORST_H} is not the measured innocent worst")
+          3.0 < esc.INNOCENT_WORST_H < 6.0 < esc.ORG_DARK_FLOOR_H,
+          f"{esc.INNOCENT_WORST_H} is not the measured innocent worst (~4h heartbeat cadence)")
 
     # ── QUORUM ──────────────────────────────────────────────────────────────────────
     check("quorum counts DISTINCT agents, not fires",
@@ -174,8 +177,9 @@ def main():
     # ── THE VIOLATOR MUST STILL BE THE VIOLATOR ─────────────────────────────────────
     # A floor's justification is an empirical claim, so it can EXPIRE. This re-derives the
     # worst innocent org-wide silence from the wire using the facility's own SQL and fails
-    # if the recorded constant has drifted — otherwise 8.42h becomes a number that was true
-    # once, sitting next to a floor that still cites it.
+    # if the recorded constant has drifted — otherwise 4.0h becomes a number that was true
+    # once, sitting next to a floor that still cites it. Gaps are PULSE-fire gaps (org-clock
+    # liveness), so an innocent human-idle window no longer inflates the violator.
     try:
         from nucleus import wake_audit as _wa
         import psycopg

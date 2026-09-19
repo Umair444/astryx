@@ -68,39 +68,52 @@ from dataclasses import dataclass, field
 # The terminal address, and every address for which our predicate is a tautology.
 SUBJECT_EXCLUDE = frozenset({"owner"})
 
-# Org-wide silence floor for the aggregate rung (scout, msg 11576; re-derived 2026-08-20).
-# THE NUMBER THAT WOULD VIOLATE THIS FLOOR, not the one that comforts it: over 35 days the
-# worst INNOCENT org-wide silence measured 8.42h, so 12h carries 1.43x margin — thin, and
-# stated as thin. The only gap above it in that window was the 87.89h outage itself, at
-# which this rung would have spoken 75.9h before the org actually recovered. The median gap
-# is ~3h and quoting THAT would make the floor look far safer than it is.
+# Org-wide silence floor for the aggregate rung (scout, msg 11576; re-derived on the
+# PULSE-LIVENESS measure 2026-09-19, steward — see below for why the old steps measure was
+# wrong). THE NUMBER THAT WOULD VIOLATE THIS FLOOR, not the one that comforts it: over 35
+# days the worst INNOCENT org silence — a window where the PULSE was alive (still firing
+# triggers) and only the agents were idle — measured 4.0h, the org's densest guaranteed
+# pulse fire (the 4-hourly steward heartbeat). So 12h carries 3x margin, and it sits in an
+# EMPTY band: the next gap up is 29.4h. Every gap above the floor (29.4h, 92.4h, 141.4h in
+# this window) is a period where the pulse fired NOTHING — a real org-clock death, the
+# rung's TRUE subject, not a false positive (the 141h 08-30→09-05 is corroborated by the
+# backup gap, no dumps Aug 27→Sep 5). The floor's validity is coupled to "a sub-12h
+# heartbeat exists" — retune all heartbeats slower than 12h and this constant must rise.
 ORG_DARK_FLOOR_H = 12.0
-INNOCENT_WORST_H = 8.42          # the violator, kept next to the floor it justifies
+INNOCENT_WORST_H = 4.0           # the violator, kept next to the floor it justifies
 
-# ── ONE DERIVATION OF "HOW QUIET IS THE ORG" ─────────────────────────────────────────
+# ── ONE DERIVATION OF "IS THE ORG CLOCK ALIVE" ───────────────────────────────────────
 # The number that TRIGGERS this rung and the number that JUSTIFIES its floor must come
 # from the same definition, or the justification silently stops describing the trigger.
-# Three ad-hoc versions of this existed by the time it was noticed: the shim would compute
-# one, esc_latency derived episodes its own way, and I ran a third by hand to check the
-# 8.42h violator. Same writer-count defect that produced three copies of the consumption
-# predicate, caught one day later in a number instead of a predicate.
 #
-# ORG-WIDE silence is the gap since ANY agent last stepped — not per-agent quiet, which is
-# a different quantity with a different floor (wedge_watch's MIN_QUIET_H = 6h, per seat).
-# Conflating them is the error this constant pair exists to prevent, so they are named
-# apart here rather than left for a reader to infer.
+# THE MEASURE IS PULSE-LIVENESS, NOT AGENT ACTIVITY. The original measure was the gap since
+# any agent last STEPPED — but this org is human-gated and legitimately silent for days, so
+# a steps-gap conflated "the clock died" with "the humans are idle". By 2026-09-19 that
+# conflation had five gaps above the 12h floor (141/88/29/13/12h) with the worst innocent at
+# 11.92h — margin collapsed to 1.007x — because innocent human-idle windows had grown into
+# the floor. The fix: the PULSE evaluates every minute and FIRES its heartbeats/guards on
+# schedule regardless of agent idleness, so a gap in the pulse's OWN fired-message stream
+# (from_agent='pulse') is org-clock death — the true dark signal — while an agent-steps gap
+# during a live pulse is just innocent quiet. On the pulse measure the 13/12/11.92h innocent
+# gaps collapse to <=4h (the pulse was alive), and only real pulse-down outages stay above
+# the floor. This stream PERSISTS in `messages`, so the constant is re-derivable from history
+# with no new per-tick table. (This is per-org clock liveness, NOT per-agent quiet, which is
+# a different quantity with a different floor — wedge_watch's MIN_QUIET_H = 6h, per seat.)
 ORG_QUIET_SQL = """
-SELECT EXTRACT(epoch FROM (now() - max(ts))) / 3600.0 AS quiet_h FROM steps
+SELECT EXTRACT(epoch FROM (now() - max(ts))) / 3600.0 AS quiet_h
+  FROM messages WHERE from_agent = 'pulse'
 """
 
 # The distribution the floor is a bet against. `esc_latency` runs THIS to re-derive
 # INNOCENT_WORST_H rather than restating it, and its gate fails if the constant above has
 # drifted from what the wire actually shows — a violator that stops being the violator is
-# a justification that has quietly expired.
+# a justification that has quietly expired. Gaps are between distinct PULSE fire times
+# (from_agent='pulse'), so the distribution is org-clock liveness, not agent activity.
 ORG_SILENCE_EPISODES_SQL = """
 WITH s AS (SELECT ts, lag(ts) OVER (ORDER BY ts) AS prev
-             FROM (SELECT DISTINCT ts FROM steps
-                    WHERE ts > now() - make_interval(days => %(days)s)) x)
+             FROM (SELECT DISTINCT ts FROM messages
+                    WHERE from_agent = 'pulse'
+                      AND ts > now() - make_interval(days => %(days)s)) x)
 SELECT EXTRACT(epoch FROM (ts - prev)) / 3600.0 AS gap_h
   FROM s WHERE prev IS NOT NULL ORDER BY gap_h DESC
 """
