@@ -115,6 +115,19 @@ check("CONTROL constitutive trigger with roi>=0 is NOT at-risk (roi<0 is the rec
 res = layer2({K: -5_000_000}, {K: {"premium": 0, "enabled": False}})
 check("CONTROL disabled trigger is NOT at-risk", K not in {r["key"] for r in res["at_risk"]})
 
+# ── ARM 2b: a manifest entry with a STANDING no-fund ruling is NOT a price-me candidate ──────
+# (seed's session_refresh ruling, 19796: warn-only, no actuator → earns no premium; kept in the
+# manifest so it is never mis-surfaced as new-unclassified, but routed OUT of at_risk.)
+RULED = next((k for k, s in MAN.items() if s.get("ruled_unfunded")), None)
+if RULED is not None:
+    res = layer2({RULED: -5_000_000}, {RULED: {"premium": 0, "enabled": True}})
+    check("ARM2b a ruled-unfunded manifest entry is NOT at-risk even at premium=0 ∧ roi<0",
+          RULED not in {r["key"] for r in res["at_risk"]})
+    check("ARM2b a ruled-unfunded entry IS reported in the ruled_unfunded bucket (not lost)",
+          RULED in {r["key"] for r in res.get("ruled_unfunded", [])})
+    check("ARM2b a ruled-unfunded entry is NOT treated as unclassified (stays a known row)",
+          RULED not in m.new_unclassified({RULED}, MAN, seen=set()))
+
 # ── ARM 3 (load-bearing): completeness — a NEW uninsured non-manifest trigger surfaces ONCE ──
 uninsured = {NON}
 fresh = m.new_unclassified(uninsured, MAN, seen=set())
