@@ -35,6 +35,17 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 PY=${PY:-venv/bin/python}; [ -x "$PY" ] || PY=python3
+
+# Node for the channel gates. The pulse runs check.sh on a minimal systemd PATH with no
+# mise dir, so the node the org actually spawns agents with is invisible and the channel
+# gates (test_ear_survival, test_wake_recovery) silently SKIP — verified nothing — on every
+# timer run while passing interactively. They resolve node via shutil.which, so put the org's
+# node on PATH from the ASTRYX_NODE anchor (env first, then .env — the same host-config
+# spawn.sh honors; pulse.py loads only ASTRYX_DSN, not the whole .env, so read it here).
+# Harmless where ASTRYX_NODE is unset or node is already found. (seed, steward check_stamp finding 2026-09-20.)
+NODE_BIN=${ASTRYX_NODE:-$(sed -n 's/^ASTRYX_NODE=//p' .env 2>/dev/null | head -1)}
+[ -n "$NODE_BIN" ] && export PATH="$(dirname "$NODE_BIN"):$PATH"
+
 EXIT_SKIP=77
 fail=0
 verified=0
