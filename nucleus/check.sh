@@ -121,6 +121,11 @@ verdict() {
 [ -n "${CHECK_LIB_ONLY:-}" ] && return 0
 
 run "charter resolver invariants"      "$PY" tests/test_charter.py
+# org MCP write-tool role gate (t-org-grant): the genome/identity writes are governance-gated
+# (cross-agent amend_charter refused for non-governance; set_persona self-only) so grant:org is
+# safe to grant widely, while reads + benign writes (goals/economy/propose_goal/announce) stay
+# OPEN — over-gating them would re-break abstractor read-access. DB-free; mutation-control arm.
+run "org MCP write-tool role gate"     "$PY" tests/test_org_write_gate.py
 run "tier floor invariants"            "$PY" tests/test_tier.py
 run "dep coverage invariants"          "$PY" tests/test_deps.py
 run "dep manifest covers all imports"  "$PY" nucleus/deps.py coverage
