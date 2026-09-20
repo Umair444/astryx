@@ -152,10 +152,30 @@ hit_verb = [v for v in FORBIDDEN if v in low]
 check("ARM4 layer-1 render carries NO removal verb (seed's rung-gating; FYI-only)",
       not hit_verb, f"forbidden verbs present: {hit_verb}")
 
+# ── ARM 5 (load-bearing): LAYER-3 flags active∧funded_by-NULL goals, on the CORRECT key ──────
+# The pre-close capture-miss set (a3's key, seed 20218): the flag is funded_by IS NULL, NOT budget=0.
+# RED-first: a naive impl keying on budget=0 misses the priced-but-unattributed row (G_UNATTR);
+# one ignoring state flags the closed row (G_DONE); one ignoring funded_by flags the funded row (G_FUNDED).
+G_UNPRICED = {"id": 1, "title": "x", "budget": 0, "owner": "seed", "funded_by": None, "state": "active"}
+G_UNATTR   = {"id": 2, "title": "y", "budget": 500, "owner": "seed", "funded_by": None, "state": "active"}
+G_FUNDED   = {"id": 3, "title": "z", "budget": 0, "owner": "seed", "funded_by": "seed", "state": "active"}
+G_DONE     = {"id": 4, "title": "w", "budget": 0, "owner": "seed", "funded_by": None, "state": "done"}
+g = m.assess_unfunded_goals([G_UNPRICED, G_UNATTR, G_FUNDED, G_DONE])
+flagged_ids = {x["id"] for x in g}
+check("ARM5 an active∧funder-NULL goal at budget=0 is flagged (unpriced)", 1 in flagged_ids)
+check("ARM5 a PRICED but funder-NULL active goal is flagged too (key is funded_by, NOT budget=0)",
+      2 in flagged_ids, "the a3 correction: budget>0 can still be unattributed")
+check("ARM5 a FUNDED active goal is NOT flagged (has a funder → attributed)", 3 not in flagged_ids)
+check("ARM5 a non-active (done) goal is NOT flagged (only live goals can ship)", 4 not in flagged_ids)
+kinds = {x["id"]: x["kind"] for x in g}
+check("ARM5 budget=0 tagged 'unpriced', budget>0 tagged 'unattributed'",
+      kinds.get(1) == "unpriced" and kinds.get(2) == "unattributed", f"kinds={kinds}")
+
 print()
 if fails:
     print(f"FAILED ({len(fails)}): " + "; ".join(fails))
     sys.exit(1)
-print("weekly_economic_review: layer-2 insures the constitutive set with prepared proposals, "
-      "completeness guard closes the manifest, layer-1 is attribution-blind FYI with no removal verb")
+print("weekly_economic_review: L2 insures the constitutive trigger set with prepared proposals, "
+      "completeness guard closes the manifest, L3 flags active∧unfunded goals on the funded_by key, "
+      "L1 is attribution-blind FYI with no removal verb")
 sys.exit(0)
