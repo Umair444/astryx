@@ -152,24 +152,28 @@ hit_verb = [v for v in FORBIDDEN if v in low]
 check("ARM4 layer-1 render carries NO removal verb (seed's rung-gating; FYI-only)",
       not hit_verb, f"forbidden verbs present: {hit_verb}")
 
-# ── ARM 5 (load-bearing): LAYER-3 flags active∧funded_by-NULL goals, on the CORRECT key ──────
-# The pre-close capture-miss set (a3's key, seed 20218): the flag is funded_by IS NULL, NOT budget=0.
-# RED-first: a naive impl keying on budget=0 misses the priced-but-unattributed row (G_UNATTR);
-# one ignoring state flags the closed row (G_DONE); one ignoring funded_by flags the funded row (G_FUNDED).
-G_UNPRICED = {"id": 1, "title": "x", "budget": 0, "owner": "seed", "funded_by": None, "state": "active"}
-G_UNATTR   = {"id": 2, "title": "y", "budget": 500, "owner": "seed", "funded_by": None, "state": "active"}
-G_FUNDED   = {"id": 3, "title": "z", "budget": 0, "owner": "seed", "funded_by": "seed", "state": "active"}
-G_DONE     = {"id": 4, "title": "w", "budget": 0, "owner": "seed", "funded_by": None, "state": "done"}
-g = m.assess_unfunded_goals([G_UNPRICED, G_UNATTR, G_FUNDED, G_DONE])
-flagged_ids = {x["id"] for x in g}
-check("ARM5 an active∧funder-NULL goal at budget=0 is flagged (unpriced)", 1 in flagged_ids)
-check("ARM5 a PRICED but funder-NULL active goal is flagged too (key is funded_by, NOT budget=0)",
-      2 in flagged_ids, "the a3 correction: budget>0 can still be unattributed")
-check("ARM5 a FUNDED active goal is NOT flagged (has a funder → attributed)", 3 not in flagged_ids)
-check("ARM5 a non-active (done) goal is NOT flagged (only live goals can ship)", 4 not in flagged_ids)
-kinds = {x["id"]: x["kind"] for x in g}
-check("ARM5 budget=0 tagged 'unpriced', budget>0 tagged 'unattributed'",
-      kinds.get(1) == "unpriced" and kinds.get(2) == "unattributed", f"kinds={kinds}")
+# ── ARM 5 (load-bearing): LAYER-3 funded_by-SENTINEL design (a1 msg 20252, seed-concurred) ───────
+# NULL funded_by = uncaptured miss (fires); '(deferred:<reason>)' sentinel = deliberate disposition
+# (self-suppresses, shown for transparency); a real funder = attributed (skip). This is the "sentinel-
+# suppresses / silent-NULL-still-fires" invariant. RED-first: an impl that doesn't recognize the
+# deferred sentinel alarms on it (G_DEFER lands in worklist); one keying budget=0 for anon mis-partitions.
+G_ALARM  = {"id": 1, "title": "x", "budget": 0,   "owner": "seed", "funded_by": None, "state": "active"}
+G_ANON   = {"id": 2, "title": "y", "budget": 500, "owner": "seed", "funded_by": None, "state": "active"}
+G_DEFER  = {"id": 3, "title": "z", "budget": 0,   "owner": "seed", "funded_by": "(deferred:price-at-build)", "state": "active"}
+G_FUNDED = {"id": 4, "title": "p", "budget": 0,   "owner": "seed", "funded_by": "seed", "state": "active"}
+G_DONE   = {"id": 5, "title": "q", "budget": 0,   "owner": "seed", "funded_by": None, "state": "done"}
+r3 = m.assess_unfunded_goals([G_ALARM, G_ANON, G_DEFER, G_FUNDED, G_DONE])
+work_ids = {x["id"] for x in r3["price_worklist"]}
+anon_ids = {x["id"] for x in r3["anonymous_mint"]}
+defer_ids = {x["id"] for x in r3["deferred"]}
+check("ARM5 NULL funder ∧ budget=0 IS the alarm (silent-NULL fires — the 3909 case)", 1 in work_ids)
+check("ARM5 NULL funder ∧ budget>0 is the anonymous-mint surface, NOT the pricing worklist",
+      2 in anon_ids and 2 not in work_ids)
+check("ARM5 a '(deferred:...)' sentinel SELF-SUPPRESSES (not alarmed) but IS shown (transparency)",
+      3 not in work_ids and 3 not in anon_ids and 3 in defer_ids, "a1's cry-wolf fix")
+check("ARM5 a real funder is attributed → flagged NOWHERE", 4 not in (work_ids | anon_ids | defer_ids))
+check("ARM5 a non-active (done) goal is NOT alarmed (only live goals can ship)",
+      5 not in (work_ids | anon_ids))
 
 print()
 if fails:
