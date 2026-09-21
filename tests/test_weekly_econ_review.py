@@ -10,7 +10,7 @@ pnl → the econ table); nothing READS it to surface the banker duties the chart
 trigger is that reader. It sits a LAYER ABOVE market_decay (which is the sole ACTUATOR): the
 review only SURFACES.
 
-TWO LAYERS, different safety profiles (seed's split, 19713):
+THREE LAYERS, different safety profiles (seed's split 19713; LAYER 3 added 2026-09-20):
   LAYER 2 — uninsured constitutive guards at reconcile-risk. Threshold: a trigger in the
     banker's CONSTITUTIVE manifest that is enabled ∧ premium=0 ∧ roi<0 → flagged AT-RISK with a
     prepared premium proposal (amount + value case + who prices it), so pricing them (the
@@ -23,6 +23,12 @@ TWO LAYERS, different safety profiles (seed's split, 19713):
     BY CONSTRUCTION), so a net-negative flag false-positives on exactly the agents doing
     invisible-but-real work. The rungs need attribution v2 before the signal may route toward
     removal. The review may only DISTRIBUTE the number, never verb it.
+  LAYER 3 — active goals with no funder (the pre-close capture-miss set). funded_by IS NULL = an
+    UNCAPTURED miss (fires: budget=0 → pricing worklist, budget>0 → anonymous-mint integrity); a
+    '(deferred:<reason>)' sentinel = a DELIBERATE disposition (self-suppresses, shown for
+    transparency — no silent cap); a real funder = attributed (skipped). a1's funded_by-sentinel
+    design (msg 20252): the sentinel silences the SURFACE but 4061's mint-gate still refuses it
+    (DEFER≠EXEMPT). Would have caught 3909 (shipped unfunded because nothing watched the set).
 
 RED-FIRST load-bearing arms (a plausible WRONG implementation fails each):
   1. a FUNDED constitutive trigger is NOT at-risk — a naive "flag every roi<0" impl fails this.
@@ -32,6 +38,9 @@ RED-FIRST load-bearing arms (a plausible WRONG implementation fails each):
      not (completeness guard closes the manifest's fail-open, without droning the known set).
   4. the LAYER-1 render carries no removal verb (deprecate/merge/retire/fire/kill) — pins seed's
      rung-gating as an output polarity invariant, the flattering direction nobody reports.
+  5. (LAYER 3) a NULL-funder goal fires (silent-NULL = the 3909 case) but a '(deferred:...)'
+     sentinel SELF-SUPPRESSES (shown, not alarmed) — mutation: an impl that doesn't recognize the
+     sentinel alarms on it.
 
 Path-load the gitignored trigger body + skip-77 when absent (never static-import — fails
 deps.py's clean-clone AST scan). Exit 0 pass · 1 fail · 77 could-not-run.
