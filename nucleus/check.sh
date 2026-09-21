@@ -247,9 +247,10 @@ run "referral opt-in + static-literal" bash nucleus/referral_guard.sh
 # runs only where PyYAML happens to be importable — it is not a dependency.
 run "OKF frontmatter additivity"      "$PY" tests/test_okf.py
 # The recall-graph compiler. Its load-bearing arm is CONFORMANCE: the page-link set it
-# extracts must equal link_integrity.py's edge for edge, or the graph and the lint watching
-# the same files disagree with nothing to arbitrate. Pure stdlib; the estate arms skip
-# loudly on a clean checkout, and the wire layer is never touched here.
+# extracts must equal the trusted link guard's — _wiki_links() in memory/lints/drift.py (the
+# reconstructed link_integrity) — edge for edge, or the graph and the lint watching the same
+# files disagree with nothing to arbitrate. Pure stdlib; the estate arms skip loudly on a
+# clean checkout, and the wire layer is never touched here.
 run "recall-graph compiler"           "$PY" tests/test_memgraph.py
 # The typed layer's lint. Every finding must be FALSIFIABLE and every expected field set
 # DERIVED from the corpus — a hand-kept list would be the drift class this org has hit
