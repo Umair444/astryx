@@ -29,6 +29,7 @@ try:
 
     # ── context: last usage block in this session's own transcript ──────────────────
     total = 0
+    model = ""
     if tp and os.path.isfile(tp):
         size = os.path.getsize(tp)
         with open(tp, "rb") as fh:
@@ -45,6 +46,7 @@ try:
                 total = (u.get("input_tokens", 0)
                          + u.get("cache_read_input_tokens", 0)
                          + u.get("cache_creation_input_tokens", 0))
+                model = msg.get("model") or ""
 
     # ── the DB: window proof (agent's context high-water) + org plan gauges ─────────
     agent = None
@@ -96,9 +98,20 @@ try:
         pass
 
     if total:
+        # window = the running model's REAL context window. Opus 4.x is a 1M window
+        # (deployment-proven: seed's hook sits >780k uncompacted), so map opus→1M directly
+        # rather than waiting to OBSERVE >200k — else an opus agent still under 200k
+        # phantom-ceilings (reads 188k as "94% of 200k" when it is ~19% of 1M), which drove
+        # real over-caution org-wide (needless defers + self-compaction). Fall back to the
+        # evidence-based floor (an observed load of N proves the window >= N) for any
+        # non-opus/unknown model, staying conservative when the window is unproven.
         evidence = max(total, high)
-        limit = 1_000_000 if evidence > 200_000 else 200_000
-        proven = evidence > 200_000
+        if "opus" in (model or "").lower():
+            limit, proven = 1_000_000, True
+        elif evidence > 200_000:
+            limit, proven = 1_000_000, True
+        else:
+            limit, proven = 200_000, False
         pct = 100.0 * total / limit
         assumed = "" if proven else "an assumed "
         print(f"[usage] context ~{total:,} tokens (~{pct:.0f}% of "
