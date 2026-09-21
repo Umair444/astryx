@@ -45,16 +45,25 @@ class Ctx:
     the escalation path has a real INSERT, and a test that let it run would be writing live
     wire rows every time the suite ran."""
 
-    def __init__(self, last, state=None, escalated_recently=False):
+    def __init__(self, last, state=None, escalated_recently=False, last_turn=None):
         self.state = {} if state is None else state
         self._last = last
         self._escalated_recently = escalated_recently
+        # The fake max(ended_at) the liveness probe would return. DEFAULT None models a seat
+        # taking NO turns — the wedge the escalation was built for, and the state every
+        # pre-2026-09-17 escalation test implicitly assumed. A live silent seat passes a
+        # recent timestamp instead.
+        self._last_turn = last_turn
         self.writes = []          # every INSERT the guard attempted, as (query, params)
 
     def sql(self, q, params=()):
         if q.lstrip().upper().startswith("INSERT"):
             self.writes.append((q, params))
             return []
+        if "FROM turns" in q:                     # the liveness probe (escalation gate)
+            assert "agent='canopus'" in q, \
+                "liveness must read MY OWN turns, not the fleet's"
+            return [{"last_turn": self._last_turn}]
         if "body LIKE" in q:                      # the escalation dedup probe
             assert params and params[0] == bs.ESCALATE_TO, \
                 "the dedup must probe the peer it actually writes to"
@@ -207,6 +216,67 @@ check("escalation body carries no long digit run",
 check("escalation body leaks no career specifics",
       all(tok not in ebody for tok in
           ("klarna", "revolut", "monzo", "cv", "salary", "recruiter", "£", "application")))
+
+# ── LIVENESS GATE ON THE ESCALATION (2026-09-17) ─────────────────────────────────
+# The 09-16 cadence-close made deliberate no-delta silence HEALTHY. The escalation's own
+# claim — "a fire delivered to a body taking no turns" — is false on a silent-but-ALIVE
+# seat, and routing it to a peer cries wolf on the channel that must stay credible for the
+# real wedge. So the numeric-silence escalation now fires ONLY when the seat is genuinely
+# not consuming wakes. The PERSONAL fire is deliberately untouched. Default Ctx last_turn is
+# None (a wedge) — so every escalation test above still models the seat the guard was built
+# for, and these add the world it was missing.
+c = Ctx(ago(bs.ESCALATE_H + 4), {}, last_turn=ago(1))     # 56h silent BUT a turn 1h ago
+bs.brief_silence(c)
+check("a LIVE seat past the bound does NOT escalate (deliberate silence, not a wedge)",
+      c.escalations() == [])
+check("but the PERSONAL re-decision fire still fires for a live silent seat",
+      bs.brief_silence(Ctx(ago(bs.ESCALATE_H + 4), {}, last_turn=ago(1))) is not None)
+
+c = Ctx(ago(bs.ESCALATE_H + 4), {}, last_turn=None)       # 56h silent, zero turns = wedged
+bs.brief_silence(c)
+check("a WEDGED seat past the bound (no turns at all) DOES escalate",
+      len(c.escalations()) == 1)
+
+# A present-but-stale timestamp is still a wedge — kills a LIVENESS_H=huge mutation that the
+# None case (which short-circuits before the comparison) cannot catch.
+c = Ctx(ago(bs.ESCALATE_H + 4), {}, last_turn=ago(bs.LIVENESS_H + 2))
+bs.brief_silence(c)
+check("a turn just OUTSIDE the liveness window is a wedge — escalates",
+      len(c.escalations()) == 1)
+c = Ctx(ago(bs.ESCALATE_H + 4), {}, last_turn=ago(bs.LIVENESS_H - 2))
+bs.brief_silence(c)
+check("a turn just INSIDE the liveness window is alive — no escalation",
+      c.escalations() == [])
+
+# Fail-safe: a liveness probe that ERRORS must read as NOT alive (escalate), never a false
+# clean — the polarity this whole guard descends from.
+class ErrCtx(Ctx):
+    def sql(self, q, params=()):
+        if "FROM turns" in q:
+            raise RuntimeError("liveness probe blew up")
+        return super().sql(q, params)
+c = ErrCtx(ago(bs.ESCALATE_H + 4), {})
+bs.brief_silence(c)
+check("a liveness-probe ERROR fails toward escalation, never a false clean",
+      len(c.escalations()) == 1)
+
+# The no-anchor case is NOT liveness-gated: alive-but-no-delivered-message-ever is a broken
+# routing identity, exactly what a live seat cannot diagnose about itself.
+c = Ctx(None, {}, last_turn=ago(1))
+bs.brief_silence(c)
+check("a LIVE seat with no anchor still escalates (broken routing, not a wedge)",
+      len(c.escalations()) == 1)
+
+# The liveness window pinned in ABSOLUTE durations, so a mutated LIVENESS_H cannot survive
+# by dragging the fixtures with it ([[feedback_threshold_needs_a_world_unit_fixture]]).
+c = Ctx(ago(72), {}, last_turn=ago(2))
+bs.brief_silence(c)
+check("72h silent but a turn 2h ago is a live silent seat — no peer spend",
+      c.escalations() == [], "(pins the liveness window above 2h)")
+c = Ctx(ago(72), {}, last_turn=ago(48))
+bs.brief_silence(c)
+check("48h since the last turn is a wedge by any duty-cycle measure — escalates",
+      len(c.escalations()) == 1, "(pins the liveness window below 48h)")
 
 print("ALL PASS" if not _fails else f"FAILURES: {_fails}")
 sys.exit(1 if _fails else 0)
