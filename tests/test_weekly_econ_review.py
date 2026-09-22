@@ -41,6 +41,16 @@ RED-FIRST load-bearing arms (a plausible WRONG implementation fails each):
   5. (LAYER 3) a NULL-funder goal fires (silent-NULL = the 3909 case) but a '(deferred:...)'
      sentinel SELF-SUPPRESSES (shown, not alarmed) — mutation: an impl that doesn't recognize the
      sentinel alarms on it.
+  6. (ctx.sql SURFACE) arms 1-5 exercise the PURE helpers and never touch ctx.sql — but the
+     2026-09-21 live crash lived THERE (a literal % in a LIKE, parsed as a placeholder because
+     pulse_run's Ctx.sql calls execute(query, params=()) — a non-None params makes psycopg scan
+     for %-placeholders; the pure arms stayed green through it). This arm invokes the ENTRYPOINT
+     through pulse_run's OWN Ctx (imported, NOT re-implemented — a stand-in with a different
+     execute() arity is exactly what masked the 09-21 dry-run), so a %-mismatch / bad-column /
+     arg-count regression in any of the three ctx.sql queries reddens at GATE time, not
+     firing-and-crashing the following Monday. RED-first discriminator: a literal-% query RAISES
+     under the runner's real call, the safe left(col,N)= form does not. Read-only (SELECTs only);
+     no DB reachable (clean clone / no .env) → the SQL arm SKIPS without failing, the pure arms stand.
 
 Path-load the gitignored trigger body + skip-77 when absent (never static-import — fails
 deps.py's clean-clone AST scan). Exit 0 pass · 1 fail · 77 could-not-run.
@@ -183,6 +193,70 @@ check("ARM5 a '(deferred:...)' sentinel SELF-SUPPRESSES (not alarmed) but IS sho
 check("ARM5 a real funder is attributed → flagged NOWHERE", 4 not in (work_ids | anon_ids | defer_ids))
 check("ARM5 a non-active (done) goal is NOT alarmed (only live goals can ship)",
       5 not in (work_ids | anon_ids))
+
+# ── ARM 6 (load-bearing): the ctx.sql SURFACE parses & executes under pulse_run's REAL call ──────
+# Arms 1-5 never touch ctx.sql; the 09-21 crash did. Import pulse_run's OWN Ctx (execute(query,
+# params=()) — the exact call whose %-parse crashed) rather than re-implement it: a stand-in with a
+# different execute() arity is precisely what let the 09-21 dry-run pass while the pulse crashed.
+# No DB / no .env (clean clone) → SKIP the SQL arm, keep the pure arms green.
+try:
+    _pr_spec = importlib.util.spec_from_file_location(
+        "pulse_run_under_test", REPO / "nucleus" / "pulse_run.py")
+    _pr = importlib.util.module_from_spec(_pr_spec)
+    _pr_spec.loader.exec_module(_pr)      # reads .env for DSN at import — raises on a clean clone
+    RunnerCtx = _pr.Ctx
+except Exception as e:  # noqa: BLE001 — no runner/DSN/psycopg ⇒ skip the SQL arm, pure arms stand
+    print(f"  SKIP  ARM6 ctx.sql surface — pulse_run/DSN unavailable ({type(e).__name__}: {e})")
+    RunnerCtx = None
+
+if RunnerCtx is not None:
+    class RecordingCtx(RunnerCtx):       # faithful execute(query, params); records what was issued
+        def __init__(self, state):
+            super().__init__(state)
+            self.queries = []
+        def sql(self, query, params=()):
+            self.queries.append(query)
+            return super().sql(query, params)
+
+    # (a) the live entrypoint parses & executes every query it reaches, end to end, no raise
+    ctx = RecordingCtx({})
+    try:
+        out = m.weekly_economic_review(ctx)
+        ran_ok, err = True, ""
+    except Exception as e:  # noqa: BLE001 — a ctx.sql-surface regression surfaces HERE, at gate
+        ran_ok, err, out = False, f"{type(e).__name__}: {e}", None
+    check("ARM6a entrypoint runs end-to-end through pulse_run.Ctx — the ctx.sql surface parses & "
+          "executes under the runner's real execute(query, params) signature", ran_ok, err)
+    check("ARM6a entrypoint returns a review string or None (never a stray type)",
+          out is None or isinstance(out, str), f"returned {type(out).__name__}")
+    check("ARM6a reached at least the econ ledger query", len(ctx.queries) >= 1,
+          f"queries issued: {len(ctx.queries)}")
+    if out is not None:      # econ had a row ⇒ the entrypoint flowed through ALL three ctx.sql calls
+        check("ARM6a with a populated ledger, all THREE ctx.sql surfaces (econ, triggers, goals) "
+              "were parsed & executed — none silently skipped", len(ctx.queries) == 3,
+              f"queries issued: {len(ctx.queries)}")
+
+    # (b) RED-first discriminator: the SAME runner call RAISES on the literal-% form that crashed
+    # 09-21 and does NOT raise on the safe left(col,N)= form the trigger now uses. Proves the arm can
+    # OBSERVE a %-regression — and that pulse_run.Ctx still passes params (drop params ⇒ no %-parse ⇒
+    # this class stops being caught; this control reddens if the runner is ever "optimized" that way).
+    ctx2 = RunnerCtx({})
+    def _raises(q):
+        try:
+            ctx2.sql(q)      # params defaults to () — the runner's real call surface
+            return False
+        except Exception:
+            return True
+    check("ARM6b MUTANT: a literal-% query (LIKE '(deferred:%') RAISES under the runner's call — "
+          "the arm can observe the 09-21 crash class", _raises("SELECT 1 AS x WHERE 'z' LIKE '(deferred:%'"))
+    check("ARM6b CONTROL: the safe left(col,N)='prefix' form does NOT raise (the trigger's fix)",
+          not _raises("SELECT 1 AS x WHERE left('z',10)='(deferred:'"))
+    for _c in (ctx, ctx2):
+        try:
+            if _c._conn is not None:
+                _c._conn.close()
+        except Exception:
+            pass
 
 print()
 if fails:
