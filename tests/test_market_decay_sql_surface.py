@@ -34,7 +34,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 EXIT_SKIP = 77
-BODY = REPO / "triggers" / "steward" / "market_decay.py"
+BODY = Path(os.environ.get("MARKET_DECAY_SRC", REPO / "triggers" / "steward" / "market_decay.py"))
 ENV = REPO / ".env"
 if not BODY.exists() or not ENV.exists():
     print("SKIP: market_decay body and/or .env absent (gitignored body / bare clone) — nothing asserted.")

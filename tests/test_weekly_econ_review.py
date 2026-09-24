@@ -56,6 +56,7 @@ Path-load the gitignored trigger body + skip-77 when absent (never static-import
 deps.py's clean-clone AST scan). Exit 0 pass · 1 fail · 77 could-not-run.
 """
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -63,7 +64,7 @@ REPO = Path(__file__).resolve().parents[1]
 EXIT_SKIP = 77
 fails = []
 
-BODY = REPO / "triggers" / "steward" / "weekly_economic_review.py"
+BODY = Path(os.environ.get("WEEKLY_ECON_SRC", REPO / "triggers" / "steward" / "weekly_economic_review.py"))
 if not BODY.exists():
     print("SKIP: weekly_economic_review trigger absent (gitignored body, fresh clone) — nothing asserted.")
     sys.exit(EXIT_SKIP)
