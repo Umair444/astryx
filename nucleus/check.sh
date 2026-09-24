@@ -373,6 +373,14 @@ run "owner_queue_age content-first-seen age" "$PY" tests/test_owner_queue_age.py
 # triggers still retire durably. RED-first: a regression to unconditional-retire fails the
 # file-backed->advisory arm.
 run "market_decay advisory (no self-retire churn)" "$PY" tests/test_market_decay_advisory.py
+# market_decay SQL-SURFACE (steward, a4 2026-09-24): the advisory oracle above drives only the pure
+# _decide/_is_file_backed and never invokes market_decay(ctx), so its four ctx.sql strings were
+# untested — a %-literal/bad-column/typo there ships green and the SOLE economic actuator silently
+# stops regulating until it next fires. This arm executes all four FOR REAL against a HERMETIC TEMP
+# SCHEMA (write-safe: the enabled=false UPDATE and the notice INSERT land in a throwaway schema,
+# search_path SCH-only), driven to the RETIRE branch so every query runs. RED-first: a %-literal or
+# bad column in any string reddens the end-to-end arm. SKIPs where the gitignored body or the DB is absent.
+run "market_decay SQL-surface (4 queries execute, write-safe temp schema)" "$PY" tests/test_market_decay_sql_surface.py
 # weekly_economic_review (steward, the banker's ledger reader — a SURFACE above market_decay,
 # never an actuator): LAYER 2 flags uninsured constitutive guards at reconcile-risk (in the
 # banker's manifest ∧ premium=0 ∧ roi<0) WITH prepared premium proposals; a funded one is insured
