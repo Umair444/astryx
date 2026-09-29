@@ -1,5 +1,8 @@
 {
  "covering": {
+  "bridges/common.py::step_line\u001fselect content from steps where id=? and agent=?": [
+   "steps doorbell resolves only the named agent's step"
+  ],
   "hooks/step.py::handle_stop\u001finsert into turns (agent, session_id, started_at, ended_at, duration_ms, source, input_prompt, input_msg_id, num_responses, num_tools, char_count, tokens_in, tokens_out, model, stop_reason, raw_payload, usage_snapshot, goal_id) values (?,?,?::timestamptz, now(), ?, ?,?,?,?,?,?,?,?,?,?,?,?,?) returning id": [
    "doctor units-drift: a live orphan is not told to self-delete"
   ],
@@ -348,6 +351,11 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:12d8b05f301eaeb76d5e6869f023046416c3db93aa3b9162b794e4cf98d40fff"
+  },
+  "bridges/common.py::step_line\u001fselect content from steps where id=? and agent=?": {
+   "admitted": "2026-09-29",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "doorbell owner-match (a4 #22117): executed in a stamped fixture by tests/test_step_doorbell.py B1, both witnesses traced (1 row for the owner, 0 for a forged agent), but asyncpg exposes no table OID, so the stamp cannot be credited (declared FIXTURE-DDL cap, as goal_create S3). Replaces the seeded UNEXECUTED row for the pre-fix text (where id=?), which shrinks at merge. Shrinks when the shim resolves asyncpg relations."
   },
   "bridges/common.py::update_poll_votes\u001fselect votes from polls where msg_id=?": {
    "debt": "UNEXECUTED",

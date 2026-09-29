@@ -25,7 +25,14 @@ depth, graded as such.
   B2 step_line's `agent` is a REQUIRED keyword, and every step_line call in bridges/ passes
      `agent=` (AST: a call can't silently fall back to matching "").
 
-Exits 77 when the substrate (node + pg modules, a DB role that can CREATE DATABASE) is absent.
+THE DATABASE is sqlguard's stamped fixture (nucleus/sqlguard/fixture.py, the ONE applier), not a
+hand-built one: an unstamped relation caps every site at FIXTURE-DDL, so step_line's owner-matched
+query could never read RESPONSIVE. B1 then gives that query both witnesses (1 row for the owner,
+0 for the forger). B1 uses ONE asyncpg connection, not a pool: step_line only calls .fetchrow, which
+both provide, and a pool's release runs asyncpg's own reset SQL, which is driver-internal and not
+under test here (seed #23668; the general sqlguard rule for driver SQL is a4's call).
+
+Exits 77 when the substrate (node + pg modules, a buildable fixture database) is absent.
 """
 import ast
 import asyncio
@@ -109,16 +116,20 @@ if not ADMIN_DSN:
     skip("no ASTRYX_DSN")
 if not NODE or not (REPO / "channel" / "node_modules" / "pg").is_dir():
     skip("node or channel/node_modules/pg absent")
-try:
-    admin = psycopg.connect(ADMIN_DSN, autocommit=True, connect_timeout=5)
-except Exception as e:  # noqa: BLE001
-    skip(f"database unreachable ({type(e).__name__})")
-if not admin.execute("SELECT rolcreatedb OR rolsuper FROM pg_roles "
-                     "WHERE rolname = current_user").fetchone()[0]:
-    skip("this role cannot CREATE DATABASE (a throwaway is the only safe substrate)")
+sys.path.insert(0, str(REPO))
+from nucleus.sqlguard.fixture import fixture_db  # noqa: E402 — the ONE applier
 
-PROBE_DB = f"astryx_doorprobe_{os.getpid()}"
-PROBE_DSN = re.sub(r"/[^/?]+(\?|$)", f"/{PROBE_DB}\\1", ADMIN_DSN, count=1)
+_fx = fixture_db()
+try:
+    fx = _fx.__enter__()
+except Exception as e:  # noqa: BLE001 — no CREATEDB / DB down: cannot verify, don't fake
+    skip(f"the fixture database couldn't be built ({type(e).__name__}: {e})")
+# fixture_db() hands back a libpq key=value conninfo; node-pg (the staged ear) and asyncpg both
+# take a URL. Same database, URL form, derived from the org's URL DSN; refuse rather than guess.
+PROBE_DSN = re.sub(r"/[^/?]+(\?|$)", f"/{fx['dbname']}\\1", ADMIN_DSN, count=1)
+if f"/{fx['dbname']}" not in PROBE_DSN:
+    _fx.__exit__(None, None, None)
+    skip("could not derive a URL DSN for the fixture database (unexpected ASTRYX_DSN shape)")
 stage = Path(tempfile.mkdtemp(prefix="doorbell-"))
 proc = None
 
@@ -136,12 +147,8 @@ def stdout_text():
     return (stage / "stdout.log").read_text(errors="replace")
 
 
+db = None
 try:
-    admin.execute(f'CREATE DATABASE "{PROBE_DB}"')
-    subprocess.run([sys.executable, "-c", "import sys,psycopg;"
-                    "psycopg.connect(sys.argv[1],autocommit=True).execute(open(sys.argv[2]).read())",
-                    PROBE_DSN, str(REPO / "nucleus" / "schema.sql")],
-                   check=True, capture_output=True, timeout=120)
     db = psycopg.connect(PROBE_DSN, autocommit=True, connect_timeout=5)
     db.execute("INSERT INTO subscriptions (watcher, target, filter) VALUES (%s,'zzx','all')",
                (PROBE_AGENT,))
@@ -206,7 +213,7 @@ try:
     common = importlib.import_module("bridges.common")
 
     async def b1():
-        pool = await asyncpg.create_pool(PROBE_DSN, min_size=1, max_size=2)
+        pool = await asyncpg.connect(PROBE_DSN)      # a connection: no pool-reset SQL
         try:
             call = common.step_line
             kw = "agent" if "agent" in inspect.signature(call).parameters else None
@@ -230,15 +237,11 @@ finally:
         proc.kill()
         proc.wait(timeout=10)
     try:
-        db.close()
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        admin.execute(f'DROP DATABASE IF EXISTS "{PROBE_DB}" WITH (FORCE)')
-    except Exception:  # noqa: BLE001
-        pass
-    admin.close()
-    shutil.rmtree(stage, ignore_errors=True)
+        if db is not None:
+            db.close()
+    finally:
+        _fx.__exit__(None, None, None)            # the fixture drops its own DB WITH (FORCE)
+        shutil.rmtree(stage, ignore_errors=True)
 
 if fails:
     print(f"\nFAIL: {len(fails)} doorbell invariant(s) broken")
