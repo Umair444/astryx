@@ -135,6 +135,7 @@ echo "$ASTRYX_SQLGUARD_RUN" > "$ASTRYX_SQLGUARD_DIR/run_id"
 # The canary proves THIS run's shim can observe: one statement through the REAL pulse_run.Ctx.sql. If it isn't
 # RESPONSIVE, the whole sqlguard verdict is NOT SEARCHED (a check that can't observe says so).
 run "sqlguard canary: the shim observes through the real Ctx.sql" "$PY" -m nucleus.sqlguard.canary
+run "sqlguard oracle: privacy (P1) + controls"          "$PY" tests/test_sqlguard.py
 
 run "charter resolver invariants"      "$PY" tests/test_charter.py
 # org MCP write-tool role gate (t-org-grant): the genome/identity writes are governance-gated
