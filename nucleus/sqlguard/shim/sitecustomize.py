@@ -274,10 +274,13 @@ if _DIR:
                     rows = int(m.group(1)) if m else -1
                 else:
                     rows = -1
-                # (P) is NOT-EVALUATED on asyncpg: its Attribute has no table OID (a1's B1).
-                _emit({"t": _norm(query), "db": getattr(getattr(self, "_params", None), "database", "?"),
-                       "schema": "public", "frames": _frames(), "ok": True, "rows": rows, "p": None,
-                       "rels": [], "stamped": None, "gate": _GATE, "driver": "asyncpg"})
+                # (P) is NOT-EVALUATED on asyncpg: its Attribute has no table OID (a1's B1). The STAMP needs no OIDs:
+                # with none, _stamped() takes the D-B DB-grain path (every org relation in the fixture stamp-valid
+                # NOW). It used to be hard-coded None, which capped every asyncpg site at FIXTURE-DDL (forge #23806).
+                db = getattr(getattr(self, "_params", None), "database", "?")
+                _emit({"t": _norm(query), "db": db, "schema": "public", "frames": _frames(), "ok": True,
+                       "rows": rows, "p": None, "rels": [], "stamped": _stamped(str(db), []), "gate": _GATE,
+                       "driver": "asyncpg"})
             except Exception as ee:
                 _err(ee)
             return r

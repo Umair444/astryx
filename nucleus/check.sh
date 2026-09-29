@@ -62,7 +62,9 @@ run() {
   # it is the exact defect this accounting exists to catch, so it is reported as a
   # violation rather than quietly trusted. Narrow by construction: only a line whose
   # first non-space token is SKIP or ○ counts, so a passing test whose NAME contains
-  # "skipped" (test_plan_lifecycle has one) can never trip it. This belt can only ever
+  # "skipped" (test_plan_lifecycle has one) can never trip it. So a leading ○ or SKIP IS a skip
+  # announcement: never use either as a neutral marker in a gate's output (sqlguard enforce did, and
+  # its admitted rows read an enforcing gate as UNVERIFIED on every run; seed #24103). This belt can only ever
   # ADD strictness — it cannot turn a real skip into a pass — so both the exit code and
   # the announcement must fail before a vacuous gate reads green.
   # here-string, NOT `printf | grep -q`: the pipe form is the SIGPIPE/pipefail race seed

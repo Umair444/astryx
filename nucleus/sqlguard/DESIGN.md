@@ -152,3 +152,22 @@ Residuals (declared, not closed):
 - enforce's own SQL runs AFTER its judge, and each check.sh run has a fresh trace dir, so enforce.py's sites
   can never climb in-check. They stay listed debt. Re-judging a finished trace dir sees them (a false
   R-STALE, from re-judging only).
+- (a3 #22780, closed) A function rename used to reset an untraced site's NOT-SEARCHED clock, and `shrink` deleted
+  the moved rows. Now the clock and every row carry text_key (path + normalized SQL, no qualname), and `shrink`
+  re-keys a vanished row when exactly one UNLISTED live site shares its text. A changed statement is a new site,
+  so its clock legitimately restarts (e87eac9's nudge dedup: `'nudge:%%'` became a parameter). Deploying the
+  text_key clock restarts every NOT-SEARCHED clock ONCE (the live table dates from 09-29).
+- asyncpg is credited through the D-B DB-grain stamp (forge #23806). The shim used to hard-code
+  stamped=None for asyncpg, which capped every asyncpg site at FIXTURE-DDL. Only (P) stays NOT-EVALUATED on
+  asyncpg, because its Attribute has no table OID.
+- Driver-internal SQL (drivers.py) is decided by TEXT provenance, not frames. Frames can't separate repo
+  `conn.execute(q)` from `pool.release()`: both reach the wrapped method from inside the driver. The order is:
+  1. a repo literal owns the text;
+  2. an unresolved repo site is on the stack (FALLBACK);
+  3. EVERY ;-statement is a constant in the driver's installed source, AST-derived per version → counted,
+     printed as name@version, and given no credit;
+  4. otherwise it's R-BLIND.
+  The first rule I ruled (immediate caller inside the driver) would have swallowed nearly all repo SQL; see
+  #23984. Declared residual: a repo caller the inventory doesn't see as SQL-bearing whose runtime text equals a
+  driver constant also reads driver-internal, so the count is not proof that only the driver spoke.
+- fixture_db() yields `url` (postgresql://) beside the key=value `dsn`, for asyncpg and node-pg.

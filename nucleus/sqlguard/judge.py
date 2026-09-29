@@ -32,7 +32,7 @@ import re
 import sys
 from pathlib import Path
 
-from nucleus.sqlguard import inventory
+from nucleus.sqlguard import drivers, inventory
 from nucleus.sqlguard.normalize import is_site, is_write
 
 REPO = inventory.REPO
@@ -122,6 +122,7 @@ def judge(trace_dir, inv=None, covering=None, stored_covering=None):
     ev = collections.defaultdict(lambda: {"ok": 0, "credited": 0, "fixture_ddl": 0, "zero": False, "pos": False,
                                           "p": {}, "gates": set(), "fallback": False, "write": False})
     blind, direct, oracle_own = [], [], 0
+    driver_internal = collections.Counter()         # "name@version" -> n: after tiers 1+2, never above them
     extractors = {}                                  # F-b: test file -> gates, derived from the trace
     for r in recs:
         if _CREATE.search(r["t"]) and r.get("ok"):
@@ -143,6 +144,10 @@ def judge(trace_dir, inv=None, covering=None, stored_covering=None):
             direct.append({"t": r["t"][:120], "frame": (r.get("frames") or [["?", "?", 0]])[0]})
             continue
         if kind == "blind":
+            drv = r.get("driver") or "psycopg"
+            if drivers.is_internal(r["t"], drv):
+                driver_internal[f"{drv}@{drivers.version(drv)}"] += 1     # no credit, not blind, COUNTED
+                continue
             blind.append({"t": r["t"][:120], "frame": (r.get("frames") or [["?", "?", 0]])[0]})
             continue
         e = ev[(key, text)]
@@ -212,10 +217,11 @@ def judge(trace_dir, inv=None, covering=None, stored_covering=None):
     if shim_errors:
         run_not_searched.append(f"shim internal errors: {shim_errors}")
     return {"counts": dict(counts), "sites": sites, "blind": blind, "direct": direct, "oracle_own": oracle_own,
+            "driver_internal": dict(driver_internal),
             "run_not_searched": run_not_searched, "covering": covering, "gates": gates,
             "untraced_children": {k: sorted(v) for k, v in untraced.items()},
             "extractors": {k: sorted(v) for k, v in extractors.items()},
-            "extractors_static": inv["extractors"], "exempt": inv["exempt"], "records": len(recs)}
+            "extractors_static": inv["extractors"], "exempt": inv["exempt"], "excluded": inv.get("excluded", []), "records": len(recs)}
 
 
 REMAINDER = ("CEILING: RESPONSIVE = the WHERE and every computed bool responded. It never means CORRECT (that's the "
@@ -233,11 +239,15 @@ def print_report(rep):
     for script, gs in sorted(rep["untraced_children"].items()):
         print(f"  NOT SEARCHED (untraced child): {script} was launched with a cleared env by {gs}")
     from nucleus.sqlguard.privacy import ignored
+    if rep.get("driver_internal"):
+        print(f"  driver-internal (no credit; composed of the driver's own source constants): {rep['driver_internal']}"
+              f". A repo text equal to a driver constant would also count, so this is not proof only the driver spoke")
     for b in rep["blind"][:10]:
         p = b["frame"][0]
         what = "" if (p.startswith("tier/") or ignored(p)) else f" ran {b['t']!r}"   # P1: no gitignored SQL text
         print(f"  BLIND (reverse agreement): {p}::{b['frame'][1]}{what}")
-    print(f"  extractors (static list, until migrated): {len(rep['extractors_static'])}; exempt: {rep['exempt']}")
+    print(f"  extractors (static list, until migrated): {len(rep['extractors_static'])}; exempt: {rep['exempt']}; "
+          f"excluded roots: {rep.get('excluded', [])}")
 
 
 def write_report(d, rep):

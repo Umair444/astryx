@@ -45,6 +45,13 @@ def _path(site_key: str) -> str:
     return site_key.split("::", 1)[0]
 
 
+def text_key(site_key: str) -> str:
+    """The site WITHOUT its qualname: sha256(path + SEP + normalized text). A function rename keeps it (a3 #22780),
+    so the NOT-SEARCHED clock and ledger rows follow a moved site instead of resetting. It's a digest for every
+    origin, so it leaks no more than ledger_key's digest does."""
+    return "sha256t:" + hashlib.sha256(f"{_path(site_key)}{SEP}{site_key.split(SEP, 1)[-1]}".encode()).hexdigest()
+
+
 def ledger_key(site_key: str) -> str:
     return "sha256:" + hashlib.sha256(site_key.encode()).hexdigest() if ignored(_path(site_key)) else site_key
 

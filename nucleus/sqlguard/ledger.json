@@ -313,7 +313,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 270,
+  "debt_rows": 268,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 8,
@@ -332,1084 +332,1348 @@
  "rows": {
   "bridges/common.py::listen\u001f*": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:61a644cc80693aa56eabfdd176f38b78884f0201006032a53bf276c2456be655"
   },
   "bridges/common.py::reacted_message\u001fselect from_agent, body from messages where thread=? and delivery->>'message_id'=? order by id desc limit 1": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:f352d95dcd3962b041852cb79c2fe6d2724cf4109b3366488d782e2ad6b1f58d"
   },
   "bridges/common.py::record_poll\u001finsert into polls (msg_id, chat, agent, question, options, multi) values (?,?,?,?,?,?) on conflict (msg_id) do nothing": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:97903f4c8923188e067aba289d41fe935a1bf5b67219c6b4088ebc9868e45a7e"
   },
   "bridges/common.py::resolve_quoted_body\u001fselect body from messages where delivery->>'message_id'=? or id::text=? order by id desc limit 1": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:2e7bd1a776591c8c7eb979a22228e894aba46e2e8edca819ae319aa716ac0677"
   },
   "bridges/common.py::route_target\u001fselect to_agent from messages where thread=? and intent='chat' and from_org<>'local' and to_org='local' order by id desc limit 1": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:dfe454b7d426e2199091c8bd86d08cb2494558fa461e3b7d89fb055b47b8ae83"
   },
   "bridges/common.py::step_line\u001fselect content from steps where id=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:12d8b05f301eaeb76d5e6869f023046416c3db93aa3b9162b794e4cf98d40fff"
   },
   "bridges/common.py::update_poll_votes\u001fselect votes from polls where msg_id=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:08ba294fe657a2754ea5cd4f0c528f517fbcd34ace0c431982a04e002d9adbd7"
   },
   "bridges/common.py::update_poll_votes\u001fupdate polls set votes=?, updated_at=now() where msg_id=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:6b3243bc86bee9c73d16fcf3f3e182299ca1675350d5eb1496de89b6ece3e9f0"
   },
   "bridges/common.py::wire_insert\u001finsert into messages (from_agent, from_org, to_agent, thread, intent, body, delivery) values (?,?,?,?,?,?,?)": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:a40d088ceb245f404cb10ed6df045042e183029de6c601a75d83042bed3be5d0"
   },
   "bridges/discord.py::_poll_event\u001fselect * from polls where msg_id=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:20b396f38d8b675342ce7adaf817280e802852d5b501bd245dd665b9b29ba81b"
   },
   "bridges/discord.py::deliver\u001fupdate messages set status=?, delivered_at=now(), delivery=? where id=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:0204045dfd76201518ffdc738ce74f5271a6ba671ea1a7ca8a0a6290581710a4"
   },
   "bridges/gateway.py::inbox\u001finsert into messages (from_agent, from_org, to_agent, to_org, thread, intent, body, sig) values (?, ?, ?, 'local', ?, ?, ?, ?)": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:a029539220696570e452cc3152da7c2fc1d9715e06a6c8b905103bd753b4a2a1"
   },
   "bridges/gateway.py::inbox\u001fselect pubkey, status, caps_granted from peers where org=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:1edcf004fa07252c697dbb336c9bbc2e7d64a1d84f9e1e4683966a5d2910a6f4"
   },
   "bridges/gateway.py::introduce\u001finsert into messages (from_agent, from_org, to_agent, intent, body) values ('gateway', 'local', 'seed', 'introduce', ?)": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:b985bb987666884447485d1f66a27b10bb311e414fdf59a26352eb63101c1223"
   },
   "bridges/gateway.py::introduce\u001finsert into peers (org, url, pubkey, status, notes) values (?, ?, ?, 'introduced', 'introduced itself') on conflict (org) do update set url=?, pubkey=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:56e37b963a7f257d88d48474b74adfa964c867aac3649d452b003d3342f4a77a"
   },
   "bridges/gateway.py::introduce\u001fselect pubkey, status from peers where org=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:13604b226e87ecb81af076a11581f92c579cb39994df767eaafae6bc4cdf0b17"
   },
   "bridges/gateway.py::listen_task\u001fselect * from messages where id=? and status='pending'": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:ddc052c10f6c1ce26b2725d48019470e59a078631c07de5b12e96febcf6bbbfd"
   },
   "bridges/gateway.py::listen_task\u001fselect * from messages where to_org <> 'local' and status='pending'": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:68a42154a6612b6e8df91ac6276eecb5ae1fefa608c81648bf755c14847017d6"
   },
   "bridges/gateway.py::pickup\u001fselect * from messages where to_org=? and id > ? and status='pending' order by id limit 50": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:a946046bdcef424bf7193c04a28a679d44e5b93cdc72df36882898d30f06ba96"
   },
   "bridges/gateway.py::pickup\u001fselect pubkey, status from peers where org=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:13604b226e87ecb81af076a11581f92c579cb39994df767eaafae6bc4cdf0b17"
   },
   "bridges/gateway.py::pickup\u001fupdate messages set status='delivered', delivered_at=now() where to_org=? and id <= ? and status='pending'": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:b4322a16d4c3c88eeee950db0527d7976d8af07d9d1d6d80ee578b47090b83c7"
   },
   "bridges/gateway.py::pickup\u001fupdate peers set last_pickup=? where org=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:ce1341bac7735ad204261bf132cd2a50ced43a7302bc6e25db8ce7e62a16176e"
   },
   "bridges/gateway.py::pickup_task\u001finsert into messages (from_agent, from_org, to_agent, to_org, thread, intent, body, sig) values (?, ?, ?, 'local', ?, ?, ?, ?)": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:a029539220696570e452cc3152da7c2fc1d9715e06a6c8b905103bd753b4a2a1"
   },
   "bridges/gateway.py::pickup_task\u001fselect org, url, pubkey from peers where url is not null and status in ('introduced', 'trusted')": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:193d2da66fc650495ee816e595d2b5e1b144fe3b338df08a7298d248686aa7d8"
   },
   "bridges/gateway.py::push\u001finsert into messages (from_agent, to_agent, intent, body) values ('gateway', ?, 'error', ?)": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:297b1e92a6d2c80aa5f64233236a1b266b427b19872037042e1010e1e5a02205"
   },
   "bridges/gateway.py::push\u001fselect url, pubkey, status from peers where org=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:d442163045b884d1d31debf7d9ab905e5374d613c12cc6ee235cee8e5492487c"
   },
   "bridges/gateway.py::push\u001fupdate messages set status='dead' where id=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:21e3838d6bf5dcde723fe85ac7773adb8ed26dc03071b3c8bc5ea4d296753905"
   },
   "bridges/gateway.py::push\u001fupdate messages set status='delivered', delivered_at=now() where id=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:93716887975c8f1d35b58202ce99b0c61df36ded3e93bebad6870a9ee8e8a4c5"
   },
   "bridges/telegram.py::deliver\u001fupdate messages set status=?, delivered_at=now(), delivery=? where id=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:9cb8f03bbe6b1d69dbe1fea8441c9e1717b4d38fdfc844ded853c741064cc802"
   },
   "bridges/telegram.py::on_poll_answer\u001fselect * from polls where msg_id=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:f90c294876e46b32fdc5455a75756777e18e8297aa884c2a1383b8a39ea24708"
   },
   "bridges/whatsapp.py::deliver\u001fupdate messages set status=?, delivered_at=now(), delivery=? where id=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:6c0c8262a1d641cf3694571a708fbbc0957ebcf1701837f53d40d346d9c4f81d"
   },
   "bridges/whatsapp.py::hook\u001fselect agent from polls where msg_id=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:0c58cbf16ac1eab30b61558b9fe9bf0c8af78d284d2187c314f10d23eb6aee2f"
   },
   "bridges/whatsapp.py::lifespan.<locals>._read_pulse_age\u001fselect extract(epoch from now() - max(last_eval))::float as age from triggers where enabled": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:b6d12d0a8ca9d62057c670900f74ad170dee02b981a9307786eb1ca4d09a873d"
   },
   "bridges/whatsapp.py::refresh_poll\u001finsert into polls (msg_id, chat, agent, question, options, multi, votes) values (?,?,null,?,?,?,'{}') on conflict (msg_id) do update set question=excluded.question, options=excluded.options, multi=excluded.multi": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:0c5ea99366c26d18ee0d1bab61874a0d1027af520726019ffcee82cfa801dfba"
   },
   "hooks/step.py::handle_stop\u001finsert into messages (from_agent, from_org, to_agent, to_org, thread, intent, body, turn_id) values (?,'local',?,'local',?,'chat',?,?)": {
    "debt": "NOT-SEARCHED-AT-SEED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:cf329025297d9be7539c49fce2f422283895aee01ab0060723c185b692592e71"
   },
   "hooks/step.py::handle_stop\u001finsert into turns (agent, session_id, started_at, ended_at, duration_ms, source, input_prompt, input_msg_id, num_responses, num_tools, char_count, tokens_in, tokens_out, model, stop_reason, raw_payload, usage_snapshot, goal_id) values (?,?,?::timestamptz, now(), ?, ?,?,?,?,?,?,?,?,?,?,?,?,?) returning id": {
    "debt": "EXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:4bf593c31942ff5d940fb064106004756b44e442773537ad8b6ce21f43673d62"
   },
   "hooks/step.py::handle_stop\u001fselect (regexp_match(thread, '^(?:plan|goal)-(\\d+)$'))[1]::bigint from messages where id=?": {
    "debt": "NOT-SEARCHED-AT-SEED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:18de4898d3209b446c984c31c569e404175d455749eef4a9652cbf91a18e4702"
   },
   "hooks/step.py::handle_stop\u001fselect count(*) from messages where turn_id=? and to_agent=?": {
    "debt": "NOT-SEARCHED-AT-SEED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:f55451d664f34f93ebd66406109423fb08717970db4e633469953565917b6c1e"
   },
   "hooks/step.py::handle_stop\u001fselect from_agent, from_org, thread from messages where id=?": {
    "debt": "NOT-SEARCHED-AT-SEED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:59c14c226344fb040f4539e29705d1b290ad1b8231e0c044ec881f946840638a"
   },
   "hooks/step.py::handle_stop\u001fupdate classifications set turn_id=? where agent=? and turn_id is null and (session_id is null or session_id = ?) and ts >= ?::timestamptz - interval '10 seconds'": {
    "debt": "EXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:be2059108f6d08874b25a2733f91fa3cf70b56189913e90486e320bf30477b80"
   },
   "hooks/step.py::handle_stop\u001fupdate messages set turn_id=? where from_agent=? and from_org='local' and turn_id is null and ts >= ?::timestamptz": {
    "debt": "EXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:f09629621bb079493a9acd454057f9546e912b7a3e064a5752838f16ab02f466"
   },
   "hooks/step.py::handle_stop\u001fupdate steps set turn_id=? where agent=? and turn_id is null and ts >= ?::timestamptz": {
    "debt": "EXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:1b330334f809aee1e3c9096bfd1bcedbeab9a2436f3824dc548cf84253e266e5"
   },
   "hooks/step.py::handle_stop\u001fupdate turns set num_steps=(select count(*) from steps where turn_id=?) where id=?": {
    "debt": "EXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:6d376c1c0d3cc3ec7735279fea10cfe0635118bc71ca075892964bfb87e225b4"
   },
   "hooks/step.py::main\u001finsert into steps (agent, kind, content) values (?,'response',?)": {
    "debt": "NOT-SEARCHED-AT-SEED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:64b95efe9e7fac5530e14ef4547b8e361f5adfcc40a8fdb3b90114fb5e08887c"
   },
   "hooks/step.py::main\u001finsert into steps (agent, kind, content, meta) values (?,'error',?,?)": {
    "debt": "NOT-SEARCHED-AT-SEED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:515cd3731d2387ea77418ac2d990ecaa7b17952fc725a79e6c3e856a380f7800"
   },
   "hooks/step.py::main\u001finsert into steps (agent, kind, content, meta) values (?,'tool',?,?)": {
    "debt": "NOT-SEARCHED-AT-SEED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:2e981781463eee623a047ffc0b8a965ec404e1bcb0fa80519c8d9d7b7d23e2ac"
   },
   "hooks/step.py::main\u001finsert into steps (agent, kind, content, meta) values (?,'tool_done',?,?)": {
    "debt": "NOT-SEARCHED-AT-SEED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:1407d4c855a59c28a74f5c0dc16ac9a2a87fba7cf47195094b5faa167e119f47"
   },
   "hooks/step.py::main\u001finsert into steps (agent, kind, content, turn_id, tokens_in, tokens_out) values (?,'response',?,?,?,?)": {
    "debt": "EXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:ef9b4d50690bc80791e620f4d09f359fce22df06f02956d370adc376790d5db9"
   },
   "hooks/step.py::usage_snapshot\u001fselect ended_at from turns where usage_snapshot is not null order by ended_at desc limit 1": {
    "debt": "EXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:9d2fb8b3bdf77ab1a65a4c4c0476873ba1bc0489f423d91fb2523eedc76421fd"
   },
   "hooks/usage.py::<module>\u001fselect coalesce(max((raw_payload->'usage'->>'context')::bigint),0) from turns where agent=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:d626100b54eb18cb4993d42cabf5dd102da82c3924cf6d5528430f2b2fb09a13"
   },
   "hooks/usage.py::<module>\u001fselect five_hour_pct, seven_day_pct, five_hour_reset from current_usage": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:a63e1d91e8ad8b6a50c8dcff2c20df4f5bbd0611de0f441b3c156f50dd6ccde9"
   },
   "mcp/compose/server.py::notify\u001fselect pg_notify('astryx_dag', ?)": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:bd35e4f64b1914271762fb3ceb937faf5accd1ef518fc44ae1d56199d264e13b"
   },
   "mcp/compose/server.py::run_dag\u001finsert into dag_runs (dag, args) values (?, ?) returning run_id": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:384f37db28a73644cf5e2d25d8e0069c386d028d613688ec98254ad46347eea8"
   },
   "mcp/compose/server.py::run_dag\u001fupdate dag_runs set status='error', finished=now(), result=? where run_id=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:e4efa55d4786288f66f7be58ea883d80c739765a24a9a45f0f4a355280ddabc5"
   },
   "mcp/compose/server.py::run_dag\u001fupdate dag_runs set status='ok', finished=now(), result=? where run_id=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:ae421f6fc82c49b2b0333832fce88e7efb7d829cf74ec5245bf47a781779de28"
   },
   "mcp/compose/server.py::run_dag.<locals>.one\u001finsert into dag_steps (run_id, node, tool) values (?,?,?) returning id": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:e67d30fd1ed885cdafcd513c7ae6fa4103b89edaacbbf10717b88c0f7fd1e71b"
   },
   "mcp/compose/server.py::run_dag.<locals>.one\u001fupdate dag_steps set status='error', finished=now(), error=? where id=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:681549289d1e798c2e6f4251495d2e011c07ec727bd27a0ef8e14ba152b6f990"
   },
   "mcp/compose/server.py::run_dag.<locals>.one\u001fupdate dag_steps set status='ok', finished=now(), output=? where id=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:b6df35939661c1913095724dd0a652d0a88a721e96379bf6d0bf962860aac847"
   },
   "mcp/contacts/server.py::_load_lidmap\u001fselect lid, pn from whatsmeow_lid_map": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:e915aad8db1d80974848ac25fd206c069d88473fab30fe30703db27f86f1e5a4"
   },
   "mcp/memory/resolvers.py::_run_cypher\u001f*": {
    "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:a8c06ab977e9b33d2ac62612b2bde34f750bb2c45a38dae101e9c2c935a53f4d"
   },
   "mcp/org/server.py::announce\u001finsert into messages (from_agent, to_agent, thread, intent, body) values (?, 'steward', 'org-news', 'milestone', ?) returning id": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:68ceab34345bb0d989418330ed013413b5736a9edaf8fcb24384e5f9b5cb3e85"
   },
   "mcp/org/server.py::economy\u001f*": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:5fdd856b54986c3225f4562d3128a0b1c3abefe6d8f2981fcf097b59d3de166e"
   },
   "mcp/org/server.py::economy\u001fselect day, metrics from econ order by day desc limit 1": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:e5e99bc0389d0c6cdfa0f3c9dd6014c1fe016a0a34831a63ef61aac4c6d4378e"
   },
   "mcp/org/server.py::economy\u001fselect five_hour_pct, seven_day_pct from current_usage": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:733a25977159fcaf2431172f957252ff66a7469501762a899d0cd36e10c36bbe"
   },
   "mcp/org/server.py::goals\u001f*": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:5fdd856b54986c3225f4562d3128a0b1c3abefe6d8f2981fcf097b59d3de166e"
   },
   "nucleus/canopus_inbound.py::main\u001finsert into signals (agent, priority, ref) values (?, ?, ?)": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:b79b56a953bae23b4ea400c8fbb5398d3e3fc1b0b10b534ea22fb7105f8f8e6e"
   },
   "nucleus/canopus_inbound.py::main\u001fselect 1 from signals where agent=? and ref=? limit 1": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:5282e6f5dbb1439f8f4e41d82e034f772f19748b07644ee0445aac2dff1bd330"
   },
   "nucleus/econ.py::econ_mirror\u001fselect day::text, metrics->'v2' from econ order by day desc limit 1": {
    "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:9c868e761022310cb85c0e0fa7e8c16a4eb8c8d0470ed08edf67c5bdf30bedc1"
   },
   "nucleus/econ.py::integrity\u001fselect percentile_cont(0.5) within group (order by extract(epoch from done_at - ts)/3600) from goals where done_at >= ? and done_at < ?": {
    "debt": "EXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:2d6f808aa06299d7ae1391a48d9b216bb986debaa384995f07936396ed9f5142"
   },
   "nucleus/econ.py::pnl\u001fselect agent, sum(coalesce((raw_payload->'usage'->>'billable_equiv_in')::bigint, (tokens_in*0.12)::bigint + tokens_out))::bigint as burned, count(*) as turns from turns where ended_at >= ? and ended_at < ? group by 1 order by 2 desc": {
    "debt": "EXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:f4f84eb8eaaa51ab599e1017a09a286ecb04574129e10d1f65c5088d58720b53"
   },
   "nucleus/econ.py::rollup\u001finsert into econ (day, metrics) values (?, ?) on conflict (day) do update set metrics=excluded.metrics, computed_at=now()": {
    "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:d12d3979f5818c319b163225315e91113fa69fa489d9f2447d11efc9f0dbdfcc"
   },
   "nucleus/econ.py::value_flow\u001fwith shipped as ( select id, budget_tokens from goals where done_at >= ? and done_at < ? and budget_tokens > 0), spend as ( select t.goal_id, t.agent, sum(coalesce((raw_payload->'usage'->>'billable_equiv_in')::bigint, (tokens_in*0.12)::bigint + tokens_out))::bigint as cost from turns t join shipped s on s.id = t.goal_id group by 1, 2), tot as (select goal_id, sum(cost) as total from spend group by 1) select sp.agent, sum(s.budget_tokens * sp.cost / nullif(tot.total,0))::bigint as value_earned, sum(sp.cost)::bigint as spent_on_shipped from spend sp join shipped s on s.id = sp.goal_id join tot on tot.goal_id = sp.goal_id group by 1 order by 2 desc nulls last": {
    "debt": "EXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:f28d85f59e68ca0b0a26d60dff0ef56860fbcdb27ddc9bc11065b450f25577e2"
   },
   "nucleus/esc_latency.py::episodes\u001fselect agent, ts, kind from steps where ts > now() - make_interval(days => ?) order by agent, ts": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:cfc6bbf168abd9fa01314c1fd71e91910b1f79df254dede04ea999e352b3669f"
   },
   "nucleus/esc_latency.py::main\u001fwith s as (select ts, lag(ts) over (order by ts) as prev from (select distinct ts from messages where from_agent = 'pulse' and ts > now() - make_interval(days => ?)) x) select extract(epoch from (ts - prev)) / 3600.0 as gap_h from s where prev is not null order by gap_h desc": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:98e1b717e1f0ae6ae46c4f387efbc5460e9f253869c04f97c525848678d2ca5e"
   },
   "nucleus/esc_latency.py::wakes_into\u001fselect count(*) from messages m where m.to_agent = ? and m.status = 'delivered' and m.ts > ? and m.ts < ? and not exists (select 1 from turns t where t.input_msg_id = m.id)": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:e2324b06479c6f439aea3135f78feb018c5e45b75405463b79444d925fa78369"
   },
   "nucleus/identity_commit.py::main\u001finsert into messages (from_agent, from_org, to_agent, to_org, thread, intent, body) values ('seed','local','steward','local','org-news','milestone',?)": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:8090f2d2a20a175c03efeed8a9d425baac3e994a4da83ab7a96d38f4cfbb178c"
   },
   "nucleus/introduce.py::main\u001finsert into peers (org, url, pubkey, status, notes) values (?, ?, ?, 'introduced', 'we introduced ourselves') on conflict (org) do update set url=excluded.url, pubkey=excluded.pubkey": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:07092a8dbeeeb369cbe12e0d9482b01f2c8652961151c7f8b673f3c217373141"
   },
   "nucleus/memgraph.py::build_system1\u001fselect body from messages where body ~ '^org-news #[0-9]+' order by id": {
    "debt": "NOT-SEARCHED-AT-SEED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:1b6294edaa77fc763852e5e29aa33bc393c4a4bc563cc20f5f7b25c4ad42fd59"
   },
   "nucleus/memgraph.py::build_system1\u001fselect thread, count(*), max(ts)::date, array_agg(distinct from_agent) from messages where thread is not null group by thread order by thread": {
    "debt": "NOT-SEARCHED-AT-SEED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:a4a3f66c1fb5aa03da8b48c85f480170b4354f000ccbcfc1aeac5a059f103529"
   },
   "nucleus/memgraph.py::write_pg\u001fdelete from kg.claim": {
    "debt": "NOT-SEARCHED-AT-SEED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:46713a712fc70b69daf71d73b69374e4c5f9159d9f689331b4d5e5c88f58351e"
   },
   "nucleus/memgraph.py::write_pg\u001fdelete from kg.edge": {
    "debt": "NOT-SEARCHED-AT-SEED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:d71c6ad378d3f65a45637284ff98d8808825979618c5ee4ab6a572ffcf354f52"
   },
   "nucleus/memgraph.py::write_pg\u001fdelete from kg.node": {
    "debt": "NOT-SEARCHED-AT-SEED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:85fbdbbba924ebf58330e8c833bb6b73487280a6d9f0346224acbd1c12182120"
   },
   "nucleus/people.py::write_pg\u001fdelete from social_edge where org=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:f327831a51e5fd44eaa5df04787974fdca6d637271cf7852228b8f81dd19fc38"
   },
   "nucleus/people.py::write_pg\u001fdelete from social_person where org=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:1c7cd58e2d3dbefdb58fcc510f308e54636680e0abba9c98b6dd32f63f10dc4c"
   },
   "nucleus/people.py::write_pg\u001finsert into social_edge (org,src,dst,rel) values (?,?,?,?) on conflict do nothing": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:4ed28f1d5296fd2f08f8255740383c879f31d85c1ed2d29c91e4880311945565"
   },
   "nucleus/people.py::write_pg\u001finsert into social_person (org,id,kind,label) values (?,?,'group',?)": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:bcb4a0bcd71e46df08d76ea4194cac6863a1f362d11518b9d8f7738cb754fe51"
   },
   "nucleus/people.py::write_pg\u001finsert into social_person (org,id,kind,label,direct,relation,who,shape,confidence) values (?,?,'person',?,?,?,?,?,?)": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:0eeb6b57930b46bf01713bd98fec80076b8159a28c8b0bfcb53044ec45ee14fd"
   },
   "nucleus/persona.py::apply_pg\u001fupdate social_person set shape=?, relation=coalesce(?,relation), who=coalesce(?,who), confidence=coalesce(?,confidence) where org=? and id=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:42a449a0cbd63f9a379ad8d3cf07335850c8963e80bd74f137c07d0f73aca4e8"
   },
   "nucleus/persona.py::load_pg\u001fselect id, relation, who, shape, confidence from social_person where org=? and kind='person'": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:931925e01a0f06eebb5eabdfc9828a132e720e7b505438781c92b1636e981aa2"
   },
   "nucleus/persona_llm.py::run\u001fselect relation from social_person where org=? and id=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:239e4d2d4caf0930e0992dc530a49904d37d99450a5b97c7d2bfb1e13492e099"
   },
   "nucleus/persona_llm.py::run\u001fupdate social_person set relation=?, who=?, confidence=? where org=? and id=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:1e4d7a1ba2a0a03c777191b09dfaa94580e2509b481a5c036d15f2fb5b5a4ef3"
   },
   "nucleus/pulse.py::reconcile\u001finsert into triggers (agent, name, schedule, kind, check_src, note, next_fire) values (?, ?, ?, 'python', ?, ?, now()) on conflict (agent, name) do update set schedule = ?, check_src = ?, note = ?, enabled = true": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:5856acfa01ff75f878002e4ca1cabc283182bcd4293f6d0ad5ae82c02ecaaff4"
   },
   "nucleus/pulse.py::reconcile\u001fselect agent, name from triggers where kind='python' and enabled": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:11fa21ad388a221a397d68c1838eb000434135bc285bc83ccdc7cbba15d86e76"
   },
   "nucleus/pulse.py::reconcile\u001fselect name from triggers where kind='python' and enabled and check_src like ? order by name": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:6a83c638786c1932508fb11d23c86034b48df938ffa31985fa7d5dea3452c5fc"
   },
   "nucleus/pulse.py::reconcile\u001fupdate triggers set enabled=false where agent=? and name=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:fcf65f5436cd95de6a98d1a0b89086147e59c4dcab1a1f014083e09759ddcacf"
   },
   "nucleus/pulse.py::say\u001fselect 1 from messages where to_agent=? and from_agent='pulse' and status='pending' and body like ? limit 1": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:4714676c3924c5a99cd2e26e4d5a39740f572f54d2b4474f6b8c82e6f8b3676f"
   },
   "nucleus/pulse.py::tick\u001fselect id, agent, name, schedule, kind, check_src, state, note, premium from triggers where enabled and next_fire <= now() order by next_fire for update skip locked": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:e332f11b2d5052cd2d35be545c7db5537bc49aa0d49bd8f4253ad47f3eb54fd4"
   },
   "nucleus/pulse.py::tick\u001fupdate triggers set enabled=false where id=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:eed8856d179911ff9d9708512a26e51954fbd1e5293b5573200debfbb503d645"
   },
   "nucleus/pulse.py::tick\u001fupdate triggers set next_fire=?, last_eval=? where id=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:aca2cbe30c6f7b2d5fb7497de96e37ccd8c19d36c92f0312aae33a84180c53e1"
   },
   "nucleus/senses.py::_log_call\u001finsert into steps (agent, kind, content) values (?,'sense',?)": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:6a0c124503e24fd036007589d6e3c78ebb97e80e9ce4316b06ee944c84d7e6ae"
   },
   "nucleus/senses.py::focus\u001finsert into messages (from_agent, to_agent, thread, intent, body) values ('senses', ?, ?, ?, ?) returning id": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:08d33a6509392284ffa27cda4c43740a91df3bf7776dd96d5f58ce855ad7c1aa"
   },
   "nucleus/shipped_triggers/context_compact.py::context_compact\u001fselect agent, (array_agg((raw_payload->'usage'->>'context')::bigint order by ended_at desc))[1] as context, max((raw_payload->'usage'->>'context')::bigint) as high, max(ended_at) as last_turn from turns where raw_payload->'usage' ? 'context' group by agent": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:865aba1fead70a0220f5a32409279088b0721db308c1dfbde0989e67d69a14df"
   },
   "nucleus/social_age.py::rebuild\u001fselect a.org, a.src, b.src, count(*) from social_edge a join social_edge b on a.org=b.org and a.dst=b.dst and a.src < b.src where a.rel='member-of' and b.rel='member-of' group by 1,2,3": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:65bb117670a2edf71fd70763f07a759c556d212986d342b27427ec77cdfab18f"
   },
   "nucleus/social_age.py::rebuild\u001fselect count(*) from ag_graph where name=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:aa5bd57812fcab5229b75138a7c9072b13d0926969505909c0f911dce646d9df"
   },
   "nucleus/social_age.py::rebuild\u001fselect create_graph(?)": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:ce5a502f4538c2036f285bfeb4c8df7c3379a6a3cd0aab98279ac232b6313521"
   },
   "nucleus/social_age.py::rebuild\u001fselect drop_graph(?, true)": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:d69722a76d5fac710abbea6e174e950c194a076c83418b9ed69018193f076844"
   },
   "nucleus/social_age.py::rebuild\u001fselect org, id, kind, label, direct, relation from social_person": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:75842a64da656b006345e4ec8f73d50e99f77b1707b641416a9ff4045522bc3d"
   },
   "nucleus/social_age.py::rebuild\u001fselect org, src, dst from social_edge where rel='member-of'": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:d75649df7462f07978bc9c922cb196877b35fd2430bbb2af36d3b3c1773d0714"
   },
   "nucleus/social_age.py::rebuild.<locals>.cy\u001f*": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:e1ace97f54fc80dd9641a48a036c5668f5c9e3be7161a55971ea459316300ccf"
   },
   "nucleus/sqlguard/enforce.py::_clock\u001fdelete from sqlguard_seen where kind=? and not (key = any(?))": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:b1e4618a11b0450decdf7b1d6bfe5d2dcb781ba8e241160718f42cae642fd7ed"
   },
   "nucleus/sqlguard/enforce.py::_clock\u001finsert into sqlguard_seen (kind, key) values (?,?) on conflict (kind, key) do update set last_seen=now(), runs=sqlguard_seen.runs+1 returning first_seen, runs": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:b1cb18f92d917454856be2a999c7c123075f1a0b5558ca82fb855fec577a8298"
   },
   "nucleus/sqlguard/enforce.py::enforce\u001fselect 1 from goals where id=? and state=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:a6ee0037533a5ae975091fe036ef6f0226b3202f21936daf9137a3048f825676"
   },
   "nucleus/sqlguard/enforce.py::enforce\u001fselect datname from pg_database where datname like 'astryx_fx_%'": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:79978b153539351884fcb4a8b49996e18cf12ba81fc663c86ba7e9b94eeca3b0"
   },
   "nucleus/sqlguard/enforce.py::enforce\u001fselect to_regclass('sqlguard_seen')": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:24a70fcf340ff1f032302692bdfe9fe64190e009374dd87482dcde8779a883b3"
   },
   "nucleus/sqlguard/fixture.py::_stamp_all\u001fselect c.oid, quote_ident(n.nspname)||'.'||quote_ident(c.relname) from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relkind in ('r','p','v','m') and n.nspname not in ('pg_catalog','information_schema','ag_catalog','topology') and n.nspname not like 'pg_toast%%'": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:27dad87b95a49034aebfd7ec8db5a4f12b96dfff8c4ce2a4a3bdb320c1ddd3e7"
   },
   "nucleus/sqlguard/fixture.py::_stamp_all\u001fselect relkind from pg_class where oid=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:0195b07450f4a54b59a6820d6e4696a62adfe704ce7e2139d96a77532036a498"
   },
   "nucleus/sqlguard/fixture.py::db_stamp_map\u001fselect a.attrelid, a.attname, format_type(a.atttypid, a.atttypmod), coalesce(pg_get_expr(d.adbin, d.adrelid), ''), a.attnotnull from pg_attribute a left join pg_attrdef d on d.adrelid=a.attrelid and d.adnum=a.attnum where a.attrelid = any(?) and a.attnum>0 and not a.attisdropped order by a.attrelid, a.attname": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:a4f52a4ca6bbeadf49de5245ec7d81063cd5846aec010ce837d22b9262a1b32f"
   },
   "nucleus/sqlguard/fixture.py::db_stamp_map\u001fselect c.oid, obj_description(c.oid, 'pg_class') from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relkind in ('r','p','v','m') and n.nspname not in ('pg_catalog','information_schema','ag_catalog','topology') and n.nspname not like 'pg_toast%%'": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:96acdbaceb71d76b34e453416154a81a8d249095711a9180de8b8860d31c1fd1"
   },
   "nucleus/sqlguard/fixture.py::signature\u001fselect a.attname, format_type(a.atttypid, a.atttypmod), coalesce(pg_get_expr(d.adbin, d.adrelid), ''), a.attnotnull from pg_attribute a left join pg_attrdef d on d.adrelid=a.attrelid and d.adnum=a.attnum where a.attrelid=? and a.attnum>0 and not a.attisdropped order by a.attname": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:dae03611daac6ed2f130418145eccafd61f6bb9da9b67ef6d024b058b1bf6001"
   },
   "nucleus/sqlguard/fixture.py::stamp_valid\u001fselect obj_description(?, 'pg_class')": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:43b7eb3faa4d4a09a97af081a8c98487cb92b5a123f25af1d6f6887d45b172e3"
   },
   "nucleus/toolreg.py::authorship\u001fselect agent, split_part(content, ':', 1), meta->>'edits', content from steps where kind = 'tool' and (meta ? 'edits' or content ~ '^(write|edit|multiedit|notebookedit): ') order by id": {
    "debt": "EXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:cfc2f1cbf2857508b24f1c5aca1304e5d875ae4d6f11d2e264f5299493a93a61"
   },
   "nucleus/toolreg.py::authorship\u001fselect distinct meta->>'registry_id' from steps where meta ? 'registry_id'": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:deac21bad413cf0829fe99dacb23b65920ea02d0975150a7a19cf0084b3a30ca"
   },
   "nucleus/wake_audit.py::consecutive_drops\u001fselect to_agent, id from messages m join (select distinct agent from turns) a on a.agent = m.to_agent where m.status='delivered' and m.ts > now() - make_interval(hours => ?) and m.ts < now() - make_interval(hours => 2) and (?::text is null or m.to_agent = ?) order by m.to_agent, m.id desc": {
    "debt": "EXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:f1524e3302ce93903a6e80445beda58d9ed40b2eb85e700a3be2550dddd3f040"
   },
   "observatory/api/main.py::_databases\u001fselect datname from pg_database where not datistemplate and datallowconn order by datname": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:bb31629bdfe3375ce75c97f738a22c305d6dda433d30371e55a1cd39986a6471"
   },
   "observatory/api/main.py::_is_read\u001fselect": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:3d5feb5ad6ee23a01b7888d7f0193f9ce848ae3d7befcc87274396fda99df74d"
   },
   "observatory/api/main.py::_is_read\u001fwith": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:e47be9981e67eb532f1b577e6a4caff9fb96a8e363fb2c91db1b9c764d4681db"
   },
   "observatory/api/main.py::agent_profile\u001fselect (select count(*) from turns where agent=?) as turns, (select coalesce(sum(tokens_out),0) from turns where agent=?) as tokens_out, (select coalesce(sum(coalesce((raw_payload->'usage'->>'billable_equiv_in')::bigint, (tokens_in*0.12)::bigint + tokens_out)),0)::bigint from turns where agent=?) as billable_tokens, (select count(*) from messages where from_agent=? and from_org='local') as messages_sent, (select count(*) from steps where agent=?) as steps, (select min(ts) from steps where agent=?) as first_seen, (select max(ts) from steps where agent=?) as last_seen": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:977a7dcc278dac4fb1ae66a01d6624a7cb22df9760c3abf938fa64fc9f23aafe"
   },
   "observatory/api/main.py::agent_profile\u001fselect model from turns where agent=? and model is not null order by ended_at desc limit 1": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:2a59f98ec4dd4c7300b0948516bdb111e6314a3e035f1b18539ab612dee7afe0"
   },
   "observatory/api/main.py::agent_profile\u001fselect peer, sum(n)::bigint as n from ( select to_agent as peer, count(*) as n from messages where from_agent=? and to_agent is not null group by 1 union all select from_agent as peer, count(*) as n from messages where to_agent=? group by 1 ) x where peer is not null and peer <> ? group by peer order by 2 desc limit 10": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:4a632d611a50639c42b7d18883147e67daa6af0aa1999db3f5459e0eb22cae8d"
   },
   "observatory/api/main.py::agents\u001fselect agent, max(ts) as last_seen, count(*) as steps, coalesce(sum(tokens_in), 0) as tokens_in, coalesce(sum(tokens_out), 0) as tokens_out, (array_agg(kind order by id desc))[1] as last_kind, (array_agg(left(content, 120) order by id desc))[1] as last_content from steps group by agent order by max(ts) desc": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:82ff15804265fdd8b6dcdb54cff37b547cae3303ce1d0cf3a5466aefba01bf07"
   },
   "observatory/api/main.py::agents\u001fselect distinct on (agent) agent, model from turns where model is not null order by agent, id desc": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:a4024b36422a961e7355a193c49f18695ade423a7c577439cccc91fac9da6d9e"
   },
   "observatory/api/main.py::brain_completions\u001finsert into messages (from_agent, to_agent, thread, intent, body) values ('owner', 'growbot', ?, 'task', ?) returning id": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:e815334a7542f2af3179c1254e8e51d7fa5866f8fdfeecca2421c4cbaedcb5ae"
   },
   "observatory/api/main.py::brain_completions\u001fselect id, body from messages where thread = ? and id > ? and from_agent = 'growbot' order by id limit 8": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:42db14f82f2323cfb17e1f59f110d3095ffd113400253609a6349c405e8365c4"
   },
   "observatory/api/main.py::dag_run_detail\u001fselect * from dag_runs where run_id=?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:130c36f38247a1c254360e7a8d57014ec1c0d99664e9aa4e99bcb3b24f36e998"
   },
   "observatory/api/main.py::dag_run_detail\u001fselect node, tool, status, started, finished, output, error from dag_steps where run_id=? order by id": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:00602093ab464478d099a10b77d5bba99a4dca799b8fa3afaa39141b9fecbbc9"
   },
   "observatory/api/main.py::dag_runs\u001fselect run_id, dag, status, started, finished from dag_runs order by run_id desc limit ?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:1dd52c8e78bc0eeed9961e84da61cb6bd59b7b486b59038a50aba3927bdc72eb"
   },
   "observatory/api/main.py::db_columns\u001fselect column_name as name, data_type as type, is_nullable as nullable from information_schema.columns where table_schema=? and table_name=? order by ordinal_position": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:b374611d2234c46835e244f19c3526b49fc69d68f243b2eb1709e8760d2638e0"
   },
   "observatory/api/main.py::db_count\u001f*": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:51aee8803385dca2630884b747ab7565d4a2b8b2bd20de88ed3d2593a3d4ca74"
   },
   "observatory/api/main.py::db_query\u001f*": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:51aee8803385dca2630884b747ab7565d4a2b8b2bd20de88ed3d2593a3d4ca74"
   },
   "observatory/api/main.py::db_query\u001fselect": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:3d5feb5ad6ee23a01b7888d7f0193f9ce848ae3d7befcc87274396fda99df74d"
   },
   "observatory/api/main.py::db_schema\u001fselect table_schema as schema, table_name as name, table_type as type from information_schema.tables where table_schema not in ('pg_catalog','information_schema') order by table_schema, table_name": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:3f6760b79742f30a775a4880b3d8028a860bfd74e2711badd96ba2627620cd6a"
   },
   "observatory/api/main.py::economy\u001fselect agent, sum(coalesce((raw_payload->'usage'->>'billable_equiv_in')::bigint, (tokens_in*0.12)::bigint + tokens_out))::bigint as bill, sum(tokens_out)::bigint as out, count(*) as turns from turns group by agent order by 2 desc nulls last limit 50": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:7279b5df86460eee703010ecd01aaea0e9f6c965fa6e8f70381cb3a9cb09238d"
   },
   "observatory/api/main.py::economy\u001fselect coalesce(model,'?') as model, count(*) as turns from turns where ended_at > now() - interval '7 days' and model is not null group by 1 order by 2 desc limit 6": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:93f52988b179aa90b64842a5f712313091f03a234d83136b1dc517c3ff55512e"
   },
   "observatory/api/main.py::economy\u001fselect coalesce(sum(coalesce((raw_payload->'usage'->>'billable_equiv_in')::bigint, (tokens_in*0.12)::bigint + tokens_out)),0)::bigint as bill from turns where ended_at > now() - interval '1 hour'": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:7c67f1ec5d406653c76be904fa274bd8129e17d12e0d7172e55dd70ff1bb9044"
   },
   "observatory/api/main.py::economy\u001fselect coalesce(sum(coalesce((raw_payload->'usage'->>'billable_equiv_in')::bigint, (tokens_in*0.12)::bigint + tokens_out)),0)::bigint as bill_24h, coalesce(sum(tokens_out),0)::bigint as out_24h, count(*) as turns_24h, count(distinct agent) as agents_24h from turns where ended_at > now() - interval '24 hours'": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:6fb540eb295e7352651e1ab09529432bf7681565bc0a4c73ea176fb332ad1584"
   },
   "observatory/api/main.py::economy\u001fselect date_trunc('day', ended_at)::date::text as day, sum(coalesce((raw_payload->'usage'->>'billable_equiv_in')::bigint, (tokens_in*0.12)::bigint + tokens_out))::bigint as bill, sum(tokens_out)::bigint as out, count(*) as turns from turns where ended_at > now() - interval '365 days' group by 1 order by 1": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:e184eeae2e4028ffc72eed72662f135bedb87f08b0e249f6b65d2318409ca285"
   },
   "observatory/api/main.py::economy\u001fselect day::text as day, metrics from econ order by day desc limit 90": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:d12b63627bf84d62da8a1b4c3ee9d128ec6f2eac041ba9aa8750ad0f7225d1f6"
   },
   "observatory/api/main.py::economy\u001fselect fetched_at as ended_at, five_hour_pct as five, seven_day_pct as seven from usage_readings where state='fresh' and fetched_at > now() - interval '6 hours' order by fetched_at": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:b4597f2dedc6248b3c37ca1769552ba7bf51e6dc0cb85fd8e1d123c7a6552900"
   },
   "observatory/api/main.py::economy\u001fselect fetched_at as ended_at, measured_by as agent, subscription as usage_subscription, five_hour_pct as usage_five_hour_pct, seven_day_pct as usage_seven_day_pct, seven_day_opus_pct as usage_seven_day_opus_pct, five_hour_reset as usage_five_hour_reset, seven_day_reset as usage_seven_day_reset from current_usage": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:9a6f211b1c485476dfe35751122c6bd21ca0cb8133b4a0835238d02d68d327c8"
   },
   "observatory/api/main.py::economy\u001fselect id, title, owner, state, budget_tokens, spent_tokens from goals order by spent_tokens desc limit 50": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:21f3bb58d5641e8054abcae3df8a59133e7e6f2823952f8f865767cebf2c7ebe"
   },
   "observatory/api/main.py::economy\u001fselect id, ts, from_party, to_party, amount_tokens, amount_money, memo from receipts order by id desc limit 100": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:6f7a871eae56bf224f0c59c044d99601bc41da5560294a628f58564f5bb8e1e0"
   },
   "observatory/api/main.py::goal_create\u001finsert into goals (title, owner, state, scope_note) values (?, ?, 'proposed', ?) returning id": {
    "admitted": "2026-09-29",
    "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "goal 4227 S3: executed in a stamped fixture by tests/test_goal_budget_frozen.py, but asyncpg exposes no table OID, so the stamp cannot be credited (declared FIXTURE-DDL cap). Shrinks when the observatory moves to psycopg or the cap lifts."
-  },
-  "observatory/api/main.py::goal_create\u001finsert into messages (from_agent, from_org, to_agent, to_org, thread, intent, body) values ('owner', 'local', ?, 'local', ?, 'task', ?)": {
-   "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "goal 4227 S3: executed in a stamped fixture by tests/test_goal_budget_frozen.py, but asyncpg exposes no table OID, so the stamp cannot be credited (declared FIXTURE-DDL cap). Shrinks when the observatory moves to psycopg or the cap lifts.",
+   "tk": "sha256t:a916f9172621e07e7e52863a720b467bf01af22f3a147f138735410fc8fcb24e"
   },
   "observatory/api/main.py::goals\u001fselect * from goals order by id desc limit 200": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:df9781ffc03024b3ad9d535d1874e8933868f836465df0439ae2067773453e88"
   },
   "observatory/api/main.py::growbot_event\u001finsert into messages (from_agent, to_agent, thread, intent, body) values ('owner', 'growbot', 'growbot', 'chat', ?) returning id": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:e8cc4bd35f9f9df8288755113fdd31310cfc188df7f288d6cc0d0caa927e0289"
   },
   "observatory/api/main.py::listen_task\u001fselect * from messages where id = ?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:d3dd7c4e1a3d240c4b6fa5c591ad09b036d55018758e1cbce88cef0431963025"
   },
   "observatory/api/main.py::memory_chat\u001finsert into messages (from_agent, to_agent, thread, intent, body) values ('owner', 'memory', ?, 'task', ?) returning id": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:2ae0f46f39f7356f7b90c54c31649a33aaf527f4829051781136172eaabea192"
   },
   "observatory/api/main.py::memory_chat_replies\u001fselect id, body, ts from messages where thread=? and from_agent='memory' and id > ? order by id limit 10": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:0585e629dbbb216175f7ac5bebd3bd16cdb99d6bb3df3475dd9784ad15c30876"
   },
   "observatory/api/main.py::memory_chat_replies\u001fupdate messages set status='delivered', delivered_at=now(), delivery=jsonb_build_object('ok', true, 'handle', 'observatory:estate') where id = any(?::bigint[]) and status='pending'": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:7855005200a179431b867ce0c624c02105d71a083f528b93e915588624f42c16"
   },
   "observatory/api/main.py::memory_propose\u001finsert into messages (from_agent, from_org, to_agent, to_org, thread, intent, body) values ('owner','local','memory','local','memory-proposals','task',?)": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:24abb0c20f141324326f6e95dee8867bab2764f12aa36f715d7106f01a8b4b18"
   },
   "observatory/api/main.py::messages\u001f*": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:51aee8803385dca2630884b747ab7565d4a2b8b2bd20de88ed3d2593a3d4ca74"
   },
   "observatory/api/main.py::network_cypher\u001f*": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:51aee8803385dca2630884b747ab7565d4a2b8b2bd20de88ed3d2593a3d4ca74"
   },
   "observatory/api/main.py::network_cypher\u001fdelete": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:db9fba56574ee17f5f6c2d9e66da2916bc61a717742205489a1fd4884129fb36"
   },
   "observatory/api/main.py::network_cypher\u001fmerge": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:0feeb67bffbb7962181d56ffab13cbf4ca0a35cb5b38309faf8d47ee20d47f1b"
   },
   "observatory/api/main.py::network_people\u001fselect a.org, a.src as p1, b.src as p2, count(*) as w from social_edge a join social_edge b on a.org=b.org and a.dst=b.dst and a.src < b.src where a.rel='member-of' and b.rel='member-of' group by 1,2,3 having count(*) >= ?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:d232d88e67af94eb6d5d7a67e90d6ba928a680d11c56ff1da5208d3f7065a857"
   },
   "observatory/api/main.py::network_people\u001fselect org, id, kind, label, direct, relation, who, shape, confidence from social_person": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:85912c44c10fca1ac1354309a359c4615f2d5e91e9978b5bdec216d1f4d8da8d"
   },
   "observatory/api/main.py::overview\u001f*": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:51aee8803385dca2630884b747ab7565d4a2b8b2bd20de88ed3d2593a3d4ca74"
   },
   "observatory/api/main.py::overview\u001fselect distinct agent from steps": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:f64ef54f6cd44cbdea881d24ac76addfd46855af54b1a6ea6705c0b94ae087e3"
   },
   "observatory/api/main.py::owner_send\u001finsert into messages (from_agent, to_agent, thread, intent, body) values ('owner', ?, ?, 'chat', ?) returning *": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:607c5ff29e0e30b4f018ef5ca432c613372990ff83dcfe29e9c217015c71284d"
   },
   "observatory/api/main.py::peer_orgs\u001fselect org from peers": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:84fa0be01765fa5c7e1ab0585f15435c9fcaad3e8011355395effc3af59073e9"
   },
   "observatory/api/main.py::peers\u001fselect org, status, reputation from peers order by reputation desc": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:a3ffd1d8865f4fd6ad89dd1011fab3f5b1c91d7756ce0c1bb12db2a21be31ece"
   },
   "observatory/api/main.py::steps\u001f*": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:51aee8803385dca2630884b747ab7565d4a2b8b2bd20de88ed3d2593a3d4ca74"
   },
   "observatory/api/main.py::threads\u001fselect thread, count(*) as count, min(ts) as first_ts, max(ts) as last_ts, (array_agg(from_agent order by id))[1] as starter, (array_agg(left(body, 140) order by id))[1] as preview from messages where thread is not null group by thread order by max(id) desc limit 200": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:dc5b9e860bcdfc873eba07b9fc5e85846cf34d0145870a556fb5eef8107be71d"
   },
   "observatory/api/main.py::triggers\u001fselect agent, name, schedule, kind, enabled, last_fired, next_fire, note from triggers order by agent, name": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:08ba6d9eb5ba2246b85101ca3b76b83ee4a91e1b057213427c29a170338143c0"
   },
   "observatory/api/main.py::turn_detail\u001fselect * from turns where id = ?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:940fd8060a658a9f246421437e732008e37e281d1f745beeeb1c9e7af67d65ab"
   },
   "observatory/api/main.py::turn_detail\u001fselect id, from_agent, from_org, to_agent, thread, intent, body from messages where id = ?": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:e3e45fe0738cb7cd1ba4a2b26f5d5ffe460802501597e72facacc0ef7cc0caa8"
   },
   "observatory/api/main.py::turn_detail\u001fselect id, to_agent, to_org, thread, intent, left(body, 300) as body from messages where turn_id = ? order by id": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:8c0b458c9625a10427c71ba41e794ca9b5857bc140fd026d8aec5ee372f17462"
   },
   "observatory/api/main.py::turns_list\u001f*": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:51aee8803385dca2630884b747ab7565d4a2b8b2bd20de88ed3d2593a3d4ca74"
   },
   "observatory/api/main.py::usage\u001fselect fetched_at as ended_at, measured_by as agent, src, age_seconds, snapshot as usage_snapshot, subscription as usage_subscription, five_hour_pct as usage_five_hour_pct, seven_day_pct as usage_seven_day_pct, seven_day_opus_pct as usage_seven_day_opus_pct, five_hour_reset as usage_five_hour_reset, seven_day_reset as usage_seven_day_reset from current_usage": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:64e4faacb58d9d9617fa8f754baefa7c98caecb9bbff4369272fb3aac2a7d673"
   },
   "observatory/api/main.py::usage\u001fselect fetched_at as ended_at, measured_by as agent, state as usage_state, src from usage_readings order by fetched_at desc limit 1": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:13f76ecb6fec0e400467c78bfb61518fb56c7e62a2de8faab61d145141c8b3c0"
   },
   "observatory/api/main.py::vega\u001fselect agent, content from steps where kind='milestone' order by id desc limit 8": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:1d01b7fa0e0d1f496a392b8654418a88ccb555bf41da4eb3d6f1cdfc3e088b98"
   },
   "sha256:021f9e2ed69a44a4fa6d9b2db0b044e8ddc045243609df64fc65bbd9057ef3c4": {
    "admitted": "2026-09-29",
    "debt": "UNEXECUTED",
-   "reason": "goal 4227 S1c C1.5: this 'was it EMITTED?' read moved from messages to wire_emitted, so it also sees wakes the pulse is holding. Same site and same debt as the retired messages-read row it replaces (UNEXECUTED: this check's oracle drives it through a fake ctx, no real-DB arm yet). Moved, not grown: S1c shrinks the ledger by 13 rows in the same act."
+   "reason": "goal 4227 S1c C1.5: this 'was it EMITTED?' read moved from messages to wire_emitted, so it also sees wakes the pulse is holding. Same site and same debt as the retired messages-read row it replaces (UNEXECUTED: this check's oracle drives it through a fake ctx, no real-DB arm yet). Moved, not grown: S1c shrinks the ledger by 13 rows in the same act.",
+   "tk": "sha256t:57b1b6489aec1036ff94fed251be7e364c94c7d3d1fb30856dc2c4fd6fb76f18"
   },
   "sha256:04ad6ba79bfe7f048bda3a91c4200be9293f5fa3099a7c5079a3d8776b04f6ad": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:62cf9c15362018930ec083f212093ee0bdbe7735924804e04acfc612494ee38d"
   },
   "sha256:063917621488db3215fe144e98863d6331340fb704f30428b0ec3d0220969e3f": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:863d88aeb4df9690cc9cc0ab7ee9921d85621f9bd9aa64f2d592f7e4299d6c56"
   },
   "sha256:0ee817bda79e36acdedc0817313ee5e3fffefec3a17ec52ca55447667a73287c": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:e7e56fcc87b3afbb993e17603af87d2723962beab0b4995f523c5f84f7ddf39c"
   },
   "sha256:1351af30caa076ccd2122a0eca58b4914febb0bd05452f74926a6cc26bdaa89f": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:f337353ba46a621c170bea825bd3e7bbae9ae37d8f7c0bd700cdd4aeaee47efc"
   },
   "sha256:184834a9fb206de05c3384a20b4fd3284beeaa959282e02a99d2e5954e4dd4f4": {
    "debt": "EXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:69fd50bb36d8a4ca16c20c7e6927be37a4b0e1f7882cdfd2f9321172e67c8532"
   },
   "sha256:1abb1fa38a3a9cf7cf2cc44a551b9ee1ffb901d5766b1de9a4aa34dd182f9733": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:4784707bc8b1601090a702b1a7a56337a088efd676d8057752c20c0d5ef004eb"
   },
   "sha256:20764a2557c6a56af577fc2693dc7ef5ac3a2654f83edb9abba02b32d9716b27": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:1a9e520805e58e7073cc80a4538c86d0b622a4173fd740c80618554c79a2a7e2"
   },
   "sha256:21203b2acfba4e94ade688f84146119cfb841cff441ed605786da2eb77cd3e0b": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:26cb1949f97a260538f7049dace2aa03cebe531a56b57fc81eae6439d9feb006"
   },
   "sha256:21d54d5bcbe8130fb72a8209164973487c28f96a2d1608b1dd24f8fe4ce8b35a": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:29869134e6a5f52c208e58203e7d6ee799b80d58bd28a31696a32400b14ccd07"
   },
   "sha256:270094954664f77ba34a84f8f8f0e08cf49f5ba4c30de70af1822a699c5eeef2": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:a6c328cf8cdb0b503f00815ac467d768a77eb909b1b6380e6ff7027a022be525"
   },
   "sha256:2b8ef9d19e42f59d872763dd204853a3ed41bc4fb9b6a113562c6c61663edfef": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:e278894b45d92a01e29eef406c06b2694dbca4bd2f9617371a95c51509aaf810"
   },
   "sha256:2dae3cdfd22b8fb43b1aa7478ddd5e50589a0e32d819ee9fe5c93a18f9259300": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:cb7133a97324be659b5f9d75ab13d319bd716522abeaab88f93ee521ff4023d9"
   },
   "sha256:2fef76a2e46d82af6a991c2f896d806317b6a6b62c3093f4e31bc945c29a1255": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:b8641b7991471c10ee947f74495eb5ca9f38309f37c7c69830981a40f6e8fc55"
   },
   "sha256:3084d3abaad2a8223c076a9464ce3be184b083c3ce7d55142ff8e6ba2d8a8d57": {
    "debt": "EXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:1bc105b559145239016e567c5b741883b89994f2fd8dcffb2a6715f09700d5d9"
   },
   "sha256:3458d592829aa9f48d03b8763317f24074d55c95291b7f8b0975ff76b82cd08b": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:4180ac73a9c2f8e965b37b967c4774c24135824ba0a9b3bfe1e5a53780704ecb"
   },
   "sha256:3598582c13e5c80446c796977ad4b92d0bac1d30d43047ac32f63cc53bd12028": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:2d7041740017525397775b50760a325497283e17b63735a93004ccb39e187269"
   },
   "sha256:35ad8179f934dbd19012237d08b607b8e7e750d4ca56b65e792caeaec8637409": {
    "debt": "EXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:429ddbe8ccd55c711077227da105616314338aee72939a172c78697338d82fdb"
   },
   "sha256:38682fff56dfae6e3b0ccd2a1423e4f7ac91dc5ec574c411798ec7ca817133c7": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:99558fe59609ec6d9608cf9cebe9f6b8d05cb2a0130a707c8a46b56b1f056405"
   },
   "sha256:3b0c174a930f2b6080d3919a35bbc719ce274d07f40ac6388e928445bccc216c": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:eb7c3fe40172131052a8fd8fae92ef708119bc8b3ecbc2fa89dffbab4fec1433"
   },
   "sha256:3dda790664619d71fce0f8d210a90d832d799c4e7a290ff8a53e524088767e93": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:57881d53166471ac404569cf9de2969b0fd66e70e715eb30b814bcabc8df4d50"
   },
   "sha256:3ef5d839cdc7775cc6b6ee5652e0af0c24727d64a2fb932c879b04dda8957be4": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:aa606b2a00ec12aa7d41dc4a6be35eff7df92eb760dd6c480cf9ef3524c1bb6e"
   },
   "sha256:40bc70234fb747e0a272ddfc30c7f0eeb07ecb6ccec5fc764f40be9aabd3305b": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:cd851e5d4b4ea05b0d71da16ccf9b7c840b1614da6186df69bbe43a5b72c85f8"
   },
   "sha256:4660c6b876bae12970fe1da7faf5926da0e32025efbc524a2332258cacff915c": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:9c73302a8bffd67528e9448a45b761584552cc224264a62e5719d70501f09211"
   },
   "sha256:49f80bbbc358c736549dee82612a6c0d5803a71b4ed8dc90955f4e5e7a17bf26": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:1fa408bef5f130bcbceee3ec0a3700cebdb6f03862dce9585cbd38213cc7a0de"
   },
   "sha256:4ab24d7df24668553e3ac14aa0fe1613622fb251183d798d6d95529f70cb37ca": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:13ec25c6da4bde59143e69ac87932660c583f2a1f00d18a33c6614237a6646e7"
   },
   "sha256:4f8e0a361642361c7aa508ed5edf86269b0ea93ce218a2ad0f61b455cb7b2157": {
    "debt": "EXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:63d56fb1dbcd7486f0304c8af358f4724c718475cf359d9254a6d45203e015fe"
   },
   "sha256:4fce6d215ab0c703dad50abe10cd6899953f70814d52940adb44bd47d8898f9e": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:82a816d5f1e6d1d17272b32c185c5f42d5263a452be0e33584c9991dbd1523f8"
   },
   "sha256:5aa838349f252ec9e8dcb8a931da96be1d9ea44211395927137930944e237dfd": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:f86c6fb48ede08daf83919cc62c4b7dfda4e6cfb5490d05a78810738a011c2f4"
   },
   "sha256:601700a7510fd9dfe73046322da44a764bc823d0786090492e9d706d1e0e9176": {
    "debt": "EXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:d77f42e8c31a9a2a7559eb749fa023c5f91b0671c58855950ec46d0a72b88be6"
   },
   "sha256:6300e52a339f6d9e6e52c35701e0de39d59f00fc3b82ad3b4aae5d68bf86b9ba": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:183674714b790d0afe7cef9f8ee17166b6cdc85b49ff53397a90f915526137cc"
   },
   "sha256:6489d465ea8e138902d99f69cfeddd6529168cc4b7377cee91fc16fb97eeb69f": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:a8aeafa283f69fcbe645137ee26610994ff37a2542640b9faad41a1fe82984de"
   },
   "sha256:65d63860f72c863d4827a88c9955f4f8970ad3ad8860d88ebc46c950b5722572": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:37b582827aa319a2434213f29a1a56af361a7c99e593850d32dd7e6ca9940733"
   },
   "sha256:6a44313ce751b3f3c07ad5b7eaa31263e177746662b2db8f2cf03d9e7e14f8af": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:8052e419e97bd2748d403e99626ae31531dcb83a16832bab0d76296c651243eb"
   },
   "sha256:6a4af6401736a7f7d161d3634716c7268bc34c2c15999e83ca3fcf7f6ef1b105": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:c40537eae21f09b1dbae332bd2babef605c27b0a333b76e9278e7c5d7f75f427"
   },
   "sha256:6c01b12f043905a271d7d039c2d6294bbbcb1f6f2dcfb473120602d26fe4c539": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:00323c50109133b7dfb6541a82d9945bde2245df005c3961c9b791e3fd2eca22"
   },
   "sha256:6e3b800fd2864880ad2e6c6d119e3cd78eabb482f01337c42c1df1057dc401ce": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:9a002cbbf37e7580d01db0908e3e4551299907705fc866fcfdac4abb5e338619"
   },
   "sha256:70c06752482cc844a07673dc146f86261fa6aee09f5785d9b80d2bcf68bc5705": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:e66e5c1c9d269876c2725ba05b69410541dea61df0630b7eca2cec17c0bc6028"
   },
   "sha256:74b90c2bec07ca747599ee34fb8651a81d07b68245d1ac4d4718fe8a39ef44c1": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:1aba0e1421f0289fe79457731d8899f77af316d81bb4315ca85e8bdff20f9f74"
   },
   "sha256:77602bcf20687d7498843b245abb6f9c0fd25a8e25b5d1106e26b52d106bc52c": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:3c60c2d486fdc03ffcbbb07a583d4877004ea649e40710a7d7b351f2062f1eef"
   },
   "sha256:79eadd0c797f7e3d56925c4054039c268945e6645ee1ab3c9f77aef17e0d3bfd": {
    "debt": "EXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:429ddbe8ccd55c711077227da105616314338aee72939a172c78697338d82fdb"
   },
   "sha256:8144027438a5006aad7309f2489dc4f77cc956984b8d90b24a9fc6c78775c72f": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:dd29e7ad79e7ea4093b00b1cf070a8ad3a17dfb70f6c952f7f12ccb37d9a51fe"
   },
   "sha256:81f4b04f16f620992e6adf8782c2a175db4b34b7284ba5916f534a7b28f70f72": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:1c8575e86c3331421be1c03b05ba374168325f38d6453e79bb3e4cc86997c73a"
   },
   "sha256:83cb798025a01f4b7ebc2f4d8ae05e3b045989109abf88b91d18819f7c0f3bf9": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:70babb015690d50f233da8de6b36527554813dc29b433398cc6f75f8d6da036c"
   },
   "sha256:8446a88041c7713e71ddd73efabfdf3abfbb866a872a9e0461fb08cc5ea6397c": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:19c2ec884e42ded30da7cd96cc6718bd861222863b7fef97132c4230b968e561"
   },
   "sha256:84b1a3de791457da8080d6529dca65ab9c3c79c0f8df4e6bd2d1347bf60bff21": {
    "debt": "EXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:265dc6309534c80a3d6ae8021f718f6c0050417ab0804e4d4c6a041b35a2977a"
   },
   "sha256:866f2afa548e356751e225af89f57c182fc16b9d5e89f3a715262158defdb4d8": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:1f265c2a1762cec296840bfca9afb61650a8eb6b634281c63631de920e57b73a"
   },
   "sha256:879986101286a9a6b8406565e3c86abbaaf7064352822df7dac3b99ad50b7e20": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:7da9536a4fe0473e1ed659a99f29c3d3c32c6759ad605209910799b040aea8af"
   },
   "sha256:8b405822a654e38bcc8ce7ffc5ed2e836b8e8d71cb5c61fb0cac419fc848b62e": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:a409018adb776605f2bb68a75d79945fe21f3bc727f369b96b3cedd9a9542df0"
   },
   "sha256:8d5cc11479a78bf648c457e66e095653af7b5e7cdc976135a20b306b51b47fae": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:183674714b790d0afe7cef9f8ee17166b6cdc85b49ff53397a90f915526137cc"
   },
   "sha256:9121f673ebb43fda5630138bb212d03e3ab977838c82af2d7dc325a0fe55ea0c": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:ffa8bf6a50f137fdd25df6bba9b409da86f31b903e6cc864822f54a70a705e24"
   },
   "sha256:914fc98609a7163b22c813a25508ddb4ceebb43b5a662cc2b938df137ab7f60c": {
    "admitted": "2026-09-29",
    "debt": "UNEXECUTED",
-   "reason": "goal 4227 S1c C1.5: this 'was it EMITTED?' read moved from messages to wire_emitted, so it also sees wakes the pulse is holding. Same site and same debt as the retired messages-read row it replaces (UNEXECUTED: this check's oracle drives it through a fake ctx, no real-DB arm yet). Moved, not grown: S1c shrinks the ledger by 13 rows in the same act."
+   "reason": "goal 4227 S1c C1.5: this 'was it EMITTED?' read moved from messages to wire_emitted, so it also sees wakes the pulse is holding. Same site and same debt as the retired messages-read row it replaces (UNEXECUTED: this check's oracle drives it through a fake ctx, no real-DB arm yet). Moved, not grown: S1c shrinks the ledger by 13 rows in the same act.",
+   "tk": "sha256t:bec2dca399aa2571eb394577ac1805a12fd01f32269357ac135a397b894d9e0c"
   },
   "sha256:971c6ceff899203c004706e5c1cf7c63794e26e5d2be1eb4a1fc0f43635e942f": {
    "admitted": "2026-09-29",
    "debt": "UNEXECUTED",
-   "reason": "goal 4227 S1c C1.5: this 'was it EMITTED?' read moved from messages to wire_emitted, so it also sees wakes the pulse is holding. Same site and same debt as the retired messages-read row it replaces (UNEXECUTED: this check's oracle drives it through a fake ctx, no real-DB arm yet). Moved, not grown: S1c shrinks the ledger by 13 rows in the same act."
+   "reason": "goal 4227 S1c C1.5: this 'was it EMITTED?' read moved from messages to wire_emitted, so it also sees wakes the pulse is holding. Same site and same debt as the retired messages-read row it replaces (UNEXECUTED: this check's oracle drives it through a fake ctx, no real-DB arm yet). Moved, not grown: S1c shrinks the ledger by 13 rows in the same act.",
+   "tk": "sha256t:e5cc85debd266c6739e17d2f01cecba4636ba39254ea469d8958f68420e7cfac"
   },
   "sha256:9735b7b658a405e897cb218acaa4765ee8e1b97ea4b6c10c26dc57133f349df6": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:44c5d512ad06be5fbfb057da8840552d0545381de576404db7bf5382df359ace"
   },
   "sha256:9a8253a63ad69f7434025d1cecb6193c8630dad3b9d1e9719f83b27c057e9771": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:56a287fef412dc9d124a8c6e6a62ac0bda6275c70af836fce3765cb17c1d773c"
   },
   "sha256:9b7629836c00863e76f3238c2194697f11e7c011e58da47933b0a4b5e2a246b3": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:0113eed34a0a306d5136b00acf4559abb7e12880e83b217a9a38021186d0aa90"
   },
   "sha256:9bebe0f2defedf8a4e84aceeb9648a3a9532424653e8f3652aa10bc498345694": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:9a047552afff09f51d3c2e63d91cc18d8d8acb718a3aca8f90aa0fbfc8844d6c"
   },
   "sha256:9da204395ff545b6a441570af53130c70a8e08d5ee3c277aa330fc5cd26b47eb": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:b327ac8331070a01f11787e147cef1cfc2a3dbc5df8a661edc862c3739565c36"
   },
   "sha256:9e461df078888a65fb92fa6d57ff33b23340ae42a242f216843ac99a98c748a2": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:6e25f6d63e930dc09ca2c3cdd9ed2b99c85ace51a756e1e37a3b64b7cd726bef"
   },
   "sha256:9e7834b9c2c96993bc6b8148f1ef173854d1a8fd66f7b8aeba13ab1d5cbd0571": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:7da9536a4fe0473e1ed659a99f29c3d3c32c6759ad605209910799b040aea8af"
   },
   "sha256:9f40c0e2e738f51dd18680e19faf737027b778a5f0612b786b8780f7a10b706e": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:e427113e8fe515abfb60dbf020fd2a28ffa5dbda33f487bb521efc93d3099f7f"
   },
   "sha256:ac07ac7be589973c7d1b06ee84f406621330e24a6718631649c1be8f434e8953": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:e1fa8ce379ca44493e35c0545d13357dcbcc37c952f38aad49871c1dd87347ff"
   },
   "sha256:b35cb874306b9b2633ddd177827bee8c70a55dd33fe995bc7ab13c256d36814f": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:b3132cda47e153d1b2e23f22624d6e4af393123766dc1c3236dcfe12af406d8d"
   },
   "sha256:bb7bd6e0d676c7cacd903adfb44e21e01bfef638d016fc6e901e9eb330fd5591": {
    "debt": "EXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:429ddbe8ccd55c711077227da105616314338aee72939a172c78697338d82fdb"
   },
   "sha256:bcadfe5acaaafd18571cf920ea455a0ddb3a9c45684b81c2b9b0df1702581bf1": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:ce3486b4bf9261be677483e8bce073d8232f9ede5de98f06d5e8c383cde64742"
   },
   "sha256:bf995723c828284b797216d1f05ca3aea854cbf6c98d1ef6d7c853434928bded": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:d71cb789ce470f65528fd15effdd01dec7576f31740d2262e81d263d46ebb155"
   },
   "sha256:c25ff6543cafed7b3939db2125ed8cf0a90debcd930916b37574531d5ac62244": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:fe766941a1b5512c22da98d9ddfc7ce0241c4f1020c4adda1a2cada7177dad37"
   },
   "sha256:c41cc472ec9969443e095bf8a9c5bcf825eb9d1dc78b020f06d2dd69a97d13c4": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:3ab5111413ba490f7843056dbaec62ccdbcecb3fda523437f0cde15a2df6bdbb"
   },
   "sha256:c7a34709f58d596edb212044ff362b3897a831af5b707ca6dcdb586f4b739d4e": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:62cf9c15362018930ec083f212093ee0bdbe7735924804e04acfc612494ee38d"
   },
   "sha256:cdd4cf06a544a4eb3e428e82e61e620ed650e45cfd89b4891c2bfe53b5e32204": {
    "admitted": "2026-09-29",
    "debt": "UNEXECUTED",
-   "reason": "goal 4227 S1c C1.5: this 'was it EMITTED?' read moved from messages to wire_emitted, so it also sees wakes the pulse is holding. Same site and same debt as the retired messages-read row it replaces (UNEXECUTED: this check's oracle drives it through a fake ctx, no real-DB arm yet). Moved, not grown: S1c shrinks the ledger by 13 rows in the same act."
+   "reason": "goal 4227 S1c C1.5: this 'was it EMITTED?' read moved from messages to wire_emitted, so it also sees wakes the pulse is holding. Same site and same debt as the retired messages-read row it replaces (UNEXECUTED: this check's oracle drives it through a fake ctx, no real-DB arm yet). Moved, not grown: S1c shrinks the ledger by 13 rows in the same act.",
+   "tk": "sha256t:9cc153e368a2f680b090e5bab691e88ed5971c3c9f50b065b3976258ebe0ebbf"
   },
   "sha256:d021341b3774d2bf17e08091f3698a1d4557df05b410edb9bc909ccf55151f44": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:62cf9c15362018930ec083f212093ee0bdbe7735924804e04acfc612494ee38d"
   },
   "sha256:d0d080335f48c270bc0b8bc88c62d5dcfd7f9798dbcfadf5127cd8444d197cc8": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:cf0412864104bda5ff70d647159a70a2c78507a7b305750fbed2f4c02d8dba91"
   },
   "sha256:d6aae41b3bc8b376c4e74088acd844a8743bd8dfa1dfbb747ddfc54709ef8d06": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:9f9818e2a62e685cbad3ff9e98b7edc95a2b8055ebbde49c0336c06a886ff989"
   },
   "sha256:d795be96d939193ffa019f893e2b215712bc7560701531731eb80081191b203f": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:505f299b0e42cc240b2285d6ca5b6e48a6a0d3f95b09b3d312da5e66ff58b232"
   },
   "sha256:d7e5fd956f7825fa7fc37f7e4a24e85f854601aa7a92014a47c073d6fe7caafc": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:eeba6ad1898618991e79b22d24a7b7fe259ffc73b357dda136203f3f245c7905"
   },
   "sha256:d997cb07c6f083f1ad0108072e2cfa47288f1c2069d93019a35cdbd7fd16eed9": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:2631c5dd4c53cdd3b131b5378483f8cfe50ce88200521ec50c79da042263b36c"
   },
   "sha256:e15d9f816eff10a84831892fba320c06f5b176ce84f02c03c43140df970dcfcb": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:e209300e10a51cfaf6be9cd121375b3fc047fe25ab22d0c78ce501a32b34813b"
   },
   "sha256:e96daa49e862f04c51f1933f1ba90a2108f7ba7694c41bcd6ae570d7657c33ec": {
    "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:fba22a7fe4a990d9d03bcf4682267fc4fc1e2b9055fe060d0916fb9873ed768f"
   },
   "sha256:ea1801b3abaac6055ee2508f41f5457ee8f3e1010470556dafb97e7116c79766": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:bf2062fecd28a9d27c2f148712ccb847fbffcf49b7e3ffd3192f3f101cb81d66"
   },
   "sha256:eadd8730093a76b017a9b6783544ed6d33a8ed3f293f5e8ef2fb6eec6346b038": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:37bf9957d77e5b966344a5354c6a545ecae5b325f6a16d315c6fccc30f1caad8"
   },
   "sha256:ebf1cf18cad3abd216a24aa09230da354d0d866d71996a9095a352300c23ee7d": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:f085a5ae837aab71db3cd8bea7cc4996b53a1d7aa1d3d1f5e4e4682024ac46a5"
   },
   "sha256:ef0a5839d25c1d27bf6d94e04515bddbfda3c05feda55f8ca6bcc55da40c766c": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:bbc96fae2cd968b25cb8b8264cd899fe2eb265bd99200d53b333f0b8b5b27af3"
   },
   "sha256:f11666c37f8ec5d29548340c7e2f57f5f6e2fc09dbf9e40a9a64c0a6f4944184": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:73899181c657617bc7c082a028fd0999ef82ad2f8aa22b823c006a67965a890f"
   },
   "sha256:f15d663a54ae92cc067ffade638f565b931007bcb92096b205b4298213678b76": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:dab1b557ebc2885ed0aa257afae2e96a5cad76f6aa1915c10db81050ae655902"
   },
   "sha256:fa6fa3d04421bbfec0588059d7b9b7a00300a565e250c4c134d6f8a9a5dd6575": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:9627deddf445179a69496ff280c56b18d18bad37e31dc3f04f0a31973538159a"
   },
   "sha256:fce49a32a2f9d80324424491dc4a244064fc818c52731c58d7c806cac8af868c": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:c4213cac9ae2d29dc595650a62c0c4bae226520c324fdc916d0ecfca9671cc59"
   },
   "sha256:fe916d29d28044e9519b0ea582a9f277b9b66b3ce60d73408667aed70e8cd5ed": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:8bd542361040bfde5e8a05852877ba2cc781e61d52251d24799415734bd8c83a"
   },
   "sha256:ff9d87fb3dee5217d2b7e98a2d56ebb8d51f7901887b0ae620a21d4ed3c5a9d0": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
+   "reason": "seed",
+   "tk": "sha256t:71f0c60f40571bce9fac0d27c8c6b9f7637c68cf80bea38c5811394d26afc1a8"
   }
  }
 }
