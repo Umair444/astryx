@@ -396,6 +396,59 @@ def m_climb_clock_ignores_facility_nudges(ctx):
         "real agent movement inside the grace must hold, nag or no nag"
 
 
+
+def _raw_idea_by_top(ctx, gid, thread, ago):
+    """The TOP rank ORIGINATES the idea (a4 night-review → plan-4918): a rank-1 task, not a design."""
+    ctx.sql("INSERT INTO messages (from_agent,to_agent,thread,intent,body,ts) VALUES "
+            "('abstractor-4','abstractor-1',%s,'task','a raw idea for rank-1', now() - %s::interval)",
+            (thread, ago))
+
+
+@case
+def n_top_originated_is_not_consolidated(ctx):
+    """plan-4918 (2026-09-30): the top rank filed the raw idea and nobody has climbed. The verdict net
+    must stay silent (a raw idea is not a design; 4 approves would activate it unrefined), and the climb
+    net must own the thread: after its grace it pings rank 1."""
+    gid, thread = seed_plan(ctx, [], goal_age="3 hours", make_thread=False)
+    _raw_idea_by_top(ctx, gid, thread, "3 hours")
+    MOD["plan_verdict_due"](ctx)
+    assert pings(ctx, thread, "plan_verdict_due") == [], "a top-rank RAW IDEA opened the verdict phase"
+    MOD["plan_climb_due"](ctx)
+    assert pings(ctx, thread) == ["abstractor-1"], pings(ctx, thread)
+
+
+@case
+def o_top_originated_climb_reaches_top(ctx):
+    """…then ranks 1-3 climb; rank 3 hands off to the top, which hasn't consolidated yet. The climb net
+    pings the TOP (it must not StopIteration on a `posted` set that already holds the originator), and
+    the verdict net stays silent."""
+    gid, thread = seed_plan(ctx, [("abstractor-1", "refine", "5 hours"),
+                                  ("abstractor-2", "refine", "4 hours"),
+                                  ("abstractor-3", "refine", "3 hours")],
+                            goal_age="7 hours", make_thread=False)
+    _raw_idea_by_top(ctx, gid, thread, "6 hours")
+    MOD["plan_verdict_due"](ctx)
+    assert pings(ctx, thread, "plan_verdict_due") == [], "consolidation not reached: no verdict phase"
+    MOD["plan_climb_due"](ctx)
+    assert pings(ctx, thread) == ["abstractor-4"], pings(ctx, thread)
+
+
+@case
+def p_top_originated_then_consolidated(ctx):
+    """…and once the top posts AFTER rank 3's handoff, the verdict phase opens with zero voters."""
+    gid, thread = seed_plan(ctx, [("abstractor-1", "refine", "5 hours"),
+                                  ("abstractor-2", "refine", "4 hours"),
+                                  ("abstractor-3", "refine", "3 hours"),
+                                  ("abstractor-4", "chat", "2 hours")],
+                            goal_age="7 hours", make_thread=False)
+    _raw_idea_by_top(ctx, gid, thread, "6 hours")
+    MOD["plan_climb_due"](ctx)
+    assert pings(ctx, thread) == [], "climb net must stand down at a real consolidation"
+    MOD["plan_verdict_due"](ctx)
+    assert pings(ctx, thread, "plan_verdict_due") == [
+        "abstractor-1", "abstractor-2", "abstractor-3", "abstractor-4"]
+
+
 def main():
     preflight_isolation_premise()      # fail-closed: never write until rollback is proven
     ok = True
