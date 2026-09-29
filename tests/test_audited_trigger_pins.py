@@ -13,7 +13,12 @@ schema.sql and requires every trigger on those tables to be pinned at the hash t
 produces. A trigger change without a re-audit is RED on the branch that makes it. It reads the pins
 by AST (never executes the lifecycle oracle), so it runs in a worktree with no triggers/.
 It does NOT audit a body — a human re-reads pg_get_functiondef and pins it; this only proves the
-pins describe the schema being shipped. Exit 0 pass · 1 fail · 77 no DB / no CREATEDB.
+pins describe the schema being shipped.
+REMAINDER (a2 #23791, measured): a pin hashes the trigger FUNCTION BODY, not pg_get_triggerdef —
+timing/WHEN/event changes stay green, which is the right grain for "cannot escape a rolled-back
+transaction". The real gap is CALLEES: plpgsql records no pg_depend on functions it calls, so a
+body calling a user helper keeps its pin while the helper changes. None of today's pinned bodies
+calls a user-defined function (each audit record says so); if one ever does, pin the helper too. Exit 0 pass · 1 fail · 77 no DB / no CREATEDB.
 """
 import ast
 import sys
