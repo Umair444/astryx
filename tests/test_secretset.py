@@ -52,7 +52,7 @@ PLAIN_DSN=postgresql://genesis@localhost:5432/astryx
 OPENAI_API_KEY={TOK}
 BRAND_NEW_KEY={NEW}
 GMAIL_APP_PASSWORD="{APP}"
-AUTOREMOTE_GETLOC_URL=https://example.invalid/sendmessage?key={CAP}&message=getloc
+AUTOREMOTE_GETLOC_URL=https://example.invalid/sendmessage?key={CAP}&message=getlocation
 ASTRYX_ORG=example-org
 ASTRYX_URL=http://203.0.113.9:8845
 TINY_PIN={SHORT}
@@ -90,6 +90,8 @@ def arms_s0(tmp):
     check("S0.5 a password-less DSN contributes nothing",
           not any(n.startswith("PLAIN_DSN") for n in names), f"names={sorted(names)}")
     check("S0.6 a capability URL's query value is secret", CAP in vals)
+    check("S0.6b a query param declared NOT_SECRET ('<KEY>:<param>') is not",
+          "getlocation" not in vals, f"names={sorted(names)}")
     check("S0.7 a value with spaces is secret (quoted in .env)", APP in vals)
     check("S0.8 a ~/.pgpass password is secret, escapes decoded", PGPW in vals)
     check("S0.9 one value under two keys is kept once",
@@ -256,6 +258,23 @@ def arm_live():
     dirty = sorted(k for k, v in cfg if ss.scan(v, S))
     check("L.2 no NOT_SECRET value carries a secret (the allowlist hides nothing)", not dirty,
           f"keys={dirty}")
+    # a live secret in a TRACKED file is either a committed leak or an over-broad rule (an ordinary
+    # word classed as secret would be redacted from every transcript): RED either way
+    import subprocess
+    tracked = subprocess.run(["git", "ls-files", "-z"], cwd=REPO, capture_output=True,
+                             text=True).stdout.split("\0")
+    hits = {}
+    for rel in filter(None, tracked):
+        p = REPO / rel
+        if p.is_file() and not p.is_symlink():
+            try:
+                r = ss.scan(p.read_text(errors="replace"), S)
+            except OSError:
+                continue
+            if r:
+                hits[rel] = sorted(r)
+    check("L.3 no live secret appears in any tracked file (leak or over-broad rule)",
+          len(tracked) > 50 and not hits, f"tracked={len(tracked)} hits={hits}")
     print(f"        live: {len(S)} secrets; unguardable (too short): {ss.unguardable() or 'none'}")
 
 

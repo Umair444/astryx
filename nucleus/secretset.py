@@ -34,6 +34,9 @@ NOT_SECRET = frozenset({
     "WA_CLI", "WA_DATA_HOST", "WA_DATA_CTR", "ASTRYX_ORG", "ASTRYX_URL", "TG_API_BASE",
     "GROWBOT_BODY_URL", "ASTRYX_NODE",
     "GMAIL_ADDRESS",        # an identifier (tier question, not a credential): see plan-5497 BC-b
+    # a URL query value is secret by default; these name ONE parameter ("<KEY>:<param>") whose
+    # value is an ordinary word (it appears in the tree's own code) and grants nothing
+    "AUTOREMOTE_GETLOC_URL:message",
 })
 
 
@@ -101,6 +104,7 @@ def _raw(env_file=None, pgpass_file=None) -> list[tuple[str, str]]:
         if parts is None:
             pairs.append((k, v))
         else:
+            parts = [(n, pv) for n, pv in parts if n not in NOT_SECRET]
             # A URL KEY is not on NOT_SECRET, so its password and query values are guarded. When
             # it carries NEITHER, it holds nothing: guarding the whole URL (a password-less DSN)
             # would only redact the host. When it carries a query secret, the whole URL is a
