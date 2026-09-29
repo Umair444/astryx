@@ -310,7 +310,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 288,
+  "debt_rows": 283,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 8,
@@ -461,26 +461,6 @@
   },
   "bridges/whatsapp.py::refresh_poll\u001finsert into polls (msg_id, chat, agent, question, options, multi, votes) values (?,?,null,?,?,?,'{}') on conflict (msg_id) do update set question=excluded.question, options=excluded.options, multi=excluded.multi": {
    "debt": "UNEXECUTED",
-   "reason": "seed"
-  },
-  "hooks/nudge.py::log_refusal\u001finsert into steps (agent, kind, content) values (?,'error',?)": {
-   "debt": "NOT-SEARCHED-AT-SEED",
-   "reason": "seed"
-  },
-  "hooks/nudge.py::log_refusal\u001fselect 1 from steps where agent=? and kind='error' and content like 'nudge:%%' and ts > now() - interval '1 hour' limit 1": {
-   "debt": "NOT-SEARCHED-AT-SEED",
-   "reason": "seed"
-  },
-  "hooks/nudge.py::main\u001finsert into classifications (agent, session_id, family, tier, classifier, nudged) values (?,?,?,?,?,?)": {
-   "debt": "NOT-SEARCHED-AT-SEED",
-   "reason": "seed"
-  },
-  "hooks/nudge.py::main\u001fselect 1 from classifications where agent=? and family=? and nudged and ts > now() - make_interval(days => ?) limit 1": {
-   "debt": "NOT-SEARCHED-AT-SEED",
-   "reason": "seed"
-  },
-  "hooks/nudge.py::main\u001fselect count(*) from classifications where family=? and ts > now() - make_interval(days => ?)": {
-   "debt": "NOT-SEARCHED-AT-SEED",
    "reason": "seed"
   },
   "hooks/step.py::handle_stop\u001finsert into messages (from_agent, from_org, to_agent, to_org, thread, intent, body, turn_id) values (?,'local',?,'local',?,'chat',?,?)": {

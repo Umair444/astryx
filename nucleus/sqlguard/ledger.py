@@ -3,6 +3,7 @@
 
     venv/bin/python -m nucleus.sqlguard.ledger seed <trace_dir>     # ONE-TIME seed, from a clean run's report
     venv/bin/python -m nucleus.sqlguard.ledger admit <trace_dir> <site> '<reason>'   # the ONLY growth path
+    venv/bin/python -m nucleus.sqlguard.ledger shrink <trace_dir>   # drop exactly the rows enforce calls R-STALE
 
 Every site below RESPONSIVE in the seed run becomes a row: its debt rung (UNEXECUTED / EXECUTED / FIXTURE-DDL)
 or NOT-SEARCHED-AT-SEED, which is recorded, clocked, and never hidden. The header stamps what the seed was
@@ -129,9 +130,39 @@ def admit(trace_dir: str, site: str, reason: str, path: Path = None) -> str:
     return lk
 
 
+def shrink(trace_dir: str, path: Path = None) -> list:
+    """Remove exactly the rows enforce calls R-STALE, using ITS predicate: a site that climbed to RESPONSIVE, or a
+    listed key absent from the run's inventory. Removal only, never growth. It refuses when the run had a
+    run-level NOT SEARCHED, because with triggers/ absent every gitignored site would read as vanished and be
+    wiped. It also refuses on privacy errors. Returns the removed labels, shown hashed for gitignored origin."""
+    path = path or LEDGER
+    rep = json.loads((Path(trace_dir) / "report.json").read_text())
+    if privacy.ERRORS:
+        raise SystemExit(f"refusing: privacy classification failed ({len(privacy.ERRORS)})")
+    if rep.get("run_not_searched"):
+        raise SystemExit(f"refusing: the run was NOT SEARCHED at run level {rep['run_not_searched']}, so absence "
+                         f"there proves nothing")
+    doc = json.loads(path.read_text())
+    live = {ledger_key(k): k for k in rep["sites"]}
+    gone = [lk for lk in doc["rows"]
+            if lk not in live or rep["sites"][live[lk]]["rung"] == "RESPONSIVE"]
+    out = []
+    for lk in gone:
+        del doc["rows"][lk]
+        doc.get("covering", {}).pop(lk, None)
+        out.append(lk if lk.startswith("sha256:") else privacy.label(lk))
+    if gone:
+        doc["header"]["debt_rows"] = len(doc["rows"])
+        path.write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n")
+    return out
+
+
 if __name__ == "__main__":
     if len(sys.argv) >= 3 and sys.argv[1] == "seed":
         print(json.dumps(seed(sys.argv[2]), indent=1))
+    elif len(sys.argv) == 3 and sys.argv[1] == "shrink":
+        gone = shrink(sys.argv[2])
+        print(f"shrank {len(gone)} row(s)" + "".join(f"\n  - {g}" for g in gone))
     elif len(sys.argv) == 5 and sys.argv[1] == "admit":
         print(f"admitted {admit(sys.argv[2], sys.argv[3], sys.argv[4])}")
     else:
