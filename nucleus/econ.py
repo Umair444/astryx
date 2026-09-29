@@ -584,7 +584,10 @@ def built_from() -> dict:
     and whether that tree was dirty. DETECTION-grade, not a gate: v2_view trusts the stamped
     version, and a worktree or hand-run rollup can stamp any version (09-29: an unreviewed tree
     wrote a gate-passing v2.1 row). This makes such a row identifiable after the fact. TRIP:
-    any econ row whose sha is not an ancestor of main → promote to a gate."""
+    any econ row whose sha is not an ancestor of main → promote to a gate.
+    ACCEPTED LIMIT (a2 #21986): dirty ignores UNTRACKED files (so the live tree's stray .github/
+    does not mark every row dirty) — a new untracked module econ imports would not mark it
+    either. Today econ imports only tracked nucleus modules."""
     import subprocess
     def git(*a):
         r = subprocess.run(["git", "-C", str(REPO), *a], capture_output=True, text=True, timeout=5)
