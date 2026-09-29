@@ -388,14 +388,19 @@ def integrity(conn, since, until) -> dict:
 # is status NOT_EVALUATED with value None — never a measured 0. The v2 code path must not
 # name any budget-era identifier (the oracle checks this source by AST).
 V2_VERSION = "v2.0"
+from nucleus.orgname import RESERVED_ORGS  # the demand predicate's authority (see _V2_DEMAND)
 # a call serves REAL demand (owner edge b) only when its turn served a goal, or was woken
 # by a trigger, the owner, a human chat or a federated peer. An inter-agent message alone
-# does NOT qualify: messaging a peer to look used is the named gaming vector. Detection-grade
-# (steps/turns rows are forgeable at same-uid), stated, not prevention.
+# does NOT qualify: messaging a peer to look used is the named gaming vector. "Outside this
+# org" is `from_org NOT IN orgname.RESERVED_ORGS`, DERIVED from that authority — NOT
+# `from_org IS NOT NULL`: the column DEFAULTS to 'local', so that clause was a tautology that
+# qualified every peer message (a2, plan-4227 #21324; its SQL had never been executed by the
+# oracle). Channel rows (whatsapp/discord/telegram) and federated orgs carry a non-reserved
+# from_org, so human and federated demand qualify. Detection-grade (same-uid forgeable).
 _V2_DEMAND = """(t.goal_id IS NOT NULL OR EXISTS (
         SELECT 1 FROM messages im WHERE im.id = t.input_msg_id
           AND (im.from_agent IN ('pulse','owner') OR im.from_agent LIKE 'wa-%%'
-               OR im.from_org IS NOT NULL)))"""
+               OR im.from_org <> ALL(%s))))"""   # %s = orgname.RESERVED_ORGS (the authority)
 
 
 def _v2_rec(value, coverage, status) -> dict:
@@ -416,9 +421,17 @@ def _v2_tool_gdp(rows, version=V2_VERSION, authorship_ok=True) -> dict:
                 "status": "NOT_EVALUATED: authorship unavailable (cannot discount self-use)"}
     qualified = [r for r in rows if r[3]]
     pairs = {(rid, caller) for rid, caller, author, _ in qualified if caller != author}
-    return {"value": len(pairs), "version": version,
-            "coverage": round(len(qualified) / len(rows), 4),
-            "status": "OK: usage-GDP, compression=1 declared"}
+    # an unresolved author (None, or toolreg's literal 'unknown' — every pre-ledger file) can't
+    # be self-discounted: those calls still COUNT (dropping them would under-state real use),
+    # but the number is then PARTIAL and coverage is capped by the author-resolved share, so it
+    # is never presented as fully self-use-discounted (a2 #21324).
+    unresolved = [r for r in rows if r[2] in (None, "unknown")]
+    cov = min(len(qualified) / len(rows), 1 - len(unresolved) / len(rows))
+    partial = any(r[2] in (None, "unknown") for r in qualified)
+    return {"value": len(pairs), "version": version, "coverage": round(cov, 4),
+            "status": ("PARTIAL: some counted callers' authors unresolved (self-use not "
+                       "discountable for them); compression=1 declared") if partial
+                      else "OK: usage-GDP, compression=1 declared"}
 
 
 def _v2_tool_rows(conn, since, until):
@@ -428,7 +441,7 @@ def _v2_tool_rows(conn, since, until):
         SELECT s.meta->>'registry_id' AS rid, s.agent AS caller, {_V2_DEMAND} AS dq
         FROM steps s JOIN turns t ON t.id = s.turn_id
         WHERE s.kind = 'tool' AND s.meta ? 'registry_id'
-          AND s.ts >= %s AND s.ts < %s""", (since, until))
+          AND s.ts >= %s AND s.ts < %s""", (sorted(RESERVED_ORGS), since, until))
     if not calls:
         return [], True
     try:
@@ -463,8 +476,14 @@ def v2(conn, since, until, k) -> dict:
     rows, auth_ok = _v2_tool_rows(conn, since, until)
     return {
         "version": V2_VERSION,
-        "W": _v2_rec(w, cov, ok),
-        "Q": _v2_rec(phi - w, cov, ok),
+        # W counts a shipped goal's LIFETIME turns at its done_at (the boundary transfer), so
+        # coverage — the in-window goal-attributed flux share — does not describe W's
+        # out-of-window turns; and Q = flux - W is a DAILY TRANSFER that may be < 0 on a quiet
+        # ship day. Both are conserved over windows (oracle arm 6). No reader may assume Q>=0.
+        "W": _v2_rec(w, cov, ok if not phi else
+                     "OK: lifetime turns of goals shipped in-window; coverage = in-window share"),
+        "Q": _v2_rec(phi - w, cov, ok if not phi else
+                     "OK: daily transfer, may be <0; conserved over windows"),
         "G": _v2_rec(round(w / (phi * kc) * 1e9, 6) if phi and kc else None, cov,
                      ok if phi and kc else "VACUOUS: flux or K unmeasured"),
         "tool_gdp": _v2_tool_gdp(rows, V2_VERSION, auth_ok),

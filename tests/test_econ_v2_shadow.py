@@ -43,7 +43,7 @@ except ImportError as exc:
 
 fails = []
 RECORD_KEYS = {"value", "version", "coverage", "status"}
-STATUSES = {"OK", "VACUOUS", "NOT_EVALUATED"}
+STATUSES = {"OK", "PARTIAL", "VACUOUS", "NOT_EVALUATED"}
 BUDGET_ERA = {"budget_tokens", "funded_by", "spent_tokens"}
 V1_KEYS = {"thermo", "K", "G", "final_heat", "pnl", "theil_burn",
            "productivity", "trigger_roi", "integrity"}
@@ -80,6 +80,75 @@ def _v2_source_names():
                 strings.append(node.value)
     leaked = (idents & BUDGET_ERA) | {b for b in BUDGET_ERA if any(b in s for s in strings)}
     return fns, leaked
+
+
+def _ddl(name):
+    """`CREATE TABLE IF NOT EXISTS <name> (...);` from schema.sql, COMMENT-AWARE: turns and
+    steps carry `--` comments containing ');' (e.g. '-- FK to turns(id);'), which the naive
+    first-');' extractor cuts mid-definition. Scan line by line on the code part only."""
+    lines = (REPO / "nucleus" / "schema.sql").read_text().splitlines()
+    start = next(i for i, l in enumerate(lines)
+                 if l.startswith(f"CREATE TABLE IF NOT EXISTS {name} ("))
+    out = []
+    for l in lines[start:]:
+        code = l.split("--", 1)[0].rstrip()
+        out.append(code)
+        if code.endswith(");"):
+            return "\n".join(out)
+    raise ValueError(f"unterminated DDL for {name}")
+
+
+def demand_arm(dsn):
+    import os
+    import json as _json
+    sch = f"t_v2d_{os.getpid()}"
+    c = psycopg.connect(dsn, autocommit=True)
+    try:
+        c.execute(f"DROP SCHEMA IF EXISTS {sch} CASCADE")
+        c.execute(f"CREATE SCHEMA {sch}")
+        c.execute(f"SET search_path TO {sch}")   # SCH ONLY — never public
+        for t in ("messages", "turns", "steps"):
+            c.execute(_ddl(t))
+        # case -> (from_agent, from_org or None=use the schema DEFAULT, goal_id, expect)
+        cases = {
+            "peer":  ("abstractor-1", None, None, False),   # intra-org peer: the gaming vector
+            "owner": ("owner", None, None, True),
+            "pulse": ("pulse", None, None, True),
+            "human": ("someone", "whatsapp", None, True),   # channel row carries from_org
+            "fed":   ("seed", "fedtest-x", None, True),     # a federated peer org
+            "goal":  (None, None, 7, True),                 # no message; the turn served a goal
+        }
+        for name, (frm, org, gid, _) in cases.items():
+            mid = None
+            if frm:
+                if org is None:
+                    mid = c.execute("INSERT INTO messages (from_agent, to_agent, body) "
+                                    "VALUES (%s,'caller','x') RETURNING id", (frm,)).fetchone()[0]
+                else:
+                    mid = c.execute("INSERT INTO messages (from_agent, from_org, to_agent, body) "
+                                    "VALUES (%s,%s,'caller','x') RETURNING id", (frm, org)).fetchone()[0]
+            tid = c.execute("INSERT INTO turns (agent, input_msg_id, goal_id) VALUES "
+                            "('caller-'||%s, %s, %s) RETURNING id", (name, mid, gid)).fetchone()[0]
+            c.execute("INSERT INTO steps (agent, kind, content, meta, turn_id) VALUES "
+                      "('caller-'||%s, 'tool', 'call', %s::jsonb, %s)",
+                      (name, _json.dumps({"registry_id": f"mcp:t/{name}"}), tid))
+        since = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        until = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        try:
+            rows, _ = econ._v2_tool_rows(c, since, until)
+            got = {rid.split("/")[-1]: dq for rid, _c, _a, dq in rows}
+            err = ""
+        except Exception as e:  # a SQL regression surfaces here, at gate time
+            got, err = {}, f"{type(e).__name__}: {e}"
+        check("demand reader EXECUTES against the real schema (no SQL error)", not err, err)
+        for name, (_f, _o, _g, expect) in cases.items():
+            check(f"demand[{name}] = {expect}", got.get(name) is expect, f"got {got.get(name)!r}")
+        pub = c.execute("SELECT count(*) FROM public.steps WHERE content='call' "
+                        "AND meta->>'registry_id' LIKE 'mcp:t/%%'").fetchone()[0]
+        check("CONTAINMENT: no fixture row leaked to public.steps", pub == 0)
+    finally:
+        c.execute(f"DROP SCHEMA IF EXISTS {sch} CASCADE")
+        c.close()
 
 
 def main():
@@ -213,8 +282,9 @@ def main():
         ("tool-b", "seed", None, True),      # author unknown → counted, never self-discounted
     ]
     live = econ._v2_tool_gdp(rows, ver)
-    check("tool_gdp evaluates with ledger rows (status token OK)",
-          str(live["status"]).split(":")[0] == "OK", str(live))
+    check("tool_gdp EVALUATES with ledger rows (OK or PARTIAL, never NOT_EVALUATED)",
+          str(live["status"]).split(":")[0] in ("OK", "PARTIAL") and live["value"] is not None,
+          str(live))
     unauth = econ._v2_tool_gdp(rows, ver, authorship_ok=False)
     check("tool_gdp with rows but NO authorship is NOT_EVALUATED (never an un-discounted number)",
           unauth["value"] is None and str(unauth["status"]).startswith("NOT_EVALUATED"), str(unauth))
@@ -223,7 +293,47 @@ def main():
     check("tool_gdp coverage = demand-qualified share of calls", live["coverage"] == round(5 / 6, 4),
           str(live["coverage"]))
 
+    # ── 5b. PARTIAL when authorship is unresolved (a2 #21324, honesty fix) ─────────
+    check("tool_gdp with an 'unknown'/None author counted is PARTIAL, not OK",
+          str(live["status"]).split(":")[0] == "PARTIAL", str(live))
+    # DISCRIMINATING fixture: demand share 3/4 but author-resolved share 2/4, so min() and
+    # a demand-only coverage DISAGREE (the 6-row fixture above has both at 5/6 — it cannot).
+    mix = econ._v2_tool_gdp([("a", "p1", "forge", True), ("a", "p2", None, True),
+                             ("a", "p3", "unknown", True), ("a", "p4", "forge", False)], ver)
+    check("tool_gdp coverage = min(demand share, author-resolved share)",
+          mix["coverage"] == 0.5, f"{mix['coverage']} (demand 0.75, resolved 0.5)")
+    resolved = [r for r in rows if r[2] not in (None, "unknown")]
+    full = econ._v2_tool_gdp(resolved, ver)
+    check("tool_gdp with every counted author resolved is OK",
+          str(full["status"]).split(":")[0] == "OK", str(full))
+    unk = econ._v2_tool_gdp([("t", "p1", "unknown", True)], ver)
+    check("the literal toolreg sentinel 'unknown' is treated as unresolved (PARTIAL)",
+          str(unk["status"]).split(":")[0] == "PARTIAL", str(unk))
+
+    # ── 6. Q IS A DAILY TRANSFER, conserved over windows (a2 #21324 note) ─────────
+    conn = psycopg.connect(dsn, connect_timeout=5)   # psycopg3 `with conn:` CLOSED the first
+    with conn:
+        d1 = (datetime.now(timezone.utc).date() - timedelta(days=2)).isoformat()
+        a0 = f"{d1}T00:00:00+00:00"
+        a1 = (datetime.fromisoformat(a0) + timedelta(days=1)).isoformat()
+        a2 = (datetime.fromisoformat(a0) + timedelta(days=2)).isoformat()
+        va, vb, vab = (econ.v2(conn, a0, a1, k), econ.v2(conn, a1, a2, k), econ.v2(conn, a0, a2, k))
+        check("W is additive over adjacent windows", va["W"]["value"] + vb["W"]["value"] == vab["W"]["value"])
+        check("Q is conserved over adjacent windows (sum of daily Q = Q of the union)",
+              va["Q"]["value"] + vb["Q"]["value"] == vab["Q"]["value"])
+        check("Q's record SAYS it can be negative (no S2 reader may assume Q>=0)",
+              "may be <0" in str(va["Q"]["status"]), str(va["Q"]["status"]))
+
     conn.close()
+
+    # ── 7. THE DEMAND PREDICATE, EXECUTED (a2 #21324 blocker) ──────────────────────
+    # Arm 5 fed the pure core PRE-COMPUTED booleans, so _V2_DEMAND's SQL never ran — and it
+    # was a tautology (messages.from_org DEFAULTS to 'local', so `IS NOT NULL` qualified every
+    # peer message). The 3rd instance of the ctx.sql-blindness class. Here the reader runs
+    # for real against a HERMETIC temp schema built from schema.sql's own DDL (so the
+    # load-bearing DEFAULT 'local' is the real one), search_path SCH-only (the 3833 scar).
+    demand_arm(dsn)
+
     print()
     print(f"FAILED ({len(fails)}): " + "; ".join(fails) if fails
           else "econ v2 shadow: I1 records, v1 untouched, no budgets, effort re-derived, tool GDP degrades honestly")
