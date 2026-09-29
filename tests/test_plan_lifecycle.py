@@ -449,6 +449,48 @@ def p_top_originated_then_consolidated(ctx):
         "abstractor-1", "abstractor-2", "abstractor-3", "abstractor-4"]
 
 
+
+def _msg(ctx, thread, frm, to, intent, ago):
+    ctx.sql("INSERT INTO messages (from_agent,to_agent,thread,intent,body,ts) VALUES "
+            "(%s,%s,%s,%s,'x', now() - %s::interval)", (frm, to, thread, intent, ago))
+
+
+def _climbed_and_consolidated(ctx):
+    """ranks 1-3 climbed (rank 3 handed off to the top), and the top consolidated."""
+    gid, thread = seed_plan(ctx, [("abstractor-1", "refine", "8 hours"),
+                                  ("abstractor-2", "refine", "7 hours"),
+                                  ("abstractor-3", "refine", "6 hours")],
+                            goal_age="9 hours", make_thread=False)
+    _msg(ctx, thread, "abstractor-4", "abstractor-1", "chat", "5 hours")      # the consolidation
+    return gid, thread
+
+
+@case
+def q_rework_at_top_after_revise_reopens_verdicts(ctx):
+    """plan-14/3407/3408/3410/3499 shape (a1 #24567): a revise sends the rework to the TOP, and the top posts
+    its correction with NO fresh rank-3 handoff. It's still consolidated, so the verdict net re-pings all
+    four. PINS the unbounded handoff: bounding it by the revise closes this verdict phase (5 live plans)."""
+    gid, thread = _climbed_and_consolidated(ctx)
+    _msg(ctx, thread, "abstractor-1", "abstractor-4", "revise", "4 hours")    # rework at rank 4
+    _msg(ctx, thread, "abstractor-4", "abstractor-1", "chat", "3 hours")      # the top's correction
+    MOD["plan_verdict_due"](ctx)
+    assert pings(ctx, thread, "plan_verdict_due") == [
+        "abstractor-1", "abstractor-2", "abstractor-3", "abstractor-4"], pings(ctx, thread, "plan_verdict_due")
+
+
+@case
+def r_carried_reconsolidation_stays_consolidated(ctx):
+    """plan-2789 shape (a1 #24567): the top's own REVISE carries the re-consolidation to a lower rank, then
+    verdicts land. The climb net must stay silent through the verdict phase: under a handoff bounded by the
+    revise it would read "not consolidated" and ping rank 2 mid-verdict."""
+    gid, thread = _climbed_and_consolidated(ctx)
+    _msg(ctx, thread, "abstractor-4", "abstractor-1", "revise", "4 hours")    # carried re-consolidation
+    _msg(ctx, thread, "abstractor-1", "abstractor-4", "approve", "3 hours")
+    _msg(ctx, thread, "abstractor-4", "abstractor-1", "approve", "2 hours")
+    MOD["plan_climb_due"](ctx)
+    assert pings(ctx, thread) == [], pings(ctx, thread)
+
+
 def main():
     preflight_isolation_premise()      # fail-closed: never write until rollback is proven
     ok = True
