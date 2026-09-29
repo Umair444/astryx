@@ -1,0 +1,283 @@
+"""Oracle for plan-5497 S0 + S1a: one derived secret set, and a turn writer that never copies one.
+
+S0 (nucleus/secretset.py): the set is DERIVED from the holders (.env, ~/.pgpass), fail-safe (a key
+nobody classified is secret), URL-aware (a DSN's password, a capability URL's query value; never
+its host), and reports what it can't guard instead of dropping it.
+S1a (hooks/step.py): turns.raw_payload is the one transcript copy we own, and every pg_dump
+inherits it. Every declared secret is replaced by a marker before the row is written; when the
+set can't be derived, the copies are WITHHELD, never written raw.
+
+Each arm can ALONE go red. Fixture holders carry FAKE secrets; the live arm (L) reads the real
+holders and prints counts and key NAMES only, never a value.
+
+Run: venv/bin/python tests/test_secretset.py
+"""
+import importlib.util
+import json
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO))
+
+fails = []
+
+
+def check(name, ok, detail=""):
+    print(("  ok    " if ok else "  FAIL  ") + name + (f"   [{detail}]" if detail and not ok else ""))
+    if not ok:
+        fails.append(name)
+
+
+try:
+    from nucleus import secretset as ss
+except Exception as exc:                                    # noqa: BLE001 — RED on a tree without S0
+    ss = None
+    check("nucleus.secretset imports", False, f"{type(exc).__name__}: {exc}")
+
+# ------------------------------------------------------------------ fixtures (all FAKE)
+TOK = "tok_FAKE_9f3a1c77e0b24d6a"                 # opaque key
+NEW = "new_FAKE_c1d2e3f4a5b6c7d8"                 # a key nobody classified yet
+PW = "p@ss:w/rd FAKE+9=%"                          # needs URL-encoding; has a space
+APP = "abcd efgh ijkl mnop"                        # app-password shape (spaces) — a1 F5 missed it
+CAP = "capFAKE0123456789abcdef"                    # a capability URL's key=
+PGPW = "pg:FAKE\\secret77"                         # pgpass escapes ':' and '\'
+SHORT = "abc12"
+ENV = f"""# comment
+ASTRYX_DSN=postgresql://genesis:{__import__('urllib.parse').parse.quote(PW, safe='')}@127.0.0.1:5432/astryx
+GEOLOC_DSN=postgresql://genesis:{__import__('urllib.parse').parse.quote(PW, safe='')}@127.0.0.1:5432/geo
+PLAIN_DSN=postgresql://genesis@localhost:5432/astryx
+OPENAI_API_KEY={TOK}
+BRAND_NEW_KEY={NEW}
+GMAIL_APP_PASSWORD="{APP}"
+AUTOREMOTE_GETLOC_URL=https://example.invalid/sendmessage?key={CAP}&message=getloc
+ASTRYX_ORG=example-org
+ASTRYX_URL=http://203.0.113.9:8845
+TINY_PIN={SHORT}
+"""
+PGPASS = "localhost:5432:*:genesis:" + PGPW.replace("\\", "\\\\").replace(":", "\\:") + "\n"
+ALL_FAKE = (TOK, NEW, PW, APP, CAP, PGPW)
+
+
+def fixture(tmp: Path, env=ENV, pgpass=PGPASS):
+    (tmp / ".env").write_text(env)
+    (tmp / "pgpass").write_text(pgpass)
+    return tmp / ".env", tmp / "pgpass"
+
+
+def leaks(blob: str) -> list[str]:
+    """Which fake secrets (by position) appear in blob, in ANY form secretset would redact."""
+    import urllib.parse as up
+    # the JSON-escaped spelling too: the blob is json.dumps'd, and a backslash in a secret is
+    # doubled there, so matching only the raw spelling would be blind to it (PGPW was, at first)
+    forms = lambda v: {v, up.quote(v, safe=""), up.quote_plus(v), json.dumps(v)[1:-1]}
+    return [f"#{i}" for i, v in enumerate(ALL_FAKE) if any(f in blob for f in forms(v))]
+
+
+def arms_s0(tmp):
+    envf, ppf = fixture(tmp)
+    S = ss.secret_set(envf, ppf)
+    vals = {s.value for s in S}
+    names = {s.name for s in S}
+    check("S0.1 an opaque key is secret", TOK in vals)
+    check("S0.2 POLARITY: a key nobody classified is secret (fail-safe)", NEW in vals)
+    check("S0.3 NOT_SECRET keys are not in the set",
+          "example-org" not in vals and not any("203.0.113.9" in v for v in vals))
+    check("S0.4 a DSN contributes its PASSWORD, decoded, never the host",
+          PW in vals and not any("127.0.0.1" in v for v in vals), f"names={sorted(names)}")
+    check("S0.5 a password-less DSN contributes nothing",
+          not any(n.startswith("PLAIN_DSN") for n in names), f"names={sorted(names)}")
+    check("S0.6 a capability URL's query value is secret", CAP in vals)
+    check("S0.7 a value with spaces is secret (quoted in .env)", APP in vals)
+    check("S0.8 a ~/.pgpass password is secret, escapes decoded", PGPW in vals)
+    check("S0.9 one value under two keys is kept once",
+          sum(1 for s in S if s.value == PW) == 1)
+    check("S0.10 a too-short value is REPORTED, not silently dropped",
+          SHORT not in vals and "TINY_PIN" in ss.unguardable(envf, ppf))
+    pw = next(s for s in S if s.value == PW)
+    check("S0.11 the URL-encoded spelling is a guarded form",
+          __import__("urllib.parse").parse.quote(PW, safe="") in pw.forms)
+
+    nested = {"a": [f"x {TOK} y", {"k": ENV}], f"key-{CAP}": (APP,), "n": 7}
+    red = ss.redact(nested, S)
+    blob = json.dumps(red)
+    check("S0.12 redact walks str/list/tuple/dict KEYS and removes every fake form",
+          not leaks(blob), f"left={leaks(blob)}")
+    check("S0.13 redact leaves a named marker and non-strings intact",
+          "[redacted:OPENAI_API_KEY]" in blob and red["n"] == 7)
+    check("S0.14 scan counts by NAME and never returns a value",
+          ss.scan(f"{TOK} {TOK}", S) == {"OPENAI_API_KEY": 2})
+
+    # longest-first: a secret that CONTAINS another must redact whole, not leave a tail
+    envf2, ppf2 = fixture(tmp, env=f"OUTER_KEY=zz{TOK}zz\nINNER_KEY={TOK}\n", pgpass="")
+    S2 = ss.secret_set(envf2, ppf2)
+    out = ss.redact(f"[zz{TOK}zz]", S2)
+    check("S0.15 a secret containing another redacts whole (longest first)",
+          out == "[[redacted:OUTER_KEY]]", out)
+
+
+class FakeCur:
+    """Answers step.py's reads; records every write's params."""
+
+    def __init__(self):
+        self.writes = []
+        self.connection = self
+
+    def transaction(self):
+        import contextlib
+        return contextlib.nullcontext()
+
+    def execute(self, sql, params=()):
+        self.last = sql
+        if sql.lstrip().upper().startswith(("INSERT", "UPDATE")):
+            self.writes.append((sql, params))
+        return self
+
+    def fetchone(self):
+        if "ended_at FROM turns" in self.last:
+            return (datetime.now(timezone.utc),)        # usage throttle: no network read
+        if "RETURNING id" in self.last:
+            return (4242,)
+        return None
+
+
+def dump_writes(writes, *extra) -> str:
+    """Every written param, UNWRAPPED: str() of psycopg's Jsonb hides its payload, so an arm that
+    stringified params would never look inside raw_payload (it did, in this oracle's first draft)."""
+    def val(p):
+        return getattr(p, "obj", p)
+    return json.dumps([[val(p) for p in (params or ())] for _, params in writes] + list(extra),
+                      default=str)
+
+
+def load_step():
+    spec = importlib.util.spec_from_file_location("step_under_test", REPO / "hooks/step.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def transcript(tmp: Path) -> Path:
+    t = tmp / "t.jsonl"
+    now = "2026-09-30T00:00:00Z"
+    ev = [
+        {"type": "user", "timestamp": now, "message": {"role": "user",
+                                                       "content": f"please use {TOK}"}},
+        {"type": "assistant", "timestamp": now, "message": {"id": "m1", "role": "assistant",
+         "content": [{"type": "tool_use", "id": "u1", "name": "Bash",
+                      "input": {"command": f"psql 'postgresql://genesis:{PW}@h/db' -c {CAP}",
+                                "description": f"query with {APP}"}}],
+         "usage": {"input_tokens": 3, "output_tokens": 5}}},
+        {"type": "user", "timestamp": now, "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "u1", "content": f"{ENV}\n{PGPW}\n{NEW}"}]}},
+        {"type": "assistant", "timestamp": now, "message": {"id": "m2", "role": "assistant",
+         "content": [{"type": "text", "text": f"done; the key was {TOK}"}],
+         "usage": {"input_tokens": 1, "output_tokens": 2}}},
+    ]
+    t.write_text("\n".join(json.dumps(e) for e in ev) + "\n")
+    return t
+
+
+def arms_s1a(tmp):
+    envf, ppf = fixture(tmp)
+    step = load_step()
+    if not hasattr(step, "cleaner"):
+        check("S1a step.py has a secret cleaner", False, "no cleaner(): the writer copies raw")
+    ss.ENV_FILE, ss.PGPASS_FILE = envf, ppf
+    cur = FakeCur()
+    res = step.handle_stop(cur, "abstractor-1", {"transcript_path": str(transcript(tmp)),
+                                                 "session_id": "s"})
+    blob = dump_writes(cur.writes, str(res))
+    turn_rows = [p for sql, p in cur.writes if "INSERT INTO turns" in sql]
+    check("S1a.1 a turn row is still written", len(turn_rows) == 1)
+    payload = getattr(turn_rows[0][14], "obj", None) if turn_rows else None
+    check("S1a.1b the oracle SEES the payload (it is a dict with the transcript's messages)",
+          isinstance(payload, dict) and len(payload.get("messages", [])) == 4,
+          f"payload type={type(payload).__name__}")
+    check("S1a.2 NO fake secret in any write (payload, prompt, tool input, tool_result, text)",
+          not leaks(blob), f"left={leaks(blob)}")
+    check("S1a.3 the returned reply text (response step, auto-deliver) is clean",
+          res and not leaks(str(res[1])) and "[redacted:OPENAI_API_KEY]" in res[1], str(res and res[1]))
+    check("S1a.4 usage stays exact (a cleaned turn still bills)",
+          res and res[2] == 4 and res[3] == 7, str(res and res[2:]))
+
+    # POLARITY: the set can't be derived -> the copies are withheld, never written raw
+    ss.ENV_FILE = tmp / "missing.env"
+    cur = FakeCur()
+    res = step.handle_stop(cur, "abstractor-1", {"transcript_path": str(transcript(tmp)),
+                                                 "session_id": "s"})
+    blob = dump_writes(cur.writes, str(res))
+    check("S1a.5 POLARITY: unreadable .env -> nothing written raw", not leaks(blob),
+          f"left={leaks(blob)}")
+    check("S1a.6 POLARITY: the turn row still lands, marked, and an error step says why",
+          any("INSERT INTO turns" in s for s, _ in cur.writes)
+          and any("redaction unavailable" in str(p) for s, p in cur.writes if "steps" in s),
+          f"writes={[s.split('(')[0].strip() for s, _ in cur.writes]}")
+    ss.ENV_FILE = envf
+
+    # PreToolUse: a description quoting a secret never reaches the public steps row
+    import io
+    import psycopg
+    real_connect, real_stdin = psycopg.connect, sys.stdin
+    cur = FakeCur()
+
+    class Conn:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def cursor(self): return cur
+
+    try:
+        psycopg.connect = lambda *a, **k: Conn()
+        step.DSN_FILE = str(envf)
+        sys.stdin = io.StringIO(json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                                            "tool_input": {"command": "true",
+                                                           "description": f"use {TOK}"}}))
+        import os
+        os.environ["ASTRYX_AGENT"] = "abstractor-1"
+        step.main()
+    finally:
+        psycopg.connect, sys.stdin = real_connect, real_stdin
+    blob = dump_writes(cur.writes)
+    check("S1a.7 PreToolUse: a secret in a description never reaches steps.content",
+          cur.writes and not leaks(blob), f"writes={len(cur.writes)} left={leaks(blob)}")
+
+
+def arm_live():
+    """The REAL holders: the set is non-empty (anti-vacuity) and every NOT_SECRET value is clean."""
+    if not ss.ENV_FILE.exists():
+        print(f"  skip  L (no {ss.ENV_FILE.name} in this tree)")
+        return
+    S = ss.secret_set()
+    check("L.1 the live set is non-empty (a derivation that finds nothing is vacuous)",
+          len(S) > 0, f"n={len(S)}")
+    cfg = [(k, v) for k, v in ss._env_pairs(ss.ENV_FILE) if k in ss.NOT_SECRET]
+    dirty = sorted(k for k, v in cfg if ss.scan(v, S))
+    check("L.2 no NOT_SECRET value carries a secret (the allowlist hides nothing)", not dirty,
+          f"keys={dirty}")
+    print(f"        live: {len(S)} secrets; unguardable (too short): {ss.unguardable() or 'none'}")
+
+
+def main():
+    if ss is None:
+        print(f"\nFAIL: {len(fails)} arm(s) red")
+        return 1
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        saved = (ss.ENV_FILE, ss.PGPASS_FILE)
+        try:
+            arms_s0(tmp)
+            arms_s1a(tmp)
+        finally:
+            ss.ENV_FILE, ss.PGPASS_FILE = saved
+    arm_live()
+    if fails:
+        print(f"\nFAIL: {len(fails)} arm(s) red")
+        return 1
+    print("\nPASS: one derived secret set; the turn writer copies none (plan-5497 S0+S1a)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
