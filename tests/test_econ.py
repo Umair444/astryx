@@ -134,6 +134,12 @@ def main():
                                "DESC LIMIT 1").fetchone()
             check("econ row landed (hermetic table) and carries thermo.phi",
                   row is not None and row[0] is not None)
+            bf = conn.execute(f"SELECT metrics->'built_from' FROM {sch}.econ ORDER BY day DESC "
+                              "LIMIT 1").fetchone()
+            bf = bf[0] if bf else None
+            check("the archived row carries its provenance (built_from: sha + dirty, detection-grade)",
+                  isinstance(bf, dict) and bool(bf.get("sha")) and isinstance(bf.get("dirty"), bool),
+                  str(bf))
         finally:
             conn.execute("SET search_path TO DEFAULT")
             conn.execute(f"DROP SCHEMA IF EXISTS {sch} CASCADE")

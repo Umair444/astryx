@@ -445,7 +445,7 @@ def _v2_tool_gdp(rows, version=V2_VERSION, authorship_ok=True) -> dict:
     placebo oracle (O4) passes. coverage = the demand-qualified share of observed calls."""
     if not rows:
         return {"value": None, "version": version, "coverage": 0,
-                "status": "NOT_EVALUATED: ledger absent (no registry_id calls in window)"}
+                "status": "NOT_EVALUATED: ledger absent (no meta.v-stamped registry_id calls in window)"}
     if not authorship_ok:
         return {"value": None, "version": version, "coverage": 0,
                 "status": "NOT_EVALUATED: authorship unavailable (cannot discount self-use)"}
@@ -579,6 +579,24 @@ def compute(conn, since, until) -> dict:
     }
 
 
+def built_from() -> dict:
+    """PROVENANCE of an archived row (a2, S2 review #21969): the tree that computed it — HEAD sha
+    and whether that tree was dirty. DETECTION-grade, not a gate: v2_view trusts the stamped
+    version, and a worktree or hand-run rollup can stamp any version (09-29: an unreviewed tree
+    wrote a gate-passing v2.1 row). This makes such a row identifiable after the fact. TRIP:
+    any econ row whose sha is not an ancestor of main → promote to a gate."""
+    import subprocess
+    def git(*a):
+        r = subprocess.run(["git", "-C", str(REPO), *a], capture_output=True, text=True, timeout=5)
+        return r.stdout.strip() if r.returncode == 0 else None
+    try:
+        sha, status = git("rev-parse", "HEAD"), git("status", "--porcelain", "--untracked-files=no")
+    except Exception:                                              # noqa: BLE001
+        sha, status = None, None
+    return {"sha": sha, "dirty": None if status is None else bool(status),
+            "grade": "detection: self-reported by the writing tree"}
+
+
 def rollup(conn, day: str | None = None) -> dict:
     """Compute one day's metrics and upsert the econ row. day='YYYY-MM-DD' (default:
     yesterday, so a day is only ever archived COMPLETE)."""
@@ -587,6 +605,7 @@ def rollup(conn, day: str | None = None) -> dict:
     since = f"{day}T00:00:00+00:00"
     until = (datetime.fromisoformat(since) + timedelta(days=1)).isoformat()
     metrics = compute(conn, since, until)
+    metrics["built_from"] = built_from()
     from psycopg.types.json import Jsonb
     conn.execute("INSERT INTO econ (day, metrics) VALUES (%s, %s) "
                  "ON CONFLICT (day) DO UPDATE SET metrics=EXCLUDED.metrics, "
