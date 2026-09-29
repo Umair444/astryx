@@ -368,7 +368,8 @@ async def on_step(ev: dict):
     if time.time() - job["opened"] > JOB_TIMEOUT:
         jobs.pop(agent, None)
         return
-    line = await step_line(pool, int(ev.get("id", 0)), ev.get("kind", ""), agent)
+    line = await step_line(pool, int(ev.get("id", 0)), ev.get("kind", ""), agent=agent,
+                           label=agent)
     if not line:
         return
     job["latest"] = line

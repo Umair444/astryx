@@ -206,7 +206,7 @@ async def on_step(ev: dict):
     job = jobs.get(agent)
     if not job:
         return
-    line = await step_line(pool, ev.get("id", 0), kind)
+    line = await step_line(pool, ev.get("id", 0), kind, agent=agent)
     if not line or line == job.get("sent"):
         return
     job["sent"] = line

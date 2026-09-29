@@ -220,6 +220,11 @@ run "toolreg find ranks the tool a question is about" "$PY" tests/test_toolreg_f
 # spent_tokens (never written: 0 means never measured), sends a budget, or draws a budget bar;
 # a legacy budget_tokens is labelled "budget-era". Scans the TSX with comments stripped.
 run "observatory renders no budget economics" "$PY" tests/test_observatory_no_budget_ui.py
+# steps doorbell owner-match (a4 #22117, defense in depth): a payload {id, agent} resolves only
+# to a step OF THAT AGENT, in both consumers: the REAL channel server against a throwaway DB (a
+# forged payload pushes nothing, with a positive control landed AFTER it), and the bridges'
+# step_line on a real pool, whose agent= is a required keyword every caller passes.
+run "steps doorbell resolves only the named agent's step" "$PY" tests/test_step_doorbell.py
 # the registry door (goal 4227, S4): find + run, and never a new capability. run() executes
 # registered SCRIPTS only, as an argv list (no shell), with a clamped timeout, and never starts
 # an MCP server, because that would walk past its charter grant. Mutants: tests/mutants_tools_door.py.

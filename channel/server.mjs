@@ -506,10 +506,13 @@ async function deliverMessage(id) {
 
 async function maybePushStep(payload) {
   const { id, agent, kind } = JSON.parse(payload)
-  if (agent === AGENT) return
+  if (!agent || agent === AGENT) return
   const sub = subs.find(s => s.target === agent && (s.filter === 'all' || s.filter.split(',').includes(kind)))
   if (!sub) return
-  const r = await pool.query(`SELECT * FROM steps WHERE id=$1`, [id])
+  // The subscription was matched on the payload's AGENT, so the row must BE that agent's: a
+  // payload whose id names another agent's step resolves to nothing, instead of pushing that
+  // step's content under a subscription to someone else (defense in depth, a4 #22117).
+  const r = await pool.query(`SELECT * FROM steps WHERE id=$1 AND agent=$2`, [id, agent])
   const s = r.rows[0]; if (!s) return
   await mcp.notification({
     method: 'notifications/claude/channel',

@@ -358,17 +358,23 @@ async def describe_media(path: Path | str, kind: str = "") -> str:
 
 
 # -------------------------------------------------------------------- progress
-async def step_line(pool, step_id: int, kind: str, agent: str = "") -> str | None:
+async def step_line(pool, step_id: int, kind: str, *, agent: str, label: str = "") -> str | None:
     """The steps doorbell payload is {id, agent, kind} only — fetch the content.
-    Pass agent to label the line (useful on group-chat surfaces)."""
-    if kind not in MARK:
+
+    `agent` is the payload's agent and is REQUIRED: the row must belong to it, so a payload
+    whose id names another agent's step resolves to nothing (defense in depth, a4 #22117).
+    It is deliberately separate from `label`, the optional display prefix (useful on
+    group-chat surfaces), because telegram/discord show no label, and matching on their ""
+    would be matching on nothing. An empty agent never matches."""
+    if kind not in MARK or not agent:
         return None
-    row = await pool.fetchrow("SELECT content FROM steps WHERE id=$1", step_id)
+    row = await pool.fetchrow("SELECT content FROM steps WHERE id=$1 AND agent=$2",
+                              step_id, agent)
     if not row:
         return None
     content = "writing a reply" if kind == "response" else row["content"]
-    label = f"{agent} · " if agent else ""
-    return f"{MARK[kind]} {label}{content[:140]}"
+    prefix = f"{label} · " if label else ""
+    return f"{MARK[kind]} {prefix}{content[:140]}"
 
 
 # -------------------------------------------------------------------- doorbell
