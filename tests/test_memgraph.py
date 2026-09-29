@@ -4,11 +4,10 @@
 Four invariants, in order of how badly their absence would hurt:
 
  1. CONFORMANCE TO THE LINT THE ORG ALREADY TRUSTS. The compiler's page-link set must be
-    EQUAL to link_integrity.py's, edge for edge. A graph that disagrees with the guard
-    watching the same files is worse than no graph: two instruments, one truth, and
-    nothing to say which. This is conformance-to-SPEC, not conformance-to-self — the
-    lint's regex is re-implemented here rather than imported, and a separate arm proves
-    the copy still matches the real estate so it cannot rot into agreement.
+    EQUAL to link_integrity's (drift.py _wiki_links), edge for edge. A graph that disagrees
+    with the guard watching the same files is worse than no graph: two instruments, one
+    truth, and nothing to say which. The lint is imported by path, never copied, so there
+    is no copy to rot into agreement.
 
  2. DETERMINISM. Same inputs must yield byte-identical output, INCLUDING coordinates.
     Regions are declared rather than clustered precisely because Leiden-style community
@@ -23,8 +22,14 @@ Four invariants, in order of how badly their absence would hurt:
  4. NO INVENTED EDGES. No self-edges, no edges to nodes that do not exist, and the
     `[[poll: ...]]` syntax example in tools.md must never become a node.
 
+The postgres arms write to a THROWAWAY database (nucleus/sqlguard/fixture.py), never the
+live kg: a write from here served ask() a trimmed graph mid-run, and a worktree run
+published its own compile to production (2026-09-30: 790 -> 761 nodes, restored). Each
+arm proves the live kg's (node count, max built_at) is unchanged across it.
+
 Run: venv/bin/python tests/test_memgraph.py   (also collected by pytest, and check.sh).
 """
+import contextlib
 import importlib.util
 import json
 import sys
@@ -294,6 +299,27 @@ def test_log_chain_sorts_by_date_not_file_order():
 
 
 # ── the postgres sink ─────────────────────────────────────────────────────────────────
+def _live_kg():
+    """(node count, max built_at) of the LIVE kg, or None when it has no kg schema."""
+    import psycopg
+    with psycopg.connect(mg._dsn()) as c:
+        if c.execute("SELECT to_regclass('kg.node')").fetchone()[0] is None:
+            return None
+        return c.execute("SELECT count(*), max(built_at) FROM kg.node").fetchone()
+
+
+@contextlib.contextmanager
+def _store():
+    """A throwaway database with the kg schema applied (and stamped) by the one fixture
+    applier. Yields its dsn. On exit, proves the live kg was not touched."""
+    from nucleus.sqlguard.fixture import fixture_db, PREFIX
+    before = _live_kg()
+    with fixture_db(extra=(mg.SCHEMA_SQL,)) as fx:
+        assert fx["dbname"].startswith(PREFIX), "the fixture is not a throwaway database"
+        yield fx["dsn"]
+    assert _live_kg() == before, f"the live kg changed under a test: {before} -> {_live_kg()}"
+
+
 def test_round_trip_through_postgres_is_lossless():
     """compile -> write_pg -> read_pg must reproduce the graph EXACTLY. Anything the store
     silently normalises is a second writer of that field: `visibility` defaulted in the
@@ -306,8 +332,9 @@ def test_round_trip_through_postgres_is_lossless():
         globals()["_UNVERIFIED"] = True
         return
     g = mg.compile_graph()
-    mg.write_pg(g)
-    b = mg.read_pg()
+    with _store() as dsn:
+        mg.write_pg(g, dsn, ddl=False)
+        b = mg.read_pg(dsn)
     a_nodes = {n["id"]: n for n in g["nodes"]}
     b_nodes = {n["id"]: n for n in b["nodes"]}
     assert set(a_nodes) == set(b_nodes), "node id sets differ"
@@ -336,16 +363,14 @@ def test_a_rebuild_replaces_rather_than_accumulates():
         globals()["_UNVERIFIED"] = True
         return
     g = mg.compile_graph()
-    mg.write_pg(g)
-    full = len(mg.read_pg()["nodes"])
+    keep = {n["id"] for n in g["nodes"][:10]}
     trimmed = dict(g, nodes=g["nodes"][:10],
-                   edges=[e for e in g["edges"]
-                          if e["src"] in {n["id"] for n in g["nodes"][:10]}
-                          and e["dst"] in {n["id"] for n in g["nodes"][:10]}])
-    mg.write_pg(trimmed)
-    assert len(mg.read_pg()["nodes"]) == 10, "a shrunken graph did not shrink the store"
-    mg.write_pg(g)                                   # restore
-    assert len(mg.read_pg()["nodes"]) == full
+                   edges=[e for e in g["edges"] if e["src"] in keep and e["dst"] in keep])
+    with _store() as dsn:
+        mg.write_pg(g, dsn, ddl=False)
+        assert len(mg.read_pg(dsn)["nodes"]) == len(g["nodes"]) > 10
+        mg.write_pg(trimmed, dsn, ddl=False)
+        assert len(mg.read_pg(dsn)["nodes"]) == 10, "a shrunken graph did not shrink the store"
 
 
 def test_one_build_shares_one_timestamp():
@@ -356,9 +381,11 @@ def test_one_build_shares_one_timestamp():
         globals()["_UNVERIFIED"] = True
         return
     import psycopg
-    mg.write_pg(mg.compile_graph())
-    with psycopg.connect(mg._dsn()) as c:
-        n = c.execute("SELECT count(DISTINCT built_at) FROM kg.node").fetchone()[0]
+    g = mg.compile_graph()
+    with _store() as dsn:
+        mg.write_pg(g, dsn, ddl=False)
+        with psycopg.connect(dsn) as c:
+            n = c.execute("SELECT count(DISTINCT built_at) FROM kg.node").fetchone()[0]
     assert n == 1, f"{n} distinct built_at values in one build — not atomic"
 
 

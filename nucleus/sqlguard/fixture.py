@@ -89,8 +89,12 @@ def _stamp_all(conn, sha: str) -> int:
 
 
 @contextlib.contextmanager
-def fixture_db():
-    """A fresh database, schema.sql applied whole, every relation stamped; dropped WITH (FORCE) in finally."""
+def fixture_db(extra: tuple = ()):
+    """A fresh database, schema.sql applied whole, every relation stamped; dropped WITH (FORCE) in finally.
+
+    `extra` is DDL a module owns OUTSIDE schema.sql (memgraph.SCHEMA_SQL's kg schema). It is applied here,
+    after schema.sql and BEFORE the stamp, so those relations are stamped too and their CREATE runs under
+    this applier rather than in the oracle."""
     name = f"{PREFIX}{run_id()}_{os.getpid()}_{next(_n)}".lower()
     admin = psycopg.connect(live_dsn(), autocommit=True)
     t0 = time.monotonic()
@@ -100,6 +104,8 @@ def fixture_db():
         sha = file_sha()
         with psycopg.connect(dsn, autocommit=True) as c:
             c.execute(SCHEMA.read_text())          # the WHOLE file, the same bytes init.sh applies
+            for ddl in extra:
+                c.execute(ddl)
             n = _stamp_all(c, sha)
         yield {"dbname": name, "dsn": dsn, "url": url(dsn), "file_sha": sha, "relations": n,
                "apply_s": round(time.monotonic() - t0, 3)}

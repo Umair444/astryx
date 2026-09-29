@@ -876,7 +876,7 @@ def _dsn_or_none(dsn: str | None = None) -> str | None:
     return dsn or _dsn()
 
 
-def write_pg(graph: dict, dsn: str | None = None) -> dict:
+def write_pg(graph: dict, dsn: str | None = None, ddl: bool = True) -> dict:
     """Replace the stored graph in ONE transaction. Readers see the old graph until commit
     and the new one after — never a half-built one, which is the property the temp-file
     rename used to provide. Returns {nodes, edges, claims} actually written.
@@ -885,6 +885,10 @@ def write_pg(graph: dict, dsn: str | None = None) -> dict:
     so a node that vanished upstream must vanish here. An upsert would silently accumulate
     everything the graph has ever contained, which is the drift a derived store exists to
     avoid.
+
+    ddl=False skips the CREATE batch, for a store whose kg schema was already applied by
+    its owner: the test fixture applies SCHEMA_SQL through nucleus/sqlguard/fixture.py, so
+    its relations are stamped and no CREATE runs from the oracle.
     """
     import psycopg
     dsn = _dsn_or_none(dsn)
@@ -896,7 +900,8 @@ def write_pg(graph: dict, dsn: str | None = None) -> dict:
 
     with psycopg.connect(dsn) as conn:
         with conn.cursor() as cur:
-            cur.execute(SCHEMA_SQL)
+            if ddl:
+                cur.execute(SCHEMA_SQL)
             # order matters only for the FK; CASCADE would do it, but being explicit keeps
             # the intent readable and the plan obvious.
             cur.execute("DELETE FROM kg.claim")

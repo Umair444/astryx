@@ -259,17 +259,6 @@
     "state": "done"
    }
   },
-  "tests/test_memgraph.py": {
-   "gates": [
-    "recall-graph compiler"
-   ],
-   "listed_since": "2026-09-29",
-   "reason": "B1: not a throwaway fixture: it calls memgraph.write_pg, whose CREATE ... IF NOT EXISTS kg batch runs against the LIVE DB (mg._dsn), so the kg relations are never stamped; migrate write_pg onto fixture_db, which also stops the oracle rewriting live kg",
-   "trip": {
-    "goal": 4243,
-    "state": "done"
-   }
-  },
   "tests/test_nudge.py": {
    "gates": [
     "tool nudge (O5): never blocks, never leaks, recurrence-gated"
@@ -313,10 +302,10 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 268,
+  "debt_rows": 265,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
-  "extractors_listed": 8,
+  "extractors_listed": 7,
   "generated_at": "2026-09-29T15:30:34+00:00",
   "run": "r1790695741x404760",
   "sites_total": 321,
@@ -724,21 +713,6 @@
    "debt": "NOT-SEARCHED-AT-SEED",
    "reason": "seed",
    "tk": "sha256t:a4a3f66c1fb5aa03da8b48c85f480170b4354f000ccbcfc1aeac5a059f103529"
-  },
-  "nucleus/memgraph.py::write_pg\u001fdelete from kg.claim": {
-   "debt": "NOT-SEARCHED-AT-SEED",
-   "reason": "seed",
-   "tk": "sha256t:46713a712fc70b69daf71d73b69374e4c5f9159d9f689331b4d5e5c88f58351e"
-  },
-  "nucleus/memgraph.py::write_pg\u001fdelete from kg.edge": {
-   "debt": "NOT-SEARCHED-AT-SEED",
-   "reason": "seed",
-   "tk": "sha256t:d71c6ad378d3f65a45637284ff98d8808825979618c5ee4ab6a572ffcf354f52"
-  },
-  "nucleus/memgraph.py::write_pg\u001fdelete from kg.node": {
-   "debt": "NOT-SEARCHED-AT-SEED",
-   "reason": "seed",
-   "tk": "sha256t:85fbdbbba924ebf58330e8c833bb6b73487280a6d9f0346224acbd1c12182120"
   },
   "nucleus/people.py::write_pg\u001fdelete from social_edge where org=?": {
    "debt": "UNEXECUTED",
