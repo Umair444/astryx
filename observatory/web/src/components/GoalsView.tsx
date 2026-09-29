@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Badge, Button, Modal, NumberInput, Progress, ScrollArea, Select, TextInput, Textarea, Tooltip } from '@mantine/core'
+import { Badge, Button, Modal, ScrollArea, Select, TextInput, Textarea, Tooltip } from '@mantine/core'
 import { agentColor, apiPost, displayName, fmtAgo, fmtTokens } from '../api'
 import { useStore } from '../store'
 import type { Goal } from '../types'
@@ -11,7 +11,6 @@ function NewGoalButton() {
   const [title, setTitle] = useState('')
   const [assignee, setAssignee] = useState<string | null>(null)
   const [note, setNote] = useState('')
-  const [budget, setBudget] = useState<string | number>('')
   const [busy, setBusy] = useState(false)
 
   const file = async () => {
@@ -22,10 +21,10 @@ function NewGoalButton() {
         title: title.trim(),
         assignee,
         scope_note: note.trim() || null,
-        budget_tokens: typeof budget === 'number' ? budget : null,
+        // no budget_tokens: goal 4227 retired budgets (the API stores 0 when it's absent)
       })
       setOpen(false)
-      setTitle(''); setNote(''); setBudget(''); setAssignee(null)
+      setTitle(''); setNote(''); setAssignee(null)
       refreshGoals()
     } finally {
       setBusy(false)
@@ -64,15 +63,6 @@ function NewGoalButton() {
             value={note}
             onChange={(e) => setNote(e.currentTarget.value)}
           />
-          <NumberInput
-            label="Budget (tokens)"
-            placeholder="0 = unbudgeted"
-            min={0}
-            step={100_000}
-            thousandSeparator=","
-            value={budget}
-            onChange={setBudget}
-          />
           <div className="flex justify-end gap-2 pt-1">
             <Button variant="subtle" color="gray" onClick={() => setOpen(false)}>
               cancel
@@ -101,9 +91,10 @@ const COLS: { key: string; label: string; color: string }[] = [
 ]
 
 function GoalCard({ g }: { g: Goal }) {
-  const budget = g.budget_tokens ?? 0
-  const pct = budget > 0 ? Math.min(100, (g.spent_tokens / budget) * 100) : 0
-  const over = budget > 0 && g.spent_tokens > budget
+  // Goal 4227: there are no budgets. A legacy goal's budget is shown only as muted HISTORY. No
+  // progress bar: spent_tokens was never written (0 on every row), so a bar would read "unused"
+  // where the truth is "never measured".
+  const budgetEra = g.budget_tokens ?? 0
   return (
     <div className="bg-deck-2 border border-line rounded-lg p-3 hover:border-cyan/40 transition-colors duration-75">
       <div className="text-sm text-ink leading-snug">{g.title}</div>
@@ -125,13 +116,9 @@ function GoalCard({ g }: { g: Goal }) {
         )}
         <span className="ml-auto text-[10px] font-mono text-ink-mute">#{g.id}</span>
       </div>
-      {budget > 0 && (
-        <div className="mt-2">
-          <div className="flex justify-between text-[10px] font-mono text-ink-mute mb-1">
-            <span>{fmtTokens(g.spent_tokens)} spent</span>
-            <span>{fmtTokens(budget)} budget</span>
-          </div>
-          <Progress value={pct} size="xs" color={over ? 'red' : pct > 85 ? 'yellow' : 'cyan'} />
+      {budgetEra > 0 && (
+        <div className="text-[10px] font-mono text-ink-mute/70 mt-2" title="set before goal 4227 retired budgets; history, not a limit">
+          budget-era · {fmtTokens(budgetEra)}
         </div>
       )}
       <div className="text-[10px] text-ink-mute mt-2">
