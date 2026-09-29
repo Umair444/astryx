@@ -407,6 +407,13 @@ def _v2_rec(value, coverage, status) -> dict:
     return {"value": value, "version": V2_VERSION, "coverage": coverage, "status": status}
 
 
+def _v2_counted(rows) -> set:
+    """The (tool, caller, author) triples tool GDP COUNTS: demand-qualified calls whose caller
+    is not the tool's author. One definition, shared by _v2_tool_gdp (the value) and
+    nucleus/wash_detector.py (rings over the same edges), so the two cannot drift apart."""
+    return {(rid, caller, author) for rid, caller, author, dq in rows if dq and caller != author}
+
+
 def _v2_tool_gdp(rows, version=V2_VERSION, authorship_ok=True) -> dict:
     """PURE core of v1-grade tool GDP. rows = (registry_id, caller, author, demand_qualified)
     per tool call. Value = distinct (tool, caller) pairs among demand-qualified calls whose
@@ -420,7 +427,7 @@ def _v2_tool_gdp(rows, version=V2_VERSION, authorship_ok=True) -> dict:
         return {"value": None, "version": version, "coverage": 0,
                 "status": "NOT_EVALUATED: authorship unavailable (cannot discount self-use)"}
     qualified = [r for r in rows if r[3]]
-    pairs = {(rid, caller) for rid, caller, author, _ in qualified if caller != author}
+    pairs = {(rid, caller) for rid, caller, _ in _v2_counted(rows)}
     # an unresolved author (None, or toolreg's literal 'unknown' — every pre-ledger file) can't
     # be self-discounted: those calls still COUNT (dropping them would under-state real use),
     # but the number is then PARTIAL and coverage is capped by the author-resolved share, so it

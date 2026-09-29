@@ -137,18 +137,19 @@ run "dep manifest covers all imports"  "$PY" nucleus/deps.py coverage
 run "no committed static triggers import" "$PY" tests/test_no_committed_triggers_import.py
 # economy heat-definition drift (goal 3408, enforcement half): no live surface may compute
 # heat Q as flux−budget (Φ−W). The live gate scans the tree; the oracle proves it RED.
+# MIGRATED, not retired, in goal 4227 S1b: the budget columns are deprecated read-only with NO
+# DROP and v1's frozen W stays in the econ rows, so a budget stays mixable into heat for as long
+# as the org exists. S1b closed a2's launder (#21341): stores into local dicts are traced.
 run "economy heat-definition (legend)" "$PY" nucleus/legend_guard.py
 run "legend guard invariants"          "$PY" tests/test_legend_guard.py
-# attribution conservation (goal 3408, guard-first): credited value never exceeds shipped
-# budgets and rides the ONE boundary join (turns.goal_id→shipped) — the invariant the
-# pay-the-author wiring is built against. Live gate SKIPs(77) without the DB; oracle proves RED.
-run "attribution conservation (boundary)" "$PY" nucleus/attribution_guard.py
-run "attribution guard invariants"        "$PY" tests/test_attribution_guard.py
-# pay-the-author (goal 3408 P1): credit W to the DECLARED tool author, resharing the shipped
-# budget under the same boundary ceiling as value_flow (conservation, d62c858); unknown author
-# parks to house; wash = self-dealt-author-credit DETECTION. Live gate + RED-first oracle.
-run "pay-the-author conservation"         "$PY" nucleus/pay_the_author.py
-run "pay-the-author + wash invariants"    "$PY" tests/test_pay_the_author.py
+# RETIRED in goal 4227 S1b (owner law 2026-09-29: no budgets): attribution_guard (credited value
+# never exceeds shipped BUDGETS) and pay_the_author (resharing the shipped BUDGET to tool
+# authors) conserved a quantity that no longer exists; their four lines and modules are removed,
+# not left passing vacuously. The wash detector MIGRATES: v2 tool GDP already discounts
+# self-use, so it now finds RINGS (A→B→…→A tool use, as strongly connected components over the
+# GDP-counted edges) and reports their share of GDP — detection, never an actuator.
+run "wash detector: v2 rings (live, report-only)" "$PY" nucleus/wash_detector.py
+run "wash detector invariants"                    "$PY" tests/test_wash_detector.py
 # economy-integrity (goal 3499): funded_by ATTRIBUTION, not prevention. The migration is
 # idempotent, the legacy watermark separates pre-feature NULL from new-unfunded, the
 # goals_done_stamp trigger NAMES each W-mint's funder WITHOUT breaking done_at (W-birth) and
