@@ -254,10 +254,9 @@ def hold(conn, t: dict, w: dict):
         (t["agent"], t["name"], w["from_agent"], w.get("from_org") or "local", w["to_agent"],
          w.get("to_org") or "local", w.get("thread"), w.get("intent") or "trigger", w["body"],
          bool(w.get("supersede"))))
-    ids = [r[0] for r in conn.execute(
-        f"SELECT id FROM held_wakes WHERE {_KEY} AND NOT elided ORDER BY id", key).fetchall()]
-    if len(ids) > HOLD_K:
-        conn.execute("UPDATE held_wakes SET elided = true WHERE id = ANY(%s)", (ids[:-HOLD_K],))
+    conn.execute(                              # past HOLD_K, the oldest become elided (0 rows usually)
+        f"UPDATE held_wakes SET elided = true WHERE id IN (SELECT id FROM held_wakes WHERE {_KEY} "
+        "AND NOT elided ORDER BY id DESC OFFSET %s)", (*key, HOLD_K))
 
 
 def _held_for(raised_at, now) -> str:
@@ -293,14 +292,14 @@ def release(conn):
                             "body": f"[{n} earlier held wakes elided · first held "
                                     f"{first.astimezone().isoformat(timespec='seconds')} · read them: "
                                     f"SELECT body FROM held_wakes WHERE {where}]"})
-                conn.execute(f"UPDATE held_wakes SET released_at = now() WHERE {_KEY} "
-                             "AND elided AND released_at IS NULL", key)
+            conn.execute(f"UPDATE held_wakes SET released_at = now() WHERE {_KEY} "
+                         "AND elided AND released_at IS NULL", key)
             for (hid, fa, fo, ta, to_org, th, it, body, raised) in rows:
                 stamp = (f"[held wake · raised {raised.astimezone().isoformat(timespec='seconds')} · "
                          f"held {_held_for(raised, now)} under 5h ≥{PRESSURE_PCT}% quota pressure]\n")
                 emit(conn, {"from_agent": fa, "from_org": fo, "to_agent": ta, "to_org": to_org,
                             "thread": th, "intent": it, "body": stamp + body}, held_from=raised)
-                conn.execute("DELETE FROM held_wakes WHERE id=%s", (hid,))
+            conn.execute("DELETE FROM held_wakes WHERE id = ANY(%s)", ([r[0] for r in rows],))
         conn.execute("DELETE FROM held_wakes WHERE elided AND released_at < now() - interval '7 days'")
 
 

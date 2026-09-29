@@ -35,6 +35,12 @@ Each arm can go red alone:
       the out-of-band owner alarm fires exactly when quota pressure latches the fleet
   A19 durable=True: a last-resort wake survives a LATER crash of its check; a non-durable wake queued
       by the same evaluation does not (the reviewed default: a crash delivers none)
+  A20 D2: tool_ship_watch's own org-news read (the real _news, via the real Ctx) sees a HELD receipt,
+      so a held tick can't read as "NOT CONVERGING" (NOT SEARCHED without triggers/)
+  A21 released elided rows are pruned after 7 days; unreleased ones are not
+  A22 an elided set with NO newer held rows still releases its one marker (and deletes nothing else)
+  A23 a trigger deleted while it was being evaluated: its state writes touch 0 rows, the tick doesn't
+      crash, and its wake is still delivered once
   A18 residents() is derived from the agents/ tree: it holds seed, not owner (NOT SEARCHED without it)
 
 Run: venv/bin/python tests/test_wake_chokepoint.py
@@ -206,6 +212,11 @@ def main():
         checks = str(Path(td) / "checks.py")
         Path(checks).write_text(CHECKS)
         conn = psycopg.connect(fx["dsn"], autocommit=True)
+        import runpy
+        from nucleus.pulse_run import Ctx
+        tsw = REPO / "triggers" / "seed" / "tool_ship_watch.py"
+        news_fn = runpy.run_path(str(tsw))["_news"] if tsw.exists() else None
+        empty_news = news_fn(Ctx({})) if news_fn else None     # before any org-news exists
 
         # A1/A2/A3 — hold, dedup, release
         set_gauge(conn, 90)
@@ -355,6 +366,47 @@ def main():
         check("A14 released with the pulse's own header",
               len(m) == 1 and m[0][0] == "pulse" and m[0][2] == "seed" and "[trigger fourteen] condition X" in m[0][6],
               repr(m))
+        # A20 — the emitted-read sees held wakes
+        if news_fn:
+            check("A20 D2: the org-news read is empty on an empty wire", empty_news == "", repr(empty_news))
+            conn.execute("INSERT INTO held_wakes (agent, trigger, from_agent, to_agent, thread, intent, body) "
+                         "VALUES ('seed','tool_ship_watch','seed','steward','org-news','milestone',"
+                         "'held receipt zq-4227')")
+            news = news_fn(Ctx({}))
+            check("A20 D2: tool_ship_watch._news sees a held org-news receipt", "held receipt zq-4227" in news)
+        else:
+            print("  NOT SEARCHED  A20 — no triggers/ tree here (gitignored); runs on the org host")
+
+        # A21 — the 7-day prune
+        conn.execute("DELETE FROM held_wakes")
+        conn.execute("INSERT INTO held_wakes (agent, trigger, from_agent, to_agent, body, elided, released_at) "
+                     "VALUES ('seed','p','seed','steward','old', true, now() - interval '8 days'), "
+                     "('seed','p','seed','steward','recent', true, now() - interval '1 day')")
+        set_gauge(conn, 50)
+        pulse.release(conn)
+        left = [r[0] for r in conn.execute("SELECT body FROM held_wakes ORDER BY id").fetchall()]
+        check("A21 prune: the 8-day-old released elided row is gone, the 1-day-old one stays",
+              left == ["recent"], repr(left))
+        # A22 — an orphaned elided set still announces itself
+        conn.execute("DELETE FROM held_wakes")
+        conn.execute("INSERT INTO held_wakes (agent, trigger, from_agent, to_agent, body, elided) "
+                     "VALUES ('seed','orphan','seed','steward','lost-ish', true)")
+        pulse.release(conn)
+        mk = msgs(conn, "[1 earlier held wakes elided%")
+        check("A22 an elided set with no newer rows releases exactly one marker",
+              len(mk) == 1 and mk[0][2] == "steward", repr(mk))
+        check("A22 the elided row stays readable, marked released",
+              conn.execute("SELECT count(*) FROM held_wakes WHERE body='lost-ish' AND elided "
+                           "AND released_at IS NOT NULL").fetchone()[0] == 1)
+
+        # A23 — a trigger that vanishes mid-evaluation
+        t23 = make_trigger(conn, "twentythree", "counted", checks)
+        stale = fresh(conn, t23)
+        conn.execute("DELETE FROM triggers WHERE id=%s", (t23["id"],))
+        before = len(msgs(conn, "%counted 1%"))
+        pulse.process(conn, [stale], datetime.now().astimezone())
+        check("A23 vanished trigger: no crash, its wake delivered once",
+              len(msgs(conn, "%counted 1%")) == before + 1)
         conn.close()
     return finish()
 

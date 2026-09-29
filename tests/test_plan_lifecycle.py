@@ -128,6 +128,13 @@ class TxCtx:
     def __init__(self, conn):
         self.state, self._conn = {}, conn
 
+    def say(self, to, body, **kw):
+        """goal 4227 S1c: the check SAYS its wakes; here they go through the pulse's own writer (emit)
+        inside this rolled-back transaction, so the arms see exactly what the chokepoint delivers."""
+        sys.path.insert(0, str(REPO))
+        from nucleus.pulse import emit
+        emit(self._conn, dict(kw, to_agent=to, body=body))
+
     def sql(self, query, params=()):
         with self._conn.cursor() as cur:
             cur.execute(query, params)

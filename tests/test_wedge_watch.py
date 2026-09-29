@@ -271,8 +271,12 @@ print("\nTHE WIRING, not just the predicate — the trigger must actually ROUTE 
 # the pulse posts a returned body to the trigger's OWNING agent (pulse.py:186), so for 42
 # alarms the address was a property of which folder the file sits in.
 class _Ctx:
+    # goal 4227 S1c: the check no longer INSERTs its wakes; it says them (ctx.say) and the pulse
+    # writes them. So the arms assert what the check SAYS — recipient, sender, body.
     def __init__(self, rows):
-        self.rows, self.calls = rows, []
+        self.rows, self.calls, self.said = rows, [], []
+    def say(self, to, body, **kw):
+        self.said.append(dict(kw, to_agent=to, body=body))
     def sql(self, q, params=()):
         self.calls.append((" ".join(q.split()), params))
         return self.rows if "FROM agg" in q else []
@@ -282,18 +286,20 @@ _fn = ww["wedge_watch"]
 _fn.__globals__["_bodies"] = lambda: {"seed", "steward", "forge"}
 _ctx = _Ctx([SEED_WEDGED])
 _ret = _fn(_ctx)
-_inserts = [(q, pr) for q, pr in _ctx.calls if q.startswith("INSERT")]
-_relay = [pr for q, pr in _inserts if pr and pr[0] == "forge"]
+_owner = lambda said: any(w["to_agent"] == "owner" and w.get("from_agent") == "seed" for w in said)  # noqa: E731
+_relay = [(w["to_agent"], w["body"]) for w in _ctx.said if w["to_agent"] == "forge"]
 
 check("the out-of-band floor still fires when seed is wedged",
-      any("'owner','local'" in q for q, _ in _inserts), True)
+      _owner(_ctx.said), True)
+check("the owner escalation is DURABLE: it survives a later crash of this check (S1c)",
+      any(w["to_agent"] == "owner" and w.get("durable") for w in _ctx.said), True)
 check("the in-band alarm is INSERTed to a live reader, not returned to wedged seed",
       len(_relay), 1)
 check("and it carries the AGENT WEDGED payload", "AGENT WEDGED" in _relay[0][1], True)
 check("the relay is told it is not newly authorised",
       "YOU ARE THE RELAY, NOT THE ACTOR" in _relay[0][1], True)
 check("no in-band alarm is addressed to the wedged reader",
-      [pr[0] for _, pr in _inserts if pr and pr[0] == "seed"], [])
+      [w["to_agent"] for w in _ctx.said if w["to_agent"] == "seed"], [])
 check("the return value no longer carries the alarm to seed",
       "AGENT WEDGED" in (_ret or ""), False)
 
@@ -305,8 +311,7 @@ _ret2 = _fn(_ctx2)
 check("healthy seed -> the alarm rides the return path exactly as before",
       "AGENT WEDGED" in (_ret2 or ""), True)
 check("healthy seed -> nothing is routed to a relay",
-      [pr for q, pr in _ctx2.calls if q.startswith("INSERT") and pr and pr[0] != "forge"
-       or (q.startswith("INSERT") and "'owner','local'" in q)], [])
+      [w for w in _ctx2.said if w["to_agent"] != "forge"], [])
 
 # SEED DEAD, WIRED — the widened floor clause's ONLY distinguishing case, and a mutation
 # probe (seed, 08-20) proved every arm above leaves it unobserved: with the
@@ -317,11 +322,10 @@ check("healthy seed -> nothing is routed to a relay",
 _fn.__globals__["_bodies"] = lambda: {"steward", "forge"}
 _ctx3 = _Ctx([dict(STEWARD_WEDGED, agent="forge")])
 _ret3 = _fn(_ctx3)
-_inserts3 = [(q, pr) for q, pr in _ctx3.calls if q.startswith("INSERT")]
 check("seed DEAD (no body, not wedged) -> the out-of-band floor still fires",
-      any("'owner','local'" in q for q, _ in _inserts3), True)
+      _owner(_ctx3.said), True)
 check("seed DEAD -> the in-band alarm is INSERTed to the live relay",
-      [pr[0] for q, pr in _inserts3 if pr and "'owner','local'" not in q], ["steward"])
+      [w["to_agent"] for w in _ctx3.said if w["to_agent"] != "owner"], ["steward"])
 check("seed DEAD -> nothing is returned to the dead reader",
       "AGENT WEDGED" in (_ret3 or ""), False)
 
@@ -370,7 +374,7 @@ _fn.__globals__["_bodies"] = lambda: {"seed", "steward", "forge"}
 _ctx4 = _ProseQuoteCtx([SEED_WEDGED])
 _fn(_ctx4)
 check("a prose quote of the escalation marker does not silence the owner doorbell",
-      any("'owner','local'" in q for q, _ in _ctx4.calls if q.startswith("INSERT")), True)
+      _owner(_ctx4.said), True)
 
 # THE STATUS DISCRIMINATOR (a2 via a4, msg 12345): the escalation INSERT writes
 # 'pending' and only the bridge flips it to 'delivered' — so emission must not stand
