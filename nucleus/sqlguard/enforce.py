@@ -28,7 +28,7 @@ import sys
 import psycopg
 
 from nucleus.sqlguard import judge
-from nucleus.sqlguard.fixture import live_dsn, run_id
+from nucleus.sqlguard.fixture import estate_absent, live_dsn, run_id
 from nucleus.sqlguard.privacy import handle, label, ledger_key, ignored
 
 NS_RUNS, NS_DAYS = 7, 3                    # the per-site NOT SEARCHED clock (declared)
@@ -166,6 +166,11 @@ def enforce(trace_dir, ledger=None, dsn=None, rep=None):
 
 if __name__ == "__main__":
     d = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("ASTRYX_SQLGUARD_DIR", "")
+    why = estate_absent()                       # pushed_tree_check / CI: nothing live to judge against
+    if why:
+        print(f"  NOT SEARCHED: {why}")
+        print("sqlguard enforce: rc=77 · RED 0 · reported 0 · not-searched 1")
+        sys.exit(77)
     led = load_ledger()
     rep = judge.judge(d, stored_covering=(led or {}).get("covering"))
     judge.print_report(rep)

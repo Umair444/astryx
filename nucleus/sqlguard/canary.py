@@ -5,6 +5,7 @@ Its computed bool column takes both values, so the (P) witness is exercised too.
     venv/bin/python -m nucleus.sqlguard.canary     # exits 0 after running the statement
 """
 import importlib.util
+import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -15,6 +16,11 @@ def canary(ctx, floor):
 
 
 if __name__ == "__main__":
+    # A committed-only tree (pushed_tree_check, CI) has no .env, and pulse_run reads it at IMPORT. That's the
+    # estate being absent, not the canary failing, so it's 77 with the reason named. pulse_run stays strict.
+    if not (REPO / ".env").is_file():
+        print("sqlguard canary: NOT SEARCHED: .env absent (a committed-only tree has no live DSN), rc=77")
+        sys.exit(77)
     spec = importlib.util.spec_from_file_location("pulse_run_canary", REPO / "nucleus" / "pulse_run.py")
     pr = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(pr)

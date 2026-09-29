@@ -672,6 +672,27 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
         rc_e == 0 and r4 is not None and _rung(r4["sites"], "canary", "nucleus/sqlguard/canary.py") == "RESPONSIVE",
         f"rc={rc_e} {err if r4 is None else _rung(r4['sites'], 'canary', 'nucleus/sqlguard/canary.py')}")
 
+    # estate-absent: a committed-only tree (no .env, no triggers/), the shape pushed_tree_check and CI run.
+    # Built from THIS package, so --against and --mutants reach it. Both gates must say 77 and name why.
+    import shutil
+    bare = tmp / "bare"
+    shutil.copytree(tmp / "nucleus", bare / "nucleus", ignore=shutil.ignore_patterns("__pycache__"))
+    shutil.copy2(REPO / "nucleus" / "sqlguard" / "ledger.json", bare / "nucleus" / "sqlguard" / "ledger.json")
+    (bare / "t").mkdir()
+    benv = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": os.environ.get("HOME", "/tmp")}
+    for mod, extra in (("canary", []), ("enforce", [str(bare / "t")])):
+        p = subprocess.run([sys.executable, "-m", f"nucleus.sqlguard.{mod}", *extra], cwd=bare, env=benv,
+                           capture_output=True, text=True)
+        arm(f"estate-absent: {mod} exits 77 and names .env, never a crash",
+            p.returncode == 77 and ".env" in p.stdout and "Traceback" not in p.stderr,
+            f"rc={p.returncode} {(p.stdout + p.stderr).strip().splitlines()[-1:]}")
+    # positive control: the same bare tree WITH .env runs the canary for real (the gate keys on absence only)
+    (bare / ".env").symlink_to((REPO / ".env").resolve())
+    p = subprocess.run([sys.executable, "-m", "nucleus.sqlguard.canary"], cwd=bare, env=benv,
+                       capture_output=True, text=True)
+    arm("estate-absent control: the same tree with .env runs the canary (rc 0)", p.returncode == 0,
+        f"rc={p.returncode} {p.stderr.strip().splitlines()[-1:]}")
+
     # enforce + ledger, on synthetic reports (state in a fixture DB, never the live table)
     t3 = tmp / "enf"
     t3.mkdir()
@@ -738,6 +759,8 @@ MUTANTS = [
     ("enforce.py", "if not canary or any(", "if False and any(", "canary absent"),
     ("enforce.py", "if runs > NS_RUNS and age.days >= NS_DAYS:", "if True:", "R-CLOCK not before"),
     ("ledger.py", 'if lk in doc["rows"]:', "if False:", "admit refuses"),
+    ("canary.py", 'if not (REPO / ".env").is_file():', "if False:", "estate-absent: canary"),
+    ("enforce.py", "why = estate_absent()", "why = None", "estate-absent: enforce"),
 ]
 
 

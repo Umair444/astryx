@@ -37,6 +37,16 @@ _n = itertools.count()
 _side = {}                                   # dbname -> connection (stamp checks, never the caller's)
 
 
+def estate_absent() -> str | None:
+    """Why live_dsn() can't answer on this tree, or None. Absence only: an unreadable .env still raises (loud)."""
+    env = REPO / ".env"
+    if not env.is_file():
+        return ".env absent (a committed-only tree has no live DSN)"
+    if not any(l.startswith("ASTRYX_DSN=") for l in env.read_text().splitlines()):
+        return ".env has no ASTRYX_DSN line"
+    return None
+
+
 def live_dsn() -> str:
     return next(l.split("=", 1)[1].strip() for l in (REPO / ".env").read_text().splitlines()
                 if l.startswith("ASTRYX_DSN="))
