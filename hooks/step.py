@@ -20,6 +20,13 @@ call). Every one also carries "v", the version of the call semantics that produc
 the command, the arguments and the result text are read to resolve the id and then dropped
 (I5). A toolreg failure writes the step WITHOUT meta; it never costs the row.
 
+SECRETS (plan-5497 S1a): this is the writer of turns.raw_payload, the one copy of every transcript
+we OWN, and every pg_dump inherits it. So every declared secret (nucleus/secretset.py, derived from
+.env and ~/.pgpass at write time) is replaced by "[redacted:<name>]" BEFORE any row is written:
+the payload, the input prompt, the reply text and a step's detail. If the set can't be derived,
+the transcript copies are WITHHELD (a marker in their place) and an error step says so. A writer's
+unknown is "don't copy", never "copy raw".
+
 Agent from ASTRYX_AGENT env. The transcript is the hook's own input, not a side-channel:
 nothing else reads it — every consumer reads the tables.
 """
@@ -73,6 +80,28 @@ def wall_label(cmd) -> str:
         return command_label(cmd) if isinstance(cmd, str) else "(command)"
     except Exception:
         return "(command)"
+
+
+WITHHELD = "[withheld: secret redaction unavailable]"
+
+
+def cleaner():
+    """(clean(obj), ok). clean redacts every declared secret; when the set can't be derived it
+    replaces every string with WITHHELD, so nothing unredacted is ever written."""
+    try:
+        from nucleus.secretset import redact, secret_set
+        secrets = secret_set()
+        return (lambda o: redact(o, secrets)), True
+    except Exception:
+        def withhold(o):
+            if isinstance(o, str):
+                return WITHHELD if o else o
+            if isinstance(o, dict):
+                return {k: withhold(v) for k, v in o.items()}
+            if isinstance(o, (list, tuple)):
+                return type(o)(withhold(x) for x in o)
+            return o
+        return withhold, False
 
 
 def dsn() -> str:
@@ -242,6 +271,16 @@ def handle_stop(cur, agent, h):
     except Exception:
         pass
 
+    # SECRETS: nothing below is written before it's cleaned (plan-5497 S1a). The usage block is
+    # numbers only and stays exact, so a withheld turn still bills.
+    clean, clean_ok = cleaner()
+    payload["messages"] = clean(payload["messages"])
+    input_prompt, last_text = clean(input_prompt), clean(last_text)
+    if not clean_ok:
+        payload["redaction"] = "unavailable"
+        cur.execute("INSERT INTO steps (agent, kind, content) VALUES (%s,'error',%s)",
+                    (agent, "turn transcript withheld: secret redaction unavailable (plan-5497)"))
+
     from psycopg.types.json import Jsonb
     usnap = usage_snapshot(cur)          # throttled /api/oauth/usage; None most turns
     # ECONOMY ATTRIBUTION: which goal did this turn serve? Derived from the opening
@@ -353,6 +392,7 @@ def main():
                 or ti.get("to") or ti.get("target") or ""
             if not detail and tool == "Bash":
                 detail = wall_label(ti.get("command"))
+            detail = cleaner()[0](detail)      # a description can quote a secret too
             cur.execute("INSERT INTO steps (agent, kind, content, meta) VALUES (%s,'tool',%s,%s)",
                         (agent, f"{tool}: {brief(detail)}", ledger_meta(tool, ti)))
 
