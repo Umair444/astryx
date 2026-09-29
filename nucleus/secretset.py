@@ -12,6 +12,8 @@ password and its query values are (a DSN's host and database are config, a capab
   secret_set()  -> [Secret(name, value, forms)]   .env ∪ ~/.pgpass passwords, raw + URL-encoded
   redact(obj)   -> obj with every form replaced by "[redacted:<name>]", walking str/list/dict
   scan(text)    -> {name: count}, never a value
+  holders()     -> the declared holder manifest (nucleus/secret_holders.json)
+  undeclared()  -> secret-bearing files under the manifest's scan_roots that it does not list
 
 A value shorter than MIN_LEN is not matched (a 4-char "secret" would redact ordinary words). It
 is REPORTED by unguardable(), not silently dropped. Nothing here ever prints a value.
@@ -168,4 +170,40 @@ def scan(text: str, secrets=None) -> dict[str, int]:
         n = sum(text.count(f) for f in s.forms)
         if n:
             out[s.name] = n
+    return out
+
+
+HOLDERS_FILE = Path(__file__).resolve().parent / "secret_holders.json"
+
+
+def holders(path=None) -> dict:
+    return json.loads(Path(path or HOLDERS_FILE).read_text())
+
+
+def _expand(p: str, root: Path = REPO) -> list[Path]:
+    import glob
+    p = os.path.expanduser(p)
+    p = p if os.path.isabs(p) else str(root / p)
+    return [Path(x) for x in sorted(glob.glob(p, recursive=True))]
+
+
+def undeclared(secrets=None, manifest=None, root: Path = REPO) -> dict[str, list[str]]:
+    """{file: [secret names]} for every file under scan_roots that holds a secret but is not a
+    declared holder. Names only. This is the independent reading the manifest is checked against:
+    the manifest is what we SAY; this is what the disk HOLDS."""
+    secrets = secret_set() if secrets is None else secrets
+    m = manifest or holders()
+    declared = {str(x) for h in m["holders"] + m.get("expiring", [])
+                for x in _expand(h["path"], root)}
+    out = {}
+    for pattern in m["scan_roots"]:
+        for f in _expand(pattern, root):
+            if not f.is_file() or str(f) in declared:
+                continue
+            try:
+                hits = scan(f.read_text(errors="replace"), secrets)
+            except OSError:
+                continue
+            if hits:
+                out[str(f)] = sorted(hits)
     return out

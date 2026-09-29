@@ -246,6 +246,30 @@ def arms_s1a(tmp):
           cur.writes and not leaks(blob), f"writes={len(cur.writes)} left={leaks(blob)}")
 
 
+def arms_manifest(tmp):
+    """L.4's instrument on a fixture estate: it must SEE an undeclared holder, and stop seeing it
+    once declared (else an empty result would be vacuous)."""
+    envf, ppf = fixture(tmp)
+    S = ss.secret_set(envf, ppf)
+    (tmp / "svc").mkdir(exist_ok=True)
+    (tmp / "svc" / "a.env").write_text(f"X={TOK}\n")
+    (tmp / "svc" / "clean.env").write_text("X=nothing-here\n")
+    m = {"scan_roots": ["svc/*.env"], "holders": [], "expiring": []}
+    u = ss.undeclared(S, m, root=tmp)
+    check("M.1 an undeclared secret-bearing file is FOUND (names only)",
+          list(u.values()) == [["OPENAI_API_KEY"]], str(u))
+    m["holders"].append({"path": "svc/a.env", "fate": "keep"})
+    check("M.2 once declared, it is not reported; a clean file never is",
+          ss.undeclared(S, m, root=tmp) == {})
+    m["holders"] = []
+    m["expiring"].append({"path": "svc/a.env", "fate": "expire", "expires": "2026-10-07"})
+    check("M.3 an EXPIRING holder counts as declared until it is deleted (BC-2)",
+          ss.undeclared(S, m, root=tmp) == {})
+    live = ss.holders()
+    check("M.4 the live manifest parses and every entry names a fate",
+          all(h.get("fate") in ("keep", "retire", "expire") for h in live["holders"] + live["expiring"]))
+
+
 def arm_live():
     """The REAL holders: the set is non-empty (anti-vacuity) and every NOT_SECRET value is clean."""
     if not ss.ENV_FILE.exists():
@@ -275,6 +299,9 @@ def arm_live():
                 hits[rel] = sorted(r)
     check("L.3 no live secret appears in any tracked file (leak or over-broad rule)",
           len(tracked) > 50 and not hits, f"tracked={len(tracked)} hits={hits}")
+    und = ss.undeclared(S)
+    check("L.4 every secret-bearing file under the scan roots is a DECLARED holder",
+          not und, f"undeclared={ {k.replace(str(Path.home()), '~'): v for k, v in und.items()} }")
     print(f"        live: {len(S)} secrets; unguardable (too short): {ss.unguardable() or 'none'}")
 
 
@@ -288,6 +315,7 @@ def main():
         try:
             arms_s0(tmp)
             arms_s1a(tmp)
+            arms_manifest(tmp)
         finally:
             ss.ENV_FILE, ss.PGPASS_FILE = saved
     arm_live()
