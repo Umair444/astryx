@@ -458,6 +458,10 @@ run "econ v2 shadow (4227 S0)"        "$PY" tests/test_econ_v2_shadow.py
 # counts only meta.v-stamped ledger rows, and the [econ] line is the SELF-SCOPED mirror (your own
 # tools' use by others: no rank, no net, no other name; 'not evaluated' when degenerate).
 run "econ v2 mirror + version gate (4227 S2)" "$PY" tests/test_econ_v2_mirror.py
+# econ PROVENANCE (steward): a2's trip (#21969) evaluated, not remembered — every v2.1+ econ row's
+# built_from.sha must be an ancestor of main with dirty=false; missing/unknown/foreign/dirty rows are
+# reported with their own remedies (report-only trigger, gitignored body; SKIPs where it is absent).
+run "econ provenance: v2 rows come from reviewed code" "$PY" tests/test_econ_provenance.py
 # goal 4227 O6 (steward, S1b): the economy's CONSUMER SET is DERIVED from the authorities (econ.py
 # public functions + every key compute()/v2() write, by AST; goals/econ value columns from
 # schema.sql, every column classified) and must EQUAL the typed manifest (effect type + rest
