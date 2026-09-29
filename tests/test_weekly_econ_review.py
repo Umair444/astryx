@@ -23,12 +23,10 @@ THREE LAYERS, different safety profiles (seed's split 19713; LAYER 3 added 2026-
     BY CONSTRUCTION), so a net-negative flag false-positives on exactly the agents doing
     invisible-but-real work. The rungs need attribution v2 before the signal may route toward
     removal. The review may only DISTRIBUTE the number, never verb it.
-  LAYER 3 — active goals with no funder (the pre-close capture-miss set). funded_by IS NULL = an
-    UNCAPTURED miss (fires: budget=0 → pricing worklist, budget>0 → anonymous-mint integrity); a
-    '(deferred:<reason>)' sentinel = a DELIBERATE disposition (self-suppresses, shown for
-    transparency — no silent cap); a real funder = attributed (skipped). a1's funded_by-sentinel
-    design (msg 20252): the sentinel silences the SURFACE but 4061's mint-gate still refuses it
-    (DEFER≠EXEMPT). Would have caught 3909 (shipped unfunded because nothing watched the set).
+  LAYER 3 — RETIRED (goal 4227 S1b, owner law 2026-09-29: no budgets). It flagged active goals with
+    no funder (the pricing worklist that fed the hibernated 4061 gate); with budgets gone "unpriced"
+    is not a defect. ARM 5 now pins the RETIREMENT: no goals query, no L3 function, no L3 line, and
+    no stale "market_decay has teeth" claim in the header.
 
 RED-FIRST load-bearing arms (a plausible WRONG implementation fails each):
   1. a FUNDED constitutive trigger is NOT at-risk — a naive "flag every roi<0" impl fails this.
@@ -55,8 +53,10 @@ RED-FIRST load-bearing arms (a plausible WRONG implementation fails each):
 Path-load the gitignored trigger body + skip-77 when absent (never static-import — fails
 deps.py's clean-clone AST scan). Exit 0 pass · 1 fail · 77 could-not-run.
 """
+import ast
 import importlib.util
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -172,31 +172,25 @@ hit_verb = [v for v in FORBIDDEN if v in low]
 check("ARM4 layer-1 render carries NO removal verb (seed's rung-gating; FYI-only)",
       not hit_verb, f"forbidden verbs present: {hit_verb}")
 
-# ── ARM 5 (load-bearing): LAYER-3 funded_by-SENTINEL design (a1 msg 20252, seed-concurred) ───────
-# NULL funded_by = uncaptured miss (fires); '(deferred:<reason>)' sentinel = deliberate disposition
-# (self-suppresses, shown for transparency); a real funder = attributed (skip). This is the "sentinel-
-# suppresses / silent-NULL-still-fires" invariant. RED-first: an impl that doesn't recognize the
-# deferred sentinel alarms on it (G_DEFER lands in worklist); one keying budget=0 for anon mis-partitions.
-G_ALARM  = {"id": 1, "title": "x", "budget": 0,   "owner": "seed", "funded_by": None, "state": "active"}
-G_ANON   = {"id": 2, "title": "y", "budget": 500, "owner": "seed", "funded_by": None, "state": "active"}
-G_DEFER  = {"id": 3, "title": "z", "budget": 0,   "owner": "seed", "funded_by": "(deferred:price-at-build)", "state": "active"}
-G_FUNDED = {"id": 4, "title": "p", "budget": 0,   "owner": "seed", "funded_by": "seed", "state": "active"}
-G_DONE   = {"id": 5, "title": "q", "budget": 0,   "owner": "seed", "funded_by": None, "state": "done"}
-r3 = m.assess_unfunded_goals([G_ALARM, G_ANON, G_DEFER, G_FUNDED, G_DONE])
-work_ids = {x["id"] for x in r3["price_worklist"]}
-anon_ids = {x["id"] for x in r3["anonymous_mint"]}
-defer_ids = {x["id"] for x in r3["deferred"]}
-check("ARM5 NULL funder ∧ budget=0 IS the alarm (silent-NULL fires — the 3909 case)", 1 in work_ids)
-check("ARM5 NULL funder ∧ budget>0 is the anonymous-mint surface, NOT the pricing worklist",
-      2 in anon_ids and 2 not in work_ids)
-check("ARM5 a '(deferred:...)' sentinel SELF-SUPPRESSES (not alarmed) but IS shown (transparency)",
-      3 not in work_ids and 3 not in anon_ids and 3 in defer_ids, "a1's cry-wolf fix")
-check("ARM5 a real funder is attributed → flagged NOWHERE", 4 not in (work_ids | anon_ids | defer_ids))
-check("ARM5 a non-active (done) goal is NOT alarmed (only live goals can ship)",
-      5 not in (work_ids | anon_ids))
+# ── ARM 5 (goal 4227 S1b): LAYER 3 is RETIRED, explicitly — not left running on dead columns ───────
+# RED on the pre-S1b body: it defines assess_unfunded_goals and issues a goals/funded_by query. The
+# construction half reads the body's executable strings (AST, docstrings excluded), so a comment or
+# history note naming L3 does not trip it; a re-added query does.
+check("ARM5 the LAYER-3 pricing function is gone (assess_unfunded_goals)",
+      not hasattr(m, "assess_unfunded_goals"))
+_tree = ast.parse(BODY.read_text())
+_docs = {id(b[0].value) for b in [getattr(n, "body", None) for n in ast.walk(_tree)]
+         if isinstance(b, list) and b and isinstance(b[0], ast.Expr)
+         and isinstance(b[0].value, ast.Constant)}
+_budget_era = sorted({n.lineno for n in ast.walk(_tree)
+                      if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in _docs
+                      and re.search(r"\bFROM\s+goals\b|funded_by|budget_tokens|LAYER-3|has teeth|PRICED",
+                                    n.value)})
+check("ARM5 no executable string reads goals/funded_by/budget_tokens or renders L3 / 'market PRICED' "
+      "/ 'has teeth' (market_decay no longer retires)", not _budget_era, f"at lines {_budget_era}")
 
 # ── ARM 6 (load-bearing): the ctx.sql SURFACE parses & executes under pulse_run's REAL call ──────
-# Arms 1-5 never touch ctx.sql; the 09-21 crash did. Import pulse_run's OWN Ctx (execute(query,
+# Arms 1-4 never touch ctx.sql; the 09-21 crash did. Import pulse_run's OWN Ctx (execute(query,
 # params=()) — the exact call whose %-parse crashed) rather than re-implement it: a stand-in with a
 # different execute() arity is precisely what let the 09-21 dry-run pass while the pulse crashed.
 # No DB / no .env (clean clone) → SKIP the SQL arm, keep the pure arms green.
@@ -232,13 +226,14 @@ if RunnerCtx is not None:
           out is None or isinstance(out, str), f"returned {type(out).__name__}")
     check("ARM6a reached at least the econ ledger query", len(ctx.queries) >= 1,
           f"queries issued: {len(ctx.queries)}")
-    if out is not None:      # econ had a row ⇒ the entrypoint flowed through ALL three ctx.sql calls
-        check("ARM6a with a populated ledger, all THREE ctx.sql surfaces (econ, triggers, goals) "
-              "were parsed & executed — none silently skipped", len(ctx.queries) == 3,
+    if out is not None:      # econ had a row ⇒ the entrypoint flowed through BOTH ctx.sql calls
+        check("ARM6a with a populated ledger, both ctx.sql surfaces (econ, triggers) were parsed & "
+              "executed — none silently skipped", len(ctx.queries) == 2,
               f"queries issued: {len(ctx.queries)}")
 
     # (b) RED-first discriminator: the SAME runner call RAISES on the literal-% form that crashed
-    # 09-21 and does NOT raise on the safe left(col,N)= form the trigger now uses. Proves the arm can
+    # 09-21 and does NOT raise on the safe left(col,N)= form. (The L3 query that needed it retired
+    # in S1b; the arm stays as EXECUTOR insurance for any future prefix-matching query.) Proves the arm can
     # OBSERVE a %-regression — and that pulse_run.Ctx still passes params (drop params ⇒ no %-parse ⇒
     # this class stops being caught; this control reddens if the runner is ever "optimized" that way).
     ctx2 = RunnerCtx({})
@@ -250,7 +245,7 @@ if RunnerCtx is not None:
             return True
     check("ARM6b MUTANT: a literal-% query (LIKE '(deferred:%') RAISES under the runner's call — "
           "the arm can observe the 09-21 crash class", _raises("SELECT 1 AS x WHERE 'z' LIKE '(deferred:%'"))
-    check("ARM6b CONTROL: the safe left(col,N)='prefix' form does NOT raise (the trigger's fix)",
+    check("ARM6b CONTROL: the safe left(col,N)='prefix' form does NOT raise (the 09-21 fix shape)",
           not _raises("SELECT 1 AS x WHERE left('z',10)='(deferred:'"))
     for _c in (ctx, ctx2):
         try:
@@ -264,6 +259,6 @@ if fails:
     print(f"FAILED ({len(fails)}): " + "; ".join(fails))
     sys.exit(1)
 print("weekly_economic_review: L2 insures the constitutive trigger set with prepared proposals, "
-      "completeness guard closes the manifest, L3 flags active∧unfunded goals on the funded_by key, "
+      "completeness guard closes the manifest, L3 is retired (no budgets), "
       "L1 is attribution-blind FYI with no removal verb")
 sys.exit(0)

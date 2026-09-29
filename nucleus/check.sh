@@ -388,14 +388,15 @@ run "market_decay O3: no retire verb (behaviour + construction)" "$PY" tests/tes
 # rent. RED-first: a %-literal/bad column reddens the run arm; the restored verb (mutant M3) reddens
 # O3. SKIPs where the gitignored body or the DB is absent.
 run "market_decay SQL-surface + O3 end to end (temp schema)" "$PY" tests/test_market_decay_sql_surface.py
-# weekly_economic_review (steward, the banker's ledger reader — a SURFACE above market_decay,
-# never an actuator): LAYER 2 flags uninsured constitutive guards at reconcile-risk (in the
-# banker's manifest ∧ premium=0 ∧ roi<0) WITH prepared premium proposals; a funded one is insured
+# weekly_economic_review (steward, the banker's ledger reader — a SURFACE, never an actuator):
+# LAYER 2 flags uninsured constitutive guards (in the banker's manifest ∧ premium=0 ∧ roi<0: no
+# survival flag, so shed skips them under scarcity) WITH prepared premium proposals; a funded one is insured
 # and not flagged; a new uninsured non-manifest trigger surfaces once (the manifest can't fail
 # open). LAYER 1 distributes per-agent P&L FYI-only, attribution-blind, with NO removal verb
 # (seed's rung-gating, 19713). RED-first: drop the premium gate → funded flagged (ARM1 fails);
-# verb the layer-1 line → ARM4 fails. SKIPs where the gitignored body is absent.
-run "weekly econ review: insures constitutive set, layer-1 stays FYI" "$PY" tests/test_weekly_econ_review.py
+# verb the layer-1 line → ARM4 fails. LAYER 3 (the goal-pricing worklist) is RETIRED in goal 4227 S1b
+# (no budgets); ARM5 pins that retirement. SKIPs where the gitignored body is absent.
+run "weekly econ review: insures constitutive set, layer-1 stays FYI, L3 retired" "$PY" tests/test_weekly_econ_review.py
 # goal 4227 S0 (steward): the econ v2 SHADOW at metrics->'v2' — I1 records, v1 untouched,
 # no budget-era identifier on the v2 path, effort side re-derived, tool GDP degrades honestly.
 run "econ v2 shadow (4227 S0)"        "$PY" tests/test_econ_v2_shadow.py
