@@ -55,6 +55,10 @@ class Ctx:
         # recent timestamp instead.
         self._last_turn = last_turn
         self.writes = []          # every INSERT the guard attempted, as (query, params)
+        self.said = []            # every wake the guard SAID (goal 4227 S1c: ctx.say, not INSERT)
+
+    def say(self, to, body, **kw):
+        self.said.append(("say", (to, body), kw))
 
     def sql(self, q, params=()):
         if q.lstrip().upper().startswith("INSERT"):
@@ -75,7 +79,8 @@ class Ctx:
         return [{"last_ts": self._last}]
 
     def escalations(self):
-        return [(q, pr) for q, pr in self.writes if "INSERT" in q.upper()]
+        return [(q, pr) for q, pr in self.writes if "INSERT" in q.upper()] + \
+            [(lbl, pr) for lbl, pr, _ in self.said]
 
 
 def ago(hours):
@@ -159,6 +164,8 @@ esc = c.escalations()
 check("escalates past the bound", len(esc) == 1)
 check("and addresses a peer who is NOT me",
       len(esc) == 1 and esc[0][1][0] == bs.ESCALATE_TO and bs.ESCALATE_TO != "canopus")
+check("and SAYS it as canopus, in supersede mode (a re-nag report; goal 4227 S1c)",
+      len(c.said) == 1 and c.said[0][2].get("from_agent") == "canopus" and c.said[0][2].get("supersede") is True)
 check("and marks the row so its own dedup can find it",
       len(esc) == 1 and esc[0][1][1].startswith(bs.ESCALATE_MARK))
 

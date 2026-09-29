@@ -80,8 +80,13 @@ class FakeCtx:
         self.goals = dict(goals or {})        # goal-id (str) -> state
         self.market = list(market or [])      # market_decay notice bodies
         self.now = now
-        self.posted = []                      # captured org-news INSERT bodies
+        self.posted = []                      # captured org-news receipt bodies (said, goal 4227 S1c)
+        self.said_kw = []                     # their headers
         self.queries = []
+
+    def say(self, to, body, **kw):
+        self.posted.append(body)
+        self.said_kw.append(dict(kw, to_agent=to))
 
     def sql(self, q, params=None):
         self.queries.append(q)
@@ -94,7 +99,7 @@ class FakeCtx:
         if "FROM MESSAGES" in ql and "MARKET_DECAY" in ql:
             core = (params[0] if params else "").strip("%")
             return [{"ok": 1}] if any(core in m for m in self.market) else []
-        if "FROM MESSAGES" in ql and "ORG-NEWS" in ql:
+        if ("FROM MESSAGES" in ql or "FROM WIRE_EMITTED" in ql) and "ORG-NEWS" in ql:
             return [{"body": b} for b in self.news]
         if "FROM TRIGGERS" in ql:
             return [dict(r) for r in self.triggers]
@@ -229,6 +234,18 @@ check("oneshot full-body: cleanup_hack STAYS in `seen` (still a standing nag)",
       "seed/cleanup_hack" in tctx2.state["seen"], f"seen={tctx2.state['seen']}")
 check("oneshot full-body: the fresh trigger STILL posts (no perpetual mask)",
       any("freshtrig" in b for b in tctx2.posted), f"posted={tctx2.posted!r}")
+
+# ── goal 4227 S1c: receipts are SAID (the pulse writes or holds them), and the org-news read-back asks
+# "was it EMITTED?", so it reads wire_emitted: a receipt held under quota pressure still counts as
+# announced, and a held tick can't read as NOT CONVERGING.
+_c = FakeCtx(triggers=[{"agent": "seed", "name": "brand_new_trigger", "note": "n", "kind": "python"}])
+trigger_ship_watch(_c)
+check("S1c: the org-news read-back reads wire_emitted (held receipts count as announced)",
+      any("FROM wire_emitted" in q and "org-news" in q for q in _c.queries))
+check("S1c: every receipt is SAID as seed → steward on org-news, intent milestone",
+      _c.said_kw and all(k.get("from_agent") == "seed" and k["to_agent"] == "steward"
+                         and k.get("thread") == "org-news" and k.get("intent") == "milestone"
+                         for k in _c.said_kw), repr(_c.said_kw))
 
 # ─────────────────────────────────────────────────────────────────────────────
 if fails:

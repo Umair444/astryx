@@ -538,3 +538,44 @@ CREATE TABLE IF NOT EXISTS sqlguard_seen (
   runs        int NOT NULL DEFAULT 1,
   PRIMARY KEY (kind, key)
 );
+
+-- held_wakes (goal 4227 S1c): wakes a trigger raised while the 5h quota was >=85% and the trigger
+-- carries no survival flag (premium=0). The pulse is the ONLY writer of trigger wakes: checks call
+-- ctx.say(), the pulse delivers after evaluation or holds here, and releases on the first tick the
+-- gauge reads <85% (or is missing: unknown pressure delivers). A held wake is PERSISTED, never
+-- rewound: the check's state commits as usual, so nothing re-detects and nothing floods.
+-- APPEND by default (distinct news is never merged away); a byte-identical body under the same key
+-- only bumps n; supersede=true is opt-in, per insert site, for report-style wakes whose later body
+-- contains the earlier one. Past K per key the oldest are marked elided (kept, readable, pruned 7d
+-- after their marker is released) and released as one visible marker, never silently dropped.
+CREATE TABLE IF NOT EXISTS held_wakes (
+  id          bigserial   PRIMARY KEY,
+  agent       text        NOT NULL,              -- the trigger's owner
+  trigger     text        NOT NULL,              -- the trigger's name
+  from_agent  text        NOT NULL,
+  from_org    text        NOT NULL DEFAULT 'local',
+  to_agent    text        NOT NULL,
+  to_org      text        NOT NULL DEFAULT 'local',
+  thread      text,
+  intent      text        NOT NULL DEFAULT 'trigger',
+  body        text        NOT NULL,
+  supersede   boolean     NOT NULL DEFAULT false,
+  n           integer     NOT NULL DEFAULT 1,    -- times this exact wake was raised while held
+  raised_at   timestamptz NOT NULL DEFAULT now(),
+  elided      boolean     NOT NULL DEFAULT false,
+  released_at timestamptz                        -- set on elided rows when their marker is delivered
+);
+CREATE INDEX IF NOT EXISTS held_wakes_key
+  ON held_wakes (agent, trigger, to_agent, coalesce(thread, ''));
+
+-- wire_emitted (goal 4227 S1c, C1.5): "has this been EMITTED?" — messages plus held wakes, elided
+-- rows included (they were emitted and are retrievable). A check asking whether it or anyone already
+-- announced something reads this; a check asking whether a wake was DELIVERED or ACTED ON reads
+-- messages, so a held nudge never reads as delivered-and-ignored.
+DROP VIEW IF EXISTS wire_emitted;
+CREATE VIEW wire_emitted AS
+  SELECT from_agent, from_org, to_agent, to_org, thread, intent, body, ts, 'messages'::text AS src
+    FROM messages
+  UNION ALL
+  SELECT from_agent, from_org, to_agent, to_org, thread, intent, body, raised_at, 'held'::text
+    FROM held_wakes;

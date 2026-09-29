@@ -13,15 +13,17 @@ stays exactly as today until S1c (the wake chokepoint + R1), so it is PINNED her
 Each arm can ALONE go red:
   1. At 75% a premium=0 trigger listed as an roi<0 loser is KEPT (evaluates).
   2. shed() reads NO econ/trigger_roi row at any pressure (R4: no value number).
-  3. At 90% only premium>0 triggers are kept — today's rung, pinned until S1c.
+  3. At 90% (S1c: R1 + R3) every python/sql check is kept whatever its premium — quota is spent by
+     wakes, which the chokepoint holds, not by evaluation. Includes the 17080 arm (run_check,
+     run_backup, econ_rollup) and the omission arm (a NEW premium=0 check). A premium=0 heartbeat
+     waits (its evaluation IS its wake); a premium>0 heartbeat is kept.
   4. Gauge missing, or the gauge read raising, returns `due` unchanged (fail-open).
   5. Below 70% nothing is shed.
   6. econ_line() under a PRICED fixture (W>0, negative net, rank 7/9) prints no signed
      number and no rank — only the neutral token.
   7. econ_line() on None / unpriced / absent agent is the neutral token too.
-NOT in S1a, deliberately: O1's omission arm (a NEW premium=0 trigger evaluates at >=85%) and
-the 17080 regression arm (run_check/run_backup/econ_rollup evaluate at >=85%). Both need R1,
-which ships with the chokepoint in S1c. Green here would be a claim S1a does not make.
+Arm 3 was pinned to the old >=85% rung until S1c; S1c replaced it (R1/R3). The hold itself is proven
+against a real fixture DB in tests/test_wake_chokepoint.py.
 
 Hermetic: a fake connection, no DB. Run: venv/bin/python tests/test_shed_s1a.py
 """
@@ -75,8 +77,8 @@ class FakeConn:
         return _Result(None)
 
 
-def trig(agent, name, premium=0):
-    return {"agent": agent, "name": name, "premium": premium}
+def trig(agent, name, premium=0, kind="python"):
+    return {"agent": agent, "name": name, "premium": premium, "kind": kind}
 
 
 def names(ts):
@@ -85,7 +87,7 @@ def names(ts):
 
 def main():
     loser = trig("seed", "wedge_watch", 0)
-    paid = trig("seed", "heartbeat", 1)
+    paid = trig("seed", "heartbeat", 1, kind="heartbeat")
     other = trig("steward", "run_check", 0)
     due = [loser, paid, other]
 
@@ -105,10 +107,17 @@ def main():
         check(f"{pct:.0f}%: shed() issues no econ/trigger_roi read",
               not value_reads, f"reads={value_reads}")
 
-    # 3. the >=85% rung, PINNED unchanged until S1c
-    kept = pulse.shed(list(due), FakeConn(90.0))
-    check("90%: only premium>0 kept (today's rung, pinned until S1c)",
-          names(kept) == ["seed/heartbeat"], f"kept={names(kept)}")
+    # 3. S1c: R1 evaluates every python/sql check under pressure; R3 lets a free heartbeat wait
+    free_hb = trig("medic", "heartbeat", 0, kind="heartbeat")
+    runners = [trig("steward", n) for n in ("run_check", "run_backup", "econ_rollup")]
+    newbie = trig("forge", "brand_new_guard", 0)
+    kept = pulse.shed([loser, paid, other, free_hb, newbie, *runners], FakeConn(90.0))
+    check("90%: every python check kept whatever its premium (R1)",
+          all(t in kept for t in (loser, other, newbie)), f"kept={names(kept)}")
+    check("90%: 17080 arm — run_check/run_backup/econ_rollup evaluate",
+          all(t in kept for t in runners), f"kept={names(kept)}")
+    check("90%: a premium=0 heartbeat waits, a premium>0 one is kept (R3)",
+          free_hb not in kept and paid in kept, f"kept={names(kept)}")
 
     # 4. fail-open
     check("gauge missing → due unchanged",

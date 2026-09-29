@@ -313,7 +313,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 283,
+  "debt_rows": 270,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 8,
@@ -710,15 +710,7 @@
    "debt": "UNEXECUTED",
    "reason": "seed"
   },
-  "nucleus/pulse.py::say\u001finsert into messages (from_agent, to_agent, intent, body) values ('pulse', ?, 'trigger', ?)": {
-   "debt": "UNEXECUTED",
-   "reason": "seed"
-  },
   "nucleus/pulse.py::say\u001fselect 1 from messages where to_agent=? and from_agent='pulse' and status='pending' and body like ? limit 1": {
-   "debt": "UNEXECUTED",
-   "reason": "seed"
-  },
-  "nucleus/pulse.py::shed\u001fselect five_hour_pct from current_usage": {
    "debt": "UNEXECUTED",
    "reason": "seed"
   },
@@ -730,15 +722,7 @@
    "debt": "UNEXECUTED",
    "reason": "seed"
   },
-  "nucleus/pulse.py::tick\u001fupdate triggers set last_fired=? where id=?": {
-   "debt": "UNEXECUTED",
-   "reason": "seed"
-  },
   "nucleus/pulse.py::tick\u001fupdate triggers set next_fire=?, last_eval=? where id=?": {
-   "debt": "UNEXECUTED",
-   "reason": "seed"
-  },
-  "nucleus/pulse.py::tick\u001fupdate triggers set state=? where id=?": {
    "debt": "UNEXECUTED",
    "reason": "seed"
   },
@@ -1071,6 +1055,11 @@
    "debt": "UNEXECUTED",
    "reason": "seed"
   },
+  "sha256:021f9e2ed69a44a4fa6d9b2db0b044e8ddc045243609df64fc65bbd9057ef3c4": {
+   "admitted": "2026-09-29",
+   "debt": "UNEXECUTED",
+   "reason": "goal 4227 S1c C1.5: this 'was it EMITTED?' read moved from messages to wire_emitted, so it also sees wakes the pulse is holding. Same site and same debt as the retired messages-read row it replaces (UNEXECUTED: this check's oracle drives it through a fake ctx, no real-DB arm yet). Moved, not grown: S1c shrinks the ledger by 13 rows in the same act."
+  },
   "sha256:04ad6ba79bfe7f048bda3a91c4200be9293f5fa3099a7c5079a3d8776b04f6ad": {
    "debt": "UNEXECUTED",
    "reason": "seed"
@@ -1083,20 +1072,12 @@
    "debt": "UNEXECUTED",
    "reason": "seed"
   },
-  "sha256:133dfb28472d29fbab456ba035d041c7ccd8464701c6b9ec44261284b0ff01a1": {
-   "debt": "UNEXECUTED",
-   "reason": "seed"
-  },
   "sha256:1351af30caa076ccd2122a0eca58b4914febb0bd05452f74926a6cc26bdaa89f": {
    "debt": "UNEXECUTED",
    "reason": "seed"
   },
   "sha256:184834a9fb206de05c3384a20b4fd3284beeaa959282e02a99d2e5954e4dd4f4": {
    "debt": "EXECUTED",
-   "reason": "seed"
-  },
-  "sha256:19909ab8350124c77fd9dabc2333bc1c41aaa12ef336a39e443a28d921180c50": {
-   "debt": "UNEXECUTED",
    "reason": "seed"
   },
   "sha256:1abb1fa38a3a9cf7cf2cc44a551b9ee1ffb901d5766b1de9a4aa34dd182f9733": {
@@ -1135,10 +1116,6 @@
    "debt": "EXECUTED",
    "reason": "seed"
   },
-  "sha256:32b219c5694b8fabbf42deef14220251f4d710bbe85e8b236d1635bdab286c7b": {
-   "debt": "UNEXECUTED",
-   "reason": "seed"
-  },
   "sha256:3458d592829aa9f48d03b8763317f24074d55c95291b7f8b0975ff76b82cd08b": {
    "debt": "UNEXECUTED",
    "reason": "seed"
@@ -1171,10 +1148,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed"
   },
-  "sha256:44f523377cb11d9b0f3cd69cf8e4a26ca5c7a3103eddb2a28e49e87d48554770": {
-   "debt": "UNEXECUTED",
-   "reason": "seed"
-  },
   "sha256:4660c6b876bae12970fe1da7faf5926da0e32025efbc524a2332258cacff915c": {
    "debt": "UNEXECUTED",
    "reason": "seed"
@@ -1192,10 +1165,6 @@
    "reason": "seed"
   },
   "sha256:4fce6d215ab0c703dad50abe10cd6899953f70814d52940adb44bd47d8898f9e": {
-   "debt": "UNEXECUTED",
-   "reason": "seed"
-  },
-  "sha256:51ad695d6989ae0467d83a3f99d7f4070ccc311bd5dd0925f0d4847feb4ee581": {
    "debt": "UNEXECUTED",
    "reason": "seed"
   },
@@ -1219,10 +1188,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed"
   },
-  "sha256:69a1a4e0fc3d874e33706bbb431360e1c766c5cb7850a42452888178807a3dd8": {
-   "debt": "UNEXECUTED",
-   "reason": "seed"
-  },
   "sha256:6a44313ce751b3f3c07ad5b7eaa31263e177746662b2db8f2cf03d9e7e14f8af": {
    "debt": "UNEXECUTED",
    "reason": "seed"
@@ -1231,15 +1196,7 @@
    "debt": "UNEXECUTED",
    "reason": "seed"
   },
-  "sha256:6aa649aa08b3620d0eb3a557875658a3bf93a82342b2bc5f4031de6951014cfd": {
-   "debt": "UNEXECUTED",
-   "reason": "seed"
-  },
   "sha256:6c01b12f043905a271d7d039c2d6294bbbcb1f6f2dcfb473120602d26fe4c539": {
-   "debt": "UNEXECUTED",
-   "reason": "seed"
-  },
-  "sha256:6d7f88e10b3ac450e777cdf48b0490ef929e41ab9473676a2d7f20c23f4d0fdf": {
    "debt": "UNEXECUTED",
    "reason": "seed"
   },
@@ -1275,10 +1232,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed"
   },
-  "sha256:84199478f6f38ff83a7850e9b11f8ca94159fd391d5f472e573085d64cf4c50f": {
-   "debt": "EXECUTED",
-   "reason": "seed"
-  },
   "sha256:8446a88041c7713e71ddd73efabfdf3abfbb866a872a9e0461fb08cc5ea6397c": {
    "debt": "UNEXECUTED",
    "reason": "seed"
@@ -1307,6 +1260,16 @@
    "debt": "UNEXECUTED",
    "reason": "seed"
   },
+  "sha256:914fc98609a7163b22c813a25508ddb4ceebb43b5a662cc2b938df137ab7f60c": {
+   "admitted": "2026-09-29",
+   "debt": "UNEXECUTED",
+   "reason": "goal 4227 S1c C1.5: this 'was it EMITTED?' read moved from messages to wire_emitted, so it also sees wakes the pulse is holding. Same site and same debt as the retired messages-read row it replaces (UNEXECUTED: this check's oracle drives it through a fake ctx, no real-DB arm yet). Moved, not grown: S1c shrinks the ledger by 13 rows in the same act."
+  },
+  "sha256:971c6ceff899203c004706e5c1cf7c63794e26e5d2be1eb4a1fc0f43635e942f": {
+   "admitted": "2026-09-29",
+   "debt": "UNEXECUTED",
+   "reason": "goal 4227 S1c C1.5: this 'was it EMITTED?' read moved from messages to wire_emitted, so it also sees wakes the pulse is holding. Same site and same debt as the retired messages-read row it replaces (UNEXECUTED: this check's oracle drives it through a fake ctx, no real-DB arm yet). Moved, not grown: S1c shrinks the ledger by 13 rows in the same act."
+  },
   "sha256:9735b7b658a405e897cb218acaa4765ee8e1b97ea4b6c10c26dc57133f349df6": {
    "debt": "UNEXECUTED",
    "reason": "seed"
@@ -1320,10 +1283,6 @@
    "reason": "seed"
   },
   "sha256:9bebe0f2defedf8a4e84aceeb9648a3a9532424653e8f3652aa10bc498345694": {
-   "debt": "UNEXECUTED",
-   "reason": "seed"
-  },
-  "sha256:9cdbd1926344cd8e0e91d085d558ed8a0fc1a56e420c49e262ac779d5ca0f899": {
    "debt": "UNEXECUTED",
    "reason": "seed"
   },
@@ -1359,10 +1318,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed"
   },
-  "sha256:bd322094730afa827d80d867c01f9e2de8e1643e817c3a3259bca02d607bff71": {
-   "debt": "UNEXECUTED",
-   "reason": "seed"
-  },
   "sha256:bf995723c828284b797216d1f05ca3aea854cbf6c98d1ef6d7c853434928bded": {
    "debt": "UNEXECUTED",
    "reason": "seed"
@@ -1378,6 +1333,11 @@
   "sha256:c7a34709f58d596edb212044ff362b3897a831af5b707ca6dcdb586f4b739d4e": {
    "debt": "UNEXECUTED",
    "reason": "seed"
+  },
+  "sha256:cdd4cf06a544a4eb3e428e82e61e620ed650e45cfd89b4891c2bfe53b5e32204": {
+   "admitted": "2026-09-29",
+   "debt": "UNEXECUTED",
+   "reason": "goal 4227 S1c C1.5: this 'was it EMITTED?' read moved from messages to wire_emitted, so it also sees wakes the pulse is holding. Same site and same debt as the retired messages-read row it replaces (UNEXECUTED: this check's oracle drives it through a fake ctx, no real-DB arm yet). Moved, not grown: S1c shrinks the ledger by 13 rows in the same act."
   },
   "sha256:d021341b3774d2bf17e08091f3698a1d4557df05b410edb9bc909ccf55151f44": {
    "debt": "UNEXECUTED",
@@ -1403,15 +1363,7 @@
    "debt": "UNEXECUTED",
    "reason": "seed"
   },
-  "sha256:db4e73cff91ce0f69e3c5a3afabc879508f83c273b71644f1a53357b400732b8": {
-   "debt": "EXECUTED",
-   "reason": "seed"
-  },
   "sha256:e15d9f816eff10a84831892fba320c06f5b176ce84f02c03c43140df970dcfcb": {
-   "debt": "UNEXECUTED",
-   "reason": "seed"
-  },
-  "sha256:e28a22d96be9403550ec5e85cd8dcd2d937a5398fff4417c940444597d33e8c3": {
    "debt": "UNEXECUTED",
    "reason": "seed"
   },
