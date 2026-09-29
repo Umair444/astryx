@@ -104,6 +104,16 @@ def cleaner():
         return withhold, False
 
 
+def secret_guard(tool, ti):
+    """(deny_reason | None, error | None). The guard's unknown is ALLOW: it is an actuator on every
+    tool call of every agent, so failing closed would block the fleet at once (a2 #27600)."""
+    try:
+        from nucleus.secret_guard import decide
+        return decide(tool, ti), None
+    except Exception as e:
+        return None, f"secret guard unevaluable ({type(e).__name__}): allowed (plan-5497)"
+
+
 def dsn() -> str:
     return next(l.split("=", 1)[1].strip()
                for l in open(DSN_FILE) if l.startswith("ASTRYX_DSN="))
@@ -377,6 +387,15 @@ def main():
         return
     ev = h.get("hook_event_name")
 
+    # SECRETS (plan-5497 S1b): decided BEFORE any DB work, so a down DB never opens the guard.
+    denied = guard_err = None
+    if ev == "PreToolUse":
+        denied, guard_err = secret_guard(h.get("tool_name", "?"), h.get("tool_input") or {})
+        if denied:
+            print(json.dumps({"hookSpecificOutput": {
+                "hookEventName": "PreToolUse", "permissionDecision": "deny",
+                "permissionDecisionReason": denied}}), flush=True)
+
     import psycopg
     with psycopg.connect(dsn(), connect_timeout=3) as conn:
         cur = conn.cursor()
@@ -393,8 +412,13 @@ def main():
             if not detail and tool == "Bash":
                 detail = wall_label(ti.get("command"))
             detail = cleaner()[0](detail)      # a description can quote a secret too
+            if denied:
+                detail = f"DENIED, secret holder: {brief(detail, 200)}"
             cur.execute("INSERT INTO steps (agent, kind, content, meta) VALUES (%s,'tool',%s,%s)",
                         (agent, f"{tool}: {brief(detail)}", ledger_meta(tool, ti)))
+            if guard_err:
+                cur.execute("INSERT INTO steps (agent, kind, content) VALUES (%s,'error',%s)",
+                            (agent, guard_err))
 
         elif ev == "PostToolUse":
             tool = h.get("tool_name", "?")
