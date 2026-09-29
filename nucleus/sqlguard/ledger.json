@@ -138,6 +138,9 @@
   "nucleus/wake_audit.py::dropped\u001f*": [
    "wake-audit classifier"
   ],
+  "observatory/api/main.py::goal_create\u001finsert into goals (title, owner, state, scope_note) values (?, ?, 'proposed', ?) returning id": [
+   "goal budgets frozen, writers retired (4227 S3)"
+  ],
   "sha256:0f53663b8303f90b9217216341c3b328d389279ed76a0839b9bb429e9d19777f": [
    "weekly econ review: insures constitutive set, layer-1 stays FYI, L3 retired"
   ],
@@ -587,10 +590,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed"
   },
-  "mcp/org/server.py::propose_goal\u001finsert into goals (title, owner, state, budget_tokens, epoch_hours, scope_note) values (?, ?, 'proposed', 0, ?, ?) returning id": {
-   "debt": "UNEXECUTED",
-   "reason": "seed"
-  },
   "nucleus/canopus_inbound.py::main\u001finsert into signals (agent, priority, ref) values (?, ?, ?)": {
    "debt": "UNEXECUTED",
    "reason": "seed"
@@ -951,9 +950,10 @@
    "debt": "UNEXECUTED",
    "reason": "seed"
   },
-  "observatory/api/main.py::goal_create\u001finsert into goals (title, owner, state, scope_note, budget_tokens) values (?, ?, 'proposed', ?, ?) returning id": {
-   "debt": "UNEXECUTED",
-   "reason": "seed"
+  "observatory/api/main.py::goal_create\u001finsert into goals (title, owner, state, scope_note) values (?, ?, 'proposed', ?) returning id": {
+   "admitted": "2026-09-29",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "goal 4227 S3: executed in a stamped fixture by tests/test_goal_budget_frozen.py, but asyncpg exposes no table OID, so the stamp cannot be credited (declared FIXTURE-DDL cap). Shrinks when the observatory moves to psycopg or the cap lifts."
   },
   "observatory/api/main.py::goal_create\u001finsert into messages (from_agent, from_org, to_agent, to_org, thread, intent, body) values ('owner', 'local', ?, 'local', ?, 'task', ?)": {
    "debt": "UNEXECUTED",

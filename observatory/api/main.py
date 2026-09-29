@@ -1300,7 +1300,8 @@ class NewGoal(BaseModel):
     title: str
     assignee: str                      # goals.owner = the agent responsible
     scope_note: str | None = None
-    budget_tokens: int | None = None
+    # no budget field: goals carry no budgets (goal 4227 S3). An old client still sending
+    # budget_tokens is ignored (pydantic drops unknown fields), never an error.
 
 
 @app.post("/api/goals")
@@ -1310,9 +1311,9 @@ async def goal_create(g: NewGoal, request: Request):
     if not g.title.strip() or not g.assignee.strip():
         return Response(status_code=400)
     gid = await pool.fetchval(
-        "INSERT INTO goals (title, owner, state, scope_note, budget_tokens) "
-        "VALUES ($1, $2, 'proposed', $3, $4) RETURNING id",
-        g.title.strip(), g.assignee.strip(), g.scope_note, g.budget_tokens or 0)
+        "INSERT INTO goals (title, owner, state, scope_note) "
+        "VALUES ($1, $2, 'proposed', $3) RETURNING id",
+        g.title.strip(), g.assignee.strip(), g.scope_note)
     # the assignment IS a message — the wire doorbell wakes the assignee
     body = (f"Goal #{gid} assigned to you by the owner: {g.title.strip()}"
             + (f"\n\n{g.scope_note}" if g.scope_note else "")

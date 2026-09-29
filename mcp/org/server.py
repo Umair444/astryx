@@ -61,8 +61,9 @@ def _charter_path(agent: str) -> Path | None:
 @mcp.tool()
 def propose_goal(title: str, scope_note: str = "", epoch_hours: int = 24) -> str:
     """File a goal onto the board as 'proposed' — the state the plan pipeline gates.
-    You become the goal's owner; budget stays 0 until steward prices it. Returns the
-    goal id and the next ritual step. Use this instead of raw INSERT INTO goals — this
+    You become the goal's owner. There are no budgets (goal 4227, owner law 2026-09-29): a
+    goal is work the abstractors approve, not a price. Returns the goal id and the next
+    ritual step. Use this instead of raw INSERT INTO goals — this
     is the tool-first door for filing work."""
     title = (title or "").strip()
     if not title:
@@ -71,8 +72,8 @@ def propose_goal(title: str, scope_note: str = "", epoch_hours: int = 24) -> str
     try:
         with _conn() as conn:
             gid = conn.execute(
-                "INSERT INTO goals (title, owner, state, budget_tokens, epoch_hours, scope_note) "
-                "VALUES (%s, %s, 'proposed', 0, %s, %s) RETURNING id",
+                "INSERT INTO goals (title, owner, state, epoch_hours, scope_note) "
+                "VALUES (%s, %s, 'proposed', %s, %s) RETURNING id",
                 (title, me, int(epoch_hours), scope_note or None)).fetchone()[0]
             conn.commit()
         return (f"goal {gid} filed (proposed, owner={me}). Next: open plan-{gid} and route it to "

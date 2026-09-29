@@ -12,9 +12,9 @@ This proves, on a throwaway postgres (never the org's own):
                 goals) it is 0 (nothing is legacy); it separates legacy-NULL from new-unfunded.
   W-BIRTH     · the →done/shipped transition STILL stamps done_at — the funder-naming must not
                 break the mint (this is seed's live-probe invariant, proven hermetically here).
-  NAMING      · a NEW goal (id > watermark) shipped with no funder is recorded '(unfunded)';
-                a funded new goal keeps its funder; a LEGACY goal (id <= watermark) stays NULL,
-                not revised. All three still stamp done_at.
+  NAMING      · RETIRED at goal 4227 S3 (no budgets): a goal closed with no funder is no longer
+                stamped '(unfunded)' — funded_by is frozen read-only (tests/test_goal_budget_frozen.py).
+                A funder already recorded is v1 history and is kept, unrevised. All still stamp done_at.
   NOT-PREVENTION · the trigger never REJECTS a transition (a superuser is unstoppable here) — a
                 direct done_at write and an unfunded ship both succeed; the goal is NAMED, not
                 blocked. The honesty is in the label, checked by test_funded_by_labeling parity.
@@ -132,10 +132,12 @@ try:
         conn.execute("UPDATE funded_by_watermark SET legacy_max_id = 100")
 
         def mkgoal(gid, funder=None):
-            conn.execute("INSERT INTO goals (id,title,owner,state,budget_tokens) "
-                         "VALUES (%s,%s,'forge','active',1000)", (gid, f"g{gid}"))
-            if funder is not None:
-                conn.execute("UPDATE goals SET funded_by=%s WHERE id=%s", (funder, gid))
+            # v1 HISTORY rows (a budget, maybe a funder): seeded with the S3 freeze off, the way
+            # the live table already holds them; the freeze is back on before anything is tested.
+            conn.execute("ALTER TABLE goals DISABLE TRIGGER goals_budget_frozen")
+            conn.execute("INSERT INTO goals (id,title,owner,state,budget_tokens,funded_by) "
+                         "VALUES (%s,%s,'forge','active',1000,%s)", (gid, f"g{gid}", funder))
+            conn.execute("ALTER TABLE goals ENABLE TRIGGER goals_budget_frozen")
 
         mkgoal(50)                 # LEGACY (<=100), no funder
         mkgoal(150)                # NEW (>100), no funder
@@ -149,8 +151,8 @@ try:
         want("W-BIRTH: new-unfunded goal ship stamps done_at", d150 is not None)
         want("W-BIRTH: funded goal ship stamps done_at", d160 is not None)
         want("NAMING: LEGACY goal (id<=watermark) stays NULL, not revised", f50 is None)
-        want("NAMING: NEW unfunded goal recorded '(unfunded)' at W-birth", f150 == "(unfunded)")
-        want("NAMING: funded goal keeps its attributed funder", f160 == "steward")
+        want("NAMING RETIRED (4227 S3): a NEW unfunded goal is NOT stamped '(unfunded)'", f150 is None)
+        want("NAMING: a funder already recorded (v1 history) is kept", f160 == "steward")
 
         # ── NOT-PREVENTION: the trigger names, it never REJECTS the transition ──
         mkgoal(170)
@@ -161,7 +163,7 @@ try:
             raised = True
         want("NOT-PREVENTION: an unfunded ship is NAMED, never blocked", not raised)
         # a direct done_at write (the second forgeable path) is not prevented either
-        conn.execute("INSERT INTO goals (id,title,owner,state,budget_tokens) VALUES (200,'g200','forge','active',1000)")
+        mkgoal(200)
         blocked = False
         try:
             conn.execute("UPDATE goals SET done_at=now() WHERE id=200")
@@ -175,5 +177,6 @@ print()
 if fails:
     print(f"test_funded_by: {len(fails)} FAIL — {fails}")
     sys.exit(1)
-print("test_funded_by: ALL PASS — funded_by names every W-mint's funder; W-birth intact; nothing prevented")
+print("test_funded_by: ALL PASS — migration idempotent, W-birth intact, funder-naming retired (4227 S3), "
+      "v1 funders kept, no close prevented")
 sys.exit(0)
