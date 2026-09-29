@@ -58,7 +58,7 @@ MUTANTS = {
     # Write. Model that directly: every tool_done row gets the call meta whatever the tool was.
     "M6 tool_done meta written for non-calls":
         ('            if "registry_id" not in m:\n                return None',
-         '            if "registry_id" not in m:\n                m = {"registry_id": "mcp:tools/run"}'),
+         '            if "registry_id" not in m:\n                m = {"registry_id": "mcp:tools/run", "v": 1}'),
 
     # Claim by agent + time only. A killed body's leftover label, or an overlapping session's,
     # gets joined to the wrong turn.

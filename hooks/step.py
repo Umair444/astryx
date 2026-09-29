@@ -15,7 +15,8 @@ messages.turn_id -> the turn that produced the message. One message chains two t
 TOOL LEDGER (goal 4227, S0): a call of a registered tool carries steps.meta — {registry_id} on
 the `tool` row (one per call: COUNT here), {registry_id, result_bytes} on its tool_done/error
 row (the COST), and {edits} on a Write/Edit of a tool's source (authorship evidence, never a
-call). nucleus/toolreg.py is the one authority on ids. Only the id and a byte count are kept:
+call). Every one also carries "v", the version of the call semantics that produced it
+(toolreg.LEDGER_V). nucleus/toolreg.py is the one authority on ids. Only the id and a byte count are kept:
 the command, the arguments and the result text are read to resolve the id and then dropped
 (I5). A toolreg failure writes the step WITHOUT meta; it never costs the row.
 
@@ -54,7 +55,7 @@ def ledger_meta(tool, tool_input, response=None):
         if response is not None:
             if "registry_id" not in m:
                 return None               # tool_done carries only CALL cost, never edits
-            m = {"registry_id": m["registry_id"],
+            m = {"registry_id": m["registry_id"], "v": m["v"],
                  "result_bytes": len(json.dumps(response, default=str).encode())}
         if not m:
             return None

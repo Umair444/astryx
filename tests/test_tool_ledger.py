@@ -165,12 +165,14 @@ try:
     post("Bash", bi, resp)
     (_, k1, _, m1), (_, k2, _, m2) = last(2)
     check("L1 tool row meta == {registry_id, also} for a two-script pipeline",
-          k1 == "tool" and m1 == {"registry_id": "script:nucleus/smoke.sh",
+          k1 == "tool" and m1 == {"registry_id": "script:nucleus/smoke.sh", "v": toolreg.LEDGER_V,
                                   "also": ["script:nucleus/wall.sh"]}, f"{k1} {m1}")
     want_bytes = len(json.dumps(resp, default=str).encode())
     check("L1 tool_done meta == {registry_id, result_bytes} exactly, bytes measured",
-          k2 == "tool_done" and m2 == {"registry_id": "script:nucleus/smoke.sh",
+          k2 == "tool_done" and m2 == {"registry_id": "script:nucleus/smoke.sh", "v": toolreg.LEDGER_V,
                                        "result_bytes": want_bytes}, f"{k2} {m2} want {want_bytes}")
+    check("L1 every ledger row carries the call-semantics version (v)",
+          all(m.get("v") == toolreg.LEDGER_V for *_, m in metas(admin) if m), "")
     all_meta = json.dumps([m for *_, m in metas(admin)])
     check("L2 no secret from command/args/result in ANY meta (I5)", SECRET not in all_meta,
           all_meta[:300])
@@ -178,16 +180,17 @@ try:
     # ── MCP calls ──────────────────────────────────────────────────────────────────────────
     pre("mcp__org__economy", {"agent": SECRET})
     check("L1 registered MCP tool → mcp:<server>/<tool>, args dropped",
-          last()[0][3] == {"registry_id": "mcp:org/economy"}, str(last()[0][3]))
+          last()[0][3] == {"registry_id": "mcp:org/economy", "v": toolreg.LEDGER_V}, str(last()[0][3]))
     pre("mcp__astryx__send", {"to": "bob", "body": SECRET})
     check("L1 core wire tool is registered (mcp:astryx/send)",
-          last()[0][3] == {"registry_id": "mcp:astryx/send"}, str(last()[0][3]))
+          last()[0][3] == {"registry_id": "mcp:astryx/send", "v": toolreg.LEDGER_V}, str(last()[0][3]))
 
     # ── L3: writing a tool's source is authorship, not a call ─────────────────────────────
     wi = {"file_path": f"{root}/skills/zz_ledger_probe/tool.py", "content": SECRET}
     pre("Write", wi)
     check("L3 Write of a tool source → {edits} only (content dropped)",
-          last()[0][3] == {"edits": "script:skills/zz_ledger_probe/tool.py"}, str(last()[0][3]))
+          last()[0][3] == {"edits": "script:skills/zz_ledger_probe/tool.py", "v": toolreg.LEDGER_V},
+          str(last()[0][3]))
     post("Write", wi, {"type": "create", "filePath": wi["file_path"]})
     check("L3 Write's tool_done carries NO meta (never counted as a call)",
           last()[0][3] is None, str(last()[0][3]))
@@ -204,10 +207,11 @@ try:
         check(f"L4 no meta: {why}", last()[0][3] is None, str(last()[0][3]))
     pre("mcp__tools__run", {"id": "script:nucleus/smoke.sh", "args": [SECRET]})
     check("L4 the door records the UNDERLYING id",
-          last()[0][3] == {"registry_id": "script:nucleus/smoke.sh"}, str(last()[0][3]))
+          last()[0][3] == {"registry_id": "script:nucleus/smoke.sh", "v": toolreg.LEDGER_V},
+          str(last()[0][3]))
     pre("mcp__tools__run", {"id": "script:tier/x.py"})
     check("L4 an invalid door id is not trusted (recorded as the door itself)",
-          last()[0][3] == {"registry_id": "mcp:tools/run"}, str(last()[0][3]))
+          last()[0][3] == {"registry_id": "mcp:tools/run", "v": toolreg.LEDGER_V}, str(last()[0][3]))
 
     # ── L9: a named script is not a called script ──────────────────────────────────────────
     for c in ("git add hooks/step.py nucleus/check.sh nucleus/smoke.sh",

@@ -37,6 +37,13 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 REPO_S = str(REPO)
 
+# The version of the CALL SEMANTICS every ledger row is stamped with (meta "v"). Bump it whenever
+# what counts as a call changes, so a reader filters by version rather than by a remembered
+# timestamp (I1). Rows WITHOUT "v" are the ledger's first live minutes, when any token naming a
+# script counted as a call (inflated), and they must not be read as calls.
+#   1  execution positions only; heredoc bodies are data; bash -n is not a run (a8fbd4a)
+LEDGER_V = 1
+
 # Where a reusable tool lives. tests/ are oracles, triggers/ are evaluated by the pulse rather
 # than run by an agent, and tier/ is private. None of those is a tool.
 TOOL_ROOTS = ("nucleus/", "skills/", "mcp/")
@@ -271,6 +278,11 @@ def resolve(tool_name: str, tool_input) -> dict:
                                includes it.
     {}                         anything else (Read, Grep, an unregistered server …)
     Extra ids from a pipeline that runs several scripts are kept in "also"."""
+    m = _resolve(tool_name, tool_input)
+    return {**m, "v": LEDGER_V} if m else {}
+
+
+def _resolve(tool_name: str, tool_input) -> dict:
     ti = tool_input if isinstance(tool_input, dict) else {}
     if tool_name == DOOR_RUN:
         rid = ti.get("id")
