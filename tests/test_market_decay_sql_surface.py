@@ -18,11 +18,14 @@ DB-defined, fires>=10); the arms now assert the candidate is still ENABLED, no m
 and it is REPORTED as rent. Against the pre-S1b body they are RED.
 
 WRITE-SAFETY (the crux of steward's contract), kept although the body no longer writes: the oracle
-must stay safe against a REGRESSION that re-adds a write. So this runs against a HERMETIC TEMP
-SCHEMA built from the real schema.sql DDL (the authority, not a hand copy — a column rename in
-schema.sql that breaks a query is caught too). search_path is the temp schema ONLY, never public:
-goal-3833's temp-schema test dropped the PROD view by leaving public reachable, so every unqualified
-statement here resolves to the throwaway schema and the UPDATE/INSERT can never touch production.
+must stay safe against a REGRESSION that re-adds a write. So this runs in a THROWAWAY DATABASE from the
+org's ONE fixture applier (nucleus/sqlguard/fixture.py, goal 4243): schema.sql applied WHOLE (the
+authority, ALTER-only columns included, so a column rename that breaks a query is caught too), every
+relation stamped, the database dropped in finally. A database, not a temp schema: goal-3833's temp
+schema dropped the PROD view by leaving public reachable, and a schema can't contain pg_notify either
+(#22114: a fixture step would ring live bridges). A write here can't reach production by construction.
+Being stamped, its reads can also climb to RESPONSIVE under sqlguard, which the old hand-extracted
+schema capped at FIXTURE-DDL (this file was a LISTED extractor until this migration).
 
 The seed data drives a candidate all the way to routing so BOTH queries execute (the econ read and
 the per-candidate triggers read). RED-first: reintroduce a %-literal or a bad column into either
@@ -73,27 +76,16 @@ def check(name, ok, detail=""):
             print(f"        {detail}")
 
 
-def _table_ddl(name):
-    """Extract `CREATE TABLE IF NOT EXISTS <name> ( ... );` from schema.sql — the real column DDL, the
-    authority. Stops at the first ');' so trailing ALTER/INDEX/FK statements (e.g. messages→turns) are
-    NOT dragged into the hermetic schema."""
-    text = (REPO / "nucleus" / "schema.sql").read_text()
-    i = text.index(f"CREATE TABLE IF NOT EXISTS {name} (")
-    return text[i:text.index(");", i) + 2]
+from nucleus.sqlguard.fixture import fixture_db  # noqa: E402 — the ONE applier (after the SKIP guard)
 
-
-DSN = pr.DSN
-SCH = f"t_mdsql_{os.getpid()}"
-conn = psycopg.connect(DSN, autocommit=True)
+_fx = fixture_db()
 try:
-    conn.execute(f"DROP SCHEMA IF EXISTS {SCH} CASCADE")
-    conn.execute(f"CREATE SCHEMA {SCH}")
-    # SCH ONLY — never `SCH, public`. A statement that fell through to public could hit a PROD table;
-    # the market_decay UPDATE/INSERT MUST land only in the throwaway schema (goal-3833's footgun).
-    # pg_catalog (types, now()) is always implicitly searched, so SCH-only is sufficient and isolates.
-    conn.execute(f"SET search_path TO {SCH}")
-    for t in ("econ", "triggers", "messages"):
-        conn.execute(_table_ddl(t))
+    fx = _fx.__enter__()
+except Exception as e:  # noqa: BLE001 — no CREATEDB / DB down ⇒ cannot verify, don't fake
+    print(f"SKIP: the fixture database couldn't be built ({type(e).__name__}: {e}).")
+    sys.exit(EXIT_SKIP)
+conn = psycopg.connect(fx["dsn"], autocommit=True)
+try:
 
     # ── seed data: the exact case that USED to retire, so both queries execute ────────────────
     # CONSECUTIVE(=3) econ rows, W>0 (priced), each naming the SAME candidate with roi<0 ∧
@@ -108,9 +100,9 @@ try:
     conn.execute("INSERT INTO triggers (agent, name, schedule, kind, check_src, enabled, premium) "
                  "VALUES (%s, %s, '0 0 * * *', 'sql', 'SELECT 1', true, 0)", CAND)
 
-    # ── the ctx: pulse_run's OWN Ctx, but PINNED to the temp-schema connection (write-safe) ────
+    # ── the ctx: pulse_run's OWN Ctx, but PINNED to the fixture connection (write-safe) ────────
     # Subclass so the execute(query, params) call surface is byte-identical to production; only the
-    # connection differs (temp schema, not prod), so the UPDATE/INSERT land in the throwaway schema.
+    # connection differs (the fixture database, not prod), so any write lands in the throwaway DB.
     class TempCtx(pr.Ctx):
         def __init__(self, state, connection):
             super().__init__(state)
@@ -129,13 +121,13 @@ try:
     check("EXECUTOR reproduces the %-scan at execute-time (a literal-% query RAISES — proves this is "
           "not a non-executing stub)", _raises("SELECT 1 WHERE 'z' LIKE '(x:%'"))
 
-    # ── run the entrypoint end to end: both queries execute against the temp schema ──────────
+    # ── run the entrypoint end to end: both queries execute against the fixture database ──────────
     try:
         out = m.market_decay(ctx)
         ran_ok, err = True, ""
     except Exception as e:  # noqa: BLE001 — a regression in ANY of the 4 query strings surfaces HERE
         ran_ok, err, out = False, f"{type(e).__name__}: {e}", None
-    check("entrypoint runs end-to-end through the temp-schema ctx — both ctx.sql strings (econ "
+    check("entrypoint runs end-to-end through the fixture ctx — both ctx.sql strings (econ "
           "SELECT, triggers SELECT) parse & execute", ran_ok, err)
     check("the per-candidate triggers read was REACHED (the candidate is named in the output, "
           "which only happens after its triggers row was read)",
@@ -150,18 +142,19 @@ try:
     check("the candidate is REPORTED as rent, labeled report-only",
           isinstance(out, str) and "REPORT ONLY" in out and "rent" in out, f"out={out!r}")
 
-    # CONTAINMENT: the writes went to SCH, not public — the real actuator table is untouched.
-    pub = conn.execute("SELECT count(*) FROM public.triggers WHERE agent=%s AND name=%s", CAND).fetchone()
-    check("CONTAINMENT: no victim row leaked to public.triggers (search_path SCH-only held)",
+    # CONTAINMENT: asked of PRODUCTION on its own connection — the real actuator table is untouched.
+    with psycopg.connect(pr.DSN) as live:
+        pub = live.execute("SELECT count(*) FROM triggers WHERE agent=%s AND name=%s", CAND).fetchone()
+    check("CONTAINMENT: no victim row reached the production triggers table (isolated by database)",
           pub is not None and pub[0] == 0)
 finally:
-    conn.execute(f"DROP SCHEMA IF EXISTS {SCH} CASCADE")
     conn.close()
+    _fx.__exit__(None, None, None)
 
 print()
 if fails:
     print(f"FAILED ({len(fails)}): " + "; ".join(fails))
     sys.exit(1)
-print("market_decay SQL-surface: both ctx.sql strings execute against a hermetic temp schema, "
+print("market_decay SQL-surface: both ctx.sql strings execute against a stamped fixture database, "
       "O3 holds end to end (priced negative candidate stays enabled, nothing written), production untouched")
 sys.exit(0)

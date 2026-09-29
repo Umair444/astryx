@@ -120,3 +120,35 @@ Plus:
 - B0 report-only: normalise, inventory, shim, fixture, judge, check.sh wiring.
 - B1: the RED rules + all controls in one act.
 - B2: the EXPLAIN floor for debt sites.
+
+## B1 as built (abstractor-4, for a3's review)
+- check.sh runs `enforce` as a real gate, last (rc 0 / 1 / 77). The judge is report-only when run alone.
+- tests/test_sqlguard.py builds a TEMP REPO (package copy + subjects + drivers, `ASTRYX_SQLGUARD_ROOT`) and
+  runs every control above for real: shim → judge → enforce, state in a fixture DB, never the live table.
+  - `--against <rev>` runs today's arms against an older package (RED-first).
+  - `--mutants [name]` breaks one property per mutant in the copy; each must be killed by the arm it NAMES.
+- The ledger's covering map (the last clean run, digest-keyed) is UNIONED into the judge's, so a gate that
+  crashed before reaching a site still covers it (NOT SEARCHED, never a false UNEXECUTED).
+- `ledger admit <trace_dir> <handle> '<reason>'` is the only growth path; R-NEW prints the handle, and every
+  admitted row's reason prints on every run.
+- Extractor derivation matches CREATE TABLE ANYWHERE in a statement (a batch that leads with a comment or a
+  DROP was invisible), which also makes the applier exclusion load-bearing by structure.
+- test_reachability learned the dotted edges (`-m`, dotted imports, package `__init__`, PYTHONPATH →
+  sitecustomize), each with GREEN and RED fixtures. nucleus/__init__.py's hand exemption is now derived.
+- test_market_decay_sql_surface uses fixture_db(), so its extractor row shrinks.
+- The unanchored derivation found two more extractors, both now listed with trip goal 4243: test_funded_by
+  (applies schema.sql whole to an unstamped throwaway) and test_memgraph (memgraph.write_pg runs its kg DDL
+  against the LIVE DB, so the oracle also rewrites live kg on every run; byte-identical to the nightly
+  compile from the same memory/, but it is a prod write from a test).
+- An exemption goes stale only when a TRACKED surface reaches its file. An edge found only in the gitignored
+  estate keeps it, because the entry exists for the host without that estate (pr_review.py, hit on the
+  first live run of the dotted-import parser).
+Residuals (declared, not closed):
+- M1: an OID collision can't be FORCED (the OID counter is cluster-wide). The arm proves that no credit
+  carries from one fixture DB to a hand relation in another, and there is no cache to collide in.
+- The stored covering map is written only at seed/admit. A RENAMED check.sh gate label is absent from
+  gates.tsv and reads as rc 0 (complete). That's the loud direction (a negative verdict → R-NEW or listed
+  debt, never a false RESPONSIVE), but the map has no refresh verb yet.
+- enforce's own SQL runs AFTER its judge, and each check.sh run has a fresh trace dir, so enforce.py's sites
+  can never climb in-check. They stay listed debt. Re-judging a finished trace dir sees them (a false
+  R-STALE, from re-judging only).

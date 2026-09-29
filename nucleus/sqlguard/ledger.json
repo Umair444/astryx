@@ -195,9 +195,6 @@
   "sha256:db4e73cff91ce0f69e3c5a3afabc879508f83c273b71644f1a53357b400732b8": [
    "plan-lifecycle trigger oracle"
   ],
-  "sha256:def825b26cab5fc4f5085fcc071671b1f227654218bc16488b7d766176657381": [
-   "market_decay SQL-surface + O3 end to end (temp schema)"
-  ],
   "sha256:e57b1e34e8055616525a489be10dfef250535aa753bd9794b05ccb4b7dd8f66b": [
    "weekly econ review: insures constitutive set, layer-1 stays FYI, L3 retired"
   ],
@@ -248,12 +245,23 @@
     "state": "done"
    }
   },
-  "tests/test_market_decay_sql_surface.py": {
+  "tests/test_funded_by.py": {
    "gates": [
-    "market_decay SQL-surface + O3 end to end (temp schema)"
+    "3499 funded_by attribution + W-birth intact"
    ],
    "listed_since": "2026-09-29",
-   "reason": "seed: builds an UNSTAMPED fixture; migrate to nucleus/sqlguard/fixture.py",
+   "reason": "B1: applies schema.sql WHOLE to a throwaway DB it never stamps (derived once _CREATE stopped anchoring at text start); migrate to nucleus/sqlguard/fixture.py",
+   "trip": {
+    "goal": 4243,
+    "state": "done"
+   }
+  },
+  "tests/test_memgraph.py": {
+   "gates": [
+    "recall-graph compiler"
+   ],
+   "listed_since": "2026-09-29",
+   "reason": "B1: not a throwaway fixture: it calls memgraph.write_pg, whose CREATE ... IF NOT EXISTS kg batch runs against the LIVE DB (mg._dsn), so the kg relations are never stamped; migrate write_pg onto fixture_db, which also stops the oracle rewriting live kg",
    "trip": {
     "goal": 4243,
     "state": "done"
@@ -302,10 +310,10 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 289,
+  "debt_rows": 288,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
-  "extractors_listed": 7,
+  "extractors_listed": 8,
   "generated_at": "2026-09-29T15:30:34+00:00",
   "run": "r1790695741x404760",
   "sites_total": 321,
@@ -1417,10 +1425,6 @@
   },
   "sha256:db4e73cff91ce0f69e3c5a3afabc879508f83c273b71644f1a53357b400732b8": {
    "debt": "EXECUTED",
-   "reason": "seed"
-  },
-  "sha256:def825b26cab5fc4f5085fcc071671b1f227654218bc16488b7d766176657381": {
-   "debt": "EXECUTED/FIXTURE-DDL",
    "reason": "seed"
   },
   "sha256:e15d9f816eff10a84831892fba320c06f5b176ce84f02c03c43140df970dcfcb": {

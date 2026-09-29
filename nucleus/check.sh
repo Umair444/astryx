@@ -124,7 +124,7 @@ verdict() {
 # copy of it. Everything above is definitions; everything below runs the real gates.
 [ -n "${CHECK_LIB_ONLY:-}" ] && return 0
 
-# sqlguard (goal 4243, B0 REPORT-ONLY): the driver shim rides every python gate as `sitecustomize`. check.sh sets
+# sqlguard (goal 4243): the driver shim rides every python gate as `sitecustomize`. check.sh sets
 # all three ITSELF, because run_check runs this under pulse's bare systemd env (the runner-env law:
 # ASTRYX_NODE/507e7ea). The run id names this run's fixture databases, so the leak arm only ever looks for
 # its own prefix.
@@ -496,8 +496,11 @@ else
   skip "media in-process decode" "av not installed here"
 fi
 
-# sqlguard report (B0): grades every SQL site by what the suite above actually observed. REPORT-ONLY, so it
-# can't fail this run. B1 turns its RED rules on together with their controls, in one act.
-echo; "$PY" -m nucleus.sqlguard.judge "$ASTRYX_SQLGUARD_DIR" || true
+# sqlguard (B1, ENFORCED): grades every SQL site by what the suite above actually observed, then decides against
+# the shrink-only ledger. RED on a NEW site below RESPONSIVE, a stale row, blind SQL, an expired NOT SEARCHED
+# clock, a leaked fixture DB, or an extractor-list mismatch. 77 (UNVERIFIED) when the run can't observe: shim
+# errors, the canary not RESPONSIVE, triggers/ absent. Its controls are tests/test_sqlguard.py, above.
+# It runs LAST so it sees every gate's trace, and its own rc lands in gates.tsv after it has read the file.
+run "sqlguard: every SQL site is observed, or listed debt" "$PY" -m nucleus.sqlguard.enforce "$ASTRYX_SQLGUARD_DIR"
 
 verdict

@@ -2,6 +2,7 @@
 """The sqlguard ledger: the org's KNOWN SQL-observation debt, machine-written (goal 4243, T3 + R4 + a3's C3).
 
     venv/bin/python -m nucleus.sqlguard.ledger seed <trace_dir>     # ONE-TIME seed, from a clean run's report
+    venv/bin/python -m nucleus.sqlguard.ledger admit <trace_dir> <site> '<reason>'   # the ONLY growth path
 
 Every site below RESPONSIVE in the seed run becomes a row: its debt rung (UNEXECUTED / EXECUTED / FIXTURE-DDL)
 or NOT-SEARCHED-AT-SEED, which is recorded, clocked, and never hidden. The header stamps what the seed was
@@ -97,9 +98,42 @@ def seed(trace_dir: str) -> dict:
     return header
 
 
+def admit(trace_dir: str, site: str, reason: str, path: Path = None) -> str:
+    """The ONLY growth path (R4). `site` is the handle an R-NEW line prints: a sha256 digest for a gitignored
+    origin, else `path::qualname :: text`. The site must exist in THIS run's report (report.json, written by
+    enforce) and be below RESPONSIVE, so a typo or an already-healthy site can't be admitted. The reason is
+    stored with the date and printed on every enforce run until the row shrinks."""
+    path = path or LEDGER
+    reason = (reason or "").strip()
+    if not reason or reason == "seed":
+        raise SystemExit("refusing: an admit needs a real reason (it is printed every run)")
+    rep = json.loads((Path(trace_dir) / "report.json").read_text())
+    hits = [k for k in rep["sites"] if site in (k, ledger_key(k), privacy.label(k))]
+    if privacy.ERRORS:
+        raise SystemExit(f"refusing: privacy classification failed ({len(privacy.ERRORS)})")
+    if len(hits) != 1:
+        raise SystemExit(f"refusing: {len(hits)} sites match {site!r} in {trace_dir}/report.json (need exactly 1)")
+    key = hits[0]
+    rung = rep["sites"][key]["rung"]
+    if rung == "RESPONSIVE":
+        raise SystemExit("refusing: that site is RESPONSIVE, so there is no debt to admit")
+    doc = json.loads(path.read_text())
+    lk = ledger_key(key)
+    if lk in doc["rows"]:
+        raise SystemExit("refusing: already listed")
+    doc["rows"][lk] = {"debt": "NOT-SEARCHED-AT-ADMIT" if rung == "NOT SEARCHED" else rung, "reason": reason,
+                       "admitted": datetime.date.today().isoformat()}
+    if rep.get("covering", {}).get(key):
+        doc.setdefault("covering", {})[lk] = rep["covering"][key]
+    path.write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n")
+    return lk
+
+
 if __name__ == "__main__":
     if len(sys.argv) >= 3 and sys.argv[1] == "seed":
         print(json.dumps(seed(sys.argv[2]), indent=1))
+    elif len(sys.argv) == 5 and sys.argv[1] == "admit":
+        print(f"admitted {admit(sys.argv[2], sys.argv[3], sys.argv[4])}")
     else:
         print(__doc__.strip().splitlines()[2])
         sys.exit(2)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The sqlguard judge: joins the static inventory with the runtime trace and grades every site (goal 4243).
 
-    venv/bin/python -m nucleus.sqlguard.judge <trace_dir>        # B0: REPORT-ONLY (exit 0; status printed)
+    venv/bin/python -m nucleus.sqlguard.judge <trace_dir>        # REPORT-ONLY (exit 0); enforce.py decides
 
 ATTRIBUTION (#21519, fixes V2 + V3). Walk a statement's repo frames innermost-first. The site is the first frame
 whose function's inventoried literal set CONTAINS the executed text, keyed (function, text). Otherwise it's the
@@ -37,7 +37,10 @@ from nucleus.sqlguard.normalize import is_site, is_write
 
 REPO = inventory.REPO
 _WHERE = re.compile(r"\b(where|having)\b")
-_CREATE = re.compile(r"^\s*create\s+(?:temp\s+|temporary\s+|unlogged\s+)?table\b")
+# ANYWHERE in the statement, not anchored: a test's hand DDL batch often leads with a comment, a DROP or a SET,
+# and an anchored match silently under-derives the extractor list. (It also makes the applier exclusion below
+# load-bearing by STRUCTURE: schema.sql leads with a comment, so an anchored match only skipped the applier by luck.)
+_CREATE = re.compile(r"\bcreate\s+(?:temp\s+|temporary\s+|unlogged\s+)?table\b")
 APPLIER = "nucleus/sqlguard/fixture.py"
 _AGG = re.compile(r"\b(count|sum|max|min|avg|bool_or|bool_and|array_agg|string_agg|jsonb_agg)\s*\(")
 
@@ -105,7 +108,11 @@ def attribute(rec, fns, oracle=None):
     return None, t, "blind"
 
 
-def judge(trace_dir, inv=None, covering=None):
+def judge(trace_dir, inv=None, covering=None, stored_covering=None):
+    """covering REPLACES the map (tests); stored_covering (the ledger's, from the last clean run, keyed by
+    privacy.ledger_key) is UNIONED with this run's. That's what lets a site whose covering gate crashed before
+    reaching it grade NOT SEARCHED instead of a false UNEXECUTED: this run's trace alone never names a gate for
+    a statement it didn't execute."""
     inv = inv or inventory.build()
     fns = inv["functions"]
     live = _live_db()
@@ -117,7 +124,7 @@ def judge(trace_dir, inv=None, covering=None):
     blind, direct, oracle_own = [], [], 0
     extractors = {}                                  # F-b: test file -> gates, derived from the trace
     for r in recs:
-        if _CREATE.match(r["t"]) and r.get("ok"):
+        if _CREATE.search(r["t"]) and r.get("ok"):
             fr = r.get("frames") or []
             if not any(f[0] == APPLIER for f in fr):
                 tf = next((f[0] for f in fr if f[0].startswith("tests/")), None)
@@ -162,7 +169,16 @@ def judge(trace_dir, inv=None, covering=None):
         for col, vals in (r.get("p") or {}).items():
             e["p"].setdefault(col, set()).update(v if v is not None else "\0NULL" for v in vals)
 
-    covering = covering if covering is not None else {f"{k}\x1f{t}": sorted(e["gates"]) for (k, t), e in ev.items()}
+    if covering is None:
+        covering = {f"{k}\x1f{t}": sorted(e["gates"]) for (k, t), e in ev.items()}
+        if stored_covering:
+            from nucleus.sqlguard.privacy import ledger_key
+            for key, fn in fns.items():
+                for t in list(fn["sites"]) + (["*"] if fn["unresolved"] else []):
+                    k = f"{key}\x1f{t}"
+                    old = stored_covering.get(ledger_key(k))
+                    if old:
+                        covering[k] = sorted(set(covering.get(k, [])) | set(old))
     sites = {}
     for key, fn in fns.items():
         texts = list(fn["sites"]) + (["*"] if fn["unresolved"] else [])
@@ -207,11 +223,9 @@ REMAINDER = ("CEILING: RESPONSIVE = the WHERE and every computed bool responded.
              "is observed, never exercised; stamps and the ledger are DETECTION-grade against a same-uid actor.")
 
 
-if __name__ == "__main__":
-    d = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("ASTRYX_SQLGUARD_DIR", "")
-    rep = judge(d)
+def print_report(rep):
     c = rep["counts"]
-    print(f"sqlguard (B0, report-only): {rep['records']} traced statements · sites " +
+    print(f"sqlguard: {rep['records']} traced statements · sites " +
           ", ".join(f"{k}={v}" for k, v in sorted(c.items())) +
           f" · blind={len(rep['blind'])} · direct={len(rep['direct'])} · oracle-own={rep['oracle_own']}")
     for n in rep["run_not_searched"]:
@@ -224,6 +238,16 @@ if __name__ == "__main__":
         what = "" if (p.startswith("tier/") or ignored(p)) else f" ran {b['t']!r}"   # P1: no gitignored SQL text
         print(f"  BLIND (reverse agreement): {p}::{b['frame'][1]}{what}")
     print(f"  extractors (static list, until migrated): {len(rep['extractors_static'])}; exempt: {rep['exempt']}")
-    print("  " + REMAINDER)
+
+
+def write_report(d, rep):
     with open(os.path.join(d, "report.json"), "w") as f:
         json.dump(rep, f, indent=1, default=sorted)
+
+
+if __name__ == "__main__":                            # report-only; check.sh runs enforce, which calls judge()
+    d = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("ASTRYX_SQLGUARD_DIR", "")
+    rep = judge(d)
+    print_report(rep)
+    print("  " + REMAINDER)
+    write_report(d, rep)

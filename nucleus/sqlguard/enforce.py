@@ -4,7 +4,8 @@
     venv/bin/python -m nucleus.sqlguard.enforce <trace_dir>    # rc 0 pass · 1 RED · 77 NOT SEARCHED (run level)
 
 RED:
-  R-NEW     a site below RESPONSIVE that the ledger doesn't list. EXCEPT EX3: a site capped at FIXTURE-DDL
+  R-NEW     a site below RESPONSIVE that the ledger doesn't list (growth is only via `ledger admit`, whose reason
+            then prints every run). EXCEPT EX3: a site capped at FIXTURE-DDL
             SOLELY because every covering gate belongs to a LISTED extractor still inside its window is REPORTED.
   R-STALE   a ledger row whose site climbed to RESPONSIVE, or no longer exists. This forces the shrink.
   R-BLIND   reverse agreement: runtime saw SQL the inventory doesn't know.
@@ -28,7 +29,7 @@ import psycopg
 
 from nucleus.sqlguard import judge
 from nucleus.sqlguard.fixture import live_dsn, run_id
-from nucleus.sqlguard.privacy import label, ledger_key, ignored
+from nucleus.sqlguard.privacy import handle, label, ledger_key, ignored
 
 NS_RUNS, NS_DAYS = 7, 3                    # the per-site NOT SEARCHED clock (declared)
 LEAK_RUNS, LEAK_AGE = 3, datetime.timedelta(hours=1)
@@ -55,8 +56,10 @@ def _clock(conn, kind, keys):
 
 
 def enforce(trace_dir, ledger=None, dsn=None, rep=None):
-    rep = rep or judge.judge(trace_dir)
     ledger = ledger if ledger is not None else load_ledger()
+    # The ledger's covering map (the last clean run) is unioned in, so a gate that crashed before reaching a
+    # site still COVERS it and the site grades NOT SEARCHED, never a false UNEXECUTED (C1).
+    rep = rep or judge.judge(trace_dir, stored_covering=(ledger or {}).get("covering"))
     red, report, not_searched = [], [], list(rep["run_not_searched"])
     if ledger is None:
         not_searched.append("no ledger.json: seed it first (ledger seed)")
@@ -104,12 +107,15 @@ def enforce(trace_dir, ledger=None, dsn=None, rep=None):
             ns_keys.append(key)
             continue
         if row:
+            if row.get("reason", "seed") != "seed":             # an ADMITTED row: its reason prints every run
+                report.append(f"ADMITTED {label(key)} ({row['debt']}, {row.get('admitted', '?')}): {row['reason']}")
             continue                                            # known debt, with its address
         cov = rep["covering"].get(key, [])
         if s["rung"] == "EXECUTED/FIXTURE-DDL" and cov and set(cov) <= open_gates:
             report.append(f"EX3 {label(key)}: capped at FIXTURE-DDL by a LISTED extractor (reported, not RED)")
             continue
-        red.append(f"R-NEW {label(key)}: {s['rung']} and not in the ledger")
+        red.append(f"R-NEW {label(key)}: {s['rung']} and not in the ledger. Make it RESPONSIVE, or admit it: "
+                   f"ledger admit <trace_dir> {handle(key)} '<reason>'")
     live_keys = {ledger_key(k) for k in rep["sites"]}
     for key in rows:
         if key not in live_keys:
@@ -160,7 +166,11 @@ def enforce(trace_dir, ledger=None, dsn=None, rep=None):
 
 if __name__ == "__main__":
     d = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("ASTRYX_SQLGUARD_DIR", "")
-    out = enforce(d)
+    led = load_ledger()
+    rep = judge.judge(d, stored_covering=(led or {}).get("covering"))
+    judge.print_report(rep)
+    judge.write_report(d, rep)                  # ledger admit reads it
+    out = enforce(d, ledger=led, rep=rep)
     for n in out["not_searched"]:
         print(f"  NOT SEARCHED: {n}")
     for r in out["red"]:

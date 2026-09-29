@@ -55,3 +55,10 @@ def label(site_key: str) -> str:
         return "<private-tier site>"
     fn = site_key.split(SEP, 1)[0]
     return fn if ignored(path) else site_key.replace(SEP, " :: ")
+
+
+def handle(site_key: str) -> str:
+    """What a human passes to `ledger admit`: the digest for a gitignored origin (it reveals nothing), else the
+    readable key with the separator shown as ' :: '. ledger.admit() accepts either form."""
+    k = ledger_key(site_key)
+    return k if k.startswith("sha256:") else repr(label(site_key))
