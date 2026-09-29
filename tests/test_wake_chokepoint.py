@@ -31,6 +31,11 @@ Each arm can go red alone:
   A14 a RETURNED fire string at 90% is held like any wake, and released with the pulse's own header
   A15 a held wake is visible in wire_emitted (C1.5), and not in messages
   A16 O7: no `INSERT INTO messages` in triggers/**/*.py or in the in-repo modules they import
+  A17 a wake to a QUOTA-FREE recipient (the owner, behind a bridge) at 90% is delivered, never held:
+      the out-of-band owner alarm fires exactly when quota pressure latches the fleet
+  A19 durable=True: a last-resort wake survives a LATER crash of its check; a non-durable wake queued
+      by the same evaluation does not (the reviewed default: a crash delivers none)
+  A18 residents() is derived from the agents/ tree: it holds seed, not owner (NOT SEARCHED without it)
 
 Run: venv/bin/python tests/test_wake_chokepoint.py
 """
@@ -92,6 +97,14 @@ def counted(ctx):
 
 def fire_str(ctx):
     return "condition X"
+
+def durable_then_crash(ctx):
+    ctx.say("owner", "last resort", thread="esc-y", intent="chat", from_agent="seed", durable=True)
+    ctx.say("steward", "not durable", from_agent="seed")
+    raise RuntimeError("boom")
+
+def to_owner(ctx):
+    ctx.say("owner", "the org has gone quiet", thread="esc-x", intent="chat", from_agent="seed")
 '''
 
 
@@ -181,6 +194,15 @@ def main():
             check("pulse binds ASTRYX_DSN from env and exposes process() (the chokepoint seam)", False,
                   f"DSN is fixture: {pulse.DSN == fx['dsn']}, process: {hasattr(pulse, 'process')}")
             return finish()
+        real_tree = (REPO / "agents").is_dir()
+        if real_tree:
+            pulse._residents = None
+            r = pulse.residents()
+            check("A18 residents() derived from agents/: seed in, owner out", "seed" in r and "owner" not in r,
+                  f"{len(r)} residents")
+        else:
+            print("  NOT SEARCHED  A18 residents() — no agents/ tree here (gitignored); runs on the org host")
+        pulse._residents = {"seed", "steward"}      # hermetic: the fixture recipients are the residents
         checks = str(Path(td) / "checks.py")
         Path(checks).write_text(CHECKS)
         conn = psycopg.connect(fx["dsn"], autocommit=True)
@@ -304,6 +326,21 @@ def main():
         check("A13 R3: premium=0 heartbeat at 90% neither delivered nor held",
               not msgs(conn, "%hb-free%") and not held(conn, "%hb-free%"))
         check("A13 R3: premium>0 heartbeat at 90% delivered", len(msgs(conn, "%hb-paid%")) == 1)
+
+        # A17 — quota-free recipients are never held
+        t17 = make_trigger(conn, "seventeen", "to_owner", checks)
+        tick(pulse, conn, t17)
+        m = msgs(conn, "%gone quiet%")
+        check("A17 wake to owner at 90%: delivered at once, not held",
+              len(m) == 1 and m[0][:6] == ("seed", "local", "owner", "local", "esc-x", "chat")
+              and not held(conn, "%gone quiet%"), repr(m))
+
+        # A19 — durable survives a later crash, nothing else does
+        t19 = make_trigger(conn, "nineteen", "durable_then_crash", checks)
+        tick(pulse, conn, t19)
+        check("A19 durable owner wake delivered despite the crash", len(msgs(conn, "%last resort%")) == 1)
+        check("A19 the non-durable wake of the same crashed evaluation is not delivered or held",
+              not msgs(conn, "%not durable%") and not held(conn, "%not durable%"))
 
         # A14/A15 — returned fire strings take the same path; wire_emitted sees held rows
         t14 = make_trigger(conn, "fourteen", "fire_str", checks)
