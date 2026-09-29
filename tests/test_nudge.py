@@ -35,6 +35,7 @@ each case picks.
 import ast
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -50,7 +51,13 @@ EXIT_SKIP = 77
 SUBJECT = Path(os.environ.get("NUDGE_SRC") or REPO / "hooks" / "nudge.py")
 ENV = REPO / ".env"
 PY = sys.executable
-HARD_BOUND = 1.5 + 1.0          # the hook's deadline + interpreter start-up slack
+HARD_S = 1.5                    # the hook's own deadline (N3 checks it against the REAL value)
+RELAXED_S = 20                  # the deadline for LOGIC arms, whose subject isn't latency
+# TIMING DISCIPLINE (the 09-29 flake: seed's full check.sh on a loaded host). The hook goes
+# SILENT past its deadline, by design. So a positive-nudge arm run with the real 1.5s tests
+# host load, not recurrence, and it flipped red under a 4-core busy loop on main. Only N3's
+# subject is the deadline. Every other arm runs on a tree whose HARD_S is raised to RELAXED_S,
+# and "no connection attempt" (N4) is proven by the fake server's HIT COUNT, never by wall time.
 SECRET = "SEKRET-nudge-7c1"
 
 fails = []
@@ -141,14 +148,28 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 
-srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+# 0.0.0.0, so a connection to the host's own NON-loopback address (N4) would land here and
+# count as a hit: a refusal is then proven by zero hits, not by how fast it returned.
+srv = ThreadingHTTPServer(("0.0.0.0", 0), H)
 srv.daemon_threads = True
 threading.Thread(target=srv.serve_forever, daemon=True).start()
 PORT = srv.server_address[1]
 s = socket.socket(); s.bind(("127.0.0.1", 0)); DOWN = s.getsockname()[1]; s.close()
 
 
-def make_tree():
+def lan_ip():
+    """A non-loopback IPv4 of this host, or None. The UDP connect sends nothing."""
+    try:
+        u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        u.connect(("10.255.255.255", 1))
+        ip = u.getsockname()[0]
+        u.close()
+        return None if ip.startswith("127.") else ip
+    except OSError:
+        return None
+
+
+def make_tree(deadline=None):
     """The hook plus FIXTURE charters, so the tier arm doesn't depend on the org's real (and
     gitignored) agents/: zzpub holds no grant, so its content is public, and zzpriv holds
     gmail, so its content is private. charter.py resolves symlinks to find agents/, so it and
@@ -165,6 +186,12 @@ def make_tree():
     for name, grants in (("zzpub", ""), ("zzpub2", ""), ("zzpriv", "Grants: gmail\n")):
         (t / "agents" / name).mkdir(parents=True)
         (t / "agents" / name / f"{name}.md").write_text(f"# {name}\n{grants}")
+    if deadline is not None:
+        src = (t / "hooks" / "nudge.py").read_text()
+        new, n = re.subn(r"^HARD_S = [0-9.]+", f"HARD_S = {deadline}", src, flags=re.M)
+        if n != 1:          # fail LOUDLY: a silent miss would run logic arms at the real deadline
+            raise SystemExit(f"FAIL: could not relax HARD_S in the subject ({n} matches)")
+        (t / "hooks" / "nudge.py").write_text(new)
     return t
 
 
@@ -188,7 +215,8 @@ def ddl(name):
 
 
 SCH = f"t_nudge_{os.getpid()}"
-root = make_tree()
+strict = make_tree()                    # the REAL deadline: N3 only
+root = make_tree(deadline=RELAXED_S)    # every logic arm
 exits = []
 try:
     admin.execute(f"DROP SCHEMA IF EXISTS {SCH} CASCADE")
@@ -200,27 +228,39 @@ try:
                                  "FROM classifications ORDER BY id").fetchall()
     url = f"http://127.0.0.1:{PORT}/classify"
 
-    # ── N3 silent + bounded, whatever the endpoint does ─────────────────────────────────
-    for name, u, mode in (("unset", None, "ok"), ("down (closed port)", f"http://127.0.0.1:{DOWN}/c", "ok"),
+    # ── N3 silent + bounded, whatever the endpoint does (the REAL deadline) ─────────────
+    # The bound adapts to the host's CURRENT start-up cost: the unset case does no work beyond
+    # starting the interpreter, so its wall time is that cost under whatever load exists now.
+    Fake.mode = "ok"
+    r, base = run(strict, SCH, None)
+    exits.append(r.returncode)
+    bound = HARD_S + max(1.0, 2 * base)
+    check(f"N3 unset: silent (start-up baseline {base:.2f}s, so bound {bound:.2f}s)",
+          r.stdout == "", f"stdout={r.stdout[:80]!r}")
+    for name, u, mode in (("down (closed port)", f"http://127.0.0.1:{DOWN}/c", "ok"),
                           ("hung (accepts, never answers)", url, "hang"),
                           ("DRIP (beats any per-socket timeout)", url, "drip"),
                           ("garbage body", url, "garbage")):
         Fake.mode = mode
-        r, dt = run(root, SCH, u)
+        r, dt = run(strict, SCH, u)
         exits.append(r.returncode)
-        check(f"N3 {name}: silent, within {HARD_BOUND}s",
-              r.stdout == "" and dt < HARD_BOUND, f"stdout={r.stdout[:80]!r} took {dt:.2f}s")
+        check(f"N3 {name}: silent, within the deadline + start-up",
+              r.stdout == "" and dt < bound, f"stdout={r.stdout[:80]!r} took {dt:.2f}s, bound {bound:.2f}s")
     check("N3 none of those wrote a label", rows() == [], str(rows()))
 
     # ── N4 non-loopback refused without a connection, logged once ───────────────────────
     Fake.mode, Fake.hits = "ok", 0
-    for u in (f"http://localhost:{PORT}/classify", "http://10.255.255.1:9/c",
-              f"http://127.0.0.1.nip.io:{PORT}/c"):
-        r, dt = run(root, SCH, u)
+    ip = lan_ip()
+    refused = [f"http://localhost:{PORT}/classify", f"http://127.0.0.1.nip.io:{PORT}/c"]
+    if ip:
+        refused.append(f"http://{ip}:{PORT}/c")     # routable AND reaches the fake if connected
+    for u in refused:
+        r, _ = run(root, SCH, u)
         exits.append(r.returncode)
-        check(f"N4 refused, fast, silent: {u.split('//')[1][:28]}",
-              r.stdout == "" and dt < 1.2, f"{r.stdout[:60]!r} {dt:.2f}s")
-    check("N4 the refused endpoints got ZERO requests", Fake.hits == 0, f"hits={Fake.hits}")
+        check(f"N4 refused, silent: {u.split('//')[1][:28]}", r.stdout == "", f"{r.stdout[:60]!r}")
+    check(f"N4 the refused endpoints got ZERO requests (a connect would be a hit; "
+          f"{'incl. this host LAN IP ' + ip if ip else 'no LAN IP on this host: loopback names only'})",
+          Fake.hits == 0, f"hits={Fake.hits}")
     logged = admin.execute("SELECT count(*), max(content) FROM steps WHERE kind='error' "
                            "AND content LIKE 'nudge:%'").fetchone()
     check("N4 the refusal is logged once (deduped), without the URL",
@@ -331,6 +371,7 @@ finally:
         admin.execute(f"DROP SCHEMA IF EXISTS {SCH} CASCADE")
     finally:
         shutil.rmtree(root, ignore_errors=True)
+        shutil.rmtree(strict, ignore_errors=True)
 
 if fails:
     print(f"\nFAIL: {len(fails)} nudge invariant(s) broken")
