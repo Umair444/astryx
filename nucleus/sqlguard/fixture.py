@@ -113,6 +113,20 @@ _ALLSIG_SQL = ("SELECT a.attrelid, a.attname, format_type(a.atttypid, a.atttypmo
                "WHERE a.attrelid = ANY(%s) AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attrelid, a.attname")
 
 
+def _side_conn(dbname: str):
+    """The observer connection, BOUNDED (a3 D-C). pg_get_expr needs AccessShare on the relation, and a caller that
+    holds uncommitted DDL (AccessExclusive) would block it forever. The caller is stuck inside the shim waiting on
+    us, so that's a cross-client deadlock Postgres can't detect. With lock_timeout, the read gives up in 250ms,
+    and a timeout means NO CREDIT (the safe direction). It's also the RIGHT answer: a side connection sees only
+    the COMMITTED shape, so it can't vouch for an uncommitted one anyway."""
+    c = _side.get(dbname)
+    if c is None or c.closed:
+        c = _side[dbname] = psycopg.connect(make_conninfo(live_dsn(), dbname=dbname), autocommit=True)
+        c.execute("SET lock_timeout = '250ms'")
+        c.execute("SET statement_timeout = '2s'")
+    return c
+
+
 def db_stamp_map(dbname: str) -> dict:
     """{oid: stamp-valid NOW} for every org relation in a fixture DB. Two catalog queries, no cache.
 
@@ -122,9 +136,7 @@ def db_stamp_map(dbname: str) -> dict:
     construction, not by invalidation. The signature is computed exactly as signature() computes it (same
     columns, order and repr), so the stamper and the checker can't drift."""
     try:
-        c = _side.get(dbname)
-        if c is None or c.closed:
-            c = _side[dbname] = psycopg.connect(make_conninfo(live_dsn(), dbname=dbname), autocommit=True)
+        c = _side_conn(dbname)
         rels = c.execute(_REL_SQL).fetchall()
         rows = {}
         for relid, *attr in c.execute(_ALLSIG_SQL, ([o for o, _ in rels],)).fetchall():
@@ -146,9 +158,7 @@ def stamp_valid(dbname: str, oid: int) -> bool:
     signature equals the relation's shape now. Any failure (no comment, stale sha, altered shape, unreadable)
     is False, which gives no credit: the safe direction."""
     try:
-        c = _side.get(dbname)
-        if c is None or c.closed:
-            c = _side[dbname] = psycopg.connect(make_conninfo(live_dsn(), dbname=dbname), autocommit=True)
+        c = _side_conn(dbname)
         row = c.execute("SELECT obj_description(%s, 'pg_class')", (oid,)).fetchone()
         text = row[0] if row else None
         if not text or not text.startswith(STAMP):

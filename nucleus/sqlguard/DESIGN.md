@@ -58,6 +58,16 @@ inventoried literal set CONTAINS the executed normalised text, keyed `(relpath::
 - The leak arm: this run's prefix must be gone. A foreign `astryx_fx_*` is tracked by first-seen state
   (pg_database records no creation time).
 
+## Stated property (a3 D-C)
+The shim's side work is BOUNDED and can never block or abort the gate under test. Its observer runs on a
+separate connection with lock_timeout 250ms and statement_timeout 2s, and a timeout or error means NO CREDIT.
+A caller whose open transaction blocked the observer is memoised as "no credit" until the transaction ends (a
+client-side status read). It never runs a statement on the caller's connection.
+Controls:
+- an uncommitted ALTER in the caller's transaction completes in <5s, with the post-ALTER SELECT stamped=False;
+- 50 statements in that transaction take <2s;
+- the fixture DB is gone afterwards.
+
 ## Ledger
 - Generated and shrink-only, keyed by site. Each row carries its debt rung.
 - RED on a NEW site below RESPONSIVE. RED on a listed row whose site has since climbed.

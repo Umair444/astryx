@@ -20,6 +20,9 @@ RULES THIS FILE KEEPS:
   * Fail-open on its OWN errors: each one is written as a {"shim_error": class} record and swallowed. The
     judge treats any count > 0 as a NOT SEARCHED run. It must never read as EXECUTED, and never raise into the
     code under test.
+  * Its side work is BOUNDED and can never block or abort the gate under test (a3 D-C): the observer
+    connection has lock_timeout 250ms and statement_timeout 2s, and a timeout or error means NO CREDIT. A
+    caller whose open transaction blocked it is memoised as "no credit" until that transaction ends.
   * Stamp validity is recomputed per fixture statement with NO cache (a3 D-A). An ALTER keeps the OID, and
     another process can run DDL we never see. OIDs are only ever compared within one database (M1).
 This file is the one declared inventory exemption (it cannot observe its own guarded reads).
@@ -133,7 +136,16 @@ if _DIR:
             _schema[conn_key] = m.group(1)
         return _schema[conn_key]
 
-    def _stamped(dbname, oids):
+    _withheld = weakref.WeakKeyDictionary()   # caller conn -> True while its txn blocked our observer (a3 D-C)
+
+    def _idle(conn):
+        try:
+            from psycopg import pq
+            return conn.info.transaction_status == pq.TransactionStatus.IDLE
+        except Exception:
+            return True
+
+    def _stamped(dbname, oids, conn=None):
         """Fixture DBs only (live → None). Recomputed at EVERY statement, with NO cache (a3 D-A: an ALTER keeps the
         OID, and a cache would credit the altered relation). With base relations: every one must be stamp-valid
         NOW. Without them (DML without RETURNING, computed-only SELECTs, a3 D-B): EVERY org relation in the
@@ -141,12 +153,20 @@ if _DIR:
         conservative: one hand-made or altered relation anywhere withholds credit."""
         if not dbname.startswith(_FX_PREFIX):
             return None
+        # MEMO: once this caller's open transaction has blocked the observer, don't pay another 250ms timeout
+        # per statement. Withhold credit until its transaction ends. The status is a CLIENT-SIDE read.
+        if conn is not None and _withheld.get(conn):
+            if not _idle(conn):
+                return False
+            _withheld.pop(conn, None)
         _local.busy = True
         try:
             m = _private("fixture").db_stamp_map(dbname)
         finally:
             _local.busy = False
         if not m:
+            if conn is not None and not _idle(conn):
+                _withheld[conn] = True
             return False
         if oids:
             return all(m.get(o, False) for o in oids)
@@ -189,7 +209,7 @@ if _DIR:
                                 break
                     p[str(i)] = seen
         rec["p"], rec["rels"] = p, sorted(rels)
-        rec["stamped"] = _stamped(dbname, sorted(rels))
+        rec["stamped"] = _stamped(dbname, sorted(rels), conn)
         _emit(rec)
 
     def _wrap_sync(orig):
