@@ -48,15 +48,21 @@ def dp_arms():
     # name, not crash. A crash is red, but it can't say WHICH property the code violates.
     errs = lambda: list(getattr(privacy, "ERRORS", []))
     clear = lambda: (privacy.ignored.cache_clear(), getattr(privacy, "ERRORS", []).clear())
+
+    def probe(p):                        # an exception is a named FAIL (the authority didn't fail CLOSED)
+        try:
+            return privacy.ignored(p)
+        except Exception as e:
+            return f"raised {type(e).__name__}"
     with tempfile.TemporaryDirectory() as nonrepo:
         try:
             privacy.REPO = Path(nonrepo)                                  # (i) outside any git repo → rc 128
             clear()
-            check("D-P (i) not-a-repo reads as IGNORED (fails closed)", privacy.ignored("triggers/zz/a.py") is True)
+            check("D-P (i) not-a-repo reads as IGNORED (fails closed)", probe("triggers/zz/a.py") is True)
             check("D-P (i) ...and records a classification error", bool(errs()))
             privacy.REPO = real_repo; os.environ["PATH"] = "/nonexistent"  # (ii) git absent from PATH
             clear()
-            check("D-P (ii) git absent reads as IGNORED (fails closed)", privacy.ignored("triggers/zz/b.py") is True)
+            check("D-P (ii) git absent reads as IGNORED (fails closed)", probe("triggers/zz/b.py") is True)
             check("D-P (ii) ...and records a classification error", bool(errs()))
             os.environ["PATH"] = real_path
             privacy.REPO = Path(nonrepo)                                  # (iii) a seed write while it's failing
@@ -72,6 +78,8 @@ def dp_arms():
                 ledger.seed(nonrepo)
             except SystemExit:
                 refused = True
+            except Exception:
+                refused = False          # a crash isn't a refusal; the file check below decides the rest
             check("D-P (iii) the ledger writer REFUSES while classification failed", refused)
             check("D-P (iii) ...and no ledger file was written", not out.exists())
         finally:
