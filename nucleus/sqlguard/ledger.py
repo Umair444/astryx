@@ -25,6 +25,7 @@ import sys
 from pathlib import Path
 
 from nucleus.sqlguard import judge
+from nucleus.sqlguard.privacy import ledger_key
 
 REPO = judge.REPO
 LEDGER = REPO / "nucleus" / "sqlguard" / "ledger.json"
@@ -67,7 +68,7 @@ def seed(trace_dir: str) -> dict:
     for key, s in rep["sites"].items():
         if s["rung"] != "RESPONSIVE":
             rung = "NOT-SEARCHED-AT-SEED" if s["rung"] == "NOT SEARCHED" else s["rung"]
-            rows[key] = {"debt": rung, "reason": "seed"}
+            rows[ledger_key(key)] = {"debt": rung, "reason": "seed"}     # P1: a gitignored origin → a digest
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, capture_output=True,
                             text=True).stdout.strip()
     header = {"commit": commit, "generated_at": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
@@ -81,11 +82,12 @@ def seed(trace_dir: str) -> dict:
     today = datetime.date.today().isoformat()
     extractors = {f: {"gates": gs, "listed_since": today,
                       "reason": "seed: builds an UNSTAMPED fixture; migrate to nucleus/sqlguard/fixture.py",
-                      "trip": ("plan-4227 econ stages settle (seed #22133)" if "econ" in f
-                               else "4243 B1 migration")}
+                      # P2: a MACHINE-CHECKABLE trip that enforce.py evaluates, never prose. The econ oracles
+                      # wait on goal 4227 (seed #22133); the rest migrate within this guard's own goal.
+                      "trip": {"goal": 4227 if "econ" in f else 4243, "state": "done"}}
                   for f, gs in sorted(rep["extractors"].items())}
     header["extractors_listed"] = len(extractors)
-    doc = {"header": header, "covering": {k: v for k, v in rep["covering"].items() if v}, "rows": rows,
+    doc = {"header": header, "covering": {ledger_key(k): v for k, v in rep["covering"].items() if v}, "rows": rows,
            "extractors": extractors}
     LEDGER.write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n")
     return header

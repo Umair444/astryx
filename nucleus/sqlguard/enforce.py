@@ -28,6 +28,7 @@ import psycopg
 
 from nucleus.sqlguard import judge
 from nucleus.sqlguard.fixture import live_dsn, run_id
+from nucleus.sqlguard.privacy import label, ledger_key, ignored
 
 NS_RUNS, NS_DAYS = 7, 3                    # the per-site NOT SEARCHED clock (declared)
 LEAK_RUNS, LEAK_AGE = 3, datetime.timedelta(hours=1)
@@ -94,10 +95,10 @@ def enforce(trace_dir, ledger=None, dsn=None, rep=None):
     ns_keys = []
     for key, s in rep["sites"].items():
         fn, _, text = key.partition("\x1f")
-        row = rows.get(key)
+        row = rows.get(ledger_key(key))
         if s["rung"] == "RESPONSIVE":
             if row:
-                red.append(f"R-STALE {fn}: now RESPONSIVE but still listed as {row['debt']} (shrink the ledger)")
+                red.append(f"R-STALE {label(key)}: now RESPONSIVE but still listed as {row['debt']} (shrink)")
             continue
         if s["rung"] == "NOT SEARCHED":
             ns_keys.append(key)
@@ -106,25 +107,36 @@ def enforce(trace_dir, ledger=None, dsn=None, rep=None):
             continue                                            # known debt, with its address
         cov = rep["covering"].get(key, [])
         if s["rung"] == "EXECUTED/FIXTURE-DDL" and cov and set(cov) <= open_gates:
-            report.append(f"EX3 {fn}: capped at FIXTURE-DDL by a LISTED extractor (reported, not RED)")
+            report.append(f"EX3 {label(key)}: capped at FIXTURE-DDL by a LISTED extractor (reported, not RED)")
             continue
-        red.append(f"R-NEW {fn}: {s['rung']} and not in the ledger: {text[:70]!r}")
+        red.append(f"R-NEW {label(key)}: {s['rung']} and not in the ledger")
+    live_keys = {ledger_key(k) for k in rep["sites"]}
     for key in rows:
-        if key not in rep["sites"]:
-            red.append(f"R-STALE {key.split(chr(31))[0]}: listed, but the site no longer exists (shrink)")
+        if key not in live_keys:
+            shown = "a hashed (gitignored-origin) site" if key.startswith("sha256:") else label(key)
+            red.append(f"R-STALE {shown}: listed, but the site no longer exists (shrink)")
     for b in rep["blind"]:
-        red.append(f"R-BLIND {b['frame']} ran SQL the inventory doesn't know: {b['t'][:70]!r}")
+        path = b["frame"][0]
+        what = "" if (path.startswith("tier/") or ignored(path)) else f": {b['t'][:70]!r}"
+        red.append(f"R-BLIND {path}::{b['frame'][1]} ran SQL the inventory doesn't know{what}")
 
     try:
         with psycopg.connect(dsn or live_dsn(), autocommit=True, connect_timeout=5) as c:
             if not c.execute("SELECT to_regclass('sqlguard_seen')").fetchone()[0]:
                 not_searched.append("state table sqlguard_seen absent: apply nucleus/schema.sql")
             else:
-                seen, now = _clock(c, "ns_site", ns_keys)
+                seen, now = _clock(c, "ns_site", [ledger_key(k) for k in ns_keys])   # P1: digests at rest too
                 for k, (first, runs) in seen.items():
                     age = now - first
                     if runs > NS_RUNS and age.days >= NS_DAYS:
-                        red.append(f"R-CLOCK {k.split(chr(31))[0]}: NOT SEARCHED for {runs} runs / {age.days}d")
+                        red.append(f"R-CLOCK {label(k)}: NOT SEARCHED for {runs} runs / {age.days}d")
+                for f, meta in listed.items():                  # P2: machine-checkable trips
+                    trip = meta.get("trip") or {}
+                    if isinstance(trip, dict) and trip.get("goal") and c.execute(
+                            "SELECT 1 FROM goals WHERE id=%s AND state=%s", (trip["goal"], trip.get("state", "done"))
+                    ).fetchone():
+                        red.append(f"R-EXTRACT {f}: its trip fired (goal {trip['goal']} is "
+                                   f"{trip.get('state', 'done')}), so migrate it to nucleus/sqlguard/fixture.py")
                 fx = [r[0] for r in c.execute("SELECT datname FROM pg_database WHERE datname LIKE 'astryx_fx_%'")]
                 mine = f"astryx_fx_{run_id()}_".lower()
                 for d in fx:

@@ -218,8 +218,11 @@ if __name__ == "__main__":
         print(f"  NOT SEARCHED (run): {n}")
     for script, gs in sorted(rep["untraced_children"].items()):
         print(f"  NOT SEARCHED (untraced child): {script} was launched with a cleared env by {gs}")
+    from nucleus.sqlguard.privacy import ignored
     for b in rep["blind"][:10]:
-        print(f"  BLIND (reverse agreement): {b['frame']} ran {b['t']!r}")
+        p = b["frame"][0]
+        what = "" if (p.startswith("tier/") or ignored(p)) else f" ran {b['t']!r}"   # P1: no gitignored SQL text
+        print(f"  BLIND (reverse agreement): {p}::{b['frame'][1]}{what}")
     print(f"  extractors (static list, until migrated): {len(rep['extractors_static'])}; exempt: {rep['exempt']}")
     print("  " + REMAINDER)
     with open(os.path.join(d, "report.json"), "w") as f:
