@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Progress, ScrollArea, Tooltip } from '@mantine/core'
+import { ScrollArea, Tooltip } from '@mantine/core'
 import { api, agentColor, fmtTime, fmtTokens } from '../api'
 import type { Economy, EconDissipative, EconLatest, EconTriggerTfp } from '../types'
 
@@ -436,25 +436,24 @@ function UsageTab({ econ }: { econ: Economy | null }) {
         </div>
       </div>
 
-      {/* goal budgets */}
+      {/* goals: no budgets since 4227. A legacy budget is muted history; spent_tokens was never
+          written, so it isn't shown at all (a 0 there means "never measured", not "unused"). */}
       <div className="bg-deck-2 border border-line rounded-lg p-3">
-        <div className="text-[11px] uppercase tracking-wider text-ink-dim mb-2">Goal budgets</div>
+        <div className="text-[11px] uppercase tracking-wider text-ink-dim mb-2">Goals</div>
         <div className="space-y-2">
           {(econ?.goals ?? []).map((g) => {
-            const budget = g.budget_tokens ?? 0
-            const pct = budget > 0 ? Math.min(100, (g.spent_tokens / budget) * 100) : 0
+            const budgetEra = g.budget_tokens ?? 0
             return (
               <div key={g.id} className="text-[12px]">
                 <div className="flex items-center gap-2">
                   <span className="text-ink truncate">{g.title}</span>
                   <span className="text-[10px] text-ink-mute font-mono shrink-0">{g.state}</span>
-                  <span className="ml-auto font-mono text-ink-mute whitespace-nowrap">
-                    {fmtTokens(g.spent_tokens)}{budget > 0 ? ` / ${fmtTokens(budget)}` : ''}
-                  </span>
+                  {budgetEra > 0 && (
+                    <span className="ml-auto font-mono text-[10px] text-ink-mute/70 whitespace-nowrap" title="set before goal 4227 retired budgets; history, not a limit">
+                      budget-era · {fmtTokens(budgetEra)}
+                    </span>
+                  )}
                 </div>
-                {budget > 0 && (
-                  <Progress value={pct} size="xs" mt={4} color={g.spent_tokens > budget ? 'red' : pct > 85 ? 'yellow' : 'cyan'} />
-                )}
               </div>
             )
           })}

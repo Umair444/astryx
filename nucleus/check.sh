@@ -210,6 +210,10 @@ run "memory window() picks rare-term mass" "$PY" tests/test_memory_window.py
 # costs the row, and the classifications table refuses a prompt-shaped label. RED-first against
 # the pre-4227 hook; the arms that pass vacuously there are pinned by tests/mutants_tool_ledger.py.
 run "tool ledger: ids only, ledger authorship" "$PY" tests/test_tool_ledger.py
+# observatory without budget economics (goal 4227 follow-up, a2 #23159): no component renders
+# spent_tokens (never written: 0 means never measured), sends a budget, or draws a budget bar;
+# a legacy budget_tokens is labelled "budget-era". Scans the TSX with comments stripped.
+run "observatory renders no budget economics" "$PY" tests/test_observatory_no_budget_ui.py
 # the registry door (goal 4227, S4): find + run, and never a new capability. run() executes
 # registered SCRIPTS only, as an argv list (no shell), with a clamped timeout, and never starts
 # an MCP server, because that would walk past its charter grant. Mutants: tests/mutants_tools_door.py.
