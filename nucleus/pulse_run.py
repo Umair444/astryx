@@ -40,12 +40,17 @@ class Ctx:
         """Queue a wake. The pulse writes it after this evaluation, byte for byte as given here,
         or holds it under quota pressure. supersede=True only where a later wake contains the
         earlier one (a per-tick report); distinct news keeps the default so none is merged away.
-        durable=True: delivered even if this evaluation later crashes (a crash otherwise delivers
-        none of its wakes). ONLY for a last-resort alarm whose dedup reads the WIRE, not ctx.state,
-        or a deterministic crash would re-send it every tick."""
-        self.wakes.append({"to_agent": to, "body": str(body), "thread": thread, "intent": intent,
-                           "from_agent": from_agent, "from_org": from_org, "to_org": to_org,
-                           "supersede": bool(supersede), "durable": bool(durable)})
+        durable=True: delivered even if this evaluation later RAISES OR HANGS past the pulse's
+        timeout (otherwise a failed evaluation delivers none of its wakes). It is written to stdout
+        the moment it is queued, so even a killed process hands it over. ONLY for a last-resort
+        alarm whose dedup reads the WIRE, not ctx.state, or a deterministic failure would re-send it
+        every tick; tests/test_wake_chokepoint.py holds the declared list of such sites."""
+        w = {"to_agent": to, "body": str(body), "thread": thread, "intent": intent,
+             "from_agent": from_agent, "from_org": from_org, "to_org": to_org,
+             "supersede": bool(supersede), "durable": bool(durable)}
+        self.wakes.append(w)
+        if durable:                   # handed over NOW: survives a later raise, hang or kill
+            print(json.dumps({"durable_wake": w}, default=str), flush=True)
 
     def sql(self, query, params=()):
         if _WAKE_WRITE.search(_COMMENT.sub(" ", str(query))):
@@ -71,13 +76,7 @@ def main():
     sys.path.insert(0, str(REPO))
     mod = runpy.run_path(str(REPO / file))
     ctx = Ctx(payload.get("state") or {})
-    try:
-        fire = mod[func](ctx)
-    except BaseException:
-        durable = [w for w in ctx.wakes if w.get("durable")]
-        if durable:                       # the only wakes a crashed evaluation still delivers
-            print(json.dumps({"durable_wakes": durable}, default=str), flush=True)
-        raise
+    fire = mod[func](ctx)             # durable wakes were already printed as they were queued
     print(json.dumps({"state": ctx.state,
                       "fire": fire if isinstance(fire, str) else None,
                       "wakes": ctx.wakes},

@@ -41,6 +41,10 @@ Each arm can go red alone:
   A22 an elided set with NO newer held rows still releases its one marker (and deletes nothing else)
   A23 a trigger deleted while it was being evaluated: its state writes touch 0 rows, the tick doesn't
       crash, and its wake is still delivered once
+  A24 D2-b: every `durable=True` ctx.say site in triggers/** (+ their in-repo imports) is DECLARED below with
+      its reason; a new use is RED until declared and reviewed (a durable wake whose dedup reads ctx.state
+      would re-send on every failing tick)
+  A25 D2-a: a durable wake survives its check HANGING past the pulse's timeout (delivered once)
   A18 residents() is derived from the agents/ tree: it holds seed, not owner (NOT SEARCHED without it)
 
 Run: venv/bin/python tests/test_wake_chokepoint.py
@@ -66,6 +70,11 @@ except Exception as exc:                                        # noqa: BLE001
 
 K = 5
 fails = []
+# D2-b: the only places a wake may survive its check's failure. Each must dedup on the WIRE.
+DURABLE_DECLARED = {
+    "triggers/seed/wedge_watch.py": (1, "owner escalation: the out-of-band last-resort alarm; its dedup "
+                                        "(_esc_binds) reads the sent row, and owner wakes are never held (D-1)"),
+}
 
 
 def check(name, ok, detail=""):
@@ -103,6 +112,11 @@ def counted(ctx):
 
 def fire_str(ctx):
     return "condition X"
+
+def durable_then_hang(ctx):
+    ctx.say("owner", "hang alarm", thread="esc-z", intent="chat", from_agent="seed", durable=True)
+    import time
+    time.sleep(60)
 
 def durable_then_crash(ctx):
     ctx.say("owner", "last resort", thread="esc-y", intent="chat", from_agent="seed", durable=True)
@@ -159,7 +173,7 @@ def tick(pulse, conn, *ts):
 def o7_scan():
     """every `INSERT INTO messages` in trigger code, and in the in-repo modules trigger code imports"""
     pat = re.compile(r"INSERT\s+INTO\s+(?:\"?public\"?\.)?\"?messages\"?\b", re.I)
-    seen, todo, hits = set(), [], []
+    seen, todo, hits, durable = set(), [], [], {}
     for p in (REPO / "triggers").rglob("*.py"):
         todo.append(p)
     while todo:
@@ -176,6 +190,11 @@ def o7_scan():
             hits.append(f"{p.relative_to(REPO)}: unparseable (closure unknown)")
             continue
         for node in ast.walk(tree):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "say"
+                    and any(k.arg == "durable" and isinstance(k.value, ast.Constant) and k.value.value
+                            for k in node.keywords)):
+                rel = str(p.relative_to(REPO))
+                durable[rel] = durable.get(rel, 0) + 1
             mods = []
             if isinstance(node, ast.Import):
                 mods = [a.name for a in node.names]
@@ -185,13 +204,19 @@ def o7_scan():
                 cand = REPO / (m.replace(".", "/") + ".py")
                 if cand.exists():
                     todo.append(cand)
-    return hits, len(seen)
+    return hits, len(seen), durable
 
 
 def main():
-    hits, nfiles = o7_scan()
-    check(f"A16 O7: no INSERT INTO messages in triggers/** + their in-repo imports ({nfiles} files)",
-          not hits and nfiles > 0, "; ".join(hits[:12]))
+    if not (REPO / "triggers").is_dir():                # 4243 r1/r2: ABSENT is NOT SEARCHED, never a FAIL
+        print("  NOT SEARCHED  A16/A24 — no triggers/ tree here (gitignored); runs on the org host")
+    else:
+        hits, nfiles, durable = o7_scan()
+        check(f"A16 O7: no INSERT INTO messages in triggers/** + their in-repo imports ({nfiles} files)",
+              not hits and nfiles > 0, "; ".join(hits[:12]))       # PRESENT but 0 files scanned → RED
+        declared = {f: n for f, (n, _) in DURABLE_DECLARED.items()}
+        check("A24 D2-b: the durable=True sites are exactly the declared ones", durable == declared,
+              f"found {durable}, declared {declared}")
 
     with fixture_db() as fx, tempfile.TemporaryDirectory() as td:
         os.environ["ASTRYX_DSN"] = fx["dsn"]        # pulse + pulse_run subprocesses bind to the fixture
@@ -352,6 +377,19 @@ def main():
         check("A19 durable owner wake delivered despite the crash", len(msgs(conn, "%last resort%")) == 1)
         check("A19 the non-durable wake of the same crashed evaluation is not delivered or held",
               not msgs(conn, "%not durable%") and not held(conn, "%not durable%"))
+
+        # A25 — a durable wake survives a HANG past the pulse's timeout
+        t25 = make_trigger(conn, "twentyfive", "durable_then_hang", checks)
+        saved, pulse.CHECK_TIMEOUT = pulse.CHECK_TIMEOUT, 4
+        try:
+            tick(pulse, conn, t25)
+        finally:
+            pulse.CHECK_TIMEOUT = saved
+        check("A25 durable owner wake delivered once although its check hung and was killed",
+              len(msgs(conn, "%hang alarm%")) == 1)
+        check("A25 the hang is reported loudly (timed out; emitted, held here at 90%)",
+              conn.execute("SELECT count(*) FROM wire_emitted WHERE body LIKE '%twentyfive%' "
+                           "AND body LIKE '%timed out%'").fetchone()[0] == 1)
 
         # A14/A15 — returned fire strings take the same path; wire_emitted sees held rows
         t14 = make_trigger(conn, "fourteen", "fire_str", checks)

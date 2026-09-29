@@ -126,17 +126,30 @@ def reconcile(conn):
 def run_python(src: str, state: dict) -> dict:
     """check in a killable subprocess: {state} in on stdin, {state, fire} out."""
     file, func = src.split("::")
-    r = subprocess.run([PY, str(REPO / "nucleus" / "pulse_run.py"), file, func],
-                       input=json.dumps({"state": state}), capture_output=True,
-                       text=True, timeout=CHECK_TIMEOUT, cwd=REPO)
-    if r.returncode != 0:
-        durable = []
-        try:                              # a crashed check still hands over its durable wakes (S1c)
-            durable = json.loads(r.stdout.strip().splitlines()[-1]).get("durable_wakes") or []
+    try:
+        r = subprocess.run([PY, str(REPO / "nucleus" / "pulse_run.py"), file, func],
+                           input=json.dumps({"state": state}), capture_output=True,
+                           text=True, timeout=CHECK_TIMEOUT, cwd=REPO)
+    except subprocess.TimeoutExpired as e:  # a HUNG check still hands over its durable wakes (S1c)
+        out = e.stdout.decode(errors="replace") if isinstance(e.stdout, bytes) else (e.stdout or "")
+        return {"state": state, "error": f"timed out after {CHECK_TIMEOUT}s",
+                "wakes": _durable(out)}
+    if r.returncode != 0:                 # a RAISING check likewise
+        return {"state": state, "error": r.stderr.strip()[-500:], "wakes": _durable(r.stdout)}
+    return json.loads(r.stdout.strip().splitlines()[-1])
+
+
+def _durable(stdout: str) -> list[dict]:
+    """The durable wakes a failed check printed as it queued them (pulse_run.Ctx.say)."""
+    out = []
+    for line in (stdout or "").splitlines():
+        try:
+            w = json.loads(line).get("durable_wake")
         except Exception:
-            pass
-        return {"state": state, "error": r.stderr.strip()[-500:], "wakes": durable}
-    return json.loads(r.stdout)
+            continue
+        if isinstance(w, dict):
+            out.append(w)
+    return out
 
 
 def evaluate(t: dict, conn) -> tuple[str | None, dict, list[dict]]:
