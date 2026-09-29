@@ -77,11 +77,25 @@ check("dirty=None → 'dirty' (unknown is never clean)", got.get("d6") == "dirty
 check("a JSON-string built_from parses (clean → not flagged)", "d7" not in got, str(got))
 check("one ancestor lookup per distinct sha", sorted(calls) == sorted([GOOD, BAD]), str(calls))
 
-print("\n2. _is_ancestor (real git):")
+print("\n2. git (a hermetic temp repo: a main commit, a side-branch commit, a missing object):")
+import tempfile  # noqa: E402
+_tmp = tempfile.TemporaryDirectory()
+T = Path(_tmp.name) / "r"
+G = ["git", "-C", str(T), "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
+subprocess.run(["git", "init", "-q", "-b", "main", str(T)], check=True)
+subprocess.run(G + ["commit", "-q", "--allow-empty", "-m", "on main"], check=True)
+on_main = subprocess.run(G + ["rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+subprocess.run(G + ["checkout", "-q", "-b", "side"], check=True)
+subprocess.run(G + ["commit", "-q", "--allow-empty", "-m", "off main"], check=True)
+off_main = subprocess.run(G + ["rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+check("a commit on main → ancestor", m._is_ancestor(on_main, T))
+check("a REAL commit off main (side branch) → not an ancestor", not m._is_ancestor(off_main, T))
+check("an object the repo lacks → not an ancestor", not m._is_ancestor("f" * 40, T))
+check("None → not an ancestor", not m._is_ancestor(None, T))
+check("git_blind: a healthy repo with main → None", m.git_blind(T) is None)
+check("git_blind: a directory that is not a repo → a reason (the checker is blind)",
+      bool(m.git_blind(Path(_tmp.name))))
 head = subprocess.run(["git", "-C", str(REPO), "rev-parse", "main"], capture_output=True, text=True).stdout.strip()
-check("main's HEAD is an ancestor of main", m._is_ancestor(head, REPO), head)
-check("a sha no repo has → False (never clean)", not m._is_ancestor("f" * 40, REPO))
-check("None → False", not m._is_ancestor(None, REPO))
 
 print("\n3. entrypoint (pulse_run.Ctx on a sqlguard fixture):")
 try:
@@ -104,15 +118,17 @@ if fx is not None:
             metrics = {"v2": v2} | ({"built_from": bf} if bf is not None else {})
             conn.execute("INSERT INTO econ (day, metrics) VALUES (%s, %s::jsonb)", (day, json.dumps(metrics)))
 
-        put("2026-01-01", "v2.0", None)                                   # pre-stamp: out of scope
-        put("2026-01-02", "v2.1", {"sha": head, "dirty": False})          # clean
-        put("2026-01-03", "v2.1", {"sha": "e" * 40, "dirty": False})      # foreign
-        put("2026-01-04", "v2.1", None)                                   # missing
-
         class TempCtx(pr.Ctx):
             def __init__(self, state, connection):
                 super().__init__(state)
                 self._conn = connection
+
+        check("an EMPTY econ table → silent (the entrypoint's WHERE also sees 0 rows)",
+              m.econ_provenance(TempCtx({}, conn)) is None)
+        put("2026-01-01", "v2.0", None)                                   # pre-stamp: out of scope
+        put("2026-01-02", "v2.1", {"sha": head, "dirty": False})          # clean
+        put("2026-01-03", "v2.1", {"sha": "e" * 40, "dirty": False})      # foreign
+        put("2026-01-04", "v2.1", None)                                   # missing
 
         st = {}
         out = m.econ_provenance(TempCtx(st, conn))
@@ -125,6 +141,13 @@ if fx is not None:
         check("the v2.0 pre-stamp row is out of scope", "2026-01-01" not in out, out)
         check("same set next run → silent (dedup)", m.econ_provenance(TempCtx(st, conn)) is None)
         check("lost state → re-alarms (loud side)", isinstance(m.econ_provenance(TempCtx({}, conn)), str))
+        # a BLIND checker (its repo is not a git repo) → ONE unverifiable line, zero per-row verdicts
+        real = m.REPO
+        m.REPO = Path(_tmp.name)
+        blind = m.econ_provenance(TempCtx({}, conn)) or ""
+        m.REPO = real
+        check("blind checker → exactly one 'UNVERIFIABLE' line and NO 'foreign' verdict",
+              blind.count("UNVERIFIABLE") == 1 and "foreign" not in blind and "2026-01-0" not in blind, blind)
         conn.execute("DELETE FROM econ WHERE day IN ('2026-01-03','2026-01-04')")
         st2 = {"nag": 1}
         check("an all-clean table is silent and clears the nag",
