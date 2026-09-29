@@ -47,7 +47,11 @@ _TERMS = ("phi_goal_attributed", "thermo", '"Q"', "'Q'", "heat", "phi", "flux")
 # correctly-sourced subtrahend is recognised by name even without an in-scope binding.
 # Kept TIGHT: a genuine unknown (e.g. `mystery`) stays unknown and fails closed.
 FLUX_ATTRIBUTED_KEYS = {"phi_goal_attributed", "phi_goal", "attributed_flux", "goal_attributed_flux"}
-FLUX_KEYS = {"phi", "flux", "bill", "billable", "phi_heat", "heat_instant_phi", "tokens_out"}
+# shipped_flux (goal 4227 v2): billable tokens on turns of goals shipped in-window — the
+# owner's v2 W is EFFORT (a cost), not v1's Σ budget_tokens (a price), so v2 heat
+# Q = phi − shipped_flux is flux − flux. The bare name `w` STAYS a budget key below.
+FLUX_KEYS = {"phi", "flux", "bill", "billable", "phi_heat", "heat_instant_phi", "tokens_out",
+             "shipped_flux"}
 BUDGET_KEYS = {"w", "budget", "budgets", "budget_tokens", "work"}   # the PRICE — never a heat subtrahend
 
 FLUX = "flux"

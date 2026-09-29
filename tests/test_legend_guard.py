@@ -97,6 +97,14 @@ check("...and phi_goal as a bare param (name-recognised, no binding) also passes
 
 # ── 5. SAME-BASE / NON-SUB forms must NOT fire ───────────────────────────────────────
 print("\nNO-FIRE ARMS — the guard flags a unit MIX, not arithmetic:")
+# goal 4227 v2: W is FLUX (effort), declared via the shipped_flux key. The fix must not
+# blind the guard — the v1 budget mixes it exists for must still fire.
+check("v2 heat q = fx['phi'] - fx['shipped_flux'] (declared flux-flux) passes",
+      red("def f(fx):\n    return {'Q': fx['phi'] - fx['shipped_flux']}"), False)
+check("...but heat = phi - budget_tokens (the real v1 unit mix) is STILL flagged",
+      red("def f(phi, budget_tokens):\n    q = phi - budget_tokens\n    return q"), True)
+check("...and a bare `w` subtrahend is STILL read as budget (v2 fix did not widen `w`)",
+      red("def f(phi, w):\n    q = phi - w\n    return q"), True)
 check("eta = w / phi (division of price by cost) does not fire",
       red("def f():\n th={}\n w,phi=th.get('W'),th.get('phi')\n eta=w/phi\n return eta"), False)
 check("a direct flux heat value (heat_instant_phi/phi) — no subtraction — does not fire",
