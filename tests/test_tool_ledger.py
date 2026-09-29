@@ -3,7 +3,7 @@
 throwaway schema, stamps each call with the registry id and nothing else.
 
     venv/bin/python tests/test_tool_ledger.py        (also run by nucleus/check.sh)
-    STEP_SRC=<path> …                                (the subject; mutation_probe sets it)
+    STEP_SRC=<path> / TOOLREG_SRC=<path> …           (the two subjects; mutation_probe sets one)
 
 WHAT IT HOLDS
   L1 a call of a registered tool carries {registry_id} on its `tool` row and
@@ -24,6 +24,13 @@ WHAT IT HOLDS
      meta form count.
   L8 the classifications table refuses a prompt-shaped label (I5 against an untrusted
      classifier that echoes its input).
+  L9 a script that is only NAMED (git add x.py, grep … x.py, cat x.py) is not a call. Only
+     an execution position counts. The ledger's first live minutes counted every mention,
+     which inflated usage with every review and commit.
+
+BOTH SUBJECTS RUN FROM ONE TEMP REPO TREE: hooks/step.py and nucleus/toolreg.py are copies of
+the subjects, and everything else is symlinked in. Both files derive REPO from their own path,
+so every absolute path this oracle builds is under that tree, never the real REPO.
 
 WHY A SUBPROCESS, AND WHY PGOPTIONS. The hook opens its own connection from .env, so the only
 way to test the REAL file, rather than an import of pieces of it, is to run it. libpq honours
@@ -43,10 +50,11 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 EXIT_SKIP = 77
 SUBJECT = Path(os.environ.get("STEP_SRC") or REPO / "hooks" / "step.py")
+TOOLREG = Path(os.environ.get("TOOLREG_SRC") or REPO / "nucleus" / "toolreg.py")
 ENV = REPO / ".env"
 PY = sys.executable
 
-if not ENV.exists() or not SUBJECT.exists():
+if not ENV.exists() or not SUBJECT.exists() or not TOOLREG.exists():
     print("SKIP: .env or the step hook is absent (bare clone) — nothing verified.")
     sys.exit(EXIT_SKIP)
 try:
@@ -57,9 +65,6 @@ try:
 except Exception as e:  # noqa: BLE001
     print(f"SKIP: no reachable DB ({type(e).__name__}) — nothing verified.")
     sys.exit(EXIT_SKIP)
-
-sys.path.insert(0, str(REPO))
-from nucleus import toolreg  # noqa: E402
 
 fails = []
 SECRET = "SEKRET-4227-xq9"          # planted everywhere a leak could come from
@@ -82,18 +87,21 @@ def ddl(name):
 
 
 def tree(broken_toolreg=False):
-    """A temp repo root holding the subject as hooks/step.py. The hook derives REPO from its own
-    path, so this is how the SUBJECT, not the installed hook, gets run."""
+    """A temp repo root: the two subjects copied in, everything else symlinked."""
     t = Path(tempfile.mkdtemp(prefix="t_ledger_"))
     (t / "hooks").mkdir()
     shutil.copy(SUBJECT, t / "hooks" / "step.py")
     (t / ".env").write_text(f"ASTRYX_DSN={DSN}\n")
+    (t / "nucleus").mkdir()
+    for e in (REPO / "nucleus").iterdir():
+        if e.name not in ("toolreg.py", "__pycache__"):
+            (t / "nucleus" / e.name).symlink_to(e)
     if broken_toolreg:
-        (t / "nucleus").mkdir()
-        (t / "nucleus" / "__init__.py").write_text("")
         (t / "nucleus" / "toolreg.py").write_text("raise RuntimeError('toolreg broken')\n")
     else:
-        (t / "nucleus").symlink_to(REPO / "nucleus")
+        shutil.copy(TOOLREG, t / "nucleus" / "toolreg.py")
+    for d in ("mcp", "skills", "tests"):
+        (t / d).symlink_to(REPO / d)
     return t
 
 
@@ -127,6 +135,8 @@ roots = []
 try:
     schema(admin, SCH, ("turns", "steps", "messages", "classifications"))
     root = tree(); roots.append(root)
+    sys.path.insert(0, str(root))
+    from nucleus import toolreg  # noqa: E402  — the SUBJECT's copy, from the temp tree
 
     def pre(tool, ti, agent="alice"):
         return hook(root, SCH, {"hook_event_name": "PreToolUse", "tool_name": tool,
@@ -140,7 +150,7 @@ try:
         return metas(admin)[-n:]
 
     # ── L1 + L2: a Bash call of a registered script, secrets in every input ────────────────
-    cmd = f"cd {REPO} && ASTRYX_TOKEN={SECRET} bash nucleus/smoke.sh --key '{SECRET}' | nucleus/wall.sh"
+    cmd = f"cd {root} && ASTRYX_TOKEN={SECRET} bash nucleus/smoke.sh --key '{SECRET}' | nucleus/wall.sh"
     bi = {"command": cmd, "description": "run smoke"}
     resp = {"stdout": f"ok {SECRET} " + "x" * 500, "stderr": "", "interrupted": False}
     pre("Bash", bi)
@@ -166,7 +176,7 @@ try:
           last()[0][3] == {"registry_id": "mcp:astryx/send"}, str(last()[0][3]))
 
     # ── L3: writing a tool's source is authorship, not a call ─────────────────────────────
-    wi = {"file_path": f"{REPO}/skills/zz_ledger_probe/tool.py", "content": SECRET}
+    wi = {"file_path": f"{root}/skills/zz_ledger_probe/tool.py", "content": SECRET}
     pre("Write", wi)
     check("L3 Write of a tool source → {edits} only (content dropped)",
           last()[0][3] == {"edits": "script:skills/zz_ledger_probe/tool.py"}, str(last()[0][3]))
@@ -176,10 +186,11 @@ try:
 
     # ── L4: unregistered → no meta; the door's id is validated ────────────────────────────
     for tool, ti, why in (
-            ("Read", {"file_path": f"{REPO}/nucleus/econ.py"}, "Read of a tool is not a call"),
+            ("Read", {"file_path": f"{root}/nucleus/econ.py"}, "Read of a tool is not a call"),
             ("mcp__not_a_server__x", {}, "unregistered MCP server"),
             ("Bash", {"command": "cat tier/secret.py"}, "tier/ is never a tool root"),
-            ("Bash", {"command": "python nucleus/../tier/x.py"}, "a .. escape out of a root"),
+            ("Bash", {"command": "python3 nucleus/../tests/test_tool_ledger.py"},
+             "a .. escape out of a root (to a file that EXISTS)"),
             ("Bash", {"command": "ls -la"}, "a plain command")):
         pre(tool, ti)
         check(f"L4 no meta: {why}", last()[0][3] is None, str(last()[0][3]))
@@ -189,6 +200,20 @@ try:
     pre("mcp__tools__run", {"id": "script:tier/x.py"})
     check("L4 an invalid door id is not trusted (recorded as the door itself)",
           last()[0][3] == {"registry_id": "mcp:tools/run"}, str(last()[0][3]))
+
+    # ── L9: a named script is not a called script ──────────────────────────────────────────
+    for c in ("git add hooks/step.py nucleus/check.sh nucleus/smoke.sh",
+              "grep -n x nucleus/econ.py; sed -n 1,5p nucleus/pulse.py | head -3",
+              "cat nucleus/smoke.sh && git diff nucleus/wall.sh",
+              "python3 -c 'print(1)' nucleus/econ.py"):
+        pre("Bash", {"command": c})
+        check(f"L9 mention is not a call: {c[:48]!r}", last()[0][3] is None, str(last()[0][3]))
+    for c, want in (("timeout 60 venv/bin/python -u -m nucleus.econ", "script:nucleus/econ.py"),
+                    ("FOO=1 nucleus/smoke.sh", "script:nucleus/smoke.sh"),
+                    (f"{root}/nucleus/check.sh --fast", "script:nucleus/check.sh")):
+        pre("Bash", {"command": c})
+        check(f"L9 execution position IS a call: {c[:48]!r}",
+              (last()[0][3] or {}).get("registry_id") == want, str(last()[0][3]))
 
     # ── L5: a broken toolreg never costs the row ──────────────────────────────────────────
     broken = tree(broken_toolreg=True); roots.append(broken)
@@ -235,13 +260,13 @@ try:
     # ── L7: authorship from the ledger ────────────────────────────────────────────────────
     admin.execute("DELETE FROM steps")
     rows = [
-        ("alice", f"Write: {REPO}/nucleus/zz_probe_a.py", None),          # legacy form
-        ("bob", f"Edit: {REPO}/nucleus/zz_probe_a.py", None),
-        ("alice", f"Edit: {REPO}/nucleus/zz_probe_a.py", None),
+        ("alice", f"Write: {root}/nucleus/zz_probe_a.py", None),          # legacy form
+        ("bob", f"Edit: {root}/nucleus/zz_probe_a.py", None),
+        ("alice", f"Edit: {root}/nucleus/zz_probe_a.py", None),
         ("carol", "Write: (described)", {"edits": "script:skills/zz_probe_b/t.py"}),  # meta form
         ("erin", "Edit: (described)", {"edits": "script:skills/zz_probe_b/t.py"}),
-        ("dave", f"Edit: {REPO}/nucleus/zz_probe_c.py", None),           # predates the record
-        ("frank", f"Write: {REPO}/nucleus/zz_probe_c.py", None),
+        ("dave", f"Edit: {root}/nucleus/zz_probe_c.py", None),           # predates the record
+        ("frank", f"Write: {root}/nucleus/zz_probe_c.py", None),
     ]
     for agent, content, meta in rows:
         admin.execute("INSERT INTO steps (agent, kind, content, meta) VALUES (%s,'tool',%s,%s)",

@@ -84,20 +84,96 @@ def _module_path(tok: str) -> str | None:
     return None
 
 
+# A path is CALLED only where the shell would execute it: as the command word itself, or as
+# the script an interpreter is handed. Everywhere else (git add nucleus/x.py, grep … x.py,
+# sed -n … x.py) the path is only mentioned. Counting a mention as a call would inflate
+# usage-GDP with every review and every commit, and it did, for the first minutes this ledger
+# was live (plan-4227, 09-29).
+_OPERATORS = {";", "&&", "||", "|", "&", "(", ")", "|&", ";;"}
+_WRAPPERS = {"env", "nohup", "exec", "time", "command", "builtin", "sudo", "nice", "stdbuf"}
+_TAKES_ARG = {"timeout": 1, "nice": 0}     # wrappers whose first plain argument is not the command
+_INTERP = re.compile(r"^(python[0-9.]*|bash|sh|zsh|dash|node|deno|bun|uv|pipx)$")
+
+
+def _simple_commands(cmd: str) -> list[list[str]]:
+    lex = shlex.shlex(cmd.replace("\n", " ; "), posix=True, punctuation_chars=";&|()")
+    lex.whitespace_split = True
+    out, cur = [], []
+    for t in lex:
+        if t in _OPERATORS or set(t) <= set(";&|()"):
+            if cur:
+                out.append(cur)
+            cur = []
+        else:
+            cur.append(t)
+    if cur:
+        out.append(cur)
+    return out
+
+
+def _invoked(words: list[str]) -> str | None:
+    """The registry id this one simple command executes, if any."""
+    i = 0
+    while i < len(words):
+        w = words[i]
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", w):         # FOO=1 cmd
+            i += 1
+        elif w in _WRAPPERS or w in _TAKES_ARG:
+            i += 1
+            while i < len(words) and words[i].startswith("-"):     # wrapper flags
+                i += 1
+            if w in _TAKES_ARG and _TAKES_ARG[w] and i < len(words):
+                i += _TAKES_ARG[w]                                   # timeout's duration
+        else:
+            break
+    if i >= len(words):
+        return None
+    head = words[i]
+    rid = script_id(head)
+    if rid:
+        return rid
+    if not _INTERP.match(os.path.basename(head)):
+        return None
+    j = i + 1
+    if os.path.basename(head) == "uv" and j < len(words) and words[j] == "run":
+        # uv run's own flags take values (--with pkg), so scan to the first word that is a
+        # script or an interpreter instead of parsing uv's flag grammar.
+        j += 1
+        while j < len(words):
+            rid = script_id(words[j])
+            if rid:
+                return rid
+            if _INTERP.match(os.path.basename(words[j])):
+                j += 1
+                break
+            j += 1
+    while j < len(words):
+        a = words[j]
+        if a == "-m" and j + 1 < len(words):
+            return script_id(_module_path(words[j + 1]) or "")
+        if a == "-c" or a == "-":                    # inline code / stdin: no script file
+            return None
+        if a.startswith("-"):
+            j += 1
+            continue
+        return script_id(a)
+    return None
+
+
 def ids_in_command(cmd: str) -> list[str]:
-    """Every registered script a shell command invokes, in order, without duplicates."""
+    """Every registered script a shell command EXECUTES, in order, without duplicates. A
+    script that is only named (an argument to git, grep, sed, cat …) is not a call."""
     if not isinstance(cmd, str) or not cmd:
         return []
     try:
-        toks = shlex.split(cmd, posix=True)
-    except ValueError:                   # an unbalanced quote: fall back to whitespace
-        toks = cmd.split()
+        cmds = _simple_commands(cmd)
+    except ValueError:                   # an unbalanced quote: the command can't be read
+        return []
     out = []
-    for t in toks:
-        for piece in re.split(r"[;&|()<>]+", t):
-            rid = script_id(piece) or script_id(_module_path(piece) or "")
-            if rid and rid not in out:
-                out.append(rid)
+    for words in cmds:
+        rid = _invoked(words)
+        if rid and rid not in out:
+            out.append(rid)
     return out
 
 
