@@ -171,3 +171,11 @@ Residuals (declared, not closed):
   #23984. Declared residual: a repo caller the inventory doesn't see as SQL-bearing whose runtime text equals a
   driver constant also reads driver-internal, so the count is not proof that only the driver spoke.
 - fixture_db() yields `url` (postgresql://) beside the key=value `dsn`, for asyncpg and node-pg.
+- LIVE-ONLY evidence doesn't move the ledger (seed #26453). A live-public READ may grade RESPONSIVE, but its
+  witnesses are whatever live data held during the run (plan_verdict_due's `now() - make_interval` dedup saw
+  rows 0 and 1 in one run and only 0 in the next). The judge marks such a site `live_only`: RESPONSIVE, but not
+  by stamped-fixture evidence alone. Enforce REPORTS a live-only climb of a listed row, and `ledger shrink` never
+  drops one. Declared residual: 34 of 53 RESPONSIVE sites were live-only on 09-30, and an UNLISTED live-only site
+  can still dip to EXECUTED and read R-NEW. The fully honest rung (live-only = EXECUTED, with the 34 listed as
+  debt) is a design change left to the plan, not this commit.
+- A site keyword must END its token (steward #26944): CLI argv literals like "merge-base" aren't sites.

@@ -436,10 +436,12 @@ try:
     rows = {"a.py::f\x1fselect 1": "UNEXECUTED", "a.py::g\x1fselect 2": "UNEXECUTED",
             "a.py::h\x1fselect 3": "UNEXECUTED", "a.py::old\x1fselect 9": "EXECUTED",
             "a.py::amb\x1fselect 8": "UNEXECUTED", IGN: "EXECUTED", MV_IGN_OLD: "UNEXECUTED",
-            "a.py::old2\x1fselect 1": "EXECUTED"}      # its text's only live match is ALREADY listed: drop, never overwrite
+            "a.py::old2\x1fselect 1": "EXECUTED",      # its text's only live match is ALREADY listed: drop, never overwrite
+            "a.py::lv\x1fselect 7": "EXECUTED"}        # climbed on LIVE data only: not reproducible, so KEPT
     sites = {"a.py::f\x1fselect 1": "UNEXECUTED", "a.py::g\x1fselect 2": "RESPONSIVE",
              "a.py::new\x1fselect 9": "NOT SEARCHED", "a.py::p\x1fselect 8": "UNEXECUTED",
-             "a.py::q\x1fselect 8": "UNEXECUTED", IGN: "EXECUTED", MV_IGN_NEW: "UNEXECUTED"}
+             "a.py::q\x1fselect 8": "UNEXECUTED", IGN: "EXECUTED", MV_IGN_NEW: "UNEXECUTED",
+             "a.py::lv\x1fselect 7": "RESPONSIVE"}
     doc = {"header": {"debt_rows": len(rows)}, "extractors": {},
            "rows": {lk(k): {"debt": v, "reason": "seed", "listed_since": "2026-01-01"} for k, v in rows.items()},
            "covering": {lk("a.py::old\x1fselect 9"): ["g-old"], lk("a.py::h\x1fselect 3"): ["g-h"]}}
@@ -448,7 +450,8 @@ try:
         t = Path(t)
         led = t / "ledger.json"
         led.write_text(json.dumps(doc))
-        (t / "report.json").write_text(json.dumps({"sites": {k: {"rung": v} for k, v in sites.items()},
+        (t / "report.json").write_text(json.dumps({"sites": {k: {"rung": v, "live_only": k == "a.py::lv\x1fselect 7"}
+                                                             for k, v in sites.items()},
                                                    "run_not_searched": [], "covering": {}}))
         removed, moved = ledger.shrink(str(t), led)
         after = json.loads(led.read_text())
@@ -457,7 +460,8 @@ try:
         OUT["rows"] = {k: v for k, v in after["rows"].items()}
         OUT["covering"] = after["covering"]
         OUT["debt_rows"] = after["header"]["debt_rows"]
-        OUT["want_keys"] = sorted([lk("a.py::f\x1fselect 1"), lk(IGN), "a.py::new\x1fselect 9", lk(MV_IGN_NEW)])
+        OUT["want_keys"] = sorted([lk("a.py::f\x1fselect 1"), lk(IGN), "a.py::new\x1fselect 9", lk(MV_IGN_NEW),
+                                   "a.py::lv\x1fselect 7"])
         OUT["ign_tk"] = after["rows"].get(lk(IGN), {}).get("tk") == tkf(IGN)
         again = ledger.shrink(str(t), led)
         OUT["idempotent"] = again == ([], []) and json.loads(led.read_text()) == after
@@ -519,6 +523,9 @@ def main():
         run("new", rep({S1: "UNEXECUTED"}), lg(), dsn)
         run("listed", rep({S1: "UNEXECUTED"}), lg({S1: "UNEXECUTED"}), dsn)
         run("climbed", rep({S1: "RESPONSIVE"}), lg({S1: "UNEXECUTED"}), dsn)
+        lr = rep({S1: "RESPONSIVE"})
+        lr["sites"][S1]["live_only"] = True
+        run("live_climb", lr, lg({S1: "EXECUTED"}), dsn)
         run("vanished", rep({}), lg({S2: "UNEXECUTED"}), dsn)
         run("canary_absent", {**rep({}), "sites": {}}, lg(), dsn)
         ex = {"tests/x.py": {"gates": ["gx"], "listed_since": str(today), "trip": {"goal": 999999, "state": "done"}}}
@@ -724,6 +731,14 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
         _rung(S, "v3_twin_b"))
     arm("V4 a STORED bool constant is not graded (RESPONSIVE)", _rung(S, "v4_stored_bool") == "RESPONSIVE",
         _rung(S, "v4_stored_bool"))
+    lo = lambda fn, path="subj/arms.py": [v.get("live_only") for k, v in S.items() if k.startswith(f"{path}::{fn}\x1f")]
+    arm("a RESPONSIVE read on LIVE data is marked live_only; a stamped-fixture one is not",
+        lo("data_const") == [True] and lo("v3_twin_a") == [False], f"{lo('data_const')} {lo('v3_twin_a')}")
+    _, NS, err = _py(tmp, _env(tmp, run), "-c", "import json; from nucleus.sqlguard.normalize import is_site; print(json.dumps("
+                     "[is_site('merge-base'), is_site('update-index'), is_site('MERGE INTO t USING s ON true'), "
+                     "is_site('select(1)'), is_site('SELECT 1')]))")
+    arm("a site keyword must END its token: CLI argv 'merge-base'/'update-index' are not sites (steward #26944)",
+        NS == [False, False, True, True, True], str(NS or err))
     arm("computed-DATA constant via Ctx.sql is GREEN (RESPONSIVE)", _rung(S, "data_const") == "RESPONSIVE",
         _rung(S, "data_const"))
     arm("#3 a projected computed-bool constant via Ctx.sql stays RED (EXECUTED)",
@@ -850,6 +865,9 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
     arm("R-NEW names the admit handle", any("ledger admit" in r for r in E["new"]["red"]), str(E["new"]["red"]))
     arm("a listed debt row passes (rc 0)", E["listed"]["rc"] == 0, str(E["listed"]))
     arm("R-STALE a listed row that climbed", has("climbed", "R-STALE"), str(E["climbed"]))
+    arm("a LIVE-ONLY climb of a listed row is REPORTED, not R-STALE (the ledger moves on reproducible evidence)",
+        "live_climb" in E and E["live_climb"]["rc"] == 0 and not has("live_climb", "R-STALE")
+        and any(r.startswith("LIVE-ONLY") for r in E["live_climb"]["report"]), str(E.get("live_climb")))
     arm("R-STALE a listed row whose site vanished", has("vanished", "R-STALE"), str(E["vanished"]))
     arm("canary absent → run-level NOT SEARCHED (77)", E["canary_absent"]["rc"] == 77, str(E["canary_absent"]))
     arm("EX3 a listed extractor's FIXTURE-DDL site is REPORTED, not RED",
@@ -894,7 +912,7 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
         and K["rows"].get("a.py::new\x1fselect 9", {}).get("listed_since") == "2026-01-01" and len(K["moved"]) == 2,
         kerr or f"{K['moved']} {sorted(K['rows'])}")
     arm("shrink carries a moved row's covering and drops a removed one's, then restamps debt_rows",
-        not kerr and K["covering"] == {"a.py::new\x1fselect 9": ["g-old"]} and K["debt_rows"] == 4,
+        not kerr and K["covering"] == {"a.py::new\x1fselect 9": ["g-old"]} and K["debt_rows"] == 5,
         kerr or f"{K['covering']} {K['debt_rows']}")
     arm("shrink backfills tk on a live hashed row", not kerr and K["ign_tk"], kerr or "no tk")
     arm("shrink is idempotent (a second run moves nothing, removes nothing)", not kerr and K["idempotent"], kerr)
@@ -959,6 +977,11 @@ MUTANTS = [
     ("estate.py", 'return 1, ".env is present', 'return 77, ".env is present', "no-DSN: enforce"),
     ("enforce.py", 'gate("enforce"', 'print("enforce"', "estate-absent: enforce"),
     ("ledger.py", 'if rep.get("run_not_searched"):', "if False:", "shrink refuses"),
+    ("judge.py", "live_only = not (fw and fp)", "live_only = False", "marked live_only"),
+    ("enforce.py", 'if row and s.get("live_only"):', "if False:", "LIVE-ONLY climb"),
+    ("ledger.py", 'if s["rung"] == "RESPONSIVE" and not s.get("live_only"):', 'if s["rung"] == "RESPONSIVE":',
+     "AMBIGUOUS"),
+    ("normalize.py", "(?=[\\s(]|$)", "\\b", "must END its token"),
     ("enforce.py", 'lines += [f"  · {r}" for r in out["report"]]', 'lines += [f"  ○ {r}" for r in out["report"]]',
      "not read as a skip"),
     ("shim/sitecustomize.py", '"stamped": _stamped(str(db), [])', '"stamped": None', "D-B DB-grain stamp"),
@@ -975,7 +998,7 @@ MUTANTS = [
     ("ledger.py", "if len(cands) == 1 and", "if False and", "re-keys a site moved"),
     ("ledger.py", "cands = [c for c in by_tk.get(tk, []) if c not in rows]", "cands = by_tk.get(tk, [])",
      "AMBIGUOUS"),
-    ("ledger.py", 'if rep["sites"][live[lk]]["rung"] == "RESPONSIVE":', "if False:", "AMBIGUOUS"),
+    ("ledger.py", 'if s["rung"] == "RESPONSIVE" and not s.get("live_only"):', "if False:", "AMBIGUOUS"),
     ("ledger.py", "old_cov = cov.pop(lk, None)", "old_cov = cov.get(lk)", "covering"),
     ("ledger.py", 'rows[lk].setdefault("tk", text_key(k))', "None", "backfills tk"),
     ("enforce.py", "tks.setdefault(text_key(k), k)", "tks.setdefault(ledger_key(k), k)", "renamed function keeps"),

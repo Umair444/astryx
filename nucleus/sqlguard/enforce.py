@@ -105,7 +105,11 @@ def enforce(trace_dir, ledger=None, dsn=None, rep=None):
         fn, _, text = key.partition("\x1f")
         row = rows.get(ledger_key(key))
         if s["rung"] == "RESPONSIVE":
-            if row:
+            if row and s.get("live_only"):
+                # the ledger moves only on REPRODUCIBLE evidence: a climb read off live data flaps back next run
+                report.append(f"LIVE-ONLY climb {label(key)}: RESPONSIVE on live data this run, still listed as "
+                              f"{row['debt']}. Not reproducible, so not shrunk: exercise it in a stamped fixture")
+            elif row:
                 red.append(f"R-STALE {label(key)}: now RESPONSIVE but still listed as {row['debt']} (shrink)")
             continue
         if s["rung"] == "NOT SEARCHED":

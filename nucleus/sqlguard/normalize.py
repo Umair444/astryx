@@ -10,7 +10,9 @@ import re
 _PLACEHOLDER = re.compile(r"\$\d+|%\([A-Za-z_]\w*\)s|%s")
 _SPACE = re.compile(r"\s+")
 # A statement is a SQL SITE when its first keyword is one of these. The same set a1 measured with (T1).
-_SITE = re.compile(r"^\s*(select|insert|update|delete|with|merge)\b", re.I)
+# The keyword must END its token: followed by whitespace, "(" or the end. \b alone let a CLI argv literal like
+# "merge-base" or "update-index" (a hyphen is a word boundary) read as a site (steward #26944).
+_SITE = re.compile(r"^\s*(select|insert|update|delete|with|merge)(?=[\s(]|$)", re.I)
 # WRITE is classified CONSERVATIVELY (#21938): a DML keyword ANYWHERE, word-bounded. A data-modifying CTE leads
 # with WITH, and Postgres's command tag calls it SELECT. Misclassifying something as a write only removes
 # public credit.

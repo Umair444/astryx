@@ -157,7 +157,8 @@ def shrink(trace_dir: str, path: Path = None) -> tuple:
     removed, moved = [], []
     for lk in list(rows):
         if lk in live:
-            if rep["sites"][live[lk]]["rung"] == "RESPONSIVE":
+            s = rep["sites"][live[lk]]
+            if s["rung"] == "RESPONSIVE" and not s.get("live_only"):     # a live-only climb isn't reproducible
                 del rows[lk]
                 cov.pop(lk, None)
                 removed.append(show(lk))
