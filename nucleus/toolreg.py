@@ -30,6 +30,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import sys
 from pathlib import Path
 
@@ -97,6 +98,9 @@ _SHELLS = ("bash", "sh", "zsh", "dash")
 # Shell reserved words that can precede a command in the same simple command.
 _RESERVED = {"if", "then", "else", "elif", "do", "while", "until", "!", "{", "}"}
 _SOURCE = ("source", ".")
+_BUILTINS = {"cd", "echo", "printf", "export", "set", "unset", "test", "[", "read", "exit",
+             "true", "false", "for", "case", "wait", "kill", "type", "alias", "pwd", "ulimit",
+             "trap", "eval", "exec", "local", "return", "shift", "declare", "mapfile", "cat"}
 _HEREDOC = re.compile(r"<<(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
 
 
@@ -203,6 +207,34 @@ def ids_in_command(cmd: str) -> list[str]:
         if rid and rid not in out:
             out.append(rid)
     return out
+
+
+def command_label(cmd: str) -> str:
+    """What a shell command RAN, without its arguments: the first registered script it
+    executes, else the program name of its first simple command. This is what the public wall
+    (steps.content) shows for a Bash call that has no description. Arguments are where secrets
+    live, and so is a VAR=value prefix (PGPASSWORD=… psql), so both are dropped.
+    The program name is shown only when it IS a program: an executable on PATH, or a shell
+    builtin. A shape test would pass a secret that happens to sit in command position (a bare
+    token, a mistyped paste), so anything that isn't a known program becomes "(command)"."""
+    try:
+        ids = ids_in_command(cmd)
+        if ids:
+            return ids[0]
+        for words in _simple_commands(cmd):
+            i = 0
+            while i < len(words) and (re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", words[i])
+                                      or words[i] in _RESERVED or words[i] in _WRAPPERS):
+                i += 1
+            if i < len(words):
+                name = os.path.basename(words[i])
+                if re.fullmatch(r"[A-Za-z0-9_.+-]{1,40}", name) and (
+                        name in _BUILTINS or shutil.which(name)):
+                    return name
+                return "(command)"
+    except Exception:
+        pass
+    return "(command)"
 
 
 def mcp_id(tool_name: str) -> str | None:

@@ -35,8 +35,8 @@ MUTANTS = {
     # The fence narrowed. A broken toolreg then raises out of the hook and the step row is lost:
     # telemetry costing the row it rides on.
     "M3 the ledger fence no longer catches a toolreg failure":
-        ("    except Exception:\n        return None\n\n\ndef dsn",
-         "    except KeyError:\n        return None\n\n\ndef dsn"),
+        ("    except Exception:\n        return None\n\n\ndef wall_label",
+         "    except KeyError:\n        return None\n\n\ndef wall_label"),
 
     # No savepoint. On a DB that predates the classifications table, the failed UPDATE aborts
     # the whole transaction, so the turn row is lost with it.
@@ -64,4 +64,19 @@ MUTANTS = {
     # gets joined to the wrong turn.
     "M7 classification claim without the session filter":
         ('"AND (session_id IS NULL OR session_id = %s) "\n', '"AND (true OR %s IS NULL) "\n'),
+
+    # The pre-4227 fallback restored: a description-less Bash call shows its raw command, which
+    # is public and fed nightly into memory's RAG.
+    "M8 the raw-command fallback restored":
+        ('            detail = ti.get("description") or ti.get("file_path") \\\n',
+         '            detail = ti.get("description") or ti.get("command") or ti.get("file_path") \\\n'),
+
+    # The error text back on the wall: a Bash failure's stderr can carry anything.
+    "M9 error rows carry the error text":
+        ('(agent, f"{tool}: failed", meta))', '(agent, f"{tool}: {brief(err, 300)}", meta))'),
+
+    # A label that falls back to the command when toolreg is unavailable.
+    "M10 wall label falls back to the command itself":
+        ('    except Exception:\n        return "(command)"\n\n\ndef dsn',
+         '    except Exception:\n        return str(cmd)\n\n\ndef dsn'),
 }

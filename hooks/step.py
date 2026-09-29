@@ -64,6 +64,16 @@ def ledger_meta(tool, tool_input, response=None):
         return None
 
 
+def wall_label(cmd) -> str:
+    """The public label for a description-less Bash call. It must never raise, and it must never
+    fall back to the command itself."""
+    try:
+        from nucleus.toolreg import command_label
+        return command_label(cmd) if isinstance(cmd, str) else "(command)"
+    except Exception:
+        return "(command)"
+
+
 def dsn() -> str:
     return next(l.split("=", 1)[1].strip()
                for l in open(DSN_FILE) if l.startswith("ASTRYX_DSN="))
@@ -334,8 +344,14 @@ def main():
         if ev == "PreToolUse":
             tool = h.get("tool_name", "?")
             ti = h.get("tool_input") or {}
-            detail = ti.get("description") or ti.get("command") or ti.get("file_path") \
+            # NEVER the raw command: steps are public and memory's nightly drain feeds them
+            # into RAG, and a command's arguments are where a secret lands (an inlined DSN, a
+            # PGPASSWORD=… prefix). A description-less Bash call shows WHAT ran (its registry
+            # id, else the program name) and none of its arguments. seed approved, plan-4227.
+            detail = ti.get("description") or ti.get("file_path") \
                 or ti.get("to") or ti.get("target") or ""
+            if not detail and tool == "Bash":
+                detail = wall_label(ti.get("command"))
             cur.execute("INSERT INTO steps (agent, kind, content, meta) VALUES (%s,'tool',%s,%s)",
                         (agent, f"{tool}: {brief(detail)}", ledger_meta(tool, ti)))
 
@@ -346,8 +362,11 @@ def main():
             err = r.get("error") or ("" if r.get("success", True) else "failed") \
                 if isinstance(r, dict) else ""
             if err:
+                # The error TEXT is tool output (a Bash failure carries its stderr), so it's the
+                # same class as the raw command: the wall records THAT the call failed, not what
+                # it printed. (Zero error rows exist today; this closes it before one does.)
                 cur.execute("INSERT INTO steps (agent, kind, content, meta) VALUES (%s,'error',%s,%s)",
-                            (agent, f"{tool}: {brief(err, 300)}", meta))
+                            (agent, f"{tool}: failed", meta))
             else:
                 cur.execute("INSERT INTO steps (agent, kind, content, meta) VALUES (%s,'tool_done',%s,%s)",
                             (agent, f"{tool} done", meta))

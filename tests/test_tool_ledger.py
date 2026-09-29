@@ -27,6 +27,10 @@ WHAT IT HOLDS
   L10 a heredoc BODY is data, not commands: a body line naming a script is not a call, and
      an apostrophe in a body doesn't drop the real call in front of it (abstractor-4's review).
      `bash -n` is a syntax check, not a run.
+  L11 the PUBLIC WALL never carries a raw command: a description-less Bash call's content is
+     its registry id or its program name, never its arguments or a VAR=value prefix, and an
+     error row doesn't carry the error text. A secret planted across the WHOLE run must appear
+     in no steps.content (steps feed memory's nightly RAG compile).
   L6b Stop never claims a classification from a DIFFERENT session.
   L9 a script that is only NAMED (git add x.py, grep … x.py, cat x.py) is not a call. Only
      an execution position counts. The ledger's first live minutes counted every mention,
@@ -232,6 +236,19 @@ try:
         got = (last()[0][3] or {}).get("registry_id")
         check(f"L10 {why}", got == want, f"got {got} want {want}")
 
+    # ── L11: the wall never carries a raw command ─────────────────────────────────────────
+    for c, want in ((f"psql postgres://u:{SECRET}@h/db -c 'select 1'", "Bash: psql"),
+                    (f"PGPASSWORD={SECRET} psql -h h", "Bash: psql"),
+                    (f"PGPASSWORD={SECRET} nucleus/smoke.sh --dsn postgres://u:{SECRET}@h",
+                     "Bash: script:nucleus/smoke.sh"),
+                    (f"'{SECRET}'", "Bash: (command)"),
+                    (f"echo 'unbalanced {SECRET}", "Bash: (command)")):
+        pre("Bash", {"command": c})
+        check(f"L11 wall label for {want!r}", last()[0][2] == want, repr(last()[0][2]))
+    post("Bash", {"command": f"psql -c x"}, {"error": f"FATAL: password {SECRET} rejected"})
+    check("L11 an error row carries no error text", last()[0][2] == "Bash: failed",
+          repr(last()[0][2]))
+
     # ── L5: a broken toolreg never costs the row ──────────────────────────────────────────
     broken = tree(broken_toolreg=True); roots.append(broken)
     n0 = len(metas(admin))
@@ -241,6 +258,15 @@ try:
     check("L5 toolreg raising → the step row is STILL written, without meta",
           len(rows) == n0 + 1 and rows[-1][1] == "tool" and rows[-1][3] is None,
           f"rows {n0}->{len(rows)} last={rows[-1] if rows else None}")
+    hook(broken, SCH, {"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                       "tool_input": {"command": f"psql postgres://u:{SECRET}@h"}})
+    check("L5 toolreg raising + no description → '(command)', never the command",
+          metas(admin)[-1][2] == "Bash: (command)", repr(metas(admin)[-1][2]))
+
+    wall = " ".join(c for _, _, c, _ in metas(admin))
+    check("L11 the planted secret appears in NO steps.content across the whole run",
+          SECRET not in wall, wall[wall.find(SECRET) - 60:wall.find(SECRET) + 20]
+          if SECRET in wall else "")
 
     # ── L6: Stop claims the classification; a DB without the table still gets its turn ───
     def transcript(d):
