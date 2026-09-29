@@ -44,6 +44,8 @@ Each arm can go red alone:
   A24 D2-b: every `durable=True` ctx.say site in triggers/** (+ their in-repo imports) is DECLARED below with
       its reason; a new use is RED until declared and reviewed (a durable wake whose dedup reads ctx.state
       would re-send on every failing tick)
+      (a site counts unless its durable= is the literal False: a variable or a truthy literal counts)
+      A24 control: the counter on synthetic calls (durable=flag, =1, **kw count; =False, absent don't)
   A25 D2-a: a durable wake survives its check HANGING past the pulse's timeout (delivered once)
   A18 residents() is derived from the agents/ tree: it holds seed, not owner (NOT SEARCHED without it)
 
@@ -170,6 +172,19 @@ def tick(pulse, conn, *ts):
     pulse.process(conn, [fresh(conn, t) for t in ts], datetime.now().astimezone())
 
 
+def is_durable_say(node) -> bool:
+    """A ctx.say(...) call that MAY be durable. Fail toward declared: any durable= other than the literal
+    False counts (durable=flag, durable=1), and so does a **splat, whose keywords can't be read statically."""
+    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "say"):
+        return False
+    for k in node.keywords:
+        if k.arg is None:                                        # ctx.say(..., **kw): unknown → counted
+            return True
+        if k.arg == "durable" and not (isinstance(k.value, ast.Constant) and k.value.value is False):
+            return True
+    return False
+
+
 def o7_scan():
     """every `INSERT INTO messages` in trigger code, and in the in-repo modules trigger code imports"""
     pat = re.compile(r"INSERT\s+INTO\s+(?:\"?public\"?\.)?\"?messages\"?\b", re.I)
@@ -190,9 +205,7 @@ def o7_scan():
             hits.append(f"{p.relative_to(REPO)}: unparseable (closure unknown)")
             continue
         for node in ast.walk(tree):
-            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "say"
-                    and any(k.arg == "durable" and isinstance(k.value, ast.Constant) and k.value.value
-                            for k in node.keywords)):
+            if is_durable_say(node):
                 rel = str(p.relative_to(REPO))
                 durable[rel] = durable.get(rel, 0) + 1
             mods = []
@@ -208,6 +221,15 @@ def o7_scan():
 
 
 def main():
+    # A24 control (a3 #23731): the counter itself, on synthetic calls, so a silent revert of the predicate goes
+    # RED even while the live tree's only site is a literal True.
+    control = {'ctx.say("owner", "x", durable=True)': True, 'ctx.say("owner", "x", durable=flag)': True,
+               'ctx.say("owner", "x", durable=1)': True, 'ctx.say("owner", "x", **kw)': True,
+               'ctx.say("owner", "x", durable=False)': False, 'ctx.say("owner", "x")': False}
+    wrong = {src: want for src, want in control.items()
+             if is_durable_say(ast.parse(src).body[0].value) != want}
+    check("A24 control: durable=flag / =1 / **splat count as durable sites; =False and absent don't",
+          not wrong, f"miscounted: {wrong}")
     if not (REPO / "triggers").is_dir():                # 4243 r1/r2: ABSENT is NOT SEARCHED, never a FAIL
         print("  NOT SEARCHED  A16/A24 — no triggers/ tree here (gitignored); runs on the org host")
     else:
