@@ -27,6 +27,7 @@ contributors are the other agents who wrote to it afterwards. If there is no rec
 is 'unknown'. It is graded DETECTION: steps rows are forgeable by anyone at the same uid.
 """
 import json
+import math
 import os
 import re
 import shlex
@@ -417,21 +418,59 @@ def entries() -> list[dict]:
     return out
 
 
-def find(query: str, limit: int = 10) -> list[dict]:
-    """Rank entries by how many query words they contain, matching both id and description.
-    It's deliberately dumb: the result stays readable to the agent that asked, and it costs
-    nothing to run."""
-    words = [w for w in re.findall(r"[a-z0-9]+", (query or "").lower()) if len(w) > 1]
-    if not words:
+# Words a question is made of but no tool is ABOUT. A closed list: the ranking below discounts any
+# word that's everywhere anyway, so this only has to catch the words too short to discount well.
+_STOP = frozenset("a an and are be can do does for from how i in into is it its me my of on or "
+                  "please that the this to up what when where which who why with you your".split())
+
+
+RELATIVE_FLOOR = 0.4    # keep results scoring >= this fraction of the best one
+
+
+def _tokens(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", (text or "").lower())
+
+
+def _match(q: str, t: str) -> bool:
+    """Whole tokens only, never substrings ("is" must not hit "list"). A token of 4+ characters also
+    matches by prefix either way, which covers the inflections a question uses (healthy/health,
+    checks/check, rendered/render) without a stemmer's rules to get wrong."""
+    if q == t:
+        return True
+    return len(q) >= 4 and len(t) >= 4 and (t.startswith(q) or q.startswith(t))
+
+
+def find(query: str, limit: int = 10, pool: list | None = None) -> list[dict]:
+    """Rank registered tools against a question, matching id and description.
+
+    Each distinct query word counts once, weighted by how RARE it is across the registry
+    (log N/df, plain IDF): "org" is in almost every description, so it barely counts, while
+    "health" picks out one tool. Stopwords are dropped. It's still deliberately simple, with no
+    embeddings and no model: the result stays explainable to the agent that asked, and it costs
+    nothing to run. `pool` is the entry list to search (default: the live registry)."""
+    pool = entries() if pool is None else pool
+    words = sorted({w for w in _tokens(query) if w not in _STOP and len(w) > 1})
+    if not words or not pool:
         return []
+    docs = [set(_tokens(e["id"] + " " + e["description"])) for e in pool]
+    n = len(docs)
+    df = {w: sum(1 for d in docs if any(_match(w, t) for t in d)) for w in words}
     scored = []
-    for e in entries():
-        hay = (e["id"] + " " + e["description"]).lower()
-        s = sum(1 for w in words if w in hay)
-        if s:
-            scored.append((s, e["id"], e))
-    scored.sort(key=lambda x: (-x[0], x[1]))
-    return [e for _, _, e in scored[:limit]]
+    for e, d in zip(pool, docs):
+        hit = [w for w in words if any(_match(w, t) for t in d)]
+        if hit:
+            score = sum(math.log((n + 1) / (df[w] + 0.5)) for w in hit)
+            # Ties are common at this N. A query word in the tool's own ID is what the tool is
+            # ABOUT; a description hit may be a passing mention ("list of model ids"). So the ID
+            # breaks ties, before the alphabetical fallback (abstractor-4, review of 231b679).
+            id_toks = _tokens(e["id"])
+            id_hits = sum(1 for w in hit if any(_match(w, t) for t in id_toks))
+            scored.append((-score, -id_hits, e["id"], e))
+    scored.sort(key=lambda x: (x[0], x[1], x[2]))
+    # RELATIVE cutoff: a result held up by common words alone ("org") is dropped once a far stronger
+    # match exists, while near-ties stay. A single-word query is unaffected (its hits all score alike).
+    best = -scored[0][0] if scored else 0
+    return [e for sc, _, _, e in scored if -sc >= RELATIVE_FLOOR * best][:limit]
 
 
 if __name__ == "__main__":
