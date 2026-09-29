@@ -3,7 +3,7 @@
 
     venv/bin/python -m nucleus.sqlguard.ledger seed <trace_dir>     # ONE-TIME seed, from a clean run's report
     venv/bin/python -m nucleus.sqlguard.ledger admit <trace_dir> <site> '<reason>'   # the ONLY growth path
-    venv/bin/python -m nucleus.sqlguard.ledger shrink <trace_dir>   # drop exactly the rows enforce calls R-STALE
+    venv/bin/python -m nucleus.sqlguard.ledger shrink <trace_dir>   # settle R-STALE: drop, or re-key a moved site
 
 Every site below RESPONSIVE in the seed run becomes a row: its debt rung (UNEXECUTED / EXECUTED / FIXTURE-DDL)
 or NOT-SEARCHED-AT-SEED, which is recorded, clocked, and never hidden. The header stamps what the seed was
@@ -28,7 +28,7 @@ from pathlib import Path
 
 from nucleus.sqlguard import judge
 from nucleus.sqlguard import privacy
-from nucleus.sqlguard.privacy import ledger_key
+from nucleus.sqlguard.privacy import ledger_key, text_key
 
 REPO = judge.REPO
 LEDGER = REPO / "nucleus" / "sqlguard" / "ledger.json"
@@ -71,7 +71,7 @@ def seed(trace_dir: str) -> dict:
     for key, s in rep["sites"].items():
         if s["rung"] != "RESPONSIVE":
             rung = "NOT-SEARCHED-AT-SEED" if s["rung"] == "NOT SEARCHED" else s["rung"]
-            rows[ledger_key(key)] = {"debt": rung, "reason": "seed"}     # P1: a gitignored origin → a digest
+            rows[ledger_key(key)] = {"debt": rung, "reason": "seed", "tk": text_key(key)}     # P1: a gitignored origin → a digest
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, capture_output=True,
                             text=True).stdout.strip()
     header = {"commit": commit, "generated_at": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
@@ -123,18 +123,20 @@ def admit(trace_dir: str, site: str, reason: str, path: Path = None) -> str:
     if lk in doc["rows"]:
         raise SystemExit("refusing: already listed")
     doc["rows"][lk] = {"debt": "NOT-SEARCHED-AT-ADMIT" if rung == "NOT SEARCHED" else rung, "reason": reason,
-                       "admitted": datetime.date.today().isoformat()}
+                       "admitted": datetime.date.today().isoformat(), "tk": text_key(key)}
     if rep.get("covering", {}).get(key):
         doc.setdefault("covering", {})[lk] = rep["covering"][key]
     path.write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n")
     return lk
 
 
-def shrink(trace_dir: str, path: Path = None) -> list:
-    """Remove exactly the rows enforce calls R-STALE, using ITS predicate: a site that climbed to RESPONSIVE, or a
-    listed key absent from the run's inventory. Removal only, never growth. It refuses when the run had a
-    run-level NOT SEARCHED, because with triggers/ absent every gitignored site would read as vanished and be
-    wiped. It also refuses on privacy errors. Returns the removed labels, shown hashed for gitignored origin."""
+def shrink(trace_dir: str, path: Path = None) -> tuple:
+    """Settle enforce's R-STALE set against a run's report. A row whose site climbed to RESPONSIVE is dropped.
+    A row whose key is absent is MOVED when exactly one unledgered live site has its text_key (same file, same
+    SQL: a rename re-keyed it), keeping its debt, reason and dates (a3 #22780); otherwise it is dropped. Rows
+    whose site is live get their tk backfilled, so hashed rows can be followed next time.
+    Never grows the debt. Refuses a run-level NOT SEARCHED run (with triggers/ absent every gitignored site would
+    read as vanished) and privacy errors. Returns (removed, moved), shown hashed for gitignored origin."""
     path = path or LEDGER
     rep = json.loads((Path(trace_dir) / "report.json").read_text())
     if privacy.ERRORS:
@@ -143,26 +145,46 @@ def shrink(trace_dir: str, path: Path = None) -> list:
         raise SystemExit(f"refusing: the run was NOT SEARCHED at run level {rep['run_not_searched']}, so absence "
                          f"there proves nothing")
     doc = json.loads(path.read_text())
+    rows, cov = doc["rows"], doc.setdefault("covering", {})
     live = {ledger_key(k): k for k in rep["sites"]}
-    gone = [lk for lk in doc["rows"]
-            if lk not in live or rep["sites"][live[lk]]["rung"] == "RESPONSIVE"]
-    out = []
-    for lk in gone:
-        del doc["rows"][lk]
-        doc.get("covering", {}).pop(lk, None)
-        out.append(lk if lk.startswith("sha256:") else privacy.label(lk))
-    if gone:
-        doc["header"]["debt_rows"] = len(doc["rows"])
-        path.write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n")
-    return out
+    by_tk = {}
+    for lk, k in live.items():
+        by_tk.setdefault(text_key(k), []).append(lk)
+        if lk in rows:
+            rows[lk].setdefault("tk", text_key(k))
+    show = lambda lk: lk if lk.startswith("sha256:") else privacy.label(lk)
+    removed, moved = [], []
+    for lk in list(rows):
+        if lk in live:
+            if rep["sites"][live[lk]]["rung"] == "RESPONSIVE":
+                del rows[lk]
+                cov.pop(lk, None)
+                removed.append(show(lk))
+            continue
+        tk = rows[lk].get("tk") or (None if lk.startswith("sha256:") else text_key(lk))
+        cands = [c for c in by_tk.get(tk, []) if c not in rows] if tk else []
+        row = rows.pop(lk)
+        old_cov = cov.pop(lk, None)
+        if len(cands) == 1 and rep["sites"][live[cands[0]]]["rung"] != "RESPONSIVE":
+            new = cands[0]
+            rows[new] = {**row, "tk": tk}
+            if rep.get("covering", {}).get(live[new]) or old_cov:
+                cov[new] = rep.get("covering", {}).get(live[new]) or old_cov
+            moved.append(f"{show(lk)} -> {show(new)}")
+        else:
+            removed.append(show(lk))
+    doc["header"]["debt_rows"] = len(rows)
+    path.write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n")
+    return removed, moved
 
 
 if __name__ == "__main__":
     if len(sys.argv) >= 3 and sys.argv[1] == "seed":
         print(json.dumps(seed(sys.argv[2]), indent=1))
     elif len(sys.argv) == 3 and sys.argv[1] == "shrink":
-        gone = shrink(sys.argv[2])
-        print(f"shrank {len(gone)} row(s)" + "".join(f"\n  - {g}" for g in gone))
+        gone, moved = shrink(sys.argv[2])
+        print(f"shrank {len(gone)} row(s), re-keyed {len(moved)}" + "".join(f"\n  - {g}" for g in gone)
+              + "".join(f"\n  ~ {m}" for m in moved))
     elif len(sys.argv) == 5 and sys.argv[1] == "admit":
         print(f"admitted {admit(sys.argv[2], sys.argv[3], sys.argv[4])}")
     else:

@@ -34,7 +34,7 @@ import psycopg
 
 from nucleus.sqlguard import judge
 from nucleus.sqlguard.fixture import live_dsn, run_id
-from nucleus.sqlguard.privacy import handle, label, ledger_key, ignored
+from nucleus.sqlguard.privacy import handle, label, ledger_key, ignored, text_key
 
 NS_RUNS, NS_DAYS = 7, 3                    # the per-site NOT SEARCHED clock (declared)
 LEAK_RUNS, LEAK_AGE = 3, datetime.timedelta(hours=1)
@@ -125,7 +125,8 @@ def enforce(trace_dir, ledger=None, dsn=None, rep=None):
     for key in rows:
         if key not in live_keys:
             shown = "a hashed (gitignored-origin) site" if key.startswith("sha256:") else label(key)
-            red.append(f"R-STALE {shown}: listed, but the site no longer exists (shrink)")
+            red.append(f"R-STALE {shown}: listed, but its key is absent (the site was deleted, or moved by a rename): "
+                       f"`ledger shrink <trace_dir>` re-keys a unique move and drops the rest")
     for b in rep["blind"]:
         path = b["frame"][0]
         what = "" if (path.startswith("tier/") or ignored(path)) else f": {b['t'][:70]!r}"
@@ -136,11 +137,17 @@ def enforce(trace_dir, ledger=None, dsn=None, rep=None):
             if not c.execute("SELECT to_regclass('sqlguard_seen')").fetchone()[0]:
                 not_searched.append("state table sqlguard_seen absent: apply nucleus/schema.sql")
             else:
-                seen, now = _clock(c, "ns_site", [ledger_key(k) for k in ns_keys])   # P1: digests at rest too
-                for k, (first, runs) in seen.items():
+                # Keyed by text_key (digests at rest, P1) and NOT by qualname, so renaming the function around an
+                # unobserved site doesn't reset its clock (a3 #22780). Same text in one file shares a clock: the older
+                # first-seen wins, which is the loud direction.
+                tks = {}
+                for k in ns_keys:
+                    tks.setdefault(text_key(k), k)
+                seen, now = _clock(c, "ns_site", list(tks))
+                for tk, (first, runs) in seen.items():
                     age = now - first
                     if runs > NS_RUNS and age.days >= NS_DAYS:
-                        red.append(f"R-CLOCK {label(k)}: NOT SEARCHED for {runs} runs / {age.days}d")
+                        red.append(f"R-CLOCK {label(tks[tk])}: NOT SEARCHED for {runs} runs / {age.days}d")
                 for f, meta in listed.items():                  # P2: machine-checkable trips
                     trip = meta.get("trip") or {}
                     if isinstance(trip, dict) and trip.get("goal") and c.execute(

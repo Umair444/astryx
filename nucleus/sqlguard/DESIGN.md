@@ -152,3 +152,8 @@ Residuals (declared, not closed):
 - enforce's own SQL runs AFTER its judge, and each check.sh run has a fresh trace dir, so enforce.py's sites
   can never climb in-check. They stay listed debt. Re-judging a finished trace dir sees them (a false
   R-STALE, from re-judging only).
+- (a3 #22780, closed) A function rename used to reset an untraced site's NOT-SEARCHED clock, and `shrink` deleted
+  the moved rows. Now the clock and every row carry text_key (path + normalized SQL, no qualname), and `shrink`
+  re-keys a vanished row when exactly one UNLISTED live site shares its text. A changed statement is a new site,
+  so its clock legitimately restarts (e87eac9's nudge dedup: `'nudge:%%'` became a parameter). Deploying the
+  text_key clock restarts every NOT-SEARCHED clock ONCE (the live table dates from 09-29).

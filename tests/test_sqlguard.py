@@ -371,6 +371,62 @@ print(json.dumps({"sites": rep["sites"], "run_not_searched": rep["run_not_search
                   "untraced": rep["untraced_children"], "extractors": rep["extractors"]}))
 '''
 
+SHRINK = r'''"""Drives ledger.shrink on SYNTHETIC reports, in the temp tree (so --against and --mutants reach it)."""
+import json
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from nucleus.sqlguard import ledger, privacy  # noqa: E402
+
+OUT = {}
+try:
+    lk, tkf = privacy.ledger_key, privacy.text_key
+    IGN = "subj/ignored_arm.py::f\x1fselect 1"                   # gitignored origin in this tree: a digest key
+    MV_IGN_OLD, MV_IGN_NEW = "subj/ignored_arm.py::old\x1fselect 5", "subj/ignored_arm.py::new\x1fselect 5"
+    rows = {"a.py::f\x1fselect 1": "UNEXECUTED", "a.py::g\x1fselect 2": "UNEXECUTED",
+            "a.py::h\x1fselect 3": "UNEXECUTED", "a.py::old\x1fselect 9": "EXECUTED",
+            "a.py::amb\x1fselect 8": "UNEXECUTED", IGN: "EXECUTED", MV_IGN_OLD: "UNEXECUTED",
+            "a.py::old2\x1fselect 1": "EXECUTED"}      # its text's only live match is ALREADY listed: drop, never overwrite
+    sites = {"a.py::f\x1fselect 1": "UNEXECUTED", "a.py::g\x1fselect 2": "RESPONSIVE",
+             "a.py::new\x1fselect 9": "NOT SEARCHED", "a.py::p\x1fselect 8": "UNEXECUTED",
+             "a.py::q\x1fselect 8": "UNEXECUTED", IGN: "EXECUTED", MV_IGN_NEW: "UNEXECUTED"}
+    doc = {"header": {"debt_rows": len(rows)}, "extractors": {},
+           "rows": {lk(k): {"debt": v, "reason": "seed", "listed_since": "2026-01-01"} for k, v in rows.items()},
+           "covering": {lk("a.py::old\x1fselect 9"): ["g-old"], lk("a.py::h\x1fselect 3"): ["g-h"]}}
+    doc["rows"][lk(MV_IGN_OLD)]["tk"] = tkf(MV_IGN_OLD)          # a hashed row can only be followed by its tk
+    with tempfile.TemporaryDirectory() as t:
+        t = Path(t)
+        led = t / "ledger.json"
+        led.write_text(json.dumps(doc))
+        (t / "report.json").write_text(json.dumps({"sites": {k: {"rung": v} for k, v in sites.items()},
+                                                   "run_not_searched": [], "covering": {}}))
+        removed, moved = ledger.shrink(str(t), led)
+        after = json.loads(led.read_text())
+        OUT["removed"] = sorted(removed)
+        OUT["moved"] = sorted(moved)
+        OUT["rows"] = {k: v for k, v in after["rows"].items()}
+        OUT["covering"] = after["covering"]
+        OUT["debt_rows"] = after["header"]["debt_rows"]
+        OUT["want_keys"] = sorted([lk("a.py::f\x1fselect 1"), lk(IGN), "a.py::new\x1fselect 9", lk(MV_IGN_NEW)])
+        OUT["ign_tk"] = after["rows"].get(lk(IGN), {}).get("tk") == tkf(IGN)
+        again = ledger.shrink(str(t), led)
+        OUT["idempotent"] = again == ([], []) and json.loads(led.read_text()) == after
+        led.write_text(json.dumps(doc))
+        (t / "report.json").write_text(json.dumps({"sites": {}, "run_not_searched": ["triggers/ absent"]}))
+        try:
+            ledger.shrink(str(t), led)
+            OUT["refused"] = False
+        except SystemExit:
+            OUT["refused"] = json.loads(led.read_text()) == doc
+except Exception as e:                                           # an older package: every arm FAILs by name
+    OUT["error"] = f"{type(e).__name__}: {e}"
+print(json.dumps(OUT))
+'''
+
+
 ENF = r'''"""Drives enforce.py and ledger.admit against SYNTHETIC reports (tests/test_sqlguard.py builds this file)."""
 import datetime
 import json
@@ -438,6 +494,7 @@ def main():
         run("clock_1", rep({S1: "NOT SEARCHED"}), lg(), dsn)
         st.execute("UPDATE sqlguard_seen SET runs = 99, first_seen = now() - interval '10 days' WHERE kind = 'ns_site'")
         run("clock_2", rep({S1: "NOT SEARCHED"}), lg(), dsn)
+        run("clock_moved", rep({S1.replace("v3_twin_b", "v3_twin_renamed"): "NOT SEARCHED"}), lg(), dsn)
         # R-LEAK: this run's prefix, and a foreign one by first-seen
         mine, foreign = f"astryx_fx_{run_id}_leak".lower(), f"astryx_fx_zzh{os.getpid()}".lower()
         adm = psycopg.connect(fixture.live_dsn(), autocommit=True)
@@ -527,6 +584,7 @@ def _build_tree(tmp: Path, rev=None):
     (tmp / "tests").mkdir()
     (tmp / "tests" / "drive.py").write_text(DRIVE)
     (tmp / "tests" / "enf.py").write_text(ENF)
+    (tmp / "tests" / "shrink.py").write_text(SHRINK)
     (tmp / "tests" / "clean.py").write_text(CLEAN)
     (tmp / ".gitignore").write_text("subj/ignored_*.py\n.env\n")
     subprocess.run(["git", "init", "-q"], cwd=tmp, check=True)
@@ -739,6 +797,30 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
     arm("trip fired (goal done) → R-EXTRACT", has("trip_fired", "R-EXTRACT"), str(E["trip_fired"]))
     arm("R-CLOCK not before the clock runs out", not has("clock_1", "R-CLOCK"), str(E["clock_1"]))
     arm("R-CLOCK a site NOT SEARCHED past N runs AND T days", has("clock_2", "R-CLOCK"), str(E["clock_2"]))
+    arm("R-CLOCK a renamed function keeps its site's clock (qualname-free key)",
+        has("clock_moved", "R-CLOCK"), str(E.get("clock_moved")))
+
+    # ledger shrink, in the temp tree
+    _, K, err = _py(tmp, _env(tmp, run), "tests/shrink.py")
+    K = K or {"error": err}
+    kerr = K.get("error", "")
+    arm("shrink drops the climbed, the deleted and the AMBIGUOUS (and never overwrites a listed row), nothing else",
+        not kerr and K["removed"] == sorted(["a.py::amb :: select 8", "a.py::g :: select 2", "a.py::h :: select 3",
+                                             "a.py::old2 :: select 1"])
+        and K["rows"].get("a.py::f\x1fselect 1", {}).get("debt") == "UNEXECUTED",
+        kerr or str(K["removed"]))
+    arm("shrink re-keys a site moved by a rename (plain and hashed), debt and dates intact",
+        not kerr and sorted(K["rows"]) == K["want_keys"]
+        and K["rows"].get("a.py::new\x1fselect 9", {}).get("debt") == "EXECUTED"
+        and K["rows"].get("a.py::new\x1fselect 9", {}).get("listed_since") == "2026-01-01" and len(K["moved"]) == 2,
+        kerr or f"{K['moved']} {sorted(K['rows'])}")
+    arm("shrink carries a moved row's covering and drops a removed one's, then restamps debt_rows",
+        not kerr and K["covering"] == {"a.py::new\x1fselect 9": ["g-old"]} and K["debt_rows"] == 4,
+        kerr or f"{K['covering']} {K['debt_rows']}")
+    arm("shrink backfills tk on a live hashed row", not kerr and K["ign_tk"], kerr or "no tk")
+    arm("shrink is idempotent (a second run moves nothing, removes nothing)", not kerr and K["idempotent"], kerr)
+    arm("shrink refuses a run-level NOT SEARCHED run (absence there proves nothing)",
+        not kerr and K["refused"], kerr)
     arm("R-LEAK this run's fixture DB still present", any("this run's" in r for r in E["leak_1"]["red"]),
         str(E["leak_1"]))
     arm("R-LEAK a foreign fixture DB: not on first sight",
@@ -785,6 +867,14 @@ MUTANTS = [
     ("estate.py", "if live:", "if False:", "live-broken .env: canary"),
     ("estate.py", 'return 1, ".env is present', 'return 77, ".env is present', "no-DSN: enforce"),
     ("enforce.py", 'gate("enforce"', 'print("enforce"', "estate-absent: enforce"),
+    ("ledger.py", 'if rep.get("run_not_searched"):', "if False:", "shrink refuses"),
+    ("ledger.py", "if len(cands) == 1 and", "if False and", "re-keys a site moved"),
+    ("ledger.py", "cands = [c for c in by_tk.get(tk, []) if c not in rows]", "cands = by_tk.get(tk, [])",
+     "AMBIGUOUS"),
+    ("ledger.py", 'if rep["sites"][live[lk]]["rung"] == "RESPONSIVE":', "if False:", "AMBIGUOUS"),
+    ("ledger.py", "old_cov = cov.pop(lk, None)", "old_cov = cov.get(lk)", "covering"),
+    ("ledger.py", 'rows[lk].setdefault("tk", text_key(k))', "None", "backfills tk"),
+    ("enforce.py", "tks.setdefault(text_key(k), k)", "tks.setdefault(ledger_key(k), k)", "renamed function keeps"),
 ]
 
 
@@ -808,47 +898,6 @@ def mutant_battery(only=None):
             survived.append(f"{f}: {old}")
     print(f"\nmutants: {len(todo) - len(survived)}/{len(todo)} killed by their named arm")
     return 1 if survived else 0
-
-
-def shrink_arms():
-    """`ledger shrink`: removes exactly enforce's R-STALE set (vanished + climbed), keeps listed debt, never grows,
-    and refuses a run-level NOT SEARCHED run (triggers/ absent would make every gitignored site read as vanished)."""
-    import tempfile
-    sys.path.insert(0, str(REPO))
-    from nucleus.sqlguard import ledger
-    from nucleus.sqlguard.privacy import ledger_key
-    ign = "triggers/steward/x.py::f\x1fselect 1"                     # gitignored origin: stored as a digest
-    rows = {"a.py::f\x1fselect 1": "debt", "a.py::g\x1fselect 2": "climbed", "a.py::h\x1fselect 3": "vanished",
-            ign: "debt"}
-    sites = {"a.py::f\x1fselect 1": {"rung": "UNEXECUTED"}, "a.py::g\x1fselect 2": {"rung": "RESPONSIVE"},
-             ign: {"rung": "EXECUTED"}}
-    with tempfile.TemporaryDirectory() as t:
-        t = Path(t)
-        led = t / "ledger.json"
-        doc = {"header": {"debt_rows": 4}, "extractors": {},
-               "rows": {ledger_key(k): {"debt": "UNEXECUTED", "reason": "seed"} for k in rows},
-               "covering": {ledger_key("a.py::h\x1fselect 3"): ["g"]}}
-        led.write_text(json.dumps(doc))
-        (t / "report.json").write_text(json.dumps({"sites": sites, "run_not_searched": []}))
-        gone = ledger.shrink(str(t), led)
-        after = json.loads(led.read_text())
-        check("shrink removes the vanished and the climbed rows, and nothing else",
-              sorted(gone) == sorted(["a.py::g :: select 2", "a.py::h :: select 3"]) and
-              set(after["rows"]) == {ledger_key("a.py::f\x1fselect 1"), ledger_key(ign)}, f"{gone} {list(after['rows'])}")
-        check("shrink drops a removed row's covering and restamps debt_rows",
-              not after["covering"] and after["header"]["debt_rows"] == 2, str(after["covering"]))
-        again = ledger.shrink(str(t), led)
-        check("shrink is idempotent (a second run removes nothing, grows nothing)",
-              again == [] and json.loads(led.read_text()) == after, str(again))
-        led.write_text(json.dumps(doc))
-        (t / "report.json").write_text(json.dumps({"sites": {}, "run_not_searched": ["triggers/ absent"]}))
-        try:
-            ledger.shrink(str(t), led)
-            refused = False
-        except SystemExit:
-            refused = True
-        check("shrink refuses a run-level NOT SEARCHED run (absence there proves nothing)",
-              refused and json.loads(led.read_text()) == doc)
 
 
 def propagate_arms():
@@ -909,7 +958,6 @@ def main():
     check("P1 control: a planted plaintext gitignored key IS detected", bool(plaintext_ignored_keys(probe)))
     dp_arms()
     propagate_arms()
-    shrink_arms()
     with tempfile.TemporaryDirectory(prefix="sqlguard-h-") as d:
         harness_arms(Path(d))
     print(f"\n{'FAIL' if fails else 'PASS'}: sqlguard oracle ({len(fails)} failing)")
