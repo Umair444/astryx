@@ -476,3 +476,22 @@ CREATE TABLE IF NOT EXISTS social_edge (
   PRIMARY KEY (org, src, dst, rel)
 );
 CREATE INDEX IF NOT EXISTS social_edge_src ON social_edge (org, src);
+
+-- CLASSIFICATIONS (goal 4227, S4): one LABEL per prompt from the pluggable classifier, which
+-- the nudge hook (hooks/nudge.py) reads for RECURRENCE of a task family. It holds labels ONLY.
+-- There is no column for prompt text, and the CHECKs refuse a label shaped like one: the
+-- classifier is an external service whose output is untrusted, and one that echoed the prompt
+-- back as its "family" would otherwise persist it (I5). turn_id is claimed at Stop by
+-- hooks/step.py, the same way steps are. No metric reads this table (the nudge takes no metric
+-- input, and no economy number is computed from a label).
+CREATE TABLE IF NOT EXISTS classifications (
+  id          bigserial PRIMARY KEY,
+  ts          timestamptz NOT NULL DEFAULT now(),
+  agent       text NOT NULL,
+  session_id  text,
+  turn_id     bigint REFERENCES turns(id) ON DELETE SET NULL,
+  family      text NOT NULL CHECK (family ~ '^[a-z0-9][a-z0-9_.-]{0,47}$'),
+  tier        text NOT NULL CHECK (tier IN ('trivial','simple','complex')),
+  classifier  text CHECK (classifier IS NULL OR classifier ~ '^[A-Za-z0-9_.:/@+-]{1,64}$')
+);
+CREATE INDEX IF NOT EXISTS classifications_recur ON classifications (agent, family, ts DESC);

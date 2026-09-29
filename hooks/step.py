@@ -12,6 +12,13 @@ Wired as PreToolUse + PostToolUse + Stop hooks in each home's settings.json.
 The causal graph: turns.input_msg_id -> the message that triggered the turn;
 messages.turn_id -> the turn that produced the message. One message chains two turns.
 
+TOOL LEDGER (goal 4227, S0): a call of a registered tool carries steps.meta — {registry_id} on
+the `tool` row (one per call: COUNT here), {registry_id, result_bytes} on its tool_done/error
+row (the COST), and {edits} on a Write/Edit of a tool's source (authorship evidence, never a
+call). nucleus/toolreg.py is the one authority on ids. Only the id and a byte count are kept:
+the command, the arguments and the result text are read to resolve the id and then dropped
+(I5). A toolreg failure writes the step WITHOUT meta; it never costs the row.
+
 Agent from ASTRYX_AGENT env. The transcript is the hook's own input, not a side-channel:
 nothing else reads it — every consumer reads the tables.
 """
@@ -37,6 +44,24 @@ def brief(v, n=400) -> str:
         return json.dumps(v)[:n]
     except Exception:
         return str(v)[:n]
+
+
+def ledger_meta(tool, tool_input, response=None):
+    """steps.meta for one call, or None. Never raises: telemetry must not cost the step row."""
+    try:
+        from nucleus.toolreg import resolve
+        m = resolve(tool, tool_input)
+        if response is not None:
+            if "registry_id" not in m:
+                return None               # tool_done carries only CALL cost, never edits
+            m = {"registry_id": m["registry_id"],
+                 "result_bytes": len(json.dumps(response, default=str).encode())}
+        if not m:
+            return None
+        from psycopg.types.json import Jsonb
+        return Jsonb(m)
+    except Exception:
+        return None
 
 
 def dsn() -> str:
@@ -231,6 +256,22 @@ def handle_stop(cur, agent, h):
          tin, tout, model, stop_reason, Jsonb(payload), usnap, goal_id)).fetchone()
     turn_id = row[0] if row else None
 
+    # The nudge hook labels a prompt before its turn exists; claim its classification rows the
+    # same way steps are claimed below. The row is written around submission, which can fall a
+    # moment BEFORE the transcript's started_at, hence the slack; the previous turn's Stop has
+    # already claimed its own rows, so the slack can't steal one. A savepoint keeps a missing table (a DB that predates
+    # 4227's schema) from aborting the turn row it's riding with.
+    if turn_id is not None and started_at:
+        try:
+            with cur.connection.transaction():
+                cur.execute(
+                    "UPDATE classifications SET turn_id=%s "
+                    "WHERE agent=%s AND turn_id IS NULL "
+                    "AND ts >= %s::timestamptz - interval '10 seconds'",
+                    (turn_id, agent, started_at))
+        except Exception:
+            pass
+
     # back-fill this turn's rows (scoped by start time so history is untouched):
     # the tool/response steps it produced, and the messages it sent.
     if turn_id is not None and started_at:
@@ -293,20 +334,21 @@ def main():
             ti = h.get("tool_input") or {}
             detail = ti.get("description") or ti.get("command") or ti.get("file_path") \
                 or ti.get("to") or ti.get("target") or ""
-            cur.execute("INSERT INTO steps (agent, kind, content) VALUES (%s,'tool',%s)",
-                        (agent, f"{tool}: {brief(detail)}"))
+            cur.execute("INSERT INTO steps (agent, kind, content, meta) VALUES (%s,'tool',%s,%s)",
+                        (agent, f"{tool}: {brief(detail)}", ledger_meta(tool, ti)))
 
         elif ev == "PostToolUse":
             tool = h.get("tool_name", "?")
             r = h.get("tool_response")
+            meta = ledger_meta(tool, h.get("tool_input") or {}, r if r is not None else "")
             err = r.get("error") or ("" if r.get("success", True) else "failed") \
                 if isinstance(r, dict) else ""
             if err:
-                cur.execute("INSERT INTO steps (agent, kind, content) VALUES (%s,'error',%s)",
-                            (agent, f"{tool}: {brief(err, 300)}"))
+                cur.execute("INSERT INTO steps (agent, kind, content, meta) VALUES (%s,'error',%s,%s)",
+                            (agent, f"{tool}: {brief(err, 300)}", meta))
             else:
-                cur.execute("INSERT INTO steps (agent, kind, content) VALUES (%s,'tool_done',%s)",
-                            (agent, f"{tool} done"))
+                cur.execute("INSERT INTO steps (agent, kind, content, meta) VALUES (%s,'tool_done',%s,%s)",
+                            (agent, f"{tool} done", meta))
 
         elif ev == "Stop":
             res = handle_stop(cur, agent, h)

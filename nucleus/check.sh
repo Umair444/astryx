@@ -180,6 +180,13 @@ run "memory ask() hides tier-private data" "$PY" tests/test_memory_ask_tier.py
 # stopwords/page-generics can't swamp it (a raw-count window landed on a stopword-dense decoy
 # and excluded the answer section). Hermetic, pure-stdlib, RED-first against count-based.
 run "memory window() picks rare-term mass" "$PY" tests/test_memory_window.py
+# tool ledger (goal 4227, S0): the REAL step hook, run as a subprocess into a throwaway schema
+# (PGOPTIONS search_path, no public fallback), stamps each registered-tool call with its
+# registry_id + result_bytes and NOTHING else (I5: a secret planted in command, args and result
+# never reaches meta). Also: authorship derived from the steps ledger, a toolreg failure never
+# costs the row, and the classifications table refuses a prompt-shaped label. RED-first against
+# the pre-4227 hook; the arms that pass vacuously there are pinned by tests/mutants_tool_ledger.py.
+run "tool ledger: ids only, ledger authorship" "$PY" tests/test_tool_ledger.py
 # This suite's own blind spot: the list below is hand-maintained, so a newly committed
 # tests/test_*.py was silently never run and this still printed ALL PASS (reproduced
 # 08-13). Derives the expected set from the tests/test_*.py glob — a new oracle must
