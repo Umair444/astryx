@@ -140,23 +140,34 @@ def announce(body: str) -> str:
 
 @mcp.tool()
 def economy() -> dict:
-    """The org's economic picture + your own standing + your usage, in one read, with a
-    one-line glossary so the numbers are legible without econ knowledge. The per-agent
-    STANDING metric is being designed under goal 3407; until it lands, 'you' reports your
-    raw 7-day burn and how much of it was goal-attributed (work) vs unattributed (heat)."""
+    """The org's economic picture + your own mirror + your usage, in one read, with a glossary
+    so the numbers are legible without econ knowledge. Goal 4227 (owner, 2026-09-29): NO
+    budgets. `org` is v2 (effort-side W, tool usage-GDP), read only through econ.v2_view (the
+    version gate) and shown with its coverage and status; `org_v1_budget_era` is the frozen v1
+    view (W = sum of budgets), labeled, never back-filled. `you.mirror` is your OWN tools' use
+    by other agents — never a rank."""
     out = {"glossary": {
+        "W": "v2 work = billable tokens spent on goals that SHIPPED in the window through plan quorum (effort, a flux). Detection-grade: quorum size is not stored",
+        "Q": "v2 heat = flux - W, a daily TRANSFER (may be < 0 on a ship day; conserved over windows)",
         "G": "grow ratio = W / (flux * self-bytes): value earned per token burned per byte of org; higher = leaner",
-        "W": "work = sum of budgets of goals VERIFIED in the window (goals.done_at). ATTRIBUTION-grade, not tamper-proof: a genesis superuser forges the stamp, and W is also materialized into econ.metrics (a second forgeable surface); funded_by names each mint's funder. Prevention (NOSUPERUSER over done_at + the econ rollup + turns.agent + messages/quorum) is deferred — goal 3499",
-        "Q": "heat = flux - goal-attributed flux: tokens burned that shipped nothing (both flux, so never negative)",
+        "tool_gdp": "usage-GDP = distinct (tool, caller) pairs among demand-qualified calls by NON-authors; compression = 1, declared, until the placebo oracle passes",
         "flux": "billable tokens spent in the window (the org's energy in)",
+        "coverage": "the share of the input a number actually saw — a number without it is not shown",
+        "W_v1": "budget-era (frozen at goal 4227): work = sum of budgets of goals VERIFIED in the window (goals.done_at). ATTRIBUTION-grade, not tamper-proof: a genesis superuser forges the stamp, and W is also materialized into econ.metrics (a second forgeable surface); funded_by names each mint's funder. Prevention (NOSUPERUSER over done_at + the econ rollup + turns.agent + messages/quorum) is deferred — goal 3499",
     }}
     me = _me()
     try:
-        from nucleus.econ import BILL
+        from nucleus.econ import BILL, econ_line, econ_mirror, v2_view
         with _conn() as conn:
             r = conn.execute("SELECT day, metrics FROM econ ORDER BY day DESC LIMIT 1").fetchone()
             if r:
                 day, m = r[0], r[1]
+                v2 = v2_view(m)
+                out["org"] = ({"day": str(day), "version": v2["version"],
+                               **{k: v2[k] for k in ("W", "Q", "G", "tool_gdp") if k in v2}}
+                              if v2 else {"day": str(day), "note": "no v2 record at the current "
+                                          "version in the newest econ row yet (the nightly rollup "
+                                          "has not run on S2 code) — v1 below is budget-era"})
                 th = m.get("thermo", {})
                 phi, w, phi_goal = th.get("phi"), th.get("W"), th.get("phi_goal_attributed")
                 # Q = heat = flux MINUS goal-attributed flux (both flux → can't go negative).
@@ -165,8 +176,10 @@ def economy() -> dict:
                 # window flux. phi_goal_attributed is the flux-based attributable spend, already
                 # in the same thermo dict (econ.py:112). (abstractor-1, plan-3408 msg 16134.)
                 q = (phi - phi_goal) if (phi is not None and phi_goal is not None) else None
-                out["org"] = {"day": str(day), "G": m.get("G"), "W": w, "Q": q,
-                              "flux": phi, "eta_W_over_flux": th.get("eta")}
+                out["org_v1_budget_era"] = {"label": "budget-era: frozen at goal 4227, W = sum of "
+                                            "budgets; never back-filled into v2",
+                                            "day": str(day), "G": m.get("G"), "W": w, "Q": q,
+                                            "flux": phi, "eta_W_over_flux": th.get("eta")}
             else:
                 out["org"] = {"note": "no econ row yet — the rollup has not run"}
             s = conn.execute(
@@ -174,10 +187,10 @@ def economy() -> dict:
                 f"COALESCE(SUM({BILL}) FILTER (WHERE goal_id IS NOT NULL),0)::bigint, COUNT(*) "
                 f"FROM turns WHERE agent=%s AND ended_at > now() - interval '7 days'", (me,)).fetchone()
             burn, attributed, turns = int(s[0]), int(s[1]), int(s[2])
+            mir = econ_mirror(conn, me)
             out["you"] = {"agent": me, "burn_7d": burn, "attributed_7d": attributed,
                           "attributed_frac": round(attributed / burn, 4) if burn else None,
-                          "turns_7d": turns,
-                          "note": "single standing metric pending goal 3407"}
+                          "turns_7d": turns, "mirror": mir, "mirror_line": econ_line(mir)}
             g = conn.execute(
                 "SELECT five_hour_pct, seven_day_pct FROM current_usage").fetchone()  # 3833
             if g and g[0] is not None:

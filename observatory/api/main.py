@@ -645,13 +645,20 @@ async def economy():
     # implementation of the equations) + a live today-so-far reading. The API serves the
     # RAW series; the client holds the equations, so the playground's sliders recompute
     # G/η locally without another request.
+    # Goal 4227 S2: the v1 fields (W = sum of budgets) are FROZEN and labeled budget-era; each
+    # point carries its v2 records ONLY through econ.v2_view (the version gate), else None —
+    # a v2.0 or pre-v2 day shows no v2, never a back-filled one.
+    from nucleus.econ import v2_view
     econ_rows = await pool.fetch(
         "SELECT day::text AS day, metrics FROM econ ORDER BY day DESC LIMIT 90")
     econ_series = []
     for r in reversed(econ_rows):
         m = r["metrics"] if isinstance(r["metrics"], dict) else json.loads(r["metrics"])
         t = m.get("thermo") or {}
+        v2 = v2_view(m)
         econ_series.append({
+            "v2": ({k: v2[k] for k in ("W", "Q", "G", "tool_gdp") if k in v2} | {"version": v2["version"]}
+                   if v2 else None),
             "day": r["day"], "phi": t.get("phi"), "W": t.get("W"),
             "eta": t.get("eta"), "G": m.get("G"),
             "heat_frac": t.get("heat_instant_frac"),
@@ -688,7 +695,11 @@ async def economy():
 
     return {
         "authoritative": authoritative,
-        "econ": {"series": econ_series, "latest": econ_latest, "today": econ_today},
+        "econ": {"series": econ_series, "latest": econ_latest, "today": econ_today,
+                 "labels": {"v1": "budget-era: phi/W/eta/G per point are v1, frozen at goal 4227 "
+                                  "(W = sum of budgets), never back-filled into v2",
+                            "v2": "per-point v2 records {value, version, coverage, status}; "
+                                  "None where the day predates the v2 version gate"}},
         "series": [{"t": r["ended_at"].isoformat(),
                     "five": float(r["five"]) if r["five"] is not None else None,
                     "seven": float(r["seven"]) if r["seven"] is not None else None}

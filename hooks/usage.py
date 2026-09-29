@@ -72,15 +72,14 @@ try:
                 plan = (f" · plan 5h {g[0]:.0f}%"
                         + (f" (resets {reset}Z)" if reset else "")
                         + (f" · 7d {g[1]:.0f}%" if g[1] is not None else ""))
-            # ── [econ] line (goal 3407; DISARMED to the neutral token by plan-4227 S1a
-            # until the v2 mirror lands). Its OWN fail-open try — a standing meter must
+            # ── [econ] line: the v2 MIRROR (goal 4227 S2) — this agent's OWN tools' use by
+            # other agents, one precomputed econ row read (never an aggregate in the 5s
+            # prompt budget), version-gated, no rank. Its OWN fail-open try — a meter must
             # never break the wake for every agent on the org.
             try:
                 sys.path.insert(0, REPO)
-                # No econ_standing() query while disarmed: it would spend DB latency in
-                # the 5s prompt budget for a result the renderer discards. S2 re-wires it.
-                from nucleus.econ import econ_line as _render
-                econ_line = _render(None)
+                from nucleus.econ import econ_line as _render, econ_mirror
+                econ_line = _render(econ_mirror(conn, agent) if agent else None)
             except Exception:
                 econ_line = ""
     except Exception:

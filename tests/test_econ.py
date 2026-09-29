@@ -11,7 +11,8 @@ What must hold (each arm can ALONE go red):
   5. theil(): uniform shares → ~0; one-agent-takes-all → ~1; <2 shares → None (not 0 —
      a singleton has no inequality to measure).
   6. rollup() writes a row whose G/thermo agree with its own components (self-consistency
-     of the archived artifact with the equations that made it).
+     of the archived artifact with the equations that made it) — into a HERMETIC econ table;
+     the live econ table must be untouched (containment arm).
 
 Run: venv/bin/python tests/test_econ.py    (collected by check.sh)
 """
@@ -104,40 +105,54 @@ def main():
                       "SELECT coalesce(sum(budget_tokens),0) FROM goals WHERE done_at > "
                       "now() - interval '30 days'")[0]))
 
-        # rollup self-consistency on yesterday (writes/updates one econ row)
-        m = econ.rollup(conn)
-        g, th, kk = m["G"], m["thermo"], m["K"]
-        if th["phi"] and kk["compressed"]:
-            expect = round(th["W"] / (th["phi"] * kk["compressed"]) * 1e9, 6)
-            check("archived G equals its own components", g == expect,
-                  f"G={g} expect={expect}")
-            check("measured W=0 yields G=0.0, never None",
-                  not (th["W"] == 0 and g is None))
-        else:
-            check("G is None exactly when a denominator is unmeasurable", g is None)
-        row = conn.execute("SELECT metrics->'thermo'->>'phi' FROM econ ORDER BY day DESC "
-                           "LIMIT 1").fetchone()
-        check("econ row landed and carries thermo.phi", row is not None and row[0] is not None)
+        # rollup self-consistency on yesterday — archived into a HERMETIC econ table, never the
+        # live one. (Until goal 4227 S2 this upserted PRODUCTION econ with whatever code ran the
+        # suite: any worktree's check.sh rewrote yesterday's row with unreviewed code — and once
+        # v2 readers gate on the stamped version, such a row can carry a gate-passing version
+        # its reviewers never saw. steward did exactly that on 09-29.) search_path puts a temp
+        # schema holding only `econ` first, so the upsert lands there while compute()'s reads
+        # (turns/goals/steps/messages; compute never reads econ) still see the real substrate.
+        import os
+        sch = f"t_econ_{os.getpid()}"
+        live_before = conn.execute("SELECT computed_at FROM public.econ ORDER BY day DESC "
+                                   "LIMIT 1").fetchone()
+        conn.execute(f"CREATE SCHEMA {sch}")
+        conn.execute(f"CREATE TABLE {sch}.econ (LIKE public.econ INCLUDING ALL)")
+        conn.execute(f"SET search_path TO {sch}, public")
+        try:
+            m = econ.rollup(conn)
+            g, th, kk = m["G"], m["thermo"], m["K"]
+            if th["phi"] and kk["compressed"]:
+                expect = round(th["W"] / (th["phi"] * kk["compressed"]) * 1e9, 6)
+                check("archived G equals its own components", g == expect,
+                      f"G={g} expect={expect}")
+                check("measured W=0 yields G=0.0, never None",
+                      not (th["W"] == 0 and g is None))
+            else:
+                check("G is None exactly when a denominator is unmeasurable", g is None)
+            row = conn.execute(f"SELECT metrics->'thermo'->>'phi' FROM {sch}.econ ORDER BY day "
+                               "DESC LIMIT 1").fetchone()
+            check("econ row landed (hermetic table) and carries thermo.phi",
+                  row is not None and row[0] is not None)
+            bf = conn.execute(f"SELECT metrics->'built_from' FROM {sch}.econ ORDER BY day DESC "
+                              "LIMIT 1").fetchone()
+            bf = bf[0] if bf else None
+            check("the archived row carries its provenance (built_from: sha + dirty, detection-grade)",
+                  isinstance(bf, dict) and bool(bf.get("sha")) and isinstance(bf.get("dirty"), bool),
+                  str(bf))
+        finally:
+            conn.execute("SET search_path TO DEFAULT")
+            conn.execute(f"DROP SCHEMA IF EXISTS {sch} CASCADE")
+            conn.commit()
+        live_after = conn.execute("SELECT computed_at FROM public.econ ORDER BY day DESC "
+                                  "LIMIT 1").fetchone()
+        check("CONTAINMENT: the live econ table was not written by this oracle",
+              live_before == live_after, f"{live_before} -> {live_after}")
 
-        # goal #3407: econ_standing reads the archived pnl (never recomputes) and returns a
-        # FACT dict. It must agree with the row just archived; rank must be sane; and an
-        # unknown agent must resolve to present=False (a fact, not an error). Cross-checked
-        # against the raw jsonb independently of econ_standing's own parsing.
-        st = econ.econ_standing(conn, "steward")
-        check("econ_standing returns a fact dict (an econ row exists after rollup)",
-              isinstance(st, dict) and {"priced", "net", "rank", "present"} <= set(st))
-        if st and st["present"]:
-            check("econ_standing rank within [1, n]",
-                  isinstance(st["rank"], int) and 1 <= st["rank"] <= st["n"], f"{st}")
-            check("econ_standing net is int, priced is bool",
-                  isinstance(st["net"], int) and isinstance(st["priced"], bool), f"{st}")
-            raw = econ._one(conn,
-                "SELECT (e->>'net')::bigint FROM econ, jsonb_array_elements(metrics->'pnl') e "
-                "WHERE day=(SELECT max(day) FROM econ) AND e->>'agent'=%s", ("steward",))
-            check("econ_standing net matches the archived pnl row",
-                  raw is not None and int(raw[0]) == st["net"], f"st={st} raw={raw}")
-        check("econ_standing on a non-existent agent is present=False (not an error)",
-              (econ.econ_standing(conn, "no-such-agent-zzz") or {}).get("present") is False)
+        # goal 4227 S2: the cross-agent rank (econ_standing) is gone; the [econ] line is the
+        # self-scoped v2 mirror, pinned by tests/test_econ_v2_mirror.py.
+        check("no cross-agent rank function remains (econ_standing retired at S2)",
+              not hasattr(econ, "econ_standing"))
 
     print(f"\n{'FAILED (' + str(len(fails)) + '): ' + ', '.join(fails) if fails else 'all econ invariants hold'}")
     return 1 if fails else 0
