@@ -17,7 +17,8 @@ with a runtime hole, `.format()`, `%`-formatting, or psycopg.sql composition. Th
 FUNCTION level and flags it FALLBACK (#21516 R3).
 
 The roots are DERIVED: every .py under the repo, walking the FILESYSTEM and not git, because triggers/ is
-gitignored. Excluded: tests/ (oracles, not subjects), venv/, node_modules/, homes/, and caches. A file that
+gitignored. Excluded: tests/ (oracles, not subjects), venv/, node_modules/, homes/, caches, and EXCLUDED_ROOTS
+(declared with a reason and printed every run). A file that
 won't parse is reported, and the judge treats a non-zero count as NOT SEARCHED.
 """
 import ast
@@ -30,6 +31,14 @@ from nucleus.sqlguard.normalize import is_site, is_write, norm
 
 REPO = Path(os.environ.get("ASTRYX_SQLGUARD_ROOT") or Path(__file__).resolve().parents[2]).resolve()
 SKIP_DIRS = {"venv", ".venv", "node_modules", "homes", ".git", "__pycache__", "dist", "build"}
+# Top-level roots that hold no subject code, each with its reason. Unlike SKIP_DIRS they're DECLARED: printed on
+# every answer, and an unknown directory is still walked (so omission fails loud, as R-NEW). Code that ever RUNS
+# from an excluded root still surfaces at runtime as R-BLIND (the shim sees SQL the inventory doesn't know).
+EXCLUDED_ROOTS = {
+    "var": "runtime state (gitignored): logs, runner state, charter backups, deploy bundles. A bundle's .py is a "
+           "SNAPSHOT of code that lives in triggers/ or a one-shot migration; nothing imports or schedules var/ "
+           "(09-29: var/s1c-bundle read as 43 R-NEW duplicates)",
+}
 # The shim is the instrument itself: its catalog reads run under its own recursion guard, so it cannot
 # observe them. That's the ONE declared exemption, printed with every answer. Nothing else is exempt.
 EXEMPT = {"nucleus/sqlguard/shim/sitecustomize.py"}
@@ -40,7 +49,8 @@ def _py_files(include_tests: bool):
         rel = os.path.relpath(dirpath, REPO)
         top = rel.split(os.sep)[0]
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS
-                       and not (rel == "." and d == "tests" and not include_tests)]
+                       and not (rel == "." and d == "tests" and not include_tests)
+                       and not (rel == "." and d in EXCLUDED_ROOTS)]
         if top in SKIP_DIRS:
             continue
         for f in filenames:
@@ -307,7 +317,7 @@ def build() -> dict:
                         if str(p.relative_to(REPO)) not in NOT_READERS and reads_schema_sql(p))
     # triggers/ is gitignored: a clone or worktree without it has NOT SEARCHED the class's home. That's never clean.
     return {"functions": functions, "oracle": oracle, "unparseable": sorted(unparseable), "extractors": extractors,
-            "exempt": sorted(EXEMPT), "triggers_absent": not (REPO / "triggers").is_dir(), "root": str(REPO)}
+            "exempt": sorted(EXEMPT), "excluded": sorted(EXCLUDED_ROOTS), "triggers_absent": not (REPO / "triggers").is_dir(), "root": str(REPO)}
 
 
 if __name__ == "__main__":

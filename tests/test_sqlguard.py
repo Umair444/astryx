@@ -531,6 +531,7 @@ def main():
         label = S1.replace("\x1f", " :: ")
         OUT["admit_key"] = ledger.admit(str(td), label, "harness: the reason", lp)
         led = json.loads(lp.read_text())
+        OUT["admit_restamp"] = led.get("header", {}).get("debt_rows") == len(led["rows"]) == 1
         run("admitted", rep({S1: "UNEXECUTED"}), led, dsn)
         try:
             ledger.admit(str(td), label, "again", lp)
@@ -585,6 +586,9 @@ def _build_tree(tmp: Path, rev=None):
     (tmp / "tests" / "drive.py").write_text(DRIVE)
     (tmp / "tests" / "enf.py").write_text(ENF)
     (tmp / "tests" / "shrink.py").write_text(SHRINK)
+    for d in ("var/bundle", "varx"):                    # an excluded root, and a prefix-sharing root that is NOT
+        (tmp / d).mkdir(parents=True)
+        (tmp / d / "snap.py").write_text('def f(c):\n    return c.execute("SELECT 1 FROM goals WHERE id = 7")\n')
     (tmp / "tests" / "clean.py").write_text(CLEAN)
     (tmp / ".gitignore").write_text("subj/ignored_*.py\n.env\n")
     subprocess.run(["git", "init", "-q"], cwd=tmp, check=True)
@@ -800,6 +804,16 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
     arm("R-CLOCK a renamed function keeps its site's clock (qualname-free key)",
         has("clock_moved", "R-CLOCK"), str(E.get("clock_moved")))
 
+    # the declared excluded roots: var/ is not walked, a prefix-sharing sibling (varx/) still is
+    _, V, err = _py(tmp, _env(tmp, run), "-c", "import json; from nucleus.sqlguard import inventory as i; "
+                    "b = i.build(); print(json.dumps({'paths': sorted({k.split('::')[0] for k in b['functions']}), "
+                    "'excluded': b.get('excluded')}))")
+    V = V or {"paths": [], "excluded": err}
+    arm("an EXCLUDED root (var/) is not inventoried, and it's declared in the answer",
+        "var/bundle/snap.py" not in V["paths"] and V["excluded"] == ["var"], str(V["excluded"]))
+    arm("control: a prefix-sharing root (varx/) IS still inventoried", "varx/snap.py" in V["paths"],
+        str([p for p in V["paths"] if p.startswith("var")]))
+
     # ledger shrink, in the temp tree
     _, K, err = _py(tmp, _env(tmp, run), "tests/shrink.py")
     K = K or {"error": err}
@@ -832,6 +846,7 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
     arm("admit grows the ledger; the admitted row passes and its REASON prints",
         E["admitted"]["rc"] == 0 and any("harness: the reason" in r for r in E["admitted"]["report"]),
         str(E["admitted"]))
+    arm("admit restamps header.debt_rows", E.get("admit_restamp") is True, str(E.get("admit_restamp")))
     return failed
 
 
@@ -859,6 +874,7 @@ MUTANTS = [
     ("enforce.py", "if not canary or any(", "if False and any(", "canary absent"),
     ("enforce.py", "if runs > NS_RUNS and age.days >= NS_DAYS:", "if True:", "R-CLOCK not before"),
     ("ledger.py", 'if lk in doc["rows"]:', "if False:", "admit refuses"),
+    ("ledger.py", 'doc.setdefault("header", {})["debt_rows"] = len(doc["rows"])', "pass", "admit restamps"),
     ("estate.py", "if not env.is_file():", "if False:", "estate-absent: canary"),
     ("estate.py", "if not env.is_file():", "if False:", "estate-absent: enforce"),
     ("estate.py", "if missing:", "if False:", "deps-absent: enforce"),
@@ -868,6 +884,9 @@ MUTANTS = [
     ("estate.py", 'return 1, ".env is present', 'return 77, ".env is present', "no-DSN: enforce"),
     ("enforce.py", 'gate("enforce"', 'print("enforce"', "estate-absent: enforce"),
     ("ledger.py", 'if rep.get("run_not_searched"):', "if False:", "shrink refuses"),
+    ("inventory.py", 'and not (rel == "." and d in EXCLUDED_ROOTS)]', "]", "EXCLUDED root"),
+    ("inventory.py", 'and not (rel == "." and d in EXCLUDED_ROOTS)]', 'and not any(d.startswith(x) for x in EXCLUDED_ROOTS)]',
+     "prefix-sharing root"),
     ("ledger.py", "if len(cands) == 1 and", "if False and", "re-keys a site moved"),
     ("ledger.py", "cands = [c for c in by_tk.get(tk, []) if c not in rows]", "cands = by_tk.get(tk, [])",
      "AMBIGUOUS"),
@@ -898,6 +917,17 @@ def mutant_battery(only=None):
             survived.append(f"{f}: {old}")
     print(f"\nmutants: {len(todo) - len(survived)}/{len(todo)} killed by their named arm")
     return 1 if survived else 0
+
+
+def ledger_inconsistency(doc):
+    bad = []
+    n, rows = doc.get("header", {}).get("debt_rows"), doc.get("rows", {})
+    if n != len(rows):
+        bad.append(f"header.debt_rows={n} but {len(rows)} rows")
+    missing = [k for k, v in rows.items() if "tk" not in v]
+    if missing:
+        bad.append(f"{len(missing)} row(s) without tk")
+    return bad
 
 
 def propagate_arms():
@@ -956,6 +986,13 @@ def main():
     # Positive control: the probe must be able to SEE a leak, or its silence proves nothing.
     probe = {"rows": {"triggers/zz/x.py::f\x1fselect 1": {}}}
     check("P1 control: a planted plaintext gitignored key IS detected", bool(plaintext_ignored_keys(probe)))
+    # ONE writer (the tool): seed/admit/shrink all restamp and all stamp tk. A header that disagrees with its rows, or
+    # a row without tk, means a SECOND writer touched the file (a hand edit, a text merge; a3 #23793, S3 c8eeb9e).
+    bad = ledger_inconsistency(json.loads(path.read_text()))
+    check("the tracked ledger is tool-written: header.debt_rows == len(rows), and every row carries tk", not bad,
+          "; ".join(bad))
+    check("control: a planted header/rows mismatch and a tk-less row ARE detected",
+          len(ledger_inconsistency({"header": {"debt_rows": 2}, "rows": {"a.py::f\x1fselect 1": {}}})) == 2)
     dp_arms()
     propagate_arms()
     with tempfile.TemporaryDirectory(prefix="sqlguard-h-") as d:

@@ -124,6 +124,7 @@ def admit(trace_dir: str, site: str, reason: str, path: Path = None) -> str:
         raise SystemExit("refusing: already listed")
     doc["rows"][lk] = {"debt": "NOT-SEARCHED-AT-ADMIT" if rung == "NOT SEARCHED" else rung, "reason": reason,
                        "admitted": datetime.date.today().isoformat(), "tk": text_key(key)}
+    doc.setdefault("header", {})["debt_rows"] = len(doc["rows"])
     if rep.get("covering", {}).get(key):
         doc.setdefault("covering", {})[lk] = rep["covering"][key]
     path.write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n")

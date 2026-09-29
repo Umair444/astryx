@@ -215,7 +215,7 @@ def judge(trace_dir, inv=None, covering=None, stored_covering=None):
             "run_not_searched": run_not_searched, "covering": covering, "gates": gates,
             "untraced_children": {k: sorted(v) for k, v in untraced.items()},
             "extractors": {k: sorted(v) for k, v in extractors.items()},
-            "extractors_static": inv["extractors"], "exempt": inv["exempt"], "records": len(recs)}
+            "extractors_static": inv["extractors"], "exempt": inv["exempt"], "excluded": inv.get("excluded", []), "records": len(recs)}
 
 
 REMAINDER = ("CEILING: RESPONSIVE = the WHERE and every computed bool responded. It never means CORRECT (that's the "
@@ -237,7 +237,8 @@ def print_report(rep):
         p = b["frame"][0]
         what = "" if (p.startswith("tier/") or ignored(p)) else f" ran {b['t']!r}"   # P1: no gitignored SQL text
         print(f"  BLIND (reverse agreement): {p}::{b['frame'][1]}{what}")
-    print(f"  extractors (static list, until migrated): {len(rep['extractors_static'])}; exempt: {rep['exempt']}")
+    print(f"  extractors (static list, until migrated): {len(rep['extractors_static'])}; exempt: {rep['exempt']}; "
+          f"excluded roots: {rep.get('excluded', [])}")
 
 
 def write_report(d, rep):
