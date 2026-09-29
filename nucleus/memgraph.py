@@ -72,11 +72,16 @@ CONTEXT = MEM / "context"
 
 MIDDOT = "·"
 
-# link_integrity.py's regex, character for character. The compiler's extracted link set
-# MUST equal that lint's, or the graph and the guard the org already trusts have diverged.
-# The strict [a-z0-9-] charset is also what keeps tools.md's `[[poll: question | A | B]]`
-# EXAMPLE out of the graph — widen it and you invent a phantom node.
-LINK_RE = re.compile(r"\[\[([a-z0-9-]+)\]\]")
+# The wikilink regex. The compiler's extracted link set MUST equal the org's trusted link
+# guard — _wiki_links() in memory/lints/drift.py (the reconstructed link_integrity, folded
+# there 2026-09-10 after the standalone triggers/memory/link_integrity.py was retired in the
+# 08-25 shed). ALIASED and ANCHORED forms are real links: [[target|alias]] and
+# [[target#anchor]] both point at `target`. A strict [a-z0-9-] charset used to double as the
+# poll-example guard, but that job belongs to the code-strip (below): the fenced
+# `[[poll: question | A | B]]` EXAMPLE is removed before extraction, so the charset need not
+# be narrow — and narrowing it silently dropped the real [[verification|...]] edge that the
+# trusted lint counts (memory, 2026-09-21).
+LINK_RE = re.compile(r"\[\[\s*([^\]|#]+?)\s*(?:[|#][^\]]*)?\]\]")
 
 # log.md's own prose, which turns out to be a causal ledger nobody reads.
 LOG_DATE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\s*·\s*([^·]+?)\s*·\s*([A-Z][A-Z -]*[A-Z])")
@@ -246,15 +251,18 @@ def parse_claims(body: str, dialect: str, entity: str | None) -> list[dict]:
 def page_links(text: str) -> list[str]:
     """Wikilink targets. Self-links included; the caller drops self-edges, as the lint does.
 
-    NOT byte-identical logic to link_integrity.py, and the difference is deliberate: this
-    strips fenced/inline code and HTML comments first, the lint does not. Measured across
-    all 18 live pages the two agree exactly (0 disagreements), and test_memgraph.py asserts
-    that equality on every run — so the divergence is GUARDED rather than assumed. If a
-    page ever fences a real `[[link]]`, the conformance arm goes red and someone chooses,
-    instead of the graph and the lint quietly disagreeing. (Docstring corrected after
-    memory pointed out it claimed a parity the code does not have — msg 3822.)
+    Same regex and alias/anchor handling as the trusted lint's _wiki_links()
+    (memory/lints/drift.py), so the compiler and the guard see the same link set. This
+    strips fenced/inline code and HTML comments first; the lint strips code but not
+    comments — a difference test_memgraph.py's conformance arm proves harmless on every
+    run by comparing the two edge sets against the live estate, so the divergence is
+    GUARDED rather than assumed. If a page ever fences a real `[[link]]`, or puts one in an
+    HTML comment, that arm goes red and someone chooses, instead of the graph and the lint
+    quietly disagreeing. (History: the arm had been comparing against a phantom copy of a
+    retired file and went dark, masking a dropped [[verification|...]] edge — memory,
+    2026-09-21.)
     """
-    return LINK_RE.findall(_strip_code_and_comments(text))
+    return [m.group(1).strip() for m in LINK_RE.finditer(_strip_code_and_comments(text))]
 
 
 # ─────────────────────────────────────────────────────────── the graph

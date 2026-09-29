@@ -25,8 +25,8 @@ Four invariants, in order of how badly their absence would hurt:
 
 Run: venv/bin/python tests/test_memgraph.py   (also collected by pytest, and check.sh).
 """
+import importlib.util
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -36,9 +36,21 @@ from nucleus import memgraph as mg  # noqa: E402
 REPO = Path(__file__).resolve().parent.parent
 WIKI = REPO / "memory" / "wiki"
 
-# link_integrity.py's regex, character for character. Copied rather than imported because
-# triggers/ is gitignored and absent from CI; test_copy_has_not_rotted keeps it honest.
-LINT_LINK_RE = re.compile(r"\[\[([a-z0-9-]+)\]\]")
+# The org's trusted link guard, imported by path rather than copied. It is _wiki_links() in
+# memory/lints/drift.py — the reconstructed link_integrity (the standalone
+# triggers/memory/link_integrity.py was retired in the 08-25 shed and folded here 2026-09-10).
+# memory/ is gitignored, so this is absent on a clean clone (SKIP) but PRESENT on the live
+# host, where a skip would mean a dark guard, not a baseline. Importing the real thing rather
+# than copying its regex kills the copy-rot class that already bit this file once (the
+# frontmatter-strip drift, msg 5186) — there is no longer a copy to drift.
+def _load_drift():
+    src = REPO / "memory" / "lints" / "drift.py"
+    if not src.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location("drift_lint", src)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 PAGE_A = """# org — ASTRYX overview
 *compiled 2026-07-20 · compile #2*
@@ -73,21 +85,11 @@ Some framing prose with a · middot in it, which is not a fact line.
 """
 
 
-def _lint_edges() -> set:
+def _edges(link_fn) -> set:
     pages = {p.stem for p in WIKI.glob("*.md")}
     out = set()
     for p in WIKI.glob("*.md"):
-        for t in set(LINT_LINK_RE.findall(p.read_text())):
-            if t in pages and t != p.stem:
-                out.add((p.stem, t))
-    return out
-
-
-def _mine_edges() -> set:
-    pages = {p.stem for p in WIKI.glob("*.md")}
-    out = set()
-    for p in WIKI.glob("*.md"):
-        for t in set(mg.page_links(p.read_text())):
+        for t in set(link_fn(p.read_text())):
             if t in pages and t != p.stem:
                 out.add((p.stem, t))
     return out
@@ -95,54 +97,32 @@ def _mine_edges() -> set:
 
 # ── 1. conformance ────────────────────────────────────────────────────────────────────
 def test_link_set_equals_link_integrity():
+    """CONFORMANCE, the load-bearing arm: the compiler's page-link set must EQUAL the org's
+    trusted link guard, edge for edge — two instruments watching the same files, one truth.
+
+    The guard is _wiki_links() in memory/lints/drift.py, imported live rather than copied
+    (see _load_drift). memory/ is gitignored ⇒ a clean clone SKIPS; the live host HAS it and
+    must VERIFY. A skip HERE, on a host where drift.py exists, is a dark guard masquerading
+    as a baseline — which is exactly how a dropped [[verification|...]] edge hid while this
+    arm compared against a copy of a retired file (memory, 2026-09-21).
+
+    Comparing the two live functions (not a copied regex) also folds in the old
+    copy-vs-original and copy-has-not-rotted arms: `len(mine) > 50` catches either going
+    blind, and equality against the real lint catches drift with nothing left to rot."""
+    drift = _load_drift()
+    if drift is None:
+        print("SKIP: memory/lints/drift.py absent (gitignored) — link conformance not verified")
+        globals()["_UNVERIFIED"] = True
+        return
     if not WIKI.is_dir():
         print("SKIP: memory/wiki absent (gitignored) — link conformance not verified")
         globals()["_UNVERIFIED"] = True
         return
-    lint, mine = _lint_edges(), _mine_edges()
-    assert lint == mine, (f"link sets DIVERGED\n  lint-only: {sorted(lint - mine)}\n"
+    mine, lint = _edges(mg.page_links), _edges(drift._wiki_links)
+    assert lint == mine, (f"link set DIVERGED from the trusted lint (drift._wiki_links)\n"
+                          f"  lint-only: {sorted(lint - mine)}\n"
                           f"  mine-only: {sorted(mine - lint)}")
     assert len(mine) > 50, f"only {len(mine)} edges — one of the two has gone blind"
-
-
-LINT_SRC = REPO / "triggers" / "memory" / "link_integrity.py"
-
-
-def test_copy_equals_the_original():
-    """The copy must equal the ORIGINAL, not merely still match the estate.
-
-    memory (msg 5186) caught that the old version of this arm was conformance-to-self in
-    a subtle dress: it asserted the copied regex still matched pages, which proves the
-    copy matches SOMETHING, never that it equals the thing it copied. And it had ALREADY
-    silently diverged — link_integrity now reads okf.strip(text) so frontmatter is removed
-    before matching, while this file matched the raw bytes. The old arm stayed green for a
-    reason unrelated to equality: frontmatter cannot contain `[[` because okf.py forbids
-    it. A guard passing for the wrong reason is the failure it exists to prevent.
-
-    triggers/ is gitignored, so this SKIPS on a clean clone — but where the original
-    exists, compare against it rather than around it.
-    """
-    if not LINT_SRC.is_file():
-        print("SKIP: triggers/memory/link_integrity.py absent (gitignored) — "
-              "copy-vs-original not verified")
-        globals()["_UNVERIFIED"] = True
-        return
-    m = re.search(r"^LINK_RE\s*=\s*re\.compile\((r?[\"'].*?[\"'])\)",
-                  LINT_SRC.read_text(), re.M)
-    assert m, "LINK_RE not found in link_integrity.py — the copy check is blind; re-point it"
-    original = eval(m.group(1))                      # the literal, not a re-derivation
-    assert original == LINT_LINK_RE.pattern, (
-        f"the copied regex has DRIFTED from the lint:\n"
-        f"  lint : {original!r}\n  copy : {LINT_LINK_RE.pattern!r}")
-
-
-def test_copy_has_not_rotted():
-    """Belt: even equal, both could have gone blind against the real estate."""
-    if not WIKI.is_dir():
-        globals()["_UNVERIFIED"] = True
-        return
-    hits = sum(len(LINT_LINK_RE.findall(p.read_text())) for p in WIKI.glob("*.md"))
-    assert hits > 50, f"copied LINK_RE matched {hits} on the live estate — it has drifted"
 
 
 # ── 2. determinism ────────────────────────────────────────────────────────────────────
