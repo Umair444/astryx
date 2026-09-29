@@ -491,6 +491,24 @@ def r_carried_reconsolidation_stays_consolidated(ctx):
     assert pings(ctx, thread) == [], pings(ctx, thread)
 
 
+
+@case
+def s_chat_down_the_chain_is_not_a_climb(ctx):
+    """plan-4918 shape (2026-09-30): the top files a raw idea; rank 3 posts a note DOWN the chain (to rank 1);
+    rank 1 hands off to rank 2; rank 2 acks DOWN the chain ("refinement pending"). The baton is with RANK 2.
+    A post isn't a climb step, a HANDOFF (a message to a higher rank) is: counting any post named the TOP as
+    next and would have skipped ranks 2 and 3."""
+    gid, thread = seed_plan(ctx, [], goal_age="5 hours", make_thread=False)
+    for frm, to, intent, ago in [("abstractor-4", "abstractor-1", "task", "4 hours"),
+                                 ("abstractor-3", "abstractor-1", "chat", "4 hours"),
+                                 ("abstractor-1", "abstractor-2", "refine", "3 hours"),
+                                 ("abstractor-2", "abstractor-1", "chat", "3 hours")]:
+        ctx.sql("INSERT INTO messages (from_agent,to_agent,thread,intent,body,ts) VALUES "
+                "(%s,%s,%s,%s,'x', now() - %s::interval)", (frm, to, thread, intent, ago))
+    MOD["plan_climb_due"](ctx)
+    assert pings(ctx, thread) == ["abstractor-2"], pings(ctx, thread)
+
+
 def main():
     preflight_isolation_premise()      # fail-closed: never write until rollback is proven
     ok = True
