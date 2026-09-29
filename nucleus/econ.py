@@ -464,13 +464,14 @@ def v2(conn, since, until, k) -> dict:
                coalesce(sum({BILL}) FILTER (WHERE goal_id IS NOT NULL),0)::bigint
         FROM turns WHERE ended_at >= %s AND ended_at < %s""", (since, until))
     phi, phi_goal = int(f[0]), int(f[1])
-    w = int(_one(conn, f"""
+    # v2 W is EFFORT (billable tokens, a flux), not v1's budget-price: named shipped_flux at
+    # its sum(BILL) binding so legend_guard reads Q = phi - shipped_flux as flux - flux.
+    shipped_flux = int(_one(conn, f"""
         SELECT coalesce(sum({BILL}),0)::bigint FROM turns t JOIN goals g ON g.id = t.goal_id
         WHERE g.done_at >= %s AND g.done_at < %s
           AND EXISTS (SELECT 1 FROM messages m
                       WHERE m.thread = 'plan-'||g.id AND m.intent = 'approve')""",
         (since, until))[0])
-    fx = {"phi": phi, "shipped_flux": w}   # both FLUX; the keys are the declared bases
     cov = round(phi_goal / phi, 4) if phi else None
     ok = "OK" if phi else "VACUOUS: no flux in window"
     kc = (k or {}).get("compressed")
@@ -481,13 +482,12 @@ def v2(conn, since, until, k) -> dict:
         # coverage — the in-window goal-attributed flux share — does not describe W's
         # out-of-window turns; and Q = flux - W is a DAILY TRANSFER that may be < 0 on a quiet
         # ship day. Both are conserved over windows (oracle arm 6). No reader may assume Q>=0.
-        "W": _v2_rec(w, cov, ok if not phi else
+        "W": _v2_rec(shipped_flux, cov, ok if not phi else
                      "OK: lifetime turns of goals shipped in-window; coverage = in-window share"),
-        # operands read through DECLARED keys so legend_guard can see both bases are FLUX
-        # (billable tokens): v2's W is effort, not v1's budget-price, so Q = flux - flux.
-        "Q": _v2_rec(fx["phi"] - fx["shipped_flux"], cov, ok if not phi else
+        # Q = flux - flux: both operands are billable tokens (see shipped_flux above)
+        "Q": _v2_rec(phi - shipped_flux, cov, ok if not phi else
                      "OK: daily transfer, may be <0; conserved over windows"),
-        "G": _v2_rec(round(w / (phi * kc) * 1e9, 6) if phi and kc else None, cov,
+        "G": _v2_rec(round(shipped_flux / (phi * kc) * 1e9, 6) if phi and kc else None, cov,
                      ok if phi and kc else "VACUOUS: flux or K unmeasured"),
         "tool_gdp": _v2_tool_gdp(rows, V2_VERSION, auth_ok),
     }

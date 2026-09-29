@@ -91,46 +91,96 @@ def _string_arg(node: ast.AST) -> str | None:
 
 
 class _Scope:
-    """Per-function name→base map, built from the bindings the function actually makes."""
+    """Per-function name→base map, built from the bindings the function actually makes.
+
+    Bindings are recorded as AST NODES and classified LAZILY at lookup, so the answer does not
+    depend on walk order (a `x = budget_tokens` nested deeper than the dict that stores `x` is
+    still seen). A name bound more than once is BUDGET if ANY binding is: a traced budget is
+    never renamed or re-bound away (a2, plan-4227 #21341)."""
 
     def __init__(self) -> None:
-        self.base: dict[str, str] = {}
+        self.bound: dict[str, list[ast.AST]] = {}
+        # locally built dicts: name -> {key: [value nodes STORED under it]}. A Subscript on a
+        # traced dict reads the stored value's base, never the key's — otherwise a budget
+        # stored under a flux-named key launders through the guard.
+        self.dicts: dict[str, dict[str, list[ast.AST]]] = {}
+        self._busy: set[int] = set()          # recursion guard: `d['a'] = d['a']`, `x = x + 1`
+
+    def _merge(self, nodes: list[ast.AST]) -> str:
+        bases = set()
+        for n in nodes:
+            if id(n) in self._busy:
+                continue
+            self._busy.add(id(n))
+            try:
+                bases.add(self.classify(n))
+            finally:
+                self._busy.discard(id(n))
+        if BUDGET in bases:
+            return BUDGET
+        bases.discard(UNKNOWN)
+        if FLUX_ATTR in bases and FLUX not in bases:
+            return FLUX_ATTR
+        return FLUX if bases else UNKNOWN
 
     def classify(self, node: ast.AST) -> str:
         """Base of an expression node: trace bound names, th[...] reads, and bare names."""
         if isinstance(node, ast.Name):
-            return self.base.get(node.id, _key_base(node.id))
+            # the trace wins; a name falls back to its OWN name only when the trace is UNKNOWN
+            # (e.g. `shipped_flux = int(_one(...)[0])` — the SQL is untraceable, the name at the
+            # binding site is the declaration). A traced BUDGET is never renamed away.
+            traced = self._merge(self.bound.get(node.id, []))
+            return traced if traced != UNKNOWN else _key_base(node.id)
         # th.get("phi_goal_attributed")  /  m["W"]
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
                 and node.func.attr == "get" and node.args:
             s = _string_arg(node.args[0])
             if s is not None:
-                return _key_base(s)
+                return self._stored_or_key(node.func.value, s)
         if isinstance(node, ast.Subscript):
             s = _string_arg(node.slice)
             if s is not None:
-                return _key_base(s)
+                return self._stored_or_key(node.value, s)
         # int(x) / round(x, n) / a wrapping call → base of the first arg
         if isinstance(node, ast.Call) and node.args:
             return self.classify(node.args[0])
-        if isinstance(node, ast.Tuple) and node.elts:
-            return UNKNOWN
         return UNKNOWN
 
+    def _stored_or_key(self, container: ast.AST, key: str) -> str:
+        if isinstance(container, ast.Name) and container.id in self.dicts:
+            stored = self._merge(self.dicts[container.id].get(key, []))
+            if stored != UNKNOWN:
+                return stored
+        return _key_base(key)
+
     def bind_targets(self, targets: list[ast.AST], value: ast.AST) -> None:
-        """`a, b, c = th['phi'], th['W'], th['phi_goal_attributed']` and single binds."""
-        names = [t for t in targets if isinstance(t, ast.Name)]
-        # tuple-unpack: element-wise
-        if len(names) == 1 and isinstance(names[0], ast.Name) is False:
-            return
+        """`a, b, c = th['phi'], th['W'], th['phi_goal_attributed']`, single binds, dict builds
+        (`d = {...}` / `d = dict(k=v)`) and stores (`d['k'] = v`)."""
         for t in targets:
             if isinstance(t, ast.Tuple) and isinstance(value, ast.Tuple) \
                     and len(t.elts) == len(value.elts):
                 for tt, vv in zip(t.elts, value.elts):
                     if isinstance(tt, ast.Name):
-                        self.base[tt.id] = self.classify(vv)
+                        self.bound.setdefault(tt.id, []).append(vv)
             elif isinstance(t, ast.Name):
-                self.base[t.id] = self.classify(value)
+                self.bound.setdefault(t.id, []).append(value)
+                for k, v in self._dict_items(value):
+                    self.dicts.setdefault(t.id, {}).setdefault(k, []).append(v)
+            elif isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name):
+                k = _string_arg(t.slice)
+                if k is not None:
+                    self.dicts.setdefault(t.value.id, {}).setdefault(k, []).append(value)
+
+    @staticmethod
+    def _dict_items(value: ast.AST) -> list[tuple[str, ast.AST]]:
+        """(key, value node) pairs of a dict literal or dict(k=v) call; [] if not a dict build."""
+        if isinstance(value, ast.Dict):
+            return [(ks, v) for k, v in zip(value.keys, value.values)
+                    if k is not None and (ks := _string_arg(k)) is not None]
+        if isinstance(value, ast.Call) and isinstance(value.func, ast.Name) \
+                and value.func.id == "dict" and not value.args:
+            return [(kw.arg, kw.value) for kw in value.keywords if kw.arg]
+        return []
 
 
 def _heat_named(target: ast.AST) -> bool:

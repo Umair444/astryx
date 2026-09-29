@@ -112,6 +112,47 @@ check("a direct flux heat value (heat_instant_phi/phi) — no subtraction — do
 check("phi - phi (flux−flux, both flux) does not fire",
       red("def f():\n phi=1\n d = phi - phi\n return d"), False)
 
+# ── 5b. LAUNDER ARMS (goal 4227 S1b, a2's binding residual #21341) ───────────────────
+# The f220ad9 hotfix "declared" v2 W through a locally built dict; classify(Subscript) read
+# the KEY's base, never the STORED value's, so a budget laundered through a dict passed
+# SILENT. The guard now traces local dict literals / dict(k=v) / d['k']=v stores and reads
+# the stored value's base; a bound name falls back to its OWN name only when its trace is
+# UNKNOWN, so a traced BUDGET always beats a flux-looking name.
+print("\nLAUNDER ARMS — a budget stored under a flux-named key/name must still FIRE:")
+check("a2's launder: fx={'shipped_flux': budget_tokens}; Q = fx['phi'] - fx['shipped_flux'] FIRES",
+      red("def f(phi, budget_tokens):\n    fx = {'phi': phi, 'shipped_flux': budget_tokens}\n"
+          "    return {'Q': fx['phi'] - fx['shipped_flux']}"), True)
+check("store-launder: fx={}; fx['shipped_flux'] = budget_tokens; q = phi - fx['shipped_flux'] FIRES",
+      red("def f(phi, budget_tokens):\n    fx = {}\n    fx['shipped_flux'] = budget_tokens\n"
+          "    q = phi - fx['shipped_flux']\n    return q"), True)
+check("dict(kw) launder: fx = dict(shipped_flux=budget_tokens); q = phi - fx['shipped_flux'] FIRES",
+      red("def f(phi, budget_tokens):\n    fx = dict(shipped_flux=budget_tokens)\n"
+          "    q = phi - fx['shipped_flux']\n    return q"), True)
+check("trace beats name: shipped_flux = budget_tokens; q = phi - shipped_flux FIRES",
+      red("def f(phi, budget_tokens):\n    shipped_flux = budget_tokens\n    q = phi - shipped_flux\n"
+          "    return q"), True)
+check("ORDER launder: x bound to budget in a NESTED block, stored in a dict walked EARLIER, FIRES",
+      red("def f(phi, budget_tokens, c):\n    fx = {'shipped_flux': x}\n    if c:\n"
+          "        x = budget_tokens\n    q = phi - fx['shipped_flux']\n    return q"), True)
+check(".get launder: fx={'shipped_flux': budget_tokens}; q = phi - fx.get('shipped_flux') FIRES",
+      red("def f(phi, budget_tokens):\n    fx = {'shipped_flux': budget_tokens}\n"
+          "    q = phi - fx.get('shipped_flux')\n    return q"), True)
+check("REBIND launder: a name bound to budget AND later to an untraceable value stays budget "
+      "(non-heat output, so only the unit-mix rule can speak — last-binding-wins was silent here)",
+      red("def f(phi, budget_tokens):\n    shipped_flux = budget_tokens\n"
+          "    shipped_flux = int(_one('y')[0])\n    d = phi - shipped_flux\n    return d"), True)
+check("self-referential store terminates (d['a'] = d['a'] + 1) and does not crash the scan",
+      isinstance(scan_source("def f(d):\n    d = {}\n    d['a'] = d['a'] + 1\n    q = 1 - d['a']\n", "t"), list), True)
+check("CONTROL a dict that really stores flux passes: fx={'shipped_flux': phi_goal}",
+      red("def f(phi, phi_goal):\n    fx = {'shipped_flux': phi_goal}\n    q = phi - fx['shipped_flux']\n"
+          "    return q"), False)
+check("CONTROL the econ.py v2 shape passes: shipped_flux = int(_one(...)[0]) (UNKNOWN trace -> its name)",
+      red("def v2(conn):\n    phi = int(_one(conn, 'x')[0])\n    shipped_flux = int(_one(conn, 'y')[0])\n"
+          "    return {'Q': _rec(phi - shipped_flux)}"), False)
+check("...and the same shape bound to `w` STILL fires (name fallback keeps w a budget)",
+      red("def v2(conn):\n    phi = int(_one(conn, 'x')[0])\n    w = int(_one(conn, 'y')[0])\n"
+          "    return {'Q': _rec(phi - w)}"), True)
+
 # ── 6. the guard holds the REAL live tree green (substrate, not a fixture) ────────────
 print("\nLIVE ARM — the real economy surfaces must be same-base:")
 rc = guard_main([])
