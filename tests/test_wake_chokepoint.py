@@ -44,6 +44,7 @@ Each arm can go red alone:
   A24 D2-b: every `durable=True` ctx.say site in triggers/** (+ their in-repo imports) is DECLARED below with
       its reason; a new use is RED until declared and reviewed (a durable wake whose dedup reads ctx.state
       would re-send on every failing tick)
+      (a site counts unless its durable= is the literal False: a variable or a truthy literal counts)
   A25 D2-a: a durable wake survives its check HANGING past the pulse's timeout (delivered once)
   A18 residents() is derived from the agents/ tree: it holds seed, not owner (NOT SEARCHED without it)
 
@@ -191,8 +192,9 @@ def o7_scan():
             continue
         for node in ast.walk(tree):
             if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "say"
-                    and any(k.arg == "durable" and isinstance(k.value, ast.Constant) and k.value.value
-                            for k in node.keywords)):
+                    and any(k.arg == "durable" and not (isinstance(k.value, ast.Constant) and k.value.value is False)
+                            for k in node.keywords)):   # ANY durable= but a literal False counts (a3):
+                                                        # durable=flag / durable=1 can't slip past
                 rel = str(p.relative_to(REPO))
                 durable[rel] = durable.get(rel, 0) + 1
             mods = []
