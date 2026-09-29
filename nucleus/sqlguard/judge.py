@@ -37,6 +37,8 @@ from nucleus.sqlguard.normalize import is_site, is_write
 
 REPO = inventory.REPO
 _WHERE = re.compile(r"\b(where|having)\b")
+_CREATE = re.compile(r"^\s*create\s+(?:temp\s+|temporary\s+|unlogged\s+)?table\b")
+APPLIER = "nucleus/sqlguard/fixture.py"
 _AGG = re.compile(r"\b(count|sum|max|min|avg|bool_or|bool_and|array_agg|string_agg|jsonb_agg)\s*\(")
 
 
@@ -113,6 +115,14 @@ def judge(trace_dir, inv=None, covering=None):
     ev = collections.defaultdict(lambda: {"ok": 0, "credited": 0, "fixture_ddl": 0, "zero": False, "pos": False,
                                           "p": {}, "gates": set(), "fallback": False, "write": False})
     blind, direct, oracle_own = [], [], 0
+    extractors = {}                                  # F-b: test file -> gates, derived from the trace
+    for r in recs:
+        if _CREATE.match(r["t"]) and r.get("ok"):
+            fr = r.get("frames") or []
+            if not any(f[0] == APPLIER for f in fr):
+                tf = next((f[0] for f in fr if f[0].startswith("tests/")), None)
+                if tf:
+                    extractors.setdefault(tf, set()).add(r.get("gate", ""))
     for r in recs:
         if not is_site(r["t"]):
             continue
@@ -188,6 +198,7 @@ def judge(trace_dir, inv=None, covering=None):
     return {"counts": dict(counts), "sites": sites, "blind": blind, "direct": direct, "oracle_own": oracle_own,
             "run_not_searched": run_not_searched, "covering": covering, "gates": gates,
             "untraced_children": {k: sorted(v) for k, v in untraced.items()},
+            "extractors": {k: sorted(v) for k, v in extractors.items()},
             "extractors_static": inv["extractors"], "exempt": inv["exempt"], "records": len(recs)}
 
 

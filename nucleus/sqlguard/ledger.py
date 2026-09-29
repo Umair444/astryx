@@ -28,17 +28,31 @@ from nucleus.sqlguard import judge
 
 REPO = judge.REPO
 LEDGER = REPO / "nucleus" / "sqlguard" / "ledger.json"
-ESTATE = ("triggers", "sensors", "agents", "memory", "local.md")
+# The estate is DERIVED from git (everything gitignored that the real tree holds), never hand-listed. My first
+# seed hand-listed it and missed bridges/geoloc.py, mcp/geoloc/, harness/ and more (the glob-domain trap, in my
+# own tooling). Only BULK NON-CODE is excluded, declared here. Anything it misses reads as a loud R-NEW in the
+# real tree, never a silent absorption.
+ESTATE_EXCLUDE = ("venv/", ".venv/", "homes/", "node_modules/", "backups/", "media/", "observatory/web/dist/",
+                  ".env")
 
 
-def estate_hash(root: Path = REPO) -> dict:
+def estate_paths(source_root: Path = REPO) -> list:
+    """Gitignored paths in the SOURCE tree (the real one: a worktree's git sees none of them)."""
+    out = subprocess.run(["git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"],
+                         cwd=source_root, capture_output=True, text=True).stdout.split("\n")
+    return sorted(p for p in out if p and "__pycache__" not in p and not p.endswith(".pyc")
+                  and not any(p == e or p.startswith(e) or f"/{e}" in f"/{p}" for e in ESTATE_EXCLUDE))
+
+
+def estate_hash(root: Path = REPO, source_root: Path = None) -> dict:
     files = []
-    for name in ESTATE:
+    for name in estate_paths(source_root or root):
         p = root / name
         if p.is_file():
             files.append(p)
         elif p.is_dir():
-            files += [f for f in p.rglob("*") if f.is_file() and "__pycache__" not in f.parts]
+            files += [f for f in p.rglob("*") if f.is_file() and "__pycache__" not in f.parts
+                      and not f.name.endswith(".pyc")]
     h = hashlib.sha256()
     for f in sorted(files, key=lambda x: str(x.relative_to(root))):
         h.update(f"{f.relative_to(root)}\0{hashlib.sha256(f.read_bytes()).hexdigest()}\n".encode())
@@ -57,10 +71,22 @@ def seed(trace_dir: str) -> dict:
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, capture_output=True,
                             text=True).stdout.strip()
     header = {"commit": commit, "generated_at": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
-              "run": os.environ.get("ASTRYX_SQLGUARD_RUN", ""), **estate_hash(),
+              "run": (Path(trace_dir) / "run_id").read_text().strip() if (Path(trace_dir) / "run_id").exists() else "",
+              **estate_hash(REPO, Path(os.environ.get("ASTRYX_SQLGUARD_ESTATE_SRC") or REPO)),
               "sites_total": len(rep["sites"]), "debt_rows": len(rows), "counts": rep["counts"],
               "untraced_children": rep["untraced_children"]}
-    doc = {"header": header, "covering": {k: v for k, v in rep["covering"].items() if v}, "rows": rows}
+    # EX1/EX2: the extractors DERIVED from this run are listed, each with its gates, a reason, an observable TRIP
+    # and a listed-since date (the clock). The econ oracles wait on plan-4227 (seed #22133), and the rest migrate
+    # in B1.
+    today = datetime.date.today().isoformat()
+    extractors = {f: {"gates": gs, "listed_since": today,
+                      "reason": "seed: builds an UNSTAMPED fixture; migrate to nucleus/sqlguard/fixture.py",
+                      "trip": ("plan-4227 econ stages settle (seed #22133)" if "econ" in f
+                               else "4243 B1 migration")}
+                  for f, gs in sorted(rep["extractors"].items())}
+    header["extractors_listed"] = len(extractors)
+    doc = {"header": header, "covering": {k: v for k, v in rep["covering"].items() if v}, "rows": rows,
+           "extractors": extractors}
     LEDGER.write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n")
     return header
 
