@@ -272,6 +272,13 @@ run "a skip is not a pass (verdict accounting)" "$PY" tests/test_check_verdict.p
 # that is not a pass: it means nothing gates a push there. Pure stdlib, no DB.
 run "installed pre-push hook is the reviewed one" "$PY" tests/test_hook_integrity.py
 run "...and the reviewed one still does the job" "$PY" tests/test_pre_push_contract.py
+# The pushed-tree check runs check.sh under the hook's environment. From a linked worktree
+# that environment carried GIT_DIR, and a test's `git init` re-initialized the SHARED repo as
+# bare (2026-09-30). The oracle reproduces it on a throwaway repo (RED unfixed, GREEN fixed,
+# main-tree CONTROL); the tripwire reads this repo's common config on every run, so any
+# other path that flips core.bare is caught by the next check. Pure stdlib + git, ~1s.
+run "a worktree push cannot reach the shared .git" "$PY" tests/test_git_env_isolation.py
+run "the shared repo is not bare (core.bare tripwire)" "$PY" tests/test_git_env_isolation.py --tripwire
 # The org's PII detector, gated on the two properties that failed in the field: a finding
 # is silenced only by REPAIR or by an explicit ruling (warn-once let a live finding sit
 # unmentioned for 22 days), and the guard never emits the shape it hunts (an unmasked
