@@ -77,8 +77,10 @@ try:
             # never break the wake for every agent on the org.
             try:
                 sys.path.insert(0, REPO)
-                from nucleus.econ import econ_line as _render, econ_standing
-                econ_line = _render(econ_standing(conn, agent) if agent else None)
+                # No econ_standing() query while disarmed: it would spend DB latency in
+                # the 5s prompt budget for a result the renderer discards. S2 re-wires it.
+                from nucleus.econ import econ_line as _render
+                econ_line = _render(None)
             except Exception:
                 econ_line = ""
     except Exception:
