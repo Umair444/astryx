@@ -796,6 +796,47 @@ def mutant_battery(only=None):
     return 1 if survived else 0
 
 
+def shrink_arms():
+    """`ledger shrink`: removes exactly enforce's R-STALE set (vanished + climbed), keeps listed debt, never grows,
+    and refuses a run-level NOT SEARCHED run (triggers/ absent would make every gitignored site read as vanished)."""
+    import tempfile
+    sys.path.insert(0, str(REPO))
+    from nucleus.sqlguard import ledger
+    from nucleus.sqlguard.privacy import ledger_key
+    ign = "triggers/steward/x.py::f\x1fselect 1"                     # gitignored origin: stored as a digest
+    rows = {"a.py::f\x1fselect 1": "debt", "a.py::g\x1fselect 2": "climbed", "a.py::h\x1fselect 3": "vanished",
+            ign: "debt"}
+    sites = {"a.py::f\x1fselect 1": {"rung": "UNEXECUTED"}, "a.py::g\x1fselect 2": {"rung": "RESPONSIVE"},
+             ign: {"rung": "EXECUTED"}}
+    with tempfile.TemporaryDirectory() as t:
+        t = Path(t)
+        led = t / "ledger.json"
+        doc = {"header": {"debt_rows": 4}, "extractors": {},
+               "rows": {ledger_key(k): {"debt": "UNEXECUTED", "reason": "seed"} for k in rows},
+               "covering": {ledger_key("a.py::h\x1fselect 3"): ["g"]}}
+        led.write_text(json.dumps(doc))
+        (t / "report.json").write_text(json.dumps({"sites": sites, "run_not_searched": []}))
+        gone = ledger.shrink(str(t), led)
+        after = json.loads(led.read_text())
+        check("shrink removes the vanished and the climbed rows, and nothing else",
+              sorted(gone) == sorted(["a.py::g :: select 2", "a.py::h :: select 3"]) and
+              set(after["rows"]) == {ledger_key("a.py::f\x1fselect 1"), ledger_key(ign)}, f"{gone} {list(after['rows'])}")
+        check("shrink drops a removed row's covering and restamps debt_rows",
+              not after["covering"] and after["header"]["debt_rows"] == 2, str(after["covering"]))
+        again = ledger.shrink(str(t), led)
+        check("shrink is idempotent (a second run removes nothing, grows nothing)",
+              again == [] and json.loads(led.read_text()) == after, str(again))
+        led.write_text(json.dumps(doc))
+        (t / "report.json").write_text(json.dumps({"sites": {}, "run_not_searched": ["triggers/ absent"]}))
+        try:
+            ledger.shrink(str(t), led)
+            refused = False
+        except SystemExit:
+            refused = True
+        check("shrink refuses a run-level NOT SEARCHED run (absence there proves nothing)",
+              refused and json.loads(led.read_text()) == doc)
+
+
 def propagate_arms():
     """F-a: the ONE opt-in helper. Outside a trace it returns the oracle's env UNCHANGED (it never widens a stated
     env); inside one it adds exactly the sqlguard variables and the shim path, keeping what the oracle set."""
@@ -854,6 +895,7 @@ def main():
     check("P1 control: a planted plaintext gitignored key IS detected", bool(plaintext_ignored_keys(probe)))
     dp_arms()
     propagate_arms()
+    shrink_arms()
     with tempfile.TemporaryDirectory(prefix="sqlguard-h-") as d:
         harness_arms(Path(d))
     print(f"\n{'FAIL' if fails else 'PASS'}: sqlguard oracle ({len(fails)} failing)")
