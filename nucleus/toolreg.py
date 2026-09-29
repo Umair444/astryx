@@ -374,10 +374,12 @@ def _describe(path: Path) -> str:
         head = path.read_text(errors="replace").splitlines()[:40]
     except Exception:
         return ""
-    body = "\n".join(head)
-    m = re.search(r'("""|\'\'\')\s*(.+?)\s*$', body, re.M)
-    if m:
-        return m.group(2).strip().rstrip('"\'')[:200]
+    # Docstrings are Python's. In a shell script a triple quote is code or heredoc data (mcp/new.sh's
+    # template, a `tr -d '"'\''` quote strip), and matching it described the tool by its body.
+    if path.suffix == ".py":
+        m = re.search(r'("""|\'\'\')\s*(.+?)\s*$', "\n".join(head), re.M)
+        if m:
+            return m.group(2).strip().rstrip('"\'')[:200]
     for line in head:
         s = line.strip()
         if s.startswith(("#!", "# -*-")) or not s:
