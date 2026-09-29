@@ -15,6 +15,10 @@ def canary(ctx, floor):
 
 
 if __name__ == "__main__":
+    # A committed-only tree (pushed_tree_check, CI) has no .env and maybe no deps, and pulse_run needs both at
+    # IMPORT. That's the estate being absent, not the canary failing: 77, reason named. pulse_run stays strict.
+    from nucleus.sqlguard.estate import gate
+    gate("canary", REPO, deps=("psycopg", "requests"))      # pulse_run needs .env and both at import
     spec = importlib.util.spec_from_file_location("pulse_run_canary", REPO / "nucleus" / "pulse_run.py")
     pr = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(pr)

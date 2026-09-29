@@ -24,6 +24,11 @@ import datetime
 import json
 import os
 import sys
+from pathlib import Path
+
+if __name__ == "__main__":             # before ANY dependency import: a bare interpreter must reach the gate
+    from nucleus.sqlguard.estate import gate
+    gate("enforce", Path(os.environ.get("ASTRYX_SQLGUARD_ROOT") or Path(__file__).resolve().parents[2]))
 
 import psycopg
 
