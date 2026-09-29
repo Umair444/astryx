@@ -183,6 +183,23 @@ def dc_probe(c, k):
 
 def never_run(c, k):
     return c.execute("SELECT id FROM goals WHERE owner = %s", (k,)).fetchall()
+
+
+async def apg_fetch(con, k):                 # asyncpg on a stamped fixture: the D-B DB-grain stamp credits it
+    return await con.fetchrow("SELECT title FROM goals WHERE id = $1", k)
+
+
+async def apg_pool(pool, k):                 # release() runs asyncpg's reset: driver SQL inside a SQL-bearing frame
+    async with pool.acquire() as con:
+        return await con.fetchrow("SELECT owner FROM goals WHERE id = $1", k)
+
+
+async def apg_known_driver_text(con):        # a REPO literal that is ALSO an asyncpg source constant: tier 1 owns it
+    return await con.fetchrow("SELECT pg_catalog.pg_is_in_recovery()")
+
+
+async def apg_fallback_driver_text(con, fn): # an unresolved repo site rendering to a driver constant: FALLBACK
+    return await con.fetchrow(f"SELECT {fn}()")
 '''
 
 SUBJ_IGNORED = '''def ignored_never_run(c, k):
@@ -264,6 +281,35 @@ def main():
         arms.stamped_update(c, gid)
         arms.stamped_update(c, -1)
         c.close()
+    with fixture_db() as fx:                  # G: asyncpg, via fixture_db()'s url
+        import asyncio
+        import asyncpg
+        c = psycopg.connect(fx["dsn"], autocommit=True)
+        gid = rows(c)
+        c.close()
+
+        # an older package's fixture has no url: derive it, so --against fails the asyncpg arms BY NAME
+        from psycopg.conninfo import conninfo_to_dict
+        d = conninfo_to_dict(fx["dsn"])
+        url = fx.get("url") or (f"postgresql://{d.get('user', '')}:{d.get('password', '')}@{d.get('host', '')}"
+                                f":{d.get('port', 5432)}/{d['dbname']}")
+
+        async def apg():
+            con = await asyncpg.connect(url)
+            try:
+                for k in (gid, -1):
+                    await arms.apg_fetch(con, k)
+                await arms.apg_known_driver_text(con)
+                await arms.apg_fallback_driver_text(con, "pg_advisory_unlock_all")
+            finally:
+                await con.close()
+            pool = await asyncpg.create_pool(url, min_size=1, max_size=1)
+            try:
+                for k in (gid, -1):
+                    await arms.apg_pool(pool, k)
+            finally:
+                await pool.close()
+        asyncio.run(apg())
     with fixture_db() as fx:                  # B: one hand-made relation (and M1: A's credit must not carry here)
         c = psycopg.connect(fx["dsn"], autocommit=True)
         gid = rows(c)
@@ -368,7 +414,8 @@ except TypeError as e:                      # an older package: THOSE arms fail 
     print(json.dumps({"error": f"TypeError: {e}"}))
     sys.exit(0)
 print(json.dumps({"sites": rep["sites"], "run_not_searched": rep["run_not_searched"], "blind": rep["blind"],
-                  "untraced": rep["untraced_children"], "extractors": rep["extractors"]}))
+                  "untraced": rep["untraced_children"], "extractors": rep["extractors"],
+                  "driver_internal": rep.get("driver_internal", {})}))
 '''
 
 SHRINK = r'''"""Drives ledger.shrink on SYNTHETIC reports, in the temp tree (so --against and --mutants reach it)."""
@@ -655,6 +702,21 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
     S = rep["sites"]
     arm("run: no shim errors, no blind SQL, triggers/ present", not rep["run_not_searched"] and not rep["blind"],
         f"{rep['run_not_searched']} {rep['blind'][:3]}")
+    DI = rep.get("driver_internal", {})
+    arm("asyncpg on a stamped fixture is RESPONSIVE (the D-B DB-grain stamp; no OIDs needed)",
+        _rung(S, "apg_fetch") == "RESPONSIVE", _rung(S, "apg_fetch"))
+    arm("driver-internal: a pool release's reset is COUNTED (name@version), never BLIND",
+        any(k.startswith("asyncpg@") and v > 0 for k, v in DI.items()) and not rep["blind"]
+        and _rung(S, "apg_pool") == "RESPONSIVE", f"{DI} {rep['blind'][:2]} {_rung(S, 'apg_pool')}")
+    arm("control: a repo literal that is ALSO a driver constant stays repo-attributed (tier 1 before the driver)",
+        _rung(S, "apg_known_driver_text") not in ("UNEXECUTED", "<0 sites>"), _rung(S, "apg_known_driver_text"))
+    arm("an unresolved repo site rendering to a driver constant is FALLBACK, not driver-internal (tier 2 first)",
+        _rung(S, "apg_fallback_driver_text") not in ("UNEXECUTED", "<0 sites>"), _rung(S, "apg_fallback_driver_text"))
+    _, DV, err = _py(tmp, _env(tmp, run), "-c", "import json; from nucleus.sqlguard import drivers as d; print(json.dumps("
+                     "[d.is_internal('select pg_advisory_unlock_all(); close all; unlisten *; reset all;', 'asyncpg'),"
+                     " d.is_internal('select pg_advisory_unlock_all(); select 4242', 'asyncpg')]))")
+    arm("driver-internal needs EVERY statement to be a driver constant (one foreign statement → not internal)",
+        DV == [True, False], str(DV or err))
     arm("V2 the canary through the REAL Ctx.sql is RESPONSIVE",
         _rung(S, "canary", "nucleus/sqlguard/canary.py") == "RESPONSIVE", _rung(S, "canary", "nucleus/sqlguard/canary.py"))
     arm("V3 twin texts: the executed twin climbs", _rung(S, "v3_twin_a") == "RESPONSIVE", _rung(S, "v3_twin_a"))
@@ -899,6 +961,14 @@ MUTANTS = [
     ("ledger.py", 'if rep.get("run_not_searched"):', "if False:", "shrink refuses"),
     ("enforce.py", 'lines += [f"  · {r}" for r in out["report"]]', 'lines += [f"  ○ {r}" for r in out["report"]]',
      "not read as a skip"),
+    ("shim/sitecustomize.py", '"stamped": _stamped(str(db), [])', '"stamped": None', "D-B DB-grain stamp"),
+    ("judge.py", 'if drivers.is_internal(r["t"], drv):', "if False:", "pool release's reset"),
+    ("judge.py", 'key, text, kind = attribute(r, fns, inv.get("oracle"))',
+     'key, text, kind = (None, r["t"], "blind") if drivers.is_internal(r["t"], r.get("driver") or "psycopg") '
+     'else attribute(r, fns, inv.get("oracle"))', "stays repo-attributed"),
+    ("judge.py", 'if key in fns and fns[key]["unresolved"]:', "if False:", "FALLBACK, not driver-internal"),
+    ("drivers.py", "return bool(parts) and all(p in lits for p in parts)",
+     "return bool(parts) and any(p in lits for p in parts)", "EVERY statement"),
     ("inventory.py", 'and not (rel == "." and d in EXCLUDED_ROOTS)]', "]", "EXCLUDED root"),
     ("inventory.py", 'and not (rel == "." and d in EXCLUDED_ROOTS)]', 'and not any(d.startswith(x) for x in EXCLUDED_ROOTS)]',
      "prefix-sharing root"),

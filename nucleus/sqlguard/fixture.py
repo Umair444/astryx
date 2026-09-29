@@ -25,9 +25,10 @@ import itertools
 import os
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 import psycopg
-from psycopg.conninfo import make_conninfo
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 REPO = Path(os.environ.get("ASTRYX_SQLGUARD_ROOT") or Path(__file__).resolve().parents[2]).resolve()
 SCHEMA = REPO / "nucleus" / "schema.sql"
@@ -35,6 +36,15 @@ PREFIX = "astryx_fx_"
 STAMP = "astryx-ddl:"
 _n = itertools.count()
 _side = {}                                   # dbname -> connection (stamp checks, never the caller's)
+
+
+def url(dsn: str) -> str:
+    """The same database as a postgresql:// URL. node-pg and asyncpg take a URL, not psycopg's key=value
+    conninfo (forge #23806: every asyncpg oracle was regex-deriving one)."""
+    d = conninfo_to_dict(dsn)
+    auth = quote(d.get("user", ""), safe="") + (":" + quote(d["password"], safe="") if d.get("password") else "")
+    host = d.get("host", "") + (f":{d['port']}" if d.get("port") else "")
+    return f"postgresql://{auth + '@' if auth else ''}{host}/{quote(d.get('dbname', ''), safe='')}"
 
 
 def live_dsn() -> str:
@@ -91,7 +101,7 @@ def fixture_db():
         with psycopg.connect(dsn, autocommit=True) as c:
             c.execute(SCHEMA.read_text())          # the WHOLE file, the same bytes init.sh applies
             n = _stamp_all(c, sha)
-        yield {"dbname": name, "dsn": dsn, "file_sha": sha, "relations": n,
+        yield {"dbname": name, "dsn": dsn, "url": url(dsn), "file_sha": sha, "relations": n,
                "apply_s": round(time.monotonic() - t0, 3)}
     finally:
         try:

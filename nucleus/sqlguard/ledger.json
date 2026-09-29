@@ -313,7 +313,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 269,
+  "debt_rows": 268,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 8,
@@ -1090,11 +1090,6 @@
    "debt": "EXECUTED/FIXTURE-DDL",
    "reason": "goal 4227 S3: executed in a stamped fixture by tests/test_goal_budget_frozen.py, but asyncpg exposes no table OID, so the stamp cannot be credited (declared FIXTURE-DDL cap). Shrinks when the observatory moves to psycopg or the cap lifts.",
    "tk": "sha256t:a916f9172621e07e7e52863a720b467bf01af22f3a147f138735410fc8fcb24e"
-  },
-  "observatory/api/main.py::goal_create\u001finsert into messages (from_agent, from_org, to_agent, to_org, thread, intent, body) values ('owner', 'local', ?, 'local', ?, 'task', ?)": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:18c7bf99226694cb42ffbbe3449dc39068795e393cd96af94a3c99cb7047ab98"
   },
   "observatory/api/main.py::goals\u001fselect * from goals order by id desc limit 200": {
    "debt": "UNEXECUTED",
