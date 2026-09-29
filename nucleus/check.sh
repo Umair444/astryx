@@ -33,6 +33,12 @@
 # there. Even then the verdict NAMES every unverified gate and never claims ALL PASS.
 # There is no manifest of what-may-skip-where to rot: the caller opts out, visibly.
 set -uo pipefail
+# No gate inherits a repo locator or the caller's `git -c` settings. A hook from a linked
+# worktree, a branch check, or a worktree shell can all carry GIT_DIR/GIT_CONFIG_PARAMETERS,
+# and one test's `git init <tmp>` under GIT_DIR re-initialized the SHARED repo as bare
+# (2026-09-30). This is the chokepoint every gate's environment passes through, so the scrub
+# lives here for every caller. Oracle: tests/test_git_env_isolation.py.
+for v in $(compgen -e | grep "^GIT_"); do unset "$v"; done
 cd "$(dirname "$0")/.."
 PY=${PY:-venv/bin/python}; [ -x "$PY" ] || PY=python3
 

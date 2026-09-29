@@ -15,9 +15,12 @@ check.sh inherited it, so every child addressed the SHARED repo instead of its o
 A push from the MAIN tree does not export a GIT_DIR that points elsewhere, which is why this
 stayed hidden until the cherry-pick-onto-origin/main PR flow moved pushes into worktrees.
 
-THE FIX lives in nucleus/pushed_tree_check.sh: it unsets the repo-locating GIT_* variables
-right after REPO is computed, so the clone, the checkout, check.sh and every test below it
-locate their own repository.
+THE FIX: nucleus/pushed_tree_check.sh unsets EVERY inherited GIT_* right after REPO is
+computed, so the clone, the checkout, check.sh and every test below it locate their own
+repository. The set is derived, not listed: the hook also carries GIT_CONFIG_PARAMETERS, the
+pusher's `git -c ...`, which would reach every test's throwaway repo (a3 #28083). check.sh
+runs the same scrub at its entry, the chokepoint for every caller (hooks, branch checks,
+a worktree shell).
 
 HERMETIC. Every arm builds a throwaway repo (a bare remote, a main tree, a linked worktree),
 commits the REAL tracked hooks/pre-push and the REAL nucleus/pushed_tree_check.sh into it,
@@ -30,6 +33,10 @@ THE ARMS:
            config goes bare or the worktree detaches. This proves the oracle can see the bug.
   GREEN    the real script, pushed from the worktree: config not bare, worktree on its branch.
   CONTROL  the unfixed script, pushed from the MAIN tree: not bare. Only worktree pushes trip.
+  CONFIG   `git -c init.defaultBranch=zzz push` from the worktree: a child `git init` under a
+           LISTED scrub (locators only) gets branch zzz (RED); under the derived one it does not.
+  CHECK.SH check.sh's own scrub line, EXECUTED with GIT_DIR and GIT_CONFIG_PARAMETERS set,
+           leaves no GIT_* behind.
   TRIPWIRE the --tripwire reader flags a throwaway repo set bare, and passes one that is not.
 
 --tripwire: this repo's COMMON config must not say core.bare=true. It is cheap and standing,
@@ -46,7 +53,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 HOOK = REPO / "hooks" / "pre-push"
 SCRIPT = REPO / "nucleus" / "pushed_tree_check.sh"
-UNSET = "unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR"
+CHECK = REPO / "nucleus" / "check.sh"
+# The one scrub, byte-identical in both scripts: every exported GIT_* is unset.
+UNSET = 'for v in $(compgen -e | grep "^GIT_"); do unset "$v"; done'
 # The repo-locating variables. Scrubbed from THIS process first: under a worktree hook they
 # would point the throwaway repos' git calls at the shared .git, which is the incident itself.
 LOCATORS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX", "GIT_COMMON_DIR",
@@ -56,7 +65,10 @@ for _v in LOCATORS:
 
 STUB_PRIVACY = "#!/bin/sh\nexit 0\n"
 # What a test did in the incident: `git init` in a fresh temp dir, trusting cwd to pick the repo.
-STUB_CHECK = '#!/bin/sh\nd=$(mktemp -d)\ngit init -q "$d"\nrm -rf "$d"\nexit 0\n'
+# It also records the branch that init chose, so the CONFIG arm can see a leaked `git -c`.
+STUB_CHECK = ('#!/bin/sh\nd=$(mktemp -d)\ngit init -q "$d"\n'
+              'git -C "$d" symbolic-ref --short HEAD > "$TMPDIR/initbranch" 2>/dev/null\n'
+              'rm -rf "$d"\nexit 0\n')
 
 fails = []
 
@@ -110,10 +122,11 @@ def build(td: Path, script_body: str) -> tuple:
     return main, wt, env
 
 
-def push_from(where: Path, env: dict) -> tuple:
-    """Push `where`'s HEAD branch; return (config went bare?, worktree still on `br`?)."""
+def push_from(where: Path, env: dict, pre=()) -> tuple:
+    """Push `where`'s HEAD branch; return (config went bare?, worktree still on `br`?).
+    `pre` is global options for the push itself (e.g. -c k=v)."""
     branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=where, env=env).stdout.strip()
-    git("push", "-q", "origin", branch, cwd=where, env=env, check_rc=False)
+    git(*pre, "push", "-q", "origin", branch, cwd=where, env=env, check_rc=False)
     main = where if (where / ".git").is_dir() else where.parent / "main"
     bare = is_bare(main / ".git" / "config")
     wt = where.parent / "wt"
@@ -144,6 +157,7 @@ def main() -> int:
         return 77
     real = SCRIPT.read_text()
     check("the real script carries the GIT_* unset line", UNSET in real)
+    check("check.sh carries the same scrub line", UNSET in CHECK.read_text())
     unfixed = real.replace(UNSET + "\n", "")
 
     with tempfile.TemporaryDirectory() as td:
@@ -162,6 +176,27 @@ def main() -> int:
         main_, wt, env = build(Path(td), unfixed)
         bare, _ = push_from(main_, env)
         check("CONTROL: unfixed script, MAIN-tree push -> not bare", not bare, f"bare={bare}")
+
+    # The CONFIG RED is the LISTED scrub (bfa7a2e): it clears the locators, so the child init
+    # lands in its own dir, but the pusher's GIT_CONFIG_PARAMETERS passes straight through.
+    # (The fully unfixed script can't show this: its inherited GIT_DIR hijacks the init first.)
+    listed = real.replace(UNSET, "unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR")
+    for label, body, want_leak in (("RED", listed, True), ("GREEN", real, False)):
+        with tempfile.TemporaryDirectory() as td:
+            main_, wt, env = build(Path(td), body)
+            push_from(wt, env, pre=("-c", "init.defaultBranch=zzz"))
+            got = (Path(td) / "initbranch").read_text().strip() \
+                if (Path(td) / "initbranch").exists() else "(stub never ran)"
+            check(f"CONFIG {label}: a pusher's `git -c` "
+                  f"{'reaches' if want_leak else 'does not reach'} a child git init",
+                  (got == "zzz") == want_leak and got != "(stub never ran)", f"branch={got}")
+
+    r = subprocess.run(["bash", "-c", UNSET + '\nenv | grep "^GIT_" || true'],
+                       env=dict(os.environ, GIT_DIR="/nonexistent", GIT_PREFIX="x/",
+                                GIT_CONFIG_PARAMETERS="'init.defaultbranch'='zzz'"),
+                       capture_output=True, text=True, timeout=30)
+    check("CHECK.SH: the scrub line, executed, leaves no GIT_* behind",
+          r.returncode == 0 and r.stdout.strip() == "", r.stdout.strip() or r.stderr.strip())
 
     with tempfile.TemporaryDirectory() as td:
         env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
