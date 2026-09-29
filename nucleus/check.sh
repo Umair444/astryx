@@ -198,10 +198,11 @@ run "tools door: registered scripts only, no shell, no server" "$PY" tests/test_
 # without connecting, never classifies content-private agents, persists labels only, and
 # nudges on RECURRENCE, not difficulty. Mutants: tests/mutants_nudge.py.
 run "tool nudge (O5): never blocks, never leaks, recurrence-gated" "$PY" tests/test_nudge.py
-# the S4 wiring (W1 + W3): spawn.sh's two heredocs, EXECUTED verbatim in bash and parsed, give
-# every resident the door and the nudge (its own UserPromptSubmit group, timeout 3 < usage.py's
-# 5); station.py never gets the door. Mutants: tests/mutants_spawn_wiring.py.
-run "S4 wiring: residents get door + nudge, stationed don't" "$PY" tests/test_spawn_wiring.py
+# spawn.sh --render + the S4 wiring (W1 + W3): the REAL generation path (fixture charters, shims
+# for tmux/psql/claude/pgrep that log and touch nothing) renders a resident's home with NO side
+# effect, and every resident gets the door and the nudge (own UserPromptSubmit group, timeout 3
+# < usage.py's 5); stationed agents never get the door. Mutants: tests/mutants_spawn_wiring.py.
+run "spawn --render: real generation, no side effect; S4 wiring" "$PY" tests/test_spawn_wiring.py
 # This suite's own blind spot: the list below is hand-maintained, so a newly committed
 # tests/test_*.py was silently never run and this still printed ALL PASS (reproduced
 # 08-13). Derives the expected set from the tests/test_*.py glob — a new oracle must

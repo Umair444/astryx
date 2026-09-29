@@ -5,7 +5,28 @@
 # exception, and only until the CLI ships non-interactive acceptance.)
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-AGENT=${1:?usage: spawn.sh <agent>}
+# RENDER MODE: `spawn.sh --render <agent> <outdir>` writes the home files a spawn would write
+# (CLAUDE.md, .mcp.json, .claude/settings.json) into <outdir>, then exits BEFORE any side
+# effect: no DB write, no tmux, no claude, no residency refusal. It is THIS script, one code
+# path with each side effect guarded by $RENDER, never a copy (a copy is a second authority for
+# what a home contains). Tests and builds that change the genome check the REAL generation
+# through it (seed, plan-4227). The output can hold the same secrets a home does (runtime_env
+# splices a provider token into settings.json), so <outdir> must lie OUTSIDE the repo (homes/
+# is gitignored; nothing else is), and it's created 0700 under umask 077.
+RENDER=""
+if [ "${1:-}" = "--render" ]; then
+  RENDER=1
+  AGENT=${2:?usage: spawn.sh --render <agent> <outdir>}
+  OUT=${3:?usage: spawn.sh --render <agent> <outdir>}
+  umask 077
+  OUT="$(realpath -m "$OUT")"                  # canonical BEFORE anything is created
+  case "$OUT/" in
+    "$(realpath -m "$ROOT")"/*) echo "spawn --render: <outdir> must be outside the repo ($OUT)"; exit 1;;
+  esac
+  mkdir -p "$OUT"
+else
+  AGENT=${1:?usage: spawn.sh <agent>   |   spawn.sh --render <agent> <outdir>}
+fi
 # A charter is agents/<name>.md at any depth: composites are directories, a
 # self-form agent is agents/<name>/<name>.md, members live inside composite dirs
 # (nesting allowed). The stem is the canonical name and a GLOBAL key (plan-2 §4):
@@ -41,7 +62,7 @@ fi
 # the two-seed incident of 2026-07-25 (a full day of "lost" owner messages);
 # this guard retires the class.
 # (ASTRYX_AGENT is ENV, invisible to pgrep -f — read /proc/<pid>/environ)
-if ! tmux has-session -t "=ax-$AGENT" 2>/dev/null; then
+if [ -z "$RENDER" ] && ! tmux has-session -t "=ax-$AGENT" 2>/dev/null; then
   for pid in $(pgrep -f 'channel/server.mjs' 2>/dev/null); do
     if tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -qx "ASTRYX_AGENT=$AGENT"; then
       echo "'$AGENT' already has a live body outside tmux (channel server pid $pid) — refusing a second one"
@@ -51,6 +72,7 @@ if ! tmux has-session -t "=ax-$AGENT" 2>/dev/null; then
 fi
 SESS="ax-$AGENT"
 HOME_D="$ROOT/homes/$AGENT"
+[ -n "$RENDER" ] && HOME_D="$OUT"
 NODE=${ASTRYX_NODE:-$(command -v node || true)}
 [ -n "$NODE" ] || { echo "spawn: node not found on PATH (set ASTRYX_NODE)"; exit 1; }
 
@@ -59,19 +81,19 @@ NODE=${ASTRYX_NODE:-$(command -v node || true)}
 # Runs before the residency check so existing residents gain it too.
 HB=$(grep -m1 '^Heartbeat:' "$CHARTER" | cut -d: -f2- | xargs || true)
 DSN=$(grep '^ASTRYX_DSN=' "$ROOT/.env" | cut -d= -f2-)
-psql "$DSN" -qc "INSERT INTO triggers (agent, name, schedule, kind)
+[ -z "$RENDER" ] && psql "$DSN" -qc "INSERT INTO triggers (agent, name, schedule, kind)
   VALUES ('$AGENT', 'heartbeat', '${HB:-0 9 * * *}', 'heartbeat')
   ON CONFLICT (agent, name) DO NOTHING" 2>/dev/null || true
 
 # Standard nightly self-review: the growth law made mechanical. Staggered by a
 # hash of the name (02:00-03:59 window) so the org does not wake all at once.
 CK=$(printf '%s' "$AGENT" | cksum | cut -d' ' -f1)
-psql "$DSN" -qc "INSERT INTO triggers (agent, name, schedule, kind, note)
+[ -z "$RENDER" ] && psql "$DSN" -qc "INSERT INTO triggers (agent, name, schedule, kind, note)
   VALUES ('$AGENT', 'night-review', '$((CK % 60)) $((2 + CK % 2)) * * *', 'heartbeat',
   'nightly review: FIRST read the org''s shipping log — query_thread(''org-news'') — new capabilities land daily and change what is possible for you. THEN read your own day (query_steps yourself), ask what you should have done better and what tool, trigger, or skill you lack, and take ONE concrete growth action: build it, file it as a goal, or propose it to seed (dedup against org-news first — what you lack may already exist). This review is also YOURS: informed by what the org has become, you are free to reshape who you are — personality, interests, boundaries, any SHELL section of your charter — via self_edit, exactly as far as the understanding moves you. The org grows because you do.')
   ON CONFLICT (agent, name) DO NOTHING" 2>/dev/null || true
 
-if tmux has-session -t "=$SESS" 2>/dev/null; then echo "$AGENT already resident"; exit 0; fi
+if [ -z "$RENDER" ] && tmux has-session -t "=$SESS" 2>/dev/null; then echo "$AGENT already resident"; exit 0; fi
 
 mkdir -p "$HOME_D/.claude"
 # genome → body: charter + law are the auto-loaded context (no boot prompt needed)
@@ -163,6 +185,9 @@ cat > "$HOME_D/.claude/settings.json" <<EOF
   }
 }
 EOF
+
+# RENDER stops here: everything below reads the transcript/DB and starts the body.
+if [ -n "$RENDER" ]; then echo "$AGENT rendered into $HOME_D (no side effects)"; exit 0; fi
 
 # resume-first: a resident's life survives its process (GENESIS lesson, kept)
 RESUME=""
