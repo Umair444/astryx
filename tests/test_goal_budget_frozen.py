@@ -12,8 +12,8 @@ v1's frozen econ rows reference it — and FROZEN by a BEFORE trigger (goals_bud
 insert may not set them, an update may not change them. triggers.premium is EXCLUDED: it is the
 survival flag pulse.shed reads, not a budget (a3's sequencing hazard, #21235).
 
-GRADE: the freeze is a DB trigger — it stops every client path (MCP, API, psql by an agent), but
-a genesis superuser can drop it. Detection-grade against that actor, like everything in 3499.
+GRADE: ACCIDENT-PROOF, NOT ACTOR-PROOF (a2 #23159). The freeze stops the honest writer who did not
+know; every agent's psql is the superuser that owns goals and can disable it unrecorded.
 
 Every arm executes the REAL code against a sqlguard fixture (a throwaway DATABASE with schema.sql
 applied whole — goal 4243: a SQL site is RESPONSIVE only when its literal runs in a stamped fixture):
@@ -24,6 +24,8 @@ applied whole — goal 4243: a SQL site is RESPONSIVE only when its literal runs
   3. FREEZE on INSERT: budget_tokens / spent_tokens / funded_by set at insert → rejected.
   4. FREEZE on UPDATE: changing any of the three on a LEGACY budgeted row → rejected; changing
      anything else on that row works, and its budget is still READABLE (read-only ≠ gone).
+  4b. LATE WRITER: a later-sorting BEFORE trigger that sets funded_by is still rejected — the
+     freeze is an AFTER trigger and sees the final row.
   5. CLOSE: state→done still stamps done_at (W-birth) and no longer writes funded_by.
   6. premium EXCLUDED: UPDATE triggers SET premium succeeds.
   7. NO DROP: every budget column still exists.
@@ -155,6 +157,23 @@ try:
     check("updating OTHER columns of a budgeted row still works", not ok_, why)
     after = conn.execute("SELECT budget_tokens, funded_by FROM goals WHERE id=%s", (gid,)).fetchone()
     check("the v1 budget is still READABLE (read-only, not erased)", after == (1000, "seed"), str(after))
+
+    # ── 4b. LATE WRITER (a2 #23159) ─────────────────────────────────────────────────────
+    # BEFORE ROW triggers fire in NAME order and a later one's NEW is never re-checked, so a BEFORE
+    # freeze is a gate any later-sorting BEFORE trigger writes through (goals_done_stamp is exactly
+    # that shape — it used to write funded_by). The freeze must see the FINAL row: an AFTER trigger.
+    print("\n4b. a later-sorting BEFORE trigger cannot write through the freeze:")
+    conn.execute("CREATE FUNCTION t_s3_late() RETURNS trigger AS $$ BEGIN "
+                 "NEW.funded_by := 'late-writer'; RETURN NEW; END $$ LANGUAGE plpgsql")
+    conn.execute("CREATE TRIGGER goals_zz_late BEFORE UPDATE ON goals FOR EACH ROW "
+                 "EXECUTE FUNCTION t_s3_late()")
+    bad, why = rejects(conn, "UPDATE goals SET title='t_s3 late probe' WHERE id=%s", (gid,))
+    late = conn.execute("SELECT funded_by FROM goals WHERE id=%s", (gid,)).fetchone()[0]
+    conn.execute("DROP TRIGGER goals_zz_late ON goals")
+    check("a late BEFORE trigger setting funded_by is REJECTED (the freeze sees the final row)",
+          bad and late == "seed", f"rejected={bad} funded_by={late!r} {why}")
+    tg = conn.execute("SELECT tgtype & 2 FROM pg_trigger WHERE tgname='goals_budget_frozen'").fetchone()
+    check("goals_budget_frozen is an AFTER trigger", tg is not None and tg[0] == 0, str(tg))
 
     # ── 5. CLOSE ──────────────────────────────────────────────────────────────────────────
     print("\n5. CLOSE (W-birth kept, funder-naming retired):")

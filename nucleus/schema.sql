@@ -272,8 +272,14 @@ CREATE TRIGGER goals_done_stamp BEFORE UPDATE ON goals
 -- READ-ONLY — kept, never dropped, because v1's frozen econ rows and the goals that carry a
 -- budget or a funder are history. An insert may not set them; an update may not change them.
 -- triggers.premium is NOT covered: it is the survival flag pulse.shed reads, not a budget.
--- GRADE: stops every client path (MCP, API, an agent's psql); a genesis superuser can drop the
--- trigger — detection-grade against that actor, like the rest of 3499.
+-- AN AFTER TRIGGER, deliberately (a2 #23159): BEFORE ROW triggers fire in NAME order and a later
+-- one's NEW is never re-checked, so a BEFORE freeze is a gate any later-sorting BEFORE trigger
+-- (goals_done_stamp is that shape) writes through. AFTER sees the final row; the RAISE rolls the
+-- statement back.
+-- GRADE: ACCIDENT-PROOF, NOT ACTOR-PROOF. It stops the honest writer who did not know. Every
+-- agent's psql connects as the superuser that owns goals, so ALTER TABLE ... DISABLE TRIGGER or
+-- session_replication_role=replica bypasses it and nothing records that — not even detection
+-- against a same-uid actor.
 CREATE OR REPLACE FUNCTION goals_budget_frozen() RETURNS trigger AS $$
 BEGIN
   IF TG_OP = 'INSERT' THEN
@@ -291,7 +297,7 @@ BEGIN
   RETURN NEW;
 END $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS goals_budget_frozen ON goals;
-CREATE TRIGGER goals_budget_frozen BEFORE INSERT OR UPDATE ON goals
+CREATE TRIGGER goals_budget_frozen AFTER INSERT OR UPDATE ON goals
   FOR EACH ROW EXECUTE FUNCTION goals_budget_frozen();
 COMMENT ON COLUMN goals.budget_tokens IS 'DEPRECATED read-only (goal 4227 S3): v1 price, history only';
 COMMENT ON COLUMN goals.spent_tokens IS 'DEPRECATED read-only (goal 4227 S3): never written';
