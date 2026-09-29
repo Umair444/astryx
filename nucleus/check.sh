@@ -210,6 +210,10 @@ run "memory window() picks rare-term mass" "$PY" tests/test_memory_window.py
 # costs the row, and the classifications table refuses a prompt-shaped label. RED-first against
 # the pre-4227 hook; the arms that pass vacuously there are pinned by tests/mutants_tool_ledger.py.
 run "tool ledger: ids only, ledger authorship" "$PY" tests/test_tool_ledger.py
+# the registry door's find() (steward #25795): whole-token matching (no "is" inside "list"),
+# 4+ char prefixes either way (healthy/health), stopwords dropped, IDF-weighted, and a relative
+# floor that drops common-word-only matches. Fixture registry, RED against the substring ranker.
+run "toolreg find ranks the tool a question is about" "$PY" tests/test_toolreg_find.py
 # observatory without budget economics (goal 4227 follow-up, a2 #23159): no component renders
 # spent_tokens (never written: 0 means never measured), sends a budget, or draws a budget bar;
 # a legacy budget_tokens is labelled "budget-era". Scans the TSX with comments stripped.
