@@ -56,7 +56,7 @@ run() {
   local label=$1; shift
   printf '\033[36m▶\033[0m %s\n' "$label"
   local out rc
-  out=$("$@" 2>&1); rc=$?
+  out=$(ASTRYX_SQLGUARD_GATE="$label" "$@" 2>&1); rc=$?
   printf '%s\n' "$out"
   # The belt. A gate that ANNOUNCES a skip and still exits 0 has broken the protocol —
   # it is the exact defect this accounting exists to catch, so it is reported as a
@@ -77,6 +77,9 @@ run() {
   if [ "$rc" = 0 ] && grep -qE '^[[:space:]]*(SKIP|○)' <<<"$out"; then
     rc=$EXIT_SKIP; LIARS+=("$label")
   fi
+  # sqlguard (goal 4243): the effective rc per gate. The judge reads this to decide whether a site's NEGATIVE
+  # verdict saw a complete search (C1: every covering gate exited 0).
+  [ -n "${ASTRYX_SQLGUARD_DIR:-}" ] && printf '%s\t%s\n' "$label" "$rc" >> "$ASTRYX_SQLGUARD_DIR/gates.tsv"
   case $rc in
     0)  verified=$((verified+1)); printf '\033[32m  ✓ %s\033[0m\n' "$label" ;;
     "$EXIT_SKIP")
@@ -86,7 +89,8 @@ run() {
   esac
 }
 # A gate whose PREREQUISITE is absent is itself unverified — never silently omitted.
-skip() { UNVERIFIED+=("$1"); printf '\033[33m○\033[0m %s — VERIFIED NOTHING (%s)\n' "$1" "$2"; }
+skip() { [ -n "${ASTRYX_SQLGUARD_DIR:-}" ] && printf '%s\t77\n' "$1" >> "$ASTRYX_SQLGUARD_DIR/gates.tsv"
+  UNVERIFIED+=("$1"); printf '\033[33m○\033[0m %s — VERIFIED NOTHING (%s)\n' "$1" "$2"; }
 
 verdict() {
   echo
@@ -119,6 +123,14 @@ verdict() {
 # against SYNTHETIC gates so the accounting is proven against THIS file rather than a
 # copy of it. Everything above is definitions; everything below runs the real gates.
 [ -n "${CHECK_LIB_ONLY:-}" ] && return 0
+
+# sqlguard (goal 4243, B0 REPORT-ONLY): the driver shim rides every python gate as `sitecustomize`. check.sh sets
+# all three ITSELF, because run_check runs this under pulse's bare systemd env (the runner-env law:
+# ASTRYX_NODE/507e7ea). The run id names this run's fixture databases, so the leak arm only ever looks for
+# its own prefix.
+export ASTRYX_SQLGUARD_RUN="${ASTRYX_SQLGUARD_RUN:-r$(date +%s)x$$}"
+export ASTRYX_SQLGUARD_DIR="${ASTRYX_SQLGUARD_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/sqlguard.XXXXXX")}"
+export PYTHONPATH="$PWD/nucleus/sqlguard/shim${PYTHONPATH:+:$PYTHONPATH}"
 
 run "charter resolver invariants"      "$PY" tests/test_charter.py
 # org MCP write-tool role gate (t-org-grant): the genome/identity writes are governance-gated
@@ -478,5 +490,9 @@ if "$PY" -c 'import av' 2>/dev/null; then
 else
   skip "media in-process decode" "av not installed here"
 fi
+
+# sqlguard report (B0): grades every SQL site by what the suite above actually observed. REPORT-ONLY, so it
+# can't fail this run. B1 turns its RED rules on together with their controls, in one act.
+echo; "$PY" -m nucleus.sqlguard.judge "$ASTRYX_SQLGUARD_DIR" || true
 
 verdict

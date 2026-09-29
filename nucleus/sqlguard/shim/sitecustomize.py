@@ -66,12 +66,40 @@ if _DIR:
     def _err(e):
         _emit({"shim_error": type(e).__name__, "gate": _GATE})
 
+    _copy_map = {}
+
+    def _as_repo(fn):
+        """A frame's repo relpath. A file OUTSIDE the repo maps to a repo file only if it is a BYTE-IDENTICAL copy
+        at a matching path suffix. That's how oracles under the ENV-subject contract (5c3f153) run subjects from
+        a temp tree. A MUTATED copy (mutation_probe) never matches, so a mutant can't credit the real site."""
+        if fn.startswith(_REPO + os.sep):
+            return os.path.relpath(fn, _REPO)
+        if fn in _copy_map:
+            return _copy_map[fn]
+        rel = None
+        try:
+            parts = fn.split(os.sep)
+            for i in range(1, len(parts)):
+                cand = os.path.join(_REPO, *parts[i:])
+                if os.path.isfile(cand):
+                    with open(fn, "rb") as a, open(cand, "rb") as b:
+                        if a.read() == b.read():
+                            rel = os.path.join(*parts[i:])
+                    break
+        except Exception:
+            rel = None
+        _copy_map[fn] = rel
+        return rel
+
     def _frames():
         out, f = [], sys._getframe(2)
         while f is not None and len(out) < 40:
             fn = os.path.realpath(f.f_code.co_filename)
-            if fn.startswith(_REPO + os.sep) and fn != _SELF and f"{os.sep}venv{os.sep}" not in fn:
-                out.append([os.path.relpath(fn, _REPO), f.f_code.co_qualname, f.f_lineno])
+            if fn != _SELF and f"{os.sep}venv{os.sep}" not in fn and "site-packages" not in fn \
+                    and not fn.startswith("<"):
+                rel = _as_repo(fn)
+                if rel:
+                    out.append([rel, f.f_code.co_qualname, f.f_lineno])
             f = f.f_back
         return out
 
@@ -277,6 +305,31 @@ if _DIR:
             return spec
 
     sys.meta_path.insert(0, _Finder())
+
+    # UNTRACED CHILDREN. An oracle that launches a repo script with its OWN env dict (hook tests do this on
+    # purpose, to mimic the harness) drops PYTHONPATH and the trace dir, so the child runs unobserved. The shim
+    # does NOT inject its variables: that would be a side effect on the subject, overriding the test's stated
+    # env. It RECORDS the launch instead, and the judge grades that script's unobserved sites NOT SEARCHED with
+    # this named cause, never a false UNEXECUTED.
+    import subprocess as _sp
+    _popen_init = _sp.Popen.__init__
+
+    def _popen(self, args, *a, **k):
+        try:
+            env = k.get("env")
+            if env is not None and "ASTRYX_SQLGUARD_DIR" not in env:
+                argv = [args] if isinstance(args, (str, bytes)) else list(args)
+                for w in argv:
+                    w = os.fsdecode(w) if isinstance(w, bytes) else str(w)
+                    if w.endswith(".py"):
+                        rel = _as_repo(os.path.realpath(w))
+                        if rel:
+                            _emit({"untraced_child": rel, "gate": _GATE, "frames": _frames()})
+                        break
+        except Exception as e:
+            _err(e)
+        return _popen_init(self, args, *a, **k)
+    _sp.Popen.__init__ = _popen
     for _m, _p in (("psycopg", _patch_psycopg), ("asyncpg", _patch_asyncpg)):
         if _m in sys.modules:                          # already imported (e.g. by site hooks): patch now
             try:

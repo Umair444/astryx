@@ -46,7 +46,7 @@ def _live_db():
     return conninfo_to_dict(live_dsn()).get("dbname")
 
 
-def load_traces(d):
+def load_traces(d, untraced=None):
     recs, shim_errors = [], 0
     for f in sorted(glob.glob(os.path.join(d, "trace-*.jsonl"))):
         for line in open(f, errors="replace"):
@@ -57,6 +57,9 @@ def load_traces(d):
                 continue
             if "shim_error" in r:
                 shim_errors += 1
+            elif "untraced_child" in r:
+                if untraced is not None:
+                    untraced.setdefault(r["untraced_child"], set()).add(r.get("gate", ""))
             else:
                 recs.append(r)
     return recs, shim_errors
@@ -95,6 +98,8 @@ def attribute(rec, fns, oracle=None):
             return key, "*", "fallback"
         if key in oracle and oracle[key]["unresolved"]:
             return None, t, "oracle"
+    if any(t in f["sites"] for f in fns.values()):
+        return None, t, "direct"          # a KNOWN subject text, run with no owning function on the stack
     return None, t, "blind"
 
 
@@ -102,17 +107,23 @@ def judge(trace_dir, inv=None, covering=None):
     inv = inv or inventory.build()
     fns = inv["functions"]
     live = _live_db()
-    recs, shim_errors = load_traces(trace_dir)
+    untraced = {}
+    recs, shim_errors = load_traces(trace_dir, untraced)
     gates = load_gates(trace_dir)
     ev = collections.defaultdict(lambda: {"ok": 0, "credited": 0, "fixture_ddl": 0, "zero": False, "pos": False,
                                           "p": {}, "gates": set(), "fallback": False, "write": False})
-    blind, oracle_own = [], 0
+    blind, direct, oracle_own = [], [], 0
     for r in recs:
         if not is_site(r["t"]):
             continue
         key, text, kind = attribute(r, fns, inv.get("oracle"))
         if kind == "oracle":
             oracle_own += 1
+            continue
+        if kind == "direct":
+            # e.g. a test executing esc.ORG_SILENCE_EPISODES_SQL itself. Crediting the owning site would be
+            # text-only credit (V3, the false-credit direction), so it earns nothing, and it isn't blind.
+            direct.append({"t": r["t"][:120], "frame": (r.get("frames") or [["?", "?", 0]])[0]})
             continue
         if kind == "blind":
             blind.append({"t": r["t"][:120], "frame": (r.get("frames") or [["?", "?", 0]])[0]})
@@ -150,7 +161,9 @@ def judge(trace_dir, inv=None, covering=None):
             cov = covering.get(f"{key}\x1f{t}", [])
             complete = all(gates.get(g, 0) == 0 for g in cov)          # empty set = vacuously complete
             if not e or e["ok"] == 0:
-                rung = "UNEXECUTED" if complete else "NOT SEARCHED"
+                # a script launched untraced (cleared env) WAS run, just not observed: that's absence of
+                # evidence, never evidence of absence
+                rung = "NOT SEARCHED" if key.split("::")[0] in untraced or not complete else "UNEXECUTED"
             elif e["credited"] == 0:
                 rung = "EXECUTED/FIXTURE-DDL"
             else:
@@ -172,8 +185,9 @@ def judge(trace_dir, inv=None, covering=None):
         run_not_searched.append(f"unparseable files: {inv['unparseable']}")
     if shim_errors:
         run_not_searched.append(f"shim internal errors: {shim_errors}")
-    return {"counts": dict(counts), "sites": sites, "blind": blind, "oracle_own": oracle_own,
+    return {"counts": dict(counts), "sites": sites, "blind": blind, "direct": direct, "oracle_own": oracle_own,
             "run_not_searched": run_not_searched, "covering": covering, "gates": gates,
+            "untraced_children": {k: sorted(v) for k, v in untraced.items()},
             "extractors_static": inv["extractors"], "exempt": inv["exempt"], "records": len(recs)}
 
 
@@ -188,9 +202,11 @@ if __name__ == "__main__":
     c = rep["counts"]
     print(f"sqlguard (B0, report-only): {rep['records']} traced statements · sites " +
           ", ".join(f"{k}={v}" for k, v in sorted(c.items())) +
-          f" · blind={len(rep['blind'])} · oracle-own={rep['oracle_own']}")
+          f" · blind={len(rep['blind'])} · direct={len(rep['direct'])} · oracle-own={rep['oracle_own']}")
     for n in rep["run_not_searched"]:
         print(f"  NOT SEARCHED (run): {n}")
+    for script, gs in sorted(rep["untraced_children"].items()):
+        print(f"  NOT SEARCHED (untraced child): {script} was launched with a cleared env by {gs}")
     for b in rep["blind"][:10]:
         print(f"  BLIND (reverse agreement): {b['frame']} ran {b['t']!r}")
     print(f"  extractors (static list, until migrated): {len(rep['extractors_static'])}; exempt: {rep['exempt']}")

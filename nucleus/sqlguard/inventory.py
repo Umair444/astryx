@@ -94,8 +94,62 @@ def _head(node):
     return ""
 
 
-def _module_consts(tree):
-    consts, changed = {}, True
+_XCONSTS = {}
+
+
+def _imported_consts(tree, rel):
+    """String constants imported from a REPO module (`from nucleus.x import FRAG`), resolved from that module's
+    own constants, so a query built as `LITERAL + FRAG` resolves exactly instead of silently dropping out."""
+    out = {}
+    for st in tree.body:
+        if isinstance(st, ast.ImportFrom) and st.module and not st.level:
+            src = REPO / (st.module.replace(".", "/") + ".py")
+            if not src.is_file():
+                continue
+            key = str(src)
+            if key not in _XCONSTS:
+                _XCONSTS[key] = {}                     # recursion guard for import cycles
+                try:
+                    _XCONSTS[key] = _module_consts(ast.parse(src.read_text(errors="replace")))
+                except SyntaxError:
+                    pass
+            for a in st.names:
+                if a.name in _XCONSTS[key]:
+                    out[a.asname or a.name] = _XCONSTS[key][a.name]
+    return out
+
+
+def _consts_of(src):
+    key = str(src)
+    if key not in _XCONSTS:
+        _XCONSTS[key] = {}                             # recursion guard for import cycles
+        try:
+            _XCONSTS[key] = _module_consts(ast.parse(src.read_text(errors="replace")))
+        except SyntaxError:
+            pass
+    return _XCONSTS[key]
+
+
+def _module_aliases(tree):
+    """alias -> constants of a REPO module bound as a module object, at ANY depth (imports are often local):
+    `import nucleus.escalation as esc`, `from nucleus import escalation as esc`. So `esc.SQL` resolves."""
+    out = {}
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Import):
+            for a in n.names:
+                src = REPO / (a.name.replace(".", "/") + ".py")
+                if a.asname and src.is_file():
+                    out[a.asname] = _consts_of(src)
+        elif isinstance(n, ast.ImportFrom) and n.module and not n.level:
+            for a in n.names:
+                src = REPO / (n.module.replace(".", "/") + "/" + a.name + ".py")
+                if src.is_file():
+                    out[a.asname or a.name] = _consts_of(src)
+    return out
+
+
+def _module_consts(tree, seed=None):
+    consts, changed = dict(seed or {}), True
     while changed:                                     # fixpoint: constants may build on earlier ones
         changed = False
         for st in tree.body:
@@ -128,7 +182,17 @@ def _own_nodes(fn):
 
 def inventory_file(path: Path, rel: str):
     tree = ast.parse(path.read_text(errors="replace"), filename=rel)
-    consts = _module_consts(tree)
+    consts = _module_consts(tree, _imported_consts(tree, rel))
+    aliases = _module_aliases(tree)
+    # A module constant that LOOKS like SQL but still can't be resolved: a function referencing it is
+    # SQL-bearing at FUNCTION level (FALLBACK). It's never silently dropped, which was reverse agreement's
+    # first real catch.
+    unresolved_consts = set()
+    for st in tree.body:
+        if isinstance(st, (ast.Assign, ast.AnnAssign)) and st.value is not None:
+            tg = st.targets[0] if isinstance(st, ast.Assign) else st.target
+            if isinstance(tg, ast.Name) and tg.id not in consts and is_site(_head(st.value)):
+                unresolved_consts.add(tg.id)
     docs = _docstring_ids(tree)
     parent = {}
     for n in ast.walk(tree):
@@ -144,6 +208,13 @@ def inventory_file(path: Path, rel: str):
                 visit(child, qn + ".<locals>.")
             elif isinstance(child, ast.ClassDef):
                 visit(child, prefix + child.name + ".")
+            elif isinstance(child, ast.Lambda):
+                # co_qualname of a lambda is `<prefix><lambda>`; several in one scope share it, so merge.
+                got = _collect(ast.Module(body=[ast.Expr(child.body)], type_ignores=[]))
+                cur = functions.setdefault(f"{rel}::{prefix}<lambda>", {"sites": {}, "unresolved": []})
+                cur["sites"].update(got["sites"])
+                cur["unresolved"] = sorted(set(cur["unresolved"]) | set(got["unresolved"]))
+                visit(child, prefix + "<lambda>.<locals>.")
             else:
                 visit(child, prefix)
 
@@ -163,7 +234,13 @@ def inventory_file(path: Path, rel: str):
             composed = (isinstance(p, ast.Attribute) and p.attr == "format") \
                 or (isinstance(p, ast.BinOp) and isinstance(p.op, ast.Mod) and p.left is n) \
                 or (isinstance(p, ast.Call) and getattr(p.func, "attr", getattr(p.func, "id", "")) == "SQL")
-            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in consts:
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in unresolved_consts:
+                unresolved.append(getattr(n, "lineno", 0))
+                continue
+            if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id in aliases \
+                    and n.attr in aliases[n.value.id]:
+                text = aliases[n.value.id][n.attr]         # esc.ORG_SILENCE_EPISODES_SQL
+            elif isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in consts:
                 text = consts[n.id]
             elif isinstance(n, (ast.Constant, ast.JoinedStr)) or (isinstance(n, ast.BinOp)
                                                                    and isinstance(n.op, ast.Add)):
