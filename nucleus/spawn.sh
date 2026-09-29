@@ -12,7 +12,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # what a home contains). Tests and builds that change the genome check the REAL generation
 # through it (seed, plan-4227). The output can hold the same secrets a home does (runtime_env
 # splices a provider token into settings.json), so <outdir> must lie OUTSIDE the repo (homes/
-# is gitignored; nothing else is), and it's created 0700 under umask 077.
+# is gitignored; nothing else is), and it must NOT EXIST: render creates it fresh, 0700 under
+# umask 077. An existing dir would keep its own permissions (mkdir -p changes nothing), and the
+# three writes truncate what's there, so `--render seed ~` would overwrite the owner's own
+# ~/.claude/settings.json (abstractor-4, plan-4227 review #4).
 RENDER=""
 if [ "${1:-}" = "--render" ]; then
   RENDER=1
@@ -23,7 +26,8 @@ if [ "${1:-}" = "--render" ]; then
   case "$OUT/" in
     "$(realpath -m "$ROOT")"/*) echo "spawn --render: <outdir> must be outside the repo ($OUT)"; exit 1;;
   esac
-  mkdir -p "$OUT"
+  [ -e "$OUT" ] && { echo "spawn --render: <outdir> must not exist; render creates it fresh ($OUT)"; exit 1; }
+  mkdir "$OUT"
 else
   AGENT=${1:?usage: spawn.sh <agent>   |   spawn.sh --render <agent> <outdir>}
 fi

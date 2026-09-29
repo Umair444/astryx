@@ -53,4 +53,12 @@ MUTANTS = {
     # Create, THEN check: a refused render still leaves a directory inside the repo.
     "Q8 outdir created before the inside-repo check":
         ('  umask 077\n  OUT="$(realpath -m "$OUT")"', '  umask 077\n  mkdir -p "$OUT"\n  OUT="$(realpath -m "$OUT")"'),
+
+    # The pre-fix shape, exactly: no existence check and `mkdir -p`. (Removing only the check
+    # is masked by the plain mkdir, which also refuses an existing dir: two layers.)
+    # An existing outdir accepted: render truncates what's there (the owner's ~/.claude/settings.json
+    # via `--render seed ~`) and the dir keeps its own permissions (abstractor-4, review #4).
+    "Q9 an existing outdir accepted":
+        ('  [ -e "$OUT" ] && { echo "spawn --render: <outdir> must not exist; render creates it fresh ($OUT)"; exit 1; }\n  mkdir "$OUT"',
+         '  mkdir -p "$OUT"'),
 }

@@ -25,6 +25,8 @@ as a logged side effect, never as a session.
      (<root>/homes/<agent>) is never created, even for an agent that is ALREADY resident
   R6 an <outdir> inside the repo is refused and nothing is created (a render holds a token)
   R7 <outdir> is 0700 and settings.json is 0600
+  R9 an EXISTING <outdir> is refused and left byte-identical: render never overwrites (else
+     `--render seed ~` truncates the owner's own ~/.claude/settings.json)
   R8 a stationed agent renders nothing (it has no home), exit 0
   S5 station.py never references the door, the registry, or --mcp-config
 """
@@ -71,6 +73,9 @@ def make_tree() -> Path:
                        ("zzstat", "# zzstat\nType: stationed\n")):
         (t / "agents" / name).mkdir(parents=True)
         (t / "agents" / name / f"{name}.md").write_text(body)
+    # A real repo HAS homes/. Without it, a plain `mkdir <repo>/homes/x` fails for want of a
+    # parent, and that would mask a missing inside-the-repo check (R6).
+    (t / "homes").mkdir()
     shims = t / "shims"
     shims.mkdir()
     for tool in ("tmux", "psql", "claude", "pgrep"):
@@ -177,6 +182,17 @@ try:
     check("R6 an <outdir> inside the repo is refused (exit != 0)", r.returncode != 0,
           r.stdout[-200:])
     check("R6 ...and nothing is created there", not inside.exists())
+
+    # ── R9: an existing outdir is refused, untouched ─────────────────────────────────────
+    existing = outs / "zz-existing"
+    (existing / ".claude").mkdir(parents=True)
+    sentinel = b'{"permissions": {"defaultMode": "SENTINEL-owner-file"}}\n'
+    (existing / ".claude" / "settings.json").write_bytes(sentinel)
+    r, calls = render(root, "zzres", existing)
+    check("R9 an existing <outdir> is refused (exit != 0)", r.returncode != 0, r.stdout[-200:])
+    check("R9 ...its settings.json is byte-identical, and nothing was added",
+          (existing / ".claude" / "settings.json").read_bytes() == sentinel
+          and files_under(existing) == {".claude/settings.json"}, str(sorted(files_under(existing))))
 
     # ── R8: stationed ────────────────────────────────────────────────────────────────────
     out = outs / "zzstat"
