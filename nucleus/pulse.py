@@ -152,37 +152,28 @@ def evaluate(t: dict, conn) -> tuple[str | None, dict]:
 
 
 def shed(due: list[dict], conn) -> list[dict]:
-    """MARKET-ORDERED LOAD SHEDDING (owner ruling 2026-08-22: no categorical priorities —
-    the ladder is priced, not declared). When the account's 5h window runs hot, the org
-    modulates its own intake flux like any dissipative structure:
+    """LOAD SHEDDING under quota pressure. When the account's 5h window runs hot:
 
-      >= 70%  triggers with archived trailing roi<0 AND premium=0 sleep — the market's
-              losers shed first, by their own numbers (newest econ row's trigger_roi)
-      >= 85%  only premium>0 triggers evaluate — what someone PAYS FOR is, by the
-              market's own definition, what must survive scarcity
+      >= 85%  only premium>0 triggers evaluate (the survival flag)
+
+    Reads NO value number (plan-4227 S1a, goal 4227 retires budgets). The old >=70% rung
+    slept premium=0 triggers whose archived trigger_roi was <0; roi rows exist only for
+    triggers that FIRED, so it shed the detectors currently seeing something first, and it
+    keyed protection on the very quantity goal 4227 migrates. Removed, not re-keyed: seed's
+    ruling prices the survival ladder in the QUOTA a wake costs, and that re-key ships with
+    the wake chokepoint (S1c), which also replaces this rung's skip-the-evaluation with
+    hold-the-wake. Until then the >=85% rung is kept exactly as it was.
 
     Shedding skips THIS evaluation only (clocks already advanced); nothing is disabled,
     nothing is messaged — the condition is visible in the observatory, and a shed tick
-    costs nothing, which is the point. Fail-open: no gauge or no econ row = no shedding."""
+    costs nothing, which is the point. Fail-open: no gauge = no shedding."""
     try:
         g = conn.execute(
             "SELECT five_hour_pct FROM current_usage").fetchone()   # unified authority (3833)
         pct = float(g[0]) if g and g[0] is not None else None
-        if pct is None or pct < 70:
+        if pct is None or pct < 85:
             return due
-        if pct >= 85:
-            kept = [t for t in due if int(t.get("premium") or 0) > 0]
-        else:
-            row = conn.execute(
-                "SELECT metrics->'trigger_roi' FROM econ ORDER BY day DESC LIMIT 1"
-            ).fetchone()
-            roi = row[0] if row else None
-            if isinstance(roi, str):
-                roi = json.loads(roi)
-            losers = {(r["agent"], r["trigger"]) for r in (roi or [])
-                      if int(r["roi"]) < 0}
-            kept = [t for t in due if int(t.get("premium") or 0) > 0
-                    or (t["agent"], t["name"]) not in losers]
+        kept = [t for t in due if int(t.get("premium") or 0) > 0]
         for t in due:
             if t not in kept:
                 print(f"shed {t['agent']}/{t['name']} (5h {pct:.0f}%)")

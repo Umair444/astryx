@@ -72,23 +72,13 @@ try:
                 plan = (f" · plan 5h {g[0]:.0f}%"
                         + (f" (resets {reset}Z)" if reset else "")
                         + (f" · 7d {g[1]:.0f}%" if g[1] is not None else ""))
-            # ── [econ] standing (goal 3407): the org economy in one jargon-free line,
-            # from the nightly econ rollup. Its OWN fail-open try — a standing meter must
-            # never break the wake for every agent on the org. States a factual position,
-            # never an org verdict; neutral token while unpriced (W=0) or no rollup yet.
+            # ── [econ] line (goal 3407; DISARMED to the neutral token by plan-4227 S1a
+            # until the v2 mirror lands). Its OWN fail-open try — a standing meter must
+            # never break the wake for every agent on the org.
             try:
                 sys.path.insert(0, REPO)
-                from nucleus.econ import econ_standing
-                f = econ_standing(conn, agent) if agent else None
-                if not f or not f.get("priced") or not f.get("present") \
-                        or f.get("net") is None:
-                    econ_line = "[econ] between ships · no standing verdict"
-                else:
-                    net, rank, n = f["net"], f.get("rank"), f["n"]
-                    where = f" (rank {rank}/{n})" if rank else ""
-                    lead = ("carrying your weight" if net >= 0
-                            else "running net-negative")
-                    econ_line = f"[econ] {lead} this window · net {net:+,.0f}{where}"
+                from nucleus.econ import econ_line as _render, econ_standing
+                econ_line = _render(econ_standing(conn, agent) if agent else None)
             except Exception:
                 econ_line = ""
     except Exception:

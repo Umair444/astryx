@@ -238,6 +238,20 @@ def econ_standing(conn, agent: str) -> dict | None:
             "net": (mine or {}).get("net"), "rank": rank}
 
 
+ECON_NEUTRAL = "[econ] between ships · no standing verdict"
+
+
+def econ_line(standing: dict | None) -> str:
+    """The per-wake [econ] line (hooks/usage.py renders this, fail-open).
+
+    DISARMED (plan-4227 S1a): always the neutral token. The priced branch printed a signed
+    net and a cross-agent rank the moment W>0; goal 4227 retires the budgets that W was a
+    sum of, and a line that shapes behaviour must not act on a quantity mid-migration. The
+    [econ] v2 mirror (S2) replaces this, self-scoped and versioned; econ_standing() keeps
+    returning the facts for readers that want them."""
+    return ECON_NEUTRAL
+
+
 def theil(shares: list[float]) -> float | None:
     """Normalized Theil T/ln(n) ∈ [0,1] — KL(share ‖ uniform), the entropic Gini."""
     import math
