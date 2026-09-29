@@ -401,6 +401,12 @@ run "weekly econ review: insures constitutive set, layer-1 stays FYI, L3 retired
 # goal 4227 S0 (steward): the econ v2 SHADOW at metrics->'v2' — I1 records, v1 untouched,
 # no budget-era identifier on the v2 path, effort side re-derived, tool GDP degrades honestly.
 run "econ v2 shadow (4227 S0)"        "$PY" tests/test_econ_v2_shadow.py
+# goal 4227 O6 (steward, S1b): the economy's CONSUMER SET is DERIVED from the authorities (econ.py
+# public functions + every key compute()/v2() write, by AST; goals/econ value columns from
+# schema.sql, every column classified) and must EQUAL the typed manifest (effect type + rest
+# state). A new unseen consumer, a stale row, an unclassified column, or a value-keyed HARD
+# actuator is RED. Gitignored roots absent (worktree/clone) → tracked half asserted, then 77.
+run "econ consumer set derived = typed manifest (4227 O6)" "$PY" tests/test_econ_consumers.py
 # Drives the REAL ./init.sh doctor with a systemctl liveness-shim (hermetic: only the target
 # orphan's is-active is forced; every other call hits the real binary). Pins that a LIVE orphan
 # is routed to manual reconciliation, NOT told to "rerun ./init.sh to regenerate" (which would
