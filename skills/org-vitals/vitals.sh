@@ -7,9 +7,13 @@
 # CURRENT best probe for its axis, with the reason inline, so callers can't regress to a worse one.
 # Born as medic's exam.sh; moved here so every agent can find and reuse it.
 #
-# USAGE. bash skills/org-vitals/vitals.sh     (any cwd; resolves the repo root itself)
+# USAGE. bash skills/org-vitals/vitals.sh [--doctor]     (any cwd; resolves the repo root itself)
+#   --doctor (or VITALS_DOCTOR=1) adds the `./init.sh doctor` panel. It is OFF by default because
+#   doctor is not free: it makes an authenticated model call (`claude -p --model haiku`, spends plan
+#   quota, up to 30s), loads the faster-whisper model on CPU, and runs the deps/media probes.
 #
-# READ-ONLY. SELECTs, greps and reports; `git fetch` is its only side effect (remote-tracking refs).
+# READ-ONLY. SELECTs, greps and reports. Side effects: `git fetch` (remote-tracking refs) always;
+# with --doctor, doctor's model call + whisper load above. It never writes state, never checks out.
 # Never writes, never checks out, never patches. Prints metadata only — message ids/status/age,
 # never bodies. Exit 0 always: it is a panel, not a gate (check.sh and check_stamp are the gates).
 #
@@ -33,9 +37,13 @@ printf 'vs origin/main: %s ahead / %s behind\n' \
 git log origin/main --oneline -3 2>/dev/null
 
 hr "doctor — reds only (record these as BASELINE on clean main)"
-_doc="$(timeout 120 ./init.sh doctor 2>&1)"
-printf '%s\n' "$_doc" | grep -E '✗' || echo "  (no reds)"
-printf 'greens: %s\n' "$(printf '%s\n' "$_doc" | grep -c '✓')"
+if [ "${1:-}" = "--doctor" ] || [ "${VITALS_DOCTOR:-0}" = "1" ]; then
+  _doc="$(timeout 120 ./init.sh doctor 2>&1)"
+  printf '%s\n' "$_doc" | grep -E '✗' || echo "  (no reds)"
+  printf 'greens: %s\n' "$(printf '%s\n' "$_doc" | grep -c '✓')"
+else
+  echo "  (skipped: opt in with --doctor or VITALS_DOCTOR=1. It makes a haiku model call + a whisper load)"
+fi
 
 hr "gate suite — steward's run_check STAMP (not a re-run; read CONTENT, not the clock)"
 # check.sh is minutes to run; steward's run_check stamps the verdict to backups/.last-check on a
