@@ -159,10 +159,34 @@ EOF
 # resume-first: a resident's life survives its process (GENESIS lesson, kept)
 RESUME=""
 TDIR="$HOME/.claude/projects/$(echo "$HOME_D" | tr / -)"
-latest=$(ls -t "$TDIR"/*.jsonl 2>/dev/null | grep -v '/agent-' | head -1 || true)
+newest=$(ls -t "$TDIR"/*.jsonl 2>/dev/null | grep -v '/agent-' | head -1 || true)
+# The session ID comes from the DB: step.py records every turn's session_id in `turns`,
+# so the newest row IS this agent's current life (owner's design, 2026-09-29). The file
+# must still exist — refresh.sh sets transcripts aside for a deliberate fresh boot, and a
+# missing file means fresh, not a resume into nothing. turns is written at Stop and has
+# known gaps (a compacted session can end with no turn row), so a strictly NEWER
+# transcript on disk wins and says so. DB unreachable/empty → the newest transcript.
+latest=""
+sid=$(psql "$DSN" -tAc "SELECT session_id FROM turns WHERE agent='$AGENT' AND session_id IS NOT NULL ORDER BY ended_at DESC NULLS LAST LIMIT 1" 2>/dev/null || true)
+if [ -n "$sid" ] && [ -f "$TDIR/$sid.jsonl" ]; then
+  latest="$TDIR/$sid.jsonl"
+  if [ -n "$newest" ] && [ "$newest" != "$latest" ] && [ "$newest" -nt "$latest" ]; then
+    echo "  note: newer transcript than turns.session_id ($sid) — resuming $(basename "$newest" .jsonl)"
+    latest="$newest"
+  fi
+elif [ -z "$sid" ]; then
+  latest="$newest"
+fi
+# --resume <id> — NOT --continue, whose own "most recent conversation in this
+# directory" heuristic can land on the wrong session. And no age gate:
+# how long an outage lasted must not decide whether an agent keeps its memory (a >72h
+# gate wiped every resident's context after a multi-day host outage, 2026-09-29).
+# Deliberate fresh boots stay refresh.sh's job: it sets transcripts aside first, so
+# $latest is empty here and the agent boots fresh. The size guard stays (a bloated
+# session resumes degraded).
 if [ -n "$latest" ]; then
-  age=$(( $(date +%s) - $(stat -c %Y "$latest") )); size=$(stat -c %s "$latest")
-  if [ "$age" -lt 259200 ] && [ "$size" -lt 10485760 ]; then RESUME="--continue "; fi
+  size=$(stat -c %s "$latest")
+  if [ "$size" -lt 10485760 ]; then RESUME="--resume $(basename "$latest" .jsonl) "; fi
 fi
 
 # model: charter line "Model: haiku|sonnet|opus" (default opus — owner's call;
