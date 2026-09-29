@@ -93,10 +93,34 @@ _OPERATORS = {";", "&&", "||", "|", "&", "(", ")", "|&", ";;"}
 _WRAPPERS = {"env", "nohup", "exec", "time", "command", "builtin", "sudo", "nice", "stdbuf"}
 _TAKES_ARG = {"timeout": 1, "nice": 0}     # wrappers whose first plain argument is not the command
 _INTERP = re.compile(r"^(python[0-9.]*|bash|sh|zsh|dash|node|deno|bun|uv|pipx)$")
+_SHELLS = ("bash", "sh", "zsh", "dash")
+# Shell reserved words that can precede a command in the same simple command.
+_RESERVED = {"if", "then", "else", "elif", "do", "while", "until", "!", "{", "}"}
+_SOURCE = ("source", ".")
+_HEREDOC = re.compile(r"<<(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
+
+
+def _strip_heredocs(cmd: str) -> str:
+    """Drop heredoc BODIES, keeping the line that opens each one. A body is data fed to a
+    command, not commands. Parsed as commands it inflated calls (a body line naming a script)
+    and dropped real ones (one apostrophe in a body made the whole command unparseable).
+    abstractor-4's review of 3ba7f0d, plan-4227."""
+    out, pending = [], []
+    for line in cmd.split("\n"):
+        if pending:
+            dash, word = pending[0]
+            if (line.lstrip("\t") if dash else line) == word:
+                pending.pop(0)
+            continue
+        out.append(line)
+        pending = [(m.group(1) == "-", m.group(3)) for m in _HEREDOC.finditer(line)
+                   if not line[max(0, m.start() - 1):m.start()] == "<"]   # <<< is a here-string
+    return "\n".join(out)
 
 
 def _simple_commands(cmd: str) -> list[list[str]]:
-    lex = shlex.shlex(cmd.replace("\n", " ; "), posix=True, punctuation_chars=";&|()")
+    lex = shlex.shlex(_strip_heredocs(cmd).replace("\n", " ; "), posix=True,
+                      punctuation_chars=";&|()")
     lex.whitespace_split = True
     out, cur = [], []
     for t in lex:
@@ -116,7 +140,7 @@ def _invoked(words: list[str]) -> str | None:
     i = 0
     while i < len(words):
         w = words[i]
-        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", w):         # FOO=1 cmd
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", w) or w in _RESERVED:   # FOO=1 cmd
             i += 1
         elif w in _WRAPPERS or w in _TAKES_ARG:
             i += 1
@@ -129,6 +153,8 @@ def _invoked(words: list[str]) -> str | None:
     if i >= len(words):
         return None
     head = words[i]
+    if head in _SOURCE:                               # `source x.sh` / `. x.sh` executes it
+        return script_id(words[i + 1]) if i + 1 < len(words) else None
     rid = script_id(head)
     if rid:
         return rid
@@ -152,6 +178,8 @@ def _invoked(words: list[str]) -> str | None:
         if a == "-m" and j + 1 < len(words):
             return script_id(_module_path(words[j + 1]) or "")
         if a == "-c" or a == "-":                    # inline code / stdin: no script file
+            return None
+        if a == "-n" and os.path.basename(head) in _SHELLS:   # a syntax check, not a run
             return None
         if a.startswith("-"):
             j += 1

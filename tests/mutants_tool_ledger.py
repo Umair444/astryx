@@ -59,4 +59,9 @@ MUTANTS = {
     "M6 tool_done meta written for non-calls":
         ('            if "registry_id" not in m:\n                return None',
          '            if "registry_id" not in m:\n                m = {"registry_id": "mcp:tools/run"}'),
+
+    # Claim by agent + time only. A killed body's leftover label, or an overlapping session's,
+    # gets joined to the wrong turn.
+    "M7 classification claim without the session filter":
+        ('"AND (session_id IS NULL OR session_id = %s) "\n', '"AND (true OR %s IS NULL) "\n'),
 }

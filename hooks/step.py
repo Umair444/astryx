@@ -258,8 +258,9 @@ def handle_stop(cur, agent, h):
 
     # The nudge hook labels a prompt before its turn exists; claim its classification rows the
     # same way steps are claimed below. The row is written around submission, which can fall a
-    # moment BEFORE the transcript's started_at, hence the slack; the previous turn's Stop has
-    # already claimed its own rows, so the slack can't steal one. A savepoint keeps a missing table (a DB that predates
+    # moment BEFORE the transcript's started_at, hence the slack. The previous turn's Stop has
+    # already claimed its own rows. The session filter covers the cases where it hasn't: a
+    # killed body, or two sessions of one agent overlapping (abstractor-4, plan-4227). A savepoint keeps a missing table (a DB that predates
     # 4227's schema) from aborting the turn row it's riding with.
     if turn_id is not None and started_at:
         try:
@@ -267,8 +268,9 @@ def handle_stop(cur, agent, h):
                 cur.execute(
                     "UPDATE classifications SET turn_id=%s "
                     "WHERE agent=%s AND turn_id IS NULL "
+                    "AND (session_id IS NULL OR session_id = %s) "
                     "AND ts >= %s::timestamptz - interval '10 seconds'",
-                    (turn_id, agent, started_at))
+                    (turn_id, agent, h.get("session_id"), started_at))
         except Exception:
             pass
 

@@ -52,4 +52,15 @@ MUTANTS = {
     "T7 an edit is recorded as a call":
         ('        return {"edits": rid} if rid else {}\n',
          '        return {"registry_id": rid} if rid else {}\n'),
+
+    # abstractor-4's catch on review: heredoc bodies parsed as commands. It's both directions
+    # at once: body lines naming a script inflate, and one apostrophe in a body drops the real
+    # call in front of it.
+    "T8 heredoc bodies parsed as commands (strip reverted)":
+        ("    lex = shlex.shlex(_strip_heredocs(cmd).replace(",
+         "    lex = shlex.shlex((cmd).replace("),
+
+    "T9 bash -n counted as a run":
+        ('        if a == "-n" and os.path.basename(head) in _SHELLS:',
+         '        if False and os.path.basename(head) in _SHELLS:'),
 }

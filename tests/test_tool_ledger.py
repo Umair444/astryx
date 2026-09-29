@@ -24,6 +24,10 @@ WHAT IT HOLDS
      meta form count.
   L8 the classifications table refuses a prompt-shaped label (I5 against an untrusted
      classifier that echoes its input).
+  L10 a heredoc BODY is data, not commands: a body line naming a script is not a call, and
+     an apostrophe in a body doesn't drop the real call in front of it (abstractor-4's review).
+     `bash -n` is a syntax check, not a run.
+  L6b Stop never claims a classification from a DIFFERENT session.
   L9 a script that is only NAMED (git add x.py, grep … x.py, cat x.py) is not a call. Only
      an execution position counts. The ledger's first live minutes counted every mention,
      which inflated usage with every review and commit.
@@ -215,6 +219,19 @@ try:
         check(f"L9 execution position IS a call: {c[:48]!r}",
               (last()[0][3] or {}).get("registry_id") == want, str(last()[0][3]))
 
+    # ── L10: heredoc bodies are data ───────────────────────────────────────────────────────
+    for c, want, why in (
+            ("cat > /tmp/n.md <<'EOF'\nnucleus/check.sh is the gate runner\nEOF", None,
+             "a heredoc body naming a script is not a call"),
+            ("venv/bin/python - <<'EOF'\nnucleus/econ.py\nEOF", None,
+             "stdin-fed python whose body names a script"),
+            ("venv/bin/python nucleus/econ.py <<'EOF'\nit's here\nEOF", "script:nucleus/econ.py",
+             "an apostrophe in the body doesn't drop the REAL call"),
+            ("bash -n nucleus/smoke.sh", None, "bash -n is a syntax check")):
+        pre("Bash", {"command": c})
+        got = (last()[0][3] or {}).get("registry_id")
+        check(f"L10 {why}", got == want, f"got {got} want {want}")
+
     # ── L5: a broken toolreg never costs the row ──────────────────────────────────────────
     broken = tree(broken_toolreg=True); roots.append(broken)
     n0 = len(metas(admin))
@@ -238,15 +255,22 @@ try:
                 "usage": {"input_tokens": 1, "output_tokens": 1}}})) + "\n")
         return p
 
-    admin.execute("INSERT INTO classifications (agent, family, tier, classifier) "
-                  "VALUES ('alice','build.tool','complex','test')")
+    admin.execute("INSERT INTO classifications (agent, family, tier, classifier, session_id) "
+                  "VALUES ('alice','build.tool','complex','test','s')")
+    admin.execute("INSERT INTO classifications (agent, family, tier, classifier, session_id) "
+                  "VALUES ('alice','other.session','simple','test','ANOTHER')")
     tdir = tempfile.mkdtemp(prefix="t_ledger_tx_"); roots.append(Path(tdir))
     hook(root, SCH, {"hook_event_name": "Stop", "session_id": "s",
                      "transcript_path": str(transcript(tdir))})
     t_new = admin.execute("SELECT max(id) FROM turns WHERE agent='alice'").fetchone()[0]
-    claimed = admin.execute("SELECT turn_id FROM classifications WHERE agent='alice'").fetchone()[0]
+    claimed = admin.execute("SELECT turn_id FROM classifications WHERE agent='alice' "
+                            "AND session_id='s'").fetchone()[0]
     check("L6 Stop claims the nudge's classification for the turn",
           t_new is not None and claimed == t_new, f"turn={t_new} claimed={claimed}")
+    other = admin.execute("SELECT turn_id FROM classifications "
+                          "WHERE session_id='ANOTHER'").fetchone()[0]
+    check("L6b a classification from ANOTHER session is not claimed", other is None,
+          f"claimed by turn {other}")
 
     schema(admin, SCH2, ("turns", "steps", "messages"))       # NO classifications table
     hook(root, SCH2, {"hook_event_name": "Stop", "session_id": "s",
