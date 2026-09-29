@@ -218,6 +218,10 @@ run "observatory renders no budget economics" "$PY" tests/test_observatory_no_bu
 # registered SCRIPTS only, as an argv list (no shell), with a clamped timeout, and never starts
 # an MCP server, because that would walk past its charter grant. Mutants: tests/mutants_tools_door.py.
 run "tools door: registered scripts only, no shell, no server" "$PY" tests/test_tools_door.py
+# the registry's search text (medic): a tool is described by its OWN header. The docstring regex
+# ran over shell scripts too, so a `'''` in code or a heredoc template described a tool by its body
+# (mcp/new.sh was registered as its template's placeholder). RED-first against the unscoped regex.
+run "toolreg: a tool's search text is its own header" "$PY" tests/test_toolreg_describe.py
 # the tool nudge, O5 (goal 4227, S4): the REAL UserPromptSubmit hook against a fake loopback
 # classifier. It never exits non-zero (static, from the AST), stays silent and inside its hard
 # deadline whether the classifier is unset/down/hung/DRIPPING, refuses non-loopback endpoints
