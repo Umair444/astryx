@@ -188,6 +188,16 @@ run "memory window() picks rare-term mass" "$PY" tests/test_memory_window.py
 # costs the row, and the classifications table refuses a prompt-shaped label. RED-first against
 # the pre-4227 hook; the arms that pass vacuously there are pinned by tests/mutants_tool_ledger.py.
 run "tool ledger: ids only, ledger authorship" "$PY" tests/test_tool_ledger.py
+# the registry door (goal 4227, S4): find + run, and never a new capability. run() executes
+# registered SCRIPTS only, as an argv list (no shell), with a clamped timeout, and never starts
+# an MCP server, because that would walk past its charter grant. Mutants: tests/mutants_tools_door.py.
+run "tools door: registered scripts only, no shell, no server" "$PY" tests/test_tools_door.py
+# the tool nudge, O5 (goal 4227, S4): the REAL UserPromptSubmit hook against a fake loopback
+# classifier. It never exits non-zero (static, from the AST), stays silent and inside its hard
+# deadline whether the classifier is unset/down/hung/DRIPPING, refuses non-loopback endpoints
+# without connecting, never classifies content-private agents, persists labels only, and
+# nudges on RECURRENCE, not difficulty. Mutants: tests/mutants_nudge.py.
+run "tool nudge (O5): never blocks, never leaks, recurrence-gated" "$PY" tests/test_nudge.py
 # This suite's own blind spot: the list below is hand-maintained, so a newly committed
 # tests/test_*.py was silently never run and this still printed ALL PASS (reproduced
 # 08-13). Derives the expected set from the tests/test_*.py glob — a new oracle must

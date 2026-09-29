@@ -54,5 +54,12 @@
    "mcp/memory/server.py"
   ],
   "author": "forge"
+ },
+ "tools": {
+  "command": "venv/bin/python",
+  "args": [
+   "mcp/tools/server.py"
+  ],
+  "author": "forge"
  }
 }
