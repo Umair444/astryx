@@ -533,6 +533,9 @@ def main():
         led = json.loads(lp.read_text())
         OUT["admit_restamp"] = led.get("header", {}).get("debt_rows") == len(led["rows"]) == 1
         run("admitted", rep({S1: "UNEXECUTED"}), led, dsn)
+        a = OUT["admitted"]
+        OUT["admitted_lines"] = (enforce.render({"rc": a["rc"], "red": a["red"], "report": a["report"],
+                                                 "not_searched": a["ns"]}) if hasattr(enforce, "render") else None)
         try:
             ledger.admit(str(td), label, "again", lp)
             refusals["twice"] = False
@@ -847,6 +850,16 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
         E["admitted"]["rc"] == 0 and any("harness: the reason" in r for r in E["admitted"]["report"]),
         str(E["admitted"]))
     arm("admit restamps header.debt_rows", E.get("admit_restamp") is True, str(E.get("admit_restamp")))
+    # check.sh's OWN skip-announcement pattern, read from check.sh (not copied), so the arm follows the protocol
+    import re
+    m = re.search(r"grep -qE '([^']*)' <<<\"\$out\"", (REPO / "nucleus" / "check.sh").read_text())
+    skip = re.compile(m.group(1).replace("[[:space:]]", r"\s")) if m else None
+    lines = E.get("admitted_lines") or []
+    arm("an enforcing rc-0 run WITH an admitted row is not read as a skip by check.sh's protocol (seed #24103)",
+        bool(skip) and E["admitted"]["rc"] == 0 and any("ADMITTED" in l for l in lines)
+        and not any(skip.search(l) for l in lines), str([l for l in lines if skip and skip.search(l)] or lines[:3]))
+    arm("control: check.sh's skip pattern, as extracted, DOES read a `○` line as a skip",
+        bool(skip) and bool(skip.search("  ○ ADMITTED x")), str(m and m.group(1)))
     return failed
 
 
@@ -884,6 +897,8 @@ MUTANTS = [
     ("estate.py", 'return 1, ".env is present', 'return 77, ".env is present', "no-DSN: enforce"),
     ("enforce.py", 'gate("enforce"', 'print("enforce"', "estate-absent: enforce"),
     ("ledger.py", 'if rep.get("run_not_searched"):', "if False:", "shrink refuses"),
+    ("enforce.py", 'lines += [f"  · {r}" for r in out["report"]]', 'lines += [f"  ○ {r}" for r in out["report"]]',
+     "not read as a skip"),
     ("inventory.py", 'and not (rel == "." and d in EXCLUDED_ROOTS)]', "]", "EXCLUDED root"),
     ("inventory.py", 'and not (rel == "." and d in EXCLUDED_ROOTS)]', 'and not any(d.startswith(x) for x in EXCLUDED_ROOTS)]',
      "prefix-sharing root"),

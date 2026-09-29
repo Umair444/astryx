@@ -176,6 +176,18 @@ def enforce(trace_dir, ledger=None, dsn=None, rep=None):
     return {"rc": rc, "red": red, "report": report, "not_searched": not_searched}
 
 
+def render(out) -> list:
+    """The printed verdict. A REPORTED/ADMITTED row is marked `·`, never `○`: check.sh's protocol reads a line
+    whose first token is SKIP or ○ as a SKIP ANNOUNCEMENT, so `○` would count this enforcing, rc-0 gate as
+    UNVERIFIED on every run that has an admitted row. That's the guard going dark while it works (seed #24103)."""
+    lines = [f"  NOT SEARCHED: {n}" for n in out["not_searched"]]
+    lines += [f"  \033[31m✗\033[0m {r}" for r in out["red"]]
+    lines += [f"  · {r}" for r in out["report"]]
+    lines.append(f"sqlguard enforce: rc={out['rc']} · RED {len(out['red'])} · reported {len(out['report'])} · "
+                 f"not-searched {len(out['not_searched'])}")
+    return lines
+
+
 if __name__ == "__main__":
     d = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("ASTRYX_SQLGUARD_DIR", "")
     led = load_ledger()
@@ -183,13 +195,6 @@ if __name__ == "__main__":
     judge.print_report(rep)
     judge.write_report(d, rep)                  # ledger admit reads it
     out = enforce(d, ledger=led, rep=rep)
-    for n in out["not_searched"]:
-        print(f"  NOT SEARCHED: {n}")
-    for r in out["red"]:
-        print(f"  \033[31m✗\033[0m {r}")
-    for r in out["report"]:
-        print(f"  ○ {r}")
-    print(f"sqlguard enforce: rc={out['rc']} · RED {len(out['red'])} · reported {len(out['report'])} · "
-          f"not-searched {len(out['not_searched'])}")
+    print("\n".join(render(out)))
     print("  " + judge.REMAINDER)
     sys.exit(out["rc"])
