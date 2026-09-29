@@ -60,4 +60,10 @@ MUTANTS = {
     # families, and a hint repeated every wake trains dismissal (abstractor-4, W2).
     "U8 the per-(agent, family) cooldown removed":
         ("        if not cooling:\n", "        if True:\n"),
+
+    # The DB fault swallowed silently again: a missing migration then kills the nudge forever
+    # with no trace (abstractor-4's review #3).
+    "U9 a DB fault is silent again":
+        ('        log_error(dsn, agent, "classification write failed", type(e).__name__)\n',
+         '        pass\n'),
 }

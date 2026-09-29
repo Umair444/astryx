@@ -142,18 +142,25 @@ def classify(url: str, text: str) -> dict | None:
             "model": model if isinstance(model, str) and MODEL_RE.match(model) else None}
 
 
-def log_refusal(dsn: str, agent: str, url: str) -> None:
-    """One error step per agent per hour, naming the refusal and not the URL. The URL could
-    itself be something the owner doesn't want on the public steps table."""
+def log_error(dsn: str, agent: str, key: str, detail: str) -> None:
+    """One error step per agent per KEY per hour. Silence is the right failure for one prompt,
+    and the wrong one for a standing fault (a refused endpoint, a missing migration): without a
+    trace, the feature is dead and looks idle. The step names the fault, never its payload."""
     import psycopg
     with psycopg.connect(dsn, connect_timeout=1) as c:
         seen = c.execute(
-            "SELECT 1 FROM steps WHERE agent=%s AND kind='error' AND content LIKE 'nudge:%%' "
-            "AND ts > now() - interval '1 hour' LIMIT 1", (agent,)).fetchone()
+            "SELECT 1 FROM steps WHERE agent=%s AND kind='error' AND content LIKE %s "
+            "AND ts > now() - interval '1 hour' LIMIT 1", (agent, f"nudge: {key}%")).fetchone()
         if not seen:
             c.execute("INSERT INTO steps (agent, kind, content) VALUES (%s,'error',%s)",
-                      (agent, "nudge: classifier endpoint refused (not loopback/unix socket; "
-                              "the owner can allow it with ASTRYX_CLASSIFIER_ALLOW_REMOTE=1)"))
+                      (agent, f"nudge: {key} ({detail})"))
+
+
+def log_refusal(dsn: str, agent: str, url: str) -> None:
+    """Named, not quoted: the URL could itself be something the owner keeps off the public wall."""
+    log_error(dsn, agent, "classifier endpoint refused",
+              "not loopback/unix socket; the owner can allow it with "
+              "ASTRYX_CLASSIFIER_ALLOW_REMOTE=1")
 
 
 def main() -> None:
@@ -180,6 +187,32 @@ def main() -> None:
         return
 
     import psycopg
+    try:
+        kind, prior = record(psycopg, dsn, agent, h, label)
+    except _Deadline:
+        raise
+    except Exception as e:
+        # A DB fault is visible, once an hour, by exception CLASS only: the message can quote
+        # SQL or values. abstractor-4, plan-4227: a missing `nudged` migration would otherwise
+        # kill the nudge silently and forever.
+        log_error(dsn, agent, "classification write failed", type(e).__name__)
+        return
+    # Printed only after the row COMMITS (record() above). If the deadline lands in between, a
+    # nudge is lost rather than repeated: silence is this hook's failure direction.
+
+    find = f"{REPO}/venv/bin/python {REPO}/nucleus/toolreg.py find <words>"
+    if kind == "recurring":
+        print(f"[tools] Recurring work: task family '{label['family']}' came up {prior}x in "
+              f"{RECUR_DAYS}d. Search the registry before doing it by hand: `{find}` (or "
+              f"mcp__tools__find). If nothing fits, read {REPO}/skills/tool-building/SKILL.md "
+              f"and make one.")
+    elif kind == "complex":
+        print(f"[tools] Complex task: decompose it first, and check the registry for pieces "
+              f"you can reuse: `{find}`.")
+
+
+def record(psycopg, dsn, agent, h, label) -> tuple:
+    """Count the family, apply the cooldown, write the label. Returns (nudge kind or None, prior)."""
     with psycopg.connect(dsn, connect_timeout=1) as c:
         prior = c.execute(
             "SELECT count(*) FROM classifications WHERE family=%s "
@@ -199,18 +232,7 @@ def main() -> None:
                   "nudged) VALUES (%s,%s,%s,%s,%s,%s)",
                   (agent, (h.get("session_id") or None), label["family"], label["tier"],
                    label["model"], kind is not None))
-    # Printed only after the row COMMITS (the with-block above). If the deadline lands in
-    # between, a nudge is lost rather than repeated: silence is this hook's failure direction.
-
-    find = f"{REPO}/venv/bin/python {REPO}/nucleus/toolreg.py find <words>"
-    if kind == "recurring":
-        print(f"[tools] Recurring work: task family '{label['family']}' came up {prior}x in "
-              f"{RECUR_DAYS}d. Search the registry before doing it by hand: `{find}` (or "
-              f"mcp__tools__find). If nothing fits, read {REPO}/skills/tool-building/SKILL.md "
-              f"and make one.")
-    elif kind == "complex":
-        print(f"[tools] Complex task: decompose it first, and check the registry for pieces "
-              f"you can reuse: `{find}`.")
+    return kind, prior
 
 
 if __name__ == "__main__":

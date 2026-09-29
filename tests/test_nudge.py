@@ -26,6 +26,9 @@ each case picks.
   N8 COOLDOWN (W2): one nudge per (agent, family) per 7d. Repeat wakes of a recurring family
      get silence, a SECOND agent still gets its first nudge, and the record is the row's
      nudged flag (derived, not remembered).
+  N9 a DB fault is VISIBLE, not silent-forever: against a classifications table missing the
+     `nudged` column (the unmigrated live DB), the hook stays silent and exits 0, and leaves ONE
+     error step per hour naming the exception CLASS, never its message.
   N7 no prompt text persisted: a secret in the prompt appears in no classifications row and no
      step, and a classifier that echoes the prompt as its label writes no row.
 """
@@ -296,6 +299,30 @@ try:
     check("N7 a classifier echoing the prompt as its label → no row, silent",
           len(rows()) == n and r.stdout == "", f"rows {n}->{len(rows())}")
     Fake.mode = "ok"
+
+    # ── N9 an unmigrated DB is visible ───────────────────────────────────────────────────
+    SCH_OLD = f"{SCH}_old"
+    admin.execute(f"DROP SCHEMA IF EXISTS {SCH_OLD} CASCADE")
+    admin.execute(f"CREATE SCHEMA {SCH_OLD}")
+    admin.execute(f"SET search_path TO {SCH_OLD}")
+    for t in ("turns", "steps"):
+        admin.execute(ddl(t))
+    old_cls = "\n".join(l for l in ddl("classifications").splitlines() if "nudged" not in l)
+    old_cls = old_cls.replace("{1,64}$'),\n);", "{1,64}$')\n);")
+    admin.execute(old_cls)
+    Fake.mode, Fake.reply = "ok", {"family": "build.tool", "tier": "complex"}
+    outs9 = []
+    for _ in range(2):
+        r, _ = run(root, SCH_OLD, url)
+        exits.append(r.returncode)
+        outs9.append(r.stdout)
+    errs = admin.execute("SELECT content FROM steps WHERE kind='error'").fetchall()
+    check("N9 unmigrated DB: silent both times", outs9 == ["", ""], str(outs9))
+    check("N9 ...ONE error step (rate-limited), naming the exception CLASS",
+          len(errs) == 1 and errs[0][0] == "nudge: classification write failed (UndefinedColumn)",
+          str(errs))
+    admin.execute(f"SET search_path TO {SCH}")
+    admin.execute(f"DROP SCHEMA IF EXISTS {SCH_OLD} CASCADE")
 
     check("N2 every behavioural case exited 0", set(exits) == {0}, str(exits))
 finally:
