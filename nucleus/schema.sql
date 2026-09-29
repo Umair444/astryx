@@ -251,7 +251,6 @@ INSERT INTO funded_by_watermark (legacy_max_id)
   SELECT COALESCE(max(id), 0) FROM goals
   ON CONFLICT (singleton) DO NOTHING;
 CREATE OR REPLACE FUNCTION goals_done_stamp() RETURNS trigger AS $$
-DECLARE wm bigint;
 BEGIN
   IF NEW.state IN ('shipped','done') AND (OLD.state IS DISTINCT FROM NEW.state) THEN
     -- W-birth: stamp the boundary (UNCHANGED — this is the mint moment, and it runs FIRST so
@@ -259,23 +258,44 @@ BEGIN
     IF NEW.done_at IS NULL THEN
       NEW.done_at := now();
     END IF;
-    -- 3499 ATTRIBUTION (NAMING, not prevention): name the funding state at W-birth. A NEW goal
-    -- (id past the migration watermark) shipped with no funder is recorded '(unfunded)' — a
-    -- visible unattributed mint. A LEGACY goal (id <= watermark) keeps NULL: pre-feature,
-    -- honestly unknown, never revised. A genesis superuser still forges any of this — hence
-    -- NAMING, never REJECT: the trigger records the funding state, it does not gate the write.
-    IF NEW.funded_by IS NULL THEN
-      SELECT legacy_max_id INTO wm FROM funded_by_watermark LIMIT 1;
-      IF wm IS NOT NULL AND NEW.id > wm THEN
-        NEW.funded_by := '(unfunded)';
-      END IF;
-    END IF;
+    -- (goal 4227 S3: the 3499 funder-NAMING that followed here — funded_by := '(unfunded)' for
+    -- a new goal closed with no funder — is RETIRED with budgets. funded_by is frozen below;
+    -- the rows it already named keep their names as v1 history.)
   END IF;
   RETURN NEW;
 END $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS goals_done_stamp ON goals;
 CREATE TRIGGER goals_done_stamp BEFORE UPDATE ON goals
   FOR EACH ROW EXECUTE FUNCTION goals_done_stamp();
+
+-- goal 4227 S3 (owner law 2026-09-29: NO budgets, ever): the budget columns are DEPRECATED and
+-- READ-ONLY — kept, never dropped, because v1's frozen econ rows and the goals that carry a
+-- budget or a funder are history. An insert may not set them; an update may not change them.
+-- triggers.premium is NOT covered: it is the survival flag pulse.shed reads, not a budget.
+-- GRADE: stops every client path (MCP, API, an agent's psql); a genesis superuser can drop the
+-- trigger — detection-grade against that actor, like the rest of 3499.
+CREATE OR REPLACE FUNCTION goals_budget_frozen() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.budget_tokens <> 0 OR NEW.spent_tokens <> 0 OR NEW.funded_by IS NOT NULL THEN
+      RAISE EXCEPTION 'goals budget columns are read-only since goal 4227 (no budgets): '
+        'budget_tokens=%, spent_tokens=%, funded_by=% on insert', NEW.budget_tokens,
+        NEW.spent_tokens, NEW.funded_by;
+    END IF;
+  ELSIF NEW.budget_tokens IS DISTINCT FROM OLD.budget_tokens
+     OR NEW.spent_tokens IS DISTINCT FROM OLD.spent_tokens
+     OR NEW.funded_by IS DISTINCT FROM OLD.funded_by THEN
+    RAISE EXCEPTION 'goals budget columns are read-only since goal 4227 (no budgets): '
+      'goal % may not change budget_tokens/spent_tokens/funded_by', OLD.id;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS goals_budget_frozen ON goals;
+CREATE TRIGGER goals_budget_frozen BEFORE INSERT OR UPDATE ON goals
+  FOR EACH ROW EXECUTE FUNCTION goals_budget_frozen();
+COMMENT ON COLUMN goals.budget_tokens IS 'DEPRECATED read-only (goal 4227 S3): v1 price, history only';
+COMMENT ON COLUMN goals.spent_tokens IS 'DEPRECATED read-only (goal 4227 S3): never written';
+COMMENT ON COLUMN goals.funded_by IS 'DEPRECATED read-only (goal 4227 S3): v1 mint funder, history only';
 
 -- econ: the daily thermodynamic/economic rollup (one row per day, metrics jsonb).
 -- Computed by nucleus/econ.py (the ONE implementation of the equations; the observatory

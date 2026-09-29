@@ -169,11 +169,16 @@ run "wash detector: v2 rings (live, report-only)" "$PY" nucleus/wash_detector.py
 run "wash detector invariants"                    "$PY" tests/test_wash_detector.py
 # economy-integrity (goal 3499): funded_by ATTRIBUTION, not prevention. The migration is
 # idempotent, the legacy watermark separates pre-feature NULL from new-unfunded, the
-# goals_done_stamp trigger NAMES each W-mint's funder WITHOUT breaking done_at (W-birth) and
-# WITHOUT rejecting any write (a superuser is unstoppable in-DB), and every W-bearing surface
+# goals_done_stamp trigger stamps done_at (W-birth) WITHOUT rejecting any close (a superuser is
+# unstoppable in-DB) — its funder-NAMING retired with budgets at goal 4227 S3 — and every W-bearing surface
 # is labeled attribution-grade. Two oracles: the DB behaviour (throwaway-pg, RED-first) and
 # the source labeling-parity drift guard (pure stdlib).
 run "3499 funded_by attribution + W-birth intact" "$PY" tests/test_funded_by.py
+# goal 4227 S3 (steward): the budget WRITERS retire — propose_goal and the observatory's goal_create
+# stop writing budgets, goals_done_stamp stops naming funders — and goals.budget_tokens /
+# spent_tokens / funded_by are FROZEN read-only by a DB trigger (kept, never dropped: v1 history).
+# triggers.premium is excluded (the survival flag). Drives the REAL functions in a sqlguard fixture.
+run "goal budgets frozen, writers retired (4227 S3)" "$PY" tests/test_goal_budget_frozen.py
 run "3499 econ honest-labeling parity"            "$PY" tests/test_econ_labeling.py
 # disk-guard (09-05 ENOSPC remediation): hermetic band-ladder oracle — the guard itself
 # goes LIVE only when wired into the wa-bridge lifespan (BUILT ≠ DEPLOYED; wiring is a
