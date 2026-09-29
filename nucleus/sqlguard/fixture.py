@@ -103,6 +103,44 @@ def fixture_db():
             admin.close()
 
 
+_REL_SQL = ("SELECT c.oid, obj_description(c.oid, 'pg_class') FROM pg_class c "
+            "JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind IN ('r','p','v','m') "
+            "AND n.nspname NOT IN ('pg_catalog','information_schema','ag_catalog','topology') "
+            "AND n.nspname NOT LIKE 'pg_toast%%'")
+_ALLSIG_SQL = ("SELECT a.attrelid, a.attname, format_type(a.atttypid, a.atttypmod), "
+               "coalesce(pg_get_expr(d.adbin, d.adrelid), ''), a.attnotnull "
+               "FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum "
+               "WHERE a.attrelid = ANY(%s) AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attrelid, a.attname")
+
+
+def db_stamp_map(dbname: str) -> dict:
+    """{oid: stamp-valid NOW} for every org relation in a fixture DB. Two catalog queries, no cache.
+
+    It is recomputed at EVERY credit (a3 D-A): an ALTER keeps the OID, so any cache keyed by (db, oid) would go
+    on crediting the altered relation, which is #3's hiding place re-opened. A process-local cache also can't see
+    DDL run by ANOTHER process against the same fixture (a hook under test), so correctness here comes by
+    construction, not by invalidation. The signature is computed exactly as signature() computes it (same
+    columns, order and repr), so the stamper and the checker can't drift."""
+    try:
+        c = _side.get(dbname)
+        if c is None or c.closed:
+            c = _side[dbname] = psycopg.connect(make_conninfo(live_dsn(), dbname=dbname), autocommit=True)
+        rels = c.execute(_REL_SQL).fetchall()
+        rows = {}
+        for relid, *attr in c.execute(_ALLSIG_SQL, ([o for o, _ in rels],)).fetchall():
+            rows.setdefault(relid, []).append(tuple(attr))
+        cur_sha, out = file_sha(), {}
+        for oid, text in rels:
+            ok = bool(text) and text.startswith(STAMP)
+            if ok:
+                sha, _, sig = text[len(STAMP):].partition(":")
+                ok = sha == cur_sha and sig == hashlib.sha256(repr(rows.get(oid, [])).encode()).hexdigest()
+            out[oid] = ok
+        return out
+    except Exception:
+        return {}
+
+
 def stamp_valid(dbname: str, oid: int) -> bool:
     """At CREDIT time: the relation carries a stamp whose file sha is the CURRENT schema.sql's, and whose
     signature equals the relation's shape now. Any failure (no comment, stale sha, altered shape, unreadable)

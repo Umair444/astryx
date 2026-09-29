@@ -88,6 +88,18 @@ Extractor list (a3 #22138):
   RED-on-new, until that row's trip or clock fires. Any other reason for being below RESPONSIVE stays RED-on-new.
   - RED-control: an oracle that's an unlisted schema.sql reader → RED.
   - GREEN-control: a listed one inside its window → reported.
+B0 review (a3 #22252), for B1:
+- D-A: stamp validity is recomputed per statement, NO cache (an ALTER keeps the OID). RED-control: SELECT, ALTER
+  … DROP DEFAULT, then the same SELECT → the second record is stamped=False.
+- D-B: DML without RETURNING and computed-only SELECTs fall back to "EVERY relation in the fixture DB is stamp-valid
+  NOW". GREEN: an UPDATE at 1 row and at 0 rows in a stamped fixture → RESPONSIVE. RED: after a hand CREATE
+  TABLE → not credited.
+- F-a: untraced children → NOT SEARCHED, cause named, on the per-site clock. The opt-in is ONE helper in
+  nucleus/sqlguard/, never a per-test copy.
+- F-b: the extractor list is derived at RUNTIME ("builds an unstamped fixture"). A listed extractor drops off
+  ONLY when its gate completed rc=0 without building one, so a skip never silently "migrates" it. EX2/EX3 unchanged.
+- C3: the seed run is a clean worktree with the estate COPIED in. Record sha + count + an ESTATE MANIFEST HASH
+  beside the seed stamp.
 Plus:
 - C1: negatives only at rc=0.
 - a2: hash production rows before and after a full check.sh; they must be unchanged.

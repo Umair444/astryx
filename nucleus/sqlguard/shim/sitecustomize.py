@@ -20,7 +20,8 @@ RULES THIS FILE KEEPS:
   * Fail-open on its OWN errors: each one is written as a {"shim_error": class} record and swallowed. The
     judge treats any count > 0 as a NOT SEARCHED run. It must never read as EXECUTED, and never raise into the
     code under test.
-  * Catalog caches are keyed (dbname, oid) (M1): OIDs are per database.
+  * Stamp validity is recomputed per fixture statement with NO cache (a3 D-A). An ALTER keeps the OID, and
+    another process can run DDL we never see. OIDs are only ever compared within one database (M1).
 This file is the one declared inventory exemption (it cannot observe its own guarded reads).
 """
 import os
@@ -45,7 +46,6 @@ if _DIR:
     _lock = threading.Lock()
     _seq = itertools.count()
     _out = None
-    _stamp_cache = {}                        # (dbname, oid) -> bool
     import weakref
     _schema = weakref.WeakKeyDictionary()     # conn -> schema (id() is reused after GC; a weak key isn't)
     _SET_PATH = re.compile(r"^set (?:session |local )?search_path (?:to|=) \"?([a-z0-9_]+)")
@@ -134,19 +134,23 @@ if _DIR:
         return _schema[conn_key]
 
     def _stamped(dbname, oids):
-        """True iff EVERY relation carries a valid signature stamp (current schema.sql sha + recomputed sig)."""
-        if not dbname.startswith(_FX_PREFIX) or not oids:
+        """Fixture DBs only (live → None). Recomputed at EVERY statement, with NO cache (a3 D-A: an ALTER keeps the
+        OID, and a cache would credit the altered relation). With base relations: every one must be stamp-valid
+        NOW. Without them (DML without RETURNING, computed-only SELECTs, a3 D-B): EVERY org relation in the
+        fixture DB must be stamp-valid NOW. That's the design's captured-stamp fallback at the DB grain. It's
+        conservative: one hand-made or altered relation anywhere withholds credit."""
+        if not dbname.startswith(_FX_PREFIX):
             return None
-        todo = [o for o in oids if (dbname, o) not in _stamp_cache]
-        if todo:
-            _local.busy = True
-            try:
-                stamp_valid = _private("fixture").stamp_valid
-                for o in todo:
-                    _stamp_cache[(dbname, o)] = stamp_valid(dbname, o)
-            finally:
-                _local.busy = False
-        return all(_stamp_cache[(dbname, o)] for o in oids)
+        _local.busy = True
+        try:
+            m = _private("fixture").db_stamp_map(dbname)
+        finally:
+            _local.busy = False
+        if not m:
+            return False
+        if oids:
+            return all(m.get(o, False) for o in oids)
+        return all(m.values())
 
     def _query_text(q, conn):
         if isinstance(q, bytes):
