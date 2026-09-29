@@ -20,10 +20,12 @@ The derived consumer set must EQUAL the typed MANIFEST (I2: effect type + rest s
 A new, unseen consumer turns it RED. And no entry may be typed `hard`: after S1a/S1b the
 value-keyed hard actuators (market_decay's retire, shed's roi rung) are gone — I4/O3 closure.
 
-GITIGNORED ROOTS (triggers/, memory/graph, sensors — decided by `git check-ignore`, not a list)
-are absent in a worktree or a fresh clone. The tracked half is always asserted; if a gitignored
-root is absent its manifest rows are UNVERIFIED and the run exits 77 AFTER the tracked asserts —
-a skip, never a pass. Run it in the live tree for the whole set.
+THE SCAN DOMAIN IS DERIVED TOO (a2, S1b review #21603): every .py under the repo minus
+{venv, node_modules, homes, tests, .git} and test_/mutants_ files — not a root list, so a consumer
+landing in a NEW top-level dir (bridges/, harness/, …) is seen. Gitignored code (triggers/,
+memory/graph, sensors — decided by `git check-ignore`) is absent in a worktree or fresh clone:
+a manifest row whose file is ABSENT and gitignored is UNVERIFIED, and the run exits 77 AFTER the
+tracked asserts — a skip, never a pass. Run it in the live tree for the whole set.
 
 Exit 0 pass · 1 fail · 77 tracked half passed, gitignored half unverifiable here.
 """
@@ -35,7 +37,7 @@ import warnings
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-ROOTS = ("nucleus", "triggers", "mcp", "hooks", "observatory/api", "memory/graph", "sensors")
+EXCLUDE_DIRS = {"venv", "node_modules", "homes", "tests", ".git"}
 AUTHORITY = "nucleus/econ.py"
 
 # ── (iii) goals/econ columns: DECLARED, but complete (every column classified) ──────────────
@@ -201,21 +203,33 @@ check("a NEW key written into v2 is derived automatically (x['mirror_probe'] bec
 
 # ── the live set equals the manifest ────────────────────────────────────────────────────────
 print("\nCONSUMER SET = TYPED MANIFEST:")
-derived, absent_roots = {}, []
-for root in ROOTS:
-    base = REPO / root
-    if not base.exists():
-        if _ignored(f"{root}/x.py"):
-            absent_roots.append(root)
-        continue
-    for p in sorted(base.rglob("*.py")):
-        rel = str(p.relative_to(REPO))
-        if rel == AUTHORITY or p.name.startswith(("test_", "mutants_")) or "node_modules" in rel:
+def scan(repo: Path, pub, keys, value_cols) -> dict:
+    """{relpath: reasons} over every .py under `repo` outside EXCLUDE_DIRS (the derived domain)."""
+    out = {}
+    for p in sorted(repo.rglob("*.py")):
+        rel = p.relative_to(repo)
+        if set(rel.parts[:-1]) & EXCLUDE_DIRS or str(rel) == AUTHORITY \
+                or p.name.startswith(("test_", "mutants_")):
             continue
-        why = reads(p.read_text(errors="replace"), pub, keys, V)
+        why = reads(p.read_text(errors="replace"), pub, keys, value_cols)
         if why:
-            derived[rel] = why
-expected = {k for k in MANIFEST if not any(k.startswith(r + "/") for r in absent_roots)}
+            out[str(rel)] = why
+    return out
+
+
+import tempfile  # noqa: E402
+with tempfile.TemporaryDirectory() as _d:
+    (Path(_d) / "brandnew_dir").mkdir()
+    (Path(_d) / "brandnew_dir" / "reader.py").write_text("x = m['v2']['W']\n")
+    (Path(_d) / "venv").mkdir()
+    (Path(_d) / "venv" / "lib.py").write_text("x = m['v2']['W']\n")
+    _fx = scan(Path(_d), pub, keys, V)
+check("the scan DOMAIN is derived: a consumer in a NEW top-level dir is found; venv/ is not scanned",
+      set(_fx) == {"brandnew_dir/reader.py"}, f"found={sorted(_fx)}")
+
+derived = scan(REPO, pub, keys, V)
+unverified = sorted(k for k in MANIFEST if not (REPO / k).exists() and _ignored(k))
+expected = set(MANIFEST) - set(unverified)
 new = sorted(set(derived) - expected)
 gone = sorted(expected - set(derived))
 check("every derived consumer is in the manifest (a new, unseen consumer is RED — type it)",
@@ -234,9 +248,9 @@ print()
 if fails:
     print(f"FAILED ({len(fails)}): " + "; ".join(fails))
     sys.exit(1)
-if absent_roots:
-    print(f"SKIP (77): tracked half PASSED; gitignored root(s) {absent_roots} absent here, so "
-          f"{len(MANIFEST) - len(expected)} manifest row(s) are UNVERIFIED — run in the live tree.")
+if unverified:
+    print(f"SKIP (77): tracked half PASSED; gitignored manifest row(s) {unverified} are absent "
+          f"here, so UNVERIFIED — run in the live tree.")
     sys.exit(77)
 print(f"econ consumers: {len(derived)} derived = typed manifest; no value-keyed hard actuator")
 sys.exit(0)

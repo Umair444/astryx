@@ -19,6 +19,11 @@ AST, so this scans ONLY what executes — the "check what RUNS, not what is writ
 law this org keeps re-learning (an oracle that failed on its own comment; a check that
 passed because a comment named the right function).
 
+GRADE OF THE NAME FALLBACK (goal 4227 S1b, a2 #21603): opaque values are trusted by the name
+they are bound to; the guard convicts mixes of TRACEABLE budget values, not false names. A
+binding like `shipped_flux = budget_for(g)` is a lie told in a name at the binding site — the
+guard would need call tracing to see it; a reviewer sees it in one line.
+
 Independence: the guard does not import econ.py or the org server; it re-derives the
 same-base rule from the SPEC, so it cannot pass by sharing the emitter's code.
 
