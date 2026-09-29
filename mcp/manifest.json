@@ -143,7 +143,20 @@
           "description": "Ask the org's own MEMORY a question and get a short, CITED answer synthesized from the"
         }
       ]
+    },
+    {
+      "server": "tools",
+      "tools": [
+        {
+          "name": "find",
+          "description": "Search the org's tool registry BEFORE writing a script or doing by hand what a tool may"
+        },
+        {
+          "name": "run",
+          "description": "Run a registered script by its registry id (e.g. script:nucleus/smoke.sh) with an argv"
+        }
+      ]
     }
   ],
-  "total_tools": 26
+  "total_tools": 28
 }
