@@ -17,6 +17,9 @@ which lets the same oracle run against the pre-fix find() and prove it RED.
   F3 whole tokens: a short word never matches INSIDE another ("ist" is not in "list")
   F4 a stopword-only question returns nothing
   F5 rarity: a common word ranks below a rare one ("org dag" puts the DAG tool first)
+  F7 a TIE goes to the tool whose own ID holds the words, not to one whose description merely
+     mentions them, even when the mentioner sorts first alphabetically (abstractor-4: "list
+     models" put imagegen/generate above imagegen/list_models)
   F6 a match on common words alone is dropped when a far stronger match exists, but a query of
      only that common word still returns its matches
 """
@@ -87,6 +90,16 @@ check("F6 common-word-only matches are dropped when a far stronger match exists"
 got = ids("org", limit=50)
 check("F6 ...but a query of ONLY the common word still returns its matches",
       len(got) == 16, f"{len(got)} results")
+
+# F7: identical scores (both descriptions carry both words once). "aaa…" sorts first alphabetically.
+TIE = [E("mcp:img/aaa_generate", "make images; returns a list of model ids"),
+       E("mcp:img/list_models", "which image model ids are visible")] + \
+      [E(f"script:nucleus/pad{i}.py", "astryx utility") for i in range(10)]
+toolreg.entries = lambda: TIE
+got = ids("list models")
+check("F7 a tie goes to the tool whose ID holds the words, not a description mention",
+      bool(got) and got[0] == "mcp:img/list_models", str(got))
+toolreg.entries = lambda: POOL
 
 if fails:
     print(f"\nFAIL: {len(fails)} find() invariant(s) broken")

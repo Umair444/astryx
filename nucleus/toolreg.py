@@ -460,12 +460,17 @@ def find(query: str, limit: int = 10, pool: list | None = None) -> list[dict]:
         hit = [w for w in words if any(_match(w, t) for t in d)]
         if hit:
             score = sum(math.log((n + 1) / (df[w] + 0.5)) for w in hit)
-            scored.append((-score, e["id"], e))
-    scored.sort(key=lambda x: (x[0], x[1]))
+            # Ties are common at this N. A query word in the tool's own ID is what the tool is
+            # ABOUT; a description hit may be a passing mention ("list of model ids"). So the ID
+            # breaks ties, before the alphabetical fallback (abstractor-4, review of 231b679).
+            id_toks = _tokens(e["id"])
+            id_hits = sum(1 for w in hit if any(_match(w, t) for t in id_toks))
+            scored.append((-score, -id_hits, e["id"], e))
+    scored.sort(key=lambda x: (x[0], x[1], x[2]))
     # RELATIVE cutoff: a result held up by common words alone ("org") is dropped once a far stronger
     # match exists, while near-ties stay. A single-word query is unaffected (its hits all score alike).
     best = -scored[0][0] if scored else 0
-    return [e for sc, _, e in scored if -sc >= RELATIVE_FLOOR * best][:limit]
+    return [e for sc, _, _, e in scored if -sc >= RELATIVE_FLOOR * best][:limit]
 
 
 if __name__ == "__main__":

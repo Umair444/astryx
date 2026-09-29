@@ -27,4 +27,9 @@ MUTANTS = {
         ("    return len(q) >= 4 and len(t) >= 4 and", "    return len(q) >= 1 and len(t) >= 1 and"),
     "Z6 prefix one way only (a longer question word misses: 'healthy' → 'health')":
         ("(t.startswith(q) or q.startswith(t))", "t.startswith(q)"),
+
+    # Ties fall back to alphabetical id: a passing description mention outranks the tool the
+    # question is about (abstractor-4's "list models" / "db backup" cases).
+    "Z7 no id-hit tie-break":
+        ("    scored.sort(key=lambda x: (x[0], x[1], x[2]))", "    scored.sort(key=lambda x: (x[0], x[2]))"),
 }
