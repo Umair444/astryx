@@ -60,14 +60,14 @@ NON_VALUE_COLS = {
 # type: hard (acts on value by writing/skipping) | soft (shapes behaviour: a line an agent reads)
 #       | detector | reporter | writer.   rest: the declared state when its input is VACUOUS.
 MANIFEST = {
-    "hooks/usage.py": {"type": "soft", "rest": "[econ] neutral token (disarmed, S1a)",
-                       "stage": "S2 mirrors v2, self-scoped"},
-    "mcp/org/server.py": {"type": "reporter", "rest": "economy() shows v1, labeled budget-era",
-                          "stage": "S2 reads v2; S3 propose_goal stops writing budgets"},
-    "observatory/api/main.py": {"type": "reporter", "rest": "v1 frozen, labeled budget-era",
-                                "stage": "S2"},
-    "memory/graph/ingest.py": {"type": "reporter", "rest": "ingests v1 budget as history",
-                               "stage": "S2"},
+    "hooks/usage.py": {"type": "soft", "rest": "neutral / 'not evaluated' token below V2_MIN",
+                       "stage": "S2: the self-scoped v2 mirror, no rank"},
+    "mcp/org/server.py": {"type": "reporter", "rest": "org = gated v2 or a note; v1 labeled budget-era",
+                          "stage": "S2 done; S3 propose_goal stops writing budgets"},
+    "observatory/api/main.py": {"type": "reporter", "rest": "per-point v2 = None below V2_MIN; v1 labeled",
+                                "stage": "S2 done (API); the dashboard UI still charts v1"},
+    "memory/graph/ingest.py": {"type": "reporter", "rest": "a goal's budget as a HISTORICAL fact",
+                               "stage": "unchanged at S2: a column value, not v1 W; S3 read-only"},
     "nucleus/wash_detector.py": {"type": "detector", "rest": "NOT_EVALUATED share on no calls",
                                  "stage": "migrated S1b (v2 rings, report-only)"},
     "triggers/steward/econ_rollup.py": {"type": "writer", "rest": "archives what compute() returns",
@@ -194,9 +194,16 @@ for label, src, want in [
     check(f"{label} → {'consumer' if want else 'not a consumer'}", got == want, f"reads={reads(src, pub, keys, V)}")
 
 # a key the authority STARTS writing joins the set with no edit here (derivation, not a list)
-_econ_plus = (REPO / AUTHORITY).read_text().replace(
-    '"tool_gdp": _v2_tool_gdp(rows, V2_VERSION, auth_ok),',
-    '"tool_gdp": _v2_tool_gdp(rows, V2_VERSION, auth_ok),\n        "mirror_probe": None,', 1)
+# (injected through the AST — a text anchor silently stopped matching when S2 rewrote that line,
+# and a probe whose edit did not apply answers a smaller question than it asks)
+_t = ast.parse((REPO / AUTHORITY).read_text())
+_rets = [r for f in _t.body if isinstance(f, ast.FunctionDef) and f.name == "v2"
+         for r in ast.walk(f) if isinstance(r, ast.Return) and isinstance(r.value, ast.Dict)]
+if not _rets:
+    raise SystemExit("FAIL: v2() has no dict return — cannot probe key derivation")
+_rets[0].value.keys.append(ast.Constant("mirror_probe"))
+_rets[0].value.values.append(ast.Constant(None))
+_econ_plus = ast.unparse(_t)
 _, keys_plus, _ = derive_identifiers(_econ_plus, (REPO / "nucleus" / "schema.sql").read_text())
 check("a NEW key written into v2 is derived automatically (x['mirror_probe'] becomes a consumer)",
       "mirror_probe" in keys_plus and bool(reads("x = m['mirror_probe']", pub, keys_plus, V)))

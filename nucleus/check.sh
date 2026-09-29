@@ -401,6 +401,11 @@ run "weekly econ review: insures constitutive set, layer-1 stays FYI, L3 retired
 # goal 4227 S0 (steward): the econ v2 SHADOW at metrics->'v2' — I1 records, v1 untouched,
 # no budget-era identifier on the v2 path, effort side re-derived, tool GDP degrades honestly.
 run "econ v2 shadow (4227 S0)"        "$PY" tests/test_econ_v2_shadow.py
+# goal 4227 S2 (steward): reads cut over to v2 behind the VERSION GATE (econ.v2_view, >= V2_MIN —
+# v2.0 rows carry S0's tautology + the named-script over-count and are never read), tool GDP
+# counts only meta.v-stamped ledger rows, and the [econ] line is the SELF-SCOPED mirror (your own
+# tools' use by others: no rank, no net, no other name; 'not evaluated' when degenerate).
+run "econ v2 mirror + version gate (4227 S2)" "$PY" tests/test_econ_v2_mirror.py
 # goal 4227 O6 (steward, S1b): the economy's CONSUMER SET is DERIVED from the authorities (econ.py
 # public functions + every key compute()/v2() write, by AST; goals/econ value columns from
 # schema.sql, every column classified) and must EQUAL the typed manifest (effect type + rest

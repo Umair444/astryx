@@ -131,7 +131,9 @@ def demand_arm(dsn):
                             "('caller-'||%s, %s, %s) RETURNING id", (name, mid, gid)).fetchone()[0]
             c.execute("INSERT INTO steps (agent, kind, content, meta, turn_id) VALUES "
                       "('caller-'||%s, 'tool', 'call', %s::jsonb, %s)",
-                      (name, _json.dumps({"registry_id": f"mcp:t/{name}"}), tid))
+                      (name, _json.dumps({"registry_id": f"mcp:t/{name}", "v": 1}), tid))
+            # "v": since S2 the reader counts only ledger rows stamped with meta.v (forge
+            # #21604); the unstamped case is pinned in tests/test_econ_v2_mirror.py arm 5.
         since = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
         until = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
         try:

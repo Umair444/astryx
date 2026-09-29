@@ -212,44 +212,48 @@ def pnl(conn, since, until) -> list[dict]:
     return out
 
 
-def econ_standing(conn, agent: str) -> dict | None:
-    """One agent's economic standing, read from the LATEST archived econ row (the nightly
-    rollup) — never recomputed, so it is cheap enough to run in every agent's wake hook.
-    Returns None when no econ row has been archived yet.
-
-    FACTS ONLY, by the goal-#3407 design (16042): `priced` (is the org's W>0 this window —
-    is there any standing to take at all), this agent's `net`, and its `rank` among all
-    burners by net (rank 1 = most net-positive). The RENDERER decides wording; it states a
-    factual position, NEVER an org verdict, and shows the neutral token while UNPRICED (W=0).
-    The disambiguating fact — is a negative net expected-in-flight or genuine waste — lives
-    at the agent, not here, so this returns the number and leaves the judgment to its reader."""
-    row = _one(conn, "SELECT day, metrics FROM econ ORDER BY day DESC LIMIT 1")
-    if not row:
-        return None
-    day, m = row[0], row[1] or {}
-    priced = bool((m.get("thermo") or {}).get("W"))
-    flows = m.get("pnl") or []
-    # rank 1 = most net-positive; deterministic tiebreak by agent name so a wake is stable
-    ordered = sorted(flows, key=lambda r: (-(r.get("net") or 0), r.get("agent") or ""))
-    mine = next((r for r in flows if r.get("agent") == agent), None)
-    rank = next((i + 1 for i, r in enumerate(ordered) if r.get("agent") == agent), None)
-    return {"day": str(day), "priced": priced, "n": len(flows),
-            "present": mine is not None,
-            "net": (mine or {}).get("net"), "rank": rank}
-
-
 ECON_NEUTRAL = "[econ] between ships · no standing verdict"
 
 
-def econ_line(standing: dict | None) -> str:
-    """The per-wake [econ] line (hooks/usage.py renders this, fail-open).
+def econ_mirror(conn, agent: str) -> dict | None:
+    """The reader's OWN mirror from the NEWEST archived econ row — one indexed row read, cheap
+    enough for every wake (a1 edge c: never aggregate in the hook). Only that row: a newest
+    row below V2_MIN reads as not-yet-cut-over, never by reaching back to an older one.
+    Self-scoped by construction: returns only `agent`'s entry, never the table."""
+    row = _one(conn, "SELECT day::text, metrics->'v2' FROM econ ORDER BY day DESC LIMIT 1")
+    if not row:
+        return None
+    v2 = v2_view({"v2": row[1]})
+    if v2 is None:
+        return {"day": row[0], "version": (row[1] or {}).get("version") if isinstance(row[1], dict)
+                else None, "status": None, "coverage": None, "mine": None}
+    mir = v2.get("mirror") or {}
+    return {"day": row[0], "version": v2.get("version"), "status": mir.get("status"),
+            "coverage": mir.get("coverage"), "mine": (mir.get("value") or {}).get(agent)}
 
-    DISARMED (plan-4227 S1a): always the neutral token. The priced branch printed a signed
-    net and a cross-agent rank the moment W>0; goal 4227 retires the budgets that W was a
-    sum of, and a line that shapes behaviour must not act on a quantity mid-migration. The
-    [econ] v2 mirror (S2) replaces this, self-scoped and versioned; econ_standing() keeps
-    returning the facts for readers that want them."""
-    return ECON_NEUTRAL
+
+def econ_line(rec: dict | None) -> str:
+    """The per-wake [econ] line (hooks/usage.py renders this, fail-open). A SOFT ACTUATOR: it is
+    injected into every prompt, so it shapes behaviour unread (a3 H2). It therefore shows ONLY
+    the reader's own tools' use by OTHER agents, with its as-of day and coverage — never a
+    signed net, a cross-agent rank, or another agent's name. Anything that is not a v2 mirror
+    record at or above V2_MIN (None, a v1 standing dict, a v2.0 row) → the neutral token; a
+    degenerate input → an explicit 'not evaluated' token, never a number."""
+    if not isinstance(rec, dict) or _v2_ver(rec.get("version")) is None \
+            or _v2_ver(rec.get("version")) < V2_MIN:
+        return ECON_NEUTRAL
+    day, status = rec.get("day") or "?", str(rec.get("status") or "")
+    if not status or status.startswith("NOT_EVALUATED"):
+        why = status.split(":", 1)[1].strip() if ":" in status else "no mirror in the newest row"
+        return f"[econ] v2 · {day} · your tools: not evaluated ({why})"
+    cov = rec.get("coverage")
+    tail = (f"usage-GDP, compression=1, coverage {cov:.0%}" if isinstance(cov, (int, float))
+            else "usage-GDP, compression=1") + (" · PARTIAL" if status.startswith("PARTIAL") else "")
+    mine = rec.get("mine")
+    if not mine:
+        return f"[econ] v2 · {day} · no tool of yours was called by another agent on demand ({tail})"
+    return (f"[econ] v2 · {day} · your tools: {mine['tools']} used by {mine['callers']} other "
+            f"agent(s), {mine['pairs']} tool×caller pair(s) ({tail})")
 
 
 def theil(shares: list[float]) -> float | None:
@@ -387,7 +391,26 @@ def integrity(conn, since, until) -> dict:
 # number without its coverage cannot be displayed honestly, and an unmeasurable quantity
 # is status NOT_EVALUATED with value None — never a measured 0. The v2 code path must not
 # name any budget-era identifier (the oracle checks this source by AST).
-V2_VERSION = "v2.0"
+# v2.1 (S2): the version gate. v2.0 rows were archived while S0's demand predicate was a
+# tautology (fixed e36a66c) and the ledger counted a script NAMED in a command as called
+# (fixed acfc1ea); readers take only V2_MIN and up, so nobody has to remember which days.
+V2_VERSION = "v2.1"
+V2_MIN = (2, 1)
+
+
+def _v2_ver(v) -> tuple | None:
+    """'v2.1' -> (2, 1); anything else -> None (unknown version = not readable)."""
+    m = re.fullmatch(r"v(\d+)\.(\d+)", v) if isinstance(v, str) else None
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def v2_view(metrics) -> dict | None:
+    """THE READ GATE: the v2 records of an econ metrics bundle if their version is >= V2_MIN,
+    else None. Every v2 reader goes through here (economy(), the observatory, the [econ] hook);
+    a caller that gets None shows v2 as not-yet-available — it never falls back to v1."""
+    v2 = (metrics or {}).get("v2") if isinstance(metrics, dict) else None
+    ver = _v2_ver((v2 or {}).get("version")) if isinstance(v2, dict) else None
+    return v2 if ver is not None and ver >= V2_MIN else None
 from nucleus.orgname import RESERVED_ORGS  # the demand predicate's authority (see _V2_DEMAND)
 # a call serves REAL demand (owner edge b) only when its turn served a goal, or was woken
 # by a trigger, the owner, a human chat or a federated peer. An inter-agent message alone
@@ -441,13 +464,38 @@ def _v2_tool_gdp(rows, version=V2_VERSION, authorship_ok=True) -> dict:
                       else "OK: usage-GDP, compression=1 declared"}
 
 
+def _v2_mirror(rows, tool_gdp) -> dict:
+    """PURE. The [econ] mirror, per AUTHOR: their own tools' use by OTHER agents on demand —
+    distinct tools, distinct callers, (tool, caller) pairs, over econ._v2_counted (the same
+    edges tool GDP counts). Self-scoped: a record holds counts only, never a name. Unresolved
+    authors get no entry. It inherits tool_gdp's status and coverage, so a degenerate ledger
+    is NOT_EVALUATED here too (never 'nobody used your tools')."""
+    if tool_gdp.get("value") is None:
+        return {"value": None, "version": tool_gdp["version"], "coverage": 0,
+                "status": tool_gdp["status"]}
+    per: dict = {}
+    for rid, caller, author in _v2_counted(rows):
+        if author in (None, "unknown"):
+            continue
+        a = per.setdefault(author, {"tools": set(), "callers": set(), "pairs": set()})
+        a["tools"].add(rid)
+        a["callers"].add(caller)
+        a["pairs"].add((rid, caller))
+    return {"value": {k: {f: len(v[f]) for f in ("tools", "callers", "pairs")} for k, v in per.items()},
+            "version": tool_gdp["version"], "coverage": tool_gdp["coverage"],
+            "status": tool_gdp["status"]}
+
+
 def _v2_tool_rows(conn, since, until):
     """(rows, authorship_ok) from forge's ledger (plan-4227 #21266): one kind='tool' step per
-    call carrying meta.registry_id; closed turns only (turn_id back-fills at Stop)."""
+    call carrying meta.registry_id; closed turns only (turn_id back-fills at Stop). Only rows
+    stamped with meta.v (forge #21604, toolreg.LEDGER_V) count: an unstamped row predates
+    versioned call semantics. Strict on purpose — a remembered timestamp window for the
+    interim would be the cut-over-by-memory this filter replaced; the gap under-counts."""
     calls = _all(conn, f"""
         SELECT s.meta->>'registry_id' AS rid, s.agent AS caller, {_V2_DEMAND} AS dq
         FROM steps s JOIN turns t ON t.id = s.turn_id
-        WHERE s.kind = 'tool' AND s.meta ? 'registry_id'
+        WHERE s.kind = 'tool' AND s.meta ? 'registry_id' AND s.meta ? 'v'
           AND s.ts >= %s AND s.ts < %s""", (sorted(RESERVED_ORGS), since, until))
     if not calls:
         return [], True
@@ -483,6 +531,7 @@ def v2(conn, since, until, k) -> dict:
     ok = "OK" if phi else "VACUOUS: no flux in window"
     kc = (k or {}).get("compressed")
     rows, auth_ok = _v2_tool_rows(conn, since, until)
+    gdp = _v2_tool_gdp(rows, V2_VERSION, auth_ok)
     return {
         "version": V2_VERSION,
         # W counts a shipped goal's LIFETIME turns at its done_at (the boundary transfer), so
@@ -496,7 +545,9 @@ def v2(conn, since, until, k) -> dict:
                      "OK: daily transfer, may be <0; conserved over windows"),
         "G": _v2_rec(round(shipped_flux / (phi * kc) * 1e9, 6) if phi and kc else None, cov,
                      ok if phi and kc else "VACUOUS: flux or K unmeasured"),
-        "tool_gdp": _v2_tool_gdp(rows, V2_VERSION, auth_ok),
+        "tool_gdp": gdp,
+        # the [econ] mirror (S2): each author's own tools' use by others, read one row per wake
+        "mirror": _v2_mirror(rows, gdp),
     }
 
 
