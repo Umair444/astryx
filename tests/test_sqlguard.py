@@ -44,19 +44,23 @@ def dp_arms():
     sys.path.insert(0, str(REPO))
     from nucleus.sqlguard import privacy, ledger
     real_repo, real_path = privacy.REPO, os.environ.get("PATH", "")
+    # Test BEHAVIOUR, not the new API: against code without an error list (ee495dd) the arms must FAIL with a
+    # name, not crash. A crash is red, but it can't say WHICH property the code violates.
+    errs = lambda: list(getattr(privacy, "ERRORS", []))
+    clear = lambda: (privacy.ignored.cache_clear(), getattr(privacy, "ERRORS", []).clear())
     with tempfile.TemporaryDirectory() as nonrepo:
         try:
             privacy.REPO = Path(nonrepo)                                  # (i) outside any git repo → rc 128
-            privacy.ignored.cache_clear(); privacy.ERRORS.clear()
+            clear()
             check("D-P (i) not-a-repo reads as IGNORED (fails closed)", privacy.ignored("triggers/zz/a.py") is True)
-            check("D-P (i) ...and records a classification error", bool(privacy.ERRORS))
+            check("D-P (i) ...and records a classification error", bool(errs()))
             privacy.REPO = real_repo; os.environ["PATH"] = "/nonexistent"  # (ii) git absent from PATH
-            privacy.ignored.cache_clear(); privacy.ERRORS.clear()
+            clear()
             check("D-P (ii) git absent reads as IGNORED (fails closed)", privacy.ignored("triggers/zz/b.py") is True)
-            check("D-P (ii) ...and records a classification error", bool(privacy.ERRORS))
+            check("D-P (ii) ...and records a classification error", bool(errs()))
             os.environ["PATH"] = real_path
             privacy.REPO = Path(nonrepo)                                  # (iii) a seed write while it's failing
-            privacy.ignored.cache_clear(); privacy.ERRORS.clear()
+            clear()
             out = Path(nonrepo) / "ledger.json"
             real_ledger, real_judge = ledger.LEDGER, ledger.judge.judge
             ledger.LEDGER = out
@@ -72,7 +76,7 @@ def dp_arms():
             check("D-P (iii) ...and no ledger file was written", not out.exists())
         finally:
             os.environ["PATH"] = real_path
-            privacy.REPO = real_repo; privacy.ignored.cache_clear(); privacy.ERRORS.clear()
+            privacy.REPO = real_repo; clear()
             try:
                 ledger.LEDGER, ledger.judge.judge = real_ledger, real_judge
             except NameError:
