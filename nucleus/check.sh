@@ -389,6 +389,9 @@ run "market_decay SQL-surface (4 queries execute, write-safe temp schema)" "$PY"
 # (seed's rung-gating, 19713). RED-first: drop the premium gate → funded flagged (ARM1 fails);
 # verb the layer-1 line → ARM4 fails. SKIPs where the gitignored body is absent.
 run "weekly econ review: insures constitutive set, layer-1 stays FYI" "$PY" tests/test_weekly_econ_review.py
+# goal 4227 S0 (steward): the econ v2 SHADOW at metrics->'v2' — I1 records, v1 untouched,
+# no budget-era identifier on the v2 path, effort side re-derived, tool GDP degrades honestly.
+run "econ v2 shadow (4227 S0)"        "$PY" tests/test_econ_v2_shadow.py
 # Drives the REAL ./init.sh doctor with a systemctl liveness-shim (hermetic: only the target
 # orphan's is-active is forced; every other call hits the real binary). Pins that a LIVE orphan
 # is routed to manual reconciliation, NOT told to "rerun ./init.sh to regenerate" (which would

@@ -366,6 +366,97 @@ def integrity(conn, since, until) -> dict:
 
 # ── the daily rollup (steward's trigger and the CLI both land here) ──────────────────
 
+# ── v2 SHADOW (goal 4227, S0) ────────────────────────────────────────────────────────
+# The owner's tool-centered economy (2026-09-29): NO budgets. v2 is computed and archived
+# BESIDE v1 at metrics['v2'] and nothing reads it until S2 cuts the readers over, so S0
+# changes no behaviour. Every record is I1-shaped {value, version, coverage, status}: a
+# number without its coverage cannot be displayed honestly, and an unmeasurable quantity
+# is status NOT_EVALUATED with value None — never a measured 0. The v2 code path must not
+# name any budget-era identifier (the oracle checks this source by AST).
+V2_VERSION = "v2.0"
+# a call serves REAL demand (owner edge b) only when its turn served a goal, or was woken
+# by a trigger, the owner, a human chat or a federated peer. An inter-agent message alone
+# does NOT qualify: messaging a peer to look used is the named gaming vector. Detection-grade
+# (steps/turns rows are forgeable at same-uid), stated, not prevention.
+_V2_DEMAND = """(t.goal_id IS NOT NULL OR EXISTS (
+        SELECT 1 FROM messages im WHERE im.id = t.input_msg_id
+          AND (im.from_agent IN ('pulse','owner') OR im.from_agent LIKE 'wa-%%'
+               OR im.from_org IS NOT NULL)))"""
+
+
+def _v2_rec(value, coverage, status) -> dict:
+    return {"value": value, "version": V2_VERSION, "coverage": coverage, "status": status}
+
+
+def _v2_tool_gdp(rows, version=V2_VERSION, authorship_ok=True) -> dict:
+    """PURE core of v1-grade tool GDP. rows = (registry_id, caller, author, demand_qualified)
+    per tool call. Value = distinct (tool, caller) pairs among demand-qualified calls whose
+    caller is not the tool's author (self-use discounted; an 'unknown'/None author is never
+    self-discounted). compression = 1, declared: savings per call enter only after the
+    placebo oracle (O4) passes. coverage = the demand-qualified share of observed calls."""
+    if not rows:
+        return {"value": None, "version": version, "coverage": 0,
+                "status": "NOT_EVALUATED: ledger absent (no registry_id calls in window)"}
+    if not authorship_ok:
+        return {"value": None, "version": version, "coverage": 0,
+                "status": "NOT_EVALUATED: authorship unavailable (cannot discount self-use)"}
+    qualified = [r for r in rows if r[3]]
+    pairs = {(rid, caller) for rid, caller, author, _ in qualified if caller != author}
+    return {"value": len(pairs), "version": version,
+            "coverage": round(len(qualified) / len(rows), 4),
+            "status": "OK: usage-GDP, compression=1 declared"}
+
+
+def _v2_tool_rows(conn, since, until):
+    """(rows, authorship_ok) from forge's ledger (plan-4227 #21266): one kind='tool' step per
+    call carrying meta.registry_id; closed turns only (turn_id back-fills at Stop)."""
+    calls = _all(conn, f"""
+        SELECT s.meta->>'registry_id' AS rid, s.agent AS caller, {_V2_DEMAND} AS dq
+        FROM steps s JOIN turns t ON t.id = s.turn_id
+        WHERE s.kind = 'tool' AND s.meta ? 'registry_id'
+          AND s.ts >= %s AND s.ts < %s""", (since, until))
+    if not calls:
+        return [], True
+    try:
+        from nucleus import toolreg
+        with conn.cursor() as cur:
+            who = toolreg.authorship(cur, sorted({c["rid"] for c in calls}))
+    except Exception:
+        return [(c["rid"], c["caller"], None, bool(c["dq"])) for c in calls], False
+    return [(c["rid"], c["caller"], (who.get(c["rid"]) or {}).get("author"), bool(c["dq"]))
+            for c in calls], True
+
+
+def v2(conn, since, until, k) -> dict:
+    """The v2 records. Effort side = the boundary law in EFFORT units: W is the billable
+    spend on turns of goals that SHIPPED in-window and went through plan quorum (approve
+    rows on plan-<id>; quorum size is not stored, so this is 'went through the pipeline',
+    detection-grade). Q = flux - W. G = W/(flux*K), same 1e9 scale as v1."""
+    f = _one(conn, f"""
+        SELECT coalesce(sum({BILL}),0)::bigint,
+               coalesce(sum({BILL}) FILTER (WHERE goal_id IS NOT NULL),0)::bigint
+        FROM turns WHERE ended_at >= %s AND ended_at < %s""", (since, until))
+    phi, phi_goal = int(f[0]), int(f[1])
+    w = int(_one(conn, f"""
+        SELECT coalesce(sum({BILL}),0)::bigint FROM turns t JOIN goals g ON g.id = t.goal_id
+        WHERE g.done_at >= %s AND g.done_at < %s
+          AND EXISTS (SELECT 1 FROM messages m
+                      WHERE m.thread = 'plan-'||g.id AND m.intent = 'approve')""",
+        (since, until))[0])
+    cov = round(phi_goal / phi, 4) if phi else None
+    ok = "OK" if phi else "VACUOUS: no flux in window"
+    kc = (k or {}).get("compressed")
+    rows, auth_ok = _v2_tool_rows(conn, since, until)
+    return {
+        "version": V2_VERSION,
+        "W": _v2_rec(w, cov, ok),
+        "Q": _v2_rec(phi - w, cov, ok),
+        "G": _v2_rec(round(w / (phi * kc) * 1e9, 6) if phi and kc else None, cov,
+                     ok if phi and kc else "VACUOUS: flux or K unmeasured"),
+        "tool_gdp": _v2_tool_gdp(rows, V2_VERSION, auth_ok),
+    }
+
+
 def compute(conn, since, until) -> dict:
     """The full metrics bundle for a window — PURE (no write). Shared by rollup (which
     archives a COMPLETE day) and the live dashboard (which calls it for today-so-far,
@@ -389,6 +480,8 @@ def compute(conn, since, until) -> dict:
         "productivity": productivity(conn),
         "trigger_roi": trigger_roi(conn),
         "integrity": integrity(conn, since, until),
+        # goal 4227 S0: the v2 shadow. Archived, read by NOTHING until S2 (v1 above untouched)
+        "v2": v2(conn, since, until, k),
     }
 
 
