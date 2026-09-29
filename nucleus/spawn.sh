@@ -117,12 +117,18 @@ for g in $(grep -m1 '^Grants:' "$CHARTER" 2>/dev/null | cut -d: -f2- | tr ',' ' 
   esac
 done
 
+# tools = the registry door (goal 4227 S4). Every RESIDENT gets it, not a grant: it's flat rent
+# (two tools however many the org grows), and no new capability, because a resident already
+# holds Bash and the door runs registered scripts only, never a granted MCP server. It is
+# deliberately NOT given to STATIONED agents (nucleus/station.py, --tools "" fail-closed), where
+# it WOULD be a new execution capability. tests/test_spawn_wiring.py pins both halves.
 cat > "$HOME_D/.mcp.json" <<EOF
 { "mcpServers": { "astryx": {
     "command": "$NODE",
     "args": ["$ROOT/channel/server.mjs"],
     "env": { "ASTRYX_AGENT": "$AGENT" }
-}$EXTRA } }
+},
+  "tools": { "command": "$ROOT/venv/bin/python", "args": ["$ROOT/mcp/tools/server.py"] }$EXTRA } }
 EOF
 
 # think: charter line "Think: off" zeroes extended thinking for reflex-class
@@ -151,7 +157,9 @@ cat > "$HOME_D/.claude/settings.json" <<EOF
     "Stop": [ { "hooks": [
       { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/step.py", "timeout": 10 } ] } ],
     "UserPromptSubmit": [ { "hooks": [
-      { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/usage.py", "timeout": 5 } ] } ]
+      { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/usage.py", "timeout": 5 } ] },
+      { "hooks": [
+      { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/nudge.py", "timeout": 3 } ] } ]
   }
 }
 EOF

@@ -5,6 +5,14 @@ agent at the tool registry before it does the work by hand (goal 4227, S4).
     recurring family (≥ RECUR_N prior labels, org-wide, RECUR_DAYS)  → search the registry first
     complex and novel                                                → decompose; check for pieces
     anything else (trivial, simple one-off)                          → print nothing
+    …and never twice for one (agent, family) within COOLDOWN_DAYS.
+
+THE COOLDOWN (abstractor-4, plan-4227 W2). Recurrence is org-wide, because a family recurring
+across agents is exactly the shared-tool signal. That makes the org's dominant families
+(night-review, plan review, wire replies) "recurring" for every agent from day one, and a hint
+repeated on every wake trains dismissal. The first nudge carries all the information. It's
+recorded on the classification row (nudged=true), so the cooldown is DERIVED from the table
+rather than remembered, and it can't be lost.
 
 It's gated on recurrence, not difficulty: a complex one-off tool gets 0 calls, so it's worth 0.
 
@@ -51,6 +59,7 @@ HARD_S = 1.5            # the whole hook, wall clock
 CLASSIFY_S = 1.0        # socket timeout for the classifier (each op); HARD_S bounds the total
 RECUR_N = 3             # prior labels of the same family that make it "recurring"
 RECUR_DAYS = 14
+COOLDOWN_DAYS = 7       # at most one nudge per (agent, family) in this window
 TEXT_MAX = 8000         # characters of prompt sent to the classifier
 FAMILY_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,47}$")
 TIERS = ("trivial", "simple", "complex")
@@ -176,18 +185,30 @@ def main() -> None:
             "SELECT count(*) FROM classifications WHERE family=%s "
             "AND ts > now() - make_interval(days => %s)",
             (label["family"], RECUR_DAYS)).fetchone()[0]
-        c.execute("INSERT INTO classifications (agent, session_id, family, tier, classifier) "
-                  "VALUES (%s,%s,%s,%s,%s)",
+        cooling = c.execute(
+            "SELECT 1 FROM classifications WHERE agent=%s AND family=%s AND nudged "
+            "AND ts > now() - make_interval(days => %s) LIMIT 1",
+            (agent, label["family"], COOLDOWN_DAYS)).fetchone()
+        kind = None
+        if not cooling:
+            if prior >= RECUR_N and label["tier"] != "trivial":
+                kind = "recurring"
+            elif label["tier"] == "complex":
+                kind = "complex"
+        c.execute("INSERT INTO classifications (agent, session_id, family, tier, classifier, "
+                  "nudged) VALUES (%s,%s,%s,%s,%s,%s)",
                   (agent, (h.get("session_id") or None), label["family"], label["tier"],
-                   label["model"]))
+                   label["model"], kind is not None))
+    # Printed only after the row COMMITS (the with-block above). If the deadline lands in
+    # between, a nudge is lost rather than repeated: silence is this hook's failure direction.
 
     find = f"{REPO}/venv/bin/python {REPO}/nucleus/toolreg.py find <words>"
-    if prior >= RECUR_N and label["tier"] != "trivial":
+    if kind == "recurring":
         print(f"[tools] Recurring work: task family '{label['family']}' came up {prior}x in "
               f"{RECUR_DAYS}d. Search the registry before doing it by hand: `{find}` (or "
               f"mcp__tools__find). If nothing fits, read {REPO}/skills/tool-building/SKILL.md "
               f"and make one.")
-    elif label["tier"] == "complex":
+    elif kind == "complex":
         print(f"[tools] Complex task: decompose it first, and check the registry for pieces "
               f"you can reuse: `{find}`.")
 

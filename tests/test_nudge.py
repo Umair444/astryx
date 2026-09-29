@@ -23,6 +23,9 @@ each case picks.
   N5 a content-private agent is never classified: the endpoint gets zero hits.
   N6 recurring family → the registry nudge; complex novel → decompose; trivial/simple novel
      → nothing.
+  N8 COOLDOWN (W2): one nudge per (agent, family) per 7d. Repeat wakes of a recurring family
+     get silence, a SECOND agent still gets its first nudge, and the record is the row's
+     nudged flag (derived, not remembered).
   N7 no prompt text persisted: a secret in the prompt appears in no classifications row and no
      step, and a classifier that echoes the prompt as its label writes no row.
 """
@@ -156,7 +159,7 @@ def make_tree():
             shutil.copy(e, t / "nucleus" / e.name)
         elif e.name != "__pycache__":
             (t / "nucleus" / e.name).symlink_to(e)
-    for name, grants in (("zzpub", ""), ("zzpriv", "Grants: gmail\n")):
+    for name, grants in (("zzpub", ""), ("zzpub2", ""), ("zzpriv", "Grants: gmail\n")):
         (t / "agents" / name).mkdir(parents=True)
         (t / "agents" / name / f"{name}.md").write_text(f"# {name}\n{grants}")
     return t
@@ -233,13 +236,15 @@ try:
           Fake.hits == 0 and rows() == [] and r.stdout == "", f"hits={Fake.hits} rows={rows()}")
 
     # ── N6 recurrence gates the nudge, not difficulty ────────────────────────────────────
-    Fake.reply = {"family": "build.tool", "tier": "complex", "model": "fake-1"}
+    # One discriminator per arm: complex-novel gets its OWN family, so its nudge (and the
+    # cooldown record it writes) can't touch the recurrence arms below.
+    Fake.reply = {"family": "novel.thing", "tier": "complex", "model": "fake-1"}
     r, _ = run(root, SCH, url, prompt=f"write a new poller {SECRET}")
     exits.append(r.returncode)
     check("N6 complex + novel → the decompose nudge", "[tools] Complex task" in r.stdout,
           r.stdout[:120])
     Fake.reply = {"family": "build.tool", "tier": "simple"}
-    for _ in range(2):
+    for _ in range(3):
         r, _ = run(root, SCH, url)
     check("N6 simple + not yet recurring (2 prior) → nothing", r.stdout == "", r.stdout[:120])
     r, _ = run(root, SCH, url)
@@ -247,8 +252,26 @@ try:
     check("N6 3 prior of the family → the registry nudge, naming the skill",
           "[tools] Recurring work" in r.stdout and "toolreg.py find" in r.stdout
           and "skills/tool-building/SKILL.md" in r.stdout, r.stdout[:160])
-    Fake.reply = {"family": "build.tool", "tier": "trivial"}
+
+    # ── N8 the cooldown ──────────────────────────────────────────────────────────────────
+    outs = [run(root, SCH, url)[0].stdout for _ in range(3)]
+    check("N8 the SAME agent's next 3 wakes of that family → silence (cooldown)",
+          outs == ["", "", ""], str([o[:40] for o in outs]))
+    r, _ = run(root, SCH, url, agent="zzpub2")
+    check("N8 a SECOND agent still gets its first nudge for the family",
+          "[tools] Recurring work" in r.stdout, r.stdout[:120])
+    nudged = admin.execute("SELECT agent, count(*) FROM classifications "
+                           "WHERE family='build.tool' AND nudged GROUP BY 1 ORDER BY 1").fetchall()
+    check("N8 the record is the row: exactly one nudged row per agent",
+          nudged == [("zzpub", 1), ("zzpub2", 1)], str(nudged))
+    admin.execute("UPDATE classifications SET ts = ts - interval '8 days' "
+                  "WHERE agent='zzpub' AND family='build.tool' AND nudged")
     r, _ = run(root, SCH, url)
+    check("N8 after the window the agent is nudged again", "[tools] Recurring work" in r.stdout,
+          r.stdout[:120])
+
+    Fake.reply = {"family": "build.tool", "tier": "trivial"}
+    r, _ = run(root, SCH, url, agent="zzpub2")
     check("N6 recurring but trivial → nothing", r.stdout == "", r.stdout[:120])
     Fake.reply = {"family": "one.off", "tier": "simple"}
     r, _ = run(root, SCH, url)
@@ -264,7 +287,8 @@ try:
     check("N5 an agent with NO charter is treated as private (fail-closed)",
           Fake.hits == 0 and r.stdout == "", f"hits={Fake.hits}")
     check("N7 rows hold labels only (agent, family, tier, classifier, session)",
-          all(len(x) == 5 and x[1] in ("build.tool", "one.off") for x in rows()), str(rows()[:3]))
+          all(len(x) == 5 and x[1] in ("build.tool", "one.off", "novel.thing") for x in rows()),
+          str(rows()[:3]))
     n = len(rows())
     Fake.mode = "echo"
     r, _ = run(root, SCH, url, prompt=f"echo {SECRET}")

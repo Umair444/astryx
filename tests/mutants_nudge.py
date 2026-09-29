@@ -44,8 +44,8 @@ MUTANTS = {
     # Gate on difficulty instead of recurrence: a complex one-off gets the build-a-tool nudge,
     # and recurring simple work gets nothing.
     "U5 gated on difficulty, not recurrence":
-        ('    if prior >= RECUR_N and label["tier"] != "trivial":',
-         '    if label["tier"] == "complex" and prior >= 0 and False:'),
+        ('            if prior >= RECUR_N and label["tier"] != "trivial":',
+         '            if label["tier"] == "complex" and prior >= 0 and False:'),
 
     # Prompt text persisted by the side door: an innocent-looking column.
     "U6 prompt text rides into session_id":
@@ -55,4 +55,9 @@ MUTANTS = {
     # classifier never works.
     "U7 the owner's allow-remote flag ignored":
         ('cfg.get("ASTRYX_CLASSIFIER_ALLOW_REMOTE") != "1"', 'True'),
+
+    # No cooldown: org-wide recurrence then nudges every agent on every wake of the dominant
+    # families, and a hint repeated every wake trains dismissal (abstractor-4, W2).
+    "U8 the per-(agent, family) cooldown removed":
+        ("        if not cooling:\n", "        if True:\n"),
 }

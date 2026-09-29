@@ -494,6 +494,8 @@ CREATE TABLE IF NOT EXISTS classifications (
   turn_id     bigint REFERENCES turns(id) ON DELETE SET NULL,
   family      text NOT NULL CHECK (family ~ '^[a-z0-9][a-z0-9_.-]{0,47}$'),
   tier        text NOT NULL CHECK (tier IN ('trivial','simple','complex')),
-  classifier  text CHECK (classifier IS NULL OR classifier ~ '^[A-Za-z0-9_.:/@+-]{1,64}$')
+  classifier  text CHECK (classifier IS NULL OR classifier ~ '^[A-Za-z0-9_.:/@+-]{1,64}$'),
+  nudged      boolean NOT NULL DEFAULT false   -- this label produced a nudge (the cooldown's record)
 );
+ALTER TABLE classifications ADD COLUMN IF NOT EXISTS nudged boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS classifications_recur ON classifications (agent, family, ts DESC);
