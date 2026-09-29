@@ -3,8 +3,9 @@ nucleus/mutation_probe.py.
 
     venv/bin/python nucleus/mutation_probe.py tests/mutants_step_doorbell_bridge.py
 
-NOT AUTHORED: dropping only the `not agent` early return. The SQL's `AND agent=$2` refuses ""
-as well, so that mutant is equivalent.
+E3 drops only the `not agent` early return. It's killable because the fixture holds a real step
+with agent '' (steps.agent is NOT NULL but admits ''); otherwise it would look equivalent only
+because of today's data (abstractor-4).
 """
 from pathlib import Path
 
@@ -24,4 +25,7 @@ MUTANTS = {
     # telegram/discord label, which is the trap seed named.
     "E2 agent gets a default (callers can forget it)":
         ("*, agent: str, label: str = \"\")", "*, agent: str = \"\", label: str = \"\")"),
+
+    "E3 the empty-agent early return dropped":
+        ("    if kind not in MARK or not agent:\n", "    if kind not in MARK:\n"),
 }

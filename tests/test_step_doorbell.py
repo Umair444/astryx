@@ -15,7 +15,10 @@ depth, graded as such.
      payload {id: <another agent's step>, agent: <the subscribed agent>} pushes NOTHING; and a
      second real step pushed AFTER the forgery arrives. That last one proves the ear was
      listening throughout, so the silence came from the fix and not from a dead server.
-  C2 an empty agent in the payload pushes nothing.
+  C2 an empty agent in the payload pushes nothing, even against a real step whose agent IS ''
+     and a subscription whose target IS ''. steps.agent is NOT NULL but admits ''. So without
+     this fixture, "SQL agent='' matches nothing" would be true only of today's DATA, and the
+     early return would be unpinned (abstractor-4's note on 9c1b729).
   B1 bridges/common.py step_line, through a real asyncpg pool on the same throwaway DB: the
      right agent gets the line, the wrong agent gets None, and "" gets None (the label
      default must never be a match key).
@@ -142,6 +145,10 @@ try:
     db = psycopg.connect(PROBE_DSN, autocommit=True, connect_timeout=5)
     db.execute("INSERT INTO subscriptions (watcher, target, filter) VALUES (%s,'zzx','all')",
                (PROBE_AGENT,))
+    # The degenerate case made REAL: a subscription to '' and (below) a step whose agent is ''.
+    # With both present, only the early return keeps an agent:"" payload from resolving.
+    db.execute("INSERT INTO subscriptions (watcher, target, filter) VALUES (%s,'','all')",
+               (PROBE_AGENT,))
 
     # ── the REAL server, staged outside the repo (ear-survival pattern) ──────────────────
     (stage / "channel").mkdir()
@@ -172,16 +179,20 @@ try:
     check("C1 positive control: a real step of the subscribed agent is pushed", ok_first)
 
     secret_id = step("zzy", "SECRET-zzy-content")             # zzy: nobody subscribes
+    empty_id = step("", "SECRET-empty-agent-content")         # agent '' IS a legal value
     db.execute("SELECT pg_notify('astryx_steps', %s)",
                (json.dumps({"id": secret_id, "agent": "zzx", "kind": "tool"}),))
     db.execute("SELECT pg_notify('astryx_steps', %s)",
-               (json.dumps({"id": secret_id, "agent": "", "kind": "tool"}),))
+               (json.dumps({"id": empty_id, "agent": "", "kind": "tool"}),))
     after_id = step("zzx", "LEGIT-after-forgery")
     arrived = wait_for(lambda: "LEGIT-after-forgery" in stdout_text(), 10)
     check("C1 a real step AFTER the forgery arrives (the ear listened throughout)", arrived)
-    check("C1/C2 the forged payloads pushed NOTHING of the other agent's step",
+    check("C1 a forged payload pushed NOTHING of the other agent's step",
           "SECRET-zzy-content" not in stdout_text(),
           "the other agent's step content was pushed under the zzx subscription")
+    check("C2 an agent:\"\" payload pushed nothing, with a '' step AND a '' subscription present",
+          "SECRET-empty-agent-content" not in stdout_text(),
+          "the '' step was pushed: the empty-agent early return is gone")
 
     # ── B1: the bridges' step_line, the SUBJECT copy, on a real asyncpg pool ─────────────
     pkg = stage / "bridges"
@@ -202,8 +213,8 @@ try:
             right = await call(pool, secret_id, "tool", **({kw: "zzy"} if kw else {}))
             wrong = await (call(pool, secret_id, "tool", **{kw: "zzx"}) if kw
                            else call(pool, secret_id, "tool", "zzx"))
-            empty = await (call(pool, secret_id, "tool", **{kw: ""}) if kw
-                           else call(pool, secret_id, "tool"))
+            empty = await (call(pool, empty_id, "tool", **{kw: ""}) if kw
+                           else call(pool, empty_id, "tool"))
             return right, wrong, empty
         finally:
             await pool.close()
@@ -212,7 +223,8 @@ try:
     check("B1 step_line: the step's own agent gets the line",
           right is not None and "SECRET-zzy-content" in right, repr(right))
     check("B1 step_line: ANOTHER agent's payload gets None", wrong is None, repr(wrong))
-    check("B1 step_line: an empty agent never matches", empty is None, repr(empty))
+    check("B1 step_line: an empty agent never matches, even a step whose agent IS ''",
+          empty is None, repr(empty))
 finally:
     if proc and proc.poll() is None:
         proc.kill()
