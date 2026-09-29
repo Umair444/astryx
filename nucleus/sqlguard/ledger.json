@@ -1,0 +1,1483 @@
+{
+ "covering": {
+  "hooks/step.py::handle_stop\u001finsert into turns (agent, session_id, started_at, ended_at, duration_ms, source, input_prompt, input_msg_id, num_responses, num_tools, char_count, tokens_in, tokens_out, model, stop_reason, raw_payload, usage_snapshot, goal_id) values (?,?,?::timestamptz, now(), ?, ?,?,?,?,?,?,?,?,?,?,?,?,?) returning id": [
+   "doctor units-drift: a live orphan is not told to self-delete"
+  ],
+  "hooks/step.py::handle_stop\u001fupdate classifications set turn_id=? where agent=? and turn_id is null and (session_id is null or session_id = ?) and ts >= ?::timestamptz - interval '10 seconds'": [
+   "doctor units-drift: a live orphan is not told to self-delete"
+  ],
+  "hooks/step.py::handle_stop\u001fupdate messages set turn_id=? where from_agent=? and from_org='local' and turn_id is null and ts >= ?::timestamptz": [
+   "doctor units-drift: a live orphan is not told to self-delete"
+  ],
+  "hooks/step.py::handle_stop\u001fupdate steps set turn_id=? where agent=? and turn_id is null and ts >= ?::timestamptz": [
+   "doctor units-drift: a live orphan is not told to self-delete"
+  ],
+  "hooks/step.py::handle_stop\u001fupdate turns set num_steps=(select count(*) from steps where turn_id=?) where id=?": [
+   "doctor units-drift: a live orphan is not told to self-delete"
+  ],
+  "hooks/step.py::main\u001finsert into steps (agent, kind, content, turn_id, tokens_in, tokens_out) values (?,'response',?,?,?,?)": [
+   "doctor units-drift: a live orphan is not told to self-delete"
+  ],
+  "hooks/step.py::usage_snapshot\u001fselect ended_at from turns where usage_snapshot is not null order by ended_at desc limit 1": [
+   "doctor units-drift: a live orphan is not told to self-delete"
+  ],
+  "mcp/memory/resolvers.py::_run_cypher\u001f*": [
+   "memory ask() hides tier-private data"
+  ],
+  "nucleus/econ.py::_v2_tool_rows\u001fselect s.meta->>'registry_id' as rid, s.agent as caller, (t.goal_id is not null or exists ( select 1 from messages im where im.id = t.input_msg_id and (im.from_agent in ('pulse','owner') or im.from_agent like 'wa-%%' or im.from_org <> all(?)))) as dq from steps s join turns t on t.id = s.turn_id where s.kind = 'tool' and s.meta ? 'registry_id' and s.meta ? 'v' and s.ts >= ? and s.ts < ?": [
+   "econ v2 mirror + version gate (4227 S2)",
+   "econ v2 shadow (4227 S0)",
+   "the org economy is honest",
+   "wash detector invariants",
+   "wash detector: v2 rings (live, report-only)"
+  ],
+  "nucleus/econ.py::econ_mirror\u001fselect day::text, metrics->'v2' from econ order by day desc limit 1": [
+   "econ v2 mirror + version gate (4227 S2)"
+  ],
+  "nucleus/econ.py::final_heat\u001fselect coalesce(sum(coalesce((raw_payload->'usage'->>'billable_equiv_in')::bigint, (tokens_in*0.12)::bigint + tokens_out)),0)::bigint from turns t join goals g on g.id=t.goal_id where g.state='refused' or (g.state='hibernated' and g.ts < now()-interval '90 days')": [
+   "econ v2 shadow (4227 S0)",
+   "the org economy is honest"
+  ],
+  "nucleus/econ.py::integrity\u001fselect (select avg(budget_tokens) from goals where done_at >= ? and done_at < ? and budget_tokens>0), (select avg(budget_tokens) from goals where done_at < ? and budget_tokens>0)": [
+   "econ v2 shadow (4227 S0)",
+   "the org economy is honest"
+  ],
+  "nucleus/econ.py::integrity\u001fselect count(*) filter (where exists (select 1 from steps s where s.turn_id=t.id and s.kind='milestone'))::float / nullif(count(*),0) from turns t where ended_at >= ? and ended_at < ?": [
+   "econ v2 shadow (4227 S0)",
+   "the org economy is honest"
+  ],
+  "nucleus/econ.py::integrity\u001fselect percentile_cont(0.5) within group (order by extract(epoch from done_at - ts)/3600) from goals where done_at >= ? and done_at < ?": [
+   "econ v2 shadow (4227 S0)",
+   "the org economy is honest"
+  ],
+  "nucleus/econ.py::pnl\u001fselect agent, sum(coalesce((raw_payload->'usage'->>'billable_equiv_in')::bigint, (tokens_in*0.12)::bigint + tokens_out))::bigint as burned, count(*) as turns from turns where ended_at >= ? and ended_at < ? group by 1 order by 2 desc": [
+   "econ v2 shadow (4227 S0)",
+   "the org economy is honest"
+  ],
+  "nucleus/econ.py::productivity\u001f*": [
+   "econ v2 shadow (4227 S0)",
+   "the org economy is honest"
+  ],
+  "nucleus/econ.py::rollup\u001finsert into econ (day, metrics) values (?, ?) on conflict (day) do update set metrics=excluded.metrics, computed_at=now()": [
+   "the org economy is honest"
+  ],
+  "nucleus/econ.py::thermo\u001fselect coalesce(sum(budget_tokens),0)::bigint, count(*) from goals where done_at >= ? and done_at < ?": [
+   "econ v2 shadow (4227 S0)",
+   "the org economy is honest"
+  ],
+  "nucleus/econ.py::thermo\u001fselect coalesce(sum(coalesce((raw_payload->'usage'->>'billable_equiv_in')::bigint, (tokens_in*0.12)::bigint + tokens_out)),0)::bigint, count(*), coalesce(sum(coalesce((raw_payload->'usage'->>'billable_equiv_in')::bigint, (tokens_in*0.12)::bigint + tokens_out)) filter (where goal_id is not null),0)::bigint from turns where ended_at >= ? and ended_at < ?": [
+   "econ v2 shadow (4227 S0)",
+   "the org economy is honest"
+  ],
+  "nucleus/econ.py::thermo\u001fselect count(*), coalesce(sum(coalesce((raw_payload->'usage'->>'billable_equiv_in')::bigint, (tokens_in*0.12)::bigint + tokens_out)),0)::bigint from turns t where t.ended_at >= ? and t.ended_at < ? and t.goal_id is null and not exists (select 1 from messages m where m.turn_id = t.id) and not exists (select 1 from steps s where s.turn_id = t.id and s.kind in ('milestone','error'))": [
+   "econ v2 shadow (4227 S0)",
+   "the org economy is honest"
+  ],
+  "nucleus/econ.py::trigger_roi\u001f*": [
+   "econ v2 shadow (4227 S0)",
+   "the org economy is honest"
+  ],
+  "nucleus/econ.py::v2\u001fselect coalesce(sum(coalesce((raw_payload->'usage'->>'billable_equiv_in')::bigint, (tokens_in*0.12)::bigint + tokens_out)),0)::bigint from turns t join goals g on g.id = t.goal_id where g.done_at >= ? and g.done_at < ? and exists (select 1 from messages m where m.thread = 'plan-'||g.id and m.intent = 'approve')": [
+   "econ v2 shadow (4227 S0)",
+   "the org economy is honest"
+  ],
+  "nucleus/econ.py::v2\u001fselect coalesce(sum(coalesce((raw_payload->'usage'->>'billable_equiv_in')::bigint, (tokens_in*0.12)::bigint + tokens_out)),0)::bigint, coalesce(sum(coalesce((raw_payload->'usage'->>'billable_equiv_in')::bigint, (tokens_in*0.12)::bigint + tokens_out)) filter (where goal_id is not null),0)::bigint from turns where ended_at >= ? and ended_at < ?": [
+   "econ v2 shadow (4227 S0)",
+   "the org economy is honest"
+  ],
+  "nucleus/econ.py::value_flow\u001fwith shipped as ( select id, budget_tokens from goals where done_at >= ? and done_at < ? and budget_tokens > 0), spend as ( select t.goal_id, t.agent, sum(coalesce((raw_payload->'usage'->>'billable_equiv_in')::bigint, (tokens_in*0.12)::bigint + tokens_out))::bigint as cost from turns t join shipped s on s.id = t.goal_id group by 1, 2), tot as (select goal_id, sum(cost) as total from spend group by 1) select sp.agent, sum(s.budget_tokens * sp.cost / nullif(tot.total,0))::bigint as value_earned, sum(sp.cost)::bigint as spent_on_shipped from spend sp join shipped s on s.id = sp.goal_id join tot on tot.goal_id = sp.goal_id group by 1 order by 2 desc nulls last": [
+   "econ v2 shadow (4227 S0)",
+   "the org economy is honest"
+  ],
+  "nucleus/memgraph.py::build_system1\u001fselect body from messages where body ~ '^org-news #[0-9]+' order by id": [
+   "recall-graph compiler"
+  ],
+  "nucleus/memgraph.py::build_system1\u001fselect distinct ts::date from steps order by 1": [
+   "recall-graph compiler"
+  ],
+  "nucleus/memgraph.py::build_system1\u001fselect id, title, state, owner from goals order by id": [
+   "recall-graph compiler"
+  ],
+  "nucleus/memgraph.py::build_system1\u001fselect thread, count(*), max(ts)::date, array_agg(distinct from_agent) from messages where thread is not null group by thread order by thread": [
+   "recall-graph compiler"
+  ],
+  "nucleus/memgraph.py::read_pg\u001fselect id,kind,label,layer,region,type,title,visibility,degree,x,y,region_i,attrs from kg.node order by id": [
+   "recall-graph compiler"
+  ],
+  "nucleus/memgraph.py::read_pg\u001fselect max(built_at) from kg.node": [
+   "recall-graph compiler"
+  ],
+  "nucleus/memgraph.py::read_pg\u001fselect node_id,entity,rel,value,evidence,confidence,contra,line from kg.claim order by node_id,id": [
+   "recall-graph compiler"
+  ],
+  "nucleus/memgraph.py::read_pg\u001fselect src,dst,cls,rel from kg.edge order by src,dst,cls,rel": [
+   "recall-graph compiler"
+  ],
+  "nucleus/memgraph.py::write_pg\u001fdelete from kg.claim": [
+   "recall-graph compiler"
+  ],
+  "nucleus/memgraph.py::write_pg\u001fdelete from kg.edge": [
+   "recall-graph compiler"
+  ],
+  "nucleus/memgraph.py::write_pg\u001fdelete from kg.node": [
+   "recall-graph compiler"
+  ],
+  "nucleus/sqlguard/canary.py::canary\u001fselect n, (mod(n, 2) = 0) as even from generate_series(1, 2) as n where n > ?": [
+   "sqlguard canary: the shim observes through the real Ctx.sql"
+  ],
+  "nucleus/toolreg.py::authorship\u001fselect agent, split_part(content, ':', 1), meta->>'edits', content from steps where kind = 'tool' and (meta ? 'edits' or content ~ '^(write|edit|multiedit|notebookedit): ') order by id": [
+   "econ v2 mirror + version gate (4227 S2)",
+   "econ v2 shadow (4227 S0)",
+   "tool ledger: ids only, ledger authorship",
+   "wash detector invariants",
+   "wash detector: v2 rings (live, report-only)"
+  ],
+  "nucleus/wake_audit.py::consecutive_drops\u001fselect to_agent, id from messages m join (select distinct agent from turns) a on a.agent = m.to_agent where m.status='delivered' and m.ts > now() - make_interval(hours => ?) and m.ts < now() - make_interval(hours => 2) and (?::text is null or m.to_agent = ?) order by m.to_agent, m.id desc": [
+   "wake-audit classifier"
+  ],
+  "nucleus/wake_audit.py::dropped\u001f*": [
+   "wake-audit classifier"
+  ],
+  "sha256:0f53663b8303f90b9217216341c3b328d389279ed76a0839b9bb429e9d19777f": [
+   "weekly econ review: insures constitutive set, layer-1 stays FYI, L3 retired"
+  ],
+  "sha256:184834a9fb206de05c3384a20b4fd3284beeaa959282e02a99d2e5954e4dd4f4": [
+   "plan-lifecycle trigger oracle"
+  ],
+  "sha256:3084d3abaad2a8223c076a9464ce3be184b083c3ce7d55142ff8e6ba2d8a8d57": [
+   "plan-lifecycle trigger oracle"
+  ],
+  "sha256:35ad8179f934dbd19012237d08b607b8e7e750d4ca56b65e792caeaec8637409": [
+   "plan-lifecycle trigger oracle"
+  ],
+  "sha256:391e46dcbaa946aebc4bb72b74ca94b4b6aecf3fe65db4cbb98beaacc52a284b": [
+   "plan-lifecycle trigger oracle"
+  ],
+  "sha256:4f8e0a361642361c7aa508ed5edf86269b0ea93ce218a2ad0f61b455cb7b2157": [
+   "plan-lifecycle trigger oracle"
+  ],
+  "sha256:601700a7510fd9dfe73046322da44a764bc823d0786090492e9d706d1e0e9176": [
+   "plan-lifecycle trigger oracle"
+  ],
+  "sha256:60b7b6e7d27ebf8e3501ab71b3be34103fcbbed200afab59d6f427a4b3706c11": [
+   "plan-lifecycle trigger oracle"
+  ],
+  "sha256:66bde10a66ab0e79c68c7957d45e85bf1f2f4787ab081bad9b90467cc356ed9d": [
+   "plan-lifecycle trigger oracle"
+  ],
+  "sha256:70f696f8edd27c049c197a59a1d029e5007c99563b5db9cc7558ebee7fe1cd8c": [
+   "plan-lifecycle trigger oracle"
+  ],
+  "sha256:77d2988948e4dd3bfef8f18e580bbecb091c15148e2916efa4993ba5ebd9f49c": [
+   "plan-lifecycle trigger oracle"
+  ],
+  "sha256:79eadd0c797f7e3d56925c4054039c268945e6645ee1ab3c9f77aef17e0d3bfd": [
+   "plan-lifecycle trigger oracle"
+  ],
+  "sha256:84199478f6f38ff83a7850e9b11f8ca94159fd391d5f472e573085d64cf4c50f": [
+   "plan-lifecycle trigger oracle"
+  ],
+  "sha256:84b1a3de791457da8080d6529dca65ab9c3c79c0f8df4e6bd2d1347bf60bff21": [
+   "plan-lifecycle trigger oracle"
+  ],
+  "sha256:a64c517068bcb09e56c3f5db9d7b6131bedb6a6d6bad7e78ab23155a390845bb": [
+   "plan-lifecycle trigger oracle"
+  ],
+  "sha256:baa2b53df6e14bac34ea4328c6e6b998b9b7dc4213ca397b8ab5757a6aa32380": [
+   "plan-lifecycle trigger oracle"
+  ],
+  "sha256:bb2b489e98f0426d93be54f8de4cefc5407d6bd8e7f570765d8f5c998f356752": [
+   "plan-lifecycle trigger oracle"
+  ],
+  "sha256:bb7bd6e0d676c7cacd903adfb44e21e01bfef638d016fc6e901e9eb330fd5591": [
+   "plan-lifecycle trigger oracle"
+  ],
+  "sha256:db4e73cff91ce0f69e3c5a3afabc879508f83c273b71644f1a53357b400732b8": [
+   "plan-lifecycle trigger oracle"
+  ],
+  "sha256:e57b1e34e8055616525a489be10dfef250535aa753bd9794b05ccb4b7dd8f66b": [
+   "weekly econ review: insures constitutive set, layer-1 stays FYI, L3 retired"
+  ],
+  "sha256:e5f2781f5685585225ea5e01e45a16f599b32c4db7575f880c457997e9794aae": [
+   "plan-lifecycle trigger oracle"
+  ],
+  "sha256:e7323553ca7436038159926962e610ad1ea3657912dfba4b11bed3c16c3d1d5f": [
+   "plan-lifecycle trigger oracle"
+  ],
+  "sha256:e96daa49e862f04c51f1933f1ba90a2108f7ba7694c41bcd6ae570d7657c33ec": [
+   "market_decay SQL-surface + O3 end to end (temp schema)"
+  ],
+  "sha256:ea33e3cc683868b2c884a824a8b30b4f2582b9ead25889b620aa759b0dec61bc": [
+   "plan-lifecycle trigger oracle"
+  ]
+ },
+ "extractors": {
+  "tests/test_econ.py": {
+   "gates": [
+    "the org economy is honest"
+   ],
+   "listed_since": "2026-09-29",
+   "reason": "seed: builds an UNSTAMPED fixture; migrate to nucleus/sqlguard/fixture.py",
+   "trip": {
+    "goal": 4227,
+    "state": "done"
+   }
+  },
+  "tests/test_econ_v2_mirror.py": {
+   "gates": [
+    "econ v2 mirror + version gate (4227 S2)"
+   ],
+   "listed_since": "2026-09-29",
+   "reason": "seed: builds an UNSTAMPED fixture; migrate to nucleus/sqlguard/fixture.py",
+   "trip": {
+    "goal": 4227,
+    "state": "done"
+   }
+  },
+  "tests/test_econ_v2_shadow.py": {
+   "gates": [
+    "econ v2 shadow (4227 S0)"
+   ],
+   "listed_since": "2026-09-29",
+   "reason": "seed: builds an UNSTAMPED fixture; migrate to nucleus/sqlguard/fixture.py",
+   "trip": {
+    "goal": 4227,
+    "state": "done"
+   }
+  },
+  "tests/test_funded_by.py": {
+   "gates": [
+    "3499 funded_by attribution + W-birth intact"
+   ],
+   "listed_since": "2026-09-29",
+   "reason": "B1: applies schema.sql WHOLE to a throwaway DB it never stamps (derived once _CREATE stopped anchoring at text start); migrate to nucleus/sqlguard/fixture.py",
+   "trip": {
+    "goal": 4243,
+    "state": "done"
+   }
+  },
+  "tests/test_memgraph.py": {
+   "gates": [
+    "recall-graph compiler"
+   ],
+   "listed_since": "2026-09-29",
+   "reason": "B1: not a throwaway fixture: it calls memgraph.write_pg, whose CREATE ... IF NOT EXISTS kg batch runs against the LIVE DB (mg._dsn), so the kg relations are never stamped; migrate write_pg onto fixture_db, which also stops the oracle rewriting live kg",
+   "trip": {
+    "goal": 4243,
+    "state": "done"
+   }
+  },
+  "tests/test_nudge.py": {
+   "gates": [
+    "tool nudge (O5): never blocks, never leaks, recurrence-gated"
+   ],
+   "listed_since": "2026-09-29",
+   "reason": "seed: builds an UNSTAMPED fixture; migrate to nucleus/sqlguard/fixture.py",
+   "trip": {
+    "goal": 4243,
+    "state": "done"
+   }
+  },
+  "tests/test_tool_ledger.py": {
+   "gates": [
+    "tool ledger: ids only, ledger authorship"
+   ],
+   "listed_since": "2026-09-29",
+   "reason": "seed: builds an UNSTAMPED fixture; migrate to nucleus/sqlguard/fixture.py",
+   "trip": {
+    "goal": 4243,
+    "state": "done"
+   }
+  },
+  "tests/test_usage_poll.py": {
+   "gates": [
+    "usage-authority: fresh-when-idle + tier + read-census"
+   ],
+   "listed_since": "2026-09-29",
+   "reason": "seed: builds an UNSTAMPED fixture; migrate to nucleus/sqlguard/fixture.py",
+   "trip": {
+    "goal": 4243,
+    "state": "done"
+   }
+  }
+ },
+ "header": {
+  "commit": "241272e29aa83e10733c49539d98d96c652e75a9",
+  "counts": {
+   "EXECUTED": 22,
+   "EXECUTED/FIXTURE-DDL": 5,
+   "NOT SEARCHED": 18,
+   "RESPONSIVE": 32,
+   "UNEXECUTED": 244
+  },
+  "debt_rows": 288,
+  "estate_files": 160,
+  "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
+  "extractors_listed": 8,
+  "generated_at": "2026-09-29T15:30:34+00:00",
+  "run": "r1790695741x404760",
+  "sites_total": 321,
+  "untraced_children": {
+   "hooks/nudge.py": [
+    "tool nudge (O5): never blocks, never leaks, recurrence-gated"
+   ],
+   "hooks/step.py": [
+    "tool ledger: ids only, ledger authorship"
+   ]
+  }
+ },
+ "rows": {
+  "bridges/common.py::listen\u001f*": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/common.py::reacted_message\u001fselect from_agent, body from messages where thread=? and delivery->>'message_id'=? order by id desc limit 1": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/common.py::record_poll\u001finsert into polls (msg_id, chat, agent, question, options, multi) values (?,?,?,?,?,?) on conflict (msg_id) do nothing": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/common.py::resolve_quoted_body\u001fselect body from messages where delivery->>'message_id'=? or id::text=? order by id desc limit 1": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/common.py::route_target\u001fselect to_agent from messages where thread=? and intent='chat' and from_org<>'local' and to_org='local' order by id desc limit 1": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/common.py::step_line\u001fselect content from steps where id=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/common.py::update_poll_votes\u001fselect votes from polls where msg_id=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/common.py::update_poll_votes\u001fupdate polls set votes=?, updated_at=now() where msg_id=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/common.py::wire_insert\u001finsert into messages (from_agent, from_org, to_agent, thread, intent, body, delivery) values (?,?,?,?,?,?,?)": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/discord.py::_poll_event\u001fselect * from polls where msg_id=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/discord.py::deliver\u001fupdate messages set status=?, delivered_at=now(), delivery=? where id=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/gateway.py::inbox\u001finsert into messages (from_agent, from_org, to_agent, to_org, thread, intent, body, sig) values (?, ?, ?, 'local', ?, ?, ?, ?)": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/gateway.py::inbox\u001fselect pubkey, status, caps_granted from peers where org=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/gateway.py::introduce\u001finsert into messages (from_agent, from_org, to_agent, intent, body) values ('gateway', 'local', 'seed', 'introduce', ?)": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/gateway.py::introduce\u001finsert into peers (org, url, pubkey, status, notes) values (?, ?, ?, 'introduced', 'introduced itself') on conflict (org) do update set url=?, pubkey=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/gateway.py::introduce\u001fselect pubkey, status from peers where org=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/gateway.py::listen_task\u001fselect * from messages where id=? and status='pending'": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/gateway.py::listen_task\u001fselect * from messages where to_org <> 'local' and status='pending'": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/gateway.py::pickup\u001fselect * from messages where to_org=? and id > ? and status='pending' order by id limit 50": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/gateway.py::pickup\u001fselect pubkey, status from peers where org=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/gateway.py::pickup\u001fupdate messages set status='delivered', delivered_at=now() where to_org=? and id <= ? and status='pending'": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/gateway.py::pickup\u001fupdate peers set last_pickup=? where org=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/gateway.py::pickup_task\u001finsert into messages (from_agent, from_org, to_agent, to_org, thread, intent, body, sig) values (?, ?, ?, 'local', ?, ?, ?, ?)": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/gateway.py::pickup_task\u001fselect org, url, pubkey from peers where url is not null and status in ('introduced', 'trusted')": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/gateway.py::push\u001finsert into messages (from_agent, to_agent, intent, body) values ('gateway', ?, 'error', ?)": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/gateway.py::push\u001fselect url, pubkey, status from peers where org=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/gateway.py::push\u001fupdate messages set status='dead' where id=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/gateway.py::push\u001fupdate messages set status='delivered', delivered_at=now() where id=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/telegram.py::deliver\u001fupdate messages set status=?, delivered_at=now(), delivery=? where id=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/telegram.py::on_poll_answer\u001fselect * from polls where msg_id=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/whatsapp.py::deliver\u001fupdate messages set status=?, delivered_at=now(), delivery=? where id=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/whatsapp.py::hook\u001fselect agent from polls where msg_id=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/whatsapp.py::lifespan.<locals>._read_pulse_age\u001fselect extract(epoch from now() - max(last_eval))::float as age from triggers where enabled": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "bridges/whatsapp.py::refresh_poll\u001finsert into polls (msg_id, chat, agent, question, options, multi, votes) values (?,?,null,?,?,?,'{}') on conflict (msg_id) do update set question=excluded.question, options=excluded.options, multi=excluded.multi": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "hooks/nudge.py::log_refusal\u001finsert into steps (agent, kind, content) values (?,'error',?)": {
+   "debt": "NOT-SEARCHED-AT-SEED",
+   "reason": "seed"
+  },
+  "hooks/nudge.py::log_refusal\u001fselect 1 from steps where agent=? and kind='error' and content like 'nudge:%%' and ts > now() - interval '1 hour' limit 1": {
+   "debt": "NOT-SEARCHED-AT-SEED",
+   "reason": "seed"
+  },
+  "hooks/nudge.py::main\u001finsert into classifications (agent, session_id, family, tier, classifier, nudged) values (?,?,?,?,?,?)": {
+   "debt": "NOT-SEARCHED-AT-SEED",
+   "reason": "seed"
+  },
+  "hooks/nudge.py::main\u001fselect 1 from classifications where agent=? and family=? and nudged and ts > now() - make_interval(days => ?) limit 1": {
+   "debt": "NOT-SEARCHED-AT-SEED",
+   "reason": "seed"
+  },
+  "hooks/nudge.py::main\u001fselect count(*) from classifications where family=? and ts > now() - make_interval(days => ?)": {
+   "debt": "NOT-SEARCHED-AT-SEED",
+   "reason": "seed"
+  },
+  "hooks/step.py::handle_stop\u001finsert into messages (from_agent, from_org, to_agent, to_org, thread, intent, body, turn_id) values (?,'local',?,'local',?,'chat',?,?)": {
+   "debt": "NOT-SEARCHED-AT-SEED",
+   "reason": "seed"
+  },
+  "hooks/step.py::handle_stop\u001finsert into turns (agent, session_id, started_at, ended_at, duration_ms, source, input_prompt, input_msg_id, num_responses, num_tools, char_count, tokens_in, tokens_out, model, stop_reason, raw_payload, usage_snapshot, goal_id) values (?,?,?::timestamptz, now(), ?, ?,?,?,?,?,?,?,?,?,?,?,?,?) returning id": {
+   "debt": "EXECUTED",
+   "reason": "seed"
+  },
+  "hooks/step.py::handle_stop\u001fselect (regexp_match(thread, '^(?:plan|goal)-(\\d+)$'))[1]::bigint from messages where id=?": {
+   "debt": "NOT-SEARCHED-AT-SEED",
+   "reason": "seed"
+  },
+  "hooks/step.py::handle_stop\u001fselect count(*) from messages where turn_id=? and to_agent=?": {
+   "debt": "NOT-SEARCHED-AT-SEED",
+   "reason": "seed"
+  },
+  "hooks/step.py::handle_stop\u001fselect from_agent, from_org, thread from messages where id=?": {
+   "debt": "NOT-SEARCHED-AT-SEED",
+   "reason": "seed"
+  },
+  "hooks/step.py::handle_stop\u001fupdate classifications set turn_id=? where agent=? and turn_id is null and (session_id is null or session_id = ?) and ts >= ?::timestamptz - interval '10 seconds'": {
+   "debt": "EXECUTED",
+   "reason": "seed"
+  },
+  "hooks/step.py::handle_stop\u001fupdate messages set turn_id=? where from_agent=? and from_org='local' and turn_id is null and ts >= ?::timestamptz": {
+   "debt": "EXECUTED",
+   "reason": "seed"
+  },
+  "hooks/step.py::handle_stop\u001fupdate steps set turn_id=? where agent=? and turn_id is null and ts >= ?::timestamptz": {
+   "debt": "EXECUTED",
+   "reason": "seed"
+  },
+  "hooks/step.py::handle_stop\u001fupdate turns set num_steps=(select count(*) from steps where turn_id=?) where id=?": {
+   "debt": "EXECUTED",
+   "reason": "seed"
+  },
+  "hooks/step.py::main\u001finsert into steps (agent, kind, content) values (?,'response',?)": {
+   "debt": "NOT-SEARCHED-AT-SEED",
+   "reason": "seed"
+  },
+  "hooks/step.py::main\u001finsert into steps (agent, kind, content, meta) values (?,'error',?,?)": {
+   "debt": "NOT-SEARCHED-AT-SEED",
+   "reason": "seed"
+  },
+  "hooks/step.py::main\u001finsert into steps (agent, kind, content, meta) values (?,'tool',?,?)": {
+   "debt": "NOT-SEARCHED-AT-SEED",
+   "reason": "seed"
+  },
+  "hooks/step.py::main\u001finsert into steps (agent, kind, content, meta) values (?,'tool_done',?,?)": {
+   "debt": "NOT-SEARCHED-AT-SEED",
+   "reason": "seed"
+  },
+  "hooks/step.py::main\u001finsert into steps (agent, kind, content, turn_id, tokens_in, tokens_out) values (?,'response',?,?,?,?)": {
+   "debt": "EXECUTED",
+   "reason": "seed"
+  },
+  "hooks/step.py::usage_snapshot\u001fselect ended_at from turns where usage_snapshot is not null order by ended_at desc limit 1": {
+   "debt": "EXECUTED",
+   "reason": "seed"
+  },
+  "hooks/usage.py::<module>\u001fselect coalesce(max((raw_payload->'usage'->>'context')::bigint),0) from turns where agent=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "hooks/usage.py::<module>\u001fselect five_hour_pct, seven_day_pct, five_hour_reset from current_usage": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "mcp/compose/server.py::notify\u001fselect pg_notify('astryx_dag', ?)": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "mcp/compose/server.py::run_dag\u001finsert into dag_runs (dag, args) values (?, ?) returning run_id": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "mcp/compose/server.py::run_dag\u001fupdate dag_runs set status='error', finished=now(), result=? where run_id=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "mcp/compose/server.py::run_dag\u001fupdate dag_runs set status='ok', finished=now(), result=? where run_id=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "mcp/compose/server.py::run_dag.<locals>.one\u001finsert into dag_steps (run_id, node, tool) values (?,?,?) returning id": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "mcp/compose/server.py::run_dag.<locals>.one\u001fupdate dag_steps set status='error', finished=now(), error=? where id=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "mcp/compose/server.py::run_dag.<locals>.one\u001fupdate dag_steps set status='ok', finished=now(), output=? where id=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "mcp/contacts/server.py::_load_lidmap\u001fselect lid, pn from whatsmeow_lid_map": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "mcp/memory/resolvers.py::_run_cypher\u001f*": {
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "seed"
+  },
+  "mcp/org/server.py::announce\u001finsert into messages (from_agent, to_agent, thread, intent, body) values (?, 'steward', 'org-news', 'milestone', ?) returning id": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "mcp/org/server.py::economy\u001f*": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "mcp/org/server.py::economy\u001fselect day, metrics from econ order by day desc limit 1": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "mcp/org/server.py::economy\u001fselect five_hour_pct, seven_day_pct from current_usage": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "mcp/org/server.py::goals\u001f*": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "mcp/org/server.py::propose_goal\u001finsert into goals (title, owner, state, budget_tokens, epoch_hours, scope_note) values (?, ?, 'proposed', 0, ?, ?) returning id": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/canopus_inbound.py::main\u001finsert into signals (agent, priority, ref) values (?, ?, ?)": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/canopus_inbound.py::main\u001fselect 1 from signals where agent=? and ref=? limit 1": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/econ.py::econ_mirror\u001fselect day::text, metrics->'v2' from econ order by day desc limit 1": {
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "seed"
+  },
+  "nucleus/econ.py::integrity\u001fselect percentile_cont(0.5) within group (order by extract(epoch from done_at - ts)/3600) from goals where done_at >= ? and done_at < ?": {
+   "debt": "EXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/econ.py::pnl\u001fselect agent, sum(coalesce((raw_payload->'usage'->>'billable_equiv_in')::bigint, (tokens_in*0.12)::bigint + tokens_out))::bigint as burned, count(*) as turns from turns where ended_at >= ? and ended_at < ? group by 1 order by 2 desc": {
+   "debt": "EXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/econ.py::rollup\u001finsert into econ (day, metrics) values (?, ?) on conflict (day) do update set metrics=excluded.metrics, computed_at=now()": {
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "seed"
+  },
+  "nucleus/econ.py::value_flow\u001fwith shipped as ( select id, budget_tokens from goals where done_at >= ? and done_at < ? and budget_tokens > 0), spend as ( select t.goal_id, t.agent, sum(coalesce((raw_payload->'usage'->>'billable_equiv_in')::bigint, (tokens_in*0.12)::bigint + tokens_out))::bigint as cost from turns t join shipped s on s.id = t.goal_id group by 1, 2), tot as (select goal_id, sum(cost) as total from spend group by 1) select sp.agent, sum(s.budget_tokens * sp.cost / nullif(tot.total,0))::bigint as value_earned, sum(sp.cost)::bigint as spent_on_shipped from spend sp join shipped s on s.id = sp.goal_id join tot on tot.goal_id = sp.goal_id group by 1 order by 2 desc nulls last": {
+   "debt": "EXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/esc_latency.py::episodes\u001fselect agent, ts, kind from steps where ts > now() - make_interval(days => ?) order by agent, ts": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/esc_latency.py::main\u001fwith s as (select ts, lag(ts) over (order by ts) as prev from (select distinct ts from messages where from_agent = 'pulse' and ts > now() - make_interval(days => ?)) x) select extract(epoch from (ts - prev)) / 3600.0 as gap_h from s where prev is not null order by gap_h desc": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/esc_latency.py::wakes_into\u001fselect count(*) from messages m where m.to_agent = ? and m.status = 'delivered' and m.ts > ? and m.ts < ? and not exists (select 1 from turns t where t.input_msg_id = m.id)": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/identity_commit.py::main\u001finsert into messages (from_agent, from_org, to_agent, to_org, thread, intent, body) values ('seed','local','steward','local','org-news','milestone',?)": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/introduce.py::main\u001finsert into peers (org, url, pubkey, status, notes) values (?, ?, ?, 'introduced', 'we introduced ourselves') on conflict (org) do update set url=excluded.url, pubkey=excluded.pubkey": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/memgraph.py::build_system1\u001fselect body from messages where body ~ '^org-news #[0-9]+' order by id": {
+   "debt": "NOT-SEARCHED-AT-SEED",
+   "reason": "seed"
+  },
+  "nucleus/memgraph.py::build_system1\u001fselect thread, count(*), max(ts)::date, array_agg(distinct from_agent) from messages where thread is not null group by thread order by thread": {
+   "debt": "NOT-SEARCHED-AT-SEED",
+   "reason": "seed"
+  },
+  "nucleus/memgraph.py::write_pg\u001fdelete from kg.claim": {
+   "debt": "NOT-SEARCHED-AT-SEED",
+   "reason": "seed"
+  },
+  "nucleus/memgraph.py::write_pg\u001fdelete from kg.edge": {
+   "debt": "NOT-SEARCHED-AT-SEED",
+   "reason": "seed"
+  },
+  "nucleus/memgraph.py::write_pg\u001fdelete from kg.node": {
+   "debt": "NOT-SEARCHED-AT-SEED",
+   "reason": "seed"
+  },
+  "nucleus/people.py::write_pg\u001fdelete from social_edge where org=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/people.py::write_pg\u001fdelete from social_person where org=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/people.py::write_pg\u001finsert into social_edge (org,src,dst,rel) values (?,?,?,?) on conflict do nothing": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/people.py::write_pg\u001finsert into social_person (org,id,kind,label) values (?,?,'group',?)": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/people.py::write_pg\u001finsert into social_person (org,id,kind,label,direct,relation,who,shape,confidence) values (?,?,'person',?,?,?,?,?,?)": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/persona.py::apply_pg\u001fupdate social_person set shape=?, relation=coalesce(?,relation), who=coalesce(?,who), confidence=coalesce(?,confidence) where org=? and id=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/persona.py::load_pg\u001fselect id, relation, who, shape, confidence from social_person where org=? and kind='person'": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/persona_llm.py::run\u001fselect relation from social_person where org=? and id=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/persona_llm.py::run\u001fupdate social_person set relation=?, who=?, confidence=? where org=? and id=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/pulse.py::reconcile\u001finsert into triggers (agent, name, schedule, kind, check_src, note, next_fire) values (?, ?, ?, 'python', ?, ?, now()) on conflict (agent, name) do update set schedule = ?, check_src = ?, note = ?, enabled = true": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/pulse.py::reconcile\u001fselect agent, name from triggers where kind='python' and enabled": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/pulse.py::reconcile\u001fselect name from triggers where kind='python' and enabled and check_src like ? order by name": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/pulse.py::reconcile\u001fupdate triggers set enabled=false where agent=? and name=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/pulse.py::say\u001finsert into messages (from_agent, to_agent, intent, body) values ('pulse', ?, 'trigger', ?)": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/pulse.py::say\u001fselect 1 from messages where to_agent=? and from_agent='pulse' and status='pending' and body like ? limit 1": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/pulse.py::shed\u001fselect five_hour_pct from current_usage": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/pulse.py::tick\u001fselect id, agent, name, schedule, kind, check_src, state, note, premium from triggers where enabled and next_fire <= now() order by next_fire for update skip locked": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/pulse.py::tick\u001fupdate triggers set enabled=false where id=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/pulse.py::tick\u001fupdate triggers set last_fired=? where id=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/pulse.py::tick\u001fupdate triggers set next_fire=?, last_eval=? where id=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/pulse.py::tick\u001fupdate triggers set state=? where id=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/senses.py::_log_call\u001finsert into steps (agent, kind, content) values (?,'sense',?)": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/senses.py::focus\u001finsert into messages (from_agent, to_agent, thread, intent, body) values ('senses', ?, ?, ?, ?) returning id": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/shipped_triggers/context_compact.py::context_compact\u001fselect agent, (array_agg((raw_payload->'usage'->>'context')::bigint order by ended_at desc))[1] as context, max((raw_payload->'usage'->>'context')::bigint) as high, max(ended_at) as last_turn from turns where raw_payload->'usage' ? 'context' group by agent": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/social_age.py::rebuild\u001fselect a.org, a.src, b.src, count(*) from social_edge a join social_edge b on a.org=b.org and a.dst=b.dst and a.src < b.src where a.rel='member-of' and b.rel='member-of' group by 1,2,3": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/social_age.py::rebuild\u001fselect count(*) from ag_graph where name=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/social_age.py::rebuild\u001fselect create_graph(?)": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/social_age.py::rebuild\u001fselect drop_graph(?, true)": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/social_age.py::rebuild\u001fselect org, id, kind, label, direct, relation from social_person": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/social_age.py::rebuild\u001fselect org, src, dst from social_edge where rel='member-of'": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/social_age.py::rebuild.<locals>.cy\u001f*": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/sqlguard/enforce.py::_clock\u001fdelete from sqlguard_seen where kind=? and not (key = any(?))": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/sqlguard/enforce.py::_clock\u001finsert into sqlguard_seen (kind, key) values (?,?) on conflict (kind, key) do update set last_seen=now(), runs=sqlguard_seen.runs+1 returning first_seen, runs": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/sqlguard/enforce.py::enforce\u001fselect 1 from goals where id=? and state=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/sqlguard/enforce.py::enforce\u001fselect datname from pg_database where datname like 'astryx_fx_%'": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/sqlguard/enforce.py::enforce\u001fselect to_regclass('sqlguard_seen')": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/sqlguard/fixture.py::_stamp_all\u001fselect c.oid, quote_ident(n.nspname)||'.'||quote_ident(c.relname) from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relkind in ('r','p','v','m') and n.nspname not in ('pg_catalog','information_schema','ag_catalog','topology') and n.nspname not like 'pg_toast%%'": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/sqlguard/fixture.py::_stamp_all\u001fselect relkind from pg_class where oid=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/sqlguard/fixture.py::db_stamp_map\u001fselect a.attrelid, a.attname, format_type(a.atttypid, a.atttypmod), coalesce(pg_get_expr(d.adbin, d.adrelid), ''), a.attnotnull from pg_attribute a left join pg_attrdef d on d.adrelid=a.attrelid and d.adnum=a.attnum where a.attrelid = any(?) and a.attnum>0 and not a.attisdropped order by a.attrelid, a.attname": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/sqlguard/fixture.py::db_stamp_map\u001fselect c.oid, obj_description(c.oid, 'pg_class') from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relkind in ('r','p','v','m') and n.nspname not in ('pg_catalog','information_schema','ag_catalog','topology') and n.nspname not like 'pg_toast%%'": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/sqlguard/fixture.py::signature\u001fselect a.attname, format_type(a.atttypid, a.atttypmod), coalesce(pg_get_expr(d.adbin, d.adrelid), ''), a.attnotnull from pg_attribute a left join pg_attrdef d on d.adrelid=a.attrelid and d.adnum=a.attnum where a.attrelid=? and a.attnum>0 and not a.attisdropped order by a.attname": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/sqlguard/fixture.py::stamp_valid\u001fselect obj_description(?, 'pg_class')": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/toolreg.py::authorship\u001fselect agent, split_part(content, ':', 1), meta->>'edits', content from steps where kind = 'tool' and (meta ? 'edits' or content ~ '^(write|edit|multiedit|notebookedit): ') order by id": {
+   "debt": "EXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/toolreg.py::authorship\u001fselect distinct meta->>'registry_id' from steps where meta ? 'registry_id'": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "nucleus/wake_audit.py::consecutive_drops\u001fselect to_agent, id from messages m join (select distinct agent from turns) a on a.agent = m.to_agent where m.status='delivered' and m.ts > now() - make_interval(hours => ?) and m.ts < now() - make_interval(hours => 2) and (?::text is null or m.to_agent = ?) order by m.to_agent, m.id desc": {
+   "debt": "EXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::_databases\u001fselect datname from pg_database where not datistemplate and datallowconn order by datname": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::_is_read\u001fselect": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::_is_read\u001fwith": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::agent_profile\u001fselect (select count(*) from turns where agent=?) as turns, (select coalesce(sum(tokens_out),0) from turns where agent=?) as tokens_out, (select coalesce(sum(coalesce((raw_payload->'usage'->>'billable_equiv_in')::bigint, (tokens_in*0.12)::bigint + tokens_out)),0)::bigint from turns where agent=?) as billable_tokens, (select count(*) from messages where from_agent=? and from_org='local') as messages_sent, (select count(*) from steps where agent=?) as steps, (select min(ts) from steps where agent=?) as first_seen, (select max(ts) from steps where agent=?) as last_seen": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::agent_profile\u001fselect model from turns where agent=? and model is not null order by ended_at desc limit 1": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::agent_profile\u001fselect peer, sum(n)::bigint as n from ( select to_agent as peer, count(*) as n from messages where from_agent=? and to_agent is not null group by 1 union all select from_agent as peer, count(*) as n from messages where to_agent=? group by 1 ) x where peer is not null and peer <> ? group by peer order by 2 desc limit 10": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::agents\u001fselect agent, max(ts) as last_seen, count(*) as steps, coalesce(sum(tokens_in), 0) as tokens_in, coalesce(sum(tokens_out), 0) as tokens_out, (array_agg(kind order by id desc))[1] as last_kind, (array_agg(left(content, 120) order by id desc))[1] as last_content from steps group by agent order by max(ts) desc": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::agents\u001fselect distinct on (agent) agent, model from turns where model is not null order by agent, id desc": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::brain_completions\u001finsert into messages (from_agent, to_agent, thread, intent, body) values ('owner', 'growbot', ?, 'task', ?) returning id": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::brain_completions\u001fselect id, body from messages where thread = ? and id > ? and from_agent = 'growbot' order by id limit 8": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::dag_run_detail\u001fselect * from dag_runs where run_id=?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::dag_run_detail\u001fselect node, tool, status, started, finished, output, error from dag_steps where run_id=? order by id": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::dag_runs\u001fselect run_id, dag, status, started, finished from dag_runs order by run_id desc limit ?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::db_columns\u001fselect column_name as name, data_type as type, is_nullable as nullable from information_schema.columns where table_schema=? and table_name=? order by ordinal_position": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::db_count\u001f*": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::db_query\u001f*": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::db_query\u001fselect": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::db_schema\u001fselect table_schema as schema, table_name as name, table_type as type from information_schema.tables where table_schema not in ('pg_catalog','information_schema') order by table_schema, table_name": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::economy\u001fselect agent, sum(coalesce((raw_payload->'usage'->>'billable_equiv_in')::bigint, (tokens_in*0.12)::bigint + tokens_out))::bigint as bill, sum(tokens_out)::bigint as out, count(*) as turns from turns group by agent order by 2 desc nulls last limit 50": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::economy\u001fselect coalesce(model,'?') as model, count(*) as turns from turns where ended_at > now() - interval '7 days' and model is not null group by 1 order by 2 desc limit 6": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::economy\u001fselect coalesce(sum(coalesce((raw_payload->'usage'->>'billable_equiv_in')::bigint, (tokens_in*0.12)::bigint + tokens_out)),0)::bigint as bill from turns where ended_at > now() - interval '1 hour'": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::economy\u001fselect coalesce(sum(coalesce((raw_payload->'usage'->>'billable_equiv_in')::bigint, (tokens_in*0.12)::bigint + tokens_out)),0)::bigint as bill_24h, coalesce(sum(tokens_out),0)::bigint as out_24h, count(*) as turns_24h, count(distinct agent) as agents_24h from turns where ended_at > now() - interval '24 hours'": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::economy\u001fselect date_trunc('day', ended_at)::date::text as day, sum(coalesce((raw_payload->'usage'->>'billable_equiv_in')::bigint, (tokens_in*0.12)::bigint + tokens_out))::bigint as bill, sum(tokens_out)::bigint as out, count(*) as turns from turns where ended_at > now() - interval '365 days' group by 1 order by 1": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::economy\u001fselect day::text as day, metrics from econ order by day desc limit 90": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::economy\u001fselect fetched_at as ended_at, five_hour_pct as five, seven_day_pct as seven from usage_readings where state='fresh' and fetched_at > now() - interval '6 hours' order by fetched_at": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::economy\u001fselect fetched_at as ended_at, measured_by as agent, subscription as usage_subscription, five_hour_pct as usage_five_hour_pct, seven_day_pct as usage_seven_day_pct, seven_day_opus_pct as usage_seven_day_opus_pct, five_hour_reset as usage_five_hour_reset, seven_day_reset as usage_seven_day_reset from current_usage": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::economy\u001fselect id, title, owner, state, budget_tokens, spent_tokens from goals order by spent_tokens desc limit 50": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::economy\u001fselect id, ts, from_party, to_party, amount_tokens, amount_money, memo from receipts order by id desc limit 100": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::goal_create\u001finsert into goals (title, owner, state, scope_note, budget_tokens) values (?, ?, 'proposed', ?, ?) returning id": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::goal_create\u001finsert into messages (from_agent, from_org, to_agent, to_org, thread, intent, body) values ('owner', 'local', ?, 'local', ?, 'task', ?)": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::goals\u001fselect * from goals order by id desc limit 200": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::growbot_event\u001finsert into messages (from_agent, to_agent, thread, intent, body) values ('owner', 'growbot', 'growbot', 'chat', ?) returning id": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::listen_task\u001fselect * from messages where id = ?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::memory_chat\u001finsert into messages (from_agent, to_agent, thread, intent, body) values ('owner', 'memory', ?, 'task', ?) returning id": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::memory_chat_replies\u001fselect id, body, ts from messages where thread=? and from_agent='memory' and id > ? order by id limit 10": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::memory_chat_replies\u001fupdate messages set status='delivered', delivered_at=now(), delivery=jsonb_build_object('ok', true, 'handle', 'observatory:estate') where id = any(?::bigint[]) and status='pending'": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::memory_propose\u001finsert into messages (from_agent, from_org, to_agent, to_org, thread, intent, body) values ('owner','local','memory','local','memory-proposals','task',?)": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::messages\u001f*": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::network_cypher\u001f*": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::network_cypher\u001fdelete": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::network_cypher\u001fmerge": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::network_people\u001fselect a.org, a.src as p1, b.src as p2, count(*) as w from social_edge a join social_edge b on a.org=b.org and a.dst=b.dst and a.src < b.src where a.rel='member-of' and b.rel='member-of' group by 1,2,3 having count(*) >= ?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::network_people\u001fselect org, id, kind, label, direct, relation, who, shape, confidence from social_person": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::overview\u001f*": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::overview\u001fselect distinct agent from steps": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::owner_send\u001finsert into messages (from_agent, to_agent, thread, intent, body) values ('owner', ?, ?, 'chat', ?) returning *": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::peer_orgs\u001fselect org from peers": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::peers\u001fselect org, status, reputation from peers order by reputation desc": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::steps\u001f*": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::threads\u001fselect thread, count(*) as count, min(ts) as first_ts, max(ts) as last_ts, (array_agg(from_agent order by id))[1] as starter, (array_agg(left(body, 140) order by id))[1] as preview from messages where thread is not null group by thread order by max(id) desc limit 200": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::triggers\u001fselect agent, name, schedule, kind, enabled, last_fired, next_fire, note from triggers order by agent, name": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::turn_detail\u001fselect * from turns where id = ?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::turn_detail\u001fselect id, from_agent, from_org, to_agent, thread, intent, body from messages where id = ?": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::turn_detail\u001fselect id, to_agent, to_org, thread, intent, left(body, 300) as body from messages where turn_id = ? order by id": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::turns_list\u001f*": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::usage\u001fselect fetched_at as ended_at, measured_by as agent, src, age_seconds, snapshot as usage_snapshot, subscription as usage_subscription, five_hour_pct as usage_five_hour_pct, seven_day_pct as usage_seven_day_pct, seven_day_opus_pct as usage_seven_day_opus_pct, five_hour_reset as usage_five_hour_reset, seven_day_reset as usage_seven_day_reset from current_usage": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::usage\u001fselect fetched_at as ended_at, measured_by as agent, state as usage_state, src from usage_readings order by fetched_at desc limit 1": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "observatory/api/main.py::vega\u001fselect agent, content from steps where kind='milestone' order by id desc limit 8": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:04ad6ba79bfe7f048bda3a91c4200be9293f5fa3099a7c5079a3d8776b04f6ad": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:063917621488db3215fe144e98863d6331340fb704f30428b0ec3d0220969e3f": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:0ee817bda79e36acdedc0817313ee5e3fffefec3a17ec52ca55447667a73287c": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:133dfb28472d29fbab456ba035d041c7ccd8464701c6b9ec44261284b0ff01a1": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:1351af30caa076ccd2122a0eca58b4914febb0bd05452f74926a6cc26bdaa89f": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:184834a9fb206de05c3384a20b4fd3284beeaa959282e02a99d2e5954e4dd4f4": {
+   "debt": "EXECUTED",
+   "reason": "seed"
+  },
+  "sha256:19909ab8350124c77fd9dabc2333bc1c41aaa12ef336a39e443a28d921180c50": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:1abb1fa38a3a9cf7cf2cc44a551b9ee1ffb901d5766b1de9a4aa34dd182f9733": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:20764a2557c6a56af577fc2693dc7ef5ac3a2654f83edb9abba02b32d9716b27": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:21203b2acfba4e94ade688f84146119cfb841cff441ed605786da2eb77cd3e0b": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:21d54d5bcbe8130fb72a8209164973487c28f96a2d1608b1dd24f8fe4ce8b35a": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:270094954664f77ba34a84f8f8f0e08cf49f5ba4c30de70af1822a699c5eeef2": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:2b8ef9d19e42f59d872763dd204853a3ed41bc4fb9b6a113562c6c61663edfef": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:2dae3cdfd22b8fb43b1aa7478ddd5e50589a0e32d819ee9fe5c93a18f9259300": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:2fef76a2e46d82af6a991c2f896d806317b6a6b62c3093f4e31bc945c29a1255": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:3084d3abaad2a8223c076a9464ce3be184b083c3ce7d55142ff8e6ba2d8a8d57": {
+   "debt": "EXECUTED",
+   "reason": "seed"
+  },
+  "sha256:32b219c5694b8fabbf42deef14220251f4d710bbe85e8b236d1635bdab286c7b": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:3458d592829aa9f48d03b8763317f24074d55c95291b7f8b0975ff76b82cd08b": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:3598582c13e5c80446c796977ad4b92d0bac1d30d43047ac32f63cc53bd12028": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:35ad8179f934dbd19012237d08b607b8e7e750d4ca56b65e792caeaec8637409": {
+   "debt": "EXECUTED",
+   "reason": "seed"
+  },
+  "sha256:38682fff56dfae6e3b0ccd2a1423e4f7ac91dc5ec574c411798ec7ca817133c7": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:3b0c174a930f2b6080d3919a35bbc719ce274d07f40ac6388e928445bccc216c": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:3dda790664619d71fce0f8d210a90d832d799c4e7a290ff8a53e524088767e93": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:3ef5d839cdc7775cc6b6ee5652e0af0c24727d64a2fb932c879b04dda8957be4": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:40bc70234fb747e0a272ddfc30c7f0eeb07ecb6ccec5fc764f40be9aabd3305b": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:44f523377cb11d9b0f3cd69cf8e4a26ca5c7a3103eddb2a28e49e87d48554770": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:4660c6b876bae12970fe1da7faf5926da0e32025efbc524a2332258cacff915c": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:49f80bbbc358c736549dee82612a6c0d5803a71b4ed8dc90955f4e5e7a17bf26": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:4ab24d7df24668553e3ac14aa0fe1613622fb251183d798d6d95529f70cb37ca": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:4f8e0a361642361c7aa508ed5edf86269b0ea93ce218a2ad0f61b455cb7b2157": {
+   "debt": "EXECUTED",
+   "reason": "seed"
+  },
+  "sha256:4fce6d215ab0c703dad50abe10cd6899953f70814d52940adb44bd47d8898f9e": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:51ad695d6989ae0467d83a3f99d7f4070ccc311bd5dd0925f0d4847feb4ee581": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:5aa838349f252ec9e8dcb8a931da96be1d9ea44211395927137930944e237dfd": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:601700a7510fd9dfe73046322da44a764bc823d0786090492e9d706d1e0e9176": {
+   "debt": "EXECUTED",
+   "reason": "seed"
+  },
+  "sha256:6300e52a339f6d9e6e52c35701e0de39d59f00fc3b82ad3b4aae5d68bf86b9ba": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:6489d465ea8e138902d99f69cfeddd6529168cc4b7377cee91fc16fb97eeb69f": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:65d63860f72c863d4827a88c9955f4f8970ad3ad8860d88ebc46c950b5722572": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:69a1a4e0fc3d874e33706bbb431360e1c766c5cb7850a42452888178807a3dd8": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:6a44313ce751b3f3c07ad5b7eaa31263e177746662b2db8f2cf03d9e7e14f8af": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:6a4af6401736a7f7d161d3634716c7268bc34c2c15999e83ca3fcf7f6ef1b105": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:6aa649aa08b3620d0eb3a557875658a3bf93a82342b2bc5f4031de6951014cfd": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:6c01b12f043905a271d7d039c2d6294bbbcb1f6f2dcfb473120602d26fe4c539": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:6d7f88e10b3ac450e777cdf48b0490ef929e41ab9473676a2d7f20c23f4d0fdf": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:6e3b800fd2864880ad2e6c6d119e3cd78eabb482f01337c42c1df1057dc401ce": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:70c06752482cc844a07673dc146f86261fa6aee09f5785d9b80d2bcf68bc5705": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:74b90c2bec07ca747599ee34fb8651a81d07b68245d1ac4d4718fe8a39ef44c1": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:77602bcf20687d7498843b245abb6f9c0fd25a8e25b5d1106e26b52d106bc52c": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:79eadd0c797f7e3d56925c4054039c268945e6645ee1ab3c9f77aef17e0d3bfd": {
+   "debt": "EXECUTED",
+   "reason": "seed"
+  },
+  "sha256:8144027438a5006aad7309f2489dc4f77cc956984b8d90b24a9fc6c78775c72f": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:81f4b04f16f620992e6adf8782c2a175db4b34b7284ba5916f534a7b28f70f72": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:83cb798025a01f4b7ebc2f4d8ae05e3b045989109abf88b91d18819f7c0f3bf9": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:84199478f6f38ff83a7850e9b11f8ca94159fd391d5f472e573085d64cf4c50f": {
+   "debt": "EXECUTED",
+   "reason": "seed"
+  },
+  "sha256:8446a88041c7713e71ddd73efabfdf3abfbb866a872a9e0461fb08cc5ea6397c": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:84b1a3de791457da8080d6529dca65ab9c3c79c0f8df4e6bd2d1347bf60bff21": {
+   "debt": "EXECUTED",
+   "reason": "seed"
+  },
+  "sha256:866f2afa548e356751e225af89f57c182fc16b9d5e89f3a715262158defdb4d8": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:879986101286a9a6b8406565e3c86abbaaf7064352822df7dac3b99ad50b7e20": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:8b405822a654e38bcc8ce7ffc5ed2e836b8e8d71cb5c61fb0cac419fc848b62e": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:8d5cc11479a78bf648c457e66e095653af7b5e7cdc976135a20b306b51b47fae": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:9121f673ebb43fda5630138bb212d03e3ab977838c82af2d7dc325a0fe55ea0c": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:9735b7b658a405e897cb218acaa4765ee8e1b97ea4b6c10c26dc57133f349df6": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:9a8253a63ad69f7434025d1cecb6193c8630dad3b9d1e9719f83b27c057e9771": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:9b7629836c00863e76f3238c2194697f11e7c011e58da47933b0a4b5e2a246b3": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:9bebe0f2defedf8a4e84aceeb9648a3a9532424653e8f3652aa10bc498345694": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:9cdbd1926344cd8e0e91d085d558ed8a0fc1a56e420c49e262ac779d5ca0f899": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:9da204395ff545b6a441570af53130c70a8e08d5ee3c277aa330fc5cd26b47eb": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:9e461df078888a65fb92fa6d57ff33b23340ae42a242f216843ac99a98c748a2": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:9e7834b9c2c96993bc6b8148f1ef173854d1a8fd66f7b8aeba13ab1d5cbd0571": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:9f40c0e2e738f51dd18680e19faf737027b778a5f0612b786b8780f7a10b706e": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:ac07ac7be589973c7d1b06ee84f406621330e24a6718631649c1be8f434e8953": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:b35cb874306b9b2633ddd177827bee8c70a55dd33fe995bc7ab13c256d36814f": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:bb7bd6e0d676c7cacd903adfb44e21e01bfef638d016fc6e901e9eb330fd5591": {
+   "debt": "EXECUTED",
+   "reason": "seed"
+  },
+  "sha256:bcadfe5acaaafd18571cf920ea455a0ddb3a9c45684b81c2b9b0df1702581bf1": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:bd322094730afa827d80d867c01f9e2de8e1643e817c3a3259bca02d607bff71": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:bf995723c828284b797216d1f05ca3aea854cbf6c98d1ef6d7c853434928bded": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:c25ff6543cafed7b3939db2125ed8cf0a90debcd930916b37574531d5ac62244": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:c41cc472ec9969443e095bf8a9c5bcf825eb9d1dc78b020f06d2dd69a97d13c4": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:c7a34709f58d596edb212044ff362b3897a831af5b707ca6dcdb586f4b739d4e": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:d021341b3774d2bf17e08091f3698a1d4557df05b410edb9bc909ccf55151f44": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:d0d080335f48c270bc0b8bc88c62d5dcfd7f9798dbcfadf5127cd8444d197cc8": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:d6aae41b3bc8b376c4e74088acd844a8743bd8dfa1dfbb747ddfc54709ef8d06": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:d795be96d939193ffa019f893e2b215712bc7560701531731eb80081191b203f": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:d7e5fd956f7825fa7fc37f7e4a24e85f854601aa7a92014a47c073d6fe7caafc": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:d997cb07c6f083f1ad0108072e2cfa47288f1c2069d93019a35cdbd7fd16eed9": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:db4e73cff91ce0f69e3c5a3afabc879508f83c273b71644f1a53357b400732b8": {
+   "debt": "EXECUTED",
+   "reason": "seed"
+  },
+  "sha256:e15d9f816eff10a84831892fba320c06f5b176ce84f02c03c43140df970dcfcb": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:e28a22d96be9403550ec5e85cd8dcd2d937a5398fff4417c940444597d33e8c3": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:e96daa49e862f04c51f1933f1ba90a2108f7ba7694c41bcd6ae570d7657c33ec": {
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "seed"
+  },
+  "sha256:ea1801b3abaac6055ee2508f41f5457ee8f3e1010470556dafb97e7116c79766": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:eadd8730093a76b017a9b6783544ed6d33a8ed3f293f5e8ef2fb6eec6346b038": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:ebf1cf18cad3abd216a24aa09230da354d0d866d71996a9095a352300c23ee7d": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:ef0a5839d25c1d27bf6d94e04515bddbfda3c05feda55f8ca6bcc55da40c766c": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:f11666c37f8ec5d29548340c7e2f57f5f6e2fc09dbf9e40a9a64c0a6f4944184": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:f15d663a54ae92cc067ffade638f565b931007bcb92096b205b4298213678b76": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:fa6fa3d04421bbfec0588059d7b9b7a00300a565e250c4c134d6f8a9a5dd6575": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:fce49a32a2f9d80324424491dc4a244064fc818c52731c58d7c806cac8af868c": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:fe916d29d28044e9519b0ea582a9f277b9b66b3ce60d73408667aed70e8cd5ed": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  },
+  "sha256:ff9d87fb3dee5217d2b7e98a2d56ebb8d51f7901887b0ae620a21d4ed3c5a9d0": {
+   "debt": "UNEXECUTED",
+   "reason": "seed"
+  }
+ }
+}

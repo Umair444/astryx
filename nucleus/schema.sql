@@ -499,3 +499,16 @@ CREATE TABLE IF NOT EXISTS classifications (
 );
 ALTER TABLE classifications ADD COLUMN IF NOT EXISTS nudged boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS classifications_recur ON classifications (agent, family, ts DESC);
+
+-- SQLGUARD STATE (goal 4243): what the meta-guard has to remember ACROSS runs, as a row (org law), not a file.
+-- kind 'ns_site' = a site NOT SEARCHED since first_seen (the per-site clock); 'fx_db' = a foreign astryx_fx_*
+-- database seen by the leak arm. Postgres records no creation time for a database, so first-seen IS the clock.
+-- Losing this table only DELAYS a RED (the clock restarts); it never silences one.
+CREATE TABLE IF NOT EXISTS sqlguard_seen (
+  kind        text NOT NULL,
+  key         text NOT NULL,
+  first_seen  timestamptz NOT NULL DEFAULT now(),
+  last_seen   timestamptz NOT NULL DEFAULT now(),
+  runs        int NOT NULL DEFAULT 1,
+  PRIMARY KEY (kind, key)
+);

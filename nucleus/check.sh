@@ -56,7 +56,7 @@ run() {
   local label=$1; shift
   printf '\033[36m▶\033[0m %s\n' "$label"
   local out rc
-  out=$("$@" 2>&1); rc=$?
+  out=$(ASTRYX_SQLGUARD_GATE="$label" "$@" 2>&1); rc=$?
   printf '%s\n' "$out"
   # The belt. A gate that ANNOUNCES a skip and still exits 0 has broken the protocol —
   # it is the exact defect this accounting exists to catch, so it is reported as a
@@ -77,6 +77,9 @@ run() {
   if [ "$rc" = 0 ] && grep -qE '^[[:space:]]*(SKIP|○)' <<<"$out"; then
     rc=$EXIT_SKIP; LIARS+=("$label")
   fi
+  # sqlguard (goal 4243): the effective rc per gate. The judge reads this to decide whether a site's NEGATIVE
+  # verdict saw a complete search (C1: every covering gate exited 0).
+  [ -n "${ASTRYX_SQLGUARD_DIR:-}" ] && printf '%s\t%s\n' "$label" "$rc" >> "$ASTRYX_SQLGUARD_DIR/gates.tsv"
   case $rc in
     0)  verified=$((verified+1)); printf '\033[32m  ✓ %s\033[0m\n' "$label" ;;
     "$EXIT_SKIP")
@@ -86,7 +89,8 @@ run() {
   esac
 }
 # A gate whose PREREQUISITE is absent is itself unverified — never silently omitted.
-skip() { UNVERIFIED+=("$1"); printf '\033[33m○\033[0m %s — VERIFIED NOTHING (%s)\n' "$1" "$2"; }
+skip() { [ -n "${ASTRYX_SQLGUARD_DIR:-}" ] && printf '%s\t77\n' "$1" >> "$ASTRYX_SQLGUARD_DIR/gates.tsv"
+  UNVERIFIED+=("$1"); printf '\033[33m○\033[0m %s — VERIFIED NOTHING (%s)\n' "$1" "$2"; }
 
 verdict() {
   echo
@@ -119,6 +123,19 @@ verdict() {
 # against SYNTHETIC gates so the accounting is proven against THIS file rather than a
 # copy of it. Everything above is definitions; everything below runs the real gates.
 [ -n "${CHECK_LIB_ONLY:-}" ] && return 0
+
+# sqlguard (goal 4243): the driver shim rides every python gate as `sitecustomize`. check.sh sets
+# all three ITSELF, because run_check runs this under pulse's bare systemd env (the runner-env law:
+# ASTRYX_NODE/507e7ea). The run id names this run's fixture databases, so the leak arm only ever looks for
+# its own prefix.
+export ASTRYX_SQLGUARD_RUN="${ASTRYX_SQLGUARD_RUN:-r$(date +%s)x$$}"
+export ASTRYX_SQLGUARD_DIR="${ASTRYX_SQLGUARD_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/sqlguard.XXXXXX")}"
+export PYTHONPATH="$PWD/nucleus/sqlguard/shim${PYTHONPATH:+:$PYTHONPATH}"
+echo "$ASTRYX_SQLGUARD_RUN" > "$ASTRYX_SQLGUARD_DIR/run_id"
+# The canary proves THIS run's shim can observe: one statement through the REAL pulse_run.Ctx.sql. If it isn't
+# RESPONSIVE, the whole sqlguard verdict is NOT SEARCHED (a check that can't observe says so).
+run "sqlguard canary: the shim observes through the real Ctx.sql" "$PY" -m nucleus.sqlguard.canary
+run "sqlguard oracle: privacy (P1) + controls"          "$PY" tests/test_sqlguard.py
 
 run "charter resolver invariants"      "$PY" tests/test_charter.py
 # org MCP write-tool role gate (t-org-grant): the genome/identity writes are governance-gated
@@ -478,5 +495,12 @@ if "$PY" -c 'import av' 2>/dev/null; then
 else
   skip "media in-process decode" "av not installed here"
 fi
+
+# sqlguard (B1, ENFORCED): grades every SQL site by what the suite above actually observed, then decides against
+# the shrink-only ledger. RED on a NEW site below RESPONSIVE, a stale row, blind SQL, an expired NOT SEARCHED
+# clock, a leaked fixture DB, or an extractor-list mismatch. 77 (UNVERIFIED) when the run can't observe: shim
+# errors, the canary not RESPONSIVE, triggers/ absent. Its controls are tests/test_sqlguard.py, above.
+# It runs LAST so it sees every gate's trace, and its own rc lands in gates.tsv after it has read the file.
+run "sqlguard: every SQL site is observed, or listed debt" "$PY" -m nucleus.sqlguard.enforce "$ASTRYX_SQLGUARD_DIR"
 
 verdict

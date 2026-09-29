@@ -164,7 +164,6 @@ EXEMPT = {
     "nucleus/smoke.sh":
         "manual: doctor-class post-deploy probe, self-declared (`# Usage: nucleus/smoke.sh "
         "[observatory-port]`) and already classified as manual by test_check_coverage.py:56",
-    "nucleus/__init__.py":    "library: package marker, imported implicitly by `from nucleus import X`",
     # invoked by nucleus/spawn.sh (per-agent provider/auth override, read at each spawn) — a
     # SHELL invocation, outside this scanner's committed-python view. charter.py sits in the
     # same spawn.sh line and passes ONLY because python files (mcp/org, observatory) also call
@@ -418,9 +417,37 @@ def _py_index(label, text):
     return _PY_INDEX[label]
 
 
-def _py_invocations(text, comp, stem, label="<fixture>"):
+# A MODULE HAS A DOTTED NAME, AND PYTHON RUNS IT BY THAT NAME TOO (goal 4243, abstractor-4). The stem forms
+# above were written when nucleus/ was flat. A subpackage (nucleus/sqlguard/) is reached in three spellings
+# this parser couldn't see, and all three were live the day it landed:
+#   `"$PY" -m nucleus.sqlguard.canary`             a module RUN by its dotted name (check.sh)
+#   `from nucleus.sqlguard import inventory`        a submodule IMPORTED by its dotted name
+#   `-m nucleus.sqlguard.x` / any submodule import  ALSO executes the package's __init__.py, which Python
+#                                                   imports first. So nucleus/__init__.py is DERIVED now, not
+#                                                   exempted: its old exemption was this edge written by hand.
+# And one loader that is neither a call nor an import: a directory on PYTHONPATH makes the interpreter import
+# its `sitecustomize.py` at startup (the sqlguard shim rides every gate that way). The edge is drawn ONLY for
+# that one auto-loaded name, and only from a line that SETS PYTHONPATH to that exact directory.
+_AUTOLOADED = ("sitecustomize.py", "usercustomize.py")
+
+
+def _dotted(path):
+    """-> (dotted module name, is_package_init), or (None, False) for a non-.py path."""
+    if path.endswith("/__init__.py"):
+        return path[:-len("/__init__.py")].replace("/", "."), True
+    if path.endswith(".py"):
+        return path[:-3].replace("/", "."), False
+    return None, False
+
+
+def _dotted_match(name, dotted, pkg):
+    return name == dotted or (pkg and name.startswith(dotted + "."))
+
+
+def _py_invocations(text, comp, stem, label="<fixture>", path=None):
     """-> list of (lineno, why). Raises SyntaxError if the surface is unparseable."""
     imports, calls = _py_index(label, text)
+    dotted, pkg = _dotted(path or "")
     out = []
     if stem:
         for form, name in (("import", stem), ("import", f"nucleus.{stem}"),
@@ -428,9 +455,14 @@ def _py_invocations(text, comp, stem, label="<fixture>"):
             if name in imports:
                 out.append((1, form))
                 break
+    if not out and dotted and any(_dotted_match(n, dotted, pkg) for n in imports):
+        out.append((1, "package import" if pkg else "dotted import"))
     for lineno, consts, why in calls:
         if any(comp.search(c) for c in consts):
             out.append((lineno, why))
+        elif dotted and why == "subprocess" and "-m" in consts \
+                and any(_dotted_match(c, dotted, pkg) for c in consts):
+            out.append((lineno, "subprocess -m"))
     return out
 
 
@@ -468,6 +500,12 @@ def invocations(path, texts):
                       rf"|import\s+(?:nucleus\.)?{re.escape(stem)}\b"
                       rf"|from\s+nucleus\s+import\s+(?:[\w,\s]*\b){re.escape(stem)}\b)")
            if stem and stem != "__init__" else None)
+    dotted, pkg = _dotted(path)
+    mod_m = (re.compile(rf"(?:^|\s)-m\s+[\"']?{re.escape(dotted)}{r'(?:\.[\w.]+)?' if pkg else ''}"
+                        rf"(?=[\s\"';)&|]|$)") if dotted else None)
+    site_dir = os.path.dirname(path) if base in _AUTOLOADED else None
+    pypath = (re.compile(rf"(?:^|[\s\"'=:/}}]){re.escape(site_dir)}/?(?=[\s\"':$;]|$)")
+              if site_dir else None)
     hits = []
     for label, text in texts:
         if label == path:
@@ -475,7 +513,7 @@ def invocations(path, texts):
         if label.endswith(".py"):
             try:
                 rows = text.splitlines()
-                for lineno, why in _py_invocations(text, comp, stem, label):
+                for lineno, why in _py_invocations(text, comp, stem, label, path):
                     line = rows[lineno - 1].strip() if lineno <= len(rows) else ""
                     hits.append((label, f"{line[:120]}   [{why}]"))
             except SyntaxError:
@@ -484,7 +522,8 @@ def invocations(path, texts):
         is_conf = label.endswith(".conf")
         for raw in text.splitlines():
             line = _strip_comment(raw, is_conf)
-            if not line or (base not in line and not (stem and stem in line)):
+            if not line or (base not in line and not (stem and stem in line)
+                            and not (dotted and dotted in line) and not (site_dir and site_dir in line)):
                 continue
             if is_conf:
                 # runner row: name | agent | schedule | script | note
@@ -503,6 +542,12 @@ def invocations(path, texts):
                     if at and comp.search(line, at.end()):
                         hit = True
                         break
+                at = tok.search(line)
+                if not hit and at and mod_m and mod_m.search(line, at.end()):
+                    hit = True                        # `$PY -m dotted.name`: run by its module name
+                at = line.find("PYTHONPATH=")
+                if not hit and pypath and at >= 0 and pypath.search(line, at):
+                    hit = True                        # its directory on PYTHONPATH: auto-imported at startup
             if hit:
                 hits.append((label, line.strip()))
     return hits
@@ -699,6 +744,43 @@ FIXTURES = [
        'SUBJECT = Path(REPO / "nucleus" / "other.py")\n'
        '_spec = importlib.util.spec_from_file_location("u", SUBJECT)\n')],
      "nucleus/escalation.py"),
+    # THE DOTTED EDGES (goal 4243). Every .py label below is UNIQUE in this list: the parse cache is keyed by
+    # label, so a reused label would answer with the previous fixture's parse (my first draft hit it twice).
+    # One GREEN per spelling, and a RED beside each that the naive version of
+    # the rule would pass: a prefix-sharing module name, a mention in prose, a sibling in the same directory.
+    ("run by module name: $PY -m dotted.name", True,
+     [("nucleus/check.sh", 'run "canary" "$PY" -m nucleus.sqlguard.canary')], "nucleus/sqlguard/canary.py"),
+    ("-m of a module whose name merely STARTS with this one is not this one", False,
+     [("nucleus/check.sh", 'run "x" "$PY" -m nucleus.sqlguard.canary_extra')], "nucleus/sqlguard/canary.py"),
+    ("-m with no interpreter token is prose", False,
+     [("nucleus/x.sh", 'echo "see -m nucleus.sqlguard.canary"')], "nucleus/sqlguard/canary.py"),
+    ("-m of a submodule also runs the package __init__", True,
+     [("nucleus/check.sh", '"$PY" -m nucleus.sqlguard.enforce "$D"')], "nucleus/sqlguard/__init__.py"),
+    ("-m of a prefix-sharing SIBLING package does not run this __init__", False,
+     [("nucleus/check.sh", '"$PY" -m nucleus.sqlguardx.enforce')], "nucleus/sqlguard/__init__.py"),
+    ("a submodule imported by its dotted name", True,
+     [("nucleus/sqlguard/judge.py", "from nucleus.sqlguard import inventory\n")], "nucleus/sqlguard/inventory.py"),
+    ("a name imported FROM a dotted submodule", True,
+     [("nucleus/sqlguard/enforce.py", "from nucleus.sqlguard.normalize import norm\n")],
+     "nucleus/sqlguard/normalize.py"),
+    ("a dotted import in a docstring is prose", False,
+     [("nucleus/x.py", '"""use it as: from nucleus.sqlguard import inventory"""\n')],
+     "nucleus/sqlguard/inventory.py"),
+    ("the package __init__ is reached by importing its package", True,
+     [("tests/test_x.py", "from nucleus import charter\n")], "nucleus/__init__.py"),
+    ("a subprocess -m list", True,
+     [("tests/test_y.py", 'subprocess.run([PY, "-m", "nucleus.sqlguard.enforce", d])\n')],
+     "nucleus/sqlguard/enforce.py"),
+    ("sitecustomize: its directory set on PYTHONPATH", True,
+     [("nucleus/check.sh", 'export PYTHONPATH="$PWD/nucleus/sqlguard/shim${PYTHONPATH:+:$PYTHONPATH}"')],
+     "nucleus/sqlguard/shim/sitecustomize.py"),
+    ("PYTHONPATH loads ONLY sitecustomize, never a sibling module", False,
+     [("nucleus/check.sh", 'export PYTHONPATH="$PWD/nucleus/sqlguard/shim"')], "nucleus/sqlguard/shim/other.py"),
+    ("a prefix-sharing directory on PYTHONPATH is not this one", False,
+     [("nucleus/check.sh", 'export PYTHONPATH="$PWD/nucleus/sqlguard/shimx"')],
+     "nucleus/sqlguard/shim/sitecustomize.py"),
+    ("the shim directory named OUTSIDE a PYTHONPATH assignment is not a load", False,
+     [("nucleus/x.sh", 'ls "$PWD/nucleus/sqlguard/shim"')], "nucleus/sqlguard/shim/sitecustomize.py"),
     ("the same path as an ARGUMENT is not a command word", False,
      [("nucleus/x.sh", '  echo "see $REPO/nucleus/pushed_tree_check.sh for details"')],
      "nucleus/pushed_tree_check.sh"),
@@ -753,6 +835,29 @@ DATA_FOLD_FIXTURES = [
 ]
 
 
+def stale_exemptions(exempt, pop, reached, tracked):
+    """Exemptions the manifest outlived: gone from HEAD, or reached by a TRACKED surface.
+
+    An edge found only in the gitignored estate (triggers/, units/, runners.conf) does NOT
+    stale an entry. Those entries exist for the host WITHOUT that estate — a fresh clone, CI —
+    where the scan can't see the edge, and deleting one on the estate host's word re-accuses
+    the file everywhere else. Hit 2026-09-29: teaching the parser dotted imports found
+    nucleus/shipped_triggers/pr_review.py reached from triggers/steward/pr_review.py, which is
+    exactly the edge its exemption already names as outside this scanner's committed view."""
+    return [p for p in exempt
+            if p not in pop or any(s in tracked for s, _ in reached.get(p, []))]
+
+
+# (exempt path, its hits, want-stale). The exemption stays while only the estate reaches it.
+STALE_FIXTURES = [
+    ("an edge only from the gitignored estate keeps the exemption",
+     [("triggers/steward/pr_review.py", "from nucleus.shipped_triggers.pr_review import x")], False),
+    ("an edge from a committed surface stales it", [("init.sh", "./nucleus/x.sh")], True),
+    ("a committed edge beside an estate one still stales it",
+     [("triggers/steward/pr_review.py", "import"), ("init.sh", "./nucleus/x.sh")], True),
+]
+
+
 def self_test():
     bad = []
     seen_blind = set(UNPARSEABLE)
@@ -782,6 +887,11 @@ def self_test():
         got = bool(inherited_from_dead(reached, dead))
         if got != want:
             bad.append(f"  {'MISSED' if want else 'FALSE POSITIVE'}: inherited — {name}")
+    for name, hits, want in STALE_FIXTURES:
+        got = bool(stale_exemptions(["nucleus/x.sh"], ["nucleus/x.sh"],
+                                    {"nucleus/x.sh": hits}, {"init.sh"}))
+        if got != want:
+            bad.append(f"  {'MISSED' if want else 'FALSE POSITIVE'}: stale — {name}")
     return bad
 
 
@@ -820,7 +930,7 @@ def main():
         missing.append(("py-unparseable", label,
                         "will not parse, so the edges it declares could not be read"))
     accused = [p for p in unreached if p not in EXEMPT]
-    stale = [p for p in EXEMPT if p not in pop or p in reached]
+    stale = stale_exemptions(EXEMPT, pop, reached, set(_git("ls-files")))
 
     if report:
         print(f"population {len(pop)}  reached {len(reached)}  "
