@@ -382,7 +382,9 @@ CREATE TABLE IF NOT EXISTS triggers (
   -- trigger to exist regardless of its ROI. A guard's value is disasters that did not
   -- happen — structurally invisible to goal attribution — so guards survive by being
   -- FUNDED (steward prices, owner's treasury pays), never by a category exemption.
-  -- premium=0 + persistent negative ROI = the market retires the trigger (market_decay).
+  -- Since goal 4227 (2026-09-29, no trigger killing) nothing retires on ROI: market_decay
+  -- REPORTS premium=0 + negative ROI as rent, and premium is the SURVIVAL FLAG pulse.shed
+  -- reads under quota scarcity. Not a budget: excluded from the S3 budget deprecation.
   premium    bigint NOT NULL DEFAULT 0,
   UNIQUE (agent, name)
 );

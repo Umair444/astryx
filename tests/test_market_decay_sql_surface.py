@@ -2,8 +2,8 @@
 """SQL-surface oracle for market_decay (triggers/steward/market_decay.py).
 
 WHY THIS EXISTS (2026-09-24, a4 night-review; steward-delegated msg 20692). test_market_decay_advisory
-drives the PURE _decide/_is_file_backed and NEVER invokes market_decay(ctx) — so the trigger's four
-ctx.sql query strings were untested. A %-literal / bad-column / typo regression in any of them ships
+drives the PURE _decide and NEVER invokes market_decay(ctx) — so the trigger's ctx.sql query
+strings were untested. A %-literal / bad-column / typo regression in any of them ships
 GREEN through check.sh and only surfaces the next time the trigger fires (loud via run_python, but a
 day late), and market_decay is the SOLE economic actuator — a broken query there means the market
 silently stops regulating until it next fires. This arm executes all four queries FOR REAL through
@@ -11,17 +11,22 @@ psycopg's execute(query, params) signature (the %-scan crash lives at EXECUTE-ti
 string-parse — so NO non-executing stub), so such a regression reddens at gate time. Same class as
 weekly_econ's ARM 6; see tests/test_weekly_econ_review.py and reference_trigger_sql_percent_gotcha.
 
-WRITE-SAFETY (the crux of steward's contract). market_decay WRITES: query 3 is
-`UPDATE triggers SET enabled=false` and query 4 INSERTs a wire message. Running the entrypoint against
-the LIVE Ctx would retire a real trigger AND ring the doorbell. So this runs against a HERMETIC TEMP
+O3 END-TO-END (goal 4227 S1b, owner law 2026-09-29: no trigger killing). Until S1b market_decay
+WROTE — `UPDATE triggers SET enabled=false` plus a wire notice — and this oracle proved those writes
+executed. The seed below is the exact case that USED to retire (W>0 priced ∧ roi<0 ×3 ∧ premium=0 ∧
+DB-defined, fires>=10); the arms now assert the candidate is still ENABLED, no message was written,
+and it is REPORTED as rent. Against the pre-S1b body they are RED.
+
+WRITE-SAFETY (the crux of steward's contract), kept although the body no longer writes: the oracle
+must stay safe against a REGRESSION that re-adds a write. So this runs against a HERMETIC TEMP
 SCHEMA built from the real schema.sql DDL (the authority, not a hand copy — a column rename in
 schema.sql that breaks a query is caught too). search_path is the temp schema ONLY, never public:
 goal-3833's temp-schema test dropped the PROD view by leaving public reachable, so every unqualified
 statement here resolves to the throwaway schema and the UPDATE/INSERT can never touch production.
 
-The seed data drives _decide to the RETIRE branch so ALL FOUR queries execute (a candidate that only
-reported would never reach the UPDATE/INSERT). RED-first: reintroduce a %-literal or a bad column into
-one of the four strings → the end-to-end arm reddens; green on the fix.
+The seed data drives a candidate all the way to routing so BOTH queries execute (the econ read and
+the per-candidate triggers read). RED-first: reintroduce a %-literal or a bad column into either
+string → the end-to-end arm reddens; green on the fix.
 
 Clean clone (no gitignored body / no DB / no .env) → SKIP 77, verifies nothing, never a false pass.
 Exit 0 pass · 1 fail · 77 could-not-run.
@@ -90,7 +95,7 @@ try:
     for t in ("econ", "triggers", "messages"):
         conn.execute(_table_ddl(t))
 
-    # ── seed data that drives _decide -> "retire" so ALL FOUR queries execute ─────────────────
+    # ── seed data: the exact case that USED to retire, so both queries execute ────────────────
     # CONSECUTIVE(=3) econ rows, W>0 (priced), each naming the SAME candidate with roi<0 ∧
     # fires>=MIN_FIRES → verdict==3 → candidate. A made-up (agent,name) that exists in no real org.
     CAND = ("t_victim_agent", "t_money_pit_trigger")
@@ -98,7 +103,8 @@ try:
     for d in ("2026-09-24", "2026-09-23", "2026-09-22"):
         conn.execute("INSERT INTO econ (day, metrics) VALUES (%s::date, %s::jsonb)",
                      (d, json.dumps({"thermo": {"W": "1000000"}, "trigger_roi": roi_entry})))
-    # the candidate trigger: premium=0, enabled=true, DB-defined check_src (no on-disk .py) → retire
+    # the candidate trigger: premium=0, enabled=true, DB-defined check_src (no on-disk .py) — the
+    # durable-retire case before S1b; now it must be reported and left enabled
     conn.execute("INSERT INTO triggers (agent, name, schedule, kind, check_src, enabled, premium) "
                  "VALUES (%s, %s, '0 0 * * *', 'sql', 'SELECT 1', true, 0)", CAND)
 
@@ -123,24 +129,26 @@ try:
     check("EXECUTOR reproduces the %-scan at execute-time (a literal-% query RAISES — proves this is "
           "not a non-executing stub)", _raises("SELECT 1 WHERE 'z' LIKE '(x:%'"))
 
-    # ── run the entrypoint end to end: all four queries execute against the temp schema ────────
+    # ── run the entrypoint end to end: both queries execute against the temp schema ──────────
     try:
         out = m.market_decay(ctx)
         ran_ok, err = True, ""
     except Exception as e:  # noqa: BLE001 — a regression in ANY of the 4 query strings surfaces HERE
         ran_ok, err, out = False, f"{type(e).__name__}: {e}", None
-    check("entrypoint runs end-to-end through the temp-schema ctx — all 4 ctx.sql strings (econ "
-          "SELECT, triggers SELECT, triggers UPDATE, messages INSERT) parse & execute", ran_ok, err)
+    check("entrypoint runs end-to-end through the temp-schema ctx — both ctx.sql strings (econ "
+          "SELECT, triggers SELECT) parse & execute", ran_ok, err)
+    check("the per-candidate triggers read was REACHED (the candidate is named in the output, "
+          "which only happens after its triggers row was read)",
+          isinstance(out, str) and "/".join(CAND) in out, f"out={out!r}")
 
-    # reaching RETIRE proves the WRITE queries (3 and 4) actually ran, in the temp schema:
+    # O3: the case that used to retire now retires NOTHING and writes NOTHING
     en = conn.execute("SELECT enabled FROM triggers WHERE agent=%s AND name=%s", CAND).fetchone()
-    check("query 3 (UPDATE enabled=false) executed — the candidate is retired IN THE TEMP SCHEMA",
-          en is not None and en[0] is False, f"enabled={en}")
-    msg = conn.execute("SELECT from_agent, intent FROM messages WHERE to_agent=%s", (CAND[0],)).fetchone()
-    check("query 4 (INSERT messages) executed — the loud notice landed IN THE TEMP SCHEMA",
-          msg is not None and msg[0] == "steward" and msg[1] == "market", f"msg={msg}")
-    check("the entrypoint reported the retirement (RETIRED segment present)",
-          isinstance(out, str) and "RETIRED" in out, f"out={out!r}")
+    check("O3 W>0 ∧ roi<0 ∧ premium=0 → the candidate is STILL ENABLED (no enabled=false write)",
+          en is not None and en[0] is True, f"enabled={en}")
+    nmsg = conn.execute("SELECT count(*) FROM messages").fetchone()[0]
+    check("O3 no wire notice written (the retire notice went with the verb)", nmsg == 0, f"messages={nmsg}")
+    check("the candidate is REPORTED as rent, labeled report-only",
+          isinstance(out, str) and "REPORT ONLY" in out and "rent" in out, f"out={out!r}")
 
     # CONTAINMENT: the writes went to SCH, not public — the real actuator table is untouched.
     pub = conn.execute("SELECT count(*) FROM public.triggers WHERE agent=%s AND name=%s", CAND).fetchone()
@@ -154,6 +162,6 @@ print()
 if fails:
     print(f"FAILED ({len(fails)}): " + "; ".join(fails))
     sys.exit(1)
-print("market_decay SQL-surface: all 4 ctx.sql strings execute against a hermetic temp schema "
-      "(write-safe — UPDATE/INSERT contained), the %-scan is reproduced, production untouched")
+print("market_decay SQL-surface: both ctx.sql strings execute against a hermetic temp schema, "
+      "O3 holds end to end (priced negative candidate stays enabled, nothing written), production untouched")
 sys.exit(0)

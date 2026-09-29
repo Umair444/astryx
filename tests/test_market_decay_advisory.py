@@ -1,25 +1,35 @@
 #!/usr/bin/env python3
-"""Oracle for market_decay's FILE-BACKED → ADVISORY routing (triggers/steward/market_decay.py).
+"""Oracle for market_decay's ROUTING (triggers/steward/market_decay.py) — O3, goal 4227 S1b.
 
     venv/bin/python tests/test_market_decay_advisory.py    (also run by nucleus/check.sh)
 
-THE GAP THIS PINS (2026-09-15). market_decay retired a trigger by setting triggers.enabled=false.
-But a FILE-BACKED trigger (its check_src names an on-disk .py) is re-upserted enabled=true by
-pulse.reconcile() every tick — so the kill only CHURNS (the ledger reads "retired" for a trigger
-that never stops) — and market_decay is ITSELF file-backed, so the unconditional path made it
-SELF-RETIRE. The fix routes file-backed candidates to ADVISORY (report the market verdict, route
-the real remedy = remove the file or fund it; never flip enabled), reserving enabled=false for
-DB-defined triggers where it durably sticks. The discriminator is check_src, which authoritatively
-resolves the shared-runner-file case (run_backup -> org_runners.py::run_backup) a per-file check misses.
+THE LAW THIS PINS (owner, 2026-09-29): no budgets, nothing enforced, NO trigger killing —
+measure rent only. market_decay was the org's sole economic actuator: it set enabled=false on
+DB-defined triggers with roi<0 ×3d ∧ premium=0 once W>0. Its roi is priced in budget_tokens,
+so under v2 every trigger that fired would read roi<0 and the verb would retire the DB-defined
+majority (plan-4227 F1, oracle O3: W>0 ∧ roi<0 ∧ premium=0 → NO enabled=false write).
 
-RED-FIRST: the pre-fix logic returned "retire" for a file-backed candidate (the self-retire/churn
-bug). The load-bearing arm asserts the fixed _decide returns "advisory" there — a regression back to
-unconditional retire fails it. Drives the PURE _decide/_is_file_backed, so no DB or clock needed.
+TWO ARMS, deliberately of different kinds:
+  1. BEHAVIOUR — _decide over the WHOLE input grid never yields a retire outcome.
+  2. CONSTRUCTION — the body's executable strings (AST, not text: comments may say "UPDATE")
+     contain no UPDATE/INSERT/DELETE. A behaviour arm only covers the routes _decide has; the
+     construction arm catches a write re-added OUTSIDE _decide.
+The end-to-end O3 arm (the entrypoint against a hermetic schema with W>0) lives in
+tests/test_market_decay_sql_surface.py.
 
-Path-load the gitignored trigger body + skip-77 when absent (never static-import — fails deps.py's
-clean-clone AST scan). Exit 0 pass · 1 fail · 77 could-not-run.
+(History: until S1b this file pinned the 2026-09-15 FILE-BACKED→ADVISORY routing that stopped
+market_decay self-retiring. With no retire verb at all, that distinction has nothing left to
+route.)
+
+MARKET_DECAY_SRC overrides the subject (the gitignored staging protocol, plan-4227 #21337:
+review runs against the staged body). Path-load + skip-77 when absent (never static-import —
+fails deps.py's clean-clone AST scan). Exit 0 pass · 1 fail · 77 could-not-run.
 """
+import ast
 import importlib.util
+import itertools
+import os
+import re
 import sys
 from pathlib import Path
 
@@ -27,13 +37,10 @@ REPO = Path(__file__).resolve().parents[1]
 EXIT_SKIP = 77
 fails = []
 
-BODY = REPO / "triggers" / "steward" / "market_decay.py"
+BODY = Path(os.environ.get("MARKET_DECAY_SRC", REPO / "triggers" / "steward" / "market_decay.py"))
 if not BODY.exists():
     print("SKIP: market_decay trigger absent (gitignored body, fresh clone) — nothing asserted.")
     sys.exit(EXIT_SKIP)
-# REPO on sys.path so the path-loaded body's OWN first-party imports (from astryx import ...)
-# resolve at exec time. This is a runtime sys.path insert, NOT a static `from triggers...`
-# import node, so deps.py's clean-clone AST scan is unaffected (the whole point of path-load).
 sys.path.insert(0, str(REPO))
 try:
     _spec = importlib.util.spec_from_file_location("market_decay_under_test", BODY)
@@ -42,10 +49,6 @@ try:
 except Exception as e:  # noqa: BLE001 — absent/unimportable body => SKIP, not a false pass
     print(f"SKIP: market_decay not importable ({type(e).__name__}: {e}) — nothing asserted.")
     sys.exit(EXIT_SKIP)
-
-dec = m._decide
-fb = m._is_file_backed
-FB_SRC = "triggers/steward/market_decay.py::market_decay"   # a real file-backed check_src
 
 
 def check(name, ok, detail=""):
@@ -56,29 +59,37 @@ def check(name, ok, detail=""):
             print(f"        {detail}")
 
 
-# ── _is_file_backed: the discriminator, incl the shared-runner-file gotcha ───────────────
-check("per-trigger file is file-backed", fb(FB_SRC))
-check("SHARED runner file is file-backed (org_runners.py gotcha — a per-file check misses this)",
-      fb("triggers/steward/org_runners.py::run_backup"))
-check("a SQL/DB-defined check is NOT file-backed", not fb("SELECT 1 FROM goals"))
-check("a check_src naming a MISSING file is not file-backed", not fb("triggers/steward/nope.py::x"))
-check("empty check_src is not file-backed", not fb(""))
+# ── 1. BEHAVIOUR: no input yields a retire ─────────────────────────────────────────────
+# _decide's arity changed in S1b (priced/check_src no longer route anything); drive whatever
+# arity it has with a grid over the values that used to reach "retire".
+nargs = m._decide.__code__.co_argcount
+grid = {"premium": (0, None, 1_000_000), "enabled": (True, False),
+        "check_src": ("SELECT 1 FROM goals", "triggers/steward/market_decay.py::market_decay", ""),
+        "priced": (True, False), "repo": (REPO,)}
+names = m._decide.__code__.co_varnames[:nargs]
+outs = {m._decide(*combo) for combo in itertools.product(*(grid.get(n, (None,)) for n in names))}
+check("O3 _decide over the full grid (incl. W>0 ∧ roi<0 ∧ premium=0 ∧ DB-defined) never returns 'retire'",
+      "retire" not in outs, f"outcomes={sorted(outs)}")
+check("an unfunded enabled trigger is REPORTED (rent is measured, not dropped)",
+      m._decide(*[{"premium": 0, "enabled": True}.get(n, grid.get(n, (None,))[0]) for n in names]) == "report")
+check("premium>0 → spare", m._decide(*[{"premium": 1, "enabled": True}.get(n, grid.get(n, (None,))[0])
+                                         for n in names]) == "spare")
 
-# ── LOAD-BEARING RED-first: file-backed candidate -> ADVISORY, never the churn/self-retire ──
-check("FILE-BACKED priced+unfunded -> ADVISORY (the fix; pre-fix returned 'retire' -> self-retire/churn)",
-      dec(0, True, FB_SRC, True) == "advisory",
-      "a market enabled=false on a file-backed trigger only churns back, and market_decay is "
-      "itself file-backed so the old path self-retired it")
-
-# ── controls: every other branch unchanged ──────────────────────────────────────────────
-check("DB-defined priced+unfunded -> durable RETIRE", dec(0, True, "SELECT 1 FROM goals", True) == "retire")
-check("premium>0 -> spare (funded, never retired)", dec(1_000_000, True, FB_SRC, True) == "spare")
-check("W=0 window (no prices) -> report-only, never disable", dec(0, True, FB_SRC, False) == "report")
-check("already enabled=false -> skip (a durable DB kill; don't re-announce)", dec(0, False, "SELECT 1", True) == "skip")
+# ── 2. CONSTRUCTION: no write statement anywhere in the body's executable strings ──────
+tree = ast.parse(BODY.read_text())
+_docs = {id(b[0].value) for b in [getattr(n, "body", None) for n in ast.walk(tree)]
+         if isinstance(b, list) and b and isinstance(b[0], ast.Expr)
+         and isinstance(b[0].value, ast.Constant)}
+_WRITE = re.compile(r"\bUPDATE\s+\w+\s+SET\b|\bINSERT\s+INTO\b|\bDELETE\s+FROM\b", re.I)
+writes = sorted(n.lineno for n in ast.walk(tree)
+                if isinstance(n, ast.Constant) and isinstance(n.value, str)
+                and id(n) not in _docs and _WRITE.search(n.value))
+check("O3 by construction: no UPDATE/INSERT/DELETE string in the body (the retire verb and its "
+      "wire notice are gone, not just unreached)", not writes, f"write strings at {writes}")
 
 print()
 if fails:
     print(f"FAILED ({len(fails)}): " + "; ".join(fails))
     sys.exit(1)
-print("market_decay routes file-backed->advisory (no churn/self-retire), DB-defined->durable retire")
+print("market_decay reports rent and has no retire verb (O3: behaviour + construction)")
 sys.exit(0)

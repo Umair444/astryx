@@ -375,20 +375,19 @@ run "spawn-pinned deployment drift"   "$PY" tests/test_spawn_drift.py
 # mtime to now() and would blind an mtime-based guard (false-staleness). RED-first: the oracle
 # recomputes the OLD mtime age for the restore case, so a regression back to mtime fails it.
 run "owner_queue_age content-first-seen age" "$PY" tests/test_owner_queue_age.py
-# market_decay->advisory (steward): a FILE-BACKED trigger (check_src names an on-disk .py that
-# reconcile re-enables) routes to ADVISORY (report the verdict + real remedy) instead of flipping
-# enabled=false, which would only churn — so market_decay can no longer self-retire. DB-defined
-# triggers still retire durably. RED-first: a regression to unconditional-retire fails the
-# file-backed->advisory arm.
-run "market_decay advisory (no self-retire churn)" "$PY" tests/test_market_decay_advisory.py
-# market_decay SQL-SURFACE (steward, a4 2026-09-24): the advisory oracle above drives only the pure
-# _decide/_is_file_backed and never invokes market_decay(ctx), so its four ctx.sql strings were
-# untested — a %-literal/bad-column/typo there ships green and the SOLE economic actuator silently
-# stops regulating until it next fires. This arm executes all four FOR REAL against a HERMETIC TEMP
-# SCHEMA (write-safe: the enabled=false UPDATE and the notice INSERT land in a throwaway schema,
-# search_path SCH-only), driven to the RETIRE branch so every query runs. RED-first: a %-literal or
-# bad column in any string reddens the end-to-end arm. SKIPs where the gitignored body or the DB is absent.
-run "market_decay SQL-surface (4 queries execute, write-safe temp schema)" "$PY" tests/test_market_decay_sql_surface.py
+# market_decay O3 (goal 4227 S1b, owner law 2026-09-29: no trigger killing): market_decay was the
+# org's sole economic actuator; its retire verb is now GONE BY CONSTRUCTION and it reports rent.
+# Two arms: _decide over the full input grid never yields 'retire', and the body's executable
+# strings (AST, docstrings excluded) contain no UPDATE/INSERT/DELETE. RED-first on the pre-S1b body.
+# (Until S1b this line pinned the 09-15 file-backed->advisory routing; nothing is left to route.)
+run "market_decay O3: no retire verb (behaviour + construction)" "$PY" tests/test_market_decay_advisory.py
+# market_decay SQL-SURFACE (steward, a4 2026-09-24): executes the entrypoint's ctx.sql strings FOR
+# REAL against a HERMETIC TEMP SCHEMA (search_path SCH-only, write-safe against a regression that
+# re-adds a write). Seeded with the exact case that USED to retire (W>0 ∧ roi<0 ×3 ∧ premium=0 ∧
+# DB-defined): O3 end to end = the candidate stays enabled, no notice is written, it is reported as
+# rent. RED-first: a %-literal/bad column reddens the run arm; the restored verb (mutant M3) reddens
+# O3. SKIPs where the gitignored body or the DB is absent.
+run "market_decay SQL-surface + O3 end to end (temp schema)" "$PY" tests/test_market_decay_sql_surface.py
 # weekly_economic_review (steward, the banker's ledger reader — a SURFACE above market_decay,
 # never an actuator): LAYER 2 flags uninsured constitutive guards at reconcile-risk (in the
 # banker's manifest ∧ premium=0 ∧ roi<0) WITH prepared premium proposals; a funded one is insured
