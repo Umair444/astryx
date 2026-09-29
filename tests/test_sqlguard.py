@@ -686,8 +686,15 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
         arm(f"estate-absent: {mod} exits 77 and names .env, never a crash",
             p.returncode == 77 and ".env" in p.stdout and "Traceback" not in p.stderr,
             f"rc={p.returncode} {(p.stdout + p.stderr).strip().splitlines()[-1:]}")
-    # positive control: the same bare tree WITH .env runs the canary for real (the gate keys on absence only)
+    # deps-absent: .env present, but `-S` drops site-packages, so psycopg is gone (pushed_tree_check's bare python3)
     (bare / ".env").symlink_to((REPO / ".env").resolve())
+    for mod, extra in (("canary", []), ("enforce", [str(bare / "t")])):
+        p = subprocess.run([sys.executable, "-S", "-m", f"nucleus.sqlguard.{mod}", *extra], cwd=bare, env=benv,
+                           capture_output=True, text=True)
+        arm(f"deps-absent: {mod} exits 77 and names psycopg, never a crash",
+            p.returncode == 77 and "psycopg" in p.stdout and "Traceback" not in p.stderr,
+            f"rc={p.returncode} {(p.stdout + p.stderr).strip().splitlines()[-1:]}")
+    # positive control: the same bare tree WITH .env and deps runs the canary for real (gate keys on absence only)
     p = subprocess.run([sys.executable, "-m", "nucleus.sqlguard.canary"], cwd=bare, env=benv,
                        capture_output=True, text=True)
     arm("estate-absent control: the same tree with .env runs the canary (rc 0)", p.returncode == 0,
@@ -759,8 +766,11 @@ MUTANTS = [
     ("enforce.py", "if not canary or any(", "if False and any(", "canary absent"),
     ("enforce.py", "if runs > NS_RUNS and age.days >= NS_DAYS:", "if True:", "R-CLOCK not before"),
     ("ledger.py", 'if lk in doc["rows"]:', "if False:", "admit refuses"),
-    ("canary.py", 'if not (REPO / ".env").is_file():', "if False:", "estate-absent: canary"),
-    ("enforce.py", "why = estate_absent()", "why = None", "estate-absent: enforce"),
+    ("estate.py", "if not env.is_file():", "if False:", "estate-absent: canary"),
+    ("estate.py", "if not env.is_file():", "if False:", "estate-absent: enforce"),
+    ("estate.py", "if missing:", "if False:", "deps-absent: enforce"),
+    ("estate.py", "if missing:", "if False:", "deps-absent: canary"),
+    ("enforce.py", 'gate("enforce"', 'print("enforce"', "estate-absent: enforce"),
 ]
 
 
