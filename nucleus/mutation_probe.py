@@ -171,6 +171,14 @@ def probe(spec_path: Path, verbose: bool = True) -> int:
                   f"assertion should have\ncaught it, and whether one exists at all, is the "
                   f"author's call. It singles out\nNO assertion: the finding is about this "
                   f"mutant, never about any one check.")
+        elif skipped:
+            # The headline may never out-claim its parts. With a mutant NOT PROBED, "every
+            # authored mutant was caught" is false, even though the exit code (2) was honest.
+            # A reader who stops at the headline is exactly who this protects (forge, 09-29:
+            # a re-anchored oracle left M3 unapplied under an "every mutant caught" line).
+            print(f"Every PROBED mutant was caught, but {len(skipped)} of "
+                  f"{len(caught) + len(skipped)} were NOT PROBED,\nso this run does NOT show "
+                  f"the authored set is caught.")
         else:
             print("Every authored mutant was caught. This says nothing about mutations that\n"
                   "were never authored — coverage is bounded by the list, not by the oracle.")
@@ -277,9 +285,17 @@ def self_test() -> int:
             f'ORACLE = {str(td / "oracle_good.py")!r}\n'
             'ENV = "PROBE_SELFTEST_SRC"\n'
             'MUTANTS = {"gone": ("NOT_IN_SOURCE = 1", "NOT_IN_SOURCE = 2")}\n')
-        rc = probe(td / "m_stale.py", verbose=False)
+        buf3 = io.StringIO()
+        with contextlib.redirect_stdout(buf3):
+            rc = probe(td / "m_stale.py", verbose=True)
+        out3 = buf3.getvalue()
         print(f"  {'PASS' if rc == 2 else 'FAIL'}  non-applying mutant does not read as clean")
         ok &= rc == 2
+        # The exit code alone isn't enough: a reader stops at the headline. With a mutant NOT
+        # PROBED, the headline must not say the authored set was caught.
+        head_ok = "Every authored mutant was caught" not in out3 and "NOT PROBED" in out3
+        print(f"  {'PASS' if head_ok else 'FAIL'}  the headline never claims the set was caught")
+        ok &= head_ok
 
     print("\n" + ("SELF-TEST PASS" if ok else "SELF-TEST FAILED"))
     return 0 if ok else 1
