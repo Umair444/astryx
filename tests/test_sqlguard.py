@@ -672,32 +672,43 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
         rc_e == 0 and r4 is not None and _rung(r4["sites"], "canary", "nucleus/sqlguard/canary.py") == "RESPONSIVE",
         f"rc={rc_e} {err if r4 is None else _rung(r4['sites'], 'canary', 'nucleus/sqlguard/canary.py')}")
 
-    # estate-absent: a committed-only tree (no .env, no triggers/), the shape pushed_tree_check and CI run.
-    # Built from THIS package, so --against and --mutants reach it. Both gates must say 77 and name why.
+    # ABSENT vs BROKEN (a3 #22659). A committed-only tree (no triggers/) is the shape pushed_tree_check and CI run:
+    # a missing .env or dep there is 77, named. The same absences WITH triggers/ are a live host that lost its
+    # estate: rc 1, loud, and named BROKEN so it's told apart from a crash. A .env without the DSN is rc 1 anywhere.
+    # Built from THIS package, so --against and --mutants reach it.
     import shutil
     bare = tmp / "bare"
     shutil.copytree(tmp / "nucleus", bare / "nucleus", ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copy2(REPO / "nucleus" / "sqlguard" / "ledger.json", bare / "nucleus" / "sqlguard" / "ledger.json")
     (bare / "t").mkdir()
     benv = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": os.environ.get("HOME", "/tmp")}
-    for mod, extra in (("canary", []), ("enforce", [str(bare / "t")])):
-        p = subprocess.run([sys.executable, "-m", f"nucleus.sqlguard.{mod}", *extra], cwd=bare, env=benv,
-                           capture_output=True, text=True)
-        arm(f"estate-absent: {mod} exits 77 and names .env, never a crash",
-            p.returncode == 77 and ".env" in p.stdout and "Traceback" not in p.stderr,
-            f"rc={p.returncode} {(p.stdout + p.stderr).strip().splitlines()[-1:]}")
-    # deps-absent: .env present, but `-S` drops site-packages, so psycopg is gone (pushed_tree_check's bare python3)
-    (bare / ".env").symlink_to((REPO / ".env").resolve())
-    for mod, extra in (("canary", []), ("enforce", [str(bare / "t")])):
-        p = subprocess.run([sys.executable, "-S", "-m", f"nucleus.sqlguard.{mod}", *extra], cwd=bare, env=benv,
-                           capture_output=True, text=True)
-        arm(f"deps-absent: {mod} exits 77 and names psycopg, never a crash",
-            p.returncode == 77 and "psycopg" in p.stdout and "Traceback" not in p.stderr,
-            f"rc={p.returncode} {(p.stdout + p.stderr).strip().splitlines()[-1:]}")
-    # positive control: the same bare tree WITH .env and deps runs the canary for real (gate keys on absence only)
+    envf = bare / ".env"
+
+    def bare_case(name, env, live, flags, rc, tag, word):
+        envf.unlink(missing_ok=True)
+        if env == "real":
+            envf.symlink_to((REPO / ".env").resolve())
+        elif env == "nodsn":
+            envf.write_text("SOMETHING_ELSE=1\n")
+        (bare / "triggers").mkdir(exist_ok=True) if live else shutil.rmtree(bare / "triggers", ignore_errors=True)
+        for mod, extra in (("canary", []), ("enforce", [str(bare / "t")])):
+            p = subprocess.run([sys.executable, *flags, "-m", f"nucleus.sqlguard.{mod}", *extra], cwd=bare,
+                               env=benv, capture_output=True, text=True)
+            arm(f"{name}: {mod} exits {rc} and names {tag}",
+                p.returncode == rc and tag in p.stdout and word in p.stdout and "Traceback" not in p.stderr,
+                f"rc={p.returncode} {(p.stdout + p.stderr).strip().splitlines()[-1:]}")
+
+    bare_case("estate-absent", None, False, [], 77, ".env", "NOT SEARCHED")
+    bare_case("deps-absent", "real", False, ["-S"], 77, "psycopg", "NOT SEARCHED")      # pushed_tree_check's python3
+    bare_case("live-broken .env", None, True, [], 1, ".env", "BROKEN")
+    bare_case("live-broken deps", "real", True, ["-S"], 1, "psycopg", "BROKEN")         # a runner lost its interpreter
+    bare_case("no-DSN", "nodsn", False, [], 1, "ASTRYX_DSN", "BROKEN")                  # misconfigured even when bare
+    # positive control: .env and deps present, on a live-shaped tree, runs the canary for real (absence only)
+    envf.unlink(missing_ok=True)
+    envf.symlink_to((REPO / ".env").resolve())
     p = subprocess.run([sys.executable, "-m", "nucleus.sqlguard.canary"], cwd=bare, env=benv,
                        capture_output=True, text=True)
-    arm("estate-absent control: the same tree with .env runs the canary (rc 0)", p.returncode == 0,
+    arm("estate control: with .env and deps the canary runs (rc 0)", p.returncode == 0,
         f"rc={p.returncode} {p.stderr.strip().splitlines()[-1:]}")
 
     # enforce + ledger, on synthetic reports (state in a fixture DB, never the live table)
@@ -770,6 +781,9 @@ MUTANTS = [
     ("estate.py", "if not env.is_file():", "if False:", "estate-absent: enforce"),
     ("estate.py", "if missing:", "if False:", "deps-absent: enforce"),
     ("estate.py", "if missing:", "if False:", "deps-absent: canary"),
+    ("estate.py", "if live:", "if False:", "live-broken deps: enforce"),
+    ("estate.py", "if live:", "if False:", "live-broken .env: canary"),
+    ("estate.py", 'return 1, ".env is present', 'return 77, ".env is present', "no-DSN: enforce"),
     ("enforce.py", 'gate("enforce"', 'print("enforce"', "estate-absent: enforce"),
 ]
 
