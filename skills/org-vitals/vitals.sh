@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# astryx · org vitals — one read-only health pass: doctor reds, gate-suite stamp (unverified NAMES), genuinely-dark triggers, stuck messages, service errors, backup + restore freshness.
+# astryx · org vitals — is the org healthy right now? One read-only pass: gate stamp (unverified NAMES), dark triggers, stuck messages, service errors, backup freshness; --doctor adds doctor.
 #
 # WHY. "Is the org healthy right now?" is asked every heartbeat, and hand-typed probes drift back
 # to noisy ones under time pressure — the classic is `last_eval < now()-1 day`, which brands every
