@@ -25,6 +25,7 @@ import sys
 from pathlib import Path
 
 from nucleus.sqlguard import judge
+from nucleus.sqlguard import privacy
 from nucleus.sqlguard.privacy import ledger_key
 
 REPO = judge.REPO
@@ -89,6 +90,9 @@ def seed(trace_dir: str) -> dict:
     header["extractors_listed"] = len(extractors)
     doc = {"header": header, "covering": {ledger_key(k): v for k, v in rep["covering"].items() if v}, "rows": rows,
            "extractors": extractors}
+    if privacy.ERRORS:                       # a3 D-P: never write while the privacy authority couldn't answer
+        raise SystemExit(f"refusing to write the ledger: privacy classification failed "
+                         f"({len(privacy.ERRORS)}): {privacy.ERRORS[:3]}")
     LEDGER.write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n")
     return header
 

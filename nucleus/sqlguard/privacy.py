@@ -20,10 +20,25 @@ from nucleus.sqlguard.inventory import REPO
 SEP = "\x1f"
 
 
+ERRORS = []                                   # classification failures this run (a3 D-P)
+
+
 @lru_cache(maxsize=None)
 def ignored(relpath: str) -> bool:
-    r = subprocess.run(["git", "check-ignore", "-q", "--no-index", relpath], cwd=REPO)
-    return r.returncode == 0
+    """FAILS CLOSED (a3 D-P). git check-ignore: 0 = ignored, 1 = not ignored, 128 = fatal (not a repo, a broken
+    index). Only an explicit 1 means "safe to print and store in plaintext". Anything else, including git being
+    absent from a minimal PATH, is treated as IGNORED (digest the key, print path::qualname only) and RECORDED.
+    The ledger writer refuses to write and enforce reports NOT SEARCHED whenever ERRORS is non-empty. An
+    authority that can't answer must never read as "not private"."""
+    try:
+        r = subprocess.run(["git", "check-ignore", "-q", "--no-index", relpath], cwd=REPO, capture_output=True)
+    except Exception as e:
+        ERRORS.append(f"{relpath}: git unavailable ({type(e).__name__})")
+        return True
+    if r.returncode in (0, 1):
+        return r.returncode == 0
+    ERRORS.append(f"{relpath}: git check-ignore rc={r.returncode}")
+    return True
 
 
 def _path(site_key: str) -> str:

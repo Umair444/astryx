@@ -150,6 +150,10 @@ def enforce(trace_dir, ledger=None, dsn=None, rep=None):
     except psycopg.Error as e:
         not_searched.append(f"state/leak checks couldn't run: {type(e).__name__}")
 
+    from nucleus.sqlguard import privacy
+    if privacy.ERRORS:                                             # a3 D-P: the privacy authority couldn't answer
+        not_searched.append(f"privacy classification failed ({len(privacy.ERRORS)}); findings for those "
+                            f"sites were redacted, never printed in plaintext")
     rc = 77 if not_searched else (1 if red else 0)
     return {"rc": rc, "red": red, "report": report, "not_searched": not_searched}
 

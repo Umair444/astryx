@@ -31,7 +31,52 @@ def plaintext_ignored_keys(doc: dict) -> set:
         return set()
     r = subprocess.run(["git", "check-ignore", "--no-index", "--stdin"], cwd=REPO, input="\n".join(paths),
                        capture_output=True, text=True)
+    if r.returncode not in (0, 1):
+        return None                     # a3 D-P: the authority couldn't answer. That's NOT SEARCHED, never PASS.
     return set(r.stdout.split())
+
+
+def dp_arms():
+    """a3 D-P: privacy.py must FAIL CLOSED when git can't answer. RED against ee495dd (rc 128 read as 'not
+    ignored')."""
+    import os
+    import tempfile
+    sys.path.insert(0, str(REPO))
+    from nucleus.sqlguard import privacy, ledger
+    real_repo, real_path = privacy.REPO, os.environ.get("PATH", "")
+    with tempfile.TemporaryDirectory() as nonrepo:
+        try:
+            privacy.REPO = Path(nonrepo)                                  # (i) outside any git repo → rc 128
+            privacy.ignored.cache_clear(); privacy.ERRORS.clear()
+            check("D-P (i) not-a-repo reads as IGNORED (fails closed)", privacy.ignored("triggers/zz/a.py") is True)
+            check("D-P (i) ...and records a classification error", bool(privacy.ERRORS))
+            privacy.REPO = real_repo; os.environ["PATH"] = "/nonexistent"  # (ii) git absent from PATH
+            privacy.ignored.cache_clear(); privacy.ERRORS.clear()
+            check("D-P (ii) git absent reads as IGNORED (fails closed)", privacy.ignored("triggers/zz/b.py") is True)
+            check("D-P (ii) ...and records a classification error", bool(privacy.ERRORS))
+            os.environ["PATH"] = real_path
+            privacy.REPO = Path(nonrepo)                                  # (iii) a seed write while it's failing
+            privacy.ignored.cache_clear(); privacy.ERRORS.clear()
+            out = Path(nonrepo) / "ledger.json"
+            real_ledger, real_judge = ledger.LEDGER, ledger.judge.judge
+            ledger.LEDGER = out
+            ledger.judge.judge = lambda d: {"sites": {"triggers/zz/c.py::f\x1fselect 1": {"rung": "UNEXECUTED"}},
+                                            "run_not_searched": [], "extractors": {}, "covering": {},
+                                            "counts": {}, "untraced_children": {}}
+            refused = False
+            try:
+                ledger.seed(nonrepo)
+            except SystemExit:
+                refused = True
+            check("D-P (iii) the ledger writer REFUSES while classification failed", refused)
+            check("D-P (iii) ...and no ledger file was written", not out.exists())
+        finally:
+            os.environ["PATH"] = real_path
+            privacy.REPO = real_repo; privacy.ignored.cache_clear(); privacy.ERRORS.clear()
+            try:
+                ledger.LEDGER, ledger.judge.judge = real_ledger, real_judge
+            except NameError:
+                pass
 
 
 def main():
@@ -40,11 +85,15 @@ def main():
         print("SKIP: no ledger.json to check. Nothing was verified.")
         return 77
     leaked = plaintext_ignored_keys(json.loads(path.read_text()))
+    if leaked is None:
+        print("NOT SEARCHED: git check-ignore couldn't answer (no usable git repo here). P1 verified nothing.")
+        return 77
     check("P1 the tracked ledger carries no plaintext key from a gitignored file", not leaked,
           f"{len(leaked)} gitignored file(s) in plaintext: {sorted(leaked)[:6]}")
     # Positive control: the probe must be able to SEE a leak, or its silence proves nothing.
     probe = {"rows": {"triggers/zz/x.py::f\x1fselect 1": {}}}
-    check("P1 control: a planted plaintext gitignored key IS detected", plaintext_ignored_keys(probe) != set())
+    check("P1 control: a planted plaintext gitignored key IS detected", bool(plaintext_ignored_keys(probe)))
+    dp_arms()
     print(f"\n{'FAIL' if fails else 'PASS'}: sqlguard oracle ({len(fails)} failing)")
     return 1 if fails else 0
 
