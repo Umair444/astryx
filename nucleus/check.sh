@@ -466,6 +466,10 @@ run "org identity / peer name policy" "$PY" tests/test_org_identity.py
 # Needs psycopg + a live org DB + the (gitignored) trigger bodies; it SKIPS loudly rather
 # than passing where it cannot honestly run, so in CI this is a local-only gate today.
 run "plan-lifecycle trigger oracle"   "$PY" tests/test_plan_lifecycle.py
+# the lifecycle oracle's AUDITED_TRIGGERS pins are compared to the LIVE db, so a branch that changes a
+# pinned trigger reads green in review and breaks only after the live apply (goal 4227 S3, seed #23672).
+# This checks the pins against THIS tree's schema.sql in a fixture — RED on the branch that changes it.
+run "audited trigger pins match this schema.sql" "$PY" tests/test_audited_trigger_pins.py
 # Pure stdlib and needs no DB (the wire + wacli are stubbed), but the trigger BODY it
 # tests is gitignored, so it SKIPS loudly on a fresh clone rather than passing.
 run "gemini ear-dark trigger oracle"  "$PY" tests/test_ear_dark.py

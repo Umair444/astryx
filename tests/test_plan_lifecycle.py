@@ -74,18 +74,33 @@ WRITE_TABLES = ("goals", "messages")
 AUDITED_TRIGGERS = {
     # pg_notify only: queued at raise, delivered at COMMIT, discarded on ROLLBACK.
     # Audited 2026-08-13 by reading pg_get_functiondef; re-read it if this hash moves.
+    # Calls no user-defined function (builtin pg_notify only) — re-checked 2026-09-29.
     ("messages", "messages_notify"):
         "90dc3a1274f05949d212c2bcf9fe8dacf90180e37e869596154d63fcb8e1524c",
     # BEFORE UPDATE row trigger stamping goals.done_at (the economy's boundary event).
-    # Re-audited 2026-08-29 (goal 3499) by reading pg_get_functiondef: still pure plpgsql,
-    # mutates NEW only (NEW.done_at + NEW.funded_by) plus one SELECT INTO read from
-    # funded_by_watermark — no NOTIFY, no dblink, no COPY, no write to any other table; a NEW
-    # mutation and a read are transaction-local and roll back with the transaction. The hash
-    # moved because 3499 added the funder-naming; the rollback-safety property is unchanged.
+    # Re-audited 2026-09-29 (goal 4227 S3, steward) by reading pg_get_functiondef on the live DB:
+    # pure plpgsql, mutates NEW.done_at ONLY — S3 removed the funder-naming and with it the
+    # SELECT INTO read from funded_by_watermark; no NOTIFY, no dblink, no COPY, no write to any
+    # other table. Calls no user-defined function (builtin now() only). Transaction-local.
+    # (Previous pin 3b6883024b6a… = the 3499 body.)
     # Re-read it if this hash moves.
     ("goals", "goals_done_stamp"):
-        "3b6883024b6ad417d2f338564c519ed4971b2e48c4254db76bcf2aa283025291",
+        "3ff956b5ec898883ac5725590746214f44cb77b9b621858f0512061eb68b6409",
+    # AFTER INSERT OR UPDATE row trigger freezing the deprecated budget columns (goal 4227 S3).
+    # Audited 2026-09-29 (steward) by reading pg_get_functiondef on the live DB: pure plpgsql,
+    # reads NEW/OLD and at most RAISEs — no write anywhere, no NOTIFY/dblink/COPY. Inside the
+    # scenarios' rolled-back transaction a RAISE only aborts the statement; the scenarios never
+    # set budget_tokens/spent_tokens/funded_by, so it never fires. Calls no user-defined
+    # function. Transaction-local.
+    # Re-read it if this hash moves.
+    ("goals", "goals_budget_frozen"):
+        "b63554be919a50c376f94c067bf1af255c49210064b709f5f52967244f2664f1",
 }
+# tests/test_audited_trigger_pins.py checks these pins against THIS tree's schema.sql in a fixture,
+# so a branch that changes a pinned trigger is RED at review, not after the live apply (S3's lesson).
+# A pin hashes the trigger FUNCTION BODY only: it does not cover CALLEES (plpgsql records no
+# pg_depend on functions it calls). If a pinned body ever calls a user-defined helper, pin the
+# helper too, or the helper can gain a NOTIFY/dblink/write under an unchanged pin (a2 #23791).
 
 
 def preflight_isolation_premise():
