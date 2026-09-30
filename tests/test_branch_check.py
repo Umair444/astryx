@@ -59,6 +59,12 @@ def main():
     s = bc.summary(noisy)
     check("summary reads ONLY check.sh's final block: a gate's own 'FAILED (n): …' and ✗ lines are never read",
           s["failed"] == ["gate b", "gate c"] and s["unverified"] == ["gate d"], str(s))
+    # the LAST gate's output ending in check.sh's exact shape, directly above verdict()'s blank (a3 S1 #33654)
+    tail = ("\x1b[36m▶\x1b[0m last gate\nFAILED (1):\n  ✗ injected-name\n  ✗ last gate\n"
+            "\nFAILED (1):\n  ✗ last gate\n\ncheck: FAILURES above — a committed invariant regressed\n")
+    s = bc.summary(tail)
+    check("the walk stops at verdict()'s leading blank: the last gate's own block above it is never read",
+          s["failed"] == ["last gate"], str(s))
     s = bc.summary("  ✗ stray\ncheck: ALL CODE INVARIANTS PASS (3 gates verified)\n")
     check("…and a clean run's summary has no FAILED set even after stray ✗ output", s["failed"] == [], str(s))
     est = {"branch": {"skipped_credential": []}}

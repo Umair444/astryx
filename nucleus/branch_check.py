@@ -66,7 +66,9 @@ def summary(log: str) -> dict:
     items = []
     for ln in reversed(lines[:end]):
         if not ln.strip():
-            continue
+            if out["failed"] or out["unverified"]:
+                break                                      # verdict()'s leading `echo` (check.sh:104): the TOP edge
+            continue                                       # its trailing `echo` (check.sh:115), below the block
         if ln.startswith("  ") and ln.strip()[:1] in ("✗", "○"):
             items.append(ln.strip()[1:].strip())
             continue

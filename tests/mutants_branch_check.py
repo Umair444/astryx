@@ -29,4 +29,6 @@ MUTANTS = {
          "        kind = next((k for k, rx in _HEAD.items() if rx.match(ln)), None)\n        if kind is None:\n            continue"),
     "O6 gates failing on BOTH sides aren't reported":
         ('    dead = sorted(set(m["failed"]) & set(b["failed"]))', '    dead = []'),
+    "O7 the walk has no TOP edge (skips verdict()'s leading blank and reads the last gate's output)":
+        ("            if out[\"failed\"] or out[\"unverified\"]:\n                break", "            if False:\n                break"),
 }
