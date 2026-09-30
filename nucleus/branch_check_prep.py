@@ -212,26 +212,33 @@ def private_repo(live: Path, sha: str, dest: Path, main_sha: str = None) -> Path
 
 
 def history_secret_hits(repo: Path, secrets_) -> list:
-    """Every commit in the repo's history whose DIFF or MESSAGE carries a form of a secret, as "<sha12> (diff|message)"
-    (a3 C2a/C2b). The sandbox can read all of it now, so the scan covers all of it: `-S` alone sees diffs, never a
-    secret pasted into a message. One pass over `git log --all -p --text`. The value never leaves this function.
-    DECLARED residual: only CURRENT values are known; one committed and since rotated is invisible here."""
+    """Every OBJECT in the repo's store that carries a form of a secret, as "<sha12> (<type>[: path])". The domain is
+    the object store itself (`git cat-file --batch-all-objects`), i.e. exactly what the sandbox can read, reachable
+    or not: blobs (every version of every file), commits (their MESSAGES, a3 C2b) and trees. No diff semantics to
+    reason about: `git log -p` shows no diff for a MERGE, so a credential introduced by a merge resolution and removed
+    by a later merge sat in no scanned diff while `git show <merge>:f` still read it (a3 E1 #34564). The value never
+    leaves this function. DECLARED residual: only CURRENT values are known; one committed and since rotated is
+    invisible here."""
     forms = [f.encode() for sec in secrets_ for f in sec.forms if f]
-    p = subprocess.Popen(["git", "log", "--all", "-p", "--text", "--no-color", "--no-ext-diff",
-                          "--format=%x00%H%n%B"], cwd=repo, stdout=subprocess.PIPE)
-    hits, cur, in_msg = [], None, False
-    for line in p.stdout:
-        if line.startswith(b"\x00"):
-            cur, in_msg = line[1:13].decode(), True
-            continue
-        if in_msg and line.startswith(b"diff --git"):
-            in_msg = False
-        if cur and any(f in line for f in forms):
-            h = f"{cur} ({'message' if in_msg else 'diff'})"
-            if h not in hits:
-                hits.append(h)
+    paths = {}                                          # blob sha -> a path it appears at (for the label only)
+    rl = subprocess.run(["git", "rev-list", "--all", "--objects"], cwd=repo, capture_output=True, check=True).stdout
+    for ln in rl.decode(errors="replace").splitlines():
+        sha, _, path = ln.partition(" ")
+        if path:
+            paths.setdefault(sha, path)
+    p = subprocess.Popen(["git", "cat-file", "--batch-all-objects", "--batch"], cwd=repo, stdout=subprocess.PIPE)
+    hits = []
+    while True:
+        head = p.stdout.readline()
+        if not head:
+            break
+        sha, typ, size = head.decode().split()
+        body = p.stdout.read(int(size))
+        p.stdout.read(1)                                # the newline after each object
+        if any(f in body for f in forms):
+            hits.append(f"{sha[:12]} ({typ}{': ' + paths[sha] if sha in paths and typ == 'blob' else ''})")
     if p.wait() != 0:
-        raise Refuse("the history secret scan couldn't read the repo's history")
+        raise Refuse("the history secret scan couldn't read the repo's object store")
     return hits
 
 

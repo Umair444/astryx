@@ -56,8 +56,8 @@ MUTANTS = {
     "B19 every live branch is fetched, not just main and the side's sha (another agent's unpushed work arrives)":
         ('    run("fetch", "-q", "--no-tags", f"file://{live}", *refs)',
          '    run("fetch", "-q", "--no-tags", f"file://{live}", *refs, "+refs/heads/*:refs/remotes/live/*")'),
-    "B20 the history scan skips commit MESSAGES (a3 C2b: a pasted DSN is readable and unscanned)":
-        ("        if cur and any(f in line for f in forms):", "        if cur and not in_msg and any(f in line for f in forms):"),
-    "B21 the history scan reads messages only, no diffs (a credential added then deleted is missed)":
-        ('    p = subprocess.Popen(["git", "log", "--all", "-p", "--text",', '    p = subprocess.Popen(["git", "log", "--all", "--text",'),
+    "B20 the history scan skips COMMIT objects (a3 C2b: a DSN pasted into a message is readable and unscanned)":
+        ("        if any(f in body for f in forms):", "        if typ != \"commit\" and any(f in body for f in forms):"),
+    "B21 the history scan skips BLOBS (a credential added then deleted, or put in by a merge resolution, is missed)":
+        ("        if any(f in body for f in forms):", "        if typ != \"blob\" and any(f in body for f in forms):"),
 }

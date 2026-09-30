@@ -390,9 +390,41 @@ def main():
         secrets_ = bp.secret_set(live)
         hh = bp.history_secret_hits(repo, secrets_)
         check("D2: a credential added then DELETED on the branch is found in the history (the tree scan can't)",
-              any(h.endswith("(diff)") for h in hh) and not any(FAKE in h for h in hh), str(hh))
+              any(h.endswith("(blob: tmp_cfg.py)") for h in hh) and not any(FAKE in h for h in hh), str(hh))
         check("C2b: a credential pasted into a commit MESSAGE is found (-S alone never sees it)",
-              any(h.endswith("(message)") for h in hh) and not any(FAKE in h for h in hh), str(hh))
+              any(h.endswith("(commit)") for h in hh) and not any(FAKE in h for h in hh), str(hh))
+        # a3 E1 #34564: an EVIL MERGE. The credential enters in a merge RESOLUTION (in neither parent) and a second
+        # merge removes it: `git log -p` shows no diff for either merge, and the tip is clean, yet
+        # `git show <merge>:e.py` still reads it inside the sandbox.
+        git(live, "switch", "-q", "-c", "evil_a", main_sha)
+        (live / "e.py").write_text("a = 1\n")
+        git(live, "add", "e.py")
+        git(live, "commit", "-q", "-m", "a1")
+        git(live, "switch", "-q", "-c", "evil_b", main_sha)
+        (live / "e.py").write_text("a = 2\n")
+        git(live, "add", "e.py")
+        git(live, "commit", "-q", "-m", "b1")
+        subprocess.run(["git", "merge", "-q", "evil_a"], cwd=live, capture_output=True)        # conflicts, by design
+        (live / "e.py").write_text(f"a = '{FAKE}'\n")
+        git(live, "add", "e.py")
+        git(live, "commit", "-q", "--no-edit")
+        git(live, "switch", "-q", "-c", "evil_c", "evil_a")
+        (live / "e.py").write_text("a = 3\n")
+        git(live, "commit", "-q", "-am", "c1")
+        git(live, "switch", "-q", "evil_b")
+        subprocess.run(["git", "merge", "-q", "evil_c"], cwd=live, capture_output=True)
+        (live / "e.py").write_text("a = 4\n")
+        git(live, "add", "e.py")
+        git(live, "commit", "-q", "--no-edit")
+        evil = git(live, "rev-parse", "HEAD").strip()
+        lp = subprocess.run(["git", "log", "-p", evil], cwd=live, capture_output=True, text=True).stdout
+        git(live, "switch", "-q", "main")
+        er = bp.private_repo(live, evil, tmp / "run" / "evil", main_sha=main_sha)
+        eh = bp.history_secret_hits(er, secrets_)
+        check("E1 control: `git log -p` never shows the evil merge's line, and the tip doesn't carry it",
+              FAKE not in lp and FAKE not in (er / "e.py").read_text())
+        check("E1: a credential introduced by a MERGE resolution and removed by a second merge is found",
+              any(h.endswith("(blob: e.py)") for h in eh) and not any(FAKE in h for h in eh), str(eh))
         clean = bp.private_repo(live, main_sha, tmp / "run" / "clean", main_sha=main_sha)
         check("…and a history with no credential has no hits", bp.history_secret_hits(clean, secrets_) == [])
         vals = {s.value for s in secrets_}
