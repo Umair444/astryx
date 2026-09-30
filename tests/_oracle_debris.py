@@ -14,7 +14,8 @@ from pathlib import Path
 from psycopg import sql
 
 ORACLE_BASE = Path(os.environ.get("ASTRYX_RUNSCOPE_ORACLE_ROOT", "/tmp/astryx-runscope-oracle"))
-TEST_DB = re.compile(r"^(?:astryx_bctpl_(?:zz|zk|t)_|astryxQbctplQ_)(\d+)$|^bc_(\d+)x\d+_nullacl$")
+TEST_DB = re.compile(r"^(?:astryx_bctpl_(?:zz|zk|t)_|astryxQbctplQ_|astryxAfxBprod_|astryx-fx-prod-|astryx_fx_bcx_)(\d+)$"
+                     r"|^bc_(\d+)x\d+_nullacl$")
 
 
 def _gone(pid: int) -> bool:

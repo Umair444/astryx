@@ -40,6 +40,9 @@ ENV_ALLOW = ("ASTRYX_ORG", "ASTRYX_URL", "ASTRYX_NODE", "WA_CLI", "WA_DATA_HOST"
              "GMAIL_ADDRESS", "GROWBOT_BODY_URL", "AUTOREMOTE_GETLOC_URL")      # declared NON-secret keys
 P0A = "REVOKE CONNECT ON DATABASE {} FROM PUBLIC"
 TPL_PREFIX = "astryx_bctpl_"
+# The human-personal tier (local.md law): LINKED into the run and mounted READ-ONLY by the sandbox, never COPIED.
+# A copy would put the tier's bytes in the run's tmp; a writable link would let a gate write THROUGH into live.
+PRIVATE_TIER = ("tier", "owner.md", "relations.md")
 TPL_EXTENSIONS = ("vector", "postgis", "age")
 
 
@@ -89,13 +92,38 @@ def carries_secret(path: Path, secrets_: set) -> int:
 
 
 # ── P0-b: the hardening precondition ───────────────────────────────────────────────────────────────────────
+# DECLARED TRANSIENT databases (plan-4918 #28982): created continuously by the suites, each with a NULL ACL because
+# Postgres has no default privileges for databases, so a one-time REVOKE can't cover them. Each prefix is LITERAL
+# (matched with startswith, never an SQL LIKE whose "_" is a wildcard: a1 BC-1) and names its CREATOR (a1 BC-3).
+# They hold no live listener, so the worst a run can do there is cross-talk into a concurrent test. Any database
+# NOT matching is ACCUSED: an unknown member refuses the run until it's hardened or declared here.
+TRANSIENT = {
+    "astryx_fx_": "nucleus/sqlguard/fixture.py fixture_db: per run, dropped WITH (FORCE); REVOKEs PUBLIC at creation",
+    "astryx_wakeprobe_": "tests/test_wake_recovery.py:138: per pid, dropped in its finally",
+}
+
+
+def transient(name: str) -> bool:
+    return any(name.startswith(p) for p in TRANSIENT)
+
+
 def unhardened(conn, run_role: str, own_templates=()) -> list:
-    """Databases the run doesn't own that still grant PUBLIC CONNECT (a NULL ACL counts: the server resolves it)."""
-    rows = conn.execute(
+    """Databases the run doesn't own that still grant PUBLIC CONNECT (a NULL ACL counts: the server resolves it).
+    Evaluated PER MEMBER: one that errors (dropped between the listing and the check: a live race) is ACCUSED,
+    never skipped (a1 BC-2). Declared transient names are excluded before evaluation."""
+    names = [r[0] for r in conn.execute(
         "SELECT d.datname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba "
-        "WHERE d.datallowconn AND r.rolname <> %s AND has_database_privilege('public', d.datname, 'CONNECT') "
-        "ORDER BY 1", (run_role,)).fetchall()
-    return [r[0] for r in rows if r[0] not in own_templates]
+        "WHERE d.datallowconn AND r.rolname <> %s ORDER BY 1", (run_role,))]
+    bad = []
+    for n in names:
+        if n in own_templates or transient(n):
+            continue
+        try:
+            if conn.execute("SELECT has_database_privilege('public', %s, 'CONNECT')", (n,)).fetchone()[0]:
+                bad.append(n)
+        except psycopg.Error:
+            bad.append(f"{n} (unevaluable)")
+    return bad
 
 
 def require_hardened(conn, run_role: str):
@@ -163,10 +191,16 @@ def copy_estate(live: Path, repo: Path, secrets_: set) -> dict:
     import sys
     sys.path.insert(0, str(live))
     from nucleus.sqlguard.ledger import estate_paths
-    placed, skipped = [], []
+    placed, skipped, linked = [], [], []
     for rel in estate_paths(live):
         rel = rel.rstrip("/")
         src, dst = live / rel, repo / rel
+        if rel.split("/")[0] in PRIVATE_TIER:
+            if src.exists() and not dst.exists():
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.symlink_to(src)
+            linked.append(rel)                                   # the sandbox ro-binds each of these live paths
+            continue
         files = [src] if src.is_file() else [p for p in src.rglob("*") if p.is_file()] if src.is_dir() else []
         for f in files:
             r = f.relative_to(live)
@@ -176,7 +210,7 @@ def copy_estate(live: Path, repo: Path, secrets_: set) -> dict:
             (repo / r).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(f, repo / r, follow_symlinks=True)
         placed.append(rel)
-    return {"placed": placed, "skipped_credential": skipped}
+    return {"placed": placed, "skipped_credential": skipped, "linked_private": linked}
 
 
 def write_env(repo: Path, run_dsn: str, live: Path = LIVE) -> Path:

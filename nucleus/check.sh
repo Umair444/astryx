@@ -155,6 +155,15 @@ run "runscope: teardown by ownership, stale sweep, foreign scopes refused" "$PY"
 run "branch_check prep: hardening precondition, template, repo, estate, env" "$PY" tests/test_branch_check_prep.py
 # the base (R2): a real pg_dump of prod into a run-OWNED base the run role can write; prod only read. ~2.5 min.
 run "branch_check base: prod restored into a run-owned base" "$PY" tests/test_branch_check_base.py
+# branch_check sandbox (R3/R5): the allowlist holds from INSIDE (bwrap), every negative probe has its OUTSIDE
+# positive control, and each probe FIRES on a planted breach (the live .env, the real HOME's .pgpass, the docker
+# socket, an unhardened foreign DB). The probe run inside is the TOOL's copy, never the branch's.
+# Mutants: tests/mutants_branch_check_sandbox.py.
+run "branch_check sandbox: the boundary holds from inside, every probe falsifiable" "$PY" tests/test_branch_check_sandbox.py
+# branch_check orchestrator (P2): check.sh's own sets compared, FLAKY != REGRESSED, a prod-reaching statement
+# fails the run, and on an unhardened host the run REFUSES rc 77 naming P0-a and leaves nothing.
+# Mutants: tests/mutants_branch_check.py.
+run "branch_check: differential verdict, prod witness, clean refusal" "$PY" tests/test_branch_check.py
 
 run "charter resolver invariants"      "$PY" tests/test_charter.py
 # org MCP write-tool role gate (t-org-grant): the genome/identity writes are governance-gated

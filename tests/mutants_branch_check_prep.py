@@ -16,7 +16,8 @@ ENV = "BRANCH_CHECK_PREP_SRC"
 
 MUTANTS = {
     "B1 P0-b reads datacl TEXT, so a NULL (default) ACL passes vacuously":
-        ("AND has_database_privilege('public', d.datname, 'CONNECT') ", "AND d.datacl::text LIKE '%=c/%' "),
+        ("            if conn.execute(\"SELECT has_database_privilege('public', %s, 'CONNECT')\", (n,)).fetchone()[0]:",
+         "            if conn.execute(\"SELECT d.datacl::text LIKE '%%=c/%%' FROM pg_database d WHERE d.datname = %s\", (n,)).fetchone()[0]:"),
     "B2 eviction ignores the keep set (the two sides evict each other)":
         ("    keep = {f\"{TPL_PREFIX}{k}\" for k in keep} | {name}", "    keep = {name}"),
     "B3 LIKE unescaped ('_' matches any char: a lookalike is evicted)":
@@ -27,6 +28,13 @@ MUTANTS = {
         ("            if carries_secret(f, secrets_):\n", "            if False:\n"),
     "B6 the generated env copies every live key, not the allowlist":
         ("[f\"{k}={live_env[k]}\" for k in ENV_ALLOW if k in live_env]", "[f\"{k}={v}\" for k, v in live_env.items() if k != \"ASTRYX_DSN\"]"),
+    "B8 the human-personal tier is COPIED into the run, not linked":
+        ("        if rel.split(\"/\")[0] in PRIVATE_TIER:\n", "        if False:\n"),
+    "B9 the exemption matches like an unescaped LIKE ('_' a wildcard: lookalikes exempt)":
+        ("    return any(name.startswith(p) for p in TRANSIENT)",
+         "    return any(re.match(p.replace(\"_\", \".\"), name) for p in TRANSIENT)"),
+    "B10 a member whose check errors is SKIPPED, not accused":
+        ("            bad.append(f\"{n} (unevaluable)\")", "            pass"),
     "B7 the admin password stays in the pg_dump argv conninfo":
         ("    pw = d.pop(\"password\", None)", "    pw = d.get(\"password\")"),
 }

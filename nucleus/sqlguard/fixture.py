@@ -47,6 +47,13 @@ def url(dsn: str) -> str:
     return f"postgresql://{auth + '@' if auth else ''}{host}/{quote(d.get('dbname', ''), safe='')}"
 
 
+class FixtureUnavailable(Exception):
+    """The ENVIRONMENT can't host a fixture: no .env/DSN, the server unreachable, or a role that can't CREATE
+    DATABASE. A consumer that means "skip when there's no database" catches THIS and nothing wider: a broken
+    schema.sql, a bad extra DDL or a stamp error propagates as ITSELF, so it reads RED, not "not run". A broad
+    `except Exception: skip` had turned a planted schema SyntaxError into UNVERIFIED (a2 #31526, a1 #31528)."""
+
+
 def live_dsn() -> str:
     return next(l.split("=", 1)[1].strip() for l in (REPO / ".env").read_text().splitlines()
                 if l.startswith("ASTRYX_DSN="))
@@ -76,10 +83,7 @@ def signature(conn, oid: int) -> str:
 
 
 def _stamp_all(conn, sha: str) -> int:
-    rels = conn.execute("SELECT c.oid, quote_ident(n.nspname)||'.'||quote_ident(c.relname) FROM pg_class c "
-                        "JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind IN ('r','p','v','m') "
-                        "AND n.nspname NOT IN ('pg_catalog','information_schema','ag_catalog','topology') "
-                        "AND n.nspname NOT LIKE 'pg_toast%%'").fetchall()
+    rels = conn.execute("SELECT c.oid, quote_ident(n.nspname)||'.'||quote_ident(c.relname) " + _ORG_RELS).fetchall()
     for oid, qname in rels:
         kind = "VIEW" if conn.execute("SELECT relkind FROM pg_class WHERE oid=%s",
                                       (oid,)).fetchone()[0] in ("v", "m") else "TABLE"
@@ -96,10 +100,26 @@ def fixture_db(extra: tuple = ()):
     after schema.sql and BEFORE the stamp, so those relations are stamped too and their CREATE runs under
     this applier rather than in the oracle."""
     name = f"{PREFIX}{run_id()}_{os.getpid()}_{next(_n)}".lower()
-    admin = psycopg.connect(live_dsn(), autocommit=True)
+    try:
+        admin = psycopg.connect(live_dsn(), autocommit=True)
+    except (OSError, StopIteration, psycopg.OperationalError) as e:
+        raise FixtureUnavailable(f"no reachable admin DSN ({type(e).__name__})") from e
     t0 = time.monotonic()
     try:
-        admin.execute(f'CREATE DATABASE "{name}"')
+        # branch_check (plan-4918 P0-c) runs this as a NOSUPERUSER role that can't CREATE EXTENSION. It points
+        # ASTRYX_FIXTURE_TEMPLATE at a cached template that already carries them; schema.sql's IF NOT EXISTS then
+        # no-ops. Without the template, a non-superuser fixture silently LACKS vector/postgis/age (a2's find).
+        tpl = os.environ.get("ASTRYX_FIXTURE_TEMPLATE")
+        # Hardened at the CREATOR with NO window (plan-4918 #28982, a3 BC-5): born with connections DISALLOWED (nobody,
+        # superuser included, can connect, and P0-b's datallowconn listing never sees it), PUBLIC CONNECT revoked,
+        # THEN opened. A REVOKE after an open CREATE wouldn't evict a session a concurrent run role got in the gap.
+        try:
+            admin.execute(f'CREATE DATABASE "{name}" ALLOW_CONNECTIONS false'
+                          + (f' TEMPLATE "{tpl}"' if tpl and tpl.replace("_", "").isalnum() else ""))
+        except psycopg.errors.InsufficientPrivilege as e:
+            raise FixtureUnavailable("this role can't CREATE DATABASE") from e
+        admin.execute(f'REVOKE CONNECT ON DATABASE "{name}" FROM PUBLIC')
+        admin.execute(f'ALTER DATABASE "{name}" ALLOW_CONNECTIONS true')
         dsn = make_conninfo(live_dsn(), dbname=name)
         sha = file_sha()
         with psycopg.connect(dsn, autocommit=True) as c:
@@ -119,10 +139,17 @@ def fixture_db(extra: tuple = ()):
             admin.close()
 
 
-_REL_SQL = ("SELECT c.oid, obj_description(c.oid, 'pg_class') FROM pg_class c "
-            "JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind IN ('r','p','v','m') "
-            "AND n.nspname NOT IN ('pg_catalog','information_schema','ag_catalog','topology') "
-            "AND n.nspname NOT LIKE 'pg_toast%%'")
+# The ORG relations: ONE predicate shared by the stamper and the checker, so they can't disagree about the domain.
+# Extension MEMBERS (postgis's geography_columns/geometry_columns views, …) aren't built by schema.sql, so they're
+# never stamped. Under a NOSUPERUSER run role cloning a template the extensions came from, they're owned by the
+# template's owner, and COMMENT on them fails "must be owner" (plan-4918 P0-c, measured). Before this, superuser
+# stamped them silently.
+_ORG_RELS = ("FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind IN ('r','p','v','m') "
+             "AND n.nspname NOT IN ('pg_catalog','information_schema','ag_catalog','topology') "
+             "AND n.nspname NOT LIKE 'pg_toast%%' "
+             "AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_class'::regclass "
+             "AND d.objid = c.oid AND d.deptype = 'e')")
+_REL_SQL = "SELECT c.oid, obj_description(c.oid, 'pg_class') " + _ORG_RELS
 _ALLSIG_SQL = ("SELECT a.attrelid, a.attname, format_type(a.atttypid, a.atttypmod), "
                "coalesce(pg_get_expr(d.adbin, d.adrelid), ''), a.attnotnull "
                "FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum "

@@ -49,7 +49,9 @@ def synthetic_live(tmp: Path) -> Path:
     (live / "nucleus" / "__init__.py").write_text("")
     (live / "nucleus" / "schema.sql").write_text("-- synthetic\n")
     (live / "code.py").write_text("x = 1\n")
-    (live / ".gitignore").write_text("triggers/\n.env\n")
+    (live / ".gitignore").write_text("triggers/\n.env\ntier/\n")
+    (live / "tier").mkdir()
+    (live / "tier" / "personal.md").write_text("human-personal tier: never copied\n")
     (live / "triggers" / "t").mkdir(parents=True)
     (live / "triggers" / "t" / "plain.py").write_text("y = 2\n")
     (live / "triggers" / "t" / "leaky.py").write_text(f"a = 1\nDSN = 'postgresql://u:{FAKE}@h/db'\n")
@@ -102,6 +104,27 @@ def main():
         check("P0-b control: after the P0-a REVOKE it is hardened", nul not in bp.unhardened(adm, scope.role), "")
         own = scope.create_db(f"{scope.role}_own")
         check("P0-b: a database the RUN owns is never counted", own not in bp.unhardened(adm, scope.role), "")
+        # a1 BC-1: the exemption is a LITERAL prefix, never a LIKE: lookalikes are ACCUSED, a real one exempt
+        pid = os.getpid()
+        look = [f"astryxAfxBprod_{pid}", f"astryx-fx-prod-{pid}"]
+        real_fx = f"astryx_fx_bcx_{pid}"
+        for d in look + [real_fx]:
+            adm.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(d)))
+            made_dbs.append(d)
+        uh = bp.unhardened(adm, scope.role)
+        check("BC-1: lookalike names ('_' as a wildcard would exempt them) are ACCUSED", all(d in uh for d in look), str(uh))
+        check("BC-1 control: a real declared-transient name (astryx_fx_…) is exempt", real_fx not in uh, "")
+
+        class Flaky:                                                  # a1 BC-2: a member that errors is ACCUSED
+            def __init__(self, real, bad):
+                self.real, self.bad = real, bad
+            def execute(self, q, params=()):
+                if "has_database_privilege" in q and params and params[0] == self.bad:
+                    raise psycopg.errors.InvalidCatalogName("dropped mid-check")
+                return self.real.execute(q, params)
+        uh2 = bp.unhardened(Flaky(adm, nul), scope.role)
+        check("BC-2: a member whose check ERRORS (dropped mid-check) is ACCUSED as unevaluable, never skipped",
+              f"{nul} (unevaluable)" in uh2, str(uh2))
         try:
             bp.require_hardened(adm, "no_such_role_x")        # every DB counts → on an unhardened host this refuses
             refused = not bp.unhardened(adm, "no_such_role_x")
@@ -138,6 +161,75 @@ def main():
         check("P0-c: the NOSUPERUSER run role clones the template, and the clone HAS the extensions",
               set(bp.TPL_EXTENSIONS) <= exts, str(sorted(exts)))
 
+        # ── fixture_db AS THE RUN ROLE: the template hook is what gives it the extensions (a2's fail-open) ───
+        froot = tmp / "froot"
+        (froot / "nucleus").mkdir(parents=True)
+        shutil.copy2(REPO / "nucleus" / "schema.sql", froot / "nucleus" / "schema.sql")
+        (froot / ".env").write_text(f"ASTRYX_DSN={scope.dsn(own)}\n")
+        probe_fx = ("import os,sys,json,psycopg,importlib.util; sys.path.insert(0, sys.argv[1])\n"
+                    "seq, real = [], psycopg.Connection.execute\n"      # the helper's statement sequence (a3 BC-5)
+                    "def spy(self, q, *a, **k):\n    s = str(q)\n    seq.append(s) if 'DATABASE' in s else None\n    return real(self, q, *a, **k)\n"
+                    "psycopg.Connection.execute = spy\n"
+                    "src = os.environ.get('SQLGUARD_FIXTURE_SRC')\n"      # mutation_probe swaps fixture.py here
+                    "if src:\n    sp = importlib.util.spec_from_file_location('fixture', src); fixture = importlib.util.module_from_spec(sp); sp.loader.exec_module(fixture)\n"
+                    "else:\n    from nucleus.sqlguard import fixture\n"
+                    "with fixture.fixture_db() as fx:\n"
+                    "    c = psycopg.connect(fx['dsn'])\n"
+                    "    ex = sorted(r[0] for r in c.execute('select extname from pg_extension'))\n"
+                    "    pub = c.execute(\"select has_database_privilege('public', current_database(), 'CONNECT')\").fetchone()[0]\n"
+                    "    print(json.dumps({'exts': ex, 'public': pub, 'seq': seq})); c.close()")
+        def fx_exts(template):
+            e = {**os.environ, "ASTRYX_SQLGUARD_ROOT": str(froot), "ASTRYX_SQLGUARD_RUN": f"bco{os.getpid()}"}
+            e.pop("ASTRYX_FIXTURE_TEMPLATE", None)
+            if template:
+                e["ASTRYX_FIXTURE_TEMPLATE"] = template
+            r = subprocess.run([sys.executable, "-c", probe_fx, str(REPO)], env=e, capture_output=True, text=True, timeout=120)
+            return r.stdout.strip().splitlines()[-1] if r.stdout.strip() else r.stderr[-300:]
+        import json as _json
+        def parsed(s):
+            try:
+                return _json.loads(s)
+            except ValueError:
+                return {"exts": [], "public": None, "raw": s}
+        bare, templ = parsed(fx_exts(None)), parsed(fx_exts(tpl))
+        check("fail-open reproduced: a NOSUPERUSER fixture WITHOUT the template lacks the extensions",
+              "vector" not in bare["exts"], str(bare))
+        check("fixture_db under the run role WITH ASTRYX_FIXTURE_TEMPLATE has vector/postgis/age",
+              all(x in templ["exts"] for x in ("vector", "postgis", "age")), str(templ))
+        seq = [s.split('"')[0].strip() for s in templ.get("seq", [])][:3]
+        check("BC-5: no window: CREATE … ALLOW_CONNECTIONS false, then REVOKE, then ALTER … ALLOW_CONNECTIONS true",
+              len(seq) == 3 and seq[0].startswith("CREATE DATABASE") and "ALLOW_CONNECTIONS false" in templ["seq"][0]
+              and seq[1].startswith("REVOKE CONNECT") and "ALLOW_CONNECTIONS true" in templ["seq"][2], str(templ.get("seq")))
+        check("BC-4: fixture_db REVOKEs PUBLIC CONNECT at creation, verified by the SERVER (not datacl)",
+              templ["public"] is False and bare["public"] is False, f"{bare.get('public')} {templ.get('public')}")
+
+        # ── FixtureUnavailable: the ENVIRONMENT class only; a broken schema.sql propagates as itself (a1 #31528) ──
+        probe_ex = ("import os,sys,importlib.util; sys.path.insert(0, sys.argv[1])\n"
+                    "src = os.environ.get('SQLGUARD_FIXTURE_SRC')\n"
+                    "if src:\n    sp = importlib.util.spec_from_file_location('fixture', src); fixture = importlib.util.module_from_spec(sp); sp.loader.exec_module(fixture)\n"
+                    "else:\n    from nucleus.sqlguard import fixture\n"
+                    "try:\n    with fixture.fixture_db() as fx: print('OPENED')\n"
+                    "except fixture.FixtureUnavailable: print('FixtureUnavailable')\n"
+                    "except Exception as e: print(type(e).__module__ + '.' + type(e).__name__)")
+        def fx_outcome(root):
+            e = {**os.environ, "ASTRYX_SQLGUARD_ROOT": str(root), "ASTRYX_SQLGUARD_RUN": f"bcx{os.getpid()}"}
+            r = subprocess.run([sys.executable, "-c", probe_ex, str(REPO)], env=e, capture_output=True, text=True,
+                               timeout=120)
+            return (r.stdout.strip().splitlines() or [r.stderr[-200:]])[-1]
+        dead = tmp / "dead"
+        (dead / "nucleus").mkdir(parents=True)
+        shutil.copy2(REPO / "nucleus" / "schema.sql", dead / "nucleus" / "schema.sql")
+        (dead / ".env").write_text("ASTRYX_DSN=postgresql://nobody@127.0.0.1:1/x?connect_timeout=2\n")
+        out = fx_outcome(dead)
+        check("FixtureUnavailable: an unreachable server is the ENVIRONMENT class", out == "FixtureUnavailable", out)
+        broken = tmp / "broken"
+        (broken / "nucleus").mkdir(parents=True)
+        (broken / "nucleus" / "schema.sql").write_text("CREATE TABLEE nope (x int);\n")
+        (broken / ".env").write_text(f"ASTRYX_DSN={scope.dsn(own)}\n")
+        out = fx_outcome(broken)
+        check("a BROKEN schema.sql propagates as itself (a psycopg SyntaxError), never as FixtureUnavailable",
+              out.endswith("SyntaxError") and "FixtureUnavailable" not in out, out)
+
         # ── private repo, estate copy, secrets, env ──────────────────────────────────────────────────────
         live = synthetic_live(tmp)
         before = git(live, "status", "--porcelain", "--ignored")
@@ -154,6 +246,9 @@ def main():
               not (repo / "triggers/t/leaky.py").exists() and "triggers/t/leaky.py" in rep["skipped_credential"],
               str(rep))
         check("estate: .env is never copied (estate_paths excludes it)", not (repo / ".env").exists(), "")
+        check("estate: the human-personal tier is LINKED to live, never copied into the run",
+              (repo / "tier").is_symlink() and (repo / "tier").resolve() == (live / "tier").resolve()
+              and "tier" in rep["linked_private"], str(rep.get("linked_private")))
         (repo / "leak.py").write_text(f"k = '{FAKE}'\n")
         git(repo, "add", "leak.py")
         git(repo, "commit", "-q", "-m", "a branch that commits a credential")
