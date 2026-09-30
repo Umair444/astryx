@@ -111,7 +111,11 @@ check("a file exec'd by nobody is still reported LOST with the gate on", ls, [GE
 print("\n  coverage must persist once earned, and shrinkage must be reported:")
 _, w3, l3 = mod.derive(LIVE, [SERVER, GEO])
 check("a path exec'd by nobody this tick is reported LOST", l3, [GEO])
-check("...and is not silently dropped from the watched set", w3, [SERVER])
+check("...and is not silently dropped from the watched set", w3, [SERVER, GEO])
+# (Until 2026-09-30 the line above asserted w3 == [SERVER] — the DROP — under a label that
+# says the opposite. The guard then shipped the drop live while its report claimed "Kept in
+# the watched set", and a stopped server got one alarm and was forgotten. A label is a claim
+# the expected value has to agree with; nothing checked that it did.)
 _, w4, l4 = mod.derive([("seed", SERVER, t(3)), ("vega", SERVER, t(3))], [SERVER])
 check("a path still running with fewer agents stays watched, unreported", (w4, l4), ([SERVER], []))
 
@@ -333,6 +337,30 @@ check("recorded at rung 0", ctx8.state["reported"], {f"{SERVER}|seed": 0, f"{SER
 run([("seed", SERVER, NOW), ("vega", SERVER, NOW)], ctx8)          # both respawn past the edit
 check("cleared when current", ctx8.state["reported"], {})
 check("and a fresh relapse speaks again at rung 0", run(P_FRESH, ctx8) is not None, True)
+
+print("\nLOST RE-NAGS — shrinkage is a ladder, not a one-shot (fixed 2026-09-30):")
+P_UP = [("seed", SERVER, NOW - timedelta(hours=1)), ("vega", SERVER, NOW - timedelta(hours=1))]
+ctx9 = Ctx({"watched": [SERVER, GEO]})
+l1 = run(P_UP, ctx9)
+check("a lost file is announced on arrival", "COVERAGE SHRANK" in (l1 or "") and GEO in (l1 or ""), True)
+check("...stays in the persisted watched set", GEO in ctx9.state["watched"], True)
+check("...and holds a ladder key the drift HEAL does not wipe", ctx9.state["reported"].get(f"{GEO}|LOST"), 0)
+check("...then holds inside rung 0 rather than drumming", run(P_UP, ctx9), None)
+mod._now = lambda: NOW + timedelta(days=1)
+l2 = run(P_UP, ctx9)
+check("...and RE-NAGS at the next rung (the one-shot is gone)", GEO in (l2 or ""), True)
+check("...dated from when the loss was first seen", "(lost 1d)" in (l2 or ""), True)
+check("...then holds again inside that rung", run(P_UP, ctx9), None)
+print("  heal: the server starts again, so the ladder clears and coverage is kept:")
+run(P_UP + [("p1", GEO, NOW)], ctx9)
+check("ladder key cleared", f"{GEO}|LOST" in ctx9.state["reported"], False)
+check("first-seen cleared", ctx9.state.get("lost_since", {}), {})
+check("still watched", GEO in ctx9.state["watched"], True)
+print("  retire: an operator removes it from coverage, and it is simply not lost any more:")
+ctx9.state["watched"].remove(GEO)
+check("a retired file is not reported", run(P_UP, ctx9), None)
+check("...and is not re-added", GEO in ctx9.state["watched"], False)
+mod._now = lambda: NOW
 
 print("\nPOSTURE — this guard must never be an actuator:")
 src = BODY.read_text()
