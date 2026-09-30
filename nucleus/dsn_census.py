@@ -63,6 +63,26 @@ def _environ(pid) -> dict | None:
     return {k: env[k] for k in KEEP if k in env}
 
 
+def channel_server_pids(candidates=None) -> list[str]:
+    """PIDs of running channel servers: processes whose EXECUTABLE is node and whose argv runs
+    channel/server.mjs. `pgrep -f channel/server.mjs` alone also matches any SHELL whose command line
+    merely contains that string (it counted a1's own bash as a second abstractor-1 body, 09-30), and a
+    long-lived one would read as a stale consumer or be picked as the resident env."""
+    if candidates is None:
+        candidates = subprocess.run(["pgrep", "-f", "channel/server.mjs"], capture_output=True,
+                                    text=True).stdout.split()
+    out = []
+    for pid in candidates:
+        try:
+            exe = Path(os.readlink(f"/proc/{pid}/exe")).name
+            argv = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+        except OSError:
+            continue                                      # gone, or not ours to read
+        if exe.startswith("node") and any(a.endswith(b"channel/server.mjs") for a in argv[1:3]):
+            out.append(str(pid))
+    return out
+
+
 def runners() -> dict[str, dict]:
     out = {}
     for s in SERVICES:
@@ -72,9 +92,7 @@ def runners() -> dict[str, dict]:
             e = _environ(pid)
             if e is not None:
                 out[f"unit:{s}"] = e
-    pids = subprocess.run(["pgrep", "-f", "channel/server.mjs"], capture_output=True,
-                          text=True).stdout.split()
-    for pid in pids[:1]:
+    for pid in channel_server_pids()[:1]:
         e = _environ(pid)
         if e is not None:
             out["resident:channel"] = e

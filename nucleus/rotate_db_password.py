@@ -171,8 +171,7 @@ def stale_consumers() -> list[str]:
                              capture_output=True, text=True).stdout.strip()
         if pid and pid != "0":
             pids[f"unit:{u}"] = pid
-    for pid in subprocess.run(["pgrep", "-f", "channel/server.mjs"], capture_output=True,
-                              text=True).stdout.split():
+    for pid in dsn_census.channel_server_pids():         # node running server.mjs, never a shell
         pids[f"channel-server:{pid}"] = pid
     out = []
     for name, pid in sorted(pids.items()):
