@@ -145,15 +145,17 @@ def main():
             refused = "REVOKE CONNECT ON DATABASE" in str(e)
         check("require_hardened refuses with seed's P0-a statement whenever anything is unhardened", refused, "")
 
-        # ── the cached extension template (P0-c; keep set; LIKE escape) ──────────────────────────────────
-        existing = {r[0][len(bp.TPL_PREFIX):] for r in adm.execute(
-            "SELECT datname FROM pg_database WHERE datname LIKE 'astryx\\_bctpl\\_%'") if not TEST_NAME(r[0])}
+        # ── the cached extension template (P0-c; keep set; its OWN namespace, exact shape: seed #34141) ────
+        # Every name lives under THIS oracle's pid-scoped prefix, so a concurrent oracle or a real run is never ours
+        # to evict, and ours never theirs. The planted names test each property the eviction must hold.
         pid = os.getpid()
-        mine = f"t_{pid}"                                          # test-only names carry the pid (see _oracle_debris)
-        stale = f"astryx_bctpl_zz_{pid}"
-        decoy = f"astryxQbctplQ_{pid}"                            # matches only if "_" were a wildcard
-        kept = f"astryx_bctpl_zk_{pid}"                           # a planted KEPT template: the arm can't be vacuous
-        for d in (stale, decoy, kept):
+        pfx = f"astryx_bctpl_o{pid}_"
+        mine = f"{pid:012x}"
+        stale = pfx + "f" * 12                                     # a stale sha: evicted
+        kept = pfx + "e" * 12                                      # a planted KEPT template: the arm can't be vacuous
+        longer = pfx + "c" * 12 + "_x"                             # not the exact shape: an unanchored `$` evicts it
+        foreign = "zz" + pfx + "b" * 12                            # contains ours: an unanchored `^` evicts it
+        for d in (stale, kept, longer, foreign):
             adm.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(d)))
             made_dbs.append(d)
         class Rec:                                                    # records the statements, delegates the rest
@@ -165,7 +167,10 @@ def main():
                     self.seq.append(s)
                 return self.real.execute(q, params) if params is not None else self.real.execute(q)
         rec = Rec(adm)
-        tpl = bp.ensure_ext_template(rec, mine, keep=existing | {kept[len(bp.TPL_PREFIX):]})
+        tpl = bp.ensure_ext_template(rec, mine, keep={"e" * 12}, prefix=pfx, evict=False)
+        gone = lambda d: not adm.execute("SELECT 1 FROM pg_database WHERE datname=%s", (d,)).fetchone()
+        check("evict=False (another run is alive) evicts NOTHING, the stale sha included", not gone(stale), "")
+        bp.ensure_ext_template(adm, mine, keep={"e" * 12}, prefix=pfx)          # evict=True, template already built
         tseq = [q for q in rec.seq if tpl in q]
         check("R3: the template is born CLOSED, then REVOKE, then opened",
               len(tseq) >= 3 and "ALLOW_CONNECTIONS false" in tseq[0] and tseq[1].startswith("REVOKE CONNECT")
@@ -174,11 +179,19 @@ def main():
         row = adm.execute("SELECT datistemplate, has_database_privilege('public', datname, 'CONNECT') "
                           "FROM pg_database WHERE datname=%s", (tpl,)).fetchone()
         check("the extension template is IS_TEMPLATE and grants no PUBLIC CONNECT", row == (True, False), str(row))
-        gone = lambda d: not adm.execute("SELECT 1 FROM pg_database WHERE datname=%s", (d,)).fetchone()
         check("a stale-sha template NOT in keep is evicted", gone(stale), "")
-        check("eviction never touches a lookalike name ('_' is escaped in LIKE)", not gone(decoy), "")
-        check("eviction keeps every template in the keep set (a planted one included)",
-              not gone(kept) and all(not gone(bp.TPL_PREFIX + k) for k in existing), "")
+        check("eviction keeps the template in the keep set, and the one it just built", not gone(kept) and not gone(tpl))
+        check("eviction never touches a LONGER name than <prefix><12 hex> (anchored at the end)", not gone(longer))
+        check("eviction never touches a FOREIGN name that contains the prefix (anchored at the start)",
+              not gone(foreign))
+        bad = pfx + "."                                            # a regex metacharacter, inside OUR namespace, so a
+        made_dbs.append(bad + mine)                               # mutant that builds it anyway leaves reapable debris
+        try:
+            bp.ensure_ext_template(adm, mine, prefix=bad)
+            refused = False
+        except ValueError:
+            refused = True
+        check("a prefix outside [a-z0-9_] is refused (it must be literal inside the regex)", refused)
         clone = f"{scope.role}_fx"
         with psycopg.connect(scope.dsn(own), autocommit=True) as rc_:        # AS THE RUN ROLE (P0-c)
             rc_.execute(sql.SQL("CREATE DATABASE {} TEMPLATE {}").format(sql.Identifier(clone), sql.Identifier(tpl)))
@@ -352,7 +365,7 @@ def main():
         if scope:
             scope.close()
         for d in made_dbs:
-            if not d.startswith(bp.TPL_PREFIX) or d.startswith(("astryx_bctpl_zz_", "astryx_bctpl_zk_", "astryx_bctpl_t_")):
+            if not d.startswith(bp.TPL_PREFIX) or TEST_NAME(d):          # never a real cached template
                 if adm.execute("SELECT 1 FROM pg_database WHERE datname=%s", (d,)).fetchone():
                     adm.execute(sql.SQL("ALTER DATABASE {} IS_TEMPLATE false").format(sql.Identifier(d)))
                     adm.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(d)))

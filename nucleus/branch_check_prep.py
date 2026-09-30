@@ -154,16 +154,24 @@ def schema_sha(repo: Path) -> str:
     return hashlib.sha256((repo / "nucleus" / "schema.sql").read_bytes()).hexdigest()[:12]
 
 
-def ensure_ext_template(conn, sha12: str, keep=()) -> str:
+def ensure_ext_template(conn, sha12: str, keep=(), prefix: str = TPL_PREFIX, evict: bool = True) -> str:
     """The cached template for one schema.sql sha. Eviction drops OTHER shas' templates EXCEPT those in `keep`:
     a differential run needs main's AND the branch's at once when a branch changes schema.sql, so evicting
-    "everything but mine" would make the two sides evict each other."""
-    name = f"{TPL_PREFIX}{sha12}"
-    keep = {f"{TPL_PREFIX}{k}" for k in keep} | {name}
-    for (old,) in conn.execute("SELECT datname FROM pg_database WHERE datname LIKE %s AND NOT (datname = ANY(%s))",
-                               (TPL_PREFIX.replace("_", "\\_") + "%", list(keep))).fetchall():   # "_" is a LIKE wildcard
-        conn.execute(sql.SQL("ALTER DATABASE {} IS_TEMPLATE false").format(sql.Identifier(old)))
-        conn.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(old)))     # evict stale sha
+    "everything but mine" would make the two sides evict each other.
+    SCOPE (seed #34141): eviction only ever sees EXACT names in its own namespace, `^<prefix><12 hex>$`. A
+    concurrent oracle's templates live under their own pid-scoped prefix, and a longer or foreign name never
+    matches, so one caller can't drop a template another is cloning from. Across concurrent REAL runs the caller
+    passes evict=False (branch_check.run does, while any other scope is alive): a run with another schema sha is
+    still using its template."""
+    if not re.fullmatch(r"[a-z0-9_]+", prefix):
+        raise ValueError(f"template prefix {prefix!r}: only [a-z0-9_], so it is literal inside a regex")
+    name = f"{prefix}{sha12}"
+    keep = {f"{prefix}{k}" for k in keep} | {name}
+    if evict:
+        for (old,) in conn.execute("SELECT datname FROM pg_database WHERE datname ~ %s AND NOT (datname = ANY(%s))",
+                                   (f"^{prefix}[0-9a-f]{{12}}$", list(keep))).fetchall():
+            conn.execute(sql.SQL("ALTER DATABASE {} IS_TEMPLATE false").format(sql.Identifier(old)))
+            conn.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(old)))     # evict stale sha
     if not conn.execute("SELECT 1 FROM pg_database WHERE datname = %s", (name,)).fetchone():
         # zero window (a3 #32077 R3): born closed, PUBLIC revoked, then opened for the extension build
         conn.execute(sql.SQL("CREATE DATABASE {} ALLOW_CONNECTIONS false").format(sql.Identifier(name)))

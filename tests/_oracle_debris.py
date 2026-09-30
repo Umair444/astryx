@@ -15,7 +15,8 @@ from psycopg import sql
 
 ORACLE_BASE = Path(os.environ.get("ASTRYX_RUNSCOPE_ORACLE_ROOT", "/tmp/astryx-runscope-oracle"))
 TEST_DB = re.compile(r"^(?:astryx_bctpl_(?:zz|zk|t)_|astryxQbctplQ_|astryxAfxBprod_|astryx-fx-prod-|astryx_fx_bcx_|astryx_hardenprobe_[abc]_)(\d+)$"
-                     r"|^bc_(\d+)x\d+_nullacl$")
+                     r"|^bc_(\d+)x\d+_nullacl$"
+                 r"|^(?:zz)?astryx_bctpl_o(\d+)_")                  # the prep oracle's own template namespace
 TEST_ROLE = re.compile(r"^astryx_hardendep_(\d+)$")        # a LOGIN role test_init_harden plants
 
 
@@ -38,7 +39,7 @@ def reap(adm) -> list:
     reaped = []
     for (d,) in adm.execute("SELECT datname FROM pg_database").fetchall():
         m = TEST_DB.match(d)
-        if m and _gone(int(m.group(1) or m.group(2))):
+        if m and _gone(int(next(g for g in m.groups() if g))):
             _drop_db(adm, d)
             reaped.append(d)
     for (r,) in adm.execute("SELECT rolname FROM pg_roles").fetchall():     # after the DBs holding its grants

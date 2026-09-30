@@ -158,6 +158,19 @@ def teardown(admin_dsn: str, role: str, root: Path, base: Path = None) -> dict:
     return out
 
 
+def live(base: Path = None) -> list:
+    """Run ids of the scopes under `base` whose process is alive (pid AND start time), this process's included."""
+    base = base or SCOPE_ROOT
+    out = []
+    for d in sorted(p for p in base.iterdir() if p.is_dir()) if base.is_dir() else []:
+        try:
+            if alive(json.loads((d / "lock.json").read_text())):
+                out.append(d.name)
+        except (OSError, ValueError):
+            continue
+    return out
+
+
 def sweep(admin_dsn: str, base: Path = None) -> list:
     """Reap every scope under `base` whose lock's process is gone (pid AND start time). Returns their reports."""
     base = base or SCOPE_ROOT

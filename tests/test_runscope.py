@@ -86,6 +86,8 @@ def main():
               and lock.get("role") == s.role and s.root.parent == base, str(lock))
         r = adm.execute("SELECT rolsuper, rolcreatedb, rolcanlogin FROM pg_roles WHERE rolname=%s", (s.role,)).fetchone()
         check("open: the run role is LOGIN NOSUPERUSER CREATEDB", r == (False, True, True), str(r))
+        lv = rs.live(base)
+        check("live(): an open scope of THIS process is live", s.run_id in lv, str(lv))
         pw = adm.execute("SELECT rolpassword FROM pg_authid WHERE rolname=%s", (s.role,)).fetchone()
         check("open: the server holds only a SCRAM verifier, never the plaintext",
               bool(pw and pw[0] and pw[0].startswith("SCRAM-SHA-256$") and s._password not in pw[0]), "")
@@ -131,6 +133,9 @@ def main():
         t_dead = fake_scope(dead.pid, 1)
         t_reused = fake_scope(os.getpid(), (rs._starttime(os.getpid()) or 0) + 12345)   # live pid, WRONG start
         t_live = fake_scope(os.getpid(), rs._starttime(os.getpid()))
+        lv = rs.live(base)
+        check("live(): a live scope counts; a dead one and a REUSED pid don't (the eviction guard, seed #34141)",
+              t_live.run_id in lv and t_dead.run_id not in lv and t_reused.run_id not in lv, str(lv))
         reaped = {x["scope"] for x in rs.sweep(dsn, base)}
         check("sweep reaps a scope whose process is gone", t_dead.run_id in reaped and not role_exists(t_dead.role),
               str(reaped))

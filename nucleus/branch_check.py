@@ -120,7 +120,10 @@ def run(branch: str, main_ref: str = "main") -> int:
             if errs:
                 raise prep.Refuse(f"the prod restore into the base reported {errs} error(s)")
             shas = {side: prep.schema_sha(repo[side]) for side in repo}
-            tpl = {side: prep.ensure_ext_template(adm, shas[side], keep=set(shas.values())) for side in repo}
+            # evict stale templates only when no OTHER run is alive: it may be cloning from its own (seed #34141)
+            alone = rs.live(scope.base) == [scope.run_id]
+            tpl = {side: prep.ensure_ext_template(adm, shas[side], keep=set(shas.values()), evict=alone)
+                   for side in repo}
             clone = {side: scope.create_db(f"{scope.role}_{side}", template=base) for side in repo}
             # the sandbox's ONLY route to postgres: a unix socket in each side's run tmp, bridged to the server
             sock = {side: tmp[side] / "pg" for side in repo}
