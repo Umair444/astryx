@@ -76,12 +76,12 @@ def check(name, ok, detail=""):
             print(f"        {detail}")
 
 
-from nucleus.sqlguard.fixture import fixture_db  # noqa: E402 — the ONE applier (after the SKIP guard)
+from nucleus.sqlguard.fixture import FixtureUnavailable, fixture_db  # noqa: E402 — the ONE applier (after the SKIP guard)
 
 _fx = fixture_db()
 try:
     fx = _fx.__enter__()
-except Exception as e:  # noqa: BLE001 — no CREATEDB / DB down ⇒ cannot verify, don't fake
+except FixtureUnavailable as e:  # no CREATEDB / DB down ⇒ cannot verify, don't fake. A broken schema.sql is NOT this: it fails
     print(f"SKIP: the fixture database couldn't be built ({type(e).__name__}: {e}).")
     sys.exit(EXIT_SKIP)
 conn = psycopg.connect(fx["dsn"], autocommit=True)

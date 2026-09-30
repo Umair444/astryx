@@ -144,6 +144,26 @@ echo "$ASTRYX_SQLGUARD_RUN" > "$ASTRYX_SQLGUARD_DIR/run_id"
 # RESPONSIVE, the whole sqlguard verdict is NOT SEARCHED (a check that can't observe says so).
 run "sqlguard canary: the shim observes through the real Ctx.sql" "$PY" -m nucleus.sqlguard.canary
 run "sqlguard oracle: privacy (P1) + controls"          "$PY" tests/test_sqlguard.py
+# runscope (plan-4918 R1): a run's databases, role and directory are torn down by OWNERSHIP, a run-owned template
+# included; the stale sweep keys on (pid, start time); a lockfile naming a foreign role or path is refused; the
+# server only ever sees a SCRAM verifier. Real roles/DBs, cleaned up independently. Mutants: tests/mutants_runscope.py.
+run "runscope: teardown by ownership, stale sweep, foreign scopes refused" "$PY" tests/test_runscope.py
+# branch_check prep (plan-4918 P0/P1): the P0-b precondition asks has_database_privilege (a NULL ACL is PUBLIC
+# CONNECT), the cached extension template (keep set, escaped LIKE, no PUBLIC CONNECT, clonable by the NOSUPERUSER
+# run role), the private repo, the estate copy that skips credential-bearing files, the branch-tree secret scan,
+# the generated env, and no password on pg_dump argv. Mutants: tests/mutants_branch_check_prep.py.
+run "branch_check prep: hardening precondition, template, repo, estate, env" "$PY" tests/test_branch_check_prep.py
+# the base (R2): a real pg_dump of prod into a run-OWNED base the run role can write; prod only read. ~2.5 min.
+run "branch_check base: prod restored into a run-owned base" "$PY" tests/test_branch_check_base.py
+# branch_check sandbox (R3/R5): the allowlist holds from INSIDE (bwrap), every negative probe has its OUTSIDE
+# positive control, and each probe FIRES on a planted breach (the live .env, the real HOME's .pgpass, the docker
+# socket, an unhardened foreign DB). The probe run inside is the TOOL's copy, never the branch's.
+# Mutants: tests/mutants_branch_check_sandbox.py.
+run "branch_check sandbox: the boundary holds from inside, every probe falsifiable" "$PY" tests/test_branch_check_sandbox.py
+# branch_check orchestrator (P2): check.sh's own sets compared, FLAKY != REGRESSED, a prod-reaching statement
+# fails the run, and on an unhardened host the run REFUSES rc 77 naming P0-a and leaves nothing.
+# Mutants: tests/mutants_branch_check.py.
+run "branch_check: differential verdict, prod witness, clean refusal" "$PY" tests/test_branch_check.py
 
 run "charter resolver invariants"      "$PY" tests/test_charter.py
 # org MCP write-tool role gate (t-org-grant): the genome/identity writes are governance-gated

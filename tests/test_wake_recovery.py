@@ -226,7 +226,14 @@ def check(name: str, ok: bool, detail: str) -> None:
 
 try:
     # ------------------------------------------------------ throwaway substrate
-    admin.execute(f'CREATE DATABASE "{PROBE_DB}"')
+    # zero-window (plan-4918 a3 #32897 W1): born CLOSED, PUBLIC CONNECT revoked, then opened, so no concurrent
+    # branch_check run role can CONNECT (and NOTIFY into this wake test) in the gap. This is what let branch_check's
+    # transient-exemption manifest go EMPTY.
+    admin.execute(f'CREATE DATABASE "{PROBE_DB}" ALLOW_CONNECTIONS false')
+    admin.execute(f'REVOKE CONNECT ON DATABASE "{PROBE_DB}" FROM PUBLIC')
+    admin.execute(f'ALTER DATABASE "{PROBE_DB}" ALLOW_CONNECTIONS true')
+    if admin.execute("SELECT has_database_privilege('public', %s, 'CONNECT')", (PROBE_DB,)).fetchone()[0]:
+        failures.append("the probe DB grants PUBLIC CONNECT after its zero-window creation")
     subprocess.run([sys.executable, "-c", "import sys,psycopg;"
                     "psycopg.connect(sys.argv[1],autocommit=True).execute(open(sys.argv[2]).read())",
                     PROBE_DSN, str(SCHEMA)], check=True, capture_output=True, timeout=120)
