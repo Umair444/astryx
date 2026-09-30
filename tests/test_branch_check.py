@@ -30,6 +30,16 @@ LOG = ("\x1b[36m▶\x1b[0m gate a\n  ✓ gate a\n"
 
 
 def main():
+    # The subject imports psycopg at module top (via prep/runscope too). An estate-absent tree (pushed_tree_check:
+    # committed files, PY=python3, no venv) has none, and that's NOT SEARCHED, never a FAIL (seed #33386). Probed
+    # alone, so the subject's own import errors still fail loudly.
+    try:
+        import psycopg  # noqa: F401
+    except ModuleNotFoundError as e:                                  # absent → 77; INSTALLED but broken → FAIL (a3)
+        if e.name != "psycopg":
+            raise
+        print(f"NOT SEARCHED: psycopg is not importable by {sys.executable} ({e}); no arm ran.")
+        return 77
     src = os.environ.get("BRANCH_CHECK_SRC")                          # mutation_probe points this at a mutant copy
     if src:
         import importlib.util

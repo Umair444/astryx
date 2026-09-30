@@ -164,6 +164,9 @@ run "branch_check sandbox: the boundary holds from inside, every probe falsifiab
 # fails the run, and on an unhardened host the run REFUSES rc 77 naming P0-a and leaves nothing.
 # Mutants: tests/mutants_branch_check.py.
 run "branch_check: differential verdict, prod witness, clean refusal" "$PY" tests/test_branch_check.py
+# init.sh's harden node (plan-4918 P0-a): a fresh org is born with no PUBLIC CONNECT on the databases it
+# administers. Run against the oracle's own scratch DBs only, by name. Mutants: tests/mutants_init_harden.py.
+run "init.sh harden: no PUBLIC CONNECT on the org's databases" "$PY" tests/test_init_harden.py
 
 run "charter resolver invariants"      "$PY" tests/test_charter.py
 # org MCP write-tool role gate (t-org-grant): the genome/identity writes are governance-gated

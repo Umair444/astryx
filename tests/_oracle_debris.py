@@ -14,8 +14,9 @@ from pathlib import Path
 from psycopg import sql
 
 ORACLE_BASE = Path(os.environ.get("ASTRYX_RUNSCOPE_ORACLE_ROOT", "/tmp/astryx-runscope-oracle"))
-TEST_DB = re.compile(r"^(?:astryx_bctpl_(?:zz|zk|t)_|astryxQbctplQ_|astryxAfxBprod_|astryx-fx-prod-|astryx_fx_bcx_)(\d+)$"
+TEST_DB = re.compile(r"^(?:astryx_bctpl_(?:zz|zk|t)_|astryxQbctplQ_|astryxAfxBprod_|astryx-fx-prod-|astryx_fx_bcx_|astryx_hardenprobe_[abc]_)(\d+)$"
                      r"|^bc_(\d+)x\d+_nullacl$")
+TEST_ROLE = re.compile(r"^astryx_hardendep_(\d+)$")        # a LOGIN role test_init_harden plants
 
 
 def _gone(pid: int) -> bool:
@@ -40,6 +41,11 @@ def reap(adm) -> list:
         if m and _gone(int(m.group(1) or m.group(2))):
             _drop_db(adm, d)
             reaped.append(d)
+    for (r,) in adm.execute("SELECT rolname FROM pg_roles").fetchall():     # after the DBs holding its grants
+        m = TEST_ROLE.match(r)
+        if m and _gone(int(m.group(1))):
+            adm.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(r)))
+            reaped.append(r)
     if ORACLE_BASE.is_dir():
         for scope in ORACLE_BASE.iterdir():
             try:
