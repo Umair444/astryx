@@ -454,6 +454,38 @@ st, *_ = ev([A3, msg(POST + 81, f"merge-ready: f11b {main0[:7]}..{c12[:7]}\nsupe
 check("a CROSS-sender supersedes → CONTESTED for the old range (never cancelling), marked as a supersedes",
       f"CONTESTED, not merged: {c11[:10]}" in st and "(a supersedes)" in st and f"PASSED, not merged: {c12[:10]}" in st, st)
 
+# a3 #32627 F1, the live #28491 shape: ONE message = a same-sender `supersedes:` of the unlanded PRE-rebase commit
+# + a `merge-ready:` of the landed rebased one. Both share a -U0 key, but git cherry is context-sensitive, so the
+# watch must judge the commit the STANDING marker names — judging the first-seen (old) one nagged a merged branch.
+commit("ctxr.txt", NUM, "ctxr: twenty lines")
+rb0 = git("rev-parse", "HEAD")
+git("checkout", "-q", "-b", "fr1")
+r1 = commit("ctxr.txt", NUM.replace("\n5\n", "\nFIVE\n"), "fr: change five (pre-rebase)")
+git("checkout", "-q", "main")
+commit("ctxr.txt", NUM.replace("\n7\n", "\nSEVEN\n"), "main: ctxr neighbour seven")
+rb1 = git("rev-parse", "HEAD")
+git("checkout", "-q", "-b", "fr2")
+r2 = commit("ctxr.txt", (T / "ctxr.txt").read_text().replace("\n5\n", "\nFIVE\n"), "fr: change five (rebased)")
+git("checkout", "-q", "main")
+git("merge", "-q", "--no-ff", "-m", "merge fr2", "fr2")
+git("push", "-q", "origin", "main")
+st, no, tr, *_ = ev([msg(POST + 90, f"merge-ready: fr1 {rb0[:7]}..{r1[:7]}", sender="abstractor-4"),
+                     msg(POST + 91, f"merge-ready: fr2 {rb1[:7]}..{r2[:7]}\nsupersedes: {rb0[:7]}..{r1[:7]}",
+                         sender="abstractor-4")])
+check("F1: supersedes of an unlanded pre-rebase commit + the LANDED rebased range in one message → nothing standing",
+      r1[:10] not in st and r2[:10] not in st, st)
+
+# a3 #32627 F3, the live #30443 shape: a reviewer's ONE message re-covering another sender's range (supersedes +
+# a merge-ready that includes it) is not an objection plus a withdrawal
+git("checkout", "-q", "-b", "f13", main0)
+d1 = commit("f13a.txt", "d1\n", "f13: builder's first commit")
+d2 = commit("f13b.txt", "d2\n", "f13: the delta")
+git("checkout", "-q", "main")
+st, no, tr, *_ = ev([msg(POST + 95, f"merge-ready: f13 {main0[:7]}..{d1[:7]}", sender="abstractor-4"),
+                     msg(POST + 96, f"PASS\nmerge-ready: f13 {main0[:7]}..{d2[:7]}\nsupersedes: {main0[:7]}..{d1[:7]}")])
+check("F3: one message re-covering another's range prints no 'objection … withdrawn by its own' line",
+      "withdrawn" not in tr and "CONTESTED" not in st and f"PASSED, not merged: {d1[:10]}" in st, st + " | " + tr)
+
 # holds
 git("checkout", "-q", "-b", "f6", main0)
 c6 = commit("f6.txt", "6\n", "f6: held")
@@ -518,10 +550,12 @@ check("a pre-adoption prose PASS on an unlanded commit → BACKFILL notice, not 
       c7[:10] in no and c7[:10] not in st, st + " | " + no)
 st, no, *_ = ev([], prose=[msg(POST + 50, f"REVIEW {c7[:7]}: PASS")])
 check("post-adoption → STANDING 'PASS WITHOUT MARKER'", f"PASS WITHOUT MARKER: {c7[:10]}" in st, st)
-st, no, *_ = ev([msg(POST + 51, f"merge-retract: {c7[:7]}", sender="seed")],
-                prose=[msg(PRE, f"REVIEW {c7[:7]}: PASS"), msg(POST + 50, f"REVIEW {c7[:7]}: PASS")])
+st, no, tr, *_ = ev([msg(POST + 51, f"merge-retract: {c7[:7]}", sender="seed")],
+                    prose=[msg(PRE, f"REVIEW {c7[:7]}: PASS"), msg(POST + 50, f"REVIEW {c7[:7]}: PASS")])
 check("a merge-retract clears it from BOTH (the aeb21dc case leaves the steady state)",
       c7[:10] not in st and c7[:10] not in no, st + " | " + no)
+check("  ... and the clearing is ATTRIBUTED in the trailer (a3 #32627 F2: a silencer nobody sees is what M4 forbids)",
+      f"cleared {c7[:10]} by seed #{POST + 51}" in tr, tr)
 st, no, *_ = ev([], prose=[msg(POST + 52, f"REVIEW {c1[:7]}: PASS"), msg(POST + 53, f"NOT PASS {c7[:7]}")])
 check("a landed commit is never listed; NOT PASS is not a verdict", st == "" and no == "", st + " | " + no)
 
