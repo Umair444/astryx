@@ -21,6 +21,7 @@ RESPONSIVE; the state table absent (apply schema.sql).
 Every answer prints judge.REMAINDER, the ceiling of what RESPONSIVE certifies.
 """
 import datetime
+import hashlib
 import json
 import os
 import sys
@@ -66,6 +67,13 @@ def enforce(trace_dir, ledger=None, dsn=None, rep=None):
     # site still COVERS it and the site grades NOT SEARCHED, never a false UNEXECUTED (C1).
     rep = rep or judge.judge(trace_dir, stored_covering=(ledger or {}).get("covering"))
     red, report, not_searched = [], [], list(rep["run_not_searched"])
+    ids = []                                        # parallel to red: each finding's STABLE identity (plan-4918 D4)
+
+    def R(ident: str, line: str):
+        """A RED finding, keyed by what it IS (class + ledger key/file/text), never by a rendered line: an R-BLIND
+        frame carries file:LINE, and unchanged code shifts lines between two trees (a3 C4). Stored hashed."""
+        red.append(line)
+        ids.append(hashlib.sha256(ident.encode()).hexdigest()[:24])
     if ledger is None:
         not_searched.append("no ledger.json: seed it first (ledger seed)")
         return {"rc": 77, "red": red, "report": report, "not_searched": not_searched}
@@ -84,19 +92,19 @@ def enforce(trace_dir, ledger=None, dsn=None, rep=None):
     for f, meta in listed.items():
         since = datetime.date.fromisoformat(meta.get("listed_since", str(today)))
         if (today - since).days > EX_DAYS:
-            red.append(f"R-EXTRACT {f}: listed {(today - since).days}d > {EX_DAYS}d (trip: {meta.get('trip')})")
+            R(f"R-EXTRACT window {f}", f"R-EXTRACT {f}: listed {(today - since).days}d > {EX_DAYS}d (trip: {meta.get('trip')})")
         else:
             open_gates.update(meta.get("gates", []))
     derived = rep["extractors"]
     for f, gs in derived.items():
         if f not in listed:
-            red.append(f"R-EXTRACT {f} builds an UNSTAMPED fixture and isn't listed: migrate it to "
+            R(f"R-EXTRACT unlisted {f}", f"R-EXTRACT {f} builds an UNSTAMPED fixture and isn't listed: migrate it to "
                        f"nucleus/sqlguard/fixture.py, or list it with a reason and a trip")
     for f, meta in listed.items():
         if f not in derived:
             gs = meta.get("gates", [])
             if gs and all(gates.get(g) == 0 for g in gs):
-                red.append(f"R-EXTRACT {f} no longer builds an unstamped fixture (its gate completed rc=0): "
+                R(f"R-EXTRACT gone {f}", f"R-EXTRACT {f} no longer builds an unstamped fixture (its gate completed rc=0): "
                            f"remove it from the list (shrink)")
             # else: a skipped or failed gate says nothing about absence (F-b), so leave it listed
 
@@ -110,7 +118,7 @@ def enforce(trace_dir, ledger=None, dsn=None, rep=None):
                 report.append(f"LIVE-ONLY climb {label(key)}: RESPONSIVE on live data this run, still listed as "
                               f"{row['debt']}. Not reproducible, so not shrunk: exercise it in a stamped fixture")
             elif row:
-                red.append(f"R-STALE {label(key)}: now RESPONSIVE but still listed as {row['debt']} (shrink)")
+                R(f"R-STALE climbed {ledger_key(key)}", f"R-STALE {label(key)}: now RESPONSIVE but still listed as {row['debt']} (shrink)")
             continue
         if s["rung"] == "NOT SEARCHED":
             ns_keys.append(key)
@@ -123,7 +131,7 @@ def enforce(trace_dir, ledger=None, dsn=None, rep=None):
         if s["rung"] == "EXECUTED/FIXTURE-DDL" and cov and set(cov) <= open_gates:
             report.append(f"EX3 {label(key)}: capped at FIXTURE-DDL by a LISTED extractor (reported, not RED)")
             continue
-        red.append(f"R-NEW {label(key)}: {s['rung']} and not in the ledger. Make it RESPONSIVE, or admit it: "
+        R(f"R-NEW {ledger_key(key)}", f"R-NEW {label(key)}: {s['rung']} and not in the ledger. Make it RESPONSIVE, or admit it: "
                    f"ledger admit <trace_dir> {handle(key)} '<reason>'")
     # the declared live-only residual, MEASURED each run rather than remembered as a dated count (a3 #29426)
     lo = sum(1 for k, s in rep["sites"].items() if s.get("live_only") and ledger_key(k) not in rows)
@@ -133,12 +141,13 @@ def enforce(trace_dir, ledger=None, dsn=None, rep=None):
     for key in rows:
         if key not in live_keys:
             shown = "a hashed (gitignored-origin) site" if key.startswith("sha256:") else label(key)
-            red.append(f"R-STALE {shown}: listed, but its key is absent (the site was deleted, or moved by a rename): "
+            R(f"R-STALE absent {key}", f"R-STALE {shown}: listed, but its key is absent (the site was deleted, or moved by a rename): "
                        f"`ledger shrink <trace_dir>` re-keys a unique move and drops the rest")
     for b in rep["blind"]:
         path = b["frame"][0]
         what = "" if (path.startswith("tier/") or ignored(path)) else f": {b['t'][:70]!r}"
-        red.append(f"R-BLIND {path}::{b['frame'][1]} ran SQL the inventory doesn't know{what}")
+        R(f"R-BLIND {path}::{b['frame'][1]}::{b['t']}",                       # frame[2] (the LINE) never keyed
+          f"R-BLIND {path}::{b['frame'][1]} ran SQL the inventory doesn't know{what}")
 
     try:
         with psycopg.connect(dsn or live_dsn(), autocommit=True, connect_timeout=5) as c:
@@ -155,24 +164,24 @@ def enforce(trace_dir, ledger=None, dsn=None, rep=None):
                 for tk, (first, runs) in seen.items():
                     age = now - first
                     if runs > NS_RUNS and age.days >= NS_DAYS:
-                        red.append(f"R-CLOCK {label(tks[tk])}: NOT SEARCHED for {runs} runs / {age.days}d")
+                        R(f"R-CLOCK {tk}", f"R-CLOCK {label(tks[tk])}: NOT SEARCHED for {runs} runs / {age.days}d")
                 for f, meta in listed.items():                  # P2: machine-checkable trips
                     trip = meta.get("trip") or {}
                     if isinstance(trip, dict) and trip.get("goal") and c.execute(
                             "SELECT 1 FROM goals WHERE id=%s AND state=%s", (trip["goal"], trip.get("state", "done"))
                     ).fetchone():
-                        red.append(f"R-EXTRACT {f}: its trip fired (goal {trip['goal']} is "
+                        R(f"R-EXTRACT trip {f}", f"R-EXTRACT {f}: its trip fired (goal {trip['goal']} is "
                                    f"{trip.get('state', 'done')}), so migrate it to nucleus/sqlguard/fixture.py")
                 fx = [r[0] for r in c.execute("SELECT datname FROM pg_database WHERE datname LIKE 'astryx_fx_%'")]
                 mine = f"astryx_fx_{run_id()}_".lower()
                 for d in fx:
                     if d.startswith(mine):
-                        red.append(f"R-LEAK {d}: this run's fixture DB is still present")
+                        R("R-LEAK this run", f"R-LEAK {d}: this run's fixture DB is still present")
                 foreign = [d for d in fx if not d.startswith(mine)]
                 fseen, now = _clock(c, "fx_db", foreign)
                 for d, (first, runs) in fseen.items():
                     if runs >= LEAK_RUNS and now - first >= LEAK_AGE:
-                        red.append(f"R-LEAK {d}: a foreign fixture DB present for {runs} runs since {first:%F %T}")
+                        R(f"R-LEAK foreign {d}", f"R-LEAK {d}: a foreign fixture DB present for {runs} runs since {first:%F %T}")
     except psycopg.Error as e:
         not_searched.append(f"state/leak checks couldn't run: {type(e).__name__}")
 
@@ -181,7 +190,15 @@ def enforce(trace_dir, ledger=None, dsn=None, rep=None):
         not_searched.append(f"privacy classification failed ({len(privacy.ERRORS)}); findings for those "
                             f"sites were redacted, never printed in plaintext")
     rc = 77 if not_searched else (1 if red else 0)
-    return {"rc": rc, "red": red, "report": report, "not_searched": not_searched}
+    return {"rc": rc, "red": red, "red_ids": ids, "report": report, "not_searched": not_searched}
+
+
+def write_red(trace_dir, out) -> None:
+    """red.json beside report.json: [{id, line}] for a differential reader (branch_check, plan-4918 D4). The line is
+    the rendered finding, already privacy-safe (it is printed); the id is the hashed identity."""
+    if trace_dir and os.path.isdir(trace_dir):
+        with open(os.path.join(trace_dir, "red.json"), "w") as f:
+            json.dump([{"id": i, "line": l} for i, l in zip(out.get("red_ids", []), out["red"])], f)
 
 
 def render(out) -> list:
@@ -203,6 +220,7 @@ if __name__ == "__main__":
     judge.print_report(rep)
     judge.write_report(d, rep)                  # ledger admit reads it
     out = enforce(d, ledger=led, rep=rep)
+    write_red(d, out)
     print("\n".join(render(out)))
     print("  " + judge.REMAINDER)
     sys.exit(out["rc"])

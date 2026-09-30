@@ -38,4 +38,12 @@ MUTANTS = {
     "S7 (v) judged by a WRITE to a path that may be bwrap's synthetic dir":
         ("    res[\"live_repo_writable\"] = res[\"live_repo_visible\"] and os.access(lr / \"nucleus\", os.W_OK)",
          "    res[\"live_repo_writable\"] = os.access(lr, os.W_OK)"),
+    "S12 the whole mise tree is bound (every tool's install, the shims) instead of node's one install":
+        ("        return MISE_INSTALLS.resolve() / rel.parts[0] / rel.parts[1]", "        return MISE_INSTALLS.resolve().parent"),
+    "S13 a mise resolving OUTSIDE its installs tree is accepted":
+        ("    if MISE_INSTALLS.resolve() not in p.parents or not p.is_file():", "    if not p.is_file():"),
+    "S14 a failing mise falls back instead of refusing":
+        ('        raise NodeUnresolved(f"`{mise} which node` failed (rc {r.returncode})")', '        return sys_node'),
+    "S15 the sandbox env doesn't carry the resolved node (check.sh follows the live shim)":
+        ('        e["ASTRYX_NODE"] = str(node)', "        pass"),
 }

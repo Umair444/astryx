@@ -29,8 +29,6 @@ import os
 import re
 import shutil
 import subprocess
-import tarfile
-import io
 from pathlib import Path
 from urllib.parse import quote
 
@@ -199,17 +197,42 @@ def ensure_ext_template(conn, sha12: str, keep=(), prefix: str = TPL_PREFIX, evi
 
 
 # ── the private repo and the estate ─────────────────────────────────────────────────────────────────────────
-def private_repo(live: Path, sha: str, dest: Path) -> Path:
-    """`git archive <sha>` into dest, then init + ONE commit. The live repo is only READ."""
+def private_repo(live: Path, sha: str, dest: Path, main_sha: str = None) -> Path:
+    """A repo of exactly TWO refs, `main` and the side's sha (checked out, detached), WITH their history (plan-4918
+    D2: econ provenance needs `main`, ship_watch needs spawn.sh's history). Fetched over file://, which is a PACK
+    transfer: only objects those two refs reach arrive. Never a local clone, which hardlinks the whole object store,
+    dangling blobs, stashes and every other branch included (a3 C2a). The live repo is only READ."""
     dest.mkdir(parents=True)
-    arc = subprocess.run(["git", "archive", sha], cwd=live, capture_output=True, check=True).stdout
-    with tarfile.open(fileobj=io.BytesIO(arc)) as t:
-        t.extractall(dest, filter="tar")
-    env = {**os.environ, "GIT_AUTHOR_NAME": "branch_check", "GIT_AUTHOR_EMAIL": "bc@local",
-           "GIT_COMMITTER_NAME": "branch_check", "GIT_COMMITTER_EMAIL": "bc@local"}
-    for cmd in (["git", "init", "-q"], ["git", "add", "-A"], ["git", "commit", "-q", "-m", f"branch_check {sha}"]):
-        subprocess.run(cmd, cwd=dest, env=env, check=True, capture_output=True)
+    run = lambda *a: subprocess.run(["git", *a], cwd=dest, check=True, capture_output=True)
+    run("init", "-q", "-b", "bc_unborn")                   # never "main": fetching into a checked-out branch fails
+    refs = [f"{main_sha or sha}:refs/heads/main"] + ([f"{sha}:refs/heads/branch_check"] if main_sha else [])
+    run("fetch", "-q", "--no-tags", f"file://{live}", *refs)
+    run("checkout", "-q", "--detach", sha)
     return dest
+
+
+def history_secret_hits(repo: Path, secrets_) -> list:
+    """Every commit in the repo's history whose DIFF or MESSAGE carries a form of a secret, as "<sha12> (diff|message)"
+    (a3 C2a/C2b). The sandbox can read all of it now, so the scan covers all of it: `-S` alone sees diffs, never a
+    secret pasted into a message. One pass over `git log --all -p --text`. The value never leaves this function.
+    DECLARED residual: only CURRENT values are known; one committed and since rotated is invisible here."""
+    forms = [f.encode() for sec in secrets_ for f in sec.forms if f]
+    p = subprocess.Popen(["git", "log", "--all", "-p", "--text", "--no-color", "--no-ext-diff",
+                          "--format=%x00%H%n%B"], cwd=repo, stdout=subprocess.PIPE)
+    hits, cur, in_msg = [], None, False
+    for line in p.stdout:
+        if line.startswith(b"\x00"):
+            cur, in_msg = line[1:13].decode(), True
+            continue
+        if in_msg and line.startswith(b"diff --git"):
+            in_msg = False
+        if cur and any(f in line for f in forms):
+            h = f"{cur} ({'message' if in_msg else 'diff'})"
+            if h not in hits:
+                hits.append(h)
+    if p.wait() != 0:
+        raise Refuse("the history secret scan couldn't read the repo's history")
+    return hits
 
 
 def tracked_secret_hits(repo: Path, secrets_: set) -> list:
@@ -250,9 +273,12 @@ def copy_estate(live: Path, repo: Path, secrets_: set) -> dict:
     return {"placed": placed, "skipped_credential": skipped, "linked_private": linked}
 
 
-def write_env(repo: Path, run_dsn: str, live: Path = LIVE) -> Path:
-    """The generated .env: the run role's DSN plus declared non-secret keys. Never the live file."""
+def write_env(repo: Path, run_dsn: str, live: Path = LIVE, node: Path = None) -> Path:
+    """The generated .env: the run role's DSN plus declared non-secret keys. Never the live file. `node` replaces
+    the live ASTRYX_NODE (possibly a mise shim, unusable inside the sandbox) with the resolved binary (D3)."""
     live_env = read_env(live / ".env")
+    if node:
+        live_env = {**live_env, "ASTRYX_NODE": str(node)}
     lines = [f"ASTRYX_DSN={run_dsn}"] + [f"{k}={live_env[k]}" for k in ENV_ALLOW if k in live_env]
     p = repo / ".env"
     p.write_text("\n".join(lines) + "\n")

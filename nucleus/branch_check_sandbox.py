@@ -2,7 +2,7 @@
 """branch_check SANDBOX (plan-4918 R3 + R5): a capability ALLOWLIST, and the boundary PROBED from inside.
 
 R3, the allowlist (a2's measured D run): the run sees exactly
-    /usr, /etc (ro) · the live venv and mise (ro, at their own paths) · channel/node_modules (ro, regenerable)
+    /usr, /etc (ro) · the live venv and ONE resolved node install (ro, at their own paths) · channel/node_modules (ro, regenerable)
     · the private-tier paths the prep LINKED (ro, at their live paths) · the private repo (rw) · the run tmp (rw)
 with HOME = TMPDIR = the run tmp, /tmp and /run as fresh tmpfs (no docker socket), `env -i` plus an explicit env.
 THE NETWORK IS NOT SHARED (a3 #32077 R1): --unshare-net gives the run its own netns (loopback only), so it can't reach
@@ -186,8 +186,42 @@ class PgBridge:
 PROBE_AT = "/run/bc_probe.py"
 
 
+MISE_INSTALLS = HOME / ".local" / "share" / "mise" / "installs"
+
+
+class NodeUnresolved(Exception):
+    """No node the sandbox can use: a mise that fails, or resolves outside its own installs tree (a3 C3)."""
+
+
+def node_bin(mise: str = "mise", sys_node: Path = Path("/usr/bin/node")) -> Path:
+    """The node the suites run, resolved OUTSIDE the sandbox (plan-4918 D3). A system node (/usr/bin, already bound)
+    needs nothing. Otherwise `mise which node`, which must resolve INSIDE ~/.local/share/mise/installs: only that
+    one install dir is bound, never the whole mise tree (it also holds other tools' installs). Inside, a mise SHIM
+    can't work (HOME is the run's tmp, so mise has no config): "node is not a valid shim", first e2e #33638."""
+    if sys_node.exists():
+        return sys_node
+    try:
+        r = subprocess.run([mise, "which", "node"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise NodeUnresolved(f"`{mise} which node` couldn't run: {type(e).__name__}") from e
+    if r.returncode or not r.stdout.strip():
+        raise NodeUnresolved(f"`{mise} which node` failed (rc {r.returncode})")
+    p = Path(r.stdout.strip()).resolve()
+    if MISE_INSTALLS.resolve() not in p.parents or not p.is_file():
+        raise NodeUnresolved(f"`{mise} which node` resolved outside {MISE_INSTALLS}: {p}")
+    return p
+
+
+def node_dir(node: Path) -> Path:
+    """The ONE directory to bind for `node`: its mise install (…/installs/node/<version>), or nothing for /usr/bin."""
+    if MISE_INSTALLS.resolve() in node.parents:
+        rel = node.relative_to(MISE_INSTALLS.resolve())
+        return MISE_INSTALLS.resolve() / rel.parts[0] / rel.parts[1]
+    return None
+
+
 def argv(repo: Path, run_tmp: Path, ro_extra=(), live: Path = LIVE, probe_src: Path = None,
-         share_net: bool = False) -> list:
+         share_net: bool = False, node: Path = None) -> list:
     """The bwrap command prefix. `ro_extra` = live paths the prep linked (the private tier). `probe_src` is the
     TOOL's own copy of this file, bound read-only at PROBE_AT: the repo inside is the BRANCH's tree, and a verifier
     taken from the subject under test could be rewritten to lie."""
@@ -196,9 +230,9 @@ def argv(repo: Path, run_tmp: Path, ro_extra=(), live: Path = LIVE, probe_src: P
          "--symlink", "usr/lib", "/lib64", "--symlink", "usr/bin", "/sbin",
          "--ro-bind", "/etc", "/etc", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--tmpfs", "/run",
          "--ro-bind", str(live / "venv"), str(live / "venv")]
-    mise = HOME / ".local" / "share" / "mise"
-    if mise.is_dir():
-        a += ["--ro-bind", str(mise), str(mise)]
+    nd = node_dir(node) if node else None
+    if nd:
+        a += ["--ro-bind", str(nd), str(nd)]              # ONE install, never the whole mise tree (a3 C3)
     nm = live / "channel" / "node_modules"
     if nm.is_dir() and (repo / "channel").is_dir():
         a += ["--ro-bind", str(nm), str(repo / "channel" / "node_modules")]
@@ -214,9 +248,13 @@ def argv(repo: Path, run_tmp: Path, ro_extra=(), live: Path = LIVE, probe_src: P
     return a
 
 
-def env(run_dsn: str) -> dict:
-    """What `env -i` hands the sandbox: a minimal PATH, the locale, and the run role's DSN. Nothing else."""
-    return {"PATH": "/usr/bin", "LANG": "C.UTF-8", "ASTRYX_DSN": run_dsn}
+def env(run_dsn: str, node: Path = None) -> dict:
+    """What `env -i` hands the sandbox: a minimal PATH, the locale, the run role's DSN, and the resolved node
+    (check.sh puts ASTRYX_NODE's dir on PATH; the live value may be a mise shim, which can't run inside)."""
+    e = {"PATH": "/usr/bin", "LANG": "C.UTF-8", "ASTRYX_DSN": run_dsn}
+    if node:
+        e["ASTRYX_NODE"] = str(node)
+    return e
 
 
 # ── the probe, as a program: run INSIDE (and, for the controls, OUTSIDE) ──────────────────────────────────────

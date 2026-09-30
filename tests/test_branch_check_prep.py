@@ -58,7 +58,7 @@ def synthetic_live(tmp: Path) -> Path:
     (live / "triggers" / "t" / "leaky.py").write_text(f"a = 1\nDSN = 'postgresql://u:{FAKE}@h/db'\n")
     (live / ".env").write_text(f"ASTRYX_DSN=postgresql://u:{FAKE}@h/db\nASTRYX_ORG=org.test\nOPENAI_API_KEY=sk-{FAKE}\n"
                                f"AUTOREMOTE_GETLOC_URL=https://ar.example/x?key={ARKEY}&message=hello\n")
-    git(live, "init", "-q")
+    git(live, "init", "-q", "-b", "main")
     git(live, "add", "-A")
     git(live, "commit", "-q", "-m", "base")
     return live
@@ -356,11 +356,45 @@ def main():
         # ── private repo, estate copy, secrets, env ──────────────────────────────────────────────────────
         live = synthetic_live(tmp)
         before = git(live, "status", "--porcelain", "--ignored")
-        repo = bp.private_repo(live, git(live, "rev-parse", "HEAD").strip(), tmp / "run" / "repo")
-        check("private repo: ONE commit of the tree, the live repo only read",
-              git(repo, "rev-list", "--count", "HEAD").strip() == "1" and (repo / "code.py").is_file()
-              and git(live, "status", "--porcelain", "--ignored") == before, "")
+        main_sha = git(live, "rev-parse", "HEAD").strip()
+        # a BRANCH with history: a credential added then deleted (the tree is clean, the history isn't), and one
+        # pasted into a commit MESSAGE (a3 C2b); plus what must never arrive: another branch, and a dangling blob
+        git(live, "switch", "-q", "-c", "feature")
+        (live / "tmp_cfg.py").write_text(f"PW = '{FAKE}'\n")
+        git(live, "add", "tmp_cfg.py")
+        git(live, "commit", "-q", "-m", "wip")
+        git(live, "rm", "-q", "tmp_cfg.py")
+        git(live, "commit", "-q", "-m", "remove it")
+        (live / "code.py").write_text("x = 2\n")
+        git(live, "commit", "-q", "-am", f"fixed the DSN, it was postgresql://u:{FAKE}@h/db")
+        feat = git(live, "rev-parse", "HEAD").strip()
+        git(live, "switch", "-q", "-c", "other", main_sha)
+        (live / "other.py").write_text("o = 1\n")
+        git(live, "add", "other.py")
+        git(live, "commit", "-q", "-m", "someone else's unpushed work")
+        other = git(live, "rev-parse", "HEAD").strip()
+        blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=live, input=f"k={FAKE}\n",
+                              capture_output=True, text=True, check=True).stdout.strip()   # dangling: no ref reaches it
+        git(live, "switch", "-q", "main")
+        before = git(live, "status", "--porcelain", "--ignored")
+        repo = bp.private_repo(live, feat, tmp / "run" / "repo", main_sha=main_sha)
+        has = lambda o: subprocess.run(["git", "cat-file", "-e", o], cwd=repo, capture_output=True).returncode == 0
+        refs = git(repo, "for-each-ref", "--format=%(refname)").split()
+        check("private repo: the side's sha checked out WITH its history, and `main` resolves (D2)",
+              git(repo, "rev-parse", "HEAD").strip() == feat and git(repo, "rev-parse", "main").strip() == main_sha
+              and git(repo, "rev-list", "--count", "HEAD").strip() == "4" and (repo / "code.py").is_file()
+              and git(live, "status", "--porcelain", "--ignored") == before, str(refs))
+        check("C2a: exactly two refs arrive; another live branch doesn't", sorted(refs) == [
+              "refs/heads/branch_check", "refs/heads/main"] and not has(other), str(refs))
+        check("C2a: a DANGLING object carrying a credential in the live store never reaches the clone", not has(blob))
         secrets_ = bp.secret_set(live)
+        hh = bp.history_secret_hits(repo, secrets_)
+        check("D2: a credential added then DELETED on the branch is found in the history (the tree scan can't)",
+              any(h.endswith("(diff)") for h in hh) and not any(FAKE in h for h in hh), str(hh))
+        check("C2b: a credential pasted into a commit MESSAGE is found (-S alone never sees it)",
+              any(h.endswith("(message)") for h in hh) and not any(FAKE in h for h in hh), str(hh))
+        clean = bp.private_repo(live, main_sha, tmp / "run" / "clean", main_sha=main_sha)
+        check("…and a history with no credential has no hits", bp.history_secret_hits(clean, secrets_) == [])
         vals = {s.value for s in secrets_}
         check("secret_set comes from nucleus.secretset: the DSN password, the API key and AUTOREMOTE's key= are secret",
               FAKE in vals and f"sk-{FAKE}" in vals and ARKEY in vals and "org.test" not in vals, "")

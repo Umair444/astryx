@@ -53,4 +53,11 @@ MUTANTS = {
         ("    pw = d.pop(\"password\", None)", "    pw = d.get(\"password\")"),
     "B15 the cached template never gets ag_catalog USAGE (the run role can't see cypher)":
         ("        t.execute(AGE_USAGE)\n", "        pass\n"),
+    "B19 every live branch is fetched, not just main and the side's sha (another agent's unpushed work arrives)":
+        ('    run("fetch", "-q", "--no-tags", f"file://{live}", *refs)',
+         '    run("fetch", "-q", "--no-tags", f"file://{live}", *refs, "+refs/heads/*:refs/remotes/live/*")'),
+    "B20 the history scan skips commit MESSAGES (a3 C2b: a pasted DSN is readable and unscanned)":
+        ("        if cur and any(f in line for f in forms):", "        if cur and not in_msg and any(f in line for f in forms):"),
+    "B21 the history scan reads messages only, no diffs (a credential added then deleted is missed)":
+        ('    p = subprocess.Popen(["git", "log", "--all", "-p", "--text",', '    p = subprocess.Popen(["git", "log", "--all", "--text",'),
 }
