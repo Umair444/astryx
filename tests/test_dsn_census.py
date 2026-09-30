@@ -111,6 +111,12 @@ def main():
         decoy.wait()
     check("D7 a shell or python process mentioning channel/server.mjs is NOT a channel server",
           got == [], str(got))
+    gone = c.channel_server_pids(["999999999"])
+    import unittest.mock as um
+    with um.patch("os.readlink", side_effect=PermissionError("not ours")):
+        unknown = c.channel_server_pids(["12345"])
+    check("D8 a vanished pid is dropped; an UNREADABLE one is kept (unknown is stale for P4)",
+          gone == [] and unknown == ["12345"], f"gone={gone} unknown={unknown}")
     live = subprocess.run(["pgrep", "-f", "channel/server.mjs"], capture_output=True, text=True).stdout.split()
     real = c.channel_server_pids()
     if any(Path(f"/proc/{p}/exe").exists() and "node" in os.path.basename(os.readlink(f"/proc/{p}/exe"))

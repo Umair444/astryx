@@ -76,8 +76,11 @@ def channel_server_pids(candidates=None) -> list[str]:
         try:
             exe = Path(os.readlink(f"/proc/{pid}/exe")).name
             argv = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+        except (FileNotFoundError, ProcessLookupError):
+            continue                                      # gone: nothing to judge
         except OSError:
-            continue                                      # gone, or not ours to read
+            out.append(str(pid))                          # UNKNOWN (not ours to read): kept, so P4's
+            continue                                      # "unknown is stale" can refuse on it (a2)
         if exe.startswith("node") and any(a.endswith(b"channel/server.mjs") for a in argv[1:3]):
             out.append(str(pid))
     return out
