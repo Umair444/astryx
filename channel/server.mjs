@@ -261,13 +261,12 @@ async function handleTool(name, a) {
     // A change is a row whose intent is in nucleus/plan_change_intents (revise, design):
     // plan-4918's binding revision #28982 was intent='design' and left 4/4 "fresh".
     // ONE file, also read by triggers/seed/plan_consensus.py, so the tool and the nets
-    // can't disagree (seed #29424). Read per call; unreadable or no 'revise' THROWS,
-    // because an empty set would stale nothing (the silent side).
+    // can't disagree (seed #29424). Read per call; unreadable, a non-bare token, or no
+    // 'revise' THROWS, because a shrunk set would stale less (the silent side).
     // Owner-override amendments carry neither intent and do not stale votes: the
     // owner is not a voter; seed adjudicates those directly.
-    const changes = readFileSync(new URL('../nucleus/plan_change_intents', import.meta.url), 'utf8')
-      .split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'))
-    if (!changes.includes('revise')) throw new Error('nucleus/plan_change_intents lists no revise')
+    const { changeIntents } = await import('./plan_change_intents.mjs')    // one grammar, executed by the oracle
+    const changes = changeIntents(new URL('../nucleus/plan_change_intents', import.meta.url))
     const lr = await pool.query(
       `SELECT max(ts) AS t FROM messages WHERE thread=$1 AND intent = ANY($2)`, [a.thread, changes])
     const lastRevise = lr.rows[0]?.t

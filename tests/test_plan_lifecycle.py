@@ -528,7 +528,7 @@ def t_design_repost_stales_approvals(ctx):
     the verdict net re-pings the three whose approve predates the change."""
     gid, thread = _approved_then_redesigned(ctx)
     met = MOD["plan_consensus"](ctx) or ""
-    assert f"#{gid} " not in met, f"quorum fired on approves that predate the design change: {met}"
+    assert f"#{gid} " not in met, f"quorum fired on fixture #{gid}'s approves that predate the design change"
     MOD["plan_verdict_due"](ctx)
     assert pings(ctx, thread, "plan_verdict_due") == ["abstractor-2", "abstractor-3", "abstractor-4"], \
         pings(ctx, thread, "plan_verdict_due")
@@ -546,17 +546,53 @@ def u_design_repost_stays_consolidated(ctx):
 
 @case
 def v_one_writer_for_change_intents(ctx):
-    """The tool and the nets read ONE file, so they can't disagree (seed #29424). The trigger's set IS the
-    file's. server.mjs's plan_quorum reads the file and hardcodes no intent in its staleness query."""
-    path = REPO / "nucleus" / "plan_change_intents"
-    want = {l.strip() for l in path.read_text().splitlines() if l.strip() and not l.lstrip().startswith("#")}
-    assert {"revise", "design"} <= want, want
-    assert set(MOD["change_intents"]()) == want, (MOD["change_intents"](), want)
-    js = (REPO / "channel" / "server.mjs").read_text()
-    block = js[js.index("if (name === 'plan_quorum')"):js.index("if (name === 'self_edit')")]
-    assert "plan_change_intents" in block, "plan_quorum does not read nucleus/plan_change_intents"
-    assert "intent='revise'" not in block, "plan_quorum hardcodes intent='revise' in its staleness query"
+    """The tool and the nets read ONE file under ONE grammar, and this arm RUNS both readers rather than grepping
+    one (a1 #30442): the Python change_intents() and channel/plan_change_intents.mjs's changeIntents(), on the
+    real file and on hand-edit variants. They must agree on every clean variant and BOTH refuse every bad one.
+    An inline comment used to yield the token "design  # note" in both, silently dropping 'design'; a BOM used to
+    split them (JS trim() strips it, Python strip() doesn't)."""
+    import json
+    import subprocess
+    import tempfile
+    js = REPO / "channel" / "plan_change_intents.mjs"
 
+    def both(path):
+        try:
+            py = sorted(MOD["change_intents"](path))
+        except RuntimeError as e:
+            py = f"RAISE {e}"
+        r = subprocess.run(["node", "--input-type=module", "-e",
+                            f"import {{ changeIntents }} from {json.dumps(js.as_uri())}; "
+                            f"try {{ console.log(JSON.stringify(changeIntents(process.argv[1]).sort())) }} "
+                            f"catch (e) {{ console.log(JSON.stringify('RAISE ' + e.message)) }}", str(path)],
+                           capture_output=True, text=True, timeout=30)
+        assert r.returncode == 0, f"node could not run the JS reader: {r.stderr.strip()[:200]}"
+        return py, json.loads(r.stdout)
+
+    real = REPO / "nucleus" / "plan_change_intents"
+    py, jsv = both(real)
+    assert py == jsv and {"revise", "design"} <= set(py), (py, jsv)
+    variants = {                               # name -> (bytes, expected: a sorted list, or None = both refuse)
+        "crlf+bom+tab-comment": ("\ufeff# head\r\n\t# tabbed note\r\nrevise\r\n\tdesign \r\n".encode(),
+                                 ["design", "revise"]),
+        "bom on a token line":  ("\ufeffrevise\ndesign\n".encode(), ["design", "revise"]),
+        "inline comment":       (b"revise\ndesign  # note\n", None),
+        "no revise":            (b"# only a comment\ndesign\n", None),
+        "capitalised token":    (b"revise\nDesign\n", None),
+    }
+    with tempfile.TemporaryDirectory() as d:
+        for name, (raw, want) in variants.items():
+            f = Path(d) / name.replace(" ", "_")
+            f.write_bytes(raw)
+            py, jsv = both(f)
+            if want is None:
+                assert str(py).startswith("RAISE") and str(jsv).startswith("RAISE"), (name, py, jsv)
+            else:
+                assert py == jsv == want, (name, py, jsv)
+    src = (REPO / "channel" / "server.mjs").read_text()
+    block = src[src.index("if (name === 'plan_quorum')"):src.index("if (name === 'self_edit')")]
+    assert "changeIntents(" in block and "intent='revise'" not in block, \
+        "plan_quorum must stale through changeIntents(), never a hardcoded intent"
 
 def main():
     preflight_isolation_premise()      # fail-closed: never write until rollback is proven
