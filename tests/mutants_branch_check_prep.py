@@ -22,9 +22,15 @@ MUTANTS = {
         ("            if conn.execute(\"SELECT has_database_privilege('public', %s, 'CONNECT')\", (n,)).fetchone()[0]:",
          "            if conn.execute(\"SELECT d.datacl::text LIKE '%%=c/%%' FROM pg_database d WHERE d.datname = %s\", (n,)).fetchone()[0]:"),
     "B2 eviction ignores the keep set (the two sides evict each other)":
-        ("    keep = {f\"{TPL_PREFIX}{k}\" for k in keep} | {name}", "    keep = {name}"),
-    "B3 LIKE unescaped ('_' matches any char: a lookalike is evicted)":
-        ("(TPL_PREFIX.replace(\"_\", \"\\\\_\") + \"%\", list(keep))", "(TPL_PREFIX + \"%\", list(keep))"),
+        ("    keep = {f\"{prefix}{k}\" for k in keep} | {name}", "    keep = {name}"),
+    "B3 the eviction regex is unanchored at the END (a longer name is evicted)":
+        ('(f"^{prefix}[0-9a-f]{{12}}$", list(keep))', '(f"^{prefix}[0-9a-f]{{12}}", list(keep))'),
+    "B16 the eviction regex is unanchored at the START (a foreign name containing ours is evicted: seed #34141)":
+        ('(f"^{prefix}[0-9a-f]{{12}}$", list(keep))', '(f"{prefix}[0-9a-f]{{12}}$", list(keep))'),
+    "B17 evict=False is ignored (a concurrent run's template is dropped mid-run)":
+        ("    if evict:\n", "    if True:\n"),
+    "B18 the prefix isn't checked (a regex metacharacter reaches the eviction pattern)":
+        ('    if not re.fullmatch(r"[a-z0-9_]+", prefix):', "    if False:"),
     "B4 the template keeps PUBLIC CONNECT":
         ("        conn.execute(sql.SQL(P0A).format(sql.Identifier(name)))\n", ""),
     "B5 a credential-bearing estate file is copied anyway":

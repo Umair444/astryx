@@ -43,8 +43,14 @@ def url(dsn: str) -> str:
     conninfo (forge #23806: every asyncpg oracle was regex-deriving one)."""
     d = conninfo_to_dict(dsn)
     auth = quote(d.get("user", ""), safe="") + (":" + quote(d["password"], safe="") if d.get("password") else "")
+    db = quote(d.get("dbname", ""), safe="")
+    if d.get("host", "").startswith("/"):
+        # a UNIX-SOCKET directory (branch_check's sandbox, where the network is unshared): it can't sit in the
+        # authority. `@/dir:5432/db` parses as an empty host, and asyncpg then tries localhost TCP (first e2e #33638).
+        q = f"?host={quote(d['host'], safe='/')}" + (f"&port={d['port']}" if d.get("port") else "")
+        return f"postgresql://{auth + '@' if auth else ''}/{db}{q}"
     host = d.get("host", "") + (f":{d['port']}" if d.get("port") else "")
-    return f"postgresql://{auth + '@' if auth else ''}{host}/{quote(d.get('dbname', ''), safe='')}"
+    return f"postgresql://{auth + '@' if auth else ''}{host}/{db}"
 
 
 class FixtureUnavailable(Exception):

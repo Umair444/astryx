@@ -52,6 +52,21 @@ def main():
     check("summary: check.sh's own FAILED/UNVERIFIED sets and verdict line, ANSI stripped",
           s["failed"] == ["gate b", "gate c"] and s["unverified"] == ["gate d"] and s["line"].startswith("check: 40"),
           str(s))
+    # a GATE's own output can look like the summary (econ provenance prints "FAILED (3): …", first e2e #33638)
+    # …and one in check.sh's EXACT shape (test_check_verdict drives check.sh's own summary() and prints one)
+    noisy = ("\x1b[36m▶\x1b[0m gate e\nFAILED (3): x; y; z\n  ✗ injected by a gate\n  ✗ gate e\n"
+             "\x1b[36m▶\x1b[0m gate v\nFAILED (1):\n  ✗ injected in check.sh's own shape\n  ✓ gate v\n" + LOG)
+    s = bc.summary(noisy)
+    check("summary reads ONLY check.sh's final block: a gate's own 'FAILED (n): …' and ✗ lines are never read",
+          s["failed"] == ["gate b", "gate c"] and s["unverified"] == ["gate d"], str(s))
+    # the LAST gate's output ending in check.sh's exact shape, directly above verdict()'s blank (a3 S1 #33654)
+    tail = ("\x1b[36m▶\x1b[0m last gate\nFAILED (1):\n  ✗ injected-name\n  ✗ last gate\n"
+            "\nFAILED (1):\n  ✗ last gate\n\ncheck: FAILURES above — a committed invariant regressed\n")
+    s = bc.summary(tail)
+    check("the walk stops at verdict()'s leading blank: the last gate's own block above it is never read",
+          s["failed"] == ["last gate"], str(s))
+    s = bc.summary("  ✗ stray\ncheck: ALL CODE INVARIANTS PASS (3 gates verified)\n")
+    check("…and a clean run's summary has no FAILED set even after stray ✗ output", s["failed"] == [], str(s))
     est = {"branch": {"skipped_credential": []}}
     sha = {"main": "a" * 40, "branch": "b" * 40}
     def rep(main, branch, witness=None):
@@ -71,6 +86,8 @@ def main():
     rc, out = rep(base, dict(base))
     check("identical sides → rc 0, each side's check.sh verdict line quoted, the shared VERIFIED NOTHING listed",
           rc == 0 and "check: m" in out and "VERIFIED NOTHING under branch_check" in out and "○ u" in out, out)
+    check("a gate FAILING ON BOTH SIDES is listed by name (\"no regression\" over dead gates isn't coverage)",
+          "FAILED ON BOTH SIDES" in out and "    ✗ x" in out, out)
     t = Path(tempfile.mkdtemp())
     (t / "trace-1.jsonl").write_text("\n".join(json.dumps({"db": d}) for d in ("astryx", "astryx_fx_1", "astryx")) + "\n")
     check("the prod witness counts only statements whose db IS the prod database", bc.prod_statements(t, "astryx") == 2)

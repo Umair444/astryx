@@ -58,6 +58,9 @@ def main():
                               capture_output=True, text=True, timeout=60)
 
     adm = psycopg.connect(dsn, autocommit=True)
+    if not adm.execute("SELECT rolcreaterole AND rolcreatedb OR rolsuper FROM pg_roles WHERE rolname = current_user").fetchone()[0]:
+        print("NOT SEARCHED: this role can't CREATE ROLE/DATABASE (e.g. branch_check's own run role). Nothing was verified.")
+        return 77
     from _oracle_debris import reap
     reap(adm)
     a, b, c = (f"astryx_hardenprobe_{x}_{os.getpid()}" for x in "abc")

@@ -34,4 +34,6 @@ MUTANTS = {
     "R6 the server gets the PLAINTEXT password, not a SCRAM verifier":
         ("sql.Identifier(self.role), sql.Literal(verifier.decode())))",
          "sql.Identifier(self.role), sql.Literal(self._password)))"),
+    "R10 live() counts every scope, dead ones included (a stale scope would stop eviction forever)":
+        ("            if alive(json.loads((d / \"lock.json\").read_text())):", "            if json.loads((d / \"lock.json\").read_text()):"),
 }

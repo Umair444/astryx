@@ -49,21 +49,34 @@ def admin_dsn() -> str:
     return dsn
 
 
+_HEAD = {"failed": re.compile(r"^FAILED \(\d+\):$"), "unverified": re.compile(r"^UNVERIFIED \(\d+\) — ")}
+
+
 def summary(log: str) -> dict:
-    """check.sh's OWN verdict sets, parsed from its own summary block: {failed: [...], unverified: [...], line}."""
-    text = re.sub(r"\x1b\[[0-9;]*m", "", log)
-    out, cur = {"failed": [], "unverified": [], "line": ""}, None
-    for ln in text.splitlines():
-        if ln.startswith("FAILED ("):
-            cur = "failed"
-        elif ln.startswith("UNVERIFIED ("):
-            cur = "unverified"
-        elif ln.startswith("check: "):
-            out["line"], cur = ln, None
-        elif cur and ln.startswith("  ") and ln.strip()[:1] in ("✗", "○"):
-            out[cur].append(ln.strip()[1:].strip())
-        elif cur and not ln.startswith("  "):
-            cur = None
+    """check.sh's OWN verdict sets, parsed from the block it prints LAST (check.sh:109-124): {failed, unverified, line}.
+    Only that trailing block counts. A gate's own output can print a "FAILED (3): …" line and "  ✗ …" items (the
+    econ provenance oracle does, first end-to-end run #33638), and reading those would let a gate inject or mask a
+    name. So: the LAST `check: ` line, and walking UP from it, only its headers (their exact shape) and their items."""
+    lines = re.sub(r"\x1b\[[0-9;]*m", "", log).splitlines()
+    out = {"failed": [], "unverified": [], "line": ""}
+    end = max((i for i, ln in enumerate(lines) if ln.startswith("check: ")), default=None)
+    if end is None:
+        return out
+    out["line"] = lines[end]
+    items = []
+    for ln in reversed(lines[:end]):
+        if not ln.strip():
+            if out["failed"] or out["unverified"]:
+                break                                      # verdict()'s leading `echo` (check.sh:104): the TOP edge
+            continue                                       # its trailing `echo` (check.sh:115), below the block
+        if ln.startswith("  ") and ln.strip()[:1] in ("✗", "○"):
+            items.append(ln.strip()[1:].strip())
+            continue
+        kind = next((k for k, rx in _HEAD.items() if rx.match(ln)), None)
+        if kind is None:
+            break                                          # above the summary block: gate output, never read
+        out[kind] = list(reversed(items)) + out[kind]
+        items = []
     return out
 
 
@@ -107,7 +120,10 @@ def run(branch: str, main_ref: str = "main") -> int:
             if errs:
                 raise prep.Refuse(f"the prod restore into the base reported {errs} error(s)")
             shas = {side: prep.schema_sha(repo[side]) for side in repo}
-            tpl = {side: prep.ensure_ext_template(adm, shas[side], keep=set(shas.values())) for side in repo}
+            # evict stale templates only when no OTHER run is alive: it may be cloning from its own (seed #34141)
+            alone = rs.live(scope.base) == [scope.run_id]
+            tpl = {side: prep.ensure_ext_template(adm, shas[side], keep=set(shas.values()), evict=alone)
+                   for side in repo}
             clone = {side: scope.create_db(f"{scope.role}_{side}", template=base) for side in repo}
             # the sandbox's ONLY route to postgres: a unix socket in each side's run tmp, bridged to the server
             sock = {side: tmp[side] / "pg" for side in repo}
@@ -189,6 +205,10 @@ def report(sha: dict, sums: dict, witness: dict, est: dict) -> int:
             print(f"  {label}:")
             for x in xs:
                 print(f"    {x}")
+    dead = sorted(set(m["failed"]) & set(b["failed"]))
+    print(f"  FAILED ON BOTH SIDES (verified nothing about the branch; the environment, or main itself): {len(dead)}")
+    for x in dead:
+        print(f"    ✗ {x}")
     both = sorted(set(m["unverified"]) & set(b["unverified"]))
     print(f"  VERIFIED NOTHING under branch_check (both sides; coverage this run did not provide): {len(both)}")
     for x in both:

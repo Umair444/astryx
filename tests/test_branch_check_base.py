@@ -32,6 +32,9 @@ def main():
     from nucleus import runscope as rs
     from _oracle_debris import ORACLE_BASE, reap
     adm = psycopg.connect(dsn, autocommit=True)
+    if not adm.execute("SELECT rolcreaterole AND rolcreatedb OR rolsuper FROM pg_roles WHERE rolname = current_user").fetchone()[0]:
+        print("NOT SEARCHED: this role can't CREATE ROLE/DATABASE (e.g. branch_check's own run role). Nothing was verified.")
+        return 77
     reap(adm)
     prod = conninfo_to_dict(dsn).get("dbname", "astryx")
     before = adm.execute("SELECT md5(string_agg(t::text, '|' ORDER BY t.id)) FROM goals t").fetchone()[0]

@@ -27,7 +27,7 @@
   "nucleus/branch_check_prep.py::ensure_ext_template\u001fselect 1 from pg_database where datname = ?": [
    "branch_check prep: hardening precondition, template, repo, estate, env"
   ],
-  "nucleus/branch_check_prep.py::ensure_ext_template\u001fselect datname from pg_database where datname like ? and not (datname = any(?))": [
+  "nucleus/branch_check_prep.py::ensure_ext_template\u001fselect datname from pg_database where datname ~ ? and not (datname = any(?))": [
    "branch_check prep: hardening precondition, template, repo, estate, env"
   ],
   "nucleus/branch_check_prep.py::unhardened\u001fselect d.datname from pg_database d join pg_roles r on r.oid = d.datdba where d.datallowconn and r.rolname <> ? order by 1": [
@@ -676,11 +676,11 @@
    "reason": "plan-4918 cached extension template, existence check: a pg_catalog read (pg_database): the judge credits only live public or stamped-fixture relations, so RESPONSIVE is unreachable by construction; pinned by B4/B12 (template ACL, zero-window)",
    "tk": "sha256t:4f386ffac17068ca31eeaf88288f1672758f06b7d6fc498c3e720bbdff391b25"
   },
-  "nucleus/branch_check_prep.py::ensure_ext_template\u001fselect datname from pg_database where datname like ? and not (datname = any(?))": {
+  "nucleus/branch_check_prep.py::ensure_ext_template\u001fselect datname from pg_database where datname ~ ? and not (datname = any(?))": {
    "admitted": "2026-09-30",
    "debt": "EXECUTED",
-   "reason": "plan-4918 template eviction: a pg_catalog read (pg_database): the judge credits only live public or stamped-fixture relations, so RESPONSIVE is unreachable by construction; pinned by B2 (keep set) and B3 (escaped LIKE)",
-   "tk": "sha256t:3b754232e4277f4d7d40ccbf685b9b6be7630c5f958a5c8117ef31d964859b09"
+   "reason": "plan-4918 template eviction (seed #34141): a pg_catalog read (pg_database), so RESPONSIVE is unreachable by the judge's relation rule; its discrimination is the mutant battery's (B2 keep set, B3/B16 anchors, B17 evict flag, B18 prefix check). It replaces the LIKE form's row, dropped by ledger shrink against the same main-tree run.",
+   "tk": "sha256t:64202ec866f358a70f7d416167f288739f3efaf4bcb3102ad5517220d5ab51f6"
   },
   "nucleus/branch_check_prep.py::unhardened\u001fselect d.datname from pg_database d join pg_roles r on r.oid = d.datdba where d.datallowconn and r.rolname <> ? order by 1": {
    "admitted": "2026-09-30",
