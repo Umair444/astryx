@@ -139,6 +139,17 @@ check("the sender announced the range to another first → SELF-MARKED",
       m.request_flag("forge", [], [{"id": 1, "from_agent": "forge", "to_agent": "a4"},
                                    {"id": 2, "from_agent": "a4", "to_agent": "forge"}])[0] == "SELF-MARKED")
 check("nothing earlier → UNREQUESTED", m.request_flag("a9", [], [])[0] == "UNREQUESTED")
+# a3 #31311 R2: a BRANCH name can be written before any commit exists (an assignment: "build it on plan-x-fix"),
+# so branch evidence must never pick `first`: the builder who then announces its range by sha and self-marks is
+# SELF-MARKED. Branch rows only upgrade UNREQUESTED → REQUESTED.
+check("a branch-only ASSIGNMENT before the builder's sha announce does not hide SELF-MARKED (a3 R2)",
+      m.request_flag("builder", [], [{"id": 1, "from_agent": "seed", "to_agent": "builder", "by_sha": False},
+                                     {"id": 2, "from_agent": "builder", "to_agent": "a2", "by_sha": True}])[0]
+      == "SELF-MARKED")
+check("  branch-only evidence TO the sender upgrades UNREQUESTED → REQUESTED",
+      m.request_flag("a2", [], [{"id": 1, "from_agent": "a1", "to_agent": "a2", "by_sha": False}])[0] == "REQUESTED")
+check("  branch-only evidence FROM the sender never makes it SELF-MARKED (only a sha can say who built it)",
+      m.request_flag("a9", [], [{"id": 1, "from_agent": "a9", "to_agent": "a3", "by_sha": False}])[0] == "UNREQUESTED")
 check("a note-to-self is not an announcement → UNREQUESTED",
       m.request_flag("a9", [], [{"id": 1, "from_agent": "a9", "to_agent": "a9"}])[0] == "UNREQUESTED")
 try:
@@ -538,6 +549,9 @@ if fx is not None:
         check("REQUESTED via the real earlier-query → no flag", f"UNREQUESTED #{req_id}" not in out, out)
         check("UNREQUESTED via the real earlier-query (zero rows; a pulse row's mention is not a request)",
               f"UNREQUESTED #{unreq_id}" in out, out)
+        rows = m._earlier(TempCtx({}, conn))(br_id, [x1[:7]], "feat/branch-only-ask")
+        check("the real earlier-query marks a branch-only row by_sha=false (the SQL carries the evidence kind)",
+              any(r["by_sha"] is False for r in rows) and all("by_sha" in r for r in rows), str(rows))
         check("a request naming only the BRANCH → REQUESTED (a3 BC-2; the live #29323 false flag)",
               f"feat/branch-only-ask PASSed by abstractor-6 #{br_id}" in out and f"#{br_id} by abstractor-6" not in out, out)
         check("the next run is silent (dedup)", m.merge_ready(TempCtx(st8, conn)) is None)
