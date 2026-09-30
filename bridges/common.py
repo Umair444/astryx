@@ -121,6 +121,15 @@ def address_agent(text: str, default: str) -> tuple[str, str]:
     return default, text
 
 
+# The human's inbound that ANSWERS an agent: a poll vote, the one structured answer bridges issue
+# ids for (live inbound intents: chat, poll, reaction; there's no inbound 'permission', since an
+# answer to a permission prompt arrives as chat). NAMED POSITIVELY, because the failure directions
+# differ. An intent that wrongly counts can steal the next reply: a REACTION can target any old
+# message (abstractor-2 #33265). One that wrongly doesn't count falls back to the last agent
+# message the human saw, which is usually the agent that asked anyway.
+ANSWER_INTENTS = frozenset({"poll"})
+
+
 async def route_target(pool, thread: str, text: str, default: str) -> tuple[str, str]:
     """Resolve which agent an inbound message routes to, and clean the text.
 
@@ -130,8 +139,9 @@ async def route_target(pool, thread: str, text: str, default: str) -> tuple[str,
       2. otherwise the newest thing an agent put in front of the human, which is either
            - an agent's message TO THE HUMAN (ANY intent: chat, poll, receipt, permission…),
              counted as its from_agent, or
-           - the human's structured ANSWER to an agent (a poll vote, a permission answer: any
-             intent except free-text 'chat'), counted as its to_agent.
+           - the human's ANSWER to an agent (ANSWER_INTENTS: a poll vote), counted as its
+             to_agent. Free-text chat and reactions (which can point at any old message) don't
+             count.
          A bare reply answers the most recent agent message the human saw: that's how people
          reply in chat. The human's own free-text chats don't count, so a past @mention can't
          pull the next plain reply away from whoever spoke to them since;
@@ -153,7 +163,7 @@ async def route_target(pool, thread: str, text: str, default: str) -> tuple[str,
         "ORDER BY id DESC LIMIT 50", thread)
     for r in rows:                               # 2. newest first
         if r["from_org"] != "local":             # the human's own message: only an ANSWER counts
-            if r["intent"] == "chat":            # free text (a past @mention included) doesn't stick
+            if r["intent"] not in ANSWER_INTENTS:  # chat (a past @mention) / a reaction: no
                 continue
             who = r["to_agent"]
         elif not agent_exists(r["to_agent"]):    # an agent speaking TO the human

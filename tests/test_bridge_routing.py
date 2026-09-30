@@ -30,6 +30,8 @@ message is read), staged with fixture charters, so agent_exists() answers from t
   R13 seed's pinned case: owner "@forge …", forge silent, canopus then posts TO the owner, then a
       bare reply → canopus
   R14 a thread holding only the human's own chats (an @mention, no agent reply) → the default
+  R15 a REACTION doesn't count (abstractor-2 #33265): the owner reacts to an OLD canopus message
+      after readycash posted, then a bare reply → readycash, the last agent message he saw
   R12 a non-owner human (wa-…) is a human too: an agent speaking to them gets their reply
 PRECEDENCE: explicit mention on THIS message > the newest agent-bearing row (counting polls) >
 the surface default.
@@ -124,6 +126,10 @@ try:
     row("dc:r13", "canopus", "local", "owner", "local")
     # R14: only the owner's own chat (a mention), with no agent reply yet.
     row("dc:r14", "owner", "discord", "forge", "local")
+    # R15: canopus spoke, then readycash, then the owner reacted to canopus's OLD message.
+    row("dc:r15", "canopus", "local", "owner", "local")
+    row("dc:r15", "readycash", "local", "owner", "local")
+    row("dc:r15", "owner", "discord", "canopus", "local", "reaction")
     # R9: owner ↔ canopus, then an internal handoff seed → canopus on the same thread.
     row("dc:r9", "owner", "discord", "canopus", "local")
     row("dc:r9", "canopus", "local", "owner", "local")
@@ -153,6 +159,7 @@ try:
                 "r7": await rt(conn, "dc:r7", "sure", "seed"),
                 "r9": await rt(conn, "dc:r9", "go on", "seed"),
                 "r13": await rt(conn, "dc:r13", "ok do it", "seed"),
+                "r15": await rt(conn, "dc:r15", "sounds good", "seed"),
                 "r14": await rt(conn, "dc:r14", "hello?", "seed"),
                 "r10": await rt(conn, "dc:r10", "ok", "seed"),
                 "r11": await rt(conn, "dc:r11", "yes", "seed"),
@@ -175,6 +182,8 @@ try:
     check("R6 a newest non-agent sender is skipped → the next real agent", who["r6"] == "canopus",
           who["r6"])
     check("R7 another thread's speaker never leaks in", who["r7"] == "canopus", who["r7"])
+    check("R15 a reaction to an old message doesn't count → readycash (the last agent he saw)",
+          who["r15"] == "readycash", who["r15"])
     check("R13 seed's case: @forge, forge silent, canopus posts to the owner → bare reply → canopus",
           who["r13"] == "canopus", who["r13"])
     check("R14 only the human's own chats on the thread → the default (a mention doesn't stick)",
