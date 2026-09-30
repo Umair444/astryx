@@ -124,21 +124,29 @@ def address_agent(text: str, default: str) -> tuple[str, str]:
 async def route_target(pool, thread: str, text: str, default: str) -> tuple[str, str]:
     """Resolve which agent an inbound message routes to, and clean the text.
 
-    The conversation is sticky: an @mention wins for this message and — because it
-    becomes the message's to_agent on the wire — sets the thread's target going
-    forward. With no mention, the message continues to the LAST agent addressed on
-    this thread, so a chat stays with whoever you last tagged until you tag someone
-    else. A fresh thread falls back to `default` (the surface's own agent). The wire
-    is the state: "last tagged" is just the previous inbound message's to_agent.
-    Standard on every channel."""
+    An @mention on this message wins, and because it becomes the message's to_agent on the
+    wire it also steers the thread from then on. With no mention, the message goes to whoever
+    the conversation is WITH right now: the newest agent-bearing row on this thread, which is
+    either
+      - the human's last inbound message (chat OR poll vote), counted as its to_agent, or
+      - an agent's last message on the thread (chat or poll), counted as its from_agent.
+    A fresh thread, or one whose rows name no live agent, falls back to `default` (the
+    surface's own agent). The wire is the state. Standard on every channel.
+
+    Why both kinds of row (seed, canopus #33249): the old rule only looked at the last
+    inbound CHAT. So an agent that spoke on the thread, or whose poll the human had just
+    answered, never became the target, and the owner's go-ahead to canopus was delivered to
+    seed, the last agent he had typed to in chat."""
     agent, cleaned = address_agent(text, "")
     if agent:                                    # explicit @mention on this message
         return agent, cleaned
-    row = await pool.fetchrow(
-        "SELECT to_agent FROM messages WHERE thread=$1 AND intent='chat' "
-        "AND from_org<>'local' AND to_org='local' ORDER BY id DESC LIMIT 1", thread)
-    if row and agent_exists(row["to_agent"]):
-        return row["to_agent"], text
+    rows = await pool.fetch(
+        "SELECT CASE WHEN from_org='local' THEN from_agent ELSE to_agent END AS who "
+        "FROM messages WHERE thread=$1 AND intent IN ('chat','poll') "
+        "AND (from_org='local' OR to_org='local') ORDER BY id DESC LIMIT 20", thread)
+    for r in rows:                               # newest first; skip non-agents (pulse, a human)
+        if agent_exists(r["who"]):
+            return r["who"], text
     return default, text
 
 
