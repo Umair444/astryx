@@ -453,9 +453,17 @@ def main():
         envp = bp.write_env(repo, "postgresql://run@127.0.0.1/x", live)
         text = envp.read_text()
         from nucleus import secretset
-        check("generated .env: the run DSN + allowlisted keys only, mode 600",
-              "ASTRYX_DSN=postgresql://run@" in text and "ASTRYX_ORG=org.test" in text and FAKE not in text
-              and oct(envp.stat().st_mode)[-3:] == "600", "")
+        check("BC-2: ENV_ALLOW is EMPTY (measured, #34686); a key re-enters only with a RED-without/GREEN-with proof",
+              bp.ENV_ALLOW == (), str(bp.ENV_ALLOW))
+        check("generated .env: the run DSN ONLY (no live key, not even a non-secret ASTRYX_ORG), mode 600",
+              text.splitlines() == ["ASTRYX_DSN=postgresql://run@127.0.0.1/x"] and oct(envp.stat().st_mode)[-3:] == "600",
+              str([l.split("=", 1)[0] for l in text.splitlines()]))
+        withnode = bp.write_env(repo, "postgresql://run@127.0.0.1/x", live, node=Path("/r/node")).read_text()
+        check("…plus the RESOLVED node when given (a derived path, not a live value)",
+              withnode.splitlines() == ["ASTRYX_DSN=postgresql://run@127.0.0.1/x", "ASTRYX_NODE=/r/node"],
+              str([l.split("=", 1)[0] for l in withnode.splitlines()]))
+        envp = bp.write_env(repo, "postgresql://run@127.0.0.1/x", live)
+        text = envp.read_text()
         check("R2: the generated .env holds NOTHING secretset flags (AUTOREMOTE's key= included)",
               secretset.scan(text, secrets_) == {} and ARKEY not in text, str(secretset.scan(text, secrets_)))
         # a SYNTHETIC DSN with a fake password: the live DSN is password-less since plan-5497 S1c (the password lives

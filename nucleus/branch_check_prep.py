@@ -38,7 +38,11 @@ from psycopg import sql
 LIVE = Path(os.environ.get("ASTRYX_LIVE_REPO", "/home/umair/astryx"))
 from nucleus import secretset                                  # noqa: E402 (the ONE secret authority)
 
-ENV_ALLOW = tuple(sorted(k for k in secretset.NOT_SECRET if ":" not in k))  # whole-key non-secret entries only
+# ENV_ALLOW is EMPTY by measurement (plan-4918 BC-2, #34686): a main-vs-main run with every then-allowlisted key
+# withheld gave IDENTICAL failed/unverified sets, so no gate that verifies under branch_check reads any of them. A key
+# RE-ENTERS only with a proof cited beside it: a gate RED without the key and GREEN with it. That's the recoverable
+# direction: a missing key shows as RED or UNVERIFIED, while a present one hands a live value into the sandbox.
+ENV_ALLOW = ()
 P0A = "REVOKE CONNECT ON DATABASE {} FROM PUBLIC"
 TPL_PREFIX = "astryx_bctpl_"
 # The human-personal tier (local.md law): LINKED into the run and mounted READ-ONLY by the sandbox, never COPIED.
@@ -281,12 +285,11 @@ def copy_estate(live: Path, repo: Path, secrets_: set) -> dict:
 
 
 def write_env(repo: Path, run_dsn: str, live: Path = LIVE, node: Path = None) -> Path:
-    """The generated .env: the run role's DSN plus declared non-secret keys. Never the live file. `node` replaces
-    the live ASTRYX_NODE (possibly a mise shim, unusable inside the sandbox) with the resolved binary (D3)."""
+    """The generated .env: the run role's DSN, the RESOLVED node (D3: a derived path, not a live value; the live
+    ASTRYX_NODE may be a mise shim that can't run inside), and ENV_ALLOW's keys (empty, BC-2). Never the live file."""
     live_env = read_env(live / ".env")
-    if node:
-        live_env = {**live_env, "ASTRYX_NODE": str(node)}
-    lines = [f"ASTRYX_DSN={run_dsn}"] + [f"{k}={live_env[k]}" for k in ENV_ALLOW if k in live_env]
+    lines = ([f"ASTRYX_DSN={run_dsn}"] + ([f"ASTRYX_NODE={node}"] if node else [])
+             + [f"{k}={live_env[k]}" for k in ENV_ALLOW if k in live_env])
     p = repo / ".env"
     p.write_text("\n".join(lines) + "\n")
     p.chmod(0o600)

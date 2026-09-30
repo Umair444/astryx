@@ -43,9 +43,8 @@ MUTANTS = {
         ("TRANSIENT = {}      # EMPTY", "TRANSIENT = {\"astryx_wakeprobe_\": (re.compile(r\"^astryx_wakeprobe_(\\d+)$\"), \"x\")}      # EMPTY"),
     "B10 a member whose check errors is SKIPPED, not accused":
         ("            bad.append(f\"{n} (unevaluable)\")", "            pass"),
-    "B11 a 'KEY:param' exemption widened to the WHOLE key (the AUTOREMOTE drift a3 found)":
-        ("ENV_ALLOW = tuple(sorted(k for k in secretset.NOT_SECRET if \":\" not in k))",
-         "ENV_ALLOW = tuple(sorted({k.split(\":\")[0] for k in secretset.NOT_SECRET}))"),
+    "B11 ENV_ALLOW re-widened to every whole-key non-secret (the pre-BC-2 set: live values enter the sandbox)":
+        ("ENV_ALLOW = ()\n", "ENV_ALLOW = tuple(sorted(k for k in secretset.NOT_SECRET if \":\" not in k))\n"),
     "B12 the extension template is born OPEN (connectable before its REVOKE)":
         ("        conn.execute(sql.SQL(\"CREATE DATABASE {} ALLOW_CONNECTIONS false\").format(sql.Identifier(name)))",
          "        conn.execute(sql.SQL(\"CREATE DATABASE {}\").format(sql.Identifier(name)))"),
