@@ -6,6 +6,9 @@ One per property: each probe's firing and each vacuity refusal. NOT authored: re
 (HOME = run tmp; the real home never mounted). Either alone keeps ~/.pgpass out, so each single removal is an
 equivalent mutant BY CONSTRUCTION; the (i) RED arm removes them (plus the network) and fires. Also not authored:
 --unshare-pid (a3's nit): hiding the host process list has no in-sandbox observable the probes use today.
+Nor the PgBridge stale-socket fix (a3 B1) by single fences: readiness is a real AF_UNIX connect AND the stale file
+is unlinked first (asyncio's bind also replaces a stale socket). Each alone suffices, so removing one is equivalent
+by construction; the B1 arm is RED against b106d25, where BOTH were absent (run by hand, BRANCH_CHECK_SANDBOX_SRC).
 """
 from pathlib import Path
 

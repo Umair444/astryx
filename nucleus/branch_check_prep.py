@@ -88,14 +88,38 @@ def carries_secret(path: Path, secrets_) -> int:
 # (matched with startswith, never an SQL LIKE whose "_" is a wildcard: a1 BC-1) and names its CREATOR (a1 BC-3).
 # They hold no live listener, so the worst a run can do there is cross-talk into a concurrent test. Any database
 # NOT matching is ACCUSED: an unknown member refuses the run until it's hardened or declared here.
+# An exemption holds only while its CREATOR IS ALIVE (a2 #32775): the name marks the class, not a live instance, so a
+# bare prefix would exempt a dead run's LEAK forever (astryx_wakeprobe_3730269 was exactly that). Each entry parses the
+# creator's pid out of the name; a dead pid is a LEAK (accused, named), an unparseable name is NOT exempt.
+# astryx_fx_ is NOT here: fixture_db now creates zero-window (a3 BC-5), so a fixture with PUBLIC CONNECT is a creator
+# REGRESSION to accuse, not a class to exempt. TARGET STATE: this manifest EMPTY (fix creators, don't exempt names).
+# TRIP: wakeprobe's entry goes when tests/test_wake_recovery.py creates zero-window too.
 TRANSIENT = {
-    "astryx_fx_": "nucleus/sqlguard/fixture.py fixture_db: per run, dropped WITH (FORCE); REVOKEs PUBLIC at creation",
-    "astryx_wakeprobe_": "tests/test_wake_recovery.py:138: per pid, dropped in its finally",
+    "astryx_wakeprobe_": (re.compile(r"^astryx_wakeprobe_(\d+)$"),
+                          "tests/test_wake_recovery.py:138: per pid, dropped in its finally"),
 }
 
 
-def transient(name: str) -> bool:
-    return any(name.startswith(p) for p in TRANSIENT)
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def transient(name: str):
+    """True: a declared transient whose creator is ALIVE (exempt). A str: why it's a LEAK (dead or unparseable
+    creator: accused). False: not a declared class at all (accused as unhardened)."""
+    for prefix, (rx, _creator) in TRANSIENT.items():
+        if name.startswith(prefix):
+            m = rx.match(name)
+            if not m:
+                return "leak: declared prefix but no parseable creator pid"
+            return True if _pid_alive(int(m.group(1))) else f"leak: creator pid {m.group(1)} is gone"
+    return False
 
 
 def unhardened(conn, run_role: str, own_templates=()) -> list:
@@ -107,7 +131,11 @@ def unhardened(conn, run_role: str, own_templates=()) -> list:
         "WHERE d.datallowconn AND r.rolname <> %s ORDER BY 1", (run_role,))]
     bad = []
     for n in names:
-        if n in own_templates or transient(n):
+        t = transient(n)
+        if n in own_templates or t is True:
+            continue
+        if isinstance(t, str):
+            bad.append(f"{n} ({t})")
             continue
         try:
             if conn.execute("SELECT has_database_privilege('public', %s, 'CONNECT')", (n,)).fetchone()[0]:

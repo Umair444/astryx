@@ -122,7 +122,7 @@ def run(branch: str, main_ref: str = "main") -> int:
                    "listeners": sb.host_listeners(), "socket_dirs": [str(sock["branch"])],
                    "foreign_dbs": [d for (d,) in adm.execute(
                        "SELECT d.datname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba "
-                       "WHERE d.datallowconn AND r.rolname <> %s", (scope.role,)) if not prep.transient(d)]}
+                       "WHERE d.datallowconn AND r.rolname <> %s", (scope.role,)) if prep.transient(d) is not True]}
             probe_src = Path(sb.__file__).resolve()                                 # the TOOL's copy, never the branch's
             ro = [LIVE / p for p in est["branch"]["linked_private"]]
             a = sb.argv(repo["branch"], tmp["branch"], ro_extra=ro, probe_src=probe_src)

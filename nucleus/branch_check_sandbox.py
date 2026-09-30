@@ -91,9 +91,7 @@ def host_listeners() -> list:
                 ip = ".".join(str(int(hexip[i:i + 2], 16)) for i in (6, 4, 2, 0))
                 ip = "127.0.0.1" if ip == "0.0.0.0" else ip
             else:
-                ip = "::1" if set(hexip) == {"0"} else None
-                if ip is None:
-                    continue                                          # a specific v6 address: the v4 row covers it
+                ip = "::1"                              # every v6 LISTEN row probed on ::1 (a v6-only listener exists)
             out.add((ip, port))
     return sorted(out)
 
@@ -151,16 +149,26 @@ class PgBridge:
         self.dir, self.port, self.proc = Path(sock_dir), port, None
 
     def __enter__(self):
+        import socket
         import time
         self.dir.mkdir(parents=True, exist_ok=True)
+        # a SIGTERM'd bridge leaves its socket FILE behind; readiness by exists() then passes instantly on a dir that
+        # hosted an earlier bridge while nothing listens (a3 #32894 B1: the branch side reuses its dir, main never
+        # does, so the race would read as a false REGRESSED). Remove it, and call it ready only on a real connect.
+        (self.dir / f".s.PGSQL.{self.port}").unlink(missing_ok=True)
         code = (f"import sys; sys.path.insert(0, {str(Path(__file__).resolve().parents[1])!r}); "
                 f"from nucleus.branch_check_sandbox import bridge_main; bridge_main({str(self.dir)!r}, port={self.port})")
         self.proc = subprocess.Popen([sys.executable, "-c", code])
         sock = self.dir / f".s.PGSQL.{self.port}"
-        for _ in range(100):
-            if sock.exists():
+        for _ in range(200):
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                s.connect(str(sock))
                 return self
-            time.sleep(0.05)
+            except OSError:
+                time.sleep(0.05)
+            finally:
+                s.close()
         self.proc.kill()
         raise RuntimeError("the postgres bridge never opened its socket")
 

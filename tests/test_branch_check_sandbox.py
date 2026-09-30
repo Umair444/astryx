@@ -77,6 +77,22 @@ def main():
                                capture_output=True, text=True, timeout=120)
             return json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else {"error": r.stderr[-400:]}
 
+        # a3 #32894 B1: enter, exit, enter again in the SAME dir; the second bridge is ready only when it ACCEPTS
+        import socket as _so
+        rd = run_tmp / "pg2"
+        with sb.PgBridge(rd):
+            pass
+        b2 = sb.PgBridge(rd).__enter__()
+        cs = _so.socket(_so.AF_UNIX, _so.SOCK_STREAM)
+        try:
+            cs.connect(str(rd / ".s.PGSQL.5432"))
+            reuse_ok = True
+        except OSError as e:
+            reuse_ok = False
+        finally:
+            cs.close()
+            b2.__exit__(None, None, None)
+        check("B1: a bridge re-entered in the same dir accepts IMMEDIATELY (no stale-socket readiness)", reuse_ok, "")
         outside = sb.probe(out_cfg)
         ins = inside()
         check("probe ran inside the sandbox", "error" not in ins, str(ins.get("error")))

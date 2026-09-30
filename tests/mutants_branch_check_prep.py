@@ -5,6 +5,9 @@
 One per safety property: the NULL-ACL precondition, the template keep set and LIKE escape, the template's
 PUBLIC CONNECT revoke, the credential-bearing file skip, the generated env's allowlist, and the password kept
 off argv.
+NOT authored (declared): a wildcard prefix match (the old B9). TRANSIENT now pairs startswith with a strict
+per-class regex, so a lookalike that a wildcard admitted fails the regex and is accused as "no parseable creator
+pid": an equivalent mutant BY CONSTRUCTION (two fences), not by data.
 """
 from pathlib import Path
 
@@ -30,9 +33,9 @@ MUTANTS = {
         ("[f\"{k}={live_env[k]}\" for k in ENV_ALLOW if k in live_env]", "[f\"{k}={v}\" for k, v in live_env.items() if k != \"ASTRYX_DSN\"]"),
     "B8 the human-personal tier is COPIED into the run, not linked":
         ("        if rel.split(\"/\")[0] in PRIVATE_TIER:\n", "        if False:\n"),
-    "B9 the exemption matches like an unescaped LIKE ('_' a wildcard: lookalikes exempt)":
-        ("    return any(name.startswith(p) for p in TRANSIENT)",
-         "    return any(re.match(p.replace(\"_\", \".\"), name) for p in TRANSIENT)"),
+    "B13 the exemption ignores creator liveness (a dead run's leak exempt forever)":
+        ("            return True if _pid_alive(int(m.group(1))) else f\"leak: creator pid {m.group(1)} is gone\"",
+         "            return True"),
     "B10 a member whose check errors is SKIPPED, not accused":
         ("            bad.append(f\"{n} (unevaluable)\")", "            pass"),
     "B11 a 'KEY:param' exemption widened to the WHOLE key (the AUTOREMOTE drift a3 found)":

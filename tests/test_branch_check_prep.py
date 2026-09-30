@@ -109,13 +109,20 @@ def main():
         # a1 BC-1: the exemption is a LITERAL prefix, never a LIKE: lookalikes are ACCUSED, a real one exempt
         pid = os.getpid()
         look = [f"astryxAfxBprod_{pid}", f"astryx-fx-prod-{pid}"]
-        real_fx = f"astryx_fx_bcx_{pid}"
-        for d in look + [real_fx]:
+        real_fx = f"astryx_fx_bcx_{pid}"                        # an OPEN fixture: a creator regression now
+        live_wp = f"astryx_wakeprobe_{pid}"                        # the declared class, creator ALIVE (this pid)
+        deadp = subprocess.Popen(["true"]); deadp.wait()
+        dead_wp = f"astryx_wakeprobe_{deadp.pid}"                  # the declared class, creator GONE (the 3730269 case)
+        for d in look + [real_fx, live_wp, dead_wp]:
             adm.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(d)))
             made_dbs.append(d)
         uh = bp.unhardened(adm, scope.role)
         check("BC-1: lookalike names ('_' as a wildcard would exempt them) are ACCUSED", all(d in uh for d in look), str(uh))
-        check("BC-1 control: a real declared-transient name (astryx_fx_…) is exempt", real_fx not in uh, "")
+        check("a2 BC: an open astryx_fx_ DB is ACCUSED (fixture_db is zero-window now, so it's a creator regression)",
+              real_fx in uh, str(uh))
+        check("a2 BC control: a declared transient whose creator is ALIVE is exempt", live_wp not in " ".join(uh), str(uh))
+        check("a2 BC: a declared transient whose creator is GONE is a LEAK (accused, named), never exempt",
+              any(x.startswith(f"{dead_wp} (leak: creator pid") for x in uh), str(uh))
 
         class Flaky:                                                  # a1 BC-2: a member that errors is ACCUSED
             def __init__(self, real, bad):
