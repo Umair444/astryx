@@ -271,22 +271,95 @@ def undeclared_unit_envs(secrets=None, manifest=None) -> dict[str, list[str]]:
     return {k: v for k, v in env_file_units(secrets).items() if k not in declared}
 
 
-def derived_drift(manifest=None, root: Path = REPO) -> dict[str, list[str]]:
-    """{holder: [keys whose value differs from their source]} for every holder that declares
-    `derived_from`. A hand-derived copy with no writer is a second authority: this makes its drift
-    loud. Values are compared in-process and never returned (a2 #29236)."""
-    m = manifest or holders()
+CONSUMER_ENABLED = frozenset({"enabled", "enabled-runtime", "static", "alias", "indirect", "generated"})
+CONSUMER_ACTIVE = frozenset({"active", "activating", "reloading", "deactivating", "failed"})
+
+
+def _unit_states(names: list[str]) -> dict[str, tuple[str, str]] | str:
+    """{unit: (is-enabled, is-active)}, or a string saying why systemd can't be asked."""
+    import subprocess
     out = {}
+    for verb in ("is-enabled", "is-active"):
+        try:
+            r = subprocess.run(["systemctl", verb, *names], capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return f"systemctl unavailable ({type(e).__name__})"
+        states = r.stdout.split()
+        if len(states) != len(names):                     # no bus: "Failed to connect" on stderr
+            return "systemd not reachable from here"
+        for n, st in zip(names, states):
+            out.setdefault(n, ["", ""])[0 if verb == "is-enabled" else 1] = st
+    return {n: tuple(v) for n, v in out.items()}
+
+
+def units_using(path: Path) -> tuple[list[str], str | None]:
+    """(CONSUMER units whose EnvironmentFile is `path`, why-unknown). A consumer is keyed on DECLARED
+    intent, never on current liveness: a unit whose non-optional EnvironmentFile vanished goes
+    `failed` on its next start, and a liveness key would then drop it and read NOT SEARCHED, the
+    dark direction one step late (a2 #33642). So a unit counts unless it is disabled AND inactive;
+    `failed` counts (it is the consumer reporting the file gone)."""
+    names = []
+    for d in UNIT_DIRS:
+        if not d.is_dir():
+            continue
+        for u in sorted(d.glob("*.service")):
+            try:
+                lines = u.read_text(errors="replace").splitlines()
+            except OSError:
+                continue
+            for line in lines:
+                if line.startswith("EnvironmentFile="):
+                    f = os.path.expanduser(line.split("=", 1)[1].strip().lstrip("-"))
+                    # realpath BOTH sides: a symlinked ~/.config must not hide the consumer (a2 #33644)
+                    if os.path.realpath(f) == os.path.realpath(path) and u.name not in names:
+                        names.append(u.name)
+    if not names:
+        return [], None
+    states = _unit_states(names)
+    if isinstance(states, str):
+        return [], states
+    return [n for n in names
+            if states[n][0] in CONSUMER_ENABLED or states[n][1] in CONSUMER_ACTIVE], None
+
+
+def derived_status(manifest=None, root: Path = REPO) -> tuple[dict, dict]:
+    """(drift, not_searched). drift = {holder: [keys that differ | "missing copy/source"]};
+    not_searched = {holder: why}. An OUT-OF-TREE copy that is absent is NOT SEARCHED (a sandbox or a
+    fresh host that doesn't carry it, seed #33639) UNLESS an ACTIVE unit loads it: then its absence is
+    a live consumer reading a vanished file, and it is DRIFT (the dark-guard direction). An in-tree
+    copy that is absent is always drift."""
+    m = manifest or holders()
+    drift, not_searched = {}, {}
     for h in m["holders"] + m.get("expiring", []):
         for src, keys in (h.get("derived_from") or {}).items():
             copies = _expand(h["path"], root)
             sources = _expand(src, root)
+            if not copies:
+                # realpath: a HOME like ".../tree/../home" must not read as inside the tree
+                raw = Path(os.path.realpath(os.path.expanduser(h["path"])))
+                out_of_tree = os.path.isabs(os.path.expanduser(h["path"])) and \
+                    Path(os.path.realpath(REPO)) not in raw.parents
+                if out_of_tree:
+                    users, unknown = units_using(raw)
+                    if users:
+                        drift[h["path"]] = [f"missing copy, but consumer unit(s) load it: {users}"]
+                    else:
+                        not_searched[h["path"]] = unknown or "absent here, and no enabled or live unit loads it"
+                    continue
             if not copies or not sources:
-                out[h["path"]] = [f"missing {'copy' if not copies else 'source'}"]
+                drift[h["path"]] = [f"missing {'copy' if not copies else 'source'}"]
                 continue
             have = dict(_env_pairs(copies[0]))
             want = dict(_env_pairs(sources[0]))
             bad = sorted(k for k in keys if have.get(k) != want.get(k) or k not in want)
             if bad:
-                out[h["path"]] = bad
-    return out
+                drift[h["path"]] = bad
+    return drift, not_searched
+
+
+def derived_drift(manifest=None, root: Path = REPO) -> dict[str, list[str]]:
+    """{holder: [keys whose value differs from their source]} for every holder that declares
+    `derived_from`. A hand-derived copy with no writer is a second authority: this makes its drift
+    loud. Values are compared in-process and never returned (a2 #29236). Out-of-tree copies absent
+    for lack of an environment are in derived_status()'s not_searched, not here."""
+    return derived_status(manifest, root)[0]
