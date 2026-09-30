@@ -88,16 +88,12 @@ def carries_secret(path: Path, secrets_) -> int:
 # (matched with startswith, never an SQL LIKE whose "_" is a wildcard: a1 BC-1) and names its CREATOR (a1 BC-3).
 # They hold no live listener, so the worst a run can do there is cross-talk into a concurrent test. Any database
 # NOT matching is ACCUSED: an unknown member refuses the run until it's hardened or declared here.
-# An exemption holds only while its CREATOR IS ALIVE (a2 #32775): the name marks the class, not a live instance, so a
-# bare prefix would exempt a dead run's LEAK forever (astryx_wakeprobe_3730269 was exactly that). Each entry parses the
-# creator's pid out of the name; a dead pid is a LEAK (accused, named), an unparseable name is NOT exempt.
-# astryx_fx_ is NOT here: fixture_db now creates zero-window (a3 BC-5), so a fixture with PUBLIC CONNECT is a creator
-# REGRESSION to accuse, not a class to exempt. TARGET STATE: this manifest EMPTY (fix creators, don't exempt names).
-# TRIP: wakeprobe's entry goes when tests/test_wake_recovery.py creates zero-window too.
-TRANSIENT = {
-    "astryx_wakeprobe_": (re.compile(r"^astryx_wakeprobe_(\d+)$"),
-                          "tests/test_wake_recovery.py:138: per pid, dropped in its finally"),
-}
+# If an entry is ever re-added it is (regex, creator); an exemption then holds only while the parsed creator pid is
+# alive (a2 #32775), a dead one is a LEAK, an unparseable name is accused. But see W1 below before re-adding.
+TRANSIENT = {}      # EMPTY, and pinned by an arm: every creator is zero-window now (fixture_db, test_wake_recovery).
+                    # Re-adding a prefix is a DECISION: under the sandbox's --unshare-pid, a pid parsed from a name
+                    # is a NAMESPACE pid (2, 3 …) that the host sees as a live kernel thread (a3 #32897 W1), so a
+                    # pid-keyed exemption can't be trusted; fix the creator instead.
 
 
 def _pid_alive(pid: int) -> bool:

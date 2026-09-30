@@ -120,9 +120,10 @@ def main():
         check("BC-1: lookalike names ('_' as a wildcard would exempt them) are ACCUSED", all(d in uh for d in look), str(uh))
         check("a2 BC: an open astryx_fx_ DB is ACCUSED (fixture_db is zero-window now, so it's a creator regression)",
               real_fx in uh, str(uh))
-        check("a2 BC control: a declared transient whose creator is ALIVE is exempt", live_wp not in " ".join(uh), str(uh))
-        check("a2 BC: a declared transient whose creator is GONE is a LEAK (accused, named), never exempt",
-              any(x.startswith(f"{dead_wp} (leak: creator pid") for x in uh), str(uh))
+        check("W1: TRANSIENT is EMPTY (pinned; a re-added prefix is a decision, and pid-keyed liveness is unsound "
+              "under --unshare-pid)", bp.TRANSIENT == {}, str(bp.TRANSIENT))
+        check("W1: an open wakeprobe DB is ACCUSED like any other, whatever pid its name carries",
+              live_wp in uh and dead_wp in uh, str(uh))
 
         class Flaky:                                                  # a1 BC-2: a member that errors is ACCUSED
             def __init__(self, real, bad):

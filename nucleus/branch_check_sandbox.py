@@ -144,7 +144,9 @@ def bridge_main(sock_dir: str, host: str = "127.0.0.1", port: int = 5432):
 
 
 class PgBridge:
-    """Context manager: start the bridge (from the TOOL's own code) and wait for its socket; stop it on exit."""
+    """Context manager: start the bridge (from the TOOL's own code) and wait for its socket; stop it on exit.
+    The readiness connect opens a TCP session to postgres and drops it before the startup packet, so the server logs
+    one harmless "incomplete startup packet" per bridge."""
     def __init__(self, sock_dir: Path, port: int = 5432):
         self.dir, self.port, self.proc = Path(sock_dir), port, None
 
@@ -161,6 +163,8 @@ class PgBridge:
         self.proc = subprocess.Popen([sys.executable, "-c", code])
         sock = self.dir / f".s.PGSQL.{self.port}"
         for _ in range(200):
+            if self.proc.poll() is not None:                      # the bridge died at start: fail fast, not in 10s
+                raise RuntimeError(f"the postgres bridge exited at start (rc {self.proc.returncode})")
             s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             try:
                 s.connect(str(sock))

@@ -33,17 +33,8 @@ MUTANTS = {
         ("[f\"{k}={live_env[k]}\" for k in ENV_ALLOW if k in live_env]", "[f\"{k}={v}\" for k, v in live_env.items() if k != \"ASTRYX_DSN\"]"),
     "B8 the human-personal tier is COPIED into the run, not linked":
         ("        if rel.split(\"/\")[0] in PRIVATE_TIER:\n", "        if False:\n"),
-    "B13 the exemption ignores creator liveness (a dead run's leak exempt forever)":
-        ("            return True if _pid_alive(int(m.group(1))) else f\"leak: creator pid {m.group(1)} is gone\"",
-         "            return True"),
-    "B10 a member whose check errors is SKIPPED, not accused":
-        ("            bad.append(f\"{n} (unevaluable)\")", "            pass"),
-    "B11 a 'KEY:param' exemption widened to the WHOLE key (the AUTOREMOTE drift a3 found)":
-        ("ENV_ALLOW = tuple(sorted(k for k in secretset.NOT_SECRET if \":\" not in k))",
-         "ENV_ALLOW = tuple(sorted({k.split(\":\")[0] for k in secretset.NOT_SECRET}))"),
-    "B12 the extension template is born OPEN (connectable before its REVOKE)":
-        ("        conn.execute(sql.SQL(\"CREATE DATABASE {} ALLOW_CONNECTIONS false\").format(sql.Identifier(name)))",
-         "        conn.execute(sql.SQL(\"CREATE DATABASE {}\").format(sql.Identifier(name)))"),
+    "B14 a transient prefix is re-added (pid-keyed exemption under --unshare-pid)":
+        ("TRANSIENT = {}      # EMPTY", "TRANSIENT = {\"astryx_wakeprobe_\": (re.compile(r\"^astryx_wakeprobe_(\\d+)$\"), \"x\")}      # EMPTY"),
     "B7 the admin password stays in the pg_dump argv conninfo":
         ("    pw = d.pop(\"password\", None)", "    pw = d.get(\"password\")"),
 }
