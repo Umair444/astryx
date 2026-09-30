@@ -549,7 +549,9 @@ st, no, *_ = ev([], prose=[msg(PRE, f"REVIEW {c7[:7]}: PASS")])
 check("a pre-adoption prose PASS on an unlanded commit → BACKFILL notice, not standing",
       c7[:10] in no and c7[:10] not in st, st + " | " + no)
 st, no, *_ = ev([], prose=[msg(POST + 50, f"REVIEW {c7[:7]}: PASS")])
-check("post-adoption → STANDING 'PASS WITHOUT MARKER'", f"PASS WITHOUT MARKER: {c7[:10]}" in st, st)
+check("post-adoption → a 'PASS WITHOUT MARKER' NOTICE, never STANDING (a prose false positive — live a4 #32896, a "
+      "REQUEST whose lead said 'for your build PASS' — must not cost seed a nag a day)",
+      f"PASS WITHOUT MARKER: {c7[:10]}" in no and c7[:10] not in st, st + " | " + no)
 st, no, tr, *_ = ev([msg(POST + 51, f"merge-retract: {c7[:7]}", sender="seed")],
                     prose=[msg(PRE, f"REVIEW {c7[:7]}: PASS"), msg(POST + 50, f"REVIEW {c7[:7]}: PASS")])
 check("a merge-retract clears it from BOTH (the aeb21dc case leaves the steady state)",
