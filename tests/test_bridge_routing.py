@@ -19,6 +19,16 @@ message is read), staged with fixture charters, so agent_exists() answers from t
   R5 stickiness kept: the owner @-addressed forge and forge hasn't replied yet → forge
   R6 a newest row naming a non-agent (from 'pulse') is skipped → the next real agent
   R7 another thread's speaker never leaks in
+  R8 seed's precedence (#33255), in a group-style thread: an explicit @mention ALWAYS wins. The
+     owner writes "@insurance …" where readycash spoke last, and it goes to insurance, which
+     has never spoken there. A newer speaker must never steal an addressed message; the
+     wm_ai-style groups route by @agent.
+  R9  (a2 B1) an agent-to-AGENT handoff on the thread (seed → canopus) doesn't steal the human's reply
+  R10 (a2 B2) a RECEIPT the agent sent the human counts as speaking, with no intent allowlist
+  R11 an agent that STARTS a thread (no human row yet) gets the first reply
+  R12 a non-owner human (wa-…) is a human too: an agent speaking to them gets their reply
+PRECEDENCE: explicit mention on THIS message > the newest agent-bearing row (counting polls) >
+the surface default.
 """
 import asyncio
 import importlib
@@ -76,7 +86,7 @@ try:
     for sib in ("transcribe.py",):
         if (REPO / "bridges" / sib).exists():
             (stage / "bridges" / sib).symlink_to(REPO / "bridges" / sib)
-    for a in ("canopus", "seed", "forge"):            # the fixture roster; 'pulse' has no charter
+    for a in ("canopus", "seed", "forge", "insurance", "readycash"):            # the fixture roster; 'pulse' has no charter
         (stage / "agents" / a).mkdir(parents=True)
         (stage / "agents" / a / f"{a}.md").write_text(f"# {a}\n")
     sys.path.insert(0, str(stage))
@@ -102,6 +112,20 @@ try:
     # R6: the newest row is from a non-agent sender.
     row("dc:r6", "canopus", "local", "owner", "local")
     row("dc:r6", "pulse", "local", "owner", "local")
+    # R8: a group-style thread: readycash spoke LAST, and insurance has never spoken here.
+    row("wa:grp", "owner", "whatsapp", "readycash", "local")
+    row("wa:grp", "readycash", "local", "owner", "local")
+    # R9: owner ↔ canopus, then an internal handoff seed → canopus on the same thread.
+    row("dc:r9", "owner", "discord", "canopus", "local")
+    row("dc:r9", "canopus", "local", "owner", "local")
+    row("dc:r9", "seed", "local", "canopus", "local")
+    # R10: seed chatted the owner, then canopus sent the owner a RECEIPT.
+    row("dc:r10", "seed", "local", "owner", "local")
+    row("dc:r10", "canopus", "local", "owner", "local", "receipt")
+    # R11: canopus opens a thread; there's no human row yet.
+    row("dc:r11", "canopus", "local", "owner", "local")
+    # R12: a non-owner human on whatsapp.
+    row("wa:r12", "canopus", "local", "wa-test-nonowner", "local")
     # R7: seed speaks on ANOTHER thread, after r7's canopus row.
     row("dc:r7", "canopus", "local", "owner", "local")
     row("dc:other", "seed", "local", "owner", "local")
@@ -118,6 +142,11 @@ try:
                 "r5": await rt(conn, "dc:r5", "and another thing", "seed"),
                 "r6": await rt(conn, "dc:r6", "thanks", "seed"),
                 "r7": await rt(conn, "dc:r7", "sure", "seed"),
+                "r9": await rt(conn, "dc:r9", "go on", "seed"),
+                "r10": await rt(conn, "dc:r10", "ok", "seed"),
+                "r11": await rt(conn, "dc:r11", "yes", "seed"),
+                "r12": await rt(conn, "wa:r12", "thanks", "seed"),
+                "r8": await rt(conn, "wa:grp", "@insurance what does the policy cover", "seed"),
             }
         finally:
             await conn.close()
@@ -135,6 +164,31 @@ try:
     check("R6 a newest non-agent sender is skipped → the next real agent", who["r6"] == "canopus",
           who["r6"])
     check("R7 another thread's speaker never leaks in", who["r7"] == "canopus", who["r7"])
+    check("R9 an agent-to-agent handoff (seed → canopus) doesn't steal the reply → canopus",
+          who["r9"] == "canopus", who["r9"])
+    check("R10 a receipt to the human counts as the agent speaking → canopus", who["r10"] == "canopus",
+          who["r10"])
+    check("R11 an agent that started the thread gets the first reply → canopus",
+          who["r11"] == "canopus", who["r11"])
+    check("R12 a wa- human is a human: canopus spoke to them → canopus", who["r12"] == "canopus",
+          who["r12"])
+    check("R8 an explicit @mention ALWAYS wins: @insurance where readycash spoke last → insurance",
+          who["r8"] == "insurance", who["r8"])
+    check("R8 ...and the mention token is stripped from the delivered text",
+          "@insurance" not in got["r8"][1], "mention token still in the text")
+    # As the bridge does: the addressed message lands on the wire with to_agent=insurance.
+    row("wa:grp", "owner", "whatsapp", "insurance", "local")
+
+    async def follow_up():
+        conn = await asyncpg.connect(URL)
+        try:
+            return await common.route_target(conn, "wa:grp", "and the premium?", "seed")
+        finally:
+            await conn.close()
+
+    r8b = asyncio.run(follow_up())[0]
+    check("R8 an UNADDRESSED follow-up after the mention stays with insurance (its row is now "
+          "the newest), until another agent speaks", r8b == "insurance", r8b)
     db.close()
 finally:
     _fx.__exit__(None, None, None)

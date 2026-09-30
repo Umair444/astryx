@@ -124,30 +124,39 @@ def address_agent(text: str, default: str) -> tuple[str, str]:
 async def route_target(pool, thread: str, text: str, default: str) -> tuple[str, str]:
     """Resolve which agent an inbound message routes to, and clean the text.
 
-    An @mention on this message wins, and because it becomes the message's to_agent on the
-    wire it also steers the thread from then on. With no mention, the message goes to whoever
-    the conversation is WITH right now: the newest agent-bearing row on this thread, which is
-    either
-      - the human's last inbound message (chat OR poll vote), counted as its to_agent, or
-      - an agent's last message on the thread (chat or poll), counted as its from_agent.
-    A fresh thread, or one whose rows name no live agent, falls back to `default` (the
-    surface's own agent). The wire is the state. Standard on every channel.
+    PRECEDENCE (seed #33255/#33256):
+      1. an explicit @mention on THIS message, always;
+      2. otherwise whoever the thread's conversation is with right now, which is the newest of
+           - the human's own inbound message (ANY intent: chat, a poll vote, a permission
+             answer…), counted as its to_agent, and
+           - an agent's message TO THE HUMAN (ANY intent: chat, poll, receipt, permission…),
+             counted as its from_agent;
+      3. otherwise `default` (the surface's own agent).
+    "To the human" means to a non-agent: the registry of agents is the one authority, so
+    'owner' and every wa-/dc-/tg- person qualify with no name typed here. That's also what
+    lets an agent that STARTS a thread get the first reply.
 
-    Why both kinds of row (seed, canopus #33249): the old rule only looked at the last
-    inbound CHAT. So an agent that spoke on the thread, or whose poll the human had just
-    answered, never became the target, and the owner's go-ahead to canopus was delivered to
-    seed, the last agent he had typed to in chat."""
+    What the human SAW is the rule, not an intent allowlist (abstractor-2 #33257): a receipt
+    or permission prompt the bridge renders is the agent speaking, as far as the human can
+    tell. An agent-to-AGENT handoff on the thread (seed → canopus) is not "the conversation",
+    so it never steals the human's next reply. Names with no charter (pulse) are skipped. The
+    wire is the state."""
     agent, cleaned = address_agent(text, "")
-    if agent:                                    # explicit @mention on this message
+    if agent:                                    # 1. explicit @mention on this message
         return agent, cleaned
     rows = await pool.fetch(
-        "SELECT CASE WHEN from_org='local' THEN from_agent ELSE to_agent END AS who "
-        "FROM messages WHERE thread=$1 AND intent IN ('chat','poll') "
-        "AND (from_org='local' OR to_org='local') ORDER BY id DESC LIMIT 20", thread)
-    for r in rows:                               # newest first; skip non-agents (pulse, a human)
-        if agent_exists(r["who"]):
-            return r["who"], text
-    return default, text
+        "SELECT from_org, from_agent, to_agent FROM messages WHERE thread=$1 "
+        "ORDER BY id DESC LIMIT 50", thread)
+    for r in rows:                               # 2. newest first
+        if r["from_org"] != "local":             # the human's own message
+            who = r["to_agent"]
+        elif not agent_exists(r["to_agent"]):    # an agent speaking TO the human
+            who = r["from_agent"]
+        else:                                    # agent-to-agent: not the conversation
+            continue
+        if agent_exists(who):
+            return who, text
+    return default, text                         # 3.
 
 
 # ---------------------------------------------------------------------- embeds
