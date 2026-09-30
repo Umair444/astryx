@@ -66,4 +66,11 @@ MUTANTS = {
     "U9 a DB fault is silent again":
         ('        log_error(dsn, agent, "classification write failed", type(e).__name__)\n',
          '        pass\n'),
+
+    # A 3s block BEFORE the deadline is armed: every prompt waits 3s, and the deadline never sees
+    # it. abstractor-2 REVISE #23924: my 9/9 lacked this, and the deflaked N3 (then calibrated on
+    # the hook itself) let it pass. It must fail against the INDEPENDENT baseline.
+    "U10 a blocking start-up before the deadline is armed":
+        ("from urllib.parse import urlsplit\n",
+         "from urllib.parse import urlsplit\nimport time; time.sleep(3)\n"),
 }
