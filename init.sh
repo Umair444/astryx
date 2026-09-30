@@ -305,14 +305,32 @@ _act_schema() { say "applying schema"
 # explicit. DOMAIN, shared by the check and the act so they can't disagree: connectable databases the DSN role
 # administers (a member of datdba). A database on a shared server we can't REVOKE on is never ours to stall on.
 # Names narrow it (the oracle hardens only its own scratch DBs); the reconciler passes none. Idempotent.
+#
+# DEPENDENTS (a3 #33510). On a server the human points us at, another app may reach one of these databases with
+# its own login role through PUBLIC alone; the REVOKE would cut it on its next connect, attributed to nothing, and
+# again on every ./init.sh. So a database with a DEPENDENT is HELD, never revoked: a LOGIN role that isn't a
+# superuser, a member of the owner, or a run role (bc_*), and holds no explicit CONNECT (no ACL entry it's a member
+# of). `harden` (interior) revokes the rest; `hardencut` (halt) stays RED while any is held, and the doctor names
+# the roles and the GRANT that releases it. Once the human GRANTs explicitly, the role drops out on the next run.
 _HARDEN_Q="SELECT datname FROM pg_database WHERE datallowconn AND pg_has_role(current_user, datdba, 'MEMBER')
   AND has_database_privilege('public', datname, 'CONNECT')
   AND (:'only' = '' OR datname = ANY(string_to_array(:'only', ',')))"
-_open_dbs() { echo "$_HARDEN_Q ORDER BY 1;" | psql_q -X -q -tA -v ON_ERROR_STOP=1 -v only="$(IFS=,; echo "$*")"; }
+_HARDEN_CUT="SELECT d.datname, string_agg(r.rolname, ', ' ORDER BY r.rolname) AS cut
+  FROM ($_HARDEN_Q) q JOIN pg_database d ON d.datname = q.datname
+  JOIN pg_roles r ON r.rolcanlogin AND NOT r.rolsuper AND NOT pg_has_role(r.oid, d.datdba, 'MEMBER')
+   AND r.rolname NOT LIKE 'bc\_%'
+   AND NOT EXISTS (SELECT 1 FROM aclexplode(coalesce(d.datacl, acldefault('d', d.datdba))) x
+                   WHERE x.privilege_type = 'CONNECT' AND x.grantee <> 0 AND pg_has_role(r.oid, x.grantee, 'MEMBER'))
+  GROUP BY d.datname"
+_HARDEN_FREE="SELECT datname FROM ($_HARDEN_Q) q WHERE datname NOT IN (SELECT datname FROM ($_HARDEN_CUT) c)"
+_harden_psql() { psql_q -X -q -tA -F '|' -v ON_ERROR_STOP=1 -v only="$(IFS=,; echo "${*:2}")" <<< "$1"; }
+_open_dbs() { _harden_psql "$_HARDEN_FREE ORDER BY 1;" "$@"; }             # revocable now
+_cut_dbs() { _harden_psql "$_HARDEN_CUT ORDER BY 1;" "$@"; }               # held: "db|role, role"
 _chk_harden() { local o; o=$(_open_dbs "$@") || return 1; [ -z "$o" ]; }     # psql failing is RED, never green
+_chk_hardencut() { local o; o=$(_cut_dbs "$@") || return 1; [ -z "$o" ]; }
 _act_harden() { say "revoking PUBLIC CONNECT on the org's databases (plan-4918 P0-a)"
-  echo "SELECT format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', datname) FROM ($_HARDEN_Q) q \gexec" \
-    | psql_q -X -q -v ON_ERROR_STOP=1 -v only="$(IFS=,; echo "$*")" >/dev/null; }
+  _harden_psql "SELECT format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', datname) FROM ($_HARDEN_FREE) f \gexec" \
+    "$@" >/dev/null; }
 # <<< harden
 
 _chk_venv() { [ -d venv ]; }
@@ -449,7 +467,7 @@ _act_model() {
 
 # the precondition DAG, in dependency order (top depends on nothing).  name|class
 RECONCILE_NODES=(
-  "pg|interior" "pgready|wait" "schema|interior" "harden|interior" "venv|interior" "deps|interior"
+  "pg|interior" "pgready|wait" "schema|interior" "harden|interior" "hardencut|halt" "venv|interior" "deps|interior"
   "model|interior" "chan|interior" "obs|interior" "obskey|interior" "ident|interior"
   "units|interior" "law|interior" "prehook|interior" "ccompact|interior" "prreview|interior" "login|halt"
   "seed|interior" "prompt|interior")
@@ -616,6 +634,12 @@ if [ "${1:-}" = "doctor" ]; then
     DSN=$(grep '^ASTRYX_DSN=' .env | cut -d= -f2-)
     psql "$DSN" -c 'SELECT 1' >/dev/null 2>&1 && ok "postgres reachable" || bad "postgres unreachable (docker start astryx-pg?)"
     psql "$DSN" -c 'SELECT 1 FROM triggers LIMIT 1' >/dev/null 2>&1 && ok "schema applied" || bad "schema missing — rerun ./init.sh"
+    if _cut=$(_cut_dbs 2>/dev/null); then                    # the harden node's HELD databases, named (a3 #33510)
+      [ -z "$_cut" ] && ok "harden: no database is held back by a role that connects only through PUBLIC"
+      while IFS='|' read -r _d _rs; do
+        [ -n "$_d" ] && bad "harden HELD $_d: login role(s) $_rs connect only through PUBLIC, so the REVOKE would cut them — GRANT CONNECT ON DATABASE \"$_d\" TO $_rs; then rerun ./init.sh"
+      done <<< "$_cut"
+    fi
   else
     bad ".env missing — run ./init.sh"
   fi
