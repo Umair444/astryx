@@ -14,6 +14,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 fails = []
 FAKE = "fAkE-sEcReT-4918-" + "x" * 12                            # never a real credential
+ARKEY = "fAkEaRkEy4918" + "y" * 10                               # a fake AUTOREMOTE `key=` value
 
 
 def check(name, ok, detail=""):
@@ -55,7 +56,8 @@ def synthetic_live(tmp: Path) -> Path:
     (live / "triggers" / "t").mkdir(parents=True)
     (live / "triggers" / "t" / "plain.py").write_text("y = 2\n")
     (live / "triggers" / "t" / "leaky.py").write_text(f"a = 1\nDSN = 'postgresql://u:{FAKE}@h/db'\n")
-    (live / ".env").write_text(f"ASTRYX_DSN=postgresql://u:{FAKE}@h/db\nASTRYX_ORG=org.test\nOPENAI_API_KEY=sk-{FAKE}\n")
+    (live / ".env").write_text(f"ASTRYX_DSN=postgresql://u:{FAKE}@h/db\nASTRYX_ORG=org.test\nOPENAI_API_KEY=sk-{FAKE}\n"
+                               f"AUTOREMOTE_GETLOC_URL=https://ar.example/x?key={ARKEY}&message=hello\n")
     git(live, "init", "-q")
     git(live, "add", "-A")
     git(live, "commit", "-q", "-m", "base")
@@ -143,7 +145,20 @@ def main():
         for d in (stale, decoy, kept):
             adm.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(d)))
             made_dbs.append(d)
-        tpl = bp.ensure_ext_template(adm, mine, keep=existing | {kept[len(bp.TPL_PREFIX):]})
+        class Rec:                                                    # records the statements, delegates the rest
+            def __init__(self, real):
+                self.real, self.seq, self.info = real, [], real.info
+            def execute(self, q, params=None):
+                s = q.as_string(self.real) if hasattr(q, "as_string") else str(q)
+                if "DATABASE" in s:
+                    self.seq.append(s)
+                return self.real.execute(q, params) if params is not None else self.real.execute(q)
+        rec = Rec(adm)
+        tpl = bp.ensure_ext_template(rec, mine, keep=existing | {kept[len(bp.TPL_PREFIX):]})
+        tseq = [q for q in rec.seq if tpl in q]
+        check("R3: the template is born CLOSED, then REVOKE, then opened",
+              len(tseq) >= 3 and "ALLOW_CONNECTIONS false" in tseq[0] and tseq[1].startswith("REVOKE CONNECT")
+              and "ALLOW_CONNECTIONS true" in tseq[2], str(tseq[:3]))
         made_dbs.append(tpl)
         row = adm.execute("SELECT datistemplate, has_database_privilege('public', datname, 'CONNECT') "
                           "FROM pg_database WHERE datname=%s", (tpl,)).fetchone()
@@ -238,8 +253,9 @@ def main():
               git(repo, "rev-list", "--count", "HEAD").strip() == "1" and (repo / "code.py").is_file()
               and git(live, "status", "--porcelain", "--ignored") == before, "")
         secrets_ = bp.secret_set(live)
-        check("secret_set derives the non-allowlisted .env values (and the DSN's embedded password), not allowlisted ones",
-              FAKE in secrets_ and f"sk-{FAKE}" in secrets_ and "org.test" not in secrets_, "")
+        vals = {s.value for s in secrets_}
+        check("secret_set comes from nucleus.secretset: the DSN password, the API key and AUTOREMOTE's key= are secret",
+              FAKE in vals and f"sk-{FAKE}" in vals and ARKEY in vals and "org.test" not in vals, "")
         rep = bp.copy_estate(live, repo, secrets_)
         check("estate: a plain gitignored file is copied", (repo / "triggers/t/plain.py").is_file(), str(rep))
         check("estate: a file carrying a secret is NOT copied, and is listed",
@@ -252,18 +268,28 @@ def main():
         (repo / "leak.py").write_text(f"k = '{FAKE}'\n")
         git(repo, "add", "leak.py")
         git(repo, "commit", "-q", "-m", "a branch that commits a credential")
+        (repo / "ar.py").write_text(f"URL = 'https://ar.example/x?key={ARKEY}'\n")
+        git(repo, "add", "ar.py")
+        git(repo, "commit", "-q", "-m", "a branch that commits the AUTOREMOTE key")
         hits = bp.tracked_secret_hits(repo, secrets_)
+        check("R2: a branch committing the AUTOREMOTE key= value is REFUSED (file:line, value never printed)",
+              "ar.py:1" in hits and not any(ARKEY in h for h in hits), str(hits))
         check("branch tree: a committed credential is found as file:line, the value never in the output (a3 BC-2)",
               "leak.py:1" in hits and not any(FAKE in h for h in hits), str(hits))
         envp = bp.write_env(repo, "postgresql://run@127.0.0.1/x", live)
         text = envp.read_text()
+        from nucleus import secretset
         check("generated .env: the run DSN + allowlisted keys only, mode 600",
               "ASTRYX_DSN=postgresql://run@" in text and "ASTRYX_ORG=org.test" in text and FAKE not in text
               and oct(envp.stat().st_mode)[-3:] == "600", "")
-        ci, env = bp._argv_safe(dsn, "x")
-        pw = conninfo_to_dict(dsn).get("password")
+        check("R2: the generated .env holds NOTHING secretset flags (AUTOREMOTE's key= included)",
+              secretset.scan(text, secrets_) == {} and ARKEY not in text, str(secretset.scan(text, secrets_)))
+        # a SYNTHETIC DSN with a fake password: the live DSN is password-less since plan-5497 S1c (the password lives
+        # only in ~/.pgpass), and an arm bound to today's data went vacuous the day that landed
+        fake_dsn = f"postgresql://u:{FAKE}@127.0.0.1:5432/db"
+        ci, env = bp._argv_safe(fake_dsn, "x")
         check("pg_dump/pg_restore argv carries no password (it travels in the child env only)",
-              bool(pw) and pw not in ci and env.get("PGPASSWORD") == pw, "")
+              FAKE not in ci and env.get("PGPASSWORD") == FAKE and "dbname=x" in ci, ci)
 
     finally:
         if scope:

@@ -35,6 +35,12 @@ MUTANTS = {
          "    return any(re.match(p.replace(\"_\", \".\"), name) for p in TRANSIENT)"),
     "B10 a member whose check errors is SKIPPED, not accused":
         ("            bad.append(f\"{n} (unevaluable)\")", "            pass"),
+    "B11 a 'KEY:param' exemption widened to the WHOLE key (the AUTOREMOTE drift a3 found)":
+        ("ENV_ALLOW = tuple(sorted(k for k in secretset.NOT_SECRET if \":\" not in k))",
+         "ENV_ALLOW = tuple(sorted({k.split(\":\")[0] for k in secretset.NOT_SECRET}))"),
+    "B12 the extension template is born OPEN (connectable before its REVOKE)":
+        ("        conn.execute(sql.SQL(\"CREATE DATABASE {} ALLOW_CONNECTIONS false\").format(sql.Identifier(name)))",
+         "        conn.execute(sql.SQL(\"CREATE DATABASE {}\").format(sql.Identifier(name)))"),
     "B7 the admin password stays in the pg_dump argv conninfo":
         ("    pw = d.pop(\"password\", None)", "    pw = d.get(\"password\")"),
 }

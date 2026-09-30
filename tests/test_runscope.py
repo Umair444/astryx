@@ -89,10 +89,22 @@ def main():
         pw = adm.execute("SELECT rolpassword FROM pg_authid WHERE rolname=%s", (s.role,)).fetchone()
         check("open: the server holds only a SCRAM verifier, never the plaintext",
               bool(pw and pw[0] and pw[0].startswith("SCRAM-SHA-256$") and s._password not in pw[0]), "")
-        a = s.create_db(f"{s.role}_a")
+        sent.clear()
+        psycopg.Connection.execute = spy
+        try:
+            a = s.create_db(f"{s.role}_a")
+        finally:
+            psycopg.Connection.execute = real_exec
+        seq = [q for q in sent if "DATABASE" in q]
+        check("R3: create_db is born CLOSED, then REVOKE, then opened (no window for a concurrent run role)",
+              len(seq) == 3 and "ALLOW_CONNECTIONS false" in seq[0] and seq[1].startswith("REVOKE CONNECT")
+              and "ALLOW_CONNECTIONS true" in seq[2], str(seq))
         odd = s.create_db(f"zz_{s.run_id}_odd")                  # named OUTSIDE any prefix: ownership still finds it
         tpl = s.create_db(f"{s.role}_tpl")
         adm.execute(sql.SQL("ALTER DATABASE {} IS_TEMPLATE true").format(sql.Identifier(tpl)))
+        pub = [adm.execute("SELECT has_database_privilege('public', %s, 'CONNECT')", (d,)).fetchone()[0]
+               for d in (a, odd, tpl)]
+        check("R3: no database the run creates grants PUBLIC CONNECT (server-verified)", pub == [False] * 3, str(pub))
         c = psycopg.connect(s.dsn(a), autocommit=True)               # the run role can use its own database
         check("the run role connects to its own database with the generated DSN",
               c.execute("SELECT current_user").fetchone()[0] == s.role)

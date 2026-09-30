@@ -26,6 +26,11 @@ MUTANTS = {
          "            and role.startswith(ROLE_PREFIX))"),
     "R5 the root isn't bound to the base (any absolute path is removed)":
         ("    return (root.is_absolute() and root.resolve().parent == base.resolve()", "    return (root.is_absolute()"),
+    "R7 create_db is born OPEN (a concurrent run role can connect in the gap and keep its session)":
+        ("        q = sql.SQL(\"CREATE DATABASE {} OWNER {} ALLOW_CONNECTIONS false\").format(",
+         "        q = sql.SQL(\"CREATE DATABASE {} OWNER {}\").format("),
+    "R8 create_db never revokes PUBLIC CONNECT":
+        ("            c.execute(sql.SQL(\"REVOKE CONNECT ON DATABASE {} FROM PUBLIC\").format(sql.Identifier(name)))\n", ""),
     "R6 the server gets the PLAINTEXT password, not a SCRAM verifier":
         ("sql.Identifier(self.role), sql.Literal(verifier.decode())))",
          "sql.Identifier(self.role), sql.Literal(self._password)))"),

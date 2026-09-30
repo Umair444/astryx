@@ -56,26 +56,28 @@ def main():
         repo, run_tmp = tmp / "repo", tmp / "tmp"
         repo.mkdir()
         run_tmp.mkdir()
-        from psycopg.conninfo import conninfo_to_dict
-        d = conninfo_to_dict(dsn)
-        base_dsn = scope.dsn("").rsplit("/", 1)[0] + "/"
+        sock = run_tmp / "pg"
         cfg = {"targets": sb.reach_targets(), "live_env": str(live / ".env"), "live_repo": str(live),
-               "own_dsn": scope.dsn(own), "foreign_dbs": [hard, d.get("dbname", "astryx") if False else hard],
-               "run_dsn_base": base_dsn}
+               "own_dsn": scope.dsn(own, socket_dir=sock), "foreign_dbs": [hard],
+               "run_conn": {"user": scope.role, "password": scope._password, "host": str(sock), "port": 5432},
+               "listeners": sb.host_listeners(), "socket_dirs": [str(sock)]}
+        out_cfg = {**cfg, "socket_dirs": [], "own_dsn": scope.dsn(own),
+                   "run_conn": {**cfg["run_conn"], "host": "127.0.0.1"}}          # OUTSIDE: the same probes over TCP
+        bridge = sb.PgBridge(sock).__enter__()
         py = str(live / "venv" / "bin" / "python")
         probe_src = Path(src) if src else REPO / "nucleus" / "branch_check_sandbox.py"
 
-        def inside(ro_extra=(), home=None, c=cfg):
-            a = sb.argv(repo, run_tmp, ro_extra=ro_extra, live=live, probe_src=probe_src)
+        def inside(ro_extra=(), home=None, c=cfg, share_net=False):
+            a = sb.argv(repo, run_tmp, ro_extra=ro_extra, live=live, probe_src=probe_src, share_net=share_net)
             if home:
                 a = [x for x in a]
                 i = a.index("--setenv")
                 a[i + 2] = str(home)                                  # HOME
-            r = subprocess.run(a + [py, sb.PROBE_AT], input=json.dumps(c), env=sb.env(scope.dsn(own)),
+            r = subprocess.run(a + [py, sb.PROBE_AT], input=json.dumps(c), env=sb.env(c["own_dsn"]),
                                capture_output=True, text=True, timeout=120)
             return json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else {"error": r.stderr[-400:]}
 
-        outside = sb.probe(cfg)
+        outside = sb.probe(out_cfg)
         ins = inside()
         check("probe ran inside the sandbox", "error" not in ins, str(ins.get("error")))
         bad = sb.verdict(ins, outside)
@@ -83,13 +85,23 @@ def main():
               str(bad))
         check("control (i): a pgpass tuple authenticates password-less OUTSIDE (a3 BC-4)",
               bool(outside["pgpass_reach"]["reached"]), str(outside["pgpass_reach"]))
-        check("control (vi): NOTIFY/LISTEN works in the run's own clone", ins.get("own_notify") is True, "")
+        check("control (vi): NOTIFY/LISTEN works in the run's own clone THROUGH the bridge", ins.get("own_notify") is True, "")
+        check("(vii): with the network unshared, NO host listener (geoloc :8766 among them) is reachable inside",
+              ins.get("listeners_reached") == [] and any(":8766" in x for x in outside.get("listeners_reached", [])),
+              f"inside={ins.get('listeners_reached')}")
+        check("(vii): the internet is unreachable inside", ins.get("external_reached") is False, "")
+        leak_net = sb.verdict(inside(share_net=True), outside)
+        check("RED (vii): the SAME sandbox with the host network shared reaches the listeners → refusal names (vii)",
+              any(r.startswith("(vii) host listeners") and ":8766" in r for r in leak_net), str(leak_net)[:300])
         # ── each probe FIRES on a planted breach ─────────────────────────────────────────────────────────────
         leak_env = sb.verdict(inside(ro_extra=[live / ".env"]), outside)
         check("RED (iv): the live .env bound in → refusal names (iv)", any(r.startswith("(iv) the live") for r in leak_env),
               str(leak_env))
-        leak_home = sb.verdict(inside(ro_extra=[Path.home() / ".pgpass"], home=Path.home()), outside)
-        check("RED (i): the real HOME with its .pgpass → refusal names password-less reach",
+        # (i) now needs TWO fences down: the pgpass entry is host=localhost, which libpq applies to a unix socket
+        # only at its DEFAULT socket dir (the bridge's isn't), so with the network unshared there is no route.
+        # The RED control therefore drops both: the real HOME with its .pgpass AND the host network.
+        leak_home = sb.verdict(inside(ro_extra=[Path.home() / ".pgpass"], home=Path.home(), share_net=True), outside)
+        check("RED (i): real HOME + its .pgpass + the host network → refusal names password-less reach",
               any(r.startswith("(i) password-less") for r in leak_home), str(leak_home))
         leak_rw = sb.verdict({**ins, "live_repo_writable": sb.probe(cfg)["live_repo_writable"]}, outside)
         check("RED (v): a world where the live repo IS writable → refusal names (v) (the outside probe sees it)",
@@ -105,7 +117,8 @@ def main():
                 ("(i) VACUOUS", {}, {"pgpass_reach": {"reached": []}}, "(i) VACUOUS"),
                 ("(iv) VACUOUS", {}, {"live_env_readable": False}, "(iv) VACUOUS"),
                 ("(v) VACUOUS", {}, {"live_repo_writable": False}, "(v) VACUOUS"),
-                ("(vi) VACUOUS", {"own_notify": False}, {}, "(vi) VACUOUS")):
+                ("(vi) VACUOUS", {"own_notify": False}, {}, "(vi) VACUOUS"),
+                ("(vii) VACUOUS", {}, {"listeners_reached": []}, "(vii) VACUOUS")):
             v = sb.verdict({**good, **patch_in}, {**outside, **patch_out})
             check(f"vacuity: {name} is a refusal reason", any(r.startswith(want) for r in v), str(v))
         soft = f"bc_{os.getpid()}x1_nullacl"                                               # left UNhardened
@@ -114,6 +127,10 @@ def main():
         check("RED (vi): an unhardened database the run doesn't own → refusal names it",
               any(r.startswith("(vi) the run role") and soft in r for r in leak_db), str(leak_db))
     finally:
+        try:
+            bridge.__exit__(None, None, None)
+        except Exception:
+            pass
         if scope:
             scope.close()
         for db in (hard, soft):

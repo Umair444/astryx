@@ -72,17 +72,28 @@ class RunScope:
                 sql.Identifier(self.role), sql.Literal(verifier.decode())))
         return self
 
-    def dsn(self, dbname: str, host: str = "127.0.0.1", port: int = 5432) -> str:
-        """The run role's DSN for one of its databases. The only place the plaintext password is rendered."""
+    def dsn(self, dbname: str, host: str = "127.0.0.1", port: int = 5432, socket_dir: str = None) -> str:
+        """The run role's DSN for one of its databases. The only place the plaintext password is rendered.
+        With socket_dir, the DSN reaches the server through a unix socket in that directory (the sandbox's only
+        route to postgres once its network is unshared)."""
+        if socket_dir:
+            from urllib.parse import quote
+            return f"postgresql://{self.role}:{self._password}@/{dbname}?host={quote(str(socket_dir), safe='/')}&port={port}"
         return f"postgresql://{self.role}:{self._password}@{host}:{port}/{dbname}"
 
     def create_db(self, name: str, template: str = None) -> str:
-        """A database OWNED by the run role (created by the admin, so any template works)."""
-        q = sql.SQL("CREATE DATABASE {} OWNER {}").format(sql.Identifier(name), sql.Identifier(self.role))
+        """A database OWNED by the run role (created by the admin, so any template works), born with NO window
+        (a3 #32077 R3): connections DISALLOWED at creation, PUBLIC CONNECT revoked, then opened. Otherwise two
+        runs that both passed P0-b could CONNECT to each other's prod clones in the gap. The owner keeps CONNECT
+        through its own ACL entry."""
+        q = sql.SQL("CREATE DATABASE {} OWNER {} ALLOW_CONNECTIONS false").format(
+            sql.Identifier(name), sql.Identifier(self.role))
         if template:
             q = q + sql.SQL(" TEMPLATE {}").format(sql.Identifier(template))
         with psycopg.connect(self.admin_dsn, autocommit=True) as c:
             c.execute(q)
+            c.execute(sql.SQL("REVOKE CONNECT ON DATABASE {} FROM PUBLIC").format(sql.Identifier(name)))
+            c.execute(sql.SQL("ALTER DATABASE {} ALLOW_CONNECTIONS true").format(sql.Identifier(name)))
         return name
 
     # ── teardown ────────────────────────────────────────────────────────────────────────────────────────────

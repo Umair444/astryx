@@ -109,35 +109,44 @@ def run(branch: str, main_ref: str = "main") -> int:
             shas = {side: prep.schema_sha(repo[side]) for side in repo}
             tpl = {side: prep.ensure_ext_template(adm, shas[side], keep=set(shas.values())) for side in repo}
             clone = {side: scope.create_db(f"{scope.role}_{side}", template=base) for side in repo}
+            # the sandbox's ONLY route to postgres: a unix socket in each side's run tmp, bridged to the server
+            sock = {side: tmp[side] / "pg" for side in repo}
             for side in repo:
-                prep.write_env(repo[side], scope.dsn(clone[side]))
+                prep.write_env(repo[side], scope.dsn(clone[side], socket_dir=sock[side]))
                 (repo[side] / "venv").symlink_to(LIVE / "venv")
             # R5, the boundary, probed from inside with outside controls (the branch side is the untrusted one)
             cfg = {"targets": sb.reach_targets(), "live_env": str(LIVE / ".env"), "live_repo": str(LIVE),
-                   "own_dsn": scope.dsn(clone["branch"]), "run_dsn_base": scope.dsn("").rsplit("/", 1)[0] + "/",
+                   "own_dsn": scope.dsn(clone["branch"], socket_dir=sock["branch"]),
+                   "run_conn": {"user": scope.role, "password": scope._password, "host": str(sock["branch"]),
+                                "port": 5432},
+                   "listeners": sb.host_listeners(), "socket_dirs": [str(sock["branch"])],
                    "foreign_dbs": [d for (d,) in adm.execute(
                        "SELECT d.datname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba "
                        "WHERE d.datallowconn AND r.rolname <> %s", (scope.role,)) if not prep.transient(d)]}
             probe_src = Path(sb.__file__).resolve()                                 # the TOOL's copy, never the branch's
             ro = [LIVE / p for p in est["branch"]["linked_private"]]
             a = sb.argv(repo["branch"], tmp["branch"], ro_extra=ro, probe_src=probe_src)
-            pr = subprocess.run(a + [str(LIVE / "venv/bin/python"), sb.PROBE_AT], input=json.dumps(cfg),
-                                env=sb.env(scope.dsn(clone["branch"])), capture_output=True, text=True, timeout=300)
+            with sb.PgBridge(sock["branch"]):
+                pr = subprocess.run(a + [str(LIVE / "venv/bin/python"), sb.PROBE_AT], input=json.dumps(cfg),
+                                    env=sb.env(cfg["own_dsn"]), capture_output=True, text=True, timeout=300)
             inside = json.loads(pr.stdout.strip().splitlines()[-1]) if pr.stdout.strip() else None
             if inside is None:
                 raise prep.Refuse(f"the R5 probe didn't run inside the sandbox: {pr.stderr[-300:]}")
-            bad = sb.verdict(inside, sb.probe(cfg))
+            out_cfg = {**cfg, "socket_dirs": [], "run_conn": {**cfg["run_conn"], "host": "127.0.0.1"},
+                       "own_dsn": scope.dsn(clone["branch"])}                 # OUTSIDE: the same probes over TCP
+            bad = sb.verdict(inside, sb.probe(out_cfg))
             if bad:
                 raise prep.Refuse("R5: " + "; ".join(bad))
         # the suites, one per side, identical sandboxes
         def suite(side, attempt):
             trace = tmp[side] / f"sqlguard{attempt}"
             trace.mkdir()
-            env = {**sb.env(scope.dsn(clone[side])), "ASTRYX_FIXTURE_TEMPLATE": tpl[side],
+            env = {**sb.env(scope.dsn(clone[side], socket_dir=sock[side])), "ASTRYX_FIXTURE_TEMPLATE": tpl[side],
                    "ASTRYX_SQLGUARD_DIR": str(trace)}
             a = sb.argv(repo[side], tmp[side], ro_extra=[LIVE / p for p in est[side]["linked_private"]])
-            p = subprocess.run(a + ["bash", "nucleus/check.sh"], env=env, capture_output=True, text=True,
-                               timeout=SUITE_TIMEOUT)
+            with sb.PgBridge(sock[side]):
+                p = subprocess.run(a + ["bash", "nucleus/check.sh"], env=env, capture_output=True, text=True,
+                                   timeout=SUITE_TIMEOUT)
             if os.environ.get("BRANCH_CHECK_KEEP_LOGS"):
                 (scope.base / f"{scope.run_id}-{side}{attempt}.log").write_text(p.stdout + p.stderr)
             return summary(p.stdout), prod_statements(trace, prod_db)

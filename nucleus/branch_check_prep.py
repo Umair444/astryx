@@ -20,7 +20,9 @@ and it writes only inside the run's own scope: the databases its role owns, and 
                  (a3 BC-2): a credential committed by a branch is what a pre-land check exists to stop.
   env            generated: the run role's DSN + an allowlist of non-secret keys. The live .env is never copied.
 
-SECRET SET: derived here until plan-5497 ships its one secret_set(). Then this imports it (never a second copy).
+SECRET SET: imported from nucleus.secretset (plan-5497's ONE authority), never derived here. The env allowlist is
+secretset.NOT_SECRET's WHOLE-KEY entries only; a "KEY:param" entry exempts one URL parameter, never its key. A local
+list had drifted: it declared AUTOREMOTE_GETLOC_URL non-secret although its `key=` is a credential (a3 #32077 R2).
 """
 import hashlib
 import os
@@ -36,8 +38,9 @@ import psycopg
 from psycopg import sql
 
 LIVE = Path(os.environ.get("ASTRYX_LIVE_REPO", "/home/umair/astryx"))
-ENV_ALLOW = ("ASTRYX_ORG", "ASTRYX_URL", "ASTRYX_NODE", "WA_CLI", "WA_DATA_HOST", "WA_DATA_CTR", "TG_API_BASE",
-             "GMAIL_ADDRESS", "GROWBOT_BODY_URL", "AUTOREMOTE_GETLOC_URL")      # declared NON-secret keys
+from nucleus import secretset                                  # noqa: E402 (the ONE secret authority)
+
+ENV_ALLOW = tuple(sorted(k for k in secretset.NOT_SECRET if ":" not in k))  # whole-key non-secret entries only
 P0A = "REVOKE CONNECT ON DATABASE {} FROM PUBLIC"
 TPL_PREFIX = "astryx_bctpl_"
 # The human-personal tier (local.md law): LINKED into the run and mounted READ-ONLY by the sandbox, never COPIED.
@@ -60,34 +63,22 @@ def read_env(path: Path) -> dict:
     return out
 
 
-def secret_set(live: Path = LIVE) -> set:
-    """Every live .env value whose key isn't declared non-secret, plus every pgpass-file password, each raw and
-    URL-encoded. Short values (<8) are dropped: they'd match everywhere and aren't credentials."""
-    vals = {v for k, v in read_env(live / ".env").items() if k not in ENV_ALLOW}
-    for pf in (Path(os.environ.get("PGPASSFILE", "")), Path.home() / ".pgpass"):
-        if pf.is_file():
-            for line in pf.read_text().splitlines():
-                parts = re.split(r"(?<!\\):", line)
-                if len(parts) >= 5:
-                    vals.add(parts[4])
-    for dsn in list(vals):                                  # a DSN's embedded password is a secret on its own
-        m = re.match(r"\w+://[^:/@]+:([^@]+)@", dsn)
-        if m:
-            vals.add(m.group(1))
-    vals = {v for v in vals if len(v) >= 8}
-    return vals | {quote(v, safe="") for v in vals}
+def secret_set(live: Path = LIVE) -> list:
+    """secretset's Secret list for the LIVE holders (the live .env, the reachable pgpass file)."""
+    return secretset.secret_set(env_file=live / ".env")
 
 
-def carries_secret(path: Path, secrets_: set) -> int:
-    """1-based line of the first secret occurrence, 0 if none. Binary-safe; the value is never returned."""
+def carries_secret(path: Path, secrets_) -> int:
+    """1-based line of the first occurrence of any FORM of any secret, 0 if none. Binary-safe; never returns a value."""
     try:
         data = path.read_bytes()
     except OSError:
         return 0
-    for s in secrets_:
-        i = data.find(s.encode())
-        if i >= 0:
-            return data.count(b"\n", 0, i) + 1
+    for sec in secrets_:
+        for form in sec.forms:
+            i = data.find(form.encode())
+            if i >= 0:
+                return data.count(b"\n", 0, i) + 1
     return 0
 
 
@@ -150,14 +141,16 @@ def ensure_ext_template(conn, sha12: str, keep=()) -> str:
         conn.execute(sql.SQL("ALTER DATABASE {} IS_TEMPLATE false").format(sql.Identifier(old)))
         conn.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(old)))     # evict stale sha
     if not conn.execute("SELECT 1 FROM pg_database WHERE datname = %s", (name,)).fetchone():
-        conn.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+        # zero window (a3 #32077 R3): born closed, PUBLIC revoked, then opened for the extension build
+        conn.execute(sql.SQL("CREATE DATABASE {} ALLOW_CONNECTIONS false").format(sql.Identifier(name)))
+        conn.execute(sql.SQL(P0A).format(sql.Identifier(name)))
+        conn.execute(sql.SQL("ALTER DATABASE {} ALLOW_CONNECTIONS true").format(sql.Identifier(name)))
         info = conn.info
         with psycopg.connect(host=info.host, port=info.port, user=info.user, password=info.password,
                              dbname=name, autocommit=True) as t:
             for ext in TPL_EXTENSIONS:
                 t.execute(sql.SQL("CREATE EXTENSION IF NOT EXISTS {}").format(sql.Identifier(ext)))
         conn.execute(sql.SQL("ALTER DATABASE {} IS_TEMPLATE true").format(sql.Identifier(name)))
-        conn.execute(sql.SQL(P0A).format(sql.Identifier(name)))
     return name
 
 

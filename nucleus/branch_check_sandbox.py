@@ -5,8 +5,13 @@ R3, the allowlist (a2's measured D run): the run sees exactly
     /usr, /etc (ro) · the live venv and mise (ro, at their own paths) · channel/node_modules (ro, regenerable)
     · the private-tier paths the prep LINKED (ro, at their live paths) · the private repo (rw) · the run tmp (rw)
 with HOME = TMPDIR = the run tmp, /tmp and /run as fresh tmpfs (no docker socket), `env -i` plus an explicit env.
-~/.pgpass is kept out by TWO independent fences, each sufficient alone: HOME points at the run tmp, and the real
-home is never mounted (only mise, at its own path).
+THE NETWORK IS NOT SHARED (a3 #32077 R1): --unshare-net gives the run its own netns (loopback only), so it can't reach
+the host's listeners (geoloc :8766 serves the owner's location fixes to any 127.0.0.1 client) or the internet. Its
+ONE route out is postgres, through a host-side BRIDGE: a unix socket in the run tmp relayed to the server's TCP port,
+so authentication stays exactly as it is (SCRAM, the run role's own password). --unshare-pid hides host processes.
+~/.pgpass is kept out by independent fences, each sufficient alone: HOME points at the run tmp; the real home is never
+mounted (only mise, at its own path); and with the network unshared its host=localhost entry has no route (libpq
+applies a localhost entry to a unix socket only at its DEFAULT socket dir, and the bridge's socket isn't there).
 Anything not listed is ABSENT, so an undeclared dependency fails loud instead of silently reading live.
 
 R5, the probes (plan-4918 #26043 + #26057 + a3 BC-4), run INSIDE before the suite, each must hold or the run
@@ -20,6 +25,8 @@ control that runs OUTSIDE and must SUCCEED:
   (iii) docker is unreachable inside (no socket).                 Control: the socket exists outside.
   (vi)  the run role can't CONNECT to any database it doesn't own. Control: NOTIFY + LISTEN work in its own clone.
   (ii)  is subsumed by (vi): without CONNECT on prod there is no INSERT to try.
+  (vii) every host TCP listener (enumerated OUTSIDE from /proc/net/tcp{,6}) and one external address are unreachable
+        inside.                                                    Control: the same connects succeed outside.
 """
 import json
 import os
@@ -62,10 +69,113 @@ def reach_targets() -> list:
     return sorted(tuples)
 
 
+EXTERNAL = ("1.1.1.1", 443)
+
+
+def host_listeners() -> list:
+    """(ip, port) of every TCP socket in LISTEN on the host, from /proc/net/tcp{,6}. A wildcard bind is probed on
+    loopback (the address a same-host client would use)."""
+    out = set()
+    for f, fam in (("/proc/net/tcp", 4), ("/proc/net/tcp6", 6)):
+        try:
+            lines = Path(f).read_text().splitlines()[1:]
+        except OSError:
+            continue
+        for ln in lines:
+            parts = ln.split()
+            if len(parts) < 4 or parts[3] != "0A":                   # 0A = LISTEN
+                continue
+            hexip, hexport = parts[1].split(":")
+            port = int(hexport, 16)
+            if fam == 4:
+                ip = ".".join(str(int(hexip[i:i + 2], 16)) for i in (6, 4, 2, 0))
+                ip = "127.0.0.1" if ip == "0.0.0.0" else ip
+            else:
+                ip = "::1" if set(hexip) == {"0"} else None
+                if ip is None:
+                    continue                                          # a specific v6 address: the v4 row covers it
+            out.add((ip, port))
+    return sorted(out)
+
+
+def _reach(targets, timeout=1.0) -> list:
+    import socket
+    ok = []
+    for ip, port in targets:
+        fam = socket.AF_INET6 if ":" in ip else socket.AF_INET
+        s = socket.socket(fam, socket.SOCK_STREAM)
+        s.settimeout(timeout)
+        try:
+            s.connect((ip, port))
+            ok.append(f"{ip}:{port}")
+        except OSError:
+            pass
+        finally:
+            s.close()
+    return ok
+
+
+def bridge_main(sock_dir: str, host: str = "127.0.0.1", port: int = 5432):
+    """The host-side postgres bridge: <sock_dir>/.s.PGSQL.<port> relayed to host:port. Runs OUTSIDE the sandbox."""
+    import asyncio
+
+    async def pipe(r, w):
+        try:
+            while data := await r.read(65536):
+                w.write(data)
+                await w.drain()
+        except (ConnectionError, OSError):
+            pass
+        finally:
+            w.close()
+
+    async def handle(cr, cw):
+        try:
+            sr, sw = await asyncio.open_connection(host, port)
+        except OSError:
+            cw.close()
+            return
+        await asyncio.gather(pipe(cr, sw), pipe(sr, cw))
+
+    async def main():
+        path = Path(sock_dir) / f".s.PGSQL.{port}"
+        server = await asyncio.start_unix_server(handle, path=str(path))
+        async with server:
+            await server.serve_forever()
+    asyncio.run(main())
+
+
+class PgBridge:
+    """Context manager: start the bridge (from the TOOL's own code) and wait for its socket; stop it on exit."""
+    def __init__(self, sock_dir: Path, port: int = 5432):
+        self.dir, self.port, self.proc = Path(sock_dir), port, None
+
+    def __enter__(self):
+        import time
+        self.dir.mkdir(parents=True, exist_ok=True)
+        code = (f"import sys; sys.path.insert(0, {str(Path(__file__).resolve().parents[1])!r}); "
+                f"from nucleus.branch_check_sandbox import bridge_main; bridge_main({str(self.dir)!r}, port={self.port})")
+        self.proc = subprocess.Popen([sys.executable, "-c", code])
+        sock = self.dir / f".s.PGSQL.{self.port}"
+        for _ in range(100):
+            if sock.exists():
+                return self
+            time.sleep(0.05)
+        self.proc.kill()
+        raise RuntimeError("the postgres bridge never opened its socket")
+
+    def __exit__(self, *exc):
+        if self.proc:
+            self.proc.terminate()
+            self.proc.wait(timeout=10)
+        return False
+
+
 PROBE_AT = "/run/bc_probe.py"
 
 
-def argv(repo: Path, run_tmp: Path, ro_extra=(), live: Path = LIVE, probe_src: Path = None) -> list:
+def argv(repo: Path, run_tmp: Path, ro_extra=(), live: Path = LIVE, probe_src: Path = None,
+         share_net: bool = False) -> list:
     """The bwrap command prefix. `ro_extra` = live paths the prep linked (the private tier). `probe_src` is the
     TOOL's own copy of this file, bound read-only at PROBE_AT: the repo inside is the BRANCH's tree, and a verifier
     taken from the subject under test could be rewritten to lie."""
@@ -87,7 +197,8 @@ def argv(repo: Path, run_tmp: Path, ro_extra=(), live: Path = LIVE, probe_src: P
         a += ["--ro-bind", str(probe_src), PROBE_AT]
     a += ["--bind", str(repo), str(repo), "--bind", str(run_tmp), str(run_tmp),
           "--setenv", "HOME", str(run_tmp), "--setenv", "TMPDIR", str(run_tmp),
-          "--share-net", "--die-with-parent", "--chdir", str(repo)]
+          ("--share-net" if share_net else "--unshare-net"),       # share_net: ONLY the oracle's RED control
+          "--unshare-pid", "--die-with-parent", "--chdir", str(repo)]
     return a
 
 
@@ -98,7 +209,7 @@ def env(run_dsn: str) -> dict:
 
 # ── the probe, as a program: run INSIDE (and, for the controls, OUTSIDE) ──────────────────────────────────────
 def probe(cfg: dict) -> dict:
-    """cfg: {targets, live_env, live_repo, own_dsn, foreign_dbs, run_dsn_base}. Returns {name: ok, …}; `ok` means
+    """cfg: {targets, live_env, live_repo, own_dsn, foreign_dbs, run_conn, listeners, socket_dirs}. Returns {name: ok, …}; `ok` means
     the property the run needs holds IN THIS PROCESS's world (a boundary: reach FAILS)."""
     import psycopg
     res = {}
@@ -123,10 +234,20 @@ def probe(cfg: dict) -> dict:
     res["live_repo_visible"] = (lr / "nucleus" / "check.sh").is_file()
     res["live_repo_writable"] = res["live_repo_visible"] and os.access(lr / "nucleus", os.W_OK)
     res["docker_socket"] = Path("/var/run/docker.sock").exists() or Path("/run/docker.sock").exists()
+    res["listeners_reached"] = _reach([tuple(x) for x in cfg.get("listeners", [])])
+    res["external_reached"] = bool(_reach([EXTERNAL], timeout=3.0))
+    for sd in cfg.get("socket_dirs", []):                        # (i) through the bridge, password-less
+        for u in ("genesis", "postgres"):
+            try:
+                c = psycopg.connect(host=sd, port=5432, user=u, dbname="postgres", connect_timeout=3, password="")
+                res["pgpass_reach"]["reached"].append(f"{u}@{sd}")
+                c.close()
+            except Exception:
+                pass
     foreign = []
     for db in cfg.get("foreign_dbs", []):
         try:
-            c = psycopg.connect(cfg["run_dsn_base"] + db, connect_timeout=3)
+            c = psycopg.connect(**cfg["run_conn"], dbname=db, connect_timeout=3)
             foreign.append(db)
             c.close()
         except Exception:
@@ -162,6 +283,12 @@ def verdict(inside: dict, outside: dict) -> list:
         bad.append("(v) VACUOUS: the live repo isn't writable outside either, so the inside result proves nothing")
     if inside["docker_socket"]:
         bad.append("(iii) a docker socket is visible inside")
+    if inside.get("listeners_reached"):
+        bad.append(f"(vii) host listeners reachable from inside: {inside['listeners_reached']}")
+    if not outside.get("listeners_reached"):
+        bad.append("(vii) VACUOUS: no host listener is reachable even OUTSIDE, so the inside result proves nothing")
+    if inside.get("external_reached"):
+        bad.append("(vii) the internet is reachable from inside")
     if inside["foreign_connect"]:
         bad.append(f"(vi) the run role CONNECTs to databases it doesn't own: {inside['foreign_connect']}")
     if not inside["own_notify"]:
