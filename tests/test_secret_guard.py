@@ -26,6 +26,13 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 fails = []
+skipped = []
+
+
+def skip_arm(name, why):
+    """An arm that could not run is NOT a pass: the gate exits 77 (UNVERIFIED) naming it."""
+    print(f"  SKIP  {name}: {why}")
+    skipped.append(f"{name} ({why})")
 
 
 def check(name, ok, detail=""):
@@ -167,6 +174,11 @@ def run_step(step, event, tool, ti, connect_ok=True):
 
 
 def arms_step(tmp: Path):
+    try:
+        import psycopg  # noqa: F401 — run_step stands in for psycopg.connect
+    except ImportError:
+        skip_arm("G7/G4 (end to end through hooks/step.py)", "psycopg not importable")
+        return
     import importlib.util
     spec = importlib.util.spec_from_file_location("step_s1b", REPO / "hooks/step.py")
     step = importlib.util.module_from_spec(spec)
@@ -214,6 +226,9 @@ def main():
     if fails:
         print(f"\nFAIL: {len(fails)} arm(s) red")
         return 1
+    if skipped:
+        print(f"\nNOT RUN ({len(skipped)}): " + "; ".join(skipped) + " — exit 77, a skip is not a pass")
+        return 77
     print("\nPASS: declared secrets stay out of context (plan-5497 S1b; accident-grade, see G-docs)")
     return 0
 

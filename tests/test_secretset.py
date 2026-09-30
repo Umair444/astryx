@@ -23,6 +23,13 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 fails = []
+skipped = []
+
+
+def skip_arm(name, why):
+    """An arm that could not run is NOT a pass: the gate exits 77 (UNVERIFIED) naming it."""
+    print(f"  SKIP  {name}: {why}")
+    skipped.append(f"{name} ({why})")
 
 
 def check(name, ok, detail=""):
@@ -196,6 +203,11 @@ def transcript(tmp: Path) -> Path:
 
 
 def arms_s1a(tmp):
+    try:
+        import psycopg  # noqa: F401 — step.py builds its rows with psycopg's Jsonb
+    except ImportError:
+        skip_arm("S1a (the turn writer, hooks/step.py)", "psycopg not importable")
+        return
     envf, ppf = fixture(tmp)
     step = load_step()
     if not hasattr(step, "cleaner"):
@@ -326,7 +338,7 @@ def arms_manifest(tmp):
 def arm_live():
     """The REAL holders: the set is non-empty (anti-vacuity) and every NOT_SECRET value is clean."""
     if not ss.ENV_FILE.exists():
-        print(f"  skip  L (no {ss.ENV_FILE.name} in this tree)")
+        skip_arm("L (the live holders)", f"no {ss.ENV_FILE.name} in this tree")
         return
     S = ss.secret_set()
     check("L.1 the live set is non-empty (a derivation that finds nothing is vacuous)",
@@ -380,6 +392,9 @@ def main():
     if fails:
         print(f"\nFAIL: {len(fails)} arm(s) red")
         return 1
+    if skipped:
+        print(f"\nNOT RUN ({len(skipped)}): " + "; ".join(skipped) + " — exit 77, a skip is not a pass")
+        return 77
     print("\nPASS: one derived secret set; the turn writer copies none (plan-5497 S0+S1a)")
     return 0
 
