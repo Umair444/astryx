@@ -14,6 +14,8 @@ SUBJECT = REPO / "nucleus" / "branch_check.py"
 ORACLE = REPO / "tests" / "test_branch_check.py"
 ENV = "BRANCH_CHECK_SRC"
 
+# DECLARED, not authored: the rerun's sqlguard intersection in run() (a branch-only finding must reproduce).
+# run() is exercised end to end only by a real run, never by this oracle; its arm is the next e2e run's report.
 MUTANTS = {
     "O1 a statement reaching PROD doesn't fail the run":
         ("    if any(witness.values()):\n        return 1\n", ""),
@@ -28,7 +30,12 @@ MUTANTS = {
         ("        kind = next((k for k, rx in _HEAD.items() if rx.match(ln)), None)\n        if kind is None:\n            break",
          "        kind = next((k for k, rx in _HEAD.items() if rx.match(ln)), None)\n        if kind is None:\n            continue"),
     "O6 gates failing on BOTH sides aren't reported":
-        ('    dead = sorted(set(m["failed"]) & set(b["failed"]))', '    dead = []'),
+        ('    dead = sorted((set(m["failed"]) & set(b["failed"])) - ({SQLGUARD_GATE} if judged else set()))', '    dead = []'),
     "O7 the walk has no TOP edge (skips verdict()'s leading blank and reads the last gate's output)":
         ("            if out[\"failed\"] or out[\"unverified\"]:\n                break", "            if False:\n                break"),
+    "O8 sqlguard's branch-only findings are ignored (a new R-NEW on the branch reads clean)":
+        ("        sg_new = sorted(l for i, l in br.items() if i not in mr)", "        sg_new = []"),
+    "O9 sqlguard is still listed dead when it WAS judged differentially":
+        ('    dead = sorted((set(m["failed"]) & set(b["failed"])) - ({SQLGUARD_GATE} if judged else set()))',
+         '    dead = sorted(set(m["failed"]) & set(b["failed"]))'),
 }

@@ -29,8 +29,6 @@ import os
 import re
 import shutil
 import subprocess
-import tarfile
-import io
 from pathlib import Path
 from urllib.parse import quote
 
@@ -154,6 +152,14 @@ def schema_sha(repo: Path) -> str:
     return hashlib.sha256((repo / "nucleus" / "schema.sql").read_bytes()).hexdigest()[:12]
 
 
+# AGE's schema is owned by the admin that created the extension, so a run role can't even SEE cypher() without USAGE
+# (plan-4918 D1, measured). Granted to PUBLIC, and ONLY inside run-owned databases and the cached template (both have
+# PUBLIC CONNECT revoked): the template outlives any one run role (a3 C1c). Idempotent; a no-op without AGE.
+AGE_USAGE = ("DO $$ BEGIN IF to_regnamespace('ag_catalog') IS NOT NULL "
+             "AND NOT has_schema_privilege('public', 'ag_catalog', 'USAGE') THEN "
+             "GRANT USAGE ON SCHEMA ag_catalog TO PUBLIC; END IF; END $$")
+
+
 def ensure_ext_template(conn, sha12: str, keep=(), prefix: str = TPL_PREFIX, evict: bool = True) -> str:
     """The cached template for one schema.sql sha. Eviction drops OTHER shas' templates EXCEPT those in `keep`:
     a differential run needs main's AND the branch's at once when a branch changes schema.sql, so evicting
@@ -183,21 +189,57 @@ def ensure_ext_template(conn, sha12: str, keep=(), prefix: str = TPL_PREFIX, evi
             for ext in TPL_EXTENSIONS:
                 t.execute(sql.SQL("CREATE EXTENSION IF NOT EXISTS {}").format(sql.Identifier(ext)))
         conn.execute(sql.SQL("ALTER DATABASE {} IS_TEMPLATE true").format(sql.Identifier(name)))
+    info = conn.info                                   # a template cached before D1 lacks the grant: add it once
+    with psycopg.connect(host=info.host, port=info.port, user=info.user, password=info.password,
+                         dbname=name, autocommit=True) as t:
+        t.execute(AGE_USAGE)
     return name
 
 
 # ── the private repo and the estate ─────────────────────────────────────────────────────────────────────────
-def private_repo(live: Path, sha: str, dest: Path) -> Path:
-    """`git archive <sha>` into dest, then init + ONE commit. The live repo is only READ."""
+def private_repo(live: Path, sha: str, dest: Path, main_sha: str = None) -> Path:
+    """A repo of exactly TWO refs, `main` and the side's sha (checked out, detached), WITH their history (plan-4918
+    D2: econ provenance needs `main`, ship_watch needs spawn.sh's history). Fetched over file://, which is a PACK
+    transfer: only objects those two refs reach arrive. Never a local clone, which hardlinks the whole object store,
+    dangling blobs, stashes and every other branch included (a3 C2a). The live repo is only READ."""
     dest.mkdir(parents=True)
-    arc = subprocess.run(["git", "archive", sha], cwd=live, capture_output=True, check=True).stdout
-    with tarfile.open(fileobj=io.BytesIO(arc)) as t:
-        t.extractall(dest, filter="tar")
-    env = {**os.environ, "GIT_AUTHOR_NAME": "branch_check", "GIT_AUTHOR_EMAIL": "bc@local",
-           "GIT_COMMITTER_NAME": "branch_check", "GIT_COMMITTER_EMAIL": "bc@local"}
-    for cmd in (["git", "init", "-q"], ["git", "add", "-A"], ["git", "commit", "-q", "-m", f"branch_check {sha}"]):
-        subprocess.run(cmd, cwd=dest, env=env, check=True, capture_output=True)
+    run = lambda *a: subprocess.run(["git", *a], cwd=dest, check=True, capture_output=True)
+    run("init", "-q", "-b", "bc_unborn")                   # never "main": fetching into a checked-out branch fails
+    refs = [f"{main_sha or sha}:refs/heads/main"] + ([f"{sha}:refs/heads/branch_check"] if main_sha else [])
+    run("fetch", "-q", "--no-tags", f"file://{live}", *refs)
+    run("checkout", "-q", "--detach", sha)
     return dest
+
+
+def history_secret_hits(repo: Path, secrets_) -> list:
+    """Every OBJECT in the repo's store that carries a form of a secret, as "<sha12> (<type>[: path])". The domain is
+    the object store itself (`git cat-file --batch-all-objects`), i.e. exactly what the sandbox can read, reachable
+    or not: blobs (every version of every file), commits (their MESSAGES, a3 C2b) and trees. No diff semantics to
+    reason about: `git log -p` shows no diff for a MERGE, so a credential introduced by a merge resolution and removed
+    by a later merge sat in no scanned diff while `git show <merge>:f` still read it (a3 E1 #34564). The value never
+    leaves this function. DECLARED residual: only CURRENT values are known; one committed and since rotated is
+    invisible here."""
+    forms = [f.encode() for sec in secrets_ for f in sec.forms if f]
+    paths = {}                                          # blob sha -> a path it appears at (for the label only)
+    rl = subprocess.run(["git", "rev-list", "--all", "--objects"], cwd=repo, capture_output=True, check=True).stdout
+    for ln in rl.decode(errors="replace").splitlines():
+        sha, _, path = ln.partition(" ")
+        if path:
+            paths.setdefault(sha, path)
+    p = subprocess.Popen(["git", "cat-file", "--batch-all-objects", "--batch"], cwd=repo, stdout=subprocess.PIPE)
+    hits = []
+    while True:
+        head = p.stdout.readline()
+        if not head:
+            break
+        sha, typ, size = head.decode().split()
+        body = p.stdout.read(int(size))
+        p.stdout.read(1)                                # the newline after each object
+        if any(f in body for f in forms):
+            hits.append(f"{sha[:12]} ({typ}{': ' + paths[sha] if sha in paths and typ == 'blob' else ''})")
+    if p.wait() != 0:
+        raise Refuse("the history secret scan couldn't read the repo's object store")
+    return hits
 
 
 def tracked_secret_hits(repo: Path, secrets_: set) -> list:
@@ -238,9 +280,12 @@ def copy_estate(live: Path, repo: Path, secrets_: set) -> dict:
     return {"placed": placed, "skipped_credential": skipped, "linked_private": linked}
 
 
-def write_env(repo: Path, run_dsn: str, live: Path = LIVE) -> Path:
-    """The generated .env: the run role's DSN plus declared non-secret keys. Never the live file."""
+def write_env(repo: Path, run_dsn: str, live: Path = LIVE, node: Path = None) -> Path:
+    """The generated .env: the run role's DSN plus declared non-secret keys. Never the live file. `node` replaces
+    the live ASTRYX_NODE (possibly a mise shim, unusable inside the sandbox) with the resolved binary (D3)."""
     live_env = read_env(live / ".env")
+    if node:
+        live_env = {**live_env, "ASTRYX_NODE": str(node)}
     lines = [f"ASTRYX_DSN={run_dsn}"] + [f"{k}={live_env[k]}" for k in ENV_ALLOW if k in live_env]
     p = repo / ".env"
     p.write_text("\n".join(lines) + "\n")
@@ -300,4 +345,5 @@ def build_base(scope, admin_dsn: str, prod_db: str) -> tuple:
     dump.wait()
     with psycopg.connect(make_conninfo(admin_dsn, dbname=base), autocommit=True) as c:
         c.execute(OWN_SQL.format(role=sql.Identifier(scope.role).as_string(c)))
+        c.execute(AGE_USAGE)                           # prod's own ag_catalog ACL is never touched (a3 C1c)
     return base, rest.returncode, len([l for l in rest.stderr.splitlines() if "error" in l.lower()])

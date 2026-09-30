@@ -24,6 +24,9 @@
   "mcp/memory/resolvers.py::_run_cypher\u001f*": [
    "memory ask() hides tier-private data"
   ],
+  "nucleus/agelib.py::prepare\u001fselect rolsuper from pg_roles where rolname = current_user": [
+   "branch_check prep: hardening precondition, template, repo, estate, env"
+  ],
   "nucleus/branch_check_prep.py::ensure_ext_template\u001fselect 1 from pg_database where datname = ?": [
    "branch_check prep: hardening precondition, template, repo, estate, env"
   ],
@@ -134,6 +137,12 @@
   ],
   "nucleus/rotate_db_password.py::rotate\u001fselect rolpassword from pg_authid where rolname=?": [
    "db password rotation leaks nothing (5497 S3b BC-1)"
+  ],
+  "nucleus/runscope.py::RunScope.open\u001fselect 1 from pg_available_extensions where name = 'age'": [
+   "branch_check base: prod restored into a run-owned base",
+   "branch_check prep: hardening precondition, template, repo, estate, env",
+   "branch_check sandbox: the boundary holds from inside, every probe falsifiable",
+   "runscope: teardown by ownership, stale sweep, foreign scopes refused"
   ],
   "nucleus/secret_sweep.py::sweep_turns\u001fselect raw_payload, input_prompt from turns where id=?": [
    "at-rest secret sweep redacts without corrupting (5497 S2)"
@@ -332,7 +341,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 272,
+  "debt_rows": 275,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -664,6 +673,18 @@
    "reason": "seed",
    "tk": "sha256t:5fdd856b54986c3225f4562d3128a0b1c3abefe6d8f2981fcf097b59d3de166e"
   },
+  "nucleus/agelib.py::aprepare\u001fselect rolsuper from pg_roles where rolname = current_user": {
+   "admitted": "2026-09-30",
+   "debt": "UNEXECUTED",
+   "reason": "plan-4918 D1: LOAD 'age' only as a superuser (a non-superuser can't LOAD, nor read session_preload_libraries). a pg_catalog read, so RESPONSIVE is unreachable by the judge's relation rule; pinned by agelib A1/A2 and the C1b arms (run role: no LOAD, cypher works; superuser: LOADs).",
+   "tk": "sha256t:e0267931d6560547b3a76b2aa4066243504b90be6fa89f1cc8e51000d7e284bf"
+  },
+  "nucleus/agelib.py::prepare\u001fselect rolsuper from pg_roles where rolname = current_user": {
+   "admitted": "2026-09-30",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "plan-4918 D1: LOAD 'age' only as a superuser (a non-superuser can't LOAD, nor read session_preload_libraries). a pg_catalog read, so RESPONSIVE is unreachable by the judge's relation rule; pinned by agelib A1/A2 and the C1b arms (run role: no LOAD, cypher works; superuser: LOADs).",
+   "tk": "sha256t:e0267931d6560547b3a76b2aa4066243504b90be6fa89f1cc8e51000d7e284bf"
+  },
   "nucleus/branch_check.py::run\u001fselect d.datname from pg_database d join pg_roles r on r.oid = d.datdba where d.datallowconn and r.rolname <> ?": {
    "admitted": "2026-09-30",
    "debt": "UNEXECUTED",
@@ -860,6 +881,12 @@
    "debt": "EXECUTED",
    "reason": "plan-5497 S3b rollback channel: reads the role verifier so a failed canary restores it byte for byte. Executed by tests/test_rotate_db_password.py on a throwaway role; R5 (mutation: skip the restore) is its discriminating arm.",
    "tk": "sha256t:5dd71eabd853547977ed08637a6aa5ad2bbe486fa2bc7571a2d7f8bb91608a84"
+  },
+  "nucleus/runscope.py::RunScope.open\u001fselect 1 from pg_available_extensions where name = 'age'": {
+   "admitted": "2026-09-30",
+   "debt": "EXECUTED",
+   "reason": "plan-4918 D1: the run role gets AGE's session preload only where the server offers AGE (a missing preload library fails every connection). a pg_catalog read, so RESPONSIVE is unreachable by the judge's relation rule; pinned by runscope R9 and the arm 'the role preloads AGE exactly when the server offers it'.",
+   "tk": "sha256t:766e4bbf18714a244390f9e5c9a1eb18e2c56b63ef724c0f6591215e34cdc4f6"
   },
   "nucleus/secret_sweep.py::sweep_turns\u001fselect raw_payload, input_prompt from turns where id=?": {
    "admitted": "2026-09-30",

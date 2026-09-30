@@ -88,6 +88,45 @@ def main():
           rc == 0 and "check: m" in out and "VERIFIED NOTHING under branch_check" in out and "○ u" in out, out)
     check("a gate FAILING ON BOTH SIDES is listed by name (\"no regression\" over dead gates isn't coverage)",
           "FAILED ON BOTH SIDES" in out and "    ✗ x" in out, out)
+    # ── sqlguard judged DIFFERENTIALLY by identity (plan-4918 D4, a3 C4) ─────────────────────────────────────
+    sg = bc.SQLGUARD_GATE
+    base_sg = {"failed": [sg], "unverified": [], "line": "check: m", "sqlguard_red": {"id1": "R-BLIND a.py::f (line 10)"}}
+    shifted = {"failed": [sg], "unverified": [], "line": "check: b", "sqlguard_red": {"id1": "R-BLIND a.py::f (line 99)"}}
+    rc, out = rep(base_sg, shifted)
+    check("C4: two sides differing only by a LINE offset → no regression, and sqlguard isn't listed as dead",
+          rc == 0 and "REGRESSED" not in out and "judged DIFFERENTIALLY" in out
+          and f"    ✗ {sg}" not in out, out)
+    grown = {**shifted, "sqlguard_red": {"id1": "R-BLIND a.py::f", "id2": "R-NEW b.py::g :: select 2"}}
+    rc, out = rep(base_sg, grown)
+    check("D4: a RED only on the branch is a REGRESSION, named by its line → rc 1",
+          rc == 1 and "REGRESSED" in out and "R-NEW b.py::g :: select 2" in out, out)
+    cs = (REPO / "nucleus" / "check.sh").read_text()
+    check("SQLGUARD_GATE is exactly check.sh's own label for the enforce gate",
+          f'run "{sg}" "$PY" -m nucleus.sqlguard.enforce' in cs)
+    esrc = os.environ.get("ENFORCE_SRC")                              # mutation_probe points this at a mutant
+    if esrc:
+        import importlib.util
+        esp = importlib.util.spec_from_file_location("enforce_under_test", esrc)
+        enf = importlib.util.module_from_spec(esp)
+        esp.loader.exec_module(enf)
+    else:
+        from nucleus.sqlguard import enforce as enf
+    def blind_ids(line, text="select 1"):
+        rep_ = {"run_not_searched": [], "extractors": {}, "gates": {}, "covering": {},
+                "sites": {enf.CANARY + "\x1fselect 1": {"rung": "RESPONSIVE"}},
+                "blind": [{"frame": ["nucleus/x.py", "f", line], "t": text}]}
+        return enf.enforce("/nonexistent", ledger={"rows": {}, "extractors": {}},
+                           dsn="postgresql://nobody@127.0.0.1:1/x?connect_timeout=2", rep=rep_)["red_ids"]
+    a_, b_, c_ = blind_ids(10), blind_ids(99), blind_ids(10, "select 2")
+    check("C4: enforce keys an R-BLIND by path/function/text, never its LINE (same id at line 10 and 99)",
+          len(a_) == 1 and a_ == b_, f"{a_} {b_}")
+    check("…and different SQL at the same place is a different identity", a_ != c_, f"{a_} {c_}")
+    td = Path(tempfile.mkdtemp())
+    check("sqlguard_red: no red.json (enforce didn't run) → None, never an empty 'no findings'",
+          bc.sqlguard_red(td) is None)
+    (td / "red.json").write_text(json.dumps([{"id": "x", "line": "R-NEW …"}]))
+    check("sqlguard_red: red.json → {id: line}", bc.sqlguard_red(td) == {"x": "R-NEW …"})
+
     t = Path(tempfile.mkdtemp())
     (t / "trace-1.jsonl").write_text("\n".join(json.dumps({"db": d}) for d in ("astryx", "astryx_fx_1", "astryx")) + "\n")
     check("the prod witness counts only statements whose db IS the prod database", bc.prod_statements(t, "astryx") == 2)

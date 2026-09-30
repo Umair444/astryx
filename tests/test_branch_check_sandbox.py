@@ -77,6 +77,43 @@ def main():
                                capture_output=True, text=True, timeout=120)
             return json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else {"error": r.stderr[-400:]}
 
+        # ── node (plan-4918 D3, a3 C3): resolved OUTSIDE, ONE install bound, never the whole mise tree ────────
+        nb = None
+        try:
+            nb = sb.node_bin()
+        except sb.NodeUnresolved as e:
+            check("D3: node resolves on this host", False, str(e))
+        if nb:
+            na = sb.argv(repo, run_tmp, live=live, node=nb)
+            ran = subprocess.run(na + [str(nb), "-e", "process.stdout.write(process.version)"],
+                                 env=sb.env(scope.dsn(own), nb), capture_output=True, text=True, timeout=60)
+            check("D3: the resolved node RUNS inside the sandbox", ran.returncode == 0 and ran.stdout.startswith("v"),
+                  (ran.stdout + ran.stderr)[-200:])
+            inst = sb.MISE_INSTALLS
+            if sb.node_dir(nb):
+                seen = subprocess.run(na + ["/usr/bin/ls", "-A", str(inst)], env=sb.env(scope.dsn(own), nb),
+                                      capture_output=True, text=True, timeout=60)
+                shims = subprocess.run(na + ["/usr/bin/ls", str(inst.parent / "shims")], env=sb.env(scope.dsn(own), nb),
+                                       capture_output=True, text=True, timeout=60)
+                check("C3: inside, the mise installs tree shows ONLY node (no other tool's install, no shims)",
+                      seen.stdout.split() == ["node"] and shims.returncode != 0, f"{seen.stdout.split()} shims_rc={shims.returncode}")
+        check("D3: the sandbox env hands check.sh the RESOLVED node as ASTRYX_NODE (never the live shim)",
+              sb.env("x", Path("/r/node")).get("ASTRYX_NODE") == "/r/node" and "ASTRYX_NODE" not in sb.env("x"))
+        nowhere = tmp / "no-system-node"
+        failing = tmp / "mise-fails"
+        failing.write_text("#!/bin/sh\nexit 3\n")
+        failing.chmod(0o755)
+        outside = tmp / "mise-outside"
+        outside.write_text("#!/bin/sh\necho /usr/bin/true\n")
+        outside.chmod(0o755)
+        for label, fake in (("fails", failing), ("resolves OUTSIDE its installs tree", outside)):
+            try:
+                sb.node_bin(mise=str(fake), sys_node=nowhere)
+                refused = False
+            except sb.NodeUnresolved:
+                refused = True
+            check(f"C3: a mise that {label} is REFUSED (never a fallback to the whole tree)", refused)
+
         # a3 #32894 B1: enter, exit, enter again in the SAME dir; the second bridge is ready only when it ACCEPTS
         import socket as _so
         rd = run_tmp / "pg2"

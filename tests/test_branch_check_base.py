@@ -38,6 +38,9 @@ def main():
     reap(adm)
     prod = conninfo_to_dict(dsn).get("dbname", "astryx")
     before = adm.execute("SELECT md5(string_agg(t::text, '|' ORDER BY t.id)) FROM goals t").fetchone()[0]
+    AGE_PUB = ("SELECT to_regnamespace('ag_catalog') IS NOT NULL "
+               "AND has_schema_privilege('public', 'ag_catalog', 'USAGE')")
+    age_pub_before = adm.execute(AGE_PUB).fetchone()[0]
     scope = rs.RunScope(dsn, root=ORACLE_BASE).open()
     try:
         base, rc, errs = bp.build_base(scope, dsn, prod)
@@ -51,6 +54,13 @@ def main():
               f"owner={owner}")
         after = adm.execute("SELECT md5(string_agg(t::text, '|' ORDER BY t.id)) FROM goals t").fetchone()[0]
         check("prod is only read (goals unchanged across the dump)", before == after, "")
+        with psycopg.connect(scope.dsn(base), autocommit=True) as bc:
+            base_pub = bc.execute(AGE_PUB).fetchone()[0]
+        check("D1: the run-owned base grants ag_catalog USAGE (the run role can see cypher)",
+              base_pub or not age_pub_before and not adm.execute("SELECT to_regnamespace('ag_catalog')").fetchone()[0],
+              f"base={base_pub}")
+        check("C1c: prod's own ag_catalog ACL is unchanged across the base build",
+              adm.execute(AGE_PUB).fetchone()[0] == age_pub_before, f"before={age_pub_before}")
     finally:
         rep = scope.close()
         check("teardown leaves nothing the run owned", not rep["leaked"] and not rep["role_left"], str(rep))

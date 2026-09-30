@@ -88,6 +88,12 @@ def main():
         check("open: the run role is LOGIN NOSUPERUSER CREATEDB", r == (False, True, True), str(r))
         lv = rs.live(base)
         check("live(): an open scope of THIS process is live", s.run_id in lv, str(lv))
+        has_age = adm.execute("SELECT 1 FROM pg_available_extensions WHERE name = 'age'").fetchone() is not None
+        pre = adm.execute("SELECT coalesce(bool_or(x = 'session_preload_libraries=age'), false) FROM pg_db_role_setting "
+                          "st JOIN pg_roles r ON r.oid = st.setrole, unnest(st.setconfig) x "
+                          "WHERE r.rolname = %s AND st.setdatabase = 0", (s.role,)).fetchone()[0]
+        check("open: the role preloads AGE exactly when the server offers it (plan-4918 D1)", pre == has_age,
+              f"preload={pre} available={has_age}")
         pw = adm.execute("SELECT rolpassword FROM pg_authid WHERE rolname=%s", (s.role,)).fetchone()
         check("open: the server holds only a SCRAM verifier, never the plaintext",
               bool(pw and pw[0] and pw[0].startswith("SCRAM-SHA-256$") and s._password not in pw[0]), "")

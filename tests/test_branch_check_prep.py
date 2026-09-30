@@ -58,7 +58,7 @@ def synthetic_live(tmp: Path) -> Path:
     (live / "triggers" / "t" / "leaky.py").write_text(f"a = 1\nDSN = 'postgresql://u:{FAKE}@h/db'\n")
     (live / ".env").write_text(f"ASTRYX_DSN=postgresql://u:{FAKE}@h/db\nASTRYX_ORG=org.test\nOPENAI_API_KEY=sk-{FAKE}\n"
                                f"AUTOREMOTE_GETLOC_URL=https://ar.example/x?key={ARKEY}&message=hello\n")
-    git(live, "init", "-q")
+    git(live, "init", "-q", "-b", "main")
     git(live, "add", "-A")
     git(live, "commit", "-q", "-m", "base")
     return live
@@ -71,7 +71,7 @@ def main():
         return 77
     import psycopg
     from psycopg import sql
-    from psycopg.conninfo import conninfo_to_dict
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
     try:
         src = os.environ.get("BRANCH_CHECK_PREP_SRC")                 # mutation_probe points this at a mutant copy
         if src:
@@ -200,6 +200,44 @@ def main():
         check("P0-c: the NOSUPERUSER run role clones the template, and the clone HAS the extensions",
               set(bp.TPL_EXTENSIONS) <= exts, str(sorted(exts)))
 
+        # ── AGE as the RUN ROLE (plan-4918 D1, a3 C1b): no LOAD; a role-level preload + ag_catalog USAGE ────────
+        import importlib.util
+        asrc = os.environ.get("AGELIB_SRC")                                # mutation_probe points this at a mutant
+        if asrc:
+            asp = importlib.util.spec_from_file_location("agelib_under_test", asrc)
+            agelib = importlib.util.module_from_spec(asp)
+            asp.loader.exec_module(agelib)
+        else:
+            from nucleus import agelib
+        class Spy:
+            def __init__(self, c):
+                self.c, self.q = c, []
+            def execute(self, q, *a):
+                self.q.append(str(q))
+                return self.c.execute(q, *a)
+        pre = adm.execute("SELECT coalesce(bool_or(x = 'session_preload_libraries=age'), false) FROM pg_db_role_setting s "
+                          "JOIN pg_roles r ON r.oid = s.setrole, unnest(s.setconfig) x "
+                          "WHERE r.rolname = %s AND s.setdatabase = 0", (scope.role,)).fetchone()[0]
+        check("D1: the run role carries a role-level AGE preload, set by the admin at open", pre)
+        def age_try(dsn_, graph):
+            with psycopg.connect(dsn_, autocommit=True) as ac:
+                spy = Spy(ac)
+                try:
+                    agelib.prepare(spy)
+                    ac.execute(f"SELECT create_graph('{graph}')")
+                    ac.execute(f"SELECT * FROM cypher('{graph}', $q$ CREATE (n:BcAge) RETURN n $q$) AS (n agtype)")
+                    n = ac.execute(f"SELECT * FROM cypher('{graph}', $q$ MATCH (n:BcAge) RETURN count(n) $q$) "
+                                   "AS (c agtype)").fetchone()[0]
+                    return str(n), spy.q
+                except psycopg.Error as e:
+                    return f"{type(e).__name__}: {str(e).splitlines()[0]}", spy.q
+        got, q = age_try(scope.dsn(clone), "bcage_run")
+        check("C1b: as the run role, prepare() issues NO LOAD and cypher works through the preload",
+              got == "1" and not any("LOAD" in x for x in q), f"{got} {q}")
+        got, q = age_try(make_conninfo(dsn, dbname=clone), "bcage_su")
+        check("C1b: as a superuser, prepare() still LOADs (prod unchanged), and cypher works without any preload",
+              got == "1" and any(x == "LOAD 'age'" for x in q), f"{got} {q}")
+
         # ── fixture_db AS THE RUN ROLE: the template hook is what gives it the extensions (a2's fail-open) ───
         froot = tmp / "froot"
         (froot / "nucleus").mkdir(parents=True)
@@ -318,11 +356,77 @@ def main():
         # ── private repo, estate copy, secrets, env ──────────────────────────────────────────────────────
         live = synthetic_live(tmp)
         before = git(live, "status", "--porcelain", "--ignored")
-        repo = bp.private_repo(live, git(live, "rev-parse", "HEAD").strip(), tmp / "run" / "repo")
-        check("private repo: ONE commit of the tree, the live repo only read",
-              git(repo, "rev-list", "--count", "HEAD").strip() == "1" and (repo / "code.py").is_file()
-              and git(live, "status", "--porcelain", "--ignored") == before, "")
+        main_sha = git(live, "rev-parse", "HEAD").strip()
+        # a BRANCH with history: a credential added then deleted (the tree is clean, the history isn't), and one
+        # pasted into a commit MESSAGE (a3 C2b); plus what must never arrive: another branch, and a dangling blob
+        git(live, "switch", "-q", "-c", "feature")
+        (live / "tmp_cfg.py").write_text(f"PW = '{FAKE}'\n")
+        git(live, "add", "tmp_cfg.py")
+        git(live, "commit", "-q", "-m", "wip")
+        git(live, "rm", "-q", "tmp_cfg.py")
+        git(live, "commit", "-q", "-m", "remove it")
+        (live / "code.py").write_text("x = 2\n")
+        git(live, "commit", "-q", "-am", f"fixed the DSN, it was postgresql://u:{FAKE}@h/db")
+        feat = git(live, "rev-parse", "HEAD").strip()
+        git(live, "switch", "-q", "-c", "other", main_sha)
+        (live / "other.py").write_text("o = 1\n")
+        git(live, "add", "other.py")
+        git(live, "commit", "-q", "-m", "someone else's unpushed work")
+        other = git(live, "rev-parse", "HEAD").strip()
+        blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=live, input=f"k={FAKE}\n",
+                              capture_output=True, text=True, check=True).stdout.strip()   # dangling: no ref reaches it
+        git(live, "switch", "-q", "main")
+        before = git(live, "status", "--porcelain", "--ignored")
+        repo = bp.private_repo(live, feat, tmp / "run" / "repo", main_sha=main_sha)
+        has = lambda o: subprocess.run(["git", "cat-file", "-e", o], cwd=repo, capture_output=True).returncode == 0
+        refs = git(repo, "for-each-ref", "--format=%(refname)").split()
+        check("private repo: the side's sha checked out WITH its history, and `main` resolves (D2)",
+              git(repo, "rev-parse", "HEAD").strip() == feat and git(repo, "rev-parse", "main").strip() == main_sha
+              and git(repo, "rev-list", "--count", "HEAD").strip() == "4" and (repo / "code.py").is_file()
+              and git(live, "status", "--porcelain", "--ignored") == before, str(refs))
+        check("C2a: exactly two refs arrive; another live branch doesn't", sorted(refs) == [
+              "refs/heads/branch_check", "refs/heads/main"] and not has(other), str(refs))
+        check("C2a: a DANGLING object carrying a credential in the live store never reaches the clone", not has(blob))
         secrets_ = bp.secret_set(live)
+        hh = bp.history_secret_hits(repo, secrets_)
+        check("D2: a credential added then DELETED on the branch is found in the history (the tree scan can't)",
+              any(h.endswith("(blob: tmp_cfg.py)") for h in hh) and not any(FAKE in h for h in hh), str(hh))
+        check("C2b: a credential pasted into a commit MESSAGE is found (-S alone never sees it)",
+              any(h.endswith("(commit)") for h in hh) and not any(FAKE in h for h in hh), str(hh))
+        # a3 E1 #34564: an EVIL MERGE. The credential enters in a merge RESOLUTION (in neither parent) and a second
+        # merge removes it: `git log -p` shows no diff for either merge, and the tip is clean, yet
+        # `git show <merge>:e.py` still reads it inside the sandbox.
+        git(live, "switch", "-q", "-c", "evil_a", main_sha)
+        (live / "e.py").write_text("a = 1\n")
+        git(live, "add", "e.py")
+        git(live, "commit", "-q", "-m", "a1")
+        git(live, "switch", "-q", "-c", "evil_b", main_sha)
+        (live / "e.py").write_text("a = 2\n")
+        git(live, "add", "e.py")
+        git(live, "commit", "-q", "-m", "b1")
+        subprocess.run(["git", "merge", "-q", "evil_a"], cwd=live, capture_output=True)        # conflicts, by design
+        (live / "e.py").write_text(f"a = '{FAKE}'\n")
+        git(live, "add", "e.py")
+        git(live, "commit", "-q", "--no-edit")
+        git(live, "switch", "-q", "-c", "evil_c", "evil_a")
+        (live / "e.py").write_text("a = 3\n")
+        git(live, "commit", "-q", "-am", "c1")
+        git(live, "switch", "-q", "evil_b")
+        subprocess.run(["git", "merge", "-q", "evil_c"], cwd=live, capture_output=True)
+        (live / "e.py").write_text("a = 4\n")
+        git(live, "add", "e.py")
+        git(live, "commit", "-q", "--no-edit")
+        evil = git(live, "rev-parse", "HEAD").strip()
+        lp = subprocess.run(["git", "log", "-p", evil], cwd=live, capture_output=True, text=True).stdout
+        git(live, "switch", "-q", "main")
+        er = bp.private_repo(live, evil, tmp / "run" / "evil", main_sha=main_sha)
+        eh = bp.history_secret_hits(er, secrets_)
+        check("E1 control: `git log -p` never shows the evil merge's line, and the tip doesn't carry it",
+              FAKE not in lp and FAKE not in (er / "e.py").read_text())
+        check("E1: a credential introduced by a MERGE resolution and removed by a second merge is found",
+              any(h.endswith("(blob: e.py)") for h in eh) and not any(FAKE in h for h in eh), str(eh))
+        clean = bp.private_repo(live, main_sha, tmp / "run" / "clean", main_sha=main_sha)
+        check("…and a history with no credential has no hits", bp.history_secret_hits(clean, secrets_) == [])
         vals = {s.value for s in secrets_}
         check("secret_set comes from nucleus.secretset: the DSN password, the API key and AUTOREMOTE's key= are secret",
               FAKE in vals and f"sk-{FAKE}" in vals and ARKEY in vals and "org.test" not in vals, "")

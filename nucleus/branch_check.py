@@ -20,6 +20,9 @@ The order is the design's (#26043 + #26057), each step fail-closed:
   teardown    always, by ownership; a LEAK makes the run rc 1
 Prevention grade (stated in the design): against accidents and env-following tests. An adversarial same-uid actor
 is out of scope; it can reach prod without this tool.
+AGE (a3 C1a): the run role's session preload makes AGE's C code reachable from the run role, and every cypher() call
+parses branch-authored text inside it. An AGE privilege escalation would be an escape to superuser, and so to prod.
+That is attack surface prod doesn't have (prod runs AGE as a superuser already), and it is out of scope at this grade.
 """
 import argparse
 import glob
@@ -40,6 +43,18 @@ from nucleus import runscope as rs
 
 LIVE = prep.LIVE
 SUITE_TIMEOUT = int(os.environ.get("BRANCH_CHECK_SUITE_TIMEOUT", "3600"))
+# check.sh's label for the sqlguard gate (check.sh:594; the orchestrator oracle pins it against check.sh itself).
+# Its ledger is kept against LIVE, so under E it reads RED on both sides; it's judged DIFFERENTIALLY instead,
+# by each side's red.json identities (plan-4918 D4, a3 C4).
+SQLGUARD_GATE = "sqlguard: every SQL site is observed, or listed debt"
+
+
+def sqlguard_red(trace: Path):
+    """{identity: rendered line} from enforce's red.json in this side's trace dir, or None if enforce didn't write it."""
+    try:
+        return {r["id"]: r["line"] for r in json.loads((trace / "red.json").read_text())}
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
 
 
 def admin_dsn() -> str:
@@ -105,11 +120,15 @@ def run(branch: str, main_ref: str = "main") -> int:
     try:
         with psycopg.connect(dsn, autocommit=True) as adm:
             prep.require_hardened(adm, scope.role)                                  # P0-b
+            try:
+                node = sb.node_bin()                                                # D3: resolved OUTSIDE
+            except sb.NodeUnresolved as e:
+                raise prep.Refuse(f"no usable node for the suites: {e}")
             secrets_ = prep.secret_set(LIVE)
             repo, tmp = {}, {}
             for side in ("main", "branch"):
-                repo[side] = prep.private_repo(LIVE, sha[side], scope.root / side / "repo")
-                hits = prep.tracked_secret_hits(repo[side], secrets_)
+                repo[side] = prep.private_repo(LIVE, sha[side], scope.root / side / "repo", main_sha=sha["main"])
+                hits = prep.tracked_secret_hits(repo[side], secrets_) + prep.history_secret_hits(repo[side], secrets_)
                 if hits:
                     raise prep.Refuse(f"a credential is committed in {side} ({sha[side][:7]}): {hits} "
                                       f"(values not printed)")
@@ -128,7 +147,7 @@ def run(branch: str, main_ref: str = "main") -> int:
             # the sandbox's ONLY route to postgres: a unix socket in each side's run tmp, bridged to the server
             sock = {side: tmp[side] / "pg" for side in repo}
             for side in repo:
-                prep.write_env(repo[side], scope.dsn(clone[side], socket_dir=sock[side]))
+                prep.write_env(repo[side], scope.dsn(clone[side], socket_dir=sock[side]), node=node)
                 (repo[side] / "venv").symlink_to(LIVE / "venv")
             # R5, the boundary, probed from inside with outside controls (the branch side is the untrusted one)
             cfg = {"targets": sb.reach_targets(), "live_env": str(LIVE / ".env"), "live_repo": str(LIVE),
@@ -141,10 +160,10 @@ def run(branch: str, main_ref: str = "main") -> int:
                        "WHERE d.datallowconn AND r.rolname <> %s", (scope.role,)) if prep.transient(d) is not True]}
             probe_src = Path(sb.__file__).resolve()                                 # the TOOL's copy, never the branch's
             ro = [LIVE / p for p in est["branch"]["linked_private"]]
-            a = sb.argv(repo["branch"], tmp["branch"], ro_extra=ro, probe_src=probe_src)
+            a = sb.argv(repo["branch"], tmp["branch"], ro_extra=ro, probe_src=probe_src, node=node)
             with sb.PgBridge(sock["branch"]):
                 pr = subprocess.run(a + [str(LIVE / "venv/bin/python"), sb.PROBE_AT], input=json.dumps(cfg),
-                                    env=sb.env(cfg["own_dsn"]), capture_output=True, text=True, timeout=300)
+                                    env=sb.env(cfg["own_dsn"], node), capture_output=True, text=True, timeout=300)
             inside = json.loads(pr.stdout.strip().splitlines()[-1]) if pr.stdout.strip() else None
             if inside is None:
                 raise prep.Refuse(f"the R5 probe didn't run inside the sandbox: {pr.stderr[-300:]}")
@@ -157,15 +176,17 @@ def run(branch: str, main_ref: str = "main") -> int:
         def suite(side, attempt):
             trace = tmp[side] / f"sqlguard{attempt}"
             trace.mkdir()
-            env = {**sb.env(scope.dsn(clone[side], socket_dir=sock[side])), "ASTRYX_FIXTURE_TEMPLATE": tpl[side],
+            env = {**sb.env(scope.dsn(clone[side], socket_dir=sock[side]), node), "ASTRYX_FIXTURE_TEMPLATE": tpl[side],
                    "ASTRYX_SQLGUARD_DIR": str(trace)}
-            a = sb.argv(repo[side], tmp[side], ro_extra=[LIVE / p for p in est[side]["linked_private"]])
+            a = sb.argv(repo[side], tmp[side], ro_extra=[LIVE / p for p in est[side]["linked_private"]], node=node)
             with sb.PgBridge(sock[side]):
                 p = subprocess.run(a + ["bash", "nucleus/check.sh"], env=env, capture_output=True, text=True,
                                    timeout=SUITE_TIMEOUT)
             if os.environ.get("BRANCH_CHECK_KEEP_LOGS"):
                 (scope.base / f"{scope.run_id}-{side}{attempt}.log").write_text(p.stdout + p.stderr)
-            return summary(p.stdout), prod_statements(trace, prod_db)
+            out = summary(p.stdout)
+            out["sqlguard_red"] = sqlguard_red(trace)
+            return out, prod_statements(trace, prod_db)
         sums, witness = {}, {}
         for side in ("main", "branch"):
             sums[side], witness[side] = suite(side, 1)
@@ -176,6 +197,9 @@ def run(branch: str, main_ref: str = "main") -> int:
             witness["branch"] += w2
             sums["branch"]["flaky"] = sorted(first - set(again["failed"]))
             sums["branch"]["failed"] = sorted(set(sums["branch"]["failed"]) - set(sums["branch"]["flaky"]))
+            r1, r2 = sums["branch"]["sqlguard_red"], again["sqlguard_red"]
+            # a branch-only sqlguard finding must REPRODUCE too (FLAKY != REGRESSED)
+            sums["branch"]["sqlguard_red"] = None if r1 is None or r2 is None else {i: l for i, l in r1.items() if i in r2}
         rc = report(sha, sums, witness, est)
     except prep.Refuse as e:
         print(f"branch_check: REFUSED (rc 77): {e}")
@@ -194,6 +218,13 @@ def report(sha: dict, sums: dict, witness: dict, est: dict) -> int:
     for side in ("main", "branch"):
         print(f"  {side:6s} {sums[side]['line']}")                  # check.sh's own verdict line, verbatim
     regressed = sorted(set(b["failed"]) - set(m["failed"]))
+    mr, br = m.get("sqlguard_red"), b.get("sqlguard_red")
+    judged = mr is not None and br is not None
+    if judged:                                      # D4: the gate's findings, by identity, not the gate's rc
+        sg_new = sorted(l for i, l in br.items() if i not in mr)
+        regressed += [f"{SQLGUARD_GATE} → {l}" for l in sg_new]
+        print(f"  sqlguard judged DIFFERENTIALLY: {len(br)} RED on the branch, {len(mr)} on main, "
+              f"{len(sg_new)} only on the branch")
     fixed = sorted(set(m["failed"]) - set(b["failed"]))
     newly_unverified = sorted(set(b["unverified"]) - set(m["unverified"]))
     for label, xs in (("REGRESSED (fails on the branch, not on main, and again on a rerun)", regressed),
@@ -205,7 +236,7 @@ def report(sha: dict, sums: dict, witness: dict, est: dict) -> int:
             print(f"  {label}:")
             for x in xs:
                 print(f"    {x}")
-    dead = sorted(set(m["failed"]) & set(b["failed"]))
+    dead = sorted((set(m["failed"]) & set(b["failed"])) - ({SQLGUARD_GATE} if judged else set()))
     print(f"  FAILED ON BOTH SIDES (verified nothing about the branch; the environment, or main itself): {len(dead)}")
     for x in dead:
         print(f"    ✗ {x}")

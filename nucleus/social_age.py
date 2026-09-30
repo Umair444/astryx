@@ -53,8 +53,8 @@ def rebuild() -> dict:
         return str(s).replace("\\", "").replace("'", "")
 
     with psycopg.connect(social, autocommit=True) as dst, dst.cursor() as cur:
-        cur.execute("LOAD 'age'")
-        cur.execute('SET search_path = ag_catalog, "$user", public')
+        from nucleus import agelib
+        agelib.prepare(cur)               # LOAD as a superuser; a run role has AGE preloaded (plan-4918 D1)
         cur.execute("SELECT count(*) FROM ag_graph WHERE name=%s", (GRAPH,))
         if cur.fetchone()[0]:
             cur.execute("SELECT drop_graph(%s, true)", (GRAPH,))
