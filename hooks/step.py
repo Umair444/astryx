@@ -82,6 +82,11 @@ def wall_label(cmd) -> str:
         return "(command)"
 
 
+def dsn() -> str:
+    return next(l.split("=", 1)[1].strip()
+               for l in open(DSN_FILE) if l.startswith("ASTRYX_DSN="))
+
+
 WITHHELD = "[withheld: secret redaction unavailable]"
 
 
@@ -112,11 +117,6 @@ def secret_guard(tool, ti):
         return decide(tool, ti), None
     except Exception as e:
         return None, f"secret guard unevaluable ({type(e).__name__}): allowed (plan-5497)"
-
-
-def dsn() -> str:
-    return next(l.split("=", 1)[1].strip()
-               for l in open(DSN_FILE) if l.startswith("ASTRYX_DSN="))
 
 
 def is_tool_result(content) -> bool:

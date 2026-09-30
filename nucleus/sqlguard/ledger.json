@@ -122,6 +122,9 @@
   "nucleus/memgraph.py::write_pg\u001fdelete from kg.node": [
    "recall-graph compiler"
   ],
+  "nucleus/rotate_db_password.py::rotate\u001fselect rolpassword from pg_authid where rolname=?": [
+   "db password rotation leaks nothing (5497 S3b BC-1)"
+  ],
   "nucleus/sqlguard/canary.py::canary\u001fselect n, (mod(n, 2) = 0) as even from generate_series(1, 2) as n where n > ?": [
    "sqlguard canary: the shim observes through the real Ctx.sql"
   ],
@@ -302,7 +305,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 265,
+  "debt_rows": 267,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -798,6 +801,18 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:aca2cbe30c6f7b2d5fb7497de96e37ccd8c19d36c92f0312aae33a84180c53e1"
+  },
+  "nucleus/rotate_db_password.py::at_rest_count\u001fselect count(*) from turns where position(? in raw_payload::text) > 0 or position(? in coalesce(input_prompt,'')) > 0": {
+   "admitted": "2026-09-30",
+   "debt": "UNEXECUTED",
+   "reason": "plan-5497 S3b live precondition P3 (the value is at rest nowhere before rotating). The oracle stubs it because the live scan walks every transcript; it runs only in a live rotation, gated by a2 PASS + seed go.",
+   "tk": "sha256t:dd75411e26801e2e4972f7b91ecca9c79cf80b9b84f1f6c43fa5a7f6556b6edb"
+  },
+  "nucleus/rotate_db_password.py::rotate\u001fselect rolpassword from pg_authid where rolname=?": {
+   "admitted": "2026-09-30",
+   "debt": "EXECUTED",
+   "reason": "plan-5497 S3b rollback channel: reads the role verifier so a failed canary restores it byte for byte. Executed by tests/test_rotate_db_password.py on a throwaway role; R5 (mutation: skip the restore) is its discriminating arm.",
+   "tk": "sha256t:5dd71eabd853547977ed08637a6aa5ad2bbe486fa2bc7571a2d7f8bb91608a84"
   },
   "nucleus/senses.py::_log_call\u001finsert into steps (agent, kind, content) values (?,'sense',?)": {
    "debt": "UNEXECUTED",
