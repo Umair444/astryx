@@ -125,6 +125,10 @@ def enforce(trace_dir, ledger=None, dsn=None, rep=None):
             continue
         red.append(f"R-NEW {label(key)}: {s['rung']} and not in the ledger. Make it RESPONSIVE, or admit it: "
                    f"ledger admit <trace_dir> {handle(key)} '<reason>'")
+    # the declared live-only residual, MEASURED each run rather than remembered as a dated count (a3 #29426)
+    lo = sum(1 for k, s in rep["sites"].items() if s.get("live_only") and ledger_key(k) not in rows)
+    if lo:
+        report.append(f"{lo} unlisted RESPONSIVE site(s) are live-only (witnesses from live data: not reproducible)")
     live_keys = {ledger_key(k) for k in rep["sites"]}
     for key in rows:
         if key not in live_keys:

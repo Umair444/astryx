@@ -526,6 +526,7 @@ def main():
         lr = rep({S1: "RESPONSIVE"})
         lr["sites"][S1]["live_only"] = True
         run("live_climb", lr, lg({S1: "EXECUTED"}), dsn)
+        run("live_unlisted", lr, lg(), dsn)
         run("vanished", rep({}), lg({S2: "UNEXECUTED"}), dsn)
         run("canary_absent", {**rep({}), "sites": {}}, lg(), dsn)
         ex = {"tests/x.py": {"gates": ["gx"], "listed_since": str(today), "trip": {"goal": 999999, "state": "done"}}}
@@ -736,9 +737,10 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
         lo("data_const") == [True] and lo("v3_twin_a") == [False], f"{lo('data_const')} {lo('v3_twin_a')}")
     _, NS, err = _py(tmp, _env(tmp, run), "-c", "import json; from nucleus.sqlguard.normalize import is_site; print(json.dumps("
                      "[is_site('merge-base'), is_site('update-index'), is_site('MERGE INTO t USING s ON true'), "
-                     "is_site('select(1)'), is_site('SELECT 1')]))")
+                     "is_site('select(1)'), is_site('SELECT 1'), is_site('SELECT*FROM t'), is_site('SELECT/*c*/1'), "
+                     "is_site('select\"c\" from t')]))")
     arm("a site keyword must END its token: CLI argv 'merge-base'/'update-index' are not sites (steward #26944)",
-        NS == [False, False, True, True, True], str(NS or err))
+        NS == [False, False, True, True, True, True, True, True], str(NS or err))
     arm("computed-DATA constant via Ctx.sql is GREEN (RESPONSIVE)", _rung(S, "data_const") == "RESPONSIVE",
         _rung(S, "data_const"))
     arm("#3 a projected computed-bool constant via Ctx.sql stays RED (EXECUTED)",
@@ -865,6 +867,9 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
     arm("R-NEW names the admit handle", any("ledger admit" in r for r in E["new"]["red"]), str(E["new"]["red"]))
     arm("a listed debt row passes (rc 0)", E["listed"]["rc"] == 0, str(E["listed"]))
     arm("R-STALE a listed row that climbed", has("climbed", "R-STALE"), str(E["climbed"]))
+    arm("the live-only residual is MEASURED each run: an unlisted live-only RESPONSIVE site is counted in the report",
+        "live_unlisted" in E and any("are live-only" in r for r in E["live_unlisted"]["report"]),
+        str(E.get("live_unlisted")))
     arm("a LIVE-ONLY climb of a listed row is REPORTED, not R-STALE (the ledger moves on reproducible evidence)",
         "live_climb" in E and E["live_climb"]["rc"] == 0 and not has("live_climb", "R-STALE")
         and any(r.startswith("LIVE-ONLY") for r in E["live_climb"]["report"]), str(E.get("live_climb")))
@@ -981,7 +986,9 @@ MUTANTS = [
     ("enforce.py", 'if row and s.get("live_only"):', "if False:", "LIVE-ONLY climb"),
     ("ledger.py", 'if s["rung"] == "RESPONSIVE" and not s.get("live_only"):', 'if s["rung"] == "RESPONSIVE":',
      "AMBIGUOUS"),
-    ("normalize.py", "(?=[\\s(]|$)", "\\b", "must END its token"),
+    ("normalize.py", "\\b(?!-)", "\\b", "must END its token"),
+    ("enforce.py", "    if lo:\n", "    if False:\n", "residual is MEASURED"),
+    ("normalize.py", "\\b(?!-)", "(?=[\\s(]|$)", "must END its token"),
     ("enforce.py", 'lines += [f"  · {r}" for r in out["report"]]', 'lines += [f"  ○ {r}" for r in out["report"]]',
      "not read as a skip"),
     ("shim/sitecustomize.py", '"stamped": _stamped(str(db), [])', '"stamped": None', "D-B DB-grain stamp"),
