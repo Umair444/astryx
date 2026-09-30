@@ -309,6 +309,16 @@ def arms_manifest(tmp):
           "holders": [{"path": "svc/a.env", "fate": "keep"}, {"path": ".env", "fate": "keep"}],
           "expiring": []}
     u3 = ss.undeclared(S, m3, root=tmp)
+    (tmp / "src.env").write_text(f"A_TOKEN={TOK}\nB_DSN=postgresql://u@h/d\nOTHER=x\n")
+    (tmp / "copy.env").write_text(f"A_TOKEN={TOK}\nB_DSN=postgresql://u@h/d\n")
+    md = {"holders": [{"path": "copy.env", "fate": "keep",
+                       "derived_from": {"src.env": ["A_TOKEN", "B_DSN"]}}], "expiring": []}
+    ok_before = ss.derived_drift(md, root=tmp)
+    (tmp / "src.env").write_text(f"A_TOKEN=rotated_FAKE_000111222\nB_DSN=postgresql://u@h/d\n")
+    drift = ss.derived_drift(md, root=tmp)
+    check("M.8 a derived copy equal to its source is clean; a rotated source is DRIFT, named, "
+          "never valued", ok_before == {} and drift == {"copy.env": ["A_TOKEN"]}
+          and TOK not in json.dumps(drift), f"{ok_before} {drift}")
     check("M.7 a symlink to a holder is not reported; a real .env copy is",
           list(u3) == [str(tmp / "scratch2" / ".env")], str(list(u3)))
 
@@ -342,6 +352,8 @@ def arm_live():
                 hits[rel] = sorted(r)
     check("L.3 no live secret appears in any tracked file (leak or over-broad rule)",
           len(tracked) > 50 and not hits, f"tracked={len(tracked)} hits={hits}")
+    dd = ss.derived_drift()
+    check("L.6 every hand-derived copy still equals its source (names only)", not dd, f"drift={dd}")
     uu = ss.undeclared_unit_envs(S)
     check("L.5 every unit whose EnvironmentFile holds a secret is a DECLARED holder", not uu,
           f"undeclared={uu}")

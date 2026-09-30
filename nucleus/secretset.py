@@ -269,3 +269,24 @@ def undeclared_unit_envs(secrets=None, manifest=None) -> dict[str, list[str]]:
     m = manifest or holders()
     declared = {h["path"] for h in m["holders"] + m.get("expiring", [])}
     return {k: v for k, v in env_file_units(secrets).items() if k not in declared}
+
+
+def derived_drift(manifest=None, root: Path = REPO) -> dict[str, list[str]]:
+    """{holder: [keys whose value differs from their source]} for every holder that declares
+    `derived_from`. A hand-derived copy with no writer is a second authority: this makes its drift
+    loud. Values are compared in-process and never returned (a2 #29236)."""
+    m = manifest or holders()
+    out = {}
+    for h in m["holders"] + m.get("expiring", []):
+        for src, keys in (h.get("derived_from") or {}).items():
+            copies = _expand(h["path"], root)
+            sources = _expand(src, root)
+            if not copies or not sources:
+                out[h["path"]] = [f"missing {'copy' if not copies else 'source'}"]
+                continue
+            have = dict(_env_pairs(copies[0]))
+            want = dict(_env_pairs(sources[0]))
+            bad = sorted(k for k in keys if have.get(k) != want.get(k) or k not in want)
+            if bad:
+                out[h["path"]] = bad
+    return out
