@@ -120,7 +120,8 @@ def judge(trace_dir, inv=None, covering=None, stored_covering=None):
     recs, shim_errors = load_traces(trace_dir, untraced)
     gates = load_gates(trace_dir)
     ev = collections.defaultdict(lambda: {"ok": 0, "credited": 0, "fixture_ddl": 0, "zero": False, "pos": False,
-                                          "p": {}, "gates": set(), "fallback": False, "write": False})
+                                          "p": {}, "gates": set(), "fallback": False, "write": False,
+                                          "fx_zero": False, "fx_pos": False, "fx_p": {}})
     blind, direct, oracle_own = [], [], 0
     driver_internal = collections.Counter()         # "name@version" -> n: after tiers 1+2, never above them
     extractors = {}                                  # F-b: test file -> gates, derived from the trace
@@ -173,6 +174,11 @@ def judge(trace_dir, inv=None, covering=None, stored_covering=None):
             e["pos"] = True
         for col, vals in (r.get("p") or {}).items():
             e["p"].setdefault(col, set()).update(v if v is not None else "\0NULL" for v in vals)
+        if stamped_fx:                                # the REPRODUCIBLE half: a fixture's data is the oracle's own
+            e["fx_zero"] |= rows == 0
+            e["fx_pos"] |= bool(rows and rows > 0)
+            for col, vals in (r.get("p") or {}).items():
+                e["fx_p"].setdefault(col, set()).update(v if v is not None else "\0NULL" for v in vals)
 
     if covering is None:
         covering = {f"{k}\x1f{t}": sorted(e["gates"]) for (k, t), e in ev.items()}
@@ -206,7 +212,15 @@ def judge(trace_dir, inv=None, covering=None, stored_covering=None):
                     rung = "RESPONSIVE"
                 else:
                     rung = "EXECUTED" if complete else "NOT SEARCHED"
-            sites[f"{key}\x1f{t}"] = {"rung": rung, "fallback": t == "*",
+            # live_only: RESPONSIVE, but the stamped-fixture evidence ALONE wouldn't be. The witnesses came from
+            # whatever live data held during the run (a now()-relative window over live messages), so the next run
+            # can read EXECUTED. The ledger only moves on reproducible evidence (seed #26453: plan_verdict_due flap).
+            live_only = False
+            if rung == "RESPONSIVE":
+                fw = (not w_need) or (e["fx_zero"] and e["fx_pos"])
+                fp = set(e["fx_p"]) == set(e["p"]) and all(len(v) >= 2 for v in e["fx_p"].values())
+                live_only = not (fw and fp)
+            sites[f"{key}\x1f{t}"] = {"rung": rung, "fallback": t == "*", "live_only": live_only,
                                      "write": fn["sites"].get(t, {}).get("write", False) if t != "*" else None}
     counts = collections.Counter(s["rung"] for s in sites.values())
     run_not_searched = []

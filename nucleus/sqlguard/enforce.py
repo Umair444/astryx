@@ -105,7 +105,11 @@ def enforce(trace_dir, ledger=None, dsn=None, rep=None):
         fn, _, text = key.partition("\x1f")
         row = rows.get(ledger_key(key))
         if s["rung"] == "RESPONSIVE":
-            if row:
+            if row and s.get("live_only"):
+                # the ledger moves only on REPRODUCIBLE evidence: a climb read off live data flaps back next run
+                report.append(f"LIVE-ONLY climb {label(key)}: RESPONSIVE on live data this run, still listed as "
+                              f"{row['debt']}. Not reproducible, so not shrunk: exercise it in a stamped fixture")
+            elif row:
                 red.append(f"R-STALE {label(key)}: now RESPONSIVE but still listed as {row['debt']} (shrink)")
             continue
         if s["rung"] == "NOT SEARCHED":
@@ -121,6 +125,10 @@ def enforce(trace_dir, ledger=None, dsn=None, rep=None):
             continue
         red.append(f"R-NEW {label(key)}: {s['rung']} and not in the ledger. Make it RESPONSIVE, or admit it: "
                    f"ledger admit <trace_dir> {handle(key)} '<reason>'")
+    # the declared live-only residual, MEASURED each run rather than remembered as a dated count (a3 #29426)
+    lo = sum(1 for k, s in rep["sites"].items() if s.get("live_only") and ledger_key(k) not in rows)
+    if lo:
+        report.append(f"{lo} unlisted RESPONSIVE site(s) are live-only (witnesses from live data: not reproducible)")
     live_keys = {ledger_key(k) for k in rep["sites"]}
     for key in rows:
         if key not in live_keys:
