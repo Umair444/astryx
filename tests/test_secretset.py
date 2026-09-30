@@ -373,6 +373,21 @@ def arms_manifest(tmp):
             verdicts[label] = bool(ss.units_using(gone)[0])
     finally:
         ss.UNIT_DIRS, ss._unit_states = real_dirs, real_states
+    # M.11: the unit names the file through a SYMLINKED directory; the manifest names the real one
+    real_dir = tmp / "realcfg"
+    real_dir.mkdir(exist_ok=True)
+    link_dir = tmp / "linkcfg"
+    if not link_dir.exists():
+        link_dir.symlink_to(real_dir)
+    (ud / "x-link.service").write_text(f"[Service]\nEnvironmentFile={link_dir}/geo.env\n")
+    try:
+        ss.UNIT_DIRS = (ud,)
+        ss._unit_states = lambda names: {n: ("enabled", "active") for n in names}
+        via_link = ss.units_using(real_dir / "geo.env")[0]
+    finally:
+        ss.UNIT_DIRS, ss._unit_states = real_dirs, real_states
+    check("M.11 a unit naming the file through a symlinked dir is still its consumer",
+          via_link == ["x-link.service"], str(via_link))
     check("M.10 consumer = declared intent: enabled+FAILED, enabled+inactive, disabled+failed count; "
           "only disabled+inactive does not",
           verdicts == {"enabled+failed": True, "enabled+inactive": True, "disabled+failed": True,

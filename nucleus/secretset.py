@@ -309,8 +309,9 @@ def units_using(path: Path) -> tuple[list[str], str | None]:
                 continue
             for line in lines:
                 if line.startswith("EnvironmentFile="):
-                    f = Path(os.path.expanduser(line.split("=", 1)[1].strip().lstrip("-")))
-                    if f == path and u.name not in names:
+                    f = os.path.expanduser(line.split("=", 1)[1].strip().lstrip("-"))
+                    # realpath BOTH sides: a symlinked ~/.config must not hide the consumer (a2 #33644)
+                    if os.path.realpath(f) == os.path.realpath(path) and u.name not in names:
                         names.append(u.name)
     if not names:
         return [], None
