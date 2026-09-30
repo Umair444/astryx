@@ -96,6 +96,11 @@ check("merge-ready parses branch/base/head", len(r) == 1 and (r[0]["branch"], r[
 check("a quoted <template> line is not a claim (and not MALFORMED)", not any(b["id"] == 2 for b in P["malformed"]),
       str(P["malformed"]))
 check("a merge-ready without a range is MALFORMED", any(b["id"] == 3 for b in P["malformed"]), str(P["malformed"]))
+P3 = m.parse_markers([msg(20, f"merge-ready: feat/n {A[:7]}..{B[:7]} (a2 PASS #31541)\nsupersedes: {A[:7]}..{C[:7]} (old)"),
+                      msg(21, f"merge-ready: feat/n {A[:7]}..{B[:7]} and more words")])
+check("a trailing '(...)' note after the range parses (live a1 #31542 read MALFORMED and went unwatched)",
+      [r["id"] for r in P3["ready"]] == [20] and any(x.get("range") == (A[:7], C[:7]) for x in P3["retract"]), str(P3))
+check("  any other trailing text is still MALFORMED", [b["id"] for b in P3["malformed"]] == [21], str(P3["malformed"]))
 check("supersedes without a merge-ready in the same message is MALFORMED",
       any(b["id"] == 4 and "without a merge-ready" in b.get("why", "") for b in P["malformed"]))
 sup = [x for x in P["retract"] if x.get("range")]
@@ -328,11 +333,11 @@ c4a = commit("f4.txt", "4a\n", "f4: retracted base")
 c4b = commit("f4b.txt", "4b\n", "f4: replacement")
 git("checkout", "-q", "main")
 st, no, tr, *_ = ev([msg(POST + 10, f"merge-ready: f4 {main0[:7]}..{c4a[:7]}"),
-                     msg(POST + 11, f"merge-retract: {c4a[:7]}", sender="abstractor-4"),
+                     msg(POST + 11, f"merge-retract: {c4a[:7]}"),        # SAME sender: cancels its own
                      msg(POST + 12, f"merge-ready: f4 {c4a[:7]}..{c4b[:7]}")])
 check("a replacement PASS on a retracted base reports ONLY its own commit",
       c4b[:10] in st and c4a[:10] not in st, st)
-check("  the retract trails, attributed (by <agent> #<id>)", f"retracted {c4a[:10]} by abstractor-4 #{POST + 11}"
+check("  the retract trails, attributed (by <agent> #<id>)", f"retracted {c4a[:10]} by abstractor-3 #{POST + 11}"
       in tr, tr)
 
 # supersedes
@@ -355,6 +360,47 @@ st, no, tr, *_ = ev([msg(POST + 22, f"merge-ready: f5c {main0[:7]}..{y1[:7]}"),
                      msg(POST + 23, f"merge-ready: f5c {main0[:7]}..{y2[:7]}\nsupersedes: {main0[:7]}..{y1[:7]}")])
 check("supersedes + a new range that re-covers the old commit → the commit stays STANDING (ready wins in-message)",
       y1[:10] in st and y2[:10] in st and y1[:10] not in tr, st + " | " + tr)
+
+# RETRACT RULES (a2 #31306, a4 #31308, steward #31309, a3 #31839): nobody silences another sender's claim
+git("checkout", "-q", "-b", "f11", main0)
+c11 = commit("f11.txt", "11\n", "f11: contested")
+git("checkout", "-q", "-b", "f11b", main0)
+c12 = commit("f11.txt", "12\n", "f11: someone else's rework")
+git("checkout", "-q", "main")
+A3 = msg(POST + 80, f"PASS\nmerge-ready: f11 {main0[:7]}..{c11[:7]}")
+OBJ = msg(POST + 81, f"merge-retract: {c11[:7]} doesn't carry over", sender="abstractor-4")
+st, no, tr, *_ = ev([A3, msg(POST + 79, f"merge-ready: f11 {main0[:7]}..{c11[:7]}", sender="abstractor-4"),
+                     msg(POST + 81, f"merge-retract: {c11[:7]}", sender="abstractor-4")])
+check("a4 #31303 shape: the builder retracting its OWN self-mark leaves the reviewer's PASS standing",
+      f"PASSED, not merged: {c11[:10]}" in st and "abstractor-3 #" in st and "CONTESTED" not in st, st)
+st, no, tr, *_ = ev([A3, OBJ])
+check("aeb21dc shape: a CROSS-sender retract → STANDING 'CONTESTED', the PASS and the objection both printed",
+      f"CONTESTED, not merged: {c11[:10]}" in st and f"abstractor-3 #{POST + 80}" in st
+      and f"objected by abstractor-4 #{POST + 81}: doesn't carry over" in st and "PASSED, not merged" not in st, st)
+st, no, tr, *_ = ev([A3, OBJ, msg(POST + 82, f"merge-retract: {c11[:7]}")])
+check("discharge (1): the ORIGINAL marker's sender retracts → nothing stands; the retract trails",
+      c11[:10] not in st and f"retracted {c11[:10]} by abstractor-3 #{POST + 82}" in tr, st + " | " + tr)
+st, no, tr, *_ = ev([A3, OBJ, msg(POST + 82, f"merge-ready: f11 {main0[:7]}..{c11[:7]}", sender="abstractor-4")])
+check("discharge (2): the OBJECTOR marks it merge-ready afterwards → withdrawn, attributed; PASSED again",
+      f"PASSED, not merged: {c11[:10]}" in st and "CONTESTED" not in st
+      and f"objection #{POST + 81} by abstractor-4 withdrawn by its own merge-ready #{POST + 82}" in tr, st + " | " + tr)
+st, no, tr, *_ = ev([A3, OBJ, msg(POST + 82, f"merge-hold: {c11[:7]} owner call", sender="seed")])
+check("discharge (3): a later merge-hold → HELD (trailing), still naming the objection",
+      "CONTESTED" not in st and "HELD" in tr and f"objected by abstractor-4 #{POST + 81}" in tr, st + " | " + tr)
+st, *_ = ev([A3, OBJ, msg(POST + 82, f"merge-hold: {c11[:7]} owner call", sender="seed", ts=NOW - dt.timedelta(days=m.HOLD_DAYS + 1))])
+check("  ... and a stale hold on a contest is STANDING-HOLD, objection still named",
+      "STANDING-HOLD" in st and f"objected by abstractor-4 #{POST + 81}" in st, st)
+st, *_ = ev([A3, msg(POST + 82, f"merge-hold: {c11[:7]} owner call", sender="seed"),
+             msg(POST + 83, f"merge-retract: {c11[:7]} doesn't carry over", sender="abstractor-4")])
+check("a hold placed BEFORE the objection does not discharge it (the objection is news) → CONTESTED",
+      f"CONTESTED, not merged: {c11[:10]}" in st, st)
+st, *_ = ev([A3, OBJ, msg(POST + 82, f"PASS again\nmerge-ready: f11 {main0[:7]}..{c11[:7]}")])
+check("NEGATIVE: the objected-to reviewer re-marking does NOT clear the contest",
+      f"CONTESTED, not merged: {c11[:10]}" in st, st)
+st, *_ = ev([A3, msg(POST + 81, f"merge-ready: f11b {main0[:7]}..{c12[:7]}\nsupersedes: {main0[:7]}..{c11[:7]}",
+                     sender="abstractor-4")])
+check("a CROSS-sender supersedes → CONTESTED for the old range (never cancelling), marked as a supersedes",
+      f"CONTESTED, not merged: {c11[:10]}" in st and "(a supersedes)" in st and f"PASSED, not merged: {c12[:10]}" in st, st)
 
 # holds
 git("checkout", "-q", "-b", "f6", main0)
@@ -402,6 +448,13 @@ st, no, *_ = ev([msg(POST + 34, f"PASS\nmerge-ready: f10 {main0[:7]}..{c10a[:7]}
                  msg(POST + 35, f"merge-ready: f10 {main0[:7]}..{c10b[:7]}", sender="builder")], earlier=_req)
 check("  a reviewer marker covering only PART of the self-marked range → no corroboration claim",
       f"SELF-MARKED #{POST + 35}" in no and "corroborated" not in no, no)
+
+git("cherry-pick", c11)
+git("push", "-q", "origin", "main")
+st, no, *_ = ev([A3, OBJ])
+check("discharge (4): the patch LANDS while contested → a 'MERGED WHILE CONTESTED' notice, never a silent drop",
+      f"MERGED WHILE CONTESTED: {c11[:10]}" in no and f"objected by abstractor-4 #{POST + 81}" in no
+      and c11[:10] not in st, st + " | " + no)
 
 # ------------------------------------------------------------------------------------------------ 5
 print("\n5. prose coverage + adoption boundary (a1 BC-2):")
