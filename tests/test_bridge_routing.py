@@ -16,7 +16,8 @@ message is read), staged with fixture charters, so agent_exists() answers from t
   R2 a POLL vote to canopus is the newest human row → canopus
   R3 control: a fresh thread → the surface default
   R4 an @mention wins over the thread
-  R5 stickiness kept: the owner @-addressed forge and forge hasn't replied yet → forge
+  R5 a mention does NOT stick (seed #33262): the owner @-addressed forge earlier, canopus had
+     spoken to him before that, and a plain reply → canopus (the last agent he SAW)
   R6 a newest row naming a non-agent (from 'pulse') is skipped → the next real agent
   R7 another thread's speaker never leaks in
   R8 seed's precedence (#33255), in a group-style thread: an explicit @mention ALWAYS wins. The
@@ -26,6 +27,9 @@ message is read), staged with fixture charters, so agent_exists() answers from t
   R9  (a2 B1) an agent-to-AGENT handoff on the thread (seed → canopus) doesn't steal the human's reply
   R10 (a2 B2) a RECEIPT the agent sent the human counts as speaking, with no intent allowlist
   R11 an agent that STARTS a thread (no human row yet) gets the first reply
+  R13 seed's pinned case: owner "@forge …", forge silent, canopus then posts TO the owner, then a
+      bare reply → canopus
+  R14 a thread holding only the human's own chats (an @mention, no agent reply) → the default
   R12 a non-owner human (wa-…) is a human too: an agent speaking to them gets their reply
 PRECEDENCE: explicit mention on THIS message > the newest agent-bearing row (counting polls) >
 the surface default.
@@ -115,6 +119,11 @@ try:
     # R8: a group-style thread: readycash spoke LAST, and insurance has never spoken here.
     row("wa:grp", "owner", "whatsapp", "readycash", "local")
     row("wa:grp", "readycash", "local", "owner", "local")
+    # R13: seed's case. The owner mentions forge; forge is silent; canopus posts to the owner.
+    row("dc:r13", "owner", "discord", "forge", "local")
+    row("dc:r13", "canopus", "local", "owner", "local")
+    # R14: only the owner's own chat (a mention), with no agent reply yet.
+    row("dc:r14", "owner", "discord", "forge", "local")
     # R9: owner ↔ canopus, then an internal handoff seed → canopus on the same thread.
     row("dc:r9", "owner", "discord", "canopus", "local")
     row("dc:r9", "canopus", "local", "owner", "local")
@@ -143,6 +152,8 @@ try:
                 "r6": await rt(conn, "dc:r6", "thanks", "seed"),
                 "r7": await rt(conn, "dc:r7", "sure", "seed"),
                 "r9": await rt(conn, "dc:r9", "go on", "seed"),
+                "r13": await rt(conn, "dc:r13", "ok do it", "seed"),
+                "r14": await rt(conn, "dc:r14", "hello?", "seed"),
                 "r10": await rt(conn, "dc:r10", "ok", "seed"),
                 "r11": await rt(conn, "dc:r11", "yes", "seed"),
                 "r12": await rt(conn, "wa:r12", "thanks", "seed"),
@@ -159,11 +170,15 @@ try:
           who["r2"])
     check("R3 control: a fresh thread → the surface default (seed)", who["r3"] == "seed", who["r3"])
     check("R4 an @mention wins over the thread", who["r4"] == "forge", who["r4"])
-    check("R5 stickiness: owner addressed forge, forge hasn't replied → forge", who["r5"] == "forge",
-          who["r5"])
+    check("R5 a past @mention does NOT stick: plain reply → canopus (the last agent he saw)",
+          who["r5"] == "canopus", who["r5"])
     check("R6 a newest non-agent sender is skipped → the next real agent", who["r6"] == "canopus",
           who["r6"])
     check("R7 another thread's speaker never leaks in", who["r7"] == "canopus", who["r7"])
+    check("R13 seed's case: @forge, forge silent, canopus posts to the owner → bare reply → canopus",
+          who["r13"] == "canopus", who["r13"])
+    check("R14 only the human's own chats on the thread → the default (a mention doesn't stick)",
+          who["r14"] == "seed", who["r14"])
     check("R9 an agent-to-agent handoff (seed → canopus) doesn't steal the reply → canopus",
           who["r9"] == "canopus", who["r9"])
     check("R10 a receipt to the human counts as the agent speaking → canopus", who["r10"] == "canopus",
@@ -187,8 +202,8 @@ try:
             await conn.close()
 
     r8b = asyncio.run(follow_up())[0]
-    check("R8 an UNADDRESSED follow-up after the mention stays with insurance (its row is now "
-          "the newest), until another agent speaks", r8b == "insurance", r8b)
+    check("R8 an UNADDRESSED follow-up after the mention goes to readycash, the last agent the "
+          "owner SAW (a mention routes only its own message)", r8b == "readycash", r8b)
     db.close()
 finally:
     _fx.__exit__(None, None, None)

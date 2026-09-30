@@ -31,13 +31,18 @@ MUTANTS = {
          '        elif True:                               # an agent speaking TO the human\n'),
     # a2 B2: an intent allowlist restored (a receipt to the human stops counting).
     "B4 an intent allowlist on the agent's side (a receipt to the human stops counting)":
-        ('"SELECT from_org, from_agent, to_agent FROM messages WHERE thread=$1 "',
-         '"SELECT from_org, from_agent, to_agent FROM messages WHERE thread=$1 "\n'
+        ('"SELECT from_org, from_agent, to_agent, intent FROM messages WHERE thread=$1 "',
+         '"SELECT from_org, from_agent, to_agent, intent FROM messages WHERE thread=$1 "\n'
          '        "AND (from_org<>\'local\' OR intent IN (\'chat\',\'poll\')) "'),
     "B5 the newest row is taken even when it names no agent":
         ('        if agent_exists(who):\n            return who, text\n',
          '        return who, text\n'),
     "B6 the thread filter dropped (another thread's speaker leaks in)":
-        ('"SELECT from_org, from_agent, to_agent FROM messages WHERE thread=$1 "',
-         '"SELECT from_org, from_agent, to_agent FROM messages WHERE $1::text IS NOT NULL "'),
+        ('"SELECT from_org, from_agent, to_agent, intent FROM messages WHERE thread=$1 "',
+         '"SELECT from_org, from_agent, to_agent, intent FROM messages WHERE $1::text IS NOT NULL "'),
+
+    # seed #33262: a mention must NOT stick. Counting the human's free-text chats makes it stick.
+    "B7 the human's own free-text chats count (a past @mention sticks)":
+        ('            if r["intent"] == "chat":            # free text (a past @mention included) doesn\'t stick\n'
+         '                continue\n', ''),
 }

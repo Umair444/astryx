@@ -124,13 +124,17 @@ def address_agent(text: str, default: str) -> tuple[str, str]:
 async def route_target(pool, thread: str, text: str, default: str) -> tuple[str, str]:
     """Resolve which agent an inbound message routes to, and clean the text.
 
-    PRECEDENCE (seed #33255/#33256):
-      1. an explicit @mention on THIS message, always;
-      2. otherwise whoever the thread's conversation is with right now, which is the newest of
-           - the human's own inbound message (ANY intent: chat, a poll vote, a permission
-             answer…), counted as its to_agent, and
+    PRECEDENCE (seed #33255/#33256/#33262):
+      1. an explicit @mention on THIS message, always. It routes only the message that
+         carries it; it does NOT stick;
+      2. otherwise the newest thing an agent put in front of the human, which is either
            - an agent's message TO THE HUMAN (ANY intent: chat, poll, receipt, permission…),
-             counted as its from_agent;
+             counted as its from_agent, or
+           - the human's structured ANSWER to an agent (a poll vote, a permission answer: any
+             intent except free-text 'chat'), counted as its to_agent.
+         A bare reply answers the most recent agent message the human saw: that's how people
+         reply in chat. The human's own free-text chats don't count, so a past @mention can't
+         pull the next plain reply away from whoever spoke to them since;
       3. otherwise `default` (the surface's own agent).
     "To the human" means to a non-agent: the registry of agents is the one authority, so
     'owner' and every wa-/dc-/tg- person qualify with no name typed here. That's also what
@@ -145,10 +149,12 @@ async def route_target(pool, thread: str, text: str, default: str) -> tuple[str,
     if agent:                                    # 1. explicit @mention on this message
         return agent, cleaned
     rows = await pool.fetch(
-        "SELECT from_org, from_agent, to_agent FROM messages WHERE thread=$1 "
+        "SELECT from_org, from_agent, to_agent, intent FROM messages WHERE thread=$1 "
         "ORDER BY id DESC LIMIT 50", thread)
     for r in rows:                               # 2. newest first
-        if r["from_org"] != "local":             # the human's own message
+        if r["from_org"] != "local":             # the human's own message: only an ANSWER counts
+            if r["intent"] == "chat":            # free text (a past @mention included) doesn't stick
+                continue
             who = r["to_agent"]
         elif not agent_exists(r["to_agent"]):    # an agent speaking TO the human
             who = r["from_agent"]
