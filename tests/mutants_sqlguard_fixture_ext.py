@@ -29,6 +29,8 @@ MUTANTS = {
          "            except Exception as e:\n                raise FixtureUnavailable('wrapped') from e\n"),
     "F6 an unreachable server raises raw, not FixtureUnavailable (consumers can't narrow)":
         ("    except (OSError, StopIteration, psycopg.OperationalError) as e:\n", "    except ZeroDivisionError as e:\n"),
+    "F7 url() puts a socket directory in the authority (asyncpg falls back to localhost TCP)":
+        ('    if d.get("host", "").startswith("/"):\n', '    if False:\n'),
     "F2 ASTRYX_FIXTURE_TEMPLATE ignored (a NOSUPERUSER fixture silently lacks the extensions)":
         ("    tpl = os.environ.get(\"ASTRYX_FIXTURE_TEMPLATE\")", "    tpl = None"),
 }

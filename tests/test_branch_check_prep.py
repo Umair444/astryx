@@ -86,6 +86,9 @@ def main():
         check("branch_check_prep importable", False, str(e))
         return 1
     adm = psycopg.connect(dsn, autocommit=True)
+    if not adm.execute("SELECT rolcreaterole AND rolcreatedb OR rolsuper FROM pg_roles WHERE rolname = current_user").fetchone()[0]:
+        print("NOT SEARCHED: this role can't CREATE ROLE/DATABASE (e.g. branch_check's own run role). Nothing was verified.")
+        return 77
     sys.path.insert(0, str(REPO / "tests"))
     from _oracle_debris import ORACLE_BASE, TEST_DB, reap
     TEST_NAME = lambda n: bool(TEST_DB.match(n))
@@ -234,6 +237,42 @@ def main():
               and seq[1].startswith("REVOKE CONNECT") and "ALLOW_CONNECTIONS true" in templ["seq"][2], str(templ.get("seq")))
         check("BC-4: fixture_db REVOKEs PUBLIC CONNECT at creation, verified by the SERVER (not datacl)",
               templ["public"] is False and bare["public"] is False, f"{bare.get('public')} {templ.get('public')}")
+
+        # ── fixture.url() over a UNIX SOCKET: the sandbox's only route (first e2e #33638, sqlguard P1's asyncpg) ──
+        import asyncio
+        import importlib.util
+        fsrc = os.environ.get("SQLGUARD_FIXTURE_SRC")
+        if fsrc:
+            fsp = importlib.util.spec_from_file_location("fixture_under_test", fsrc)
+            fxmod = importlib.util.module_from_spec(fsp)
+            fsp.loader.exec_module(fxmod)
+        else:
+            from nucleus.sqlguard import fixture as fxmod
+        from nucleus import branch_check_sandbox as sbx
+        sdir = tmp / "sock"
+        sdir.mkdir()
+        sock_url = fxmod.url(scope.dsn(own, socket_dir=sdir))
+        check("url(): a socket directory rides in ?host=, never in the authority",
+              "@/" + own + "?host=" in sock_url and str(sdir) not in sock_url.split("?")[0], sock_url.split("@")[-1])
+        try:
+            import asyncpg
+        except ModuleNotFoundError:
+            asyncpg = None
+        if asyncpg is None:
+            print("  NOTE  asyncpg absent: the socket-connect arm didn't run")
+        else:
+            async def _via_socket():
+                con = await asyncpg.connect(sock_url, timeout=10)
+                try:
+                    return await con.fetchval("SELECT current_database()")
+                finally:
+                    await con.close()
+            with sbx.PgBridge(sdir):
+                try:
+                    got = asyncio.run(_via_socket())
+                except Exception as e:                                  # the arm's verdict, reported by name
+                    got = f"{type(e).__name__}: {e}"
+            check("asyncpg connects through the bridge SOCKET with url()'s URL", got == own, str(got)[:200])
 
         # ── FixtureUnavailable: the ENVIRONMENT class only; a broken schema.sql propagates as itself (a1 #31528) ──
         probe_ex = ("import os,sys,importlib.util; sys.path.insert(0, sys.argv[1])\n"
