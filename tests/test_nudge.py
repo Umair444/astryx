@@ -208,6 +208,25 @@ def run(root, sch, url=None, prompt="refactor the ledger", agent="zzpub", extra=
     return r, time.monotonic() - t0
 
 
+# The hook's own top-level imports: everything it runs BEFORE its deadline is armed.
+HOOK_PRELUDE = ("import ipaddress, json, os, re, signal, socket, sys, http.client; "
+                "from urllib.parse import urlsplit")
+
+
+def interp_baseline() -> float:
+    """Start-up cost under the CURRENT load, measured on a process INDEPENDENT of the subject: a
+    fresh interpreter doing only the hook's own stdlib imports, median of 3. abstractor-2 REVISE
+    #23924: calibrating on the hook itself let a hook that stalls 3s before arming its deadline
+    raise its own bound to 7.66s and pass. The subject must not be able to move its own ceiling."""
+    ts = []
+    for _ in range(3):
+        t0 = time.monotonic()
+        subprocess.run([PY, "-c", HOOK_PRELUDE], capture_output=True, timeout=30,
+                       env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")})
+        ts.append(time.monotonic() - t0)
+    return sorted(ts)[1]
+
+
 def ddl(name):
     text = (REPO / "nucleus" / "schema.sql").read_text()
     i = text.index(f"CREATE TABLE IF NOT EXISTS {name} (")
@@ -232,11 +251,13 @@ try:
     # The bound adapts to the host's CURRENT start-up cost: the unset case does no work beyond
     # starting the interpreter, so its wall time is that cost under whatever load exists now.
     Fake.mode = "ok"
-    r, base = run(strict, SCH, None)
-    exits.append(r.returncode)
+    base = interp_baseline()
     bound = HARD_S + max(1.0, 2 * base)
-    check(f"N3 unset: silent (start-up baseline {base:.2f}s, so bound {bound:.2f}s)",
-          r.stdout == "", f"stdout={r.stdout[:80]!r}")
+    r, dt = run(strict, SCH, None)
+    exits.append(r.returncode)
+    check(f"N3 unset: silent, within the bound (independent baseline {base:.2f}s, "
+          f"bound {bound:.2f}s)", r.stdout == "" and dt < bound,
+          f"stdout={r.stdout[:80]!r} took {dt:.2f}s")
     for name, u, mode in (("down (closed port)", f"http://127.0.0.1:{DOWN}/c", "ok"),
                           ("hung (accepts, never answers)", url, "hang"),
                           ("DRIP (beats any per-socket timeout)", url, "drip"),
