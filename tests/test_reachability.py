@@ -148,6 +148,9 @@ EXEMPT = {
     # prompt, which is the whole point of it (the standing rule it serves is about
     # what a human TYPES; the shell wrapper that lies is not present in scripts).
     "nucleus/estate_grep.sh": "manual: the estate search an agent TYPES — org-news #12934 names it as the rule's implementation; its oracle test_estate_grep.py is what check.sh runs",
+    "nucleus/apply_receipt.py": "manual: operator-run at deploy — seed applies a PASSed gitignored body with it and posts the "
+                                "`applied:` receipt it prints (plan-5791 staging protocol, a3 BC-3); its oracle "
+                                "test_merge_ready.py is what check.sh runs",
     # SIX EXEMPTIONS USED TO LIVE HERE — one per tests/mutants_*.py, added one at a
     # time over eight days by three different authors, each correctly reasoned and each
     # a symptom of the same missing edge. DATA_READERS retires all of them: the specs are
