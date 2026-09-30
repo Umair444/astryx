@@ -41,13 +41,16 @@ set -u
 
 REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || {
   echo "pushed-tree check: not a git repository — VERIFIED NOTHING"; exit 77; }
-# SCRUB THE INHERITED REPO LOCATORS. From a LINKED worktree, git hands this hook
+# SCRUB EVERY INHERITED GIT_*. From a LINKED worktree, git hands this hook
 # GIT_DIR=<repo>/.git/worktrees/<wt>, and every child below inherited it: a test's
 # `git init <tmp>` re-initialized the SHARED repo and wrote core.bare=true (2026-09-30,
 # broke git for every agent), and the checkout below detached the pusher's worktree
-# instead of the clone. REPO is already resolved, so from here each git call locates
-# its own repository. Oracle: tests/test_git_env_isolation.py.
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR
+# instead of the clone. The set is DERIVED, not listed: the hook also carries
+# GIT_CONFIG_PARAMETERS (the pusher's `git -c ...`), which would reach every test's
+# throwaway repo (a3 #28083). REPO is already resolved, so from here each git call
+# locates its own repository. check.sh scrubs again at its own entry.
+# Oracle: tests/test_git_env_isolation.py.
+for v in $(compgen -e | grep "^GIT_"); do unset "$v"; done
 cd "$REPO" || exit 77
 
 REF="${1:-HEAD}"
