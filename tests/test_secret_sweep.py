@@ -142,20 +142,44 @@ def arms_files(tmp: Path):
           str(rep["skipped"]))
 
 
-def arm_turns(tmp: Path):
+def environment_absent() -> str | None:
+    """Why the turns arm CAN'T run here, or None. Only ENVIRONMENT absence may skip (a2 #31526): no
+    psycopg, no .env, the server unreachable, or no right to CREATE DATABASE. It is probed BEFORE the
+    fixture is built, so an error while building it (a broken schema.sql) is the SUBJECT's failure and
+    goes RED, never "not run"."""
     try:
-        from nucleus.sqlguard.fixture import fixture_db
         import psycopg
-        from psycopg.types.json import Jsonb
-    except Exception as e:                                  # noqa: BLE001
-        skip_arm("W5 turns arm", f"{type(e).__name__}")
+    except ImportError:
+        return "psycopg not importable"
+    try:
+        from nucleus.sqlguard.fixture import live_dsn
+        dsn = live_dsn()
+    except (OSError, StopIteration):
+        return "no ASTRYX_DSN in .env"
+    try:
+        with psycopg.connect(dsn, connect_timeout=5) as c:
+            ok = c.execute("SELECT rolsuper OR rolcreatedb FROM pg_roles "
+                           "WHERE rolname = current_user").fetchone()[0]
+    except psycopg.OperationalError as e:
+        return f"database unreachable ({type(e).__name__})"
+    return None if ok else "this role can't CREATE DATABASE"
+
+
+def arm_turns(tmp: Path):
+    why = environment_absent()
+    if why:
+        skip_arm("W5 turns arm", why)
         return
+    import psycopg
+    from psycopg.types.json import Jsonb
+    from nucleus.sqlguard.fixture import fixture_db
     S = secrets(tmp)
     try:
         cm = fixture_db()
         db = cm.__enter__()
-    except Exception as e:                                  # noqa: BLE001
-        skip_arm("W5 turns arm", f"no fixture database ({type(e).__name__})")
+    except Exception as e:                                  # noqa: BLE001 — the environment is PRESENT
+        check("W5 the fixture database builds (the environment is present, so this is the subject)",
+              False, f"{type(e).__name__}: {str(e)[:160]}")
         return
     try:
         payload = {"messages": [{"type": "user", "message": {"content": [
@@ -181,12 +205,40 @@ def arm_turns(tmp: Path):
         cm.__exit__(None, None, None)
 
 
+def arm_polarity(tmp: Path):
+    """W7 (a2 #31526): with the environment PRESENT, a fixture that fails to BUILD (a broken schema.sql)
+    is the subject's failure: RED, never NOT RUN. The fixture is replaced by one raising the error a
+    broken schema raises, so the arm needs no edit to schema.sql."""
+    if environment_absent():
+        return                                              # W5 already recorded why nothing ran
+    import psycopg
+    import nucleus.sqlguard.fixture as fx
+    real, n_fail, n_skip = fx.fixture_db, len(fails), len(skipped)
+
+    def broken(*a, **k):
+        raise psycopg.errors.SyntaxError('syntax error at or near ";"')
+    import io
+    from contextlib import redirect_stdout
+    try:
+        fx.fixture_db = broken
+        with redirect_stdout(io.StringIO()):                # the injected FAIL is expected: don't print it
+            arm_turns(tmp)
+    finally:
+        fx.fixture_db = real
+    new = fails[n_fail:]
+    del fails[n_fail:]                                      # the injected failure is the expectation
+    check("W7 a fixture that fails to BUILD is RED, never NOT RUN (a broken schema.sql)",
+          len(new) == 1 and "fixture database builds" in new[0] and len(skipped) == n_skip,
+          f"fails={new} skipped={skipped[n_skip:]}")
+
+
 def main():
     with tempfile.TemporaryDirectory() as d:
         saved = sw.PROJECTS
         try:
             arms_files(Path(d))
             arm_turns(Path(d))
+            arm_polarity(Path(d))
         finally:
             sw.PROJECTS = saved
     if fails:
