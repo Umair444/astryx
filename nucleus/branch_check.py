@@ -20,6 +20,9 @@ The order is the design's (#26043 + #26057), each step fail-closed:
   teardown    always, by ownership; a LEAK makes the run rc 1
 Prevention grade (stated in the design): against accidents and env-following tests. An adversarial same-uid actor
 is out of scope; it can reach prod without this tool.
+AGE (a3 C1a): the run role's session preload makes AGE's C code reachable from the run role, and every cypher() call
+parses branch-authored text inside it. An AGE privilege escalation would be an escape to superuser, and so to prod.
+That is attack surface prod doesn't have (prod runs AGE as a superuser already), and it is out of scope at this grade.
 """
 import argparse
 import glob

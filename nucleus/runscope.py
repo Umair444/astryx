@@ -70,6 +70,11 @@ class RunScope:
             verifier = c.pgconn.encrypt_password(self._password.encode(), self.role.encode(), b"scram-sha-256")
             c.execute(sql.SQL("CREATE ROLE {} LOGIN NOSUPERUSER CREATEDB PASSWORD {}").format(
                 sql.Identifier(self.role), sql.Literal(verifier.decode())))
+            # AGE (plan-4918 D1): a non-superuser can't `LOAD 'age'`, so the admin preloads it for this role's
+            # sessions. Only where the server offers AGE: a preload of a missing library fails EVERY connection.
+            if c.execute("SELECT 1 FROM pg_available_extensions WHERE name = 'age'").fetchone():
+                c.execute(sql.SQL("ALTER ROLE {} SET session_preload_libraries = 'age'").format(
+                    sql.Identifier(self.role)))
         return self
 
     def dsn(self, dbname: str, host: str = "127.0.0.1", port: int = 5432, socket_dir: str = None) -> str:

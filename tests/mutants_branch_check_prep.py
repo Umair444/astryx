@@ -51,4 +51,6 @@ MUTANTS = {
          "        conn.execute(sql.SQL(\"CREATE DATABASE {}\").format(sql.Identifier(name)))"),
     "B7 the admin password stays in the pg_dump argv conninfo":
         ("    pw = d.pop(\"password\", None)", "    pw = d.get(\"password\")"),
+    "B15 the cached template never gets ag_catalog USAGE (the run role can't see cypher)":
+        ("        t.execute(AGE_USAGE)\n", "        pass\n"),
 }

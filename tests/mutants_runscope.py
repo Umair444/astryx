@@ -36,4 +36,7 @@ MUTANTS = {
          "sql.Identifier(self.role), sql.Literal(self._password)))"),
     "R10 live() counts every scope, dead ones included (a stale scope would stop eviction forever)":
         ("            if alive(json.loads((d / \"lock.json\").read_text())):", "            if json.loads((d / \"lock.json\").read_text()):"),
+    "R9 the run role gets no AGE preload (it can't LOAD, so AGE is unusable in the run)":
+        ("            if c.execute(\"SELECT 1 FROM pg_available_extensions WHERE name = 'age'\").fetchone():",
+         "            if False:"),
 }

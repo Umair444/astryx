@@ -1259,8 +1259,8 @@ async def network_cypher(q: CypherQ, request: Request):
     dsn = os.environ.get("SOCIAL_DSN", "") or DSN.rsplit("/", 1)[0] + "/astryx_social"
     try:
         async with await psycopg.AsyncConnection.connect(dsn, autocommit=True) as conn:
-            await conn.execute("LOAD 'age'")
-            await conn.execute("SET search_path = ag_catalog, \"$user\", public")
+            from nucleus import agelib
+            await agelib.aprepare(conn)       # LOAD as a superuser; a run role has AGE preloaded (plan-4918 D1)
             await conn.execute("SET statement_timeout = '10s'")
             # AGE's contract: the SQL column list must match the cypher RETURN arity.
             # Derived by counting top-level commas in the final RETURN clause — a wrong

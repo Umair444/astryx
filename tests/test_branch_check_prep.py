@@ -71,7 +71,7 @@ def main():
         return 77
     import psycopg
     from psycopg import sql
-    from psycopg.conninfo import conninfo_to_dict
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
     try:
         src = os.environ.get("BRANCH_CHECK_PREP_SRC")                 # mutation_probe points this at a mutant copy
         if src:
@@ -199,6 +199,44 @@ def main():
             exts = {r[0] for r in fc.execute("SELECT extname FROM pg_extension")}
         check("P0-c: the NOSUPERUSER run role clones the template, and the clone HAS the extensions",
               set(bp.TPL_EXTENSIONS) <= exts, str(sorted(exts)))
+
+        # ── AGE as the RUN ROLE (plan-4918 D1, a3 C1b): no LOAD; a role-level preload + ag_catalog USAGE ────────
+        import importlib.util
+        asrc = os.environ.get("AGELIB_SRC")                                # mutation_probe points this at a mutant
+        if asrc:
+            asp = importlib.util.spec_from_file_location("agelib_under_test", asrc)
+            agelib = importlib.util.module_from_spec(asp)
+            asp.loader.exec_module(agelib)
+        else:
+            from nucleus import agelib
+        class Spy:
+            def __init__(self, c):
+                self.c, self.q = c, []
+            def execute(self, q, *a):
+                self.q.append(str(q))
+                return self.c.execute(q, *a)
+        pre = adm.execute("SELECT coalesce(bool_or(x = 'session_preload_libraries=age'), false) FROM pg_db_role_setting s "
+                          "JOIN pg_roles r ON r.oid = s.setrole, unnest(s.setconfig) x "
+                          "WHERE r.rolname = %s AND s.setdatabase = 0", (scope.role,)).fetchone()[0]
+        check("D1: the run role carries a role-level AGE preload, set by the admin at open", pre)
+        def age_try(dsn_, graph):
+            with psycopg.connect(dsn_, autocommit=True) as ac:
+                spy = Spy(ac)
+                try:
+                    agelib.prepare(spy)
+                    ac.execute(f"SELECT create_graph('{graph}')")
+                    ac.execute(f"SELECT * FROM cypher('{graph}', $q$ CREATE (n:BcAge) RETURN n $q$) AS (n agtype)")
+                    n = ac.execute(f"SELECT * FROM cypher('{graph}', $q$ MATCH (n:BcAge) RETURN count(n) $q$) "
+                                   "AS (c agtype)").fetchone()[0]
+                    return str(n), spy.q
+                except psycopg.Error as e:
+                    return f"{type(e).__name__}: {str(e).splitlines()[0]}", spy.q
+        got, q = age_try(scope.dsn(clone), "bcage_run")
+        check("C1b: as the run role, prepare() issues NO LOAD and cypher works through the preload",
+              got == "1" and not any("LOAD" in x for x in q), f"{got} {q}")
+        got, q = age_try(make_conninfo(dsn, dbname=clone), "bcage_su")
+        check("C1b: as a superuser, prepare() still LOADs (prod unchanged), and cypher works without any preload",
+              got == "1" and any(x == "LOAD 'age'" for x in q), f"{got} {q}")
 
         # ── fixture_db AS THE RUN ROLE: the template hook is what gives it the extensions (a2's fail-open) ───
         froot = tmp / "froot"

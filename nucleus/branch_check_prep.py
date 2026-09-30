@@ -154,6 +154,14 @@ def schema_sha(repo: Path) -> str:
     return hashlib.sha256((repo / "nucleus" / "schema.sql").read_bytes()).hexdigest()[:12]
 
 
+# AGE's schema is owned by the admin that created the extension, so a run role can't even SEE cypher() without USAGE
+# (plan-4918 D1, measured). Granted to PUBLIC, and ONLY inside run-owned databases and the cached template (both have
+# PUBLIC CONNECT revoked): the template outlives any one run role (a3 C1c). Idempotent; a no-op without AGE.
+AGE_USAGE = ("DO $$ BEGIN IF to_regnamespace('ag_catalog') IS NOT NULL "
+             "AND NOT has_schema_privilege('public', 'ag_catalog', 'USAGE') THEN "
+             "GRANT USAGE ON SCHEMA ag_catalog TO PUBLIC; END IF; END $$")
+
+
 def ensure_ext_template(conn, sha12: str, keep=(), prefix: str = TPL_PREFIX, evict: bool = True) -> str:
     """The cached template for one schema.sql sha. Eviction drops OTHER shas' templates EXCEPT those in `keep`:
     a differential run needs main's AND the branch's at once when a branch changes schema.sql, so evicting
@@ -183,6 +191,10 @@ def ensure_ext_template(conn, sha12: str, keep=(), prefix: str = TPL_PREFIX, evi
             for ext in TPL_EXTENSIONS:
                 t.execute(sql.SQL("CREATE EXTENSION IF NOT EXISTS {}").format(sql.Identifier(ext)))
         conn.execute(sql.SQL("ALTER DATABASE {} IS_TEMPLATE true").format(sql.Identifier(name)))
+    info = conn.info                                   # a template cached before D1 lacks the grant: add it once
+    with psycopg.connect(host=info.host, port=info.port, user=info.user, password=info.password,
+                         dbname=name, autocommit=True) as t:
+        t.execute(AGE_USAGE)
     return name
 
 
@@ -300,4 +312,5 @@ def build_base(scope, admin_dsn: str, prod_db: str) -> tuple:
     dump.wait()
     with psycopg.connect(make_conninfo(admin_dsn, dbname=base), autocommit=True) as c:
         c.execute(OWN_SQL.format(role=sql.Identifier(scope.role).as_string(c)))
+        c.execute(AGE_USAGE)                           # prod's own ag_catalog ACL is never touched (a3 C1c)
     return base, rest.returncode, len([l for l in rest.stderr.splitlines() if "error" in l.lower()])
