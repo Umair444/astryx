@@ -26,8 +26,18 @@ can embed it directly; these functions are the reference implementation + a self
 Run (self-test against the live graph):  venv/bin/python memory/graph/resolvers.py
 Env: DSN (falls back to ASTRYX_DSN)
 """
+import importlib.util
 import os
 import sys
+from pathlib import Path
+
+# AGE session setup is nucleus/agelib.py's (plan-4918 D1): a superuser LOADs, a run role
+# (branch_check) has AGE preloaded and must NOT LOAD. Imported by path, because putting the
+# repo root on sys.path would let its mcp/ dir shadow the installed `mcp` package.
+_spec = importlib.util.spec_from_file_location(
+    "agelib", Path(__file__).resolve().parents[2] / "nucleus" / "agelib.py")
+agelib = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(agelib)
 
 try:
     import psycopg
@@ -81,8 +91,7 @@ RETURN id(m),
 
 
 def _run_cypher(cur, cypher: str):
-    cur.execute("LOAD 'age';")
-    cur.execute('SET search_path = ag_catalog, "$user", public;')
+    agelib.prepare(cur)
     cur.execute(
         f"SELECT * FROM cypher('{GRAPH}', $cyq$ {cypher} $cyq$) "
         "AS (id agtype, kind agtype, title agtype, text agtype);"
