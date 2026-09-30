@@ -35,7 +35,9 @@ def main():
     # alone, so the subject's own import errors still fail loudly.
     try:
         import psycopg  # noqa: F401
-    except ImportError as e:
+    except ModuleNotFoundError as e:                                  # absent → 77; INSTALLED but broken → FAIL (a3)
+        if e.name != "psycopg":
+            raise
         print(f"NOT SEARCHED: psycopg is not importable by {sys.executable} ({e}); no arm ran.")
         return 77
     src = os.environ.get("BRANCH_CHECK_SRC")                          # mutation_probe points this at a mutant copy
