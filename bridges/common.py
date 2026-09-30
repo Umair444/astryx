@@ -121,25 +121,58 @@ def address_agent(text: str, default: str) -> tuple[str, str]:
     return default, text
 
 
+# The human's inbound that ANSWERS an agent: a poll vote, the one structured answer bridges issue
+# ids for (live inbound intents: chat, poll, reaction; there's no inbound 'permission', since an
+# answer to a permission prompt arrives as chat). NAMED POSITIVELY, because the failure directions
+# differ. An intent that wrongly counts can steal the next reply: a REACTION can target any old
+# message (abstractor-2 #33265). One that wrongly doesn't count falls back to the last agent
+# message the human saw, which is usually the agent that asked anyway.
+ANSWER_INTENTS = frozenset({"poll"})
+
+
 async def route_target(pool, thread: str, text: str, default: str) -> tuple[str, str]:
     """Resolve which agent an inbound message routes to, and clean the text.
 
-    The conversation is sticky: an @mention wins for this message and — because it
-    becomes the message's to_agent on the wire — sets the thread's target going
-    forward. With no mention, the message continues to the LAST agent addressed on
-    this thread, so a chat stays with whoever you last tagged until you tag someone
-    else. A fresh thread falls back to `default` (the surface's own agent). The wire
-    is the state: "last tagged" is just the previous inbound message's to_agent.
-    Standard on every channel."""
+    PRECEDENCE (seed #33255/#33256/#33262):
+      1. an explicit @mention on THIS message, always. It routes only the message that
+         carries it; it does NOT stick;
+      2. otherwise the newest thing an agent put in front of the human, which is either
+           - an agent's message TO THE HUMAN (ANY intent: chat, poll, receipt, permission…),
+             counted as its from_agent, or
+           - the human's ANSWER to an agent (ANSWER_INTENTS: a poll vote), counted as its
+             to_agent. Free-text chat and reactions (which can point at any old message) don't
+             count.
+         A bare reply answers the most recent agent message the human saw: that's how people
+         reply in chat. The human's own free-text chats don't count, so a past @mention can't
+         pull the next plain reply away from whoever spoke to them since;
+      3. otherwise `default` (the surface's own agent).
+    "To the human" means to a non-agent: the registry of agents is the one authority, so
+    'owner' and every wa-/dc-/tg- person qualify with no name typed here. That's also what
+    lets an agent that STARTS a thread get the first reply.
+
+    What the human SAW is the rule, not an intent allowlist (abstractor-2 #33257): a receipt
+    or permission prompt the bridge renders is the agent speaking, as far as the human can
+    tell. An agent-to-AGENT handoff on the thread (seed → canopus) is not "the conversation",
+    so it never steals the human's next reply. Names with no charter (pulse) are skipped. The
+    wire is the state."""
     agent, cleaned = address_agent(text, "")
-    if agent:                                    # explicit @mention on this message
+    if agent:                                    # 1. explicit @mention on this message
         return agent, cleaned
-    row = await pool.fetchrow(
-        "SELECT to_agent FROM messages WHERE thread=$1 AND intent='chat' "
-        "AND from_org<>'local' AND to_org='local' ORDER BY id DESC LIMIT 1", thread)
-    if row and agent_exists(row["to_agent"]):
-        return row["to_agent"], text
-    return default, text
+    rows = await pool.fetch(
+        "SELECT from_org, from_agent, to_agent, intent FROM messages WHERE thread=$1 "
+        "ORDER BY id DESC LIMIT 50", thread)
+    for r in rows:                               # 2. newest first
+        if r["from_org"] != "local":             # the human's own message: only an ANSWER counts
+            if r["intent"] not in ANSWER_INTENTS:  # chat (a past @mention) / a reaction: no
+                continue
+            who = r["to_agent"]
+        elif not agent_exists(r["to_agent"]):    # an agent speaking TO the human
+            who = r["from_agent"]
+        else:                                    # agent-to-agent: not the conversation
+            continue
+        if agent_exists(who):
+            return who, text
+    return default, text                         # 3.
 
 
 # ---------------------------------------------------------------------- embeds

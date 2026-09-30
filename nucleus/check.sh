@@ -258,6 +258,10 @@ run "observatory renders no budget economics" "$PY" tests/test_observatory_no_bu
 # forged payload pushes nothing, with a positive control landed AFTER it), and the bridges'
 # step_line on a real pool, whose agent= is a required keyword every caller passes.
 run "steps doorbell resolves only the named agent's step" "$PY" tests/test_step_doorbell.py
+# bridge reply routing (seed #33250): an unaddressed human reply on a discord/whatsapp/telegram
+# thread goes to the newest agent-bearing row there (the human's last chat OR poll target, or an
+# agent's own last message); the surface default only when none. Synthetic threads, stamped fixture.
+run "bridge replies route to who the thread is talking with" "$PY" tests/test_bridge_routing.py
 # the registry door (goal 4227, S4): find + run, and never a new capability. run() executes
 # registered SCRIPTS only, as an argv list (no shell), with a clamped timeout, and never starts
 # an MCP server, because that would walk past its charter grant. Mutants: tests/mutants_tools_door.py.
