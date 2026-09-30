@@ -44,6 +44,11 @@ def main(argv=None):
 
     root = Path(a.repo).resolve()
     live = Path(a.live).absolute()
+    # a symlinked live path: os.replace would swap the LINK for a regular file, and the receipt would name
+    # the link's target instead of the path given (a3 #29321)
+    if live.is_symlink():
+        print(f"REFUSED: {live} is a symlink — apply to its target by its real path", file=sys.stderr)
+        return 2
     try:
         rel = live.resolve().relative_to(root)
     except ValueError:

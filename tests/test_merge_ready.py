@@ -120,6 +120,16 @@ pp = m.prose_passes([msg(1, "REVIEW abc1234: PASS."), msg(2, "NOT PASS abc1234")
                      msg(5, "PASSes abc1234")])
 check("'PASS <sha>' is a verdict; NOT PASS / PASS/REVISE / PASSes / no-sha are not",
       [x[0]["id"] for x in pp] == [1] and pp[0][1] == ["abc1234"], str([(x[0]["id"], x[1]) for x in pp]))
+# the live false positives of 09-30 (steward #29220, a3 #29321): DISCUSSION naming a sha with PASS further down,
+# and a REVISE lead that says "before I PASS", became STANDING nags. A verdict LEADS (a1 #27806 F5): first line.
+pp = m.prose_passes([msg(6, "plan-5791 built, in review.\nbackfill: aeb21dc (a3 PASS #22311), clear it"),
+                     msg(7, "BUILD REVIEW → REVISE (one defect)\nfbcb8fe: fix it before I PASS with the marker"),
+                     msg(8, "REVIEW fbcb8fe → REVISE, then PASS on the re-post"),
+                     msg(9, "Review of 9c1b729 (doorbell): PASS. Seed, this clears the merge.\nalso 1b510a2")])
+check("a verdict must LEAD: PASS deeper in a discussion, or on a REVISE first line, is not a verdict",
+      [x[0]["id"] for x in pp] == [9], str([x[0]["id"] for x in pp]))
+check("  a leading verdict still names shas from the WHOLE body", pp and pp[0][1] == ["1b510a2", "9c1b729"],
+      str(pp and pp[0][1]))
 
 # ------------------------------------------------------------------------------------------------ 3
 print("\n3. request flags (a2 C1):")
@@ -197,7 +207,7 @@ def _hermetic_run(self, *args, stdin=None, check=False):      # the body's git s
 m.Git.run = _hermetic_run
 
 
-def ev(msgs, prose=(), earlier=lambda mid, pre: [{"id": 1, "from_agent": "builder", "to_agent": "abstractor-3"}]):
+def ev(msgs, prose=(), earlier=lambda mid, pre, br=None: [{"id": 1, "from_agent": "builder", "to_agent": "abstractor-3"}]):
     st, no, tr, dom = m.evaluate(msgs, list(prose), earlier, T, now=NOW.timestamp())
     return ("\n".join(x[1] for x in st), "\n".join(x[1] for x in no), "\n".join(tr), dom, st, no)
 
@@ -211,8 +221,8 @@ st, no, tr, dom, S, N = ev([MK1])
 check("RED-FIRST: a synthetic PASS on an unmerged sha → STANDING 'PASSED, not merged'",
       "PASSED, not merged: " + c1[:10] in st, st)
 check("  attributed to its marker (#id, sender, stated range)", f"abstractor-3 #{POST + 1}" in st, st)
-check("the domain line states the clean-reverts-only residual and the never-fetch rule",
-      "CLEAN reverts only" in dom and "never fetches" in dom, dom)
+check("the domain line states the exact-inverse residual and the never-fetch rule",
+      "exact inverse" in dom and "never fetches" in dom, dom)
 commit("moves.txt", "main moved\n", "main moves on")          # a new parent, so the pick CAN'T reuse c1's sha
 git("cherry-pick", c1)                                       # rebase-landed: same patch, new sha
 landed = git("rev-parse", "HEAD")
@@ -238,7 +248,7 @@ check("merge → clean revert → STANDING 'BACKED-OUT', naming the reverting co
 
 
 def _inv_R(self, c):
-    r = self.run("diff", "--no-color", f"{c}^", c, "-R")
+    r = self.run("diff", "--no-color", "-U0", f"{c}^", c, "-R")     # differs from the body ONLY in -R
     return self._patch_id(r.stdout)
 
 
@@ -253,6 +263,40 @@ git("push", "-q", "origin", "main")
 st, *_ = ev([MK2])
 check("land → revert → re-land → not BACKED-OUT (the latest carrier decides; a3 BC-1)",
       "BACKED-OUT" not in st and c2[:10] not in st, st)
+
+# a3 #29321 R1: a CLEAN revert whose diff CONTEXT moved (main edited a neighbour line between landing and revert)
+# must still read BACKED-OUT. With context-hashing patch-ids it read PUSHED and left the standing set in silence.
+NUM = "".join(f"{i}\n" for i in range(1, 21))
+commit("ctx.txt", NUM, "ctx: twenty lines")
+git("push", "-q", "origin", "main")
+ctx_base = git("rev-parse", "HEAD")
+git("checkout", "-q", "-b", "f8")
+c8 = commit("ctx.txt", NUM.replace("\n5\n", "\nFIVE\n"), "f8: change five")
+git("checkout", "-q", "main")
+git("merge", "-q", "--no-ff", "-m", "merge f8", "f8")
+commit("ctx.txt", (T / "ctx.txt").read_text().replace("\n7\n", "\nSEVEN\n"), "main: neighbour seven")
+git("revert", "--no-edit", c8)
+rv8 = git("rev-parse", "HEAD")
+git("push", "-q", "origin", "main")
+st, *_ = ev([msg(POST + 5, f"merge-ready: f8 {ctx_base[:7]}..{c8[:7]}")])
+check("a clean revert with SHIFTED CONTEXT (a neighbour edited in between) → BACKED-OUT, naming the reverter",
+      "FIVE" not in (T / "ctx.txt").read_text() and f"BACKED-OUT: {c8[:10]}" in st and rv8[:10] in st, st)
+
+# ... and when the landing is a REBASE (a cherry-pick, not an ancestor), the branch commit's OWN patch-id must be
+# context-free too, or it never finds its landing in main's -U0 log
+git("checkout", "-q", "-b", "f9")
+c9 = commit("ctx.txt", (T / "ctx.txt").read_text().replace("\n10\n", "\nTEN\n"), "f9: change ten")
+git("checkout", "-q", "main")
+commit("moves9.txt", "m\n", "main moves before the pick")
+git("cherry-pick", c9)
+pick9 = git("rev-parse", "HEAD")
+commit("ctx.txt", (T / "ctx.txt").read_text().replace("\n12\n", "\nTWELVE\n"), "main: neighbour twelve")
+git("revert", "--no-edit", pick9)
+rv9 = git("rev-parse", "HEAD")
+git("push", "-q", "origin", "main")
+st, *_ = ev([msg(POST + 6, f"merge-ready: f9 {git('merge-base', 'main', c9)[:7]}..{c9[:7]}")])
+check("a REBASE-landed commit, reverted after a neighbour edit → BACKED-OUT (its own patch-id is context-free)",
+      "TEN" not in (T / "ctx.txt").read_text() and f"BACKED-OUT: {c9[:10]}" in st and rv9[:10] in st, st)
 
 # squash → DISAGREE
 git("checkout", "-q", "-b", "f3")
@@ -317,12 +361,36 @@ check("a hold older than HOLD_DAYS → STANDING-HOLD (a defer can't go permanent
 # unresolvable, flags
 st, no, *_ = ev([msg(POST + 40, f"merge-ready: gone {'d' * 7}..{'e' * 7}")])
 check("an unresolvable range → a notice (never silently unwatched)", "does not resolve" in no, no)
-st, no, *_ = ev([R6], earlier=lambda mid, pre: [])
+st, no, *_ = ev([R6], earlier=lambda mid, pre, br=None: [])
 check("UNREQUESTED prints for a marker no one asked for", f"UNREQUESTED #{POST + 30}" in no, no)
-st, no, *_ = ev([R6], earlier=lambda mid, pre: [{"id": 5, "from_agent": "abstractor-3", "to_agent": "abstractor-1"}])
+st, no, *_ = ev([R6], earlier=lambda mid, pre, br=None: [{"id": 5, "from_agent": "abstractor-3", "to_agent": "abstractor-1"}])
 check("SELF-MARKED prints for the builder's own marker", f"SELF-MARKED #{POST + 30}" in no, no)
 st, no, *_ = ev([R6])
 check("REQUESTED does not print", "REQUESTED" not in no and "SELF-MARKED" not in no, no)
+# the 09-30 live shape: the reviewer marked the range (REQUESTED), then the BUILDER re-marked it as one range
+REV6 = msg(POST + 32, f"PASS\nmerge-ready: f6 {main0[:7]}..{c6[:7]}", sender="abstractor-2")
+SELF6 = msg(POST + 33, f"merge-ready: f6 {main0[:7]}..{c6[:7]}", sender="builder")
+
+
+def _req(mid, pre, br=None):                     # the builder asked abstractor-2 for the review, before both markers
+    return [{"id": 1, "from_agent": "builder", "to_agent": "abstractor-2"}]
+
+
+st, no, *_ = ev([REV6, SELF6], earlier=_req)
+check("a builder re-marking a reviewer-marked range: still SELF-MARKED, and names its corroboration",
+      f"SELF-MARKED #{POST + 33} by builder" in no and f"corroborated: every commit also marked by abstractor-2 #{POST + 32}"
+      in no, no)
+st, no, *_ = ev([SELF6], earlier=_req)
+check("  without the reviewer's marker there is no corroboration claim", f"SELF-MARKED #{POST + 33}" in no
+      and "corroborated" not in no, no)
+git("checkout", "-q", "-b", "f10", main0)
+c10a = commit("f10a.txt", "a\n", "f10: reviewed half")
+c10b = commit("f10b.txt", "b\n", "f10: unreviewed half")
+git("checkout", "-q", "main")
+st, no, *_ = ev([msg(POST + 34, f"PASS\nmerge-ready: f10 {main0[:7]}..{c10a[:7]}", sender="abstractor-2"),
+                 msg(POST + 35, f"merge-ready: f10 {main0[:7]}..{c10b[:7]}", sender="builder")], earlier=_req)
+check("  a reviewer marker covering only PART of the self-marked range → no corroboration claim",
+      f"SELF-MARKED #{POST + 35}" in no and "corroborated" not in no, no)
 
 # ------------------------------------------------------------------------------------------------ 5
 print("\n5. prose coverage + adoption boundary (a1 BC-2):")
@@ -378,6 +446,14 @@ out = subprocess.run([PY, str(HELPER), str(bodies[0]), str(TD / "outside.py"), "
                      capture_output=True, text=True)
 check("helper REFUSES a live path outside the repo", out.returncode == 2 and not (TD / "outside.py").exists(),
       out.stderr)
+link = T / "triggers" / "seed" / "linked.py"
+link.symlink_to(LIVE)
+out = subprocess.run([PY, str(HELPER), str(bodies[0]), str(link), "--expect",
+                      hashlib.sha256(bodies[0].read_bytes()).hexdigest(), "--pass", "1", "--repo", str(T)],
+                     capture_output=True, text=True)
+check("helper REFUSES a symlinked live path (os.replace would swap the link for a file; a3 #29321 nit)",
+      out.returncode == 2 and link.is_symlink() and LIVE.read_bytes() == before, out.stderr)
+link.unlink()
 LIVE.write_text("# hand edit, no review\n")
 st, *_ = ev(RC)
 check("a direct live edit → STANDING TAIL-MISMATCH", "TAIL-MISMATCH" in st, st)
@@ -450,6 +526,9 @@ if fx is not None:
         # nobody asked abstractor-5, and the only earlier mention of c4b is the PULSE row: the real earlier-query
         # must return ZERO rows here (sqlguard's W rung needs both 0 and >=1 rows from it)
         unreq_id = put("abstractor-5", f"PASS\nmerge-ready: f4 {c4a[:7]}..{c4b[:7]}")
+        # 09-30 live shape (a1 #29322 → a2 #29323): the request names the BRANCH only, never a sha in the range
+        put("builder", "the next commit on feat/branch-only-ask is up, please look", to="abstractor-6")
+        br_id = put("abstractor-6", f"PASS\nmerge-ready: feat/branch-only-ask {main0[:7]}..{x1[:7]}")
         st8 = {}
         out = m.merge_ready(TempCtx(st8, conn)) or ""
         check("a local marker reports, through the entrypoint's own SQL", c6[:10] in out and "PASSED" in out, out)
@@ -459,6 +538,8 @@ if fx is not None:
         check("REQUESTED via the real earlier-query → no flag", f"UNREQUESTED #{req_id}" not in out, out)
         check("UNREQUESTED via the real earlier-query (zero rows; a pulse row's mention is not a request)",
               f"UNREQUESTED #{unreq_id}" in out, out)
+        check("a request naming only the BRANCH → REQUESTED (a3 BC-2; the live #29323 false flag)",
+              f"feat/branch-only-ask PASSed by abstractor-6 #{br_id}" in out and f"#{br_id} by abstractor-6" not in out, out)
         check("the next run is silent (dedup)", m.merge_ready(TempCtx(st8, conn)) is None)
         m.REPO = TD                                      # not a repo: the checker is blind
         blind = m.merge_ready(TempCtx({}, conn)) or ""
