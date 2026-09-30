@@ -13,7 +13,7 @@ Each arm can ALONE go red:
   W6 a re-scan after redaction reports only the ACTIVE file: S2's "re-scanned to 0" can't pass
      while a live transcript still holds the value.
 
-Run: venv/bin/python tests/test_secret_sweep.py   (the turns arm SKIPs, loudly, without a DB)
+Run: venv/bin/python tests/test_secret_sweep.py   (the turns arm SKIPs without a DB: exit 77)
 """
 import json
 import os
@@ -25,6 +25,13 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 fails = []
+skipped = []
+
+
+def skip_arm(name, why):
+    """An arm that could not run is NOT a pass: the gate exits 77 (UNVERIFIED) naming it."""
+    print(f"  SKIP  {name}: {why}")
+    skipped.append(f"{name} ({why})")
 
 
 def check(name, ok, detail=""):
@@ -141,14 +148,14 @@ def arm_turns(tmp: Path):
         import psycopg
         from psycopg.types.json import Jsonb
     except Exception as e:                                  # noqa: BLE001
-        print(f"  SKIP  W5 turns arm: {type(e).__name__}")
+        skip_arm("W5 turns arm", f"{type(e).__name__}")
         return
     S = secrets(tmp)
     try:
         cm = fixture_db()
         db = cm.__enter__()
     except Exception as e:                                  # noqa: BLE001
-        print(f"  SKIP  W5 turns arm: no fixture database ({type(e).__name__})")
+        skip_arm("W5 turns arm", f"no fixture database ({type(e).__name__})")
         return
     try:
         payload = {"messages": [{"type": "user", "message": {"content": [
@@ -185,6 +192,9 @@ def main():
     if fails:
         print(f"\nFAIL: {len(fails)} arm(s) red")
         return 1
+    if skipped:
+        print(f"\nNOT RUN ({len(skipped)}): " + "; ".join(skipped) + " — exit 77, a skip is not a pass")
+        return 77
     print("\nPASS: the at-rest sweep finds and redacts without corrupting (plan-5497 S2)")
     return 0
 

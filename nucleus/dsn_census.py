@@ -84,7 +84,10 @@ def runners() -> dict[str, dict]:
 
 
 def _node() -> str:
-    for line in (REPO / ".env").read_text().splitlines():
+    env = REPO / ".env"
+    if not env.exists():                                  # a bare clone: PATH's node
+        return "node"
+    for line in env.read_text().splitlines():
         if line.startswith("ASTRYX_NODE="):
             return line.split("=", 1)[1].strip()
     return "node"
