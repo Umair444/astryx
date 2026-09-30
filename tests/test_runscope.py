@@ -57,8 +57,12 @@ def main():
     if not adm.execute("SELECT rolcreaterole AND rolcreatedb OR rolsuper FROM pg_roles WHERE rolname = current_user").fetchone()[0]:
         print("NOT SEARCHED: this role can't CREATE ROLE/DATABASE. Nothing was verified.")
         return 77
+    sys.path.insert(0, str(REPO / "tests"))
+    from _oracle_debris import ORACLE_BASE, reap
+    reap(adm)                                                    # a killed earlier run's debris, by raw SQL
     role_exists = lambda r: bool(adm.execute("SELECT 1 FROM pg_roles WHERE rolname=%s", (r,)).fetchone())
-    base = Path(tempfile.mkdtemp(prefix="runscope-oracle-"))
+    base = ORACLE_BASE / f"o{os.getpid()}"                         # per-oracle subdir: its own scopes only
+    base.mkdir(parents=True, exist_ok=True)
     extra_roles = []
     try:
         # ── open + teardown by ownership ─────────────────────────────────────────────────────────────────

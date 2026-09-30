@@ -148,6 +148,13 @@ run "sqlguard oracle: privacy (P1) + controls"          "$PY" tests/test_sqlguar
 # included; the stale sweep keys on (pid, start time); a lockfile naming a foreign role or path is refused; the
 # server only ever sees a SCRAM verifier. Real roles/DBs, cleaned up independently. Mutants: tests/mutants_runscope.py.
 run "runscope: teardown by ownership, stale sweep, foreign scopes refused" "$PY" tests/test_runscope.py
+# branch_check prep (plan-4918 P0/P1): the P0-b precondition asks has_database_privilege (a NULL ACL is PUBLIC
+# CONNECT), the cached extension template (keep set, escaped LIKE, no PUBLIC CONNECT, clonable by the NOSUPERUSER
+# run role), the private repo, the estate copy that skips credential-bearing files, the branch-tree secret scan,
+# the generated env, and no password on pg_dump argv. Mutants: tests/mutants_branch_check_prep.py.
+run "branch_check prep: hardening precondition, template, repo, estate, env" "$PY" tests/test_branch_check_prep.py
+# the base (R2): a real pg_dump of prod into a run-OWNED base the run role can write; prod only read. ~2.5 min.
+run "branch_check base: prod restored into a run-owned base" "$PY" tests/test_branch_check_base.py
 
 run "charter resolver invariants"      "$PY" tests/test_charter.py
 # org MCP write-tool role gate (t-org-grant): the genome/identity writes are governance-gated
