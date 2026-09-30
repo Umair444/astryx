@@ -127,6 +127,22 @@ def main():
         if (REPO / f).exists():
             check(f"pinned: {f} is captured", covered_by(f, captured))
 
+    # ── the backup FOLLOWS THE SECRET (plan-5497, a2 #27944) ───────────────────────────
+    # S1c moves the DB password out of .env into ~/.pgpass, OUTSIDE the repo, so the git-derived
+    # population above can't see it. Moving a copy must not silently drop the only backed-up
+    # one, so the expected set comes from the holder manifest's `backup` flag, not from here.
+    import json
+    manifest = json.loads((REPO / "nucleus" / "secret_holders.json").read_text())
+    must = [h["path"] for h in manifest["holders"] if h.get("backup")]
+    check("the holder manifest names what a restore needs (backup:true is non-empty)",
+          bool(must), "no holder is flagged backup:true: the arm below would be vacuous")
+    must_rel = []
+    for p in must:
+        rel = p[2:] if p.startswith("~/") else p
+        if ((Path.home() / rel) if p.startswith("~/") else (REPO / p)).exists():
+            must_rel.append(rel)
+            check(f"the backup follows the secret: {p} is captured", covered_by(rel, captured))
+
     # ── and does the REAL artifact carry them? ───────────────────────────────────────
     # The list is a promise; the tarball is the thing a restore actually opens. Only red
     # on an artifact NEWER than backup.sh — an older one legitimately predates the fix,
@@ -144,7 +160,7 @@ def main():
         except Exception as e:
             skip("the newest real artifact carries the inputs", f"unreadable: {type(e).__name__}")
             return verdict()
-        missing = sorted(p for p in inputs if not covered_by(p, names))
+        missing = sorted(p for p in inputs + must_rel if not covered_by(p, names))
         check(f"the newest artifact ({arts[-1].name}) carries every input",
               not missing, "missing from the tarball: " + ", ".join(missing))
 

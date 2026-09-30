@@ -105,6 +105,12 @@ for m in "$HOME"/.claude/projects/-home-umair-astryx*/memory; do
   [ -d "$m" ] || continue                      # unmatched glob expands to itself
   mem_dirs="$mem_dirs ${m#"$HOME"/}"           # $HOME-relative, tarred via -C below
 done
+# ~/.pgpass (plan-5497 S1c, a2 #27944): once the DB password leaves .env it lives ONLY here, so
+# the backup FOLLOWS THE SECRET or a restore brings back an org that can't reach its own
+# database. $HOME-relative like the memory dirs. The artifact already holds .env (the federation
+# identity), so this adds a credential to an artifact that was already credential-grade.
+home_files=""
+[ -f "$HOME/.pgpass" ] && home_files=".pgpass"
 # `--list-state` prints exactly what this script WOULD capture and exits. It exists so
 # tests/test_backup_inputs.py can ask the emitter rather than re-parse it: the oracle
 # derives what SHOULD be captured from `git status --ignored` minus a regenerable manifest
@@ -115,7 +121,7 @@ if [ "${1:-}" = "--list-state" ]; then
   # Memory dirs are $HOME-relative (tarred via -C), so they are printed with the same
   # prefix they will carry INSIDE the artifact. An emitter that reports a path in one
   # form and writes it in another sends its own verifier looking in the wrong place.
-  for x in $mem_dirs; do echo "$x"; done
+  for x in $mem_dirs $home_files; do echo "$x"; done
   exit 0
 fi
 
@@ -213,7 +219,7 @@ if [ -n "$state_dirs" ]; then
   # repo-relative. Whole directories, never a partial capture — a memory dir half in the
   # tarball is the container-vs-content trap wearing a backup's clothes.
   if ! tar -czf "$statepart" --exclude='__pycache__' --exclude='*.pyc' $state_dirs \
-        ${mem_dirs:+-C "$HOME" $mem_dirs} 2>/dev/null; then
+        ${mem_dirs:+-C "$HOME" $mem_dirs} ${home_files:+-C "$HOME" $home_files} 2>/dev/null; then
     echo "backup: FAILED to capture operational state ($state_dirs) — no backup written." >&2
     echo "  A dump alone would restore the triggers TABLE without the trigger BODIES: an org that" >&2
     echo "  boots looking healthy with its whole immune layer absent. The pair ships or neither does." >&2
