@@ -271,10 +271,33 @@ def undeclared_unit_envs(secrets=None, manifest=None) -> dict[str, list[str]]:
     return {k: v for k, v in env_file_units(secrets).items() if k not in declared}
 
 
-def units_using(path: Path) -> tuple[list[str], str | None]:
-    """(ACTIVE units whose EnvironmentFile is `path`, why-unknown). why-unknown is set when systemd
-    can't be asked (a sandbox, a host without it): then nothing can be said about consumers."""
+CONSUMER_ENABLED = frozenset({"enabled", "enabled-runtime", "static", "alias", "indirect", "generated"})
+CONSUMER_ACTIVE = frozenset({"active", "activating", "reloading", "deactivating", "failed"})
+
+
+def _unit_states(names: list[str]) -> dict[str, tuple[str, str]] | str:
+    """{unit: (is-enabled, is-active)}, or a string saying why systemd can't be asked."""
     import subprocess
+    out = {}
+    for verb in ("is-enabled", "is-active"):
+        try:
+            r = subprocess.run(["systemctl", verb, *names], capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return f"systemctl unavailable ({type(e).__name__})"
+        states = r.stdout.split()
+        if len(states) != len(names):                     # no bus: "Failed to connect" on stderr
+            return "systemd not reachable from here"
+        for n, st in zip(names, states):
+            out.setdefault(n, ["", ""])[0 if verb == "is-enabled" else 1] = st
+    return {n: tuple(v) for n, v in out.items()}
+
+
+def units_using(path: Path) -> tuple[list[str], str | None]:
+    """(CONSUMER units whose EnvironmentFile is `path`, why-unknown). A consumer is keyed on DECLARED
+    intent, never on current liveness: a unit whose non-optional EnvironmentFile vanished goes
+    `failed` on its next start, and a liveness key would then drop it and read NOT SEARCHED, the
+    dark direction one step late (a2 #33642). So a unit counts unless it is disabled AND inactive;
+    `failed` counts (it is the consumer reporting the file gone)."""
     names = []
     for d in UNIT_DIRS:
         if not d.is_dir():
@@ -291,15 +314,11 @@ def units_using(path: Path) -> tuple[list[str], str | None]:
                         names.append(u.name)
     if not names:
         return [], None
-    try:
-        r = subprocess.run(["systemctl", "is-active", *names], capture_output=True, text=True,
-                           timeout=10)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return [], f"systemctl unavailable ({type(e).__name__})"
-    states = r.stdout.split()
-    if len(states) != len(names):                         # no bus: "Failed to connect" on stderr
-        return [], "systemd not reachable from here"
-    return [n for n, st in zip(names, states) if st == "active"], None
+    states = _unit_states(names)
+    if isinstance(states, str):
+        return [], states
+    return [n for n in names
+            if states[n][0] in CONSUMER_ENABLED or states[n][1] in CONSUMER_ACTIVE], None
 
 
 def derived_status(manifest=None, root: Path = REPO) -> tuple[dict, dict]:
@@ -322,9 +341,9 @@ def derived_status(manifest=None, root: Path = REPO) -> tuple[dict, dict]:
                 if out_of_tree:
                     users, unknown = units_using(raw)
                     if users:
-                        drift[h["path"]] = [f"missing copy, but ACTIVE unit(s) load it: {users}"]
+                        drift[h["path"]] = [f"missing copy, but consumer unit(s) load it: {users}"]
                     else:
-                        not_searched[h["path"]] = unknown or "absent here, and no active unit loads it"
+                        not_searched[h["path"]] = unknown or "absent here, and no enabled or live unit loads it"
                     continue
             if not copies or not sources:
                 drift[h["path"]] = [f"missing {'copy' if not copies else 'source'}"]

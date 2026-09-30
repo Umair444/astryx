@@ -351,11 +351,32 @@ def arms_manifest(tmp):
         ss.REPO, ss.units_using = real_repo, real_users
     check("M.9a out-of-tree copy absent, no active unit loads it → NOT SEARCHED, named",
           str(gone) in n0 and str(gone) not in d0, f"drift={d0} ns={n0}")
-    check("M.9b … but an ACTIVE unit loads it → DRIFT (the dark-guard direction)",
-          str(gone) in d1 and "ACTIVE" in d1[str(gone)][0], f"drift={d1}")
+    check("M.9b … but a consumer unit loads it → DRIFT (the dark-guard direction)",
+          str(gone) in d1 and "consumer" in d1[str(gone)][0], f"drift={d1}")
     check("M.9c systemd unreachable → NOT SEARCHED with the reason; an IN-TREE absent copy is always DRIFT",
           n2.get(str(gone)) == "systemd not reachable from here" and "intree_gone.env" in d0
           and "intree_gone.env" in d1, f"ns={n2} d0={d0}")
+    # M.10 (a2 #33642): the consumer is keyed on DECLARED intent, not liveness. A unit whose
+    # non-optional EnvironmentFile vanished goes `failed` on restart; that must still read DRIFT.
+    ud = tmp / "units10"
+    ud.mkdir(exist_ok=True)
+    (ud / "x-geo.service").write_text(f"[Service]\nEnvironmentFile={gone}\n")
+    real_dirs, real_states = ss.UNIT_DIRS, ss._unit_states
+    verdicts = {}
+    try:
+        ss.UNIT_DIRS = (ud,)
+        for label, st in (("enabled+failed", ("enabled", "failed")),
+                          ("enabled+inactive", ("enabled", "inactive")),
+                          ("disabled+failed", ("disabled", "failed")),
+                          ("disabled+inactive", ("disabled", "inactive"))):
+            ss._unit_states = lambda names, st=st: {n: st for n in names}
+            verdicts[label] = bool(ss.units_using(gone)[0])
+    finally:
+        ss.UNIT_DIRS, ss._unit_states = real_dirs, real_states
+    check("M.10 consumer = declared intent: enabled+FAILED, enabled+inactive, disabled+failed count; "
+          "only disabled+inactive does not",
+          verdicts == {"enabled+failed": True, "enabled+inactive": True, "disabled+failed": True,
+                       "disabled+inactive": False}, str(verdicts))
     check("M.7 a symlink to a holder is not reported; a real .env copy is",
           list(u3) == [str(tmp / "scratch2" / ".env")], str(list(u3)))
 
@@ -393,8 +414,8 @@ def arm_live():
     check("L.6 every hand-derived copy still equals its source (names only)", not dd, f"drift={dd}")
     for path, why in ns.items():
         skip_arm(f"L.6 derived copy {path}", f"NOT SEARCHED: {why}")
-    # L.6b the DARK-GUARD direction, armed on THIS host: for every present out-of-tree derived copy an
-    # ACTIVE unit loads, simulate its disappearance (the lookup is stubbed; the file is never touched)
+    # L.6b the DARK-GUARD direction, armed on THIS host: for every present out-of-tree derived copy a
+    # consumer unit loads, simulate its disappearance (the lookup is stubbed; the file is never touched)
     # and require DRIFT, not NOT SEARCHED. It proves a vanished geoloc.env would go RED here.
     live = ss.holders()
     armed = []
@@ -411,10 +432,10 @@ def arm_live():
     finally:
         ss._expand = real_expand
     if armed:
-        check("L.6b a vanished copy that an ACTIVE unit loads reads DRIFT on this host (dark guard armed)",
+        check("L.6b a vanished copy that a consumer unit loads reads DRIFT on this host (dark guard armed)",
               all(h["path"] in vanished for h in armed), f"armed={[h['path'] for h in armed]} got={vanished}")
     else:
-        skip_arm("L.6b dark-guard direction", "no present out-of-tree derived copy with an active unit here")
+        skip_arm("L.6b dark-guard direction", "no present out-of-tree derived copy with a consumer unit here")
     uu = ss.undeclared_unit_envs(S)
     check("L.5 every unit whose EnvironmentFile holds a secret is a DECLARED holder", not uu,
           f"undeclared={uu}")
