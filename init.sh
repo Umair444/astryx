@@ -298,6 +298,23 @@ _act_schema() { say "applying schema"
   if command -v psql >/dev/null; then psql "$(dsn)" -f nucleus/schema.sql >/dev/null
   else docker exec -i astryx-pg psql -U astryx -d astryx < nucleus/schema.sql >/dev/null; fi; }
 
+# >>> harden (plan-4918 P0-a)
+# No database this org administers grants PUBLIC CONNECT. Postgres's default lets EVERY role connect to every
+# database, so a run-scoped role (branch_check's bc_*, a fixture's owner) could open prod; branch_check's P0-b
+# refuses to run until this holds. The owner keeps CONNECT through its own ACL entry, which the REVOKE makes
+# explicit. DOMAIN, shared by the check and the act so they can't disagree: connectable databases the DSN role
+# administers (a member of datdba). A database on a shared server we can't REVOKE on is never ours to stall on.
+# Names narrow it (the oracle hardens only its own scratch DBs); the reconciler passes none. Idempotent.
+_HARDEN_Q="SELECT datname FROM pg_database WHERE datallowconn AND pg_has_role(current_user, datdba, 'MEMBER')
+  AND has_database_privilege('public', datname, 'CONNECT')
+  AND (:'only' = '' OR datname = ANY(string_to_array(:'only', ',')))"
+_open_dbs() { echo "$_HARDEN_Q ORDER BY 1;" | psql_q -X -q -tA -v ON_ERROR_STOP=1 -v only="$(IFS=,; echo "$*")"; }
+_chk_harden() { local o; o=$(_open_dbs "$@") || return 1; [ -z "$o" ]; }     # psql failing is RED, never green
+_act_harden() { say "revoking PUBLIC CONNECT on the org's databases (plan-4918 P0-a)"
+  echo "SELECT format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', datname) FROM ($_HARDEN_Q) q \gexec" \
+    | psql_q -X -q -v ON_ERROR_STOP=1 -v only="$(IFS=,; echo "$*")" >/dev/null; }
+# <<< harden
+
 _chk_venv() { [ -d venv ]; }
 # uv when present (fast, modern), python3 -m venv otherwise — SAME venv/ layout either
 # way, so every unit/hook path (venv/bin/python) is identical regardless of the creator.
@@ -432,7 +449,7 @@ _act_model() {
 
 # the precondition DAG, in dependency order (top depends on nothing).  name|class
 RECONCILE_NODES=(
-  "pg|interior" "pgready|wait" "schema|interior" "venv|interior" "deps|interior"
+  "pg|interior" "pgready|wait" "schema|interior" "harden|interior" "venv|interior" "deps|interior"
   "model|interior" "chan|interior" "obs|interior" "obskey|interior" "ident|interior"
   "units|interior" "law|interior" "prehook|interior" "ccompact|interior" "prreview|interior" "login|halt"
   "seed|interior" "prompt|interior")
