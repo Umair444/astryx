@@ -125,6 +125,12 @@
   "nucleus/rotate_db_password.py::rotate\u001fselect rolpassword from pg_authid where rolname=?": [
    "db password rotation leaks nothing (5497 S3b BC-1)"
   ],
+  "nucleus/secret_sweep.py::sweep_turns\u001fselect raw_payload, input_prompt from turns where id=?": [
+   "at-rest secret sweep redacts without corrupting (5497 S2)"
+  ],
+  "nucleus/secret_sweep.py::sweep_turns\u001fupdate turns set raw_payload=?, input_prompt=? where id=?": [
+   "at-rest secret sweep redacts without corrupting (5497 S2)"
+  ],
   "nucleus/sqlguard/canary.py::canary\u001fselect n, (mod(n, 2) = 0) as even from generate_series(1, 2) as n where n > ?": [
    "sqlguard canary: the shim observes through the real Ctx.sql"
   ],
@@ -305,7 +311,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 267,
+  "debt_rows": 270,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -657,6 +663,12 @@
    "reason": "seed",
    "tk": "sha256t:5282e6f5dbb1439f8f4e41d82e034f772f19748b07644ee0445aac2dff1bd330"
   },
+  "nucleus/dsn_census.py::clients\u001fselect current_user": {
+   "admitted": "2026-09-30",
+   "debt": "UNEXECUTED",
+   "reason": "plan-5497 S1c-0 runner census: the query IS the canary, run by each client under each REAL runner environment (psql/psycopg/asyncpg/node-pg subprocesses), never in-process under the shim. tests/test_dsn_census.py is hermetic by design (a2 #28956 B3).",
+   "tk": "sha256t:512c3f53b64496351c32c5fd2c4f22ede4c99faf8c74a9c2d5aef704b7cf4e09"
+  },
   "nucleus/econ.py::econ_mirror\u001fselect day::text, metrics->'v2' from econ order by day desc limit 1": {
    "debt": "EXECUTED/FIXTURE-DDL",
    "reason": "seed",
@@ -813,6 +825,18 @@
    "debt": "EXECUTED",
    "reason": "plan-5497 S3b rollback channel: reads the role verifier so a failed canary restores it byte for byte. Executed by tests/test_rotate_db_password.py on a throwaway role; R5 (mutation: skip the restore) is its discriminating arm.",
    "tk": "sha256t:5dd71eabd853547977ed08637a6aa5ad2bbe486fa2bc7571a2d7f8bb91608a84"
+  },
+  "nucleus/secret_sweep.py::sweep_turns\u001fselect raw_payload, input_prompt from turns where id=?": {
+   "admitted": "2026-09-30",
+   "debt": "EXECUTED",
+   "reason": "plan-5497 S2 at-rest sweep: reads one matched turn to redact it. Executed on a fixture_db by tests/test_secret_sweep.py (W5); the matching scan is RESPONSIVE.",
+   "tk": "sha256t:c1e916969b32f9fe3efcb9d3dadb5eac4e2ccd5f5dc70965e27f95a2393dd03a"
+  },
+  "nucleus/secret_sweep.py::sweep_turns\u001fupdate turns set raw_payload=?, input_prompt=? where id=?": {
+   "admitted": "2026-09-30",
+   "debt": "EXECUTED",
+   "reason": "plan-5497 S2 at-rest redaction write: replaces only the secret spellings in one turn. Executed on a fixture_db by tests/test_secret_sweep.py (W5, re-scan to 0 with structure and usage intact); live only on --redact after a2 PASS + seed go.",
+   "tk": "sha256t:c07af76af722bbef60efb4a73629d6dcd97e5311d9efee01c52e00093a384f26"
   },
   "nucleus/senses.py::_log_call\u001finsert into steps (agent, kind, content) values (?,'sense',?)": {
    "debt": "UNEXECUTED",

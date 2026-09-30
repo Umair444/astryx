@@ -37,20 +37,23 @@ ACTIVE_DAYS = 7
 PROJECTS = Path.home() / ".claude" / "projects"
 
 
+SCRATCH = Path(f"/tmp/claude-{os.getuid()}")
+
+
 def transcript_files() -> list[Path]:
     fs = [p for p in PROJECTS.rglob("*") if p.is_file() and (".jsonl" in p.name or "archive" in p.parts)]
     fs += [p for p in REPO.glob("homes/*/.transcript-aside/*") if p.is_file()]
-    return sorted(fs)
+    # review scratch: .env COPIES a review ritual minted (a2 counted 20). Links to a holder are skipped.
+    fs += [p for p in ss._expand(str(SCRATCH / "**/.env*")) if p.is_file() and not p.is_symlink()]
+    return sorted(set(fs))
 
 
 def active(files: list[Path], now: float = None) -> set[Path]:
+    """ANY *.jsonl directly in a project dir written within ACTIVE_DAYS (a2 #28956: it costs
+    nothing today and doesn't rest on "one live session per dir")."""
     now = now or time.time()
-    newest = {}
-    for f in files:
-        if f.suffix == ".jsonl" and f.parent.parent == PROJECTS:
-            if f.parent not in newest or f.stat().st_mtime > newest[f.parent].stat().st_mtime:
-                newest[f.parent] = f
-    return {f for f in newest.values() if now - f.stat().st_mtime < ACTIVE_DAYS * 86400}
+    return {f for f in files if f.suffix == ".jsonl" and f.parent.parent == PROJECTS
+            and now - f.stat().st_mtime < ACTIVE_DAYS * 86400}
 
 
 def _parses(line: str) -> bool:
@@ -117,7 +120,8 @@ def sweep(do_redact: bool = False, secrets=None, files=None, turns: bool = True)
     secrets = ss.secret_set() if secrets is None else secrets
     files = transcript_files() if files is None else files
     live = active(files)
-    rep = {"domains": {"transcripts": [str(PROJECTS / "**"), "homes/*/.transcript-aside/*"],
+    rep = {"domains": {"transcripts": [str(PROJECTS / "**"), str(REPO / "homes/*/.transcript-aside/*"),
+                                       str(SCRATCH / "**/.env*") + " (not links)"],
                        "turns": "raw_payload + input_prompt",
                        "not_searched": ["backups/ (declared holders)", "compressed files"]},
            "files_scanned": len(files), "files": {}, "held_active": [], "skipped": {}}

@@ -45,10 +45,15 @@ APP = "abcd efgh ijkl mnop"                        # app-password shape (spaces)
 CAP = "capFAKE0123456789abcdef"                    # a capability URL's key=
 PGPW = "pg:FAKE\\secret77"                         # pgpass escapes ':' and '\'
 SHORT = "abc12"
+HOOKTOK = "hookFAKE7d8e9f0a1b2c"                    # a2 #28956 B1: a token in a URL PATH
+USERTOK = "ghpFAKE3c4d5e6f7a8b9"                    # … and in the userinfo USERNAME
 ENV = f"""# comment
 ASTRYX_DSN=postgresql://genesis:{__import__('urllib.parse').parse.quote(PW, safe='')}@127.0.0.1:5432/astryx
 GEOLOC_DSN=postgresql://genesis:{__import__('urllib.parse').parse.quote(PW, safe='')}@127.0.0.1:5432/geo
+OBSERVER_DSN=postgresql://genesis@localhost:5432/genesis
 PLAIN_DSN=postgresql://genesis@localhost:5432/astryx
+NEW_HOOK=https://hooks.example.invalid/services/T0AAA/B0BBB/{HOOKTOK}
+TOKEN_AS_USER=https://{USERTOK}@git.example.invalid/x.git
 OPENAI_API_KEY={TOK}
 BRAND_NEW_KEY={NEW}
 GMAIL_APP_PASSWORD="{APP}"
@@ -87,8 +92,16 @@ def arms_s0(tmp):
           "example-org" not in vals and not any("203.0.113.9" in v for v in vals))
     check("S0.4 a DSN contributes its PASSWORD, decoded, never the host",
           PW in vals and not any("127.0.0.1" in v for v in vals), f"names={sorted(names)}")
-    check("S0.5 a password-less DSN contributes nothing",
-          not any(n.startswith("PLAIN_DSN") for n in names), f"names={sorted(names)}")
+    check("S0.5 a URL_CONFIG DSN without a password contributes nothing (post-S1c shape)",
+          not any(n.startswith("OBSERVER_DSN") for n in names), f"names={sorted(names)}")
+    check("S0.5b URL_CONFIG gives up WHOLE-URL guarding only: its password is still guarded",
+          PW in vals and not any(v.startswith("postgresql://genesis:") for v in vals))
+    check("S0.5c B1 POLARITY: an UNCLASSIFIED URL with no password and no query is guarded WHOLE",
+          any(HOOKTOK in v for v in vals) and any(n == "PLAIN_DSN" for n in names),
+          f"names={sorted(names)}")
+    check("S0.5d B1: a token in the userinfo USERNAME is guarded, whole and alone",
+          USERTOK in vals and any(USERTOK in v and v != USERTOK for v in vals),
+          f"names={sorted(names)}")
     check("S0.6 a capability URL's query value is secret", CAP in vals)
     check("S0.6b a query param declared NOT_SECRET ('<KEY>:<param>') is not",
           "getlocation" not in vals, f"names={sorted(names)}")
@@ -267,7 +280,37 @@ def arms_manifest(tmp):
           ss.undeclared(S, m, root=tmp) == {})
     live = ss.holders()
     check("M.4 the live manifest parses and every entry names a fate",
-          all(h.get("fate") in ("keep", "retire", "expire") for h in live["holders"] + live["expiring"]))
+          all(h.get("fate") in ("keep", "retire", "expire", "minimize")
+              for h in live["holders"] + live["expiring"]))
+    # B2(c): a unit whose EnvironmentFile holds a secret is a holder of its PROCESS ENVIRON
+    ud = tmp / "units"
+    ud.mkdir(exist_ok=True)
+    (ud / "x-leaky.service").write_text(f"[Service]\nEnvironmentFile=-{tmp}/svc/a.env\n")
+    (ud / "x-clean.service").write_text(f"[Service]\nEnvironmentFile={tmp}/svc/clean.env\n")
+    saved = ss.UNIT_DIRS
+    try:
+        ss.UNIT_DIRS = (ud,)
+        found = ss.env_file_units(S)
+        m2 = {"holders": [], "expiring": [], "scan_roots": []}
+        und = ss.undeclared_unit_envs(S, m2)
+        m2["holders"].append({"path": "unit-env:x-leaky.service", "fate": "minimize"})
+        und2 = ss.undeclared_unit_envs(S, m2)
+    finally:
+        ss.UNIT_DIRS = saved
+    check("M.5 a unit whose EnvironmentFile holds a secret is FOUND, a clean one is not",
+          list(found) == ["unit-env:x-leaky.service"], str(found))
+    check("M.6 it is undeclared until the manifest names it", bool(und) and not und2)
+    # a LINK to a holder under a scan root is not a copy; a real copy is
+    (tmp / "scratch").mkdir(exist_ok=True)
+    (tmp / "scratch" / ".env").symlink_to(tmp / "svc" / "a.env")
+    (tmp / "scratch2").mkdir(exist_ok=True)
+    (tmp / "scratch2" / ".env").write_text(f"X={TOK}\n")
+    m3 = {"scan_roots": [str(tmp) + "/**/.env*"],
+          "holders": [{"path": "svc/a.env", "fate": "keep"}, {"path": ".env", "fate": "keep"}],
+          "expiring": []}
+    u3 = ss.undeclared(S, m3, root=tmp)
+    check("M.7 a symlink to a holder is not reported; a real .env copy is",
+          list(u3) == [str(tmp / "scratch2" / ".env")], str(list(u3)))
 
 
 def arm_live():
@@ -299,6 +342,9 @@ def arm_live():
                 hits[rel] = sorted(r)
     check("L.3 no live secret appears in any tracked file (leak or over-broad rule)",
           len(tracked) > 50 and not hits, f"tracked={len(tracked)} hits={hits}")
+    uu = ss.undeclared_unit_envs(S)
+    check("L.5 every unit whose EnvironmentFile holds a secret is a DECLARED holder", not uu,
+          f"undeclared={uu}")
     und = ss.undeclared(S)
     check("L.4 every secret-bearing file under the scan roots is a DECLARED holder",
           not und, f"undeclared={ {k.replace(str(Path.home()), '~'): v for k, v in und.items()} }")

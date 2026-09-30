@@ -42,6 +42,13 @@ NOT_SECRET = frozenset({
 })
 
 
+# URL keys whose URL is CONFIGURATION (host, port, database): the URL is not guarded whole, but its
+# password and query values still are. Every OTHER URL key is guarded whole, plus its parts: a token
+# can sit in a path (a webhook) or in the userinfo username, and "no password, no query" is not
+# evidence of "no secret" (a2 #28956 B1). After S1c these DSNs carry no password at all.
+URL_CONFIG = frozenset({"ASTRYX_DSN", "GEOLOC_DSN", "OBSERVER_DSN"})
+
+
 class Secret(NamedTuple):
     name: str               # "ASTRYX_DSN:password", "OPENAI_API_KEY", "pgpass:localhost:5432:*:genesis"
     value: str
@@ -106,12 +113,15 @@ def _raw(env_file=None, pgpass_file=None) -> list[tuple[str, str]]:
         if parts is None:
             pairs.append((k, v))
         else:
-            parts = [(n, pv) for n, pv in parts if n not in NOT_SECRET]
-            # A URL KEY is not on NOT_SECRET, so its password and query values are guarded. When
-            # it carries NEITHER, it holds nothing: guarding the whole URL (a password-less DSN)
-            # would only redact the host. When it carries a query secret, the whole URL is a
-            # capability too; the query value alone covers it.
-            pairs.extend(parts)
+            # FAIL-SAFE (a2 #28956 B1): an unclassified URL is guarded WHOLE, and its password and
+            # query values too (so a copy of just the token is caught). Only a URL_CONFIG key gives
+            # up whole-URL guarding, and only that: its password and query values stay guarded.
+            if k not in URL_CONFIG:
+                pairs.append((k, v))
+                u = urllib.parse.urlsplit(v).username
+                if u:                                     # a token as the userinfo username
+                    pairs.append((f"{k}:username", urllib.parse.unquote(u)))
+            pairs.extend((n, pv) for n, pv in parts if n not in NOT_SECRET)
     pp = Path(pgpass_file or PGPASS_FILE)
     if pp.exists():
         pairs.extend(_pgpass_pairs(pp))
@@ -181,10 +191,22 @@ def holders(path=None) -> dict:
 
 
 def _expand(p: str, root: Path = REPO) -> list[Path]:
+    import fnmatch
     import glob
-    p = os.path.expanduser(p)
+    p = os.path.expanduser(p.replace("{uid}", str(os.getuid())))
     p = p if os.path.isabs(p) else str(root / p)
-    return [Path(x) for x in sorted(glob.glob(p, recursive=True))]
+    if "**" not in p:
+        return [Path(x) for x in sorted(glob.glob(p))]
+    # walk WITHOUT following symlinks: a scratch tree links venv/ and the estate in, and a glob
+    # that followed them would scan the whole org (and call a link to a holder a copy)
+    base, _, pat = p.partition("**")
+    pat = pat.lstrip("/")
+    out = []
+    for dp, dns, fns in os.walk(base or "/", followlinks=False):
+        for n in fns:
+            if fnmatch.fnmatch(n, pat):
+                out.append(Path(dp) / n)
+    return sorted(out)
 
 
 def undeclared(secrets=None, manifest=None, root: Path = REPO) -> dict[str, list[str]]:
@@ -195,11 +217,14 @@ def undeclared(secrets=None, manifest=None, root: Path = REPO) -> dict[str, list
     m = manifest or holders()
     declared = {str(x) for h in m["holders"] + m.get("expiring", [])
                 for x in _expand(h["path"], root)}
+    declared |= {str(Path(x).resolve()) for x in declared}
     out = {}
     for pattern in m["scan_roots"]:
         for f in _expand(pattern, root):
             if not f.is_file() or str(f) in declared:
                 continue
+            if f.is_symlink() and str(f.resolve()) in declared:
+                continue                                  # a link to a holder is not a copy
             try:
                 hits = scan(f.read_text(errors="replace"), secrets)
             except OSError:
@@ -207,3 +232,40 @@ def undeclared(secrets=None, manifest=None, root: Path = REPO) -> dict[str, list
             if hits:
                 out[str(f)] = sorted(hits)
     return out
+
+
+UNIT_DIRS = (REPO / "units", Path("/etc/systemd/system"), Path.home() / ".config/systemd/user")
+
+
+def env_file_units(secrets=None) -> dict[str, list[str]]:
+    """{"unit-env:<unit>": [secret names]} for every systemd unit whose EnvironmentFile holds a
+    declared secret. Such a unit's PROCESS ENVIRON is a holder (readable at /proc/<pid>/environ
+    by this uid), and a file scan can't see it (a2 #28956 B2)."""
+    secrets = secret_set() if secrets is None else secrets
+    out = {}
+    for d in UNIT_DIRS:
+        if not d.is_dir():
+            continue
+        for u in sorted(d.glob("*.service")):
+            try:
+                text = u.read_text(errors="replace")
+            except OSError:
+                continue
+            for line in text.splitlines():
+                if not line.startswith("EnvironmentFile="):
+                    continue
+                f = Path(os.path.expanduser(line.split("=", 1)[1].strip().lstrip("-")))
+                try:
+                    hits = scan(f.read_text(errors="replace"), secrets) if f.is_file() else {}
+                except OSError:
+                    hits = {}
+                if hits:
+                    out.setdefault(f"unit-env:{u.name}", [])
+                    out[f"unit-env:{u.name}"] = sorted(set(out[f"unit-env:{u.name}"]) | set(hits))
+    return out
+
+
+def undeclared_unit_envs(secrets=None, manifest=None) -> dict[str, list[str]]:
+    m = manifest or holders()
+    declared = {h["path"] for h in m["holders"] + m.get("expiring", [])}
+    return {k: v for k, v in env_file_units(secrets).items() if k not in declared}

@@ -16,6 +16,9 @@ script that prints what it parsed, `docker inspect`, /proc/*/environ, a tracebac
 purpose or by accident. S1c (the password leaves .env) is what carries the DB password; this
 guard is load-bearing for the tokens and ASTRYX_SECRET_KEY that stay in .env (BC-b).
 
+TIMEOUT: the deny is printed before any DB work; if the 5s hook timeout kills the process first,
+the decision is lost and the call is ALLOWED, the declared polarity (a2 #28956).
+
 DOMAIN: resident sessions (ASTRYX_AGENT set) — the fleet this plan measured. POLARITY (a2): this
 is an actuator on every tool call of every agent, so its unknown is ALLOW: decide() raising is the
 CALLER's cue to allow and log loudly, never to block the fleet.
@@ -38,7 +41,7 @@ QUARANTINE = Path.home() / ".astryx-quarantine"
 # read-back shapes the leaking transcripts actually show (Read of .env; cat/grep/sed printing it).
 PRINTERS = frozenset({"cat", "head", "tail", "grep", "egrep", "fgrep", "rg", "sed", "awk", "gawk",
                       "less", "more", "strings", "xxd", "od", "hexdump", "nl", "tac", "sort", "uniq",
-                      "cut", "jq", "tr", "column", "bat", "diff",
+                      "cut", "jq", "tr", "column", "bat", "diff", "xargs",
                       # print nothing but MINT an undeclared copy (a2 #27600: 20 review copies)
                       "cp", "rsync", "tar", "scp", "install"})
 WRAPPERS = frozenset({"sudo", "env", "timeout", "nice", "nohup", "xargs", "command", "exec"})
@@ -107,6 +110,8 @@ def holder_files() -> list[Path]:
 
 
 BY_NAME = frozenset({".env", ".pgpass"})     # secret-bearing by convention, wherever they sit
+# a process environment: a unit with EnvironmentFile=.env holds every secret there (a2 #28956 B2)
+_PROC_ENVIRON = re.compile(r"^/proc/[^/]+/(task/[^/]+/)?environ$")
 
 
 def _is_holder_path(p: str, holders: list[Path]) -> bool:
@@ -115,6 +120,7 @@ def _is_holder_path(p: str, holders: list[Path]) -> bool:
     except (OSError, ValueError):
         return False
     return (rp in holders or Path(p).name in BY_NAME or rp.name in BY_NAME
+            or bool(_PROC_ENVIRON.match(os.path.expanduser(p))) or bool(_PROC_ENVIRON.match(str(rp)))
             or QUARANTINE in rp.parents or rp == QUARANTINE)
 
 
@@ -154,6 +160,8 @@ def _command_word(words: list[str]) -> tuple[str, list[str]]:
             i += 2
         elif wrapped and (w.startswith("-") or re.fullmatch(r"\d+(\.\d+)?[smhd]?", w)):
             i += 1                                        # a wrapper's flag, timeout's duration
+        elif w.startswith("<") and "xargs" in map(os.path.basename, words[:i]):
+            return "xargs", words[i:]                    # bare xargs runs echo: it PRINTS its input
         else:
             return os.path.basename(w), words[i + 1:]
     return "", []

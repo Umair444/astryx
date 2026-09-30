@@ -95,6 +95,12 @@ def arms(tmp: Path):
                 "env X=1 cat .env", "LC_ALL=C sort .env", "cat <.env"):
         r = bash(cmd)
         check(f"G5 read-back DENIED: {cmd.splitlines()[0][:52]}", bool(r), "allowed")
+    for cmd in ("cat /proc/1234/environ", 'tr "\\0" "\\n" < /proc/$pid/environ',
+                "strings /proc/self/environ", "xargs -0 -n1 < /proc/77/task/78/environ"):
+        check(f"G5 B2 process environ DENIED: {cmd[:44]}", bool(bash(cmd)), "allowed")
+    check("G5 B2 Read of /proc/self/environ DENIED",
+          bool(sg.decide("Read", {"file_path": "/proc/self/environ"})))
+    check("G6 /proc/<pid>/status (not an environ) ALLOWED", bash("cat /proc/1/status") is None)
     for tool, p in (("Read", "~/.pgpass"), ("Read", str(tmp / "pgpass")),
                     ("Read", str(tmp / "q" / "dead.env")), ("Grep", env)):
         check(f"G5 {tool} {Path(p).name} DENIED", bool(sg.decide(tool, {"file_path": p, "path": p})))
