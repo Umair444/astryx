@@ -26,6 +26,8 @@ PRECONDITIONS (live run; refuse with rc 77 and a NAMED reason, never a partial r
      holders declared stale-inert, holds the current password: a service still carrying it in a
      DSN would lock out at step 3.
   P2 (BC-2) the manifest's `expiring` list is empty: every rollback/backup copy was deleted.
+  P4 (S1c) every running DSN consumer STARTED after the switch (a service keeps the DSN it read at
+     startup in memory; one that predates the switch would lock out at step 3).
   P3 (S2) the current value appears 0 times in the at-rest domains (the ~/.claude transcripts, the
      homes' .transcript-aside, turns.raw_payload). secret_set() only knows current values, so after
      this rotation the sweeper could no longer find old copies (a4's ordering hazard).
@@ -134,7 +136,50 @@ def preconditions(pgpass: Path, role: str, hosts: set, port: str) -> list[str]:
     n = at_rest_count(probe)
     if n:
         reasons.append(f"P3 (S2): the current value is still at rest: {n}")
+    stale = stale_consumers()
+    if stale:
+        reasons.append(f"P4 (S1c): DSN consumers started before the switch still hold the old DSN "
+                       f"in memory; restart them first: {stale}")
     return reasons
+
+
+def process_start(pid) -> float | None:
+    """A process's start time as epoch seconds, from /proc (boot time + starttime ticks)."""
+    try:
+        after_comm = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+        ticks = int(after_comm[19])                        # field 22 (starttime), 0-based after comm
+        btime = next(int(l.split()[1]) for l in Path("/proc/stat").read_text().splitlines()
+                     if l.startswith("btime "))
+        return btime + ticks / os.sysconf("SC_CLK_TCK")
+    except (OSError, ValueError, StopIteration, IndexError):
+        return None
+
+
+def stale_consumers() -> list[str]:
+    """Running DSN consumers that STARTED BEFORE the last S1c switch: they still hold the old,
+    password-bearing DSN in memory (the channel servers read .env at start; a unit's environ is
+    loaded at start), so rotating would lock them out. The switch time is the newest mtime among
+    nucleus.dsn_password's targets. An unknown start time is stale (fail-closed)."""
+    import subprocess
+    from nucleus import dsn_census, dsn_password
+    switched = max((f.stat().st_mtime for f in dsn_password.targets()), default=None)
+    if switched is None:
+        return ["no DSN targets found: the switch time is unknown"]
+    pids = {}
+    for u in dsn_census.SERVICES:
+        pid = subprocess.run(["systemctl", "show", "-p", "MainPID", "--value", u],
+                             capture_output=True, text=True).stdout.strip()
+        if pid and pid != "0":
+            pids[f"unit:{u}"] = pid
+    for pid in subprocess.run(["pgrep", "-f", "channel/server.mjs"], capture_output=True,
+                              text=True).stdout.split():
+        pids[f"channel-server:{pid}"] = pid
+    out = []
+    for name, pid in sorted(pids.items()):
+        t = process_start(pid)
+        if t is None or t < switched:
+            out.append(name)
+    return out
 
 
 def at_rest_count(probe) -> dict:

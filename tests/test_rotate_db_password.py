@@ -168,18 +168,24 @@ def main():
             svc.mkdir()
             (svc / "a.env").write_text(f"DSN=postgresql://{ROLE}:{rot._esc(new)}@h/db\n")
             from nucleus import secretset as ss
-            saved = (ss.holders, rot.at_rest_count)
+            saved = (ss.holders, rot.at_rest_count, rot.stale_consumers)
             try:
                 ss.holders = lambda path=None: {"scan_roots": [str(svc / "*.env")], "holders": [],
                                                 "expiring": [{"path": "x", "fate": "expire"}]}
                 rot.at_rest_count = lambda probe: {"turns": 3}
+                rot.stale_consumers = lambda: ["unit:astryx-gateway"]
                 reasons = rot.preconditions(pp, ROLE, {"localhost", "127.0.0.1"}, PORT)
             finally:
-                ss.holders, rot.at_rest_count = saved
+                ss.holders, rot.at_rest_count, rot.stale_consumers = saved
             joined = " | ".join(reasons)
-            check("P preconditions refuse, each NAMED: P1 holder, P2 expiring, P3 at rest",
+            check("P preconditions refuse, each NAMED: P1 holder, P2 expiring, P3 at rest, "
+                  "P4 stale consumer",
                   "P1 (S1c)" in joined and "a.env" in joined and "P2 (BC-2)" in joined
-                  and "P3 (S2)" in joined and new not in joined, joined[:300])
+                  and "P3 (S2)" in joined and "P4 (S1c)" in joined and "astryx-gateway" in joined
+                  and new not in joined, joined[:300])
+            me = rot.process_start(os.getpid())
+            check("P4b process_start reads a real start time (after boot, not in the future)",
+                  me is not None and me <= time.time() + 1 and time.time() - me < 3600, str(me))
     finally:
         admin.execute(f"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename='{ROLE}'")
         admin.execute(sql.SQL("REVOKE CONNECT ON DATABASE {} FROM {}").format(
