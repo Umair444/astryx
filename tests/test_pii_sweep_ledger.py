@@ -273,6 +273,42 @@ def main():
               st8.get("v1_seen_dropped") == 2 and "seen" not in st8,
               f"state={ {k: v for k, v in st8.items() if k != 'open'} }")
 
+    # ---- cost: the tier lookup is paid once per AUTHOR, never once per row --------------
+    # 2026-09-30 07:20Z the live sweep crashed "timed out after 30s": _tier_private resolved
+    # the agent's charter (a recursive glob of agents/) for EVERY row — 2725 rows = 60.8s
+    # measured, 99% in charter.resolve — on a heavy wire day. A crashed eval never saves its
+    # watermark, so the backlog only grows and the guard stays blind: the cost has to be
+    # bounded by the number of distinct authors, which a busy day does not grow.
+    import nucleus.tier as _tier
+    calls = []
+    _real = _tier.is_content_public
+
+    def _counting(name):
+        calls.append(name)
+        return True
+
+    class RowsCtx(FakeCtx):
+        def sql(self, q, p=()):
+            self.queries.append(q)
+            if "MAX(id)" in q:
+                return [{"m": 0}]
+            if "FROM messages" in q and "id >" in q:
+                return [{"id": 100 + i, "thread": "t", "from_agent": ("fx-a", "fx-b")[i % 2],
+                         "body": "nothing to see"} for i in range(40)]
+            if "FROM steps" in q and "id >" in q:
+                return [{"id": 500 + i, "agent": ("fx-a", "fx-b")[i % 2], "content": "plain"}
+                        for i in range(40)]
+            return []
+    _tier.is_content_public = _counting
+    try:
+        fixture_tree(tmp_cost := Path(tempfile.mkdtemp()), clean)
+        mod["pii_sweep"].__globals__["REPO"] = tmp_cost
+        mod["pii_sweep"](RowsCtx({"last_msg_id": 1, "last_step_id": 1}))
+    finally:
+        _tier.is_content_public = _real
+    check("80 wire+step rows from 2 authors → the tier lookup runs once per AUTHOR (2), not per row",
+          sorted(calls) == ["fx-a", "fx-b"], f"{len(calls)} lookups: {sorted(set(calls))}")
+
     print("\n" + ("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}"))
     return 1 if fails else 0
 
