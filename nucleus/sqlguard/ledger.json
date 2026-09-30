@@ -332,7 +332,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 274,
+  "debt_rows": 273,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -373,11 +373,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:dfe454b7d426e2199091c8bd86d08cb2494558fa461e3b7d89fb055b47b8ae83"
-  },
-  "bridges/common.py::step_line\u001fselect content from steps where id=?": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:12d8b05f301eaeb76d5e6869f023046416c3db93aa3b9162b794e4cf98d40fff"
   },
   "bridges/common.py::update_poll_votes\u001fselect votes from polls where msg_id=?": {
    "debt": "UNEXECUTED",

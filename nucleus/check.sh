@@ -238,6 +238,10 @@ run "memory window() picks rare-term mass" "$PY" tests/test_memory_window.py
 # costs the row, and the classifications table refuses a prompt-shaped label. RED-first against
 # the pre-4227 hook; the arms that pass vacuously there are pinned by tests/mutants_tool_ledger.py.
 run "tool ledger: ids only, ledger authorship" "$PY" tests/test_tool_ledger.py
+# geoloc /recent (a3 #32078, privacy): location history needs GEOLOC_TOKEN even from localhost, the
+# token compare is constant-time, and a malformed ingest token is a 401, never a 500. The body
+# (bridges/geoloc.py) is gitignored, so this SKIPs 77 on a clean clone. No location data is used.
+run "geoloc /recent: token required, localhost included" "$PY" tests/test_geoloc_recent_auth.py
 # the registry door's find() (steward #25795): whole-token matching (no "is" inside "list"),
 # 4+ char prefixes either way (healthy/health), stopwords dropped, IDF-weighted, and a relative
 # floor that drops common-word-only matches. Fixture registry, RED against the substring ranker.

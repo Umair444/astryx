@@ -14,6 +14,7 @@ able to pass vacuously. Each arm can ALONE go red:
 Run: venv/bin/python tests/test_dsn_census.py
 """
 import io
+import os
 import sys
 import tempfile
 from contextlib import redirect_stdout
@@ -92,6 +93,36 @@ def main():
                   {"PATH": "/usr/bin:/bin"})
     check("D6 probe returns an error CLASS, never the error text",
           out == "FAIL:no password supplied" and FAKE not in out, out)
+
+    # D7: a SHELL whose command line merely contains "channel/server.mjs" is not a channel server
+    import subprocess
+    # a COMPOUND command, so bash stays the process: `bash -c "sleep 30 # …"` is a simple command,
+    # bash execs sleep, the decoy's argv loses the string, and the arm tests nothing (its first draft)
+    decoy = subprocess.Popen(["bash", "-c", "sleep 30; true # channel/server.mjs"])
+    try:
+        import time
+        time.sleep(0.2)
+        seen = Path(f"/proc/{decoy.pid}/cmdline").read_bytes()
+        check("D7a the decoy really carries the string in its argv (else D7 is vacuous)",
+              b"channel/server.mjs" in seen, repr(seen[:80]))
+        got = c.channel_server_pids([str(decoy.pid), str(os.getpid())])
+    finally:
+        decoy.kill()
+        decoy.wait()
+    check("D7 a shell or python process mentioning channel/server.mjs is NOT a channel server",
+          got == [], str(got))
+    gone = c.channel_server_pids(["999999999"])
+    import unittest.mock as um
+    with um.patch("os.readlink", side_effect=PermissionError("not ours")):
+        unknown = c.channel_server_pids(["12345"])
+    check("D8 a vanished pid is dropped; an UNREADABLE one is kept (unknown is stale for P4)",
+          gone == [] and unknown == ["12345"], f"gone={gone} unknown={unknown}")
+    live = subprocess.run(["pgrep", "-f", "channel/server.mjs"], capture_output=True, text=True).stdout.split()
+    real = c.channel_server_pids()
+    if any(Path(f"/proc/{p}/exe").exists() and "node" in os.path.basename(os.readlink(f"/proc/{p}/exe"))
+           for p in live if Path(f"/proc/{p}").exists()):
+        check("D7b every live node channel server IS found (the filter doesn't go blind)",
+              len(real) >= 1 and set(real) <= set(live), f"real={real}")
 
     if fails:
         print(f"\nFAIL: {len(fails)} arm(s) red")
