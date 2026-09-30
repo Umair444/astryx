@@ -24,6 +24,16 @@
   "mcp/memory/resolvers.py::_run_cypher\u001f*": [
    "memory ask() hides tier-private data"
   ],
+  "nucleus/branch_check_prep.py::ensure_ext_template\u001fselect 1 from pg_database where datname = ?": [
+   "branch_check prep: hardening precondition, template, repo, estate, env"
+  ],
+  "nucleus/branch_check_prep.py::ensure_ext_template\u001fselect datname from pg_database where datname like ? and not (datname = any(?))": [
+   "branch_check prep: hardening precondition, template, repo, estate, env"
+  ],
+  "nucleus/branch_check_prep.py::unhardened\u001fselect d.datname from pg_database d join pg_roles r on r.oid = d.datdba where d.datallowconn and r.rolname <> ? order by 1": [
+   "branch_check prep: hardening precondition, template, repo, estate, env",
+   "branch_check: differential verdict, prod witness, clean refusal"
+  ],
   "nucleus/econ.py::_v2_tool_rows\u001fselect s.meta->>'registry_id' as rid, s.agent as caller, (t.goal_id is not null or exists ( select 1 from messages im where im.id = t.input_msg_id and (im.from_agent in ('pulse','owner') or im.from_agent like 'wa-%%' or im.from_org <> all(?)))) as dq from steps s join turns t on t.id = s.turn_id where s.kind = 'tool' and s.meta ? 'registry_id' and s.meta ? 'v' and s.ts >= ? and s.ts < ?": [
    "econ v2 mirror + version gate (4227 S2)",
    "econ v2 shadow (4227 S0)",
@@ -133,6 +143,17 @@
   ],
   "nucleus/sqlguard/canary.py::canary\u001fselect n, (mod(n, 2) = 0) as even from generate_series(1, 2) as n where n > ?": [
    "sqlguard canary: the shim observes through the real Ctx.sql"
+  ],
+  "nucleus/sqlguard/fixture.py::_stamp_all\u001fselect c.oid, quote_ident(n.nspname)||'.'||quote_ident(c.relname) from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relkind in ('r','p','v','m') and n.nspname not in ('pg_catalog','information_schema','ag_catalog','topology') and n.nspname not like 'pg_toast%%' and not exists (select 1 from pg_depend d where d.classid = 'pg_class'::regclass and d.objid = c.oid and d.deptype = 'e')": [
+   "at-rest secret sweep redacts without corrupting (5497 S2)",
+   "audited trigger pins match this schema.sql",
+   "econ provenance: v2 rows come from reviewed code",
+   "every trigger wake leaves through the pulse (4227 S1c)",
+   "goal budgets frozen, writers retired (4227 S3)",
+   "market_decay SQL-surface + O3 end to end (temp schema)",
+   "merge-ready watch + apply receipts (plan-5791)",
+   "recall-graph compiler",
+   "steps doorbell resolves only the named agent's step"
   ],
   "nucleus/toolreg.py::authorship\u001fselect agent, split_part(content, ':', 1), meta->>'edits', content from steps where kind = 'tool' and (meta ? 'edits' or content ~ '^(write|edit|multiedit|notebookedit): ') order by id": [
    "econ v2 mirror + version gate (4227 S2)",
@@ -311,7 +332,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 270,
+  "debt_rows": 274,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -653,6 +674,30 @@
    "reason": "seed",
    "tk": "sha256t:5fdd856b54986c3225f4562d3128a0b1c3abefe6d8f2981fcf097b59d3de166e"
   },
+  "nucleus/branch_check.py::run\u001fselect d.datname from pg_database d join pg_roles r on r.oid = d.datdba where d.datallowconn and r.rolname <> ?": {
+   "admitted": "2026-09-30",
+   "debt": "UNEXECUTED",
+   "reason": "plan-4918 orchestrator R5 foreign-DB list: runs only in a real branch_check run, never inside check.sh (it needs seed's P0-a); a pg_catalog read (pg_database): the judge credits only live public or stamped-fixture relations, so RESPONSIVE is unreachable by construction; first exercised by the first end-to-end run",
+   "tk": "sha256t:02ed9515f7aa8b7b5729348f5b01cd715628af9f02a4096e37dbb6282cff385d"
+  },
+  "nucleus/branch_check_prep.py::ensure_ext_template\u001fselect 1 from pg_database where datname = ?": {
+   "admitted": "2026-09-30",
+   "debt": "EXECUTED",
+   "reason": "plan-4918 cached extension template, existence check: a pg_catalog read (pg_database): the judge credits only live public or stamped-fixture relations, so RESPONSIVE is unreachable by construction; pinned by B4/B12 (template ACL, zero-window)",
+   "tk": "sha256t:4f386ffac17068ca31eeaf88288f1672758f06b7d6fc498c3e720bbdff391b25"
+  },
+  "nucleus/branch_check_prep.py::ensure_ext_template\u001fselect datname from pg_database where datname like ? and not (datname = any(?))": {
+   "admitted": "2026-09-30",
+   "debt": "EXECUTED",
+   "reason": "plan-4918 template eviction: a pg_catalog read (pg_database): the judge credits only live public or stamped-fixture relations, so RESPONSIVE is unreachable by construction; pinned by B2 (keep set) and B3 (escaped LIKE)",
+   "tk": "sha256t:3b754232e4277f4d7d40ccbf685b9b6be7630c5f958a5c8117ef31d964859b09"
+  },
+  "nucleus/branch_check_prep.py::unhardened\u001fselect d.datname from pg_database d join pg_roles r on r.oid = d.datdba where d.datallowconn and r.rolname <> ? order by 1": {
+   "admitted": "2026-09-30",
+   "debt": "EXECUTED",
+   "reason": "plan-4918 P0-b member list: a pg_catalog read (pg_database): the judge credits only live public or stamped-fixture relations, so RESPONSIVE is unreachable by construction; its discrimination is the mutant battery's (B1 NULL-ACL, B10 unevaluable-accused)",
+   "tk": "sha256t:4b03ab31ee84171de1402caa417d0973034ca2ef7b298893ced4e90b0c2b41fb"
+  },
   "nucleus/canopus_inbound.py::main\u001finsert into signals (agent, priority, ref) values (?, ?, ?)": {
    "debt": "UNEXECUTED",
    "reason": "seed",
@@ -913,10 +958,11 @@
    "reason": "seed",
    "tk": "sha256t:24a70fcf340ff1f032302692bdfe9fe64190e009374dd87482dcde8779a883b3"
   },
-  "nucleus/sqlguard/fixture.py::_stamp_all\u001fselect c.oid, quote_ident(n.nspname)||'.'||quote_ident(c.relname) from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relkind in ('r','p','v','m') and n.nspname not in ('pg_catalog','information_schema','ag_catalog','topology') and n.nspname not like 'pg_toast%%'": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:27dad87b95a49034aebfd7ec8db5a4f12b96dfff8c4ce2a4a3bdb320c1ddd3e7"
+  "nucleus/sqlguard/fixture.py::_stamp_all\u001fselect c.oid, quote_ident(n.nspname)||'.'||quote_ident(c.relname) from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relkind in ('r','p','v','m') and n.nspname not in ('pg_catalog','information_schema','ag_catalog','topology') and n.nspname not like 'pg_toast%%' and not exists (select 1 from pg_depend d where d.classid = 'pg_class'::regclass and d.objid = c.oid and d.deptype = 'e')": {
+   "admitted": "2026-09-30",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "plan-4918 re-key: this seed-debt catalog read gained the extension-member exclusion (_ORG_RELS, so a non-superuser never stamps ag_catalog members); the old-text row it replaces is dropped with the same commit",
+   "tk": "sha256t:dd050ae916a4a3ffdf5d0fcaef7e02f232d4e593f097a2ecacf93c517232b405"
   },
   "nucleus/sqlguard/fixture.py::_stamp_all\u001fselect relkind from pg_class where oid=?": {
    "debt": "UNEXECUTED",
@@ -928,10 +974,11 @@
    "reason": "seed",
    "tk": "sha256t:a4f52a4ca6bbeadf49de5245ec7d81063cd5846aec010ce837d22b9262a1b32f"
   },
-  "nucleus/sqlguard/fixture.py::db_stamp_map\u001fselect c.oid, obj_description(c.oid, 'pg_class') from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relkind in ('r','p','v','m') and n.nspname not in ('pg_catalog','information_schema','ag_catalog','topology') and n.nspname not like 'pg_toast%%'": {
+  "nucleus/sqlguard/fixture.py::db_stamp_map\u001fselect c.oid, obj_description(c.oid, 'pg_class') from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relkind in ('r','p','v','m') and n.nspname not in ('pg_catalog','information_schema','ag_catalog','topology') and n.nspname not like 'pg_toast%%' and not exists (select 1 from pg_depend d where d.classid = 'pg_class'::regclass and d.objid = c.oid and d.deptype = 'e')": {
+   "admitted": "2026-09-30",
    "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:96acdbaceb71d76b34e453416154a81a8d249095711a9180de8b8860d31c1fd1"
+   "reason": "plan-4918 re-key: this seed-debt catalog read gained the extension-member exclusion (_ORG_RELS, so a non-superuser never stamps ag_catalog members); the old-text row it replaces is dropped with the same commit",
+   "tk": "sha256t:2ce2b4116414724a6d879300fdae5874145d01bfb05b9682134900e1cec1cbbd"
   },
   "nucleus/sqlguard/fixture.py::signature\u001fselect a.attname, format_type(a.atttypid, a.atttypmod), coalesce(pg_get_expr(d.adbin, d.adrelid), ''), a.attnotnull from pg_attribute a left join pg_attrdef d on d.adrelid=a.attrelid and d.adnum=a.attnum where a.attrelid=? and a.attnum>0 and not a.attisdropped order by a.attname": {
    "debt": "UNEXECUTED",

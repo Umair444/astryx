@@ -38,10 +38,21 @@ if [ ${#SPECS[@]} -eq 0 ]; then
   exit 0
 fi
 
-# --smoke: ONE family (first in sorted glob) — the fast liveness edge check.sh runs so
-# the probe machinery is automatically REACHED daily; the full battery rides the monthly
-# trigger. A smoke pass claims the MACHINERY works, never that every mutant still catches.
-if [ "${1:-}" = "--smoke" ]; then SPECS=("${SPECS[0]}"); fi
+# --smoke: ONE family — the fast liveness edge check.sh runs so the probe machinery is
+# automatically REACHED daily; the full battery rides the monthly trigger. A smoke pass
+# claims the MACHINERY works, never that every mutant still catches.
+# The family is NAMED, not "first in sorted glob": the glob's order is the locale's, so any
+# new family that collates first silently became the smoke. plan-4918's prep family did
+# (en_US ignores the '_' vs '.' difference), turning a ~4s gate into 13 live-DB oracle runs
+# of 10+ minutes (seed #33150). Absent → refuse loudly (rc 1), never fall back to another.
+SMOKE=tests/mutants_check_coverage.py
+if [ "${1:-}" = "--smoke" ]; then
+  if [ ! -f "$SMOKE" ]; then
+    echo "probe-all --smoke: the named smoke family $SMOKE is gone — name another cheap one here."
+    exit 1
+  fi
+  SPECS=("$SMOKE")
+fi
 
 echo "probe-all: ${#SPECS[@]} authored mutant set(s)"
 fail=0

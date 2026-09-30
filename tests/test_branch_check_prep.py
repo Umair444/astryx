@@ -189,6 +189,14 @@ def main():
         (froot / "nucleus").mkdir(parents=True)
         shutil.copy2(REPO / "nucleus" / "schema.sql", froot / "nucleus" / "schema.sql")
         (froot / ".env").write_text(f"ASTRYX_DSN={scope.dsn(own)}\n")
+        def _private_trace(e):
+            # This child is RE-ROOTED at a fake repo (ASTRYX_SQLGUARD_ROOT), so its shim can't attribute a frame to
+            # the real one: under check.sh its probe SQL read BLIND as ?::? (seed #33150). Like test_sqlguard's
+            # _env, a re-rooted child traces into its OWN dir, never the estate's.
+            if "ASTRYX_SQLGUARD_DIR" in e:
+                d = tmp / f"trace-{len(list(tmp.glob('trace-*')))}"
+                d.mkdir()
+                e["ASTRYX_SQLGUARD_DIR"] = str(d)
         probe_fx = ("import os,sys,json,psycopg,importlib.util; sys.path.insert(0, sys.argv[1])\n"
                     "seq, real = [], psycopg.Connection.execute\n"      # the helper's statement sequence (a3 BC-5)
                     "def spy(self, q, *a, **k):\n    s = str(q)\n    seq.append(s) if 'DATABASE' in s else None\n    return real(self, q, *a, **k)\n"
@@ -203,6 +211,7 @@ def main():
                     "    print(json.dumps({'exts': ex, 'public': pub, 'seq': seq})); c.close()")
         def fx_exts(template):
             e = {**os.environ, "ASTRYX_SQLGUARD_ROOT": str(froot), "ASTRYX_SQLGUARD_RUN": f"bco{os.getpid()}"}
+            _private_trace(e)
             e.pop("ASTRYX_FIXTURE_TEMPLATE", None)
             if template:
                 e["ASTRYX_FIXTURE_TEMPLATE"] = template
@@ -236,6 +245,7 @@ def main():
                     "except Exception as e: print(type(e).__module__ + '.' + type(e).__name__)")
         def fx_outcome(root):
             e = {**os.environ, "ASTRYX_SQLGUARD_ROOT": str(root), "ASTRYX_SQLGUARD_RUN": f"bcx{os.getpid()}"}
+            _private_trace(e)
             r = subprocess.run([sys.executable, "-c", probe_ex, str(REPO)], env=e, capture_output=True, text=True,
                                timeout=120)
             return (r.stdout.strip().splitlines() or [r.stderr[-200:]])[-1]

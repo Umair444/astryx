@@ -77,8 +77,14 @@ def _load(path: Path):
 
 def _run_oracle(oracle: Path, env_var: str, subject_path: Path) -> int:
     env = dict(os.environ, **{env_var: str(subject_path)})
-    r = subprocess.run([sys.executable, str(oracle)], env=env,
-                       capture_output=True, text=True, timeout=120)
+    with tempfile.TemporaryDirectory() as trace:
+        # A mutant (or the canary) is NOT the inventoried code, so its SQL is not estate evidence: under check.sh's
+        # sqlguard it read BLIND (126 lines, seed #33150, when the smoke family became one with SQL mutants). The
+        # oracle child keeps tracing, but into a private dir that dies with the run, never the estate's.
+        if "ASTRYX_SQLGUARD_DIR" in env:
+            env["ASTRYX_SQLGUARD_DIR"] = trace
+        r = subprocess.run([sys.executable, str(oracle)], env=env,
+                           capture_output=True, text=True, timeout=120)
     return r.returncode
 
 
@@ -296,6 +302,34 @@ def self_test() -> int:
         head_ok = "Every authored mutant was caught" not in out3 and "NOT PROBED" in out3
         print(f"  {'PASS' if head_ok else 'FAIL'}  the headline never claims the set was caught")
         ok &= head_ok
+
+        # A mutant's SQL must never reach the estate's sqlguard trace (seed #33150): the oracle child sees a
+        # private trace dir, and a set-but-empty estate dir stays empty after a probe.
+        print("\nSQLGUARD — a mutant's run never writes the estate's trace dir:")
+        (td / "oracle_trace.py").write_text(
+            _ORACLE_HEAD
+            + 'd = os.environ.get("ASTRYX_SQLGUARD_DIR", "")\n'
+              'Path(d, "trace-probe.jsonl").write_text("x") if d else fails.append("unset")\n'
+            + _GOOD + _ORACLE_TAIL)
+        (td / "m_trace.py").write_text(
+            f'SUBJECT = {str(td / "subject.py")!r}\n'
+            f'ORACLE = {str(td / "oracle_trace.py")!r}\n'
+            'ENV = "PROBE_SELFTEST_SRC"\n'
+            'MUTANTS = {"threshold moved": ("THRESHOLD = 10", "THRESHOLD = 100")}\n')
+        estate = td / "estate_trace"
+        estate.mkdir()
+        prev = os.environ.get("ASTRYX_SQLGUARD_DIR")
+        os.environ["ASTRYX_SQLGUARD_DIR"] = str(estate)
+        try:
+            rc = probe(td / "m_trace.py", verbose=False)
+        finally:
+            if prev is None:
+                os.environ.pop("ASTRYX_SQLGUARD_DIR", None)
+            else:
+                os.environ["ASTRYX_SQLGUARD_DIR"] = prev
+        tr_ok = rc == 0 and not any(estate.iterdir())
+        print(f"  {'PASS' if tr_ok else 'FAIL'}  the oracle traced, into a private dir (estate dir empty, rc {rc})")
+        ok &= tr_ok
 
     print("\n" + ("SELF-TEST PASS" if ok else "SELF-TEST FAILED"))
     return 0 if ok else 1
