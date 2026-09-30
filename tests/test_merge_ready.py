@@ -43,9 +43,72 @@ from pathlib import Path
 for _k in [k for k in os.environ if k.startswith("GIT_")]:
     del os.environ[_k]
 REPO = Path(__file__).resolve().parents[1]
-BODY =Path(os.environ.get("MERGE_READY_SRC") or REPO / "triggers" / "seed" / "merge_ready.py")
+BODY = Path(os.environ.get("MERGE_READY_SRC") or REPO / "triggers" / "seed" / "merge_ready.py")
+PY = sys.executable
+HELPER = REPO / "nucleus" / "apply_receipt.py"
+fails, skips = [], []
+
+
+def check(name, ok, detail=""):
+    print(f"  {'PASS' if ok else 'FAIL'}  {name}")
+    if not ok:
+        fails.append(name)
+        if detail:
+            print(f"        {detail}")
+
+
+# ------------------------------------------------------------------------------------------------ 0
+# The TRACKED helper needs no watch body, so its arms run FIRST and everywhere — a fresh clone included
+# (a3 #32619: the reachability exemption says "its oracle is what check.sh runs", which must not depend on
+# the gitignored body being present). A plain temp dir as --repo: the helper never touches git.
+import hashlib  # noqa: E402
+print("0. apply_receipt helper (tracked; needs no watch body):")
+_h0 = tempfile.TemporaryDirectory()
+H0 = Path(_h0.name) / "repo"
+(H0 / "triggers" / "seed").mkdir(parents=True)
+H0LIVE = H0 / "triggers" / "seed" / "x.py"
+H0B = []
+for _i in range(3):
+    _b = Path(_h0.name) / f"stage{_i}.py"
+    _b.write_text(f"# body {_i}\n")
+    H0B.append(_b)
+
+
+def happly(b, live=H0LIVE, expect=None, pass_id=7):
+    exp = expect or hashlib.sha256(b.read_bytes()).hexdigest()
+    return subprocess.run([PY, str(HELPER), str(b), str(live), "--expect", exp, "--pass", str(pass_id),
+                           "--repo", str(H0)], capture_output=True, text=True)
+
+
+_rs = [happly(b, pass_id=100 + i) for i, b in enumerate(H0B)]
+check("helper: 3 sequential applies exit 0", all(x.returncode == 0 for x in _rs), str([x.stderr for x in _rs]))
+_ln = [x.stdout.strip().split() for x in _rs]
+_sha = [hashlib.sha256(b.read_bytes()).hexdigest() for b in H0B]
+check("helper: a NEW file's before is `absent`; the receipt names the repo-relative path and PASS id",
+      _ln[0][:3] == ["applied:", "triggers/seed/x.py", "absent"] and _ln[0][-2:] == ["(PASS", "#100)"], str(_ln[0]))
+check("helper: every after-sha is the COMPUTED sha256 of the body applied, and each before is the prior after",
+      [x[4] for x in _ln] == _sha and [x[2] for x in _ln[1:]] == _sha[:2], str(_ln))
+_before = H0LIVE.read_bytes()
+_bad = happly(H0B[0], expect="0" * 64)
+check("helper REFUSES a body that does not match --expect, and writes nothing",
+      _bad.returncode == 2 and "REFUSED" in _bad.stderr and H0LIVE.read_bytes() == _before, _bad.stderr)
+_o = happly(H0B[0], expect="zz")
+check("helper REFUSES a non-hex --expect", _o.returncode == 2, _o.stderr)
+_o = happly(H0B[0], live=Path(_h0.name) / "outside.py")
+check("helper REFUSES a live path outside the repo",
+      _o.returncode == 2 and not (Path(_h0.name) / "outside.py").exists(), _o.stderr)
+_link = H0 / "triggers" / "seed" / "linked.py"
+_link.symlink_to(H0LIVE)
+_o = happly(H0B[0], live=_link)
+check("helper REFUSES a symlinked live path (os.replace would swap the link for a file; a3 #29321 nit)",
+      _o.returncode == 2 and _link.is_symlink() and H0LIVE.read_bytes() == _before, _o.stderr)
+
 if not BODY.exists():
-    print("SKIP: merge_ready body absent (gitignored triggers/) — nothing asserted.")
+    if fails:
+        print(f"\nFAIL: {len(fails)} helper arm(s); the watch body is absent (gitignored triggers/), its arms not run")
+        sys.exit(1)
+    print("\nSKIP (partial): the helper's arms PASSED; the merge_ready body is absent (gitignored triggers/) — "
+          "every watch arm unverified.")
     sys.exit(77)
 sys.path.insert(0, str(REPO))
 try:
@@ -56,20 +119,9 @@ except Exception as e:  # noqa: BLE001
     print(f"SKIP: merge_ready not importable ({type(e).__name__}: {e}).")
     sys.exit(77)
 
-PY = sys.executable
-HELPER = REPO / "nucleus" / "apply_receipt.py"
-fails, skips = [], []
 NOW = dt.datetime.now(dt.timezone.utc)
 POST = m.ADOPTION_MSG_ID + 1000          # message ids after the adoption boundary
 PRE = 100                                # and before it
-
-
-def check(name, ok, detail=""):
-    print(f"  {'PASS' if ok else 'FAIL'}  {name}")
-    if not ok:
-        fails.append(name)
-        if detail:
-            print(f"        {detail}")
 
 
 def msg(i, body, sender="abstractor-3", to="seed", ts=None):
@@ -481,7 +533,6 @@ for i in range(3):
     b = TD / f"stage{i}.py"
     b.write_text(f"# body {i}\n")
     bodies.append(b)
-import hashlib  # noqa: E402
 
 
 def apply(b, expect=None, pass_id=7):
@@ -491,33 +542,15 @@ def apply(b, expect=None, pass_id=7):
 
 
 rs = [apply(b, pass_id=100 + i) for i, b in enumerate(bodies)]
-check("helper: 3 applies exit 0", all(x.returncode == 0 for x in rs), str([x.stderr for x in rs]))
+check("helper: 3 applies into the hermetic git repo exit 0", all(x.returncode == 0 for x in rs), str([x.stderr for x in rs]))
 lines = [x.stdout.strip() for x in rs]
-check("helper: a NEW file's before is `absent`; each receipt names the repo-relative path",
+check("  the first receipt there is a genesis (`absent`)",
       lines[0].startswith("applied: triggers/seed/x.py absent → "), lines[0])
 RC = [msg(POST + 60 + i, f"applied to the live tree:\n{ln}", sender="seed") for i, ln in enumerate(lines)]
 st, no, tr, dom, *_ = ev(RC)
 check("3 sequential receipts chain: live == tail → silent (no standing, no notice)", st == "" and no == "", st + no)
 check("the watched path is DECLARED in the domain line", "triggers/seed/x.py" in dom, dom)
 before = LIVE.read_bytes()
-bad = apply(bodies[0], expect="0" * 64)
-check("helper REFUSES a body that does not match --expect, and writes nothing",
-      bad.returncode == 2 and "REFUSED" in bad.stderr and LIVE.read_bytes() == before, bad.stderr)
-out = apply(bodies[0], expect="zz")
-check("helper REFUSES a non-hex --expect", out.returncode == 2, out.stderr)
-out = subprocess.run([PY, str(HELPER), str(bodies[0]), str(TD / "outside.py"), "--expect",
-                      hashlib.sha256(bodies[0].read_bytes()).hexdigest(), "--pass", "1", "--repo", str(T)],
-                     capture_output=True, text=True)
-check("helper REFUSES a live path outside the repo", out.returncode == 2 and not (TD / "outside.py").exists(),
-      out.stderr)
-link = T / "triggers" / "seed" / "linked.py"
-link.symlink_to(LIVE)
-out = subprocess.run([PY, str(HELPER), str(bodies[0]), str(link), "--expect",
-                      hashlib.sha256(bodies[0].read_bytes()).hexdigest(), "--pass", "1", "--repo", str(T)],
-                     capture_output=True, text=True)
-check("helper REFUSES a symlinked live path (os.replace would swap the link for a file; a3 #29321 nit)",
-      out.returncode == 2 and link.is_symlink() and LIVE.read_bytes() == before, out.stderr)
-link.unlink()
 LIVE.write_text("# hand edit, no review\n")
 st, *_ = ev(RC)
 check("a direct live edit → STANDING TAIL-MISMATCH", "TAIL-MISMATCH" in st, st)
