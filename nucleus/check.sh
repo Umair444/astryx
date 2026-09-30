@@ -354,6 +354,7 @@ run "secret set + turn writer redaction (5497 S0+S1a)" "$PY" tests/test_secretse
 run "secret guard keeps holders out of context (5497 S1b)" "$PY" tests/test_secret_guard.py
 run "db password rotation leaks nothing (5497 S3b BC-1)" "$PY" tests/test_rotate_db_password.py
 run "S1c-0 runner census cannot pass vacuously (5497)" "$PY" tests/test_dsn_census.py
+run "at-rest secret sweep redacts without corrupting (5497 S2)" "$PY" tests/test_secret_sweep.py
 run "every trigger wake leaves through the pulse (4227 S1c)" "$PY" tests/test_wake_chokepoint.py
 # The ear must outlive a database blip. Runs the REAL channel/server.mjs against a
 # THROWAWAY database (created, then dropped — the org's own is never written to), breaks
