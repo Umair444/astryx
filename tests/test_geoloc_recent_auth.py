@@ -53,9 +53,12 @@ if not SRC.exists():
           f"(gitignored geoloc estate, e.g. a clean clone). Nothing was verified here.")
     sys.exit(77)
 try:
-    from starlette.testclient import TestClient
+    # Via fastapi, the DECLARED dependency (nucleus/deps.conf core), and the framework geoloc itself
+    # is written against. It re-exports starlette's TestClient, the same object; importing starlette
+    # directly would lean on a transitive dep that the one dep authority doesn't list.
+    from fastapi.testclient import TestClient
 except Exception as e:  # noqa: BLE001
-    print(f"SKIP: starlette's TestClient is unavailable ({type(e).__name__}). Nothing verified.")
+    print(f"SKIP: fastapi's TestClient is unavailable ({type(e).__name__}). Nothing verified.")
     sys.exit(77)
 
 # The axis under test is set EXPLICITLY, never inherited: a real GEOLOC_TOKEN in the ambient env
