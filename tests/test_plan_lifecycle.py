@@ -509,6 +509,55 @@ def s_chat_down_the_chain_is_not_a_climb(ctx):
     assert pings(ctx, thread) == ["abstractor-2"], pings(ctx, thread)
 
 
+def _approved_then_redesigned(ctx):
+    """plan-4918 #28982 shape (seed #29424): all four approve, then the top posts a changed BINDING part as
+    intent='design' (not 'revise'), then one voter re-approves naming it. Only 'revise' staled approvals, so the
+    old approves still counted: plan_quorum read 4/4 fresh and a4 re-collected verdicts by hand."""
+    gid, thread = _climbed_and_consolidated(ctx)
+    for v, ago in [("abstractor-1", "4 hours"), ("abstractor-2", "4 hours"),
+                   ("abstractor-3", "4 hours"), ("abstractor-4", "4 hours")]:
+        _msg(ctx, thread, v, "abstractor-4", "approve", ago)
+    _msg(ctx, thread, "abstractor-4", "abstractor-1", "design", "3 hours")    # the binding revision
+    _msg(ctx, thread, "abstractor-1", "abstractor-4", "approve", "2 hours")   # a1 re-reads and re-approves
+    return gid, thread
+
+
+@case
+def t_design_repost_stales_approvals(ctx):
+    """A design post after approvals STALES them, exactly as a revise does: the quorum is 1/4, not 4/4, and
+    the verdict net re-pings the three whose approve predates the change."""
+    gid, thread = _approved_then_redesigned(ctx)
+    met = MOD["plan_consensus"](ctx) or ""
+    assert f"#{gid} " not in met, f"quorum fired on approves that predate the design change: {met}"
+    MOD["plan_verdict_due"](ctx)
+    assert pings(ctx, thread, "plan_verdict_due") == ["abstractor-2", "abstractor-3", "abstractor-4"], \
+        pings(ctx, thread, "plan_verdict_due")
+
+
+@case
+def u_design_repost_stays_consolidated(ctx):
+    """The design post stales VERDICTS only; it must not reopen the CLIMB. consolidated() keeps the revise-only
+    cut: under the verdict cut the top's own design post sits AT the cut, not after it, so the thread would
+    read un-consolidated and the climb net would ping rank 1 mid-verdict."""
+    gid, thread = _approved_then_redesigned(ctx)
+    MOD["plan_climb_due"](ctx)
+    assert pings(ctx, thread) == [], pings(ctx, thread)
+
+
+@case
+def v_one_writer_for_change_intents(ctx):
+    """The tool and the nets read ONE file, so they can't disagree (seed #29424). The trigger's set IS the
+    file's. server.mjs's plan_quorum reads the file and hardcodes no intent in its staleness query."""
+    path = REPO / "nucleus" / "plan_change_intents"
+    want = {l.strip() for l in path.read_text().splitlines() if l.strip() and not l.lstrip().startswith("#")}
+    assert {"revise", "design"} <= want, want
+    assert set(MOD["change_intents"]()) == want, (MOD["change_intents"](), want)
+    js = (REPO / "channel" / "server.mjs").read_text()
+    block = js[js.index("if (name === 'plan_quorum')"):js.index("if (name === 'self_edit')")]
+    assert "plan_change_intents" in block, "plan_quorum does not read nucleus/plan_change_intents"
+    assert "intent='revise'" not in block, "plan_quorum hardcodes intent='revise' in its staleness query"
+
+
 def main():
     preflight_isolation_premise()      # fail-closed: never write until rollback is proven
     ok = True

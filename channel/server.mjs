@@ -257,11 +257,19 @@ async function handleTool(name, a) {
        FROM messages WHERE thread=$1 AND intent IN ('approve','revise')
        ORDER BY from_agent, id DESC`, [a.thread])
     // "any revise reopens the loop" — mechanized: an approve predating the latest
-    // revise is STALE and does not count (abstractor-4's night-review, 2026-07-22).
-    // Owner-override amendments are not 'revise' rows and do not stale votes: the
+    // CHANGE is STALE and does not count (abstractor-4's night-review, 2026-07-22).
+    // A change is a row whose intent is in nucleus/plan_change_intents (revise, design):
+    // plan-4918's binding revision #28982 was intent='design' and left 4/4 "fresh".
+    // ONE file, also read by triggers/seed/plan_consensus.py, so the tool and the nets
+    // can't disagree (seed #29424). Read per call; unreadable or no 'revise' THROWS,
+    // because an empty set would stale nothing (the silent side).
+    // Owner-override amendments carry neither intent and do not stale votes: the
     // owner is not a voter; seed adjudicates those directly.
+    const changes = readFileSync(new URL('../nucleus/plan_change_intents', import.meta.url), 'utf8')
+      .split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'))
+    if (!changes.includes('revise')) throw new Error('nucleus/plan_change_intents lists no revise')
     const lr = await pool.query(
-      `SELECT max(ts) AS t FROM messages WHERE thread=$1 AND intent='revise'`, [a.thread])
+      `SELECT max(ts) AS t FROM messages WHERE thread=$1 AND intent = ANY($2)`, [a.thread, changes])
     const lastRevise = lr.rows[0]?.t
     const fresh = v => v.intent === 'approve' && (!lastRevise || v.ts > lastRevise)
     const gid = /^plan-(\d+)$/.exec(a.thread)?.[1]
@@ -271,11 +279,11 @@ async function handleTool(name, a) {
     if (!r.rows.length) return '(no verdicts on this thread yet)'
     return r.rows.map(v =>
       `${v.intent === 'approve' ? '✔' : '✗'} ${v.from_agent}: ${v.intent}`
-      + (v.intent === 'approve' && lastRevise && v.ts <= lastRevise ? ' STALE (predates last revise)' : '')
+      + (v.intent === 'approve' && lastRevise && v.ts <= lastRevise ? ' STALE (predates last change)' : '')
       + ` [${v.ts.toISOString()}]`)
       .join('\n')
       + `\napprovals: ${r.rows.filter(fresh).length} fresh`
-      + (lastRevise ? ` (last revise ${lastRevise.toISOString()})` : '')
+      + (lastRevise ? ` (last change ${lastRevise.toISOString()})` : '')
       + (goal ? ` — goal ${gid} is ${goal.state}` : '')
   }
   if (name === 'self_edit') {
