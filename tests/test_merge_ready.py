@@ -43,9 +43,72 @@ from pathlib import Path
 for _k in [k for k in os.environ if k.startswith("GIT_")]:
     del os.environ[_k]
 REPO = Path(__file__).resolve().parents[1]
-BODY =Path(os.environ.get("MERGE_READY_SRC") or REPO / "triggers" / "seed" / "merge_ready.py")
+BODY = Path(os.environ.get("MERGE_READY_SRC") or REPO / "triggers" / "seed" / "merge_ready.py")
+PY = sys.executable
+HELPER = REPO / "nucleus" / "apply_receipt.py"
+fails, skips = [], []
+
+
+def check(name, ok, detail=""):
+    print(f"  {'PASS' if ok else 'FAIL'}  {name}")
+    if not ok:
+        fails.append(name)
+        if detail:
+            print(f"        {detail}")
+
+
+# ------------------------------------------------------------------------------------------------ 0
+# The TRACKED helper needs no watch body, so its arms run FIRST and everywhere — a fresh clone included
+# (a3 #32619: the reachability exemption says "its oracle is what check.sh runs", which must not depend on
+# the gitignored body being present). A plain temp dir as --repo: the helper never touches git.
+import hashlib  # noqa: E402
+print("0. apply_receipt helper (tracked; needs no watch body):")
+_h0 = tempfile.TemporaryDirectory()
+H0 = Path(_h0.name) / "repo"
+(H0 / "triggers" / "seed").mkdir(parents=True)
+H0LIVE = H0 / "triggers" / "seed" / "x.py"
+H0B = []
+for _i in range(3):
+    _b = Path(_h0.name) / f"stage{_i}.py"
+    _b.write_text(f"# body {_i}\n")
+    H0B.append(_b)
+
+
+def happly(b, live=H0LIVE, expect=None, pass_id=7):
+    exp = expect or hashlib.sha256(b.read_bytes()).hexdigest()
+    return subprocess.run([PY, str(HELPER), str(b), str(live), "--expect", exp, "--pass", str(pass_id),
+                           "--repo", str(H0)], capture_output=True, text=True)
+
+
+_rs = [happly(b, pass_id=100 + i) for i, b in enumerate(H0B)]
+check("helper: 3 sequential applies exit 0", all(x.returncode == 0 for x in _rs), str([x.stderr for x in _rs]))
+_ln = [x.stdout.strip().split() for x in _rs]
+_sha = [hashlib.sha256(b.read_bytes()).hexdigest() for b in H0B]
+check("helper: a NEW file's before is `absent`; the receipt names the repo-relative path and PASS id",
+      _ln[0][:3] == ["applied:", "triggers/seed/x.py", "absent"] and _ln[0][-2:] == ["(PASS", "#100)"], str(_ln[0]))
+check("helper: every after-sha is the COMPUTED sha256 of the body applied, and each before is the prior after",
+      [x[4] for x in _ln] == _sha and [x[2] for x in _ln[1:]] == _sha[:2], str(_ln))
+_before = H0LIVE.read_bytes()
+_bad = happly(H0B[0], expect="0" * 64)
+check("helper REFUSES a body that does not match --expect, and writes nothing",
+      _bad.returncode == 2 and "REFUSED" in _bad.stderr and H0LIVE.read_bytes() == _before, _bad.stderr)
+_o = happly(H0B[0], expect="zz")
+check("helper REFUSES a non-hex --expect", _o.returncode == 2, _o.stderr)
+_o = happly(H0B[0], live=Path(_h0.name) / "outside.py")
+check("helper REFUSES a live path outside the repo",
+      _o.returncode == 2 and not (Path(_h0.name) / "outside.py").exists(), _o.stderr)
+_link = H0 / "triggers" / "seed" / "linked.py"
+_link.symlink_to(H0LIVE)
+_o = happly(H0B[0], live=_link)
+check("helper REFUSES a symlinked live path (os.replace would swap the link for a file; a3 #29321 nit)",
+      _o.returncode == 2 and _link.is_symlink() and H0LIVE.read_bytes() == _before, _o.stderr)
+
 if not BODY.exists():
-    print("SKIP: merge_ready body absent (gitignored triggers/) — nothing asserted.")
+    if fails:
+        print(f"\nFAIL: {len(fails)} helper arm(s); the watch body is absent (gitignored triggers/), its arms not run")
+        sys.exit(1)
+    print("\nSKIP (partial): the helper's arms PASSED; the merge_ready body is absent (gitignored triggers/) — "
+          "every watch arm unverified.")
     sys.exit(77)
 sys.path.insert(0, str(REPO))
 try:
@@ -56,20 +119,9 @@ except Exception as e:  # noqa: BLE001
     print(f"SKIP: merge_ready not importable ({type(e).__name__}: {e}).")
     sys.exit(77)
 
-PY = sys.executable
-HELPER = REPO / "nucleus" / "apply_receipt.py"
-fails, skips = [], []
 NOW = dt.datetime.now(dt.timezone.utc)
 POST = m.ADOPTION_MSG_ID + 1000          # message ids after the adoption boundary
 PRE = 100                                # and before it
-
-
-def check(name, ok, detail=""):
-    print(f"  {'PASS' if ok else 'FAIL'}  {name}")
-    if not ok:
-        fails.append(name)
-        if detail:
-            print(f"        {detail}")
 
 
 def msg(i, body, sender="abstractor-3", to="seed", ts=None):
@@ -96,6 +148,11 @@ check("merge-ready parses branch/base/head", len(r) == 1 and (r[0]["branch"], r[
 check("a quoted <template> line is not a claim (and not MALFORMED)", not any(b["id"] == 2 for b in P["malformed"]),
       str(P["malformed"]))
 check("a merge-ready without a range is MALFORMED", any(b["id"] == 3 for b in P["malformed"]), str(P["malformed"]))
+P3 = m.parse_markers([msg(20, f"merge-ready: feat/n {A[:7]}..{B[:7]} (a2 PASS #31541)\nsupersedes: {A[:7]}..{C[:7]} (old)"),
+                      msg(21, f"merge-ready: feat/n {A[:7]}..{B[:7]} and more words")])
+check("a trailing '(...)' note after the range parses (live a1 #31542 read MALFORMED and went unwatched)",
+      [r["id"] for r in P3["ready"]] == [20] and any(x.get("range") == (A[:7], C[:7]) for x in P3["retract"]), str(P3))
+check("  any other trailing text is still MALFORMED", [b["id"] for b in P3["malformed"]] == [21], str(P3["malformed"]))
 check("supersedes without a merge-ready in the same message is MALFORMED",
       any(b["id"] == 4 and "without a merge-ready" in b.get("why", "") for b in P["malformed"]))
 sup = [x for x in P["retract"] if x.get("range")]
@@ -328,11 +385,11 @@ c4a = commit("f4.txt", "4a\n", "f4: retracted base")
 c4b = commit("f4b.txt", "4b\n", "f4: replacement")
 git("checkout", "-q", "main")
 st, no, tr, *_ = ev([msg(POST + 10, f"merge-ready: f4 {main0[:7]}..{c4a[:7]}"),
-                     msg(POST + 11, f"merge-retract: {c4a[:7]}", sender="abstractor-4"),
+                     msg(POST + 11, f"merge-retract: {c4a[:7]}"),        # SAME sender: cancels its own
                      msg(POST + 12, f"merge-ready: f4 {c4a[:7]}..{c4b[:7]}")])
 check("a replacement PASS on a retracted base reports ONLY its own commit",
       c4b[:10] in st and c4a[:10] not in st, st)
-check("  the retract trails, attributed (by <agent> #<id>)", f"retracted {c4a[:10]} by abstractor-4 #{POST + 11}"
+check("  the retract trails, attributed (by <agent> #<id>)", f"retracted {c4a[:10]} by abstractor-3 #{POST + 11}"
       in tr, tr)
 
 # supersedes
@@ -355,6 +412,79 @@ st, no, tr, *_ = ev([msg(POST + 22, f"merge-ready: f5c {main0[:7]}..{y1[:7]}"),
                      msg(POST + 23, f"merge-ready: f5c {main0[:7]}..{y2[:7]}\nsupersedes: {main0[:7]}..{y1[:7]}")])
 check("supersedes + a new range that re-covers the old commit → the commit stays STANDING (ready wins in-message)",
       y1[:10] in st and y2[:10] in st and y1[:10] not in tr, st + " | " + tr)
+
+# RETRACT RULES (a2 #31306, a4 #31308, steward #31309, a3 #31839): nobody silences another sender's claim
+git("checkout", "-q", "-b", "f11", main0)
+c11 = commit("f11.txt", "11\n", "f11: contested")
+git("checkout", "-q", "-b", "f11b", main0)
+c12 = commit("f11.txt", "12\n", "f11: someone else's rework")
+git("checkout", "-q", "main")
+A3 = msg(POST + 80, f"PASS\nmerge-ready: f11 {main0[:7]}..{c11[:7]}")
+OBJ = msg(POST + 81, f"merge-retract: {c11[:7]} doesn't carry over", sender="abstractor-4")
+st, no, tr, *_ = ev([A3, msg(POST + 79, f"merge-ready: f11 {main0[:7]}..{c11[:7]}", sender="abstractor-4"),
+                     msg(POST + 81, f"merge-retract: {c11[:7]}", sender="abstractor-4")])
+check("a4 #31303 shape: the builder retracting its OWN self-mark leaves the reviewer's PASS standing",
+      f"PASSED, not merged: {c11[:10]}" in st and "abstractor-3 #" in st and "CONTESTED" not in st, st)
+st, no, tr, *_ = ev([A3, OBJ])
+check("aeb21dc shape: a CROSS-sender retract → STANDING 'CONTESTED', the PASS and the objection both printed",
+      f"CONTESTED, not merged: {c11[:10]}" in st and f"abstractor-3 #{POST + 80}" in st
+      and f"objected by abstractor-4 #{POST + 81}: doesn't carry over" in st and "PASSED, not merged" not in st, st)
+st, no, tr, *_ = ev([A3, OBJ, msg(POST + 82, f"merge-retract: {c11[:7]}")])
+check("discharge (1): the ORIGINAL marker's sender retracts → nothing stands; the retract trails",
+      c11[:10] not in st and f"retracted {c11[:10]} by abstractor-3 #{POST + 82}" in tr, st + " | " + tr)
+st, no, tr, *_ = ev([A3, OBJ, msg(POST + 82, f"merge-ready: f11 {main0[:7]}..{c11[:7]}", sender="abstractor-4")])
+check("discharge (2): the OBJECTOR marks it merge-ready afterwards → withdrawn, attributed; PASSED again",
+      f"PASSED, not merged: {c11[:10]}" in st and "CONTESTED" not in st
+      and f"objection #{POST + 81} by abstractor-4 withdrawn by its own merge-ready #{POST + 82}" in tr, st + " | " + tr)
+st, no, tr, *_ = ev([A3, OBJ, msg(POST + 82, f"merge-hold: {c11[:7]} owner call", sender="seed")])
+check("discharge (3): a later merge-hold → HELD (trailing), still naming the objection",
+      "CONTESTED" not in st and "HELD" in tr and f"objected by abstractor-4 #{POST + 81}" in tr, st + " | " + tr)
+st, *_ = ev([A3, OBJ, msg(POST + 82, f"merge-hold: {c11[:7]} owner call", sender="seed", ts=NOW - dt.timedelta(days=m.HOLD_DAYS + 1))])
+check("  ... and a stale hold on a contest is STANDING-HOLD, objection still named",
+      "STANDING-HOLD" in st and f"objected by abstractor-4 #{POST + 81}" in st, st)
+st, *_ = ev([A3, msg(POST + 82, f"merge-hold: {c11[:7]} owner call", sender="seed"),
+             msg(POST + 83, f"merge-retract: {c11[:7]} doesn't carry over", sender="abstractor-4")])
+check("a hold placed BEFORE the objection does not discharge it (the objection is news) → CONTESTED",
+      f"CONTESTED, not merged: {c11[:10]}" in st, st)
+st, *_ = ev([A3, OBJ, msg(POST + 82, f"PASS again\nmerge-ready: f11 {main0[:7]}..{c11[:7]}")])
+check("NEGATIVE: the objected-to reviewer re-marking does NOT clear the contest",
+      f"CONTESTED, not merged: {c11[:10]}" in st, st)
+st, *_ = ev([A3, msg(POST + 81, f"merge-ready: f11b {main0[:7]}..{c12[:7]}\nsupersedes: {main0[:7]}..{c11[:7]}",
+                     sender="abstractor-4")])
+check("a CROSS-sender supersedes → CONTESTED for the old range (never cancelling), marked as a supersedes",
+      f"CONTESTED, not merged: {c11[:10]}" in st and "(a supersedes)" in st and f"PASSED, not merged: {c12[:10]}" in st, st)
+
+# a3 #32627 F1, the live #28491 shape: ONE message = a same-sender `supersedes:` of the unlanded PRE-rebase commit
+# + a `merge-ready:` of the landed rebased one. Both share a -U0 key, but git cherry is context-sensitive, so the
+# watch must judge the commit the STANDING marker names — judging the first-seen (old) one nagged a merged branch.
+commit("ctxr.txt", NUM, "ctxr: twenty lines")
+rb0 = git("rev-parse", "HEAD")
+git("checkout", "-q", "-b", "fr1")
+r1 = commit("ctxr.txt", NUM.replace("\n5\n", "\nFIVE\n"), "fr: change five (pre-rebase)")
+git("checkout", "-q", "main")
+commit("ctxr.txt", NUM.replace("\n7\n", "\nSEVEN\n"), "main: ctxr neighbour seven")
+rb1 = git("rev-parse", "HEAD")
+git("checkout", "-q", "-b", "fr2")
+r2 = commit("ctxr.txt", (T / "ctxr.txt").read_text().replace("\n5\n", "\nFIVE\n"), "fr: change five (rebased)")
+git("checkout", "-q", "main")
+git("merge", "-q", "--no-ff", "-m", "merge fr2", "fr2")
+git("push", "-q", "origin", "main")
+st, no, tr, *_ = ev([msg(POST + 90, f"merge-ready: fr1 {rb0[:7]}..{r1[:7]}", sender="abstractor-4"),
+                     msg(POST + 91, f"merge-ready: fr2 {rb1[:7]}..{r2[:7]}\nsupersedes: {rb0[:7]}..{r1[:7]}",
+                         sender="abstractor-4")])
+check("F1: supersedes of an unlanded pre-rebase commit + the LANDED rebased range in one message → nothing standing",
+      r1[:10] not in st and r2[:10] not in st, st)
+
+# a3 #32627 F3, the live #30443 shape: a reviewer's ONE message re-covering another sender's range (supersedes +
+# a merge-ready that includes it) is not an objection plus a withdrawal
+git("checkout", "-q", "-b", "f13", main0)
+d1 = commit("f13a.txt", "d1\n", "f13: builder's first commit")
+d2 = commit("f13b.txt", "d2\n", "f13: the delta")
+git("checkout", "-q", "main")
+st, no, tr, *_ = ev([msg(POST + 95, f"merge-ready: f13 {main0[:7]}..{d1[:7]}", sender="abstractor-4"),
+                     msg(POST + 96, f"PASS\nmerge-ready: f13 {main0[:7]}..{d2[:7]}\nsupersedes: {main0[:7]}..{d1[:7]}")])
+check("F3: one message re-covering another's range prints no 'objection … withdrawn by its own' line",
+      "withdrawn" not in tr and "CONTESTED" not in st and f"PASSED, not merged: {d1[:10]}" in st, st + " | " + tr)
 
 # holds
 git("checkout", "-q", "-b", "f6", main0)
@@ -403,6 +533,13 @@ st, no, *_ = ev([msg(POST + 34, f"PASS\nmerge-ready: f10 {main0[:7]}..{c10a[:7]}
 check("  a reviewer marker covering only PART of the self-marked range → no corroboration claim",
       f"SELF-MARKED #{POST + 35}" in no and "corroborated" not in no, no)
 
+git("cherry-pick", c11)
+git("push", "-q", "origin", "main")
+st, no, *_ = ev([A3, OBJ])
+check("discharge (4): the patch LANDS while contested → a 'MERGED WHILE CONTESTED' notice, never a silent drop",
+      f"MERGED WHILE CONTESTED: {c11[:10]}" in no and f"objected by abstractor-4 #{POST + 81}" in no
+      and c11[:10] not in st, st + " | " + no)
+
 # ------------------------------------------------------------------------------------------------ 5
 print("\n5. prose coverage + adoption boundary (a1 BC-2):")
 git("checkout", "-q", "-b", "f7", main0)
@@ -413,10 +550,12 @@ check("a pre-adoption prose PASS on an unlanded commit → BACKFILL notice, not 
       c7[:10] in no and c7[:10] not in st, st + " | " + no)
 st, no, *_ = ev([], prose=[msg(POST + 50, f"REVIEW {c7[:7]}: PASS")])
 check("post-adoption → STANDING 'PASS WITHOUT MARKER'", f"PASS WITHOUT MARKER: {c7[:10]}" in st, st)
-st, no, *_ = ev([msg(POST + 51, f"merge-retract: {c7[:7]}", sender="seed")],
-                prose=[msg(PRE, f"REVIEW {c7[:7]}: PASS"), msg(POST + 50, f"REVIEW {c7[:7]}: PASS")])
+st, no, tr, *_ = ev([msg(POST + 51, f"merge-retract: {c7[:7]}", sender="seed")],
+                    prose=[msg(PRE, f"REVIEW {c7[:7]}: PASS"), msg(POST + 50, f"REVIEW {c7[:7]}: PASS")])
 check("a merge-retract clears it from BOTH (the aeb21dc case leaves the steady state)",
       c7[:10] not in st and c7[:10] not in no, st + " | " + no)
+check("  ... and the clearing is ATTRIBUTED in the trailer (a3 #32627 F2: a silencer nobody sees is what M4 forbids)",
+      f"cleared {c7[:10]} by seed #{POST + 51}" in tr, tr)
 st, no, *_ = ev([], prose=[msg(POST + 52, f"REVIEW {c1[:7]}: PASS"), msg(POST + 53, f"NOT PASS {c7[:7]}")])
 check("a landed commit is never listed; NOT PASS is not a verdict", st == "" and no == "", st + " | " + no)
 
@@ -428,7 +567,6 @@ for i in range(3):
     b = TD / f"stage{i}.py"
     b.write_text(f"# body {i}\n")
     bodies.append(b)
-import hashlib  # noqa: E402
 
 
 def apply(b, expect=None, pass_id=7):
@@ -438,33 +576,15 @@ def apply(b, expect=None, pass_id=7):
 
 
 rs = [apply(b, pass_id=100 + i) for i, b in enumerate(bodies)]
-check("helper: 3 applies exit 0", all(x.returncode == 0 for x in rs), str([x.stderr for x in rs]))
+check("helper: 3 applies into the hermetic git repo exit 0", all(x.returncode == 0 for x in rs), str([x.stderr for x in rs]))
 lines = [x.stdout.strip() for x in rs]
-check("helper: a NEW file's before is `absent`; each receipt names the repo-relative path",
+check("  the first receipt there is a genesis (`absent`)",
       lines[0].startswith("applied: triggers/seed/x.py absent → "), lines[0])
 RC = [msg(POST + 60 + i, f"applied to the live tree:\n{ln}", sender="seed") for i, ln in enumerate(lines)]
 st, no, tr, dom, *_ = ev(RC)
 check("3 sequential receipts chain: live == tail → silent (no standing, no notice)", st == "" and no == "", st + no)
 check("the watched path is DECLARED in the domain line", "triggers/seed/x.py" in dom, dom)
 before = LIVE.read_bytes()
-bad = apply(bodies[0], expect="0" * 64)
-check("helper REFUSES a body that does not match --expect, and writes nothing",
-      bad.returncode == 2 and "REFUSED" in bad.stderr and LIVE.read_bytes() == before, bad.stderr)
-out = apply(bodies[0], expect="zz")
-check("helper REFUSES a non-hex --expect", out.returncode == 2, out.stderr)
-out = subprocess.run([PY, str(HELPER), str(bodies[0]), str(TD / "outside.py"), "--expect",
-                      hashlib.sha256(bodies[0].read_bytes()).hexdigest(), "--pass", "1", "--repo", str(T)],
-                     capture_output=True, text=True)
-check("helper REFUSES a live path outside the repo", out.returncode == 2 and not (TD / "outside.py").exists(),
-      out.stderr)
-link = T / "triggers" / "seed" / "linked.py"
-link.symlink_to(LIVE)
-out = subprocess.run([PY, str(HELPER), str(bodies[0]), str(link), "--expect",
-                      hashlib.sha256(bodies[0].read_bytes()).hexdigest(), "--pass", "1", "--repo", str(T)],
-                     capture_output=True, text=True)
-check("helper REFUSES a symlinked live path (os.replace would swap the link for a file; a3 #29321 nit)",
-      out.returncode == 2 and link.is_symlink() and LIVE.read_bytes() == before, out.stderr)
-link.unlink()
 LIVE.write_text("# hand edit, no review\n")
 st, *_ = ev(RC)
 check("a direct live edit → STANDING TAIL-MISMATCH", "TAIL-MISMATCH" in st, st)
