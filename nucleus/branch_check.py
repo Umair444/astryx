@@ -220,9 +220,16 @@ def report(sha: dict, sums: dict, witness: dict, est: dict) -> int:
     regressed = sorted(set(b["failed"]) - set(m["failed"]))
     mr, br = m.get("sqlguard_red"), b.get("sqlguard_red")
     judged = mr is not None and br is not None
+    both = sorted(set(m["unverified"]) & set(b["unverified"]))
+    dark = []
     if judged:                                      # D4: the gate's findings, by identity, not the gate's rc
         sg_new = sorted(l for i, l in br.items() if i not in mr)
-        regressed += [f"{SQLGUARD_GATE} → {l}" for l in sg_new]
+        # A NEW site no oracle EXECUTED here, while some gates verified nothing: its only oracle may be one of them
+        # (sandbox-dark, e.g. branch_check_prep's), so branch_check can't tell it from a site nothing runs (a4 #36860,
+        # 10-09: the names-mode `unhardened` read was RESPONSIVE live). Named, never REGRESSED. EXECUTED-but-unlisted
+        # stays REGRESSED: there the oracle demonstrably ran.
+        dark = [l for l in sg_new if l.startswith("R-NEW") and "UNEXECUTED" in l] if both else []
+        regressed += [f"{SQLGUARD_GATE} → {l}" for l in sg_new if l not in dark]
         print(f"  sqlguard judged DIFFERENTIALLY: {len(br)} RED on the branch, {len(mr)} on main, "
               f"{len(sg_new)} only on the branch")
     fixed = sorted(set(m["failed"]) - set(b["failed"]))
@@ -240,7 +247,14 @@ def report(sha: dict, sums: dict, witness: dict, est: dict) -> int:
     print(f"  FAILED ON BOTH SIDES (verified nothing about the branch; the environment, or main itself): {len(dead)}")
     for x in dead:
         print(f"    ✗ {x}")
-    both = sorted(set(m["unverified"]) & set(b["unverified"]))
+    if dark:
+        print(f"  UNVERIFIABLE HERE (a branch-only R-NEW no oracle EXECUTED under branch_check, while {len(both)} gate(s) "
+              f"below verified nothing; its oracle may be one of them): {len(dark)}")
+        print("    decide it LIVE: run its oracle under the shim (PYTHONPATH=nucleus/sqlguard/shim, ASTRYX_SQLGUARD_DIR, "
+              "ASTRYX_SQLGUARD_GATE) and `python -m nucleus.sqlguard.judge <dir>`; seed's merge-time check.sh enforces "
+              "it either way")
+        for x in dark:
+            print(f"    ? {x}")
     print(f"  VERIFIED NOTHING under branch_check (both sides; coverage this run did not provide): {len(both)}")
     for x in both:
         print(f"    ○ {x}")

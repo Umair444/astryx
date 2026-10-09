@@ -40,4 +40,12 @@ MUTANTS = {
          '    dead = sorted(set(m["failed"]) & set(b["failed"]))'),
     "O10 production scopes its sweep (only=set(): no orphan is ever reaped, a reboot strands every role again)":
         ("    for r in rs.sweep(dsn):", "    for r in rs.sweep(dsn, only=set()):"),
+    "O11 every branch-only R-NEW is UNVERIFIABLE (an EXECUTED unlisted site, whose oracle ran, escapes as dark)":
+        ('dark = [l for l in sg_new if l.startswith("R-NEW") and "UNEXECUTED" in l] if both else []',
+         'dark = [l for l in sg_new if l.startswith("R-NEW")] if both else []'),
+    "O12 dark is judged with no dark gate at all (an UNEXECUTED site nothing could run escapes)":
+        ('dark = [l for l in sg_new if l.startswith("R-NEW") and "UNEXECUTED" in l] if both else []',
+         'dark = [l for l in sg_new if l.startswith("R-NEW") and "UNEXECUTED" in l]'),
+    "O13 a dark site is dropped silently instead of named":
+        ('        for x in dark:\n            print(f"    ? {x}")', '        pass'),
 }

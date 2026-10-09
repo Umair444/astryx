@@ -110,6 +110,21 @@ def main():
     rc, out = rep(base_sg, grown)
     check("D4: a RED only on the branch is a REGRESSION, named by its line → rc 1",
           rc == 1 and "REGRESSED" in out and "R-NEW b.py::g :: select 2" in out, out)
+    # a4 #36860: a NEW site that's UNEXECUTED while gates verified nothing is UNVERIFIABLE HERE, not REGRESSED; the
+    # same site EXECUTED (its oracle ran) or with no dark gate at all stays a regression
+    unex = "R-NEW c.py::h :: select 3: UNEXECUTED and not in the ledger. Make it RESPONSIVE, or admit it"
+    exed = "R-NEW d.py::k :: select 4: EXECUTED and not in the ledger. Make it RESPONSIVE, or admit it"
+    darkm = {**base_sg, "unverified": ["prep gate"]}
+    rc, out = rep(darkm, {**shifted, "unverified": ["prep gate"], "sqlguard_red": {"id1": "R-BLIND a.py::f", "u": unex}})
+    check("an UNEXECUTED branch-only R-NEW beside sandbox-dark gates is UNVERIFIABLE HERE (named, with the live "
+          "decider), not REGRESSED → rc 0", rc == 0 and "UNVERIFIABLE HERE" in out and f"? {unex}" in out
+          and "REGRESSED" not in out and "sqlguard.judge" in out, out)
+    rc, out = rep(darkm, {**shifted, "unverified": ["prep gate"], "sqlguard_red": {"id1": "R-BLIND a.py::f", "e": exed}})
+    check("…but an EXECUTED unlisted one (its oracle ran) stays REGRESSED → rc 1",
+          rc == 1 and "REGRESSED" in out and exed in out and "UNVERIFIABLE" not in out, out)
+    rc, out = rep(base_sg, {**shifted, "sqlguard_red": {"id1": "R-BLIND a.py::f", "u": unex}})
+    check("…and with NO dark gate, an UNEXECUTED one is REGRESSED → rc 1",
+          rc == 1 and "REGRESSED" in out and unex in out and "UNVERIFIABLE" not in out, out)
     cs = (REPO / "nucleus" / "check.sh").read_text()
     check("SQLGUARD_GATE is exactly check.sh's own label for the enforce gate",
           f'run "{sg}" "$PY" -m nucleus.sqlguard.enforce' in cs)
