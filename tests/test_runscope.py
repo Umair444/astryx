@@ -53,6 +53,37 @@ def main():
     except ImportError as e:
         check("runscope importable", False, str(e))
         return 1
+    # The host id's sources, in order (a3 #36112), hermetically: no file read, no ioreg run.
+    real_path, real_run = rs.Path, rs.subprocess.run
+
+    class _P:
+        files = {}
+
+        def __init__(self, f):
+            self.f = f
+
+        def read_text(self):
+            if self.f not in _P.files:
+                raise FileNotFoundError(self.f)
+            return _P.files[self.f]
+
+    class _R:
+        stdout = '  | "IOPlatformUUID" = "MAC-UUID-1"\n'
+    try:
+        rs.Path = _P
+        rs.subprocess.run = lambda *a, **k: _R()
+        _P.files = {"/etc/machine-id": "sysd\n", "/var/lib/dbus/machine-id": "dbus\n"}
+        a = rs._machine_id()
+        _P.files = {"/etc/machine-id": "\n", "/var/lib/dbus/machine-id": "dbus\n"}
+        b = rs._machine_id()
+        _P.files = {}
+        c = rs._machine_id()
+        _R.stdout = "no platform here"
+        d = rs._machine_id()
+    finally:
+        rs.Path, rs.subprocess.run = real_path, real_run
+    check("the host id: systemd's first, then dbus's (an EMPTY file is skipped), then macOS's IOPlatformUUID, else None",
+          (a, b, c, d) == ("sysd", "dbus", "MAC-UUID-1", None), str((a, b, c, d)))
     adm = psycopg.connect(dsn, autocommit=True)
     if not adm.execute("SELECT rolcreaterole AND rolcreatedb OR rolsuper FROM pg_roles WHERE rolname = current_user").fetchone()[0]:
         print("NOT SEARCHED: this role can't CREATE ROLE/DATABASE. Nothing was verified.")
