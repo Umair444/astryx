@@ -38,4 +38,6 @@ MUTANTS = {
     "O9 sqlguard is still listed dead when it WAS judged differentially":
         ('    dead = sorted((set(m["failed"]) & set(b["failed"])) - ({SQLGUARD_GATE} if judged else set()))',
          '    dead = sorted(set(m["failed"]) & set(b["failed"]))'),
+    "O10 production scopes its sweep (only=set(): no orphan is ever reaped, a reboot strands every role again)":
+        ("    for r in rs.sweep(dsn):", "    for r in rs.sweep(dsn, only=set()):"),
 }

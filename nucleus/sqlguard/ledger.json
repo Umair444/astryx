@@ -285,6 +285,20 @@
   ],
   "sha256:ea33e3cc683868b2c884a824a8b30b4f2582b9ead25889b620aa759b0dec61bc": [
    "plan-lifecycle trigger oracle"
+  ],
+  "nucleus/runscope.py::_drop_owned\u001fselect 1 from pg_roles where rolname = ?": [
+   "branch_check base: prod restored into a run-owned base",
+   "branch_check prep: hardening precondition, template, repo, estate, env",
+   "branch_check sandbox: the boundary holds from inside, every probe falsifiable",
+   "branch_check: differential verdict, prod witness, clean refusal",
+   "runscope: teardown by ownership, stale sweep, foreign scopes refused"
+  ],
+  "nucleus/runscope.py::orphan_roles\u001fselect rolname from pg_roles where rolname like 'bc\\_%'": [
+   "branch_check: differential verdict, prod witness, clean refusal",
+   "runscope: teardown by ownership, stale sweep, foreign scopes refused"
+  ],
+  "nucleus/runscope.py::orphan_roles\u001fselect shobj_description(oid, 'pg_authid') from pg_roles where rolname = ?": [
+   "runscope"
   ]
  },
  "extractors": {
@@ -375,7 +389,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 274,
+  "debt_rows": 277,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -395,25 +409,25 @@
   "bridges/canvas.py::_say\u001fupdate canvas_threads set updated_at=now(), title=coalesce(title, ?) where thread=?": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas: every caller passes a thread it just read from canvas_threads (or that create() registered), so 0 rows is unreachable; \u22651 observed",
+   "reason": "seed 10-09 canvas: every caller passes a thread it just read from canvas_threads (or that create() registered), so 0 rows is unreachable; ≥1 observed",
    "tk": "sha256t:d88dc7c68469047fd412770de32f02e015de98ceb40fb11432fb17857fa51cb0"
   },
   "bridges/canvas.py::canvas_archive\u001fupdate canvases set archived=true where id=?": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas: runs only after _canvas_for() found the canvas (404 otherwise, observed), so 0 rows is unreachable; \u22651 observed",
+   "reason": "seed 10-09 canvas: runs only after _canvas_for() found the canvas (404 otherwise, observed), so 0 rows is unreachable; ≥1 observed",
    "tk": "sha256t:4b9ae46977794133dbf40131da35a16ead9a79a794cce687cd010832623cf9fe"
   },
   "bridges/canvas.py::canvas_share\u001fupdate canvases set shared_with=? where id=?": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas: runs only after _canvas_for() found the canvas (404 otherwise), so 0 rows is unreachable; \u22651 observed",
+   "reason": "seed 10-09 canvas: runs only after _canvas_for() found the canvas (404 otherwise), so 0 rows is unreachable; ≥1 observed",
    "tk": "sha256t:f6069fe213608d246e73445b404a3a73c37ea70cb2f5aaba47b6cd276836274c"
   },
   "bridges/canvas.py::logout\u001fdelete from canvas_sessions where token_hash=?": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas: the gate admits /api/logout only with a live session row for this cookie, so 0 rows is unreachable; \u22651 observed",
+   "reason": "seed 10-09 canvas: the gate admits /api/logout only with a live session row for this cookie, so 0 rows is unreachable; ≥1 observed",
    "tk": "sha256t:2c348c96403fa54c70b93a583c21f5ac9391746cad17f3d14198a9af7dafa353"
   },
   "bridges/canvas.py::new_canvas\u001fselect *, version as ver from canvases where id=?": {
@@ -425,19 +439,19 @@
   "bridges/canvas.py::thread_user\u001fupdate canvas_threads set updated_at=now() where thread=?": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas: runs only after the SELECT on the same thread found it, so 0 rows is unreachable; \u22651 observed",
+   "reason": "seed 10-09 canvas: runs only after the SELECT on the same thread found it, so 0 rows is unreachable; ≥1 observed",
    "tk": "sha256t:15fe7a04aabf9aaa376b567f13b163586df067fd5e7fb73026e0faf60b1c752f"
   },
   "bridges/canvas.py::viewer\u001fupdate canvas_users set last_seen=now() where name=?": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas: runs only for a session whose JOIN just found the non-revoked user, so 0 rows is unreachable; \u22651 observed",
+   "reason": "seed 10-09 canvas: runs only for a session whose JOIN just found the non-revoked user, so 0 rows is unreachable; ≥1 observed",
    "tk": "sha256t:ba79ef9cf28c18ca2b3e0c53def19db9bff0525f912560d4fb5ee5c73cd44b1b"
   },
   "bridges/canvas_voice.py::voice_session\u001finsert into canvas_voice_usage (user_name, model) values (?,?) returning id": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09: INSERT \u2026 RETURNING always affects exactly one row; the 0-row arm does not exist",
+   "reason": "seed 10-09: INSERT … RETURNING always affects exactly one row; the 0-row arm does not exist",
    "tk": "sha256t:3c7a03b454af33ce666876001b7bc99b1b7b81b62d76d74efbec95002e3b38de"
   },
   "bridges/common.py::listen\u001f*": {
@@ -573,7 +587,7 @@
   "bridges/providers/canvas.py::CanvasProvider.list_chats\u001fselect thread, user_name, agent, title from canvas_threads where not archived order by updated_at desc limit 100": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas: read-only channel listing; \u22651 observed, the empty arm is the trivially-correct empty list",
+   "reason": "seed 10-09 canvas: read-only channel listing; ≥1 observed, the empty arm is the trivially-correct empty list",
    "tk": "sha256t:045afc1a84b0629a0964ee47824ff4ab7618684ce135e53b2f68eb1da610a51e"
   },
   "bridges/telegram.py::deliver\u001fupdate messages set status=?, delivered_at=now(), delivery=? where id=?": {
@@ -810,7 +824,7 @@
   "nucleus/canvas.py::publish\u001fupdate canvases set version=version+1, updated_at=now() where id=? returning version": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas: runs only after _canvas() found the row (a missing id raises first), so the 0-row arm is unreachable; \u22651 observed in tests/test_canvas.py",
+   "reason": "seed 10-09 canvas: runs only after _canvas() found the row (a missing id raises first), so the 0-row arm is unreachable; ≥1 observed in tests/test_canvas.py",
    "tk": "sha256t:bb8d2536e8727317a91c192d1d88abf1b745eb6a8c957e6a3df08462c6c74da4"
   },
   "nucleus/dsn_census.py::clients\u001fselect current_user": {
@@ -1792,6 +1806,24 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:71f0c60f40571bce9fac0d27c8c6b9f7637c68cf80bea38c5811394d26afc1a8"
+  },
+  "nucleus/runscope.py::_drop_owned\u001fselect 1 from pg_roles where rolname = ?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "a2 F1: teardown-by-ownership's 'is the role gone' read, shared by teardown() and the orphan sweep. a pg_catalog read, so RESPONSIVE is unreachable by the judge's relation rule (it reads 1 row only when a DROP ROLE failed); pinned by the teardown and F1 arms.",
+   "tk": "sha256t:755ebfa6d16e9722a913bb5fd789b621ababa8ded98f59b20da19e3e8a99c614"
+  },
+  "nucleus/runscope.py::orphan_roles\u001fselect rolname from pg_roles where rolname like 'bc\\_%'": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "a2 F1: the stale sweep's orphan source (run roles read from postgres, since a reboot wipes the lockfiles). a pg_catalog read, so RESPONSIVE is unreachable by the judge's relation rule; pinned by runscope R11/R12 and the F1 arms (crashed run reaped, live run kept, reused pid reaped).",
+   "tk": "sha256t:dbd0b463138c90e51116c81c062828070777c67a588f1256c06dd80cdc35e9af"
+  },
+  "nucleus/runscope.py::orphan_roles\u001fselect shobj_description(oid, 'pg_authid') from pg_roles where rolname = ?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "a3 D1 host stamp: the orphan sweep reaps only roles stamped with THIS machine's id. A pg_catalog read of one named role (always one row), so RESPONSIVE is unreachable by the judge's relation rule; pinned by R15 and the 'foreign or unstamped is reported, never dropped' arm.",
+   "tk": "sha256t:d6b97d805e7416e4d66a4e3bc2e117d48e8dcc57c5097b4c26778f1861e4ff53"
   }
  }
 }

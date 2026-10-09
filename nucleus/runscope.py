@@ -24,6 +24,7 @@ LEAK = anything still owned after teardown. It is reported, never silently retri
 """
 import json
 import os
+import re
 import secrets
 import shutil
 import time
@@ -70,6 +71,8 @@ class RunScope:
             verifier = c.pgconn.encrypt_password(self._password.encode(), self.role.encode(), b"scram-sha-256")
             c.execute(sql.SQL("CREATE ROLE {} LOGIN NOSUPERUSER CREATEDB PASSWORD {}").format(
                 sql.Identifier(self.role), sql.Literal(verifier.decode())))
+            if MACHINE_ID:
+                c.execute(sql.SQL("COMMENT ON ROLE {} IS {}").format(sql.Identifier(self.role), sql.Literal(MACHINE_ID)))
             # AGE (plan-4918 D1): a non-superuser can't `LOAD 'age'`, so the admin preloads it for this role's
             # sessions. Only where the server offers AGE: a preload of a missing library fails EVERY connection.
             if c.execute("SELECT 1 FROM pg_available_extensions WHERE name = 'age'").fetchone():
@@ -141,21 +144,8 @@ def teardown(admin_dsn: str, role: str, root: Path, base: Path = None) -> dict:
         return out
     with psycopg.connect(admin_dsn, autocommit=True) as c:
         exists = c.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone()
-        for db in owned_dbs(admin_dsn, role, c) if exists else []:
-            try:
-                c.execute(sql.SQL("ALTER DATABASE {} IS_TEMPLATE false").format(sql.Identifier(db)))
-                c.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(db)))
-                out["dropped"].append(db)
-            except psycopg.Error as e:
-                out["errors"].append(f"{db}: {type(e).__name__}")
-        if exists:
-            out["leaked"] = owned_dbs(admin_dsn, role, c)
-            if not out["leaked"]:
-                try:
-                    c.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))
-                except psycopg.Error as e:
-                    out["errors"].append(f"role: {type(e).__name__}")
-            out["role_left"] = bool(c.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone())
+    if exists:
+        out.update(_drop_owned(admin_dsn, role))         # ONE implementation of "drop what the role owns, then it"
     root = Path(root)
     if root.exists():
         shutil.rmtree(root, ignore_errors=True)
@@ -176,13 +166,79 @@ def live(base: Path = None) -> list:
     return out
 
 
-def sweep(admin_dsn: str, base: Path = None) -> list:
+ROLE_RX = re.compile(rf"^{ROLE_PREFIX}(\d+)x(\d+)$")
+# The role name carries pid and epoch but no HOST, and a postgres the human points us at may serve two hosts. So each
+# run role is stamped with this machine's id at creation, and the orphan sweep reaps ONLY roles carrying it: a foreign
+# or missing stamp is REPORTED, never dropped (a3 #35480: host A must not read host B's live run as an orphan).
+_MID = Path("/etc/machine-id")
+MACHINE_ID = _MID.read_text().strip() if _MID.is_file() else None
+
+
+def _started_at(pid: int):
+    """Wall-clock start of the process now holding `pid` (boot time + its start ticks), or None if the pid is gone."""
+    st = _starttime(pid)
+    if st is None:
+        return None
+    btime = next(int(ln.split()[1]) for ln in Path("/proc/stat").read_text().splitlines() if ln.startswith("btime "))
+    return btime + st / os.sysconf("SC_CLK_TCK")
+
+
+def orphan_roles(admin_dsn: str, only=None, foreign=None) -> list:
+    """Run roles whose creator is GONE, read from POSTGRES, not from lockfiles (a2 F1 #34875): a reboot or a removed
+    scope dir erases the lock, never the role or its databases. The role's name is its creator, `bc_<pid>x<epoch>`.
+    Gone means the pid is dead, OR the process now holding it started AFTER the role's epoch (pids are reused, most
+    of all after a reboot), so it can't be the creator. A live run is never an orphan, with or without its lock.
+    `only` restricts the CANDIDATES before any test (a3 D1 #35480): production passes None (the org-wide sweep it
+    needs); an oracle passes exactly the roles it made, so even a mutated predicate can destroy nothing else.
+    An orphan not stamped with THIS machine's id is appended to `foreign` (reported), never returned (dropped)."""
+    with psycopg.connect(admin_dsn, autocommit=True) as c:
+        roles = [r[0] for r in c.execute("SELECT rolname FROM pg_roles WHERE rolname LIKE 'bc\\_%'")]
+        out = []
+        for r in roles:
+            if only is not None and r not in only:
+                continue
+            m = ROLE_RX.match(r)
+            if not m:
+                continue
+            started = _started_at(int(m.group(1)))
+            if started is not None and started <= int(m.group(2)) + 2:      # the creator (or older) is still alive
+                continue
+            stamp = c.execute("SELECT shobj_description(oid, 'pg_authid') FROM pg_roles WHERE rolname = %s",
+                              (r,)).fetchone()
+            if not MACHINE_ID or not stamp or stamp[0] != MACHINE_ID:
+                if foreign is not None:
+                    foreign.append(r)
+                continue
+            out.append(r)
+    return sorted(out)
+
+
+def _drop_owned(admin_dsn: str, role: str) -> dict:
+    """teardown()'s database half, for a role with no root to bind (an orphan): every DB it owns, then the role."""
+    out = {"dropped": [], "leaked": [], "errors": [], "role_left": False}
+    with psycopg.connect(admin_dsn, autocommit=True) as c:
+        for db in owned_dbs(admin_dsn, role, c):
+            try:
+                c.execute(sql.SQL("ALTER DATABASE {} IS_TEMPLATE false").format(sql.Identifier(db)))
+                c.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(db)))
+                out["dropped"].append(db)
+            except psycopg.Error as e:
+                out["errors"].append(f"{db}: {type(e).__name__}")
+        out["leaked"] = owned_dbs(admin_dsn, role, c)
+        if not out["leaked"]:
+            try:
+                c.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))
+            except psycopg.Error as e:
+                out["errors"].append(f"role: {type(e).__name__}")
+        out["role_left"] = bool(c.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone())
+    return out
+
+
+def sweep(admin_dsn: str, base: Path = None, only=None) -> list:
     """Reap every scope under `base` whose lock's process is gone (pid AND start time). Returns their reports."""
     base = base or SCOPE_ROOT
     reaped = []
-    if not base.is_dir():
-        return reaped
-    for d in sorted(p for p in base.iterdir() if p.is_dir()):
+    for d in sorted(p for p in base.iterdir() if p.is_dir()) if base.is_dir() else []:
         try:
             lock = json.loads((d / "lock.json").read_text())
         except (OSError, ValueError):
@@ -191,4 +247,11 @@ def sweep(admin_dsn: str, base: Path = None) -> list:
             continue
         rep = teardown(admin_dsn, str(lock.get("role", "")), d, base)
         reaped.append({"scope": d.name, **rep})
+    foreign = []
+    for role in orphan_roles(admin_dsn, only=only, foreign=foreign):    # a2 F1: the lock is gone, the role isn't
+        reaped.append({"scope": role[len(ROLE_PREFIX):], "orphan": True, **_drop_owned(admin_dsn, role)})
+    for role in foreign:
+        reaped.append({"scope": role[len(ROLE_PREFIX):], "orphan": True, "dropped": [],
+                       "skipped": "not stamped with this machine's id: another host's (or a pre-stamp) run role. "
+                                  "Reported, never dropped"})
     return reaped
