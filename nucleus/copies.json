@@ -1,5 +1,5 @@
 {
-  "_doc": "The derived-copy registry v0 (plan-8018 S1). One entry per CACHED copy; checked by nucleus/copies.py. comparator ∈ {root_digest, value_equal}; kind ∈ {age_graph, sql_table, file}. writers: the ONE builder (globs). schema: the DDL that creates the copy's container (not counted as a writer). test_writers: oracles that write the copy on purpose. not_writers: files the writer scan lists that write some OTHER target, each pinned to its sha256 so an edit re-raises it.",
+  "_doc": "The derived-copy registry v0 (plan-8018 S1). One entry per CACHED copy; checked by nucleus/copies.py. comparator ∈ {root_digest, value_equal}; kind ∈ {age_graph, sql_table, file}. writers: the ONE builder (globs). reads: database rows the builder consumes besides its roots, from the closed set copies.READS, folded into the digest. schema: the DDL that creates the copy's container (not counted as a writer). test_writers: oracles that write the copy on purpose. not_writers: files the writer scan lists that write some OTHER target, each pinned to its sha256 so an edit re-raises it.",
   "copies": [
     {
       "name": "graph:memory",
@@ -7,6 +7,7 @@
       "graph": "memory",
       "comparator": "root_digest",
       "roots": ["memory/wiki/*.md", "memory/ontology.md"],
+      "reads": ["kg.claim incidence"],
       "builder": "memory/graph/ingest.py::run_ingest",
       "writers": ["memory/graph/ingest.py"],
       "schema": ["memory/graph/schema.sql"],

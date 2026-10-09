@@ -10,12 +10,19 @@ Arms (RED / GREEN / CONTROL):
   W4 CONTROL  a reader (MATCH … RETURN) plus SQL's own SET/UPDATE…SET/DELETE FROM/CREATE TABLE → not listed.
   W5          a not_writers pin passes at its sha; an edit to the pinned file re-raises it LOUD.
   W6          a module that writes ANOTHER graph by literal name → not listed.
+  B1 RED      a helper imported under another name (`import cy as run; run(cur, "MERGE …")`) → UNCOUNTABLE;
+              CONTROL: prose with the same verbs, no AGE and no listed import → not listed (a3 #39203).
+  B2 RED      a .mjs writer of cypher('memory', … CREATE …) → listed.
+  B3 RED      SQL straight to the label tables (DELETE FROM / TRUNCATE / UPDATE / INSERT INTO memory."Concept") → writer.
+  B4 RED      DROP SCHEMA memory CASCADE → writer.
   D1 RED      a graph with no Meta vertex → STALE ("carries no root digest").
   D2 GREEN    a Meta vertex carrying the recomputed root digest → FRESH.
   D3 RED      a root file edited after the stamp → STALE ("root moved").
   D4 RED      a stamped graph with no declaration → LOUD UNDECLARED.
   D5 RED      a missing declarations file, or a comparator outside the closed set → LOUD.
   D6 GREEN    value_equal: equal file copy → FRESH; changed → STALE.
+  K1 RED      the digest folds the kg.claim incidence the build reads: a changed kg.claim row → STALE; an
+              undeclared read name → LOUD.
   I1          (when memory/graph/ingest.py is present, or INGEST_SRC) the REAL ingest stamps its own digest in its
               own transaction → FRESH; a fault-injected rollback leaves the previous digest (and the content) in place.
 Exit 0 pass · 1 fail · 77 could-not-run.
@@ -63,7 +70,8 @@ def estate():
 
 def decl(**over):
     d = {"name": "graph:memory", "kind": "age_graph", "graph": "memory", "comparator": "root_digest",
-         "roots": ["memory/wiki/*.md", "memory/ontology.md"], "writers": ["memory/graph/ingest.py"],
+         "roots": ["memory/wiki/*.md", "memory/ontology.md"], "reads": ["kg.claim incidence"],
+         "writers": ["memory/graph/ingest.py"],
          "schema": [], "test_writers": [], "not_writers": {}}
     d.update(over)
     return d
@@ -123,6 +131,40 @@ found = C.graph_writers("memory", root)
 check("W6 a writer of ANOTHER graph by literal → not listed", "other.py" not in found, repr(found))
 (root / "other.py").unlink()
 
+print("BC-1 fail-open shapes (a3 #39203):")
+(root / "rogue_alias.py").write_text("from memory.graph.ingest import cy as run\n"
+                                     "def f(cur):\n    run(cur, \"MERGE (x:Concept {name: 'x'})\")\n")
+found = C.graph_writers("memory", root)
+check("B1 a helper imported under another name → UNCOUNTABLE", found.get("rogue_alias.py") == "uncountable",
+      repr(found))
+(root / "rogue_alias.py").unlink()
+(root / "prose.py").write_text('"""We MERGE (two lists) and CREATE (a page); DELETE rows in prose."""\n')
+found = C.graph_writers("memory", root)
+check("B1 CONTROL prose with the verbs, no AGE, no listed import → not listed", "prose.py" not in found, repr(found))
+(root / "prose.py").unlink()
+(root / "web").mkdir()
+(root / "web" / "w.mjs").write_text("await c.query(\"SELECT * FROM cypher('memory', $$ CREATE (n:Concept) $$) "
+                                    "AS (v agtype)\")\n")
+found = C.graph_writers("memory", root)
+check("B2 a .mjs writer → listed", found.get("web/w.mjs") == "writer", repr(found))
+(root / "web" / "w.mjs").unlink()
+for i, stmt in enumerate(['DELETE FROM memory."Concept"', "TRUNCATE memory.\"Concept\"",
+                          "UPDATE memory.\"Concept\" SET properties = NULL", "INSERT INTO memory.\"Meta\" VALUES (1)"]):
+    (root / f"sqlw{i}.py").write_text(f"def f(cur):\n    cur.execute('{stmt}')\n")
+found = C.graph_writers("memory", root)
+check("B3 SQL writes to the label tables → writers (DELETE/TRUNCATE/UPDATE/INSERT)",
+      all(found.get(f"sqlw{i}.py") == "writer" for i in range(4)), repr(found))
+for i in range(4):
+    (root / f"sqlw{i}.py").unlink()
+(root / "dropper.py").write_text("def f(cur):\n    cur.execute('DROP SCHEMA memory CASCADE')\n")
+found = C.graph_writers("memory", root)
+check("B4 DROP SCHEMA memory → writer", found.get("dropper.py") == "writer", repr(found))
+(root / "dropper.py").unlink()
+(root / "other_sql.py").write_text("def f(cur):\n    cur.execute('DELETE FROM memoryx.t'); cur.execute('UPDATE t SET a=1')\n")
+found = C.graph_writers("memory", root)
+check("B3 CONTROL SQL to another schema → not listed", "other_sql.py" not in found, repr(found))
+(root / "other_sql.py").unlink()
+
 real_decls, C.DECLARATIONS = C.DECLARATIONS, Path(tempfile.mkdtemp()) / "nope.json"
 res = C.check(None, None, root)
 C.DECLARATIONS = real_decls
@@ -161,10 +203,25 @@ try:
 
     res = C.check(conn, [decl()], root)
     check("D1 no Meta vertex → STALE", status(res)[0] == ("STALE", "the copy carries no root digest"), repr(res))
-    want = C.root_digest(C.root_files(decl()["roots"], root), root)
+    cur.execute("CREATE SCHEMA IF NOT EXISTS kg")
+    cur.execute("CREATE TABLE IF NOT EXISTS kg.claim (entity text, rel text)")
+    cur.execute("INSERT INTO kg.claim VALUES ('goal-1', 'state'), ('memory', 'type')")
+
+    def want_now():
+        return C.copy_digest(C.root_digest(C.root_files(decl()["roots"], root), root),
+                             {"kg.claim incidence": C.read_rows(cur, "kg.claim incidence")})
+    want = want_now()
     stamp("memory", want)
     res = C.check(conn, [decl()], root)
     check("D2 the recomputed root digest → FRESH", status(res)[0][0] == "FRESH", repr(res))
+    cur.execute("UPDATE kg.claim SET rel = 'owner' WHERE entity = 'goal-1'")
+    res = C.check(conn, [decl()], root)
+    check("K1 a changed kg.claim row → STALE", status(res)[0][0] == "STALE", repr(res))
+    cur.execute("UPDATE kg.claim SET rel = 'state' WHERE entity = 'goal-1'")
+    res = C.check(conn, [decl()], root)
+    check("K1 CONTROL the row restored → FRESH again", status(res)[0][0] == "FRESH", repr(res))
+    res = C.check(conn, [decl(reads=["kg.node everything"])], root)
+    check("K1 a read outside the closed set → LOUD", status(res)[0][0] == "LOUD", repr(res))
     (root / "memory" / "wiki" / "a.md").write_text("---\ntitle: a\n---\nalpha, edited\n")
     res = C.check(conn, [decl()], root)
     check("D3 a root edited after the stamp → STALE", status(res)[0][0] == "STALE"
@@ -178,9 +235,11 @@ try:
 
     # I1: the real builder writes its own digest, in its own transaction.
     src = Path(os.environ.get("INGEST_SRC") or REPO / "memory" / "graph" / "ingest.py")
-    schema = src.parent / "schema.sql"
-    if not src.exists() or not schema.exists():
-        print("  SKIP  I1 memory/graph/ingest.py absent (gitignored); the builder arm needs INGEST_SRC")
+    schema = Path(os.environ.get("INGEST_SCHEMA") or REPO / "memory" / "graph" / "schema.sql")
+    missing = [str(p) for p in (src, schema) if not p.exists()]
+    if missing:
+        print(f"  SKIP  I1 the builder arm can't run: {', '.join(missing)} absent (memory/ is gitignored; "
+              "set INGEST_SRC / INGEST_SCHEMA)")
     else:
         spec = importlib.util.spec_from_file_location("ingest_under_test", src)
         ing = importlib.util.module_from_spec(spec)

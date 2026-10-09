@@ -35,7 +35,7 @@ COMPARATORS = ("root_digest", "value_equal")
 KINDS = ("age_graph", "sql_table", "file")
 META_LABEL = "Meta"                  # the one vertex inside a graph copy that carries its root digest
 SKIP_DIRS = {".git", "venv", ".venv", "node_modules", "__pycache__", "dist", "build", ".claude"}
-SCAN_EXT = (".py", ".sql", ".sh")
+SCAN_EXT = (".py", ".sql", ".sh", ".mjs", ".js", ".ts")   # a3 #39203 B2: the node side can reach AGE too
 
 
 # ── the root digest: ONE function, used by the builder that writes it and the checker that compares it ──────────
@@ -60,6 +60,36 @@ def root_digest(paths, root: Path = None) -> str:
     return h.hexdigest()
 
 
+# Database rows a builder READS besides its md roots (a3 #39203: root set ≠ read set is a false FRESH). A CLOSED
+# set of static queries: the builder reads through read_rows() and the checker re-reads through the same call, so
+# both digest exactly the rows the build consumed. An absent relation digests as absent, never as empty-and-fine.
+READS = {
+    "kg.claim incidence": ("kg.claim", "SELECT DISTINCT entity, rel FROM kg.claim ORDER BY 1, 2"),
+}
+_REGCLASS_SQL = "SELECT to_regclass(%s) IS NOT NULL"
+
+
+def read_rows(cur, name: str):
+    """The rows of READS[name], or None when its relation is absent (probed first: in one big transaction a failing
+    SELECT would poison every later statement)."""
+    relation, sql = READS[name]
+    cur.execute(_REGCLASS_SQL, (relation,))
+    if not cur.fetchone()[0]:
+        return None
+    cur.execute(sql)
+    return [tuple(r) for r in cur.fetchall()]
+
+
+def copy_digest(file_digest: str, reads: dict) -> str:
+    """The stamped digest: the md roots' digest folded with every declared read's rows (None = absent)."""
+    if not reads:
+        return file_digest
+    h = hashlib.sha256(file_digest.encode())
+    for name in sorted(reads):
+        h.update(b"\0" + name.encode() + b"\0" + json.dumps(reads[name], default=str).encode())
+    return h.hexdigest()
+
+
 # ── writer counts ──────────────────────────────────────────────────────────────────────────────────────────────
 
 # Cypher write verbs, shaped so SQL's own words don't match: CREATE/MERGE take a pattern `(`, SET/REMOVE take a
@@ -70,7 +100,9 @@ _CYPHER_WRITE = re.compile(r"\b(?:MERGE|CREATE)\s*\(|\bSET\s+\w+\.\w+\s*\+?=|\bR
 _GRAPH_DDL = re.compile(r"\b(drop_graph|create_graph)\s*\(")
 # the graph argument of every cypher()/create_graph()/drop_graph() call, as written
 _GRAPH_ARG = re.compile(r"""\b(?:cypher|create_graph|drop_graph)\s*\(\s*([^,)]*)""")
-_CY_HELPER = re.compile(r"\bcy\s*\(")
+# a file that touches AGE at all (a3 #39203 B1: write verbs with no resolvable graph call are uncountable only then,
+# or when it imports a module already listed, so prose that merely says MERGE stays out without a sha pin)
+_AGE_TOUCH = re.compile(r"agtype|ag_catalog|\bcypher\b|LOAD\s+'age'", re.I)
 
 
 def _estate_files(root: Path):
@@ -104,28 +136,50 @@ def graph_writers(graph: str, root: Path = None) -> dict:
     A file with Cypher write verbs or graph DDL is examined call by call:
       writer       some cypher()/create_graph()/drop_graph() call names `graph` (a literal, or a module constant
                    such as GRAPH = '<g>' through an f-string hole);
-      uncountable  some call's graph can't be resolved (a variable, %s, a runtime hole), or it writes through a
-                   cy() helper with no cypher() of its own: it MAY write `graph`, so it is listed, never counted
-                   as zero (a3 BC-1);
-      (skipped)    every call names some OTHER graph literally.
+      writer       or it writes the graph's storage in SQL: DELETE FROM / TRUNCATE / UPDATE / INSERT INTO
+                   <graph>.<label>, or DROP SCHEMA <graph> (a3 #39203 B3/B4);
+      uncountable  some call's graph can't be resolved (a variable, %s, a runtime hole), or it has write verbs and
+                   no graph call of its own while touching AGE (agtype/ag_catalog/cypher/LOAD 'age') or importing
+                   a module already listed (a helper under any name, B1): it MAY write `graph`, so it is listed,
+                   never counted as zero (a3 BC-1);
+      (skipped)    every call names some OTHER graph literally, or it is prose (verbs, no AGE, no listed import).
     Coarse by design: the grain is the FILE. A file that reads `graph` and writes another graph is listed as a
     writer; the declaration can pin it as a non-writer by sha."""
     root = root or REPO
-    out = {}
+    g = re.escape(graph)
+    # B3/B4: AGE labels are plain tables in schema <graph>; SQL can write them without any Cypher.
+    storage = re.compile(r"\b(?:delete\s+from|truncate(?:\s+table)?|update|insert\s+into)\s+(?:only\s+)?"
+                         r"\"?" + g + r"\"?\.|\bdrop\s+schema\s+(?:if\s+exists\s+)?\"?" + g + r"\"?\b", re.I)
+    out, pending = {}, {}
     for p in _estate_files(root):
         try:
             s = p.read_text(errors="replace")
         except OSError:
             continue
-        if not (_CYPHER_WRITE.search(s) or _GRAPH_DDL.search(s)):
+        if not (_CYPHER_WRITE.search(s) or _GRAPH_DDL.search(s) or storage.search(s)):
             continue
         consts = dict(re.findall(r"""(?m)^([A-Z_][A-Z0-9_]*)\s*=\s*['"]([A-Za-z_]\w*)['"]""", s))
         named = [_graph_of(a, consts) for a in _GRAPH_ARG.findall(s)]
         rel = str(p.relative_to(root))
         if graph in named:
             out[rel] = "writer"
-        elif any(g is None for g in named) or (not named and _CY_HELPER.search(s)):
+        elif storage.search(s):
+            out[rel] = "writer"                          # SQL straight to the graph's label tables (B3/B4)
+        elif any(g is None for g in named) or (not named and _AGE_TOUCH.search(s)):
             out[rel] = "uncountable"
+        elif not named:
+            pending[rel] = s                             # verbs, no graph call, no AGE: decided by its imports
+    # B1: a helper imported under any name. A pending file that imports a listed module may write through it.
+    grew = True
+    while grew:
+        grew = False
+        mods = {r[:-len(Path(r).suffix)].replace(os.sep, ".") for r in out}
+        for rel, s in list(pending.items()):
+            if any(re.search(r"(?m)^\s*(?:from\s+" + re.escape(m) + r"\s+import|import\s+" + re.escape(m) + r"\b)", s)
+                   for m in mods):
+                out[rel] = "uncountable"
+                del pending[rel]
+                grew = True
     return out
 
 
@@ -162,6 +216,13 @@ def _excused(rel: str, decl: dict, root: Path) -> bool:
 
 # ── reading the digest a copy carries ──────────────────────────────────────────────────────────────────────────
 
+# The digest readers are STATIC SQL, one per declarable graph (AGE's cypher() takes its graph as a literal, and a
+# composed statement is a site sqlguard can't resolve). A graph without one here can't be declared: check() is LOUD.
+META_SQL = {
+    "memory": "SELECT * FROM cypher('memory', $q$ MATCH (m:Meta) RETURN m.root_digest $q$) AS (d agtype)",
+}
+
+
 def stored_graph_digest(conn, graph: str):
     """The root digest inside graph `graph`'s Meta vertex, or None (absent ⇒ the caller reads STALE)."""
     with conn.cursor() as cur:
@@ -174,8 +235,7 @@ def stored_graph_digest(conn, graph: str):
                     "WHERE g.name = %s AND l.name = %s", (graph, META_LABEL))
         if not cur.fetchone():
             return None
-        cur.execute(f"SELECT * FROM cypher('{graph}', $q$ MATCH (m:{META_LABEL}) RETURN m.root_digest $q$) "
-                    "AS (d agtype)")
+        cur.execute(META_SQL[graph])
         rows = [str(r[0]).strip('"') for r in cur.fetchall() if r[0] is not None]
     return rows[0] if len(rows) == 1 else None          # zero or several Meta vertices: not one digest
 
@@ -235,10 +295,18 @@ def check(conn=None, decls=None, root: Path = None, inv: dict = None) -> list:
         # freshness
         if d["comparator"] == "root_digest":
             want = root_digest(root_files(d["roots"], root), root)
+            if any(r not in READS for r in d.get("reads", [])):
+                out.append((name, "LOUD", f"reads {d['reads']} not all in the closed set {sorted(READS)}"))
+                continue
             if d["kind"] == "age_graph":
                 if conn is None:
                     out.append((name, "LOUD", "no database connection to read the stored digest"))
                     continue
+                if d["graph"] not in META_SQL:
+                    out.append((name, "LOUD", f"no static digest reader for graph {d['graph']!r} (META_SQL)"))
+                    continue
+                with conn.cursor() as cur:
+                    want = copy_digest(want, {r: read_rows(cur, r) for r in d.get("reads", [])})
                 have = stored_graph_digest(conn, d["graph"])
             else:
                 have = None
