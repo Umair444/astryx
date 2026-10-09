@@ -68,11 +68,14 @@ hits: dict[str, list[float]] = {}                  # rate limits: key -> timesta
 
 
 # ------------------------------------------------------------------ identity
+OWNER_WIRE = "owner"   # the owner's wire handle on this surface; an invitee is cv-<name>
+
+
 class Viewer:
     def __init__(self, name: str, agents: list[str] | None = None):
         self.name = name                           # 'owner' or an invitee name
         self.owner = name == "owner"
-        self.wire = "owner" if self.owner else f"cv-{name}"
+        self.wire = OWNER_WIRE if self.owner else f"cv-{name}"
         self.agents = agents or []
 
     def may_reach(self, agent: str) -> bool:
@@ -554,6 +557,15 @@ _FILE_TOKEN = re.compile(r"\[\[file:([^\]]+)\]\]")
 _ANY_FILE = re.compile(r"\[\[file:([^\]]+)\]\]|<(?:file|voice) attached(?:, fetch failed: [^>]*)?: ([^>]+)>")
 
 
+def _upload_sub(handle: str) -> str:
+    """A viewer's own upload folder, relative to MEDIA_DIR (handles are server-assigned: owner, cv-<name>)."""
+    return "cv/" + re.sub(r"[^a-z0-9_-]", "_", handle.lower())[:64]
+
+
+def _upload_dir(handle: str) -> Path:
+    return MEDIA_DIR / _upload_sub(handle)
+
+
 async def _message_file(v, msg: int, n: int) -> Path | None:
     """The n-th file a message embeds ([[file:/abs/path]]), if the viewer may see that message:
     they own its thread, or they are its sender/recipient. Only a path the message names."""
@@ -567,17 +579,23 @@ async def _message_file(v, msg: int, n: int) -> Path | None:
     if n < 0 or n >= len(paths):
         return None
     path = Path(paths[n]).resolve()
-    # A HUMAN's message is text they typed: it may name only what was uploaded (MEDIA_DIR). Otherwise
-    # an invitee could write [[file:/home/…/.env]] into their own thread and download it. An agent's
-    # embed is a deliberate act by an org member, so it may point anywhere it can read.
-    if not agent_exists(row["from_agent"]) and not path.is_relative_to(MEDIA_DIR.resolve()):
-        return None
+    # A HUMAN's message is text they typed, so it names only media, never the host (an invitee once
+    # could name /home/…/.env, 7819477). An invitee reaches only what THEY uploaded — media/cv/<handle>/
+    # — not the shared media dir, where the owner's and other channels' files sit (steward #37433). The
+    # owner's own messages reach all of media (every file there is the owner's), still never the host,
+    # so a stolen owner session can't read .env either. An agent's embed is a deliberate act by an org
+    # member and may point anywhere it can read.
+    author = row["from_agent"] or ""
+    if not agent_exists(author):
+        root = MEDIA_DIR if author == OWNER_WIRE else _upload_dir(author)
+        if not path.is_relative_to(root.resolve()):
+            return None
     return path if path.is_file() else None
 
 
 def _title_of(text: str) -> str:
     """A chat's title from its first message: files read as their names, never as raw tokens/paths."""
-    t = _ANY_FILE.sub(lambda m: " 📎 " + re.sub(r"^cv-\d+-", "", Path((m[1] or m[2]).strip()).name) + " ", text)
+    t = _ANY_FILE.sub(lambda m: " 📎 " + re.sub(r"^(cv|tg|dc)-(\d+|[0-9a-f]{24})-", "", Path((m[1] or m[2]).strip()).name) + " ", text)
     return re.sub(r"\s+", " ", t).strip()[:60]
 
 
@@ -666,7 +684,7 @@ async def upload(request: Request):
         return deny(400, "empty or over 50MB")
     name = re.sub(r"[^A-Za-z0-9._-]", "_", request.headers.get("x-filename", "file.bin"))[-80:]
     kind = request.headers.get("x-kind", "")
-    p = media_path("cv", name)
+    p = media_path("cv", name, sub=_upload_sub(v.wire))
     p.write_bytes(data)
     return {"line": await describe_media(p, kind), "path": str(p)}
 

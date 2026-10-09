@@ -128,6 +128,31 @@ def api(url):
         arm("an invitee with nothing yet sees no canvases and no threads",
             who("guest").get(f"{A}/canvases").json() == [] and who("guest").get(f"{A}/threads").json() == [])
         arm("an invitee sees only granted agents", [a["name"] for a in who("guest").get(f"{A}/agents").json()] == ["painter"])
+        # an invitee may name only files THEY uploaded — not the owner's, not another channel's (steward #37433)
+        o = who("owner")
+        up = o.post(f"{A}/upload", content=b"owner notes\n", headers={**H, "x-filename": "brief.txt"}).json()
+        t = o.post(f"{A}/threads", json={"agent": "painter"}, headers=H).json()["thread"]
+        owner_file = up["path"]
+        from bridges.common import media_path as _mp
+        tg = _mp("tg", "photo.jpg"); tg.write_bytes(b"\xff\xd8owner-photo")
+        g = who("guest")
+        gt = g.post(f"{A}/threads", json={"agent": "painter"}, headers=H).json()["thread"]
+        gu = g.post(f"{A}/upload", content=b"guest notes\n", headers={**H, "x-filename": "mine.txt"}).json()
+        g.post(f"{A}/threads/{gt}/messages", json={"body": f"{gu['line']} [[file:{owner_file}]] [[file:{tg}]]"}, headers=H)
+        gm = g.get(f"{A}/threads/{gt}/messages").json()["messages"][-1]["id"]
+        mine, theirs, other = (g.get(f"{A}/file?msg={gm}&n={k}").status_code for k in (0, 1, 2))
+        arm("an invitee opens their own upload, but not the owner's upload or a Telegram photo, even by exact path",
+            mine == 200 and theirs == 404 and other == 404, (mine, theirs, other, gu.get("path")))
+        import re as _re
+        arm("upload names carry a random token, never a timestamp, in the uploader's own folder",
+            "/media/cv/cv-guest/" in gu["path"] and bool(_re.search(r"/cv-[0-9a-f]{24}-mine\.txt$", gu["path"]))
+            and bool(_re.search(r"/tg-[0-9a-f]{24}-photo\.jpg$", str(tg))), (gu["path"], str(tg)))
+        o = who("owner")
+        o.post(f"{A}/threads/{t}/messages", json={"body": f"[[file:{tg}]] [[file:{owner_file}]] [[file:/etc/hostname]]"}, headers=H)
+        om = o.get(f"{A}/threads/{t}/messages").json()["messages"][-1]["id"]
+        arm("the owner's own message reaches all of media (theirs), still never the host",
+            [o.get(f"{A}/file?msg={om}&n={k}").status_code for k in (0, 1, 2)] == [200, 200, 404])
+        tg.unlink(missing_ok=True)
         arm("an invitee cannot open a thread with an ungranted agent",
             who("guest").post(f"{A}/threads", json={"agent": "seed"}, headers=H).status_code == 403)
         t = who("guest").post(f"{A}/threads", json={"agent": "painter"}, headers=H).json()["thread"]

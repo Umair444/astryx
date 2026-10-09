@@ -43,7 +43,7 @@ function badge(name: string) {
   return BADGE[ext] ?? { label: (ext || 'file').slice(0, 4).toUpperCase(), color: 'var(--t-accent)' }
 }
 
-const pretty = (name: string) => name.replace(/^cv-\d+-/, '')
+const pretty = (name: string) => name.replace(/^(cv|tg|dc)-(\d+|[0-9a-f]{24})-/, '')
 
 export function FileChip({ msgId, n, path }: { msgId: number; n: number; path: string }) {
   const [open, setOpen] = useState(false)
