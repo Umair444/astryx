@@ -201,6 +201,44 @@ def test_bridge_carve_out_is_pending_only():
     assert _ids(g["fresh"]) == {"3"}, g
 
 
+# ------------------------------------------------ (e) NO SUCH RESIDENT is not DEAF (2026-10-09)
+# memory wrote to_agent='a3' (a nickname); this guard said "DEAF RECIPIENT a3 — restart it", a remedy
+# that would have killed a HEALTHY abstractor-3. A name with no resident charter has no server.mjs to
+# lose: its fault is the sender's addressing. DEAF is only for a RESIDENT.
+def test_unknown_recipient_is_unaddressed_not_deaf():
+    g = bucket([_fentry(35146, "pending", 2)], _meta(35146, pend_server=True, known_resident=False))
+    assert _ids(g["unaddressed"]) == {"35146"} and g["deaf"] == [], g
+
+
+def test_resident_with_roster_read_is_still_deaf():
+    g = bucket([_fentry(2, "pending", 72)], _meta(2, pend_server=True, known_resident=True))
+    assert _ids(g["deaf"]) == {"2"} and g["unaddressed"] == [], g
+
+
+def test_roster_unread_falls_back_to_deaf():
+    """known_resident ABSENT means the roster could not be read: the prior behaviour (DEAF) stands,
+    so an unreadable roster never silently hides a real deaf resident."""
+    g = bucket([_fentry(3, "pending", 72)], _meta(3, pend_server=True))
+    assert _ids(g["deaf"]) == {"3"}, g
+
+
+def test_unknown_recipient_render_never_says_restart():
+    """Through the real entrypoint: the report for a non-resident names the ADDRESSING remedy and
+    never the restart one."""
+    import types
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    rows = [{"id": 900, "ts": _dt.now(_tz.utc) - _td(hours=30), "to_agent": "a3", "to_org": "local",
+             "status": "pending", "from_agent": "memory", "external_handle": False,
+             "bridge_delivered": False, "awaiting_peer_pickup": False, "last_pickup": None}]
+    ctx = types.SimpleNamespace(state={}, sql=lambda q, p=(): rows)
+    try:
+        out = _MOD["outbound_stuck"](ctx) or ""
+    except Exception as e:  # noqa: BLE001
+        raise AssertionError(f"entrypoint raised: {type(e).__name__}: {e}")
+    assert "NO SUCH RESIDENT" in out and "a3" in out, out
+    assert "DEAF RECIPIENT" not in out and "kill-session" not in out, out
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
