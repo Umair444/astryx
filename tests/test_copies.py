@@ -8,11 +8,18 @@ Arms (RED / GREEN / CONTROL):
               UNCOUNTABLE: never counted as one writer (a3 BC-1).
   W3 RED      a second module with cypher('memory', … CREATE …) → LOUD, listed as a writer.
   W4 CONTROL  a reader (MATCH … RETURN) plus SQL's own SET/UPDATE…SET/DELETE FROM/CREATE TABLE → not listed.
-  W5          a not_writers pin passes at its sha; an edit to the pinned file re-raises it LOUD.
+  W5          a not_writers pin passes at its GRAPH SIGNATURE; a non-graph edit keeps it (CONTROL), a graph edit
+              re-raises it LOUD (a3 #39496). W7 a pin never excuses a provable writer, even re-taken.
   W6          a module that writes ANOTHER graph by literal name → not listed.
   B1 RED      a labelled write whose graph name lives in a VERB-LESS helper → UNCOUNTABLE, in a3's three variants
               (#39401): (1) the helper aliased on import, (2) the importer walked before the helper, (3) a helper
               outside the estate with no AGE word in the caller. CONTROL: prose with the verbs, no label → not listed.
+  S2 RED      the scanner's own prose (copies.py's comments) → not listed; S3 an empty-paren create_graph() mention is
+              not a call (CONTROL), a real create_graph('memory') is a writer.
+  L1 RED      the CHECKED-IN tree under its own copies.json has no undeclared writer: a stale sha pin, an undeclared
+              test writer or a self-listing reads in check.sh, not only in the nightly live check (e55c65f read LOUD);
+              the real pinned file: a routine edit keeps its pin (CONTROL), a new graph call re-raises it, SQL to a
+              label table reads as a writer; via copies.stray_writers, the same path check() takes (a3 #39586).
   B2 RED      a .mjs writer of cypher('memory', … CREATE …) → listed.
   B3 RED      SQL straight to the label tables (DELETE FROM / TRUNCATE / UPDATE / INSERT INTO memory."Concept") → writer.
   B4 RED      DROP SCHEMA memory CASCADE → writer.
@@ -117,13 +124,24 @@ check("W4 CONTROL a reader + SQL's own SET/DELETE FROM/CREATE TABLE → not list
 (root / "social.py").write_text("def f(cur, graph):\n    cur.execute('SELECT drop_graph(%s, true)', (graph,))\n")
 found = C.graph_writers("memory", root)
 check("W5 a graph named by a variable is uncountable", found.get("social.py") == "uncountable", repr(found))
-pin = {"social.py": {"sha256": C._sha(root / "social.py"), "why": "people graphs"}}
-res = C.check(None, [decl(not_writers=pin, comparator="value_equal", kind="file",
-                          source="memory/ontology.md", target="memory/ontology.md")], root)
-check("W5 …a sha-pinned exemption passes", status(res)[0][0] == "FRESH", repr(res))
-(root / "social.py").write_text((root / "social.py").read_text() + "# edited\n")
+pin = {"social.py": {"graph_sig": C.graph_signature(root / "social.py"), "why": "people graphs"}}
+res = C.check(None, [decl(not_writers=pin)], root)     # kind age_graph, so the writer scan runs; no conn: the
+past_writers = lambda r: status(r) and "no database connection" in status(r)[0][1]   # verdict past the writer stage
+check("W5 …a graph-signature pin passes the writer stage", past_writers(res), repr(res))
+(root / "social.py").write_text((root / "social.py").read_text() + "# a routine edit, no graph code\n")
 res = C.check(None, [decl(not_writers=pin)], root)
-check("W5 …an edit to the pinned file re-raises it LOUD", status(res)[0][0] == "LOUD", repr(res))
+check("W5 CONTROL a non-graph edit to the pinned file keeps the pin (a3 #39496)", past_writers(res), repr(res))
+(root / "social.py").write_text((root / "social.py").read_text() + "def g(cur, graph):\n"
+                                "    cur.execute('SELECT create_graph(%s)', (graph,))\n")
+res = C.check(None, [decl(not_writers=pin)], root)
+check("W5 …a GRAPH edit to the pinned file re-raises it LOUD", status(res)[0][0] == "LOUD"
+      and "social.py (uncountable)" in status(res)[0][1], repr(res))
+(root / "social.py").write_text("def f(cur, graph):\n    cur.execute('SELECT drop_graph(%s, true)', (graph,))\n"
+                                "    cur.execute(\"DELETE FROM memory.\\\"Concept\\\"\")\n")
+pin = {"social.py": {"graph_sig": C.graph_signature(root / "social.py"), "why": "re-taken after the edit"}}
+res = C.check(None, [decl(not_writers=pin)], root)
+check("W7 a pin never excuses a PROVABLE writer (SQL to memory's label tables), even re-taken",
+      status(res)[0][0] == "LOUD" and "social.py (writer)" in status(res)[0][1], repr(res))
 (root / "social.py").unlink()
 
 (root / "other.py").write_text("def f(cur):\n    cur.execute(\"SELECT * FROM cypher('astryx_social', "
@@ -131,6 +149,45 @@ check("W5 …an edit to the pinned file re-raises it LOUD", status(res)[0][0] ==
 found = C.graph_writers("memory", root)
 check("W6 a writer of ANOTHER graph by literal → not listed", "other.py" not in found, repr(found))
 (root / "other.py").unlink()
+
+print("the live tree (S1-live, after e55c65f read LOUD on its own scanner and test):")
+(root / "nucleus").mkdir(exist_ok=True)
+(root / "nucleus" / "copies.py").write_text((REPO / "nucleus" / "copies.py").read_text())
+found = C.graph_writers("memory", root)
+check("S2 the scanner's own prose (MERGE/DELETE/create_graph() in comments) → not listed",
+      "nucleus/copies.py" not in found, repr(found))
+(root / "nucleus" / "copies.py").unlink()
+(root / "ddl_prose.py").write_text("# we call create_graph() and drop_graph() elsewhere\n"
+                                   "Q = \"SELECT * FROM cypher('memory', $$ MATCH (n) RETURN n $$) AS (v agtype)\"\n")
+(root / "ddl_call.py").write_text("def f(cur):\n    cur.execute(\"SELECT create_graph('memory')\")\n")
+found = C.graph_writers("memory", root)
+check("S3 CONTROL an empty-paren create_graph() mention is not a call → not listed", "ddl_prose.py" not in found,
+      repr(found))
+check("S3 a real create_graph('memory') call → writer", found.get("ddl_call.py") == "writer", repr(found))
+(root / "ddl_prose.py").unlink()
+(root / "ddl_call.py").unlink()
+live, err = C.load_declarations()
+mem = [d for d in (live or []) if d.get("name") == "graph:memory"]
+stray = {} if not mem else C.stray_writers(mem[0], REPO)[1]
+check("L1 the checked-in tree under its own declarations has no undeclared writer (a stale sha pin reads here)",
+      not err and mem and not stray, repr(err or stray))
+
+bcp = "tests/test_branch_check_prep.py"
+if mem and bcp in mem[0].get("not_writers", {}):
+    (root / "tests").mkdir(exist_ok=True)
+    body = (REPO / bcp).read_text()
+    (root / bcp).write_text(body + "# a routine edit by someone who never touched the graph\n")
+    found, stray = C.stray_writers(mem[0], root)
+    check("L1 CONTROL a non-graph edit to a pinned live file keeps its pin", bcp in found and bcp not in stray,
+          repr(found.get(bcp)))
+    (root / bcp).write_text(body + "Q = \"SELECT * FROM cypher('other', $$ MERGE (x:Concept {n: 1}) $$) AS (v agtype)\"\n")
+    found, stray = C.stray_writers(mem[0], root)
+    check("L1 a new graph call in a pinned live file → re-raised, named", bcp in stray, repr(found.get(bcp)))
+    (root / bcp).write_text(body + "Q = 'DELETE FROM memory.\"Concept\" WHERE true'\n")
+    found, stray = C.stray_writers(mem[0], root)
+    check("L1 SQL to a label table in a pinned live file → a WRITER, never excused (W7 on the gate's path)",
+          stray.get(bcp) == "writer", repr(found.get(bcp)))
+    (root / bcp).unlink()
 
 print("BC-1 fail-open shapes (a3 #39203):")
 HELPER = ("def cy(cur, q):\n    cur.execute(f\"SELECT * FROM cypher('memory', $$ {q} $$) AS (v agtype)\")\n")

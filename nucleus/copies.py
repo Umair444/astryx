@@ -101,16 +101,16 @@ def copy_digest(file_digest: str, reads: dict) -> str:
 # ── writer counts ──────────────────────────────────────────────────────────────────────────────────────────────
 
 # Cypher write verbs, shaped so SQL's own words don't match: CREATE/MERGE take a pattern `(`, SET/REMOVE take a
-# `var.prop`, DELETE takes a variable (never FROM). `SET search_path`, `UPDATE t SET col =`, `DELETE FROM`, and
+# `var.prop`, a DELETE's operand is a variable (never FROM). `SET search_path`, `UPDATE t SET col =`, `DELETE FROM`, and
 # `CREATE TABLE` are SQL and stay out.
 _CYPHER_WRITE = re.compile(r"\b(?:MERGE|CREATE)\s*\(|\bSET\s+\w+\.\w+\s*\+?=|\bREMOVE\s+\w+\.\w+"
                            r"|\b(?:DETACH\s+)?DELETE\s+(?!FROM\b)[a-z_]\w*\b")
-_GRAPH_DDL = re.compile(r"\b(drop_graph|create_graph)\s*\(")
+_GRAPH_DDL = re.compile(r"\b(drop_graph|create_graph)\s*\(\s*[^)\s]")   # a call has an argument; prose `create_graph()` has none
 # the graph argument of every cypher()/create_graph()/drop_graph() call, as written
 _GRAPH_ARG = re.compile(r"""\b(?:cypher|create_graph|drop_graph)\s*\(\s*([^,)]*)""")
 # a file that touches AGE at all: write verbs with no graph call of their own are uncountable then
 _AGE_TOUCH = re.compile(r"agtype|ag_catalog|\bcypher\b|LOAD\s+'age'", re.I)
-# a Cypher pattern write WITH A LABEL, `MERGE (x:Concept`: the write itself, wherever the graph name lives (a3 #39401
+# a Cypher pattern write WITH A LABEL (MERGE, an open paren, var:Label): the write itself, wherever the graph name lives (a3 #39401
 # B1). Measured on the estate: matches exactly the 7 graph files and 0 prose, so it needs no import tracing.
 _LABELLED_WRITE = re.compile(r"\b(?:MERGE|CREATE)\s*\(\s*\w*\s*:\s*\w")
 
@@ -150,7 +150,7 @@ def graph_writers(graph: str, root: Path = None) -> dict:
                    <graph>.<label>, or DROP SCHEMA <graph> (a3 #39203 B3/B4);
       uncountable  some call's graph can't be resolved (a variable, %s, a runtime hole), or it has write verbs and
                    no graph call of its own while touching AGE (agtype/ag_catalog/cypher/LOAD 'age') or holding a
-                   labelled pattern write (`MERGE (x:Concept`): the verb may reach `graph` through a helper whose
+                   labelled pattern write (MERGE/CREATE of a var:Label pattern): the verb may reach `graph` through a helper whose
                    graph name lives elsewhere (B1), so it is listed, never counted as zero (a3 BC-1, #39401);
       (skipped)    every call names some OTHER graph literally, or it is prose (verbs, no AGE, no label).
     Coarse by design: the grain is the FILE. A file that reads `graph` and writes another graph is listed as a
@@ -202,13 +202,27 @@ def sql_writers(relation: str, inv: dict = None) -> dict:
     return out
 
 
-def _excused(rel: str, decl: dict, root: Path) -> bool:
-    """A declared writer, schema, or test writer, or an exemption pinned to the file's sha (an edit re-raises it)."""
+def graph_signature(p: Path) -> str:
+    """sha256 over the file's GRAPH-touching text only: every cypher()/create_graph()/drop_graph() argument as
+    written, and every labelled pattern write with its label, sorted. The property a not_writers pin vouches for
+    ("which graphs this code writes") lives in those lines, not in the file's bytes, so a routine edit elsewhere
+    keeps the pin and a new or changed graph call re-raises it (a3 #39496)."""
+    s = p.read_text(errors="replace")
+    items = sorted(["arg " + a.strip() for a in _GRAPH_ARG.findall(s)]
+                   + ["write " + m.group(0) for m in re.finditer(_LABELLED_WRITE.pattern + r"\w*", s)])
+    return hashlib.sha256("\n".join(items).encode()).hexdigest()
+
+
+def _excused(rel: str, decl: dict, root: Path, kind: str) -> bool:
+    """A declared writer, schema, or test writer; or a not_writers exemption pinned to the file's graph signature.
+    A pin excuses only an UNCOUNTABLE file: one that provably writes the graph (a literal call, SQL to its label
+    tables) is a writer whatever its pin says."""
     if any(fnmatch.fnmatch(rel, g) for g in decl.get("writers", []) + decl.get("schema", [])
            + decl.get("test_writers", [])):
         return True
     ex = decl.get("not_writers", {}).get(rel)
-    return bool(ex) and (root / rel).is_file() and _sha(root / rel) == ex.get("sha256")
+    return (bool(ex) and kind == "uncountable" and (root / rel).is_file()
+            and graph_signature(root / rel) == ex.get("graph_sig"))
 
 
 # ── reading the digest a copy carries ──────────────────────────────────────────────────────────────────────────
@@ -252,6 +266,20 @@ def load_declarations(path: Path = None):
         return None, f"declarations unreadable ({Path(path).name}: {type(e).__name__})"
 
 
+def stray_writers(d: dict, root: Path = None, inv: dict = None):
+    """(found, stray) for one declaration: every writer the scan finds, and those its declaration doesn't excuse.
+    The ONE path from a scan to a verdict: check() and the check.sh gate (test_copies L1) both read it, so a pin
+    can't excuse in one and not the other (a3 #39586)."""
+    root = root or REPO
+    if d.get("kind") == "age_graph":
+        found = graph_writers(d["graph"], root)
+    elif d.get("kind") == "sql_table":
+        found = sql_writers(d["table"], inv)
+    else:
+        found = {}
+    return found, {r: k for r, k in found.items() if not _excused(r, d, root, k)}
+
+
 def check(conn=None, decls=None, root: Path = None, inv: dict = None) -> list:
     """[(name, status, detail)]; status ∈ FRESH, STALE, LOUD. Never raises on a bad declaration."""
     root = root or REPO
@@ -270,12 +298,7 @@ def check(conn=None, decls=None, root: Path = None, inv: dict = None) -> list:
         # writers
         if d["kind"] == "age_graph":
             declared_graphs.add(d["graph"])
-            found = graph_writers(d["graph"], root)
-        elif d["kind"] == "sql_table":
-            found = sql_writers(d["table"], inv)
-        else:
-            found = {}
-        stray = {r: k for r, k in found.items() if not _excused(r, d, root)}
+        found, stray = stray_writers(d, root, inv)
         n_writers = sum(1 for r, k in found.items() if k == "writer"
                         and any(fnmatch.fnmatch(r, g) for g in d.get("writers", [])))
         if stray:
