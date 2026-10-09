@@ -26,4 +26,11 @@ MUTANTS = {
         ('        c.execute("SET default_transaction_read_only = on")\n', ''),
     "P7 drift is reported but never fails (any difference reads green)":
         ('            "drift": bool(missing or extra or typed)}', '            "drift": False}'),
+    "P8 a missing OBJECT isn't seen (a hand-dropped messages_notify silences the wire, parity green: a1 #38450)":
+        ('    missing = sorted(f"{k} {n}" for k, names in expected.items() for n in names - live.get(k, set()))',
+         '    missing = []'),
+    "P9 object drift is computed but never fails the run":
+        ('    out["drift"] = out["drift"] or o["drift"]', '    out["drift"] = out["drift"]'),
+    "P10 internal (FK) triggers are judged (their OID-derived names differ per database: a false MISSING)":
+        ("WHERE NOT t.tgisinternal AND n.nspname <> ALL(%s)", "WHERE n.nspname <> ALL(%s)"),
 }
