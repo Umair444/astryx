@@ -143,7 +143,9 @@ def _selftest():
     dsn = os.environ.get("DSN") or os.environ.get("ASTRYX_DSN")
     if not dsn:
         sys.exit("set DSN or ASTRYX_DSN")
-    with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
+    # read-only BY CONSTRUCTION, not only by content (a3 #39182 BC-1): a write verb here fails in postgres.
+    with psycopg.connect(dsn, autocommit=True, options="-c default_transaction_read_only=on") as conn, \
+            conn.cursor() as cur:
         rows = corpus(cur)
         print(f"corpus(): {len(rows)} admitted nodes")
         by_kind: dict[str, int] = {}

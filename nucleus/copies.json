@@ -1,0 +1,26 @@
+{
+  "_doc": "The derived-copy registry v0 (plan-8018 S1). One entry per CACHED copy; checked by nucleus/copies.py. comparator ∈ {root_digest, value_equal}; kind ∈ {age_graph, sql_table, file}. writers: the ONE builder (globs). schema: the DDL that creates the copy's container (not counted as a writer). test_writers: oracles that write the copy on purpose. not_writers: files the writer scan lists that write some OTHER target, each pinned to its sha256 so an edit re-raises it.",
+  "copies": [
+    {
+      "name": "graph:memory",
+      "kind": "age_graph",
+      "graph": "memory",
+      "comparator": "root_digest",
+      "roots": ["memory/wiki/*.md", "memory/ontology.md"],
+      "builder": "memory/graph/ingest.py::run_ingest",
+      "writers": ["memory/graph/ingest.py"],
+      "schema": ["memory/graph/schema.sql"],
+      "test_writers": ["memory/graph/test_*.py", "tests/test_memory_ask_tier.py"],
+      "not_writers": {
+        "nucleus/social_age.py": {
+          "sha256": "c491da8d5504196bcd1c80399c49d67fd0f5eed3f306e85cd33faa25a499332f",
+          "why": "drop_graph/create_graph(%s) on the people graphs it is handed (astryx_social and its owner twin), never 'memory'"
+        },
+        "tests/test_branch_check_prep.py": {
+          "sha256": "8e38ea6bfe960fdd154181584a95cb9049f192002677c65996cc03905a676a21",
+          "why": "creates and writes its own throwaway BcAge probe graph named by a local variable, never 'memory'"
+        }
+      }
+    }
+  ]
+}
