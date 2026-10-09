@@ -302,7 +302,7 @@ def test_later_rows_are_named_as_candidates_never_a_verdict():
     out = _run_with_roster(["seed", "memory", "abstractor-3"], sender="memory", to="a3",
                            cands=[{"stuck": 901, "cand": 35864, "resend": True}, {"stuck": 901, "cand": 36566,
                                                                                "resend": False}])
-    assert "#35864 (resend)" in out and "#36566" in out and "read them before resending" in out, out
+    assert "#35864 (says resend)" in out and "#36566" in out and "read them before resending" in out, out
     assert "NO SUCH RESIDENT" in out, out                       # a candidate never changes the class or silences it
     out = _run_with_roster(["seed", "memory", "abstractor-3"], sender="memory", to="a3")
     assert "read them before resending" not in out, out
@@ -340,10 +340,13 @@ def test_later_rows_query_on_a_real_db_at_zero_and_one_rows():
         res = put("memory", "abstractor-3", f"Review request. This is a resend: #{stuck} went to a nickname",
                   "delivered", 29)
         out = _MOD["outbound_stuck"](C({})) or ""
-        assert f"#{res} (resend)" in out, out                                                 # >=1 candidate row
+        assert f"#{res} (says resend)" in out, out                                            # >=1 candidate row
         rep = put("memory", "abstractor-3", "Review request: the .absolute() switch", "delivered", 28)
         out = _MOD["outbound_stuck"](C({})) or ""                  # the projected `resend` bool must read FALSE too
-        assert f"#{rep}" in out and f"#{rep} (resend)" not in out, out                       # (sqlguard: RESPONSIVE)
+        assert f"#{rep}" in out and f"#{rep} (says" not in out, out                          # (sqlguard: RESPONSIVE)
+        pres = put("memory", "abstractor-3", f"I presented #{stuck} to the reviewers yesterday", "delivered", 27)
+        out = _MOD["outbound_stuck"](C({})) or ""                  # a4 #41379 R2: "presented" is not a resend word
+        assert f"#{pres}" in out and f"#{pres} (says" not in out, out
         conn.close()
     finally:
         fxc.__exit__(None, None, None)
