@@ -25,6 +25,7 @@ parses branch-authored text inside it. An AGE privilege escalation would be an e
 That is attack surface prod doesn't have (prod runs AGE as a superuser already), and it is out of scope at this grade.
 """
 import argparse
+import ast
 import glob
 import json
 import os
@@ -55,6 +56,59 @@ def sqlguard_red(trace: Path):
         return {r["id"]: r["line"] for r in json.loads((trace / "red.json").read_text())}
     except (OSError, ValueError, KeyError, TypeError):
         return None
+
+
+# ── which dark gate could have run a site (a2 #37119): a RELATION, never co-occurrence ───────────────────────────
+# 17 gates are dark on every run, so "some gate was dark" is always true; keyed on that, a site NO oracle runs (the
+# founding class sqlguard exists for) would read UNVERIFIABLE forever. A site is excused only when a dark gate's
+# ORACLE references the site's module, read statically from the branch's own check.sh and oracle files.
+# A string names a module the oracle RUNS only as an argument of one of these loaders (a3 #38259, measured: 72 of
+# the gate→module relations a bare string constant made were DATA, tuples of names, path dicts, a module read as
+# text, even this oracle's own test literal). A closed set: a new loader shape reads REGRESSED until it's added.
+LOADERS = frozenset({"import_module", "spec_from_file_location", "run_module", "run_path", "find_spec"})
+_RUN_RX = re.compile(r'^run "([^"]+)"\s+"\$PY"\s+(?:-m\s+(\S+)|(\S+\.py))', re.M)
+
+
+def gate_refs(repo: Path) -> dict:
+    """{check.sh label: the modules its python oracle RUNS}: imports at any depth (`import a.b`, `from a import b`
+    as a, a.b), and a string constant ONLY as a positional argument of a LOADERS call (`importlib.import_module(
+    "bridges.common")`). A string anywhere else is data, never a reference. Unparseable or absent oracles are
+    omitted, so their sites stay REGRESSED (fail-closed)."""
+    out = {}
+    try:
+        text = (repo / "nucleus" / "check.sh").read_text()
+    except OSError:
+        return out
+    for label, mod, path in _RUN_RX.findall(text):
+        f = repo / (mod.replace(".", "/") + ".py" if mod else path)
+        try:
+            tree = ast.parse(f.read_text())
+        except (OSError, SyntaxError, ValueError):
+            continue
+        refs = set()
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Import):
+                refs |= {a.name for a in n.names}
+            elif isinstance(n, ast.ImportFrom) and n.module:
+                refs |= {n.module} | {f"{n.module}.{a.name}" for a in n.names}
+            elif isinstance(n, ast.Call) and getattr(n.func, "attr", getattr(n.func, "id", None)) in LOADERS:
+                refs |= {a.value for a in n.args if isinstance(a, ast.Constant) and isinstance(a.value, str)}
+        out[label] = refs
+    return out
+
+
+def covering_gate(site_path: str, gates, refs: dict):
+    """The first of `gates` whose oracle references `site_path` (a repo-relative .py) by its dotted module or its
+    path. Never by a bare stem: "canvas" is an ordinary word in an econ oracle (measured), and a word match would
+    excuse exactly the unreferenced site this exists to keep RED. None if no dark gate could have run it."""
+    if not site_path.endswith(".py"):
+        return None
+    mod = site_path[:-3].replace("/", ".")
+    for g in gates:
+        r = refs.get(g, set())
+        if mod in r or site_path in r:
+            return g
+    return None
 
 
 def admin_dsn() -> str:
@@ -200,7 +254,7 @@ def run(branch: str, main_ref: str = "main") -> int:
             r1, r2 = sums["branch"]["sqlguard_red"], again["sqlguard_red"]
             # a branch-only sqlguard finding must REPRODUCE too (FLAKY != REGRESSED)
             sums["branch"]["sqlguard_red"] = None if r1 is None or r2 is None else {i: l for i, l in r1.items() if i in r2}
-        rc = report(sha, sums, witness, est)
+        rc = report(sha, sums, witness, est, refs=gate_refs(repo["branch"]))
     except prep.Refuse as e:
         print(f"branch_check: REFUSED (rc 77): {e}")
         rc = 77
@@ -212,7 +266,7 @@ def run(branch: str, main_ref: str = "main") -> int:
     return rc
 
 
-def report(sha: dict, sums: dict, witness: dict, est: dict) -> int:
+def report(sha: dict, sums: dict, witness: dict, est: dict, refs: dict = None) -> int:
     m, b = sums["main"], sums["branch"]
     print(f"branch_check {sha['branch'][:7]} vs main {sha['main'][:7]}")
     for side in ("main", "branch"):
@@ -220,9 +274,23 @@ def report(sha: dict, sums: dict, witness: dict, est: dict) -> int:
     regressed = sorted(set(b["failed"]) - set(m["failed"]))
     mr, br = m.get("sqlguard_red"), b.get("sqlguard_red")
     judged = mr is not None and br is not None
+    both = sorted(set(m["unverified"]) & set(b["unverified"]))
+    dark_gates = sorted(set(both) | (set(b["unverified"]) - set(m["unverified"])))
+    dark = []
     if judged:                                      # D4: the gate's findings, by identity, not the gate's rc
         sg_new = sorted(l for i, l in br.items() if i not in mr)
-        regressed += [f"{SQLGUARD_GATE} → {l}" for l in sg_new]
+        # A NEW site no oracle EXECUTED here is excused ONLY if a gate that verified nothing (on both sides, or newly
+        # on the branch) has an oracle referencing its module: that oracle may be its only runner, sandbox-dark (a4
+        # #36860: prep's names-mode `unhardened` read was RESPONSIVE live; a2 #37112: test_people_gate needs
+        # CREATEROLE). Named with that gate, never REGRESSED. A site no dark oracle references, or one EXECUTED
+        # but unlisted (its oracle ran), stays REGRESSED (a2 #37119).
+        for l in sg_new:
+            mt = re.match(r"R-NEW (\S+?)::", l)
+            g = covering_gate(mt.group(1), dark_gates, refs or {}) if mt and "UNEXECUTED" in l else None
+            if g:
+                dark.append((l, g))
+        excused = {l for l, _ in dark}
+        regressed += [f"{SQLGUARD_GATE} → {l}" for l in sg_new if l not in excused]
         print(f"  sqlguard judged DIFFERENTIALLY: {len(br)} RED on the branch, {len(mr)} on main, "
               f"{len(sg_new)} only on the branch")
     fixed = sorted(set(m["failed"]) - set(b["failed"]))
@@ -240,7 +308,14 @@ def report(sha: dict, sums: dict, witness: dict, est: dict) -> int:
     print(f"  FAILED ON BOTH SIDES (verified nothing about the branch; the environment, or main itself): {len(dead)}")
     for x in dead:
         print(f"    ✗ {x}")
-    both = sorted(set(m["unverified"]) & set(b["unverified"]))
+    if dark:
+        print(f"  UNVERIFIABLE HERE (a branch-only R-NEW no oracle EXECUTED under branch_check; the named gate's oracle "
+              f"references its module and verified nothing this run): {len(dark)}")
+        print("    decide it LIVE: run that oracle under the shim (PYTHONPATH=nucleus/sqlguard/shim, ASTRYX_SQLGUARD_DIR, "
+              "ASTRYX_SQLGUARD_GATE) and `python -m nucleus.sqlguard.judge <dir>`; seed's merge-time check.sh enforces "
+              "it either way")
+        for x, g in dark:
+            print(f"    ? {x}\n      ← dark gate: {g}")
     print(f"  VERIFIED NOTHING under branch_check (both sides; coverage this run did not provide): {len(both)}")
     for x in both:
         print(f"    ○ {x}")

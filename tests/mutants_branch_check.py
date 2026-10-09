@@ -40,4 +40,28 @@ MUTANTS = {
          '    dead = sorted(set(m["failed"]) & set(b["failed"]))'),
     "O10 production scopes its sweep (only=set(): no orphan is ever reaped, a reboot strands every role again)":
         ("    for r in rs.sweep(dsn):", "    for r in rs.sweep(dsn, only=set()):"),
+    "O11 an EXECUTED unlisted site (its oracle ran) is excused as dark too":
+        ('g = covering_gate(mt.group(1), dark_gates, refs or {}) if mt and "UNEXECUTED" in l else None',
+         'g = covering_gate(mt.group(1), dark_gates, refs or {}) if mt else None'),
+    "O12 co-occurrence, not relation: any dark gate excuses any site (a2 #37119's fail-open)":
+        ('        if mod in r or site_path in r:\n            return g', '        return g'),
+    "O13 a dark site is dropped silently instead of named":
+        ('        for x, g in dark:\n            print(f"    ? {x}\\n      ← dark gate: {g}")', '        pass'),
+    "O14 a bare stem counts as a reference (an ordinary word excuses an unreferenced module)":
+        ('        if mod in r or site_path in r:', '        if mod in r or site_path in r or mod.rpartition(".")[2] in r:'),
+    "O15 a gate newly dark on the branch isn't counted (a2 #37112's CREATEROLE skip reads REGRESSED)":
+        ('dark_gates = sorted(set(both) | (set(b["unverified"]) - set(m["unverified"])))', 'dark_gates = sorted(set(both))'),
+    "O16 production never hands report() the references (the excuse is dead code)":
+        ('        rc = report(sha, sums, witness, est, refs=gate_refs(repo["branch"]))', '        rc = report(sha, sums, witness, est)'),
+    "O17 a nested import is missed (only module-level imports are read)":
+        ('        for n in ast.walk(tree):\n            if isinstance(n, ast.Import):',
+         '        for n in tree.body:\n            if isinstance(n, ast.Import):'),
+    "O18 any string constant counts as a reference (data names excuse modules nothing runs: a3 #38259)":
+        ('            elif isinstance(n, ast.Call) and getattr(n.func, "attr", getattr(n.func, "id", None)) in LOADERS:\n'
+         '                refs |= {a.value for a in n.args if isinstance(a, ast.Constant) and isinstance(a.value, str)}',
+         '            elif isinstance(n, ast.Constant) and isinstance(n.value, str):\n'
+         '                refs.add(n.value)'),
+    "O19 a loader's string argument is ignored (an importlib-loaded subject is never covered)":
+        ('LOADERS = frozenset({"import_module", "spec_from_file_location", "run_module", "run_path", "find_spec"})',
+         'LOADERS = frozenset()'),
 }
