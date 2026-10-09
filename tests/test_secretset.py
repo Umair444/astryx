@@ -39,8 +39,24 @@ def check(name, ok, detail=""):
         fails.append(name)
 
 
+# mutation_probe contract (tests/mutants_secretset.py): the SUBJECT comes from SECRETSET_SRC when set. It is
+# installed AS nucleus.secretset, because hooks/step.py and secret_guard import that name themselves; a
+# mutant loaded beside the real module would leave the S1a arms testing the real code.
+SUBJECT = Path(os.environ.get("SECRETSET_SRC", REPO / "nucleus" / "secretset.py"))
 try:
-    from nucleus import secretset as ss
+    if "SECRETSET_SRC" in os.environ:
+        import importlib.util
+        import nucleus
+        _spec = importlib.util.spec_from_file_location("nucleus.secretset", SUBJECT)
+        ss = importlib.util.module_from_spec(_spec)
+        sys.modules["nucleus.secretset"] = ss
+        nucleus.secretset = ss
+        _spec.loader.exec_module(ss)
+        ss.REPO = REPO                                       # a mutant lives in a temp dir: keep the tree's root
+        ss.ENV_FILE, ss.HOLDERS_FILE = REPO / ".env", REPO / "nucleus" / "secret_holders.json"
+        ss.UNIT_DIRS = (REPO / "units",) + tuple(ss.UNIT_DIRS[1:])
+    else:
+        from nucleus import secretset as ss
 except Exception as exc:                                    # noqa: BLE001 — RED on a tree without S0
     ss = None
     check("nucleus.secretset imports", False, f"{type(exc).__name__}: {exc}")
