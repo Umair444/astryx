@@ -22,13 +22,15 @@ Three arms, on a throwaway postgres+AGE graph (never the org's own):
 
 Synthesis is forced EXTRACTIVE (OpenAI key withheld): hermetic, deterministic, zero external
 spend, and STRICTER — extractive quotes page text verbatim, so a leaked page shows its secret
-literally rather than at an LLM's discretion. Throwaway DB only (role must CREATE DATABASE and
-AGE must be installable), else SKIP 77. Run by check.sh.
+literally rather than at an LLM's discretion. The substrate is sqlguard's fixture_db(): a
+throwaway database that carries AGE for a superuser (schema.sql creates it) AND for
+branch_check's NOSUPERUSER run role (ASTRYX_FIXTURE_TEMPLATE, a template that already has it).
+AGE sessions go through nucleus/agelib.py, which LOADs only as a superuser. SKIP 77 when there
+is no fixture or no AGE in it. Run by check.sh.
 """
 import importlib.util
 import json
 import os
-import re
 import sys
 from pathlib import Path
 
@@ -72,71 +74,46 @@ def want(label, cond):
 
 
 # ── throwaway substrate ──────────────────────────────────────────────────────────────
-def dsn():
-    if os.environ.get("ASTRYX_DSN"):
-        return os.environ["ASTRYX_DSN"].strip()
-    env = REPO / ".env"
-    if env.exists():
-        for line in env.read_text().splitlines():
-            if line.startswith("ASTRYX_DSN="):
-                return line[len("ASTRYX_DSN="):].strip().strip('"').strip("'")
-    return None
-
-
-ADMIN_DSN = dsn()
-if not ADMIN_DSN:
-    skip("no ASTRYX_DSN — no graph substrate")
+sys.path.insert(1, str(REPO))       # AFTER mcp/memory, so the installed `mcp` package still wins
 try:
-    admin = psycopg.connect(ADMIN_DSN, autocommit=True, connect_timeout=5)
-except Exception as e:                                              # noqa: BLE001
-    skip(f"database unreachable ({type(e).__name__})")
-row = admin.execute("SELECT rolcreatedb OR rolsuper FROM pg_roles WHERE rolname=current_user").fetchone()
-if not row or not row[0]:
-    admin.close()
-    skip("role cannot CREATE DATABASE — a throwaway is the only safe substrate")
-age = admin.execute("SELECT 1 FROM pg_available_extensions WHERE name='age'").fetchone()
-if not age:
-    admin.close()
-    skip("Apache AGE not installed in the cluster — cannot build a throwaway graph")
-
-PROBE_DB = f"astryx_tierprobe_{os.getpid()}"
-PROBE_DSN = re.sub(r"/[^/?]+(\?|$)", f"/{PROBE_DB}\\1", ADMIN_DSN, count=1)
-if PROBE_DB not in PROBE_DSN:
-    admin.close()
-    skip("could not derive a throwaway DSN")
-
-
-def cleanup():
-    try:
-        admin.execute(f'DROP DATABASE IF EXISTS "{PROBE_DB}" WITH (FORCE)')
-    except Exception:                                              # noqa: BLE001
-        pass
-    admin.close()
+    from nucleus import agelib
+    from nucleus.sqlguard.fixture import fixture_db, FixtureUnavailable
+except Exception as e:                                             # noqa: BLE001
+    skip(f"{type(e).__name__}: {e} — no fixture applier")
 
 
 def cy(cur, q):
-    cur.execute("LOAD 'age';")
-    cur.execute('SET search_path = ag_catalog, "$user", public;')
+    agelib.prepare(cur)
     cur.execute(f"SELECT * FROM cypher('memory', $cyq$ {q} $cyq$) AS (a agtype);")
 
 
 def raw_nodes(cur):
     """MY OWN ungated read — no resolver code — to independently prove the private node is
     reachable/term-matched absent the gate (arm C)."""
-    cur.execute("LOAD 'age';")
-    cur.execute('SET search_path = ag_catalog, "$user", public;')
+    agelib.prepare(cur)
     cur.execute("SELECT * FROM cypher('memory', $q$ MATCH (n) RETURN labels(n)[0], "
                 "coalesce(n.text,'') $q$) AS (kind agtype, text agtype);")
     return [(str(k).strip('"'), str(t).strip('"')) for k, t in cur.fetchall()]
 
 
+_fx = fixture_db()
 try:
-    admin.execute(f'DROP DATABASE IF EXISTS "{PROBE_DB}" WITH (FORCE)')
-    admin.execute(f'CREATE DATABASE "{PROBE_DB}"')
+    PROBE_DSN = _fx.__enter__()["dsn"]
+except FixtureUnavailable as e:
+    skip(f"no throwaway substrate: {e}")
+except Exception as e:                                             # noqa: BLE001
+    skip(f"fixture_db failed ({type(e).__name__}: {e})")
+
+
+def cleanup():
+    _fx.__exit__(None, None, None)
+
+
+try:
     with psycopg.connect(PROBE_DSN, autocommit=True, connect_timeout=5) as sc, sc.cursor() as cur:
-        cur.execute("CREATE EXTENSION IF NOT EXISTS age;")
-        cur.execute("LOAD 'age';")
-        cur.execute('SET search_path = ag_catalog, "$user", public;')
+        if not cur.execute("SELECT 1 FROM pg_extension WHERE extname='age'").fetchone():
+            skip("the fixture carries no AGE (not in this cluster, or no template for a NOSUPERUSER role)")
+        agelib.prepare(cur)
         cur.execute("SELECT create_graph('memory');")
         # admitted page — shares the query terms, carries the PUBLIC marker
         cy(cur, "CREATE (:Concept {title:'gateway-runbook', admitted:true, "
