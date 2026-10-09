@@ -525,7 +525,7 @@ async def _say(v: Viewer, thread: str, default_agent: str, text: str, intent="ch
         json.dumps(meta))
     await pool.execute(
         "UPDATE canvas_threads SET updated_at=now(), title=coalesce(title, $2) WHERE thread=$1",
-        thread, re.sub(r"\s+", " ", text)[:60])
+        thread, _title_of(text))
     waiting.setdefault(agent, {})[thread] = (v.name, time.time())
     push(v.name, {"type": "message", "thread": thread, "message": shape(row)})
     push(v.name, {"type": "progress", "thread": thread, "agent": agent, "line": "◌ waking up"})
@@ -573,6 +573,12 @@ async def _message_file(v, msg: int, n: int) -> Path | None:
     if not agent_exists(row["from_agent"]) and not path.is_relative_to(MEDIA_DIR.resolve()):
         return None
     return path if path.is_file() else None
+
+
+def _title_of(text: str) -> str:
+    """A chat's title from its first message: files read as their names, never as raw tokens/paths."""
+    t = _ANY_FILE.sub(lambda m: " 📎 " + re.sub(r"^cv-\d+-", "", Path((m[1] or m[2]).strip()).name) + " ", text)
+    return re.sub(r"\s+", " ", t).strip()[:60]
 
 
 # What may be shown IN the page (inline) rather than downloaded. Only types a browser renders
