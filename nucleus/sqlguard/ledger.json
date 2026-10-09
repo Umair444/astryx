@@ -440,7 +440,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 293,
+  "debt_rows": 294,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -1127,6 +1127,11 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:79978b153539351884fcb4a8b49996e18cf12ba81fc663c86ba7e9b94eeca3b0"
+  },
+  "nucleus/sqlguard/enforce.py::enforce\u001fselect to_regclass('sqlguard_seen')": {
+   "debt": "UNEXECUTED",
+   "reason": "seed (restored 10-09, steward #38027): shrunk in c3aab02 on ONE run's RESPONSIVE grade, but to_regclass returns one row either way (NULL or the oid), so the grade rides whether the run created sqlguard_seen and flaps red on other trees. Listed until a fixture pins table-absent and table-present arms.",
+   "tk": "sha256t:24a70fcf340ff1f032302692bdfe9fe64190e009374dd87482dcde8779a883b3"
   },
   "nucleus/sqlguard/fixture.py::_stamp_all\u001fselect c.oid, quote_ident(n.nspname)||'.'||quote_ident(c.relname) from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relkind in ('r','p','v','m') and n.nspname not in ('pg_catalog','information_schema','ag_catalog','topology') and n.nspname not like 'pg_toast%%' and not exists (select 1 from pg_depend d where d.classid = 'pg_class'::regclass and d.objid = c.oid and d.deptype = 'e')": {
    "admitted": "2026-09-30",
