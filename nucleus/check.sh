@@ -401,6 +401,8 @@ run "OKF frontmatter additivity"      "$PY" tests/test_okf.py
 # files disagree with nothing to arbitrate. Pure stdlib; the estate arms skip loudly on a
 # clean checkout, and the wire layer is never touched here.
 run "recall-graph compiler"           "$PY" tests/test_memgraph.py
+run "derived-copy registry: digests + writer count (8018 S1)" "$PY" tests/test_copies.py
+run "derived-copy registry: the graph builder stamps its own digest (8018 S1)" "$PY" tests/test_copies_builder.py
 # The typed layer's lint. Every finding must be FALSIFIABLE and every expected field set
 # DERIVED from the corpus — a hand-kept list would be the drift class this org has hit
 # five ways. Named for the false positive it prevents: the lint's first version condemned

@@ -143,7 +143,9 @@ def retrieve(query: str, topk: int = 5, hop: int = 4) -> tuple[list[dict], list[
     dsn = _env("ASTRYX_DSN")
     if not (psycopg and dsn):
         return [], []
-    with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
+    # read-only BY CONSTRUCTION, not only by content (a3 #39182 BC-1): a write verb here fails in postgres.
+    with psycopg.connect(dsn, autocommit=True, options="-c default_transaction_read_only=on") as conn, \
+            conn.cursor() as cur:
         corpus = R.corpus(cur)
         by_id = {d["id"]: d for d in corpus}
         top = [d for _, d in bm25(query, corpus)[:topk]]
