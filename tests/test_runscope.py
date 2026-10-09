@@ -142,7 +142,7 @@ def main():
         lv = rs.live(base)
         check("live(): a live scope counts; a dead one and a REUSED pid don't (the eviction guard, seed #34141)",
               t_live.run_id in lv and t_dead.run_id not in lv and t_reused.run_id not in lv, str(lv))
-        reaped = {x["scope"] for x in rs.sweep(dsn, base)}
+        reaped = {x["scope"] for x in rs.sweep(dsn, base, only=set(extra_roles))}
         check("sweep reaps a scope whose process is gone", t_dead.run_id in reaped and not role_exists(t_dead.role),
               str(reaped))
         check("sweep reaps a scope whose pid was REUSED (same pid, different start time)",
@@ -170,10 +170,21 @@ def main():
         _sh1.rmtree(nolock.root, ignore_errors=True)
         reused = f"{rs.ROLE_PREFIX}{os.getpid()}x1000"                   # OUR live pid, an epoch long before we started
         adm.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(reused)))
+        adm.execute(sql.SQL("COMMENT ON ROLE {} IS {}").format(sql.Identifier(reused), sql.Literal(rs.MACHINE_ID)))
         extra_roles.append(reused)
+        # a3 D1 #35480: the oracle's sweeps are SCOPED to its own roles, so a DEAD orphan outside the set survives
+        # (proof the candidate set binds), and a foreign or missing host stamp is reported, never dropped
+        outside = f"{rs.ROLE_PREFIX}{os.getpid()}x1001"
+        foreign_r = f"{rs.ROLE_PREFIX}{os.getpid()}x1002"
+        unstamped = f"{rs.ROLE_PREFIX}{os.getpid()}x1003"
+        for r_ in (outside, foreign_r, unstamped):
+            adm.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(r_)))
+        adm.execute(sql.SQL("COMMENT ON ROLE {} IS {}").format(sql.Identifier(outside), sql.Literal(rs.MACHINE_ID)))
+        adm.execute(sql.SQL("COMMENT ON ROLE {} IS 'another-host-0000'").format(sql.Identifier(foreign_r)))
+        extra_roles.extend([foreign_r, unstamped])                # NOT outside: it must stay out of the sweep's set
         adm.execute(sql.SQL("CREATE DATABASE {} OWNER {} ALLOW_CONNECTIONS false").format(
             sql.Identifier(f"{reused}_db"), sql.Identifier(reused)))
-        orph = {x["scope"]: x for x in rs.sweep(dsn, base) if x.get("orphan")}
+        orph = {x["scope"]: x for x in rs.sweep(dsn, base, only=set(extra_roles)) if x.get("orphan")}
         cid = crashed[len(rs.ROLE_PREFIX):]
         check("F1: a crashed run whose lock dir is GONE is reaped from postgres (its role and DBs)",
               bool(crashed) and cid in orph and not role_exists(crashed) and orph[cid]["dropped"] == [f"{crashed}_crashed"],
@@ -182,6 +193,14 @@ def main():
               nolock.run_id not in orph and role_exists(nolock.role), str(sorted(orph)))
         check("F1: a REUSED pid (alive, but started after the role's epoch) is not the creator: reaped",
               f"{os.getpid()}x1000" in orph and not role_exists(reused), str(sorted(orph)))
+        check("D1: a DEAD orphan OUTSIDE the oracle's candidate set survives its sweep (the set binds)",
+              role_exists(outside) and f"{os.getpid()}x1001" not in orph, str(sorted(orph)))
+        rep_ = {x["scope"]: x for x in rs.sweep(dsn, base, only=set(extra_roles)) if x.get("orphan")}
+        check("host stamp: a dead orphan stamped by ANOTHER host, or not at all, is REPORTED, never dropped",
+              role_exists(foreign_r) and role_exists(unstamped)
+              and all(k in rep_ and rep_[k].get("skipped") for k in (f"{os.getpid()}x1002", f"{os.getpid()}x1003")),
+              str(sorted(rep_)))
+        adm.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(outside)))          # ours: cleaned by hand
         nolock.close()
         again = nolock.close()                                      # a second close of a torn-down scope
         check("teardown is IDEMPOTENT: closing an already torn-down scope drops nothing and reports no leak",
@@ -194,7 +213,7 @@ def main():
         crafted = base / "9x9crafted"
         crafted.mkdir()
         (crafted / "lock.json").write_text(json.dumps({"pid": 1, "starttime": -1, "role": victim.role}))
-        rs.sweep(dsn, base)
+        rs.sweep(dsn, base, only=set(extra_roles))
         check("a crafted lock naming ANOTHER role is refused (the role must match its own directory)",
               role_exists(victim.role), "victim role was dropped")
         outside = Path(tempfile.mkdtemp(prefix="runscope-outside-")) / victim.run_id   # same NAME, wrong parent

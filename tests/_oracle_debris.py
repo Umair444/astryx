@@ -15,7 +15,8 @@ from psycopg import sql
 
 ORACLE_BASE = Path(os.environ.get("ASTRYX_RUNSCOPE_ORACLE_ROOT", "/tmp/astryx-runscope-oracle"))
 from nucleus.branch_check_prep import TEST_DB                    # noqa: E402 (ONE definition, P0-b's refusal reads it too)
-TEST_ROLE = re.compile(r"^astryx_hardendep_(\d+)$")        # a LOGIN role test_init_harden plants
+TEST_ROLE = re.compile(r"^astryx_hardendep_(\d+)$"
+                       r"|^bc_(\d+)x100[0-3]$")    # runscope's synthetic orphans (reused / outside / foreign / unstamped)        # a LOGIN role test_init_harden plants
 
 
 def _gone(pid: int) -> bool:
@@ -42,7 +43,11 @@ def reap(adm) -> list:
             reaped.append(d)
     for (r,) in adm.execute("SELECT rolname FROM pg_roles").fetchall():     # after the DBs holding its grants
         m = TEST_ROLE.match(r)
-        if m and _gone(int(m.group(1))):
+        if m and _gone(int(next(g for g in m.groups() if g))):
+            for (d,) in adm.execute("SELECT d.datname FROM pg_database d JOIN pg_roles o ON o.oid = d.datdba "
+                                    "WHERE o.rolname = %s", (r,)).fetchall():
+                _drop_db(adm, d)                            # by OWNERSHIP first: a role owning a DB can't be dropped
+                reaped.append(d)
             adm.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(r)))
             reaped.append(r)
     if ORACLE_BASE.is_dir():

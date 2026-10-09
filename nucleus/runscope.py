@@ -71,6 +71,8 @@ class RunScope:
             verifier = c.pgconn.encrypt_password(self._password.encode(), self.role.encode(), b"scram-sha-256")
             c.execute(sql.SQL("CREATE ROLE {} LOGIN NOSUPERUSER CREATEDB PASSWORD {}").format(
                 sql.Identifier(self.role), sql.Literal(verifier.decode())))
+            if MACHINE_ID:
+                c.execute(sql.SQL("COMMENT ON ROLE {} IS {}").format(sql.Identifier(self.role), sql.Literal(MACHINE_ID)))
             # AGE (plan-4918 D1): a non-superuser can't `LOAD 'age'`, so the admin preloads it for this role's
             # sessions. Only where the server offers AGE: a preload of a missing library fails EVERY connection.
             if c.execute("SELECT 1 FROM pg_available_extensions WHERE name = 'age'").fetchone():
@@ -165,6 +167,11 @@ def live(base: Path = None) -> list:
 
 
 ROLE_RX = re.compile(rf"^{ROLE_PREFIX}(\d+)x(\d+)$")
+# The role name carries pid and epoch but no HOST, and a postgres the human points us at may serve two hosts. So each
+# run role is stamped with this machine's id at creation, and the orphan sweep reaps ONLY roles carrying it: a foreign
+# or missing stamp is REPORTED, never dropped (a3 #35480: host A must not read host B's live run as an orphan).
+_MID = Path("/etc/machine-id")
+MACHINE_ID = _MID.read_text().strip() if _MID.is_file() else None
 
 
 def _started_at(pid: int):
@@ -176,22 +183,33 @@ def _started_at(pid: int):
     return btime + st / os.sysconf("SC_CLK_TCK")
 
 
-def orphan_roles(admin_dsn: str) -> list:
+def orphan_roles(admin_dsn: str, only=None, foreign=None) -> list:
     """Run roles whose creator is GONE, read from POSTGRES, not from lockfiles (a2 F1 #34875): a reboot or a removed
     scope dir erases the lock, never the role or its databases. The role's name is its creator, `bc_<pid>x<epoch>`.
     Gone means the pid is dead, OR the process now holding it started AFTER the role's epoch (pids are reused, most
-    of all after a reboot), so it can't be the creator. A live run is never an orphan, with or without its lock."""
+    of all after a reboot), so it can't be the creator. A live run is never an orphan, with or without its lock.
+    `only` restricts the CANDIDATES before any test (a3 D1 #35480): production passes None (the org-wide sweep it
+    needs); an oracle passes exactly the roles it made, so even a mutated predicate can destroy nothing else.
+    An orphan not stamped with THIS machine's id is appended to `foreign` (reported), never returned (dropped)."""
     with psycopg.connect(admin_dsn, autocommit=True) as c:
         roles = [r[0] for r in c.execute("SELECT rolname FROM pg_roles WHERE rolname LIKE 'bc\\_%'")]
-    out = []
-    for r in roles:
-        m = ROLE_RX.match(r)
-        if not m:
-            continue
-        started = _started_at(int(m.group(1)))
-        if started is not None and started <= int(m.group(2)) + 2:      # the creator (or older) is still alive
-            continue
-        out.append(r)
+        out = []
+        for r in roles:
+            if only is not None and r not in only:
+                continue
+            m = ROLE_RX.match(r)
+            if not m:
+                continue
+            started = _started_at(int(m.group(1)))
+            if started is not None and started <= int(m.group(2)) + 2:      # the creator (or older) is still alive
+                continue
+            stamp = c.execute("SELECT shobj_description(oid, 'pg_authid') FROM pg_roles WHERE rolname = %s",
+                              (r,)).fetchone()
+            if not MACHINE_ID or not stamp or stamp[0] != MACHINE_ID:
+                if foreign is not None:
+                    foreign.append(r)
+                continue
+            out.append(r)
     return sorted(out)
 
 
@@ -216,7 +234,7 @@ def _drop_owned(admin_dsn: str, role: str) -> dict:
     return out
 
 
-def sweep(admin_dsn: str, base: Path = None) -> list:
+def sweep(admin_dsn: str, base: Path = None, only=None) -> list:
     """Reap every scope under `base` whose lock's process is gone (pid AND start time). Returns their reports."""
     base = base or SCOPE_ROOT
     reaped = []
@@ -229,6 +247,11 @@ def sweep(admin_dsn: str, base: Path = None) -> list:
             continue
         rep = teardown(admin_dsn, str(lock.get("role", "")), d, base)
         reaped.append({"scope": d.name, **rep})
-    for role in orphan_roles(admin_dsn):                # a2 F1: the lock is gone, the role and its DBs aren't
+    foreign = []
+    for role in orphan_roles(admin_dsn, only=only, foreign=foreign):    # a2 F1: the lock is gone, the role isn't
         reaped.append({"scope": role[len(ROLE_PREFIX):], "orphan": True, **_drop_owned(admin_dsn, role)})
+    for role in foreign:
+        reaped.append({"scope": role[len(ROLE_PREFIX):], "orphan": True, "dropped": [],
+                       "skipped": "not stamped with this machine's id: another host's (or a pre-stamp) run role. "
+                                  "Reported, never dropped"})
     return reaped
