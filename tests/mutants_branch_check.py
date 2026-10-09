@@ -40,12 +40,20 @@ MUTANTS = {
          '    dead = sorted(set(m["failed"]) & set(b["failed"]))'),
     "O10 production scopes its sweep (only=set(): no orphan is ever reaped, a reboot strands every role again)":
         ("    for r in rs.sweep(dsn):", "    for r in rs.sweep(dsn, only=set()):"),
-    "O11 every branch-only R-NEW is UNVERIFIABLE (an EXECUTED unlisted site, whose oracle ran, escapes as dark)":
-        ('dark = [l for l in sg_new if l.startswith("R-NEW") and "UNEXECUTED" in l] if both else []',
-         'dark = [l for l in sg_new if l.startswith("R-NEW")] if both else []'),
-    "O12 dark is judged with no dark gate at all (an UNEXECUTED site nothing could run escapes)":
-        ('dark = [l for l in sg_new if l.startswith("R-NEW") and "UNEXECUTED" in l] if both else []',
-         'dark = [l for l in sg_new if l.startswith("R-NEW") and "UNEXECUTED" in l]'),
+    "O11 an EXECUTED unlisted site (its oracle ran) is excused as dark too":
+        ('g = covering_gate(mt.group(1), dark_gates, refs or {}) if mt and "UNEXECUTED" in l else None',
+         'g = covering_gate(mt.group(1), dark_gates, refs or {}) if mt else None'),
+    "O12 co-occurrence, not relation: any dark gate excuses any site (a2 #37119's fail-open)":
+        ('        if mod in r or site_path in r:\n            return g', '        return g'),
     "O13 a dark site is dropped silently instead of named":
-        ('        for x in dark:\n            print(f"    ? {x}")', '        pass'),
+        ('        for x, g in dark:\n            print(f"    ? {x}\\n      ← dark gate: {g}")', '        pass'),
+    "O14 a bare stem counts as a reference (an ordinary word excuses an unreferenced module)":
+        ('        if mod in r or site_path in r:', '        if mod in r or site_path in r or mod.rpartition(".")[2] in r:'),
+    "O15 a gate newly dark on the branch isn't counted (a2 #37112's CREATEROLE skip reads REGRESSED)":
+        ('dark_gates = sorted(set(both) | (set(b["unverified"]) - set(m["unverified"])))', 'dark_gates = sorted(set(both))'),
+    "O16 production never hands report() the references (the excuse is dead code)":
+        ('        rc = report(sha, sums, witness, est, refs=gate_refs(repo["branch"]))', '        rc = report(sha, sums, witness, est)'),
+    "O17 a nested import is missed (only module-level imports are read)":
+        ('        for n in ast.walk(tree):\n            if isinstance(n, ast.Import):',
+         '        for n in tree.body:\n            if isinstance(n, ast.Import):'),
 }

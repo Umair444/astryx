@@ -69,10 +69,10 @@ def main():
     check("…and a clean run's summary has no FAILED set even after stray ✗ output", s["failed"] == [], str(s))
     est = {"branch": {"skipped_credential": []}}
     sha = {"main": "a" * 40, "branch": "b" * 40}
-    def rep(main, branch, witness=None):
+    def rep(main, branch, witness=None, refs=None):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
-            rc = bc.report(sha, {"main": main, "branch": branch}, witness or {"main": 0, "branch": 0}, est)
+            rc = bc.report(sha, {"main": main, "branch": branch}, witness or {"main": 0, "branch": 0}, est, refs=refs)
         return rc, buf.getvalue()
     base = {"failed": ["x"], "unverified": ["u"], "line": "check: m"}
     rc, out = rep(base, {"failed": ["x", "y"], "unverified": ["u"], "line": "check: b"})
@@ -94,6 +94,10 @@ def main():
     runfn = next(n for n in ast.walk(ast.parse(srcp.read_text())) if isinstance(n, ast.FunctionDef) and n.name == "run")
     sweeps = [c for c in ast.walk(runfn) if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
               and c.func.attr == "sweep"]
+    reps = [c for c in ast.walk(runfn) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == "report"]
+    check("branch_check.run passes report() the BRANCH's oracle references (refs=gate_refs(repo['branch']))",
+          len(reps) == 1 and any(k.arg == "refs" and "gate_refs" in ast.dump(k.value) and "'branch'" in ast.unparse(k.value)
+                                 for k in reps[0].keywords), ast.dump(reps[0]) if reps else "no report call in run()")
     check("branch_check.run calls sweep() with NO `only` (the org-wide orphan sweep production needs)",
           len(sweeps) == 1 and not any(k.arg == "only" for k in sweeps[0].keywords),
           ast.dump(sweeps[0]) if sweeps else "no sweep call in run()")
@@ -110,21 +114,48 @@ def main():
     rc, out = rep(base_sg, grown)
     check("D4: a RED only on the branch is a REGRESSION, named by its line → rc 1",
           rc == 1 and "REGRESSED" in out and "R-NEW b.py::g :: select 2" in out, out)
-    # a4 #36860: a NEW site that's UNEXECUTED while gates verified nothing is UNVERIFIABLE HERE, not REGRESSED; the
-    # same site EXECUTED (its oracle ran) or with no dark gate at all stays a regression
+    # a4 #36860 + a2 #37119: an UNEXECUTED branch-only R-NEW is UNVERIFIABLE HERE only when a gate that verified
+    # nothing has an ORACLE REFERENCING the site's module (a relation, not co-occurrence); else it's REGRESSED
     unex = "R-NEW c.py::h :: select 3: UNEXECUTED and not in the ledger. Make it RESPONSIVE, or admit it"
-    exed = "R-NEW d.py::k :: select 4: EXECUTED and not in the ledger. Make it RESPONSIVE, or admit it"
-    darkm = {**base_sg, "unverified": ["prep gate"]}
-    rc, out = rep(darkm, {**shifted, "unverified": ["prep gate"], "sqlguard_red": {"id1": "R-BLIND a.py::f", "u": unex}})
-    check("an UNEXECUTED branch-only R-NEW beside sandbox-dark gates is UNVERIFIABLE HERE (named, with the live "
-          "decider), not REGRESSED → rc 0", rc == 0 and "UNVERIFIABLE HERE" in out and f"? {unex}" in out
-          and "REGRESSED" not in out and "sqlguard.judge" in out, out)
-    rc, out = rep(darkm, {**shifted, "unverified": ["prep gate"], "sqlguard_red": {"id1": "R-BLIND a.py::f", "e": exed}})
-    check("…but an EXECUTED unlisted one (its oracle ran) stays REGRESSED → rc 1",
+    exed = "R-NEW c.py::k :: select 4: EXECUTED and not in the ledger. Make it RESPONSIVE, or admit it"
+    orphan = "R-NEW z.py::q :: select 5: UNEXECUTED and not in the ledger. Make it RESPONSIVE, or admit it"
+    refs = {"prep gate": {"c", "os"}, "other gate": {"y"}}
+    darkm = {**base_sg, "unverified": ["prep gate", "other gate"]}
+    darkb = {**shifted, "unverified": ["prep gate", "other gate"]}
+    rc, out = rep(darkm, {**darkb, "sqlguard_red": {"id1": "R-BLIND a.py::f", "u": unex}}, refs=refs)
+    check("an UNEXECUTED R-NEW whose module a DARK gate's oracle references is UNVERIFIABLE HERE, naming that gate "
+          "and the live decider → rc 0", rc == 0 and "UNVERIFIABLE HERE" in out and f"? {unex}" in out
+          and "← dark gate: prep gate" in out and "REGRESSED" not in out and "sqlguard.judge" in out, out)
+    rc, out = rep(darkm, {**darkb, "sqlguard_red": {"id1": "R-BLIND a.py::f", "o": orphan}}, refs=refs)
+    check("a2 RED: an UNEXECUTED R-NEW in a module NO dark oracle references is REGRESSED, though gates are dark → rc 1",
+          rc == 1 and "REGRESSED" in out and orphan in out and "UNVERIFIABLE" not in out, out)
+    rc, out = rep(darkm, {**darkb, "sqlguard_red": {"id1": "R-BLIND a.py::f", "e": exed}}, refs=refs)
+    check("…an EXECUTED unlisted one (its oracle ran) stays REGRESSED → rc 1",
           rc == 1 and "REGRESSED" in out and exed in out and "UNVERIFIABLE" not in out, out)
-    rc, out = rep(base_sg, {**shifted, "sqlguard_red": {"id1": "R-BLIND a.py::f", "u": unex}})
-    check("…and with NO dark gate, an UNEXECUTED one is REGRESSED → rc 1",
+    rc, out = rep(base_sg, {**shifted, "sqlguard_red": {"id1": "R-BLIND a.py::f", "u": unex}}, refs=refs)
+    check("…and with NO dark gate, a referenced UNEXECUTED one is REGRESSED → rc 1",
           rc == 1 and "REGRESSED" in out and unex in out and "UNVERIFIABLE" not in out, out)
+    rc, out = rep(base_sg, {**shifted, "unverified": ["prep gate"], "sqlguard_red": {"id1": "R-BLIND a.py::f", "u": unex}},
+                  refs=refs)
+    check("a gate NEWLY unverified on the branch (a2 #37112: CREATEROLE missing) counts as dark → UNVERIFIABLE, rc 0",
+          rc == 0 and "← dark gate: prep gate" in out and "REGRESSED" not in out, out)
+    # the relation, read statically from a repo's check.sh and oracle files
+    tdr = Path(tempfile.mkdtemp(prefix="bc-refs-"))
+    (tdr / "nucleus").mkdir()
+    (tdr / "tests").mkdir()
+    (tdr / "nucleus" / "check.sh").write_text('run "g1" "$PY" tests/t1.py\nrun "g2" "$PY" -m nucleus.t2\n'
+                                             'run "g3" "$PY" tests/broken.py\nrun "g4" bash tests/t4.sh\n')
+    (tdr / "tests" / "t1.py").write_text("def f():\n    from nucleus import foo\nP = 'nucleus/bar.py'\nW = 'canvas'\n")
+    (tdr / "nucleus" / "t2.py").write_text("import nucleus.baz as b\n")
+    (tdr / "tests" / "broken.py").write_text("def (:\n")
+    gr = bc.gate_refs(tdr)
+    cg = lambda f: bc.covering_gate(f, ["g1", "g2", "g3", "g4"], gr)
+    check("gate_refs: a NESTED `from nucleus import foo`, a path string, and `-m` gates are read; an unparseable or "
+          "non-python oracle is omitted (its sites stay RED)",
+          cg("nucleus/foo.py") == "g1" and cg("nucleus/bar.py") == "g1" and cg("nucleus/baz.py") == "g2"
+          and set(gr) == {"g1", "g2"}, str({k: sorted(v) for k, v in gr.items()}))
+    check("covering_gate never matches a BARE WORD ('canvas' in an oracle doesn't cover nucleus/canvas.py)",
+          cg("nucleus/canvas.py") is None and cg("nucleus/qux.py") is None, str(cg("nucleus/canvas.py")))
     cs = (REPO / "nucleus" / "check.sh").read_text()
     check("SQLGUARD_GATE is exactly check.sh's own label for the enforce gate",
           f'run "{sg}" "$PY" -m nucleus.sqlguard.enforce' in cs)
