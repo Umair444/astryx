@@ -40,22 +40,75 @@ function surfaceLabel(s: string | null) {
 export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) => void }) {
   const { agents, presence, flash, peers, overview, who } = useStore()
   const box = useRef<HTMLDivElement>(null)
-  const [size, setSize] = useState({ w: 1000, h: 700 })
+  const [size, setSize] = useState({ w: 0, h: 0 })
   const [now, setNow] = useState(Date.now())
   const [flights, setFlights] = useState<Flight[]>([])
   const [hover, setHover] = useState<string | null>(null)
 
-  // a room larger than the screen (a phone) opens centred on the owner, not at its corner
-  const centred = useRef(false)
+  // the camera: the room is a place you move around in — drag to pan, wheel/trackpad or pinch to
+  // zoom about the pointer, buttons for the same. A drag that starts on a face never opens it.
+  const [cam, setCam] = useState({ x: 0, y: 0, k: 1 })
+  const camRef = useRef(cam); camRef.current = cam
+  const placed = useRef(false)
+  const drag = useRef<{ pts: Map<number, { x: number; y: number }>; moved: number; pinch0?: { d: number; k: number } }>({ pts: new Map(), moved: 0 })
+
+  const zoomAt = (k: number, px: number, py: number) => setCam(c => {
+    const nk = Math.min(2.5, Math.max(0.35, k))
+    return { k: nk, x: px - (px - c.x) * (nk / c.k), y: py - (py - c.y) * (nk / c.k) }
+  })
+  const fit = (min = 0) => {
+    const k = Math.max(min, Math.min(1, size.w / room.w, size.h / room.h))
+    setCam({ k, x: (size.w - room.w * k) / 2, y: (size.h - room.h * k) / 2 })
+  }
+
   useEffect(() => {
     const el = box.current
-    if (!el || centred.current || !size.w) return
-    if (el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight) {
-      el.scrollLeft = (el.scrollWidth - el.clientWidth) / 2
-      el.scrollTop = (el.scrollHeight - el.clientHeight) / 2
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      const r = el.getBoundingClientRect()
+      const c = camRef.current
+      // a pinch (ctrlKey) or a notched mouse wheel zooms; a two-finger trackpad scroll pans
+      const wheel = e.deltaMode !== 0 || (e.deltaX === 0 && Number.isInteger(e.deltaY) && Math.abs(e.deltaY) >= 50)
+      if (e.ctrlKey || e.metaKey || wheel)
+        zoomAt(c.k * Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)), e.clientX - r.left, e.clientY - r.top)
+      else setCam({ ...c, x: c.x - e.deltaX, y: c.y - e.deltaY })
     }
-    centred.current = true
-  }, [size])
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    if (e.button !== 0 && e.pointerType === 'mouse') return
+    const d = drag.current
+    if (d.pts.size === 0) d.moved = 0
+    d.pts.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    if (d.pts.size === 2) {
+      const [a, b] = [...d.pts.values()]
+      d.pinch0 = { d: Math.hypot(a.x - b.x, a.y - b.y), k: camRef.current.k }
+    }
+  }
+  const onPointerMove = (e: React.PointerEvent) => {
+    const d = drag.current
+    const last = d.pts.get(e.pointerId)
+    if (!last) return
+    const dx = e.clientX - last.x, dy = e.clientY - last.y
+    d.pts.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    d.moved += Math.abs(dx) + Math.abs(dy)
+    if (d.moved > 4 && !box.current!.hasPointerCapture(e.pointerId)) box.current!.setPointerCapture(e.pointerId)
+    if (d.pts.size === 2 && d.pinch0) {
+      const [a, b] = [...d.pts.values()]
+      const r = box.current!.getBoundingClientRect()
+      zoomAt(d.pinch0.k * Math.hypot(a.x - b.x, a.y - b.y) / d.pinch0.d, (a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top)
+    } else if (d.moved > 4) setCam(c => ({ ...c, x: c.x + dx, y: c.y + dy }))
+  }
+  const onPointerUp = (e: React.PointerEvent) => {
+    const d = drag.current
+    d.pts.delete(e.pointerId)
+    if (d.pts.size < 2) d.pinch0 = undefined
+  }
+  // a drag that ends over a face must not count as a click on it
+  const swallowDragClick = (e: React.MouseEvent) => { if (drag.current.moved > 4) { e.stopPropagation(); e.preventDefault() } }
 
   useEffect(() => {
     const el = box.current!
@@ -76,8 +129,13 @@ export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) =>
     return [...byDept.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
   }, [agents])
 
-  // the room never shrinks below legible: on a phone you pan it, nobody gets crushed
+  // the room never shrinks below legible: on a phone you pan and pinch it, nobody gets crushed
   const room = { w: Math.max(size.w, 900), h: Math.max(size.h, 760) }
+  useEffect(() => {
+    if (placed.current || !size.w) return   // wait for the real measurement
+    placed.current = true
+    fit(0.6)
+  }, [size.w, size.h])
 
   // layout: ONE ring of people. A department is a contiguous arc of it (a room within the room),
   // with a gap between departments; free agents are single seats. Seats are angles on an ellipse.
@@ -134,8 +192,10 @@ export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) =>
         {overview && <span className="text-ink-mute hidden md:inline">· {overview.messages_24h} messages today</span>}
         <span className="ml-auto text-[11px] text-ink-mute hidden sm:inline">every message on the wire travels across the room as it happens</span>
       </div>
-      <div ref={box} className="relative flex-1 min-h-0 overflow-auto floor-bg">
-       <div className="relative" style={{ width: room.w, height: room.h }}>
+      <div ref={box} className="relative flex-1 min-h-0 overflow-hidden floor-bg select-none touch-none cursor-grab active:cursor-grabbing"
+        onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}
+        onClickCapture={swallowDragClick} onDoubleClick={(e) => { if (e.target === e.currentTarget) fit() }}>
+       <div className="absolute left-0 top-0 origin-top-left" style={{ width: room.w, height: room.h, transform: `translate(${cam.x}px, ${cam.y}px) scale(${cam.k})` }}>
         {/* the ring itself, and each department as a band along it */}
         <svg className="absolute left-0 top-0 pointer-events-none" width={room.w} height={room.h}>
           <ellipse cx={ring.cx} cy={ring.cy} rx={ring.rx} ry={ring.ry} fill="none" stroke="var(--t-line)" strokeDasharray="2 7" />
@@ -227,6 +287,15 @@ export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) =>
         {agents.length === 0 && (
           <div className="absolute inset-0 grid place-items-center text-ink-mute text-sm">the floor is empty — no agents yet</div>
         )}
+       </div>
+       <div className="absolute left-3 bottom-3 flex flex-col rounded-xl border border-line bg-deck-2/90 backdrop-blur overflow-hidden z-30 cursor-default"
+         onPointerDown={(e) => { e.stopPropagation(); drag.current.moved = 0 }}>
+         {([['+', 'zoom in', () => zoomAt(cam.k * 1.25, size.w / 2, size.h / 2)],
+            ['−', 'zoom out', () => zoomAt(cam.k / 1.25, size.w / 2, size.h / 2)],
+            ['⤢', 'fit the whole floor', () => fit()]] as const).map(([g, t, f]) => (
+           <button key={t} title={t} aria-label={t} onClick={f}
+             className="w-8 h-8 grid place-items-center text-ink-dim hover:text-ink hover:bg-deck text-[15px] border-b border-line last:border-b-0">{g}</button>
+         ))}
        </div>
       </div>
     </div>
