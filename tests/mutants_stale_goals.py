@@ -26,7 +26,10 @@ MUTANTS = {
     # Decimal / float raises. The epoch path (Decimal // int) survives it, which is why
     # this hid for weeks in a branch no goal had reached yet.
     "M1 the Decimal age is not coerced (the four-tick production crash)":
-        ('        age_s = float(g["age_s"] or 0)', '        age_s = g["age_s"] or 0'),
+        # re-anchored 2026-10-09 (running-time age): the coercion now sits inside the discount;
+        # dropping it makes Decimal - float raise — the same production crash this mutant pins
+        ('        age_s = max(0.0, float(g["age_s"] or 0) - dark_s)   # RUNNING time, not wall time',
+         '        age_s = max(0.0, (g["age_s"] or 0) - dark_s)   # RUNNING time, not wall time'),
 
     # The ceiling that let goal 15 sit fourteen days after one escalation: with a cap, the
     # WORST state is the only one that can never re-nag, and severity is inverted.
@@ -51,6 +54,23 @@ MUTANTS = {
     "M5 a stranded goal is flagged once, ever":
         ("                if band > stranded.get(gid, -1):",
          "                if gid not in stranded:"),
+
+    # RUNNING TIME (2026-10-09, host off 8.75d → six false "9 dead epochs"). The discount
+    # dropped: wall-clock decay is back, and an outage reads as neglect again.
+    "D1 host-down time is not discounted (wall-clock decay returns)":
+        ('        age_s = max(0.0, float(g["age_s"] or 0) - dark_s)   # RUNNING time, not wall time',
+         '        age_s = float(g["age_s"] or 0)   # RUNNING time, not wall time'),
+
+    # The threshold dropped: every inter-message gap reads as darkness, so a quiet-but-UP
+    # org (gaps up to the 4h heartbeat) is discounted too — the quiet direction.
+    "D2 every gap counts as darkness (the DARK_GAP threshold is lost)":
+        ("WHERE ts - prev > interval '{DARK_GAP}'", "WHERE ts - prev > interval '0 seconds'"),
+
+    # Darkness from BEFORE the goal's last evidence is subtracted too, so a goal that shipped
+    # after an outage is credited with time it never spent waiting.
+    "D3 darkness before the last evidence is discounted":
+        ("SELECT sum(extract(epoch from (dk.b - greatest(dk.a, e.since)))) AS dark_s",
+         "SELECT sum(extract(epoch from (dk.b - dk.a))) AS dark_s"),
 
     # Both dedup sets accumulate goals that have left the board, so a goal that goes
     # terminal and later returns to play inherits a dead receipt instead of a full ladder.

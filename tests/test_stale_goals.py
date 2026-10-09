@@ -87,10 +87,15 @@ class FakeCtx:
         return self.rows
 
 
-def goal(gid, state, days, title="t", owner="steward", epoch_hours=24):
-    """A goal row shaped like the real query's output — ages as DECIMAL, deliberately."""
-    return dict(id=gid, title=title, owner=owner, state=state,
-                epoch_hours=epoch_hours, age_s=Decimal(str(int(days * 86400))))
+def goal(gid, state, days, title="t", owner="steward", epoch_hours=24, dark_days=None):
+    """A goal row shaped like the real query's output — ages as DECIMAL, deliberately.
+    dark_days: host-down time inside the evidence window (the query's dark_s); omitted =
+    the pre-2026-10-09 row shape, which must still decay exactly as before."""
+    row = dict(id=gid, title=title, owner=owner, state=state,
+               epoch_hours=epoch_hours, age_s=Decimal(str(int(days * 86400))))
+    if dark_days is not None:
+        row["dark_s"] = Decimal(str(int(dark_days * 86400)))
+    return row
 
 
 mod = load_subject()
@@ -199,5 +204,71 @@ ctx10 = FakeCtx([goal(10, "proposed", 0.5)], {})
 check("a freshly proposed goal is not nagged about at all",
       fire(ctx10) is None, "the first band is 2 days; a new proposal is not a finding")
 
+# ── RUNNING time, not wall time (2026-10-09: host off 8.75d → six goals "9 dead epochs") ──────
+out = fire(FakeCtx([goal(11, "active", 9.6, dark_days=8.75)]))
+check("a goal whose whole silence is host-down time is NOT escalated (the 10-09 false six)",
+      out is None or "#11" not in out, f"out={out!r}")
+out = fire(FakeCtx([goal(12, "active", 10, dark_days=7)]))
+check("...but running-time decay still escalates, and SAYS how much it discounted",
+      out and "#12" in out and "3 epochs" in out and "168h host-down discounted" in out, f"out={out!r}")
+out = fire(FakeCtx([goal(13, "active", 2, dark_days=5)]))
+# (darkness is summed only inside [evidence, now], so it cannot exceed the age; the max(0, …) clamp is
+#  defensive and its removal is an EQUIVALENT mutant — this arm proves only that such a row is quiet)
+check("a row whose darkness exceeds its age is quiet and does not raise",
+      out is None or "#13" not in out, f"out={out!r}")
+check("the dark-gap threshold is the declared 6h (premise: an UP org writes at least every 4h)",
+      mod.get("DARK_GAP") == "6 hours", f"DARK_GAP={mod.get('DARK_GAP')!r}")
+
+# ── the query EXECUTED (the ctx.sql-blindness class): a stamped fixture DB, never production ────
+try:
+    import importlib.util as _ilu
+    _p = _ilu.spec_from_file_location("pulse_run_sg", REPO / "nucleus" / "pulse_run.py")
+    _pr = _ilu.module_from_spec(_p)
+    _p.loader.exec_module(_pr)
+    import psycopg
+    sys.path.insert(0, str(REPO))
+    from nucleus.sqlguard.fixture import fixture_db
+    _fx = fixture_db()
+    fx = _fx.__enter__()
+except Exception as e:  # noqa: BLE001
+    print(f"  SKIP  fixture arms — fixture/runner unavailable ({type(e).__name__}: {e})")
+    fx = None
+    fails_skip = True
+if fx is not None:
+    conn = psycopg.connect(fx["dsn"], autocommit=True)
+    try:
+        class TempCtx(_pr.Ctx):
+            def __init__(self, state, connection):
+                super().__init__(state)
+                self._conn = connection
+        fire(TempCtx({}, conn))   # an EMPTY goals table: the query must run and return nothing
+        q = "INSERT INTO goals (title, owner, state, epoch_hours, ts) VALUES (%s,'steward','active',24, now() - %s::interval) RETURNING id"
+        g_old = conn.execute(q, ("predates the outage", "5 days")).fetchone()[0]
+        g_new = conn.execute(q, ("after the outage", "2 hours")).fetchone()[0]
+        for ago in ("5 days", "4 days 20 hours", "3 days", "2 days 21 hours", "2 hours", "1 hour"):
+            conn.execute("INSERT INTO messages (from_agent, to_agent, body, ts) VALUES ('pulse','seed','tick', now() - %s::interval)", (ago,))
+        # gaps: 4d20h→3d = 44h (DARK), 3d→2d21h = 3h (quiet, NOT dark), 2d21h→2h = ~68.9h (DARK)
+        cap = []
+
+        class SpyCtx(TempCtx):
+            def sql(self, q, params=()):
+                rows = super().sql(q, params)
+                if "dark_s" in q:
+                    cap.extend(rows)
+                return rows
+        fire(SpyCtx({}, conn))
+        by = {r["id"]: r for r in cap}
+        d_old = float(by[g_old]["dark_s"]) / 3600 if g_old in by else None
+        d_new = float(by[g_new]["dark_s"]) / 3600 if g_new in by else None
+        check("REAL SQL: the old goal is discounted exactly the two >6h gaps (44h + 68h), not the 3h one",
+              d_old is not None and abs(d_old - (44 + 67)) < 1.5, f"dark_h={d_old}")
+        # each autocommit INSERT has its own now(), so the "-2h" message lands a fraction of a second
+        # after the goal's "-2h" ts — that sliver is correctly counted; a minute is the honest bound
+        check("REAL SQL: a goal whose evidence follows the gaps is discounted (sub-minute) nothing",
+              d_new is not None and d_new < 1 / 60, f"dark_h={d_new}")
+    finally:
+        conn.close()
+        _fx.__exit__(None, None, None)
+
 print("\n" + ("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}"))
-sys.exit(1 if fails else 0)
+sys.exit(1 if fails else (77 if globals().get("fails_skip") else 0))
