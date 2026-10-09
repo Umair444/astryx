@@ -61,7 +61,7 @@ try:
     ok, msg = address.check("stewrd", AG)
     check("a typo is refused with the close name", not ok and "steward" in msg, msg)
     check("the refusal says nothing was sent", "nothing was sent" in msg, msg)
-    for to in ("owner", "wa-923001234567", "tg-12345", "dc-998877", "cv-bob", "canvas-12"):
+    for to in ("owner", "wa-test-person", "tg-12345", "dc-998877", "cv-bob", "canvas-12"):
         ok, msg = address.check(to, AG)
         check(f"surface {to!r} passes ({address.surface_of(to)})", ok, msg)
     for to in ("canvas-x", "dc:123", "owners", "quasar"):
