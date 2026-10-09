@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -215,6 +216,27 @@ def main():
         extra_roles.extend([foreign_r, unstamped])                # NOT outside: it must stay out of the sweep's set
         adm.execute(sql.SQL("CREATE DATABASE {} OWNER {} ALLOW_CONNECTIONS false").format(
             sql.Identifier(f"{reused}_db"), sql.Identifier(reused)))
+        # a3 #37109 (2): ownership, not an epoch. The crashed child is a REAL-epoch orphan of a test run, which
+        # MIN_EPOCH can't see. It carries the TEST stamp, so an UNSCOPED (production) read never returns it, while a
+        # PRODUCTION-stamped dead orphan still is returned (the reaper isn't simply off). Read-only.
+        cstamp = adm.execute("SELECT shobj_description(oid, 'pg_authid') FROM pg_roles WHERE rolname = %s",
+                             (crashed,)).fetchone() if crashed else None
+        prod_orphan = f"{rs.ROLE_PREFIX}{dead.pid}x{int(time.time()) - 100}"           # a dead creator, real epoch
+        adm.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(prod_orphan)))
+        adm.execute(sql.SQL("COMMENT ON ROLE {} IS {}").format(sql.Identifier(prod_orphan), sql.Literal(rs.MACHINE_ID)))
+        fg = []
+        un = rs.orphan_roles(dsn, foreign=fg)
+        adm.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(prod_orphan)))       # ours: cleaned by hand
+        nstamp = adm.execute("SELECT shobj_description(oid, 'pg_authid') FROM pg_roles WHERE rolname = %s",
+                             (nolock.role,)).fetchone()
+        check("TEST stamp: an oracle-made run role carries test:<machine-id>, in-process (this oracle's own scope, "
+              "made by the module under test) and in a child (the crashed run)",
+              bool(nstamp) and nstamp[0] == rs.TEST_STAMP and bool(cstamp) and cstamp[0] == rs.TEST_STAMP,
+              f"in-process={nstamp} child={cstamp}")
+        check("TEST stamp: an UNSCOPED (production) read never returns the oracle's real-epoch crashed child; it's "
+              "reported as foreign", crashed not in un and crashed in fg, f"in_un={crashed in un} in_fg={crashed in fg}")
+        check("…while a PRODUCTION-stamped dead orphan IS returned unscoped (the reaper still reaps real debris)",
+              prod_orphan in un, str(sorted(un))[:200])
         orph = {x["scope"]: x for x in rs.sweep(dsn, base, only=set(extra_roles)) if x.get("orphan")}
         cid = crashed[len(rs.ROLE_PREFIX):]
         check("F1: a crashed run whose lock dir is GONE is reaped from postgres (its role and DBs)",

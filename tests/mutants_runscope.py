@@ -51,7 +51,7 @@ MUTANTS = {
     "R14 the candidate set is ignored (an oracle's sweep reaches every role on the cluster)":
         ("            if only is not None and r not in only:\n                continue\n", ""),
     "R15 the host stamp is ignored (host A reaps host B's live run, which has no local pid)":
-        ("            if not MACHINE_ID or not stamp or stamp[0] != MACHINE_ID:", "            if False:"),
+        ("            if not MACHINE_ID or not stamp or stamp[0] not in ok:", "            if False:"),
     "R16 the dbus id is never consulted (an older Linux host stamps nothing, so its orphans are never reaped)":
         ('    for f in ("/etc/machine-id", "/var/lib/dbus/machine-id"):', '    for f in ("/etc/machine-id",):'),
     "R17 an EMPTY id file is taken as the id (every host with an empty file shares one stamp)":
@@ -64,4 +64,12 @@ MUTANTS = {
     "R20 sweep lets one orphan's drop failure escape":
         ("        except Exception as e:                         # noqa: BLE001 — one orphan never crashes the run",
          "        except ZeroDivisionError as e:                 # noqa: BLE001 — one orphan never crashes the run"),
+    "R21 an unscoped sweep accepts the TEST stamp (a real run reaps a live oracle's real-epoch crashed child: a3 #37109)":
+        ("            ok = {MACHINE_ID} if only is None else {MACHINE_ID, TEST_STAMP}",
+         "            ok = {MACHINE_ID, TEST_STAMP}"),
+    "R22 an oracle's run role carries the production stamp (ownership is invisible to the sweep)":
+        ("    return TEST_STAMP if os.environ.get(TEST_ENV) else MACHINE_ID", "    return MACHINE_ID"),
+    "R23 a scoped oracle sweep rejects its own test stamp (an oracle's crashed run is never reaped)":
+        ("            ok = {MACHINE_ID} if only is None else {MACHINE_ID, TEST_STAMP}",
+         "            ok = {MACHINE_ID}"),
 }

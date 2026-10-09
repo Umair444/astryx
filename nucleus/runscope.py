@@ -73,7 +73,7 @@ class RunScope:
             c.execute(sql.SQL("CREATE ROLE {} LOGIN NOSUPERUSER CREATEDB PASSWORD {}").format(
                 sql.Identifier(self.role), sql.Literal(verifier.decode())))
             if MACHINE_ID:
-                c.execute(sql.SQL("COMMENT ON ROLE {} IS {}").format(sql.Identifier(self.role), sql.Literal(MACHINE_ID)))
+                c.execute(sql.SQL("COMMENT ON ROLE {} IS {}").format(sql.Identifier(self.role), sql.Literal(_stamp())))
             # AGE (plan-4918 D1): a non-superuser can't `LOAD 'age'`, so the admin preloads it for this role's
             # sessions. Only where the server offers AGE: a preload of a missing library fails EVERY connection.
             if c.execute("SELECT 1 FROM pg_available_extensions WHERE name = 'age'").fetchone():
@@ -192,6 +192,16 @@ def _machine_id():
 
 
 MACHINE_ID = _machine_id()
+# An ORACLE's run role is stamped `test:<machine-id>` (a3 #37109 (2)): the property is ownership, not an epoch shape.
+# A production (unscoped) sweep reaps ONLY the exact machine id, so it never adopts a live oracle's role, the real-
+# epoch crashed-child arm included, which MIN_EPOCH can't see. A scoped sweep (only=) accepts its own test stamp.
+# Set by check.sh for every gate, and by tests/_oracle_debris for an oracle run directly (mutation_probe's way).
+TEST_ENV = "ASTRYX_RUNSCOPE_TEST"
+TEST_STAMP = f"test:{MACHINE_ID}" if MACHINE_ID else None
+
+
+def _stamp():
+    return TEST_STAMP if os.environ.get(TEST_ENV) else MACHINE_ID
 
 
 def _started_at(pid: int):
@@ -203,7 +213,8 @@ def _started_at(pid: int):
     return btime + st / os.sysconf("SC_CLK_TCK")
 
 
-# No real run role predates 2020: its epoch is the run's start. A smaller epoch is SYNTHETIC, an oracle's planted role
+# No real run role predates 2020: its epoch is the run's start (on a host with a working clock: one that boots with no
+# RTC reads 1970 until NTP, so its runs read synthetic and are never reaped there, the safe direction, a3 #37109). A smaller epoch is SYNTHETIC, an oracle's planted role
 # (test_runscope's bc_<pid>x1000..1003), and an UNSCOPED (production) sweep must never adopt one: it belongs to a
 # live oracle that is asserting on it (a2 F-RS #36873: a real branch_check sweep reaped a3's running mutant battery's
 # planted roles, and crashed in the race). Reported, never dropped. A scoped sweep (only=) still judges them.
@@ -218,6 +229,7 @@ def orphan_roles(admin_dsn: str, only=None, foreign=None, synthetic=None) -> lis
     `only` restricts the CANDIDATES before any test (a3 D1 #35480): production passes None (the org-wide sweep it
     needs); an oracle passes exactly the roles it made, so even a mutated predicate can destroy nothing else.
     An orphan not stamped with THIS machine's id is appended to `foreign` (reported), never returned (dropped).
+    Unscoped, an ORACLE's role (stamp TEST_STAMP) counts as foreign too; only a scoped sweep reaps it.
     Unscoped, a role with a SYNTHETIC epoch (< MIN_EPOCH) is appended to `synthetic` and never judged."""
     with psycopg.connect(admin_dsn, autocommit=True) as c:
         roles = [r[0] for r in c.execute("SELECT rolname FROM pg_roles WHERE rolname LIKE 'bc\\_%'")]
@@ -237,7 +249,8 @@ def orphan_roles(admin_dsn: str, only=None, foreign=None, synthetic=None) -> lis
                 continue
             stamp = c.execute("SELECT shobj_description(oid, 'pg_authid') FROM pg_roles WHERE rolname = %s",
                               (r,)).fetchone()
-            if not MACHINE_ID or not stamp or stamp[0] != MACHINE_ID:
+            ok = {MACHINE_ID} if only is None else {MACHINE_ID, TEST_STAMP}       # a test stamp: scoped sweeps only
+            if not MACHINE_ID or not stamp or stamp[0] not in ok:
                 if foreign is not None:
                     foreign.append(r)
                 continue

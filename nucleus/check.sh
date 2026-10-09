@@ -136,6 +136,7 @@ verdict() {
 # all three ITSELF, because run_check runs this under pulse's bare systemd env (the runner-env law:
 # ASTRYX_NODE/507e7ea). The run id names this run's fixture databases, so the leak arm only ever looks for
 # its own prefix.
+export ASTRYX_RUNSCOPE_TEST=1                # every run role a gate makes is a TEST role (runscope TEST_STAMP)
 export ASTRYX_SQLGUARD_RUN="${ASTRYX_SQLGUARD_RUN:-r$(date +%s)x$$}"
 export ASTRYX_SQLGUARD_DIR="${ASTRYX_SQLGUARD_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/sqlguard.XXXXXX")}"
 export PYTHONPATH="$PWD/nucleus/sqlguard/shim${PYTHONPATH:+:$PYTHONPATH}"
