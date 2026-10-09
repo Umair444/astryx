@@ -172,7 +172,7 @@
   "nucleus/people_gate.py::drift\u001fselect 1 from pg_database where datname = ?": [
    "people gate: details only to people_cleared, network to the resident (accident-grade)"
   ],
-  "nucleus/people_gate.py::drift\u001fselect attname from pg_attribute where attrelid = 'social_person'::regclass and attnum > 0 and not attisdropped and attname <> all(?) order by attnum": [
+  "nucleus/people_gate.py::drift\u001fselect attname from pg_attribute where attrelid = ?::regclass and attnum > 0 and not attisdropped and attname <> all(?) order by attnum": [
    "people gate: details only to people_cleared, network to the resident (accident-grade)"
   ],
   "nucleus/people_gate.py::drift\u001fselect rolcanlogin from pg_roles where rolname = ?": [
@@ -962,11 +962,11 @@
    "reason": "people library 1a: a pg_catalog read (pg_roles/pg_database/pg_attribute), so RESPONSIVE is unreachable by the judge's relation rule; executed by test_people_gate / test_privilege_census",
    "tk": "sha256t:b2b9fa21fdbd4c96c019dfd9651607a9c4062aee11268ce3408b2cb0e0e6a9f0"
   },
-  "nucleus/people_gate.py::drift\u001fselect attname from pg_attribute where attrelid = 'social_person'::regclass and attnum > 0 and not attisdropped and attname <> all(?) order by attnum": {
+  "nucleus/people_gate.py::drift\u001fselect attname from pg_attribute where attrelid = ?::regclass and attnum > 0 and not attisdropped and attname <> all(?) order by attnum": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "people library 1a: a pg_catalog read (pg_roles/pg_database/pg_attribute), so RESPONSIVE is unreachable by the judge's relation rule; executed by test_people_gate / test_privilege_census",
-   "tk": "sha256t:9f0ec323abd4c6b0aa78b260be919605e6b4eeb7c67bf6030da70f3bd433f58f"
+   "reason": "people library 1a: drift's per-table column listing (every NETWORK table, social_edge included per memory #36868), a pg_catalog read, so RESPONSIVE is unreachable by the judge's relation rule; executed by test_people_gate; replaces the social_person-only text",
+   "tk": "sha256t:9e2e9c929e94efc9dae58bcf67d120f1dd91ad72e3ca03cbc4d8215b77778083"
   },
   "nucleus/people_gate.py::drift\u001fselect rolcanlogin from pg_roles where rolname = ?": {
    "admitted": "2026-10-09",
