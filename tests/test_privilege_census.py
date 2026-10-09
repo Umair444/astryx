@@ -99,5 +99,47 @@ with tempfile.TemporaryDirectory() as td:
          and "SHARED-library files with a SUPERUSER statement (1): nucleus/lib.py" in out
          and "triggers/seed/t.py" not in out.split("RESIDENT files", 1)[-1], out[-900:])
 
+# --live, only where a database is reachable (the static half above never needs one).
+dsn = os.environ.get("ASTRYX_DSN") or next((l.split("=", 1)[1].strip() for l in (
+    (REPO / ".env").read_text().splitlines() if (REPO / ".env").is_file() else ()) if l.startswith("ASTRYX_DSN=")), None)
+if dsn:
+    try:
+        lv = C.live(dsn)
+        want("--live: every catalog count is read (tables, sequences, views, functions are integers)",
+             all(isinstance(lv[k], int) for k in ("tables", "sequences", "views", "functions")), str(lv)[:300])
+    except Exception as e:                                          # noqa: BLE001
+        want("--live: the catalog reads run", False, f"{type(e).__name__}: {e}"[:300])
+    import psycopg
+    real_connect = psycopg.connect
+
+    class Probe:                                  # the live half's session must refuse a write
+        def __init__(self, *a, **k):
+            self.c = real_connect(*a, **k)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            self.c.close()
+
+        def execute(self, q, *a):
+            r = self.c.execute(q, *a)
+            if q.startswith("SET default_transaction_read_only"):
+                try:
+                    self.c.execute("CREATE TEMP TABLE census_probe (a int)")
+                    Probe.wrote = True
+                except psycopg.Error:
+                    Probe.wrote = False
+            return r
+    Probe.wrote = None
+    psycopg.connect = Probe
+    try:
+        C.live(dsn)
+    finally:
+        psycopg.connect = real_connect
+    want("--live: its session is READ ONLY (a write after the SET is refused)", Probe.wrote is False, str(Probe.wrote))
+else:
+    print("  (no ASTRYX_DSN: the --live arms verified nothing)")
+
 print(f"\n{'FAIL' if fails else 'PASS'}: test_privilege_census ({len(fails)} failing)")
 sys.exit(1 if fails else 0)

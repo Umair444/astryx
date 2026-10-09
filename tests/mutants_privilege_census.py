@@ -2,7 +2,7 @@
 
     venv/bin/python nucleus/mutation_probe.py tests/mutants_privilege_census.py
 
-Hermetic (a temp tree, no database). One per way a census misleads 1b: over-matching invents blockers,
+Hermetic (a temp tree), except C8, whose arm reads catalogs only. One per way a census misleads 1b: over-matching invents blockers,
 under-matching hides them, a wrong surface or DSN source sends the switch to the wrong place.
 """
 from pathlib import Path
@@ -27,6 +27,8 @@ MUTANTS = {
         ('SKIP_DIRS = {"venv", ".venv",', 'SKIP_DIRS = {".venv",'),
     "C6 triggers/ reads as a resident surface":
         ('    ("triggers/", "pulse triggers (service)", "service"),', '    ("triggers/", "pulse triggers (service)", "resident"),'),
+    "C8 the live half's session isn't read-only":
+        ('        c.execute("SET default_transaction_read_only = on")\n', ''),
     "C7 superuser misses LOAD":
         (r"""r"(\bCREATE EXTENSION\b|\bLOAD\s+'|""", r"""r"(\bCREATE EXTENSION\b|"""),
 }

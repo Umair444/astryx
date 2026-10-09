@@ -303,11 +303,6 @@ try:
             G.grant_main(c, resident=RES, cleared=CLR)
             d = G.drift(c, admin, resident=RES, cleared=CLR, private_db=PRIV)
             want("GREEN: re-applying grant_main repairs the planted table and column leaks (idempotent)", d == [], str(d))
-            c.execute("ALTER TABLE social_person ADD COLUMN pgate_later text")
-            d = G.drift(c, admin, resident=RES, cleared=CLR, private_db=PRIV)
-            e = refused(as_(RES, db), "SELECT pgate_later FROM social_person")
-            want("GREEN: a column added later is hidden from the resident (fail-closed), and drift stays empty",
-                 e is not None and "permission denied" in e and d == [], f"{e} {d}")
 
         # CONTROL: the cleared member reads both; the resident still reads the network.
         e = refused(as_(MEM, db), "SELECT * FROM social_relation")
@@ -355,6 +350,35 @@ try:
         want("CUTOVER: persona.apply_pg writes social_relation, and load_pg reads it back (COALESCE keeps kind)",
              n == 2 and back.get("pD", {}).get("shape") == "monthly" and back["pA"]["shape"] == "hourly"
              and back["pA"]["relation"] == "close-friend", f"{n} {back.get('pA')} {back.get('pD')}")
+        # persona_llm, with the channel and the model stubbed: it labels an UNLABELLED person into social_relation
+        # and skips a labelled one, and never writes social_person.
+        from nucleus import persona_llm
+        jids = {"pA@s.whatsapp.net": "pA", "pD@s.whatsapp.net": "pD"}
+        real = people._wa, people.pid, persona_llm.classify
+        people.pid = lambda j: jids[j]
+        people._wa = lambda *a, **k: ([{"jid": j, "last_message_ts": "1"} for j in jids] if a[0] == "chats"
+                                      else {"messages": [{"Text": "a message long enough to be sampled " * 2}]})
+        persona_llm.classify = lambda text: {"relation": "neighbour", "who": "next door", "confidence": "low"}
+        try:
+            res = persona_llm.run(limit=5, budget_s=60)
+        finally:
+            people._wa, people.pid, persona_llm.classify = real
+        with psycopg.connect(fx["dsn"], autocommit=True) as c:
+            kd = dict(c.execute("SELECT pid, kind FROM social_relation WHERE org=%s AND pid IN ('pA','pD')",
+                                (ORG,)).fetchall())
+            n_left = c.execute(M.LEFT_SQL).fetchone()[0]
+        want("CUTOVER: persona_llm labels the unlabelled person into social_relation, skips the labelled one, and "
+             "writes nothing onto social_person", res.get("labelled") == 1 and res.get("skipped") == 1
+             and kd == {"pA": "close-friend", "pD": "neighbour"} and n_left == 0, f"{res} {kd} {n_left}")
+
+        # LAST, because an ALTER changes social_person's signature and so voids its fixture stamp for any later
+        # write (sqlguard would credit nothing after it).
+        with psycopg.connect(fx["dsn"], autocommit=True) as c:
+            c.execute("ALTER TABLE social_person ADD COLUMN pgate_later text")
+            d = G.drift(c, admin, resident=RES, cleared=CLR, private_db=PRIV)
+            e = refused(as_(RES, db), "SELECT pgate_later FROM social_person")
+            want("GREEN: a column added later is hidden from the resident (fail-closed), and drift stays empty",
+                 e is not None and "permission denied" in e and d == [], f"{e} {d}")
 finally:
     try:
         reap(admin, mine=True)
