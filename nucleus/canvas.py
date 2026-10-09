@@ -28,6 +28,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import psycopg
@@ -234,6 +235,41 @@ TIER: a canvas with tier=personal is never shared; keep the human-personal tier 
 
 
 # ---------------------------------------------------------------------------- CLI
+# ---------------------------------------------------------------- the share gate
+# SHARING, not painting, is what moves canvas content off-org (seed #35151), so the hard gate sits
+# here and its verdict is steward's pii_canvas sweep (triggers/steward/pii_sweep.py) — one writer,
+# one reader, a row in postgres between them. FAIL-CLOSED on every unknown: no sweep row, no
+# completed scan, content newer than the scan (painted since the last 5-minute tick), or an
+# unpinned owner-PII finding on this canvas. Pins are steward's, by location, never by value.
+_GATE_SQL = (
+    "SELECT t.state->>'checked_at' AS checked_at, "
+    "  (SELECT count(*) FROM jsonb_each(coalesce(t.state->'open', '{}'::jsonb)) o "
+    "    WHERE (o.value->>'cid')::bigint = %(cid)s) AS findings, "
+    "  greatest((SELECT max(ts) FROM canvas_versions WHERE canvas_id = %(cid)s), "
+    "           (SELECT max(updated_at) FROM canvas_data WHERE canvas_id = %(cid)s)) AS newest "
+    "FROM triggers t WHERE t.agent = 'steward' AND t.name = 'pii_canvas'")
+
+
+def share_blockers(conn, cid: int) -> list[str]:
+    """Why canvas `cid` may NOT be shared right now; [] means it may. Shapes only, never a value."""
+    row = conn.execute(_GATE_SQL, {"cid": cid}).fetchone()
+    if row is None:
+        return ["the privacy sweep (steward/pii_canvas) is not registered — nothing has read this canvas"]
+    checked_at, findings, newest = row
+    out = []
+    if not checked_at:
+        out.append("the privacy sweep has not completed a scan yet")
+    elif newest is not None and newest > datetime.fromisoformat(checked_at):
+        out.append("this canvas changed after the last privacy scan — retry within 5 minutes")
+    if findings:
+        # NOT "republish": every version stays readable to a viewer via /render?v=N
+        # (bridges/canvas.py:canvas_render), so a clean new version leaves the old one exposed
+        out.append(f"{findings} possible owner-PII finding(s) on this canvas, in a version or live "
+                   "value a viewer can still read (any version renders via ?v=N, so republishing "
+                   "does not clear it) — ask steward to rule it benign, or remove that version")
+    return out
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="canvas.py", description="astryx canvas — agents' write path")
     sub = p.add_subparsers(dest="cmd", required=True)
