@@ -7,6 +7,10 @@ make it MORE aggressive. SAFE BY CONSTRUCTION (seed #34899): the oracle's live a
 (astryx_fx_rptest<pid>_), so an aggressive mutant can only ever see databases the oracle itself made.
 Not here, because EQUIVALENT: `keep=` ignored (a3 M7). fixture_db reaps BEFORE its CREATE, so its own name is
 never listed.
+THE BOUNDARY of that construction (a3 #39299): it protects every mutant that judges WITHIN reap()'s candidate set.
+It does NOT protect a mutant that removes or widens reap()'s own `starts_with(datname, PREFIX)` filter. That one
+would see every astryx_fx_* on the shared server. Don't add such a mutant here without a different construction:
+a throwaway cluster, or a check of the candidate set against a planted allowlist BEFORE any DROP.
 """
 from pathlib import Path
 
