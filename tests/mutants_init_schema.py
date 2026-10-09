@@ -21,4 +21,8 @@ MUTANTS = {
         ('"schema|interior" ', ''),
     "S5 the stamp is never written (the node can never go green)":
         ('-c "INSERT INTO schema_applied (id, sha)', '-c "SELECT 1 /* INSERT INTO schema_applied (id, sha)'),
+    "S6 commit-first guard deleted (an uncommitted schema.sql reaches prod)":
+        ('&& [ "${ASTRYX_SCHEMA_DIRTY_OK:-}" != 1 ] \\', '&& false && [ "${ASTRYX_SCHEMA_DIRTY_OK:-}" != 1 ] \\'),
+    "S7 the HEAD path drifts back to root-relative (a4 #41136 R1: wrong under -C)":
+        ('show "HEAD:./$(basename "$_SCHEMA_FILE")" | cmp', 'show "HEAD:$_SCHEMA_FILE" | cmp'),
 }

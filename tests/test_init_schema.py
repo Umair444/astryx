@@ -104,32 +104,46 @@ def main():
         check("idempotent: a second apply of the same bytes exits 0 and stays GREEN",
               r.returncode == 0 and sh("_chk_schema").returncode == 0, r.stderr[-300:])
 
-        # COMMIT FIRST: in a git work tree, an uncommitted schema.sql is refused before it touches the database
+        # COMMIT FIRST (a4 #41136): run the way init really runs — cwd = the repo root, init's own RELATIVE default
+        # path "nucleus/schema.sql" — and refuse anything whose bytes differ from HEAD's: modified, staged, untracked.
         gd = td / "gitrepo"
-        gd.mkdir()
-        gs = gd / "schema.sql"
-        shutil.copy(copy, gs)
-        g = lambda *a: subprocess.run(["git", "-C", str(gd), *a], capture_output=True, text=True,
-                                      env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
-        g("init", "-q"); g("add", "schema.sql"); g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base")
+        (gd / "nucleus").mkdir(parents=True)
+        gs = gd / "nucleus" / "schema.sql"
+        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        g = lambda *a: subprocess.run(["git", "-C", str(gd), *a], capture_output=True, text=True, env=clean_env)
+        g("init", "-q")
 
         def sh_git(extra=None):
             prog = "say() { :; }\npsql_q() { psql \"$SCHEMA_DSN\" \"$@\"; }\n" + m.group(0) + "\n_act_schema\n"
-            env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-            return subprocess.run(["bash", "-c", prog], env={**env, "SCHEMA_DSN": sdsn, "ASTRYX_SCHEMA": str(gs), **(extra or {})},
+            env = {k: v for k, v in clean_env.items() if k != "ASTRYX_SCHEMA"}     # init's own default path
+            return subprocess.run(["bash", "-c", prog], cwd=gd, env={**env, "SCHEMA_DSN": sdsn, **(extra or {})},
                                   capture_output=True, text=True, timeout=300)
+        commit = lambda msg: g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", msg)
         before = q("SELECT sha FROM schema_applied WHERE id = 1")[0]
+        shutil.copy(copy, gs)                                                     # present, never added
+        r = sh_git()
+        check("COMMIT FIRST: an UNTRACKED schema.sql is refused (git has never seen it), the stamp unchanged",
+              r.returncode != 0 and "committed" in r.stderr and q("SELECT sha FROM schema_applied WHERE id = 1")[0] == before,
+              (r.returncode, r.stderr[-200:]))
+        g("add", "nucleus/schema.sql"); commit("base")
         gs.write_text(gs.read_text() + "\nCREATE TABLE IF NOT EXISTS zz_schemaprobe_dirty (x int);\n")
         r = sh_git()
-        check("COMMIT FIRST: an UNCOMMITTED schema.sql in a work tree is refused, the database untouched",
-              r.returncode != 0 and "UNCOMMITTED" in r.stderr and q("SELECT to_regclass('zz_schemaprobe_dirty')")[0] is None
+        check("COMMIT FIRST: MODIFIED on init's own relative default path is refused, the database untouched",
+              r.returncode != 0 and q("SELECT to_regclass('zz_schemaprobe_dirty')")[0] is None
               and q("SELECT sha FROM schema_applied WHERE id = 1")[0] == before, (r.returncode, r.stderr[-200:]))
+        g("add", "nucleus/schema.sql")
+        r = sh_git()
+        check("…STAGED but uncommitted is refused too", r.returncode != 0 and q("SELECT to_regclass('zz_schemaprobe_dirty')")[0] is None,
+              (r.returncode, r.stderr[-200:]))
         r = sh_git({"ASTRYX_SCHEMA_DIRTY_OK": "1"})
         check("…the explicit override applies it anyway", r.returncode == 0 and q("SELECT to_regclass('zz_schemaprobe_dirty')")[0] is not None,
               r.stderr[-200:])
-        g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "dirty→committed")
+        commit("dirty→committed")
         r = sh_git()
         check("…and once committed, it applies with no override", r.returncode == 0, r.stderr[-200:])
+        r = sh_git({"ASTRYX_SCHEMA": str(gs)})
+        check("…committed, named by an ABSOLUTE ASTRYX_SCHEMA, applies too (the HEAD path is relative to -C by construction)",
+              r.returncode == 0, r.stderr[-200:])
 
         # a broken apply must not stamp
         good = q("SELECT sha FROM schema_applied WHERE id = 1")[0]
