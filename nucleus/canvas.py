@@ -14,6 +14,7 @@ so publishing is a row and a live update is a row; the bridge pushes both to eve
     venv/bin/python nucleus/canvas.py show <id> [--version N]    # the body html of a version
     venv/bin/python nucleus/canvas.py versions <id>
     venv/bin/python nucleus/canvas.py rollback <id> <version>
+    venv/bin/python nucleus/canvas.py preview <id> <page.html> [outdir] [--set KEY=JSON ...]   # SEE it first
 
 <id> may be 12, canvas-12 or cv:canvas-12 (the thread you were asked on): all name canvas 12.
 
@@ -231,7 +232,114 @@ Your avatar flies to that element and shows your live steps; a publish marks you
 the parts you build stable ids/data-attributes so you (and the viewer's clicks) can point at them.
 A viewer can CLICK an element and ask for a change: it arrives with the element's selector and text.
 TIER: a canvas with tier=personal is never shared; keep the human-personal tier off org canvases.
+SEE IT BEFORE YOU PUBLISH: `canvas.py preview <id> page.html` renders it in the real shell with live data
+at desktop, phone and reduced motion, and reports uncaught errors and CSP blocks; look at the PNGs.
 """
+
+
+# ------------------------------------------------------------------------ preview
+# READ-ONLY: the page in the real shell (canvas_shell.render, unchanged CSP and theme), the bridge's
+# side of the postMessage protocol emulated in-page over an in-memory copy of the canvas's data, and
+# headless chromium screenshots. Never a row: no publish, no set; --set overrides live in the stub only.
+# Chromium is a HOST dependency resolved here, never imported by any other path (born from painter's
+# tools/preview.py, 2026-10-09: v1-v8 of Org pulse shipped unseen and two drew owner complaints).
+BROWSERS = ("chromium", "chromium-browser", "google-chrome")
+KIT_DIR = REPO / "canvas" / "web" / "dist" / "kit"      # what the bridge serves at /kit/ (web/scripts/kit.mjs)
+SHOTS = (("desktop", 1280, 1600, []), ("phone", 390, 2200, []),
+         ("reduced", 1280, 1600, ["--force-prefers-reduced-motion"]))
+# the parent app's half of the shim protocol (canvas/web/src/CanvasView.tsx), answered from D; errors and
+# CSP blocks are tagged onto the console so the log scrape can count them
+_STUB = ("<script>(()=>{const D=%s;"
+         "addEventListener('message',ev=>{const m=ev.data||{};if(!m.astryx||ev.source!==window)return;"
+         "const r=v=>postMessage({astryx:1,op:'reply',id:m.id,ok:true,value:v},'*');"
+         "if(m.op==='ready')postMessage({astryx:1,op:'theme',dark:true,vars:{}},'*');"
+         "else if(m.op==='data.get')r(D[m.key]);else if(m.op==='data.all')r(D);"
+         "else if(m.op==='data.set'){D[m.key]=m.value;r()}else if(m.op==='ask')r(null)});"
+         "addEventListener('error',e=>console.error('UNCAUGHT '+e.message));"
+         "addEventListener('unhandledrejection',e=>console.error('UNCAUGHT (promise) '+(e.reason&&e.reason.message||e.reason)));"
+         "addEventListener('securitypolicyviolation',e=>console.error('CSP-BLOCKED '+e.effectiveDirective+' '+e.blockedURI));"
+         "})();</script>")
+_CONSOLE = re.compile(r'CONSOLE[:(]\d+\)?\] "((?:UNCAUGHT|CSP-BLOCKED) .*?)", source:')
+
+
+def browser() -> str | None:
+    import shutil
+    return next((p for p in map(shutil.which, BROWSERS) if p), None)
+
+
+def live_data(cid: int) -> dict:
+    """What `canvas.py get <id>` prints, from a read-only transaction."""
+    with psycopg.connect(dsn()) as conn:
+        conn.read_only = True
+        return get_data(conn, cid)
+
+
+def deep_set(d: dict, key: str, value) -> None:
+    """a=1 sets a top-level key; a.b=1 reaches inside (making dicts on the way)."""
+    *path, last = key.split(".")
+    for p in path:
+        if not isinstance(d.get(p), dict):
+            d[p] = {}
+        d = d[p]
+    d[last] = value
+
+
+def _kit_server():
+    """The kit over http on 127.0.0.1, CORS-open like the bridge's /kit/ (fonts load in CORS mode).
+    A file:// URL is not a valid CSP source, so a file:// kit would be blocked by the very CSP
+    preview must keep unchanged. Lives for one preview, on an ephemeral port."""
+    import functools, threading
+    from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+    class Kit(SimpleHTTPRequestHandler):
+        def end_headers(self):
+            self.send_header("access-control-allow-origin", "*")
+            super().end_headers()
+
+        def log_message(self, *a):
+            pass
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Kit, directory=str(KIT_DIR)))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+def preview(cid: int, page: str, outdir: str | None = None, overrides=(), load=None) -> tuple[list[Path], list[str]]:
+    """(png paths, page errors). `load(cid) -> dict` is the data source (default: live, read-only);
+    its result is deep-copied before any override, so the source is never touched."""
+    import subprocess, shutil, tempfile
+    exe = browser()
+    if not exe:
+        raise CanvasError("preview needs chromium on this host (none of " + ", ".join(BROWSERS) + " is on PATH); "
+                          "install it — nothing was rendered")
+    from bridges.canvas_shell import render
+    data = json.loads(json.dumps((load or live_data)(cid)))
+    for k, v in overrides:
+        deep_set(data, k, v)
+    if not KIT_DIR.is_dir():
+        print(f"canvas: note: the kit is not built at {KIT_DIR} — /kit/ scripts will not load", file=sys.stderr)
+    body = Path(page).read_text()
+    out = Path(outdir) if outdir else Path(tempfile.mkdtemp(prefix="cv-preview-"))
+    out.mkdir(parents=True, exist_ok=True)
+    doc, pngs, errs = out / "preview.html", [], []
+    prof = tempfile.mkdtemp(prefix="cv-preview-profile-")   # never the viewer's own browser profile
+    srv = _kit_server()
+    try:
+        html = render(cid, "preview", 0, body, f"http://127.0.0.1:{srv.server_address[1]}/")
+        stub = _STUB % json.dumps(data).replace("</", "<\\/")
+        doc.write_text(re.sub(r"(<body[^>]*>)", lambda m: m.group(1) + stub, html, count=1))
+        for name, w, h, extra in SHOTS:
+            png = out / f"{name}.png"
+            r = subprocess.run([exe, "--headless=new", "--disable-gpu", "--hide-scrollbars", f"--user-data-dir={prof}",
+                                "--virtual-time-budget=8000", "--enable-logging=stderr", "--v=0", *extra,
+                                f"--window-size={w},{h}", f"--screenshot={png}", doc.as_uri()],
+                               capture_output=True, text=True, timeout=120)
+            if name == "desktop":                # one page load is the error census; the others repeat it
+                errs = _CONSOLE.findall(r.stderr)
+            pngs.append(png)
+    finally:
+        srv.shutdown(); srv.server_close()
+        shutil.rmtree(prof, ignore_errors=True)
+    return pngs, errs
 
 
 # ---------------------------------------------------------------------------- CLI
@@ -357,10 +465,32 @@ def main(argv=None) -> int:
     sh = sub.add_parser("show"); sh.add_argument("id"); sh.add_argument("--version", type=int)
     vs = sub.add_parser("versions"); vs.add_argument("id")
     rb = sub.add_parser("rollback"); rb.add_argument("id"); rb.add_argument("version", type=int)
+    pv = sub.add_parser("preview"); pv.add_argument("id"); pv.add_argument("page"); pv.add_argument("outdir", nargs="?")
+    pv.add_argument("--set", action="append", default=[], metavar="KEY=JSON", help="stub-only; a.b reaches inside")
     a = p.parse_args(argv)
     if a.cmd == "guide":
         print(GUIDE)
         return 0
+    if a.cmd == "preview":                       # read-only: no write connection is ever opened
+        try:
+            ov = []
+            for x in a.set:
+                k, _, raw = x.partition("=")
+                try:
+                    ov.append((k, json.loads(raw)))
+                except json.JSONDecodeError:
+                    ov.append((k, raw))          # a bare word is a string, as in `set`
+            pngs, errs = preview(parse_id(a.id), a.page, a.outdir, ov)
+        except (CanvasError, FileNotFoundError, psycopg.Error) as e:
+            print(f"canvas: {e}", file=sys.stderr)
+            return 1
+        print(f"page errors: {len(errs)}")
+        for e in errs[:5]:
+            print(f"  {e[:300]}")
+        bad = [p for p in pngs if not (p.is_file() and p.stat().st_size)]
+        for png in pngs:
+            print(png if png not in bad else f"{png}  (MISSING — chromium wrote nothing)")
+        return 1 if bad else 0
     who = actor()
     try:
         with psycopg.connect(dsn(), autocommit=False) as conn:
