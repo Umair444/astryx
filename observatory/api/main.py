@@ -2982,8 +2982,8 @@ async def memory_chat_replies(thread: str, after: int = 0, request: Request = No
     open against an agent's think time."""
     if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
         return Response(status_code=403)
-    if not thread.startswith("obs:estate"):
-        return Response(status_code=400)          # this poller reads estate threads only
+    if not thread.startswith(("obs:estate", "obs:person-")):
+        return Response(status_code=400)          # estate threads, and "ask memory about this person" (pid-keyed)
     rows = await pool.fetch(
         "SELECT id, body, ts FROM messages WHERE thread=$1 AND from_agent='memory' "
         "AND id > $2 ORDER BY id LIMIT 10", thread, after)

@@ -196,6 +196,11 @@ def main(url):
             all(cl.get(u, headers=O).status_code == 404 for u in ("/api/memory/library/laws/nope", "/api/memory/library/..%2F/outside",
                                                                   "/api/memory/library/laws/..%2F..%2Foutside", "/api/memory/library/Laws/proving-a-fix"))
             and cl.get("/api/memory/library").status_code == 403 and cl.get("/api/memory/library/laws/proving-a-fix").status_code == 403)
+        sent = cl.post("/api/memory/chat", json={"message": "who is this to me?", "thread": "obs:person-p-1"}, headers=O).json()
+        polled = cl.get(f"/api/memory/chat?thread=obs:person-p-1&after={sent['sent']}", headers=O)
+        arm("ask-memory-about-a-person posts on a pid-keyed thread and polls it; other prefixes are refused",
+            sent.get("thread") == "obs:person-p-1" and polled.status_code == 200 and polled.json()["replies"] == []
+            and cl.get("/api/memory/chat?thread=t-anything", headers=O).status_code == 400, (sent, polled.status_code))
         quiet = next((n for n in real if n != agent), agent)
         q = cl.get(f"/api/agents/{quiet}/profile", headers=O).json()
         arm("a quiet agent's profile has no presence and no recent work", q.get("presence") is None and q.get("recent") == [], q.get("recent"))
