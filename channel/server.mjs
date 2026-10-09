@@ -186,6 +186,11 @@ const TOOLS = [
 async function handleTool(name, a) {
   if (name === 'send') {
     const [toAgent, toOrg = 'local'] = String(a.to).split('@')
+    // A name nothing consumes would sit pending forever behind an "ok" (two residents addressed "a3" on
+    // 2026-10-09). Refuse it HERE, in the sender's turn, with the canonical name (nucleus/address.py).
+    const { checkAddress } = await import('./address.mjs')
+    // toAgent, not a.to: judge the EXACT value the INSERT writes below (a3 #38028 A1, parity)
+    const { note } = toOrg === 'local' ? await checkAddress(toAgent) : { note: '' }
     const thread = a.thread || `t-${Date.now().toString(36)}`
     const ins = await pool.query(
       `INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, intent, body)
@@ -198,7 +203,7 @@ async function handleTool(name, a) {
     // agent-to-agent messages have no such receipt and return immediately.
     const channelBound = toOrg === 'local' &&
       (toAgent === 'owner' || /^(wa|tg|dc)-/.test(toAgent))
-    if (!channelBound) return `sent to ${a.to} (thread ${thread}, msg ${id})`
+    if (!channelBound) return `sent to ${a.to} (thread ${thread}, msg ${id})${note}`
     const deadline = Date.now() + 20_000
     while (Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 300))
