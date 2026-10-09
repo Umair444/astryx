@@ -3,6 +3,8 @@
     venv/bin/python nucleus/mutation_probe.py tests/mutants_schema_parity.py
 
 Every destructive arm runs on the oracle's own fixture; the live arm only reads, in a read-only session.
+NOT AUTHORED (equivalent): definitions()' internal-trigger exclusion. An internal trigger's OID-derived name never
+appears on BOTH sides, and CHANGED compares only shared names, so including them changes nothing observable.
 """
 from pathlib import Path
 
@@ -32,5 +34,15 @@ MUTANTS = {
     "P9 object drift is computed but never fails the run":
         ('    out["drift"] = out["drift"] or o["drift"]', '    out["drift"] = out["drift"]'),
     "P10 internal (FK) triggers are judged (their OID-derived names differ per database: a false MISSING)":
-        ("WHERE NOT t.tgisinternal AND n.nspname <> ALL(%s)", "WHERE n.nspname <> ALL(%s)"),
+        ('"trigger": "SELECT n.nspname || \'.\' || c.relname || \'.\' || t.tgname FROM pg_trigger t "\n'
+         '                   "JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace "\n'
+         '                   "WHERE NOT t.tgisinternal AND n.nspname <> ALL(%s)",',
+         '"trigger": "SELECT n.nspname || \'.\' || c.relname || \'.\' || t.tgname FROM pg_trigger t "\n'
+         '                   "JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace "\n'
+         '                   "WHERE n.nspname <> ALL(%s)",'),
+    "P11 a body replaced in place passes (CREATE OR REPLACE messages_notify, no notify, parity green: a1 #38541)":
+        ("                  if n in live.get(k, {}) and live[k][n] != h)", "                  if False)"),
+    "P12 CHANGED is computed but never fails the run":
+        ('    out["drift"] = out["drift"] or o["drift"] or bool(out["objects_changed"])',
+         '    out["drift"] = out["drift"] or o["drift"]'),
 }

@@ -115,6 +115,28 @@ def main():
           r2.get("drift") is True and r2.get("objects_missing") and not r2.get("missing") and not r2.get("extra")
           and not r2.get("type"), str({k: r2.get(k) for k in ("drift", "objects_missing", "missing")}))
 
+    # a1 #38541: a body REPLACED in place keeps its name and signature. The messages trigger's function, replaced
+    # by one that no longer notifies, must read CHANGED (never MISSING), through run() as a whole
+    try:
+        with fixture_db(extra=P.expected_extra()) as fx3:
+            with psycopg.connect(fx3["dsn"], autocommit=True) as c3:
+                fname = c3.execute("SELECT p.proname FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid "
+                                   "WHERE t.tgrelid = 'messages'::regclass AND NOT t.tgisinternal "
+                                   "ORDER BY 1 LIMIT 1").fetchone()[0]
+                c3.execute(f"CREATE OR REPLACE FUNCTION public.{fname}() RETURNS trigger LANGUAGE plpgsql "
+                           "AS $$BEGIN RETURN NEW; END$$")
+            r3 = P.run(fx3["dsn"])
+    except FixtureUnavailable as e:
+        fname, r3 = None, {"error": str(e)}
+    check("CHANGED: the messages trigger's function replaced IN PLACE (same name and signature, no notify) reads "
+          "CHANGED through run(), and nothing reads MISSING",
+          r3.get("drift") is True and f"function public.{fname}()" in (r3.get("objects_changed") or [])
+          and not r3.get("objects_missing") and not r3.get("missing"),
+          str({k: r3.get(k) for k in ("drift", "objects_changed", "objects_missing")}))
+    check("…and identical definitions are not CHANGED (the comparison has a green)",
+          P.compare_definitions({"view": {"a": "1"}}, {"view": {"a": "1"}}) == []
+          and P.compare_definitions({"view": {"a": "1"}}, {"view": {}}) == [])
+
     # LIVE, read-only
     real = psycopg.connect
 
@@ -157,8 +179,9 @@ def main():
     finally:
         psycopg.connect = real
     check("LIVE: the live catalog matches a fresh apply of the schema files (no MISSING, EXTRA or TYPE drift, no "
-          "MISSING trigger/function/view/index)", live["drift"] is False,
-          f"missing={live['missing']} extra={live['extra']} type={live['type']} obj={live['objects_missing']}")
+          "MISSING or CHANGED trigger/function/view/index)", live["drift"] is False,
+          f"missing={live['missing']} extra={live['extra']} type={live['type']} obj={live['objects_missing']} "
+          f"changed={live['objects_changed']}")
     check("LIVE: the read happens in a READ-ONLY session (a write after the SET is refused)",
           Probe.wrote is False, str(Probe.wrote))
     if live["live_only"]:
