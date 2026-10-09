@@ -84,6 +84,8 @@ def main():
               "SUBLINKED" in log, log)
         check("a1 R2: a write the run made into a LIVE linked path is NAMED in the report",
               "LIVE WRITES" in p.stdout and "live_write.txt" in p.stdout, p.stdout[-400:])
+        check("…and NOT attributed to the run: the estate has concurrent writers, a mtime can't tell them apart (a4 10-10)",
+              "NOT ATTRIBUTED" in p.stdout, p.stdout[-400:])
         trees = [ln for ln in git(r, "worktree", "list").splitlines() if "merge-check." in ln]
         check("…and the scratch worktree (with its links) is gone afterwards", trees == [], str(trees))
         check("the merged tree's FAILED set is printed", "✗ a gate" in p.stdout, p.stdout[-300:])

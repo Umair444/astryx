@@ -15,7 +15,9 @@
 #      read 15 FAIL on main as an artifact): every gitignored path git reports, minus ESTATE_EXCLUDE (the SAME list as
 #      nucleus/sqlguard/ledger.py, parity-checked by the oracle), plus the runtime necessities, minus a DECLARED skip.
 #      Per ENTRY, so a gitignored subdir of a tracked dir gets its own link (a whole-dir link would nest).
-#   4. LIVE WRITES ARE REPORTED (a1 R2): the links are LIVE, so anything the run wrote into a linked path is named.
+#   4. LIVE WRITES ARE REPORTED (a1 R2): the links are LIVE, so anything changed in a linked path during the run is
+#      named. It is NOT ATTRIBUTED: the estate has other writers (a resident's self_edit, memory's compile, a trigger
+#      a merge installs), and a mtime cannot tell them from the run. A named path is a lead to read, not a verdict.
 # Output, at the end: the base sha, the merged sha, the merged tree's FAILED set, and pushed_tree_check's rc for the
 # merged tree AND for the base (the control) at the SAME sha. It judges nothing beyond that: a FAILED set still has
 # to be read against main's own (a set that is "the same as every tree" is a claim; measure its members live).
@@ -70,7 +72,7 @@ if [ "${MERGE_CHECK_FULL:-1}" != 0 ]; then
   echo "  linked ${#made[@]} estate path(s)"
   wrote=$(for l in "${made[@]}"; do case "$l" in venv|channel/node_modules) continue ;; esac
     find "$LIVE/$l" -newer "$MARK" -not -path '*__pycache__*' -not -name '*.pyc' 2>/dev/null; done | head -20)
-  [ -n "$wrote" ] && { echo "  LIVE WRITES during the run (a linked path is PRODUCTION):"; echo "$wrote" | sed 's/^/    /'; }
+  [ -n "$wrote" ] && { echo "  LIVE WRITES during the run (a linked path is PRODUCTION; NOT ATTRIBUTED: the run OR a concurrent writer):"; echo "$wrote" | sed 's/^/    /'; }
   sed 's/\x1b\[[0-9;]*m//g' "$LOG" | tac | sed -n '/^check:/,/^FAILED (/p' | tac | sed -n '/^FAILED (/,/^UNVERIFIED/p' \
     | grep -v '^UNVERIFIED' | sed 's/^/  /'
   [ "$rc_links" = 0 ] && git worktree remove --force "$WT" >/dev/null 2>&1
