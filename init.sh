@@ -368,6 +368,16 @@ _chk_peoplegate() { venv/bin/python -m nucleus.people_gate check; }
 _act_peoplegate() { say "people gate: relation details readable only by people_cleared (accident-grade)"
   venv/bin/python -m nucleus.people_gate apply >/dev/null; }
 
+# >>> dispatcher link
+# The repo's `astryx` is a TRACKED symlink to the RELATIVE `init.sh`. Rewriting it to "$PWD/init.sh" dirtied the tree
+# on every run and put a host path one `git add -A` away from a commit (seed #38930). Relative, and only when it
+# doesn't already resolve to init.sh (the PATH link in ~/.local/bin stays absolute: it lives outside the repo).
+# Only where a REAL init.sh sits in this directory: run through the ~/.local/bin link, line 6's cd lands in
+# ~/.local/bin, and a relative link there would replace the PATH link with a broken one.
+_link_dispatcher() { [ -f init.sh ] && [ ! -L init.sh ] || return 0
+  [ "$(readlink astryx 2>/dev/null)" = "init.sh" ] || ln -sfn init.sh astryx 2>/dev/null; }
+# <<< dispatcher link
+
 _chk_venv() { [ -d venv ]; }
 # uv when present (fast, modern), python3 -m venv otherwise — SAME venv/ layout either
 # way, so every unit/hook path (venv/bin/python) is identical regardless of the creator.
@@ -613,7 +623,7 @@ setup() {
   [ -n "$copied" ] && say "  ↳ OBS_KEY copied to your clipboard."
   say "  that key lives in .env (gitignored) — it's a credential: guard it, never paste it in chat or commit it."
   # `astryx` from anywhere — link the one dispatcher onto PATH (no file clutter, one surface).
-  ln -sf "$PWD/init.sh" "$PWD/astryx" 2>/dev/null
+  _link_dispatcher
   if [ -d "$HOME/.local/bin" ]; then
     ln -sf "$PWD/init.sh" "$HOME/.local/bin/astryx" 2>/dev/null \
       && say "linked: astryx → this repo (run 'astryx doctor' / 'astryx wall' from anywhere)"
