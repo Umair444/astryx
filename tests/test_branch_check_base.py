@@ -138,6 +138,10 @@ def main():
                     guard._judge(q)
                     return cur.executemany(q, *a2, **k2)
 
+                def stream(self, q, *a2, **k2):        # steward #39777: stream() executes too
+                    guard._judge(q)
+                    return cur.stream(q, *a2, **k2)
+
                 def copy(self, q, *a2, **k2):
                     guard._judge("COPY " + str(q))     # COPY is never database-level: refused on prod
                     return cur.copy(q, *a2, **k2)
@@ -193,29 +197,65 @@ def main():
         refused_before = len(refused)
         probes = {"multi-statement": "SELECT 1; ALTER SCHEMA public OWNER TO nobody",
                   "grant-then-db": "GRANT ALL ON SCHEMA public TO nobody; REVOKE CONNECT ON DATABASE x FROM PUBLIC"}
-        blocked = {}
-        with _Guarded(real_connect(dsn, autocommit=True), prod) as g:
+        blocked, sent = {}, []
+
+        class _Recorder:                                    # steward #39777: a probe whose failure mode is a prod WRITE
+            """Records, SENDS NOTHING. Built around this, not a real connection, so a regressed guard reads as
+            `sent: [...]` and fails the arm while prod is never touched (seed #34899's rule)."""
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *e):
+                return False
+
+            def execute(self, q, *a, **k):
+                sent.append(str(q))
+
+            def cursor(self, *a, **k):
+                rec = self
+
+                class _RC:
+                    def __enter__(self):
+                        return self
+
+                    def __exit__(self, *e):
+                        return False
+
+                    def execute(self, q, *a2, **k2):
+                        sent.append(str(q))
+
+                    executemany = stream = copy = execute
+                return _RC()
+
+            def pipeline(self, *a, **k):
+                sent.append("pipeline")
+                return self
+        with _Guarded(_Recorder(), prod) as g:
             for name_, q in probes.items():
                 try:
                     g._judge(q)
                     blocked[name_] = False
                 except RuntimeError:
                     blocked[name_] = True
-            try:
-                with g.cursor() as cur:
-                    cur.execute("ALTER SCHEMA public OWNER TO nobody")
-                blocked["cursor"] = False
-            except RuntimeError:
-                blocked["cursor"] = True
+            for verb in ("execute", "executemany", "stream"):
+                try:
+                    with g.cursor() as cur:
+                        getattr(cur, verb)("ALTER SCHEMA public OWNER TO nobody")
+                    blocked[f"cursor.{verb}"] = False
+                except RuntimeError:
+                    blocked[f"cursor.{verb}"] = True
             try:
                 g.pipeline()
                 blocked["pipeline"] = False
             except RuntimeError:
                 blocked["pipeline"] = True
             g._judge("SELECT 1")                            # the green control: a lone read still passes
+            g.execute("SELECT 1")                           # …and reaches the recorder (proof the recorder records)
         del refused[refused_before:]                        # the probes' refusals are the test, not the subject's
-        check("the guard refuses, on a prod connection, a multi-statement string, a write through cursor(), and a "
-              "pipeline (steward #39065), while a lone SELECT still passes", all(blocked.values()), str(blocked))
+        check("the guard refuses, on a prod-dbname connection, a multi-statement string, a write through cursor() "
+              "(execute, executemany, stream) and a pipeline, while a lone SELECT passes; the probe connection is a "
+              "RECORDER, so a regressed guard reads `sent` and prod is never touched (steward #39065/#39777)",
+              all(blocked.values()) and not [x for x in sent if x != "SELECT 1"], f"{blocked} sent={sent}")
         check("…and build_base's IN-PROCESS writes went to the base: it connected to the base, and every statement "
               "on a prod-dbname connection was database-level (create_db's)", base in conns and not refused,
               f"conns={conns} refused={refused}")
