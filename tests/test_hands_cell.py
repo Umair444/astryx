@@ -351,6 +351,14 @@ finally:
             hands.kill(lid)
         except Exception:  # noqa: BLE001
             pass
+    # Teardown that DOESN'T trust the subject: under a mutant, hands.kill() may itself be the bug
+    # (it leaked 20 containers across one battery). Everything carrying OUR namespace label goes,
+    # straight through docker. The namespace scopes it, so nothing of the org's is touched.
+    _ns = os.environ["HANDS_NS"]
+    for kind, rm in ((["ps", "-aq"], ["rm", "-f"]), (["network", "ls", "-q"], ["network", "rm"])):
+        ids = docker(*kind, "--filter", f"label=astryx.hands.ns={_ns}").stdout.split()
+        if ids:
+            docker(*rm, *ids)
     try:
         hands.sweep()
     except Exception:  # noqa: BLE001
