@@ -125,6 +125,10 @@ try:
                 self._conn = conn
 
         conn.execute("DELETE FROM canvas_versions"); conn.execute("DELETE FROM canvases")
+        conn.execute("DELETE FROM canvas_data")
+        st0 = {}
+        check("EMPTY canvas tables → silent, and the scan still completes (checked_at set)",
+              fire(TempCtx(st0)) is None and st0.get("checked_at"), str(st0))
         sh = canvas(shared=["guest1"])
         own = canvas()
         version(sh, 1, f"<p>call me on {FAKE_PHONE}</p>")       # an OLD version of a SHARED canvas
