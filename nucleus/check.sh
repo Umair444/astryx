@@ -175,6 +175,9 @@ run "init.sh harden: no PUBLIC CONNECT on the org's databases" "$PY" tests/test_
 # in full, so a pulled NEW table is applied, and a failed apply never reads green. On a scratch DB. Mutants:
 # tests/mutants_init_schema.py.
 run "init.sh schema: a changed schema.sql is re-applied, a failed apply stays RED" "$PY" tests/test_init_schema.py
+# the tracked `astryx` link stays the RELATIVE init.sh: no host path, no churn, the PATH link untouched (seed #38930).
+# Hermetic. Mutants: tests/mutants_init_link.py.
+run "init.sh dispatcher link: the tracked astryx link stays relative" "$PY" tests/test_init_link.py
 # the database's SHAPE, which the stamp can't see (a1 #38264): live == a fresh apply of the schema files, table by
 # table, column by column, with types. Catches a column added inside an existing CREATE TABLE IF NOT EXISTS (a no-op
 # on a live host) and a hand DROP. Live read is read-only. Mutants: tests/mutants_schema_parity.py.
