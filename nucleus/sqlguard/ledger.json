@@ -169,6 +169,39 @@
   "nucleus/memgraph.py::write_pg\u001fdelete from kg.node": [
    "recall-graph compiler"
   ],
+  "nucleus/people_gate.py::_role\u001fselect rolcanlogin from pg_roles where rolname = ?": [
+   "people gate: details only to people_cleared, network to the resident (accident-grade)"
+  ],
+  "nucleus/people_gate.py::drift\u001fselect 1 from pg_database where datname = ?": [
+   "people gate: details only to people_cleared, network to the resident (accident-grade)"
+  ],
+  "nucleus/people_gate.py::drift\u001fselect attname from pg_attribute where attrelid = ?::regclass and attnum > 0 and not attisdropped and attname <> all(?) order by attnum": [
+   "people gate: details only to people_cleared, network to the resident (accident-grade)"
+  ],
+  "nucleus/people_gate.py::drift\u001fselect rolcanlogin from pg_roles where rolname = ?": [
+   "people gate: details only to people_cleared, network to the resident (accident-grade)"
+  ],
+  "nucleus/people_gate.py::ensure_private_db\u001fselect 1 from pg_database where datname = ?": [
+   "people gate: details only to people_cleared, network to the resident (accident-grade)"
+  ],
+  "nucleus/people_gate.py::grant_network_db\u001fselect 1 from pg_database where datname = ?": [
+   "people gate: details only to people_cleared, network to the resident (accident-grade)"
+  ],
+  "nucleus/persona.py::apply_pg\u001finsert into social_relation (org,pid,kind,context,evidence,confidence) select org, id, ?, ?, ?, ? from social_person where org=? and id=? on conflict (org,pid) do update set evidence=excluded.evidence, kind=coalesce(excluded.kind,social_relation.kind), context=coalesce(excluded.context,social_relation.context), confidence=coalesce(excluded.confidence,social_relation.confidence), updated_at=now()": [
+   "people gate: details only to people_cleared, network to the resident (accident-grade)"
+  ],
+  "nucleus/persona.py::load_pg\u001fselect pid, kind, context, evidence, confidence from social_relation where org=?": [
+   "people gate: details only to people_cleared, network to the resident (accident-grade)"
+  ],
+  "nucleus/persona_llm.py::run\u001fselect r.kind from social_person p left join social_relation r on r.org=p.org and r.pid=p.id where p.org=? and p.id=?": [
+   "people gate: details only to people_cleared, network to the resident (accident-grade)"
+  ],
+  "nucleus/privilege_census.py::live\u001fselect r.rolname, r.rolsuper, count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace join pg_roles r on r.oid=c.relowner where c.relkind in ('r','p','v','m','s') and n.nspname='public' group by 1,2 order by 3 desc": [
+   "privilege census: classes discriminate, surfaces and DSN sources assigned"
+  ],
+  "nucleus/privilege_census.py::live\u001fselect rolname, rolsuper, rolcreatedb, rolcreaterole from pg_roles where rolcanlogin and rolname !~ '^bc_' order by 1": [
+   "privilege census: classes discriminate, surfaces and DSN sources assigned"
+  ],
   "nucleus/rotate_db_password.py::rotate\u001fselect rolpassword from pg_authid where rolname=?": [
    "db password rotation leaks nothing (5497 S3b BC-1)"
   ],
@@ -197,6 +230,24 @@
   ],
   "nucleus/secret_sweep.py::sweep_turns\u001fupdate turns set raw_payload=?, input_prompt=? where id=?": [
    "at-rest secret sweep redacts without corrupting (5497 S2)"
+  ],
+  "nucleus/social_age.py::_fresh\u001fselect count(*) from ag_graph where name=?": [
+   "people gate: details only to people_cleared, network to the resident (accident-grade)"
+  ],
+  "nucleus/social_age.py::_fresh\u001fselect create_graph(?)": [
+   "people gate: details only to people_cleared, network to the resident (accident-grade)"
+  ],
+  "nucleus/social_age.py::_fresh\u001fselect drop_graph(?, true)": [
+   "people gate: details only to people_cleared, network to the resident (accident-grade)"
+  ],
+  "nucleus/social_age.py::_readers\u001fselect rolname from pg_roles where rolname = any(?)": [
+   "people gate: details only to people_cleared, network to the resident (accident-grade)"
+  ],
+  "nucleus/social_age.py::rebuild\u001fselect 1 from pg_database where datname = ?": [
+   "people gate: details only to people_cleared, network to the resident (accident-grade)"
+  ],
+  "nucleus/social_age.py::rebuild.<locals>.cyp\u001f*": [
+   "people gate: details only to people_cleared, network to the resident (accident-grade)"
   ],
   "nucleus/sqlguard/canary.py::canary\u001fselect n, (mod(n, 2) = 0) as even from generate_series(1, 2) as n where n > ?": [
    "sqlguard canary: the shim observes through the real Ctx.sql"
@@ -261,7 +312,7 @@
   "observatory/api/main.py::person_profile\u001fselect g.id, g.label, (select count(*) from social_edge m where m.org=e.org and m.dst=e.dst and m.rel='member-of') as size from social_edge e join social_person g on g.org=e.org and g.id=e.dst where e.org=? and e.src=? and e.rel='member-of' order by size desc": [
    "observatory: agents as people"
   ],
-  "observatory/api/main.py::person_profile\u001fselect org, id, kind, label, direct, relation, who, shape, confidence from social_person where id=? and kind='person'": [
+  "observatory/api/main.py::person_profile\u001fselect p.org, p.id, p.kind, p.label, p.direct, r.kind as relation, r.context as who, r.evidence as shape, r.confidence, r.closeness from social_person p left join social_relation r on r.org = p.org and r.pid = p.id where p.id=? and p.kind='person'": [
    "observatory: agents as people"
   ],
   "observatory/api/main.py::person_profile\u001fselect weight, first_ts, last_ts, mine from social_edge where org=? and dst=? and rel='dm'": [
@@ -440,7 +491,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 294,
+  "debt_rows": 304,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -950,25 +1001,77 @@
    "reason": "seed",
    "tk": "sha256t:a4a3f66c1fb5aa03da8b48c85f480170b4354f000ccbcfc1aeac5a059f103529"
   },
-  "nucleus/persona.py::apply_pg\u001fupdate social_person set shape=?, relation=coalesce(?,relation), who=coalesce(?,who), confidence=coalesce(?,confidence) where org=? and id=?": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:42a449a0cbd63f9a379ad8d3cf07335850c8963e80bd74f137c07d0f73aca4e8"
+  "nucleus/people_gate.py::_role\u001fselect rolcanlogin from pg_roles where rolname = ?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "people library 1a: a pg_catalog read (pg_roles/pg_database/pg_attribute), so RESPONSIVE is unreachable by the judge's relation rule; executed by test_people_gate / test_privilege_census",
+   "tk": "sha256t:11f437b37f78bef2448be41b74a048bc9799a07ab3f36234652b2d6cac812d19"
   },
-  "nucleus/persona.py::load_pg\u001fselect id, relation, who, shape, confidence from social_person where org=? and kind='person'": {
+  "nucleus/people_gate.py::apply\u001fselect 1 from pg_available_extensions where name = 'age'": {
+   "admitted": "2026-10-09",
    "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:931925e01a0f06eebb5eabdfc9828a132e720e7b505438781c92b1636e981aa2"
+   "reason": "people library 1a: apply() is init.sh's peoplegate act on the LIVE roles; the oracle drives the same functions on scratch names and never apply() itself; a pg_catalog read",
+   "tk": "sha256t:381c2168c531e8d97851034e0de31f770609b9b8a2ee8e3451b618122b6a724e"
   },
-  "nucleus/persona_llm.py::run\u001fselect relation from social_person where org=? and id=?": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:239e4d2d4caf0930e0992dc530a49904d37d99450a5b97c7d2bfb1e13492e099"
+  "nucleus/people_gate.py::drift\u001fselect 1 from pg_database where datname = ?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "people library 1a: a pg_catalog read (pg_roles/pg_database/pg_attribute), so RESPONSIVE is unreachable by the judge's relation rule; executed by test_people_gate / test_privilege_census",
+   "tk": "sha256t:b2b9fa21fdbd4c96c019dfd9651607a9c4062aee11268ce3408b2cb0e0e6a9f0"
   },
-  "nucleus/persona_llm.py::run\u001fupdate social_person set relation=?, who=?, confidence=? where org=? and id=?": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:1e4d7a1ba2a0a03c777191b09dfaa94580e2509b481a5c036d15f2fb5b5a4ef3"
+  "nucleus/people_gate.py::drift\u001fselect attname from pg_attribute where attrelid = ?::regclass and attnum > 0 and not attisdropped and attname <> all(?) order by attnum": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "people library 1a: drift's per-table column listing (every NETWORK table, social_edge included per memory #36868), a pg_catalog read, so RESPONSIVE is unreachable by the judge's relation rule; executed by test_people_gate; replaces the social_person-only text",
+   "tk": "sha256t:9e2e9c929e94efc9dae58bcf67d120f1dd91ad72e3ca03cbc4d8215b77778083"
+  },
+  "nucleus/people_gate.py::drift\u001fselect rolcanlogin from pg_roles where rolname = ?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "people library 1a: a pg_catalog read (pg_roles/pg_database/pg_attribute), so RESPONSIVE is unreachable by the judge's relation rule; executed by test_people_gate / test_privilege_census",
+   "tk": "sha256t:11f437b37f78bef2448be41b74a048bc9799a07ab3f36234652b2d6cac812d19"
+  },
+  "nucleus/people_gate.py::ensure_private_db\u001fselect 1 from pg_database where datname = ?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "people library 1a: a pg_catalog read (pg_roles/pg_database/pg_attribute), so RESPONSIVE is unreachable by the judge's relation rule; executed by test_people_gate / test_privilege_census",
+   "tk": "sha256t:b2b9fa21fdbd4c96c019dfd9651607a9c4062aee11268ce3408b2cb0e0e6a9f0"
+  },
+  "nucleus/people_gate.py::grant_network_db\u001fselect 1 from pg_database where datname = ?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "people library 1a: a pg_catalog read (pg_roles/pg_database/pg_attribute), so RESPONSIVE is unreachable by the judge's relation rule; executed by test_people_gate / test_privilege_census",
+   "tk": "sha256t:b2b9fa21fdbd4c96c019dfd9651607a9c4062aee11268ce3408b2cb0e0e6a9f0"
+  },
+  "nucleus/persona.py::apply_pg\u001finsert into social_relation (org,pid,kind,context,evidence,confidence) select org, id, ?, ?, ?, ? from social_person where org=? and id=? on conflict (org,pid) do update set evidence=excluded.evidence, kind=coalesce(excluded.kind,social_relation.kind), context=coalesce(excluded.context,social_relation.context), confidence=coalesce(excluded.confidence,social_relation.confidence), updated_at=now()": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "people library 1a cutover: executed against the stamped fixture by test_people_gate's CUTOVER arms (apply_pg/load_pg round-trip and persona_llm's label/skip are asserted)",
+   "tk": "sha256t:f40e986c92ec4d2301846d8cbc3ab17f79d3d45fbdb6011021315cb798f03783"
+  },
+  "nucleus/persona.py::load_pg\u001fselect pid, kind, context, evidence, confidence from social_relation where org=?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "people library 1a cutover: executed against the stamped fixture by test_people_gate's CUTOVER arms (apply_pg/load_pg round-trip and persona_llm's label/skip are asserted)",
+   "tk": "sha256t:12fa493cfbecd1b59a0b9cb14b52054f55d2d6dd1dfdc8307f963e8fecef6f84"
+  },
+  "nucleus/persona_llm.py::run\u001fselect r.kind from social_person p left join social_relation r on r.org=p.org and r.pid=p.id where p.org=? and p.id=?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "people library 1a cutover: executed against the stamped fixture by test_people_gate's CUTOVER arms (apply_pg/load_pg round-trip and persona_llm's label/skip are asserted)",
+   "tk": "sha256t:e80b3ab1daf265974567ca614c99e8c5e20f80e07cbe0d3640eadeccf18aa0b6"
+  },
+  "nucleus/privilege_census.py::live\u001fselect r.rolname, r.rolsuper, count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace join pg_roles r on r.oid=c.relowner where c.relkind in ('r','p','v','m','s') and n.nspname='public' group by 1,2 order by 3 desc": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "people library 1a: a pg_catalog read (pg_roles/pg_database/pg_attribute), so RESPONSIVE is unreachable by the judge's relation rule; executed by test_people_gate / test_privilege_census",
+   "tk": "sha256t:aa9ec0eec58ff2b4b02f736a8ebe0f229f669b2f9af4be42353bdd47942be9c8"
+  },
+  "nucleus/privilege_census.py::live\u001fselect rolname, rolsuper, rolcreatedb, rolcreaterole from pg_roles where rolcanlogin and rolname !~ '^bc_' order by 1": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "people library 1a: a pg_catalog read (pg_roles/pg_database/pg_attribute), so RESPONSIVE is unreachable by the judge's relation rule; executed by test_people_gate / test_privilege_census",
+   "tk": "sha256t:046b20c0dabd11548bae9814467a482cc75a8bc3ba33df01baa1bf6468820550"
   },
   "nucleus/pulse.py::reconcile\u001finsert into triggers (agent, name, schedule, kind, check_src, note, next_fire) values (?, ?, ?, 'python', ?, ?, now()) on conflict (agent, name) do update set schedule = ?, check_src = ?, note = ?, enabled = true": {
    "debt": "UNEXECUTED",
@@ -1073,30 +1176,40 @@
    "reason": "seed",
    "tk": "sha256t:865aba1fead70a0220f5a32409279088b0721db308c1dfbde0989e67d69a14df"
   },
+  "nucleus/social_age.py::_fresh\u001fselect count(*) from ag_graph where name=?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "people library 1a: AGE graph calls in a scratch AGE database (not a stamped fixture relation), so RESPONSIVE is unreachable; executed by test_people_gate's two rebuilds",
+   "tk": "sha256t:aa5bd57812fcab5229b75138a7c9072b13d0926969505909c0f911dce646d9df"
+  },
+  "nucleus/social_age.py::_fresh\u001fselect create_graph(?)": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "people library 1a: AGE graph calls in a scratch AGE database (not a stamped fixture relation), so RESPONSIVE is unreachable; executed by test_people_gate's two rebuilds",
+   "tk": "sha256t:ce5a502f4538c2036f285bfeb4c8df7c3379a6a3cd0aab98279ac232b6313521"
+  },
+  "nucleus/social_age.py::_fresh\u001fselect drop_graph(?, true)": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "people library 1a: AGE graph calls in a scratch AGE database (not a stamped fixture relation), so RESPONSIVE is unreachable; executed by test_people_gate's two rebuilds",
+   "tk": "sha256t:d69722a76d5fac710abbea6e174e950c194a076c83418b9ed69018193f076844"
+  },
+  "nucleus/social_age.py::_readers\u001fselect rolname from pg_roles where rolname = any(?)": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "people library 1a: a pg_catalog read (pg_roles/pg_database/pg_attribute), so RESPONSIVE is unreachable by the judge's relation rule; executed by test_people_gate / test_privilege_census",
+   "tk": "sha256t:1f31b63e012d7e8e40f8f8231572e356cfd4a3f3e98f6139acb3a64b13fe72c9"
+  },
+  "nucleus/social_age.py::rebuild\u001fselect 1 from pg_database where datname = ?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "people library 1a: a pg_catalog read (pg_roles/pg_database/pg_attribute), so RESPONSIVE is unreachable by the judge's relation rule; executed by test_people_gate / test_privilege_census",
+   "tk": "sha256t:5742f793d34a878a56915ece96b479bdf821c9b7af0982e046bb5f09d2e8d065"
+  },
   "nucleus/social_age.py::rebuild\u001fselect a.org, a.src, b.src, count(*) from social_edge a join social_edge b on a.org=b.org and a.dst=b.dst and a.src < b.src where a.rel='member-of' and b.rel='member-of' group by 1,2,3": {
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:65bb117670a2edf71fd70763f07a759c556d212986d342b27427ec77cdfab18f"
-  },
-  "nucleus/social_age.py::rebuild\u001fselect count(*) from ag_graph where name=?": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:aa5bd57812fcab5229b75138a7c9072b13d0926969505909c0f911dce646d9df"
-  },
-  "nucleus/social_age.py::rebuild\u001fselect create_graph(?)": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:ce5a502f4538c2036f285bfeb4c8df7c3379a6a3cd0aab98279ac232b6313521"
-  },
-  "nucleus/social_age.py::rebuild\u001fselect drop_graph(?, true)": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:d69722a76d5fac710abbea6e174e950c194a076c83418b9ed69018193f076844"
-  },
-  "nucleus/social_age.py::rebuild\u001fselect org, id, kind, label, direct, relation from social_person": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:75842a64da656b006345e4ec8f73d50e99f77b1707b641416a9ff4045522bc3d"
   },
   "nucleus/social_age.py::rebuild\u001fselect org, src, dst from social_edge where rel='member-of'": {
    "debt": "UNEXECUTED",
@@ -1106,6 +1219,12 @@
   "nucleus/social_age.py::rebuild.<locals>.cy\u001f*": {
    "debt": "UNEXECUTED",
    "reason": "seed",
+   "tk": "sha256t:e1ace97f54fc80dd9641a48a036c5668f5c9e3be7161a55971ea459316300ccf"
+  },
+  "nucleus/social_age.py::rebuild.<locals>.cyp\u001f*": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "people library 1a: AGE graph calls in a scratch AGE database (not a stamped fixture relation), so RESPONSIVE is unreachable; executed by test_people_gate's two rebuilds",
    "tk": "sha256t:e1ace97f54fc80dd9641a48a036c5668f5c9e3be7161a55971ea459316300ccf"
   },
   "nucleus/sqlguard/enforce.py::_clock\u001fdelete from sqlguard_seen where kind=? and not (key = any(?))": {
@@ -1431,10 +1550,11 @@
    "reason": "seed",
    "tk": "sha256t:d232d88e67af94eb6d5d7a67e90d6ba928a680d11c56ff1da5208d3f7065a857"
   },
-  "observatory/api/main.py::network_people\u001fselect org, id, kind, label, direct, relation, who, shape, confidence from social_person": {
+  "observatory/api/main.py::network_people\u001fselect p.org, p.id, p.kind, p.label, p.direct, r.kind as relation, r.context as who, r.evidence as shape, r.confidence from social_person p left join social_relation r on r.org = p.org and r.pid = p.id": {
+   "admitted": "2026-10-09",
    "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:85912c44c10fca1ac1354309a359c4615f2d5e91e9978b5bdec216d1f4d8da8d"
+   "reason": "people library 1a cutover: the owner-gated endpoint LEFT JOINs social_relation for the details; no oracle drives the FastAPI app, so this re-texted read stays UNEXECUTED",
+   "tk": "sha256t:b001e563955803e31de2c9016b585fa3193106f45184777d38c8fc9e882d17da"
   },
   "observatory/api/main.py::overview\u001f*": {
    "debt": "UNEXECUTED",
@@ -1473,11 +1593,11 @@
    "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
    "tk": "sha256t:9655da8e1a8976f3f3bab17b7d9e95dc052e77bdfbf198f3b0eb1b29aa909ac6"
   },
-  "observatory/api/main.py::person_profile\u001fselect org, id, kind, label, direct, relation, who, shape, confidence from social_person where id=? and kind='person'": {
+  "observatory/api/main.py::person_profile\u001fselect p.org, p.id, p.kind, p.label, p.direct, r.kind as relation, r.context as who, r.evidence as shape, r.confidence, r.closeness from social_person p left join social_relation r on r.org = p.org and r.pid = p.id where p.id=? and p.kind='person'": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
-   "tk": "sha256t:f6fa667df2926e4199d5018fe67be2353dbf73c13c889572387947319d1de396"
+   "reason": "people library 1a cutover of seed's 10-09 person drawer read: details LEFT JOINed from social_relation. Executed in a stamped fixture by tests/test_observatory_people.py (the person arm, RED with the old endpoint), but asyncpg exposes no table OID, so the stamp can't be credited (the same FIXTURE-DDL cap as the row it replaces)",
+   "tk": "sha256t:3fe578cb65b9ec8150b9c2d055c82596830dd2a7885cbbf025108eae24974796"
   },
   "observatory/api/main.py::person_profile\u001fselect weight, first_ts, last_ts, mine from social_edge where org=? and dst=? and rel='dm'": {
    "admitted": "2026-10-09",

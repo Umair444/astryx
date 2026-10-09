@@ -171,6 +171,13 @@ run "branch_check: differential verdict, prod witness, clean refusal" "$PY" test
 # init.sh's harden node (plan-4918 P0-a): a fresh org is born with no PUBLIC CONNECT on the databases it
 # administers. Run against the oracle's own scratch DBs only, by name. Mutants: tests/mutants_init_harden.py.
 run "init.sh harden: no PUBLIC CONNECT on the org's databases" "$PY" tests/test_init_harden.py
+# people library 1a: relation details readable only by people_cleared, the network layer by the resident role;
+# the move's receipt; the writers' cutover. ACCIDENT-GRADE (a same-uid resident can read the superuser credential),
+# proven on scratch roles and DBs. Mutants: tests/mutants_people_gate.py, tests/mutants_people_move.py.
+run "people gate: details only to people_cleared, network to the resident (accident-grade)" "$PY" tests/test_people_gate.py
+# the privilege census 1b is decided on: statement classes by surface, DSN source by file. Hermetic.
+# Mutants: tests/mutants_privilege_census.py.
+run "privilege census: classes discriminate, surfaces and DSN sources assigned" "$PY" tests/test_privilege_census.py
 
 run "charter resolver invariants"      "$PY" tests/test_charter.py
 # org MCP write-tool role gate (t-org-grant): the genome/identity writes are governance-gated

@@ -52,7 +52,8 @@ def main(url):
         c.execute("INSERT INTO social_person (org, id, kind, label, direct, shape) VALUES "
                   "('local', 'p-3', 'person', 'Bare Person', false, NULL), ('local', 'p-4', 'person', 'Mutual', false, NULL), "
                   "('local', 'g-1', 'group', 'Book club', false, NULL)")
-        c.execute("UPDATE social_person SET shape='replies fast, mornings' WHERE id='p-1'")
+        # persona's description lives in social_relation.evidence (people library 1a), not on social_person
+        c.execute("INSERT INTO social_relation (org, pid, evidence) VALUES ('local', 'p-1', 'replies fast, mornings')")
         c.execute("INSERT INTO social_edge (org, src, dst, rel, weight, first_ts, last_ts, mine) VALUES "
                   "('local','owner','p-1','dm',42,'2025-04-01','2026-10-01',20), "
                   "('local','p-1','g-1','member-of',1,NULL,NULL,NULL), ('local','p-4','g-1','member-of',1,NULL,NULL,NULL)")

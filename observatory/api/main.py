@@ -1393,9 +1393,11 @@ async def network_people(request: Request, min_shared: int = 1):
     """
     if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
         return Response(status_code=403)
+    # The details come from social_relation (people library 1a); this endpoint is OWNER-GATED above.
     people = await pool.fetch(
-        "SELECT org, id, kind, label, direct, relation, who, shape, confidence "
-        "FROM social_person")
+        "SELECT p.org, p.id, p.kind, p.label, p.direct, r.kind AS relation, r.context AS who, "
+        "r.evidence AS shape, r.confidence "
+        "FROM social_person p LEFT JOIN social_relation r ON r.org = p.org AND r.pid = p.id")
     knows = await pool.fetch(
         "SELECT a.org, a.src AS p1, b.src AS p2, count(*) AS w "
         "FROM social_edge a JOIN social_edge b "
@@ -1444,8 +1446,11 @@ async def person_profile(pid: str, request: Request):
     private guess and the owner's own answer. Owner-only twice (the gate, and here)."""
     if not is_owner(request):
         return Response(status_code=403)
-    p = await pool.fetchrow("SELECT org, id, kind, label, direct, relation, who, shape, confidence "
-                            "FROM social_person WHERE id=$1 AND kind='person'", pid)
+    # The details come from social_relation (people library 1a), never social_person.
+    p = await pool.fetchrow("SELECT p.org, p.id, p.kind, p.label, p.direct, r.kind AS relation, r.context AS who, "
+                            "r.evidence AS shape, r.confidence, r.closeness "
+                            "FROM social_person p LEFT JOIN social_relation r ON r.org = p.org AND r.pid = p.id "
+                            "WHERE p.id=$1 AND p.kind='person'", pid)
     if not p:
         return Response(status_code=404)
     dm = await pool.fetchrow("SELECT weight, first_ts, last_ts, mine FROM social_edge "
