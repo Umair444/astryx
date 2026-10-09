@@ -12,7 +12,9 @@ collected by the next fixture_db() entry, and nothing a LIVE run owns is ever dr
      plain run id); an unparseable name → None. Report-only.
   L. live, on the real server: a child enters fixture_db and is SIGKILLed → its database survives the kill,
      stamped with the child's pid → the next fixture_db() entry drops it. A database stamped with a LIVE pid, and
-     an unstamped astryx_fx_* database, are both kept. Only astryx_fx_* names are ever considered.
+     an unstamped database, are both kept. Only PREFIX names are ever considered. Every live arm runs under a
+     PRIVATE prefix, so neither the reaper nor any mutant of it can touch another run's database.
+  Mutants: tests/mutants_fixture_reaper.py (mutation_probe, via SQLGUARD_FIXTURE_SRC).
 Exit 0 pass · 1 fail · 77 no reachable server (nothing verified).
 """
 import os
@@ -26,7 +28,16 @@ for _k in [k for k in os.environ if k.startswith("GIT_")]:
     del os.environ[_k]
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
-from nucleus.sqlguard import fixture as fxm  # noqa: E402
+SRC = os.environ.get("SQLGUARD_FIXTURE_SRC") or str(REPO / "nucleus" / "sqlguard" / "fixture.py")  # mutation_probe swaps it
+import importlib.util  # noqa: E402
+os.environ.setdefault("ASTRYX_SQLGUARD_ROOT", str(REPO))   # a mutant COPY lives outside the repo: keep REPO (and .env) real
+_sp = importlib.util.spec_from_file_location("fixture_under_test", SRC)
+fxm = importlib.util.module_from_spec(_sp)
+_sp.loader.exec_module(fxm)
+# SAFE BY CONSTRUCTION (seed #34899): every LIVE arm runs under a PRIVATE prefix, so reap() (and a mutant that makes it
+# aggressive: ignore the namespace, trust the name …) can only ever see databases THIS oracle made, never another
+# run's. PREFIX is read at call time by both reap() and fixture_db()'s naming.
+fxm.PREFIX = f"astryx_fx_rptest{os.getpid()}_"
 
 fails = []
 
@@ -45,7 +56,7 @@ def dead_pid() -> int:
     return p.pid                                    # reaped by wait(): no process holds this pid now
 
 
-HERE = (fxm._pidns(), fxm._host())
+HERE = (fxm._pidns(), fxm._host())  # NB: here=… overrides it per arm
 D, L = dead_pid(), os.getpid()
 
 
@@ -63,6 +74,8 @@ check("a stamp from another pid NAMESPACE → keep, even with a dead-looking pid
       fxm.verdict("astryx_fx_x_1_0", stamp(D, pidns="4026532999"))[0] == "keep")
 check("a stamp from another HOST → keep", fxm.verdict("astryx_fx_x_1_0", stamp(D, host="000000000000"))[0] == "keep")
 check("an empty pidns (unknowable) → keep", fxm.verdict("astryx_fx_x_1_0", stamp(D, pidns=""))[0] == "keep")
+check("BOTH sides unknowable (two sandboxes with no /proc): an empty-pidns stamp with a dead pid → keep (a3 #39195)",
+      fxm.verdict("astryx_fx_x_1_0", stamp(D, pidns=""), alive=lambda p: False, here=("", HERE[1]))[0] == "keep")
 check("the NAME is never trusted: a dead tail pid, no stamp → keep",
       fxm.verdict(f"astryx_fx_r1791x9_{D}_0", None)[0] == "keep")
 check("...and a live stamp under a dead-looking name → keep",
@@ -86,9 +99,10 @@ made = []                                            # every database this oracl
 try:
     child = subprocess.Popen(
         [sys.executable, "-c",
-         "import sys, time; sys.path.insert(0, %r)\n"
-         "from nucleus.sqlguard.fixture import fixture_db\n"
-         "with fixture_db() as fx:\n    print(fx['dbname'], flush=True); time.sleep(120)\n" % str(REPO)],
+         "import sys, time, importlib.util\n"
+         "s = importlib.util.spec_from_file_location('fx_child', %r); f = importlib.util.module_from_spec(s)\n"
+         "s.loader.exec_module(f); f.PREFIX = %r\n"
+         "with f.fixture_db() as fx:\n    print(fx['dbname'], flush=True); time.sleep(120)\n" % (SRC, fxm.PREFIX)],
         stdout=subprocess.PIPE, text=True)
     killed = child.stdout.readline().strip()
     os.kill(child.pid, signal.SIGKILL)
@@ -100,8 +114,8 @@ try:
     check("...stamped with the killed child's pid and this namespace",
           row and fxm._parse_stamp(row[0]) == {"pid": child.pid, "pidns": HERE[0], "host": HERE[1]}, str(row))
 
-    live_name = f"astryx_fx_reaper_live_{L}_0"
-    bare_name = f"astryx_fx_reaper_bare_{D}_0"
+    live_name = f"{fxm.PREFIX}live_{L}_0"
+    bare_name = f"{fxm.PREFIX}bare_{D}_0"
     for n in (live_name, bare_name):
         admin.execute(f'DROP DATABASE IF EXISTS "{n}"')
         admin.execute(f'CREATE DATABASE "{n}" ALLOW_CONNECTIONS false')
@@ -117,7 +131,8 @@ try:
               fxm._parse_stamp(admin.execute("SELECT shobj_description(oid, 'pg_database') FROM pg_database "
                                              "WHERE datname=%s", (fx["dbname"],)).fetchone()[0])["pid"] == L)
     rep = fxm.reap(admin)
-    check("reap() only ever considers astryx_fx_* names", all(n.startswith(fxm.PREFIX) for n, _, _ in rep), str(rep))
+    check("reap() only ever considers its PREFIX's names (here the oracle's private one)",
+          all(n.startswith(fxm.PREFIX) for n, _, _ in rep), str(rep))
     check("reap() reports why it kept each one", all(why for _, _, why in rep), str(rep))
 finally:
     for n in made:

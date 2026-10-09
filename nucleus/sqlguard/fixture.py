@@ -116,8 +116,8 @@ def reap(admin, keep: str = "") -> list[tuple[str, str, str]]:
     except psycopg.Error:
         return out
     for name, comment in rows:
-        if name == keep:
-            continue
+        if name == keep:            # belt and braces: fixture_db reaps BEFORE its CREATE, so its own name is never
+            continue                # listed yet (a3 #39195 M7: dropping this line is an EQUIVALENT mutant)
         act, why = verdict(name, comment)
         if act == "reap":
             try:
