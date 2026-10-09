@@ -183,14 +183,22 @@ def _started_at(pid: int):
     return btime + st / os.sysconf("SC_CLK_TCK")
 
 
-def orphan_roles(admin_dsn: str, only=None, foreign=None) -> list:
+# No real run role predates 2020: its epoch is the run's start. A smaller epoch is SYNTHETIC, an oracle's planted role
+# (test_runscope's bc_<pid>x1000..1003), and an UNSCOPED (production) sweep must never adopt one: it belongs to a
+# live oracle that is asserting on it (a2 F-RS #36873: a real branch_check sweep reaped a3's running mutant battery's
+# planted roles, and crashed in the race). Reported, never dropped. A scoped sweep (only=) still judges them.
+MIN_EPOCH = 1_577_836_800
+
+
+def orphan_roles(admin_dsn: str, only=None, foreign=None, synthetic=None) -> list:
     """Run roles whose creator is GONE, read from POSTGRES, not from lockfiles (a2 F1 #34875): a reboot or a removed
     scope dir erases the lock, never the role or its databases. The role's name is its creator, `bc_<pid>x<epoch>`.
     Gone means the pid is dead, OR the process now holding it started AFTER the role's epoch (pids are reused, most
     of all after a reboot), so it can't be the creator. A live run is never an orphan, with or without its lock.
     `only` restricts the CANDIDATES before any test (a3 D1 #35480): production passes None (the org-wide sweep it
     needs); an oracle passes exactly the roles it made, so even a mutated predicate can destroy nothing else.
-    An orphan not stamped with THIS machine's id is appended to `foreign` (reported), never returned (dropped)."""
+    An orphan not stamped with THIS machine's id is appended to `foreign` (reported), never returned (dropped).
+    Unscoped, a role with a SYNTHETIC epoch (< MIN_EPOCH) is appended to `synthetic` and never judged."""
     with psycopg.connect(admin_dsn, autocommit=True) as c:
         roles = [r[0] for r in c.execute("SELECT rolname FROM pg_roles WHERE rolname LIKE 'bc\\_%'")]
         out = []
@@ -199,6 +207,10 @@ def orphan_roles(admin_dsn: str, only=None, foreign=None) -> list:
                 continue
             m = ROLE_RX.match(r)
             if not m:
+                continue
+            if only is None and int(m.group(2)) < MIN_EPOCH:
+                if synthetic is not None:
+                    synthetic.append(r)
                 continue
             started = _started_at(int(m.group(1)))
             if started is not None and started <= int(m.group(2)) + 2:      # the creator (or older) is still alive
@@ -214,23 +226,29 @@ def orphan_roles(admin_dsn: str, only=None, foreign=None) -> list:
 
 
 def _drop_owned(admin_dsn: str, role: str) -> dict:
-    """teardown()'s database half, for a role with no root to bind (an orphan): every DB it owns, then the role."""
+    """teardown()'s database half, for a role with no root to bind (an orphan): every DB it owns, then the role.
+    A lost connection (another sweep dropped the same DB first, an admin terminated us) is REPORTED in `errors`,
+    never raised: one orphan must not crash the run (a2 F-RS #36873). `role_left` is then None: unknown."""
     out = {"dropped": [], "leaked": [], "errors": [], "role_left": False}
-    with psycopg.connect(admin_dsn, autocommit=True) as c:
-        for db in owned_dbs(admin_dsn, role, c):
-            try:
-                c.execute(sql.SQL("ALTER DATABASE {} IS_TEMPLATE false").format(sql.Identifier(db)))
-                c.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(db)))
-                out["dropped"].append(db)
-            except psycopg.Error as e:
-                out["errors"].append(f"{db}: {type(e).__name__}")
-        out["leaked"] = owned_dbs(admin_dsn, role, c)
-        if not out["leaked"]:
-            try:
-                c.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))
-            except psycopg.Error as e:
-                out["errors"].append(f"role: {type(e).__name__}")
-        out["role_left"] = bool(c.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone())
+    try:
+        with psycopg.connect(admin_dsn, autocommit=True) as c:
+            for db in owned_dbs(admin_dsn, role, c):
+                try:
+                    c.execute(sql.SQL("ALTER DATABASE {} IS_TEMPLATE false").format(sql.Identifier(db)))
+                    c.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(db)))
+                    out["dropped"].append(db)
+                except psycopg.Error as e:
+                    out["errors"].append(f"{db}: {type(e).__name__}")
+            out["leaked"] = owned_dbs(admin_dsn, role, c)
+            if not out["leaked"]:
+                try:
+                    c.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))
+                except psycopg.Error as e:
+                    out["errors"].append(f"role: {type(e).__name__}")
+            out["role_left"] = bool(c.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone())
+    except psycopg.Error as e:
+        out["errors"].append(f"connection: {type(e).__name__}: {str(e).strip()[:120]}")
+        out["role_left"] = None
     return out
 
 
@@ -247,9 +265,16 @@ def sweep(admin_dsn: str, base: Path = None, only=None) -> list:
             continue
         rep = teardown(admin_dsn, str(lock.get("role", "")), d, base)
         reaped.append({"scope": d.name, **rep})
-    foreign = []
-    for role in orphan_roles(admin_dsn, only=only, foreign=foreign):    # a2 F1: the lock is gone, the role isn't
-        reaped.append({"scope": role[len(ROLE_PREFIX):], "orphan": True, **_drop_owned(admin_dsn, role)})
+    foreign, synthetic = [], []
+    for role in orphan_roles(admin_dsn, only=only, foreign=foreign, synthetic=synthetic):   # a2 F1: lock gone, role not
+        try:
+            rep = _drop_owned(admin_dsn, role)
+        except Exception as e:                         # noqa: BLE001 — one orphan never crashes the run (a2 F-RS)
+            rep = {"dropped": [], "errors": [f"{type(e).__name__}: {str(e)[:120]}"], "role_left": None}
+        reaped.append({"scope": role[len(ROLE_PREFIX):], "orphan": True, **rep})
+    for role in synthetic:
+        reaped.append({"scope": role[len(ROLE_PREFIX):], "orphan": True, "dropped": [],
+                       "skipped": "synthetic epoch (an oracle's planted role): an unscoped sweep never drops it"})
     for role in foreign:
         reaped.append({"scope": role[len(ROLE_PREFIX):], "orphan": True, "dropped": [],
                        "skipped": "not stamped with this machine's id: another host's (or a pre-stamp) run role. "

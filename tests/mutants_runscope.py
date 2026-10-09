@@ -43,7 +43,7 @@ MUTANTS = {
         ("            if c.execute(\"SELECT 1 FROM pg_available_extensions WHERE name = 'age'\").fetchone():",
          "            if False:"),
     "R11 the sweep never reads postgres for orphans (a reboot strands every crashed run's role and DBs: a2 F1)":
-        ("    for role in orphan_roles(admin_dsn, only=only, foreign=foreign):", "    for role in []:"),
+        ("    for role in orphan_roles(admin_dsn, only=only, foreign=foreign, synthetic=synthetic):", "    for role in []:"),
     "R12 orphan liveness by pid alone (a reused pid after a reboot shields the dead run's role forever)":
         ("        if started is not None and started <= int(m.group(2)) + 2:", "        if started is not None:"),
     "R13 orphans ignore liveness (a LIVE run whose lock was wiped is torn down mid-run)":
@@ -52,4 +52,12 @@ MUTANTS = {
         ("            if only is not None and r not in only:\n                continue\n", ""),
     "R15 the host stamp is ignored (host A reaps host B's live run, which has no local pid)":
         ("            if not MACHINE_ID or not stamp or stamp[0] != MACHINE_ID:", "            if False:"),
+    "R18 an unscoped sweep adopts a synthetic-epoch role (a real run reaps a live oracle's planted roles)":
+        ("            if only is None and int(m.group(2)) < MIN_EPOCH:", "            if False:"),
+    "R19 _drop_owned raises on a lost connection (one orphan crashes the run)":
+        ("    except psycopg.Error as e:\n        out[\"errors\"].append(f\"connection:",
+         "    except ZeroDivisionError as e:\n        out[\"errors\"].append(f\"connection:"),
+    "R20 sweep lets one orphan's drop failure escape":
+        ("        except Exception as e:                         # noqa: BLE001 — one orphan never crashes the run",
+         "        except ZeroDivisionError as e:                 # noqa: BLE001 — one orphan never crashes the run"),
 }
