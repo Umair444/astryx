@@ -145,17 +145,27 @@ def main():
     (tdr / "tests").mkdir()
     (tdr / "nucleus" / "check.sh").write_text('run "g1" "$PY" tests/t1.py\nrun "g2" "$PY" -m nucleus.t2\n'
                                              'run "g3" "$PY" tests/broken.py\nrun "g4" bash tests/t4.sh\n')
-    (tdr / "tests" / "t1.py").write_text("def f():\n    from nucleus import foo\nP = 'nucleus/bar.py'\nW = 'canvas'\n")
+    (tdr / "tests" / "t1.py").write_text("import importlib\ndef f():\n    from nucleus import foo\n"
+                                         "B = importlib.import_module('nucleus.bar')\nW = 'canvas'\n"
+                                         "T = importlib.import_module('canvas')  # a TOP-LEVEL canvas, not nucleus.canvas\n"
+                                         "SCRIPTS = ('nucleus.qux', 'nucleus/qux.py')\nPATHS = {'k': 'nucleus/qux.py'}\n"
+                                         "def g(cg):\n    return cg('nucleus/zed.py')\n")
     (tdr / "nucleus" / "t2.py").write_text("import nucleus.baz as b\n")
     (tdr / "tests" / "broken.py").write_text("def (:\n")
     gr = bc.gate_refs(tdr)
     cg = lambda f: bc.covering_gate(f, ["g1", "g2", "g3", "g4"], gr)
-    check("gate_refs: a NESTED `from nucleus import foo`, a path string, and `-m` gates are read; an unparseable or "
-          "non-python oracle is omitted (its sites stay RED)",
+    check("gate_refs: a NESTED `from nucleus import foo`, a LOADER's string argument, and `-m` gates are read; an "
+          "unparseable or non-python oracle is omitted (its sites stay RED)",
           cg("nucleus/foo.py") == "g1" and cg("nucleus/bar.py") == "g1" and cg("nucleus/baz.py") == "g2"
           and set(gr) == {"g1", "g2"}, str({k: sorted(v) for k, v in gr.items()}))
     check("covering_gate never matches a BARE WORD ('canvas' in an oracle doesn't cover nucleus/canvas.py)",
-          cg("nucleus/canvas.py") is None and cg("nucleus/qux.py") is None, str(cg("nucleus/canvas.py")))
+          cg("nucleus/canvas.py") is None, str(cg("nucleus/canvas.py")))
+    check("a3 #38259: a module named only as DATA (a tuple or dict of names, or a non-loader call's argument) is NOT "
+          "covered", cg("nucleus/qux.py") is None and cg("nucleus/zed.py") is None,
+          f"qux={cg('nucleus/qux.py')} zed={cg('nucleus/zed.py')}")
+    self_refs = bc.gate_refs(REPO).get("branch_check: differential verdict, prod witness, clean refusal", set())
+    check("this oracle's own test literals never make it 'cover' what they name (nucleus/canvas.py)",
+          "nucleus/canvas.py" not in self_refs and "nucleus.canvas" not in self_refs, str(sorted(self_refs))[:300])
     cs = (REPO / "nucleus" / "check.sh").read_text()
     check("SQLGUARD_GATE is exactly check.sh's own label for the enforce gate",
           f'run "{sg}" "$PY" -m nucleus.sqlguard.enforce' in cs)

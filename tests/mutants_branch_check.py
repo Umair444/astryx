@@ -56,4 +56,12 @@ MUTANTS = {
     "O17 a nested import is missed (only module-level imports are read)":
         ('        for n in ast.walk(tree):\n            if isinstance(n, ast.Import):',
          '        for n in tree.body:\n            if isinstance(n, ast.Import):'),
+    "O18 any string constant counts as a reference (data names excuse modules nothing runs: a3 #38259)":
+        ('            elif isinstance(n, ast.Call) and getattr(n.func, "attr", getattr(n.func, "id", None)) in LOADERS:\n'
+         '                refs |= {a.value for a in n.args if isinstance(a, ast.Constant) and isinstance(a.value, str)}',
+         '            elif isinstance(n, ast.Constant) and isinstance(n.value, str):\n'
+         '                refs.add(n.value)'),
+    "O19 a loader's string argument is ignored (an importlib-loaded subject is never covered)":
+        ('LOADERS = frozenset({"import_module", "spec_from_file_location", "run_module", "run_path", "find_spec"})',
+         'LOADERS = frozenset()'),
 }

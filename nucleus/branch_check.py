@@ -62,13 +62,18 @@ def sqlguard_red(trace: Path):
 # 17 gates are dark on every run, so "some gate was dark" is always true; keyed on that, a site NO oracle runs (the
 # founding class sqlguard exists for) would read UNVERIFIABLE forever. A site is excused only when a dark gate's
 # ORACLE references the site's module, read statically from the branch's own check.sh and oracle files.
+# A string names a module the oracle RUNS only as an argument of one of these loaders (a3 #38259, measured: 72 of
+# the gate→module relations a bare string constant made were DATA, tuples of names, path dicts, a module read as
+# text, even this oracle's own test literal). A closed set: a new loader shape reads REGRESSED until it's added.
+LOADERS = frozenset({"import_module", "spec_from_file_location", "run_module", "run_path", "find_spec"})
 _RUN_RX = re.compile(r'^run "([^"]+)"\s+"\$PY"\s+(?:-m\s+(\S+)|(\S+\.py))', re.M)
 
 
 def gate_refs(repo: Path) -> dict:
-    """{check.sh label: the names its python oracle references}: imports at any depth (`import a.b`, `from a import
-    b` as a, a.b), and string constants (a module loaded by name or path, as importlib loaders and mutant ENV
-    channels do). Unparseable or absent oracles are omitted, so their sites stay REGRESSED (fail-closed)."""
+    """{check.sh label: the modules its python oracle RUNS}: imports at any depth (`import a.b`, `from a import b`
+    as a, a.b), and a string constant ONLY as a positional argument of a LOADERS call (`importlib.import_module(
+    "bridges.common")`). A string anywhere else is data, never a reference. Unparseable or absent oracles are
+    omitted, so their sites stay REGRESSED (fail-closed)."""
     out = {}
     try:
         text = (repo / "nucleus" / "check.sh").read_text()
@@ -86,8 +91,8 @@ def gate_refs(repo: Path) -> dict:
                 refs |= {a.name for a in n.names}
             elif isinstance(n, ast.ImportFrom) and n.module:
                 refs |= {n.module} | {f"{n.module}.{a.name}" for a in n.names}
-            elif isinstance(n, ast.Constant) and isinstance(n.value, str) and len(n.value) < 200:
-                refs.add(n.value)
+            elif isinstance(n, ast.Call) and getattr(n.func, "attr", getattr(n.func, "id", None)) in LOADERS:
+                refs |= {a.value for a in n.args if isinstance(a, ast.Constant) and isinstance(a.value, str)}
         out[label] = refs
     return out
 
