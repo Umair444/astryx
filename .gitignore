@@ -10,7 +10,6 @@ agents/*
 !agents/seed.md
 !agents/seed/
 !agents/seed/seed.md
-!agents/*/avatar.*
 agents/seed/avatar.*
 !agents/*.example.md
 !agents/*.example/
