@@ -281,6 +281,26 @@ def test_absent_estate_is_an_empty_graph_not_a_crash():
         world.REPO = real_world
 
 
+def test_world_layer_never_mints_a_person():
+    """People are never kg nodes (owner design 2026-10-09; memory #35895, a3 K1 #36974). The
+    guarantee used to be ONE early `return` above intact minting code, untested, in a graph
+    rebuilt on a schedule. Driven with a taxonomy that HAS a circle and a member, so it goes
+    RED the moment anything turns a member into a node again."""
+    from nucleus import world
+    real = world.taxonomy
+    world.taxonomy = lambda *a, **k: {
+        "categories": {"family": [{"slug": "fixture-member", "name": "Fixture Member",
+                                   "facets": {"city": "Nowhere"}, "_ids": []}]},
+        "facets": {"city": "city"}}
+    try:
+        g = mg.compile_graph(with_system1=False)
+    finally:
+        world.taxonomy = real
+    bad = [n["id"] for n in g["nodes"] if n.get("kind") in ("person", "category")
+           or str(n["id"]).startswith(("world:person:", "world:cat:"))]
+    assert not bad, f"kg minted people/circles: {bad[:3]}"
+    assert not any("Fixture Member" in json.dumps(n) for n in g["nodes"]), "a member's name reached kg"
+
 def test_log_chain_sorts_by_date_not_file_order():
     """log.md is append-only but NOT chronological — physical order runs 07-19, 07-20,
     07-23, 07-26, 07-25, ... and #12/#12b/#12c share a date. Trusting file order would
