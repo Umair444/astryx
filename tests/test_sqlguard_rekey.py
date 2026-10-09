@@ -97,6 +97,31 @@ def main():
         arm("a row absent at both sides is PRE-EXISTING, never blamed on the range",
             res["stale"] == [] and res["preexisting"] == ["nucleus/gone.py::f\x1fselect 1"], res)
 
+        # F (a4 #34885): the range CHANGES norm() and deletes a listed site; the ledger is re-keyed into the NEW form.
+        # Judged by its OWN normalizer, base's site sat in the OLD key space and read PRE-EXISTING: a false clean.
+        with open(r / "nucleus" / "sqlguard" / "normalize.py", "a") as f:
+            f.write("\n_norm0 = norm\n\n\ndef norm(text):\n    return _norm0(text).upper()\n")
+        fn, text = new_key.split("\x1f")
+        up_key = f"{fn}\x1f{text.upper()}"
+        (r / "nucleus" / "demo.py").write_text('def q2(c):\n    return c.execute("SELECT b FROM t")\n')
+        led.write_text(json.dumps({"header": {}, "rows": {up_key: {}}}))
+        git(r, "commit", "-qam", "F: norm() upper-cases; q deleted; its row re-keyed, not dropped")
+        F = git(r, "rev-parse", "HEAD")
+        res = rekey.check(r, E, F)
+        arm("a range that CHANGES norm() and deletes a listed site → STALE in HEAD's key space (never PRE-EXISTING)",
+            res["stale"] == [up_key] and res["preexisting"] == [], res)
+        arm("…and the CLI exits 1", rekey.main([E, F, "--repo", str(r)]) == 1)
+
+        # G: a NEW write site is tagged (RESPONSIVE only via a stamped fixture, #21938), still advisory
+        with open(r / "nucleus" / "demo.py", "a") as f:
+            f.write('\n\ndef w(c, x):\n    return c.execute("INSERT INTO t (a) VALUES (%s)", (x,))\n')
+        git(r, "commit", "-qam", "G: a new write site")
+        G = git(r, "rev-parse", "HEAD")
+        res = rekey.check(r, F, G)
+        arm("a NEW write site is listed in new_writes, and stays advisory (rc 0)",
+            len(res["new_writes"]) == 1 and "INSERT" in res["new_writes"][0] and res["stale"] == []
+            and rekey.main([F, G, "--repo", str(r)]) == 0, res)
+
         arm("an unresolvable rev → rc 2 (couldn't run), never a clean 0",
             rekey.main(["no-such-rev", E, "--repo", str(r)]) == 2)
 

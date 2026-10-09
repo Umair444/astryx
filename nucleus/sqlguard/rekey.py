@@ -8,13 +8,17 @@ the old row R-STALE and the new site R-NEW, and main's estate check goes RED on 
 (seed #33150, #34264), and both reviews had PASSed from extracts, where the estate gate cannot run. This answers the
 question from the two TRACKED trees alone, in under a minute, with no database and no live state.
 
-Each revision is `git archive`d and inventoried by ITS OWN nucleus/sqlguard/inventory.py, so the two sides normalize
-exactly as each would in its own run. Then, against HEAD's ledger.json:
+Each revision is `git archive`d and inventoried by HEAD's nucleus/sqlguard/inventory.py + normalizer, BOTH trees.
+The question is "what will main's run, with HEAD's code, read?", so HEAD's normalizer is the only judge and base is
+there only to assign blame. Judging base by ITS OWN normalizer gave a FALSE CLEAN exactly when a range changes
+norm(): every key moves, a deleted listed site's base key sits in the OLD key space, and it read PRE-EXISTING
+(a4 #34885). Then, against HEAD's ledger.json:
 
   STALE  (certain, rc 1): a listed row whose site EXISTED at BASE and is GONE at HEAD. The range removed or re-texted
          it and didn't move the row. Fix with the tool: `ledger shrink` / `ledger admit` from a main-tree judged run.
   NEW    (advisory, rc 0): a site at HEAD that wasn't at BASE and isn't listed. It reads R-NEW unless the run grades it
-         RESPONSIVE, which only a run can tell. Make it RESPONSIVE, or admit it.
+         RESPONSIVE, which only a run can tell. Make it RESPONSIVE, or admit it. A WRITE is tagged: it can reach
+         RESPONSIVE only through a stamped fixture (live DML is never credited, #21938), so it usually needs an admit.
   PRE-EXISTING (advisory): a listed row absent at BOTH sides: stale before this range, not caused by it.
 
 DOMAIN, stated: tracked .py files only. The gitignored estate (triggers/, bridges/…) isn't in an archive, and its rows
@@ -44,33 +48,37 @@ def _tree(repo: Path, rev: str, dest: Path) -> Path:
     return dest
 
 
-def _sites(tree: Path) -> set:
-    """Every site key `<file>::<fn><SEP><normalized text>` (and `<SEP>*` for runtime-composed), per the tree's OWN
-    inventory, run as that tree's module so its normalization is the one its own run would use."""
+def _sites(tree: Path, judge: Path = None) -> dict:
+    """{site key: is_write} for every site `<file>::<fn><SEP><normalized text>` (and `<SEP>*` for runtime-composed) in
+    `tree`, as the JUDGE tree's inventory and normalizer read it (HEAD's, for both sides: a4 #34885)."""
+    judge = judge or tree
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    env.update(ASTRYX_SQLGUARD_ROOT=str(tree), PYTHONPATH=str(tree), PYTHONWARNINGS="ignore")
-    r = subprocess.run([sys.executable, "-m", "nucleus.sqlguard.inventory", "--json"], cwd=tree, env=env,
+    env.update(ASTRYX_SQLGUARD_ROOT=str(tree), PYTHONPATH=str(judge), PYTHONWARNINGS="ignore")
+    r = subprocess.run([sys.executable, "-m", "nucleus.sqlguard.inventory", "--json"], cwd=judge, env=env,
                        capture_output=True, text=True, timeout=600)
     if r.returncode != 0:
         raise RuntimeError(f"inventory failed in {tree.name}: {r.stderr.strip()[-300:]}")
     inv = json.loads(r.stdout)
-    out = set()
+    out = {}
     for fn, v in inv["functions"].items():
-        out |= {f"{fn}{SEP}{t}" for t in v["sites"]}
+        for t, meta in v["sites"].items():
+            out[f"{fn}{SEP}{t}"] = bool((meta or {}).get("write")) if isinstance(meta, dict) else False
         if v.get("unresolved"):
-            out.add(f"{fn}{SEP}*")
+            out[f"{fn}{SEP}*"] = False
     return out
 
 
 def check(repo: Path, base: str, head: str) -> dict:
     with tempfile.TemporaryDirectory() as td:
-        b, h = _sites(_tree(repo, base, Path(td) / "base")), _sites(_tree(repo, head, Path(td) / "head"))
+        ht = _tree(repo, head, Path(td) / "head")
+        b, h = _sites(_tree(repo, base, Path(td) / "base"), judge=ht), _sites(ht)
         led = Path(td) / "head" / "nucleus" / "sqlguard" / "ledger.json"
         rows = json.loads(led.read_text())["rows"] if led.is_file() else {}
     hashed = sum(1 for k in rows if k.startswith("sha256:"))
     listed = {k for k in rows if not k.startswith("sha256:")}
     return {"stale": sorted(k for k in listed if k in b and k not in h),
-            "new": sorted(k for k in h - b if k not in listed),
+            "new": sorted(k for k in h.keys() - b.keys() if k not in listed),
+            "new_writes": sorted(k for k in h.keys() - b.keys() if k not in listed and h[k]),
             "preexisting": sorted(k for k in listed if k not in b and k not in h),
             "hashed_skipped": hashed, "base_sites": len(b), "head_sites": len(h), "ledger_rows": len(rows)}
 
@@ -98,7 +106,8 @@ def main(argv=None) -> int:
         if r[key]:
             print(f"  {label} ({len(r[key])}) — {note}:")
             for k in r[key]:
-                print(f"    {_show(k)}")
+                w = key == "new" and k in r["new_writes"]
+                print(f"    {_show(k)}" + ("   [write: RESPONSIVE only via a stamped fixture, else R-NEW]" if w else ""))
     print("  clean: no listed row loses its site in this range" if not r["stale"] else
           "  RED: merging this range leaves the rows above R-STALE (and their re-texted sites R-NEW)")
     return 1 if r["stale"] else 0
