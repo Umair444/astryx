@@ -55,6 +55,12 @@ MUTANTS = {
         ("if states[n][0] in CONSUMER_ENABLED or states[n][1] in CONSUMER_ACTIVE], None",
          'if states[n][1] == "active"], None'),
     # a2 #33644: realpath on ONE side only; a symlinked ~/.config hides the consumer. M.11.
+    # a2 #39990 (M10): the master POLARITY inverted into a name-pattern denylist, the plausible real-world bug: only
+    # keys whose NAME sounds like a credential are guarded, so an unclassified key with an innocent name leaks.
+    "M10 an unclassified key is guarded only if its NAME sounds secret (denylist, not fail-safe)":
+        ("if k in NOT_SECRET or not v:",
+         "if k in NOT_SECRET or not v or not any(t in k for t in "
+         "('KEY', 'TOKEN', 'SECRET', 'PASSWORD', 'DSN', 'SALT', 'URL')):"),
     "M9 units_using compares the unit's path without realpath":
         ("if os.path.realpath(f) == os.path.realpath(path) and u.name not in names:",
          "if Path(f) == path and u.name not in names:"),

@@ -64,6 +64,7 @@ except Exception as exc:                                    # noqa: BLE001 — R
 # ------------------------------------------------------------------ fixtures (all FAKE)
 TOK = "tok_FAKE_9f3a1c77e0b24d6a"                 # opaque key
 NEW = "new_FAKE_c1d2e3f4a5b6c7d8"                 # a key nobody classified yet
+HANDLE = "hdl_FAKE_0f1e2d3c4b5a6978"              # … and one whose NAME sounds harmless (a2 #39990, M10)
 PW = "p@ss:w/rd FAKE+9=%"                          # needs URL-encoding; has a space
 APP = "abcd efgh ijkl mnop"                        # app-password shape (spaces) — a1 F5 missed it
 CAP = "capFAKE0123456789abcdef"                    # a capability URL's key=
@@ -80,6 +81,7 @@ NEW_HOOK=https://hooks.example.invalid/services/T0AAA/B0BBB/{HOOKTOK}
 TOKEN_AS_USER=https://{USERTOK}@git.example.invalid/x.git
 OPENAI_API_KEY={TOK}
 BRAND_NEW_KEY={NEW}
+ROUTER_HANDLE={HANDLE}
 GMAIL_APP_PASSWORD="{APP}"
 AUTOREMOTE_GETLOC_URL=https://example.invalid/sendmessage?key={CAP}&message=getlocation
 ASTRYX_ORG=example-org
@@ -112,6 +114,8 @@ def arms_s0(tmp):
     names = {s.name for s in S}
     check("S0.1 an opaque key is secret", TOK in vals)
     check("S0.2 POLARITY: a key nobody classified is secret (fail-safe)", NEW in vals)
+    check("S0.2b POLARITY by construction, not by NAME: an unclassified key with an innocent name is secret",
+          HANDLE in vals)
     check("S0.3 NOT_SECRET keys are not in the set",
           "example-org" not in vals and not any("203.0.113.9" in v for v in vals))
     check("S0.4 a DSN contributes its PASSWORD, decoded, never the host",
