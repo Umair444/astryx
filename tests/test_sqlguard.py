@@ -529,6 +529,13 @@ def main():
         run("live_unlisted", lr, lg(), dsn)
         run("vanished", rep({}), lg({S2: "UNEXECUTED"}), dsn)
         run("canary_absent", {**rep({}), "sites": {}}, lg(), dsn)
+        # BOTH arms of enforce's own state probe, every run (steward #38027): to_regclass('sqlguard_seen') finds the
+        # table here and NOT here, so its grade no longer rides on which runs happen to reach it.
+        st.execute("ALTER TABLE sqlguard_seen RENAME TO sqlguard_seen_away")
+        try:
+            run("state_absent", rep({S1: "UNEXECUTED"}), lg({S1: "UNEXECUTED"}), dsn)
+        finally:
+            st.execute("ALTER TABLE sqlguard_seen_away RENAME TO sqlguard_seen")
         ex = {"tests/x.py": {"gates": ["gx"], "listed_since": str(today), "trip": {"goal": 999999, "state": "done"}}}
         cov = {S1: ["gx"]}
         run("ex3_listed", rep({S1: "EXECUTED/FIXTURE-DDL"}, covering=cov, extractors={"tests/x.py": ["gx"]}),
@@ -875,6 +882,8 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
         and any(r.startswith("LIVE-ONLY") for r in E["live_climb"]["report"]), str(E.get("live_climb")))
     arm("R-STALE a listed row whose site vanished", has("vanished", "R-STALE"), str(E["vanished"]))
     arm("canary absent → run-level NOT SEARCHED (77)", E["canary_absent"]["rc"] == 77, str(E["canary_absent"]))
+    arm("the state table absent → that run says so (NOT SEARCHED), never a silent clock",
+        any("sqlguard_seen absent" in x for x in E["state_absent"]["ns"]), str(E["state_absent"]["ns"]))
     arm("EX3 a listed extractor's FIXTURE-DDL site is REPORTED, not RED",
         E["ex3_listed"]["rc"] == 0 and any(r.startswith("EX3") for r in E["ex3_listed"]["report"]),
         str(E["ex3_listed"]))
