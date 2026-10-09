@@ -296,10 +296,16 @@ def main():
               "vector" not in bare["exts"], str(bare))
         check("fixture_db under the run role WITH ASTRYX_FIXTURE_TEMPLATE has vector/postgis/age",
               all(x in templ["exts"] for x in ("vector", "postgis", "age")), str(templ))
-        seq = [s.split('"')[0].strip() for s in templ.get("seq", [])][:3]
+        # fixture_db's entry REAPS dead runs' databases first (DROP … IF EXISTS, steward/fixture-reaper), so BC-5's
+        # sequence is read from ITS CREATE on; anything before that must be a reaper drop and nothing else.
+        fxall = templ.get("seq", [])
+        fx_at = next((k for k, s in enumerate(fxall) if s.startswith("CREATE DATABASE")), 0)
+        fxseq = fxall[fx_at:]
+        seq = [s.split('"')[0].strip() for s in fxseq][:3]
         check("BC-5: no window: CREATE … ALLOW_CONNECTIONS false, then REVOKE, then ALTER … ALLOW_CONNECTIONS true",
-              len(seq) == 3 and seq[0].startswith("CREATE DATABASE") and "ALLOW_CONNECTIONS false" in templ["seq"][0]
-              and seq[1].startswith("REVOKE CONNECT") and "ALLOW_CONNECTIONS true" in templ["seq"][2], str(templ.get("seq")))
+              len(seq) == 3 and seq[0].startswith("CREATE DATABASE") and "ALLOW_CONNECTIONS false" in fxseq[0]
+              and seq[1].startswith("REVOKE CONNECT") and "ALLOW_CONNECTIONS true" in fxseq[2]
+              and all(s.startswith("DROP DATABASE IF EXISTS") for s in fxall[:fx_at]), str(fxall))
         check("BC-4: fixture_db REVOKEs PUBLIC CONNECT at creation, verified by the SERVER (not datacl)",
               templ["public"] is False and bare["public"] is False, f"{bare.get('public')} {templ.get('public')}")
 
