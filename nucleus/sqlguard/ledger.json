@@ -225,6 +225,18 @@
   "nucleus/runscope.py::orphan_roles\u001fselect shobj_description(oid, 'pg_authid') from pg_roles where rolname = ?": [
    "runscope"
   ],
+  "nucleus/schema_parity.py::definitions\u001fselect n.nspname || '.' || c.relname || '.' || t.tgname, md5(pg_get_triggerdef(t.oid)) from pg_trigger t join pg_class c on c.oid = t.tgrelid join pg_namespace n on n.oid = c.relnamespace where not t.tgisinternal and n.nspname <> all(?)": [
+   "schema parity: the live catalog has every table and column the schema files define"
+  ],
+  "nucleus/schema_parity.py::definitions\u001fselect n.nspname || '.' || c.relname, md5(pg_get_indexdef(c.oid)) from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.relkind in ('i', 'i') and n.nspname <> all(?) and n.nspname not like 'pg_toast%%' and not exists (select 1 from pg_depend d where d.classid = 'pg_class'::regclass and d.objid = c.oid and d.deptype = 'e')": [
+   "schema parity: the live catalog has every table and column the schema files define"
+  ],
+  "nucleus/schema_parity.py::definitions\u001fselect n.nspname || '.' || c.relname, md5(pg_get_viewdef(c.oid)) from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.relkind in ('v', 'm') and n.nspname <> all(?) and not exists (select 1 from pg_depend d where d.classid = 'pg_class'::regclass and d.objid = c.oid and d.deptype = 'e')": [
+   "schema parity: the live catalog has every table and column the schema files define"
+  ],
+  "nucleus/schema_parity.py::definitions\u001fselect n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')', md5(pg_get_functiondef(p.oid)) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where p.prokind in ('f', 'p') and n.nspname <> all(?) and n.nspname not like 'pg_%%' and not exists (select 1 from pg_depend d where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e')": [
+   "schema parity: the live catalog has every table and column the schema files define"
+  ],
   "nucleus/schema_parity.py::objects\u001fselect n.nspname || '.' || c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.relkind in ('i', 'i') and n.nspname <> all(?) and n.nspname not like 'pg_toast%%' and not exists (select 1 from pg_depend d where d.classid = 'pg_class'::regclass and d.objid = c.oid and d.deptype = 'e')": [
    "schema parity: the live catalog has every table and column the schema files define"
   ],
@@ -506,7 +518,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 309,
+  "debt_rows": 313,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -1163,6 +1175,30 @@
    "debt": "EXECUTED",
    "reason": "a3 D1 host stamp: the orphan sweep reaps only roles stamped with THIS machine's id. A pg_catalog read of one named role (always one row), so RESPONSIVE is unreachable by the judge's relation rule; pinned by R15 and the 'foreign or unstamped is reported, never dropped' arm.",
    "tk": "sha256t:d6b97d805e7416e4d66a4e3bc2e117d48e8dcc57c5097b4c26778f1861e4ff53"
+  },
+  "nucleus/schema_parity.py::definitions\u001fselect n.nspname || '.' || c.relname || '.' || t.tgname, md5(pg_get_triggerdef(t.oid)) from pg_trigger t join pg_class c on c.oid = t.tgrelid join pg_namespace n on n.oid = c.relnamespace where not t.tgisinternal and n.nspname <> all(?)": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "schema parity CHANGED (a1 #38541): a pg_catalog definition read (pg_get_*def over pg_trigger/pg_proc/pg_class), so RESPONSIVE is unreachable; run on fixtures and live by tests/test_schema_parity.py",
+   "tk": "sha256t:c43ebca8be0c2ec906e0508b1507c276c72b5c54a97278e2bc1cb8cd7ca0faac"
+  },
+  "nucleus/schema_parity.py::definitions\u001fselect n.nspname || '.' || c.relname, md5(pg_get_indexdef(c.oid)) from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.relkind in ('i', 'i') and n.nspname <> all(?) and n.nspname not like 'pg_toast%%' and not exists (select 1 from pg_depend d where d.classid = 'pg_class'::regclass and d.objid = c.oid and d.deptype = 'e')": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "schema parity CHANGED (a1 #38541): a pg_catalog definition read (pg_get_*def over pg_trigger/pg_proc/pg_class), so RESPONSIVE is unreachable; run on fixtures and live by tests/test_schema_parity.py",
+   "tk": "sha256t:540c623638e6291828dc9c054444aeb95be457fbafd5c879869500afd5b5843c"
+  },
+  "nucleus/schema_parity.py::definitions\u001fselect n.nspname || '.' || c.relname, md5(pg_get_viewdef(c.oid)) from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.relkind in ('v', 'm') and n.nspname <> all(?) and not exists (select 1 from pg_depend d where d.classid = 'pg_class'::regclass and d.objid = c.oid and d.deptype = 'e')": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "schema parity CHANGED (a1 #38541): a pg_catalog definition read (pg_get_*def over pg_trigger/pg_proc/pg_class), so RESPONSIVE is unreachable; run on fixtures and live by tests/test_schema_parity.py",
+   "tk": "sha256t:2f9b8ebda4f7bd4c2cf6bca800aa67c439a4645ff0e075ba8c4c06e47ad05f63"
+  },
+  "nucleus/schema_parity.py::definitions\u001fselect n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')', md5(pg_get_functiondef(p.oid)) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where p.prokind in ('f', 'p') and n.nspname <> all(?) and n.nspname not like 'pg_%%' and not exists (select 1 from pg_depend d where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e')": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "schema parity CHANGED (a1 #38541): a pg_catalog definition read (pg_get_*def over pg_trigger/pg_proc/pg_class), so RESPONSIVE is unreachable; run on fixtures and live by tests/test_schema_parity.py",
+   "tk": "sha256t:bb46c3dafd28f2bef714fe8fc5ce34749184676cc272e3341e91545f9c5a8085"
   },
   "nucleus/schema_parity.py::objects\u001fselect n.nspname || '.' || c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.relkind in ('i', 'i') and n.nspname <> all(?) and n.nspname not like 'pg_toast%%' and not exists (select 1 from pg_depend d where d.classid = 'pg_class'::regclass and d.objid = c.oid and d.deptype = 'e')": {
    "admitted": "2026-10-09",
