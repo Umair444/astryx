@@ -237,6 +237,43 @@ def coverage(url):
         mid = cl.get(f"{A}/threads/{t}/messages").json()["messages"][0]["id"]
         arm("a file not named by the message is 404; a missing message is 404",
             cl.get(f"{A}/file?msg={mid}&n=0").status_code == 404 and cl.get(f"{A}/file?msg=999999999&n=0").status_code == 404)
+        # files: a HUMAN's message may only name what was uploaded — never an arbitrary path on the host
+        cl.post(f"{A}/threads/{t}/messages", json={"body": "look [[file:/etc/hostname]] and <file attached: /etc/hostname>"}, headers=H)
+        evil = cl.get(f"{A}/threads/{t}/messages").json()["messages"][-1]["id"]
+        arm("a user can't read a host file by naming it in their own message (either file form)",
+            cl.get(f"{A}/file?msg={evil}&n=0").status_code == 404 and cl.get(f"{A}/file?msg={evil}&n=1").status_code == 404)
+        up = cl.post(f"{A}/upload", content=b"hello, canvas\n", headers={**H, "x-filename": "notes.txt"}).json()
+        cl.post(f"{A}/threads/{t}/messages", json={"body": f"here: {up.get('line') or up.get('body') or up}"}, headers=H)
+        um = cl.get(f"{A}/threads/{t}/messages").json()["messages"][-1]["id"]
+        dl = cl.get(f"{A}/file?msg={um}&n=0")
+        il = cl.get(f"{A}/file?msg={um}&n=0&inline=1")
+        arm("an upload opens: it downloads by default, and views inline as plain text when asked",
+            dl.status_code == 200 and dl.content == b"hello, canvas\n" and "attachment" in dl.headers.get("content-disposition", "")
+            and il.headers.get("content-type", "").startswith("text/plain") and "inline" in il.headers.get("content-disposition", "")
+            and il.headers.get("x-content-type-options") == "nosniff", (up, dl.status_code, dict(il.headers)))
+        svg = cl.post(f"{A}/upload", content=b"<svg xmlns='http://www.w3.org/2000/svg'><script>1</script></svg>",
+                      headers={**H, "x-filename": "x.svg"}).json()
+        cl.post(f"{A}/threads/{t}/messages", json={"body": f"{svg.get('line') or svg.get('body') or svg}"}, headers=H)
+        sv = cl.get(f"{A}/threads/{t}/messages").json()["messages"][-1]["id"]
+        arm("an SVG is never served inline (as a document it would script this origin)",
+            "attachment" in cl.get(f"{A}/file?msg={sv}&n=0&inline=1").headers.get("content-disposition", ""))
+        arm("a preview is only for Office documents", cl.get(f"{A}/file/preview?msg={um}&n=0").status_code == 415)
+        import shutil as _sh, subprocess as _sp, tempfile as _tf
+        if _sh.which("soffice"):
+            with _tf.TemporaryDirectory() as td:
+                (Path(td) / "brief.txt").write_text("Quarterly brief\nRevenue up.\n")
+                _sp.run(["soffice", f"-env:UserInstallation=file://{td}/p", "--headless", "--convert-to", "docx",
+                         "--outdir", td, f"{td}/brief.txt"], capture_output=True, timeout=120)
+                docx = (Path(td) / "brief.docx").read_bytes()
+            du = cl.post(f"{A}/upload", content=docx, headers={**H, "x-filename": "brief.docx"}).json()
+            cl.post(f"{A}/threads/{t}/messages", json={"body": f"{du.get('line') or du.get('body') or du}"}, headers=H)
+            dm = cl.get(f"{A}/threads/{t}/messages").json()["messages"][-1]["id"]
+            pv = cl.get(f"{A}/file/preview?msg={dm}&n=0")
+            arm("a Word document opens as a PDF the page can show (LibreOffice, cached)",
+                pv.status_code == 200 and pv.content[:5] == b"%PDF-" and "inline" in pv.headers.get("content-disposition", ""),
+                (pv.status_code, pv.text[:120]))
+        else:
+            print("  ○ office preview — NOT SEARCHED: soffice not installed on this host")
         sm = cl.post(f"{A}/canvases/{full['id']}/ask", json={"text": "make this weekly", "frame": False, "agent": "forge",
                      "element": {"selector": "#hero", "tag": "div", "text": "17", "html": "<div id=hero>17</div>"}}, headers=H)
         crew = cl.get(f"{A}/canvases/{full['id']}").json().get("crew", [])
