@@ -44,6 +44,7 @@ def main():
     try:
         with fixture_db(extra=P.expected_extra()) as fx, psycopg.connect(fx["dsn"], autocommit=True) as c:
             before = P.shape(c)
+            obefore = P.objects(c)
             mem = set(re.findall(r"CREATE TABLE IF NOT EXISTS\s+(\w+(?:\.\w+)?)", P.expected_extra()[0]))
             names = {f"{s}.{t}" for s, t in before} | {t for _, t in before}
             check("memgraph's module-owned tables are in the EXPECTED shape (else their drift is never judged)",
@@ -57,6 +58,24 @@ def main():
             c.execute("ALTER TABLE social_relation ALTER COLUMN closeness TYPE varchar(7)")
             c.execute("DROP TABLE presence CASCADE")
             d = P.compare(before, P.shape(c))
+            # OBJECTS (a1 #38450): the trigger that wakes every ear, a function, a view, an index
+            trg = sorted(t for t in obefore["trigger"] if ".messages." in t)
+            fn = sorted(f for f in obefore["function"] if "notify" not in f and "()" not in f) or sorted(obefore["function"])
+            vw, ix = sorted(obefore["view"]), sorted(i for i in obefore["index"] if not i.endswith("_pkey"))
+            picks = {"trigger": trg[:1], "function": fn[:1], "view": vw[:1], "index": ix[:1]}
+            for t in picks["trigger"]:
+                ns, rel, name = t.split(".", 2)
+                c.execute(f'DROP TRIGGER "{name}" ON "{ns}"."{rel}"')
+            for v in picks["view"]:
+                ns, name = v.split(".", 1)
+                c.execute(f'DROP VIEW "{ns}"."{name}" CASCADE')
+            for i in picks["index"]:
+                ns, name = i.split(".", 1)
+                c.execute(f'DROP INDEX IF EXISTS "{ns}"."{name}"')
+            for f in picks["function"]:
+                c.execute(f"DROP FUNCTION {f} CASCADE")
+            c.execute("CREATE INDEX zz_parity_handmade ON social_edge (dst)")
+            od = P.compare_objects(obefore, P.objects(c))
     except FixtureUnavailable as e:
         print(f"NOT SEARCHED: {e}")
         return 77
@@ -69,9 +88,32 @@ def main():
           str(d["type"]))
     check("…and any of them is drift", d["drift"] is True)
     check("identical shapes are NOT drift (the comparison has a green)", P.compare(before, before)["drift"] is False)
+    want = {f"{k} {n}" for k, ns in picks.items() for n in ns}
+    check("OBJECTS: a dropped trigger (the messages ear's), function, view and index each read MISSING",
+          all(picks.values()) and want <= set(od["missing"]) and od["drift"] is True,
+          f"picks={picks} missing={od['missing'][:8]}")
+    check("OBJECTS: a hand-added index is REPORTED, never judged",
+          "index public.zz_parity_handmade" in od["extra_reported"]
+          and P.compare_objects(obefore, {**obefore, "index": obefore["index"] | {"public.zz"}})["drift"] is False,
+          str(od["extra_reported"][:5]))
     check("a live-only table is reported, never judged",
           P.compare({}, {("public", "x"): {"a": "int"}}) == {"missing": [], "extra": [], "type": [],
                                                             "live_only": ["public.x"], "drift": False})
+
+    # run() as a whole: a database that lacks ONLY the messages trigger must read drift through objects alone (a3/a1
+    # lens: a computed verdict that never reaches the exit code is a test with no runner)
+    try:
+        with fixture_db(extra=P.expected_extra()) as fx2:
+            with psycopg.connect(fx2["dsn"], autocommit=True) as c2:
+                for t in sorted(t for t in P.objects(c2)["trigger"] if ".messages." in t)[:1]:
+                    ns, rel, name = t.split(".", 2)
+                    c2.execute(f'DROP TRIGGER "{name}" ON "{ns}"."{rel}"')
+            r2 = P.run(fx2["dsn"])
+    except FixtureUnavailable as e:
+        r2 = {"error": str(e)}
+    check("run(): a database missing ONLY the messages trigger reads DRIFT (columns identical, objects not)",
+          r2.get("drift") is True and r2.get("objects_missing") and not r2.get("missing") and not r2.get("extra")
+          and not r2.get("type"), str({k: r2.get(k) for k in ("drift", "objects_missing", "missing")}))
 
     # LIVE, read-only
     real = psycopg.connect
@@ -114,8 +156,9 @@ def main():
         live = P.run(live_dsn())
     finally:
         psycopg.connect = real
-    check("LIVE: the live catalog matches a fresh apply of the schema files (no MISSING, EXTRA or TYPE drift)",
-          live["drift"] is False, f"missing={live['missing']} extra={live['extra']} type={live['type']}")
+    check("LIVE: the live catalog matches a fresh apply of the schema files (no MISSING, EXTRA or TYPE drift, no "
+          "MISSING trigger/function/view/index)", live["drift"] is False,
+          f"missing={live['missing']} extra={live['extra']} type={live['type']} obj={live['objects_missing']}")
     check("LIVE: the read happens in a READ-ONLY session (a write after the SET is refused)",
           Probe.wrote is False, str(Probe.wrote))
     if live["live_only"]:
