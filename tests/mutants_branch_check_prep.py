@@ -69,5 +69,6 @@ MUTANTS = {
     "B25 the names-mode scan still filters datallowconn (the oracle's closed decoys go unjudged)":
         ('            "WHERE d.datname = ANY(%s) AND r.rolname <> %s ORDER BY 1"', '            "WHERE d.datallowconn AND d.datname = ANY(%s) AND r.rolname <> %s ORDER BY 1"'),
     "B26 the prep oracle's wakeprobe isn't a TEST_DB (a killed oracle's wakeprobes leak forever: a2 F2)":
-        ('                     r"|astryx_hardenprobe_[abc]_|astryx_wakeprobe_)(\\d+)$"', '                     r"|astryx_hardenprobe_[abc]_)(\\d+)$"'),
+        ('                     r"|astryx_hardenprobe_[abc]_|astryx_wakeprobe_|astryx_schemaprobe_)(\\d+)$"',
+         '                     r"|astryx_hardenprobe_[abc]_|astryx_schemaprobe_)(\\d+)$"'),
 }

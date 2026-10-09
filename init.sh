@@ -306,10 +306,26 @@ _act_pg() {
 
 _chk_pgready() { psql_q -c 'SELECT 1' >/dev/null 2>&1; }          # wait (transient boundary)
 
-_chk_schema() { psql_q -c 'SELECT 1 FROM triggers LIMIT 1' >/dev/null 2>&1; }
-_act_schema() { say "applying schema"
-  if command -v psql >/dev/null; then psql "$(dsn)" -f nucleus/schema.sql >/dev/null
-  else docker exec -i astryx-pg psql -U astryx -d astryx < nucleus/schema.sql >/dev/null; fi; }
+# >>> schema
+# GREEN iff the database carries a stamp of the EXACT schema.sql bytes last applied in full. "Some schema exists" was
+# the old check, so a host that pulled a NEW table judged itself current and skipped it (seed #38258: people-gate
+# 1a's social_relation never reached a pulled host, and the peoplegate node failed "social_relation is missing").
+# schema.sql is idempotent (IF NOT EXISTS / DO blocks), so a re-apply on any change is safe. The act applies a COPY,
+# stamps THAT copy's sha, and stamps only after a clean ON_ERROR_STOP apply: a failed apply stays RED. psql_q feeds
+# stdin, so the docker-psql path applies the same bytes.
+_SCHEMA_FILE="${ASTRYX_SCHEMA:-nucleus/schema.sql}"
+_STAMP_Q="SELECT sha FROM schema_applied WHERE id = 1"
+_sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }  # macOS
+_chk_schema() { local have want; have=$(psql_q -X -tA -c "$_STAMP_Q" 2>/dev/null) || return 1
+  want=$(_sha256 "$_SCHEMA_FILE"); [ -n "$have" ] && [ "$have" = "$want" ]; }
+_act_schema() { say "applying schema (schema.sql differs from what this database last applied)"
+  local tmp sha rc; tmp=$(mktemp) || return 1; cp "$_SCHEMA_FILE" "$tmp" || { rm -f "$tmp"; return 1; }
+  sha=$(_sha256 "$tmp")
+  psql_q -X -q -v ON_ERROR_STOP=1 < "$tmp" >/dev/null; rc=$?; rm -f "$tmp"; [ "$rc" -eq 0 ] || return 1
+  psql_q -X -q -v ON_ERROR_STOP=1 \
+    -c "CREATE TABLE IF NOT EXISTS schema_applied (id int PRIMARY KEY CHECK (id = 1), sha text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())" \
+    -c "INSERT INTO schema_applied (id, sha) VALUES (1, '$sha') ON CONFLICT (id) DO UPDATE SET sha = EXCLUDED.sha, applied_at = now()" >/dev/null; }
+# <<< schema
 
 # >>> harden (plan-4918 P0-a)
 # No database this org administers grants PUBLIC CONNECT. Postgres's default lets EVERY role connect to every
@@ -653,7 +669,8 @@ if [ "${1:-}" = "doctor" ]; then
   if [ -f .env ]; then
     DSN=$(grep '^ASTRYX_DSN=' .env | cut -d= -f2-)
     psql "$DSN" -c 'SELECT 1' >/dev/null 2>&1 && ok "postgres reachable" || bad "postgres unreachable (docker start astryx-pg?)"
-    psql "$DSN" -c 'SELECT 1 FROM triggers LIMIT 1' >/dev/null 2>&1 && ok "schema applied" || bad "schema missing — rerun ./init.sh"
+    _chk_schema && ok "schema applied (this database carries the current schema.sql's stamp)" \
+      || bad "schema missing or STALE (schema.sql changed since its last apply) — rerun ./init.sh"
     if _cut=$(_cut_dbs 2>/dev/null); then                    # the harden node's HELD databases, named (a3 #33510)
       [ -z "$_cut" ] && ok "harden: no database is held back by a role that connects only through PUBLIC"
       while IFS='|' read -r _d _rs; do

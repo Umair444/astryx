@@ -154,7 +154,7 @@ def unhardened(conn, run_role: str, own_templates=(), names=None) -> list:
 # reaps by it (dead creator only), and P0-b's refusal uses it to say WHY a database is accused (seed #34713). The
 # wakeprobe name is here because the prep oracle's W1 arm plants it (a killed prep oracle leaked them: a2 F2).
 TEST_DB = re.compile(r"^(?:astryx_bctpl_(?:zz|zk|t)_|astryxQbctplQ_|astryxAfxBprod_|astryx-fx-prod-|astryx_fx_bcx_"
-                     r"|astryx_hardenprobe_[abc]_|astryx_wakeprobe_)(\d+)$"
+                     r"|astryx_hardenprobe_[abc]_|astryx_wakeprobe_|astryx_schemaprobe_)(\d+)$"
                      r"|^bc_(\d+)x\d+_nullacl$"
                      r"|^(?:zz)?astryx_bctpl_o(\d+)_")                  # the prep oracle's own template namespace
 # OTHER oracles' pid-tagged probe DBs, ENUMERATED (each test's own f"astryx_<name>_{os.getpid()}"; they clean up
