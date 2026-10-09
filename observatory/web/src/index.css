@@ -84,3 +84,12 @@ body {
 
 :root[data-theme="light"] .react-flow__node:hover { filter: brightness(0.97) drop-shadow(0 2px 6px color-mix(in srgb, var(--t-fg) 12%, transparent)); }
 .react-flow { --xy-background-color: transparent; }
+
+/* the Floor: a quiet, theme-true grid — a room, not a chart */
+.floor-bg {
+  background:
+    radial-gradient(900px 600px at 50% 45%, color-mix(in srgb, var(--t-accent) 7%, transparent), transparent 70%),
+    linear-gradient(color-mix(in srgb, var(--t-line) 55%, transparent) 1px, transparent 1px) 0 0 / 44px 44px,
+    linear-gradient(90deg, color-mix(in srgb, var(--t-line) 55%, transparent) 1px, transparent 1px) 0 0 / 44px 44px,
+    var(--t-bg);
+}

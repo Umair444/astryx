@@ -38,7 +38,11 @@ from psycopg import sql
 LIVE = Path(os.environ.get("ASTRYX_LIVE_REPO", "/home/umair/astryx"))
 from nucleus import secretset                                  # noqa: E402 (the ONE secret authority)
 
-ENV_ALLOW = tuple(sorted(k for k in secretset.NOT_SECRET if ":" not in k))  # whole-key non-secret entries only
+# ENV_ALLOW is EMPTY by measurement (plan-4918 BC-2, #34686): a main-vs-main run with every then-allowlisted key
+# withheld gave IDENTICAL failed/unverified sets, so no gate that verifies under branch_check reads any of them. A key
+# RE-ENTERS only with a proof cited beside it: a gate RED without the key and GREEN with it. That's the recoverable
+# direction: a missing key shows as RED or UNVERIFIED, while a present one hands a live value into the sandbox.
+ENV_ALLOW = ()
 P0A = "REVOKE CONNECT ON DATABASE {} FROM PUBLIC"
 TPL_PREFIX = "astryx_bctpl_"
 # The human-personal tier (local.md law): LINKED into the run and mounted READ-ONLY by the sandbox, never COPIED.
@@ -116,13 +120,20 @@ def transient(name: str):
     return False
 
 
-def unhardened(conn, run_role: str, own_templates=()) -> list:
+def unhardened(conn, run_role: str, own_templates=(), names=None) -> list:
     """Databases the run doesn't own that still grant PUBLIC CONNECT (a NULL ACL counts: the server resolves it).
     Evaluated PER MEMBER: one that errors (dropped between the listing and the check: a live race) is ACCUSED,
-    never skipped (a1 BC-2). Declared transient names are excluded before evaluation."""
-    names = [r[0] for r in conn.execute(
-        "SELECT d.datname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba "
-        "WHERE d.datallowconn AND r.rolname <> %s ORDER BY 1", (run_role,))]
+    never skipped (a1 BC-2). Declared transient names are excluded before evaluation.
+    `names` (the oracle's) evaluates an EXPLICIT set whatever its datallowconn: the oracle plants its accused decoys
+    ALLOW_CONNECTIONS false, so a concurrent REAL run's scan never sees them (a2 F3 #34875)."""
+    if names is None:
+        names = [r[0] for r in conn.execute(
+            "SELECT d.datname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba "
+            "WHERE d.datallowconn AND r.rolname <> %s ORDER BY 1", (run_role,))]
+    else:
+        names = [r[0] for r in conn.execute(
+            "SELECT d.datname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba "
+            "WHERE d.datname = ANY(%s) AND r.rolname <> %s ORDER BY 1", (list(names), run_role))]
     bad = []
     for n in names:
         t = transient(n)
@@ -139,12 +150,50 @@ def unhardened(conn, run_role: str, own_templates=()) -> list:
     return bad
 
 
-def require_hardened(conn, run_role: str):
-    bad = unhardened(conn, run_role)
+# Names only branch_check's own oracles create, each carrying its creator's pid. ONE definition: tests/_oracle_debris.py
+# reaps by it (dead creator only), and P0-b's refusal uses it to say WHY a database is accused (seed #34713). The
+# wakeprobe name is here because the prep oracle's W1 arm plants it (a killed prep oracle leaked them: a2 F2).
+TEST_DB = re.compile(r"^(?:astryx_bctpl_(?:zz|zk|t)_|astryxQbctplQ_|astryxAfxBprod_|astryx-fx-prod-|astryx_fx_bcx_"
+                     r"|astryx_hardenprobe_[abc]_|astryx_wakeprobe_)(\d+)$"
+                     r"|^bc_(\d+)x\d+_nullacl$"
+                     r"|^(?:zz)?astryx_bctpl_o(\d+)_")                  # the prep oracle's own template namespace
+# OTHER oracles' pid-tagged probe DBs, ENUMERATED (each test's own f"astryx_<name>_{os.getpid()}"; they clean up
+# their own, so they are NOT reaped here). Enumerated, never a "trailing digits" guess: an unlisted name falls to the
+# REVOKE advice, harmless on a test DB, and never to "droppable", which on a real database would be data loss.
+OTHER_PROBES = re.compile(r"^astryx_(?:earprobe|tierprobe|fundedby|fx_rot)_(\d+)$|^astryx_fx_zzh(\d+)$")
+
+
+def provenance(name: str) -> str:
+    """For an oracle's test database: whether its creator is still RUNNING (retry after it) or GONE (debris). Empty
+    for any other name. It only EXPLAINS an accusation; it never exempts one (a live oracle's open DB is reachable)."""
+    m = TEST_DB.match(name) or OTHER_PROBES.match(name)
+    if not m:
+        return ""
+    pid = int(next(g for g in m.groups() if g))
+    if _pid_alive(pid):
+        return f"a test DB of LIVE pid {pid}: an oracle is running, retry after it"
+    return f"a test DB of GONE pid {pid}: debris, droppable once you've confirmed the pid is gone"
+
+
+def refusal(bad: list) -> str:
+    """P0-b's refusal text. Test DBs are named with their creator's state and never get a REVOKE suggestion (revoking
+    a live oracle's deliberately open DB would break its arm); everything else gets seed's P0-a statement."""
+    msg = ("P0-b: these databases still grant PUBLIC CONNECT, so a run role could reach them (and NOTIFY/LISTEN "
+           "needs no grant).")
+    test = [(b, provenance(b.split(" (")[0])) for b in bad]
+    tests = [f"{b} ({why})" for b, why in test if why]
+    rest = [b.split(" (")[0] for b, why in test if not why]
+    if tests:
+        msg += " Oracle TEST databases: " + "; ".join(tests) + "."
+    if rest:
+        msg += " Seed's one-time host hardening (P0-a): " + "; ".join(P0A.format(d) for d in rest)
+    return msg
+
+
+def require_hardened(conn, run_role: str, names=None):
+    bad = unhardened(conn, run_role, names=names)
     if bad:
-        raise Refuse("P0-b: these databases still grant PUBLIC CONNECT, so a run role could reach them (and "
-                     "NOTIFY/LISTEN needs no grant). Seed's one-time host hardening (P0-a): "
-                     + "; ".join(P0A.format(d) for d in bad))
+        raise Refuse(refusal(bad))
 
 
 # ── the fixture-extension template (cached, named, evicted by schema sha) ───────────────────────────────────
@@ -281,12 +330,11 @@ def copy_estate(live: Path, repo: Path, secrets_: set) -> dict:
 
 
 def write_env(repo: Path, run_dsn: str, live: Path = LIVE, node: Path = None) -> Path:
-    """The generated .env: the run role's DSN plus declared non-secret keys. Never the live file. `node` replaces
-    the live ASTRYX_NODE (possibly a mise shim, unusable inside the sandbox) with the resolved binary (D3)."""
+    """The generated .env: the run role's DSN, the RESOLVED node (D3: a derived path, not a live value; the live
+    ASTRYX_NODE may be a mise shim that can't run inside), and ENV_ALLOW's keys (empty, BC-2). Never the live file."""
     live_env = read_env(live / ".env")
-    if node:
-        live_env = {**live_env, "ASTRYX_NODE": str(node)}
-    lines = [f"ASTRYX_DSN={run_dsn}"] + [f"{k}={live_env[k]}" for k in ENV_ALLOW if k in live_env]
+    lines = ([f"ASTRYX_DSN={run_dsn}"] + ([f"ASTRYX_NODE={node}"] if node else [])
+             + [f"{k}={live_env[k]}" for k in ENV_ALLOW if k in live_env])
     p = repo / ".env"
     p.write_text("\n".join(lines) + "\n")
     p.chmod(0o600)

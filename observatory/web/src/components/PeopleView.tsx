@@ -17,7 +17,8 @@ import type {
   AgentRow,
   AgentSpawnResult,
 } from '../types'
-import Avatar, { type AvatarStatus } from './Avatar'
+import { type AvatarStatus } from './Avatar'
+import AgentFace from './AgentFace'
 import RuntimeEditor from './RuntimeEditor'
 
 /* The People experience: an astryx agent is a PERSON. This is the org's cast page —
@@ -56,7 +57,7 @@ function CharacterCard({ a, onOpen }: { a: AgentRow; onOpen: (n: string) => void
                  hover:border-cyan/40 hover:-translate-y-0.5 hover:shadow-[0_8px_24px_-12px_color-mix(in_srgb,var(--t-accent)_35%,transparent)]
                  transition-all duration-100"
     >
-      <Avatar name={a.agent} size={46} status={st} title={displayName(a.agent)} />
+      <AgentFace name={a.agent} size={46} status={st} title={displayName(a.agent)} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <span className="text-sm font-semibold text-ink truncate group-hover:text-cyan-soft transition-colors">
@@ -443,7 +444,7 @@ function ProfileModal({
           <div className="p-5">
             {/* header */}
             <div className="flex items-start gap-4">
-              <Avatar name={p.name} size={76} status={status} title={displayName(p.name)} />
+              <AgentFace name={p.name} size={76} status={status} title={displayName(p.name)} />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
                   <h2 className="text-xl font-bold text-ink">{displayName(p.name)}</h2>
@@ -498,7 +499,7 @@ function ProfileModal({
                       className="flex items-center gap-1.5 bg-deck border border-line rounded-full pl-1 pr-2.5 py-1
                                  hover:border-cyan/40 transition-colors"
                     >
-                      <Avatar name={r.agent} size={20} ring={false} title={displayName(r.agent)} />
+                      <AgentFace name={r.agent} size={20} title={displayName(r.agent)} />
                       <span className="text-[12px] text-ink-dim">{displayName(r.agent)}</span>
                       <span className="text-[10px] font-mono text-ink-mute">{r.messages}</span>
                     </button>
@@ -521,7 +522,7 @@ function ProfileModal({
                       className="flex items-center gap-1.5 bg-deck border border-line rounded-full pl-1 pr-2.5 py-1
                                  hover:border-cyan/40 transition-colors"
                     >
-                      <Avatar name={peer} size={20} ring={false} title={displayName(peer)} />
+                      <AgentFace name={peer} size={20} title={displayName(peer)} />
                       <span className="text-[12px] text-ink-dim">{displayName(peer)}</span>
                     </button>
                   ))}

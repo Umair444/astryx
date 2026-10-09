@@ -12,7 +12,8 @@
   "bridges/canvas.py::logout\u001fdelete from canvas_sessions where token_hash=?": [
    "canvas: trust lines, claim, shell"
   ],
-  "bridges/canvas.py::new_canvas\u001fselect * from canvases where id=?": [
+  "bridges/canvas.py::new_canvas\u001fselect *, version as ver from canvases where id=?": [
+   "canvas voice: cap, tier fence, owner",
    "canvas: trust lines, claim, shell"
   ],
   "bridges/canvas.py::thread_user\u001fupdate canvas_threads set updated_at=now() where thread=?": [
@@ -20,6 +21,9 @@
   ],
   "bridges/canvas.py::viewer\u001fupdate canvas_users set last_seen=now() where name=?": [
    "canvas: trust lines, claim, shell"
+  ],
+  "bridges/canvas_voice.py::voice_session\u001finsert into canvas_voice_usage (user_name, model) values (?,?) returning id": [
+   "canvas voice: cap, tier fence, owner"
   ],
   "bridges/providers/canvas.py::CanvasProvider.list_chats\u001fselect thread, user_name, agent, title from canvas_threads where not archived order by updated_at desc limit 100": [
    "canvas: trust lines, claim, shell"
@@ -204,6 +208,20 @@
    "branch_check sandbox: the boundary holds from inside, every probe falsifiable",
    "runscope: teardown by ownership, stale sweep, foreign scopes refused"
   ],
+  "nucleus/runscope.py::_drop_owned\u001fselect 1 from pg_roles where rolname = ?": [
+   "branch_check base: prod restored into a run-owned base",
+   "branch_check prep: hardening precondition, template, repo, estate, env",
+   "branch_check sandbox: the boundary holds from inside, every probe falsifiable",
+   "branch_check: differential verdict, prod witness, clean refusal",
+   "runscope: teardown by ownership, stale sweep, foreign scopes refused"
+  ],
+  "nucleus/runscope.py::orphan_roles\u001fselect rolname from pg_roles where rolname like 'bc\\_%'": [
+   "branch_check: differential verdict, prod witness, clean refusal",
+   "runscope: teardown by ownership, stale sweep, foreign scopes refused"
+  ],
+  "nucleus/runscope.py::orphan_roles\u001fselect shobj_description(oid, 'pg_authid') from pg_roles where rolname = ?": [
+   "runscope"
+  ],
   "nucleus/secret_sweep.py::sweep_turns\u001fselect raw_payload, input_prompt from turns where id=?": [
    "at-rest secret sweep redacts without corrupting (5497 S2)"
   ],
@@ -254,6 +272,9 @@
   ],
   "nucleus/wake_audit.py::dropped\u001f*": [
    "wake-audit classifier"
+  ],
+  "observatory/api/main.py::agent_profile\u001fselect mode() within group (order by model) from turns where agent=? and model is not null and ended_at > now() - interval '2 days'": [
+   "observatory: agents as people"
   ],
   "observatory/api/main.py::goal_create\u001finsert into goals (title, owner, state, scope_note) values (?, ?, 'proposed', ?) returning id": [
    "goal budgets frozen, writers retired (4227 S3)"
@@ -419,7 +440,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 288,
+  "debt_rows": 287,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -460,11 +481,11 @@
    "reason": "seed 10-09 canvas: the gate admits /api/logout only with a live session row for this cookie, so 0 rows is unreachable; \u22651 observed",
    "tk": "sha256t:2c348c96403fa54c70b93a583c21f5ac9391746cad17f3d14198a9af7dafa353"
   },
-  "bridges/canvas.py::new_canvas\u001fselect * from canvases where id=?": {
+  "bridges/canvas.py::new_canvas\u001fselect *, version as ver from canvases where id=?": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas: re-reads the id create() returned in the same request, so 0 rows is unreachable; \u22651 observed",
-   "tk": "sha256t:ab991a449c8b14f5ecfbd3736bdba6a4cc0b62e572a671455e2544fefad6290e"
+   "reason": "seed 10-09: re-reads the id create() returned in the same request (0 rows unreachable); the alias rename of the admitted row",
+   "tk": "sha256t:57af3c3f65d3c913d25b0ad6192c33cfea9c04aa1c9b3f852a171a981628c06f"
   },
   "bridges/canvas.py::thread_user\u001fupdate canvas_threads set updated_at=now() where thread=?": {
    "admitted": "2026-10-09",
@@ -477,6 +498,12 @@
    "debt": "EXECUTED",
    "reason": "seed 10-09 canvas: runs only for a session whose JOIN just found the non-revoked user, so 0 rows is unreachable; \u22651 observed",
    "tk": "sha256t:ba79ef9cf28c18ca2b3e0c53def19db9bff0525f912560d4fb5ee5c73cd44b1b"
+  },
+  "bridges/canvas_voice.py::voice_session\u001finsert into canvas_voice_usage (user_name, model) values (?,?) returning id": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "seed 10-09: INSERT \u2026 RETURNING always affects exactly one row; the 0-row arm does not exist",
+   "tk": "sha256t:3c7a03b454af33ce666876001b7bc99b1b7b81b62d76d74efbec95002e3b38de"
   },
   "bridges/common.py::listen\u001f*": {
    "debt": "UNEXECUTED",
@@ -917,26 +944,6 @@
    "reason": "seed",
    "tk": "sha256t:a4a3f66c1fb5aa03da8b48c85f480170b4354f000ccbcfc1aeac5a059f103529"
   },
-  "nucleus/people.py::write_pg\u001fdelete from social_edge where org=?": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:f327831a51e5fd44eaa5df04787974fdca6d637271cf7852228b8f81dd19fc38"
-  },
-  "nucleus/people.py::write_pg\u001fdelete from social_person where org=?": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:1c7cd58e2d3dbefdb58fcc510f308e54636680e0abba9c98b6dd32f63f10dc4c"
-  },
-  "nucleus/people.py::write_pg\u001finsert into social_edge (org,src,dst,rel) values (?,?,?,?) on conflict do nothing": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:4ed28f1d5296fd2f08f8255740383c879f31d85c1ed2d29c91e4880311945565"
-  },
-  "nucleus/people.py::write_pg\u001finsert into social_person (org,id,kind,label) values (?,?,'group',?)": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:bcb4a0bcd71e46df08d76ea4194cac6863a1f362d11518b9d8f7738cb754fe51"
-  },
   "nucleus/people_gate.py::_role\u001fselect rolcanlogin from pg_roles where rolname = ?": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
@@ -1066,6 +1073,24 @@
    "debt": "EXECUTED",
    "reason": "plan-4918 D1: the run role gets AGE's session preload only where the server offers AGE (a missing preload library fails every connection). a pg_catalog read, so RESPONSIVE is unreachable by the judge's relation rule; pinned by runscope R9 and the arm 'the role preloads AGE exactly when the server offers it'.",
    "tk": "sha256t:766e4bbf18714a244390f9e5c9a1eb18e2c56b63ef724c0f6591215e34cdc4f6"
+  },
+  "nucleus/runscope.py::_drop_owned\u001fselect 1 from pg_roles where rolname = ?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "a2 F1: teardown-by-ownership's 'is the role gone' read, shared by teardown() and the orphan sweep. a pg_catalog read, so RESPONSIVE is unreachable by the judge's relation rule (it reads 1 row only when a DROP ROLE failed); pinned by the teardown and F1 arms.",
+   "tk": "sha256t:755ebfa6d16e9722a913bb5fd789b621ababa8ded98f59b20da19e3e8a99c614"
+  },
+  "nucleus/runscope.py::orphan_roles\u001fselect rolname from pg_roles where rolname like 'bc\\_%'": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "a2 F1: the stale sweep's orphan source (run roles read from postgres, since a reboot wipes the lockfiles). a pg_catalog read, so RESPONSIVE is unreachable by the judge's relation rule; pinned by runscope R11/R12 and the F1 arms (crashed run reaped, live run kept, reused pid reaped).",
+   "tk": "sha256t:dbd0b463138c90e51116c81c062828070777c67a588f1256c06dd80cdc35e9af"
+  },
+  "nucleus/runscope.py::orphan_roles\u001fselect shobj_description(oid, 'pg_authid') from pg_roles where rolname = ?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "a3 D1 host stamp: the orphan sweep reaps only roles stamped with THIS machine's id. A pg_catalog read of one named role (always one row), so RESPONSIVE is unreachable by the judge's relation rule; pinned by R15 and the 'foreign or unstamped is reported, never dropped' arm.",
+   "tk": "sha256t:d6b97d805e7416e4d66a4e3bc2e117d48e8dcc57c5097b4c26778f1861e4ff53"
   },
   "nucleus/secret_sweep.py::sweep_turns\u001fselect raw_payload, input_prompt from turns where id=?": {
    "admitted": "2026-09-30",
@@ -1232,10 +1257,11 @@
    "reason": "seed",
    "tk": "sha256t:e47be9981e67eb532f1b577e6a4caff9fb96a8e363fb2c91db1b9c764d4681db"
   },
-  "observatory/api/main.py::agent_profile\u001fselect (select count(*) from turns where agent=?) as turns, (select coalesce(sum(tokens_out),0) from turns where agent=?) as tokens_out, (select coalesce(sum(coalesce((raw_payload->'usage'->>'billable_equiv_in')::bigint, (tokens_in*0.12)::bigint + tokens_out)),0)::bigint from turns where agent=?) as billable_tokens, (select count(*) from messages where from_agent=? and from_org='local') as messages_sent, (select count(*) from steps where agent=?) as steps, (select min(ts) from steps where agent=?) as first_seen, (select max(ts) from steps where agent=?) as last_seen": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:977a7dcc278dac4fb1ae66a01d6624a7cb22df9760c3abf938fa64fc9f23aafe"
+  "observatory/api/main.py::agent_profile\u001fselect mode() within group (order by model) from turns where agent=? and model is not null and ended_at > now() - interval '2 days'": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "seed 10-09: an aggregate without GROUP BY always returns one row (NULL when quiet, observed); the 0-row arm does not exist",
+   "tk": "sha256t:8e795d0cf463ea06028958f685921e4514d8e36af4883590633150c1615400e0"
   },
   "observatory/api/main.py::agent_profile\u001fselect model from turns where agent=? and model is not null order by ended_at desc limit 1": {
    "debt": "UNEXECUTED",
@@ -1246,16 +1272,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:4a632d611a50639c42b7d18883147e67daa6af0aa1999db3f5459e0eb22cae8d"
-  },
-  "observatory/api/main.py::agents\u001fselect agent, max(ts) as last_seen, count(*) as steps, coalesce(sum(tokens_in), 0) as tokens_in, coalesce(sum(tokens_out), 0) as tokens_out, (array_agg(kind order by id desc))[1] as last_kind, (array_agg(left(content, 120) order by id desc))[1] as last_content from steps group by agent order by max(ts) desc": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:82ff15804265fdd8b6dcdb54cff37b547cae3303ce1d0cf3a5466aefba01bf07"
-  },
-  "observatory/api/main.py::agents\u001fselect distinct on (agent) agent, model from turns where model is not null order by agent, id desc": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:a4024b36422a961e7355a193c49f18695ade423a7c577439cccc91fac9da6d9e"
   },
   "observatory/api/main.py::brain_completions\u001finsert into messages (from_agent, to_agent, thread, intent, body) values ('owner', 'growbot', ?, 'task', ?) returning id": {
    "debt": "UNEXECUTED",
@@ -1377,6 +1393,12 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:d3dd7c4e1a3d240c4b6fa5c591ad09b036d55018758e1cbce88cef0431963025"
+  },
+  "observatory/api/main.py::listen_task\u001fselect * from presence where agent=?": {
+   "admitted": "2026-10-09",
+   "debt": "UNEXECUTED",
+   "reason": "seed 10-09: runs only inside the live LISTEN tap on an astryx_presence doorbell (an id the trigger just wrote); the same read is RESPONSIVE in canvas on_presence (tests/test_canvas.py)",
+   "tk": "sha256t:5bbe322b2890c658fe34204fb8794ff82cb2dcdd23f94330d6b7a51208686f1b"
   },
   "observatory/api/main.py::memory_chat\u001finsert into messages (from_agent, to_agent, thread, intent, body) values ('owner', 'memory', ?, 'task', ?) returning id": {
    "debt": "UNEXECUTED",

@@ -13,6 +13,9 @@ SUBJECT = REPO / "nucleus" / "runscope.py"
 ORACLE = REPO / "tests" / "test_runscope.py"
 ENV = "RUNSCOPE_SRC"
 
+# R13 was once DECLARED (unsafe: the oracle's sweep ran org-wide, and it dropped every bc_* role on 10-09). Since a3 D1
+# #35480 every oracle sweep passes only= its OWN roles, so a mutated predicate can destroy nothing else: authored.
+TIMEOUT = 300          # ~60 s alone; concurrent full checks and batteries pushed some runs past 120 s (10-09)
 MUTANTS = {
     "R1 teardown by NAME prefix, not ownership (a differently named db is missed)":
         ("    q = \"SELECT d.datname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba WHERE r.rolname = %s ORDER BY 1\"",
@@ -39,4 +42,14 @@ MUTANTS = {
     "R9 the run role gets no AGE preload (it can't LOAD, so AGE is unusable in the run)":
         ("            if c.execute(\"SELECT 1 FROM pg_available_extensions WHERE name = 'age'\").fetchone():",
          "            if False:"),
+    "R11 the sweep never reads postgres for orphans (a reboot strands every crashed run's role and DBs: a2 F1)":
+        ("    for role in orphan_roles(admin_dsn, only=only, foreign=foreign):", "    for role in []:"),
+    "R12 orphan liveness by pid alone (a reused pid after a reboot shields the dead run's role forever)":
+        ("        if started is not None and started <= int(m.group(2)) + 2:", "        if started is not None:"),
+    "R13 orphans ignore liveness (a LIVE run whose lock was wiped is torn down mid-run)":
+        ("            if started is not None and started <= int(m.group(2)) + 2:      # the creator (or older) is still alive\n                continue\n", ""),
+    "R14 the candidate set is ignored (an oracle's sweep reaches every role on the cluster)":
+        ("            if only is not None and r not in only:\n                continue\n", ""),
+    "R15 the host stamp is ignored (host A reaps host B's live run, which has no local pid)":
+        ("            if not MACHINE_ID or not stamp or stamp[0] != MACHINE_ID:", "            if False:"),
 }

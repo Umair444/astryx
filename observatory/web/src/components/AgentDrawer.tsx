@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Badge, Drawer, ScrollArea, Tabs } from '@mantine/core'
+import AgentFace from './AgentFace'
 import { api, apiSend, agentColor, avatarInitial, displayName, fmtAgo, fmtTime, fmtTokens, obsKey, shortModel } from '../api'
 import { useStore } from '../store'
 import type { Profile, Step, Turn } from '../types'
@@ -53,20 +54,8 @@ export default function AgentDrawer({ name, onClose }: { name: string; onClose: 
       size="lg"
       title={
         <div className="flex items-center gap-3">
-          {profile?.avatar ? (
-            <img
-              src={`/api/agents/${encodeURIComponent(name)}/avatar${key ? `?key=${encodeURIComponent(key)}` : ''}`}
-              className="w-10 h-10 rounded-xl object-cover border border-line"
-              alt=""
-            />
-          ) : (
-            <span
-              className="w-10 h-10 rounded-xl grid place-items-center text-base font-bold text-agent-ink"
-              style={{ background: col }}
-            >
-              {avatarInitial(name)}
-            </span>
-          )}
+          {/* the agent's own face (public route — no key ever rides an image URL) */}
+          <AgentFace name={name} size={44} radius="14px" />
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <span className="font-semibold" style={{ color: col }}>
@@ -91,6 +80,31 @@ export default function AgentDrawer({ name, onClose }: { name: string; onClose: 
       }
       styles={{ content: { background: 'var(--t-panel)' }, header: { background: 'var(--t-panel)' } }}
     >
+      {profile && (
+        <div className="mb-3 rounded-xl border border-line bg-deck p-3">
+          <div className="flex items-center gap-2 mb-1.5">
+            <span className="text-[10px] uppercase tracking-[.14em] text-ink-mute">Now</span>
+            {profile.presence?.surface && (
+              <span className="text-[11px] text-cyan">{profile.presence.state} · {profile.presence.surface}</span>
+            )}
+            <a href={`/canvas/#/new/${encodeURIComponent(name)}`} target="_blank" rel="noreferrer"
+              className="ml-auto text-[12px] px-2.5 py-1 rounded-lg no-underline font-medium"
+              style={{ background: 'linear-gradient(135deg, var(--t-accent), var(--t-accent2))', color: 'var(--t-on)' }}>
+              Talk to {displayName(name)} ↗
+            </a>
+          </div>
+          {profile.presence?.say && <div className="text-[13px] text-ink mb-1">“{profile.presence.say}”</div>}
+          <div className="space-y-0.5">
+            {(profile.recent ?? []).slice(0, 5).map((r, i) => (
+              <div key={i} className="flex gap-2 text-[11.5px]">
+                <span className="text-ink-mute w-12 shrink-0">{fmtAgo(r.ts)}</span>
+                <span className={`truncate ${r.kind === 'error' ? 'text-bad' : r.kind === 'milestone' ? 'text-good' : 'text-ink-dim font-mono'}`}>{r.content}</span>
+              </div>
+            ))}
+            {!(profile.recent ?? []).length && <div className="text-[11.5px] text-ink-mute">quiet lately</div>}
+          </div>
+        </div>
+      )}
       {profile && (
         <div className="grid grid-cols-4 gap-2 mb-3">
           {(

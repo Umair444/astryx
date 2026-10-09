@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import PeopleGraph from './PeopleGraph'
+import AgentFace from './AgentFace'
 import { ScrollArea } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { ReactFlow, Background, MarkerType, Position, type Node, type Edge } from '@xyflow/react'
@@ -124,12 +125,7 @@ function agentEl(
           {type}
         </span>
       )}
-      <span
-        className="mx-auto w-8 h-8 rounded-xl grid place-items-center text-[14px] font-bold text-agent-ink"
-        style={{ background: color, opacity: alive ? 1 : 0.55 }}
-      >
-        {avatarInitial(name)}
-      </span>
+      <AgentFace name={name} size={32} radius="9999px" dim={!alive} />
       <div className={`font-semibold text-[13px] mt-1 truncate ${alive ? 'text-ink' : 'text-ink-mute'}`}>
         {displayName(name)}
       </div>
@@ -414,12 +410,7 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
                 <span
                   className={`w-2 h-2 rounded-full shrink-0 ${a.alive ? 'bg-good' : 'bg-ink-mute/40'}`}
                 />
-                <span
-                  className="w-7 h-7 rounded-lg grid place-items-center text-[12px] font-bold text-agent-ink"
-                  style={{ background: agentColor(a.agent) }}
-                >
-                  {avatarInitial(a.agent)}
-                </span>
+                <AgentFace name={a.agent} size={28} radius="9999px" />
                 <span className="text-sm text-ink">{displayName(a.agent)}</span>
                 {(a.group_path ?? []).length > 0 && (
                   <span className="text-[10px] font-mono text-ink-mute">

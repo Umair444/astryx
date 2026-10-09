@@ -88,6 +88,9 @@ VEGA_HOME = Path(tempfile.gettempdir()) / "astryx-vega-conjure"
 # agent, but step/last_content bodies only for grant-derived content-public agents
 # (nucleus/tier.py, fail-closed). A content-class path must NOT be added here without
 # applying that floor — the grade-3 assert (tests/test_tier.py) fails if it is.
+# An agent's FACE is metadata (it exists, it looks like this), public like its name in /api/agents;
+# an <img> cannot send the owner header, so the avatar route is the one parameterised public path.
+_PUBLIC_AVATAR = re.compile(r"^/api/agents/[a-z][a-z0-9_-]{0,40}/avatar$")
 PUBLIC_PATHS = {"/api/overview", "/api/peers", "/api/vega", "/api/whoami",
                 "/api/events", "/api/messages", "/api/agents",
                 "/favicon.svg"}
@@ -231,7 +234,7 @@ async def listen_task():
         try:
             conn = await asyncpg.connect(DSN)
             q: asyncio.Queue = asyncio.Queue()
-            for ch in ("astryx_wire", "astryx_steps", "astryx_dag"):
+            for ch in ("astryx_wire", "astryx_steps", "astryx_dag", "astryx_presence"):
                 await conn.add_listener(
                     ch, lambda c, p, chan, payload: q.put_nowait((chan, payload)))
             conn.add_termination_listener(lambda c: q.put_nowait(("__dead__", "")))
@@ -255,6 +258,14 @@ async def listen_task():
                         data = {"type": "dag", **json.loads(payload)}
                     except Exception:
                         continue
+                elif chan == "astryx_presence":
+                    try:
+                        prow = await conn.fetchrow("SELECT * FROM presence WHERE agent=$1",
+                                                   json.loads(payload).get("agent", ""))
+                    except Exception:
+                        continue
+                    if prow:
+                        data = {"type": "presence", **_presence(prow)}
                 elif chan == "astryx_wire":
                     row = await conn.fetchrow(
                         "SELECT * FROM messages WHERE id = $1", int(payload))
@@ -283,7 +294,8 @@ app = FastAPI(lifespan=lifespan)
 @app.middleware("http")
 async def privacy_gate(request: Request, call_next):
     p = request.url.path
-    if p.startswith("/api/") and p not in PUBLIC_PATHS and not is_owner(request):
+    if (p.startswith("/api/") and p not in PUBLIC_PATHS and not _PUBLIC_AVATAR.match(p)
+            and not is_owner(request)):
         return Response(status_code=403)
     return await call_next(request)
 
@@ -401,9 +413,11 @@ async def agents(request: Request):
     meta = agent_meta()
     nogroup = {"group_path": [], "rank": None, "model_pin": None}
     # actual model per agent from its latest turn; charter Model: pin as fallback
+    # The DOMINANT model over the last two days, not the last turn's: a resident's session also
+    # logs small auxiliary calls on another model, and "latest" relabelled seed "haiku" (10-09).
     actual = {r["agent"]: r["model"] for r in await pool.fetch(
-        "SELECT DISTINCT ON (agent) agent, model FROM turns "
-        "WHERE model IS NOT NULL ORDER BY agent, id DESC")}
+        "SELECT agent, mode() WITHIN GROUP (ORDER BY model) AS model FROM turns "
+        "WHERE model IS NOT NULL AND ended_at > now() - interval '2 days' GROUP BY agent")}
 
     from nucleus import charter
 
@@ -412,6 +426,12 @@ async def agents(request: Request):
         return {"group_path": m["group_path"], "rank": m["rank"],
                 "model": actual.get(a) or m.get("model_pin") or "opus",
                 "type": charter.agent_type(a) or "resident"}
+    # THE TREE IS THE REGISTRY: an agent is a charter (nucleus/charter.py), not a name that once
+    # wrote a step. Without this, a body spawned in error (seed's onboard.md, 10-09) lived on in the
+    # roster and on the Floor through its old step rows.
+    registry = set(charter.roster())
+    rows = [r for r in rows if r["agent"] in registry]
+    alive = {a for a in alive if a in registry}
     out = [{**dict(r), "last_seen": r["last_seen"].isoformat(),
             "alive": r["agent"] in alive, **enrich(r["agent"])} for r in rows]
     seen = {r["agent"] for r in rows}
@@ -1230,6 +1250,72 @@ async def network_people(request: Request, min_shared: int = 1):
                       "derived from message senders — silent members are invisible"]}
 
 
+# ---------------------------------------------------------------- people: the owner confirms
+# memory guesses who people are to the owner (pid-keyed, counts-only evidence) in its PRIVATE scratch,
+# never on the wire (local.md: family data is personal tier) and never in a DB table every superuser
+# agent can read until the people_cleared role lands (plan-4918 1a). The owner answers HERE: the name is
+# resolved owner-side from the graph, the answer appended beside the asks, and memory is told only a COUNT.
+_PEOPLE_DIR = Path(os.environ.get("ASTRYX_PEOPLE_DIR") or REPO / "homes" / "memory" / ".people")  # override: oracles
+PEOPLE_KINDS = ["family", "partner", "close friend", "friend", "colleague", "collaborator",
+                "classmate", "acquaintance", "community", "other"]
+PEOPLE_CLOSENESS = ["inner", "close", "regular", "distant"]
+
+
+def _jsonl(path: Path) -> list[dict]:
+    try:
+        return [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+@app.get("/api/people/asks")
+async def people_asks(request: Request):
+    if not is_owner(request):
+        return Response(status_code=403)
+    asks = _jsonl(_PEOPLE_DIR / "asks.jsonl")
+    done = {a.get("pid") for a in _jsonl(_PEOPLE_DIR / "answers.jsonl")}
+    open_asks = [a for a in asks if a.get("pid") and a["pid"] not in done]
+    labels = {r["id"]: r["label"] for r in await pool.fetch(
+        "SELECT id, label FROM social_person WHERE id = ANY($1::text[])", [a["pid"] for a in open_asks])}
+    return {"kinds": PEOPLE_KINDS, "closeness": PEOPLE_CLOSENESS, "answered": len(done),
+            "asks": [{"pid": a["pid"], "label": labels.get(a["pid"]) or "someone (no saved name)",
+                      "kind": a.get("candidate_kind"), "closeness": a.get("closeness"),
+                      "confidence": a.get("confidence"), "evidence": a.get("evidence_summary") or {}}
+                     for a in open_asks]}
+
+
+class PeopleAnswer(BaseModel):
+    pid: str
+    kind: str | None = None
+    closeness: str | None = None
+    skip: bool = False
+
+
+@app.post("/api/people/answers")
+async def people_answer(body: PeopleAnswer, request: Request):
+    if not is_owner(request):
+        return Response(status_code=403)
+    asked = {a.get("pid") for a in _jsonl(_PEOPLE_DIR / "asks.jsonl")}
+    if body.pid not in asked:
+        return Response("not an open ask", status_code=404)
+    if not body.skip and (body.kind not in PEOPLE_KINDS or body.closeness not in PEOPLE_CLOSENESS):
+        return Response("kind/closeness must be one of the offered values", status_code=400)
+    row = {"pid": body.pid, "kind": None if body.skip else body.kind,
+           "closeness": None if body.skip else body.closeness, "skipped": body.skip,
+           "answered_at": datetime.now(timezone.utc).isoformat()}
+    f = _PEOPLE_DIR / "answers.jsonl"
+    fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(fd, "a") as out:
+        out.write(json.dumps(row) + "\n")
+    n = len(_jsonl(f))
+    await pool.execute(
+        "INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES "
+        "('owner', 'memory', 't-memory-people', 'receipt', $1)",
+        f"owner answered a people ask in the observatory — answers.jsonl now has {n} line(s). "
+        f"(Counts only on the wire; the answers are in your private scratch.)")
+    return {"ok": True, "answered": n}
+
+
 class CypherQ(BaseModel):
     query: str
 
@@ -1575,9 +1661,16 @@ async def agent_profile(name: str):
                (SELECT count(*) FROM steps WHERE agent=$1)                        AS steps,
                (SELECT min(ts) FROM steps WHERE agent=$1)                         AS first_seen,
                (SELECT max(ts) FROM steps WHERE agent=$1)                         AS last_seen""", name)
+    # dominant recent model, not the last turn's (an auxiliary call relabelled seed, 10-09)
     a_model = await pool.fetchval(
-        "SELECT model FROM turns WHERE agent=$1 AND model IS NOT NULL "
-        "ORDER BY ended_at DESC LIMIT 1", name)
+        "SELECT mode() WITHIN GROUP (ORDER BY model) FROM turns WHERE agent=$1 AND model IS NOT NULL "
+        "AND ended_at > now() - interval '2 days'", name) or await pool.fetchval(
+        "SELECT model FROM turns WHERE agent=$1 AND model IS NOT NULL ORDER BY ended_at DESC LIMIT 1", name)
+    # NOW: where its attention is and what it just did — the agent as a person at work
+    pr = await pool.fetchrow("SELECT * FROM presence WHERE agent=$1", name)
+    recent = await pool.fetch(
+        "SELECT ts, kind, content FROM steps WHERE agent=$1 AND kind IN ('tool','milestone','error') "
+        "ORDER BY id DESC LIMIT 8", name)
     # who this agent actually talks to, both directions on the wire — its relationships
     rel = await pool.fetch("""
         SELECT peer, sum(n)::bigint AS n FROM (
@@ -1616,15 +1709,44 @@ async def agent_profile(name: str):
                          for k, v in dict(stats).items()}},
             "relations": [{"agent": r["peer"], "messages": r["n"]} for r in rel],
             "peers": peers,
-            "history": history}
+            "history": history,
+            "presence": _presence(pr) if pr else None,
+            "recent": [{"ts": r["ts"].isoformat(), "kind": r["kind"], "content": (r["content"] or "")[:200]}
+                       for r in recent]}
+
+
+_AVATAR_TYPES = {".svg": "image/svg+xml", ".png": "image/png", ".webp": "image/webp", ".jpg": "image/jpeg"}
 
 
 @app.get("/api/agents/{name}/avatar")
 async def agent_avatar(name: str):
-    for p in (REPO / "agents").rglob("avatar.*"):
-        if p.parent.name == name:
-            return FileResponse(p, headers={"cache-control": "max-age=300"})
-    return Response(status_code=404)
+    """The avatar the agent authored, beside its charter (resolved by the one charter rule).
+    Agent-authored SVG is served sandboxed: as a document it gets no script and no network."""
+    try:
+        ch = _charter.resolve(name)
+    except _charter.Collision:
+        ch = None
+    pic = next((ch.parent / f"avatar{x}" for x in _AVATAR_TYPES
+                if ch and ch.parent.name == ch.stem and (ch.parent / f"avatar{x}").is_file()), None)
+    if not pic:
+        return Response(status_code=404)
+    return FileResponse(pic, media_type=_AVATAR_TYPES[pic.suffix], headers={
+        "cache-control": "public, max-age=300", "x-content-type-options": "nosniff",
+        "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox"})
+
+
+def _presence(r) -> dict:
+    return {"agent": r["agent"], "surface": r["surface"], "target": r["target"], "say": r["say"],
+            "state": r["state"], "updated_at": r["updated_at"].isoformat()}
+
+
+@app.get("/api/presence")
+async def presence_all(request: Request):
+    """Where every agent's attention is (nucleus/presence.py). Owner-only: a surface name can
+    carry a private canvas or thread."""
+    if not is_owner(request):
+        return Response(status_code=403)
+    return [_presence(r) for r in await pool.fetch("SELECT * FROM presence ORDER BY updated_at DESC")]
 
 
 # ============================================================ system monitor

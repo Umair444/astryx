@@ -88,6 +88,16 @@ def main():
           rc == 0 and "check: m" in out and "VERIFIED NOTHING under branch_check" in out and "○ u" in out, out)
     check("a gate FAILING ON BOTH SIDES is listed by name (\"no regression\" over dead gates isn't coverage)",
           "FAILED ON BOTH SIDES" in out and "    ✗ x" in out, out)
+    # ── a3 D1 #35480: PRODUCTION sweeps org-wide (only=None); only an oracle scopes its sweep to its own roles ─────
+    import ast
+    srcp = Path(os.environ.get("BRANCH_CHECK_SRC") or (REPO / "nucleus" / "branch_check.py"))
+    runfn = next(n for n in ast.walk(ast.parse(srcp.read_text())) if isinstance(n, ast.FunctionDef) and n.name == "run")
+    sweeps = [c for c in ast.walk(runfn) if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+              and c.func.attr == "sweep"]
+    check("branch_check.run calls sweep() with NO `only` (the org-wide orphan sweep production needs)",
+          len(sweeps) == 1 and not any(k.arg == "only" for k in sweeps[0].keywords),
+          ast.dump(sweeps[0]) if sweeps else "no sweep call in run()")
+
     # ── sqlguard judged DIFFERENTIALLY by identity (plan-4918 D4, a3 C4) ─────────────────────────────────────
     sg = bc.SQLGUARD_GATE
     base_sg = {"failed": [sg], "unverified": [], "line": "check: m", "sqlguard_red": {"id1": "R-BLIND a.py::f (line 10)"}}
@@ -150,8 +160,9 @@ def main():
         # only THIS run's role (bc_<our pid>x<epoch>): a concurrent oracle's scope is not our leak
         left = adm.execute("SELECT count(*) FROM pg_roles WHERE rolname LIKE %s",
                            (f"bc\\_{os.getpid()}x%",)).fetchone()[0]
-        check("on an unhardened host the run REFUSES (rc 77) naming seed's P0-a REVOKE", rc == 77 and "REVOKE CONNECT" in out,
-              out[-300:])
+        # REVOKE advice appears only for a NON-test database; a live oracle's open test DB is named instead (a2 F3)
+        check("on an unhardened host the run REFUSES (rc 77) with P0-b's refusal, naming why",
+              rc == 77 and "P0-b:" in out and ("REVOKE CONNECT" in out or "Oracle TEST databases" in out), out[-300:])
         check("…and the refusal leaves no role, database or scope behind", left == 0 and "LEAK" not in out, f"roles={left}")
     else:
         print("  NOTE  the host is hardened (P0-a applied): the refusal arm doesn't apply; the full run is the check.")
