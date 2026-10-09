@@ -34,6 +34,7 @@ import asyncio
 import json
 import os
 import re
+import secrets
 import time
 from pathlib import Path
 
@@ -372,9 +373,13 @@ def vote_body(question: str, changes: list[str], aggregates: dict) -> str:
 
 
 # ----------------------------------------------------------------------- media
-def media_path(prefix: str, name: str) -> Path:
-    MEDIA_DIR.mkdir(exist_ok=True)
-    return MEDIA_DIR / f"{prefix}-{int(time.time())}-{name}"
+def media_path(prefix: str, name: str, sub: str | None = None) -> Path:
+    """Where an inbound file lands. The name carries a RANDOM token, never a timestamp: a guessable
+    name lets anyone who can make the server read a path enumerate other people's files (steward
+    #37433). `sub` puts it in its uploader's own folder (canvas: media/cv/<wire handle>/)."""
+    d = MEDIA_DIR / sub if sub else MEDIA_DIR
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"{prefix}-{secrets.token_hex(12)}-{name}"
 
 
 async def describe_media(path: Path | str, kind: str = "") -> str:

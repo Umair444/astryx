@@ -33,6 +33,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from nucleus.charter import resolve, agent_type, Collision  # noqa: E402
+from nucleus.claude_bin import claude_bin  # noqa: E402
 
 DEFAULT_MODEL = "haiku"
 TIMEOUT_S = 90
@@ -77,7 +78,7 @@ def station(name: str, message: str, *, timeout: int = TIMEOUT_S,
     # bare cwd OUTSIDE the repo tree — the vega tripwire: no planted config is reachable.
     home = Path(tempfile.gettempdir()) / "astryx-station" / name
     home.mkdir(parents=True, exist_ok=True)
-    cmd = ["claude", "-p", "--model", model,
+    cmd = [claude_bin(), "-p", "--model", model,
            "--strict-mcp-config", "--no-session-persistence"]
     if tools:
         cmd += ["--tools", tools]              # scoped allowlist, charter's explicit choice

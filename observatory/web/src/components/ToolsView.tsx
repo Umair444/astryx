@@ -1,81 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ScrollArea } from '@mantine/core'
-import { ReactFlow, Position, type Node, type Edge } from '@xyflow/react'
-import '@xyflow/react/dist/style.css'
 import { api, apiPost, displayName, fmtAgo } from '../api'
 import AgentFace from './AgentFace'
+import ToolDetail, { FlowGraph, StatusBadge, fmtDur, fmtSince, fmtUntil, type ToolSel } from './ToolDetail'
 import { Count, Empty, LiveDot, Panel, SectionHead, Skeleton, Spark, Stat, ViewHeader, useNow } from '../ui/kit'
 import { useStore } from '../store'
-import { useTheme } from '../theme'
 import type {
   DagDef,
   DagRun,
-  DagRunDetail,
   ServiceActionResult,
   ServiceRow,
   ToolsResponse,
   TriggerRow,
 } from '../types'
-
-const NODE_W = 168
-const NODE_H = 52
-const COL_X = 200 // horizontal step per dep-depth
-const ROW_Y = 70 // vertical step within a depth column
-
-/* ------------------------------------------------------------- helpers */
-function fmtDur(started: string, finished: string | null): string {
-  const s = Math.max(0, ((finished ? +new Date(finished) : Date.now()) - +new Date(started)) / 1000)
-  if (s < 60) return `${s.toFixed(1)}s`
-  if (s < 3600) return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`
-  return `${(s / 3600).toFixed(1)}h`
-}
-
-/* timestamps: pg rows are ISO, systemd's are "Sat 2026-07-18 22:10:11 PKT" */
-function parseTs(ts: string | null): number | null {
-  if (!ts) return null
-  let t = +new Date(ts)
-  if (!Number.isNaN(t)) return t
-  const m = ts.match(/(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/)
-  if (m) {
-    t = +new Date(`${m[1]}T${m[2]}`)
-    if (!Number.isNaN(t)) return t
-  }
-  return null
-}
-
-function fmtSpan(s: number): string {
-  if (s < 90) return `${Math.max(1, Math.round(s))}s`
-  if (s < 3600) return `${Math.round(s / 60)}m`
-  if (s < 86400) return `${Math.round(s / 3600)}h`
-  return `${Math.round(s / 86400)}d`
-}
-
-function fmtSince(ts: string | null): string {
-  const t = parseTs(ts)
-  return t === null ? '—' : fmtSpan((Date.now() - t) / 1000)
-}
-
-function fmtUntil(ts: string | null): string {
-  const t = parseTs(ts)
-  if (t === null) return '—'
-  const s = (t - Date.now()) / 1000
-  return s <= 0 ? 'due' : fmtSpan(s)
-}
-
-function StatusBadge({ s }: { s: string }) {
-  const cls =
-    s === 'running'
-      ? 'text-cyan border-cyan/40 bg-cyan/10'
-      : s === 'ok'
-        ? 'text-good border-good/40 bg-good/10'
-        : 'text-bad border-bad/40 bg-bad/10'
-  return (
-    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[10.5px] font-mono ${cls}`}>
-      {s === 'running' && <LiveDot state="working" />}
-      {s}
-    </span>
-  )
-}
 
 /* ------------------------------------------------------------- services */
 const SERVICE_ACTIONS = ['restart', 'stop', 'start'] as const
@@ -84,10 +21,12 @@ function ServiceItem({
   s,
   owner,
   onPatch,
+  onOpen,
 }: {
   s: ServiceRow
   owner: boolean
   onPatch: (r: ServiceRow) => void
+  onOpen: () => void
 }) {
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
@@ -109,7 +48,8 @@ function ServiceItem({
 
   return (
     <div className="border-b border-line/50 last:border-b-0 hover:bg-deck-3/30 transition-colors">
-      <div className="flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-1 px-4 py-2.5 min-w-0">
+      <div role="button" tabIndex={0} onClick={onOpen} onKeyDown={(e) => { if (e.key === 'Enter') onOpen() }}
+        className="flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-1 px-4 py-2.5 min-w-0 cursor-pointer">
         {s.active ? <LiveDot state="awake" className="shrink-0" /> : <span className="w-2 h-2 rounded-full shrink-0 bg-bad shadow-[0_0_8px_1px_var(--t-bad)]" />}
         <span className="text-[13px] font-mono text-ink shrink-0">{s.unit.replace(/\.service$/, '')}</span>
         {actionable && s.enabled === false && (
@@ -129,7 +69,7 @@ function ServiceItem({
         <span className={`ml-auto shrink-0 text-[11px] font-mono ${s.active ? 'text-ink-mute' : 'text-bad'}`}>{s.state}</span>
         <span className="w-12 shrink-0 text-right text-[11px] font-mono text-ink-mute" title="since">{fmtSince(s.since)}</span>
         {owner && actionable && (
-          <span className="flex gap-1 shrink-0">
+          <span className="flex gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
             {SERVICE_ACTIONS.map((a) => (
               <button
                 key={a}
@@ -163,9 +103,9 @@ function KindBadge({ k }: { k: string }) {
   return <span className={`px-1.5 py-px rounded-full border text-[10px] font-mono ${cls}`}>{k}</span>
 }
 
-function TriggerItem({ t }: { t: TriggerRow }) {
+function TriggerItem({ t, onOpen }: { t: TriggerRow; onOpen: () => void }) {
   return (
-    <div className="flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-0.5 px-4 py-2 border-b border-line/40 last:border-b-0 min-w-0">
+    <button onClick={onOpen} className="w-full text-left flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-0.5 px-4 py-2 border-b border-line/40 last:border-b-0 min-w-0 hover:bg-deck-3/40 transition-colors">
       <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${t.enabled ? 'bg-good' : 'bg-ink-mute/40'}`} />
       <span className={`text-[12.5px] font-mono shrink-0 ${t.enabled ? 'text-ink' : 'text-ink-mute line-through'}`}>{t.name}</span>
       <KindBadge k={t.kind} />
@@ -177,81 +117,15 @@ function TriggerItem({ t }: { t: TriggerRow }) {
       <span className="w-16 shrink-0 text-right text-[10px] font-mono text-ink-mute">
         last <span className="text-ink-dim">{t.last_fired ? fmtAgo(t.last_fired) : 'never'}</span>
       </span>
-    </div>
+    </button>
   )
 }
 
 /* --------------------------------------------------------------- flows */
-/* left-to-right layered layout: depth 0 = no deps, depth n = 1 + max dep depth */
-function dagFlow(dag: DagDef): { nodes: Node[]; edges: Edge[]; height: number } {
-  const byId = new Map(dag.nodes.map((n) => [n.id, n]))
-  const depth = new Map<string, number>()
-  const calc = (id: string, seen: Set<string>): number => {
-    const memo = depth.get(id)
-    if (memo !== undefined) return memo
-    if (seen.has(id)) return 0 // cycle guard — a DAG shouldn't have one anyway
-    seen.add(id)
-    const deps = (byId.get(id)?.deps ?? []).filter((d) => byId.has(d))
-    const v = deps.length ? 1 + Math.max(...deps.map((d) => calc(d, seen))) : 0
-    depth.set(id, v)
-    return v
-  }
-  dag.nodes.forEach((n) => calc(n.id, new Set()))
-
-  const rowAt = new Map<number, number>() // next free row per depth column
-  const nodes: Node[] = dag.nodes.map((n) => {
-    const d = depth.get(n.id) ?? 0
-    const row = rowAt.get(d) ?? 0
-    rowAt.set(d, row + 1)
-    return {
-      id: n.id,
-      position: { x: d * COL_X, y: row * ROW_Y },
-      sourcePosition: Position.Right,
-      targetPosition: Position.Left,
-      data: {
-        label: (
-          <div className="w-full h-full grid place-items-center px-2">
-            <div className="text-center min-w-0">
-              <div className="text-[11.5px] font-mono font-medium text-ink truncate">{n.id}</div>
-              <div className="text-[10px] text-ink-mute truncate">{n.tool}</div>
-            </div>
-          </div>
-        ),
-      },
-      style: {
-        width: NODE_W,
-        height: NODE_H,
-        background: 'color-mix(in srgb, var(--t-accent) 7%, var(--t-panel2))',
-        border: '1px solid color-mix(in srgb, var(--t-accent) 28%, var(--t-line))',
-        borderRadius: 12,
-        boxShadow: '0 6px 18px -12px var(--t-accent)',
-        padding: 0,
-      },
-      selectable: false,
-      draggable: false,
-    }
-  })
-  const edges: Edge[] = dag.nodes.flatMap((n) =>
-    n.deps
-      .filter((d) => byId.has(d))
-      .map((d) => ({
-        id: `${dag.name}:${d}->${n.id}`,
-        source: d,
-        target: n.id,
-        animated: true,
-        style: { stroke: 'color-mix(in srgb, var(--t-accent) 55%, transparent)', strokeWidth: 1.5 },
-      })),
-  )
-  const maxRows = Math.max(1, ...rowAt.values())
-  return { nodes, edges, height: Math.min(300, maxRows * ROW_Y + 50) }
-}
-
-function FlowCard({ dag, running, lastRun }: { dag: DagDef; running: boolean; lastRun?: DagRun }) {
-  const flow = useMemo(() => dagFlow(dag), [dag])
-  const { theme } = useTheme()
+function FlowCard({ dag, running, lastRun, onOpen }: { dag: DagDef; running: boolean; lastRun?: DagRun; onOpen: () => void }) {
   const args = Object.keys(dag.args ?? {})
   return (
-    <Panel live={running} className="p-4">
+    <Panel as="button" interactive live={running} onClick={onOpen} className="w-full p-4">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span className="text-[15px] font-mono font-semibold text-ink">{dag.name}</span>
         {args.length > 0 && <span className="text-[11px] font-mono text-ink-mute truncate">({args.join(', ')})</span>}
@@ -262,52 +136,8 @@ function FlowCard({ dag, running, lastRun }: { dag: DagDef; running: boolean; la
         </span>
       </div>
       {dag.description && <div className="text-[12.5px] text-ink-dim mt-1 leading-snug">{dag.description}</div>}
-      <div className="mt-3 rounded-xl border border-line/60 bg-deck/60" style={{ height: flow.height }}>
-        <ReactFlow
-          nodes={flow.nodes}
-          edges={flow.edges}
-          fitView
-          fitViewOptions={{ padding: 0.12, maxZoom: 1 }}
-          nodesDraggable={false}
-          nodesConnectable={false}
-          panOnDrag={false}
-          zoomOnScroll={false}
-          zoomOnPinch={false}
-          zoomOnDoubleClick={false}
-          preventScrolling={false}
-          proOptions={{ hideAttribution: true }}
-          colorMode={theme.dark ? 'dark' : 'light'}
-          style={{ background: 'transparent' }}
-        />
-      </div>
+      <div className="mt-3 pointer-events-none"><FlowGraph dag={dag} /></div>
     </Panel>
-  )
-}
-
-/* ---------------------------------------------------------------- runs */
-function RunSteps({ detail }: { detail: DagRunDetail | null }) {
-  if (!detail) return <div className="px-4 py-3 space-y-2"><Skeleton className="h-3 w-2/3" /><Skeleton className="h-3 w-1/2" /></div>
-  if (!detail.steps.length) return <div className="px-3 py-2 text-[11px] text-ink-mute">no steps recorded</div>
-  return (
-    <div className="px-4 py-2">
-      {detail.steps.map((s, i) => (
-        <div key={`${s.node}-${i}`} className="relative pl-5 py-1.5">
-          <span className={`absolute left-1 top-[13px] w-2 h-2 rounded-full ${s.status === 'ok' ? 'bg-good' : s.status === 'running' ? 'bg-cyan animate-pulse' : 'bg-bad'}`} />
-          {i < detail.steps.length - 1 && <span className="absolute left-[7.5px] top-[22px] bottom-[-6px] w-px bg-line" />}
-          <div className="flex items-center gap-2 text-[11px]">
-            <span className="font-mono text-ink">{s.node}</span>
-            <span className="font-mono text-ink-mute truncate">{s.tool}</span>
-            <span className="ml-auto shrink-0 font-mono text-ink-mute">{fmtDur(s.started, s.finished)}</span>
-            <StatusBadge s={s.status} />
-          </div>
-          {s.error && (
-            <div className="mt-0.5 text-[10px] font-mono text-bad/90 whitespace-pre-wrap break-words">
-              {s.error}
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
   )
 }
 
@@ -316,17 +146,13 @@ export default function ToolsView() {
   const { dagEvent, who } = useStore()
   const [tools, setTools] = useState<ToolsResponse | null>(null)
   const [runs, setRuns] = useState<DagRun[]>([])
-  const [expanded, setExpanded] = useState<number | null>(null)
-  const [detail, setDetail] = useState<DagRunDetail | null>(null)
+  const [sel, setSel] = useState<ToolSel | null>(null)   // what's open in the details drawer
   const [services, setServices] = useState<ServiceRow[]>([])
   const [triggers, setTriggers] = useState<TriggerRow[]>([])
   const [opsLoaded, setOpsLoaded] = useState(false)
 
   const loadRuns = useCallback(() => {
     api<DagRun[]>('/dags/runs').then(setRuns).catch(() => {})
-  }, [])
-  const loadDetail = useCallback((id: number) => {
-    api<DagRunDetail>(`/dags/runs/${id}`).then(setDetail).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -364,8 +190,7 @@ export default function ToolsView() {
   useEffect(() => {
     if (!dagEvent) return
     loadRuns()
-    if (expanded !== null && dagEvent.run_id === expanded) loadDetail(expanded)
-  }, [dagEvent, expanded, loadRuns, loadDetail])
+  }, [dagEvent, loadRuns])
 
   const now = useNow(1000)
   const running = runs.filter((r) => r.status === 'running')
@@ -387,17 +212,6 @@ export default function ToolsView() {
   const failed24 = runs.filter((r) => r.status === 'error' && now - +new Date(r.started) < 86_400_000).length
   const up = services.filter((x) => x.active).length
   const makers = [...new Set([...(tools?.senses ?? []).map((x) => x.agent), ...triggers.map((t) => t.agent)])]
-
-  const toggle = (id: number) => {
-    if (expanded === id) {
-      setExpanded(null)
-      setDetail(null)
-    } else {
-      setExpanded(id)
-      setDetail(null)
-      loadDetail(id)
-    }
-  }
 
   return (
     <ScrollArea className="h-full">
@@ -428,7 +242,7 @@ export default function ToolsView() {
             <SectionHead title="Running now" count={running.length} />
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {running.map((r) => (
-                <Panel key={r.run_id} live interactive onClick={() => toggle(r.run_id)} className="p-4">
+                <Panel key={r.run_id} live interactive onClick={() => setSel({ kind: 'run', runId: r.run_id })} className="p-4">
                   <div className="flex items-center gap-2">
                     <span className="text-[14px] font-mono font-semibold text-ink truncate">{r.dag}</span>
                     <span className="ml-auto text-[11px] font-mono text-ink-mute">#{r.run_id}</span>
@@ -451,18 +265,19 @@ export default function ToolsView() {
             {!tools && [0, 1, 2].map((i) => <Skeleton key={i} className="h-40 rounded-2xl" />)}
             {(tools?.servers ?? []).map((srv) => (
               <Panel key={srv.server} className="p-4 min-w-0 flex flex-col">
-                <div className="flex items-center gap-2.5 mb-3">
+                <button onClick={() => setSel({ kind: 'server', server: srv })} className="flex items-center gap-2.5 mb-3 -mx-1 px-1 py-0.5 rounded-xl text-left hover:bg-deck-3/40 transition-colors">
                   <span className="w-8 h-8 shrink-0 rounded-xl grid place-items-center text-[15px] font-mono text-cyan"
                     style={{ background: 'color-mix(in srgb, var(--t-accent) 14%, var(--t-panel2))', boxShadow: 'inset 0 0 0 1px color-mix(in srgb, var(--t-accent) 30%, transparent)' }}>ƒ</span>
                   <span className="text-[14px] font-semibold text-ink truncate">{srv.server}</span>
-                  <span className="ml-auto shrink-0 text-[11px] font-mono text-ink-mute"><Count value={srv.tools.length} /> tools</span>
-                </div>
+                  <span className="ml-auto shrink-0 text-[11px] font-mono text-ink-mute"><Count value={srv.tools.length} /> tools ›</span>
+                </button>
                 <div className="flex flex-col gap-0.5">
                   {srv.tools.map((t) => (
-                    <div key={t.name} className="group/t flex items-baseline gap-2 py-1 px-2 -mx-2 rounded-lg hover:bg-deck-3/50 min-w-0" title={t.description}>
+                    <button key={t.name} onClick={() => setSel({ kind: 'tool', server: srv.server, tool: t.name })}
+                      className="group/t flex items-baseline gap-2 py-1 px-2 -mx-2 rounded-lg hover:bg-deck-3/50 min-w-0 text-left" title={t.description}>
                       <span className="text-[12px] font-mono text-cyan-soft shrink-0">{t.name}</span>
                       <span className="text-[11.5px] text-ink-mute truncate">{t.description}</span>
-                    </div>
+                    </button>
                   ))}
                 </div>
               </Panel>
@@ -476,7 +291,7 @@ export default function ToolsView() {
           <SectionHead title="Flows" count={tools ? tools.dags.length : undefined} />
           <div className="space-y-3">
             {(tools?.dags ?? []).map((d) => (
-              <FlowCard key={d.name} dag={d} running={running.some((r) => r.dag === d.name)} lastRun={lastByDag.get(d.name)} />
+              <FlowCard key={d.name} dag={d} running={running.some((r) => r.dag === d.name)} lastRun={lastByDag.get(d.name)} onOpen={() => setSel({ kind: 'flow', dag: d })} />
             ))}
             {!tools && <Skeleton className="h-48 rounded-2xl w-full" />}
           </div>
@@ -498,8 +313,8 @@ export default function ToolsView() {
               {runs.map((r) => (
                 <div key={r.run_id} className="border-b border-line/40 last:border-b-0">
                   <button
-                    onClick={() => toggle(r.run_id)}
-                    className={`w-full flex items-center gap-3 px-4 py-2 text-left transition-colors hover:bg-deck-3/40 ${expanded === r.run_id ? 'bg-deck-3/50' : ''}`}
+                    onClick={() => setSel({ kind: 'run', runId: r.run_id })}
+                    className="w-full flex items-center gap-3 px-4 py-2 text-left transition-colors hover:bg-deck-3/40"
                   >
                     <span className="w-14 text-[11px] font-mono text-ink-mute">#{r.run_id}</span>
                     <span className="flex-1 min-w-0 text-[12.5px] font-mono text-ink truncate">{r.dag}</span>
@@ -507,11 +322,6 @@ export default function ToolsView() {
                     <span className="hidden sm:inline w-16 text-right text-[11px] font-mono text-ink-mute">{fmtAgo(r.started)}</span>
                     <span className="w-24 flex justify-end"><StatusBadge s={r.status} /></span>
                   </button>
-                  {expanded === r.run_id && (
-                    <div className="bg-deck/40 border-t border-line/40">
-                      <RunSteps detail={detail} />
-                    </div>
-                  )}
                 </div>
               ))}
             </Panel>
@@ -526,7 +336,7 @@ export default function ToolsView() {
           <SectionHead title="Senses" count={tools?.senses ? tools.senses.length : undefined} right={<span className="text-[11px] font-mono text-ink-mute">the world calls in · :8460</span>} />
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {(tools?.senses ?? []).map((x) => (
-              <Panel key={x.path} className="p-4 min-w-0 flex gap-3">
+              <Panel key={x.path} as="button" interactive onClick={() => setSel({ kind: 'sense', sense: x })} className="w-full p-4 min-w-0 flex gap-3">
                 <AgentFace name={x.agent} size={34} />
                 <div className="min-w-0">
                   <div className="flex items-baseline gap-2">
@@ -555,7 +365,7 @@ export default function ToolsView() {
                   <span className="ml-auto text-[11px] font-mono text-ink-mute">{rows.filter((t) => t.enabled).length}/{rows.length} armed</span>
                 </div>
                 {rows.map((t) => (
-                  <TriggerItem key={`${t.agent}:${t.name}`} t={t} />
+                  <TriggerItem key={`${t.agent}:${t.name}`} t={t} onOpen={() => setSel({ kind: 'trigger', agent: t.agent, name: t.name })} />
                 ))}
               </Panel>
             ))}
@@ -569,12 +379,13 @@ export default function ToolsView() {
           {services.length ? (
             <Panel className="overflow-hidden">
               {services.map((x) => (
-                <ServiceItem key={x.unit} s={x} owner={who.owner} onPatch={patchService} />
+                <ServiceItem key={x.unit} s={x} owner={who.owner} onPatch={patchService} onOpen={() => setSel({ kind: 'service', row: x })} />
               ))}
             </Panel>
           ) : opsLoaded ? <Empty title="No services reported" /> : <Skeleton className="h-28 rounded-2xl w-full" />}
         </section>
       </div>
+      {sel && <ToolDetail sel={sel} runs={runs} onOpen={setSel} onClose={() => setSel(null)} />}
     </ScrollArea>
   )
 }

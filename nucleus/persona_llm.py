@@ -38,6 +38,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
+from nucleus.claude_bin import claude_bin  # noqa: E402
 
 MODEL = "haiku"          # the grunt tier: bounded judgement, repeated hundreds of times
 SAMPLE = 40              # messages shown per contact — enough to characterise, not to profile
@@ -72,7 +73,7 @@ def classify(chat_text: str, model: str = MODEL, timeout: int = PER_CALL_TIMEOUT
     prompt = PROMPT.format(chat=chat_text[:MAX_CHARS], rels=", ".join(RELATIONS))
     try:
         r = subprocess.run(
-            ["claude", "-p", "--model", model,
+            [claude_bin(), "-p", "--model", model,
              "--tools", "",                    # zero built-in actuators
              "--strict-mcp-config",            # no MCP servers, whatever the user config says
              "--no-session-persistence",       # nothing about these chats is retained
@@ -113,7 +114,7 @@ def _render(msgs: list[dict]) -> str:
 
 
 def run(limit: int = DEFAULT_LIMIT, budget_s: float = 600) -> dict:
-    """Label the busiest direct contacts, straight onto their social_person rows."""
+    """Label the busiest direct contacts, into social_relation (people library 1a)."""
     from nucleus import people
     import psycopg
     dsn = people._dsn()
@@ -137,7 +138,8 @@ def run(limit: int = DEFAULT_LIMIT, budget_s: float = 600) -> dict:
                 break
             pid = people.pid(c["jid"])
             with conn.cursor() as cur:
-                cur.execute("SELECT relation FROM social_person WHERE org=%s AND id=%s",
+                cur.execute("SELECT r.kind FROM social_person p LEFT JOIN social_relation r "
+                            "ON r.org=p.org AND r.pid=p.id WHERE p.org=%s AND p.id=%s",
                             (org, pid))
                 row = cur.fetchone()
             if row is None or row[0]:
@@ -155,10 +157,11 @@ def run(limit: int = DEFAULT_LIMIT, budget_s: float = 600) -> dict:
             if not lab:
                 continue
             with conn.cursor() as cur:
-                cur.execute("UPDATE social_person SET relation=%s, who=%s, confidence=%s "
-                            "WHERE org=%s AND id=%s",
-                            (lab["relation"], lab.get("who"), lab.get("confidence"),
-                             org, pid))
+                cur.execute("INSERT INTO social_relation (org,pid,kind,context,confidence) "
+                            "VALUES (%s,%s,%s,%s,%s) ON CONFLICT (org,pid) DO UPDATE SET "
+                            "kind=EXCLUDED.kind, context=EXCLUDED.context, "
+                            "confidence=EXCLUDED.confidence, updated_at=now()",
+                            (org, pid, lab["relation"], lab.get("who"), lab.get("confidence")))
             conn.commit()
             done += 1
     return {"labelled": done, "skipped": skipped,

@@ -1,4 +1,5 @@
 import PeopleGraph from './PeopleGraph'
+import LibraryView from './LibraryView'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ScrollArea, Textarea } from '@mantine/core'
 import { AnimatePresence, motion } from 'motion/react'
@@ -65,12 +66,56 @@ const KIND_R: Record<string, number> = {
   person: 8, category: 6, facet: 4,
 }
 
+type Lens = 'library' | 'cortex' | 'split' | 'ontology' | 'world'
+const GRAPH_LENSES = [{ id: 'cortex' as const, label: 'Cortex' }, { id: 'split' as const, label: 'System 1 ↔ 2' },
+                      { id: 'ontology' as const, label: 'Ontology' }, { id: 'world' as const, label: 'People' }]
+/* One plain line above each graph: what am I looking at (memory #37562). */
+const LENS_HINT: Record<Exclude<Lens, 'library'>, string> = {
+  cortex: 'every wiki page and the links between them',
+  split: 'raw events (left) beside what memory compiled from them (right)',
+  ontology: 'the kinds of page memory recognises and how they relate',
+  world: 'people and groups, owner-only',
+}
+
+/* The Library is Memory's face; the graphs are how memory files what it knows — for agents, so they
+   sit behind one quiet "Under the hood" toggle, remembered per viewer. */
+function LensBar({ lens, setLens }: { lens: Lens; setLens: (l: Lens) => void }) {
+  const [open, setOpen] = useState(() => {
+    try { return localStorage.getItem('mem_hood') === '1' } catch { return false }
+  })
+  const toggle = () => {
+    const next = !open
+    setOpen(next)
+    try { localStorage.setItem('mem_hood', next ? '1' : '0') } catch { /* private mode: not remembered */ }
+    if (!next && lens !== 'library') setLens('library')
+  }
+  const shown = open || lens !== 'library'
+  return (
+    <div className="flex flex-col items-end gap-1.5 max-w-full">
+      <div className="flex items-center gap-2 max-w-full">
+        <Tabs id="memlens" items={shown ? [{ id: 'library' as const, label: 'Library' }, ...GRAPH_LENSES] : [{ id: 'library' as const, label: 'Library' }]}
+          value={lens} onChange={setLens} />
+        <button onClick={toggle} aria-expanded={shown}
+          className="shrink-0 text-[12px] text-ink-mute hover:text-ink-dim px-2 py-1 rounded-lg transition-colors">
+          {shown ? 'Hide' : 'Under the hood'} <span className={`inline-block transition-transform ${shown ? 'rotate-180' : ''}`}>⌄</span>
+        </button>
+      </div>
+      {shown && (
+        <div className="text-[11.5px] text-ink-mute text-right">
+          How memory files what it knows: the wiki's structure, for agents.{' '}
+          <a href="#/memory/lib/architecture/how-memory-organises-knowledge" onClick={() => setLens('library')} className="text-cyan hover:underline">How it works →</a>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function MemoryView() {
   const [g, setG] = useState<Graph | null>(null)
   const [err, setErr] = useState<string>('')
   const [sel, setSel] = useState<Node | null>(null)
   const [page, setPage] = useState<{ slug: string; markdown: string } | null>(null)
-  const [lens, setLens] = useState<'cortex' | 'split' | 'ontology' | 'world'>('cortex')
+  const [lens, setLens] = useState<Lens>('library')
   const [onto, setOnto] = useState<Graph | null>(null)
   const [classes, setClasses] = useState<Set<string>>(new Set(['semantic', 'entity', 'temporal', 'causal']))
   const [hover, setHover] = useState<string | null>(null)
@@ -429,8 +474,9 @@ export default function MemoryView() {
     return s
   }, [hover, sel, shownEdges])
 
-  const LENSES = [{ id: 'cortex' as const, label: 'Cortex' }, { id: 'split' as const, label: 'System 1 ↔ 2' },
-                  { id: 'ontology' as const, label: 'Ontology' }, { id: 'world' as const, label: 'People' }]
+
+  /* The LIBRARY is memory's booklet of what the org knows — the owner's way in, so it opens first. */
+  if (lens === 'library') return <LibraryView tabs={<LensBar lens={lens} setLens={setLens} />} />
 
   /* PEOPLE are not memory's to hold. kg is readable by every agent, so the compiler no longer
    * mints a person into it (seed 10-09); the owner's people live in the private people graph
@@ -443,9 +489,9 @@ export default function MemoryView() {
           <div>
             <div className="text-[11px] uppercase tracking-[0.18em] text-ink-mute mb-1.5">who the org knows</div>
             <h1 className="text-[28px] font-semibold tracking-[-0.02em] leading-none ax-title">People</h1>
-            <div className="mt-2 text-[12.5px] text-ink-mute">From the private people graph — visible only to you; memory works from it, never copies it.</div>
+            <div className="mt-2 text-[12.5px] text-ink-mute">{LENS_HINT.world} — from the private people graph; memory works from it, never copies it.</div>
           </div>
-          <div className="ml-auto"><Tabs id="memlens" items={LENSES} value={lens} onChange={setLens} /></div>
+          <div className="ml-auto"><LensBar lens={lens} setLens={setLens} /></div>
         </div>
         <div className="flex-1 min-h-0 relative"><div className="absolute inset-0"><PeopleGraph /></div></div>
       </div>
@@ -459,7 +505,7 @@ export default function MemoryView() {
     return (
       <div className="h-full grid place-items-center">
         <div className="flex flex-col items-center gap-6">
-        <Tabs id="memlens" items={LENSES} value={lens} onChange={setLens} />
+        <LensBar lens={lens} setLens={setLens} />
         <Empty title="No compiled graph yet" hint={<>
           <code className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-deck-3">venv/bin/python nucleus/memgraph.py build</code>
           {g.notes?.map((n, i) => <span key={i} className="block mt-2">{n}</span>)}
@@ -514,9 +560,10 @@ export default function MemoryView() {
             <div className="text-[11px] uppercase tracking-[0.18em] text-ink-mute mb-1.5">what the org knows</div>
             <h1 className="text-[28px] font-semibold tracking-[-0.02em] leading-none ax-title">Memory</h1>
             <div className="mt-2"><Header g={g} stale={stale} /></div>
+            <div className="mt-1.5 text-[13px] text-ink-dim">{LENS_HINT[lens]}</div>
           </div>
           <div className="ml-auto flex flex-col items-end gap-2 pointer-events-auto">
-            <Tabs id="memlens" items={LENSES} value={lens} onChange={setLens} />
+            <LensBar lens={lens} setLens={setLens} />
             <div className="flex flex-wrap justify-end gap-1.5">
               {(Object.keys(CLASS_STYLE) as Edge['cls'][]).map((c) => {
                 const on = classes.has(c)

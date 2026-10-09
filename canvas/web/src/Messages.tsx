@@ -1,16 +1,13 @@
 import { useEffect, useRef } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
-import { BASE } from './api'
 import { useStore } from './store'
 import type { Msg } from './types'
 import { Avatar, Markdown, ago } from './ui'
+import { ANY_FILE, FileChip, filesOf } from './Media'
 
-const FILE_TOKEN = /\[\[file:([^\]]+)\]\]/g
-const ATTACHED = /<(file|voice) attached(?:, fetch failed: [^>]*)?: ([^>]+)>/g
 
 function prettify(body: string) {
   return body
-    .replace(ATTACHED, (_, kind, p) => `\`${kind === 'voice' ? '🎙' : '📎'} ${String(p).split('/').pop()}\``)
     .replace(/\(transcript: ([^)]*)\)/g, '> $1')
 }
 
@@ -49,8 +46,8 @@ export function Messages({ thread, msgs, compact }: { thread: string; msgs: Msg[
 
 function Bubble({ m, mine, msgId }: { m: Msg; mine: boolean; msgId: number }) {
   const page = m.from.startsWith('canvas-')
-  const files = [...m.body.matchAll(FILE_TOKEN)].map(x => x[1].trim())
-  const text = prettify(m.body.replace(FILE_TOKEN, '').trim())
+  const files = filesOf(m.body)
+  const text = prettify(m.body.replace(ANY_FILE, '').trim())
   if (page) {
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex justify-center">
@@ -63,8 +60,9 @@ function Bubble({ m, mine, msgId }: { m: Msg; mine: boolean; msgId: number }) {
   if (mine) {
     return (
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex justify-end">
-        <div className="max-w-[85%] bg-fg/[.07] border border-line rounded-[20px] rounded-br-md px-4 py-2.5">
-          <Markdown text={text} />
+        <div className="max-w-[85%] flex flex-col items-end">
+          {text && <div className="bg-fg/[.07] border border-line rounded-[20px] rounded-br-md px-4 py-2.5"><Markdown text={text} /></div>}
+          {files.map((f, i) => <FileChip key={i} msgId={msgId} n={i} path={f} />)}
         </div>
       </motion.div>
     )
@@ -85,22 +83,3 @@ function Bubble({ m, mine, msgId }: { m: Msg; mine: boolean; msgId: number }) {
   )
 }
 
-function FileChip({ msgId, n, path }: { msgId: number; n: number; path: string }) {
-  const url = `${BASE}api/file?msg=${msgId}&n=${n}`
-  const name = path.split('/').pop() ?? path
-  if (/\.(png|jpe?g|gif|webp|svg)$/i.test(name)) {
-    return <a href={url} target="_blank" rel="noreferrer"><img src={url} alt={name} className="mt-2 max-h-80 rounded-2xl border border-line" /></a>
-  }
-  // a recorded voice note is cv-<ts>-voice.webm (bridges/canvas.py transcribe → media_path): sound only. Any other
-  // webm, and every mp4/mov, is a video — it needs a picture, and seeking (FileResponse serves 206).
-  const voice = /(^|[-_])voice\.[a-z0-9]+$/i.test(name)
-  if (!voice && /\.(mp4|m4v|mov|webm)$/i.test(name)) {
-    return <video controls playsInline preload="metadata" src={url} className="mt-2 max-h-96 w-full max-w-xl rounded-2xl border border-line bg-black" />
-  }
-  if (/\.(mp3|ogg|wav|m4a|webm)$/i.test(name)) return <audio controls src={url} className="mt-2 w-full max-w-sm" />
-  return (
-    <a href={url} download={name} className="mt-2 inline-flex items-center gap-2 text-sm bg-fg/[.06] hover:bg-fg/[.1] border border-line rounded-xl px-3 py-2">
-      📎 {name}
-    </a>
-  )
-}
