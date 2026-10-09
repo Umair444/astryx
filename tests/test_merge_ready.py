@@ -708,6 +708,34 @@ st_, no_, _tr_, dom_ = m.evaluate([RQ_M], [], lambda *a: [], T, now=N0)
 check("evaluate WITHOUT requests (old callers) judges none, and the domain says so",
       "OPEN REQUEST" not in "\n".join(x[1] for x in st_) and "not judged this run" in dom_, dom_)
 
+# ----------------------------------------------------------------------------------------------- 11
+print("\n11. the report fits the wire (steward #41384: 5,374 chars rendered, 3,000 delivered):")
+MG = [(f"merged:k{i}", f"MERGED, not pushed: {i:010d} subject {i} — x PASSed by a #{i}") for i in range(200)]
+ACT = [("req:7", "OPEN REQUEST #7 by a1 → seed (marker): rq — 13h running"),
+       ("passed:k1", "PASSED, not merged: aaaaaaaaaa one — PASSed by a3 #1"),
+       ("chain:p:TAIL", "triggers/x.py: TAIL-MISMATCH: live 1 != tail 2"),
+       ("backout:k2", "BACKED-OUT: bbbbbbbbbb two — reverted by c")]
+NO = [(f"bad:{i}", f"MALFORMED marker #{i} by a: `merge-ready: x`" + " pad" * 90) for i in range(60)]  # each line hits LINE_MAX, so the cap BINDS
+DOM = "DOMAIN: tracked commits … OPEN REQUESTS: 3 request(s) in 14 days, reported after 12h of RUNNING time."
+out = m.render(MG + ACT, NO, ["retracted x by a #1"], DOM, ahead="main is 182 commit(s) ahead of origin/main")
+check("200 merged + 4 actionable + 60 notices renders INSIDE the wire's 3,000-char cap",
+      len(out) <= 3000, f"{len(out)} chars")
+check("MERGED-not-pushed is ONE coupled line, naming the count, the push gap and that one push clears them",
+      out.count("MERGED, not pushed") == 0 and out.count("MERGED, NOT PUSHED: 200 item(s)") == 1
+      and "182 commit(s) ahead" in out and "ONE push clears them all" in out, out[-600:])
+check("actionable standing is ordered by what seed can act on: PASSED, OPEN REQUEST, BACKED-OUT, chain",
+      out.index("PASSED, not merged") < out.index("OPEN REQUEST #7") < out.index("BACKED-OUT")
+      < out.index("TAIL-MISMATCH"), out[:700])
+check("DOMAIN always arrives, last, whole (the OPEN REQUESTS clause rides at its end)",
+      out.rstrip().endswith("RUNNING time.") and "OPEN REQUESTS: 3" in out, out[-200:])
+check("a list cut for room SAYS how many it left out", "more not shown)" in out, out[-900:-500])
+check("the header counts what is actionable separately from the merged-not-pushed fact",
+      out.splitlines()[0].startswith("plan-5791 merge-ready watch: 4 standing to act on, 200 merged-not-pushed"),
+      out.splitlines()[0])
+big = m.render(ACT, [], [], "DOMAIN: " + "z" * 3000)
+check("a runaway DOMAIN is capped, never pushing the report past the wire", len(big) <= 3000, f"{len(big)}")
+check("no merged items → no coupled line", "MERGED, NOT PUSHED" not in m.render(ACT, NO[:2], [], DOM))
+
 # ------------------------------------------------------------------------------------------------ 9
 print("\n9. entrypoint (pulse_run.Ctx on a sqlguard fixture):")
 try:
