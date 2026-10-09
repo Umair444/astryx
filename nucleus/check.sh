@@ -567,10 +567,11 @@ run "gemini mouth-dark trigger oracle" "$PY" tests/test_mouth_dark.py
 # each is run here and shown to convict a service that is fine. Same gitignored-body caveat:
 # SKIPs (77) on a clone. The live arm reaches real systemd and skips loudly without it.
 run "service deploy drift oracle"     "$PY" tests/test_service_deploy_drift.py
-# Same gitignored-body caveat: SKIPs (77) on a clone. Guards the DEDUP specifically —
-# the key must carry an escalation band, or a standing condition warns once and goes
-# silent (which is how p1 degraded unobserved at 59h, 2026-08-14).
-run "session-refresh dedup oracle"    "$PY" tests/test_session_refresh.py
+# (session-refresh dedup oracle retired 2026-10-09 with its trigger: owner ruling "a resident never
+#  dies — it compacts", so nothing recommends a fresh boot any more. Body kept at homes/seed/retired-triggers/.)
+# CANVAS, the owner's front door: the trust lines (invitee vs owner vs the page itself, CSRF, revocation),
+# the exactly-once claim that must never take another surface's row, the no-network shell. Fixture DB.
+run "canvas: trust lines, claim, shell"  "$PY" tests/test_canvas.py
 # The human ontology. Its lead assertion is the PRIVACY one and it is derived from the
 # live owner instruments, so a new PII shape in relations.md goes red without anyone
 # remembering to update a pattern list.

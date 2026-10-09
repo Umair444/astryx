@@ -37,6 +37,16 @@ export default function Sidebar({
       </div>
       <ScrollArea className="flex-1" type="scroll">
         <div className="p-3">
+          {/* the front door: talk to agents, watch them paint (bridges/canvas.py, proxied at /canvas/) */}
+          <a
+            href="/canvas/"
+            className="mb-4 flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm font-medium text-white no-underline transition hover:brightness-110"
+            style={{ background: 'linear-gradient(135deg,#8b7bff,#38d9f5)', boxShadow: '0 6px 24px -10px rgba(56,217,245,.6)' }}
+          >
+            <span className="w-4 text-center">✎</span>
+            <span className="flex-1">Open Canvas</span>
+            <span className="opacity-80">↗</span>
+          </a>
           <Text size="xs" c="dimmed" fw={600} tt="uppercase" mb={6} style={{ letterSpacing: '0.08em' }}>
             Views
           </Text>

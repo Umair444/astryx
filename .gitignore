@@ -18,6 +18,8 @@ agents/.git/
 /memory/
 observatory/web/node_modules/
 observatory/web/dist/
+canvas/web/node_modules/
+canvas/web/dist/
 
 # geoloc — niche owner-personal location intake (Tasker→endpoint); removed from the
 # PUBLIC tree but kept on the owner's disk so the running service survives (goal
