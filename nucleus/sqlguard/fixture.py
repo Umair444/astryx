@@ -37,6 +37,96 @@ STAMP = "astryx-ddl:"
 _n = itertools.count()
 _side = {}                                   # dbname -> connection (stamp checks, never the caller's)
 
+# ── THE REAPER (seed #38669): a SIGKILLed oracle skips the `finally` that drops its database, so ~30 oracles each
+# leaked their astryx_fx_* DB on a kill, and nothing collected them. Every fixture_db() entry now reaps the dead.
+# KEEP IS THE DEFAULT. A database is dropped only when its OWNER STAMP proves its creator is gone:
+#   - the stamp is a COMMENT ON DATABASE written at creation: pid, the pid NAMESPACE inode and a host hash. A pid
+#     alone is a lie across namespaces: under branch_check's bwrap --unshare-pid a run's pid is a namespace pid
+#     (a3 #32897 W1), so the host would see a LIVE sandboxed run as dead, and a sandboxed reaper would see every
+#     host run as dead. So a stamp from another namespace or host is never judged, only kept;
+#   - no stamp (a legacy name, or the instant between CREATE and COMMENT) → KEEP. The name is never trusted for the
+#     verdict: three historical spellings exist (sa<pid>x<epoch>, r<epoch>x<run>, a plain run id), and seed's first
+#     parser misread one into a "dead" pid that was a LIVE run. The name's tail pid is parsed for the REPORT only;
+#   - pid alive, or reused by another process → KEEP (reuse fails safe). PermissionError means alive.
+OWNER = "astryx-fixture-owner:"
+
+
+def _pidns() -> str:
+    try:
+        return os.readlink("/proc/self/ns/pid").split("[", 1)[1].rstrip("]")
+    except (OSError, IndexError):
+        return ""                                    # unknowable → stamps carry "", and "" is never judged
+
+
+def _host() -> str:
+    import socket
+    return hashlib.sha256(socket.gethostname().encode()).hexdigest()[:12]
+
+
+def owner_stamp(pid: int | None = None) -> str:
+    return f"{OWNER}pid={pid or os.getpid()};pidns={_pidns()};host={_host()}"
+
+
+def _parse_stamp(comment: str | None) -> dict | None:
+    if not comment or not comment.startswith(OWNER):
+        return None
+    try:
+        kv = dict(p.split("=", 1) for p in comment[len(OWNER):].split(";"))
+        return {"pid": int(kv["pid"]), "pidns": kv["pidns"], "host": kv["host"]}
+    except (ValueError, KeyError):
+        return None
+
+
+def name_pid(name: str) -> int | None:
+    """The pid in a fixture name's shared tail `_<pid>_<n>`, for REPORTING only (never a verdict)."""
+    import re
+    m = re.search(r"_(\d+)_\d+$", name)
+    return int(m.group(1)) if m else None
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OverflowError, ValueError):
+        return True
+
+
+def verdict(name: str, comment: str | None, alive=_alive, here: tuple | None = None) -> tuple[str, str]:
+    """('reap'|'keep', why) for one astryx_fx_* database. Pure given `alive` and `here` = (pidns, host)."""
+    pidns, host = here or (_pidns(), _host())
+    st = _parse_stamp(comment)
+    if st is None:
+        return "keep", f"no owner stamp (name tail pid {name_pid(name)}, never trusted)"
+    if not st["pidns"] or st["pidns"] != pidns or st["host"] != host:
+        return "keep", "stamped by another pid namespace or host: its pid means nothing here"
+    if alive(st["pid"]):
+        return "keep", f"creator pid {st['pid']} is alive"
+    return "reap", f"creator pid {st['pid']} is gone"
+
+
+def reap(admin, keep: str = "") -> list[tuple[str, str, str]]:
+    """Drop every astryx_fx_* database whose verdict is 'reap'. Never raises: a reaper that fails keeps."""
+    out = []
+    try:
+        rows = admin.execute("SELECT datname, shobj_description(oid, 'pg_database') FROM pg_database "
+                             "WHERE starts_with(datname, %s)", (PREFIX,)).fetchall()
+    except psycopg.Error:
+        return out
+    for name, comment in rows:
+        if name == keep:
+            continue
+        act, why = verdict(name, comment)
+        if act == "reap":
+            try:
+                admin.execute('DROP DATABASE IF EXISTS "{}" WITH (FORCE)'.format(name.replace('"', '""')))
+            except psycopg.Error as e:
+                act, why = "keep", f"drop refused ({type(e).__name__}): {why}"
+        out.append((name, act, why))
+    return out
+
 
 def url(dsn: str) -> str:
     """The same database as a postgresql:// URL. node-pg and asyncpg take a URL, not psycopg's key=value
@@ -111,6 +201,7 @@ def fixture_db(extra: tuple = ()):
     except (OSError, StopIteration, psycopg.OperationalError) as e:
         raise FixtureUnavailable(f"no reachable admin DSN ({type(e).__name__})") from e
     t0 = time.monotonic()
+    reap(admin, keep=name)                           # the dead runs' leftovers first (never raises; keep is default)
     try:
         # branch_check (plan-4918 P0-c) runs this as a NOSUPERUSER role that can't CREATE EXTENSION. It points
         # ASTRYX_FIXTURE_TEMPLATE at a cached template that already carries them; schema.sql's IF NOT EXISTS then
@@ -124,6 +215,10 @@ def fixture_db(extra: tuple = ()):
                           + (f' TEMPLATE "{tpl}"' if tpl and tpl.replace("_", "").isalnum() else ""))
         except psycopg.errors.InsufficientPrivilege as e:
             raise FixtureUnavailable("this role can't CREATE DATABASE") from e
+        try:                                         # the OWNER STAMP the reaper judges by (inline: digits/hex only)
+            admin.execute(f'COMMENT ON DATABASE "{name}" IS \'{owner_stamp()}\'')
+        except psycopg.Error:
+            pass                                     # unstamped → the reaper KEEPS it; never fail a fixture for this
         admin.execute(f'REVOKE CONNECT ON DATABASE "{name}" FROM PUBLIC')
         admin.execute(f'ALTER DATABASE "{name}" ALLOW_CONNECTIONS true')
         dsn = make_conninfo(live_dsn(), dbname=name)
