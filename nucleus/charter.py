@@ -49,7 +49,25 @@ def _is_example(p: Path, agents_dir: Path) -> bool:
         part.endswith(".example") for part in rel.parts)
 
 
-NON_CHARTERS = (".organ.md", "README.md", "onboard.md")
+NON_CHARTERS = (".organ.md", "README.md")
+
+
+def is_charter(p: Path, agents_dir: Path = AGENTS) -> bool:
+    """Is this .md an AGENT? The one rule, structural rather than a list of names:
+    examples, .git and a composite's structural files are not; and a SELF-FOLDER
+    (agents/<x>/<x>.md) is that agent's home, so any OTHER .md beside its charter is a
+    document the agent keeps (seed's onboard.md), never a second agent. A hardcoded
+    filename list worked for one file and spawned a phantom 'onboard' everywhere else."""
+    if ".git" in p.parts or _is_example(p, agents_dir) or p.name in NON_CHARTERS:
+        return False
+    d = p.parent
+    if d != agents_dir and p.stem != d.name and (d / f"{d.name}.md").is_file():
+        return False
+    return True
+
+
+def charter_files(agents_dir: Path = AGENTS) -> list[Path]:
+    return sorted(p for p in agents_dir.rglob("*.md") if is_charter(p, agents_dir))
 
 
 def roster(agents_dir: Path = AGENTS) -> list[str]:
@@ -61,9 +79,7 @@ def roster(agents_dir: Path = AGENTS) -> list[str]:
     rather than keep a list, because a hardcoded roster silently goes wrong the
     moment an agent is created, retired, or moved between composites.
     """
-    return sorted(p.stem for p in agents_dir.rglob("*.md")
-                  if ".git" not in p.parts and not _is_example(p, agents_dir)
-                  and p.name not in NON_CHARTERS)
+    return sorted(p.stem for p in charter_files(agents_dir))
 
 
 def resolve(name: str, agents_dir: Path = AGENTS) -> Path | None:
@@ -73,8 +89,7 @@ def resolve(name: str, agents_dir: Path = AGENTS) -> Path | None:
     safe = "".join(c for c in name if c.isalnum() or c in "-_").lower()
     if not safe:
         return None
-    hits = [p for p in agents_dir.rglob(f"{safe}.md")
-            if ".git" not in p.parts and not _is_example(p, agents_dir)]
+    hits = [p for p in agents_dir.rglob(f"{safe}.md") if is_charter(p, agents_dir)]
     if len(hits) > 1:
         raise Collision(
             f"REGISTRY COLLISION: '{name}' has {len(hits)} charters:\n"
@@ -110,6 +125,8 @@ def roster_of_type(kind: str, agents_dir: Path = AGENTS) -> list[str]:
 
 
 if __name__ == "__main__":
+    if sys.argv[1:] == ["--roster"]:                 # for shell callers (spawn-all.sh)
+        print("\n".join(roster())); sys.exit(0)
     if len(sys.argv) not in (2, 3):
         print("usage: charter.py <name> [--type]", file=sys.stderr)
         sys.exit(2)

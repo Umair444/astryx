@@ -372,14 +372,8 @@ async def logout(request: Request):
 
 
 def _roster() -> list[str]:
-    seen = set()
-    for f in sorted((REPO / "agents").rglob("*.md")):
-        if ".example" in f.name or ".example" in str(f.parent) or f.stem in seen:
-            continue
-        if f.stem == "onboard":                    # seed's onboarding script, not a charter
-            continue
-        seen.add(f.stem)
-    return sorted(seen)
+    from nucleus import charter
+    return charter.roster()
 
 
 def _blurb(name: str) -> str:

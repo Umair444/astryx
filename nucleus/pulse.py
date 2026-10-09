@@ -223,7 +223,8 @@ def residents() -> set[str]:
     global _residents
     if _residents is None:
         try:
-            _residents = {c.stem for c in (REPO / "agents").rglob("*.md")}
+            from nucleus import charter
+            _residents = set(charter.roster())
         except Exception:
             _residents = set()
     return _residents

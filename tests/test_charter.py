@@ -47,6 +47,19 @@ def test_member_resolves_at_depth():
     assert resolve("canopus", d) == d / "org/canopus/canopus.md"
 
 
+def test_document_beside_self_folder_charter_is_not_an_agent():
+    # agents/seed/onboard.md is a document seed keeps, not a second agent (it was spawned as one
+    # and drawn in the network map while the rule was a filename list). A composite's members,
+    # which live in their OWN folders, are unaffected.
+    d = _tree()
+    _mk(d, "seed/onboard.md")
+    _mk(d, "org/lead.md")                  # a composite with no org/org.md: a real member
+    from nucleus.charter import roster
+    names = roster(d)
+    assert "onboard" not in names and resolve("onboard", d) is None
+    assert {"seed", "canopus", "lead"} <= set(names)
+
+
 def test_example_file_never_charter():
     d = _tree()
     assert resolve("vega", d) is None

@@ -42,6 +42,7 @@ DIST = ROOT / "web" / "dist"
 # (bridges/providers) for contact resolution, rather than re-implementing it here.
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
+from nucleus import charter as _charter  # noqa: E402 — the one roster rule
 
 def _dsn() -> str:
     if os.environ.get("ASTRYX_DSN"):
@@ -364,10 +365,9 @@ def agent_meta() -> dict[str, dict]:
     out: dict[str, dict] = {}
     for f in root.rglob("*.md"):
         parts = f.relative_to(root).parts
-        if f.name.endswith(".example.md") or any(p.endswith(".example") for p in parts):
-            continue
-        if f.name in (".organ.md", "README.md"):
-            continue                    # reserved names are never charters (plan-2 §1)
+        if not _charter.is_charter(f, root):
+            continue                    # the ONE rule (nucleus/charter.py): examples, structural
+                                        # files, and documents beside a self-folder charter
         # self-folder form: agents/<name>/<name>.md — the folder is the agent's own
         # home, not a composite level, so it drops out of the group path
         if len(parts) >= 2 and parts[-2] == f.stem:
