@@ -1,0 +1,46 @@
+<svg viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <title>p1 — the cosmologist</title>
+
+  <!-- Dark base circle for light themes -->
+  <circle cx="64" cy="64" r="64" fill="#1a1a2e"/>
+
+  <!-- Cosmic gradient overlay (subtle) -->
+  <defs>
+    <radialGradient id="cosmicGlow" cx="50%" cy="40%" r="60%">
+      <stop offset="0%" style="stop-color:#4a5f8f;stop-opacity:0.4"/>
+      <stop offset="100%" style="stop-color:#1a1a2e;stop-opacity:1"/>
+    </radialGradient>
+  </defs>
+  <circle cx="64" cy="64" r="64" fill="url(#cosmicGlow)"/>
+
+  <!-- Thinker figure (head + body silhouette) -->
+  <circle cx="64" cy="48" r="14" fill="#e0e0e0"/>
+  <ellipse cx="64" cy="72" rx="11" ry="16" fill="#e0e0e0"/>
+
+  <!-- Contemplating pose: hand to chin -->
+  <circle cx="53" cy="60" r="4" fill="#e0e0e0"/>
+  <path d="M 57 58 Q 60 62 57 66" stroke="#e0e0e0" stroke-width="3" fill="none" stroke-linecap="round"/>
+
+  <!-- Orbiting scales around the figure -->
+  <!-- Inner orbit (small scales) -->
+  <circle cx="64" cy="32" r="2" fill="#ff9f43" opacity="0.8"/>
+  <circle cx="64" cy="32" r="12" fill="none" stroke="#ff9f43" stroke-width="1" opacity="0.4" stroke-dasharray="2,2"/>
+
+  <!-- Middle orbit (medium scales) -->
+  <circle cx="90" cy="64" r="3" fill="#00d4ff" opacity="0.7"/>
+  <circle cx="64" cy="64" r="26" fill="none" stroke="#00d4ff" stroke-width="1" opacity="0.3" stroke-dasharray="3,3"/>
+
+  <!-- Outer orbit (cosmic scales) -->
+  <circle cx="64" cy="96" r="2" fill="#c44569" opacity="0.6"/>
+  <circle cx="64" cy="64" r="40" fill="none" stroke="#c44569" stroke-width="1" opacity="0.2" stroke-dasharray="4,4"/>
+
+  <!-- Star field (cosmic context) -->
+  <circle cx="30" cy="28" r="1" fill="#ffffff" opacity="0.6"/>
+  <circle cx="98" cy="35" r="0.8" fill="#ffffff" opacity="0.5"/>
+  <circle cx="25" cy="72" r="1" fill="#ffffff" opacity="0.4"/>
+  <circle cx="102" cy="85" r="0.7" fill="#ffffff" opacity="0.5"/>
+  <circle cx="35" cy="100" r="1" fill="#ffffff" opacity="0.6"/>
+
+  <!-- Central thought (curved line suggesting contemplation) -->
+  <path d="M 64 34 Q 72 42 75 52" stroke="#ffde59" stroke-width="1.5" fill="none" opacity="0.7" stroke-linecap="round"/>
+</svg>
