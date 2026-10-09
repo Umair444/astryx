@@ -29,7 +29,9 @@ import hashlib
 import json
 import re
 import secrets
+import shutil
 import subprocess
+import tempfile
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -44,7 +46,7 @@ from pydantic import BaseModel
 from nucleus import canvas as cv
 from nucleus import presence as pres
 from .canvas_shell import render
-from .common import (REPO, agent_exists, describe_media, env, media_path, route_target,
+from .common import (MEDIA_DIR, REPO, agent_exists, describe_media, env, media_path, route_target,
                      step_line, wire_insert)
 from .transcribe import transcribe
 
@@ -546,24 +548,104 @@ async def say(thread: str, body: Say, request: Request):
 
 
 _FILE_TOKEN = re.compile(r"\[\[file:([^\]]+)\]\]")
+# Every file a body carries, in order: an agent's [[file:/path]] embed, or the line an upload leaves
+# (<file attached: /path>, <voice attached: /path>, common.describe_media). The app numbers them the
+# same way (canvas/web/src/Messages.tsx), so `n` means the same file on both sides.
+_ANY_FILE = re.compile(r"\[\[file:([^\]]+)\]\]|<(?:file|voice) attached(?:, fetch failed: [^>]*)?: ([^>]+)>")
+
+
+async def _message_file(v, msg: int, n: int) -> Path | None:
+    """The n-th file a message embeds ([[file:/abs/path]]), if the viewer may see that message:
+    they own its thread, or they are its sender/recipient. Only a path the message names."""
+    row = await pool.fetchrow("SELECT thread, body, to_agent, from_agent FROM messages WHERE id=$1", msg)
+    if not row:
+        return None
+    t = await _own_thread(v, row["thread"] or "") if row["thread"] else None
+    if not t and not (row["to_agent"] == v.wire or row["from_agent"] == v.wire):
+        return None
+    paths = [(a or b).strip() for a, b in _ANY_FILE.findall(row["body"])]
+    if n < 0 or n >= len(paths):
+        return None
+    path = Path(paths[n]).resolve()
+    # A HUMAN's message is text they typed: it may name only what was uploaded (MEDIA_DIR). Otherwise
+    # an invitee could write [[file:/home/…/.env]] into their own thread and download it. An agent's
+    # embed is a deliberate act by an org member, so it may point anywhere it can read.
+    if not agent_exists(row["from_agent"]) and not path.is_relative_to(MEDIA_DIR.resolve()):
+        return None
+    return path if path.is_file() else None
+
+
+# What may be shown IN the page (inline) rather than downloaded. Only types a browser renders
+# without running the file's own script on this origin: raster images, PDF (the browser's viewer),
+# media, and text forced to text/plain. SVG and HTML are never inline — as a document they'd script
+# the canvas origin; an <img> of an SVG stays safe and is how the chat shows them.
+INLINE_TYPES = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".mp4", ".m4v", ".mov", ".webm",
+                ".mp3", ".ogg", ".wav", ".m4a", ".flac"}
+TEXT_TYPES = {".txt", ".md", ".csv", ".tsv", ".json", ".log", ".py", ".js", ".ts", ".tsx", ".sql", ".yaml",
+              ".yml", ".toml", ".sh", ".ini", ".xml"}
+# Office documents become a PDF (LibreOffice, headless) so they read exactly as authored.
+OFFICE_TYPES = {".docx", ".doc", ".odt", ".rtf", ".pptx", ".ppt", ".odp", ".xlsx", ".xls", ".ods"}
+_PREVIEW_DIR = MEDIA_DIR / ".preview"
+_convert_lock = asyncio.Lock()          # one soffice at a time: it is heavy, and shares a profile
 
 
 @app.get("/api/file")
-async def message_file(msg: int, n: int, request: Request):
-    """A file an agent embedded ([[file:/abs/path]]) in a message the viewer can see. Only a path
-    the message itself names is served; the viewer must own the message's thread."""
+async def message_file(msg: int, n: int, request: Request, inline: int = 0):
+    """A file an agent or the viewer embedded in a message the viewer can see. `inline=1` asks to
+    VIEW it in the page — granted only for INLINE_TYPES / TEXT_TYPES; anything else downloads."""
     from fastapi.responses import FileResponse
     v = V(request)
-    row = await pool.fetchrow("SELECT thread, body, to_agent, from_agent FROM messages WHERE id=$1", msg)
-    if not row:
-        return deny(404, "no such message")
-    t = await _own_thread(v, row["thread"] or "") if row["thread"] else None
-    if not t and not (row["to_agent"] == v.wire or row["from_agent"] == v.wire):
-        return deny(404, "no such message")
-    paths = [p.strip() for p in _FILE_TOKEN.findall(row["body"])]
-    if n < 0 or n >= len(paths) or not Path(paths[n]).is_file():
+    path = await _message_file(v, msg, n)
+    if not path:
         return deny(404, "file not found")
-    return FileResponse(paths[n], filename=Path(paths[n]).name)
+    ext = path.suffix.lower()
+    if inline and ext in TEXT_TYPES:
+        return FileResponse(path, media_type="text/plain; charset=utf-8", content_disposition_type="inline",
+                            filename=path.name, headers={"X-Content-Type-Options": "nosniff"})
+    if inline and ext in INLINE_TYPES:
+        return FileResponse(path, content_disposition_type="inline", filename=path.name,
+                            headers={"X-Content-Type-Options": "nosniff"})
+    return FileResponse(path, filename=path.name)
+
+
+@app.get("/api/file/preview")
+async def message_file_preview(msg: int, n: int, request: Request):
+    """An Office document rendered to PDF for viewing in the page. Converted once (LibreOffice,
+    headless, its own throwaway profile) and cached by the file's content hash."""
+    from fastapi.responses import FileResponse
+    v = V(request)
+    path = await _message_file(v, msg, n)
+    if not path:
+        return deny(404, "file not found")
+    if path.suffix.lower() not in OFFICE_TYPES:
+        return deny(415, "no preview for this type")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()[:32]
+    out = _PREVIEW_DIR / f"{digest}.pdf"
+    if not out.is_file():
+        soffice = shutil.which("soffice") or shutil.which("libreoffice")
+        if not soffice:
+            return deny(501, "LibreOffice is not installed on this host")
+        async with _convert_lock:
+            if not out.is_file():
+                _PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+                with tempfile.TemporaryDirectory() as tmp:
+                    src = Path(tmp) / f"doc{path.suffix.lower()}"
+                    shutil.copyfile(path, src)
+                    proc = await asyncio.create_subprocess_exec(
+                        soffice, f"-env:UserInstallation=file://{tmp}/profile", "--headless", "--norestore",
+                        "--convert-to", "pdf", "--outdir", tmp, str(src),
+                        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+                    try:
+                        await asyncio.wait_for(proc.wait(), 120)
+                    except asyncio.TimeoutError:
+                        proc.kill()
+                        return deny(504, "the document took too long to render")
+                    made = Path(tmp) / "doc.pdf"
+                    if not made.is_file():
+                        return deny(422, "this document could not be rendered")
+                    shutil.move(str(made), out)
+    return FileResponse(out, media_type="application/pdf", content_disposition_type="inline",
+                        filename=f"{path.stem}.pdf", headers={"X-Content-Type-Options": "nosniff"})
 
 
 @app.post("/api/upload")
