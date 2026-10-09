@@ -202,13 +202,27 @@ def sql_writers(relation: str, inv: dict = None) -> dict:
     return out
 
 
-def _excused(rel: str, decl: dict, root: Path) -> bool:
-    """A declared writer, schema, or test writer, or an exemption pinned to the file's sha (an edit re-raises it)."""
+def graph_signature(p: Path) -> str:
+    """sha256 over the file's GRAPH-touching text only: every cypher()/create_graph()/drop_graph() argument as
+    written, and every labelled pattern write with its label, sorted. The property a not_writers pin vouches for
+    ("which graphs this code writes") lives in those lines, not in the file's bytes, so a routine edit elsewhere
+    keeps the pin and a new or changed graph call re-raises it (a3 #39496)."""
+    s = p.read_text(errors="replace")
+    items = sorted(["arg " + a.strip() for a in _GRAPH_ARG.findall(s)]
+                   + ["write " + m.group(0) for m in re.finditer(_LABELLED_WRITE.pattern + r"\w*", s)])
+    return hashlib.sha256("\n".join(items).encode()).hexdigest()
+
+
+def _excused(rel: str, decl: dict, root: Path, kind: str = "uncountable") -> bool:
+    """A declared writer, schema, or test writer; or a not_writers exemption pinned to the file's graph signature.
+    A pin excuses only an UNCOUNTABLE file: one that provably writes the graph (a literal call, SQL to its label
+    tables) is a writer whatever its pin says."""
     if any(fnmatch.fnmatch(rel, g) for g in decl.get("writers", []) + decl.get("schema", [])
            + decl.get("test_writers", [])):
         return True
     ex = decl.get("not_writers", {}).get(rel)
-    return bool(ex) and (root / rel).is_file() and _sha(root / rel) == ex.get("sha256")
+    return (bool(ex) and kind == "uncountable" and (root / rel).is_file()
+            and graph_signature(root / rel) == ex.get("graph_sig"))
 
 
 # ── reading the digest a copy carries ──────────────────────────────────────────────────────────────────────────
@@ -275,7 +289,7 @@ def check(conn=None, decls=None, root: Path = None, inv: dict = None) -> list:
             found = sql_writers(d["table"], inv)
         else:
             found = {}
-        stray = {r: k for r, k in found.items() if not _excused(r, d, root)}
+        stray = {r: k for r, k in found.items() if not _excused(r, d, root, k)}
         n_writers = sum(1 for r, k in found.items() if k == "writer"
                         and any(fnmatch.fnmatch(r, g) for g in d.get("writers", [])))
         if stray:
