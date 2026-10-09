@@ -178,6 +178,28 @@ def api(url):
         arm("once scanned, a FLAGGED version stays withheld; the clean one is served",
             g2b.get("html") is None and "owner-PII" in g2b["withheld"][0]
             and who("guest").get(f"{A}/canvases/{s_id}/render?v=1").json().get("html"), g2b)
+        # C2 (a3 #36233): title/brief and publish NOTES are agent-written and served to guests — gated too
+        with psycopg_conn(url) as pc:
+            cv_lib.publish(pc, s_id, "<p>three</p>", "painter", "added 15555550123")
+            pc.commit()
+        verdict({"m": {"cid": s_id, "src": f"canvas:{s_id}:meta", "loc": "x", "label": "phone-bare"},
+                 "n": {"cid": s_id, "src": f"canvas:{s_id}:v3:note", "loc": "x", "label": "phone-bare"}})
+        gl = {c["id"]: c for c in who("guest").get(f"{A}/canvases").json()}
+        arm("a flagged TITLE is masked in the guest's canvas list; the owner sees it",
+            gl[s_id]["title"].startswith("(withheld") and gl[s_id]["brief"] is None
+            and any(c["id"] == s_id and not c["title"].startswith("(withheld")
+                    for c in who("owner").get(f"{A}/canvases").json()), gl.get(s_id))
+        gv = {x["version"]: x for x in who("guest").get(f"{A}/canvases/{s_id}").json()["versions"]}
+        arm("a flagged publish NOTE is masked for THAT version only",
+            gv[3]["note"].startswith("(withheld") and not (gv[1]["note"] or "").startswith("(withheld"), gv)
+        arm("...and the owner reads the note", who("owner").get(f"{A}/canvases/{s_id}").json()["versions"][0]["note"]
+            == "added 15555550123")
+        with psycopg_conn(url) as pc:
+            m_id = cv_lib.create(pc, "Plain", "painter", "owner")
+            pc.commit()
+        verdict({"m": {"cid": m_id, "src": f"canvas:{m_id}:meta", "loc": "x", "label": "phone-bare"}})
+        arm("a flagged title blocks a WIDENING share",
+            who("owner").post(f"{A}/canvases/{m_id}/share", json={"users": ["guest"]}, headers=H).status_code == 409)
         arm("narrowing the audience is never gated", who("owner").post(
             f"{A}/canvases/{s_id}/share", json={"users": []}, headers=H).status_code == 200)
         with psycopg_conn(url) as pc:

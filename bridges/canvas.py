@@ -618,13 +618,24 @@ def _cshape(c) -> dict:
             "brief": c["brief"], "updated_at": c["updated_at"].isoformat(), "archived": c["archived"]}
 
 
+async def _shape_for(v, c) -> dict:
+    """_cshape for a VIEWER: a non-owner sees the agent-written title/brief only once steward's
+    pii_canvas sweep has cleared them (a3 #36233 C2). The owner sees everything."""
+    d = _cshape(c)
+    if not v.owner:
+        mv = await sync(cv.meta_view, c["id"])
+        if mv["meta"]:
+            d["title"], d["brief"] = "(withheld: " + "; ".join(mv["meta"]) + ")", None
+    return d
+
+
 @app.get("/api/canvases")
 async def canvases(request: Request):
     v = V(request)
     rows = await pool.fetch(
         "SELECT *, version AS ver FROM canvases WHERE NOT archived AND ($1 OR user_name=$2 OR $2 = ANY(shared_with)) "
         "ORDER BY updated_at DESC", v.owner, v.name)
-    return [_cshape(r) for r in rows]
+    return [await _shape_for(v, r) for r in rows]
 
 
 class NewCanvas(BaseModel):
@@ -662,13 +673,16 @@ async def new_canvas(body: NewCanvas, request: Request):
 
 @app.get("/api/canvases/{cid}")
 async def canvas_get(cid: int, request: Request):
-    c = await _canvas_for(V(request), cid)
+    v = V(request)
+    c = await _canvas_for(v, cid)
     if not c:
         return deny(404, "no such canvas")
     vers = await pool.fetch("SELECT version AS ver, author, note, ts FROM canvas_versions WHERE canvas_id=$1 "
                             "ORDER BY version DESC LIMIT 50", cid)
-    return {**_cshape(c), "thread": f"cv:canvas-{cid}",
-            "versions": [{"version": r["ver"], "author": r["author"], "note": r["note"],
+    held = {} if v.owner else (await sync(cv.meta_view, cid))["notes"]     # per-version note masking
+    return {**(await _shape_for(v, c)), "thread": f"cv:canvas-{cid}",
+            "versions": [{"version": r["ver"], "author": r["author"],
+                          "note": ("(withheld: " + "; ".join(held[r["ver"]]) + ")") if r["ver"] in held else r["note"],
                           "ts": r["ts"].isoformat()} for r in vers]}
 
 

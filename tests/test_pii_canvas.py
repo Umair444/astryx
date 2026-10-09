@@ -90,6 +90,7 @@ try:
     gate_row({"checked_at": now_, "open": {}})
     check("scanned and clean → allowed ([])", cv.share_blockers(conn, c1) == [], str(cv.share_blockers(conn, c1)))
     c2 = canvas()
+    now_ = conn.execute("SELECT now()::text").fetchone()[0].replace(" ", "T")   # scanned AFTER c2 exists
     gate_row({"checked_at": now_, "open": {"h1": {"cid": c1, "loc": "x", "label": "phone-bare"}}})
     b = cv.share_blockers(conn, c1)
     check("an open finding on the canvas → refused, and the remedy says republishing does NOT clear it",
@@ -102,6 +103,12 @@ try:
     check("view: a version that does not exist → not blocked here (render answers no html itself)",
           cv.view_blockers(conn, c1, 999) == [], str(cv.view_blockers(conn, c1, 999)))
     check("view: an existing, scanned, clean version → visible", cv.view_blockers(conn, c1, 1) == [])
+    gate_row({"checked_at": now_, "open": {"h1": {"cid": c1, "loc": "x", "label": "phone-bare"}}})
+    c3 = canvas()                                  # created AFTER now_: its title/brief are unscanned
+    gate_row({"checked_at": old.replace(" ", "T"), "open": {}})
+    b3 = cv.share_blockers(conn, c3)
+    check("a canvas CREATED after the last scan → share refused (its title/brief are unscanned)",
+          b3 and "changed after the last privacy scan" in b3[0], str(b3))
     gate_row({"checked_at": now_, "open": {"h1": {"cid": c1, "loc": "x", "label": "phone-bare"}}})
     check("the gate's reasons carry no value (shapes only)",
           FAKE_PHONE not in json.dumps(cv.share_blockers(conn, c1)))
@@ -166,6 +173,26 @@ try:
         version(sh, 3, f"<p>{FAKE_PHONE} again</p>", ago="-1 hour")   # written AFTER this run starts
         out3 = fire(TempCtx(st)) or ""
         check("content written after the run's start is not scanned this run", f"canvas#{sh} v3" not in out3, out3)
+
+        # C2 (a3 #36233): the DOMAIN is everything agent-written a guest is served — title/brief, notes, keys
+        mt = conn.execute("INSERT INTO canvases (title, agent, user_name, tier, shared_with, created_at) VALUES "
+                          "(%s,'painter','owner','org',ARRAY['g'], now() - interval '1 hour') RETURNING id",
+                          (f"call {FAKE_PHONE}",)).fetchone()[0]
+        conn.execute("INSERT INTO canvas_versions (canvas_id, version, html, author, note, ts) VALUES "
+                     "(%s,1,'<p>ok</p>','painter',%s, now() - interval '1 hour')", (mt, f"added {FAKE_PHONE}"))
+        conn.execute("INSERT INTO canvas_data (canvas_id, key, value, updated_by, updated_at) VALUES "
+                     "(%s,%s,'1'::jsonb,'painter', now() - interval '1 hour')", (mt, f"phone-{FAKE_PHONE}"))
+        stm = {}
+        fire(TempCtx(stm))
+        srcs = {r["src"] for r in stm["open"].values() if r["cid"] == mt}
+        check("a PII TITLE is found, as the canvas's meta location", f"canvas:{mt}:meta" in srcs, str(srcs))
+        check("a PII publish NOTE is found, per version", f"canvas:{mt}:v1:note" in srcs, str(srcs))
+        check("a PII data KEY name is found (keys ride the SSE push)",
+              any(x.startswith(f"canvas:{mt}:data:") for x in srcs), str(srcs))
+        check("the page html, which is clean, is NOT flagged", f"canvas:{mt}:v1" not in srcs, str(srcs))
+        conn.execute("DELETE FROM canvas_data WHERE canvas_id=%s", (mt,))
+        conn.execute("DELETE FROM canvas_versions WHERE canvas_id=%s", (mt,))
+        conn.execute("DELETE FROM canvases WHERE id=%s", (mt,))
 
         print("\nE. end to end — the sweep's state drives the real gate:")
         gate_row(st)

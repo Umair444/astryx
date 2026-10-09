@@ -273,7 +273,8 @@ def share_blockers(conn, cid: int) -> list[str]:
         return out
     newest = conn.execute(
         "SELECT greatest((SELECT max(ts) FROM canvas_versions WHERE canvas_id = %(cid)s), "
-        "                (SELECT max(updated_at) FROM canvas_data WHERE canvas_id = %(cid)s))",
+        "                (SELECT max(updated_at) FROM canvas_data WHERE canvas_id = %(cid)s), "
+        "                (SELECT created_at FROM canvases WHERE id = %(cid)s))",
         {"cid": cid}).fetchone()[0]
     if newest is not None and newest > checked:
         out.append("this canvas changed after the last privacy scan — retry within 5 minutes")
@@ -298,6 +299,32 @@ def view_blockers(conn, cid: int, ver: int) -> list[str]:
     if f"canvas:{cid}:v{ver}" in srcs:
         out.append("withheld — this version carries a possible owner-PII finding awaiting a ruling")
     return out
+
+
+def meta_view(conn, cid: int) -> dict:
+    """What a NON-OWNER may see of canvas `cid`'s agent-written METADATA (a3 #36233, C2): the title and
+    brief, and each version's publish note. {"meta": [reasons] (non-empty = mask title+brief),
+    "notes": {version: [reasons]} (only the versions whose note must be masked)}. Title and brief are
+    written only at create (there is no retitle path), so their freshness is canvases.created_at; a
+    note is immutable with its version, so its freshness is that version's ts. TRIP: a retitle path
+    must bump a metadata timestamp, or this would serve an unscanned new title."""
+    out, checked, srcs = _verdict(conn, cid)
+    vers = conn.execute("SELECT version, ts FROM canvas_versions WHERE canvas_id = %s", (cid,)).fetchall()
+    if out:                                            # no verdict at all: mask everything, fail closed
+        return {"meta": out, "notes": {v: out for v, _ in vers}}
+    meta = []
+    created = conn.execute("SELECT created_at FROM canvases WHERE id = %s", (cid,)).fetchone()
+    if created is not None and created[0] > checked:
+        meta.append("pending privacy scan")
+    if f"canvas:{cid}:meta" in srcs:
+        meta.append("withheld — a possible owner-PII finding awaiting a ruling")
+    notes = {}
+    for v, ts in vers:
+        why = (["pending privacy scan"] if ts > checked else []) + \
+              (["withheld — flagged"] if f"canvas:{cid}:v{v}:note" in srcs else [])
+        if why:
+            notes[v] = why
+    return {"meta": meta, "notes": notes}
 
 
 def data_blockers(conn, cid: int) -> list[str]:
