@@ -155,6 +155,9 @@
    "branch_check: differential verdict, prod witness, clean refusal",
    "runscope: teardown by ownership, stale sweep, foreign scopes refused"
   ],
+  "nucleus/runscope.py::orphan_roles\u001fselect shobj_description(oid, 'pg_authid') from pg_roles where rolname = ?": [
+   "runscope"
+  ],
   "nucleus/secret_sweep.py::sweep_turns\u001fselect raw_payload, input_prompt from turns where id=?": [
    "at-rest secret sweep redacts without corrupting (5497 S2)"
   ],
@@ -352,7 +355,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 277,
+  "debt_rows": 278,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -910,6 +913,12 @@
    "debt": "EXECUTED",
    "reason": "a2 F1: the stale sweep's orphan source (run roles read from postgres, since a reboot wipes the lockfiles). a pg_catalog read, so RESPONSIVE is unreachable by the judge's relation rule; pinned by runscope R11/R12 and the F1 arms (crashed run reaped, live run kept, reused pid reaped).",
    "tk": "sha256t:dbd0b463138c90e51116c81c062828070777c67a588f1256c06dd80cdc35e9af"
+  },
+  "nucleus/runscope.py::orphan_roles\u001fselect shobj_description(oid, 'pg_authid') from pg_roles where rolname = ?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "a3 D1 host stamp: the orphan sweep reaps only roles stamped with THIS machine's id. A pg_catalog read of one named role (always one row), so RESPONSIVE is unreachable by the judge's relation rule; pinned by R15 and the 'foreign or unstamped is reported, never dropped' arm.",
+   "tk": "sha256t:d6b97d805e7416e4d66a4e3bc2e117d48e8dcc57c5097b4c26778f1861e4ff53"
   },
   "nucleus/secret_sweep.py::sweep_turns\u001fselect raw_payload, input_prompt from turns where id=?": {
    "admitted": "2026-09-30",
