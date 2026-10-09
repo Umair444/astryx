@@ -1664,6 +1664,9 @@ class VegaMsg(BaseModel):
 vega_hits: dict[str, list[float]] = {}
 
 
+from nucleus.claude_bin import claude_bin  # noqa: E402
+
+
 @app.post("/api/vega")
 async def vega(m: VegaMsg, request: Request):
     vega_md = _charter_path("vega")
@@ -1712,7 +1715,7 @@ async def vega(m: VegaMsg, request: Request):
         #                       regardless of cwd (grade-1; the resident spawn relies
         #                       on this same primitive). Together: no actuator at all.
         proc = await asyncio.create_subprocess_exec(
-            "claude", "-p", "--model", "haiku",
+            claude_bin(), "-p", "--model", "haiku",
             "--tools", "",
             "--strict-mcp-config",
             "--no-session-persistence",
@@ -1723,7 +1726,9 @@ async def vega(m: VegaMsg, request: Request):
         out, _ = await asyncio.wait_for(
             proc.communicate(prompt.encode()), timeout=90)
         reply = out.decode(errors="replace").strip() or "…"
-    except Exception:
+    except Exception as e:
+        # say WHY in the journal: a swallowed FileNotFoundError hid "claude not on the unit's PATH"
+        print(f"vega: conjure failed: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
         reply = "I lost my train of thought. Ask me again."
     return {"reply": reply[:4000]}
 

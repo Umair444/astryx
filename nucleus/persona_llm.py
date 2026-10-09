@@ -38,6 +38,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
+from nucleus.claude_bin import claude_bin  # noqa: E402
 
 MODEL = "haiku"          # the grunt tier: bounded judgement, repeated hundreds of times
 SAMPLE = 40              # messages shown per contact — enough to characterise, not to profile
@@ -72,7 +73,7 @@ def classify(chat_text: str, model: str = MODEL, timeout: int = PER_CALL_TIMEOUT
     prompt = PROMPT.format(chat=chat_text[:MAX_CHARS], rels=", ".join(RELATIONS))
     try:
         r = subprocess.run(
-            ["claude", "-p", "--model", model,
+            [claude_bin(), "-p", "--model", model,
              "--tools", "",                    # zero built-in actuators
              "--strict-mcp-config",            # no MCP servers, whatever the user config says
              "--no-session-persistence",       # nothing about these chats is retained
