@@ -175,6 +175,20 @@
    "branch_check sandbox: the boundary holds from inside, every probe falsifiable",
    "runscope: teardown by ownership, stale sweep, foreign scopes refused"
   ],
+  "nucleus/runscope.py::_drop_owned\u001fselect 1 from pg_roles where rolname = ?": [
+   "branch_check base: prod restored into a run-owned base",
+   "branch_check prep: hardening precondition, template, repo, estate, env",
+   "branch_check sandbox: the boundary holds from inside, every probe falsifiable",
+   "branch_check: differential verdict, prod witness, clean refusal",
+   "runscope: teardown by ownership, stale sweep, foreign scopes refused"
+  ],
+  "nucleus/runscope.py::orphan_roles\u001fselect rolname from pg_roles where rolname like 'bc\\_%'": [
+   "branch_check: differential verdict, prod witness, clean refusal",
+   "runscope: teardown by ownership, stale sweep, foreign scopes refused"
+  ],
+  "nucleus/runscope.py::orphan_roles\u001fselect shobj_description(oid, 'pg_authid') from pg_roles where rolname = ?": [
+   "runscope"
+  ],
   "nucleus/secret_sweep.py::sweep_turns\u001fselect raw_payload, input_prompt from turns where id=?": [
    "at-rest secret sweep redacts without corrupting (5497 S2)"
   ],
@@ -213,6 +227,48 @@
   ],
   "observatory/api/main.py::goal_create\u001finsert into goals (title, owner, state, scope_note) values (?, ?, 'proposed', ?) returning id": [
    "goal budgets frozen, writers retired (4227 S3)"
+  ],
+  "observatory/api/main.py::goal_detail\u001fselect * from (select * from messages where thread=? order by id desc limit 60) t order by id": [
+   "observatory: agents as people"
+  ],
+  "observatory/api/main.py::goal_detail\u001fselect * from goals where id=?": [
+   "observatory: agents as people"
+  ],
+  "observatory/api/main.py::goal_detail\u001fselect * from goals where parent_id=? order by id": [
+   "observatory: agents as people"
+  ],
+  "observatory/api/main.py::goal_detail\u001fselect * from steps where goal_id=? order by id desc limit 25": [
+   "observatory: agents as people"
+  ],
+  "observatory/api/main.py::goal_detail\u001fselect count(*) from messages where thread=?": [
+   "observatory: agents as people"
+  ],
+  "observatory/api/main.py::goal_detail\u001fselect distinct on (from_agent) from_agent, intent, ts from messages where thread=? and intent in ('approve', 'revise') order by from_agent, id desc": [
+   "observatory: agents as people"
+  ],
+  "observatory/api/main.py::person_profile\u001fselect count(distinct b.src) from social_edge a join social_edge b on a.org=b.org and a.dst=b.dst and b.src<>a.src where a.org=? and a.src=? and a.rel='member-of' and b.rel='member-of'": [
+   "observatory: agents as people"
+  ],
+  "observatory/api/main.py::person_profile\u001fselect g.id, g.label, (select count(*) from social_edge m where m.org=e.org and m.dst=e.dst and m.rel='member-of') as size from social_edge e join social_person g on g.org=e.org and g.id=e.dst where e.org=? and e.src=? and e.rel='member-of' order by size desc": [
+   "observatory: agents as people"
+  ],
+  "observatory/api/main.py::person_profile\u001fselect org, id, kind, label, direct, relation, who, shape, confidence from social_person where id=? and kind='person'": [
+   "observatory: agents as people"
+  ],
+  "observatory/api/main.py::person_profile\u001fselect weight, first_ts, last_ts, mine from social_edge where org=? and dst=? and rel='dm'": [
+   "observatory: agents as people"
+  ],
+  "observatory/api/main.py::tool_detail\u001fselect agent, ts, left(content, 200) as content from steps where left(content, length(?)) = ? and content not like '% done' order by id desc limit 15": [
+   "observatory: agents as people"
+  ],
+  "observatory/api/main.py::tools_usage\u001fselect split_part(substr(content, length(?) + 1), ' ', 1) as tool, agent, count(*) as n from steps where ts > now() - interval '7 days' and left(content, length(?)) = ? and content not like '% done' group by 1, 2": [
+   "observatory: agents as people"
+  ],
+  "observatory/api/main.py::trigger_detail\u001fselect agent, name, schedule, kind, enabled, check_src, state, last_eval, last_fired, next_fire, note from triggers where agent=? and name=?": [
+   "observatory: agents as people"
+  ],
+  "observatory/api/main.py::trigger_detail\u001fselect id, ts, left(body, 600) as body from messages where from_agent='pulse' and to_agent=? and left(body, length(?)) = ? order by id desc limit 8": [
+   "observatory: agents as people"
   ],
   "sha256:0f53663b8303f90b9217216341c3b328d389279ed76a0839b9bb429e9d19777f": [
    "weekly econ review: insures constitutive set, layer-1 stays FYI, L3 retired"
@@ -285,20 +341,6 @@
   ],
   "sha256:ea33e3cc683868b2c884a824a8b30b4f2582b9ead25889b620aa759b0dec61bc": [
    "plan-lifecycle trigger oracle"
-  ],
-  "nucleus/runscope.py::_drop_owned\u001fselect 1 from pg_roles where rolname = ?": [
-   "branch_check base: prod restored into a run-owned base",
-   "branch_check prep: hardening precondition, template, repo, estate, env",
-   "branch_check sandbox: the boundary holds from inside, every probe falsifiable",
-   "branch_check: differential verdict, prod witness, clean refusal",
-   "runscope: teardown by ownership, stale sweep, foreign scopes refused"
-  ],
-  "nucleus/runscope.py::orphan_roles\u001fselect rolname from pg_roles where rolname like 'bc\\_%'": [
-   "branch_check: differential verdict, prod witness, clean refusal",
-   "runscope: teardown by ownership, stale sweep, foreign scopes refused"
-  ],
-  "nucleus/runscope.py::orphan_roles\u001fselect shobj_description(oid, 'pg_authid') from pg_roles where rolname = ?": [
-   "runscope"
   ]
  },
  "extractors": {
@@ -389,7 +431,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 277,
+  "debt_rows": 291,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -409,25 +451,25 @@
   "bridges/canvas.py::_say\u001fupdate canvas_threads set updated_at=now(), title=coalesce(title, ?) where thread=?": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas: every caller passes a thread it just read from canvas_threads (or that create() registered), so 0 rows is unreachable; ≥1 observed",
+   "reason": "seed 10-09 canvas: every caller passes a thread it just read from canvas_threads (or that create() registered), so 0 rows is unreachable; \u22651 observed",
    "tk": "sha256t:d88dc7c68469047fd412770de32f02e015de98ceb40fb11432fb17857fa51cb0"
   },
   "bridges/canvas.py::canvas_archive\u001fupdate canvases set archived=true where id=?": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas: runs only after _canvas_for() found the canvas (404 otherwise, observed), so 0 rows is unreachable; ≥1 observed",
+   "reason": "seed 10-09 canvas: runs only after _canvas_for() found the canvas (404 otherwise, observed), so 0 rows is unreachable; \u22651 observed",
    "tk": "sha256t:4b9ae46977794133dbf40131da35a16ead9a79a794cce687cd010832623cf9fe"
   },
   "bridges/canvas.py::canvas_share\u001fupdate canvases set shared_with=? where id=?": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas: runs only after _canvas_for() found the canvas (404 otherwise), so 0 rows is unreachable; ≥1 observed",
+   "reason": "seed 10-09 canvas: runs only after _canvas_for() found the canvas (404 otherwise), so 0 rows is unreachable; \u22651 observed",
    "tk": "sha256t:f6069fe213608d246e73445b404a3a73c37ea70cb2f5aaba47b6cd276836274c"
   },
   "bridges/canvas.py::logout\u001fdelete from canvas_sessions where token_hash=?": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas: the gate admits /api/logout only with a live session row for this cookie, so 0 rows is unreachable; ≥1 observed",
+   "reason": "seed 10-09 canvas: the gate admits /api/logout only with a live session row for this cookie, so 0 rows is unreachable; \u22651 observed",
    "tk": "sha256t:2c348c96403fa54c70b93a583c21f5ac9391746cad17f3d14198a9af7dafa353"
   },
   "bridges/canvas.py::new_canvas\u001fselect *, version as ver from canvases where id=?": {
@@ -439,19 +481,19 @@
   "bridges/canvas.py::thread_user\u001fupdate canvas_threads set updated_at=now() where thread=?": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas: runs only after the SELECT on the same thread found it, so 0 rows is unreachable; ≥1 observed",
+   "reason": "seed 10-09 canvas: runs only after the SELECT on the same thread found it, so 0 rows is unreachable; \u22651 observed",
    "tk": "sha256t:15fe7a04aabf9aaa376b567f13b163586df067fd5e7fb73026e0faf60b1c752f"
   },
   "bridges/canvas.py::viewer\u001fupdate canvas_users set last_seen=now() where name=?": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas: runs only for a session whose JOIN just found the non-revoked user, so 0 rows is unreachable; ≥1 observed",
+   "reason": "seed 10-09 canvas: runs only for a session whose JOIN just found the non-revoked user, so 0 rows is unreachable; \u22651 observed",
    "tk": "sha256t:ba79ef9cf28c18ca2b3e0c53def19db9bff0525f912560d4fb5ee5c73cd44b1b"
   },
   "bridges/canvas_voice.py::voice_session\u001finsert into canvas_voice_usage (user_name, model) values (?,?) returning id": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09: INSERT … RETURNING always affects exactly one row; the 0-row arm does not exist",
+   "reason": "seed 10-09: INSERT \u2026 RETURNING always affects exactly one row; the 0-row arm does not exist",
    "tk": "sha256t:3c7a03b454af33ce666876001b7bc99b1b7b81b62d76d74efbec95002e3b38de"
   },
   "bridges/common.py::listen\u001f*": {
@@ -587,7 +629,7 @@
   "bridges/providers/canvas.py::CanvasProvider.list_chats\u001fselect thread, user_name, agent, title from canvas_threads where not archived order by updated_at desc limit 100": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas: read-only channel listing; ≥1 observed, the empty arm is the trivially-correct empty list",
+   "reason": "seed 10-09 canvas: read-only channel listing; \u22651 observed, the empty arm is the trivially-correct empty list",
    "tk": "sha256t:045afc1a84b0629a0964ee47824ff4ab7618684ce135e53b2f68eb1da610a51e"
   },
   "bridges/telegram.py::deliver\u001fupdate messages set status=?, delivered_at=now(), delivery=? where id=?": {
@@ -824,7 +866,7 @@
   "nucleus/canvas.py::publish\u001fupdate canvases set version=version+1, updated_at=now() where id=? returning version": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas: runs only after _canvas() found the row (a missing id raises first), so the 0-row arm is unreachable; ≥1 observed in tests/test_canvas.py",
+   "reason": "seed 10-09 canvas: runs only after _canvas() found the row (a missing id raises first), so the 0-row arm is unreachable; \u22651 observed in tests/test_canvas.py",
    "tk": "sha256t:bb8d2536e8727317a91c192d1d88abf1b745eb6a8c957e6a3df08462c6c74da4"
   },
   "nucleus/dsn_census.py::clients\u001fselect current_user": {
@@ -970,6 +1012,24 @@
    "debt": "EXECUTED",
    "reason": "plan-4918 D1: the run role gets AGE's session preload only where the server offers AGE (a missing preload library fails every connection). a pg_catalog read, so RESPONSIVE is unreachable by the judge's relation rule; pinned by runscope R9 and the arm 'the role preloads AGE exactly when the server offers it'.",
    "tk": "sha256t:766e4bbf18714a244390f9e5c9a1eb18e2c56b63ef724c0f6591215e34cdc4f6"
+  },
+  "nucleus/runscope.py::_drop_owned\u001fselect 1 from pg_roles where rolname = ?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "a2 F1: teardown-by-ownership's 'is the role gone' read, shared by teardown() and the orphan sweep. a pg_catalog read, so RESPONSIVE is unreachable by the judge's relation rule (it reads 1 row only when a DROP ROLE failed); pinned by the teardown and F1 arms.",
+   "tk": "sha256t:755ebfa6d16e9722a913bb5fd789b621ababa8ded98f59b20da19e3e8a99c614"
+  },
+  "nucleus/runscope.py::orphan_roles\u001fselect rolname from pg_roles where rolname like 'bc\\_%'": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "a2 F1: the stale sweep's orphan source (run roles read from postgres, since a reboot wipes the lockfiles). a pg_catalog read, so RESPONSIVE is unreachable by the judge's relation rule; pinned by runscope R11/R12 and the F1 arms (crashed run reaped, live run kept, reused pid reaped).",
+   "tk": "sha256t:dbd0b463138c90e51116c81c062828070777c67a588f1256c06dd80cdc35e9af"
+  },
+  "nucleus/runscope.py::orphan_roles\u001fselect shobj_description(oid, 'pg_authid') from pg_roles where rolname = ?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "a3 D1 host stamp: the orphan sweep reaps only roles stamped with THIS machine's id. A pg_catalog read of one named role (always one row), so RESPONSIVE is unreachable by the judge's relation rule; pinned by R15 and the 'foreign or unstamped is reported, never dropped' arm.",
+   "tk": "sha256t:d6b97d805e7416e4d66a4e3bc2e117d48e8dcc57c5097b4c26778f1861e4ff53"
   },
   "nucleus/secret_sweep.py::sweep_turns\u001fselect raw_payload, input_prompt from turns where id=?": {
    "admitted": "2026-09-30",
@@ -1242,6 +1302,42 @@
    "reason": "goal 4227 S3: executed in a stamped fixture by tests/test_goal_budget_frozen.py, but asyncpg exposes no table OID, so the stamp cannot be credited (declared FIXTURE-DDL cap). Shrinks when the observatory moves to psycopg or the cap lifts.",
    "tk": "sha256t:a916f9172621e07e7e52863a720b467bf01af22f3a147f138735410fc8fcb24e"
   },
+  "observatory/api/main.py::goal_detail\u001fselect * from (select * from messages where thread=? order by id desc limit 60) t order by id": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
+   "tk": "sha256t:2592668a5f4bdc219c64a53e36a187411038d5c34d4283a604a4628a6367c36c"
+  },
+  "observatory/api/main.py::goal_detail\u001fselect * from goals where id=?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
+   "tk": "sha256t:523fb4c297e95b8ee460eb25510707b83eb9421e971efef09b7ad82e52f77044"
+  },
+  "observatory/api/main.py::goal_detail\u001fselect * from goals where parent_id=? order by id": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
+   "tk": "sha256t:7d0871a4b251ac94eb81eba16fed016f948f1546c29b88141265840278a775af"
+  },
+  "observatory/api/main.py::goal_detail\u001fselect * from steps where goal_id=? order by id desc limit 25": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
+   "tk": "sha256t:c82b38cdb5c228b20882faa09fba49a6c38bdb2a91a1748fd495c7642585e420"
+  },
+  "observatory/api/main.py::goal_detail\u001fselect count(*) from messages where thread=?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
+   "tk": "sha256t:71c1a657ea2867568d396373356f397196eb1374553e58a9b28840be8659327a"
+  },
+  "observatory/api/main.py::goal_detail\u001fselect distinct on (from_agent) from_agent, intent, ts from messages where thread=? and intent in ('approve', 'revise') order by from_agent, id desc": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
+   "tk": "sha256t:a2720195f47e67dbc051fec87428fd5084f8cb344f9ef7fc892b9855acb5edb8"
+  },
   "observatory/api/main.py::goals\u001fselect * from goals order by id desc limit 200": {
    "debt": "UNEXECUTED",
    "reason": "seed",
@@ -1338,6 +1434,30 @@
    "reason": "seed",
    "tk": "sha256t:a3ffd1d8865f4fd6ad89dd1011fab3f5b1c91d7756ce0c1bb12db2a21be31ece"
   },
+  "observatory/api/main.py::person_profile\u001fselect count(distinct b.src) from social_edge a join social_edge b on a.org=b.org and a.dst=b.dst and b.src<>a.src where a.org=? and a.src=? and a.rel='member-of' and b.rel='member-of'": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
+   "tk": "sha256t:b797bbda02cf76e4866117add3296d8d3cfb5106c0d09644ca8616db20816b61"
+  },
+  "observatory/api/main.py::person_profile\u001fselect g.id, g.label, (select count(*) from social_edge m where m.org=e.org and m.dst=e.dst and m.rel='member-of') as size from social_edge e join social_person g on g.org=e.org and g.id=e.dst where e.org=? and e.src=? and e.rel='member-of' order by size desc": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
+   "tk": "sha256t:9655da8e1a8976f3f3bab17b7d9e95dc052e77bdfbf198f3b0eb1b29aa909ac6"
+  },
+  "observatory/api/main.py::person_profile\u001fselect org, id, kind, label, direct, relation, who, shape, confidence from social_person where id=? and kind='person'": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
+   "tk": "sha256t:f6fa667df2926e4199d5018fe67be2353dbf73c13c889572387947319d1de396"
+  },
+  "observatory/api/main.py::person_profile\u001fselect weight, first_ts, last_ts, mine from social_edge where org=? and dst=? and rel='dm'": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
+   "tk": "sha256t:79b63e5f87bf2838865e9b22c60d354473b2149c138bc966e5e13ad4b083e6e7"
+  },
   "observatory/api/main.py::steps\u001f*": {
    "debt": "UNEXECUTED",
    "reason": "seed",
@@ -1347,6 +1467,30 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:dc5b9e860bcdfc873eba07b9fc5e85846cf34d0145870a556fb5eef8107be71d"
+  },
+  "observatory/api/main.py::tool_detail\u001fselect agent, ts, left(content, 200) as content from steps where left(content, length(?)) = ? and content not like '% done' order by id desc limit 15": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
+   "tk": "sha256t:ba69a01145560260ab27a68433333b4064e3a94efae1883bbe7576af50930ddf"
+  },
+  "observatory/api/main.py::tools_usage\u001fselect split_part(substr(content, length(?) + 1), ' ', 1) as tool, agent, count(*) as n from steps where ts > now() - interval '7 days' and left(content, length(?)) = ? and content not like '% done' group by 1, 2": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
+   "tk": "sha256t:26dedd41b91540728f5575bd1cd4bd267dc569f78ace2ef84557769de0155eda"
+  },
+  "observatory/api/main.py::trigger_detail\u001fselect agent, name, schedule, kind, enabled, check_src, state, last_eval, last_fired, next_fire, note from triggers where agent=? and name=?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
+   "tk": "sha256t:b601e0497f83ecce4ca60a02c93454c6820709a8f3b6cf182730e29c138670cd"
+  },
+  "observatory/api/main.py::trigger_detail\u001fselect id, ts, left(body, 600) as body from messages where from_agent='pulse' and to_agent=? and left(body, length(?)) = ? order by id desc limit 8": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
+   "tk": "sha256t:98f4fbf473c16ab52d68c7971e42e19f8b2d95ec86212e551ddc349d66a530b7"
   },
   "observatory/api/main.py::triggers\u001fselect agent, name, schedule, kind, enabled, last_fired, next_fire, note from triggers order by agent, name": {
    "debt": "UNEXECUTED",
@@ -1806,24 +1950,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:71f0c60f40571bce9fac0d27c8c6b9f7637c68cf80bea38c5811394d26afc1a8"
-  },
-  "nucleus/runscope.py::_drop_owned\u001fselect 1 from pg_roles where rolname = ?": {
-   "admitted": "2026-10-09",
-   "debt": "EXECUTED",
-   "reason": "a2 F1: teardown-by-ownership's 'is the role gone' read, shared by teardown() and the orphan sweep. a pg_catalog read, so RESPONSIVE is unreachable by the judge's relation rule (it reads 1 row only when a DROP ROLE failed); pinned by the teardown and F1 arms.",
-   "tk": "sha256t:755ebfa6d16e9722a913bb5fd789b621ababa8ded98f59b20da19e3e8a99c614"
-  },
-  "nucleus/runscope.py::orphan_roles\u001fselect rolname from pg_roles where rolname like 'bc\\_%'": {
-   "admitted": "2026-10-09",
-   "debt": "EXECUTED",
-   "reason": "a2 F1: the stale sweep's orphan source (run roles read from postgres, since a reboot wipes the lockfiles). a pg_catalog read, so RESPONSIVE is unreachable by the judge's relation rule; pinned by runscope R11/R12 and the F1 arms (crashed run reaped, live run kept, reused pid reaped).",
-   "tk": "sha256t:dbd0b463138c90e51116c81c062828070777c67a588f1256c06dd80cdc35e9af"
-  },
-  "nucleus/runscope.py::orphan_roles\u001fselect shobj_description(oid, 'pg_authid') from pg_roles where rolname = ?": {
-   "admitted": "2026-10-09",
-   "debt": "EXECUTED",
-   "reason": "a3 D1 host stamp: the orphan sweep reaps only roles stamped with THIS machine's id. A pg_catalog read of one named role (always one row), so RESPONSIVE is unreachable by the judge's relation rule; pinned by R15 and the 'foreign or unstamped is reported, never dropped' arm.",
-   "tk": "sha256t:d6b97d805e7416e4d66a4e3bc2e117d48e8dcc57c5097b4c26778f1861e4ff53"
   }
  }
 }

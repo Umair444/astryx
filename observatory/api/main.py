@@ -1190,6 +1190,151 @@ def unit_state(unit: str) -> dict:
                 "description": str(e)[:80], "since": None}
 
 
+# ---------------------------------------------------------------- tools: details (owner, via the gate)
+# A tool's arguments and full docstring come from its server's SOURCE (mcp/<srv>/server.py, the file
+# mcp/registry.json launches), read with ast — never imported, so a broken server can't break this.
+_WIRE_SERVER = "astryx (the wire)"
+_WIRE_TOOLS = {"send": "to, body, intent?, thread?", "subscribe": "agent, filter?", "query_steps": "agent?, limit?"}
+
+
+def _server_source(server: str) -> Path | None:
+    try:
+        reg = json.loads((REPO / "mcp" / "registry.json").read_text())
+    except Exception:
+        return None
+    spec = reg.get(server)
+    if not isinstance(spec, dict):
+        return None
+    for a in spec.get("args", []):
+        if str(a).endswith(".py"):
+            f = (REPO / a).resolve()
+            if f.is_file() and (REPO / "mcp") in f.parents:
+                return f
+    return None
+
+
+def _tool_defs(src: Path) -> dict[str, dict]:
+    """{tool: {doc, args:[{name, type, default}]}} for every @<x>.tool()-decorated function."""
+    import ast
+    out: dict[str, dict] = {}
+    try:
+        tree = ast.parse(src.read_text())
+    except Exception:
+        return out
+    for n in ast.walk(tree):
+        if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not any("tool" in ast.unparse(d) for d in n.decorator_list):
+            continue
+        a = n.args
+        pos = a.posonlyargs + a.args
+        defaults = [None] * (len(pos) - len(a.defaults)) + list(a.defaults)
+        args = [{"name": x.arg, "type": ast.unparse(x.annotation) if x.annotation else None,
+                 "default": ast.unparse(d) if d is not None else None}
+                for x, d in zip(pos, defaults) if x.arg not in ("self", "ctx")]
+        args += [{"name": x.arg, "type": ast.unparse(x.annotation) if x.annotation else None,
+                  "default": ast.unparse(d) if d is not None else None}
+                 for x, d in zip(a.kwonlyargs, a.kw_defaults)]
+        out[n.name] = {"doc": ast.get_docstring(n) or "", "args": args,
+                       "returns": ast.unparse(n.returns) if n.returns else None}
+    return out
+
+
+def _mcp_prefix(server: str) -> str:
+    """How a resident's step names a call to this server's tools: mcp__<server>__<tool>."""
+    return "mcp__astryx__" if server == _WIRE_SERVER else f"mcp__{server}__"
+
+
+@app.get("/api/tools/usage")
+async def tools_usage(server: str):
+    """Calls per tool on one server over the last 7 days, and who made them (from steps)."""
+    pre = _mcp_prefix(server)
+    rows = await pool.fetch(
+        "SELECT split_part(substr(content, length($1) + 1), ' ', 1) AS tool, agent, count(*) AS n "
+        "FROM steps WHERE ts > now() - interval '7 days' AND left(content, length($1)) = $1 "
+        "AND content NOT LIKE '% done' GROUP BY 1, 2", pre)
+    tools: dict[str, dict] = {}
+    for r in rows:
+        t = r["tool"].rstrip(":")
+        e = tools.setdefault(t, {"calls": 0, "agents": {}})
+        e["calls"] += r["n"]
+        e["agents"][r["agent"]] = e["agents"].get(r["agent"], 0) + r["n"]
+    return {"server": server, "tools": tools}
+
+
+@app.get("/api/tools/{server}/{tool}")
+async def tool_detail(server: str, tool: str):
+    """One tool: its full docstring and arguments (from source), and its recent calls."""
+    src = None if server == _WIRE_SERVER else _server_source(server)
+    if server != _WIRE_SERVER and not src:
+        return Response(status_code=404)
+    if server == _WIRE_SERVER:
+        if tool not in _WIRE_TOOLS:
+            return Response(status_code=404)
+        d = {"doc": "", "args": [{"name": a.strip().rstrip("?"), "type": None,
+                                  "default": "optional" if a.strip().endswith("?") else None}
+                                 for a in _WIRE_TOOLS[tool].split(",")], "returns": None}
+    else:
+        d = _tool_defs(src).get(tool)
+        if d is None:
+            return Response(status_code=404)
+    pre = f"{_mcp_prefix(server)}{tool}"
+    calls = await pool.fetch(
+        "SELECT agent, ts, left(content, 200) AS content FROM steps "
+        "WHERE left(content, length($1)) = $1 AND content NOT LIKE '% done' ORDER BY id DESC LIMIT 15", pre)
+    return {"server": server, "tool": tool, **d,
+            "source": str(src.relative_to(REPO)) if src else None,
+            "calls": [{"agent": c["agent"], "ts": c["ts"].isoformat(), "content": c["content"]} for c in calls]}
+
+
+@app.get("/api/triggers/{agent}/{name}")
+async def trigger_detail(agent: str, name: str):
+    """One trigger, in full: its check source, state, when it last evaluated and fired, and its
+    recent fires on the wire (pulse → agent, '[trigger <name>…')."""
+    t = await pool.fetchrow(
+        "SELECT agent, name, schedule, kind, enabled, check_src, state, last_eval, last_fired, next_fire, note "
+        "FROM triggers WHERE agent=$1 AND name=$2", agent, name)
+    if not t:
+        return Response(status_code=404)
+    head = f"[trigger {name}"
+    fires = await pool.fetch(
+        "SELECT id, ts, left(body, 600) AS body FROM messages WHERE from_agent='pulse' AND to_agent=$1 "
+        "AND left(body, length($2)) = $2 ORDER BY id DESC LIMIT 8", agent, head)
+    fires = [f for f in fires if f["body"][len(head):len(head) + 1] in ("]", " ")]
+    # a python trigger's check_src names its file; show the code itself (confined to triggers/, capped)
+    root = (REPO / "triggers").resolve()
+    cand = t["check_src"] if t["kind"] == "python" and (t["check_src"] or "").endswith(".py") else f"triggers/{agent}/{name}.py"
+    path = (REPO / cand).resolve()
+    if root not in path.parents:
+        path = REPO / "triggers" / agent / f"{name}.py"
+    code = None
+    if path.is_file():
+        try:
+            code = path.read_text(errors="replace")[:20000]
+        except OSError:
+            code = None
+    iso = lambda v: v.isoformat() if v else None
+    state = t["state"]
+    return {**{k: t[k] for k in ("agent", "name", "schedule", "kind", "enabled", "check_src", "note")},
+            "state": json.loads(state) if isinstance(state, str) else state,
+            "last_eval": iso(t["last_eval"]), "last_fired": iso(t["last_fired"]), "next_fire": iso(t["next_fire"]),
+            "file": str(path.relative_to(REPO)) if path.is_file() else None, "source": code,
+            "fires": [{"id": f["id"], "ts": f["ts"].isoformat(), "body": f["body"]} for f in fires]}
+
+
+@app.get("/api/services/{unit}/log")
+async def service_log(unit: str, lines: int = 40):
+    """The tail of one astryx unit's journal. Only units that ship in units/ (service_units)."""
+    if unit not in service_units():
+        return Response(status_code=404)
+    try:
+        r = subprocess.run(["journalctl", "-u", unit, "-n", str(max(1, min(lines, 200))), "--no-pager",
+                            "-o", "short-iso"], capture_output=True, text=True, timeout=8)
+        return {"unit": unit, "lines": r.stdout.splitlines()[-200:]}
+    except Exception as e:
+        return {"unit": unit, "lines": [], "error": f"{type(e).__name__}: {e}"}
+
+
 @app.get("/api/services")
 async def services():
     out = [unit_state(u) for u in service_units()]
@@ -2646,6 +2791,81 @@ async def memory_ontology():
                       "types": len(types), "categories": len(cats), "pages": len(pages),
                       "findings": len(findings)},
             "notes": []}
+
+
+# ---------------------------------------------------------------- the library (memory's booklet)
+# memory writes memory/library/ (shelves.json + <shelf>/<slug>.md with YAML frontmatter, chronicle/
+# YYYY-MM-DD.md as the overnight editions); the observatory only reads it. Org tier only — memory keeps
+# the personal tier out at write time — and owner-gated like /api/memory/page. Served ONLY from under
+# LIBRARY: shelf and slug must be plain names, and the resolved path must stay inside the root.
+LIBRARY = Path(os.environ.get("ASTRYX_LIBRARY_DIR") or REPO / "memory" / "library")
+_LIB_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,80}$")
+
+
+def _book(f: Path) -> tuple[dict, str] | None:
+    import yaml
+    raw = f.read_text(errors="replace")
+    if not raw.startswith("---"):
+        return {}, raw
+    try:
+        _, fm, body = raw.split("---", 2)
+        meta = yaml.safe_load(fm) or {}
+        return (meta if isinstance(meta, dict) else {}), body.lstrip("\n")
+    except Exception:
+        return None
+
+
+def _plain(md: str) -> str:
+    """Body text for full-text search: markdown syntax and [[link]] brackets out, words in."""
+    t = re.sub(r"```.*?```", " ", md, flags=re.S)
+    t = re.sub(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]", lambda m: m[2] or m[1].replace("-", " "), t)
+    t = re.sub(r"[#>*_`|\[\]()-]+", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+@app.get("/api/memory/library")
+async def library_index():
+    """The shelves and every book's card (frontmatter + slug + plain text for search). Chronicle
+    editions come newest first."""
+    if not LIBRARY.is_dir():
+        return {"shelves": [], "books": []}
+    try:
+        shelves = json.loads((LIBRARY / "shelves.json").read_text())
+    except Exception:
+        shelves = []
+    books = []
+    for f in sorted(LIBRARY.glob("*/*.md")):
+        shelf, slug = f.parent.name, f.stem
+        if not (_LIB_NAME.match(shelf) and _LIB_NAME.match(slug)):
+            continue
+        got = _book(f)
+        if got is None:
+            continue
+        meta, body = got
+        card = {k: (str(v) if k in ("updated", "date") and v is not None else v) for k, v in meta.items()
+                if k in ("title", "abstract", "updated", "tags", "related", "reading_min", "date", "highlights", "books_touched")}
+        books.append({**card, "slug": slug, "shelf": shelf, "title": card.get("title") or slug.replace("-", " "),
+                      "text": _plain(body)[:20000]})
+    nights = sorted((b for b in books if b["shelf"] == "chronicle"), key=lambda b: str(b.get("date") or b["slug"]), reverse=True)
+    rest = sorted((b for b in books if b["shelf"] != "chronicle"), key=lambda b: (b["shelf"], b["title"].lower()))
+    books = nights + rest
+    return {"shelves": sorted(shelves, key=lambda s: s.get("order", 99)), "books": books}
+
+
+@app.get("/api/memory/library/{shelf}/{slug}")
+async def library_book(shelf: str, slug: str):
+    """One book: its frontmatter and markdown body."""
+    if not (_LIB_NAME.match(shelf) and _LIB_NAME.match(slug)) or not LIBRARY.is_dir():
+        return Response(status_code=404)
+    f = (LIBRARY / shelf / f"{slug}.md").resolve()
+    if not f.is_relative_to(LIBRARY.resolve()) or not f.is_file():
+        return Response(status_code=404)
+    got = _book(f)
+    if got is None:
+        return Response(status_code=422)
+    meta, body = got
+    meta = {k: (str(v) if isinstance(v, (date, datetime)) else v) for k, v in meta.items()}
+    return {"shelf": shelf, "slug": slug, "meta": meta, "markdown": body}
 
 
 @app.get("/api/memory/page/{slug}")

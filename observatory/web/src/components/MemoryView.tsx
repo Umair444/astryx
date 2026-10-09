@@ -1,4 +1,5 @@
 import PeopleGraph from './PeopleGraph'
+import LibraryView from './LibraryView'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ScrollArea, Textarea } from '@mantine/core'
 import { AnimatePresence, motion } from 'motion/react'
@@ -70,7 +71,7 @@ export default function MemoryView() {
   const [err, setErr] = useState<string>('')
   const [sel, setSel] = useState<Node | null>(null)
   const [page, setPage] = useState<{ slug: string; markdown: string } | null>(null)
-  const [lens, setLens] = useState<'cortex' | 'split' | 'ontology' | 'world'>('cortex')
+  const [lens, setLens] = useState<'library' | 'cortex' | 'split' | 'ontology' | 'world'>('library')
   const [onto, setOnto] = useState<Graph | null>(null)
   const [classes, setClasses] = useState<Set<string>>(new Set(['semantic', 'entity', 'temporal', 'causal']))
   const [hover, setHover] = useState<string | null>(null)
@@ -429,8 +430,11 @@ export default function MemoryView() {
     return s
   }, [hover, sel, shownEdges])
 
-  const LENSES = [{ id: 'cortex' as const, label: 'Cortex' }, { id: 'split' as const, label: 'System 1 ↔ 2' },
+  const LENSES = [{ id: 'library' as const, label: 'Library' }, { id: 'cortex' as const, label: 'Cortex' }, { id: 'split' as const, label: 'System 1 ↔ 2' },
                   { id: 'ontology' as const, label: 'Ontology' }, { id: 'world' as const, label: 'People' }]
+
+  /* The LIBRARY is memory's booklet of what the org knows — the owner's way in, so it opens first. */
+  if (lens === 'library') return <LibraryView tabs={<Tabs id="memlens" items={LENSES} value={lens} onChange={setLens} />} />
 
   /* PEOPLE are not memory's to hold. kg is readable by every agent, so the compiler no longer
    * mints a person into it (seed 10-09); the owner's people live in the private people graph

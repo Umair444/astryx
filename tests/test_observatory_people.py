@@ -63,6 +63,15 @@ def main(url):
                   "('abstractor-1','abstractor-2',%s,'task','refined'), ('abstractor-2','abstractor-1',%s,'revise','no'), "
                   "('abstractor-2','abstractor-1',%s,'approve','yes now')", (f"plan-{gid}",) * 3)
         c.execute("INSERT INTO steps (agent, kind, content, goal_id) VALUES (%s,'tool','Bash: build it',%s)", (agent, gid))
+        c.execute("INSERT INTO steps (agent, kind, content) VALUES (%s,'tool','mcp__compose__dag_run: nightly'), "
+                  "(%s,'tool','mcp__compose__dag_run done'), ('seed','tool','mcp__compose__dag_run: again')", (agent, agent))
+        c.execute("INSERT INTO triggers (agent, name, schedule, kind, check_src, state, note) VALUES "
+                  "('seed','tool_watch','*/5 * * * *','python','triggers/seed/tool_watch.py','{\"seen\": 3}','watches tools'), "
+                  "('seed','quiet_watch','0 * * * *','sql','SELECT 1',DEFAULT,NULL), "
+                  "('seed','escape','0 * * * *','python','triggers/../observatory/api/main.py',DEFAULT,NULL)")
+        c.execute("INSERT INTO messages (from_agent, to_agent, intent, body) VALUES "
+                  "('pulse','seed','trigger','[trigger tool_watch] two tools went quiet'), "
+                  "('pulse','seed','trigger','[trigger tool_watcher] a different trigger, same prefix')")
         c.execute("INSERT INTO presence (agent, surface, target, say, state) VALUES "
                   "(%s,'canvas:2','#hero','making it count up','working')", (agent,))
         c.commit()
@@ -142,6 +151,48 @@ def main(url):
             cl.get("/api/people/nope/profile", headers=O).status_code == 404
             and cl.get("/api/people/g-1/profile", headers=O).status_code == 404
             and cl.get("/api/people/p-1/profile").status_code == 403)
+        td = cl.get("/api/tools/compose/dag_run", headers=O).json()
+        arm("a tool opens with its arguments and docstring from source, and its recent calls (never the 'done' echo)",
+            [a["name"] for a in td["args"]] == ["name", "args"] and "composite DAG" in td["doc"]
+            and [c["content"] for c in td["calls"]] == ["mcp__compose__dag_run: again", "mcp__compose__dag_run: nightly"], td)
+        arm("a tool nobody has called opens with no calls", cl.get("/api/tools/compose/dag_list", headers=O).json()["calls"] == [])
+        arm("an unknown tool or server is 404; a path-shaped server never resolves",
+            cl.get("/api/tools/compose/nope", headers=O).status_code == 404
+            and cl.get("/api/tools/nope/x", headers=O).status_code == 404
+            and cl.get("/api/tools/..%2F..%2Fetc/x", headers=O).status_code == 404)
+        wt = cl.get("/api/tools/astryx (the wire)/send", headers=O).json()
+        arm("a wire tool opens with its arguments", [a["name"] for a in wt["args"]][:2] == ["to", "body"], wt)
+        us = cl.get("/api/tools/usage", params={"server": "compose"}, headers=O).json()
+        arm("a server's usage counts calls per tool and who made them",
+            us["tools"].get("dag_run", {}).get("calls") == 2 and us["tools"]["dag_run"]["agents"] == {agent: 1, "seed": 1}, us)
+        arm("a server nobody has used has no usage",
+            cl.get("/api/tools/usage", params={"server": "gmail"}, headers=O).json()["tools"] == {})
+        tr = cl.get("/api/triggers/seed/tool_watch", headers=O).json()
+        arm("a trigger opens with its source, state, and ITS fires only (not a same-prefix sibling's)",
+            tr["check_src"] == "triggers/seed/tool_watch.py" and tr["state"] == {"seen": 3} and "source" in tr
+            and [f["body"] for f in tr["fires"]] == ["[trigger tool_watch] two tools went quiet"], tr)
+        esc = cl.get("/api/triggers/seed/escape", headers=O).json()
+        arm("a trigger whose check_src points outside triggers/ never serves that file",
+            esc["source"] is None and esc["file"] is None, (esc["source"], esc["file"]))
+        arm("a trigger that never fired opens with no fires",
+            cl.get("/api/triggers/seed/quiet_watch", headers=O).json()["fires"] == [])
+        arm("a missing trigger is 404; tool, trigger and log details are owner-only",
+            cl.get("/api/triggers/seed/nope", headers=O).status_code == 404
+            and all(cl.get(u).status_code == 403 for u in ("/api/tools/compose/dag_run", "/api/triggers/seed/tool_watch",
+                                                            "/api/tools/usage?server=compose", "/api/services/astryx-pulse.service/log")))
+        arm("a unit that isn't astryx's never yields a journal", cl.get("/api/services/sshd.service/log", headers=O).status_code == 404)
+        li = cl.get("/api/memory/library", headers=O).json()
+        arm("the library lists shelves in order and books as cards (frontmatter + plain text), newest night first",
+            [x["id"] for x in li["shelves"]] == ["chronicle", "laws"]
+            and [b["slug"] for b in li["books"]] == ["2026-10-09", "2026-10-08", "proving-a-fix"]
+            and li["books"][2]["title"] == "Proving a Fix" and li["books"][2]["updated"] == "2026-10-09"
+            and "honest claims" in li["books"][2]["text"] and "[[" not in li["books"][2]["text"], li)
+        bk = cl.get("/api/memory/library/laws/proving-a-fix", headers=O).json()
+        arm("a book opens with its frontmatter and markdown", bk["meta"]["title"] == "Proving a Fix" and "[[honest-claims]]" in bk["markdown"], bk)
+        arm("a book is served only from inside the library, only to the owner",
+            all(cl.get(u, headers=O).status_code == 404 for u in ("/api/memory/library/laws/nope", "/api/memory/library/..%2F/outside",
+                                                                  "/api/memory/library/laws/..%2F..%2Foutside", "/api/memory/library/Laws/proving-a-fix"))
+            and cl.get("/api/memory/library").status_code == 403 and cl.get("/api/memory/library/laws/proving-a-fix").status_code == 403)
         quiet = next((n for n in real if n != agent), agent)
         q = cl.get(f"/api/agents/{quiet}/profile", headers=O).json()
         arm("a quiet agent's profile has no presence and no recent work", q.get("presence") is None and q.get("recent") == [], q.get("recent"))
@@ -157,6 +208,15 @@ if __name__ == "__main__":
         {"pid": "p-2", "candidate_kind": "friend", "closeness": "inner", "confidence": "low",
          "evidence_summary": {"dm_msgs": 610}})))
     os.environ["ASTRYX_PEOPLE_DIR"] = str(pdir)
+    lib = Path(tempfile.mkdtemp())
+    (lib / "laws").mkdir(); (lib / "chronicle").mkdir()
+    (lib / "shelves.json").write_text('[{"id":"laws","order":2,"title":"Laws"},{"id":"chronicle","order":0,"title":"The Chronicle"}]')
+    (lib / "laws" / "proving-a-fix.md").write_text('---\ntitle: "Proving a Fix"\nabstract: "Red before green."\nupdated: 2026-10-09\n'
+                                                  'tags: [laws]\nrelated: [honest-claims]\nreading_min: 3\n---\n# Proving a Fix\nSee [[honest-claims]].\n')
+    for d in ("2026-10-08", "2026-10-09"):
+        (lib / "chronicle" / f"{d}.md").write_text(f'---\ntitle: "Night of {d}"\ndate: {d}\nhighlights: [a]\n---\nWhat happened.\n')
+    (lib.parent / "outside.md").write_text("---\ntitle: secret\n---\nnot a book\n")
+    os.environ["ASTRYX_LIBRARY_DIR"] = str(lib)
     with fixture_db() as fx:
         os.environ["ASTRYX_DSN"] = fx["url"]
         os.environ["OBS_KEY"] = "test-owner-key"

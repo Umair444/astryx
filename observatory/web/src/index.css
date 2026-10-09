@@ -166,3 +166,62 @@ body {
   50% { transform: translate(6vmax, 4vmax) scale(1.12); }
   100% { transform: translate(-4vmax, 7vmax) scale(.95); }
 }
+
+/* ================================================================ THE LIBRARY (LibraryView)
+   A reading room: Instrument Serif for titles, Newsreader for the long column, theme tokens for
+   every colour so all 12 palettes (light ones too) read well. */
+.lib-display { font-family: "Instrument Serif", Georgia, serif; font-weight: 400; letter-spacing: -0.01em; }
+.lib-serif { font-family: "Newsreader Variable", "Newsreader", Georgia, serif; }
+.lib-search {
+  background: color-mix(in srgb, var(--t-panel) 82%, transparent);
+  border: 1px solid var(--t-line2);
+  box-shadow: 0 20px 50px -24px color-mix(in srgb, var(--t-accent) 45%, transparent), inset 0 1px 0 color-mix(in srgb, var(--t-fg) 6%, transparent);
+  backdrop-filter: blur(16px);
+  transition: border-color .15s, box-shadow .15s;
+}
+.lib-search:focus-within { border-color: color-mix(in srgb, var(--t-accent) 60%, var(--t-line2)); box-shadow: 0 0 0 4px color-mix(in srgb, var(--t-accent) 16%, transparent), 0 20px 50px -24px var(--t-accent); }
+.lib-pop { background: var(--t-panel); border: 1px solid var(--t-line2); box-shadow: 0 30px 60px -20px color-mix(in srgb, #000 55%, transparent); }
+.lib-mark { background: color-mix(in srgb, var(--t-accent) 28%, transparent); color: var(--t-fg); border-radius: 3px; padding: 0 2px; }
+.lib-edition {
+  background:
+    radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, var(--t-accent) 22%, transparent) 0%, transparent 55%),
+    radial-gradient(100% 120% at 100% 100%, color-mix(in srgb, var(--t-accent2) 16%, transparent) 0%, transparent 60%),
+    color-mix(in srgb, var(--t-panel) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--t-accent) 28%, var(--t-line));
+  box-shadow: 0 30px 70px -36px var(--t-accent);
+  transition: transform .2s cubic-bezier(.2,.8,.2,1), box-shadow .2s;
+}
+.lib-edition:hover { transform: translateY(-2px); box-shadow: 0 36px 80px -34px var(--t-accent); }
+.lib-card {
+  background: color-mix(in srgb, var(--t-panel) 80%, transparent);
+  border: 1px solid var(--t-line);
+  transition: transform .18s cubic-bezier(.2,.8,.2,1), border-color .18s, box-shadow .18s;
+}
+.lib-card:hover { transform: translateY(-3px); border-color: color-mix(in srgb, var(--t-accent) 45%, var(--t-line)); box-shadow: 0 22px 44px -26px color-mix(in srgb, var(--t-accent) 60%, transparent); }
+.lib-callout { background: color-mix(in srgb, var(--t-accent) 7%, var(--t-panel)); border: 1px solid color-mix(in srgb, var(--t-accent) 22%, var(--t-line)); }
+
+.lib-prose { font-family: "Newsreader Variable", "Newsreader", Georgia, serif; font-size: 19px; line-height: 1.72; color: color-mix(in srgb, var(--t-fg) 86%, var(--t-dim)); }
+.lib-prose > * + * { margin-top: 1.05em; }
+.lib-prose h2 { font-family: "Instrument Serif", Georgia, serif; font-weight: 400; font-size: 34px; line-height: 1.1; color: var(--t-fg); margin-top: 1.9em; scroll-margin-top: 24px; }
+.lib-prose h3 { font-family: "Inter Variable", sans-serif; font-weight: 600; font-size: 17px; letter-spacing: -0.005em; color: var(--t-fg); margin-top: 1.6em; scroll-margin-top: 24px; }
+.lib-prose h4 { font-family: "Inter Variable", sans-serif; font-weight: 600; font-size: 15px; color: var(--t-dim); }
+.lib-prose strong { color: var(--t-fg); font-weight: 600; }
+.lib-prose em { font-style: italic; }
+.lib-prose a { color: var(--t-accent); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--t-accent) 40%, transparent); text-underline-offset: 3px; }
+.lib-prose a.wikilink { text-decoration-style: dotted; }
+.lib-prose a:hover { text-decoration-color: var(--t-accent); }
+.lib-prose .wikilink.missing { color: var(--t-mute); border-bottom: 1px dashed var(--t-line2); }
+.lib-prose ul, .lib-prose ol { padding-left: 1.3em; }
+.lib-prose ul { list-style: disc; } .lib-prose ol { list-style: decimal; }
+.lib-prose li + li { margin-top: .35em; }
+.lib-prose li::marker { color: var(--t-mute); }
+.lib-prose blockquote { border-left: 2px solid var(--t-accent); padding: .2em 0 .2em 1.1em; color: var(--t-dim); font-style: italic; }
+.lib-prose code { font-family: var(--font-mono); font-size: .8em; background: var(--t-panel2); border: 1px solid var(--t-line); border-radius: 5px; padding: .08em .35em; }
+.lib-prose pre { font-family: var(--font-mono); font-size: 13.5px; line-height: 1.55; background: var(--t-panel); border: 1px solid var(--t-line); border-radius: 14px; padding: 1em 1.2em; overflow-x: auto; }
+.lib-prose pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+.lib-prose table { width: 100%; border-collapse: collapse; font-family: "Inter Variable", sans-serif; font-size: 14px; line-height: 1.45; display: block; overflow-x: auto; }
+.lib-prose th { text-align: left; font-weight: 600; color: var(--t-fg); border-bottom: 1px solid var(--t-line2); padding: .6em .8em; white-space: nowrap; }
+.lib-prose td { border-bottom: 1px solid color-mix(in srgb, var(--t-line) 70%, transparent); padding: .55em .8em; vertical-align: top; }
+.lib-prose tr:hover td { background: color-mix(in srgb, var(--t-accent) 5%, transparent); }
+.lib-prose hr { border: 0; height: 1px; background: var(--t-line); margin: 2.4em 0; }
+@media (max-width: 640px) { .lib-prose { font-size: 17.5px; } .lib-prose h2 { font-size: 28px; } }
