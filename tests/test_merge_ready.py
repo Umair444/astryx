@@ -735,6 +735,21 @@ check("the header counts what is actionable separately from the merged-not-pushe
 big = m.render(ACT, [], [], "DOMAIN: " + "z" * 3000)
 check("a runaway DOMAIN is capped, never pushing the report past the wire", len(big) <= 3000, f"{len(big)}")
 check("no merged items → no coupled line", "MERGED, NOT PUSHED" not in m.render(ACT, NO[:2], [], DOM))
+# a1 #41745 R1: when room runs out BEFORE a section starts, the whole block is dropped and must still be COUNTED
+BIG = [(f"bad:{i}", "MALFORMED " + "w" * 390) for i in range(60)] + [(f"backfill:{i}", f"old {i} " + "v" * 390) for i in range(10)]
+TR = ["HELD x by a #1: reason", "retracted y"]
+lost, over = [], []
+for b in range(600, 3001, 25):                   # the invariant across budgets, since ONE fixture rarely hits the edge
+    r1 = m.render([ACT[1]], BIG, TR, "DOMAIN: d", budget=b)
+    if len(r1) > b:
+        over.append((b, len(r1)))
+    for name, n in (("STANDING", 1), ("NOTICES", 60), ("BACKFILL", 10), ("SILENCERS", 2)):
+        if f"\n{name}" not in r1 and f"{n} {name}" not in r1:
+            lost.append((b, name))
+check("across budgets 600..3000: every non-empty section is SHOWN or COUNTED in the dropped line, never lost "
+      "(a1 #41745 R1)", not lost, str(lost[:6]))
+check("...and the report never exceeds its budget", not over, str(over[:4]))
+check("the header counts silencers too", "2 silencer(s)" in m.render([ACT[1]], BIG, TR, "D").splitlines()[0])
 
 # ------------------------------------------------------------------------------------------------ 9
 print("\n9. entrypoint (pulse_run.Ctx on a sqlguard fixture):")
