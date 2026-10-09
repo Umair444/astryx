@@ -235,6 +235,21 @@ async def health():
     return {"ok": True, "routes": len(routes()), "jobs": list(jobs)}
 
 
+async def stored_text(chat: str, msgid: str, waits=(2, 5, 12)) -> str:
+    """The text wacli's store holds for a message whose webhook arrived empty (an undecrypted
+    placeholder). Retries briefly: the decrypt-retry lands seconds later."""
+    for w in waits:
+        await asyncio.sleep(w)
+        try:
+            d = json.loads(await wacli("messages", "show", "--chat", chat, "--id", msgid, "--json"))
+        except Exception:
+            continue
+        t = ((d.get("data") or {}).get("Text") or "").strip()
+        if t:
+            return t
+    return ""
+
+
 @app.post("/hook")
 async def hook(request: Request):
     body = await request.body()
@@ -258,7 +273,10 @@ async def hook(request: Request):
         del seen_msgids[k]
     if msgid and msgid in seen_msgids:
         return {"ok": True}
-    seen_msgids[msgid] = now
+    # NOT marked seen yet: a message WhatsApp couldn't decrypt first arrives as an EMPTY event and
+    # its decrypted twin comes later with the SAME id. Marking the empty one seen discarded the real
+    # message as a duplicate (owner, 2026-10-09: "my whatsapp message in astryx group didn't reach
+    # you"). An id is marked seen only once it carries something we act on (below).
 
     # ---- polls: bookkeeping runs BEFORE the FromMe drop — a vote cast from the
     # linked phone itself arrives as FromMe and must still count.
@@ -305,13 +323,14 @@ async def hook(request: Request):
         got = await fetch_media(chat, msgid, media)
         got = await describe_media(got, media) if isinstance(got, Path) else got
         text = f"{text}\n{got}" if text else got
+    if not text and msgid and not m.get("ReactionEmoji") and not m.get("Revoked"):
+        # an EMPTY event that isn't a reaction or a revoke is most often an undecrypted placeholder:
+        # wacli's own store gets the plaintext once the retry lands. Fetch it from there.
+        text = await stored_text(chat, msgid)
     if not text:
-        # Reactions arrive as non-text events; wacli's payload shape isn't confirmed
-        # yet — log one so the handler can be wired to the real shape.
-        blob = json.dumps(m)
-        if "eact" in blob:
-            print(f"wa reaction webhook — keys={list(m)} payload={blob[:400]}", flush=True)
         return {"ok": True}
+    if msgid:
+        seen_msgids[msgid] = now
 
     sender_jid = jid_str(m.get("SenderJID"))
     trusted = sender_jid in route.get("trusted_jids", [])
