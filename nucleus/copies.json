@@ -11,14 +11,14 @@
       "builder": "memory/graph/ingest.py::run_ingest",
       "writers": ["memory/graph/ingest.py"],
       "schema": ["memory/graph/schema.sql"],
-      "test_writers": ["memory/graph/test_*.py", "tests/test_memory_ask_tier.py"],
+      "test_writers": ["memory/graph/test_*.py", "tests/test_memory_ask_tier.py", "tests/test_copies*.py"],
       "not_writers": {
         "nucleus/social_age.py": {
           "sha256": "c491da8d5504196bcd1c80399c49d67fd0f5eed3f306e85cd33faa25a499332f",
           "why": "drop_graph/create_graph(%s) on the people graphs it is handed (astryx_social and its owner twin), never 'memory'"
         },
         "tests/test_branch_check_prep.py": {
-          "sha256": "8e38ea6bfe960fdd154181584a95cb9049f192002677c65996cc03905a676a21",
+          "sha256": "5c8508d825146ce94eea2ba27c1737257a4751356747a20e7044a6cd4dd71c4e",
           "why": "creates and writes its own throwaway BcAge probe graph named by a local variable, never 'memory'"
         }
       }

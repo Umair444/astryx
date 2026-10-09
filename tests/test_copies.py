@@ -13,6 +13,10 @@ Arms (RED / GREEN / CONTROL):
   B1 RED      a labelled write whose graph name lives in a VERB-LESS helper → UNCOUNTABLE, in a3's three variants
               (#39401): (1) the helper aliased on import, (2) the importer walked before the helper, (3) a helper
               outside the estate with no AGE word in the caller. CONTROL: prose with the verbs, no label → not listed.
+  S2 RED      the scanner's own prose (copies.py's comments) → not listed; S3 an empty-paren create_graph() mention is
+              not a call (CONTROL), a real create_graph('memory') is a writer.
+  L1 RED      the CHECKED-IN tree under its own copies.json has no undeclared writer: a stale sha pin, an undeclared
+              test writer or a self-listing reads in check.sh, not only in the nightly live check (e55c65f read LOUD).
   B2 RED      a .mjs writer of cypher('memory', … CREATE …) → listed.
   B3 RED      SQL straight to the label tables (DELETE FROM / TRUNCATE / UPDATE / INSERT INTO memory."Concept") → writer.
   B4 RED      DROP SCHEMA memory CASCADE → writer.
@@ -131,6 +135,29 @@ check("W5 …an edit to the pinned file re-raises it LOUD", status(res)[0][0] ==
 found = C.graph_writers("memory", root)
 check("W6 a writer of ANOTHER graph by literal → not listed", "other.py" not in found, repr(found))
 (root / "other.py").unlink()
+
+print("the live tree (S1-live, after e55c65f read LOUD on its own scanner and test):")
+(root / "nucleus").mkdir(exist_ok=True)
+(root / "nucleus" / "copies.py").write_text((REPO / "nucleus" / "copies.py").read_text())
+found = C.graph_writers("memory", root)
+check("S2 the scanner's own prose (MERGE/DELETE/create_graph() in comments) → not listed",
+      "nucleus/copies.py" not in found, repr(found))
+(root / "nucleus" / "copies.py").unlink()
+(root / "ddl_prose.py").write_text("# we call create_graph() and drop_graph() elsewhere\n"
+                                   "Q = \"SELECT * FROM cypher('memory', $$ MATCH (n) RETURN n $$) AS (v agtype)\"\n")
+(root / "ddl_call.py").write_text("def f(cur):\n    cur.execute(\"SELECT create_graph('memory')\")\n")
+found = C.graph_writers("memory", root)
+check("S3 CONTROL an empty-paren create_graph() mention is not a call → not listed", "ddl_prose.py" not in found,
+      repr(found))
+check("S3 a real create_graph('memory') call → writer", found.get("ddl_call.py") == "writer", repr(found))
+(root / "ddl_prose.py").unlink()
+(root / "ddl_call.py").unlink()
+live, err = C.load_declarations()
+mem = [d for d in (live or []) if d.get("name") == "graph:memory"]
+stray = {} if not mem else {r: k for r, k in C.graph_writers("memory", REPO).items()
+                            if not C._excused(r, mem[0], REPO)}
+check("L1 the checked-in tree under its own declarations has no undeclared writer (a stale sha pin reads here)",
+      not err and mem and not stray, repr(err or stray))
 
 print("BC-1 fail-open shapes (a3 #39203):")
 HELPER = ("def cy(cur, q):\n    cur.execute(f\"SELECT * FROM cypher('memory', $$ {q} $$) AS (v agtype)\")\n")

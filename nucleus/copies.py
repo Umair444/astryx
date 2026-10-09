@@ -101,16 +101,16 @@ def copy_digest(file_digest: str, reads: dict) -> str:
 # ── writer counts ──────────────────────────────────────────────────────────────────────────────────────────────
 
 # Cypher write verbs, shaped so SQL's own words don't match: CREATE/MERGE take a pattern `(`, SET/REMOVE take a
-# `var.prop`, DELETE takes a variable (never FROM). `SET search_path`, `UPDATE t SET col =`, `DELETE FROM`, and
+# `var.prop`, a DELETE's operand is a variable (never FROM). `SET search_path`, `UPDATE t SET col =`, `DELETE FROM`, and
 # `CREATE TABLE` are SQL and stay out.
 _CYPHER_WRITE = re.compile(r"\b(?:MERGE|CREATE)\s*\(|\bSET\s+\w+\.\w+\s*\+?=|\bREMOVE\s+\w+\.\w+"
                            r"|\b(?:DETACH\s+)?DELETE\s+(?!FROM\b)[a-z_]\w*\b")
-_GRAPH_DDL = re.compile(r"\b(drop_graph|create_graph)\s*\(")
+_GRAPH_DDL = re.compile(r"\b(drop_graph|create_graph)\s*\(\s*[^)\s]")   # a call has an argument; prose `create_graph()` has none
 # the graph argument of every cypher()/create_graph()/drop_graph() call, as written
 _GRAPH_ARG = re.compile(r"""\b(?:cypher|create_graph|drop_graph)\s*\(\s*([^,)]*)""")
 # a file that touches AGE at all: write verbs with no graph call of their own are uncountable then
 _AGE_TOUCH = re.compile(r"agtype|ag_catalog|\bcypher\b|LOAD\s+'age'", re.I)
-# a Cypher pattern write WITH A LABEL, `MERGE (x:Concept`: the write itself, wherever the graph name lives (a3 #39401
+# a Cypher pattern write WITH A LABEL (MERGE, an open paren, var:Label): the write itself, wherever the graph name lives (a3 #39401
 # B1). Measured on the estate: matches exactly the 7 graph files and 0 prose, so it needs no import tracing.
 _LABELLED_WRITE = re.compile(r"\b(?:MERGE|CREATE)\s*\(\s*\w*\s*:\s*\w")
 
@@ -150,7 +150,7 @@ def graph_writers(graph: str, root: Path = None) -> dict:
                    <graph>.<label>, or DROP SCHEMA <graph> (a3 #39203 B3/B4);
       uncountable  some call's graph can't be resolved (a variable, %s, a runtime hole), or it has write verbs and
                    no graph call of its own while touching AGE (agtype/ag_catalog/cypher/LOAD 'age') or holding a
-                   labelled pattern write (`MERGE (x:Concept`): the verb may reach `graph` through a helper whose
+                   labelled pattern write (MERGE/CREATE of a var:Label pattern): the verb may reach `graph` through a helper whose
                    graph name lives elsewhere (B1), so it is listed, never counted as zero (a3 BC-1, #39401);
       (skipped)    every call names some OTHER graph literally, or it is prose (verbs, no AGE, no label).
     Coarse by design: the grain is the FILE. A file that reads `graph` and writes another graph is listed as a
