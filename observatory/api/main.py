@@ -1248,6 +1248,72 @@ async def network_people(request: Request, min_shared: int = 1):
                       "derived from message senders — silent members are invisible"]}
 
 
+# ---------------------------------------------------------------- people: the owner confirms
+# memory guesses who people are to the owner (pid-keyed, counts-only evidence) in its PRIVATE scratch,
+# never on the wire (local.md: family data is personal tier) and never in a DB table every superuser
+# agent can read until the people_cleared role lands (plan-4918 1a). The owner answers HERE: the name is
+# resolved owner-side from the graph, the answer appended beside the asks, and memory is told only a COUNT.
+_PEOPLE_DIR = Path(os.environ.get("ASTRYX_PEOPLE_DIR") or REPO / "homes" / "memory" / ".people")  # override: oracles
+PEOPLE_KINDS = ["family", "partner", "close friend", "friend", "colleague", "collaborator",
+                "classmate", "acquaintance", "community", "other"]
+PEOPLE_CLOSENESS = ["inner", "close", "regular", "distant"]
+
+
+def _jsonl(path: Path) -> list[dict]:
+    try:
+        return [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+@app.get("/api/people/asks")
+async def people_asks(request: Request):
+    if not is_owner(request):
+        return Response(status_code=403)
+    asks = _jsonl(_PEOPLE_DIR / "asks.jsonl")
+    done = {a.get("pid") for a in _jsonl(_PEOPLE_DIR / "answers.jsonl")}
+    open_asks = [a for a in asks if a.get("pid") and a["pid"] not in done]
+    labels = {r["id"]: r["label"] for r in await pool.fetch(
+        "SELECT id, label FROM social_person WHERE id = ANY($1::text[])", [a["pid"] for a in open_asks])}
+    return {"kinds": PEOPLE_KINDS, "closeness": PEOPLE_CLOSENESS, "answered": len(done),
+            "asks": [{"pid": a["pid"], "label": labels.get(a["pid"]) or "someone (no saved name)",
+                      "kind": a.get("candidate_kind"), "closeness": a.get("closeness"),
+                      "confidence": a.get("confidence"), "evidence": a.get("evidence_summary") or {}}
+                     for a in open_asks]}
+
+
+class PeopleAnswer(BaseModel):
+    pid: str
+    kind: str | None = None
+    closeness: str | None = None
+    skip: bool = False
+
+
+@app.post("/api/people/answers")
+async def people_answer(body: PeopleAnswer, request: Request):
+    if not is_owner(request):
+        return Response(status_code=403)
+    asked = {a.get("pid") for a in _jsonl(_PEOPLE_DIR / "asks.jsonl")}
+    if body.pid not in asked:
+        return Response("not an open ask", status_code=404)
+    if not body.skip and (body.kind not in PEOPLE_KINDS or body.closeness not in PEOPLE_CLOSENESS):
+        return Response("kind/closeness must be one of the offered values", status_code=400)
+    row = {"pid": body.pid, "kind": None if body.skip else body.kind,
+           "closeness": None if body.skip else body.closeness, "skipped": body.skip,
+           "answered_at": datetime.now(timezone.utc).isoformat()}
+    f = _PEOPLE_DIR / "answers.jsonl"
+    fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(fd, "a") as out:
+        out.write(json.dumps(row) + "\n")
+    n = len(_jsonl(f))
+    await pool.execute(
+        "INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES "
+        "('owner', 'memory', 't-memory-people', 'receipt', $1)",
+        f"owner answered a people ask in the observatory — answers.jsonl now has {n} line(s). "
+        f"(Counts only on the wire; the answers are in your private scratch.)")
+    return {"ok": True, "answered": n}
+
+
 class CypherQ(BaseModel):
     query: str
 

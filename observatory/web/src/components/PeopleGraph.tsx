@@ -1,3 +1,4 @@
+import PeopleConfirm from './PeopleConfirm'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader } from '@mantine/core'
 import { api, apiPost } from '../api'
@@ -26,6 +27,7 @@ type PGraph = { orgs: string[]; nodes: PNode[]; edges: PEdge[];
 const GOLDEN = Math.PI * (3 - Math.sqrt(5))
 
 export default function PeopleGraph() {
+  const [confirming, setConfirming] = useState(false)
   const [g, setG] = useState<PGraph | null>(null)
   const [err, setErr] = useState('')
   const [minW, setMinW] = useState(2)          // knows-edge threshold; storage keeps all
@@ -126,6 +128,10 @@ export default function PeopleGraph() {
         <span>{g.stats.people} people</span>
         <span>{g.stats.knows} relations</span>
         <span>{g.stats.orgs} org{g.stats.orgs === 1 ? '' : 's'} on the network</span>
+        <button onClick={() => setConfirming((c) => !c)}
+          className={`px-2.5 py-[3px] rounded-md border font-sans text-[11px] ${confirming ? 'border-cyan bg-cyan/15 text-ink' : 'border-line text-ink-dim hover:text-ink'}`}>
+          ✓ confirm your people
+        </button>
         <label className="flex items-center gap-1.5">
           shared contexts ≥
           <input type="range" min={1} max={6} value={minW}
@@ -141,6 +147,7 @@ export default function PeopleGraph() {
       </div>
 
       <div className="flex-1 flex min-h-0">
+        {confirming && <PeopleConfirm onClose={() => setConfirming(false)} />}
         <svg ref={svgRef} viewBox="-700 -540 1400 1080" preserveAspectRatio="xMidYMid meet"
           className="flex-1 starfield cursor-grab active:cursor-grabbing touch-none"
           onMouseDown={(e) => { drag.current = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y } }}
