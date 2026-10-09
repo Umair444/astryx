@@ -53,6 +53,18 @@ def main():
                             ("a relative link", str(binp / "astryx-rel")), ("a chain of links", str(t / "chain"))):
             out, err = where(zero, elsewhere)
             check(f"invoked via {label} from another directory → runs in the repo", out == str(repo), f"{out} {err}")
+    with tempfile.TemporaryDirectory() as td:                              # a2 #39682: a CYCLE fails loud, never hangs
+        t = Path(td)
+        os.symlink(str(t / "loopB"), t / "loopA")
+        os.symlink(str(t / "loopA"), t / "loopB")
+        try:
+            r = subprocess.run(["bash", "-c", m.group(0) + "\npwd -P\n", str(t / "loopA")], cwd=t, capture_output=True,
+                               text=True, timeout=10)
+            rc, err = r.returncode, r.stderr
+        except subprocess.TimeoutExpired:
+            rc, err = "TIMEOUT (hangs)", ""
+        check("a link CYCLE exits 1 naming the loop, within seconds (never a silent hang)",
+              rc == 1 and "init.sh: link loop at" in err, f"rc={rc} {err[-120:]}")
     print(f"\n{'FAIL' if fails else 'PASS'}: init start directory ({len(fails)} failing)")
     return 1 if fails else 0
 

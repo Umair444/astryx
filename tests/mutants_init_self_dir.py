@@ -17,5 +17,7 @@ MUTANTS = {
         ('  case "$_t" in /*) _self="$_t" ;; *) _self="$(dirname "$_self")/$_t" ;; esac\ndone',
          '  case "$_t" in /*) _self="$_t" ;; *) _self="$(dirname "$_self")/$_t" ;; esac; break\ndone'),
     "D4 the old start directory comes back after the block (a later cd undoes the resolution)":
-        ('unset _self _t\n# <<< self dir', 'unset _self _t\n# <<< self dir\ncd "$(dirname "$0")"'),
+        ('unset _self _t _hops\n# <<< self dir', 'unset _self _t _hops\n# <<< self dir\ncd "$(dirname "$0")"'),
+    "D5 no hop cap (a link cycle hangs init.sh's first act forever, silently: a2 #39682)":
+        ('  [ "$_hops" -le 40 ] || { echo "init.sh: link loop at $0" >&2; exit 1; }\n', ''),
 }

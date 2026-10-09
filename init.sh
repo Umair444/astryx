@@ -7,13 +7,15 @@ set -euo pipefail
 # Start in the REPO however this was invoked. Through the PATH link (~/.local/bin/astryx → <repo>/init.sh), $0 is the
 # LINK, so `cd "$(dirname "$0")"` landed in ~/.local/bin and every `astryx <verb>` ran outside the repo (a2 #39198).
 # Resolve link chains in plain POSIX (older macOS readlink has no -f): a relative target is relative to its link's dir.
-_self="$0"
+_self="$0"; _hops=0
 while [ -L "$_self" ]; do
+  _hops=$((_hops + 1))      # a CYCLE would spin forever, silently: cap at the kernel's ELOOP limit (a2 #39682)
+  [ "$_hops" -le 40 ] || { echo "init.sh: link loop at $0" >&2; exit 1; }
   _t=$(readlink "$_self")
   case "$_t" in /*) _self="$_t" ;; *) _self="$(dirname "$_self")/$_t" ;; esac
 done
 cd "$(dirname "$_self")"
-unset _self _t
+unset _self _t _hops
 # <<< self dir
 
 say() { echo -e "\033[36m[astryx]\033[0m $*"; }
