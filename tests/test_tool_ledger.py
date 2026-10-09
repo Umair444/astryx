@@ -378,6 +378,7 @@ finally:
                 shutil.rmtree(r, ignore_errors=True)
 
 if fails:
-    print(f"\nFAIL: {len(fails)} tool-ledger invariant(s) broken")
+    # the arm names ride the LAST line: a reader that keeps only `tail -1` must still learn WHICH broke (seed #38800)
+    print(f"\nFAIL: {len(fails)} tool-ledger invariant(s) broken: " + "; ".join(f[:80] for f in fails))
     sys.exit(1)
 print("\nPASS: the tool ledger stamps ids and nothing else; authorship is ledger-derived")
