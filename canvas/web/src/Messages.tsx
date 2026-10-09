@@ -91,6 +91,12 @@ function FileChip({ msgId, n, path }: { msgId: number; n: number; path: string }
   if (/\.(png|jpe?g|gif|webp|svg)$/i.test(name)) {
     return <a href={url} target="_blank" rel="noreferrer"><img src={url} alt={name} className="mt-2 max-h-80 rounded-2xl border border-line" /></a>
   }
+  // a recorded voice note is cv-<ts>-voice.webm (bridges/canvas.py transcribe → media_path): sound only. Any other
+  // webm, and every mp4/mov, is a video — it needs a picture, and seeking (FileResponse serves 206).
+  const voice = /(^|[-_])voice\.[a-z0-9]+$/i.test(name)
+  if (!voice && /\.(mp4|m4v|mov|webm)$/i.test(name)) {
+    return <video controls playsInline preload="metadata" src={url} className="mt-2 max-h-96 w-full max-w-xl rounded-2xl border border-line bg-black" />
+  }
   if (/\.(mp3|ogg|wav|m4a|webm)$/i.test(name)) return <audio controls src={url} className="mt-2 w-full max-w-sm" />
   return (
     <a href={url} download={name} className="mt-2 inline-flex items-center gap-2 text-sm bg-fg/[.06] hover:bg-fg/[.1] border border-line rounded-xl px-3 py-2">
