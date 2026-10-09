@@ -1,7 +1,8 @@
 // A small live store: the server pushes (SSE), the store folds, components subscribe.
 import { useSyncExternalStore } from 'react'
 import { BASE, get } from './api'
-import type { Agent, Canvas, Me, Msg, Thread } from './types'
+import type { Agent, Canvas, Me, Msg, Presence, Thread } from './types'
+import { applyTheme, initialTheme, type Theme } from './themes'
 
 export interface Progress { agent: string; line: string; at: number }
 
@@ -13,9 +14,13 @@ interface State {
   messages: Record<string, Msg[]>
   progress: Record<string, Progress | null>
   online: boolean
+  theme: Theme
+  presence: Record<string, Presence>
+  bubble: Record<string, { line: string; at: number }>
 }
 
-let state: State = { me: null, agents: [], threads: [], canvases: [], messages: {}, progress: {}, online: false }
+let state: State = { me: null, agents: [], threads: [], canvases: [], messages: {}, progress: {}, online: false, theme: initialTheme(), presence: {}, bubble: {} }
+applyTheme(state.theme)
 const subs = new Set<() => void>()
 
 export function set(patch: Partial<State> | ((s: State) => Partial<State>)) {
@@ -100,7 +105,25 @@ export function connect() {
       case 'canvas_data':
         canvasBus.forEach(f => f(e))
         break
+      case 'presence': {
+        const { type: _t, ...p } = e
+        set(s => ({ presence: { ...s.presence, [p.agent]: p as Presence } }))
+        break
+      }
+      case 'presence_step':
+        set(s => ({ bubble: { ...s.bubble, [e.agent]: { line: e.line, at: Date.now() } } }))
+        break
     }
   }
 }
 export function disconnect() { es?.close(); es = null }
+
+export function setTheme(th: Theme) {
+  applyTheme(th)
+  set({ theme: th })
+}
+
+export async function loadPresence(surface: string) {
+  const rows = await get<Presence[]>(`/presence?surface=${encodeURIComponent(surface)}`)
+  set(s => ({ presence: { ...s.presence, ...Object.fromEntries(rows.map(r => [r.agent, r])) } }))
+}

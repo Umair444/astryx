@@ -2,26 +2,18 @@ import { useState } from 'react'
 import { motion } from 'motion/react'
 import { post } from './api'
 import { go } from './nav'
-import { set, useStore } from './store'
-import type { Route, Thread } from './types'
+import { useStore } from './store'
+import type { Route } from './types'
 import { Avatar, I, ago } from './ui'
 import { NewCanvasDialog } from './NewCanvasDialog'
-import { AgentPicker } from './AgentPicker'
+import { ThemePicker } from './ThemePicker'
 
 export function Sidebar({ route, onVoice }: { route: Route; onVoice: () => void }) {
   const me = useStore(s => s.me)!
   const threads = useStore(s => s.threads)
   const canvases = useStore(s => s.canvases)
   const online = useStore(s => s.online)
-  const [picking, setPicking] = useState(false)
   const [newCanvas, setNewCanvas] = useState(false)
-
-  async function startChat(agent: string) {
-    setPicking(false)
-    const r = await post<{ thread: string; agent: string }>('/threads', { agent })
-    set(s => ({ threads: [{ thread: r.thread, agent: r.agent, title: null, updated_at: new Date().toISOString(), last: '' } as Thread, ...s.threads] }))
-    go(`/chat/${encodeURIComponent(r.thread)}`)
-  }
 
   async function logout() {
     await post('/logout').catch(() => {})
@@ -36,14 +28,14 @@ export function Sidebar({ route, onVoice }: { route: Route; onVoice: () => void 
           <div className="w-8 h-8 rounded-[11px] sig ring-sig group-hover:scale-105 transition" />
           <span className="font-serif text-[26px] leading-none tracking-tight">canvas</span>
         </button>
-        <span title={online ? 'live' : 'reconnecting'} className={`ml-auto w-2 h-2 rounded-full ${online ? 'bg-good shadow-[0_0_10px_#34d399]' : 'bg-warn animate-pulse'}`} />
+        <span title={online ? 'live' : 'reconnecting'} className={`ml-auto w-2 h-2 rounded-full ${online ? 'bg-good shadow-[0_0_10px_var(--t-good)]' : 'bg-warn animate-pulse'}`} />
       </div>
 
       <div className="px-3 grid grid-cols-2 gap-2">
-        <button onClick={() => setPicking(true)} className="flex items-center justify-center gap-2 rounded-xl py-2.5 bg-white/[.06] hover:bg-white/[.1] border border-line transition text-sm font-medium">
+        <button onClick={() => go('/new')} className="flex items-center justify-center gap-2 rounded-xl py-2.5 bg-fg/[.06] hover:bg-fg/[.1] border border-line transition text-sm font-medium">
           {I.chat()} New chat
         </button>
-        <button onClick={() => setNewCanvas(true)} className="flex items-center justify-center gap-2 rounded-xl py-2.5 sig text-white hover:brightness-110 transition text-sm font-medium">
+        <button onClick={() => setNewCanvas(true)} className="flex items-center justify-center gap-2 rounded-xl py-2.5 sig hover:brightness-110 transition text-sm font-medium">
           {I.canvas()} Canvas
         </button>
       </div>
@@ -55,8 +47,8 @@ export function Sidebar({ route, onVoice }: { route: Route; onVoice: () => void 
         {canvases.length > 0 && <Section label="Canvases" />}
         {canvases.map(c => (
           <motion.button layout key={c.id} onClick={() => go(`/canvas/${c.id}`)}
-            className={`w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-xl transition ${route.view === 'canvas' && route.id === c.id ? 'bg-white/[.08]' : 'hover:bg-white/[.04]'}`}>
-            <span className={`w-6 h-6 rounded-lg grid place-items-center ${c.version ? 'bg-gradient-to-br from-violet/40 to-cyan/30' : 'bg-white/[.06]'}`}>{I.canvas('w-3.5 h-3.5')}</span>
+            className={`w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-xl transition ${route.view === 'canvas' && route.id === c.id ? 'bg-fg/[.08]' : 'hover:bg-fg/[.04]'}`}>
+            <span className={`w-6 h-6 rounded-lg grid place-items-center ${c.version ? 'bg-gradient-to-br from-violet/40 to-cyan/30' : 'bg-fg/[.06]'}`}>{I.canvas('w-3.5 h-3.5')}</span>
             <span className="flex-1 min-w-0 truncate text-[14px]">{c.title}</span>
             {c.tier === 'personal' && <span className="text-[10px] text-warn/80">●</span>}
             <span className="text-[11px] text-fg-mute">v{c.version}</span>
@@ -67,7 +59,7 @@ export function Sidebar({ route, onVoice }: { route: Route; onVoice: () => void 
         {threads.length === 0 && <p className="px-3 text-sm text-fg-mute">No conversations yet.</p>}
         {threads.map(t => (
           <motion.button layout key={t.thread} onClick={() => go(`/chat/${encodeURIComponent(t.thread)}`)}
-            className={`w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-xl transition ${active(t.thread) ? 'bg-white/[.08]' : 'hover:bg-white/[.04]'}`}>
+            className={`w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-xl transition ${active(t.thread) ? 'bg-fg/[.08]' : 'hover:bg-fg/[.04]'}`}>
             <Avatar name={t.agent} size={24} />
             <span className="flex-1 min-w-0">
               <span className="block truncate text-[14px]">{t.title || `New chat with ${t.agent}`}</span>
@@ -83,11 +75,11 @@ export function Sidebar({ route, onVoice }: { route: Route; onVoice: () => void 
           <div className="text-sm font-medium truncate">{me.owner ? 'Owner' : me.name}</div>
           <div className="text-[11px] text-fg-mute">{me.owner ? 'full access' : `${me.agents.length} agent${me.agents.length === 1 ? '' : 's'}`}</div>
         </div>
-        {me.owner && <button title="People" onClick={() => go('/people')} className="p-2 rounded-lg hover:bg-white/[.06] text-fg-dim">{I.people()}</button>}
-        <button title="Sign out" onClick={logout} className="p-2 rounded-lg hover:bg-white/[.06] text-fg-dim">{I.logout()}</button>
+        <ThemePicker compact />
+        {me.owner && <button title="People" onClick={() => go('/people')} className="p-2 rounded-lg hover:bg-fg/[.06] text-fg-dim">{I.people()}</button>}
+        <button title="Sign out" onClick={logout} className="p-2 rounded-lg hover:bg-fg/[.06] text-fg-dim">{I.logout()}</button>
       </div>
 
-      {picking && <AgentPicker onPick={startChat} onClose={() => setPicking(false)} />}
       {newCanvas && <NewCanvasDialog onClose={() => setNewCanvas(false)} />}
     </aside>
   )

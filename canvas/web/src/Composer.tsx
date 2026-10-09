@@ -5,12 +5,13 @@ import { I } from './ui'
 
 interface Att { name: string; line: string }
 
-export function Composer({ onSend, placeholder = 'Message…', onVoice, big, disabled }: {
+export function Composer({ onSend, placeholder = 'Message…', onVoice, big, disabled, autoFocus }: {
   onSend: (text: string, attachments: string[]) => Promise<void> | void
   placeholder?: string
   onVoice?: () => void
   big?: boolean
   disabled?: boolean
+  autoFocus?: boolean
 }) {
   const [text, setText] = useState('')
   const [atts, setAtts] = useState<Att[]>([])
@@ -83,7 +84,7 @@ export function Composer({ onSend, placeholder = 'Message…', onVoice, big, dis
         {atts.length > 0 && (
           <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="flex flex-wrap gap-1.5 px-1.5 pb-2 overflow-hidden">
             {atts.map((a, i) => (
-              <span key={i} className="flex items-center gap-1.5 text-xs bg-white/[.07] rounded-lg pl-2.5 pr-1 py-1">
+              <span key={i} className="flex items-center gap-1.5 text-xs bg-fg/[.07] rounded-lg pl-2.5 pr-1 py-1">
                 {I.clip('w-3 h-3')} {a.name}
                 <button onClick={() => setAtts(x => x.filter((_, j) => j !== i))} className="p-0.5 hover:text-bad">{I.x('w-3 h-3')}</button>
               </span>
@@ -92,7 +93,7 @@ export function Composer({ onSend, placeholder = 'Message…', onVoice, big, dis
         )}
       </AnimatePresence>
       <textarea
-        ref={ta} rows={1} value={text} disabled={disabled}
+        ref={ta} rows={1} value={text} disabled={disabled} autoFocus={autoFocus}
         onChange={e => setText(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send() } }}
         placeholder={transcribing ? 'Transcribing…' : rec ? 'Listening… click the mic to stop' : placeholder}
@@ -106,7 +107,7 @@ export function Composer({ onSend, placeholder = 'Message…', onVoice, big, dis
         </Btn>
         {onVoice && <Btn title="Voice conversation" onClick={onVoice}>{I.wave()}</Btn>}
         <button onClick={send} disabled={(!text.trim() && !atts.length) || !!uploading || disabled}
-          className="ml-auto w-9 h-9 rounded-xl sig grid place-items-center text-white disabled:opacity-30 disabled:grayscale hover:brightness-110 active:scale-95 transition">
+          className="ml-auto w-9 h-9 rounded-xl sig grid place-items-center disabled:opacity-30 disabled:grayscale hover:brightness-110 active:scale-95 transition">
           {I.send()}
         </button>
       </div>
@@ -117,7 +118,7 @@ export function Composer({ onSend, placeholder = 'Message…', onVoice, big, dis
 function Btn({ children, onClick, title, on }: { children: React.ReactNode; onClick: () => void; title: string; on?: boolean }) {
   return (
     <button title={title} onClick={onClick}
-      className={`w-9 h-9 rounded-xl grid place-items-center transition ${on ? 'bg-bad/15 text-bad' : 'text-fg-dim hover:text-fg hover:bg-white/[.06]'}`}>
+      className={`w-9 h-9 rounded-xl grid place-items-center transition ${on ? 'bg-bad/15 text-bad' : 'text-fg-dim hover:text-fg hover:bg-fg/[.06]'}`}>
       {children}
     </button>
   )

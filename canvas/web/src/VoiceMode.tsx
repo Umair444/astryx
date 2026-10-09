@@ -144,11 +144,11 @@ export function VoiceMode({ thread: initial, onClose }: { thread?: string; onClo
     starting: 'Waking the microphone…', listening: 'Listening', hearing: 'Hearing you…', transcribing: 'Catching that…',
     thinking: `${agent} is thinking`, speaking: agent, error: 'Voice unavailable',
   }
-  const hue = phase === 'speaking' ? '#38d9f5' : phase === 'thinking' || phase === 'transcribing' ? '#c4b5fd' : '#8b7bff'
+  const hue = phase === 'speaking' ? 'var(--t-accent2)' : 'var(--t-accent)'
   const scale = 1 + (phase === 'hearing' || phase === 'listening' ? level * 0.55 : 0)
 
   return (
-    <motion.div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#05060f]/95 backdrop-blur-xl"
+    <motion.div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-void/95 backdrop-blur-xl"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <button onClick={onClose} className="absolute top-5 right-5 p-3 rounded-2xl glass text-fg-dim hover:text-fg">{I.x('w-5 h-5')}</button>
       <div className="absolute top-6 left-6 flex items-center gap-2.5 text-sm text-fg-dim"><Avatar name={agent} size={28} /> {agent}</div>
@@ -164,8 +164,8 @@ export function VoiceMode({ thread: initial, onClose }: { thread?: string; onClo
           animate={{ scale: phase === 'speaking' ? [1, 1.08, 0.98, 1.05, 1] : scale }}
           transition={phase === 'speaking' ? { duration: 1.6, repeat: Infinity } : { type: 'spring', damping: 12, stiffness: 160 }}
           style={{
-            background: `radial-gradient(circle at 35% 30%, #ffffff55, transparent 40%), conic-gradient(from 0deg, #8b7bff, #38d9f5, #a78bfa, #22d3ee, #8b7bff)`,
-            boxShadow: `0 0 90px 10px ${hue}55, inset 0 0 40px #ffffff22`,
+            background: `radial-gradient(circle at 35% 30%, #ffffff55, transparent 40%), conic-gradient(from 0deg, var(--t-accent), var(--t-accent2), var(--t-accent), var(--t-accent2), var(--t-accent))`,
+            boxShadow: `0 0 90px 10px color-mix(in srgb, ${hue} 35%, transparent), inset 0 0 40px #ffffff22`,
             filter: phase === 'thinking' || phase === 'transcribing' ? 'saturate(.7) brightness(.9)' : 'none',
           }} />
       </div>

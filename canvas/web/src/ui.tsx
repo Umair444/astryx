@@ -1,5 +1,6 @@
 // Small shared pieces: avatar, markdown, icons, time.
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
+import { BASE } from './api'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 
@@ -19,22 +20,38 @@ function hue(name: string) {
   return h
 }
 
+const noAvatar = new Set<string>()
+
 export function Avatar({ name, size = 32, alive }: { name: string; size?: number; alive?: boolean }) {
   const h = hue(name)
   const human = name === 'owner' || name.startsWith('cv-') || name === 'you'
+  const page = name.startsWith('canvas-')
+  const [failed, setFailed] = useState(noAvatar.has(name))
+  if (!human && !page && !failed) {
+    return (
+      <div className="relative shrink-0" style={{ width: size, height: size }}>
+        <img src={`${BASE}api/avatar/${encodeURIComponent(name)}`} alt={name} width={size} height={size} draggable={false}
+          className="w-full h-full rounded-full object-cover select-none" style={{ boxShadow: `0 0 0 1px var(--t-line2)` }}
+          onError={() => { noAvatar.add(name); setFailed(true) }} />
+        {alive !== undefined && (
+          <span className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-ink-900 ${alive ? 'bg-good' : 'bg-fg-mute'}`} />
+        )}
+      </div>
+    )
+  }
   return (
     <div className="relative shrink-0" style={{ width: size, height: size }}>
       <div
-        className="w-full h-full rounded-full grid place-items-center font-semibold text-white/95"
+        className={`w-full h-full rounded-full grid place-items-center font-semibold ${human ? 'text-fg' : 'text-white'}`}
         style={{
           fontSize: size * 0.4,
           background: human
-            ? 'linear-gradient(135deg,#2a3158,#1a1f3d)'
+            ? 'linear-gradient(135deg, var(--t-line2), var(--t-panel2))'
             : `conic-gradient(from ${h}deg, hsl(${h} 80% 62%), hsl(${(h + 70) % 360} 85% 58%), hsl(${(h + 140) % 360} 75% 60%), hsl(${h} 80% 62%))`,
-          boxShadow: human ? 'inset 0 0 0 1px rgba(255,255,255,.1)' : `0 0 18px -4px hsl(${h} 80% 60% / .55)`,
+          boxShadow: human ? 'inset 0 0 0 1px var(--t-line2)' : `0 0 18px -4px hsl(${h} 80% 60% / .55)`,
         }}
       >
-        <span style={{ textShadow: '0 1px 2px rgba(0,0,0,.35)' }}>{(human ? 'U' : name[0] ?? '?').toUpperCase()}</span>
+        <span style={{ textShadow: human ? 'none' : '0 1px 2px rgba(0,0,0,.35)' }}>{(human ? 'U' : name[0] ?? '?').toUpperCase()}</span>
       </div>
       {alive !== undefined && (
         <span className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-ink-900 ${alive ? 'bg-good' : 'bg-fg-mute'}`} />

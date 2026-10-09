@@ -37,10 +37,10 @@ export function NewCanvasDialog({ onClose, seed }: { onClose: () => void; seed?:
       <p className="text-fg-dim text-sm -mt-1 mb-5">Describe what you want to see. An agent paints it live — you'll watch it appear, then click and ask for changes.</p>
       <label className="block text-xs uppercase tracking-wider text-fg-mute mb-1.5">Name</label>
       <input autoFocus value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Org pulse"
-        className="w-full bg-white/[.04] border border-line rounded-xl px-3.5 py-2.5 outline-none focus:border-violet/50 mb-4" />
+        className="w-full bg-fg/[.04] border border-line rounded-xl px-3.5 py-2.5 outline-none focus:border-violet/50 mb-4" />
       <label className="block text-xs uppercase tracking-wider text-fg-mute mb-1.5">What should it show?</label>
       <textarea value={brief} onChange={e => setBrief(e.target.value)} rows={4} placeholder="The question it answers, the data, how it should feel…"
-        className="w-full bg-white/[.04] border border-line rounded-xl px-3.5 py-2.5 outline-none focus:border-violet/50 resize-none" />
+        className="w-full bg-fg/[.04] border border-line rounded-xl px-3.5 py-2.5 outline-none focus:border-violet/50 resize-none" />
       {!brief && (
         <div className="flex flex-wrap gap-2 mt-2">
           {IDEAS.map(([t, b]) => (
@@ -59,10 +59,10 @@ export function NewCanvasDialog({ onClose, seed }: { onClose: () => void; seed?:
         </div>
         <div>
           <label className="block text-xs uppercase tracking-wider text-fg-mute mb-1.5">Tier</label>
-          <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-white/[.04] border border-line">
+          <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-fg/[.04] border border-line">
             {(['org', 'personal'] as const).map(t => (
               <button key={t} onClick={() => setTier(t)}
-                className={`py-1.5 rounded-lg text-sm transition ${tier === t ? 'bg-white/[.1] text-fg' : 'text-fg-dim'}`}>{t}</button>
+                className={`py-1.5 rounded-lg text-sm transition ${tier === t ? 'bg-fg/[.1] text-fg' : 'text-fg-dim'}`}>{t}</button>
             ))}
           </div>
         </div>
@@ -70,7 +70,7 @@ export function NewCanvasDialog({ onClose, seed }: { onClose: () => void; seed?:
       {tier === 'personal' && <p className="text-[12px] text-warn/80 mt-2">Personal canvases are never shared with anyone.</p>}
       {err && <p className="text-bad text-sm mt-3">{err}</p>}
       <button onClick={create} disabled={busy}
-        className="w-full mt-5 sig rounded-2xl py-3 font-medium text-white disabled:opacity-60 hover:brightness-110 transition">
+        className="w-full mt-5 sig rounded-2xl py-3 font-medium disabled:opacity-60 hover:brightness-110 transition">
         {busy ? 'Handing the brush…' : 'Start painting'}
       </button>
     </Modal>

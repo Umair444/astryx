@@ -41,7 +41,7 @@ export function Login({ onIn }: { onIn: (m: Me) => void }) {
           className="w-full glass rounded-2xl px-4 py-3.5 outline-none focus:border-violet/60 transition placeholder:text-fg-mute"
         />
         {err && <p className="text-bad text-sm mt-3">{err}</p>}
-        <button disabled={busy} className="w-full mt-4 sig rounded-2xl py-3.5 font-medium text-white disabled:opacity-60 hover:brightness-110 transition">
+        <button disabled={busy} className="w-full mt-4 sig rounded-2xl py-3.5 font-medium disabled:opacity-60 hover:brightness-110 transition">
           {busy ? 'Opening…' : 'Enter'}
         </button>
       </motion.form>

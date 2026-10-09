@@ -41,6 +41,7 @@ export interface Canvas {
   user: string
   tier: 'org' | 'personal'
   shared_with: string[]
+  crew?: string[]
   version: number
   brief: string | null
   updated_at: string
@@ -49,8 +50,17 @@ export interface Canvas {
   versions?: { version: number; author: string; note: string | null; ts: string }[]
 }
 
+export interface Presence {
+  agent: string
+  surface: string | null
+  target: string | null
+  say: string | null
+  state: 'idle' | 'moving' | 'working' | 'done'
+  updated_at: string
+}
+
 export type Route =
-  | { view: 'home' }
+  | { view: 'home'; agent?: string; fresh?: number }
   | { view: 'chat'; thread: string }
   | { view: 'canvas'; id: number }
   | { view: 'people' }

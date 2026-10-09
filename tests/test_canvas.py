@@ -43,7 +43,7 @@ def pure():
     arm("an external script is named in the notes (the CSP will block it)", any("EXTERNAL" in n for n in notes), notes)
     arm("publish writers: the canvas's agent, painter, seed, owner — not a stranger",
         cv.may_write("forge", "forge") and cv.may_write("forge", "painter") and not cv.may_write("forge", "scout"))
-    html = render({"id": 7, "title": "T</script>", "version": 3}, '<script src="/kit/chart.umd.min.js"></script>',
+    html = render(7, "T</script>", 3, '<script src="/kit/chart.umd.min.js"></script>',
                   "https://h.example/canvas/kit/")
     arm("the shell's CSP forbids every network call", "connect-src &#x27;none&#x27;" in html)
     arm("/kit/ refs are rewritten to the real (prefixed) kit", 'src="https://h.example/canvas/kit/chart.umd.min.js"' in html)

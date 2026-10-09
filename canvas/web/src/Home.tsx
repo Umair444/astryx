@@ -5,6 +5,7 @@ import { go } from './nav'
 import { addMessage, refreshLists, useStore } from './store'
 import type { Msg } from './types'
 import { Composer } from './Composer'
+import { AgentSwitcher } from './AgentSwitcher'
 import { NewCanvasDialog } from './NewCanvasDialog'
 import { Avatar, I, ago } from './ui'
 
@@ -13,13 +14,13 @@ function greeting() {
   return h < 5 ? 'Still up' : h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : h < 22 ? 'Good evening' : 'Good night'
 }
 
-export function Home({ onVoice }: { onVoice: () => void }) {
+export function Home({ onVoice, agent: preset }: { onVoice: () => void; agent?: string }) {
   const me = useStore(s => s.me)!
   const canvases = useStore(s => s.canvases)
   const agents = useStore(s => s.agents)
   const [canvasSeed, setCanvasSeed] = useState<string | null>(null)
   const [err, setErr] = useState('')
-  const home = me.owner ? me.home : me.agents[0]
+  const [home, setHome] = useState(preset || (me.owner ? me.home : me.agents[0]) || '')
   const awake = agents.filter(a => a.alive).length
 
   async function send(text: string, attachments: string[]) {
@@ -38,7 +39,7 @@ export function Home({ onVoice }: { onVoice: () => void }) {
       <div className="max-w-3xl mx-auto px-5 md:px-8 pt-[12vh] pb-16">
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, ease: [0.2, 0.8, 0.2, 1] }}>
           <div className="flex items-center gap-2 text-sm text-fg-mute mb-4">
-            <span className="w-1.5 h-1.5 rounded-full bg-good shadow-[0_0_8px_#34d399]" />
+            <span className="w-1.5 h-1.5 rounded-full bg-good shadow-[0_0_8px_var(--t-good)]" />
             {awake} of {agents.length} agents awake
           </div>
           <h1 className="font-serif text-[clamp(44px,7vw,72px)] leading-[.95] tracking-tight">
@@ -49,7 +50,13 @@ export function Home({ onVoice }: { onVoice: () => void }) {
 
         <motion.div className="mt-9" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.12, duration: 0.5 }}>
           {home ? (
-            <Composer big onSend={send} onVoice={onVoice} placeholder={`Ask ${home} anything…`} />
+            <>
+              <div className="flex items-center gap-2 mb-2.5 text-sm text-fg-mute">
+                <span>To</span><AgentSwitcher value={home} onChange={setHome} />
+                <span className="hidden sm:inline truncate">{agents.find(a => a.name === home)?.blurb}</span>
+              </div>
+              <Composer big onSend={send} onVoice={onVoice} placeholder={`Ask ${home} anything…`} autoFocus />
+            </>
           ) : (
             <p className="text-fg-dim">You don't have access to any agents yet — ask the owner to grant you one.</p>
           )}
@@ -72,8 +79,8 @@ export function Home({ onVoice }: { onVoice: () => void }) {
                   className="text-left rounded-2xl overflow-hidden border border-line hover:border-violet/40 transition group bg-ink-800/60">
                   <div className="h-28 easel relative overflow-hidden">
                     <div className="absolute inset-0 opacity-60 group-hover:opacity-90 transition"
-                      style={{ background: `radial-gradient(260px 120px at ${20 + (c.id * 37) % 60}% 40%, rgba(139,123,255,.35), transparent 70%), radial-gradient(200px 100px at ${70 - (c.id * 23) % 40}% 80%, rgba(56,217,245,.3), transparent 70%)` }} />
-                    <span className="absolute top-3 right-3 text-[11px] px-2 py-0.5 rounded-full bg-black/40 text-fg-dim">{c.version ? `v${c.version}` : 'painting…'}</span>
+                      style={{ background: `radial-gradient(260px 120px at ${20 + (c.id * 37) % 60}% 40%, color-mix(in srgb, var(--t-accent) 38%, transparent), transparent 70%), radial-gradient(200px 100px at ${70 - (c.id * 23) % 40}% 80%, color-mix(in srgb, var(--t-accent2) 32%, transparent), transparent 70%)` }} />
+                    <span className="absolute top-3 right-3 text-[11px] px-2 py-0.5 rounded-full solid text-fg-dim">{c.version ? `v${c.version}` : 'painting…'}</span>
                   </div>
                   <div className="px-4 py-3 flex items-center gap-3">
                     <Avatar name={c.agent} size={22} />

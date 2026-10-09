@@ -9,8 +9,9 @@ import { Home } from './Home'
 import { ChatView } from './ChatView'
 import { CanvasView } from './CanvasView'
 import { People } from './People'
-import { VoiceMode } from './VoiceMode'
+import { VoiceDock, openVoice } from './VoiceDock'
 import { I } from './ui'
+import { useThemeKeys } from './ThemePicker'
 
 function parse(hash: string): Route {
   const h = hash.replace(/^#\/?/, '')
@@ -18,6 +19,7 @@ function parse(hash: string): Route {
   if (a === 'chat' && b) return { view: 'chat', thread: decodeURIComponent(b) }
   if (a === 'canvas' && b && /^\d+$/.test(b)) return { view: 'canvas', id: Number(b) }
   if (a === 'people') return { view: 'people' }
+  if (a === 'new') return { view: 'home', agent: b ? decodeURIComponent(b) : undefined, fresh: Date.now() }
   return { view: 'home' }
 }
 
@@ -26,7 +28,7 @@ export default function App() {
   const [booted, setBooted] = useState(false)
   const [route, setRoute] = useState<Route>(() => parse(location.hash))
   const [nav, setNav] = useState(false)                 // mobile drawer
-  const [voice, setVoice] = useState<{ thread?: string } | null>(null)
+  useThemeKeys()
 
   useEffect(() => {
     const on = () => { setRoute(parse(location.hash)); setNav(false) }
@@ -64,12 +66,12 @@ export default function App() {
   return (
     <div className="h-full flex relative">
       <div className="aurora" />
-      <div className="hidden md:flex relative z-10"><Sidebar route={route} onVoice={() => setVoice({})} /></div>
+      <div className="hidden md:flex relative z-10"><Sidebar route={route} onVoice={() => openVoice()} /></div>
       <AnimatePresence>
         {nav && (
           <motion.div className="md:hidden fixed inset-0 z-40 flex" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             <motion.div initial={{ x: -300 }} animate={{ x: 0 }} exit={{ x: -300 }} transition={{ type: 'spring', damping: 30, stiffness: 300 }}>
-              <Sidebar route={route} onVoice={() => { setNav(false); setVoice({}) }} />
+              <Sidebar route={route} onVoice={() => { setNav(false); openVoice() }} />
             </motion.div>
             <div className="flex-1 bg-black/50" onClick={() => setNav(false)} />
           </motion.div>
@@ -79,19 +81,19 @@ export default function App() {
         <button className="md:hidden absolute top-3 left-3 z-20 p-2 rounded-xl glass" onClick={() => setNav(true)}>{I.menu()}</button>
         <AnimatePresence mode="wait">
           <motion.div
-            key={route.view + ('thread' in route ? route.thread : '') + ('id' in route ? route.id : '')}
+            key={route.view + ('thread' in route ? route.thread : '') + ('id' in route ? route.id : '') + ('fresh' in route ? route.fresh : '')}
             className="flex-1 min-h-0 flex flex-col"
             initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.18 }}
           >
-            {route.view === 'home' && <Home onVoice={() => setVoice({})} />}
-            {route.view === 'chat' && <ChatView thread={route.thread} onVoice={() => setVoice({ thread: route.thread })} />}
+            {route.view === 'home' && <Home onVoice={() => openVoice()} agent={route.agent} />}
+            {route.view === 'chat' && <ChatView thread={route.thread} onVoice={() => openVoice(route.thread)} />}
             {route.view === 'canvas' && <CanvasView id={route.id} />}
             {route.view === 'people' && <People />}
           </motion.div>
         </AnimatePresence>
       </main>
-      <AnimatePresence>{voice && <VoiceMode thread={voice.thread} onClose={() => setVoice(null)} />}</AnimatePresence>
+      <VoiceDock />
     </div>
   )
 }

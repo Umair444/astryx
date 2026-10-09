@@ -63,7 +63,7 @@ function Bubble({ m, mine, msgId }: { m: Msg; mine: boolean; msgId: number }) {
   if (mine) {
     return (
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex justify-end">
-        <div className="max-w-[85%] bg-white/[.07] border border-line rounded-[20px] rounded-br-md px-4 py-2.5">
+        <div className="max-w-[85%] bg-fg/[.07] border border-line rounded-[20px] rounded-br-md px-4 py-2.5">
           <Markdown text={text} />
         </div>
       </motion.div>
@@ -93,7 +93,7 @@ function FileChip({ msgId, n, path }: { msgId: number; n: number; path: string }
   }
   if (/\.(mp3|ogg|wav|m4a|webm)$/i.test(name)) return <audio controls src={url} className="mt-2 w-full max-w-sm" />
   return (
-    <a href={url} download={name} className="mt-2 inline-flex items-center gap-2 text-sm bg-white/[.06] hover:bg-white/[.1] border border-line rounded-xl px-3 py-2">
+    <a href={url} download={name} className="mt-2 inline-flex items-center gap-2 text-sm bg-fg/[.06] hover:bg-fg/[.1] border border-line rounded-xl px-3 py-2">
       📎 {name}
     </a>
   )

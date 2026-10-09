@@ -36,8 +36,8 @@ export function People() {
         <div className="glass rounded-3xl p-5">
           <div className="flex gap-2">
             <input value={name} onChange={e => setName(e.target.value)} placeholder="name (a-z, 0-9)"
-              className="flex-1 bg-white/[.04] border border-line rounded-xl px-3.5 py-2.5 outline-none focus:border-violet/50" />
-            <button onClick={invite} disabled={!name.trim()} className="sig rounded-xl px-5 font-medium text-white disabled:opacity-40">Invite</button>
+              className="flex-1 bg-fg/[.04] border border-line rounded-xl px-3.5 py-2.5 outline-none focus:border-violet/50" />
+            <button onClick={invite} disabled={!name.trim()} className="sig rounded-xl px-5 font-medium disabled:opacity-40">Invite</button>
           </div>
           <div className="mt-3 text-xs uppercase tracking-wider text-fg-mute">Can talk to</div>
           <div className="flex flex-wrap gap-1.5 mt-2">

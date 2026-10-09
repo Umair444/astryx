@@ -647,7 +647,7 @@ BEGIN
   IF TG_TABLE_NAME = 'canvas_data' THEN
     PERFORM pg_notify('astryx_canvas', json_build_object('kind','data','canvas',NEW.canvas_id,'key',NEW.key)::text);
   ELSE
-    PERFORM pg_notify('astryx_canvas', json_build_object('kind','canvas','canvas',NEW.id,'version',NEW.version)::text);
+    PERFORM pg_notify('astryx_canvas', json_build_object('kind','canvas','canvas',NEW.id,'ver',NEW.version)::text);
   END IF;
   RETURN NEW;
 END $$ LANGUAGE plpgsql;
@@ -657,3 +657,42 @@ CREATE TRIGGER canvases_notify AFTER INSERT OR UPDATE ON canvases
 DROP TRIGGER IF EXISTS canvas_data_notify ON canvas_data;
 CREATE TRIGGER canvas_data_notify AFTER INSERT OR UPDATE ON canvas_data
   FOR EACH ROW EXECUTE FUNCTION notify_canvas();
+
+-- ── CANVAS VOICE (owner-directed 2026-10-09): the always-ready realtime voice runs on OpenAI
+-- gpt-realtime — EXTERNAL spend the owner signed for, capped per day (CANVAS_VOICE_DAILY_MINUTES).
+-- One row per minted ephemeral session; the client reports cumulative connected seconds. An
+-- unreported session is billed a floor minute by bridges/canvas_voice.py.
+CREATE TABLE IF NOT EXISTS canvas_voice_usage (
+  id          bigserial PRIMARY KEY,
+  user_name   text NOT NULL,                    -- 'owner' or a canvas_users.name
+  model       text NOT NULL,
+  minted_at   timestamptz NOT NULL DEFAULT now(),
+  seconds     integer NOT NULL DEFAULT 0,       -- client-reported, monotonic (greatest)
+  reported    boolean NOT NULL DEFAULT false,
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS canvas_voice_usage_day ON canvas_voice_usage (minted_at);
+
+-- ── PRESENCE (2026-10-09): where each agent's attention IS, right now. One row per agent, so it is
+-- a state, not a log (steps is the log). General on purpose: `surface` names any place the org can
+-- show an agent — canvas:<id>, thread:<thread>, goal:<id> — and `target` is that surface's own
+-- locator (a canvas: a CSS selector). CANVAS renders it as agents moving over the page they work on;
+-- any other surface may read it the same way. Writers: nucleus/presence.py (agents), the canvas
+-- bridge (a summon), nucleus/canvas.publish (a finished stroke).
+CREATE TABLE IF NOT EXISTS presence (
+  agent      text PRIMARY KEY,
+  surface    text,                                  -- NULL = idle
+  target     text,
+  say        text,                                  -- one short line beside the avatar
+  state      text NOT NULL DEFAULT 'idle',          -- idle | moving | working | done
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE canvases ADD COLUMN IF NOT EXISTS crew text[] NOT NULL DEFAULT '{}';  -- agents summoned to work on it
+CREATE OR REPLACE FUNCTION notify_presence() RETURNS trigger AS $$
+BEGIN
+  PERFORM pg_notify('astryx_presence', json_build_object('agent', NEW.agent)::text);
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS presence_notify ON presence;
+CREATE TRIGGER presence_notify AFTER INSERT OR UPDATE ON presence
+  FOR EACH ROW EXECUTE FUNCTION notify_presence();

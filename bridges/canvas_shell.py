@@ -30,8 +30,8 @@ THEME_CSS = r"""
 --cv-line:rgba(10,14,40,.09);--cv-ink:#141a33;--cv-dim:#4d5677;--cv-mute:#8a91ab;--cv-accent:#6a5af9;--cv-accent-2:#0aa5c9;color-scheme:light}
 *,*::before,*::after{box-sizing:border-box}
 html,body{margin:0;min-height:100%}
-body{background:radial-gradient(1200px 600px at 10% -10%,rgba(139,123,255,.10),transparent 60%),
-radial-gradient(900px 500px at 110% 10%,rgba(56,217,245,.07),transparent 60%),var(--cv-bg);
+body{background:radial-gradient(1200px 600px at 10% -10%,color-mix(in srgb,var(--cv-accent) 10%,transparent),transparent 60%),
+radial-gradient(900px 500px at 110% 10%,color-mix(in srgb,var(--cv-accent-2) 7%,transparent),transparent 60%),var(--cv-bg);
 color:var(--cv-ink);font:15px/1.55 var(--cv-font);padding:28px;-webkit-font-smoothing:antialiased}
 :root[data-theme=light] body{background:var(--cv-bg)}
 h1,h2,h3{letter-spacing:-.02em;line-height:1.15;margin:0 0 .4em}
@@ -53,7 +53,7 @@ background:var(--cv-panel-2);border:1px solid var(--cv-line);color:var(--cv-dim)
 .cv-btn{appearance:none;border:1px solid var(--cv-line);background:var(--cv-panel-2);color:var(--cv-ink);
 padding:8px 14px;border-radius:10px;font:inherit;cursor:pointer;transition:background .2s,border-color .2s,transform .1s}
 .cv-btn:hover{border-color:var(--cv-accent)}.cv-btn:active{transform:scale(.97)}
-.cv-btn.primary{background:linear-gradient(135deg,var(--cv-accent),var(--cv-accent-2));border:0;color:#fff}
+.cv-btn.primary{background:linear-gradient(135deg,var(--cv-accent),var(--cv-accent-2));border:0;color:var(--cv-on,#fff)}
 table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
 th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--cv-line)}th{color:var(--cv-dim);font-weight:550;font-size:12px;text-transform:uppercase;letter-spacing:.06em}
 code,pre{font-family:var(--cv-mono);font-size:13px}
@@ -82,8 +82,70 @@ SHIM_JS = r"""
     var m = ev.data || {}; if (!m.astryx) return;
     if (m.op === 'reply' && waiting[m.id]) { var w = waiting[m.id]; delete waiting[m.id]; m.ok ? w[0](m.value) : w[1](new Error(m.error || 'failed')); }
     else if (m.op === 'data') fire(m.key, m.value);
-    else if (m.op === 'theme') document.documentElement.setAttribute('data-theme', m.theme);
+    else if (m.op === 'theme') applyTheme(m);
+    else if (m.op === 'locate') post({ op: 'rect', id: m.id, rect: rectOf(m.selector) });
+    else if (m.op === 'pick') pick(!!m.on);
   });
+  // THEME: the viewer's palette arrives as --cv-* variables; pages read them, and redraw on change
+  var themeFns = [], theme = { dark: true, vars: {} };
+  function applyTheme(m){
+    var root = document.documentElement; theme = { dark: !!m.dark, vars: m.vars || {} };
+    for (var k in theme.vars) root.style.setProperty(k, theme.vars[k]);
+    root.setAttribute('data-theme', theme.dark ? 'dark' : 'light'); root.style.colorScheme = theme.dark ? 'dark' : 'light';
+    themeFns.forEach(function(fn){ try { fn(theme); } catch (e) { report(e); } });
+  }
+  // LOCATE: where an element is, so the app can fly an agent's avatar to it
+  function rectOf(sel){
+    try { var el = sel && document.querySelector(sel); if (!el) return null; var r = el.getBoundingClientRect();
+      return { x: r.left, y: r.top, w: r.width, h: r.height }; } catch (e) { return null; }
+  }
+  var vpPending = false;
+  function viewportMoved(){ if (vpPending) return; vpPending = true; requestAnimationFrame(function(){ vpPending = false; post({ op: 'viewport' }); }); }
+  window.addEventListener('scroll', viewportMoved, true); window.addEventListener('resize', viewportMoved);
+  // PICK: the viewer points at part of the page to talk about it
+  function selectorOf(el){
+    if (el.id) return '#' + CSS.escape(el.id);
+    var parts = [];
+    for (var n = el; n && n.nodeType === 1 && n !== document.body && parts.length < 6; n = n.parentElement) {
+      if (n.id) { parts.unshift('#' + CSS.escape(n.id)); break; }
+      var tag = n.tagName.toLowerCase(), i = 1, s = n;
+      while ((s = s.previousElementSibling)) if (s.tagName === n.tagName) i++;
+      parts.unshift(tag + ':nth-of-type(' + i + ')');
+    }
+    if (parts[0] && parts[0][0] !== '#') parts.unshift('body');
+    return parts.join(' > ');
+  }
+  var box = null, picking = false;
+  function onMove(e){
+    var el = e.target; if (!el || el === box || el === document.body || el === document.documentElement) { box.style.opacity = 0; return; }
+    var r = el.getBoundingClientRect();
+    box.style.opacity = 1; box.style.transform = 'translate(' + (r.left - 4) + 'px,' + (r.top - 4) + 'px)';
+    box.style.width = (r.width + 8) + 'px'; box.style.height = (r.height + 8) + 'px';
+  }
+  function onPick(e){
+    e.preventDefault(); e.stopPropagation();
+    var el = e.target, r = el.getBoundingClientRect();
+    post({ op: 'picked', el: { selector: selectorOf(el), tag: el.tagName.toLowerCase(),
+      text: (el.innerText || el.textContent || '').trim().slice(0, 300), html: el.outerHTML.slice(0, 1200),
+      rect: { x: r.left, y: r.top, w: r.width, h: r.height } } });
+  }
+  function onKey(e){ if (e.key === 'Escape') post({ op: 'pick-cancel' }); }
+  function pick(on){
+    if (on === picking) return; picking = on;
+    if (on) {
+      box = document.createElement('div');
+      box.style.cssText = 'position:fixed;left:0;top:0;pointer-events:none;z-index:2147483647;border-radius:10px;opacity:0;' +
+        'border:2px solid var(--cv-accent);background:color-mix(in srgb,var(--cv-accent) 10%,transparent);' +
+        'box-shadow:0 0 0 4px color-mix(in srgb,var(--cv-accent) 18%,transparent);transition:transform .12s ease,width .12s ease,height .12s ease,opacity .12s';
+      document.documentElement.appendChild(box); document.documentElement.style.cursor = 'crosshair';
+      document.addEventListener('mousemove', onMove, true); document.addEventListener('click', onPick, true);
+      document.addEventListener('keydown', onKey, true);
+    } else {
+      if (box) box.remove(); box = null; document.documentElement.style.cursor = '';
+      document.removeEventListener('mousemove', onMove, true); document.removeEventListener('click', onPick, true);
+      document.removeEventListener('keydown', onKey, true);
+    }
+  }
   function report(e){
     if (reported) return; reported = true;
     post({ op: 'error', message: String((e && (e.stack || e.message)) || e).slice(0, 2000) });
@@ -99,7 +161,10 @@ SHIM_JS = r"""
       on: function(k, fn){ (subs[k] = subs[k] || []).push(fn); if (k !== '*' && k in cache) fn(cache[k], k);
             return function(){ subs[k] = (subs[k] || []).filter(function(f){ return f !== fn; }); }; }
     },
-    ask: function(text, context){ return req('ask', { text: String(text).slice(0, 4000), context: context || null }); }
+    ask: function(text, context){ return req('ask', { text: String(text).slice(0, 4000), context: context || null }); },
+    color: function(name){ return getComputedStyle(document.documentElement).getPropertyValue('--cv-' + name).trim(); },
+    onTheme: function(fn){ themeFns.push(fn); return function(){ themeFns = themeFns.filter(function(f){ return f !== fn; }); }; },
+    get theme(){ return theme; }
   };
   post({ op: 'ready' });
 })();
@@ -118,13 +183,13 @@ def csp(kit: str) -> str:
 _KIT_REF = re.compile(r"""(["'(])/kit/""")
 
 
-def render(canvas: dict, body: str, kit: str, theme: str = "dark") -> str:
+def render(cid: int, title: str, ver: int, body: str, kit: str, theme: str = "dark") -> str:
     """The whole document for one canvas version. `kit` is the absolute kit URL as the viewer
     reached this bridge (…/canvas/kit/) — the only off-document source the CSP allows. The
     contract tells authors to write "/kit/x.js"; a srcdoc frame would resolve that against the
     site root, so it is rewritten to the real kit here, where the prefix is known."""
     body = _KIT_REF.sub(lambda m: m.group(1) + kit, body)
-    meta = {"id": canvas["id"], "title": canvas["title"], "version": canvas["version"]}
+    meta = {"id": cid, "title": title, "version": ver}
     shim = SHIM_JS.replace("__CANVAS__", json.dumps(meta).replace("</", "<\\/"))
     return (
         "<!doctype html><html data-theme=\"" + ("light" if theme == "light" else "dark") + "\"><head>"
@@ -132,7 +197,7 @@ def render(canvas: dict, body: str, kit: str, theme: str = "dark") -> str:
         f"<meta http-equiv=\"Content-Security-Policy\" content=\"{_html.escape(csp(kit))}\">"
         "<meta name=\"referrer\" content=\"no-referrer\">"
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-        f"<title>{_html.escape(canvas['title'])}</title>"
+        f"<title>{_html.escape(title)}</title>"
         f"<style>{THEME_CSS.replace('__KIT__', kit)}</style>"
         f"<script>{shim}</script>"
         "</head><body>\n" + body + "\n</body></html>")
