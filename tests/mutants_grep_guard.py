@@ -38,4 +38,9 @@ MUTANTS = {
     "G9 a combined flag cluster isn't seen as recursive (`grep -nrI` allowed)":
         ('        if re.fullmatch(r"-[A-Za-z]+", a) and ("r" in a[1:] or "R" in a[1:]):',
          '        if a in ("-r", "-R"):'),
+    "G10 $HOME isn't expanded (`grep -r x $HOME/astryx` from a home allowed: a2 #41004)":
+        ('    return os.path.expanduser(path.replace("${HOME}", home).replace("$HOME", home))',
+         '    return os.path.expanduser(path)'),
+    "G11 `-d recurse` isn't recursive (a2 #41004: function 7 vs real 47, allowed)":
+        ('        if a == "-d" and i + 1 < len(args) and args[i + 1] == "recurse":', '        if False:'),
 }

@@ -40,6 +40,8 @@ with tempfile.TemporaryDirectory() as td:
     (root / "nucleus").mkdir()
     (root / ".gitignore").write_text("memory/\n")
     R, P, cwd_sub = str(root), str(top), str(root / "nucleus")
+    os.environ["HOME"] = P                          # $HOME/repo is the blind root; expansion must use HOME
+    HOMECWD = cwd_sub
 
     deny = {
         "recursive from the repo root (path)": (f"grep -rl kg {R}", "/"),
@@ -54,6 +56,10 @@ with tempfile.TemporaryDirectory() as td:
         "a parent of the repo (a .gitignore one level down)": (f"grep -rl kg {P}", "/"),
         "\\grep still runs the FUNCTION (a backslash stops aliases, not functions)": (f"\\grep -rl kg {R}", "/"),
         "after `;` and a newline": (f"true;\ngrep -rl kg {R}", "/"),
+        "-d recurse is recursive (a2 #41004)": (f"grep -d recurse kg {R}", "/"),
+        "--directories=recurse is recursive": (f"grep --directories=recurse kg {R}", "/"),
+        "$HOME/… names the root (residents reach the repo this way: a2 #41004)": ("grep -rl kg $HOME/repo", HOMECWD),
+        "${HOME}/… likewise": ("grep -rl kg ${HOME}/repo", HOMECWD),
     }
     for name, (cmd, cwd) in deny.items():
         r = G.decide(cmd, cwd)
@@ -74,6 +80,8 @@ with tempfile.TemporaryDirectory() as td:
         "unparseable quoting → ALLOW (polarity)": ("grep -rl 'unterminated", R),
         "a root that doesn't exist → ALLOW": ("grep -rl kg /nonexistent/path", "/"),
         "empty command": ("", R),
+        "-d skip is not recursive": (f"grep -d skip kg {R}", "/"),
+        "an unknown variable stays unexpanded → no such path → ALLOW": ("grep -rl kg $NOT_A_VAR/repo", HOMECWD),
     }
     for name, (cmd, cwd) in allow.items():
         r = G.decide(cmd, cwd)

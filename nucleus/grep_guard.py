@@ -21,7 +21,10 @@ DENIED although it looks exempt: `\\grep`. A backslash suppresses ALIAS expansio
 still runs the function (measured: `grep(){ echo FUNCTION; }; \\grep x` prints FUNCTION).
 
 GRADE: accident-grade. It bounds the SHAPE that has actually recurred, not every blind search (a script that
-calls ugrep, `rg` without -u, a find|grep pipeline). POLARITY: its unknown is ALLOW. It is an actuator on every
+calls ugrep, `rg` without -u, a find|grep pipeline). DOMAIN: Bash `grep` only. Claude Code's built-in Grep TOOL
+is ripgrep, and with rg's defaults it is EQUALLY blind (a2 #41004, by proxy: `rg -l` 7 against `rg -uu` 47 at the
+live root). It is NOT covered: measured 0 Grep-tool calls in the same 4-day corpus, and residents' toolsets don't
+carry it. If that changes, the seam is the same (step.py's PreToolUse, which already branches on tool == "Grep"). POLARITY: its unknown is ALLOW. It is an actuator on every
 Bash call of every agent, so an unparseable command, an unreadable directory or an exception all allow;
 decide() raising is the caller's cue to allow and log, never to block the fleet (secret_guard's rule, a2 #27600).
 
@@ -63,8 +66,10 @@ def _simple_commands(words):
 
 
 def _recursive(args) -> bool:
-    for a in args:
-        if a in ("--recursive", "--dereference-recursive"):
+    for i, a in enumerate(args):
+        if a in ("--recursive", "--dereference-recursive", "--directories=recurse"):
+            return True
+        if a == "-d" and i + 1 < len(args) and args[i + 1] == "recurse":     # a2 #41004: -d recurse IS -r
             return True
         if re.fullmatch(r"-[A-Za-z]+", a) and ("r" in a[1:] or "R" in a[1:]):
             return True
@@ -112,6 +117,14 @@ def _blind_root(p: Path) -> bool:
     return False
 
 
+def _expand(path: str) -> str:
+    """~ and $HOME/${HOME} only: residents reach the repo as `$HOME/astryx` from homes/<agent> (a2 #41004). Any
+    other variable is left unexpanded (its value is the shell's, not ours to guess), so it resolves to a path that
+    doesn't exist and is ALLOWED: the declared polarity."""
+    home = str(Path.home())
+    return os.path.expanduser(path.replace("${HOME}", home).replace("$HOME", home))
+
+
 def decide(command: str, cwd: str = None):
     try:
         words = _words(command or "")
@@ -125,12 +138,12 @@ def decide(command: str, cwd: str = None):
             continue
         if argv[0] == "cd":
             target = argv[1] if len(argv) > 1 else str(Path.home())
-            here = (here / os.path.expanduser(target)).resolve() if not target.startswith("-") else here
+            here = (here / _expand(target)).resolve() if not target.startswith("-") else here
             continue
         if argv[0] != "grep" or not _recursive(argv[1:]):
             continue
         for r in _roots(argv[1:]):
-            root = (here / os.path.expanduser(r)).resolve()
+            root = (here / _expand(r)).resolve()
             if _blind_root(root):
                 return (f"plain `grep` is a shell function (ugrep --ignore-files): a recursive search from {root} "
                         f"silently skips every gitignored path under it (memory/, triggers/, homes/, agents/ …). "
