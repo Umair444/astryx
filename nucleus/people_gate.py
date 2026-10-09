@@ -11,16 +11,22 @@ GRADE: ACCIDENT-GRADE, NOT PREVENTION (seed #36018, a4 #36015). Every resident r
 Bash, and the superuser credential sits in .env (ASTRYX_DSN) and ~/.pgpass, both readable by every resident. A
 resident that WANTS the details connects as the superuser and reads them; no GRANT here stops that. What this does
 gate: tool paths and default DSNs. Once residents connect as `astryx_resident` (build 1b), an ordinary query or a
-graph walk physically can't reach a detail, and a deliberate read needs an explicit credential grab that leaves a
-step trail (detection, by org-form + steward). Prevention needs the superuser credential OFF every resident-readable
-surface (a separate OS user for admin and services, or a credential broker): owner-level infrastructure.
+graph walk physically can't reach a detail; reading one takes a DELIBERATE connection with the superuser credential.
+NOTHING DETECTS THAT TODAY (steward #36869, measured): a resident's step records the description it writes itself,
+grabbing the credential is ambient (every resident does it for ordinary probes), and postgres logs nothing per role
+(no pgaudit, log_statement=none). The honest detection substrate is a server-side object audit (pgaudit) whose log
+sits outside the residents' uid. Prevention needs the superuser credential OFF every resident-readable surface (a
+separate OS user for admin and services, or a credential broker). Both are owner-level infrastructure.
 
 INERT AS SHIPPED (1a). `astryx_resident` is created NOLOGIN with no password: nothing can connect as it until 1b
 (ALTER ROLE ... LOGIN PASSWORD, then the residents' DSN switch) is decided on the privilege census's numbers
 (nucleus/privilege_census.py). The grants are real and the oracle proves them on scratch roles.
 
-FAIL-CLOSED POLARITY. The resident reads social_person through a COLUMN-level grant on NETWORK_COLS, so a column
-added later is unreadable until someone names it here: an unknown member defaults to hidden.
+FAIL-CLOSED POLARITY. The resident reads every network table through a COLUMN-level grant on the columns NETWORK names,
+so a column added later is unreadable until someone names it here: an unknown member defaults to hidden. social_edge
+is the case that proved it (memory #36868): main's DM edges added weight/first_ts/last_ts/mine/scanned_at, the
+owner's per-contact message count and recency, i.e. closeness by proxy. A dm row's EXISTENCE says only what
+social_person.direct already says, so (org, src, dst, rel) stays network; the counts are cleared-only.
 
 Names are parameters so the oracle (tests/test_people_gate.py) runs this exact code on scratch roles and scratch
 databases; production passes none.
@@ -42,9 +48,14 @@ RESIDENT = "astryx_resident"
 CLEARED = "people_cleared"
 PRIVATE_DB = "astryx_people"          # the private AGE projection; its graph shares the name
 NETWORK_DB = "astryx_social"          # the all-agent network graph (nucleus/social_age.py)
-NETWORK_COLS = ("org", "id", "kind", "label", "direct", "seen_at")
-NETWORK_TABLES = ("social_edge",)     # whole-table SELECT for the resident
+# The network layer, by table: the ONLY columns the resident may read. Anything else on these tables is a detail.
+NETWORK = {
+    "social_person": ("org", "id", "kind", "label", "direct", "seen_at"),
+    "social_edge": ("org", "src", "dst", "rel"),
+}
+NETWORK_COLS = NETWORK["social_person"]
 DETAIL_TABLE = "social_relation"
+CLEARED_TABLES = (DETAIL_TABLE, "social_edge")   # whole-table SELECT for people_cleared (the dm counts included)
 
 ROLE_SQL = "SELECT rolcanlogin FROM pg_roles WHERE rolname = %s"
 DB_SQL = "SELECT 1 FROM pg_database WHERE datname = %s"
@@ -71,14 +82,14 @@ def grant_main(conn, resident: str = RESIDENT, cleared: str = CLEARED) -> None:
     db = conn.execute("SELECT current_database()").fetchone()[0]
     conn.execute(sql.SQL("REVOKE ALL ON {} FROM PUBLIC").format(I(DETAIL_TABLE)))
     conn.execute(sql.SQL("REVOKE ALL ON {} FROM {}").format(I(DETAIL_TABLE), I(resident)))   # a stale grant
-    conn.execute(sql.SQL("GRANT SELECT ON {} TO {}").format(I(DETAIL_TABLE), I(cleared)))
+    for t in CLEARED_TABLES:
+        conn.execute(sql.SQL("GRANT SELECT ON {} TO {}").format(I(t), I(cleared)))
     # A table-level SELECT would carry every detail column; REVOKE ALL first so a stale whole-table grant can't
     # survive a re-apply, then the column grant.
-    conn.execute(sql.SQL("REVOKE ALL ON social_person FROM {}").format(I(resident)))
-    conn.execute(sql.SQL("GRANT SELECT ({}) ON social_person TO {}")
-                 .format(sql.SQL(", ").join(map(I, NETWORK_COLS)), I(resident)))
-    for t in NETWORK_TABLES:
-        conn.execute(sql.SQL("GRANT SELECT ON {} TO {}").format(I(t), I(resident)))
+    for t, cols in NETWORK.items():
+        conn.execute(sql.SQL("REVOKE ALL ON {} FROM {}").format(I(t), I(resident)))
+        conn.execute(sql.SQL("GRANT SELECT ({}) ON {} TO {}")
+                     .format(sql.SQL(", ").join(map(I, cols)), I(t), I(resident)))
     conn.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}, {}").format(I(db), I(resident), I(cleared)))
 
 
@@ -135,18 +146,19 @@ def drift(conn, admin=None, resident: str = RESIDENT, cleared: str = CLEARED,
         out.append(f"PUBLIC can SELECT {DETAIL_TABLE}")
     if q("SELECT has_table_privilege(%s, %s, 'SELECT')", resident, DETAIL_TABLE):
         out.append(f"{resident} can SELECT {DETAIL_TABLE}")
-    if not q("SELECT has_table_privilege(%s, %s, 'SELECT')", cleared, DETAIL_TABLE):
-        out.append(f"{cleared} can't SELECT {DETAIL_TABLE}")
-    hidden = [c for (c,) in conn.execute(
-        "SELECT attname FROM pg_attribute WHERE attrelid = 'social_person'::regclass AND attnum > 0 "
-        "AND NOT attisdropped AND attname <> ALL(%s) ORDER BY attnum", (list(NETWORK_COLS),)).fetchall()]
-    leak = [c for c in hidden if q("SELECT has_column_privilege(%s, 'social_person', %s, 'SELECT')", resident, c)]
-    if leak:
-        out.append(f"{resident} can read social_person detail column(s) {', '.join(leak)}")
-    miss = [c for c in NETWORK_COLS if not q("SELECT has_column_privilege(%s, 'social_person', %s, 'SELECT')",
-                                             resident, c)]
-    if miss:
-        out.append(f"{resident} can't read network column(s) {', '.join(miss)}")
+    for t in CLEARED_TABLES:
+        if not q("SELECT has_table_privilege(%s, %s, 'SELECT')", cleared, t):
+            out.append(f"{cleared} can't SELECT {t}")
+    for t, cols in NETWORK.items():           # every column NOT named is a detail, so a new one is drift if readable
+        hidden = [c for (c,) in conn.execute(
+            "SELECT attname FROM pg_attribute WHERE attrelid = %s::regclass AND attnum > 0 "
+            "AND NOT attisdropped AND attname <> ALL(%s) ORDER BY attnum", (t, list(cols))).fetchall()]
+        leak = [c for c in hidden if q("SELECT has_column_privilege(%s, %s, %s, 'SELECT')", resident, t, c)]
+        if leak:
+            out.append(f"{resident} can read {t} detail column(s) {', '.join(leak)}")
+        miss = [c for c in cols if not q("SELECT has_column_privilege(%s, %s, %s, 'SELECT')", resident, t, c)]
+        if miss:
+            out.append(f"{resident} can't read {t} network column(s) {', '.join(miss)}")
     if admin.execute(DB_SQL, (private_db,)).fetchone() is None:
         out.append(f"database {private_db} is missing")
     else:

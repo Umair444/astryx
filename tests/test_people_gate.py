@@ -4,8 +4,10 @@
 GRADE: ACCIDENT-GRADE. This proves what a role can't reach. It does NOT prove a resident can't read the details:
 every resident runs as the same OS user, and the superuser credential is in .env and ~/.pgpass, readable by all of
 them. A resident that connects as the superuser reads social_relation regardless of every GRANT here. What is
-proven is that the TOOL paths and the resident ROLE can't, so a read needs a deliberate credential grab (detection
-grade, by org-form + steward). Prevention-grade is owner infrastructure (a separate OS user, or a credential broker).
+proven is that the TOOL paths and the resident ROLE can't, so a read needs a deliberate superuser connection. Nothing
+DETECTS that today (steward #36869: the step trail is self-authored, the credential grab is ambient, postgres logs
+nothing per role). Detection (pgaudit, log outside the residents' uid) and prevention (a separate OS user, or a
+credential broker) are both owner infrastructure.
 
 Arms, on SCRATCH roles and SCRATCH databases only (it never changes, and never depends on, a live role):
   RED      the role residents use TODAY (ASTRYX_DSN's) is a superuser: it reads every detail. A NOSUPERUSER resident
@@ -14,7 +16,7 @@ Arms, on SCRATCH roles and SCRATCH databases only (it never changes, and never d
            detail columns of social_person, and refused CONNECT to the private database, each with the error text
            predicted here; PUBLIC holds nothing on social_relation; people_gate.drift() is empty.
   CONTROL  a scratch member of the scratch cleared role reads social_relation (values intact) and walks the private
-           graph; the scratch resident still reads social_person's network columns, social_edge, and walks the
+           graph; the scratch resident still reads the network columns of social_person and social_edge, and walks the
            network graph, whose nodes carry no detail.
   MOVE     the receipt: digest == digest_after, left == 0, a re-run moves nothing.
   CUTOVER  people.write_pg never writes a detail and never erases social_relation; persona.apply_pg / load_pg round-
@@ -193,6 +195,9 @@ try:
             c.execute("INSERT INTO social_person (org,id,kind,label) VALUES (%s,'g1','group','Group')", (ORG,))
             for pid in ("pA", "pB", "pC"):                      # pD, pE: in no context
                 c.execute("INSERT INTO social_edge (org,src,dst) VALUES (%s,%s,'g1')", (ORG, pid))
+            # DM edges (main 32798a2): the owner's per-contact message count and recency, a DETAIL (memory #36868).
+            c.execute("INSERT INTO social_edge (org,src,dst,rel,weight,first_ts,last_ts,mine,scanned_at) "
+                      "VALUES (%s,'owner','pA','dm',42,now()-interval '9 days',now(),17,now())", (ORG,))
 
             # RED: the superuser reads every detail; so does a resident given the obvious table-level grant.
             n = c.execute("SELECT count(*) FROM social_person WHERE relation IS NOT NULL OR who IS NOT NULL "
@@ -245,18 +250,46 @@ try:
             want("MOVE: a move whose values don't land raises and rolls back WHOLE (source intact, nothing added)",
                  "rolled back" in eaten and n_left == len(DETAILED) and n_rel == 1, f"{eaten} left={n_left} rel={n_rel}")
             c.execute("DROP TRIGGER pgate_eat ON social_relation")
+            # A cut-over writer labelled pB DIFFERENTLY before the move (source: 'cousin'): a CONFLICT (a2 B2).
+            c.execute("INSERT INTO social_relation (org,pid,kind) VALUES (%s,'pB','prior2')", (ORG,))
         with psycopg.connect(fx["dsn"]) as c:
             dry = M.move(c)
-            want("MOVE: a dry run counts the detailed rows and changes nothing",
-                 dry["rows"] == len(DETAILED) and not dry["applied"]
+            want("MOVE: a dry run counts the detailed rows and the 1 conflicting key, and changes nothing",
+                 dry["rows"] == len(DETAILED) and dry["conflicts"] == 1 and not dry["applied"]
                  and c.execute(M.LEFT_SQL).fetchone()[0] == len(DETAILED), str(dry))
             try:
-                rec = M.move(c, apply=True)
+                M.move(c, apply=True)
+                refusal = "no error"
+            except RuntimeError as x:
+                refusal = str(x)
+            want("MOVE: by default a conflict is REFUSED with its count and rolls back (never silently overwritten)",
+                 "1 key(s) conflict" in refusal and c.execute(M.LEFT_SQL).fetchone()[0] == len(DETAILED)
+                 and c.execute("SELECT kind FROM social_relation WHERE pid='pB'").fetchone()[0] == "prior2", refusal)
+            try:
+                rec = M.move(c, apply=True, keep_target=True)
             except RuntimeError as x:
                 rec = {"error": str(x)}
-            want("MOVE: digest == digest_after, left == 0, every detailed row landed",
-                 rec.get("applied") and rec["digest"] == rec["digest_after"] and rec["left"] == 0
+            want("MOVE: --keep-target keeps the newer value, counts it kept=1, left == 0, every other field landed",
+                 rec.get("applied") and rec.get("kept") == 1 and rec["left"] == 0
                  and rec["social_relation"] == len(DETAILED), str(rec))
+        # The DEFAULT path landing, in a second org so the fixture's expectations stay exact: a NULL source field never
+        # overwrites a value a cut-over writer already wrote (pF's kind), and a non-NULL one lands (its context).
+        with psycopg.connect(fx["dsn"], autocommit=True) as c:
+            c.execute("INSERT INTO social_person (org,id,kind,label,who) VALUES ('pgtest2','pF','person','F','x')")
+            c.execute("INSERT INTO social_relation (org,pid,kind) VALUES ('pgtest2','pF','pre')")
+        with psycopg.connect(fx["dsn"]) as c:
+            try:
+                d2 = M.move(c, apply=True)
+            except RuntimeError as x:
+                d2 = {"error": str(x)}
+            pf = c.execute("SELECT kind, context FROM social_relation WHERE org='pgtest2'").fetchall()
+            c.commit()
+        with psycopg.connect(fx["dsn"], autocommit=True) as c:
+            c.execute("DELETE FROM social_relation WHERE org='pgtest2'")
+            c.execute("DELETE FROM social_person WHERE org='pgtest2'")
+        want("MOVE: the default path keeps a value a NULL source doesn't have, and lands the one it has",
+             d2.get("applied") and d2.get("conflicts") == 0 and pf == [("pre", "x")], f"{d2} {pf}")
+        with psycopg.connect(fx["dsn"]) as c:
             try:
                 again = M.move(c, apply=True)
             except RuntimeError as x:
@@ -265,9 +298,10 @@ try:
         with psycopg.connect(fx["dsn"], autocommit=True) as c:
             got = sorted(c.execute("SELECT pid, kind, context, evidence, confidence FROM social_relation "
                                    "WHERE org=%s", (ORG,)).fetchall())
-        expect = sorted((p[0], p[3] if p[0] != "pC" else "prior", p[4], p[5], p[6]) for p in DETAILED)
+        expect = sorted((p[0], {"pC": "prior", "pB": "prior2"}.get(p[0], p[3]), p[4], p[5], p[6]) for p in DETAILED)
         want("MOVE: social_relation holds exactly the moved values (relation->kind, who->context, shape->evidence),"
-             " and a NULL source never overwrites a value already there (pC's kind)", got == expect, str(got))
+             " a NULL source never overwrites a value already there (pC), and the kept conflict stays (pB)",
+             got == expect, str(got))
         from nucleus import social_age
         r = social_age.rebuild(base=fx["dsn"], social=make_conninfo(ADMIN_DSN, dbname=NET),
                                private=make_conninfo(ADMIN_DSN, dbname=PRIV), resident=RES, cleared=CLR)
@@ -280,6 +314,10 @@ try:
         e = refused(as_(RES, db), "SELECT * FROM social_relation")
         want("GREEN: resident SELECT social_relation -> 'permission denied for table social_relation'",
              e is not None and "permission denied for table social_relation" in e, e)
+        for col in ("weight", "first_ts", "last_ts", "mine", "scanned_at"):
+            e = refused(as_(RES, db), f"SELECT {col} FROM social_edge")
+            want(f"GREEN: resident SELECT social_edge.{col} (the DM count/recency) -> 'permission denied for table "
+                 "social_edge'", e is not None and "permission denied for table social_edge" in e, e)
         for col in ("relation", "who", "shape", "confidence"):
             e = refused(as_(RES, db), f"SELECT {col} FROM social_person")
             want(f"GREEN: resident SELECT social_person.{col} -> 'permission denied for table social_person'",
@@ -296,12 +334,15 @@ try:
             want("GREEN: people_gate.drift() is empty on the gated fixture", d == [], str(d))
             c.execute(sql.SQL("GRANT SELECT ON social_relation TO {}").format(sql.Identifier(RES)))
             c.execute(sql.SQL("GRANT SELECT (relation) ON social_person TO {}").format(sql.Identifier(RES)))
+            c.execute(sql.SQL("GRANT SELECT (last_ts) ON social_edge TO {}").format(sql.Identifier(RES)))
             c.execute("GRANT SELECT ON social_relation TO PUBLIC")
             admin.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(sql.Identifier(PRIV), sql.Identifier(RES)))
             d = G.drift(c, admin, resident=RES, cleared=CLR, private_db=PRIV)
-            want("DRIFT: planted leaks are each named (PUBLIC and resident on social_relation, the relation column,"
-                 " the private CONNECT)", len(d) == 4 and any("PUBLIC" in x for x in d)
-                 and any("relation" in x and "column" in x for x in d) and any("CONNECT" in x for x in d), str(d))
+            want("DRIFT: planted leaks are each named (PUBLIC and resident on social_relation, social_person's relation,"
+                 " social_edge's last_ts, the private CONNECT)", len(d) == 5 and any("PUBLIC" in x for x in d)
+                 and any("social_person detail" in x and "relation" in x for x in d)
+                 and any("social_edge detail" in x and "last_ts" in x for x in d)
+                 and any("CONNECT" in x for x in d), str(d))
             admin.execute(sql.SQL("REVOKE CONNECT ON DATABASE {} FROM {}").format(sql.Identifier(PRIV), sql.Identifier(RES)))
             G.grant_main(c, resident=RES, cleared=CLR)
             d = G.drift(c, admin, resident=RES, cleared=CLR, private_db=PRIV)
@@ -310,6 +351,12 @@ try:
         # CONTROL: the cleared member reads both; the resident still reads the network.
         e = refused(as_(MEM, db), "SELECT * FROM social_relation")
         want("CONTROL: a people_cleared member SELECTs social_relation", e is None, e)
+        try:
+            with psycopg.connect(as_(MEM, db), autocommit=True) as c:
+                dmw = c.execute("SELECT weight, mine FROM social_edge WHERE rel='dm'").fetchall()
+        except psycopg.Error as x:
+            dmw = f"ERR {x}"
+        want("CONTROL: a people_cleared member reads the DM counts", dmw == [(42, 17)], str(dmw))
         try:
             kinds = sorted(str(k[0]).strip('"') for k in cypher(
                 as_(MEM, PRIV), "astryx_people", "MATCH (:owner)-[r:relation]->(:person) RETURN r.kind")
@@ -320,8 +367,13 @@ try:
              kinds == sorted(e[1] for e in expect if e[1]), str(kinds))
         e = refused(as_(RES, db), "SELECT org, id, kind, label, direct, seen_at FROM social_person")
         want("CONTROL: the resident reads social_person's network columns", e is None, e)
-        e = refused(as_(RES, db), "SELECT * FROM social_edge")
-        want("CONTROL: the resident reads social_edge", e is None, e)
+        try:
+            with psycopg.connect(as_(RES, db), autocommit=True) as c:
+                net = c.execute("SELECT rel, count(*) FROM social_edge GROUP BY 1 ORDER BY 1").fetchall()
+        except psycopg.Error as x:
+            net = f"ERR {x}"
+        want("CONTROL: the resident reads social_edge's network columns, dm rows' EXISTENCE included (= direct)",
+             net == [("dm", 1), ("member-of", 3)], str(net))
         try:
             knows = cypher(as_(RES, NET), "astryx_social", "MATCH (a:person)-[k:knows]->(b:person) RETURN count(k)")
             keys = cypher(as_(RES, NET), "astryx_social", "MATCH (n) RETURN keys(n)")
@@ -337,10 +389,15 @@ try:
         # CUTOVER: the writers, pointed at the fixture.
         os.environ["ASTRYX_DSN"], os.environ["ASTRYX_ORG"] = fx["dsn"], ORG
         from nucleus import people, persona
-        people.write_pg({"people": {p[0]: {"id": p[0], "label": p[1], "direct": p[2]} for p in PEOPLE},
+        real_wa = people._wa
+        people._wa = lambda *a, **k: None                   # main's write_pg ends in dm_refresh: never the live wacli
+        try:
+            people.write_pg({"people": {p[0]: {"id": p[0], "label": p[1], "direct": p[2]} for p in PEOPLE},
                          "groups": {"g1": {"id": "g1", "label": "Group"}},
                          "edges": [{"src": "pA", "dst": "g1"}]},
                         personas={"pA": {"relation": "LEAK", "who": "LEAK", "shape": "LEAK", "confidence": "LEAK"}})
+        finally:
+            people._wa = real_wa
         with psycopg.connect(fx["dsn"], autocommit=True) as c:
             want("CUTOVER: people.write_pg writes no detail onto social_person",
                  c.execute(M.LEFT_SQL).fetchone()[0] == 0)
@@ -378,10 +435,13 @@ try:
         # write (sqlguard would credit nothing after it).
         with psycopg.connect(fx["dsn"], autocommit=True) as c:
             c.execute("ALTER TABLE social_person ADD COLUMN pgate_later text")
+            c.execute("ALTER TABLE social_edge ADD COLUMN pgate_later text")
             d = G.drift(c, admin, resident=RES, cleared=CLR, private_db=PRIV)
-            e = refused(as_(RES, db), "SELECT pgate_later FROM social_person")
-            want("GREEN: a column added later is hidden from the resident (fail-closed), and drift stays empty",
-                 e is not None and "permission denied" in e and d == [], f"{e} {d}")
+            ep = refused(as_(RES, db), "SELECT pgate_later FROM social_person")
+            ee = refused(as_(RES, db), "SELECT pgate_later FROM social_edge")
+            want("GREEN: a column added later to social_person OR social_edge is hidden from the resident "
+                 "(fail-closed), and drift stays empty", ep is not None and "permission denied" in ep
+                 and ee is not None and "permission denied" in ee and d == [], f"{ep} {ee} {d}")
 finally:
     try:
         reap(admin, mine=True)
