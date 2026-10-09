@@ -50,9 +50,9 @@ def main(url):
     from nucleus import tier
     import bridges.canvas as b
     import bridges.canvas_voice as cvv
-    minted = []
-    cvv.urllib.request.urlopen = lambda req, timeout=20: (minted.append(req.full_url), _FakeResp(
-        {"value": "ek_test", "expires_at": 9999999999}))[1]
+    minted, sent = [], []
+    cvv.urllib.request.urlopen = lambda req, timeout=20: (minted.append(req.full_url), sent.append(req.data), _FakeResp(
+        {"value": "ek_test", "expires_at": 9999999999}))[2]
     H = {"x-astryx": "1"}
     A = "/canvas/api"
     private = next((a for a in ("canopus", "gemini", "memory") if not tier.is_content_public(a)), None)
@@ -92,6 +92,10 @@ def main(url):
             s1.status_code == 200 and body.get("value") == "ek_test" and body.get("usage_id")
             and minted and minted[-1].endswith("/v1/realtime/client_secrets"), body)
         allow = body.get("allow", [])
+        sess = json.loads(sent[-1] or b"{}").get("session", {}) if sent else {}
+        arm("the voice understands any language but always ANSWERS in English (owner, 10-09)",
+            "ANY language" in sess.get("instructions", "") and "ALWAYS answer out loud in English" in sess.get("instructions", "")
+            and "language" not in json.dumps(sess.get("audio", {}).get("input", {}).get("transcription", {})), sess.get("audio"))
         arm("the session's tool allowlist excludes tier-private agents",
             (private is None or private not in allow) and (public is None or public in allow), allow)
         r = o.post(f"{A}/voice/usage", json={"id": body.get("usage_id", 0), "seconds": 90}, headers=H).json()

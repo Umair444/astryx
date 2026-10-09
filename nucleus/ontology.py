@@ -167,7 +167,7 @@ def expected_fields(page_type: str, pages: list[dict] | None = None) -> set[str]
     is a statement about a sample too small to mean anything.
     """
     pages = _pages() if pages is None else pages
-    same = [p for p in pages if p["type"] == page_type]
+    same = [p for p in pages if p["type"] == page_type and p["rels"]]   # prose pages declare no fields (as the infobox check)
     if len(same) < MIN_PAGES:
         return set()
     counts = Counter(r for p in same for r in p["rels"])

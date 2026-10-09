@@ -9,6 +9,9 @@
   "bridges/canvas.py::canvas_share\u001fupdate canvases set shared_with=? where id=?": [
    "canvas: trust lines, claim, shell"
   ],
+  "bridges/canvas.py::crew_remove\u001fupdate canvases set crew = array_remove(crew, ?) where id=? and ? = any(crew) returning id": [
+   "canvas: trust lines, claim, shell"
+  ],
   "bridges/canvas.py::logout\u001fdelete from canvas_sessions where token_hash=?": [
    "canvas: trust lines, claim, shell"
   ],
@@ -488,7 +491,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 303,
+  "debt_rows": 304,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -522,6 +525,12 @@
    "debt": "EXECUTED",
    "reason": "seed 10-09 canvas: runs only after _canvas_for() found the canvas (404 otherwise), so 0 rows is unreachable; \u22651 observed",
    "tk": "sha256t:f6069fe213608d246e73445b404a3a73c37ea70cb2f5aaba47b6cd276836274c"
+  },
+  "bridges/canvas.py::crew_remove\u001fupdate canvases set crew = array_remove(crew, ?) where id=? and ? = any(crew) returning id": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "seed 10-09 canvas crew removal: executed in a stamped fixture by tests/test_canvas.py with BOTH arms (a crew member removed \u2192 1 row, the same removal again \u2192 0 rows), but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create).",
+   "tk": "sha256t:0fd2880df649df0f5a9ba53bd994ca35e771653c83a5727adfa0f557bd8ce413"
   },
   "bridges/canvas.py::logout\u001fdelete from canvas_sessions where token_hash=?": {
    "admitted": "2026-10-09",
@@ -1240,7 +1249,7 @@
   },
   "nucleus/sqlguard/enforce.py::enforce\u001fselect to_regclass('sqlguard_seen')": {
    "debt": "UNEXECUTED",
-   "reason": "seed",
+   "reason": "seed (restored 10-09, steward #38027): shrunk in c3aab02 on ONE run's RESPONSIVE grade, but to_regclass returns one row either way (NULL or the oid), so the grade rides whether the run created sqlguard_seen and flaps red on other trees. Listed until a fixture pins table-absent and table-present arms.",
    "tk": "sha256t:24a70fcf340ff1f032302692bdfe9fe64190e009374dd87482dcde8779a883b3"
   },
   "nucleus/sqlguard/fixture.py::_stamp_all\u001fselect c.oid, quote_ident(n.nspname)||'.'||quote_ident(c.relname) from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relkind in ('r','p','v','m') and n.nspname not in ('pg_catalog','information_schema','ag_catalog','topology') and n.nspname not like 'pg_toast%%' and not exists (select 1 from pg_depend d where d.classid = 'pg_class'::regclass and d.objid = c.oid and d.deptype = 'e')": {

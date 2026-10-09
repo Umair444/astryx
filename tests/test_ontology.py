@@ -78,6 +78,17 @@ def test_a_shapeless_type_IS_called_a_bucket():
     assert f and f[0]["type"] == "concept", "a type whose pages share nothing went unreported"
 
 
+def test_prose_pages_do_not_drag_a_real_core_under_threshold():
+    """memory #37896: zero-relation (prose) pages declare no fields by contract, so they can't count
+    against a type's shared core — the infobox check already exempts them (msg 16664)."""
+    mixed = SHAPED + [_page(f"p{i}", "goal", set()) for i in range(4)]   # 3 of 7 carry the core: under THRESHOLD unless prose is exempt
+    assert ont.expected_fields("goal", mixed) == {"state", "title"}, ont.expected_fields("goal", mixed)
+    kinds = [x["kind"] for x in ont.findings(mixed) if x.get("type") == "goal"]
+    assert "catch-all-type" not in kinds, f"prose pages made a shaped type look like a bucket: {kinds}"
+    # control: notation pages that share nothing are still a bucket, prose or no prose
+    assert any(x["kind"] == "catch-all-type" for x in ont.findings(BUCKET + [_page("p3", "concept", set())]))
+
+
 def test_incomplete_infobox_names_the_page_and_the_field():
     """Falsifiable: a specific page missing a specific field its siblings carry."""
     gapped = SHAPED[:2] + [_page("g3", "goal", {"title", "convergence"})]   # g3 loses state

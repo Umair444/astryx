@@ -114,8 +114,10 @@ def node_bin():
 ADMIN_DSN, NODE = dsn(), node_bin()
 if not ADMIN_DSN:
     skip("no ASTRYX_DSN")
-if not NODE or not (REPO / "channel" / "node_modules" / "pg").is_dir():
-    skip("node or channel/node_modules/pg absent")
+# The ear arms (C1/C2) need node + the channel's pg; B1 (step_line) needs only the fixture. Without
+# node, run B1 anyway and say the ear went unsearched — a whole-file skip left step_line's 0-row and
+# ≥1-row arms unrun on fresh trees, so its sqlguard grade flapped between runs (steward #37892).
+EAR = bool(NODE and (REPO / "channel" / "node_modules" / "pg").is_dir())
 sys.path.insert(0, str(REPO))
 from nucleus.sqlguard.fixture import fixture_db  # noqa: E402 — the ONE applier
 
@@ -157,49 +159,54 @@ try:
     db.execute("INSERT INTO subscriptions (watcher, target, filter) VALUES (%s,'','all')",
                (PROBE_AGENT,))
 
-    # ── the REAL server, staged outside the repo (ear-survival pattern) ──────────────────
-    (stage / "channel").mkdir()
-    shutil.copy2(SERVER, stage / "channel" / "server.mjs")
-    (stage / "channel" / "node_modules").symlink_to(REPO / "channel" / "node_modules")
-    (stage / ".env").write_text(f"ASTRYX_DSN={PROBE_DSN}\n")
-    env = {**os.environ, "ASTRYX_AGENT": PROBE_AGENT, "ASTRYX_DSN": PROBE_DSN,
-           "ASTRYX_SUBS_REFRESH_MS": "500"}
-    with open(stage / "stdout.log", "wb") as out, open(stage / "stderr.log", "wb") as err:
-        proc = subprocess.Popen([NODE, str(stage / "channel" / "server.mjs")], cwd=stage,
-                                env=env, stdin=subprocess.PIPE, stdout=out, stderr=err)
-
     def step(agent, content, kind="tool"):
         return db.execute("INSERT INTO steps (agent, kind, content) VALUES (%s,%s,%s) "
                           "RETURNING id", (agent, kind, content)).fetchone()[0]
 
-    # C1 positive control: the ear is up and the subscription loaded. Retry until the
-    # server's LISTEN is live (a step before it is simply missed, never queued).
-    ok_first = False
-    for i in range(20):
-        step("zzx", f"LEGIT-first-{i}")
-        if wait_for(lambda: "LEGIT-first-" in stdout_text(), 1.5):
-            ok_first = True
-            break
-    if not ok_first:
-        skip("the staged ear never pushed a real subscribed step (no positive control), "
-             "so no silence below could mean anything")
-    check("C1 positive control: a real step of the subscribed agent is pushed", ok_first)
+    if EAR:
+        # ── the REAL server, staged outside the repo (ear-survival pattern) ──────────────────
+        (stage / "channel").mkdir()
+        shutil.copy2(SERVER, stage / "channel" / "server.mjs")
+        (stage / "channel" / "node_modules").symlink_to(REPO / "channel" / "node_modules")
+        (stage / ".env").write_text(f"ASTRYX_DSN={PROBE_DSN}\n")
+        env = {**os.environ, "ASTRYX_AGENT": PROBE_AGENT, "ASTRYX_DSN": PROBE_DSN,
+               "ASTRYX_SUBS_REFRESH_MS": "500"}
+        with open(stage / "stdout.log", "wb") as out, open(stage / "stderr.log", "wb") as err:
+            proc = subprocess.Popen([NODE, str(stage / "channel" / "server.mjs")], cwd=stage,
+                                    env=env, stdin=subprocess.PIPE, stdout=out, stderr=err)
 
-    secret_id = step("zzy", "SECRET-zzy-content")             # zzy: nobody subscribes
-    empty_id = step("", "SECRET-empty-agent-content")         # agent '' IS a legal value
-    db.execute("SELECT pg_notify('astryx_steps', %s)",
-               (json.dumps({"id": secret_id, "agent": "zzx", "kind": "tool"}),))
-    db.execute("SELECT pg_notify('astryx_steps', %s)",
-               (json.dumps({"id": empty_id, "agent": "", "kind": "tool"}),))
-    after_id = step("zzx", "LEGIT-after-forgery")
-    arrived = wait_for(lambda: "LEGIT-after-forgery" in stdout_text(), 10)
-    check("C1 a real step AFTER the forgery arrives (the ear listened throughout)", arrived)
-    check("C1 a forged payload pushed NOTHING of the other agent's step",
-          "SECRET-zzy-content" not in stdout_text(),
-          "the other agent's step content was pushed under the zzx subscription")
-    check("C2 an agent:\"\" payload pushed nothing, with a '' step AND a '' subscription present",
-          "SECRET-empty-agent-content" not in stdout_text(),
-          "the '' step was pushed: the empty-agent early return is gone")
+        # C1 positive control: the ear is up and the subscription loaded. Retry until the
+        # server's LISTEN is live (a step before it is simply missed, never queued).
+        ok_first = False
+        for i in range(20):
+            step("zzx", f"LEGIT-first-{i}")
+            if wait_for(lambda: "LEGIT-first-" in stdout_text(), 1.5):
+                ok_first = True
+                break
+        if not ok_first:
+            skip("the staged ear never pushed a real subscribed step (no positive control), "
+                 "so no silence below could mean anything")
+        check("C1 positive control: a real step of the subscribed agent is pushed", ok_first)
+
+        secret_id = step("zzy", "SECRET-zzy-content")             # zzy: nobody subscribes
+        empty_id = step("", "SECRET-empty-agent-content")         # agent '' IS a legal value
+        db.execute("SELECT pg_notify('astryx_steps', %s)",
+                   (json.dumps({"id": secret_id, "agent": "zzx", "kind": "tool"}),))
+        db.execute("SELECT pg_notify('astryx_steps', %s)",
+                   (json.dumps({"id": empty_id, "agent": "", "kind": "tool"}),))
+        after_id = step("zzx", "LEGIT-after-forgery")
+        arrived = wait_for(lambda: "LEGIT-after-forgery" in stdout_text(), 10)
+        check("C1 a real step AFTER the forgery arrives (the ear listened throughout)", arrived)
+        check("C1 a forged payload pushed NOTHING of the other agent's step",
+              "SECRET-zzy-content" not in stdout_text(),
+              "the other agent's step content was pushed under the zzx subscription")
+        check("C2 an agent:\"\" payload pushed nothing, with a '' step AND a '' subscription present",
+              "SECRET-empty-agent-content" not in stdout_text(),
+              "the '' step was pushed: the empty-agent early return is gone")
+    else:
+        print("  ○ C1/C2 the staged channel ear — NOT SEARCHED: node or channel/node_modules/pg absent")
+        secret_id = step("zzy", "SECRET-zzy-content")
+        empty_id = step("", "SECRET-empty-agent-content")
 
     # ── B1: the bridges' step_line, the SUBJECT copy, on a real asyncpg pool ─────────────
     pkg = stage / "bridges"
