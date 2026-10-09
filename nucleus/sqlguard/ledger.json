@@ -12,7 +12,8 @@
   "bridges/canvas.py::logout\u001fdelete from canvas_sessions where token_hash=?": [
    "canvas: trust lines, claim, shell"
   ],
-  "bridges/canvas.py::new_canvas\u001fselect * from canvases where id=?": [
+  "bridges/canvas.py::new_canvas\u001fselect *, version as ver from canvases where id=?": [
+   "canvas voice: cap, tier fence, owner",
    "canvas: trust lines, claim, shell"
   ],
   "bridges/canvas.py::thread_user\u001fupdate canvas_threads set updated_at=now() where thread=?": [
@@ -20,6 +21,9 @@
   ],
   "bridges/canvas.py::viewer\u001fupdate canvas_users set last_seen=now() where name=?": [
    "canvas: trust lines, claim, shell"
+  ],
+  "bridges/canvas_voice.py::voice_session\u001finsert into canvas_voice_usage (user_name, model) values (?,?) returning id": [
+   "canvas voice: cap, tier fence, owner"
   ],
   "bridges/providers/canvas.py::CanvasProvider.list_chats\u001fselect thread, user_name, agent, title from canvas_threads where not archived order by updated_at desc limit 100": [
    "canvas: trust lines, claim, shell"
@@ -204,6 +208,9 @@
   "nucleus/wake_audit.py::dropped\u001f*": [
    "wake-audit classifier"
   ],
+  "observatory/api/main.py::agent_profile\u001fselect mode() within group (order by model) from turns where agent=? and model is not null and ended_at > now() - interval '2 days'": [
+   "observatory: agents as people"
+  ],
   "observatory/api/main.py::goal_create\u001finsert into goals (title, owner, state, scope_note) values (?, ?, 'proposed', ?) returning id": [
    "goal budgets frozen, writers retired (4227 S3)"
   ],
@@ -368,7 +375,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 280,
+  "debt_rows": 279,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -388,44 +395,50 @@
   "bridges/canvas.py::_say\u001fupdate canvas_threads set updated_at=now(), title=coalesce(title, ?) where thread=?": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas: every caller passes a thread it just read from canvas_threads (or that create() registered), so 0 rows is unreachable; ≥1 observed",
+   "reason": "seed 10-09 canvas: every caller passes a thread it just read from canvas_threads (or that create() registered), so 0 rows is unreachable; \u22651 observed",
    "tk": "sha256t:d88dc7c68469047fd412770de32f02e015de98ceb40fb11432fb17857fa51cb0"
   },
   "bridges/canvas.py::canvas_archive\u001fupdate canvases set archived=true where id=?": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas: runs only after _canvas_for() found the canvas (404 otherwise, observed), so 0 rows is unreachable; ≥1 observed",
+   "reason": "seed 10-09 canvas: runs only after _canvas_for() found the canvas (404 otherwise, observed), so 0 rows is unreachable; \u22651 observed",
    "tk": "sha256t:4b9ae46977794133dbf40131da35a16ead9a79a794cce687cd010832623cf9fe"
   },
   "bridges/canvas.py::canvas_share\u001fupdate canvases set shared_with=? where id=?": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas: runs only after _canvas_for() found the canvas (404 otherwise), so 0 rows is unreachable; ≥1 observed",
+   "reason": "seed 10-09 canvas: runs only after _canvas_for() found the canvas (404 otherwise), so 0 rows is unreachable; \u22651 observed",
    "tk": "sha256t:f6069fe213608d246e73445b404a3a73c37ea70cb2f5aaba47b6cd276836274c"
   },
   "bridges/canvas.py::logout\u001fdelete from canvas_sessions where token_hash=?": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas: the gate admits /api/logout only with a live session row for this cookie, so 0 rows is unreachable; ≥1 observed",
+   "reason": "seed 10-09 canvas: the gate admits /api/logout only with a live session row for this cookie, so 0 rows is unreachable; \u22651 observed",
    "tk": "sha256t:2c348c96403fa54c70b93a583c21f5ac9391746cad17f3d14198a9af7dafa353"
   },
-  "bridges/canvas.py::new_canvas\u001fselect * from canvases where id=?": {
+  "bridges/canvas.py::new_canvas\u001fselect *, version as ver from canvases where id=?": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas: re-reads the id create() returned in the same request, so 0 rows is unreachable; ≥1 observed",
-   "tk": "sha256t:ab991a449c8b14f5ecfbd3736bdba6a4cc0b62e572a671455e2544fefad6290e"
+   "reason": "seed 10-09: re-reads the id create() returned in the same request (0 rows unreachable); the alias rename of the admitted row",
+   "tk": "sha256t:57af3c3f65d3c913d25b0ad6192c33cfea9c04aa1c9b3f852a171a981628c06f"
   },
   "bridges/canvas.py::thread_user\u001fupdate canvas_threads set updated_at=now() where thread=?": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas: runs only after the SELECT on the same thread found it, so 0 rows is unreachable; ≥1 observed",
+   "reason": "seed 10-09 canvas: runs only after the SELECT on the same thread found it, so 0 rows is unreachable; \u22651 observed",
    "tk": "sha256t:15fe7a04aabf9aaa376b567f13b163586df067fd5e7fb73026e0faf60b1c752f"
   },
   "bridges/canvas.py::viewer\u001fupdate canvas_users set last_seen=now() where name=?": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas: runs only for a session whose JOIN just found the non-revoked user, so 0 rows is unreachable; ≥1 observed",
+   "reason": "seed 10-09 canvas: runs only for a session whose JOIN just found the non-revoked user, so 0 rows is unreachable; \u22651 observed",
    "tk": "sha256t:ba79ef9cf28c18ca2b3e0c53def19db9bff0525f912560d4fb5ee5c73cd44b1b"
+  },
+  "bridges/canvas_voice.py::voice_session\u001finsert into canvas_voice_usage (user_name, model) values (?,?) returning id": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "seed 10-09: INSERT \u2026 RETURNING always affects exactly one row; the 0-row arm does not exist",
+   "tk": "sha256t:3c7a03b454af33ce666876001b7bc99b1b7b81b62d76d74efbec95002e3b38de"
   },
   "bridges/common.py::listen\u001f*": {
    "debt": "UNEXECUTED",
@@ -560,7 +573,7 @@
   "bridges/providers/canvas.py::CanvasProvider.list_chats\u001fselect thread, user_name, agent, title from canvas_threads where not archived order by updated_at desc limit 100": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas: read-only channel listing; ≥1 observed, the empty arm is the trivially-correct empty list",
+   "reason": "seed 10-09 canvas: read-only channel listing; \u22651 observed, the empty arm is the trivially-correct empty list",
    "tk": "sha256t:045afc1a84b0629a0964ee47824ff4ab7618684ce135e53b2f68eb1da610a51e"
   },
   "bridges/telegram.py::deliver\u001fupdate messages set status=?, delivered_at=now(), delivery=? where id=?": {
@@ -797,7 +810,7 @@
   "nucleus/canvas.py::publish\u001fupdate canvases set version=version+1, updated_at=now() where id=? returning version": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas: runs only after _canvas() found the row (a missing id raises first), so the 0-row arm is unreachable; ≥1 observed in tests/test_canvas.py",
+   "reason": "seed 10-09 canvas: runs only after _canvas() found the row (a missing id raises first), so the 0-row arm is unreachable; \u22651 observed in tests/test_canvas.py",
    "tk": "sha256t:bb8d2536e8727317a91c192d1d88abf1b745eb6a8c957e6a3df08462c6c74da4"
   },
   "nucleus/dsn_census.py::clients\u001fselect current_user": {
@@ -1051,6 +1064,11 @@
    "reason": "seed",
    "tk": "sha256t:79978b153539351884fcb4a8b49996e18cf12ba81fc663c86ba7e9b94eeca3b0"
   },
+  "nucleus/sqlguard/enforce.py::enforce\u001fselect to_regclass('sqlguard_seen')": {
+   "debt": "UNEXECUTED",
+   "reason": "seed",
+   "tk": "sha256t:24a70fcf340ff1f032302692bdfe9fe64190e009374dd87482dcde8779a883b3"
+  },
   "nucleus/sqlguard/fixture.py::_stamp_all\u001fselect c.oid, quote_ident(n.nspname)||'.'||quote_ident(c.relname) from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relkind in ('r','p','v','m') and n.nspname not in ('pg_catalog','information_schema','ag_catalog','topology') and n.nspname not like 'pg_toast%%' and not exists (select 1 from pg_depend d where d.classid = 'pg_class'::regclass and d.objid = c.oid and d.deptype = 'e')": {
    "admitted": "2026-09-30",
    "debt": "EXECUTED/FIXTURE-DDL",
@@ -1113,10 +1131,11 @@
    "reason": "seed",
    "tk": "sha256t:e47be9981e67eb532f1b577e6a4caff9fb96a8e363fb2c91db1b9c764d4681db"
   },
-  "observatory/api/main.py::agent_profile\u001fselect (select count(*) from turns where agent=?) as turns, (select coalesce(sum(tokens_out),0) from turns where agent=?) as tokens_out, (select coalesce(sum(coalesce((raw_payload->'usage'->>'billable_equiv_in')::bigint, (tokens_in*0.12)::bigint + tokens_out)),0)::bigint from turns where agent=?) as billable_tokens, (select count(*) from messages where from_agent=? and from_org='local') as messages_sent, (select count(*) from steps where agent=?) as steps, (select min(ts) from steps where agent=?) as first_seen, (select max(ts) from steps where agent=?) as last_seen": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:977a7dcc278dac4fb1ae66a01d6624a7cb22df9760c3abf938fa64fc9f23aafe"
+  "observatory/api/main.py::agent_profile\u001fselect mode() within group (order by model) from turns where agent=? and model is not null and ended_at > now() - interval '2 days'": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "seed 10-09: an aggregate without GROUP BY always returns one row (NULL when quiet, observed); the 0-row arm does not exist",
+   "tk": "sha256t:8e795d0cf463ea06028958f685921e4514d8e36af4883590633150c1615400e0"
   },
   "observatory/api/main.py::agent_profile\u001fselect model from turns where agent=? and model is not null order by ended_at desc limit 1": {
    "debt": "UNEXECUTED",
@@ -1127,16 +1146,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:4a632d611a50639c42b7d18883147e67daa6af0aa1999db3f5459e0eb22cae8d"
-  },
-  "observatory/api/main.py::agents\u001fselect agent, max(ts) as last_seen, count(*) as steps, coalesce(sum(tokens_in), 0) as tokens_in, coalesce(sum(tokens_out), 0) as tokens_out, (array_agg(kind order by id desc))[1] as last_kind, (array_agg(left(content, 120) order by id desc))[1] as last_content from steps group by agent order by max(ts) desc": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:82ff15804265fdd8b6dcdb54cff37b547cae3303ce1d0cf3a5466aefba01bf07"
-  },
-  "observatory/api/main.py::agents\u001fselect distinct on (agent) agent, model from turns where model is not null order by agent, id desc": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:a4024b36422a961e7355a193c49f18695ade423a7c577439cccc91fac9da6d9e"
   },
   "observatory/api/main.py::brain_completions\u001finsert into messages (from_agent, to_agent, thread, intent, body) values ('owner', 'growbot', ?, 'task', ?) returning id": {
    "debt": "UNEXECUTED",
@@ -1258,6 +1267,12 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:d3dd7c4e1a3d240c4b6fa5c591ad09b036d55018758e1cbce88cef0431963025"
+  },
+  "observatory/api/main.py::listen_task\u001fselect * from presence where agent=?": {
+   "admitted": "2026-10-09",
+   "debt": "UNEXECUTED",
+   "reason": "seed 10-09: runs only inside the live LISTEN tap on an astryx_presence doorbell (an id the trigger just wrote); the same read is RESPONSIVE in canvas on_presence (tests/test_canvas.py)",
+   "tk": "sha256t:5bbe322b2890c658fe34204fb8794ff82cb2dcdd23f94330d6b7a51208686f1b"
   },
   "observatory/api/main.py::memory_chat\u001finsert into messages (from_agent, to_agent, thread, intent, body) values ('owner', 'memory', ?, 'task', ?) returning id": {
    "debt": "UNEXECUTED",
@@ -1802,11 +1817,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:71f0c60f40571bce9fac0d27c8c6b9f7637c68cf80bea38c5811394d26afc1a8"
-  },
-  "nucleus/sqlguard/enforce.py::enforce\u001fselect to_regclass('sqlguard_seen')": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:24a70fcf340ff1f032302692bdfe9fe64190e009374dd87482dcde8779a883b3"
   }
  }
 }

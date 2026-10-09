@@ -5,6 +5,7 @@ import { saveObsKey } from './api'
 import { StoreProvider, useStore } from './store'
 import Sidebar from './components/Sidebar'
 import NetworkView from './components/NetworkView'
+import FloorView from './components/FloorView'
 import PeopleView from './components/PeopleView'
 import WireView from './components/WireView'
 import GoalsView from './components/GoalsView'
@@ -30,6 +31,7 @@ export type Route =
   | { tab: 'memory' }
   | { tab: 'growbot' }
   | { tab: 'face' }
+  | { tab: 'floor' }
 
 function parseHash(): Route {
   const h = location.hash.replace(/^#\/?/, '')
@@ -44,16 +46,18 @@ function parseHash(): Route {
   if (tab === 'memory') return { tab: 'memory' }
   if (tab === 'growbot') return { tab: 'growbot' }
   if (tab === 'face') return { tab: 'face' }
-  return { tab: 'network' }
+  if (tab === 'network') return { tab: 'network' }
+  return { tab: 'floor' }          // the Floor is home: the org as a place
 }
 
 export function nav(r: Route) {
-  if (r.tab === 'network') location.hash = '#/'
+  if (r.tab === 'floor') location.hash = '#/'
   else if (r.tab === 'wire') location.hash = `#/wire${r.thread ? '/' + encodeURIComponent(r.thread) : ''}`
   else location.hash = `#/${r.tab}`
 }
 
 const TABS: { key: Route['tab']; label: string; icon: string }[] = [
+  { key: 'floor', label: 'Floor', icon: '◉' },
   { key: 'network', label: 'Network', icon: '☉' },
   { key: 'agents', label: 'Agents', icon: '◍' },
   { key: 'wire', label: 'Wire', icon: '✦' },
@@ -178,8 +182,9 @@ function Shell() {
     })
   const isDesktop = useMediaQuery('(min-width: 48em)', true)
   const { overview, who, whoChecked } = useStore()
-  const tabs = who.owner ? TABS : TABS.filter((t) => t.key === 'network')
-  const locked = !who.owner && route.tab !== 'network'
+  // the Floor and the Network are the org's public faces; everything else is the owner's
+  const tabs = who.owner ? TABS : TABS.filter((t) => t.key === 'network' || t.key === 'floor')
+  const locked = !who.owner && route.tab !== 'network' && route.tab !== 'floor'
 
   useEffect(() => {
     const f = () => {
@@ -214,19 +219,6 @@ function Shell() {
           <Text size="xs" c="dimmed" visibleFrom="xs">
             · observatory
           </Text>
-          <div className="hidden sm:flex items-center gap-1 ml-4">
-            {tabs.map((t) => (
-              <button
-                key={t.key}
-                onClick={() => nav({ tab: t.key } as Route)}
-                className={`px-2.5 py-1 rounded-md text-[12px] ${
-                  route.tab === t.key ? 'bg-deck-3 text-cyan-soft' : 'text-ink-dim hover:text-ink'
-                }`}
-              >
-                {t.icon} {t.label}
-              </button>
-            ))}
-          </div>
           <span className="ml-auto flex items-center gap-2 text-[11px] text-ink-mute">
             {overview && (
               <>
@@ -254,6 +246,7 @@ function Shell() {
             ) : null
           ) : (
             <>
+              {route.tab === 'floor' && <FloorView onOpenAgent={setAgentOpen} />}
               {route.tab === 'network' && <NetworkView onOpenAgent={setAgentOpen} />}
               {route.tab === 'agents' && <PeopleView />}
               {route.tab === 'wire' && <WireView route={route} onOpenAgent={setAgentOpen} />}

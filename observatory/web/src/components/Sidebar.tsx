@@ -1,11 +1,13 @@
 import { ScrollArea, Text, Tooltip, UnstyledButton } from '@mantine/core'
 import { agentColor, avatarInitial, displayName, fmtAgo, fmtTokens, shortModel } from '../api'
+import AgentFace from './AgentFace'
 import { useStore } from '../store'
 import { nav } from '../App'
 import type { Route } from '../App'
 import ThemePicker from './ThemePicker'
 
 const LINKS: { tab: Route['tab']; label: string; icon: string }[] = [
+  { tab: 'floor', label: 'Floor', icon: '◉' },
   { tab: 'network', label: 'Network', icon: '☉' },
   { tab: 'agents', label: 'Agents', icon: '◍' },
   { tab: 'wire', label: 'The Wire', icon: '✦' },
@@ -26,7 +28,7 @@ export default function Sidebar({
   onOpenAgent: (n: string) => void
 }) {
   const { overview, agents, who } = useStore()
-  const links = who.owner ? LINKS : LINKS.filter((l) => l.tab === 'network')
+  const links = who.owner ? LINKS : LINKS.filter((l) => l.tab === 'network' || l.tab === 'floor')
 
   return (
     <div className="h-full flex flex-col">
@@ -89,12 +91,7 @@ export default function Sidebar({
               onClick={() => onOpenAgent(a.agent)}
               className="w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-ink-dim hover:bg-deck-3 hover:text-ink transition-colors duration-75"
             >
-              <span
-                className="w-5 h-5 rounded-full grid place-items-center text-[10px] font-bold text-agent-ink"
-                style={{ background: agentColor(a.agent) }}
-              >
-                {avatarInitial(a.agent)}
-              </span>
+              <AgentFace name={a.agent} size={20} radius="9999px" />
               <span className="truncate">{displayName(a.agent)}</span>
               {a.type && a.type !== 'resident' && (
                 <span className="text-[8px] font-mono uppercase tracking-wide px-1 py-px rounded border border-line bg-deck-2 text-warn/80">

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'motion/react'
+import AgentFace from './AgentFace'
 import { api, avatarInitial, displayName, fmtDay, fmtTime } from '../api'
 import { useStore } from '../store'
 import type { Msg } from '../types'
@@ -52,9 +53,7 @@ function parseStory(m: Msg): Story {
 function Byline({ s, expanded }: { s: Story; expanded: boolean }) {
   return (
     <div className="flex items-center gap-2 mt-auto pt-3">
-      <span className="w-5 h-5 rounded-full grid place-items-center text-[10px] font-bold bg-deck-3 border border-line text-cyan-soft shrink-0">
-        {avatarInitial(s.m.from)}
-      </span>
+      <AgentFace name={s.m.from} size={20} radius="9999px" />
       <span className="text-xs text-ink-mute font-mono">{displayName(s.m.from)}</span>
       <span className="text-[11px] text-ink-mute/60">·</span>
       <span className="text-[11px] text-ink-mute/80" title={new Date(s.m.ts).toLocaleString()}>

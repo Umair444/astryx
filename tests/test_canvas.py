@@ -235,6 +235,16 @@ def coverage(url):
         mid = cl.get(f"{A}/threads/{t}/messages").json()["messages"][0]["id"]
         arm("a file not named by the message is 404; a missing message is 404",
             cl.get(f"{A}/file?msg={mid}&n=0").status_code == 404 and cl.get(f"{A}/file?msg=999999999&n=0").status_code == 404)
+        sm = cl.post(f"{A}/canvases/{full['id']}/ask", json={"text": "make this weekly", "frame": False, "agent": "forge",
+                     "element": {"selector": "#hero", "tag": "div", "text": "17", "html": "<div id=hero>17</div>"}}, headers=H)
+        crew = cl.get(f"{A}/canvases/{full['id']}").json().get("crew", [])
+        cl.post(f"{A}/canvases/{full['id']}/ask", json={"text": "and again", "frame": False, "agent": "forge"}, headers=H)
+        crew2 = cl.get(f"{A}/canvases/{full['id']}").json().get("crew", [])
+        with psycopg_conn(url) as c:
+            pr = c.execute("SELECT surface, state FROM presence WHERE agent='forge'").fetchone()
+        arm("summoning brings an agent onto the crew ONCE, and it appears on the canvas at once (moving)",
+            sm.status_code == 200 and crew == ["forge"] and crew2 == ["forge"] and pr == (f"canvas:{full['id']}", "moving"),
+            (sm.status_code, crew, crew2, pr))
         arm("logout ends the session", cl.post(f"{A}/logout", headers=H).status_code == 200 and cl.get(f"{A}/me").status_code == 401)
         cl.post(f"{A}/logout", headers=H)                                          # logout: 0 rows
 
@@ -251,6 +261,13 @@ def coverage(url):
             arm("an agent opening a NEW cv: thread to the owner registers it in the owner's list", reg == "owner")
             arm("replies to canvas-<id> (real or gone) are claimed", st[ids[1]] == st[ids[2]] == "delivered")
             await b.on_canvas({"kind": "canvas", "canvas": full["id"], "version": 1})
+            arm("presence fan-out: viewers of a real canvas / of a missing one",
+                "owner" in await b.canvas_viewers(f"canvas:{full['id']}") and await b.canvas_viewers("canvas:999999") == set())
+            await b.on_presence({"agent": "nobody-at-all"})          # no row: nothing to fan out
+            await conn.execute("INSERT INTO presence (agent, surface, state) VALUES ('scout', $1, 'working') "
+                               "ON CONFLICT (agent) DO UPDATE SET surface=EXCLUDED.surface", f"canvas:{full['id']}")
+            await b.on_presence({"agent": "scout"})
+            arm("a presence row reaches the canvas's cache", b.present.get("scout", {}).get("surface") == f"canvas:{full['id']}")
             await b.on_canvas({"kind": "data", "canvas": 999999, "key": "k"})
         finally:
             await conn.close()
@@ -282,6 +299,18 @@ def coverage(url):
         rc = [cv.main(["list"]), cv.main(["list", "--all"]), cv.main(["versions", str(full["id"])]),
               cv.main(["versions", str(empty["id"])]), cv.main(["show", str(full["id"])]),
               cv.main(["show", str(full["id"]), "--version", "42"])]
+    # presence: the general primitive, its CLI both ways
+    from nucleus import presence as pres
+    pout = io.StringIO()
+    os.environ["ASTRYX_AGENT"] = "scout"
+    with contextlib.redirect_stdout(pout):
+        prc = [pres.main(["show"]), pres.main(["focus", f"cv:canvas-{full['id']}", "--target", "#x", "--say", "on it"]),
+               pres.main(["show", f"canvas-{full['id']}"]), pres.main(["show", "canvas:999999"]),
+               pres.main(["done", "--say", "finished"]), pres.main(["clear"]), pres.main(["focus", "nonsense"])]
+    os.environ.pop("ASTRYX_AGENT", None)
+    txt = pout.getvalue()
+    arm("presence CLI: focus/show/done/clear work; a naive surface is normalised; nonsense is refused (rc 1)",
+        prc == [0, 0, 0, 0, 0, 0, 1] and f"canvas:{full['id']}" in txt and "(nobody present)" in txt, (prc, txt[-300:]))
     arm("the CLI: list, versions (some/none), show (found / missing version → rc 1)", rc == [0, 0, 0, 0, 0, 1], rc)
 
 

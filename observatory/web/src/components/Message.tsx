@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { motion } from 'motion/react'
+import AgentFace from './AgentFace'
 import { agentColor, avatarInitial, displayName, fmtTime } from '../api'
 import { useStore } from '../store'
 import type { Msg } from '../types'
@@ -52,10 +53,9 @@ export default function Message({
           {!compact && (
             <button
               onClick={() => onOpenAgent?.(m.from)}
-              className="w-8 h-8 rounded-lg grid place-items-center text-[13px] font-bold text-agent-ink"
-              style={{ background: col }}
+              className="shrink-0 rounded-full"
             >
-              {avatarInitial(m.from)}
+              <AgentFace name={m.from} size={32} />
             </button>
           )}
         </div>

@@ -1,0 +1,56 @@
+import { useState } from 'react'
+import Avatar, { type AvatarStatus } from './Avatar'
+
+/* An agent's FACE: the avatar it authored for itself (agents/<x>/avatar.svg, mandatory since
+   2026-10-09), served at /api/agents/<x>/avatar. Anyone without one — a human on a channel, a
+   peer, an agent that hasn't drawn itself yet — gets the deterministic generated portrait, so
+   no face is ever a bare letter. One component for every surface: a person looks the same
+   in the sidebar, the wire, the network and the profile. */
+
+const missing = new Set<string>()
+const HUMAN = /^(owner|(wa|tg|dc|cv|canvas)-.+)$|@/
+
+const RING: Record<AvatarStatus, string> = { live: 'var(--t-good)', dormant: 'var(--t-mute)', retired: 'var(--t-warn)' }
+
+export default function AgentFace({ name, size = 32, radius = '9999px', dim = false, title, status }: {
+  name: string
+  size?: number
+  radius?: string
+  dim?: boolean
+  title?: string
+  status?: AvatarStatus      // a status ring (live / dormant / retired), as the people page shows
+}) {
+  if (status) {
+    const pad = Math.max(2, Math.round(size / 16))
+    return (
+      <span className="shrink-0 inline-grid place-items-center" title={title ?? name}
+        style={{ width: size, height: size, borderRadius: radius, padding: pad,
+                 boxShadow: `0 0 0 ${pad}px ${RING[status]}`, opacity: status === 'dormant' ? 0.85 : 1,
+                 outline: status === 'retired' ? `1px dashed ${RING.retired}` : undefined }}>
+        <AgentFace name={name} size={size - pad * 2} radius={radius} dim={dim} title={title} />
+      </span>
+    )
+  }
+  const [failed, setFailed] = useState(() => missing.has(name))
+  const style = { width: size, height: size, borderRadius: radius, opacity: dim ? 0.55 : 1 }
+  if (!name || HUMAN.test(name) || failed) {
+    return (
+      <span className="shrink-0 overflow-hidden inline-block" style={style} title={title ?? name}>
+        <Avatar name={name || '?'} size={size} ring={false} />
+      </span>
+    )
+  }
+  return (
+    <img
+      src={`/api/agents/${encodeURIComponent(name)}/avatar`}
+      alt={name}
+      title={title ?? name}
+      width={size}
+      height={size}
+      draggable={false}
+      onError={() => { missing.add(name); setFailed(true) }}
+      className="shrink-0 object-cover select-none"
+      style={{ ...style, boxShadow: '0 0 0 1px var(--t-line2)' }}
+    />
+  )
+}

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ScrollArea } from '@mantine/core'
+import AgentFace from './AgentFace'
 import { api, agentColor, agentColorA, avatarInitial, displayName, fmtTokens } from '../api'
 import { useStore } from '../store'
 import type { AgentRow, Turn, TurnEvent } from '../types'
@@ -232,12 +233,7 @@ function SceneTurn({ t, onPeek }: { t: Turn; onPeek: () => void }) {
   return (
     <div className="rounded-lg border border-line/70 bg-deck-2/50 overflow-hidden">
       <div className="flex items-center gap-2 px-3 py-1.5 bg-deck-3/40 border-b border-line/60">
-        <span
-          className="w-5 h-5 rounded-full grid place-items-center text-[9px] font-bold text-agent-ink shrink-0"
-          style={{ background: col }}
-        >
-          {avatarInitial(t.agent)}
-        </span>
+        <AgentFace name={t.agent} size={20} radius="9999px" />
         <span className="text-[12px] font-semibold" style={{ color: col }}>
           {displayName(t.agent)}
         </span>

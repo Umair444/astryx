@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { api, apiPost, eventsUrl, fetchWhoami } from './api'
-import type { AgentRow, DagEvent, Goal, Msg, Overview, Peer, WhoAmI, WireEvent } from './types'
+import type { AgentRow, DagEvent, Goal, Msg, Overview, Peer, Presence, WhoAmI, WireEvent } from './types'
 
 /* one wire pulse — the network view animates the from→to edge for a moment.
    Orgs ride along so the anonymous map can animate org<->peer boundary edges. */
@@ -21,6 +21,7 @@ interface Store {
   goals: Goal[]
   peers: Peer[]
   flash: Flash | null
+  presence: Record<string, Presence> // owner-only: where each agent's attention is
   dagEvent: DagEvent | null // latest {type:'dag'} pulse — tools view refetches on it
   loadOlder: () => Promise<number>
   who: WhoAmI // owner unlocks the composer, vega gates the concierge
@@ -41,6 +42,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [goals, setGoals] = useState<Goal[]>([])
   const [peers, setPeers] = useState<Peer[]>([])
   const [flash, setFlash] = useState<Flash | null>(null)
+  const [presence, setPresence] = useState<Record<string, Presence>>({})
   const [dagEvent, setDagEvent] = useState<DagEvent | null>(null)
   const [who, setWho] = useState<WhoAmI>({ owner: false, vega: false })
   const [whoChecked, setWhoChecked] = useState(false)
@@ -115,6 +117,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (who.owner) api<Goal[]>('/goals').then(setGoals).catch(() => {})
   }, [who.owner])
 
+  useEffect(() => {
+    if (who.owner) api<Presence[]>('/presence').then(rows => setPresence(Object.fromEntries(rows.map(r => [r.agent, r])))).catch(() => {})
+  }, [who.owner])
+
   // one SSE pipe: new messages land in the feed, steps freshen the agent roster.
   // Reconnects whenever recheckWho lands (key saved/forgotten) so the ?key= is current.
   useEffect(() => {
@@ -131,6 +137,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const { type: _t, ...m } = e
         setMessages((cur) => (cur.some((x) => x.id === m.id) ? cur : [...cur, m as Msg]))
         setFlash({ key: m.id, from: m.from, to: m.to, from_org: m.from_org, to_org: m.to_org })
+        return
+      }
+      if (e.type === 'presence') {
+        const { type: _t, ...p } = e
+        setPresence((cur) => ({ ...cur, [p.agent]: p as Presence }))
         return
       }
       if (e.type === 'dag') {
@@ -154,8 +165,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [whoChecked, who])
 
   const value = useMemo(
-    () => ({ overview, agents, messages, loadMax, goals, peers, flash, dagEvent, loadOlder, who, whoChecked, recheckWho, send, refreshGoals }),
-    [overview, agents, messages, loadMax, goals, peers, flash, dagEvent, loadOlder, who, whoChecked, recheckWho, send, refreshGoals],
+    () => ({ overview, agents, messages, loadMax, goals, peers, flash, presence, dagEvent, loadOlder, who, whoChecked, recheckWho, send, refreshGoals }),
+    [overview, agents, messages, loadMax, goals, peers, flash, presence, dagEvent, loadOlder, who, whoChecked, recheckWho, send, refreshGoals],
   )
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

@@ -391,7 +391,18 @@ export interface WhoAmI {
 }
 
 /* /api/events SSE payloads */
+/* nucleus/presence.py — where an agent's attention is right now (owner-only) */
+export interface Presence {
+  agent: string
+  surface: string | null
+  target: string | null
+  say: string | null
+  state: 'idle' | 'moving' | 'working' | 'done'
+  updated_at: string
+}
+
 export type WireEvent =
+  | ({ type: 'presence' } & Presence)
   | ({ type: 'message' } & Msg)
   | { type: 'step'; id: number; agent: string; kind: string }
   | DagEvent
@@ -517,6 +528,8 @@ export interface AgentProfile {
   stats: { steps: number; turns: number; billable_tokens: number; last_seen: string | null }
   relations: { agent: string; messages: number }[]
   peers: string[]
+  presence?: Presence | null
+  recent?: { ts: string; kind: string; content: string }[]
 }
 
 /* POST /api/agents — bring an agent into the world */
@@ -556,4 +569,6 @@ export interface Profile {
   rank: number | null
   stats: { turns: number; tokens_out: number; messages_sent: number; steps: number; first_seen: string | null }
   history: { hash: string; author: string; date: string; subject: string }[]
+  presence?: Presence | null
+  recent?: { ts: string; kind: string; content: string }[]
 }
