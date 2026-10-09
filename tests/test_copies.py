@@ -10,8 +10,9 @@ Arms (RED / GREEN / CONTROL):
   W4 CONTROL  a reader (MATCH … RETURN) plus SQL's own SET/UPDATE…SET/DELETE FROM/CREATE TABLE → not listed.
   W5          a not_writers pin passes at its sha; an edit to the pinned file re-raises it LOUD.
   W6          a module that writes ANOTHER graph by literal name → not listed.
-  B1 RED      a helper imported under another name (`import cy as run; run(cur, "MERGE …")`) → UNCOUNTABLE;
-              CONTROL: prose with the same verbs, no AGE and no listed import → not listed (a3 #39203).
+  B1 RED      a labelled write whose graph name lives in a VERB-LESS helper → UNCOUNTABLE, in a3's three variants
+              (#39401): (1) the helper aliased on import, (2) the importer walked before the helper, (3) a helper
+              outside the estate with no AGE word in the caller. CONTROL: prose with the verbs, no label → not listed.
   B2 RED      a .mjs writer of cypher('memory', … CREATE …) → listed.
   B3 RED      SQL straight to the label tables (DELETE FROM / TRUNCATE / UPDATE / INSERT INTO memory."Concept") → writer.
   B4 RED      DROP SCHEMA memory CASCADE → writer.
@@ -132,15 +133,31 @@ check("W6 a writer of ANOTHER graph by literal → not listed", "other.py" not i
 (root / "other.py").unlink()
 
 print("BC-1 fail-open shapes (a3 #39203):")
-(root / "rogue_alias.py").write_text("from memory.graph.ingest import cy as run\n"
-                                     "def f(cur):\n    run(cur, \"MERGE (x:Concept {name: 'x'})\")\n")
+HELPER = ("def cy(cur, q):\n    cur.execute(f\"SELECT * FROM cypher('memory', $$ {q} $$) AS (v agtype)\")\n")
+CALLER = "def f(cur):\n    run(cur, \"MERGE (x:Concept {name: 'x'})\")\n"
+(root / "lib").mkdir()
+(root / "lib" / "z_cyh.py").write_text(HELPER)                     # verb-less: never listed itself
+(root / "rogue_alias.py").write_text("from lib.z_cyh import cy as run\n" + CALLER)
 found = C.graph_writers("memory", root)
-check("B1 a helper imported under another name → UNCOUNTABLE", found.get("rogue_alias.py") == "uncountable",
+check("B1(1) a verb-less helper aliased on import → caller UNCOUNTABLE", found.get("rogue_alias.py") == "uncountable",
       repr(found))
+check("B1(1) …the verb-less helper itself is not listed", "lib/z_cyh.py" not in found, repr(found))
 (root / "rogue_alias.py").unlink()
+(root / "lib" / "a_caller.py").write_text("from lib.z_cyh import cy as run\n" + CALLER)   # walked before z_cyh
+found = C.graph_writers("memory", root)
+check("B1(2) the importer walked before the helper → UNCOUNTABLE", found.get("lib/a_caller.py") == "uncountable",
+      repr(found))
+(root / "lib" / "a_caller.py").unlink()
+(root / "lib" / "z_cyh.py").unlink()
+(root / "lib").rmdir()
+(root / "rogue_ext.py").write_text("from somepkg.graphs import cy as run\n" + CALLER)        # helper off-estate
+found = C.graph_writers("memory", root)
+check("B1(3) a helper outside the estate, no AGE word in the caller → UNCOUNTABLE",
+      found.get("rogue_ext.py") == "uncountable", repr(found))
+(root / "rogue_ext.py").unlink()
 (root / "prose.py").write_text('"""We MERGE (two lists) and CREATE (a page); DELETE rows in prose."""\n')
 found = C.graph_writers("memory", root)
-check("B1 CONTROL prose with the verbs, no AGE, no listed import → not listed", "prose.py" not in found, repr(found))
+check("B1 CONTROL prose with the verbs, no label → not listed", "prose.py" not in found, repr(found))
 (root / "prose.py").unlink()
 (root / "web").mkdir()
 (root / "web" / "w.mjs").write_text("await c.query(\"SELECT * FROM cypher('memory', $$ CREATE (n:Concept) $$) "

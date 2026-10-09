@@ -108,9 +108,11 @@ _CYPHER_WRITE = re.compile(r"\b(?:MERGE|CREATE)\s*\(|\bSET\s+\w+\.\w+\s*\+?=|\bR
 _GRAPH_DDL = re.compile(r"\b(drop_graph|create_graph)\s*\(")
 # the graph argument of every cypher()/create_graph()/drop_graph() call, as written
 _GRAPH_ARG = re.compile(r"""\b(?:cypher|create_graph|drop_graph)\s*\(\s*([^,)]*)""")
-# a file that touches AGE at all (a3 #39203 B1: write verbs with no resolvable graph call are uncountable only then,
-# or when it imports a module already listed, so prose that merely says MERGE stays out without a sha pin)
+# a file that touches AGE at all: write verbs with no graph call of their own are uncountable then
 _AGE_TOUCH = re.compile(r"agtype|ag_catalog|\bcypher\b|LOAD\s+'age'", re.I)
+# a Cypher pattern write WITH A LABEL, `MERGE (x:Concept`: the write itself, wherever the graph name lives (a3 #39401
+# B1). Measured on the estate: matches exactly the 7 graph files and 0 prose, so it needs no import tracing.
+_LABELLED_WRITE = re.compile(r"\b(?:MERGE|CREATE)\s*\(\s*\w*\s*:\s*\w")
 
 
 def _estate_files(root: Path):
@@ -147,10 +149,10 @@ def graph_writers(graph: str, root: Path = None) -> dict:
       writer       or it writes the graph's storage in SQL: DELETE FROM / TRUNCATE / UPDATE / INSERT INTO
                    <graph>.<label>, or DROP SCHEMA <graph> (a3 #39203 B3/B4);
       uncountable  some call's graph can't be resolved (a variable, %s, a runtime hole), or it has write verbs and
-                   no graph call of its own while touching AGE (agtype/ag_catalog/cypher/LOAD 'age') or importing
-                   a module already listed (a helper under any name, B1): it MAY write `graph`, so it is listed,
-                   never counted as zero (a3 BC-1);
-      (skipped)    every call names some OTHER graph literally, or it is prose (verbs, no AGE, no listed import).
+                   no graph call of its own while touching AGE (agtype/ag_catalog/cypher/LOAD 'age') or holding a
+                   labelled pattern write (`MERGE (x:Concept`): the verb may reach `graph` through a helper whose
+                   graph name lives elsewhere (B1), so it is listed, never counted as zero (a3 BC-1, #39401);
+      (skipped)    every call names some OTHER graph literally, or it is prose (verbs, no AGE, no label).
     Coarse by design: the grain is the FILE. A file that reads `graph` and writes another graph is listed as a
     writer; the declaration can pin it as a non-writer by sha."""
     root = root or REPO
@@ -158,7 +160,7 @@ def graph_writers(graph: str, root: Path = None) -> dict:
     # B3/B4: AGE labels are plain tables in schema <graph>; SQL can write them without any Cypher.
     storage = re.compile(r"\b(?:delete\s+from|truncate(?:\s+table)?|update|insert\s+into)\s+(?:only\s+)?"
                          r"\"?" + g + r"\"?\.|\bdrop\s+schema\s+(?:if\s+exists\s+)?\"?" + g + r"\"?\b", re.I)
-    out, pending = {}, {}
+    out = {}
     for p in _estate_files(root):
         try:
             s = p.read_text(errors="replace")
@@ -173,21 +175,8 @@ def graph_writers(graph: str, root: Path = None) -> dict:
             out[rel] = "writer"
         elif storage.search(s):
             out[rel] = "writer"                          # SQL straight to the graph's label tables (B3/B4)
-        elif any(g is None for g in named) or (not named and _AGE_TOUCH.search(s)):
-            out[rel] = "uncountable"
-        elif not named:
-            pending[rel] = s                             # verbs, no graph call, no AGE: decided by its imports
-    # B1: a helper imported under any name. A pending file that imports a listed module may write through it.
-    grew = True
-    while grew:
-        grew = False
-        mods = {r[:-len(Path(r).suffix)].replace(os.sep, ".") for r in out}
-        for rel, s in list(pending.items()):
-            if any(re.search(r"(?m)^\s*(?:from\s+" + re.escape(m) + r"\s+import|import\s+" + re.escape(m) + r"\b)", s)
-                   for m in mods):
-                out[rel] = "uncountable"
-                del pending[rel]
-                grew = True
+        elif any(g is None for g in named) or (not named and (_AGE_TOUCH.search(s) or _LABELLED_WRITE.search(s))):
+            out[rel] = "uncountable"                     # a labelled write with no graph call: a helper's (B1)
     return out
 
 
