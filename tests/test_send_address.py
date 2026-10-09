@@ -8,7 +8,8 @@ server.mjs calls before it writes a row). seed #37905's arms, plus the consumer 
      - a nickname is refused WITH its canonical name ("a3" → abstractor-3), a typo by edit distance;
      - every surface class passes; a malformed surface is refused, the wrong separator gets the dash form;
      - a charter added after the first check passes on the next call (read at call time, no restart);
-     - name@<peer> is the gateway's (passes); name@local is judged here; an .example.md is not a resident.
+     - name@<peer> is the gateway's (passes); name@local is judged here; an .example.md is not a resident;
+       a malformed org ("seed@", "seed@local ") is refused rather than handed to federation.
   B. pairing: each surface class names a consumer file that really runs its predicate, and every
      to_agent predicate a bridge runs is admitted by some class. A new bridge class missing from
      SURFACES would make send refuse a deliverable name, and a class with no consumer would admit a
@@ -74,6 +75,9 @@ try:
     check("name@<peer org> is the gateway's to judge → passes", address.check("anyone@peer.example", AG)[0])
     check("name@local is judged here", address.check("seed@local", AG)[0] and not address.check("a3@local", AG)[0])
     check("empty is refused", not address.check("", AG)[0])
+    for to in ("seed@", "seed@local ", "seed@ peer.example", "seed@Peer"):    # a3 #38032: the ORG half too
+        ok, msg = address.check(to, AG)
+        check(f"a malformed org is refused, never handed to federation: {to!r}", not ok and "no such org" in msg, msg)
     for to in ("seed ", " seed", "seed\n", "abstractor-3 @local"):     # a3 #38028 A1: never normalized
         ok, msg = address.check(to, AG)
         check(f"whitespace is not normalized away: {to!r} is refused, suggesting the real name",
@@ -137,14 +141,16 @@ try:
     send = srv[srv.index("if (name === 'send')"):srv.index("if (name === 'subscribe')")]
     check("send awaits checkAddress before its INSERT",
           "await checkAddress(" in send and send.index("await checkAddress(") < send.index("INSERT INTO messages"))
-    check("...only for local recipients (federation stays the gateway's)", "toOrg === 'local' ? await checkAddress" in send)
+    check("...EVERY send is judged: a local row by its to_agent, any other by the (to_agent, to_org) as written",
+          "await checkAddress(toOrg === 'local' ? toAgent : `${toAgent}@${toOrg}`)" in send)
     # PARITY (a3 #38028): the value checked is byte-identical to the to_agent the INSERT writes. Both must be
     # the SAME identifier, bound once from the split and never reassigned in between.
-    arg = re.search(r"await checkAddress\((\w+)\)", send)
-    ins = re.search(r"INSERT INTO messages \(from_agent, from_org, to_agent[^`]*`,\s*\[AGENT, (\w+),", send)
+    arg = re.search(r"await checkAddress\(toOrg === 'local' \? (\w+) :", send)
+    ins = re.search(r"INSERT INTO messages \(from_agent, from_org, to_agent[^`]*`,\s*\[AGENT, (\w+), (\w+),", send)
     between = send[send.index("await checkAddress("):send.index("INSERT INTO messages")]
     check("parity: send checks the exact identifier it INSERTs as to_agent, unreassigned in between",
-          arg and ins and arg.group(1) == ins.group(1)
+          arg and ins and arg.group(1) == ins.group(1) and ins.group(2) == "toOrg"
+          and "`${" + ins.group(1) + "}@${toOrg}`" in send
           and not re.search(rf"\b{arg.group(1)}\s*=[^=]", between),
           f"checked={arg and arg.group(1)} inserted={ins and ins.group(1)}")
 finally:

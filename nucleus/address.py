@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from nucleus import charter  # noqa: E402
+from nucleus import charter, orgname  # noqa: E402
 
 # (class, pattern, consumer file, the to_agent predicate that consumer runs)
 SURFACES = (
@@ -67,9 +67,14 @@ def check(to: str, agents_dir: Path = charter.AGENTS) -> tuple[bool, str]:
     # NEVER normalize here (a3 #38028 A1): the value judged must be byte-identical to the to_agent that is
     # WRITTEN. A strip made "seed " pass while server.mjs inserted 'seed ', which no consumer reads. No
     # roster name or surface class contains whitespace, so " seed" is simply refused, suggesting seed.
-    name, _, org = str(to).partition("@")
-    if org and org != "local":
-        return True, "ok"                                   # federation: the gateway's to judge
+    name, at, org = str(to).partition("@")
+    if at and org != "local":
+        # the ORG half is written raw too (a3 #38032): "seed@" writes to_org '', "seed@local " writes
+        # 'local ' — neither is local, and no peer can hold that name, so it is a dead letter in federation.
+        if not orgname.ORG_RE.match(org):
+            return False, (f"no such org '{org}': an org name matches {orgname.ORG_RE.pattern} (no spaces, "
+                           f"not empty). For a local resident drop the '@'. Nothing was sent.")
+        return True, "ok"                                   # a well-formed peer: the gateway's to judge
     if not name:
         return False, "empty recipient"
     roster = charter.roster(agents_dir)
