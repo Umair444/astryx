@@ -323,11 +323,16 @@ async def hook(request: Request):
         got = await fetch_media(chat, msgid, media)
         got = await describe_media(got, media) if isinstance(got, Path) else got
         text = f"{text}\n{got}" if text else got
-    if not text and msgid and not m.get("ReactionEmoji") and not m.get("Revoked"):
-        # an EMPTY event that isn't a reaction or a revoke is most often an undecrypted placeholder:
-        # wacli's own store gets the plaintext once the retry lands. Fetch it from there.
+    if not text and msgid and not m.get("ReactionToID") and not m.get("ReactionEmoji") and not m.get("Revoked"):
+        # an EMPTY event that isn't a reaction or a revoke: wacli's store may hold the text by now (it
+        # writes a later event for this id there BEFORE posting it). Fetch it from there. A reaction is
+        # keyed on ReactionToID, not the emoji: a removal (or an undecryptable reaction) has none.
         text = await stored_text(chat, msgid)
     if not text:
+        return {"ok": True}
+    if msgid and msgid in seen_msgids:
+        # re-checked AFTER the awaits above: wacli gives a POST 5s, so the store poll outlives it and the
+        # twin can land (and be delivered) meanwhile. Without this, both rows reach the wire.
         return {"ok": True}
     if msgid:
         seen_msgids[msgid] = now
