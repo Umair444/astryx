@@ -15,6 +15,11 @@
 #      read 15 FAIL on main as an artifact): every gitignored path git reports, minus ESTATE_EXCLUDE (the SAME list as
 #      nucleus/sqlguard/ledger.py, parity-checked by the oracle), plus the runtime necessities, minus a DECLARED skip.
 #      Per ENTRY, so a gitignored subdir of a tracked dir gets its own link (a whole-dir link would nest).
+#      AN INTERRUPT CLEANS UP TOO: INT/TERM/HUP stop the check, remove the links and the tree, exit 130. (The check
+#      runs in the background and is WAITED on: bash defers a trap until a foreground child exits, so a TERM during
+#      an hour-long check would otherwise clean nothing until it ended. A run stopped this way left 38 live links in
+#      /tmp, a4 10-10.) SIGKILL cannot be trapped: a run starting later NAMES any scratch tree still holding live
+#      links, and removes nothing (it may be someone else's run in progress).
 #   4. LIVE WRITES ARE REPORTED (a1 R2): the links are LIVE, so anything changed in a linked path during the run is
 #      named. It is NOT ATTRIBUTED: the estate has other writers (a resident's self_edit, memory's compile, a trigger
 #      a merge installs), and a mtime cannot tell them from the run. A named path is a lead to read, not a verdict.
@@ -48,6 +53,10 @@ WT=$(mktemp -d "${TMPDIR:-/tmp}/merge-check.XXXXXX")/tree
 CHECK=${MERGE_CHECK_CHECK:-"bash nucleus/check.sh"}
 PTC=${MERGE_CHECK_PTC:-"bash $LIVE/nucleus/pushed_tree_check.sh"}
 rc_links=0
+git worktree list --porcelain | sed -n 's/^worktree //p' | grep '/merge-check\.[^/]*/tree$' | while IFS= read -r o; do
+  n=$(find "$o" -type l -lname "$LIVE/*" 2>/dev/null | wc -l)
+  [ "$n" -gt 0 ] && echo "  ORPHAN? a scratch tree holds $n live link(s): $o (a killed run, or a run in progress; not touched)"
+done
 if [ "${MERGE_CHECK_FULL:-1}" != 0 ]; then
   git worktree add --detach "$WT" "$T" >/dev/null 2>&1 || { echo "merge_check: worktree failed"; exit 2; }
   made=()
@@ -64,8 +73,20 @@ if [ "${MERGE_CHECK_FULL:-1}" != 0 ]; then
       mkdir -p "$(dirname "$WT/$l")" && ln -s "$LIVE/$l" "$WT/$l" && made+=("$l"); fi
   done
   LOG="$WT.full.log"
-  (cd "$WT" && timeout 3600 bash -c "$CHECK" > "$LOG" 2>&1); echo "  full check rc=$? (log: $LOG)"
-  for l in "${made[@]}"; do rm -f "${WT:?}/$l"; done
+  unlink_all() { for l in "${made[@]}"; do rm -f "${WT:?}/$l"; done; }
+  interrupted() {
+    kill -TERM "$cpid" 2>/dev/null; wait "$cpid" 2>/dev/null; unlink_all
+    left=0; for l in "${made[@]}"; do { [ -e "$WT/$l" ] || [ -L "$WT/$l" ]; } && left=$((left + 1)); done
+    [ "$left" = 0 ] && git worktree remove --force "$WT" >/dev/null 2>&1
+    echo "  INTERRUPTED: check stopped, ${#made[@]} link(s) removed, $left survived"; exit 130
+  }
+  (cd "$WT" && exec timeout 3600 bash -c "$CHECK") > "$LOG" 2>&1 &
+  cpid=$!
+  trap interrupted INT TERM HUP
+  wait "$cpid"; crc=$?
+  trap - INT TERM HUP
+  echo "  full check rc=$crc (log: $LOG)"
+  unlink_all
   for l in "${made[@]}"; do
     if [ -e "$WT/$l" ] || [ -L "$WT/$l" ]; then echo "  LINK SURVIVED: $l"; rc_links=3; fi
   done
