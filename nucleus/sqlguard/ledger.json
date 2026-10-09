@@ -375,7 +375,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 279,
+  "debt_rows": 274,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -878,31 +878,6 @@
    "debt": "NOT-SEARCHED-AT-SEED",
    "reason": "seed",
    "tk": "sha256t:a4a3f66c1fb5aa03da8b48c85f480170b4354f000ccbcfc1aeac5a059f103529"
-  },
-  "nucleus/people.py::write_pg\u001fdelete from social_edge where org=?": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:f327831a51e5fd44eaa5df04787974fdca6d637271cf7852228b8f81dd19fc38"
-  },
-  "nucleus/people.py::write_pg\u001fdelete from social_person where org=?": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:1c7cd58e2d3dbefdb58fcc510f308e54636680e0abba9c98b6dd32f63f10dc4c"
-  },
-  "nucleus/people.py::write_pg\u001finsert into social_edge (org,src,dst,rel) values (?,?,?,?) on conflict do nothing": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:4ed28f1d5296fd2f08f8255740383c879f31d85c1ed2d29c91e4880311945565"
-  },
-  "nucleus/people.py::write_pg\u001finsert into social_person (org,id,kind,label) values (?,?,'group',?)": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:bcb4a0bcd71e46df08d76ea4194cac6863a1f362d11518b9d8f7738cb754fe51"
-  },
-  "nucleus/people.py::write_pg\u001finsert into social_person (org,id,kind,label,direct,relation,who,shape,confidence) values (?,?,'person',?,?,?,?,?,?)": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:0eeb6b57930b46bf01713bd98fec80076b8159a28c8b0bfcb53044ec45ee14fd"
   },
   "nucleus/persona.py::apply_pg\u001fupdate social_person set shape=?, relation=coalesce(?,relation), who=coalesce(?,who), confidence=coalesce(?,confidence) where org=? and id=?": {
    "debt": "UNEXECUTED",

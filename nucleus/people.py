@@ -46,6 +46,7 @@ import re
 import subprocess
 import sys
 import time as _time
+from datetime import datetime as _dt
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -266,7 +267,9 @@ def write_pg(g: dict, personas: dict | None = None) -> dict:
     personas = personas or {}
     with psycopg.connect(dsn) as conn:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM social_edge WHERE org=%s", (org,))
+            # dm edges are refreshed INCREMENTALLY (dm_refresh) and survive the rebuild; everything else
+            # is rebuilt from this scan
+            cur.execute("DELETE FROM social_edge WHERE org=%s AND rel <> 'dm'", (org,))
             cur.execute("DELETE FROM social_person WHERE org=%s", (org,))
             for p_ in g.get("people", {}).values():
                 per = personas.get(p_["id"]) or {}
@@ -291,11 +294,114 @@ def write_pg(g: dict, personas: dict | None = None) -> dict:
                     "ON CONFLICT DO NOTHING",
                     (org, e["src"], e["dst"], e.get("rel", "member-of")))
         conn.commit()
-    return {"org": org, "people": len(g.get("people", {})),
-            "groups": len(g.get("groups", {})), "edges": len(g.get("edges", []))}
+    out = {"org": org, "people": len(g.get("people", {})),
+           "groups": len(g.get("groups", {})), "edges": len(g.get("edges", []))}
+    # what remains of the nightly trigger's 30s goes to refreshing the most recently changed DMs
+    try:
+        out["dm"] = dm_refresh(budget_s=DM_NIGHTLY_S)
+    except Exception as e:                         # a DM pass must never fail the people sweep
+        out["dm"] = {"error": f"{type(e).__name__}: {e}"}
+    return out
+
+
+# ------------------------------------------------------------------ direct-message evidence
+# How OFTEN and how RECENTLY the owner talks to each direct contact, and who carries it — the
+# evidence relation guesses need (memory, 10-09: 138 of 270 direct contacts had none). Read through
+# the CLI one chat at a time; only counts and timestamps are kept, never a message's text.
+DM_CAP = 2000                 # messages read per chat; a count at the cap is reported as capped
+DM_NIGHTLY_S = 8.0            # the nightly trigger's remaining budget (pulse gives a check 30s)
+
+
+def dm_stats(jid: str, cap: int = DM_CAP) -> dict | None:
+    """{n, mine, first, last, capped} for one direct chat, or None if unreadable."""
+    d = _wa("messages", "list", "--chat", jid, "--limit", str(cap), "--asc", timeout=60)
+    if d is None:
+        return None
+    ms = (d.get("messages") or []) if isinstance(d, dict) else (d or [])   # an empty chat answers null
+    ts = [m.get("Timestamp") for m in ms if m.get("Timestamp")]
+    return {"n": len(ms), "mine": sum(1 for m in ms if m.get("FromMe")),
+            "first": min(ts) if ts else None, "last": max(ts) if ts else None, "capped": len(ms) >= cap}
+
+
+def dm_refresh(budget_s: float = DM_NIGHTLY_S, limit: int | None = None) -> dict:
+    """Upsert owner→person dm edges, stalest first: chats never scanned, then chats whose last message
+    is newer than their scan. Bounded by budget_s; returns counts and how far back the store reaches."""
+    import psycopg
+    dsn = _dsn()
+    if not dsn:
+        raise RuntimeError("no ASTRYX_DSN")
+    chats = _wa("chats", "list", "--limit", "500")
+    if chats is None:
+        return {"refreshed": 0, "note": "whatsapp channel unreachable"}
+    if isinstance(chats, dict):
+        chats = chats.get("chats") or chats.get("items") or []
+    dms = [c for c in chats if str(c.get("jid", "")).endswith("@s.whatsapp.net")]
+    org = _org()
+    started, done, capped, unreadable = _time.monotonic(), 0, 0, 0
+    with psycopg.connect(dsn) as conn:
+        known = {r[0]: r[1] for r in conn.execute(
+            "SELECT dst, last_ts FROM social_edge WHERE org=%s AND rel='dm'", (org,)).fetchall()}
+
+        def chat_last(c):
+            try:
+                return _dt.fromisoformat(str(c.get("last_message_ts")).replace("Z", "+00:00"))
+            except (TypeError, ValueError):
+                return None
+
+        # stale = never read, or the chat's last message is newer than the last one we recorded
+        # (parsed datetimes, never string order across 'Z'/'+00:00'); never-read first, then the most
+        # recently active, so a bounded night spends its seconds where things moved
+        def is_stale(c):
+            p_ = pid(c["jid"])
+            if p_ not in known:
+                return True                            # never read
+            cl = chat_last(c)
+            if cl is None:
+                return False                           # an empty chat stays read until a message lands
+            return known[p_] is None or cl > known[p_]
+        todo = [c for c in dms if is_stale(c)]
+        todo.sort(key=lambda c: str(c.get("last_message_ts") or ""), reverse=True)
+        todo.sort(key=lambda c: pid(c["jid"]) in known)            # stable: never-read first
+        for c in todo[: limit or len(todo)]:
+            if _time.monotonic() - started > budget_s:
+                break
+            try:
+                st = dm_stats(c["jid"])
+            except Exception:                      # one odd chat is unreadable, never the whole sweep
+                st = None
+            if st is None:
+                unreadable += 1
+                continue
+            capped += st["capped"]
+            # recency = the later of what we read and what the chat list says (a capped read can't
+            # see the newest messages, and must not leave the chat looking stale forever)
+            cand = [x for x in (st["last"] and _dt.fromisoformat(st["last"].replace("Z", "+00:00")), chat_last(c)) if x]
+            st["last"] = max(cand) if cand else None
+            conn.execute(
+                "INSERT INTO social_edge (org, src, dst, rel, weight, first_ts, last_ts, mine, scanned_at) "
+                "VALUES (%s, 'owner', %s, 'dm', %s, %s, %s, %s, now()) "
+                "ON CONFLICT (org, src, dst, rel) DO UPDATE SET weight=EXCLUDED.weight, first_ts=EXCLUDED.first_ts, "
+                "last_ts=EXCLUDED.last_ts, mine=EXCLUDED.mine, scanned_at=now()",
+                (org, pid(c["jid"]), st["n"], st["first"], st["last"], st["mine"]))
+            done += 1
+        conn.commit()
+        reach = conn.execute("SELECT min(first_ts), count(*), count(*) FILTER (WHERE weight > 0) "
+                             "FROM social_edge WHERE org=%s AND rel='dm'", (org,)).fetchone()
+    return {"refreshed": done, "pending": max(0, len(todo) - done - unreadable), "unreadable": unreadable,
+            "capped": capped, "dm_edges": reach[1], "with_messages": reach[2],
+            "store_reaches_back_to": reach[0].isoformat() if reach[0] else None}
+
+
+def _dm_cli(argv) -> int:
+    budget = float(argv[argv.index("--budget") + 1]) if "--budget" in argv else 600.0
+    r = dm_refresh(budget_s=budget)
+    print(json.dumps(r, indent=2))                 # counts only — never a name, number or text
+    return 0
 
 
 def main() -> int:
+    if sys.argv[1:2] == ["dm-sweep"]:
+        return _dm_cli(sys.argv[2:])
     g = scan()
     if not g["people"] and not g["groups"]:
         for n in g["notes"]:

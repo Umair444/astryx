@@ -696,3 +696,13 @@ END $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS presence_notify ON presence;
 CREATE TRIGGER presence_notify AFTER INSERT OR UPDATE ON presence
   FOR EACH ROW EXECUTE FUNCTION notify_presence();
+
+-- DM edges (2026-10-09, memory's people build 2): owner → person, rel='dm', weight = messages in the
+-- direct chat; first/last message time and how many were the owner's own (mine) are the frequency and
+-- recency evidence relation guesses need. These are PRIVATE, org-specific signals: a federation
+-- projection carries nodes and "knows" edges only, never rel='dm'. scanned_at drives the incremental
+-- nightly refresh (nucleus/people.py dm_refresh).
+ALTER TABLE social_edge ADD COLUMN IF NOT EXISTS first_ts   timestamptz;
+ALTER TABLE social_edge ADD COLUMN IF NOT EXISTS last_ts    timestamptz;
+ALTER TABLE social_edge ADD COLUMN IF NOT EXISTS mine       int;
+ALTER TABLE social_edge ADD COLUMN IF NOT EXISTS scanned_at timestamptz;
