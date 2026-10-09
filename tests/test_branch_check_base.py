@@ -102,12 +102,52 @@ def main():
         def __exit__(self, *a):
             return self._c.__exit__(*a)
 
-        def execute(self, q, *a, **k):
+        def _judge(self, q):
+            """steward #39065 (1): a prefix match alone lets "SELECT 1; ALTER SCHEMA …" through, and psycopg runs a
+            parameterless multi-statement string whole. So a statement on a prod connection must be ONE statement
+            (no `;` before its end) AND database-level. Stated limit (3): a SELECT can still call a function that
+            writes; this guards statement TEXT, not what a function does."""
             text = q.as_string(self._c) if hasattr(q, "as_string") else str(q)
-            if self._db == prod and not DB_LEVEL.match(text):
+            if self._db == prod and (";" in text.strip().rstrip(";") or not DB_LEVEL.match(text)):
                 refused.append(("psycopg", text[:80]))
                 raise RuntimeError(f"oracle refused: a write on a PROD connection: {text[:80]}")
+
+        def execute(self, q, *a, **k):
+            self._judge(q)
             return self._c.execute(q, *a, **k)
+
+        def cursor(self, *a, **k):                         # steward (2): a cursor is the same door, guarded the same
+            guard, cur = self, self._c.cursor(*a, **k)
+
+            class _Cur:
+                def __getattr__(self, n):
+                    return getattr(cur, n)
+
+                def __enter__(self):
+                    cur.__enter__()
+                    return self
+
+                def __exit__(self, *e):
+                    return cur.__exit__(*e)
+
+                def execute(self, q, *a2, **k2):
+                    guard._judge(q)
+                    return cur.execute(q, *a2, **k2)
+
+                def executemany(self, q, *a2, **k2):
+                    guard._judge(q)
+                    return cur.executemany(q, *a2, **k2)
+
+                def copy(self, q, *a2, **k2):
+                    guard._judge("COPY " + str(q))     # COPY is never database-level: refused on prod
+                    return cur.copy(q, *a2, **k2)
+            return _Cur()
+
+        def pipeline(self, *a, **k):                       # batches statements past execute's view: refused on prod
+            if self._db == prod:
+                refused.append(("psycopg", "pipeline"))
+                raise RuntimeError("oracle refused: a pipeline on a PROD connection")
+            return self._c.pipeline(*a, **k)
 
     def connect(*a, **k):
         db = k.get("dbname") or (_db(a[0]) if a else None) or _db(k.get("conninfo", "")) or prod
@@ -149,6 +189,33 @@ def main():
               "nothing that writes was aimed at prod", not refused and calls.count(("pg_dump", prod)) == 1
               and ("pg_restore", base) in calls and all(db != prod for tool, db in calls if tool != "pg_dump"),
               f"calls={calls} refused={refused}")
+        # the guard's OWN discrimination (steward #39065), on a real prod-dbname connection, statements never sent
+        refused_before = len(refused)
+        probes = {"multi-statement": "SELECT 1; ALTER SCHEMA public OWNER TO nobody",
+                  "grant-then-db": "GRANT ALL ON SCHEMA public TO nobody; REVOKE CONNECT ON DATABASE x FROM PUBLIC"}
+        blocked = {}
+        with _Guarded(real_connect(dsn, autocommit=True), prod) as g:
+            for name_, q in probes.items():
+                try:
+                    g._judge(q)
+                    blocked[name_] = False
+                except RuntimeError:
+                    blocked[name_] = True
+            try:
+                with g.cursor() as cur:
+                    cur.execute("ALTER SCHEMA public OWNER TO nobody")
+                blocked["cursor"] = False
+            except RuntimeError:
+                blocked["cursor"] = True
+            try:
+                g.pipeline()
+                blocked["pipeline"] = False
+            except RuntimeError:
+                blocked["pipeline"] = True
+            g._judge("SELECT 1")                            # the green control: a lone read still passes
+        del refused[refused_before:]                        # the probes' refusals are the test, not the subject's
+        check("the guard refuses, on a prod connection, a multi-statement string, a write through cursor(), and a "
+              "pipeline (steward #39065), while a lone SELECT still passes", all(blocked.values()), str(blocked))
         check("…and build_base's IN-PROCESS writes went to the base: it connected to the base, and every statement "
               "on a prod-dbname connection was database-level (create_db's)", base in conns and not refused,
               f"conns={conns} refused={refused}")
