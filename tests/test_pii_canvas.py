@@ -96,6 +96,13 @@ try:
           b and "1 possible owner-PII" in b[0] and "?v=N" in b[0] and "does not clear" in b[0], str(b))
     check("a finding on ANOTHER canvas does not block this one", cv.share_blockers(conn, c2) == [],
           str(cv.share_blockers(conn, c2)))
+    # the view gate per VERSION (a3 #35598) — a version that does not exist is not invented into a block:
+    # the lookup answers 0 rows and render then serves its own "no such version" (sqlguard's W rung)
+    gate_row({"checked_at": now_, "open": {}})
+    check("view: a version that does not exist → not blocked here (render answers no html itself)",
+          cv.view_blockers(conn, c1, 999) == [], str(cv.view_blockers(conn, c1, 999)))
+    check("view: an existing, scanned, clean version → visible", cv.view_blockers(conn, c1, 1) == [])
+    gate_row({"checked_at": now_, "open": {"h1": {"cid": c1, "loc": "x", "label": "phone-bare"}}})
     check("the gate's reasons carry no value (shapes only)",
           FAKE_PHONE not in json.dumps(cv.share_blockers(conn, c1)))
 
