@@ -30,7 +30,8 @@ sys.path.insert(0, str(REPO))
 # The trigger BODY is gitignored, so on a fresh clone or a CI runner there is nothing to
 # test. SKIP LOUDLY (77) rather than pass: a check that silently reports success when it
 # could not run is the "a SKIP is not a PASS" defect in the one place anyone reads it.
-if not (REPO / "triggers" / "steward" / "outbound_stuck.py").exists():
+import os as _os  # noqa: E402
+if not _os.environ.get("OUTBOUND_STUCK_SRC") and not (REPO / "triggers" / "steward" / "outbound_stuck.py").exists():
     print("SKIP: triggers/steward/outbound_stuck.py not present (gitignored body) — "
           "the outbound-stuck classifier was NOT verified this run")
     sys.exit(77)
@@ -41,7 +42,9 @@ if not (REPO / "triggers" / "steward" / "outbound_stuck.py").exists():
 # on a clone while passing locally. runpy is the precedent already set by
 # test_plan_lifecycle.py and test_ear_dark.py for exactly this: a body that may be absent
 # is addressed as a file, never as a module.
-_MOD = runpy.run_path(str(REPO / "triggers" / "steward" / "outbound_stuck.py"))  # noqa: E402
+import os  # noqa: E402
+SRC = os.environ.get("OUTBOUND_STUCK_SRC") or str(REPO / "triggers" / "steward" / "outbound_stuck.py")
+_MOD = runpy.run_path(SRC)  # noqa: E402
 classify, SETTLED, BANDS = _MOD["classify"], _MOD["SETTLED"], _MOD["BANDS"]
 bucket = _MOD["bucket"]
 
@@ -231,19 +234,21 @@ def test_unknown_recipient_render_never_says_restart():
     assert "DEAF RECIPIENT" not in out and "kill-session" not in out, out
 
 
-def _run_with_roster(roster, sender="seed", to="abstractor-3"):
-    """The real entrypoint on one 30h-pending row, with BOTH roster derivations forced to `roster`."""
+def _run_with_roster(roster, sender="seed", to="abstractor-3", to_org="local", cands=()):
+    """The real entrypoint on one 30h-pending row, with BOTH roster derivations forced to `roster`. `cands` =
+    rows the later-rows query returns ({stuck, cand, resend}); every other query gets the stuck row."""
     import types
     import nucleus.charter as ch
     from datetime import datetime as _dt, timedelta as _td, timezone as _tz
     rows = [{"id": 901, "ts": _dt.now(_tz.utc) - _td(hours=30), "to_agent": to,
-             "to_org": "local", "status": "pending", "from_agent": sender, "external_handle": False,
+             "to_org": to_org, "status": "pending", "from_agent": sender, "external_handle": to_org != "local",
              "bridge_delivered": False, "awaiting_peer_pickup": False, "last_pickup": None}]
     real_t, real_r = ch.roster_of_type, ch.roster
     ch.roster_of_type = lambda kind, *a, **k: list(roster)
     ch.roster = lambda *a, **k: list(roster)
     try:
-        return _MOD["outbound_stuck"](types.SimpleNamespace(state={}, sql=lambda q, p=(): rows)) or ""
+        return _MOD["outbound_stuck"](types.SimpleNamespace(
+            state={}, sql=lambda q, p=(): list(cands) if "AS cand" in q else rows)) or ""
     finally:
         ch.roster_of_type, ch.roster = real_t, real_r
 
@@ -282,6 +287,63 @@ def test_the_live_shape_memory_to_a3_is_no_such_resident():
 def test_a_non_agent_sender_cannot_vouch_so_stays_deaf():
     out = _run_with_roster(["seed", "memory"], sender="pulse", to="a3")
     assert "DEAF RECIPIENT" in out and "NO SUCH RESIDENT" not in out, out
+
+
+def test_own_surface_org_reads_surface_not_external():
+    """10-09 forge #35625 → cv-…@canvas: `canvas` is the owner's own surface (orgname.RESERVED_ORGS), not a peer."""
+    out = _run_with_roster(["seed", "forge"], sender="forge", to="cv-zz", to_org="canvas")
+    assert "-> surface" in out and "-> external" not in out, out
+    out = _run_with_roster(["seed", "forge"], sender="forge", to="x", to_org="peer.example")
+    assert "-> external" in out, out
+
+
+def test_later_rows_are_named_as_candidates_never_a_verdict():
+    """steward night-review 10-10: the sender had already resent (memory #35146 → #35864); the guard now SAYS so."""
+    out = _run_with_roster(["seed", "memory", "abstractor-3"], sender="memory", to="a3",
+                           cands=[{"stuck": 901, "cand": 35864, "resend": True}, {"stuck": 901, "cand": 36566,
+                                                                               "resend": False}])
+    assert "#35864 (resend)" in out and "#36566" in out and "read them before resending" in out, out
+    assert "NO SUCH RESIDENT" in out, out                       # a candidate never changes the class or silences it
+    out = _run_with_roster(["seed", "memory", "abstractor-3"], sender="memory", to="a3")
+    assert "read them before resending" not in out, out
+
+
+def test_later_rows_query_on_a_real_db_at_zero_and_one_rows():
+    """The later-rows SQL through pulse_run.Ctx on a sqlguard fixture (its W rung: 0 rows and >=1 row)."""
+    try:
+        import psycopg
+        import importlib.util
+        from nucleus.sqlguard.fixture import fixture_db
+        sp = importlib.util.spec_from_file_location("pulse_run_os", REPO / "nucleus" / "pulse_run.py")
+        pr = importlib.util.module_from_spec(sp)
+        sp.loader.exec_module(pr)
+        fxc = fixture_db()
+        fx = fxc.__enter__()
+    except Exception as e:  # noqa: BLE001
+        print(f"    (skipped: no fixture DB — {type(e).__name__})")
+        return
+    try:
+        conn = psycopg.connect(fx["dsn"], autocommit=True)
+
+        class C(pr.Ctx):
+            def __init__(s, st):
+                super().__init__(st)
+                s._conn = conn
+
+        def put(frm, to, body, status, hours_ago):
+            return conn.execute("INSERT INTO messages (from_agent, from_org, to_agent, to_org, body, status, ts) "
+                                "VALUES (%s,'local',%s,'local',%s,%s, now() - make_interval(hours => %s)) RETURNING id",
+                                (frm, to, body, status, hours_ago)).fetchone()[0]
+        stuck = put("memory", "a3", "Review request: the .absolute() switch", "pending", 30)
+        out = _MOD["outbound_stuck"](C({})) or ""
+        assert f"#{stuck}" in out and "read them before resending" not in out, out          # 0 candidate rows
+        res = put("memory", "abstractor-3", f"Review request. This is a resend: #{stuck} went to a nickname",
+                  "delivered", 29)
+        out = _MOD["outbound_stuck"](C({})) or ""
+        assert f"#{res} (resend)" in out, out                                                 # >=1 candidate row
+        conn.close()
+    finally:
+        fxc.__exit__(None, None, None)
 
 
 if __name__ == "__main__":
