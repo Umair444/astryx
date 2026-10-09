@@ -16,6 +16,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
+from nucleus.sqlguard.estate import gate  # noqa: E402
+gate('test_canvas_voice', REPO, deps=('psycopg', 'asyncpg', 'fastapi'))   # a committed-only tree: 77, not a crash
 from nucleus.sqlguard.fixture import fixture_db  # noqa: E402
 
 fails = 0

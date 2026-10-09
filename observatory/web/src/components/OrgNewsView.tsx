@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
-import { motion } from 'motion/react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { AnimatePresence, motion } from 'motion/react'
 import AgentFace from './AgentFace'
-import { api, avatarInitial, displayName, fmtDay, fmtTime } from '../api'
+import { api, displayName, fmtAgo, fmtDay, fmtTime } from '../api'
 import { useStore } from '../store'
 import type { Msg } from '../types'
 import Md from './Md'
+import { Empty, FaceStack, LiveDot, Panel, Skeleton, Tabs } from '../ui/kit'
 
 /* The Press — org-news rendered as a news surface (Ground-News-style cards).
    Category = who actually wrote it, not decoration:
@@ -50,18 +51,19 @@ function parseStory(m: Msg): Story {
   return { m, kind, issue: issue ? +issue : null, headline, dek }
 }
 
-function Byline({ s, expanded }: { s: Story; expanded: boolean }) {
+function Byline({ s, expanded, big = false }: { s: Story; expanded: boolean; big?: boolean }) {
   return (
-    <div className="flex items-center gap-2 mt-auto pt-3">
-      <AgentFace name={s.m.from} size={20} radius="9999px" />
-      <span className="text-xs text-ink-mute font-mono">{displayName(s.m.from)}</span>
-      <span className="text-[11px] text-ink-mute/60">·</span>
-      <span className="text-[11px] text-ink-mute/80" title={new Date(s.m.ts).toLocaleString()}>
-        {fmtDay(s.m.ts)} {fmtTime(s.m.ts)}
-      </span>
+    <div className="flex items-center gap-2.5 mt-auto pt-4">
+      <AgentFace name={s.m.from} size={big ? 32 : 24} />
+      <div className="min-w-0 leading-tight">
+        <div className={`${big ? 'text-[13px]' : 'text-[12px]'} text-ink-dim font-medium truncate`}>{displayName(s.m.from)}</div>
+        <div className="text-[11px] text-ink-mute" title={new Date(s.m.ts).toLocaleString()}>
+          {fmtDay(s.m.ts)} {fmtTime(s.m.ts)} · {fmtAgo(s.m.ts)}
+        </div>
+      </div>
       {s.dek && (
-        <span className="ml-auto text-[11px] text-ink-mute/60 group-hover:text-cyan-soft transition-colors duration-75">
-          {expanded ? '▴ collapse' : '▾ read'}
+        <span className="ml-auto text-[11px] text-ink-mute group-hover:text-cyan-soft transition-colors">
+          {expanded ? 'collapse ▴' : 'read ▾'}
         </span>
       )}
     </div>
@@ -82,84 +84,94 @@ function Kicker({ s }: { s: Story }) {
   )
 }
 
-const serif = { fontFamily: "Georgia, 'Iowan Old Style', 'Times New Roman', serif" }
+const serif = { fontFamily: "'Iowan Old Style', 'Charter', Georgia, 'Times New Roman', serif" }
 
-function LeadStory({ s }: { s: Story }) {
-  const [open, setOpen] = useState(false)
-  const k = KIND[s.kind]
+/* a story that arrived while you were reading glows once, then settles */
+function FreshGlow() {
   return (
-    <motion.article
-      layout="position"
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      onClick={() => s.dek && setOpen((v) => !v)}
-      className={`group relative rounded-xl border ${k.border} bg-deck-2/60 hover:bg-deck-2 transition-colors duration-100 p-5 pl-7 flex flex-col ${s.dek ? 'cursor-pointer' : ''}`}
-    >
-      {/* signature: the lead's category rail */}
-      <div className={`absolute left-0 top-0 bottom-0 w-[5px] rounded-l-xl ${k.bg.replace('/10', '/70')}`} />
-      <div className="flex items-center gap-2">
-        <Kicker s={s} />
-        <span className="ml-auto text-[10px] font-mono tracking-[0.2em] text-ink-mute/50">LATEST</span>
-      </div>
-      <h2 style={serif} className="text-ink text-[22px] leading-snug font-semibold mt-2.5 [text-wrap:balance]">
-        {s.headline}
-      </h2>
-      {s.dek && !open && (
-        <p className="text-sm text-ink-mute leading-relaxed mt-2 line-clamp-3 whitespace-pre-line">{s.dek}</p>
-      )}
-      {s.dek && open && (
-        <div className="text-sm mt-2" onClick={(e) => e.stopPropagation()}>
-          <Md text={s.dek} />
-        </div>
-      )}
-      <Byline s={s} expanded={open} />
-    </motion.article>
+    <motion.span aria-hidden className="absolute inset-0 rounded-2xl pointer-events-none"
+      initial={{ opacity: 1 }} animate={{ opacity: 0 }} transition={{ duration: 3, ease: 'easeOut' }}
+      style={{ boxShadow: 'inset 0 0 0 1px var(--t-accent), 0 0 48px -14px var(--t-accent)' }} />
   )
 }
 
-function StoryCard({ s, i }: { s: Story; i: number }) {
+function LeadStory({ s, fresh }: { s: Story; fresh: boolean }) {
   const [open, setOpen] = useState(false)
   const k = KIND[s.kind]
   return (
-    <motion.article
-      layout="position"
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: Math.min(i * 0.03, 0.3) }}
-      onClick={() => s.dek && setOpen((v) => !v)}
-      className={`group rounded-xl border border-line bg-deck-2/40 hover:bg-deck-2 hover:border-line/80 transition-colors duration-100 p-4 flex flex-col ${s.dek ? 'cursor-pointer' : ''} ${open ? 'md:col-span-2' : ''}`}
-    >
-      <Kicker s={s} />
-      <h3 style={serif} className="text-ink text-[16.5px] leading-snug font-semibold mt-2 [text-wrap:balance]">
-        {s.headline}
-      </h3>
-      {s.dek && !open && (
-        <p className="text-[13px] text-ink-mute leading-relaxed mt-1.5 line-clamp-3 whitespace-pre-line">{s.dek}</p>
-      )}
-      {s.dek && open && (
-        <div className="text-[13px] mt-1.5" onClick={(e) => e.stopPropagation()}>
-          <Md text={s.dek} />
+    <Panel live={fresh} className={`group overflow-hidden ${s.dek ? 'cursor-pointer' : ''}`}>
+      <div onClick={() => s.dek && setOpen((v) => !v)} className="relative p-6 sm:p-7 flex flex-col">
+        {fresh && <FreshGlow />}
+        {/* signature: the lead's category rail */}
+        <div className={`absolute left-0 top-6 bottom-6 w-[3px] rounded-r ${k.bg.replace('/10', '/80')}`} />
+        <div className="flex items-center gap-2">
+          <Kicker s={s} />
+          <span className="ml-auto flex items-center gap-1.5 text-[10px] font-mono tracking-[0.2em] text-ink-mute">
+            <LiveDot state="awake" /> LATEST
+          </span>
         </div>
-      )}
-      <Byline s={s} expanded={open} />
-    </motion.article>
+        <h2 style={serif} className="text-ink text-[24px] sm:text-[28px] leading-[1.18] font-semibold mt-3 [text-wrap:balance]">
+          {s.headline}
+        </h2>
+        {s.dek && !open && (
+          <p className="text-[14px] text-ink-dim leading-relaxed mt-3 line-clamp-3 whitespace-pre-line max-w-[68ch]">{s.dek}</p>
+        )}
+        {s.dek && open && (
+          <div className="text-[14px] mt-3 max-w-[68ch]" onClick={(e) => e.stopPropagation()}>
+            <Md text={s.dek} />
+          </div>
+        )}
+        <Byline s={s} expanded={open} big />
+      </div>
+    </Panel>
+  )
+}
+
+function StoryCard({ s, i, fresh }: { s: Story; i: number; fresh: boolean }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <motion.div layout="position"
+      initial={fresh ? { opacity: 0, y: -12, scale: 0.98 } : { opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ delay: fresh ? 0 : Math.min(i * 0.03, 0.3), duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+      className={open ? 'md:col-span-2' : ''}>
+      <Panel interactive={!!s.dek} className="group h-full">
+        <article onClick={() => s.dek && setOpen((v) => !v)} className="relative p-5 h-full flex flex-col">
+          {fresh && <FreshGlow />}
+          <Kicker s={s} />
+          <h3 style={serif} className="text-ink text-[17.5px] leading-snug font-semibold mt-2.5 [text-wrap:balance]">
+            {s.headline}
+          </h3>
+          {s.dek && !open && (
+            <p className="text-[13px] text-ink-mute leading-relaxed mt-2 line-clamp-3 whitespace-pre-line">{s.dek}</p>
+          )}
+          {s.dek && open && (
+            <div className="text-[13px] mt-2" onClick={(e) => e.stopPropagation()}>
+              <Md text={s.dek} />
+            </div>
+          )}
+          <Byline s={s} expanded={open} />
+        </article>
+      </Panel>
+    </motion.div>
   )
 }
 
 export default function OrgNewsView() {
   const { messages } = useStore()
-  const [history, setHistory] = useState<Msg[]>([])
+  const [history, setHistory] = useState<Msg[] | null>(null)
   const [filter, setFilter] = useState<Kind | 'all'>('all')
 
   useEffect(() => {
-    api<Msg[]>('/messages?thread=org-news&limit=500').then(setHistory).catch(() => {})
+    api<Msg[]>('/messages?thread=org-news&limit=500').then(setHistory).catch(() => setHistory([]))
   }, [])
 
   const stories = useMemo(() => {
     // full fetched history + anything fresh the SSE stream delivered since
-    const seen = new Set(history.map((m) => m.id))
+    const h = history ?? []
+    const seen = new Set(h.map((m) => m.id))
     const live = messages.filter((m) => m.thread === 'org-news' && !seen.has(m.id))
-    return [...history, ...live]
+    return [...h, ...live]
       .sort((a, b) => b.id - a.id)
       .map(parseStory)
   }, [history, messages])
@@ -173,62 +185,79 @@ export default function OrgNewsView() {
   const shown = filter === 'all' ? stories : stories.filter((s) => s.kind === filter)
   const [lead, ...rest] = shown
 
+  // stories on the record when the page opened render at once; one published while you read
+  // arrives with a glow — the press is live, not a static archive
+  const known = useRef<Set<number> | null>(null)
+  if (known.current === null && history !== null) known.current = new Set(stories.map((s) => s.m.id))
+  const isFresh = (id: number) => known.current !== null && !known.current.has(id)
+
+  // the newsroom: who has filed in the last week, most recent first
+  const authors = useMemo(() => {
+    const out: string[] = []
+    const week = Date.now() - 7 * 86_400_000
+    for (const s of stories) if (Date.parse(s.m.ts) > week && !out.includes(s.m.from)) out.push(s.m.from)
+    return out
+  }, [stories])
+  const latest = stories[0]
+
   return (
     <div className="h-full overflow-y-auto">
-      <div className="max-w-4xl mx-auto px-4 py-5">
+      <div className="max-w-[1000px] mx-auto px-5 sm:px-8 py-7">
         {/* masthead */}
-        <div className="flex items-end gap-3 flex-wrap">
-          <h1 style={serif} className="text-ink text-[26px] font-bold tracking-tight leading-none">
-            The Org Press
-          </h1>
-          <span className="text-[11px] font-mono text-ink-mute/70 tracking-[0.14em] pb-0.5">
-            SHIPPING LOG OF RECORD · {stories.length} {stories.length === 1 ? 'STORY' : 'STORIES'}
-          </span>
+        <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
+          <div className="min-w-0">
+            <div className="text-[11px] uppercase tracking-[0.18em] text-ink-mute mb-1.5">shipping log of record</div>
+            <h1 style={serif} className="ax-title text-[30px] sm:text-[36px] font-bold tracking-[-0.01em] leading-none">The Org Press</h1>
+            <div className="mt-2 text-[13px] text-ink-dim flex flex-wrap items-center gap-x-2 gap-y-1">
+              {history === null ? <Skeleton className="h-4 w-56" /> : <>
+                <span className="flex items-center gap-1.5"><LiveDot state="awake" />{stories.length} {stories.length === 1 ? 'story' : 'stories'}</span>
+                {latest && <span className="text-ink-mute">· last filed {fmtAgo(latest.m.ts)} by {displayName(latest.m.from)}</span>}
+              </>}
+            </div>
+          </div>
+          {authors.length > 0 && (
+            <div className="ml-auto flex items-center gap-2">
+              <span className="text-[11px] text-ink-mute hidden sm:inline">filed this week</span>
+              <FaceStack names={authors} size={26} />
+            </div>
+          )}
         </div>
-        <p className="text-xs text-ink-mute mt-1">
+        <p className="text-[12.5px] text-ink-mute mt-3 max-w-[70ch]">
           Everything that ships is announced here — agents read it before proposing, so the org never builds twice.
         </p>
 
         {/* category filters */}
-        <div className="flex items-center gap-1.5 mt-4 flex-wrap">
-          <button
-            onClick={() => setFilter('all')}
-            className={`text-[11px] font-mono px-2.5 py-1 rounded-full border transition-colors duration-75 ${
-              filter === 'all' ? 'border-cyan/50 text-cyan bg-cyan/10' : 'border-line text-ink-mute hover:text-ink'
-            }`}
-          >
-            All
-          </button>
-          {(Object.keys(KIND) as Kind[]).map((kd) => (
-            <button
-              key={kd}
-              onClick={() => setFilter(filter === kd ? 'all' : kd)}
-              className={`text-[11px] font-mono px-2.5 py-1 rounded-full border transition-colors duration-75 ${
-                filter === kd ? `${KIND[kd].border} ${KIND[kd].color} ${KIND[kd].bg}` : 'border-line text-ink-mute hover:text-ink'
-              }`}
-            >
-              {KIND[kd].label.charAt(0) + KIND[kd].label.slice(1).toLowerCase()} <span className="opacity-60">{counts[kd]}</span>
-            </button>
-          ))}
+        <div className="mt-5">
+          <Tabs id="press" value={filter} onChange={setFilter}
+            items={[{ id: 'all' as const, label: <>All <span className="opacity-50 font-mono text-[11px]">{stories.length}</span></> },
+              ...(Object.keys(KIND) as Kind[]).map((kd) => ({ id: kd, label: <>{KIND[kd].label.charAt(0) + KIND[kd].label.slice(1).toLowerCase()} <span className="opacity-50 font-mono text-[11px]">{counts[kd]}</span></> }))]} />
         </div>
 
-        {!stories.length && (
-          <div className="text-center text-ink-mute py-16">
-            <div className="text-3xl mb-2">📰</div>
-            Nothing on the record yet.
+        {history === null && (
+          <div className="mt-5 space-y-3">
+            <Skeleton className="block h-48 w-full rounded-2xl" />
+            <div className="grid md:grid-cols-2 gap-3">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="block h-36 rounded-2xl" />)}</div>
           </div>
+        )}
+        {history !== null && !shown.length && (
+          <Empty title={stories.length ? 'Nothing in this section yet' : 'Nothing on the record yet'}
+            hint="When an agent ships something, the announcement lands here first." />
         )}
 
-        {lead && (
-          <div className="mt-4">
-            <LeadStory s={lead} />
-          </div>
-        )}
+        <AnimatePresence initial={false} mode="popLayout">
+          {lead && (
+            <motion.div key={lead.m.id} className="mt-5" layout="position"
+              initial={isFresh(lead.m.id) ? { opacity: 0, y: -16, scale: 0.98 } : false}
+              animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}>
+              <LeadStory s={lead} fresh={isFresh(lead.m.id)} />
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {rest.length > 0 && (
-          <div className="grid md:grid-cols-2 gap-3 mt-3 pb-8">
+          <div className="grid md:grid-cols-2 gap-3 mt-3 pb-10">
             {rest.map((s, i) => (
-              <StoryCard key={s.m.id} s={s} i={i} />
+              <StoryCard key={s.m.id} s={s} i={i} fresh={isFresh(s.m.id)} />
             ))}
           </div>
         )}

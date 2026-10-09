@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { ScrollArea, Slider, Textarea } from '@mantine/core'
 import { api, apiPost, obsKey } from '../api'
 import type { Msg } from '../types'
+import { displayName } from '../api'
+import AgentFace from './AgentFace'
+import { Empty, LiveDot, Panel, SectionHead, ViewHeader } from '../ui/kit'
 
 /* GrowBot — Art of the Problem's open two-servo body (github.com/britcruise9/GrowBot),
    ported to the wire. The reference brain talks to the body over cloud APIs; here the
@@ -161,75 +164,76 @@ export default function GrowbotView() {
   const wifiBody = !!stats && !('serial' in stats)
   const serialUp = !!stats?.serial
 
+  const bodyState = !online ? 'asleep' : stats?.act.active ? 'working' : 'awake'
+
   return (
-    <ScrollArea className="h-full starfield">
-      <div className="max-w-3xl mx-auto px-4 py-6 flex flex-col gap-5">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="text-lg font-bold text-ink">growbot</div>
-            <div className="text-xs text-ink-mute leading-relaxed">
-              a <a className="text-cyan-soft hover:underline" href="https://github.com/britcruise9/GrowBot" target="_blank" rel="noreferrer">GrowBot</a> body
-              on the astryx wire — two servo legs, a Pico for a spine, the org for a brain
-            </div>
-          </div>
-          <a href="#/face"
-            className="shrink-0 px-3 py-2 rounded-xl border border-line bg-deck-2 text-cyan-soft text-sm font-semibold hover:bg-deck-3">
-            ◠ ◠ face
-          </a>
-        </div>
+    <ScrollArea className="h-full">
+      <div className="max-w-3xl mx-auto px-5 sm:px-8 py-7 flex flex-col gap-5">
+        <ViewHeader
+          kicker="a body on the wire"
+          title="GrowBot"
+          live={<>
+            <span className="flex items-center gap-1.5"><LiveDot state={bodyState} />body host {online ? 'up' : 'down'}</span>
+            <span className="text-ink-mute">·</span>
+            <span className="flex items-center gap-1.5">
+              <LiveDot state={serialUp || wifiBody ? 'awake' : 'asleep'} />
+              {wifiBody ? 'wi-fi body' : `pico serial ${serialUp ? 'linked' : 'unplugged'}`}
+            </span>
+          </>}
+          actions={
+            <a href="#/face" className="ax-panel ax-panel-hover px-4 py-2 rounded-xl text-[13px] font-medium text-ink no-underline">
+              ◠ ◠ face
+            </a>
+          }
+        />
+        <p className="-mt-3 text-[13px] text-ink-mute leading-relaxed">
+          A <a className="text-cyan-soft hover:underline" href="https://github.com/britcruise9/GrowBot" target="_blank" rel="noreferrer">GrowBot</a> body
+          on the astryx wire — two servo legs, a Pico for a spine, the org for a brain.
+        </p>
 
         {/* body vitals */}
-        <div className="rounded-xl border border-line bg-deck-2/80 p-4 flex flex-wrap gap-x-6 gap-y-2 text-xs">
-          <span className="flex items-center gap-1.5">
-            <span className={`w-2 h-2 rounded-full ${online ? 'bg-good' : 'bg-bad'}`} />
-            body host {online ? 'up' : 'down'}
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className={`w-2 h-2 rounded-full ${serialUp || wifiBody ? 'bg-good' : 'bg-ink-mute/40'}`} />
-            {wifiBody ? 'wi-fi body' : `pico serial ${serialUp ? 'linked' : 'unplugged'}`}
-          </span>
-          {stats && (
-            <>
-              <span className="text-ink-dim">
-                {stats.act.active ? `playing · ${stats.act.queued_ms}ms queued` : stats.moving ? 'held pose' : 'limp (resting)'}
-              </span>
-              <span className="text-ink-mute">dead-man ×{stats.deadman}</span>
-              <span className="text-ink-mute">up {Math.floor(stats.up_s / 60)}m</span>
-            </>
-          )}
-        </div>
+        <Panel live={!!stats?.act.active} className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-4">
+          {(
+            [
+              ['motion', stats ? (stats.act.active ? `playing · ${stats.act.queued_ms}ms` : stats.moving ? 'held pose' : 'limp (resting)') : '—'],
+              ['dead-man', stats ? `×${stats.deadman}` : '—'],
+              ['uptime', stats ? `${Math.floor(stats.up_s / 60)}m` : '—'],
+              ['commands', stats ? String(stats.set_n) : '—'],
+            ] as [string, string][]
+          ).map(([k, v]) => (
+            <div key={k} className="min-w-0">
+              <div className="text-[10.5px] uppercase tracking-[0.14em] text-ink-mute">{k}</div>
+              <div className="text-[15px] font-semibold text-ink mt-1 truncate">{v}</div>
+            </div>
+          ))}
+        </Panel>
 
         {/* routine buttons — Brit's control page, astryx-skinned */}
-        <div className="grid grid-cols-2 gap-2.5">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
           <button
             onClick={() => go('stop')}
-            className="col-span-2 py-4 rounded-xl text-lg font-bold bg-bad/15 border border-bad/40 text-bad hover:bg-bad/25"
+            className="col-span-2 sm:col-span-3 py-4 rounded-2xl text-[17px] font-bold tracking-[0.12em] bg-bad/15 border border-bad/40 text-bad hover:bg-bad/25 transition-colors"
           >
             STOP
           </button>
           {ROUTINES.map((r) => (
-            <button
-              key={r}
-              onClick={() => go(`routine?name=${r}`)}
-              className="py-3.5 rounded-xl font-semibold text-[15px] bg-deck-2 border border-line text-ink hover:bg-deck-3 hover:text-cyan-soft"
-            >
-              {r}
-            </button>
+            <Panel key={r} as="button" interactive onClick={() => go(`routine?name=${r}`)}
+              className="py-4 font-semibold text-[15px] text-ink capitalize">
+              <span className="block w-full text-center">{r}</span>
+            </Panel>
           ))}
         </div>
         <div className="text-center text-xs text-ink-mute min-h-[1.2em] font-mono">{st}</div>
 
         {/* pose levers */}
-        <div className="rounded-xl border border-line bg-deck-2/80 p-4">
-          <div className="text-[11px] uppercase tracking-wider text-ink-mute mb-3 font-semibold">
-            pose · 90 = neutral · the legs mirror: l + r = 180 moves them together
-          </div>
+        <Panel className="p-5">
+          <SectionHead title="Pose" right={<span className="text-[11px] text-ink-mute">90 = neutral · l + r = 180 moves them together</span>} />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
             {(['l', 'r'] as const).map((leg) => (
               <div key={leg}>
-                <div className="flex justify-between text-xs text-ink-dim mb-1">
+                <div className="flex justify-between text-xs text-ink-dim mb-1.5">
                   <span>{leg === 'l' ? 'left leg' : 'right leg'}</span>
-                  <span className="font-mono">{pose[leg]}°</span>
+                  <span className="font-mono text-ink">{pose[leg]}°</span>
                 </div>
                 <Slider
                   min={0} max={180} value={pose[leg]}
@@ -240,65 +244,57 @@ export default function GrowbotView() {
               </div>
             ))}
           </div>
-          <div className="text-[10px] text-ink-mute mt-2">release the lever and the body goes limp (the dead-man contract)</div>
-        </div>
+          <div className="text-[11px] text-ink-mute mt-3">release the lever and the body goes limp (the dead-man contract)</div>
+        </Panel>
 
         {/* the wire ask — the astryx twist: the brain is the org */}
-        <div className="rounded-xl border border-line bg-deck-2/80 p-4">
-          <div className="text-[11px] uppercase tracking-wider text-ink-mute mb-2 font-semibold">
-            ask the org to move — routed over the wire, not an API
-          </div>
-          <div className="flex gap-2">
+        <Panel className="p-5">
+          <SectionHead title="Ask the org to move" right={<span className="text-[11px] text-ink-mute">routed over the wire, not an API</span>} />
+          <div className="flex items-end gap-2 rounded-xl bg-deck-3/70 border border-line focus-within:border-cyan/50 pl-3 pr-1.5 py-1.5 transition-colors">
             <Textarea
               className="flex-1" autosize minRows={1} maxRows={4}
               value={ask}
+              variant="unstyled"
               onChange={(e) => setAsk(e.currentTarget.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAsk() } }}
               placeholder="dance like you just shipped v1.0"
-              styles={{ input: { background: 'var(--t-panel2)', border: '1px solid var(--t-line)', color: 'var(--t-fg)' } }}
+              styles={{ input: { color: 'var(--t-fg)', fontSize: 14, padding: '4px 0' } }}
             />
-            <button
-              onClick={sendAsk}
-              className="px-4 rounded-lg font-bold text-sm bg-gradient-to-br from-cyan to-cyan-soft text-on"
-            >
-              ask
+            <button onClick={sendAsk} disabled={!ask.trim()} className="ax-action px-4 py-1.5 rounded-lg font-medium text-[13px] disabled:opacity-40">
+              Ask
             </button>
           </div>
           {thread.length > 0 && (
-            <div className="mt-3 flex flex-col gap-1.5 max-h-56 overflow-y-auto">
+            <div className="mt-4 flex flex-col gap-2.5 max-h-64 overflow-y-auto">
               {thread.slice(-12).map((m) => (
-                <div key={m.id} className="text-xs leading-relaxed">
-                  <span className={`font-semibold ${m.from === 'owner' ? 'text-cyan-soft' : 'text-good'}`}>
-                    {m.from}
-                  </span>{' '}
-                  <span className="text-ink-dim whitespace-pre-wrap">{m.body.length > 400 ? m.body.slice(0, 400) + '…' : m.body}</span>
+                <div key={m.id} className="flex gap-2.5 text-[13px] leading-relaxed">
+                  {m.from === 'owner'
+                    ? <span className="w-6 h-6 shrink-0 rounded-full grid place-items-center text-[10px] font-semibold ax-action">you</span>
+                    : <AgentFace name={m.from} size={24} />}
+                  <div className="min-w-0">
+                    <span className={`font-semibold text-[12px] ${m.from === 'owner' ? 'text-cyan-soft' : 'text-ink'}`}>
+                      {m.from === 'owner' ? 'you' : displayName(m.from)}
+                    </span>
+                    <div className="text-ink-dim whitespace-pre-wrap">{m.body.length > 400 ? m.body.slice(0, 400) + '…' : m.body}</div>
+                  </div>
                 </div>
               ))}
             </div>
           )}
-        </div>
+        </Panel>
 
         {/* conformance — Brit's protocol/conformance.html, inside the observatory */}
-        <div className="rounded-xl border border-line bg-deck-2/80 p-4">
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-[11px] uppercase tracking-wider text-ink-mute font-semibold">
-              body conformance · does it speak GrowBot?
-            </div>
-            <button
-              onClick={conformance}
-              className="px-3 py-1 rounded-md text-xs font-bold bg-deck-3 border border-line text-cyan-soft hover:text-cyan"
-            >
-              run
-            </button>
-          </div>
+        <Panel className="p-5">
+          <SectionHead title="Body conformance"
+            right={<button onClick={conformance} className="ax-action px-3.5 py-1 rounded-lg text-xs font-medium">Run</button>} />
           {confVerdict && (
-            <div className={`text-sm font-bold mb-2 ${confVerdict.startsWith('✅') ? 'text-good' : 'text-bad'}`}>
+            <div className={`text-[14px] font-semibold mb-2 ${confVerdict.startsWith('✅') ? 'text-good' : 'text-bad'}`}>
               {confVerdict}
             </div>
           )}
           {conf?.map((c, i) => (
-            <div key={i} className="flex items-start gap-2 py-1 text-xs border-t border-line/50 first:border-0">
-              <span className={`px-1.5 rounded font-bold text-[10px] leading-4 min-w-[42px] text-center ${CONF_TAG[c.state]}`}>
+            <div key={i} className="flex items-start gap-2.5 py-2 text-xs border-t border-line/50 first:border-0">
+              <span className={`px-2 rounded-full font-bold text-[10px] leading-5 min-w-[46px] text-center ${CONF_TAG[c.state]}`}>
                 {c.state}
               </span>
               <span className="text-ink-dim">{c.name}</span>
@@ -306,15 +302,13 @@ export default function GrowbotView() {
             </div>
           ))}
           {!conf && (
-            <div className="text-xs text-ink-mute">
-              runs the protocol checks from{' '}
-              <a className="text-cyan-soft hover:underline" href="https://github.com/britcruise9/GrowBot/blob/main/protocol/PROTOCOL.md" target="_blank" rel="noreferrer">
-                PROTOCOL.md
-              </a>{' '}
-              against this body, live
-            </div>
+            <Empty tone="accent2" title="Does this body speak GrowBot?"
+              hint={<>Runs the protocol checks from{' '}
+                <a className="text-cyan-soft hover:underline" href="https://github.com/britcruise9/GrowBot/blob/main/protocol/PROTOCOL.md" target="_blank" rel="noreferrer">
+                  PROTOCOL.md
+                </a>{' '}against this body, live.</>} />
           )}
-        </div>
+        </Panel>
       </div>
     </ScrollArea>
   )

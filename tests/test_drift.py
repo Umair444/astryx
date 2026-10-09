@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Oracle for memory's consolidated drift-lint (memory/lints/drift.py).
 
-WHAT IT PINS. drift_findings() is the 5→1 restore of the drift floor; it carries four checks
-today — wiki_drift (goal-state), link_integrity, roster_drift, frontmatter_drift (compile_lag
-is the fifth, deferred while org-news is frozen). Each has its own RED/CONTROL/GREEN block below.
+WHAT IT PINS. drift_findings() is the 5→1 restore of the drift floor; it carries five checks
+today — wiki_drift (goal-state), link_integrity, roster_drift, frontmatter_drift, compile_lag
+(the wiki's last compile vs the newest raw row). Each has its own RED/CONTROL/GREEN block below.
 The wiki_drift core — the index's goal-state RESTATEMENT vs the raw goals table — pins the three
 directions it can fail:
   RED   a planted divergence FIRES (index says X, raw says Y)             -> [goal-state-drift]
@@ -322,6 +322,50 @@ check("frontmatter findings are sorted/stable across pages",
       ["[frontmatter-entity-mismatch] goal-14.md: x-entity='goal-99' contradicts the page identity 'goal-14'",
        "[frontmatter-entity-mismatch] goal-2.md: x-entity='goal-9' contradicts the page identity 'goal-2'"])
 
+# ═══ compile_lag: the wiki's last compile (log.md) vs the newest raw row ═══
+def lag_findings_for(log_text, newest_ts, wiki=True):
+    """Drive the REAL _compile_lag_findings against a fixture log + an injected newest-raw ts.
+    log_text None = no log.md; wiki=False = no wiki tree beside it (a clean clone)."""
+    import datetime as dt
+    with tempfile.TemporaryDirectory() as d:
+        if wiki:
+            (Path(d) / "wiki").mkdir()
+        log = Path(d) / "log.md"
+        if log_text is not None:
+            log.write_text(log_text)
+        ts = dt.datetime.fromisoformat(newest_ts) if newest_ts else None
+        return mod._compile_lag_findings(lambda q, params=(): [{"ts": ts}], log_path=log)
+
+
+LAG_LOG = ("2026-09-10 · compile · a\n2026-09-14 · compile · b\n"
+           "2026-09-20 · night-review · not a compile\n")
+
+# ── RED: raw 25 days past the newest compile fires, naming the newest compile (09-14, not 09-10;
+# the 09-20 night-review line is not a compile) ─────────────────────────────────────────
+check("compile-lag: raw far past the last compile fires",
+      lag_findings_for(LAG_LOG, "2026-10-09T08:00:00"),
+      ["[compile-lag] log.md: the last wiki compile is 2026-09-14 and the raw has moved "
+       "more than 7 days past it"])
+
+# ── CONTROL: the SAME log, raw 7 days on (the boundary), is silent — the RED fired for the lag ─
+check("compile-lag CONTROL: raw within the window is silent",
+      lag_findings_for(LAG_LOG, "2026-09-21T23:59:00"), [])
+
+# ── GREEN: a quiet org is not lag — empty wire is silent ──────────────────────────────────
+check("compile-lag: empty wire is silent", lag_findings_for(LAG_LOG, None), [])
+
+# ── RED: a log with no compile line fires rather than failing silent ─────────────────────
+check("compile-lag: no compile line fires",
+      lag_findings_for("2026-09-20 · night-review · x\n", "2026-09-21T00:00:00"),
+      ["[compile-lag] log.md: no `· compile ·` line — the wiki has no recorded compile"])
+
+# ── RED / GREEN: an absent log fires beside a wiki, is silent on a clean clone ───────────
+check("compile-lag: absent log beside a wiki fires",
+      lag_findings_for(None, "2026-10-09T00:00:00"),
+      ["[compile-lag] log.md: the compile log is absent — the wiki's age cannot be read"])
+check("compile-lag: no log, no wiki is silent (clean-clone degrade)",
+      lag_findings_for(None, "2026-10-09T00:00:00", wiki=False), [])
+
 print()
 
 # ── live smoke: exercise the real DB path, assert NOTHING (this reports, does not test) ─
@@ -343,5 +387,5 @@ if failures:
     for f in failures:
         print(f"  {f}")
     sys.exit(1)
-print("PASS — the four drift checks (goal-state, link_integrity, roster, frontmatter) each fire "
+print("PASS — the five drift checks (goal-state, link_integrity, roster, frontmatter, compile-lag) each fire "
       "on their planted defect and stay silent on a faithful estate")

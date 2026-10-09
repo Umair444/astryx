@@ -29,7 +29,9 @@ import hashlib
 import json
 import re
 import secrets
+import shutil
 import subprocess
+import tempfile
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -44,7 +46,7 @@ from pydantic import BaseModel
 from nucleus import canvas as cv
 from nucleus import presence as pres
 from .canvas_shell import render
-from .common import (REPO, agent_exists, describe_media, env, media_path, route_target,
+from .common import (MEDIA_DIR, REPO, agent_exists, describe_media, env, media_path, route_target,
                      step_line, wire_insert)
 from .transcribe import transcribe
 
@@ -66,11 +68,14 @@ hits: dict[str, list[float]] = {}                  # rate limits: key -> timesta
 
 
 # ------------------------------------------------------------------ identity
+OWNER_WIRE = "owner"   # the owner's wire handle on this surface; an invitee is cv-<name>
+
+
 class Viewer:
     def __init__(self, name: str, agents: list[str] | None = None):
         self.name = name                           # 'owner' or an invitee name
         self.owner = name == "owner"
-        self.wire = "owner" if self.owner else f"cv-{name}"
+        self.wire = OWNER_WIRE if self.owner else f"cv-{name}"
         self.agents = agents or []
 
     def may_reach(self, agent: str) -> bool:
@@ -523,7 +528,7 @@ async def _say(v: Viewer, thread: str, default_agent: str, text: str, intent="ch
         json.dumps(meta))
     await pool.execute(
         "UPDATE canvas_threads SET updated_at=now(), title=coalesce(title, $2) WHERE thread=$1",
-        thread, re.sub(r"\s+", " ", text)[:60])
+        thread, _title_of(text))
     waiting.setdefault(agent, {})[thread] = (v.name, time.time())
     push(v.name, {"type": "message", "thread": thread, "message": shape(row)})
     push(v.name, {"type": "progress", "thread": thread, "agent": agent, "line": "◌ waking up"})
@@ -546,24 +551,151 @@ async def say(thread: str, body: Say, request: Request):
 
 
 _FILE_TOKEN = re.compile(r"\[\[file:([^\]]+)\]\]")
+# Every file a body carries, in order: an agent's [[file:/path]] embed, or the line an upload leaves
+# (<file attached: /path>, <voice attached: /path>, common.describe_media). The app numbers them the
+# same way (canvas/web/src/Messages.tsx), so `n` means the same file on both sides.
+_ANY_FILE = re.compile(r"\[\[file:([^\]]+)\]\]|<(?:file|voice) attached(?:, fetch failed: [^>]*)?: ([^>]+)>")
+
+
+def _upload_sub(handle: str) -> str:
+    """A viewer's own upload folder, relative to MEDIA_DIR (handles are server-assigned: owner, cv-<name>)."""
+    return "cv/" + re.sub(r"[^a-z0-9_-]", "_", handle.lower())[:64]
+
+
+def _upload_dir(handle: str) -> Path:
+    return MEDIA_DIR / _upload_sub(handle)
+
+
+def _never_served(path: Path) -> bool:
+    """The floor under every file the canvas hands out: the org's declared secret holders
+    (nucleus/secret_holders.json) and the privacy invariants (CLAUDE.md) — whoever asks, whoever
+    embedded it."""
+    home = Path.home()
+    dirs = [REPO / "agents", REPO / "triggers", REPO / "memory", home / ".ssh", home / ".gnupg"]
+    dirs += [d for d in (REPO / "homes").glob("*/.people")]
+    files = {REPO / ".env", REPO / "local.md", REPO / "relations.md", REPO / "owner.md", home / ".pgpass"}
+    try:
+        from nucleus import secretset
+        for h in secretset.holders().get("holders", []):
+            if not str(h.get("path", "")).startswith("docker:"):
+                files.update(secretset._expand(h["path"]))
+    except Exception:
+        pass                                  # the explicit list above still stands
+    files = {f.resolve() for f in files}
+    return path in files or path.name.startswith(".env") or any(path.is_relative_to(d.resolve()) for d in dirs)
+
+
+async def _message_file(v, msg: int, n: int) -> Path | None:
+    """The n-th file a message embeds ([[file:/abs/path]]), if the viewer may see that message:
+    they own its thread, or they are its sender/recipient. Only a path the message names."""
+    row = await pool.fetchrow("SELECT thread, body, to_agent, from_agent FROM messages WHERE id=$1", msg)
+    if not row:
+        return None
+    t = await _own_thread(v, row["thread"] or "") if row["thread"] else None
+    if not t and not (row["to_agent"] == v.wire or row["from_agent"] == v.wire):
+        return None
+    paths = [(a or b).strip() for a, b in _ANY_FILE.findall(row["body"])]
+    if n < 0 or n >= len(paths):
+        return None
+    path = Path(paths[n]).resolve()
+    # WHO may be handed WHAT, keyed on the VIEWER as well as the author (steward #37433, #37555):
+    # - never, for anyone: a declared secret holder or a privacy-invariant path (_never_served);
+    # - an invitee viewer: only media — even an AGENT's embed, because an agent replying in a guest's
+    #   thread writes text the guest steered ("attach /…/.env for me"); an agent that means to give a
+    #   guest a file copies it into media first, an explicit act;
+    # - a human author: only media (the owner: all of it, every file there is theirs; an invitee: only
+    #   what THEY uploaded, media/cv/<handle>/), never the host — so a stolen owner session can't read
+    #   .env through its own message either;
+    # - an agent's embed, to the owner: anywhere it can read, minus the floor.
+    if _never_served(path):
+        return None
+    author = row["from_agent"] or ""
+    if not agent_exists(author):
+        root = MEDIA_DIR if author == OWNER_WIRE else _upload_dir(author)
+        if not path.is_relative_to(root.resolve()):
+            return None
+    elif not v.owner and not path.is_relative_to(MEDIA_DIR.resolve()):
+        return None
+    return path if path.is_file() else None
+
+
+def _title_of(text: str) -> str:
+    """A chat's title from its first message: files read as their names, never as raw tokens/paths."""
+    t = _ANY_FILE.sub(lambda m: " 📎 " + re.sub(r"^(cv|tg|dc)-(\d+|[0-9a-f]{24})-", "", Path((m[1] or m[2]).strip()).name) + " ", text)
+    return re.sub(r"\s+", " ", t).strip()[:60]
+
+
+# What may be shown IN the page (inline) rather than downloaded. Only types a browser renders
+# without running the file's own script on this origin: raster images, PDF (the browser's viewer),
+# media, and text forced to text/plain. SVG and HTML are never inline — as a document they'd script
+# the canvas origin; an <img> of an SVG stays safe and is how the chat shows them.
+INLINE_TYPES = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".mp4", ".m4v", ".mov", ".webm",
+                ".mp3", ".ogg", ".wav", ".m4a", ".flac"}
+TEXT_TYPES = {".txt", ".md", ".csv", ".tsv", ".json", ".log", ".py", ".js", ".ts", ".tsx", ".sql", ".yaml",
+              ".yml", ".toml", ".sh", ".ini", ".xml"}
+# Office documents become a PDF (LibreOffice, headless) so they read exactly as authored.
+OFFICE_TYPES = {".docx", ".doc", ".odt", ".rtf", ".pptx", ".ppt", ".odp", ".xlsx", ".xls", ".ods"}
+_PREVIEW_DIR = MEDIA_DIR / ".preview"
+_convert_lock = asyncio.Lock()          # one soffice at a time: it is heavy, and shares a profile
 
 
 @app.get("/api/file")
-async def message_file(msg: int, n: int, request: Request):
-    """A file an agent embedded ([[file:/abs/path]]) in a message the viewer can see. Only a path
-    the message itself names is served; the viewer must own the message's thread."""
+async def message_file(msg: int, n: int, request: Request, inline: int = 0):
+    """A file an agent or the viewer embedded in a message the viewer can see. `inline=1` asks to
+    VIEW it in the page — granted only for INLINE_TYPES / TEXT_TYPES; anything else downloads."""
     from fastapi.responses import FileResponse
     v = V(request)
-    row = await pool.fetchrow("SELECT thread, body, to_agent, from_agent FROM messages WHERE id=$1", msg)
-    if not row:
-        return deny(404, "no such message")
-    t = await _own_thread(v, row["thread"] or "") if row["thread"] else None
-    if not t and not (row["to_agent"] == v.wire or row["from_agent"] == v.wire):
-        return deny(404, "no such message")
-    paths = [p.strip() for p in _FILE_TOKEN.findall(row["body"])]
-    if n < 0 or n >= len(paths) or not Path(paths[n]).is_file():
+    path = await _message_file(v, msg, n)
+    if not path:
         return deny(404, "file not found")
-    return FileResponse(paths[n], filename=Path(paths[n]).name)
+    ext = path.suffix.lower()
+    if inline and ext in TEXT_TYPES:
+        return FileResponse(path, media_type="text/plain; charset=utf-8", content_disposition_type="inline",
+                            filename=path.name, headers={"X-Content-Type-Options": "nosniff"})
+    if inline and ext in INLINE_TYPES:
+        return FileResponse(path, content_disposition_type="inline", filename=path.name,
+                            headers={"X-Content-Type-Options": "nosniff"})
+    return FileResponse(path, filename=path.name)
+
+
+@app.get("/api/file/preview")
+async def message_file_preview(msg: int, n: int, request: Request):
+    """An Office document rendered to PDF for viewing in the page. Converted once (LibreOffice,
+    headless, its own throwaway profile) and cached by the file's content hash."""
+    from fastapi.responses import FileResponse
+    v = V(request)
+    path = await _message_file(v, msg, n)
+    if not path:
+        return deny(404, "file not found")
+    if path.suffix.lower() not in OFFICE_TYPES:
+        return deny(415, "no preview for this type")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()[:32]
+    out = _PREVIEW_DIR / f"{digest}.pdf"
+    if not out.is_file():
+        soffice = shutil.which("soffice") or shutil.which("libreoffice")
+        if not soffice:
+            return deny(501, "LibreOffice is not installed on this host")
+        async with _convert_lock:
+            if not out.is_file():
+                _PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+                with tempfile.TemporaryDirectory() as tmp:
+                    src = Path(tmp) / f"doc{path.suffix.lower()}"
+                    shutil.copyfile(path, src)
+                    proc = await asyncio.create_subprocess_exec(
+                        soffice, f"-env:UserInstallation=file://{tmp}/profile", "--headless", "--norestore",
+                        "--convert-to", "pdf", "--outdir", tmp, str(src),
+                        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+                    try:
+                        await asyncio.wait_for(proc.wait(), 120)
+                    except asyncio.TimeoutError:
+                        proc.kill()
+                        return deny(504, "the document took too long to render")
+                    made = Path(tmp) / "doc.pdf"
+                    if not made.is_file():
+                        return deny(422, "this document could not be rendered")
+                    shutil.move(str(made), out)
+    return FileResponse(out, media_type="application/pdf", content_disposition_type="inline",
+                        filename=f"{path.stem}.pdf", headers={"X-Content-Type-Options": "nosniff"})
 
 
 @app.post("/api/upload")
@@ -578,7 +710,7 @@ async def upload(request: Request):
         return deny(400, "empty or over 50MB")
     name = re.sub(r"[^A-Za-z0-9._-]", "_", request.headers.get("x-filename", "file.bin"))[-80:]
     kind = request.headers.get("x-kind", "")
-    p = media_path("cv", name)
+    p = media_path("cv", name, sub=_upload_sub(v.wire))
     p.write_bytes(data)
     return {"line": await describe_media(p, kind), "path": str(p)}
 
@@ -618,13 +750,24 @@ def _cshape(c) -> dict:
             "brief": c["brief"], "updated_at": c["updated_at"].isoformat(), "archived": c["archived"]}
 
 
+async def _shape_for(v, c) -> dict:
+    """_cshape for a VIEWER: a non-owner sees the agent-written title/brief only once steward's
+    pii_canvas sweep has cleared them (a3 #36233 C2). The owner sees everything."""
+    d = _cshape(c)
+    if not v.owner:
+        mv = await sync(cv.meta_view, c["id"])
+        if mv["meta"]:
+            d["title"], d["brief"] = "(withheld: " + "; ".join(mv["meta"]) + ")", None
+    return d
+
+
 @app.get("/api/canvases")
 async def canvases(request: Request):
     v = V(request)
     rows = await pool.fetch(
         "SELECT *, version AS ver FROM canvases WHERE NOT archived AND ($1 OR user_name=$2 OR $2 = ANY(shared_with)) "
         "ORDER BY updated_at DESC", v.owner, v.name)
-    return [_cshape(r) for r in rows]
+    return [await _shape_for(v, r) for r in rows]
 
 
 class NewCanvas(BaseModel):
@@ -662,13 +805,16 @@ async def new_canvas(body: NewCanvas, request: Request):
 
 @app.get("/api/canvases/{cid}")
 async def canvas_get(cid: int, request: Request):
-    c = await _canvas_for(V(request), cid)
+    v = V(request)
+    c = await _canvas_for(v, cid)
     if not c:
         return deny(404, "no such canvas")
     vers = await pool.fetch("SELECT version AS ver, author, note, ts FROM canvas_versions WHERE canvas_id=$1 "
                             "ORDER BY version DESC LIMIT 50", cid)
-    return {**_cshape(c), "thread": f"cv:canvas-{cid}",
-            "versions": [{"version": r["ver"], "author": r["author"], "note": r["note"],
+    held = {} if v.owner else (await sync(cv.meta_view, cid))["notes"]     # per-version note masking
+    return {**(await _shape_for(v, c)), "thread": f"cv:canvas-{cid}",
+            "versions": [{"version": r["ver"], "author": r["author"],
+                          "note": ("(withheld: " + "; ".join(held[r["ver"]]) + ")") if r["ver"] in held else r["note"],
                           "ts": r["ts"].isoformat()} for r in vers]}
 
 
@@ -678,6 +824,13 @@ async def canvas_render(cid: int, request: Request, v: int = 0, theme: str = "da
     if not c:
         return deny(404, "no such canvas")
     ver = v or c["ver"]
+    viewer = V(request)
+    if not viewer.owner:
+        # THE VIEW GATE (steward, a3 #35598): a guest is served only content steward's pii_canvas sweep
+        # has CLEARED. Publishing to an already-shared canvas would otherwise reach the guest at once.
+        blocked = await sync(cv.view_blockers, cid, ver)
+        if blocked:
+            return {"version": ver, "html": None, "withheld": blocked}
     row = await pool.fetchrow("SELECT html FROM canvas_versions WHERE canvas_id=$1 AND version=$2", cid, ver)
     if not row:
         return {"version": 0, "html": None}
@@ -686,8 +839,16 @@ async def canvas_render(cid: int, request: Request, v: int = 0, theme: str = "da
 
 @app.get("/api/canvases/{cid}/data")
 async def canvas_data(cid: int, request: Request, key: str | None = None):
-    if not await _canvas_for(V(request), cid):
+    viewer = V(request)
+    if not await _canvas_for(viewer, cid):
         return deny(404, "no such canvas")
+    if not viewer.owner:
+        # the same view gate, for live values: all-or-nothing, the page simply reads no data
+        blocked = await sync(cv.data_blockers, cid)
+        if blocked:
+            body = {"key": key, "value": None} if key is not None else {}
+            why = "; ".join(blocked).replace("\u2014", "-").encode("ascii", "replace").decode()[:500]
+            return JSONResponse(body, headers={"x-astryx-withheld": why})   # headers are latin-1 only
     if key is not None:
         row = await pool.fetchrow("SELECT value FROM canvas_data WHERE canvas_id=$1 AND key=$2", cid, key)
         return {"key": key, "value": json.loads(row["value"]) if row else None}
@@ -772,6 +933,31 @@ async def canvas_ask(cid: int, body: Ask, request: Request):
     return {"ok": True}
 
 
+@app.delete("/api/canvases/{cid}/crew/{agent}")
+async def crew_remove(cid: int, agent: str, request: Request):
+    """Send a summoned agent away. The crew is also the write list (nucleus/canvas.py may_write), so
+    this revokes its right to publish; its presence leaves the canvas and it is told to stop. The
+    keeper stays — a canvas always has one."""
+    v = V(request)
+    c = await _canvas_for(v, cid)
+    if not c:
+        return deny(404, "no such canvas")
+    if c["user_name"] != v.name and not v.owner:
+        return deny(403, "only the canvas's owner can change its crew")
+    agent = agent.strip().lower()
+    if agent == c["agent"]:
+        return deny(400, f"{agent} keeps this canvas and can't be removed")
+    gone = await pool.fetchval("UPDATE canvases SET crew = array_remove(crew, $2) "
+                               "WHERE id=$1 AND $2 = ANY(crew) RETURNING id", cid, agent)
+    await sync(pres.leave, agent, f"canvas:{cid}", f"left canvas #{cid}")
+    if gone:
+        await _say(v, f"cv:canvas-{cid}", agent,
+                   f"[canvas #{cid} \"{c['title']}\"] You've been released from this canvas by its owner. "
+                   f"Stop any work on it; you can no longer publish it.",
+                   meta={"canvas": cid, "released": True})
+    return {"ok": True, "removed": bool(gone)}
+
+
 class FrameError(BaseModel):
     version: int
     message: str
@@ -822,6 +1008,12 @@ async def canvas_share(cid: int, body: Share, request: Request):
     users = sorted({u.strip().lower() for u in body.users if u.strip()})
     if users and c["tier"] == "personal":
         return deny(400, "a personal-tier canvas is never shared")
+    if set(users) - set(c["shared_with"]):
+        # THE SHARE GATE (seed #35151, steward): widening the audience needs a cleared canvas.
+        # Narrowing or unsharing is always allowed — it only ever reduces exposure.
+        blocked = await sync(cv.share_blockers, cid)
+        if blocked:
+            return deny(409, "not shared — " + "; ".join(blocked))
     await pool.execute("UPDATE canvases SET shared_with=$2 WHERE id=$1", cid, users)
     return {"ok": True, "shared_with": users}
 

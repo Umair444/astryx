@@ -31,3 +31,4 @@ async function call<T>(method: string, path: string, body?: unknown, headers: Re
 
 export const get = <T>(p: string) => call<T>('GET', p)
 export const post = <T>(p: string, b?: unknown, h?: Record<string, string>) => call<T>('POST', p, b ?? {}, h)
+export const del = <T>(p: string) => call<T>('DELETE', p)

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { api, apiPost } from '../api'
+import { Empty, Skeleton } from '../ui/kit'
 
 /* The owner tells the org who his people are. memory guesses privately (pid-keyed, counts-only
    evidence, never on the wire); here the owner confirms, corrects, or skips — one card at a time,
@@ -23,23 +24,22 @@ export default function PeopleConfirm({ onClose }: { onClose: () => void }) {
   useEffect(() => { load() }, [])
 
   return (
-    <aside className="w-[360px] max-w-[92vw] shrink-0 border-r border-line bg-deck-2 flex flex-col min-h-0">
-      <div className="px-4 py-3 border-b border-line flex items-start gap-2">
+    <aside className="ax-panel w-[360px] max-w-[92vw] shrink-0 m-3 mr-0 rounded-2xl flex flex-col min-h-0 overflow-hidden">
+      <div className="px-4 py-3.5 border-b border-line flex items-start gap-2">
         <div className="min-w-0">
-          <div className="text-[13px] font-semibold text-ink">Help the org know your people</div>
+          <div className="text-[15px] font-semibold text-ink">Help the org know your people</div>
           <div className="text-[11px] text-ink-mute leading-snug mt-0.5">
             memory's private guesses — confirm, correct or skip. Names stay on your side; memory only hears a count.
           </div>
         </div>
-        <button onClick={onClose} className="ml-auto text-ink-mute hover:text-ink text-lg leading-none px-1">×</button>
+        <button onClick={onClose} aria-label="close" className="ml-auto w-7 h-7 grid place-items-center rounded-full text-ink-mute hover:text-ink hover:bg-deck-3 text-lg leading-none">×</button>
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2.5">
         {err && <div className="text-[12px] text-bad">{err}</div>}
-        {!data && !err && <div className="text-[12px] text-ink-mute">loading…</div>}
+        {!data && !err && [0, 1, 2].map((i) => <Skeleton key={i} className="h-[148px] w-full rounded-xl" />)}
         {data && data.asks.length === 0 && (
-          <div className="text-[12px] text-ink-mute p-2">
-            Nothing to confirm right now{data.answered ? ` — ${data.answered} answered so far` : ''}. memory adds the next batch as its evidence grows.
-          </div>
+          <Empty title="Nothing to confirm right now"
+            hint={`${data.answered ? `${data.answered} answered so far. ` : ''}memory adds the next batch as its evidence grows.`} />
         )}
         <AnimatePresence initial={false}>
           {data?.asks.map((a) => (
@@ -65,7 +65,7 @@ function Card({ a, kinds, closeness, onDone }: { a: Ask; kinds: string[]; closen
   }
   return (
     <motion.div layout initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: 40 }}
-      className="rounded-xl border border-line bg-deck p-3">
+      className="rounded-xl border border-line bg-deck-3/50 p-3.5">
       <div className="flex items-baseline gap-2">
         <span className="text-[14px] font-medium text-ink truncate">{a.label}</span>
         {a.confidence && <span className="text-[10px] uppercase tracking-wider text-ink-mute">{a.confidence} confidence</span>}
@@ -78,7 +78,7 @@ function Card({ a, kinds, closeness, onDone }: { a: Ask; kinds: string[]; closen
       <div className="mt-2 flex flex-wrap gap-1">
         {kinds.map((k) => (
           <button key={k} onClick={() => setKind(k)}
-            className={`text-[11px] px-2 py-0.5 rounded-full border transition ${kind === k ? 'border-cyan bg-cyan/15 text-ink' : 'border-line text-ink-dim hover:text-ink'}`}>{k}</button>
+            className={`text-[11.5px] px-2.5 py-0.5 rounded-full border transition ${kind === k ? 'border-cyan bg-cyan/15 text-ink' : 'border-line text-ink-dim hover:text-ink hover:border-line-2'}`}>{k}</button>
         ))}
       </div>
       <div className="mt-1.5 flex gap-1">
@@ -89,8 +89,7 @@ function Card({ a, kinds, closeness, onDone }: { a: Ask; kinds: string[]; closen
       </div>
       <div className="mt-2.5 flex gap-2">
         <button disabled={busy || !kind || !close} onClick={() => send(false)}
-          className="flex-1 text-[12px] font-medium py-1.5 rounded-lg disabled:opacity-40"
-          style={{ background: 'linear-gradient(135deg, var(--t-accent), var(--t-accent2))', color: 'var(--t-on)' }}>
+          className="ax-action flex-1 text-[12px] font-medium py-1.5 rounded-lg disabled:opacity-40">
           {a.kind && kind === a.kind && close === a.closeness ? 'Confirm' : 'Save'}
         </button>
         <button disabled={busy} onClick={() => send(true)} className="text-[12px] px-3 py-1.5 rounded-lg border border-line text-ink-dim hover:text-ink">Skip</button>

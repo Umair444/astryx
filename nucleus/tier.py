@@ -30,6 +30,17 @@ from nucleus.charter import resolve, Collision, AGENTS
 # confirming it reads no owner-personal data. Do NOT convert to a PII denylist.
 ORG_ACTUATION_GRANTS = frozenset({"compose", "channels"})
 
+# PERSONAL LANES: agents whose WORK is the owner's human-personal tier (local.md), so their
+# wire rows never feed a compiled, RAG-reachable artifact (memory's library and wiki). A
+# different question from the content floor above. That one is grant-derived and marks seed,
+# memory and the abstractors private too, so it's the wrong key for "may memory compile this
+# row" (a3 #37444). Declared here, ONCE, for every consumer (triggers/memory/library_compile.py).
+# An agent not listed is org: this is an exclusion of DECLARED lanes, so a new personal-lane
+# agent must be added here when it's chartered. Coverage, 2026-10-09: canopus (career), gemini
+# (the family twin), p1 and p2 (philosophers that hold owner-mail and location grants; listed
+# out of caution). Not listed: vega (the public voice), growbot (the robot body).
+PERSONAL_LANES = frozenset({"canopus", "gemini", "p1", "p2"})
+
 
 def _grants(name: str, agents_dir=AGENTS) -> set | None:
     """The agent's grant set, or None if the agent has no resolvable charter."""

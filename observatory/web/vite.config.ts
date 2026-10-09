@@ -8,7 +8,8 @@ export default defineConfig({
     // the theme palettes are shared with Canvas: ../../canvas/web/src/themes.ts
     fs: { allow: ['.', '../../canvas/web/src'] },
     proxy: {
-      '/api': 'http://127.0.0.1:8090',
+      // OBS_API points a dev server at another observatory (a fixture-backed one for screenshots)
+      '/api': process.env.OBS_API || 'http://127.0.0.1:8090',
     },
   },
 })

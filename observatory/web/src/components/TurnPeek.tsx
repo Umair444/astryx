@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Drawer, ScrollArea } from '@mantine/core'
-import { api, agentColor, displayName, fmtTokens, shortModel } from '../api'
+import { api, displayName, fmtTokens, shortModel } from '../api'
+import AgentFace from './AgentFace'
+import { Skeleton } from '../ui/kit'
 import type { TurnDetail } from '../types'
 
 /* The signature move (plan-2 §5): any rendered message/turn peels open into the
@@ -42,13 +44,8 @@ export default function TurnPeek({
       title={
         d ? (
           <span className="flex items-center gap-2">
-            <span
-              className="w-6 h-6 rounded-lg grid place-items-center text-[11px] font-bold text-agent-ink"
-              style={{ background: agentColor(d.agent) }}
-            >
-              {d.agent[0].toUpperCase()}
-            </span>
-            <span className="text-sm text-ink">
+            <AgentFace name={d.agent} size={26} />
+            <span className="text-sm font-semibold text-ink">
               {displayName(d.agent)} · turn #{d.id}
             </span>
             <span className="text-[10px] font-mono text-ink-mute">
@@ -62,12 +59,19 @@ export default function TurnPeek({
       styles={{ content: { background: 'var(--t-bg)' }, header: { background: 'var(--t-bg)' } }}
     >
       {err && <div className="text-sm text-bad font-mono">{err}</div>}
-      {!d && !err && <div className="text-sm text-ink-mute">opening the turn…</div>}
+      {!d && !err && (
+        <div className="space-y-3">
+          <Skeleton className="h-20 w-full block !rounded-xl" />
+          <Skeleton className="h-3 w-2/3 block" />
+          <Skeleton className="h-16 w-full block !rounded-xl" />
+          <Skeleton className="h-3 w-1/2 block" />
+        </div>
+      )}
       {d && (
         <ScrollArea className="h-full">
           <div className="space-y-3 pb-8">
             {/* the trigger — what woke this mind */}
-            <div className="rounded-lg border border-line bg-deck-2 p-3">
+            <div className="ax-panel rounded-xl p-3.5">
               <div className="text-[10px] uppercase tracking-[0.15em] text-ink-mute mb-1.5">
                 trigger {d.trigger ? `· msg #${d.trigger.id} · ${d.trigger.from_agent} → ${d.agent}` : `· ${d.source ?? 'self'}`}
                 {d.trigger?.thread && <span className="ml-1 font-mono">({d.trigger.thread})</span>}
@@ -89,7 +93,7 @@ export default function TurnPeek({
                     </span>
                   </div>
                 ) : (
-                  <div key={i} className="rounded-lg border border-line/60 bg-deck-3/40 p-3">
+                  <div key={i} className="rounded-xl border border-line/60 bg-deck-3/40 p-3.5">
                     <div className="text-[12.5px] text-ink leading-relaxed whitespace-pre-wrap break-words">
                       {e.text}
                     </div>
@@ -103,7 +107,7 @@ export default function TurnPeek({
 
             {/* the outputs — what left this turn onto the wire */}
             {d.outputs.length > 0 && (
-              <div className="rounded-lg border border-cyan/20 bg-deck-2 p-3">
+              <div className="ax-panel rounded-xl p-3.5 !border-cyan/30">
                 <div className="text-[10px] uppercase tracking-[0.15em] text-cyan-soft/70 mb-1.5">
                   sent from this turn
                 </div>

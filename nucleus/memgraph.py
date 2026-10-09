@@ -715,41 +715,6 @@ def build_world(g: Graph) -> None:
     # salted id; relation details private and role-gated). kg may hold their TYPE and coverage,
     # never a person, a name, or a circle.
     g.notes.append("world layer: people are not minted into kg — they live in the social graph DB")
-    return
-    tax = world.taxonomy()
-    if not tax["categories"]:
-        g.notes.append("world layer empty: no owner instruments present (gitignored)")
-        return
-    for cat, members in tax["categories"].items():
-        cid = g.node(f"world:cat:{world._slug(cat)}", kind="category", label=cat,
-                     layer="world", region="World")
-        for m in members:
-            # No `claims` here on purpose. kg.claim's row shape requires an `entity`, and a
-            # facet is already carried as a node plus an edge below — emitting it twice
-            # would be a second writer for the same fact, in a module whose whole design
-            # rule is writer-count-1. (First cut emitted claims without `entity`, which
-            # would have aborted the write transaction rather than degrading.)
-            pid = g.node(f"world:person:{m['slug']}", kind="person", label=m["name"],
-                         layer="world", region="World", facets=m["facets"])
-            g.edge(pid, cid, "semantic", "in-category")
-            # IDENTITY: the channel-graph twin is recorded as an ATTRIBUTE, not a stub
-            # node. The channel-derived social graph lives in the `social` schema now
-            # (owner ruling 2026-08-14: postgres for everything, one store); a kg stub
-            # for every matched contact would be a second copy of that store's nodes.
-            # social.person.curated_slug is the join point, written by the loader.
-            for raw in m.get("_ids", []):
-                try:
-                    from nucleus import people as _pp
-                    g.nodes[pid]["channel_id"] = _pp.pid(raw)
-                except Exception:
-                    continue
-            # Facets become nodes too: they are the AXES a human browses by, and as nodes
-            # they show which people share a place, a platform, a status. As bare
-            # attributes they would be invisible in a graph view.
-            for k, v in m["facets"].items():
-                fid = g.node(f"world:facet:{k}:{world._slug(v)}", kind="facet",
-                             label=f"{k}: {v}", layer="world", region="World")
-                g.edge(pid, fid, "entity", k)
 
 
 def compile_graph(dsn: str | None = None, with_system1: bool = True) -> dict:

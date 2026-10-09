@@ -1,8 +1,12 @@
+import PeopleGraph from './PeopleGraph'
+import LibraryView from './LibraryView'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ScrollArea, SegmentedControl, Loader, Textarea } from '@mantine/core'
+import { ScrollArea, Textarea } from '@mantine/core'
+import { AnimatePresence, motion } from 'motion/react'
 import { useMediaQuery } from '@mantine/hooks'
 import { api, apiPost, fmtAgo } from '../api'
 import Md from './Md'
+import { Empty, LiveDot, Orb, Panel, SectionHead, Tabs, ViewHeader } from '../ui/kit'
 
 /* The Memory tab — the org's recall system, rendered.
  *
@@ -62,13 +66,56 @@ const KIND_R: Record<string, number> = {
   person: 8, category: 6, facet: 4,
 }
 
+type Lens = 'library' | 'cortex' | 'split' | 'ontology' | 'world'
+const GRAPH_LENSES = [{ id: 'cortex' as const, label: 'Cortex' }, { id: 'split' as const, label: 'System 1 ↔ 2' },
+                      { id: 'ontology' as const, label: 'Ontology' }, { id: 'world' as const, label: 'People' }]
+/* One plain line above each graph: what am I looking at (memory #37562). */
+const LENS_HINT: Record<Exclude<Lens, 'library'>, string> = {
+  cortex: 'every wiki page and the links between them',
+  split: 'raw events (left) beside what memory compiled from them (right)',
+  ontology: 'the kinds of page memory recognises and how they relate',
+  world: 'people and groups, owner-only',
+}
+
+/* The Library is Memory's face; the graphs are how memory files what it knows — for agents, so they
+   sit behind one quiet "Under the hood" toggle, remembered per viewer. */
+function LensBar({ lens, setLens }: { lens: Lens; setLens: (l: Lens) => void }) {
+  const [open, setOpen] = useState(() => {
+    try { return localStorage.getItem('mem_hood') === '1' } catch { return false }
+  })
+  const toggle = () => {
+    const next = !open
+    setOpen(next)
+    try { localStorage.setItem('mem_hood', next ? '1' : '0') } catch { /* private mode: not remembered */ }
+    if (!next && lens !== 'library') setLens('library')
+  }
+  const shown = open || lens !== 'library'
+  return (
+    <div className="flex flex-col items-end gap-1.5 max-w-full">
+      <div className="flex items-center gap-2 max-w-full">
+        <Tabs id="memlens" items={shown ? [{ id: 'library' as const, label: 'Library' }, ...GRAPH_LENSES] : [{ id: 'library' as const, label: 'Library' }]}
+          value={lens} onChange={setLens} />
+        <button onClick={toggle} aria-expanded={shown}
+          className="shrink-0 text-[12px] text-ink-mute hover:text-ink-dim px-2 py-1 rounded-lg transition-colors">
+          {shown ? 'Hide' : 'Under the hood'} <span className={`inline-block transition-transform ${shown ? 'rotate-180' : ''}`}>⌄</span>
+        </button>
+      </div>
+      {shown && (
+        <div className="text-[11.5px] text-ink-mute text-right">
+          How memory files what it knows: the wiki's structure, for agents.{' '}
+          <a href="#/memory/lib/architecture/how-memory-organises-knowledge" onClick={() => setLens('library')} className="text-cyan hover:underline">How it works →</a>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function MemoryView() {
   const [g, setG] = useState<Graph | null>(null)
   const [err, setErr] = useState<string>('')
   const [sel, setSel] = useState<Node | null>(null)
   const [page, setPage] = useState<{ slug: string; markdown: string } | null>(null)
-  const [lens, setLens] = useState<'cortex' | 'split' | 'ontology' | 'world'>('cortex')
-  const [world, setWorld] = useState<Graph | null>(null)
+  const [lens, setLens] = useState<Lens>('library')
   const [onto, setOnto] = useState<Graph | null>(null)
   const [classes, setClasses] = useState<Set<string>>(new Set(['semantic', 'entity', 'temporal', 'causal']))
   const [hover, setHover] = useState<string | null>(null)
@@ -101,15 +148,6 @@ export default function MemoryView() {
     api<Graph>('/memory/ontology').then(setOnto).catch(() => {})
   }, [lens, onto])
 
-  /* The WORLD lens: people, their categories, the facets that cut across them. The other
-   * three lenses are all the org describing itself — this is the only one about anyone
-   * outside it, which is why it exists. Derived from the owner's instruments; identifying
-   * values are stripped before compile, never here. */
-  useEffect(() => {
-    if (lens !== 'world' || world) return
-    api<Graph>('/memory/world').then(setWorld).catch(() => {})
-  }, [lens, world])
-
   useEffect(() => {
     if (!sel || (sel.kind !== 'page' && sel.kind !== 'brief')) { setPage(null); return }
     const slug = sel.id.split(':')[1]
@@ -117,7 +155,7 @@ export default function MemoryView() {
     api<{ slug: string; markdown: string }>(`/memory/page/${slug}`).then(setPage).catch(() => setPage(null))
   }, [sel])
 
-  const view_g = lens === 'ontology' ? onto : lens === 'world' ? world : g
+  const view_g = lens === 'ontology' ? onto : g
   const byId = useMemo(() => new Map((view_g?.nodes ?? []).map((n) => [n.id, n])), [view_g])
 
   /* Zoom must be SCOPED TO THIS CANVAS, which means preventDefault() on the wheel — and
@@ -436,90 +474,135 @@ export default function MemoryView() {
     return s
   }, [hover, sel, shownEdges])
 
-  if (err) return <div className="p-6 text-sm text-ink-dim">memory graph unavailable — {err}</div>
-  if (!g) return <div className="h-full grid place-items-center"><Loader color="cyan" /></div>
-  if (lens === 'world' && !world)
-    return <div className="h-full grid place-items-center text-ink-mute text-sm">loading the world…</div>
-  if (lens === 'ontology' && !onto)
-    return <div className="h-full grid place-items-center"><Loader color="cyan" /></div>
+
+  /* The LIBRARY is memory's booklet of what the org knows — the owner's way in, so it opens first. */
+  if (lens === 'library') return <LibraryView tabs={<LensBar lens={lens} setLens={setLens} />} />
+
+  /* PEOPLE are not memory's to hold. kg is readable by every agent, so the compiler no longer
+   * mints a person into it (seed 10-09); the owner's people live in the private people graph
+   * (social_person / social_edge / astryx_social) — the same one Network → People draws. This
+   * lens shows THAT graph, owner-side, instead of an always-empty filter over kg. */
+  if (lens === 'world') {
+    return (
+      <div className="h-full flex flex-col">
+        <div className="shrink-0 px-6 pt-5 pb-3 flex flex-wrap items-start gap-4">
+          <div>
+            <div className="text-[11px] uppercase tracking-[0.18em] text-ink-mute mb-1.5">who the org knows</div>
+            <h1 className="text-[28px] font-semibold tracking-[-0.02em] leading-none ax-title">People</h1>
+            <div className="mt-2 text-[12.5px] text-ink-mute">{LENS_HINT.world} — from the private people graph; memory works from it, never copies it.</div>
+          </div>
+          <div className="ml-auto"><LensBar lens={lens} setLens={setLens} /></div>
+        </div>
+        <div className="flex-1 min-h-0 relative"><div className="absolute inset-0"><PeopleGraph /></div></div>
+      </div>
+    )
+  }
+
+  if (err) return <div className="h-full grid place-items-center"><Empty tone="bad" title="The memory graph is unavailable" hint={err} /></div>
+  if (!g) return <Recalling what="recalling what the org knows…" />
 
   if (!g.nodes.length) {
     return (
-      <div className="p-6 text-sm text-ink-dim">
-        <div className="text-ink mb-2">No compiled graph yet.</div>
-        <code className="text-xs">venv/bin/python nucleus/memgraph.py build</code>
-        {g.notes?.map((n, i) => <div key={i} className="mt-2 text-xs text-ink-mute">{n}</div>)}
+      <div className="h-full grid place-items-center">
+        <div className="flex flex-col items-center gap-6">
+        <LensBar lens={lens} setLens={setLens} />
+        <Empty title="No compiled graph yet" hint={<>
+          <code className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-deck-3">venv/bin/python nucleus/memgraph.py build</code>
+          {g.notes?.map((n, i) => <span key={i} className="block mt-2">{n}</span>)}
+        </>} />
+        </div>
       </div>
     )
   }
 
   const stale = (g.age_s ?? 0) > 48 * 3600
+  const lensLoading = lens === 'ontology' && !onto
 
   /* Mobile: no canvas. Same choice NetworkView makes — a pannable 285-node SVG on a
    * phone is worse than an honest list. */
   if (mobile) {
     return (
       <ScrollArea className="h-full">
-        <div className="p-3">
-          <Header g={g} stale={stale} />
-          {g.regions.map((r) => (
-            <div key={r} className="mb-4">
-              <div className="text-[11px] uppercase tracking-wider mb-1" style={{ color: `hsl(${hue(r)} 70% var(--hue-l-text))` }}>{r}</div>
-              {g.nodes.filter((n) => n.region === r && (n.kind === 'page' || n.kind === 'goal' || n.kind === 'agent'))
-                .sort((a, b) => b.degree - a.degree)
-                .map((n) => (
-                  <div key={n.id} className="text-sm py-1 border-b border-line/40 flex justify-between">
-                    <span>{n.label}</span><span className="text-ink-mute font-mono text-xs">{n.degree}</span>
-                  </div>
-                ))}
-            </div>
-          ))}
+        <div className="px-4 py-6">
+          <ViewHeader kicker="what the org knows" title="Memory" live={<Header g={g} stale={stale} />} />
+          {g.regions.map((r) => {
+            const items = g.nodes.filter((n) => n.region === r && (n.kind === 'page' || n.kind === 'goal' || n.kind === 'agent'))
+              .sort((a, b) => b.degree - a.degree)
+            if (!items.length) return null
+            return (
+              <section key={r} className="mb-6">
+                <SectionHead title={r} count={items.length}
+                  right={<span className="w-2.5 h-2.5 rounded-full" style={{ background: `hsl(${hue(r)} 70% 60%)`, boxShadow: `0 0 10px hsl(${hue(r)} 70% 60%)` }} />} />
+                <Panel className="px-3.5 py-1">
+                  {items.map((n) => (
+                    <div key={n.id} className="text-[13.5px] py-2 border-b border-line/40 last:border-0 flex items-center gap-2.5">
+                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: `hsl(${hue(r)} 70% 62%)` }} />
+                      <span className="truncate text-ink-dim">{n.label}</span>
+                      <span className="ml-auto text-ink-mute font-mono text-[11px]">{n.degree}</span>
+                    </div>
+                  ))}
+                </Panel>
+              </section>
+            )
+          })}
         </div>
       </ScrollArea>
     )
   }
 
   return (
-    <div className="h-full flex flex-col">
-      <div className="px-3 pt-2 pb-1 flex items-center gap-3 flex-wrap">
-        {/* Shows only when the view is OFF-DEFAULT: a control that is always there is
-            chrome; one that appears exactly when it can do something is a hint. */}
-        {atDefault ? null : (
-          <button onClick={() => setView(fitRef.current)}
-            title="Reset zoom and pan"
-            className="text-[11px] font-mono px-2 py-[3px] rounded border border-cyan/40 text-cyan hover:bg-cyan/10 transition-colors shrink-0">
-            reset · {view.k.toFixed(2)}×
-          </button>
-        )}
-        <SegmentedControl size="xs" value={lens} onChange={(v) => setLens(v as 'cortex' | 'split' | 'ontology' | 'world')}
-          data={[{ label: 'Cortex', value: 'cortex' }, { label: 'System 1 ↔ 2', value: 'split' },
-                 { label: 'Ontology', value: 'ontology' },
-                 { label: 'People', value: 'world' }]} />
-        <div className="flex gap-1">
-          {(Object.keys(CLASS_STYLE) as Edge['cls'][]).map((c) => {
-            const on = classes.has(c)
-            return (
-              <button key={c} title={CLASS_STYLE[c].hint}
-                onClick={() => setClasses((s) => { const n = new Set(s); n.has(c) ? n.delete(c) : n.add(c); return n })}
-                className="text-[11px] px-2 py-[3px] rounded border transition-all"
-                style={{
-                  borderColor: on ? CLASS_STYLE[c].c : 'var(--color-line)',
-                  color: on ? CLASS_STYLE[c].c : 'var(--color-ink-mute)',
-                  background: on ? `color-mix(in srgb, ${CLASS_STYLE[c].c} 8%, transparent)` : 'transparent',
-                }}>
-                {CLASS_STYLE[c].label} <span className="opacity-60">{g.stats.by_class?.[c] ?? 0}</span>
-              </button>
-            )
-          })}
+    <div className="h-full flex flex-col relative">
+      {/* the chrome floats over the constellation: the map is the page, not a widget in it */}
+      <div className="absolute left-0 right-0 top-0 z-10 pointer-events-none px-6 pt-5 pb-10"
+        style={{ background: 'linear-gradient(180deg, color-mix(in srgb, var(--t-bg) 82%, transparent) 0%, color-mix(in srgb, var(--t-bg) 45%, transparent) 60%, transparent 100%)' }}>
+        <div className="flex flex-wrap items-start gap-4">
+          <div className="pointer-events-auto">
+            <div className="text-[11px] uppercase tracking-[0.18em] text-ink-mute mb-1.5">what the org knows</div>
+            <h1 className="text-[28px] font-semibold tracking-[-0.02em] leading-none ax-title">Memory</h1>
+            <div className="mt-2"><Header g={g} stale={stale} /></div>
+            <div className="mt-1.5 text-[13px] text-ink-dim">{LENS_HINT[lens]}</div>
+          </div>
+          <div className="ml-auto flex flex-col items-end gap-2 pointer-events-auto">
+            <LensBar lens={lens} setLens={setLens} />
+            <div className="flex flex-wrap justify-end gap-1.5">
+              {(Object.keys(CLASS_STYLE) as Edge['cls'][]).map((c) => {
+                const on = classes.has(c)
+                return (
+                  <button key={c} title={CLASS_STYLE[c].hint}
+                    onClick={() => setClasses((s) => { const n = new Set(s); n.has(c) ? n.delete(c) : n.add(c); return n })}
+                    className="ax-panel flex items-center gap-1.5 text-[11.5px] px-2.5 py-1 rounded-full transition-all"
+                    style={{
+                      color: on ? CLASS_STYLE[c].c : 'var(--color-ink-mute)',
+                      borderColor: on ? `color-mix(in srgb, ${CLASS_STYLE[c].c} 55%, transparent)` : undefined,
+                    }}>
+                    <span className="w-1.5 h-1.5 rounded-full" style={{ background: on ? CLASS_STYLE[c].c : 'var(--t-line2)', boxShadow: on ? `0 0 8px ${CLASS_STYLE[c].c}` : 'none' }} />
+                    {CLASS_STYLE[c].label} <span className="opacity-60 font-mono text-[10.5px]">{g.stats.by_class?.[c] ?? 0}</span>
+                  </button>
+                )
+              })}
+              {/* Shows only when the view is OFF-DEFAULT: a control that is always there is
+                  chrome; one that appears exactly when it can do something is a hint. */}
+              {!atDefault && (
+                <button onClick={() => setView(fitRef.current)} title="Reset zoom and pan"
+                  className="ax-panel text-[11.5px] font-mono px-2.5 py-1 rounded-full text-cyan hover:brightness-125 transition">
+                  ⤢ reset · {view.k.toFixed(2)}×
+                </button>
+              )}
+            </div>
+          </div>
         </div>
-        <div className="ml-auto"><Header g={g} stale={stale} /></div>
       </div>
 
       <div className="flex-1 min-h-0 flex flex-col">
-      <div className="flex-1 min-h-0 flex">
+      <div className="flex-1 min-h-0 flex relative">
+        {lensLoading && (
+          <div className="absolute inset-0 z-[5] grid place-items-center pointer-events-none">
+            <div className="flex flex-col items-center gap-3"><Orb size={54} /><span className="text-[13px] text-ink-mute">reading the schema…</span></div>
+          </div>
+        )}
         <svg
           ref={svgRef}
-          className="flex-1 starfield cursor-grab active:cursor-grabbing touch-none"
+          className="flex-1 cursor-grab active:cursor-grabbing touch-none"
           viewBox="-900 -700 1800 1400" preserveAspectRatio="xMidYMid meet"
           onMouseDown={(e) => { drag.current = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y } }}
           onMouseUp={() => { drag.current = null }}
@@ -542,6 +625,19 @@ export default function MemoryView() {
               <feGaussianBlur stdDeviation="3.4" result="b" />
               <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
             </filter>
+            {/* DOTS: every node is a small lit sphere, not a flat disc — a bright core falling off
+                into its region's hue. One gradient per region × layer (a handful), never per node. */}
+            {[...new Set((view_g?.nodes ?? []).map((n) => `${n.region}|${n.layer}`))].map((key) => {
+              const [r, layer] = key.split('|')
+              const s2 = layer === 'system2'
+              return (
+                <radialGradient key={key} id={`mg-${r}-${layer}`} cx="38%" cy="34%" r="70%">
+                  <stop offset="0%" stopColor={`hsl(${hue(r)} ${s2 ? 90 : 60}% ${s2 ? 90 : 76}%)`} />
+                  <stop offset="45%" stopColor={`hsl(${hue(r)} ${s2 ? 78 : 45}% ${s2 ? 66 : 52}%)`} />
+                  <stop offset="100%" stopColor={`hsl(${hue(r)} ${s2 ? 70 : 40}% ${s2 ? 42 : 34}%)`} />
+                </radialGradient>
+              )
+            })}
           </defs>
 
           <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
@@ -554,7 +650,11 @@ export default function MemoryView() {
                 return (
                   <circle key={b.region} cx={b.cx} cy={b.cy} r={b.r}
                     fill={`hsl(${hue(b.region)} 70% 52% / ${a})`}
-                    style={{ transition: 'fill .5s ease-out' }} />
+                    style={{ transition: 'fill .5s ease-out' }}>
+                    {/* the organ breathes: a slow radius swell, staggered per region so the
+                        cortex never pulses in lockstep. Positions never move — only light. */}
+                    <animate attributeName="r" values={`${b.r};${b.r * 1.07};${b.r}`} dur={`${9 + (hue(b.region) % 5)}s`} repeatCount="indefinite" />
+                  </circle>
                 )
               })}
             </g>
@@ -590,9 +690,28 @@ export default function MemoryView() {
               })}
             </g>
 
+            {/* halos: the hubs (the things much of the org's knowledge hangs off) carry a slow
+                pulse ring, so the map reads as alive at rest — Dots-like, never busy */}
+            {!(blink && hops) && (
+              <g pointerEvents="none">
+                {(view_g?.nodes ?? []).filter((n) => n.degree > 12 && n.layer === 'system2').slice(0, 40).map((n, i) => {
+                  const p = pos.get(n.id)!
+                  const r0 = (KIND_R[n.kind] ?? 3) + Math.min(5, n.degree * 0.16)
+                  const lit = !neighbours || neighbours.has(n.id)
+                  return (
+                    <circle key={n.id} cx={p.x} cy={p.y} r={r0} fill="none"
+                      stroke={`hsl(${hue(n.region)} 80% 70%)`} strokeWidth={1} opacity={lit ? 0.5 : 0.08}>
+                      <animate attributeName="r" values={`${r0};${r0 * 3.2}`} dur="3.6s" begin={`${(i * 0.37) % 3.6}s`} repeatCount="indefinite" />
+                      <animate attributeName="stroke-opacity" values="0.7;0" dur="3.6s" begin={`${(i * 0.37) % 3.6}s`} repeatCount="indefinite" />
+                    </circle>
+                  )
+                })}
+              </g>
+            )}
+
             {/* nodes */}
             <g>
-              {view_g!.nodes.map((n) => {
+              {(view_g?.nodes ?? []).map((n) => {
                 const p = pos.get(n.id)!
                 const lit = !neighbours || neighbours.has(n.id)
                 /* SCREEN-SPACE FLOOR. Radii are world units, so at k=0.081 an r=8 node
@@ -616,7 +735,7 @@ export default function MemoryView() {
                   : lit ? (n.layer === 'system2' ? 0.98 : 0.72) : 0.12
                 return (
                   <circle key={n.id} cx={p.x} cy={p.y} r={r}
-                    fill={`hsl(${hue(n.region)} ${n.layer === 'system2' ? 78 : 45}% ${n.layer === 'system2' ? 66 : 52}%)`}
+                    fill={`url(#mg-${n.region}-${n.layer})`}
                     stroke={
                       (n as any).bucket || (n as any).thin || (n as any).gap || (n as any).uncategorised
                         ? 'var(--t-bad)'
@@ -635,19 +754,20 @@ export default function MemoryView() {
 
             {/* labels: only what can be read — hubs, and whatever is focused */}
             <g pointerEvents="none">
-              {view_g!.nodes.filter((n) => n.degree > 9 || n.id === hover || n.id === sel?.id || n.kind === 'type' || n.kind === 'category').map((n) => {
+              {(view_g?.nodes ?? []).filter((n) => n.degree > 9 || n.id === hover || n.id === sel?.id || n.kind === 'type' || n.kind === 'category').map((n) => {
                 const p = pos.get(n.id)!
                 return (
-                  <text key={n.id} x={p.x} y={p.y - 12} textAnchor="middle" fontSize="12"
+                  <text key={n.id} x={p.x} y={p.y - 14} textAnchor="middle" fontSize={n.id === hover || n.id === sel?.id ? 18 : 15}
+                    fontWeight={n.id === hover || n.id === sel?.id ? 600 : 500}
                     fill={n.id === hover || n.id === sel?.id ? 'var(--t-fg)' : 'var(--color-ink-dim)'}
-                    style={{ paintOrder: 'stroke', stroke: 'var(--color-deck)', strokeWidth: 3 }}>
+                    style={{ paintOrder: 'stroke', stroke: 'var(--color-deck)', strokeWidth: 4, strokeLinejoin: 'round' }}>
                     {n.label}
                   </text>
                 )
               })}
               {blobs.filter((b) => b.n > 2).map((b) => (
-                <text key={b.region} x={b.cx} y={b.cy - b.r - 8} textAnchor="middle" fontSize="15"
-                  letterSpacing="2" opacity={0.75} fill={`hsl(${hue(b.region)} 70% var(--hue-l-text))`}>
+                <text key={b.region} x={b.cx} y={b.cy - b.r - 8} textAnchor="middle" fontSize="17" fontWeight={600}
+                  letterSpacing="3" opacity={0.8} fill={`hsl(${hue(b.region)} 70% var(--hue-l-text))`}>
                   {b.region.toUpperCase()}
                 </text>
               ))}
@@ -655,26 +775,33 @@ export default function MemoryView() {
           </g>
         </svg>
 
+        <AnimatePresence>
         {sel && (
-          <div className="w-[420px] border-l border-line bg-deck-2 flex flex-col min-h-0">
-            <div className="p-3 border-b border-line">
+          <motion.div key="sel" initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 24 }}
+            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+            className="ax-panel absolute right-4 top-[132px] bottom-4 z-20 w-[420px] max-w-[calc(100%-2rem)] rounded-2xl flex flex-col min-h-0 overflow-hidden">
+            <div className="px-4 pt-4 pb-3 border-b border-line/70">
               <div className="flex items-start justify-between gap-2">
-                <div>
-                  <div className="text-base">{sel.title || sel.label}</div>
-                  <div className="text-[11px] text-ink-mute font-mono mt-1">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: `hsl(${hue(sel.region)} 75% 62%)`, boxShadow: `0 0 10px hsl(${hue(sel.region)} 75% 62%)` }} />
+                    <div className="text-[16px] font-semibold text-ink leading-snug">{sel.title || sel.label}</div>
+                  </div>
+                  <div className="text-[11px] text-ink-mute font-mono mt-1.5">
                     {sel.kind} · {sel.region} · deg {sel.degree}
                     {sel.dialect && ` · dialect ${sel.dialect}`}
                     {sel.compiled && ` · compiled ${sel.compiled}`}
                   </div>
                 </div>
-                <button onClick={() => setSel(null)} className="text-ink-mute hover:text-ink text-lg leading-none">×</button>
+                <button onClick={() => setSel(null)} aria-label="close"
+                  className="w-7 h-7 rounded-full grid place-items-center text-ink-mute hover:text-ink hover:bg-deck-3/70 text-lg leading-none shrink-0">×</button>
               </div>
             </div>
             <ScrollArea className="flex-1 min-h-0">
-              <div className="p-3">
+              <div className="px-4 py-3">
                 {sel.claims?.length ? (
                   <>
-                    <div className="text-[11px] uppercase tracking-wider text-ink-dim mb-2">
+                    <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-2">
                       {sel.claims.length} claims
                     </div>
                     <div className="font-mono text-[11.5px] leading-relaxed mb-4">
@@ -692,14 +819,14 @@ export default function MemoryView() {
                   </>
                 ) : null}
                 {page && <Md text={page.markdown} />}
-                <div className="mt-3">
-                  <div className="text-[11px] uppercase tracking-wider text-ink-dim mb-1">links</div>
+                <div className="mt-4">
+                  <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-1.5">links</div>
                   {shownEdges.filter((e) => e.src === sel.id || e.dst === sel.id).slice(0, 40).map((e, i) => {
                     const other = e.src === sel.id ? e.dst : e.src
                     const on = byId.get(other)
                     return (
                       <button key={i} onClick={() => on && setSel(on)}
-                        className="block text-left text-xs py-[2px] hover:text-ink text-ink-dim">
+                        className="block w-full text-left text-[12px] py-1 px-1.5 -mx-1.5 rounded-md hover:bg-deck-3/60 hover:text-ink text-ink-dim transition-colors">
                         <span style={{ color: CLASS_STYLE[e.cls].c }}>{e.rel}</span>
                         <span className="text-ink-mute"> → </span>{on?.label ?? other}
                       </button>
@@ -708,46 +835,56 @@ export default function MemoryView() {
                 </div>
               </div>
             </ScrollArea>
-          </div>
+          </motion.div>
         )}
+        </AnimatePresence>
       </div>
 
       {/* ── ask the estate ─────────────────────────────────────────────────────────
         * Retrieval ran server-side BEFORE the model was called, so the graph above is
         * lighting up what was actually read — evidence, not the model's self-report. */}
-      <div className="border-t border-line bg-deck-2 shrink-0 relative">
-        {/* The cross the owner asked for: the answer panel could be summoned but not
-          * dismissed — the old 'clear' rendered only when retrieval succeeded, so a
-          * no-retrieval or failed answer had no way out. Visible whenever the panel is. */}
-        {ans && (
-          <button onClick={() => { setAns(null); setBlink(0) }} title="close"
-            className="absolute top-1.5 right-2 z-10 text-ink-mute hover:text-ink text-[15px] leading-none px-1.5 py-0.5">✕</button>
-        )}
-        {ans && (
-          <ScrollArea className="max-h-[38vh]">
-            <div className="px-4 py-3 pr-8">
-              <Md text={ans.answer.replace(/^PROPOSE:.*$/m, '')} />
-              {ret && (
-                <div className="mt-2 text-[11px] text-ink-mute font-mono">
-                  read {Object.values(ret.hops).filter((h) => h === 0).length} directly,
-                  {' '}{Object.values(ret.hops).filter((h) => h === 1).length} by one hop ·
-                  {' '}{ret.regions.join(' · ')}
-                </div>
-              )}
-            </div>
-          </ScrollArea>
-        )}
-        <div className="flex items-end gap-2 px-3 py-2">
-          <Textarea
-            className="flex-1" autosize minRows={1} maxRows={4} size="xs"
-            placeholder="ask the estate — answers come only from what's compiled"
-            value={q} onChange={(e) => setQ(e.currentTarget.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask() } }}
-          />
-          <button onClick={ask} disabled={asking || !q.trim()}
-            className="text-xs px-3 py-2 rounded border border-line hover:border-cyan disabled:opacity-40 shrink-0">
-            {asking ? 'reading…' : 'ask'}
-          </button>
+      <div className="absolute left-0 right-0 bottom-0 z-20 px-4 pb-4 pointer-events-none">
+        <div className={`ax-panel pointer-events-auto mx-auto rounded-2xl overflow-hidden relative transition-[max-width] duration-300 ${sel ? 'max-w-[min(720px,calc(100%-460px))] mr-[452px]' : 'max-w-[760px]'}`}>
+          {/* The cross the owner asked for: the answer panel could be summoned but not
+            * dismissed — the old 'clear' rendered only when retrieval succeeded, so a
+            * no-retrieval or failed answer had no way out. Visible whenever the panel is. */}
+          <AnimatePresence>
+            {ans && (
+              <motion.div key="ans" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }} className="border-b border-line/70 relative">
+                <button onClick={() => { setAns(null); setBlink(0) }} title="close" aria-label="close answer"
+                  className="absolute top-2 right-2 z-10 w-7 h-7 rounded-full grid place-items-center text-ink-mute hover:text-ink hover:bg-deck-3/70 text-[14px] leading-none">✕</button>
+                <ScrollArea.Autosize mah="38vh">
+                  <div className="px-5 py-4 pr-10 text-[14px]">
+                    <Md text={ans.answer.replace(/^PROPOSE:.*$/m, '')} />
+                    {ret && (
+                      <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[11px] text-ink-mute font-mono">
+                        <span className="px-2 py-0.5 rounded-full border border-line">read {Object.values(ret.hops).filter((h) => h === 0).length} directly</span>
+                        <span className="px-2 py-0.5 rounded-full border border-line">{Object.values(ret.hops).filter((h) => h === 1).length} by one hop</span>
+                        {ret.regions.map((r) => (
+                          <span key={r} className="px-2 py-0.5 rounded-full border" style={{ borderColor: `hsl(${hue(r)} 60% 50% / .5)`, color: `hsl(${hue(r)} 70% var(--hue-l-text))` }}>{r}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </ScrollArea.Autosize>
+              </motion.div>
+            )}
+          </AnimatePresence>
+          <div className="flex items-end gap-3 px-3 py-2.5">
+            <span className={`shrink-0 mb-1 transition-transform ${asking ? 'scale-110' : ''}`}><Orb size={26} tone={asking ? 'accent2' : 'accent'} /></span>
+            <Textarea
+              className="flex-1" autosize minRows={1} maxRows={4} variant="unstyled"
+              placeholder="Ask the org's memory — answers come only from what's compiled"
+              value={q} onChange={(e) => setQ(e.currentTarget.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask() } }}
+              styles={{ input: { fontSize: 14, color: 'var(--t-fg)', paddingTop: 6, paddingBottom: 6 } }}
+            />
+            <button onClick={ask} disabled={asking || !q.trim()}
+              className="ax-action shrink-0 px-4 py-2 rounded-xl text-[13px] font-medium disabled:opacity-40">
+              {asking ? 'reading…' : 'Ask'}
+            </button>
+          </div>
         </div>
       </div>
       </div>
@@ -757,16 +894,28 @@ export default function MemoryView() {
 
 function Header({ g, stale }: { g: Graph; stale: boolean }) {
   return (
-    <div className="flex items-center gap-3 text-[11px] text-ink-dim font-mono">
-      <span>{g.stats.nodes} nodes</span>
-      <span>{g.stats.edges} edges</span>
-      <span>{g.stats.claims} claims</span>
-      <span className="text-ink-mute">S2 {g.stats.system2} / S1 {g.stats.system1}</span>
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-ink-dim">
+      <span className="flex items-center gap-1.5"><LiveDot state={stale ? 'asleep' : 'awake'} />{g.stats.nodes.toLocaleString()} nodes</span>
+      <span className="text-ink-mute">·</span><span>{g.stats.edges.toLocaleString()} links</span>
+      <span className="text-ink-mute">·</span><span>{g.stats.claims.toLocaleString()} claims</span>
+      <span className="text-ink-mute font-mono text-[11px]">S2 {g.stats.system2} / S1 {g.stats.system1}</span>
       {/* A graph that goes stale while staying beautiful is this surface's silent
         * failure, so the age is stated rather than left to be inferred. */}
       <span className={stale ? 'text-bad' : 'text-ink-mute'}>
-        compiled {g.age_s != null ? fmtAgo(new Date(Date.now() - g.age_s * 1000).toISOString()) : '—'}
+        · compiled {g.age_s != null ? fmtAgo(new Date(Date.now() - g.age_s * 1000).toISOString()) : '—'}
       </span>
+    </div>
+  )
+}
+
+/* the waiting state: a breathing orb, not a spinner — memory is recalling, not loading */
+function Recalling({ what }: { what: string }) {
+  return (
+    <div className="h-full grid place-items-center">
+      <div className="flex flex-col items-center gap-4">
+        <Orb size={64} />
+        <span className="text-[13px] text-ink-mute">{what}</span>
+      </div>
     </div>
   )
 }

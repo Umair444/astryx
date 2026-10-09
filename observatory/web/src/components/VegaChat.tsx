@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Textarea } from '@mantine/core'
 import { AnimatePresence, motion } from 'motion/react'
 import { useStore } from '../store'
+import { Orb } from '../ui/kit'
 
 interface Turn {
   role: 'visitor' | 'vega'
@@ -57,84 +58,98 @@ export default function VegaChat() {
   if (!who.vega || dead) return null
 
   return (
-    <div className="fixed right-4 bottom-[calc(54px+env(safe-area-inset-bottom)+12px)] sm:bottom-4 z-50">
+    <div className="fixed right-4 bottom-[calc(54px+env(safe-area-inset-bottom)+12px)] sm:bottom-4 z-50 flex flex-col items-end">
       <AnimatePresence>
         {open && (
           <motion.div
-            initial={{ opacity: 0, y: 12, scale: 0.98 }}
+            initial={{ opacity: 0, y: 14, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 12, scale: 0.98 }}
-            transition={{ duration: 0.15 }}
-            className="w-[360px] max-w-[calc(100vw-2rem)] h-[460px] max-h-[calc(100dvh-6rem)] mb-2 flex flex-col rounded-xl border border-line bg-deck-2 shadow-xl shadow-black/40 overflow-hidden"
+            exit={{ opacity: 0, y: 14, scale: 0.97 }}
+            transition={{ type: 'spring', damping: 26, stiffness: 320 }}
+            style={{ transformOrigin: 'bottom right' }}
+            className="ax-panel w-[370px] max-w-[calc(100vw-2rem)] h-[480px] max-h-[calc(100dvh-6rem)] mb-3 flex flex-col rounded-2xl overflow-hidden"
           >
-            <div className="px-3 py-2 border-b border-line flex items-center gap-2 shrink-0 starfield">
-              <span className="font-mono text-xs text-cyan">◉ vega</span>
-              <span className="text-[11px] text-ink-mute">station concierge</span>
+            <div className="px-4 py-3 border-b border-line flex items-center gap-3 shrink-0">
+              <Orb size={28} tone="accent2" />
+              <div className="min-w-0">
+                <div className="text-[14px] font-semibold text-ink leading-tight">Vega</div>
+                <div className="text-[11px] text-ink-mute leading-tight">the org's concierge · ask what you're looking at</div>
+              </div>
               <button
                 onClick={() => setOpen(false)}
-                className="ml-auto w-6 h-6 grid place-items-center rounded-md text-ink-mute hover:text-ink hover:bg-deck-3 text-lg leading-none transition-colors duration-75"
+                aria-label="close"
+                className="ml-auto w-7 h-7 grid place-items-center rounded-full text-ink-mute hover:text-ink hover:bg-deck-3 text-lg leading-none"
               >
                 ×
               </button>
             </div>
-            <div ref={boxRef} className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
+            <div ref={boxRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-2.5">
               {turns.map((t, i) => (
-                <div key={i} className={`flex ${t.role === 'visitor' ? 'justify-end' : 'justify-start'}`}>
+                <motion.div key={i} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+                  className={`flex ${t.role === 'visitor' ? 'justify-end' : 'justify-start'}`}>
                   <div
-                    className={`max-w-[85%] px-2.5 py-1.5 rounded-lg text-[13px] whitespace-pre-wrap break-words ${
+                    className={`max-w-[85%] px-3 py-2 text-[13.5px] leading-relaxed whitespace-pre-wrap break-words ${
                       t.role === 'visitor'
-                        ? 'bg-cyan/10 border border-cyan/30 text-ink'
-                        : 'bg-deck-3 border border-line text-ink'
+                        ? 'ax-action rounded-2xl rounded-br-md'
+                        : 'bg-deck-3 border border-line text-ink rounded-2xl rounded-bl-md'
                     }`}
                   >
                     {t.text}
                   </div>
-                </div>
+                </motion.div>
               ))}
               {busy && (
                 <div className="flex justify-start">
-                  <div className="px-2.5 py-1.5 rounded-lg bg-deck-3 border border-line font-mono text-[12px] text-ink-mute animate-pulse">
-                    vega is thinking…
+                  <div className="px-3.5 py-2.5 rounded-2xl rounded-bl-md bg-deck-3 border border-line flex gap-1" aria-label="vega is thinking">
+                    {[0, 1, 2].map((d) => (
+                      <motion.span key={d} className="w-1.5 h-1.5 rounded-full bg-cyan-soft"
+                        animate={{ opacity: [0.25, 1, 0.25], y: [0, -2, 0] }} transition={{ duration: 1, repeat: Infinity, delay: d * 0.15 }} />
+                    ))}
                   </div>
                 </div>
               )}
             </div>
-            <div className="px-3 py-2 border-t border-line shrink-0 flex items-end gap-2">
-              <Textarea
-                value={input}
-                onChange={(e) => setInput(e.currentTarget.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault()
-                    submit()
-                  }
-                }}
-                placeholder="ask vega…"
-                autosize
-                minRows={1}
-                maxRows={4}
-                size="xs"
-                className="flex-1"
-                styles={{ input: { background: 'var(--t-panel2)', border: '1px solid var(--t-line)' } }}
-              />
-              <button
-                onClick={submit}
-                disabled={busy || !input.trim()}
-                className="px-3 py-1.5 rounded-md border border-cyan/40 bg-cyan/10 text-cyan-soft text-xs font-semibold hover:bg-cyan/20 disabled:opacity-40 transition-colors duration-75"
-              >
-                {busy ? '…' : 'send'}
-              </button>
+            <div className="p-3 border-t border-line shrink-0">
+              <div className="flex items-end gap-2 rounded-xl bg-deck-3/70 border border-line focus-within:border-cyan/50 pl-3 pr-1.5 py-1.5 transition-colors">
+                <Textarea
+                  value={input}
+                  onChange={(e) => setInput(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      submit()
+                    }
+                  }}
+                  placeholder="Ask Vega…"
+                  autosize
+                  minRows={1}
+                  maxRows={4}
+                  variant="unstyled"
+                  className="flex-1"
+                  styles={{ input: { fontSize: 13.5, padding: '4px 0', color: 'var(--t-fg)' } }}
+                />
+                <button
+                  onClick={submit}
+                  disabled={busy || !input.trim()}
+                  aria-label="send"
+                  className="ax-action w-8 h-8 grid place-items-center rounded-lg text-[14px] disabled:opacity-40"
+                >
+                  ↑
+                </button>
+              </div>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
       {!open && (
-        <button
+        <motion.button
           onClick={() => setOpen(true)}
-          className="ml-auto flex items-center gap-1.5 px-3.5 py-2 rounded-full border border-cyan/40 bg-deck-2 font-mono text-xs text-cyan-soft shadow-lg shadow-cyan/10 hover:bg-deck-3 transition-colors duration-75"
+          initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+          className="ax-panel ax-panel-hover flex items-center gap-2 pl-2 pr-4 py-2 rounded-full text-[13px] font-medium text-ink"
         >
-          ◉ ask vega
-        </button>
+          <Orb size={22} tone="accent2" />
+          Ask Vega
+        </motion.button>
       )}
     </div>
   )

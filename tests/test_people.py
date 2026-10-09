@@ -28,6 +28,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
+
+class _Skip(Exception):
+    """An arm whose estate is absent on this tree (estate.absent → 77): reported as NOT SEARCHED."""
+
 from nucleus import people  # noqa: E402
 
 # Built by CONCATENATION on purpose: the runtime value must be JID-shaped to exercise
@@ -186,6 +190,12 @@ def test_dm_edges_carry_frequency_and_recency_incrementally():
     the nightly rebuild, and the output is counts only (no name, number or text)."""
     import json as _json
     import os as _os
+    from nucleus.sqlguard.estate import absent
+    got = absent(REPO, ("psycopg",))
+    if got:                                    # 77 on a committed-only tree; loud (rc 1) on a live host
+        if got[0] == 77:
+            raise _Skip(got[1])
+        raise RuntimeError(got[1])
     import psycopg
     from nucleus.sqlguard.fixture import fixture_db
     chats = [{"jid": "111@s.whatsapp.net", "name": "A", "last_message_ts": "2026-10-01T10:00:00Z"},
@@ -254,14 +264,17 @@ def test_dm_edges_carry_frequency_and_recency_incrementally():
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    failed = 0
+    failed = skipped = 0
     for fn in fns:
         try:
             fn()
             print(f"  ✓ {fn.__name__}")
+        except _Skip as e:
+            skipped += 1
+            print(f"  ○ {fn.__name__} — NOT SEARCHED: {e}")
         except Exception:
             failed += 1
             print(f"  ✗ {fn.__name__}")
             traceback.print_exc()
-    print(f"\n{len(fns) - failed}/{len(fns)} passed")
+    print(f"\n{len(fns) - failed - skipped}/{len(fns)} passed" + (f", {skipped} not searched" if skipped else ""))
     sys.exit(1 if failed else 0)

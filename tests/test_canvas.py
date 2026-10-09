@@ -7,6 +7,7 @@ Each arm is a property a viewer, an invitee or an agent depends on — the trust
 """
 import asyncio
 import contextlib
+import json
 import os
 import sys
 from pathlib import Path
@@ -14,6 +15,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
+from nucleus.sqlguard.estate import gate  # noqa: E402
+gate('test_canvas', REPO, deps=('psycopg', 'asyncpg', 'fastapi'))   # a committed-only tree: 77, not a crash
 from nucleus.sqlguard.fixture import fixture_db  # noqa: E402
 
 fails = 0
@@ -94,6 +97,7 @@ def library(dsn):
 def api(url):
     from fastapi.testclient import TestClient
     import bridges.canvas as b
+    from nucleus import canvas as cv_lib
     print("api (bridges/canvas.py, in-process)")
     H = {"x-astryx": "1"}
     A = "/canvas/api"
@@ -124,6 +128,49 @@ def api(url):
         arm("an invitee with nothing yet sees no canvases and no threads",
             who("guest").get(f"{A}/canvases").json() == [] and who("guest").get(f"{A}/threads").json() == [])
         arm("an invitee sees only granted agents", [a["name"] for a in who("guest").get(f"{A}/agents").json()] == ["painter"])
+        # an invitee may name only files THEY uploaded — not the owner's, not another channel's (steward #37433)
+        o = who("owner")
+        up = o.post(f"{A}/upload", content=b"owner notes\n", headers={**H, "x-filename": "brief.txt"}).json()
+        t = o.post(f"{A}/threads", json={"agent": "painter"}, headers=H).json()["thread"]
+        owner_file = up["path"]
+        from bridges.common import media_path as _mp
+        tg = _mp("tg", "photo.jpg"); tg.write_bytes(b"\xff\xd8owner-photo")
+        g = who("guest")
+        gt = g.post(f"{A}/threads", json={"agent": "painter"}, headers=H).json()["thread"]
+        gu = g.post(f"{A}/upload", content=b"guest notes\n", headers={**H, "x-filename": "mine.txt"}).json()
+        g.post(f"{A}/threads/{gt}/messages", json={"body": f"{gu['line']} [[file:{owner_file}]] [[file:{tg}]]"}, headers=H)
+        gm = g.get(f"{A}/threads/{gt}/messages").json()["messages"][-1]["id"]
+        mine, theirs, other = (g.get(f"{A}/file?msg={gm}&n={k}").status_code for k in (0, 1, 2))
+        arm("an invitee opens their own upload, but not the owner's upload or a Telegram photo, even by exact path",
+            mine == 200 and theirs == 404 and other == 404, (mine, theirs, other, gu.get("path")))
+        import re as _re
+        arm("upload names carry a random token, never a timestamp, in the uploader's own folder",
+            "/media/cv/cv-guest/" in gu["path"] and bool(_re.search(r"/cv-[0-9a-f]{24}-mine\.txt$", gu["path"]))
+            and bool(_re.search(r"/tg-[0-9a-f]{24}-photo\.jpg$", str(tg))), (gu["path"], str(tg)))
+        # an AGENT replying in a guest's thread writes text the guest steered: the guest still gets only media
+        import tempfile as _tf2
+        outside = Path(_tf2.mkdtemp()) / "agent-made.txt"; outside.write_text("made by an agent\n")
+        env_path = REPO / ".env"
+        with psycopg_conn(url) as c:
+            aid = c.execute("INSERT INTO messages (from_agent, to_agent, thread, body) VALUES ('painter', 'cv-guest', %s, %s) RETURNING id",
+                            (gt, f"here [[file:{env_path}]] [[file:{outside}]] [[file:{tg}]]")).fetchone()[0]
+            c.commit()
+        g = who("guest")
+        arm("an agent's embed in a guest's thread: .env and a non-media file are refused, media is served",
+            [g.get(f"{A}/file?msg={aid}&n={k}").status_code for k in (0, 1, 2)] == [404, 404, 200])
+        o = who("owner")
+        with psycopg_conn(url) as c:
+            oid = c.execute("INSERT INTO messages (from_agent, to_agent, thread, body) VALUES ('painter', 'owner', %s, %s) RETURNING id",
+                            (t, f"[[file:{env_path}]] [[file:{outside}]]")).fetchone()[0]
+            c.commit()
+        arm("to the owner an agent's embed reaches anywhere it can read — except the never-served floor (.env)",
+            [o.get(f"{A}/file?msg={oid}&n={k}").status_code for k in (0, 1)] == [404, 200])
+        o = who("owner")
+        o.post(f"{A}/threads/{t}/messages", json={"body": f"[[file:{tg}]] [[file:{owner_file}]] [[file:/etc/hostname]]"}, headers=H)
+        om = o.get(f"{A}/threads/{t}/messages").json()["messages"][-1]["id"]
+        arm("the owner's own message reaches all of media (theirs), still never the host",
+            [o.get(f"{A}/file?msg={om}&n={k}").status_code for k in (0, 1, 2)] == [200, 200, 404])
+        tg.unlink(missing_ok=True)
         arm("an invitee cannot open a thread with an ungranted agent",
             who("guest").post(f"{A}/threads", json={"agent": "seed"}, headers=H).status_code == 403)
         t = who("guest").post(f"{A}/threads", json={"agent": "painter"}, headers=H).json()["thread"]
@@ -138,6 +185,77 @@ def api(url):
         p = who("owner").post(f"{A}/canvases", json={"title": "Mine", "tier": "personal"}, headers=H).json()
         arm("a personal-tier canvas is never shared",
             who("owner").post(f"{A}/canvases/{p['id']}/share", json={"users": ["guest"]}, headers=H).status_code == 400)
+        # ── THE PRIVACY GATES at the bridge (steward; a3 #35598): share AND view read steward/pii_canvas ──
+        with psycopg_conn(url) as pc:
+            s_id = cv_lib.create(pc, "Shared", "painter", "owner")
+            cv_lib.publish(pc, s_id, "<p>clean</p>", "painter")
+            pc.execute("DELETE FROM triggers WHERE agent='steward' AND name='pii_canvas'")
+            pc.commit()
+        arm("share with no privacy verdict at all → 409 (fail closed)",
+            who("owner").post(f"{A}/canvases/{s_id}/share", json={"users": ["guest"]}, headers=H).status_code == 409)
+
+        def verdict(open_=None):
+            with psycopg_conn(url) as pc:
+                pc.execute("DELETE FROM triggers WHERE agent='steward' AND name='pii_canvas'")
+                pc.execute("INSERT INTO triggers (agent, name, schedule, kind, state) VALUES "
+                           "('steward','pii_canvas','*/5 * * * *','python', jsonb_build_object("
+                           "'checked_at', now()::text, 'open', %s::jsonb))", (json.dumps(open_ or {}),))
+                pc.commit()
+        verdict()
+        arm("a scanned, clean canvas shares", who("owner").post(
+            f"{A}/canvases/{s_id}/share", json={"users": ["guest"]}, headers=H).status_code == 200)
+        g1 = who("guest").get(f"{A}/canvases/{s_id}/render?v=1").json()
+        arm("the guest reads the CLEARED version", g1.get("html") and not g1.get("withheld"), g1)
+        with psycopg_conn(url) as pc:
+            cv_lib.publish(pc, s_id, "<p>call 15555550123</p>", "painter")      # after the share, after the scan
+            pc.commit()
+        g2 = who("guest").get(f"{A}/canvases/{s_id}/render?v=2").json()
+        arm("a version published AFTER sharing is WITHHELD from the guest until scanned (the bypass a3 found)",
+            g2.get("html") is None and g2.get("withheld") and "pending privacy scan" in g2["withheld"][0], g2)
+        arm("...the head is withheld too (no ?v)", who("guest").get(f"{A}/canvases/{s_id}/render").json().get("html") is None)
+        arm("...and the OWNER still sees it", who("owner").get(f"{A}/canvases/{s_id}/render?v=2").json().get("html"))
+        who("owner").post(f"{A}/canvases/{s_id}/data", json={"key": "k", "value": 1}, headers=H)
+        gd = who("guest").get(f"{A}/canvases/{s_id}/data")
+        arm("live data changed after the scan is withheld from the guest (empty, with the reason in a header)",
+            gd.json() == {} and "pending privacy scan" in gd.headers.get("x-astryx-withheld", ""), gd.headers)
+        verdict({"h": {"cid": s_id, "src": f"canvas:{s_id}:v2", "loc": "x", "label": "phone-bare"}})
+        g2b = who("guest").get(f"{A}/canvases/{s_id}/render?v=2").json()
+        arm("once scanned, a FLAGGED version stays withheld; the clean one is served",
+            g2b.get("html") is None and "owner-PII" in g2b["withheld"][0]
+            and who("guest").get(f"{A}/canvases/{s_id}/render?v=1").json().get("html"), g2b)
+        verdict({"d": {"cid": s_id, "src": f"canvas:{s_id}:data:k", "loc": "x", "label": "phone-bare"}})
+        gdf = who("guest").get(f"{A}/canvases/{s_id}/data")       # scanned AFTER the write: only the FINDING holds it
+        arm("a scanned, FLAGGED data value is withheld from the guest (a3 M3); the owner reads it",
+            gdf.json() == {} and "withheld" in gdf.headers.get("x-astryx-withheld", "")
+            and "pending" not in gdf.headers.get("x-astryx-withheld", "")
+            and who("owner").get(f"{A}/canvases/{s_id}/data").json() == {"k": 1}, gdf.headers)
+        # C2 (a3 #36233): title/brief and publish NOTES are agent-written and served to guests — gated too
+        with psycopg_conn(url) as pc:
+            cv_lib.publish(pc, s_id, "<p>three</p>", "painter", "added 15555550123")
+            pc.commit()
+        verdict({"m": {"cid": s_id, "src": f"canvas:{s_id}:meta", "loc": "x", "label": "phone-bare"},
+                 "n": {"cid": s_id, "src": f"canvas:{s_id}:v3:note", "loc": "x", "label": "phone-bare"}})
+        gl = {c["id"]: c for c in who("guest").get(f"{A}/canvases").json()}
+        arm("a flagged TITLE is masked in the guest's canvas list; the owner sees it",
+            gl[s_id]["title"].startswith("(withheld") and gl[s_id]["brief"] is None
+            and any(c["id"] == s_id and not c["title"].startswith("(withheld")
+                    for c in who("owner").get(f"{A}/canvases").json()), gl.get(s_id))
+        gv = {x["version"]: x for x in who("guest").get(f"{A}/canvases/{s_id}").json()["versions"]}
+        arm("a flagged publish NOTE is masked for THAT version only",
+            gv[3]["note"].startswith("(withheld") and not (gv[1]["note"] or "").startswith("(withheld"), gv)
+        arm("...and the owner reads the note", who("owner").get(f"{A}/canvases/{s_id}").json()["versions"][0]["note"]
+            == "added 15555550123")
+        with psycopg_conn(url) as pc:
+            m_id = cv_lib.create(pc, "Plain", "painter", "owner")
+            pc.commit()
+        verdict({"m": {"cid": m_id, "src": f"canvas:{m_id}:meta", "loc": "x", "label": "phone-bare"}})
+        arm("a flagged title blocks a WIDENING share",
+            who("owner").post(f"{A}/canvases/{m_id}/share", json={"users": ["guest"]}, headers=H).status_code == 409)
+        arm("narrowing the audience is never gated", who("owner").post(
+            f"{A}/canvases/{s_id}/share", json={"users": []}, headers=H).status_code == 200)
+        with psycopg_conn(url) as pc:
+            pc.execute("DELETE FROM triggers WHERE agent='steward' AND name='pii_canvas'")
+            pc.commit()
         who("owner").post(f"{A}/users/guest/revoke", headers=H)
         arm("a revoked invitee's live session dies", who("guest").get(f"{A}/me").status_code == 401)
         return c["id"], t
@@ -220,7 +338,13 @@ def coverage(url):
         arm("versions listed for painted + unpainted",
             len(cl.get(f"{A}/canvases/{full['id']}").json()["versions"]) == 1
             and cl.get(f"{A}/canvases/{empty['id']}").json()["versions"] == [])
-        arm("share an org canvas", cl.post(f"{A}/canvases/{full['id']}/share", json={"users": ["cov"]}, headers=H).json().get("shared_with") == ["cov"])
+        # the share gate fails closed without a privacy verdict (steward/pii_canvas), so give it a cleared one
+        with psycopg_conn(url) as pc:
+            pc.execute("DELETE FROM triggers WHERE agent='steward' AND name='pii_canvas'")
+            pc.execute("INSERT INTO triggers (agent, name, schedule, kind, state) VALUES ('steward','pii_canvas',"
+                       "'*/5 * * * *','python', jsonb_build_object('checked_at', now()::text, 'open', '{}'::jsonb))")
+            pc.commit()
+        arm("share an org canvas (cleared by the privacy sweep)", cl.post(f"{A}/canvases/{full['id']}/share", json={"users": ["cov"]}, headers=H).json().get("shared_with") == ["cov"])
         arm("archive", cl.post(f"{A}/canvases/{empty['id']}/archive", headers=H).status_code == 200
             and cl.post(f"{A}/canvases/999999/archive", headers=H).status_code == 404)
         t = cl.post(f"{A}/threads", json={"agent": "painter"}, headers=H).json()["thread"]
@@ -235,6 +359,43 @@ def coverage(url):
         mid = cl.get(f"{A}/threads/{t}/messages").json()["messages"][0]["id"]
         arm("a file not named by the message is 404; a missing message is 404",
             cl.get(f"{A}/file?msg={mid}&n=0").status_code == 404 and cl.get(f"{A}/file?msg=999999999&n=0").status_code == 404)
+        # files: a HUMAN's message may only name what was uploaded — never an arbitrary path on the host
+        cl.post(f"{A}/threads/{t}/messages", json={"body": "look [[file:/etc/hostname]] and <file attached: /etc/hostname>"}, headers=H)
+        evil = cl.get(f"{A}/threads/{t}/messages").json()["messages"][-1]["id"]
+        arm("a user can't read a host file by naming it in their own message (either file form)",
+            cl.get(f"{A}/file?msg={evil}&n=0").status_code == 404 and cl.get(f"{A}/file?msg={evil}&n=1").status_code == 404)
+        up = cl.post(f"{A}/upload", content=b"hello, canvas\n", headers={**H, "x-filename": "notes.txt"}).json()
+        cl.post(f"{A}/threads/{t}/messages", json={"body": f"here: {up.get('line') or up.get('body') or up}"}, headers=H)
+        um = cl.get(f"{A}/threads/{t}/messages").json()["messages"][-1]["id"]
+        dl = cl.get(f"{A}/file?msg={um}&n=0")
+        il = cl.get(f"{A}/file?msg={um}&n=0&inline=1")
+        arm("an upload opens: it downloads by default, and views inline as plain text when asked",
+            dl.status_code == 200 and dl.content == b"hello, canvas\n" and "attachment" in dl.headers.get("content-disposition", "")
+            and il.headers.get("content-type", "").startswith("text/plain") and "inline" in il.headers.get("content-disposition", "")
+            and il.headers.get("x-content-type-options") == "nosniff", (up, dl.status_code, dict(il.headers)))
+        svg = cl.post(f"{A}/upload", content=b"<svg xmlns='http://www.w3.org/2000/svg'><script>1</script></svg>",
+                      headers={**H, "x-filename": "x.svg"}).json()
+        cl.post(f"{A}/threads/{t}/messages", json={"body": f"{svg.get('line') or svg.get('body') or svg}"}, headers=H)
+        sv = cl.get(f"{A}/threads/{t}/messages").json()["messages"][-1]["id"]
+        arm("an SVG is never served inline (as a document it would script this origin)",
+            "attachment" in cl.get(f"{A}/file?msg={sv}&n=0&inline=1").headers.get("content-disposition", ""))
+        arm("a preview is only for Office documents", cl.get(f"{A}/file/preview?msg={um}&n=0").status_code == 415)
+        import shutil as _sh, subprocess as _sp, tempfile as _tf
+        if _sh.which("soffice"):
+            with _tf.TemporaryDirectory() as td:
+                (Path(td) / "brief.txt").write_text("Quarterly brief\nRevenue up.\n")
+                _sp.run(["soffice", f"-env:UserInstallation=file://{td}/p", "--headless", "--convert-to", "docx",
+                         "--outdir", td, f"{td}/brief.txt"], capture_output=True, timeout=120)
+                docx = (Path(td) / "brief.docx").read_bytes()
+            du = cl.post(f"{A}/upload", content=docx, headers={**H, "x-filename": "brief.docx"}).json()
+            cl.post(f"{A}/threads/{t}/messages", json={"body": f"{du.get('line') or du.get('body') or du}"}, headers=H)
+            dm = cl.get(f"{A}/threads/{t}/messages").json()["messages"][-1]["id"]
+            pv = cl.get(f"{A}/file/preview?msg={dm}&n=0")
+            arm("a Word document opens as a PDF the page can show (LibreOffice, cached)",
+                pv.status_code == 200 and pv.content[:5] == b"%PDF-" and "inline" in pv.headers.get("content-disposition", ""),
+                (pv.status_code, pv.text[:120]))
+        else:
+            print("  ○ office preview — NOT SEARCHED: soffice not installed on this host")
         sm = cl.post(f"{A}/canvases/{full['id']}/ask", json={"text": "make this weekly", "frame": False, "agent": "forge",
                      "element": {"selector": "#hero", "tag": "div", "text": "17", "html": "<div id=hero>17</div>"}}, headers=H)
         crew = cl.get(f"{A}/canvases/{full['id']}").json().get("crew", [])
@@ -245,6 +406,22 @@ def coverage(url):
         arm("summoning brings an agent onto the crew ONCE, and it appears on the canvas at once (moving)",
             sm.status_code == 200 and crew == ["forge"] and crew2 == ["forge"] and pr == (f"canvas:{full['id']}", "moving"),
             (sm.status_code, crew, crew2, pr))
+        cid = full['id']
+        keep = cl.delete(f"{A}/canvases/{cid}/crew/{full['agent']}", headers=H)
+        nohdr = cl.delete(f"{A}/canvases/{cid}/crew/forge")
+        rm = cl.delete(f"{A}/canvases/{cid}/crew/forge", headers=H).json()
+        again = cl.delete(f"{A}/canvases/{cid}/crew/forge", headers=H).json()
+        crew3 = cl.get(f"{A}/canvases/{cid}").json().get("crew", [])
+        with psycopg_conn(url) as c:
+            pr2 = c.execute("SELECT surface, state FROM presence WHERE agent='forge'").fetchone()
+            told = c.execute("SELECT count(*) FROM messages WHERE to_agent='forge' AND body LIKE '%released from this canvas%'").fetchone()[0]
+        arm("the owner can send a summoned agent away: it leaves the crew and the canvas, and is told once",
+            rm.get("removed") is True and again.get("removed") is False and crew3 == [] and pr2 == (None, "done") and told == 1,
+            (rm, again, crew3, pr2, told))
+        arm("the keeper can't be removed; a removal without the CSRF header is refused",
+            keep.status_code == 400 and nohdr.status_code == 403, (keep.status_code, nohdr.status_code))
+        from nucleus import canvas as ncv
+        arm("a released agent can no longer publish the canvas", not ncv.may_write(full['agent'], "forge", crew3), crew3)
         arm("logout ends the session", cl.post(f"{A}/logout", headers=H).status_code == 200 and cl.get(f"{A}/me").status_code == 401)
         cl.post(f"{A}/logout", headers=H)                                          # logout: 0 rows
 

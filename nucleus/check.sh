@@ -339,6 +339,10 @@ run "the shared repo is not bare (core.bare tripwire)" "$PY" tests/test_git_env_
 # fixtures, no DB, no live estate. SKIPs by name where triggers/ is absent, which is every
 # clean checkout: there the guard is not here to be verified. ~0.3s.
 run "pii_sweep cannot forget a finding or print a routing id" "$PY" tests/test_pii_sweep_ledger.py
+# CANVAS privacy (steward, seed #35151): pii_canvas sweeps every canvas version + live value (history is
+# guest-readable via ?v=N), REACH-tagged; its state IS the share gate, nucleus/canvas.py:share_blockers,
+# which fails closed. Fixture DB only. The gate arms always run; the sweep arms SKIP 77 without the body.
+run "canvas: privacy sweep + fail-closed share gate" "$PY" tests/test_pii_canvas.py
 # The guard that reads THIS suite's own live-tree result. check.sh runs automatically in
 # exactly two places and both are clones, where the gitignored estate cannot exist — so
 # nucleus/check_watch.sh runs it here on a timer and stamps the outcome, and the guard
@@ -456,6 +460,10 @@ run "escalation facility: polarity + collapse" "$PY" tests/test_escalation.py
 # is what check_watch.sh exists for. The lints watched everyone's drift and nothing
 # watched theirs until the index parser condemned a healthy line over one capital letter.
 run "wiki/estate drift floor (5->1)"  "$PY" tests/test_drift.py
+# The overnight-edition doorbell (triggers/memory/library_compile.py) and drift.py's compile_lag run their SQL
+# through pulse_run's own Ctx in a stamped fixture, each site at 0 and >=1 rows (steward #37335). Both are
+# gitignored, so a clean clone exits 77 with the reason named.
+run "library_compile + compile_lag: SQL in a fixture"  "$PY" tests/test_library_compile.py
 # Class-1 of the prove-family oracle (scout, plan-15): drives all seven containment
 # verdicts BOTH ways against synthetic trees via G15_ENVF/G15_SCAN_ROOTS. Its output
 # states its own limit — decision logic only, not the real cell.

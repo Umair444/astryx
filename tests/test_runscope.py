@@ -53,6 +53,37 @@ def main():
     except ImportError as e:
         check("runscope importable", False, str(e))
         return 1
+    # The host id's sources, in order (a3 #36112), hermetically: no file read, no ioreg run.
+    real_path, real_run = rs.Path, rs.subprocess.run
+
+    class _P:
+        files = {}
+
+        def __init__(self, f):
+            self.f = f
+
+        def read_text(self):
+            if self.f not in _P.files:
+                raise FileNotFoundError(self.f)
+            return _P.files[self.f]
+
+    class _R:
+        stdout = '  | "IOPlatformUUID" = "MAC-UUID-1"\n'
+    try:
+        rs.Path = _P
+        rs.subprocess.run = lambda *a, **k: _R()
+        _P.files = {"/etc/machine-id": "sysd\n", "/var/lib/dbus/machine-id": "dbus\n"}
+        a = rs._machine_id()
+        _P.files = {"/etc/machine-id": "\n", "/var/lib/dbus/machine-id": "dbus\n"}
+        b = rs._machine_id()
+        _P.files = {}
+        c = rs._machine_id()
+        _R.stdout = "no platform here"
+        d = rs._machine_id()
+    finally:
+        rs.Path, rs.subprocess.run = real_path, real_run
+    check("the host id: systemd's first, then dbus's (an EMPTY file is skipped), then macOS's IOPlatformUUID, else None",
+          (a, b, c, d) == ("sysd", "dbus", "MAC-UUID-1", None), str((a, b, c, d)))
     adm = psycopg.connect(dsn, autocommit=True)
     if not adm.execute("SELECT rolcreaterole AND rolcreatedb OR rolsuper FROM pg_roles WHERE rolname = current_user").fetchone()[0]:
         print("NOT SEARCHED: this role can't CREATE ROLE/DATABASE. Nothing was verified.")
@@ -200,6 +231,44 @@ def main():
               role_exists(foreign_r) and role_exists(unstamped)
               and all(k in rep_ and rep_[k].get("skipped") for k in (f"{os.getpid()}x1002", f"{os.getpid()}x1003")),
               str(sorted(rep_)))
+        # a2 F-RS #36873: an UNSCOPED (production) read never adopts a planted role. `outside` is dead by epoch and
+        # carries THIS host's stamp, so only its synthetic epoch keeps a real branch_check sweep off it. Read-only.
+        syn, fgn = [], []
+        got = rs.orphan_roles(dsn, foreign=fgn, synthetic=syn)
+        check("F-RS: an UNSCOPED orphan read never returns an oracle's planted (synthetic-epoch) role; it's reported",
+              outside not in got and outside in syn and foreign_r not in got, f"got={outside in got} syn={outside in syn}")
+        # ...and one orphan's lost connection never crashes the sweep (another sweep dropped its DB first, or an
+        # admin terminated us): hermetic, the server is never touched.
+        real_connect, real_orph, real_drop = rs.psycopg.connect, rs.orphan_roles, rs._drop_owned
+
+        def _dead(*a, **k):
+            raise psycopg.OperationalError("the connection is closed")
+        try:
+            rs.psycopg.connect = _dead
+            d_ = rs._drop_owned(dsn, "bc_1x2")
+        except Exception as e:                                          # noqa: BLE001
+            d_ = {"raised": repr(e)}
+        finally:
+            rs.psycopg.connect = real_connect
+        check("F-RS: _drop_owned REPORTS a lost connection (errors, role_left unknown) and never raises",
+              "raised" not in d_ and any(x.startswith("connection: OperationalError") for x in d_.get("errors", []))
+              and d_.get("role_left") is None, str(d_))
+
+        def _boom(dsn_, role):
+            if role == "bc_1x2":
+                raise RuntimeError("lost mid-drop")
+            return {"dropped": [], "leaked": [], "errors": [], "role_left": False}
+        try:
+            rs.orphan_roles = lambda *a, **k: ["bc_1x2", "bc_3x4"]
+            rs._drop_owned = _boom
+            sw = rs.sweep(dsn, Path(tempfile.mkdtemp(prefix="runscope-empty-")), only={"bc_1x2", "bc_3x4"})
+        except Exception as e:                                          # noqa: BLE001
+            sw = [{"raised": repr(e)}]
+        finally:
+            rs.orphan_roles, rs._drop_owned = real_orph, real_drop
+        check("F-RS: a sweep whose first orphan's drop raises still reports it and goes on to the next",
+              [x.get("scope") for x in sw] == ["1x2", "3x4"] and sw[0].get("errors") and sw[0].get("role_left") is None,
+              str(sw))
         adm.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(outside)))          # ours: cleaned by hand
         nolock.close()
         again = nolock.close()                                      # a second close of a torn-down scope

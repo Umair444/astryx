@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useStore } from '../store'
 import { displayName, fmtAgo } from '../api'
-import type { AgentRow, Presence } from '../types'
+import type { AgentRow } from '../types'
 import AgentFace from './AgentFace'
+import { FRESH_PRESENCE, moodOf, nowLine } from '../ui/life'
 
 /* THE FLOOR — the org as a place, its agents as people in it (owner vision, 2026-10-09:
    "agents are like people… a ready player one feel"). Departments are the agents/ tree;
@@ -12,30 +13,8 @@ import AgentFace from './AgentFace'
    edge of the room, and federation peers sit on the rim. Read-only and general: nothing
    here knows what any particular org does. */
 
-type Mood = 'working' | 'awake' | 'asleep'
-const WORK_WINDOW = 90_000          // a step this recent means "working right now"
-const FRESH_PRESENCE = 20 * 60_000
-
 interface Spot { x: number; y: number }
 interface Flight { key: number; from: Spot; to: Spot; intent: string | null }
-
-function moodOf(a: AgentRow, p: Presence | undefined, now: number): Mood {
-  if (!a.alive) return 'asleep'
-  // a presence row says "working", but only recent activity proves it: one that's gone quiet for
-  // 3 minutes has settled, whatever the row says (the same self-healing rule canvas uses)
-  const live = p && p.surface && now - Date.parse(p.updated_at) < 3 * 60_000
-  if (live && (p!.state === 'working' || p!.state === 'moving')) return 'working'
-  if (a.last_seen && now - Date.parse(a.last_seen) < WORK_WINDOW && a.last_kind !== 'response') return 'working'
-  return 'awake'
-}
-
-function surfaceLabel(s: string | null) {
-  if (!s) return ''
-  if (s.startsWith('canvas:')) return `on canvas #${s.slice(7)}`
-  if (s.startsWith('goal:')) return `on goal #${s.slice(5)}`
-  if (s.startsWith('thread:')) return 'in a conversation'
-  return s
-}
 
 export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) => void }) {
   const { agents, presence, flash, peers, overview, who } = useStore()
@@ -258,9 +237,9 @@ export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) =>
           const mood = moods[a.agent]
           const p = presence[a.agent]
           const freshP = p && p.surface && now - Date.parse(p.updated_at) < FRESH_PRESENCE
-          const line = mood === 'asleep' ? `asleep · ${fmtAgo(a.last_seen)}`
-            : freshP && p!.say ? p!.say : (a.last_content ?? (mood === 'working' ? 'working…' : 'here'))
-          const where = freshP ? surfaceLabel(p!.surface) : ''
+          const nl = nowLine(a, p, mood, now)
+          const line = mood === 'asleep' ? `asleep · ${fmtAgo(a.last_seen)}` : nl.line
+          const where = nl.where
           return (
             <motion.button key={a.agent} onClick={() => onOpenAgent(a.agent)}
               onMouseEnter={() => setHover(a.agent)} onMouseLeave={() => setHover(h => (h === a.agent ? null : h))}

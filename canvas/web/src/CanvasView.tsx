@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'motion/react'
-import { get, post } from './api'
+import { del, get, post } from './api'
 import { go } from './nav'
 import { getState, loadPresence, loadThread, onCanvas, refreshLists, useStore } from './store'
 import { canvasVars, type Theme } from './themes'
@@ -202,6 +202,14 @@ export function CanvasView({ id }: { id: number }) {
     loadMeta().catch(() => {})
   }
 
+  // send a summoned agent away: it leaves the crew (and with it the right to publish here)
+  async function release(a: string) {
+    if (!confirm(`Remove ${a} from this canvas? It stops working here and can no longer publish it.`)) return
+    await del(`/canvases/${id}/crew/${encodeURIComponent(a)}`)
+    loadMeta().catch(() => {})
+    loadPresence(surface).catch(() => {})
+  }
+
   async function rollback(v: number) { setHist(false); await post(`/canvases/${id}/rollback`, { version: v }) }
   async function archive() {
     if (!confirm('Archive this canvas? It leaves your list; its history stays in the table.')) return
@@ -219,7 +227,7 @@ export function CanvasView({ id }: { id: number }) {
             <h1 className="font-medium truncate">{c?.title ?? '…'}</h1>
             {c?.tier === 'personal' && <span className="text-[10px] uppercase tracking-wider text-warn border border-warn/30 rounded-full px-2 py-0.5">personal</span>}
           </div>
-          {c && <CrewStrip crew={crew} presence={presence} surface={surface} canSummon={owns}
+          {c && <CrewStrip crew={crew} keeper={c.agent} presence={presence} surface={surface} canSummon={owns} onRemove={release}
             onSummon={a => ask(`You're joining canvas #${id} "${c.title}". Take a look and say hello to the viewer in one line; wait for a request.`, a)} />}
           <div className="ml-auto flex items-center gap-1">
             {painted && owns && (
@@ -410,8 +418,9 @@ function PresenceLayer({ crew, presence, bubble, surface, rects }: {
   )
 }
 
-function CrewStrip({ crew, presence, surface, canSummon, onSummon }: {
-  crew: string[]; presence: Record<string, Presence>; surface: string; canSummon: boolean; onSummon: (a: string) => void
+function CrewStrip({ crew, keeper, presence, surface, canSummon, onSummon, onRemove }: {
+  crew: string[]; keeper: string; presence: Record<string, Presence>; surface: string; canSummon: boolean
+  onSummon: (a: string) => void; onRemove: (a: string) => void
 }) {
   const [adding, setAdding] = useState(false)
   return (
@@ -419,7 +428,17 @@ function CrewStrip({ crew, presence, surface, canSummon, onSummon }: {
       <div className="flex -space-x-2">
         {crew.map(a => {
           const busy = presence[a]?.surface === surface && (presence[a]?.state === 'working' || presence[a]?.state === 'moving')
-          return <div key={a} title={a} className={`rounded-full ring-2 ${busy ? 'ring-violet' : 'ring-void'}`}><Avatar name={a} size={26} /></div>
+          return (
+            <div key={a} title={a === keeper ? `${a} · keeps this canvas` : a} className={`group relative rounded-full ring-2 ${busy ? 'ring-violet' : 'ring-void'} hover:z-10`}>
+              <Avatar name={a} size={26} />
+              {canSummon && a !== keeper && (
+                <button onClick={() => onRemove(a)} title={`Remove ${a} from this canvas`} aria-label={`remove ${a}`}
+                  className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full grid place-items-center bg-fg text-void opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity shadow">
+                  {I.x('w-2.5 h-2.5')}
+                </button>
+              )}
+            </div>
+          )
         })}
       </div>
       {canSummon && (adding

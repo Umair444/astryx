@@ -542,6 +542,31 @@ async def goals():
     return [goal(r) for r in rows]
 
 
+@app.get("/api/goals/{gid}")
+async def goal_detail(gid: int):
+    """One goal, in full: the goal row, its sub-goals, its plan thread (plan-<id>, where the
+    abstractors refine and vote), each abstractor's latest verdict, and the recent steps tagged to
+    it. Owner-only by the privacy gate (not a PUBLIC_PATH)."""
+    g = await pool.fetchrow("SELECT * FROM goals WHERE id=$1", gid)
+    if not g:
+        return Response(status_code=404)
+    thread = f"plan-{gid}"
+    kids = await pool.fetch("SELECT * FROM goals WHERE parent_id=$1 ORDER BY id", gid)
+    msgs = await pool.fetch(
+        "SELECT * FROM (SELECT * FROM messages WHERE thread=$1 ORDER BY id DESC LIMIT 60) t ORDER BY id", thread)
+    total = await pool.fetchval("SELECT count(*) FROM messages WHERE thread=$1", thread)
+    votes = await pool.fetch(
+        "SELECT DISTINCT ON (from_agent) from_agent, intent, ts FROM messages "
+        "WHERE thread=$1 AND intent IN ('approve', 'revise') ORDER BY from_agent, id DESC", thread)
+    steps = await pool.fetch("SELECT * FROM steps WHERE goal_id=$1 ORDER BY id DESC LIMIT 25", gid)
+    return {"goal": {**goal(g), "done_at": g["done_at"].isoformat() if g["done_at"] else None,
+                     "funded_by": g["funded_by"]},
+            "children": [goal(k) for k in kids],
+            "thread": thread, "thread_total": total, "messages": [msg(m) for m in msgs],
+            "votes": [{"agent": v["from_agent"], "intent": v["intent"], "ts": v["ts"].isoformat()} for v in votes],
+            "steps": [step(x) for x in steps]}
+
+
 #  BILLABLE, NOT RAW. steps.tokens_in / turns.tokens_in count cache reads at face value and
 #  overstate real cost ~7x (this org runs ~96% cache-read at 0.1x). The honest number is
 #  billable_equiv_in, written per turn in raw_payload.usage (hooks/step.py). Turns before the
@@ -1165,6 +1190,151 @@ def unit_state(unit: str) -> dict:
                 "description": str(e)[:80], "since": None}
 
 
+# ---------------------------------------------------------------- tools: details (owner, via the gate)
+# A tool's arguments and full docstring come from its server's SOURCE (mcp/<srv>/server.py, the file
+# mcp/registry.json launches), read with ast — never imported, so a broken server can't break this.
+_WIRE_SERVER = "astryx (the wire)"
+_WIRE_TOOLS = {"send": "to, body, intent?, thread?", "subscribe": "agent, filter?", "query_steps": "agent?, limit?"}
+
+
+def _server_source(server: str) -> Path | None:
+    try:
+        reg = json.loads((REPO / "mcp" / "registry.json").read_text())
+    except Exception:
+        return None
+    spec = reg.get(server)
+    if not isinstance(spec, dict):
+        return None
+    for a in spec.get("args", []):
+        if str(a).endswith(".py"):
+            f = (REPO / a).resolve()
+            if f.is_file() and (REPO / "mcp") in f.parents:
+                return f
+    return None
+
+
+def _tool_defs(src: Path) -> dict[str, dict]:
+    """{tool: {doc, args:[{name, type, default}]}} for every @<x>.tool()-decorated function."""
+    import ast
+    out: dict[str, dict] = {}
+    try:
+        tree = ast.parse(src.read_text())
+    except Exception:
+        return out
+    for n in ast.walk(tree):
+        if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not any("tool" in ast.unparse(d) for d in n.decorator_list):
+            continue
+        a = n.args
+        pos = a.posonlyargs + a.args
+        defaults = [None] * (len(pos) - len(a.defaults)) + list(a.defaults)
+        args = [{"name": x.arg, "type": ast.unparse(x.annotation) if x.annotation else None,
+                 "default": ast.unparse(d) if d is not None else None}
+                for x, d in zip(pos, defaults) if x.arg not in ("self", "ctx")]
+        args += [{"name": x.arg, "type": ast.unparse(x.annotation) if x.annotation else None,
+                  "default": ast.unparse(d) if d is not None else None}
+                 for x, d in zip(a.kwonlyargs, a.kw_defaults)]
+        out[n.name] = {"doc": ast.get_docstring(n) or "", "args": args,
+                       "returns": ast.unparse(n.returns) if n.returns else None}
+    return out
+
+
+def _mcp_prefix(server: str) -> str:
+    """How a resident's step names a call to this server's tools: mcp__<server>__<tool>."""
+    return "mcp__astryx__" if server == _WIRE_SERVER else f"mcp__{server}__"
+
+
+@app.get("/api/tools/usage")
+async def tools_usage(server: str):
+    """Calls per tool on one server over the last 7 days, and who made them (from steps)."""
+    pre = _mcp_prefix(server)
+    rows = await pool.fetch(
+        "SELECT split_part(substr(content, length($1) + 1), ' ', 1) AS tool, agent, count(*) AS n "
+        "FROM steps WHERE ts > now() - interval '7 days' AND left(content, length($1)) = $1 "
+        "AND content NOT LIKE '% done' GROUP BY 1, 2", pre)
+    tools: dict[str, dict] = {}
+    for r in rows:
+        t = r["tool"].rstrip(":")
+        e = tools.setdefault(t, {"calls": 0, "agents": {}})
+        e["calls"] += r["n"]
+        e["agents"][r["agent"]] = e["agents"].get(r["agent"], 0) + r["n"]
+    return {"server": server, "tools": tools}
+
+
+@app.get("/api/tools/{server}/{tool}")
+async def tool_detail(server: str, tool: str):
+    """One tool: its full docstring and arguments (from source), and its recent calls."""
+    src = None if server == _WIRE_SERVER else _server_source(server)
+    if server != _WIRE_SERVER and not src:
+        return Response(status_code=404)
+    if server == _WIRE_SERVER:
+        if tool not in _WIRE_TOOLS:
+            return Response(status_code=404)
+        d = {"doc": "", "args": [{"name": a.strip().rstrip("?"), "type": None,
+                                  "default": "optional" if a.strip().endswith("?") else None}
+                                 for a in _WIRE_TOOLS[tool].split(",")], "returns": None}
+    else:
+        d = _tool_defs(src).get(tool)
+        if d is None:
+            return Response(status_code=404)
+    pre = f"{_mcp_prefix(server)}{tool}"
+    calls = await pool.fetch(
+        "SELECT agent, ts, left(content, 200) AS content FROM steps "
+        "WHERE left(content, length($1)) = $1 AND content NOT LIKE '% done' ORDER BY id DESC LIMIT 15", pre)
+    return {"server": server, "tool": tool, **d,
+            "source": str(src.relative_to(REPO)) if src else None,
+            "calls": [{"agent": c["agent"], "ts": c["ts"].isoformat(), "content": c["content"]} for c in calls]}
+
+
+@app.get("/api/triggers/{agent}/{name}")
+async def trigger_detail(agent: str, name: str):
+    """One trigger, in full: its check source, state, when it last evaluated and fired, and its
+    recent fires on the wire (pulse → agent, '[trigger <name>…')."""
+    t = await pool.fetchrow(
+        "SELECT agent, name, schedule, kind, enabled, check_src, state, last_eval, last_fired, next_fire, note "
+        "FROM triggers WHERE agent=$1 AND name=$2", agent, name)
+    if not t:
+        return Response(status_code=404)
+    head = f"[trigger {name}"
+    fires = await pool.fetch(
+        "SELECT id, ts, left(body, 600) AS body FROM messages WHERE from_agent='pulse' AND to_agent=$1 "
+        "AND left(body, length($2)) = $2 ORDER BY id DESC LIMIT 8", agent, head)
+    fires = [f for f in fires if f["body"][len(head):len(head) + 1] in ("]", " ")]
+    # a python trigger's check_src names its file; show the code itself (confined to triggers/, capped)
+    root = (REPO / "triggers").resolve()
+    cand = t["check_src"] if t["kind"] == "python" and (t["check_src"] or "").endswith(".py") else f"triggers/{agent}/{name}.py"
+    path = (REPO / cand).resolve()
+    if root not in path.parents:
+        path = REPO / "triggers" / agent / f"{name}.py"
+    code = None
+    if path.is_file():
+        try:
+            code = path.read_text(errors="replace")[:20000]
+        except OSError:
+            code = None
+    iso = lambda v: v.isoformat() if v else None
+    state = t["state"]
+    return {**{k: t[k] for k in ("agent", "name", "schedule", "kind", "enabled", "check_src", "note")},
+            "state": json.loads(state) if isinstance(state, str) else state,
+            "last_eval": iso(t["last_eval"]), "last_fired": iso(t["last_fired"]), "next_fire": iso(t["next_fire"]),
+            "file": str(path.relative_to(REPO)) if path.is_file() else None, "source": code,
+            "fires": [{"id": f["id"], "ts": f["ts"].isoformat(), "body": f["body"]} for f in fires]}
+
+
+@app.get("/api/services/{unit}/log")
+async def service_log(unit: str, lines: int = 40):
+    """The tail of one astryx unit's journal. Only units that ship in units/ (service_units)."""
+    if unit not in service_units():
+        return Response(status_code=404)
+    try:
+        r = subprocess.run(["journalctl", "-u", unit, "-n", str(max(1, min(lines, 200))), "--no-pager",
+                            "-o", "short-iso"], capture_output=True, text=True, timeout=8)
+        return {"unit": unit, "lines": r.stdout.splitlines()[-200:]}
+    except Exception as e:
+        return {"unit": unit, "lines": [], "error": f"{type(e).__name__}: {e}"}
+
+
 @app.get("/api/services")
 async def services():
     out = [unit_state(u) for u in service_units()]
@@ -1266,6 +1436,41 @@ def _jsonl(path: Path) -> list[dict]:
         return [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
     except (OSError, json.JSONDecodeError):
         return []
+
+
+@app.get("/api/people/{pid}/profile")
+async def person_profile(pid: str, request: Request):
+    """Everything the org knows about ONE person, for the owner's eyes: the node (and persona's
+    description where it wrote one), the owner's direct-message history with them (counts and
+    dates, never text), the groups they share, how many people they share them with, memory's
+    private guess and the owner's own answer. Owner-only twice (the gate, and here)."""
+    if not is_owner(request):
+        return Response(status_code=403)
+    p = await pool.fetchrow("SELECT org, id, kind, label, direct, relation, who, shape, confidence "
+                            "FROM social_person WHERE id=$1 AND kind='person'", pid)
+    if not p:
+        return Response(status_code=404)
+    dm = await pool.fetchrow("SELECT weight, first_ts, last_ts, mine FROM social_edge "
+                             "WHERE org=$1 AND dst=$2 AND rel='dm'", p["org"], pid)
+    groups = await pool.fetch(
+        "SELECT g.id, g.label, (SELECT count(*) FROM social_edge m WHERE m.org=e.org AND m.dst=e.dst "
+        "AND m.rel='member-of') AS size FROM social_edge e JOIN social_person g ON g.org=e.org AND g.id=e.dst "
+        "WHERE e.org=$1 AND e.src=$2 AND e.rel='member-of' ORDER BY size DESC", p["org"], pid)
+    mutuals = await pool.fetchval(
+        "SELECT count(DISTINCT b.src) FROM social_edge a JOIN social_edge b ON a.org=b.org AND a.dst=b.dst "
+        "AND b.src<>a.src WHERE a.org=$1 AND a.src=$2 AND a.rel='member-of' AND b.rel='member-of'", p["org"], pid)
+    ask = next((a for a in reversed(_jsonl(_PEOPLE_DIR / "asks.jsonl")) if a.get("pid") == pid), None)
+    ans = next((a for a in reversed(_jsonl(_PEOPLE_DIR / "answers.jsonl")) if a.get("pid") == pid), None)
+    iso = lambda t: t.isoformat() if t else None
+    return {"person": dict(p),
+            "dm": {"msgs": dm["weight"], "first": iso(dm["first_ts"]), "last": iso(dm["last_ts"]),
+                   "mine": dm["mine"]} if dm else None,
+            "groups": [{"id": g["id"], "label": g["label"], "size": g["size"]} for g in groups],
+            "mutuals": mutuals,
+            "memory_guess": {"kind": ask.get("candidate_kind"), "closeness": ask.get("closeness"),
+                             "confidence": ask.get("confidence")} if ask else None,
+            "your_answer": {"kind": ans.get("kind"), "closeness": ans.get("closeness"),
+                            "skipped": bool(ans.get("skipped"))} if ans else None}
 
 
 @app.get("/api/people/asks")
@@ -1748,6 +1953,22 @@ async def presence_all(request: Request):
         return Response(status_code=403)
     return [_presence(r) for r in await pool.fetch("SELECT * FROM presence ORDER BY updated_at DESC")]
 
+
+
+@app.get("/api/pulse")
+async def pulse(request: Request):
+    """Each agent's heartbeat: steps per hour over the last 24h, oldest first (24 buckets). The
+    agent cards draw it as a line, so a glance says who has been working and when. Owner-only:
+    an activity RATE is exactly what the anonymous floor zeroes (plan-18)."""
+    if not is_owner(request):
+        return Response(status_code=403)
+    rows = await pool.fetch(
+        "SELECT agent, least(23, floor(extract(epoch from now() - ts) / 3600))::int AS h, count(*) AS n "
+        "FROM steps WHERE ts > now() - interval '24 hours' GROUP BY 1, 2")
+    out: dict[str, list[int]] = {}
+    for r in rows:
+        out.setdefault(r["agent"], [0] * 24)[23 - r["h"]] = r["n"]
+    return out
 
 # ============================================================ system monitor
 def _gpu() -> list[dict]:
@@ -2451,7 +2672,7 @@ async def memory_graph(fresh: int = 0):
         try:
             sys.path.insert(0, str(REPO))
             from nucleus import memgraph
-            memgraph.write(memgraph.compile_graph())
+            memgraph.write_pg(memgraph.compile_graph())
         except Exception as e:
             return {"error": f"compile failed: {type(e).__name__}: {e}", "nodes": [], "edges": []}
     g = _memgraph_read()
@@ -2572,6 +2793,83 @@ async def memory_ontology():
                       "types": len(types), "categories": len(cats), "pages": len(pages),
                       "findings": len(findings)},
             "notes": []}
+
+
+# ---------------------------------------------------------------- the library (memory's booklet)
+# memory writes memory/library/ (shelves.json + <shelf>/<slug>.md with YAML frontmatter, chronicle/
+# YYYY-MM-DD.md as the overnight editions); the observatory only reads it. Org tier only — memory keeps
+# the personal tier out at write time — and owner-gated like /api/memory/page. Served ONLY from under
+# LIBRARY: shelf and slug must be plain names, and the resolved path must stay inside the root.
+LIBRARY = Path(os.environ.get("ASTRYX_LIBRARY_DIR") or REPO / "memory" / "library")
+_LIB_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,80}$")
+
+
+def _book(f: Path) -> tuple[dict, str] | None:
+    import yaml
+    raw = f.read_text(errors="replace")
+    if not raw.startswith("---"):
+        return {}, raw
+    try:
+        _, fm, body = raw.split("---", 2)
+        meta = yaml.safe_load(fm) or {}
+        return (meta if isinstance(meta, dict) else {}), body.lstrip("\n")
+    except Exception:
+        return None
+
+
+def _plain(md: str) -> str:
+    """Body text for full-text search: markdown syntax and [[link]] brackets out, words in."""
+    t = re.sub(r"```.*?```", " ", md, flags=re.S)
+    t = re.sub(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]", lambda m: m[2] or m[1].replace("-", " "), t)
+    t = re.sub(r"[#>*_`|\[\]()-]+", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+@app.get("/api/memory/library")
+async def library_index():
+    """The shelves and every book's card (frontmatter + slug + plain text for search). Chronicle
+    editions come newest first."""
+    if not LIBRARY.is_dir():
+        return {"shelves": [], "books": []}
+    try:
+        shelves = json.loads((LIBRARY / "shelves.json").read_text())
+    except Exception:
+        shelves = []
+    books = []
+    for f in sorted(LIBRARY.glob("*/*.md")):
+        shelf, slug = f.parent.name, f.stem
+        if not (_LIB_NAME.match(shelf) and _LIB_NAME.match(slug)):
+            continue
+        got = _book(f)
+        if got is None:
+            continue
+        meta, body = got
+        card = {k: (str(v) if k in ("updated", "date") and v is not None else v) for k, v in meta.items()
+                if k in ("title", "abstract", "updated", "tags", "related", "reading_min", "date", "highlights", "books_touched", "order")}
+        books.append({**card, "slug": slug, "shelf": shelf, "title": card.get("title") or slug.replace("-", " "),
+                      "text": _plain(body)[:20000]})
+    nights = sorted((b for b in books if b["shelf"] == "chronicle"), key=lambda b: str(b.get("date") or b["slug"]), reverse=True)
+    # memory's `order` puts each shelf's front page first (goals by number); a book without one goes last
+    rest = sorted((b for b in books if b["shelf"] != "chronicle"),
+                  key=lambda b: (b["shelf"], b["order"] if isinstance(b.get("order"), int) else 999, b["title"].lower()))
+    books = nights + rest
+    return {"shelves": sorted(shelves, key=lambda s: s.get("order", 99)), "books": books}
+
+
+@app.get("/api/memory/library/{shelf}/{slug}")
+async def library_book(shelf: str, slug: str):
+    """One book: its frontmatter and markdown body."""
+    if not (_LIB_NAME.match(shelf) and _LIB_NAME.match(slug)) or not LIBRARY.is_dir():
+        return Response(status_code=404)
+    f = (LIBRARY / shelf / f"{slug}.md").resolve()
+    if not f.is_relative_to(LIBRARY.resolve()) or not f.is_file():
+        return Response(status_code=404)
+    got = _book(f)
+    if got is None:
+        return Response(status_code=422)
+    meta, body = got
+    meta = {k: (str(v) if isinstance(v, (date, datetime)) else v) for k, v in meta.items()}
+    return {"shelf": shelf, "slug": slug, "meta": meta, "markdown": body}
 
 
 @app.get("/api/memory/page/{slug}")
