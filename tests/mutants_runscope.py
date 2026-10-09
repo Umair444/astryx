@@ -52,6 +52,10 @@ MUTANTS = {
         ("            if only is not None and r not in only:\n                continue\n", ""),
     "R15 the host stamp is ignored (host A reaps host B's live run, which has no local pid)":
         ("            if not MACHINE_ID or not stamp or stamp[0] != MACHINE_ID:", "            if False:"),
+    "R16 the dbus id is never consulted (an older Linux host stamps nothing, so its orphans are never reaped)":
+        ('    for f in ("/etc/machine-id", "/var/lib/dbus/machine-id"):', '    for f in ("/etc/machine-id",):'),
+    "R17 an EMPTY id file is taken as the id (every host with an empty file shares one stamp)":
+        ("        if v:\n            return v", "        if True:\n            return v"),
     "R18 an unscoped sweep adopts a synthetic-epoch role (a real run reaps a live oracle's planted roles)":
         ("            if only is None and int(m.group(2)) < MIN_EPOCH:", "            if False:"),
     "R19 _drop_owned raises on a lost connection (one orphan crashes the run)":
