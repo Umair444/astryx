@@ -332,6 +332,10 @@ run "the shared repo is not bare (core.bare tripwire)" "$PY" tests/test_git_env_
 # fixtures, no DB, no live estate. SKIPs by name where triggers/ is absent, which is every
 # clean checkout: there the guard is not here to be verified. ~0.3s.
 run "pii_sweep cannot forget a finding or print a routing id" "$PY" tests/test_pii_sweep_ledger.py
+# CANVAS privacy (steward, seed #35151): pii_canvas sweeps every canvas version + live value (history is
+# guest-readable via ?v=N), REACH-tagged; its state IS the share gate, nucleus/canvas.py:share_blockers,
+# which fails closed. Fixture DB only. The gate arms always run; the sweep arms SKIP 77 without the body.
+run "canvas: privacy sweep + fail-closed share gate" "$PY" tests/test_pii_canvas.py
 # The guard that reads THIS suite's own live-tree result. check.sh runs automatically in
 # exactly two places and both are clones, where the gitignored estate cannot exist — so
 # nucleus/check_watch.sh runs it here on a timer and stamps the outcome, and the guard
