@@ -182,11 +182,13 @@ def main(url):
                                                             "/api/tools/usage?server=compose", "/api/services/astryx-pulse.service/log")))
         arm("a unit that isn't astryx's never yields a journal", cl.get("/api/services/sshd.service/log", headers=O).status_code == 404)
         li = cl.get("/api/memory/library", headers=O).json()
+        arm("a shelf opens on its front page: books follow memory's `order`, unordered ones last",
+            [b["slug"] for b in li["books"] if b["shelf"] == "laws"] == ["laws-front", "a-later-law", "proving-a-fix"], li)
         arm("the library lists shelves in order and books as cards (frontmatter + plain text), newest night first",
             [x["id"] for x in li["shelves"]] == ["chronicle", "laws"]
-            and [b["slug"] for b in li["books"]] == ["2026-10-09", "2026-10-08", "proving-a-fix"]
-            and li["books"][2]["title"] == "Proving a Fix" and li["books"][2]["updated"] == "2026-10-09"
-            and "honest claims" in li["books"][2]["text"] and "[[" not in li["books"][2]["text"], li)
+            and [b["slug"] for b in li["books"]] == ["2026-10-09", "2026-10-08", "laws-front", "a-later-law", "proving-a-fix"]
+            and li["books"][4]["title"] == "Proving a Fix" and li["books"][4]["updated"] == "2026-10-09"
+            and "honest claims" in li["books"][4]["text"] and "[[" not in li["books"][4]["text"], li)
         bk = cl.get("/api/memory/library/laws/proving-a-fix", headers=O).json()
         arm("a book opens with its frontmatter and markdown", bk["meta"]["title"] == "Proving a Fix" and "[[honest-claims]]" in bk["markdown"], bk)
         arm("a book is served only from inside the library, only to the owner",
@@ -213,6 +215,8 @@ if __name__ == "__main__":
     (lib / "shelves.json").write_text('[{"id":"laws","order":2,"title":"Laws"},{"id":"chronicle","order":0,"title":"The Chronicle"}]')
     (lib / "laws" / "proving-a-fix.md").write_text('---\ntitle: "Proving a Fix"\nabstract: "Red before green."\nupdated: 2026-10-09\n'
                                                   'tags: [laws]\nrelated: [honest-claims]\nreading_min: 3\n---\n# Proving a Fix\nSee [[honest-claims]].\n')
+    (lib / "laws" / "a-later-law.md").write_text('---\ntitle: "A Later Law"\norder: 5\n---\nlater\n')
+    (lib / "laws" / "laws-front.md").write_text('---\ntitle: "Zed: the front page"\norder: 0\n---\nfront\n')
     for d in ("2026-10-08", "2026-10-09"):
         (lib / "chronicle" / f"{d}.md").write_text(f'---\ntitle: "Night of {d}"\ndate: {d}\nhighlights: [a]\n---\nWhat happened.\n')
     (lib.parent / "outside.md").write_text("---\ntitle: secret\n---\nnot a book\n")

@@ -19,7 +19,7 @@ import { Empty, Skeleton } from '../ui/kit'
 
 interface Shelf { id: string; title: string; blurb?: string; order?: number; icon?: string }
 interface Card {
-  slug: string; shelf: string; title: string; abstract?: string; updated?: string; tags?: string[]
+  order?: number; slug: string; shelf: string; title: string; abstract?: string; updated?: string; tags?: string[]
   related?: string[]; reading_min?: number; date?: string; highlights?: string[]; books_touched?: string[]; text: string
 }
 interface Index { shelves: Shelf[]; books: Card[] }
@@ -60,7 +60,7 @@ function useLibRoute(): [{ shelf: string; slug: string } | null, (shelf?: string
     addEventListener('hashchange', f)
     return () => removeEventListener('hashchange', f)
   }, [])
-  return [r, (shelf, slug) => { location.hash = shelf && slug ? `#/memory/lib/${shelf}/${slug}` : '#/memory/lib' }]
+  return [r, (shelf, slug) => { location.hash = shelf && slug ? `#/memory/lib/${shelf}/${slug}` : shelf ? `#/memory/lib?shelf=${shelf}` : '#/memory/lib' }]
 }
 
 export default function LibraryView({ tabs }: { tabs: ReactNode }) {
@@ -94,6 +94,10 @@ function Home({ idx, bySlug, go }: { idx: Index; bySlug: Map<string, Card>; go: 
   const tonight = nights[0]
   const shelves = idx.shelves.filter((s) => s.id !== 'chronicle' && idx.books.some((b) => b.shelf === s.id))
   const count = idx.books.filter((b) => b.shelf !== 'chronicle').length
+  useEffect(() => {
+    const want = location.hash.match(/[?&]shelf=([a-z0-9-]+)/)?.[1]
+    if (want) setTimeout(() => document.getElementById(`shelf-${want}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60)
+  }, [])
   return (
     <div className="px-5 sm:px-10 pb-24 max-w-6xl mx-auto">
       <header className="pt-10 sm:pt-16 pb-8 text-center">
@@ -139,7 +143,7 @@ function Home({ idx, bySlug, go }: { idx: Index; bySlug: Map<string, Card>; go: 
       {shelves.map((s, si) => {
         const books = idx.books.filter((b) => b.shelf === s.id)
         return (
-          <motion.section key={s.id} className="mb-14" initial={{ opacity: 0, y: 12 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: '-60px' }} transition={{ delay: Math.min(si, 3) * 0.04 }}>
+          <motion.section key={s.id} id={`shelf-${s.id}`} className="mb-14 scroll-mt-6" initial={{ opacity: 0, y: 12 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: '-60px' }} transition={{ delay: Math.min(si, 3) * 0.04 }}>
             <div className="flex items-end gap-4 mb-5 border-b border-line pb-3">
               <span className="w-10 h-10 rounded-2xl grid place-items-center text-cyan shrink-0" style={{ background: 'color-mix(in srgb, var(--t-accent) 14%, transparent)' }}><Icon name={s.icon} /></span>
               <div className="min-w-0">
@@ -306,7 +310,7 @@ function Reader({ at, idx, bySlug, go }: { at: { shelf: string; slug: string }; 
     <div className="px-5 sm:px-10 pb-28 max-w-6xl mx-auto">
       <nav className="pt-8 flex items-center gap-2 text-[13px] text-ink-mute">
         <button onClick={() => go()} className="hover:text-ink">Library</button><span>›</span>
-        <span className="text-ink-dim">{shelf?.title ?? at.shelf}</span>
+        <button onClick={() => go(at.shelf)} className="text-ink-dim hover:text-ink">{shelf?.title ?? at.shelf}</button>
       </nav>
       <div className="grid gap-12 lg:grid-cols-[minmax(0,68ch)_220px] lg:justify-center mt-6">
         <article className="min-w-0">
@@ -323,6 +327,19 @@ function Reader({ at, idx, bySlug, go }: { at: { shelf: string; slug: string }; 
             <ul className="mt-8 grid gap-3 rounded-2xl p-6 lib-callout">
               {highlights.map((h, i) => <li key={i} className="flex gap-3 text-[15px] leading-snug text-ink-dim"><span className="text-cyan">✦</span><span>{h}</span></li>)}
             </ul>
+          )}
+          {toc.length > 1 && (
+            <details className="lg:hidden mt-8 rounded-2xl lib-callout px-5 py-3 group">
+              <summary className="cursor-pointer list-none flex items-center gap-2 text-[12px] uppercase tracking-[0.16em] text-ink-mute">
+                Contents <span className="ml-auto transition-transform group-open:rotate-90">›</span>
+              </summary>
+              <nav className="mt-3 flex flex-col gap-1.5 pb-1">
+                {toc.map((t) => (
+                  <a key={t.id} href={`#${t.id}`} onClick={(e) => { e.preventDefault(); document.getElementById(t.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }}
+                    className={`text-[14px] text-ink-dim hover:text-ink ${t.level === 3 ? 'pl-4' : ''}`}>{t.text}</a>
+                ))}
+              </nav>
+            </details>
           )}
           {!book && <div className="mt-10 flex flex-col gap-3">{[0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-4 w-full block" />)}</div>}
           <div ref={article} className="lib-prose mt-10" dangerouslySetInnerHTML={{ __html: html }}

@@ -2843,11 +2843,13 @@ async def library_index():
             continue
         meta, body = got
         card = {k: (str(v) if k in ("updated", "date") and v is not None else v) for k, v in meta.items()
-                if k in ("title", "abstract", "updated", "tags", "related", "reading_min", "date", "highlights", "books_touched")}
+                if k in ("title", "abstract", "updated", "tags", "related", "reading_min", "date", "highlights", "books_touched", "order")}
         books.append({**card, "slug": slug, "shelf": shelf, "title": card.get("title") or slug.replace("-", " "),
                       "text": _plain(body)[:20000]})
     nights = sorted((b for b in books if b["shelf"] == "chronicle"), key=lambda b: str(b.get("date") or b["slug"]), reverse=True)
-    rest = sorted((b for b in books if b["shelf"] != "chronicle"), key=lambda b: (b["shelf"], b["title"].lower()))
+    # memory's `order` puts each shelf's front page first (goals by number); a book without one goes last
+    rest = sorted((b for b in books if b["shelf"] != "chronicle"),
+                  key=lambda b: (b["shelf"], b["order"] if isinstance(b.get("order"), int) else 999, b["title"].lower()))
     books = nights + rest
     return {"shelves": sorted(shelves, key=lambda s: s.get("order", 99)), "books": books}
 
