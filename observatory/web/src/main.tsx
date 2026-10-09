@@ -8,6 +8,7 @@ import {
   type MantineColorsTuple,
 } from '@mantine/core'
 import '@mantine/core/styles.css'
+import '@fontsource-variable/inter'
 import './index.css'
 import App from './App'
 import { ThemeProvider, useTheme } from './theme'
@@ -25,7 +26,7 @@ const ramp = (k: string): MantineColorsTuple => [
 const theme = createTheme({
   primaryColor: 'accent',
   primaryShade: 6,
-  fontFamily: '-apple-system, "Segoe UI", Roboto, "Inter", sans-serif',
+  fontFamily: '"Inter Variable", -apple-system, "Segoe UI", Roboto, sans-serif',
   fontFamilyMonospace: 'ui-monospace, "JetBrains Mono", "Cascadia Code", monospace',
   defaultRadius: 'md',
   white: '#ffffff',

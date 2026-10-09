@@ -20,6 +20,8 @@ import type {
 import { type AvatarStatus } from './Avatar'
 import AgentFace from './AgentFace'
 import RuntimeEditor from './RuntimeEditor'
+import { Action, Empty, FaceStack, LiveDot, Panel, SectionHead, Skeleton, Spark, ViewHeader, useNow } from '../ui/kit'
+import { moodOf, nowLine, type Mood } from '../ui/life'
 
 /* The People experience: an astryx agent is a PERSON. This is the org's cast page —
    every agent a character card, grouped into departments (the composite folders), with a
@@ -48,37 +50,48 @@ function deptOf(a: AgentRow): string | null {
 }
 
 /* ------------------------------------------------------------------ character card */
-function CharacterCard({ a, onOpen }: { a: AgentRow; onOpen: (n: string) => void }) {
-  const st = rowStatus(a)
+function CharacterCard({ a, mood, beat, now, onOpen }: { a: AgentRow; mood: Mood; beat?: number[]; now: number; onOpen: (n: string) => void }) {
+  const { presence } = useStore()
+  const { where, line } = nowLine(a, presence[a.agent], mood, now)
+  const today = beat ? beat.reduce((x, y) => x + y, 0) : null
   return (
-    <button
-      onClick={() => onOpen(a.agent)}
-      className="group text-left bg-deck-2 border border-line rounded-xl p-3 flex items-center gap-3
-                 hover:border-cyan/40 hover:-translate-y-0.5 hover:shadow-[0_8px_24px_-12px_color-mix(in_srgb,var(--t-accent)_35%,transparent)]
-                 transition-all duration-100"
-    >
-      <AgentFace name={a.agent} size={46} status={st} title={displayName(a.agent)} />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          <span className="text-sm font-semibold text-ink truncate group-hover:text-cyan-soft transition-colors">
-            {displayName(a.agent)}
-          </span>
-          {a.type && a.type !== 'resident' && (
-            <span className="text-[8px] font-mono uppercase tracking-wide px-1 py-px rounded border border-line bg-deck text-warn/80">
-              {a.type}
-            </span>
-          )}
+    <Panel as="button" interactive live={mood === 'working'} onClick={() => onOpen(a.agent)} className="group p-4 flex flex-col gap-3 min-h-[168px]">
+      <div className="flex items-center gap-3">
+        <span className="relative rounded-full shrink-0" style={{ boxShadow: mood === 'working' ? '0 0 0 2px var(--t-accent), 0 0 26px -4px var(--t-accent)' : mood === 'awake' ? '0 0 0 2px color-mix(in srgb, var(--t-good) 60%, transparent)' : '0 0 0 1px var(--t-line)' }}>
+          <AgentFace name={a.agent} size={52} dim={mood === 'asleep'} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-[16px] font-semibold text-ink truncate">{displayName(a.agent)}</span>
+            {a.type && a.type !== 'resident' && (
+              <span className="text-[9px] font-mono uppercase tracking-wide px-1.5 py-px rounded-full border border-warn/40 text-warn/90">{a.type}</span>
+            )}
+          </div>
+          <div className="text-[12px] text-ink-mute truncate">
+            {deptOf(a) ? displayName(deptOf(a)!) : 'independent'}{a.model ? ` · ${shortModel(a.model)}` : ''}
+          </div>
         </div>
-        <div className="text-[11px] text-ink-mute truncate">
-          {deptOf(a) ? displayName(deptOf(a)!) : 'unaffiliated'}
-          {a.model ? <span className="text-ink-mute/70"> · {shortModel(a.model)}</span> : null}
+        <span className="flex items-center gap-1.5 text-[11px] text-ink-mute shrink-0"><LiveDot state={mood} />{mood}</span>
+      </div>
+      <div className={`text-[12.5px] leading-snug line-clamp-2 text-left ${mood === 'working' ? 'text-ink-dim font-mono text-[11.5px]' : 'text-ink-mute'}`}>
+        {where && <span className="text-cyan">{where} · </span>}
+        {mood === 'asleep' ? `asleep · seen ${fmtAgo(a.last_seen)}` : line}
+      </div>
+      <div className="mt-auto flex items-end gap-3">
+        <div className="flex-1 h-9 relative">
+          {beat ? <Spark data={beat} tone={mood === 'working' ? 'accent' : mood === 'awake' ? 'good' : 'accent2'} className="absolute inset-0 w-full h-full" />
+            : <Skeleton className="absolute inset-x-0 bottom-0 h-1.5" />}
         </div>
-        <div className="flex items-center gap-1.5 mt-1 text-[10px] font-mono text-ink-mute/80">
-          <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[st]}`} />
-          {st === 'live' ? 'live now' : `seen ${fmtAgo(a.last_seen)}`}
+        <div className="text-right shrink-0">
+          <div className="text-[13px] font-semibold text-ink tabular-nums">{today == null ? '—' : today.toLocaleString()}</div>
+          <div className="text-[10px] uppercase tracking-[0.12em] text-ink-mute">steps · 24h</div>
         </div>
       </div>
-    </button>
+      <a href={`/canvas/#/new/${encodeURIComponent(a.agent)}`} onClick={(e) => e.stopPropagation()}
+        className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity ax-action !px-2.5 !py-1 !text-[11px] !rounded-lg no-underline">
+        Talk ↗
+      </a>
+    </Panel>
   )
 }
 
@@ -591,7 +604,16 @@ function ProfileModal({
 
 /* ------------------------------------------------------------------ the view */
 export default function PeopleView() {
-  const { agents, who } = useStore()
+  const { agents, who, presence } = useStore()
+  const now = useNow(5000)
+  const [beats, setBeats] = useState<Record<string, number[]> | null>(null)
+  useEffect(() => {
+    if (!who.owner) return
+    const load = () => api<Record<string, number[]>>('/pulse').then(setBeats).catch(() => {})
+    load()
+    const t = setInterval(load, 60_000)
+    return () => clearInterval(t)
+  }, [who.owner])
   const [profile, setProfile] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   // a private mirror so an action (retire/create) can refresh the cast without waiting
@@ -629,50 +651,40 @@ export default function PeopleView() {
     }))
   }, [roster])
 
-  const liveCount = roster.filter((a) => a.alive).length
+  const moods = useMemo(() => Object.fromEntries(roster.map((a) => [a.agent, moodOf(a, presence[a.agent], now)])) as Record<string, Mood>, [roster, presence, now])
+  const workingNames = roster.filter((a) => moods[a.agent] === 'working').map((a) => a.agent)
+  const awake = roster.filter((a) => moods[a.agent] !== 'asleep').length
 
   return (
     <ScrollArea className="h-full">
-      <div className="p-4 max-w-[1100px] mx-auto">
-        {/* masthead */}
-        <div className="flex items-center gap-3 mb-5">
-          <div>
-            <h1 className="text-lg font-bold text-ink">The people of the org</h1>
-            <div className="text-[12px] text-ink-mute">
-              {roster.length} agent{roster.length === 1 ? '' : 's'} · {liveCount} live · every one a
-              charter, a face, a place on the wire
-            </div>
-          </div>
-          {who.owner && (
-            <Button
-              className="ml-auto"
-              color="cyan"
-              variant="light"
-              onClick={() => setCreating(true)}
-              leftSection={<span className="text-base leading-none">+</span>}
-            >
-              Bring an agent into the world
-            </Button>
-          )}
-        </div>
+      <div className="px-5 sm:px-8 py-7 max-w-[1240px] mx-auto">
+        <ViewHeader
+          kicker="the cast"
+          title="The people of the org"
+          live={<>
+            <span className="flex items-center gap-1.5"><LiveDot state="working" />{workingNames.length} working</span>
+            <span className="text-ink-mute">·</span>
+            <span className="flex items-center gap-1.5"><LiveDot state="awake" />{awake} awake</span>
+            <span className="text-ink-mute">· {roster.length} in all — each a charter, a face, a place on the wire</span>
+          </>}
+          faces={workingNames}
+          actions={who.owner && <Action onClick={() => setCreating(true)}><span className="text-base leading-none">+</span> Bring an agent into the world</Action>}
+        />
 
         {!roster.length && (
-          <div className="text-sm text-ink-mute py-10 text-center">no agents in the org yet</div>
+          agents.length === 0
+            ? <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">{[0, 1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-[168px] rounded-2xl" />)}</div>
+            : <Empty title="No agents in the org yet" hint="Bring the first one into the world — a charter is a personality with duties." />
         )}
 
         {/* the cast, grouped into teams */}
         {groups.map((g) => (
-          <section key={g.dept ?? 'unaffiliated'} className="mb-7">
-            <div className="flex items-baseline gap-2 mb-2.5">
-              <h2 className="text-[13px] font-semibold text-ink-dim tracking-wide">
-                {g.dept ? displayName(g.dept) : 'Unaffiliated'}
-              </h2>
-              <span className="text-[11px] text-ink-mute font-mono">{g.members.length}</span>
-              <div className="flex-1 h-px bg-line/60 ml-1" />
-            </div>
-            <div className="grid gap-2.5 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+          <section key={g.dept ?? 'unaffiliated'} className="mb-9">
+            <SectionHead title={g.dept ? displayName(g.dept) : 'Independent'} count={g.members.length}
+              right={<FaceStack names={g.members.filter((a) => moods[a.agent] === 'working').map((a) => a.agent)} size={20} max={4} />} />
+            <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
               {g.members.map((a) => (
-                <CharacterCard key={a.agent} a={a} onOpen={setProfile} />
+                <CharacterCard key={a.agent} a={a} mood={moods[a.agent]} beat={beats ? beats[a.agent] ?? Array(24).fill(0) : undefined} now={now} onOpen={setProfile} />
               ))}
             </div>
           </section>

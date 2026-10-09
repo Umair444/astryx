@@ -18,6 +18,9 @@ import GrowbotView from './components/GrowbotView'
 import FaceView from './components/FaceView'
 import AgentDrawer from './components/AgentDrawer'
 import VegaChat from './components/VegaChat'
+import PulseStrip from './components/PulseStrip'
+import Palette from './components/Palette'
+import { Orb } from './ui/kit'
 
 export type Route =
   | { tab: 'network' }
@@ -207,19 +210,15 @@ function Shell() {
       padding={0}
       className="h-full"
     >
-      <AppShell.Header className="starfield !bg-deck !border-line">
+      <AppShell.Header className="!bg-deck/80 !border-line backdrop-blur-xl">
         <Group h="100%" px="md" gap="sm">
           <Burger opened={navOpened} onClick={toggle} hiddenFrom="sm" size="sm" />
           <Tooltip label={deskNav ? 'Hide sidebar' : 'Show sidebar'} openDelay={400}>
-            <Burger opened={deskNav} onClick={toggleDeskNav} visibleFrom="sm" size="sm" />
+            <Burger opened={false} onClick={toggleDeskNav} visibleFrom="sm" size="sm" aria-label="toggle sidebar" />
           </Tooltip>
-          <Text c="cyan.4" fw={600} style={{ letterSpacing: '0.05em' }}>
-            astryx
-          </Text>
-          <Text size="xs" c="dimmed" visibleFrom="xs">
-            · observatory
-          </Text>
-          <span className="ml-auto flex items-center gap-2 text-[11px] text-ink-mute">
+          <a href="#/" className="flex items-center gap-2 no-underline sm:hidden"><Orb size={20} /><span className="text-[14px] font-semibold text-ink">astryx</span></a>
+          <div className="flex-1 min-w-0 flex justify-center"><PulseStrip /></div>
+          <span className="flex items-center gap-2 text-[11px] text-ink-mute shrink-0">
             {overview && (
               <>
                 <span className="hidden sm:inline font-mono text-ink-dim">{overview.org}</span>
@@ -238,8 +237,9 @@ function Shell() {
         <Sidebar route={route} onOpenAgent={setAgentOpen} />
       </AppShell.Navbar>
 
-      <AppShell.Main className="h-dvh" style={{ display: 'flex', flexDirection: 'column' }}>
-        <div className="flex-1 min-h-0">
+      <AppShell.Main className="h-dvh relative" style={{ display: 'flex', flexDirection: 'column' }}>
+        <div className="ax-aurora"><i /><i /><i /></div>
+        <div className="relative z-[1] flex-1 min-h-0">
           {locked ? (
             whoChecked ? ( // hold blank until whoami answers so the owner never flashes the lock
               <LockPanel />
@@ -283,6 +283,7 @@ function Shell() {
         </div>
       </AppShell.Footer>
 
+      <Palette onOpenAgent={setAgentOpen} />
       {agentOpen && <AgentDrawer name={agentOpen} onClose={() => setAgentOpen(null)} />}
       {/* VEGA is the PUBLIC concierge and floats bottom-right on every view; the Memory
           tab is owner-only and docks its own ask box in that exact corner, so the two

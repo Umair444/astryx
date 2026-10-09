@@ -39,6 +39,7 @@ def main(url):
     with TestClient(obs.app) as cl0:
         empty = cl0.get("/api/agents", headers={"x-obs-key": "test-owner-key"}).json()
         arm("before any activity the roster still lists every charter (as quiet)", len(empty) == len(real), len(empty))
+        arm("a quiet org has no heartbeat yet", cl0.get("/api/pulse", headers={"x-obs-key": "test-owner-key"}).json() == {})
     with psycopg.connect(url) as c:
         c.execute("INSERT INTO steps (agent, kind, content) VALUES (%s,'tool','Bash: paint'), "
                   "('onboard-ghost','tool','a body spawned in error')", (agent,))
@@ -64,6 +65,10 @@ def main(url):
         arm("an agent's face is public (no key)", cl.get(f"/api/agents/{agent}/avatar").status_code in (200, 404))
         arm("a path-shaped avatar name is refused", cl.get("/api/agents/..%2Fsecret/avatar").status_code in (403, 404))
         arm("presence is owner-only", cl.get("/api/presence").status_code == 403)
+        arm("the heartbeat (an activity rate) is owner-only", cl.get("/api/pulse").status_code == 403)
+        beat = cl.get("/api/pulse", headers=O).json().get(agent, [])
+        arm("an agent's heartbeat is 24 hourly buckets, this hour's step in the last one",
+            len(beat) == 24 and beat[-1] >= 1 and sum(beat) == beat[-1], beat)
         pr = cl.get("/api/presence", headers=O).json()
         arm("the owner sees where each agent's attention is",
             any(p["agent"] == agent and p["surface"] == "canvas:2" and p["target"] == "#hero" for p in pr), pr)

@@ -47,7 +47,9 @@ html, body, #root { height: 100%; }
 body {
   background: var(--t-bg);
   color: var(--t-fg);
-  font-family: -apple-system, "Segoe UI", Roboto, "Inter", sans-serif;
+  font-family: "Inter Variable", -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
   font-size: 15px;
   overscroll-behavior: none;
 }
@@ -92,4 +94,76 @@ body {
     linear-gradient(color-mix(in srgb, var(--t-line) 55%, transparent) 1px, transparent 1px) 0 0 / 44px 44px,
     linear-gradient(90deg, color-mix(in srgb, var(--t-line) 55%, transparent) 1px, transparent 1px) 0 0 / 44px 44px,
     var(--t-bg);
+}
+
+/* ================================================================ THE KIT (ui/kit.tsx)
+   One visual language for every view: glass panels over a slow aurora, things that work
+   breathe, numbers arrive. Every color is a theme token, so all 12 palettes (light ones too)
+   carry it without a per-theme rule. */
+.ax-panel {
+  background: color-mix(in srgb, var(--t-panel) 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--t-line) 85%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--t-fg) 5%, transparent), 0 10px 30px -18px color-mix(in srgb, #000 60%, transparent);
+  backdrop-filter: blur(14px) saturate(1.15);
+}
+.ax-panel-hover { transition: transform .18s cubic-bezier(.2,.8,.2,1), border-color .18s, box-shadow .18s; }
+.ax-panel-hover:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--t-accent) 45%, var(--t-line));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--t-fg) 7%, transparent), 0 18px 40px -20px color-mix(in srgb, var(--t-accent) 55%, transparent);
+}
+.ax-scan {
+  position: absolute; left: 14px; right: 14px; top: -1px; height: 1px; overflow: hidden; border-radius: 1px;
+  background: color-mix(in srgb, var(--t-accent) 18%, transparent);
+}
+.ax-scan::after {
+  content: ""; position: absolute; inset: 0; width: 40%;
+  background: linear-gradient(90deg, transparent, var(--t-accent2), var(--t-accent), transparent);
+  animation: ax-scan 2.6s cubic-bezier(.45,0,.2,1) infinite;
+}
+@keyframes ax-scan { from { transform: translateX(-100%); } to { transform: translateX(260%); } }
+
+.ax-skel {
+  display: inline-block;
+  background: linear-gradient(90deg, var(--t-panel2) 0%, color-mix(in srgb, var(--t-line2) 70%, var(--t-panel2)) 50%, var(--t-panel2) 100%);
+  background-size: 200% 100%; animation: ax-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes ax-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+
+.ax-orb {
+  background:
+    radial-gradient(circle at 34% 30%, color-mix(in srgb, #fff 55%, var(--orb)) 0%, transparent 32%),
+    radial-gradient(circle at 50% 55%, var(--orb) 0%, color-mix(in srgb, var(--orb) 40%, transparent) 55%, transparent 72%);
+  box-shadow: 0 0 40px -6px var(--orb);
+  animation: ax-breathe 4.2s ease-in-out infinite;
+}
+@keyframes ax-breathe { 0%, 100% { transform: scale(.94); filter: saturate(.9); } 50% { transform: scale(1.04); filter: saturate(1.2); } }
+
+.ax-action {
+  color: var(--t-on);
+  background: linear-gradient(135deg, var(--t-accent), color-mix(in srgb, var(--t-accent2) 70%, var(--t-accent)));
+  box-shadow: 0 8px 22px -10px var(--t-accent), inset 0 1px 0 color-mix(in srgb, #fff 25%, transparent);
+  transition: transform .15s, box-shadow .15s, filter .15s;
+}
+.ax-action:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.08); box-shadow: 0 12px 28px -10px var(--t-accent); }
+
+.ax-title {
+  background: linear-gradient(180deg, var(--t-fg) 30%, color-mix(in srgb, var(--t-fg) 62%, var(--t-accent)));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+
+/* the aurora: three theme-tinted lights drifting behind every view — the room is never dead */
+.ax-aurora { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0; }
+.ax-aurora i {
+  position: absolute; width: 46vmax; height: 46vmax; border-radius: 50%; filter: blur(90px); opacity: .16;
+  animation: ax-drift 38s ease-in-out infinite alternate;
+}
+.ax-aurora i:nth-child(1) { background: var(--t-accent); left: -12vmax; top: -18vmax; }
+.ax-aurora i:nth-child(2) { background: var(--t-accent2); right: -16vmax; top: 18%; animation-duration: 46s; animation-delay: -12s; opacity: .11; }
+.ax-aurora i:nth-child(3) { background: var(--t-good); left: 30%; bottom: -26vmax; animation-duration: 54s; animation-delay: -30s; opacity: .07; }
+:root[data-theme="light"] .ax-aurora i { opacity: .10; }
+@keyframes ax-drift {
+  0% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(6vmax, 4vmax) scale(1.12); }
+  100% { transform: translate(-4vmax, 7vmax) scale(.95); }
 }

@@ -1747,6 +1747,22 @@ async def presence_all(request: Request):
     return [_presence(r) for r in await pool.fetch("SELECT * FROM presence ORDER BY updated_at DESC")]
 
 
+
+@app.get("/api/pulse")
+async def pulse(request: Request):
+    """Each agent's heartbeat: steps per hour over the last 24h, oldest first (24 buckets). The
+    agent cards draw it as a line, so a glance says who has been working and when. Owner-only:
+    an activity RATE is exactly what the anonymous floor zeroes (plan-18)."""
+    if not is_owner(request):
+        return Response(status_code=403)
+    rows = await pool.fetch(
+        "SELECT agent, least(23, floor(extract(epoch from now() - ts) / 3600))::int AS h, count(*) AS n "
+        "FROM steps WHERE ts > now() - interval '24 hours' GROUP BY 1, 2")
+    out: dict[str, list[int]] = {}
+    for r in rows:
+        out.setdefault(r["agent"], [0] * 24)[23 - r["h"]] = r["n"]
+    return out
+
 # ============================================================ system monitor
 def _gpu() -> list[dict]:
     out = []
