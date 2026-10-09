@@ -71,6 +71,18 @@
   "nucleus/canvas.py::publish\u001fupdate canvases set version=version+1, updated_at=now() where id=? returning version": [
    "canvas: trust lines, claim, shell"
   ],
+  "nucleus/copies.py::_exists\u001fselect to_regclass(?) is not null": [
+   "copies",
+   "copies builder"
+  ],
+  "nucleus/copies.py::stamped_graphs\u001fselect g.name from ag_catalog.ag_label l join ag_catalog.ag_graph g on g.graphid = l.graph where l.name = ?": [
+   "copies",
+   "copies builder"
+  ],
+  "nucleus/copies.py::stored_graph_digest\u001fselect * from cypher('memory', $q$ match (m:meta) return m.root_digest $q$) as (d agtype)": [
+   "copies",
+   "copies builder"
+  ],
   "nucleus/econ.py::_v2_tool_rows\u001fselect s.meta->>'registry_id' as rid, s.agent as caller, (t.goal_id is not null or exists ( select 1 from messages im where im.id = t.input_msg_id and (im.from_agent in ('pulse','owner') or im.from_agent like 'wa-%%' or im.from_org <> all(?)))) as dq from steps s join turns t on t.id = s.turn_id where s.kind = 'tool' and s.meta ? 'registry_id' and s.meta ? 'v' and s.ts >= ? and s.ts < ?": [
    "econ v2 mirror + version gate (4227 S2)",
    "econ v2 shadow (4227 S0)",
@@ -509,7 +521,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 310,
+  "debt_rows": 313,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -952,6 +964,24 @@
    "debt": "EXECUTED",
    "reason": "seed 10-09 canvas: runs only after _canvas() found the row (a missing id raises first), so the 0-row arm is unreachable; \u22651 observed in tests/test_canvas.py",
    "tk": "sha256t:bb8d2536e8727317a91c192d1d88abf1b745eb6a8c957e6a3df08462c6c74da4"
+  },
+  "nucleus/copies.py::_exists\u001fselect to_regclass(?) is not null": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "catalog/AGE read: it reads no stamped org relation (to_regclass is a catalog function; cypher() and ag_catalog are AGE's own tables, never stamped by fixture._ORG_RELS), so it can't climb past FIXTURE-DDL by design. Its answers are pinned by tests/test_copies.py (E0 true/false, D1 vs D2, D4 label vs no label) and the builder arms I1/I2 (plan-8018 S1, a3 #39203 (e))",
+   "tk": "sha256t:f3eebacbe8264d6a2212c7b9b924950fc4a91a3a04631ad5c4d26ea50abcd133"
+  },
+  "nucleus/copies.py::stamped_graphs\u001fselect g.name from ag_catalog.ag_label l join ag_catalog.ag_graph g on g.graphid = l.graph where l.name = ?": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "catalog/AGE read: it reads no stamped org relation (to_regclass is a catalog function; cypher() and ag_catalog are AGE's own tables, never stamped by fixture._ORG_RELS), so it can't climb past FIXTURE-DDL by design. Its answers are pinned by tests/test_copies.py (E0 true/false, D1 vs D2, D4 label vs no label) and the builder arms I1/I2 (plan-8018 S1, a3 #39203 (e))",
+   "tk": "sha256t:65ebe16f607760d2a0c911e66ab2217d027afd52d5721cdb50a77a3dea83f2ca"
+  },
+  "nucleus/copies.py::stored_graph_digest\u001fselect * from cypher('memory', $q$ match (m:meta) return m.root_digest $q$) as (d agtype)": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "catalog/AGE read: it reads no stamped org relation (to_regclass is a catalog function; cypher() and ag_catalog are AGE's own tables, never stamped by fixture._ORG_RELS), so it can't climb past FIXTURE-DDL by design. Its answers are pinned by tests/test_copies.py (E0 true/false, D1 vs D2, D4 label vs no label) and the builder arms I1/I2 (plan-8018 S1, a3 #39203 (e))",
+   "tk": "sha256t:7dd3e5d4da427b3750b6a6e282aec06477256ee99ad64adc961870c5bc831dd7"
   },
   "nucleus/dsn_census.py::clients\u001fselect current_user": {
    "admitted": "2026-09-30",

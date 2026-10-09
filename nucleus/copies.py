@@ -63,20 +63,28 @@ def root_digest(paths, root: Path = None) -> str:
 # Database rows a builder READS besides its md roots (a3 #39203: root set ≠ read set is a false FRESH). A CLOSED
 # set of static queries: the builder reads through read_rows() and the checker re-reads through the same call, so
 # both digest exactly the rows the build consumed. An absent relation digests as absent, never as empty-and-fine.
-READS = {
-    "kg.claim incidence": ("kg.claim", "SELECT DISTINCT entity, rel FROM kg.claim ORDER BY 1, 2"),
-}
+# Each read is a module constant executed BY NAME in read_rows, so sqlguard attributes it to that function.
+KG_INCIDENCE_SQL = "SELECT DISTINCT entity, rel FROM kg.claim ORDER BY 1, 2"
+READS = {"kg.claim incidence": "kg.claim"}             # read name → the relation it reads
 _REGCLASS_SQL = "SELECT to_regclass(%s) IS NOT NULL"
+
+
+def _exists(cur, relation: str) -> bool:
+    """One probe for "does this relation exist", shared by every reader (a failing SELECT would poison a caller's
+    transaction, so existence is asked first)."""
+    cur.execute(_REGCLASS_SQL, (relation,))
+    return bool(cur.fetchone()[0])
 
 
 def read_rows(cur, name: str):
     """The rows of READS[name], or None when its relation is absent (probed first: in one big transaction a failing
     SELECT would poison every later statement)."""
-    relation, sql = READS[name]
-    cur.execute(_REGCLASS_SQL, (relation,))
-    if not cur.fetchone()[0]:
+    if not _exists(cur, READS[name]):
         return None
-    cur.execute(sql)
+    if name == "kg.claim incidence":
+        cur.execute(KG_INCIDENCE_SQL)
+    else:                                                # unreachable while READS and this dispatch agree
+        raise KeyError(f"no static query for read {name!r}")
     return [tuple(r) for r in cur.fetchall()]
 
 
@@ -218,24 +226,20 @@ def _excused(rel: str, decl: dict, root: Path) -> bool:
 
 # The digest readers are STATIC SQL, one per declarable graph (AGE's cypher() takes its graph as a literal, and a
 # composed statement is a site sqlguard can't resolve). A graph without one here can't be declared: check() is LOUD.
-META_SQL = {
-    "memory": "SELECT * FROM cypher('memory', $q$ MATCH (m:Meta) RETURN m.root_digest $q$) AS (d agtype)",
-}
+MEMORY_META_SQL = "SELECT * FROM cypher('memory', $q$ MATCH (m:Meta) RETURN m.root_digest $q$) AS (d agtype)"
+META_SQL = {"memory": "MEMORY_META_SQL"}               # graph → the name of its static reader, executed by name
 
 
 def stored_graph_digest(conn, graph: str):
     """The root digest inside graph `graph`'s Meta vertex, or None (absent ⇒ the caller reads STALE)."""
+    if graph != "memory":                              # no static reader (META_SQL): check() is LOUD first
+        return None
     with conn.cursor() as cur:
+        if not _exists(cur, f'{graph}."{META_LABEL}"'):    # the graph or its Meta label is absent
+            return None
         cur.execute("LOAD 'age'")
         cur.execute('SET search_path = ag_catalog, "$user", public')
-        cur.execute("SELECT 1 FROM ag_catalog.ag_graph WHERE name = %s", (graph,))
-        if not cur.fetchone():
-            return None
-        cur.execute("SELECT 1 FROM ag_catalog.ag_label l JOIN ag_catalog.ag_graph g ON g.graphid = l.graph "
-                    "WHERE g.name = %s AND l.name = %s", (graph, META_LABEL))
-        if not cur.fetchone():
-            return None
-        cur.execute(META_SQL[graph])
+        cur.execute(MEMORY_META_SQL)
         rows = [str(r[0]).strip('"') for r in cur.fetchall() if r[0] is not None]
     return rows[0] if len(rows) == 1 else None          # zero or several Meta vertices: not one digest
 

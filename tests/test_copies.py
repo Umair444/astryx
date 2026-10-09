@@ -23,11 +23,11 @@ Arms (RED / GREEN / CONTROL):
   D6 GREEN    value_equal: equal file copy → FRESH; changed → STALE.
   K1 RED      the digest folds the kg.claim incidence the build reads: a changed kg.claim row → STALE; an
               undeclared read name → LOUD.
-  I1          (when memory/graph/ingest.py is present, or INGEST_SRC) the REAL ingest stamps its own digest in its
-              own transaction → FRESH; a fault-injected rollback leaves the previous digest (and the content) in place.
+  E0          the shared existence probe answers true and false; a graph with no static reader yields no digest.
+The builder's own arm (the REAL ingest stamps its digest in its transaction) is tests/test_copies_builder.py: it
+needs the gitignored memory/ tree, so it SKIPs where this file never does.
 Exit 0 pass · 1 fail · 77 could-not-run.
 """
-import importlib.util
 import json
 import os
 import sys
@@ -181,7 +181,15 @@ check("D6 an equal copy → FRESH", status(C.check(None, [ve], root), "file:dst"
 check("D6 a changed copy → STALE", status(C.check(None, [ve], root), "file:dst")[0][0] == "STALE")
 
 print("root digest inside the graph (fixture DB):")
-_fx = fixture_db()
+# Every relation the arms touch is created BEFORE the stamp (fixture_db's `extra`), so sqlguard credits the reads:
+# the graphs, the labels the arms write (AGE creates a label table on first use: DDL), and kg.claim.
+AGE_DDL = ("LOAD 'age'; SET search_path = ag_catalog, \"$user\", public; "
+           "SELECT create_graph('memory'); SELECT create_vlabel('memory', 'Meta'); "
+           "SELECT create_vlabel('memory', 'Concept'); "
+           "SELECT create_graph('shadow_copy'); SELECT create_vlabel('shadow_copy', 'Meta'); "
+           "SELECT create_graph('plain'); "
+           "CREATE SCHEMA kg; CREATE TABLE kg.claim (entity text, rel text)")
+_fx = fixture_db(extra=(AGE_DDL,))
 try:
     fx = _fx.__enter__()
 except Exception as e:  # noqa: BLE001
@@ -192,19 +200,17 @@ try:
     cur = conn.cursor()
     cur.execute("LOAD 'age'")
     cur.execute('SET search_path = ag_catalog, "$user", public')
-    cur.execute("SELECT count(*) FROM ag_graph WHERE name = 'memory'")
-    if not cur.fetchone()[0]:
-        cur.execute("SELECT create_graph('memory')")
     cur.execute("SELECT * FROM cypher('memory', $$ CREATE (:Concept {name: 'a'}) $$) AS (v agtype)")
 
     def stamp(graph, digest):
         cur.execute(f"SELECT * FROM cypher('{graph}', $q$ MERGE (m:Meta {{name: 'root'}}) "
                     f"SET m.root_digest = '{digest}' $q$) AS (v agtype)")
 
+    check("E0 the existence probe answers both ways", C._exists(cur, "kg.claim") and not C._exists(cur, "kg.absent"))
+    check("E0 an undeclarable graph has no digest reader → None", C.stored_graph_digest(conn, "shadow_copy") is None)
     res = C.check(conn, [decl()], root)
-    check("D1 no Meta vertex → STALE", status(res)[0] == ("STALE", "the copy carries no root digest"), repr(res))
-    cur.execute("CREATE SCHEMA IF NOT EXISTS kg")
-    cur.execute("CREATE TABLE IF NOT EXISTS kg.claim (entity text, rel text)")
+    check("D1 a Meta label but no Meta vertex → STALE",
+          status(res)[0] == ("STALE", "the copy carries no root digest"), repr(res))
     cur.execute("INSERT INTO kg.claim VALUES ('goal-1', 'state'), ('memory', 'type')")
 
     def want_now():
@@ -222,51 +228,22 @@ try:
     check("K1 CONTROL the row restored → FRESH again", status(res)[0][0] == "FRESH", repr(res))
     res = C.check(conn, [decl(reads=["kg.node everything"])], root)
     check("K1 a read outside the closed set → LOUD", status(res)[0][0] == "LOUD", repr(res))
+    real_reads = dict(C.READS)
+    C.READS["absent probe"] = "kg.absent"
+    check("K1 an absent read relation digests as absent (None), not as empty",
+          C.read_rows(cur, "absent probe") is None)
+    C.READS.clear()
+    C.READS.update(real_reads)
     (root / "memory" / "wiki" / "a.md").write_text("---\ntitle: a\n---\nalpha, edited\n")
     res = C.check(conn, [decl()], root)
     check("D3 a root edited after the stamp → STALE", status(res)[0][0] == "STALE"
           and "root moved" in status(res)[0][1], repr(res))
-    cur.execute("SELECT create_graph('shadow_copy')")
+    res = C.check(conn, [decl()], root)
+    check("D4 CONTROL a graph with no Meta label is not a copy", not status(res, "graph:plain"), repr(res))
     stamp("shadow_copy", "0" * 64)
     res = C.check(conn, [decl()], root)
     check("D4 a stamped graph with no declaration → LOUD UNDECLARED",
           status(res, "graph:shadow_copy") and status(res, "graph:shadow_copy")[0][0] == "LOUD", repr(res))
-    cur.execute("SELECT drop_graph('shadow_copy', true)")
-
-    # I1: the real builder writes its own digest, in its own transaction.
-    src = Path(os.environ.get("INGEST_SRC") or REPO / "memory" / "graph" / "ingest.py")
-    schema = Path(os.environ.get("INGEST_SCHEMA") or REPO / "memory" / "graph" / "schema.sql")
-    missing = [str(p) for p in (src, schema) if not p.exists()]
-    if missing:
-        print(f"  SKIP  I1 the builder arm can't run: {', '.join(missing)} absent (memory/ is gitignored; "
-              "set INGEST_SRC / INGEST_SCHEMA)")
-    else:
-        spec = importlib.util.spec_from_file_location("ingest_under_test", src)
-        ing = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(ing)
-        if "root_digest" not in src.read_text():
-            check("I1 the builder stamps a root digest", False, "ingest.py carries no root_digest write")
-        else:
-            cur.execute("SELECT drop_graph('memory', true)")
-            cur.execute(schema.read_text())
-            ing.WIKI, ing.ONTOLOGY_MD = root / "memory" / "wiki", root / "memory" / "ontology.md"
-            ing.run_ingest(fx["dsn"])
-            res = C.check(conn, [decl()], root)
-            check("I1 after a real ingest → FRESH", status(res)[0][0] == "FRESH", repr(res))
-            before = C.stored_graph_digest(conn, "memory")
-            (root / "memory" / "wiki" / "a.md").write_text("---\ntitle: a\n---\nalpha, edited again\n")
-
-            def boom(cur_, cy1):
-                raise RuntimeError("injected")
-            try:
-                ing.run_ingest(fx["dsn"], _fault=boom)
-            except RuntimeError:
-                pass
-            after = C.stored_graph_digest(conn, "memory")
-            check("I1 a rolled-back ingest leaves the previous digest", before == after and before is not None,
-                  f"{before} → {after}")
-            res = C.check(conn, [decl()], root)
-            check("I1 …which now reads STALE against the edited root", status(res)[0][0] == "STALE", repr(res))
     conn.close()
 finally:
     _fx.__exit__(None, None, None)
