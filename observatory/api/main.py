@@ -1203,9 +1203,11 @@ async def network_people(request: Request, min_shared: int = 1):
     """
     if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
         return Response(status_code=403)
+    # The details come from social_relation (people library 1a); this endpoint is OWNER-GATED above.
     people = await pool.fetch(
-        "SELECT org, id, kind, label, direct, relation, who, shape, confidence "
-        "FROM social_person")
+        "SELECT p.org, p.id, p.kind, p.label, p.direct, r.kind AS relation, r.context AS who, "
+        "r.evidence AS shape, r.confidence "
+        "FROM social_person p LEFT JOIN social_relation r ON r.org = p.org AND r.pid = p.id")
     knows = await pool.fetch(
         "SELECT a.org, a.src AS p1, b.src AS p2, count(*) AS w "
         "FROM social_edge a JOIN social_edge b "

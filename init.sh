@@ -346,6 +346,12 @@ _act_harden() { say "revoking PUBLIC CONNECT on the org's databases (plan-4918 P
     "$@" >/dev/null; }
 # <<< harden
 
+# people library 1a: social_relation's grants, the people_cleared / astryx_resident roles (resident NOLOGIN until
+# 1b), and the private AGE database astryx_people, born zero-window. The check and the act are one module.
+_chk_peoplegate() { venv/bin/python -m nucleus.people_gate check; }
+_act_peoplegate() { say "people gate: relation details readable only by people_cleared (accident-grade)"
+  venv/bin/python -m nucleus.people_gate apply >/dev/null; }
+
 _chk_venv() { [ -d venv ]; }
 # uv when present (fast, modern), python3 -m venv otherwise — SAME venv/ layout either
 # way, so every unit/hook path (venv/bin/python) is identical regardless of the creator.
@@ -482,7 +488,7 @@ _act_model() {
 # the precondition DAG, in dependency order (top depends on nothing).  name|class
 RECONCILE_NODES=(
   "pg|interior" "pgready|wait" "schema|interior" "harden|interior" "hardencut|halt" "venv|interior" "deps|interior"
-  "model|interior" "chan|interior" "obs|interior" "obskey|interior" "ident|interior"
+  "peoplegate|interior" "model|interior" "chan|interior" "obs|interior" "obskey|interior" "ident|interior"
   "units|interior" "law|interior" "prehook|interior" "ccompact|interior" "prreview|interior" "login|halt"
   "seed|interior" "prompt|interior")
 

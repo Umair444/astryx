@@ -257,25 +257,25 @@ def write_pg(g: dict, personas: dict | None = None) -> dict:
     DELETE-then-INSERT scoped to THIS org's rows: the table is multi-org by design
     (federation peers replicate their structure in), so a rebuild must never touch
     rows another org sent us.
+
+    DETAILS ARE NOT WRITTEN HERE (people library 1a). What a relation IS lives in social_relation
+    (nucleus/people_gate.py), which this DELETE never touches, so a nightly rebuild can't erase or
+    re-expose a detail. `personas` is accepted for the caller's sake and ignored.
     """
     import psycopg
     dsn = _dsn()
     if not dsn:
         raise RuntimeError("no ASTRYX_DSN")
     org = _org()
-    personas = personas or {}
     with psycopg.connect(dsn) as conn:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM social_edge WHERE org=%s", (org,))
             cur.execute("DELETE FROM social_person WHERE org=%s", (org,))
             for p_ in g.get("people", {}).values():
-                per = personas.get(p_["id"]) or {}
                 cur.execute(
-                    "INSERT INTO social_person (org,id,kind,label,direct,relation,who,shape,confidence) "
-                    "VALUES (%s,%s,'person',%s,%s,%s,%s,%s,%s)",
-                    (org, p_["id"], p_["label"], bool(p_.get("direct")),
-                     per.get("relation"), per.get("who"), per.get("shape"),
-                     per.get("confidence")))
+                    "INSERT INTO social_person (org,id,kind,label,direct) "
+                    "VALUES (%s,%s,'person',%s,%s)",
+                    (org, p_["id"], p_["label"], bool(p_.get("direct"))))
             for gg in g.get("groups", {}).values():
                 cur.execute(
                     "INSERT INTO social_person (org,id,kind,label) VALUES (%s,%s,'group',%s)",

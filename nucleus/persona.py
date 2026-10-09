@@ -46,8 +46,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-# Storage is social_person columns in postgres — the same store as the people graph,
-# per the owner's postgres-for-everything ruling. No JSON cache: the tier/ file era
+# Storage is the social_relation table in postgres, keyed to the people graph's ids, per the
+# owner's postgres-for-everything ruling; readable only by people_cleared (nucleus/people_gate.py). No JSON cache: the tier/ file era
 # ended when it produced a second store and a double-serve.
 
 MIN_MSGS = 8            # below this, every derived statistic is noise
@@ -186,7 +186,7 @@ def build(limit: int = MAX_CONTACTS, budget_s: float = BUDGET_S) -> dict:
 
 
 def load_pg() -> dict:
-    """id -> persona fields, from social_person. The one store."""
+    """id -> persona fields, from social_relation (people library 1a: the details' one store)."""
     from nucleus import people
     import psycopg
     dsn = people._dsn()
@@ -194,15 +194,15 @@ def load_pg() -> dict:
         return {}
     out = {}
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
-        cur.execute("SELECT id, relation, who, shape, confidence FROM social_person "
-                    "WHERE org=%s AND kind='person'", (people._org(),))
+        cur.execute("SELECT pid, kind, context, evidence, confidence FROM social_relation "
+                    "WHERE org=%s", (people._org(),))
         for i, rel, who, shp, conf in cur.fetchall():
             out[i] = {"relation": rel, "who": who, "shape": shp, "confidence": conf}
     return out
 
 
 def apply_pg(personas: dict) -> int:
-    """Write derived persona fields onto their social_person rows."""
+    """Write derived persona fields into social_relation, for people the graph knows."""
     from nucleus import people
     import psycopg
     dsn = people._dsn()
@@ -213,10 +213,14 @@ def apply_pg(personas: dict) -> int:
         with conn.cursor() as cur:
             for pid, per in personas.items():
                 cur.execute(
-                    "UPDATE social_person SET shape=%s, relation=COALESCE(%s,relation), "
-                    "who=COALESCE(%s,who), confidence=COALESCE(%s,confidence) "
-                    "WHERE org=%s AND id=%s",
-                    (per.get("shape"), per.get("relation"), per.get("who"),
+                    "INSERT INTO social_relation (org,pid,kind,context,evidence,confidence) "
+                    "SELECT org, id, %s, %s, %s, %s FROM social_person WHERE org=%s AND id=%s "
+                    "ON CONFLICT (org,pid) DO UPDATE SET evidence=EXCLUDED.evidence, "
+                    "kind=COALESCE(EXCLUDED.kind,social_relation.kind), "
+                    "context=COALESCE(EXCLUDED.context,social_relation.context), "
+                    "confidence=COALESCE(EXCLUDED.confidence,social_relation.confidence), "
+                    "updated_at=now()",
+                    (per.get("relation"), per.get("who"), per.get("shape"),
                      per.get("confidence"), people._org(), pid))
                 n += cur.rowcount
         conn.commit()
@@ -230,7 +234,7 @@ def main() -> int:
             print(f"  note: {n}")
         return 77
     n = apply_pg(g["personas"])
-    print(f"  {n} social_person rows updated")
+    print(f"  {n} social_relation rows written")
     rows = sorted(g["personas"].values(), key=lambda p: -p.get("messages", 0))
     print(f"  {len(rows)} personas derived\n")
     for p in rows[:12]:

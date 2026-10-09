@@ -504,6 +504,23 @@ CREATE TABLE IF NOT EXISTS social_edge (
   PRIMARY KEY (org, src, dst, rel)
 );
 CREATE INDEX IF NOT EXISTS social_edge_src ON social_edge (org, src);
+-- The DETAILS of a relation (people library, seed #35894): what it IS, who the person is to the owner, the
+-- behavioural evidence, how sure we are. NOT network layer: readable only by people_cleared (nucleus/people_gate.py,
+-- which holds the grants and states the grade: ACCIDENT-GRADE while residents can read the superuser credential).
+-- Moved out of social_person's relation/who/shape/confidence (kind/context/evidence/confidence) by
+-- nucleus/people_move.py. Not rebuilt nightly: social_person's DELETE+INSERT never touches it.
+CREATE TABLE IF NOT EXISTS social_relation (
+  org        text NOT NULL,
+  pid        text NOT NULL,                       -- social_person.id
+  kind       text,                                -- model-derived class (close-friend…), was social_person.relation
+  closeness  text,                                -- no writer yet
+  context    text,                                -- one derived sentence, was social_person.who; never a quote
+  confidence text,
+  evidence   text,                                -- behavioural summary (persona.py), was social_person.shape
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (org, pid)
+);
+REVOKE ALL ON social_relation FROM PUBLIC;
 
 -- CLASSIFICATIONS (goal 4227, S4): one LABEL per prompt from the pluggable classifier, which
 -- the nudge hook (hooks/nudge.py) reads for RECURRENCE of a task family. It holds labels ONLY.
