@@ -19,6 +19,9 @@ OBJECTS (a1 #38450): the most load-bearing things schema.sql makes aren't column
 every ear, and a hand DROP of it silences the wire while the columns stay identical. So triggers (non-internal),
 public non-extension functions (by signature), views and indexes are judged MISSING-only: an object the files
 define that live lacks is drift. EXTRA objects are reported, never judged (hand-added indexes are harmless).
+CHANGED (a1 #38541): a name is not a body. `CREATE OR REPLACE FUNCTION messages_notify()` with a body that no longer
+notifies keeps its name and signature. So every object present on BOTH sides is also compared by the md5 of its
+server-rendered definition (pg_get_functiondef / triggerdef / viewdef / indexdef); a difference is drift.
 
     venv/bin/python -m nucleus.schema_parity     # exit 0 parity, 1 drift (printed), 77 no fixture possible
 """
@@ -79,6 +82,36 @@ def compare_objects(expected: dict, live: dict) -> dict:
     return {"missing": missing, "extra_reported": extra, "drift": bool(missing)}
 
 
+def definitions(conn) -> dict:
+    """{kind: {name: md5(definition)}}, the same domain and names as objects(). Aggregates are out (they have no
+    functiondef); only plain functions and procedures."""
+    q = {
+        "trigger": "SELECT n.nspname || '.' || c.relname || '.' || t.tgname, md5(pg_get_triggerdef(t.oid)) "
+                   "FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace "
+                   "WHERE NOT t.tgisinternal AND n.nspname <> ALL(%s)",
+        "function": "SELECT n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')', "
+                    "md5(pg_get_functiondef(p.oid)) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+                    "WHERE p.prokind IN ('f', 'p') AND n.nspname <> ALL(%s) AND n.nspname NOT LIKE 'pg_%%' "
+                    "AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_proc'::regclass "
+                    "AND d.objid = p.oid AND d.deptype = 'e')",
+        "view": "SELECT n.nspname || '.' || c.relname, md5(pg_get_viewdef(c.oid)) FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind IN ('v', 'm') AND n.nspname <> ALL(%s) "
+                "AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid "
+                "AND d.deptype = 'e')",
+        "index": "SELECT n.nspname || '.' || c.relname, md5(pg_get_indexdef(c.oid)) FROM pg_class c "
+                 "JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind IN ('i', 'I') AND n.nspname <> ALL(%s) "
+                 "AND n.nspname NOT LIKE 'pg_toast%%' AND NOT EXISTS (SELECT 1 FROM pg_depend d "
+                 "WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e')",
+    }
+    return {k: dict(conn.execute(v, (list(SYSTEM),)).fetchall()) for k, v in q.items()}
+
+
+def compare_definitions(expected: dict, live: dict) -> list:
+    """An object on BOTH sides whose definition differs (missing/extra is compare_objects' job)."""
+    return sorted(f"{k} {n}" for k, d in expected.items() for n, h in d.items()
+                  if n in live.get(k, {}) and live[k][n] != h)
+
+
 def compare(expected: dict, live: dict) -> dict:
     """The diff, as sorted lists of strings. `drift` is everything judged; `live_only` is reported only."""
     missing, extra, typed = [], [], []
@@ -110,14 +143,15 @@ def run(live_dsn: str) -> dict:
     import psycopg
     from nucleus.sqlguard.fixture import fixture_db
     with fixture_db(extra=expected_extra()) as fx, psycopg.connect(fx["dsn"], autocommit=True) as f:
-        exp, exp_o = shape(f), objects(f)
+        exp, exp_o, exp_d = shape(f), objects(f), definitions(f)
     with psycopg.connect(live_dsn, autocommit=True) as c:
         c.execute("SET default_transaction_read_only = on")
-        got, got_o = shape(c), objects(c)
+        got, got_o, got_d = shape(c), objects(c), definitions(c)
     out = compare(exp, got)
     o = compare_objects(exp_o, got_o)
     out["objects_missing"], out["objects_extra"] = o["missing"], o["extra_reported"]
-    out["drift"] = out["drift"] or o["drift"]
+    out["objects_changed"] = compare_definitions(exp_d, got_d)
+    out["drift"] = out["drift"] or o["drift"] or bool(out["objects_changed"])
     return out
 
 
@@ -128,7 +162,7 @@ def main() -> int:
     except FixtureUnavailable as e:
         print(f"schema_parity: NOT SEARCHED ({e})")
         return 77
-    for k in ("missing", "extra", "type", "objects_missing"):
+    for k in ("missing", "extra", "type", "objects_missing", "objects_changed"):
         for x in d[k]:
             print(f"  DRIFT {k.upper()}: {x}")
     if d["objects_extra"]:
