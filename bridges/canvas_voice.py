@@ -40,7 +40,9 @@ router = APIRouter()
 
 MODEL = env("CANVAS_VOICE_MODEL", "gpt-realtime")
 VOICE = env("CANVAS_VOICE_VOICE", "marin")
-TRANSCRIBE = env("CANVAS_VOICE_TRANSCRIBE", "gpt-4o-mini-transcribe")
+TRANSCRIBE = env("CANVAS_VOICE_TRANSCRIBE", "gpt-4o-mini-transcribe")   # no language pinned: it auto-detects
+# The owner speaks any language; the voice always ANSWERS in this one (owner, 2026-10-09).
+REPLY_LANG = env("CANVAS_VOICE_REPLY_LANGUAGE", "English")
 FLOOR_SECONDS = 60                                 # a minted session that never reports costs this
 
 
@@ -120,6 +122,10 @@ async def voice_status(request: Request):
 INSTRUCTIONS = """You are the voice of astryx — {owner_word} personal organisation of AI agents. \
 You speak with the owner, out loud.
 
+Language: the owner may speak to you in ANY language (Urdu, Punjabi, English, a mix). Understand \
+it as it comes, never ask him to switch, and ALWAYS answer out loud in {reply_lang}, whatever \
+language he used. When you ask an agent something, write the request in {reply_lang} too.
+
 How you sound: warm, brisk, never verbose. Short spoken sentences. No lists, no markdown, no \
 reading out IDs or URLs. One idea at a time. If you're interrupted, stop and listen.
 
@@ -188,7 +194,8 @@ async def voice_session(request: Request):
         return deny(429, "too many voice sessions this hour")
     allow = allowlist(v)
     blurbs = "; ".join(f"{a} ({C._blurb(a) or 'agent'})" for a in allow) or "none"
-    instructions = INSTRUCTIONS.format(owner_word="the owner's" if v.owner else "an", home=_home(), roster=blurbs)
+    instructions = INSTRUCTIONS.format(owner_word="the owner's" if v.owner else "an", home=_home(), roster=blurbs,
+                                       reply_lang=REPLY_LANG)
     cfg = {
         "expires_after": {"anchor": "created_at", "seconds": 120},   # only has to survive the SDP exchange
         "session": {
