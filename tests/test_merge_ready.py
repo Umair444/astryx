@@ -627,6 +627,87 @@ check("a changed set speaks at once", m.decide(s, S1 + [("passed:z", "l")], N1, 
 check("lost state re-alarms (the loud side)", m.decide({}, S1, [], now=t0))
 check("all clear → silent", not m.decide({"standing": ["passed:x"]}, [], [], now=t0))
 
+# ----------------------------------------------------------------------------------------------- 10
+print("\n10. open review requests (a1 #39987, seed #39989):")
+N0 = NOW.timestamp()
+H = 3600
+check("running_s: a 10h span holding a 6h dark span is 4h of running time",
+      abs(m.running_s(N0 - 10 * H, N0, [(N0 - 8 * H, N0 - 2 * H)]) - 4 * H) < 1)
+check("running_s: a dark span outside the window costs nothing", m.running_s(N0 - 3 * H, N0, [(0, 10)]) == 3 * H)
+
+
+def rq(i, age_h, sender="abstractor-1", to="seed", routed=False, kind="prose", commits=(), thread="t-rq"):
+    return {"id": i, "ts": N0 - age_h * H, "sender": sender, "to": to, "thread": thread, "routed": routed,
+            "kind": kind, "label": f"req {i}", "commits": list(commits)}
+
+
+never = lambda cs: False                                         # noqa: E731
+o = m.open_requests([rq(1, 13)], {}, never, N0, [])
+check("a prose request 13h old with no reply → ONE NOTICE 'OPEN REQUEST' (prose never re-nags)",
+      len(o) == 1 and o[0][0] == "reqp:1" and not o[0][2] and "OPEN REQUEST #1" in o[0][1], str(o))
+check("...11h old → not yet", m.open_requests([rq(1, 11)], {}, never, N0, []) == [])
+check("...13h of WALL time with a 6h host-down inside → 7h running → not yet",
+      m.open_requests([rq(1, 13)], {}, never, N0, [(N0 - 10 * H, N0 - 4 * H)]) == [])
+check("a later reply on its thread from anyone but the requester CLOSES it",
+      m.open_requests([rq(1, 13)], {"t-rq": [(2, "abstractor-3")]}, never, N0, []) == [])
+check("...the requester's own later message does not", len(m.open_requests(
+      [rq(1, 13)], {"t-rq": [(2, "abstractor-1"), (3, "pulse")]}, never, N0, [])) == 1)
+check("...a reply on ANOTHER thread does not", len(m.open_requests(
+      [rq(1, 13)], {"t-other": [(2, "abstractor-3")]}, never, N0, [])) == 1)
+check("...a reply EARLIER than the request does not", len(m.open_requests(
+      [rq(5, 13)], {"t-rq": [(2, "abstractor-3")]}, never, N0, [])) == 1)
+R = rq(10, 13, sender="seed", to="abstractor-2", routed=True)
+check("a ROUTED request (seed → a2): the original requester replying does NOT close it (the a1 #34877 shape)",
+      len(m.open_requests([R], {"t-rq": [(11, "abstractor-1")]}, never, N0, [])) == 1)
+check("...its addressee replying does", m.open_requests([R], {"t-rq": [(11, "abstractor-2")]}, never, N0, []) == [])
+o = m.open_requests([rq(1, 13, kind="marker", commits=["x"])], {}, never, N0, [])
+check("a review-request MARKER open 13h → STANDING (re-nags until answered)",
+      len(o) == 1 and o[0][0] == "req:1" and o[0][2], str(o))
+check("...a merge-ready covering it, or its commits landing, CLOSES it (answered())",
+      m.open_requests([rq(1, 13, kind="marker", commits=["x"])], {}, lambda cs: True, N0, []) == [])
+check("...a request naming NO commit can only close by a reply (answered() isn't consulted on nothing)",
+      len(m.open_requests([rq(1, 13)], {}, lambda cs: True, N0, [])) == 1)
+
+# through evaluate(): the grammar, the prose lead, and answered() against real git
+git("checkout", "-q", "-b", "rq")
+crq = commit("rq.txt", "rq\n", "rq: a change nobody reviewed")
+git("checkout", "-q", "main")
+head = git("rev-parse", "main")
+OLD = NOW - dt.timedelta(hours=13)
+RQ_M = msg(POST + 500, f"please look\nreview-request: rq {head[:7]}..{crq[:7]}", sender="abstractor-1", ts=OLD)
+RQ_P = msg(POST + 501, f"REVIEW REQUEST: branch rq @ {crq[:7]}", sender="abstractor-1", ts=OLD)
+RQ_Q = msg(POST + 502, f"a note.\nquoting: REVIEW REQUEST: rq @ {crq[:7]}", sender="abstractor-1", ts=OLD)
+RQ_L = msg(POST + 503, f"REVIEW REQUEST: an old one @ {head[:7]}", sender="abstractor-1", ts=OLD)
+RQ_BAD = msg(POST + 504, "review-request: rq notarange", sender="abstractor-1", ts=OLD)
+
+
+def evq(msgs, prose, later=None, dark=()):
+    st_, no_, _tr, dom_ = m.evaluate(msgs, [], lambda *a: [], T, now=N0,
+                                     requests={"prose": prose, "later": later or {}, "dark": list(dark)})
+    return st_, no_, dom_
+
+
+st_, no_, dom_ = evq([RQ_M, RQ_BAD], [RQ_P, RQ_Q, RQ_L])
+S_ = "\n".join(x[1] for x in st_)
+N_ = "\n".join(x[1] for x in no_)
+check("evaluate: a review-request: MARKER, unanswered 13h → STANDING OPEN REQUEST",
+      f"OPEN REQUEST #{POST + 500}" in S_ and "rq " in S_, S_)
+check("evaluate: a prose 'REVIEW REQUEST' LEAD → NOTICE OPEN REQUEST", f"OPEN REQUEST #{POST + 501}" in N_, N_)
+check("evaluate: 'REVIEW REQUEST' quoted below the lead is NOT a request", f"#{POST + 502}" not in N_ + S_, N_)
+check("evaluate: a request naming only LANDED commits reads answered (all landed in main)",
+      f"#{POST + 503}" not in N_ + S_, N_)
+check("evaluate: a malformed review-request: → MALFORMED, not silently dropped",
+      f"MALFORMED marker #{POST + 504}" in N_, N_)
+check("evaluate: the domain states the requests read and the running-time rule",
+      "OPEN REQUESTS:" in dom_ and "RUNNING time" in dom_, dom_)
+MK_RQ = msg(POST + 510, f"PASS\nmerge-ready: rq {head[:7]}..{crq[:7]}", sender="abstractor-2")
+st_, no_, _d = evq([RQ_M, MK_RQ], [RQ_P])
+check("evaluate: a merge-ready marker on the range closes BOTH the marker and the prose request",
+      "OPEN REQUEST" not in "\n".join(x[1] for x in st_ + no_), str(st_ + no_))
+st_, no_, _tr_, dom_ = m.evaluate([RQ_M], [], lambda *a: [], T, now=N0)
+check("evaluate WITHOUT requests (old callers) judges none, and the domain says so",
+      "OPEN REQUEST" not in "\n".join(x[1] for x in st_) and "not judged this run" in dom_, dom_)
+
 # ------------------------------------------------------------------------------------------------ 9
 print("\n9. entrypoint (pulse_run.Ctx on a sqlguard fixture):")
 try:
@@ -682,6 +763,35 @@ if fx is not None:
         m.REPO = T
         check("a blind checker reports ONE 'UNVERIFIABLE' line and judges nothing",
               blind.count("UNVERIFIABLE") == 1 and "PASSED" not in blind, blind)
+        # OPEN REQUESTS through the entrypoint's own three queries, each driven at 0 rows and >=1 row (sqlguard's
+        # W rung): the runs above had no request and no >6h gap, so the prose and dark queries answered 0 rows
+        # and the thread query never ran. Now a prose request 13h old with NO reply, then a reply.
+        def put_at(frm, body, hours_ago, thread, to="seed"):
+            return conn.execute("INSERT INTO messages (from_agent, from_org, to_agent, thread, body, ts) VALUES "
+                                "(%s,'local',%s,%s,%s, now() - make_interval(hours => %s)) RETURNING id",
+                                (frm, to, thread, body, hours_ago)).fetchone()[0]
+        for hh in (14, 10, 6, 2):                        # a LIVE wire: traffic every 4h, so no silence reads as
+            put_at("pulse", "heartbeat", hh, "t-ep-hb")  # host-down (a lone old row would, and discount itself)
+        rq_id = put_at("abstractor-1", f"REVIEW REQUEST: branch rq @ {crq[:7]}", 13, "t-ep-rq")
+        rqx = m._requests(TempCtx({}, conn), [])
+        check("entrypoint: the prose-request query finds the 13h request (>=1 row)",
+              any(r["id"] == rq_id for r in rqx["prose"]), str([r["id"] for r in rqx["prose"]]))
+        check("entrypoint: its thread has no later reply yet (the thread query answers 0 rows for it)",
+              "t-ep-rq" not in rqx["later"], str(rqx["later"]))
+        out_rq = m.merge_ready(TempCtx({}, conn)) or ""
+        check("entrypoint: an unanswered 13h request reports OPEN REQUEST to seed", f"OPEN REQUEST #{rq_id}" in out_rq,
+              out_rq)
+        put_at("abstractor-2", "looking now", 12, "t-ep-rq", to="abstractor-1")
+        rqx = m._requests(TempCtx({}, conn), [])
+        check("entrypoint: the reply is read (the thread query answers >=1 row)",
+              any(f == "abstractor-2" for _i, f in rqx["later"].get("t-ep-rq", [])), str(rqx["later"]))
+        check("entrypoint: ...and the request is no longer open",
+              f"OPEN REQUEST #{rq_id}" not in (m.merge_ready(TempCtx({}, conn)) or ""))
+        check("entrypoint: no wire gap > 6h yet → the dark query answers 0 rows", rqx["dark"] == [], str(rqx["dark"]))
+        put_at("builder", "a lone row before a long silence", 40, "t-ep-dark")
+        rqx = m._requests(TempCtx({}, conn), [])
+        check("entrypoint: a >6h wire silence is read as a dark span (>=1 row)",
+              len(rqx["dark"]) >= 1 and all(b - a > m.DARK_GAP_S for a, b in rqx["dark"]), str(rqx["dark"]))
     finally:
         conn.close()
         _fx.__exit__(None, None, None)
