@@ -341,6 +341,9 @@ def test_later_rows_query_on_a_real_db_at_zero_and_one_rows():
                   "delivered", 29)
         out = _MOD["outbound_stuck"](C({})) or ""
         assert f"#{res} (resend)" in out, out                                                 # >=1 candidate row
+        rep = put("memory", "abstractor-3", "Review request: the .absolute() switch", "delivered", 28)
+        out = _MOD["outbound_stuck"](C({})) or ""                  # the projected `resend` bool must read FALSE too
+        assert f"#{rep}" in out and f"#{rep} (resend)" not in out, out                       # (sqlguard: RESPONSIVE)
         conn.close()
     finally:
         fxc.__exit__(None, None, None)
