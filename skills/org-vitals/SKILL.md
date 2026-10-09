@@ -22,7 +22,7 @@ media probes. Pass `--doctor` when you're actually diagnosing, not for a routine
 | Panel | Healthy looks like | The trap it avoids |
 |---|---|---|
 | git | `0 ahead / 0 behind` on main | branching off a local main ahead of origin drags others' unpushed commits into your PR |
-| continuity | `(no >6h gap in steps …)` | after an outage, boot backlog looks like stuck messages and live-window gates (econ v2 shadow, wake_marker) go red on an empty window; name the gap first, then reproduce each red. A gap that began before the 14d window is still named (`VITALS_DARK_DAYS` sets the window) |
+| continuity | `(no >6h gap in steps …)` | a steps hole has two causes: **HOST/PULSE DARK** (longest message silence >6h: expect boot backlog and vacuous live-window gates like econ v2 shadow and wake_marker) and **PULSE UP, NO AGENT TURNED** (≤6h: the pulse kept writing, nobody turned: a wedge or quota shed, a FINDING). Classified by message silence, not message count, because the pulse boots before the agents. A gap that began before the 14d window is still named (`VITALS_DARK_DAYS` sets the window) |
 | doctor (`--doctor`) | only reds your baseline already explains | a doctor red is TWO claims (what failed, and why): reproduce both before acting |
 | gate suite | the stamp's verdict line, `failed=0` | reads the stamp's CONTENT, not its age (a failed run writes a fresh stamp); lists UNVERIFIED gates by **name**, because a swapped skip hides behind an unchanged count |
 | triggers | `(none overdue)` | probes `next_fire < now()-15min`, never `last_eval` age, which marks every weekly/monthly trigger stale by design |
