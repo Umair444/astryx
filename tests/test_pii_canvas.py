@@ -16,7 +16,9 @@ arms have already run. Arms:
      live data value is scanned; the same state next run is silent; a canvas that becomes SHARED
      re-speaks; a pinned LOCATION is silent and never enters `open`; content written after the run's
      start is not scanned (and checked_at stays honest); deleting the row discharges the finding.
-  E. end to end: the sweep's state, written to the trigger row, drives the real gate.
+  E. end to end: the sweep's state, written to the trigger row, drives the real gate (share, and a
+     scanned-and-flagged data value withheld by its finding).
+  T. tripwire: no tracked code retitles a canvas (meta freshness keys on created_at because of it).
 Exit 0 pass · 1 fail · 77 could-not-run (partial counts).
 """
 import importlib.util
@@ -116,6 +118,22 @@ try:
     check("the gate's reasons carry no value (shapes only)",
           FAKE_PHONE not in json.dumps(cv.share_blockers(conn, c1)))
 
+    # TRIPWIRE (a3 #37123): meta freshness keys on canvases.created_at ONLY because nothing retitles. A
+    # tracked UPDATE of title/brief would serve an unscanned new title for up to 5 minutes; this arm forces
+    # the key to move with any such path. A direct DB UPDATE stays detection-grade (next sweep flags it).
+    import re
+    import subprocess
+    RETITLE = re.compile(r"UPDATE\s+canvases\W+SET\W.{0,200}?\b(title|brief)\s*=", re.I | re.S)
+    check("tripwire control: the pattern sees a retitle, plain or split across python literals",
+          RETITLE.search("UPDATE canvases SET title=%s WHERE id=%s")
+          and RETITLE.search('"UPDATE canvases "\n  "SET updated_at=now(), brief = %s"'))
+    tracked = subprocess.run(["git", "-C", str(REPO), "ls-files", "*.py", "*.sql", "*.sh", "*.ts", "*.tsx"],
+                             capture_output=True, text=True).stdout.split()
+    hits = [f for f in tracked if f != "tests/test_pii_canvas.py"
+            and RETITLE.search((REPO / f).read_text(errors="ignore"))]
+    check(f"tripwire: no tracked code retitles a canvas ({len(tracked)} files read) — if one does, meta_view "
+          "must key on a metadata timestamp it bumps", tracked and not hits, str(hits))
+
     print("\nS. the sweep (gitignored body):")
     BODY = Path(os.environ.get("PII_SWEEP_SRC") or REPO / "triggers" / "steward" / "pii_sweep.py")
     mod = None
@@ -204,6 +222,9 @@ try:
               any("changed after" in x for x in b_sh), str(b_sh))
         b_own = cv.share_blockers(conn, own)
         check("the canvas with an open finding is refused", any("owner-PII" in x for x in b_own), str(b_own))
+        d_own = cv.data_blockers(conn, own)       # its data value was SCANNED (not fresh) and FLAGGED (a3 M3)
+        check("a scanned, flagged data value is withheld by its FINDING, not by freshness",
+              any("owner-PII finding" in x for x in d_own) and not any("pending" in x for x in d_own), str(d_own))
         conn.execute("DELETE FROM canvas_versions WHERE canvas_id=%s", (own,))
         conn.execute("DELETE FROM canvas_data WHERE canvas_id=%s", (own,))
         fire(TempCtx(st))

@@ -307,7 +307,9 @@ def meta_view(conn, cid: int) -> dict:
     "notes": {version: [reasons]} (only the versions whose note must be masked)}. Title and brief are
     written only at create (there is no retitle path), so their freshness is canvases.created_at; a
     note is immutable with its version, so its freshness is that version's ts. TRIP: a retitle path
-    must bump a metadata timestamp, or this would serve an unscanned new title."""
+    must bump a metadata timestamp, or this would serve an unscanned new title; tests/test_pii_canvas.py
+    fails on any tracked UPDATE of title/brief. A direct DB UPDATE is DETECTION-grade only: the next
+    sweep (≤5 min) flags it, and until then the new title is served."""
     out, checked, srcs = _verdict(conn, cid)
     vers = conn.execute("SELECT version, ts FROM canvas_versions WHERE canvas_id = %s", (cid,)).fetchall()
     if out:                                            # no verdict at all: mask everything, fail closed

@@ -178,6 +178,12 @@ def api(url):
         arm("once scanned, a FLAGGED version stays withheld; the clean one is served",
             g2b.get("html") is None and "owner-PII" in g2b["withheld"][0]
             and who("guest").get(f"{A}/canvases/{s_id}/render?v=1").json().get("html"), g2b)
+        verdict({"d": {"cid": s_id, "src": f"canvas:{s_id}:data:k", "loc": "x", "label": "phone-bare"}})
+        gdf = who("guest").get(f"{A}/canvases/{s_id}/data")       # scanned AFTER the write: only the FINDING holds it
+        arm("a scanned, FLAGGED data value is withheld from the guest (a3 M3); the owner reads it",
+            gdf.json() == {} and "withheld" in gdf.headers.get("x-astryx-withheld", "")
+            and "pending" not in gdf.headers.get("x-astryx-withheld", "")
+            and who("owner").get(f"{A}/canvases/{s_id}/data").json() == {"k": 1}, gdf.headers)
         # C2 (a3 #36233): title/brief and publish NOTES are agent-written and served to guests — gated too
         with psycopg_conn(url) as pc:
             cv_lib.publish(pc, s_id, "<p>three</p>", "painter", "added 15555550123")
