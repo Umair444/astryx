@@ -99,16 +99,18 @@ def main():
         # ── P0-b: the hardening precondition (a1's binding NULL-ACL arm) ──────────────────────────────────
         scope = rs.RunScope(dsn, root=ORACLE_BASE).open()
         nul = f"{scope.role}_nullacl"
-        adm.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(nul)))      # admin-owned, NULL datacl
+        # every decoy this oracle plants is ALLOW_CONNECTIONS false: a concurrent REAL run's datallowconn scan never
+        # sees it (a2 F3 #34875), while the arms evaluate it by NAME
+        adm.execute(sql.SQL("CREATE DATABASE {} ALLOW_CONNECTIONS false").format(sql.Identifier(nul)))      # admin-owned, NULL datacl
         made_dbs.append(nul)
         acl = adm.execute("SELECT datacl FROM pg_database WHERE datname=%s", (nul,)).fetchone()[0]
         check("fixture: the probe DB has a NULL (default) ACL", acl is None, str(acl))
         check("P0-b: a NULL-ACL database the run doesn't own is UNHARDENED (the server resolves the default)",
-              nul in bp.unhardened(adm, scope.role), "")
+              nul in bp.unhardened(adm, scope.role, names=[nul]), "")
         adm.execute(sql.SQL(bp.P0A).format(sql.Identifier(nul)))
-        check("P0-b control: after the P0-a REVOKE it is hardened", nul not in bp.unhardened(adm, scope.role), "")
+        check("P0-b control: after the P0-a REVOKE it is hardened", nul not in bp.unhardened(adm, scope.role, names=[nul]), "")
         own = scope.create_db(f"{scope.role}_own")
-        check("P0-b: a database the RUN owns is never counted", own not in bp.unhardened(adm, scope.role), "")
+        check("P0-b: a database the RUN owns is never counted", own not in bp.unhardened(adm, scope.role, names=[own]), "")
         # a1 BC-1: the exemption is a LITERAL prefix, never a LIKE: lookalikes are ACCUSED, a real one exempt
         pid = os.getpid()
         look = [f"astryxAfxBprod_{pid}", f"astryx-fx-prod-{pid}"]
@@ -116,10 +118,13 @@ def main():
         live_wp = f"astryx_wakeprobe_{pid}"                        # the declared class, creator ALIVE (this pid)
         deadp = subprocess.Popen(["true"]); deadp.wait()
         dead_wp = f"astryx_wakeprobe_{deadp.pid}"                  # the declared class, creator GONE (the 3730269 case)
-        for d in look + [real_fx, live_wp, dead_wp]:
-            adm.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(d)))
+        planted = look + [real_fx, live_wp, dead_wp]
+        for d in planted:
+            adm.execute(sql.SQL("CREATE DATABASE {} ALLOW_CONNECTIONS false").format(sql.Identifier(d)))
             made_dbs.append(d)
-        uh = bp.unhardened(adm, scope.role)
+        uh = bp.unhardened(adm, scope.role, names=planted)
+        check("F3: every decoy is INVISIBLE to a real run's scan (ALLOW_CONNECTIONS false), so it can't block one",
+              not any(d in bp.unhardened(adm, scope.role) for d in planted + [nul]), "")
         check("BC-1: lookalike names ('_' as a wildcard would exempt them) are ACCUSED", all(d in uh for d in look), str(uh))
         check("a2 BC: an open astryx_fx_ DB is ACCUSED (fixture_db is zero-window now, so it's a creator regression)",
               real_fx in uh, str(uh))
@@ -135,15 +140,24 @@ def main():
                 if "has_database_privilege" in q and params and params[0] == self.bad:
                     raise psycopg.errors.InvalidCatalogName("dropped mid-check")
                 return self.real.execute(q, params)
-        uh2 = bp.unhardened(Flaky(adm, nul), scope.role)
+        uh2 = bp.unhardened(Flaky(adm, nul), scope.role, names=[nul])
         check("BC-2: a member whose check ERRORS (dropped mid-check) is ACCUSED as unevaluable, never skipped",
               f"{nul} (unevaluable)" in uh2, str(uh2))
         try:
-            bp.require_hardened(adm, "no_such_role_x")        # every DB counts → on an unhardened host this refuses
-            refused = not bp.unhardened(adm, "no_such_role_x")
+            bp.require_hardened(adm, "no_such_role_x", names=[live_wp, dead_wp])
+            refused, why = False, "did not refuse"
         except bp.Refuse as e:
-            refused = "REVOKE CONNECT ON DATABASE" in str(e)
-        check("require_hardened refuses with seed's P0-a statement whenever anything is unhardened", refused, "")
+            why = str(e)
+            refused = (f"{live_wp} (a test DB of LIVE pid {pid}" in why and f"{dead_wp} (a test DB of GONE pid" in why
+                       and bp.P0A.format(live_wp) not in why and bp.P0A.format(dead_wp) not in why)
+        check("refusal names each test DB's creator LIVE (retry) or GONE (debris), with NO REVOKE for either (#34713)",
+              refused, why[-300:])
+        msg = bp.refusal(["some_app_db", f"astryx_earprobe_{deadp.pid}", "astryx_prod_7"])
+        check("refusal: any other database gets seed's P0-a REVOKE; an unlisted digit-suffixed name never 'droppable'",
+              bp.P0A.format("some_app_db") in msg and bp.P0A.format("astryx_prod_7") in msg
+              and f"astryx_earprobe_{deadp.pid} (a test DB of GONE pid" in msg and "astryx_prod_7 (a test DB" not in msg, msg)
+        check("provenance never EXEMPTS: a LIVE oracle's open test DB is still accused",
+              live_wp in bp.unhardened(adm, scope.role, names=[live_wp]))
 
         # ── the cached extension template (P0-c; keep set; its OWN namespace, exact shape: seed #34141) ────
         # Every name lives under THIS oracle's pid-scoped prefix, so a concurrent oracle or a real run is never ours
@@ -156,7 +170,7 @@ def main():
         longer = pfx + "c" * 12 + "_x"                             # not the exact shape: an unanchored `$` evicts it
         foreign = "zz" + pfx + "b" * 12                            # contains ours: an unanchored `^` evicts it
         for d in (stale, kept, longer, foreign):
-            adm.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(d)))
+            adm.execute(sql.SQL("CREATE DATABASE {} ALLOW_CONNECTIONS false").format(sql.Identifier(d)))
             made_dbs.append(d)
         class Rec:                                                    # records the statements, delegates the rest
             def __init__(self, real):

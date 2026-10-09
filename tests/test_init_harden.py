@@ -62,6 +62,10 @@ def main():
         print("NOT SEARCHED: this role can't CREATE ROLE/DATABASE (e.g. branch_check's own run role). Nothing was verified.")
         return 77
     from _oracle_debris import reap
+    # SERIALIZED across concurrent runs of this oracle (two full checks at once, 10-09): each plants a LOGIN role, and
+    # to the OTHER run's open scratch DBs that role is a genuine dependent, so they'd be held and its arms flake. The
+    # lock is session-held and dies with this connection, a crash included.
+    adm.execute("SELECT pg_advisory_lock(hashtext('astryx:test_init_harden'))")
     reap(adm)
     a, b, c = (f"astryx_hardenprobe_{x}_{os.getpid()}" for x in "abc")
     dep = f"astryx_hardendep_{os.getpid()}"

@@ -120,13 +120,20 @@ def transient(name: str):
     return False
 
 
-def unhardened(conn, run_role: str, own_templates=()) -> list:
+def unhardened(conn, run_role: str, own_templates=(), names=None) -> list:
     """Databases the run doesn't own that still grant PUBLIC CONNECT (a NULL ACL counts: the server resolves it).
     Evaluated PER MEMBER: one that errors (dropped between the listing and the check: a live race) is ACCUSED,
-    never skipped (a1 BC-2). Declared transient names are excluded before evaluation."""
-    names = [r[0] for r in conn.execute(
-        "SELECT d.datname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba "
-        "WHERE d.datallowconn AND r.rolname <> %s ORDER BY 1", (run_role,))]
+    never skipped (a1 BC-2). Declared transient names are excluded before evaluation.
+    `names` (the oracle's) evaluates an EXPLICIT set whatever its datallowconn: the oracle plants its accused decoys
+    ALLOW_CONNECTIONS false, so a concurrent REAL run's scan never sees them (a2 F3 #34875)."""
+    if names is None:
+        names = [r[0] for r in conn.execute(
+            "SELECT d.datname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba "
+            "WHERE d.datallowconn AND r.rolname <> %s ORDER BY 1", (run_role,))]
+    else:
+        names = [r[0] for r in conn.execute(
+            "SELECT d.datname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba "
+            "WHERE d.datname = ANY(%s) AND r.rolname <> %s ORDER BY 1", (list(names), run_role))]
     bad = []
     for n in names:
         t = transient(n)
@@ -143,12 +150,50 @@ def unhardened(conn, run_role: str, own_templates=()) -> list:
     return bad
 
 
-def require_hardened(conn, run_role: str):
-    bad = unhardened(conn, run_role)
+# Names only branch_check's own oracles create, each carrying its creator's pid. ONE definition: tests/_oracle_debris.py
+# reaps by it (dead creator only), and P0-b's refusal uses it to say WHY a database is accused (seed #34713). The
+# wakeprobe name is here because the prep oracle's W1 arm plants it (a killed prep oracle leaked them: a2 F2).
+TEST_DB = re.compile(r"^(?:astryx_bctpl_(?:zz|zk|t)_|astryxQbctplQ_|astryxAfxBprod_|astryx-fx-prod-|astryx_fx_bcx_"
+                     r"|astryx_hardenprobe_[abc]_|astryx_wakeprobe_)(\d+)$"
+                     r"|^bc_(\d+)x\d+_nullacl$"
+                     r"|^(?:zz)?astryx_bctpl_o(\d+)_")                  # the prep oracle's own template namespace
+# OTHER oracles' pid-tagged probe DBs, ENUMERATED (each test's own f"astryx_<name>_{os.getpid()}"; they clean up
+# their own, so they are NOT reaped here). Enumerated, never a "trailing digits" guess: an unlisted name falls to the
+# REVOKE advice, harmless on a test DB, and never to "droppable", which on a real database would be data loss.
+OTHER_PROBES = re.compile(r"^astryx_(?:earprobe|tierprobe|fundedby|fx_rot)_(\d+)$|^astryx_fx_zzh(\d+)$")
+
+
+def provenance(name: str) -> str:
+    """For an oracle's test database: whether its creator is still RUNNING (retry after it) or GONE (debris). Empty
+    for any other name. It only EXPLAINS an accusation; it never exempts one (a live oracle's open DB is reachable)."""
+    m = TEST_DB.match(name) or OTHER_PROBES.match(name)
+    if not m:
+        return ""
+    pid = int(next(g for g in m.groups() if g))
+    if _pid_alive(pid):
+        return f"a test DB of LIVE pid {pid}: an oracle is running, retry after it"
+    return f"a test DB of GONE pid {pid}: debris, droppable once you've confirmed the pid is gone"
+
+
+def refusal(bad: list) -> str:
+    """P0-b's refusal text. Test DBs are named with their creator's state and never get a REVOKE suggestion (revoking
+    a live oracle's deliberately open DB would break its arm); everything else gets seed's P0-a statement."""
+    msg = ("P0-b: these databases still grant PUBLIC CONNECT, so a run role could reach them (and NOTIFY/LISTEN "
+           "needs no grant).")
+    test = [(b, provenance(b.split(" (")[0])) for b in bad]
+    tests = [f"{b} ({why})" for b, why in test if why]
+    rest = [b.split(" (")[0] for b, why in test if not why]
+    if tests:
+        msg += " Oracle TEST databases: " + "; ".join(tests) + "."
+    if rest:
+        msg += " Seed's one-time host hardening (P0-a): " + "; ".join(P0A.format(d) for d in rest)
+    return msg
+
+
+def require_hardened(conn, run_role: str, names=None):
+    bad = unhardened(conn, run_role, names=names)
     if bad:
-        raise Refuse("P0-b: these databases still grant PUBLIC CONNECT, so a run role could reach them (and "
-                     "NOTIFY/LISTEN needs no grant). Seed's one-time host hardening (P0-a): "
-                     + "; ".join(P0A.format(d) for d in bad))
+        raise Refuse(refusal(bad))
 
 
 # ── the fixture-extension template (cached, named, evicted by schema sha) ───────────────────────────────────

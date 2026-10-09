@@ -14,9 +14,7 @@ from pathlib import Path
 from psycopg import sql
 
 ORACLE_BASE = Path(os.environ.get("ASTRYX_RUNSCOPE_ORACLE_ROOT", "/tmp/astryx-runscope-oracle"))
-TEST_DB = re.compile(r"^(?:astryx_bctpl_(?:zz|zk|t)_|astryxQbctplQ_|astryxAfxBprod_|astryx-fx-prod-|astryx_fx_bcx_|astryx_hardenprobe_[abc]_)(\d+)$"
-                     r"|^bc_(\d+)x\d+_nullacl$"
-                 r"|^(?:zz)?astryx_bctpl_o(\d+)_")                  # the prep oracle's own template namespace
+from nucleus.branch_check_prep import TEST_DB                    # noqa: E402 (ONE definition, P0-b's refusal reads it too)
 TEST_ROLE = re.compile(r"^astryx_hardendep_(\d+)$")        # a LOGIN role test_init_harden plants
 
 

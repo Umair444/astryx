@@ -13,6 +13,10 @@ SUBJECT = REPO / "nucleus" / "runscope.py"
 ORACLE = REPO / "tests" / "test_runscope.py"
 ENV = "RUNSCOPE_SRC"
 
+# DECLARED, NOT AUTHORED: "orphans ignore liveness" (dropping the started-before-epoch test). The oracle's sweep runs
+# against the LIVE server, so that mutant would tear down EVERY live run's role and databases org-wide, other agents'
+# branch_check runs and oracles included (it ran once, 2026-10-09 ~10:20, before this was seen). Its arm, "a LIVE
+# run whose lock was wiped is KEPT", is real; the probe must not be the one to fire it.
 MUTANTS = {
     "R1 teardown by NAME prefix, not ownership (a differently named db is missed)":
         ("    q = \"SELECT d.datname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba WHERE r.rolname = %s ORDER BY 1\"",
@@ -39,4 +43,8 @@ MUTANTS = {
     "R9 the run role gets no AGE preload (it can't LOAD, so AGE is unusable in the run)":
         ("            if c.execute(\"SELECT 1 FROM pg_available_extensions WHERE name = 'age'\").fetchone():",
          "            if False:"),
+    "R11 the sweep never reads postgres for orphans (a reboot strands every crashed run's role and DBs: a2 F1)":
+        ("    for role in orphan_roles(admin_dsn):", "    for role in []:"),
+    "R12 orphan liveness by pid alone (a reused pid after a reboot shields the dead run's role forever)":
+        ("        if started is not None and started <= int(m.group(2)) + 2:", "        if started is not None:"),
 }

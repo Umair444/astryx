@@ -151,6 +151,39 @@ def main():
               str(reaped))
         t_live.close()
 
+        # ── F1 (a2 #34875): orphans read from POSTGRES; the lock dir is gone (a reboot wipes /tmp) ──────────
+        crash_src = ("import os, sys; sys.path.insert(0, sys.argv[1]); from pathlib import Path\n"
+                     "from nucleus import runscope as rs\n"
+                     "s = rs.RunScope(os.environ['ASTRYX_DSN'], root=Path(sys.argv[2])).open()\n"
+                     "s.create_db(s.role + '_crashed'); print(s.role)\n")     # exits WITHOUT teardown: a crash
+        child = subprocess.run([sys.executable, "-c", crash_src, str(REPO), str(base)],
+                               env={**os.environ, "ASTRYX_DSN": dsn}, capture_output=True, text=True, timeout=60)
+        crashed = (child.stdout.strip().splitlines() or [""])[-1]
+        if crashed:
+            extra_roles.append(crashed)
+            import shutil as _sh0
+            _sh0.rmtree(base / crashed[len(rs.ROLE_PREFIX):], ignore_errors=True)       # the lock, wiped
+        nolock = rs.RunScope(dsn, root=base).open()                       # a LIVE run whose lock was wiped
+        extra_roles.append(nolock.role)
+        nolock.create_db(f"{nolock.role}_kept")
+        import shutil as _sh1
+        _sh1.rmtree(nolock.root, ignore_errors=True)
+        reused = f"{rs.ROLE_PREFIX}{os.getpid()}x1000"                   # OUR live pid, an epoch long before we started
+        adm.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(reused)))
+        extra_roles.append(reused)
+        adm.execute(sql.SQL("CREATE DATABASE {} OWNER {} ALLOW_CONNECTIONS false").format(
+            sql.Identifier(f"{reused}_db"), sql.Identifier(reused)))
+        orph = {x["scope"]: x for x in rs.sweep(dsn, base) if x.get("orphan")}
+        cid = crashed[len(rs.ROLE_PREFIX):]
+        check("F1: a crashed run whose lock dir is GONE is reaped from postgres (its role and DBs)",
+              bool(crashed) and cid in orph and not role_exists(crashed) and orph[cid]["dropped"] == [f"{crashed}_crashed"],
+              f"{child.stderr[-200:]} {orph.get(cid)}")
+        check("F1: a LIVE run whose lock was wiped is KEPT (its creator is alive and older than its epoch)",
+              nolock.run_id not in orph and role_exists(nolock.role), str(sorted(orph)))
+        check("F1: a REUSED pid (alive, but started after the role's epoch) is not the creator: reaped",
+              f"{os.getpid()}x1000" in orph and not role_exists(reused), str(sorted(orph)))
+        nolock.close()
+
         # ── refusal: a lockfile is data ──────────────────────────────────────────────────────────────────
         victim = rs.RunScope(dsn, root=base).open()                  # a real role that must SURVIVE
         extra_roles.append(victim.role)

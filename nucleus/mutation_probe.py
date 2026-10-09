@@ -66,6 +66,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 EXIT_SKIP = 77
+TIMED_OUT = -1          # _run_oracle's sentinel: the oracle didn't finish, so it verified nothing (never a catch)
+DEFAULT_TIMEOUT = 120   # a spec whose oracle is slower declares TIMEOUT (the prep oracle takes ~200 s, 10-09)
 
 
 def _load(path: Path):
@@ -75,7 +77,7 @@ def _load(path: Path):
     return mod
 
 
-def _run_oracle(oracle: Path, env_var: str, subject_path: Path) -> int:
+def _run_oracle(oracle: Path, env_var: str, subject_path: Path, timeout: int = DEFAULT_TIMEOUT) -> int:
     env = dict(os.environ, **{env_var: str(subject_path)})
     with tempfile.TemporaryDirectory() as trace:
         # A mutant (or the canary) is NOT the inventoried code, so its SQL is not estate evidence: under check.sh's
@@ -83,8 +85,13 @@ def _run_oracle(oracle: Path, env_var: str, subject_path: Path) -> int:
         # oracle child keeps tracing, but into a private dir that dies with the run, never the estate's.
         if "ASTRYX_SQLGUARD_DIR" in env:
             env["ASTRYX_SQLGUARD_DIR"] = trace
-        r = subprocess.run([sys.executable, str(oracle)], env=env,
-                           capture_output=True, text=True, timeout=120)
+        try:
+            r = subprocess.run([sys.executable, str(oracle)], env=env,
+                               capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            # It used to RAISE, crashing the whole probe after SIGKILLing the oracle mid-run (its finally never ran,
+            # so a slow DB oracle stranded debris: a2 F2 #34875). Now it's an outcome: NOT PROBED, named.
+            return TIMED_OUT
     return r.returncode
 
 
@@ -108,7 +115,12 @@ def probe(spec_path: Path, verbose: bool = True) -> int:
     # BASELINE. If the oracle does not pass against the unmutated subject, every "caught"
     # below would be meaningless — it would be failing for a reason that has nothing to do
     # with the mutation. Refuse rather than report.
-    base = _run_oracle(oracle, spec.ENV, subject)
+    timeout = int(getattr(spec, "TIMEOUT", DEFAULT_TIMEOUT))
+    base = _run_oracle(oracle, spec.ENV, subject, timeout)
+    if base == TIMED_OUT:
+        print(f"REFUSING: {oracle.name} did not finish within {timeout}s against the unmutated subject. Declare a "
+              f"larger TIMEOUT in the spec; every verdict below would be a guess.")
+        return 1
     if base != 0:
         print(f"REFUSING: {oracle.name} does not pass against the unmutated subject "
               f"(exit {base}). Fix the oracle first; mutation results would be noise.")
@@ -129,7 +141,7 @@ def probe(spec_path: Path, verbose: bool = True) -> int:
     with tempfile.TemporaryDirectory() as td:
         canary = Path(td) / subject.name
         canary.write_text("def ( this file is deliberately not python — the canary\n")
-        if _run_oracle(oracle, spec.ENV, canary) == 0:
+        if _run_oracle(oracle, spec.ENV, canary, timeout) == 0:
             print(f"WIRING FAULT: {oracle.name} PASSED against a syntactically destroyed "
                   f"subject.\n  The oracle is not reading the path {spec.ENV} hands it — "
                   f"likely a bare import or a\n  hardcoded subject. Every mutant verdict "
@@ -148,7 +160,10 @@ def probe(spec_path: Path, verbose: bool = True) -> int:
                 continue
             mpath = Path(td) / subject.name
             mpath.write_text(src.replace(old, new, 1))
-            rc = _run_oracle(oracle, spec.ENV, mpath)
+            rc = _run_oracle(oracle, spec.ENV, mpath, timeout)
+            if rc == TIMED_OUT:
+                skipped.append(f"{name} (oracle TIMED OUT after {timeout}s — it verified nothing)")
+                continue
             # A SKIP IS NOT A CATCH. An oracle that could not run its checks exits 77 and
             # is non-zero, so a naive `rc != 0` would score "the oracle never looked" as
             # "the oracle noticed" — the same not-run-reads-as-a-verdict defect check.sh
@@ -330,6 +345,29 @@ def self_test() -> int:
         tr_ok = rc == 0 and not any(estate.iterdir())
         print(f"  {'PASS' if tr_ok else 'FAIL'}  the oracle traced, into a private dir (estate dir empty, rc {rc})")
         ok &= tr_ok
+
+        # A TIMEOUT is an outcome, never a crash and never a catch (10-09: a 200 s prep oracle against a 120 s limit
+        # crashed the probe and stranded its debris).
+        print("\nTIMEOUT — a mutant whose oracle doesn't finish is NOT PROBED, and the probe doesn't crash:")
+        (td / "oracle_slow.py").write_text(
+            _ORACLE_HEAD
+            + 'import time\nif "THRESHOLD = 100" in SUBJECT.read_text():\n    time.sleep(30)\n'
+            + _GOOD + _ORACLE_TAIL)
+        (td / "m_slow.py").write_text(
+            f'SUBJECT = {str(td / "subject.py")!r}\n'
+            f'ORACLE = {str(td / "oracle_slow.py")!r}\n'
+            'ENV = "PROBE_SELFTEST_SRC"\nTIMEOUT = 3\n'
+            'MUTANTS = {"threshold moved": ("THRESHOLD = 10", "THRESHOLD = 100")}\n')
+        buf4 = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf4):
+                rc = probe(td / "m_slow.py", verbose=True)
+            out4 = buf4.getvalue()
+            slow_ok = rc == 2 and "TIMED OUT after 3s" in out4 and "CAUGHT" not in out4
+        except Exception as e:                                   # the old behaviour: the probe itself crashed
+            slow_ok, out4 = False, f"{type(e).__name__}: {e}"
+        print(f"  {'PASS' if slow_ok else 'FAIL'}  a timed-out mutant reads NOT PROBED (rc 2), never CAUGHT, no crash")
+        ok &= slow_ok
 
     print("\n" + ("SELF-TEST PASS" if ok else "SELF-TEST FAILED"))
     return 0 if ok else 1
