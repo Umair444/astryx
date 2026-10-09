@@ -9,7 +9,12 @@ Both subjects are gitignored (triggers/, memory/), so they're path-loaded; eithe
   3. org work + the owner's own rows inside an org thread + a WhatsApp session row → only the agent-to-agent
      thread is listed (≥1 row), the owner/wa- rows are neither listed nor counted (steward #37121), and the moved
      goal is listed (≥1 row).
+  3b. a t- thread whose only rows are a personal-lane agent (nucleus/tier.py PERSONAL_LANES) with seed is neither
+     counted nor listed (a3 #37444 B1).
   4. the same day again → silent (once-per-day dedup).
+  6. the watermark is CONTENT (a3 #37444 B2): the newest edition's `compiled_through:` line; touching the file's
+     mtime doesn't move it; no line or an unparseable one → the start of the edition's date; no edition → None;
+     and the wake hands memory the value to write.
   5. compile_lag on the same fixture: an empty wire → no finding; the raw >7 days past log.md's last compile →
      the finding; a compile on the newest raw's day → no finding.
 Exit 0 pass · 1 fail · 77 could-not-run.
@@ -75,7 +80,8 @@ try:
             self._conn = connection
 
     since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1)).isoformat()
-    lc._last_edition = lambda: since                     # the watermark is a file mtime; pin it
+    real_last_edition = lc._last_edition
+    lc._last_edition = lambda: since                     # pin the window; the watermark has its own arms (6)
 
     def put(frm, to, thread, body="x"):
         conn.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES (%s,%s,%s,'chat',%s)",
@@ -107,7 +113,39 @@ try:
     check("3. owner/wa- rows in org threads are NOT listed", "t-localmd-x" not in tl and "t-family-x" not in tl, tl)
     check("3. …nor counted (cv 1 + plan 2 = 3)", out.startswith("OVERNIGHT EDITION DUE: 3 "), out[:80])
     check("3. the moved goal is listed", "a goal that moved" in out, out)
+
+    from nucleus.tier import PERSONAL_LANES
+    lane = sorted(PERSONAL_LANES)[0]
+    put(lane, "seed", "t-lane-x", "a personal-lane request")
+    put("seed", lane, "t-lane-x", "seed's answer")
+    out = lc.library_compile(TempCtx({}, conn)) or ""
+    check(f"3b. a {lane}<->seed t- thread is NOT listed", "t-lane-x" not in threads_of(out), threads_of(out))
+    check("3b. …nor counted (still 3)", out.startswith("OVERNIGHT EDITION DUE: 3 "), out[:80])
+    check("3b. …nor named in the who", lane not in threads_of(out), threads_of(out))
     check("4. the same day again → silent (dedup)", lc.library_compile(TempCtx(st, conn)) is None)
+
+    print("watermark:")
+    with tempfile.TemporaryDirectory() as d:
+        ch = Path(d)
+        check("6. no edition → None", real_last_edition(ch) is None)
+        ed = ch / "2026-10-09.md"
+        ed.write_text('---\ntitle: "x"\ncompiled_through: "2026-10-09T10:59:03+00:00"\n---\n# x\n')
+        (ch / "2026-10-08.md").write_text('---\ntitle: "y"\ncompiled_through: "2026-10-09T00:00:00+00:00"\n---\n')
+        check("6. the newest edition's compiled_through is the watermark",
+              real_last_edition(ch) == "2026-10-09T10:59:03+00:00", str(real_last_edition(ch)))
+        os.utime(ed, (2_000_000_000, 2_000_000_000))       # a correction / restore / re-copy touches the file
+        check("6. an mtime touch doesn't move it", real_last_edition(ch) == "2026-10-09T10:59:03+00:00",
+              str(real_last_edition(ch)))
+        ed.write_text('---\ntitle: "x"\n---\n# x\ncompiled_through: "2099-01-01T00:00:00+00:00"\n')
+        check("6. no frontmatter line → the start of its date (a body line doesn't count)",
+              real_last_edition(ch) == "2026-10-09T00:00:00+00:00", str(real_last_edition(ch)))
+        ed.write_text('---\ncompiled_through: "yesterday-ish"\n---\n')
+        check("6. an unparseable line → the start of its date", real_last_edition(ch) == "2026-10-09T00:00:00+00:00",
+              str(real_last_edition(ch)))
+    lc._last_edition = lambda: since
+    out = lc.library_compile(TempCtx({}, conn)) or ""
+    check("6. the wake hands memory the compiled_through value to write",
+          "compiled_through: 20" in out and "{now}" not in out, out[-300:])
 
     print("compile_lag (drift.py):")
     ctx = TempCtx({}, conn)
