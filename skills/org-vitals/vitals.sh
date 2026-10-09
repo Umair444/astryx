@@ -36,6 +36,22 @@ printf 'vs origin/main: %s ahead / %s behind\n' \
   "$(git rev-list --count HEAD..origin/main 2>/dev/null || echo '?')"
 git log origin/main --oneline -3 2>/dev/null
 
+hr "continuity — was the org DARK recently? (read this before judging any red below)"
+# After an outage, the boot backlog shows as "stuck" messages and gates that read LIVE recent data
+# (econ v2 shadow's 2-day window, wake_marker's live sample) go red on an empty window. Neither
+# is a lesion, and the other panels can't tell "the org was off" from "something is broken". So
+# this panel names the gap first. Any agent's step is a heartbeat, so a >6h hole in `steps`
+# within 14 days means the whole org was dark (host off, or every session wedged). Empty = continuous.
+# The window's first step is lagged against the last step BEFORE the window, so a gap that began
+# before the window opened (an org dark >14d, just back) is still named, not hidden by a NULL lag.
+_gap="$(q "SELECT to_char(prev AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI\"Z\"')||' → '||to_char(ts AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI\"Z\"')||'  dark '||round(EXTRACT(EPOCH FROM ts-prev)/3600.0,1)||'h  (resumed '||round(EXTRACT(EPOCH FROM now()-ts)/3600.0,1)||'h ago)' FROM (SELECT ts, coalesce(lag(ts) OVER (ORDER BY ts), (SELECT max(ts) FROM steps WHERE ts <= now()-interval '${VITALS_DARK_DAYS:-14} days')) prev FROM steps WHERE ts > now()-interval '${VITALS_DARK_DAYS:-14} days') s WHERE ts-prev > interval '6 hours' ORDER BY ts DESC LIMIT 3")"
+if [ -n "$_gap" ]; then
+  printf '%s\n' "$_gap"
+  echo "  ⚠ a recent dark gap: expect boot backlog and vacuous live-window gates; reproduce before calling them lesions"
+else
+  echo "  (no >6h gap in steps over ${VITALS_DARK_DAYS:-14}d — the org has been continuously alive)"
+fi
+
 hr "doctor — reds only (record these as BASELINE on clean main)"
 if [ "${1:-}" = "--doctor" ] || [ "${VITALS_DOCTOR:-0}" = "1" ]; then
   _doc="$(timeout 120 ./init.sh doctor 2>&1)"
