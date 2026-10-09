@@ -219,12 +219,11 @@ fi
 # how long an outage lasted must not decide whether an agent keeps its memory (a >72h
 # gate wiped every resident's context after a multi-day host outage, 2026-09-29).
 # Deliberate fresh boots stay refresh.sh's job: it sets transcripts aside first, so
-# $latest is empty here and the agent boots fresh. The size guard stays (a bloated
-# session resumes degraded).
-if [ -n "$latest" ]; then
-  size=$(stat -c %s "$latest")
-  if [ "$size" -lt 10485760 ]; then RESUME="--resume $(basename "$latest" .jsonl) "; fi
-fi
+# $latest is empty here and the agent boots fresh. And no SIZE gate either: a resident
+# never dies — it compacts and goes on (owner ruling 2026-10-09; a 10MB gate booted the
+# seed fresh over a 48MB life after a 9-day outage). Size is compaction's problem, not
+# a reason to forget.
+if [ -n "$latest" ]; then RESUME="--resume $(basename "$latest" .jsonl) "; fi
 
 # model: charter line "Model: haiku|sonnet|opus" (default opus — owner's call;
 # philosophers pin haiku in their charters, idle residents cost nothing anyway)
