@@ -126,26 +126,25 @@ def census() -> dict:
             "surfaces": {k: dict(v) for k, v in by_surface.items()}, "files": per_file}
 
 
-LIVE_SQL = {
-    "tables": "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
-              "WHERE c.relkind IN ('r','p') AND n.nspname='public'",
-    "sequences": "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
-                 "WHERE c.relkind='S' AND n.nspname='public'",
-    "views": "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
-             "WHERE c.relkind IN ('v','m') AND n.nspname='public'",
-    "owners": "SELECT r.rolname, r.rolsuper, count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
-              "JOIN pg_roles r ON r.oid=c.relowner WHERE c.relkind IN ('r','p','v','m','S') AND n.nspname='public' "
-              "GROUP BY 1,2 ORDER BY 3 DESC",
-    "login_roles": "SELECT rolname, rolsuper, rolcreatedb, rolcreaterole FROM pg_roles WHERE rolcanlogin "
-                   "AND rolname !~ '^bc_' ORDER BY 1",
-    "functions": "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' "
-                 "AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid=p.oid AND d.deptype='e')",
-}
-
-
 def live(dsn: str) -> dict:
-    """Catalog reads only. The numbers 1b's GRANT set is sized by."""
+    """Catalog reads only. The numbers 1b's GRANT set is sized by. (The queries are LOCAL so sqlguard keys them to
+    the function that runs them.)"""
     import psycopg
+    LIVE_SQL = {
+        "tables": "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                  "WHERE c.relkind IN ('r','p') AND n.nspname='public'",
+        "sequences": "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                     "WHERE c.relkind='S' AND n.nspname='public'",
+        "views": "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                 "WHERE c.relkind IN ('v','m') AND n.nspname='public'",
+        "owners": "SELECT r.rolname, r.rolsuper, count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                  "JOIN pg_roles r ON r.oid=c.relowner WHERE c.relkind IN ('r','p','v','m','S') AND n.nspname='public' "
+                  "GROUP BY 1,2 ORDER BY 3 DESC",
+        "login_roles": "SELECT rolname, rolsuper, rolcreatedb, rolcreaterole FROM pg_roles WHERE rolcanlogin "
+                       "AND rolname !~ '^bc_' ORDER BY 1",
+        "functions": "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' "
+                     "AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid=p.oid AND d.deptype='e')",
+    }
     out = {}
     with psycopg.connect(dsn, autocommit=True) as c:
         c.execute("SET default_transaction_read_only = on")

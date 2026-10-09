@@ -272,6 +272,9 @@ try:
         r = social_age.rebuild(base=fx["dsn"], social=make_conninfo(ADMIN_DSN, dbname=NET),
                                private=make_conninfo(ADMIN_DSN, dbname=PRIV), resident=RES, cleared=CLR)
         want("the rebuild projects both graphs", r.get("private") == len(DETAILED) and r["knows"] == 3, str(r))
+        r2 = social_age.rebuild(base=fx["dsn"], social=make_conninfo(ADMIN_DSN, dbname=NET),
+                                private=make_conninfo(ADMIN_DSN, dbname=PRIV), resident=RES, cleared=CLR)
+        want("a second rebuild (drop_graph, then re-grant) gives the same graphs", r2 == r, f"{r2} != {r}")
 
         # GREEN: the resident is refused, with the text predicted.
         e = refused(as_(RES, db), "SELECT * FROM social_relation")
