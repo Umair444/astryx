@@ -144,6 +144,10 @@ echo "$ASTRYX_SQLGUARD_RUN" > "$ASTRYX_SQLGUARD_DIR/run_id"
 # RESPONSIVE, the whole sqlguard verdict is NOT SEARCHED (a check that can't observe says so).
 run "sqlguard canary: the shim observes through the real Ctx.sql" "$PY" -m nucleus.sqlguard.canary
 run "sqlguard oracle: privacy (P1) + controls"          "$PY" tests/test_sqlguard.py
+# a3 night-review 10-09: a range that re-texts a LISTED SQL literal without moving its ledger row is RED before
+# merge, statically (plan-4918 was backed out twice for exactly that). Hermetic, ~2s. Reviewers run the tool:
+#   venv/bin/python -m nucleus.sqlguard.rekey <base> <head>
+run "sqlguard rekey: a re-texted listed literal needs its ledger move" "$PY" tests/test_sqlguard_rekey.py
 # runscope (plan-4918 R1): a run's databases, role and directory are torn down by OWNERSHIP, a run-owned template
 # included; the stale sweep keys on (pid, start time); a lockfile naming a foreign role or path is refused; the
 # server only ever sees a SCRAM verifier. Real roles/DBs, cleaned up independently. Mutants: tests/mutants_runscope.py.
