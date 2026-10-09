@@ -213,7 +213,7 @@ def graph_signature(p: Path) -> str:
     return hashlib.sha256("\n".join(items).encode()).hexdigest()
 
 
-def _excused(rel: str, decl: dict, root: Path, kind: str = "uncountable") -> bool:
+def _excused(rel: str, decl: dict, root: Path, kind: str) -> bool:
     """A declared writer, schema, or test writer; or a not_writers exemption pinned to the file's graph signature.
     A pin excuses only an UNCOUNTABLE file: one that provably writes the graph (a literal call, SQL to its label
     tables) is a writer whatever its pin says."""
@@ -266,6 +266,20 @@ def load_declarations(path: Path = None):
         return None, f"declarations unreadable ({Path(path).name}: {type(e).__name__})"
 
 
+def stray_writers(d: dict, root: Path = None, inv: dict = None):
+    """(found, stray) for one declaration: every writer the scan finds, and those its declaration doesn't excuse.
+    The ONE path from a scan to a verdict: check() and the check.sh gate (test_copies L1) both read it, so a pin
+    can't excuse in one and not the other (a3 #39586)."""
+    root = root or REPO
+    if d.get("kind") == "age_graph":
+        found = graph_writers(d["graph"], root)
+    elif d.get("kind") == "sql_table":
+        found = sql_writers(d["table"], inv)
+    else:
+        found = {}
+    return found, {r: k for r, k in found.items() if not _excused(r, d, root, k)}
+
+
 def check(conn=None, decls=None, root: Path = None, inv: dict = None) -> list:
     """[(name, status, detail)]; status ∈ FRESH, STALE, LOUD. Never raises on a bad declaration."""
     root = root or REPO
@@ -284,12 +298,7 @@ def check(conn=None, decls=None, root: Path = None, inv: dict = None) -> list:
         # writers
         if d["kind"] == "age_graph":
             declared_graphs.add(d["graph"])
-            found = graph_writers(d["graph"], root)
-        elif d["kind"] == "sql_table":
-            found = sql_writers(d["table"], inv)
-        else:
-            found = {}
-        stray = {r: k for r, k in found.items() if not _excused(r, d, root, k)}
+        found, stray = stray_writers(d, root, inv)
         n_writers = sum(1 for r, k in found.items() if k == "writer"
                         and any(fnmatch.fnmatch(r, g) for g in d.get("writers", [])))
         if stray:

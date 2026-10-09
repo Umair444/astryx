@@ -18,7 +18,8 @@ Arms (RED / GREEN / CONTROL):
               not a call (CONTROL), a real create_graph('memory') is a writer.
   L1 RED      the CHECKED-IN tree under its own copies.json has no undeclared writer: a stale sha pin, an undeclared
               test writer or a self-listing reads in check.sh, not only in the nightly live check (e55c65f read LOUD);
-              the real pinned file: a routine edit keeps its pin (CONTROL), a new graph call re-raises it.
+              the real pinned file: a routine edit keeps its pin (CONTROL), a new graph call re-raises it, SQL to a
+              label table reads as a writer; via copies.stray_writers, the same path check() takes (a3 #39586).
   B2 RED      a .mjs writer of cypher('memory', … CREATE …) → listed.
   B3 RED      SQL straight to the label tables (DELETE FROM / TRUNCATE / UPDATE / INSERT INTO memory."Concept") → writer.
   B4 RED      DROP SCHEMA memory CASCADE → writer.
@@ -167,8 +168,7 @@ check("S3 a real create_graph('memory') call → writer", found.get("ddl_call.py
 (root / "ddl_call.py").unlink()
 live, err = C.load_declarations()
 mem = [d for d in (live or []) if d.get("name") == "graph:memory"]
-stray = {} if not mem else {r: k for r, k in C.graph_writers("memory", REPO).items()
-                            if not C._excused(r, mem[0], REPO)}
+stray = {} if not mem else C.stray_writers(mem[0], REPO)[1]
 check("L1 the checked-in tree under its own declarations has no undeclared writer (a stale sha pin reads here)",
       not err and mem and not stray, repr(err or stray))
 
@@ -177,13 +177,16 @@ if mem and bcp in mem[0].get("not_writers", {}):
     (root / "tests").mkdir(exist_ok=True)
     body = (REPO / bcp).read_text()
     (root / bcp).write_text(body + "# a routine edit by someone who never touched the graph\n")
-    found = C.graph_writers("memory", root)
-    check("L1 CONTROL a non-graph edit to a pinned live file keeps its pin",
-          bcp in found and C._excused(bcp, mem[0], root, found[bcp]), repr(found.get(bcp)))
+    found, stray = C.stray_writers(mem[0], root)
+    check("L1 CONTROL a non-graph edit to a pinned live file keeps its pin", bcp in found and bcp not in stray,
+          repr(found.get(bcp)))
     (root / bcp).write_text(body + "Q = \"SELECT * FROM cypher('other', $$ MERGE (x:Concept {n: 1}) $$) AS (v agtype)\"\n")
-    found = C.graph_writers("memory", root)
-    check("L1 a new graph call in a pinned live file → re-raised, named",
-          bcp in found and not C._excused(bcp, mem[0], root, found[bcp]), repr(found.get(bcp)))
+    found, stray = C.stray_writers(mem[0], root)
+    check("L1 a new graph call in a pinned live file → re-raised, named", bcp in stray, repr(found.get(bcp)))
+    (root / bcp).write_text(body + "Q = 'DELETE FROM memory.\"Concept\" WHERE true'\n")
+    found, stray = C.stray_writers(mem[0], root)
+    check("L1 SQL to a label table in a pinned live file → a WRITER, never excused (W7 on the gate's path)",
+          stray.get(bcp) == "writer", repr(found.get(bcp)))
     (root / bcp).unlink()
 
 print("BC-1 fail-open shapes (a3 #39203):")
