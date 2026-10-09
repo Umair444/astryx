@@ -225,3 +225,20 @@ body {
 .lib-prose tr:hover td { background: color-mix(in srgb, var(--t-accent) 5%, transparent); }
 .lib-prose hr { border: 0; height: 1px; background: var(--t-line); margin: 2.4em 0; }
 @media (max-width: 640px) { .lib-prose { font-size: 17.5px; } .lib-prose h2 { font-size: 28px; } }
+
+/* the stacks: a shelf of spines (LibraryView) */
+.lib-shelf {
+  background: linear-gradient(180deg, transparent 0%, transparent calc(100% - 12px), color-mix(in srgb, var(--t-line2) 90%, transparent) calc(100% - 12px), color-mix(in srgb, var(--t-line) 80%, transparent) 100%);
+  box-shadow: inset 0 -14px 18px -14px color-mix(in srgb, #000 50%, transparent);
+}
+.lib-spine {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--spine) 78%, #000) 0%, var(--spine) 18%, color-mix(in srgb, var(--spine) 88%, #fff) 50%, var(--spine) 82%, color-mix(in srgb, var(--spine) 70%, #000) 100%);
+  box-shadow: 0 6px 14px -8px color-mix(in srgb, #000 70%, transparent), inset 0 2px 0 color-mix(in srgb, #fff 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--spine) 60%, #000);
+}
+.lib-spine:hover { box-shadow: 0 16px 26px -10px color-mix(in srgb, var(--t-accent) 60%, #000); }
+.lib-spine-title {
+  writing-mode: vertical-rl; transform: rotate(180deg); font-family: "Instrument Serif", Georgia, serif;
+  font-size: 15px; line-height: 1.05; color: #fff; text-shadow: 0 1px 1px rgba(0,0,0,.35);
+  max-height: calc(100% - 22px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}

@@ -7,7 +7,7 @@ import MiniSearch from 'minisearch'
 import '@fontsource/instrument-serif/400.css'
 import '@fontsource/instrument-serif/400-italic.css'
 import '@fontsource-variable/newsreader'
-import { api } from '../api'
+import { api, apiPost } from '../api'
 import AgentFace from './AgentFace'
 import { Empty, Skeleton } from '../ui/kit'
 
@@ -88,79 +88,89 @@ export default function LibraryView({ tabs }: { tabs: ReactNode }) {
   )
 }
 
-/* ------------------------------------------------------------------ home */
+/* ------------------------------------------------------------------ home: the reading room */
+// A library, not a newspaper (owner, 10-09): the reference desk at the top — one box that searches
+// the shelves as you type and, on Enter, ASKS the librarian (memory) — and below it the stacks.
+const SHELF_HUE = (id: string) => { let h = 0; for (const c of id) h = (h * 31 + c.charCodeAt(0)) % 997; return (h * 137) % 360 }   // golden-angle spread: shelves land far apart on the wheel
+
 function Home({ idx, bySlug, go }: { idx: Index; bySlug: Map<string, Card>; go: (s?: string, b?: string) => void }) {
-  const nights = idx.books.filter((b) => b.shelf === 'chronicle')
-  const tonight = nights[0]
+  const journal = idx.books.filter((b) => b.shelf === 'chronicle')
   const shelves = idx.shelves.filter((s) => s.id !== 'chronicle' && idx.books.some((b) => b.shelf === s.id))
-  const count = idx.books.filter((b) => b.shelf !== 'chronicle').length
+  const count = idx.books.length
   useEffect(() => {
     const want = location.hash.match(/[?&]shelf=([a-z0-9-]+)/)?.[1]
     if (want) setTimeout(() => document.getElementById(`shelf-${want}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60)
   }, [])
   return (
     <div className="px-5 sm:px-10 pb-24 max-w-6xl mx-auto">
-      <header className="pt-10 sm:pt-16 pb-8 text-center">
-        <h1 className="lib-display text-[48px] sm:text-[72px] leading-[0.95] text-ink">The Library</h1>
-        <p className="mt-4 text-[15px] text-ink-dim">
-          {count} books on {shelves.length} shelves — <span className="italic lib-display text-[18px]">everything the org has learned</span>, written up nightly by
-          <span className="inline-flex items-center gap-1.5 align-middle ml-1.5"><AgentFace name="memory" size={20} />Memory</span>
+      <header className="pt-10 sm:pt-14 pb-10 text-center">
+        <h1 className="lib-display text-[46px] sm:text-[64px] leading-[0.95] text-ink">The Library</h1>
+        <p className="mt-3 text-[14.5px] text-ink-dim">
+          {count} volumes, kept by <span className="inline-flex items-center gap-1.5 align-middle"><AgentFace name="memory" size={18} />Memory</span> — ask it anything, or browse the stacks
         </p>
-        <Search idx={idx} go={go} />
+        <Desk idx={idx} bySlug={bySlug} go={go} />
       </header>
 
-      {tonight && (
-        <section className="mb-16">
-          <motion.button onClick={() => go(tonight.shelf, tonight.slug)} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-            className="lib-edition group w-full text-left rounded-[28px] p-7 sm:p-10 grid gap-8 md:grid-cols-[1.4fr_1fr]">
-            <div>
-              <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-cyan"><Icon name="moon" className="w-4 h-4" />Tonight's edition · {fmtDate(tonight.date ?? tonight.slug)}</div>
-              <h2 className="lib-display mt-4 text-[34px] sm:text-[44px] leading-[1.02] text-ink group-hover:text-cyan-soft transition-colors">{tonight.title}</h2>
-              {tonight.abstract && <p className="lib-serif mt-4 text-[17px] leading-relaxed text-ink-dim">{tonight.abstract}</p>}
-              <span className="mt-6 inline-flex items-center gap-2 text-[13px] text-cyan">Read the edition <span className="transition-transform group-hover:translate-x-1">→</span></span>
-            </div>
-            {!!tonight.highlights?.length && (
-              <ul className="flex flex-col gap-3 self-center">
-                {tonight.highlights.slice(0, 6).map((h, i) => (
-                  <motion.li key={i} initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.15 + i * 0.06 }}
-                    className="flex gap-3 text-[14px] leading-snug text-ink-dim"><span className="text-cyan mt-0.5">✦</span><span>{h}</span></motion.li>
-                ))}
-              </ul>
-            )}
-          </motion.button>
-          {nights.length > 1 && (
-            <div className="mt-5 flex items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:none]">
-              <span className="text-[11px] uppercase tracking-[0.16em] text-ink-mute shrink-0 mr-2">Earlier nights</span>
-              {nights.slice(1, 30).map((n) => (
-                <button key={n.slug} onClick={() => go(n.shelf, n.slug)} title={n.title}
-                  className="ax-panel shrink-0 rounded-full px-3 py-1 text-[12px] text-ink-dim hover:text-ink hover:border-cyan/50 transition-colors">{fmtDate(n.date ?? n.slug)}</button>
-              ))}
-            </div>
-          )}
-        </section>
+      {shelves.map((s) => <Stack key={s.id} shelf={s} books={idx.books.filter((b) => b.shelf === s.id)} go={go} />)}
+      {journal.length > 0 && (
+        <Stack shelf={{ id: 'chronicle', title: 'The Journal', blurb: 'One dated volume per night: what the org did and learned.', icon: 'moon' }}
+          books={journal} go={go} dated />
       )}
-
-      {shelves.map((s, si) => {
-        const books = idx.books.filter((b) => b.shelf === s.id)
-        return (
-          <motion.section key={s.id} id={`shelf-${s.id}`} className="mb-14 scroll-mt-6" initial={{ opacity: 0, y: 12 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: '-60px' }} transition={{ delay: Math.min(si, 3) * 0.04 }}>
-            <div className="flex items-end gap-4 mb-5 border-b border-line pb-3">
-              <span className="w-10 h-10 rounded-2xl grid place-items-center text-cyan shrink-0" style={{ background: 'color-mix(in srgb, var(--t-accent) 14%, transparent)' }}><Icon name={s.icon} /></span>
-              <div className="min-w-0">
-                <h2 className="lib-display text-[30px] leading-none text-ink">{s.title}</h2>
-                {s.blurb && <p className="mt-1.5 text-[13px] text-ink-mute">{s.blurb}</p>}
-              </div>
-              <span className="ml-auto text-[12px] font-mono text-ink-mute shrink-0">{books.length} book{books.length === 1 ? '' : 's'}</span>
-            </div>
-            <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-              {books.map((b) => <BookCard key={b.slug} b={b} onOpen={() => go(b.shelf, b.slug)} />)}
-            </div>
-          </motion.section>
-        )
-      })}
-      {!shelves.length && !tonight && <Empty title="No books yet" />}
+      {!shelves.length && !journal.length && <Empty title="No volumes yet" />}
       {bySlug.size === 0 && null}
     </div>
+  )
+}
+
+/* a shelf of spines; its title opens the contents (every volume with its abstract) */
+function Stack({ shelf, books, go, dated }: { shelf: Shelf; books: Card[]; go: (s?: string, b?: string) => void; dated?: boolean }) {
+  const [open, setOpen] = useState(false)
+  const hue = SHELF_HUE(shelf.id)
+  return (
+    <section id={`shelf-${shelf.id}`} className="mb-12 scroll-mt-6">
+      <button onClick={() => setOpen((o) => !o)} className="w-full flex items-end gap-4 mb-4 text-left group">
+        <span className="w-10 h-10 rounded-2xl grid place-items-center shrink-0" style={{ background: `hsl(${hue} 60% 50% / .16)`, color: `hsl(${hue} 70% 65%)` }}><Icon name={shelf.icon} /></span>
+        <div className="min-w-0">
+          <h2 className="lib-display text-[30px] leading-none text-ink group-hover:text-cyan-soft transition-colors">{shelf.title}</h2>
+          {shelf.blurb && <p className="mt-1.5 text-[13px] text-ink-mute">{shelf.blurb}</p>}
+        </div>
+        <span className="ml-auto text-[12px] text-ink-mute shrink-0">{books.length} vol. · {open ? 'close contents' : 'contents'} {open ? '▴' : '▾'}</span>
+      </button>
+      <div className="lib-shelf relative flex items-end gap-1.5 overflow-x-auto pb-3 pt-2 px-2 rounded-xl [scrollbar-width:thin]">
+        {books.map((b, i) => (
+          <motion.button key={b.slug} onClick={() => go(b.shelf, b.slug)} title={b.abstract ?? b.title}
+            initial={{ opacity: 0, y: 8 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: Math.min(i, 12) * 0.02 }}
+            whileHover={{ y: -10 }}
+            className="lib-spine shrink-0 rounded-t-md rounded-b-sm flex flex-col items-center justify-between py-3"
+            style={{
+              height: 150 + ((b.reading_min ?? 3) % 5) * 9, width: 40 + Math.min(16, (b.reading_min ?? 3) * 1.6),
+              ['--spine' as string]: `hsl(${(hue + (i % 4) * 9) % 360} 45% ${30 + (i % 3) * 5}%)`,
+            }}>
+            <span className="lib-spine-title">{dated ? fmtDate(b.date ?? b.slug) : b.title}</span>
+            <span className="text-[9.5px] text-white/70 font-mono">{b.reading_min ? `${b.reading_min}′` : ''}</span>
+          </motion.button>
+        ))}
+      </div>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.ol initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+            className="mt-3 overflow-hidden rounded-2xl lib-callout divide-y divide-line/60">
+            {books.map((b, i) => (
+              <li key={b.slug}>
+                <button onClick={() => go(b.shelf, b.slug)} className="w-full text-left px-5 py-3.5 flex gap-4 hover:bg-deck-3/50">
+                  <span className="font-mono text-[11px] text-ink-mute w-6 shrink-0 pt-1">{String(i + 1).padStart(2, '0')}</span>
+                  <span className="min-w-0">
+                    <span className="lib-display text-[20px] text-ink block leading-tight">{dated ? `${fmtDate(b.date ?? b.slug)} — ${b.title}` : b.title}</span>
+                    {b.abstract && <span className="lib-serif text-[14px] text-ink-dim line-clamp-2 block mt-0.5">{b.abstract}</span>}
+                  </span>
+                  <span className="ml-auto text-[11px] text-ink-mute shrink-0 pt-1">{b.reading_min ? `${b.reading_min} min` : ''}</span>
+                </button>
+              </li>
+            ))}
+          </motion.ol>
+        )}
+      </AnimatePresence>
+    </section>
   )
 }
 
@@ -178,10 +188,13 @@ function BookCard({ b, onOpen }: { b: Card; onOpen: () => void }) {
   )
 }
 
-/* ------------------------------------------------------------------ search */
-function Search({ idx, go }: { idx: Index; go: (s?: string, b?: string) => void }) {
+/* ------------------------------------------------------------------ the reference desk */
+// Type: the shelves are searched as you go. Enter: the question goes to the librarian (memory) on an
+// obs:library-<hex> thread, the volumes it is reading show at once, and its answer lands inline.
+function Desk({ idx, bySlug, go }: { idx: Index; bySlug: Map<string, Card>; go: (s?: string, b?: string) => void }) {
   const [q, setQ] = useState('')
-  const [sel, setSel] = useState(0)
+  const [sel, setSel] = useState(-1)
+  const [ask, setAsk] = useState<{ q: string; reading: Card[]; answer: string | null; err?: string } | null>(null)
   const input = useRef<HTMLInputElement>(null)
   const ms = useMemo(() => {
     const m = new MiniSearch<Card & { id: string; tagline: string }>({
@@ -191,9 +204,9 @@ function Search({ idx, go }: { idx: Index; go: (s?: string, b?: string) => void 
     m.addAll(idx.books.map((b) => ({ ...b, id: `${b.shelf}/${b.slug}`, tagline: (b.tags ?? []).join(' ') })))
     return m
   }, [idx])
-  const hits = useMemo(() => (q.trim().length > 1 ? ms.search(q.trim()).slice(0, 8) : []), [ms, q])
-  const shelfTitle = useMemo(() => new Map(idx.shelves.map((s) => [s.id, s.title])), [idx])
-  useEffect(() => setSel(0), [q])
+  const hits = useMemo(() => (q.trim().length > 1 ? ms.search(q.trim()).slice(0, 6) : []), [ms, q])
+  const shelfTitle = useMemo(() => new Map([...idx.shelves.map((s) => [s.id, s.title] as const), ['chronicle', 'The Journal'] as const]), [idx])
+  useEffect(() => setSel(-1), [q])
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       const typing = (e.target as HTMLElement)?.closest?.('input, textarea, [contenteditable="true"]')
@@ -203,44 +216,96 @@ function Search({ idx, go }: { idx: Index; go: (s?: string, b?: string) => void 
     return () => removeEventListener('keydown', k)
   }, [])
 
+  async function librarian(question: string) {
+    const reading = ms.search(question).slice(0, 4).map((h) => bySlug.get(h.slug as string)).filter(Boolean) as Card[]
+    setAsk({ q: question, reading, answer: null })
+    setQ('')
+    try {
+      const thread = `obs:library-${Math.random().toString(16).slice(2, 10)}`
+      const r = await apiPost<{ sent: number }>('/memory/chat', { message: question, thread })
+      for (let i = 0; i < 120; i++) {                     // the librarian answers on its own clock (~4 min)
+        await new Promise((res) => setTimeout(res, 2000))
+        const got = await api<{ replies: { id: number; body: string }[] }>(`/memory/chat?thread=${encodeURIComponent(thread)}&after=${r.sent}`)
+        if (got.replies.length) { setAsk((a) => a && { ...a, answer: got.replies.map((x) => x.body).join('\n\n') }); return }
+      }
+      setAsk((a) => a && { ...a, err: 'Memory hasn’t answered yet — it may be mid-task. The question is on its desk.' })
+    } catch (e) {
+      setAsk((a) => a && { ...a, err: String(e) })
+    }
+  }
+
   const snippet = (text: string) => {
     const words = q.trim().toLowerCase().split(/\s+/).filter((w) => w.length > 1)
     const low = text.toLowerCase()
     const at = words.map((w) => low.indexOf(w)).filter((i) => i >= 0).sort((a, b) => a - b)[0] ?? -1
     if (at < 0) return null
-    const from = Math.max(0, at - 70), piece = text.slice(from, at + 150)
+    const from = Math.max(0, at - 60), piece = text.slice(from, at + 140)
     const re = new RegExp(`(${words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'ig')
     return <>{from > 0 ? '…' : ''}{piece.split(re).map((p, i) => (i % 2 ? <mark key={i} className="lib-mark">{p}</mark> : p))}…</>
   }
+  const answerHtml = useMemo(() => (ask?.answer ? render(ask.answer, bySlug) : ''), [ask?.answer, bySlug])
 
   return (
-    <div className="relative max-w-2xl mx-auto mt-9 text-left">
+    <div className="relative max-w-2xl mx-auto mt-8 text-left">
       <label className="lib-search flex items-center gap-3 rounded-2xl px-5 h-14">
         <svg viewBox="0 0 24 24" className="w-5 h-5 text-ink-mute shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
-        <input ref={input} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search everything the org knows…"
+        <input ref={input} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ask memory, or search the shelves…"
           onKeyDown={(e) => {
             if (e.key === 'ArrowDown') { e.preventDefault(); setSel((v) => Math.min(hits.length - 1, v + 1)) }
-            else if (e.key === 'ArrowUp') { e.preventDefault(); setSel((v) => Math.max(0, v - 1)) }
-            else if (e.key === 'Enter' && hits[sel]) go(hits[sel].shelf, hits[sel].slug)
+            else if (e.key === 'ArrowUp') { e.preventDefault(); setSel((v) => Math.max(-1, v - 1)) }
+            else if (e.key === 'Enter') { if (sel >= 0 && hits[sel]) go(hits[sel].shelf, hits[sel].slug); else if (q.trim()) librarian(q.trim()) }
             else if (e.key === 'Escape') setQ('')
           }}
           className="flex-1 min-w-0 bg-transparent outline-none text-[16px] text-ink placeholder:text-ink-mute" />
-        <kbd className="hidden sm:inline font-mono text-[11px] px-1.5 py-0.5 rounded border border-line text-ink-mute">/</kbd>
+        <kbd className="hidden sm:inline font-mono text-[11px] px-1.5 py-0.5 rounded border border-line text-ink-mute">↵ ask</kbd>
       </label>
       <AnimatePresence>
         {q.trim().length > 1 && (
           <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
             className="absolute left-0 right-0 top-[64px] z-20 rounded-2xl overflow-hidden lib-pop max-h-[60vh] overflow-y-auto">
-            {hits.length ? hits.map((h, i) => (
+            <button onClick={() => librarian(q.trim())} onMouseEnter={() => setSel(-1)}
+              className={`w-full text-left px-5 py-3 border-b border-line/60 flex items-center gap-3 ${sel === -1 ? 'bg-deck-3' : ''}`}>
+              <AgentFace name="memory" size={22} />
+              <span className="text-[14px] text-ink">Ask memory: <span className="text-ink-dim">“{q.trim()}”</span></span>
+              <span className="ml-auto text-[11px] text-ink-mute">Enter</span>
+            </button>
+            {hits.map((h, i) => (
               <button key={h.id} onMouseEnter={() => setSel(i)} onClick={() => go(h.shelf, h.slug)}
-                className={`w-full text-left px-5 py-3.5 border-b border-line/60 last:border-0 ${i === sel ? 'bg-deck-3' : ''}`}>
+                className={`w-full text-left px-5 py-3 border-b border-line/60 last:border-0 ${i === sel ? 'bg-deck-3' : ''}`}>
                 <div className="flex items-baseline gap-2">
-                  <span className="lib-display text-[20px] text-ink">{h.title}</span>
+                  <span className="lib-display text-[19px] text-ink">{h.title}</span>
                   <span className="text-[11px] uppercase tracking-[0.14em] text-ink-mute">{shelfTitle.get(h.shelf) ?? h.shelf}</span>
                 </div>
-                <div className="mt-1 text-[13px] leading-snug text-ink-dim line-clamp-2">{snippet(h.text) ?? h.abstract}</div>
+                <div className="mt-0.5 text-[13px] leading-snug text-ink-dim line-clamp-2">{snippet(h.text) ?? h.abstract}</div>
               </button>
-            )) : <div className="px-5 py-6 text-[13px] text-ink-mute">Nothing in the library matches “{q}”.</div>}
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {ask && (
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="mt-6 rounded-3xl lib-edition p-6 sm:p-7 text-left">
+            <div className="flex items-start gap-3">
+              <AgentFace name="memory" size={28} />
+              <div className="min-w-0 flex-1">
+                <div className="text-[12px] uppercase tracking-[0.16em] text-cyan">You asked</div>
+                <div className="lib-display text-[24px] leading-tight text-ink mt-1">{ask.q}</div>
+              </div>
+              <button onClick={() => setAsk(null)} aria-label="close" className="text-ink-mute hover:text-ink px-1">✕</button>
+            </div>
+            {ask.reading.length > 0 && (
+              <div className="mt-4 flex flex-wrap items-center gap-2 text-[12.5px] text-ink-mute">
+                {ask.answer ? 'Drawn from' : <><span className="w-3 h-3 rounded-full border-2 border-cyan border-t-transparent animate-spin" />Memory is reading</>}
+                {ask.reading.map((b) => (
+                  <button key={b.slug} onClick={() => go(b.shelf, b.slug)} className="ax-panel rounded-full px-2.5 py-0.5 text-ink-dim hover:text-ink">{b.title}</button>
+                ))}
+              </div>
+            )}
+            {!ask.reading.length && !ask.answer && !ask.err && (
+              <div className="mt-4 text-[12.5px] text-ink-mute flex items-center gap-2"><span className="w-3 h-3 rounded-full border-2 border-cyan border-t-transparent animate-spin" />Memory is thinking…</div>
+            )}
+            {ask.answer && <div className="lib-prose mt-5 !text-[17px]" dangerouslySetInnerHTML={{ __html: answerHtml }} />}
+            {ask.err && <div className="mt-4 text-[13px] text-ink-mute">{ask.err}</div>}
           </motion.div>
         )}
       </AnimatePresence>
