@@ -571,7 +571,11 @@ def _never_served(path: Path) -> bool:
     (nucleus/secret_holders.json) and the privacy invariants (CLAUDE.md) — whoever asks, whoever
     embedded it."""
     home = Path.home()
-    dirs = [REPO / "agents", REPO / "triggers", REPO / "memory", home / ".ssh", home / ".gnupg"]
+    # the host's credential stores too: the Claude OAuth token every resident runs on (~/.claude), the
+    # GitHub token and astryx's own config (~/.config), keyrings (steward #37779)
+    dirs = [REPO / "agents", REPO / "triggers", REPO / "memory", home / ".ssh", home / ".gnupg",
+            home / ".claude", home / ".config", home / ".local" / "share" / "keyrings",
+            home / "genesis", home / ".astryx-quarantine"]          # secretset scan roots that are whole trees
     dirs += [d for d in (REPO / "homes").glob("*/.people")]
     files = {REPO / ".env", REPO / "local.md", REPO / "relations.md", REPO / "owner.md", home / ".pgpass"}
     try:

@@ -163,6 +163,9 @@ def api(url):
             oid = c.execute("INSERT INTO messages (from_agent, to_agent, thread, body) VALUES ('painter', 'owner', %s, %s) RETURNING id",
                             (t, f"[[file:{env_path}]] [[file:{outside}]]")).fetchone()[0]
             c.commit()
+        import bridges.canvas as _bc
+        arm("the floor also holds the host's credential stores (Claude token, GitHub token, config)",
+            all(_bc._never_served((Path.home() / x).resolve()) for x in (".claude/.credentials.json", ".config/gh/hosts.yml", ".ssh/id_ed25519")))
         arm("to the owner an agent's embed reaches anywhere it can read — except the never-served floor (.env)",
             [o.get(f"{A}/file?msg={oid}&n={k}").status_code for k in (0, 1)] == [404, 200])
         o = who("owner")
