@@ -3,7 +3,18 @@
 # Usage: ./init.sh            core org (postgres, schema, deps, seed, observatory)
 #        ./init.sh whatsapp   wire WhatsApp as an owner surface (needs wacli, wacli.sh)
 set -euo pipefail
-cd "$(dirname "$0")"
+# >>> self dir
+# Start in the REPO however this was invoked. Through the PATH link (~/.local/bin/astryx → <repo>/init.sh), $0 is the
+# LINK, so `cd "$(dirname "$0")"` landed in ~/.local/bin and every `astryx <verb>` ran outside the repo (a2 #39198).
+# Resolve link chains in plain POSIX (older macOS readlink has no -f): a relative target is relative to its link's dir.
+_self="$0"
+while [ -L "$_self" ]; do
+  _t=$(readlink "$_self")
+  case "$_t" in /*) _self="$_t" ;; *) _self="$(dirname "$_self")/$_t" ;; esac
+done
+cd "$(dirname "$_self")"
+unset _self _t
+# <<< self dir
 
 say() { echo -e "\033[36m[astryx]\033[0m $*"; }
 die() { echo -e "\033[31m[astryx]\033[0m $*" >&2; exit 1; }
