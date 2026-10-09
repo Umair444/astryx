@@ -51,20 +51,68 @@ def main():
     calls, refused = [], []
     real_popen, real_run = _sp.Popen, _sp.run
 
+    def _db(spec):
+        try:
+            return conninfo_to_dict(spec).get("dbname") or None
+        except Exception:                                          # noqa: BLE001
+            return None
+
     def _target(argv):
-        if "-d" in argv and argv.index("-d") + 1 < len(argv):
-            try:
-                return conninfo_to_dict(argv[argv.index("-d") + 1]).get("dbname")
-            except Exception:                                      # noqa: BLE001
-                return argv[argv.index("-d") + 1]
+        """The database a libpq tool will reach: -d X, --dbname X, --dbname=X, or a positional conninfo/URL. None if
+        it can't be read, and then libpq falls back to PGDATABASE or the user name (prod here), so the caller
+        treats None as PROD (steward #39047 R2, fail-closed)."""
+        for i, a in enumerate(argv):
+            if a in ("-d", "--dbname") and i + 1 < len(argv):
+                return _db(argv[i + 1])
+            if a.startswith("--dbname="):
+                return _db(a.split("=", 1)[1])
+        for a in argv[1:]:
+            if not a.startswith("-") and ("=" in a or "://" in a):
+                return _db(a)
         return None
 
     def _guard(argv):
         tool, db = os.path.basename(str(argv[0])), _target(list(map(str, argv)))
         calls.append((tool, db))
-        if db == prod and tool != "pg_dump":
+        if tool != "pg_dump" and db in (prod, None):
             refused.append((tool, db))
-            raise RuntimeError(f"oracle refused: {tool} would write PROD ({db})")
+            raise RuntimeError(f"oracle refused: {tool} would write PROD ({db or 'an unreadable target'})")
+
+    # IN-PROCESS connections too (steward #39047 R1): build_base's own psycopg connections run OWN_SQL. A connection
+    # to prod's dbname is allowed only DATABASE-LEVEL statements (create_db's CREATE/ALTER DATABASE and its REVOKE
+    # ON DATABASE: cluster-level, never prod's contents); any other statement on it is refused before it executes.
+    import re as _re
+    import psycopg as _pg
+    real_connect = _pg.connect
+    DB_LEVEL = _re.compile(r"^\s*(CREATE DATABASE|ALTER DATABASE|DROP DATABASE|(GRANT|REVOKE)\b.*\bON DATABASE\b|SELECT)\b",
+                           _re.I | _re.S)
+    conns = []
+
+    class _Guarded:
+        def __init__(self, c, db):
+            self._c, self._db = c, db
+
+        def __getattr__(self, n):
+            return getattr(self._c, n)
+
+        def __enter__(self):
+            self._c.__enter__()
+            return self
+
+        def __exit__(self, *a):
+            return self._c.__exit__(*a)
+
+        def execute(self, q, *a, **k):
+            text = q.as_string(self._c) if hasattr(q, "as_string") else str(q)
+            if self._db == prod and not DB_LEVEL.match(text):
+                refused.append(("psycopg", text[:80]))
+                raise RuntimeError(f"oracle refused: a write on a PROD connection: {text[:80]}")
+            return self._c.execute(q, *a, **k)
+
+    def connect(*a, **k):
+        db = k.get("dbname") or (_db(a[0]) if a else None) or _db(k.get("conninfo", "")) or prod
+        conns.append(db)
+        return _Guarded(real_connect(*a, **k), db)
 
     def popen(argv, *a, **k):
         _guard(argv)
@@ -78,7 +126,7 @@ def main():
     age_pub_before = adm.execute(AGE_PUB).fetchone()[0]
     scope = rs.RunScope(dsn, root=ORACLE_BASE).open()
     try:
-        _sp.Popen, _sp.run = popen, run
+        _sp.Popen, _sp.run, _pg.connect = popen, run, connect
         try:
             base, rc, errs = bp.build_base(scope, dsn, prod)
         except RuntimeError as e:
@@ -88,7 +136,7 @@ def main():
             print(f"\nFAIL: branch_check base ({len(fails)} failing)")
             return 1                                       # finally still tears the scope down
         finally:
-            _sp.Popen, _sp.run = real_popen, real_run
+            _sp.Popen, _sp.run, _pg.connect = real_popen, real_run, real_connect
         with psycopg.connect(scope.dsn(base), autocommit=True) as bc:
             n = bc.execute("SELECT count(*) FROM steps").fetchone()[0]
             bc.execute("INSERT INTO steps (agent, kind, content) VALUES ('bc-oracle', 'milestone', 'x')")
@@ -101,6 +149,9 @@ def main():
               "nothing that writes was aimed at prod", not refused and calls.count(("pg_dump", prod)) == 1
               and ("pg_restore", base) in calls and all(db != prod for tool, db in calls if tool != "pg_dump"),
               f"calls={calls} refused={refused}")
+        check("…and build_base's IN-PROCESS writes went to the base: it connected to the base, and every statement "
+              "on a prod-dbname connection was database-level (create_db's)", base in conns and not refused,
+              f"conns={conns} refused={refused}")
         with psycopg.connect(scope.dsn(base), autocommit=True) as bc:
             base_pub = bc.execute(AGE_PUB).fetchone()[0]
         check("D1: the run-owned base grants ag_catalog USAGE (the run role can see cypher)",
