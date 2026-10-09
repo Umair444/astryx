@@ -28,6 +28,8 @@ for _k in [k for k in os.environ if k.startswith("GIT_")]:
     del os.environ[_k]
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
+from nucleus.sqlguard.estate import gate  # noqa: E402
+gate("test_fixture_reaper", REPO, deps=("psycopg",))   # a committed-only tree (no venv): 77, not an import crash
 SRC = os.environ.get("SQLGUARD_FIXTURE_SRC") or str(REPO / "nucleus" / "sqlguard" / "fixture.py")  # mutation_probe swaps it
 import importlib.util  # noqa: E402
 os.environ.setdefault("ASTRYX_SQLGUARD_ROOT", str(REPO))   # a mutant COPY lives outside the repo: keep REPO (and .env) real
