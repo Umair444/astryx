@@ -36,6 +36,34 @@ printf 'vs origin/main: %s ahead / %s behind\n' \
   "$(git rev-list --count HEAD..origin/main 2>/dev/null || echo '?')"
 git log origin/main --oneline -3 2>/dev/null
 
+hr "continuity — any >6h hole in agent steps, and WHY (read this before judging any red below)"
+# After an outage, the boot backlog shows as "stuck" messages and gates that read LIVE recent data
+# (econ v2 shadow's 2-day window, wake_marker's live sample) go red on an empty window. Neither is a
+# lesion, and the other panels can't tell "the org was off" from "something is broken". So this
+# panel names a >6h hole in `steps` (any agent's step is a heartbeat) within 14 days.
+# The window's first step is lagged against the last step BEFORE the window, so a gap that began
+# before the window opened (an org dark >14d, just back) is still named, not hidden by a NULL lag.
+# A steps hole has TWO causes, and they mean opposite things (steward #34886). It is classified by
+# the longest MESSAGE silence inside it. The pulse writes a message at least every 4h while it runs
+# (60d max quiet-but-up silence: 4.0h), so:
+#   >6h silent  -> HOST/PULSE DARK: benign for the reds below.
+#   <=6h silent -> PULSE UP, NO AGENT TURNED: a wedge or a quota shed. That is a FINDING.
+# Not "any message inside": the pulse boots before the agents, so a real outage holds messages
+# at its tail (09-30→10-09: 29 msgs, 210.2h silent).
+_gap="$(q "WITH g AS (SELECT prev, ts FROM (SELECT ts, coalesce(lag(ts) OVER (ORDER BY ts), (SELECT max(ts) FROM steps WHERE ts <= now()-interval '${VITALS_DARK_DAYS:-14} days')) prev FROM steps WHERE ts > now()-interval '${VITALS_DARK_DAYS:-14} days') s WHERE ts-prev > interval '6 hours' ORDER BY ts DESC LIMIT 3),
+ c AS (SELECT g.prev, g.ts, (SELECT max(t-pt) FROM (SELECT t, lag(t) OVER (ORDER BY t) pt FROM (SELECT g.prev t UNION ALL SELECT m.ts FROM messages m WHERE m.ts > g.prev AND m.ts < g.ts UNION ALL SELECT g.ts) x) y) sil FROM g)
+ SELECT CASE WHEN sil > interval '6 hours' THEN 'HOST/PULSE DARK          ' ELSE 'PULSE UP, NO AGENT TURNED' END||'  '||to_char(prev AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI\"Z\"')||' → '||to_char(ts AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI\"Z\"')||'  no steps '||round(EXTRACT(EPOCH FROM ts-prev)/3600.0,1)||'h, longest message silence '||round(EXTRACT(EPOCH FROM sil)/3600.0,1)||'h  (resumed '||round(EXTRACT(EPOCH FROM now()-ts)/3600.0,1)||'h ago)' FROM c ORDER BY ts DESC")"
+if [ -n "$_gap" ]; then
+  printf '%s\n' "$_gap"
+  printf '%s\n' "$_gap" | grep -q '^HOST/PULSE DARK' && \
+    echo "  ⚠ HOST/PULSE DARK: expect boot backlog and vacuous live-window gates; still reproduce each red before calling it an artifact"
+  printf '%s\n' "$_gap" | grep -q '^PULSE UP, NO AGENT TURNED' && \
+    echo "  ⚠ PULSE UP, NO AGENT TURNED: the pulse ran and nobody turned (wedged sessions, quota shed?). That is a FINDING to investigate, not boot noise"
+  true
+else
+  echo "  (no >6h gap in steps over ${VITALS_DARK_DAYS:-14}d — the org has been continuously alive)"
+fi
+
 hr "doctor — reds only (record these as BASELINE on clean main)"
 if [ "${1:-}" = "--doctor" ] || [ "${VITALS_DOCTOR:-0}" = "1" ]; then
   _doc="$(timeout 120 ./init.sh doctor 2>&1)"

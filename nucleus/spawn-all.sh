@@ -23,9 +23,8 @@ for _ in $(seq 1 60); do
   sleep 2
 done
 
-mapfile -t AGENTS < <(find agents -type f -name '*.md' \
-  -not -name '*.example.md' -not -path '*.example/*' -not -path '*/.git/*' \
-  -printf '%f\n' | sed 's/\.md$//' | sort -u)
+# the ONE roster rule (nucleus/charter.py): a find here spawned seed's onboard.md as an agent
+mapfile -t AGENTS < <(venv/bin/python nucleus/charter.py --roster)
 
 echo "spawn-all: ${#AGENTS[@]} charters in the tree"
 for a in "${AGENTS[@]}"; do

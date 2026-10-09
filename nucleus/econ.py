@@ -411,11 +411,11 @@ def v2_view(metrics) -> dict | None:
     v2 = (metrics or {}).get("v2") if isinstance(metrics, dict) else None
     ver = _v2_ver((v2 or {}).get("version")) if isinstance(v2, dict) else None
     return v2 if ver is not None and ver >= V2_MIN else None
-from nucleus.orgname import RESERVED_ORGS  # the demand predicate's authority (see _V2_DEMAND)
+from nucleus.orgname import INTERNAL_ORGS  # the demand predicate's authority (see _V2_DEMAND)
 # a call serves REAL demand (owner edge b) only when its turn served a goal, or was woken
 # by a trigger, the owner, a human chat or a federated peer. An inter-agent message alone
 # does NOT qualify: messaging a peer to look used is the named gaming vector. "Outside this
-# org" is `from_org NOT IN orgname.RESERVED_ORGS`, DERIVED from that authority — NOT
+# org" is `from_org NOT IN orgname.INTERNAL_ORGS`, DERIVED from that authority — NOT
 # `from_org IS NOT NULL`: the column DEFAULTS to 'local', so that clause was a tautology that
 # qualified every peer message (a2, plan-4227 #21324; its SQL had never been executed by the
 # oracle). Channel rows (whatsapp/discord/telegram) and federated orgs carry a non-reserved
@@ -423,7 +423,9 @@ from nucleus.orgname import RESERVED_ORGS  # the demand predicate's authority (s
 _V2_DEMAND = """(t.goal_id IS NOT NULL OR EXISTS (
         SELECT 1 FROM messages im WHERE im.id = t.input_msg_id
           AND (im.from_agent IN ('pulse','owner') OR im.from_agent LIKE 'wa-%%'
-               OR im.from_org <> ALL(%s))))"""   # %s = orgname.RESERVED_ORGS (the authority)
+               OR im.from_org <> ALL(%s))))"""   # %s = orgname.INTERNAL_ORGS (the authority)
+# NOT orgname.RESERVED_ORGS: that set answers "which names may a peer never claim" and includes the
+# owner's channels; read here it would drop every channel human from demand (2026-10-09, caught RED-first).
 
 
 def _v2_rec(value, coverage, status) -> dict:
@@ -496,7 +498,7 @@ def _v2_tool_rows(conn, since, until):
         SELECT s.meta->>'registry_id' AS rid, s.agent AS caller, {_V2_DEMAND} AS dq
         FROM steps s JOIN turns t ON t.id = s.turn_id
         WHERE s.kind = 'tool' AND s.meta ? 'registry_id' AND s.meta ? 'v'
-          AND s.ts >= %s AND s.ts < %s""", (sorted(RESERVED_ORGS), since, until))
+          AND s.ts >= %s AND s.ts < %s""", (sorted(INTERNAL_ORGS), since, until))
     if not calls:
         return [], True
     try:

@@ -34,6 +34,17 @@ ORG_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,79}$")
 # while adding canvas as a surface). A new surface adds its name here.
 RESERVED_ORGS = frozenset({"local", "whatsapp", "telegram", "discord", "canvas", "owner"})
 
+# INTERNAL is a DIFFERENT question from RESERVED, and conflating them broke a second consumer. RESERVED
+# answers "which names may a peer never claim" (the federation door; the owner's surfaces are "us" there).
+# INTERNAL answers "which from_org stamps did the org itself write" — the rows that are NOT outside
+# demand. A human on whatsapp/telegram/discord/canvas is RESERVED (no peer may pose as that channel) but
+# NOT internal: their message is real outside demand (econ._V2_DEMAND). Widening RESERVED for the door
+# on 2026-10-09 silently stopped every channel human counting as demand in tool GDP, because econ read
+# RESERVED; steward's oracle caught it (demand[human]) before a single row was written. Every internal
+# stamp is also reserved, never the reverse — asserted below, so the relation cannot drift silently.
+INTERNAL_ORGS = frozenset({"local"})
+assert INTERNAL_ORGS <= RESERVED_ORGS, "an internal stamp must also be unclaimable by a peer"
+
 URL_MAX = 200
 
 

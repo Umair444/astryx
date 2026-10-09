@@ -42,6 +42,7 @@ except ImportError as exc:
     sys.exit(77)
 
 fails = []
+partial = []   # named partial skips: an arm the substrate cannot exercise (exit 77, never a pass)
 RECORD_KEYS = {"value", "version", "coverage", "status"}
 STATUSES = {"OK", "PARTIAL", "VACUOUS", "NOT_EVALUATED"}
 BUDGET_ERA = {"budget_tokens", "funded_by", "spent_tokens"}
@@ -115,6 +116,7 @@ def demand_arm(dsn):
             "owner": ("owner", None, None, True),
             "pulse": ("pulse", None, None, True),
             "human": ("someone", "whatsapp", None, True),   # channel row carries from_org
+            "canvas": ("cv-guest", "canvas", None, True),   # a canvas human: RESERVED, yet outside demand
             "fed":   ("seed", "fedtest-x", None, True),     # a federated peer org
             "goal":  (None, None, 7, True),                 # no message; the turn served a goal
         }
@@ -313,9 +315,21 @@ def main():
           str(unk["status"]).split(":")[0] == "PARTIAL", str(unk))
 
     # ── 6. Q IS A DAILY TRANSFER, conserved over windows (a2 #21324 note) ─────────
+    # THE WINDOW IS DERIVED, NOT ASSUMED (2026-10-09). This arm read "now - 2 days", and after the host
+    # was off 09-30 → 10-09 that day held no turns: Q's status read "VACUOUS: no flux in window" and the
+    # gate went RED on the org's sleep, not on a broken invariant. The Q record's honesty is asserted on
+    # the newest COMPLETE day that HAS flux; an org with no flux at all is a named partial skip.
     conn = psycopg.connect(dsn, connect_timeout=5)   # psycopg3 `with conn:` CLOSED the first
     with conn:
-        d1 = (datetime.now(timezone.utc).date() - timedelta(days=2)).isoformat()
+        fd = conn.execute("SELECT max(ended_at)::date FROM turns "
+                          "WHERE ended_at < date_trunc('day', now() AT TIME ZONE 'UTC') "
+                          "AT TIME ZONE 'UTC' - interval '1 day'").fetchone()[0]
+        if fd is None:
+            print("  SKIP  the Q window arms — no complete day with flux exists (an org that never ran)")
+            partial.append("Q window (no flux day)")
+            d1 = (datetime.now(timezone.utc).date() - timedelta(days=2)).isoformat()
+        else:
+            d1 = fd.isoformat()
         a0 = f"{d1}T00:00:00+00:00"
         a1 = (datetime.fromisoformat(a0) + timedelta(days=1)).isoformat()
         a2 = (datetime.fromisoformat(a0) + timedelta(days=2)).isoformat()
@@ -323,8 +337,9 @@ def main():
         check("W is additive over adjacent windows", va["W"]["value"] + vb["W"]["value"] == vab["W"]["value"])
         check("Q is conserved over adjacent windows (sum of daily Q = Q of the union)",
               va["Q"]["value"] + vb["Q"]["value"] == vab["Q"]["value"])
-        check("Q's record SAYS it can be negative (no S2 reader may assume Q>=0)",
-              "may be <0" in str(va["Q"]["status"]), str(va["Q"]["status"]))
+        if fd is not None:
+            check(f"Q's record SAYS it can be negative (no S2 reader may assume Q>=0) — on {d1}, the newest flux day",
+                  "may be <0" in str(va["Q"]["status"]), str(va["Q"]["status"]))
 
     conn.close()
 
@@ -339,7 +354,12 @@ def main():
     print()
     print(f"FAILED ({len(fails)}): " + "; ".join(fails) if fails
           else "econ v2 shadow: I1 records, v1 untouched, no budgets, effort re-derived, tool GDP degrades honestly")
-    return 1 if fails else 0
+    if fails:
+        return 1
+    if partial:
+        print(f"SKIP (partial): {', '.join(partial)}")
+        return 77
+    return 0
 
 
 if __name__ == "__main__":

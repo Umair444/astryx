@@ -707,6 +707,15 @@ def build_world(g: Graph) -> None:
     except Exception as e:                      # a broken world layer must not take the
         g.notes.append(f"world layer skipped: {e}")   # whole graph compile down with it
         return
+    # PEOPLE ARE NOT MINTED INTO kg (owner design, 2026-10-09; memory's firewall check #35895).
+    # This layer used to turn relations.md into kind=person nodes WITH display names, joined by
+    # in-category edges to the owner's circles — so a relation KIND (family, …) reached every
+    # agent through kg and `memory ask`, and kg's `visibility` gates labels on PUBLIC surfaces
+    # only, not org readers. People live in the social graph DB (node = one channel account,
+    # salted id; relation details private and role-gated). kg may hold their TYPE and coverage,
+    # never a person, a name, or a circle.
+    g.notes.append("world layer: people are not minted into kg — they live in the social graph DB")
+    return
     tax = world.taxonomy()
     if not tax["categories"]:
         g.notes.append("world layer empty: no owner instruments present (gitignored)")
