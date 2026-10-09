@@ -267,6 +267,9 @@ run "memory window() picks rare-term mass" "$PY" tests/test_memory_window.py
 # costs the row, and the classifications table refuses a prompt-shaped label. RED-first against
 # the pre-4227 hook; the arms that pass vacuously there are pinned by tests/mutants_tool_ledger.py.
 run "tool ledger: ids only, ledger authorship" "$PY" tests/test_tool_ledger.py
+# grep guard (a3 night-review 10-10; rule #12548/#40752): a recursive PLAIN grep rooted above a .gitignore is the
+# ugrep shell function and silently skips the gitignored estate. Hermetic; mutants in tests/mutants_grep_guard.py.
+run "grep guard: a blind recursive sweep is denied, the real binary never" "$PY" tests/test_grep_guard.py
 run "fixture_db reaps a killed run's database, never a live one's" "$PY" tests/test_fixture_reaper.py
 # geoloc /recent (a3 #32078, privacy): location history needs GEOLOC_TOKEN even from localhost, the
 # token compare is constant-time, and a malformed ingest token is a 401, never a 500. The body

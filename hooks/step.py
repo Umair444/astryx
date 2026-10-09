@@ -119,6 +119,16 @@ def secret_guard(tool, ti):
         return None, f"secret guard unevaluable ({type(e).__name__}): allowed (plan-5497)"
 
 
+def grep_guard(command, cwd):
+    """(deny_reason | None, error | None). A recursive plain grep rooted above a .gitignore silently skips the
+    gitignored estate (#12548/#40752). Same polarity as secret_guard: its unknown is ALLOW."""
+    try:
+        from nucleus.grep_guard import decide
+        return decide(command, cwd), None
+    except Exception as e:
+        return None, f"grep guard unevaluable ({type(e).__name__}): allowed"
+
+
 def is_tool_result(content) -> bool:
     return isinstance(content, list) and any(
         isinstance(c, dict) and c.get("type") == "tool_result" for c in content)
@@ -391,6 +401,9 @@ def main():
     denied = guard_err = None
     if ev == "PreToolUse":
         denied, guard_err = secret_guard(h.get("tool_name", "?"), h.get("tool_input") or {})
+        if not denied and h.get("tool_name") == "Bash":
+            denied, gerr = grep_guard((h.get("tool_input") or {}).get("command") or "", h.get("cwd"))
+            guard_err = guard_err or gerr
         if denied:
             print(json.dumps({"hookSpecificOutput": {
                 "hookEventName": "PreToolUse", "permissionDecision": "deny",
