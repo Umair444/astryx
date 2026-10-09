@@ -175,6 +175,10 @@ run "init.sh harden: no PUBLIC CONNECT on the org's databases" "$PY" tests/test_
 # in full, so a pulled NEW table is applied, and a failed apply never reads green. On a scratch DB. Mutants:
 # tests/mutants_init_schema.py.
 run "init.sh schema: a changed schema.sql is re-applied, a failed apply stays RED" "$PY" tests/test_init_schema.py
+# the database's SHAPE, which the stamp can't see (a1 #38264): live == a fresh apply of the schema files, table by
+# table, column by column, with types. Catches a column added inside an existing CREATE TABLE IF NOT EXISTS (a no-op
+# on a live host) and a hand DROP. Live read is read-only. Mutants: tests/mutants_schema_parity.py.
+run "schema parity: the live catalog has every table and column the schema files define" "$PY" tests/test_schema_parity.py
 # people library 1a: relation details readable only by people_cleared, the network layer by the resident role;
 # the move's receipt; the writers' cutover. ACCIDENT-GRADE (a same-uid resident can read the superuser credential),
 # proven on scratch roles and DBs. Mutants: tests/mutants_people_gate.py, tests/mutants_people_move.py.
