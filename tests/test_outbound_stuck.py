@@ -224,17 +224,9 @@ def test_roster_unread_falls_back_to_deaf():
 
 def test_unknown_recipient_render_never_says_restart():
     """Through the real entrypoint: the report for a non-resident names the ADDRESSING remedy and
-    never the restart one."""
-    import types
-    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
-    rows = [{"id": 900, "ts": _dt.now(_tz.utc) - _td(hours=30), "to_agent": "a3", "to_org": "local",
-             "status": "pending", "from_agent": "memory", "external_handle": False,
-             "bridge_delivered": False, "awaiting_peer_pickup": False, "last_pickup": None}]
-    ctx = types.SimpleNamespace(state={}, sql=lambda q, p=(): rows)
-    try:
-        out = _MOD["outbound_stuck"](ctx) or ""
-    except Exception as e:  # noqa: BLE001
-        raise AssertionError(f"entrypoint raised: {type(e).__name__}: {e}")
+    never the restart one. The roster is FORCED (a4 #35873): reading the host's agents/ tree made this
+    arm pass only where the identity repo exists, and fail under branch_check or a clone."""
+    out = _run_with_roster(["seed", "memory"], sender="memory", to="a3")
     assert "NO SUCH RESIDENT" in out and "a3" in out, out
     assert "DEAF RECIPIENT" not in out and "kill-session" not in out, out
 
