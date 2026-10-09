@@ -16,4 +16,8 @@ MUTANTS = {
          'out=$(git merge-tree --write-tree --name-only "$M" "$B" 2>&1); if false; then'),
     "K3 the transient links aren't removed (a live .env stays linked into a scratch tree)":
         ('  for l in "${made[@]}"; do rm -f "${WT:?}/$l"; done\n', ''),
+    "K4 the link set is a hand list again (a gitignored subdir of a tracked dir is left out: a1 #40418)":
+        ('  for l in $estate $RUNTIME; do', '  for l in $RUNTIME; do'),
+    "K5 live writes into a linked path go unreported (a1 R2)":
+        ('  [ -n "$wrote" ] && { echo "  LIVE WRITES', '  [ -z "x" ] && { echo "  LIVE WRITES'),
 }
