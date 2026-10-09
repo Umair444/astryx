@@ -110,6 +110,9 @@ try:
     check("a canvas CREATED after the last scan → share refused (its title/brief are unscanned)",
           b3 and "changed after the last privacy scan" in b3[0], str(b3))
     gate_row({"checked_at": now_, "open": {"h1": {"cid": c1, "loc": "x", "label": "phone-bare"}}})
+    mv0 = cv.meta_view(conn, 999999)              # an id with no canvas and no versions: both lookups answer 0 rows
+    check("meta_view of a canvas that does not exist masks nothing it cannot see (sqlguard's W)",
+          mv0 == {"meta": [], "notes": {}}, str(mv0))
     check("the gate's reasons carry no value (shapes only)",
           FAKE_PHONE not in json.dumps(cv.share_blockers(conn, c1)))
 
