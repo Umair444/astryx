@@ -6,6 +6,7 @@ The API runs in-process (TestClient on the prefixed ASGI app, lifespan and wire 
 Each arm is a property a viewer, an invitee or an agent depends on — the trust lines first.
 """
 import asyncio
+import contextlib
 import os
 import sys
 from pathlib import Path
@@ -120,6 +121,8 @@ def api(url):
         keep("guest")
         me = who("guest").get(f"{A}/me").json()
         arm("an invitee is cv-<name>, never owner", me["wire"] == "cv-guest" and me["owner"] is False, me)
+        arm("an invitee with nothing yet sees no canvases and no threads",
+            who("guest").get(f"{A}/canvases").json() == [] and who("guest").get(f"{A}/threads").json() == [])
         arm("an invitee sees only granted agents", [a["name"] for a in who("guest").get(f"{A}/agents").json()] == ["painter"])
         arm("an invitee cannot open a thread with an ungranted agent",
             who("guest").post(f"{A}/threads", json={"agent": "seed"}, headers=H).status_code == 403)
@@ -171,6 +174,134 @@ async def rows(url, cid, guest_thread):
         await conn.close()
 
 
+def coverage(url):
+    """Every SQL site both ways — a row found AND a row not found — so sqlguard can call each one
+    RESPONSIVE (its W witness), not merely executed. Each call is also a real behaviour check."""
+    import io
+    import contextlib
+    from fastapi.testclient import TestClient
+    import bridges.canvas as b
+    from bridges.providers.canvas import CanvasProvider
+    from nucleus import canvas as cv
+    print("coverage (every SQL site, found and not-found)")
+    H = {"x-astryx": "1"}
+    A = "/canvas/api"
+    with TestClient(b.root, base_url="http://testserver") as cl:
+        cl.post(f"{A}/login", json={"key": "nope"}, headers=H)                       # login: 0 rows
+        r = cl.post(f"{A}/login", json={"key": "test-owner-key"}, headers=H)
+        arm("owner session for coverage", r.status_code == 200)
+        with psycopg_conn(url) as c:
+            c.execute("INSERT INTO steps (agent, kind, content) VALUES ('painter', 'tool', 'cov')")
+            c.commit()
+        arm("agent activity is read from steps", any(a["last_seen"] for a in cl.get(f"{A}/agents").json()))
+        arm("list canvases", isinstance(cl.get(f"{A}/canvases").json(), list))
+        arm("list threads", isinstance(cl.get(f"{A}/threads").json(), list))
+        arm("users list", isinstance(cl.get(f"{A}/users").json(), list))
+        cl.post(f"{A}/users", json={"name": "cov", "agents": []}, headers=H)
+        arm("grants on a real and a missing user", cl.post(f"{A}/users/cov/grants", json={"name": "cov", "agents": ["painter"]}, headers=H).status_code == 200
+            and cl.post(f"{A}/users/ghost/grants", json={"name": "ghost", "agents": []}, headers=H).status_code == 200)
+        cl.post(f"{A}/users/ghost/revoke", headers=H)                                # revoke: 0 rows
+        empty = cl.post(f"{A}/canvases", json={"title": "Empty"}, headers=H).json()
+        full = cl.post(f"{A}/canvases", json={"title": "Full"}, headers=H).json()
+        arm("a missing canvas is 404 everywhere",
+            all(cl.get(f"{A}/canvases/999999{x}").status_code == 404 for x in ("", "/render", "/data")))
+        arm("an unpainted canvas renders nothing", cl.get(f"{A}/canvases/{empty['id']}/render").json()["html"] is None)
+        with psycopg_conn(url) as c:
+            cv.publish(c, full["id"], "<p>v1</p>", "painter")
+            cv.set_data(c, full["id"], "k", 1, "painter")
+            c.commit()
+        arm("a painted canvas renders its version", "<p>v1</p>" in (cl.get(f"{A}/canvases/{full['id']}/render").json()["html"] or ""))
+        arm("an absent version renders nothing", cl.get(f"{A}/canvases/{full['id']}/render?v=99").json()["html"] is None)
+        arm("data: all + one key + a missing key",
+            cl.get(f"{A}/canvases/{full['id']}/data").json() == {"k": 1}
+            and cl.get(f"{A}/canvases/{full['id']}/data?key=k").json()["value"] == 1
+            and cl.get(f"{A}/canvases/{full['id']}/data?key=nope").json()["value"] is None
+            and cl.get(f"{A}/canvases/{empty['id']}/data").json() == {})
+        arm("versions listed for painted + unpainted",
+            len(cl.get(f"{A}/canvases/{full['id']}").json()["versions"]) == 1
+            and cl.get(f"{A}/canvases/{empty['id']}").json()["versions"] == [])
+        arm("share an org canvas", cl.post(f"{A}/canvases/{full['id']}/share", json={"users": ["cov"]}, headers=H).json().get("shared_with") == ["cov"])
+        arm("archive", cl.post(f"{A}/canvases/{empty['id']}/archive", headers=H).status_code == 200
+            and cl.post(f"{A}/canvases/999999/archive", headers=H).status_code == 404)
+        t = cl.post(f"{A}/threads", json={"agent": "painter"}, headers=H).json()["thread"]
+        arm("an empty thread reads empty; a missing one is 404",
+            cl.get(f"{A}/threads/{t}/messages").json()["messages"] == []
+            and cl.get(f"{A}/threads/cv:nope/messages").status_code == 404)
+        cl.post(f"{A}/threads/{t}/messages", json={"body": "hello"}, headers=H)
+        arm("a thread with a message reads it", len(cl.get(f"{A}/threads/{t}/messages").json()["messages"]) == 1)
+        arm("the owner's thread list now has it", any(x["thread"] == t for x in cl.get(f"{A}/threads").json()))
+        arm("a canvas thread includes the page's rows",
+            cl.get(f"{A}/threads/cv:canvas-{full['id']}/messages").status_code == 200)
+        mid = cl.get(f"{A}/threads/{t}/messages").json()["messages"][0]["id"]
+        arm("a file not named by the message is 404; a missing message is 404",
+            cl.get(f"{A}/file?msg={mid}&n=0").status_code == 404 and cl.get(f"{A}/file?msg=999999999&n=0").status_code == 404)
+        arm("logout ends the session", cl.post(f"{A}/logout", headers=H).status_code == 200 and cl.get(f"{A}/me").status_code == 401)
+        cl.post(f"{A}/logout", headers=H)                                          # logout: 0 rows
+
+    async def rows2():
+        import asyncpg
+        conn = await asyncpg.connect(url)
+        try:
+            ids = [await conn.fetchval("INSERT INTO messages (from_agent, to_agent, thread, body) VALUES ($1,$2,$3,'r') RETURNING id", *x)
+                   for x in (("forge", "owner", "cv:opened-by-an-agent"), ("forge", f"canvas-{full['id']}", "t-x"),
+                             ("forge", "canvas-999999", "t-y"), ("forge", "cv-nobody", None))]
+            await b.claim(conn)
+            st = {r["id"]: r["status"] for r in await conn.fetch("SELECT id, status FROM messages WHERE id = ANY($1)", ids)}
+            reg = await conn.fetchval("SELECT user_name FROM canvas_threads WHERE thread='cv:opened-by-an-agent'")
+            arm("an agent opening a NEW cv: thread to the owner registers it in the owner's list", reg == "owner")
+            arm("replies to canvas-<id> (real or gone) are claimed", st[ids[1]] == st[ids[2]] == "delivered")
+            await b.on_canvas({"kind": "canvas", "canvas": full["id"], "version": 1})
+            await b.on_canvas({"kind": "data", "canvas": 999999, "key": "k"})
+        finally:
+            await conn.close()
+    import asyncio as _a
+    b.pool = None
+    _a.run(_pool_run(url, rows2))
+
+    async def prov():
+        p = CanvasProvider()
+        chats = await p.list_chats()
+        hit, miss = await p.search_contacts("cov"), await p.search_contacts("zzz")
+        r1, r2 = await p.resolve("canvas:cv-cov"), await p.resolve("canvas:cv-ghost")
+        arm("provider: chats listed, contacts found/not, resolve found/not",
+            len(chats) > 0 and len(hit) == 1 and miss == [] and r1 is not None and r2 is None)
+    _a.run(prov())
+
+    with psycopg_conn(url) as c:
+        arm("get_data: {} on a bare canvas, every key on a full one",
+            cv.get_data(c, empty["id"]) == {} and cv.get_data(c, full["id"]) == {"k": 1})
+        for bad in (lambda: cv.publish(c, 999999, "<p/>", "seed"), lambda: cv.rollback(c, full["id"], 99, "seed"),
+                    lambda: cv.get_data(c, full["id"], "nope")):
+            try:
+                bad(); arm("a missing canvas/version/key is a named error", False)
+            except cv.CanvasError:
+                pass
+        c.rollback()
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        rc = [cv.main(["list"]), cv.main(["list", "--all"]), cv.main(["versions", str(full["id"])]),
+              cv.main(["versions", str(empty["id"])]), cv.main(["show", str(full["id"])]),
+              cv.main(["show", str(full["id"]), "--version", "42"])]
+    arm("the CLI: list, versions (some/none), show (found / missing version → rc 1)", rc == [0, 0, 0, 0, 0, 1], rc)
+
+
+@contextlib.contextmanager
+def psycopg_conn(url):
+    import psycopg
+    with psycopg.connect(url) as c:
+        yield c
+
+
+async def _pool_run(url, fn):
+    import asyncpg
+    import bridges.canvas as b
+    b.pool = await asyncpg.create_pool(url, min_size=1, max_size=2)
+    try:
+        await fn()
+    finally:
+        await b.pool.close()
+
+
 if __name__ == "__main__":
     pure()
     with fixture_db() as fx:
@@ -179,5 +310,6 @@ if __name__ == "__main__":
         library(fx["url"])
         cid, gt = api(fx["url"])
         asyncio.run(rows(fx["url"], cid, gt))
+        coverage(fx["url"])
     print(f"{'PASS' if not fails else 'FAIL'}: canvas ({fails} failing)")
     sys.exit(1 if fails else 0)

@@ -425,10 +425,11 @@ async def thread_messages(thread: str, request: Request):
     t = await _own_thread(V(request), thread)
     if not t:
         return deny(404, "no such conversation")
-    q = "SELECT * FROM messages WHERE thread=$1"
-    if t["canvas_id"]:
-        q += f" OR to_agent='canvas-{int(t['canvas_id'])}' OR from_agent='canvas-{int(t['canvas_id'])}'"
-    rows = await pool.fetch(f"SELECT * FROM ({q} ORDER BY id DESC LIMIT 300) x ORDER BY id", thread)
+    # a canvas's own thread also shows the page's rows (to/from canvas-<id>) wherever they were threaded
+    page = f"canvas-{int(t['canvas_id'])}" if t["canvas_id"] else ""
+    rows = await pool.fetch(
+        "SELECT * FROM (SELECT * FROM messages WHERE thread=$1 OR ($2 <> '' AND (to_agent=$2 OR from_agent=$2)) "
+        "ORDER BY id DESC LIMIT 300) x ORDER BY id", thread, page)
     return {"thread": thread, "agent": t["agent"], "title": t["title"],
             "messages": [shape(r) for r in rows],
             "waiting": [a for a, w in waiting.items() if thread in w]}
