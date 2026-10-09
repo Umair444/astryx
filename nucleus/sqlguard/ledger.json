@@ -225,6 +225,9 @@
   "nucleus/runscope.py::orphan_roles\u001fselect shobj_description(oid, 'pg_authid') from pg_roles where rolname = ?": [
    "runscope"
   ],
+  "nucleus/schema_parity.py::shape\u001fselect n.nspname, c.relname, a.attname, format_type(a.atttypid, a.atttypmod) from pg_class c join pg_namespace n on n.oid = c.relnamespace join pg_attribute a on a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped where c.relkind in ('r', 'p') and n.nspname <> all(?) and n.nspname not like 'pg_toast%%' and n.nspname not like 'pg_temp%%' and not exists (select 1 from pg_depend d where d.classid = 'pg_class'::regclass and d.objid = c.oid and d.deptype = 'e') order by 1, 2, 3": [
+   "schema parity: the live catalog has every table and column the schema files define"
+  ],
   "nucleus/secret_sweep.py::sweep_turns\u001fselect raw_payload, input_prompt from turns where id=?": [
    "at-rest secret sweep redacts without corrupting (5497 S2)"
   ],
@@ -491,7 +494,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 304,
+  "debt_rows": 305,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -1148,6 +1151,12 @@
    "debt": "EXECUTED",
    "reason": "a3 D1 host stamp: the orphan sweep reaps only roles stamped with THIS machine's id. A pg_catalog read of one named role (always one row), so RESPONSIVE is unreachable by the judge's relation rule; pinned by R15 and the 'foreign or unstamped is reported, never dropped' arm.",
    "tk": "sha256t:d6b97d805e7416e4d66a4e3bc2e117d48e8dcc57c5097b4c26778f1861e4ff53"
+  },
+  "nucleus/schema_parity.py::shape\u001fselect n.nspname, c.relname, a.attname, format_type(a.atttypid, a.atttypmod) from pg_class c join pg_namespace n on n.oid = c.relnamespace join pg_attribute a on a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped where c.relkind in ('r', 'p') and n.nspname <> all(?) and n.nspname not like 'pg_toast%%' and n.nspname not like 'pg_temp%%' and not exists (select 1 from pg_depend d where d.classid = 'pg_class'::regclass and d.objid = c.oid and d.deptype = 'e') order by 1, 2, 3": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "schema parity (a1 #38264): the catalog shape read, run on the fixture AND live by tests/test_schema_parity.py; a pg_catalog read (pg_class/pg_attribute/pg_depend), so RESPONSIVE is unreachable by the judge's relation rule",
+   "tk": "sha256t:138d06a73e80673bead0b3ba476e3779662a618592cba9f650ce484ff0646b36"
   },
   "nucleus/secret_sweep.py::sweep_turns\u001fselect raw_payload, input_prompt from turns where id=?": {
    "admitted": "2026-09-30",
