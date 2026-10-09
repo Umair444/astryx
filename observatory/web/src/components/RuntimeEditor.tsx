@@ -115,11 +115,11 @@ export default function RuntimeEditor({ name, live }: { name: string; live: bool
           token — .env key holding it{' '}
           {tokenEnv &&
             (cfg.token_env === tokenEnv ? (
-              <span className={cfg.token_present ? 'text-teal-300' : 'text-red-300'}>
+              <span className={cfg.token_present ? 'text-good' : 'text-bad'}>
                 · {cfg.token_present ? 'resolves in .env ✓' : 'NOT found in .env ✗'}
               </span>
             ) : (
-              <span className="text-amber-300">· unsaved</span>
+              <span className="text-warn">· unsaved</span>
             ))}
         </div>
         <input
@@ -182,7 +182,7 @@ export default function RuntimeEditor({ name, live }: { name: string; live: bool
         >
           clear (→ default)
         </button>
-        {dirty && <span className="text-[11px] text-amber-300">unsaved changes</span>}
+        {dirty && <span className="text-[11px] text-warn">unsaved changes</span>}
         {note && !dirty && <span className="text-[11px] text-ink-mute">{note}</span>}
       </div>
     </div>

@@ -26,7 +26,7 @@ export default function RoutesView() {
   return (
     <div className="h-full overflow-y-auto p-4 space-y-4">
       <WireExplainer />
-      {err && <div className="text-xs text-red-300">could not load routes — {err}</div>}
+      {err && <div className="text-xs text-bad">could not load routes — {err}</div>}
       {!data && !err && <div className="text-xs text-ink-mute">reading the wiring…</div>}
       {data?.map((c) => (
         <ChannelBlock key={c.channel} data={c} onSaved={load} />
@@ -141,7 +141,7 @@ function ChannelBlock({ data, onSaved }: { data: ChannelRoutes; onSaved: () => v
           {routes.length} route{routes.length === 1 ? '' : 's'}
         </span>
         <div className="ml-auto flex items-center gap-2">
-          {dirty && <span className="text-[11px] text-amber-300">unsaved</span>}
+          {dirty && <span className="text-[11px] text-warn">unsaved</span>}
           {msg && !dirty && <span className="text-[11px] text-ink-mute">{msg}</span>}
           <button
             onClick={save}
@@ -232,7 +232,7 @@ function RouteRow({
           <input type="checkbox" checked={route.live_steps !== false} onChange={(e) => onPatch({ live_steps: e.currentTarget.checked })} />
           live steps
         </label>
-        <button onClick={onRemove} className="text-ink-mute hover:text-red-300 text-sm px-1" title="remove route">
+        <button onClick={onRemove} className="text-ink-mute hover:text-bad text-sm px-1" title="remove route">
           ×
         </button>
       </div>
@@ -243,7 +243,7 @@ function RouteRow({
           {trusted.map((t, k) => (
             <span key={k} className="inline-flex items-center gap-1 rounded bg-deck-3 border border-line px-1.5 py-0.5 text-[11px] font-mono text-ink-dim">
               {String(t)}
-              <button onClick={() => setTrusted(trusted.filter((_, j) => j !== k))} className="text-ink-mute hover:text-red-300">
+              <button onClick={() => setTrusted(trusted.filter((_, j) => j !== k))} className="text-ink-mute hover:text-bad">
                 ×
               </button>
             </span>
@@ -376,10 +376,10 @@ function AddRoute({
         </button>
       </div>
 
-      {err && <div className="text-[11px] text-amber-300">{err} — add by id below instead.</div>}
+      {err && <div className="text-[11px] text-warn">{err} — add by id below instead.</div>}
 
       {matches && matches.length > 1 && (
-        <div className="text-[11px] text-amber-300">
+        <div className="text-[11px] text-warn">
           {matches.length} contacts match — pick the right one{matches.length > 12 ? ', or narrow the name' : ''}:
         </div>
       )}

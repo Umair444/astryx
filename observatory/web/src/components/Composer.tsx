@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Select, Textarea } from '@mantine/core'
 import { useStore } from '../store'
 
-const field = { background: '#141c3a', border: '1px solid #1d2647' }
+const field = { background: 'var(--t-panel2)', border: '1px solid var(--t-line)' }
 
 /* Owner composer — only rendered when whoami says owner. Sends onto the wire
    as 'owner'; when a thread pane is open the message lands in that thread. */
@@ -73,7 +73,7 @@ export default function Composer({ thread }: { thread?: string }) {
           {busy ? '…' : 'send'}
         </button>
       </div>
-      {err && <div className="text-[11px] text-red-400 mt-1">send failed — key rejected or wire down</div>}
+      {err && <div className="text-[11px] text-bad mt-1">send failed — key rejected or wire down</div>}
     </div>
   )
 }

@@ -16,9 +16,9 @@ import Md from './Md'
 type Kind = 'charter' | 'tools' | 'dispatch'
 
 const KIND: Record<Kind, { label: string; color: string; bg: string; border: string }> = {
-  charter: { label: 'CHARTER', color: 'text-amber-400', bg: 'bg-amber-400/10', border: 'border-amber-400/30' },
+  charter: { label: 'CHARTER', color: 'text-warn', bg: 'bg-warn/10', border: 'border-warn/30' },
   tools: { label: 'TOOLING', color: 'text-cyan', bg: 'bg-cyan/10', border: 'border-cyan/30' },
-  dispatch: { label: 'DISPATCH', color: 'text-violet-400', bg: 'bg-violet-400/10', border: 'border-violet-400/30' },
+  dispatch: { label: 'DISPATCH', color: 'text-cyan-soft', bg: 'bg-cyan-soft/10', border: 'border-cyan-soft/30' },
 }
 
 interface Story {

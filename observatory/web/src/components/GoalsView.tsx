@@ -82,12 +82,12 @@ function NewGoalButton() {
 }
 
 const COLS: { key: string; label: string; color: string }[] = [
-  { key: 'proposed', label: 'proposed', color: '#9aa7c7' },
-  { key: 'active', label: 'active', color: '#22d3ee' },
-  { key: 'shipped', label: 'shipped', color: '#2fbf71' },
-  { key: 'done', label: 'done', color: '#f2c14e' },
-  { key: 'hibernated', label: 'hibernated', color: '#7c5cff' },
-  { key: 'refused', label: 'refused', color: '#ff5c7a' },
+  { key: 'proposed', label: 'proposed', color: 'var(--t-dim)' },
+  { key: 'active', label: 'active', color: 'var(--t-accent)' },
+  { key: 'shipped', label: 'shipped', color: 'var(--t-good)' },
+  { key: 'done', label: 'done', color: 'var(--t-warn)' },
+  { key: 'hibernated', label: 'hibernated', color: 'var(--t-accent2)' },
+  { key: 'refused', label: 'refused', color: 'var(--t-bad)' },
 ]
 
 function GoalCard({ g }: { g: Goal }) {
@@ -101,7 +101,7 @@ function GoalCard({ g }: { g: Goal }) {
       {g.scope_note && <div className="text-[11px] text-ink-mute mt-1 line-clamp-2">{g.scope_note}</div>}
       <div className="flex items-center gap-2 mt-2">
         <span
-          className="w-4 h-4 rounded-full grid place-items-center text-[9px] font-bold text-deck"
+          className="w-4 h-4 rounded-full grid place-items-center text-[9px] font-bold text-agent-ink"
           style={{ background: agentColor(g.owner) }}
         >
           {g.owner?.[0]}

@@ -115,7 +115,7 @@ export default function VegaChat() {
                 maxRows={4}
                 size="xs"
                 className="flex-1"
-                styles={{ input: { background: '#141c3a', border: '1px solid #1d2647' } }}
+                styles={{ input: { background: 'var(--t-panel2)', border: '1px solid var(--t-line)' } }}
               />
               <button
                 onClick={submit}

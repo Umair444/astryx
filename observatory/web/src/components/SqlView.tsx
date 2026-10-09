@@ -133,7 +133,7 @@ function FileTree({
             </button>
             <button
               onClick={() => onDelete(n)}
-              className="opacity-0 group-hover:opacity-100 text-ink-mute hover:text-red-400 px-1"
+              className="opacity-0 group-hover:opacity-100 text-ink-mute hover:text-bad px-1"
               title="delete"
             >
               ×
@@ -430,7 +430,7 @@ export default function SqlView() {
                   setTabs((ts) => ts.filter((_, k) => k !== i))
                   setActive((a) => Math.max(0, a >= i ? a - 1 : a))
                 }}
-                className="opacity-40 group-hover:opacity-100 hover:text-red-400"
+                className="opacity-40 group-hover:opacity-100 hover:text-bad"
               >
                 ×
               </button>
@@ -554,13 +554,13 @@ export default function SqlView() {
         {/* results grid */}
         <div className="flex-1 min-h-0">
           {r?.error ? (
-            <div className="p-3 font-mono text-[12px] text-red-400 whitespace-pre-wrap">{r.error}</div>
+            <div className="p-3 font-mono text-[12px] text-bad whitespace-pre-wrap">{r.error}</div>
           ) : r?.columns && r.columns.length ? (
             <ScrollArea className="h-full">
               <Table stickyHeader verticalSpacing={3} horizontalSpacing="sm" className="text-[12px]" striped highlightOnHover>
                 <Table.Thead>
                   <Table.Tr>
-                    <Table.Th style={{ width: 42, color: '#5b6689' }}>#</Table.Th>
+                    <Table.Th style={{ width: 42, color: 'var(--t-mute)' }}>#</Table.Th>
                     {r.columns.map((c, i) => (
                       <Table.Th key={i} onClick={() => sortBy(i)} style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}>
                         <span className="text-cyan-soft">{c}</span>
