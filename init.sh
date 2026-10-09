@@ -332,6 +332,14 @@ _sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum
 _chk_schema() { local have want; have=$(psql_q -X -tA -c "$_STAMP_Q" 2>/dev/null) || return 1
   want=$(_sha256 "$_SCHEMA_FILE"); [ -n "$have" ] && [ "$have" = "$want" ]; }
 _act_schema() { say "applying schema (schema.sql differs from what this database last applied)"
+  # COMMIT FIRST (seed 2026-10-09: an uncommitted ALTER applied to prod read schema-parity EXTRA on every committed
+  # tree for an hour). Prod carries only what git carries. A release without git skips this; the override is loud.
+  if git -C "$(dirname "$_SCHEMA_FILE")" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+     && ! git -C "$(dirname "$_SCHEMA_FILE")" diff --quiet HEAD -- "$_SCHEMA_FILE" 2>/dev/null \
+     && [ "${ASTRYX_SCHEMA_DIRTY_OK:-}" != 1 ]; then
+    echo -e "\033[31m[astryx]\033[0m schema.sql has UNCOMMITTED changes: commit them first (prod carries only what git carries), or set ASTRYX_SCHEMA_DIRTY_OK=1 to apply anyway" >&2
+    return 1
+  fi
   local tmp sha rc; tmp=$(mktemp) || return 1; cp "$_SCHEMA_FILE" "$tmp" || { rm -f "$tmp"; return 1; }
   sha=$(_sha256 "$tmp")
   psql_q -X -q -v ON_ERROR_STOP=1 < "$tmp" >/dev/null; rc=$?; rm -f "$tmp"; [ "$rc" -eq 0 ] || return 1
