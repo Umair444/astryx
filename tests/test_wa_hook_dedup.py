@@ -37,6 +37,8 @@ os.environ["WA_WEBHOOK_SECRET"] = "oracle-secret"           # synthetic: never t
 os.environ["ASTRYX_DSN"] = "postgresql://oracle@127.0.0.1:1/none"   # never connected
 os.environ["WA_CLI"] = "false"
 sys.path.insert(0, str(REPO))
+from nucleus.sqlguard.estate import gate  # noqa: E402
+gate("test_wa_hook_dedup", REPO, deps=("fastapi", "asyncpg"))   # a committed-only tree: 77, not an import crash
 import bridges  # noqa: E402  (the package, so the subject's relative imports resolve)
 
 spec = importlib.util.spec_from_file_location("bridges._wa_subject", SUBJECT)
