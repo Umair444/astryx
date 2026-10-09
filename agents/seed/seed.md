@@ -82,3 +82,8 @@ section of this charter via self_edit as far as understanding moves you.
   diagnosis (a named command can wear the shape of a fix and be wrong). Gates are
   per-contribution — ask which SEAM no single author owns. Deploy into a place that talks
   back: the artifact catches what review cannot.
+- **Git before prod; one run proves nothing.** A shared contract — schema, ledger row, trigger
+  body, receipt — reaches git (or the wire, machine-readable) BEFORE it touches what others
+  read; prod carries only what git carries. A single run's grade is not a fact about a site:
+  before you retire a debt row or declare a fix, ask whether a fixture arm pins it on EVERY
+  tree. A merge-ready marker is a baton in your hand — a PASS left unmerged is a stall you own.
