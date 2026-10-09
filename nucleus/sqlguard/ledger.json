@@ -309,7 +309,7 @@
   "observatory/api/main.py::person_profile\u001fselect g.id, g.label, (select count(*) from social_edge m where m.org=e.org and m.dst=e.dst and m.rel='member-of') as size from social_edge e join social_person g on g.org=e.org and g.id=e.dst where e.org=? and e.src=? and e.rel='member-of' order by size desc": [
    "observatory: agents as people"
   ],
-  "observatory/api/main.py::person_profile\u001fselect org, id, kind, label, direct, relation, who, shape, confidence from social_person where id=? and kind='person'": [
+  "observatory/api/main.py::person_profile\u001fselect p.org, p.id, p.kind, p.label, p.direct, r.kind as relation, r.context as who, r.evidence as shape, r.confidence, r.closeness from social_person p left join social_relation r on r.org = p.org and r.pid = p.id where p.id=? and p.kind='person'": [
    "observatory: agents as people"
   ],
   "observatory/api/main.py::person_profile\u001fselect weight, first_ts, last_ts, mine from social_edge where org=? and dst=? and rel='dm'": [
@@ -1584,11 +1584,11 @@
    "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
    "tk": "sha256t:9655da8e1a8976f3f3bab17b7d9e95dc052e77bdfbf198f3b0eb1b29aa909ac6"
   },
-  "observatory/api/main.py::person_profile\u001fselect org, id, kind, label, direct, relation, who, shape, confidence from social_person where id=? and kind='person'": {
+  "observatory/api/main.py::person_profile\u001fselect p.org, p.id, p.kind, p.label, p.direct, r.kind as relation, r.context as who, r.evidence as shape, r.confidence, r.closeness from social_person p left join social_relation r on r.org = p.org and r.pid = p.id where p.id=? and p.kind='person'": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
-   "tk": "sha256t:f6fa667df2926e4199d5018fe67be2353dbf73c13c889572387947319d1de396"
+   "reason": "people library 1a cutover of seed's 10-09 person drawer read: details LEFT JOINed from social_relation. Executed in a stamped fixture by tests/test_observatory_people.py (the person arm, RED with the old endpoint), but asyncpg exposes no table OID, so the stamp can't be credited (the same FIXTURE-DDL cap as the row it replaces)",
+   "tk": "sha256t:3fe578cb65b9ec8150b9c2d055c82596830dd2a7885cbbf025108eae24974796"
   },
   "observatory/api/main.py::person_profile\u001fselect weight, first_ts, last_ts, mine from social_edge where org=? and dst=? and rel='dm'": {
    "admitted": "2026-10-09",
