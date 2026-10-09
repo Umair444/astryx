@@ -215,12 +215,14 @@ def fixture_db(extra: tuple = ()):
                           + (f' TEMPLATE "{tpl}"' if tpl and tpl.replace("_", "").isalnum() else ""))
         except psycopg.errors.InsufficientPrivilege as e:
             raise FixtureUnavailable("this role can't CREATE DATABASE") from e
-        try:                                         # the OWNER STAMP the reaper judges by (inline: digits/hex only)
-            admin.execute(f'COMMENT ON DATABASE "{name}" IS \'{owner_stamp()}\'')
-        except psycopg.Error:
-            pass                                     # unstamped → the reaper KEEPS it; never fail a fixture for this
         admin.execute(f'REVOKE CONNECT ON DATABASE "{name}" FROM PUBLIC')
         admin.execute(f'ALTER DATABASE "{name}" ALLOW_CONNECTIONS true')
+        # the OWNER STAMP the reaper judges by, AFTER BC-5's CREATE → REVOKE → ALTER (that order is an access
+        # invariant, armed in test_branch_check_prep). Unstamped for an instant → the reaper KEEPS it (safe).
+        try:
+            admin.execute(f'COMMENT ON DATABASE "{name}" IS \'{owner_stamp()}\'')    # inline: digits/hex only
+        except psycopg.Error:
+            pass                                     # unstamped → kept; never fail a fixture for this
         dsn = make_conninfo(live_dsn(), dbname=name)
         sha = file_sha()
         with psycopg.connect(dsn, autocommit=True) as c:
