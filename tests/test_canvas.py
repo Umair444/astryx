@@ -147,6 +147,24 @@ def api(url):
         arm("upload names carry a random token, never a timestamp, in the uploader's own folder",
             "/media/cv/cv-guest/" in gu["path"] and bool(_re.search(r"/cv-[0-9a-f]{24}-mine\.txt$", gu["path"]))
             and bool(_re.search(r"/tg-[0-9a-f]{24}-photo\.jpg$", str(tg))), (gu["path"], str(tg)))
+        # an AGENT replying in a guest's thread writes text the guest steered: the guest still gets only media
+        import tempfile as _tf2
+        outside = Path(_tf2.mkdtemp()) / "agent-made.txt"; outside.write_text("made by an agent\n")
+        env_path = REPO / ".env"
+        with psycopg_conn(url) as c:
+            aid = c.execute("INSERT INTO messages (from_agent, to_agent, thread, body) VALUES ('painter', 'cv-guest', %s, %s) RETURNING id",
+                            (gt, f"here [[file:{env_path}]] [[file:{outside}]] [[file:{tg}]]")).fetchone()[0]
+            c.commit()
+        g = who("guest")
+        arm("an agent's embed in a guest's thread: .env and a non-media file are refused, media is served",
+            [g.get(f"{A}/file?msg={aid}&n={k}").status_code for k in (0, 1, 2)] == [404, 404, 200])
+        o = who("owner")
+        with psycopg_conn(url) as c:
+            oid = c.execute("INSERT INTO messages (from_agent, to_agent, thread, body) VALUES ('painter', 'owner', %s, %s) RETURNING id",
+                            (t, f"[[file:{env_path}]] [[file:{outside}]]")).fetchone()[0]
+            c.commit()
+        arm("to the owner an agent's embed reaches anywhere it can read — except the never-served floor (.env)",
+            [o.get(f"{A}/file?msg={oid}&n={k}").status_code for k in (0, 1)] == [404, 200])
         o = who("owner")
         o.post(f"{A}/threads/{t}/messages", json={"body": f"[[file:{tg}]] [[file:{owner_file}]] [[file:/etc/hostname]]"}, headers=H)
         om = o.get(f"{A}/threads/{t}/messages").json()["messages"][-1]["id"]

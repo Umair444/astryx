@@ -222,7 +222,13 @@
   "nucleus/wake_audit.py::dropped\u001f*": [
    "wake-audit classifier"
   ],
+  "observatory/api/main.py::agent_profile\u001fselect * from presence where agent=?": [
+   "observatory: agents as people"
+  ],
   "observatory/api/main.py::agent_profile\u001fselect mode() within group (order by model) from turns where agent=? and model is not null and ended_at > now() - interval '2 days'": [
+   "observatory: agents as people"
+  ],
+  "observatory/api/main.py::agent_profile\u001fselect ts, kind, content from steps where agent=? and kind in ('tool','milestone','error') order by id desc limit 8": [
    "observatory: agents as people"
   ],
   "observatory/api/main.py::goal_create\u001finsert into goals (title, owner, state, scope_note) values (?, ?, 'proposed', ?) returning id": [
@@ -431,7 +437,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 291,
+  "debt_rows": 293,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -1180,6 +1186,12 @@
    "reason": "seed",
    "tk": "sha256t:e47be9981e67eb532f1b577e6a4caff9fb96a8e363fb2c91db1b9c764d4681db"
   },
+  "observatory/api/main.py::agent_profile\u001fselect * from presence where agent=?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "seed 10-09 agent profile (Now block + recent work): executed in a stamped fixture with BOTH a presence row and none, recent steps and none, by tests/test_observatory_people.py; asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create).",
+   "tk": "sha256t:5bbe322b2890c658fe34204fb8794ff82cb2dcdd23f94330d6b7a51208686f1b"
+  },
   "observatory/api/main.py::agent_profile\u001fselect mode() within group (order by model) from turns where agent=? and model is not null and ended_at > now() - interval '2 days'": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
@@ -1195,6 +1207,12 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:4a632d611a50639c42b7d18883147e67daa6af0aa1999db3f5459e0eb22cae8d"
+  },
+  "observatory/api/main.py::agent_profile\u001fselect ts, kind, content from steps where agent=? and kind in ('tool','milestone','error') order by id desc limit 8": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "seed 10-09 agent profile (Now block + recent work): executed in a stamped fixture with BOTH a presence row and none, recent steps and none, by tests/test_observatory_people.py; asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create).",
+   "tk": "sha256t:f014606ca88caf8e9458aa8e9b064b2be5dfdf3c2021cdc69ed67d657a970b27"
   },
   "observatory/api/main.py::brain_completions\u001finsert into messages (from_agent, to_agent, thread, intent, body) values ('owner', 'growbot', ?, 'task', ?) returning id": {
    "debt": "UNEXECUTED",

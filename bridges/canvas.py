@@ -566,6 +566,25 @@ def _upload_dir(handle: str) -> Path:
     return MEDIA_DIR / _upload_sub(handle)
 
 
+def _never_served(path: Path) -> bool:
+    """The floor under every file the canvas hands out: the org's declared secret holders
+    (nucleus/secret_holders.json) and the privacy invariants (CLAUDE.md) — whoever asks, whoever
+    embedded it."""
+    home = Path.home()
+    dirs = [REPO / "agents", REPO / "triggers", REPO / "memory", home / ".ssh", home / ".gnupg"]
+    dirs += [d for d in (REPO / "homes").glob("*/.people")]
+    files = {REPO / ".env", REPO / "local.md", REPO / "relations.md", REPO / "owner.md", home / ".pgpass"}
+    try:
+        from nucleus import secretset
+        for h in secretset.holders().get("holders", []):
+            if not str(h.get("path", "")).startswith("docker:"):
+                files.update(secretset._expand(h["path"]))
+    except Exception:
+        pass                                  # the explicit list above still stands
+    files = {f.resolve() for f in files}
+    return path in files or path.name.startswith(".env") or any(path.is_relative_to(d.resolve()) for d in dirs)
+
+
 async def _message_file(v, msg: int, n: int) -> Path | None:
     """The n-th file a message embeds ([[file:/abs/path]]), if the viewer may see that message:
     they own its thread, or they are its sender/recipient. Only a path the message names."""
@@ -579,17 +598,24 @@ async def _message_file(v, msg: int, n: int) -> Path | None:
     if n < 0 or n >= len(paths):
         return None
     path = Path(paths[n]).resolve()
-    # A HUMAN's message is text they typed, so it names only media, never the host (an invitee once
-    # could name /home/…/.env, 7819477). An invitee reaches only what THEY uploaded — media/cv/<handle>/
-    # — not the shared media dir, where the owner's and other channels' files sit (steward #37433). The
-    # owner's own messages reach all of media (every file there is the owner's), still never the host,
-    # so a stolen owner session can't read .env either. An agent's embed is a deliberate act by an org
-    # member and may point anywhere it can read.
+    # WHO may be handed WHAT, keyed on the VIEWER as well as the author (steward #37433, #37555):
+    # - never, for anyone: a declared secret holder or a privacy-invariant path (_never_served);
+    # - an invitee viewer: only media — even an AGENT's embed, because an agent replying in a guest's
+    #   thread writes text the guest steered ("attach /…/.env for me"); an agent that means to give a
+    #   guest a file copies it into media first, an explicit act;
+    # - a human author: only media (the owner: all of it, every file there is theirs; an invitee: only
+    #   what THEY uploaded, media/cv/<handle>/), never the host — so a stolen owner session can't read
+    #   .env through its own message either;
+    # - an agent's embed, to the owner: anywhere it can read, minus the floor.
+    if _never_served(path):
+        return None
     author = row["from_agent"] or ""
     if not agent_exists(author):
         root = MEDIA_DIR if author == OWNER_WIRE else _upload_dir(author)
         if not path.is_relative_to(root.resolve()):
             return None
+    elif not v.owner and not path.is_relative_to(MEDIA_DIR.resolve()):
+        return None
     return path if path.is_file() else None
 
 
