@@ -4,12 +4,16 @@ through pulse_run's OWN Ctx against a sqlguard fixture DB (steward #39184, the l
 
 The subject is gitignored (triggers/), so it's path-loaded; absent → SKIP 77. The launch is recorded, never run
 (subprocess.Popen is replaced), and the report/log paths point into a temp dir. Arms:
-  1. 0 folded rows (no social_relation row has `through`) → silent, and NOTHING is launched: the first backfill
-     is memory's own, by hand.
+  1a. 0 folded rows (no social_relation row has `through`) and NO report → silent, and NOTHING is launched: the
+      first backfill is memory's own, by hand.
+  1b. 0 folded rows but a report counting some → LOUD ("watermarks LOST") and relaunched: "never backfilled" and
+      "backfilled, then lost" must not read the same (a3 #39200).
+  1c. PARTIAL loss: the table holds fewer folded rows than the last report counted → LOUD.
   2. ≥1 folded row and a fresh healthy report → silent, and `essence.py daily` is launched detached.
   3. ≥1 folded row and NO report → loud ("no essence run has ever reported"): a lost report never reads healthy.
   4. ≥1 folded row and a report with fetch-failed → loud (a2 #38791 B3: an unread chat is never "nothing new").
   5. ≥1 folded row and a report older than two days → loud (stale).
+  Every loud arm also asserts the relaunch: a stall is the recovery path, never a stop (a3 #39200 M2).
 Exit 0 pass · 1 fail · 77 could-not-run.
 """
 import importlib.util
@@ -90,12 +94,23 @@ try:
 
     now = time.time()
     print("people_essence:")
-    out = run({"at": now, "stats": {"ok": 1}})
-    check("1. 0 folded rows → silent", out is None, repr(out))
-    check("1. 0 folded rows → nothing launched", launched == [], repr(launched))
+    def relaunched():
+        return len(launched) == 1 and launched[0][0][-1] == "daily"
+
+    out = run(None)
+    check("1a. 0 folded, no report → silent", out is None, repr(out))
+    check("1a. 0 folded, no report → nothing launched", launched == [], repr(launched))
+
+    out = run({"at": now, "folded": 5, "stats": {"ok": 1}}) or ""
+    check("1b. 0 folded but a report counted 5 → loud (LOST)", "watermarks LOST" in out, repr(out))
+    check("1b. … and relaunched", relaunched(), repr(launched))
 
     conn.execute("INSERT INTO social_relation (org, pid, through) VALUES ('fx', 'p1', now())")
-    out = run({"at": now, "todo": 2, "stats": {"ok": 2}})
+    out = run({"at": now, "folded": 5, "stats": {"ok": 1}}) or ""
+    check("1c. 1 folded where the report counted 5 → loud (partial loss)", "watermarks LOST" in out, repr(out))
+    check("1c. … and relaunched", relaunched(), repr(launched))
+
+    out = run({"at": now, "todo": 2, "folded": 1, "stats": {"ok": 2}})
     check("2. ≥1 folded + healthy report → silent", out is None, repr(out))
     check("2. ≥1 folded → `essence.py daily` launched detached",
           len(launched) == 1 and launched[0][0][-1] == "daily" and launched[0][0][-2].endswith("essence.py")
@@ -103,12 +118,15 @@ try:
 
     out = run(None) or ""
     check("3. ≥1 folded + no report → loud", "no essence run has ever reported" in out, repr(out))
+    check("3. ≥1 folded + no report → relaunched", relaunched(), repr(launched))
 
     out = run({"at": now, "todo": 3, "stats": {"ok": 2, "fetch-failed": 1}}) or ""
     check("4. fetch-failed → loud", "could not be read from WhatsApp" in out, repr(out))
+    check("4. fetch-failed → relaunched", relaunched(), repr(launched))
 
     out = run({"at": now - 3 * 86400, "todo": 1, "stats": {"ok": 1}}) or ""
     check("5. a report older than two days → loud", "no run has finished for 3.0 days" in out, repr(out))
+    check("5. a report older than two days → relaunched", relaunched(), repr(launched))
     conn.close()
 finally:
     _fx.__exit__(None, None, None)
