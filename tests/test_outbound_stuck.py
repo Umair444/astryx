@@ -201,6 +201,89 @@ def test_bridge_carve_out_is_pending_only():
     assert _ids(g["fresh"]) == {"3"}, g
 
 
+# ------------------------------------------------ (e) NO SUCH RESIDENT is not DEAF (2026-10-09)
+# memory wrote to_agent='a3' (a nickname); this guard said "DEAF RECIPIENT a3 — restart it", a remedy
+# that would have killed a HEALTHY abstractor-3. A name with no resident charter has no server.mjs to
+# lose: its fault is the sender's addressing. DEAF is only for a RESIDENT.
+def test_unknown_recipient_is_unaddressed_not_deaf():
+    g = bucket([_fentry(35146, "pending", 2)], _meta(35146, pend_server=True, known_resident=False))
+    assert _ids(g["unaddressed"]) == {"35146"} and g["deaf"] == [], g
+
+
+def test_resident_with_roster_read_is_still_deaf():
+    g = bucket([_fentry(2, "pending", 72)], _meta(2, pend_server=True, known_resident=True))
+    assert _ids(g["deaf"]) == {"2"} and g["unaddressed"] == [], g
+
+
+def test_roster_unread_falls_back_to_deaf():
+    """known_resident ABSENT means the roster could not be read: the prior behaviour (DEAF) stands,
+    so an unreadable roster never silently hides a real deaf resident."""
+    g = bucket([_fentry(3, "pending", 72)], _meta(3, pend_server=True))
+    assert _ids(g["deaf"]) == {"3"}, g
+
+
+def test_unknown_recipient_render_never_says_restart():
+    """Through the real entrypoint: the report for a non-resident names the ADDRESSING remedy and
+    never the restart one. The roster is FORCED (a4 #35873): reading the host's agents/ tree made this
+    arm pass only where the identity repo exists, and fail under branch_check or a clone."""
+    out = _run_with_roster(["seed", "memory"], sender="memory", to="a3")
+    assert "NO SUCH RESIDENT" in out and "a3" in out, out
+    assert "DEAF RECIPIENT" not in out and "kill-session" not in out, out
+
+
+def _run_with_roster(roster, sender="seed", to="abstractor-3"):
+    """The real entrypoint on one 30h-pending row, with BOTH roster derivations forced to `roster`."""
+    import types
+    import nucleus.charter as ch
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    rows = [{"id": 901, "ts": _dt.now(_tz.utc) - _td(hours=30), "to_agent": to,
+             "to_org": "local", "status": "pending", "from_agent": sender, "external_handle": False,
+             "bridge_delivered": False, "awaiting_peer_pickup": False, "last_pickup": None}]
+    real_t, real_r = ch.roster_of_type, ch.roster
+    ch.roster_of_type = lambda kind, *a, **k: list(roster)
+    ch.roster = lambda *a, **k: list(roster)
+    try:
+        return _MOD["outbound_stuck"](types.SimpleNamespace(state={}, sql=lambda q, p=(): rows)) or ""
+    finally:
+        ch.roster_of_type, ch.roster = real_t, real_r
+
+
+def test_empty_roster_is_unread_so_a_real_resident_stays_deaf():
+    """a4 #35869: a checkout without the identity repo reads an EMPTY roster (it does not raise). That
+    must fall back to DEAF — never hide a real deaf resident behind 'DO NOT restart anything'."""
+    out = _run_with_roster([])
+    assert "DEAF RECIPIENT" in out and "NO SUCH RESIDENT" not in out, out
+
+
+def test_roster_without_seed_is_not_this_orgs_roster():
+    out = _run_with_roster(["abstractor-1", "forge"])          # plausible-looking, but no seed
+    assert "DEAF RECIPIENT" in out and "NO SUCH RESIDENT" not in out, out
+
+
+def test_real_roster_with_the_resident_is_deaf_and_without_is_no_such():
+    assert "DEAF RECIPIENT" in _run_with_roster(["seed", "abstractor-3"])
+    out = _run_with_roster(["seed", "forge"])                  # the org's roster, recipient absent
+    assert "NO SUCH RESIDENT" in out and "2 resident(s)" in out, out
+
+
+def test_seed_only_roster_is_a_non_identity_checkout_so_stays_deaf():
+    """a4 #35871: seed.md is TRACKED, so a checkout without the identity repo reads exactly {seed}.
+    The row's sender must be in the roster for it to count as the org's — memory is not here → DEAF."""
+    out = _run_with_roster(["seed"], sender="memory", to="abstractor-3")
+    assert "DEAF RECIPIENT" in out and "NO SUCH RESIDENT" not in out, out
+
+
+def test_the_live_shape_memory_to_a3_is_no_such_resident():
+    """The 10-09 case itself, on a roster that names the sender: memory -> 'a3' is NO SUCH RESIDENT."""
+    out = _run_with_roster(["seed", "memory", "abstractor-3"], sender="memory", to="a3")
+    assert "NO SUCH RESIDENT" in out and "kill-session" not in out, out
+
+
+def test_a_non_agent_sender_cannot_vouch_so_stays_deaf():
+    out = _run_with_roster(["seed", "memory"], sender="pulse", to="a3")
+    assert "DEAF RECIPIENT" in out and "NO SUCH RESIDENT" not in out, out
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
