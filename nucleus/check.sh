@@ -473,6 +473,7 @@ run "wiki/estate drift floor (5->1)"  "$PY" tests/test_drift.py
 # through pulse_run's own Ctx in a stamped fixture, each site at 0 and >=1 rows (steward #37335). Both are
 # gitignored, so a clean clone exits 77 with the reason named.
 run "library_compile + compile_lag: SQL in a fixture"  "$PY" tests/test_library_compile.py
+run "people_essence: SQL in a fixture"  "$PY" tests/test_people_essence.py
 # Class-1 of the prove-family oracle (scout, plan-15): drives all seven containment
 # verdicts BOTH ways against synthetic trees via G15_ENVF/G15_SCAN_ROOTS. Its output
 # states its own limit — decision logic only, not the real cell.
