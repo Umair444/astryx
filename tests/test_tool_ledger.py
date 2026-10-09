@@ -45,7 +45,13 @@ way to test the REAL file, rather than an import of pieces of it, is to run it. 
 PGOPTIONS, so `-c search_path=<temp schema>` sends every unqualified statement the hook makes
 into the throwaway schema. There's no public fallback, so a prod table can't be written.
 
-Exits 77 when there's no .env/DSN/psycopg: that means nothing was verified, not that it passed.
+WHERE THE SCRATCH LIVES: a sqlguard FIXTURE DATABASE (nucleus/sqlguard/fixture.py), never prod. The temp
+tree's .env names the fixture's DSN, so the hook's own connection lands there too. This oracle used to make its
+t_ledger_<pid> schemas inside the org DB with no reaper, and a killed run left them behind: two from dead pids
+sat in prod holding 41 test steps and 2 turns until seed dropped them (a4 #38447, seed #38448). The fixture DB
+is dropped WITH (FORCE) when the run ends, so its schemas go with it.
+
+Exits 77 when there's no .env/DSN/psycopg/fixture DB: that means nothing was verified, not that it passed.
 """
 import json
 import os
@@ -67,11 +73,19 @@ if not ENV.exists() or not SUBJECT.exists() or not TOOLREG.exists():
     sys.exit(EXIT_SKIP)
 try:
     import psycopg
-    DSN = next(l.split("=", 1)[1].strip() for l in ENV.read_text().splitlines()
-               if l.startswith("ASTRYX_DSN="))
+    import importlib.util
+    # Loaded BY PATH under a private name, never `import nucleus...`: that would bind the `nucleus` package to the
+    # REAL repo before the temp tree is put on sys.path, so `toolreg` would resolve against the real REPO and every
+    # temp-tree path would fall outside it (L7 went red exactly that way). fixture.py imports no nucleus module.
+    _spec = importlib.util.spec_from_file_location("_tl_fixture", REPO / "nucleus" / "sqlguard" / "fixture.py")
+    _fixture = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_fixture)
+    _fx = _fixture.fixture_db()
+    fx = _fx.__enter__()                # a fresh DB, dropped WITH (FORCE) at exit: scratch never lives in prod
+    DSN = fx["dsn"]
     admin = psycopg.connect(DSN, autocommit=True, connect_timeout=5)
 except Exception as e:  # noqa: BLE001
-    print(f"SKIP: no reachable DB ({type(e).__name__}) — nothing verified.")
+    print(f"SKIP: no fixture DB ({type(e).__name__}: {e}) — nothing verified.")
     sys.exit(EXIT_SKIP)
 
 fails = []
@@ -355,11 +369,13 @@ try:
         check(f"L8 CHECK refuses {why}", ok)
 finally:
     try:
-        admin.execute(f"DROP SCHEMA IF EXISTS {SCH} CASCADE")
-        admin.execute(f"DROP SCHEMA IF EXISTS {SCH2} CASCADE")
+        admin.close()
     finally:
-        for r in roots:
-            shutil.rmtree(r, ignore_errors=True)
+        try:
+            _fx.__exit__(None, None, None)  # drops the whole fixture DB, its scratch schemas with it
+        finally:
+            for r in roots:
+                shutil.rmtree(r, ignore_errors=True)
 
 if fails:
     print(f"\nFAIL: {len(fails)} tool-ledger invariant(s) broken")

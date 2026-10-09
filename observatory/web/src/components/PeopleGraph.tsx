@@ -321,6 +321,8 @@ function PersonCard({ node, degree, onClose, onConfirm }: { node: PNode; degree:
             </div>
           )}
 
+          <AskMemory pid={node.id} />
+
           {!known && (
             <div className="rounded-xl border border-dashed border-line px-3 py-2.5 text-[12px] text-ink-mute">
               {p.memory_guess
@@ -333,5 +335,53 @@ function PersonCard({ node, degree, onClose, onConfirm }: { node: PNode; degree:
         </div>
       )}
     </Panel>
+  )
+}
+
+/* "Ask memory about this person": the owner's own words go to memory on a pid-keyed thread
+   (obs:person-<pid>) — the panel never adds the name or any detail to the message; memory resolves
+   the pid privately and answers inline. Owner-only like the drawer. */
+function AskMemory({ pid }: { pid: string }) {
+  const [q, setQ] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [log, setLog] = useState<{ who: 'you' | 'memory'; text: string }[]>([])
+  const thread = `obs:person-${pid}`
+  useEffect(() => { setLog([]); setQ('') }, [pid])
+  async function ask() {
+    const text = q.trim()
+    if (!text || busy) return
+    setBusy(true); setQ('')
+    setLog((l) => [...l, { who: 'you', text }])
+    try {
+      const r = await apiPost<{ sent: number; thread: string }>('/memory/chat', { message: text, thread })
+      let after = r.sent
+      for (let i = 0; i < 90; i++) {                       // memory answers on its own clock: poll ~3 min
+        await new Promise((res) => setTimeout(res, 2000))
+        const got = await api<{ replies: { id: number; body: string }[] }>(`/memory/chat?thread=${encodeURIComponent(thread)}&after=${after}`)
+        if (got.replies.length) {
+          after = got.replies[got.replies.length - 1].id
+          setLog((l) => [...l, ...got.replies.map((x) => ({ who: 'memory' as const, text: x.body }))])
+          break
+        }
+      }
+    } catch (e) {
+      setLog((l) => [...l, { who: 'memory', text: `couldn't reach memory: ${e}` }])
+    } finally { setBusy(false) }
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      {log.map((m, i) => (
+        <div key={i} className={`text-[12.5px] leading-relaxed rounded-xl px-3 py-2 ${m.who === 'you' ? 'bg-deck-3 text-ink self-end max-w-[90%]' : 'text-ink-dim border border-line'}`}>
+          {m.who === 'memory' && <span className="text-[10.5px] uppercase tracking-[0.14em] text-cyan block mb-0.5">memory</span>}
+          {m.text}
+        </div>
+      ))}
+      {busy && <div className="text-[11.5px] text-ink-mute flex items-center gap-2"><span className="w-3 h-3 rounded-full border-2 border-cyan border-t-transparent animate-spin" />memory is thinking…</div>}
+      <div className="flex items-center gap-2 rounded-xl border border-line bg-deck-3/60 pl-3 pr-1 py-1 focus-within:border-cyan/50">
+        <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') ask() }}
+          placeholder="Ask memory about them…" className="flex-1 min-w-0 bg-transparent outline-none text-[12.5px] text-ink placeholder:text-ink-mute py-1" />
+        <button onClick={ask} disabled={!q.trim() || busy} className="ax-action !px-2.5 !py-1 !text-[11px] !rounded-lg disabled:opacity-40">Ask</button>
+      </div>
+    </div>
   )
 }

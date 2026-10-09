@@ -1516,6 +1516,14 @@ async def people_answer(body: PeopleAnswer, request: Request):
     with os.fdopen(fd, "a") as out:
         out.write(json.dumps(row) + "\n")
     n = len(_jsonl(f))
+    if not body.skip:
+        # ONE authority (a2 #38791 B1): the owner's answer is promoted straight into social_relation,
+        # outranking any model guess (confidence='owner'); answers.jsonl stays as the append-only record.
+        await pool.execute(
+            "INSERT INTO social_relation (org, pid, kind, closeness, confidence, updated_at) "
+            "VALUES (COALESCE((SELECT org FROM social_person WHERE id=$1 LIMIT 1), 'local'), $1, $2, $3, 'owner', now()) "
+            "ON CONFLICT (org, pid) DO UPDATE SET kind=EXCLUDED.kind, closeness=EXCLUDED.closeness, "
+            "confidence='owner', updated_at=now()", body.pid, body.kind, body.closeness)
     await pool.execute(
         "INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES "
         "('owner', 'memory', 't-memory-people', 'receipt', $1)",
@@ -2982,8 +2990,8 @@ async def memory_chat_replies(thread: str, after: int = 0, request: Request = No
     open against an agent's think time."""
     if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
         return Response(status_code=403)
-    if not thread.startswith("obs:estate"):
-        return Response(status_code=400)          # this poller reads estate threads only
+    if not thread.startswith(("obs:estate", "obs:person-", "obs:library-")):
+        return Response(status_code=400)          # estate, "ask memory about this person" (pid-keyed), the Library's desk
     rows = await pool.fetch(
         "SELECT id, body, ts FROM messages WHERE thread=$1 AND from_agent='memory' "
         "AND id > $2 ORDER BY id LIMIT 10", thread, after)

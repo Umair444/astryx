@@ -521,6 +521,12 @@ CREATE TABLE IF NOT EXISTS social_relation (
   PRIMARY KEY (org, pid)
 );
 REVOKE ALL ON social_relation FROM PUBLIC;
+-- memory's people essences (a2 #38791 B2: the content lives behind the people gate, not in files).
+-- memory/essence.py is the only writer; all three are DERIVED, never a quote.
+ALTER TABLE social_relation
+  ADD COLUMN IF NOT EXISTS essence   text,          -- ≤60 words: who this person is to the owner
+  ADD COLUMN IF NOT EXISTS now_state text,          -- ≤30 words: the latest state + open loops, with direction
+  ADD COLUMN IF NOT EXISTS through   timestamptz;   -- the last WhatsApp message folded in (the delta watermark)
 
 -- CLASSIFICATIONS (goal 4227, S4): one LABEL per prompt from the pluggable classifier, which
 -- the nudge hook (hooks/nudge.py) reads for RECURRENCE of a task family. It holds labels ONLY.

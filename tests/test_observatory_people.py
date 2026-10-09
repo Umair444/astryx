@@ -123,6 +123,10 @@ def main(url):
             notes = [r[0] for r in c.execute("SELECT body FROM messages WHERE to_agent='memory'").fetchall()]
         arm("answers land privately (one per pid) and the ask closes",
             ok.get("answered") == 1 and left["asks"] == [] and [l["pid"] for l in lines] == ["p-1", "p-2"] and lines[1]["skipped"])
+        with psycopg.connect(url) as c:
+            rel = c.execute("SELECT pid, kind, closeness, confidence FROM social_relation ORDER BY pid").fetchall()
+        arm("an answer is promoted into social_relation as the owner's (one authority); a skip writes nothing",
+            rel == [("p-1", "friend", "close", "owner")], rel)
         arm("memory is told only a COUNT on the wire — no pid, no name, no relation",
             len(notes) == 2 and not any(("p-1" in n or "friend" in n) for n in notes), notes)
         fr = cl.get("/api/memory/graph?fresh=1", headers=O).json()
@@ -196,6 +200,11 @@ def main(url):
             all(cl.get(u, headers=O).status_code == 404 for u in ("/api/memory/library/laws/nope", "/api/memory/library/..%2F/outside",
                                                                   "/api/memory/library/laws/..%2F..%2Foutside", "/api/memory/library/Laws/proving-a-fix"))
             and cl.get("/api/memory/library").status_code == 403 and cl.get("/api/memory/library/laws/proving-a-fix").status_code == 403)
+        sent = cl.post("/api/memory/chat", json={"message": "who is this to me?", "thread": "obs:person-p-1"}, headers=O).json()
+        polled = cl.get(f"/api/memory/chat?thread=obs:person-p-1&after={sent['sent']}", headers=O)
+        arm("ask-memory-about-a-person posts on a pid-keyed thread and polls it; other prefixes are refused",
+            sent.get("thread") == "obs:person-p-1" and polled.status_code == 200 and polled.json()["replies"] == []
+            and cl.get("/api/memory/chat?thread=t-anything", headers=O).status_code == 400, (sent, polled.status_code))
         quiet = next((n for n in real if n != agent), agent)
         q = cl.get(f"/api/agents/{quiet}/profile", headers=O).json()
         arm("a quiet agent's profile has no presence and no recent work", q.get("presence") is None and q.get("recent") == [], q.get("recent"))
