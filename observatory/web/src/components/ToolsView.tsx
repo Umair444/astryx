@@ -4,6 +4,7 @@ import { ReactFlow, Position, type Node, type Edge } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { agentColor, api, apiPost, fmtAgo } from '../api'
 import { useStore } from '../store'
+import { useTheme } from '../theme'
 import type {
   DagDef,
   DagRun,
@@ -64,8 +65,8 @@ function StatusBadge({ s }: { s: string }) {
     s === 'running'
       ? 'text-cyan border-cyan/40 bg-cyan/10 animate-pulse'
       : s === 'ok'
-        ? 'text-emerald-400 border-emerald-400/40 bg-emerald-400/10'
-        : 'text-red-400 border-red-400/40 bg-red-400/10'
+        ? 'text-good border-good/40 bg-good/10'
+        : 'text-bad border-bad/40 bg-bad/10'
   return <span className={`px-1.5 py-px rounded border text-[10px] font-mono ${cls}`}>{s}</span>
 }
 
@@ -113,20 +114,20 @@ function ServiceItem({
       <div className="flex items-center gap-2.5 px-3 py-2 min-w-0">
         <span
           className={`w-2 h-2 rounded-full shrink-0 ${
-            s.active ? 'bg-emerald-400 animate-pulse shadow-[0_0_6px_2px_rgba(52,211,153,0.5)]' : 'bg-red-400'
+            s.active ? 'bg-good animate-pulse shadow-[0_0_6px_2px_color-mix(in_srgb,var(--t-good)_50%,transparent)]' : 'bg-bad'
           }`}
         />
         <span className="text-[12px] font-mono text-ink shrink-0">{s.unit}</span>
         {actionable && s.enabled === false && (
           <span
-            className="shrink-0 text-[10px] font-mono px-1.5 py-px rounded border border-amber-400/40 bg-amber-400/10 text-amber-300"
+            className="shrink-0 text-[10px] font-mono px-1.5 py-px rounded border border-warn/40 bg-warn/10 text-warn"
             title="disabled — this service will NOT come back after a reboot"
           >
             ⚠ no-boot
           </span>
         )}
         {actionable && s.enabled === true && (
-          <span className="shrink-0 text-[10px] font-mono text-emerald-400/70" title="enabled — survives reboot">
+          <span className="shrink-0 text-[10px] font-mono text-good/70" title="enabled — survives reboot">
             ⏻
           </span>
         )}
@@ -149,7 +150,7 @@ function ServiceItem({
         )}
       </div>
       {err && (
-        <div className="px-3 pb-1.5 -mt-1 text-[10px] font-mono text-red-400/90 whitespace-pre-wrap break-words">
+        <div className="px-3 pb-1.5 -mt-1 text-[10px] font-mono text-bad/90 whitespace-pre-wrap break-words">
           {err}
         </div>
       )}
@@ -161,7 +162,7 @@ function ServiceItem({
 function KindBadge({ k }: { k: string }) {
   const cls =
     k === 'sql'
-      ? 'text-violet-400 border-violet-400/40 bg-violet-400/10'
+      ? 'text-cyan-soft border-cyan-soft/40 bg-cyan-soft/10'
       : k === 'python'
         ? 'text-cyan border-cyan/40 bg-cyan/10'
         : 'text-ink-dim border-line bg-deck-3'
@@ -171,7 +172,7 @@ function KindBadge({ k }: { k: string }) {
 function TriggerItem({ t }: { t: TriggerRow }) {
   return (
     <div className="flex items-center gap-2 px-3 py-1.5 border-b border-line/50 last:border-b-0 min-w-0">
-      <span className={`shrink-0 text-[10px] leading-none ${t.enabled ? 'text-emerald-400' : 'text-ink-mute/60'}`}>
+      <span className={`shrink-0 text-[10px] leading-none ${t.enabled ? 'text-good' : 'text-ink-mute/60'}`}>
         {t.enabled ? '●' : '○'}
       </span>
       <span className="text-[12px] font-mono text-ink shrink-0">{t.name}</span>
@@ -228,8 +229,8 @@ function dagFlow(dag: DagDef): { nodes: Node[]; edges: Edge[]; height: number } 
       style: {
         width: NODE_W,
         height: NODE_H,
-        background: '#141c3a',
-        border: '1px solid #1d2647',
+        background: 'var(--t-panel2)',
+        border: '1px solid var(--t-line)',
         borderRadius: 8,
         padding: 0,
       },
@@ -244,7 +245,7 @@ function dagFlow(dag: DagDef): { nodes: Node[]; edges: Edge[]; height: number } 
         id: `${dag.name}:${d}->${n.id}`,
         source: d,
         target: n.id,
-        style: { stroke: '#22d3ee44' },
+        style: { stroke: 'color-mix(in srgb, var(--t-accent) 45%, transparent)' },
       })),
   )
   const maxRows = Math.max(1, ...rowAt.values())
@@ -253,6 +254,7 @@ function dagFlow(dag: DagDef): { nodes: Node[]; edges: Edge[]; height: number } 
 
 function FlowCard({ dag }: { dag: DagDef }) {
   const flow = useMemo(() => dagFlow(dag), [dag])
+  const { theme } = useTheme()
   const args = Object.keys(dag.args ?? {})
   return (
     <div className="bg-deck-2 border border-line rounded-lg p-3">
@@ -276,7 +278,7 @@ function FlowCard({ dag }: { dag: DagDef }) {
           zoomOnDoubleClick={false}
           preventScrolling={false}
           proOptions={{ hideAttribution: true }}
-          colorMode="dark"
+          colorMode={theme.dark ? 'dark' : 'light'}
         />
       </div>
     </div>
@@ -298,7 +300,7 @@ function RunSteps({ detail }: { detail: DagRunDetail | null }) {
             <StatusBadge s={s.status} />
           </div>
           {s.error && (
-            <div className="mt-0.5 text-[10px] font-mono text-red-400/90 whitespace-pre-wrap break-words">
+            <div className="mt-0.5 text-[10px] font-mono text-bad/90 whitespace-pre-wrap break-words">
               {s.error}
             </div>
           )}
@@ -423,7 +425,7 @@ export default function ToolsView() {
               <div key={s.path} className="bg-deck-2 border border-line rounded-lg p-3 min-w-0">
                 <div className="flex items-baseline gap-2 mb-1">
                   <span className="text-[12px] font-semibold text-ink truncate">{s.agent}</span>
-                  <span className="text-[11px] font-mono text-emerald-400 shrink-0">{s.path}</span>
+                  <span className="text-[11px] font-mono text-good shrink-0">{s.path}</span>
                 </div>
                 <div className="text-[10px] text-ink-mute">{s.description || 'no description'}</div>
               </div>

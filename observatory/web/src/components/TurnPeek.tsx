@@ -43,7 +43,7 @@ export default function TurnPeek({
         d ? (
           <span className="flex items-center gap-2">
             <span
-              className="w-6 h-6 rounded-lg grid place-items-center text-[11px] font-bold text-deck"
+              className="w-6 h-6 rounded-lg grid place-items-center text-[11px] font-bold text-agent-ink"
               style={{ background: agentColor(d.agent) }}
             >
               {d.agent[0].toUpperCase()}
@@ -59,9 +59,9 @@ export default function TurnPeek({
           `turn #${turnId ?? ''}`
         )
       }
-      styles={{ content: { background: '#0b1020' }, header: { background: '#0b1020' } }}
+      styles={{ content: { background: 'var(--t-bg)' }, header: { background: 'var(--t-bg)' } }}
     >
-      {err && <div className="text-sm text-red-400 font-mono">{err}</div>}
+      {err && <div className="text-sm text-bad font-mono">{err}</div>}
       {!d && !err && <div className="text-sm text-ink-mute">opening the turn…</div>}
       {d && (
         <ScrollArea className="h-full">
@@ -82,8 +82,8 @@ export default function TurnPeek({
               {d.events.map((e, i) =>
                 e.kind === 'tool' ? (
                   <div key={i} className="flex items-center gap-2 pl-3">
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400/70 shrink-0" />
-                    <span className="text-[11px] font-mono text-amber-200/70 truncate">
+                    <span className="w-1.5 h-1.5 rounded-full bg-warn/70 shrink-0" />
+                    <span className="text-[11px] font-mono text-warn/70 truncate">
                       {e.name}
                       {e.brief ? ` · ${e.brief}` : ''}
                     </span>

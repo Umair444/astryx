@@ -2644,6 +2644,59 @@ async def events(request: Request):
                                       "x-accel-buffering": "no"})
 
 
+# ---------------------------------------------------------------- canvas (proxied)
+# CANVAS — the owner's front door (bridges/canvas.py, :8091 on loopback) — is "routed from the
+# observatory" (owner, 2026-10-09): the tunnel's https host serves it at /canvas/ with no new
+# public hostname, which is also what gives voice mode the secure context a microphone needs.
+# A dumb byte pipe: auth, CSRF and every rule live in the canvas service, never here. Streaming,
+# so its SSE flows. The observatory's own owner key is NOT forwarded as authority (canvas has its
+# own session); x-forwarded-* tell canvas the URL the viewer actually used.
+import http.cookiejar  # noqa: E402
+import httpx  # noqa: E402
+from fastapi import BackgroundTasks  # noqa: E402
+
+CANVAS_UP = "http://127.0.0.1:8091"
+_HOP = {"connection", "keep-alive", "transfer-encoding", "te", "trailer", "upgrade",
+        "proxy-authorization", "proxy-authenticate", "host"}
+_canvas_http: httpx.AsyncClient | None = None
+
+
+@app.api_route("/canvas", methods=["GET", "HEAD"])
+async def canvas_root():
+    return Response(status_code=308, headers={"location": "/canvas/"})
+
+
+@app.api_route("/canvas/{path:path}", methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"])
+async def canvas_proxy(path: str, request: Request):
+    global _canvas_http
+    if _canvas_http is None:
+        # A jar that STORES NOTHING. httpx's default jar keeps every Set-Cookie it sees and replays
+        # it on later requests — one shared client for all viewers, so the owner's login session
+        # was replayed to every anonymous visitor (caught in the first proxy E2E, 2026-10-09: an
+        # unauthenticated /canvas/api/me answered "owner"). Each browser's own Cookie header is
+        # forwarded as-is; the proxy itself must never remember one.
+        _canvas_http = httpx.AsyncClient(
+            timeout=httpx.Timeout(30, read=None),
+            cookies=http.cookiejar.CookieJar(policy=http.cookiejar.DefaultCookiePolicy(allowed_domains=[])))
+    headers = [(k, v) for k, v in request.headers.items()
+               if k.lower() not in _HOP and k.lower() != "x-obs-key"]
+    headers += [("x-forwarded-host", request.headers.get("x-forwarded-host") or request.headers.get("host", "")),
+                ("x-forwarded-proto", request.headers.get("x-forwarded-proto") or request.url.scheme)]
+    upstream = _canvas_http.build_request(
+        request.method, f"{CANVAS_UP}/canvas/{path}", params=request.query_params,
+        headers=headers, content=await request.body())
+    try:
+        r = await _canvas_http.send(upstream, stream=True)
+    except httpx.HTTPError:
+        return Response("canvas is not running (astryx-canvas.service)", status_code=502,
+                        media_type="text/plain")
+    done = BackgroundTasks()
+    done.add_task(r.aclose)
+    resp = StreamingResponse(r.aiter_raw(), status_code=r.status_code, background=done)
+    resp.raw_headers = [(k, v) for k, v in r.headers.raw if k.decode().lower() not in _HOP]
+    return resp
+
+
 # ---------------------------------------------------------------- static SPA
 if DIST.is_dir():
     @app.get("/")

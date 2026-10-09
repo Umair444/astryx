@@ -70,7 +70,7 @@ PUB = KEY.verify_key.encode(HexEncoder).decode()
 sys.path.insert(0, str(REPO))
 from nucleus.tier import content_public_agents  # noqa: E402
 # the door's name policy — see nucleus/orgname.py for why a name is a trust label
-from nucleus.orgname import org_ok, peer_url_ok  # noqa: E402
+from nucleus.orgname import RESERVED_ORGS, org_ok, peer_url_ok  # noqa: E402
 # WHO is an agent is charter.roster()'s call — the ONE exclusion authority (examples,
 # .git, NON_CHARTERS). The card only annotates; deriving names here keeps a runbook like
 # onboard.md from drifting onto the public card (card_assert.py's two-writers warning).
@@ -478,6 +478,16 @@ async def pickup(request: Request, org: str, since: int = 0, ts: str = "", sig: 
 
 # ----------------------------------------------------------------- outbound
 async def push(row) -> bool:
+    # name@<surface> is a LOCAL person on one of the owner's surfaces, never a peer. The channel ear
+    # renders surface senders as `cv-x@canvas` / `owner@telegram` (federation syntax), agents reply to
+    # what they see, and those replies used to die here as "not an introduced peer" (forge #35629).
+    # Surface names are reserved at the door (orgname.RESERVED_ORGS), so no peer can hold one: re-address
+    # the row locally and ring the local doorbells the insert trigger skipped. One fix, every surface.
+    if row["to_org"] in RESERVED_ORGS:
+        await pool.execute("UPDATE messages SET to_org='local' WHERE id=$1 AND status='pending'", row["id"])
+        await pool.execute("SELECT pg_notify('astryx_msg_' || $1, $2), pg_notify('astryx_wire', $2)",
+                           row["to_agent"], str(row["id"]))
+        return True
     peer = await pool.fetchrow("SELECT url, pubkey, status FROM peers WHERE org=$1",
                                row["to_org"])
     if not peer or peer["status"] in ("stranger", "revoked"):

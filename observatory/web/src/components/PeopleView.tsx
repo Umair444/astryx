@@ -30,9 +30,9 @@ function rowStatus(a: AgentRow): AvatarStatus {
 }
 
 const STATUS_DOT: Record<AvatarStatus, string> = {
-  live: 'bg-emerald-400',
+  live: 'bg-good',
   dormant: 'bg-ink-mute/50',
-  retired: 'bg-amber-400/70',
+  retired: 'bg-warn/70',
 }
 
 const STATUS_LABEL: Record<AvatarStatus, string> = {
@@ -53,7 +53,7 @@ function CharacterCard({ a, onOpen }: { a: AgentRow; onOpen: (n: string) => void
     <button
       onClick={() => onOpen(a.agent)}
       className="group text-left bg-deck-2 border border-line rounded-xl p-3 flex items-center gap-3
-                 hover:border-cyan/40 hover:-translate-y-0.5 hover:shadow-[0_8px_24px_-12px_rgba(34,211,238,0.35)]
+                 hover:border-cyan/40 hover:-translate-y-0.5 hover:shadow-[0_8px_24px_-12px_color-mix(in_srgb,var(--t-accent)_35%,transparent)]
                  transition-all duration-100"
     >
       <Avatar name={a.agent} size={46} status={st} title={displayName(a.agent)} />
@@ -63,7 +63,7 @@ function CharacterCard({ a, onOpen }: { a: AgentRow; onOpen: (n: string) => void
             {displayName(a.agent)}
           </span>
           {a.type && a.type !== 'resident' && (
-            <span className="text-[8px] font-mono uppercase tracking-wide px-1 py-px rounded border border-line bg-deck text-amber-300/80">
+            <span className="text-[8px] font-mono uppercase tracking-wide px-1 py-px rounded border border-line bg-deck text-warn/80">
               {a.type}
             </span>
           )}
@@ -204,11 +204,11 @@ function CreateAgentModal({
           </button>
         )}
 
-        {err && <div className="text-[12px] text-rose-400">create failed — {err}</div>}
+        {err && <div className="text-[12px] text-bad">create failed — {err}</div>}
         {result && (
           <div
             className={`text-[12px] rounded-lg border p-2 ${
-              result.ok ? 'border-emerald-500/30 text-emerald-300' : 'border-amber-500/30 text-amber-300'
+              result.ok ? 'border-good/30 text-good' : 'border-warn/30 text-warn'
             }`}
           >
             <div>
@@ -360,9 +360,9 @@ function RuntimeSection({ name, live }: { name: string; live: boolean }) {
 function StatusPill({ status }: { status: AvatarStatus }) {
   const cls =
     status === 'live'
-      ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10'
+      ? 'border-good/40 text-good bg-good/10'
       : status === 'retired'
-      ? 'border-amber-500/40 text-amber-300 bg-amber-500/10'
+      ? 'border-warn/40 text-warn bg-warn/10'
       : 'border-line text-ink-mute bg-deck'
   return (
     <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-full border ${cls}`}>
@@ -549,7 +549,7 @@ function ProfileModal({
                 )}
                 {confirmRetire ? (
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[12px] text-amber-300">
+                    <span className="text-[12px] text-warn">
                       Retire {displayName(p.name)}? Tombstones the charter and stops the body.
                       Reversible — the name rests, the history stays.
                     </span>
@@ -573,7 +573,7 @@ function ProfileModal({
                       </Button>
                     )}
                     {p.retired && (
-                      <span className="text-[11px] text-amber-300/80">
+                      <span className="text-[11px] text-warn/80">
                         retired — remove the tombstone (revive) to bring it back
                       </span>
                     )}

@@ -579,3 +579,120 @@ CREATE VIEW wire_emitted AS
   UNION ALL
   SELECT from_agent, from_org, to_agent, to_org, thread, intent, body, raised_at, 'held'::text
     FROM held_wakes;
+
+-- ── CANVAS (owner-directed 2026-10-09): the front door — chat with agents + live agent-authored
+-- canvases. bridges/canvas.py is the surface; nucleus/canvas.py is the agents' write path.
+-- Threads 'cv:<id>' are canvas conversations; a canvas's own thread is 'cv:canvas-<id>'.
+-- Identities: the owner logs in with OBS_KEY and speaks as 'owner'; an invitee is 'cv-<name>'
+-- (untrusted, reaches only the agents the owner granted); anything originating INSIDE a canvas
+-- iframe is 'canvas-<id>' from_org 'canvas' — never the viewer (a1 #35009, confused deputy).
+CREATE TABLE IF NOT EXISTS canvas_users (
+  name        text PRIMARY KEY,                 -- wire identity is cv-<name>; 'owner' is the owner
+  token_hash  text UNIQUE,                      -- sha256 of the invite token; NULL for owner
+  agents      text[] NOT NULL DEFAULT '{}',     -- agents this invitee may talk to (owner grant)
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  last_seen   timestamptz,
+  revoked     boolean NOT NULL DEFAULT false
+);
+CREATE TABLE IF NOT EXISTS canvas_sessions (
+  token_hash  text PRIMARY KEY,                 -- sha256 of the HttpOnly cookie value
+  user_name   text NOT NULL,                    -- 'owner' or a canvas_users.name
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  expires_at  timestamptz NOT NULL DEFAULT now() + interval '30 days'
+);
+CREATE TABLE IF NOT EXISTS canvas_threads (
+  thread      text PRIMARY KEY,                 -- 'cv:<id>' (or a foreign thread an agent opened to a canvas user)
+  user_name   text NOT NULL,
+  agent       text NOT NULL,
+  title       text,
+  canvas_id   bigint,                           -- set when this is a canvas's own thread
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  archived    boolean NOT NULL DEFAULT false
+);
+CREATE INDEX IF NOT EXISTS canvas_threads_user ON canvas_threads (user_name, updated_at DESC);
+CREATE TABLE IF NOT EXISTS canvases (
+  id          bigserial PRIMARY KEY,
+  title       text NOT NULL,
+  agent       text NOT NULL,                    -- the canvas's author/keeper (publishes, answers ask())
+  user_name   text NOT NULL DEFAULT 'owner',    -- whose canvas it is
+  tier        text NOT NULL DEFAULT 'org',      -- org | personal (personal is never shareable)
+  shared_with text[] NOT NULL DEFAULT '{}',     -- invitees who may view it (owner act; never for personal)
+  version     integer NOT NULL DEFAULT 0,       -- 0 = not yet painted
+  brief       text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  archived    boolean NOT NULL DEFAULT false
+);
+CREATE TABLE IF NOT EXISTS canvas_versions (     -- immutable; publish = a new row, rollback = re-publish an old one
+  canvas_id   bigint NOT NULL REFERENCES canvases(id),
+  version     integer NOT NULL,
+  html        text NOT NULL,                    -- BODY html only; the bridge owns the shell (CSP, shim)
+  author      text NOT NULL,
+  note        text,
+  ts          timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (canvas_id, version)
+);
+CREATE TABLE IF NOT EXISTS canvas_data (         -- live documents a canvas renders from
+  canvas_id   bigint NOT NULL REFERENCES canvases(id),
+  key         text NOT NULL,
+  value       jsonb NOT NULL,
+  updated_by  text NOT NULL,
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (canvas_id, key)
+);
+-- Doorbell: ids only (NOTIFY caps at 8000 bytes); consumers fetch the row. Namespaced channel.
+CREATE OR REPLACE FUNCTION notify_canvas() RETURNS trigger AS $$
+BEGIN
+  IF TG_TABLE_NAME = 'canvas_data' THEN
+    PERFORM pg_notify('astryx_canvas', json_build_object('kind','data','canvas',NEW.canvas_id,'key',NEW.key)::text);
+  ELSE
+    PERFORM pg_notify('astryx_canvas', json_build_object('kind','canvas','canvas',NEW.id,'ver',NEW.version)::text);
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS canvases_notify ON canvases;
+CREATE TRIGGER canvases_notify AFTER INSERT OR UPDATE ON canvases
+  FOR EACH ROW EXECUTE FUNCTION notify_canvas();
+DROP TRIGGER IF EXISTS canvas_data_notify ON canvas_data;
+CREATE TRIGGER canvas_data_notify AFTER INSERT OR UPDATE ON canvas_data
+  FOR EACH ROW EXECUTE FUNCTION notify_canvas();
+
+-- ── CANVAS VOICE (owner-directed 2026-10-09): the always-ready realtime voice runs on OpenAI
+-- gpt-realtime — EXTERNAL spend the owner signed for, capped per day (CANVAS_VOICE_DAILY_MINUTES).
+-- One row per minted ephemeral session; the client reports cumulative connected seconds. An
+-- unreported session is billed a floor minute by bridges/canvas_voice.py.
+CREATE TABLE IF NOT EXISTS canvas_voice_usage (
+  id          bigserial PRIMARY KEY,
+  user_name   text NOT NULL,                    -- 'owner' or a canvas_users.name
+  model       text NOT NULL,
+  minted_at   timestamptz NOT NULL DEFAULT now(),
+  seconds     integer NOT NULL DEFAULT 0,       -- client-reported, monotonic (greatest)
+  reported    boolean NOT NULL DEFAULT false,
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS canvas_voice_usage_day ON canvas_voice_usage (minted_at);
+
+-- ── PRESENCE (2026-10-09): where each agent's attention IS, right now. One row per agent, so it is
+-- a state, not a log (steps is the log). General on purpose: `surface` names any place the org can
+-- show an agent — canvas:<id>, thread:<thread>, goal:<id> — and `target` is that surface's own
+-- locator (a canvas: a CSS selector). CANVAS renders it as agents moving over the page they work on;
+-- any other surface may read it the same way. Writers: nucleus/presence.py (agents), the canvas
+-- bridge (a summon), nucleus/canvas.publish (a finished stroke).
+CREATE TABLE IF NOT EXISTS presence (
+  agent      text PRIMARY KEY,
+  surface    text,                                  -- NULL = idle
+  target     text,
+  say        text,                                  -- one short line beside the avatar
+  state      text NOT NULL DEFAULT 'idle',          -- idle | moving | working | done
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE canvases ADD COLUMN IF NOT EXISTS crew text[] NOT NULL DEFAULT '{}';  -- agents summoned to work on it
+CREATE OR REPLACE FUNCTION notify_presence() RETURNS trigger AS $$
+BEGIN
+  PERFORM pg_notify('astryx_presence', json_build_object('agent', NEW.agent)::text);
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS presence_notify ON presence;
+CREATE TRIGGER presence_notify AFTER INSERT OR UPDATE ON presence
+  FOR EACH ROW EXECUTE FUNCTION notify_presence();

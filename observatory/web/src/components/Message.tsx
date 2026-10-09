@@ -52,7 +52,7 @@ export default function Message({
           {!compact && (
             <button
               onClick={() => onOpenAgent?.(m.from)}
-              className="w-8 h-8 rounded-lg grid place-items-center text-[13px] font-bold text-deck"
+              className="w-8 h-8 rounded-lg grid place-items-center text-[13px] font-bold text-agent-ink"
               style={{ background: col }}
             >
               {avatarInitial(m.from)}

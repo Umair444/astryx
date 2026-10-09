@@ -36,9 +36,9 @@ type ConfState = 'PASS' | 'FAIL' | 'WARN' | 'RUN'
 type ConfRow = { name: string; ep: string; state: ConfState; detail: string }
 
 const CONF_TAG: Record<ConfState, string> = {
-  PASS: 'bg-emerald-400/15 text-emerald-300',
-  FAIL: 'bg-red-400/15 text-red-300',
-  WARN: 'bg-amber-400/15 text-amber-300',
+  PASS: 'bg-good/15 text-good',
+  FAIL: 'bg-bad/15 text-bad',
+  WARN: 'bg-warn/15 text-warn',
   RUN: 'bg-deck-3 text-ink-mute',
 }
 
@@ -181,11 +181,11 @@ export default function GrowbotView() {
         {/* body vitals */}
         <div className="rounded-xl border border-line bg-deck-2/80 p-4 flex flex-wrap gap-x-6 gap-y-2 text-xs">
           <span className="flex items-center gap-1.5">
-            <span className={`w-2 h-2 rounded-full ${online ? 'bg-emerald-400' : 'bg-red-400'}`} />
+            <span className={`w-2 h-2 rounded-full ${online ? 'bg-good' : 'bg-bad'}`} />
             body host {online ? 'up' : 'down'}
           </span>
           <span className="flex items-center gap-1.5">
-            <span className={`w-2 h-2 rounded-full ${serialUp || wifiBody ? 'bg-emerald-400' : 'bg-ink-mute/40'}`} />
+            <span className={`w-2 h-2 rounded-full ${serialUp || wifiBody ? 'bg-good' : 'bg-ink-mute/40'}`} />
             {wifiBody ? 'wi-fi body' : `pico serial ${serialUp ? 'linked' : 'unplugged'}`}
           </span>
           {stats && (
@@ -203,7 +203,7 @@ export default function GrowbotView() {
         <div className="grid grid-cols-2 gap-2.5">
           <button
             onClick={() => go('stop')}
-            className="col-span-2 py-4 rounded-xl text-lg font-bold bg-red-900/60 border border-red-500/30 text-red-100 hover:bg-red-900/80"
+            className="col-span-2 py-4 rounded-xl text-lg font-bold bg-bad/15 border border-bad/40 text-bad hover:bg-bad/25"
           >
             STOP
           </button>
@@ -255,11 +255,11 @@ export default function GrowbotView() {
               onChange={(e) => setAsk(e.currentTarget.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAsk() } }}
               placeholder="dance like you just shipped v1.0"
-              styles={{ input: { background: '#141c3a', border: '1px solid #1d2647', color: '#e8f0fb' } }}
+              styles={{ input: { background: 'var(--t-panel2)', border: '1px solid var(--t-line)', color: 'var(--t-fg)' } }}
             />
             <button
               onClick={sendAsk}
-              className="px-4 rounded-lg font-bold text-sm bg-gradient-to-br from-teal-400 to-sky-400 text-deck"
+              className="px-4 rounded-lg font-bold text-sm bg-gradient-to-br from-cyan to-cyan-soft text-on"
             >
               ask
             </button>
@@ -268,7 +268,7 @@ export default function GrowbotView() {
             <div className="mt-3 flex flex-col gap-1.5 max-h-56 overflow-y-auto">
               {thread.slice(-12).map((m) => (
                 <div key={m.id} className="text-xs leading-relaxed">
-                  <span className={`font-semibold ${m.from === 'owner' ? 'text-cyan-soft' : 'text-emerald-300'}`}>
+                  <span className={`font-semibold ${m.from === 'owner' ? 'text-cyan-soft' : 'text-good'}`}>
                     {m.from}
                   </span>{' '}
                   <span className="text-ink-dim whitespace-pre-wrap">{m.body.length > 400 ? m.body.slice(0, 400) + '…' : m.body}</span>
@@ -292,7 +292,7 @@ export default function GrowbotView() {
             </button>
           </div>
           {confVerdict && (
-            <div className={`text-sm font-bold mb-2 ${confVerdict.startsWith('✅') ? 'text-emerald-300' : 'text-red-300'}`}>
+            <div className={`text-sm font-bold mb-2 ${confVerdict.startsWith('✅') ? 'text-good' : 'text-bad'}`}>
               {confVerdict}
             </div>
           )}

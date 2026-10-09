@@ -160,7 +160,7 @@ export default function PeopleGraph() {
                 if (!a || !b) return null
                 const lit = sel && (e.src === sel.id || e.dst === sel.id)
                 return <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                  stroke={e.rel === 'direct' ? '#67e8f9' : '#8b93b8'}
+                  stroke={e.rel === 'direct' ? 'var(--t-accent2)' : 'var(--t-mute)'}
                   strokeWidth={lit ? 1.4 : Math.min(1.2, 0.25 + e.w * 0.12)}
                   opacity={sel ? (lit ? 0.85 : 0.04) : e.rel === 'direct' ? 0.1 : 0.28} />
               })}
@@ -178,7 +178,7 @@ export default function PeopleGraph() {
                     onClick={() => setSel(sel?.id === n.id ? null : n)}
                     className="cursor-pointer">
                     <circle r={r}
-                      fill={isOwner ? '#e8b339' : n.direct ? '#67e8f9' : '#8b93b8'}
+                      fill={isOwner ? 'var(--t-warn)' : n.direct ? 'var(--t-accent2)' : 'var(--t-mute)'}
                       opacity={lit ? (isOwner ? 0.95 : 0.8) : 0.15} />
                     {(isOwner || sel?.id === n.id || (view.k > 1.6 && n.label !== 'unknown')) && (
                       <text y={-r - 3} textAnchor="middle" fontSize={isOwner ? 11 : 8.5}
@@ -225,7 +225,7 @@ export default function PeopleGraph() {
           <button onClick={runCypher}
             className="text-xs px-3 py-1.5 rounded border border-line hover:border-cyan">run</button>
         </div>
-        {cyErr && <div className="mt-1.5 text-[11.5px] text-[#e8b339]">{cyErr}</div>}
+        {cyErr && <div className="mt-1.5 text-[11.5px] text-warn">{cyErr}</div>}
         {cyOut && (
           <div className="mt-1.5 max-h-40 overflow-auto font-mono text-[11px] text-ink-dim">
             {cyOut.length === 0 ? <div>0 rows</div>

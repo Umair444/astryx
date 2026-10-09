@@ -211,7 +211,11 @@ if [ -n "$sid" ] && [ -f "$TDIR/$sid.jsonl" ]; then
     echo "  note: newer transcript than turns.session_id ($sid) — resuming $(basename "$newest" .jsonl)"
     latest="$newest"
   fi
-elif [ -z "$sid" ]; then
+else
+  # DB empty, OR its session_id has no transcript (a non-persisted headless run under
+  # this home still logs a turn — abstractor-4 booted fresh over a 13MB life this way,
+  # 2026-10-09). A deliberate fresh boot needs no carve-out here: refresh.sh moves ALL
+  # transcripts aside, so $newest is empty too.
   latest="$newest"
 fi
 # --resume <id> — NOT --continue, whose own "most recent conversation in this

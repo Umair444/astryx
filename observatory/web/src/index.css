@@ -1,22 +1,52 @@
 @import "tailwindcss";
 
+/* Fallback palette (the Astryx theme) so the page is never unstyled before JS runs;
+   theme.tsx overwrites these on <html> from canvas/web/src/themes.ts. */
+:root {
+  --t-bg: #07091a; --t-bg2: #0b0e22; --t-panel: #10142b; --t-panel2: #161b38;
+  --t-line: #1f2547; --t-line2: #2c3466; --t-fg: #e8ebf7; --t-dim: #a0a8c6; --t-mute: #646d90;
+  --t-accent: #8b7bff; --t-accent2: #38d9f5; --t-good: #34d399; --t-bad: #fb7185;
+  --t-warn: #fbbf24; --t-on: #ffffff;
+  /* hashed hues (agent chips, memory regions) need a lightness that reads on the page */
+  --hue-l: 64%;      /* chip / swatch fill */
+  --hue-l-text: 70%; /* hue used as text */
+  --agent-ink: var(--t-bg); /* initials sitting on an agent-hued chip */
+}
+:root[data-theme="light"] {
+  --hue-l: 44%;
+  --hue-l-text: 38%;
+  --agent-ink: #ffffff;
+}
+
+/* The observatory's own names, re-pointed at the active theme. `inline` keeps the var()
+   in every utility so bg-deck, text-ink-dim, bg-cyan/20 … all follow a theme switch. */
+@theme inline {
+  --color-deck: var(--t-bg);
+  --color-deck-2: var(--t-panel);
+  --color-deck-3: var(--t-panel2);
+  --color-chrome: var(--t-bg2);
+  --color-line: var(--t-line);
+  --color-line-2: var(--t-line2);
+  --color-ink: var(--t-fg);
+  --color-ink-dim: var(--t-dim);
+  --color-ink-mute: var(--t-mute);
+  --color-cyan: var(--t-accent);
+  --color-cyan-soft: var(--t-accent2);
+  --color-good: var(--t-good);
+  --color-bad: var(--t-bad);
+  --color-warn: var(--t-warn);
+  --color-on: var(--t-on);
+  --color-agent-ink: var(--agent-ink);
+}
+
 @theme {
-  --color-deck: #0b1020;
-  --color-deck-2: #0f1630;
-  --color-deck-3: #141c3a;
-  --color-line: #1d2647;
-  --color-ink: #d5ddf5;
-  --color-ink-dim: #9aa7c7;
-  --color-ink-mute: #5b6890;
-  --color-cyan: #22d3ee;
-  --color-cyan-soft: #67e8f9;
   --font-mono: ui-monospace, "JetBrains Mono", "Cascadia Code", monospace;
 }
 
 html, body, #root { height: 100%; }
 body {
-  background: var(--color-deck);
-  color: var(--color-ink);
+  background: var(--t-bg);
+  color: var(--t-fg);
   font-family: -apple-system, "Segoe UI", Roboto, "Inter", sans-serif;
   font-size: 15px;
   overscroll-behavior: none;
@@ -25,22 +55,22 @@ body {
 /* the deck's star-dust — one quiet signature, not confetti */
 .starfield {
   background-image:
-    radial-gradient(1px 1px at 12% 28%, rgba(103,232,249,.5) 0, transparent 100%),
-    radial-gradient(1px 1px at 78% 12%, rgba(232,179,57,.4) 0, transparent 100%),
-    radial-gradient(1.5px 1.5px at 42% 74%, rgba(124,92,255,.35) 0, transparent 100%),
-    radial-gradient(1px 1px at 91% 63%, rgba(47,191,113,.4) 0, transparent 100%),
-    radial-gradient(1px 1px at 23% 89%, rgba(255,92,122,.3) 0, transparent 100%);
+    radial-gradient(1px 1px at 12% 28%, color-mix(in srgb, var(--t-accent2) 50%, transparent) 0, transparent 100%),
+    radial-gradient(1px 1px at 78% 12%, color-mix(in srgb, var(--t-warn) 40%, transparent) 0, transparent 100%),
+    radial-gradient(1.5px 1.5px at 42% 74%, color-mix(in srgb, var(--t-accent) 35%, transparent) 0, transparent 100%),
+    radial-gradient(1px 1px at 91% 63%, color-mix(in srgb, var(--t-good) 40%, transparent) 0, transparent 100%),
+    radial-gradient(1px 1px at 23% 89%, color-mix(in srgb, var(--t-bad) 30%, transparent) 0, transparent 100%);
 }
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-thumb { background: #232d55; border-radius: 4px; }
+::-webkit-scrollbar-thumb { background: var(--t-line2); border-radius: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 
-/* react-flow dark theming */
+/* react-flow theming (colors come from the active theme, see NetworkView) */
 .react-flow__attribution { display: none; }
 .react-flow__node { transition: filter 75ms, transform 75ms; }
 .react-flow__node:hover { filter: brightness(1.35); transform: translateY(-1px); }
@@ -51,3 +81,6 @@ body {
   25% { transform: rotate(-4deg); }
   75% { transform: rotate(4deg); }
 }
+
+:root[data-theme="light"] .react-flow__node:hover { filter: brightness(0.97) drop-shadow(0 2px 6px color-mix(in srgb, var(--t-fg) 12%, transparent)); }
+.react-flow { --xy-background-color: transparent; }

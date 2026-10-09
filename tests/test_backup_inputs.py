@@ -57,6 +57,9 @@ REGENERABLE = {
     "observatory/web/node_modules/":  "npm install",
     "observatory/web/dist/":          "npm run build (deploy.sh web)",
     "observatory/web/tsconfig.tsbuildinfo": "tsc build artifact",
+    "canvas/web/node_modules/":       "npm install (init.sh _act_obs)",
+    "canvas/web/dist/":               "npm run build in canvas/web (init.sh _act_obs; includes the vendored kit)",
+    "canvas/web/tsconfig.tsbuildinfo": "tsc build artifact",
     "units/":                         "init.sh units() regenerates from runners.conf",
     "backups/":                       "the artifact itself — capturing it would recurse",
     "homes/":                         "spawn.sh regenerates .mcp.json/settings.json; "

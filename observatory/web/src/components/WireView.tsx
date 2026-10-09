@@ -159,7 +159,7 @@ export default function WireView({ route, onOpenAgent }: { route: Route & { tab:
             variant="filled"
             ml="auto"
             w={isMobile ? 130 : 220}
-            styles={{ input: { background: '#141c3a', border: '1px solid #1d2647' } }}
+            styles={{ input: { background: 'var(--t-panel2)', border: '1px solid var(--t-line)' } }}
           />
         )}
       </div>
@@ -234,7 +234,7 @@ export default function WireView({ route, onOpenAgent }: { route: Route & { tab:
               setPill(false)
               boxRef.current?.scrollTo({ top: boxRef.current.scrollHeight, behavior: 'smooth' })
             }}
-            className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 px-3.5 py-1.5 rounded-full bg-cyan text-deck text-xs font-semibold shadow-lg shadow-cyan/20"
+            className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 px-3.5 py-1.5 rounded-full bg-cyan text-on text-xs font-semibold shadow-lg shadow-cyan/20"
           >
             ↓ new messages
           </motion.button>

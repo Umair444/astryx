@@ -216,16 +216,16 @@ export default function FaceView() {
 
   if (!keyOk) {
     return (
-      <div className="h-dvh grid place-items-center bg-[#05070d] text-[#e8f6ff]">
+      <div className="h-dvh grid place-items-center bg-deck text-ink">
         <form
           className="text-center"
           onSubmit={(e) => { e.preventDefault(); if (keyVal.trim()) { saveObsKey(keyVal.trim()); setKeyOk(true) } }}
         >
           <div className="text-5xl mb-4">◠ ◠</div>
-          <div className="text-sm text-[#7f93ab] mb-4">the creature is private — owner key wakes it</div>
+          <div className="text-sm text-ink-mute mb-4">the creature is private — owner key wakes it</div>
           <input
             type="password" value={keyVal} onChange={(e) => setKeyVal(e.currentTarget.value)}
-            className="px-4 py-3 rounded-xl text-center bg-[#101826] border border-[#31466b] text-[#e8f6ff]"
+            className="px-4 py-3 rounded-xl text-center bg-deck-2 border border-line-2 text-ink"
             placeholder="owner key" autoFocus
           />
         </form>
@@ -235,7 +235,7 @@ export default function FaceView() {
 
   return (
     <div
-      className="h-dvh w-full bg-[#05070d] overflow-hidden relative select-none"
+      className="h-dvh w-full bg-deck overflow-hidden relative select-none"
       onClick={onTap}
       style={{ touchAction: 'manipulation' }}
     >
@@ -250,8 +250,8 @@ export default function FaceView() {
         <svg viewBox="-160 -120 320 260" className="w-[86vw] max-w-[560px]">
           <defs>
             <radialGradient id="glow" cx="50%" cy="50%">
-              <stop offset="0%" stopColor="#37e0c8" stopOpacity="0.9" />
-              <stop offset="100%" stopColor="#37e0c8" stopOpacity="0" />
+              <stop offset="0%" stopColor="var(--t-accent2)" stopOpacity="0.9" />
+              <stop offset="100%" stopColor="var(--t-accent2)" stopOpacity="0" />
             </radialGradient>
           </defs>
           {/* eye glow */}
@@ -261,20 +261,20 @@ export default function FaceView() {
           {[-62, 62].map((cx) => (
             <g key={cx} transform={`translate(${cx} -30)`}>
               <rect x={-eyeRx} y={-eyeH / 2} width={eyeRx * 2} height={eyeH} rx={Math.min(eyeRx, eyeH / 2)}
-                fill="#0c1a2e" stroke="#37e0c8" strokeWidth="3.5" />
+                fill="var(--t-panel)" stroke="var(--t-accent2)" strokeWidth="3.5" />
               {!blink && !sleepy && (
-                <circle cx={g.x * 0.55} cy={g.y * 0.55} r={pupilR} fill="#5af0dc">
+                <circle cx={g.x * 0.55} cy={g.y * 0.55} r={pupilR} fill="var(--t-accent2)">
                   {mood === 'dizzy' && (
                     <animateTransform attributeName="transform" type="rotate" from="0 0 0" to="360 0 0" dur="0.8s" repeatCount="3" />
                   )}
                 </circle>
               )}
-              {sleepy && <line x1={-eyeRx + 6} y1="0" x2={eyeRx - 6} y2="0" stroke="#37e0c8" strokeWidth="3" strokeLinecap="round" />}
+              {sleepy && <line x1={-eyeRx + 6} y1="0" x2={eyeRx - 6} y2="0" stroke="var(--t-accent2)" strokeWidth="3" strokeLinecap="round" />}
             </g>
           ))}
           {/* mouth */}
           <g transform="translate(0 30)">
-            <path d={mouth} fill={mood === 'startled' ? '#0c1a2e' : 'none'} stroke="#37e0c8" strokeWidth="4" strokeLinecap="round">
+            <path d={mouth} fill={mood === 'startled' ? 'var(--t-panel)' : 'none'} stroke="var(--t-accent2)" strokeWidth="4" strokeLinecap="round">
               {mood === 'speaking' && (
                 <animate attributeName="stroke-width" values="4;7;4;6;4" dur="0.6s" repeatCount="indefinite" />
               )}
@@ -282,14 +282,14 @@ export default function FaceView() {
           </g>
           {/* listening ripples */}
           {mood === 'listening' && (
-            <circle cx="0" cy="10" r="90" fill="none" stroke="#5ab0ff" strokeWidth="2" opacity="0.6">
+            <circle cx="0" cy="10" r="90" fill="none" stroke="var(--t-accent)" strokeWidth="2" opacity="0.6">
               <animate attributeName="r" values="80;140" dur="1.2s" repeatCount="indefinite" />
               <animate attributeName="opacity" values="0.6;0" dur="1.2s" repeatCount="indefinite" />
             </circle>
           )}
           {/* thinking dots */}
           {mood === 'thinking' && (
-            <g fill="#7f93ab">
+            <g fill="var(--t-mute)">
               {[0, 1, 2].map((i) => (
                 <circle key={i} cx={-16 + i * 16} cy="-95" r="5">
                   <animate attributeName="opacity" values="0.2;1;0.2" dur="1.2s" begin={`${i * 0.25}s`} repeatCount="indefinite" />
@@ -301,7 +301,7 @@ export default function FaceView() {
       </div>
 
       {/* caption — what it heard / what it says */}
-      <div className="absolute bottom-24 inset-x-0 text-center px-8 text-[#9fdfd4] text-lg leading-snug min-h-[3.5rem]">
+      <div className="absolute bottom-24 inset-x-0 text-center px-8 text-cyan-soft text-lg leading-snug min-h-[3.5rem]">
         {caption}
       </div>
 
@@ -309,7 +309,7 @@ export default function FaceView() {
       <button
         onClick={listen}
         className={`absolute bottom-5 left-1/2 -translate-x-1/2 w-16 h-16 rounded-full border grid place-items-center text-2xl transition-colors ${
-          mood === 'listening' ? 'bg-[#37e0c8] text-[#04110f] border-transparent' : 'bg-[#101826]/80 text-[#7f93ab] border-[#31466b]'
+          mood === 'listening' ? 'bg-cyan-soft text-on border-transparent' : 'bg-deck-2/80 text-ink-mute border-line-2'
         }`}
       >
         {mood === 'listening' ? '◉' : '🎤'}
@@ -317,14 +317,14 @@ export default function FaceView() {
 
       {/* setup hint */}
       <button onClick={(e) => { e.stopPropagation(); setHint(!hint) }}
-        className="absolute top-4 right-4 text-[#31466b] text-xl">⚙</button>
+        className="absolute top-4 right-4 text-line-2 text-xl">⚙</button>
       {hint && (
         <div onClick={(e) => e.stopPropagation()}
-          className="absolute top-12 right-4 left-4 sm:left-auto sm:w-96 rounded-xl border border-[#31466b] bg-[#101826]/95 p-4 text-xs text-[#8fa3bb] leading-relaxed">
-          <b className="text-[#e8f6ff]">phone setup (once)</b><br />
+          className="absolute top-12 right-4 left-4 sm:left-auto sm:w-96 rounded-xl border border-line-2 bg-deck-2/95 p-4 text-xs text-ink-dim leading-relaxed">
+          <b className="text-ink">phone setup (once)</b><br />
           mic + always-on screen need this page treated as secure:<br />
           1. chrome://flags → “Insecure origins treated as secure” → add
-          <code className="text-[#37e0c8]"> http://{location.host}</code> → relaunch<br />
+          <code className="text-cyan-soft"> http://{location.host}</code> → relaunch<br />
           2. or: Android developer options → “Stay awake” (while charging)<br />
           tap the face = it giggles (reflex, no AI call) · shake/pickup = it feels it ·
           🎤 = talk to it, the org answers out loud

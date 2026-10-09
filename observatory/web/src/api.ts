@@ -83,14 +83,14 @@ export function shortModel(id: string | null | undefined): string {
 export function agentColor(name: string): string {
   let h = 0
   for (const c of (name || '?').toUpperCase()) h = (h * 31 + c.charCodeAt(0)) >>> 0
-  return `hsl(${h % 360} 72% 64%)`
+  return `hsl(${h % 360} 72% var(--hue-l))`
 }
 
 /* same hue, custom alpha — for borders and glows */
 export function agentColorA(name: string, alpha: number): string {
   let h = 0
   for (const c of (name || '?').toUpperCase()) h = (h * 31 + c.charCodeAt(0)) >>> 0
-  return `hsl(${h % 360} 72% 64% / ${alpha})`
+  return `hsl(${h % 360} 72% var(--hue-l) / ${alpha})`
 }
 
 export function fmtTime(ts: string): string {

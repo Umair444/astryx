@@ -121,7 +121,7 @@ function KeyBadge() {
               placeholder="key"
               size="xs"
               autoFocus
-              styles={{ input: { background: '#141c3a', border: '1px solid #1d2647' } }}
+              styles={{ input: { background: 'var(--t-panel2)', border: '1px solid var(--t-line)' } }}
             />
           </form>
         )}
@@ -158,7 +158,7 @@ function LockPanel() {
             onChange={(e) => setVal(e.currentTarget.value)}
             placeholder="owner key"
             size="xs"
-            styles={{ input: { background: '#141c3a', border: '1px solid #1d2647', textAlign: 'center' } }}
+            styles={{ input: { background: 'var(--t-panel2)', border: '1px solid var(--t-line)', textAlign: 'center' } }}
           />
         </form>
       </div>
@@ -232,7 +232,7 @@ function Shell() {
               <>
                 <span className="hidden sm:inline font-mono text-ink-dim">{overview.org}</span>
                 <span className="flex items-center gap-1">
-                  <span className={`w-2 h-2 rounded-full ${overview.live > 0 ? 'bg-emerald-400 animate-pulse' : 'bg-ink-mute/40'}`} />
+                  <span className={`w-2 h-2 rounded-full ${overview.live > 0 ? 'bg-good animate-pulse' : 'bg-ink-mute/40'}`} />
                   {overview.live} live
                 </span>
               </>

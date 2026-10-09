@@ -48,10 +48,10 @@ const REGION_HUE: Record<string, number> = {
 const hue = (r: string) => REGION_HUE[r] ?? 230
 
 const CLASS_STYLE: Record<Edge['cls'], { c: string; label: string; hint: string }> = {
-  semantic: { c: '#67e8f9', label: 'semantic', hint: 'wikilinks — these pages are about each other' },
-  entity: { c: '#7c5cff', label: 'entity', hint: 'a fact points at something that exists' },
-  temporal: { c: '#2fbf71', label: 'temporal', hint: 'when — compiles, days, dated evidence' },
-  causal: { c: '#e8b339', label: 'causal', hint: 'what caused a compile, and what it produced' },
+  semantic: { c: 'var(--t-accent2)', label: 'semantic', hint: 'wikilinks — these pages are about each other' },
+  entity: { c: 'var(--t-accent)', label: 'entity', hint: 'a fact points at something that exists' },
+  temporal: { c: 'var(--t-good)', label: 'temporal', hint: 'when — compiles, days, dated evidence' },
+  causal: { c: 'var(--t-warn)', label: 'causal', hint: 'what caused a compile, and what it produced' },
 }
 
 const KIND_R: Record<string, number> = {
@@ -464,7 +464,7 @@ export default function MemoryView() {
           <Header g={g} stale={stale} />
           {g.regions.map((r) => (
             <div key={r} className="mb-4">
-              <div className="text-[11px] uppercase tracking-wider mb-1" style={{ color: `hsl(${hue(r)} 70% 70%)` }}>{r}</div>
+              <div className="text-[11px] uppercase tracking-wider mb-1" style={{ color: `hsl(${hue(r)} 70% var(--hue-l-text))` }}>{r}</div>
               {g.nodes.filter((n) => n.region === r && (n.kind === 'page' || n.kind === 'goal' || n.kind === 'agent'))
                 .sort((a, b) => b.degree - a.degree)
                 .map((n) => (
@@ -505,7 +505,7 @@ export default function MemoryView() {
                 style={{
                   borderColor: on ? CLASS_STYLE[c].c : 'var(--color-line)',
                   color: on ? CLASS_STYLE[c].c : 'var(--color-ink-mute)',
-                  background: on ? `${CLASS_STYLE[c].c}14` : 'transparent',
+                  background: on ? `color-mix(in srgb, ${CLASS_STYLE[c].c} 8%, transparent)` : 'transparent',
                 }}>
                 {CLASS_STYLE[c].label} <span className="opacity-60">{g.stats.by_class?.[c] ?? 0}</span>
               </button>
@@ -619,8 +619,8 @@ export default function MemoryView() {
                     fill={`hsl(${hue(n.region)} ${n.layer === 'system2' ? 78 : 45}% ${n.layer === 'system2' ? 66 : 52}%)`}
                     stroke={
                       (n as any).bucket || (n as any).thin || (n as any).gap || (n as any).uncategorised
-                        ? '#ff5c7a'
-                        : isSel ? '#fff' : hot && h === 0 ? '#fff' : 'none'}
+                        ? 'var(--t-bad)'
+                        : isSel ? 'var(--t-fg)' : hot && h === 0 ? 'var(--t-fg)' : 'none'}
                     strokeWidth={(n as any).bucket || (n as any).thin || (n as any).gap || (n as any).uncategorised ? 1.6 : hot && h === 0 ? 1.1 : 1.4}
                     opacity={op}
                     filter={n.degree > 12 || isSel || (hot && h === 0) ? 'url(#glow)' : undefined}
@@ -639,7 +639,7 @@ export default function MemoryView() {
                 const p = pos.get(n.id)!
                 return (
                   <text key={n.id} x={p.x} y={p.y - 12} textAnchor="middle" fontSize="12"
-                    fill={n.id === hover || n.id === sel?.id ? '#fff' : 'var(--color-ink-dim)'}
+                    fill={n.id === hover || n.id === sel?.id ? 'var(--t-fg)' : 'var(--color-ink-dim)'}
                     style={{ paintOrder: 'stroke', stroke: 'var(--color-deck)', strokeWidth: 3 }}>
                     {n.label}
                   </text>
@@ -647,7 +647,7 @@ export default function MemoryView() {
               })}
               {blobs.filter((b) => b.n > 2).map((b) => (
                 <text key={b.region} x={b.cx} y={b.cy - b.r - 8} textAnchor="middle" fontSize="15"
-                  letterSpacing="2" opacity={0.75} fill={`hsl(${hue(b.region)} 70% 72%)`}>
+                  letterSpacing="2" opacity={0.75} fill={`hsl(${hue(b.region)} 70% var(--hue-l-text))`}>
                   {b.region.toUpperCase()}
                 </text>
               ))}
@@ -682,9 +682,9 @@ export default function MemoryView() {
                         <div key={i} className="py-[3px] border-b border-line/30">
                           <span className="text-ink-mute">{c.rel}</span>
                           <span className="text-ink-mute"> · </span>
-                          <span className={c.contra ? 'text-[#ff5c7a]' : ''}>{c.value}</span>
+                          <span className={c.contra ? 'text-bad' : ''}>{c.value}</span>
                           {c.confidence !== 'observed' && (
-                            <span className="text-[#e8b339] ml-1">({c.confidence})</span>
+                            <span className="text-warn ml-1">({c.confidence})</span>
                           )}
                         </div>
                       ))}
@@ -764,7 +764,7 @@ function Header({ g, stale }: { g: Graph; stale: boolean }) {
       <span className="text-ink-mute">S2 {g.stats.system2} / S1 {g.stats.system1}</span>
       {/* A graph that goes stale while staying beautiful is this surface's silent
         * failure, so the age is stated rather than left to be inferred. */}
-      <span className={stale ? 'text-[#ff5c7a]' : 'text-ink-mute'}>
+      <span className={stale ? 'text-bad' : 'text-ink-mute'}>
         compiled {g.age_s != null ? fmtAgo(new Date(Date.now() - g.age_s * 1000).toISOString()) : '—'}
       </span>
     </div>

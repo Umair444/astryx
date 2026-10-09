@@ -22,7 +22,7 @@ function fmtDur(s: number): string {
   return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`
 }
 
-const hue = (p: number) => (p >= 90 ? '#f87171' : p >= 70 ? '#fbbf24' : '#34d399')
+const hue = (p: number) => (p >= 90 ? 'var(--t-bad)' : p >= 70 ? 'var(--t-warn)' : 'var(--t-good)')
 
 function Bar({ pct, label, sub }: { pct: number; label: string; sub?: string }) {
   return (

@@ -54,7 +54,7 @@ function Door({ title, sub, hue, onClick, isStage }: {
     >
       <div className="flex items-center gap-2.5">
         <span
-          className="w-9 h-9 rounded-xl grid place-items-center text-[15px] font-bold text-deck"
+          className="w-9 h-9 rounded-xl grid place-items-center text-[15px] font-bold text-agent-ink"
           style={{ background: hue }}
         >
           {isStage ? '❝' : '▸'}
@@ -233,7 +233,7 @@ function SceneTurn({ t, onPeek }: { t: Turn; onPeek: () => void }) {
     <div className="rounded-lg border border-line/70 bg-deck-2/50 overflow-hidden">
       <div className="flex items-center gap-2 px-3 py-1.5 bg-deck-3/40 border-b border-line/60">
         <span
-          className="w-5 h-5 rounded-full grid place-items-center text-[9px] font-bold text-deck shrink-0"
+          className="w-5 h-5 rounded-full grid place-items-center text-[9px] font-bold text-agent-ink shrink-0"
           style={{ background: col }}
         >
           {avatarInitial(t.agent)}
@@ -258,7 +258,7 @@ function SceneTurn({ t, onPeek }: { t: Turn; onPeek: () => void }) {
         )}
         {events.map((e, i) =>
           e.kind === 'tool' ? (
-            <div key={i} className="flex items-start gap-2 text-[11.5px] font-mono text-amber-200/60">
+            <div key={i} className="flex items-start gap-2 text-[11.5px] font-mono text-warn/60">
               <span className="mt-px">⏺</span>
               <span className="truncate">
                 {(e.name ?? '?').replace(/^mcp__[^_]+__/, '')}

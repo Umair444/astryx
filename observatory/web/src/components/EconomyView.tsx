@@ -3,10 +3,10 @@ import { ScrollArea, Tooltip } from '@mantine/core'
 import { api, agentColor, fmtTime, fmtTokens } from '../api'
 import type { Economy, EconDissipative, EconLatest, EconTriggerTfp } from '../types'
 
-const BILL = '#22d3ee'
-const OUTC = '#7c5cff'
-const GREEN = '#34d399'
-const ROSE = '#f43f5e'
+const BILL = 'var(--t-accent)'
+const OUTC = 'var(--t-accent2)'
+const GREEN = 'var(--t-good)'
+const ROSE = 'var(--t-bad)'
 
 function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
@@ -20,7 +20,7 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub?: s
 
 /* Usage-Monitor-style gauge: a labelled bar against a ceiling */
 function Gauge({ label, pct, right, color }: { label: string; pct: number; right: string; color?: string }) {
-  const c = color ?? (pct >= 85 ? '#f43f5e' : pct >= 70 ? '#facc15' : '#34d399')
+  const c = color ?? (pct >= 85 ? 'var(--t-bad)' : pct >= 70 ? 'var(--t-warn)' : 'var(--t-good)')
   return (
     <div className="flex items-center gap-2 text-[12px]">
       <span className="text-ink-dim w-32 shrink-0">{label}</span>
@@ -32,10 +32,16 @@ function Gauge({ label, pct, right, color }: { label: string; pct: number; right
   )
 }
 
-const MODEL_COLORS = ['#7c5cff', '#22d3ee', '#34d399', '#facc15', '#f43f5e']
+const MODEL_COLORS = ['var(--t-accent)', 'var(--t-accent2)', 'var(--t-good)', 'var(--t-warn)', 'var(--t-bad)']
 
 /* dark→bright green buckets: [empty, q1, q2, q3, q4] */
-const HEAT_COLORS = ['#0e1a14', '#14532d', '#16a34a', '#22c55e', '#4ade80']
+const HEAT_COLORS = [
+  'var(--t-panel2)',
+  'color-mix(in srgb, var(--t-good) 30%, var(--t-panel2))',
+  'color-mix(in srgb, var(--t-good) 55%, var(--t-panel2))',
+  'color-mix(in srgb, var(--t-good) 78%, var(--t-panel2))',
+  'var(--t-good)',
+]
 
 function fmtClock(iso?: string | null) {
   if (!iso) return '—'
@@ -120,8 +126,8 @@ function Sparkline({ series }: { series: Economy['series'] }) {
     <svg width="100%" viewBox={`0 0 ${W} ${H}`} height={H} preserveAspectRatio="none" className="block">
       {[0, 25, 50, 75, 100].map((g) => (
         <g key={g}>
-          <line x1={padL} y1={y(g)} x2={W - padR} y2={y(g)} stroke="#1e2a44" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-          <text x={padL - 5} y={y(g) + 3} textAnchor="end" fontSize={9} fill="#5b6890" fontFamily="monospace">{g}</text>
+          <line x1={padL} y1={y(g)} x2={W - padR} y2={y(g)} stroke="var(--t-line)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+          <text x={padL - 5} y={y(g) + 3} textAnchor="end" fontSize={9} fill="var(--t-mute)" fontFamily="monospace">{g}</text>
         </g>
       ))}
       {lanes.map(({ key, color, label }) => {
@@ -169,7 +175,7 @@ function DailyBars({ daily }: { daily: Economy['daily'] }) {
               <rect x={x} y={H - hBill - hOut} width={bw} height={Math.max(hOut, total ? 1 : 0)} fill={OUTC} opacity={0.85} rx={1.5} />
               <rect x={x} y={H - hBill} width={bw} height={Math.max(hBill, total ? 1 : 0)} fill={BILL} opacity={0.85} rx={1.5} />
               {(i === 0 || i === daily.length - 1 || i % 7 === 0) && (
-                <text x={x + bw / 2} y={H + 12} textAnchor="middle" fontSize={8} fill="#5b6890" fontFamily="monospace">
+                <text x={x + bw / 2} y={H + 12} textAnchor="middle" fontSize={8} fill="var(--t-mute)" fontFamily="monospace">
                   {d.day.slice(5)}
                 </text>
               )}
@@ -253,7 +259,7 @@ function Heatmap({ heatmap }: { heatmap: Economy['heatmap'] }) {
     <div className="overflow-x-auto">
       <svg width={gridW} height={topPad + 7 * (CELL + GAP)} className="block">
         {monthLabels.map((m) => (
-          <text key={`${m.col}-${m.label}`} x={m.col * (CELL + GAP)} y={10} fontSize={9} fill="#5b6890" fontFamily="monospace">
+          <text key={`${m.col}-${m.label}`} x={m.col * (CELL + GAP)} y={10} fontSize={9} fill="var(--t-mute)" fontFamily="monospace">
             {m.label}
           </text>
         ))}
@@ -311,7 +317,7 @@ function PlanLimits({ auth }: { auth: Economy['authoritative'] }) {
     }
     const danger = reset ? +new Date(eta) < +new Date(reset) : true
     return (
-      <span className={danger ? 'text-rose-400' : 'text-ink-dim'}>
+      <span className={danger ? 'text-bad' : 'text-ink-dim'}>
         {label} → 100% at {fmtClock(eta)} (rate +{rate.toFixed(1)} pp/h)
         {!danger ? ' — after reset, safe' : ''}
       </span>
@@ -418,7 +424,7 @@ function UsageTab({ econ }: { econ: Economy | null }) {
           {(econ?.agents ?? []).map((a) => (
             <div key={a.agent} className="flex items-center gap-2 text-[12px]">
               <span
-                className="w-4 h-4 rounded-full grid place-items-center text-[9px] font-bold text-deck shrink-0"
+                className="w-4 h-4 rounded-full grid place-items-center text-[9px] font-bold text-agent-ink shrink-0"
                 style={{ background: agentColor(a.agent) }}
               >
                 {a.agent[0]}
@@ -543,8 +549,8 @@ function GapLine({ pts, color, fmt, height = 96 }: {
     <svg width="100%" viewBox={`0 0 ${W} ${H}`} height={H} preserveAspectRatio="none" className="block">
       {[0, 0.5, 1].map((g) => (
         <g key={g}>
-          <line x1={padL} y1={y(g * top)} x2={W - padR} y2={y(g * top)} stroke="#1e2a44" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-          <text x={padL - 5} y={y(g * top) + 3} textAnchor="end" fontSize={9} fill="#5b6890" fontFamily="monospace">{f(g * top)}</text>
+          <line x1={padL} y1={y(g * top)} x2={W - padR} y2={y(g * top)} stroke="var(--t-line)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+          <text x={padL - 5} y={y(g * top) + 3} textAnchor="end" fontSize={9} fill="var(--t-mute)" fontFamily="monospace">{f(g * top)}</text>
         </g>
       ))}
       {segs.map((seg, i) => {
@@ -562,8 +568,8 @@ function GapLine({ pts, color, fmt, height = 96 }: {
           </g>
         )
       })}
-      <text x={padL} y={H - 3} fontSize={8} fill="#5b6890" fontFamily="monospace">{pts[0].day}</text>
-      <text x={W - padR} y={H - 3} textAnchor="end" fontSize={8} fill="#5b6890" fontFamily="monospace">{pts[pts.length - 1].day}</text>
+      <text x={padL} y={H - 3} fontSize={8} fill="var(--t-mute)" fontFamily="monospace">{pts[0].day}</text>
+      <text x={W - padR} y={H - 3} textAnchor="end" fontSize={8} fill="var(--t-mute)" fontFamily="monospace">{pts[pts.length - 1].day}</text>
     </svg>
   )
 }
@@ -589,8 +595,8 @@ function GapBars({ pts, color, fmt, height = 96 }: {
     <svg width="100%" viewBox={`0 0 ${W} ${H}`} height={H} preserveAspectRatio="none" className="block">
       {[0.5, 1].map((g) => (
         <g key={g}>
-          <line x1={padL} y1={padT + (1 - g) * plotH} x2={W - padR} y2={padT + (1 - g) * plotH} stroke="#1e2a44" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-          <text x={padL - 5} y={padT + (1 - g) * plotH + 3} textAnchor="end" fontSize={9} fill="#5b6890" fontFamily="monospace">{f(g * vMax)}</text>
+          <line x1={padL} y1={padT + (1 - g) * plotH} x2={W - padR} y2={padT + (1 - g) * plotH} stroke="var(--t-line)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+          <text x={padL - 5} y={padT + (1 - g) * plotH + 3} textAnchor="end" fontSize={9} fill="var(--t-mute)" fontFamily="monospace">{f(g * vMax)}</text>
         </g>
       ))}
       {have.map((p) => {
@@ -601,8 +607,8 @@ function GapBars({ pts, color, fmt, height = 96 }: {
           </rect>
         )
       })}
-      <text x={padL} y={H - 3} fontSize={8} fill="#5b6890" fontFamily="monospace">{pts[0].day}</text>
-      <text x={W - padR} y={H - 3} textAnchor="end" fontSize={8} fill="#5b6890" fontFamily="monospace">{pts[pts.length - 1].day}</text>
+      <text x={padL} y={H - 3} fontSize={8} fill="var(--t-mute)" fontFamily="monospace">{pts[0].day}</text>
+      <text x={W - padR} y={H - 3} textAnchor="end" fontSize={8} fill="var(--t-mute)" fontFamily="monospace">{pts[pts.length - 1].day}</text>
     </svg>
   )
 }
@@ -623,7 +629,7 @@ function EnergyFlow({ latest }: { latest: EconLatest }) {
   const top = sorted.slice(0, 8)
   const rest = sorted.slice(8)
   const nodes = top.map((p) => ({ name: p.agent, burn: p.burned, color: agentColor(p.agent) }))
-  if (rest.length) nodes.push({ name: `others (${rest.length})`, burn: rest.reduce((a, p) => a + p.burned, 0), color: '#5b6890' })
+  if (rest.length) nodes.push({ name: `others (${rest.length})`, burn: rest.reduce((a, p) => a + p.burned, 0), color: 'var(--t-mute)' })
   const total = nodes.reduce((a, n) => a + n.burn, 0)
   if (!total) return <div className="text-xs text-ink-mute py-4 text-center">no flux on {latest.day}</div>
 
@@ -688,12 +694,12 @@ function EnergyFlow({ latest }: { latest: EconLatest }) {
         })}
         {/* node bars + labels */}
         <rect x={xL} y={yL} width={NW} height={hL} rx={2} fill={BILL} opacity={0.9} />
-        <text x={xL - 8} y={yL + hL / 2 - 4} textAnchor="end" fontSize={11} fill="#8b96b8" fontFamily="monospace">Φ flux in</text>
-        <text x={xL - 8} y={yL + hL / 2 + 10} textAnchor="end" fontSize={10} fill="#5b6890" fontFamily="monospace">{fmtTokens(t.phi)}</text>
+        <text x={xL - 8} y={yL + hL / 2 - 4} textAnchor="end" fontSize={11} fill="var(--t-dim)" fontFamily="monospace">Φ flux in</text>
+        <text x={xL - 8} y={yL + hL / 2 + 10} textAnchor="end" fontSize={10} fill="var(--t-mute)" fontFamily="monospace">{fmtTokens(t.phi)}</text>
         {mids.map((m) => (
           <g key={`n-${m.name}`}>
             <rect x={xM} y={m.y} width={NW} height={Math.max(m.h, 1.5)} rx={2} fill={m.color} opacity={0.9} />
-            <text x={xM + NW + 8} y={m.y + Math.max(m.h, 1.5) / 2 + 3} fontSize={10} fill="#8b96b8" fontFamily="monospace">
+            <text x={xM + NW + 8} y={m.y + Math.max(m.h, 1.5) / 2 + 3} fontSize={10} fill="var(--t-dim)" fontFamily="monospace">
               {m.name} · {fmtTokens(m.burn)}
             </text>
           </g>
@@ -727,7 +733,7 @@ function ThermoTab({ d }: { d: EconDissipative }) {
         <div className="bg-deck-2 border border-line rounded-lg p-3 col-span-2">
           <div className="text-[11px] uppercase tracking-wider text-ink-dim">
             G · dissipative yield {L ? <span className="text-ink-mute normal-case tracking-normal">· {L.day}</span> : null}
-            {live ? <span className="ml-1.5 normal-case tracking-normal text-emerald-400">● live</span> : null}
+            {live ? <span className="ml-1.5 normal-case tracking-normal text-good">● live</span> : null}
           </div>
           <div className="text-3xl font-bold text-ink mt-1 font-mono">{fmtG(L?.G)}</div>
           <div className="text-[11px] text-ink-dim mt-1.5 font-mono">G = W / (Φ · K)</div>
@@ -879,7 +885,7 @@ function MarketTab({ d }: { d: EconDissipative }) {
           {pnl.map((p) => (
             <div key={p.agent} className="flex items-center gap-2 text-[12px]">
               <span
-                className="w-4 h-4 rounded-full grid place-items-center text-[9px] font-bold text-deck shrink-0"
+                className="w-4 h-4 rounded-full grid place-items-center text-[9px] font-bold text-agent-ink shrink-0"
                 style={{ background: agentColor(p.agent) }}
               >
                 {p.agent[0]}
@@ -915,7 +921,7 @@ function MarketTab({ d }: { d: EconDissipative }) {
 
 /* ── Productivity — trigger TFP + sense adoption ───────────────────────────────────── */
 
-const TFP_COLORS = ['#22d3ee', '#7c5cff', '#34d399', '#facc15', '#f43f5e', '#fb923c']
+const TFP_COLORS = ['var(--t-accent)', 'var(--t-accent2)', 'var(--t-good)', 'var(--t-warn)', 'var(--t-bad)', 'color-mix(in srgb, var(--t-warn) 50%, var(--t-bad))']
 
 /* cost_per_fire over days for the top triggers by fires — a falling line is a
    productivity gain (same wake, fewer tokens) */
@@ -951,8 +957,8 @@ function TfpChart({ rows }: { rows: EconTriggerTfp[] }) {
       <svg width="100%" viewBox={`0 0 ${W} ${H}`} height={H} preserveAspectRatio="none" className="block">
         {[0, 0.5, 1].map((g) => (
           <g key={g}>
-            <line x1={padL} y1={y(g * vMax)} x2={W - padR} y2={y(g * vMax)} stroke="#1e2a44" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-            <text x={padL - 5} y={y(g * vMax) + 3} textAnchor="end" fontSize={9} fill="#5b6890" fontFamily="monospace">{fmtTokens(g * vMax)}</text>
+            <line x1={padL} y1={y(g * vMax)} x2={W - padR} y2={y(g * vMax)} stroke="var(--t-line)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+            <text x={padL - 5} y={y(g * vMax) + 3} textAnchor="end" fontSize={9} fill="var(--t-mute)" fontFamily="monospace">{fmtTokens(g * vMax)}</text>
           </g>
         ))}
         {top.map((t, i) => {
@@ -1110,8 +1116,8 @@ function PlayChart({ pts }: { pts: PlayPt[] }) {
     <svg width="100%" viewBox={`0 0 ${W} ${H}`} height={H} preserveAspectRatio="none" className="block">
       {[0, 0.5, 1].map((g) => (
         <g key={g}>
-          <line x1={padL} y1={y(g * top)} x2={W - padR} y2={y(g * top)} stroke="#1e2a44" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-          <text x={padL - 5} y={y(g * top) + 3} textAnchor="end" fontSize={9} fill="#5b6890" fontFamily="monospace">{fmtG(g * top)}</text>
+          <line x1={padL} y1={y(g * top)} x2={W - padR} y2={y(g * top)} stroke="var(--t-line)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+          <text x={padL - 5} y={y(g * top) + 3} textAnchor="end" fontSize={9} fill="var(--t-mute)" fontFamily="monospace">{fmtG(g * top)}</text>
         </g>
       ))}
       {lanes.map(({ get, color, dash }, li) =>

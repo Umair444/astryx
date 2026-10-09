@@ -61,7 +61,7 @@ export default function AgentDrawer({ name, onClose }: { name: string; onClose: 
             />
           ) : (
             <span
-              className="w-10 h-10 rounded-xl grid place-items-center text-base font-bold text-deck"
+              className="w-10 h-10 rounded-xl grid place-items-center text-base font-bold text-agent-ink"
               style={{ background: col }}
             >
               {avatarInitial(name)}
@@ -89,7 +89,7 @@ export default function AgentDrawer({ name, onClose }: { name: string; onClose: 
           </div>
         </div>
       }
-      styles={{ content: { background: '#0f1630' }, header: { background: '#0f1630' } }}
+      styles={{ content: { background: 'var(--t-panel)' }, header: { background: 'var(--t-panel)' } }}
     >
       {profile && (
         <div className="grid grid-cols-4 gap-2 mb-3">
@@ -126,7 +126,7 @@ export default function AgentDrawer({ name, onClose }: { name: string; onClose: 
               <div key={s.heading} className="mb-4">
                 <div className="text-[11px] uppercase tracking-[0.15em] text-ink-mute mb-1">{s.heading}</div>
                 <div className="text-[13px] text-ink-dim whitespace-pre-wrap leading-relaxed border-l-2 pl-3"
-                     style={{ borderColor: `${col}44` }}>
+                     style={{ borderColor: `color-mix(in srgb, ${col} 27%, transparent)` }}>
                   {s.body}
                 </div>
               </div>
@@ -280,7 +280,7 @@ function CharterEditor({ name, initial, live }: { name: string; initial: string;
         >
           {saving ? 'saving…' : 'save charter'}
         </button>
-        {dirty && <span className="text-[11px] text-amber-300">unsaved changes</span>}
+        {dirty && <span className="text-[11px] text-warn">unsaved changes</span>}
         {note && !dirty && <span className="text-[11px] text-ink-mute">{note}</span>}
       </div>
     </div>

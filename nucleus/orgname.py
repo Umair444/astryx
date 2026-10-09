@@ -26,8 +26,13 @@ import re
 ORG_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,79}$")
 
 # Names that mean "us" and can therefore never be claimed by a peer. `local` is the
-# sentinel every internal row carries in from_org/to_org.
-RESERVED_ORGS = frozenset({"local"})
+# sentinel every internal row carries in from_org/to_org. The owner's SURFACES are "us"
+# too: each chat bridge stamps its own name in from_org (whatsapp, telegram, discord,
+# canvas), and the observatory's anonymous rule shows a row whose org is ANY peer —
+# whatever its status, by ruling. So a stranger introducing itself as "whatsapp" would
+# have published the owner's own channel traffic, body and all (seed, 2026-10-09, found
+# while adding canvas as a surface). A new surface adds its name here.
+RESERVED_ORGS = frozenset({"local", "whatsapp", "telegram", "discord", "canvas", "owner"})
 
 URL_MAX = 200
 

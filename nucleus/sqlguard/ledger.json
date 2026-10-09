@@ -1,5 +1,29 @@
 {
  "covering": {
+  "bridges/canvas.py::_say\u001fupdate canvas_threads set updated_at=now(), title=coalesce(title, ?) where thread=?": [
+   "canvas: trust lines, claim, shell"
+  ],
+  "bridges/canvas.py::canvas_archive\u001fupdate canvases set archived=true where id=?": [
+   "canvas: trust lines, claim, shell"
+  ],
+  "bridges/canvas.py::canvas_share\u001fupdate canvases set shared_with=? where id=?": [
+   "canvas: trust lines, claim, shell"
+  ],
+  "bridges/canvas.py::logout\u001fdelete from canvas_sessions where token_hash=?": [
+   "canvas: trust lines, claim, shell"
+  ],
+  "bridges/canvas.py::new_canvas\u001fselect * from canvases where id=?": [
+   "canvas: trust lines, claim, shell"
+  ],
+  "bridges/canvas.py::thread_user\u001fupdate canvas_threads set updated_at=now() where thread=?": [
+   "canvas: trust lines, claim, shell"
+  ],
+  "bridges/canvas.py::viewer\u001fupdate canvas_users set last_seen=now() where name=?": [
+   "canvas: trust lines, claim, shell"
+  ],
+  "bridges/providers/canvas.py::CanvasProvider.list_chats\u001fselect thread, user_name, agent, title from canvas_threads where not archived order by updated_at desc limit 100": [
+   "canvas: trust lines, claim, shell"
+  ],
   "hooks/step.py::handle_stop\u001finsert into turns (agent, session_id, started_at, ended_at, duration_ms, source, input_prompt, input_msg_id, num_responses, num_tools, char_count, tokens_in, tokens_out, model, stop_reason, raw_payload, usage_snapshot, goal_id) values (?,?,?::timestamptz, now(), ?, ?,?,?,?,?,?,?,?,?,?,?,?,?) returning id": [
    "doctor units-drift: a live orphan is not told to self-delete"
   ],
@@ -36,6 +60,9 @@
   "nucleus/branch_check_prep.py::unhardened\u001fselect d.datname from pg_database d join pg_roles r on r.oid = d.datdba where d.datallowconn and r.rolname <> ? order by 1": [
    "branch_check prep: hardening precondition, template, repo, estate, env",
    "branch_check: differential verdict, prod witness, clean refusal"
+  ],
+  "nucleus/canvas.py::publish\u001fupdate canvases set version=version+1, updated_at=now() where id=? returning version": [
+   "canvas: trust lines, claim, shell"
   ],
   "nucleus/econ.py::_v2_tool_rows\u001fselect s.meta->>'registry_id' as rid, s.agent as caller, (t.goal_id is not null or exists ( select 1 from messages im where im.id = t.input_msg_id and (im.from_agent in ('pulse','owner') or im.from_agent like 'wa-%%' or im.from_org <> all(?)))) as dq from steps s join turns t on t.id = s.turn_id where s.kind = 'tool' and s.meta ? 'registry_id' and s.meta ? 'v' and s.ts >= ? and s.ts < ?": [
    "econ v2 mirror + version gate (4227 S2)",
@@ -355,7 +382,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 278,
+  "debt_rows": 283,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -372,6 +399,48 @@
   }
  },
  "rows": {
+  "bridges/canvas.py::_say\u001fupdate canvas_threads set updated_at=now(), title=coalesce(title, ?) where thread=?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "seed 10-09 canvas: every caller passes a thread it just read from canvas_threads (or that create() registered), so 0 rows is unreachable; \u22651 observed",
+   "tk": "sha256t:d88dc7c68469047fd412770de32f02e015de98ceb40fb11432fb17857fa51cb0"
+  },
+  "bridges/canvas.py::canvas_archive\u001fupdate canvases set archived=true where id=?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "seed 10-09 canvas: runs only after _canvas_for() found the canvas (404 otherwise, observed), so 0 rows is unreachable; \u22651 observed",
+   "tk": "sha256t:4b9ae46977794133dbf40131da35a16ead9a79a794cce687cd010832623cf9fe"
+  },
+  "bridges/canvas.py::canvas_share\u001fupdate canvases set shared_with=? where id=?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "seed 10-09 canvas: runs only after _canvas_for() found the canvas (404 otherwise), so 0 rows is unreachable; \u22651 observed",
+   "tk": "sha256t:f6069fe213608d246e73445b404a3a73c37ea70cb2f5aaba47b6cd276836274c"
+  },
+  "bridges/canvas.py::logout\u001fdelete from canvas_sessions where token_hash=?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "seed 10-09 canvas: the gate admits /api/logout only with a live session row for this cookie, so 0 rows is unreachable; \u22651 observed",
+   "tk": "sha256t:2c348c96403fa54c70b93a583c21f5ac9391746cad17f3d14198a9af7dafa353"
+  },
+  "bridges/canvas.py::new_canvas\u001fselect * from canvases where id=?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "seed 10-09 canvas: re-reads the id create() returned in the same request, so 0 rows is unreachable; \u22651 observed",
+   "tk": "sha256t:ab991a449c8b14f5ecfbd3736bdba6a4cc0b62e572a671455e2544fefad6290e"
+  },
+  "bridges/canvas.py::thread_user\u001fupdate canvas_threads set updated_at=now() where thread=?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "seed 10-09 canvas: runs only after the SELECT on the same thread found it, so 0 rows is unreachable; \u22651 observed",
+   "tk": "sha256t:15fe7a04aabf9aaa376b567f13b163586df067fd5e7fb73026e0faf60b1c752f"
+  },
+  "bridges/canvas.py::viewer\u001fupdate canvas_users set last_seen=now() where name=?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "seed 10-09 canvas: runs only for a session whose JOIN just found the non-revoked user, so 0 rows is unreachable; \u22651 observed",
+   "tk": "sha256t:ba79ef9cf28c18ca2b3e0c53def19db9bff0525f912560d4fb5ee5c73cd44b1b"
+  },
   "bridges/common.py::listen\u001f*": {
    "debt": "UNEXECUTED",
    "reason": "seed",
@@ -501,6 +570,12 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:93716887975c8f1d35b58202ce99b0c61df36ded3e93bebad6870a9ee8e8a4c5"
+  },
+  "bridges/providers/canvas.py::CanvasProvider.list_chats\u001fselect thread, user_name, agent, title from canvas_threads where not archived order by updated_at desc limit 100": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "seed 10-09 canvas: read-only channel listing; \u22651 observed, the empty arm is the trivially-correct empty list",
+   "tk": "sha256t:045afc1a84b0629a0964ee47824ff4ab7618684ce135e53b2f68eb1da610a51e"
   },
   "bridges/telegram.py::deliver\u001fupdate messages set status=?, delivered_at=now(), delivery=? where id=?": {
    "debt": "UNEXECUTED",
@@ -732,6 +807,12 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:5282e6f5dbb1439f8f4e41d82e034f772f19748b07644ee0445aac2dff1bd330"
+  },
+  "nucleus/canvas.py::publish\u001fupdate canvases set version=version+1, updated_at=now() where id=? returning version": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "seed 10-09 canvas: runs only after _canvas() found the row (a missing id raises first), so the 0-row arm is unreachable; \u22651 observed in tests/test_canvas.py",
+   "tk": "sha256t:bb8d2536e8727317a91c192d1d88abf1b745eb6a8c957e6a3df08462c6c74da4"
   },
   "nucleus/dsn_census.py::clients\u001fselect current_user": {
    "admitted": "2026-09-30",
@@ -1396,11 +1477,6 @@
    "reason": "seed",
    "tk": "sha256t:a6c328cf8cdb0b503f00815ac467d768a77eb909b1b6380e6ff7027a022be525"
   },
-  "sha256:2b8ef9d19e42f59d872763dd204853a3ed41bc4fb9b6a113562c6c61663edfef": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:e278894b45d92a01e29eef406c06b2694dbca4bd2f9617371a95c51509aaf810"
-  },
   "sha256:2dae3cdfd22b8fb43b1aa7478ddd5e50589a0e32d819ee9fe5c93a18f9259300": {
    "debt": "UNEXECUTED",
    "reason": "seed",
@@ -1536,11 +1612,6 @@
    "reason": "seed",
    "tk": "sha256t:1aba0e1421f0289fe79457731d8899f77af316d81bb4315ca85e8bdff20f9f74"
   },
-  "sha256:77602bcf20687d7498843b245abb6f9c0fd25a8e25b5d1106e26b52d106bc52c": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:3c60c2d486fdc03ffcbbb07a583d4877004ea649e40710a7d7b351f2062f1eef"
-  },
   "sha256:79eadd0c797f7e3d56925c4054039c268945e6645ee1ab3c9f77aef17e0d3bfd": {
    "debt": "EXECUTED",
    "reason": "seed",
@@ -1590,11 +1661,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:183674714b790d0afe7cef9f8ee17166b6cdc85b49ff53397a90f915526137cc"
-  },
-  "sha256:9121f673ebb43fda5630138bb212d03e3ab977838c82af2d7dc325a0fe55ea0c": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:ffa8bf6a50f137fdd25df6bba9b409da86f31b903e6cc864822f54a70a705e24"
   },
   "sha256:914fc98609a7163b22c813a25508ddb4ceebb43b5a662cc2b938df137ab7f60c": {
    "admitted": "2026-09-29",
@@ -1773,11 +1839,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:c4213cac9ae2d29dc595650a62c0c4bae226520c324fdc916d0ecfca9671cc59"
-  },
-  "sha256:fe916d29d28044e9519b0ea582a9f277b9b66b3ce60d73408667aed70e8cd5ed": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:8bd542361040bfde5e8a05852877ba2cc781e61d52251d24799415734bd8c83a"
   },
   "sha256:ff9d87fb3dee5217d2b7e98a2d56ebb8d51f7901887b0ae620a21d4ed3c5a9d0": {
    "debt": "UNEXECUTED",

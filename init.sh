@@ -35,6 +35,19 @@ User=$USER
 [Install]
 WantedBy=multi-user.target
 EOF
+  cat > "$UD/astryx-canvas.service" <<EOF
+[Unit]
+Description=astryx canvas — the owner's front door: chat with agents, live agent-painted canvases (proxied by the observatory at /canvas/)
+After=network.target
+[Service]
+WorkingDirectory=$PWD
+ExecStart=$PWD/venv/bin/uvicorn bridges.canvas:root --host 127.0.0.1 --port 8091
+Restart=always
+RestartSec=5
+User=$USER
+[Install]
+WantedBy=multi-user.target
+EOF
   cat > "$UD/astryx-pulse.service" <<EOF
 [Unit]
 Description=astryx pulse — one tick of the trigger clock
@@ -351,9 +364,10 @@ _act_deps() { local g; g=$(active_dep_groups); say "python deps ($g)"
 _chk_chan() { [ -d channel/node_modules ]; }
 _act_chan() { say "npm install (channel server)"; (cd channel && npm install --no-fund --no-audit >/dev/null); }
 
-_chk_obs() { [ -d observatory/web/dist ]; }
-_act_obs() { say "building the observatory (the public portal on :8090)"
-  (cd observatory/web && npm install --no-fund --no-audit >/dev/null && npm run build >/dev/null); }
+_chk_obs() { [ -d observatory/web/dist ] && [ -d canvas/web/dist ]; }
+_act_obs() { say "building the observatory (the public portal on :8090) and canvas (its /canvas/ front door)"
+  (cd observatory/web && npm install --no-fund --no-audit >/dev/null && npm run build >/dev/null)
+  (cd canvas/web && npm install --no-fund --no-audit >/dev/null && npm run build >/dev/null); }
 
 _chk_obskey() { grep -q '^OBS_KEY=' .env 2>/dev/null; }
 _act_obskey() { echo "OBS_KEY=$(head -c 24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)" >> .env; }

@@ -108,7 +108,16 @@ def ship(conn, gid):
 
 try:
     admin.execute(f'DROP DATABASE IF EXISTS "{PROBE_DB}" WITH (FORCE)')
-    admin.execute(f'CREATE DATABASE "{PROBE_DB}"')
+    # BORN ZERO-WINDOW (a4 #35730): a default CREATE DATABASE grants PUBLIC CONNECT for as long as this
+    # oracle runs, and branch_check's P0-b refuses while ANY database it does not own does — so every
+    # run of this file could refuse someone's real branch_check. Created closed, PUBLIC revoked, then
+    # opened: the same three steps nucleus/sqlguard/fixture.py uses. (Not fixture_db() itself: this
+    # oracle's subject is the MIGRATION, which must be applied twice to an EMPTY database.)
+    admin.execute(f'CREATE DATABASE "{PROBE_DB}" WITH ALLOW_CONNECTIONS false')
+    admin.execute(f'REVOKE CONNECT, TEMPORARY ON DATABASE "{PROBE_DB}" FROM PUBLIC')
+    admin.execute(f'ALTER DATABASE "{PROBE_DB}" WITH ALLOW_CONNECTIONS true')
+    want("ZERO-WINDOW: the probe database grants PUBLIC no CONNECT (read from the server)",
+         admin.execute("SELECT has_database_privilege('public', %s, 'CONNECT')", (PROBE_DB,)).fetchone()[0] is False)
 
     # ── MIGRATION + idempotency: apply schema.sql TWICE, on an empty DB (fresh-clone path) ──
     with psycopg.connect(PROBE_DSN, autocommit=True, connect_timeout=5) as sc:

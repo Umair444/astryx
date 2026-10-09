@@ -6,6 +6,7 @@ import { ReactFlow, Background, MarkerType, Position, type Node, type Edge } fro
 import '@xyflow/react/dist/style.css'
 import { agentColor, agentColorA, avatarInitial, displayName, fmtTokens, shortModel } from '../api'
 import { useStore } from '../store'
+import { useTheme } from '../theme'
 import type { AgentRow } from '../types'
 
 const AGENT_W = 168
@@ -115,16 +116,16 @@ function agentEl(
     <button onClick={onClick} className="w-full h-full text-center px-2 py-2 cursor-pointer relative">
       <span
         className={`absolute top-2 right-2 w-2 h-2 rounded-full ${
-          alive ? 'bg-emerald-400 animate-pulse shadow-[0_0_6px_2px_rgba(52,211,153,0.5)]' : 'bg-ink-mute/40'
+          alive ? 'bg-good animate-pulse shadow-[0_0_6px_2px_color-mix(in_srgb,var(--t-good)_50%,transparent)]' : 'bg-ink-mute/40'
         }`}
       />
       {type && type !== 'resident' && (
-        <span className="absolute top-1.5 left-2 text-[8px] font-mono uppercase tracking-wide px-1 py-px rounded border border-line bg-deck-2 text-amber-300/80">
+        <span className="absolute top-1.5 left-2 text-[8px] font-mono uppercase tracking-wide px-1 py-px rounded border border-line bg-deck-2 text-warn/80">
           {type}
         </span>
       )}
       <span
-        className="mx-auto w-8 h-8 rounded-xl grid place-items-center text-[14px] font-bold text-deck"
+        className="mx-auto w-8 h-8 rounded-xl grid place-items-center text-[14px] font-bold text-agent-ink"
         style={{ background: color, opacity: alive ? 1 : 0.55 }}
       >
         {avatarInitial(name)}
@@ -141,6 +142,8 @@ function agentEl(
 
 export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) => void }) {
   const { overview, agents, peers, flash, who } = useStore()
+  const { theme } = useTheme()
+  const c = theme.t // flow colours are concrete hex (marker ids embed them), alpha via #rrggbbaa
   /* Two layers of one network: AGENTS (orgs and residents) and PEOPLE — the social
    * graph the network has observed, the FB shape. Owner-only for now: it carries real
    * names; the anonymized public form is a separate ruling. */
@@ -180,7 +183,7 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
       target,
       animated: true,
       zIndex: 10,
-      style: { stroke: '#22d3ee', strokeWidth: 2, filter: 'drop-shadow(0 0 3px #22d3ee)' },
+      style: { stroke: c.accent, strokeWidth: 2, filter: `drop-shadow(0 0 3px ${c.accent})` },
     }
     setFlashEdges((es) => [...es.filter((e) => e.id !== id), edge])
     const t = setTimeout(() => setFlashEdges((es) => es.filter((e) => e.id !== id)), 3000)
@@ -193,7 +196,7 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
     const boxStyle = (border: string, w: number, h: number): React.CSSProperties => ({
       width: w,
       height: h,
-      background: '#0f1630',
+      background: 'var(--t-panel)',
       border: `1px solid ${border}`,
       borderRadius: 10,
       padding: 0,
@@ -217,7 +220,7 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
           </div>
         ),
       },
-      style: { ...boxStyle('#22d3ee66', ORG_W, ORG_H), boxShadow: '0 0 22px rgba(34,211,238,0.12)' },
+      style: { ...boxStyle(c.accent + '88', ORG_W, ORG_H), boxShadow: `0 0 22px ${c.accent}22` },
       selectable: false,
     })
 
@@ -229,7 +232,7 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
           onOpenAgent(a.agent),
         ),
       },
-      style: boxStyle(a.alive ? agentColorA(a.agent, 0.45) : '#1d2647', AGENT_W, AGENT_H),
+      style: boxStyle(a.alive ? agentColorA(a.agent, 0.55) : c.line2, AGENT_W, AGENT_H),
       ...extra,
     })
 
@@ -260,8 +263,8 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
         style: {
           width: item.w,
           height: item.h,
-          background: '#141c3a99',
-          border: '1px solid #26305c',
+          background: c.panel2 + '99',
+          border: `1px solid ${c.line2}`,
           borderRadius: 16,
           padding: 0,
         },
@@ -290,8 +293,8 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
             source: headId(kids[i]),
             target: headId(kids[i - 1]),
             zIndex: 1,
-            style: { stroke: '#3b4677', strokeWidth: 1 },
-            markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: '#3b4677' },
+            style: { stroke: c.mute, strokeWidth: 1 },
+            markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: c.mute },
           })
       kids.forEach(emitInternal)
     }
@@ -307,8 +310,8 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
           source: src,
           target: upId,
           zIndex: 1,
-          style: { stroke: alive ? '#22d3ee44' : '#1d2647' },
-          markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: alive ? '#22d3ee66' : '#1d2647' },
+          style: { stroke: alive ? c.accent + '55' : c.line2 },
+          markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: alive ? c.accent + '88' : c.line2 },
         })
         return
       }
@@ -326,7 +329,7 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
         id: `e-org-${a.agent}`,
         source: 'org',
         target: a.agent,
-        style: { stroke: a.alive ? '#22d3ee44' : '#1d2647' },
+        style: { stroke: a.alive ? c.accent + '55' : c.line2 },
       })
     })
 
@@ -364,17 +367,17 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
           ),
         },
         style: {
-          ...boxStyle(p.status === 'active' ? '#7c5cff55' : '#1d2647', PEER_W, PEER_H),
-          background: '#0b1020',
+          ...boxStyle(p.status === 'active' ? c.accent2 + '77' : c.line2, PEER_W, PEER_H),
+          background: c.bg,
           borderStyle: 'dashed',
         },
         selectable: false,
       })
-      edges.push({ id: `e-org-${id}`, source: 'org', target: id, style: { stroke: '#7c5cff33', strokeDasharray: '4 4' } })
+      edges.push({ id: `e-org-${id}`, source: 'org', target: id, style: { stroke: c.accent2 + '55', strokeDasharray: '4 4' } })
     })
 
     return { nodes, edges }
-  }, [overview, agents, peers, onOpenAgent, who.owner])
+  }, [overview, agents, peers, onOpenAgent, who.owner, c])
 
   // Re-fit whenever the graph's shape changes (agents/peers/groups arrive
   // async after mount). Without this, fitView runs once on the lone org node
@@ -409,10 +412,10 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
                 className="w-full flex items-center gap-2.5 py-2 px-1 text-left border-b border-line/50"
               >
                 <span
-                  className={`w-2 h-2 rounded-full shrink-0 ${a.alive ? 'bg-emerald-400' : 'bg-ink-mute/40'}`}
+                  className={`w-2 h-2 rounded-full shrink-0 ${a.alive ? 'bg-good' : 'bg-ink-mute/40'}`}
                 />
                 <span
-                  className="w-7 h-7 rounded-lg grid place-items-center text-[12px] font-bold text-deck"
+                  className="w-7 h-7 rounded-lg grid place-items-center text-[12px] font-bold text-agent-ink"
                   style={{ background: agentColor(a.agent) }}
                 >
                   {avatarInitial(a.agent)}
@@ -482,9 +485,9 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
           nodesDraggable={false}
           nodesConnectable={false}
           proOptions={{ hideAttribution: true }}
-          colorMode="dark"
+          colorMode={theme.dark ? 'dark' : 'light'}
         >
-          <Background color="#1d2647" gap={28} />
+          <Background color={c.line2} gap={28} />
         </ReactFlow>
       </div>
       )}
