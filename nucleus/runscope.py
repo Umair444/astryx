@@ -27,6 +27,7 @@ import os
 import re
 import secrets
 import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -170,8 +171,27 @@ ROLE_RX = re.compile(rf"^{ROLE_PREFIX}(\d+)x(\d+)$")
 # The role name carries pid and epoch but no HOST, and a postgres the human points us at may serve two hosts. So each
 # run role is stamped with this machine's id at creation, and the orphan sweep reaps ONLY roles carrying it: a foreign
 # or missing stamp is REPORTED, never dropped (a3 #35480: host A must not read host B's live run as an orphan).
-_MID = Path("/etc/machine-id")
-MACHINE_ID = _MID.read_text().strip() if _MID.is_file() else None
+# The id is read from the first source that has one: systemd's, then dbus's (older Linux), then macOS's platform UUID
+# (a3 #36112: CLAUDE.md supports macOS, which has neither file). No id at all is the SAFE direction, every role
+# unstamped and only reported, but then a crashed run's role is never reaped there: debris accumulates, by design.
+def _machine_id():
+    for f in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
+        try:
+            v = Path(f).read_text().strip()
+        except OSError:
+            continue
+        if v:
+            return v
+    try:
+        out = subprocess.run(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"], capture_output=True, text=True,
+                             timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r'"IOPlatformUUID"\s*=\s*"([^"]+)"', out)
+    return m.group(1) if m else None
+
+
+MACHINE_ID = _machine_id()
 
 
 def _started_at(pid: int):
