@@ -336,6 +336,7 @@ run "pii_sweep cannot forget a finding or print a routing id" "$PY" tests/test_p
 # guest-readable via ?v=N), REACH-tagged; its state IS the share gate, nucleus/canvas.py:share_blockers,
 # which fails closed. Fixture DB only. The gate arms always run; the sweep arms SKIP 77 without the body.
 run "canvas: privacy sweep + fail-closed share gate" "$PY" tests/test_pii_canvas.py
+run "send: a name nothing consumes is refused in the sender's turn" "$PY" tests/test_send_address.py
 # The guard that reads THIS suite's own live-tree result. check.sh runs automatically in
 # exactly two places and both are clones, where the gitignored estate cannot exist — so
 # nucleus/check_watch.sh runs it here on a timer and stamps the outcome, and the guard
