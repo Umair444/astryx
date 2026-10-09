@@ -1,8 +1,16 @@
-import { useState } from 'react'
-import { Badge, Button, Modal, ScrollArea, Select, TextInput, Textarea, Tooltip } from '@mantine/core'
-import { agentColor, apiPost, displayName, fmtAgo, fmtTokens } from '../api'
+import { useEffect, useMemo, useState } from 'react'
+import { Button, Modal, ScrollArea, Select, TextInput, Textarea, Tooltip } from '@mantine/core'
+import { AnimatePresence, motion } from 'motion/react'
+import { apiPost, displayName, fmtAgo, fmtTokens } from '../api'
 import { useStore } from '../store'
 import type { Goal } from '../types'
+import AgentFace from './AgentFace'
+import { Action, Empty, LiveDot, Panel, Skeleton, ViewHeader, useNow } from '../ui/kit'
+
+/* GOALS — what the org is pursuing, as a board that breathes: a goal with progress in the last
+   day glows (its owner is on it), a stalled one says so, and every card is its owner's face. */
+
+const LIVE_WINDOW = 24 * 3600_000 // progress this recent means the goal is moving right now
 
 /* owner files a goal; the assignment rides the wire as a task message */
 function NewGoalButton() {
@@ -33,9 +41,7 @@ function NewGoalButton() {
 
   return (
     <>
-      <Button size="compact-sm" color="cyan" variant="light" onClick={() => setOpen(true)}>
-        ＋ File goal
-      </Button>
+      <Action onClick={() => setOpen(true)}><span className="text-base leading-none">+</span> File a goal</Action>
       <Modal opened={open} onClose={() => setOpen(false)} title="File a goal" centered size="md">
         <div className="space-y-3">
           <TextInput
@@ -81,49 +87,88 @@ function NewGoalButton() {
   )
 }
 
-const COLS: { key: string; label: string; color: string }[] = [
-  { key: 'proposed', label: 'proposed', color: 'var(--t-dim)' },
-  { key: 'active', label: 'active', color: 'var(--t-accent)' },
-  { key: 'shipped', label: 'shipped', color: 'var(--t-good)' },
-  { key: 'done', label: 'done', color: 'var(--t-warn)' },
-  { key: 'hibernated', label: 'hibernated', color: 'var(--t-accent2)' },
-  { key: 'refused', label: 'refused', color: 'var(--t-bad)' },
+type Col = { key: string; label: string; color: string }
+// two tiers so the board never runs off the screen: what is in motion, then what has settled
+const MOTION: Col[] = [
+  { key: 'proposed', label: 'Proposed', color: 'var(--t-dim)' },
+  { key: 'active', label: 'Active', color: 'var(--t-accent)' },
+  { key: 'shipped', label: 'Shipped', color: 'var(--t-good)' },
+]
+const SETTLED: Col[] = [
+  { key: 'done', label: 'Done', color: 'var(--t-warn)' },
+  { key: 'hibernated', label: 'Hibernated', color: 'var(--t-accent2)' },
+  { key: 'refused', label: 'Refused', color: 'var(--t-bad)' },
 ]
 
-function GoalCard({ g }: { g: Goal }) {
+const ago = (t: string | null) => { const a = fmtAgo(t); return a === 'now' ? 'just now' : `${a} ago` }
+
+const isMoving = (g: Goal, now: number) =>
+  (g.state === 'active' || g.state === 'proposed') && !!g.last_progress && now - Date.parse(g.last_progress) < LIVE_WINDOW
+
+function GoalCard({ g, now }: { g: Goal; now: number }) {
   // Goal 4227: there are no budgets. A legacy goal's budget is shown only as muted HISTORY. No
   // progress bar: spent_tokens was never written (0 on every row), so a bar would read "unused"
   // where the truth is "never measured".
   const budgetEra = g.budget_tokens ?? 0
+  const moving = isMoving(g, now)
   return (
-    <div className="bg-deck-2 border border-line rounded-lg p-3 hover:border-cyan/40 transition-colors duration-75">
-      <div className="text-sm text-ink leading-snug">{g.title}</div>
-      {g.scope_note && <div className="text-[11px] text-ink-mute mt-1 line-clamp-2">{g.scope_note}</div>}
-      <div className="flex items-center gap-2 mt-2">
-        <span
-          className="w-4 h-4 rounded-full grid place-items-center text-[9px] font-bold text-agent-ink"
-          style={{ background: agentColor(g.owner) }}
-        >
-          {g.owner?.[0]}
-        </span>
-        <span className="text-[11px] text-ink-mute">{g.owner}</span>
-        {g.dead_epochs > 0 && (
-          <Tooltip label={`${g.dead_epochs} epoch${g.dead_epochs > 1 ? 's' : ''} without progress`} withArrow>
-            <Badge size="xs" color="red" variant="light">
-              ☠ {g.dead_epochs}
-            </Badge>
-          </Tooltip>
-        )}
-        <span className="ml-auto text-[10px] font-mono text-ink-mute">#{g.id}</span>
-      </div>
-      {budgetEra > 0 && (
-        <div className="text-[10px] font-mono text-ink-mute/70 mt-2" title="set before goal 4227 retired budgets; history, not a limit">
-          budget-era · {fmtTokens(budgetEra)}
+    <motion.div layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.97 }}
+      transition={{ type: 'spring', damping: 28, stiffness: 300 }}>
+      <Panel live={moving} className="p-3.5 flex flex-col gap-2.5">
+        <div className="text-[13.5px] font-medium text-ink leading-snug line-clamp-3">{g.title}</div>
+        {g.scope_note && <div className="text-[11.5px] text-ink-mute leading-snug line-clamp-1">{g.scope_note}</div>}
+        <div className="flex items-center gap-2 min-w-0">
+          <AgentFace name={g.owner} size={20} />
+          <span className="text-[12px] text-ink-dim truncate">{displayName(g.owner)}</span>
+          <span className="ml-auto text-[10.5px] font-mono text-ink-mute shrink-0">#{g.id}</span>
         </div>
-      )}
-      <div className="text-[10px] text-ink-mute mt-2">
-        last progress {fmtAgo(g.last_progress)}
-        {g.epoch_hours ? ` · epoch ${g.epoch_hours}h` : ''}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-ink-mute">
+          {moving ? (
+            <span className="flex items-center gap-1.5 text-cyan"><LiveDot state="working" />moving · {ago(g.last_progress)}</span>
+          ) : (
+            <span>{g.last_progress ? `progress ${ago(g.last_progress)}` : 'no progress yet'}</span>
+          )}
+          {g.dead_epochs > 0 && (
+            <Tooltip label={`${g.dead_epochs} epoch${g.dead_epochs > 1 ? 's' : ''} without progress${g.epoch_hours ? ` (epoch ${g.epoch_hours}h)` : ''}`} withArrow>
+              <span className="px-1.5 py-px rounded-full border border-bad/40 text-bad text-[10px]">stalled · {g.dead_epochs}</span>
+            </Tooltip>
+          )}
+          {budgetEra > 0 && (
+            <span className="ml-auto font-mono text-[10px] text-ink-mute/70" title="set before goal 4227 retired budgets; history, not a limit">
+              budget-era · {fmtTokens(budgetEra)}
+            </span>
+          )}
+        </div>
+      </Panel>
+    </motion.div>
+  )
+}
+
+function Board({ cols, byState, now }: { cols: Col[]; byState: Map<string, Goal[]>; now: number }) {
+  return (
+    <div className="-mx-5 sm:-mx-8 px-5 sm:px-8 overflow-x-auto pb-2 snap-x snap-mandatory md:snap-none">
+      <div className="grid gap-4 items-start" style={{ gridTemplateColumns: `repeat(${cols.length}, minmax(264px, 1fr))` }}>
+        {cols.map((col) => {
+          const items = byState.get(col.key) ?? []
+          return (
+            <section key={col.key} className="min-w-0 snap-start">
+              <div className="flex items-center gap-2 px-1 mb-3">
+                <span className="w-2 h-2 rounded-full" style={{ background: col.color, boxShadow: `0 0 10px ${col.color}` }} />
+                <span className="text-[12px] font-semibold uppercase tracking-[0.14em] text-ink-dim">{col.label}</span>
+                <span className="text-[11px] font-mono text-ink-mute">{items.length}</span>
+                <span className="flex-1 h-px ml-1" style={{ background: `linear-gradient(90deg, color-mix(in srgb, ${col.color} 45%, transparent), transparent)` }} />
+              </div>
+              <div className="flex flex-col gap-3">
+                <AnimatePresence initial={false}>
+                  {items.map((g) => <GoalCard key={g.id} g={g} now={now} />)}
+                </AnimatePresence>
+                {!items.length && (
+                  <div className="rounded-2xl border border-dashed border-line px-3 py-6 text-center text-[12px] text-ink-mute">nothing here yet</div>
+                )}
+              </div>
+            </section>
+          )
+        })}
       </div>
     </div>
   )
@@ -131,36 +176,61 @@ function GoalCard({ g }: { g: Goal }) {
 
 export default function GoalsView() {
   const { goals } = useStore()
+  const now = useNow(30_000)
+  // the store can't tell "loading" from "none": give the first fetch a moment before saying empty
+  const [settled, setSettled] = useState(false)
+  useEffect(() => { const t = setTimeout(() => setSettled(true), 2500); return () => clearTimeout(t) }, [])
+
+  const byState = useMemo(() => {
+    const m = new Map<string, Goal[]>()
+    for (const g of goals) {
+      const k = g.state || 'proposed'
+      m.set(k, [...(m.get(k) ?? []), g])
+    }
+    for (const list of m.values())
+      list.sort((a, b) => Number(isMoving(b, now)) - Number(isMoving(a, now)) ||
+        (b.last_progress ? Date.parse(b.last_progress) : 0) - (a.last_progress ? Date.parse(a.last_progress) : 0) || b.id - a.id)
+    return m
+  }, [goals, now])
+
+  const count = (k: string) => byState.get(k)?.length ?? 0
+  const moving = goals.filter((g) => isMoving(g, now))
+  const owners = [...new Set(goals.filter((g) => g.state === 'active').map((g) => g.owner))]
+  const settled_ = SETTLED.filter((c) => count(c.key) > 0)
 
   return (
     <ScrollArea className="h-full">
-      <div className="flex items-center justify-between px-3 pt-3">
-        <span className="text-xs text-ink-mute">
-          goals are the org's funded purposes — assignment travels the wire
-        </span>
-        <NewGoalButton />
-      </div>
-      <div className="p-3 grid gap-3 md:grid-cols-5">
-        {COLS.map((col) => {
-          const items = goals.filter((g) => (g.state || 'proposed') === col.key)
-          return (
-            <div key={col.key} className="min-w-0">
-              <div className="flex items-center gap-2 px-1 mb-2">
-                <span className="w-2 h-2 rounded-full" style={{ background: col.color }} />
-                <span className="text-xs font-semibold uppercase tracking-wider text-ink-dim">{col.label}</span>
-                <Badge size="xs" variant="light" color="gray">
-                  {items.length}
-                </Badge>
-              </div>
-              <div className="space-y-2">
-                {items.map((g) => (
-                  <GoalCard key={g.id} g={g} />
-                ))}
-                {!items.length && <div className="text-xs text-ink-mute px-1">—</div>}
-              </div>
-            </div>
-          )
-        })}
+      <div className="px-5 sm:px-8 py-7 max-w-[1500px] mx-auto">
+        <ViewHeader
+          kicker="what the org is pursuing"
+          title="Goals"
+          live={goals.length ? <>
+            <span className="flex items-center gap-1.5"><LiveDot state={moving.length ? 'working' : 'awake'} />{moving.length} moving now</span>
+            <span className="text-ink-mute">·</span>
+            <span>{count('active')} active</span>
+            <span className="text-ink-mute">·</span>
+            <span>{count('shipped')} shipped</span>
+            <span className="text-ink-mute">·</span>
+            <span>{count('proposed')} proposed</span>
+            <span className="text-ink-mute hidden sm:inline">— assignment travels the wire</span>
+          </> : <span className="text-ink-mute">goals are the org's purposes — assignment travels the wire</span>}
+          faces={owners}
+          actions={<NewGoalButton />}
+        />
+
+        {!goals.length && (settled
+          ? <Empty title="No goals on the board yet" hint="File the first one — it lands as proposed and its owner is woken on the wire." />
+          : <div className="grid gap-4 grid-cols-1 md:grid-cols-3">{[0, 1, 2].map((i) => (
+              <div key={i} className="flex flex-col gap-3"><Skeleton className="h-5 w-24" /><Skeleton className="h-28 rounded-2xl" /><Skeleton className="h-20 rounded-2xl" /></div>
+            ))}</div>)}
+
+        {goals.length > 0 && <Board cols={MOTION} byState={byState} now={now} />}
+        {goals.length > 0 && settled_.length > 0 && (
+          <div className="mt-10">
+            <div className="text-[11px] uppercase tracking-[0.18em] text-ink-mute mb-4">settled</div>
+            <Board cols={settled_} byState={byState} now={now} />
+          </div>
+        )}
       </div>
     </ScrollArea>
   )

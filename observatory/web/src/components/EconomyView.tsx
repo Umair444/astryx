@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
 import { ScrollArea, Tooltip } from '@mantine/core'
-import { api, agentColor, fmtTime, fmtTokens } from '../api'
+import { api, agentColor, displayName, fmtTime, fmtTokens } from '../api'
+import AgentFace from './AgentFace'
+import { Count, Empty, LiveDot, Panel, Skeleton, Spark, Tabs, ViewHeader } from '../ui/kit'
 import type { Economy, EconDissipative, EconLatest, EconTriggerTfp } from '../types'
 
 const BILL = 'var(--t-accent)'
@@ -8,13 +11,18 @@ const OUTC = 'var(--t-accent2)'
 const GREEN = 'var(--t-good)'
 const ROSE = 'var(--t-bad)'
 
-function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
+/* a headline number. `value` is a node so a still-loading figure can be a skeleton (kit Count),
+   never a "0" that reads as truth; `spark` draws the series behind it when there is one. */
+function StatCard({ label, value, sub, spark, tone }: {
+  label: string; value: ReactNode; sub?: ReactNode; spark?: number[]; tone?: 'accent' | 'accent2' | 'good' | 'warn' | 'bad'
+}) {
   return (
-    <div className="bg-deck-2 border border-line rounded-lg p-3">
-      <div className="text-[11px] uppercase tracking-wider text-ink-dim">{label}</div>
-      <div className="text-xl font-bold text-ink mt-1 font-mono">{value}</div>
-      {sub && <div className="text-[10px] text-ink-mute mt-0.5">{sub}</div>}
-    </div>
+    <Panel className="p-4 overflow-hidden min-h-[104px]">
+      <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute">{label}</div>
+      <div className="relative z-[1] mt-2 text-[26px] font-semibold tracking-tight text-ink leading-none tabular-nums">{value}</div>
+      {sub && <div className="relative z-[1] mt-2 text-[11.5px] text-ink-mute leading-snug">{sub}</div>}
+      {spark && spark.length > 1 && <Spark data={spark} tone={tone} className="absolute right-0 bottom-0 w-[58%] h-12 opacity-70" />}
+    </Panel>
   )
 }
 
@@ -22,12 +30,12 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub?: s
 function Gauge({ label, pct, right, color }: { label: string; pct: number; right: string; color?: string }) {
   const c = color ?? (pct >= 85 ? 'var(--t-bad)' : pct >= 70 ? 'var(--t-warn)' : 'var(--t-good)')
   return (
-    <div className="flex items-center gap-2 text-[12px]">
-      <span className="text-ink-dim w-32 shrink-0">{label}</span>
-      <div className="flex-1 h-2 rounded bg-deck overflow-hidden">
-        <div className="h-full rounded" style={{ width: `${Math.min(100, Math.max(0, pct))}%`, background: c }} />
+    <div className="flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-1.5 text-[12px]">
+      <span className="text-ink-dim sm:w-32 shrink-0">{label}</span>
+      <div className="order-last basis-full sm:order-none sm:basis-auto flex-1 h-2 rounded-full bg-deck-3 overflow-hidden">
+        <div className="h-full rounded-full transition-[width] duration-700" style={{ width: `${Math.min(100, Math.max(0, pct))}%`, background: `linear-gradient(90deg, color-mix(in srgb, ${c} 55%, transparent), ${c})`, boxShadow: `0 0 12px -2px ${c}` }} />
       </div>
-      <span className="font-mono text-ink-mute sm:whitespace-nowrap sm:w-56 max-w-[45%] text-right">{right}</span>
+      <span className="ml-auto font-mono text-[11px] text-ink-mute sm:whitespace-nowrap sm:w-56 text-right">{right}</span>
     </div>
   )
 }
@@ -130,7 +138,7 @@ function Sparkline({ series }: { series: Economy['series'] }) {
           <text x={padL - 5} y={y(g) + 3} textAnchor="end" fontSize={9} fill="var(--t-mute)" fontFamily="monospace">{g}</text>
         </g>
       ))}
-      {lanes.map(({ key, color, label }) => {
+      {lanes.map(({ key, color, label }, li) => {
         const dp = pts.filter((p) => p[key] != null)
         if (!dp.length) return null
         const linePath = dp.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(+new Date(p.t)).toFixed(1)},${y(p[key] as number).toFixed(1)}`).join(' ')
@@ -138,6 +146,10 @@ function Sparkline({ series }: { series: Economy['series'] }) {
         const xb = x(+new Date(dp[0].t)).toFixed(1)
         const areaPath = `${linePath} L${xa},${y(0).toFixed(1)} L${xb},${y(0).toFixed(1)} Z`
         const lv = dp[dp.length - 1][key] as number
+        // two end labels at nearly the same level would print on top of each other: push them apart
+        const ends = lanes.map((l) => { const q = pts.filter((p) => p[l.key] != null); return q.length ? y(q[q.length - 1][l.key] as number) : null })
+        const clash = ends[0] != null && ends[1] != null && Math.abs(ends[0] - ends[1]) < 12
+        const ly = y(lv) + 3 + (clash ? (li === 0 ? -6 : 6) * (ends[0]! <= ends[1]! ? 1 : -1) : 0)
         return (
           <g key={key}>
             <path d={areaPath} fill={color} opacity={0.1} />
@@ -145,7 +157,7 @@ function Sparkline({ series }: { series: Economy['series'] }) {
             {dp.map((p) => (
               <circle key={p.t} cx={x(+new Date(p.t))} cy={y(p[key] as number)} r={2.5} fill={color} />
             ))}
-            <text x={W - padR + 8} y={y(lv) + 3} fontSize={11} fill={color} fontFamily="monospace">{label} {lv.toFixed(0)}%</text>
+            <text x={W - padR + 8} y={ly} fontSize={11} fill={color} fontFamily="monospace">{label} {lv.toFixed(0)}%</text>
           </g>
         )
       })}
@@ -298,8 +310,8 @@ function Heatmap({ heatmap }: { heatmap: Economy['heatmap'] }) {
 function PlanLimits({ auth }: { auth: Economy['authoritative'] }) {
   if (!auth) {
     return (
-      <div className="bg-deck-2 border border-line rounded-lg p-3">
-        <div className="text-[11px] uppercase tracking-wider text-ink-dim mb-2">Plan limits · live from /usage API</div>
+      <div className="ax-panel rounded-2xl p-4">
+        <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-2">Plan limits · live from /usage API</div>
         <div className="text-xs text-ink-mute">gathering usage data — a snapshot lands on each agent turn</div>
       </div>
     )
@@ -325,9 +337,9 @@ function PlanLimits({ auth }: { auth: Economy['authoritative'] }) {
   }
 
   return (
-    <div className="bg-deck-2 border border-line rounded-lg p-3">
+    <div className="ax-panel rounded-2xl p-4">
       <div className="flex items-baseline gap-2 mb-2">
-        <div className="text-[11px] uppercase tracking-wider text-ink-dim">Plan limits · live from /usage API</div>
+        <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute">Plan limits · live from /usage API</div>
         <span className="text-[10px] text-ink-mute ml-auto">
           {auth.subscription ? `${auth.subscription} · ` : ''}
           {auth.measured_by} · {fmtAge(auth.measured_at)}
@@ -339,7 +351,7 @@ function PlanLimits({ auth }: { auth: Economy['authoritative'] }) {
         {auth.seven_day_opus_pct != null && (
           <Gauge label="7-day Opus" pct={auth.seven_day_opus_pct} right={rightFor(auth.seven_day_opus_pct, auth.seven_day_reset)} />
         )}
-        <div className="flex flex-wrap gap-x-6 gap-y-1 pt-1.5 text-[11px] font-mono">
+        <div className="flex flex-wrap gap-x-6 gap-y-1 pt-1.5 text-[11px] font-mono min-w-0 break-words">
           {prediction('5h', auth.five_hour_eta_100, auth.five_hour_rate_pp_h, auth.five_hour_reset)}
           {prediction('7d', auth.seven_day_eta_100, auth.seven_day_rate_pp_h, auth.seven_day_reset)}
         </div>
@@ -350,6 +362,18 @@ function PlanLimits({ auth }: { auth: Economy['authoritative'] }) {
 
 /* ── Usage — the original Economy panel, verbatim ──────────────────────────────────── */
 function UsageTab({ econ }: { econ: Economy | null }) {
+  if (!econ) {
+    return (
+      <div className="space-y-3">
+        <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
+          {['Billable · 24h', 'Output · 24h', 'Turns · 24h', 'Active agents · 24h'].map((l) => <StatCard key={l} label={l} value={<Count value={undefined} />} />)}
+        </div>
+        <Skeleton className="block w-full h-[120px] rounded-2xl" />
+        <Skeleton className="block w-full h-[150px] rounded-2xl" />
+        <Skeleton className="block w-full h-[90px] rounded-2xl" />
+      </div>
+    )
+  }
   const maxAgentBill = Math.max(...(econ?.agents ?? []).map((a) => a.bill), 1)
   const modelTotal = (econ?.models ?? []).reduce((s, m) => s + m.turns, 0)
 
@@ -357,10 +381,10 @@ function UsageTab({ econ }: { econ: Economy | null }) {
     <div className="space-y-3">
       {/* headline: the last 24h at a glance (billable) */}
       <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
-        <StatCard label="Billable · 24h" value={fmtTokens(econ?.summary.bill_24h)} />
-        <StatCard label="Output · 24h" value={fmtTokens(econ?.summary.out_24h)} />
-        <StatCard label="Turns · 24h" value={fmtTokens(econ?.summary.turns_24h)} />
-        <StatCard label="Active agents · 24h" value={fmtTokens(econ?.summary.agents_24h)} />
+        <StatCard label="Billable · 24h" value={<Count value={econ?.summary.bill_24h} format={fmtTokens} />} spark={econ?.daily.map((d) => d.bill)} sub="cost-equivalent tokens" />
+        <StatCard label="Output · 24h" value={<Count value={econ?.summary.out_24h} format={fmtTokens} />} spark={econ?.daily.map((d) => d.out)} tone="accent2" sub="tokens the agents wrote" />
+        <StatCard label="Turns · 24h" value={<Count value={econ?.summary.turns_24h} />} spark={econ?.daily.map((d) => d.turns)} tone="good" sub="agent sessions run" />
+        <StatCard label="Active agents · 24h" value={<Count value={econ?.summary.agents_24h} />} sub={econ ? `of ${econ.agents.length} with spend on record` : undefined} />
       </div>
 
       {/* plan limits — authoritative, live from the /usage API */}
@@ -368,9 +392,9 @@ function UsageTab({ econ }: { econ: Economy | null }) {
 
       {/* usage sparkline — the two live %-series over the last 6h */}
       {econ && econ.series.filter((p) => p.t).length >= 2 && (
-        <div className="bg-deck-2 border border-line rounded-lg p-3">
+        <div className="ax-panel rounded-2xl p-4">
           <div className="flex items-baseline gap-3 mb-2">
-            <div className="text-[11px] uppercase tracking-wider text-ink-dim">Usage · last 6h</div>
+            <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute">Usage · last 6h</div>
             <div className="flex gap-4 ml-auto text-[10px] text-ink-mute">
               <span className="flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-sm" style={{ background: BILL }} /> 5-hour
@@ -385,17 +409,17 @@ function UsageTab({ econ }: { econ: Economy | null }) {
       )}
 
       {/* usage heatmap — GitHub-contributions-style, 365 days */}
-      <div className="bg-deck-2 border border-line rounded-lg p-3">
-        <div className="text-[11px] uppercase tracking-wider text-ink-dim mb-2">Usage heatmap · 365 days</div>
+      <div className="ax-panel rounded-2xl p-4">
+        <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-2">Usage heatmap · 365 days</div>
         <Heatmap heatmap={econ?.heatmap ?? []} />
       </div>
 
       {/* model mix */}
-      <div className="bg-deck-2 border border-line rounded-lg p-3">
-        <div className="text-[11px] uppercase tracking-wider text-ink-dim mb-2">Model mix</div>
+      <div className="ax-panel rounded-2xl p-4">
+        <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-2">Model mix</div>
         {econ?.models.length ? (
           <div className="flex items-center gap-2 text-[12px]">
-            <div className="flex-1 h-2 rounded bg-deck overflow-hidden flex">
+            <div className="flex-1 h-2.5 rounded-full bg-deck-3 overflow-hidden flex gap-px">
               {econ.models.map((m, i) => (
                 <div key={m.model} style={{ width: `${modelTotal ? (100 * m.turns) / modelTotal : 0}%`, background: MODEL_COLORS[i % MODEL_COLORS.length] }} />
               ))}
@@ -410,31 +434,26 @@ function UsageTab({ econ }: { econ: Economy | null }) {
       </div>
 
       {/* 30-day token flow */}
-      <div className="bg-deck-2 border border-line rounded-lg p-3">
-        <div className="text-[11px] uppercase tracking-wider text-ink-dim mb-2">Token flow · 30 days</div>
+      <div className="ax-panel rounded-2xl p-4">
+        <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-2">Token flow · 30 days</div>
         <DailyBars daily={econ?.daily ?? []} />
       </div>
 
       {/* per-agent spend (billable) */}
-      <div className="bg-deck-2 border border-line rounded-lg p-3">
-        <div className="text-[11px] uppercase tracking-wider text-ink-dim mb-2">
+      <div className="ax-panel rounded-2xl p-4">
+        <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-2">
           Per-agent · billable <span className="text-ink-mute">({econ?.agents.length ?? 0})</span>
         </div>
         <div className="space-y-1.5">
           {(econ?.agents ?? []).map((a) => (
-            <div key={a.agent} className="flex items-center gap-2 text-[12px]">
-              <span
-                className="w-4 h-4 rounded-full grid place-items-center text-[9px] font-bold text-agent-ink shrink-0"
-                style={{ background: agentColor(a.agent) }}
-              >
-                {a.agent[0]}
-              </span>
-              <span className="text-ink w-28 truncate">{a.agent}</span>
-              <div className="flex-1 h-1.5 rounded bg-deck overflow-hidden hidden sm:block">
-                <div className="h-full rounded" style={{ width: `${(a.bill / maxAgentBill) * 100}%`, background: agentColor(a.agent) }} />
+            <div key={a.agent} className="flex items-center gap-2.5 text-[12px] py-0.5">
+              <AgentFace name={a.agent} size={22} />
+              <span className="text-ink w-28 truncate">{displayName(a.agent)}</span>
+              <div className="flex-1 h-1.5 rounded-full bg-deck-3 overflow-hidden hidden sm:block">
+                <div className="h-full rounded-full" style={{ width: `${(a.bill / maxAgentBill) * 100}%`, background: `linear-gradient(90deg, color-mix(in srgb, ${agentColor(a.agent)} 40%, transparent), ${agentColor(a.agent)})` }} />
               </div>
-              <span className="font-mono text-ink-mute whitespace-nowrap">
-                ↯{fmtTokens(a.bill)} billable · ↑{fmtTokens(a.out)} · {a.turns} turns
+              <span className="font-mono text-ink-mute whitespace-nowrap text-[11px] ml-auto sm:ml-0">
+                {fmtTokens(a.bill)}<span className="hidden md:inline"> billable · {fmtTokens(a.out)} out · {a.turns} turns</span>
               </span>
             </div>
           ))}
@@ -444,8 +463,8 @@ function UsageTab({ econ }: { econ: Economy | null }) {
 
       {/* goals: no budgets since 4227. A legacy budget is muted history; spent_tokens was never
           written, so it isn't shown at all (a 0 there means "never measured", not "unused"). */}
-      <div className="bg-deck-2 border border-line rounded-lg p-3">
-        <div className="text-[11px] uppercase tracking-wider text-ink-dim mb-2">Goals</div>
+      <div className="ax-panel rounded-2xl p-4">
+        <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-2">Goals</div>
         <div className="space-y-2">
           {(econ?.goals ?? []).map((g) => {
             const budgetEra = g.budget_tokens ?? 0
@@ -468,8 +487,8 @@ function UsageTab({ econ }: { econ: Economy | null }) {
       </div>
 
       {/* the ledger */}
-      <div className="bg-deck-2 border border-line rounded-lg p-3">
-        <div className="text-[11px] uppercase tracking-wider text-ink-dim mb-2">
+      <div className="ax-panel rounded-2xl p-4">
+        <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-2">
           Receipts <span className="text-ink-mute">· the org ledger</span>
         </div>
         <div className="space-y-1">
@@ -491,7 +510,7 @@ function UsageTab({ econ }: { econ: Economy | null }) {
               </span>
             </div>
           ))}
-          {!econ?.receipts.length && <div className="text-xs text-ink-mute">ledger is empty</div>}
+          {!econ?.receipts.length && <Empty title="The ledger is empty" hint="Receipts land here when value moves across the org boundary." tone="good" />}
         </div>
       </div>
     </div>
@@ -730,8 +749,8 @@ function ThermoTab({ d }: { d: EconDissipative }) {
     <div className="space-y-3">
       {/* hero: the one law, with live values substituted */}
       <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
-        <div className="bg-deck-2 border border-line rounded-lg p-3 col-span-2">
-          <div className="text-[11px] uppercase tracking-wider text-ink-dim">
+        <div className="ax-panel rounded-2xl p-4 col-span-2">
+          <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute">
             G · dissipative yield {L ? <span className="text-ink-mute normal-case tracking-normal">· {L.day}</span> : null}
             {live ? <span className="ml-1.5 normal-case tracking-normal text-good">● live</span> : null}
           </div>
@@ -754,8 +773,8 @@ function ThermoTab({ d }: { d: EconDissipative }) {
 
       {/* today so far — the day is still open */}
       {today && (
-        <div className="bg-deck-2 border border-line rounded-lg p-3">
-          <div className="text-[11px] uppercase tracking-wider text-ink-dim mb-2">
+        <div className="ax-panel rounded-2xl p-4">
+          <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-2">
             Today, incomplete <span className="text-ink-mute">· {today.day}</span>
           </div>
           <div className="flex flex-wrap gap-x-8 gap-y-1 text-[12px] font-mono">
@@ -769,9 +788,9 @@ function ThermoTab({ d }: { d: EconDissipative }) {
       )}
 
       {/* the energy flow: Φ → agents → { W, Q } */}
-      <div className="bg-deck-2 border border-line rounded-lg p-3">
+      <div className="ax-panel rounded-2xl p-4">
         <div className="flex items-baseline gap-3 mb-1">
-          <div className="text-[11px] uppercase tracking-wider text-ink-dim">Energy flow {L ? `· ${L.day}` : ''}</div>
+          <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute">Energy flow {L ? `· ${L.day}` : ''}</div>
           <div className="flex gap-4 ml-auto text-[10px] text-ink-mute">
             <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm" style={{ background: GREEN }} /> W work</span>
             <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm" style={{ background: ROSE }} /> Q heat</span>
@@ -782,27 +801,27 @@ function ThermoTab({ d }: { d: EconDissipative }) {
       </div>
 
       {noWEver && (!today || !today.thermo.W) && (
-        <div className="bg-deck-2 border border-line rounded-lg p-3 text-[11px] text-ink-mute leading-relaxed">
+        <div className="ax-panel rounded-2xl p-4 text-[11px] text-ink-mute leading-relaxed">
           no FUNDED goal has verified since instrumentation — W enters only when a budgeted goal ships
           (goals.done_at). Everything is heat until the boundary pays.
         </div>
       )}
 
       {/* the daily series — gaps are days the org was dark */}
-      <div className="bg-deck-2 border border-line rounded-lg p-3">
-        <div className="text-[11px] uppercase tracking-wider text-ink-dim mb-1">η · efficiency over time</div>
+      <div className="ax-panel rounded-2xl p-4">
+        <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-1">η · efficiency over time</div>
         <GapLine pts={pt('eta')} color={GREEN} fmt={(v) => fmtPct(v, 0)} />
       </div>
-      <div className="bg-deck-2 border border-line rounded-lg p-3">
-        <div className="text-[11px] uppercase tracking-wider text-ink-dim mb-1">heat fraction over time</div>
+      <div className="ax-panel rounded-2xl p-4">
+        <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-1">heat fraction over time</div>
         <GapLine pts={pt('heat_frac')} color={ROSE} fmt={(v) => fmtPct(v, 0)} />
       </div>
-      <div className="bg-deck-2 border border-line rounded-lg p-3">
-        <div className="text-[11px] uppercase tracking-wider text-ink-dim mb-1">Φ · daily billable flux</div>
+      <div className="ax-panel rounded-2xl p-4">
+        <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-1">Φ · daily billable flux</div>
         <GapBars pts={pt('phi')} color={BILL} />
       </div>
-      <div className="bg-deck-2 border border-line rounded-lg p-3">
-        <div className="text-[11px] uppercase tracking-wider text-ink-dim mb-1">
+      <div className="ax-panel rounded-2xl p-4">
+        <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-1">
           K · self-description bytes <span className="text-ink-mute normal-case tracking-normal">(compressed — deletions visibly drop it)</span>
         </div>
         <GapLine pts={pt('K')} color={OUTC} fmt={fmtBytes} />
@@ -816,8 +835,8 @@ function TriggerMarketCard({ rows }: { rows: NonNullable<EconLatest['trigger_roi
   const shown = rows.slice(0, 15)
   const unpriced = rows.length > 0 && rows.every((r) => r.value_reached === 0)
   return (
-    <div className="bg-deck-2 border border-line rounded-lg p-3">
-      <div className="text-[11px] uppercase tracking-wider text-ink-dim mb-2">Trigger market · trailing 30d</div>
+    <div className="ax-panel rounded-2xl p-4">
+      <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-2">Trigger market · trailing 30d</div>
       {unpriced && (
         <div className="text-[11px] text-ink-mute mb-2">
           market unpriced — no funded goal has shipped in-window; ROI shows cost only and nothing is auto-retired
@@ -877,30 +896,25 @@ function MarketTab({ d }: { d: EconDissipative }) {
         <StatCard label="attributed % of Φ" value={fmtPct(lastAttr)} sub="spend attributed to goals — the rest is blind flux" />
       </div>
 
-      <div className="bg-deck-2 border border-line rounded-lg p-3">
-        <div className="text-[11px] uppercase tracking-wider text-ink-dim mb-2">
+      <div className="ax-panel rounded-2xl p-4">
+        <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-2">
           P&L · yesterday <span className="text-ink-mute">{L ? `(${L.day})` : ''}</span>
         </div>
         <div className="space-y-1.5">
           {pnl.map((p) => (
-            <div key={p.agent} className="flex items-center gap-2 text-[12px]">
-              <span
-                className="w-4 h-4 rounded-full grid place-items-center text-[9px] font-bold text-agent-ink shrink-0"
-                style={{ background: agentColor(p.agent) }}
-              >
-                {p.agent[0]}
-              </span>
-              <span className="text-ink w-28 truncate">{p.agent}</span>
-              <div className="flex-1 h-1.5 rounded bg-deck overflow-hidden hidden sm:block">
+            <div key={p.agent} className="flex items-center gap-2.5 text-[12px] py-0.5">
+              <AgentFace name={p.agent} size={22} />
+              <span className="text-ink w-28 truncate">{displayName(p.agent)}</span>
+              <div className="flex-1 h-1.5 rounded-full bg-deck-3 overflow-hidden hidden sm:block">
                 <div
-                  className="h-full rounded"
+                  className="h-full rounded-full"
                   style={{ width: `${(Math.abs(p.net) / maxNet) * 100}%`, background: p.net >= 0 ? GREEN : ROSE }}
                 />
               </div>
-              <span className="font-mono text-ink-mute whitespace-nowrap">
+              <span className="font-mono text-ink-mute whitespace-nowrap text-[11px] hidden md:inline">
                 burned {fmtTokens(p.burned)} · earned {fmtTokens(p.value_earned)} · {p.turns} turns
               </span>
-              <span className="font-mono w-16 text-right whitespace-nowrap" style={{ color: p.net >= 0 ? GREEN : ROSE }}>
+              <span className="font-mono w-16 ml-auto md:ml-0 text-right whitespace-nowrap" style={{ color: p.net >= 0 ? GREEN : ROSE }}>
                 {fmtSigned(p.net)}
               </span>
             </div>
@@ -911,7 +925,7 @@ function MarketTab({ d }: { d: EconDissipative }) {
 
       <TriggerMarketCard rows={L?.trigger_roi ?? []} />
 
-      <div className="bg-deck-2 border border-line rounded-lg p-3 text-[11px] text-ink-mute leading-relaxed">
+      <div className="ax-panel rounded-2xl p-4 text-[11px] text-ink-mute leading-relaxed">
         <span className="text-ink-dim uppercase tracking-wider text-[11px]">value law</span> — value enters only at
         the boundary (verified funded goals); internal use propagates it; nothing internal can mint it.
       </div>
@@ -1002,15 +1016,15 @@ function ProductivityTab({ d }: { d: EconDissipative }) {
         <StatCard label="sense calls" value={String((P?.senses ?? []).reduce((s, r) => s + r.calls, 0))} sub="afferent reads that replaced a full wake" />
       </div>
 
-      <div className="bg-deck-2 border border-line rounded-lg p-3">
-        <div className="text-[11px] uppercase tracking-wider text-ink-dim mb-1">
+      <div className="ax-panel rounded-2xl p-4">
+        <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-1">
           Trigger TFP · cost per fire <span className="text-ink-mute normal-case tracking-normal">(falling = productivity gain)</span>
         </div>
         <TfpChart rows={P?.trigger_tfp ?? []} />
       </div>
 
-      <div className="bg-deck-2 border border-line rounded-lg p-3">
-        <div className="text-[11px] uppercase tracking-wider text-ink-dim mb-2">Senses · adoption</div>
+      <div className="ax-panel rounded-2xl p-4">
+        <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-2">Senses · adoption</div>
         {P?.senses.length ? (
           <div className="space-y-1">
             {P.senses.map((s) => (
@@ -1038,8 +1052,8 @@ function ProductivityTab({ d }: { d: EconDissipative }) {
 /* ── Integrity — the Goodhart panel: each detector names the exploit it catches ────── */
 function Detector({ name, value, catches, note }: { name: string; value: string | null; catches: string; note?: string }) {
   return (
-    <div className="bg-deck-2 border border-line rounded-lg p-3">
-      <div className="text-[11px] uppercase tracking-wider text-ink-dim">{name}</div>
+    <div className="ax-panel rounded-2xl p-4">
+      <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute">{name}</div>
       {value != null ? (
         <div className="text-xl font-bold text-ink mt-1 font-mono">{value}</div>
       ) : (
@@ -1176,14 +1190,14 @@ function PlaygroundTab({ d }: { d: EconDissipative }) {
 
   return (
     <div className="space-y-3">
-      <div className="bg-deck-2 border border-line rounded-lg p-3">
-        <div className="text-[11px] uppercase tracking-wider text-ink-dim mb-2">
+      <div className="ax-panel rounded-2xl p-4">
+        <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-2">
           The law, adjustable <span className="text-ink-mute normal-case tracking-normal">· G′ = W / (Φ · K^α) — all client-side, from econ.series</span>
         </div>
         <div className="space-y-3">
-          <div className="flex items-center gap-2 text-[12px]">
-            <span className="text-ink-dim w-44 shrink-0">window</span>
-            <div className="flex gap-1">
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 text-[12px]">
+            <span className="text-ink-dim basis-full sm:basis-auto sm:w-44 shrink-0">window</span>
+            <div className="flex flex-wrap gap-1">
               {WINDOWS.map((w) => (
                 <button
                   key={w}
@@ -1196,27 +1210,27 @@ function PlaygroundTab({ d }: { d: EconDissipative }) {
                 </button>
               ))}
             </div>
-            <span className="ml-auto font-mono text-ink-mute text-[11px]">{winPts.length} measured days in window</span>
+            <span className="sm:ml-auto font-mono text-ink-mute text-[11px]">{winPts.length} measured days in window</span>
           </div>
-          <div className="flex items-center gap-2 text-[12px]">
-            <span className="text-ink-dim w-44 shrink-0">α · K-weight exponent</span>
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 text-[12px]">
+            <span className="text-ink-dim basis-full sm:basis-auto sm:w-44 shrink-0">α · K-weight exponent</span>
             <input
               type="range" min={0} max={2} step={0.1} value={alpha}
               onChange={(e) => setAlpha(Number(e.currentTarget.value))}
-              className="flex-1" style={{ accentColor: OUTC }}
+              className="flex-1 min-w-0" style={{ accentColor: OUTC }}
             />
-            <span className="font-mono text-ink-mute w-40 text-right">
+            <span className="font-mono text-ink-mute sm:w-40 text-right text-[11px]">
               α = {alpha.toFixed(1)} {alpha === 0 ? '· structure ignored' : alpha === 1 ? '· the law' : alpha >= 1.5 ? '· bloat punished hard' : ''}
             </span>
           </div>
-          <div className="flex items-center gap-2 text-[12px]">
-            <span className="text-ink-dim w-44 shrink-0">what if we shipped…</span>
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 text-[12px]">
+            <span className="text-ink-dim basis-full sm:basis-auto sm:w-44 shrink-0">what if we shipped…</span>
             <input
               type="range" min={0} max={2 * maxPhi} step={Math.max(1, Math.round(maxPhi / 50))} value={ship}
               onChange={(e) => setShip(Number(e.currentTarget.value))}
-              className="flex-1" style={{ accentColor: GREEN }}
+              className="flex-1 min-w-0" style={{ accentColor: GREEN }}
             />
-            <span className="font-mono text-ink-mute w-40 text-right">{fmtTokens(ship)} value-tok/day</span>
+            <span className="font-mono text-ink-mute sm:w-40 text-right text-[11px]">{fmtTokens(ship)} value-tok/day</span>
           </div>
         </div>
       </div>
@@ -1228,9 +1242,9 @@ function PlaygroundTab({ d }: { d: EconDissipative }) {
         <StatCard label="heat · window mean" value={fmtPct(meanHeat)} sub="mean of daily heat fractions" />
       </div>
 
-      <div className="bg-deck-2 border border-line rounded-lg p-3">
+      <div className="ax-panel rounded-2xl p-4">
         <div className="flex items-baseline gap-3 mb-1">
-          <div className="text-[11px] uppercase tracking-wider text-ink-dim">daily G′ + projection</div>
+          <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute">daily G′ + projection</div>
           <div className="flex gap-4 ml-auto text-[10px] text-ink-mute">
             <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm" style={{ background: BILL }} /> measured</span>
             <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm" style={{ background: GREEN }} /> if shipping (dashed)</span>
@@ -1269,36 +1283,43 @@ export default function EconomyView() {
     return () => clearInterval(t)
   }, [])
 
-  const diss = econ?.econ ?? null
+  const diss = econ?.econ && Object.keys(econ.econ).length ? econ.econ : null
+  const spenders = econ ? [...econ.agents].sort((a, b) => b.bill - a.bill).slice(0, 6).map((a) => a.agent) : []
+  const auth = econ?.authoritative
 
   return (
     <ScrollArea className="h-full">
-      <div className="p-3 space-y-3 max-w-[1100px] mx-auto">
-        <div className="flex flex-wrap gap-1">
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={`rounded-md px-3 py-1.5 text-sm transition-colors duration-75 ${
-                tab === t.id ? 'bg-deck-3 text-cyan-soft' : 'text-ink-dim hover:bg-deck-3 hover:text-ink'
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
+      <div className="px-5 sm:px-8 py-7 max-w-[1240px] mx-auto">
+        <ViewHeader
+          kicker="effort, value, spend"
+          title="Economy"
+          live={econ ? <>
+            <span className="flex items-center gap-1.5"><LiveDot state={econ.summary.turns_24h ? 'working' : 'awake'} />{econ.summary.turns_24h.toLocaleString()} turns today</span>
+            <span className="text-ink-mute">·</span>
+            <span>{econ.summary.agents_24h} agents spending</span>
+            {auth?.five_hour_pct != null && <><span className="text-ink-mute">·</span><span>5-hour plan at {auth.five_hour_pct.toFixed(0)}%</span></>}
+          </> : <Skeleton className="h-4 w-72" />}
+          faces={spenders}
+        />
+        <div className="mb-5 -mx-5 px-5 sm:mx-0 sm:px-0 overflow-x-auto [scrollbar-width:none]"><div className="w-max"><Tabs id="econ" items={TABS} value={tab} onChange={setTab} /></div></div>
 
-        {tab === 'usage' && <UsageTab econ={econ} />}
-        {tab !== 'usage' && !diss && (
-          <div className="bg-deck-2 border border-line rounded-lg p-3 text-xs text-ink-mute">
-            the dissipative layer has no readings yet — nucleus/econ.py writes one row per day
-          </div>
-        )}
-        {tab === 'thermo' && diss && <ThermoTab d={diss} />}
-        {tab === 'market' && diss && <MarketTab d={diss} />}
-        {tab === 'productivity' && diss && <ProductivityTab d={diss} />}
-        {tab === 'integrity' && diss && <IntegrityTab d={diss} />}
-        {tab === 'playground' && diss && <PlaygroundTab d={diss} />}
+        <div className="space-y-3">
+          {tab === 'usage' && <UsageTab econ={econ} />}
+          {tab !== 'usage' && !econ && (
+            <div className="space-y-3">
+              <div className="grid gap-3 grid-cols-2 md:grid-cols-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="block w-full h-[104px] rounded-2xl" />)}</div>
+              <Skeleton className="block w-full h-64 rounded-2xl" />
+            </div>
+          )}
+          {tab !== 'usage' && econ && !diss && (
+            <Panel className="p-2"><Empty title="The dissipative layer has no readings yet" hint="nucleus/econ.py writes one row per day — the first lands after tonight's rollup." /></Panel>
+          )}
+          {tab === 'thermo' && diss && <ThermoTab d={diss} />}
+          {tab === 'market' && diss && <MarketTab d={diss} />}
+          {tab === 'productivity' && diss && <ProductivityTab d={diss} />}
+          {tab === 'integrity' && diss && <IntegrityTab d={diss} />}
+          {tab === 'playground' && diss && <PlaygroundTab d={diss} />}
+        </div>
       </div>
     </ScrollArea>
   )

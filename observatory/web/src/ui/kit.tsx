@@ -91,9 +91,9 @@ type Tone = 'accent' | 'accent2' | 'good' | 'warn' | 'bad'
 const TONE: Record<Tone, string> = { accent: 'var(--t-accent)', accent2: 'var(--t-accent2)', good: 'var(--t-good)', warn: 'var(--t-warn)', bad: 'var(--t-bad)' }
 
 /** A soft area sparkline, oldest first: a smooth curve that draws itself in left to right. */
-export function Spark({ data, tone = 'accent', className = '' }: { data: number[]; tone?: Tone; className?: string }) {
+export function Spark({ data, tone = 'accent', className = '', max: ceil }: { data: number[]; tone?: Tone; className?: string; max?: number }) {
   const id = useRef(`sp${Math.random().toString(36).slice(2, 8)}`).current
-  const max = Math.max(1, ...data)
+  const max = ceil ?? Math.max(1, ...data)   // a fixed ceiling (e.g. 100 for a percent) keeps a steady value from filling the tile
   const W = 100, H = 30
   const pts = data.map((v, i) => [(i / (data.length - 1)) * W, H - 1.5 - (v / max) * (H - 5)] as const)
   // Catmull-Rom → cubic Bézier: a curve through every point, no overshoot below the baseline
@@ -124,7 +124,9 @@ export function Spark({ data, tone = 'accent', className = '' }: { data: number[
 }
 
 export function Skeleton({ className = '' }: { className?: string }) {
-  return <span className={`ax-skel rounded-md ${className}`} />
+  // inline by default (a number's placeholder), but a caller's own display/position class wins
+  const disp = /(^|\s)(block|flex|grid|absolute|fixed)(\s|$)/.test(className) ? '' : 'inline-block'
+  return <span className={`ax-skel rounded-md ${disp} ${className}`} />
 }
 
 /* ---------------------------------------------------------------- life */
@@ -184,10 +186,10 @@ export function Tabs<T extends string>({ items, value, onChange, id }: {
   items: readonly { id: T; label: ReactNode }[]; value: T; onChange: (v: T) => void; id: string
 }) {
   return (
-    <div className="ax-panel inline-flex flex-wrap gap-0.5 p-1 rounded-xl">
+    <div className="ax-panel inline-flex max-w-full overflow-x-auto [scrollbar-width:none] gap-0.5 p-1 rounded-xl">
       {items.map((t) => (
         <button key={t.id} onClick={() => onChange(t.id)}
-          className={`relative px-3.5 py-1.5 text-[13px] rounded-lg transition-colors ${value === t.id ? 'text-ink' : 'text-ink-mute hover:text-ink-dim'}`}>
+          className={`relative shrink-0 px-3.5 py-1.5 text-[13px] rounded-lg whitespace-nowrap transition-colors ${value === t.id ? 'text-ink' : 'text-ink-mute hover:text-ink-dim'}`}>
           {value === t.id && (
             <motion.span layoutId={`tab-${id}`} className="absolute inset-0 rounded-lg"
               style={{ background: 'color-mix(in srgb, var(--t-accent) 16%, var(--t-panel2))', boxShadow: 'inset 0 0 0 1px color-mix(in srgb, var(--t-accent) 30%, transparent)' }}

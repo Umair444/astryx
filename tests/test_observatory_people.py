@@ -99,6 +99,9 @@ def main(url):
             ok.get("answered") == 1 and left["asks"] == [] and [l["pid"] for l in lines] == ["p-1", "p-2"] and lines[1]["skipped"])
         arm("memory is told only a COUNT on the wire — no pid, no name, no relation",
             len(notes) == 2 and not any(("p-1" in n or "friend" in n) for n in notes), notes)
+        fr = cl.get("/api/memory/graph?fresh=1", headers=O).json()
+        arm("the Memory view's recompile button compiles (it called a memgraph function that did not exist)",
+            "compile failed" not in str(fr.get("error", "")), fr.get("error"))
         quiet = next((n for n in real if n != agent), agent)
         q = cl.get(f"/api/agents/{quiet}/profile", headers=O).json()
         arm("a quiet agent's profile has no presence and no recent work", q.get("presence") is None and q.get("recent") == [], q.get("recent"))

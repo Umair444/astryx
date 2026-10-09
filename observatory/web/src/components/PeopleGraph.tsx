@@ -1,7 +1,7 @@
 import PeopleConfirm from './PeopleConfirm'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Loader } from '@mantine/core'
 import { api, apiPost } from '../api'
+import { Empty, Orb, Panel } from '../ui/kit'
 
 /* The astryx network's SOCIAL graph — the FB shape, deliberately.
  *
@@ -119,20 +119,22 @@ export default function PeopleGraph() {
     else setCyOut(r.rows)
   }
 
-  if (err) return <div className="p-6 text-sm text-ink-dim">people graph unavailable — {err}</div>
-  if (!g) return <div className="h-full grid place-items-center"><Loader color="cyan" /></div>
+  if (err) return <Empty tone="bad" title="The people graph is unavailable" hint={err} />
+  if (!g) return <div className="h-full grid place-items-center"><Orb size={56} tone="accent2" /></div>
+
+  const chip = 'ax-panel rounded-full px-3 py-1 text-[11.5px] text-ink-dim'
 
   return (
     <div className="h-full flex flex-col">
-      <div className="px-3 py-2 flex items-center gap-4 flex-wrap text-[11px] font-mono text-ink-dim border-b border-line">
-        <span>{g.stats.people} people</span>
-        <span>{g.stats.knows} relations</span>
-        <span>{g.stats.orgs} org{g.stats.orgs === 1 ? '' : 's'} on the network</span>
+      <div className="px-4 py-2.5 flex items-center gap-2 flex-wrap">
+        <span className={chip}><b className="text-ink font-semibold tabular-nums">{g.stats.people}</b> people</span>
+        <span className={chip}><b className="text-ink font-semibold tabular-nums">{g.stats.knows}</b> relations</span>
+        <span className={chip}><b className="text-ink font-semibold tabular-nums">{g.stats.orgs}</b> org{g.stats.orgs === 1 ? '' : 's'} on the network</span>
         <button onClick={() => setConfirming((c) => !c)}
-          className={`px-2.5 py-[3px] rounded-md border font-sans text-[11px] ${confirming ? 'border-cyan bg-cyan/15 text-ink' : 'border-line text-ink-dim hover:text-ink'}`}>
+          className={`px-3.5 py-1 rounded-full text-[12px] font-medium ${confirming ? 'ax-panel text-ink border-cyan/50' : 'ax-action'}`}>
           ✓ confirm your people
         </button>
-        <label className="flex items-center gap-1.5">
+        <label className={`${chip} flex items-center gap-2`}>
           shared contexts ≥
           <input type="range" min={1} max={6} value={minW}
             onChange={(e) => setMinW(Number(e.currentTarget.value))} className="w-24" />
@@ -140,7 +142,7 @@ export default function PeopleGraph() {
         </label>
         {(Math.abs(view.k - 1) > 1e-3 || Math.abs(view.x) > 0.5) && (
           <button onClick={() => setView({ x: 0, y: 0, k: 1 })}
-            className="px-2 py-[2px] rounded border border-cyan/40 text-cyan hover:bg-cyan/10">
+            className="px-3 py-1 rounded-full border border-cyan/40 text-cyan text-[11.5px] hover:bg-cyan/10">
             reset · {view.k.toFixed(2)}×
           </button>
         )}
@@ -149,7 +151,7 @@ export default function PeopleGraph() {
       <div className="flex-1 flex min-h-0">
         {confirming && <PeopleConfirm onClose={() => setConfirming(false)} />}
         <svg ref={svgRef} viewBox="-700 -540 1400 1080" preserveAspectRatio="xMidYMid meet"
-          className="flex-1 starfield cursor-grab active:cursor-grabbing touch-none"
+          className="flex-1 cursor-grab active:cursor-grabbing touch-none"
           onMouseDown={(e) => { drag.current = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y } }}
           onMouseUp={() => { drag.current = null }}
           onMouseLeave={() => { drag.current = null }}
@@ -160,6 +162,16 @@ export default function PeopleGraph() {
             if (!a || !b) return
             setView((v) => ({ ...v, x: d.vx + (b.x - a.x), y: d.vy + (b.y - a.y) }))
           }}>
+          <defs>
+            <radialGradient id="pg-halo">
+              <stop offset="0" stopColor="var(--t-accent2)" stopOpacity="0.45" />
+              <stop offset="1" stopColor="var(--t-accent2)" stopOpacity="0" />
+            </radialGradient>
+            <radialGradient id="pg-sun">
+              <stop offset="0" stopColor="var(--t-warn)" stopOpacity="0.55" />
+              <stop offset="1" stopColor="var(--t-warn)" stopOpacity="0" />
+            </radialGradient>
+          </defs>
           <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
             <g fill="none">
               {shown.map((e, i) => {
@@ -184,6 +196,9 @@ export default function PeopleGraph() {
                   <g key={n.id} transform={`translate(${p.x} ${p.y})`}
                     onClick={() => setSel(sel?.id === n.id ? null : n)}
                     className="cursor-pointer">
+                    {(isOwner || n.direct) && lit && (
+                      <circle r={r * (isOwner ? 4 : 2.6)} fill={isOwner ? 'url(#pg-sun)' : 'url(#pg-halo)'} className="pointer-events-none" />
+                    )}
                     <circle r={r}
                       fill={isOwner ? 'var(--t-warn)' : n.direct ? 'var(--t-accent2)' : 'var(--t-mute)'}
                       opacity={lit ? (isOwner ? 0.95 : 0.8) : 0.15} />
@@ -201,9 +216,9 @@ export default function PeopleGraph() {
         </svg>
 
         {sel && (
-          <div className="w-[260px] border-l border-line bg-deck-2 p-3 text-[12.5px] shrink-0">
+          <Panel className="w-[280px] m-3 p-4 text-[12.5px] shrink-0 self-start">
             <div className="flex items-start justify-between">
-              <div className="font-medium">{sel.label}</div>
+              <div className="text-[15px] font-semibold text-ink">{sel.label}</div>
               <button onClick={() => setSel(null)} className="text-ink-mute hover:text-ink px-1">✕</button>
             </div>
             <div className="text-[11px] text-ink-mute font-mono mt-1">{sel.org}</div>
@@ -214,27 +229,28 @@ export default function PeopleGraph() {
             {sel.who && <div className="mt-2">{sel.who}</div>}
             {sel.shape && <div className="mt-1 text-[11.5px] text-ink-mute">{sel.shape}</div>}
             {sel.relation && (
-              <div className="mt-2 inline-block px-1.5 py-[1px] rounded border border-line text-[11px]">
+              <div className="mt-3 inline-block px-2.5 py-0.5 rounded-full border border-cyan/35 bg-cyan/10 text-cyan-soft text-[11px]">
                 {sel.relation}
               </div>
             )}
-          </div>
+          </Panel>
         )}
       </div>
 
       {/* openCypher over the same graph — the queryable half of the FB idea. */}
-      <div className="border-t border-line px-3 py-2 shrink-0">
-        <div className="flex items-center gap-2">
+      <div className="px-4 pb-4 pt-1 shrink-0 sm:mr-36">
+        <div className="flex items-center gap-2 ax-panel rounded-xl pl-3 pr-1.5 py-1.5 focus-within:border-cyan/50">
+          <span className="text-[11px] font-mono text-cyan shrink-0">cypher ›</span>
           <input value={cy} onChange={(e) => setCy(e.currentTarget.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') runCypher() }}
-            placeholder="cypher — e.g. MATCH (a:person)-[k:knows]->(b:person) WHERE k.shared >= 3 RETURN a.name, b.name LIMIT 20   (edges are stored once: use the directed form)"
-            className="flex-1 bg-transparent border border-line rounded px-2 py-1.5 text-[12px] font-mono outline-none focus:border-cyan/50" />
-          <button onClick={runCypher}
-            className="text-xs px-3 py-1.5 rounded border border-line hover:border-cyan">run</button>
+            placeholder="e.g. MATCH (a:person)-[k:knows]->(b:person) WHERE k.shared >= 3 RETURN a.name, b.name LIMIT 20   (edges are stored once: use the directed form)"
+            className="flex-1 min-w-0 bg-transparent px-1 py-1.5 text-[12px] font-mono text-ink outline-none placeholder:text-ink-mute" />
+          <button onClick={runCypher} disabled={!cy.trim()}
+            className="ax-action text-xs px-3.5 py-1.5 rounded-lg font-medium disabled:opacity-40">Run</button>
         </div>
         {cyErr && <div className="mt-1.5 text-[11.5px] text-warn">{cyErr}</div>}
         {cyOut && (
-          <div className="mt-1.5 max-h-40 overflow-auto font-mono text-[11px] text-ink-dim">
+          <div className="mt-2 max-h-40 overflow-auto font-mono text-[11px] text-ink-dim ax-panel rounded-xl px-3 py-2">
             {cyOut.length === 0 ? <div>0 rows</div>
               : cyOut.map((r, i) => <div key={i} className="py-[1px] border-b border-line/20">{r}</div>)}
           </div>

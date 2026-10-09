@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import Avatar, { type AvatarStatus } from './Avatar'
+import { displayName } from '../api'
 
 /* An agent's FACE: the avatar it authored for itself (agents/<x>/avatar.svg, mandatory since
    2026-10-09), served at /api/agents/<x>/avatar. Anyone without one — a human on a channel, a
@@ -23,7 +24,7 @@ export default function AgentFace({ name, size = 32, radius = '9999px', dim = fa
   if (status) {
     const pad = Math.max(2, Math.round(size / 16))
     return (
-      <span className="shrink-0 inline-grid place-items-center" title={title ?? name}
+      <span className="shrink-0 inline-grid place-items-center" title={title ?? displayName(name)}
         style={{ width: size, height: size, borderRadius: radius, padding: pad,
                  boxShadow: `0 0 0 ${pad}px ${RING[status]}`, opacity: status === 'dormant' ? 0.85 : 1,
                  outline: status === 'retired' ? `1px dashed ${RING.retired}` : undefined }}>
@@ -35,7 +36,7 @@ export default function AgentFace({ name, size = 32, radius = '9999px', dim = fa
   const style = { width: size, height: size, borderRadius: radius, opacity: dim ? 0.55 : 1 }
   if (!name || HUMAN.test(name) || failed) {
     return (
-      <span className="shrink-0 overflow-hidden inline-block" style={style} title={title ?? name}>
+      <span className="shrink-0 overflow-hidden inline-block" style={style} title={title ?? displayName(name)}>
         <Avatar name={name || '?'} size={size} ring={false} />
       </span>
     )
@@ -44,7 +45,7 @@ export default function AgentFace({ name, size = 32, radius = '9999px', dim = fa
     <img
       src={`/api/agents/${encodeURIComponent(name)}/avatar`}
       alt={name}
-      title={title ?? name}
+      title={title ?? displayName(name)}
       width={size}
       height={size}
       draggable={false}

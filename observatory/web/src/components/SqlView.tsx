@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ActionIcon, Button, ScrollArea, Table, Tooltip } from '@mantine/core'
+import { ScrollArea, Tooltip } from '@mantine/core'
+import { Empty, LiveDot } from '../ui/kit'
 import { api, apiPost, apiSend } from '../api'
 import type { Cell, DbList, DbSchema, QueryResult, SqlNode } from '../types'
 
 const PAGE = 200
+// a browser table past a few thousand rows freezes the tab; render this many, export carries all
+const RENDER_MAX = 2000
 
 interface Tab {
   id: number
@@ -76,23 +79,24 @@ function DbTree({
         <div key={db}>
           <button
             onClick={() => toggle(db)}
-            className="w-full flex items-center gap-1 px-2 py-1 rounded hover:bg-deck-3 text-ink-dim"
+            className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-deck-3/60 ${open === db ? 'text-ink' : 'text-ink-dim'}`}
           >
-            <span className="w-3 text-ink-mute">{open === db ? '▾' : '▸'}</span>
-            <span className="truncate">🛢 {db}</span>
+            <span className="w-3 text-ink-mute text-[10px]">{open === db ? '▾' : '▸'}</span>
+            <span className="w-2 h-2 rounded-sm bg-cyan/70 shrink-0" />
+            <span className="truncate font-mono">{db}</span>
           </button>
           {open === db &&
             schemas[db] &&
             Object.entries(schemas[db].schemas).map(([sc, tables]) => (
               <div key={sc} className="ml-3">
-                <div className="px-2 py-0.5 text-[10px] uppercase tracking-wide text-ink-mute">{sc}</div>
+                <div className="px-2.5 pt-1.5 pb-0.5 text-[10px] uppercase tracking-[0.14em] text-ink-mute">{sc}</div>
                 {tables.map((t) => (
                   <button
                     key={t.name}
                     onClick={() => onPick(db, sc, t.name)}
-                    className="w-full flex items-center gap-1 pl-4 pr-2 py-0.5 rounded hover:bg-deck-3 text-ink-mute hover:text-cyan-soft"
+                    className="w-full flex items-center gap-1.5 pl-5 pr-2 py-1 rounded-lg hover:bg-deck-3/60 text-ink-mute hover:text-ink font-mono text-[11.5px]"
                   >
-                    <span>{t.type === 'view' ? '◫' : '▤'}</span>
+                    <span className={t.type === 'view' ? 'text-cyan-soft' : 'text-ink-mute/70'}>{t.type === 'view' ? '◫' : '▤'}</span>
                     <span className="truncate">{t.name}</span>
                   </button>
                 ))}
@@ -121,14 +125,14 @@ function FileTree({
       {nodes.map((n) => (
         <div key={n.path}>
           <div
-            className="group flex items-center gap-1 px-1 py-0.5 rounded hover:bg-deck-3 text-[12px]"
+            className="group flex items-center gap-1 px-1 py-1 rounded-lg hover:bg-deck-3/60 text-[12px]"
             style={{ paddingLeft: 6 + depth * 12 }}
           >
             <button
               onClick={() => !n.dir && onOpen(n)}
               className={`flex items-center gap-1 flex-1 truncate ${n.dir ? 'text-ink-dim' : 'text-ink-mute hover:text-cyan-soft'}`}
             >
-              <span>{n.dir ? '📁' : '≡'}</span>
+              <span className={n.dir ? 'text-warn/80' : 'text-ink-mute/70'}>{n.dir ? '▸' : '≡'}</span>
               <span className="truncate">{n.name}</span>
             </button>
             <button
@@ -372,7 +376,7 @@ export default function SqlView() {
     else patch(active, { sortCol: c, sortDir: 'asc' })
   }
 
-  if (!tab) return <div className="p-4 text-sm text-ink-mute">connecting…</div>
+  if (!tab) return <div className="p-6 flex items-center gap-2 text-[13px] text-ink-mute"><LiveDot state="working" />connecting to the database…</div>
   const r = tab.result
 
   return (
@@ -392,8 +396,8 @@ export default function SqlView() {
       ) : (
         <>
           <div className="shrink-0 border-r border-line flex flex-col" style={{ width: leftW }}>
-            <div className="flex items-center justify-between px-3 py-2 border-b border-line">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-dim">Databases</span>
+            <div className="flex items-center justify-between px-3 py-2.5 border-b border-line">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-dim">Databases</span>
               <button onClick={() => setLeftHidden(true)} className="text-ink-mute hover:text-cyan-soft text-sm" title="hide">
                 ‹
               </button>
@@ -414,16 +418,17 @@ export default function SqlView() {
       {/* middle: tabs + editor + results */}
       <div className="flex-1 min-w-0 flex flex-col">
         {/* query tabs */}
-        <div className="flex items-center gap-1 px-2 pt-1.5 border-b border-line overflow-x-auto">
+        <div className="flex items-center gap-1 px-2 pt-2 border-b border-line overflow-x-auto">
           {tabs.map((t, i) => (
             <div
               key={t.id}
               onClick={() => setActive(i)}
-              className={`group flex items-center gap-1 px-2.5 py-1 rounded-t text-[12px] cursor-pointer whitespace-nowrap ${
-                i === active ? 'bg-deck-3 text-cyan-soft' : 'text-ink-mute hover:text-ink'
+              className={`group relative flex items-center gap-1.5 px-3 py-1.5 rounded-t-lg text-[12px] cursor-pointer whitespace-nowrap ${
+                i === active ? 'bg-deck/80 text-ink shadow-[inset_0_2px_0_var(--t-accent)]' : 'text-ink-mute hover:text-ink'
               }`}
             >
-              <span className="truncate max-w-[120px]">{t.filePath ? '≡ ' : ''}{t.title}</span>
+              {t.running && <LiveDot state="working" />}
+              <span className="truncate max-w-[140px]">{t.filePath ? '≡ ' : ''}{t.title}</span>
               <button
                 onClick={(e) => {
                   e.stopPropagation()
@@ -466,26 +471,30 @@ export default function SqlView() {
               onChange={(e) => patch(active, { sql: e.target.value })}
               onKeyDown={onEditorKey}
               spellCheck={false}
-              className="w-full flex-1 resize-none bg-deck px-3 py-2 font-mono text-[13px] text-ink outline-none leading-relaxed"
-              style={{ tabSize: 2 }}
+              className="w-full flex-1 resize-none bg-deck/80 px-4 py-3 font-mono text-[13px] text-ink outline-none leading-relaxed caret-[var(--t-accent)] selection:bg-cyan/25"
+              style={{ tabSize: 2, fontFamily: 'var(--font-mono)' }}
             />
           </div>
         )}
 
         {/* action bar */}
-        <div className="flex items-center gap-2 px-3 py-1.5 border-b border-line text-[12px]">
-          <Button size="compact-xs" color="cyan" variant="filled" loading={tab.running} onClick={() => runQuery(active, { limit: null })}>
-            ▶ Run
-          </Button>
+        <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-line text-[12px]">
+          <Tooltip label="⌘/Ctrl+Enter" openDelay={400}>
+            <button disabled={tab.running} onClick={() => runQuery(active, { limit: null })}
+              className="ax-action inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[12px] font-medium disabled:opacity-60">
+              {tab.running ? <LiveDot state="working" /> : '▶'} Run
+            </button>
+          </Tooltip>
           <Tooltip label="⌘/Ctrl+Shift+Enter" openDelay={400}>
-            <Button size="compact-xs" variant="light" color="cyan" onClick={() => runInNewTab(10)}>
+            <button onClick={() => runInNewTab(10)}
+              className="inline-flex items-center gap-1 px-3 py-1 rounded-lg text-[12px] border border-cyan/40 text-cyan-soft hover:bg-cyan/10 transition-colors">
               ▶ Run 10 ↗
-            </Button>
+            </button>
           </Tooltip>
           <select
             value={tab.db}
             onChange={(e) => patch(active, { db: e.target.value })}
-            className="bg-deck-3 text-ink-dim text-[11px] rounded px-1.5 py-1 border border-line outline-none"
+            className="bg-deck-3/70 text-ink-dim text-[11.5px] font-mono rounded-lg px-2 py-1 border border-line outline-none"
           >
             {dbs.map((d) => (
               <option key={d} value={d}>
@@ -493,11 +502,11 @@ export default function SqlView() {
               </option>
             ))}
           </select>
-          <div className="ml-auto flex items-center gap-1.5 text-[11px] text-ink-mute font-mono">
+          <div className="ml-auto flex items-center gap-1.5 text-[11.5px] text-ink-mute font-mono">
             {r && !r.error && (
               <>
-                <span>{r.command}</span>
-                <span>· {r.rowCount ?? 0} rows</span>
+                <span className="px-1.5 py-px rounded-full border border-good/40 text-good">{r.command}</span>
+                <span className="text-ink-dim">{(r.rowCount ?? 0).toLocaleString()} rows</span>
                 <span>· {r.elapsed_ms}ms</span>
                 {tab.count != null && <span className="text-cyan-soft">· total {tab.count}</span>}
               </>
@@ -533,60 +542,62 @@ export default function SqlView() {
           <>
         {/* results toolbar */}
         {r && !r.error && r.columns && (
-          <div className="flex items-center gap-1 px-3 py-1 border-b border-line">
-            <ActionIcon.Group>
-              <Button size="compact-xs" variant="subtle" color="gray" onClick={() => getCount(active)}>
-                Σ count
-              </Button>
-              <Button size="compact-xs" variant="subtle" color="gray" onClick={() => runQuery(active, { limit: PAGE, offset: r.rows?.length ?? 0, append: true })}>
-                ↓ fetch more
-              </Button>
-              <Button size="compact-xs" variant="subtle" color="gray" onClick={() => download(`${tab.title}.csv`, toCSV(r.columns!, r.rows ?? []))}>
-                ⤓ export
-              </Button>
-              <Button size="compact-xs" variant="subtle" color="gray" onClick={() => exportAll(active)}>
-                ⤓ export all
-              </Button>
-            </ActionIcon.Group>
+          <div className="flex flex-wrap items-center gap-1 px-3 py-1.5 border-b border-line">
+            {([
+              ['Σ count', () => getCount(active)],
+              ['↓ fetch more', () => runQuery(active, { limit: PAGE, offset: r.rows?.length ?? 0, append: true })],
+              ['⤓ export', () => download(`${tab.title}.csv`, toCSV(r.columns!, r.rows ?? []))],
+              ['⤓ export all', () => exportAll(active)],
+            ] as const).map(([label, fn]) => (
+              <button key={label} onClick={fn} style={{ fontSize: 11.5 }}
+                className="px-2.5 py-1 rounded-lg text-ink-mute hover:text-ink hover:bg-deck-3/60 transition-colors">
+                {label}
+              </button>
+            ))}
           </div>
         )}
 
         {/* results grid */}
         <div className="flex-1 min-h-0">
           {r?.error ? (
-            <div className="p-3 font-mono text-[12px] text-bad whitespace-pre-wrap">{r.error}</div>
+            <div className="m-3 p-3 rounded-xl border border-bad/40 bg-bad/10 font-mono text-[12px] text-bad whitespace-pre-wrap">{r.error}</div>
           ) : r?.columns && r.columns.length ? (
             <ScrollArea className="h-full">
-              <Table stickyHeader verticalSpacing={3} horizontalSpacing="sm" className="text-[12px]" striped highlightOnHover>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th style={{ width: 42, color: 'var(--t-mute)' }}>#</Table.Th>
+              <table className="w-full text-[12px] border-separate border-spacing-0">
+                <thead>
+                  <tr>
+                    <th className="sticky top-0 z-10 bg-deck-2/95 backdrop-blur px-3 py-2 text-left font-medium text-ink-mute border-b border-line w-[46px]">#</th>
                     {r.columns.map((c, i) => (
-                      <Table.Th key={i} onClick={() => sortBy(i)} style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                      <th key={i} onClick={() => sortBy(i)}
+                        className="sticky top-0 z-10 bg-deck-2/95 backdrop-blur px-3 py-2 text-left font-medium font-mono whitespace-nowrap cursor-pointer border-b border-line hover:text-ink">
                         <span className="text-cyan-soft">{c}</span>
                         {tab.sortCol === i && <span className="text-ink-mute"> {tab.sortDir === 'asc' ? '▲' : '▼'}</span>}
-                      </Table.Th>
+                      </th>
                     ))}
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {view.map((row, ri) => (
-                    <Table.Tr key={ri}>
-                      <Table.Td className="font-mono text-ink-mute">{ri + 1}</Table.Td>
+                  </tr>
+                </thead>
+                <tbody>
+                  {view.slice(0, RENDER_MAX).map((row, ri) => (
+                    <tr key={ri} className="hover:bg-cyan/[0.06] odd:bg-deck-3/20">
+                      <td className="px-3 py-1 font-mono text-ink-mute/70 border-b border-line/25">{ri + 1}</td>
                       {row.map((cell, ci) => (
-                        <Table.Td key={ci} className="font-mono" style={{ maxWidth: 380, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        <td key={ci} className="px-3 py-1 font-mono border-b border-line/25" style={{ maxWidth: 380, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                           {cell === null ? <span className="text-ink-mute/50 italic">NULL</span> : <span className="text-ink-dim">{cellStr(cell)}</span>}
-                        </Table.Td>
+                        </td>
                       ))}
-                    </Table.Tr>
+                    </tr>
                   ))}
-                </Table.Tbody>
-              </Table>
+                  {view.length > RENDER_MAX && (
+                    <tr><td colSpan={(r.columns?.length ?? 0) + 1} className="px-3 py-3 text-center text-[12px] text-ink-mute">
+                      showing the first {RENDER_MAX.toLocaleString()} of {view.length.toLocaleString()} rows — export for all of them
+                    </td></tr>
+                  )}
+                </tbody>
+              </table>
             </ScrollArea>
           ) : (
-            <div className="p-3 text-[12px] text-ink-mute">
-              {r ? `${r.command} — ${r.rowCount ?? 0} rows` : 'run a query — ⌘/Ctrl+Enter'}
-            </div>
+            r ? <div className="p-4 text-[12.5px] text-ink-mute font-mono">{r.command} — {r.rowCount ?? 0} rows</div>
+              : <Empty title="Ask the database anything" hint="Write SQL above and press ⌘/Ctrl+Enter — or pick a table on the left." />
           )}
         </div>
           </>
@@ -612,12 +623,12 @@ export default function SqlView() {
             className="w-1 shrink-0 cursor-col-resize hover:bg-cyan-soft/40 bg-line/40"
           />
           <div className="shrink-0 border-l border-line flex flex-col" style={{ width: rightW }}>
-            <div className="flex items-center justify-between px-3 py-2 border-b border-line">
+            <div className="flex items-center justify-between px-3 py-2.5 border-b border-line">
               <div className="flex items-center gap-1">
                 <button onClick={() => setRightHidden(true)} className="text-ink-mute hover:text-cyan-soft text-sm" title="hide">
                   ›
                 </button>
-                <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-dim">SQL files</span>
+                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-dim">SQL files</span>
               </div>
               <div className="flex gap-1">
                 <Tooltip label="save current tab" openDelay={400}>

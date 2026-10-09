@@ -124,7 +124,6 @@ body {
 @keyframes ax-scan { from { transform: translateX(-100%); } to { transform: translateX(260%); } }
 
 .ax-skel {
-  display: inline-block;
   background: linear-gradient(90deg, var(--t-panel2) 0%, color-mix(in srgb, var(--t-line2) 70%, var(--t-panel2)) 50%, var(--t-panel2) 100%);
   background-size: 200% 100%; animation: ax-shimmer 1.4s ease-in-out infinite;
 }

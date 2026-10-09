@@ -2465,7 +2465,7 @@ async def memory_graph(fresh: int = 0):
         try:
             sys.path.insert(0, str(REPO))
             from nucleus import memgraph
-            memgraph.write(memgraph.compile_graph())
+            memgraph.write_pg(memgraph.compile_graph())
         except Exception as e:
             return {"error": f"compile failed: {type(e).__name__}: {e}", "nodes": [], "edges": []}
     g = _memgraph_read()
