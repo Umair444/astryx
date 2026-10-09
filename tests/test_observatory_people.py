@@ -47,6 +47,20 @@ def main(url):
                   "(%s,'s','claude-opus-5-5',now()), (%s,'s','claude-opus-5-5',now()), "
                   "(%s,'s','claude-haiku-5-5',now() + interval '1 second')", (agent, agent, agent))
         c.execute("INSERT INTO social_person (org, id, label, direct) VALUES ('local', 'p-1', 'Test Person', true)")
+        c.execute("INSERT INTO social_person (org, id, kind, label, direct, shape) VALUES "
+                  "('local', 'p-3', 'person', 'Bare Person', false, NULL), ('local', 'p-4', 'person', 'Mutual', false, NULL), "
+                  "('local', 'g-1', 'group', 'Book club', false, NULL)")
+        c.execute("UPDATE social_person SET shape='replies fast, mornings' WHERE id='p-1'")
+        c.execute("INSERT INTO social_edge (org, src, dst, rel, weight, first_ts, last_ts, mine) VALUES "
+                  "('local','owner','p-1','dm',42,'2025-04-01','2026-10-01',20), "
+                  "('local','p-1','g-1','member-of',1,NULL,NULL,NULL), ('local','p-4','g-1','member-of',1,NULL,NULL,NULL)")
+        gid = c.execute("INSERT INTO goals (title, owner, state) VALUES ('a goal with a plan', %s, 'active') RETURNING id", (agent,)).fetchone()[0]
+        bare = c.execute("INSERT INTO goals (title, owner, state) VALUES ('a bare goal', 'seed', 'proposed') RETURNING id").fetchone()[0]
+        c.execute("INSERT INTO goals (title, owner, state, parent_id) VALUES ('a sub-goal', 'seed', 'proposed', %s)", (gid,))
+        c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES "
+                  "('abstractor-1','abstractor-2',%s,'task','refined'), ('abstractor-2','abstractor-1',%s,'revise','no'), "
+                  "('abstractor-2','abstractor-1',%s,'approve','yes now')", (f"plan-{gid}",) * 3)
+        c.execute("INSERT INTO steps (agent, kind, content, goal_id) VALUES (%s,'tool','Bash: build it',%s)", (agent, gid))
         c.execute("INSERT INTO presence (agent, surface, target, say, state) VALUES "
                   "(%s,'canvas:2','#hero','making it count up','working')", (agent,))
         c.commit()
@@ -102,6 +116,30 @@ def main(url):
         fr = cl.get("/api/memory/graph?fresh=1", headers=O).json()
         arm("the Memory view's recompile button compiles (it called a memgraph function that did not exist)",
             "compile failed" not in str(fr.get("error", "")), fr.get("error"))
+        gd = cl.get(f"/api/goals/{gid}", headers=O).json()
+        arm("a goal opens in full: sub-goals, its plan thread, each voter's LATEST verdict, its steps",
+            gd["goal"]["title"] == "a goal with a plan" and [k["title"] for k in gd["children"]] == ["a sub-goal"]
+            and gd["thread_total"] == 3 and [m["body"] for m in gd["messages"]] == ["refined", "no", "yes now"]
+            and gd["votes"] == [{"agent": "abstractor-2", "intent": "approve", "ts": gd["votes"][0]["ts"]}]
+            and [x["content"] for x in gd["steps"]] == ["Bash: build it"], gd)
+        bd = cl.get(f"/api/goals/{bare}", headers=O).json()
+        arm("a goal with nothing yet opens empty, not broken",
+            bd["children"] == [] and bd["messages"] == [] and bd["votes"] == [] and bd["steps"] == [] and bd["thread_total"] == 0, bd)
+        arm("a missing goal is 404; goal detail is owner-only",
+            cl.get("/api/goals/987654321", headers=O).status_code == 404 and cl.get(f"/api/goals/{gid}").status_code == 403)
+        pp = cl.get("/api/people/p-1/profile", headers=O).json()
+        arm("a person opens with what the org knows: persona's description, the DM history (counts, never text), "
+            "shared groups, mutuals, memory's guess and the owner's answer",
+            pp["person"]["shape"] == "replies fast, mornings" and pp["dm"]["msgs"] == 42 and pp["dm"]["mine"] == 20
+            and [g["label"] for g in pp["groups"]] == ["Book club"] and pp["groups"][0]["size"] == 2 and pp["mutuals"] == 1
+            and pp["memory_guess"]["kind"] == "colleague" and pp["your_answer"]["kind"] == "friend", pp)
+        bp = cl.get("/api/people/p-3/profile", headers=O).json()
+        arm("a person the org knows nothing about opens empty, not broken",
+            bp["dm"] is None and bp["groups"] == [] and bp["mutuals"] == 0 and bp["memory_guess"] is None and bp["your_answer"] is None, bp)
+        arm("a missing person is 404; a group is not a person; profiles are owner-only",
+            cl.get("/api/people/nope/profile", headers=O).status_code == 404
+            and cl.get("/api/people/g-1/profile", headers=O).status_code == 404
+            and cl.get("/api/people/p-1/profile").status_code == 403)
         quiet = next((n for n in real if n != agent), agent)
         q = cl.get(f"/api/agents/{quiet}/profile", headers=O).json()
         arm("a quiet agent's profile has no presence and no recent work", q.get("presence") is None and q.get("recent") == [], q.get("recent"))

@@ -1,3 +1,4 @@
+import PeopleGraph from './PeopleGraph'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ScrollArea, Textarea } from '@mantine/core'
 import { AnimatePresence, motion } from 'motion/react'
@@ -70,7 +71,6 @@ export default function MemoryView() {
   const [sel, setSel] = useState<Node | null>(null)
   const [page, setPage] = useState<{ slug: string; markdown: string } | null>(null)
   const [lens, setLens] = useState<'cortex' | 'split' | 'ontology' | 'world'>('cortex')
-  const [world, setWorld] = useState<Graph | null>(null)
   const [onto, setOnto] = useState<Graph | null>(null)
   const [classes, setClasses] = useState<Set<string>>(new Set(['semantic', 'entity', 'temporal', 'causal']))
   const [hover, setHover] = useState<string | null>(null)
@@ -103,15 +103,6 @@ export default function MemoryView() {
     api<Graph>('/memory/ontology').then(setOnto).catch(() => {})
   }, [lens, onto])
 
-  /* The WORLD lens: people, their categories, the facets that cut across them. The other
-   * three lenses are all the org describing itself — this is the only one about anyone
-   * outside it, which is why it exists. Derived from the owner's instruments; identifying
-   * values are stripped before compile, never here. */
-  useEffect(() => {
-    if (lens !== 'world' || world) return
-    api<Graph>('/memory/world').then(setWorld).catch(() => {})
-  }, [lens, world])
-
   useEffect(() => {
     if (!sel || (sel.kind !== 'page' && sel.kind !== 'brief')) { setPage(null); return }
     const slug = sel.id.split(':')[1]
@@ -119,7 +110,7 @@ export default function MemoryView() {
     api<{ slug: string; markdown: string }>(`/memory/page/${slug}`).then(setPage).catch(() => setPage(null))
   }, [sel])
 
-  const view_g = lens === 'ontology' ? onto : lens === 'world' ? world : g
+  const view_g = lens === 'ontology' ? onto : g
   const byId = useMemo(() => new Map((view_g?.nodes ?? []).map((n) => [n.id, n])), [view_g])
 
   /* Zoom must be SCOPED TO THIS CANVAS, which means preventDefault() on the wheel — and
@@ -438,24 +429,48 @@ export default function MemoryView() {
     return s
   }, [hover, sel, shownEdges])
 
+  const LENSES = [{ id: 'cortex' as const, label: 'Cortex' }, { id: 'split' as const, label: 'System 1 ↔ 2' },
+                  { id: 'ontology' as const, label: 'Ontology' }, { id: 'world' as const, label: 'People' }]
+
+  /* PEOPLE are not memory's to hold. kg is readable by every agent, so the compiler no longer
+   * mints a person into it (seed 10-09); the owner's people live in the private people graph
+   * (social_person / social_edge / astryx_social) — the same one Network → People draws. This
+   * lens shows THAT graph, owner-side, instead of an always-empty filter over kg. */
+  if (lens === 'world') {
+    return (
+      <div className="h-full flex flex-col">
+        <div className="shrink-0 px-6 pt-5 pb-3 flex flex-wrap items-start gap-4">
+          <div>
+            <div className="text-[11px] uppercase tracking-[0.18em] text-ink-mute mb-1.5">who the org knows</div>
+            <h1 className="text-[28px] font-semibold tracking-[-0.02em] leading-none ax-title">People</h1>
+            <div className="mt-2 text-[12.5px] text-ink-mute">From the private people graph — visible only to you; memory works from it, never copies it.</div>
+          </div>
+          <div className="ml-auto"><Tabs id="memlens" items={LENSES} value={lens} onChange={setLens} /></div>
+        </div>
+        <div className="flex-1 min-h-0 relative"><div className="absolute inset-0"><PeopleGraph /></div></div>
+      </div>
+    )
+  }
+
   if (err) return <div className="h-full grid place-items-center"><Empty tone="bad" title="The memory graph is unavailable" hint={err} /></div>
   if (!g) return <Recalling what="recalling what the org knows…" />
 
   if (!g.nodes.length) {
     return (
       <div className="h-full grid place-items-center">
+        <div className="flex flex-col items-center gap-6">
+        <Tabs id="memlens" items={LENSES} value={lens} onChange={setLens} />
         <Empty title="No compiled graph yet" hint={<>
           <code className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-deck-3">venv/bin/python nucleus/memgraph.py build</code>
           {g.notes?.map((n, i) => <span key={i} className="block mt-2">{n}</span>)}
         </>} />
+        </div>
       </div>
     )
   }
 
   const stale = (g.age_s ?? 0) > 48 * 3600
-  const lensLoading = (lens === 'world' && !world) || (lens === 'ontology' && !onto)
-  const LENSES = [{ id: 'cortex' as const, label: 'Cortex' }, { id: 'split' as const, label: 'System 1 ↔ 2' },
-                  { id: 'ontology' as const, label: 'Ontology' }, { id: 'world' as const, label: 'People' }]
+  const lensLoading = lens === 'ontology' && !onto
 
   /* Mobile: no canvas. Same choice NetworkView makes — a pannable 285-node SVG on a
    * phone is worse than an honest list. */
@@ -535,7 +550,7 @@ export default function MemoryView() {
       <div className="flex-1 min-h-0 flex relative">
         {lensLoading && (
           <div className="absolute inset-0 z-[5] grid place-items-center pointer-events-none">
-            <div className="flex flex-col items-center gap-3"><Orb size={54} /><span className="text-[13px] text-ink-mute">{lens === 'world' ? 'gathering the world…' : 'reading the schema…'}</span></div>
+            <div className="flex flex-col items-center gap-3"><Orb size={54} /><span className="text-[13px] text-ink-mute">reading the schema…</span></div>
           </div>
         )}
         <svg

@@ -1,7 +1,7 @@
 import PeopleConfirm from './PeopleConfirm'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, apiPost } from '../api'
-import { Empty, Orb, Panel } from '../ui/kit'
+import { Empty, Orb, Panel, Skeleton } from '../ui/kit'
 
 /* The astryx network's SOCIAL graph — the FB shape, deliberately.
  *
@@ -215,26 +215,7 @@ export default function PeopleGraph() {
           </g>
         </svg>
 
-        {sel && (
-          <Panel className="w-[280px] m-3 p-4 text-[12.5px] shrink-0 self-start">
-            <div className="flex items-start justify-between">
-              <div className="text-[15px] font-semibold text-ink">{sel.label}</div>
-              <button onClick={() => setSel(null)} className="text-ink-mute hover:text-ink px-1">✕</button>
-            </div>
-            <div className="text-[11px] text-ink-mute font-mono mt-1">{sel.org}</div>
-            <div className="mt-2 text-ink-dim">
-              {(deg.get(sel.id) ?? 0)} connection{(deg.get(sel.id) ?? 0) === 1 ? '' : 's'}
-              {sel.direct ? ' · direct thread with the owner' : ''}
-            </div>
-            {sel.who && <div className="mt-2">{sel.who}</div>}
-            {sel.shape && <div className="mt-1 text-[11.5px] text-ink-mute">{sel.shape}</div>}
-            {sel.relation && (
-              <div className="mt-3 inline-block px-2.5 py-0.5 rounded-full border border-cyan/35 bg-cyan/10 text-cyan-soft text-[11px]">
-                {sel.relation}
-              </div>
-            )}
-          </Panel>
-        )}
+        {sel && <PersonCard node={sel} degree={deg.get(sel.id) ?? 0} onClose={() => setSel(null)} onConfirm={() => setConfirming(true)} />}
       </div>
 
       {/* openCypher over the same graph — the queryable half of the FB idea. */}
@@ -257,5 +238,100 @@ export default function PeopleGraph() {
         )}
       </div>
     </div>
+  )
+}
+
+/* ------------------------------------------------------------------ one person, opened */
+type Profile = {
+  person: PNode & { confidence?: string | null }
+  dm: { msgs: number; first: string | null; last: string | null; mine: number | null } | null
+  groups: { id: string; label: string; size: number }[]
+  mutuals: number
+  memory_guess: { kind: string | null; closeness: string | null; confidence: string | null } | null
+  your_answer: { kind: string | null; closeness: string | null; skipped: boolean } | null
+}
+
+const month = (t: string | null) => (t ? new Date(t).toLocaleDateString(undefined, { month: 'short', year: 'numeric' }) : '')
+const daysAgo = (t: string | null) => {
+  if (!t) return ''
+  const d = Math.round((Date.now() - Date.parse(t)) / 86_400_000)
+  return d <= 0 ? 'today' : d === 1 ? 'yesterday' : d < 60 ? `${d} days ago` : `${Math.round(d / 30)} months ago`
+}
+
+function PersonCard({ node, degree, onClose, onConfirm }: { node: PNode; degree: number; onClose: () => void; onConfirm: () => void }) {
+  const [p, setP] = useState<Profile | null>(null)
+  const [err, setErr] = useState('')
+  useEffect(() => {
+    setP(null); setErr('')
+    if (node.kind !== 'person') return
+    api<Profile>(`/people/${encodeURIComponent(node.id)}/profile`).then(setP).catch((e) => setErr(String(e)))
+  }, [node.id, node.kind])
+
+  const label = node.label && node.label !== 'unknown' ? node.label : 'no saved name'
+  const desc = p?.person.who || p?.person.shape
+  const known = p?.your_answer && !p.your_answer.skipped ? p.your_answer : null
+  return (
+    <Panel className="w-[320px] m-3 p-4 text-[12.5px] shrink-0 self-start max-h-[calc(100%-24px)] overflow-y-auto">
+      <div className="flex items-start gap-2">
+        <div className="min-w-0">
+          <div className="text-[16px] font-semibold text-ink truncate">{label}</div>
+          <div className="text-[11px] text-ink-mute mt-0.5">
+            {node.kind === 'owner' ? 'you — the centre of this graph' : `${degree} connection${degree === 1 ? '' : 's'}${node.direct ? ' · you talk directly' : ''}`}
+          </div>
+        </div>
+        <button onClick={onClose} className="ml-auto text-ink-mute hover:text-ink px-1" aria-label="close">✕</button>
+      </div>
+
+      {node.kind === 'person' && !p && !err && <div className="mt-4 flex flex-col gap-2"><Skeleton className="h-3.5 w-full block" /><Skeleton className="h-3.5 w-4/5 block" /><Skeleton className="h-3.5 w-3/5 block" /></div>}
+      {err && <div className="mt-3 text-bad text-[12px]">{err}</div>}
+
+      {p && (
+        <div className="mt-3 flex flex-col gap-3.5">
+          {(known || p.person.relation) && (
+            <div className="flex flex-wrap gap-1.5">
+              <span className="px-2.5 py-0.5 rounded-full border border-cyan/40 bg-cyan/10 text-cyan-soft text-[11.5px]">
+                {known ? `${known.kind}${known.closeness ? ` · ${known.closeness}` : ''}` : p.person.relation}
+              </span>
+              <span className="text-[10.5px] text-ink-mute self-center">{known ? 'you said' : 'persona'}</span>
+            </div>
+          )}
+
+          <div className="text-[13px] leading-relaxed text-ink-dim">
+            {desc ? <p>{desc}</p> : null}
+            <p className={desc ? 'mt-2' : ''}>
+              {p.dm && p.dm.msgs > 0
+                ? <>You've exchanged <b className="text-ink">{p.dm.msgs.toLocaleString()}</b> message{p.dm.msgs === 1 ? '' : 's'}
+                    {p.dm.first ? <> since {month(p.dm.first)}</> : null}
+                    {p.dm.mine != null ? <> — {p.dm.mine.toLocaleString()} of them yours</> : null}
+                    {p.dm.last ? <>; last {daysAgo(p.dm.last)}</> : null}.</>
+                : node.direct ? 'You have a direct chat, but no messages are on record yet.' : 'You have no direct chat with them.'}
+              {' '}
+              {p.groups.length
+                ? <>In <b className="text-ink">{p.groups.length}</b> group{p.groups.length === 1 ? '' : 's'} with you, alongside {p.mutuals} other {p.mutuals === 1 ? 'person' : 'people'} you know.</>
+                : 'You share no groups.'}
+            </p>
+          </div>
+
+          {p.groups.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {p.groups.slice(0, 8).map((g) => (
+                <span key={g.id} className="ax-panel rounded-full px-2.5 py-0.5 text-[11px] text-ink-dim">{g.label || 'a group'} <span className="text-ink-mute font-mono">{g.size}</span></span>
+              ))}
+              {p.groups.length > 8 && <span className="text-[11px] text-ink-mute self-center">+{p.groups.length - 8}</span>}
+            </div>
+          )}
+
+          {!known && (
+            <div className="rounded-xl border border-dashed border-line px-3 py-2.5 text-[12px] text-ink-mute">
+              {p.memory_guess
+                ? <>Memory's guess: <span className="text-ink-dim">{p.memory_guess.kind}{p.memory_guess.closeness ? ` · ${p.memory_guess.closeness}` : ''}</span>
+                    {p.memory_guess.confidence ? ` (${p.memory_guess.confidence} confidence)` : ''}. </>
+                : 'The org doesn\'t know who they are to you yet. '}
+              <button onClick={onConfirm} className="text-cyan hover:underline">Tell it</button>
+            </div>
+          )}
+        </div>
+      )}
+    </Panel>
   )
 }

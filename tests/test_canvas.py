@@ -245,6 +245,22 @@ def coverage(url):
         arm("summoning brings an agent onto the crew ONCE, and it appears on the canvas at once (moving)",
             sm.status_code == 200 and crew == ["forge"] and crew2 == ["forge"] and pr == (f"canvas:{full['id']}", "moving"),
             (sm.status_code, crew, crew2, pr))
+        cid = full['id']
+        keep = cl.delete(f"{A}/canvases/{cid}/crew/{full['agent']}", headers=H)
+        nohdr = cl.delete(f"{A}/canvases/{cid}/crew/forge")
+        rm = cl.delete(f"{A}/canvases/{cid}/crew/forge", headers=H).json()
+        again = cl.delete(f"{A}/canvases/{cid}/crew/forge", headers=H).json()
+        crew3 = cl.get(f"{A}/canvases/{cid}").json().get("crew", [])
+        with psycopg_conn(url) as c:
+            pr2 = c.execute("SELECT surface, state FROM presence WHERE agent='forge'").fetchone()
+            told = c.execute("SELECT count(*) FROM messages WHERE to_agent='forge' AND body LIKE '%released from this canvas%'").fetchone()[0]
+        arm("the owner can send a summoned agent away: it leaves the crew and the canvas, and is told once",
+            rm.get("removed") is True and again.get("removed") is False and crew3 == [] and pr2 == (None, "done") and told == 1,
+            (rm, again, crew3, pr2, told))
+        arm("the keeper can't be removed; a removal without the CSRF header is refused",
+            keep.status_code == 400 and nohdr.status_code == 403, (keep.status_code, nohdr.status_code))
+        from nucleus import canvas as ncv
+        arm("a released agent can no longer publish the canvas", not ncv.may_write(full['agent'], "forge", crew3), crew3)
         arm("logout ends the session", cl.post(f"{A}/logout", headers=H).status_code == 200 and cl.get(f"{A}/me").status_code == 401)
         cl.post(f"{A}/logout", headers=H)                                          # logout: 0 rows
 

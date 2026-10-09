@@ -5,6 +5,7 @@ import { apiPost, displayName, fmtAgo, fmtTokens } from '../api'
 import { useStore } from '../store'
 import type { Goal } from '../types'
 import AgentFace from './AgentFace'
+import GoalDetail from './GoalDetail'
 import { Action, Empty, LiveDot, Panel, Skeleton, ViewHeader, useNow } from '../ui/kit'
 
 /* GOALS — what the org is pursuing, as a board that breathes: a goal with progress in the last
@@ -105,7 +106,7 @@ const ago = (t: string | null) => { const a = fmtAgo(t); return a === 'now' ? 'j
 const isMoving = (g: Goal, now: number) =>
   (g.state === 'active' || g.state === 'proposed') && !!g.last_progress && now - Date.parse(g.last_progress) < LIVE_WINDOW
 
-function GoalCard({ g, now }: { g: Goal; now: number }) {
+function GoalCard({ g, now, onOpen }: { g: Goal; now: number; onOpen: (id: number) => void }) {
   // Goal 4227: there are no budgets. A legacy goal's budget is shown only as muted HISTORY. No
   // progress bar: spent_tokens was never written (0 on every row), so a bar would read "unused"
   // where the truth is "never measured".
@@ -114,7 +115,7 @@ function GoalCard({ g, now }: { g: Goal; now: number }) {
   return (
     <motion.div layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.97 }}
       transition={{ type: 'spring', damping: 28, stiffness: 300 }}>
-      <Panel live={moving} className="p-3.5 flex flex-col gap-2.5">
+      <Panel as="button" interactive live={moving} onClick={() => onOpen(g.id)} className="w-full p-3.5 flex flex-col gap-2.5">
         <div className="text-[13.5px] font-medium text-ink leading-snug line-clamp-3">{g.title}</div>
         {g.scope_note && <div className="text-[11.5px] text-ink-mute leading-snug line-clamp-1">{g.scope_note}</div>}
         <div className="flex items-center gap-2 min-w-0">
@@ -144,7 +145,7 @@ function GoalCard({ g, now }: { g: Goal; now: number }) {
   )
 }
 
-function Board({ cols, byState, now }: { cols: Col[]; byState: Map<string, Goal[]>; now: number }) {
+function Board({ cols, byState, now, onOpen }: { cols: Col[]; byState: Map<string, Goal[]>; now: number; onOpen: (id: number) => void }) {
   return (
     <div className="-mx-5 sm:-mx-8 px-5 sm:px-8 overflow-x-auto pb-2 snap-x snap-mandatory md:snap-none">
       <div className="grid gap-4 items-start" style={{ gridTemplateColumns: `repeat(${cols.length}, minmax(264px, 1fr))` }}>
@@ -160,7 +161,7 @@ function Board({ cols, byState, now }: { cols: Col[]; byState: Map<string, Goal[
               </div>
               <div className="flex flex-col gap-3">
                 <AnimatePresence initial={false}>
-                  {items.map((g) => <GoalCard key={g.id} g={g} now={now} />)}
+                  {items.map((g) => <GoalCard key={g.id} g={g} now={now} onOpen={onOpen} />)}
                 </AnimatePresence>
                 {!items.length && (
                   <div className="rounded-2xl border border-dashed border-line px-3 py-6 text-center text-[12px] text-ink-mute">nothing here yet</div>
@@ -177,6 +178,7 @@ function Board({ cols, byState, now }: { cols: Col[]; byState: Map<string, Goal[
 export default function GoalsView() {
   const { goals } = useStore()
   const now = useNow(30_000)
+  const [open, setOpen] = useState<number | null>(null)
   // the store can't tell "loading" from "none": give the first fetch a moment before saying empty
   const [settled, setSettled] = useState(false)
   useEffect(() => { const t = setTimeout(() => setSettled(true), 2500); return () => clearTimeout(t) }, [])
@@ -224,14 +226,15 @@ export default function GoalsView() {
               <div key={i} className="flex flex-col gap-3"><Skeleton className="h-5 w-24" /><Skeleton className="h-28 rounded-2xl" /><Skeleton className="h-20 rounded-2xl" /></div>
             ))}</div>)}
 
-        {goals.length > 0 && <Board cols={MOTION} byState={byState} now={now} />}
+        {goals.length > 0 && <Board cols={MOTION} byState={byState} now={now} onOpen={setOpen} />}
         {goals.length > 0 && settled_.length > 0 && (
           <div className="mt-10">
             <div className="text-[11px] uppercase tracking-[0.18em] text-ink-mute mb-4">settled</div>
-            <Board cols={settled_} byState={byState} now={now} />
+            <Board cols={settled_} byState={byState} now={now} onOpen={setOpen} />
           </div>
         )}
       </div>
+      {open != null && <GoalDetail id={open} onClose={() => setOpen(null)} onOpen={setOpen} />}
     </ScrollArea>
   )
 }

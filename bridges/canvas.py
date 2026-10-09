@@ -772,6 +772,31 @@ async def canvas_ask(cid: int, body: Ask, request: Request):
     return {"ok": True}
 
 
+@app.delete("/api/canvases/{cid}/crew/{agent}")
+async def crew_remove(cid: int, agent: str, request: Request):
+    """Send a summoned agent away. The crew is also the write list (nucleus/canvas.py may_write), so
+    this revokes its right to publish; its presence leaves the canvas and it is told to stop. The
+    keeper stays — a canvas always has one."""
+    v = V(request)
+    c = await _canvas_for(v, cid)
+    if not c:
+        return deny(404, "no such canvas")
+    if c["user_name"] != v.name and not v.owner:
+        return deny(403, "only the canvas's owner can change its crew")
+    agent = agent.strip().lower()
+    if agent == c["agent"]:
+        return deny(400, f"{agent} keeps this canvas and can't be removed")
+    gone = await pool.fetchval("UPDATE canvases SET crew = array_remove(crew, $2) "
+                               "WHERE id=$1 AND $2 = ANY(crew) RETURNING id", cid, agent)
+    await sync(pres.leave, agent, f"canvas:{cid}", f"left canvas #{cid}")
+    if gone:
+        await _say(v, f"cv:canvas-{cid}", agent,
+                   f"[canvas #{cid} \"{c['title']}\"] You've been released from this canvas by its owner. "
+                   f"Stop any work on it; you can no longer publish it.",
+                   meta={"canvas": cid, "released": True})
+    return {"ok": True, "removed": bool(gone)}
+
+
 class FrameError(BaseModel):
     version: int
     message: str

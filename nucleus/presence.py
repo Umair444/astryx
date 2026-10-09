@@ -65,6 +65,14 @@ def done(conn, agent: str, say: str | None = None) -> None:
         (agent, (say or None) and say[:SAY_MAX]))
 
 
+def leave(conn, agent: str, surface: str, say: str | None = None) -> None:
+    """Sent away from a surface (e.g. removed from a canvas crew): its attention is no longer THERE.
+    Only touches the row if the agent is still on that surface — it may already be elsewhere."""
+    conn.execute(
+        "UPDATE presence SET surface=NULL, target=NULL, state='done', say=coalesce(%s, say), updated_at=now() "
+        "WHERE agent=%s AND surface=%s", ((say or None) and say[:SAY_MAX], agent, surface))
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="presence.py", description="where an agent's attention is")
     sub = p.add_subparsers(dest="cmd", required=True)

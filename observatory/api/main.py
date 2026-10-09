@@ -542,6 +542,31 @@ async def goals():
     return [goal(r) for r in rows]
 
 
+@app.get("/api/goals/{gid}")
+async def goal_detail(gid: int):
+    """One goal, in full: the goal row, its sub-goals, its plan thread (plan-<id>, where the
+    abstractors refine and vote), each abstractor's latest verdict, and the recent steps tagged to
+    it. Owner-only by the privacy gate (not a PUBLIC_PATH)."""
+    g = await pool.fetchrow("SELECT * FROM goals WHERE id=$1", gid)
+    if not g:
+        return Response(status_code=404)
+    thread = f"plan-{gid}"
+    kids = await pool.fetch("SELECT * FROM goals WHERE parent_id=$1 ORDER BY id", gid)
+    msgs = await pool.fetch(
+        "SELECT * FROM (SELECT * FROM messages WHERE thread=$1 ORDER BY id DESC LIMIT 60) t ORDER BY id", thread)
+    total = await pool.fetchval("SELECT count(*) FROM messages WHERE thread=$1", thread)
+    votes = await pool.fetch(
+        "SELECT DISTINCT ON (from_agent) from_agent, intent, ts FROM messages "
+        "WHERE thread=$1 AND intent IN ('approve', 'revise') ORDER BY from_agent, id DESC", thread)
+    steps = await pool.fetch("SELECT * FROM steps WHERE goal_id=$1 ORDER BY id DESC LIMIT 25", gid)
+    return {"goal": {**goal(g), "done_at": g["done_at"].isoformat() if g["done_at"] else None,
+                     "funded_by": g["funded_by"]},
+            "children": [goal(k) for k in kids],
+            "thread": thread, "thread_total": total, "messages": [msg(m) for m in msgs],
+            "votes": [{"agent": v["from_agent"], "intent": v["intent"], "ts": v["ts"].isoformat()} for v in votes],
+            "steps": [step(x) for x in steps]}
+
+
 #  BILLABLE, NOT RAW. steps.tokens_in / turns.tokens_in count cache reads at face value and
 #  overstate real cost ~7x (this org runs ~96% cache-read at 0.1x). The honest number is
 #  billable_equiv_in, written per turn in raw_payload.usage (hooks/step.py). Turns before the
@@ -1264,6 +1289,41 @@ def _jsonl(path: Path) -> list[dict]:
         return [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
     except (OSError, json.JSONDecodeError):
         return []
+
+
+@app.get("/api/people/{pid}/profile")
+async def person_profile(pid: str, request: Request):
+    """Everything the org knows about ONE person, for the owner's eyes: the node (and persona's
+    description where it wrote one), the owner's direct-message history with them (counts and
+    dates, never text), the groups they share, how many people they share them with, memory's
+    private guess and the owner's own answer. Owner-only twice (the gate, and here)."""
+    if not is_owner(request):
+        return Response(status_code=403)
+    p = await pool.fetchrow("SELECT org, id, kind, label, direct, relation, who, shape, confidence "
+                            "FROM social_person WHERE id=$1 AND kind='person'", pid)
+    if not p:
+        return Response(status_code=404)
+    dm = await pool.fetchrow("SELECT weight, first_ts, last_ts, mine FROM social_edge "
+                             "WHERE org=$1 AND dst=$2 AND rel='dm'", p["org"], pid)
+    groups = await pool.fetch(
+        "SELECT g.id, g.label, (SELECT count(*) FROM social_edge m WHERE m.org=e.org AND m.dst=e.dst "
+        "AND m.rel='member-of') AS size FROM social_edge e JOIN social_person g ON g.org=e.org AND g.id=e.dst "
+        "WHERE e.org=$1 AND e.src=$2 AND e.rel='member-of' ORDER BY size DESC", p["org"], pid)
+    mutuals = await pool.fetchval(
+        "SELECT count(DISTINCT b.src) FROM social_edge a JOIN social_edge b ON a.org=b.org AND a.dst=b.dst "
+        "AND b.src<>a.src WHERE a.org=$1 AND a.src=$2 AND a.rel='member-of' AND b.rel='member-of'", p["org"], pid)
+    ask = next((a for a in reversed(_jsonl(_PEOPLE_DIR / "asks.jsonl")) if a.get("pid") == pid), None)
+    ans = next((a for a in reversed(_jsonl(_PEOPLE_DIR / "answers.jsonl")) if a.get("pid") == pid), None)
+    iso = lambda t: t.isoformat() if t else None
+    return {"person": dict(p),
+            "dm": {"msgs": dm["weight"], "first": iso(dm["first_ts"]), "last": iso(dm["last_ts"]),
+                   "mine": dm["mine"]} if dm else None,
+            "groups": [{"id": g["id"], "label": g["label"], "size": g["size"]} for g in groups],
+            "mutuals": mutuals,
+            "memory_guess": {"kind": ask.get("candidate_kind"), "closeness": ask.get("closeness"),
+                             "confidence": ask.get("confidence")} if ask else None,
+            "your_answer": {"kind": ans.get("kind"), "closeness": ans.get("closeness"),
+                            "skipped": bool(ans.get("skipped"))} if ans else None}
 
 
 @app.get("/api/people/asks")
