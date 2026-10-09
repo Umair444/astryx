@@ -189,7 +189,8 @@ async function handleTool(name, a) {
     // A name nothing consumes would sit pending forever behind an "ok" (two residents addressed "a3" on
     // 2026-10-09). Refuse it HERE, in the sender's turn, with the canonical name (nucleus/address.py).
     const { checkAddress } = await import('./address.mjs')
-    const { note } = toOrg === 'local' ? await checkAddress(a.to) : { note: '' }
+    // toAgent, not a.to: judge the EXACT value the INSERT writes below (a3 #38028 A1, parity)
+    const { note } = toOrg === 'local' ? await checkAddress(toAgent) : { note: '' }
     const thread = a.thread || `t-${Date.now().toString(36)}`
     const ins = await pool.query(
       `INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, intent, body)

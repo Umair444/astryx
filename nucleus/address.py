@@ -17,6 +17,8 @@ WHAT IS ADDRESSABLE (to_org = local):
     has no consumer saying so, or a consumer delivers a class this list does not admit.
 A name with '@<org>' for a non-local org is not judged here: the gateway owns federation, and it
 re-addresses the RESERVED_ORGS surfaces (orgname.py) itself.
+BOUNDARY: a surface is admitted by SHAPE (wa-<anything>), so a mistyped chat id still passes and sits
+pending; only the bridges know which ids route. Its detection is outbound_stuck (the pending-age watcher).
 
 CLI: address.py <to>  → exit 0 (addressable, prints "ok") · exit 2 (refused, prints the reason)
 """
@@ -48,7 +50,7 @@ def surface_of(name: str) -> str | None:
 def suggest(name: str, roster: list[str]) -> list[str]:
     """Canonical names the sender probably meant. A nickname keeps the first letter and the trailing
     number ("a3" → abstractor-3); a typo is close by edit distance ("stewrd" → steward)."""
-    low = name.lower()
+    low = name.strip().lower()
     out = []
     s = re.match(r"^(wa|tg|dc|cv|canvas)[:_.](.+)$", low)   # a surface spelled with the wrong separator
     if s and surface_of(f"{s.group(1)}-{s.group(2)}"):
@@ -62,8 +64,10 @@ def suggest(name: str, roster: list[str]) -> list[str]:
 
 def check(to: str, agents_dir: Path = charter.AGENTS) -> tuple[bool, str]:
     """(addressable, message). Never raises on a bad name; a broken agents/ tree raises (the caller decides)."""
-    to = str(to).strip()
-    name, _, org = to.partition("@")
+    # NEVER normalize here (a3 #38028 A1): the value judged must be byte-identical to the to_agent that is
+    # WRITTEN. A strip made "seed " pass while server.mjs inserted 'seed ', which no consumer reads. No
+    # roster name or surface class contains whitespace, so " seed" is simply refused, suggesting seed.
+    name, _, org = str(to).partition("@")
     if org and org != "local":
         return True, "ok"                                   # federation: the gateway's to judge
     if not name:

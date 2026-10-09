@@ -16,7 +16,8 @@ server.mjs calls before it writes a row). seed #37905's arms, plus the consumer 
   C. the JS seam, executed under node: a refusal THROWS with the suggestion (isError for the sender);
      a surface resolves; an unevaluable check ALLOWS with a visible note; a just-added charter passes
      on the next call (each call is a fresh python). No node → ○ NOT SEARCHED, exit 77 (partial).
-  D. server.mjs's send awaits checkAddress BEFORE its INSERT, for local recipients only.
+  D. server.mjs's send awaits checkAddress BEFORE its INSERT, for local recipients only, on the SAME
+     identifier it writes as to_agent (parity: the value judged is the value written, a3 #38028).
 Exit 0 pass · 1 fail · 77 partial (C not searched).
 """
 import json
@@ -73,6 +74,10 @@ try:
     check("name@<peer org> is the gateway's to judge → passes", address.check("anyone@peer.example", AG)[0])
     check("name@local is judged here", address.check("seed@local", AG)[0] and not address.check("a3@local", AG)[0])
     check("empty is refused", not address.check("", AG)[0])
+    for to in ("seed ", " seed", "seed\n", "abstractor-3 @local"):     # a3 #38028 A1: never normalized
+        ok, msg = address.check(to, AG)
+        check(f"whitespace is not normalized away: {to!r} is refused, suggesting the real name",
+              not ok and ("seed" in msg or "abstractor-3" in msg), msg)
 
     print("\nB. surface classes ↔ the consumers that deliver them:")
     for cls, rx, consumer, pred in address.SURFACES:
@@ -102,6 +107,7 @@ try:
               "const o = { py: %s, addr: %s };\n"
               "const r = {};\n"
               "try { await checkAddress('a3', o); r.a3 = 'resolved' } catch (e) { r.a3 = 'threw: ' + e.message }\n"
+              "try { await checkAddress('seed ', o); r.ws = 'resolved' } catch (e) { r.ws = 'threw' }\n"
               "r.owner = await checkAddress('owner', o);\n"
               "r.broken = await checkAddress('a3', { py: '/nonexistent/python', addr: o.addr });\n"
               "try { await checkAddress('newcomer', o); r.before = 'resolved' } catch (e) { r.before = 'threw' }\n"
@@ -120,6 +126,7 @@ try:
             check("a refusal THROWS with the suggestion (the sender's isError)",
                   r["a3"].startswith("threw:") and "did you mean abstractor-3?" in r["a3"], r["a3"])
             check("a surface resolves with no note", r["owner"] == {"ok": True, "note": ""}, str(r["owner"]))
+            check("'seed ' THROWS through the seam too (nothing normalizes it on the way)", r["ws"] == "threw", r["ws"])
             check("an unevaluable check ALLOWS, with a visible note (never mutes the org)",
                   r["broken"]["ok"] and "address unchecked" in r["broken"]["note"], str(r["broken"]))
             check("a charter added mid-session: refused before, passes after, same ear",
@@ -131,6 +138,15 @@ try:
     check("send awaits checkAddress before its INSERT",
           "await checkAddress(" in send and send.index("await checkAddress(") < send.index("INSERT INTO messages"))
     check("...only for local recipients (federation stays the gateway's)", "toOrg === 'local' ? await checkAddress" in send)
+    # PARITY (a3 #38028): the value checked is byte-identical to the to_agent the INSERT writes. Both must be
+    # the SAME identifier, bound once from the split and never reassigned in between.
+    arg = re.search(r"await checkAddress\((\w+)\)", send)
+    ins = re.search(r"INSERT INTO messages \(from_agent, from_org, to_agent[^`]*`,\s*\[AGENT, (\w+),", send)
+    between = send[send.index("await checkAddress("):send.index("INSERT INTO messages")]
+    check("parity: send checks the exact identifier it INSERTs as to_agent, unreassigned in between",
+          arg and ins and arg.group(1) == ins.group(1)
+          and not re.search(rf"\b{arg.group(1)}\s*=[^=]", between),
+          f"checked={arg and arg.group(1)} inserted={ins and ins.group(1)}")
 finally:
     shutil.rmtree(tmp, ignore_errors=True)
 
