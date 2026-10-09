@@ -251,8 +251,10 @@ export function CanvasView({ id }: { id: number }) {
               </div>
             )}
             {me.owner && c?.tier === 'org' && <IconBtn title="Share" onClick={() => setShare(true)}>{I.share()}</IconBtn>}
-            <IconBtn title="Full screen" onClick={() => stage.current?.requestFullscreen?.()}>{I.expand()}</IconBtn>
-            {owns && <IconBtn title="Archive" onClick={archive}>{I.archive()}</IconBtn>}
+            <span className="hidden sm:contents">
+              <IconBtn title="Full screen" onClick={() => stage.current?.requestFullscreen?.()}>{I.expand()}</IconBtn>
+              {owns && <IconBtn title="Archive" onClick={archive}>{I.archive()}</IconBtn>}
+            </span>
             <IconBtn title="Conversation" onClick={() => setSide(s => !s)} on={side}>{I.side()}</IconBtn>
           </div>
         </header>
@@ -351,18 +353,21 @@ function PresenceLayer({ crew, presence, bubble, surface, rects }: {
         const b = bubble[agent] && now - bubble[agent].at < BUBBLE_MS ? bubble[agent].line : null
         // self-healing: "working" with no step for 3 minutes has settled, whatever the row says
         const quiet = now - Math.max(Date.parse(p?.updated_at ?? '0'), bubble[agent]?.at ?? 0) > 3 * 60 * 1000
-        const state = !live ? 'idle' : (p.state === 'working' || p.state === 'moving') && quiet ? 'done' : p.state
+        const settled = !live ? 'idle' : (p.state === 'working' || p.state === 'moving') && quiet ? 'done' : p.state
+        const doneAt = Math.max(Date.parse(p?.updated_at ?? '0'), bubble[agent]?.at ?? 0)
+        const state = settled === 'done' && now - doneAt > 45 * 1000 ? 'idle' : settled
         const rect = live && p.target ? rects[p.target] : null
         const say = state === 'idle' ? null : (b && state !== 'done' ? b : p?.say)
         let x: number, y: number, s = 44
         if (rect && state !== 'idle') {
           x = Math.min(Math.max(rect.x + rect.w - 22, 8), size.w - 52); y = Math.min(Math.max(rect.y - 22, 8), size.h - 52)
+          if (x > size.w - 300) x = Math.min(x, size.w - 52)
         } else if (state === 'moving' || state === 'working' || state === 'done') {
           const i = roaming++
           x = size.w * (0.3 + 0.18 * i) + Math.sin(now / 2400 + i) * 24; y = 72 + Math.cos(now / 3100 + i) * 14
         } else {
           const i = benched++
-          s = 34; x = 14 + i * 40; y = size.h - 50
+          s = 34; x = 14 + i * 40; y = size.h - 112          // the bench sits just above the ask bar
         }
         return (
           <div key={agent}>
@@ -376,7 +381,7 @@ function PresenceLayer({ crew, presence, bubble, surface, rects }: {
                 </motion.div>
               )}
             </AnimatePresence>
-            <motion.div className="absolute flex items-start gap-2" initial={false}
+            <motion.div className={`absolute flex items-start gap-2 ${x > size.w - 300 ? 'flex-row-reverse' : ''}`} initial={false}
               animate={{ x, y }} transition={{ type: 'spring', damping: 18, stiffness: 90, mass: 1.1 }}>
               <motion.div animate={state === 'working' || state === 'moving' ? { y: [0, -5, 0], rotate: [0, -3, 3, 0] } : { y: 0, rotate: 0 }}
                 transition={{ duration: 2.2, repeat: state === 'working' || state === 'moving' ? Infinity : 0 }}
@@ -391,7 +396,7 @@ function PresenceLayer({ crew, presence, bubble, surface, rects }: {
               <AnimatePresence>
                 {state !== 'idle' && (
                   <motion.div initial={{ opacity: 0, scale: .9, x: -6 }} animate={{ opacity: 1, scale: 1, x: 0 }} exit={{ opacity: 0, scale: .9 }}
-                    className="solid rounded-2xl rounded-tl-md px-3 py-1.5 shadow-xl shadow-black/20 max-w-[260px]">
+                    className="solid rounded-2xl rounded-tl-md px-3 py-1.5 shadow-xl shadow-black/20" style={{ maxWidth: Math.min(260, size.w - 80) }}>
                     <div className="text-[11px] font-semibold text-violet leading-tight">{agent}</div>
                     {say && <div className={`text-[12px] leading-snug ${b && state !== 'done' ? 'font-mono shimmer' : 'text-fg-dim'} line-clamp-2`}>{say}</div>}
                   </motion.div>
