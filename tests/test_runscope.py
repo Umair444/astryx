@@ -183,6 +183,10 @@ def main():
         check("F1: a REUSED pid (alive, but started after the role's epoch) is not the creator: reaped",
               f"{os.getpid()}x1000" in orph and not role_exists(reused), str(sorted(orph)))
         nolock.close()
+        again = nolock.close()                                      # a second close of a torn-down scope
+        check("teardown is IDEMPOTENT: closing an already torn-down scope drops nothing and reports no leak",
+              again["dropped"] == [] and not again["leaked"] and not again["role_left"] and not again["errors"],
+              str(again))
 
         # ── refusal: a lockfile is data ──────────────────────────────────────────────────────────────────
         victim = rs.RunScope(dsn, root=base).open()                  # a real role that must SURVIVE

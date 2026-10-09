@@ -144,6 +144,17 @@
    "branch_check sandbox: the boundary holds from inside, every probe falsifiable",
    "runscope: teardown by ownership, stale sweep, foreign scopes refused"
   ],
+  "nucleus/runscope.py::_drop_owned\u001fselect 1 from pg_roles where rolname = ?": [
+   "branch_check base: prod restored into a run-owned base",
+   "branch_check prep: hardening precondition, template, repo, estate, env",
+   "branch_check sandbox: the boundary holds from inside, every probe falsifiable",
+   "branch_check: differential verdict, prod witness, clean refusal",
+   "runscope: teardown by ownership, stale sweep, foreign scopes refused"
+  ],
+  "nucleus/runscope.py::orphan_roles\u001fselect rolname from pg_roles where rolname like 'bc\\_%'": [
+   "branch_check: differential verdict, prod witness, clean refusal",
+   "runscope: teardown by ownership, stale sweep, foreign scopes refused"
+  ],
   "nucleus/secret_sweep.py::sweep_turns\u001fselect raw_payload, input_prompt from turns where id=?": [
    "at-rest secret sweep redacts without corrupting (5497 S2)"
   ],
@@ -341,7 +352,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 275,
+  "debt_rows": 277,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -887,6 +898,18 @@
    "debt": "EXECUTED",
    "reason": "plan-4918 D1: the run role gets AGE's session preload only where the server offers AGE (a missing preload library fails every connection). a pg_catalog read, so RESPONSIVE is unreachable by the judge's relation rule; pinned by runscope R9 and the arm 'the role preloads AGE exactly when the server offers it'.",
    "tk": "sha256t:766e4bbf18714a244390f9e5c9a1eb18e2c56b63ef724c0f6591215e34cdc4f6"
+  },
+  "nucleus/runscope.py::_drop_owned\u001fselect 1 from pg_roles where rolname = ?": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "a2 F1: teardown-by-ownership's 'is the role gone' read, shared by teardown() and the orphan sweep. a pg_catalog read, so RESPONSIVE is unreachable by the judge's relation rule (it reads 1 row only when a DROP ROLE failed); pinned by the teardown and F1 arms.",
+   "tk": "sha256t:755ebfa6d16e9722a913bb5fd789b621ababa8ded98f59b20da19e3e8a99c614"
+  },
+  "nucleus/runscope.py::orphan_roles\u001fselect rolname from pg_roles where rolname like 'bc\\_%'": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "a2 F1: the stale sweep's orphan source (run roles read from postgres, since a reboot wipes the lockfiles). a pg_catalog read, so RESPONSIVE is unreachable by the judge's relation rule; pinned by runscope R11/R12 and the F1 arms (crashed run reaped, live run kept, reused pid reaped).",
+   "tk": "sha256t:dbd0b463138c90e51116c81c062828070777c67a588f1256c06dd80cdc35e9af"
   },
   "nucleus/secret_sweep.py::sweep_turns\u001fselect raw_payload, input_prompt from turns where id=?": {
    "admitted": "2026-09-30",
