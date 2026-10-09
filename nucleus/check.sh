@@ -392,6 +392,7 @@ run "A2A card canonicalisation (JCS)" "$PY" tests/test_card_canon.py
 # heat <= flux, theil arms both ways, archived rollup self-consistent with its parts.
 run "the org economy is honest"       "$PY" tests/test_econ.py
 run "shed reads no value (4227 S1a)"   "$PY" tests/test_shed_s1a.py
+# Mutants: tests/mutants_secretset.py (the hand mutations from the plan-5497 build, committed).
 run "secret set + turn writer redaction (5497 S0+S1a)" "$PY" tests/test_secretset.py
 run "secret guard keeps holders out of context (5497 S1b)" "$PY" tests/test_secret_guard.py
 run "db password rotation leaks nothing (5497 S3b BC-1)" "$PY" tests/test_rotate_db_password.py
