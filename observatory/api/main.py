@@ -1516,6 +1516,14 @@ async def people_answer(body: PeopleAnswer, request: Request):
     with os.fdopen(fd, "a") as out:
         out.write(json.dumps(row) + "\n")
     n = len(_jsonl(f))
+    if not body.skip:
+        # ONE authority (a2 #38791 B1): the owner's answer is promoted straight into social_relation,
+        # outranking any model guess (confidence='owner'); answers.jsonl stays as the append-only record.
+        await pool.execute(
+            "INSERT INTO social_relation (org, pid, kind, closeness, confidence, updated_at) "
+            "VALUES (COALESCE((SELECT org FROM social_person WHERE id=$1 LIMIT 1), 'local'), $1, $2, $3, 'owner', now()) "
+            "ON CONFLICT (org, pid) DO UPDATE SET kind=EXCLUDED.kind, closeness=EXCLUDED.closeness, "
+            "confidence='owner', updated_at=now()", body.pid, body.kind, body.closeness)
     await pool.execute(
         "INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES "
         "('owner', 'memory', 't-memory-people', 'receipt', $1)",

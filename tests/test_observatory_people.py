@@ -123,6 +123,10 @@ def main(url):
             notes = [r[0] for r in c.execute("SELECT body FROM messages WHERE to_agent='memory'").fetchall()]
         arm("answers land privately (one per pid) and the ask closes",
             ok.get("answered") == 1 and left["asks"] == [] and [l["pid"] for l in lines] == ["p-1", "p-2"] and lines[1]["skipped"])
+        with psycopg.connect(url) as c:
+            rel = c.execute("SELECT pid, kind, closeness, confidence FROM social_relation ORDER BY pid").fetchall()
+        arm("an answer is promoted into social_relation as the owner's (one authority); a skip writes nothing",
+            rel == [("p-1", "friend", "close", "owner")], rel)
         arm("memory is told only a COUNT on the wire — no pid, no name, no relation",
             len(notes) == 2 and not any(("p-1" in n or "friend" in n) for n in notes), notes)
         fr = cl.get("/api/memory/graph?fresh=1", headers=O).json()

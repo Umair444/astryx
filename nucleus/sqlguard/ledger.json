@@ -321,6 +321,9 @@
   "observatory/api/main.py::goal_detail\u001fselect distinct on (from_agent) from_agent, intent, ts from messages where thread=? and intent in ('approve', 'revise') order by from_agent, id desc": [
    "observatory: agents as people"
   ],
+  "observatory/api/main.py::people_answer\u001finsert into social_relation (org, pid, kind, closeness, confidence, updated_at) values (coalesce((select org from social_person where id=? limit 1), 'local'), ?, ?, ?, 'owner', now()) on conflict (org, pid) do update set kind=excluded.kind, closeness=excluded.closeness, confidence='owner', updated_at=now()": [
+   "observatory: agents as people"
+  ],
   "observatory/api/main.py::person_profile\u001fselect count(distinct b.src) from social_edge a join social_edge b on a.org=b.org and a.dst=b.dst and b.src<>a.src where a.org=? and a.src=? and a.rel='member-of' and b.rel='member-of'": [
    "observatory: agents as people"
   ],
@@ -506,7 +509,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 309,
+  "debt_rows": 310,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -1625,6 +1628,12 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:a3ffd1d8865f4fd6ad89dd1011fab3f5b1c91d7756ce0c1bb12db2a21be31ece"
+  },
+  "observatory/api/main.py::people_answer\u001finsert into social_relation (org, pid, kind, closeness, confidence, updated_at) values (coalesce((select org from social_person where id=? limit 1), 'local'), ?, ?, ?, 'owner', now()) on conflict (org, pid) do update set kind=excluded.kind, closeness=excluded.closeness, confidence='owner', updated_at=now()": {
+   "admitted": "2026-10-09",
+   "debt": "EXECUTED",
+   "reason": "seed 10-09 people_answer promotes the owner's answer into social_relation (a2 #38791 B1): an INSERT \u2026 ON CONFLICT DO UPDATE always affects exactly one row (insert or update; both observed by tests/test_observatory_people.py), so a 0-row arm does not exist; asyncpg also caps it at FIXTURE-DDL.",
+   "tk": "sha256t:f9c72528fa0b53735c7fdb136df735f20a5b169b6bcad8c2a78e5edb0f4c4e69"
   },
   "observatory/api/main.py::person_profile\u001fselect count(distinct b.src) from social_edge a join social_edge b on a.org=b.org and a.dst=b.dst and b.src<>a.src where a.org=? and a.src=? and a.rel='member-of' and b.rel='member-of'": {
    "admitted": "2026-10-09",
