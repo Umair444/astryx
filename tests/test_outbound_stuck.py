@@ -239,6 +239,40 @@ def test_unknown_recipient_render_never_says_restart():
     assert "DEAF RECIPIENT" not in out and "kill-session" not in out, out
 
 
+def _run_with_roster(roster):
+    """The real entrypoint on one 30h-pending row to a REAL resident, with roster_of_type forced."""
+    import types
+    import nucleus.charter as ch
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    rows = [{"id": 901, "ts": _dt.now(_tz.utc) - _td(hours=30), "to_agent": "abstractor-3",
+             "to_org": "local", "status": "pending", "from_agent": "seed", "external_handle": False,
+             "bridge_delivered": False, "awaiting_peer_pickup": False, "last_pickup": None}]
+    real = ch.roster_of_type
+    ch.roster_of_type = lambda kind, *a, **k: list(roster)
+    try:
+        return _MOD["outbound_stuck"](types.SimpleNamespace(state={}, sql=lambda q, p=(): rows)) or ""
+    finally:
+        ch.roster_of_type = real
+
+
+def test_empty_roster_is_unread_so_a_real_resident_stays_deaf():
+    """a4 #35869: a checkout without the identity repo reads an EMPTY roster (it does not raise). That
+    must fall back to DEAF — never hide a real deaf resident behind 'DO NOT restart anything'."""
+    out = _run_with_roster([])
+    assert "DEAF RECIPIENT" in out and "NO SUCH RESIDENT" not in out, out
+
+
+def test_roster_without_seed_is_not_this_orgs_roster():
+    out = _run_with_roster(["abstractor-1", "forge"])          # plausible-looking, but no seed
+    assert "DEAF RECIPIENT" in out and "NO SUCH RESIDENT" not in out, out
+
+
+def test_real_roster_with_the_resident_is_deaf_and_without_is_no_such():
+    assert "DEAF RECIPIENT" in _run_with_roster(["seed", "abstractor-3"])
+    out = _run_with_roster(["seed", "forge"])                  # the org's roster, recipient absent
+    assert "NO SUCH RESIDENT" in out and "2 resident(s)" in out, out
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
