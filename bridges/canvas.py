@@ -678,6 +678,13 @@ async def canvas_render(cid: int, request: Request, v: int = 0, theme: str = "da
     if not c:
         return deny(404, "no such canvas")
     ver = v or c["ver"]
+    viewer = V(request)
+    if not viewer.owner:
+        # THE VIEW GATE (steward, a3 #35598): a guest is served only content steward's pii_canvas sweep
+        # has CLEARED. Publishing to an already-shared canvas would otherwise reach the guest at once.
+        blocked = await sync(cv.view_blockers, cid, ver)
+        if blocked:
+            return {"version": ver, "html": None, "withheld": blocked}
     row = await pool.fetchrow("SELECT html FROM canvas_versions WHERE canvas_id=$1 AND version=$2", cid, ver)
     if not row:
         return {"version": 0, "html": None}
@@ -686,8 +693,16 @@ async def canvas_render(cid: int, request: Request, v: int = 0, theme: str = "da
 
 @app.get("/api/canvases/{cid}/data")
 async def canvas_data(cid: int, request: Request, key: str | None = None):
-    if not await _canvas_for(V(request), cid):
+    viewer = V(request)
+    if not await _canvas_for(viewer, cid):
         return deny(404, "no such canvas")
+    if not viewer.owner:
+        # the same view gate, for live values: all-or-nothing, the page simply reads no data
+        blocked = await sync(cv.data_blockers, cid)
+        if blocked:
+            body = {"key": key, "value": None} if key is not None else {}
+            why = "; ".join(blocked).replace("\u2014", "-").encode("ascii", "replace").decode()[:500]
+            return JSONResponse(body, headers={"x-astryx-withheld": why})   # headers are latin-1 only
     if key is not None:
         row = await pool.fetchrow("SELECT value FROM canvas_data WHERE canvas_id=$1 AND key=$2", cid, key)
         return {"key": key, "value": json.loads(row["value"]) if row else None}
@@ -822,6 +837,12 @@ async def canvas_share(cid: int, body: Share, request: Request):
     users = sorted({u.strip().lower() for u in body.users if u.strip()})
     if users and c["tier"] == "personal":
         return deny(400, "a personal-tier canvas is never shared")
+    if set(users) - set(c["shared_with"]):
+        # THE SHARE GATE (seed #35151, steward): widening the audience needs a cleared canvas.
+        # Narrowing or unsharing is always allowed — it only ever reduces exposure.
+        blocked = await sync(cv.share_blockers, cid)
+        if blocked:
+            return deny(409, "not shared — " + "; ".join(blocked))
     await pool.execute("UPDATE canvases SET shared_with=$2 WHERE id=$1", cid, users)
     return {"ok": True, "shared_with": users}
 

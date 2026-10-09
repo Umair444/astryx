@@ -235,38 +235,83 @@ TIER: a canvas with tier=personal is never shared; keep the human-personal tier 
 
 
 # ---------------------------------------------------------------------------- CLI
-# ---------------------------------------------------------------- the share gate
-# SHARING, not painting, is what moves canvas content off-org (seed #35151), so the hard gate sits
-# here and its verdict is steward's pii_canvas sweep (triggers/steward/pii_sweep.py) — one writer,
-# one reader, a row in postgres between them. FAIL-CLOSED on every unknown: no sweep row, no
-# completed scan, content newer than the scan (painted since the last 5-minute tick), or an
-# unpinned owner-PII finding on this canvas. Pins are steward's, by location, never by value.
-_GATE_SQL = (
+# ------------------------------------------------------- the privacy gates (share + view)
+# Content leaves the org through TWO doors, and both are gated by the SAME verdict: steward's
+# pii_canvas sweep (triggers/steward/pii_sweep.py), one writer, one reader, a row in postgres.
+#   SHARE (share_blockers): a canvas is not shared while any of its content is unscanned or flagged.
+#   VIEW  (view_blockers / data_blockers): a NON-OWNER viewer is served only content the sweep has
+#         CLEARED — a version or data value newer than the last scan, or carrying an open finding, is
+#         withheld. a3 #35598: gating share alone was false prevention, because publishing to an
+#         ALREADY-shared canvas reaches the guest at once (on_canvas pushes, canvas_render serves any
+#         version via ?v=N); the view gate closes that door at the moment of reading.
+# FAIL-CLOSED on every unknown: no sweep row, or no completed scan. Pins are steward's, by location.
+# The open-finding filter keys on `cid`, which ONLY pii_canvas writes (wire findings carry none), and
+# on `src`, whose canvas spellings are "canvas:<cid>:v<ver>" and "canvas:<cid>:data:<masked key>".
+_VERDICT_SQL = (
     "SELECT t.state->>'checked_at' AS checked_at, "
-    "  (SELECT count(*) FROM jsonb_each(coalesce(t.state->'open', '{}'::jsonb)) o "
-    "    WHERE (o.value->>'cid')::bigint = %(cid)s) AS findings, "
-    "  greatest((SELECT max(ts) FROM canvas_versions WHERE canvas_id = %(cid)s), "
-    "           (SELECT max(updated_at) FROM canvas_data WHERE canvas_id = %(cid)s)) AS newest "
+    "  coalesce((SELECT array_agg(o.value->>'src') "
+    "            FROM jsonb_each(coalesce(t.state->'open', '{}'::jsonb)) o "
+    "            WHERE (o.value->>'cid')::bigint = %(cid)s), '{}') AS srcs "
     "FROM triggers t WHERE t.agent = 'steward' AND t.name = 'pii_canvas'")
+
+
+def _verdict(conn, cid: int):
+    """(reasons, checked_at, srcs): reasons non-empty when no verdict exists at all."""
+    row = conn.execute(_VERDICT_SQL, {"cid": cid}).fetchone()
+    if row is None:
+        return ["the privacy sweep (steward/pii_canvas) is not registered — nothing has read this canvas"], None, set()
+    checked_at, srcs = row
+    if not checked_at:
+        return ["the privacy sweep has not completed a scan yet"], None, set()
+    return [], datetime.fromisoformat(checked_at), set(srcs or ())
 
 
 def share_blockers(conn, cid: int) -> list[str]:
     """Why canvas `cid` may NOT be shared right now; [] means it may. Shapes only, never a value."""
-    row = conn.execute(_GATE_SQL, {"cid": cid}).fetchone()
-    if row is None:
-        return ["the privacy sweep (steward/pii_canvas) is not registered — nothing has read this canvas"]
-    checked_at, findings, newest = row
-    out = []
-    if not checked_at:
-        out.append("the privacy sweep has not completed a scan yet")
-    elif newest is not None and newest > datetime.fromisoformat(checked_at):
+    out, checked, srcs = _verdict(conn, cid)
+    if out:
+        return out
+    newest = conn.execute(
+        "SELECT greatest((SELECT max(ts) FROM canvas_versions WHERE canvas_id = %(cid)s), "
+        "                (SELECT max(updated_at) FROM canvas_data WHERE canvas_id = %(cid)s))",
+        {"cid": cid}).fetchone()[0]
+    if newest is not None and newest > checked:
         out.append("this canvas changed after the last privacy scan — retry within 5 minutes")
-    if findings:
+    if srcs:
         # NOT "republish": every version stays readable to a viewer via /render?v=N
         # (bridges/canvas.py:canvas_render), so a clean new version leaves the old one exposed
-        out.append(f"{findings} possible owner-PII finding(s) on this canvas, in a version or live "
+        out.append(f"{len(srcs)} possible owner-PII finding(s) on this canvas, in a version or live "
                    "value a viewer can still read (any version renders via ?v=N, so republishing "
                    "does not clear it) — ask steward to rule it benign, or remove that version")
+    return out
+
+
+def view_blockers(conn, cid: int, ver: int) -> list[str]:
+    """Why a NON-OWNER may not see version `ver` of canvas `cid`; [] means they may."""
+    out, checked, srcs = _verdict(conn, cid)
+    if out:
+        return out
+    ts = conn.execute("SELECT ts FROM canvas_versions WHERE canvas_id = %s AND version = %s",
+                      (cid, ver)).fetchone()
+    if ts is not None and ts[0] > checked:
+        out.append("pending privacy scan — this version is newer than the last scan (at most 5 minutes)")
+    if f"canvas:{cid}:v{ver}" in srcs:
+        out.append("withheld — this version carries a possible owner-PII finding awaiting a ruling")
+    return out
+
+
+def data_blockers(conn, cid: int) -> list[str]:
+    """Why a NON-OWNER may not read canvas `cid`'s live data; [] means they may. All-or-nothing:
+    a page reading half its data is a broken page, and a withheld key is as private as a value."""
+    out, checked, srcs = _verdict(conn, cid)
+    if out:
+        return out
+    newest = conn.execute("SELECT max(updated_at) FROM canvas_data WHERE canvas_id = %s",
+                          (cid,)).fetchone()[0]
+    if newest is not None and newest > checked:
+        out.append("pending privacy scan — live data changed after the last scan (at most 5 minutes)")
+    if any(s.startswith(f"canvas:{cid}:data:") for s in srcs):
+        out.append("withheld — a live value carries a possible owner-PII finding awaiting a ruling")
     return out
 
 

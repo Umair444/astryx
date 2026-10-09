@@ -7,6 +7,7 @@ Each arm is a property a viewer, an invitee or an agent depends on — the trust
 """
 import asyncio
 import contextlib
+import json
 import os
 import sys
 from pathlib import Path
@@ -94,6 +95,7 @@ def library(dsn):
 def api(url):
     from fastapi.testclient import TestClient
     import bridges.canvas as b
+    from nucleus import canvas as cv_lib
     print("api (bridges/canvas.py, in-process)")
     H = {"x-astryx": "1"}
     A = "/canvas/api"
@@ -138,6 +140,49 @@ def api(url):
         p = who("owner").post(f"{A}/canvases", json={"title": "Mine", "tier": "personal"}, headers=H).json()
         arm("a personal-tier canvas is never shared",
             who("owner").post(f"{A}/canvases/{p['id']}/share", json={"users": ["guest"]}, headers=H).status_code == 400)
+        # ── THE PRIVACY GATES at the bridge (steward; a3 #35598): share AND view read steward/pii_canvas ──
+        with psycopg_conn(url) as pc:
+            s_id = cv_lib.create(pc, "Shared", "painter", "owner")
+            cv_lib.publish(pc, s_id, "<p>clean</p>", "painter")
+            pc.execute("DELETE FROM triggers WHERE agent='steward' AND name='pii_canvas'")
+            pc.commit()
+        arm("share with no privacy verdict at all → 409 (fail closed)",
+            who("owner").post(f"{A}/canvases/{s_id}/share", json={"users": ["guest"]}, headers=H).status_code == 409)
+
+        def verdict(open_=None):
+            with psycopg_conn(url) as pc:
+                pc.execute("DELETE FROM triggers WHERE agent='steward' AND name='pii_canvas'")
+                pc.execute("INSERT INTO triggers (agent, name, schedule, kind, state) VALUES "
+                           "('steward','pii_canvas','*/5 * * * *','python', jsonb_build_object("
+                           "'checked_at', now()::text, 'open', %s::jsonb))", (json.dumps(open_ or {}),))
+                pc.commit()
+        verdict()
+        arm("a scanned, clean canvas shares", who("owner").post(
+            f"{A}/canvases/{s_id}/share", json={"users": ["guest"]}, headers=H).status_code == 200)
+        g1 = who("guest").get(f"{A}/canvases/{s_id}/render?v=1").json()
+        arm("the guest reads the CLEARED version", g1.get("html") and not g1.get("withheld"), g1)
+        with psycopg_conn(url) as pc:
+            cv_lib.publish(pc, s_id, "<p>call 15555550123</p>", "painter")      # after the share, after the scan
+            pc.commit()
+        g2 = who("guest").get(f"{A}/canvases/{s_id}/render?v=2").json()
+        arm("a version published AFTER sharing is WITHHELD from the guest until scanned (the bypass a3 found)",
+            g2.get("html") is None and g2.get("withheld") and "pending privacy scan" in g2["withheld"][0], g2)
+        arm("...the head is withheld too (no ?v)", who("guest").get(f"{A}/canvases/{s_id}/render").json().get("html") is None)
+        arm("...and the OWNER still sees it", who("owner").get(f"{A}/canvases/{s_id}/render?v=2").json().get("html"))
+        who("owner").post(f"{A}/canvases/{s_id}/data", json={"key": "k", "value": 1}, headers=H)
+        gd = who("guest").get(f"{A}/canvases/{s_id}/data")
+        arm("live data changed after the scan is withheld from the guest (empty, with the reason in a header)",
+            gd.json() == {} and "pending privacy scan" in gd.headers.get("x-astryx-withheld", ""), gd.headers)
+        verdict({"h": {"cid": s_id, "src": f"canvas:{s_id}:v2", "loc": "x", "label": "phone-bare"}})
+        g2b = who("guest").get(f"{A}/canvases/{s_id}/render?v=2").json()
+        arm("once scanned, a FLAGGED version stays withheld; the clean one is served",
+            g2b.get("html") is None and "owner-PII" in g2b["withheld"][0]
+            and who("guest").get(f"{A}/canvases/{s_id}/render?v=1").json().get("html"), g2b)
+        arm("narrowing the audience is never gated", who("owner").post(
+            f"{A}/canvases/{s_id}/share", json={"users": []}, headers=H).status_code == 200)
+        with psycopg_conn(url) as pc:
+            pc.execute("DELETE FROM triggers WHERE agent='steward' AND name='pii_canvas'")
+            pc.commit()
         who("owner").post(f"{A}/users/guest/revoke", headers=H)
         arm("a revoked invitee's live session dies", who("guest").get(f"{A}/me").status_code == 401)
         return c["id"], t
@@ -220,7 +265,13 @@ def coverage(url):
         arm("versions listed for painted + unpainted",
             len(cl.get(f"{A}/canvases/{full['id']}").json()["versions"]) == 1
             and cl.get(f"{A}/canvases/{empty['id']}").json()["versions"] == [])
-        arm("share an org canvas", cl.post(f"{A}/canvases/{full['id']}/share", json={"users": ["cov"]}, headers=H).json().get("shared_with") == ["cov"])
+        # the share gate fails closed without a privacy verdict (steward/pii_canvas), so give it a cleared one
+        with psycopg_conn(url) as pc:
+            pc.execute("DELETE FROM triggers WHERE agent='steward' AND name='pii_canvas'")
+            pc.execute("INSERT INTO triggers (agent, name, schedule, kind, state) VALUES ('steward','pii_canvas',"
+                       "'*/5 * * * *','python', jsonb_build_object('checked_at', now()::text, 'open', '{}'::jsonb))")
+            pc.commit()
+        arm("share an org canvas (cleared by the privacy sweep)", cl.post(f"{A}/canvases/{full['id']}/share", json={"users": ["cov"]}, headers=H).json().get("shared_with") == ["cov"])
         arm("archive", cl.post(f"{A}/canvases/{empty['id']}/archive", headers=H).status_code == 200
             and cl.post(f"{A}/canvases/999999/archive", headers=H).status_code == 404)
         t = cl.post(f"{A}/threads", json={"agent": "painter"}, headers=H).json()["thread"]
