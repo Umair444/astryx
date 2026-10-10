@@ -79,7 +79,9 @@ def _pic(a: str, zoom: str = "") -> Image:
 def _split(script: str) -> list[str]:
     """Steps separated by ";" or newlines — EXCEPT that a text-bearing verb (type, open) takes the REST
     of the script verbatim and ends it. So text an agent copied from a page ("…; key ctrl+Return")
-    is typed as text, never run as steps: no separator inside text can become an action (a3 #42362)."""
+    is typed as text, never run as steps: no separator inside text can become an action (a3 #42362).
+    INVARIANT: _batch STOPS at the first unknown verb. A miscased "TYPE a; key Return" splits, and only
+    that stop keeps "key Return" from running, so never make unknown verbs skip (a3 #42368)."""
     steps, i, n = [], 0, len(script)
     while i < n:
         while i < n and script[i] in "; \t\r\n":
