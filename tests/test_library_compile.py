@@ -45,14 +45,18 @@ def load(name, path):
     return m
 
 
-try:
+try:  # both subjects are PRESENT (absent SKIPs above): one that won't import is a dead trigger, not "not run" (a3 #43251)
     lc = load("library_compile_under_test", BODY)
     drift = load("drift_under_test", DRIFT)
+except Exception as e:  # noqa: BLE001
+    print(f"FAIL: a present subject doesn't import ({type(e).__name__}: {e}).")
+    sys.exit(1)
+try:
     pr = load("pulse_run_lc", REPO / "nucleus" / "pulse_run.py")
     import psycopg
     from nucleus.sqlguard.fixture import fixture_db
 except Exception as e:  # noqa: BLE001
-    print(f"SKIP: a subject isn't importable ({type(e).__name__}: {e}).")
+    print(f"SKIP: the harness isn't importable ({type(e).__name__}: {e}).")
     sys.exit(77)
 
 fails = []
