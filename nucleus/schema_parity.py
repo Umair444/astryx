@@ -211,6 +211,30 @@ def present(admin_dsn: str, db: str) -> list:
         raise
 
 
+def readable(admin_dsn: str, db: str) -> list:
+    """What the resident role CAN'T reach in a scoped database (owner ruling 10-10: every resident reads org data), as
+    sentences; [] = readable. init.sh's geoschema check requires it, so a live database converges on the declared
+    ACL instead of keeping whatever it was born with."""
+    import psycopg
+    from psycopg.conninfo import make_conninfo
+    out = []
+    with psycopg.connect(admin_dsn, autocommit=True) as a:
+        if not a.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (RESIDENT,)).fetchone():
+            return [f"role {RESIDENT} is missing (people_gate creates it)"]
+        if not a.execute("SELECT has_database_privilege(%s, %s, 'CONNECT')", (RESIDENT, db)).fetchone()[0]:
+            out.append(f"{RESIDENT} can't CONNECT to {db}")
+    with psycopg.connect(make_conninfo(admin_dsn, dbname=db), autocommit=True) as c:
+        c.execute("SET default_transaction_read_only = on")
+        for ns in DATABASES[db]["schemas"] or ():
+            if not c.execute("SELECT has_schema_privilege(%s, %s, 'USAGE')", (RESIDENT, ns)).fetchone()[0]:
+                out.append(f"{RESIDENT} has no USAGE on {db}.{ns}")
+            for (t,) in c.execute("SELECT format('%%I.%%I', schemaname, tablename) FROM pg_tables WHERE schemaname = %s "
+                                  "AND NOT has_table_privilege(%s, format('%%I.%%I', schemaname, tablename), 'SELECT') "
+                                  "ORDER BY 1", (ns, RESIDENT)):
+                out.append(f"{RESIDENT} can't SELECT {db}.{t}")
+    return out
+
+
 def birth(admin, db: str) -> bool:
     """A missing scoped database, BORN ZERO-WINDOW: closed, PUBLIC revoked, the resident granted CONNECT, then opened
     (a4 #42525: revoking PUBLIC and granting nothing breaks the ruling by construction). True if created now."""
@@ -223,6 +247,16 @@ def birth(admin, db: str) -> bool:
     if admin.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (RESIDENT,)).fetchone():
         admin.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(I(db), I(RESIDENT)))
     admin.execute(sql.SQL("ALTER DATABASE {} ALLOW_CONNECTIONS true").format(I(db)))
+    return True
+
+
+def grant_connect(admin, db: str) -> bool:
+    """CONNECT for the resident on an EXISTING database (a4 #43925: birth() grants only on a database it creates, so the
+    live geo kept a datacl with no resident while init's presence check read green). False if the role is absent."""
+    from psycopg import sql
+    if not admin.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (RESIDENT,)).fetchone():
+        return False
+    admin.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(sql.Identifier(db), sql.Identifier(RESIDENT)))
     return True
 
 
@@ -254,6 +288,8 @@ def apply(admin_dsn: str, db: str) -> list:
     with psycopg.connect(admin_dsn, autocommit=True) as a:
         if birth(a, db):
             did.append(f"database {db}")
+        elif grant_connect(a, db):
+            did.append(f"granted CONNECT on {db} to {RESIDENT}")
     with psycopg.connect(make_conninfo(admin_dsn, dbname=db)) as c:
         for f in DATABASES[db]["files"]:
             c.execute((REPO / f).read_text())
@@ -268,6 +304,13 @@ def main(argv=None) -> int:
     import sys as _sys
     import psycopg
     argv = list(_sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["readable"]:
+        from nucleus.sqlguard.fixture import live_dsn
+        db = argv[1] if len(argv) > 1 else "geo"
+        left = readable(live_dsn(), db)
+        for x in left:
+            print(f"  schema_parity [{db}]: {x}")
+        return 1 if left else 0
     if argv[:1] in (["present"], ["apply"]):
         from nucleus.sqlguard.fixture import live_dsn
         db = argv[1] if len(argv) > 1 else "geo"

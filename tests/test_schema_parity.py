@@ -306,6 +306,43 @@ def main():
     except FixtureUnavailable as e:
         print(f"  SKIP  geo read arm: {e}")
         fails.append("SKIP geo read")
+    # F3 (a4 #43925): readable() is init's convergence check, and an EXISTING database converges through grant_connect()
+    try:
+        with fixture_db(extra=geo_sql) as gr:
+            gdb2 = conninfo_db(gr["dsn"])
+            P.DATABASES[gdb2] = P.DATABASES["geo"]
+            try:
+                before = P.readable(gr["dsn"], gdb2)
+                with psycopg.connect(gr["dsn"], autocommit=True) as z:
+                    P.grant_read(z, P.DATABASES["geo"]["schemas"])
+                with psycopg.connect(live_dsn(), autocommit=True) as a:
+                    P.grant_connect(a, gdb2)
+                after = P.readable(gr["dsn"], gdb2)
+            finally:
+                P.DATABASES.pop(gdb2, None)
+        check("READABLE: before the grants the resident's every gap is named (CONNECT, USAGE, each table's SELECT)",
+              any("can't CONNECT" in x for x in before) and any("no USAGE on" in x for x in before)
+              and sum("can't SELECT" in x for x in before) == 3, str(before))
+        check("READABLE: after grant_connect() + grant_read() → nothing missing (init's check reads green)", after == [],
+              str(after))
+    except FixtureUnavailable as e:
+        print(f"  SKIP  readable arms: {e}")
+        fails.append("SKIP readable")
+    zc = f"zz_geo_conn_{os.getpid()}"
+    try:
+        with psycopg.connect(live_dsn(), autocommit=True) as a:
+            P.birth(a, zc)
+            a.execute(f'REVOKE CONNECT ON DATABASE "{zc}" FROM {P.RESIDENT}')
+            lost = a.execute("SELECT has_database_privilege(%s, %s, 'CONNECT')", (P.RESIDENT, zc)).fetchone()[0]
+            P.grant_connect(a, zc)
+            back = a.execute("SELECT has_database_privilege(%s, %s, 'CONNECT')", (P.RESIDENT, zc)).fetchone()[0]
+            pub = a.execute("SELECT has_database_privilege('public', %s, 'CONNECT')", (zc,)).fetchone()[0]
+        check("CONVERGE: an EXISTING database whose resident CONNECT was lost gets it back from grant_connect(), PUBLIC "
+              "still nothing (a4 #43925: birth() grants only what it creates)",
+              lost is False and back is True and pub is False, f"{lost} {back} {pub}")
+    finally:
+        with psycopg.connect(live_dsn(), autocommit=True) as a:
+            a.execute(f'DROP DATABASE IF EXISTS "{zc}" WITH (FORCE)')
     psycopg.connect = Probe
     Probe.wrote = None
     try:

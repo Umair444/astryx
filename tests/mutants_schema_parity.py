@@ -25,7 +25,8 @@ MUTANTS = {
     "P5 memgraph's module-owned DDL leaves the expected set (its drift reads live-only, never judged)":
         ('    return (memgraph.SCHEMA_SQL,)', '    return ()'),
     "P6 the live session isn't read-only":
-        ('        c.execute("SET default_transaction_read_only = on")\n', ''),
+        ('    with psycopg.connect(live_dsn, autocommit=True) as c:\n        c.execute("SET default_transaction_read_only = on")\n',
+         '    with psycopg.connect(live_dsn, autocommit=True) as c:\n'),     # run()'s live session (readable() sets its own)
     "P7 drift is reported but never fails (any difference reads green)":
         ('            "drift": bool(missing or extra or typed)}', '            "drift": False}'),
     "P8 a missing OBJECT isn't seen (a hand-dropped messages_notify silences the wire, parity green: a1 #38450)":
@@ -60,6 +61,14 @@ MUTANTS = {
         ('    for ns in schemas or ():\n        conn.execute(sql.SQL("GRANT USAGE', '    for ns in ():\n        conn.execute(sql.SQL("GRANT USAGE'),
     "G8 birth grants the resident no CONNECT (a fresh geo is closed to every agent)":
         ('        admin.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(I(db), I(RESIDENT)))\n', ''),
+    "G9 readable() is blind to a missing CONNECT (init's check reads green on a closed database)":
+        ("        if not a.execute(\"SELECT has_database_privilege(%s, %s, 'CONNECT')\", (RESIDENT, db)).fetchone()[0]:",
+         "        if False:"),
+    "G10 readable() is blind to an unreadable table":
+        ("                out.append(f\"{RESIDENT} can't SELECT {db}.{t}\")", "                pass"),
+    "G11 grant_connect() grants nothing (an existing database never converges)":
+        ('    admin.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(sql.Identifier(db), sql.Identifier(RESIDENT)))\n    return True',
+         '    return True'),
     "G4 the presence check's table parse goes blind (it would read green over nothing)":
         ('    if not got:                                   # anti-vacuity', '    if False:                                   # anti-vacuity'),
 }

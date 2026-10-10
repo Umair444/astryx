@@ -1,23 +1,20 @@
 #!/usr/bin/env python3
-"""Oracle for the people library's privilege boundary, build 1a (memory #35896, seed #35894/#36018).
+"""Oracle for the people library's ACCESS declaration (owner ruling 10-10: "database entities should be public to all
+agents working inside astryx"; seed #42347 F3). Build 1a's split (details for people_cleared only) is RETIRED.
 
-GRADE: ACCIDENT-GRADE. This proves what a role can't reach. It does NOT prove a resident can't read the details:
-every resident runs as the same OS user, and the superuser credential is in .env and ~/.pgpass, readable by all of
-them. A resident that connects as the superuser reads social_relation regardless of every GRANT here. What is
-proven is that the TOOL paths and the resident ROLE can't, so a read needs a deliberate superuser connection. Nothing
-DETECTS that today (steward #36869: the step trail is self-authored, the credential grab is ambient, postgres logs
-nothing per role). Detection (pgaudit, log outside the residents' uid) and prevention (a separate OS user, or a
-credential broker) are both owner infrastructure.
+"All agents" is the RESIDENT role, never postgres PUBLIC: PUBLIC is every role on the server, branch_check's sandboxed run
+roles included, which P0-b keeps off prod data. Residents still connect as the superuser today (the RED arm), so these
+grants DECLARE the design; the day they switch to astryx_resident (1b) nothing narrows.
 
 Arms, on SCRATCH roles and SCRATCH databases only (it never changes, and never depends on, a live role):
-  RED      the role residents use TODAY (ASTRYX_DSN's) is a superuser: it reads every detail. A NOSUPERUSER resident
-           given the obvious network grant (table-level SELECT on social_person) reads them too.
-  GREEN    after people_gate + people_move, the scratch resident is refused SELECT on social_relation, refused the
-           detail columns of social_person, and refused CONNECT to the private database, each with the error text
-           predicted here; PUBLIC holds nothing on social_relation; people_gate.drift() is empty.
-  CONTROL  a scratch member of the scratch cleared role reads social_relation (values intact) and walks the private
-           graph; the scratch resident still reads the network columns of social_person and social_edge, and walks the
-           network graph, whose nodes carry no detail.
+  RED      the role residents use TODAY (ASTRYX_DSN's) is a superuser: it reads every detail.
+  GREEN    after people_gate + people_move, the scratch resident SELECTs social_relation, the detail columns of
+           social_person and social_edge's DM counts, CONNECTs to the relation database and walks its graph; PUBLIC
+           holds nothing on any people table nor CONNECT on that database; people_gate.drift() is empty.
+  DRIFT    a revoked resident grant (a table, the CONNECT) and a PUBLIC grant are each NAMED; a stale COLUMN grant
+           from the retired split doesn't survive a re-apply; re-applying repairs all of it.
+  ZERO     the relation database is never connectable while PUBLIC holds CONNECT (born closed, revoked, then opened).
+  LATER    a column added later is readable by the resident at once (the table grant), and drift stays empty.
   MOVE     the receipt: digest == digest_after, left == 0, a re-run moves nothing.
   CUTOVER  people.write_pg never writes a detail and never erases social_relation; persona.apply_pg / load_pg round-
            trip through social_relation.
@@ -209,12 +206,10 @@ try:
             n = c.execute("SELECT count(*) FROM social_person WHERE relation IS NOT NULL OR who IS NOT NULL "
                           "OR shape IS NOT NULL OR confidence IS NOT NULL").fetchone()[0]
             want(f"RED: the superuser reads the {len(DETAILED)} detailed rows", n == len(DETAILED), str(n))
-            c.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(sql.Identifier(db), sql.Identifier(RES)))
-            c.execute(sql.SQL("GRANT SELECT ON social_person TO {}").format(sql.Identifier(RES)))
-            e = refused(as_(RES, db), "SELECT relation, who, shape, confidence FROM social_person")
-            want("RED: a NOSUPERUSER resident with table-level SELECT on social_person reads the details", e is None, e)
+            # the retired split's STALE column grant, which the open grant must not leave behind half-applied
+            c.execute(sql.SQL("GRANT SELECT (org, id) ON social_person TO {}").format(sql.Identifier(RES)))
 
-            # THE GATE, then THE MOVE.
+            # THE GRANT, then THE MOVE.
             G.grant_main(c, resident=RES, cleared=CLR)
         class Spy:                                   # records each statement and the db's state right after it
             def __init__(self, c):
@@ -228,7 +223,7 @@ try:
                 self.log.append((txt, st))
                 return r
         spy = Spy(admin)
-        G.ensure_private_db(spy, name=PRIV, cleared=CLR)
+        G.ensure_private_db(spy, name=PRIV, cleared=CLR, resident=RES)
         opened_public = [t for t, st in spy.log if st and st[0] and st[1]]
         want(f"ZERO-WINDOW: {PRIV} is never connectable while PUBLIC holds CONNECT (born closed, revoked, then opened)",
              spy.log and not opened_public and spy.log[-1][1] == (True, False), str(opened_public or spy.log[-1:]))
@@ -316,45 +311,50 @@ try:
                                 private=make_conninfo(ADMIN_DSN, dbname=PRIV), resident=RES, cleared=CLR)
         want("a second rebuild (drop_graph, then re-grant) gives the same graphs", r2 == r, f"{r2} != {r}")
 
-        # GREEN: the resident is refused, with the text predicted.
-        e = refused(as_(RES, db), "SELECT * FROM social_relation")
-        want("GREEN: resident SELECT social_relation -> 'permission denied for table social_relation'",
-             e is not None and "permission denied for table social_relation" in e, e)
-        for col in ("weight", "first_ts", "last_ts", "mine", "scanned_at"):
-            e = refused(as_(RES, db), f"SELECT {col} FROM social_edge")
-            want(f"GREEN: resident SELECT social_edge.{col} (the DM count/recency) -> 'permission denied for table "
-                 "social_edge'", e is not None and "permission denied for table social_edge" in e, e)
-        for col in ("relation", "who", "shape", "confidence"):
-            e = refused(as_(RES, db), f"SELECT {col} FROM social_person")
-            want(f"GREEN: resident SELECT social_person.{col} -> 'permission denied for table social_person'",
-                 e is not None and "permission denied for table social_person" in e, e)
+        # GREEN: every resident reads the people library (the ruling), PUBLIC nothing.
+        e = refused(as_(RES, db), "SELECT pid, kind, context, evidence, confidence FROM social_relation")
+        want("GREEN: the resident SELECTs social_relation (the relation details)", e is None, e)
+        e = refused(as_(RES, db), "SELECT weight, first_ts, last_ts, mine, scanned_at FROM social_edge")
+        want("GREEN: the resident SELECTs social_edge's DM counts and recency", e is None, e)
+        e = refused(as_(RES, db), "SELECT relation, who, shape, confidence FROM social_person")
+        want("GREEN: the resident SELECTs social_person's detail columns", e is None, e)
         e = refused(as_(RES, PRIV))
-        want(f"GREEN: resident CONNECT {PRIV} -> 'permission denied for database' + 'User does not have CONNECT"
-             " privilege'", e is not None and f'permission denied for database "{PRIV}"' in e
-             and "User does not have CONNECT privilege" in e, e)
+        want(f"GREEN: the resident CONNECTs to {PRIV}", e is None, e)
+        try:
+            rk = sorted(str(k[0]).strip('"') for k in cypher(
+                as_(RES, PRIV), "astryx_people", "MATCH (:owner)-[r:relation]->(:person) RETURN r.kind")
+                if k[0] is not None and str(k[0]) != "null")
+        except psycopg.Error as x:
+            rk = f"ERR {x}"
+        want("GREEN: the resident walks the relation graph (owner)-[:relation]->(person)",
+             rk == sorted(e[1] for e in expect if e[1]), str(rk))
         with psycopg.connect(fx["dsn"], autocommit=True) as c:
-            want("GREEN: PUBLIC holds nothing on social_relation",
-                 not any(c.execute("SELECT has_table_privilege('public', 'social_relation', %s)", (p,)).fetchone()[0]
+            want("GREEN: PUBLIC holds nothing on any people table (all agents = the resident role, never PUBLIC)",
+                 not any(c.execute("SELECT has_table_privilege('public', %s, %s)", (t, p)).fetchone()[0]
+                         for t in G.ORG_TABLES
                          for p in ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER")))
+            want(f"GREEN: PUBLIC can't CONNECT to {PRIV}", not admin.execute(
+                "SELECT has_database_privilege('public', %s, 'CONNECT')", (PRIV,)).fetchone()[0])
+            stale = c.execute("SELECT count(*) FROM pg_attribute WHERE attrelid = 'social_person'::regclass "
+                              "AND attacl::text LIKE %s", (f"%{RES}%",)).fetchone()[0]
+            want("GREEN: the retired split's stale COLUMN grant is gone after the apply", stale == 0, str(stale))
             d = G.drift(c, admin, resident=RES, cleared=CLR, private_db=PRIV)
-            want("GREEN: people_gate.drift() is empty on the gated fixture", d == [], str(d))
-            c.execute(sql.SQL("GRANT SELECT ON social_relation TO {}").format(sql.Identifier(RES)))
-            c.execute(sql.SQL("GRANT SELECT (relation) ON social_person TO {}").format(sql.Identifier(RES)))
-            c.execute(sql.SQL("GRANT SELECT (last_ts) ON social_edge TO {}").format(sql.Identifier(RES)))
-            c.execute("GRANT SELECT ON social_relation TO PUBLIC")
-            admin.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(sql.Identifier(PRIV), sql.Identifier(RES)))
-            d = G.drift(c, admin, resident=RES, cleared=CLR, private_db=PRIV)
-            want("DRIFT: planted leaks are each named (PUBLIC and resident on social_relation, social_person's relation,"
-                 " social_edge's last_ts, the private CONNECT)", len(d) == 5 and any("PUBLIC" in x for x in d)
-                 and any("social_person detail" in x and "relation" in x for x in d)
-                 and any("social_edge detail" in x and "last_ts" in x for x in d)
-                 and any("CONNECT" in x for x in d), str(d))
+            want("GREEN: people_gate.drift() is empty on the granted fixture", d == [], str(d))
+            c.execute(sql.SQL("REVOKE SELECT ON social_relation FROM {}").format(sql.Identifier(RES)))
+            c.execute("GRANT SELECT ON social_edge TO PUBLIC")
             admin.execute(sql.SQL("REVOKE CONNECT ON DATABASE {} FROM {}").format(sql.Identifier(PRIV), sql.Identifier(RES)))
-            G.grant_main(c, resident=RES, cleared=CLR)
             d = G.drift(c, admin, resident=RES, cleared=CLR, private_db=PRIV)
-            want("GREEN: re-applying grant_main repairs the planted table and column leaks (idempotent)", d == [], str(d))
+            want("DRIFT: each planted narrowing or widening is NAMED (the resident's social_relation, PUBLIC on "
+                 "social_edge, the resident's CONNECT)", len(d) == 3
+                 and any(f"{RES} can't SELECT social_relation" in x for x in d)
+                 and any("PUBLIC can SELECT social_edge" in x for x in d)
+                 and any(f"{RES} can not CONNECT" in x for x in d), str(d))
+            G.grant_main(c, resident=RES, cleared=CLR)
+            G.ensure_private_db(admin, name=PRIV, cleared=CLR, resident=RES)
+            d = G.drift(c, admin, resident=RES, cleared=CLR, private_db=PRIV)
+            want("GREEN: re-applying repairs every planted drift (idempotent)", d == [], str(d))
 
-        # CONTROL: the cleared member reads both; the resident still reads the network.
+        # CONTROL: a member of the cleared role keeps every read it had (nothing narrows for a charter holding it).
         e = refused(as_(MEM, db), "SELECT * FROM social_relation")
         want("CONTROL: a people_cleared member SELECTs social_relation", e is None, e)
         try:
@@ -371,15 +371,6 @@ try:
             kinds = f"ERR {x}"
         want("CONTROL: a people_cleared member walks the private graph (owner)-[:relation]->(person)",
              kinds == sorted(e[1] for e in expect if e[1]), str(kinds))
-        e = refused(as_(RES, db), "SELECT org, id, kind, label, direct, seen_at FROM social_person")
-        want("CONTROL: the resident reads social_person's network columns", e is None, e)
-        try:
-            with psycopg.connect(as_(RES, db), autocommit=True) as c:
-                net = c.execute("SELECT rel, count(*) FROM social_edge GROUP BY 1 ORDER BY 1").fetchall()
-        except psycopg.Error as x:
-            net = f"ERR {x}"
-        want("CONTROL: the resident reads social_edge's network columns, dm rows' EXISTENCE included (= direct)",
-             net == [("dm", 1), ("member-of", 3)], str(net))
         try:
             knows = cypher(as_(RES, NET), "astryx_social", "MATCH (a:person)-[k:knows]->(b:person) RETURN count(k)")
             keys = cypher(as_(RES, NET), "astryx_social", "MATCH (n) RETURN keys(n)")
@@ -389,7 +380,8 @@ try:
             knows, keyset = f"ERR {x}", {"ERR"}
         want("CONTROL: the resident walks the network graph (knows edges)",
              isinstance(knows, list) and str(knows[0][0]) == "3", str(knows))
-        want("CONTROL: the network graph's nodes carry no detail (keys within id/org/name/direct)",
+        want("DESIGN: the network graph's nodes carry the network shape (keys within id/org/name/direct); the "
+             "details live in the relation graph, which every resident also reads",
              keyset <= {"id", "org", "name", "direct"}, str(keyset))
 
         # CUTOVER: the writers, pointed at the fixture.
@@ -445,9 +437,8 @@ try:
             d = G.drift(c, admin, resident=RES, cleared=CLR, private_db=PRIV)
             ep = refused(as_(RES, db), "SELECT pgate_later FROM social_person")
             ee = refused(as_(RES, db), "SELECT pgate_later FROM social_edge")
-            want("GREEN: a column added later to social_person OR social_edge is hidden from the resident "
-                 "(fail-closed), and drift stays empty", ep is not None and "permission denied" in ep
-                 and ee is not None and "permission denied" in ee and d == [], f"{ep} {ee} {d}")
+            want("LATER: a column added later to social_person OR social_edge is readable by the resident at once "
+                 "(the table grant), and drift stays empty", ep is None and ee is None and d == [], f"{ep} {ee} {d}")
 finally:
     try:
         reap(admin, mine=True)

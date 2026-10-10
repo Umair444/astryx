@@ -200,13 +200,13 @@
   "nucleus/people_gate.py::drift\u001fselect 1 from pg_database where datname = ?": [
    "people gate: details only to people_cleared, network to the resident (accident-grade)"
   ],
-  "nucleus/people_gate.py::drift\u001fselect attname from pg_attribute where attrelid = ?::regclass and attnum > 0 and not attisdropped and attname <> all(?) order by attnum": [
-   "people gate: details only to people_cleared, network to the resident (accident-grade)"
-  ],
   "nucleus/people_gate.py::drift\u001fselect rolcanlogin from pg_roles where rolname = ?": [
    "people gate: details only to people_cleared, network to the resident (accident-grade)"
   ],
   "nucleus/people_gate.py::ensure_private_db\u001fselect 1 from pg_database where datname = ?": [
+   "people gate: details only to people_cleared, network to the resident (accident-grade)"
+  ],
+  "nucleus/people_gate.py::ensure_private_db\u001fselect rolname from pg_roles where rolname = any(?)": [
    "people gate: details only to people_cleared, network to the resident (accident-grade)"
   ],
   "nucleus/people_gate.py::grant_network_db\u001fselect 1 from pg_database where datname = ?": [
@@ -274,6 +274,9 @@
   "nucleus/schema_parity.py::definitions\u001fselect n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')', md5(pg_get_functiondef(p.oid)) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where p.prokind in ('f', 'p') and n.nspname <> all(?) and n.nspname not like 'pg_%%' and not exists (select 1 from pg_depend d where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e')": [
    "schema parity: the live catalog has every table and column the schema files define"
   ],
+  "nucleus/schema_parity.py::grant_connect\u001fselect 1 from pg_roles where rolname = ?": [
+   "schema parity: the live catalog has every table and column the schema files define"
+  ],
   "nucleus/schema_parity.py::grant_read\u001fselect 1 from pg_roles where rolname = ?": [
    "schema parity: the live catalog has every table and column the schema files define"
   ],
@@ -287,6 +290,9 @@
    "schema parity: the live catalog has every table and column the schema files define"
   ],
   "nucleus/schema_parity.py::objects\u001fselect n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname <> all(?) and n.nspname not like 'pg_%%' and not exists (select 1 from pg_depend d where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e')": [
+   "schema parity: the live catalog has every table and column the schema files define"
+  ],
+  "nucleus/schema_parity.py::readable\u001fselect 1 from pg_roles where rolname = ?": [
    "schema parity: the live catalog has every table and column the schema files define"
   ],
   "nucleus/schema_parity.py::shape\u001fselect n.nspname, c.relname, a.attname, format_type(a.atttypid, a.atttypmod) from pg_class c join pg_namespace n on n.oid = c.relnamespace join pg_attribute a on a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped where c.relkind in ('r', 'p') and n.nspname <> all(?) and n.nspname not like 'pg_toast%%' and n.nspname not like 'pg_temp%%' and not exists (select 1 from pg_depend d where d.classid = 'pg_class'::regclass and d.objid = c.oid and d.deptype = 'e') order by 1, 2, 3": [
@@ -624,7 +630,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 340,
+  "debt_rows": 342,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -1230,12 +1236,6 @@
    "reason": "people library 1a: a pg_catalog read (pg_roles/pg_database/pg_attribute), so RESPONSIVE is unreachable by the judge's relation rule; executed by test_people_gate / test_privilege_census",
    "tk": "sha256t:b2b9fa21fdbd4c96c019dfd9651607a9c4062aee11268ce3408b2cb0e0e6a9f0"
   },
-  "nucleus/people_gate.py::drift\u001fselect attname from pg_attribute where attrelid = ?::regclass and attnum > 0 and not attisdropped and attname <> all(?) order by attnum": {
-   "admitted": "2026-10-09",
-   "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "people library 1a: drift's per-table column listing (every NETWORK table, social_edge included per memory #36868), a pg_catalog read, so RESPONSIVE is unreachable by the judge's relation rule; executed by test_people_gate; replaces the social_person-only text",
-   "tk": "sha256t:9e2e9c929e94efc9dae58bcf67d120f1dd91ad72e3ca03cbc4d8215b77778083"
-  },
   "nucleus/people_gate.py::drift\u001fselect rolcanlogin from pg_roles where rolname = ?": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED/FIXTURE-DDL",
@@ -1247,6 +1247,12 @@
    "debt": "EXECUTED",
    "reason": "people library 1a: a pg_catalog read (pg_roles/pg_database/pg_attribute), so RESPONSIVE is unreachable by the judge's relation rule; executed by test_people_gate / test_privilege_census",
    "tk": "sha256t:b2b9fa21fdbd4c96c019dfd9651607a9c4062aee11268ce3408b2cb0e0e6a9f0"
+  },
+  "nucleus/people_gate.py::ensure_private_db\u001fselect rolname from pg_roles where rolname = any(?)": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED",
+   "reason": "open read (seed #42347 F3): a pg_roles read (does the resident role exist before granting or judging it), a catalog read, so RESPONSIVE is unreachable by the judge's relation rule; executed by test_people_gate / test_schema_parity",
+   "tk": "sha256t:2f9a0f966a2f0ee4bc42f2c9380b137e6a6746bf1fb16b966ed2f1e49d5c5180"
   },
   "nucleus/people_gate.py::grant_network_db\u001fselect 1 from pg_database where datname = ?": {
    "admitted": "2026-10-09",
@@ -1408,6 +1414,12 @@
    "reason": "schema parity CHANGED (a1 #38541): a pg_catalog definition read (pg_get_*def over pg_trigger/pg_proc/pg_class), so RESPONSIVE is unreachable; run on fixtures and live by tests/test_schema_parity.py",
    "tk": "sha256t:bb46c3dafd28f2bef714fe8fc5ce34749184676cc272e3341e91545f9c5a8085"
   },
+  "nucleus/schema_parity.py::grant_connect\u001fselect 1 from pg_roles where rolname = ?": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED",
+   "reason": "open read (seed #42347 F3): a pg_roles read (does the resident role exist before granting or judging it), a catalog read, so RESPONSIVE is unreachable by the judge's relation rule; executed by test_people_gate / test_schema_parity",
+   "tk": "sha256t:f376fa6a762e45634b7abe117346658e4e1cd323d9ad1016041a1a3a4e10b214"
+  },
   "nucleus/schema_parity.py::grant_read\u001fselect 1 from pg_roles where rolname = ?": {
    "admitted": "2026-10-10",
    "debt": "EXECUTED",
@@ -1437,6 +1449,12 @@
    "debt": "EXECUTED",
    "reason": "schema parity objects (a1 #38450): a pg_catalog read (pg_trigger/pg_proc/pg_class/pg_depend), so RESPONSIVE is unreachable by the judge's relation rule; run on fixtures and live by tests/test_schema_parity.py",
    "tk": "sha256t:775faa01acfab769d88c41117234b30040c3a0baeba6b9a8269625ae38bf51c6"
+  },
+  "nucleus/schema_parity.py::readable\u001fselect 1 from pg_roles where rolname = ?": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED",
+   "reason": "open read (seed #42347 F3): a pg_roles read (does the resident role exist before granting or judging it), a catalog read, so RESPONSIVE is unreachable by the judge's relation rule; executed by test_people_gate / test_schema_parity",
+   "tk": "sha256t:f376fa6a762e45634b7abe117346658e4e1cd323d9ad1016041a1a3a4e10b214"
   },
   "nucleus/schema_parity.py::shape\u001fselect n.nspname, c.relname, a.attname, format_type(a.atttypid, a.atttypmod) from pg_class c join pg_namespace n on n.oid = c.relnamespace join pg_attribute a on a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped where c.relkind in ('r', 'p') and n.nspname <> all(?) and n.nspname not like 'pg_toast%%' and n.nspname not like 'pg_temp%%' and not exists (select 1 from pg_depend d where d.classid = 'pg_class'::regclass and d.objid = c.oid and d.deptype = 'e') order by 1, 2, 3": {
    "admitted": "2026-10-09",

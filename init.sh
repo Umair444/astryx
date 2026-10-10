@@ -468,7 +468,8 @@ _act_schema() { say "applying schema (schema.sql differs from what this database
 # The `geo` database's design is nucleus/schema_geo.sql (DDL only; the location rows are personal tier and never in
 # git). The check is cheap (every declared table exists); schema_parity's check.sh gate is the full judge. The act
 # births the database zero-window if missing and refuses a file that isn't committed, like the schema node.
-_chk_geoschema() { venv/bin/python -m nucleus.schema_parity present geo >/dev/null 2>&1; }
+_chk_geoschema() { venv/bin/python -m nucleus.schema_parity present geo >/dev/null 2>&1 \
+  && venv/bin/python -m nucleus.schema_parity readable geo >/dev/null 2>&1; }   # declared AND readable by every resident
 _act_geoschema() { say "geo: applying nucleus/schema_geo.sql (the declared design of the geo database)"
   venv/bin/python -m nucleus.schema_parity apply geo >/dev/null; }
 # <<< geoschema
@@ -511,7 +512,7 @@ _act_harden() { say "revoking PUBLIC CONNECT on the org's databases (plan-4918 P
 # people library 1a: social_relation's grants, the people_cleared / astryx_resident roles (resident NOLOGIN until
 # 1b), and the private AGE database astryx_people, born zero-window. The check and the act are one module.
 _chk_peoplegate() { venv/bin/python -m nucleus.people_gate check; }
-_act_peoplegate() { say "people gate: relation details readable only by people_cleared (accident-grade)"
+_act_peoplegate() { say "people gate: every resident reads the people library; PUBLIC doesn't (owner ruling 10-10)"
   venv/bin/python -m nucleus.people_gate apply >/dev/null; }
 # The derived graph databases, as social_age.DESIGN declares them (owner 10-10: "the design on github should match
 # local"). ensure creates a missing database or extension, then rebuilds; the check is read-only.
