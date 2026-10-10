@@ -134,31 +134,66 @@ arm('(iv) view actions leave the confirm unfocused and still pending', (await ev
 const forged = await ev(`${T}.confirmForged().then(o => o.status + ':' + (o.reason || ''))`)
 arm('a forged event object (plain {isTrusted:true,…}) is refused', String(forged).startsWith('refused') && (await desktopRuns()) === 0 && (await pend()) === p1.nonce, forged)
 
-// (v) X shown > 500ms, Y arrives, a click at the same point at once → neither runs
-const before = await allow()
-if (!before) { arm('(v) the prompt from (i) is still on screen', false); console.log(`FAIL (${fails})`); cleanup(); process.exit(1) }
-await room(AGENT.toUpperCase() === AGENT ? AGENT.toLowerCase() : AGENT.toUpperCase())   // different args, same agent (names match case-insensitively)
-const y = await waitAllow()
-await click(before.x, before.y)
-await sleep(150)
-const yNonce = await pend()
-arm('(v) a click landing as Y replaces X runs neither', (await desktopRuns()) === 0 && !!yNonce && yNonce !== p1.nonce, `runs ${await desktopRuns()}`)
-arm('(v) X\'s element is gone; the prompt on screen is Y\'s', !!y && y.nonce === yNonce && y.nonce !== before.nonce)
+// (v) and (iii) assert on a click that landed WITHIN the 500ms dwell, so each attempt MEASURES that: the trusted click's
+// own timeStamp minus performance.now() taken just before the new request (a lower bound on its bind time). A
+// stalled page can make "at once" take seconds, and then the prompt has legitimately armed: that attempt is
+// INCONCLUSIVE, so it is dismissed and retried (up to 5). Never a pass on an unmeasured attempt (a1 #44281).
+await ev(`window.__clicks = []; document.addEventListener('click', e => { if (e.isTrusted) window.__clicks.push(e.timeStamp) }, true); true`)
+const GAP_MS = 400
+const lastGap = () => ev(`window.__clicks[window.__clicks.length - 1] - window.__t0`)
+const request = (agent) => ev(`(window.__t0 = performance.now(), ${T}.room.run('open_desktop', { agent: ${JSON.stringify(agent)} }).then(o => o.status))`)
+const armedX = async () => {                     // a prompt X on screen, bound for over 500ms
+  if (!(await pend())) await room(AGENT)
+  const x = await waitAllow()
+  await sleep(650)
+  return x
+}
+const OTHER = AGENT.toUpperCase() === AGENT ? AGENT.toLowerCase() : AGENT.toUpperCase()   // same agent, different args
+
+// (v) X shown > 500ms, Y arrives, a click at the same point within the dwell → neither runs
+let vDone = false
+for (let attempt = 1; attempt <= 5 && !vDone; attempt++) {
+  const x = await armedX()
+  if (!x) break
+  const runs0 = await desktopRuns()
+  await request(attempt % 2 ? OTHER : AGENT)
+  await click(x.x, x.y)
+  await sleep(150)
+  const gap = await lastGap()
+  if (!(gap < GAP_MS)) { console.log(`    (v) attempt ${attempt}: click landed ${Math.round(gap)}ms after Y's request, inconclusive, retrying`); await ev(`${T}.dismiss(); true`); continue }
+  const y = await allow()
+  const yNonce = await pend()
+  console.log(`    (v) measured: the click landed ${Math.round(gap)}ms after Y's request (attempt ${attempt})`)
+  arm('(v) a click landing as Y replaces X runs neither', (await desktopRuns()) === runs0 && !!yNonce && yNonce !== x.nonce, `runs +${(await desktopRuns()) - runs0}`)
+  arm('(v) X\'s element is gone; the prompt on screen is Y\'s', !!y && y.nonce === yNonce && y.nonce !== x.nonce)
+  vDone = true
+}
+if (!vDone) { console.log('  FAIL  NOT MEASURED: page too slow for (v) in 5 attempts'); fails++ }
+await ev(`${T}.dismiss(); true`)
 
 // (iii) a click under 500ms after render is ignored; after, it runs, exactly once
-await room(AGENT)
-const z = await waitAllow()
-const zN = await pend()
-await click(z.x, z.y)
-await sleep(100)
-arm('(iii) a trusted click under 500ms after render is ignored', (await desktopRuns()) === 0 && (await pend()) === zN)
-await sleep(650)
-await click(z.x, z.y)
-await sleep(400)
-arm('(iii) a trusted click after it armed runs the call exactly once', (await desktopRuns()) === 1 && (await pend()) === null, `runs ${await desktopRuns()}, pending ${await pend()}`)
-await click(z.x, z.y)
-await sleep(200)
-arm('a second click runs nothing more', (await desktopRuns()) === 1)
+let iiiDone = false
+for (let attempt = 1; attempt <= 5 && !iiiDone; attempt++) {
+  const runs0 = await desktopRuns()
+  await request(AGENT)
+  const z = await waitAllow()
+  const zN = await pend()
+  await click(z.x, z.y)
+  await sleep(100)
+  const gap = await lastGap()
+  if (!(gap < GAP_MS)) { console.log(`    (iii) attempt ${attempt}: click landed ${Math.round(gap)}ms after the request, inconclusive, retrying`); await ev(`${T}.dismiss(); true`); continue }
+  console.log(`    (iii) measured: the early click landed ${Math.round(gap)}ms after the request (attempt ${attempt})`)
+  arm('(iii) a trusted click under 500ms after render is ignored', (await desktopRuns()) === runs0 && (await pend()) === zN)
+  await sleep(650)
+  await click(z.x, z.y)
+  await sleep(400)
+  arm('(iii) a trusted click after it armed runs the call exactly once', (await desktopRuns()) === runs0 + 1 && (await pend()) === null, `runs +${(await desktopRuns()) - runs0}, pending ${await pend()}`)
+  await click(z.x, z.y)
+  await sleep(200)
+  arm('a second click runs nothing more', (await desktopRuns()) === runs0 + 1)
+  iiiDone = true
+}
+if (!iiiDone) { console.log('  FAIL  NOT MEASURED: page too slow for (iii) in 5 attempts'); fails++ }
 arm('no uncaught errors in the page', errors.length === 0, errors.slice(0, 3).join(' ; '))
 console.log(fails ? `FAIL (${fails})` : 'ALL PASS')
 cleanup()

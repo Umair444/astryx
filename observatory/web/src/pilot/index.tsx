@@ -36,6 +36,7 @@ export const pilot = createExecutor(CATALOG, bound, {
 // server only: a production build drops this block (import.meta.env.DEV is false there)
 if ((import.meta as unknown as { env: { DEV: boolean } }).env.DEV) (window as unknown as Record<string, unknown>).__pilotTest = {
   room: pilot.room, pending: pilot.pending, ran: pilot.ran,
+  dismiss: () => pilot.dismiss(pilot.pending()?.nonce ?? ''),
   // a plain object claiming every trusted field, aimed at the bound prompt: the executor must refuse it (a1 #44266)
   confirmForged: () => pilot.confirm(pilot.pending()?.nonce ?? '', { isTrusted: true, pointerType: 'mouse', currentTarget: document.querySelector('[data-pilot-allow]'), timeStamp: 1e9 }),
 }
