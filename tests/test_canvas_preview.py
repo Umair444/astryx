@@ -227,9 +227,14 @@ def containment():
         arm(f"the stdlib reader agrees with Pillow on all {len(shots)} screenshots so far", shots and not diff, diff)
     canary = TMP / "canary.html"
     canary.write_text("<body style='margin:0;background:#f00'>CANARY</body>")
-    pngs, _ = cv.preview(9, page("file", f"<script>location.href={json.dumps(canary.as_uri())}</script>"),
+    # a positive paint witness (abstractor-3 #44885): the page paints green, then navigates. Not-red alone also passes
+    # on a frame that never painted (the bare shell), which the OOPIF race made common; exact green means the page
+    # painted AND stayed. Measured: blocked navigation keeps it (0,170,0); without the paint the centre is the shell.
+    green = "<div style='position:fixed;inset:0;background:#0a0'></div>"
+    pngs, _ = cv.preview(9, page("file", green + f"<script>location.href={json.dumps(canary.as_uri())}</script>"),
                          str(TMP / "f3"), load=lambda c: {})
-    arm("(f) a page navigating to a host file: the file is NOT in the screenshot", not red(pngs[0]), pngs[0])
+    arm("(f) a page navigating to a host file: it painted and stayed, the file is NOT in the screenshot",
+        centre_rgb(pngs[0]) == (0, 170, 0) and not red(pngs[0]), centre_rgb(pngs[0]))
 
     _, errs = cv.preview(9, page("ls", "<script>localStorage.setItem('k', 1)</script>"), str(TMP / "f4"),
                          load=lambda c: {})
