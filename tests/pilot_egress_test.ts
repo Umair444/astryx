@@ -3,6 +3,7 @@
 import { readFileSync } from 'node:fs'
 import { createExecutor, type Catalog, type Handler, type Json } from '../observatory/web/src/pilot/core.ts'
 import { functionOutput, project } from '../observatory/web/src/pilot/egress.ts'
+import { makeHandlers, type PilotCtx } from '../observatory/web/src/pilot/handlers.ts'
 
 const catalog = JSON.parse(readFileSync(process.argv[2], 'utf8')) as Catalog
 let fails = 0
@@ -30,6 +31,40 @@ const p = await wire('open_desktop', { agent: 'forge' })
 arm('a parked confirm tells the provider only that the owner must tap', p.includes('tap Allow') && !p.includes(ex.pending()!.nonce))
 const r = await wire('set_theme', { theme: 'nope' })
 arm('a refusal leaves as an error string', r.includes('"ok":false') && r.includes('error'))
+
+// R2 (a4 #44288): get_view_state READS the page. Run the REAL handler against a page that holds an obs key in the
+// URL, a personal thread open, and a private agent's step body on screen; the bytes the provider gets carry none.
+{
+  const KEYSENT = 'OBSKEY-SENTINEL-91c2'
+  const THREAD = 'career-offer-SENTINEL-ab12'
+  const BODY = 'STEP-BODY-SENTINEL-55e0'
+  const g = globalThis as unknown as Record<string, unknown>
+  g.location = { hash: `#/wire/${THREAD}?key=${KEYSENT}`, search: `?key=${KEYSENT}`, href: `http://x/?key=${KEYSENT}#/wire/${THREAD}` }
+  g.document = { body: { innerText: BODY }, title: BODY }
+  const ctx = {
+    view: () => 'wire', thread: () => THREAD, navigate: () => {}, openThread: () => {},
+    agents: () => ['canopus', 'seed'], agentOpen: () => 'canopus', openAgent: () => {},
+    themes: () => [{ id: 'nord', name: 'Nord' }], theme: () => 'nord', setTheme: () => {}, cycleTheme: () => {},
+    desktopOpen: () => null, openDesktop: () => {}, deskOf: () => null, get: async () => ({}),
+  } as unknown as PilotCtx
+  const real = makeHandlers(ctx)
+  const ex2 = createExecutor(catalog, real, { project })
+  const out = await ex2.room.run('get_view_state', {})
+  const frame = JSON.stringify({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: 'c1', output: JSON.stringify(functionOutput(out)) } })
+  arm('get_view_state reaches the provider (view, theme, the open agent\'s name)', out.status === 'done' && frame.includes('wire') && frame.includes('nord') && frame.includes('canopus'))
+  arm('an OBS_KEY in the URL is absent from the frame', !frame.includes(KEYSENT))
+  arm('a personal thread key is absent from the frame', !frame.includes(THREAD))
+  arm('a private agent\'s step body on the page is absent from the frame', !frame.includes(BODY))
+  const ctx2 = { ...ctx, thread: () => 'plan-9000' } as PilotCtx
+  const o2 = await createExecutor(catalog, makeHandlers(ctx2), { project }).room.run('get_view_state', {})
+  arm('an org plan thread key may leave', JSON.stringify(functionOutput(o2)).includes('plan-9000'))
+  const nav = JSON.stringify(functionOutput(await createExecutor(catalog, makeHandlers(ctx), { project }).room.run('open_thread', { thread: THREAD })))
+  arm('open_thread on a personal key does not echo it back', !nav.includes(THREAD))
+  for (const a of catalog.actions.filter((x) => x.class === 'view' || x.class === 'read')) {
+    if (project(a.name, {}) === null) arm(`every room-reachable action has a projection entry: ${a.name}`, false)
+  }
+  arm('every view and read action has a projection entry (no silent refusal)', true)
+}
 
 console.log(fails ? `FAIL (${fails})` : 'ALL PASS')
 process.exit(fails ? 1 : 0)

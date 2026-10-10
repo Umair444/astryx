@@ -4,7 +4,7 @@
   "matrix": {
     "owner": {"view": "allow", "read": "allow", "write": "confirm", "actuate": "confirm"},
     "visitor": {"view": "allow"},
-    "room": {"view": "allow", "read": "projection", "write": "confirm", "actuate": "confirm"},
+    "room": {"view": "projection", "read": "projection", "write": "confirm", "actuate": "confirm"},
     "agent": {"view": "allow"},
     "anonymous": {},
     "peer": {}
