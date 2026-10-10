@@ -23,6 +23,11 @@ own arms live in tests/test_copies.py, which never skips. Arms:
   P2        `tags:` as a YAML block list holding career → dark.
   P3        a career book's ABSTRACT carrying the plant → dark, and the plant is not in its text.
   P4        `tags: [career]` then `tags: []` → dark.
+a3 #44329's notes, each a RED on c334c47a:
+  N1        a book's sections, once the book goes dark, keep only their node name as title and text (not
+            "<book title> · <anchor>": the book's title is what dark_title guards).
+  N2        frontmatter keys are case-folded: `Tags: [career]` and `X-Visibility: private` → dark; `TAGS` beside
+            `tags` is a repeated key → dark. CONTROL: `Title:` still names a clean book.
 Exit 0 pass · 1 fail · 77 could-not-run.
 """
 import importlib.util
@@ -80,6 +85,10 @@ BIG = "".join(f"## part {i}\n{FILL} {PLANT if i == 2 else ''}\n\n" for i in rang
 (LIB / "block.md").write_text(f'---\ntitle: "Block"\ntags:\n  - career\n---\n{PLANT}\n')
 (LIB / "abs.md").write_text(f'---\ntitle: "Abs"\nabstract: "{PLANT} in summary"\ntags: [career]\n---\nbody\n')
 (LIB / "dup.md").write_text(f'---\ntitle: "Dup"\ntags: [career]\ntags: []\n---\n{PLANT}\n')
+(LIB / "capt.md").write_text(f'---\ntitle: "Capt"\nTags: [career]\n---\n{PLANT}\n')
+(LIB / "capv.md").write_text(f'---\ntitle: "Capv"\nX-Visibility: private\n---\n{PLANT}\n')
+(LIB / "capd.md").write_text(f'---\ntitle: "Capd"\ntags: [agents]\nTAGS: [career]\n---\n{PLANT}\n')
+(LIB / "capc.md").write_text('---\nTitle: "Capc Named"\ntags: [org]\n---\ncapc body\n')
 (LIB / "a.md").write_text('---\ntitle: "Library a"\ntags: [org]\n---\nlibrary-a body links [[clean]]\n')
 DECL = {"name": "graph:memory", "kind": "age_graph", "graph": "memory", "comparator": "root_digest",
         "roots": ["memory/wiki/*.md", "memory/library/**/*.md", "memory/ontology.md"], "reads": ["kg.claim incidence"],
@@ -167,6 +176,16 @@ try:
         check("P1 tagged career after admission: no library node leaks the plant", not leaked(), repr(leaked()))
         adm, txt = node("library:shelf/grows")
         check("P1 …and the parent is dark, title only", adm is False and txt.strip('"') == "Grows", (adm, txt))
+        dk = conn.execute("SELECT * FROM cypher('memory', $$ MATCH (c:Concept) WHERE c.name STARTS WITH "
+                          "'library:shelf/grows#' RETURN c.name, c.title, c.text $$) "
+                          "AS (n agtype, t agtype, x agtype)").fetchall()
+        check("N1 a dark book's sections keep only their name as title and text",
+              len(dk) >= 2 and all(str(n) == str(t) == str(x) for n, t, x in dk), repr(dk[:2]))
+        for nm in ("capt", "capv", "capd"):
+            adm, txt = node(f"library:shelf/{nm}")
+            check(f"N2 {nm}: a case-variant key is read, dark, no plant", adm is False and PLANT not in txt, (adm, txt))
+        adm, txt = node("library:shelf/capc")
+        check("N2 CONTROL: `Title:` names a clean admitted book", adm and "Capc Named" in txt, (adm, txt))
         res = C.check(conn, [DECL], root)
         check("S2g after the rebuild → FRESH", res and res[0][1] == "FRESH", repr(res))
         (LIB / "clean.md").write_text('---\ntitle: "Clean"\ntags: [org]\n---\nbeta body, edited\n')
