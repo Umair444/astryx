@@ -756,14 +756,26 @@ CREATE TABLE IF NOT EXISTS hands_leases (
 CREATE TABLE IF NOT EXISTS leases (
   resource     text PRIMARY KEY,
   holder       text,                                  -- NULL iff free
-  state        text NOT NULL DEFAULT 'free' CHECK (state IN ('free','EAR','MUTED','FOCAL')),
+  state        text NOT NULL DEFAULT 'free' CHECK (state IN ('free','EAR','MUTED','FOCAL','HELD')),
   granted_at   timestamptz,
   expires_at   timestamptz,                           -- the TTL; NULL for free and MUTED only
   heartbeat_at timestamptz,
   budget       jsonb,                                 -- S4's FOCAL cap rides here; NULL in S1
   CHECK ((state = 'free') = (holder IS NULL)),
-  CHECK ((state IN ('EAR','FOCAL')) = (expires_at IS NOT NULL))
+  CHECK ((state IN ('EAR','FOCAL','HELD')) = (expires_at IS NOT NULL))
 );
+-- HELD (plan-8675 C4): a plain one-holder hold with a TTL, for resources that aren't a microphone: 'vm-slot'
+-- (which VM may be resident in RAM: the Android emulator or the Windows VM, measured not to fit together) and
+-- 'android:<avd>' (one agent drives a phone at a time). Widened in place on an existing table, idempotently:
+-- the two checks are dropped by their generated names and re-added with HELD.
+DO $$ BEGIN
+  ALTER TABLE leases DROP CONSTRAINT IF EXISTS leases_state_check;
+  ALTER TABLE leases ADD CONSTRAINT leases_state_check
+    CHECK (state IN ('free','EAR','MUTED','FOCAL','HELD'));
+  ALTER TABLE leases DROP CONSTRAINT IF EXISTS leases_check1;
+  ALTER TABLE leases ADD CONSTRAINT leases_check1
+    CHECK ((state IN ('EAR','FOCAL','HELD')) = (expires_at IS NOT NULL));
+END $$;
 
 -- UTTERANCES (plan-8674 S1, hearing): the raw room transcript, one row per VAD speech segment the ear transcribed.
 -- In the ONE org database like every table (owner ruling 2026-10-10, seed #42311: information in astryx is shared

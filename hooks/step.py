@@ -173,9 +173,26 @@ def usage_snapshot(cur):
 
 LAPTOP_OMITTED = "[hands laptop output omitted]"
 TYPED_OMITTED = "[typed text omitted]"
+PHONE_OMITTED = "[phone output omitted: not a public screen]"
+PHONE_STAMP = "astryx-surface: "        # mcp/phone/server.py ends EVERY answer with this block
 
 
-def strip_pixels(obj, _laptop_ids=None):
+def _phone_public(content) -> bool:
+    """A phone tool result is kept only if its LAST block is the facade's surface stamp saying tier "org"
+    (plan-8675 C3). Anything else, including no stamp, an unparseable one or a string body, is not public."""
+    if not isinstance(content, list) or not content:
+        return False
+    last = content[-1]
+    if not (isinstance(last, dict) and last.get("type") == "text"
+            and str(last.get("text", "")).startswith(PHONE_STAMP)):
+        return False
+    try:
+        return json.loads(last["text"][len(PHONE_STAMP):]).get("tier") == "org"
+    except (ValueError, AttributeError):
+        return False
+
+
+def strip_pixels(obj, _laptop_ids=None, _phone_ids=None):
     """No image is ever KEPT in turns (a3 #42085 L1). The agent saw it (that's its context, the
     owner's choice); the DB, every pg_dump and every branch_check clone don't keep it: a
     screenshot of the owner's real screen is his WhatsApp, his family, whatever was open. Each
@@ -183,12 +200,14 @@ def strip_pixels(obj, _laptop_ids=None):
     taken on screen="laptop" keeps no TEXT body either: an act() answer names his windows."""
     import hashlib
     if _laptop_ids is None:
-        _laptop_ids = set()
+        _laptop_ids, _phone_ids = set(), set()
         def find(o):
             if isinstance(o, dict):
                 if (o.get("type") == "tool_use" and str(o.get("name", "")).startswith("mcp__hands__")
                         and (o.get("input") or {}).get("screen") != "background"):
                     _laptop_ids.add(o.get("id"))
+                if o.get("type") == "tool_use" and str(o.get("name", "")).startswith("mcp__phone__"):
+                    _phone_ids.add(o.get("id"))
                 for v in o.values():
                     find(v)
             elif isinstance(o, list):
@@ -196,7 +215,7 @@ def strip_pixels(obj, _laptop_ids=None):
                     find(v)
         find(obj)
     if isinstance(obj, list):
-        return [strip_pixels(v, _laptop_ids) for v in obj]
+        return [strip_pixels(v, _laptop_ids, _phone_ids) for v in obj]
     if not isinstance(obj, dict):
         return obj
     if obj.get("type") == "image":
@@ -211,9 +230,16 @@ def strip_pixels(obj, _laptop_ids=None):
         # never kept, on any screen
         inp = {**obj["input"], "text": TYPED_OMITTED}
         return {**obj, "input": inp}
+    if (obj.get("type") == "tool_use" and str(obj.get("name", "")).startswith("mcp__phone__")
+            and (obj.get("input") or {}).get("action") == "type"):
+        # what an agent types on a phone can be a password or a one-time code: never kept
+        return {**obj, "input": {**obj["input"], "text": TYPED_OMITTED}}
     if obj.get("type") == "tool_result" and obj.get("tool_use_id") in _laptop_ids:
         return {**{k: v for k, v in obj.items() if k != "content"}, "content": LAPTOP_OMITTED}
-    return {k: strip_pixels(v, _laptop_ids) for k, v in obj.items()}
+    if obj.get("type") == "tool_result" and obj.get("tool_use_id") in (_phone_ids or ()) \
+            and not _phone_public(obj.get("content")):
+        return {**{k: v for k, v in obj.items() if k != "content"}, "content": PHONE_OMITTED}
+    return {k: strip_pixels(v, _laptop_ids, _phone_ids) for k, v in obj.items()}
 
 
 def handle_stop(cur, agent, h):

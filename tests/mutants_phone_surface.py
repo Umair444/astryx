@@ -1,0 +1,29 @@
+"""Authored mutants for mcp/phone/surface.py (plan-8675 S1), run by nucleus/mutation_probe.py:
+
+    venv/bin/python nucleus/mutation_probe.py tests/mutants_phone_surface.py
+"""
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+SUBJECT = REPO / "mcp/phone/surface.py"
+ORACLE = REPO / "tests" / "test_phone_facade.py"
+ENV = "PHONE_SURFACE_SRC"
+TIMEOUT = 120
+
+MUTANTS = {
+    "an unlisted visible window doesn't taint":
+        ('"personal" if unlisted or not visible else "org"',
+         '"personal" if not visible else "org"'),
+    'nothing visible reads as public':
+        ('"personal" if unlisted or not visible else "org"',
+         '"personal" if unlisted else "org"'),
+    'a block with no isVisible line counts as hidden':
+        ('            w["visible"] = True\n',
+         '            w["visible"] = False\n'),
+    'titles match as substrings':
+        ('r["title"].fullmatch(w["title"])',
+         'r["title"].search(w["title"])'),
+    "the owning package isn't checked":
+        ('w["package"] == r["package"] and r["title"]',
+         'r["title"]'),
+}

@@ -11,6 +11,11 @@ The ONLY writer of the main db's `leases` table (schema.sql). One row per resour
   unmute(conn, res)             MUTED → free
   indicator(row, now)           what the observatory shows, DERIVED from the row + heartbeat age: never stored
 
+  hold(conn, res, holder, ttl)   HELD, for a resource that isn't a microphone (plan-8675 C4: 'vm-slot',
+                                'android:<avd>'): free, this holder's own, or an expired hold → HELD by holder
+  unhold(conn, res, holder)     HELD → free, only while `holder` holds it (also how a caller frees a hold whose
+                                holder it has PROVED gone: keyed on the holder it inspected, never a newer one)
+
 Deliberately NOT nucleus/hands.py / hands_leases: the owner rejected that design (2026-10-10).
 """
 from __future__ import annotations
@@ -86,3 +91,28 @@ def indicator(row: dict | None, now: datetime | None = None) -> dict:
     live = row["expires_at"] is not None and row["expires_at"] >= now
     mic = {"EAR": "listening" if live else "stale", "FOCAL": "focal" if live else "reverting"}[row["state"]]
     return {"mic": mic, "holder": row["holder"], "age_s": age}
+
+
+def _not_ear(resource: str) -> None:
+    # A microphone's lease has states a plain hold must never touch (MUTED only the owner ends).
+    if resource.startswith("ear:"):
+        raise ValueError(f"{resource} is a microphone lease: use claim/release/mute")
+
+
+def hold(conn, resource: str, holder: str, ttl_s: int) -> dict | None:
+    """The row if `holder` now holds `resource`, else None (someone else holds it, live). One statement."""
+    _not_ear(resource)
+    _ensure(conn, resource)
+    return _row(conn.execute(
+        f"UPDATE leases SET holder = %s, state = 'HELD', granted_at = CASE WHEN holder = %s AND state = 'HELD' "
+        f"THEN granted_at ELSE now() END, expires_at = now() + make_interval(secs => %s), heartbeat_at = now() "
+        f"WHERE resource = %s AND (state = 'free' OR (state = 'HELD' AND (holder = %s OR expires_at < now()))) "
+        f"RETURNING {COLS}", (holder, holder, ttl_s, resource, holder)))
+
+
+def unhold(conn, resource: str, holder: str) -> dict | None:
+    _not_ear(resource)
+    return _row(conn.execute(
+        f"UPDATE leases SET holder = NULL, state = 'free', granted_at = NULL, expires_at = NULL "
+        f"WHERE resource = %s AND state = 'HELD' AND holder = %s RETURNING {COLS}", (resource, holder)))
+

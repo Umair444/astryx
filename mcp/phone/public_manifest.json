@@ -1,0 +1,11 @@
+{
+  "_doc": "plan-8675 C3: the phone windows whose content is PUBLIC. A visible window matching no rule makes the surface personal (fail-safe). title is a full-match regex over the window title from `dumpsys window windows`. Measured on android-35 (S0 AVD): NotificationShade is visible only while the shade is open, so it is deliberately absent here.",
+  "public_windows": [
+    {"package": "com.android.systemui", "title": "ScreenDecorOverlay(Bottom)?", "why": "rounded-corner decor: no content"},
+    {"package": "com.android.systemui", "title": "StatusBar", "why": "clock, battery and notification ICONS; the shade's text lives in NotificationShade"},
+    {"package": "com.android.systemui", "title": "NavigationBar\\d*", "why": "back/home/recents buttons"},
+    {"package": "com.google.android.apps.nexuslauncher", "title": "Taskbar", "why": "app icons only"},
+    {"package": "com.android.settings", "title": "com\\.android\\.settings/.*", "why": "S1's public proof app"},
+    {"package": "com.google.android.calculator", "title": "com\\.google\\.android\\.calculator/.*", "why": "a harmless public app"}
+  ]
+}
