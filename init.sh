@@ -186,7 +186,7 @@ EOF
   if [ "$ear_on" = 1 ] && [ -f bridges/ear.py ]; then
     cat > "$UD/astryx-ear.service" <<EOF
 [Unit]
-Description=astryx ear — hearing: VAD speech segments from the observatory → local STT → astryx_ear (:8092, via /ear/)
+Description=astryx ear — hearing: VAD speech segments from the observatory → local STT → the ear store (:8092, via /ear/)
 After=network.target docker.service
 [Service]
 WorkingDirectory=$PWD
