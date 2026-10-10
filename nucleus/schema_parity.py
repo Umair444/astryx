@@ -28,6 +28,7 @@ server-rendered definition (pg_get_functiondef / triggerdef / viewdef / indexdef
 from __future__ import annotations
 
 import sys
+import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -139,15 +140,39 @@ def expected_extra() -> tuple:
     return (memgraph.SCHEMA_SQL,)
 
 
-def run(live_dsn: str) -> dict:
+# EVERY database the org declares (owner 10-10: "the design on github should match local"; F1 of steward #42345).
+# `files`: DDL applied to the fixture AFTER schema.sql (the fixture always carries it); `schemas`: the namespaces this
+# database's file declares, the only ones judged there. A SCOPED database judges live-only tables in its schemas too:
+# nobody else writes into `track`, so a table there that the file doesn't define is an ad-hoc table, not a peer's.
+DATABASES = {
+    "astryx": {"files": (), "schemas": None},
+    "geo": {"files": ("nucleus/schema_geo.sql",), "schemas": ("track",)},
+}
+
+
+def _scope(schemas, sh, ob, de):
+    if schemas is None:
+        return sh, ob, de
+    keep = lambda name: name.split(".", 1)[0] in schemas       # noqa: E731
+    return ({t: c for t, c in sh.items() if t[0] in schemas},
+            {k: {n for n in v if keep(n)} for k, v in ob.items()},
+            {k: {n: h for n, h in v.items() if keep(n)} for k, v in de.items()})
+
+
+def run(live_dsn: str, db: str = "astryx") -> dict:
     import psycopg
     from nucleus.sqlguard.fixture import fixture_db
-    with fixture_db(extra=expected_extra()) as fx, psycopg.connect(fx["dsn"], autocommit=True) as f:
-        exp, exp_o, exp_d = shape(f), objects(f), definitions(f)
+    spec = DATABASES[db]
+    extra = expected_extra() if db == "astryx" else tuple((REPO / f).read_text() for f in spec["files"])
+    with fixture_db(extra=extra) as fx, psycopg.connect(fx["dsn"], autocommit=True) as f:
+        exp, exp_o, exp_d = _scope(spec["schemas"], shape(f), objects(f), definitions(f))
     with psycopg.connect(live_dsn, autocommit=True) as c:
         c.execute("SET default_transaction_read_only = on")
-        got, got_o, got_d = shape(c), objects(c), definitions(c)
+        got, got_o, got_d = _scope(spec["schemas"], shape(c), objects(c), definitions(c))
     out = compare(exp, got)
+    if spec["schemas"] is not None and out["live_only"]:
+        out["extra"] += [f"table {t} (live-only in a declared schema: an ad-hoc table)" for t in out["live_only"]]
+        out["drift"] = True
     o = compare_objects(exp_o, got_o)
     out["objects_missing"], out["objects_extra"] = o["missing"], o["extra_reported"]
     out["objects_changed"] = compare_definitions(exp_d, got_d)
@@ -155,13 +180,92 @@ def run(live_dsn: str) -> dict:
     return out
 
 
-def main() -> int:
-    from nucleus.sqlguard.fixture import FixtureUnavailable, live_dsn
+TABLE_RX = re.compile(r"CREATE TABLE IF NOT EXISTS ([a-z_]+\.[a-z_]+)", re.I)
+
+
+def declared_tables(db: str) -> list:
+    """The tables a scoped database's files declare (init.sh's cheap presence check; parity is the full judge)."""
+    got = sorted({m for f in DATABASES[db]["files"] for m in TABLE_RX.findall((REPO / f).read_text())})
+    if not got:                                   # anti-vacuity: a presence check over nothing would read green
+        raise RuntimeError(f"no CREATE TABLE IF NOT EXISTS parsed from {db}'s files: the check would verify nothing")
+    return got
+
+
+def present(admin_dsn: str, db: str) -> list:
+    """What the declared database lacks for init.sh's node: [] when the database and every declared table exist."""
+    import psycopg
+    from psycopg.conninfo import make_conninfo
     try:
-        d = run(live_dsn())
-    except FixtureUnavailable as e:
-        print(f"schema_parity: NOT SEARCHED ({e})")
-        return 77
+        with psycopg.connect(make_conninfo(admin_dsn, dbname=db), autocommit=True) as c:
+            return [t for t in declared_tables(db) if c.execute("SELECT to_regclass(%s)", (t,)).fetchone()[0] is None]
+    except psycopg.OperationalError as e:
+        if "does not exist" in str(e):
+            return [f"database {db}"]
+        raise
+
+
+def apply(admin_dsn: str, db: str) -> list:
+    """init.sh's act for a scoped database: born ZERO-WINDOW if missing (closed, PUBLIC revoked, then opened), then
+    its files applied in one transaction each. COMMIT FIRST, like the schema node: a file whose bytes differ from git
+    HEAD's is refused (prod carries only what git carries). Returns what it did."""
+    import subprocess
+    import psycopg
+    from psycopg import sql
+    from psycopg.conninfo import make_conninfo
+    did = []
+    for f in DATABASES[db]["files"]:
+        head = subprocess.run(["git", "-C", str(REPO), "show", f"HEAD:{f}"], capture_output=True, text=True)
+        if head.returncode != 0 or head.stdout != (REPO / f).read_text():
+            raise RuntimeError(f"{f} differs from what git has committed (modified, staged or untracked): commit it first")
+    with psycopg.connect(admin_dsn, autocommit=True) as a:
+        if not a.execute("SELECT 1 FROM pg_database WHERE datname = %s", (db,)).fetchone():
+            a.execute(sql.SQL("CREATE DATABASE {} ALLOW_CONNECTIONS false").format(sql.Identifier(db)))
+            a.execute(sql.SQL("REVOKE ALL ON DATABASE {} FROM PUBLIC").format(sql.Identifier(db)))
+            a.execute(sql.SQL("ALTER DATABASE {} ALLOW_CONNECTIONS true").format(sql.Identifier(db)))
+            did.append(f"database {db}")
+    with psycopg.connect(make_conninfo(admin_dsn, dbname=db)) as c:
+        for f in DATABASES[db]["files"]:
+            c.execute((REPO / f).read_text())
+            did.append(f"applied {f}")
+        c.commit()
+    return did
+
+
+def main(argv=None) -> int:
+    import sys as _sys
+    argv = list(_sys.argv[1:] if argv is None else argv)
+    if argv[:1] in (["present"], ["apply"]):
+        from nucleus.sqlguard.fixture import live_dsn
+        db = argv[1] if len(argv) > 1 else "geo"
+        if argv[0] == "present":
+            left = present(live_dsn(), db)
+            for x in left:
+                print(f"  schema_parity [{db}]: missing {x}")
+            return 1 if left else 0
+        for x in apply(live_dsn(), db):
+            print(f"  schema_parity [{db}]: {x}")
+        return 0
+    from psycopg.conninfo import make_conninfo
+    from nucleus.sqlguard.fixture import FixtureUnavailable, live_dsn
+    rc = 0
+    for db in DATABASES:
+        try:
+            d = run(live_dsn() if db == "astryx" else make_conninfo(live_dsn(), dbname=db), db=db)
+        except FixtureUnavailable as e:
+            print(f"schema_parity [{db}]: NOT SEARCHED ({e})")
+            return 77
+        except Exception as e:  # noqa: BLE001 — an absent declared database is drift, not a crash
+            if "does not exist" in str(e):
+                print(f"  DRIFT MISSING: database {db}")
+                print(f"schema_parity [{db}]: DRIFT")
+                rc = 1
+                continue
+            raise
+        rc = max(rc, _report(db, d))
+    return rc
+
+
+def _report(db: str, d: dict) -> int:
     for k in ("missing", "extra", "type", "objects_missing", "objects_changed"):
         for x in d[k]:
             print(f"  DRIFT {k.upper()}: {x}")
@@ -169,7 +273,7 @@ def main() -> int:
         print(f"  reported, not judged: {len(d['objects_extra'])} live-only object(s): {', '.join(d['objects_extra'])}")
     if d["live_only"]:
         print(f"  reported, not judged: {len(d['live_only'])} live-only table(s): {', '.join(d['live_only'])}")
-    print("schema_parity: " + ("DRIFT" if d["drift"] else "live matches a fresh apply of the schema files"))
+    print(f"schema_parity [{db}]: " + ("DRIFT" if d["drift"] else "live matches a fresh apply of the schema files"))
     return 1 if d["drift"] else 0
 
 

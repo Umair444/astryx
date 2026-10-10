@@ -186,6 +186,71 @@ def main():
           Probe.wrote is False, str(Probe.wrote))
     if live["live_only"]:
         print(f"  (reported, not judged: {len(live['live_only'])} live-only table(s))")
+
+    # GEO (owner 10-10 "the design on github should match local"; steward #42345 F1): a SCOPED database. Its file is
+    # nucleus/schema_geo.sql; only `track` is judged, and there a live-only table IS drift (nobody else writes into it).
+    from psycopg.conninfo import make_conninfo
+    tabs = P.declared_tables("geo")
+    check("GEO: the file declares its three tables (anti-vacuity: the presence check has something to check)",
+          tabs == ["track.locations", "track.presence", "track.zones"], str(tabs))
+    geo_sql = tuple((REPO / f).read_text() for f in P.DATABASES["geo"]["files"])
+    try:
+        with fixture_db(extra=geo_sql) as gx:
+            g0 = P.run(gx["dsn"], db="geo")
+            check("GEO: a fresh apply of schema_geo.sql matches itself in scope (the comparison has a green)",
+                  g0["drift"] is False, str(g0))
+            with psycopg.connect(gx["dsn"], autocommit=True) as c:
+                c.execute("ALTER TABLE track.zones DROP COLUMN tier")
+                c.execute("CREATE TABLE track.adhoc (x int)")
+                c.execute("CREATE TABLE public.zz_not_geos (x int)")
+            g1 = P.run(gx["dsn"], db="geo")
+            check("GEO: a dropped declared column reads MISSING", "column track.zones.tier (text)" in g1["missing"],
+                  str(g1["missing"]))
+            check("GEO: an ad-hoc table INSIDE the declared schema is judged EXTRA (drift), not merely reported",
+                  any(x.startswith("table track.adhoc") for x in g1["extra"]) and g1["drift"] is True, str(g1["extra"]))
+            check("GEO: a table OUTSIDE the declared schema is out of geo's scope (never reported as geo's)",
+                  not any("zz_not_geos" in x for x in g1["extra"] + g1["live_only"]), str(g1))
+            with psycopg.connect(gx["dsn"], autocommit=True) as c:
+                c.execute("DROP TABLE track.presence")
+            with psycopg.connect(gx["dsn"], autocommit=True) as c:
+                gone = [t for t in P.declared_tables("geo") if c.execute("SELECT to_regclass(%s)", (t,)).fetchone()[0] is None]
+            check("GEO: the presence predicate names a dropped declared table", gone == ["track.presence"], str(gone))
+    except FixtureUnavailable as e:
+        print(f"  SKIP  geo fixture arms: {e}")
+        fails.append("SKIP geo")
+    import tempfile
+    real_repo = P.REPO
+    with tempfile.TemporaryDirectory() as td:
+        (Path(td) / "nucleus").mkdir()
+        (Path(td) / "nucleus" / "schema_geo.sql").write_text("-- an uncommitted edit\n")
+        P.REPO = Path(td)
+        try:
+            # a DEAD admin DSN: the refusal must come before any connection, so a mutant that drops the git check
+            # fails on the connect here, and never applies anything to a real server
+            P.apply("host=127.0.0.1 port=1 dbname=nowhere connect_timeout=2", "geo")
+            refused = None
+        except RuntimeError as e:
+            refused = str(e)
+        except Exception as e:                    # noqa: BLE001 — reached the server step: the check was skipped
+            refused = None
+            print(f"        (apply got past the commit check: {type(e).__name__})")
+        finally:
+            P.REPO = real_repo
+    check("GEO: apply() REFUSES a file git hasn't committed (prod carries only what git carries), before touching the "
+          "server", refused is not None and "commit it first" in refused, str(refused))
+    psycopg.connect = Probe
+    Probe.wrote = None
+    try:
+        glive = P.run(make_conninfo(live_dsn(), dbname="geo"), db="geo")
+    finally:
+        psycopg.connect = real
+    check("LIVE GEO: the live `track` schema matches a fresh apply of schema_geo.sql, ad-hoc tables included",
+          glive["drift"] is False, f"missing={glive['missing']} extra={glive['extra']} type={glive['type']} "
+          f"obj={glive['objects_missing']} changed={glive['objects_changed']}")
+    real_fails = [f for f in fails if not f.startswith("SKIP")]
+    if len(real_fails) != len(fails) and not real_fails:
+        print("\nSKIP (partial): geo fixture arms")
+        return 77
     print(f"\n{'FAIL' if fails else 'PASS'}: schema parity ({len(fails)} failing)")
     return 1 if fails else 0
 
