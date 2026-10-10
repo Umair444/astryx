@@ -11,6 +11,7 @@ import WireView from './components/WireView'
 import GoalsView from './components/GoalsView'
 import EconomyView from './components/EconomyView'
 import ToolsView from './components/ToolsView'
+import HandsView from './components/HandsView'
 import SystemView from './components/SystemView'
 import TheatreView from './components/TheatreView'
 import MemoryView from './components/MemoryView'
@@ -35,6 +36,7 @@ export type Route =
   | { tab: 'growbot' }
   | { tab: 'face' }
   | { tab: 'floor' }
+  | { tab: 'hands' }
 
 function parseHash(): Route {
   const h = location.hash.replace(/^#\/?/, '')
@@ -50,6 +52,7 @@ function parseHash(): Route {
   if (tab === 'growbot') return { tab: 'growbot' }
   if (tab === 'face') return { tab: 'face' }
   if (tab === 'network') return { tab: 'network' }
+  if (tab === 'hands') return { tab: 'hands' }
   return { tab: 'floor' }          // the Floor is home: the org as a place
 }
 
@@ -65,6 +68,7 @@ const TABS: { key: Route['tab']; label: string; icon: string }[] = [
   { key: 'agents', label: 'Agents', icon: '◍' },
   { key: 'wire', label: 'Wire', icon: '✦' },
   { key: 'goals', label: 'Goals', icon: '◎' },
+  { key: 'hands', label: 'Hands', icon: '✋' },
   { key: 'economy', label: 'Economy', icon: '⬡' },
   { key: 'tools', label: 'Tools', icon: 'ƒ' },
   { key: 'theatre', label: 'Theatre', icon: '❝' },
@@ -276,6 +280,7 @@ function Shell() {
               {route.tab === 'theatre' && <TheatreView />}
               {route.tab === 'memory' && <MemoryView />}
               {route.tab === 'growbot' && <GrowbotView />}
+              {route.tab === 'hands' && <HandsView />}
             </>
           )}
         </div>

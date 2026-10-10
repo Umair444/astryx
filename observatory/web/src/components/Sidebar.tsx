@@ -16,6 +16,7 @@ export const LINKS: { tab: Route['tab']; label: string; icon: string; hint: stri
   { tab: 'agents', label: 'Agents', icon: '◍', hint: 'the people of the org' },
   { tab: 'wire', label: 'The Wire', icon: '✦', hint: 'every conversation' },
   { tab: 'goals', label: 'Goals', icon: '◎', hint: 'what the org is pursuing' },
+  { tab: 'hands', label: 'Hands', icon: '✋', hint: 'agents at their own desktops' },
   { tab: 'economy', label: 'Economy', icon: '⬡', hint: 'effort, value, spend' },
   { tab: 'tools', label: 'Tools', icon: 'ƒ', hint: 'what the org has built' },
   { tab: 'theatre', label: 'Theatre', icon: '❝', hint: 'the org, narrated' },

@@ -279,6 +279,10 @@ run "fixture_db reaps a killed run's database, never a live one's" "$PY" tests/t
 # The real executor drives the real images against a throwaway lease table, in its OWN namespace.
 # Grade: prevention vs the external adversary (residents trusted, owner #38554). 77 without docker/images.
 run "hands cell: per-lease egress, wipe on kill, step + wall caps" "$PY" tests/test_hands_cell.py
+# Hands, the owner's design (plan-7862, 10-10: "use my laptop like i can do — nothing container"): each
+# agent's own REAL desktop on this machine (headless sway + its own seat via wayvnc), watched, joined and
+# stopped from the observatory. Two tools, text replies, a 960x600 view: the token budget is pinned.
+run "hands desktop: real clicks/typing land, owner stop refuses, two small tools" "$PY" tests/test_hands_desktop.py
 # geoloc /recent (a3 #32078, privacy): location history needs GEOLOC_TOKEN even from localhost, the
 # token compare is constant-time, and a malformed ingest token is a 401, never a 500. The body
 # (bridges/geoloc.py) is gitignored, so this SKIPs 77 on a clean clone. No location data is used.
