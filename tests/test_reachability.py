@@ -137,6 +137,9 @@ EXEMPT = {
     # lives in a generated file, outside this scanner's committed view. tests/test_hands_desktop.py runs both.
     "nucleus/hands_seat.py":   "invoked by the sway config nucleus/hands_desktop.py generates (exec line, runtime); the agent's VNC seat",
     "nucleus/hands_proxy.py":  "invoked by the sway config nucleus/hands_desktop.py generates (exec line, runtime); the background browser's fence",
+    # Hearing (plan-8674 S2): nucleus/hear_pool.py starts the worker inside bwrap at runtime, the path riding a
+    # --ro-bind argument, so no committed launcher names it. tests/test_hearing.py runs it through the pool.
+    "nucleus/hear_worker.py":  "invoked by nucleus/hear_pool.py at runtime (bwrap, one per opted-in agent's hear.py); runs no SQL",
     "nucleus/esc_latency.py":  "manual: MIN_QUIET_H calibration measurement, run on demand; reports and never recommends, so a timer would only manufacture noise",
     "nucleus/doorbell.sh":    "manual: operator notify helper, self-declared Usage line",
     "nucleus/wallpane.sh":    "manual: single-pane variant of wall.sh, invoked by an operator",
