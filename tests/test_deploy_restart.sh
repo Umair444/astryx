@@ -13,11 +13,14 @@ printf 'ASTRYX_DSN=postgres://x@127.0.0.1:5432/x\n' > "$T/root/.env"
 cat > "$T/root/venv/bin/python" <<'P'
 #!/usr/bin/env bash
 if [ "${1:-}" = "nucleus/charter.py" ]; then printf 'bad\ngood\n'; exit 0; fi
-cat >/dev/null; exit 0                                   # ears(): no live ears
+cat >/dev/null                                           # ears() (run from ROOT): none until "good"
+[ -e spawned-good ] && echo "good 999999999"            # has spawned, then one, so its ready check runs
+exit 0
 P
 cat > "$T/root/nucleus/spawn.sh" <<'P'
 #!/usr/bin/env bash
 if [ "$1" = bad ]; then echo "'bad' already has a live body outside tmux — refusing a second one"; exit 3; fi
+touch "$(dirname "$0")/../spawned-$1"
 echo "$1 resident (tmux:ax-$1, boot=resumed)"
 P
 for c in psql docker tmux curl; do printf '#!/usr/bin/env bash\necho "%s $*" >> "%s"\nexit 0\n' "$c" "$LOG" > "$T/bin/$c"; done
@@ -26,8 +29,17 @@ printf '#!/usr/bin/env bash\necho "psql $*" >> "%s"\ncase "$*" in *count*) echo 
 printf '#!/usr/bin/env bash\necho "sudo $*" >> "%s"\nexit 0\n' "$LOG" > "$T/bin/sudo"
 # systemctl: no enabled units to restart; is-active answers yes
 printf '#!/usr/bin/env bash\necho "systemctl $*" >> "%s"\nexit 0\n' "$LOG" > "$T/bin/systemctl"
-# tmux pane shows the ready mode line for "good"
-printf '#!/usr/bin/env bash\necho "tmux $*" >> "%s"\n[ "$1" = capture-pane ] && echo "bypass permissions on"\nexit 0\n' "$LOG" > "$T/bin/tmux"
+# tmux pane shows the ready mode line for "good"; like real tmux, an exact "=name" with no ":" is a
+# session, not a pane, and capture-pane can't find it (the 10-10 restart reported 16 live agents ✗)
+cat > "$T/bin/tmux" <<STUB
+#!/usr/bin/env bash
+echo "tmux \$*" >> "$LOG"
+if [ "\$1" = capture-pane ]; then
+  for t in "\$@"; do case "\$t" in =*:*) ;; =*) echo "can't find pane: \${t}" >&2; exit 1;; esac; done
+  echo "bypass permissions on"
+fi
+exit 0
+STUB
 chmod +x "$T"/bin/* "$T/root/venv/bin/python" "$T/root/nucleus/spawn.sh"
 out=$(PATH="$T/bin:$PATH" ROOT="$T/root" ASTRYX_AGENT= bash -c '
   set -euo pipefail
@@ -39,6 +51,7 @@ arm() { if eval "$2"; then echo "  PASS  $1"; else echo "  FAIL  $1"; fails=$((f
 arm "a refusing spawn is a named ✗" 'grep -q "✗ bad: spawn failed" <<<"$out"'
 arm "the run CONTINUES to the next resident" 'grep -q "✓ good resident" <<<"$out"'
 arm "it ends INCOMPLETE with rc 1, never \"the org is back\"" '[ $rc = 1 ] && grep -q INCOMPLETE <<<"$out" && ! grep -q "the org is back" <<<"$out"'
+arm "a ready resident passes the ready check" 'grep -q "^tmux capture-pane" "$LOG" && ! grep -q "good: spawned, but" <<<"$out"'
 arm "the pulse is started again after the failure" 'grep -q "sudo systemctl start astryx-pulse.timer" "$LOG"'
 arm "the pulse was paused before any resident restart" '[ "$(grep -n "stop astryx-pulse.timer" "$LOG" | head -1 | cut -d: -f1)" -lt "$(grep -n "kill-session" "$LOG" | head -1 | cut -d: -f1)" ]'
 [ $fails = 0 ] && echo PASS || { echo "$out" | tail -8; echo "FAIL ($fails)"; exit 1; }
