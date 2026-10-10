@@ -50,6 +50,7 @@ class Ledger:
 
 os.environ["OPENAI_API_KEY"] = "sk-test-NEVER-RETURNED"
 os.environ["CANVAS_VOICE_DAILY_MINUTES"] = "5"
+os.environ["OBS_KEY"] = "test-owner-key"               # hermetic: never the live owner credential (a2 #44477 B1)
 from nucleus import voice_mint as V  # noqa: E402
 minted = []
 
@@ -58,6 +59,43 @@ async def fake_mint(cfg):
     minted.append(cfg)
     return 200, {"value": "ek_test_ephemeral", "expires_at": 1}
 V.mint = fake_mint
+
+# (e) FIRST, so no route arm's failure can hide it from sqlguard (a2 #44477 B1): the ledger's SQL against a REAL schema: a throwaway fixture database with schema.sql applied whole, so each
+# statement voice_mint issues runs on the declared canvas_voice_usage (sqlguard: RESPONSIVE, not merely stubbed)
+from nucleus.sqlguard.fixture import fixture_db  # noqa: E402
+import asyncpg  # noqa: E402
+
+
+async def on_fixture(dsn):
+    from psycopg.conninfo import conninfo_to_dict   # the fixture hands a libpq DSN; asyncpg takes keywords
+    d = conninfo_to_dict(dsn)
+    conn = await asyncpg.connect(host=d.get("host"), port=int(d.get("port") or 5432), user=d.get("user"),
+                                 database=d.get("dbname"), password=d.get("password"))
+    try:
+        empty = await V.minutes_today(conn)
+        await V.record(conn, "silent-a", "gpt-realtime")
+        await V.record(conn, "silent-b", "gpt-realtime")
+        floor = await V.minutes_today(conn)                          # two mints that never report: 60s each
+        await conn.execute("DELETE FROM canvas_voice_usage")
+        a = await V.record(conn, "observatory-owner", "gpt-realtime")
+        b = await V.record(conn, "umair", "gpt-realtime")
+        await V.report(conn, a, "observatory-owner", 30)
+        out = await V.report(conn, b, "umair", 90)
+        again = await V.report(conn, b, "umair", 10)              # monotonic: a lower report never lowers it
+        foreign = await V.report(conn, a, "umair", 999)           # a row is reported only by its own user
+        return empty, floor, out, again, foreign, await V.minutes_today(conn)
+    finally:
+        await conn.close()
+
+
+with fixture_db() as fx:
+    empty, floor, out, again, foreign, total = asyncio.run(on_fixture(fx["dsn"]))
+arm("on the real schema: an empty day is 0 minutes", empty == 0)
+arm("on the real schema: a session that never reports is billed the 60s floor (two silent mints = 2 min)", floor == 2.0, floor)
+arm("on the real schema: two surfaces' reports sum into one day (30s + 90s = 2 min)", out["minutes_today"] == 2.0, out)
+arm("on the real schema: a lower report never lowers the seconds", again["minutes_today"] == 2.0, again)
+arm("on the real schema: a report for another user's row changes nothing", foreign["minutes_today"] == 2.0 and total == 2.0, foreign)
+
 
 import main  # noqa: E402  (the observatory app)
 from fastapi.testclient import TestClient  # noqa: E402
@@ -72,7 +110,7 @@ arm("anonymous is refused on every pilot voice route (403)", codes == [403, 403,
 arm("nothing was minted for an anonymous caller", minted == [])
 
 # (b) the owner
-H = {"x-obs-key": next((l.split("=", 1)[1].strip() for l in open(REPO / ".env") if l.startswith("OBS_KEY=")), "")}
+H = {"x-obs-key": "test-owner-key"}
 r = c.post("/api/pilot/voice/session", headers=H)
 body = r.json() if r.status_code == 200 else {}
 arm("the owner mints a session (200, the ephemeral value)", r.status_code == 200 and body.get("value") == "ek_test_ephemeral", r.status_code)
@@ -97,37 +135,6 @@ asyncio.run(V.report(led, 2, "umair", 5 * 60))
 r2 = c.post("/api/pilot/voice/session", headers=H)
 arm("over the shared cap (canvas spent it), the observatory refuses a new session (429)", r2.status_code == 429, r2.status_code)
 arm("and mints nothing", len(minted) == 1)
-
-# (e) the ledger's SQL against a REAL schema: a throwaway fixture database with schema.sql applied whole, so each
-# statement voice_mint issues runs on the declared canvas_voice_usage (sqlguard: RESPONSIVE, not merely stubbed)
-from nucleus.sqlguard.fixture import fixture_db  # noqa: E402
-import asyncpg  # noqa: E402
-
-
-async def on_fixture(dsn):
-    from psycopg.conninfo import conninfo_to_dict   # the fixture hands a libpq DSN; asyncpg takes keywords
-    d = conninfo_to_dict(dsn)
-    conn = await asyncpg.connect(host=d.get("host"), port=int(d.get("port") or 5432), user=d.get("user"),
-                                 database=d.get("dbname"), password=d.get("password"))
-    try:
-        empty = await V.minutes_today(conn)
-        a = await V.record(conn, "observatory-owner", "gpt-realtime")
-        b = await V.record(conn, "umair", "gpt-realtime")
-        await V.report(conn, a, "observatory-owner", 30)
-        out = await V.report(conn, b, "umair", 90)
-        again = await V.report(conn, b, "umair", 10)              # monotonic: a lower report never lowers it
-        foreign = await V.report(conn, a, "umair", 999)           # a row is reported only by its own user
-        return empty, out, again, foreign, await V.minutes_today(conn)
-    finally:
-        await conn.close()
-
-
-with fixture_db() as fx:
-    empty, out, again, foreign, total = asyncio.run(on_fixture(fx["dsn"]))
-arm("on the real schema: an empty day is 0 minutes", empty == 0)
-arm("on the real schema: two surfaces' reports sum into one day (30s + 90s = 2 min)", out["minutes_today"] == 2.0, out)
-arm("on the real schema: a lower report never lowers the seconds", again["minutes_today"] == 2.0, again)
-arm("on the real schema: a report for another user's row changes nothing", foreign["minutes_today"] == 2.0 and total == 2.0, foreign)
 
 print("ALL PASS" if not fails else f"FAIL ({fails})")
 sys.exit(1 if fails else 0)
