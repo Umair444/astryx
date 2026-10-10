@@ -189,14 +189,17 @@ else:
     (sub / "sibling.txt").write_text("SIBLING-INSIDE-4410")
     sec = (outside2 / "secret.txt").as_uri()
     (sub / "x4.html").write_text(f"""<body><p>Example Person</p>
+<iframe srcdoc="<p>CTRL-INLINE-5520</p>"></iframe>
 <iframe src="sibling.txt"></iframe>
 <iframe src="{sec}"></iframe><object data="{sec}"></object><embed src="{sec}">
 </body>""")
     o = R.html_to_pdf(str(sub / "x4.html"), str(sub / "x4.pdf"))
     txt = subprocess.run(["pdftotext", str(sub / "x4.pdf"), "-"], capture_output=True,
                          text=True).stdout if not is_err(o) else ""
-    check("X4 control: a sibling file in the doc's folder DOES render (the frame works)",
-          "SIBLING-INSIDE-4410" in txt, o)
+    check("X4 control: an inline (srcdoc) iframe DOES render (frames work)",
+          "CTRL-INLINE-5520" in txt, (o, txt[:200]))
+    check("X4 a SIBLING file in the html's own folder is ABSENT (a1 #44860)",
+          not is_err(o) and "SIBLING-INSIDE-4410" not in txt, txt[:200])
     check("X4 file:// iframe/object/embed outside the folder: canary ABSENT", not is_err(o)
           and "CANARY-OUTSIDE-7731" not in txt, txt[:200])
     shutil.rmtree(outside2)

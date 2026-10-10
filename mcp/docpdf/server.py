@@ -9,8 +9,8 @@ Boundaries (the HTML is a document, never a browser session):
 - paths: absolute, resolved (symlinks and `..` followed) and confined to ALLOWED_ROOT
   (default <repo>/homes; DOCPDF_ROOT overrides); input must end .html/.htm, outputs .pdf.
 - sandbox: Chromium runs inside bwrap with its own network namespace and a filesystem of /usr,
-  fonts, the html's directory (read-only) and the output directory only. The page reaches no
-  network (any protocol) and no file outside its own folder. Keep assets beside it.
+  fonts, the html file itself (read-only) and an empty output dir only. The page reaches no
+  network (any protocol) and no other file, siblings included: documents are self-contained.
 - fail closed: a missing Chromium, a render failure, a timeout, an empty/unreadable PDF, or a
   page cap exceeded is "error: ...", and a failed render never overwrites a good PDF.
 
@@ -70,8 +70,9 @@ def _render(html: Path, out: Path) -> None:
     """Chromium print-to-pdf into `out`, inside a bwrap sandbox. The one process seam: tests
     replace it. The sandbox is the boundary (a1 REVISE #44856): its own network namespace
     (no protocol leaves, WebRTC/UDP included), and a filesystem holding only /usr, fonts, the
-    html's own directory (read-only, at /doc) and the output directory (at /out), so a
-    file:// iframe/object/embed can read nothing outside the document's folder. No bwrap →
+    html FILE itself (read-only, at /doc/<name>; never its folder, a1 #44860: a folder of CVs is
+    many applications) and the empty output temp dir (/out), so a file:// iframe/object/embed
+    reads no other file at all. Environment cleared. No bwrap →
     error; never an unsandboxed render. The dead proxy is a second layer. (scriptEnabled=false is NOT used: it makes headless print-to-pdf write nothing.)"""
     bwrap = shutil.which("bwrap")
     if not bwrap:
@@ -80,9 +81,9 @@ def _render(html: Path, out: Path) -> None:
     cmd = [bwrap, "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib",
            "--symlink", "usr/lib", "/lib64", "--symlink", "usr/bin", "/bin",
            "--ro-bind", "/etc/fonts", "/etc/fonts", "--proc", "/proc", "--dev", "/dev",
-           "--tmpfs", "/tmp", "--ro-bind", str(html.parent), "/doc",
+           "--tmpfs", "/tmp", "--dir", "/doc", "--ro-bind", str(html), f"/doc/{html.name}",
            "--bind", str(out.parent), "/out", "--unshare-all", "--die-with-parent",
-           "--setenv", "HOME", "/tmp",
+           "--clearenv", "--setenv", "PATH", "/usr/bin", "--setenv", "HOME", "/tmp",
            chromium, "--headless", "--disable-gpu", "--no-sandbox", "--no-first-run",
            "--user-data-dir=/tmp/prof",
            "--proxy-server=socks5://127.0.0.1:9", "--proxy-bypass-list=<-loopback>",
@@ -120,7 +121,7 @@ def html_to_pdf(html_path: str, pdf_path: str, max_pages: int = 0, copy_to: str 
     Paths are absolute and must sit under the allowed root (the org's homes/ by default).
     max_pages > 0 fails the call (and leaves any existing PDF untouched) when the render runs
     longer. copy_to (optional .pdf path) receives a byte-identical copy, e.g. a delivery name.
-    Sandboxed: no network, no files outside the html's own folder.
+    Sandboxed: no network, no file but the html itself (inline CSS/images).
     Returns JSON: pdf, pages, bytes, text_chars, first_text_line, copy. Any failure is
     "error: ..." (never a half-written PDF)."""
     try:
