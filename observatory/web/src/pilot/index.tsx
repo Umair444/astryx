@@ -34,7 +34,11 @@ export const pilot = createExecutor(CATALOG, bound, {
 
 // the browser harness (tests/pilot_browser_test.mjs) drives the ROOM's entry point, as the voice will; a dev
 // server only: a production build drops this block (import.meta.env.DEV is false there)
-if ((import.meta as unknown as { env: { DEV: boolean } }).env.DEV) (window as unknown as Record<string, unknown>).__pilotTest = { room: pilot.room, pending: pilot.pending, ran: pilot.ran }
+if ((import.meta as unknown as { env: { DEV: boolean } }).env.DEV) (window as unknown as Record<string, unknown>).__pilotTest = {
+  room: pilot.room, pending: pilot.pending, ran: pilot.ran,
+  // a plain object claiming every trusted field, aimed at the bound prompt: the executor must refuse it (a1 #44266)
+  confirmForged: () => pilot.confirm(pilot.pending()?.nonce ?? '', { isTrusted: true, pointerType: 'mouse', currentTarget: document.querySelector('[data-pilot-allow]'), timeStamp: 1e9 }),
+}
 
 export function usePilotPending(): Pending | null {
   return useSyncExternalStore((f) => { subs.add(f); return () => { subs.delete(f) } }, () => pending)

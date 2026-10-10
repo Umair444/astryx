@@ -8,7 +8,9 @@
 // With no URL it starts a vite dev server from observatory/web on 127.0.0.1:5181 and stops it after. It reads
 // OBS_KEY from .env into a throwaway chromium profile (never printed) and talks to the live API read-only. The
 // actuate it confirms is open_desktop for an agent with no desktop, so the handler runs and fails harmlessly.
-// Exit 77 when chromium, node_modules or the key are absent (a committed-only tree).
+// Absent chromium, node_modules or key: exit 77 on a committed-only tree (no triggers/), but 1, BROKEN, on a LIVE
+// host, where this gate is the proof of a prevention-graded cell and must not switch itself off quietly (a1 #44266).
+// Every wait is on a condition with a deadline, never on time alone, and names itself when it expires.
 import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -21,10 +23,21 @@ const WEB = join(REPO, 'observatory/web')
 const envPath = join(REPO, '.env')
 const KEY = existsSync(envPath) ? (readFileSync(envPath, 'utf8').split('\n').find((l) => l.startsWith('OBS_KEY=')) || '').slice(8).trim() : ''
 if (!CHROME || !KEY || !existsSync(join(WEB, 'node_modules/.bin/vite'))) {
-  console.log(`  NOT RUN: ${!CHROME ? 'no chromium' : !KEY ? 'no OBS_KEY in .env' : 'no observatory/web/node_modules'} (a committed-only tree)`)
+  const why = !CHROME ? 'no chromium' : !KEY ? 'no OBS_KEY in .env' : 'no observatory/web/node_modules'
+  if (existsSync(join(REPO, 'triggers'))) { console.log(`  BROKEN: ${why} on a live host (triggers/ present)`); process.exit(1) }
+  console.log(`  NOT SEARCHED: ${why} (a committed-only tree: triggers/ absent)`)
   process.exit(77)
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+/** Poll `test` until truthy or `ms` passes; on expiry, say which wait it was and stop. */
+async function until(what, test, ms = 60000) {
+  const end = Date.now() + ms
+  for (;;) {
+    try { const v = await test(); if (v) return v } catch {}
+    if (Date.now() > end) { console.log(`  FAIL  timed out after ${ms / 1000}s waiting for ${what}`); console.log('FAIL (1)'); cleanup(); process.exit(1) }
+    await sleep(200)
+  }
+}
 const kids = []
 const cleanup = () => { for (const k of kids) try { k.kill() } catch {} }
 process.on('exit', cleanup)
@@ -34,17 +47,17 @@ if (!URL0) {
   const vite = spawn(join(WEB, 'node_modules/.bin/vite'), ['--port', '5181', '--strictPort', '--host', '127.0.0.1'], { cwd: WEB, stdio: 'ignore' })
   kids.push(vite)
   URL0 = 'http://127.0.0.1:5181/'
-  for (let i = 0; i < 60; i++) { try { if ((await fetch(URL0)).ok) break } catch {} await sleep(250) }
 }
+// vite serves index.html before its first dependency optimization finishes; wait for the app's entry module too
+await until('the dev server to answer', async () => (await fetch(URL0)).ok)
+await until('the app entry module to compile', async () => (await fetch(new URL('/src/main.tsx', URL0))).ok)
 const prof = mkdtempSync(join(tmpdir(), 'pilot-cdp-'))
 process.on('exit', () => { try { rmSync(prof, { recursive: true, force: true, maxRetries: 5 }) } catch {} })   // chromium may still be writing as it exits
 const port = 9334
 kids.push(spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${prof}`, '--window-size=1280,860', 'about:blank'], { stdio: 'ignore' }))
 let ws
-for (let i = 0; i < 60 && !ws; i++) {
-  try { const p = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find((t) => t.type === 'page'); if (p) ws = new WebSocket(p.webSocketDebuggerUrl) } catch {}
-  if (!ws) await sleep(250)
-}
+const page = await until('chromium\'s debugging port', async () => (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find((t) => t.type === 'page'), 30000)
+ws = new WebSocket(page.webSocketDebuggerUrl)
 await new Promise((r) => ws.addEventListener('open', r))
 let id = 0
 const waits = new Map()
@@ -74,10 +87,12 @@ const arm = (n, ok, d = '') => { console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${n}${!
 await cdp('Runtime.enable')
 await cdp('Page.enable')
 await cdp('Page.navigate', { url: URL0 })
-await sleep(2500)
+await until('the first page load', () => ev(`document.readyState === 'complete'`))
 await ev(`localStorage.setItem('obs_key', ${JSON.stringify(KEY)}); true`)
 await cdp('Page.reload')
-for (let i = 0; i < 40; i++) { if (await ev(`!!${T} && document.body.innerText.includes('owner')`)) break; await sleep(250) }
+await until('the reloaded page', () => ev(`document.readyState === 'complete'`))
+await until('the dev harness (window.__pilotTest)', () => ev(`!!${T}`))
+await until('the owner view (whoami as owner)', () => ev(`document.body.innerText.includes('owner')`))
 arm('the owner view loaded with the dev harness', (await ev(`!!${T}`)) === true)
 // an agent that is on the roster but at no desktop: confirming it runs the handler, which fails harmlessly
 const AGENT = await ev(`fetch('/api/agents', { headers: { 'x-obs-key': localStorage.getItem('obs_key') } }).then(r => r.json()).then(async rows => {
@@ -114,6 +129,10 @@ for (const [a, args] of [['navigate', { view: 'goals' }], ['set_theme', { theme:
 }
 await sleep(300)
 arm('(iv) view actions leave the confirm unfocused and still pending', (await ev(`document.activeElement === document.querySelector('[data-pilot-allow]')`)) === false && (await pend()) === p1.nonce && (await desktopRuns()) === 0)
+
+// a forged event object (a plain object claiming isTrusted, on the armed prompt's element) is refused
+const forged = await ev(`${T}.confirmForged().then(o => o.status + ':' + (o.reason || ''))`)
+arm('a forged event object (plain {isTrusted:true,…}) is refused', String(forged).startsWith('refused') && (await desktopRuns()) === 0 && (await pend()) === p1.nonce, forged)
 
 // (v) X shown > 500ms, Y arrives, a click at the same point at once → neither runs
 const before = await allow()
