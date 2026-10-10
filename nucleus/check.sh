@@ -287,6 +287,9 @@ run "hands desktop: real clicks/typing land, owner stop refuses, two small tools
 run "doctor: postgres localhost-only, unverified when ss can't answer" bash tests/test_doctor_pg_exposure.sh
 # turns retention (owner 10-10: "add retention to save space"): old turns lose image bytes, keep their words
 run "turns retention: old images stripped, words kept, recent untouched, idempotent" "$PY" tests/test_turns_retention.py
+# deploy.sh restart's failure paths, all side effects stubbed: a refusing spawn is a named ✗, the run continues,
+# ends INCOMPLETE, and the pulse is started again (a2 #42367)
+run "deploy restart: a failed resident is named, the run continues, the pulse comes back" bash tests/test_deploy_restart.sh
 # geoloc /recent (a3 #32078, privacy): location history needs GEOLOC_TOKEN even from localhost, the
 # token compare is constant-time, and a malformed ingest token is a 401, never a 500. The body
 # (bridges/geoloc.py) is gitignored, so this SKIPs 77 on a clean clone. No location data is used.
