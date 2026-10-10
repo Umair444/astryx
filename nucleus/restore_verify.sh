@@ -91,6 +91,18 @@ else
   fi
 fi
 
+# ---- the DISASTER path: an empty data dir, initdb's placeholder, the restored pgpass (#5497, seed #44479) ----------
+# Everything above restores into the LIVE cluster, where the role already holds its real password, so it cannot see the
+# seam an empty-data-dir restore has. nucleus/restore_drill.sh rehearses that world on a throwaway server (docs/restore.md).
+# Its NOT RUN (no docker, no image) fails this run like any other step: an unproven path never earns the OK stamp.
+DRILL_CAP=${RESTORE_DRILL_CAP:-1800}
+timeout "$DRILL_CAP" bash nucleus/restore_drill.sh "$newest"; drc=$?
+case "$drc" in
+  0) ;;
+  124) echo "  ✗ restore-drill: TIMED OUT after ${DRILL_CAP}s (the drill's own trap tears it down)" >&2; fail=1 ;;
+  *) fail=1 ;;
+esac
+
 # THE STAMP RECORDS THE OUTCOME, NOT MERELY THE TIME — and that distinction is the whole
 # defect. Previously a failing run exited HERE, before the write, leaving the PREVIOUS
 # SUCCESS's stamp intact; doctor reads only the stamp's mtime, so a verifier that had
