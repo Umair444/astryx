@@ -106,6 +106,21 @@ def _hyprctl(*args: str) -> str:
     return r.stdout
 
 
+def _hdispatch(lua: str, legacy: tuple[str, ...]) -> None:
+    """A Hyprland dispatch on the owner's session. Hyprland >= 0.56 (Lua config) takes a dispatcher
+    expression, e.g. hl.dsp.focus({window="address:0x…"}); older versions take `dispatch <name> <args>`.
+    Try the Lua form, fall back to the legacy one, raise only if both refuse (measured on 0.56.2)."""
+    try:
+        _hyprctl("dispatch", lua)
+    except HandsError:
+        _hyprctl("dispatch", *legacy)
+
+
+def _lua_str(s: str) -> str:
+    level = "=" * next(n for n in range(1, 10) if f"]{'=' * n}]" not in s)
+    return f"[{level}[{s}]{level}]"
+
+
 def _monitor() -> dict:
     mons = json.loads(_hyprctl("-j", "monitors") or "[]")
     if not mons:
@@ -546,6 +561,25 @@ def screenshot(agent: str, quality: int = 70, region: tuple[int, int, int, int] 
     return _run(agent, argv + ["-"])
 
 
+def fingerprint(agent: str) -> str:
+    """A cheap digest of what's on screen (a tiny grayscale-ish capture), to wait for change."""
+    import hashlib
+    argv = ["grim", "-t", "ppm", *_output_args(agent), "-s", "0.0625", "-"]
+    return hashlib.sha1(_run(agent, argv)).hexdigest()
+
+
+def wait_change(agent: str, timeout: float, settle: float = 0.6) -> bool:
+    """Block until the screen changes (then let it settle), or timeout. True if it changed."""
+    end = time.time() + timeout
+    base = fingerprint(agent)
+    while time.time() < end:
+        time.sleep(0.35)
+        if fingerprint(agent) != base:
+            time.sleep(settle)
+            return True
+    return False
+
+
 def view_to_desktop(agent: str, x: float, y: float) -> tuple[int, int]:
     sc = view_scale(agent)
     return int(round(x * sc)), int(round(y * sc))
@@ -725,7 +759,8 @@ def windows(agent: str) -> list[dict]:
 def focus(agent: str, window_id: int) -> None:
     _guard(agent, "focus")
     if is_laptop(agent):
-        _hyprctl("dispatch", "focuswindow", f"address:0x{int(window_id):x}")
+        addr = f"address:0x{int(window_id):x}"
+        _hdispatch(f'hl.dsp.focus({{window="{addr}"}})', ("focuswindow", addr))
         return
     _sway(agent, f"[con_id={int(window_id)}] focus")
 
@@ -761,7 +796,7 @@ def open_(agent: str, what: str) -> None:
         # on his screen, in HIS browser and apps: a URL opens as a tab in his own browser
         cmd = "xdg-open " + _q(what if not is_url or "://" in what else f"https://{what}") \
             if is_url else what
-        _hyprctl("dispatch", "exec", cmd)
+        _hdispatch(f"hl.dsp.exec_cmd({_lua_str(cmd)})", ("exec", cmd))
         return
     if is_url:
         url = what if "://" in what else f"https://{what}"

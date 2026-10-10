@@ -158,6 +158,19 @@ def desktop_arms():
     hd.type_text(AGENT, "X")
     arm("(d) ctrl+a then a letter replaces the field", until(lambda: title() == "typed:X"),
         repr(title()))
+    # (p) inside do, text is text: "; key Return" typed into the field is NOT a keypress (a3 #42362 R2)
+    sys.path.insert(0, str(REPO / "mcp/hands"))
+    import server as hands_server
+    hd.click(AGENT, 300, origin + 282)
+    hd.key(AGENT, "ctrl+a")
+    hands_server._batch(AGENT, "type a; key Return")
+    arm("(p) do's type takes the rest verbatim: the separator never becomes an action",
+        until(lambda: title() == "typed:a; key Return"), repr(title()))
+    arm("(p) …and no Enter was pressed", not (title() or "").startswith("enter:"), repr(title()))
+    arm("(p) the split: type/open end the script; other verbs split on ; and newlines",
+        hands_server._split("key super+2; click 190 88; type x; click 1 1\nmore")
+        == ["key super+2", "click 190 88", "type x; click 1 1\nmore"]
+        and hands_server._split("move 1 1; open https://x.com/a;b") == ["move 1 1", "open https://x.com/a;b"])
     hd.scroll(AGENT, 700, 600, 4)
     arm("(e) a scroll lands", until(lambda: (title() or "").startswith("scrolled:")), repr(title()))
 
@@ -199,6 +212,9 @@ def desktop_arms():
     arm("(g) a zoom crop is full resolution (100×50 view px → 150×75)", z == (150, 75), str(z))
 
 
+BATCH: list = []
+
+
 def mcp_arms():
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
@@ -220,7 +236,13 @@ def mcp_arms():
                 bare_act = await s.call_tool("act", {"action": "move", "x": 5, "y": 5})
                 bare_look = await s.call_tool("look", {})
                 odd = await s.call_tool("act", {"action": "move", "x": 5, "y": 5, "screen": "own"})
+                batch_ok = await s.call_tool("act", {"action": "do", "screen": "background",
+                                                     "text": "move 10 10; move 20 20\nmove 30 30"})
+                batch_bad = await s.call_tool("act", {"action": "do", "screen": "background",
+                                                      "text": "move 10 10; bogus 1; move 5 5"})
+                still = await s.call_tool("act", {"action": "wait", "screen": "background", "amount": 2})
                 done = await s.call_tool("act", {"action": "done", "screen": "background"})
+                BATCH.extend([batch_ok, batch_bad, still])
                 return ([t.name for t in tools], len(schema), plain, seen, bare_act, bare_look,
                         odd, done)
     names, n, plain, seen, bare_act, bare_look, odd, done = asyncio.run(go())
@@ -229,6 +251,13 @@ def mcp_arms():
     arm("(h) look() without a screen is refused", bare_look.isError, str(bare_look.content[:1])[:160])
     arm('(h) an unknown screen is refused, naming "laptop" and "background"',
         "laptop" in odd.content[0].text and "background" in odd.content[0].text, odd.content[0].text)
+    b_ok, b_bad, still = BATCH
+    arm("(o) do runs several steps in one call", b_ok.content[0].text.startswith("ok · 3 step(s) done"),
+        b_ok.content[0].text[:120])
+    arm("(o) do stops at the first bad step and says which", "stopped at step 2" in b_bad.content[0].text,
+        b_bad.content[0].text[:120])
+    arm("(o) wait on an unchanging screen reports nothing changed", "nothing changed" in still.content[0].text,
+        still.content[0].text[:120])
     arm("(h) done releases the background desktop", "desk-" in done.content[0].text,
         done.content[0].text)
     arm("(h) exactly two tools: look, act", sorted(names) == ["act", "look"], str(names))
@@ -320,6 +349,18 @@ def laptop_arms():
         isinstance(hd.windows(hd.LAPTOP), list) and all("app" in x for x in hd.windows(hd.LAPTOP)))
 
 
+def step_strip_arms():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("stephook", REPO / "hooks/step.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    msgs = [{"content": [{"type": "tool_use", "id": "a", "name": "mcp__hands__act",
+                          "input": {"action": "do", "screen": "background",
+                                    "text": "click 1 1; type CANARY-PASSWORD-1"}}]}]
+    arm("(q) a do script (it can carry a typed password) is never kept in turns",
+        "CANARY-PASSWORD-1" not in json.dumps(m.strip_pixels(msgs)))
+
+
 def pool_arms():
     os.environ["ASTRYX_AGENT"] = "t-pool-a"
     a = hd.acquire("t-pool-a")
@@ -383,6 +424,7 @@ if __name__ == "__main__":
                 for d in hd.pool():
                     hd.down(d)
         redact_arms()
+        step_strip_arms()
         laptop_arms()
         never_laptop_arm()
         real_pool_untouched_arm()
