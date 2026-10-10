@@ -392,7 +392,8 @@ _act_schema() { say "applying schema (schema.sql differs from what this database
 # The `geo` database's design is nucleus/schema_geo.sql (DDL only; the location rows are personal tier and never in
 # git). The check is cheap (every declared table exists); schema_parity's check.sh gate is the full judge. The act
 # births the database zero-window if missing and refuses a file that isn't committed, like the schema node.
-_chk_geoschema() { venv/bin/python -m nucleus.schema_parity present geo >/dev/null 2>&1; }
+_chk_geoschema() { venv/bin/python -m nucleus.schema_parity present geo >/dev/null 2>&1 \
+  && venv/bin/python -m nucleus.schema_parity readable geo >/dev/null 2>&1; }   # declared AND readable by every resident
 _act_geoschema() { say "geo: applying nucleus/schema_geo.sql (the declared design of the geo database)"
   venv/bin/python -m nucleus.schema_parity apply geo >/dev/null; }
 # <<< geoschema

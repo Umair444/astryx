@@ -60,6 +60,14 @@ MUTANTS = {
         ('    for ns in schemas or ():\n        conn.execute(sql.SQL("GRANT USAGE', '    for ns in ():\n        conn.execute(sql.SQL("GRANT USAGE'),
     "G8 birth grants the resident no CONNECT (a fresh geo is closed to every agent)":
         ('        admin.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(I(db), I(RESIDENT)))\n', ''),
+    "G9 readable() is blind to a missing CONNECT (init's check reads green on a closed database)":
+        ("        if not a.execute(\"SELECT has_database_privilege(%s, %s, 'CONNECT')\", (RESIDENT, db)).fetchone()[0]:",
+         "        if False:"),
+    "G10 readable() is blind to an unreadable table":
+        ("                out.append(f\"{RESIDENT} can't SELECT {db}.{t}\")", "                pass"),
+    "G11 grant_connect() grants nothing (an existing database never converges)":
+        ('    admin.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(sql.Identifier(db), sql.Identifier(RESIDENT)))\n    return True',
+         '    return True'),
     "G4 the presence check's table parse goes blind (it would read green over nothing)":
         ('    if not got:                                   # anti-vacuity', '    if False:                                   # anti-vacuity'),
 }
