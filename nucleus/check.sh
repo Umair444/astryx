@@ -615,6 +615,9 @@ run "service deploy drift oracle"     "$PY" tests/test_service_deploy_drift.py
 # CANVAS, the owner's front door: the trust lines (invitee vs owner vs the page itself, CSRF, revocation),
 # the exactly-once claim that must never take another surface's row, the no-network shell. Fixture DB.
 run "canvas: trust lines, claim, shell"  "$PY" tests/test_canvas.py
+# `canvas.py preview`: the real shell + CSP in headless chromium, errors and CSP blocks surfaced, READ-ONLY
+# (injected data; one live arm proves canvas 2 byte-identical). No chromium or no DB = 77, never green.
+run "canvas preview: real shell, read-only" "$PY" tests/test_canvas_preview.py
 # The observatory shows agents as PEOPLE: the roster is the charter registry (no ghost bodies), faces are
 # public, presence is owner-only, the profile carries NOW, the model is the dominant one. Fixture DB.
 run "observatory: agents as people"     "$PY" tests/test_observatory_people.py
