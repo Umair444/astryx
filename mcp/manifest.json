@@ -173,7 +173,16 @@
           "description": "Look organisations up on the UK Home Office Register of Licensed Sponsors (Workers)."
         }
       ]
+    },
+    {
+      "server": "docpdf",
+      "tools": [
+        {
+          "name": "html_to_pdf",
+          "description": "Render a local HTML file to PDF with headless Chromium, then verify it."
+        }
+      ]
     }
   ],
-  "total_tools": 31
+  "total_tools": 32
 }
