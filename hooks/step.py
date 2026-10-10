@@ -170,6 +170,50 @@ def usage_snapshot(cur):
         return None
 
 
+LAPTOP_OMITTED = "[hands laptop output omitted]"
+TYPED_OMITTED = "[typed text omitted]"
+
+
+def strip_pixels(obj, _laptop_ids=None):
+    """No image is ever KEPT in turns (a3 #42085 L1). The agent saw it (that's its context, the
+    owner's choice); the DB, every pg_dump and every branch_check clone don't keep it: a
+    screenshot of the owner's real screen is his WhatsApp, his family, whatever was open. Each
+    image block becomes {"type": "image_omitted", "sha256", "bytes"}. And a hands tool result
+    taken on screen="laptop" keeps no TEXT body either: an act() answer names his windows."""
+    import hashlib
+    if _laptop_ids is None:
+        _laptop_ids = set()
+        def find(o):
+            if isinstance(o, dict):
+                if (o.get("type") == "tool_use" and str(o.get("name", "")).startswith("mcp__hands__")
+                        and (o.get("input") or {}).get("screen") != "background"):
+                    _laptop_ids.add(o.get("id"))
+                for v in o.values():
+                    find(v)
+            elif isinstance(o, list):
+                for v in o:
+                    find(v)
+        find(obj)
+    if isinstance(obj, list):
+        return [strip_pixels(v, _laptop_ids) for v in obj]
+    if not isinstance(obj, dict):
+        return obj
+    if obj.get("type") == "image":
+        src = obj.get("source") or {}
+        data = src.get("data") or obj.get("data") or ""
+        raw = data.encode() if isinstance(data, str) else bytes(data)
+        return {"type": "image_omitted", "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
+    if (obj.get("type") == "tool_use" and str(obj.get("name", "")).startswith("mcp__hands__")
+            and (obj.get("input") or {}).get("action") in ("type", "key")):
+        # what an agent TYPES can be a password from his Chromium (owner, 10-10: full access):
+        # never kept, on any screen
+        inp = {**obj["input"], "text": TYPED_OMITTED}
+        return {**obj, "input": inp}
+    if obj.get("type") == "tool_result" and obj.get("tool_use_id") in _laptop_ids:
+        return {**{k: v for k, v in obj.items() if k != "content"}, "content": LAPTOP_OMITTED}
+    return {k: strip_pixels(v, _laptop_ids) for k, v in obj.items()}
+
+
 def handle_stop(cur, agent, h):
     """Reconstruct the just-finished turn and write it. Returns (turn_id, last_text, tin, tout)."""
     try:
@@ -294,7 +338,7 @@ def handle_stop(cur, agent, h):
     # SECRETS: nothing below is written before it's cleaned (plan-5497 S1a). The usage block is
     # numbers only and stays exact, so a withheld turn still bills.
     clean, clean_ok = cleaner()
-    payload["messages"] = clean(payload["messages"])
+    payload["messages"] = clean(strip_pixels(payload["messages"]))
     input_prompt, last_text = clean(input_prompt), clean(last_text)
     if not clean_ok:
         payload["redaction"] = "unavailable"

@@ -22,6 +22,8 @@ it received in its title, so every arm reads the effect, not the call.
       at a 127.0.0.1 listener and at localhost gets 0 hits, while the control (a port the oracle
       allows, as the Windows VM's is) is hit, so the probe could see a request
   (l) access logs carry key=<redacted>, never the key (a3 #42085 F2), through the real filter
+  (n) the shared pool: a held desktop is never handed to another agent; a released or idle one is
+      reused before a new one is made
   (m) laptop mode reads the owner's REAL screen (Hyprland): kind, size and a ≤960-wide view.
       READ-ONLY: it never moves his cursor or types (NOT RUN without a Hyprland session)
 
@@ -61,6 +63,8 @@ os.environ["HANDS_LOCAL_ALLOW"] = str(P_OK)        # inherited by the desktop's 
 TMP = Path(tempfile.mkdtemp(prefix="hands-test-"))
 os.environ["ASTRYX_HANDS_STATE"] = str(TMP / "state")
 os.environ["ASTRYX_HANDS_HOME"] = str(TMP / "home")
+# its own unit names too: a test pool's desk-1 must never be (or stop) the real desk-1
+os.environ["ASTRYX_HANDS_UNIT_PREFIX"] = f"astryx-hands-test{os.getpid()}-"
 from nucleus import hands_desktop as hd  # noqa: E402
 
 AGENT = f"t-hands-{os.getpid()}"
@@ -208,18 +212,30 @@ def mcp_arms():
                 await s.initialize()
                 tools = (await s.list_tools()).tools
                 schema = json.dumps([t.model_dump(exclude_none=True) for t in tools])
-                # screen="own" ALWAYS: a test never touches the owner's real screen
+                # screen="background" ALWAYS: a test never touches the owner's real screen
                 plain = await s.call_tool("act", {"action": "move", "x": 50, "y": 50,
-                                                  "screen": "own"})
+                                                  "screen": "background"})
                 seen = await s.call_tool("act", {"action": "move", "x": 60, "y": 60, "look": True,
-                                                 "screen": "own"})
-                return [t.name for t in tools], len(schema), plain, seen
-    names, n, plain, seen = asyncio.run(go())
+                                                 "screen": "background"})
+                bare_act = await s.call_tool("act", {"action": "move", "x": 5, "y": 5})
+                bare_look = await s.call_tool("look", {})
+                odd = await s.call_tool("act", {"action": "move", "x": 5, "y": 5, "screen": "own"})
+                done = await s.call_tool("act", {"action": "done", "screen": "background"})
+                return ([t.name for t in tools], len(schema), plain, seen, bare_act, bare_look,
+                        odd, done)
+    names, n, plain, seen, bare_act, bare_look, odd, done = asyncio.run(go())
+    arm("(h) act() without a screen is refused: no default can pick the owner's screen",
+        bare_act.isError, str(bare_act.content[:1])[:160])
+    arm("(h) look() without a screen is refused", bare_look.isError, str(bare_look.content[:1])[:160])
+    arm('(h) an unknown screen is refused, naming "laptop" and "background"',
+        "laptop" in odd.content[0].text and "background" in odd.content[0].text, odd.content[0].text)
+    arm("(h) done releases the background desktop", "desk-" in done.content[0].text,
+        done.content[0].text)
     arm("(h) exactly two tools: look, act", sorted(names) == ["act", "look"], str(names))
     arm("(h) the schema every resident carries stays under 2,000 chars", n < 2000, str(n))
     arm("(h) an action answers in text only",
         [c.type for c in plain.content] == ["text"] and plain.content[0].text.startswith("ok"),
-        str([c.type for c in plain.content]))
+        str([(c.type, getattr(c, "text", "")[:200]) for c in plain.content]))
     arm("(h) look=True adds exactly one image", [c.type for c in seen.content] == ["text", "image"],
         str([c.type for c in seen.content]))
 
@@ -304,8 +320,34 @@ def laptop_arms():
         isinstance(hd.windows(hd.LAPTOP), list) and all("app" in x for x in hd.windows(hd.LAPTOP)))
 
 
+def pool_arms():
+    os.environ["ASTRYX_AGENT"] = "t-pool-a"
+    a = hd.acquire("t-pool-a")
+    again = hd.acquire("t-pool-a")
+    os.environ["ASTRYX_AGENT"] = "t-pool-b"
+    b = hd.acquire("t-pool-b")
+    arm("(n) an agent keeps the desktop it holds", a == again, f"{a} {again}")
+    arm("(n) a second agent never gets a HELD desktop: it gets another", b != a, f"{a} {b}")
+    hd.release("t-pool-a")
+    os.environ["ASTRYX_AGENT"] = "t-pool-c"
+    c = hd.acquire("t-pool-c")
+    arm("(n) a released desktop is reused before a new one is made", c == a, f"{a} {c}")
+    (hd.state_dir(b) / "holder").write_text(f"t-pool-b {time.time() - hd.HOLD_IDLE_S - 5:.0f}")
+    os.environ["ASTRYX_AGENT"] = "t-pool-d"
+    d = hd.acquire("t-pool-d")
+    arm("(n) an idle hold lapses: the desktop is free again", d == b, f"{b} {d}")
+    os.environ.pop("ASTRYX_AGENT", None)
+
+
+def real_pool_untouched_arm():
+    r = subprocess.run(["systemctl", "--user", "is-active", "astryx-hands-desk-1"],
+                       capture_output=True, text=True, env=hd._user_env())
+    arm("(n) the real desk-1 was not stopped by the suite",
+        r.stdout.strip() == "active" or not REAL_DESK1_UP, r.stdout.strip())
+
+
 def never_laptop_arm():
-    r = subprocess.run(["systemctl", "--user", "is-active", hd.unit(hd.LAPTOP)],
+    r = subprocess.run(["systemctl", "--user", "is-active", "astryx-hands-laptop"],
                        capture_output=True, text=True, env=hd._user_env())
     arm("(m) the suite never attached to the owner's real screen",
         r.stdout.strip() != "active" or LAPTOP_WAS_UP, r.stdout.strip())
@@ -320,6 +362,8 @@ def down_arms():
         (hd.home_dir(AGENT) / "browser").is_dir())
 
 
+REAL_DESK1_UP = subprocess.run(["systemctl", "--user", "is-active", "--quiet",
+                                "astryx-hands-desk-1"], env=hd._user_env()).returncode == 0
 LAPTOP_WAS_UP = subprocess.run(["systemctl", "--user", "is-active", "--quiet",
                                 "astryx-hands-laptop"], env=hd._user_env()).returncode == 0
 
@@ -333,11 +377,15 @@ if __name__ == "__main__":
                 desktop_arms()
                 mcp_arms()
                 fence_arms()
+                pool_arms()
             finally:
                 down_arms()
+                for d in hd.pool():
+                    hd.down(d)
         redact_arms()
         laptop_arms()
         never_laptop_arm()
+        real_pool_untouched_arm()
     finally:
         subprocess.run(["systemctl", "--user", "stop", hd.unit(AGENT)], capture_output=True,
                        env=hd._user_env())

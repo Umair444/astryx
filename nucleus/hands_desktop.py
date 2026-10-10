@@ -14,7 +14,7 @@ this machine, not a sandbox:
     own, so the owner clicks and types with his own cursor while the agent keeps going with
     the agent's. He watches and joins from the observatory (Hands view) or any VNC viewer.
 
-TWO KINDS OF DESKTOP. `laptop` is the owner's REAL screen: his Hyprland session, his own
+TWO KINDS OF DESKTOP (plus the shared pool, below). `laptop` is the owner's REAL screen: his Hyprland session, his own
 Chromium with his logins (WhatsApp is already there), every app he has (owner, 10-10: "why is it
 not using this laptop — chrome has whatsapp already logged in here"). The agent shares his one
 cursor there, so it's for work he hands over. Every other name is that agent's OWN desktop: a
@@ -126,8 +126,11 @@ def _name(agent: str) -> str:
     return agent
 
 
+UNIT_PREFIX = os.environ.get("ASTRYX_HANDS_UNIT_PREFIX") or "astryx-hands-"   # tests set their own
+
+
 def unit(agent: str) -> str:
-    return f"astryx-hands-{_name(agent)}"
+    return f"{UNIT_PREFIX}{_name(agent)}"
 
 
 def state_dir(agent: str) -> Path:
@@ -276,11 +279,17 @@ def up(agent: str) -> dict:
         down(agent)
         raise HandsError("the desktop did not come up within 15s (journalctl --user -u "
                          f"{unit(agent)})")
-    # wayvnc starts with the session; give it a moment to bind
-    for _ in range(25):
-        if not _port_free(port):
+    # wayvnc starts with the session, then the agent's seat connects to it. Return only when the
+    # seat answers: the FIRST action on a fresh desktop raced it (a measured flake).
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        try:
+            _seat(agent, {"op": "ping"})
             break
-        time.sleep(0.2)
+        except HandsError:
+            time.sleep(0.2)
+    else:
+        raise HandsError(f"{agent}'s seat never answered (journalctl --user -u {unit(agent)})")
     return status(agent)
 
 
@@ -323,7 +332,8 @@ def _up_laptop() -> dict:
 
 def down(agent: str) -> bool:
     r = _systemctl("stop", unit(agent))
-    (state_dir(agent) / "session").unlink(missing_ok=True)
+    for f in ("session", "seat.sock"):
+        (state_dir(agent) / f).unlink(missing_ok=True)
     return r.returncode == 0
 
 
@@ -347,6 +357,84 @@ def resume(agent: str) -> None:
     (state_dir(agent) / "stopped").unlink(missing_ok=True)
 
 
+# ---- the shared pool of background desktops (owner, 10-10) ----------------------------------
+# "the private desktop should be common for all agents — if one agent is using it already then
+# create a new one, but if it is free, the agent should use it." Desktops desk-1, desk-2, … are
+# HELD by one agent at a time: a hold lasts while the agent acts and lapses after HOLD_IDLE_S
+# without an action (or on release). desk-1 keeps the main browser profile, with the logins; a new
+# desk starts from a COPY of it (cookies carry over; WhatsApp Web, one session per device, doesn't).
+POOL_PREFIX = "desk-"
+HOLD_IDLE_S = 300
+
+
+def pool() -> list[str]:
+    names = []
+    if STATE_ROOT.exists():
+        names += [d.name for d in STATE_ROOT.iterdir() if d.name.startswith(POOL_PREFIX)]
+    if HOME_ROOT.exists():
+        names += [d.name for d in HOME_ROOT.iterdir() if d.name.startswith(POOL_PREFIX)]
+    return sorted(set(n for n in names if NAME_RE.match(n)), key=lambda n: int(n[len(POOL_PREFIX):])
+                  if n[len(POOL_PREFIX):].isdigit() else 10**9)
+
+
+def holder(desk: str) -> tuple[str, float] | None:
+    """Who holds a desk, if the hold is live."""
+    try:
+        who, ts = (state_dir(desk) / "holder").read_text().split()
+        ts = float(ts)
+    except (OSError, ValueError):
+        return None
+    return (who, ts) if time.time() - ts < HOLD_IDLE_S else None
+
+
+def _hold(desk: str, agent: str) -> None:
+    state_dir(desk).mkdir(parents=True, exist_ok=True)
+    (state_dir(desk) / "holder").write_text(f"{agent} {time.time():.0f}")
+
+
+def acquire(agent: str) -> str:
+    """The background desktop this agent works on: the one it holds, else the first free one,
+    else a new one. The hold is refreshed by every action (_guard)."""
+    import fcntl
+    STATE_ROOT.mkdir(parents=True, exist_ok=True)
+    with open(STATE_ROOT / ".pool.lock", "w") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        desks = pool()
+        mine = next((d for d in desks if (holder(d) or ("",))[0] == agent), None)
+        free = next((d for d in desks if holder(d) is None), None)
+        desk = mine or free
+        if desk is None:
+            n = 1 + max([int(d[len(POOL_PREFIX):]) for d in desks
+                         if d[len(POOL_PREFIX):].isdigit()] or [0])
+            desk = f"{POOL_PREFIX}{n}"
+        _hold(desk, agent)
+    if not alive(desk):
+        _seed_profile(desk)
+        up(desk)
+    return desk
+
+
+def release(agent: str) -> list[str]:
+    out = []
+    for d in pool():
+        h = holder(d)
+        if h and h[0] == agent:
+            (state_dir(d) / "holder").unlink(missing_ok=True)
+            out.append(d)
+    return out
+
+
+def _seed_profile(desk: str) -> None:
+    """A new desk starts from a copy of desk-1's browser profile (its logins), once."""
+    first = home_dir(f"{POOL_PREFIX}1") / "browser"
+    mine = home_dir(desk) / "browser"
+    if desk == f"{POOL_PREFIX}1" or mine.exists() or not first.is_dir():
+        return
+    home_dir(desk).mkdir(parents=True, exist_ok=True)
+    shutil.copytree(first, mine, symlinks=True, ignore_dangling_symlinks=True,
+                    ignore=shutil.ignore_patterns("Singleton*", "lockfile", "*.lock", "Crash*"))
+
+
 def status(agent: str | None = None) -> dict | list:
     if agent is None:
         names = sorted(d.name for d in STATE_ROOT.iterdir()) if STATE_ROOT.exists() else []
@@ -361,7 +449,9 @@ def status(agent: str | None = None) -> dict | list:
     la = last_act(agent)
     out = {"agent": agent, "running": live, "vnc_port": port if live else None,
            "stopped": stopped(agent), "size": list(size(agent)) if live else [WIDTH, HEIGHT],
-           "kind": "laptop" if is_laptop(agent) else "own",
+           "kind": "laptop" if is_laptop(agent) else "pool" if agent.startswith(POOL_PREFIX)
+           else "own",
+           "holder": (holder(agent) or (None,))[0] if agent.startswith(POOL_PREFIX) else None,
            "last_act": {"ts": la[0], "action": la[1], "by": la[2]} if la else None}
     if live:
         try:
@@ -402,6 +492,9 @@ def _guard(agent: str, act: str = "") -> None:
     if why:
         raise Stopped(why)
     _session(agent)
+    who = os.environ.get("ASTRYX_AGENT", "")
+    if act and who and agent.startswith(POOL_PREFIX):
+        _hold(agent, who)
     if act:          # who did what last, and when: the action's NAME only, never its text
         try:
             (state_dir(agent) / "last_act").write_text(
@@ -543,7 +636,11 @@ KEY_ALIASES = {"enter": "Return", "return": "Return", "esc": "Escape", "escape":
                "tab": "Tab", "backspace": "BackSpace", "delete": "Delete", "del": "Delete",
                "space": "space", "up": "Up", "down": "Down", "left": "Left", "right": "Right",
                "home": "Home", "end": "End", "pageup": "Prior", "pagedown": "Next",
-               "insert": "Insert", "menu": "Menu"}
+               "insert": "Insert", "menu": "Menu",
+               # punctuation by name ("+" splits a chord, so "ctrl+minus", not "ctrl+-")
+               "minus": "-", "plus": "+", "equal": "=", "comma": ",", "period": ".",
+               "slash": "/", "backslash": "\\", "semicolon": ";", "apostrophe": "'",
+               "grave": "`", "bracketleft": "[", "bracketright": "]"}
 
 
 def _sym(ch: str) -> int:

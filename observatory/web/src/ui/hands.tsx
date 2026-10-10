@@ -14,7 +14,8 @@ import AgentFace from '../components/AgentFace'
 
 export type Desk = {
   agent: string
-  kind?: 'laptop' | 'own'
+  kind?: 'laptop' | 'pool' | 'own'
+  holder?: string | null
   running: boolean
   stopped: string | null
   size: [number, number]
@@ -47,7 +48,7 @@ const snapOpen = () => opened
 
 /** The desktop an agent is using right now, if any: its own, or the owner's laptop. */
 export function deskOf(agent: string, list: Desk[], nowS = Date.now() / 1000): Desk | null {
-  const own = list.find((d) => d.agent === agent && d.running)
+  const own = list.find((d) => d.running && (d.kind === 'pool' ? d.holder === agent : d.agent === agent))
   const lap = list.find((d) => d.agent === 'laptop' && d.running && d.last_act?.by === agent
     && nowS - d.last_act.ts < RECENT_S)
   if (own && lap) return (lap.last_act!.ts >= (own.last_act?.ts ?? 0)) ? lap : own
@@ -71,7 +72,7 @@ export function HandBadge({ agent, size = 16, className = '' }: { agent: string;
   const d = deskOf(agent, list)
   if (!d) return null
   const acting = !!d.last_act && Date.now() / 1000 - d.last_act.ts < ACTIVE_S && !d.stopped
-  const where = d.agent === 'laptop' ? 'your laptop' : 'its own desktop'
+  const where = d.agent === 'laptop' ? 'your laptop' : `background ${d.agent}`
   return (
     <span role="button" tabIndex={0} title={`${displayName(agent)} is ${acting ? 'using' : 'at'} ${where}: open it`}
       onClick={(e) => { e.stopPropagation(); openDesktop(d.agent) }}
@@ -138,7 +139,7 @@ export function DesktopOverlay() {
   const d = name ? list.find((x) => x.agent === name) : null
   const close = () => { opened = null; emit() }
   const laptop = d?.agent === 'laptop'
-  const who = laptop ? (d?.last_act?.by || '') : (d?.agent || '')
+  const who = laptop ? (d?.last_act?.by || '') : d?.kind === 'pool' ? (d?.holder || d?.last_act?.by || '') : (d?.agent || '')
   const acting = !!d?.last_act && Date.now() / 1000 - d.last_act.ts < ACTIVE_S && !d.stopped
   const post = async (what: string) => {
     if (!d) return
@@ -157,7 +158,7 @@ export function DesktopOverlay() {
             {who ? <AgentFace name={who} size={34} /> : <span className="w-[34px] h-[34px] grid place-items-center rounded-full border border-line text-ink-dim"><HandSvg size={16} /></span>}
             <div className="min-w-0">
               <div className="text-[15px] font-semibold text-ink truncate">
-                {laptop ? 'Your laptop' : `${displayName(d.agent)}'s own desktop`}
+                {laptop ? 'Your laptop' : d.kind === 'pool' ? `Background ${d.agent}${who ? ` · ${displayName(who)}` : ' · free'}` : `${displayName(d.agent)}'s own desktop`}
               </div>
               <div className="text-[12px] text-ink-mute truncate">
                 {d.stopped ? 'stopped by you: every action is refused'
@@ -176,7 +177,7 @@ export function DesktopOverlay() {
             {d.stopped
               ? <button disabled={busy} onClick={() => post('resume')} className="ax-action px-4 py-2 rounded-xl text-[13px] font-medium">Give hands back</button>
               : <button disabled={busy} onClick={() => post('stop')} className="px-4 py-2 rounded-xl text-[13px] font-medium text-white" style={{ background: '#e5484d' }}>
-                  {laptop ? 'Stop agents on my laptop' : `Stop ${displayName(d.agent)}`}</button>}
+                  {laptop ? 'Stop agents on my laptop' : `Stop ${d.agent}`}</button>}
             <button onClick={close} aria-label="close" className="px-3 py-2 rounded-xl text-[13px] border border-line text-ink-dim hover:text-ink">Close</button>
           </div>
           <div className="flex-1 min-h-0 grid place-items-center" onMouseDown={(e) => { if (e.target === e.currentTarget) close() }}>
@@ -184,7 +185,7 @@ export function DesktopOverlay() {
               : <div className="text-[13px] text-ink-mute">This desktop is closed. Its logins are kept; the agent opens it when it next needs it.</div>}
           </div>
           {laptop && <div className="shrink-0 text-[12px] text-ink-mute text-center">This is your real screen. You're already at its keyboard; an agent here uses your cursor while it works.</div>}
-          {!laptop && interact && <div className="shrink-0 text-[12px] text-ink-mute text-center">You and {displayName(d.agent)} share one cursor here: your moves take it, and its next action takes it back.</div>}
+          {!laptop && interact && <div className="shrink-0 text-[12px] text-ink-mute text-center">You and {who ? displayName(who) : 'the agent'} share one cursor here: your moves take it, and its next action takes it back.</div>}
         </motion.div>
       )}
     </AnimatePresence>,
