@@ -6,6 +6,8 @@ another resident whose name extends it (abstractor-1 → abstractor-1x, p1 → p
 in a temp dir) holds the sessions, so no resident's real session is ever reachable from this test.
   RED      only ax-zzp1x is alive: _send_compact("zzp1") must FAIL, and ax-zzp1x's pane must not receive "/compact"
   GREEN    ax-zzp1 is alive: _send_compact("zzp1") succeeds and its pane receives "/compact"
+  RETIRE   the observatory's kill-session (a3 #44075): the exact form kills nothing when only a prefix-match lives, the
+           bare form does (the measured hazard, as a control), and retire passes the exact form
 Exit 0 pass · 1 fail · 77 no tmux.
 """
 import importlib.util
@@ -60,6 +62,19 @@ try:
     check("GREEN: with ax-zzp1 alive, the send succeeds", sent is True, str(sent))
     check("GREEN: …and lands in ax-zzp1's own pane", "/compact" in pane("ax-zzp1"), pane("ax-zzp1"))
     check("GREEN: …and still not in ax-zzp1x", "/compact" not in pane("ax-zzp1x"), pane("ax-zzp1x"))
+    # the observatory's retire kills a session the same way, and kill-session shares the fallback (a3 #44075)
+    tm("kill-session", "-t", "=ax-zzp1")
+    r = tm("kill-session", "-t", "=ax-zzp1")
+    check("RETIRE: the exact form `kill-session -t =ax-zzp1` with only ax-zzp1x alive kills NOTHING",
+          r.returncode != 0 and tm("has-session", "-t", "=ax-zzp1x").returncode == 0, r.stderr)
+    # ONE prefix match plus an unrelated session (a3's measured shape; two prefix matches would be ambiguous → refused)
+    tm("new-session", "-d", "-s", "ax-unrelated", "cat")
+    tm("kill-session", "-t", "ax-zzp1")          # the bare form: the measured hazard (a control, on the private server)
+    check("RETIRE CONTROL: the bare form `kill-session -t ax-zzp1` DOES kill the one prefix-matching session (ax-zzp1x)",
+          tm("has-session", "-t", "=ax-zzp1x").returncode != 0 and tm("has-session", "-t", "=ax-unrelated").returncode == 0)
+    obs = (REPO / "observatory" / "api" / "main.py").read_text()
+    check("RETIRE: the observatory's retire passes the exact target (=ax-<name>), never the bare one",
+          '"kill-session", "-t", f"=ax-{name}"' in obs and '"kill-session", "-t", f"ax-{name}"' not in obs)
 finally:
     tm("kill-server")
     shutil.rmtree(td, ignore_errors=True)
