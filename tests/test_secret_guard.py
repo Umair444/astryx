@@ -18,7 +18,9 @@ holders carry FAKE secrets. Each arm can ALONE go red.
       the key's .pub beside them still read. Hermetic: a fixture HOME holds fake files.
   G9  The other routes to the same token/key (a3 BC-3), one DENY arm each with an ALLOW control:
       $HOME/${HOME} spelling; `gh auth token` / `gh auth status --show-token|-t`; base64; a
-      RECURSIVE printer on a directory holding an out-of-repo holder; a glob that matches one.
+      RECURSIVE printer on a directory holding an out-of-repo holder; a glob that matches one;
+      (#42337) a relative path after `cd`; `gh config get oauth_token`; the credential-helper
+      protocol (`gh auth git-credential get`, `git credential fill`); dd if=.
       NOT armed, stated: a script that prints what it read (python -c "print(open(…).read())") —
       the documented accident-grade limit.
 
@@ -266,13 +268,25 @@ def arms_token_routes(tmp: Path):
                 "G9d recursive printer on a holder's directory": ["grep -r oauth ~/.config/gh", "grep -rn x ~/.ssh",
                                                                   "rg token ~/.config", "cp -r ~/.ssh /tmp/x",
                                                                   "tar czf /tmp/k.tgz ~/.ssh"],
-                "G9e a glob matching a holder": ["cat ~/.ssh/*", "head ~/.config/gh/*.yml"]}
+                "G9e a glob matching a holder": ["cat ~/.ssh/*", "head ~/.config/gh/*.yml"],
+                "G9f cd, then a relative path": ["cd ~/.config/gh && cat hosts.yml", "cd ~/.ssh; base64 id_ed25519",
+                                                 "cd ~ && cd .ssh && cat id_ed25519", "cd $HOME/.ssh && grep -r . ."],
+                "G9g gh config get oauth_token": ["gh config get oauth_token -h github.com"],
+                "G9h the credential-helper protocol": [
+                    "printf 'protocol=https\\nhost=github.com\\n' | gh auth git-credential get",
+                    "printf 'protocol=https\\nhost=github.com\\n' | git credential fill"],
+                "G9i dd (stdout by default)": ["dd if=~/.ssh/id_ed25519", "dd if=$HOME/.config/gh/hosts.yml status=none"]}
         allow = {"G9a": ['cat "$HOME/.config/ordinary.txt"', 'cat "$XDG_X/.ssh/id_ed25519"'],
                  "G9b": ["gh auth status", "gh pr list", "gh auth login --with-token"],
                  "G9c": ["base64 ~/.config/ordinary.txt"],
                  "G9d": ["grep -r x ~/.config/other", "grep oauth ~/.config/gh", "grep -rl oauth ~/.config/gh",
                          f"grep -rn x {REPO}", "ls -la ~/.ssh"],
-                 "G9e": ["cat ~/.config/*.txt", "cat ~/.ssh/*.pub"]}
+                 "G9e": ["cat ~/.config/*.txt", "cat ~/.ssh/*.pub"],
+                 "G9f": ["cd ~/.config && ls", "cd ~/.ssh && cat id_ed25519.pub", "cd ~/.config && cat ordinary.txt",
+                         "cd ~/.ssh && cd - && cat ordinary.txt"],
+                 "G9g": ["gh config get git_protocol"],
+                 "G9h": ["gh auth setup-git", "git config --get credential.helper", "git credential-cache exit"],
+                 "G9i": ["dd if=~/.config/ordinary.txt of=/dev/null"]}
         for name, cmds in deny.items():
             r = {c: sg.decide("Bash", {"command": c}, secrets=[]) for c in cmds}
             check(f"{name}: all {len(cmds)} shapes DENIED", all(r.values()), [c for c, v in r.items() if not v])
