@@ -1,0 +1,166 @@
+"""bridges/ear_stt.py — hearing's speech-to-text seam (plan-8674 S1): a PLUGGABLE backend behind a bounded queue.
+
+THE SEAM. The host is CPU-only today and gets GPUs later (owner, 2026-10-10), so the backend is a choice of config,
+not of code: EAR_STT_BACKEND=cpu (faster-whisper, int8 on CPU; the default) or cuda (faster-whisper, float16 on
+the GPU). A new backend is one class with `name`, `load()` and `transcribe(pcm) -> str`, registered in BACKENDS.
+Models load from the local cache only (local_files_only): nothing is ever downloaded, and nothing leaves the host.
+
+THE QUEUE (a1 F8). Speech arrives faster than a CPU can transcribe it (the measured real-time factor on this host is
+above 1 under load). So the queue is BOUNDED and DROPS THE OLDEST segment when full: the ear stays current instead
+of falling ever further behind, and a dropped segment's audio is simply discarded (never stored). Any drop in the
+last 10 minutes, a backlog at half the bound, or a backend that failed to load marks the ear DEGRADED, which the
+observatory shows. Nothing here ever blocks a page (rule (e)).
+
+NO TEXT IN LOGS. Nothing in this module prints, logs or raises with utterance text: failures are counted and named
+by exception TYPE only (a postgres error's DETAIL can quote a row's values). tests/test_ear_service.py transcribes a
+known clip and greps all of the service's output for its words: 0.
+"""
+from __future__ import annotations
+
+import logging
+import os
+import threading
+import time
+from collections import deque
+
+import numpy as np
+
+SR = 16000                                    # the one input format: 16 kHz mono float32 in [-1, 1]
+logging.getLogger("faster_whisper").setLevel(logging.WARNING)
+
+
+class WhisperBackend:
+    """faster-whisper (CTranslate2). The same engine bridges/transcribe.py uses for voice notes."""
+
+    def __init__(self, device: str = "cpu", compute_type: str = "int8", model: str = "small",
+                 beam: int = 1, threads: int = 0):
+        self.device, self.compute_type, self.model_name = device, compute_type, model
+        self.beam, self.threads = beam, threads
+        self.name = f"faster-whisper:{model}:{device}:{compute_type}"
+        self._m = None
+
+    def load(self) -> None:
+        if self._m is None:
+            from faster_whisper import WhisperModel
+            self._m = WhisperModel(self.model_name, device=self.device, compute_type=self.compute_type,
+                                   cpu_threads=self.threads, local_files_only=True)
+
+    def transcribe(self, pcm: np.ndarray) -> str:
+        self.load()
+        # language=None: the owner speaks Urdu, Punjabi, English and mixes; whisper detects. vad_filter uses the
+        # bundled silero model (local) to cut non-speech the browser's energy VAD let through.
+        segs, _ = self._m.transcribe(pcm, beam_size=self.beam, language=None, vad_filter=True,
+                                     condition_on_previous_text=False)
+        return " ".join(s.text.strip() for s in segs).strip()
+
+
+def _env(k: str, d: str) -> str:
+    return os.environ.get(k) or d
+
+
+BACKENDS = {
+    "cpu":  lambda: WhisperBackend("cpu", "int8", _env("EAR_STT_MODEL", "small"), int(_env("EAR_STT_BEAM", "1"))),
+    "cuda": lambda: WhisperBackend("cuda", "float16", _env("EAR_STT_MODEL", "small"), int(_env("EAR_STT_BEAM", "5"))),
+}
+
+
+def make_backend(spec: str | None = None):
+    spec = spec or _env("EAR_STT_BACKEND", "cpu")
+    if spec not in BACKENDS:
+        raise ValueError(f"unknown EAR_STT_BACKEND {spec!r}; known: {', '.join(BACKENDS)}")
+    return BACKENDS[spec]()
+
+
+class SttQueue:
+    """Bounded, drop-oldest, one worker thread. `sink(item, text, stt_ms)` stores a result; it is never logged."""
+
+    def __init__(self, backend, sink, maxlen: int = 8, degrade_window_s: int = 600):
+        self.backend, self.sink, self.maxlen, self.window = backend, sink, maxlen, degrade_window_s
+        self.q: deque = deque()
+        self.cv = threading.Condition()
+        self.dropped = 0
+        self.drop_times: deque = deque()
+        self.done = self.empty = self.failed = 0
+        self.last_error: str | None = None        # an exception TYPE name, never its message
+        self.load_error: str | None = None
+        self.loaded = False
+        self.busy = False
+        self.rtf_last: float | None = None
+        self.rtf_ewma: float | None = None
+        self._stop = False
+        self.t = threading.Thread(target=self._run, name="ear-stt", daemon=True)
+
+    def start(self):
+        self.t.start()
+        return self
+
+    def stop(self):
+        with self.cv:
+            self._stop = True
+            self.cv.notify_all()
+
+    def put(self, item: dict) -> int:
+        """Enqueue; returns how many segments were dropped to make room (0 or 1)."""
+        with self.cv:
+            n = 0
+            while len(self.q) >= self.maxlen:
+                self.q.popleft()                   # the OLDEST goes; its audio is discarded, never stored
+                self.dropped += 1
+                self.drop_times.append(time.monotonic())
+                n += 1
+            self.q.append(item)
+            self.cv.notify()
+            return n
+
+    def _run(self):
+        try:
+            self.backend.load()
+            self.loaded = True
+        except Exception as e:                     # noqa: BLE001
+            self.load_error = type(e).__name__
+            return
+        while True:
+            with self.cv:
+                while not self.q and not self._stop:
+                    self.cv.wait()
+                if self._stop:
+                    return
+                item = self.q.popleft()
+                self.busy = True
+            t0 = time.monotonic()
+            try:
+                text = self.backend.transcribe(item["pcm"])
+                ms = int((time.monotonic() - t0) * 1000)
+                dur = max(item.get("dur_ms") or 1, 1)
+                self.rtf_last = round(ms / dur, 3)
+                self.rtf_ewma = self.rtf_last if self.rtf_ewma is None else round(0.7 * self.rtf_ewma + 0.3 * self.rtf_last, 3)
+                if text:
+                    self.sink(item, text, ms)
+                    self.done += 1
+                else:
+                    self.empty += 1
+            except Exception as e:                 # noqa: BLE001
+                self.failed += 1
+                self.last_error = type(e).__name__
+            finally:
+                del item
+                self.busy = False
+
+    def status(self) -> dict:
+        now = time.monotonic()
+        with self.cv:
+            while self.drop_times and now - self.drop_times[0] > self.window:
+                self.drop_times.popleft()
+            depth = len(self.q)
+        reasons = []
+        if self.load_error:
+            reasons.append(f"backend failed to load ({self.load_error})")
+        if self.drop_times:
+            reasons.append(f"{len(self.drop_times)} segment(s) dropped in the last {self.window // 60} min")
+        if depth >= max(1, self.maxlen // 2):
+            reasons.append(f"backlog {depth}/{self.maxlen}")
+        return {"backend": getattr(self.backend, "name", "?"), "loaded": self.loaded, "queue": depth,
+                "max": self.maxlen, "busy": self.busy, "dropped": self.dropped, "done": self.done,
+                "empty": self.empty, "failed": self.failed, "last_error": self.last_error,
+                "rtf_last": self.rtf_last, "rtf_ewma": self.rtf_ewma,
+                "degraded": bool(reasons), "reasons": reasons}
