@@ -667,6 +667,7 @@ run "init units: senses, geoloc and growbot are declared (growbot's state follow
 # a deadline; the dispatcher validates every pass; the wake carries a text-free pointer; ear_fetch returns the fenced
 # span to its own agent only; hooks/step.py redacts the fence. Fixture DB for the pointer and fetch arms.
 run "hearing: hear() workers, pointer, span-fetch, fence" "$PY" tests/test_hearing.py
+run "voice orb: the confirm under trusted input (arms ii-v), states, reduced motion" "$PY" tests/test_voice_orb.py
 run "gateway: name@surface replies re-addressed local" "$PY" tests/test_gateway_surface.py
 # The human ontology. Its lead assertion is the PRIVACY one and it is derived from the
 # live owner instruments, so a new PII shape in relations.md goes red without anyone

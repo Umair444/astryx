@@ -242,3 +242,7 @@ body {
   font-size: 15px; line-height: 1.05; color: #fff; text-shadow: 0 1px 1px rgba(0,0,0,.35);
   max-height: calc(100% - 22px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+
+/* the voice orb's confirm: a fill that runs across the button for its inert window (VoiceOrb INERT_MS) */
+.ax-inert { width: 0; animation: ax-inert linear forwards; }
+@keyframes ax-inert { to { width: 100%; } }
