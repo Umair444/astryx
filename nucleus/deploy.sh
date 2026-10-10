@@ -39,60 +39,101 @@ reload() {
 }
 
 # THE WHOLE ORG, restarted as itself (owner, 2026-10-10: "restart the astryx completely — ideally
-# there should be a service already"). Order: the database, then every enabled astryx unit, then each
-# resident RESUMED on its own session (spawn.sh resumes from turns/transcripts, never a fresh mind),
-# then a verification that fails loudly. A resident is restarted when it has been idle for 2 minutes
-# (no steps, no pending messages), or after a 15-minute wait anyway: a restart replays no unread wire,
-# so waiting for a quiet point loses less. The body running this (an operator's terminal) is skipped.
+# there should be a service already"). Order: the database; STOP the pulse (its watchers spawn and kill
+# residents and would race this); every other enabled astryx unit; each resident RESUMED on its own
+# session (spawn.sh resumes from turns/transcripts) at a quiet moment (2 idle minutes, or after 15);
+# then VERIFY by set membership, and only then start the pulse again. Every miss is a named ✗ and
+# exit 1, never a green summary (a2 #42364). The body running this ($ASTRYX_AGENT) can't restart
+# itself and is reported as skipped.
+ears() {   # "<agent> <pid>" per live channel server: exe=node + server.mjs argv (dsn_census), never pgrep
+  ( cd "$ROOT" && venv/bin/python - <<'PY'
+from nucleus.dsn_census import channel_server_pids
+for pid in channel_server_pids():
+    try:
+        env = open(f"/proc/{pid}/environ", "rb").read().split(b"\0")
+    except OSError:
+        continue
+    a = next((e[13:].decode() for e in env if e.startswith(b"ASTRYX_AGENT=")), "")
+    if a:
+        print(a, pid)
+PY
+  )
+}
+ears_of() { ears | awk -v a="$1" '$1==a {print $2}'; }
+
 restart_org() {
   local DSN; DSN=$(grep '^ASTRYX_DSN=' "$ROOT/.env" | cut -d= -f2-)
+  local me="${ASTRYX_AGENT:-}" bad=0
   local pgc; pgc=$(docker ps --format '{{.Names}}\t{{.Ports}}' | awk -F'\t' '/->5432\/tcp/ {print $1; exit}')
   if [ -n "$pgc" ]; then
     echo "· restarting the database ($pgc)…"; docker restart "$pgc" >/dev/null
     for _ in $(seq 1 60); do psql "$DSN" -qc 'SELECT 1' >/dev/null 2>&1 && break; sleep 2; done
     psql "$DSN" -qc 'SELECT 1' >/dev/null 2>&1 && echo "  ✓ database accepting" || { echo "  ✗ database not accepting"; return 1; }
   fi
+  echo "· pausing the pulse (its watchers would race the resident restarts)…"
+  sudo systemctl stop astryx-pulse.timer && echo "  ✓ pulse paused"
   echo "· restarting services…"
   local u
   for u in $(systemctl list-unit-files 'astryx-*' --no-legend | awk '$2=="enabled" {print $1}'); do
-    case "$u" in astryx-residents.service) continue ;; esac     # a oneshot: the residents step below IS it
-    sudo systemctl restart "$u" && echo "  ✓ $u $(systemctl is-active "$u")"
+    case "$u" in astryx-residents.service|astryx-pulse.timer|astryx-pulse.service) continue ;; esac
+    if sudo systemctl restart "$u"; then echo "  ✓ $u $(systemctl is-active "$u")"; else echo "  ✗ $u failed to restart"; bad=1; fi
   done
   echo "· restarting residents (each resumes its own session)…"
-  local me="${ASTRYX_AGENT:-}" a pending=() deadline=$((SECONDS + 900))
+  local a pending=() deadline=$((SECONDS + 900)) t0
+  declare -A spawned_at=()
   mapfile -t pending < <(cd "$ROOT" && venv/bin/python nucleus/charter.py --roster)
   while [ ${#pending[@]} -gt 0 ]; do
     local next=()
     for a in "${pending[@]}"; do
-      [ "$a" = "$me" ] && { echo "  · $a skipped (this is the body running the restart)"; continue; }
+      [ "$a" = "$me" ] && continue
       local busy
       busy=$(psql "$DSN" -tAc "SELECT (SELECT count(*) FROM steps WHERE agent='$a' AND ts > now()-interval '2 minutes')
                                  + (SELECT count(*) FROM messages WHERE to_agent='$a' AND status='pending')" 2>/dev/null || echo 0)
       if [ "${busy:-0}" != 0 ] && [ $SECONDS -lt $deadline ]; then next+=("$a"); continue; fi
       tmux kill-session -t "=ax-$a" 2>/dev/null || true
-      for _ in $(seq 1 30); do
-        pgrep -f channel/server.mjs | while read -r p; do tr '\0' '\n' </proc/"$p"/environ 2>/dev/null; done \
-          | grep -qx "ASTRYX_AGENT=$a" || break
-        sleep 0.5
-      done
-      ( cd "$ROOT" && nucleus/spawn.sh "$a" 2>&1 | tail -1 | sed 's/^/  ✓ /' )
+      local p left
+      for _ in $(seq 1 30); do [ -z "$(ears_of "$a")" ] && break; sleep 0.5; done
+      left=$(ears_of "$a")
+      if [ -n "$left" ]; then                         # an ear outside tmux: spawn would refuse, so end it
+        for p in $left; do kill "$p" 2>/dev/null || true; done
+        for _ in $(seq 1 20); do [ -z "$(ears_of "$a")" ] && break; sleep 0.5; done
+      fi
+      if [ -n "$(ears_of "$a")" ]; then echo "  ✗ $a: its old ear won't exit (pids $(ears_of "$a" | tr '\n' ' '))"; bad=1; continue; fi
+      local out rc
+      out=$(cd "$ROOT" && nucleus/spawn.sh "$a" 2>&1); rc=$?
+      if [ $rc -ne 0 ] || grep -qi 'refusing' <<<"$out"; then
+        echo "  ✗ $a: spawn failed (rc $rc): $(tail -1 <<<"$out")"; bad=1
+      else
+        echo "  ✓ $(tail -1 <<<"$out")"; spawned_at[$a]=$SECONDS
+      fi
     done
     pending=("${next[@]}")
     [ ${#pending[@]} -gt 0 ] && { echo "  … waiting for a quiet moment: ${pending[*]}"; sleep 30; }
   done
-  echo "· verifying…"
-  local bad=0
+  echo "· verifying (set membership: every resident has exactly one ear and a ready session)…"
   for u in $(systemctl list-unit-files 'astryx-*' --no-legend | awk '$2=="enabled" {print $1}'); do
-    case "$u" in astryx-residents.service|*.timer) continue ;; esac
+    case "$u" in astryx-residents.service|astryx-pulse.timer|astryx-pulse.service) continue ;; esac
     systemctl is-active --quiet "$u" || { echo "  ✗ $u $(systemctl is-active "$u")"; bad=1; }
   done
-  systemctl is-active --quiet astryx-pulse.timer || { echo "  ✗ pulse timer not active"; bad=1; }
-  local n_ears n_roster
-  n_roster=$(cd "$ROOT" && venv/bin/python nucleus/charter.py --roster | grep -vxc "${me:-^$}")
-  n_ears=$(pgrep -f channel/server.mjs | while read -r p; do tr '\0' '\n' </proc/"$p"/environ 2>/dev/null | grep '^ASTRYX_AGENT='; done | sort -u | grep -vxc "ASTRYX_AGENT=${me:-^$}")
-  echo "  residents with a live ear: $n_ears / $n_roster"
-  [ "$n_ears" -ge "$n_roster" ] || bad=1
+  local all n
+  all=$(ears)
+  for a in $(cd "$ROOT" && venv/bin/python nucleus/charter.py --roster); do
+    [ "$a" = "$me" ] && continue
+    n=$(awk -v a="$a" '$1==a' <<<"$all" | wc -l)
+    [ "$n" = 1 ] || { echo "  ✗ $a has $n ear(s) (want exactly 1)"; bad=1; continue; }
+    # an ear alive ≠ a mind alive: the session must reach its ready prompt (the TUI's mode line)
+    local ok=0
+    for _ in $(seq 1 60); do
+      tmux capture-pane -pt "=ax-$a" 2>/dev/null | grep -q 'bypass permissions' && { ok=1; break; }
+      sleep 2
+    done
+    [ $ok = 1 ] || { echo "  ✗ $a: spawned, but its session never reached the ready prompt"; bad=1; }
+  done
   curl -sf -m 5 localhost:8090/api/overview >/dev/null && echo "  ✓ observatory answering" || { echo "  ✗ observatory not answering"; bad=1; }
+  echo "· resuming the pulse…"
+  sudo systemctl start astryx-pulse.timer && systemctl is-active --quiet astryx-pulse.timer \
+    && echo "  ✓ pulse running" || { echo "  ✗ pulse timer not active"; bad=1; }
+  [ -n "$me" ] && echo "  · $me was NOT restarted: it is the body running this (restart its session yourself)"
   [ $bad = 0 ] && echo "restart: the org is back" || { echo "restart: INCOMPLETE — see ✗ above"; return 1; }
 }
 
