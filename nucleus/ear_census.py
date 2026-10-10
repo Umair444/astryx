@@ -19,6 +19,14 @@ RED on a code line that:
     REVIEWED pin (nucleus/ear_census_reviewed.json) whose binding this run re-verifies;
   - copies (tar/rsync/cp/scp/dd/restic/borg/rclone/docker cp/shutil/tarfile) a path that is the data source, inside
     it, or an ANCESTOR of it (a home backup copies the cluster), or `docker cp`s the container itself.
+  - mounts the container's volumes into another (`--volumes-from <it>`, by name, id or compose service: docker's own
+    documented volume-backup idiom), or names a container-side data path (its mount DESTINATIONS, here
+    /var/lib/postgresql) on a docker run/exec/create line.
+
+THE DOMAIN (stated, derived): the org's live root, PLUS the cluster's own compose home: the top ancestor below $HOME
+of the container's compose working_dir label (here /home/umair/genesis), where a pg backup script would naturally
+live; the data bind source itself is not descended into. Plus the user crontab, /etc/crontab, /etc/cron.d and the
+installed systemd units. NOT searched: any other path on the host (other home directories, /usr/local/bin, /opt).
 
 The corpus is CODE-SHAPED files (scripts, python, units, crontabs, json/yaml/toml config, shebang files) under the
 root, plus the user crontab and the deployed systemd units. Comments and python docstrings are not code. Transcripts,
@@ -73,7 +81,10 @@ RE_WHOLE = re.compile(r"(?<![\w-])(pg_dumpall|pg_basebackup)(?![\w-])")
 RE_DUMP = re.compile(r"(?<![\w-])pg_dump(?![\w-])")
 RE_COPY = re.compile(r"(?<![\w.-])(tar|rsync|cp|scp|dd|restic|borg|rclone|docker\s+cp|shutil\.(?:copytree|copy2?|"
                      r"copyfile|make_archive|move)|tarfile\.open|zipfile\.ZipFile)(?![\w-])")
-RE_PATH = re.compile(r"""(?:~|\$\{?HOME\}?|Path\.home\(\))(?:/[^\s'"`;|&)<>,\]]*)?|/[^\s'"`;|&)<>,\]]+""")
+RE_VOLFROM = re.compile(r"--volumes-from(?:=|\s+)(\S+)")
+RE_DOCKER_RUN = re.compile(r"docker\s+(?:container\s+)?(?:compose\s+)?(?:run|exec|create)\b")
+# a bare `~` is $HOME only as a whole word or before '/': JS/C's bitwise-not (`~x`) is not a path
+RE_PATH = re.compile(r"""(?:(?<![\w~])~(?=/|[\s'"`;)]|$)|\$\{?HOME\}?|Path\.home\(\))(?:/[^\s'"`;|&)<>,\]]*)?|/[^\s'"`;|&)<>,\]]+""")
 DUMP_OPTS_WITH_VALUE = {"-f", "--file", "-F", "--format", "-j", "--jobs", "-Z", "--compress", "-E", "--encoding",
                         "-n", "--schema", "-N", "--exclude-schema", "-t", "--table", "-T", "--exclude-table", "-h",
                         "--host", "-p", "--port", "-U", "--username", "--role", "-S", "--superuser", "--section",
@@ -125,18 +136,50 @@ def resolve(dsn: str, run=_run) -> dict | None:
     def related(dest: str) -> bool:                                # dest is PGDATA, above it, or inside it
         dest, pd = dest.rstrip("/") or "/", pgdata.rstrip("/")
         return pd == dest or pd.startswith(dest + "/") or dest.startswith(pd + "/")
-    sources, volumes = [], []
+    sources, volumes, dests = [], [], []
     for m in info.get("Mounts") or []:
         if not related(m.get("Destination", "")):
             continue
+        dests.append(m["Destination"].rstrip("/") or "/")
         if m.get("Source"):
             sources.append(m["Source"].rstrip("/") or "/")
         if m.get("Type") == "volume" and m.get("Name"):
             volumes.append(m["Name"])
     if not sources and not volumes:
         return None                                                # data not on a host path we can see: BLIND
-    return {"container": ctr, "sources": sorted(set(sources)), "volumes": sorted(set(volumes)),
-            "host": host, "port": port, "pgdata": pgdata}
+    labels = info.get("Config", {}).get("Labels") or {}
+    # Every name the container answers to, for `--volumes-from` and `docker cp`: its name, its id (full and the
+    # 12-char short form docker prints), and its compose service name.
+    cid = info.get("Id") or ""
+    names = {ctr, (info.get("Name") or "").lstrip("/"), cid, cid[:12], labels.get("com.docker.compose.service", "")}
+    return {"container": ctr, "names": sorted(n for n in names if n), "sources": sorted(set(sources)),
+            "volumes": sorted(set(volumes)), "dests": sorted(set(dests)), "host": host, "port": port,
+            "pgdata": pgdata, "compose_dir": labels.get("com.docker.compose.project.working_dir")}
+
+
+def compose_home(phys: dict, home: str | None = None) -> Path | None:
+    """The cluster's OWN home (R2): the top ancestor below $HOME of the container's compose working_dir (here
+    /home/umair/genesis/services/pg → /home/umair/genesis), where a pg backup script would naturally live. Outside
+    $HOME, the working_dir itself. None when the container wasn't started by compose."""
+    wd = phys.get("compose_dir")
+    if not wd:
+        return None
+    home = os.path.normpath(home or str(Path.home()))
+    wd = os.path.normpath(wd)
+    if wd.startswith(home + "/"):
+        return Path(home) / wd[len(home) + 1:].split("/", 1)[0]
+    return Path(wd)
+
+
+def roots(repo_root: Path, phys: dict, home: str | None = None) -> list[Path]:
+    """The census DOMAIN: the org's live root, plus the cluster's compose home when it isn't already inside it."""
+    out = [repo_root.resolve()]
+    ch = compose_home(phys, home)
+    if ch and ch.is_dir():
+        ch = ch.resolve()
+        if not any(ch == r or ch.is_relative_to(r) for r in out):
+            out.append(ch)
+    return out
 
 
 # ── the corpus ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -152,10 +195,13 @@ def _code_shaped(p: Path) -> bool:
         return False
 
 
-def corpus(root: Path) -> list[Path]:
+def corpus(root: Path, skip: list[str] | tuple = ()) -> list[Path]:
+    """Code-shaped files under `root`. `skip`: absolute paths never descended into (the data bind source itself:
+    the cluster's files are what's protected, not a copier site)."""
     out = []
+    skip = {os.path.normpath(x) for x in skip}
     for dirpath, dirs, files in os.walk(root, followlinks=False):
-        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS and os.path.normpath(os.path.join(dirpath, d)) not in skip]
         for f in files:
             p = Path(dirpath) / f
             if p.is_symlink() or not p.is_file():
@@ -268,7 +314,10 @@ def _norm(tok: str, home: str) -> str:
 
 def touches(path: str, sources: list[str]) -> bool:
     """`path` is a source, inside one, or an ANCESTOR of one ('/' itself excluded: a stated bound)."""
-    if path in ("/", "") or not path.startswith("/"):
+    if not path.startswith("/"):
+        return False
+    path = "/" + path.strip("/")                  # POSIX normpath keeps a leading '//' ('//' would be every path)
+    if path == "/":
         return False
     return any(path == s or s.startswith(path.rstrip("/") + "/") or path.startswith(s + "/") for s in sources)
 
@@ -286,9 +335,23 @@ def classify(line: str, phys: dict | None, home: str) -> list[str]:
             kinds.append("pg_dump-nonliteral")
         elif db and db.lower() == EAR_DB:
             kinds.append("pg_dump-astryx_ear")
+    if phys:
+        # R1: docker's documented backup idiom names neither the db nor the host path:
+        #   docker run --rm --volumes-from genesis-pg -v /tmp:/b alpine tar czf /b/x /var/lib/postgresql
+        names = phys.get("names") or [phys["container"]]
+        for m in RE_VOLFROM.finditer(line):
+            target = m.group(1).strip("'\"").split(":")[0]
+            if target in names or (len(target) >= 12 and any(n.startswith(target) for n in names if len(n) == 64)):
+                kinds.append(f"volumes-from-container:{target}")
+        if RE_DOCKER_RUN.search(line):
+            for tok in RE_PATH.findall(line):
+                t = _norm(tok, home)
+                if touches(t, phys.get("dests") or []):
+                    kinds.append(f"docker-data-dest:{t}")
+                    break
     if phys and RE_COPY.search(line):
-        ctr = phys["container"]
-        if re.search(r"docker\s+cp\b", line) and re.search(rf"(?<![\w-]){re.escape(ctr)}(?![\w-])", line):
+        ctr_re = "|".join(re.escape(n) for n in (phys.get("names") or [phys["container"]]))
+        if re.search(r"docker\s+cp\b", line) and re.search(rf"(?<![\w-])(?:{ctr_re})(?![\w-])", line):
             kinds.append("docker-cp-container")
         for tok in RE_PATH.findall(line):
             if touches(_norm(tok, home), phys["sources"]):
@@ -356,7 +419,7 @@ def scan(root: Path, phys: dict | None, reviewed: list[dict] | None = None, dsn:
             continue
         for n, code in code_lines(f, text).items():
             if not code or not (RE_EAR.search(code) or RE_WHOLE.search(code) or RE_DUMP.search(code)
-                                or RE_COPY.search(code)):
+                                or RE_COPY.search(code) or RE_VOLFROM.search(code) or RE_DOCKER_RUN.search(code)):
                 continue
             kinds = classify(code, phys, home)
             if own:
@@ -431,11 +494,14 @@ def main(argv) -> int:
     rc = 0
     if what in ("all", "copiers"):
         root = Path(os.environ.get("EAR_CENSUS_ROOT") or REPO)
-        res = scan(root, phys, dsn=dsn, files=corpus(root) + extra_files(), crontab=_run(["crontab", "-l"]))
+        doms = roots(root, phys)
+        files = [f for r in doms for f in corpus(r, skip=phys["sources"])] + extra_files()
+        res = scan(root, phys, dsn=dsn, files=files, crontab=_run(["crontab", "-l"]))
         for h in res["red"]:
             print(f"  RED {h['path']}:{h['line']}  {', '.join(h['kinds'])}  | {h['code'][:120]}")
         print(f"ear_census copiers: {'RED' if res['red'] else 'GREEN'} ({len(res['red'])} red, {len(res['pinned'])} "
-              f"reviewed pins held, {res['files']} code files searched under {root} + deployed units/crontabs)")
+              f"reviewed pins held, {res['files']} code files searched under {' + '.join(map(str, doms))} "
+              f"(data source excluded) + deployed units/crontabs; nothing outside these roots is searched)")
         rc = max(rc, 1 if res["red"] else 0)
     if what in ("all", "snapper"):
         f = snapper_findings(phys["sources"])

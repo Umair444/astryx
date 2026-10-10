@@ -62,6 +62,16 @@
    "why": "an assertion over recorded argv tuples, not a copier",
    "line_at_review": 194,
    "code": "and (\"pg_restore\", base) in calls and all(db != prod for tool, db in calls if tool != \"pg_dump\"),"
+  },
+  {
+   "path": "/home/umair/genesis/services/residents/homes/vulcan/vendor/whisper.cpp/bindings/javascript/whisper.js",
+   "sha": "3667fac16486524c",
+   "kinds": [
+    "copies-data-path:/home"
+   ],
+   "why": "a vendored, minified emscripten runtime (whisper.cpp's JS binding): its 'cp' is a run-dependency label (`cp ${fullname}`) and '/home' is emscripten's in-memory virtual FS (FS.mkdir(\"/home\"), HOME=/home/web_user). One 960 KB line, no host copy. Pinned by the exact line: a rebuilt binding re-reviews.",
+   "line_at_review": 8,
+   "code": "(minified emscripten runtime line, 960 KB; not quoted)"
   }
  ]
 }

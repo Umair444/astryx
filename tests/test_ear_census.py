@@ -31,7 +31,9 @@ from nucleus import ear_census as C  # noqa: E402
 
 fails, skipped = [], []
 HOME = "/home/tester"
-PHYS = {"container": "fake-pg", "sources": [f"{HOME}/genesis/data/pg"], "volumes": ["fakevol"]}
+CID = "f" * 52 + "a1b2c3d4e5f6"
+PHYS = {"container": "fake-pg", "names": ["fake-pg", CID, CID[:12], "pg"], "sources": [f"{HOME}/genesis/data/pg"],
+        "volumes": ["fakevol"], "dests": ["/var/lib/postgresql"], "compose_dir": f"{HOME}/genesis/services/pg"}
 
 
 def want(label, cond, why=""):
@@ -68,6 +70,15 @@ RED_CASES = {
     "a unit ExecStart":             ("m.service", "[Service]\nExecStart=/usr/bin/tar czf /b.tgz /home/tester\n", "copies-data-path"),
     "a volume copy":                ("n.sh", "docker run --rm -v fakevol:/d alpine tar c /d > v.tar\n", "copies-volume"),
     "an extensionless script":      ("bin/backup", "#!/bin/sh\npg_dumpall | gzip > /x\n", "pg_dumpall"),
+    # R1 (review): docker's own documented volume-backup idiom names neither the db nor the host path
+    "R1 --volumes-from (the idiom)": ("o.sh", "docker run --rm --volumes-from fake-pg -v /tmp:/b alpine tar czf /b/x "
+                                              "/var/lib/postgresql\n", "volumes-from-container"),
+    "R1 --volumes-from by short id": ("p.sh", f"docker run --rm --volumes-from={CID[:12]} busybox true\n",
+                                      "volumes-from-container"),
+    "R1 --volumes-from by compose service": ("q.sh", "docker run --rm --volumes-from pg alpine ls\n",
+                                             "volumes-from-container"),
+    "R1 a data DESTINATION on docker exec": ("r.sh", "docker exec fake-pg tar c /var/lib/postgresql/18 > x.tar\n",
+                                             "docker-data-dest"),
 }
 with tempfile.TemporaryDirectory() as td:
     root = Path(td)
@@ -78,10 +89,13 @@ with tempfile.TemporaryDirectory() as td:
                             "x = 1  # pg_basebackup in a comment\n"
                             'def f():\n    """pg_dump $X in a docstring"""\n    return ["pg_dump", "-d", "astryx"]\n')
     plant(root, "nucleus/ear_store.py", 'EAR_DB = "astryx_ear"\n')
+    plant(root, "other.sh", "docker run --rm --volumes-from othercontainer -v /tmp:/b alpine tar czf /b/x /srv/app\n"
+                            "docker run --rm -v /srv/www:/w nginx\nlet m = ~mask; x = ~(y)\n")
     plant(root, "notes.md", "pg_dumpall astryx_ear\n")            # not code-shaped: never a site
     plant(root, "homes/x/.transcript-aside/t.jsonl", '{"c": "pg_dumpall astryx_ear"}\n')
     g = run_scan(root)
-    want("GREEN baseline: comments, docstrings, literal dumps, unrelated copies, the ear's own files, prose",
+    want("GREEN baseline: comments, docstrings, literal dumps, unrelated copies, the ear's own files, prose, an "
+         "unrelated `--volumes-from othercontainer`, bitwise-not `~x`",
          g["red"] == [], json.dumps(g["red"], indent=1))
     for label, (rel, text, kind) in RED_CASES.items():
         plant(root, rel, text)
@@ -114,7 +128,9 @@ with tempfile.TemporaryDirectory() as td:
     want("RED control: the pinned line edited by one flag is RED again (re-review needed)", len(r["red"]) == 1, str(r))
 
 print("resolve (fake docker)")
-INSPECT = [{"Config": {"Env": ["PGDATA=/var/lib/postgresql/18/docker"]}, "Mounts": [
+INSPECT = [{"Id": CID, "Name": "/genesis-pg", "Config": {"Env": ["PGDATA=/var/lib/postgresql/18/docker"], "Labels": {
+    "com.docker.compose.service": "pg", "com.docker.compose.project.working_dir": "/home/tester/genesis/services/pg"}},
+    "Mounts": [
     {"Type": "bind", "Source": "/srv/initdb", "Destination": "/docker-entrypoint-initdb.d"},
     {"Type": "bind", "Source": "/home/tester/genesis/data/pg", "Destination": "/var/lib/postgresql"},
     {"Type": "volume", "Name": "pgextra", "Source": "/var/lib/docker/volumes/pgextra/_data",
@@ -137,6 +153,13 @@ want("the DSN's port maps to its ONE container; only DATA mounts (initdb exclude
      r and r["container"] == "genesis-pg" and r["sources"] == ["/home/tester/genesis/data/pg",
                                                               "/var/lib/docker/volumes/pgextra/_data"]
      and r["volumes"] == ["pgextra"], str(r))
+want("R1: every name it answers to (name, full + short id, compose service) and the container-side data DESTINATIONS",
+     r and {"genesis-pg", CID, CID[:12], "pg"} <= set(r["names"])
+     and r["dests"] == ["/var/lib/postgresql", "/var/lib/postgresql/18/docker/pg_wal"], str(r))
+want("R2: the compose home is the top ancestor below $HOME of the compose working_dir",
+     r and r["compose_dir"] == "/home/tester/genesis/services/pg"
+     and C.compose_home(r, home="/home/tester") == Path("/home/tester/genesis"), str(r and r.get("compose_dir")))
+want("R2: a container not started by compose has no compose home", C.compose_home({"compose_dir": None}) is None)
 want("BLIND: nothing publishes the DSN's port", C.resolve("postgresql://u@127.0.0.1:5999/a", run=fake(ps1)) is None)
 ps2 = ps1 + "twin\t0.0.0.0:5432->5432/tcp\n"
 want("BLIND: two containers publish it (ambiguous)", C.resolve("postgresql://u@127.0.0.1:5432/a", run=fake(ps2)) is None)
@@ -147,6 +170,32 @@ env["ASTRYX_DSN"] = "postgresql://nobody@127.0.0.1:1/none"
 cli = subprocess.run([sys.executable, "-m", "nucleus.ear_census"], cwd=REPO, env=env, capture_output=True, text=True)
 want("the CLI exits 77 BLIND (never GREEN) when the DSN's container can't be resolved",
      cli.returncode == 77 and "BLIND" in cli.stdout, f"rc={cli.returncode} {cli.stdout}{cli.stderr}")
+
+print("R2: the cluster's own compose home is searched (derived), the data source is not")
+with tempfile.TemporaryDirectory() as td:
+    h = Path(td) / "home" / "tester"
+    repo, gen = h / "astryx", h / "genesis"
+    plant(repo, "ok.sh", "echo hi\n")
+    plant(gen, "services/pg/docker-compose.yml", "services:\n  pg:\n    image: postgres\n")
+    plant(gen, "tools/package-code", "#!/bin/sh\ncd \"$ROOT\"\nrsync -a --exclude='data/' services tools \"$STAGE/\"\n")
+    plant(gen, "data/pg/planted.sh", "pg_dumpall > /mnt/all.sql\n")       # INSIDE the data source: not a site
+    ph = {**PHYS, "sources": [str(gen / "data" / "pg")], "compose_dir": str(gen / "services" / "pg")}
+    doms = C.roots(repo, ph, home=str(h))
+    want("R2: the domain is the repo root plus the derived compose home", doms == [repo.resolve(), gen.resolve()],
+         str(doms))
+    files = [f for d in doms for f in C.corpus(d, skip=ph["sources"])]
+    g = C.scan(repo, ph, reviewed=[], files=files, home=str(h))
+    want("R2: GREEN on a compose home whose tool rsyncs with --exclude='data/' (and the data dir is never read)",
+         g["red"] == [] and not any("data/pg" in str(f) for f in files), json.dumps(g["red"]))
+    plant(gen, "tools/pg-backup.sh", f"#!/bin/sh\ntar czf /mnt/pg.tgz {gen}/data\n")
+    files = [f for d in doms for f in C.corpus(d, skip=ph["sources"])]
+    r2 = C.scan(repo, ph, reviewed=[], files=files, home=str(h))
+    want("R2 RED control: a copier planted in the compose home (not the repo) → RED",
+         any(x["path"].endswith("tools/pg-backup.sh") and any(k.startswith("copies-data-path") for k in x["kinds"])
+             for x in r2["red"]), json.dumps(r2["red"]))
+    inner = {**ph, "compose_dir": str(repo / "svc" / "pg")}
+    want("R2: a compose home already inside the repo root is not searched twice",
+         C.roots(repo, inner, home=str(repo.parent)) == [repo.resolve()], str(C.roots(repo, inner, home=str(repo.parent))))
 
 print("snapper (synthetic filesystem)")
 FS = {"/": (1, 256), "/home": (2, 256), "/home/tester": (2, 300), "/home/tester/genesis": (2, 301),
@@ -186,8 +235,11 @@ else:
     want(f"live: the DSN resolves to container {phys['container']} with a data bind source", bool(phys["sources"]),
          str(phys))
     root = Path(os.environ.get("EAR_CENSUS_ROOT") or REPO)
-    res = C.scan(root, phys, dsn=dsn, files=C.corpus(root) + C.extra_files(), crontab=C._run(["crontab", "-l"]))
-    want(f"live: the copier census is GREEN on {root} ({res['files']} code files, {len(res['pinned'])} reviewed pins)",
+    doms = C.roots(root, phys)
+    files = [f for d in doms for f in C.corpus(d, skip=phys["sources"])] + C.extra_files()
+    res = C.scan(root, phys, dsn=dsn, files=files, crontab=C._run(["crontab", "-l"]))
+    want(f"live: the copier census is GREEN on {' + '.join(map(str, doms))} ({res['files']} code files, "
+         f"{len(res['pinned'])} reviewed pins)",
          res["red"] == [], json.dumps(res["red"], indent=1))
     sf = C.snapper_findings(phys["sources"])
     want("live: no snapper config snapshots the pg data source", sf == [], str(sf))
