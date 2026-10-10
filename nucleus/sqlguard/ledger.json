@@ -261,7 +261,15 @@
   "nucleus/social_age.py::_fresh\u001fselect count(*) from ag_graph where name=?": [
    "people gate: details only to people_cleared, network to the resident (accident-grade)"
   ],
+  "nucleus/social_age.py::_fresh\u001fselect create_elabel(?, ?)": [
+   "derived graph DBs match their declared design",
+   "people gate: details only to people_cleared, network to the resident (accident-grade)"
+  ],
   "nucleus/social_age.py::_fresh\u001fselect create_graph(?)": [
+   "people gate: details only to people_cleared, network to the resident (accident-grade)"
+  ],
+  "nucleus/social_age.py::_fresh\u001fselect create_vlabel(?, ?)": [
+   "derived graph DBs match their declared design",
    "people gate: details only to people_cleared, network to the resident (accident-grade)"
   ],
   "nucleus/social_age.py::_fresh\u001fselect drop_graph(?, true)": [
@@ -269,6 +277,36 @@
   ],
   "nucleus/social_age.py::_readers\u001fselect rolname from pg_roles where rolname = any(?)": [
    "people gate: details only to people_cleared, network to the resident (accident-grade)"
+  ],
+  "nucleus/social_age.py::drift\u001fselect 1 from ag_catalog.ag_graph where name = ?": [
+   "derived graph DBs match their declared design"
+  ],
+  "nucleus/social_age.py::drift\u001fselect 1 from pg_roles where rolname = ?": [
+   "derived graph DBs match their declared design"
+  ],
+  "nucleus/social_age.py::drift\u001fselect c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = ? and c.relkind in ('r','p','v','m','f') and c.oid not in (select l.relation from ag_catalog.ag_label l join ag_catalog.ag_graph g on g.graphid = l.graph where g.name = ?) order by 1": [
+   "derived graph DBs match their declared design"
+  ],
+  "nucleus/social_age.py::drift\u001fselect extname from pg_extension": [
+   "derived graph DBs match their declared design"
+  ],
+  "nucleus/social_age.py::drift\u001fselect g.rolname from pg_database d, aclexplode(d.datacl) a join pg_roles g on g.oid = a.grantee where d.datname = ? and a.privilege_type = 'connect' and a.grantee <> d.datdba order by 1": [
+   "derived graph DBs match their declared design"
+  ],
+  "nucleus/social_age.py::drift\u001fselect l.name, l.kind from ag_catalog.ag_label l join ag_catalog.ag_graph g on g.graphid = l.graph where g.name = ? and l.name <> all(?)": [
+   "derived graph DBs match their declared design"
+  ],
+  "nucleus/social_age.py::drift\u001fselect n.nspname, c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.relkind in ('r','p','v','m','f') and n.nspname not in ('pg_catalog','information_schema','ag_catalog', ?) and n.nspname not like 'pg\\_toast%%' order by 1, 2": [
+   "derived graph DBs match their declared design"
+  ],
+  "nucleus/social_age.py::drift.<locals>.<lambda>\u001fselect has_database_privilege(?, ?, 'connect')": [
+   "derived graph DBs match their declared design"
+  ],
+  "nucleus/social_age.py::ensure\u001fselect 1 from pg_extension where extname = ?": [
+   "derived graph DBs match their declared design"
+  ],
+  "nucleus/social_age.py::ensure\u001fselect rolname from pg_roles where rolname = any(?)": [
+   "derived graph DBs match their declared design"
   ],
   "nucleus/social_age.py::rebuild\u001fselect 1 from pg_database where datname = ?": [
    "people gate: details only to people_cleared, network to the resident (accident-grade)"
@@ -521,7 +559,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 316,
+  "debt_rows": 326,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -1296,11 +1334,23 @@
    "reason": "people library 1a: AGE graph calls in a scratch AGE database (not a stamped fixture relation), so RESPONSIVE is unreachable; executed by test_people_gate's two rebuilds",
    "tk": "sha256t:aa5bd57812fcab5229b75138a7c9072b13d0926969505909c0f911dce646d9df"
   },
+  "nucleus/social_age.py::_fresh\u001fselect create_elabel(?, ?)": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "derived graphs (seed #42347 F2): AGE label DDL (create_vlabel / create_elabel) that materializes DESIGN's labels in _fresh; DDL has no row arms; executed by tests/test_social_age_design.py and test_people_gate",
+   "tk": "sha256t:e9ec8bd6d232467022fba4f14a3526fe345cf7b635472f1f0aaca327dbba17b5"
+  },
   "nucleus/social_age.py::_fresh\u001fselect create_graph(?)": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED/FIXTURE-DDL",
    "reason": "people library 1a: AGE graph calls in a scratch AGE database (not a stamped fixture relation), so RESPONSIVE is unreachable; executed by test_people_gate's two rebuilds",
    "tk": "sha256t:ce5a502f4538c2036f285bfeb4c8df7c3379a6a3cd0aab98279ac232b6313521"
+  },
+  "nucleus/social_age.py::_fresh\u001fselect create_vlabel(?, ?)": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "derived graphs (seed #42347 F2): AGE label DDL (create_vlabel / create_elabel) that materializes DESIGN's labels in _fresh; DDL has no row arms; executed by tests/test_social_age_design.py and test_people_gate",
+   "tk": "sha256t:d51c622d644216f10b0859a6c2d351d4b811b6ad2e2469a5965c7a549446ebdb"
   },
   "nucleus/social_age.py::_fresh\u001fselect drop_graph(?, true)": {
    "admitted": "2026-10-09",
@@ -1314,21 +1364,71 @@
    "reason": "people library 1a: a pg_catalog read (pg_roles/pg_database/pg_attribute), so RESPONSIVE is unreachable by the judge's relation rule; executed by test_people_gate / test_privilege_census",
    "tk": "sha256t:1f31b63e012d7e8e40f8f8231572e356cfd4a3f3e98f6139acb3a64b13fe72c9"
   },
+  "nucleus/social_age.py::drift\u001fselect 1 from ag_catalog.ag_graph where name = ?": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "derived graphs (seed #42347 F2): a read of pg_catalog / ag_catalog (pg_roles, pg_database ACL, pg_class, pg_extension, ag_graph, ag_label), so RESPONSIVE is unreachable by the judge's relation rule; executed both ways (drift found and clean) by tests/test_social_age_design.py on scratch AGE databases",
+   "tk": "sha256t:f0f8fef31a0296a085a895ab2b6f82e4e6135584bb04d4a1e9c6805449fd611d"
+  },
+  "nucleus/social_age.py::drift\u001fselect 1 from pg_roles where rolname = ?": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "derived graphs (seed #42347 F2): a read of pg_catalog / ag_catalog (pg_roles, pg_database ACL, pg_class, pg_extension, ag_graph, ag_label), so RESPONSIVE is unreachable by the judge's relation rule; executed both ways (drift found and clean) by tests/test_social_age_design.py on scratch AGE databases",
+   "tk": "sha256t:035a0e177027b1f4ff5d25314e1a8d60a823bf268f6f7dd6a7daa3394c5a1324"
+  },
+  "nucleus/social_age.py::drift\u001fselect c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = ? and c.relkind in ('r','p','v','m','f') and c.oid not in (select l.relation from ag_catalog.ag_label l join ag_catalog.ag_graph g on g.graphid = l.graph where g.name = ?) order by 1": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "derived graphs (seed #42347 F2): a read of pg_catalog / ag_catalog (pg_roles, pg_database ACL, pg_class, pg_extension, ag_graph, ag_label), so RESPONSIVE is unreachable by the judge's relation rule; executed both ways (drift found and clean) by tests/test_social_age_design.py on scratch AGE databases",
+   "tk": "sha256t:234088005186d15b96c0f0725ba44f32a8010ffedf37e7fb549b243ea8a6a53e"
+  },
+  "nucleus/social_age.py::drift\u001fselect extname from pg_extension": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "derived graphs (seed #42347 F2): a read of pg_catalog / ag_catalog (pg_roles, pg_database ACL, pg_class, pg_extension, ag_graph, ag_label), so RESPONSIVE is unreachable by the judge's relation rule; executed both ways (drift found and clean) by tests/test_social_age_design.py on scratch AGE databases",
+   "tk": "sha256t:26eb6bc5ae2dbda7b12a0beeb9deded5bf4801553b2b2eb8798755cb27d48f64"
+  },
+  "nucleus/social_age.py::drift\u001fselect g.rolname from pg_database d, aclexplode(d.datacl) a join pg_roles g on g.oid = a.grantee where d.datname = ? and a.privilege_type = 'connect' and a.grantee <> d.datdba order by 1": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "derived graphs (seed #42347 F2): a read of pg_catalog / ag_catalog (pg_roles, pg_database ACL, pg_class, pg_extension, ag_graph, ag_label), so RESPONSIVE is unreachable by the judge's relation rule; executed both ways (drift found and clean) by tests/test_social_age_design.py on scratch AGE databases",
+   "tk": "sha256t:393d419bf1838a92cc9ed36368eee3cc647cacc234029dd0b5e18cdfd4ef4c80"
+  },
+  "nucleus/social_age.py::drift\u001fselect l.name, l.kind from ag_catalog.ag_label l join ag_catalog.ag_graph g on g.graphid = l.graph where g.name = ? and l.name <> all(?)": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "derived graphs (seed #42347 F2): a read of pg_catalog / ag_catalog (pg_roles, pg_database ACL, pg_class, pg_extension, ag_graph, ag_label), so RESPONSIVE is unreachable by the judge's relation rule; executed both ways (drift found and clean) by tests/test_social_age_design.py on scratch AGE databases",
+   "tk": "sha256t:d9fc7d0474be41c5a4cb1933655ee2bd64f6b328800d612f7c0cda5767e8d76c"
+  },
+  "nucleus/social_age.py::drift\u001fselect n.nspname, c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.relkind in ('r','p','v','m','f') and n.nspname not in ('pg_catalog','information_schema','ag_catalog', ?) and n.nspname not like 'pg\\_toast%%' order by 1, 2": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "derived graphs (seed #42347 F2): a read of pg_catalog / ag_catalog (pg_roles, pg_database ACL, pg_class, pg_extension, ag_graph, ag_label), so RESPONSIVE is unreachable by the judge's relation rule; executed both ways (drift found and clean) by tests/test_social_age_design.py on scratch AGE databases",
+   "tk": "sha256t:262aac99ba10b1bb769ed872169002483d86071f8f4c0d0a9257517aa88967f0"
+  },
+  "nucleus/social_age.py::drift.<locals>.<lambda>\u001fselect has_database_privilege(?, ?, 'connect')": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "derived graphs (seed #42347 F2): a read of pg_catalog / ag_catalog (pg_roles, pg_database ACL, pg_class, pg_extension, ag_graph, ag_label), so RESPONSIVE is unreachable by the judge's relation rule; executed both ways (drift found and clean) by tests/test_social_age_design.py on scratch AGE databases",
+   "tk": "sha256t:5a92749b33a479f58b5b2d0aa9d5fe57c204f632396bc354c6b55e83deb9be3d"
+  },
+  "nucleus/social_age.py::ensure\u001fselect 1 from pg_extension where extname = ?": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "derived graphs (seed #42347 F2): a read of pg_catalog / ag_catalog (pg_roles, pg_database ACL, pg_class, pg_extension, ag_graph, ag_label), so RESPONSIVE is unreachable by the judge's relation rule; executed both ways (drift found and clean) by tests/test_social_age_design.py on scratch AGE databases",
+   "tk": "sha256t:3614cd7b3e029c8e291d9a12aa18b0010ab804db42995a44dfe7d100b76e0bf3"
+  },
+  "nucleus/social_age.py::ensure\u001fselect rolname from pg_roles where rolname = any(?)": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED",
+   "reason": "derived graphs (seed #42347 F2): a read of pg_catalog / ag_catalog (pg_roles, pg_database ACL, pg_class, pg_extension, ag_graph, ag_label), so RESPONSIVE is unreachable by the judge's relation rule; executed both ways (drift found and clean) by tests/test_social_age_design.py on scratch AGE databases",
+   "tk": "sha256t:1f31b63e012d7e8e40f8f8231572e356cfd4a3f3e98f6139acb3a64b13fe72c9"
+  },
   "nucleus/social_age.py::rebuild\u001fselect 1 from pg_database where datname = ?": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
    "reason": "people library 1a: a pg_catalog read (pg_roles/pg_database/pg_attribute), so RESPONSIVE is unreachable by the judge's relation rule; executed by test_people_gate / test_privilege_census",
    "tk": "sha256t:5742f793d34a878a56915ece96b479bdf821c9b7af0982e046bb5f09d2e8d065"
-  },
-  "nucleus/social_age.py::rebuild\u001fselect a.org, a.src, b.src, count(*) from social_edge a join social_edge b on a.org=b.org and a.dst=b.dst and a.src < b.src where a.rel='member-of' and b.rel='member-of' group by 1,2,3": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:65bb117670a2edf71fd70763f07a759c556d212986d342b27427ec77cdfab18f"
-  },
-  "nucleus/social_age.py::rebuild\u001fselect org, src, dst from social_edge where rel='member-of'": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:d75649df7462f07978bc9c922cb196877b35fd2430bbb2af36d3b3c1773d0714"
   },
   "nucleus/social_age.py::rebuild.<locals>.cy\u001f*": {
    "debt": "UNEXECUTED",

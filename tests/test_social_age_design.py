@@ -12,7 +12,7 @@ its extensions and the graph's labels. `drift` compares the live catalog to it; 
              people_gate run before it (a3 #42376).
   CONTROL    _fresh WITHOUT materializing (an empty design) on an empty graph reads MISSING: the materialization is what
              keeps the live shape independent of which rows happen to exist.
-  REBUILD    the real rebuild() into scratch databases, from a schema.sql fixture, leaves both graphs matching DESIGN.
+  REBUILD    the real rebuild() into scratch databases, from an org-schema fixture, leaves both graphs matching DESIGN.
   LIVE       drift() on the live server reports nothing (read-only sessions).
 Needs a role that can CREATE DATABASE with AGE on the server, else 77.
 """
@@ -192,7 +192,7 @@ try:
         with fixture_db() as fx:
             r = sa.rebuild(base=fx["dsn"], social=dsn_for(NET), private=dsn_for(PRIV), graph=NET, private_graph=PRIV)
             left = sa.drift(dsn_for, design=SCRATCH)
-            check("the real rebuild() from an empty schema.sql fixture leaves both graphs matching DESIGN",
+            check("the real rebuild() from an empty org-schema fixture leaves both graphs matching DESIGN",
                   left == [] and r.get("nodes") == 0 and r.get("private") == 0, f"{left} {r}")
     except (FixtureUnavailable, TypeError) as e:
         print(f"  SKIP  rebuild arm: no fixture ({type(e).__name__})")
