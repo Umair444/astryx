@@ -232,33 +232,47 @@ Your avatar flies to that element and shows your live steps; a publish marks you
 the parts you build stable ids/data-attributes so you (and the viewer's clicks) can point at them.
 A viewer can CLICK an element and ask for a change: it arrives with the element's selector and text.
 TIER: a canvas with tier=personal is never shared; keep the human-personal tier off org canvases.
-SEE IT BEFORE YOU PUBLISH: `canvas.py preview <id> page.html` renders it in the real shell with live data
-at desktop, phone and reduced motion, and reports uncaught errors and CSP blocks; look at the PNGs.
+SEE IT BEFORE YOU PUBLISH: `canvas.py preview <id> page.html` renders it in the real shell and sandbox with
+live data at desktop, phone and reduced motion, reports uncaught errors and CSP blocks (exit 2), and you look
+at the PNGs. Desktop/phone catch motion mid-flight: judge the final state from reduced.png (if the page
+honours reduced motion).
 """
 
 
 # ------------------------------------------------------------------------ preview
-# READ-ONLY: the page in the real shell (canvas_shell.render, unchanged CSP and theme), the bridge's
-# side of the postMessage protocol emulated in-page over an in-memory copy of the canvas's data, and
-# headless chromium screenshots. Never a row: no publish, no set; --set overrides live in the stub only.
+# READ-ONLY: the page in the real shell (canvas_shell.render, unchanged CSP and theme), framed the way
+# CanvasView frames it (sandboxed srcdoc iframe, opaque origin) under a parent that plays CanvasView's
+# side of the postMessage protocol over an in-memory copy of the canvas's data, and headless chromium
+# screenshots. Never a row: no publish, no set; --set overrides live in the parent only.
+# CONTAINMENT (abstractor-3 #41769): CSP does not govern navigation, and preview runs the page on THIS
+# host, not in a remote viewer's browser. So the documents are served over http from one ephemeral
+# 127.0.0.1 server (an http origin cannot navigate to file://: no host file reaches a screenshot), and
+# chromium's network is a dead proxy for everything except that server (no other host port is reached).
 # Chromium is a HOST dependency resolved here, never imported by any other path (born from painter's
 # tools/preview.py, 2026-10-09: v1-v8 of Org pulse shipped unseen and two drew owner complaints).
 BROWSERS = ("chromium", "chromium-browser", "google-chrome")
 KIT_DIR = REPO / "canvas" / "web" / "dist" / "kit"      # what the bridge serves at /kit/ (web/scripts/kit.mjs)
+SANDBOX = "allow-scripts allow-forms"                    # CanvasView.tsx SANDBOX: no allow-same-origin
 SHOTS = (("desktop", 1280, 1600, []), ("phone", 390, 2200, []),
          ("reduced", 1280, 1600, ["--force-prefers-reduced-motion"]))
-# the parent app's half of the shim protocol (canvas/web/src/CanvasView.tsx), answered from D; errors and
-# CSP blocks are tagged onto the console so the log scrape can count them
-_STUB = ("<script>(()=>{const D=%s;"
-         "addEventListener('message',ev=>{const m=ev.data||{};if(!m.astryx||ev.source!==window)return;"
-         "const r=v=>postMessage({astryx:1,op:'reply',id:m.id,ok:true,value:v},'*');"
-         "if(m.op==='ready')postMessage({astryx:1,op:'theme',dark:true,vars:{}},'*');"
-         "else if(m.op==='data.get')r(D[m.key]);else if(m.op==='data.all')r(D);"
-         "else if(m.op==='data.set'){D[m.key]=m.value;r()}else if(m.op==='ask')r(null)});"
-         "addEventListener('error',e=>console.error('UNCAUGHT '+e.message));"
+DOC = "/__preview__.html"                                 # the parent, served beside the kit
+# inside the frame: tag uncaught errors and CSP blocks onto the console so the log scrape can count them
+_TAGS = ("<script>addEventListener('error',e=>console.error('UNCAUGHT '+e.message));"
          "addEventListener('unhandledrejection',e=>console.error('UNCAUGHT (promise) '+(e.reason&&e.reason.message||e.reason)));"
          "addEventListener('securitypolicyviolation',e=>console.error('CSP-BLOCKED '+e.effectiveDirective+' '+e.blockedURI));"
-         "})();</script>")
+         "</script>")
+# the parent: CanvasView's half of the shim protocol (canvas/web/src/CanvasView.tsx), answered from D
+_PARENT = ("<!doctype html><meta charset=utf-8><style>html,body{margin:0;height:100%%;background:#0b0e17}"
+           "iframe{border:0;width:100%%;height:100%%;display:block}</style>"
+           "<script>(()=>{const D=%s;"
+           "addEventListener('message',ev=>{const f=document.getElementById('f');if(!f||ev.source!==f.contentWindow)return;"
+           "const m=ev.data||{};if(!m.astryx)return;const s=x=>f.contentWindow.postMessage(Object.assign({astryx:1},x),'*');"
+           "const r=v=>s({op:'reply',id:m.id,ok:true,value:v});"
+           "if(m.op==='ready')s({op:'theme',dark:true,vars:{}});"
+           "else if(m.op==='data.get')r(D[m.key]);else if(m.op==='data.all')r(D);"
+           "else if(m.op==='data.set'){D[m.key]=m.value;r()}else if(m.op==='ask')r(null)});"
+           "})();</script>"
+           "<iframe id=f title=preview sandbox=\"%s\" referrerpolicy=no-referrer srcdoc=\"%s\"></iframe>")
 _CONSOLE = re.compile(r'CONSOLE[:(]\d+\)?\] "((?:UNCAUGHT|CSP-BLOCKED) .*?)", source:')
 
 
@@ -284,10 +298,11 @@ def deep_set(d: dict, key: str, value) -> None:
     d[last] = value
 
 
-def _kit_server():
-    """The kit over http on 127.0.0.1, CORS-open like the bridge's /kit/ (fonts load in CORS mode).
-    A file:// URL is not a valid CSP source, so a file:// kit would be blocked by the very CSP
-    preview must keep unchanged. Lives for one preview, on an ephemeral port."""
+def _server(doc: dict):
+    """The kit (and the parent document at DOC) over http on 127.0.0.1, CORS-open like the bridge's
+    /kit/ (fonts load in CORS mode). A file:// URL is not a valid CSP source, and a file:// document
+    can navigate to any host file. `doc["html"]` is filled once the port is known (the frame names it).
+    Lives for one preview, on an ephemeral port."""
     import functools, threading
     from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
@@ -295,6 +310,16 @@ def _kit_server():
         def end_headers(self):
             self.send_header("access-control-allow-origin", "*")
             super().end_headers()
+
+        def do_GET(self):
+            if self.path.split("?")[0] != DOC:
+                return super().do_GET()
+            body = doc["html"]
+            self.send_response(200)
+            self.send_header("content-type", "text/html; charset=utf-8")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
         def log_message(self, *a):
             pass
@@ -306,7 +331,7 @@ def _kit_server():
 def preview(cid: int, page: str, outdir: str | None = None, overrides=(), load=None) -> tuple[list[Path], list[str]]:
     """(png paths, page errors). `load(cid) -> dict` is the data source (default: live, read-only);
     its result is deep-copied before any override, so the source is never touched."""
-    import subprocess, shutil, tempfile
+    import html as H, subprocess, shutil, tempfile
     exe = browser()
     if not exe:
         raise CanvasError("preview needs chromium on this host (none of " + ", ".join(BROWSERS) + " is on PATH); "
@@ -320,18 +345,25 @@ def preview(cid: int, page: str, outdir: str | None = None, overrides=(), load=N
     body = Path(page).read_text()
     out = Path(outdir) if outdir else Path(tempfile.mkdtemp(prefix="cv-preview-"))
     out.mkdir(parents=True, exist_ok=True)
-    doc, pngs, errs = out / "preview.html", [], []
+    pngs, errs = [], []
     prof = tempfile.mkdtemp(prefix="cv-preview-profile-")   # never the viewer's own browser profile
-    srv = _kit_server()
+    doc = {"html": b""}
+    srv = _server(doc)
     try:
-        html = render(cid, "preview", 0, body, f"http://127.0.0.1:{srv.server_address[1]}/")
-        stub = _STUB % json.dumps(data).replace("</", "<\\/")
-        doc.write_text(re.sub(r"(<body[^>]*>)", lambda m: m.group(1) + stub, html, count=1))
+        port = srv.server_address[1]
+        frame = render(cid, "preview", 0, body, f"http://127.0.0.1:{port}/")
+        frame = re.sub(r"(<body[^>]*>)", lambda m: m.group(1) + _TAGS, frame, count=1)
+        parent = _PARENT % (json.dumps(data).replace("</", "<\\/"), SANDBOX, H.escape(frame, quote=True))
+        (out / "frame.html").write_text(frame)               # what the viewer's iframe would hold
+        (out / "preview.html").write_text(parent)            # the frame + CanvasView's side, with the data
+        doc["html"] = parent.encode()
+        url = f"http://127.0.0.1:{port}{DOC}"
+        net = ["--proxy-server=http://127.0.0.1:9", f"--proxy-bypass-list=<-loopback>;127.0.0.1:{port}"]
         for name, w, h, extra in SHOTS:
             png = out / f"{name}.png"
             r = subprocess.run([exe, "--headless=new", "--disable-gpu", "--hide-scrollbars", f"--user-data-dir={prof}",
-                                "--virtual-time-budget=8000", "--enable-logging=stderr", "--v=0", *extra,
-                                f"--window-size={w},{h}", f"--screenshot={png}", doc.as_uri()],
+                                "--virtual-time-budget=8000", "--enable-logging=stderr", "--v=0", *net, *extra,
+                                f"--window-size={w},{h}", f"--screenshot={png}", url],
                                capture_output=True, text=True, timeout=120)
             if name == "desktop":                # one page load is the error census; the others repeat it
                 errs = _CONSOLE.findall(r.stderr)
@@ -490,7 +522,7 @@ def main(argv=None) -> int:
         bad = [p for p in pngs if not (p.is_file() and p.stat().st_size)]
         for png in pngs:
             print(png if png not in bad else f"{png}  (MISSING — chromium wrote nothing)")
-        return 1 if bad else 0
+        return 1 if bad else 2 if errs else 0     # 2: the page errs — `preview && publish` must not ship it
     who = actor()
     try:
         with psycopg.connect(dsn(), autocommit=False) as conn:
