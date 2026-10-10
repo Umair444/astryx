@@ -9,6 +9,7 @@ import type { Route } from '../App'
 import ThemePicker from './ThemePicker'
 import { LiveDot, Orb, useNow } from '../ui/kit'
 import { moodOf, nowLine } from '../ui/life'
+import { HandBadge } from '../ui/hands'
 
 export const LINKS: { tab: Route['tab']; label: string; icon: string; hint: string }[] = [
   { tab: 'floor', label: 'Floor', icon: '◉', hint: 'the org as a room' },
@@ -16,7 +17,6 @@ export const LINKS: { tab: Route['tab']; label: string; icon: string; hint: stri
   { tab: 'agents', label: 'Agents', icon: '◍', hint: 'the people of the org' },
   { tab: 'wire', label: 'The Wire', icon: '✦', hint: 'every conversation' },
   { tab: 'goals', label: 'Goals', icon: '◎', hint: 'what the org is pursuing' },
-  { tab: 'hands', label: 'Hands', icon: '⌖', hint: 'agents at the keyboard' },
   { tab: 'economy', label: 'Economy', icon: '⬡', hint: 'effort, value, spend' },
   { tab: 'tools', label: 'Tools', icon: 'ƒ', hint: 'what the org has built' },
   { tab: 'theatre', label: 'Theatre', icon: '❝', hint: 'the org, narrated' },
@@ -96,6 +96,7 @@ export default function Sidebar({ route, onOpenAgent }: { route: Route; onOpenAg
                         <span className={`block text-[13px] truncate ${mood === 'asleep' ? 'text-ink-mute' : 'text-ink-dim group-hover:text-ink'}`}>{displayName(a.agent)}</span>
                         {mood === 'working' && <span className="block text-[10.5px] font-mono text-cyan/80 truncate">{line}</span>}
                       </span>
+                      <HandBadge agent={a.agent} size={12} />
                       <LiveDot state={mood} />
                     </button>
                   )
