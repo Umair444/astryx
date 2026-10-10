@@ -747,3 +747,20 @@ CREATE TABLE IF NOT EXISTS hands_leases (
   ended_at    timestamptz,
   end_reason  text CHECK (end_reason IS NULL OR end_reason IN ('killed','step_cap','wall_cap','error'))
 );
+
+-- LEASES (plan-8674 D4, hearing S1): ONE small lease seam. One row per RESOURCE ('ear:<room>' = one ear per
+-- room); nucleus/ear_lease.py is the ONLY writer. Claim is an atomic UPDATE … WHERE state='free' RETURNING; the
+-- indicator is DERIVED from the row and its heartbeat age (a past-TTL hold reads stale, never "listening").
+-- MUTED is the only held state with no TTL: it ends only when the owner unmutes. No text ever lives here
+-- (the transcript is in astryx_ear, D1). Deliberately NOT hands_leases (owner, 2026-10-10).
+CREATE TABLE IF NOT EXISTS leases (
+  resource     text PRIMARY KEY,
+  holder       text,                                  -- NULL iff free
+  state        text NOT NULL DEFAULT 'free' CHECK (state IN ('free','EAR','MUTED','FOCAL')),
+  granted_at   timestamptz,
+  expires_at   timestamptz,                           -- the TTL; NULL for free and MUTED only
+  heartbeat_at timestamptz,
+  budget       jsonb,                                 -- S4's FOCAL cap rides here; NULL in S1
+  CHECK ((state = 'free') = (holder IS NULL)),
+  CHECK ((state IN ('EAR','FOCAL')) = (expires_at IS NOT NULL))
+);
