@@ -752,7 +752,7 @@ CREATE TABLE IF NOT EXISTS hands_leases (
 -- room); nucleus/ear_lease.py is the ONLY writer. Claim is an atomic UPDATE … WHERE state='free' RETURNING; the
 -- indicator is DERIVED from the row and its heartbeat age (a past-TTL hold reads stale, never "listening").
 -- MUTED is the only held state with no TTL: it ends only when the owner unmutes. No text ever lives here
--- (the transcript is in astryx_ear, D1). Deliberately NOT hands_leases (owner, 2026-10-10).
+-- (the transcript is `utterances`, below). Deliberately NOT hands_leases (owner, 2026-10-10).
 CREATE TABLE IF NOT EXISTS leases (
   resource     text PRIMARY KEY,
   holder       text,                                  -- NULL iff free
@@ -764,3 +764,21 @@ CREATE TABLE IF NOT EXISTS leases (
   CHECK ((state = 'free') = (holder IS NULL)),
   CHECK ((state IN ('EAR','FOCAL')) = (expires_at IS NOT NULL))
 );
+
+-- UTTERANCES (plan-8674 S1, hearing): the raw room transcript, one row per VAD speech segment the ear transcribed.
+-- In the ONE org database like every table (owner ruling 2026-10-10, seed #42311: information in astryx is shared
+-- and usable by every agent). bridges/ear.py is the ONLY writer; it never puts a transcript on the WIRE
+-- (messages) or in a log. Partitioned by UTC DAY: day partitions are created ahead and an expired day is DROPPED
+-- whole by nucleus/ear_store.maintain (short TTL, EAR_TTL_DAYS, default 3), never DELETEd row by row. No DEFAULT
+-- partition: a row with no day to land in is refused, and the writer makes the day and retries.
+CREATE TABLE IF NOT EXISTS utterances (
+  id      bigint GENERATED ALWAYS AS IDENTITY,
+  ts      timestamptz NOT NULL DEFAULT now(),
+  text    text NOT NULL,
+  speaker text NOT NULL DEFAULT 'unknown',             -- ROUGH attribution, labelled as such; never authority
+  view    text,                                        -- the observatory view the mic was on
+  dur_ms  int,
+  stt_ms  int,
+  backend text,                                        -- which STT backend heard it (cpu/cuda faster-whisper, ...)
+  PRIMARY KEY (ts, id)
+) PARTITION BY RANGE (ts);

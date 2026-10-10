@@ -93,11 +93,9 @@ def grant_main(conn, resident: str = RESIDENT, cleared: str = CLEARED) -> None:
     conn.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}, {}").format(I(db), I(resident), I(cleared)))
 
 
-def ensure_private_db(admin, name: str = PRIVATE_DB, cleared: str = CLEARED, preload: str | None = "age") -> bool:
+def ensure_private_db(admin, name: str = PRIVATE_DB, cleared: str = CLEARED) -> bool:
     """The private projection's database, BORN ZERO-WINDOW (plan-4918 #28982): created with connections disallowed,
-    PUBLIC revoked and CONNECT granted to `cleared` only, THEN opened. Returns True if it was created now.
-    `preload` is the AGE preload the people graph needs; a private database with no graph (hearing's astryx_ear,
-    plan-8674 D1) passes None and gets none."""
+    PUBLIC revoked and CONNECT granted to `cleared` only, THEN opened. Returns True if it was created now."""
     I = sql.Identifier
     made = admin.execute(DB_SQL, (name,)).fetchone() is None
     if made:
@@ -106,9 +104,7 @@ def ensure_private_db(admin, name: str = PRIVATE_DB, cleared: str = CLEARED, pre
     admin.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(I(name), I(cleared)))
     # A non-superuser can't LOAD 'age' (agelib), and a GROUP role's settings don't reach its members, so the
     # preload is set on the DATABASE.
-    if preload:
-        admin.execute(sql.SQL("ALTER DATABASE {} SET session_preload_libraries = {}")
-                      .format(I(name), sql.Literal(preload)))
+    admin.execute(sql.SQL("ALTER DATABASE {} SET session_preload_libraries = 'age'").format(I(name)))
     # Always: a run killed between CREATE and here left it closed, and only now is its ACL known to be right.
     admin.execute(sql.SQL("ALTER DATABASE {} ALLOW_CONNECTIONS true").format(I(name)))
     return made

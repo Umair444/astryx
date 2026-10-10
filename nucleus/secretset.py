@@ -35,7 +35,7 @@ MIN_LEN = 8
 NOT_SECRET = frozenset({
     "WA_CLI", "WA_DATA_HOST", "WA_DATA_CTR", "ASTRYX_ORG", "ASTRYX_URL", "TG_API_BASE",
     "GROWBOT_BODY_URL", "ASTRYX_NODE",
-    # hearing (plan-8674 S1): switches and tuning for the ear, no credential (its role's password is in ~/.pgpass)
+    # hearing (plan-8674 S1): switches and tuning for the ear; none is a credential
     "EAR_ENABLED", "EAR_ROOM", "EAR_STT_BACKEND", "EAR_STT_MODEL", "EAR_STT_BEAM", "EAR_TTL_DAYS", "EAR_QUEUE_MAX",
     "GMAIL_ADDRESS",        # an identifier (tier question, not a credential): see plan-5497 BC-b
     # a URL query value is secret by default; these name ONE parameter ("<KEY>:<param>") whose

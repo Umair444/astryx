@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Oracle: hearing's EAR service (plan-8674 S1, bridges/ear.py + bridges/ear_stt.py) on SCRATCH stores.
+"""Oracle: hearing's EAR service (plan-8674 S1, bridges/ear.py + bridges/ear_stt.py) on a FIXTURE database.
 
-The ear store is a scratch astryx_ear (nucleus/ear_store.apply on scratch roles, scratch pgpass), the main db a
-fixture database (schema.sql whole, for `leases`). Nothing live is read or written.
+The database is a throwaway fixture (schema.sql applied whole: `utterances`, `leases`, `messages`), created and
+dropped by the sqlguard fixture. Nothing live is read or written.
 
 Arms (each with its RED control):
   UPLOAD GATE  no owner key → 401 and 0 rows (the claim sheet's prevention line); a wrong key, a key in the QUERY
@@ -16,8 +16,11 @@ Arms (each with its RED control):
   NO TEXT IN LOGS  the REAL service (uvicorn subprocess, real faster-whisper on CPU) transcribes a known clip: the row
                carries its words (positive control) and the service's entire stdout+stderr carries none of them.
                RED control: the same service with a sink that print()s the text → the same grep finds the words.
+  NOT ON THE WIRE  the transcript never reaches `messages` (the wire): after every upload (fake and real whisper) no
+               messages row carries it and the messages count is unchanged; and bridges/ear.py has no code path that
+               writes messages or notifies. RED control: a planted messages row with the text IS seen by the same check.
   RTF          MEASURED: model, compute type, clip length, wall time, real-time factor and load average, printed.
-NOT RUN (77) where a scratch store can't be made (no superuser/PG17+), or the clip/model/ffmpeg aren't on the host.
+NOT RUN (77) where a fixture database can't be made, or the clip/model/ffmpeg aren't on the host.
 """
 import io
 import json
@@ -55,44 +58,17 @@ def want(label, cond, why=""):
 
 try:
     import psycopg
-    from psycopg import sql
-    from psycopg.conninfo import make_conninfo
     from fastapi.testclient import TestClient
-    from nucleus import ear_store as E
-    from nucleus.sqlguard.fixture import FixtureUnavailable, fixture_db, live_dsn
+    from nucleus.sqlguard.fixture import FixtureUnavailable, fixture_db
 except Exception as e:                                              # noqa: BLE001
     skip(f"{type(e).__name__}: {e} — needs the org runtime")
 
-PID = os.getpid()
-NAME = re.compile(r"^astryx_ears_(\d+)_[a-z]+$")
-DB, DOOR, SVC, AUD = (f"astryx_ears_{PID}_{s}" for s in ("db", "door", "svc", "aud"))
-EVT = f"ear_login_audit_{PID}"
 KEY = "test-owner-key-8674"
 WORDS = re.compile(r"\b(front|left|right|cent(er|re)|rear|side)\b", re.I)
 ALSA = Path("/usr/share/sounds/alsa")
 CLIP_PARTS = ["Front_Left", "Front_Center", "Front_Right", "Rear_Left", "Rear_Right", "Side_Left", "Side_Right"]
 
 
-def _gone(pid):
-    try:
-        os.kill(pid, 0)
-        return False
-    except ProcessLookupError:
-        return True
-    except PermissionError:
-        return False
-
-
-def reap(adm, mine=False):
-    def ours(n):
-        m = NAME.match(n)
-        return m and (int(m.group(1)) == PID if mine else _gone(int(m.group(1))))
-    for (d,) in adm.execute("SELECT datname FROM pg_database").fetchall():
-        if ours(d):
-            adm.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(d)))
-    for (r,) in adm.execute("SELECT rolname FROM pg_roles ORDER BY rolname DESC").fetchall():
-        if ours(r):
-            adm.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(r)))
 
 
 def wav(seconds=1.0, rate=16000, channels=1, tone=220.0) -> bytes:
@@ -109,27 +85,16 @@ def wav(seconds=1.0, rate=16000, channels=1, tone=220.0) -> bytes:
     return b.getvalue()
 
 
-try:
-    ADMIN = live_dsn()
-    admin = psycopg.connect(ADMIN, autocommit=True, connect_timeout=5)
-except Exception as e:                                              # noqa: BLE001
-    skip(f"no reachable admin DSN ({type(e).__name__})")
-if not admin.execute("SELECT rolsuper FROM pg_roles WHERE rolname = current_user").fetchone()[0]:
-    skip("needs a superuser to build the scratch ear store (event trigger): VERIFIED NOTHING")
-if admin.info.server_version < 170000:
-    skip("no login event triggers on this server (PG 17+)")
-
 TMP = Path(tempfile.mkdtemp(prefix="test-ear-svc-"))
-PGPASS = TMP / "pgpass"
 
 
-def svc_dsn(app="astryx-ear-svc"):
-    pw = next(l.rsplit(":", 1)[1] for l in PGPASS.read_text().splitlines() if l.split(":")[3] == SVC)
-    return make_conninfo(E.role_dsn(SVC, db=DB, base=ADMIN, app=app), password=pw)
+def rows(db):
+    return db.execute("SELECT count(*) FROM utterances").fetchone()[0]
 
 
-def rows(cur_admin_ear):
-    return cur_admin_ear.execute("SELECT count(*) FROM utterances").fetchone()[0]
+def on_wire(db, needle_re: str) -> int:
+    """Rows of the WIRE (messages) whose body matches — the transcript must never be there."""
+    return db.execute("SELECT count(*) FROM messages WHERE body ~* %s", (needle_re,)).fetchone()[0]
 
 
 class Fake:
@@ -157,15 +122,14 @@ def free_port():
     return p
 
 
-reap(admin)
 try:
-    E.apply(ADMIN, db=DB, door=DOOR, svc=SVC, audit=AUD, evt=EVT, pgpass=PGPASS)
     with fixture_db() as fx:
-        os.environ.update({"ASTRYX_DSN": fx["dsn"], "EAR_DSN": svc_dsn(), "OBS_KEY": KEY, "EAR_ROOM": "test"})
+        os.environ.update({"ASTRYX_DSN": fx["dsn"], "OBS_KEY": KEY, "EAR_ROOM": "test"})
         import bridges.ear as ear                                   # reads the env above at import
         fake = Fake()
         ear.make_backend = lambda: fake
-        ear_admin = psycopg.connect(make_conninfo(ADMIN, dbname=DB), autocommit=True)
+        ear_admin = psycopg.connect(fx["dsn"], autocommit=True)
+        wire0 = ear_admin.execute("SELECT count(*) FROM messages").fetchone()[0]
         O = {"x-obs-key": KEY}
 
         def settle(n, timeout=10):
@@ -229,6 +193,21 @@ try:
             st = cl.get("/ear/api/status", headers=O).json()
             want("status: backend named, store ok, not degraded", st["stt"]["backend"] == "fake:test"
                  and st["store"]["ok"] and not st["stt"]["degraded"], json.dumps(st))
+
+        print("not on the wire")
+        want("NOT ON THE WIRE: after the uploads no messages row carries the transcript, and the wire count is unchanged",
+             on_wire(ear_admin, re.escape(fake.text)) == 0
+             and ear_admin.execute("SELECT count(*) FROM messages").fetchone()[0] == wire0)
+        ear_admin.execute("INSERT INTO messages (from_agent, to_agent, intent, body) VALUES ('t', 't', 'chat', %s)",
+                          (f"leak: {fake.text}",))
+        want("RED control: a planted messages row carrying the text IS seen by the same check",
+             on_wire(ear_admin, re.escape(fake.text)) == 1)
+        ear_admin.execute("DELETE FROM messages WHERE from_agent = 't' AND to_agent = 't'")
+        src = (REPO / "bridges" / "ear.py").read_text()
+        code = re.sub(r'""".*?"""', "", src, flags=re.S)
+        code = "\n".join(l.split("#", 1)[0] for l in code.splitlines())
+        want("bridges/ear.py has no code path to the wire: no messages write, no wire_insert, no NOTIFY",
+             not re.search(r"(?i)\binto\s+messages\b|wire_insert|pg_notify|\bnotify\b", code))
 
         print("queue (drop-oldest, degraded)")
         from bridges import ear_stt
@@ -299,6 +278,14 @@ try:
                 fh = open(log, "wb")
                 p = subprocess.Popen([sys.executable, "-I", str(runner)], cwd=TMP, env=env, stdout=fh,
                                      stderr=subprocess.STDOUT)
+                try:
+                    return _drive(p, port, label, during, fh, log)
+                finally:
+                    if p.poll() is None:                            # never leave a server behind (a raise included)
+                        p.kill()
+                        p.wait(10)
+
+            def _drive(p, port, label, during, fh, log):
                 import httpx
                 base = f"http://127.0.0.1:{port}"
                 for _ in range(100):
@@ -363,6 +350,9 @@ try:
             leaked = WORDS.findall(out)
             want(f"NO TEXT IN LOGS: the service's whole stdout+stderr ({len(out)} bytes) carries 0 of the clip's words",
                  len(out) > 0 and not leaked, f"leaked={leaked[:5]}")
+            want("NOT ON THE WIRE (real whisper): no messages row carries any of the clip's words",
+                 on_wire(ear_admin, "(front|left|right|center|rear|side)") == 0
+                 and ear_admin.execute("SELECT count(*) FROM messages").fetchone()[0] == wire0)
             print(f"  MEASURED (service path): {st.get('stt', {}).get('backend')} rtf_last={st.get('stt', {}).get('rtf_last')}"
                   f" upload→row {wall:.1f}s (includes model load) for a {clip_s:.2f}s clip")
             code, out2, st2, _ = serve(
@@ -397,8 +387,6 @@ try:
 except FixtureUnavailable as e:
     skip(str(e))
 finally:
-    reap(admin, mine=True)
-    admin.close()
     shutil.rmtree(TMP, ignore_errors=True)
 
 print(f"\n{'ALL PASS' if not fails else f'{len(fails)} FAILED'}" + (f" ({', '.join(skipped)} NOT RUN)" if skipped else ""))

@@ -1,52 +1,33 @@
 #!/usr/bin/env python3
-"""Oracle: hearing's EAR STORE (plan-8674 S1, nucleus/ear_store.py): D1 + the catalog TTL arm + D2's reader census.
+"""Oracle: hearing's utterance retention (plan-8674 S1): `utterances` in schema.sql + nucleus/ear_store.py + the shipped
+retention trigger, on a FIXTURE database (schema.sql applied whole, dropped after; nothing live is touched).
 
-Runs the EXACT apply/maintain/census code on SCRATCH roles and a SCRATCH database (astryx_eart_<pid>_*), with a
-scratch PGPASSFILE; it never creates, reads or changes the live astryx_ear or a live role. Debris of a killed run is
-reaped by pid at start; our own in finally.
-
-Arms (each with its RED control):
-  STORE     the database is private (PUBLIC can't CONNECT; a role outside the door group is refused), has NO AGE
-            preload, the roles are NOSUPERUSER, passwords went to the pgpass file only (0600), re-apply is a no-op.
-  TEXT      the audit role (the census/TTL checker) is REFUSED SELECT on utterances: "never reads text" is a privilege.
-  TTL       GREEN on fresh day partitions. RED on a partition planted ONE DAY past the TTL (and on a DEFAULT
-            partition). maintain() DROPs it (partition gone; no DELETE: the other partitions' rows are intact), GREEN.
-  READERS   a spoofing outsider (application_name='astryx-ear-svc') is reported, graded on session_user, with its
-            claim quoted; the door's own login is not. One-shot logins are recorded once each. RED: the trigger
-            DISABLED → LOUD; DROPPED → LOUD; re-apply restores it.
-
-Needs a role that can CREATE DATABASE and CREATE ROLE on a PG with login event triggers (17+), else 77.
+Arms, each with its RED control:
+  TABLE     schema.sql declares `utterances` partitioned by range, with NO default partition: a row for a day that has
+            no partition is REFUSED (so nothing can pile up outside retention).
+  TTL       GREEN on fresh day partitions. RED on a partition planted ONE DAY past the TTL, and on a DEFAULT partition.
+            maintain() DROPs the expired partition (the table is gone; no DELETE: the fresh row is intact). GREEN.
+  TRIGGER   the shipped trigger's tick maintains and stays silent while green; with retention broken (maintain a
+            no-op) it reports the RED once, stays quiet the next tick, and re-nags after a day.
+Needs a DSN that can CREATE DATABASE (the sqlguard fixture), else 77.
 """
-import os
-import re
 import sys
-import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
-EXIT_SKIP = 77
-
-
-def skip(m):
-    print(f"SKIP: {m}")
-    sys.exit(EXIT_SKIP)
-
 
 try:
     import psycopg
     from psycopg import sql
-    from psycopg.conninfo import make_conninfo
+    from nucleus.sqlguard.fixture import FixtureUnavailable, fixture_db
 except Exception as e:                                              # noqa: BLE001
-    skip(f"{type(e).__name__}: {e} — needs the org runtime")
-
+    print(f"SKIP: {type(e).__name__}: {e}")
+    sys.exit(77)
 from nucleus import ear_store as E  # noqa: E402
-from nucleus.sqlguard.fixture import live_dsn  # noqa: E402
+from nucleus.shipped_triggers import ear_retention as T  # noqa: E402
 
-PID = os.getpid()
-NAME = re.compile(r"^astryx_eart_(\d+)_[a-z]+$")
-DB, DOOR, SVC, AUD, OUT, EVT = (f"astryx_eart_{PID}_{s}" for s in ("db", "door", "svc", "aud", "out", "evt"))
 fails = []
 
 
@@ -56,186 +37,66 @@ def want(label, cond, why=""):
         fails.append(label)
 
 
-def _gone(pid):
-    try:
-        os.kill(pid, 0)
-        return False
-    except ProcessLookupError:
-        return True
-    except PermissionError:
-        return False
-
-
-def reap(adm, mine=False):
-    def ours(n):
-        m = NAME.match(n)
-        return m and (int(m.group(1)) == PID if mine else _gone(int(m.group(1))))
-    for (d,) in adm.execute("SELECT datname FROM pg_database").fetchall():
-        if ours(d):
-            adm.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(d)))
-    for (r,) in adm.execute("SELECT rolname FROM pg_roles ORDER BY rolname DESC").fetchall():
-        if ours(r):
-            adm.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(r)))
-
-
-def refused(dsn, stmt=None):
-    try:
-        with psycopg.connect(dsn, autocommit=True, connect_timeout=5) as c:
-            if stmt:
-                c.execute(stmt).fetchall()
-        return None
-    except psycopg.Error as e:
-        return str(e)
+def plant(c, lo):
+    name = f"utterances_p{lo:%Y%m%d}"
+    c.execute(sql.SQL("CREATE TABLE {} PARTITION OF utterances FOR VALUES FROM ({}) TO ({})").format(
+        sql.Identifier(name), sql.Literal(lo.isoformat()), sql.Literal((lo + timedelta(days=1)).isoformat())))
+    c.execute("INSERT INTO utterances (ts, text) VALUES (%s, 'planted old words')", (lo + timedelta(hours=1),))
+    return name
 
 
 try:
-    ADMIN = live_dsn()
-    admin = psycopg.connect(ADMIN, autocommit=True, connect_timeout=5)
-except Exception as e:                                              # noqa: BLE001
-    skip(f"no reachable admin DSN ({type(e).__name__})")
-sup, cdb, crole = admin.execute("SELECT rolsuper, rolcreatedb, rolcreaterole FROM pg_roles "
-                                "WHERE rolname = current_user").fetchone()
-if not sup:
-    skip("needs a superuser (CREATE EVENT TRIGGER is superuser-only): VERIFIED NOTHING")
-if admin.info.server_version < 170000:
-    skip(f"server {admin.info.server_version} has no login event triggers (PG 17+)")
-
-TMP = Path(tempfile.mkdtemp(prefix="test-ear-store-"))
-PGPASS = TMP / "pgpass"
-# The scratch roles' passwords live in THIS scratch pgpass (apply's `pgpass=`), never ~/.pgpass. libpq's own
-# PGPASSFILE is left alone: the org DSN is password-less (plan-5497) and authenticates from ~/.pgpass.
-
-
-def as_(role, app=None):
-    pw = next((l.rsplit(":", 1)[1] for l in PGPASS.read_text().splitlines() if l.split(":")[3] == role), None) \
-        if PGPASS.exists() else None
-    return make_conninfo(E.role_dsn(role, db=DB, base=ADMIN, app=app), **({"password": pw} if pw else {}))
-
-
-reap(admin)
-try:
-    r1 = E.apply(ADMIN, db=DB, door=DOOR, svc=SVC, audit=AUD, evt=EVT, pgpass=PGPASS)
-    want("apply creates the database and both LOGIN roles", r1["created_db"] and sorted(r1["new_roles"]) == sorted([SVC, AUD]),
-         str(r1))
-    # ── STORE ─────────────────────────────────────────────────────────────────────────────────────────────────
-    q = lambda s, *a: admin.execute(s, a).fetchone()[0]
-    want("PUBLIC can't CONNECT to the ear database", not q("SELECT has_database_privilege('public', %s, 'CONNECT')", DB))
-    want("the door group holds CONNECT", q("SELECT has_database_privilege(%s, %s, 'CONNECT')", DOOR, DB))
-    attrs = admin.execute("SELECT rolname, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolbypassrls, rolreplication "
-                          "FROM pg_roles WHERE rolname = ANY(%s) ORDER BY 1", ([DOOR, SVC, AUD],)).fetchall()
-    want("roles: door NOLOGIN, svc/audit LOGIN; none SUPERUSER/CREATEDB/CREATEROLE/BYPASSRLS/REPLICATION",
-         len(attrs) == 3 and all(not any(a[2:]) for a in attrs)
-         and {a[0]: a[1] for a in attrs} == {DOOR: False, SVC: True, AUD: True}, str(attrs))
-    pre = admin.execute("SELECT setconfig FROM pg_db_role_setting s JOIN pg_database d ON d.oid = s.setdatabase "
-                        "WHERE d.datname = %s AND s.setrole = 0", (DB,)).fetchone()
-    want("no AGE preload on the ear database (preload=None)", not pre or not any("age" in x for x in (pre[0] or [])),
-         str(pre))
-    lines = PGPASS.read_text().splitlines()
-    want("the passwords went to the pgpass file, mode 0600, one exact entry per new role",
-         len(lines) == 2 and oct(PGPASS.stat().st_mode & 0o777) == "0o600"
-         and {l.split(":")[3] for l in lines} == {SVC, AUD} and all(l.split(":")[2] == DB for l in lines))
-    r2 = E.apply(ADMIN, db=DB, door=DOOR, svc=SVC, audit=AUD, evt=EVT, pgpass=PGPASS)
-    want("re-apply is a no-op (no new database, no new role, pgpass unchanged)",
-         not r2["created_db"] and not r2["new_roles"] and PGPASS.read_text().splitlines() == lines, str(r2))
-    admin.execute(sql.SQL("CREATE ROLE {} LOGIN PASSWORD {} NOSUPERUSER").format(
-        sql.Identifier(OUT), sql.Literal(admin.pgconn.encrypt_password(b"outsider-pw-123", OUT.encode(),
-                                                                       b"scram-sha-256").decode())))
-    out_dsn = make_conninfo(E.role_dsn(OUT, db=DB, base=ADMIN), password="outsider-pw-123")
-    err = refused(out_dsn)
-    want("RED control: a LOGIN role outside the door group is refused CONNECT", err and "permission denied" in err, str(err))
-
-    # ── partitions, a write, TEXT ─────────────────────────────────────────────────────────────────────────────
-    with psycopg.connect(as_(SVC, "astryx-ear-svc"), autocommit=True) as s:
-        m = E.maintain(s, ttl=3)
-        want("maintain (as the svc role) creates today + 2 day partitions", len(m["created"]) == 3 and not m["dropped"], str(m))
-        s.execute("INSERT INTO utterances (text, view, backend) VALUES ('sentinel words kept', 'test', 'none')")
-        kind = s.execute("SELECT relkind FROM pg_class WHERE oid = 'utterances'::regclass").fetchone()[0]
-        want("utterances is partitioned (relkind p) and the svc role can write it", kind == "p")
-    err = refused(as_(AUD), "SELECT text FROM utterances")
-    want("TEXT: the audit role is REFUSED SELECT on utterances (prevention, not a promise)",
-         err and "permission denied" in err, str(err))
-
-    # ── TTL ───────────────────────────────────────────────────────────────────────────────────────────────────
-    with psycopg.connect(as_(AUD, "astryx-ear-census"), autocommit=True) as a:
-        f0 = E.ttl_findings(a, ttl=3)
-        want("TTL GREEN on fresh partitions (run as the audit role: catalog only)", f0 == [], str(f0))
+    with fixture_db() as fx, psycopg.connect(fx["dsn"], autocommit=True) as c:
+        kind = c.execute("SELECT relkind FROM pg_class WHERE oid = 'utterances'::regclass").fetchone()[0]
+        want("schema.sql declares utterances partitioned (relkind p)", kind == "p", kind)
+        try:
+            c.execute("INSERT INTO utterances (text) VALUES ('no day for me')")
+            refused = False
+        except psycopg.errors.CheckViolation:
+            refused = True
+        want("RED control: with no partition (and no DEFAULT) a row is REFUSED, never kept outside retention", refused)
+        m = E.maintain(c, ttl=3)
+        want("maintain creates today + 2 day partitions", len(m["created"]) == 3 and not m["dropped"], str(m))
+        c.execute("INSERT INTO utterances (text, view, backend) VALUES ('fresh words', 'test', 'none')")
+        want("a row for today lands", c.execute("SELECT count(*) FROM utterances").fetchone()[0] == 1)
+        want("TTL GREEN on fresh partitions", E.ttl_findings(c, ttl=3) == [])
         now = datetime.now(timezone.utc)
-        lo = E._day(now) - timedelta(days=4)           # TTL 3 → a partition starting 4 days ago is one day past it
-        old = f"utterances_p{lo:%Y%m%d}"
-        with psycopg.connect(as_(SVC), autocommit=True) as s:
-            s.execute(sql.SQL("CREATE TABLE {} PARTITION OF utterances FOR VALUES FROM ({}) TO ({})").format(
-                sql.Identifier(old), sql.Literal(lo.isoformat()), sql.Literal((lo + timedelta(days=1)).isoformat())))
-            s.execute("INSERT INTO utterances (ts, text) VALUES (%s, 'planted old words')", (lo + timedelta(hours=1),))
-        f1 = E.ttl_findings(a, ttl=3)
+        old = plant(c, E._day(now) - timedelta(days=4))            # TTL 3 → starts one day past it
+        f1 = E.ttl_findings(c, ttl=3)
         want("RED control: a partition planted one day past the TTL turns the arm RED, naming it",
              len(f1) == 1 and old in f1[0], str(f1))
-        with psycopg.connect(as_(SVC), autocommit=True) as s:
-            m = E.maintain(s, ttl=3)
-            left = s.execute("SELECT count(*) FROM utterances").fetchone()[0]
-            gone = s.execute("SELECT to_regclass(%s)", (old,)).fetchone()[0]
-        want("maintain DROPs the expired partition (DROP, not DELETE: the table is gone, the fresh row is intact)",
-             m["dropped"] == [old] and gone is None and left == 1, f"{m} left={left}")
-        want("TTL GREEN again after the drop", E.ttl_findings(a, ttl=3) == [])
-        with psycopg.connect(as_(SVC), autocommit=True) as s:
-            s.execute("CREATE TABLE utterances_default PARTITION OF utterances DEFAULT")
-        f2 = E.ttl_findings(a, ttl=3)
-        want("RED control: a DEFAULT partition (unbounded retention) is RED", any("utterances_default" in x for x in f2), str(f2))
-        with psycopg.connect(as_(SVC), autocommit=True) as s:
-            s.execute("DROP TABLE utterances_default")
+        m = E.maintain(c, ttl=3)
+        left = c.execute("SELECT count(*) FROM utterances").fetchone()[0]
+        want("maintain DROPs the expired partition (DROP, not DELETE: the table is gone, the fresh row intact)",
+             m["dropped"] == [old] and c.execute("SELECT to_regclass(%s)", (old,)).fetchone()[0] is None and left == 1,
+             f"{m} left={left}")
+        want("TTL GREEN again after the drop", E.ttl_findings(c, ttl=3) == [])
+        c.execute("CREATE TABLE utterances_default PARTITION OF utterances DEFAULT")
+        f2 = E.ttl_findings(c, ttl=3)
+        want("RED control: a DEFAULT partition (unbounded retention) is RED", any("utterances_default" in x for x in f2),
+             str(f2))
+        E.maintain(c, ttl=3)
+        want("maintain drops a DEFAULT partition too", c.execute("SELECT to_regclass('utterances_default')").fetchone()[0]
+             is None)
 
-    # ── READERS ───────────────────────────────────────────────────────────────────────────────────────────────
-    with psycopg.connect(make_conninfo(ADMIN, dbname=DB), autocommit=True) as e:
-        e.execute("TRUNCATE login_audit")                  # a clean window: logins from here on
-    admin.execute(sql.SQL("GRANT {} TO {}").format(sql.Identifier(DOOR), sql.Identifier(OUT)))   # a member, not a door
-    for _ in range(2):
-        with psycopg.connect(as_(SVC, "astryx-ear-svc"), autocommit=True):
-            pass
-    with psycopg.connect(make_conninfo(out_dsn, application_name="astryx-ear-svc"), autocommit=True):
-        pass                                              # an outsider CLAIMING to be the ear service
-    doors, auds = {SVC: "door 4"}, {AUD: "auditor"}
-    with psycopg.connect(as_(AUD, "astryx-ear-census"), autocommit=True) as a:
-        res = E.reader_census(a, doors=doors, auditors=auds, evt=EVT)
-        want("the login trigger exists and is enabled: no LOUD", res["loud"] == [], str(res["loud"]))
-        roles = {o["role"]: o for o in res["outside"]}
-        want("the spoofing outsider is reported, graded on session_user (its claimed app name quoted)",
-             OUT in roles and roles[OUT]["app_claimed"] == "astryx-ear-svc", str(res["outside"]))
-        want("the door's own logins are not reported", SVC not in roles, str(res["outside"]))
-        n_svc = a.execute("SELECT count(*) FROM login_audit WHERE session_role = %s", (SVC,)).fetchone()[0]
-        want("one-shot logins are recorded once each (2 svc connections → 2 rows)", n_svc == 2, str(n_svc))
-        txt = E.census_text(res)
-        want("the owner report names the outsider and says detection-grade", txt and OUT in txt and "detection" in txt, str(txt))
-        res2 = E.reader_census(a, after_id=res["last_id"], doors=doors, auditors=auds, evt=EVT)
-        want("the census is incremental (after_id): nothing new → no outsiders", res2["outside"] == [], str(res2))
-    # the OWNER report (what the shipped pulse trigger sends to `owner`), on the module's default door names
-    st, kw = {}, {"doors": doors, "auditors": auds, "evt": EVT}
-    with psycopg.connect(as_(AUD), autocommit=True) as a:
-        m1 = E.owner_report(st, a, **kw)
-        m2 = E.owner_report(st, a, **kw)
-    want("owner report: names the outsider once, then is quiet (incremental)", m1 and OUT in m1 and m2 is None,
-         f"{m1!r} / {m2!r}")
-    with psycopg.connect(make_conninfo(ADMIN, dbname=DB), autocommit=True) as e:
-        e.execute(sql.SQL("ALTER EVENT TRIGGER {} DISABLE").format(sql.Identifier(EVT)))
-    with psycopg.connect(as_(AUD), autocommit=True) as a:
-        loud = E.reader_census(a, doors=doors, auditors=auds, evt=EVT)["loud"]
-        m3, m4 = E.owner_report(st, a, **kw), E.owner_report(st, a, **kw)
-        m5 = E.owner_report(st, a, now=st["nagged"] + E.RENAG_S + 1, **kw)
-    want("RED control: the trigger DISABLED → LOUD", any("DISABLED" in x for x in loud), str(loud))
-    want("owner report: a standing LOUD is sent once, re-nagged after a day, not every tick",
-         m3 and "DISABLED" in m3 and m4 is None and m5 and "DISABLED" in m5, f"{m3!r} / {m4!r} / {m5!r}")
-    with psycopg.connect(make_conninfo(ADMIN, dbname=DB), autocommit=True) as e:
-        e.execute(sql.SQL("DROP EVENT TRIGGER {}").format(sql.Identifier(EVT)))
-    with psycopg.connect(as_(AUD), autocommit=True) as a:
-        loud = E.reader_census(a, doors=doors, auditors=auds, evt=EVT)["loud"]
-    want("RED control: the trigger DROPPED → LOUD", any("MISSING" in x for x in loud), str(loud))
-    E.apply(ADMIN, db=DB, door=DOOR, svc=SVC, audit=AUD, evt=EVT, pgpass=PGPASS)
-    with psycopg.connect(as_(AUD), autocommit=True) as a:
-        loud = E.reader_census(a, doors=doors, auditors=auds, evt=EVT)["loud"]
-    want("re-apply restores the trigger (enabled)", loud == [], str(loud))
-finally:
-    reap(admin, mine=True)
-    admin.close()
-    PGPASS.unlink(missing_ok=True)
-    TMP.rmdir()
+        # the shipped trigger
+        st = {}
+        want("trigger tick: maintains and is silent while green", T.tick(st, c) is None and "last" in st, str(st))
+        real = E.maintain
+        E.maintain = lambda conn, **k: {"created": [], "dropped": []}         # retention broken
+        try:
+            old2 = plant(c, E._day(now) - timedelta(days=10))
+            m1 = T.tick(st, c)
+            m2 = T.tick(st, c)
+            m3 = T.tick(st, c, now=st["nagged"] + T.RENAG_S + 1)
+        finally:
+            E.maintain = real
+        want("RED control: retention broken → the trigger reports the RED once, quiet next tick, re-nags after a day",
+             m1 and old2 in m1 and m2 is None and m3 and old2 in m3, f"{m1!r} / {m2!r} / {m3!r}")
+        want("healed: the next tick drops it and is silent", T.tick(st, c) is None and E.ttl_findings(c) == [])
+except FixtureUnavailable as e:
+    print(f"SKIP: {e}")
+    sys.exit(77)
 
 print(f"\n{'ALL PASS' if not fails else f'{len(fails)} FAILED'}")
 sys.exit(1 if fails else 0)

@@ -1,7 +1,7 @@
 """astryx · ear_lease — D4's ONE lease seam (plan-8674 S1): the EAR/MUTED state of a room's microphone.
 
 The ONLY writer of the main db's `leases` table (schema.sql). One row per resource; for hearing the resource is
-'ear:<room>', so the primary key IS "one ear per room". No text ever lives here (the transcript is in astryx_ear).
+'ear:<room>', so the primary key IS "one ear per room". No text ever lives here (the transcript is `utterances`).
 
   claim(conn, res, holder)      atomic UPDATE … WHERE state='free' (or this holder's / an EXPIRED EAR) RETURNING.
                                 MUTED is never claimable: only the owner's unmute ends it.

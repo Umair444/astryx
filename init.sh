@@ -178,10 +178,9 @@ EOF
   # (no sense modules ship in the public tree; a sense adds its own module + grant here —
   # presence-gated exactly like a channel, generating one astryx-<sense>.service unit.)
 
-  # ── 3a. the ear — hearing (plan-8674 S1): browser speech segments → local STT → astryx_ear ───────────────────
-  # Presence signal = EAR_ENABLED=1 in .env. Standing up the ear store is a DELIBERATE owner act (it creates the
-  # astryx_ear database and its roles: `venv/bin/python -m nucleus.ear_store apply`), so no fresh clone grows an
-  # always-on microphone service by default. Loopback only: the observatory proxies <host>/ear/ to it.
+  # ── 3a. the ear — hearing (plan-8674 S1): browser speech segments → local STT → `utterances` ───────────────
+  # Presence signal = EAR_ENABLED=1 in .env. An always-on microphone is a DELIBERATE owner act, so no fresh clone
+  # grows one by default. Loopback only: the observatory proxies <host>/ear/ to it.
   ear_on=$(grep -m1 '^EAR_ENABLED=' .env 2>/dev/null | cut -d= -f2- || true)
   if [ "$ear_on" = 1 ] && [ -f bridges/ear.py ]; then
     cat > "$UD/astryx-ear.service" <<EOF

@@ -1,12 +1,14 @@
-"""astryx ear — hearing's EAR service (plan-8674 S1): door (4) of astryx_ear, the one writer of the raw transcript.
+"""astryx ear — hearing's EAR service (plan-8674 S1): the one writer of the raw room transcript (`utterances`).
 
   browser    the observatory page holds the mic. An in-browser VAD cuts speech segments; each one is POSTed here as
              16 kHz mono WAV. Nothing else is uploaded (no silence, no continuous stream).
   stt        bridges/ear_stt.py: a pluggable backend (cpu faster-whisper now, cuda later) behind a bounded,
              drop-oldest queue. Audio is decoded in memory and never written to disk.
-  store      each non-empty transcript is ONE row in astryx_ear.utterances, written as astryx_ear_svc (the door's
-             own role, never the org superuser). Text is human-personal tier: it is never on the wire, never logged.
-  lease      the room's mic state lives in the MAIN db's `leases` row (D4, nucleus/ear_lease.py): one ear per room,
+  store      each non-empty transcript is ONE row in `utterances`, in the org's one database (schema.sql; owner
+             ruling 2026-10-10: shared and usable by every agent), with day-partition DROP retention
+             (nucleus/ear_store.py). The transcript is NEVER put on the wire (`messages`) and never logged: this
+             service has no code path that writes messages or notifies, and prints no text.
+  lease      the room's mic state lives in the `leases` row (D4, nucleus/ear_lease.py): one ear per room,
              claimed atomically by one browser tab, heartbeat TTL, MUTED with no TTL. An upload is accepted only from
              the live holder; while MUTED every upload is refused (the mute is enforced HERE, not only in the page).
 
@@ -48,7 +50,6 @@ OBS_KEY = env("OBS_KEY")
 ROOM = env("EAR_ROOM", "observatory")
 RESOURCE = f"ear:{ROOM}"
 MAIN_DSN = env("ASTRYX_DSN")
-EAR_DSN = env("EAR_DSN") or S.role_dsn(S.SVC, app="astryx-ear-svc")   # password from ~/.pgpass, never .env
 MAX_BYTES = 2_000_000                       # 30 s of 16 kHz PCM16 is 960 KB
 MAX_S, MIN_S = 30.0, 0.25
 MAINTAIN_EVERY_S = 600
@@ -57,7 +58,7 @@ queue: ear_stt.SttQueue | None = None
 
 
 class Store:
-    """The door's one connection to astryx_ear (autocommit), reconnected on failure. Errors are counted by TYPE."""
+    """The writer's one connection (autocommit), reconnected on failure. Errors are counted by TYPE, never text."""
 
     def __init__(self, dsn: str):
         self.dsn, self.c, self.lock = dsn, None, threading.RLock()
@@ -108,7 +109,7 @@ class Store:
         return self.ok
 
 
-store = Store(EAR_DSN)
+store = Store(MAIN_DSN)
 
 
 class Main:
