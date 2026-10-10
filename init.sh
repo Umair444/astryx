@@ -705,6 +705,12 @@ if [ "${1:-}" = "doctor" ]; then
   if [ -f .env ]; then
     DSN=$(grep '^ASTRYX_DSN=' .env | cut -d= -f2-)
     psql "$DSN" -c 'SELECT 1' >/dev/null 2>&1 && ok "postgres reachable" || bad "postgres unreachable (docker start astryx-pg?)"
+    # every org's database is LOCALHOST-ONLY (owner, 2026-10-10): any listener on the DSN's port
+    # that isn't loopback is a database a LAN (or the world) can knock on
+    _pgport=$(printf '%s' "$DSN" | sed -nE 's#^[a-z]+://[^@]*@[^:/]+:([0-9]+).*#\1#p'); _pgport=${_pgport:-5432}
+    _wide=$(ss -ltnH 2>/dev/null | awk '{print $4}' | grep -E ":${_pgport}\$" | grep -vE '^(127\.|\[::1\]|::1)' | sort -u | tr '\n' ' ')
+    [ -z "$_wide" ] && ok "postgres listens on localhost only (port $_pgport)" \
+      || bad "postgres port $_pgport is reachable beyond localhost: ${_wide}— publish it as 127.0.0.1:$_pgport only"
     _chk_schema && ok "schema applied (this database carries the current schema.sql's stamp)" \
       || bad "schema missing or STALE (schema.sql changed since its last apply) — rerun ./init.sh"
     if _cut=$(_cut_dbs 2>/dev/null); then                    # the harden node's HELD databases, named (a3 #33510)
