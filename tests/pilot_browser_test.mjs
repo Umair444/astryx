@@ -176,19 +176,29 @@ let iiiDone = false
 for (let attempt = 1; attempt <= 5 && !iiiDone; attempt++) {
   const runs0 = await desktopRuns()
   await request(AGENT)
-  const z = await waitAllow()
   const zN = await pend()
+  const z = await waitAllow(zN)                  // THIS request's prompt, never a dismissed one
+  if (!z) { console.log(`    (iii) attempt ${attempt}: no prompt on screen, retrying`); await ev(`${T}.dismiss(); true`); continue }
   await click(z.x, z.y)
   await sleep(100)
   const gap = await lastGap()
   if (!(gap < GAP_MS)) { console.log(`    (iii) attempt ${attempt}: click landed ${Math.round(gap)}ms after the request, inconclusive, retrying`); await ev(`${T}.dismiss(); true`); continue }
   console.log(`    (iii) measured: the early click landed ${Math.round(gap)}ms after the request (attempt ${attempt})`)
   arm('(iii) a trusted click under 500ms after render is ignored', (await desktopRuns()) === runs0 && (await pend()) === zN)
-  await sleep(650)
-  await click(z.x, z.y)
-  await sleep(400)
+  // the dwell starts when the prompt's entrance has FINISHED (painter, 9740d68), and the prompt may still be moving
+  // in: so re-read where the button IS before every click, and keep tapping until it arms. A tap before it arms
+  // is refused by design, so many taps still prove "exactly once" (the nonce is consumed by the first that runs).
+  let last = z
+  for (let t = 0; t < 32 && (await desktopRuns()) === runs0; t++) {
+    const now = await allow()
+    if (!now || now.nonce !== zN) break
+    last = now
+    await click(now.x, now.y)
+    await sleep(250)
+  }
+  await sleep(300)
   arm('(iii) a trusted click after it armed runs the call exactly once', (await desktopRuns()) === runs0 + 1 && (await pend()) === null, `runs +${(await desktopRuns()) - runs0}, pending ${await pend()}`)
-  await click(z.x, z.y)
+  await click(last.x, last.y)
   await sleep(200)
   arm('a second click runs nothing more', (await desktopRuns()) === runs0 + 1)
   iiiDone = true
