@@ -197,6 +197,13 @@ def main():
     try:
         with fixture_db(extra=geo_sql) as gx:
             g0 = P.run(gx["dsn"], db="geo")
+            _gdb = conninfo_db(gx["dsn"])
+            P.DATABASES[_gdb] = P.DATABASES["geo"]
+            try:
+                _clean = P.present(gx["dsn"], _gdb)
+            finally:
+                P.DATABASES.pop(_gdb, None)
+            check("GEO: present() on a fresh apply → nothing missing", _clean == [], str(_clean))
             check("GEO: a fresh apply of schema_geo.sql matches itself in scope (the comparison has a green)",
                   g0["drift"] is False, str(g0))
             with psycopg.connect(gx["dsn"], autocommit=True) as c:
@@ -240,9 +247,15 @@ def main():
             check("GEO: the birth path's resident is people_gate's RESIDENT", P.RESIDENT == people_gate.RESIDENT)
             with psycopg.connect(gx["dsn"], autocommit=True) as c:
                 c.execute("DROP TABLE track.presence")
-            with psycopg.connect(gx["dsn"], autocommit=True) as c:
-                gone = [t for t in P.declared_tables("geo") if c.execute("SELECT to_regclass(%s)", (t,)).fetchone()[0] is None]
-            check("GEO: the presence predicate names a dropped declared table", gone == ["track.presence"], str(gone))
+            # init.sh's cheap check, through the REAL present() (it names databases by DATABASES key: alias the fixture)
+            gdb = conninfo_db(gx["dsn"])
+            P.DATABASES[gdb] = P.DATABASES["geo"]
+            try:
+                gone = P.present(gx["dsn"], gdb)
+            finally:
+                P.DATABASES.pop(gdb, None)
+            check("GEO: present() (init.sh's geoschema check) names exactly the dropped declared table",
+                  gone == ["track.presence"], str(gone))
     except FixtureUnavailable as e:
         print(f"  SKIP  geo fixture arms: {e}")
         fails.append("SKIP geo")
