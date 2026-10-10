@@ -47,7 +47,7 @@ PRIVATE = "astryx_people"
 # RESIDENT / CLEARED (the oracle pins the equality). Each database's extensions are EXTENSIONS.
 DESIGN = {
     GRAPH: {"v": ("context", "person"), "e": ("knows", "member_of"), "connect": ("astryx_resident", "people_cleared")},
-    PRIVATE: {"v": ("owner", "person"), "e": ("relation",), "connect": ("people_cleared",)},
+    PRIVATE: {"v": ("owner", "person"), "e": ("relation",), "connect": ("astryx_resident", "people_cleared")},
 }
 EXTENSIONS = ("age", "plpgsql")
 # AGE's own bookkeeping labels, present in every graph: not part of anyone's design
@@ -157,7 +157,7 @@ def rebuild(base=None, social=None, private=None, graph=GRAPH, private_graph=PRI
                               if v is not None)
             cyp(f"MATCH (o:owner {{org:'{q(org)}'}}) CREATE (o)-[:relation {{{props}}}]->"
                 f"(:person {{id:'{q(pid)}', org:'{q(org)}'}})")
-        _readers(cur, private_graph, cleared)
+        _readers(cur, private_graph, resident, cleared)       # every resident reads it (owner ruling 10-10)
     out["private"] = len(details)
     return out
 

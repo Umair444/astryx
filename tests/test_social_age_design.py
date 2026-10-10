@@ -42,6 +42,7 @@ fails = []
 PFX = "astryx_sadz_"                                    # this oracle's scratch namespace: <PFX><pid>_<role>
 NET, PRIV = f"{PFX}{os.getpid()}_net", f"{PFX}{os.getpid()}_priv"
 RES, CLR = f"{PFX}{os.getpid()}_res", f"{PFX}{os.getpid()}_clr"      # scratch stand-ins for people_gate's two roles
+OTH = f"{PFX}{os.getpid()}_oth"                                       # a role NO design names (the exactness arm)
 _role = {"astryx_resident": RES, "people_cleared": CLR}
 SCRATCH = {db: {**d, "connect": tuple(_role[r] for r in d["connect"])}
            for db, d in ((NET, sa.DESIGN[sa.GRAPH]), (PRIV, sa.DESIGN[sa.PRIVATE]))}
@@ -115,9 +116,9 @@ try:
     print("design:")
     from nucleus import people_gate
     check("DESIGN's CONNECT roles are people_gate's RESIDENT / CLEARED (one name per role)",
-          set(sa.DESIGN[sa.GRAPH]["connect"]) == {people_gate.RESIDENT, people_gate.CLEARED}
-          and sa.DESIGN[sa.PRIVATE]["connect"] == (people_gate.CLEARED,), str(sa.DESIGN))
-    for r in (RES, CLR):
+          all(set(sa.DESIGN[g]["connect"]) == {people_gate.RESIDENT, people_gate.CLEARED} for g in (sa.GRAPH, sa.PRIVATE)),
+          str(sa.DESIGN))
+    for r in (RES, CLR, OTH):
         adm.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(r)))
     print("ensure:")
     made = sa.ensure(ADMIN, design=SCRATCH)
@@ -129,7 +130,7 @@ try:
            for db in (NET, PRIV)}
     check("ensure BIRTHS each database zero-window, with NO people_gate run first: PUBLIC can't CONNECT, the declared "
           "roles can (a3 #42376: a plain CREATE here is PUBLIC-open)",
-          acl[NET] == (False, True, True) and acl[PRIV] == (False, False, True), str(acl))
+          acl[NET] == (False, True, True) and acl[PRIV] == (False, True, True), str(acl))
     left = sa.drift(dsn_for, design=SCRATCH)
     check("  a database with no graph yet reads MISSING graph (ensure creates the place, the builder the graph)",
           left == [f"MISSING {NET}: graph {NET}", f"MISSING {PRIV}: graph {PRIV}"], str(left))
@@ -178,11 +179,11 @@ try:
     left = sa.drift(dsn_for, design=SCRATCH)
     check("a declared role's CONNECT revoked → MISSING CONNECT", left == [f"MISSING {NET}: CONNECT for {RES}"], str(left))
     adm.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(sql.Identifier(NET), sql.Identifier(RES)))
-    adm.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(sql.Identifier(PRIV), sql.Identifier(RES)))
+    adm.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(sql.Identifier(PRIV), sql.Identifier(OTH)))
     left = sa.drift(dsn_for, design=SCRATCH)
     check("CONNECT granted to a role the design doesn't name → EXTRA (the ACL is declared EXACTLY, a3 #42380)",
-          left == [f"EXTRA {PRIV}: CONNECT for {RES} (not in the design)"], str(left))
-    adm.execute(sql.SQL("REVOKE CONNECT ON DATABASE {} FROM {}").format(sql.Identifier(PRIV), sql.Identifier(RES)))
+          left == [f"EXTRA {PRIV}: CONNECT for {OTH} (not in the design)"], str(left))
+    adm.execute(sql.SQL("REVOKE CONNECT ON DATABASE {} FROM {}").format(sql.Identifier(PRIV), sql.Identifier(OTH)))
     check("  ...revoked again → MATCH", sa.drift(dsn_for, design=SCRATCH) == [], "")
     ghost = f"{PFX}{os.getpid()}_ghost"
     left = sa.drift(dsn_for, design={**SCRATCH, ghost: {"v": ("x",), "e": ()}})

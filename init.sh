@@ -435,7 +435,7 @@ _act_harden() { say "revoking PUBLIC CONNECT on the org's databases (plan-4918 P
 # people library 1a: social_relation's grants, the people_cleared / astryx_resident roles (resident NOLOGIN until
 # 1b), and the private AGE database astryx_people, born zero-window. The check and the act are one module.
 _chk_peoplegate() { venv/bin/python -m nucleus.people_gate check; }
-_act_peoplegate() { say "people gate: relation details readable only by people_cleared (accident-grade)"
+_act_peoplegate() { say "people gate: every resident reads the people library; PUBLIC doesn't (owner ruling 10-10)"
   venv/bin/python -m nucleus.people_gate apply >/dev/null; }
 # The derived graph databases, as social_age.DESIGN declares them (owner 10-10: "the design on github should match
 # local"). ensure creates a missing database or extension, then rebuilds; the check is read-only.

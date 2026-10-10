@@ -1,32 +1,22 @@
 #!/usr/bin/env python3
-"""astryx · people_gate — the people library's privilege boundary (build 1a of seed #35894 / memory #35896).
+"""astryx · people_gate — the people library's ACCESS declaration: every resident reads it all (owner ruling 10-10).
 
-THE SPLIT. The network layer is STRUCTURE: who exists, and that two people are related at all (social_person's
-id/label/direct, social_edge, the astryx_social graph). Every agent may read it. The DETAILS (what a relation IS,
-who someone is to the owner, the behavioural shape, how sure we are) live in `social_relation`, readable only by
-the `people_cleared` role, and are projected into a PRIVATE AGE database whose CONNECT only people_cleared holds.
-Granting people_cleared to a charter is the owner's call (Grant: people), never this module's.
+THE RULING (owner 10-10, via seed #42309/#42323/#42347, verbatim: "database entities should be public to all agents
+working inside astryx"). The 1a SPLIT this module used to enforce (network structure for residents, relation DETAILS
+for `people_cleared` only, a private AGE database only cleared could CONNECT to) is RETIRED: inside the org there is one
+shared memory, and a role built to keep agents out of org data is against the ruling. So `astryx_resident` now holds
+table-level SELECT on social_person, social_edge and social_relation, and CONNECT on astryx_people; `people_cleared`
+keeps the same grants (a charter that holds it loses nothing).
 
-GRADE: ACCIDENT-GRADE, NOT PREVENTION (seed #36018, a4 #36015). Every resident runs as the same OS user with full
-Bash, and the superuser credential sits in .env (ASTRYX_DSN) and ~/.pgpass, both readable by every resident. A
-resident that WANTS the details connects as the superuser and reads them; no GRANT here stops that. What this does
-gate: tool paths and default DSNs. Once residents connect as `astryx_resident` (build 1b), an ordinary query or a
-graph walk physically can't reach a detail; reading one takes a DELIBERATE connection with the superuser credential.
-NOTHING DETECTS THAT TODAY (steward #36869, measured): a resident's step records the description it writes itself,
-grabbing the credential is ambient (every resident does it for ordinary probes), and postgres logs nothing per role
-(no pgaudit, log_statement=none). The honest detection substrate is a server-side object audit (pgaudit) whose log
-sits outside the residents' uid. Prevention needs the superuser credential OFF every resident-readable surface (a
-separate OS user for admin and services, or a credential broker). Both are owner-level infrastructure.
+WHO "ALL AGENTS" IS, stated (steward #42345, seed #42389): the RESIDENT role, never postgres PUBLIC. PUBLIC is every
+role on the server, branch_check's sandboxed run roles included, and P0-b requires those never to reach prod data. So
+PUBLIC is still REVOKEd on these tables and on astryx_people, and drift() reports any PUBLIC grant.
 
-INERT AS SHIPPED (1a). `astryx_resident` is created NOLOGIN with no password: nothing can connect as it until 1b
-(ALTER ROLE ... LOGIN PASSWORD, then the residents' DSN switch) is decided on the privilege census's numbers
-(nucleus/privilege_census.py). The grants are real and the oracle proves them on scratch roles.
+WHAT STILL STANDS, from local.md, not from here: the human-personal tier stays off the WIRE and out of public artifacts,
+and tier.py's PERSONAL_LANES keeps lane rows out of memory's RAG-built artifacts until the owner edits that line.
 
-FAIL-CLOSED POLARITY. The resident reads every network table through a COLUMN-level grant on the columns NETWORK names,
-so a column added later is unreadable until someone names it here: an unknown member defaults to hidden. social_edge
-is the case that proved it (memory #36868): main's DM edges added weight/first_ts/last_ts/mine/scanned_at, the
-owner's per-contact message count and recency, i.e. closeness by proxy. A dm row's EXISTENCE says only what
-social_person.direct already says, so (org, src, dst, rel) stays network; the counts are cleared-only.
+INERT AS SHIPPED, unchanged: `astryx_resident` is NOLOGIN, and residents connect as the superuser in ASTRYX_DSN, which
+reads everything regardless. These grants DECLARE the design, so the day residents switch roles (1b) nothing narrows.
 
 Names are parameters so the oracle (tests/test_people_gate.py) runs this exact code on scratch roles and scratch
 databases; production passes none.
@@ -46,16 +36,12 @@ sys.path.insert(0, str(REPO))
 
 RESIDENT = "astryx_resident"
 CLEARED = "people_cleared"
-PRIVATE_DB = "astryx_people"          # the private AGE projection; its graph shares the name
-NETWORK_DB = "astryx_social"          # the all-agent network graph (nucleus/social_age.py)
-# The network layer, by table: the ONLY columns the resident may read. Anything else on these tables is a detail.
-NETWORK = {
-    "social_person": ("org", "id", "kind", "label", "direct", "seen_at"),
-    "social_edge": ("org", "src", "dst", "rel"),
-}
-NETWORK_COLS = NETWORK["social_person"]
+PRIVATE_DB = "astryx_people"          # the relation-details AGE projection (the name is historical; every resident reads it)
+NETWORK_DB = "astryx_social"          # the network graph (nucleus/social_age.py)
 DETAIL_TABLE = "social_relation"
-CLEARED_TABLES = (DETAIL_TABLE, "social_edge")   # whole-table SELECT for people_cleared (the dm counts included)
+# Every org table of the people library: whole-table SELECT for the resident and the cleared role, nothing for PUBLIC.
+# Table-level on purpose: a column added later is readable by every resident at once (the ruling's polarity).
+ORG_TABLES = ("social_person", "social_edge", DETAIL_TABLE)
 
 ROLE_SQL = "SELECT rolcanlogin FROM pg_roles WHERE rolname = %s"
 DB_SQL = "SELECT 1 FROM pg_database WHERE datname = %s"
@@ -77,31 +63,32 @@ def ensure_roles(admin, resident: str = RESIDENT, cleared: str = CLEARED, login:
 
 
 def grant_main(conn, resident: str = RESIDENT, cleared: str = CLEARED) -> None:
-    """In the org's own database (conn is connected to it, as its owner or a superuser). Idempotent."""
+    """In the org's own database (conn is connected to it, as its owner or a superuser). Idempotent. REVOKE first, so a
+    stale grant from the retired split (or a PUBLIC grant) can't survive a re-apply; then the table grant."""
     I = sql.Identifier
     db = conn.execute("SELECT current_database()").fetchone()[0]
-    conn.execute(sql.SQL("REVOKE ALL ON {} FROM PUBLIC").format(I(DETAIL_TABLE)))
-    conn.execute(sql.SQL("REVOKE ALL ON {} FROM {}").format(I(DETAIL_TABLE), I(resident)))   # a stale grant
-    for t in CLEARED_TABLES:
-        conn.execute(sql.SQL("GRANT SELECT ON {} TO {}").format(I(t), I(cleared)))
-    # A table-level SELECT would carry every detail column; REVOKE ALL first so a stale whole-table grant can't
-    # survive a re-apply, then the column grant.
-    for t, cols in NETWORK.items():
-        conn.execute(sql.SQL("REVOKE ALL ON {} FROM {}").format(I(t), I(resident)))
-        conn.execute(sql.SQL("GRANT SELECT ({}) ON {} TO {}")
-                     .format(sql.SQL(", ").join(map(I, cols)), I(t), I(resident)))
+    for t in ORG_TABLES:
+        conn.execute(sql.SQL("REVOKE ALL ON {} FROM PUBLIC").format(I(t)))
+        for r in (resident, cleared):
+            # a table-level REVOKE also revokes that role's COLUMN privileges on every column (postgres REVOKE), so
+            # the retired split's column grants go with it (the oracle's stale-grant arm; a column loop here was dead)
+            conn.execute(sql.SQL("REVOKE ALL ON {} FROM {}").format(I(t), I(r)))
+            conn.execute(sql.SQL("GRANT SELECT ON {} TO {}").format(I(t), I(r)))
     conn.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}, {}").format(I(db), I(resident), I(cleared)))
 
 
-def ensure_private_db(admin, name: str = PRIVATE_DB, cleared: str = CLEARED) -> bool:
-    """The private projection's database, BORN ZERO-WINDOW (plan-4918 #28982): created with connections disallowed,
-    PUBLIC revoked and CONNECT granted to `cleared` only, THEN opened. Returns True if it was created now."""
+def ensure_private_db(admin, name: str = PRIVATE_DB, cleared: str = CLEARED, resident: str = RESIDENT) -> bool:
+    """The relation projection's database, BORN ZERO-WINDOW (plan-4918 #28982): created with connections disallowed,
+    PUBLIC revoked, CONNECT granted to the resident and the cleared role, THEN opened. Returns True if created now."""
     I = sql.Identifier
     made = admin.execute(DB_SQL, (name,)).fetchone() is None
     if made:
         admin.execute(sql.SQL("CREATE DATABASE {} ALLOW_CONNECTIONS false").format(I(name)))
     admin.execute(sql.SQL("REVOKE ALL ON DATABASE {} FROM PUBLIC").format(I(name)))
-    admin.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(I(name), I(cleared)))
+    have = [r for (r,) in admin.execute("SELECT rolname FROM pg_roles WHERE rolname = ANY(%s)",
+                                        ([resident, cleared],)).fetchall()]
+    if have:
+        admin.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(I(name), sql.SQL(", ").join(map(I, have))))
     # A non-superuser can't LOAD 'age' (agelib), and a GROUP role's settings don't reach its members, so the
     # preload is set on the DATABASE.
     admin.execute(sql.SQL("ALTER DATABASE {} SET session_preload_libraries = 'age'").format(I(name)))
@@ -132,7 +119,7 @@ def grant_graph(cur, graph: str, *roles: str) -> None:
 # ── the check: one predicate list, read from the server, shared by init.sh's node and the oracle ─────────────
 def drift(conn, admin=None, resident: str = RESIDENT, cleared: str = CLEARED,
           private_db: str = PRIVATE_DB) -> list:
-    """What is NOT as this module promises, as sentences. Empty = green. `conn` is the org database; `admin` (any
+    """What is NOT as this module declares, as sentences. Empty = green. `conn` is the org database; `admin` (any
     connection to the cluster, defaults to conn) reads the cluster-wide database ACLs."""
     admin = admin or conn
     out = []
@@ -141,28 +128,17 @@ def drift(conn, admin=None, resident: str = RESIDENT, cleared: str = CLEARED,
             return [f"role {r} is missing"]
     if conn.execute("SELECT to_regclass(%s)", (DETAIL_TABLE,)).fetchone()[0] is None:
         return [f"table {DETAIL_TABLE} is missing (schema.sql not applied)"]
-    q = lambda s, *a: conn.execute(s, a).fetchone()[0]
-    if q("SELECT has_table_privilege('public', %s, 'SELECT')", DETAIL_TABLE):
-        out.append(f"PUBLIC can SELECT {DETAIL_TABLE}")
-    if q("SELECT has_table_privilege(%s, %s, 'SELECT')", resident, DETAIL_TABLE):
-        out.append(f"{resident} can SELECT {DETAIL_TABLE}")
-    for t in CLEARED_TABLES:
-        if not q("SELECT has_table_privilege(%s, %s, 'SELECT')", cleared, t):
-            out.append(f"{cleared} can't SELECT {t}")
-    for t, cols in NETWORK.items():           # every column NOT named is a detail, so a new one is drift if readable
-        hidden = [c for (c,) in conn.execute(
-            "SELECT attname FROM pg_attribute WHERE attrelid = %s::regclass AND attnum > 0 "
-            "AND NOT attisdropped AND attname <> ALL(%s) ORDER BY attnum", (t, list(cols))).fetchall()]
-        leak = [c for c in hidden if q("SELECT has_column_privilege(%s, %s, %s, 'SELECT')", resident, t, c)]
-        if leak:
-            out.append(f"{resident} can read {t} detail column(s) {', '.join(leak)}")
-        miss = [c for c in cols if not q("SELECT has_column_privilege(%s, %s, %s, 'SELECT')", resident, t, c)]
-        if miss:
-            out.append(f"{resident} can't read {t} network column(s) {', '.join(miss)}")
+    q = lambda s, *a: conn.execute(s, a).fetchone()[0]      # noqa: E731
+    for t in ORG_TABLES:
+        if q("SELECT has_table_privilege('public', %s, 'SELECT')", t):
+            out.append(f"PUBLIC can SELECT {t} (all agents = the resident role, never PUBLIC)")
+        for r in (resident, cleared):
+            if not q("SELECT has_table_privilege(%s, %s, 'SELECT')", r, t):
+                out.append(f"{r} can't SELECT {t} (the ruling: every resident reads org data)")
     if admin.execute(DB_SQL, (private_db,)).fetchone() is None:
         out.append(f"database {private_db} is missing")
     else:
-        for who, want in (("public", False), (resident, False), (cleared, True)):
+        for who, want in (("public", False), (resident, True), (cleared, True)):
             if admin.execute("SELECT has_database_privilege(%s, %s, 'CONNECT')",
                              (who, private_db)).fetchone()[0] != want:
                 out.append(f"{who} {'can' if not want else 'can not'} CONNECT to {private_db}")
@@ -182,7 +158,8 @@ def apply(admin_dsn: str) -> list:
         if c.execute(AGE_SQL).fetchone():
             with psycopg.connect(make_conninfo(admin_dsn, dbname=PRIVATE_DB), autocommit=True) as p:
                 p.execute("CREATE EXTENSION IF NOT EXISTS age")
-                p.execute(sql.SQL("GRANT USAGE ON SCHEMA ag_catalog TO {}").format(sql.Identifier(CLEARED)))
+                for r in (RESIDENT, CLEARED):
+                    p.execute(sql.SQL("GRANT USAGE ON SCHEMA ag_catalog TO {}").format(sql.Identifier(r)))
         return drift(c)
 
 
