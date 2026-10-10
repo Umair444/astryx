@@ -129,6 +129,20 @@ check("a deliberately BLOCKED goal is still watched — an unre-raised gate read
       "abandonment from outside",
       out and "#4" in out, f"out={out!r}")
 
+# ── the baton: a quiet epoch names who the latest milestone was addressed to ─────────
+row = goal(6, "active", 1)
+row.update(lm_id=39995, lm_from="abstractor-4", lm_to="steward")
+out = fire(FakeCtx([row]))
+check("one dead epoch NAMES the latest plan milestone, its sender and its recipient (#4918's dropped close)",
+      out and "#39995 abstractor-4→steward" in out and "the next move is steward's" in out, f"out={out!r}")
+row = goal(7, "active", 3)
+row.update(lm_id=1, lm_from="a", lm_to="b")
+out = fire(FakeCtx([row]))
+check("...and so does the two-epoch escalation", out and "PROGRESS-LAW" in out and "#1 a→b" in out, f"out={out!r}")
+out = fire(FakeCtx([goal(8, "active", 1)]))
+check("a plan thread with no milestone says nothing about a baton (no invented holder)",
+      out and "latest plan milestone" not in out, f"out={out!r}")
+
 # THE EXCLUSION LIVES IN SQL, NOT IN THE LOOP, and my first version of this assertion
 # handed the Python a shipped goal and demanded silence — which the loop cannot give,
 # because the real query never returns that row. Testing a filter from the wrong side of
@@ -266,6 +280,20 @@ if fx is not None:
         # after the goal's "-2h" ts — that sliver is correctly counted; a minute is the honest bound
         check("REAL SQL: a goal whose evidence follows the gaps is discounted (sub-minute) nothing",
               d_new is not None and d_new < 1 / 60, f"dark_h={d_new}")
+        conn.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body, ts) VALUES "
+                     "('abstractor-4','steward',%s,'milestone','end MET', now() - interval '30 hours'), "
+                     "('abstractor-4','seed',%s,'chat','not evidence', now() - interval '29 hours'), "
+                     "('builder','steward',%s,'milestone','older', now() - interval '40 hours')",
+                     (f"plan-{g_old}", f"plan-{g_old}", f"plan-{g_old}"))
+        want = conn.execute("SELECT id FROM messages WHERE thread=%s AND body='end MET'", (f"plan-{g_old}",)).fetchone()[0]
+        cap.clear()
+        fire(SpyCtx({}, conn))
+        by = {r["id"]: r for r in cap}
+        r = by.get(g_old, {})
+        check("REAL SQL: the baton is the NEWEST milestone on the plan thread (not a later chat row, not an older milestone)",
+              r.get("lm_id") == want and r.get("lm_from") == "abstractor-4" and r.get("lm_to") == "steward", f"row={r}")
+        check("REAL SQL: a goal whose plan thread has no milestone carries no baton",
+              by.get(g_new, {}).get("lm_id", "missing") is None, f"row={by.get(g_new)}")
     finally:
         conn.close()
         _fx.__exit__(None, None, None)
