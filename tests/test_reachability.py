@@ -132,6 +132,11 @@ EXEMPT = {
         "ours lives at triggers/steward/pr_review.py) — the import edge rides a shell "
         "heredoc and the live estate, both outside this scanner's committed-python view",
     "nucleus/fedtest.py":     "manual: federation end-to-end probe; CLAUDE.md documents the human command",
+    # Hands (plan-7862): both are started by the per-desktop sway config that nucleus/hands_desktop.py
+    # GENERATES (an `exec <venv python> <path>` line written into the state dir at runtime), so the edge
+    # lives in a generated file, outside this scanner's committed view. tests/test_hands_desktop.py runs both.
+    "nucleus/hands_seat.py":   "invoked by the sway config nucleus/hands_desktop.py generates (exec line, runtime); the agent's VNC seat",
+    "nucleus/hands_proxy.py":  "invoked by the sway config nucleus/hands_desktop.py generates (exec line, runtime); the background browser's fence",
     "nucleus/esc_latency.py":  "manual: MIN_QUIET_H calibration measurement, run on demand; reports and never recommends, so a timer would only manufacture noise",
     "nucleus/doorbell.sh":    "manual: operator notify helper, self-declared Usage line",
     "nucleus/wallpane.sh":    "manual: single-pane variant of wall.sh, invoked by an operator",
