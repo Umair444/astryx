@@ -61,5 +61,12 @@
    "mcp/tools/server.py"
   ],
   "author": "forge"
+ },
+ "jobs": {
+  "command": "venv/bin/python",
+  "args": [
+   "mcp/jobs/server.py"
+  ],
+  "author": "canopus"
  }
 }

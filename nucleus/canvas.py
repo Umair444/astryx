@@ -236,6 +236,7 @@ SEE IT BEFORE YOU PUBLISH: `canvas.py preview <id> page.html` renders it in the 
 live data at desktop, phone and reduced motion, reports uncaught errors and CSP blocks (exit 2), and you look
 at the PNGs. Desktop/phone catch motion mid-flight: judge the final state from reduced.png (if the page
 honours reduced motion).
+DESIGN: the house rules (tokens, colour meaning, motion, presence, restraint) are skills/astryx-design/SKILL.md.
 """
 
 

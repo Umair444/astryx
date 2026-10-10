@@ -120,6 +120,8 @@ for g in $(grep -m1 '^Grants:' "$CHARTER" 2>/dev/null | cut -d: -f2- | tr ',' ' 
   \"org\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/org/server.py\"] }";;
     memory) EXTRA="$EXTRA,
   \"memory\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/memory/server.py\"] }";;
+    jobs) EXTRA="$EXTRA,
+  \"jobs\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/jobs/server.py\"] }";;
     contacts) EXTRA="$EXTRA,
   \"contacts\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/contacts/server.py\"] }";;
     channels) EXTRA="$EXTRA,
@@ -143,6 +145,10 @@ for g in $(grep -m1 '^Grants:' "$CHARTER" 2>/dev/null | cut -d: -f2- | tr ',' ' 
   esac
 done
 
+# hands = the agent's own desktop on this machine (plan-7862, owner 2026-10-10: "it should use my
+# laptop like i can do — nothing container… we should trust these agents"). Every RESIDENT gets it,
+# like the door: residents are trusted (owner ruling), and a resident already holds Bash on this
+# machine, so its own desktop adds sight and a cursor, not reach. NOT given to STATIONED agents.
 # tools = the registry door (goal 4227 S4). Every RESIDENT gets it, not a grant: it's flat rent
 # (two tools however many the org grows), and no new capability, because a resident already
 # holds Bash and the door runs registered scripts only, never a granted MCP server. It is
@@ -154,7 +160,10 @@ cat > "$HOME_D/.mcp.json" <<EOF
     "args": ["$ROOT/channel/server.mjs"],
     "env": { "ASTRYX_AGENT": "$AGENT" }
 },
-  "tools": { "command": "$ROOT/venv/bin/python", "args": ["$ROOT/mcp/tools/server.py"] }$EXTRA } }
+  "tools": { "command": "$ROOT/venv/bin/python", "args": ["$ROOT/mcp/tools/server.py"] },
+  "hands": { "command": "$ROOT/venv/bin/python", "args": ["$ROOT/mcp/hands/server.py"],
+    "env": { "ASTRYX_AGENT": "$AGENT", "XDG_RUNTIME_DIR": "/run/user/$(id -u)",
+      "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/$(id -u)/bus" } }$EXTRA } }
 EOF
 
 # think: charter line "Think: off" zeroes extended thinking for reflex-class

@@ -13,6 +13,16 @@ holders carry FAKE secrets. Each arm can ALONE go red.
       sha256sum; a NON-holder that merely looks similar (.env.example, venv/) is never denied.
   G7  End to end through hooks/step.py: a denied call prints Claude Code's deny JSON on stdout
       BEFORE any DB work (a down DB can't open the guard); an allowed call prints nothing.
+  G8  The public repo's WRITE credentials (plan-8677 a3 BC-2) are declared in the REAL manifest, so
+      `cat`/Read of ~/.config/gh/hosts.yml and ~/.ssh/id_ed25519 are DENIED; an ordinary file and
+      the key's .pub beside them still read. Hermetic: a fixture HOME holds fake files.
+  G9  The other routes to the same token/key (a3 BC-3), one DENY arm each with an ALLOW control:
+      $HOME/${HOME} spelling; `gh auth token` / `gh auth status --show-token|-t`; base64; a
+      RECURSIVE printer on a directory holding an out-of-repo holder; a glob that matches one;
+      (#42337) a relative path after `cd`; `gh config get oauth_token`; the credential-helper
+      protocol (`gh auth git-credential get`, `git credential fill`); dd if=.
+      NOT armed, stated: a script that prints what it read (python -c "print(open(…).read())") —
+      the documented accident-grade limit.
 
 Run: venv/bin/python tests/test_secret_guard.py
 """
@@ -213,6 +223,85 @@ def arms_step(tmp: Path):
           any("unevaluable" in str(p) for s, p in writes if "'error'" in s), str(writes)[:200])
 
 
+def arms_publish_creds(tmp: Path):
+    """G8 against the REAL manifest (the declaration under test) in a fixture HOME, so it proves the
+    entries on any host and never touches a real credential."""
+    home = tmp / "home"
+    (home / ".config" / "gh").mkdir(parents=True)
+    (home / ".ssh").mkdir()
+    for rel in (".config/gh/hosts.yml", ".ssh/id_ed25519", ".ssh/id_ed25519.pub", ".config/ordinary.txt"):
+        (home / rel).write_text("FAKE fixture, not a credential\n")
+    saved_home, saved_manifest = os.environ.get("HOME"), ss.HOLDERS_FILE
+    os.environ["HOME"], ss.HOLDERS_FILE = str(home), REPO / "nucleus" / "secret_holders.json"
+    try:
+        dec = lambda tool, ti: sg.decide(tool, ti, secrets=[])  # noqa: E731
+        for rel in (".config/gh/hosts.yml", ".ssh/id_ed25519"):
+            r = dec("Bash", {"command": f"cat ~/{rel}"})
+            check(f"G8 `cat ~/{rel}` is DENIED (declared in the real manifest)", bool(r), str(r))
+            r = dec("Read", {"file_path": str(home / rel)})
+            check(f"G8 Read of ~/{rel} is DENIED", bool(r), str(r))
+        for rel in (".config/ordinary.txt", ".ssh/id_ed25519.pub"):
+            check(f"G8 control: `cat ~/{rel}` is ALLOWED", dec("Bash", {"command": f"cat ~/{rel}"}) is None)
+            check(f"G8 control: Read of ~/{rel} is ALLOWED", dec("Read", {"file_path": str(home / rel)}) is None)
+    finally:
+        ss.HOLDERS_FILE = saved_manifest
+        if saved_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved_home
+
+
+def arms_token_routes(tmp: Path):
+    """G9, same fixture shape as G8: the REAL manifest, a fixture HOME of fake files."""
+    home = tmp / "home9"
+    for rel in (".config/gh/hosts.yml", ".ssh/id_ed25519", ".ssh/id_ed25519.pub", ".config/ordinary.txt",
+                ".config/other/notes.txt"):
+        (home / rel).parent.mkdir(parents=True, exist_ok=True)
+        (home / rel).write_text("FAKE fixture, not a credential\n")
+    saved_home, saved_manifest = os.environ.get("HOME"), ss.HOLDERS_FILE
+    os.environ["HOME"], ss.HOLDERS_FILE = str(home), REPO / "nucleus" / "secret_holders.json"
+    try:
+        deny = {"G9a $HOME spelling": ['cat "$HOME/.config/gh/hosts.yml"', "cat ${HOME}/.ssh/id_ed25519"],
+                "G9b gh prints the token": ["gh auth token", "gh auth status --show-token", "gh auth status -t",
+                                            "gh auth token --hostname github.com"],
+                "G9c base64 of the key": ["base64 ~/.ssh/id_ed25519", "base64 -w0 $HOME/.ssh/id_ed25519"],
+                "G9d recursive printer on a holder's directory": ["grep -r oauth ~/.config/gh", "grep -rn x ~/.ssh",
+                                                                  "rg token ~/.config", "cp -r ~/.ssh /tmp/x",
+                                                                  "tar czf /tmp/k.tgz ~/.ssh"],
+                "G9e a glob matching a holder": ["cat ~/.ssh/*", "head ~/.config/gh/*.yml"],
+                "G9f cd, then a relative path": ["cd ~/.config/gh && cat hosts.yml", "cd ~/.ssh; base64 id_ed25519",
+                                                 "cd ~ && cd .ssh && cat id_ed25519", "cd $HOME/.ssh && grep -r . ."],
+                "G9g gh config get oauth_token": ["gh config get oauth_token -h github.com"],
+                "G9h the credential-helper protocol": [
+                    "printf 'protocol=https\\nhost=github.com\\n' | gh auth git-credential get",
+                    "printf 'protocol=https\\nhost=github.com\\n' | git credential fill"],
+                "G9i dd (stdout by default)": ["dd if=~/.ssh/id_ed25519", "dd if=$HOME/.config/gh/hosts.yml status=none"]}
+        allow = {"G9a": ['cat "$HOME/.config/ordinary.txt"', 'cat "$XDG_X/.ssh/id_ed25519"'],
+                 "G9b": ["gh auth status", "gh pr list", "gh auth login --with-token"],
+                 "G9c": ["base64 ~/.config/ordinary.txt"],
+                 "G9d": ["grep -r x ~/.config/other", "grep oauth ~/.config/gh", "grep -rl oauth ~/.config/gh",
+                         f"grep -rn x {REPO}", "ls -la ~/.ssh"],
+                 "G9e": ["cat ~/.config/*.txt", "cat ~/.ssh/*.pub"],
+                 "G9f": ["cd ~/.config && ls", "cd ~/.ssh && cat id_ed25519.pub", "cd ~/.config && cat ordinary.txt",
+                         "cd ~/.ssh && cd - && cat ordinary.txt"],
+                 "G9g": ["gh config get git_protocol"],
+                 "G9h": ["gh auth setup-git", "git config --get credential.helper", "git credential-cache exit"],
+                 "G9i": ["dd if=~/.config/ordinary.txt of=/dev/null"]}
+        for name, cmds in deny.items():
+            r = {c: sg.decide("Bash", {"command": c}, secrets=[]) for c in cmds}
+            check(f"{name}: all {len(cmds)} shapes DENIED", all(r.values()), [c for c, v in r.items() if not v])
+        for name, cmds in allow.items():
+            r = {c: sg.decide("Bash", {"command": c}, secrets=[]) for c in cmds}
+            check(f"{name} control: {len(cmds)} neighbouring shapes ALLOWED", not any(r.values()),
+                  [c for c, v in r.items() if v])
+    finally:
+        ss.HOLDERS_FILE = saved_manifest
+        if saved_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved_home
+
+
 def main():
     saved = (ss.ENV_FILE, ss.PGPASS_FILE, ss.HOLDERS_FILE, sg.QUARANTINE)
     with tempfile.TemporaryDirectory() as d:
@@ -221,6 +310,8 @@ def main():
             setup(tmp)
             arms(tmp)
             arms_step(tmp)
+            arms_publish_creds(tmp)
+            arms_token_routes(tmp)
         finally:
             ss.ENV_FILE, ss.PGPASS_FILE, ss.HOLDERS_FILE, sg.QUARANTINE = saved
     if fails:

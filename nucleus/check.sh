@@ -193,6 +193,10 @@ run "schema parity: the live catalog has every table and column the schema files
 # the move's receipt; the writers' cutover. ACCIDENT-GRADE (a same-uid resident can read the superuser credential),
 # proven on scratch roles and DBs. Mutants: tests/mutants_people_gate.py, tests/mutants_people_move.py.
 run "people gate: details only to people_cleared, network to the resident (accident-grade)" "$PY" tests/test_people_gate.py
+# The derived graph databases' DECLARED design (owner 10-10 via seed #42323 (b)): astryx_social / astryx_people hold one
+# graph each, declared in social_age.DESIGN; drift = a missing or undeclared label, or any ad-hoc relation. Scratch AGE
+# databases for the red arms; the live read is read-only.
+run "derived graph DBs match their declared design" "$PY" tests/test_social_age_design.py
 # the privilege census 1b is decided on: statement classes by surface, DSN source by file. Hermetic.
 # Mutants: tests/mutants_privilege_census.py.
 run "privilege census: classes discriminate, surfaces and DSN sources assigned" "$PY" tests/test_privilege_census.py
@@ -279,6 +283,17 @@ run "fixture_db reaps a killed run's database, never a live one's" "$PY" tests/t
 # The real executor drives the real images against a throwaway lease table, in its OWN namespace.
 # Grade: prevention vs the external adversary (residents trusted, owner #38554). 77 without docker/images.
 run "hands cell: per-lease egress, wipe on kill, step + wall caps" "$PY" tests/test_hands_cell.py
+# Hands, the owner's design (plan-7862, 10-10: "use my laptop like i can do — nothing container"): each
+# agent's own REAL desktop on this machine (headless sway + its own seat via wayvnc), watched, joined and
+# stopped from the observatory. Two tools, text replies, a 960x600 view: the token budget is pinned.
+run "hands desktop: real clicks/typing land, owner stop refuses, two small tools" "$PY" tests/test_hands_desktop.py
+# every org's database is localhost-only (owner 10-10): doctor's _pg_exposure, with ss that can't answer → UNVERIFIED
+run "doctor: postgres localhost-only, unverified when ss can't answer" bash tests/test_doctor_pg_exposure.sh
+# turns retention (owner 10-10: "add retention to save space"): old turns lose image bytes, keep their words
+run "turns retention: old images stripped, words kept, recent untouched, idempotent" "$PY" tests/test_turns_retention.py
+# deploy.sh restart's failure paths, all side effects stubbed: a refusing spawn is a named ✗, the run continues,
+# ends INCOMPLETE, and the pulse is started again (a2 #42367)
+run "deploy restart: a failed resident is named, the run continues, the pulse comes back" bash tests/test_deploy_restart.sh
 # geoloc /recent (a3 #32078, privacy): location history needs GEOLOC_TOKEN even from localhost, the
 # token compare is constant-time, and a malformed ingest token is a 401, never a 500. The body
 # (bridges/geoloc.py) is gitignored, so this SKIPs 77 on a clean clone. No location data is used.
@@ -309,6 +324,9 @@ run "tools door: registered scripts only, no shell, no server" "$PY" tests/test_
 # ran over shell scripts too, so a `'''` in code or a heredoc template described a tool by its body
 # (mcp/new.sh was registered as its template's placeholder). RED-first against the unscoped regex.
 run "toolreg: a tool's search text is its own header" "$PY" tests/test_toolreg_describe.py
+# jobs MCP: a posting is "closed" only when the board says so; transport, 5xx, 429, shape and
+# register-header failures are errors, never a false "closed". Hermetic (MockTransport, temp cache).
+run "jobs MCP: fail-closed ATS status + sponsor-register lookup" "$PY" tests/test_jobs_mcp.py
 # the tool nudge, O5 (goal 4227, S4): the REAL UserPromptSubmit hook against a fake loopback
 # classifier. It never exits non-zero (static, from the AST), stays silent and inside its hard
 # deadline whether the classifier is unset/down/hung/DRIPPING, refuses non-loopback endpoints

@@ -17,7 +17,8 @@ conditions a1 #27821, a3 #28076, a2 #28077, a4 #28080):
      spelling provably misses it (a2 C2 RED control); revert-of-revert reads MERGED again (a3 BC-1);
      a squash is an INSTRUMENTS-DISAGREE notice; a replacement on a retracted base reports only its own
      commit; supersedes retracts the old set in one row; a fresh hold trails, a stale one is STANDING;
-     an unresolvable range is a notice; UNREQUESTED/SELF-MARKED print, REQUESTED does not.
+     an unresolvable range is a notice; UNREQUESTED/SELF-MARKED print, REQUESTED does not; a ref base
+     (`main..<sha>`) reads the ref at the marker's time, and one it cannot read is a SYMBOLIC BASE notice.
   5. coverage (a1 BC-2): a pre-adoption prose PASS on an unlanded commit is BACKFILL; post-adoption it
      is STANDING; a merge-retract clears it; a landed commit is never listed.
   6. gitignored chain (a3 G1/BC-3) with the REAL helper: 3 applies chain silently; a direct live edit is
@@ -268,15 +269,29 @@ _orig_run = m.Git.run
 
 def _hermetic_run(self, *args, stdin=None, check=False):      # the body's git sees the scrubbed env too
     r = subprocess.run(["git", "-C", str(self.repo), *args], input=stdin, capture_output=True, text=True,
-                       timeout=20, env=ENV)
+                       timeout=20, env=m.git_env(ENV) if hasattr(m, "git_env") else ENV)   # the body's own locale pin
     return r
 
 
 m.Git.run = _hermetic_run
 
 
+CACHE = TD / "mr.cache.json"          # seed #42358: ONE fact cache shared by every machine arm below, across merges,
+CACHE_DIFF = []                       # reverts and pushes; each eval runs cold AND cached and the two must agree
+_CACHED = "cache" in m.evaluate.__code__.co_varnames
+
+
 def ev(msgs, prose=(), earlier=lambda mid, pre, br=None: [{"id": 1, "from_agent": "builder", "to_agent": "abstractor-3"}]):
     st, no, tr, dom = m.evaluate(msgs, list(prose), earlier, T, now=NOW.timestamp())
+    if _CACHED:
+        if CACHE.exists():                # the oracle varies earlier_fn per call for one marker id; production's is a
+            import json as _j             # fixed query, so its time-safe evidence is cached and this one's is not
+            c = _j.loads(CACHE.read_text())
+            c["earlier"] = {}
+            CACHE.write_text(_j.dumps(c))
+        got = m.evaluate(msgs, list(prose), earlier, T, now=NOW.timestamp(), cache=CACHE)
+        if got != (st, no, tr, dom):
+            CACHE_DIFF.append((msgs[0]["id"] if msgs else None, (st, no), got[:2]))
     return ("\n".join(x[1] for x in st), "\n".join(x[1] for x in no), "\n".join(tr), dom, st, no)
 
 
@@ -502,6 +517,56 @@ check("a hold older than HOLD_DAYS → STANDING-HOLD (a defer can't go permanent
 # unresolvable, flags
 st, no, *_ = ev([msg(POST + 40, f"merge-ready: gone {'d' * 7}..{'e' * 7}")])
 check("an unresolvable range → a notice (never silently unwatched)", "does not resolve" in no, no)
+
+# a SYMBOLIC base (seed #42028): a4 #39172 `merge-ready: hands-s1-cell main..c84543f` read MALFORMED, and the notice
+# sat 28th of 42 — PASSED-not-merged for ~14h with no report naming it. A ref base means the ref AT THE MARKER'S TIME.
+SP = m.parse_markers([msg(POST + 50, "merge-ready: hs main..c84543f"),
+                      msg(POST + 51, "merge-ready: hs origin/main..c84543f (a4 PASS #1)"),
+                      msg(POST + 52, "review-request: hs main..c84543f")])
+check("a ref base (`main..<sha>`, `origin/main..<sha>`, a review-request too) PARSES, never MALFORMED",
+      not SP["malformed"] and [r["base"] for r in SP["ready"]] == ["main", "origin/main"]
+      and [r["base"] for r in SP["request"]] == ["main"], str(SP))
+git("checkout", "-q", "-b", "fs")
+s1 = commit("fs1.txt", "s1\n", "fs: one")
+s2 = commit("fs2.txt", "s2\n", "fs: two")
+git("checkout", "-q", "main")
+import time as _t
+_t.sleep(1.2)                                    # the reflog's clock is in seconds: stamp the marker AFTER main's entries
+SYM = msg(POST + 53, f"PASS\nmerge-ready: fs main..{s2[:7]}", sender="abstractor-4", ts=dt.datetime.now(dt.timezone.utc))
+st, no, *_ = ev([SYM])
+check("RED-FIRST: an unmerged head under a ref base → STANDING 'PASSED, not merged', exactly the branch's commits",
+      f"PASSED, not merged: {s1[:10]}" in st and f"PASSED, not merged: {s2[:10]}" in st
+      and st.count("PASSED, not merged") == 2 and "MALFORMED" not in no, st + " | " + no)
+check("  the line says what the ref was read as: main AT the marker's time, not today's",
+      "base main as main@{" in st and "today's" not in st, st)
+_t.sleep(1.2)                                    # ...and the merge must post-date the marker
+git("merge", "-q", "--no-ff", "-m", "merge fs", "fs")
+st, no, *_ = ev([SYM])
+check("merged AFTER the marker → MERGED-not-pushed, still the branch's 2 commits (the reflog keeps the range)",
+      f"MERGED, not pushed: {s1[:10]}" in st and f"MERGED, not pushed: {s2[:10]}" in st
+      and st.count("MERGED, not pushed") == 2 and "SYMBOLIC" not in no, st + " | " + no)
+check("  RED control: today's main as the base would read the range EMPTY (why the reflog is read)",
+      git("rev-list", f"{git('merge-base', 'main', s2)}..{s2}") == "")
+st, no, *_ = ev([msg(POST + 54, f"merge-ready: fs nosuchref..{s2[:7]}")])
+check("a ref that names nothing → a SYMBOLIC BASE notice naming the marker, 'nothing is watched'",
+      f"SYMBOLIC BASE #{POST + 54}" in no and "nothing is watched" in no and st == "", st + " | " + no)
+# a1 #42063: the "only goes back to" guard reads git's WORDS, so the reflog arms run under a translated locale —
+# gettext honours LANGUAGE over LANG, and a German warning must not read as no warning
+ENV["LANGUAGE"] = "de"
+st, no, *_ = ev([msg(POST + 55, f"merge-ready: fs main..{s2[:7]}", ts=NOW - dt.timedelta(days=3650))])
+check("a reflog that does not reach the marker's time, head already merged → a SYMBOLIC BASE notice, never EMPTY, "
+      "under LANGUAGE=de too (git answers the log's OLDEST entry there, rc 0, warning only on stderr — that base would be too early)",
+      f"SYMBOLIC BASE #{POST + 55}" in no and "can't be recovered" in no and "is EMPTY" not in no and st == "",
+      st + " | " + no)
+git("checkout", "-q", "-b", "fs2")
+s3 = commit("fs3.txt", "s3\n", "fs2: three")
+git("checkout", "-q", "main")
+st, no, *_ = ev([msg(POST + 56, f"merge-ready: fs2 main..{s3[:7]}", ts=NOW - dt.timedelta(days=3650))])
+check("  ...and an UNMERGED head before the log falls back to today's main: exactly its own commit, no wider",
+      f"PASSED, not merged: {s3[:10]}" in st and st.count("PASSED, not merged") == 1 and "today's main" in st,
+      st + " | " + no)
+del ENV["LANGUAGE"]
+git("push", "-q", "origin", "main")
 st, no, *_ = ev([R6], earlier=lambda mid, pre, br=None: [])
 check("UNREQUESTED prints for a marker no one asked for", f"UNREQUESTED #{POST + 30}" in no, no)
 st, no, *_ = ev([R6], earlier=lambda mid, pre, br=None: [{"id": 5, "from_agent": "abstractor-3", "to_agent": "abstractor-1"}])
@@ -539,6 +604,86 @@ st, no, *_ = ev([A3, OBJ])
 check("discharge (4): the patch LANDS while contested → a 'MERGED WHILE CONTESTED' notice, never a silent drop",
       f"MERGED WHILE CONTESTED: {c11[:10]}" in no and f"objected by abstractor-4 #{POST + 81}" in no
       and c11[:10] not in st, st + " | " + no)
+
+if _CACHED:
+    check("every machine arm above reads the SAME with the shared fact cache as cold (merges, reverts, pushes, "
+          "rebases between calls; seed #42358)", not CACHE_DIFF and CACHE.exists(), str(CACHE_DIFF[:2]))
+    _c = __import__("json").loads(CACHE.read_text())
+    check("  ...and the cache really held facts (patch-ids, subjects, cherry answers, main's log)",
+          len(_c.get("facts", {})) > 5 and _c.get("cherry") and _c.get("mainlog"), str({k: len(v) for k, v in _c.items()
+                                                                                       if isinstance(v, dict)}))
+    # prefetch must give EXACTLY pid()'s answer, merges included: `git show` hashes a merge's combined diff, `log -p`
+    # prints nothing for it (measured live 10-10: 4 of 40 merges re-keyed by the first batch). Section 4 made merges.
+    # a CONFLICT-RESOLVED merge: the only kind whose `git show` carries a combined diff (a clean one shows nothing)
+    git("checkout", "-q", "-b", "fx")
+    commit("clash.txt", "branch side\n", "fx: one side of a clash")
+    git("checkout", "-q", "main")
+    commit("clash.txt", "main side\n", "main: the other side")
+    git("merge", "--no-ff", "-m", "merge fx (resolved)", "fx", check=False)
+    (T / "clash.txt").write_text("resolved by hand\n")
+    git("add", "clash.txt")
+    git("-c", "core.editor=true", "commit", "-q", "--no-edit")
+    _cc = git("rev-parse", "HEAD")
+    check("  (control: the resolved merge's `git show` carries a combined diff, the shape that collides)",
+          "diff --cc" in git("show", "--no-color", "-U0", "--pretty=format:", _cc), _cc)
+    # a1 #42381: a merge has NO patch-id on either path; combined-diff ids COLLIDE across distinct merges (live:
+    # 1cba093 / c12c03b), so a second merge with an IDENTICAL resolution must not share the first one's key
+    git("checkout", "-q", "-b", "fy")
+    commit("clash.txt", "branch side again\n", "fy: another clash")
+    git("checkout", "-q", "main")
+    commit("clash.txt", "main side again\n", "main: the other side again")
+    git("merge", "--no-ff", "-m", "merge fy (resolved)", "fy", check=False)
+    (T / "clash.txt").write_text("resolved by hand\n")
+    git("add", "clash.txt")
+    git("-c", "core.editor=true", "commit", "-q", "--no-edit")
+    _cc2 = git("rev-parse", "HEAD")
+    _gk = m.Git(T)
+    check("two DISTINCT conflict-resolved merges never share a key: a merge has no patch-id (keys by its sha)",
+          _gk.pid(_cc) is None and _gk.pid(_cc2) is None and (_gk.pid(_cc) or _cc) != (_gk.pid(_cc2) or _cc2),
+          f"{_gk.pid(_cc)} {_gk.pid(_cc2)}")
+    MKM = msg(POST + 61, f"merge-ready: fxy {git('rev-parse', _cc + '^1')[:7]}..{_cc2[:7]}")
+    _cold = m.evaluate([MKM], [], lambda *a: [], T, now=NOW.timestamp())
+    MM = TD / "merge.cache.json"
+    m.evaluate([MKM], [], lambda *a: [], T, now=NOW.timestamp(), cache=MM)
+    check("a range CONTAINING conflict-resolved merges reads the same cold and from a warm cache",
+          m.evaluate([MKM], [], lambda *a: [], T, now=NOW.timestamp(), cache=MM) == _cold
+          and _cc2 in str(git("rev-list", f"{git('rev-parse', _cc + '^1')}..{_cc2}")), str(_cold[:2])[:300])
+    OTHER = TD / "other-body.cache.json"
+    OTHER.write_text(__import__("json").dumps({"v": "0" * 16, "facts": {c2: {"pid": "bogus", "np": 1}}}))
+    check("a cache written by a DIFFERENT body text is ignored (the version is the body's own hash; its bogus "
+          "patch-id changes nothing)", getattr(m, "CACHE_VERSION", None) not in (None, 1, "0" * 16)
+          and m.evaluate([MK2], [], lambda *a: [], T, now=NOW.timestamp(), cache=OTHER)
+          == m.evaluate([MK2], [], lambda *a: [], T, now=NOW.timestamp()), str(getattr(m, "CACHE_VERSION", None)))
+    _all = git("rev-list", "main").split()
+    _merges = git("rev-list", "--merges", "main").split()
+    _gb, _g1 = m.Git(T), m.Git(T)
+    _gb.prefetch(_all)
+    _bad = [c for c in _all if _gb.pid(c) != _g1.pid(c) or _gb.subject(c) != _g1.subject(c)]
+    check("prefetch's batched patch-ids and subjects equal pid()/subject() on every commit, MERGES included "
+          f"({len(_merges)} merge(s), {len(_all)} commits)", _merges and not _bad, str(_bad[:3]))
+    TORN = TD / "torn.cache.json"
+    TORN.write_text('{"v": 1, "facts": {')
+    cold = m.evaluate([MK2], [], lambda *a: [], T, now=NOW.timestamp())
+    check("a TORN cache file reads cold, never wrong", m.evaluate([MK2], [], lambda *a: [], T, now=NOW.timestamp(),
+                                                                  cache=TORN) == cold)
+    WRONGV = TD / "v0.cache.json"
+    WRONGV.write_text('{"v": 0, "facts": {"%s": {"pid": "bogus"}}}' % c2)
+    check("a cache of another VERSION is ignored (a bogus patch-id in it changes nothing)",
+          m.evaluate([MK2], [], lambda *a: [], T, now=NOW.timestamp(), cache=WRONGV) == cold)
+    # a cherry answer is keyed by the ref's EXACT sha: main moving must re-ask. A '+' (unlanded) answer cached under
+    # the old head, then the patch lands by cherry-pick (a NEW main head): the cached run must read MERGED too.
+    git("checkout", "-q", "-b", "fc")
+    cc = commit("fc.txt", "fc\n", "fc: cached then landed")
+    git("checkout", "-q", "main")
+    MKC = msg(POST + 60, f"merge-ready: fc {git('merge-base', 'main', cc)[:7]}..{cc[:7]}")
+    MC = TD / "move.cache.json"
+    st1 = m.evaluate([MKC], [], lambda *a: [], T, now=NOW.timestamp(), cache=MC)[0]
+    commit("fc-move.txt", "x\n", "main moves before the pick")
+    git("cherry-pick", cc)
+    st2 = m.evaluate([MKC], [], lambda *a: [], T, now=NOW.timestamp(), cache=MC)[0]
+    check("a cherry answer cached under main's OLD head is not reused once main moves: PASSED → MERGED",
+          any("PASSED, not merged" in x[1] for x in st1) and any("MERGED, not pushed" in x[1] for x in st2), f"{st1} | {st2}")
+    git("push", "-q", "origin", "main")
 
 # ------------------------------------------------------------------------------------------------ 5
 print("\n5. prose coverage + adoption boundary (a1 BC-2):")
@@ -754,6 +899,15 @@ check("across budgets 600..3000: every non-empty section is SHOWN or COUNTED in 
       "(a1 #41745 R1)", not lost, str(lost[:6]))
 check("...and the report never exceeds its budget", not over, str(over[:4]))
 check("the header counts silencers too", "2 silencer(s)" in m.render([ACT[1]], BIG, TR, "D").splitlines()[0])
+# seed #42028: notices pinned to a marker message stand for weeks; the one the set just changed by must be SHOWN
+OLDN = [(f"unres:{i}", f"#{i} by a: supersedes x..y does not resolve") for i in range(100, 130)]
+FRESH = ("bad:39172:merge-ready: hs main..c8", "MALFORMED marker #39172 by abstractor-4: `merge-ready: hs …`")
+LIVEN = ("dis:abc", "abc: INSTRUMENTS DISAGREE — squash")
+r2 = m.render([], OLDN + [FRESH, LIVEN], [], "DOMAIN: d")
+check("a FRESH pinned notice behind 30 stale ones is shown, ahead of them (newest first)",
+      FRESH[1] in r2 and r2.index(FRESH[1]) < r2.index("#129 by a"), r2[:600])
+check("  a state-derived notice (it clears itself) leads the pinned ones",
+      -1 < r2.find(LIVEN[1]) < r2.find(FRESH[1]), r2[:400])
 
 # ------------------------------------------------------------------------------------------------ 9
 print("\n9. entrypoint (pulse_run.Ctx on a sqlguard fixture):")
@@ -844,6 +998,21 @@ if fx is not None:
         _fx.__exit__(None, None, None)
 
 m.Git.run = _orig_run
+# a1 #42072 R2: the hermetic runner takes git_env, so it can't see the PRODUCTION line — Git.run passing it. This arm
+# runs the REAL Git.run under a translated locale on the hermetic repo (main's reflog has many entries, so a date
+# before it answers the OLDEST entry, rc 0, and only the warning says so). Mutant: drop Git.run's env= → RED here.
+print("\n12. the production Git.run speaks C (a1 #42063, #42072):")
+_lang = os.environ.get("LANGUAGE")
+os.environ["LANGUAGE"] = "de"
+try:
+    r = m.Git(T).run("rev-parse", "--verify", "main@{2001-01-01 00:00:00 +0000}^{commit}")
+    check("the REAL Git.run, LANGUAGE=de, a date before the reflog: rc 0 and the warning in ENGLISH (the guard's words)",
+          r.returncode == 0 and "only goes back to" in r.stderr, f"rc={r.returncode} stderr={r.stderr.strip()[:120]}")
+finally:
+    if _lang is None:
+        os.environ.pop("LANGUAGE", None)
+    else:
+        os.environ["LANGUAGE"] = _lang
 if fails:
     print(f"\nFAIL: {len(fails)} arm(s)")
     sys.exit(1)

@@ -156,7 +156,24 @@
           "description": "Run a registered script by its registry id (e.g. script:nucleus/smoke.sh) with an argv"
         }
       ]
+    },
+    {
+      "server": "jobs",
+      "tools": [
+        {
+          "name": "ats_job",
+          "description": "One public job posting, read from its ATS's public JSON API (Greenhouse, Lever, Ashby)."
+        },
+        {
+          "name": "ats_board",
+          "description": "Live postings on one Greenhouse / Lever / Ashby board (ats = greenhouse|lever|ashby),"
+        },
+        {
+          "name": "uk_sponsor_check",
+          "description": "Look organisations up on the UK Home Office Register of Licensed Sponsors (Workers)."
+        }
+      ]
     }
   ],
-  "total_tools": 28
+  "total_tools": 31
 }

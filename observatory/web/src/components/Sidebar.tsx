@@ -9,6 +9,7 @@ import type { Route } from '../App'
 import ThemePicker from './ThemePicker'
 import { LiveDot, Orb, useNow } from '../ui/kit'
 import { moodOf, nowLine } from '../ui/life'
+import { HandBadge } from '../ui/hands'
 
 export const LINKS: { tab: Route['tab']; label: string; icon: string; hint: string }[] = [
   { tab: 'floor', label: 'Floor', icon: '◉', hint: 'the org as a room' },
@@ -95,6 +96,7 @@ export default function Sidebar({ route, onOpenAgent }: { route: Route; onOpenAg
                         <span className={`block text-[13px] truncate ${mood === 'asleep' ? 'text-ink-mute' : 'text-ink-dim group-hover:text-ink'}`}>{displayName(a.agent)}</span>
                         {mood === 'working' && <span className="block text-[10.5px] font-mono text-cyan/80 truncate">{line}</span>}
                       </span>
+                      <HandBadge agent={a.agent} size={12} />
                       <LiveDot state={mood} />
                     </button>
                   )

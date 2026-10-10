@@ -312,6 +312,14 @@ PYEOF
 #   halt     — a PERMANENT boundary the org can't drive (missing tool, human login) →
 #              report, don't spin. Interior converges around it; the human resolves it.
 dsn() { grep '^ASTRYX_DSN=' .env 2>/dev/null | cut -d= -f2-; }
+# ok | unverified | "wide <addr …>": is anything but loopback listening on port $1? (doctor; a2 #42283)
+_pg_exposure() {
+  local out wide
+  out=$(ss -ltnH 2>/dev/null) || { echo unverified; return; }
+  [ -n "$out" ] || { echo unverified; return; }
+  wide=$(printf '%s\n' "$out" | awk '{print $4}' | grep -E ":$1\$" | grep -vE '^(127\.|\[::1\]|::1)' | sort -u | tr '\n' ' ')
+  [ -z "$wide" ] && echo ok || echo "wide $wide"
+}
 psql_q() { if command -v psql >/dev/null; then psql "$(dsn)" "$@"
   else docker exec -i astryx-pg psql -U astryx -d astryx "$@"; fi; }
 
@@ -413,6 +421,11 @@ _act_harden() { say "revoking PUBLIC CONNECT on the org's databases (plan-4918 P
 _chk_peoplegate() { venv/bin/python -m nucleus.people_gate check; }
 _act_peoplegate() { say "people gate: relation details readable only by people_cleared (accident-grade)"
   venv/bin/python -m nucleus.people_gate apply >/dev/null; }
+# The derived graph databases, as social_age.DESIGN declares them (owner 10-10: "the design on github should match
+# local"). ensure creates a missing database or extension, then rebuilds; the check is read-only.
+_chk_derivedgraphs() { venv/bin/python nucleus/social_age.py check >/dev/null; }
+_act_derivedgraphs() { say "derived graphs: astryx_social / astryx_people as social_age.DESIGN declares"
+  venv/bin/python nucleus/social_age.py ensure >/dev/null; }
 
 # >>> dispatcher link
 # The repo's `astryx` is a TRACKED symlink to the RELATIVE `init.sh`. Rewriting it to "$PWD/init.sh" dirtied the tree
@@ -560,7 +573,7 @@ _act_model() {
 # the precondition DAG, in dependency order (top depends on nothing).  name|class
 RECONCILE_NODES=(
   "pg|interior" "pgready|wait" "schema|interior" "harden|interior" "hardencut|halt" "venv|interior" "deps|interior"
-  "peoplegate|interior" "model|interior" "chan|interior" "obs|interior" "obskey|interior" "ident|interior"
+  "peoplegate|interior" "derivedgraphs|interior" "model|interior" "chan|interior" "obs|interior" "obskey|interior" "ident|interior"
   "units|interior" "law|interior" "prehook|interior" "ccompact|interior" "prreview|interior" "login|halt"
   "seed|interior" "prompt|interior")
 
@@ -688,6 +701,7 @@ if [ "${1:-}" = "doctor" ]; then
   set +e +o pipefail
   ok() { echo -e "  \033[32m✓\033[0m $*"; }
   bad() { echo -e "  \033[31m✗\033[0m $*"; FAIL=1; }
+  warn() { echo -e "  \033[33m○\033[0m $*"; }
   FAIL=""
   # install hint per platform
   if command -v pacman >/dev/null; then PKG="sudo pacman -S"
@@ -725,6 +739,15 @@ if [ "${1:-}" = "doctor" ]; then
   if [ -f .env ]; then
     DSN=$(grep '^ASTRYX_DSN=' .env | cut -d= -f2-)
     psql "$DSN" -c 'SELECT 1' >/dev/null 2>&1 && ok "postgres reachable" || bad "postgres unreachable (docker start astryx-pg?)"
+    # every org's database is LOCALHOST-ONLY (owner, 2026-10-10): any listener on the DSN's port
+    # that isn't loopback is a database a LAN (or the world) can knock on. An instrument that can't
+    # look must not report what it would have seen (a2 #42283): no ss listing → UNVERIFIED, never ok.
+    _pgport=$(printf '%s' "$DSN" | sed -nE 's#^[a-z]+://[^@]*@[^:/]+:([0-9]+).*#\1#p'); _pgport=${_pgport:-5432}
+    case "$(_pg_exposure "$_pgport")" in
+      ok)          ok "postgres listens on localhost only (port $_pgport)" ;;
+      unverified)  warn "postgres exposure UNVERIFIED: \`ss\` gave no listener table (not Linux, or ss missing)" ;;
+      *)           bad "postgres port $_pgport is reachable beyond localhost: $(_pg_exposure "$_pgport" | cut -d' ' -f2-) — publish it as 127.0.0.1:$_pgport only" ;;
+    esac
     _chk_schema && ok "schema applied (this database carries the current schema.sql's stamp)" \
       || bad "schema missing or STALE (schema.sql changed since its last apply) — rerun ./init.sh"
     if _cut=$(_cut_dbs 2>/dev/null); then                    # the harden node's HELD databases, named (a3 #33510)

@@ -45,8 +45,8 @@ spec = importlib.util.spec_from_file_location("bridges._wa_subject", SUBJECT)
 wa = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(wa)
 
-CHAT = "120000000000000001@g.us"          # synthetic ids, shaped like the real forms
-OWNER = "100000000000001@lid"
+CHAT = "wa-test-group@g.us"               # fake-in-shape ids (no digit run: privacy_gate (c)); /hook only compares them
+OWNER = "wa-test-owner@lid"
 ROUTE = {"chat": CHAT, "agent": "seed", "open": False, "trusted_jids": [OWNER]}
 fails = []
 

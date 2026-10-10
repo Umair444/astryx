@@ -4,6 +4,7 @@ import { useStore } from '../store'
 import { displayName, fmtAgo } from '../api'
 import type { AgentRow } from '../types'
 import AgentFace from './AgentFace'
+import { HandBadge } from '../ui/hands'
 import { FRESH_PRESENCE, moodOf, nowLine } from '../ui/life'
 
 /* THE FLOOR — the org as a place, its agents as people in it (owner vision, 2026-10-09:
@@ -252,6 +253,7 @@ export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) =>
                   : mood === 'awake' ? '0 0 0 2px color-mix(in srgb, var(--t-good) 70%, transparent)' : '0 0 0 1px var(--t-line)' }}>
                 <AgentFace name={a.agent} size={52} dim={mood === 'asleep'} />
                 {mood === 'working' && <span className="absolute -inset-1.5 rounded-full border-2 border-cyan/60 border-t-transparent animate-spin" style={{ animationDuration: '2.4s' }} />}
+                <HandBadge agent={a.agent} size={13} className="absolute -right-2 -bottom-1 z-10" />
               </motion.span>
               <span className="text-[12px] font-medium text-ink leading-tight">{displayName(a.agent)}</span>
               {(mood === 'working' || freshP || hover === a.agent) && (

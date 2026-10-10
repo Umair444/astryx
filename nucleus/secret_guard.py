@@ -41,7 +41,7 @@ QUARANTINE = Path.home() / ".astryx-quarantine"
 # read-back shapes the leaking transcripts actually show (Read of .env; cat/grep/sed printing it).
 PRINTERS = frozenset({"cat", "head", "tail", "grep", "egrep", "fgrep", "rg", "sed", "awk", "gawk",
                       "less", "more", "strings", "xxd", "od", "hexdump", "nl", "tac", "sort", "uniq",
-                      "cut", "jq", "tr", "column", "bat", "diff", "xargs",
+                      "cut", "jq", "tr", "column", "bat", "diff", "xargs", "base64", "base32", "basenc", "dd",
                       # print nothing but MINT an undeclared copy (a2 #27600: 20 review copies)
                       "cp", "rsync", "tar", "scp", "install"})
 WRAPPERS = frozenset({"sudo", "env", "timeout", "nice", "nohup", "xargs", "command", "exec"})
@@ -114,13 +114,26 @@ BY_NAME = frozenset({".env", ".pgpass"})     # secret-bearing by convention, whe
 _PROC_ENVIRON = re.compile(r"^/proc/[^/]+/(task/[^/]+/)?environ$")
 
 
-def _is_holder_path(p: str, holders: list[Path]) -> bool:
+def _expand(p: str) -> str:
+    """~ and $HOME/${HOME} only, as nucleus/grep_guard.py (a3 BC-3: `cat "$HOME/.config/gh/hosts.yml"`
+    passed). Any other variable stays unexpanded, so it names no holder: the declared ALLOW polarity."""
+    home = str(Path.home())
+    return os.path.expanduser(p.replace("${HOME}", home).replace("$HOME", home))
+
+
+def _at(p: str, here: Path | None) -> str:
+    """p as the shell would open it: ~/$HOME expanded, a relative path taken from the tracked `cd`."""
+    e = _expand(p)
+    return str(here / e) if here is not None and not os.path.isabs(e) else e
+
+
+def _is_holder_path(p: str, holders: list[Path], here: Path | None = None) -> bool:
     try:
-        rp = Path(os.path.realpath(os.path.expanduser(p)))
+        rp = Path(os.path.realpath(_at(p, here)))
     except (OSError, ValueError):
         return False
     return (rp in holders or Path(p).name in BY_NAME or rp.name in BY_NAME
-            or bool(_PROC_ENVIRON.match(os.path.expanduser(p))) or bool(_PROC_ENVIRON.match(str(rp)))
+            or bool(_PROC_ENVIRON.match(_expand(p))) or bool(_PROC_ENVIRON.match(str(rp)))
             or QUARANTINE in rp.parents or rp == QUARANTINE)
 
 
@@ -132,14 +145,75 @@ def _tokens(cmd: str) -> list[str]:
         return cmd.split()
 
 
-def _names_holder(args: list[str], holders: list[Path]) -> bool:
+def _names_holder(args: list[str], holders: list[Path], here: Path | None = None) -> bool:
     """A whole TOKEN is a holder path (by name, by the manifest, or in the quarantine). A regex or
     prose that merely CONTAINS ".env" is not (the first draft denied grep -E '(\\.env|venv)')."""
     for t in args:
         t = t.lstrip("<>")                                # `cat <.env`, `2>x`
+        t = t[3:] if t.startswith("if=") else t           # dd's input operand (a3 #42337)
         if not t or t.startswith("-"):
             continue
-        if Path(t).name in BY_NAME or ".astryx-quarantine" in t or _is_holder_path(t, holders):
+        if Path(t).name in BY_NAME or ".astryx-quarantine" in t or _is_holder_path(t, holders, here):
+            return True
+        if any(c in t for c in "*?["):                    # `cat ~/.ssh/*`: the shell globs, so do we
+            import glob
+            if any(_is_holder_path(g, holders) for g in glob.glob(_at(t, here))):
+                return True
+    return False
+
+
+# printers that descend into a DIRECTORY argument: grep -r prints every file under it (a3 BC-3)
+_RECURSE_FLAGS = {"grep": set("rR"), "egrep": set("rR"), "fgrep": set("rR"), "cp": set("rRa"),
+                  "scp": set("r")}
+_RECURSE_ALWAYS = frozenset({"rg", "rsync", "tar"})
+
+
+def _recurses(first: str, args: list[str]) -> bool:
+    if first in _RECURSE_ALWAYS:
+        return True
+    short = _RECURSE_FLAGS.get(first)
+    return bool(short) and any(a in ("--recursive", "--dereference-recursive", "--archive") or
+                               (a.startswith("-") and not a.startswith("--") and short & set(a[1:]))
+                               for a in args)
+
+
+def _names_holder_ancestor(args: list[str], holders: list[Path], here: Path | None = None) -> bool:
+    """A directory argument that CONTAINS a holder outside the repo (~/.ssh, ~/.config/gh). In-repo
+    holders are left out on purpose: `grep -rn X .` from the repo root is the org's commonest search,
+    and denying it would train agents around the guard (the measured-noise rule above)."""
+    outside = [h for h in holders if ss.REPO not in h.parents]
+    for t in args:
+        if not t or t.startswith("-"):
+            continue
+        try:
+            d = Path(os.path.realpath(_at(t, here)))
+        except (OSError, ValueError):
+            continue
+        if d.is_dir() and any(d in h.parents for h in outside):
+            return True
+    return False
+
+
+# Commands that print the GitHub write token with no file named (a3 BC-3 #42315, #42337). Nobody
+# needs it in context: gh and git's credential helper read it themselves. One place: the next
+# token-printing verb is a one-line add here. (command word, leading args, a flag that must appear
+# (None = any), the short-flag letter that means the same thing)
+TOKEN_PRINTERS = (
+    ("gh", ["auth", "token"], None, None),
+    ("gh", ["auth", "status"], "--show-token", "t"),
+    ("gh", ["config", "get", "oauth_token"], None, None),
+    ("gh", ["auth", "git-credential", "get"], None, None),
+    ("git", ["credential", "fill"], None, None),          # answers password=<token> via gh's helper
+)
+
+
+def _prints_token(first: str, args: list[str]) -> bool:
+    for cmd, lead, flag, short in TOKEN_PRINTERS:
+        if first != cmd or args[:len(lead)] != lead:
+            continue
+        rest = args[len(lead):]
+        if flag is None or any(a == flag or (short and a.startswith("-") and not a.startswith("--")
+                                             and short in a[1:]) for a in rest):
             return True
     return False
 
@@ -171,10 +245,22 @@ def _bash_reason(cmd: str, holders: list[Path]) -> str | None:
     quiet, prev = cmd, None
     while quiet != prev:                                  # innermost-first: a command
         prev, quiet = quiet, _SUBST.sub(" ", quiet)       # substitution's output is consumed
+    here = None                                           # unknown = the hook's own cwd
     for simple in _simple_commands(quiet):
-        first, args = _command_word(_tokens(simple))
-        if first in PRINTERS and not _prints_nothing(first, args) and _names_holder(args, holders):
+        words = _tokens(simple)
+        if words[:1] == ["cd"]:                           # `cd ~/.ssh && cat id_ed25519` (a3 #42337;
+            target = words[1] if len(words) > 1 else "~"  # grep_guard.py's loop)
+            if not target.startswith("-"):
+                here = Path(os.path.realpath(_at(target, here)))
+            continue
+        first, args = _command_word(words)
+        if first in PRINTERS and not _prints_nothing(first, args) and _names_holder(args, holders, here):
             return f"Bash `{first}` on a declared secret holder would print or copy it. {HINT}"
+        if (first in PRINTERS and not _prints_nothing(first, args) and _recurses(first, args)
+                and _names_holder_ancestor(args, holders, here)):
+            return f"Bash `{first}` would descend into a directory holding a declared secret. {HINT}"
+        if _prints_token(first, args):
+            return f"`{first} {' '.join(args[:3])}` prints the GitHub write token; gh and git read it themselves. {HINT}"
     return None
 
 

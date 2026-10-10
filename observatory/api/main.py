@@ -3152,6 +3152,125 @@ async def _pipe(url: str, request: Request, owner_key: bool, down: str):
     return resp
 
 
+# ---------------------------------------------------------------- access log: no keys
+# ?key= must never reach journald in clear (a3 #42085 F2): nucleus/logredact.py.
+from nucleus import logredact as _logredact  # noqa: E402
+_logredact.install()
+
+
+# ---------------------------------------------------------------- hands (plan-7862)
+# Each agent's own desktop on this machine (nucleus/hands_desktop.py). The owner watches it live,
+# joins in, and stops it here. OWNER ONLY, every route: a desktop holds his logged-in sessions.
+from fastapi import HTTPException as _HTTPException, WebSocket, WebSocketDisconnect  # noqa: E402
+from nucleus import hands_desktop as _hands  # noqa: E402
+
+
+def _hands_owner(request: Request) -> None:
+    if not is_owner(request):
+        raise _HTTPException(403, "owner only")
+
+
+
+@app.get("/api/hands")
+async def hands_list(request: Request):
+    _hands_owner(request)
+    return await asyncio.to_thread(_hands.status)
+
+
+@app.post("/api/hands/{agent}/stop")
+async def hands_stop(agent: str, request: Request):
+    _hands_owner(request)
+    await asyncio.to_thread(_hands.stop, agent, "the owner stopped your hands")
+    return {"ok": True}
+
+
+@app.post("/api/hands/{agent}/resume")
+async def hands_resume(agent: str, request: Request):
+    _hands_owner(request)
+    await asyncio.to_thread(_hands.resume, agent)
+    return {"ok": True}
+
+
+@app.post("/api/hands/{agent}/up")
+async def hands_up(agent: str, request: Request):
+    _hands_owner(request)
+    try:
+        return await asyncio.to_thread(_hands.up, agent)
+    except _hands.HandsError as e:
+        raise _HTTPException(409, str(e))
+
+
+@app.post("/api/hands/{agent}/down")
+async def hands_down(agent: str, request: Request):
+    _hands_owner(request)
+    return {"ok": await asyncio.to_thread(_hands.down, agent)}
+
+
+@app.get("/api/hands/{agent}/shot.jpg")
+async def hands_shot(agent: str, request: Request):
+    _hands_owner(request)
+    try:
+        jpg = await asyncio.to_thread(_hands.screenshot, agent, 60)
+    except _hands.HandsError as e:
+        raise _HTTPException(404, str(e))
+    return Response(jpg, media_type="image/jpeg", headers={"cache-control": "no-store"})
+
+
+@app.websocket("/api/hands/{agent}/vnc")
+async def hands_vnc(ws: WebSocket, agent: str):
+    """The live desktop for noVNC: a byte pipe from this websocket to the agent's wayvnc on
+    loopback. The key rides in the query string (a browser websocket can't send headers)."""
+    key = ws.query_params.get("key", "")
+    if not (OBS_KEY and secrets.compare_digest(key, OBS_KEY)):
+        await ws.close(code=4403)
+        return
+    st = await asyncio.to_thread(_hands.status, agent)
+    port = st.get("vnc_port") if isinstance(st, dict) else None
+    if not port:
+        await ws.close(code=4404)
+        return
+    proto = ws.headers.get("sec-websocket-protocol", "")
+    await ws.accept(subprotocol="binary" if "binary" in proto else None)
+    try:
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    except OSError:
+        await ws.close(code=4502)
+        return
+
+    async def up_():
+        try:
+            while True:
+                msg = await ws.receive()
+                if msg["type"] == "websocket.disconnect":
+                    break
+                data = msg.get("bytes") or (msg.get("text") or "").encode()
+                if data:
+                    writer.write(data)
+                    await writer.drain()
+        except (WebSocketDisconnect, ConnectionError, RuntimeError):
+            pass
+
+    async def down_():
+        try:
+            while True:
+                data = await reader.read(65536)
+                if not data:
+                    break
+                await ws.send_bytes(data)
+        except (WebSocketDisconnect, ConnectionError, RuntimeError):
+            pass
+
+    tasks = [asyncio.create_task(up_()), asyncio.create_task(down_())]
+    await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    for t in tasks:
+        t.cancel()
+    writer.close()
+    try:
+        await ws.close()
+    except RuntimeError:
+        pass
+
+
 # ---------------------------------------------------------------- static SPA
 if DIST.is_dir():
     @app.get("/")
