@@ -276,8 +276,22 @@ def _hermetic_run(self, *args, stdin=None, check=False):      # the body's git s
 m.Git.run = _hermetic_run
 
 
+CACHE = TD / "mr.cache.json"          # seed #42358: ONE fact cache shared by every machine arm below, across merges,
+CACHE_DIFF = []                       # reverts and pushes; each eval runs cold AND cached and the two must agree
+_CACHED = "cache" in m.evaluate.__code__.co_varnames
+
+
 def ev(msgs, prose=(), earlier=lambda mid, pre, br=None: [{"id": 1, "from_agent": "builder", "to_agent": "abstractor-3"}]):
     st, no, tr, dom = m.evaluate(msgs, list(prose), earlier, T, now=NOW.timestamp())
+    if _CACHED:
+        if CACHE.exists():                # the oracle varies earlier_fn per call for one marker id; production's is a
+            import json as _j             # fixed query, so its time-safe evidence is cached and this one's is not
+            c = _j.loads(CACHE.read_text())
+            c["earlier"] = {}
+            CACHE.write_text(_j.dumps(c))
+        got = m.evaluate(msgs, list(prose), earlier, T, now=NOW.timestamp(), cache=CACHE)
+        if got != (st, no, tr, dom):
+            CACHE_DIFF.append((msgs[0]["id"] if msgs else None, (st, no), got[:2]))
     return ("\n".join(x[1] for x in st), "\n".join(x[1] for x in no), "\n".join(tr), dom, st, no)
 
 
@@ -590,6 +604,37 @@ st, no, *_ = ev([A3, OBJ])
 check("discharge (4): the patch LANDS while contested → a 'MERGED WHILE CONTESTED' notice, never a silent drop",
       f"MERGED WHILE CONTESTED: {c11[:10]}" in no and f"objected by abstractor-4 #{POST + 81}" in no
       and c11[:10] not in st, st + " | " + no)
+
+if _CACHED:
+    check("every machine arm above reads the SAME with the shared fact cache as cold (merges, reverts, pushes, "
+          "rebases between calls; seed #42358)", not CACHE_DIFF and CACHE.exists(), str(CACHE_DIFF[:2]))
+    _c = __import__("json").loads(CACHE.read_text())
+    check("  ...and the cache really held facts (patch-ids, subjects, cherry answers, main's log)",
+          len(_c.get("facts", {})) > 5 and _c.get("cherry") and _c.get("mainlog"), str({k: len(v) for k, v in _c.items()
+                                                                                       if isinstance(v, dict)}))
+    TORN = TD / "torn.cache.json"
+    TORN.write_text('{"v": 1, "facts": {')
+    cold = m.evaluate([MK2], [], lambda *a: [], T, now=NOW.timestamp())
+    check("a TORN cache file reads cold, never wrong", m.evaluate([MK2], [], lambda *a: [], T, now=NOW.timestamp(),
+                                                                  cache=TORN) == cold)
+    WRONGV = TD / "v0.cache.json"
+    WRONGV.write_text('{"v": 0, "facts": {"%s": {"pid": "bogus"}}}' % c2)
+    check("a cache of another VERSION is ignored (a bogus patch-id in it changes nothing)",
+          m.evaluate([MK2], [], lambda *a: [], T, now=NOW.timestamp(), cache=WRONGV) == cold)
+    # a cherry answer is keyed by the ref's EXACT sha: main moving must re-ask. A '+' (unlanded) answer cached under
+    # the old head, then the patch lands by cherry-pick (a NEW main head): the cached run must read MERGED too.
+    git("checkout", "-q", "-b", "fc")
+    cc = commit("fc.txt", "fc\n", "fc: cached then landed")
+    git("checkout", "-q", "main")
+    MKC = msg(POST + 60, f"merge-ready: fc {git('merge-base', 'main', cc)[:7]}..{cc[:7]}")
+    MC = TD / "move.cache.json"
+    st1 = m.evaluate([MKC], [], lambda *a: [], T, now=NOW.timestamp(), cache=MC)[0]
+    commit("fc-move.txt", "x\n", "main moves before the pick")
+    git("cherry-pick", cc)
+    st2 = m.evaluate([MKC], [], lambda *a: [], T, now=NOW.timestamp(), cache=MC)[0]
+    check("a cherry answer cached under main's OLD head is not reused once main moves: PASSED → MERGED",
+          any("PASSED, not merged" in x[1] for x in st1) and any("MERGED, not pushed" in x[1] for x in st2), f"{st1} | {st2}")
+    git("push", "-q", "origin", "main")
 
 # ------------------------------------------------------------------------------------------------ 5
 print("\n5. prose coverage + adoption boundary (a1 BC-2):")
