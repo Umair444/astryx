@@ -1,21 +1,27 @@
-import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type PointerEvent } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, MotionConfig, motion } from 'motion/react'
 import AgentFace from './AgentFace'
 import { useTheme } from '../theme'
+import { CONFIRM_ARM_MS } from '../pilot/core'
 
 /* plan-9000 S2 SURFACE: the voice orb the ear pill expands into. Visual only: it opens no socket, spends nothing and
-   sends nothing. The S2 wiring feeds it props and receives two callbacks, onConfirm(nonce) and onDismiss(nonce).
+   sends nothing. The wiring (VoicePilot) feeds it props, a bind for the confirm button, and onDismiss(nonce).
 
-   THE CONFIRM is the owner-tap enforcement point (a4 #44109 + arm (v) #44113), so its rules live HERE, in the one
-   element that can say yes to a write or an actuate:
-   - pointer activation only: the click must follow a trusted pointerdown (mouse, touch or pen) on this element.
-     Keyboard activation (Enter or Space on a focused button, detail 0) never confirms. That is a deliberate a11y cost:
-     a keyboard-only owner can't confirm from here.
-   - inert for INERT_MS after it is first painted, so the model can't place a prompt under an in-flight click;
-   - never focusable (tabIndex -1, and a focus is dropped at once), so no view action can park it under Space;
-   - keyed by nonce: a new request is a new element with a new inert window, never an in-place text change;
-   - its words come from the VALIDATED call (action name plus enum args) only. There is no prose prop, so the model
+   THE CONFIRM decides nothing itself. Its button is handed to `bind`, which in the app is pilot/Confirm.tsx's
+   bindPilotConfirm: the executor's dwell starts at that bind, and the button's NATIVE click goes to pilot.confirm,
+   which checks isTrusted, the pointerType (mouse, touch or pen; a key is refused), currentTarget === this button and
+   CONFIRM_ARM_MS since the bind (a4 #44109, #44113 v, #44264). No prop carries a nonce toward the executor without
+   that event. What this file adds:
+   - the bind waits for the prompt's entrance to finish, so the dwell is spent on a prompt that is fully on screen
+     (a4 #44264 note); the fill bar shows that dwell, and the button reads disabled until it ends;
+   - never focusable (tabIndex -1, and a focus is dropped at once), and Enter or Space on it is swallowed. That is a
+     deliberate a11y cost: a keyboard-only owner can't confirm from here (or from S1's prompt);
+   - keyed by nonce: a new request is a new element, bound afresh, never an in-place text change; no exit animation,
+     so a replaced prompt leaves the page at once;
+   - its words come from the VALIDATED call (action name plus args) only. There is no prose prop, so the model
      can't word the question the owner says yes to.
+   The data-pilot-confirm / data-pilot-allow attributes match S1's prompt, so tests/pilot_browser_test.mjs finds
+   whichever one is showing.
 
    reply is SCREEN-ONLY (C1 phase 1): it's rendered here and nothing in this file speaks or sends it.
    Reduced motion: the orb draws one still frame and every spring becomes instant (MotionConfig "user"). */
@@ -24,12 +30,12 @@ export type OrbState = 'idle' | 'listening' | 'thinking' | 'speaking' | 'working
 export type OrbRole = 'listening' | 'working' | 'speaking'
 export interface OrbAgent { name: string; role: OrbRole }
 export interface OrbReply { agent: string; text: string }
-export type ArgValue = string | number | boolean
-export interface OrbConfirm { nonce: string; action: string; args: Record<string, ArgValue> }
+export interface OrbConfirm { nonce: string; action: string; args: Record<string, unknown> }
+/** binds `el` as the confirm for `nonce`; `refused` hears why a tap didn't run; returns the unbind */
+export type OrbBind = (nonce: string, el: HTMLElement, refused: (why: string) => void) => () => void
 type Level = number | (() => number)
 
-export const INERT_MS = 500
-const POINTERS = new Set(['mouse', 'touch', 'pen'])
+export const INERT_MS = CONFIRM_ARM_MS                       // the fill bar shows the executor's own dwell
 const WORD: Record<OrbState, string> = { idle: 'Ready', listening: 'Listening', thinking: 'Thinking', speaking: 'Speaking', working: 'Working' }
 const still = () => {
   try { return matchMedia('(prefers-reduced-motion: reduce)').matches } catch { return false }
@@ -196,37 +202,28 @@ function Faces({ agents }: { agents: OrbAgent[] }) {
 // ------------------------------------------------------------------ the confirm
 const human = (s: string) => s.replace(/[_-]+/g, ' ').replace(/^\w/, (c) => c.toUpperCase())
 
-function ConfirmPrompt({ confirm, onConfirm, onDismiss }: {
+function ConfirmPrompt({ confirm, bind, onDismiss }: {
   confirm: OrbConfirm
-  onConfirm: (nonce: string) => void
+  bind: OrbBind
   onDismiss: (nonce: string) => void
 }) {
-  const shown = useRef(Infinity)                                   // performance.now() of first paint; inert until then
-  const armed = useRef(false)                                      // a trusted pointerdown landed here after the window
-  const [ready, setReady] = useState(false)
-  useLayoutEffect(() => {
-    let t = 0
-    const raf = requestAnimationFrame(() => {
-      shown.current = performance.now()
-      t = window.setTimeout(() => setReady(true), INERT_MS)
-    })
-    return () => { cancelAnimationFrame(raf); clearTimeout(t) }
-  }, [])
-  const open = (ts: number) => ts - shown.current >= INERT_MS
-
-  const down = (e: PointerEvent<HTMLButtonElement>) => {
-    armed.current = e.isTrusted && POINTERS.has(e.pointerType) && e.isPrimary && open(e.timeStamp)
-  }
-  const click = (e: MouseEvent<HTMLButtonElement>) => {
-    const ok = armed.current && e.isTrusted && e.detail > 0 && open(e.timeStamp)
-    armed.current = false
-    if (ok) onConfirm(confirm.nonce)
-  }
+  const btn = useRef<HTMLButtonElement>(null)
+  const [entered, setEntered] = useState(false)                    // the entrance has finished; bind from here
+  const [ready, setReady] = useState(false)                        // the executor's dwell has passed
+  const [why, setWhy] = useState('')
+  useEffect(() => {
+    const el = btn.current
+    if (!entered || !el) return
+    const unbind = bind(confirm.nonce, el, setWhy)
+    const t = window.setTimeout(() => setReady(true), INERT_MS)
+    return () => { unbind(); clearTimeout(t) }
+  }, [entered, bind, confirm.nonce])
   const args = Object.entries(confirm.args)
 
   return (
-    <motion.div role="alertdialog" aria-label={`Confirm ${human(confirm.action)}`} data-nonce={confirm.nonce}
-      initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+    <motion.div role="alertdialog" aria-label={`Confirm ${human(confirm.action)}`} data-nonce={confirm.nonce} data-pilot-confirm={confirm.nonce}
+      initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2, ease: 'easeOut' }}
+      onAnimationComplete={() => setEntered(true)}
       className="rounded-2xl border border-line bg-deck-2 px-4 py-3.5">
       <div className="text-[11px] uppercase tracking-[.08em] text-ink-mute">Needs your tap</div>
       <div className="lib-display text-[22px] leading-tight text-ink mt-1">{human(confirm.action)}</div>
@@ -235,17 +232,17 @@ function ConfirmPrompt({ confirm, onConfirm, onDismiss }: {
           {args.map(([k, v]) => (
             <div key={k} className="flex items-baseline gap-1 rounded-lg bg-ink/[.05] px-2 py-1 text-[12px]">
               <dt className="text-ink-mute">{human(k)}</dt>
-              <dd className="font-mono text-ink-dim tabular-nums">{String(v)}</dd>
+              <dd className="font-mono text-ink-dim tabular-nums">{typeof v === 'object' ? JSON.stringify(v) : String(v)}</dd>
             </div>
           ))}
         </dl>
       )}
       <div className="mt-3.5 flex items-center gap-2">
-        <button type="button" data-confirm tabIndex={-1} aria-disabled={!ready}
-          onFocus={(e) => e.currentTarget.blur()} onPointerDown={down} onClick={click}
+        <button ref={btn} type="button" data-confirm data-pilot-allow tabIndex={-1} aria-disabled={!ready}
+          onFocus={(e) => e.currentTarget.blur()}
           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.preventDefault() }}
           className={`relative overflow-hidden flex-1 h-11 sm:h-10 rounded-xl text-[13px] font-semibold ax-action transition-opacity ${ready ? '' : 'opacity-60 cursor-wait'}`}>
-          {!ready && <span aria-hidden className="absolute inset-y-0 left-0 bg-on/20 ax-inert" style={{ animationDuration: `${INERT_MS}ms` }} />}
+          {entered && !ready && <span aria-hidden className="absolute inset-y-0 left-0 bg-on/20 ax-inert" style={{ animationDuration: `${INERT_MS}ms` }} />}
           <span className="relative">Confirm</span>
         </button>
         <button type="button" onClick={() => onDismiss(confirm.nonce)}
@@ -253,7 +250,7 @@ function ConfirmPrompt({ confirm, onConfirm, onDismiss }: {
           Not now
         </button>
       </div>
-      <div className="mt-2 text-[11px] text-ink-mute">Tap or click to confirm. A key press can't say yes here.</div>
+      <div className={`mt-2 text-[11px] ${why ? 'text-bad' : 'text-ink-mute'}`}>{why || "Tap or click to confirm. A key press can't say yes here."}</div>
     </motion.div>
   )
 }
@@ -261,7 +258,7 @@ function ConfirmPrompt({ confirm, onConfirm, onDismiss }: {
 // ------------------------------------------------------------------ the sheet
 const P = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
 
-export default function VoiceOrb({ open, state, inLevel, outLevel, agents, reply, confirm, onConfirm, onDismiss, onClose }: {
+export default function VoiceOrb({ open, state, inLevel, outLevel, agents, reply, confirm, bind, onDismiss, onClose }: {
   open: boolean
   state: OrbState
   inLevel: Level
@@ -269,7 +266,7 @@ export default function VoiceOrb({ open, state, inLevel, outLevel, agents, reply
   agents: OrbAgent[]
   reply?: OrbReply | null
   confirm?: OrbConfirm | null
-  onConfirm: (nonce: string) => void
+  bind: OrbBind
   onDismiss: (nonce: string) => void
   onClose: () => void
 }) {
@@ -338,7 +335,7 @@ export default function VoiceOrb({ open, state, inLevel, outLevel, agents, reply
                 )}
               </AnimatePresence>
               {/* no exit animation: a replaced or cleared prompt leaves the DOM at once, so a click can't land on it (arm v) */}
-              {confirm && <ConfirmPrompt key={confirm.nonce} confirm={confirm} onConfirm={onConfirm} onDismiss={onDismiss} />}
+              {confirm && <ConfirmPrompt key={confirm.nonce} confirm={confirm} bind={bind} onDismiss={onDismiss} />}
             </div>
           </motion.section>
         )}
