@@ -203,7 +203,8 @@ async def status():
     store_ok = await asyncio.to_thread(store.ping)
     if not store_ok:
         st = {**st, "degraded": True, "reasons": st.get("reasons", []) + [f"store offline ({store.error})"]}
-    return {"room": ROOM, "lease": await _indicator(), "stt": st, "store": {"ok": store_ok, "error": store.error}}
+    return {"room": ROOM, "lease": await _indicator(), "stt": st, "store": {"ok": store_ok, "error": store.error},
+            "ttl_days": S.ttl_days()}
 
 
 async def _holder(request: Request) -> str | None:
