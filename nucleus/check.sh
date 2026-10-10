@@ -301,6 +301,7 @@ run "deploy restart: a failed resident is named, the run continues, the pulse co
 run "context compact: /compact reaches only the named session (exact tmux target, no prefix fallback)" "$PY" tests/test_compact_exact_target.py
 run "tmux: no pane command targets a bare =session (capture-pane on \"=ax-x\" fails silently: 09-29 idle gates, 10-10 restart)" "$PY" tests/test_tmux_targets.py
 run "observatory pilot: one action catalog, matrix-gated executor, handler parity (plan-9000 S1)" "$PY" tests/test_pilot_s1.py
+run "observatory pilot: the owner-tap confirm under trusted input in chromium (plan-9000 S1 arms i-v)" node tests/pilot_browser_test.mjs
 # geoloc /recent (a3 #32078, privacy): location history needs GEOLOC_TOKEN even from localhost, the
 # token compare is constant-time, and a malformed ingest token is a 401, never a 500. The body
 # (bridges/geoloc.py) is gitignored, so this SKIPs 77 on a clean clone. No location data is used.

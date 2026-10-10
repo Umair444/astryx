@@ -1,9 +1,9 @@
 /* plan-9000 S1: the pilot's one executor for this tab, bound to the live app by <PilotHost/>.
 
-   Callers: the Ctrl-K palette runs as `owner_tap` (or `visitor` without the key): the zero-cost harness where
-   every action is exercised with no voice minute spent (C6). S2's voice will run as `room`, S4's agent rows as
-   `agent`. A `needs_confirm` outcome parks the call; the confirm control (VoiceOrb) reads usePilotPending() and
-   calls pilot.confirm(nonce) / pilot.dismiss(nonce). */
+   Callers take the entry point of THEIR principal, never name one: the Ctrl-K palette uses pilot.owner (or
+   pilot.visitor without the key), the zero-cost harness where every action runs with no voice minute spent (C6).
+   S2's voice will use pilot.room, S4's agent rows pilot.agent. A write or actuate call becomes the one pending
+   confirm, which only <PilotConfirm/>'s trusted pointer click can run. */
 import { useEffect, useRef, useSyncExternalStore } from 'react'
 import catalogJson from '../../../pilot/catalog.json'
 import { api } from '../api'
@@ -31,6 +31,10 @@ const bound = makeHandlers(new Proxy({} as PilotCtx, {
 export const pilot = createExecutor(CATALOG, bound, {
   onPending: (p) => { pending = p; subs.forEach((f) => f()) },
 })
+
+// the browser harness (tests/pilot_browser_test.mjs) drives the ROOM's entry point, as the voice will; a dev
+// server only: a production build drops this block (import.meta.env.DEV is false there)
+if ((import.meta as unknown as { env: { DEV: boolean } }).env.DEV) (window as unknown as Record<string, unknown>).__pilotTest = { room: pilot.room, pending: pilot.pending, ran: pilot.ran }
 
 export function usePilotPending(): Pending | null {
   return useSyncExternalStore((f) => { subs.add(f); return () => { subs.delete(f) } }, () => pending)

@@ -13,8 +13,8 @@ import type { Json, Outcome } from '../pilot/core'
 
 /* Ctrl/⌘ K — go anywhere: a view, an agent, a theme, a desktop, or ask for the numbers. Keyboard first (↑ ↓ ⏎ esc).
 
-   plan-9000 S1: every row is a CATALOG action run through the pilot executor (pilot/), as the owner's own tap,
-   the same door the voice uses later. So this palette is the zero-cost harness: each action is exercised here with
+   plan-9000 S1: every row is a CATALOG action run through the pilot executor (pilot/) by the owner's entry point,
+   the same gate the voice uses later. A write or actuate row (watching a desktop) opens the confirm prompt. So this palette is the zero-cost harness: each action is exercised here with
    no voice minute spent. Only "Canvas" rows are plain links: they leave the page, so they are not screen actions. */
 
 type Item = { id: string; label: string; hint: string; icon: ReactNode; call?: [string, Record<string, Json>]; href?: string; keep?: boolean }
@@ -115,8 +115,8 @@ export default function Palette() {
     if (!x) return
     if (x.href) { setOpen(false); location.href = x.href; return }
     if (!x.call) return
-    const out = await pilot.run(x.call[0], x.call[1], who.owner ? 'owner_tap' : 'visitor')
-    if (out.status === 'done' && !x.keep) { setOpen(false); return }
+    const out = await (who.owner ? pilot.owner : pilot.visitor).run(x.call[0], x.call[1])
+    if ((out.status === 'done' && !x.keep) || out.status === 'pending_owner_confirm') { setOpen(false); return }
     setAnswer(out)
   }
 

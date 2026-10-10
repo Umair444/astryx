@@ -88,6 +88,8 @@ arm("the agent MCP list is non-empty", len(mcp) > 0)
 arm("the agent MCP list is exactly the view actions", sorted(t["name"] for t in mcp) == sorted(a["name"] for a in cat["actions"] if a["class"] == "view"))
 arm("no read / write / actuate action reaches agents", not any(by[t["name"]]["class"] != "view" for t in mcp))
 arm("a missing matrix cell reads as deny", pc.cell(cat, "agent", "actuate") == "deny" and pc.cell(cat, "nobody", "view") == "deny")
+arm("no principal runs write or actuate outright: every such cell is confirm or absent", all(r.get(k, "deny") in ("confirm", "deny") for r in cat["matrix"].values() for k in ("write", "actuate")))
+arm("there is no owner_tap principal (a caller-assertable owner)", "owner_tap" not in cat["matrix"])
 arm("a classless action reads as actuate", pc.cls({"name": "x"}, cat) == "actuate")
 
 # (e)

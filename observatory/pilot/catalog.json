@@ -1,8 +1,8 @@
 {
-  "_doc": "plan-9000 S1: the observatory's ONE action catalog. Every caller (the Ctrl-K palette, the voice model, an agent's command row) reaches the screen only through these actions, gated by the matrix. The browser executor (observatory/web/src/pilot) and the server/MCP side (observatory/pilot/catalog.py) both read THIS file, so there is nothing to keep in sync. A missing matrix cell is DENY; an action with no class is treated as actuate. Schemas use only the keywords the validator implements (tests/test_pilot_s1.py checks).",
+  "_doc": "plan-9000 S1: the observatory's ONE action catalog. Every caller (the Ctrl-K palette, the voice model, an agent's command row) reaches the screen only through these actions, gated by the matrix. The browser executor (observatory/web/src/pilot) and the server/MCP side (observatory/pilot/catalog.py) both read THIS file, so there is nothing to keep in sync. A missing matrix cell is DENY; an action with no class is treated as actuate. A principal is never a value a caller passes: the executor has one entry point per principal (a1 #44141 R1). Schemas use only the keywords the validator implements (tests/test_pilot_s1.py checks).",
   "classes": ["view", "read", "write", "actuate"],
   "matrix": {
-    "owner_tap": {"view": "allow", "read": "allow", "write": "allow", "actuate": "allow"},
+    "owner": {"view": "allow", "read": "allow", "write": "confirm", "actuate": "confirm"},
     "visitor": {"view": "allow"},
     "room": {"view": "allow", "read": "projection", "write": "confirm", "actuate": "confirm"},
     "agent": {"view": "allow"},
@@ -10,7 +10,7 @@
     "peer": {}
   },
   "principals": {
-    "owner_tap": "the owner's own trusted click or key in this tab: the palette, or a confirm prompt rendered after the request",
+    "owner": "the palette in a tab holding the owner key. Its write and actuate still go through the confirm: only a trusted pointer click on the prompt rendered for that request runs them (#44109, a1 #44141 R3)",
     "visitor": "the palette in a tab without the owner key",
     "room": "the realtime model: whoever is audible (owner, TV, guest); its calls are never trusted DOM events",
     "agent": "a resident's command row, arriving over the SSE stream (S4)",
