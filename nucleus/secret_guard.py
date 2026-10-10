@@ -139,8 +139,10 @@ def _is_holder_path(p: str, holders: list[Path], here: Path | None = None) -> bo
 
 def _tokens(cmd: str) -> list[str]:
     import shlex
-    try:
-        return shlex.split(cmd, comments=False, posix=True)
+    try:                                                  # an unquoted ( or ) is its own word, as in
+        lex = shlex.shlex(cmd, posix=True, punctuation_chars="()")   # grep_guard (a3 #42348)
+        lex.whitespace_split, lex.commenters = True, ""
+        return list(lex)
     except ValueError:                                    # an unbalanced quote: fall back
         return cmd.split()
 
@@ -245,22 +247,34 @@ def _bash_reason(cmd: str, holders: list[Path]) -> str | None:
     quiet, prev = cmd, None
     while quiet != prev:                                  # innermost-first: a command
         prev, quiet = quiet, _SUBST.sub(" ", quiet)       # substitution's output is consumed
-    here = None                                           # unknown = the hook's own cwd
+    here, stack, sub = None, [], []                       # here unknown = the hook's own cwd
     for simple in _simple_commands(quiet):
         words = _tokens(simple)
-        if words[:1] == ["cd"]:                           # `cd ~/.ssh && cat id_ed25519` (a3 #42337;
-            target = words[1] if len(words) > 1 else "~"  # grep_guard.py's loop)
-            if not target.startswith("-"):
+        while words[:1] == ["("]:                         # `(cd ~/.ssh && cat id_ed25519)` (a3 #42348):
+            sub.append(here)                              # the subshell's cd holds until its `)`
+            words = words[1:]
+        closes = 0
+        while words[-1:] == [")"]:
+            closes, words = closes + 1, words[:-1]
+        if words[:1] == ["cd"] or (words[:1] == ["pushd"] and len(words) > 1):   # `cd ~/.ssh && cat
+            target = words[1] if len(words) > 1 else "~"  # id_ed25519` (a3 #42337; grep_guard.py's loop)
+            if not target.startswith(("-", "+")):         # cd - / pushd +N: here kept, as before
+                if words[0] == "pushd":
+                    stack.append(here)
                 here = Path(os.path.realpath(_at(target, here)))
-            continue
-        first, args = _command_word(words)
-        if first in PRINTERS and not _prints_nothing(first, args) and _names_holder(args, holders, here):
-            return f"Bash `{first}` on a declared secret holder would print or copy it. {HINT}"
-        if (first in PRINTERS and not _prints_nothing(first, args) and _recurses(first, args)
-                and _names_holder_ancestor(args, holders, here)):
-            return f"Bash `{first}` would descend into a directory holding a declared secret. {HINT}"
-        if _prints_token(first, args):
-            return f"`{first} {' '.join(args[:3])}` prints the GitHub write token; gh and git read it themselves. {HINT}"
+        elif words[:1] == ["popd"]:
+            here = stack.pop() if stack else here
+        else:
+            first, args = _command_word(words)
+            if first in PRINTERS and not _prints_nothing(first, args) and _names_holder(args, holders, here):
+                return f"Bash `{first}` on a declared secret holder would print or copy it. {HINT}"
+            if (first in PRINTERS and not _prints_nothing(first, args) and _recurses(first, args)
+                    and _names_holder_ancestor(args, holders, here)):
+                return f"Bash `{first}` would descend into a directory holding a declared secret. {HINT}"
+            if _prints_token(first, args):
+                return f"`{first} {' '.join(args[:3])}` prints the GitHub write token; gh and git read it themselves. {HINT}"
+        for _ in range(closes):
+            here = sub.pop() if sub else here
     return None
 
 
