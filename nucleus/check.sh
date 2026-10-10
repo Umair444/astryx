@@ -201,6 +201,11 @@ run "derived graph DBs match their declared design" "$PY" tests/test_social_age_
 # local"; F4): ports exactly loopback, the image, every -c setting's effective value, the extension versions the
 # Dockerfile declares. Synthetic RED arms; the live read is read-only. Mutants: tests/mutants_pg_design.py.
 run "the running postgres matches infra/pg" "$PY" tests/test_pg_design.py
+# the restore seam (#5497): an empty data dir's initdb holds infra/pg/.env's placeholder while the restored ~/.pgpass holds
+# the real value. pg_role_sync sets the role FROM the pgpass value (client-side SCRAM verifier; RED control on a throwaway
+# role), and the drill walks docs/restore.md on a throwaway server from the declared image with a small fixture dump.
+run "pg_role_sync: the role's password is set from the pgpass value, never printed" "$PY" tests/test_pg_role_sync.py
+run "restore drill: an empty data dir restores, its role synced to the restored pgpass" "$PY" tests/test_restore_drill.py
 # the privilege census 1b is decided on: statement classes by surface, DSN source by file. Hermetic.
 # Mutants: tests/mutants_privilege_census.py.
 run "privilege census: classes discriminate, surfaces and DSN sources assigned" "$PY" tests/test_privilege_census.py
