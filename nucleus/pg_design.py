@@ -6,10 +6,13 @@ The design is infra/pg/docker-compose.yml (container, image, loopback-only port,
 (the extension versions it is built to carry, LABEL org.astryx.pg.*_version). Judged, read-only, against `docker inspect`
 of the declared container and the server itself:
   PORTS     the published bindings are EXACTLY the declared ones (a LAN bind is drift: #5497 removed it on 10-10)
-  IMAGE     the container runs the declared image tag
+  IMAGE     the container runs the declared image tag, AND the binary under it: its image ID equals the tag's current
+            ID (a1 #43407: judged by name alone, a retag or rebuild of the tag reads green while the binary differs;
+            a mismatch means the tag moved after the container was made, a pending recreate onto an unproven image)
   SETTINGS  every `-c name=value` in the compose command is the server's EFFECTIVE value (SHOW). Its SOURCE (command
-            line, or the data dir's postgresql.auto.conf) is REPORTED, never judged: until seed's cutover recreates the
-            container from infra/pg, today's 300 comes from auto.conf, and the value is what the org relies on.
+            line, or the data dir's postgresql.auto.conf) is REPORTED until the container's own Cmd carries the `-c`
+            (seed's cutover); from then on it must read "command line". The container says which phase it is in, so
+            no flag is ever flipped by hand (a1 #43407).
   VERSIONS  each declared extension version equals pg_extension.extversion in every database that has it installed
             (a rebuild that pulls a different AGE reads RED)
   NAME      the compose container_name is nucleus/pgcontainer.sh's PG_CONTAINER (the name every docker fallback uses)
@@ -69,9 +72,11 @@ def published(inspect: dict) -> list:
     return sorted(out)
 
 
-def compare(want: dict, inspect: dict, show: dict, ext: list, helper: str | None) -> dict:
+def compare(want: dict, inspect: dict, show: dict, ext: list, helper: str | None, tag_id: str | None = None,
+            unread: tuple = ()) -> dict:
     """want = declared(); inspect = one `docker inspect` record; show = {setting: (value, source)};
-    ext = [(db, extname, extversion)]. Returns {"drift": [...], "report": [...]}."""
+    ext = [(db, extname, extversion)]; tag_id = `docker image inspect <declared tag>` .Id (None: the tag is absent);
+    unread = databases that couldn't be read. Returns {"drift": [...], "report": [...]}."""
     drift, report = [], []
     if helper != want["container"]:
         drift.append(f"NAME: nucleus/pgcontainer.sh says {helper!r}, compose's container_name is {want['container']!r}")
@@ -81,12 +86,20 @@ def compare(want: dict, inspect: dict, show: dict, ext: list, helper: str | None
     img = inspect.get("Config", {}).get("Image")
     if img != want["image"]:
         drift.append(f"IMAGE: running {img!r}, declared {want['image']!r}")
+    elif tag_id is None:
+        drift.append(f"IMAGE: the declared tag {want['image']!r} isn't present on this host (nothing to prove the binary)")
+    elif inspect.get("Image") != tag_id:
+        drift.append(f"IMAGE: the container runs {str(inspect.get('Image'))[:19]} but {want['image']} is now "
+                     f"{tag_id[:19]}: the tag moved after the container was created (a recreate would swap the binary)")
     for k, v in sorted(want["settings"].items()):
         got = show.get(k)
         if got is None:
             drift.append(f"SETTINGS: {k} unreadable on the server")
         elif got[0] != v:
             drift.append(f"SETTINGS: {k} is {got[0]} (source: {got[1]}), declared {v}")
+        elif f"{k}={v}" in (inspect.get("Config", {}).get("Cmd") or []) and got[1] != "command line":
+            drift.append(f"SETTINGS: {k}={v} is on the container's command line but the server reads it from {got[1]}"
+                         " (a data-dir setting overriding the declared one)")
         else:
             report.append(f"{k}={v} (source: {got[1]})")
     if not want["versions"]:
@@ -99,6 +112,7 @@ def compare(want: dict, inspect: dict, show: dict, ext: list, helper: str | None
             if ver != v:
                 (report if db in OUT_OF_SCOPE else drift).append(
                     f"VERSIONS: {name} in {db} is {ver}, declared {v}" + (" (out of scope)" if db in OUT_OF_SCOPE else ""))
+    report += [f"not read: database {d} (could not connect; its extensions were not compared)" for d in unread]
     return {"drift": drift, "report": report}
 
 
@@ -121,7 +135,7 @@ def _live(want: dict):
             "SELECT name, setting, source FROM pg_settings WHERE name = ANY(%s)", (list(want["settings"]),))}
         dbs = [d for (d,) in c.execute("SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate "
                                        "AND has_database_privilege(datname, 'CONNECT') ORDER BY 1")]
-    ext = []
+    ext, unread = [], []
     for d in dbs:
         try:
             with psycopg.connect(make_conninfo(base, dbname=d), autocommit=True, connect_timeout=5) as c:
@@ -129,18 +143,24 @@ def _live(want: dict):
                 ext += [(d, e, v) for e, v in c.execute(
                     "SELECT extname, extversion FROM pg_extension WHERE extname = ANY(%s)", (list(EXT_NAME.values()),))]
         except psycopg.Error:
-            continue                                 # a database being dropped mid-read (a fixture) says nothing
-    return inspect, show, ext
+            unread.append(d)                         # reported, never silently dropped (a1 #43407)
+    try:
+        t = subprocess.run(["docker", "image", "inspect", want["image"], "--format", "{{.Id}}"], capture_output=True,
+                           text=True, timeout=20)
+        tag_id = t.stdout.strip() if t.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError):
+        tag_id = None
+    return inspect, show, ext, tag_id, tuple(unread)
 
 
 def check() -> int:
     want = declared(COMPOSE.read_text(), DOCKERFILE.read_text())
     try:
-        inspect, show, ext = _live(want)
+        inspect, show, ext, tag_id, unread = _live(want)
     except Unobservable as e:
         print(f"pg_design: NOT SEARCHED ({e})")
         return 77
-    got = compare(want, inspect, show, ext, helper_container(HELPER.read_text()))
+    got = compare(want, inspect, show, ext, helper_container(HELPER.read_text()), tag_id, unread)
     for d in got["drift"]:
         print(f"  DRIFT {d}")
     for x in got["report"]:

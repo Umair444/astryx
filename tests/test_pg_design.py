@@ -53,51 +53,70 @@ check("the Dockerfile declares the extension versions it carries (age, vector, p
       set(want["versions"]) == {"age", "vector", "postgis"}, str(want["versions"]))
 
 print("red, on synthetic records:")
-OK_INSPECT = {"Config": {"Image": want["image"]},
+TAG_ID = "sha256:" + "a" * 64
+OK_INSPECT = {"Config": {"Image": want["image"], "Cmd": ["postgres"]}, "Image": TAG_ID,
               "HostConfig": {"PortBindings": {"5432/tcp": [{"HostIp": "127.0.0.1", "HostPort": "5432"}]}}}
 OK_SHOW = {k: (v, "command line") for k, v in want["settings"].items()}
 OK_EXT = [("astryx", P.EXT_NAME[n], v) for n, v in want["versions"].items()]
 H = want["container"]
-g = P.compare(want, OK_INSPECT, OK_SHOW, OK_EXT, H)
+g = P.compare(want, OK_INSPECT, OK_SHOW, OK_EXT, H, TAG_ID)
 check("a matching record is GREEN (the comparison has a green)", g["drift"] == [], str(g))
 lan = {**OK_INSPECT, "HostConfig": {"PortBindings": {"5432/tcp": [{"HostIp": "127.0.0.1", "HostPort": "5432"},
                                                                  {"HostIp": "192.168.1.5", "HostPort": "5432"}]}}}
-d = P.compare(want, lan, OK_SHOW, OK_EXT, H)["drift"]
+d = P.compare(want, lan, OK_SHOW, OK_EXT, H, TAG_ID)["drift"]
 check("a LAN bind beside loopback → PORTS drift (#5497's unbind can't silently return)",
       len(d) == 1 and d[0].startswith("PORTS:") and "192.168.1.5" in d[0], str(d))
-d = P.compare(want, {**OK_INSPECT, "Config": {"Image": "postgres:18"}}, OK_SHOW, OK_EXT, H)["drift"]
+d = P.compare(want, {**OK_INSPECT, "Config": {"Image": "postgres:18"}}, OK_SHOW, OK_EXT, H, TAG_ID)["drift"]
 check("another image (a stock postgres:18, no AGE/pgvector/postgis) → IMAGE drift",
       len(d) == 1 and d[0].startswith("IMAGE:"), str(d))
-d = P.compare(want, OK_INSPECT, {"max_connections": ("100", "default")}, OK_EXT, H)["drift"]
+d = P.compare(want, OK_INSPECT, {"max_connections": ("100", "default")}, OK_EXT, H, TAG_ID)["drift"]
 check("an effective max_connections other than the declared one → SETTINGS drift, naming its source",
       len(d) == 1 and d[0].startswith("SETTINGS: max_connections is 100 (source: default)"), str(d))
-r = P.compare(want, OK_INSPECT, {"max_connections": (want["settings"]["max_connections"], "configuration file")}, OK_EXT, H)
+r = P.compare(want, OK_INSPECT, {"max_connections": (want["settings"]["max_connections"], "configuration file")}, OK_EXT, H, TAG_ID)
 check("the declared value from the data dir's auto.conf (today, before the cutover) is GREEN, its source REPORTED",
       r["drift"] == [] and any("source: configuration file" in x for x in r["report"]), str(r))
 bad_ext = [(db, e, ("9.9.9" if e == "age" else v)) for db, e, v in OK_EXT]
-d = P.compare(want, OK_INSPECT, OK_SHOW, bad_ext, H)["drift"]
+d = P.compare(want, OK_INSPECT, OK_SHOW, bad_ext, H, TAG_ID)["drift"]
 check("a rebuilt AGE of another version → VERSIONS drift (seed #42759: a rebuild can't drift silently)",
       len(d) == 1 and d[0].startswith("VERSIONS: age in astryx is 9.9.9"), str(d))
-r = P.compare(want, OK_INSPECT, OK_SHOW, OK_EXT + [("genesis", "vector", "0.0.1")], H)
+r = P.compare(want, OK_INSPECT, OK_SHOW, OK_EXT + [("genesis", "vector", "0.0.1")], H, TAG_ID)
 check("an OUT-OF-SCOPE database's mismatch (genesis, deprecated) is REPORTED, never judged",
       r["drift"] == [] and any("genesis" in x and "out of scope" in x for x in r["report"]), str(r))
-d = P.compare({**want, "versions": {}}, OK_INSPECT, OK_SHOW, OK_EXT, H)["drift"]
+d = P.compare({**want, "versions": {}}, OK_INSPECT, OK_SHOW, OK_EXT, H, TAG_ID)["drift"]
 check("a Dockerfile that declares no versions → drift (a version check over nothing would read green)",
       any("declares no" in x for x in d), str(d))
-d = P.compare(want, OK_INSPECT, OK_SHOW, OK_EXT, "astryx-pg")["drift"]
+d = P.compare(want, OK_INSPECT, OK_SHOW, OK_EXT, "astryx-pg", TAG_ID)["drift"]
 check("a helper naming another container → NAME drift", len(d) == 1 and d[0].startswith("NAME:"), str(d))
-d = P.compare(want, OK_INSPECT, OK_SHOW, [x for x in OK_EXT if x[1] != "postgis"], H)["drift"]
+d = P.compare(want, OK_INSPECT, OK_SHOW, [x for x in OK_EXT if x[1] != "postgis"], H, TAG_ID)["drift"]
 check("a declared extension installed nowhere → VERSIONS drift", any("postgis" in x and "no database" in x for x in d),
       str(d))
 
+# a1 #43407 R2: the tag NAME matches, the binary doesn't (a retag or rebuild after the container was made)
+moved = {**OK_INSPECT, "Image": "sha256:" + "0" * 64}
+d = P.compare(want, moved, OK_SHOW, OK_EXT, H, TAG_ID)["drift"]
+check("R2: same tag NAME, different image ID under the container → IMAGE drift (the tag moved: an unproven recreate)",
+      len(d) == 1 and d[0].startswith("IMAGE:") and "tag moved" in d[0], str(d))
+d = P.compare(want, OK_INSPECT, OK_SHOW, OK_EXT, H, None)["drift"]
+check("R2: the declared tag absent from the host → IMAGE drift (nothing proves the binary)",
+      len(d) == 1 and "isn't present" in d[0], str(d))
+cut = {**OK_INSPECT, "Config": {**OK_INSPECT["Config"], "Cmd": ["postgres", "-c", "max_connections=" + want["settings"]["max_connections"]]}}
+d = P.compare(want, cut, {"max_connections": (want["settings"]["max_connections"], "configuration file")}, OK_EXT, H, TAG_ID)["drift"]
+check("AFTER THE CUTOVER (the -c is on the container's Cmd) the source must be the command line: a data-dir override "
+      "reads drift (derived from the container, never a hand flag)", len(d) == 1 and "command line" in d[0], str(d))
+r = P.compare(want, cut, {"max_connections": (want["settings"]["max_connections"], "command line")}, OK_EXT, H, TAG_ID)
+check("  ...and from the command line it is green", r["drift"] == [], str(r))
+r = P.compare(want, OK_INSPECT, OK_SHOW, OK_EXT, H, TAG_ID, unread=("zz_gone",))
+check("an unreadable database is REPORTED (not read: …), never silently dropped",
+      r["drift"] == [] and any("not read: database zz_gone" in x for x in r["report"]), str(r))
+
 print("live (read-only):")
 try:
-    inspect, show, ext = P._live(want)
+    inspect, show, ext, tag_id, unread = P._live(want)
 except P.Unobservable as e:
     print(f"  SKIP  live: {e}")
     skips.append("live")
 else:
-    got = P.compare(want, inspect, show, ext, P.helper_container(P.HELPER.read_text()))
+    got = P.compare(want, inspect, show, ext, P.helper_container(P.HELPER.read_text()), tag_id, unread)
     check("LIVE: the running server matches infra/pg", got["drift"] == [], str(got["drift"]))
     for x in got["report"]:
         print(f"        reported, not judged: {x}")

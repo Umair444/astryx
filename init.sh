@@ -321,8 +321,13 @@ _act_pg() {
       local pw; pw=$(head -c 24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)
       ( umask 077; printf 'POSTGRES_USER=astryx\nPOSTGRES_PASSWORD=%s\n' "$pw" > infra/pg/.env )
     fi
-    say "building and starting the declared postgres (infra/pg; the first build compiles AGE from its pinned commit)"
-    docker compose -f infra/pg/docker-compose.yml up -d --build >/dev/null || die "infra/pg: docker compose up failed"
+    # build ONLY when this host has no such image (a fresh org): never onto a tag a server already runs (a1 #43407)
+    if ! docker image inspect genesis/pg18:age >/dev/null 2>&1; then
+      say "building the declared postgres image (infra/pg; compiles AGE from its pinned commit: needs github.com and a few minutes)"
+      docker build -q -t genesis/pg18:age infra/pg >/dev/null || die "infra/pg: docker build failed (network to github.com? a C toolchain build?)"
+    fi
+    say "starting the declared postgres (infra/pg)"
+    docker compose -f infra/pg/docker-compose.yml up -d >/dev/null || die "infra/pg: docker compose up failed (is port 5432 already taken?)"
     local u p; u=$(grep '^POSTGRES_USER=' infra/pg/.env | cut -d= -f2-); p=$(grep '^POSTGRES_PASSWORD=' infra/pg/.env | cut -d= -f2-)
     [ -f .env ] || { echo "ASTRYX_DSN=postgres://$u:$p@127.0.0.1:5432/astryx" > .env && chmod 600 .env; }
   else die "no .env and no docker — create the db yourself and write ASTRYX_DSN=... to .env"; fi; }

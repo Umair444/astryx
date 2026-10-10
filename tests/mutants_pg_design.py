@@ -28,4 +28,9 @@ MUTANTS = {
         ("    if not want[\"versions\"]:", "    if False:"),
     "D7 the helper's container name isn't compared":
         ("    if helper != want[\"container\"]:", "    if False:"),
+    "D8 the image ID isn't compared (a retag or rebuild under the same tag name reads green; a1 #43407 R2)":
+        ("    elif inspect.get(\"Image\") != tag_id:", "    elif False:"),
+    "D9 after the cutover a data-dir override of a declared -c still reads green":
+        ("        elif f\"{k}={v}\" in (inspect.get(\"Config\", {}).get(\"Cmd\") or []) and got[1] != \"command line\":",
+         "        elif False:"),
 }

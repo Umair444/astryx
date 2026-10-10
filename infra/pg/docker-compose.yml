@@ -7,9 +7,11 @@
 # exists only inside the data is a design nobody can read from the repo.
 #
 #   docker compose -f infra/pg/docker-compose.yml up -d      # init.sh's pg node; the cutover is seed's (deploy.sh restart)
+# NO `build:` here (a1 #43407): with one, any `compose up --build` / `compose build` RETAGS the image the live server
+# runs, and the proven one (rollback: genesis/pg18:age-ecb5619) is left dangling for a prune. Building is an explicit
+# act on a candidate tag (the Dockerfile's header); init.sh builds genesis/pg18:age only on a host that has none.
 services:
   pg:
-    build: .
     image: genesis/pg18:age
     container_name: genesis-pg
     restart: unless-stopped

@@ -3,10 +3,13 @@
 # One database engine for the whole org: agents' basic ops, the Memory RAG (pgvector),
 # geospatial (PostGIS), and the social/knowledge graph (AGE, openCypher).
 #
-# AGE is compiled from source — no PGDG package exists for it. Build rules, from the
-# org's rollout plan (2026-08-13):
-#   * never overwrite the :latest tag — build as genesis/pg18:age, prove on a restored
-#     copy, swap the container; :latest IS the rollback.
+# AGE is compiled from source — no PGDG package exists for it. Build rules (rollout plan 2026-08-13, corrected 10-10):
+#   * NEVER build onto a tag a container runs. Build a CANDIDATE tag (genesis/pg18:age-<AGE_REF short>-candidate),
+#     prove it on a restored copy, then retag and recreate. The compose file has no `build:` for exactly this: a
+#     `compose up --build` would retag genesis/pg18:age under the live server (a1 #43407).
+#   * THE ROLLBACK is genesis/pg18:age-ecb5619, the image the live data was proven on (sha256:ecb5619…, built 08-14),
+#     tagged immutably on 10-10. NOT :latest: measured, :latest carries no age.so, and `age` is installed in astryx
+#     (memgraph's graph), so a :latest rollback would be a server whose memory extension has no library.
 #   * never add age to shared_preload_libraries — a broken .so would stop postgres
 #     itself (wire, steps, messages all down). Per-session `LOAD 'age'` only.
 #   * the AGE extension is created in its OWN database, never in `astryx` — extensions
