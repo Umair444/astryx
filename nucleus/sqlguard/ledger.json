@@ -506,6 +506,17 @@
   ]
  },
  "extractors": {
+  "tests/test_ear_store.py": {
+   "gates": [
+    "hearing: utterances retention (day partitions, DROP, TTL arm, trigger)"
+   ],
+   "listed_since": "2026-10-10",
+   "reason": "hearing S1 (a4 #43670): derived for CREATE TABLE \u2026 PARTITION OF utterances, not for a fixture of its own. The DB IS nucleus/sqlguard/fixture.py's (fixture_db, schema.sql stamped); the creates are ear_store.maintain()'s run-time day partitions (the code under test) and the RED controls' planted partitions (an expired day, a DEFAULT, an overlapping manual one). Proposed fix in the judge, not here: a PARTITION OF a stamp-valid parent is part of that fixture",
+   "trip": {
+    "goal": 8674,
+    "state": "open"
+   }
+  },
   "tests/test_econ.py": {
    "gates": [
     "the org economy is honest"
