@@ -25,7 +25,8 @@ MUTANTS = {
     "P5 memgraph's module-owned DDL leaves the expected set (its drift reads live-only, never judged)":
         ('    return (memgraph.SCHEMA_SQL,)', '    return ()'),
     "P6 the live session isn't read-only":
-        ('        c.execute("SET default_transaction_read_only = on")\n', ''),
+        ('    with psycopg.connect(live_dsn, autocommit=True) as c:\n        c.execute("SET default_transaction_read_only = on")\n',
+         '    with psycopg.connect(live_dsn, autocommit=True) as c:\n'),     # run()'s live session (readable() sets its own)
     "P7 drift is reported but never fails (any difference reads green)":
         ('            "drift": bool(missing or extra or typed)}', '            "drift": False}'),
     "P8 a missing OBJECT isn't seen (a hand-dropped messages_notify silences the wire, parity green: a1 #38450)":
