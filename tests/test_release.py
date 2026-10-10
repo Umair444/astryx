@@ -113,12 +113,21 @@ check("a 32+ char key is accepted", R.mac_key({R.MAC_KEY_ENV: "x" * 32}) == b"x"
 rk = R.route_key(KEY, "whatsapp", DM)
 check("the route key carries no chat id", DM["chat"].split("@")[0] not in rk and len(rk) == 24)
 lbl = R.label(["career"])
-st = R.stamp(KEY, 41, rk, lbl)
-check("a stamp verifies for its own (row id, route key, label)", R.verify_stamp(KEY, 41, rk, lbl, st))
-check("…and fails for another row, route, label, key, or an empty value",
-      not any([R.verify_stamp(KEY, 42, rk, lbl, st), R.verify_stamp(KEY, 41, "x" * 24, lbl, st),
-               R.verify_stamp(KEY, 41, rk, R.label(["family"]), st), R.verify_stamp(b"j" * 40, 41, rk, lbl, st),
-               R.verify_stamp(KEY, 41, rk, lbl, "")]))
+PA, MA = "career/" + "a" * 32, "m" * 64
+st = R.stamp(KEY, 41, rk, lbl, PA, MA)
+check("a stamp verifies for its own (row id, route key, label, pointer, body MAC)",
+      R.verify_stamp(KEY, 41, rk, lbl, PA, MA, st))
+check("…and fails for another row, route, label, key, pointer, body MAC, or an empty value (a3 F1)",
+      not any([R.verify_stamp(KEY, 42, rk, lbl, PA, MA, st), R.verify_stamp(KEY, 41, "x" * 24, lbl, PA, MA, st),
+               R.verify_stamp(KEY, 41, rk, R.label(["family"]), PA, MA, st),
+               R.verify_stamp(b"j" * 40, 41, rk, lbl, PA, MA, st),
+               R.verify_stamp(KEY, 41, rk, lbl, "career/" + "b" * 32, MA, st),
+               R.verify_stamp(KEY, 41, rk, lbl, PA, "n" * 64, st), R.verify_stamp(KEY, 41, rk, lbl, PA, MA, "")]))
+check("label() refuses a bare string (it would iterate to letters, a3 F3)", refused(R.label, "career") is not None)
+check("a tier name outside [a-z0-9_] canonicalizes to 'unknown' (still private)",
+      R.label(["a,b"]) == {R.UNKNOWN_TIER} and R.readers(R.label(["a,b"])) == {R.OWNER})
+check("two distinct labels never give one stamp (the encoding is injective)",
+      R.stamp(KEY, 1, rk, R.label(["a,b"]), PA, MA) != R.stamp(KEY, 1, rk, R.label(["a", "b"]), PA, MA))
 check("the body MAC is KEYED: not a bare sha256, and another key gives another MAC",
       R.body_mac(KEY, "ok") != hashlib.sha256(b"ok").hexdigest() and R.body_mac(KEY, "ok") != R.body_mac(b"j" * 40, "ok"))
 
@@ -134,7 +143,24 @@ with tempfile.TemporaryDirectory() as td:
     check("two puts of the same body are two files (never overwritten)", p1 != p2)
     check("a traversing pointer is refused", refused(store.get, "career/../../etc/passwd") is not None
           and refused(store.get, "../x/" + "a" * 30) is not None)
-    check("a tier name outside [a-z0-9_] can't name a store dir", refused(store.put, R.label(["../x"]), "b") is not None)
+    check("a tier name outside [a-z0-9_] can't name a store dir (it becomes 'unknown')",
+          store.put(R.label(["../x"]), "b").startswith("unknown/") and not (Path(td) / "x").exists())
+    fam = store.put(R.label(["family"]), "fam-body")
+    check("get(pointer, label) refuses a pointer from ANOTHER tier's dir",
+          refused(store.get, p1, R.label(["family"])) is not None and store.get(fam, R.label(["family"])) == "fam-body")
+    bm = R.body_mac(KEY, SENT)
+    sv = R.stamp(KEY, 9, rk, lbl, p1, bm)
+    check("open_stamped returns the body when stamp, tier dir and resolved-body MAC all agree",
+          R.open_stamped(KEY, store, 9, rk, lbl, p1, bm, sv) == SENT)
+    check("…refuses a POINTER swapped onto the stamped row", refused(R.open_stamped, KEY, store, 9, rk, lbl, p2, bm, sv)
+          is not None)
+    (Path(td) / "store" / p1).chmod(0o600)
+    (Path(td) / "store" / p1).write_text("tampered")
+    check("…refuses when the stored body was changed after release (the MAC is recomputed on the RESOLVED body)",
+          refused(R.open_stamped, KEY, store, 9, rk, lbl, p1, bm, sv) is not None)
+    fv = R.stamp(KEY, 9, rk, R.label(["family"]), p2, bm)
+    check("…refuses a career body under a family stamp (the pointer's tier must be the label's)",
+          refused(R.open_stamped, KEY, store, 9, rk, R.label(["family"]), p2, bm, fv) is not None)
 default = R.TierStore().root.resolve()
 check("the default store is under the repo's tier/, outside every home (a1 BC-1)",
       default.is_relative_to((REPO / "tier").resolve()) and not default.is_relative_to((REPO / "homes").resolve()))
@@ -176,10 +202,17 @@ check("a labelled member's body, caller thread and caller intent are all ABSENT 
       SENT not in flat and "SENT-THREAD" not in flat and "SENT-INTENT" not in flat, flat)
 check("…the thread is derived (tier-<sender>) and the intent clamped to the enum",
       row["thread"] == "tier-gemini-family" and row["intent"] == "chat")
-reply = R.agent_send("gemini-family", R.label(["family"]), "seed", "wa:inbound", "receipt", SENT,
-                     inbound_thread="wa:inbound")
-check("a reply on the inbound's own thread keeps that thread (derived, not chosen)", reply["thread"] == "wa:inbound"
+reply = R.agent_send("gemini-family", R.label(["family"]), "seed", "t-ab12cd", "receipt", SENT,
+                     inbound_thread="t-ab12cd")
+check("a reply on an ORG inbound thread keeps that thread (derived, not chosen)", reply["thread"] == "t-ab12cd"
       and reply["intent"] == "receipt")
+chan = R.agent_send("gemini-family", R.label(["family"]), "seed", "wa:100000000001@s.whatsapp.net", "chat", SENT,
+                    inbound_thread="wa:100000000001@s.whatsapp.net")
+check("a reply on a CHANNEL inbound thread does NOT carry it onto the wire (a3 F2): tier-<sender>",
+      chan["thread"] == "tier-gemini-family" and "100000000001" not in json.dumps(chan))
+odd = R.agent_send("gemini-family", R.label(["family"]), "seed", "zz:anything", "chat", SENT, inbound_thread="zz:anything")
+check("…and an UNLISTED prefix fails closed the same way (an allowlist, not a channel list)",
+      odd["thread"] == "tier-gemini-family")
 check("every derived string is within the metadata cap",
       all(len(str(v)) <= R.METADATA_CAP for k, v in row.items() if k != "to"))
 

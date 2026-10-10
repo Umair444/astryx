@@ -26,9 +26,23 @@ MUTANTS = {
     "R8 the body MAC is a bare sha256":
         ('    return _mac(key, "body", body)', '    return hashlib.sha256(body.encode()).hexdigest()'),
     "R9 the stamp omits the label":
-        ('return _mac(key, "stamp", str(int(row_id)), rkey, _label_text(lbl))', 'return _mac(key, "stamp", str(int(row_id)), rkey)'),
+        ('_mac(key, "stamp", str(int(row_id)), rkey, _label_text(lbl), str(pointer), str(bmac))',
+         '_mac(key, "stamp", str(int(row_id)), rkey, str(pointer), str(bmac))'),
+    "R15 the stamp omits the pointer (a swap on a stamped row delivers, a3 F1)":
+        ('_mac(key, "stamp", str(int(row_id)), rkey, _label_text(lbl), str(pointer), str(bmac))',
+         '_mac(key, "stamp", str(int(row_id)), rkey, _label_text(lbl), str(bmac))'),
+    "R16 the door skips the body-MAC recompute on the resolved body":
+        ('    if not hmac.compare_digest(body_mac(key, body), str(bmac)):', '    if False:'),
+    "R17 get() ignores the stamped label's tier dir":
+        ('        if lbl is not None and tier != self.tier_dir(lbl):', '        if False:'),
+    "R18 a reply keeps ANY inbound thread, a channel thread included (a3 F2)":
+        ('and _ORG_THREAD_RE.fullmatch(str(inbound_thread))', ''),
+    "R19 label() accepts a bare string (a3 F3)":
+        ('    if isinstance(tiers, (str, bytes)):\n        raise Refused', '    if False:\n        raise Refused'),
+    "R20 an odd tier name is kept verbatim (the label encoding is no longer injective)":
+        ('t if _TIER_RE.fullmatch(t) else UNKNOWN_TIER', 't'),
     "R10 a labelled agent send keeps the caller's thread":
-        ('th = inbound_thread if (inbound_thread and thread == inbound_thread) else f"tier-{sender}"', 'th = str(thread)'),
+        ('th = inbound_thread if keep else f"tier-{sender}"', 'th = str(thread)'),
     "R11 a labelled agent send keeps the caller's intent":
         ('"intent": intent if intent in INTENTS else "chat"', '"intent": intent'),
     "R12 a pointer is not validated before reading":

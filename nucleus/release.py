@@ -13,8 +13,10 @@ What lives here, each with its oracle arm in tests/test_release.py:
   release()       an owner-addressed release from a labelled member: the destination is the member's own route
                   whose audience ⊆ readers(L); the body goes to the tier store and the row gets a POINTER plus
                   metadata (bytes, keyed body MAC, route key, route-file sha). The caller names no route and no jid.
-  stamp()         a keyed MAC over (row id, route key, label). S1c's bridge delivers only rows whose stamp verifies,
-                  and takes the destination from the stamp's route, never from the thread.
+  stamp()         a keyed MAC over (row id, route key, label, pointer, body MAC): it binds WHAT was released as
+                  well as where (a3 F1). open_stamped() is what S1c's bridge calls: the stamp verifies, the pointer
+                  sits in the label's own tier dir, and the RESOLVED body's MAC matches, or nothing is delivered.
+                  The destination comes from the stamp's route, never from the thread.
   agent_send()    a labelled member's send to an AGENT carries no caller-chosen free text (a1 BC-2, #45066): the
                   body is withheld, the thread is derived, the intent comes from a closed enum.
 
@@ -46,6 +48,11 @@ METADATA_CAP = 64                       # the longest derived string a labelled 
 MAC_KEY_ENV = "ASTRYX_RELEASE_KEY"
 
 _TIER_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+UNKNOWN_TIER = "unknown"                # what any name outside _TIER_RE becomes: private, and injective to encode
+# The thread shapes an agent-addressed reply may KEEP: the wire's own (send-minted `t-…`, plan threads). Anything
+# else, a channel thread above all (wa:/tg:/dc:/cv:… carry a jid or chat id), is replaced by `tier-<sender>`.
+# An allowlist, so a channel prefix nobody listed fails closed (a3 F2, #45211).
+_ORG_THREAD_RE = re.compile(r"^(?:t-[a-z0-9]{4,16}|plan-\d{1,9})$")
 _PTR_RE = re.compile(r"^[A-Za-z0-9_-]{22,64}$")
 
 
@@ -55,8 +62,12 @@ class Refused(Exception):
 
 # ── label algebra ─────────────────────────────────────────────────────────────────────────────────────────────────
 def label(tiers) -> frozenset:
-    """A label from an iterable of tier names. An unparseable name is kept as given: it is UNKNOWN, so private."""
-    return frozenset(str(t) for t in (tiers or ()))
+    """A label from an iterable of tier names. A bare str is REFUSED (it would iterate to its letters). A name
+    outside [a-z][a-z0-9_] becomes UNKNOWN_TIER: still private, and no name can carry the separator the stamp
+    encodes with, so two distinct labels never encode alike (a3 F3)."""
+    if isinstance(tiers, (str, bytes)):
+        raise Refused("label() takes an iterable of tier names, not one string")
+    return frozenset(t if _TIER_RE.fullmatch(t) else UNKNOWN_TIER for t in (str(x) for x in (tiers or ())))
 
 
 def readers(lbl: frozenset):
@@ -161,12 +172,25 @@ def _label_text(lbl: frozenset) -> str:
     return ",".join(sorted(lbl))
 
 
-def stamp(key: bytes, row_id: int, rkey: str, lbl: frozenset) -> str:
-    return _mac(key, "stamp", str(int(row_id)), rkey, _label_text(lbl))
+def stamp(key: bytes, row_id: int, rkey: str, lbl: frozenset, pointer: str, bmac: str) -> str:
+    """Binds WHAT was released, not only where (a3 F1): a pointer or body swapped on a stamped row fails it."""
+    return _mac(key, "stamp", str(int(row_id)), rkey, _label_text(lbl), str(pointer), str(bmac))
 
 
-def verify_stamp(key: bytes, row_id: int, rkey: str, lbl: frozenset, value: str) -> bool:
-    return bool(value) and hmac.compare_digest(stamp(key, row_id, rkey, lbl), str(value))
+def verify_stamp(key: bytes, row_id: int, rkey: str, lbl: frozenset, pointer: str, bmac: str, value: str) -> bool:
+    return bool(value) and hmac.compare_digest(stamp(key, row_id, rkey, lbl, pointer, bmac), str(value))
+
+
+def open_stamped(key: bytes, store: "TierStore", row_id: int, rkey: str, lbl: frozenset, pointer: str, bmac: str,
+                 value: str) -> str:
+    """What S1c's bridge calls before delivering: the stamp must verify, the pointer must sit in the stamped label's
+    tier dir, and the RESOLVED body's keyed MAC must equal the stamped one. Any miss → Refused, nothing returned."""
+    if not verify_stamp(key, row_id, rkey, lbl, pointer, bmac, value):
+        raise Refused("stamp does not verify")
+    body = store.get(pointer, lbl)
+    if not hmac.compare_digest(body_mac(key, body), str(bmac)):
+        raise Refused("the resolved body is not the body that was released")
+    return body
 
 
 class TierStore:
@@ -177,8 +201,12 @@ class TierStore:
     def __init__(self, root: Path | None = None):
         self.root = Path(root) if root else REPO / "tier" / "release"
 
+    @staticmethod
+    def tier_dir(lbl: frozenset) -> str:
+        return "+".join(sorted(lbl)) or "org"
+
     def put(self, lbl: frozenset, body: str) -> str:
-        tier = "+".join(sorted(lbl)) or "org"
+        tier = self.tier_dir(lbl)
         if not all(_TIER_RE.fullmatch(t) for t in lbl):
             raise Refused("a tier name outside [a-z0-9_] can't name a store directory")
         d = self.root / tier
@@ -191,10 +219,13 @@ class TierStore:
             os.close(fd)
         return f"{tier}/{ptr}"
 
-    def get(self, pointer: str) -> str:
+    def get(self, pointer: str, lbl: frozenset | None = None) -> str:
+        """lbl given: the pointer's tier dir must BE that label's, so a career body can't ride a family stamp."""
         tier, _, ptr = str(pointer).partition("/")
         if not (all(_TIER_RE.fullmatch(t) for t in tier.split("+")) and _PTR_RE.fullmatch(ptr)):
             raise Refused("malformed pointer")
+        if lbl is not None and tier != self.tier_dir(lbl):
+            raise Refused("the pointer's tier is not the stamped label")
         return (self.root / tier / ptr).read_text()
 
 
@@ -241,6 +272,7 @@ def agent_send(sender: str, lbl: frozenset, to: str, thread, intent, body: str, 
     instruction into it and the recipient's channel notification would deliver it."""
     if not lbl:
         return {"to": to, "thread": thread, "intent": intent, "body": body}
-    th = inbound_thread if (inbound_thread and thread == inbound_thread) else f"tier-{sender}"
+    keep = inbound_thread and thread == inbound_thread and _ORG_THREAD_RE.fullmatch(str(inbound_thread))
+    th = inbound_thread if keep else f"tier-{sender}"
     return {"to": to, "thread": th[:METADATA_CAP], "intent": intent if intent in INTENTS else "chat",
             "body": f"[tier-labelled {_label_text(lbl)}: {len(body.encode())} bytes withheld]"[:METADATA_CAP]}
