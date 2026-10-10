@@ -355,7 +355,9 @@ finally:
     # (it leaked 20 containers across one battery). Everything carrying OUR namespace label goes,
     # straight through docker. The namespace scopes it, so nothing of the org's is touched.
     _ns = os.environ["HANDS_NS"]
-    for kind, rm in ((["ps", "-aq"], ["rm", "-f"]), (["network", "ls", "-q"], ["network", "rm"])):
+    # Volumes too, after the containers that hold them: a mutant (K3) persists the profile in one.
+    for kind, rm in ((["ps", "-aq"], ["rm", "-f"]), (["network", "ls", "-q"], ["network", "rm"]),
+                     (["volume", "ls", "-q"], ["volume", "rm", "-f"])):
         ids = docker(*kind, "--filter", f"label=astryx.hands.ns={_ns}").stdout.split()
         if ids:
             docker(*rm, *ids)

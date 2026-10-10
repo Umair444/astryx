@@ -32,7 +32,10 @@ MUTANTS = {
          "    except Exception as e:  # noqa: BLE001 — a half-built lease is torn down"),
     "K3 the profile is a named VOLUME, not tmpfs (survives the container)":
         ('"--tmpfs", "/profile:rw,size=512m,uid=10001,mode=0700",',
-         '"-v", f"hands-profile-{lease}:/profile",'),
+         # Labelled with the run's namespace so the oracle's label teardown removes it: an
+         # unlabelled `-v hands-profile-<id>` left 9 persistent profiles behind (a2 #42057).
+         '"--mount", f"type=volume,src={n[\'cell\']}-profile,dst=/profile,"\n'
+         '                f"volume-label=astryx.hands.ns={NS}",'),
     "K4 the generated filter allows every host":
         ('    return "".join(f"^{re.escape(h)}$\\n" for h in allow)', '    return ".*\\n"'),
     "K5 the lease outlives its step cap by one":
