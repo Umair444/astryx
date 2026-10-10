@@ -186,6 +186,139 @@ def main():
           Probe.wrote is False, str(Probe.wrote))
     if live["live_only"]:
         print(f"  (reported, not judged: {len(live['live_only'])} live-only table(s))")
+
+    # GEO (owner 10-10 "the design on github should match local"; steward #42345 F1): a SCOPED database. Its file is
+    # nucleus/schema_geo.sql; only `track` is judged, and there a live-only table IS drift (nobody else writes into it).
+    from psycopg.conninfo import make_conninfo
+    tabs = P.declared_tables("geo")
+    check("GEO: the file declares its three tables (anti-vacuity: the presence check has something to check)",
+          tabs == ["track.locations", "track.presence", "track.zones"], str(tabs))
+    geo_sql = tuple((REPO / f).read_text() for f in P.DATABASES["geo"]["files"])
+    try:
+        with fixture_db(extra=geo_sql) as gx:
+            g0 = P.run(gx["dsn"], db="geo")
+            _gdb = conninfo_db(gx["dsn"])
+            P.DATABASES[_gdb] = P.DATABASES["geo"]
+            try:
+                _clean = P.present(gx["dsn"], _gdb)
+            finally:
+                P.DATABASES.pop(_gdb, None)
+            check("GEO: present() on a fresh apply → nothing missing", _clean == [], str(_clean))
+            check("GEO: a fresh apply of schema_geo.sql matches itself in scope (the comparison has a green)",
+                  g0["drift"] is False, str(g0))
+            with psycopg.connect(gx["dsn"], autocommit=True) as c:
+                c.execute("ALTER TABLE track.zones DROP COLUMN tier")
+            g1 = P.run(gx["dsn"], db="geo")
+            check("GEO: a dropped declared column reads MISSING", "column track.zones.tier (text)" in g1["missing"],
+                  str(g1["missing"]))
+            with psycopg.connect(gx["dsn"], autocommit=True) as c:
+                c.execute("ALTER TABLE track.zones ADD COLUMN tier text NOT NULL DEFAULT 'trusted'")
+        # the ad-hoc TABLES are minted by the stamped applier (fixture_db's extra), never by this oracle's own CREATE
+        # TABLE: sqlguard reads a test's CREATE TABLE outside the applier as an unstamped-fixture extractor
+        with fixture_db(extra=geo_sql + ("CREATE TABLE track.adhoc (x int)", "CREATE TABLE public.zz_not_geos (x int)")) as gy:
+            g1 = P.run(gy["dsn"], db="geo")
+            check("GEO: an ad-hoc table INSIDE the declared schema is judged EXTRA (drift), not merely reported",
+                  any(x.startswith("table track.adhoc") for x in g1["extra"]) and g1["drift"] is True, str(g1["extra"]))
+            check("GEO: a table OUTSIDE the declared schema is out of geo's scope (never reported as geo's)",
+                  not any("zz_not_geos" in x for x in g1["extra"] + g1["live_only"]), str(g1))
+        with fixture_db(extra=geo_sql) as gx:
+            # a4 #42525 R1: in an EXCLUSIVE schema a hand-made index, function or trigger is ad-hoc too, each judged
+            for kind, ddl, undo in (
+                    ("index", "CREATE INDEX zz_adhoc_idx ON track.zones (radius_m)", "DROP INDEX track.zz_adhoc_idx"),
+                    ("function", "CREATE FUNCTION track.zz_set_presence() RETURNS trigger LANGUAGE plpgsql AS "
+                                 "$$BEGIN RETURN NEW; END$$", "DROP FUNCTION track.zz_set_presence()"),
+                    ("trigger", "CREATE FUNCTION public.zz_trg_fn() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RETURN "
+                                "NEW; END$$; CREATE TRIGGER zz_adhoc_trg BEFORE INSERT ON track.locations FOR EACH ROW "
+                                "EXECUTE FUNCTION public.zz_trg_fn()",
+                     "DROP TRIGGER zz_adhoc_trg ON track.locations; DROP FUNCTION public.zz_trg_fn()")):
+                with psycopg.connect(gx["dsn"], autocommit=True) as c:
+                    c.execute(ddl)
+                gk = P.run(gx["dsn"], db="geo")
+                check(f"GEO: a hand-made {kind} in the exclusive `track` schema is DRIFT (a4 #42525 R1)",
+                      gk["drift"] is True and any(x.startswith(kind) and "track." in x for x in gk["objects_missing"]),
+                      str({k: gk[k] for k in ("drift", "objects_missing", "objects_extra")}))
+                with psycopg.connect(gx["dsn"], autocommit=True) as c:
+                    c.execute(undo)
+            check("GEO: back to the declared shape → no drift (each arm's object removed)",
+                  P.run(gx["dsn"], db="geo")["drift"] is False)
+            check("GEO: exclusivity is DECLARED per database, never inferred from a scope (a4 #42525)",
+                  P.DATABASES["geo"].get("exclusive") is True and P.DATABASES["astryx"].get("exclusive") is False)
+            from nucleus import people_gate
+            check("GEO: the birth path's resident is people_gate's RESIDENT", P.RESIDENT == people_gate.RESIDENT)
+            with psycopg.connect(gx["dsn"], autocommit=True) as c:
+                c.execute("DROP TABLE track.presence")
+            # init.sh's cheap check, through the REAL present() (it names databases by DATABASES key: alias the fixture)
+            gdb = conninfo_db(gx["dsn"])
+            P.DATABASES[gdb] = P.DATABASES["geo"]
+            try:
+                gone = P.present(gx["dsn"], gdb)
+            finally:
+                P.DATABASES.pop(gdb, None)
+            check("GEO: present() (init.sh's geoschema check) names exactly the dropped declared table",
+                  gone == ["track.presence"], str(gone))
+    except FixtureUnavailable as e:
+        print(f"  SKIP  geo fixture arms: {e}")
+        fails.append("SKIP geo")
+    import tempfile
+    real_repo = P.REPO
+    with tempfile.TemporaryDirectory() as td:
+        (Path(td) / "nucleus").mkdir()
+        (Path(td) / "nucleus" / "schema_geo.sql").write_text("-- an uncommitted edit\n")
+        P.REPO = Path(td)
+        try:
+            # a DEAD admin DSN: the refusal must come before any connection, so a mutant that drops the git check
+            # fails on the connect here, and never applies anything to a real server
+            P.apply("host=127.0.0.1 port=1 dbname=nowhere connect_timeout=2", "geo")
+            refused = None
+        except RuntimeError as e:
+            refused = str(e)
+        except Exception as e:                    # noqa: BLE001 — reached the server step: the check was skipped
+            refused = None
+            print(f"        (apply got past the commit check: {type(e).__name__})")
+        finally:
+            P.REPO = real_repo
+    check("GEO: apply() REFUSES a file git hasn't committed (prod carries only what git carries), before touching the "
+          "server", refused is not None and "commit it first" in refused, str(refused))
+    # the BIRTH path (a4 #42525), in two halves so no table is minted outside the stamped applier (sqlguard EX):
+    # birth() on a scratch database (no DDL at all), grant_read() on a fixture whose tables the APPLIER made
+    zdb = f"zz_geo_birth_{os.getpid()}"
+    try:
+        with psycopg.connect(live_dsn(), autocommit=True) as a:
+            made = P.birth(a, zdb)
+            pub, res = a.execute("SELECT has_database_privilege('public', %s, 'CONNECT'), "
+                                 "has_database_privilege(%s, %s, 'CONNECT')", (zdb, P.RESIDENT, zdb)).fetchone()
+            again = P.birth(a, zdb)
+        check("GEO BIRTH: birth() makes a missing database closed to PUBLIC, CONNECT for the resident; a second call "
+              "makes nothing (a4 #42525: revoking PUBLIC and granting nothing breaks the ruling)",
+              made is True and again is False and pub is False and res is True, f"{made} {again} {pub} {res}")
+    finally:
+        with psycopg.connect(live_dsn(), autocommit=True) as a:
+            a.execute(f'DROP DATABASE IF EXISTS "{zdb}" WITH (FORCE)')
+    try:
+        with fixture_db(extra=geo_sql) as gz, psycopg.connect(gz["dsn"], autocommit=True) as z:
+            granted = P.grant_read(z, P.DATABASES["geo"]["schemas"])
+            sel = z.execute("SELECT has_table_privilege(%s, 'track.zones', 'SELECT') AND has_table_privilege(%s, "
+                            "'track.locations', 'SELECT') AND has_schema_privilege(%s, 'track', 'USAGE')",
+                            (P.RESIDENT,) * 3).fetchone()[0]
+            pubsel = z.execute("SELECT has_table_privilege('public', 'track.zones', 'SELECT')").fetchone()[0]
+        check("GEO READ: grant_read() gives the resident USAGE on track and SELECT on its tables, PUBLIC nothing",
+              granted is True and sel is True and pubsel is False, f"{granted} {sel} {pubsel}")
+    except FixtureUnavailable as e:
+        print(f"  SKIP  geo read arm: {e}")
+        fails.append("SKIP geo read")
+    psycopg.connect = Probe
+    Probe.wrote = None
+    try:
+        glive = P.run(make_conninfo(live_dsn(), dbname="geo"), db="geo")
+    finally:
+        psycopg.connect = real
+    check("LIVE GEO: the live `track` schema matches a fresh apply of schema_geo.sql, ad-hoc tables included",
+          glive["drift"] is False, f"missing={glive['missing']} extra={glive['extra']} type={glive['type']} "
+          f"obj={glive['objects_missing']} changed={glive['objects_changed']}")
+    real_fails = [f for f in fails if not f.startswith("SKIP")]
+    if len(real_fails) != len(fails) and not real_fails:
+        print("\nSKIP (partial): geo fixture arms")
+        return 77
     print(f"\n{'FAIL' if fails else 'PASS'}: schema parity ({len(fails)} failing)")
     return 1 if fails else 0
 

@@ -45,4 +45,21 @@ MUTANTS = {
     "P12 CHANGED is computed but never fails the run":
         ('    out["drift"] = out["drift"] or o["drift"] or bool(out["objects_changed"])',
          '    out["drift"] = out["drift"] or o["drift"]'),
+    # F1 (steward #42345): the scoped `geo` database
+    "G1 a scoped database's live-only tables are only REPORTED (an ad-hoc table in `track` reads green)":
+        ('    if spec.get("exclusive") and out["live_only"]:', '    if False and out["live_only"]:'),
+    "G2 the scope is ignored (geo judged as the whole server's shape)":
+        ('    if schemas is None:\n        return sh, ob, de', '    if True:\n        return sh, ob, de'),
+    "G3 apply() skips the commit-first check (an uncommitted schema file reaches prod)":
+        ('        if head.returncode != 0 or head.stdout != (REPO / f).read_text():', '        if False:'),
+    "G5 an exclusive schema's hand-made objects stay REPORTED only (a4 #42525 R1: a hand trigger reads green)":
+        ('    if spec.get("exclusive") and o["extra_reported"]:', '    if False and o["extra_reported"]:'),
+    "G6 exclusivity inferred from having a scope (a future partitioned scoped DB would go red daily)":
+        ('    "astryx": {"files": (), "schemas": None, "exclusive": False},', '    "astryx": {"files": (), "schemas": None, "exclusive": True},'),
+    "G7 the birth path grants the resident nothing (a fresh geo breaks the ruling by construction)":
+        ('    for ns in schemas or ():\n        conn.execute(sql.SQL("GRANT USAGE', '    for ns in ():\n        conn.execute(sql.SQL("GRANT USAGE'),
+    "G8 birth grants the resident no CONNECT (a fresh geo is closed to every agent)":
+        ('        admin.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(I(db), I(RESIDENT)))\n', ''),
+    "G4 the presence check's table parse goes blind (it would read green over nothing)":
+        ('    if not got:                                   # anti-vacuity', '    if False:                                   # anti-vacuity'),
 }

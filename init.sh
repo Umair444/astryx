@@ -388,6 +388,15 @@ _act_schema() { say "applying schema (schema.sql differs from what this database
     -c "INSERT INTO schema_applied (id, sha) VALUES (1, '$sha') ON CONFLICT (id) DO UPDATE SET sha = EXCLUDED.sha, applied_at = now()" >/dev/null; }
 # <<< schema
 
+# >>> geoschema (owner 10-10: "the design on github should match local"; steward #42345 F1)
+# The `geo` database's design is nucleus/schema_geo.sql (DDL only; the location rows are personal tier and never in
+# git). The check is cheap (every declared table exists); schema_parity's check.sh gate is the full judge. The act
+# births the database zero-window if missing and refuses a file that isn't committed, like the schema node.
+_chk_geoschema() { venv/bin/python -m nucleus.schema_parity present geo >/dev/null 2>&1; }
+_act_geoschema() { say "geo: applying nucleus/schema_geo.sql (the declared design of the geo database)"
+  venv/bin/python -m nucleus.schema_parity apply geo >/dev/null; }
+# <<< geoschema
+
 # >>> harden (plan-4918 P0-a)
 # No database this org administers grants PUBLIC CONNECT. Postgres's default lets EVERY role connect to every
 # database, so a run-scoped role (branch_check's bc_*, a fixture's owner) could open prod; branch_check's P0-b
@@ -580,7 +589,7 @@ _act_model() {
 # the precondition DAG, in dependency order (top depends on nothing).  name|class
 RECONCILE_NODES=(
   "pg|interior" "pgready|wait" "schema|interior" "harden|interior" "hardencut|halt" "venv|interior" "deps|interior"
-  "peoplegate|interior" "derivedgraphs|interior" "model|interior" "chan|interior" "obs|interior" "obskey|interior" "ident|interior"
+  "peoplegate|interior" "derivedgraphs|interior" "geoschema|interior" "model|interior" "chan|interior" "obs|interior" "obskey|interior" "ident|interior"
   "units|interior" "law|interior" "prehook|interior" "ccompact|interior" "prreview|interior" "login|halt"
   "seed|interior" "prompt|interior")
 
