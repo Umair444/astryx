@@ -27,7 +27,14 @@ import psycopg                                          # noqa: E402
 from psycopg import sql                                 # noqa: E402
 from psycopg.conninfo import make_conninfo              # noqa: E402
 
-from nucleus import social_age as sa                    # noqa: E402
+if os.environ.get("SOCIAL_AGE_SRC"):                    # mutation_probe hands a mutant copy here
+    import importlib.util
+    _spec = importlib.util.spec_from_file_location("nucleus.social_age", os.environ["SOCIAL_AGE_SRC"])
+    sa = importlib.util.module_from_spec(_spec)
+    sys.modules["nucleus.social_age"] = sa
+    _spec.loader.exec_module(sa)
+else:
+    from nucleus import social_age as sa                # noqa: E402
 
 fails = []
 PFX = "astryx_sadz_"                                    # this oracle's scratch namespace: <PFX><pid>_<role>
@@ -178,6 +185,26 @@ try:
     ghost = f"{PFX}{os.getpid()}_ghost"
     left = sa.drift(dsn_for, design={**SCRATCH, ghost: {"v": ("x",), "e": ()}})
     check("an absent declared database → MISSING database", left == [f"MISSING database {ghost}"], str(left))
+
+    print("tables (a3 #42994: 'r' is the realistic ad-hoc kind, and views alone let a dropped 'r' survive):")
+    # minted by the STAMPED applier (fixture_db's extra), never by this oracle's own CREATE TABLE (sqlguard EX)
+    from nucleus import agelib
+    from nucleus.sqlguard.fixture import fixture_db as _fx, FixtureUnavailable as _FxU
+    TG = f"{PFX}{os.getpid()}_tg"
+    try:
+        with _fx(extra=("LOAD 'age'", "CREATE EXTENSION IF NOT EXISTS age", agelib.PATH,
+                        f"SELECT ag_catalog.create_graph('{TG}')", f"CREATE TABLE {TG}.adhoc_t (x int)",
+                        "CREATE TABLE public.zz_adhoc_t (x int)", "SET search_path = public")) as fx:
+            left = sa.drift(lambda db: fx["dsn"], design={fx["dbname"]: {"v": (), "e": (), "connect": (), "graph": TG}})
+            check("a plain TABLE outside the graph (public) → EXTRA relation",
+                  f"EXTRA {fx['dbname']}: relation public.zz_adhoc_t (a derived database holds only its graph)" in left,
+                  str([x for x in left if "adhoc" in x]))
+            check("a plain TABLE inside the graph's schema (no label owns it) → EXTRA relation",
+                  f"EXTRA {fx['dbname']}: relation {TG}.adhoc_t (in the graph's schema but no label's table)" in left,
+                  str([x for x in left if "adhoc" in x]))
+    except _FxU as e:
+        print(f"  SKIP  table arms: no fixture ({e})")
+        fails.append("SKIP tables")
 
     print("control:")
     build(NET, {"v": (), "e": ()})                      # the pre-10-10 builder: labels only appear with their rows
