@@ -6,11 +6,26 @@
    click (no pointerType), a click on any other element, and any click within CONFIRM_ARM_MS of this element being
    bound. The button never takes focus (tabIndex -1; focus is dropped), so Space or Enter can't reach it either.
    key={nonce}: a changed request is a NEW element, bound afresh (a4 #44113 arm v).
-   Painter's VoiceOrb (S2) restyles this; the binding below is the part that must stay. */
-import { useEffect, useRef, useState } from 'react'
+   bindPilotConfirm (pilot/core's confirmBinder) is that binding, the ONE way a button reaches confirm(): this prompt and painter's VoiceOrb
+   both use it, so no path hands the executor a nonce without the native event (a4 #44264 hold). While the orb is
+   open it claims the prompt and this bottom one steps aside, so the page never holds two Allow buttons. */
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { CATALOG, pilot, usePilotPending } from '.'
-import type { Pending } from './core'
+import { confirmBinder, type Pending } from './core'
+
+/** pilot/core's confirmBinder bound to the app's executor: the only way a button here reaches confirm(). */
+export const bindPilotConfirm = confirmBinder(pilot)
+
+let claims = 0
+const claimSubs = new Set<() => void>()
+const tell = () => claimSubs.forEach((f) => f())
+/** The voice orb shows the pending prompt itself while open; call the returned function to hand it back. */
+export function claimConfirm(): () => void {
+  claims++; tell()
+  let done = false
+  return () => { if (!done) { done = true; claims--; tell() } }
+}
 
 function Prompt({ p }: { p: Pending }) {
   const btn = useRef<HTMLButtonElement>(null)
@@ -19,15 +34,7 @@ function Prompt({ p }: { p: Pending }) {
 
   useEffect(() => {
     const el = btn.current
-    if (!el) return
-    pilot.bindConfirm(p.nonce, el)
-    const onClick = async (ev: MouseEvent) => {
-      const out = await pilot.confirm(p.nonce, ev as PointerEvent)
-      if (out.status === 'refused') setWhy(out.reason)
-      else if (out.status === 'failed') { setWhy(out.reason); setTimeout(() => pilot.dismiss(p.nonce), 2500) }
-    }
-    el.addEventListener('click', onClick)
-    return () => el.removeEventListener('click', onClick)
+    return el ? bindPilotConfirm(p.nonce, el, setWhy) : undefined
   }, [p.nonce])
 
   return (
@@ -49,7 +56,8 @@ function Prompt({ p }: { p: Pending }) {
 
 export default function PilotConfirm() {
   const p = usePilotPending()
-  if (!p) return null
+  const orb = useSyncExternalStore((f) => { claimSubs.add(f); return () => { claimSubs.delete(f) } }, () => claims > 0)
+  if (!p || orb) return null
   return createPortal(
     <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[320]"><Prompt key={p.nonce} p={p} /></div>,
     document.body,

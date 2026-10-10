@@ -185,3 +185,19 @@ export function createExecutor(catalog: Catalog, handlers: Record<string, Handle
   }
 }
 export type Executor = ReturnType<typeof createExecutor>
+
+/** The ONE way a button reaches confirm() (a4 #44264): binds `el` as the confirm for `nonce` (the dwell starts now)
+ *  and hands the executor the button's own NATIVE click, so isTrusted, pointerType and currentTarget are the
+ *  browser's. `refused` hears why a tap didn't run; a failed run is dismissed after 2.5s. Returns the unbind. */
+export function confirmBinder(ex: Executor) {
+  return (nonce: string, el: EventTarget, refused: (why: string) => void): (() => void) => {
+    ex.bindConfirm(nonce, el)
+    const onClick = async (ev: Event) => {
+      const out = await ex.confirm(nonce, ev as unknown as TapEvent)
+      if (out.status === 'refused') refused(out.reason)
+      else if (out.status === 'failed') { refused(out.reason); setTimeout(() => ex.dismiss(nonce), 2500) }
+    }
+    el.addEventListener('click', onClick)
+    return () => el.removeEventListener('click', onClick)
+  }
+}

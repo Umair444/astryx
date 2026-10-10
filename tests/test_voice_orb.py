@@ -3,9 +3,12 @@
 Synthetic DOM events are untrusted, so they would prove nothing about a gate that reads isTrusted. Here chromium
 is driven over the DevTools protocol (Input.dispatchMouseEvent / dispatchKeyEvent), which delivers trusted input
 the same way a real mouse and keyboard do. The page is observatory/web/fixtures/voice-orb.html on a vite dev
-server; window.orb.set() drives the props and window.orb.log records every onConfirm.
+server. The confirm is gated by a REAL executor (pilot/core createExecutor) through the app's own confirmBinder:
+the room asks, the executor mints the nonce, and window.orb.log records every action that actually ran.
 
-  ARM iii   a pointer click inside the inert window is ignored; the same click after it confirms (the RED control)
+  ARM iii   a pointer click before the dwell runs nothing; the dwell starts after the entrance; the same click once
+            ready runs it (the RED control)
+  ARM forged  confirm() handed a plain object claiming every trusted field is refused
   ARM ii    Enter and Space never confirm, and neither does an untrusted element.click()
   ARM iv    a programmatic focus() can't park focus on the confirm
   ARM v     X shown past its window, then Y replaces it, then a click at the same spot within 500ms: neither runs,
@@ -105,57 +108,91 @@ class Page:
 
 
 SET = "window.orb.set({p}); await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))"
-BTN = "(() => {{ const b = document.querySelector('[data-nonce=\"{n}\"] [data-confirm]'); if (!b) return null;" \
+BTN = "(() => {{ const b = document.querySelector('[data-pilot-confirm=\"{n}\"] [data-pilot-allow]'); if (!b) return null;" \
       " const r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2] }})()"
+READY = "document.querySelector('[data-pilot-confirm=\"{n}\"] [data-pilot-allow]')?.getAttribute('aria-disabled') === 'false'"
 LOG = "window.orb.log.slice()"
 
 
-async def confirm(page: Page, nonce: str, action="open_desktop", args=None):
-    c = {"nonce": nonce, "action": action, "args": args or {}}
+async def ask(page: Page, action="open_desktop", args=None):
+    """the room asks; the executor mints the nonce and the orb renders it. Returns (nonce, xy, mounted_at)."""
+    c = {"action": action, "args": args or {}}
     await page.js("(async () => { " + SET.format(p=json.dumps({"confirm": c})) + " })()")
-    return await page.js(BTN.format(n=nonce))
+    n = await page.js("window.orb.pending()")
+    return n, await page.js(BTN.format(n=n)), time.monotonic()
+
+
+async def until_ready(page: Page, n: str, within=3.0) -> float:
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < within:
+        if await page.js(READY.format(n=n)):
+            return time.monotonic()
+        await asyncio.sleep(0.02)
+    return -1.0
 
 
 async def arms(page: Page) -> None:
-    print("ARM iii: the inert window")
-    xy = await confirm(page, "n-early")
-    t0 = time.monotonic()
+    print("ARM iii: the dwell, measured by the executor from the bind after the entrance")
+    n, xy, t0 = await ask(page)
     await page.click(*xy)
     early = (time.monotonic() - t0) * 1000
-    ok(await page.js(LOG) == [], f"a trusted click {early:.0f}ms after paint is ignored")
-    await asyncio.sleep(0.7)
+    ok(await page.js(LOG) == [] and await page.js("window.orb.pending()") == n,
+       f"a trusted click {early:.0f}ms after paint runs nothing; the prompt stays")
+    t2 = time.monotonic()                                       # the bind: the fill bar starts once the entrance is done
+    while time.monotonic() - t2 < 3 and not await page.js("document.querySelector('[data-pilot-allow] .ax-inert') !== null"):
+        await asyncio.sleep(0.01)
+    entrance = (time.monotonic() - t0) * 1000
+    xy = await page.js(BTN.format(n=n))                         # the entrance moved it; aim at where it is now
     await page.click(*xy)
-    ok(await page.js(LOG) == ["confirm:n-early"], "RED control: the same trusted click after 500ms confirms")
+    await asyncio.sleep(0.05)
+    why = await page.js("document.querySelector('[data-pilot-confirm] .text-bad')?.textContent ?? ''")
+    ok(await page.js(LOG) == [] and "too soon" in why,
+       f"a click just after the bind ({entrance:.0f}ms after paint) is refused by the executor, and says so")
+    t1 = await until_ready(page, n)
+    ok(t1 > 0 and (t1 - t0) * 1000 >= 500, f"the button reads ready {(t1 - t0) * 1000:.0f}ms after paint (entrance + dwell)")
+    await page.click(*xy)
+    await asyncio.sleep(0.05)
+    ok(await page.js(LOG) == ["ran:open_desktop"], "RED control: the same trusted click once ready runs it")
+
+    print("ARM forged: a plain object claiming every trusted field")
+    n, _, _ = await ask(page)
+    await until_ready(page, n)
+    xy = await page.js(BTN.format(n=n))
+    ok(await page.js("window.orb.forge()") == "refused" and await page.js(LOG) == ["ran:open_desktop"],
+       "confirm() refuses a forged event aimed at the bound button")
 
     print("ARM ii + iv: keys and focus")
-    xy = await confirm(page, "n-keys")
-    await asyncio.sleep(0.7)
-    focused = await page.js("(() => { const b = document.querySelector('[data-nonce=\"n-keys\"] [data-confirm]');"
+    focused = await page.js("(() => { const b = document.querySelector('[data-pilot-allow]');"
                             " b.focus(); return document.activeElement === b })()")
     ok(focused is False, "ARM iv: a programmatic focus() leaves the confirm unfocused")
     for _ in range(4):
         await page.key("Tab", "Tab", 9)
-    tabbed = await page.js("document.activeElement?.hasAttribute('data-confirm') === true")
+    tabbed = await page.js("document.activeElement?.hasAttribute('data-pilot-allow') === true")
     ok(tabbed is False, "Tab never lands on the confirm (tabIndex -1)")
-    await page.js("document.querySelector('[data-nonce=\"n-keys\"] [data-confirm]').focus()")
+    await page.js("document.querySelector('[data-pilot-allow]').focus()")
     await page.key("Enter", "Enter", 13, "\r")
     await page.key(" ", "Space", 32, " ")
-    ok(await page.js(LOG) == ["confirm:n-early"], "ARM ii: trusted Enter and Space do not confirm")
-    await page.js("document.querySelector('[data-nonce=\"n-keys\"] [data-confirm]').click()")
-    ok(await page.js(LOG) == ["confirm:n-early"], "an untrusted element.click() does not confirm")
+    await asyncio.sleep(0.05)
+    ok(await page.js(LOG) == ["ran:open_desktop"], "ARM ii: trusted Enter and Space run nothing")
+    await page.js("document.querySelector('[data-pilot-allow]').click()")
+    await asyncio.sleep(0.05)
+    ok(await page.js(LOG) == ["ran:open_desktop"], "an untrusted element.click() runs nothing")
     await page.click(*xy)
-    ok((await page.js(LOG))[-1] == "confirm:n-keys", "RED control: a pointer click on that same prompt confirms")
+    await asyncio.sleep(0.05)
+    ok(await page.js(LOG) == ["ran:open_desktop"] * 2, "RED control: a pointer click on that same prompt runs it")
 
     print("ARM v: a replaced prompt")
-    xy = await confirm(page, "n-x", "open_desktop")
-    await asyncio.sleep(0.7)
+    x, _, _ = await ask(page, "open_desktop")
+    await until_ready(page, x)
+    xy = await page.js(BTN.format(n=x))
     before = len(await page.js(LOG))
-    await confirm(page, "n-y", "navigate", {"route": "economy"})
+    y, _, _ = await ask(page, "navigate", {"route": "economy"})
     await page.click(*xy)
-    log = await page.js(LOG)
-    ok(len(log) == before, "a click at X's spot within 500ms of Y: neither X nor Y executed")
-    ok(await page.js("document.querySelector('[data-nonce=\"n-x\"]') === null"), "X's element is gone")
-    ok(await page.js("document.querySelector('[data-nonce=\"n-y\"]') !== null"), "Y is a fresh element with its own nonce")
+    await asyncio.sleep(0.05)
+    ok(len(await page.js(LOG)) == before, "a click at X's spot just after Y arrives: neither X nor Y ran")
+    ok(x != y and await page.js(f"document.querySelector('[data-pilot-confirm=\"{x}\"]') === null"), "X's element is gone")
+    ok(await page.js(f"document.querySelector('[data-pilot-confirm=\"{y}\"]') !== null"), "Y is a fresh element with its own nonce")
+    ok(await page.js("document.querySelectorAll('[data-pilot-allow]').length") == 1, "the page holds one Allow button")
     await page.js("(async () => { " + SET.format(p=json.dumps({"confirm": None})) + " })()")
 
 
@@ -168,7 +205,7 @@ STATES = [
     ("speaking", {"state": "speaking", "outLevel": 0.5, "agents": [{"name": "seed", "role": "speaking"}, {"name": "painter", "role": "listening"}],
                   "reply": {"agent": "seed", "text": "The pulse is green: 14 agents live, 3 goals shipped today, and no gate is red.\nThe economy view has the detail."}}),
     ("confirm", {"state": "listening", "agents": [{"name": "seed", "role": "working"}],
-                 "confirm": {"nonce": "n-shot", "action": "open_desktop", "args": {"display": 1, "focus": "terminal"}}}),
+                 "confirm": {"action": "open_desktop", "args": {"display": 1, "focus": "terminal"}}}),
 ]
 
 
