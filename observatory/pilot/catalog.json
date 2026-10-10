@@ -1,0 +1,116 @@
+{
+  "_doc": "plan-9000 S1: the observatory's ONE action catalog. Every caller (the Ctrl-K palette, the voice model, an agent's command row) reaches the screen only through these actions, gated by the matrix. The browser executor (observatory/web/src/pilot) and the server/MCP side (observatory/pilot/catalog.py) both read THIS file, so there is nothing to keep in sync. A missing matrix cell is DENY; an action with no class is treated as actuate. A principal is never a value a caller passes: the executor has one entry point per principal (a1 #44141 R1). Schemas use only the keywords the validator implements (tests/test_pilot_s1.py checks).",
+  "classes": ["view", "read", "write", "actuate"],
+  "matrix": {
+    "owner": {"view": "allow", "read": "allow", "write": "confirm", "actuate": "confirm"},
+    "visitor": {"view": "allow"},
+    "room": {"view": "allow", "read": "projection", "write": "confirm", "actuate": "confirm"},
+    "agent": {"view": "allow"},
+    "anonymous": {},
+    "peer": {}
+  },
+  "principals": {
+    "owner": "the palette in a tab holding the owner key. Its write and actuate still go through the confirm: only a trusted pointer click on the prompt rendered for that request runs them (#44109, a1 #44141 R3)",
+    "visitor": "the palette in a tab without the owner key",
+    "room": "the realtime model: whoever is audible (owner, TV, guest); its calls are never trusted DOM events",
+    "agent": "a resident's command row, arriving over the SSE stream (S4)",
+    "anonymous": "an SSE client without the owner key: receives no command rows",
+    "peer": "a federated org: not a caller"
+  },
+  "actions": [
+    {
+      "name": "navigate",
+      "class": "view",
+      "description": "Go to one of the observatory's views.",
+      "parameters": {
+        "type": "object", "additionalProperties": false, "required": ["view"],
+        "properties": {
+          "view": {"type": "string", "enum": ["floor", "network", "agents", "wire", "goals", "economy", "tools", "theatre", "memory", "growbot", "monitor"]}
+        }
+      }
+    },
+    {
+      "name": "open_thread",
+      "class": "view",
+      "description": "Open one wire thread by its key (for example plan-9000).",
+      "parameters": {
+        "type": "object", "additionalProperties": false, "required": ["thread"],
+        "properties": {"thread": {"type": "string", "minLength": 1, "maxLength": 120}}
+      }
+    },
+    {
+      "name": "open_agent",
+      "class": "view",
+      "description": "Open an agent's profile panel by its name.",
+      "parameters": {
+        "type": "object", "additionalProperties": false, "required": ["agent"],
+        "properties": {"agent": {"type": "string", "minLength": 1, "maxLength": 64}}
+      }
+    },
+    {
+      "name": "close_panel",
+      "class": "view",
+      "description": "Close whatever panel or overlay is open (agent profile, desktop view).",
+      "parameters": {"type": "object", "additionalProperties": false, "properties": {}}
+    },
+    {
+      "name": "set_theme",
+      "class": "view",
+      "description": "Switch the colour theme.",
+      "parameters": {
+        "type": "object", "additionalProperties": false, "required": ["theme"],
+        "properties": {
+          "theme": {"type": "string", "enum": ["astryx", "tokyo-night", "catppuccin", "rose-pine", "kanagawa", "gruvbox", "everforest", "nord", "matte-black", "catppuccin-latte", "flexoki-light", "white"]}
+        }
+      }
+    },
+    {
+      "name": "cycle_theme",
+      "class": "view",
+      "description": "Step to the next or previous colour theme.",
+      "parameters": {
+        "type": "object", "additionalProperties": false, "required": ["direction"],
+        "properties": {"direction": {"type": "string", "enum": ["next", "previous"]}}
+      }
+    },
+    {
+      "name": "scroll",
+      "class": "view",
+      "description": "Scroll the current view.",
+      "parameters": {
+        "type": "object", "additionalProperties": false, "required": ["to"],
+        "properties": {"to": {"type": "string", "enum": ["up", "down", "top", "bottom"]}}
+      }
+    },
+    {
+      "name": "get_view_state",
+      "class": "view",
+      "description": "What is on screen now: the view's NAME, the open agent panel, the theme. Never a URL or query string.",
+      "parameters": {"type": "object", "additionalProperties": false, "properties": {}}
+    },
+    {
+      "name": "get_usage",
+      "class": "read",
+      "description": "The org's plan-limit gauges: 5-hour and 7-day percent used, and when each resets.",
+      "parameters": {"type": "object", "additionalProperties": false, "properties": {}}
+    },
+    {
+      "name": "list_goals",
+      "class": "read",
+      "description": "Goals on the board in one state: their ids and titles.",
+      "parameters": {
+        "type": "object", "additionalProperties": false, "required": ["state"],
+        "properties": {"state": {"type": "string", "enum": ["active", "proposed", "hibernated", "done"]}}
+      }
+    },
+    {
+      "name": "open_desktop",
+      "class": "actuate",
+      "description": "Open the live view of the desktop an agent is using, where the owner can also act on it.",
+      "parameters": {
+        "type": "object", "additionalProperties": false, "required": ["agent"],
+        "properties": {"agent": {"type": "string", "minLength": 1, "maxLength": 64}}
+      }
+    }
+  ]
+}
