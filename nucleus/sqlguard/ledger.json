@@ -564,6 +564,17 @@
     "state": "done"
    }
   },
+  "tests/test_hearing.py": {
+   "gates": [
+    "hearing: hear() workers, pointer, span-fetch, fence"
+   ],
+   "listed_since": "2026-10-10",
+   "reason": "hearing S2: derived only for ear_store.maintain()'s run-time CREATE TABLE \u2026 PARTITION OF utterances (the day partitions the pointer arms need) inside nucleus/sqlguard/fixture.py's stamped fixture_db; the same misclassification as tests/test_ear_store.py",
+   "trip": {
+    "goal": 8674,
+    "state": "open"
+   }
+  },
   "tests/test_nudge.py": {
    "gates": [
     "tool nudge (O5): never blocks, never leaks, recurrence-gated"
