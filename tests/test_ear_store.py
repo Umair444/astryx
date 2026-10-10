@@ -146,6 +146,12 @@ try:
              rc1 == 0 and "words a base must not copy" not in cut and "CREATE TABLE public.utterances" in cut,
              f"rc={rc1}")
 
+        # the owner's footnote names backup.sh's keep: the constant must be backup.sh's own default (a4 #43410 R1)
+        import re
+        keep = re.search(r"^KEEP=\$\{1:-(\d+)\}", (REPO / "nucleus/backup.sh").read_text(), re.M)
+        want("BACKUP_KEEP_DAYS is backup.sh's KEEP default (what the ear footnote tells the owner)",
+             keep is not None and int(keep.group(1)) == E.BACKUP_KEEP_DAYS, f"{keep and keep.group(1)} vs {E.BACKUP_KEEP_DAYS}")
+
         # the shipped trigger
         st = {}
         want("trigger tick: maintains and is silent while green", T.tick(st, c) is None and "last" in st, str(st))

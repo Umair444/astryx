@@ -204,7 +204,7 @@ async def status():
     if not store_ok:
         st = {**st, "degraded": True, "reasons": st.get("reasons", []) + [f"store offline ({store.error})"]}
     return {"room": ROOM, "lease": await _indicator(), "stt": st, "store": {"ok": store_ok, "error": store.error},
-            "ttl_days": S.ttl_days()}
+            "ttl_days": S.ttl_days(), "backup_days": S.BACKUP_KEEP_DAYS}
 
 
 async def _holder(request: Request) -> str | None:

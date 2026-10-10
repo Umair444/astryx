@@ -25,6 +25,7 @@ interface Status {
   stt: { degraded: boolean; reasons: string[]; queue: number; backend: string; rtf_last: number | null }
   store: { ok: boolean }
   ttl_days?: number
+  backup_days?: number                                   // backup.sh keeps the last N nightly dumps
   attending?: string[]                                   // S2: agents given hearing
   caught?: { agent: string; at: string } | null           // S2: the last name heard, never the words
 }
@@ -245,7 +246,7 @@ export default function EarControl({ view }: { view: string }) {
                 boxShadow: look.live ? `0 0 ${hearing ? 10 : 5}px -1px ${orbTone}` : 'none',
               }} />
           </span>
-          <span className={look.tone === 'warn' ? '' : 'hidden sm:inline'}>{look.word}</span>
+          <span className={look.tone === 'warn' || offline ? '' : 'hidden sm:inline'}>{look.word}</span>
           {degraded && !offline && look.tone !== 'warn' && <span className="w-1.5 h-1.5 rounded-full bg-warn" title="degraded" />}
           {attending.length > 0 && (
             <span className="hidden sm:flex items-center ml-0.5">
@@ -326,7 +327,8 @@ export default function EarControl({ view }: { view: string }) {
           </div>
         </div>
         <div className="px-5 py-2.5 border-t border-line text-[11px] text-ink-mute leading-snug">
-          Speech only, transcribed on this host{status?.ttl_days ? `, kept ${status.ttl_days} days` : ''}.
+          Speech only, transcribed on this host.
+          {status?.ttl_days ? ` Kept ${status.ttl_days} days live; nightly backups hold it up to ${status.backup_days ?? 14} days more.` : ''}
           {status && <span className="font-mono"> · {status.stt.backend}{status.stt.rtf_last != null ? ` · rtf ${status.stt.rtf_last}` : ''}</span>}
         </div>
       </Popover.Dropdown>
