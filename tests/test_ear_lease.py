@@ -75,6 +75,9 @@ try:
             # MUTED
             m = L.mute(a, R)
             want("MUTED wins over a live EAR, with NO TTL", m["state"] == "MUTED" and m["expires_at"] is None, str(m))
+            again = L.mute(b, R, by="tab-b")
+            want("mute is idempotent: a second mute keeps the first (who, since when)",
+                 again["holder"] == m["holder"] and again["granted_at"] == m["granted_at"], str(again))
             later = datetime.now(timezone.utc) + timedelta(hours=6)
             want("MUTED still reads muted six hours later (no TTL)", L.indicator(L.get(a, R), later)["mic"] == "muted")
             want("RED control: MUTED is not claimable (not even by the last holder)",

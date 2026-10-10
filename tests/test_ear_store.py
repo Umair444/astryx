@@ -94,6 +94,15 @@ try:
         want("RED control: retention broken → the trigger reports the RED once, quiet next tick, re-nags after a day",
              m1 and old2 in m1 and m2 is None and m3 and old2 in m3, f"{m1!r} / {m2!r} / {m3!r}")
         want("healed: the next tick drops it and is silent", T.tick(st, c) is None and E.ttl_findings(c) == [])
+        import contextlib
+        import io
+        import os
+        os.environ["ASTRYX_DSN"] = fx["dsn"]                       # the CLI, on the fixture
+        for verb, rc_want in (("maintain", 0), ("ttl", 0)):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = E.main(["ear_store", verb])
+            want(f"CLI `ear_store {verb}` → {rc_want}", rc == rc_want, f"{rc} {buf.getvalue()[-200:]}")
 except FixtureUnavailable as e:
     print(f"SKIP: {e}")
     sys.exit(77)

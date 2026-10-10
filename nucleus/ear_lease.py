@@ -60,10 +60,12 @@ def release(conn, resource: str, holder: str) -> dict | None:
 
 
 def mute(conn, resource: str, by: str = "owner") -> dict:
+    """Idempotent: an already-MUTED room keeps its original mute (who, since when) and is returned as it is."""
     _ensure(conn, resource)
     return _row(conn.execute(
         f"UPDATE leases SET holder = %s, state = 'MUTED', granted_at = now(), expires_at = NULL, "
-        f"heartbeat_at = now() WHERE resource = %s RETURNING {COLS}", (by, resource)))
+        f"heartbeat_at = now() WHERE resource = %s AND state <> 'MUTED' RETURNING {COLS}", (by, resource))) \
+        or get(conn, resource)
 
 
 def unmute(conn, resource: str) -> dict | None:
