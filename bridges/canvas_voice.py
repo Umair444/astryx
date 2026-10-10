@@ -47,10 +47,8 @@ FLOOR_SECONDS = 60                                 # a minted session that never
 
 
 def _cap_minutes() -> float:
-    try:
-        return float(env("CANVAS_VOICE_DAILY_MINUTES", "60"))
-    except ValueError:
-        return 60.0
+    from nucleus.voice_mint import cap_minutes      # ONE cap for every voice surface (plan-9000 C4)
+    return cap_minutes()
 
 
 def _guests_ok() -> bool:
@@ -93,10 +91,8 @@ DAY = "date_trunc('day', now())"
 
 
 async def minutes_today() -> float:
-    s = await C.pool.fetchval(
-        f"SELECT coalesce(sum(greatest(seconds, CASE WHEN reported THEN 0 ELSE {FLOOR_SECONDS} END)), 0) "
-        f"FROM canvas_voice_usage WHERE minted_at >= {DAY}")
-    return round(float(s) / 60.0, 2)
+    from nucleus.voice_mint import minutes_today as shared   # canvas + observatory pilot, one ledger (C4)
+    return await shared(C.pool)
 
 
 async def _status(v) -> dict:
