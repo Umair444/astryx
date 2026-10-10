@@ -20,7 +20,8 @@ build_web() {
   local dir="$ROOT/observatory/web" ok log
   log=$(mktemp "${TMPDIR:-/tmp}/astryx-build.XXXXXX.log")
   if [ "$(id -u)" = 0 ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
-    sudo -u "$SUDO_USER" -H bash -lc "cd '$dir' && npm run build" >"$log" 2>&1 && ok=1 || ok=
+    # the path goes in as DATA ($1), never interpolated into the shell text (a2 #44267 R3)
+    sudo -u "$SUDO_USER" -H bash -lc 'cd "$1" && npm run build' _ "$dir" >"$log" 2>&1 && ok=1 || ok=
   else
     ( cd "$dir" && npm run build >"$log" 2>&1 ) && ok=1 || ok=
   fi
