@@ -98,5 +98,36 @@ r2 = c.post("/api/pilot/voice/session", headers=H)
 arm("over the shared cap (canvas spent it), the observatory refuses a new session (429)", r2.status_code == 429, r2.status_code)
 arm("and mints nothing", len(minted) == 1)
 
+# (e) the ledger's SQL against a REAL schema: a throwaway fixture database with schema.sql applied whole, so each
+# statement voice_mint issues runs on the declared canvas_voice_usage (sqlguard: RESPONSIVE, not merely stubbed)
+from nucleus.sqlguard.fixture import fixture_db  # noqa: E402
+import asyncpg  # noqa: E402
+
+
+async def on_fixture(dsn):
+    from psycopg.conninfo import conninfo_to_dict   # the fixture hands a libpq DSN; asyncpg takes keywords
+    d = conninfo_to_dict(dsn)
+    conn = await asyncpg.connect(host=d.get("host"), port=int(d.get("port") or 5432), user=d.get("user"),
+                                 database=d.get("dbname"), password=d.get("password"))
+    try:
+        empty = await V.minutes_today(conn)
+        a = await V.record(conn, "observatory-owner", "gpt-realtime")
+        b = await V.record(conn, "umair", "gpt-realtime")
+        await V.report(conn, a, "observatory-owner", 30)
+        out = await V.report(conn, b, "umair", 90)
+        again = await V.report(conn, b, "umair", 10)              # monotonic: a lower report never lowers it
+        foreign = await V.report(conn, a, "umair", 999)           # a row is reported only by its own user
+        return empty, out, again, foreign, await V.minutes_today(conn)
+    finally:
+        await conn.close()
+
+
+with fixture_db() as fx:
+    empty, out, again, foreign, total = asyncio.run(on_fixture(fx["dsn"]))
+arm("on the real schema: an empty day is 0 minutes", empty == 0)
+arm("on the real schema: two surfaces' reports sum into one day (30s + 90s = 2 min)", out["minutes_today"] == 2.0, out)
+arm("on the real schema: a lower report never lowers the seconds", again["minutes_today"] == 2.0, again)
+arm("on the real schema: a report for another user's row changes nothing", foreign["minutes_today"] == 2.0 and total == 2.0, foreign)
+
 print("ALL PASS" if not fails else f"FAIL ({fails})")
 sys.exit(1 if fails else 0)
