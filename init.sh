@@ -766,12 +766,12 @@ setup() {
   # this code reads it at runtime, no key literal in tracked source).
   local key url copied=""
   key=$(grep '^OBS_KEY=' .env 2>/dev/null | cut -d= -f2-)
-  url="http://localhost:8090/?key=$key"
+  url="http://localhost:8090/"              # NO key in what's PRINTED (seed #43278): stdout reaches logs and agent contexts
   if   command -v wl-copy >/dev/null 2>&1; then printf '%s' "$key" | wl-copy 2>/dev/null && copied=1
   elif command -v xclip   >/dev/null 2>&1; then printf '%s' "$key" | xclip -selection clipboard 2>/dev/null && copied=1
   elif command -v pbcopy  >/dev/null 2>&1; then printf '%s' "$key" | pbcopy 2>/dev/null && copied=1; fi
-  echo; say "observatory (your private dashboard): $url"
-  [ -n "$copied" ] && say "  ↳ OBS_KEY copied to your clipboard."
+  echo; say "observatory (your private dashboard): $url  (append ?key=<OBS_KEY>; the key is OBS_KEY in .env)"
+  [ -n "$copied" ] && say "  ↳ OBS_KEY copied to your clipboard: paste it after ?key=."
   say "  that key lives in .env (gitignored) — it's a credential: guard it, never paste it in chat or commit it."
   # `astryx` from anywhere — link the one dispatcher onto PATH (no file clutter, one surface).
   _link_dispatcher

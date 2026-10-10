@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# test_deploy_build — deploy.sh's build and restart failures STOP the deploy (seed #43278), and init.sh's banner prints no
+# credential. Every side effect is stubbed (no real npm, unit or sudo): the REAL deploy.sh is copied into a temp root.
+#   1. a failing web build → rc 1, "ABORTED", NOTHING restarted, never "done." (it used to restart the old bundle and
+#      print "deploy: obs done.", because set -e doesn't trip on the left of `build_web && restart`)
+#   2. a good build → restarted, "done."
+#   3. under sudo (uid 0, SUDO_USER set) the build runs AS the invoking user (`sudo -u <user>`): root's PATH has no node
+#   4. a failing restart → rc 1, "ABORTED at <unit>", never "done."
+#   4b. a root-owned stale build log from an earlier sudo run can't make a user's good build read FAILED
+#   5. init.sh's closing banner prints the observatory URL WITHOUT the key (stdout reaches logs and agent contexts)
+set -uo pipefail
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+fails=0
+arm() { if eval "$2"; then echo "  PASS  $1"; else echo "  FAIL  $1"; fails=$((fails+1)); fi; }
+
+setup() {   # $1: npm rc, $2: systemctl-restart rc, $3: uid the stub `id` reports
+  rm -rf "$T/root" "$T/bin"; mkdir -p "$T/root/nucleus" "$T/root/observatory/web" "$T/bin"
+  cp "$REPO/nucleus/deploy.sh" "$T/root/nucleus/deploy.sh"
+  : > "$T/log"
+  printf '#!/usr/bin/env bash\necho "npm $* as=${STUB_AS:-self}" >> "%s"\nexit %s\n' "$T/log" "$1" > "$T/bin/npm"
+  printf '#!/usr/bin/env bash\necho "systemctl $*" >> "%s"\n[ "$1" = restart ] && exit %s\n[ "$1" = is-active ] && echo active\nexit 0\n' \
+    "$T/log" "$2" > "$T/bin/systemctl"
+  # sudo: `sudo -u U -H bash -lc CMD` runs CMD as "U" (marked, no real login shell); anything else runs as is
+  cat > "$T/bin/sudo" <<P
+#!/usr/bin/env bash
+echo "sudo \$*" >> "$T/log"
+if [ "\$1" = -u ]; then u=\$2; shift 3; [ "\$1" = bash ] && [ "\$2" = -lc ] && exec env STUB_AS="\$u" bash -c "\$3"; exec "\$@"; fi
+exec "\$@"
+P
+  printf '#!/usr/bin/env bash\n[ "$1" = -u ] && echo %s && exit 0\nexec /usr/bin/id "$@"\n' "$3" > "$T/bin/id"
+  chmod +x "$T"/bin/*
+}
+run() { PATH="$T/bin:$PATH" SUDO_USER="${1:-}" bash "$T/root/nucleus/deploy.sh" obs 2>&1; }
+
+setup 1 0 1000; out=$(run); rc=$?
+arm "1. a failing web build → rc 1 and ABORTED" '[ $rc = 1 ] && grep -q "ABORTED — the build failed" <<<"$out"'
+arm "1. …nothing is restarted" '! grep -q "systemctl restart" "$T/log"'
+arm "1. …and it never claims done" '! grep -q "deploy: obs done" <<<"$out"'
+
+setup 0 0 1000; out=$(run); rc=$?
+arm "2. a good build → restarted, done (rc 0)" '[ $rc = 0 ] && grep -q "systemctl restart astryx-observatory" "$T/log" && grep -q "deploy: obs done" <<<"$out"'
+arm "2. …as the caller when not under sudo" 'grep -q "npm run build as=self" "$T/log"'
+
+setup 0 0 0; out=$(run alice); rc=$?
+arm "3. under sudo the build runs AS the invoking user (root has no node)" '[ $rc = 0 ] && grep -q "sudo -u alice -H bash -lc" "$T/log" && grep -q "npm run build as=alice" "$T/log"'
+
+export TMPDIR="$T/tmp"; mkdir -p "$TMPDIR"; : > "$TMPDIR/astryx-build.log"; chmod 000 "$TMPDIR/astryx-build.log"
+setup 0 0 1000; out=$(run); rc=$?
+arm "4b. a stale unwritable build log (an earlier sudo run's) can't fail a good build: each run logs fresh" \
+  '[ $rc = 0 ] && grep -q "deploy: obs done" <<<"$out"'
+setup 0 1 1000; out=$(run); rc=$?
+arm "4. a failing restart → rc 1, ABORTED at the unit, never done" '[ $rc = 1 ] && grep -q "ABORTED at astryx-observatory" <<<"$out" && ! grep -q "deploy: obs done" <<<"$out"'
+
+# 5. the banner block: what init.sh PRINTS never carries the key (it goes to the clipboard and lives in .env)
+banner=$(sed -n '/OBS_KEY is a CREDENTIAL/,/never paste it in chat/p' "$REPO/init.sh")
+arm "5. init.sh's banner prints no key (no \$key in any say/echo; the URL carries none)" \
+  '[ -n "$banner" ] && ! grep -E "(say|echo).*\\\$key" <<<"$banner" && ! grep -q "key=\$key" <<<"$banner" && grep -q "url=\"http://localhost:8090/\"" <<<"$banner"'
+
+[ $fails = 0 ] && echo PASS || { echo "FAIL ($fails)"; exit 1; }
