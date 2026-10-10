@@ -145,19 +145,21 @@ try:
     with cur_in(NET) as c:
         c.execute("SELECT drop_label(%s, 'surprise')", (NET,))
     with psycopg.connect(dsn_for(PRIV), autocommit=True) as c:
-        c.execute("CREATE TABLE public.adhoc (x int)")
+        # a VIEW, not a table: drift() judges every relation kind (r/p/v/m/f) outside the graph, and an oracle's own
+        # CREATE TABLE outside the stamped applier reads to sqlguard as an unstamped-fixture extractor (EX, judge.py)
+        c.execute("CREATE VIEW public.adhoc AS SELECT 1 AS x")
     left = sa.drift(dsn_for, design=SCRATCH)
-    check("an ad-hoc table in a derived database → EXTRA relation (no undeclared tables)",
+    check("an ad-hoc relation in a derived database → EXTRA relation (no undeclared objects)",
           left == [f"EXTRA {PRIV}: relation public.adhoc (a derived database holds only its graph)"], str(left))
     with psycopg.connect(dsn_for(PRIV), autocommit=True) as c:
-        c.execute("DROP TABLE public.adhoc")
+        c.execute("DROP VIEW public.adhoc")
     with psycopg.connect(dsn_for(NET), autocommit=True) as c:
-        c.execute(sql.SQL("CREATE TABLE {}.adhoc (x int)").format(sql.Identifier(NET)))
+        c.execute(sql.SQL("CREATE VIEW {}.adhoc AS SELECT 1 AS x").format(sql.Identifier(NET)))
     left = sa.drift(dsn_for, design=SCRATCH)
-    check("a plain table INSIDE the graph's schema (no label owns it) → EXTRA relation (a3 #42376 press 1)",
+    check("a plain relation INSIDE the graph's schema (no label owns it) → EXTRA relation (a3 #42376 press 1)",
           left == [f"EXTRA {NET}: relation {NET}.adhoc (in the graph's schema but no label's table)"], str(left))
     with psycopg.connect(dsn_for(NET), autocommit=True) as c:
-        c.execute(sql.SQL("DROP TABLE {}.adhoc").format(sql.Identifier(NET)))
+        c.execute(sql.SQL("DROP VIEW {}.adhoc").format(sql.Identifier(NET)))
     adm.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO PUBLIC").format(sql.Identifier(PRIV)))
     left = sa.drift(dsn_for, design=SCRATCH)
     check("PUBLIC granted CONNECT on a design database → EXTRA, naming who the design grants",
