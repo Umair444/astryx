@@ -211,13 +211,40 @@ def present(admin_dsn: str, db: str) -> list:
         raise
 
 
+def birth(admin, db: str) -> bool:
+    """A missing scoped database, BORN ZERO-WINDOW: closed, PUBLIC revoked, the resident granted CONNECT, then opened
+    (a4 #42525: revoking PUBLIC and granting nothing breaks the ruling by construction). True if created now."""
+    from psycopg import sql
+    I = sql.Identifier
+    if admin.execute("SELECT 1 FROM pg_database WHERE datname = %s", (db,)).fetchone():
+        return False
+    admin.execute(sql.SQL("CREATE DATABASE {} ALLOW_CONNECTIONS false").format(I(db)))
+    admin.execute(sql.SQL("REVOKE ALL ON DATABASE {} FROM PUBLIC").format(I(db)))
+    if admin.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (RESIDENT,)).fetchone():
+        admin.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(I(db), I(RESIDENT)))
+    admin.execute(sql.SQL("ALTER DATABASE {} ALLOW_CONNECTIONS true").format(I(db)))
+    return True
+
+
+def grant_read(conn, schemas) -> bool:
+    """Every resident READS the declared schemas (owner ruling 10-10: "database entities should be public to all agents
+    working inside astryx"): USAGE plus SELECT on their tables, to the resident ROLE, never PUBLIC. False if no role."""
+    from psycopg import sql
+    I = sql.Identifier
+    if not conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (RESIDENT,)).fetchone():
+        return False
+    for ns in schemas or ():
+        conn.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(I(ns), I(RESIDENT)))
+        conn.execute(sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA {} TO {}").format(I(ns), I(RESIDENT)))
+    return True
+
+
 def apply(admin_dsn: str, db: str) -> list:
-    """init.sh's act for a scoped database: born ZERO-WINDOW if missing (closed, PUBLIC revoked, then opened), then
-    its files applied in one transaction each. COMMIT FIRST, like the schema node: a file whose bytes differ from git
-    HEAD's is refused (prod carries only what git carries). Returns what it did."""
+    """init.sh's act for a scoped database: COMMIT FIRST, like the schema node (a file whose bytes differ from git HEAD's
+    is refused: prod carries only what git carries), then birth() if missing, its files in one transaction, then
+    grant_read(). Returns what it did."""
     import subprocess
     import psycopg
-    from psycopg import sql
     from psycopg.conninfo import make_conninfo
     did = []
     for f in DATABASES[db]["files"]:
@@ -225,24 +252,13 @@ def apply(admin_dsn: str, db: str) -> list:
         if head.returncode != 0 or head.stdout != (REPO / f).read_text():
             raise RuntimeError(f"{f} differs from what git has committed (modified, staged or untracked): commit it first")
     with psycopg.connect(admin_dsn, autocommit=True) as a:
-        if not a.execute("SELECT 1 FROM pg_database WHERE datname = %s", (db,)).fetchone():
-            a.execute(sql.SQL("CREATE DATABASE {} ALLOW_CONNECTIONS false").format(sql.Identifier(db)))
-            a.execute(sql.SQL("REVOKE ALL ON DATABASE {} FROM PUBLIC").format(sql.Identifier(db)))
-            if a.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (RESIDENT,)).fetchone():
-                a.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(sql.Identifier(db), sql.Identifier(RESIDENT)))
-            a.execute(sql.SQL("ALTER DATABASE {} ALLOW_CONNECTIONS true").format(sql.Identifier(db)))
+        if birth(a, db):
             did.append(f"database {db}")
     with psycopg.connect(make_conninfo(admin_dsn, dbname=db)) as c:
         for f in DATABASES[db]["files"]:
             c.execute((REPO / f).read_text())
             did.append(f"applied {f}")
-        # every resident READS it (owner ruling 10-10: "database entities should be public to all agents"): the resident
-        # ROLE, never PUBLIC (a4 #42525: a birth that revokes PUBLIC and grants nothing breaks the ruling by construction)
-        if c.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (RESIDENT,)).fetchone():
-            for ns in DATABASES[db]["schemas"] or ():
-                c.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(sql.Identifier(ns), sql.Identifier(RESIDENT)))
-                c.execute(sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA {} TO {}").format(sql.Identifier(ns),
-                                                                                         sql.Identifier(RESIDENT)))
+        if grant_read(c, DATABASES[db]["schemas"]):
             did.append(f"granted read to {RESIDENT}")
         c.commit()
     return did

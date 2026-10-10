@@ -266,24 +266,33 @@ def main():
             P.REPO = real_repo
     check("GEO: apply() REFUSES a file git hasn't committed (prod carries only what git carries), before touching the "
           "server", refused is not None and "commit it first" in refused, str(refused))
-    # the BIRTH path (a4 #42525): a fresh geo is born closed to PUBLIC and READABLE by the resident role (the ruling)
+    # the BIRTH path (a4 #42525), in two halves so no table is minted outside the stamped applier (sqlguard EX):
+    # birth() on a scratch database (no DDL at all), grant_read() on a fixture whose tables the APPLIER made
     zdb = f"zz_geo_birth_{os.getpid()}"
-    P.DATABASES[zdb] = dict(P.DATABASES["geo"])
     try:
-        did = P.apply(live_dsn(), zdb)
         with psycopg.connect(live_dsn(), autocommit=True) as a:
+            made = P.birth(a, zdb)
             pub, res = a.execute("SELECT has_database_privilege('public', %s, 'CONNECT'), "
                                  "has_database_privilege(%s, %s, 'CONNECT')", (zdb, P.RESIDENT, zdb)).fetchone()
-        with psycopg.connect(make_conninfo(live_dsn(), dbname=zdb), autocommit=True) as z:
-            sel = z.execute("SELECT has_table_privilege(%s, 'track.zones', 'SELECT') AND "
-                            "has_schema_privilege(%s, 'track', 'USAGE')", (P.RESIDENT, P.RESIDENT)).fetchone()[0]
-        check("GEO BIRTH: apply() births a missing geo closed to PUBLIC, the resident CONNECTs, USAGE on track, SELECT "
-              "on its tables (a4 #42525: revoking PUBLIC and granting nothing breaks the ruling)",
-              f"database {zdb}" in did and pub is False and res is True and sel is True, f"{did} {pub} {res} {sel}")
+            again = P.birth(a, zdb)
+        check("GEO BIRTH: birth() makes a missing database closed to PUBLIC, CONNECT for the resident; a second call "
+              "makes nothing (a4 #42525: revoking PUBLIC and granting nothing breaks the ruling)",
+              made is True and again is False and pub is False and res is True, f"{made} {again} {pub} {res}")
     finally:
-        P.DATABASES.pop(zdb, None)
         with psycopg.connect(live_dsn(), autocommit=True) as a:
             a.execute(f'DROP DATABASE IF EXISTS "{zdb}" WITH (FORCE)')
+    try:
+        with fixture_db(extra=geo_sql) as gz, psycopg.connect(gz["dsn"], autocommit=True) as z:
+            granted = P.grant_read(z, P.DATABASES["geo"]["schemas"])
+            sel = z.execute("SELECT has_table_privilege(%s, 'track.zones', 'SELECT') AND has_table_privilege(%s, "
+                            "'track.locations', 'SELECT') AND has_schema_privilege(%s, 'track', 'USAGE')",
+                            (P.RESIDENT,) * 3).fetchone()[0]
+            pubsel = z.execute("SELECT has_table_privilege('public', 'track.zones', 'SELECT')").fetchone()[0]
+        check("GEO READ: grant_read() gives the resident USAGE on track and SELECT on its tables, PUBLIC nothing",
+              granted is True and sel is True and pubsel is False, f"{granted} {sel} {pubsel}")
+    except FixtureUnavailable as e:
+        print(f"  SKIP  geo read arm: {e}")
+        fails.append("SKIP geo read")
     psycopg.connect = Probe
     Probe.wrote = None
     try:

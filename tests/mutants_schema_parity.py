@@ -57,8 +57,9 @@ MUTANTS = {
     "G6 exclusivity inferred from having a scope (a future partitioned scoped DB would go red daily)":
         ('    "astryx": {"files": (), "schemas": None, "exclusive": False},', '    "astryx": {"files": (), "schemas": None, "exclusive": True},'),
     "G7 the birth path grants the resident nothing (a fresh geo breaks the ruling by construction)":
-        ('        if c.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (RESIDENT,)).fetchone():\n            for ns',
-         '        if False:\n            for ns'),
+        ('    for ns in schemas or ():\n        conn.execute(sql.SQL("GRANT USAGE', '    for ns in ():\n        conn.execute(sql.SQL("GRANT USAGE'),
+    "G8 birth grants the resident no CONNECT (a fresh geo is closed to every agent)":
+        ('        admin.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(I(db), I(RESIDENT)))\n', ''),
     "G4 the presence check's table parse goes blind (it would read green over nothing)":
         ('    if not got:                                   # anti-vacuity', '    if False:                                   # anti-vacuity'),
 }
