@@ -65,6 +65,7 @@ def main():
                       f"test -f agents/secret/charter.md && echo SUBLINKED >> {rec}; "
                       f"echo written >> agents/secret/charter.md; "
                       f"echo scratch > agents/secret/run_made.txt; "
+                      f"echo other > {r}/agents/secret/concurrent_new.txt; "
                       f"test -d agents/secret/empty && echo EMPTYDIR >> {rec}; "
                       f"python3 -c \"import pathlib,sys; sys.exit(not any(pathlib.Path(\\\"agents\\\").rglob(\\\"charter.md\\\")))\" "
                       f"&& echo RGLOB >> {rec}; "
@@ -96,6 +97,8 @@ def main():
         check("a1 R2: a write the run made THROUGH a linked file reaches LIVE and is NAMED in the report",
               "LIVE WRITES" in p.stdout and "charter.md" in p.stdout
               and "written" in (r / "agents" / "secret" / "charter.md").read_text(), p.stdout[-400:])
+        check("a1 #43404: a CONCURRENT writer's NEW file in a live estate dir is listed too (the scan walks the estate, not the links)",
+              "concurrent_new.txt" in p.stdout, p.stdout[-400:])
         check("…and NOT attributed to the run: the estate has concurrent writers, a mtime can't tell them apart (a4 10-10)",
               "NOT ATTRIBUTED" in p.stdout, p.stdout[-400:])
         trees = [ln for ln in git(r, "worktree", "list").splitlines() if "merge-check." in ln]
