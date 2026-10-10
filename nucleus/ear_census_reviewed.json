@@ -1,0 +1,67 @@
+{
+ "_doc": "Reviewed copier-census lines (nucleus/ear_census.py). A pin holds ONLY while the exact line (sha of its code, comments cut) is unchanged and its binding re-verifies this run. Edit the line and it is RED again until re-reviewed. Adding a pin is a review act: say why the line can't reach astryx_ear.",
+ "reviewed": [
+  {
+   "path": "init.sh",
+   "sha": "7125962a75764e3e",
+   "kinds": [
+    "copies-data-path:/home"
+   ],
+   "why": "an echoed install instruction ('cp to /etc ... /home may be a separate mount'), not a copy",
+   "line_at_review": 913,
+   "code": "say \"then install the bridge (cp to /etc, not symlink — /home may be a separate mount):\""
+  },
+  {
+   "path": "nucleus/backup.sh",
+   "sha": "5ef7f4097c58f713",
+   "kinds": [
+    "pg_dump-nonliteral"
+   ],
+   "why": "backup.sh:129 sets DSN from .env's ASTRYX_DSN: it dumps the org database by name; the census re-checks that ASTRYX_DSN's dbname is not astryx_ear every run",
+   "line_at_review": 191,
+   "code": "pg_dump -Fc \"$DSN\" > \"$part\"",
+   "resolves": "ASTRYX_DSN"
+  },
+  {
+   "path": "nucleus/branch_check_prep.py",
+   "sha": "1abd26edea26e70a",
+   "kinds": [
+    "pg_dump-nonliteral"
+   ],
+   "why": "src = _argv_safe(admin_dsn, prod_db); branch_check.py:167 derives prod_db from ASTRYX_DSN's dbname: one database by name (#42048 M1)",
+   "line_at_review": 389,
+   "code": "dump = subprocess.Popen([\"pg_dump\", \"-Fc\", \"-d\", src], stdout=subprocess.PIPE, env=env)",
+   "resolves": "ASTRYX_DSN"
+  },
+  {
+   "path": "tests/test_branch_check_base.py",
+   "sha": "c5bcf9f893efe430",
+   "kinds": [
+    "pg_dump-nonliteral"
+   ],
+   "why": "a test double comparing recorded argv tuples, not a copier",
+   "line_at_review": 77,
+   "code": "if tool != \"pg_dump\" and db in (prod, None):"
+  },
+  {
+   "path": "tests/test_branch_check_base.py",
+   "sha": "688a2a8a694c0ebe",
+   "kinds": [
+    "pg_dump-nonliteral"
+   ],
+   "why": "an assertion over recorded argv tuples, not a copier",
+   "line_at_review": 193,
+   "code": "\"nothing that writes was aimed at prod\", not refused and calls.count((\"pg_dump\", prod)) == 1"
+  },
+  {
+   "path": "tests/test_branch_check_base.py",
+   "sha": "a64ac8ce63ea4a67",
+   "kinds": [
+    "pg_dump-nonliteral"
+   ],
+   "why": "an assertion over recorded argv tuples, not a copier",
+   "line_at_review": 194,
+   "code": "and (\"pg_restore\", base) in calls and all(db != prod for tool, db in calls if tool != \"pg_dump\"),"
+  }
+ ]
+}
