@@ -21,6 +21,33 @@ unset _self _t _hops
 say() { echo -e "\033[36m[astryx]\033[0m $*"; }
 die() { echo -e "\033[31m[astryx]\033[0m $*" >&2; exit 1; }
 
+# The units the owner should ENABLE: [Install]-bearing, and not declared installed-but-disabled (a remote body's growbot).
+# ONE rule for both call sites (the setup print and doctor's remediation; a3 #43932 F1: the setup path told the owner
+# to enable exactly the unit doctor forbids). Usage: _enable_list <dir> <unit>…
+_enable_list() { local dir=$1 u out=""; shift
+  for u in "$@"; do
+    grep -q '^\[Install\]' "$dir/$u" 2>/dev/null || continue
+    case " ${UNITS_EXPECT_DISABLED:-} " in *" $u "*) continue ;; esac
+    out="$out $u"
+  done; printf '%s' "$out"; }
+# doctor (ii), as data: classifies every generated unit by `systemctl is-enabled` into
+#   notenabled  a normal unit not enabled (won't survive a reboot)
+#   wrongly_on  a declared-off unit that IS enabled
+#   off_missing a declared-off unit that isn't installed at all (is-enabled: not-found / nothing; a3 #43932 F2)
+#   off_ok      a declared-off unit installed and off: the only ones the ok line may name
+_units_state() { local u st; notenabled="" wrongly_on="" off_missing="" off_ok=""
+  for u in "$@"; do
+    st=$(systemctl is-enabled "$u" 2>/dev/null) || true
+    case " ${UNITS_EXPECT_DISABLED:-} " in
+      *" $u "*) case "$st" in
+                  enabled|enabled-runtime|static|alias|indirect) wrongly_on="$wrongly_on $u" ;;
+                  ""|not-found) off_missing="$off_missing $u" ;;
+                  *) off_ok="$off_ok $u" ;;
+                esac ;;
+      *) case "$st" in enabled|enabled-runtime|static|alias|indirect|generated) ;; *) notenabled="$notenabled $u" ;; esac ;;
+    esac
+  done; }
+
 units() {  # GENERATE systemd units from the org's declared sources of truth.
   # units/ is generated output (gitignored), never hand-edited: this is the ONE
   # writer, so no unit can silently drift from what the org actually runs (the
@@ -177,6 +204,51 @@ EOF
   # wire, so keying on routes*.json would read every sense as absent; plan-17 a1).
   # (no sense modules ship in the public tree; a sense adds its own module + grant here —
   # presence-gated exactly like a channel, generating one astryx-<sense>.service unit.)
+  UNITS_EXPECT_DISABLED=""        # units declared here that must be INSTALLED but NOT enabled (doctor checks both ways)
+
+  # ── 3c. senses — the afferent API layer (nucleus/senses.py serves sensors/<agent>/*.py on :8460) ─────────
+  # Declared 10-10 (seed #43920: it ran, enabled and active, while nothing generated it). Presence signal = the server
+  # module + at least one sensor: writing sensors/<agent>/<name>.py IS deploying (senses.py's own law), so an org with
+  # no sensor grows no service.
+  if [ -f nucleus/senses.py ] && compgen -G "sensors/*/*.py" >/dev/null; then
+    cat > "$UD/astryx-senses.service" <<EOF
+[Unit]
+Description=astryx senses — the afferent API layer (sensors/<agent>/*.py served on :8460)
+After=network.target docker.service
+
+[Service]
+Type=simple
+User=$USER
+WorkingDirectory=$PWD
+ExecStart=$PWD/venv/bin/python $PWD/nucleus/senses.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  fi
+
+  # ── 3d. geoloc — the phone's location intake (bridges/geoloc.py, :8766) ─────────────────────────────────────
+  # Declared 10-10 (seed #43920). Presence signal = the bridge module (gitignored: its rows are location history, the
+  # personal tier) + its env file outside the repo (the token and the DSN it writes with). It binds 0.0.0.0 on
+  # purpose: the phone posts to it over the LAN/tailnet, which is the service. The design is declared; the values never.
+  if [ -f bridges/geoloc.py ] && [ -f "$HOME/.config/astryx/geoloc.env" ]; then
+    cat > "$UD/astryx-geoloc.service" <<EOF
+[Unit]
+Description=astryx geoloc bridge — phone location intake on :8766
+After=network.target
+[Service]
+WorkingDirectory=$PWD/bridges
+EnvironmentFile=$HOME/.config/astryx/geoloc.env
+ExecStart=$PWD/venv/bin/uvicorn geoloc:app --host 0.0.0.0 --port 8766
+Restart=always
+RestartSec=5
+User=$USER
+[Install]
+WantedBy=multi-user.target
+EOF
+  fi
 
   # ── 3a. the ear — hearing (plan-8674 S1): browser speech segments → local STT → `utterances` ───────────────
   # Presence signal = EAR_ENABLED=1 in .env. An always-on microphone is a DELIBERATE owner act, so no fresh clone
@@ -210,9 +282,13 @@ EOF
   # the ONE bare (set-e-active) units() call path — `./init.sh doctor` on a fresh clone — so
   # the maintainer never saw it (their .env has GROWBOT_BODY_URL). Empty = no URL = local body.
   gb_url=$(grep -m1 '^GROWBOT_BODY_URL=' .env 2>/dev/null | cut -d= -f2- || true)
+  # The unit is DECLARED whenever the module and a live grant exist (seed #43920: it sat on disk and in systemd with
+  # nothing generating it). WHERE the body runs decides only its STATE: a local body's unit must be enabled; a remote
+  # body (GROWBOT_BODY_URL elsewhere: the chip serves the protocol itself) must leave it installed and NOT enabled.
   if [ -f nucleus/growbot_body.py ] && \
-     { [ -z "$gb_url" ] || echo "$gb_url" | grep -qE '127\.0\.0\.1|localhost'; } && \
      grep -rqsE '^Grants:.*\bgrowbot\b' --exclude='*.example.md' agents/; then
+    { [ -z "$gb_url" ] || echo "$gb_url" | grep -qE '127\.0\.0\.1|localhost'; } \
+      || UNITS_EXPECT_DISABLED="$UNITS_EXPECT_DISABLED astryx-growbot.service"
     cat > "$UD/astryx-growbot.service" <<EOF
 [Unit]
 Description=astryx growbot body — the open GrowBot body protocol over the USB-serial Pico (:8470)
@@ -680,8 +756,8 @@ setup() {
   referral_optin       # opt-in, interactive-only (see the function's CI-asserted guards)
   # install dance — unit NAMES derived from the generated units/ (never a hardcoded
   # subset); install by COPY to /etc (deploy.sh units), never a symlink into /home.
-  local inst=""
-  for u in $(ls units 2>/dev/null); do grep -q '^\[Install\]' "units/$u" && inst="$inst $u"; done
+  local inst
+  inst=$(_enable_list units $(ls units 2>/dev/null))
   say "install the org's services (sudo; residents.service among them = reboot-safety):"
   say "  sudo ./nucleus/deploy.sh units          # cp units/*.{service,timer} → /etc + daemon-reload"
   say "  sudo systemctl enable --now$inst"
@@ -847,10 +923,10 @@ if [ "${1:-}" = "doctor" ]; then
     # unit is the invisible-dead-service footgun; residents.service enabled IS the
     # reboot-safety guarantee. Timer-driven oneshot .service units carry no [Install]
     # and read as "static" (fine); it's the .timer that must be enabled.
-    notenabled=""
-    for u in $gen_list; do
-      systemctl is-enabled "$u" >/dev/null 2>&1 || notenabled="$notenabled $u"
-    done
+    _units_state $gen_list
+    [ -n "$wrongly_on" ] && bad "units declared NOT enabled are enabled (a host service for a remote body):$wrongly_on"
+    [ -n "$off_missing" ] && bad "declared installed-but-disabled units are NOT installed (sudo ./nucleus/deploy.sh units):$off_missing"
+    [ -n "$off_ok" ] && ok "declared installed-but-disabled:$off_ok"
     if [ -z "$notenabled" ]; then ok "every derived unit enabled/static (reboot-safe)"
     else bad "derived units NOT installed/enabled (won't survive a reboot):$notenabled"
          # INSTALL BY COPY, never symlink: on a host where /home is a separate mount,
@@ -858,8 +934,7 @@ if [ "${1:-}" = "doctor" ]; then
          # mounts) and the org orphans — the 2026-07-23 incident. deploy.sh's `units`
          # mode is the one cp idiom; static oneshots ride the cp, the [Install]-bearing
          # units are enabled BY NAME against the /etc copy (root fs, never dangles).
-         inst=""
-         for u in $notenabled; do grep -q '^\[Install\]' "$GEN/$u" && inst="$inst $u"; done
+         inst=$(_enable_list "$GEN" $notenabled)
          warn "install: sudo ./nucleus/deploy.sh units   (cp units → /etc + daemon-reload)"
          [ -n "$inst" ] && warn "enable:  sudo systemctl enable --now$inst"
     fi
