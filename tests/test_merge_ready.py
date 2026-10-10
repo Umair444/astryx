@@ -904,6 +904,21 @@ if fx is not None:
         _fx.__exit__(None, None, None)
 
 m.Git.run = _orig_run
+# a1 #42072 R2: the hermetic runner takes git_env, so it can't see the PRODUCTION line — Git.run passing it. This arm
+# runs the REAL Git.run under a translated locale on the hermetic repo (main's reflog has many entries, so a date
+# before it answers the OLDEST entry, rc 0, and only the warning says so). Mutant: drop Git.run's env= → RED here.
+print("\n12. the production Git.run speaks C (a1 #42063, #42072):")
+_lang = os.environ.get("LANGUAGE")
+os.environ["LANGUAGE"] = "de"
+try:
+    r = m.Git(T).run("rev-parse", "--verify", "main@{2001-01-01 00:00:00 +0000}^{commit}")
+    check("the REAL Git.run, LANGUAGE=de, a date before the reflog: rc 0 and the warning in ENGLISH (the guard's words)",
+          r.returncode == 0 and "only goes back to" in r.stderr, f"rc={r.returncode} stderr={r.stderr.strip()[:120]}")
+finally:
+    if _lang is None:
+        os.environ.pop("LANGUAGE", None)
+    else:
+        os.environ["LANGUAGE"] = _lang
 if fails:
     print(f"\nFAIL: {len(fails)} arm(s)")
     sys.exit(1)
