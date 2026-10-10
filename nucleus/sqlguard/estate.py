@@ -15,14 +15,14 @@ import importlib.util
 import sys
 
 
-def absent(repo, deps=("psycopg",)):
+def absent(repo, deps=("psycopg",), env=True):
     """(rc, why) when an entry can't run on this tree, else None. rc 77 = absent here; rc 1 = broken."""
-    env = repo / ".env"
+    need_env, env = env, repo / ".env"
     live = (repo / "triggers").is_dir()
     miss = None
-    if not env.is_file():
+    if need_env and not env.is_file():
         miss = ".env absent"
-    elif not any(l.startswith("ASTRYX_DSN=") for l in env.read_text().splitlines()):
+    elif need_env and not any(l.startswith("ASTRYX_DSN=") for l in env.read_text().splitlines()):
         return 1, ".env is present but has no ASTRYX_DSN line (a misconfigured host, not an absent one)"
     else:
         missing = [d for d in deps if importlib.util.find_spec(d) is None]
@@ -35,8 +35,8 @@ def absent(repo, deps=("psycopg",)):
     return 77, f"{miss} (a committed-only tree: triggers/ absent)"
 
 
-def gate(name, repo, deps=("psycopg",)):
-    got = absent(repo, deps)
+def gate(name, repo, deps=("psycopg",), env=True):
+    got = absent(repo, deps, env)
     if got:
         rc, why = got
         print(f"  {'NOT SEARCHED' if rc == 77 else 'BROKEN'}: {why}")

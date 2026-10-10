@@ -66,7 +66,7 @@ os.environ["ASTRYX_HANDS_HOME"] = str(TMP / "home")
 # its own unit names too: a test pool's desk-1 must never be (or stop) the real desk-1
 os.environ["ASTRYX_HANDS_UNIT_PREFIX"] = f"astryx-hands-test{os.getpid()}-"
 from nucleus.sqlguard.estate import gate  # noqa: E402
-gate("test_hands_desktop", REPO, deps=("mcp.server",))   # a committed-only tree (no venv): 77, not an import crash
+gate("test_hands_desktop", REPO, deps=("mcp.server",), env=False)   # a committed-only tree (no venv): 77, not an import crash
 from nucleus import hands_desktop as hd  # noqa: E402
 
 AGENT = f"t-hands-{os.getpid()}"
