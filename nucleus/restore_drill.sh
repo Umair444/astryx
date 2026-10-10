@@ -84,8 +84,12 @@ printf '%s' "$placeholder" | login "$DB" stdin >/dev/null 2>&1; rc=$?
   || { echo "  ✗ restore-drill: the placeholder was not refused (login rc $rc)" >&2; fail=1; }
 
 # the dump onto THAT server (its extensions must exist in the declared image, or this is where it shows)
-nice -n19 ionice -c3 docker exec -i "$name" pg_restore --no-owner -U "$ROLE" -d "$DB" < "$dump" >/dev/null 2>&1 \
-  || echo "  restore-drill: pg_restore reported issues; the row counts below are the gate" >&2
+# stderr kept (never printed: it can quote the dump's DDL), and its ERROR-line COUNT reported, so a missing
+# extension or a failed index is visible even while the four tables below have rows (a1 #45217 follow-up 2)
+nice -n19 ionice -c3 docker exec -i "$name" pg_restore --no-owner -U "$ROLE" -d "$DB" < "$dump" >/dev/null 2>"$tmp/restore.err"
+prc=$?
+nerr=$(grep -c 'error:' "$tmp/restore.err" 2>/dev/null); nerr=${nerr:-0}
+echo "  restore-drill: pg_restore rc $prc, $nerr error line(s) (text withheld; the row counts below are the gate)"
 # counts over TCP through the synced role (PGPASSFILE above), by host psql as restore_verify reads: the drill runs no
 # python SQL of its own, so it adds no site the sqlguard inventory would have to know
 for t in steps messages goals triggers; do
