@@ -360,10 +360,16 @@ def preview(cid: int, page: str, outdir: str | None = None, overrides=(), load=N
         doc["html"] = parent.encode()
         url = f"http://127.0.0.1:{port}{DOC}"
         net = ["--proxy-server=http://127.0.0.1:9", f"--proxy-bypass-list=<-loopback>;127.0.0.1:{port}"]
+        # The sandboxed frame paints in the PARENT's renderer. With IsolateSandboxedIframes (chromium default) the frame
+        # is an out-of-process iframe, and --virtual-time-budget doesn't wait for that process: under load the
+        # screenshot fired before the frame painted, a bare shell with no page (measured 9/18 shots not red at 4 busy
+        # cores, 0/18 with this off; seed #44851). The frame stays sandboxed (opaque origin, the viewer's sandbox
+        # flags, CSP, the dead proxy); only the process split goes, in a throwaway headless profile.
+        paint = ["--disable-features=IsolateSandboxedIframes"]
         for name, w, h, extra in SHOTS:
             png = out / f"{name}.png"
             r = subprocess.run([exe, "--headless=new", "--disable-gpu", "--hide-scrollbars", f"--user-data-dir={prof}",
-                                "--virtual-time-budget=8000", "--enable-logging=stderr", "--v=0", *net, *extra,
+                                "--virtual-time-budget=8000", "--enable-logging=stderr", "--v=0", *net, *paint, *extra,
                                 f"--window-size={w},{h}", f"--screenshot={png}", url],
                                capture_output=True, text=True, timeout=120)
             if name == "desktop":                # one page load is the error census; the others repeat it
