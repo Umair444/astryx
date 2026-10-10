@@ -35,7 +35,12 @@ arm('validate: a number where a string belongs is refused', validate({ type: 'st
 
 // the matrix
 reset(); o = await ex.room.run('set_theme', { theme: 'nord' })
-arm('room: a view action runs', o.status === 'done' && ran.length === 1)
+arm('room: even a view result is REFUSED with no egress projection installed (a4 #44288 R1, fail closed)', o.status === 'refused' && ran.length === 0)
+{
+  const e1 = createExecutor(catalog, handlers, { project: (_a, r) => r })
+  reset(); const v = await e1.room.run('set_theme', { theme: 'nord' })
+  arm('room: with a projector, a view action runs', v.status === 'done' && ran.length === 1)
+}
 reset(); o = await ex.room.run('get_usage', {})
 arm('room: a read is REFUSED while no egress projection is installed (fail closed)', o.status === 'refused' && ran.length === 0)
 {
@@ -107,7 +112,7 @@ arm('a stale nonce cannot be bound', ex.bindConfirm(n1, EL) === false)
 
 // metrics (C6 f)
 const m = ex.metrics()
-arm('per-action latency is recorded', !!m.set_theme && m.set_theme.n >= 1 && typeof m.set_theme.p95 === 'number')
+arm('per-action latency is recorded', !!m.get_usage && m.get_usage.n >= 1 && typeof m.get_usage.p95 === 'number')
 
 console.log(fails ? `FAIL (${fails})` : 'ALL PASS')
 process.exit(fails ? 1 : 0)

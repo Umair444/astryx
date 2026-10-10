@@ -290,6 +290,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# plan-9000 S2: the pilot's realtime voice (owner-only by omission from PUBLIC_PATHS; spend via nucleus/voice_mint)
+from pilot_voice import router as _pilot_voice  # noqa: E402
+app.include_router(_pilot_voice)
+
 
 @app.middleware("http")
 async def privacy_gate(request: Request, call_next):

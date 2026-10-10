@@ -21,6 +21,7 @@ import AgentDrawer from './components/AgentDrawer'
 import VegaChat from './components/VegaChat'
 import PulseStrip from './components/PulseStrip'
 import EarControl from './components/EarControl'
+import VoicePilot from './components/VoicePilot'
 import Palette from './components/Palette'
 import { PilotHost } from './pilot'
 import PilotConfirm from './pilot/Confirm'
@@ -251,6 +252,7 @@ function Shell() {
                 </span>
               </>
             )}
+            {who.owner && <VoicePilot />}
             {who.owner && <EarControl view={route.tab} />}
             <KeyBadge />
           </span>

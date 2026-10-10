@@ -14,6 +14,7 @@ import { useStore } from '../store'
 import { deskOf, openDesktop, openedDesktop, useDesks } from '../ui/hands'
 import { createExecutor, type Catalog, type Pending } from './core'
 import { makeHandlers, type PilotCtx } from './handlers'
+import { project } from './egress'
 
 export const CATALOG = catalogJson as unknown as Catalog
 
@@ -30,6 +31,7 @@ const bound = makeHandlers(new Proxy({} as PilotCtx, {
 
 export const pilot = createExecutor(CATALOG, bound, {
   onPending: (p) => { pending = p; subs.forEach((f) => f()) },
+  project,                                       // C1: the room's reads leave only through this allowlist (S2)
 })
 
 // the browser harness (tests/pilot_browser_test.mjs) drives the ROOM's entry point, as the voice will; a dev
