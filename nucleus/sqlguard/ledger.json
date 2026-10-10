@@ -103,9 +103,6 @@
    "wash detector invariants",
    "wash detector: v2 rings (live, report-only)"
   ],
-  "nucleus/econ.py::econ_mirror\u001fselect day::text, metrics->'v2' from econ order by day desc limit 1": [
-   "econ v2 mirror + version gate (4227 S2)"
-  ],
   "nucleus/econ.py::final_heat\u001fselect coalesce(sum(coalesce((raw_payload->'usage'->>'billable_equiv_in')::bigint, (tokens_in*0.12)::bigint + tokens_out)),0)::bigint from turns t join goals g on g.id=t.goal_id where g.state='refused' or (g.state='hibernated' and g.ts < now()-interval '90 days')": [
    "econ v2 shadow (4227 S0)",
    "the org economy is honest"
@@ -128,9 +125,6 @@
   ],
   "nucleus/econ.py::productivity\u001f*": [
    "econ v2 shadow (4227 S0)",
-   "the org economy is honest"
-  ],
-  "nucleus/econ.py::rollup\u001finsert into econ (day, metrics) values (?, ?) on conflict (day) do update set metrics=excluded.metrics, computed_at=now()": [
    "the org economy is honest"
   ],
   "nucleus/econ.py::thermo\u001fselect coalesce(sum(budget_tokens),0)::bigint, count(*) from goals where done_at >= ? and done_at < ?": [
@@ -535,39 +529,6 @@
     "state": "open"
    }
   },
-  "tests/test_econ.py": {
-   "gates": [
-    "the org economy is honest"
-   ],
-   "listed_since": "2026-09-29",
-   "reason": "seed: builds an UNSTAMPED fixture; migrate to nucleus/sqlguard/fixture.py",
-   "trip": {
-    "goal": 4227,
-    "state": "done"
-   }
-  },
-  "tests/test_econ_v2_mirror.py": {
-   "gates": [
-    "econ v2 mirror + version gate (4227 S2)"
-   ],
-   "listed_since": "2026-09-29",
-   "reason": "seed: builds an UNSTAMPED fixture; migrate to nucleus/sqlguard/fixture.py",
-   "trip": {
-    "goal": 4227,
-    "state": "done"
-   }
-  },
-  "tests/test_econ_v2_shadow.py": {
-   "gates": [
-    "econ v2 shadow (4227 S0)"
-   ],
-   "listed_since": "2026-09-29",
-   "reason": "seed: builds an UNSTAMPED fixture; migrate to nucleus/sqlguard/fixture.py",
-   "trip": {
-    "goal": 4227,
-    "state": "done"
-   }
-  },
   "tests/test_funded_by.py": {
    "gates": [
     "3499 funded_by attribution + W-birth intact"
@@ -633,7 +594,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 343,
+  "debt_rows": 342,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -1150,11 +1111,6 @@
    "reason": "hearing S1 (plan-8674): a catalog-only read (pg_catalog / to_regclass / now()); it reads no org relation, so no schema.sql stamp can credit it. Exercised with RED controls on fixture DBs by tests/test_ear_store.py.",
    "tk": "sha256t:1afb0b418d96c7b4fbd894921b32f343281d6f2329c16dcac7a7ffc227c4dab9"
   },
-  "nucleus/econ.py::econ_mirror\u001fselect day::text, metrics->'v2' from econ order by day desc limit 1": {
-   "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "seed",
-   "tk": "sha256t:9c868e761022310cb85c0e0fa7e8c16a4eb8c8d0470ed08edf67c5bdf30bedc1"
-  },
   "nucleus/econ.py::integrity\u001fselect percentile_cont(0.5) within group (order by extract(epoch from done_at - ts)/3600) from goals where done_at >= ? and done_at < ?": {
    "debt": "EXECUTED",
    "reason": "seed",
@@ -1164,11 +1120,6 @@
    "debt": "EXECUTED",
    "reason": "seed",
    "tk": "sha256t:f4f84eb8eaaa51ab599e1017a09a286ecb04574129e10d1f65c5088d58720b53"
-  },
-  "nucleus/econ.py::rollup\u001finsert into econ (day, metrics) values (?, ?) on conflict (day) do update set metrics=excluded.metrics, computed_at=now()": {
-   "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "seed",
-   "tk": "sha256t:d12d3979f5818c319b163225315e91113fa69fa489d9f2447d11efc9f0dbdfcc"
   },
   "nucleus/econ.py::value_flow\u001fwith shipped as ( select id, budget_tokens from goals where done_at >= ? and done_at < ? and budget_tokens > 0), spend as ( select t.goal_id, t.agent, sum(coalesce((raw_payload->'usage'->>'billable_equiv_in')::bigint, (tokens_in*0.12)::bigint + tokens_out))::bigint as cost from turns t join shipped s on s.id = t.goal_id group by 1, 2), tot as (select goal_id, sum(cost) as total from spend group by 1) select sp.agent, sum(s.budget_tokens * sp.cost / nullif(tot.total,0))::bigint as value_earned, sum(sp.cost)::bigint as spent_on_shipped from spend sp join shipped s on s.id = sp.goal_id join tot on tot.goal_id = sp.goal_id group by 1 order by 2 desc nulls last": {
    "debt": "EXECUTED",
@@ -2136,6 +2087,12 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:cb7133a97324be659b5f9d75ab13d319bd716522abeaab88f93ee521ff4023d9"
+  },
+  "sha256:2f7ef57d5cd9847cfa195433291a62ddd507b392698f0a777e8505e8c11fce08": {
+   "admitted": "2026-10-11",
+   "debt": "UNEXECUTED",
+   "reason": "steward econ_rollup (gitignored trigger body, reviewed with steward/4227-trips per seed #44474): a presence probe of yesterday's econ row; it runs only on the pulse (10,40 0 * * * UTC), never inside check.sh, so UNEXECUTED here by construction. Absent row: launch nucleus.econ detached; present: quiet. The row it gates is the one nucleus/econ.py::rollup writes, RESPONSIVE in tests/test_econ.py's fixture",
+   "tk": "sha256t:0870582829e74b047009d4035749e92809f37e6e620fd4e866c607a18dd31e14"
   },
   "sha256:2fef76a2e46d82af6a991c2f896d806317b6a6b62c3093f4e31bc945c29a1255": {
    "debt": "UNEXECUTED",

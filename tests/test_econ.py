@@ -11,8 +11,8 @@ What must hold (each arm can ALONE go red):
   5. theil(): uniform shares → ~0; one-agent-takes-all → ~1; <2 shares → None (not 0 —
      a singleton has no inequality to measure).
   6. rollup() writes a row whose G/thermo agree with its own components (self-consistency
-     of the archived artifact with the equations that made it) — into a HERMETIC econ table;
-     the live econ table must be untouched (containment arm).
+     of the archived artifact with the equations that made it) — into a stamped FIXTURE
+     database seeded with one billable turn; the live econ table must be untouched (containment).
 
 Run: venv/bin/python tests/test_econ.py    (collected by check.sh)
 """
@@ -105,45 +105,47 @@ def main():
                       "SELECT coalesce(sum(budget_tokens),0) FROM goals WHERE done_at > "
                       "now() - interval '30 days'")[0]))
 
-        # rollup self-consistency on yesterday — archived into a HERMETIC econ table, never the
-        # live one. (Until goal 4227 S2 this upserted PRODUCTION econ with whatever code ran the
-        # suite: any worktree's check.sh rewrote yesterday's row with unreviewed code — and once
-        # v2 readers gate on the stamped version, such a row can carry a gate-passing version
-        # its reviewers never saw. steward did exactly that on 09-29.) search_path puts a temp
-        # schema holding only `econ` first, so the upsert lands there while compute()'s reads
-        # (turns/goals/steps/messages; compute never reads econ) still see the real substrate.
-        import os
-        sch = f"t_econ_{os.getpid()}"
+        # rollup self-consistency on yesterday, archived into a stamped FIXTURE database
+        # (nucleus/sqlguard/fixture.py: schema.sql applied whole), never the live one. Until goal
+        # 4227 S2 this upserted PRODUCTION econ with whatever code ran the suite (steward did exactly
+        # that on 09-29); S2 moved it to a temp schema on the live DB, and the 4227 close tripped
+        # R-EXTRACT on that schema's own CREATE TABLE. The fixture is seeded with ONE billable turn
+        # yesterday and no shipped goal, so both value arms run every time instead of riding
+        # whatever the live substrate holds: phi > 0 with W = 0 must archive G = 0.0, and G must
+        # equal its own components.
+        import json
+        from nucleus.sqlguard.fixture import FixtureUnavailable, fixture_db
         live_before = conn.execute("SELECT computed_at FROM public.econ ORDER BY day DESC "
                                    "LIMIT 1").fetchone()
-        conn.execute(f"CREATE SCHEMA {sch}")
-        conn.execute(f"CREATE TABLE {sch}.econ (LIKE public.econ INCLUDING ALL)")
-        conn.execute(f"SET search_path TO {sch}, public")
+        yday = now.date() - timedelta(days=1)
+        ended = datetime(yday.year, yday.month, yday.day, 12, tzinfo=timezone.utc)
         try:
-            m = econ.rollup(conn)
-            g, th, kk = m["G"], m["thermo"], m["K"]
-            if th["phi"] and kk["compressed"]:
-                expect = round(th["W"] / (th["phi"] * kk["compressed"]) * 1e9, 6)
-                check("archived G equals its own components", g == expect,
-                      f"G={g} expect={expect}")
-                check("measured W=0 yields G=0.0, never None",
-                      not (th["W"] == 0 and g is None))
-            else:
-                check("G is None exactly when a denominator is unmeasurable", g is None)
-            row = conn.execute(f"SELECT metrics->'thermo'->>'phi' FROM {sch}.econ ORDER BY day "
-                               "DESC LIMIT 1").fetchone()
-            check("econ row landed (hermetic table) and carries thermo.phi",
-                  row is not None and row[0] is not None)
-            bf = conn.execute(f"SELECT metrics->'built_from' FROM {sch}.econ ORDER BY day DESC "
-                              "LIMIT 1").fetchone()
-            bf = bf[0] if bf else None
-            check("the archived row carries its provenance (built_from: sha + dirty, detection-grade)",
-                  isinstance(bf, dict) and bool(bf.get("sha")) and isinstance(bf.get("dirty"), bool),
-                  str(bf))
-        finally:
-            conn.execute("SET search_path TO DEFAULT")
-            conn.execute(f"DROP SCHEMA IF EXISTS {sch} CASCADE")
-            conn.commit()
+            with fixture_db() as fx, psycopg.connect(fx["dsn"], connect_timeout=5) as fc:
+                fc.execute("INSERT INTO turns (agent, ended_at, raw_payload) VALUES ('fx-agent', %s, %s::jsonb)",
+                           (ended, json.dumps({"usage": {"billable_equiv_in": 1000}})))
+                fc.commit()
+                m = econ.rollup(fc)
+                g, th, kk = m["G"], m["thermo"], m["K"]
+                check("the seeded fixture day is MEASURED (phi = the one turn's 1000, K compressed > 0)",
+                      th["phi"] == 1000 and kk["compressed"] > 0, f"phi={th['phi']} K={kk.get('compressed')}")
+                if th["phi"] and kk["compressed"]:
+                    expect = round(th["W"] / (th["phi"] * kk["compressed"]) * 1e9, 6)
+                    check("archived G equals its own components", g == expect,
+                          f"G={g} expect={expect}")
+                    check("measured W=0 yields G=0.0, never None", th["W"] == 0 and g == 0.0,
+                          f"W={th['W']} G={g}")
+                row = fc.execute("SELECT metrics->'thermo'->>'phi' FROM econ ORDER BY day "
+                                 "DESC LIMIT 1").fetchone()
+                check("econ row landed (fixture table) and carries thermo.phi",
+                      row is not None and row[0] is not None)
+                bf = fc.execute("SELECT metrics->'built_from' FROM econ ORDER BY day DESC "
+                                "LIMIT 1").fetchone()
+                bf = bf[0] if bf else None
+                check("the archived row carries its provenance (built_from: sha + dirty, detection-grade)",
+                      isinstance(bf, dict) and bool(bf.get("sha")) and isinstance(bf.get("dirty"), bool),
+                      str(bf))
+        except FixtureUnavailable as e:
+            check("the rollup arm has a fixture database", False, str(e))
         live_after = conn.execute("SELECT computed_at FROM public.econ ORDER BY day DESC "
                                   "LIMIT 1").fetchone()
         check("CONTAINMENT: the live econ table was not written by this oracle",

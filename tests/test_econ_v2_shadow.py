@@ -83,33 +83,21 @@ def _v2_source_names():
     return fns, leaked
 
 
-def _ddl(name):
-    """`CREATE TABLE IF NOT EXISTS <name> (...);` from schema.sql, COMMENT-AWARE: turns and
-    steps carry `--` comments containing ');' (e.g. '-- FK to turns(id);'), which the naive
-    first-');' extractor cuts mid-definition. Scan line by line on the code part only."""
-    lines = (REPO / "nucleus" / "schema.sql").read_text().splitlines()
-    start = next(i for i, l in enumerate(lines)
-                 if l.startswith(f"CREATE TABLE IF NOT EXISTS {name} ("))
-    out = []
-    for l in lines[start:]:
-        code = l.split("--", 1)[0].rstrip()
-        out.append(code)
-        if code.endswith(");"):
-            return "\n".join(out)
-    raise ValueError(f"unterminated DDL for {name}")
-
-
 def demand_arm(dsn):
-    import os
     import json as _json
-    sch = f"t_v2d_{os.getpid()}"
-    c = psycopg.connect(dsn, autocommit=True)
+    import contextlib
+    from nucleus.sqlguard.fixture import FixtureUnavailable, fixture_db
+    # a stamped FIXTURE database (schema.sql applied whole, so the load-bearing DEFAULT 'local' is the real one);
+    # it replaced a temp schema whose own CREATE TABLEs tripped R-EXTRACT at the 4227 close
+    live = psycopg.connect(dsn, autocommit=True)
+    stack = contextlib.ExitStack()
     try:
-        c.execute(f"DROP SCHEMA IF EXISTS {sch} CASCADE")
-        c.execute(f"CREATE SCHEMA {sch}")
-        c.execute(f"SET search_path TO {sch}")   # SCH ONLY — never public
-        for t in ("messages", "turns", "steps"):
-            c.execute(_ddl(t))
+        try:
+            fx = stack.enter_context(fixture_db())
+        except FixtureUnavailable as e:
+            check("the demand arm has a fixture database", False, str(e))
+            return
+        c = stack.enter_context(psycopg.connect(fx["dsn"], autocommit=True))
         # case -> (from_agent, from_org or None=use the schema DEFAULT, goal_id, expect)
         cases = {
             "peer":  ("abstractor-1", None, None, False),   # intra-org peer: the gaming vector
@@ -147,12 +135,12 @@ def demand_arm(dsn):
         check("demand reader EXECUTES against the real schema (no SQL error)", not err, err)
         for name, (_f, _o, _g, expect) in cases.items():
             check(f"demand[{name}] = {expect}", got.get(name) is expect, f"got {got.get(name)!r}")
-        pub = c.execute("SELECT count(*) FROM public.steps WHERE content='call' "
-                        "AND meta->>'registry_id' LIKE 'mcp:t/%%'").fetchone()[0]
-        check("CONTAINMENT: no fixture row leaked to public.steps", pub == 0)
+        pub = live.execute("SELECT count(*) FROM steps WHERE content='call' "
+                           "AND meta->>'registry_id' LIKE 'mcp:t/%%'").fetchone()[0]
+        check("CONTAINMENT: no fixture row leaked to the live steps", pub == 0)
     finally:
-        c.execute(f"DROP SCHEMA IF EXISTS {sch} CASCADE")
-        c.close()
+        stack.close()
+        live.close()
 
 
 def main():
@@ -347,8 +335,8 @@ def main():
     # Arm 5 fed the pure core PRE-COMPUTED booleans, so _V2_DEMAND's SQL never ran — and it
     # was a tautology (messages.from_org DEFAULTS to 'local', so `IS NOT NULL` qualified every
     # peer message). The 3rd instance of the ctx.sql-blindness class. Here the reader runs
-    # for real against a HERMETIC temp schema built from schema.sql's own DDL (so the
-    # load-bearing DEFAULT 'local' is the real one), search_path SCH-only (the 3833 scar).
+    # for real against a stamped fixture database holding schema.sql WHOLE (so the
+    # load-bearing DEFAULT 'local' is the real one), never the live tables (the 3833 scar).
     demand_arm(dsn)
 
     print()

@@ -71,7 +71,7 @@ MANIFEST = {
     "nucleus/wash_detector.py": {"type": "detector", "rest": "NOT_EVALUATED share on no calls",
                                  "stage": "migrated S1b (v2 rings, report-only)"},
     "triggers/steward/econ_rollup.py": {"type": "writer", "rest": "archives what compute() returns",
-                                        "stage": "unchanged (runs the authority)"},
+                                        "stage": "runs the authority, detached (`-m nucleus.econ`, 10-10)"},
     "triggers/steward/market_decay.py": {"type": "detector", "rest": "reports rent, no retire verb",
                                          "stage": "S1b (was hard); S2 re-keys roi"},
     "triggers/steward/econ_provenance.py": {"type": "detector",
@@ -145,6 +145,10 @@ def reads(src: str, pub, keys, value_cols) -> list[str]:
             why.add("import nucleus.econ")
         elif isinstance(n, ast.Import) and any(a.name == "nucleus.econ" for a in n.names):
             why.add("import nucleus.econ")
+        elif isinstance(n, (ast.List, ast.Tuple)) and any(
+                isinstance(a, ast.Constant) and a.value == "-m" and isinstance(b, ast.Constant)
+                and b.value == "nucleus.econ" for a, b in zip(n.elts, n.elts[1:])):
+            why.add("runs -m nucleus.econ")       # a subprocess argv running the authority (econ_rollup, 10-10)
         elif isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) \
                 and n.value.id == "econ" and n.attr in pub:
             why.add(f"econ.{n.attr}")
@@ -188,6 +192,9 @@ for label, src, want in [
     ("import from nucleus.econ", "from nucleus.econ import _v2_counted", True),
     ("from nucleus import econ", "from nucleus import econ", True),
     ("econ.<public fn>", "y = econ.thermo(c, a, b)", True),
+    ("a subprocess argv running -m nucleus.econ", "Popen(['timeout', '900', py, '-m', 'nucleus.econ', day])", True),
+    ("CONTROL the module name in prose, not an argv", "s = 'see nucleus.econ for the equations'", False),
+    ("CONTROL -m another module", "Popen([py, '-m', 'nucleus.pulse'])", False),
     ("value column in executable SQL", "q = 'SELECT budget_tokens FROM goals'", True),
     ("CONTROL value column in a DOCSTRING only", '"""SELECT budget_tokens FROM goals"""\nx = 1', False),
     ("CONTROL value column in prose (no SQL keyword)", "s = 'the budget_tokens are retired'", False),
