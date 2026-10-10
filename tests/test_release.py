@@ -136,13 +136,16 @@ with tempfile.TemporaryDirectory() as td:
     store = R.TierStore(Path(td) / "store")
     p1, p2 = store.put(lbl, SENT), store.put(lbl, SENT)
     f1 = Path(td) / "store" / p1
-    check("put → a pointer that round-trips the body", store.get(p1) == SENT)
+    check("put → a pointer that round-trips the body", store.get(p1, lbl) == SENT)
+    import inspect
+    check("get()'s label has NO default: no caller reads across tiers by omission (a3 MC-1)",
+          inspect.signature(store.get).parameters["lbl"].default is inspect.Parameter.empty)
     check("the body file is 0600 and its tier dir 0700",
           stat.S_IMODE(f1.stat().st_mode) == 0o600 and stat.S_IMODE(f1.parent.stat().st_mode) == 0o700,
           f"{oct(f1.stat().st_mode)} {oct(f1.parent.stat().st_mode)}")
     check("two puts of the same body are two files (never overwritten)", p1 != p2)
-    check("a traversing pointer is refused", refused(store.get, "career/../../etc/passwd") is not None
-          and refused(store.get, "../x/" + "a" * 30) is not None)
+    check("a traversing pointer is refused", refused(store.get, "career/../../etc/passwd", lbl) is not None
+          and refused(store.get, "../x/" + "a" * 30, lbl) is not None)
     check("a tier name outside [a-z0-9_] can't name a store dir (it becomes 'unknown')",
           store.put(R.label(["../x"]), "b").startswith("unknown/") and not (Path(td) / "x").exists())
     fam = store.put(R.label(["family"]), "fam-body")
@@ -176,7 +179,7 @@ with tempfile.TemporaryDirectory() as td:
     flat = json.dumps(out)
     check("the sender's one owner-only route is the destination", out["route_key"] == R.route_key(KEY, "whatsapp", DM))
     check("the result carries NO body and NO chat id", SENT not in flat and "100000000001" not in flat, flat)
-    check("…but its pointer resolves to the body in the tier store", store.get(out["pointer"]) == SENT)
+    check("…but its pointer resolves to the body in the tier store", store.get(out["pointer"], lbl) == SENT)
     check("the audit fields are there: bytes, keyed body MAC, route-file sha, label",
           out["bytes"] == len(SENT) and out["body_mac"] == R.body_mac(KEY, SENT)
           and out["route_sha"] == hashlib.sha256(rfile.read_bytes()).hexdigest() and out["label"] == "career")

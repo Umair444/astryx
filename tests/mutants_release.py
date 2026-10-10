@@ -34,11 +34,13 @@ MUTANTS = {
     "R16 the door skips the body-MAC recompute on the resolved body":
         ('    if not hmac.compare_digest(body_mac(key, body), str(bmac)):', '    if False:'),
     "R17 get() ignores the stamped label's tier dir":
-        ('        if lbl is not None and tier != self.tier_dir(lbl):', '        if False:'),
+        ('        if tier != self.tier_dir(frozenset(lbl)):', '        if False:'),
     "R18 a reply keeps ANY inbound thread, a channel thread included (a3 F2)":
         ('and _ORG_THREAD_RE.fullmatch(str(inbound_thread))', ''),
     "R19 label() accepts a bare string (a3 F3)":
         ('    if isinstance(tiers, (str, bytes)):\n        raise Refused', '    if False:\n        raise Refused'),
+    "R21 get() defaults to no label (any tier's body reads by omission, a3 MC-1)":
+        ('    def get(self, pointer: str, lbl: frozenset) -> str:', '    def get(self, pointer: str, lbl: frozenset = None) -> str:'),
     "R20 an odd tier name is kept verbatim (the label encoding is no longer injective)":
         ('t if _TIER_RE.fullmatch(t) else UNKNOWN_TIER', 't'),
     "R10 a labelled agent send keeps the caller's thread":

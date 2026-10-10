@@ -219,12 +219,13 @@ class TierStore:
             os.close(fd)
         return f"{tier}/{ptr}"
 
-    def get(self, pointer: str, lbl: frozenset | None = None) -> str:
-        """lbl given: the pointer's tier dir must BE that label's, so a career body can't ride a family stamp."""
+    def get(self, pointer: str, lbl: frozenset) -> str:
+        """lbl is REQUIRED: the pointer's tier dir must BE that label's, so a career body can't ride a family stamp,
+        and no caller can read across tiers by forgetting an argument (a3 MC-1, #45213)."""
         tier, _, ptr = str(pointer).partition("/")
         if not (all(_TIER_RE.fullmatch(t) for t in tier.split("+")) and _PTR_RE.fullmatch(ptr)):
             raise Refused("malformed pointer")
-        if lbl is not None and tier != self.tier_dir(lbl):
+        if tier != self.tier_dir(frozenset(lbl)):
             raise Refused("the pointer's tier is not the stamped label")
         return (self.root / tier / ptr).read_text()
 
