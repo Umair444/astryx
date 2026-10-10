@@ -647,6 +647,15 @@ run "observatory: agents as people"     "$PY" tests/test_observatory_people.py
 # Realtime voice is an EXTERNAL processor the owner signed for: the spend cap, the server-side tier fence and the
 # owner gate must hold. OpenAI is never called (the mint is stubbed). Fixture DB.
 run "canvas voice: cap, tier fence, owner" "$PY" tests/test_canvas_voice.py
+# HEARING S1 (plan-8674): `utterances` lives in the org's one database (owner ruling 10-10) with day partitions and
+# DROP retention (a catalog-only TTL arm; the shipped retention trigger). The ear service's upload is owner-gated
+# (401, 0 rows), its output carries no utterance text (real whisper on a known clip) and the transcript never
+# reaches the wire (messages). The browser VAD sends only speech. The unit is presence-gated. Fixture DBs only.
+run "hearing: utterances retention (day partitions, DROP, TTL arm, trigger)" "$PY" tests/test_ear_store.py
+run "hearing: lease seam (EAR/MUTED, one ear per room)" "$PY" tests/test_ear_lease.py
+run "hearing: ear service (owner-gated upload, no text in logs or on the wire, RTF)" "$PY" tests/test_ear_service.py
+run "hearing: in-browser VAD sends only speech" "$PY" tests/test_ear_vad.py
+run "hearing: ear unit is presence-gated, loopback only" "$PY" tests/test_ear_unit.py
 run "gateway: name@surface replies re-addressed local" "$PY" tests/test_gateway_surface.py
 # The human ontology. Its lead assertion is the PRIVACY one and it is derived from the
 # live owner instruments, so a new PII shape in relations.md goes red without anyone

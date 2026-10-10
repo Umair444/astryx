@@ -28,6 +28,12 @@
   "bridges/canvas_voice.py::voice_session\u001finsert into canvas_voice_usage (user_name, model) values (?,?) returning id": [
    "canvas voice: cap, tier fence, owner"
   ],
+  "bridges/ear.py::Store.insert\u001finsert into utterances (text, view, dur_ms, stt_ms, backend) values (?, ?, ?, ?, ?)": [
+   "hearing service"
+  ],
+  "bridges/ear.py::Store.ping\u001fselect 1": [
+   "hearing service"
+  ],
   "bridges/providers/canvas.py::CanvasProvider.list_chats\u001fselect thread, user_name, agent, title from canvas_threads where not archived order by updated_at desc limit 100": [
    "canvas: trust lines, claim, shell"
   ],
@@ -70,6 +76,22 @@
   ],
   "nucleus/canvas.py::publish\u001fupdate canvases set version=version+1, updated_at=now() where id=? returning version": [
    "canvas: trust lines, claim, shell"
+  ],
+  "nucleus/ear_store.py::main\u001fselect to_regclass('public.utterances')": [
+   "hearing store"
+  ],
+  "nucleus/ear_store.py::partitions\u001fselect c.relname, (regexp_match(pg_get_expr(c.relpartbound, c.oid), 'from \\(''([^'']+)''\\)'))[1]::timestamptz as lo, pg_get_expr(c.relpartbound, c.oid) as bound from pg_inherits i join pg_class c on c.oid = i.inhrelid where i.inhparent = 'public.utterances'::regclass order by 2 nulls first": [
+   "hearing service",
+   "hearing store"
+  ],
+  "nucleus/ear_store.py::ttl_findings\u001fselect now()": [
+   "hearing store"
+  ],
+  "nucleus/ear_store.py::ttl_findings\u001fselect relkind from pg_class where oid = 'public.utterances'::regclass": [
+   "hearing store"
+  ],
+  "nucleus/ear_store.py::ttl_findings\u001fselect to_regclass('public.utterances')": [
+   "hearing store"
   ],
   "nucleus/econ.py::_v2_tool_rows\u001fselect s.meta->>'registry_id' as rid, s.agent as caller, (t.goal_id is not null or exists ( select 1 from messages im where im.id = t.input_msg_id and (im.from_agent in ('pulse','owner') or im.from_agent like 'wa-%%' or im.from_org <> all(?)))) as dq from steps s join turns t on t.id = s.turn_id where s.kind = 'tool' and s.meta ? 'registry_id' and s.meta ? 'v' and s.ts >= ? and s.ts < ?": [
    "econ v2 mirror + version gate (4227 S2)",
@@ -257,6 +279,9 @@
   ],
   "nucleus/secret_sweep.py::sweep_turns\u001fupdate turns set raw_payload=?, input_prompt=? where id=?": [
    "at-rest secret sweep redacts without corrupting (5497 S2)"
+  ],
+  "nucleus/shipped_triggers/ear_retention.py::tick\u001fselect to_regclass('public.utterances')": [
+   "hearing store"
   ],
   "nucleus/social_age.py::_fresh\u001fselect count(*) from ag_graph where name=?": [
    "people gate: details only to people_cleared, network to the resident (accident-grade)"
@@ -675,6 +700,18 @@
    "reason": "seed",
    "tk": "sha256t:0204045dfd76201518ffdc738ce74f5271a6ba671ea1a7ca8a0a6290581710a4"
   },
+  "bridges/ear.py::Store.insert\u001finsert into utterances (text, view, dur_ms, stt_ms, backend) values (?, ?, ?, ?, ?)": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "hearing S1 (plan-8674): rows land in the utterances DAY PARTITIONS that ear_store.maintain() creates at run time (retention by DROP); a run-time partition can't carry schema.sql's stamp. Exercised by tests/test_ear_service.py (fake + real whisper), incl. the not-on-the-wire arm.",
+   "tk": "sha256t:e6c174712a646d049c3a466371f8fa994c905415fecedb37e011cfe2501864e3"
+  },
+  "bridges/ear.py::Store.ping\u001fselect 1": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "hearing S1 (plan-8674): `SELECT 1` health probe of the ear's store connection; no relation to stamp.",
+   "tk": "sha256t:b8871308c48c6e98f085ea24c99aaa87f32fcbbf062398ec29662ad5d76ce027"
+  },
   "bridges/gateway.py::inbox\u001finsert into messages (from_agent, from_org, to_agent, to_org, thread, intent, body, sig) values (?, ?, ?, 'local', ?, ?, ?, ?)": {
    "debt": "UNEXECUTED",
    "reason": "seed",
@@ -1027,6 +1064,36 @@
    "reason": "plan-5497 S1c-0 runner census: the query IS the canary, run by each client under each REAL runner environment (psql/psycopg/asyncpg/node-pg subprocesses), never in-process under the shim. tests/test_dsn_census.py is hermetic by design (a2 #28956 B3).",
    "tk": "sha256t:512c3f53b64496351c32c5fd2c4f22ede4c99faf8c74a9c2d5aef704b7cf4e09"
   },
+  "nucleus/ear_store.py::main\u001fselect to_regclass('public.utterances')": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "hearing S1 (plan-8674): a catalog-only read (pg_catalog / to_regclass / now()); it reads no org relation, so no schema.sql stamp can credit it. Exercised with RED controls on fixture DBs by tests/test_ear_store.py.",
+   "tk": "sha256t:1afb0b418d96c7b4fbd894921b32f343281d6f2329c16dcac7a7ffc227c4dab9"
+  },
+  "nucleus/ear_store.py::partitions\u001fselect c.relname, (regexp_match(pg_get_expr(c.relpartbound, c.oid), 'from \\(''([^'']+)''\\)'))[1]::timestamptz as lo, pg_get_expr(c.relpartbound, c.oid) as bound from pg_inherits i join pg_class c on c.oid = i.inhrelid where i.inhparent = 'public.utterances'::regclass order by 2 nulls first": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "hearing S1 (plan-8674): a catalog-only read (pg_catalog / to_regclass / now()); it reads no org relation, so no schema.sql stamp can credit it. Exercised with RED controls on fixture DBs by tests/test_ear_store.py.",
+   "tk": "sha256t:825857fae87ec27c413dba48effcbda3625159f5444ddfafecab1c623738c011"
+  },
+  "nucleus/ear_store.py::ttl_findings\u001fselect now()": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "hearing S1 (plan-8674): a catalog-only read (pg_catalog / to_regclass / now()); it reads no org relation, so no schema.sql stamp can credit it. Exercised with RED controls on fixture DBs by tests/test_ear_store.py.",
+   "tk": "sha256t:e16271954f0050778534b1ca8e74d92c872fe61be275a51ee307b3c6ef9c60aa"
+  },
+  "nucleus/ear_store.py::ttl_findings\u001fselect relkind from pg_class where oid = 'public.utterances'::regclass": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "hearing S1 (plan-8674): a catalog-only read (pg_catalog / to_regclass / now()); it reads no org relation, so no schema.sql stamp can credit it. Exercised with RED controls on fixture DBs by tests/test_ear_store.py.",
+   "tk": "sha256t:621f045314fda918cd15e8d492729314f99a0d4f7de5dc0acaee4cca17dac5f5"
+  },
+  "nucleus/ear_store.py::ttl_findings\u001fselect to_regclass('public.utterances')": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "hearing S1 (plan-8674): a catalog-only read (pg_catalog / to_regclass / now()); it reads no org relation, so no schema.sql stamp can credit it. Exercised with RED controls on fixture DBs by tests/test_ear_store.py.",
+   "tk": "sha256t:1afb0b418d96c7b4fbd894921b32f343281d6f2329c16dcac7a7ffc227c4dab9"
+  },
   "nucleus/econ.py::econ_mirror\u001fselect day::text, metrics->'v2' from econ order by day desc limit 1": {
    "debt": "EXECUTED/FIXTURE-DDL",
    "reason": "seed",
@@ -1327,6 +1394,12 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:865aba1fead70a0220f5a32409279088b0721db308c1dfbde0989e67d69a14df"
+  },
+  "nucleus/shipped_triggers/ear_retention.py::tick\u001fselect to_regclass('public.utterances')": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "hearing S1 (plan-8674): a catalog-only read (pg_catalog / to_regclass / now()); it reads no org relation, so no schema.sql stamp can credit it. Exercised with RED controls on fixture DBs by tests/test_ear_store.py.",
+   "tk": "sha256t:5e61a30274174dcd3fed2f5c1140e89f8b4a7c238344a5c1198aa763c7c05ded"
   },
   "nucleus/social_age.py::_fresh\u001fselect count(*) from ag_graph where name=?": {
    "admitted": "2026-10-09",

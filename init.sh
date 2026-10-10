@@ -178,6 +178,26 @@ EOF
   # (no sense modules ship in the public tree; a sense adds its own module + grant here —
   # presence-gated exactly like a channel, generating one astryx-<sense>.service unit.)
 
+  # ── 3a. the ear — hearing (plan-8674 S1): browser speech segments → local STT → `utterances` ───────────────
+  # Presence signal = EAR_ENABLED=1 in .env. An always-on microphone is a DELIBERATE owner act, so no fresh clone
+  # grows one by default. Loopback only: the observatory proxies <host>/ear/ to it.
+  ear_on=$(grep -m1 '^EAR_ENABLED=' .env 2>/dev/null | cut -d= -f2- || true)
+  if [ "$ear_on" = 1 ] && [ -f bridges/ear.py ]; then
+    cat > "$UD/astryx-ear.service" <<EOF
+[Unit]
+Description=astryx ear — hearing: VAD speech segments from the observatory → local STT → the ear store (:8092, via /ear/)
+After=network.target docker.service
+[Service]
+WorkingDirectory=$PWD
+ExecStart=$PWD/venv/bin/uvicorn bridges.ear:app --host 127.0.0.1 --port 8092
+Restart=always
+RestartSec=5
+User=$USER
+[Install]
+WantedBy=multi-user.target
+EOF
+  fi
+
   # ── 3b. growbot body — the org's PHYSICAL body (a GrowBot Pico on USB serial) ─
   # Presence signal = the body host organ + a LIVE charter granting the growbot
   # hands (.example.md excluded: shipping the example must not grow a servo

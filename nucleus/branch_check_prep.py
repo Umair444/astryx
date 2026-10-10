@@ -379,6 +379,12 @@ def _argv_safe(dsn: str, dbname: str):
     return make_conninfo(**d), env
 
 
+# Data a run base must never copy (the table and its schema are kept, so parity holds). `utterances` is what the ear
+# heard (plan-8674, a4 R2): a killed run's base would outlive the hearing TTL. -and-children because utterances is
+# PARTITIONED and plain --exclude-table-data misses the partitions (a3 measured).
+DUMP_EXCLUDE = ["--exclude-table-data-and-children=public.utterances"]
+
+
 def build_base(scope, admin_dsn: str, prod_db: str) -> tuple:
     """pg_dump prod | pg_restore into a run-owned base, then hand every object to the run role (a2's measured
     transfer; identity sequences follow their table)."""
@@ -386,7 +392,7 @@ def build_base(scope, admin_dsn: str, prod_db: str) -> tuple:
     from psycopg.conninfo import make_conninfo
     src, env = _argv_safe(admin_dsn, prod_db)
     dst, _ = _argv_safe(admin_dsn, base)
-    dump = subprocess.Popen(["pg_dump", "-Fc", "-d", src], stdout=subprocess.PIPE, env=env)
+    dump = subprocess.Popen(["pg_dump", "-Fc", *DUMP_EXCLUDE, "-d", src], stdout=subprocess.PIPE, env=env)
     rest = subprocess.run(["pg_restore", "--no-owner", "-d", dst], stdin=dump.stdout, capture_output=True,
                           text=True, env=env)
     dump.stdout.close()
