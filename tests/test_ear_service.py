@@ -37,8 +37,6 @@ import time
 import wave
 from pathlib import Path
 
-import numpy as np
-
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 EXIT_SKIP = 77
@@ -57,11 +55,12 @@ def want(label, cond, why=""):
 
 
 try:
+    import numpy as np                                    # the ear's own dep: absent under a bare python3 (pushed_tree_check)
     import psycopg
     from fastapi.testclient import TestClient
     from nucleus.sqlguard.fixture import FixtureUnavailable, fixture_db
 except Exception as e:                                              # noqa: BLE001
-    skip(f"{type(e).__name__}: {e} — needs the org runtime")
+    skip(f"{type(e).__name__}: {e} — needs the org runtime; VERIFIED NOTHING")
 
 KEY = "test-owner-key-8674"
 WORDS = re.compile(r"\b(front|left|right|cent(er|re)|rear|side)\b", re.I)
