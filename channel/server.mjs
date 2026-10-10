@@ -9,6 +9,7 @@ import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprot
 import { z } from 'zod'
 import pg from 'pg'
 import { readFileSync } from 'node:fs'
+import { triggerFile } from './trigger_name.mjs'
 
 const AGENT = process.env.ASTRYX_AGENT
 if (!AGENT) { console.error('ASTRYX_AGENT env required'); process.exit(1) }
@@ -306,9 +307,10 @@ async function handleTool(name, a) {
   if (name === 'trigger_set') {
     if (a.kind === 'python' && a.check) {
       const dir = new URL(`../triggers/${AGENT}/`, import.meta.url)
+      const file = triggerFile(dir, a.name)                 // refuses '../x', '/etc/x', 'a b' — before any write
       await import('node:fs/promises').then(fs => fs.mkdir(dir, { recursive: true })
-        .then(() => fs.writeFile(new URL(`${a.name}.py`, dir), a.check)))
-      return `triggers/${AGENT}/${a.name}.py written — the pulse registers its @trigger `
+        .then(() => fs.writeFile(file, a.check)))
+      return `triggers/${AGENT}/${file.pathname.split('/').pop()} written — the pulse registers its @trigger `
         + `functions within a minute (schedules come from the decorators in the file)`
     }
     if (!a.schedule) throw new Error('schedule required for heartbeat/sql triggers')

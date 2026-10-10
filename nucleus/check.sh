@@ -300,6 +300,7 @@ run "turns retention: old images stripped, words kept, recent untouched, idempot
 run "deploy restart: a failed resident is named, the run continues, the pulse comes back" bash tests/test_deploy_restart.sh
 run "context compact: /compact reaches only the named session (exact tmux target, no prefix fallback)" "$PY" tests/test_compact_exact_target.py
 run "tmux: no pane command targets a bare =session (capture-pane on \"=ax-x\" fails silently: 09-29 idle gates, 10-10 restart)" "$PY" tests/test_tmux_targets.py
+run "trigger_set: a python trigger name can never write outside triggers/<agent>/ (a2 #45063)" node tests/test_trigger_name.mjs
 run "observatory pilot: one action catalog, matrix-gated executor, handler parity (plan-9000 S1)" "$PY" tests/test_pilot_s1.py
 run "observatory pilot: the owner-tap confirm under trusted input in chromium (plan-9000 S1 arms i-v)" node tests/pilot_browser_test.mjs
 run "observatory pilot: what leaves for the realtime provider is the allowlisted projection only (plan-9000 S2, C1)" node tests/pilot_egress_test.ts observatory/pilot/catalog.json
