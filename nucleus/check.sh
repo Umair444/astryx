@@ -193,6 +193,10 @@ run "schema parity: the live catalog has every table and column the schema files
 # the move's receipt; the writers' cutover. ACCIDENT-GRADE (a same-uid resident can read the superuser credential),
 # proven on scratch roles and DBs. Mutants: tests/mutants_people_gate.py, tests/mutants_people_move.py.
 run "people gate: details only to people_cleared, network to the resident (accident-grade)" "$PY" tests/test_people_gate.py
+# The derived graph databases' DECLARED design (owner 10-10 via seed #42323 (b)): astryx_social / astryx_people hold one
+# graph each, declared in social_age.DESIGN; drift = a missing or undeclared label, or any ad-hoc relation. Scratch AGE
+# databases for the red arms; the live read is read-only.
+run "derived graph DBs match their declared design" "$PY" tests/test_social_age_design.py
 # the privilege census 1b is decided on: statement classes by surface, DSN source by file. Hermetic.
 # Mutants: tests/mutants_privilege_census.py.
 run "privilege census: classes discriminate, surfaces and DSN sources assigned" "$PY" tests/test_privilege_census.py
