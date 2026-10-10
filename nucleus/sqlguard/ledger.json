@@ -384,6 +384,9 @@
    "wash detector invariants",
    "wash detector: v2 rings (live, report-only)"
   ],
+  "nucleus/voice_mint.py::record\u001finsert into canvas_voice_usage (user_name, model) values (?,?) returning id": [
+   "observatory pilot voice: owner-only routes, one ledger and one cap across canvas and the observatory (plan-9000 S2, C4)"
+  ],
   "nucleus/wake_audit.py::consecutive_drops\u001fselect to_agent, id from messages m join (select distinct agent from turns) a on a.agent = m.to_agent where m.status='delivered' and m.ts > now() - make_interval(hours => ?) and m.ts < now() - make_interval(hours => 2) and (?::text is null or m.to_agent = ?) order by m.to_agent, m.id desc": [
    "wake-audit classifier"
   ],
@@ -630,7 +633,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 342,
+  "debt_rows": 343,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -1675,6 +1678,12 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:deac21bad413cf0829fe99dacb23b65920ea02d0975150a7a19cf0084b3a30ca"
+  },
+  "nucleus/voice_mint.py::record\u001finsert into canvas_voice_usage (user_name, model) values (?,?) returning id": {
+   "admitted": "2026-10-11",
+   "debt": "EXECUTED",
+   "reason": "the one voice-spend ledger write (plan-9000 C4): an INSERT ... RETURNING with no predicate, so no fixture can make it RESPONSIVE; EXECUTED on a fixture schema by tests/test_pilot_voice_server.py (e), which reads its row back through minutes_today (floor, sum, monotonic and foreign-row arms)",
+   "tk": "sha256t:690713ec2935d00da75ece03b48953a643a812706601c3980e33a301ce7163d6"
   },
   "nucleus/wake_audit.py::consecutive_drops\u001fselect to_agent, id from messages m join (select distinct agent from turns) a on a.agent = m.to_agent where m.status='delivered' and m.ts > now() - make_interval(hours => ?) and m.ts < now() - make_interval(hours => 2) and (?::text is null or m.to_agent = ?) order by m.to_agent, m.id desc": {
    "debt": "EXECUTED",
