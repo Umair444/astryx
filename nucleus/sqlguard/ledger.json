@@ -28,8 +28,11 @@
   "bridges/canvas_voice.py::voice_session\u001finsert into canvas_voice_usage (user_name, model) values (?,?) returning id": [
    "canvas voice: cap, tier fence, owner"
   ],
-  "bridges/ear.py::Store.insert\u001finsert into utterances (text, view, dur_ms, stt_ms, backend) values (?, ?, ?, ?, ?)": [
-   "hearing service"
+  "bridges/ear.py::Hearing.record\u001fselect count(*) from hearings where agent = ? and woke and ts > now() - interval '1 hour'": [
+   "hearing: hear() workers, pointer, span-fetch, fence"
+  ],
+  "bridges/ear.py::Hearing.record\u001fupdate hearings set msg_id = ? where id = ?": [
+   "hearing: hear() workers, pointer, span-fetch, fence"
   ],
   "bridges/ear.py::Store.ping\u001fselect 1": [
    "hearing service"
@@ -561,6 +564,17 @@
     "state": "done"
    }
   },
+  "tests/test_hearing.py": {
+   "gates": [
+    "hearing: hear() workers, pointer, span-fetch, fence"
+   ],
+   "listed_since": "2026-10-10",
+   "reason": "hearing S2: derived only for ear_store.maintain()'s run-time CREATE TABLE \u2026 PARTITION OF utterances (the day partitions the pointer arms need) inside nucleus/sqlguard/fixture.py's stamped fixture_db; the same misclassification as tests/test_ear_store.py",
+   "trip": {
+    "goal": 8674,
+    "state": "open"
+   }
+  },
   "tests/test_nudge.py": {
    "gates": [
     "tool nudge (O5): never blocks, never leaks, recurrence-gated"
@@ -604,7 +618,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 337,
+  "debt_rows": 338,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -720,11 +734,17 @@
    "reason": "seed",
    "tk": "sha256t:0204045dfd76201518ffdc738ce74f5271a6ba671ea1a7ca8a0a6290581710a4"
   },
-  "bridges/ear.py::Store.insert\u001finsert into utterances (text, view, dur_ms, stt_ms, backend) values (?, ?, ?, ?, ?)": {
+  "bridges/ear.py::Hearing.record\u001fselect count(*) from hearings where agent = ? and woke and ts > now() - interval '1 hour'": {
    "admitted": "2026-10-10",
    "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "hearing S1 (plan-8674): rows land in the utterances DAY PARTITIONS that ear_store.maintain() creates at run time (retention by DROP); a run-time partition can't carry schema.sql's stamp. Exercised by tests/test_ear_service.py (fake + real whisper), incl. the not-on-the-wire arm.",
-   "tk": "sha256t:e6c174712a646d049c3a466371f8fa994c905415fecedb37e011cfe2501864e3"
+   "reason": "the wake cap's count: an aggregate without GROUP BY, so (W) is NOT-EVALUATED by the judge's rule; tests/test_hearing.py drives it through 0, 1 and 2 and arms the cap",
+   "tk": "sha256t:99360f687fe6b347e95307308c08b80135c95909b82eae6548bc892ed74cf193"
+  },
+  "bridges/ear.py::Hearing.record\u001fupdate hearings set msg_id = ? where id = ?": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "stamps the wake's message id on the hearing row inserted one statement earlier in the same transaction: exactly 1 row by construction, so (W) can never take 0",
+   "tk": "sha256t:efd3269f94ec786396e7995cf7a06ec5f93de6f585260debaf527d1556b0bac7"
   },
   "bridges/ear.py::Store.ping\u001fselect 1": {
    "admitted": "2026-10-10",

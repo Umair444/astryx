@@ -660,6 +660,10 @@ run "hearing: lease seam (EAR/MUTED, one ear per room)" "$PY" tests/test_ear_lea
 run "hearing: ear service (owner-gated upload, no text in logs or on the wire, RTF)" "$PY" tests/test_ear_service.py
 run "hearing: in-browser VAD sends only speech" "$PY" tests/test_ear_vad.py
 run "hearing: ear unit is presence-gated, loopback only" "$PY" tests/test_ear_unit.py
+# HEARING S2 (a4 #42048 D3 + D5): hear() runs in a bwrap'd worker (no DSN, no net, no /home, stdout/stderr null) with
+# a deadline; the dispatcher validates every pass; the wake carries a text-free pointer; ear_fetch returns the fenced
+# span to its own agent only; hooks/step.py redacts the fence. Fixture DB for the pointer and fetch arms.
+run "hearing: hear() workers, pointer, span-fetch, fence" "$PY" tests/test_hearing.py
 run "gateway: name@surface replies re-addressed local" "$PY" tests/test_gateway_surface.py
 # The human ontology. Its lead assertion is the PRIVACY one and it is derived from the
 # live owner instruments, so a new PII shape in relations.md goes red without anyone
