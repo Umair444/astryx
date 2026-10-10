@@ -72,6 +72,9 @@ restart_org() {
   fi
   echo "· pausing the pulse (its watchers would race the resident restarts)…"
   sudo systemctl stop astryx-pulse.timer && echo "  ✓ pulse paused"
+  # ANY exit from here (an abort under set -e, a Ctrl-C, a return) starts the pulse again: a paused
+  # pulse left behind would sit with every trigger dark, silently (a2 #42367)
+  trap 'sudo systemctl start astryx-pulse.timer >/dev/null 2>&1 || true' RETURN EXIT INT TERM
   echo "· restarting services…"
   local u
   for u in $(systemctl list-unit-files 'astryx-*' --no-legend | awk '$2=="enabled" {print $1}'); do
@@ -93,14 +96,14 @@ restart_org() {
       tmux kill-session -t "=ax-$a" 2>/dev/null || true
       local p left
       for _ in $(seq 1 30); do [ -z "$(ears_of "$a")" ] && break; sleep 0.5; done
-      left=$(ears_of "$a")
+      left=$(ears_of "$a" || true)
       if [ -n "$left" ]; then                         # an ear outside tmux: spawn would refuse, so end it
         for p in $left; do kill "$p" 2>/dev/null || true; done
         for _ in $(seq 1 20); do [ -z "$(ears_of "$a")" ] && break; sleep 0.5; done
       fi
       if [ -n "$(ears_of "$a")" ]; then echo "  ✗ $a: its old ear won't exit (pids $(ears_of "$a" | tr '\n' ' '))"; bad=1; continue; fi
       local out rc
-      out=$(cd "$ROOT" && nucleus/spawn.sh "$a" 2>&1); rc=$?
+      out=$(cd "$ROOT" && nucleus/spawn.sh "$a" 2>&1) && rc=0 || rc=$?   # never `x=$(cmd); rc=$?` under set -e
       if [ $rc -ne 0 ] || grep -qi 'refusing' <<<"$out"; then
         echo "  ✗ $a: spawn failed (rc $rc): $(tail -1 <<<"$out")"; bad=1
       else
@@ -116,7 +119,7 @@ restart_org() {
     systemctl is-active --quiet "$u" || { echo "  ✗ $u $(systemctl is-active "$u")"; bad=1; }
   done
   local all n
-  all=$(ears)
+  all=$(ears || true)
   for a in $(cd "$ROOT" && venv/bin/python nucleus/charter.py --roster); do
     [ "$a" = "$me" ] && continue
     n=$(awk -v a="$a" '$1==a' <<<"$all" | wc -l)
