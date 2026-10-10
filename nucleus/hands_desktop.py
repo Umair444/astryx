@@ -14,6 +14,14 @@ this machine, not a sandbox:
     own, so the owner clicks and types with his own cursor while the agent keeps going with
     the agent's. He watches and joins from the observatory (Hands view) or any VNC viewer.
 
+TWO KINDS OF DESKTOP. `laptop` is the owner's REAL screen: his Hyprland session, his own
+Chromium with his logins (WhatsApp is already there), every app he has (owner, 10-10: "why is it
+not using this laptop — chrome has whatsapp already logged in here"). The agent shares his one
+cursor there, so it's for work he hands over. Every other name is that agent's OWN desktop: a
+second, headless session on this machine that he can't see on his monitor (only in the
+observatory), with its own browser profile, so it can work in the background without touching
+his cursor.
+
 The agent sees by screenshot (grim) and acts through ITS OWN SEAT: nucleus/hands_seat.py holds a
 VNC connection to the desktop for the session's life, so the agent is a participant exactly like
 the owner, with its own cursor and keyboard focus. Everything is a standard wlroots tool driven at code speed; there
@@ -65,6 +73,53 @@ class Stopped(HandsError):
     pass
 
 
+LAPTOP = "laptop"
+
+
+def is_laptop(agent: str) -> bool:
+    return agent == LAPTOP
+
+
+def _hypr() -> dict | None:
+    """The owner's live Hyprland session: its instance signature and Wayland socket."""
+    try:
+        r = subprocess.run(["hyprctl", "-j", "instances"], capture_output=True, text=True,
+                           timeout=5, env=_user_env())
+        inst = json.loads(r.stdout or "[]")
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    inst = [i for i in inst if (RUNTIME / i.get("wl_socket", "-")).exists()]
+    if not inst:
+        return None
+    i = max(inst, key=lambda i: i.get("time", 0))
+    return {"HYPRLAND_INSTANCE_SIGNATURE": i["instance"], "WAYLAND_DISPLAY": i["wl_socket"]}
+
+
+def _hyprctl(*args: str) -> str:
+    h = _hypr()
+    if not h:
+        raise HandsError("the owner's Hyprland session isn't running")
+    r = subprocess.run(["hyprctl", *args], capture_output=True, text=True, timeout=10,
+                       env={**_user_env(), **h})
+    if r.returncode != 0 or r.stdout.strip() not in ("", "ok") and args[0] == "dispatch":
+        raise HandsError(f"hyprctl {' '.join(args[:2])}: {(r.stdout or r.stderr).strip()[:200]}")
+    return r.stdout
+
+
+def _monitor() -> dict:
+    mons = json.loads(_hyprctl("-j", "monitors") or "[]")
+    if not mons:
+        raise HandsError("no monitor on the owner's session")
+    return next((m for m in mons if m.get("focused")), mons[0])
+
+
+def size(agent: str) -> tuple[int, int]:
+    if is_laptop(agent):
+        m = _monitor()
+        return int(m["width"] / m.get("scale", 1)), int(m["height"] / m.get("scale", 1))
+    return WIDTH, HEIGHT
+
+
 def _name(agent: str) -> str:
     if not NAME_RE.match(agent or ""):
         raise HandsError(f"bad agent name {agent!r}")
@@ -108,7 +163,7 @@ def _pick_port(agent: str) -> int:
         if p not in taken and _port_free(p):
             return p
     for p in VNC_PORTS:
-        if p not in taken and _port_free(p):
+        if p not in taken and _port_free(p) and _port_free(p + 100):
             return p
     raise HandsError("no free VNC port in 5910-5989")
 
@@ -129,11 +184,20 @@ def _systemctl(*args: str, check: bool = False) -> subprocess.CompletedProcess:
 def alive(agent: str) -> bool:
     if _systemctl("is-active", "--quiet", unit(agent)).returncode != 0:
         return False
+    if is_laptop(agent):
+        return _hypr() is not None and (state_dir(agent) / "seat.sock").exists()
     return _session(agent, required=False) is not None
 
 
 def _session(agent: str, required: bool = True) -> dict | None:
     """The live session's coordinates, written by sway's own exec at startup."""
+    if is_laptop(agent):
+        h = _hypr()
+        if not h and required:
+            raise HandsError("the owner's Hyprland session isn't running")
+        if h:
+            h["SWAYSOCK"] = ""
+        return h
     f = state_dir(agent) / "session"
     try:
         wayland, swaysock = f.read_text().split()
@@ -162,6 +226,7 @@ workspace_layout tabbed
 exec sh -c 'printf "%s %s\\n" "$WAYLAND_DISPLAY" "$SWAYSOCK" > {sd}/session'
 exec wayvnc -r -S {sd}/wayvnc.sock 127.0.0.1 {port}
 exec {sys.executable} {Path(__file__).resolve().parent / "hands_seat.py"} {port} {sd}/seat.sock
+exec {sys.executable} {Path(__file__).resolve().parent / "hands_proxy.py"} {port + 100}
 """
 
 
@@ -172,6 +237,8 @@ def up(agent: str) -> dict:
             raise HandsError(f"missing {tool} (sudo pacman -S sway wayvnc grim)")
     if alive(agent):
         return status(agent)
+    if is_laptop(agent):
+        return _up_laptop()
     sd, hd = state_dir(agent), home_dir(agent)
     sd.mkdir(parents=True, exist_ok=True)
     hd.mkdir(parents=True, exist_ok=True)
@@ -186,6 +253,7 @@ def up(agent: str) -> dict:
         "WLR_BACKENDS": "headless", "WLR_LIBINPUT_NO_DEVICES": "1", "WLR_RENDERER": "pixman",
         "XDG_RUNTIME_DIR": str(RUNTIME), "XDG_CURRENT_DESKTOP": "sway",
         "HOME": str(Path.home()), "ASTRYX_HANDS_AGENT": agent,
+        "HANDS_LOCAL_ALLOW": os.environ.get("HANDS_LOCAL_ALLOW") or "8006",
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
     }
     cmd = ["systemd-run", "--user", f"--unit={unit(agent)}", "--collect",
@@ -216,6 +284,43 @@ def up(agent: str) -> dict:
     return status(agent)
 
 
+def _up_laptop() -> dict:
+    """Attach to the owner's REAL screen: wayvnc on his Hyprland session (his focused monitor)
+    and the agent's seat as its client. No new session, nothing launched on his desktop."""
+    h = _hypr()
+    if not h:
+        raise HandsError("the owner's Hyprland session isn't running")
+    sd = state_dir(LAPTOP)
+    sd.mkdir(parents=True, exist_ok=True)
+    os.chmod(sd, 0o700)
+    _systemctl("reset-failed", unit(LAPTOP))
+    port = _pick_port(LAPTOP)
+    (sd / "port").write_text(str(port))
+    out = _monitor()["name"]
+    seat = Path(__file__).resolve().parent / "hands_seat.py"
+    script = (f"wayvnc -r -o {out} -S {sd}/wayvnc.sock 127.0.0.1 {port} & "
+              f"exec {sys.executable} {seat} {port} {sd}/seat.sock")
+    cmd = ["systemd-run", "--user", f"--unit={unit(LAPTOP)}", "--collect",
+           "--description=astryx hands on the owner's screen",
+           "-p", "KillMode=control-group", "-p", "TimeoutStopSec=10"]
+    for k, v in {**h, "XDG_RUNTIME_DIR": str(RUNTIME),
+                 "PATH": os.environ.get("PATH", "/usr/bin:/bin")}.items():
+        cmd += ["--setenv", f"{k}={v}"]
+    cmd += ["--", "sh", "-c", script]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=_user_env())
+    if r.returncode != 0:
+        raise HandsError(f"could not attach to the owner's screen: {r.stderr.strip()[:300]}")
+    for _ in range(50):
+        if (sd / "seat.sock").exists():
+            break
+        time.sleep(0.2)
+    else:
+        down(LAPTOP)
+        raise HandsError("couldn't attach to the owner's screen within 10s (journalctl --user "
+                         f"-u {unit(LAPTOP)})")
+    return status(LAPTOP)
+
+
 def down(agent: str) -> bool:
     r = _systemctl("stop", unit(agent))
     (state_dir(agent) / "session").unlink(missing_ok=True)
@@ -226,8 +331,10 @@ def stopped(agent: str) -> str | None:
     f = state_dir(agent) / "stopped"
     try:
         return f.read_text().strip() or "the owner stopped your hands"
-    except OSError:
+    except FileNotFoundError:
         return None
+    except OSError:          # unreadable is not "not stopped": fail closed (a3 #42085)
+        return "the stop flag can't be read, so your hands are stopped"
 
 
 def stop(agent: str, why: str = "") -> None:
@@ -253,8 +360,9 @@ def status(agent: str | None = None) -> dict | list:
     live = alive(agent)
     la = last_act(agent)
     out = {"agent": agent, "running": live, "vnc_port": port if live else None,
-           "stopped": stopped(agent), "size": [WIDTH, HEIGHT],
-           "last_act": {"ts": la[0], "action": la[1]} if la else None}
+           "stopped": stopped(agent), "size": list(size(agent)) if live else [WIDTH, HEIGHT],
+           "kind": "laptop" if is_laptop(agent) else "own",
+           "last_act": {"ts": la[0], "action": la[1], "by": la[2]} if la else None}
     if live:
         try:
             out["windows"] = windows(agent)
@@ -294,48 +402,65 @@ def _guard(agent: str, act: str = "") -> None:
     if why:
         raise Stopped(why)
     _session(agent)
-    if act:          # what the agent did last, and when: the action's NAME only, never its text
+    if act:          # who did what last, and when: the action's NAME only, never its text
         try:
-            (state_dir(agent) / "last_act").write_text(f"{time.time():.0f} {act}")
+            (state_dir(agent) / "last_act").write_text(
+                f"{time.time():.0f} {act} {os.environ.get('ASTRYX_AGENT', '') or agent}")
         except OSError:
             pass
 
 
-def last_act(agent: str) -> tuple[float, str] | None:
+def last_act(agent: str) -> tuple[float, str, str] | None:
     try:
-        ts, act = (state_dir(agent) / "last_act").read_text().split(" ", 1)
-        return float(ts), act
+        ts, act, *who = (state_dir(agent) / "last_act").read_text().split()
+        return float(ts), act, (who[0] if who else agent)
     except (OSError, ValueError):
         return None
 
 
-VIEW_SCALE = 1.5          # the agent sees WIDTH/1.5 × HEIGHT/1.5 (960×600): ~770 image tokens
-                          # instead of ~1700, and its coordinates are in that view's pixels
+VIEW_W = 960              # the agent's view is at most 960 px wide (960×600 = ~770 image tokens
+                          # vs ~1700 full size); its pixels are the agent's coordinates
+
+
+def view_scale(agent: str) -> float:
+    return max(1.0, size(agent)[0] / VIEW_W)
+
+
+def _output_args(agent: str) -> list[str]:
+    return ["-o", _monitor()["name"]] if is_laptop(agent) else []
 
 
 def screenshot(agent: str, quality: int = 70, region: tuple[int, int, int, int] | None = None,
                full: bool = False) -> bytes:
-    """A JPEG of the desktop. Default: the whole desktop scaled to the VIEW (960×600), whose pixels
-    are the agent's coordinates. region=(x, y, w, h) in VIEW pixels returns that part at full
+    """A JPEG of the desktop. Default: scaled to the VIEW (≤960 wide), whose pixels are the
+    agent's coordinates. region=(x, y, w, h) in VIEW pixels returns that part at full
     resolution, to read small text without paying for a full-size image."""
     _session(agent)
+    w, h = size(agent)
+    sc = view_scale(agent)
     argv = ["grim", "-t", "jpeg", "-q", str(quality)]
     if region:
-        x, y, w, h = (int(round(v * VIEW_SCALE)) for v in region)
-        x, y = max(0, min(WIDTH - 1, x)), max(0, min(HEIGHT - 1, y))
-        w, h = max(1, min(WIDTH - x, w)), max(1, min(HEIGHT - y, h))
-        argv += ["-g", f"{x},{y} {w}x{h}"]
-    elif not full:
-        argv += ["-s", f"{1 / VIEW_SCALE:.4f}"]
+        x, y, rw, rh = (int(round(v * sc)) for v in region)
+        if is_laptop(agent):
+            m = _monitor()
+            x, y = x + m.get("x", 0), y + m.get("y", 0)
+        x, y = max(0, x), max(0, y)
+        argv += ["-g", f"{x},{y} {max(1, min(w, rw))}x{max(1, min(h, rh))}"]
+    else:
+        argv += _output_args(agent)
+        if not full and sc > 1:
+            argv += ["-s", f"{1 / sc:.4f}"]
     return _run(agent, argv + ["-"])
 
 
-def view_to_desktop(x: float, y: float) -> tuple[int, int]:
-    return int(round(x * VIEW_SCALE)), int(round(y * VIEW_SCALE))
+def view_to_desktop(agent: str, x: float, y: float) -> tuple[int, int]:
+    sc = view_scale(agent)
+    return int(round(x * sc)), int(round(y * sc))
 
 
-def _clamp(x: int, y: int) -> tuple[int, int]:
-    return max(0, min(WIDTH - 1, int(x))), max(0, min(HEIGHT - 1, int(y)))
+def _clamp(x: int, y: int, agent: str = "") -> tuple[int, int]:
+    w, h = size(agent) if agent else (WIDTH, HEIGHT)
+    return max(0, min(w - 1, int(x))), max(0, min(h - 1, int(y)))
 
 
 # ---- input: the agent's own seat (nucleus/hands_seat.py, a VNC participant) -----------
@@ -369,7 +494,7 @@ def _ptr(agent: str, x: int, y: int, mask: int = 0) -> dict:
 
 def move(agent: str, x: int, y: int) -> None:
     _guard(agent, "move")
-    _seat(agent, _ptr(agent, *_clamp(x, y)))
+    _seat(agent, _ptr(agent, *_clamp(x, y, agent)))
 
 
 def click(agent: str, x: int, y: int, button: str = "left", count: int = 1) -> None:
@@ -377,7 +502,7 @@ def click(agent: str, x: int, y: int, button: str = "left", count: int = 1) -> N
     b = BUTTONS.get(button)
     if not b:
         raise HandsError(f"button must be one of {sorted(BUTTONS)}")
-    x, y = _clamp(x, y)
+    x, y = _clamp(x, y, agent)
     msgs = [_ptr(agent, x, y)]
     for _ in range(max(1, min(3, int(count)))):
         msgs += [_ptr(agent, x, y, b), _ptr(agent, x, y)]
@@ -386,8 +511,8 @@ def click(agent: str, x: int, y: int, button: str = "left", count: int = 1) -> N
 
 def drag(agent: str, x1: int, y1: int, x2: int, y2: int) -> None:
     _guard(agent, "drag")
-    x1, y1 = _clamp(x1, y1)
-    x2, y2 = _clamp(x2, y2)
+    x1, y1 = _clamp(x1, y1, agent)
+    x2, y2 = _clamp(x2, y2, agent)
     steps = 10
     msgs = [_ptr(agent, x1, y1), _ptr(agent, x1, y1, 1)]
     msgs += [_ptr(agent, x1 + (x2 - x1) * i // steps, y1 + (y2 - y1) * i // steps, 1)
@@ -399,7 +524,7 @@ def drag(agent: str, x1: int, y1: int, x2: int, y2: int) -> None:
 def scroll(agent: str, x: int, y: int, dy: int) -> None:
     """dy > 0 scrolls down, < 0 up; one unit is one wheel notch."""
     _guard(agent, "scroll")
-    x, y = _clamp(x, y)
+    x, y = _clamp(x, y, agent)
     b = 16 if dy > 0 else 8
     msgs = [_ptr(agent, x, y)]
     for _ in range(max(1, min(30, abs(int(dy))))):
@@ -473,6 +598,17 @@ def key(agent: str, combo: str) -> None:
 
 
 def windows(agent: str) -> list[dict]:
+    if is_laptop(agent):
+        out = []
+        for c in json.loads(_hyprctl("-j", "clients") or "[]"):
+            if not c.get("mapped") or c.get("hidden"):
+                continue
+            out.append({"id": int(c["address"], 16), "app": c.get("class", ""),
+                         "title": (c.get("title") or "")[:200],
+                         "focused": c.get("focusHistoryID") == 0,
+                         "workspace": (c.get("workspace") or {}).get("name"),
+                         "rect": [*c.get("at", [0, 0]), *c.get("size", [0, 0])]})
+        return out
     tree = json.loads(_run(agent, ["swaymsg", "-t", "get_tree", "--raw"]))
     out: list[dict] = []
 
@@ -491,7 +627,16 @@ def windows(agent: str) -> list[dict]:
 
 def focus(agent: str, window_id: int) -> None:
     _guard(agent, "focus")
+    if is_laptop(agent):
+        _hyprctl("dispatch", "focuswindow", f"address:0x{int(window_id):x}")
+        return
     _sway(agent, f"[con_id={int(window_id)}] focus")
+
+
+# The agent's OWN browser goes out only through nucleus/hands_proxy.py, which refuses loopback and
+# private addresses (a3 #42085 F1). Its port sits beside the VNC port.
+def proxy_port(agent: str) -> int:
+    return int((state_dir(agent) / "port").read_text()) + 100
 
 
 def browser_argv(agent: str, url: str = "") -> list[str]:
@@ -499,6 +644,8 @@ def browser_argv(agent: str, url: str = "") -> list[str]:
     argv = [exe, f"--user-data-dir={home_dir(agent) / 'browser'}", "--ozone-platform=wayland",
             "--no-first-run", "--no-default-browser-check", "--password-store=basic",
             "--disable-features=TranslateUI", "--hide-crash-restore-bubble",
+            f"--proxy-server=http://127.0.0.1:{proxy_port(agent)}",
+            "--proxy-bypass-list=<-loopback>",
             f"--window-size={WIDTH},{HEIGHT}"]
     if url:
         argv.append(url)
@@ -512,7 +659,14 @@ def open_(agent: str, what: str) -> None:
     what = (what or "").strip()
     if not what:
         raise HandsError("open what?")
-    if re.match(r"^(https?|file)://", what) or re.match(r"^[\w.-]+\.[a-z]{2,}(/|$)", what):
+    is_url = re.match(r"^(https?|file)://", what) or re.match(r"^[\w.-]+\.[a-z]{2,}(/|$)", what)
+    if is_laptop(agent):
+        # on his screen, in HIS browser and apps: a URL opens as a tab in his own browser
+        cmd = "xdg-open " + _q(what if not is_url or "://" in what else f"https://{what}") \
+            if is_url else what
+        _hyprctl("dispatch", "exec", cmd)
+        return
+    if is_url:
         url = what if "://" in what else f"https://{what}"
         argv = browser_argv(agent, url)
     elif what in ("browser", "chromium", "chrome"):

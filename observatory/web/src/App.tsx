@@ -68,7 +68,7 @@ const TABS: { key: Route['tab']; label: string; icon: string }[] = [
   { key: 'agents', label: 'Agents', icon: '◍' },
   { key: 'wire', label: 'Wire', icon: '✦' },
   { key: 'goals', label: 'Goals', icon: '◎' },
-  { key: 'hands', label: 'Hands', icon: '✋' },
+  { key: 'hands', label: 'Hands', icon: '⌖' },
   { key: 'economy', label: 'Economy', icon: '⬡' },
   { key: 'tools', label: 'Tools', icon: 'ƒ' },
   { key: 'theatre', label: 'Theatre', icon: '❝' },

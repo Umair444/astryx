@@ -18,6 +18,12 @@ it received in its title, so every arm reads the effect, not the call.
   (i) the step log never sees typed text: hooks/step.py's detail fields are absent from act()'s
       parameters
   (j) down: the unit stops and the session file is gone; the HOME (profile) is kept
+  (k) the agent's own browser reaches NO loopback/private address (a3 #42085 F1): a page's <img>
+      at a 127.0.0.1 listener and at localhost gets 0 hits, while the control (a port the oracle
+      allows, as the Windows VM's is) is hit, so the probe could see a request
+  (l) access logs carry key=<redacted>, never the key (a3 #42085 F2), through the real filter
+  (m) laptop mode reads the owner's REAL screen (Hyprland): kind, size and a ≤960-wide view.
+      READ-ONLY: it never moves his cursor or types (NOT RUN without a Hyprland session)
 
 Host dependencies (sway, wayvnc, grim, chromium, a user systemd manager) missing → NOT RUN (77).
 """
@@ -36,6 +42,21 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
+
+import http.server  # noqa: E402
+import socket  # noqa: E402
+import threading  # noqa: E402
+
+
+def _free_port() -> int:
+    with socket.socket() as so:
+        so.bind(("127.0.0.1", 0))
+        return so.getsockname()[1]
+
+
+P_OK, P_NO = _free_port(), _free_port()
+HITS = {P_OK: 0, P_NO: 0}
+os.environ["HANDS_LOCAL_ALLOW"] = str(P_OK)        # inherited by the desktop's proxy
 
 TMP = Path(tempfile.mkdtemp(prefix="hands-test-"))
 os.environ["ASTRYX_HANDS_STATE"] = str(TMP / "state")
@@ -187,8 +208,11 @@ def mcp_arms():
                 await s.initialize()
                 tools = (await s.list_tools()).tools
                 schema = json.dumps([t.model_dump(exclude_none=True) for t in tools])
-                plain = await s.call_tool("act", {"action": "move", "x": 50, "y": 50})
-                seen = await s.call_tool("act", {"action": "move", "x": 60, "y": 60, "look": True})
+                # screen="own" ALWAYS: a test never touches the owner's real screen
+                plain = await s.call_tool("act", {"action": "move", "x": 50, "y": 50,
+                                                  "screen": "own"})
+                seen = await s.call_tool("act", {"action": "move", "x": 60, "y": 60, "look": True,
+                                                 "screen": "own"})
                 return [t.name for t in tools], len(schema), plain, seen
     names, n, plain, seen = asyncio.run(go())
     arm("(h) exactly two tools: look, act", sorted(names) == ["act", "look"], str(names))
@@ -209,6 +233,84 @@ def mcp_arms():
         not (params & set(fields)), str(params & set(fields)))
 
 
+def _listen(port):
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            HITS[port] += 1
+            self.send_response(204)
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", port), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+def fence_arms():
+    servers = [_listen(P_OK), _listen(P_NO)]
+    try:
+        import urllib.request
+        urllib.request.urlopen(f"http://127.0.0.1:{P_NO}/direct", timeout=3)
+        arm("(k) control: the probe listener counts a direct GET", HITS[P_NO] == 1, str(HITS))
+        HITS[P_NO] = 0
+        (TMP / "fence.html").write_text(
+            "<!doctype html><title>fence</title>"
+            f"<img src='http://127.0.0.1:{P_NO}/a.png'><img src='http://localhost:{P_NO}/b.png'>"
+            f"<img src='http://127.0.0.1:{P_OK}/ok.png'>")
+        hd.open_(AGENT, f"file://{TMP}/fence.html")
+        until(lambda: HITS[P_OK] > 0, 10)
+        time.sleep(2)
+        arm("(k) control: the allowed port IS reached", HITS[P_OK] > 0, str(HITS))
+        arm("(k) a page reaches no loopback listener (127.0.0.1 and localhost): 0 hits",
+            HITS[P_NO] == 0, str(HITS))
+        hd.open_(AGENT, "https://example.com")
+        if until(lambda: "Example Domain" in (title() or ""), 15):
+            arm("(k) a public site still loads", True)
+        else:
+            skip("(k) a public site still loads", "no internet answer from example.com")
+    finally:
+        for srv in servers:
+            srv.shutdown()
+
+
+def redact_arms():
+    import logging
+    from nucleus import logredact
+    rec = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s HTTP/%s" %d',
+                            ("127.0.0.1:5", "GET", "/api/hands/x/vnc?key=SECRETVALUE&a=1", "1.1",
+                             101), None)
+    logredact.KeyRedact().filter(rec)
+    line = rec.getMessage()
+    arm("(l) an access line carries key=<redacted>",
+        "key=<redacted>" in line and "SECRETVALUE" not in line and "a=1" in line, line)
+    arm("(l) a later ?x=1&key= is redacted too", "S2" not in logredact.scrub("/p?x=1&key=S2"))
+    main_src = (REPO / "observatory/api/main.py").read_text()
+    arm("(l) the observatory installs it", "_logredact.install()" in main_src)
+
+
+def laptop_arms():
+    if not hd._hypr():
+        skip("(m) laptop mode", "no Hyprland session on this host")
+        return
+    w, h = hd.size(hd.LAPTOP)
+    arm("(m) the laptop's size is its monitor's", w > 0 and h > 0, f"{w}x{h}")
+    jpg = hd._run(hd.LAPTOP, ["grim", "-t", "jpeg", "-q", "40", *hd._output_args(hd.LAPTOP),
+                              "-s", f"{1 / hd.view_scale(hd.LAPTOP):.4f}", "-"])
+    arm("(m) the agent's view of his screen is ≤960 wide", 0 < len(jpg)
+        and hd.view_scale(hd.LAPTOP) * 960 >= w - 1, f"scale {hd.view_scale(hd.LAPTOP):.2f}")
+    del jpg                                          # read-only: never kept, never shown
+    arm("(m) its windows are listed from Hyprland",
+        isinstance(hd.windows(hd.LAPTOP), list) and all("app" in x for x in hd.windows(hd.LAPTOP)))
+
+
+def never_laptop_arm():
+    r = subprocess.run(["systemctl", "--user", "is-active", hd.unit(hd.LAPTOP)],
+                       capture_output=True, text=True, env=hd._user_env())
+    arm("(m) the suite never attached to the owner's real screen",
+        r.stdout.strip() != "active" or LAPTOP_WAS_UP, r.stdout.strip())
+
+
 def down_arms():
     hd.down(AGENT)
     gone = until(lambda: not hd.alive(AGENT), 10)
@@ -217,6 +319,9 @@ def down_arms():
     arm("(j) the agent's home (its browser profile) is kept",
         (hd.home_dir(AGENT) / "browser").is_dir())
 
+
+LAPTOP_WAS_UP = subprocess.run(["systemctl", "--user", "is-active", "--quiet",
+                                "astryx-hands-laptop"], env=hd._user_env()).returncode == 0
 
 if __name__ == "__main__":
     try:
@@ -227,8 +332,12 @@ if __name__ == "__main__":
             try:
                 desktop_arms()
                 mcp_arms()
+                fence_arms()
             finally:
                 down_arms()
+        redact_arms()
+        laptop_arms()
+        never_laptop_arm()
     finally:
         subprocess.run(["systemctl", "--user", "stop", hd.unit(AGENT)], capture_output=True,
                        env=hd._user_env())

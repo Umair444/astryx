@@ -3135,6 +3135,12 @@ async def canvas_proxy(path: str, request: Request):
     return resp
 
 
+# ---------------------------------------------------------------- access log: no keys
+# ?key= must never reach journald in clear (a3 #42085 F2): nucleus/logredact.py.
+from nucleus import logredact as _logredact  # noqa: E402
+_logredact.install()
+
+
 # ---------------------------------------------------------------- hands (plan-7862)
 # Each agent's own desktop on this machine (nucleus/hands_desktop.py). The owner watches it live,
 # joins in, and stops it here. OWNER ONLY, every route: a desktop holds his logged-in sessions.

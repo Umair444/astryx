@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """astryx · hands MCP server — your own desktop on the owner's machine (plan-7862).
 
+WHICH SCREEN: screen="laptop" (default) is the owner's REAL screen: his Hyprland session, his
+own Chromium with his logins, every app he has, and one cursor shared with him. screen="own" is
+your own second desktop on this machine (invisible on his monitor, its own browser profile), for
+background work that shouldn't take his cursor.
+
 TWO tools, on purpose (owner, 2026-10-10: "we can easily make astryx a token eating machine and
 we dont want to do that"). Every resident carries this schema on every turn, so it stays small,
 and pictures are paid for only when the agent asks for one:
@@ -32,12 +37,15 @@ WAIT_MAX_S = 20
 mcp = FastMCP("hands")
 
 
-def _ready() -> str:
+def _ready(screen: str = "laptop") -> str:
     if not AGENT:
         raise hd.HandsError("ASTRYX_AGENT is not set: whose hands are these?")
-    if not hd.alive(AGENT):
-        hd.up(AGENT)
-    return AGENT
+    if screen not in ("laptop", "own"):
+        raise hd.HandsError('screen is "laptop" (the owner\'s real screen) or "own"')
+    d = hd.LAPTOP if screen == "laptop" else AGENT
+    if not hd.alive(d):
+        hd.up(d)
+    return d
 
 
 def _state(a: str) -> str:
@@ -62,11 +70,12 @@ def _pic(a: str, zoom: str = "") -> Image:
 
 
 @mcp.tool()
-def look(zoom: str = "") -> list:
-    """See your desktop (960×600; its pixels are your coordinates). zoom="x,y,w,h" shows just that
-    region at full resolution, to read small text."""
+def look(zoom: str = "", screen: str = "laptop") -> list:
+    """See the screen (≤960 wide; its pixels are your coordinates). zoom="x,y,w,h" shows just that
+    region at full resolution, to read small text. screen: "laptop" (the owner's real screen,
+    his browser and apps) | "own" (your own background desktop)."""
     try:
-        a = _ready()
+        a = _ready(screen)
         return [_state(a), _pic(a, zoom)]
     except hd.HandsError as e:
         return [f"hands error: {e}"]
@@ -74,17 +83,18 @@ def look(zoom: str = "") -> list:
 
 @mcp.tool()
 def act(action: str, x: int = -1, y: int = -1, text: str = "", x2: int = -1, y2: int = -1,
-        amount: int = 3, look: bool = False) -> list:
+        amount: int = 3, look: bool = False, screen: str = "laptop") -> list:
     """Do one thing on your desktop. Coordinates are look() pixels. Replies in text; look=True adds
     a screenshot.
     open text=URL|program (e.g. "web.whatsapp.com", "libreoffice --calc"; Windows VM:
     "http://127.0.0.1:8006") · click / double / right x,y · type text (enter: end text with \\n)
     · key text=chord ("Return", "ctrl+l", "alt+Tab") · scroll x,y amount (+down/-up)
-    · drag x,y→x2,y2 · move x,y · focus amount=window id · wait amount=seconds"""
+    · drag x,y→x2,y2 · move x,y · focus amount=window id · wait amount=seconds.
+    screen: "laptop" (default, the owner's real screen) | "own" (your background desktop)."""
     try:
-        a = _ready()
+        a = _ready(screen)
         settle = hd.SETTLE_S
-        pt = lambda: hd.view_to_desktop(x, y)  # noqa: E731
+        pt = lambda: hd.view_to_desktop(a, x, y)  # noqa: E731
         if action in ("click", "double", "right", "move", "scroll", "drag") and (x < 0 or y < 0):
             return [f"{action} needs x and y"]
         if action == "open":
@@ -107,7 +117,7 @@ def act(action: str, x: int = -1, y: int = -1, text: str = "", x2: int = -1, y2:
         elif action == "drag":
             if x2 < 0 or y2 < 0:
                 return ["drag needs x2 and y2"]
-            hd.drag(a, *pt(), *hd.view_to_desktop(x2, y2))
+            hd.drag(a, *pt(), *hd.view_to_desktop(a, x2, y2))
         elif action == "focus":
             hd.focus(a, amount)
         elif action == "wait":
