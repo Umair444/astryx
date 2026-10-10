@@ -9,14 +9,33 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 what=${1:-all}
 
 build_web() {
+  # A FAILED BUILD STOPS THE DEPLOY (seed #43278): this used to `return 1`, and every arm calls it as
+  # `build_web && restart …`, where set -e does not trip on the left of && — so a failed build read
+  # "deploy: obs done." and restarted the old bundle. Exit, before any restart.
+  # Under sudo the build runs as the INVOKING user, in a login shell: root's PATH has no mise node
+  # ("npm: command not found", 10-10), and the bundle belongs to the user, not to root.
+  # A FRESH log per run (10-10): one fixed /tmp/astryx-build.log, written by a sudo run, is root-owned, so every
+  # later run as the user failed to open it, read as a build failure, and tailed the stale root log.
   echo "· building observatory web…"
-  if ( cd "$ROOT/observatory/web" && npm run build >/tmp/astryx-build.log 2>&1 ); then
-    echo "  ✓ web built"
+  local dir="$ROOT/observatory/web" ok log
+  log=$(mktemp "${TMPDIR:-/tmp}/astryx-build.XXXXXX.log")
+  if [ "$(id -u)" = 0 ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
+    sudo -u "$SUDO_USER" -H bash -lc "cd '$dir' && npm run build" >"$log" 2>&1 && ok=1 || ok=
   else
-    echo "  ✗ web build FAILED — tail /tmp/astryx-build.log:"; tail -5 /tmp/astryx-build.log; return 1
+    ( cd "$dir" && npm run build >"$log" 2>&1 ) && ok=1 || ok=
+  fi
+  if [ -n "$ok" ]; then
+    echo "  ✓ web built"; rm -f "$log"
+  else
+    echo "  ✗ web build FAILED — tail $log:"; tail -5 "$log"
+    echo "deploy: $what ABORTED — the build failed, nothing was restarted." >&2; exit 1
   fi
 }
-restart() { echo "· restarting $1…"; sudo systemctl restart "$1" && echo "  ✓ $1 $(systemctl is-active "$1")"; }
+restart() {
+  echo "· restarting $1…"
+  sudo systemctl restart "$1" || { echo "  ✗ restart of $1 FAILED" >&2; echo "deploy: $what ABORTED at $1." >&2; exit 1; }
+  echo "  ✓ $1 $(systemctl is-active "$1")"
+}
 
 # non-sudo hot reload of a chat bridge, for when an agent must reload autonomously
 # and can't sudo systemctl: kill the worker (Restart=always respawns it from disk),
