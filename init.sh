@@ -292,6 +292,14 @@ PYEOF
 #   halt     — a PERMANENT boundary the org can't drive (missing tool, human login) →
 #              report, don't spin. Interior converges around it; the human resolves it.
 dsn() { grep '^ASTRYX_DSN=' .env 2>/dev/null | cut -d= -f2-; }
+# ok | unverified | "wide <addr …>": is anything but loopback listening on port $1? (doctor; a2 #42283)
+_pg_exposure() {
+  local out wide
+  out=$(ss -ltnH 2>/dev/null) || { echo unverified; return; }
+  [ -n "$out" ] || { echo unverified; return; }
+  wide=$(printf '%s\n' "$out" | awk '{print $4}' | grep -E ":$1\$" | grep -vE '^(127\.|\[::1\]|::1)' | sort -u | tr '\n' ' ')
+  [ -z "$wide" ] && echo ok || echo "wide $wide"
+}
 psql_q() { if command -v psql >/dev/null; then psql "$(dsn)" "$@"
   else docker exec -i astryx-pg psql -U astryx -d astryx "$@"; fi; }
 
@@ -668,6 +676,7 @@ if [ "${1:-}" = "doctor" ]; then
   set +e +o pipefail
   ok() { echo -e "  \033[32m✓\033[0m $*"; }
   bad() { echo -e "  \033[31m✗\033[0m $*"; FAIL=1; }
+  warn() { echo -e "  \033[33m○\033[0m $*"; }
   FAIL=""
   # install hint per platform
   if command -v pacman >/dev/null; then PKG="sudo pacman -S"
@@ -705,6 +714,15 @@ if [ "${1:-}" = "doctor" ]; then
   if [ -f .env ]; then
     DSN=$(grep '^ASTRYX_DSN=' .env | cut -d= -f2-)
     psql "$DSN" -c 'SELECT 1' >/dev/null 2>&1 && ok "postgres reachable" || bad "postgres unreachable (docker start astryx-pg?)"
+    # every org's database is LOCALHOST-ONLY (owner, 2026-10-10): any listener on the DSN's port
+    # that isn't loopback is a database a LAN (or the world) can knock on. An instrument that can't
+    # look must not report what it would have seen (a2 #42283): no ss listing → UNVERIFIED, never ok.
+    _pgport=$(printf '%s' "$DSN" | sed -nE 's#^[a-z]+://[^@]*@[^:/]+:([0-9]+).*#\1#p'); _pgport=${_pgport:-5432}
+    case "$(_pg_exposure "$_pgport")" in
+      ok)          ok "postgres listens on localhost only (port $_pgport)" ;;
+      unverified)  warn "postgres exposure UNVERIFIED: \`ss\` gave no listener table (not Linux, or ss missing)" ;;
+      *)           bad "postgres port $_pgport is reachable beyond localhost: $(_pg_exposure "$_pgport" | cut -d' ' -f2-) — publish it as 127.0.0.1:$_pgport only" ;;
+    esac
     _chk_schema && ok "schema applied (this database carries the current schema.sql's stamp)" \
       || bad "schema missing or STALE (schema.sql changed since its last apply) — rerun ./init.sh"
     if _cut=$(_cut_dbs 2>/dev/null); then                    # the harden node's HELD databases, named (a3 #33510)
