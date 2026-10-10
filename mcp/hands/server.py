@@ -76,9 +76,35 @@ def _pic(a: str, zoom: str = "") -> Image:
     return Image(data=hd.screenshot(a, region=region), format="jpeg")
 
 
+def _split(script: str) -> list[str]:
+    """Steps separated by ";" or newlines — EXCEPT that a text-bearing verb (type, open) takes the REST
+    of the script verbatim and ends it. So text an agent copied from a page ("…; key ctrl+Return")
+    is typed as text, never run as steps: no separator inside text can become an action (a3 #42362)."""
+    steps, i, n = [], 0, len(script)
+    while i < n:
+        while i < n and script[i] in "; \t\r\n":
+            i += 1
+        if i >= n:
+            break
+        j = i
+        while j < n and not script[j].isspace() and script[j] != ";":
+            j += 1
+        verb = script[i:j]
+        if verb in ("type", "open"):
+            arg = script[j + 1:] if j < n and script[j] == " " else script[j:]
+            steps.append(f"{verb} {arg}" if arg else verb)
+            break
+        k = j
+        while k < n and script[k] not in ";\n":
+            k += 1
+        steps.append(script[i:k].strip())
+        i = k + 1
+    return steps
+
+
 def _batch(a: str, script: str) -> tuple[int, str]:
     """Run several steps on desktop `a`; returns (steps done, a short report)."""
-    steps = [x.strip() for x in script.replace(";", "\n").splitlines() if x.strip()]
+    steps = _split(script)
     if not steps:
         raise hd.HandsError("do: no steps")
     for i, st in enumerate(steps, 1):
@@ -96,7 +122,7 @@ def _batch(a: str, script: str) -> tuple[int, str]:
                 else:
                     hd.click(a, x, y, "right" if verb == "right" else "left", 2 if verb == "double" else 1)
             elif verb == "type":
-                hd.type_text(a, rest.replace("\\n", "\n"))
+                hd.type_text(a, rest)
             elif verb == "key":
                 hd.key(a, rest.strip())
             elif verb == "scroll":
@@ -142,7 +168,8 @@ def act(action: str, screen: str, x: int = -1, y: int = -1, text: str = "", x2: 
     look=True adds a screenshot. open text=URL|program · click/double/right/move x,y · type text
     (\\n = Enter) · key text=chord ("ctrl+l") · scroll x,y amount · drag x,y,x2,y2 · focus
     amount=window id · wait amount=s (returns when the screen changes) · done (free your desk)
-    · do text="key super+2; click 190 88; type Mama; wait 3": many steps, one call (cheaper)"""
+    · do text="key super+2; click 190 88; type Mama": many steps, one call (cheaper); type/open
+    must be LAST and take the rest verbatim"""
     if action == "done":
         return [f"released {', '.join(hd.release(AGENT)) or 'nothing (you held no desktop)'}"]
     try:

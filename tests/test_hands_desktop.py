@@ -158,6 +158,19 @@ def desktop_arms():
     hd.type_text(AGENT, "X")
     arm("(d) ctrl+a then a letter replaces the field", until(lambda: title() == "typed:X"),
         repr(title()))
+    # (p) inside do, text is text: "; key Return" typed into the field is NOT a keypress (a3 #42362 R2)
+    sys.path.insert(0, str(REPO / "mcp/hands"))
+    import server as hands_server
+    hd.click(AGENT, 300, origin + 282)
+    hd.key(AGENT, "ctrl+a")
+    hands_server._batch(AGENT, "type a; key Return")
+    arm("(p) do's type takes the rest verbatim: the separator never becomes an action",
+        until(lambda: title() == "typed:a; key Return"), repr(title()))
+    arm("(p) …and no Enter was pressed", not (title() or "").startswith("enter:"), repr(title()))
+    arm("(p) the split: type/open end the script; other verbs split on ; and newlines",
+        hands_server._split("key super+2; click 190 88; type x; click 1 1\nmore")
+        == ["key super+2", "click 190 88", "type x; click 1 1\nmore"]
+        and hands_server._split("move 1 1; open https://x.com/a;b") == ["move 1 1", "open https://x.com/a;b"])
     hd.scroll(AGENT, 700, 600, 4)
     arm("(e) a scroll lands", until(lambda: (title() or "").startswith("scrolled:")), repr(title()))
 
@@ -336,6 +349,18 @@ def laptop_arms():
         isinstance(hd.windows(hd.LAPTOP), list) and all("app" in x for x in hd.windows(hd.LAPTOP)))
 
 
+def step_strip_arms():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("stephook", REPO / "hooks/step.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    msgs = [{"content": [{"type": "tool_use", "id": "a", "name": "mcp__hands__act",
+                          "input": {"action": "do", "screen": "background",
+                                    "text": "click 1 1; type CANARY-PASSWORD-1"}}]}]
+    arm("(q) a do script (it can carry a typed password) is never kept in turns",
+        "CANARY-PASSWORD-1" not in json.dumps(m.strip_pixels(msgs)))
+
+
 def pool_arms():
     os.environ["ASTRYX_AGENT"] = "t-pool-a"
     a = hd.acquire("t-pool-a")
@@ -399,6 +424,7 @@ if __name__ == "__main__":
                 for d in hd.pool():
                     hd.down(d)
         redact_arms()
+        step_strip_arms()
         laptop_arms()
         never_laptop_arm()
         real_pool_untouched_arm()

@@ -204,7 +204,8 @@ def strip_pixels(obj, _laptop_ids=None):
         raw = data.encode() if isinstance(data, str) else bytes(data)
         return {"type": "image_omitted", "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
     if (obj.get("type") == "tool_use" and str(obj.get("name", "")).startswith("mcp__hands__")
-            and (obj.get("input") or {}).get("action") in ("type", "key")):
+            and (obj.get("input") or {}).get("action") in ("type", "key", "do")):
+        # "do" carries a whole script that can type anything anywhere in it (a3 #42362 R1)
         # what an agent TYPES can be a password from his Chromium (owner, 10-10: full access):
         # never kept, on any screen
         inp = {**obj["input"], "text": TYPED_OMITTED}
