@@ -265,6 +265,9 @@ def handle_stop(cur, agent, h):
     last_text = ""
     for e in turn:
         m = e.get("message", {}) or {}
+        # ONLY `message`, never the whole entry: a transcript's user entries also carry a top-level
+        # `toolUseResult` copy of every tool result, which strip_pixels() doesn't walk. Storing whole
+        # entries would bring back screenshots and laptop output (a3 #42104).
         messages.append({"type": e.get("type"), "ts": e.get("timestamp"), "message": m})
         if e.get("type") != "assistant":
             continue
