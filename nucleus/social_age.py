@@ -170,6 +170,7 @@ def drift(dsn_for, design=None) -> list:
     design = design if design is not None else DESIGN
     out = []
     for db, want in sorted(design.items()):
+        g = want.get("graph", db)                     # the graph's name; production's is its database's (DESIGN)
         try:
             c = psycopg.connect(dsn_for(db), autocommit=True)
         except psycopg.OperationalError as e:
@@ -203,12 +204,12 @@ def drift(dsn_for, design=None) -> list:
                     out.append(f"MISSING {db}: extension {e}")
             if "age" not in have_ext:
                 continue
-            if not c.execute("SELECT 1 FROM ag_catalog.ag_graph WHERE name = %s", (db,)).fetchone():
-                out.append(f"MISSING {db}: graph {db}")
+            if not c.execute("SELECT 1 FROM ag_catalog.ag_graph WHERE name = %s", (g,)).fetchone():
+                out.append(f"MISSING {db}: graph {g}")
                 continue
             live = {(k, n) for n, k in c.execute(
                 "SELECT l.name, l.kind FROM ag_catalog.ag_label l JOIN ag_catalog.ag_graph g ON g.graphid = l.graph "
-                "WHERE g.name = %s AND l.name <> ALL(%s)", (db, list(AGE_BASE_LABELS)))}
+                "WHERE g.name = %s AND l.name <> ALL(%s)", (g, list(AGE_BASE_LABELS)))}
             decl = {("v", n) for n in want["v"]} | {("e", n) for n in want["e"]}
             kind = {"v": "vertex", "e": "edge"}
             out += [f"MISSING {db}: {kind[k]} label {n}" for k, n in sorted(decl - live)]
@@ -217,7 +218,7 @@ def drift(dsn_for, design=None) -> list:
             adhoc = [f"{s}.{r}" for s, r in c.execute(
                 "SELECT n.nspname, c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
                 "WHERE c.relkind IN ('r','p','v','m','f') AND n.nspname NOT IN ('pg_catalog','information_schema',"
-                "'ag_catalog', %s) AND n.nspname NOT LIKE 'pg\\_toast%%' ORDER BY 1, 2", (db,))]
+                "'ag_catalog', %s) AND n.nspname NOT LIKE 'pg\\_toast%%' ORDER BY 1, 2", (g,))]
             out += [f"EXTRA {db}: relation {x} (a derived database holds only its graph)" for x in adhoc]
             # ...and INSIDE the graph's schema, every table must be one of its labels' (a3 #42376 press 1: a plain
             # `CREATE TABLE <graph>.adhoc` is neither an ag_label nor outside the schema, so it was invisible)
@@ -225,8 +226,8 @@ def drift(dsn_for, design=None) -> list:
                 "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
                 "WHERE n.nspname = %s AND c.relkind IN ('r','p','v','m','f') AND c.oid NOT IN ("
                 "SELECT l.relation FROM ag_catalog.ag_label l JOIN ag_catalog.ag_graph g ON g.graphid = l.graph "
-                "WHERE g.name = %s) ORDER BY 1", (db, db))]
-            out += [f"EXTRA {db}: relation {db}.{x} (in the graph's schema but no label's table)" for x in stray]
+                "WHERE g.name = %s) ORDER BY 1", (g, g))]
+            out += [f"EXTRA {db}: relation {g}.{x} (in the graph's schema but no label's table)" for x in stray]
     return out
 
 

@@ -20,6 +20,10 @@
         "tests/test_branch_check_prep.py": {
           "graph_sig": "93b7f61d8234fcf452951a660f8d60ff6eebbf52d1d5facc33dbcc492078fcf2",
           "why": "creates and writes its own throwaway BcAge probe graph named by a local variable, never 'memory'"
+        },
+        "tests/test_social_age_design.py": {
+          "graph_sig": "1ce68881b8de3de0da1ecdb15825a0326e2883dbccec1a9d6bedcd23f4dd0c34",
+          "why": "creates its own pid-scoped scratch graphs (astryx_sadz_<pid>_*) through the builder's _fresh and a stamped fixture's create_graph, never 'memory'"
         }
       }
     }

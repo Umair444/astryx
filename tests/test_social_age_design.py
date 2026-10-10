@@ -12,7 +12,7 @@ its extensions and the graph's labels. `drift` compares the live catalog to it; 
              people_gate run before it (a3 #42376).
   CONTROL    _fresh WITHOUT materializing (an empty design) on an empty graph reads MISSING: the materialization is what
              keeps the live shape independent of which rows happen to exist.
-  REBUILD    the real rebuild() into scratch databases, from a schema.sql fixture, leaves both graphs matching DESIGN.
+  REBUILD    the real rebuild() into scratch databases, from an org-schema fixture, leaves both graphs matching DESIGN.
   LIVE       drift() on the live server reports nothing (read-only sessions).
 Needs a role that can CREATE DATABASE with AGE on the server, else 77.
 """
@@ -27,7 +27,14 @@ import psycopg                                          # noqa: E402
 from psycopg import sql                                 # noqa: E402
 from psycopg.conninfo import make_conninfo              # noqa: E402
 
-from nucleus import social_age as sa                    # noqa: E402
+if os.environ.get("SOCIAL_AGE_SRC"):                    # mutation_probe hands a mutant copy here
+    import importlib.util
+    _spec = importlib.util.spec_from_file_location("nucleus.social_age", os.environ["SOCIAL_AGE_SRC"])
+    sa = importlib.util.module_from_spec(_spec)
+    sys.modules["nucleus.social_age"] = sa
+    _spec.loader.exec_module(sa)
+else:
+    from nucleus import social_age as sa                # noqa: E402
 
 fails = []
 PFX = "astryx_sadz_"                                    # this oracle's scratch namespace: <PFX><pid>_<role>
@@ -145,19 +152,21 @@ try:
     with cur_in(NET) as c:
         c.execute("SELECT drop_label(%s, 'surprise')", (NET,))
     with psycopg.connect(dsn_for(PRIV), autocommit=True) as c:
-        c.execute("CREATE TABLE public.adhoc (x int)")
+        # a VIEW, not a table: drift() judges every relation kind (r/p/v/m/f) outside the graph, and an oracle's own
+        # CREATE TABLE outside the stamped applier reads to sqlguard as an unstamped-fixture extractor (EX, judge.py)
+        c.execute("CREATE VIEW public.adhoc AS SELECT 1 AS x")
     left = sa.drift(dsn_for, design=SCRATCH)
-    check("an ad-hoc table in a derived database → EXTRA relation (no undeclared tables)",
+    check("an ad-hoc relation in a derived database → EXTRA relation (no undeclared objects)",
           left == [f"EXTRA {PRIV}: relation public.adhoc (a derived database holds only its graph)"], str(left))
     with psycopg.connect(dsn_for(PRIV), autocommit=True) as c:
-        c.execute("DROP TABLE public.adhoc")
+        c.execute("DROP VIEW public.adhoc")
     with psycopg.connect(dsn_for(NET), autocommit=True) as c:
-        c.execute(sql.SQL("CREATE TABLE {}.adhoc (x int)").format(sql.Identifier(NET)))
+        c.execute(sql.SQL("CREATE VIEW {}.adhoc AS SELECT 1 AS x").format(sql.Identifier(NET)))
     left = sa.drift(dsn_for, design=SCRATCH)
-    check("a plain table INSIDE the graph's schema (no label owns it) → EXTRA relation (a3 #42376 press 1)",
+    check("a plain relation INSIDE the graph's schema (no label owns it) → EXTRA relation (a3 #42376 press 1)",
           left == [f"EXTRA {NET}: relation {NET}.adhoc (in the graph's schema but no label's table)"], str(left))
     with psycopg.connect(dsn_for(NET), autocommit=True) as c:
-        c.execute(sql.SQL("DROP TABLE {}.adhoc").format(sql.Identifier(NET)))
+        c.execute(sql.SQL("DROP VIEW {}.adhoc").format(sql.Identifier(NET)))
     adm.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO PUBLIC").format(sql.Identifier(PRIV)))
     left = sa.drift(dsn_for, design=SCRATCH)
     check("PUBLIC granted CONNECT on a design database → EXTRA, naming who the design grants",
@@ -177,6 +186,26 @@ try:
     left = sa.drift(dsn_for, design={**SCRATCH, ghost: {"v": ("x",), "e": ()}})
     check("an absent declared database → MISSING database", left == [f"MISSING database {ghost}"], str(left))
 
+    print("tables (a3 #42994: 'r' is the realistic ad-hoc kind, and views alone let a dropped 'r' survive):")
+    # minted by the STAMPED applier (fixture_db's extra), never by this oracle's own CREATE TABLE (sqlguard EX)
+    from nucleus import agelib
+    from nucleus.sqlguard.fixture import fixture_db as _fx, FixtureUnavailable as _FxU
+    TG = f"{PFX}{os.getpid()}_tg"
+    try:
+        with _fx(extra=("LOAD 'age'", "CREATE EXTENSION IF NOT EXISTS age", agelib.PATH,
+                        f"SELECT ag_catalog.create_graph('{TG}')", f"CREATE TABLE {TG}.adhoc_t (x int)",
+                        "CREATE TABLE public.zz_adhoc_t (x int)", "SET search_path = public")) as fx:
+            left = sa.drift(lambda db: fx["dsn"], design={fx["dbname"]: {"v": (), "e": (), "connect": (), "graph": TG}})
+            check("a plain TABLE outside the graph (public) → EXTRA relation",
+                  f"EXTRA {fx['dbname']}: relation public.zz_adhoc_t (a derived database holds only its graph)" in left,
+                  str([x for x in left if "adhoc" in x]))
+            check("a plain TABLE inside the graph's schema (no label owns it) → EXTRA relation",
+                  f"EXTRA {fx['dbname']}: relation {TG}.adhoc_t (in the graph's schema but no label's table)" in left,
+                  str([x for x in left if "adhoc" in x]))
+    except _FxU as e:
+        print(f"  SKIP  table arms: no fixture ({e})")
+        fails.append("SKIP tables")
+
     print("control:")
     build(NET, {"v": (), "e": ()})                      # the pre-10-10 builder: labels only appear with their rows
     left = sa.drift(dsn_for, design=SCRATCH)
@@ -192,7 +221,7 @@ try:
         with fixture_db() as fx:
             r = sa.rebuild(base=fx["dsn"], social=dsn_for(NET), private=dsn_for(PRIV), graph=NET, private_graph=PRIV)
             left = sa.drift(dsn_for, design=SCRATCH)
-            check("the real rebuild() from an empty schema.sql fixture leaves both graphs matching DESIGN",
+            check("the real rebuild() from an empty org-schema fixture leaves both graphs matching DESIGN",
                   left == [] and r.get("nodes") == 0 and r.get("private") == 0, f"{left} {r}")
     except (FixtureUnavailable, TypeError) as e:
         print(f"  SKIP  rebuild arm: no fixture ({type(e).__name__})")
