@@ -141,7 +141,6 @@ EXEMPT = {
     "nucleus/doorbell.sh":    "manual: operator notify helper, self-declared Usage line",
     "nucleus/wallpane.sh":    "manual: single-pane variant of wall.sh, invoked by an operator",
     "nucleus/refresh.sh":     "manual: operator session refresh",
-    "nucleus/deploy.sh":      "manual: operator deploy step",
     "nucleus/growbot_flash.sh": "manual: operator flash step — copies the body firmware "
         "onto the Pico over USB; run once per firmware change, documented in docs/growbot.md",
     "nucleus/growbot_firmware.py":
