@@ -6,7 +6,7 @@
       "kind": "age_graph",
       "graph": "memory",
       "comparator": "root_digest",
-      "roots": ["memory/wiki/*.md", "memory/ontology.md"],
+      "roots": ["memory/wiki/*.md", "memory/library/**/*.md", "memory/ontology.md"],
       "reads": ["kg.claim incidence"],
       "builder": "memory/graph/ingest.py::run_ingest",
       "writers": ["memory/graph/ingest.py"],
