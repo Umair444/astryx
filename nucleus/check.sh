@@ -274,6 +274,11 @@ run "tool ledger: ids only, ledger authorship" "$PY" tests/test_tool_ledger.py
 # ugrep shell function and silently skips the gitignored estate. Hermetic; mutants in tests/mutants_grep_guard.py.
 run "grep guard: a blind recursive sweep is denied, the real binary never" "$PY" tests/test_grep_guard.py
 run "fixture_db reaps a killed run's database, never a live one's" "$PY" tests/test_fixture_reaper.py
+# Hands S1, the browser cell (plan-7862): per-lease default-deny egress, NO model-API pinhole, no
+# secrets or mounts, kill = stop + wipe, and a lease dies at its STEP or WALL-TIME cap (seed #38260).
+# The real executor drives the real images against a throwaway lease table, in its OWN namespace.
+# Grade: prevention vs the external adversary (residents trusted, owner #38554). 77 without docker/images.
+run "hands cell: per-lease egress, wipe on kill, step + wall caps" "$PY" tests/test_hands_cell.py
 # geoloc /recent (a3 #32078, privacy): location history needs GEOLOC_TOKEN even from localhost, the
 # token compare is constant-time, and a malformed ingest token is a 401, never a 500. The body
 # (bridges/geoloc.py) is gitignored, so this SKIPs 77 on a clean clone. No location data is used.

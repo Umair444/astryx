@@ -729,3 +729,21 @@ ALTER TABLE social_edge ADD COLUMN IF NOT EXISTS first_ts   timestamptz;
 ALTER TABLE social_edge ADD COLUMN IF NOT EXISTS last_ts    timestamptz;
 ALTER TABLE social_edge ADD COLUMN IF NOT EXISTS mine       int;
 ALTER TABLE social_edge ADD COLUMN IF NOT EXISTS scanned_at timestamptz;
+
+-- HANDS LEASES (plan-7862 S1). One row per browser lease; nucleus/hands.py is the ONLY writer.
+-- The per-lease proxy's allow-list is GENERATED from `allow`, so the row is the authority on
+-- what the lease's browser may reach. A lease dies at its STEP cap or its WALL-TIME cap,
+-- whichever comes first (seed #38260), or when it's killed, and its end_reason says which.
+CREATE TABLE IF NOT EXISTS hands_leases (
+  id          bigserial PRIMARY KEY,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  agent       text NOT NULL,                     -- who asked for the lease
+  allow       text[] NOT NULL,                   -- hosts the browser may reach (exact names)
+  step_cap    int NOT NULL CHECK (step_cap BETWEEN 1 AND 1000),
+  wall_cap_s  int NOT NULL CHECK (wall_cap_s BETWEEN 1 AND 86400),
+  deadline    timestamptz NOT NULL,
+  steps_used  int NOT NULL DEFAULT 0,
+  state       text NOT NULL DEFAULT 'live' CHECK (state IN ('live','dead')),
+  ended_at    timestamptz,
+  end_reason  text CHECK (end_reason IS NULL OR end_reason IN ('killed','step_cap','wall_cap','error'))
+);
