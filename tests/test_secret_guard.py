@@ -13,6 +13,9 @@ holders carry FAKE secrets. Each arm can ALONE go red.
       sha256sum; a NON-holder that merely looks similar (.env.example, venv/) is never denied.
   G7  End to end through hooks/step.py: a denied call prints Claude Code's deny JSON on stdout
       BEFORE any DB work (a down DB can't open the guard); an allowed call prints nothing.
+  G8  The public repo's WRITE credentials (plan-8677 a3 BC-2) are declared in the REAL manifest, so
+      `cat`/Read of ~/.config/gh/hosts.yml and ~/.ssh/id_ed25519 are DENIED; an ordinary file and
+      the key's .pub beside them still read. Hermetic: a fixture HOME holds fake files.
 
 Run: venv/bin/python tests/test_secret_guard.py
 """
@@ -213,6 +216,34 @@ def arms_step(tmp: Path):
           any("unevaluable" in str(p) for s, p in writes if "'error'" in s), str(writes)[:200])
 
 
+def arms_publish_creds(tmp: Path):
+    """G8 against the REAL manifest (the declaration under test) in a fixture HOME, so it proves the
+    entries on any host and never touches a real credential."""
+    home = tmp / "home"
+    (home / ".config" / "gh").mkdir(parents=True)
+    (home / ".ssh").mkdir()
+    for rel in (".config/gh/hosts.yml", ".ssh/id_ed25519", ".ssh/id_ed25519.pub", ".config/ordinary.txt"):
+        (home / rel).write_text("FAKE fixture, not a credential\n")
+    saved_home, saved_manifest = os.environ.get("HOME"), ss.HOLDERS_FILE
+    os.environ["HOME"], ss.HOLDERS_FILE = str(home), REPO / "nucleus" / "secret_holders.json"
+    try:
+        dec = lambda tool, ti: sg.decide(tool, ti, secrets=[])  # noqa: E731
+        for rel in (".config/gh/hosts.yml", ".ssh/id_ed25519"):
+            r = dec("Bash", {"command": f"cat ~/{rel}"})
+            check(f"G8 `cat ~/{rel}` is DENIED (declared in the real manifest)", bool(r), str(r))
+            r = dec("Read", {"file_path": str(home / rel)})
+            check(f"G8 Read of ~/{rel} is DENIED", bool(r), str(r))
+        for rel in (".config/ordinary.txt", ".ssh/id_ed25519.pub"):
+            check(f"G8 control: `cat ~/{rel}` is ALLOWED", dec("Bash", {"command": f"cat ~/{rel}"}) is None)
+            check(f"G8 control: Read of ~/{rel} is ALLOWED", dec("Read", {"file_path": str(home / rel)}) is None)
+    finally:
+        ss.HOLDERS_FILE = saved_manifest
+        if saved_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved_home
+
+
 def main():
     saved = (ss.ENV_FILE, ss.PGPASS_FILE, ss.HOLDERS_FILE, sg.QUARANTINE)
     with tempfile.TemporaryDirectory() as d:
@@ -221,6 +252,7 @@ def main():
             setup(tmp)
             arms(tmp)
             arms_step(tmp)
+            arms_publish_creds(tmp)
         finally:
             ss.ENV_FILE, ss.PGPASS_FILE, ss.HOLDERS_FILE, sg.QUARANTINE = saved
     if fails:
