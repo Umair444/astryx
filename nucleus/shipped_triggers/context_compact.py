@@ -72,7 +72,9 @@ def _live() -> set[str]:
 
 def _send_compact(agent: str) -> bool:
     try:
-        subprocess.run(["tmux", "send-keys", "-t", f"ax-{agent}", "/compact", "Enter"],
+        # "=ax-<agent>:" is an EXACT session match (spawn.sh's form). A bare "ax-<agent>" falls back to prefix/fnmatch
+        # matching when that session is gone, so "/compact" could land in abstractor-1x for abstractor-1 (a3 #44065)
+        subprocess.run(["tmux", "send-keys", "-t", f"=ax-{agent}:", "/compact", "Enter"],
                        capture_output=True, timeout=10, check=True)
         return True
     except Exception:
