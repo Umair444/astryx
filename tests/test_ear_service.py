@@ -283,7 +283,7 @@ try:
                 clip_s = w.getnframes() / w.getframerate()
             ear_admin.execute("TRUNCATE utterances")
 
-            def serve(extra_py: str, label: str):
+            def serve(extra_py: str, label: str, during=None):
                 port = free_port()
                 runner = TMP / f"run_{label}.py"
                 runner.write_text(
@@ -324,6 +324,8 @@ try:
                         break
                     time.sleep(0.5)
                 wall = time.time() - t0
+                if during:
+                    during(base)
                 p.send_signal(signal.SIGTERM)
                 try:
                     p.wait(20)
@@ -332,7 +334,28 @@ try:
                 fh.close()
                 return r.status_code, log.read_text(errors="replace"), st, wall
 
-            code, out, st, wall = serve("", "clean")
+            def via_observatory(base):
+                """The browser reaches the ear THROUGH the observatory (/ear/ on its origin): the proxy adds no
+                authority, so the ear's own gate still answers."""
+                os.environ["ASTRYX_DSN"] = fx["url"]                 # the observatory's asyncpg pool takes a URL
+                sys.path.insert(0, str(REPO / "observatory" / "api"))
+                import main as obs
+                obs.EAR_UP = base
+                with TestClient(obs.app) as oc:
+                    r0 = oc.post("/ear/api/utterance?holder=x", content=wav())
+                    r1 = oc.get("/ear/api/status")
+                    r2 = oc.get("/ear/api/status", headers={"x-obs-key": KEY})
+                    obs.EAR_UP = "http://127.0.0.1:1"
+                    r3 = oc.get("/ear/api/status", headers={"x-obs-key": KEY})
+                os.environ["ASTRYX_DSN"] = fx["dsn"]
+                want("via the observatory proxy: no key → the ear's own 401 (upload and status)",
+                     r0.status_code == 401 and r1.status_code == 401, f"{r0.status_code} {r1.status_code}")
+                want("via the observatory proxy: the owner key is forwarded → 200 with the lease",
+                     r2.status_code == 200 and "lease" in r2.json(), f"{r2.status_code} {r2.text[:200]}")
+                want("ear down → the proxy answers 502 'ear offline' (the page shows it; nothing blocks)",
+                     r3.status_code == 502 and "ear offline" in r3.text, f"{r3.status_code} {r3.text[:100]}")
+
+            code, out, st, wall = serve("", "clean", during=via_observatory)
             text = (ear_admin.execute("SELECT text FROM utterances ORDER BY ts DESC LIMIT 1").fetchone() or [""])[0]
             hits_row = len(WORDS.findall(text))
             want("positive control: the real service transcribed the known clip into one row carrying its words",
