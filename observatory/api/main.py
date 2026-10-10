@@ -1135,7 +1135,9 @@ async def agent_retire(name: str, request: Request):
                      f"{stamp}. The name rests; remove this section to revive.\n")
     killed = False
     if name in tmux_alive():
-        k = subprocess.run(["tmux", "kill-session", "-t", f"ax-{name}"],
+        # "=ax-<name>" is an EXACT match: a bare target falls back to a prefix match, and kill-session then kills
+        # ax-<name>x if ax-<name> died between the tmux_alive() check and here (a3 #44075, measured)
+        k = subprocess.run(["tmux", "kill-session", "-t", f"=ax-{name}"],
                            capture_output=True, text=True, timeout=10)
         killed = k.returncode == 0
     return {"ok": True, "name": name, "retired": True, "body_stopped": killed}
