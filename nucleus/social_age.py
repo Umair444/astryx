@@ -17,7 +17,19 @@ THE PRIVATE PROJECTION (people library 1a). The DETAILS (social_relation) are pr
 ACCIDENT-GRADE). Shape: (:owner)-[:relation {kind, closeness, context, confidence}]->(:person). The network graph
 never carries a detail. Both graphs are re-granted after every rebuild, because drop_graph drops the schema's ACL.
 
-Run: venv/bin/python nucleus/social_age.py     (people_sweep calls it nightly)
+THE DESIGN, DECLARED (owner 10-10 via seed #42323 (b): "the design on github should match local"). Both databases hold
+NOTHING but one derived graph each, so their whole design is a database, its extension and the graph's labels: DESIGN
+below, the one writer of that fact. The builder MATERIALIZES every label (so an empty label still exists, and the
+live shape never depends on which rows happened to exist), and `check` compares the live catalog against DESIGN:
+  MISSING  a declared database, extension, graph or label the server lacks            -> drift
+  EXTRA    a label the design doesn't declare, or ANY relation outside the graph's own -> drift (no ad-hoc tables)
+           schema and AGE's catalog (a derived database is rebuilt, so a table there is a table nobody declared)
+Rebuild-equals-live is the parity: the rows are a pure function of `astryx`'s social tables (schema.sql), rebuilt
+nightly, so only the SHAPE can drift, and the shape is what this checks.
+
+Run: venv/bin/python nucleus/social_age.py          (people_sweep calls it nightly: rebuild)
+     venv/bin/python nucleus/social_age.py check    (exit 0 matches DESIGN, 1 drift printed, 77 unreachable)
+     venv/bin/python nucleus/social_age.py ensure   (init.sh's derivedgraphs node: create what DESIGN declares)
 """
 from __future__ import annotations
 
@@ -29,6 +41,17 @@ sys.path.insert(0, str(REPO))
 
 GRAPH = "astryx_social"
 PRIVATE = "astryx_people"
+# database (= its one graph's name) -> the graph's vertex and edge labels, and the roles that may CONNECT. PUBLIC never
+# may (a3 #42376: a plain CREATE DATABASE here is born PUBLIC-CONNECT, so the ACL is design, declared and checked, and
+# every design database is BORN zero-window by ensure() itself, whatever ran before it). Role names are people_gate's
+# RESIDENT / CLEARED (the oracle pins the equality). Each database's extensions are EXTENSIONS.
+DESIGN = {
+    GRAPH: {"v": ("context", "person"), "e": ("knows", "member_of"), "connect": ("astryx_resident", "people_cleared")},
+    PRIVATE: {"v": ("owner", "person"), "e": ("relation",), "connect": ("people_cleared",)},
+}
+EXTENSIONS = ("age", "plpgsql")
+# AGE's own bookkeeping labels, present in every graph: not part of anyone's design
+AGE_BASE_LABELS = ("_ag_label_vertex", "_ag_label_edge")
 
 
 def _social_dsn() -> str | None:
@@ -41,13 +64,20 @@ def _q(s):  # cypher string literal — ids/labels are hash-derived or display-m
     return str(s).replace("\\", "").replace("'", "")
 
 
-def _fresh(cur, graph):
+def _fresh(cur, graph, design=None):
+    """Drop and recreate `graph`, then MATERIALIZE every label its design declares (AGE otherwise creates a label only
+    when the first row uses it, so a graph with no `knows` edge would read MISSING against its own design)."""
     from nucleus import agelib
     agelib.prepare(cur)               # LOAD as a superuser; a run role has AGE preloaded (plan-4918 D1)
     cur.execute("SELECT count(*) FROM ag_graph WHERE name=%s", (graph,))
     if cur.fetchone()[0]:
         cur.execute("SELECT drop_graph(%s, true)", (graph,))
     cur.execute("SELECT create_graph(%s)", (graph,))
+    d = design if design is not None else DESIGN.get(graph, {"v": (), "e": ()})
+    for lab in d["v"]:
+        cur.execute("SELECT create_vlabel(%s, %s)", (graph, lab))
+    for lab in d["e"]:
+        cur.execute("SELECT create_elabel(%s, %s)", (graph, lab))
 
 
 def _readers(cur, graph, *roles):
@@ -87,7 +117,7 @@ def rebuild(base=None, social=None, private=None, graph=GRAPH, private_graph=PRI
     q = _q
 
     with psycopg.connect(social, autocommit=True) as dst, dst.cursor() as cur:
-        _fresh(cur, graph)
+        _fresh(cur, graph, DESIGN[GRAPH])
 
         def cy(stmt):
             cur.execute(f"SELECT * FROM cypher('{graph}', $q${stmt}$q$) AS (r agtype)")
@@ -114,7 +144,7 @@ def rebuild(base=None, social=None, private=None, graph=GRAPH, private_graph=PRI
         out["private"] = "absent"
         return out
     with psycopg.connect(private, autocommit=True) as dst, dst.cursor() as cur:
-        _fresh(cur, private_graph)
+        _fresh(cur, private_graph, DESIGN[PRIVATE])
 
         def cyp(stmt):
             cur.execute(f"SELECT * FROM cypher('{private_graph}', $q${stmt}$q$) AS (r agtype)")
@@ -132,7 +162,135 @@ def rebuild(base=None, social=None, private=None, graph=GRAPH, private_graph=PRI
     return out
 
 
-if __name__ == "__main__":
+# ── the declared design: ensure (init.sh) and check (check.sh, init.sh's node check) ──────────────────────────────
+def drift(dsn_for, design=None) -> list:
+    """What is NOT as DESIGN declares, as sentences; empty = green. `dsn_for(db)` -> a DSN for that database (the oracle
+    hands scratch ones). READ-ONLY: every session is SET default_transaction_read_only before it reads."""
+    import psycopg
+    design = design if design is not None else DESIGN
+    out = []
+    for db, want in sorted(design.items()):
+        try:
+            c = psycopg.connect(dsn_for(db), autocommit=True)
+        except psycopg.OperationalError as e:
+            if "does not exist" in str(e):
+                out.append(f"MISSING database {db}")
+                continue
+            raise
+        with c:
+            c.execute("SET default_transaction_read_only = on")
+            # the ACL FIRST, so a half-built database (no extension, no graph) still has it judged
+            q = lambda *a: c.execute("SELECT has_database_privilege(%s, %s, 'CONNECT')", a).fetchone()[0]  # noqa: E731
+            if q("public", db):
+                out.append(f"EXTRA {db}: PUBLIC can CONNECT (the design grants CONNECT only to "
+                           f"{', '.join(want.get('connect', ())) or 'nobody'})")
+            for role in want.get("connect", ()):
+                if not c.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone():
+                    out.append(f"MISSING {db}: role {role} (people_gate creates it)")
+                elif not q(role, db):
+                    out.append(f"MISSING {db}: CONNECT for {role}")
+            # ...and EXACTLY: a CONNECT grant to a role the design doesn't name is drift too (a3 #42380: one GRANT widened
+            # astryx_people silently). Read from the ACL itself; the owner and PUBLIC (reported above) are excluded.
+            # OUT OF SCOPE, stated: MEMBERSHIP (a role granted people_cleared inherits its CONNECT) is people_gate's.
+            for (role,) in c.execute(
+                    "SELECT g.rolname FROM pg_database d, aclexplode(d.datacl) a JOIN pg_roles g ON g.oid = a.grantee "
+                    "WHERE d.datname = %s AND a.privilege_type = 'CONNECT' AND a.grantee <> d.datdba ORDER BY 1", (db,)):
+                if role not in want.get("connect", ()):
+                    out.append(f"EXTRA {db}: CONNECT for {role} (not in the design)")
+            have_ext = {r[0] for r in c.execute("SELECT extname FROM pg_extension")}
+            for e in EXTENSIONS:
+                if e not in have_ext:
+                    out.append(f"MISSING {db}: extension {e}")
+            if "age" not in have_ext:
+                continue
+            if not c.execute("SELECT 1 FROM ag_catalog.ag_graph WHERE name = %s", (db,)).fetchone():
+                out.append(f"MISSING {db}: graph {db}")
+                continue
+            live = {(k, n) for n, k in c.execute(
+                "SELECT l.name, l.kind FROM ag_catalog.ag_label l JOIN ag_catalog.ag_graph g ON g.graphid = l.graph "
+                "WHERE g.name = %s AND l.name <> ALL(%s)", (db, list(AGE_BASE_LABELS)))}
+            decl = {("v", n) for n in want["v"]} | {("e", n) for n in want["e"]}
+            kind = {"v": "vertex", "e": "edge"}
+            out += [f"MISSING {db}: {kind[k]} label {n}" for k, n in sorted(decl - live)]
+            out += [f"EXTRA {db}: {kind[k]} label {n} (not in DESIGN)" for k, n in sorted(live - decl)]
+            # every relation must be the graph's own or AGE's catalog; the label tables live in the graph's schema
+            adhoc = [f"{s}.{r}" for s, r in c.execute(
+                "SELECT n.nspname, c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE c.relkind IN ('r','p','v','m','f') AND n.nspname NOT IN ('pg_catalog','information_schema',"
+                "'ag_catalog', %s) AND n.nspname NOT LIKE 'pg\\_toast%%' ORDER BY 1, 2", (db,))]
+            out += [f"EXTRA {db}: relation {x} (a derived database holds only its graph)" for x in adhoc]
+            # ...and INSIDE the graph's schema, every table must be one of its labels' (a3 #42376 press 1: a plain
+            # `CREATE TABLE <graph>.adhoc` is neither an ag_label nor outside the schema, so it was invisible)
+            stray = [r for (r,) in c.execute(
+                "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = %s AND c.relkind IN ('r','p','v','m','f') AND c.oid NOT IN ("
+                "SELECT l.relation FROM ag_catalog.ag_label l JOIN ag_catalog.ag_graph g ON g.graphid = l.graph "
+                "WHERE g.name = %s) ORDER BY 1", (db, db))]
+            out += [f"EXTRA {db}: relation {db}.{x} (in the graph's schema but no label's table)" for x in stray]
+    return out
+
+
+def ensure(admin_dsn: str, design=None) -> list:
+    """Create what DESIGN declares and the server lacks (database born zero-window with its declared CONNECT, extension,
+    preload). Idempotent; an EXISTING database's ACL is people_gate's to reconcile and check()'s to report. Returns what
+    was created."""
+    import psycopg
+    from psycopg import sql
+    from psycopg.conninfo import make_conninfo
+    design = design if design is not None else DESIGN
+    made = []
+    with psycopg.connect(admin_dsn, autocommit=True) as a:
+        I = sql.Identifier
+        for db in sorted(design):
+            if not a.execute("SELECT 1 FROM pg_database WHERE datname = %s", (db,)).fetchone():
+                # BORN ZERO-WINDOW (plan-4918 #28982, a3 #42376): closed, PUBLIC revoked, the declared roles granted,
+                # THEN opened. A plain CREATE here is PUBLIC-CONNECT, and node ORDER is not a construction.
+                a.execute(sql.SQL("CREATE DATABASE {} ALLOW_CONNECTIONS false").format(I(db)))
+                a.execute(sql.SQL("REVOKE ALL ON DATABASE {} FROM PUBLIC").format(I(db)))
+                have = [r for (r,) in a.execute("SELECT rolname FROM pg_roles WHERE rolname = ANY(%s)",
+                                                (list(design[db].get("connect", ())),))]
+                if have:
+                    a.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
+                        I(db), sql.SQL(", ").join(map(I, have))))
+                a.execute(sql.SQL("ALTER DATABASE {} ALLOW_CONNECTIONS true").format(I(db)))
+                made.append(f"database {db}")
+            a.execute(sql.SQL("ALTER DATABASE {} SET session_preload_libraries = 'age'").format(I(db)))
+            with psycopg.connect(make_conninfo(admin_dsn, dbname=db), autocommit=True) as d:
+                for e in EXTENSIONS:
+                    if not d.execute("SELECT 1 FROM pg_extension WHERE extname = %s", (e,)).fetchone():
+                        d.execute(sql.SQL("CREATE EXTENSION IF NOT EXISTS {}").format(sql.Identifier(e)))
+                        made.append(f"{db}: extension {e}")
+    return made
+
+
+def _main(argv) -> int:
+    from nucleus import people
+    from psycopg.conninfo import make_conninfo
+    base = people._dsn()
+    if not base:
+        print("social_age: no ASTRYX_DSN")
+        return 77
+    cmd = argv[1] if len(argv) > 1 else "rebuild"
+    if cmd == "check":
+        import psycopg
+        try:
+            left = drift(lambda db: make_conninfo(base, dbname=db))
+        except psycopg.Error as e:
+            print(f"social_age check: UNVERIFIED, the server could not be read ({type(e).__name__})")
+            return 77
+        for d in left:
+            print(f"  social_age: {d}")
+        print("social_age check: " + ("DRIFT" if left else "live matches DESIGN"))
+        return 1 if left else 0
+    if cmd == "ensure":
+        for m in ensure(base):
+            print(f"  social_age: created {m}")
     r = rebuild()
     print(f"  AGE graph '{GRAPH}': {r['nodes']} nodes, {r['knows']} knows, "
           f"{r['member_of']} member-of; private '{PRIVATE}': {r['private']} relation(s)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(_main(sys.argv))
+

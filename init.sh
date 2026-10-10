@@ -401,6 +401,11 @@ _act_harden() { say "revoking PUBLIC CONNECT on the org's databases (plan-4918 P
 _chk_peoplegate() { venv/bin/python -m nucleus.people_gate check; }
 _act_peoplegate() { say "people gate: relation details readable only by people_cleared (accident-grade)"
   venv/bin/python -m nucleus.people_gate apply >/dev/null; }
+# The derived graph databases, as social_age.DESIGN declares them (owner 10-10: "the design on github should match
+# local"). ensure creates a missing database or extension, then rebuilds; the check is read-only.
+_chk_derivedgraphs() { venv/bin/python nucleus/social_age.py check >/dev/null; }
+_act_derivedgraphs() { say "derived graphs: astryx_social / astryx_people as social_age.DESIGN declares"
+  venv/bin/python nucleus/social_age.py ensure >/dev/null; }
 
 # >>> dispatcher link
 # The repo's `astryx` is a TRACKED symlink to the RELATIVE `init.sh`. Rewriting it to "$PWD/init.sh" dirtied the tree
@@ -548,7 +553,7 @@ _act_model() {
 # the precondition DAG, in dependency order (top depends on nothing).  name|class
 RECONCILE_NODES=(
   "pg|interior" "pgready|wait" "schema|interior" "harden|interior" "hardencut|halt" "venv|interior" "deps|interior"
-  "peoplegate|interior" "model|interior" "chan|interior" "obs|interior" "obskey|interior" "ident|interior"
+  "peoplegate|interior" "derivedgraphs|interior" "model|interior" "chan|interior" "obs|interior" "obskey|interior" "ident|interior"
   "units|interior" "law|interior" "prehook|interior" "ccompact|interior" "prreview|interior" "login|halt"
   "seed|interior" "prompt|interior")
 
