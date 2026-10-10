@@ -199,6 +199,9 @@ def desktop_arms():
     arm("(g) a zoom crop is full resolution (100×50 view px → 150×75)", z == (150, 75), str(z))
 
 
+BATCH: list = []
+
+
 def mcp_arms():
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
@@ -220,7 +223,13 @@ def mcp_arms():
                 bare_act = await s.call_tool("act", {"action": "move", "x": 5, "y": 5})
                 bare_look = await s.call_tool("look", {})
                 odd = await s.call_tool("act", {"action": "move", "x": 5, "y": 5, "screen": "own"})
+                batch_ok = await s.call_tool("act", {"action": "do", "screen": "background",
+                                                     "text": "move 10 10; move 20 20\nmove 30 30"})
+                batch_bad = await s.call_tool("act", {"action": "do", "screen": "background",
+                                                      "text": "move 10 10; bogus 1; move 5 5"})
+                still = await s.call_tool("act", {"action": "wait", "screen": "background", "amount": 2})
                 done = await s.call_tool("act", {"action": "done", "screen": "background"})
+                BATCH.extend([batch_ok, batch_bad, still])
                 return ([t.name for t in tools], len(schema), plain, seen, bare_act, bare_look,
                         odd, done)
     names, n, plain, seen, bare_act, bare_look, odd, done = asyncio.run(go())
@@ -229,6 +238,13 @@ def mcp_arms():
     arm("(h) look() without a screen is refused", bare_look.isError, str(bare_look.content[:1])[:160])
     arm('(h) an unknown screen is refused, naming "laptop" and "background"',
         "laptop" in odd.content[0].text and "background" in odd.content[0].text, odd.content[0].text)
+    b_ok, b_bad, still = BATCH
+    arm("(o) do runs several steps in one call", b_ok.content[0].text.startswith("ok · 3 step(s) done"),
+        b_ok.content[0].text[:120])
+    arm("(o) do stops at the first bad step and says which", "stopped at step 2" in b_bad.content[0].text,
+        b_bad.content[0].text[:120])
+    arm("(o) wait on an unchanging screen reports nothing changed", "nothing changed" in still.content[0].text,
+        still.content[0].text[:120])
     arm("(h) done releases the background desktop", "desk-" in done.content[0].text,
         done.content[0].text)
     arm("(h) exactly two tools: look, act", sorted(names) == ["act", "look"], str(names))

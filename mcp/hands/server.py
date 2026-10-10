@@ -76,6 +76,54 @@ def _pic(a: str, zoom: str = "") -> Image:
     return Image(data=hd.screenshot(a, region=region), format="jpeg")
 
 
+def _batch(a: str, script: str) -> tuple[int, str]:
+    """Run several steps on desktop `a`; returns (steps done, a short report)."""
+    steps = [x.strip() for x in script.replace(";", "\n").splitlines() if x.strip()]
+    if not steps:
+        raise hd.HandsError("do: no steps")
+    for i, st in enumerate(steps, 1):
+        verb, _, rest = st.partition(" ")
+        args = rest.split()
+        try:
+            n = lambda k: int(float(args[k]))  # noqa: E731
+            if verb == "open":
+                hd.open_(a, rest.strip())
+                time.sleep(OPEN_SETTLE_S)
+            elif verb in ("click", "double", "right", "move"):
+                x, y = hd.view_to_desktop(a, n(0), n(1))
+                if verb == "move":
+                    hd.move(a, x, y)
+                else:
+                    hd.click(a, x, y, "right" if verb == "right" else "left", 2 if verb == "double" else 1)
+            elif verb == "type":
+                hd.type_text(a, rest.replace("\\n", "\n"))
+            elif verb == "key":
+                hd.key(a, rest.strip())
+            elif verb == "scroll":
+                x, y = hd.view_to_desktop(a, n(0), n(1))
+                hd.scroll(a, x, y, n(2))
+            elif verb == "drag":
+                x1, y1 = hd.view_to_desktop(a, n(0), n(1))
+                x2, y2 = hd.view_to_desktop(a, n(2), n(3))
+                hd.drag(a, x1, y1, x2, y2)
+            elif verb == "focus":
+                hd.focus(a, n(0))
+            elif verb == "wait":
+                hd.wait_change(a, min(float(WAIT_MAX_S), float(args[0]) if args else 2.0))
+                continue
+            else:
+                return i - 1, f"stopped at step {i} ({st!r}): unknown verb"
+        except (IndexError, ValueError):
+            return i - 1, f"stopped at step {i} ({st!r}): bad arguments"
+        except hd.Stopped:
+            raise
+        except hd.HandsError as e:
+            return i - 1, f"stopped at step {i} ({st!r}): {e}"
+        time.sleep(0.25)
+    time.sleep(hd.SETTLE_S)
+    return len(steps), f"ok · {len(steps)} step(s) done"
+
+
 @mcp.tool()
 def look(screen: str, zoom: str = "") -> list:
     """See a screen (≤960 wide; its pixels are your coordinates). screen: "laptop" | "background"
@@ -90,13 +138,11 @@ def look(screen: str, zoom: str = "") -> list:
 @mcp.tool()
 def act(action: str, screen: str, x: int = -1, y: int = -1, text: str = "", x2: int = -1,
         y2: int = -1, amount: int = 3, look: bool = False) -> list:
-    """Do one thing. screen (required): "laptop" | "background". Coordinates are look() pixels.
-    Replies in text; look=True adds a screenshot.
-    open text=URL|program (e.g. "web.whatsapp.com", "libreoffice --calc"; Windows VM:
-    "http://127.0.0.1:8006") · click / double / right x,y · type text (enter: end text with \\n)
-    · key text=chord ("Return", "ctrl+l", "ctrl+minus", "alt+Tab") · scroll x,y amount
-    (+down/-up) · drag x,y→x2,y2 · move x,y · focus amount=window id · wait amount=seconds
-    · done (free your background desktop)"""
+    """Do one thing. screen (required): "laptop" | "background". x,y = look() pixels. Text reply;
+    look=True adds a screenshot. open text=URL|program · click/double/right/move x,y · type text
+    (\\n = Enter) · key text=chord ("ctrl+l") · scroll x,y amount · drag x,y,x2,y2 · focus
+    amount=window id · wait amount=s (returns when the screen changes) · done (free your desk)
+    · do text="key super+2; click 190 88; type Mama; wait 3": many steps, one call (cheaper)"""
     if action == "done":
         return [f"released {', '.join(hd.release(AGENT)) or 'nothing (you held no desktop)'}"]
     try:
@@ -129,7 +175,16 @@ def act(action: str, screen: str, x: int = -1, y: int = -1, text: str = "", x2: 
         elif action == "focus":
             hd.focus(a, amount)
         elif action == "wait":
-            settle = max(0.0, min(float(WAIT_MAX_S), float(amount)))
+            changed = hd.wait_change(a, max(0.0, min(float(WAIT_MAX_S), float(amount))))
+            settle = 0
+            if not changed:
+                return [f"ok · nothing changed in {amount}s · {_state(a)}"]
+        elif action == "do":
+            done, note = _batch(a, text)
+            out = [f"{note} · {_state(a)}"]
+            if look:
+                out.append(_pic(a))
+            return out
         else:
             return [f"unknown action {action!r}"]
         time.sleep(settle)
