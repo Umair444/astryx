@@ -52,6 +52,13 @@ check("the Dockerfile pins AGE to a 40-hex commit and checks it out (a moving ma
 check("the Dockerfile declares the extension versions it carries (age, vector, postgis)",
       set(want["versions"]) == {"age", "vector", "postgis"}, str(want["versions"]))
 
+pins = dict(re.findall(r"postgresql-18-(pgvector|postgis-3)=(\d+\.\d+\.\d+)", dockerfile))
+check("the apt packages are PINNED, to exactly the versions the labels declare (a1 #43407: unpinned, a fresh build "
+      "installed pgvector 0.8.7 under a 0.8.6 label)", pins.get("pgvector") == want["versions"].get("vector")
+      and pins.get("postgis-3") == want["versions"].get("postgis"), f"{pins} vs {want['versions']}")
+check("the base image is pinned by digest (the tag moves)",
+      len(re.findall(r"^FROM postgres:18-bookworm@sha256:[0-9a-f]{64}", dockerfile, re.M)) == 2)
+
 print("red, on synthetic records:")
 TAG_ID = "sha256:" + "a" * 64
 OK_INSPECT = {"Config": {"Image": want["image"], "Cmd": ["postgres"]}, "Image": TAG_ID,

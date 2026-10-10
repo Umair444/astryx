@@ -16,7 +16,8 @@
 #     dump at database scope, and `CREATE EXTENSION age` inside the main db would weld
 #     disaster recovery to a source-compiled C extension.
 
-FROM postgres:18-bookworm AS agebuild
+# the BASE is pinned by digest too: the tag moves (it moved on this host on 10-10)
+FROM postgres:18-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c AS agebuild
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
@@ -36,17 +37,18 @@ RUN set -eux; \
     make PG_CONFIG=/usr/lib/postgresql/18/bin/pg_config -j"$(nproc)"; \
     make PG_CONFIG=/usr/lib/postgresql/18/bin/pg_config install
 
-FROM postgres:18-bookworm
+FROM postgres:18-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-        postgresql-18-pgvector \
-        postgresql-18-postgis-3 \
-        postgresql-18-postgis-3-scripts; \
+        postgresql-18-pgvector=0.8.6-1.pgdg12+2 \
+        postgresql-18-postgis-3=3.6.4+dfsg-2.pgdg12+1 \
+        postgresql-18-postgis-3-scripts=3.6.4+dfsg-2.pgdg12+1; \
     rm -rf /var/lib/apt/lists/*
 COPY --from=agebuild /usr/lib/postgresql/18/lib/age.so /usr/lib/postgresql/18/lib/
 COPY --from=agebuild /usr/share/postgresql/18/extension/age* /usr/share/postgresql/18/extension/
 
+# PINNED apt versions (a1 #43407; measured 10-10: unpinned, a fresh build installed pgvector 0.8.7 under a 0.8.6 label).
 # The extension versions this image is DECLARED to carry (infra's parity gate reads these lines and compares them with
 # the live pg_extension.extversion; a rebuild that drifts reads RED).
 LABEL org.astryx.pg.age_version="1.8.0" \
