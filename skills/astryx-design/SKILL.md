@@ -147,6 +147,14 @@ The voice orb (`VoiceDock.tsx`) is the reference for anything that hears or spea
   settles.
 - Show **which agents are attending** to a sense as faces, the same way the crew strip does. A sense
   is shared by the org, so its UI shows the room, not a lone microphone icon.
+- **The orb's own motion** (`VoiceMode.tsx`): the core follows the level on a lively spring (`damping 12,
+  stiffness 160`), and its rings follow on a softer one (`damping 14, stiffness 120`). The orb is bouncier
+  than a sheet because it is a voice, not furniture. *Thinking* is a slow ring breathe-and-turn, `2.4s` and up
+  per ring. *Speaking* is a `1.6s` pulse. Both loop only while that phase lasts.
+- **The ear's control** (`observatory/web/src/components/EarControl.tsx`) is the reference for a background
+  sense. At rest it is a pill with a small orb and one word. Tapping it opens a sheet with one serif line
+  for the state, the attending faces, one action and a footnote saying what is kept and for how long. A name
+  caught glows on that agent's face for a few seconds. Muted is warn, offline is grey, and neither shouts.
 
 ## 9. Restraint
 

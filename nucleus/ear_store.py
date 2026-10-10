@@ -46,6 +46,9 @@ def _env(key: str) -> str:
 
 
 TTL_MAX = 7
+# nucleus/backup.sh keeps the last N nightly dumps (KEEP=${1:-14}; org_runners passes no argument), each holding
+# the live window as it was: what the owner is told a word can outlive the TTL by (docs/hearing.md).
+BACKUP_KEEP_DAYS = 14
 
 
 def ttl_days() -> int:
