@@ -30,6 +30,7 @@ command -v docker >/dev/null || notrun "no docker on this host"
 [ -n "$IMAGE" ] || notrun "no image: line in infra/pg/docker-compose.yml"
 docker image inspect "$IMAGE" >/dev/null 2>&1 || notrun "the declared image $IMAGE is not on this host"
 [ -x "$PY" ] || notrun "no venv python (psycopg is needed to observe logins)"
+command -v psql >/dev/null || notrun "no host psql (the row counts read through the synced role over TCP, as restore_verify does)"
 
 name="astryx-restore-drill-$$"
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/astryx-restore-drill.XXXXXX")
@@ -85,12 +86,11 @@ printf '%s' "$placeholder" | login "$DB" stdin >/dev/null 2>&1; rc=$?
 # the dump onto THAT server (its extensions must exist in the declared image, or this is where it shows)
 nice -n19 ionice -c3 docker exec -i "$name" pg_restore --no-owner -U "$ROLE" -d "$DB" < "$dump" >/dev/null 2>&1 \
   || echo "  restore-drill: pg_restore reported issues; the row counts below are the gate" >&2
+# counts over TCP through the synced role (PGPASSFILE above), by host psql as restore_verify reads: the drill runs no
+# python SQL of its own, so it adds no site the sqlguard inventory would have to know
 for t in steps messages goals triggers; do
-  n=$("$PY" -c '
-import sys, psycopg
-with psycopg.connect(sys.argv[1], connect_timeout=5) as c:
-    print(c.execute(f"SELECT count(*) FROM {sys.argv[2]}").fetchone()[0])' "$ASTRYX_DSN" "$t" 2>/dev/null)
-  if [ -n "$n" ] && [ "$n" -gt 0 ]; then echo "  ✓ restore-drill: $t restored $n rows, read through the synced role"
+  n=$(psql -X "$ASTRYX_DSN" -tAc "SELECT count(*) FROM $t" 2>/dev/null | tr -d '[:space:]')
+  if [ -n "$n" ] && [ "$n" -gt 0 ] 2>/dev/null; then echo "  ✓ restore-drill: $t restored $n rows, read through the synced role"
   else echo "  ✗ restore-drill: $t did not restore onto the drill server" >&2; fail=1; fi
 done
 exit "$fail"

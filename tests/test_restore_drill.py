@@ -38,7 +38,7 @@ print("not run:")
 with tempfile.TemporaryDirectory() as td:
     nodock = Path(td) / "nodock"
     nodock.mkdir()
-    for tool in ("awk", "grep", "cut", "dirname", "mktemp", "bash", "cat"):
+    for tool in ("awk", "grep", "cut", "dirname", "mktemp", "bash", "cat", "psql", "tr"):
         w = shutil.which(tool)
         if w:
             (nodock / tool).symlink_to(w)
@@ -92,12 +92,13 @@ with fixture_db() as fx, tempfile.TemporaryDirectory() as td:
     check("the small fixture dump was made", d.returncode == 0 and dump.stat().st_size > 0, d.stderr[-200:].decode())
     before = set(subprocess.run(["docker", "ps", "-aq", "--filter", "name=astryx-restore-drill-"],
                                 capture_output=True, text=True).stdout.split())
-    r = subprocess.run(["timeout", "600", "bash", str(DRILL), str(dump)], cwd=REPO, capture_output=True, text=True,
+    r = subprocess.run(["timeout", "600", "bash", "nucleus/restore_drill.sh", str(dump)], cwd=REPO,
+                       capture_output=True, text=True,
                        timeout=620)
     out = r.stdout + r.stderr
     print("\n".join("        " + x for x in out.splitlines()))
     check("the drill exits 0", r.returncode == 0, f"rc {r.returncode}")
-    for want in ("initdb'd from", "after pg_role_sync apply the restored pgpass value logs in",
+    for want in ("empty data dir initdb'd from", "after pg_role_sync apply the restored pgpass value logs in",
                  "the initdb placeholder is refused", "steps restored 1 rows", "messages restored 1 rows",
                  "goals restored 1 rows", "triggers restored 1 rows"):
         check(f"✓ {want}", f"✓ restore-drill: {want}" in out)
