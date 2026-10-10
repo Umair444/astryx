@@ -14,7 +14,8 @@
 #      is DERIVED, never hand-kept (a1 #40418: a hand list of 5 left agents/abstractors/ out, and test_plan_lifecycle
 #      read 15 FAIL on main as an artifact): every gitignored path git reports, minus ESTATE_EXCLUDE (the SAME list as
 #      nucleus/sqlguard/ledger.py, parity-checked by the oracle), plus the runtime necessities, minus a DECLARED skip.
-#      Per ENTRY, so a gitignored subdir of a tracked dir gets its own link (a whole-dir link would nest).
+#      Per ENTRY, so a gitignored subdir of a tracked dir gets its own link (a whole-dir link would nest), and an
+#      entry that is a DIRECTORY is rebuilt as real directories of per-FILE links (a walker skips a linked dir).
 #      AN INTERRUPT CLEANS UP TOO: INT/TERM/HUP stop the check, remove the links and the tree, exit 130. (The check
 #      runs in the background and is WAITED on: bash defers a trap until a foreground child exits, so a TERM during
 #      an hour-long check would otherwise clean nothing until it ended. A run stopped this way left 38 live links in
@@ -68,10 +69,23 @@ if [ "${MERGE_CHECK_FULL:-1}" != 0 ]; then
     keep=1; for e in $ESTATE_EXCLUDE $SKIP; do case "/$p" in "/$e"*|*"/$e"*) keep=0 ;; esac; [ "$p" = "$e" ] && keep=0; done
     [ "$keep" = 1 ] && echo "${p%/}"; done)
   MARK="$WT.mark"; : > "$MARK"; sleep 1
-  for l in $estate $RUNTIME; do
-    if [ -e "$LIVE/$l" ] && [ ! -e "$WT/$l" ] && [ ! -L "$WT/$l" ]; then
+  # An estate DIRECTORY is rebuilt as REAL directories holding per-FILE links, never one link to the directory:
+  # Python's rglob/os.walk (and find) don't descend a symlinked directory, so a dir link hid agents/painter/ from
+  # agent_exists() and 7 gates read red here on ANY tree, main's own included (painter #42999, a4 10-10). A file
+  # the run CREATES therefore stays in the scratch tree; a write THROUGH a linked file still reaches live (reported
+  # below). RUNTIME stays whole-directory links: nothing walks venv or channel/node_modules.
+  for e in $estate; do
+    if [ -d "$LIVE/$e" ] && [ ! -L "$LIVE/$e" ]; then
+      ( cd "$LIVE" && find "$e" \( -name __pycache__ -o -name node_modules \) -prune -o -type d -print ) \
+        | while IFS= read -r d; do mkdir -p "$WT/$d"; done
+      ( cd "$LIVE" && find "$e" \( -name __pycache__ -o -name node_modules \) -prune -o ! -type d -print )
+    else echo "$e"; fi
+  done > "$WT.links"
+  for l in $RUNTIME; do echo "$l"; done >> "$WT.links"
+  while IFS= read -r l; do
+    if { [ -e "$LIVE/$l" ] || [ -L "$LIVE/$l" ]; } && [ ! -e "$WT/$l" ] && [ ! -L "$WT/$l" ]; then
       mkdir -p "$(dirname "$WT/$l")" && ln -s "$LIVE/$l" "$WT/$l" && made+=("$l"); fi
-  done
+  done < "$WT.links"
   LOG="$WT.full.log"
   unlink_all() { for l in "${made[@]}"; do rm -f "${WT:?}/$l"; done; }
   interrupted() {
@@ -91,7 +105,7 @@ if [ "${MERGE_CHECK_FULL:-1}" != 0 ]; then
     if [ -e "$WT/$l" ] || [ -L "$WT/$l" ]; then echo "  LINK SURVIVED: $l"; rc_links=3; fi
   done
   echo "  linked ${#made[@]} estate path(s)"
-  wrote=$(for l in "${made[@]}"; do case "$l" in venv|channel/node_modules) continue ;; esac
+  wrote=$(for l in $estate; do
     find "$LIVE/$l" -newer "$MARK" -not -path '*__pycache__*' -not -name '*.pyc' 2>/dev/null; done | head -20)
   [ -n "$wrote" ] && { echo "  LIVE WRITES during the run (a linked path is PRODUCTION; NOT ATTRIBUTED: the run OR a concurrent writer):"; echo "$wrote" | sed 's/^/    /'; }
   sed 's/\x1b\[[0-9;]*m//g' "$LOG" | tac | sed -n '/^check:/,/^FAILED (/p' | tac | sed -n '/^FAILED (/,/^UNVERIFIED/p' \

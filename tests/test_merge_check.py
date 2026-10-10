@@ -46,6 +46,7 @@ def main():
         (r / ".env").write_text("ASTRYX_DSN=x\n")                           # a live-estate file to link
         (r / "agents" / "secret").mkdir()                                  # …holding a GITIGNORED subdir (a1 #40418)
         (r / "agents" / "secret" / "charter.md").write_text("roster\n")
+        (r / "agents" / "secret" / "empty").mkdir()                         # an EMPTY estate dir still exists there
         git(r, "checkout", "-qb", "feat")
         (r / "g.txt").write_text("feature\n")
         git(r, "add", "g.txt")
@@ -62,7 +63,12 @@ def main():
         # the stub check: records the cwd's link state AND MOVES main (a concurrent merge landing mid-run)
         stub_check = (f"sh -c 'test -L .env && echo LINKED >> {rec}; "
                       f"test -f agents/secret/charter.md && echo SUBLINKED >> {rec}; "
-                      f"echo written > agents/secret/live_write.txt; "
+                      f"echo written >> agents/secret/charter.md; "
+                      f"echo scratch > agents/secret/run_made.txt; "
+                      f"echo other > {r}/agents/secret/concurrent_new.txt; "
+                      f"test -d agents/secret/empty && echo EMPTYDIR >> {rec}; "
+                      f"python3 -c \"import pathlib,sys; sys.exit(not any(pathlib.Path(\\\"agents\\\").rglob(\\\"charter.md\\\")))\" "
+                      f"&& echo RGLOB >> {rec}; "
                       f"git -C {r} commit -q --allow-empty -m concurrent; "
                       f"echo \"FAILED (1):\"; echo \"  ✗ a gate\"; echo; echo \"check: FAILURES above\"'")
         stub_ptc = f"sh -c 'echo PTC $0 >> {rec}'"
@@ -83,8 +89,16 @@ def main():
         check("the full check ran with the live estate LINKED in", "LINKED" in log, log)
         check("a1 #40418: a GITIGNORED subdir inside a TRACKED dir is linked per entry, and the gate reads it",
               "SUBLINKED" in log, log)
-        check("a1 R2: a write the run made into a LIVE linked path is NAMED in the report",
-              "LIVE WRITES" in p.stdout and "live_write.txt" in p.stdout, p.stdout[-400:])
+        check("painter #42999: a WALKER sees inside a gitignored DIRECTORY (Python rglob skips a linked dir: link per file)",
+              "RGLOB" in log, log)
+        check("…and an EMPTY estate directory exists in the scratch tree too", "EMPTYDIR" in log, log)
+        check("…and a file the run CREATES there stays in the scratch tree, never the live estate",
+              not (r / "agents" / "secret" / "run_made.txt").exists())
+        check("a1 R2: a write the run made THROUGH a linked file reaches LIVE and is NAMED in the report",
+              "LIVE WRITES" in p.stdout and "charter.md" in p.stdout
+              and "written" in (r / "agents" / "secret" / "charter.md").read_text(), p.stdout[-400:])
+        check("a1 #43404: a CONCURRENT writer's NEW file in a live estate dir is listed too (the scan walks the estate, not the links)",
+              "concurrent_new.txt" in p.stdout, p.stdout[-400:])
         check("…and NOT attributed to the run: the estate has concurrent writers, a mtime can't tell them apart (a4 10-10)",
               "NOT ATTRIBUTED" in p.stdout, p.stdout[-400:])
         trees = [ln for ln in git(r, "worktree", "list").splitlines() if "merge-check." in ln]
