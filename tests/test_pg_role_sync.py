@@ -52,7 +52,20 @@ check("the verifier has postgres' stored shape (SCRAM-SHA-256$4096:salt$stored:s
       bool(re.fullmatch(r"SCRAM-SHA-256\$4096:[A-Za-z0-9+/=]{24}\$[A-Za-z0-9+/=]{44}:[A-Za-z0-9+/=]{44}", v)), v)
 check("…is a function of (value, salt): same inputs, same verifier; another value, another",
       v == R.verifier("pw", salt=b"\x00" * 16) and v != R.verifier("pw2", salt=b"\x00" * 16))
-check("…and never contains the value", "pw" not in v.split("$", 1)[1].replace("SCRAM", ""))
+_long = secrets.token_urlsafe(24)
+check("…and never contains the value (a long random one: a 2-char probe proves nothing, a1 #45217)",
+      _long not in R.verifier(_long) and _long[:12] not in R.verifier(_long))
+D = ("localhost:5432:*:genesis:one\n127.0.0.1:5432:*:genesis:one\n*:*:*:other:x\n")
+check("agreeing lines for the role → no divergence (another role's value is not counted)",
+      R.pgpass_divergence(D, "5432", "genesis") == [])
+D2 = D.replace("127.0.0.1:5432:*:genesis:one", "127.0.0.1:5432:*:genesis:two")
+dv = R.pgpass_divergence(D2, "5432", "genesis")
+check("two lines for the role with DIFFERENT values → named by host:port:db, never by value",
+      dv == ["localhost:5432:*", "127.0.0.1:5432:*"] and not any(x in "".join(dv) for x in ("one", "two")), str(dv))
+check("…a '*' user line counts, since libpq would use it for this role",
+      R.pgpass_divergence(D + "*:*:*:*:three\n", "5432", "genesis") != [])
+check("…a line for another PORT does not", R.pgpass_divergence(D + "localhost:6543:*:genesis:four\n", "5432",
+                                                                 "genesis") == [])
 
 print("live (a throwaway role):")
 try:
@@ -93,6 +106,20 @@ try:
     except psycopg.OperationalError as e:
         refused = "password authentication failed" in str(e)
     check("…and the placeholder is refused", refused)
+    drift = Path(td.name) / "pgpass-drift"
+    fd = os.open(drift, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    os.write(fd, f"localhost:5432:*:{role}:{secrets.token_urlsafe(24)}\n127.0.0.1:5432:*:{role}:{value}\n".encode())
+    os.close(fd)
+    os.environ["PGPASSFILE"] = str(drift)
+    before = live.execute("SELECT rolpassword FROM pg_authid WHERE rolname=%s", (role,)).fetchone()[0]
+    ok_a, why_a = R.apply(dsn, admin_user=live.info.user, cont=cont)
+    ok_c, why_c = R.check(dsn)
+    after = live.execute("SELECT rolpassword FROM pg_authid WHERE rolname=%s", (role,)).fetchone()[0]
+    os.environ["PGPASSFILE"] = str(pf)
+    check("DRIFTED pgpass lines → apply REFUSES before any ALTER (the server's verifier is unchanged)",
+          not ok_a and "DISAGREE" in why_a and before == after, why_a)
+    check("…and check refuses too, naming hosts, never a value",
+          not ok_c and "DISAGREE" in why_c and value not in why_a + why_c, why_c)
     ok, why = R.apply(f"postgresql://{role}_absent@127.0.0.1:5432/postgres", admin_user=live.info.user, cont=cont)
     check("an absent pgpass entry is refused before any ALTER, named", not ok and "no pgpass entry" in why, why)
     r = subprocess.run([str(REPO / "venv" / "bin" / "python"), "-m", "nucleus.pg_role_sync", "check"], cwd=REPO,

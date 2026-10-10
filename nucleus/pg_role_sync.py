@@ -70,6 +70,30 @@ def pgpass_lookup(text: str, host: str, port: str, db: str, user: str) -> str | 
     return None
 
 
+def pgpass_divergence(text: str, port: str, user: str) -> list[str]:
+    """The lines a client of this role COULD use (user and port matching, '*' included, any host or db), named as
+    host:port:db, when they hold MORE THAN ONE distinct value; [] when they agree. libpq picks the first match per
+    connection host, so drifted lines would make `apply` set the server from one line and silently strand every
+    client that reads another (a1 #45217 follow-up 1: a rotation that edits one line). Values are compared, never
+    returned."""
+    seen, names = set(), []
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        f = _fields(line)
+        if len(f) != 5 or f[3] not in ("*", user) or f[1] not in ("*", port):
+            continue
+        seen.add(hashlib.sha256(f[4].encode()).digest())
+        names.append(":".join(f[:3]))
+    return names if len(seen) > 1 else []
+
+
+def _divergence_refusal(text: str, t: dict, role: str) -> str | None:
+    d = pgpass_divergence(text, t["port"], role)
+    return (f"the pgpass lines for role {role} DISAGREE ({', '.join(d)}): refusing to pick one; make them agree "
+            f"first") if d else None
+
+
 def passfile() -> Path:
     return Path(os.environ.get("PGPASSFILE") or Path.home() / ".pgpass")
 
@@ -97,8 +121,11 @@ def check(dsn: str) -> tuple[bool, str]:
     """Does the pgpass value log in? Returns (ok, reason); the reason never carries the value."""
     import psycopg
     t = target(dsn)
-    if pgpass_lookup(passfile().read_text() if passfile().exists() else "", t["host"], t["port"], t["dbname"],
-                     t["user"]) is None:
+    text = passfile().read_text() if passfile().exists() else ""
+    why = _divergence_refusal(text, t, t["user"])
+    if why:
+        return False, why
+    if pgpass_lookup(text, t["host"], t["port"], t["dbname"], t["user"]) is None:
         return False, f"no pgpass entry for {t['host']}:{t['port']}:{t['dbname']}:{t['user']} in {passfile()}"
     try:
         with psycopg.connect(dsn, connect_timeout=5) as c:
@@ -113,7 +140,11 @@ def apply(dsn: str, role: str | None = None, admin_user: str | None = None, cont
     """ALTER the role (default: the DSN's user) to the pgpass value's verifier, over the container's local socket."""
     t = target(dsn)
     role = role or t["user"]
-    pw = pgpass_lookup(passfile().read_text() if passfile().exists() else "", t["host"], t["port"], t["dbname"], role)
+    text = passfile().read_text() if passfile().exists() else ""
+    why = _divergence_refusal(text, t, role)
+    if why:
+        return False, why            # BEFORE any ALTER: a disaster restore must not pick one of two values
+    pw = pgpass_lookup(text, t["host"], t["port"], t["dbname"], role)
     if pw is None:
         return False, f"no pgpass entry for {t['host']}:{t['port']}:{t['dbname']}:{role} in {passfile()}"
     quoted = '"' + role.replace('"', '""') + '"'
