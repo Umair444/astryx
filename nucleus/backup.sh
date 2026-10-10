@@ -76,10 +76,12 @@ done
 # procs prove it). Authored source, not regenerable, not PII (intake code, not location data).
 # git reports bridges/geoloc.py as an ignored FILE (captured below) and mcp/geoloc/ as an
 # ignored DIR (captured in the dir loop). Guards drop both cleanly if geoloc is fully removed.
+# infra/pg/.env (10-10): the declared postgres server's compose env (its init password and settings), written
+# by hand at the infra/pg cutover; nothing regenerates it, and a restore of genesis-pg needs it.
 for f in local.md .env owner.md relations.md PLAN.md nucleus/runners.conf \
          bridges/routes-whatsapp.json bridges/routes-telegram.json \
          bridges/routes-discord.json mcp/contacts/test_server.py \
-         bridges/geoloc.py; do
+         bridges/geoloc.py infra/pg/.env; do
   if [ -f "$f" ]; then state_dirs="$state_dirs $f"; fi
 done
 for d in tier wacli-data mcp/geoloc; do   # present only on orgs that use them; un-regenerable

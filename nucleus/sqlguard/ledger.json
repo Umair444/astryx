@@ -960,10 +960,11 @@
    "reason": "seed",
    "tk": "sha256t:9d2fb8b3bdf77ab1a65a4c4c0476873ba1bc0489f423d91fb2523eedc76421fd"
   },
-  "hooks/usage.py::<module>\u001fselect coalesce(max((raw_payload->'usage'->>'context')::bigint),0) from turns where agent=?": {
+  "hooks/usage.py::<module>\u001fselect coalesce(max((raw_payload->'usage'->>'context')::bigint),0) from (select raw_payload from turns where agent=? order by id desc limit 200) t": {
+   "admitted": "2026-10-11",
    "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:d626100b54eb18cb4993d42cabf5dd102da82c3924cf6d5528430f2b2fb09a13"
+   "reason": "the prompt hook's context high-water, re-keyed 10-10 from the all-turns max (seed/usage-hook-fast, a2 PASS #44282): same read-only debt as its sibling hooks/usage.py sites; it runs live on every prompt under statement_timeout 900ms, and no oracle drives the hook",
+   "tk": "sha256t:94023f3bb67b1b5702d1b8e7397e576bd0296d950d1ae2224d5f8b7b8c05e623"
   },
   "hooks/usage.py::<module>\u001fselect five_hour_pct, seven_day_pct, five_hour_reset from current_usage": {
    "debt": "UNEXECUTED",
