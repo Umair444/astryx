@@ -85,16 +85,22 @@ def gate_refs(repo: Path) -> dict:
             tree = ast.parse(f.read_text())
         except (OSError, SyntaxError, ValueError):
             continue
-        refs = set()
-        for n in ast.walk(tree):
-            if isinstance(n, ast.Import):
-                refs |= {a.name for a in n.names}
-            elif isinstance(n, ast.ImportFrom) and n.module:
-                refs |= {n.module} | {f"{n.module}.{a.name}" for a in n.names}
-            elif isinstance(n, ast.Call) and getattr(n.func, "attr", getattr(n.func, "id", None)) in LOADERS:
-                refs |= {a.value for a in n.args if isinstance(a, ast.Constant) and isinstance(a.value, str)}
-        out[label] = refs
+        out[label] = module_refs(tree)
     return out
+
+
+def module_refs(tree) -> set:
+    """The modules a parsed oracle RUNS (gate_refs' reading, shared): imports at any depth, and a string constant
+    only as a positional argument of a LOADERS call."""
+    refs = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Import):
+            refs |= {a.name for a in n.names}
+        elif isinstance(n, ast.ImportFrom) and n.module:
+            refs |= {n.module} | {f"{n.module}.{a.name}" for a in n.names}
+        elif isinstance(n, ast.Call) and getattr(n.func, "attr", getattr(n.func, "id", None)) in LOADERS:
+            refs |= {a.value for a in n.args if isinstance(a, ast.Constant) and isinstance(a.value, str)}
+    return refs
 
 
 def covering_gate(site_path: str, gates, refs: dict):
@@ -254,7 +260,7 @@ def run(branch: str, main_ref: str = "main") -> int:
             r1, r2 = sums["branch"]["sqlguard_red"], again["sqlguard_red"]
             # a branch-only sqlguard finding must REPRODUCE too (FLAKY != REGRESSED)
             sums["branch"]["sqlguard_red"] = None if r1 is None or r2 is None else {i: l for i, l in r1.items() if i in r2}
-        rc = report(sha, sums, witness, est, refs=gate_refs(repo["branch"]))
+        rc = report(sha, sums, witness, est, refs=gate_refs(repo["branch"]), touched=touched_files(sha, repo["branch"]))
     except prep.Refuse as e:
         print(f"branch_check: REFUSED (rc 77): {e}")
         rc = 77
@@ -266,7 +272,33 @@ def run(branch: str, main_ref: str = "main") -> int:
     return rc
 
 
-def report(sha: dict, sums: dict, witness: dict, est: dict, refs: dict = None) -> int:
+def touched_files(sha: dict, repo: Path = None) -> set:
+    """The branch's scope: the files it changes (main..branch, from the live repo), plus every module a CHANGED .py
+    file imports (module_refs), so a red left in a module the branch's own new oracle drives is in scope too.
+    Empty if git can't say: never a guess."""
+    p = subprocess.run(["git", "diff", "--name-only", sha["main"], sha["branch"]], cwd=LIVE, capture_output=True, text=True)
+    if p.returncode != 0:
+        return set()
+    files = set(p.stdout.split())
+    out = set(files)
+    for f in files:
+        if not f.endswith(".py") or repo is None:
+            continue
+        try:
+            tree = ast.parse((repo / f).read_text())
+        except (OSError, SyntaxError, ValueError):
+            continue
+        out |= {m.replace(".", "/") + ".py" for m in module_refs(tree)}
+    return out
+
+
+def sqlguard_module(line: str):
+    """'R-NEW nucleus/x.py::f :: …' → 'nucleus/x.py' (None if the line names no module)."""
+    mt = re.match(r"R-[A-Z]+ (\S+?)::", line)
+    return mt.group(1) if mt else None
+
+
+def report(sha: dict, sums: dict, witness: dict, est: dict, refs: dict = None, touched: set = None) -> int:
     m, b = sums["main"], sums["branch"]
     print(f"branch_check {sha['branch'][:7]} vs main {sha['main'][:7]}")
     for side in ("main", "branch"):
@@ -293,6 +325,16 @@ def report(sha: dict, sums: dict, witness: dict, est: dict, refs: dict = None) -
         regressed += [f"{SQLGUARD_GATE} → {l}" for l in sg_new if l not in excused]
         print(f"  sqlguard judged DIFFERENTIALLY: {len(br)} RED on the branch, {len(mr)} on main, "
               f"{len(sg_new)} only on the branch")
+        # the per-site differential a reviewer otherwise rebuilds by hand from KEEP_LOGS (a2 night-review 10-11):
+        # which of main's reds the branch clears, and which reds it leaves standing in the very files it touches
+        cleared = sorted(l for i, l in mr.items() if i not in br)
+        standing = sorted(l for i, l in br.items() if i in mr and sqlguard_module(l) in (touched or set()))
+        for label, xs in (("sqlguard sites the branch CLEARS", cleared),
+                          ("sqlguard sites still RED in the branch's scope (files it changes, modules they import)", standing)):
+            if xs:
+                print(f"  {label}: {len(xs)}")
+                for x in xs:
+                    print(f"    {x}")
     fixed = sorted(set(m["failed"]) - set(b["failed"]))
     newly_unverified = sorted(set(b["unverified"]) - set(m["unverified"]))
     for label, xs in (("REGRESSED (fails on the branch, not on main, and again on a rerun)", regressed),

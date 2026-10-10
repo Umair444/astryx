@@ -7,6 +7,7 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -69,10 +70,11 @@ def main():
     check("…and a clean run's summary has no FAILED set even after stray ✗ output", s["failed"] == [], str(s))
     est = {"branch": {"skipped_credential": []}}
     sha = {"main": "a" * 40, "branch": "b" * 40}
-    def rep(main, branch, witness=None, refs=None):
+    def rep(main, branch, witness=None, refs=None, touched=None):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
-            rc = bc.report(sha, {"main": main, "branch": branch}, witness or {"main": 0, "branch": 0}, est, refs=refs)
+            rc = bc.report(sha, {"main": main, "branch": branch}, witness or {"main": 0, "branch": 0}, est, refs=refs,
+                           touched=touched)
         return rc, buf.getvalue()
     base = {"failed": ["x"], "unverified": ["u"], "line": "check: m"}
     rc, out = rep(base, {"failed": ["x", "y"], "unverified": ["u"], "line": "check: b"})
@@ -114,6 +116,37 @@ def main():
     rc, out = rep(base_sg, grown)
     check("D4: a RED only on the branch is a REGRESSION, named by its line → rc 1",
           rc == 1 and "REGRESSED" in out and "R-NEW b.py::g :: select 2" in out, out)
+    # a2 night-review 10-11: the per-site differential — main's reds the branch clears, and reds left in touched files
+    two = {**base_sg, "sqlguard_red": {"id1": "R-BLIND a.py::f", "k1": "R-NEW k.py::g :: select 7", "s1": "R-NEW s.py::h :: select 8"}}
+    one = {**shifted, "sqlguard_red": {"id1": "R-BLIND a.py::f", "s1": "R-NEW s.py::h :: select 8"}}
+    rc, out = rep(two, one, touched={"s.py", "k.py"})
+    check("a site RED on main and gone on the branch is listed as CLEARED, rc 0",
+          rc == 0 and "sqlguard sites the branch CLEARS: 1" in out and "    R-NEW k.py::g :: select 7" in out, out)
+    check("…a site RED on both sides in a file the branch touches is listed as still RED; one in an untouched file is not",
+          "sqlguard sites still RED in the branch's scope (files it changes, modules they import): 1" in out and "    R-NEW s.py::h :: select 8" in out
+          and "R-BLIND a.py::f" not in out.split("still RED in the branch")[1], out)
+    rc, out = rep(two, one)
+    check("…with no touched set, nothing is called still-RED-in-touched (never a guess)",
+          rc == 0 and "still RED in the branch" not in out, out)
+    check("branch_check.run passes report() the branch's scope (touched=touched_files(sha, repo['branch']))",
+          len(reps) == 1 and any(k.arg == "touched" and "touched_files" in ast.dump(k.value)
+                                 and "'branch'" in ast.unparse(k.value) for k in reps[0].keywords),
+          ast.dump(reps[0]) if reps else "no report call in run()")
+    tsc = Path(tempfile.mkdtemp(prefix="bc-scope-"))
+    (tsc / "tests").mkdir()
+    (tsc / "tests" / "test_x.py").write_text("from nucleus import voice_mint as V\nimport nucleus.other\n")
+    real = subprocess.run
+    def fake_git(argv, **kw):
+        if argv[:3] == ["git", "diff", "--name-only"]:
+            return subprocess.CompletedProcess(argv, 0, "tests/test_x.py\nREADME.md\n", "")
+        return real(argv, **kw)
+    bc.subprocess.run = fake_git
+    try:
+        scope = bc.touched_files({"main": "m", "branch": "b"}, tsc)
+    finally:
+        bc.subprocess.run = real
+    check("the scope is the changed files PLUS the modules a changed .py imports (a red the new oracle drives)",
+          {"tests/test_x.py", "README.md", "nucleus/voice_mint.py", "nucleus/other.py"} <= scope, sorted(scope))
     # a4 #36860 + a2 #37119: an UNEXECUTED branch-only R-NEW is UNVERIFIABLE HERE only when a gate that verified
     # nothing has an ORACLE REFERENCING the site's module (a relation, not co-occurrence); else it's REGRESSED
     unex = "R-NEW c.py::h :: select 3: UNEXECUTED and not in the ledger. Make it RESPONSIVE, or admit it"

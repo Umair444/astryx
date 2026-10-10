@@ -52,16 +52,26 @@ MUTANTS = {
     "O15 a gate newly dark on the branch isn't counted (a2 #37112's CREATEROLE skip reads REGRESSED)":
         ('dark_gates = sorted(set(both) | (set(b["unverified"]) - set(m["unverified"])))', 'dark_gates = sorted(set(both))'),
     "O16 production never hands report() the references (the excuse is dead code)":
-        ('        rc = report(sha, sums, witness, est, refs=gate_refs(repo["branch"]))', '        rc = report(sha, sums, witness, est)'),
+        ('        rc = report(sha, sums, witness, est, refs=gate_refs(repo["branch"]), touched=touched_files(sha, repo["branch"]))',
+         '        rc = report(sha, sums, witness, est, touched=touched_files(sha, repo["branch"]))'),
     "O17 a nested import is missed (only module-level imports are read)":
-        ('        for n in ast.walk(tree):\n            if isinstance(n, ast.Import):',
-         '        for n in tree.body:\n            if isinstance(n, ast.Import):'),
+        ('    for n in ast.walk(tree):\n        if isinstance(n, ast.Import):',
+         '    for n in tree.body:\n        if isinstance(n, ast.Import):'),
     "O18 any string constant counts as a reference (data names excuse modules nothing runs: a3 #38259)":
-        ('            elif isinstance(n, ast.Call) and getattr(n.func, "attr", getattr(n.func, "id", None)) in LOADERS:\n'
-         '                refs |= {a.value for a in n.args if isinstance(a, ast.Constant) and isinstance(a.value, str)}',
-         '            elif isinstance(n, ast.Constant) and isinstance(n.value, str):\n'
-         '                refs.add(n.value)'),
+        ('        elif isinstance(n, ast.Call) and getattr(n.func, "attr", getattr(n.func, "id", None)) in LOADERS:\n'
+         '            refs |= {a.value for a in n.args if isinstance(a, ast.Constant) and isinstance(a.value, str)}',
+         '        elif isinstance(n, ast.Constant) and isinstance(n.value, str):\n'
+         '            refs.add(n.value)'),
     "O19 a loader's string argument is ignored (an importlib-loaded subject is never covered)":
         ('LOADERS = frozenset({"import_module", "spec_from_file_location", "run_module", "run_path", "find_spec"})',
          'LOADERS = frozenset()'),
+    "O20 every main red is called CLEARED (a2 night-review 10-11: the per-site differential lies)":
+        ("        cleared = sorted(l for i, l in mr.items() if i not in br)", "        cleared = sorted(mr.values())"),
+    "O21 every red on both sides is called in-scope (an untouched file's debt is pinned on the branch)":
+        ("        standing = sorted(l for i, l in br.items() if i in mr and sqlguard_module(l) in (touched or set()))",
+         "        standing = sorted(l for i, l in br.items() if i in mr)"),
+    "O22 production never hands report() the branch's scope (the in-scope list is dead code)":
+        (', touched=touched_files(sha, repo["branch"]))', ")"),
+    "O23 the scope drops the modules a changed oracle imports (voice_mint::record, 10-11, falls out of scope)":
+        ('        out |= {m.replace(".", "/") + ".py" for m in module_refs(tree)}', "        pass"),
 }
