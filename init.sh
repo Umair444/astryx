@@ -177,6 +177,51 @@ EOF
   # wire, so keying on routes*.json would read every sense as absent; plan-17 a1).
   # (no sense modules ship in the public tree; a sense adds its own module + grant here —
   # presence-gated exactly like a channel, generating one astryx-<sense>.service unit.)
+  UNITS_EXPECT_DISABLED=""        # units declared here that must be INSTALLED but NOT enabled (doctor checks both ways)
+
+  # ── 3c. senses — the afferent API layer (nucleus/senses.py serves sensors/<agent>/*.py on :8460) ─────────
+  # Declared 10-10 (seed #43920: it ran, enabled and active, while nothing generated it). Presence signal = the server
+  # module + at least one sensor: writing sensors/<agent>/<name>.py IS deploying (senses.py's own law), so an org with
+  # no sensor grows no service.
+  if [ -f nucleus/senses.py ] && compgen -G "sensors/*/*.py" >/dev/null; then
+    cat > "$UD/astryx-senses.service" <<EOF
+[Unit]
+Description=astryx senses — the afferent API layer (sensors/<agent>/*.py served on :8460)
+After=network.target docker.service
+
+[Service]
+Type=simple
+User=$USER
+WorkingDirectory=$PWD
+ExecStart=$PWD/venv/bin/python $PWD/nucleus/senses.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  fi
+
+  # ── 3d. geoloc — the phone's location intake (bridges/geoloc.py, :8766) ─────────────────────────────────────
+  # Declared 10-10 (seed #43920). Presence signal = the bridge module (gitignored: its rows are location history, the
+  # personal tier) + its env file outside the repo (the token and the DSN it writes with). It binds 0.0.0.0 on
+  # purpose: the phone posts to it over the LAN/tailnet, which is the service. The design is declared; the values never.
+  if [ -f bridges/geoloc.py ] && [ -f "$HOME/.config/astryx/geoloc.env" ]; then
+    cat > "$UD/astryx-geoloc.service" <<EOF
+[Unit]
+Description=astryx geoloc bridge — phone location intake on :8766
+After=network.target
+[Service]
+WorkingDirectory=$PWD/bridges
+EnvironmentFile=$HOME/.config/astryx/geoloc.env
+ExecStart=$PWD/venv/bin/uvicorn geoloc:app --host 0.0.0.0 --port 8766
+Restart=always
+RestartSec=5
+User=$USER
+[Install]
+WantedBy=multi-user.target
+EOF
+  fi
 
   # ── 3a. the ear — hearing (plan-8674 S1): browser speech segments → local STT → `utterances` ───────────────
   # Presence signal = EAR_ENABLED=1 in .env. An always-on microphone is a DELIBERATE owner act, so no fresh clone
@@ -210,9 +255,13 @@ EOF
   # the ONE bare (set-e-active) units() call path — `./init.sh doctor` on a fresh clone — so
   # the maintainer never saw it (their .env has GROWBOT_BODY_URL). Empty = no URL = local body.
   gb_url=$(grep -m1 '^GROWBOT_BODY_URL=' .env 2>/dev/null | cut -d= -f2- || true)
+  # The unit is DECLARED whenever the module and a live grant exist (seed #43920: it sat on disk and in systemd with
+  # nothing generating it). WHERE the body runs decides only its STATE: a local body's unit must be enabled; a remote
+  # body (GROWBOT_BODY_URL elsewhere: the chip serves the protocol itself) must leave it installed and NOT enabled.
   if [ -f nucleus/growbot_body.py ] && \
-     { [ -z "$gb_url" ] || echo "$gb_url" | grep -qE '127\.0\.0\.1|localhost'; } && \
      grep -rqsE '^Grants:.*\bgrowbot\b' --exclude='*.example.md' agents/; then
+    { [ -z "$gb_url" ] || echo "$gb_url" | grep -qE '127\.0\.0\.1|localhost'; } \
+      || UNITS_EXPECT_DISABLED="$UNITS_EXPECT_DISABLED astryx-growbot.service"
     cat > "$UD/astryx-growbot.service" <<EOF
 [Unit]
 Description=astryx growbot body — the open GrowBot body protocol over the USB-serial Pico (:8470)
@@ -838,10 +887,15 @@ if [ "${1:-}" = "doctor" ]; then
     # unit is the invisible-dead-service footgun; residents.service enabled IS the
     # reboot-safety guarantee. Timer-driven oneshot .service units carry no [Install]
     # and read as "static" (fine); it's the .timer that must be enabled.
-    notenabled=""
+    notenabled="" wrongly_on=""
     for u in $gen_list; do
-      systemctl is-enabled "$u" >/dev/null 2>&1 || notenabled="$notenabled $u"
+      case " $UNITS_EXPECT_DISABLED " in
+        *" $u "*) systemctl is-enabled "$u" >/dev/null 2>&1 && wrongly_on="$wrongly_on $u" ;;   # declared OFF
+        *) systemctl is-enabled "$u" >/dev/null 2>&1 || notenabled="$notenabled $u" ;;
+      esac
     done
+    [ -n "$wrongly_on" ] && bad "units declared NOT enabled are enabled (a host service for a remote body):$wrongly_on"
+    [ -n "$UNITS_EXPECT_DISABLED" ] && ok "declared installed-but-disabled:$UNITS_EXPECT_DISABLED"
     if [ -z "$notenabled" ]; then ok "every derived unit enabled/static (reboot-safe)"
     else bad "derived units NOT installed/enabled (won't survive a reboot):$notenabled"
          # INSTALL BY COPY, never symlink: on a host where /home is a separate mount,
