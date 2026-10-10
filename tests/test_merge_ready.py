@@ -612,6 +612,55 @@ if _CACHED:
     check("  ...and the cache really held facts (patch-ids, subjects, cherry answers, main's log)",
           len(_c.get("facts", {})) > 5 and _c.get("cherry") and _c.get("mainlog"), str({k: len(v) for k, v in _c.items()
                                                                                        if isinstance(v, dict)}))
+    # prefetch must give EXACTLY pid()'s answer, merges included: `git show` hashes a merge's combined diff, `log -p`
+    # prints nothing for it (measured live 10-10: 4 of 40 merges re-keyed by the first batch). Section 4 made merges.
+    # a CONFLICT-RESOLVED merge: the only kind whose `git show` carries a combined diff (a clean one shows nothing)
+    git("checkout", "-q", "-b", "fx")
+    commit("clash.txt", "branch side\n", "fx: one side of a clash")
+    git("checkout", "-q", "main")
+    commit("clash.txt", "main side\n", "main: the other side")
+    git("merge", "--no-ff", "-m", "merge fx (resolved)", "fx", check=False)
+    (T / "clash.txt").write_text("resolved by hand\n")
+    git("add", "clash.txt")
+    git("-c", "core.editor=true", "commit", "-q", "--no-edit")
+    _cc = git("rev-parse", "HEAD")
+    check("  (control: the resolved merge's `git show` carries a combined diff, the shape that collides)",
+          "diff --cc" in git("show", "--no-color", "-U0", "--pretty=format:", _cc), _cc)
+    # a1 #42381: a merge has NO patch-id on either path; combined-diff ids COLLIDE across distinct merges (live:
+    # 1cba093 / c12c03b), so a second merge with an IDENTICAL resolution must not share the first one's key
+    git("checkout", "-q", "-b", "fy")
+    commit("clash.txt", "branch side again\n", "fy: another clash")
+    git("checkout", "-q", "main")
+    commit("clash.txt", "main side again\n", "main: the other side again")
+    git("merge", "--no-ff", "-m", "merge fy (resolved)", "fy", check=False)
+    (T / "clash.txt").write_text("resolved by hand\n")
+    git("add", "clash.txt")
+    git("-c", "core.editor=true", "commit", "-q", "--no-edit")
+    _cc2 = git("rev-parse", "HEAD")
+    _gk = m.Git(T)
+    check("two DISTINCT conflict-resolved merges never share a key: a merge has no patch-id (keys by its sha)",
+          _gk.pid(_cc) is None and _gk.pid(_cc2) is None and (_gk.pid(_cc) or _cc) != (_gk.pid(_cc2) or _cc2),
+          f"{_gk.pid(_cc)} {_gk.pid(_cc2)}")
+    MKM = msg(POST + 61, f"merge-ready: fxy {git('rev-parse', _cc + '^1')[:7]}..{_cc2[:7]}")
+    _cold = m.evaluate([MKM], [], lambda *a: [], T, now=NOW.timestamp())
+    MM = TD / "merge.cache.json"
+    m.evaluate([MKM], [], lambda *a: [], T, now=NOW.timestamp(), cache=MM)
+    check("a range CONTAINING conflict-resolved merges reads the same cold and from a warm cache",
+          m.evaluate([MKM], [], lambda *a: [], T, now=NOW.timestamp(), cache=MM) == _cold
+          and _cc2 in str(git("rev-list", f"{git('rev-parse', _cc + '^1')}..{_cc2}")), str(_cold[:2])[:300])
+    OTHER = TD / "other-body.cache.json"
+    OTHER.write_text(__import__("json").dumps({"v": "0" * 16, "facts": {c2: {"pid": "bogus", "np": 1}}}))
+    check("a cache written by a DIFFERENT body text is ignored (the version is the body's own hash; its bogus "
+          "patch-id changes nothing)", getattr(m, "CACHE_VERSION", None) not in (None, 1, "0" * 16)
+          and m.evaluate([MK2], [], lambda *a: [], T, now=NOW.timestamp(), cache=OTHER)
+          == m.evaluate([MK2], [], lambda *a: [], T, now=NOW.timestamp()), str(getattr(m, "CACHE_VERSION", None)))
+    _all = git("rev-list", "main").split()
+    _merges = git("rev-list", "--merges", "main").split()
+    _gb, _g1 = m.Git(T), m.Git(T)
+    _gb.prefetch(_all)
+    _bad = [c for c in _all if _gb.pid(c) != _g1.pid(c) or _gb.subject(c) != _g1.subject(c)]
+    check("prefetch's batched patch-ids and subjects equal pid()/subject() on every commit, MERGES included "
+          f"({len(_merges)} merge(s), {len(_all)} commits)", _merges and not _bad, str(_bad[:3]))
     TORN = TD / "torn.cache.json"
     TORN.write_text('{"v": 1, "facts": {')
     cold = m.evaluate([MK2], [], lambda *a: [], T, now=NOW.timestamp())
