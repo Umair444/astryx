@@ -20,6 +20,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
+from nucleus.sqlguard.estate import gate  # noqa: E402
+gate("test_canvas_preview", REPO, deps=("psycopg",))   # a committed-only tree (no venv): 77, not an import crash
 from nucleus import canvas as cv  # noqa: E402
 
 fails, skipped = 0, []
