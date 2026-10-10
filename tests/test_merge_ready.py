@@ -276,8 +276,22 @@ def _hermetic_run(self, *args, stdin=None, check=False):      # the body's git s
 m.Git.run = _hermetic_run
 
 
+CACHE = TD / "mr.cache.json"          # seed #42358: ONE fact cache shared by every machine arm below, across merges,
+CACHE_DIFF = []                       # reverts and pushes; each eval runs cold AND cached and the two must agree
+_CACHED = "cache" in m.evaluate.__code__.co_varnames
+
+
 def ev(msgs, prose=(), earlier=lambda mid, pre, br=None: [{"id": 1, "from_agent": "builder", "to_agent": "abstractor-3"}]):
     st, no, tr, dom = m.evaluate(msgs, list(prose), earlier, T, now=NOW.timestamp())
+    if _CACHED:
+        if CACHE.exists():                # the oracle varies earlier_fn per call for one marker id; production's is a
+            import json as _j             # fixed query, so its time-safe evidence is cached and this one's is not
+            c = _j.loads(CACHE.read_text())
+            c["earlier"] = {}
+            CACHE.write_text(_j.dumps(c))
+        got = m.evaluate(msgs, list(prose), earlier, T, now=NOW.timestamp(), cache=CACHE)
+        if got != (st, no, tr, dom):
+            CACHE_DIFF.append((msgs[0]["id"] if msgs else None, (st, no), got[:2]))
     return ("\n".join(x[1] for x in st), "\n".join(x[1] for x in no), "\n".join(tr), dom, st, no)
 
 
@@ -590,6 +604,86 @@ st, no, *_ = ev([A3, OBJ])
 check("discharge (4): the patch LANDS while contested → a 'MERGED WHILE CONTESTED' notice, never a silent drop",
       f"MERGED WHILE CONTESTED: {c11[:10]}" in no and f"objected by abstractor-4 #{POST + 81}" in no
       and c11[:10] not in st, st + " | " + no)
+
+if _CACHED:
+    check("every machine arm above reads the SAME with the shared fact cache as cold (merges, reverts, pushes, "
+          "rebases between calls; seed #42358)", not CACHE_DIFF and CACHE.exists(), str(CACHE_DIFF[:2]))
+    _c = __import__("json").loads(CACHE.read_text())
+    check("  ...and the cache really held facts (patch-ids, subjects, cherry answers, main's log)",
+          len(_c.get("facts", {})) > 5 and _c.get("cherry") and _c.get("mainlog"), str({k: len(v) for k, v in _c.items()
+                                                                                       if isinstance(v, dict)}))
+    # prefetch must give EXACTLY pid()'s answer, merges included: `git show` hashes a merge's combined diff, `log -p`
+    # prints nothing for it (measured live 10-10: 4 of 40 merges re-keyed by the first batch). Section 4 made merges.
+    # a CONFLICT-RESOLVED merge: the only kind whose `git show` carries a combined diff (a clean one shows nothing)
+    git("checkout", "-q", "-b", "fx")
+    commit("clash.txt", "branch side\n", "fx: one side of a clash")
+    git("checkout", "-q", "main")
+    commit("clash.txt", "main side\n", "main: the other side")
+    git("merge", "--no-ff", "-m", "merge fx (resolved)", "fx", check=False)
+    (T / "clash.txt").write_text("resolved by hand\n")
+    git("add", "clash.txt")
+    git("-c", "core.editor=true", "commit", "-q", "--no-edit")
+    _cc = git("rev-parse", "HEAD")
+    check("  (control: the resolved merge's `git show` carries a combined diff, the shape that collides)",
+          "diff --cc" in git("show", "--no-color", "-U0", "--pretty=format:", _cc), _cc)
+    # a1 #42381: a merge has NO patch-id on either path; combined-diff ids COLLIDE across distinct merges (live:
+    # 1cba093 / c12c03b), so a second merge with an IDENTICAL resolution must not share the first one's key
+    git("checkout", "-q", "-b", "fy")
+    commit("clash.txt", "branch side again\n", "fy: another clash")
+    git("checkout", "-q", "main")
+    commit("clash.txt", "main side again\n", "main: the other side again")
+    git("merge", "--no-ff", "-m", "merge fy (resolved)", "fy", check=False)
+    (T / "clash.txt").write_text("resolved by hand\n")
+    git("add", "clash.txt")
+    git("-c", "core.editor=true", "commit", "-q", "--no-edit")
+    _cc2 = git("rev-parse", "HEAD")
+    _gk = m.Git(T)
+    check("two DISTINCT conflict-resolved merges never share a key: a merge has no patch-id (keys by its sha)",
+          _gk.pid(_cc) is None and _gk.pid(_cc2) is None and (_gk.pid(_cc) or _cc) != (_gk.pid(_cc2) or _cc2),
+          f"{_gk.pid(_cc)} {_gk.pid(_cc2)}")
+    MKM = msg(POST + 61, f"merge-ready: fxy {git('rev-parse', _cc + '^1')[:7]}..{_cc2[:7]}")
+    _cold = m.evaluate([MKM], [], lambda *a: [], T, now=NOW.timestamp())
+    MM = TD / "merge.cache.json"
+    m.evaluate([MKM], [], lambda *a: [], T, now=NOW.timestamp(), cache=MM)
+    check("a range CONTAINING conflict-resolved merges reads the same cold and from a warm cache",
+          m.evaluate([MKM], [], lambda *a: [], T, now=NOW.timestamp(), cache=MM) == _cold
+          and _cc2 in str(git("rev-list", f"{git('rev-parse', _cc + '^1')}..{_cc2}")), str(_cold[:2])[:300])
+    OTHER = TD / "other-body.cache.json"
+    OTHER.write_text(__import__("json").dumps({"v": "0" * 16, "facts": {c2: {"pid": "bogus", "np": 1}}}))
+    check("a cache written by a DIFFERENT body text is ignored (the version is the body's own hash; its bogus "
+          "patch-id changes nothing)", getattr(m, "CACHE_VERSION", None) not in (None, 1, "0" * 16)
+          and m.evaluate([MK2], [], lambda *a: [], T, now=NOW.timestamp(), cache=OTHER)
+          == m.evaluate([MK2], [], lambda *a: [], T, now=NOW.timestamp()), str(getattr(m, "CACHE_VERSION", None)))
+    _all = git("rev-list", "main").split()
+    _merges = git("rev-list", "--merges", "main").split()
+    _gb, _g1 = m.Git(T), m.Git(T)
+    _gb.prefetch(_all)
+    _bad = [c for c in _all if _gb.pid(c) != _g1.pid(c) or _gb.subject(c) != _g1.subject(c)]
+    check("prefetch's batched patch-ids and subjects equal pid()/subject() on every commit, MERGES included "
+          f"({len(_merges)} merge(s), {len(_all)} commits)", _merges and not _bad, str(_bad[:3]))
+    TORN = TD / "torn.cache.json"
+    TORN.write_text('{"v": 1, "facts": {')
+    cold = m.evaluate([MK2], [], lambda *a: [], T, now=NOW.timestamp())
+    check("a TORN cache file reads cold, never wrong", m.evaluate([MK2], [], lambda *a: [], T, now=NOW.timestamp(),
+                                                                  cache=TORN) == cold)
+    WRONGV = TD / "v0.cache.json"
+    WRONGV.write_text('{"v": 0, "facts": {"%s": {"pid": "bogus"}}}' % c2)
+    check("a cache of another VERSION is ignored (a bogus patch-id in it changes nothing)",
+          m.evaluate([MK2], [], lambda *a: [], T, now=NOW.timestamp(), cache=WRONGV) == cold)
+    # a cherry answer is keyed by the ref's EXACT sha: main moving must re-ask. A '+' (unlanded) answer cached under
+    # the old head, then the patch lands by cherry-pick (a NEW main head): the cached run must read MERGED too.
+    git("checkout", "-q", "-b", "fc")
+    cc = commit("fc.txt", "fc\n", "fc: cached then landed")
+    git("checkout", "-q", "main")
+    MKC = msg(POST + 60, f"merge-ready: fc {git('merge-base', 'main', cc)[:7]}..{cc[:7]}")
+    MC = TD / "move.cache.json"
+    st1 = m.evaluate([MKC], [], lambda *a: [], T, now=NOW.timestamp(), cache=MC)[0]
+    commit("fc-move.txt", "x\n", "main moves before the pick")
+    git("cherry-pick", cc)
+    st2 = m.evaluate([MKC], [], lambda *a: [], T, now=NOW.timestamp(), cache=MC)[0]
+    check("a cherry answer cached under main's OLD head is not reused once main moves: PASSED → MERGED",
+          any("PASSED, not merged" in x[1] for x in st1) and any("MERGED, not pushed" in x[1] for x in st2), f"{st1} | {st2}")
+    git("push", "-q", "origin", "main")
 
 # ------------------------------------------------------------------------------------------------ 5
 print("\n5. prose coverage + adoption boundary (a1 BC-2):")
