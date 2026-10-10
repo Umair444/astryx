@@ -2813,8 +2813,10 @@ async def memory_ontology():
 
 # ---------------------------------------------------------------- the library (memory's booklet)
 # memory writes memory/library/ (shelves.json + <shelf>/<slug>.md with YAML frontmatter, chronicle/
-# YYYY-MM-DD.md as the overnight editions); the observatory only reads it. Org tier only — memory keeps
-# the personal tier out at write time — and owner-gated like /api/memory/page. Served ONLY from under
+# YYYY-MM-DD.md as the overnight editions); the observatory only reads it. Owner key only (403
+# otherwise), like /api/memory/page. Since 2026-10-11 personal-lane rows feed it (the owner dropped
+# local.md's RAG clause); career specifics stay meta-only at write time, and cv:/wa:/owner chat rows
+# never enter. Served ONLY from under
 # LIBRARY: shelf and slug must be plain names, and the resolved path must stay inside the root.
 LIBRARY = Path(os.environ.get("ASTRYX_LIBRARY_DIR") or REPO / "memory" / "library")
 _LIB_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,80}$")
