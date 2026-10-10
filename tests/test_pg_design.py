@@ -41,6 +41,9 @@ compose, dockerfile = P.COMPOSE.read_text(), P.DOCKERFILE.read_text()
 want = P.declared(compose, dockerfile)
 check("compose's container_name IS pgcontainer.sh's PG_CONTAINER (every docker fallback names the declared server)",
       P.helper_container(P.HELPER.read_text()) == want["container"], f"{want['container']}")
+import yaml as _yaml
+check("the compose PROJECT name is pinned to `pg` (so its network stays pg_default wherever the file lives; seed #43418)",
+      _yaml.safe_load(compose).get("name") == "pg", str(_yaml.safe_load(compose).get("name")))
 check("the published port is LOOPBACK ONLY (127.0.0.1:5432:5432, and nothing else)",
       want["ports"] == ["127.0.0.1:5432:5432"], str(want["ports"]))
 check("max_connections is DECLARED in the compose command (never only in the data dir)",

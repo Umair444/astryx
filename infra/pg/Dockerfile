@@ -49,6 +49,8 @@ COPY --from=agebuild /usr/lib/postgresql/18/lib/age.so /usr/lib/postgresql/18/li
 COPY --from=agebuild /usr/share/postgresql/18/extension/age* /usr/share/postgresql/18/extension/
 
 # PINNED apt versions (a1 #43407; measured 10-10: unpinned, a fresh build installed pgvector 0.8.7 under a 0.8.6 label).
+# MAINTENANCE: when PGDG prunes a pinned version (old ones move to apt-archive.postgresql.org) a fresh build dies at
+# apt, loudly. The fix is to BUMP the pin together with its LABEL below (and prove the image), never to drop the pin.
 # The extension versions this image is DECLARED to carry (infra's parity gate reads these lines and compares them with
 # the live pg_extension.extversion; a rebuild that drifts reads RED).
 LABEL org.astryx.pg.age_version="1.8.0" \

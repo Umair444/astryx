@@ -10,6 +10,9 @@
 # NO `build:` here (a1 #43407): with one, any `compose up --build` / `compose build` RETAGS the image the live server
 # runs, and the proven one (rollback: genesis/pg18:age-ecb5619) is left dangling for a prune. Building is an explicit
 # act on a candidate tag (the Dockerfile's header); init.sh builds genesis/pg18:age only on a host that has none.
+# The PROJECT name is pinned (seed #43418): derived from the directory, it only matched the live container's project
+# (and so its network, pg_default) because both directories end in `pg`. Moving this file must not move the network.
+name: pg
 services:
   pg:
     image: genesis/pg18:age
