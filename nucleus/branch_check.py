@@ -273,10 +273,12 @@ def run(branch: str, main_ref: str = "main") -> int:
 
 
 def touched_files(sha: dict, repo: Path = None) -> set:
-    """The branch's scope: the files it changes (main..branch, from the live repo), plus every module a CHANGED .py
+    """The branch's scope: the files it changes (main...branch, from the live repo), plus every module a CHANGED .py
     file imports (module_refs), so a red left in a module the branch's own new oracle drives is in scope too.
-    Empty if git can't say: never a guess."""
-    p = subprocess.run(["git", "diff", "--name-only", sha["main"], sha["branch"]], cwd=LIVE, capture_output=True, text=True)
+    THREE dots: the diff from the merge-base, so once main moves past the fork, main's own changes never read as the
+    branch's (a4 #45033: two-dot gave 6 files on 5f230fc, 3 of them seed's). Empty if git can't say: never a guess."""
+    p = subprocess.run(["git", "diff", "--name-only", f"{sha['main']}...{sha['branch']}"], cwd=LIVE, capture_output=True,
+                       text=True)
     if p.returncode != 0:
         return set()
     files = set(p.stdout.split())
@@ -293,8 +295,9 @@ def touched_files(sha: dict, repo: Path = None) -> set:
 
 
 def sqlguard_module(line: str):
-    """'R-NEW nucleus/x.py::f :: …' → 'nucleus/x.py' (None if the line names no module)."""
-    mt = re.match(r"R-[A-Z]+ (\S+?)::", line)
+    """'R-NEW nucleus/x.py::f :: …' → 'nucleus/x.py' (None if the line names no module). An extractor red names its
+    FILE with no '::' ('R-EXTRACT tests/t.py: listed…', 'R-EXTRACT tests/t.py builds…', enforce.py): a4 #45033."""
+    mt = re.match(r"R-[A-Z]+ (\S+?)::", line) or re.match(r"R-EXTRACT (\S+?):?(?:\s|$)", line)
     return mt.group(1) if mt else None
 
 

@@ -136,8 +136,10 @@ def main():
     (tsc / "tests").mkdir()
     (tsc / "tests" / "test_x.py").write_text("from nucleus import voice_mint as V\nimport nucleus.other\n")
     real = subprocess.run
+    diffs = []
     def fake_git(argv, **kw):
         if argv[:3] == ["git", "diff", "--name-only"]:
+            diffs.append(argv[3:])
             return subprocess.CompletedProcess(argv, 0, "tests/test_x.py\nREADME.md\n", "")
         return real(argv, **kw)
     bc.subprocess.run = fake_git
@@ -147,6 +149,12 @@ def main():
         bc.subprocess.run = real
     check("the scope is the changed files PLUS the modules a changed .py imports (a red the new oracle drives)",
           {"tests/test_x.py", "README.md", "nucleus/voice_mint.py", "nucleus/other.py"} <= scope, sorted(scope))
+    check("…diffed from the MERGE-BASE (main...branch, three dots), so main's drift past the fork isn't the branch's (a4 #45033)",
+          diffs == [["m...b"]], diffs)
+    ext = {"x1": "R-EXTRACT tests/test_x.py: listed 9d > 7d (trip: g)", "x2": "R-EXTRACT tests/test_y.py builds an UNSTAMPED fixture"}
+    rc, out = rep({**base_sg, "sqlguard_red": ext}, {**shifted, "sqlguard_red": ext}, touched={"tests/test_x.py", "tests/test_y.py"})
+    check("an R-EXTRACT red (a FILE, no '::', either form) in the branch's scope is listed as still RED (a4 #45033 F2)",
+          "still RED in the branch's scope (files it changes, modules they import): 2" in out, out)
     # a4 #36860 + a2 #37119: an UNEXECUTED branch-only R-NEW is UNVERIFIABLE HERE only when a gate that verified
     # nothing has an ORACLE REFERENCING the site's module (a relation, not co-occurrence); else it's REGRESSED
     unex = "R-NEW c.py::h :: select 3: UNEXECUTED and not in the ledger. Make it RESPONSIVE, or admit it"
