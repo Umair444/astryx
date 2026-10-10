@@ -9,8 +9,8 @@ Both subjects are gitignored (triggers/, memory/), so they're path-loaded; eithe
   3. org work + the owner's own rows inside an org thread + a WhatsApp session row → only the agent-to-agent
      thread is listed (≥1 row), the owner/wa- rows are neither listed nor counted (steward #37121), and the moved
      goal is listed (≥1 row).
-  3b. a t- thread whose only rows are a personal-lane agent (nucleus/tier.py PERSONAL_LANES) with seed is neither
-     counted nor listed (a3 #37444 B1).
+  3b. a t- thread between a former personal-lane agent (canopus) and seed IS counted and listed: the owner dropped
+     the lane exclusion on 2026-10-11 (steward #43244; it was a3 #37444 B1).
   4. the same day again → silent (once-per-day dedup).
   6. the watermark is CONTENT (a3 #37444 B2): the newest edition's `compiled_through:` line; touching the file's
      mtime doesn't move it; no line or an unparseable one → the start of the edition's date; no edition → None;
@@ -114,14 +114,15 @@ try:
     check("3. …nor counted (cv 1 + plan 2 = 3)", out.startswith("OVERNIGHT EDITION DUE: 3 "), out[:80])
     check("3. the moved goal is listed", "a goal that moved" in out, out)
 
-    from nucleus.tier import PERSONAL_LANES
-    lane = sorted(PERSONAL_LANES)[0]
-    put(lane, "seed", "t-lane-x", "a personal-lane request")
+    lane = "canopus"
+    put(lane, "seed", "t-lane-x", "a career-lane request")
     put("seed", lane, "t-lane-x", "seed's answer")
     out = lc.library_compile(TempCtx({}, conn)) or ""
-    check(f"3b. a {lane}<->seed t- thread is NOT listed", "t-lane-x" not in threads_of(out), threads_of(out))
-    check("3b. …nor counted (still 3)", out.startswith("OVERNIGHT EDITION DUE: 3 "), out[:80])
-    check("3b. …nor named in the who", lane not in threads_of(out), threads_of(out))
+    check(f"3b. a {lane}<->seed t- thread IS listed", "t-lane-x: 2 rows" in threads_of(out), threads_of(out))
+    check("3b. …and counted (3 + 2 = 5)", out.startswith("OVERNIGHT EDITION DUE: 5 "), out[:80])
+    check("3b. …and named in the who", lane in threads_of(out), threads_of(out))
+    check("3b. the owner/wa- rows are still NOT listed", "t-localmd-x" not in threads_of(out)
+          and "t-family-x" not in threads_of(out), threads_of(out))
     check("4. the same day again → silent (dedup)", lc.library_compile(TempCtx(st, conn)) is None)
 
     print("watermark:")
