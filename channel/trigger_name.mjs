@@ -17,6 +17,8 @@ export function triggerFile(dir, name) {
     throw new Error(`trigger name must be a python module name matching ^[a-z0-9_]+$ (got ${JSON.stringify(name)})`)
   }
   const file = new URL(`${nm}.py`, dir)
+  // a second, independent check on the RESOLVED path. Given the regex it is equivalent (no ^[a-z0-9_]+$ name can
+  // traverse), so no test discriminates it today: it is here so a later widening of the regex can't open the hole.
   if (dirname(fileURLToPath(file)) !== fileURLToPath(dir).replace(/\/+$/, '')) {
     throw new Error(`trigger file would land outside ${fileURLToPath(dir)}`)
   }
