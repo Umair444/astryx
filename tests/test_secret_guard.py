@@ -275,7 +275,11 @@ def arms_token_routes(tmp: Path):
                 "G9h the credential-helper protocol": [
                     "printf 'protocol=https\\nhost=github.com\\n' | gh auth git-credential get",
                     "printf 'protocol=https\\nhost=github.com\\n' | git credential fill"],
-                "G9i dd (stdout by default)": ["dd if=~/.ssh/id_ed25519", "dd if=$HOME/.config/gh/hosts.yml status=none"]}
+                "G9i dd (stdout by default)": ["dd if=~/.ssh/id_ed25519", "dd if=$HOME/.config/gh/hosts.yml status=none"],
+                "G9j pushd, then a relative path": ["pushd ~/.ssh && cat id_ed25519",
+                                                    "pushd ~/.config; pushd gh; popd; cd gh; cat hosts.yml"],
+                "G9k a subshell's cd": ["(cd ~/.ssh && cat id_ed25519)", "(cd ~/.config/gh; cat hosts.yml)",
+                                        "( cd ~/.ssh && base64 id_ed25519 )"]}
         allow = {"G9a": ['cat "$HOME/.config/ordinary.txt"', 'cat "$XDG_X/.ssh/id_ed25519"'],
                  "G9b": ["gh auth status", "gh pr list", "gh auth login --with-token"],
                  "G9c": ["base64 ~/.config/ordinary.txt"],
@@ -286,7 +290,10 @@ def arms_token_routes(tmp: Path):
                          "cd ~/.ssh && cd - && cat ordinary.txt"],
                  "G9g": ["gh config get git_protocol"],
                  "G9h": ["gh auth setup-git", "git config --get credential.helper", "git credential-cache exit"],
-                 "G9i": ["dd if=~/.config/ordinary.txt of=/dev/null"]}
+                 "G9i": ["dd if=~/.config/ordinary.txt of=/dev/null"],
+                 "G9j": ["pushd ~/.ssh && popd && cat id_ed25519", "pushd ~/.ssh && cat id_ed25519.pub"],
+                 "G9k": ["(cd ~/.ssh && ls); cat id_ed25519", "(cd ~/.ssh && cat id_ed25519.pub)",
+                         "grep -E '(id_ed25519)' notes.txt"]}
         for name, cmds in deny.items():
             r = {c: sg.decide("Bash", {"command": c}, secrets=[]) for c in cmds}
             check(f"{name}: all {len(cmds)} shapes DENIED", all(r.values()), [c for c, v in r.items() if not v])
