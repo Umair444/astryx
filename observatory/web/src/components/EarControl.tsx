@@ -328,7 +328,7 @@ export default function EarControl({ view }: { view: string }) {
         </div>
         <div className="px-5 py-2.5 border-t border-line text-[11px] text-ink-mute leading-snug">
           Speech only, transcribed on this host.
-          {status?.ttl_days ? ` Kept ${status.ttl_days} days live; nightly backups hold it up to ${status.backup_days ?? 14} days more.` : ''}
+          {status?.ttl_days ? ` Kept ${status.ttl_days} days live` : ''}{status?.ttl_days && status.backup_days ? `; the last ${status.backup_days} nightly backups hold it longer.` : status?.ttl_days ? '.' : ''}
           {status && <span className="font-mono"> · {status.stt.backend}{status.stt.rtf_last != null ? ` · rtf ${status.stt.rtf_last}` : ''}</span>}
         </div>
       </Popover.Dropdown>
