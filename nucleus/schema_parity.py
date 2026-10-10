@@ -142,11 +142,13 @@ def expected_extra() -> tuple:
 
 # EVERY database the org declares (owner 10-10: "the design on github should match local"; F1 of steward #42345).
 # `files`: DDL applied to the fixture AFTER schema.sql (the fixture always carries it); `schemas`: the namespaces this
-# database's file declares, the only ones judged there. A SCOPED database judges live-only tables in its schemas too:
-# nobody else writes into `track`, so a table there that the file doesn't define is an ad-hoc table, not a peer's.
+# database's file declares, the only ones judged there. `exclusive` is DECLARED, never inferred from a scope (a4 #42525):
+# where nothing but the file writes the schema, anything live-only in it (a table, an index, a function, a trigger, a
+# view) is ad-hoc and is drift. A scoped database with RUNTIME-minted objects (daily partitions, AGE labels) is not
+# exclusive in this sense: it needs a declared runtime pattern first, so it must not set the flag.
 DATABASES = {
-    "astryx": {"files": (), "schemas": None},
-    "geo": {"files": ("nucleus/schema_geo.sql",), "schemas": ("track",)},
+    "astryx": {"files": (), "schemas": None, "exclusive": False},
+    "geo": {"files": ("nucleus/schema_geo.sql",), "schemas": ("track",), "exclusive": True},
 }
 
 
@@ -170,16 +172,21 @@ def run(live_dsn: str, db: str = "astryx") -> dict:
         c.execute("SET default_transaction_read_only = on")
         got, got_o, got_d = _scope(spec["schemas"], shape(c), objects(c), definitions(c))
     out = compare(exp, got)
-    if spec["schemas"] is not None and out["live_only"]:
-        out["extra"] += [f"table {t} (live-only in a declared schema: an ad-hoc table)" for t in out["live_only"]]
+    if spec.get("exclusive") and out["live_only"]:
+        out["extra"] += [f"table {t} (live-only in an exclusive schema: an ad-hoc table)" for t in out["live_only"]]
         out["drift"] = True
     o = compare_objects(exp_o, got_o)
     out["objects_missing"], out["objects_extra"] = o["missing"], o["extra_reported"]
+    if spec.get("exclusive") and o["extra_reported"]:       # a4 #42525 R1: a hand index/function/trigger is ad-hoc too
+        out["objects_missing"] = out["objects_missing"] + [f"{x} (live-only in an exclusive schema: ad-hoc)"
+                                                           for x in o["extra_reported"]]
+        o["drift"] = True
     out["objects_changed"] = compare_definitions(exp_d, got_d)
     out["drift"] = out["drift"] or o["drift"] or bool(out["objects_changed"])
     return out
 
 
+RESIDENT = "astryx_resident"                       # people_gate.RESIDENT (the oracle pins the equality)
 TABLE_RX = re.compile(r"CREATE TABLE IF NOT EXISTS ([a-z_]+\.[a-z_]+)", re.I)
 
 
@@ -221,18 +228,29 @@ def apply(admin_dsn: str, db: str) -> list:
         if not a.execute("SELECT 1 FROM pg_database WHERE datname = %s", (db,)).fetchone():
             a.execute(sql.SQL("CREATE DATABASE {} ALLOW_CONNECTIONS false").format(sql.Identifier(db)))
             a.execute(sql.SQL("REVOKE ALL ON DATABASE {} FROM PUBLIC").format(sql.Identifier(db)))
+            if a.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (RESIDENT,)).fetchone():
+                a.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(sql.Identifier(db), sql.Identifier(RESIDENT)))
             a.execute(sql.SQL("ALTER DATABASE {} ALLOW_CONNECTIONS true").format(sql.Identifier(db)))
             did.append(f"database {db}")
     with psycopg.connect(make_conninfo(admin_dsn, dbname=db)) as c:
         for f in DATABASES[db]["files"]:
             c.execute((REPO / f).read_text())
             did.append(f"applied {f}")
+        # every resident READS it (owner ruling 10-10: "database entities should be public to all agents"): the resident
+        # ROLE, never PUBLIC (a4 #42525: a birth that revokes PUBLIC and grants nothing breaks the ruling by construction)
+        if c.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (RESIDENT,)).fetchone():
+            for ns in DATABASES[db]["schemas"] or ():
+                c.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(sql.Identifier(ns), sql.Identifier(RESIDENT)))
+                c.execute(sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA {} TO {}").format(sql.Identifier(ns),
+                                                                                         sql.Identifier(RESIDENT)))
+            did.append(f"granted read to {RESIDENT}")
         c.commit()
     return did
 
 
 def main(argv=None) -> int:
     import sys as _sys
+    import psycopg
     argv = list(_sys.argv[1:] if argv is None else argv)
     if argv[:1] in (["present"], ["apply"]):
         from nucleus.sqlguard.fixture import live_dsn
@@ -253,9 +271,10 @@ def main(argv=None) -> int:
             d = run(live_dsn() if db == "astryx" else make_conninfo(live_dsn(), dbname=db), db=db)
         except FixtureUnavailable as e:
             print(f"schema_parity [{db}]: NOT SEARCHED ({e})")
-            return 77
-        except Exception as e:  # noqa: BLE001 — an absent declared database is drift, not a crash
-            if "does not exist" in str(e):
+            rc = max(rc, 77) if rc != 1 else 1             # a red already found is never downgraded by a later 77
+            continue
+        except psycopg.OperationalError as e:              # only the DATABASE being absent is "missing database"
+            if f'database "{db}" does not exist' in str(e):
                 print(f"  DRIFT MISSING: database {db}")
                 print(f"schema_parity [{db}]: DRIFT")
                 rc = 1

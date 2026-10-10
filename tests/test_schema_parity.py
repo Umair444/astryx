@@ -201,15 +201,43 @@ def main():
                   g0["drift"] is False, str(g0))
             with psycopg.connect(gx["dsn"], autocommit=True) as c:
                 c.execute("ALTER TABLE track.zones DROP COLUMN tier")
-                c.execute("CREATE TABLE track.adhoc (x int)")
-                c.execute("CREATE TABLE public.zz_not_geos (x int)")
             g1 = P.run(gx["dsn"], db="geo")
             check("GEO: a dropped declared column reads MISSING", "column track.zones.tier (text)" in g1["missing"],
                   str(g1["missing"]))
+            with psycopg.connect(gx["dsn"], autocommit=True) as c:
+                c.execute("ALTER TABLE track.zones ADD COLUMN tier text NOT NULL DEFAULT 'trusted'")
+        # the ad-hoc TABLES are minted by the stamped applier (fixture_db's extra), never by this oracle's own CREATE
+        # TABLE: sqlguard reads a test's CREATE TABLE outside the applier as an unstamped-fixture extractor
+        with fixture_db(extra=geo_sql + ("CREATE TABLE track.adhoc (x int)", "CREATE TABLE public.zz_not_geos (x int)")) as gy:
+            g1 = P.run(gy["dsn"], db="geo")
             check("GEO: an ad-hoc table INSIDE the declared schema is judged EXTRA (drift), not merely reported",
                   any(x.startswith("table track.adhoc") for x in g1["extra"]) and g1["drift"] is True, str(g1["extra"]))
             check("GEO: a table OUTSIDE the declared schema is out of geo's scope (never reported as geo's)",
                   not any("zz_not_geos" in x for x in g1["extra"] + g1["live_only"]), str(g1))
+        with fixture_db(extra=geo_sql) as gx:
+            # a4 #42525 R1: in an EXCLUSIVE schema a hand-made index, function or trigger is ad-hoc too, each judged
+            for kind, ddl, undo in (
+                    ("index", "CREATE INDEX zz_adhoc_idx ON track.zones (radius_m)", "DROP INDEX track.zz_adhoc_idx"),
+                    ("function", "CREATE FUNCTION track.zz_set_presence() RETURNS trigger LANGUAGE plpgsql AS "
+                                 "$$BEGIN RETURN NEW; END$$", "DROP FUNCTION track.zz_set_presence()"),
+                    ("trigger", "CREATE FUNCTION public.zz_trg_fn() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RETURN "
+                                "NEW; END$$; CREATE TRIGGER zz_adhoc_trg BEFORE INSERT ON track.locations FOR EACH ROW "
+                                "EXECUTE FUNCTION public.zz_trg_fn()",
+                     "DROP TRIGGER zz_adhoc_trg ON track.locations; DROP FUNCTION public.zz_trg_fn()")):
+                with psycopg.connect(gx["dsn"], autocommit=True) as c:
+                    c.execute(ddl)
+                gk = P.run(gx["dsn"], db="geo")
+                check(f"GEO: a hand-made {kind} in the exclusive `track` schema is DRIFT (a4 #42525 R1)",
+                      gk["drift"] is True and any(x.startswith(kind) and "track." in x for x in gk["objects_missing"]),
+                      str({k: gk[k] for k in ("drift", "objects_missing", "objects_extra")}))
+                with psycopg.connect(gx["dsn"], autocommit=True) as c:
+                    c.execute(undo)
+            check("GEO: back to the declared shape → no drift (each arm's object removed)",
+                  P.run(gx["dsn"], db="geo")["drift"] is False)
+            check("GEO: exclusivity is DECLARED per database, never inferred from a scope (a4 #42525)",
+                  P.DATABASES["geo"].get("exclusive") is True and P.DATABASES["astryx"].get("exclusive") is False)
+            from nucleus import people_gate
+            check("GEO: the birth path's resident is people_gate's RESIDENT", P.RESIDENT == people_gate.RESIDENT)
             with psycopg.connect(gx["dsn"], autocommit=True) as c:
                 c.execute("DROP TABLE track.presence")
             with psycopg.connect(gx["dsn"], autocommit=True) as c:
@@ -238,6 +266,24 @@ def main():
             P.REPO = real_repo
     check("GEO: apply() REFUSES a file git hasn't committed (prod carries only what git carries), before touching the "
           "server", refused is not None and "commit it first" in refused, str(refused))
+    # the BIRTH path (a4 #42525): a fresh geo is born closed to PUBLIC and READABLE by the resident role (the ruling)
+    zdb = f"zz_geo_birth_{os.getpid()}"
+    P.DATABASES[zdb] = dict(P.DATABASES["geo"])
+    try:
+        did = P.apply(live_dsn(), zdb)
+        with psycopg.connect(live_dsn(), autocommit=True) as a:
+            pub, res = a.execute("SELECT has_database_privilege('public', %s, 'CONNECT'), "
+                                 "has_database_privilege(%s, %s, 'CONNECT')", (zdb, P.RESIDENT, zdb)).fetchone()
+        with psycopg.connect(make_conninfo(live_dsn(), dbname=zdb), autocommit=True) as z:
+            sel = z.execute("SELECT has_table_privilege(%s, 'track.zones', 'SELECT') AND "
+                            "has_schema_privilege(%s, 'track', 'USAGE')", (P.RESIDENT, P.RESIDENT)).fetchone()[0]
+        check("GEO BIRTH: apply() births a missing geo closed to PUBLIC, the resident CONNECTs, USAGE on track, SELECT "
+              "on its tables (a4 #42525: revoking PUBLIC and granting nothing breaks the ruling)",
+              f"database {zdb}" in did and pub is False and res is True and sel is True, f"{did} {pub} {res} {sel}")
+    finally:
+        P.DATABASES.pop(zdb, None)
+        with psycopg.connect(live_dsn(), autocommit=True) as a:
+            a.execute(f'DROP DATABASE IF EXISTS "{zdb}" WITH (FORCE)')
     psycopg.connect = Probe
     Probe.wrote = None
     try:
