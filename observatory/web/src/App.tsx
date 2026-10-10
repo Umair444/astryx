@@ -22,6 +22,7 @@ import VegaChat from './components/VegaChat'
 import PulseStrip from './components/PulseStrip'
 import EarControl from './components/EarControl'
 import Palette from './components/Palette'
+import { PilotHost } from './pilot'
 import { Orb } from './ui/kit'
 
 export type Route =
@@ -305,7 +306,8 @@ function Shell() {
         </div>
       </AppShell.Footer>
 
-      <Palette onOpenAgent={setAgentOpen} />
+      <PilotHost route={route} agentOpen={agentOpen} setAgentOpen={setAgentOpen} />
+      <Palette />
       {agentOpen && <AgentDrawer name={agentOpen} onClose={() => setAgentOpen(null)} />}
       {who.owner && <DesktopOverlay />}
       {/* VEGA is the PUBLIC concierge and floats bottom-right on every view; the Memory

@@ -43,6 +43,7 @@ function subscribe(f: () => void) {
 }
 
 export function openDesktop(name: string | null) { opened = name; emit() }
+export const openedDesktop = () => opened
 const snapDesks = () => desks
 const snapOpen = () => opened
 
