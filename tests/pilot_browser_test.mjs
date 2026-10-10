@@ -204,6 +204,35 @@ for (let attempt = 1; attempt <= 5 && !iiiDone; attempt++) {
   iiiDone = true
 }
 if (!iiiDone) { console.log('  FAIL  NOT MEASURED: page too slow for (iii) in 5 attempts'); fails++ }
+// the dwell's LENGTH (a1 #44852): taps measured against the prompt's own binding time (data-pilot-bound-at, set by
+// the executor). A tap 380-480ms after binding must be refused; one after 520ms runs exactly once. So a mutant that
+// shortens CONFIRM_ARM_MS to 300 or 100 is RED, not only one that removes the dwell.
+let dwellDone = false
+for (let attempt = 1; attempt <= 6 && !dwellDone; attempt++) {
+  const runs0 = await desktopRuns()
+  await request(AGENT)
+  const n = await pend()
+  if (!(await waitAllow(n))) { await ev(`${T}.dismiss(); true`); continue }
+  const boundAt = await until('the prompt to be bound', () => ev(`Number(document.querySelector('[data-pilot-allow]')?.getAttribute('data-pilot-bound-at')) || 0`), 10000)
+  // wait page-side until ~430ms after binding, then tap where the button is now
+  await ev(`new Promise(r => { const go = () => performance.now() - ${boundAt} >= 405 ? r(true) : setTimeout(go, 5); go() })`)
+  const b1 = await allow()
+  await click(b1.x, b1.y)
+  await sleep(60)
+  const gap1 = (await ev(`window.__clicks[window.__clicks.length - 1]`)) - boundAt
+  if (!(gap1 >= 380 && gap1 < 480)) { console.log(`    dwell attempt ${attempt}: tap landed ${Math.round(gap1)}ms after binding, outside 380-480, retrying`); await ev(`${T}.dismiss(); true`); continue }
+  arm(`a trusted tap ${Math.round(gap1)}ms after binding (inside the 500ms dwell) is refused`, (await desktopRuns()) === runs0 && (await pend()) === n)
+  await ev(`new Promise(r => { const go = () => performance.now() - ${boundAt} >= 540 ? r(true) : setTimeout(go, 5); go() })`)
+  const b2 = await allow()
+  if (!b2) { arm('a trusted tap after the 500ms dwell runs exactly once', false, 'the prompt was already gone: the early tap ran it'); dwellDone = true; continue }
+  await click(b2.x, b2.y)
+  await sleep(400)
+  const gap2 = (await ev(`window.__clicks[window.__clicks.length - 1]`)) - boundAt
+  console.log(`    dwell measured: refused at ${Math.round(gap1)}ms, tapped again at ${Math.round(gap2)}ms after binding`)
+  arm('a trusted tap after the 500ms dwell runs exactly once', gap2 >= 500 && (await desktopRuns()) === runs0 + 1 && (await pend()) === null, `gap ${Math.round(gap2)}, runs +${(await desktopRuns()) - runs0}`)
+  dwellDone = true
+}
+if (!dwellDone) { console.log('  FAIL  NOT MEASURED: no tap landed 380-480ms after binding in 6 attempts'); fails++ }
 arm('no uncaught errors in the page', errors.length === 0, errors.slice(0, 3).join(' ; '))
 console.log(fails ? `FAIL (${fails})` : 'ALL PASS')
 cleanup()

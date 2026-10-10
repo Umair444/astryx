@@ -146,6 +146,10 @@ export function createExecutor(catalog: Catalog, handlers: Record<string, Handle
   function bindConfirm(nonce: string, el: unknown): boolean {
     if (!pending || pending.nonce !== nonce || !el) return false
     bound = { nonce, el, at: clock() }
+    // the binding time on the element itself (a performance.now() reading, not a secret): the browser gate measures
+    // the dwell against it, so a mutant that shortens CONFIRM_ARM_MS is caught, not just one that removes it (a1 #44852)
+    const tag = el as { setAttribute?: (k: string, v: string) => void }
+    if (typeof tag.setAttribute === 'function') tag.setAttribute('data-pilot-bound-at', String(bound.at))
     return true
   }
 
