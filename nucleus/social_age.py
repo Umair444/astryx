@@ -189,6 +189,14 @@ def drift(dsn_for, design=None) -> list:
                     out.append(f"MISSING {db}: role {role} (people_gate creates it)")
                 elif not q(role, db):
                     out.append(f"MISSING {db}: CONNECT for {role}")
+            # ...and EXACTLY: a CONNECT grant to a role the design doesn't name is drift too (a3 #42380: one GRANT widened
+            # astryx_people silently). Read from the ACL itself; the owner and PUBLIC (reported above) are excluded.
+            # OUT OF SCOPE, stated: MEMBERSHIP (a role granted people_cleared inherits its CONNECT) is people_gate's.
+            for (role,) in c.execute(
+                    "SELECT g.rolname FROM pg_database d, aclexplode(d.datacl) a JOIN pg_roles g ON g.oid = a.grantee "
+                    "WHERE d.datname = %s AND a.privilege_type = 'CONNECT' AND a.grantee <> d.datdba ORDER BY 1", (db,)):
+                if role not in want.get("connect", ()):
+                    out.append(f"EXTRA {db}: CONNECT for {role} (not in the design)")
             have_ext = {r[0] for r in c.execute("SELECT extname FROM pg_extension")}
             for e in EXTENSIONS:
                 if e not in have_ext:

@@ -7,7 +7,7 @@ its extensions and the graph's labels. `drift` compares the live catalog to it; 
   GREEN      a graph built by the builder's own _fresh matches its design, with NO rows in it (labels are materialized).
   RED        a dropped label → MISSING; an undeclared label → EXTRA; an ad-hoc table in the derived DB, or a plain one
              INSIDE the graph's schema → EXTRA relation; PUBLIC granted CONNECT → EXTRA; a declared role's CONNECT
-             revoked → MISSING; an absent database → MISSING database.
+             revoked → MISSING; CONNECT for an UNDECLARED role → EXTRA; an absent database → MISSING database.
   ACL        ensure births every design database zero-window (PUBLIC can't, the declared roles can), with no
              people_gate run before it (a3 #42376).
   CONTROL    _fresh WITHOUT materializing (an empty design) on an empty graph reads MISSING: the materialization is what
@@ -167,6 +167,12 @@ try:
     left = sa.drift(dsn_for, design=SCRATCH)
     check("a declared role's CONNECT revoked → MISSING CONNECT", left == [f"MISSING {NET}: CONNECT for {RES}"], str(left))
     adm.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(sql.Identifier(NET), sql.Identifier(RES)))
+    adm.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(sql.Identifier(PRIV), sql.Identifier(RES)))
+    left = sa.drift(dsn_for, design=SCRATCH)
+    check("CONNECT granted to a role the design doesn't name → EXTRA (the ACL is declared EXACTLY, a3 #42380)",
+          left == [f"EXTRA {PRIV}: CONNECT for {RES} (not in the design)"], str(left))
+    adm.execute(sql.SQL("REVOKE CONNECT ON DATABASE {} FROM {}").format(sql.Identifier(PRIV), sql.Identifier(RES)))
+    check("  ...revoked again → MATCH", sa.drift(dsn_for, design=SCRATCH) == [], "")
     ghost = f"{PFX}{os.getpid()}_ghost"
     left = sa.drift(dsn_for, design={**SCRATCH, ghost: {"v": ("x",), "e": ()}})
     check("an absent declared database → MISSING database", left == [f"MISSING database {ghost}"], str(left))
