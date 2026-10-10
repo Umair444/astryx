@@ -69,12 +69,19 @@ arm "3b. the sudo build passes the path as an argument (bash -lc '…\$1…' _ <
 
 # 5b. a2 R2: BEHAVIOURAL — run the real banner block with a sentinel OBS_KEY; the sentinel must never reach stdout
 #     (a print-verb denylist missed printf: any verb that prints the key is the defect)
-mkdir -p "$T/ban"; printf 'OBS_KEY=SENTINELKEY4242\n' > "$T/ban/.env"
+mkdir -p "$T/ban" "$T/clip"; printf 'OBS_KEY=SENTINELKEY4242\n' > "$T/ban/.env"
+# STUB clipboards FIRST on PATH (a2 #44272 B1): /usr/bin/wl-copy exists on this host, and from the owner's Wayland
+# terminal the banner's copy branch would put the sentinel in HIS clipboard on every check.sh run. The stubs take
+# the bytes into the temp dir instead, which also shows the copy branch ran; no real clipboard is ever reachable.
+for c in wl-copy xclip pbcopy; do printf '#!/usr/bin/env bash\ncat > "%s/%s"\nexit 0\n' "$T/clip" "$c" > "$T/clip/$c"; done
+chmod +x "$T/clip/wl-copy" "$T/clip/xclip" "$T/clip/pbcopy"
 blk=$(sed -n '/OBS_KEY is a CREDENTIAL/,/never paste it in chat/p' "$REPO/init.sh")
-bout=$(cd "$T/ban" && PATH="/usr/bin:/bin" bash -c 'say() { echo "$*"; }; f() { '"$blk"'
+bout=$(cd "$T/ban" && PATH="$T/clip:/usr/bin:/bin" bash -c 'say() { echo "$*"; }; f() { '"$blk"'
 }; f' 2>&1)
 arm "5b. the REAL banner block, run with a sentinel key: it says where the key lives and never prints it" \
   '[ -n "$bout" ] && grep -q "localhost:8090" <<<"$bout" && ! grep -q SENTINELKEY4242 <<<"$bout"'
+arm "5b. …the key went to the (STUB) clipboard only, never a real one" \
+  'grep -q SENTINELKEY4242 "$T/clip/wl-copy" 2>/dev/null && grep -q "copied to your clipboard" <<<"$bout"'
 
 # 5. the banner block: what init.sh PRINTS never carries the key (it goes to the clipboard and lives in .env)
 banner=$(sed -n '/OBS_KEY is a CREDENTIAL/,/never paste it in chat/p' "$REPO/init.sh")
