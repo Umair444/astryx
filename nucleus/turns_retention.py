@@ -42,9 +42,10 @@ def dsn() -> str:
     raise SystemExit("no ASTRYX_DSN")
 
 
-def run(conn, days: int, dry: bool = False, limit: int = 500) -> dict:
-    """Strip image bytes from turns older than `days`. Returns counts; commits unless dry."""
-    strip = _strip()
+def run(conn, days: int, dry: bool = False, limit: int = 500, strip=None) -> dict:
+    """Strip image bytes from turns older than `days`. Returns counts; commits unless dry.
+    A turn deleted between the SELECT and its UPDATE (0 rows) is not counted (a1 #42351 R1)."""
+    strip = strip or _strip()
     rows = conn.execute(
         """SELECT id, raw_payload FROM turns
            WHERE ended_at < now() - make_interval(days => %s)
@@ -57,12 +58,14 @@ def run(conn, days: int, dry: bool = False, limit: int = 500) -> dict:
         after = json.dumps(new)
         if after == before:
             continue
+        if not dry:
+            from psycopg.types.json import Jsonb
+            cur = conn.execute("UPDATE turns SET raw_payload = %s WHERE id = %s", (Jsonb(new), tid))
+            if cur.rowcount != 1:            # deleted (or rewritten) since the SELECT: not ours to count
+                continue
         out["turns"] += 1
         out["bytes_before"] += len(before)
         out["bytes_after"] += len(after)
-        if not dry:
-            from psycopg.types.json import Jsonb
-            conn.execute("UPDATE turns SET raw_payload = %s WHERE id = %s", (Jsonb(new), tid))
     if not dry:
         conn.commit()
     return out

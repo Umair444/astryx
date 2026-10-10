@@ -187,9 +187,10 @@ if [ "$BACKUP_DB_WAIT_S" -gt 0 ]; then
 fi
 
 # retention BEFORE the dump, so the dump shrinks with it: turns older than 7 days lose their image bytes
-# (words, tool calls and usage stay). Never blocks a backup: a failure here is reported and skipped.
+# (words, tool calls and usage stay). Never blocks a backup: a failure OR a hang (lock wait, dead DB)
+# is reported and skipped — the timeout bounds it (a1 #42351 R2).
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ASTRYX_DSN="$DSN" "$ROOT_DIR/venv/bin/python" -m nucleus.turns_retention --days "${TURNS_IMAGE_DAYS:-7}" \
+ASTRYX_DSN="$DSN" timeout 600 "$ROOT_DIR/venv/bin/python" -m nucleus.turns_retention --days "${TURNS_IMAGE_DAYS:-7}" \
   2>&1 | sed 's/^/backup: /' || echo "backup: turns retention failed — continuing with the dump" >&2
 
 # host pg_dump if present, else the container's (mirrors init.sh's psql/docker split)

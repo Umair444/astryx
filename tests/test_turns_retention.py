@@ -7,6 +7,7 @@ On a throwaway fixture DB (schema.sql applied whole):
   (c) an OLD turn with no image → untouched, and never selected
   (d) a second run changes nothing (idempotent: 0 turns)
   (e) --dry-run reports without writing
+  (f) a turn deleted between the SELECT and its UPDATE isn't counted (the 0-row UPDATE)
 NOT RUN (77) without a reachable admin DSN.
 """
 import json
@@ -61,6 +62,18 @@ try:
                 json.loads(get("old_txt")) == payload(False))
             arm("(a) exactly one turn was changed", r["turns"] == 1, r)
             arm("(d) a second run changes nothing", tr.run(c, 7)["turns"] == 0)
+            # (f) a turn deleted between the SELECT and its UPDATE: the UPDATE runs at 0 rows, nothing
+            # raises, and the turn isn't counted (a1 #42351 R1; also sqlguard's 0-row observation)
+            gone = c.execute("INSERT INTO turns (agent, ended_at, raw_payload) VALUES ('t', now() - "
+                             "'30 days'::interval, %s) RETURNING id", (Jsonb(payload(True)),)).fetchone()[0]
+            c.commit()
+            real = tr._strip()
+
+            def racing_strip(msgs):
+                c.execute("DELETE FROM turns WHERE id=%s", (gone,))
+                return real(msgs)
+            r2 = tr.run(c, 7, strip=racing_strip)
+            arm("(f) a turn deleted mid-run is not counted, and nothing raises", r2["turns"] == 0, r2)
 except FixtureUnavailable as e:
     print(f"NOT RUN: {e}")
     sys.exit(77)
