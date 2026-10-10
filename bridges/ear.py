@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import asyncio
 import io
-import os
 import secrets
 import threading
 import time
@@ -76,7 +75,8 @@ class Store:
         with self.lock:
             try:
                 r = S.maintain(self._conn())
-                self.last_maintain = {"created": len(r["created"]), "dropped": len(r["dropped"])}
+                self.last_maintain = {"created": len(r["created"]), "dropped": len(r["dropped"]),
+                                     "errors": [f"{v} {n}: {e}" for v, n, e in r["errors"]]}
                 self.maintained, self.ok, self.error = time.monotonic(), True, None
             except psycopg.Error as e:
                 self.ok, self.error, self.c = False, type(e).__name__, None

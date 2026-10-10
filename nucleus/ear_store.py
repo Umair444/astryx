@@ -6,15 +6,16 @@ information in astryx is shared and usable by every other agent"). `utterances` 
 every other table, partitioned by UTC DAY. What this module owns is the retention: partitions are made ahead and
 an expired day is DROPPED whole, never DELETEd row by row.
 
-  maintain(conn)        create day partitions [today, today+2]; DROP every partition whose start is older than the
-                        TTL. Called by the ear service on start and before writes, and on the pulse by
+  maintain(conn)        DROP every partition whose start is older than the TTL, then create day partitions
+                        [today, today+2]; each statement alone, failures returned, never raised. Called by the ear service on start and before writes, and on the pulse by
                         nucleus/shipped_triggers/ear_retention.py (an idle week still expires).
   ttl_findings(conn)    the catalog-only TTL arm: the OLDEST attached partition must start within the TTL; a
                         DEFAULT (unbounded) partition is RED. Reads pg_catalog only, never a row.
 
 GRADE, stated: DROP is LOGICAL erasure at the TTL. Dropped tuples survive in recycled WAL until overwritten, and a
-nightly backup (nucleus/backup.sh dumps this database) holds whatever utterances existed at dump time for the
-BACKUP's own retention. Neither is a secure delete.
+nightly backup (nucleus/backup.sh dumps this database, keeps the last 14) holds whatever utterances existed at
+dump time for the BACKUP's own retention. Branch-check run bases copy the table but not its rows
+(branch_check_prep.DUMP_EXCLUDE). Neither is a secure delete.
 
     venv/bin/python -m nucleus.ear_store maintain   # one retention pass now
     venv/bin/python -m nucleus.ear_store ttl        # the TTL arm: 0 GREEN, 1 RED, 77 table absent (schema not applied)
@@ -26,6 +27,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import psycopg
 from psycopg import sql
 
 REPO = Path(__file__).resolve().parent.parent
@@ -43,10 +45,15 @@ def _env(key: str) -> str:
     return ""
 
 
+TTL_MAX = 7
+
+
 def ttl_days() -> int:
-    """Retention in days. SHORT by rule (a): default 3, floor 1. One knob, read by the writer and the arm alike."""
+    """Retention in days. SHORT by rule (a): default 3, floor 1, CEILING TTL_MAX. One knob, read by the writer and
+    the arm alike, so the ceiling is what keeps "short" true: EAR_TTL_DAYS=3650 in .env reads as 7. A longer window
+    is a code change, reviewed, never an .env edit."""
     try:
-        return max(1, int(_env("EAR_TTL_DAYS") or 3))
+        return min(TTL_MAX, max(1, int(_env("EAR_TTL_DAYS") or 3)))
     except ValueError:
         return 3
 
@@ -68,27 +75,38 @@ def partitions(conn) -> list[tuple[str, datetime | None, str]]:
 
 
 def maintain(conn, ttl: int | None = None, ahead: int = 2, now: datetime | None = None) -> dict:
-    """Create day partitions [today, today+ahead]; DROP every attached partition whose lower bound is older than
-    now - ttl days. Conservative: a day goes as soon as its START passes the TTL, so text is kept at most ttl days
-    (and up to one day less). DROP, never DELETE."""
+    """DROP every attached partition whose lower bound is older than now - ttl days, THEN create day partitions
+    [today, today+ahead]. Conservative: a day goes as soon as its START passes the TTL, so text is kept at most ttl
+    days (and up to one day less). DROP, never DELETE.
+
+    Erasure first and every statement on its own: one bad partition (a same-day table under another name from a
+    restore or a hand fix, a lock) never stops the drops or the other days. A failure is RETURNED in "errors" as
+    (verb, partition, error type), never raised, so the caller still runs the TTL arm and reports both."""
     ttl = ttl or ttl_days()
     now = now or datetime.now(timezone.utc)
+    made, dropped, errors = [], [], []
+    cutoff = now - timedelta(days=ttl)
+
+    def one(verb, name, stmt, into):
+        try:
+            with conn.transaction():
+                conn.execute(stmt)
+            into.append(name)
+        except psycopg.Error as e:
+            errors.append((verb, name, type(e).__name__))
+
+    for name, lo, _ in partitions(conn):
+        if lo is None or lo < cutoff:
+            one("drop", name, sql.SQL("DROP TABLE {}").format(sql.Identifier(name)), dropped)
     have = {n for n, _, _ in partitions(conn)}
-    made, dropped = [], []
     for k in range(ahead + 1):
         lo = _day(now) + timedelta(days=k)
         name = f"utterances_p{lo:%Y%m%d}"
         if name not in have:
-            conn.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} PARTITION OF utterances FOR VALUES FROM ({}) TO ({})")
-                         .format(sql.Identifier(name), sql.Literal(lo.isoformat()),
-                                 sql.Literal((lo + timedelta(days=1)).isoformat())))
-            made.append(name)
-    cutoff = now - timedelta(days=ttl)
-    for name, lo, _ in partitions(conn):
-        if lo is None or lo < cutoff:
-            conn.execute(sql.SQL("DROP TABLE {}").format(sql.Identifier(name)))
-            dropped.append(name)
-    return {"created": made, "dropped": dropped}
+            one("create", name, sql.SQL("CREATE TABLE IF NOT EXISTS {} PARTITION OF utterances FOR VALUES FROM ({}) TO ({})")
+                .format(sql.Identifier(name), sql.Literal(lo.isoformat()),
+                        sql.Literal((lo + timedelta(days=1)).isoformat())), made)
+    return {"created": made, "dropped": dropped, "errors": errors}
 
 
 def ttl_findings(conn, ttl: int | None = None, now: datetime | None = None) -> list[str]:
@@ -112,7 +130,6 @@ def ttl_findings(conn, ttl: int | None = None, now: datetime | None = None) -> l
 
 
 def main(argv) -> int:
-    import psycopg
     verb = argv[1] if len(argv) > 1 else ""
     dsn = _env("ASTRYX_DSN")
     if verb not in ("maintain", "ttl") or not dsn:
@@ -125,7 +142,9 @@ def main(argv) -> int:
         if verb == "maintain":
             r = maintain(c)
             print(f"ear_store maintain: {len(r['created'])} partition(s) created, {len(r['dropped'])} dropped")
-            return 0
+            for verb, name, err in r["errors"]:
+                print(f"  ERROR {verb} {name}: {err}")
+            return 1 if r["errors"] else 0
         f = ttl_findings(c)
         for x in f:
             print(f"  RED {x}")
