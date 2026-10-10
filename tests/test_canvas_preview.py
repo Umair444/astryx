@@ -157,14 +157,19 @@ def containment():
     finally:
         srv.shutdown(); srv.server_close()
 
-    full = "<div style='position:fixed;inset:0;background:#f00'></div>"
-    pngs, _ = cv.preview(9, page("redctl", full), str(TMP / "f2"), load=lambda c: {})
-    arm("control: the pixel probe sees a red page as red", red(pngs[0]), pngs[0])
-    canary = TMP / "canary.html"
-    canary.write_text("<body style='margin:0;background:#f00'>CANARY</body>")
-    pngs, _ = cv.preview(9, page("file", f"<script>location.href={json.dumps(canary.as_uri())}</script>"),
-                         str(TMP / "f3"), load=lambda c: {})
-    arm("(f) a page navigating to a host file: the file is NOT in the screenshot", not red(pngs[0]), pngs[0])
+    try:
+        import PIL.Image  # noqa: F401 — the pixel probe's reader; a dev dep that init never installs
+    except ImportError:
+        skip("(f) host-file navigation pixel arm and its control", "Pillow not importable (deps.conf: dev)")
+    else:
+        full = "<div style='position:fixed;inset:0;background:#f00'></div>"
+        pngs, _ = cv.preview(9, page("redctl", full), str(TMP / "f2"), load=lambda c: {})
+        arm("control: the pixel probe sees a red page as red", red(pngs[0]), pngs[0])
+        canary = TMP / "canary.html"
+        canary.write_text("<body style='margin:0;background:#f00'>CANARY</body>")
+        pngs, _ = cv.preview(9, page("file", f"<script>location.href={json.dumps(canary.as_uri())}</script>"),
+                             str(TMP / "f3"), load=lambda c: {})
+        arm("(f) a page navigating to a host file: the file is NOT in the screenshot", not red(pngs[0]), pngs[0])
 
     _, errs = cv.preview(9, page("ls", "<script>localStorage.setItem('k', 1)</script>"), str(TMP / "f4"),
                          load=lambda c: {})
