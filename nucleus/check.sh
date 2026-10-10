@@ -197,6 +197,10 @@ run "people gate: details only to people_cleared, network to the resident (accid
 # graph each, declared in social_age.DESIGN; drift = a missing or undeclared label, or any ad-hoc relation. Scratch AGE
 # databases for the red arms; the live read is read-only.
 run "derived graph DBs match their declared design" "$PY" tests/test_social_age_design.py
+# The running postgres SERVER against its declared design, infra/pg (owner 10-10 "the design on github should match
+# local"; F4): ports exactly loopback, the image, every -c setting's effective value, the extension versions the
+# Dockerfile declares. Synthetic RED arms; the live read is read-only. Mutants: tests/mutants_pg_design.py.
+run "the running postgres matches infra/pg" "$PY" tests/test_pg_design.py
 # the privilege census 1b is decided on: statement classes by surface, DSN source by file. Hermetic.
 # Mutants: tests/mutants_privilege_census.py.
 run "privilege census: classes discriminate, surfaces and DSN sources assigned" "$PY" tests/test_privilege_census.py

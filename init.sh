@@ -292,6 +292,7 @@ PYEOF
 #   halt     — a PERMANENT boundary the org can't drive (missing tool, human login) →
 #              report, don't spin. Interior converges around it; the human resolves it.
 dsn() { grep '^ASTRYX_DSN=' .env 2>/dev/null | cut -d= -f2-; }
+. nucleus/pgcontainer.sh                     # PG_CONTAINER: the one declared postgres (infra/pg/docker-compose.yml)
 # ok | unverified | "wide <addr …>": is anything but loopback listening on port $1? (doctor; a2 #42283)
 _pg_exposure() {
   local out wide
@@ -301,7 +302,7 @@ _pg_exposure() {
   [ -z "$wide" ] && echo ok || echo "wide $wide"
 }
 psql_q() { if command -v psql >/dev/null; then psql "$(dsn)" "$@"
-  else docker exec -i astryx-pg psql -U astryx -d astryx "$@"; fi; }
+  else pg_exec psql -U "$(pg_dsn_user "$(dsn)")" -d "$(pg_dsn_db "$(dsn)")" "$@"; fi; }
 
 _chk_tools() { command -v node >/dev/null && command -v python3 >/dev/null \
   && command -v tmux >/dev/null && command -v claude >/dev/null \
@@ -309,20 +310,21 @@ _chk_tools() { command -v node >/dev/null && command -v python3 >/dev/null \
 
 _chk_pg() { [ -f .env ] && grep -q '^ASTRYX_DSN=' .env; }
 _act_pg() {
-  if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx astryx-pg; then
-    docker start astryx-pg >/dev/null
-    [ -f .env ] || die "astryx-pg exists but no .env — write ASTRYX_DSN=... to .env"
+  # THE DECLARED SERVER (steward F4, seed #42759): infra/pg is the design (pg18 + pgvector + postgis + AGE pinned,
+  # loopback only, max_connections in the compose file). Never a stock image: AGE, pgvector and postgis are part of
+  # the org's design, and a stock postgres:18 carries none of them.
+  if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$PG_CONTAINER"; then
+    docker start "$PG_CONTAINER" >/dev/null
+    [ -f .env ] || die "$PG_CONTAINER exists but no .env — write ASTRYX_DSN=... to .env"
   elif command -v docker >/dev/null; then
-    local pw; pw=$(head -c 24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)
-    say "starting postgres container astryx-pg"
-    # postgres:18 changed PGDATA: the volume must mount at /var/lib/postgresql (data lands in
-    # a versioned subdir). The old ≤17 path /var/lib/postgresql/data makes 18 EXIT 1 on a fresh
-    # volume ("PostgreSQL data ... (unused mount/volume)") and crash-loop — the DB a stranger
-    # never gets. The maintainer's custom pg18 image masked it. See docker-library/postgres#37.
-    docker run -d --name astryx-pg --restart unless-stopped \
-      -e POSTGRES_USER=astryx -e POSTGRES_PASSWORD="$pw" -e POSTGRES_DB=astryx \
-      -p 127.0.0.1:5433:5432 -v astryx-pgdata:/var/lib/postgresql postgres:18 >/dev/null
-    echo "ASTRYX_DSN=postgres://astryx:$pw@127.0.0.1:5433/astryx" > .env && chmod 600 .env
+    if [ ! -f infra/pg/.env ]; then
+      local pw; pw=$(head -c 24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)
+      ( umask 077; printf 'POSTGRES_USER=astryx\nPOSTGRES_PASSWORD=%s\n' "$pw" > infra/pg/.env )
+    fi
+    say "building and starting the declared postgres (infra/pg; the first build compiles AGE from its pinned commit)"
+    docker compose -f infra/pg/docker-compose.yml up -d --build >/dev/null || die "infra/pg: docker compose up failed"
+    local u p; u=$(grep '^POSTGRES_USER=' infra/pg/.env | cut -d= -f2-); p=$(grep '^POSTGRES_PASSWORD=' infra/pg/.env | cut -d= -f2-)
+    [ -f .env ] || { echo "ASTRYX_DSN=postgres://$u:$p@127.0.0.1:5432/astryx" > .env && chmod 600 .env; }
   else die "no .env and no docker — create the db yourself and write ASTRYX_DSN=... to .env"; fi; }
 
 _chk_pgready() { psql_q -c 'SELECT 1' >/dev/null 2>&1; }          # wait (transient boundary)
@@ -718,7 +720,7 @@ if [ "${1:-}" = "doctor" ]; then
   fi
   if [ -f .env ]; then
     DSN=$(grep '^ASTRYX_DSN=' .env | cut -d= -f2-)
-    psql "$DSN" -c 'SELECT 1' >/dev/null 2>&1 && ok "postgres reachable" || bad "postgres unreachable (docker start astryx-pg?)"
+    psql "$DSN" -c 'SELECT 1' >/dev/null 2>&1 && ok "postgres reachable" || bad "postgres unreachable (docker start $PG_CONTAINER? the design is infra/pg)"
     # every org's database is LOCALHOST-ONLY (owner, 2026-10-10): any listener on the DSN's port
     # that isn't loopback is a database a LAN (or the world) can knock on. An instrument that can't
     # look must not report what it would have seen (a2 #42283): no ss listing → UNVERIFIED, never ok.

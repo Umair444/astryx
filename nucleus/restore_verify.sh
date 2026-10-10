@@ -12,6 +12,7 @@
 # Non-destructive, spends nothing, needs no owner decision. Weekly via astryx-restore-verify.
 set -uo pipefail
 cd "$(dirname "$0")/.."
+. nucleus/pgcontainer.sh                     # PG_CONTAINER: the one declared postgres (infra/pg)
 SCRATCH=astryx_restorecheck
 
 DSN=$(grep '^ASTRYX_DSN=' .env 2>/dev/null | cut -d= -f2-)
@@ -23,9 +24,9 @@ newest=$(ls -1t backups/astryx-*.dump 2>/dev/null | head -1)
 
 # host psql/pg_restore if present (the norm — init.sh/backup.sh use host tools), else the container's
 if command -v psql >/dev/null && command -v pg_restore >/dev/null; then MODE=host; else MODE=docker; fi
-q_live()    { if [ "$MODE" = host ]; then psql "$DSN" "$@"; else docker exec -i astryx-pg psql -U astryx -d astryx "$@"; fi; }
-q_scratch() { if [ "$MODE" = host ]; then psql "$SCRATCH_DSN" "$@"; else docker exec -i astryx-pg psql -U astryx -d "$SCRATCH" "$@"; fi; }
-do_restore(){ if [ "$MODE" = host ]; then pg_restore --no-owner -d "$SCRATCH_DSN" "$newest"; else docker exec -i astryx-pg pg_restore --no-owner -d "$SCRATCH" < "$newest"; fi; }
+q_live()    { if [ "$MODE" = host ]; then psql "$DSN" "$@"; else pg_exec psql -U "$(pg_dsn_user "$DSN")" -d "$(pg_dsn_db "$DSN")" "$@"; fi; }
+q_scratch() { if [ "$MODE" = host ]; then psql "$SCRATCH_DSN" "$@"; else pg_exec psql -U "$(pg_dsn_user "$DSN")" -d "$SCRATCH" "$@"; fi; }
+do_restore(){ if [ "$MODE" = host ]; then pg_restore --no-owner -d "$SCRATCH_DSN" "$newest"; else pg_exec pg_restore --no-owner -U "$(pg_dsn_user "$DSN")" -d "$SCRATCH" < "$newest"; fi; }
 
 # ALWAYS drop the scratch db, even on failure/interrupt — never leave it lying around
 cleanup() { q_live -c "DROP DATABASE IF EXISTS $SCRATCH" >/dev/null 2>&1 || true; }
