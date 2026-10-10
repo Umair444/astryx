@@ -125,9 +125,10 @@ restart_org() {
     n=$(awk -v a="$a" '$1==a' <<<"$all" | wc -l)
     [ "$n" = 1 ] || { echo "  ✗ $a has $n ear(s) (want exactly 1)"; bad=1; continue; }
     # an ear alive ≠ a mind alive: the session must reach its ready prompt (the TUI's mode line)
+    # "=name:" — a bare "=name" is a SESSION target; capture-pane wants a pane, so it never resolved
     local ok=0
     for _ in $(seq 1 60); do
-      tmux capture-pane -pt "=ax-$a" 2>/dev/null | grep -q 'bypass permissions' && { ok=1; break; }
+      tmux capture-pane -pt "=ax-$a:" 2>/dev/null | grep -q 'bypass permissions' && { ok=1; break; }
       sleep 2
     done
     [ $ok = 1 ] || { echo "  ✗ $a: spawned, but its session never reached the ready prompt"; bad=1; }
