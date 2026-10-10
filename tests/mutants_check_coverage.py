@@ -35,6 +35,7 @@ ORACLE = REPO / "tests" / "test_check_coverage.py"
 ENV = "CHECK_SH_SRC"
 
 _CHARTER = 'run "charter resolver invariants"      "$PY" tests/test_charter.py'
+_DOCTOR = 'run "doctor: postgres localhost-only, unverified when ss can\'t answer" bash tests/test_doctor_pg_exposure.sh'
 
 MUTANTS = {
     # THE core defect this gate exists to prevent, and the one I reproduced by hand on
@@ -78,4 +79,12 @@ MUTANTS = {
     "M6 oracle path moved into a shell variable (runtime sees it, parser cannot)":
         (_CHARTER,
          'T=tests/test_charter.py\nrun "charter resolver invariants"      "$PY" "$T"'),
+    # seed #42308 / a2 #42306, THE LIVE SHAPE: a committed SHELL oracle whose run line is missing. Before the
+    # widening this gate globbed test_*.py only, so this was the state of main at 37f9080 and every gate was green.
+    "M7 a committed SHELL oracle is never invoked (its run line deleted)":
+        (_DOCTOR, ""),
+    # ...and its M4: a shell oracle's line present but dead. Only the runtime shim can see it, and $PY never
+    # carries a .sh, so this is what the PATH `bash` shim exists for.
+    "M8 a SHELL oracle's run line inside a disabled block (if false)":
+        (_DOCTOR, "if false; then\n" + _DOCTOR + "\nfi"),
 }
