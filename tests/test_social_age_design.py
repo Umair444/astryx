@@ -5,8 +5,11 @@ its extensions and the graph's labels. `drift` compares the live catalog to it; 
 
   ENSURE     on scratch names: creates the database and its extensions, and is idempotent (a second run creates nothing).
   GREEN      a graph built by the builder's own _fresh matches its design, with NO rows in it (labels are materialized).
-  RED        a dropped label → MISSING; an undeclared label → EXTRA; an ad-hoc table in the derived DB → EXTRA relation;
-             an absent database → MISSING database.
+  RED        a dropped label → MISSING; an undeclared label → EXTRA; an ad-hoc table in the derived DB, or a plain one
+             INSIDE the graph's schema → EXTRA relation; PUBLIC granted CONNECT → EXTRA; a declared role's CONNECT
+             revoked → MISSING; an absent database → MISSING database.
+  ACL        ensure births every design database zero-window (PUBLIC can't, the declared roles can), with no
+             people_gate run before it (a3 #42376).
   CONTROL    _fresh WITHOUT materializing (an empty design) on an empty graph reads MISSING: the materialization is what
              keeps the live shape independent of which rows happen to exist.
   REBUILD    the real rebuild() into scratch databases, from a schema.sql fixture, leaves both graphs matching DESIGN.
@@ -29,7 +32,10 @@ from nucleus import social_age as sa                    # noqa: E402
 fails = []
 PFX = "astryx_sadz_"                                    # this oracle's scratch namespace: <PFX><pid>_<role>
 NET, PRIV = f"{PFX}{os.getpid()}_net", f"{PFX}{os.getpid()}_priv"
-SCRATCH = {NET: sa.DESIGN[sa.GRAPH], PRIV: sa.DESIGN[sa.PRIVATE]}
+RES, CLR = f"{PFX}{os.getpid()}_res", f"{PFX}{os.getpid()}_clr"      # scratch stand-ins for people_gate's two roles
+_role = {"astryx_resident": RES, "people_cleared": CLR}
+SCRATCH = {db: {**d, "connect": tuple(_role[r] for r in d["connect"])}
+           for db, d in ((NET, sa.DESIGN[sa.GRAPH]), (PRIV, sa.DESIGN[sa.PRIVATE]))}
 
 
 def check(name, ok, detail=""):
@@ -56,11 +62,16 @@ def _gone(pid):
 
 
 def reap(adm, mine=False):
-    """Drop this oracle's scratch DBs: a dead pid's (start), or our own (finally)."""
+    """Drop this oracle's scratch DBs, then its roles: a dead pid's (start), or our own (finally)."""
+    def ours(name):
+        pid = name[len(PFX):].split("_", 1)[0]
+        return pid.isdigit() and ((mine and int(pid) == os.getpid()) or (not mine and _gone(int(pid))))
     for (d,) in adm.execute("SELECT datname FROM pg_database WHERE starts_with(datname, %s)", (PFX,)).fetchall():
-        pid = d[len(PFX):].split("_", 1)[0]
-        if pid.isdigit() and ((mine and int(pid) == os.getpid()) or (not mine and _gone(int(pid)))):
+        if ours(d):
             adm.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(d)))
+    for (r,) in adm.execute("SELECT rolname FROM pg_roles WHERE starts_with(rolname, %s)", (PFX,)).fetchall():
+        if ours(r):
+            adm.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(r)))
 
 
 def dsn_for(db):
@@ -92,11 +103,24 @@ except (psycopg.Error, PermissionError, OSError) as e:
 
 reap(adm)
 try:
+    print("design:")
+    from nucleus import people_gate
+    check("DESIGN's CONNECT roles are people_gate's RESIDENT / CLEARED (one name per role)",
+          set(sa.DESIGN[sa.GRAPH]["connect"]) == {people_gate.RESIDENT, people_gate.CLEARED}
+          and sa.DESIGN[sa.PRIVATE]["connect"] == (people_gate.CLEARED,), str(sa.DESIGN))
+    for r in (RES, CLR):
+        adm.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(r)))
     print("ensure:")
     made = sa.ensure(ADMIN, design=SCRATCH)
     check("ensure creates each declared database and its extensions",
           f"database {NET}" in made and f"database {PRIV}" in made and f"{NET}: extension age" in made, str(made))
     check("  and is idempotent: a second run creates nothing", sa.ensure(ADMIN, design=SCRATCH) == [])
+    acl = {db: adm.execute("SELECT has_database_privilege('public', %s, 'CONNECT'), has_database_privilege(%s, %s, "
+                           "'CONNECT'), has_database_privilege(%s, %s, 'CONNECT')", (db, RES, db, CLR, db)).fetchone()
+           for db in (NET, PRIV)}
+    check("ensure BIRTHS each database zero-window, with NO people_gate run first: PUBLIC can't CONNECT, the declared "
+          "roles can (a3 #42376: a plain CREATE here is PUBLIC-open)",
+          acl[NET] == (False, True, True) and acl[PRIV] == (False, False, True), str(acl))
     left = sa.drift(dsn_for, design=SCRATCH)
     check("  a database with no graph yet reads MISSING graph (ensure creates the place, the builder the graph)",
           left == [f"MISSING {NET}: graph {NET}", f"MISSING {PRIV}: graph {PRIV}"], str(left))
@@ -127,6 +151,22 @@ try:
           left == [f"EXTRA {PRIV}: relation public.adhoc (a derived database holds only its graph)"], str(left))
     with psycopg.connect(dsn_for(PRIV), autocommit=True) as c:
         c.execute("DROP TABLE public.adhoc")
+    with psycopg.connect(dsn_for(NET), autocommit=True) as c:
+        c.execute(sql.SQL("CREATE TABLE {}.adhoc (x int)").format(sql.Identifier(NET)))
+    left = sa.drift(dsn_for, design=SCRATCH)
+    check("a plain table INSIDE the graph's schema (no label owns it) → EXTRA relation (a3 #42376 press 1)",
+          left == [f"EXTRA {NET}: relation {NET}.adhoc (in the graph's schema but no label's table)"], str(left))
+    with psycopg.connect(dsn_for(NET), autocommit=True) as c:
+        c.execute(sql.SQL("DROP TABLE {}.adhoc").format(sql.Identifier(NET)))
+    adm.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO PUBLIC").format(sql.Identifier(PRIV)))
+    left = sa.drift(dsn_for, design=SCRATCH)
+    check("PUBLIC granted CONNECT on a design database → EXTRA, naming who the design grants",
+          len(left) == 1 and left[0].startswith(f"EXTRA {PRIV}: PUBLIC can CONNECT"), str(left))
+    adm.execute(sql.SQL("REVOKE CONNECT ON DATABASE {} FROM PUBLIC").format(sql.Identifier(PRIV)))
+    adm.execute(sql.SQL("REVOKE CONNECT ON DATABASE {} FROM {}").format(sql.Identifier(NET), sql.Identifier(RES)))
+    left = sa.drift(dsn_for, design=SCRATCH)
+    check("a declared role's CONNECT revoked → MISSING CONNECT", left == [f"MISSING {NET}: CONNECT for {RES}"], str(left))
+    adm.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(sql.Identifier(NET), sql.Identifier(RES)))
     ghost = f"{PFX}{os.getpid()}_ghost"
     left = sa.drift(dsn_for, design={**SCRATCH, ghost: {"v": ("x",), "e": ()}})
     check("an absent declared database → MISSING database", left == [f"MISSING database {ghost}"], str(left))
@@ -157,10 +197,11 @@ try:
     check("the live server matches DESIGN (read-only sessions)", left == [], str(left))
 finally:
     reap(adm, mine=True)
-    gone = adm.execute("SELECT count(*) FROM pg_database WHERE starts_with(datname, %s)",
-                       (f"{PFX}{os.getpid()}_",)).fetchone()[0]
+    gone = adm.execute("SELECT (SELECT count(*) FROM pg_database WHERE starts_with(datname, %s)) + "
+                       "(SELECT count(*) FROM pg_roles WHERE starts_with(rolname, %s))",
+                       (f"{PFX}{os.getpid()}_", f"{PFX}{os.getpid()}_")).fetchone()[0]
     adm.close()
-    check("no scratch database is left behind", gone == 0, str(gone))
+    check("no scratch database or role is left behind", gone == 0, str(gone))
 
 real = [f for f in fails if not f.startswith("SKIP")]
 if real:

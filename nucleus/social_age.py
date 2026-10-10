@@ -41,10 +41,13 @@ sys.path.insert(0, str(REPO))
 
 GRAPH = "astryx_social"
 PRIVATE = "astryx_people"
-# database (= its one graph's name) -> the graph's vertex and edge labels. Each database's extensions are EXTENSIONS.
+# database (= its one graph's name) -> the graph's vertex and edge labels, and the roles that may CONNECT. PUBLIC never
+# may (a3 #42376: a plain CREATE DATABASE here is born PUBLIC-CONNECT, so the ACL is design, declared and checked, and
+# every design database is BORN zero-window by ensure() itself, whatever ran before it). Role names are people_gate's
+# RESIDENT / CLEARED (the oracle pins the equality). Each database's extensions are EXTENSIONS.
 DESIGN = {
-    GRAPH: {"v": ("context", "person"), "e": ("knows", "member_of")},
-    PRIVATE: {"v": ("owner", "person"), "e": ("relation",)},
+    GRAPH: {"v": ("context", "person"), "e": ("knows", "member_of"), "connect": ("astryx_resident", "people_cleared")},
+    PRIVATE: {"v": ("owner", "person"), "e": ("relation",), "connect": ("people_cleared",)},
 }
 EXTENSIONS = ("age", "plpgsql")
 # AGE's own bookkeeping labels, present in every graph: not part of anyone's design
@@ -176,6 +179,16 @@ def drift(dsn_for, design=None) -> list:
             raise
         with c:
             c.execute("SET default_transaction_read_only = on")
+            # the ACL FIRST, so a half-built database (no extension, no graph) still has it judged
+            q = lambda *a: c.execute("SELECT has_database_privilege(%s, %s, 'CONNECT')", a).fetchone()[0]  # noqa: E731
+            if q("public", db):
+                out.append(f"EXTRA {db}: PUBLIC can CONNECT (the design grants CONNECT only to "
+                           f"{', '.join(want.get('connect', ())) or 'nobody'})")
+            for role in want.get("connect", ()):
+                if not c.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone():
+                    out.append(f"MISSING {db}: role {role} (people_gate creates it)")
+                elif not q(role, db):
+                    out.append(f"MISSING {db}: CONNECT for {role}")
             have_ext = {r[0] for r in c.execute("SELECT extname FROM pg_extension")}
             for e in EXTENSIONS:
                 if e not in have_ext:
@@ -198,33 +211,47 @@ def drift(dsn_for, design=None) -> list:
                 "WHERE c.relkind IN ('r','p','v','m','f') AND n.nspname NOT IN ('pg_catalog','information_schema',"
                 "'ag_catalog', %s) AND n.nspname NOT LIKE 'pg\\_toast%%' ORDER BY 1, 2", (db,))]
             out += [f"EXTRA {db}: relation {x} (a derived database holds only its graph)" for x in adhoc]
+            # ...and INSIDE the graph's schema, every table must be one of its labels' (a3 #42376 press 1: a plain
+            # `CREATE TABLE <graph>.adhoc` is neither an ag_label nor outside the schema, so it was invisible)
+            stray = [r for (r,) in c.execute(
+                "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = %s AND c.relkind IN ('r','p','v','m','f') AND c.oid NOT IN ("
+                "SELECT l.relation FROM ag_catalog.ag_label l JOIN ag_catalog.ag_graph g ON g.graphid = l.graph "
+                "WHERE g.name = %s) ORDER BY 1", (db, db))]
+            out += [f"EXTRA {db}: relation {db}.{x} (in the graph's schema but no label's table)" for x in stray]
     return out
 
 
 def ensure(admin_dsn: str, design=None) -> list:
-    """Create what DESIGN declares and the server lacks (database, extension, preload), then rebuild. Idempotent.
-    Grants stay with nucleus/people_gate.py. Returns what was created."""
+    """Create what DESIGN declares and the server lacks (database born zero-window with its declared CONNECT, extension,
+    preload). Idempotent; an EXISTING database's ACL is people_gate's to reconcile and check()'s to report. Returns what
+    was created."""
     import psycopg
     from psycopg import sql
     from psycopg.conninfo import make_conninfo
     design = design if design is not None else DESIGN
     made = []
     with psycopg.connect(admin_dsn, autocommit=True) as a:
+        I = sql.Identifier
         for db in sorted(design):
             if not a.execute("SELECT 1 FROM pg_database WHERE datname = %s", (db,)).fetchone():
-                a.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(db)))
+                # BORN ZERO-WINDOW (plan-4918 #28982, a3 #42376): closed, PUBLIC revoked, the declared roles granted,
+                # THEN opened. A plain CREATE here is PUBLIC-CONNECT, and node ORDER is not a construction.
+                a.execute(sql.SQL("CREATE DATABASE {} ALLOW_CONNECTIONS false").format(I(db)))
+                a.execute(sql.SQL("REVOKE ALL ON DATABASE {} FROM PUBLIC").format(I(db)))
+                have = [r for (r,) in a.execute("SELECT rolname FROM pg_roles WHERE rolname = ANY(%s)",
+                                                (list(design[db].get("connect", ())),))]
+                if have:
+                    a.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
+                        I(db), sql.SQL(", ").join(map(I, have))))
+                a.execute(sql.SQL("ALTER DATABASE {} ALLOW_CONNECTIONS true").format(I(db)))
                 made.append(f"database {db}")
-            a.execute(sql.SQL("ALTER DATABASE {} SET session_preload_libraries = 'age'").format(sql.Identifier(db)))
+            a.execute(sql.SQL("ALTER DATABASE {} SET session_preload_libraries = 'age'").format(I(db)))
             with psycopg.connect(make_conninfo(admin_dsn, dbname=db), autocommit=True) as d:
                 for e in EXTENSIONS:
                     if not d.execute("SELECT 1 FROM pg_extension WHERE extname = %s", (e,)).fetchone():
                         d.execute(sql.SQL("CREATE EXTENSION IF NOT EXISTS {}").format(sql.Identifier(e)))
                         made.append(f"{db}: extension {e}")
-        # grants are people_gate's (init.sh runs its node FIRST, so astryx_people is still born zero-window there);
-        # a network database created just now gets its CONNECT here, or it would wait for the next people_gate apply
-        if f"database {GRAPH}" in made:
-            from nucleus import people_gate
-            people_gate.grant_network_db(a, GRAPH)
     return made
 
 
