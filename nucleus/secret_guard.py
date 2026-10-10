@@ -41,7 +41,7 @@ QUARANTINE = Path.home() / ".astryx-quarantine"
 # read-back shapes the leaking transcripts actually show (Read of .env; cat/grep/sed printing it).
 PRINTERS = frozenset({"cat", "head", "tail", "grep", "egrep", "fgrep", "rg", "sed", "awk", "gawk",
                       "less", "more", "strings", "xxd", "od", "hexdump", "nl", "tac", "sort", "uniq",
-                      "cut", "jq", "tr", "column", "bat", "diff", "xargs",
+                      "cut", "jq", "tr", "column", "bat", "diff", "xargs", "base64", "base32", "basenc",
                       # print nothing but MINT an undeclared copy (a2 #27600: 20 review copies)
                       "cp", "rsync", "tar", "scp", "install"})
 WRAPPERS = frozenset({"sudo", "env", "timeout", "nice", "nohup", "xargs", "command", "exec"})
@@ -114,13 +114,20 @@ BY_NAME = frozenset({".env", ".pgpass"})     # secret-bearing by convention, whe
 _PROC_ENVIRON = re.compile(r"^/proc/[^/]+/(task/[^/]+/)?environ$")
 
 
+def _expand(p: str) -> str:
+    """~ and $HOME/${HOME} only, as nucleus/grep_guard.py (a3 BC-3: `cat "$HOME/.config/gh/hosts.yml"`
+    passed). Any other variable stays unexpanded, so it names no holder: the declared ALLOW polarity."""
+    home = str(Path.home())
+    return os.path.expanduser(p.replace("${HOME}", home).replace("$HOME", home))
+
+
 def _is_holder_path(p: str, holders: list[Path]) -> bool:
     try:
-        rp = Path(os.path.realpath(os.path.expanduser(p)))
+        rp = Path(os.path.realpath(_expand(p)))
     except (OSError, ValueError):
         return False
     return (rp in holders or Path(p).name in BY_NAME or rp.name in BY_NAME
-            or bool(_PROC_ENVIRON.match(os.path.expanduser(p))) or bool(_PROC_ENVIRON.match(str(rp)))
+            or bool(_PROC_ENVIRON.match(_expand(p))) or bool(_PROC_ENVIRON.match(str(rp)))
             or QUARANTINE in rp.parents or rp == QUARANTINE)
 
 
@@ -141,7 +148,54 @@ def _names_holder(args: list[str], holders: list[Path]) -> bool:
             continue
         if Path(t).name in BY_NAME or ".astryx-quarantine" in t or _is_holder_path(t, holders):
             return True
+        if any(c in t for c in "*?["):                    # `cat ~/.ssh/*`: the shell globs, so do we
+            import glob
+            if any(_is_holder_path(g, holders) for g in glob.glob(_expand(t))):
+                return True
     return False
+
+
+# printers that descend into a DIRECTORY argument: grep -r prints every file under it (a3 BC-3)
+_RECURSE_FLAGS = {"grep": set("rR"), "egrep": set("rR"), "fgrep": set("rR"), "cp": set("rRa"),
+                  "scp": set("r")}
+_RECURSE_ALWAYS = frozenset({"rg", "rsync", "tar"})
+
+
+def _recurses(first: str, args: list[str]) -> bool:
+    if first in _RECURSE_ALWAYS:
+        return True
+    short = _RECURSE_FLAGS.get(first)
+    return bool(short) and any(a in ("--recursive", "--dereference-recursive", "--archive") or
+                               (a.startswith("-") and not a.startswith("--") and short & set(a[1:]))
+                               for a in args)
+
+
+def _names_holder_ancestor(args: list[str], holders: list[Path]) -> bool:
+    """A directory argument that CONTAINS a holder outside the repo (~/.ssh, ~/.config/gh). In-repo
+    holders are left out on purpose: `grep -rn X .` from the repo root is the org's commonest search,
+    and denying it would train agents around the guard (the measured-noise rule above)."""
+    outside = [h for h in holders if ss.REPO not in h.parents]
+    for t in args:
+        if not t or t.startswith("-"):
+            continue
+        try:
+            d = Path(os.path.realpath(_expand(t)))
+        except (OSError, ValueError):
+            continue
+        if d.is_dir() and any(d in h.parents for h in outside):
+            return True
+    return False
+
+
+def _gh_prints_token(first: str, args: list[str]) -> bool:
+    """`gh auth token`, `gh auth status --show-token|-t`: the write token with no file named (a3 BC-3).
+    Nobody needs it in context; gh and git's credential helper read it themselves."""
+    if first != "gh" or args[:1] != ["auth"]:
+        return False
+    if args[1:2] == ["token"]:
+        return True
+    return args[1:2] == ["status"] and any(a == "--show-token" or (a.startswith("-") and not a.startswith("--")
+                                                                   and "t" in a[1:]) for a in args[2:])
 
 
 # wrapper flags that take a VALUE (sudo -u USER, timeout -s SIG, nice -n N, env -u VAR)
@@ -175,6 +229,11 @@ def _bash_reason(cmd: str, holders: list[Path]) -> str | None:
         first, args = _command_word(_tokens(simple))
         if first in PRINTERS and not _prints_nothing(first, args) and _names_holder(args, holders):
             return f"Bash `{first}` on a declared secret holder would print or copy it. {HINT}"
+        if (first in PRINTERS and not _prints_nothing(first, args) and _recurses(first, args)
+                and _names_holder_ancestor(args, holders)):
+            return f"Bash `{first}` would descend into a directory holding a declared secret. {HINT}"
+        if _gh_prints_token(first, args):
+            return f"`gh {' '.join(args[:2])}` prints the GitHub write token; gh and git read it themselves. {HINT}"
     return None
 
 
