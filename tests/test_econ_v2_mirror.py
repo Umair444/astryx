@@ -23,7 +23,7 @@ its input, the ledger read has no meta.v filter, econ_standing still ranks agent
      true); NOT_EVALUATED → "not evaluated"; evaluated → the reader's own counts, an as-of day,
      the usage-GDP label; NEVER "rank", "net", a negative number, or another agent's name.
   4. NO RANK MACHINERY — econ_standing (the per-agent cross-agent rank) is gone.
-  5. LEDGER FILTER (executes against a hermetic temp schema) — a row with meta.v is counted,
+  5. LEDGER FILTER (executes against a stamped fixture database) — a row with meta.v is counted,
      an otherwise identical row without it is not.
   6. READER (executes) — econ_mirror reads the NEWEST econ row's v2 only; when that row is
      v2.0 the line is neutral even though an older row is v2.1 (no reaching back).
@@ -32,6 +32,7 @@ its input, the ledger read has no meta.v filter, econ_standing still ranks agent
 Exit 0 pass · 1 fail · 77 no DB (pure arms still asserted first).
 """
 import ast
+import contextlib
 import json
 import os
 import re
@@ -162,29 +163,26 @@ check("hooks/usage.py renders the mirror (econ_mirror → econ_line)",
       "econ_mirror" in hook and "econ_line" in hook)
 
 
-# ── 5/6. SQL arms against a hermetic temp schema ─────────────────────────────────────────
-def _ddl(name):
-    text = (REPO / "nucleus" / "schema.sql").read_text()
-    i = text.index(f"CREATE TABLE IF NOT EXISTS {name} (")
-    return text[i:text.index("\n);", i) + 3]
-
-
+# ── 5/6. SQL arms against a stamped FIXTURE database (nucleus/sqlguard/fixture.py: schema.sql applied whole;
+# the 4227 close tripped R-EXTRACT on the temp schema's own CREATE TABLEs that this replaced) ───────────────
 def sql_arms():
     try:
         import psycopg
         from nucleus.econ import _dsn    # the REPO's .env — a path-loaded subject lives elsewhere
         dsn = _dsn()
-        c = psycopg.connect(dsn, autocommit=True, connect_timeout=5)
+        live = psycopg.connect(dsn, autocommit=True, connect_timeout=5)
     except Exception as e:  # noqa: BLE001
         print(f"  SKIP  SQL arms — no DB ({type(e).__name__})")
         return False
-    sch = f"t_v2m_{os.getpid()}"
+    from nucleus.sqlguard.fixture import FixtureUnavailable, fixture_db
+    stack = contextlib.ExitStack()
     try:
-        c.execute(f"DROP SCHEMA IF EXISTS {sch} CASCADE")
-        c.execute(f"CREATE SCHEMA {sch}")
-        c.execute(f"SET search_path TO {sch}")      # SCH ONLY — never public
-        for t in ("messages", "turns", "steps", "econ"):
-            c.execute(_ddl(t))
+        try:
+            fx = stack.enter_context(fixture_db())
+        except FixtureUnavailable as e:
+            check("the SQL arms have a fixture database", False, str(e))
+            return True
+        c = stack.enter_context(psycopg.connect(fx["dsn"], autocommit=True, connect_timeout=5))
         print("\n5. LEDGER FILTER:")
         tid = c.execute("INSERT INTO turns (agent, goal_id) VALUES ('caller', 7) RETURNING id").fetchone()[0]
         for rid, meta in (("mcp:t/stamped", {"registry_id": "mcp:t/stamped", "v": 1}),
@@ -223,13 +221,13 @@ def sql_arms():
             check("newest row at V2_MIN+ → the reader's own mirror, as-of that day",
                   (st or {}).get("mine") == {"tools": 1, "callers": 1, "pairs": 1}
                   and (st or {}).get("day") == "2026-09-03", str(st))
-        pub = c.execute("SELECT count(*) FROM public.steps WHERE meta->>'registry_id' LIKE 'mcp:t/%%'"
-                        ).fetchone()[0]
-        check("CONTAINMENT: no fixture row leaked to public", pub == 0)
+        pub = live.execute("SELECT count(*) FROM steps WHERE meta->>'registry_id' LIKE 'mcp:t/%%'"
+                           ).fetchone()[0]
+        check("CONTAINMENT: no fixture row leaked to the live database", pub == 0)
         return True
     finally:
-        c.execute(f"DROP SCHEMA IF EXISTS {sch} CASCADE")
-        c.close()
+        stack.close()
+        live.close()
 
 
 ran = sql_arms()

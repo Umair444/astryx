@@ -535,39 +535,6 @@
     "state": "open"
    }
   },
-  "tests/test_econ.py": {
-   "gates": [
-    "the org economy is honest"
-   ],
-   "listed_since": "2026-09-29",
-   "reason": "seed: builds an UNSTAMPED fixture; migrate to nucleus/sqlguard/fixture.py",
-   "trip": {
-    "goal": 4227,
-    "state": "done"
-   }
-  },
-  "tests/test_econ_v2_mirror.py": {
-   "gates": [
-    "econ v2 mirror + version gate (4227 S2)"
-   ],
-   "listed_since": "2026-09-29",
-   "reason": "seed: builds an UNSTAMPED fixture; migrate to nucleus/sqlguard/fixture.py",
-   "trip": {
-    "goal": 4227,
-    "state": "done"
-   }
-  },
-  "tests/test_econ_v2_shadow.py": {
-   "gates": [
-    "econ v2 shadow (4227 S0)"
-   ],
-   "listed_since": "2026-09-29",
-   "reason": "seed: builds an UNSTAMPED fixture; migrate to nucleus/sqlguard/fixture.py",
-   "trip": {
-    "goal": 4227,
-    "state": "done"
-   }
-  },
   "tests/test_funded_by.py": {
    "gates": [
     "3499 funded_by attribution + W-birth intact"
