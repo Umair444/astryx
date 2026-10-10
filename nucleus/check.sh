@@ -298,6 +298,7 @@ run "turns retention: old images stripped, words kept, recent untouched, idempot
 # deploy.sh restart's failure paths, all side effects stubbed: a refusing spawn is a named ✗, the run continues,
 # ends INCOMPLETE, and the pulse is started again (a2 #42367)
 run "deploy restart: a failed resident is named, the run continues, the pulse comes back" bash tests/test_deploy_restart.sh
+run "tmux: no pane command targets a bare =session (capture-pane on \"=ax-x\" fails silently: 09-29 idle gates, 10-10 restart)" "$PY" tests/test_tmux_targets.py
 # geoloc /recent (a3 #32078, privacy): location history needs GEOLOC_TOKEN even from localhost, the
 # token compare is constant-time, and a malformed ingest token is a 401, never a 500. The body
 # (bridges/geoloc.py) is gitignored, so this SKIPs 77 on a clean clone. No location data is used.
