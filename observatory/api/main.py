@@ -291,8 +291,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # plan-9000 S2: the pilot's realtime voice (owner-only by omission from PUBLIC_PATHS; spend via nucleus/voice_mint)
-from pilot_voice import router as _pilot_voice  # noqa: E402
-app.include_router(_pilot_voice)
+# imported through the repo package (REPO is on sys.path), so main.py loads the same way under uvicorn and when an
+# oracle loads it by path; the pool is handed over, never re-imported (steward #44464)
+from observatory.api import pilot_voice as _pilot_voice  # noqa: E402
+_pilot_voice.bind(lambda: pool)
+app.include_router(_pilot_voice.router)
 
 
 @app.middleware("http")

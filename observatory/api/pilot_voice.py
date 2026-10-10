@@ -66,9 +66,17 @@ def deny(code: int, msg: str, **extra):
     return JSONResponse({"error": msg, **extra}, status_code=code)
 
 
+_get_pool = None
+
+
+def bind(get_pool) -> None:
+    """The host app hands over its pool getter (read at call time: the pool opens in the app's lifespan)."""
+    global _get_pool
+    _get_pool = get_pool
+
+
 def _pool(request: Request):
-    import main                                   # the host app's pool, read at call time
-    return main.pool
+    return _get_pool()
 
 
 @router.get("/api/pilot/voice/status")
