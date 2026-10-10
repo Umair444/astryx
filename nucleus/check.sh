@@ -338,6 +338,10 @@ run "toolreg: a tool's search text is its own header" "$PY" tests/test_toolreg_d
 # jobs MCP: a posting is "closed" only when the board says so; transport, 5xx, 429, shape and
 # register-header failures are errors, never a false "closed". Hermetic (MockTransport, temp cache).
 run "jobs MCP: fail-closed ATS status + sponsor-register lookup" "$PY" tests/test_jobs_mcp.py
+# docpdf MCP: HTML→PDF is verified (pages, extractable text, page cap) and fails closed without
+# touching a good PDF; paths confined to the root; the page fetches nothing (real Chromium vs a
+# real loopback listener: 0 hits). Mutants: proxy flag removed → X3 RED; confinement off → 6 RED.
+run "docpdf MCP: verified render, confined paths, no network from the page" "$PY" tests/test_docpdf_mcp.py
 # the tool nudge, O5 (goal 4227, S4): the REAL UserPromptSubmit hook against a fake loopback
 # classifier. It never exits non-zero (static, from the AST), stays silent and inside its hard
 # deadline whether the classifier is unset/down/hung/DRIPPING, refuses non-loopback endpoints
