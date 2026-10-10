@@ -23,6 +23,9 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO))
+from nucleus.sqlguard.estate import gate  # noqa: E402
+gate("test_jobs_mcp", REPO, deps=("httpx", "mcp.server"))   # a committed-only tree (no venv): 77, not an import crash
 fails = []
 
 

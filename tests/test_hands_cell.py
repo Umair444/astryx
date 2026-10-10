@@ -87,6 +87,8 @@ for img in ("astryx-hands-cell", "astryx-hands-proxy"):
         skip(f"image {img} isn't built (harness/hands/build.sh)")
 
 sys.path.insert(0, str(REPO))
+from nucleus.sqlguard.estate import gate  # noqa: E402
+gate("test_hands_cell", REPO, deps=("psycopg",))   # a committed-only tree (no venv): 77, not an import crash
 from nucleus.sqlguard.fixture import fixture_db  # noqa: E402
 
 _fx = fixture_db()

@@ -23,6 +23,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
+from nucleus.sqlguard.estate import gate  # noqa: E402
+gate("test_social_age_design", REPO, deps=("psycopg",))   # a committed-only tree (no venv): 77, not an import crash
 import psycopg                                          # noqa: E402
 from psycopg import sql                                 # noqa: E402
 from psycopg.conninfo import make_conninfo              # noqa: E402
