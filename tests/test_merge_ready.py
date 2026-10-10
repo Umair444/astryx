@@ -679,6 +679,7 @@ RQ_P = msg(POST + 501, f"REVIEW REQUEST: branch rq @ {crq[:7]}", sender="abstrac
 RQ_Q = msg(POST + 502, f"a note.\nquoting: REVIEW REQUEST: rq @ {crq[:7]}", sender="abstractor-1", ts=OLD)
 RQ_L = msg(POST + 503, f"REVIEW REQUEST: an old one @ {head[:7]}", sender="abstractor-1", ts=OLD)
 RQ_BAD = msg(POST + 504, "review-request: rq notarange", sender="abstractor-1", ts=OLD)
+RQ_MC = msg(POST + 505, f"Review request: branch rq @ {crq[:7]} (painter #41139's shape)", sender="painter", ts=OLD)
 
 
 def evq(msgs, prose, later=None, dark=()):
@@ -693,6 +694,9 @@ N_ = "\n".join(x[1] for x in no_)
 check("evaluate: a review-request: MARKER, unanswered 13h → STANDING OPEN REQUEST",
       f"OPEN REQUEST #{POST + 500}" in S_ and "rq " in S_, S_)
 check("evaluate: a prose 'REVIEW REQUEST' LEAD → NOTICE OPEN REQUEST", f"OPEN REQUEST #{POST + 501}" in N_, N_)
+st_mc, no_mc, _d = evq([], [RQ_MC])
+check("evaluate: a MIXED-CASE 'Review request:' lead opens one too (both of 10-09's real lost requests had it)",
+      f"OPEN REQUEST #{POST + 505}" in "\n".join(x[1] for x in no_mc), str(no_mc))
 check("evaluate: 'REVIEW REQUEST' quoted below the lead is NOT a request", f"#{POST + 502}" not in N_ + S_, N_)
 check("evaluate: a request naming only LANDED commits reads answered (all landed in main)",
       f"#{POST + 503}" not in N_ + S_, N_)
@@ -815,7 +819,7 @@ if fx is not None:
                                 (frm, to, thread, body, hours_ago)).fetchone()[0]
         for hh in (14, 10, 6, 2):                        # a LIVE wire: traffic every 4h, so no silence reads as
             put_at("pulse", "heartbeat", hh, "t-ep-hb")  # host-down (a lone old row would, and discount itself)
-        rq_id = put_at("abstractor-1", f"REVIEW REQUEST: branch rq @ {crq[:7]}", 13, "t-ep-rq")
+        rq_id = put_at("abstractor-1", f"Review request: branch rq @ {crq[:7]}", 13, "t-ep-rq")   # mixed case: the SQL too
         rqx = m._requests(TempCtx({}, conn), [])
         check("entrypoint: the prose-request query finds the 13h request (>=1 row)",
               any(r["id"] == rq_id for r in rqx["prose"]), str([r["id"] for r in rqx["prose"]]))
