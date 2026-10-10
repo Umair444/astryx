@@ -28,6 +28,12 @@ a3 #44329's notes, each a RED on c334c47a:
             "<book title> · <anchor>": the book's title is what dark_title guards).
   N2        frontmatter keys are case-folded: `Tags: [career]` and `X-Visibility: private` → dark; `TAGS` beside
             `tags` is a repeated key → dark. CONTROL: `Title:` still names a clean book.
+a3 #44722's probes, each a RED on 144bfee6:
+  X1        a book whose section heading carries the plant, then tagged career: no node name, title or text
+            carries it (a dark book's sections are deleted; the anchor is book content).
+  X2        a wiki page with sections, admitted, then `x-visibility: private`: the page is not admitted, title only.
+  X3        …and none of its sections survives (none admitted, none carrying the body plant).
+  X4 CTRL   a link-only phantom Concept (no page) is untouched by the cleanup.
 Exit 0 pass · 1 fail · 77 could-not-run.
 """
 import importlib.util
@@ -89,6 +95,9 @@ BIG = "".join(f"## part {i}\n{FILL} {PLANT if i == 2 else ''}\n\n" for i in rang
 (LIB / "capv.md").write_text(f'---\ntitle: "Capv"\nX-Visibility: private\n---\n{PLANT}\n')
 (LIB / "capd.md").write_text(f'---\ntitle: "Capd"\ntags: [agents]\nTAGS: [career]\n---\n{PLANT}\n')
 (LIB / "capc.md").write_text('---\nTitle: "Capc Named"\ntags: [org]\n---\ncapc body\n')
+HD = BIG.replace("## part 1", f"## {PLANT} acme 1")
+(LIB / "hd.md").write_text(f'---\ntitle: "Hd"\ntags: [agents]\n---\n{HD}')
+(root / "memory" / "wiki" / "w.md").write_text(f'---\ntitle: "W"\n---\n{BIG}')
 (LIB / "a.md").write_text('---\ntitle: "Library a"\ntags: [org]\n---\nlibrary-a body links [[clean]]\n')
 DECL = {"name": "graph:memory", "kind": "age_graph", "graph": "memory", "comparator": "root_digest",
         "roots": ["memory/wiki/*.md", "memory/library/**/*.md", "memory/ontology.md"], "reads": ["kg.claim incidence"],
@@ -171,16 +180,37 @@ try:
         for nm in ("block", "abs", "dup"):
             adm, txt = node(f"library:shelf/{nm}")
             check(f"P2-4 {nm}: dark, no plant in its text", adm is False and PLANT not in txt, (adm, txt))
+        wk = conn.execute("SELECT * FROM cypher('memory', $$ MATCH (c:Concept) WHERE c.name STARTS WITH 'w#' "
+                          "AND c.admitted = true RETURN c.name $$) AS (n agtype)").fetchall()
+        hk = conn.execute("SELECT * FROM cypher('memory', $$ MATCH (c:Concept) WHERE c.name STARTS WITH "
+                          "'library:shelf/hd#' AND c.admitted = true RETURN c.name $$) AS (n agtype)").fetchall()
+        check("X0 precondition: the wiki page and the heading book have admitted sections", len(wk) >= 2
+              and any(PLANT.lower() in str(n) for (n,) in hk), (wk, hk))
         (LIB / "grows.md").write_text(f'---\ntitle: "Grows"\ntags: [agents, career]\n---\n{BIG}')
+        (LIB / "hd.md").write_text(f'---\ntitle: "Hd"\ntags: [agents, career]\n---\n{HD}')
+        (root / "memory" / "wiki" / "w.md").write_text(f'---\ntitle: "W"\nx-visibility: private\n---\n{BIG}')
         ing.run_ingest(fx["dsn"])
         check("P1 tagged career after admission: no library node leaks the plant", not leaked(), repr(leaked()))
         adm, txt = node("library:shelf/grows")
         check("P1 …and the parent is dark, title only", adm is False and txt.strip('"') == "Grows", (adm, txt))
         dk = conn.execute("SELECT * FROM cypher('memory', $$ MATCH (c:Concept) WHERE c.name STARTS WITH "
-                          "'library:shelf/grows#' RETURN c.name, c.title, c.text $$) "
-                          "AS (n agtype, t agtype, x agtype)").fetchall()
-        check("N1 a dark book's sections keep only their name as title and text",
-              len(dk) >= 2 and all(str(n) == str(t) == str(x) for n, t, x in dk), repr(dk[:2]))
+                          "'library:shelf/grows#' RETURN c.name $$) AS (n agtype)").fetchall()
+        check("N1 a dark book's sections are gone (no \"<title> · <anchor>\" survives)", not dk, repr(dk[:2]))
+        hp = conn.execute("SELECT * FROM cypher('memory', $$ MATCH (c:Concept) WHERE toLower(c.name + ' ' + "
+                          "coalesce(c.title, '') + ' ' + coalesce(c.text, '')) CONTAINS '%s' RETURN c.name $$) "
+                          "AS (n agtype)" % PLANT.lower()).fetchall()
+        check("X1 a dark book's heading slug survives in no name, title or text",
+              not [n for (n,) in hp if "control" not in str(n)], repr(hp))
+        adm, txt = node("w")
+        check("X2 a wiki page made private after admission: not admitted, title only",
+              adm is False and txt.strip('"') == "W", (adm, txt))
+        ws = conn.execute("SELECT * FROM cypher('memory', $$ MATCH (c:Concept) WHERE c.name STARTS WITH 'w#' "
+                          "RETURN c.name $$) AS (n agtype)").fetchall()
+        check("X3 …and none of its sections survives", not ws, repr(ws))
+        ph = conn.execute("SELECT * FROM cypher('memory', $$ MATCH (x:Concept {name: 'a'})-[:LINKS]->"
+                          "(y:Concept {name: 'b'}) RETURN y.admitted $$) AS (o agtype)").fetchall()
+        check("X4 CONTROL: a link-only phantom is untouched (exists, linked, never admitted)",
+              len(ph) == 1 and str(ph[0][0]) != "true", repr(ph))
         for nm in ("capt", "capv", "capd"):
             adm, txt = node(f"library:shelf/{nm}")
             check(f"N2 {nm}: a case-variant key is read, dark, no plant", adm is False and PLANT not in txt, (adm, txt))
