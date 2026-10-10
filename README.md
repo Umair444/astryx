@@ -71,11 +71,12 @@ Watch it work: `nucleus/wall.sh` (a tmux wall of every agent's live activity), o
 uv venv venv --seed
 uv pip install --python venv/bin/python $(venv/bin/python nucleus/deps.py install-list core)
 
-# 2. postgres — a container (or point ASTRYX_DSN at any server you already run, 17+)
-docker run -d --name astryx-pg --restart unless-stopped \
-  -e POSTGRES_USER=astryx -e POSTGRES_PASSWORD=changeme -e POSTGRES_DB=astryx \
-  -p 127.0.0.1:5433:5432 -v astryx-pgdata:/var/lib/postgresql postgres:18   # 18+ mounts the parent, not /data
-echo "ASTRYX_DSN=postgres://astryx:changeme@127.0.0.1:5433/astryx" > .env && chmod 600 .env
+# 2. postgres — the declared server, infra/pg (pg18 + pgvector + PostGIS + Apache AGE pinned; loopback only).
+#    The first build compiles AGE. Or point ASTRYX_DSN at a server you already run (17+, with those extensions).
+( umask 077; printf 'POSTGRES_USER=astryx\nPOSTGRES_PASSWORD=changeme\n' > infra/pg/.env )   # gitignored
+docker build -t genesis/pg18:age infra/pg     # compiles AGE from its pinned commit: needs github.com, a few minutes
+docker compose -f infra/pg/docker-compose.yml up -d
+echo "ASTRYX_DSN=postgres://astryx:changeme@127.0.0.1:5432/astryx" > .env && chmod 600 .env
 
 # 3. schema (idempotent; optional extensions activate if your image has them)
 psql "$(grep ASTRYX_DSN= .env | cut -d= -f2-)" -f nucleus/schema.sql

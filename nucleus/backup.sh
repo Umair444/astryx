@@ -13,6 +13,7 @@
 #   ./nucleus/backup.sh [keep-last-N]   (default 14)
 set -euo pipefail
 cd "$(dirname "$0")/.."
+. nucleus/pgcontainer.sh                     # PG_CONTAINER: the one declared postgres (infra/pg)
 KEEP=${1:-14}
 
 # ── what the paired .state.tgz will carry ──────────────────────────────────────────
@@ -171,7 +172,7 @@ trap 'rm -f "$part" "$statepart"' EXIT
 : "${BACKUP_DB_WAIT_S:=90}"
 if [ "$BACKUP_DB_WAIT_S" -gt 0 ]; then
   if command -v pg_isready >/dev/null;  then ready() { pg_isready -q -d "$DSN"; }
-  elif command -v docker >/dev/null;    then ready() { docker exec astryx-pg pg_isready -q -U astryx; }
+  elif command -v docker >/dev/null;    then ready() { pg_exec pg_isready -q -U "$(pg_dsn_user "$DSN")"; }
   else                                       ready() { return 0; }
   fi
   waited=0
@@ -197,7 +198,7 @@ ASTRYX_DSN="$DSN" timeout 600 "$ROOT_DIR/venv/bin/python" -m nucleus.turns_reten
 if command -v pg_dump >/dev/null; then
   pg_dump -Fc "$DSN" > "$part"
 else
-  docker exec astryx-pg pg_dump -Fc -U astryx astryx > "$part"
+  pg_exec pg_dump -Fc -U "$(pg_dsn_user "$DSN")" "$(pg_dsn_db "$DSN")" > "$part"
 fi
 
 # integrity: a pg_dump custom archive begins with the "PGDMP" magic. This now catches only

@@ -218,6 +218,15 @@
   "nucleus/persona_llm.py::run\u001fselect r.kind from social_person p left join social_relation r on r.org=p.org and r.pid=p.id where p.org=? and p.id=?": [
    "people gate: details only to people_cleared, network to the resident (accident-grade)"
   ],
+  "nucleus/pg_design.py::_live\u001fselect datname from pg_database where datallowconn and not datistemplate and has_database_privilege(datname, 'connect') order by 1": [
+   "the running postgres matches infra/pg"
+  ],
+  "nucleus/pg_design.py::_live\u001fselect extname, extversion from pg_extension where extname = any(?)": [
+   "the running postgres matches infra/pg"
+  ],
+  "nucleus/pg_design.py::_live\u001fselect name, setting, source from pg_settings where name = any(?)": [
+   "the running postgres matches infra/pg"
+  ],
   "nucleus/privilege_census.py::live\u001fselect r.rolname, r.rolsuper, count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace join pg_roles r on r.oid=c.relowner where c.relkind in ('r','p','v','m','s') and n.nspname='public' group by 1,2 order by 3 desc": [
    "privilege census: classes discriminate, surfaces and DSN sources assigned"
   ],
@@ -584,7 +593,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 334,
+  "debt_rows": 337,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -1225,6 +1234,24 @@
    "debt": "EXECUTED",
    "reason": "people library 1a cutover: executed against the stamped fixture by test_people_gate's CUTOVER arms (apply_pg/load_pg round-trip and persona_llm's label/skip are asserted)",
    "tk": "sha256t:e80b3ab1daf265974567ca614c99e8c5e20f80e07cbe0d3640eadeccf18aa0b6"
+  },
+  "nucleus/pg_design.py::_live\u001fselect datname from pg_database where datallowconn and not datistemplate and has_database_privilege(datname, 'connect') order by 1": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED",
+   "reason": "pg design (seed #42759 F4): a read-only read of the server catalog (pg_settings, pg_database, pg_extension) comparing the running server with infra/pg, so RESPONSIVE is unreachable by the judge's relation rule; executed by tests/test_pg_design.py's live arm",
+   "tk": "sha256t:b38429d56ef350f1d941b27bad0c438d04d5cc20410a28c820b79048bfb08d59"
+  },
+  "nucleus/pg_design.py::_live\u001fselect extname, extversion from pg_extension where extname = any(?)": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED",
+   "reason": "pg design (seed #42759 F4): a read-only read of the server catalog (pg_settings, pg_database, pg_extension) comparing the running server with infra/pg, so RESPONSIVE is unreachable by the judge's relation rule; executed by tests/test_pg_design.py's live arm",
+   "tk": "sha256t:e978e804935c6ffc3812819e2525bab1b860c05191db1eba0ebfcf2945966681"
+  },
+  "nucleus/pg_design.py::_live\u001fselect name, setting, source from pg_settings where name = any(?)": {
+   "admitted": "2026-10-10",
+   "debt": "EXECUTED",
+   "reason": "pg design (seed #42759 F4): a read-only read of the server catalog (pg_settings, pg_database, pg_extension) comparing the running server with infra/pg, so RESPONSIVE is unreachable by the judge's relation rule; executed by tests/test_pg_design.py's live arm",
+   "tk": "sha256t:2ff9f836939ee0ea5daad4bc8ab3b7c9af8714a4d7b827882bcdd34c6018c54c"
   },
   "nucleus/privilege_census.py::live\u001fselect r.rolname, r.rolsuper, count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace join pg_roles r on r.oid=c.relowner where c.relkind in ('r','p','v','m','s') and n.nspname='public' group by 1,2 order by 3 desc": {
    "admitted": "2026-10-09",

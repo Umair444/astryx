@@ -1,0 +1,34 @@
+# ASTRYX · the org's ONE database server, as it runs (owner 10-10: "the design on github should match local").
+# Moved from the deprecated genesis tree (steward F4 of #42345, plan approved by seed #42759). The CONTAINER NAME stays
+# genesis-pg: renaming means recreating, done at a planned restart if at all.
+#
+# Secrets and host paths live in infra/pg/.env (gitignored): POSTGRES_USER, POSTGRES_PASSWORD, and ASTRYX_PG_DATA (this
+# host: the existing data dir). Settings live HERE, never only in the data dir's postgresql.auto.conf: a setting that
+# exists only inside the data is a design nobody can read from the repo.
+#
+#   docker compose -f infra/pg/docker-compose.yml up -d      # init.sh's pg node; the cutover is seed's (deploy.sh restart)
+# NO `build:` here (a1 #43407): with one, any `compose up --build` / `compose build` RETAGS the image the live server
+# runs, and the proven one (rollback: genesis/pg18:age-ecb5619) is left dangling for a prune. Building is an explicit
+# act on a candidate tag (the Dockerfile's header); init.sh builds genesis/pg18:age only on a host that has none.
+services:
+  pg:
+    image: genesis/pg18:age
+    container_name: genesis-pg
+    restart: unless-stopped
+    shm_size: 512mb
+    env_file: .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: astryx
+    # max_connections: 18 ears hold 2-5 each; the default 100 was hit at 10:12Z on 10-10 (seed raised it to 300)
+    command: ["postgres", "-c", "max_connections=300"]
+    ports:
+      - "127.0.0.1:5432:5432"          # loopback ONLY: the LAN bind was removed on 10-10 (#5497); the gate asserts it
+    volumes:
+      - ${ASTRYX_PG_DATA:-./data}:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d astryx"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

@@ -25,8 +25,9 @@ the router; grant sudo / API keys / app passwords (into `.env`, never the repo).
 
 ## The stack is opinionated — do not "improve" it
 Load-bearing; deviating creates the exact failures this repo exists to avoid:
-- **postgres in docker** (the `astryx-pg` container, or a server the human points you at).
-  Never a system postgres.
+- **postgres in docker**: the declared server in `infra/pg` (container `genesis-pg`; pg18 + pgvector +
+  PostGIS + AGE pinned; loopback only; settings in the compose file), or a server the human points you
+  at. Never a system postgres. `nucleus/pg_design.py` checks the running one against `infra/pg`.
 - **wacli in docker, always** — native installs misbehave (store runtime issues in the
   field). Build the image from wacli main, run sync as a `--restart unless-stopped`
   container; auth first (`docker run -it ... wacli auth`, human scans QR). The bridge reaches

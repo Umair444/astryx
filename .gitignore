@@ -61,3 +61,5 @@ tier/
 # never silently un-ignore it. Meta-reference only (a career tier exists), never content.
 **/career/
 var/
+infra/pg/.env
+infra/pg/data/
