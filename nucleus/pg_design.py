@@ -41,7 +41,11 @@ OUT_OF_SCOPE = ("genesis", "mattermost")
 
 
 class Unobservable(Exception):
-    pass
+    """This tree can't observe the live server (77): no docker, no container, or a committed-only tree with no estate."""
+
+
+class Broken(Exception):
+    """A LIVE host whose runner lost its estate (.env or psycopg gone while triggers/ exists): rc 1, never a quiet 77."""
 
 
 def declared(compose_text: str, dockerfile_text: str) -> dict:
@@ -116,7 +120,17 @@ def compare(want: dict, inspect: dict, show: dict, ext: list, helper: str | None
     return {"drift": drift, "report": report}
 
 
-def _live(want: dict):
+def _live(want: dict, repo: Path = REPO):
+    # the ESTATE first (a1 #43424): without .env, live_dsn() crashed with FileNotFoundError, so every committed-only
+    # tree on a docker host (each review worktree, pushed_tree_check) read RED instead of NOT SEARCHED. The same split
+    # as seed's 1082f98: committed-only (no triggers/) → 77; a live host that lost its estate → 1.
+    sys.path.insert(0, str(repo))
+    from nucleus.sqlguard import estate
+    got = estate.absent(Path(repo), deps=("psycopg",))
+    if got:
+        if got[0] == 77:
+            raise Unobservable(got[1])
+        raise Broken(got[1])
     try:
         r = subprocess.run(["docker", "inspect", want["container"]], capture_output=True, text=True, timeout=20)
     except (OSError, subprocess.SubprocessError) as e:
@@ -126,7 +140,6 @@ def _live(want: dict):
     inspect = json.loads(r.stdout)[0]
     import psycopg
     from psycopg.conninfo import make_conninfo
-    sys.path.insert(0, str(REPO))
     from nucleus.sqlguard.fixture import live_dsn
     base = live_dsn()
     with psycopg.connect(base, autocommit=True) as c:
@@ -160,6 +173,9 @@ def check() -> int:
     except Unobservable as e:
         print(f"pg_design: NOT SEARCHED ({e})")
         return 77
+    except Broken as e:
+        print(f"pg_design: BROKEN ({e})")
+        return 1
     got = compare(want, inspect, show, ext, helper_container(HELPER.read_text()), tag_id, unread)
     for d in got["drift"]:
         print(f"  DRIFT {d}")

@@ -33,4 +33,6 @@ MUTANTS = {
     "D9 after the cutover a data-dir override of a declared -c still reads green":
         ("        elif f\"{k}={v}\" in (inspect.get(\"Config\", {}).get(\"Cmd\") or []) and got[1] != \"command line\":",
          "        elif False:"),
+    "D10 no estate gate (a tree without .env crashes instead of reading NOT SEARCHED; a1 #43424)":
+        ("    got = estate.absent(Path(repo), deps=(\"psycopg\",))", "    got = None"),
 }
