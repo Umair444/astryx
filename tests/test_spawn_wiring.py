@@ -17,7 +17,8 @@ temp tree, and every fixture agent name is one no real org uses. A broken render
 as a logged side effect, never as a session.
 
   R1 a resident renders exactly CLAUDE.md, .mcp.json and .claude/settings.json, and nothing else
-  R2 .mcp.json: {astryx, tools}, and with a grant spliced in {astryx, tools, gmail}, valid JSON
+  R2 .mcp.json: {astryx, tools, hands}, and with a grant spliced in {astryx, tools, hands, gmail},
+     valid JSON
   R3 settings.json: the nudge in its OWN UserPromptSubmit group at timeout 3, usage.py at 5;
      Think: off and the provider token splice both land, as in a real spawn
   R4 CLAUDE.md = charter + "## The law (local.md)" + local.md
@@ -125,7 +126,8 @@ try:
     except Exception as e:  # noqa: BLE001
         servers = {}
         check("R2 .mcp.json is valid JSON", False, str(e))
-    check("R2 resident .mcp.json servers == {astryx, tools}", set(servers) == {"astryx", "tools"},
+    check("R2 resident .mcp.json servers == {astryx, tools, hands}",
+          set(servers) == {"astryx", "tools", "hands"},
           str(sorted(servers)))
     check("R2 the door points at the tree's mcp/tools/server.py",
           (servers.get("tools") or {}).get("args") == [f"{root}/mcp/tools/server.py"],
@@ -161,8 +163,8 @@ try:
     except Exception as e:  # noqa: BLE001
         servers, env_ = {}, {}
         check("R2 grant render is valid JSON", False, f"{e}: {r.stderr[-200:]}")
-    check("R2 with a grant spliced: {astryx, tools, gmail}",
-          set(servers) == {"astryx", "tools", "gmail"}, str(sorted(servers)))
+    check("R2 with a grant spliced: {astryx, tools, hands, gmail}",
+          set(servers) == {"astryx", "tools", "hands", "gmail"}, str(sorted(servers)))
     check("R3 Think: off lands (MAX_THINKING_TOKENS=0)", env_.get("MAX_THINKING_TOKENS") == "0",
           str(env_))
     check("R3 the provider token splice lands, as in a real spawn",

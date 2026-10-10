@@ -11,6 +11,7 @@ import WireView from './components/WireView'
 import GoalsView from './components/GoalsView'
 import EconomyView from './components/EconomyView'
 import ToolsView from './components/ToolsView'
+import { DesktopOverlay } from './ui/hands'
 import SystemView from './components/SystemView'
 import TheatreView from './components/TheatreView'
 import MemoryView from './components/MemoryView'
@@ -304,6 +305,7 @@ function Shell() {
 
       <Palette onOpenAgent={setAgentOpen} />
       {agentOpen && <AgentDrawer name={agentOpen} onClose={() => setAgentOpen(null)} />}
+      {who.owner && <DesktopOverlay />}
       {/* VEGA is the PUBLIC concierge and floats bottom-right on every view; the Memory
           tab is owner-only and docks its own ask box in that exact corner, so the two
           buttons overlapped. Hidden here rather than nudged — a public greeter on a
