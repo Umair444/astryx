@@ -3106,6 +3106,24 @@ async def canvas_root():
 
 @app.api_route("/canvas/{path:path}", methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"])
 async def canvas_proxy(path: str, request: Request):
+    return await _pipe(f"{CANVAS_UP}/canvas/{path}", request, owner_key=False,
+                       down="canvas is not running (astryx-canvas.service)")
+
+
+# EAR (hearing S1, bridges/ear.py on :8092): the observatory page holds the mic, so the ear is reached at /ear/ on
+# this same origin (the secure context getUserMedia needs, no new hostname). Unlike canvas, the ear has no session of
+# its own: its gate IS the observatory owner key, so x-obs-key is forwarded, and the ear service checks it itself
+# (401 without it). This proxy adds no authority: an unauthenticated request reaches the ear and is refused there.
+EAR_UP = "http://127.0.0.1:8092"
+
+
+@app.api_route("/ear/{path:path}", methods=["GET", "POST"])
+async def ear_proxy(path: str, request: Request):
+    return await _pipe(f"{EAR_UP}/ear/{path}", request, owner_key=True,
+                       down="ear offline (astryx-ear.service is not running)")
+
+
+async def _pipe(url: str, request: Request, owner_key: bool, down: str):
     global _canvas_http
     if _canvas_http is None:
         # A jar that STORES NOTHING. httpx's default jar keeps every Set-Cookie it sees and replays
@@ -3117,17 +3135,16 @@ async def canvas_proxy(path: str, request: Request):
             timeout=httpx.Timeout(30, read=None),
             cookies=http.cookiejar.CookieJar(policy=http.cookiejar.DefaultCookiePolicy(allowed_domains=[])))
     headers = [(k, v) for k, v in request.headers.items()
-               if k.lower() not in _HOP and k.lower() != "x-obs-key"]
+               if k.lower() not in _HOP and (owner_key or k.lower() != "x-obs-key")]
     headers += [("x-forwarded-host", request.headers.get("x-forwarded-host") or request.headers.get("host", "")),
                 ("x-forwarded-proto", request.headers.get("x-forwarded-proto") or request.url.scheme)]
     upstream = _canvas_http.build_request(
-        request.method, f"{CANVAS_UP}/canvas/{path}", params=request.query_params,
+        request.method, url, params=request.query_params,
         headers=headers, content=await request.body())
     try:
         r = await _canvas_http.send(upstream, stream=True)
     except httpx.HTTPError:
-        return Response("canvas is not running (astryx-canvas.service)", status_code=502,
-                        media_type="text/plain")
+        return Response(down, status_code=502, media_type="text/plain")
     done = BackgroundTasks()
     done.add_task(r.aclose)
     resp = StreamingResponse(r.aiter_raw(), status_code=r.status_code, background=done)

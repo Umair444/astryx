@@ -262,8 +262,9 @@ def ttl_findings(conn, ttl: int | None = None, now: datetime | None = None) -> l
 
 
 # ── arm: the reader census (D2, a1 BC-2 + a3 BC-2) ───────────────────────────────────────────────────────────
-def trigger_findings(conn, evt: str = EVT) -> list[str]:
+def trigger_findings(conn, evt: str | None = None) -> list[str]:
     """LOUD unless the login trigger exists, is ON login, is enabled (O origin / A always), and calls our function."""
+    evt = evt or EVT
     row = conn.execute("SELECT evtevent, evtenabled, evtfoid::regproc::text FROM pg_event_trigger WHERE evtname = %s",
                        (evt,)).fetchone()
     if row is None:
@@ -280,7 +281,7 @@ def trigger_findings(conn, evt: str = EVT) -> list[str]:
 
 
 def reader_census(conn, after_id: int = 0, doors: dict | None = None, auditors: dict | None = None,
-                  evt: str = EVT) -> dict:
+                  evt: str | None = None) -> dict:
     """Readers OUTSIDE the declared doors since audit row `after_id`. Graded on session_role (session_user);
     app_claimed is reported as claimed. {'loud': [...], 'outside': [...], 'last_id': n, 'logins': n}."""
     doors = DOORS if doors is None else doors
@@ -307,6 +308,28 @@ def census_text(res: dict) -> str | None:
     if not parts:
         return None
     return ("hearing reader census (astryx_ear, detection-grade; graded on session_user): " + " | ".join(parts))
+
+
+RENAG_S = 24 * 3600
+
+
+def owner_report(state: dict, audit, now: float | None = None, **census) -> str | None:
+    """One pulse tick of the OWNER-ONLY report (nucleus/shipped_triggers/ear_census.py sends it to `owner`):
+    the TTL arm plus the reader census since state['last_id']. New outside readers are reported once (the census is
+    incremental); a standing RED/LOUD condition re-nags daily, not every tick. Mutates `state`."""
+    import time
+    now = now or time.time()
+    res = reader_census(audit, after_id=int(state.get("last_id", 0)), **census)
+    state["last_id"] = res["last_id"]
+    standing = ["TTL RED: " + x for x in ttl_findings(audit)] + res["loud"]
+    parts = []
+    if standing and (standing != state.get("standing") or now - state.get("nagged", 0) > RENAG_S):
+        parts += standing
+        state["nagged"] = now
+    state["standing"] = standing
+    if res["outside"]:
+        parts.append(census_text({"loud": [], "outside": res["outside"]}))
+    return ("hearing (astryx_ear): " + " | ".join(parts)) if parts else None
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────────────────────────────────────

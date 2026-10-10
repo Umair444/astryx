@@ -19,6 +19,7 @@ import FaceView from './components/FaceView'
 import AgentDrawer from './components/AgentDrawer'
 import VegaChat from './components/VegaChat'
 import PulseStrip from './components/PulseStrip'
+import EarControl from './components/EarControl'
 import Palette from './components/Palette'
 import { Orb } from './ui/kit'
 
@@ -247,6 +248,7 @@ function Shell() {
                 </span>
               </>
             )}
+            {who.owner && <EarControl view={route.tab} />}
             <KeyBadge />
           </span>
         </Group>

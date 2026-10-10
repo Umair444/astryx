@@ -206,11 +206,22 @@ try:
         want("the owner report names the outsider and says detection-grade", txt and OUT in txt and "detection" in txt, str(txt))
         res2 = E.reader_census(a, after_id=res["last_id"], doors=doors, auditors=auds, evt=EVT)
         want("the census is incremental (after_id): nothing new → no outsiders", res2["outside"] == [], str(res2))
+    # the OWNER report (what the shipped pulse trigger sends to `owner`), on the module's default door names
+    st, kw = {}, {"doors": doors, "auditors": auds, "evt": EVT}
+    with psycopg.connect(as_(AUD), autocommit=True) as a:
+        m1 = E.owner_report(st, a, **kw)
+        m2 = E.owner_report(st, a, **kw)
+    want("owner report: names the outsider once, then is quiet (incremental)", m1 and OUT in m1 and m2 is None,
+         f"{m1!r} / {m2!r}")
     with psycopg.connect(make_conninfo(ADMIN, dbname=DB), autocommit=True) as e:
         e.execute(sql.SQL("ALTER EVENT TRIGGER {} DISABLE").format(sql.Identifier(EVT)))
     with psycopg.connect(as_(AUD), autocommit=True) as a:
         loud = E.reader_census(a, doors=doors, auditors=auds, evt=EVT)["loud"]
+        m3, m4 = E.owner_report(st, a, **kw), E.owner_report(st, a, **kw)
+        m5 = E.owner_report(st, a, now=st["nagged"] + E.RENAG_S + 1, **kw)
     want("RED control: the trigger DISABLED → LOUD", any("DISABLED" in x for x in loud), str(loud))
+    want("owner report: a standing LOUD is sent once, re-nagged after a day, not every tick",
+         m3 and "DISABLED" in m3 and m4 is None and m5 and "DISABLED" in m5, f"{m3!r} / {m4!r} / {m5!r}")
     with psycopg.connect(make_conninfo(ADMIN, dbname=DB), autocommit=True) as e:
         e.execute(sql.SQL("DROP EVENT TRIGGER {}").format(sql.Identifier(EVT)))
     with psycopg.connect(as_(AUD), autocommit=True) as a:
