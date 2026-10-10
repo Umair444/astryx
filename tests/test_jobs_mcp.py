@@ -9,6 +9,8 @@ by URL and records every call; the register cache lives in a temp dir. Fixtures 
 
 Both directions, every tool:
   live posting → live=true            gone posting (404) → live=false
+  absent from a listed-only board → live=null    unknown host → live=null, nothing fetched
+  any host outside ALLOWED_HOSTS (redirect hops too) → refused, a loopback listener sees 0 hits
   match → rows                        no match → match_count 0 (and NOT an error)
   API/transport/shape failure → "error: ..."  — never live=false, never "no match"
 """
@@ -190,7 +192,10 @@ check("A1 id on board → live=true, comp, both locations", r and r["live"] is T
 check("A1 includeCompensation=true requested", CALLS and "includeCompensation=true" in CALLS[0])
 check("A1 relocation sentence", r and r["sponsorship_lines"] == ["We offer relocation assistance."], r)
 r = parse(S.ats_job("https://jobs.ashbyhq.com/example-co/u-2/application"))
-check("A2 board loaded, id absent → live=false", r and r["live"] is False, r)
+check("A2 board loaded, id absent → live=null (unlisted-but-live possible), not false",
+      r and r["live"] is None and "LISTED" in r["note"], r)
+r = parse(S.ats_job("https://jobs.ashbyhq.com/example-co/U-1"))
+check("A6 URL id in another case than the board's → live=true (a3 R1)", r and r["live"] is True, r)
 route(**{AB_API: (404, "")})
 out = S.ats_job("https://jobs.ashbyhq.com/example-co/u-1")
 check("A3 board 404 → error (missing board ≠ closed posting)", is_err(out), out)
@@ -200,20 +205,13 @@ route(**{AB_API: J({"unexpected": True})})
 check("A5 wrong shape → error", is_err(S.ats_job("https://jobs.ashbyhq.com/example-co/u-1")))
 
 print("ats_job · unknown host")
-route(**{"https://careers.example.org/": (200, "<h1>Analyst</h1><p>Apply now</p>")})
+route()  # no routes: any fetch would raise in the fake
 r = parse(S.ats_job("https://careers.example.org/job/9"))
-check("U1 200 → ats=unknown, live_guess=true, labelled a GUESS", r and r["ats"] == "unknown"
-      and r["live_guess"] is True and "GUESS" in r["note"] and "live" not in r, r)
-route(**{"https://careers.example.org/": (200, "<p>This job is no longer accepting applications</p>")})
-r = parse(S.ats_job("https://careers.example.org/job/9"))
-check("U2 closed phrase → live_guess=false", r and r["live_guess"] is False, r)
-route(**{"https://careers.example.org/": (404, "")})
-r = parse(S.ats_job("https://careers.example.org/job/9"))
-check("U3 404 → live_guess=false", r and r["live_guess"] is False, r)
-route(**{"https://careers.example.org/": S.FetchError("ConnectError")})
-check("U4 unreachable → error", is_err(S.ats_job("https://careers.example.org/job/9")))
-route(**{"https://careers.example.org/": (503, "")})
-check("U5 503 → error, not a guess", is_err(S.ats_job("https://careers.example.org/job/9")))
+check("U1 unknown host → ats=unknown, live=null, and NOTHING fetched", r and r["ats"] == "unknown"
+      and r["live"] is None and "nothing was fetched" in r["note"] and CALLS == [], (r, CALLS))
+r = parse(S.ats_job("http://127.0.0.1:8460/seed/ping?focus=1"))
+check("U2 loopback URL → unknown, nothing fetched (a3 R2)", r and r["live"] is None and CALLS == [],
+      (r, CALLS))
 check("U6 empty url → error", is_err(S.ats_job("")))
 
 print("ats_board")
@@ -350,6 +348,54 @@ try:
     check("P2 end-to-end transport failure through the real _fetch → error", is_err(out), out)
 finally:
     httpx.Client = real_client
+# a3 R2 arms against the REAL _fetch: a real loopback listener must see zero requests, and a
+# redirect from an allowed host to loopback is refused before the hop is sent.
+import http.server  # noqa: E402
+import threading  # noqa: E402
+HITS = []
+
+
+class _H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        HITS.append(self.path)
+        self.send_response(200); self.end_headers(); self.wfile.write(b"ok")
+
+    def log_message(self, *a):
+        pass
+
+
+srv = http.server.HTTPServer(("127.0.0.1", 0), _H)
+port = srv.server_address[1]
+threading.Thread(target=srv.serve_forever, daemon=True).start()
+reload_spec = importlib.util.spec_from_file_location("jobs_server3", REPO / "mcp" / "jobs" / "server.py")
+S3 = importlib.util.module_from_spec(reload_spec)
+reload_spec.loader.exec_module(S3)
+for u in (f"http://127.0.0.1:{port}/seed/ping?focus=1", f"https://127.0.0.1:{port}/x"):
+    try:
+        S3._fetch(u)
+        check(f"P5 real _fetch refuses {u.split(':')[0]} loopback", False, "no raise")
+    except S3.FetchError as e:
+        check(f"P5 real _fetch refuses {u.split(':')[0]} loopback", "refused" in str(e), str(e))
+out = S3.ats_job(f"http://127.0.0.1:{port}/seed/ping?focus=1")
+check("P6 ats_job on a loopback URL: no verdict", '"live": null' in out, out)
+SEEN = []
+
+
+def redirector(request):
+    SEEN.append(str(request.url))
+    return httpx.Response(302, headers={"location": f"http://127.0.0.1:{port}/seed/ping?focus=1"})
+
+
+S3.httpx.Client = lambda **kw: real_client(transport=httpx.MockTransport(redirector), **kw)
+try:
+    out = S3.ats_job("https://jobs.lever.co/example-co/abc-123")
+    check("P7 allowed host 302 → loopback: error, the hop never sent", is_err(out)
+          and len(SEEN) == 1 and "127.0.0.1" not in SEEN[0], (out, SEEN))
+finally:
+    httpx.Client = real_client
+time.sleep(0.2)
+check("P8 the loopback listener received ZERO requests", HITS == [], HITS)
+srv.shutdown()
 s = S._scrub("ConnectError: GET https://h.example/p?token=abc&x=1 failed")
 check("P3 scrub strips query strings", "token=abc" not in s and "https://h.example/p" in s, s)
 check("P4 scrub caps length", len(S._scrub("x" * 5000)) <= 240)

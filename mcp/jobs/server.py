@@ -77,12 +77,26 @@ def _scrub(e: BaseException | str) -> str:
     return s[:240]
 
 
+# The only hosts this server ever talks to: the ATS public APIs and gov.uk. Every request,
+# redirect hops included, is checked against it, so a URL read from a job email or page can
+# never steer a fetch at this machine's own services (a3 R2: SSRF to loopback).
+ALLOWED_HOSTS = frozenset({
+    "boards-api.greenhouse.io", "api.lever.co", "api.eu.lever.co", "api.ashbyhq.com",
+    "www.gov.uk", "assets.publishing.service.gov.uk"})
+
+
+def _host_gate(request: httpx.Request) -> None:
+    if request.url.scheme != "https" or (request.url.host or "").lower() not in ALLOWED_HOSTS:
+        raise FetchError(f"refused: {request.url.scheme}://{request.url.host} is not an allowed host")
+
+
 def _fetch(url: str) -> tuple[int, str]:
-    """GET → (status, body text). Raises FetchError when no HTTP answer arrives.
-    The one network seam: tests replace it."""
+    """GET → (status, body text). Raises FetchError when no HTTP answer arrives or the host
+    (on any redirect hop) is not in ALLOWED_HOSTS. The one network seam: tests replace it."""
     try:
         with httpx.Client(timeout=httpx.Timeout(TIMEOUT, connect=min(TIMEOUT, 10)),
-                          follow_redirects=True, headers={"User-Agent": UA}) as c:
+                          follow_redirects=True, headers={"User-Agent": UA},
+                          event_hooks={"request": [_host_gate]}) as c:
             r = c.get(url)
             return r.status_code, r.text
     except httpx.HTTPError as e:
@@ -209,7 +223,7 @@ def _detect(url: str) -> dict:
 
 # ── per-ATS posting fetchers (return dict, or raise ApiError) ────────────────
 
-def _base(ats: str, url: str, live: bool) -> dict:
+def _base(ats: str, url: str, live: bool | None) -> dict:
     return {"ats": ats, "live": live, "title": None, "location": None, "updated_at": None,
             "compensation": None, "sponsorship_lines": [], "requirements_excerpt": None,
             "questions": None, "url": url}
@@ -304,10 +318,14 @@ def _ashby_location(p: dict) -> str | None:
 
 def _ashby_job(d: dict, url: str) -> dict:
     jobs = _ashby_board(d["org"])
-    p = next((x for x in jobs if str(x.get("id")) == d["id"]), None)
+    want = d["id"].strip().lower()
+    p = next((x for x in jobs if str(x.get("id") or "").strip().lower() == want), None)
     if p is None:
-        out = _base("ashby", url, False)
-        out["note"] = "board loaded; this id is not among its listed postings"
+        # The job-board API lists LISTED postings only; a live direct-link (unlisted) posting is
+        # absent too. Absence is therefore not "the board says it's gone": no verdict (a3 R1).
+        out = _base("ashby", url, None)
+        out["note"] = ("board loaded; this id is not among its LISTED postings: closed, or "
+                       "unlisted but live. No verdict; open the link to check")
         return out
     out = _base("ashby", p.get("jobUrl") or url, True)
     out["title"] = p.get("title")
@@ -325,37 +343,11 @@ def _ashby_job(d: dict, url: str) -> dict:
     return out
 
 
-_CLOSED_RX = re.compile(
-    r"(?i)no longer (accepting|available|open|active)|position has been filled|"
-    r"job (posting )?(is |has )?(closed|expired)|this (job|role|position) (is )?no longer|"
-    r"page (you('re| are) looking for )?(could not be|can'?t be|cannot be) found")
-_HINT_RX = re.compile(r"(?i)(greenhouse\.io|lever\.co|ashbyhq\.com|myworkdayjobs\.com|"
-                      r"smartrecruiters\.com|workable\.com)")
-
-
 def _unknown_job(url: str) -> dict:
-    out = {"ats": "unknown", "url": url, "live_guess": None,
-           "live_guess_basis": None,
-           "note": "GUESS from a plain page fetch, not an ATS API verdict; "
-                   "client-rendered pages often look live after they close"}
-    try:
-        status, body = _fetch(url)
-    except FetchError as e:
-        raise ApiError(f"page unreachable ({e})") from None
-    hints = sorted({h.lower() for h in _HINT_RX.findall(body or "")})
-    if hints:
-        out["ats_hints_in_page"] = hints
-    if status in (404, 410):
-        out["live_guess"], out["live_guess_basis"] = False, f"HTTP {status}"
-    elif status == 200:
-        m = _CLOSED_RX.search(_html_to_text(body)[:200_000])
-        if m:
-            out["live_guess"], out["live_guess_basis"] = False, f"page text: '{m.group(0)}'"
-        else:
-            out["live_guess"], out["live_guess_basis"] = True, "HTTP 200, no closed-posting phrase"
-    else:
-        raise ApiError(f"page answered HTTP {status}")
-    return out
+    # No fetch: an arbitrary URL (often from an email or a page) is never requested (a3 R2).
+    return {"ats": "unknown", "url": url, "live": None,
+            "note": "not a Greenhouse/Lever/Ashby URL; nothing was fetched. "
+                    "Find the posting's ATS link, or open it in a browser"}
 
 
 @mcp.tool()
@@ -364,8 +356,8 @@ def ats_job(url: str) -> str:
     Returns JSON: ats, live, title, location, updated_at, compensation, sponsorship_lines
     (verbatim sentences mentioning visa/sponsor/relocation/right-to-work), requirements_excerpt,
     questions (label + required, Greenhouse only), url. live=false ONLY when the ATS said the
-    posting is gone; any API failure is "error: ...". Unknown hosts → ats='unknown' with a
-    clearly-labelled live_guess from a plain fetch."""
+    posting is gone; any API failure is "error: ...". live=null means no verdict (an Ashby id absent from its
+    listed postings). Unknown hosts → ats='unknown', live=null, and nothing is fetched."""
     url = (url or "").strip()
     if not url:
         return _err("empty url")
