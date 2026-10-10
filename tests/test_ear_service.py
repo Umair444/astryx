@@ -22,6 +22,7 @@ Arms (each with its RED control):
   RTF          MEASURED: model, compute type, clip length, wall time, real-time factor and load average, printed.
 NOT RUN (77) where a fixture database can't be made, or the clip/model/ffmpeg aren't on the host.
 """
+import ast
 import io
 import json
 import os
@@ -205,8 +206,19 @@ try:
         src = (REPO / "bridges" / "ear.py").read_text()
         code = re.sub(r'""".*?"""', "", src, flags=re.S)
         code = "\n".join(l.split("#", 1)[0] for l in code.splitlines())
-        want("bridges/ear.py has no code path to the wire: no messages write, no wire_insert, no NOTIFY",
-             not re.search(r"(?i)\binto\s+messages\b|wire_insert|pg_notify|\bnotify\b", code))
+        want("bridges/ear.py has no wire_insert and no SQL NOTIFY (threading's cv.notify() is not one)",
+             not re.search(r"(?i)wire_insert|pg_notify|\bnotify\s+[a-z_\"]", code))
+        # S2's wake is the ONE messages write, and its body is wake_body(hid): built from the hearing id alone,
+        # so no utterance text can reach the wire through it (tests/test_hearing.py checks the rows themselves).
+        tree = ast.parse(src)
+        sites = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and n.args and any(
+            isinstance(x, ast.Constant) and isinstance(x.value, str) and re.search(r"(?i)\binto\s+messages\b", x.value)
+            for x in ast.walk(n.args[0]))]
+        body = sites[0].args[1].elts[-1] if len(sites) == 1 and isinstance(sites[0].args[1], ast.Tuple) else None
+        wb = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "wake_body"]
+        want("ear.py writes messages at exactly ONE site, whose body is wake_body(hid), a function of the id only",
+             len(sites) == 1 and isinstance(body, ast.Call) and getattr(body.func, "id", "") == "wake_body"
+             and len(wb) == 1 and [a.arg for a in wb[0].args.args] == ["hid"], f"{len(sites)} sites")
 
         print("queue (drop-oldest, degraded)")
         from bridges import ear_stt

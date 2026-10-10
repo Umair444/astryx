@@ -782,3 +782,26 @@ CREATE TABLE IF NOT EXISTS utterances (
   backend text,                                        -- which STT backend heard it (cpu/cuda faster-whisper, ...)
   PRIMARY KEY (ts, id)
 ) PARTITION BY RANGE (ts);
+
+-- HEARINGS (plan-8674 S2, a4 #42048 D5): an agent's hear() caught its name in an utterance. This row is the POINTER
+-- the agent is woken with, and it carries NO TEXT by design (no text column exists): the words stay in `utterances`,
+-- reachable only through nucleus/ear_fetch.py as the addressed span (≤30 words from the name), fenced. When the
+-- utterance's day partition drops, the pointer outlives it and a fetch says the hearing expired.
+-- speaker_verified is TYPED provenance: nothing verifies a voice yet, so it is false and the CHECK keeps it false
+-- until a verifier ships and changes the CHECK on purpose.
+CREATE TABLE IF NOT EXISTS hearings (
+  id               bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  ts               timestamptz NOT NULL DEFAULT now(),
+  agent            text NOT NULL,
+  utterance_ts     timestamptz NOT NULL,
+  utterance_id     bigint NOT NULL,
+  matched_name     text NOT NULL,
+  mode             text NOT NULL DEFAULT 'focus' CHECK (mode IN ('focus')),
+  span_start       int NOT NULL CHECK (span_start >= 0),
+  span_end         int NOT NULL CHECK (span_end > span_start AND span_end - span_start <= 30),
+  speaker_verified boolean NOT NULL DEFAULT false CHECK (NOT speaker_verified),
+  woke             boolean NOT NULL DEFAULT false,      -- false: over the agent's wake cap (counted, visible)
+  msg_id           bigint,                              -- the wake's messages row
+  fetched_at       timestamptz                          -- the last ear_fetch.py read (door 2 is counted, never silent)
+);
+CREATE INDEX IF NOT EXISTS hearings_agent_ts ON hearings (agent, ts DESC);

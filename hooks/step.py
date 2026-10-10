@@ -95,8 +95,9 @@ def cleaner():
     replaces every string with WITHHELD, so nothing unredacted is ever written."""
     try:
         from nucleus.secretset import redact, secret_set
+        from nucleus.ear_fence import redact as unfence      # a fetched room span keeps its pointer, never its words
         secrets = secret_set()
-        return (lambda o: redact(o, secrets)), True
+        return (lambda o: unfence(redact(o, secrets))), True
     except Exception:
         def withhold(o):
             if isinstance(o, str):

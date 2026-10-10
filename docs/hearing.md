@@ -26,7 +26,7 @@ every other agent.** There is no separate ear database.
 | **Outside party, via the ear upload** | **PREVENTION.** Every `/ear/api/*` route except health needs the observatory owner key, sent in the `x-obs-key` header only. A query-string key, a cookie or CORS gets nothing, and a foreign `Origin` gets a 403. | `tests/test_ear_service.py`: an unauthenticated POST → **401, 0 rows**. A wrong key, a key in the query and a foreign origin are refused. The same checks pass through the observatory proxy, which adds no authority. |
 | The upload gate's strength | **The gate is exactly as strong as `OBS_KEY`'s exposure.** The ear takes it from the `x-obs-key` header only. But the observatory's pre-existing `eventsUrl()` puts the same key in `?key=` for SSE (EventSource can't send headers), so it can land in access logs and proxy or browser history. Stated, NOT fixed in S1. | `observatory/web/src/api.ts` `eventsUrl()`. |
 | **Outside party, via the database** | **Host-only.** genesis-pg binds 127.0.0.1:5432 only, persisted in `/home/umair/genesis/services/pg/docker-compose.yml`. | Measured 2026-10-10: `ss -ltn` shows LISTEN 127.0.0.1:5432 only; `docker inspect` PortBindings HostIp is 127.0.0.1 (container created 09:52Z). |
-| Outside party, via speech ("seed, push") | **Nothing to prevent in S1.** No agent receives any utterance. From S2 on this is detection plus an authenticated confirm (D5). | (S2) |
+| Outside party, via speech ("seed, push") | **Nothing to prevent in S1.** No agent receives any utterance. From S2 on, see the S2 sheet below. | (S2) |
 | Outside party, via DoS | **Bounded.** Only the owner can post. A segment is capped at 30 s or 2 MB. The STT queue is bounded and drops the OLDEST segment, and drops, backlog or a backend failure show as "degraded". | `test_ear_service.py` queue arms: 2 of 5 dropped, the newest survive, DEGRADED with the reason. |
 | **The raw transcript is never on the WIRE** | **The ear service never writes it to the wire: PREVENTION by construction.** The ear service has no code path that writes `messages`, calls `wire_insert` or NOTIFYs. A transcript is a row in `utterances`, nothing else. **Scope:** that construction covers the ear's own write paths only. `utterances` is readable by every agent (the ruling above), so an agent that SELECTs a row and quotes it in a `send` is outside it. That case is **convention-grade, not prevented**. | `test_ear_service.py`: after the fake and the real-whisper uploads no `messages` row carries the text and the wire count is unchanged; a static arm finds no wire write in `bridges/ear.py`. Red control: a planted `messages` row carrying the text IS seen by the same check. |
 | Text in the ear service's logs | **PREVENTION by construction.** No print or log carries text, errors are named by exception TYPE only, and audio is decoded in memory and never written to disk. | `test_ear_service.py`: the real service on real whisper transcribes a known clip. The row carries its words, and the whole stdout+stderr (what journald receives) carries **0** of them. Red control: a sink that `print()`s the text is caught by the same grep. Postgres-side: `log_statement=none`, and a failing statement logs placeholders, not parameters (`log_parameter_max_length_on_error=0`), as measured. |
@@ -60,3 +60,33 @@ Model load is 3–12 s. **On this CPU the ear is never faster than real time.** 
 4. Install the units (sudo) and restart the observatory so it picks up the `/ear/` proxy. Rebuild the web with `nucleus/deploy.sh`.
 5. Install the retention trigger: `printf 'from nucleus.shipped_triggers.ear_retention import ear_retention  # noqa: F401\n' > triggers/seed/ear_retention.py`.
 6. Verify: `venv/bin/python -m nucleus.ear_store ttl`.
+
+## S2: one agent hears its name (a4 #42048 D3 + D5)
+
+An agent opts in by having `sensors/<agent>/hear.py` (`def hear(utt) -> {"decision": "pass"|"ignore", "matched_name"}`;
+the contract is in `nucleus/hear_worker.py`). Each stored utterance goes to each opted-in agent's worker. A validated
+pass becomes a `hearings` row, a POINTER with no text, and, under the agent's hourly wake cap, one wake on the wire from
+`ear`, intent `hearing`. The agent reads what was said to it with `nucleus/ear_fetch.py <id>`.
+
+| piece | where |
+|---|---|
+| bwrap'd hear() workers: deadline, kill + respawn, bench after 3 overruns, hot reload on mtime | `nucleus/hear_pool.py`, `nucleus/hear_worker.py` |
+| The dispatcher's validation (its own name, present in the text, span ≤30 words from it) | `nucleus/hear_pool.validate` |
+| The pointer: `hearings` (no text column; typed `speaker_verified`, CHECKed false) | `nucleus/schema.sql` |
+| Wake + cap, its own thread and drop-oldest queue; `attending`/`caught` in status | `bridges/ear.py` `Hearing` |
+| Span-fetch (door 2), fenced | `nucleus/ear_fetch.py`, `nucleus/ear_fence.py` |
+| Fence redaction before every turns/steps write | `hooks/step.py` `cleaner()` |
+
+| party / path | grade | evidence (RED arm), all in `tests/test_hearing.py` unless named |
+|---|---|---|
+| A hear() that hangs (a TV chooses the text, a catastrophic regex) | **Bounded.** Killed at `EAR_HEAR_MS` (200 ms) after a ready handshake; 3 overruns in a row bench it for 60 s; counted per agent in status. Other agents still hear the same utterance. | a `while True` hear() is killed and seed still passes; benched after 3; a benched worker is skipped. |
+| A hear() that prints the utterance | **PREVENTION.** The worker's stdout and stderr are /dev/null; its one way out is the answer pipe. | 0 bytes of the text on the parent's stdout+stderr. RED control: the same hear() in-process prints it. |
+| What a hear() can reach | **PREVENTION by sandbox.** bwrap: no network, no /home (no `.env`, no repo), env of PATH and LANG only. Without bwrap the pool runs no hear() at all and attends nobody (fail closed for agents, open for the room). | the worker's env has no DSN although the parent's does; /home absent; a socket to 127.0.0.1:5432 fails; no-bwrap arm. |
+| A hear() lying about what it caught | **PREVENTION.** The dispatcher accepts a pass only for the agent's OWN name, present in the text; it sets the span itself (≤30 words from the name). Hearings' CHECKs repeat the bound. | another name, an absent name, gist, junk → no pass; a 99-word span → 30 from the name; a 31-word span row refused. |
+| The raw transcript on the WIRE (ear side) | **PREVENTION by construction, narrowed.** The ear's ONE `messages` write is the wake, and its body is `wake_body(hid)`, a function of the hearing id only. | the wake bodies carry no word of the utterance (RED control: the row does); `test_ear_service.py` static arm: exactly one site, body `wake_body(hid)`, no NOTIFY. |
+| The fetched copy in the org's tables | **PREVENTION for the fenced copy.** `hooks/step.py` redacts every `{{ear h<id>}}…{{/ear}}` to its pointer before turns/steps are written; an unterminated fence redacts to the end. | the cleaner drops the words and keeps the pointer; RED control: the secret redaction alone keeps them. |
+| A restatement outside the fence (the agent quotes it in its own words or a send) | **Not prevented; detection is S3** (the reconciler). | (S3) |
+| Who may fetch | **Detection grade.** `ear_fetch` serves only the hearing's own agent (`ASTRYX_AGENT`, same uid), stamps `fetched_at`. It is not an access boundary: `utterances` is readable by every agent by the owner's ruling. | another agent → exit 2, no words; `fetched_at` stamped. |
+| The pointer after retention | The pointer outlives the day; a fetch says **expired**. | the day's partition dropped → exit 3. |
+| Outside party, via speech ("seed, push") | **Typed provenance, no authority.** The wake comes from `ear`, never `owner`; its body and every fetch say the speaker is UNVERIFIED, and `hearings.speaker_verified` is CHECKed false. **NOT YET BUILT:** the authenticated confirm enforced by "the one tool that performs owner-authority acts" (D5), because that tool is not yet named. | (open question to the reviewer) |
+| Fan-out / wake flood | **Bounded.** `EAR_WAKE_CAP` wakes per agent per hour (default 6); over the cap the pointer is kept with `woke=false`, no wake, counted in status. The dispatcher's queue is 16, drop-oldest, counted. | cap 2: three passes → two wakes, the third pointer woke=false with no message. |
