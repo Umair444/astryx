@@ -269,7 +269,7 @@ _orig_run = m.Git.run
 
 def _hermetic_run(self, *args, stdin=None, check=False):      # the body's git sees the scrubbed env too
     r = subprocess.run(["git", "-C", str(self.repo), *args], input=stdin, capture_output=True, text=True,
-                       timeout=20, env=ENV)
+                       timeout=20, env=m.git_env(ENV) if hasattr(m, "git_env") else ENV)   # the body's own locale pin
     return r
 
 
@@ -536,9 +536,12 @@ check("  RED control: today's main as the base would read the range EMPTY (why t
 st, no, *_ = ev([msg(POST + 54, f"merge-ready: fs nosuchref..{s2[:7]}")])
 check("a ref that names nothing → a SYMBOLIC BASE notice naming the marker, 'nothing is watched'",
       f"SYMBOLIC BASE #{POST + 54}" in no and "nothing is watched" in no and st == "", st + " | " + no)
+# a1 #42063: the "only goes back to" guard reads git's WORDS, so the reflog arms run under a translated locale —
+# gettext honours LANGUAGE over LANG, and a German warning must not read as no warning
+ENV["LANGUAGE"] = "de"
 st, no, *_ = ev([msg(POST + 55, f"merge-ready: fs main..{s2[:7]}", ts=NOW - dt.timedelta(days=3650))])
-check("a reflog that does not reach the marker's time, head already merged → a SYMBOLIC BASE notice, never EMPTY "
-      "(git answers the log's OLDEST entry there, rc 0, warning only on stderr — that base would be too early)",
+check("a reflog that does not reach the marker's time, head already merged → a SYMBOLIC BASE notice, never EMPTY, "
+      "under LANGUAGE=de too (git answers the log's OLDEST entry there, rc 0, warning only on stderr — that base would be too early)",
       f"SYMBOLIC BASE #{POST + 55}" in no and "can't be recovered" in no and "is EMPTY" not in no and st == "",
       st + " | " + no)
 git("checkout", "-q", "-b", "fs2")
@@ -548,6 +551,7 @@ st, no, *_ = ev([msg(POST + 56, f"merge-ready: fs2 main..{s3[:7]}", ts=NOW - dt.
 check("  ...and an UNMERGED head before the log falls back to today's main: exactly its own commit, no wider",
       f"PASSED, not merged: {s3[:10]}" in st and st.count("PASSED, not merged") == 1 and "today's main" in st,
       st + " | " + no)
+del ENV["LANGUAGE"]
 git("push", "-q", "origin", "main")
 st, no, *_ = ev([R6], earlier=lambda mid, pre, br=None: [])
 check("UNREQUESTED prints for a marker no one asked for", f"UNREQUESTED #{POST + 30}" in no, no)
