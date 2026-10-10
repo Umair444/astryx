@@ -285,6 +285,8 @@ run "hands cell: per-lease egress, wipe on kill, step + wall caps" "$PY" tests/t
 run "hands desktop: real clicks/typing land, owner stop refuses, two small tools" "$PY" tests/test_hands_desktop.py
 # every org's database is localhost-only (owner 10-10): doctor's _pg_exposure, with ss that can't answer → UNVERIFIED
 run "doctor: postgres localhost-only, unverified when ss can't answer" bash tests/test_doctor_pg_exposure.sh
+# turns retention (owner 10-10: "add retention to save space"): old turns lose image bytes, keep their words
+run "turns retention: old images stripped, words kept, recent untouched, idempotent" "$PY" tests/test_turns_retention.py
 # geoloc /recent (a3 #32078, privacy): location history needs GEOLOC_TOKEN even from localhost, the
 # token compare is constant-time, and a malformed ingest token is a 401, never a 500. The body
 # (bridges/geoloc.py) is gitignored, so this SKIPs 77 on a clean clone. No location data is used.
