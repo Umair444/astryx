@@ -120,11 +120,56 @@ def screenshots():
     shutil.rmtree(out, ignore_errors=True)
 
 
+def centre_rgb(png):
+    """The centre pixel of a PNG, stdlib only (zlib), so the containment arm needs no image library and is
+    proven wherever chromium runs (steward #42008). Chromium writes 8-bit, non-interlaced RGB/RGBA; any
+    other format RAISES, so an unreadable screenshot is a crash, never a 'not red' pass."""
+    import struct
+    import zlib
+    data = Path(png).read_bytes()
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError(f"{png}: not a PNG")
+    pos, idat, hdr = 8, [], None
+    while pos < len(data):
+        n, kind = struct.unpack(">I4s", data[pos:pos + 8])
+        body = data[pos + 8:pos + 8 + n]
+        if kind == b"IHDR":
+            hdr = struct.unpack(">IIBBBBB", body)
+        elif kind == b"IDAT":
+            idat.append(body)
+        elif kind == b"IEND":
+            break
+        pos += 12 + n
+    w, h, depth, ctype, _, _, interlace = hdr
+    if depth != 8 or ctype not in (2, 6) or interlace:
+        raise ValueError(f"{png}: unsupported PNG (depth {depth}, colour type {ctype}, interlace {interlace})")
+    bpp = 3 if ctype == 2 else 4
+    stride, raw = w * bpp, zlib.decompress(b"".join(idat))
+    prev = bytearray(stride)
+    for y in range(h // 2 + 1):  # rows unfilter top-down, each against the one above
+        f, line = raw[y * (stride + 1)], bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
+        for i in range(stride):
+            a = line[i - bpp] if i >= bpp else 0
+            b, c = prev[i], (prev[i - bpp] if i >= bpp else 0)
+            if f == 1:
+                line[i] = (line[i] + a) & 255
+            elif f == 2:
+                line[i] = (line[i] + b) & 255
+            elif f == 3:
+                line[i] = (line[i] + (a + b) // 2) & 255
+            elif f == 4:
+                pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
+                line[i] = (line[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+            elif f != 0:
+                raise ValueError(f"{png}: bad filter type {f} on row {y}")
+        prev = line
+    x = (w // 2) * bpp
+    return tuple(prev[x:x + 3])
+
+
 def red(png):
     """True when the screenshot's centre is pure red (the canary's colour)."""
-    from PIL import Image
-    with Image.open(png) as im:
-        r, g, b = im.convert("RGB").getpixel((im.width // 2, im.height // 2))
+    r, g, b = centre_rgb(png)
     return r > 230 and g < 30 and b < 30
 
 
@@ -160,6 +205,24 @@ def containment():
     full = "<div style='position:fixed;inset:0;background:#f00'></div>"
     pngs, _ = cv.preview(9, page("redctl", full), str(TMP / "f2"), load=lambda c: {})
     arm("control: the pixel probe sees a red page as red", red(pngs[0]), pngs[0])
+    white = "<div style='position:fixed;inset:0;background:#fff'></div>"
+    wpngs, _ = cv.preview(9, page("whitectl", white), str(TMP / "f2w"), load=lambda c: {})
+    arm("control: the pixel probe reads a white page as exactly white, not red",
+        centre_rgb(wpngs[0]) == (255, 255, 255) and not red(wpngs[0]), centre_rgb(wpngs[0]))
+    try:
+        from PIL import Image
+    except ImportError:
+        print("  note  stdlib reader not cross-checked against Pillow (absent); the two controls above pin it")
+    else:
+        busy = ("<div style='position:fixed;inset:0;background:linear-gradient(37deg,#123,#f80 40%,#0c9 60%,#eee)'>"
+                + "<p style='font-size:31px;color:#a0f'>" + "medic ÿ 0123 " * 40 + "</p></div>")
+        cv.preview(9, page("busy", busy), str(TMP / "f2b"), load=lambda c: {})  # every filter type, not flat rows
+        shots = sorted(TMP.rglob("*.png"))
+        def pil_centre(p):
+            with Image.open(p) as im:
+                return im.convert("RGB").getpixel((im.width // 2, im.height // 2))
+        diff = [(p.name, centre_rgb(p), pil_centre(p)) for p in shots if centre_rgb(p) != pil_centre(p)]
+        arm(f"the stdlib reader agrees with Pillow on all {len(shots)} screenshots so far", shots and not diff, diff)
     canary = TMP / "canary.html"
     canary.write_text("<body style='margin:0;background:#f00'>CANARY</body>")
     pngs, _ = cv.preview(9, page("file", f"<script>location.href={json.dumps(canary.as_uri())}</script>"),
