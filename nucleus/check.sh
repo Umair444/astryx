@@ -315,6 +315,9 @@ run "tools door: registered scripts only, no shell, no server" "$PY" tests/test_
 # ran over shell scripts too, so a `'''` in code or a heredoc template described a tool by its body
 # (mcp/new.sh was registered as its template's placeholder). RED-first against the unscoped regex.
 run "toolreg: a tool's search text is its own header" "$PY" tests/test_toolreg_describe.py
+# jobs MCP: a posting is "closed" only when the board says so; transport, 5xx, 429, shape and
+# register-header failures are errors, never a false "closed". Hermetic (MockTransport, temp cache).
+run "jobs MCP: fail-closed ATS status + sponsor-register lookup" "$PY" tests/test_jobs_mcp.py
 # the tool nudge, O5 (goal 4227, S4): the REAL UserPromptSubmit hook against a fake loopback
 # classifier. It never exits non-zero (static, from the AST), stays silent and inside its hard
 # deadline whether the classifier is unset/down/hung/DRIPPING, refuses non-loopback endpoints
