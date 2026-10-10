@@ -119,12 +119,40 @@ r = P.compare(want, OK_INSPECT, OK_SHOW, OK_EXT, H, TAG_ID, unread=("zz_gone",))
 check("an unreadable database is REPORTED (not read: …), never silently dropped",
       r["drift"] == [] and any("not read: database zz_gone" in x for x in r["report"]), str(r))
 
+print("estate (a1 #43424: a tree without .env must read NOT SEARCHED, not crash):")
+import tempfile
+with tempfile.TemporaryDirectory() as td:
+    tree = Path(td)
+    try:
+        P._live(want, repo=tree)
+        got = "observed"
+    except P.Unobservable as e:
+        got = f"77: {e}"
+    except P.Broken as e:
+        got = f"1: {e}"
+    except Exception as e:                                # noqa: BLE001 — the old crash
+        got = f"CRASH {type(e).__name__}"
+    check("a committed-only tree (no .env, no triggers/) → NOT SEARCHED (77), never a crash", got.startswith("77:"), got)
+    (tree / "triggers").mkdir()
+    try:
+        P._live(want, repo=tree)
+        got = "observed"
+    except P.Unobservable as e:
+        got = f"77: {e}"
+    except P.Broken as e:
+        got = f"1: {e}"
+    except Exception as e:                                # noqa: BLE001
+        got = f"CRASH {type(e).__name__}"
+    check("the same tree with triggers/ (a LIVE host that lost its estate) → BROKEN (1), loud", got.startswith("1:"), got)
+
 print("live (read-only):")
 try:
     inspect, show, ext, tag_id, unread = P._live(want)
 except P.Unobservable as e:
     print(f"  SKIP  live: {e}")
     skips.append("live")
+except P.Broken as e:
+    check(f"LIVE: the estate is intact on a live host ({e})", False, str(e))
 else:
     got = P.compare(want, inspect, show, ext, P.helper_container(P.HELPER.read_text()), tag_id, unread)
     check("LIVE: the running server matches infra/pg", got["drift"] == [], str(got["drift"]))
