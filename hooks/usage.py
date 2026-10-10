@@ -58,11 +58,16 @@ try:
         import psycopg
         dsn = next(line.split("=", 1)[1].strip()
                    for line in open(REPO + "/.env") if line.startswith("ASTRYX_DSN="))
-        with psycopg.connect(dsn, connect_timeout=2) as conn:
+        # every statement is capped: this runs inside a 5s prompt-hook budget, on every prompt, for every
+        # agent, and a slow DB must cost the line, never the wake (owner 10-10: the hook timed out)
+        with psycopg.connect(dsn, connect_timeout=2, options="-c statement_timeout=1500") as conn:
             if agent:
+                # the high-water over the agent's RECENT turns: max() over all of them read every jsonb
+                # payload the agent ever wrote (1.6s for seed on 10-10, growing with every turn)
                 r = conn.execute(
-                    "SELECT coalesce(max((raw_payload->'usage'->>'context')::bigint),0) "
-                    "FROM turns WHERE agent=%s", (agent,)).fetchone()
+                    "SELECT coalesce(max((raw_payload->'usage'->>'context')::bigint),0) FROM "
+                    "(SELECT raw_payload FROM turns WHERE agent=%s ORDER BY id DESC LIMIT 200) t",
+                    (agent,)).fetchone()
                 high = int(r[0]) if r else 0
             g = conn.execute(
                 "SELECT five_hour_pct, seven_day_pct, five_hour_reset "
