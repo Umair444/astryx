@@ -17,6 +17,12 @@ own arms live in tests/test_copies.py, which never skips. Arms:
   S2e       a library slug equal to a wiki stem makes two nodes; the wiki page's text is untouched.
   S2f       a library [[link]] resolves inside the library namespace.
   S2g       editing a library book reads STALE against the stamp (the library is a root), and a rebuild is FRESH.
+  a3 #44327's four leaks, each a RED on 86a5c1f6:
+  P1        a book admitted in one build (parent + section children), then tagged career: after the rebuild NO
+            library node is admitted and none carries the planted line (derive at use, not MERGE-only).
+  P2        `tags:` as a YAML block list holding career → dark.
+  P3        a career book's ABSTRACT carrying the plant → dark, and the plant is not in its text.
+  P4        `tags: [career]` then `tags: []` → dark.
 Exit 0 pass · 1 fail · 77 could-not-run.
 """
 import importlib.util
@@ -68,6 +74,12 @@ PLANT = "PLANTED-EMPLOYER-LINE"
 (LIB / "lane.md").write_text(f'---\ntitle: "Lane"\ntags: [agents, career]\n---\n{PLANT}\n')
 (LIB / "control.md").write_text(f'---\ntitle: "Control"\ntags: [agents]\n---\n{PLANT}\n')
 (LIB / "broken.md").write_text('---\ntitle: "Broken"\nno closing fence, gamma body\n')
+FILL = " ".join(["filler"] * 450)
+BIG = "".join(f"## part {i}\n{FILL} {PLANT if i == 2 else ''}\n\n" for i in range(4))
+(LIB / "grows.md").write_text(f'---\ntitle: "Grows"\ntags: [agents]\n---\n{BIG}')
+(LIB / "block.md").write_text(f'---\ntitle: "Block"\ntags:\n  - career\n---\n{PLANT}\n')
+(LIB / "abs.md").write_text(f'---\ntitle: "Abs"\nabstract: "{PLANT} in summary"\ntags: [career]\n---\nbody\n')
+(LIB / "dup.md").write_text(f'---\ntitle: "Dup"\ntags: [career]\ntags: []\n---\n{PLANT}\n')
 (LIB / "a.md").write_text('---\ntitle: "Library a"\ntags: [org]\n---\nlibrary-a body links [[clean]]\n')
 DECL = {"name": "graph:memory", "kind": "age_graph", "graph": "memory", "comparator": "root_digest",
         "roots": ["memory/wiki/*.md", "memory/library/**/*.md", "memory/ontology.md"], "reads": ["kg.claim incidence"],
@@ -140,6 +152,21 @@ try:
               ladm and "library-a body" in ltxt and "library-a body" not in wtxt and "alpha" in wtxt, (wtxt, ltxt))
         check("S2f a library link resolves inside the library", linked("library:shelf/a", "library:shelf/clean")
               and not linked("library:shelf/clean", "a"), "")
+        def leaked():
+            return conn.execute("SELECT * FROM cypher('memory', $$ MATCH (c:Concept) WHERE c.source = 'library' "
+                                "AND (c.admitted = true AND c.text CONTAINS '%s') AND NOT c.name STARTS WITH "
+                                "'library:shelf/control' RETURN c.name $$) AS (n agtype)" % PLANT).fetchall()
+        kids = conn.execute("SELECT * FROM cypher('memory', $$ MATCH (c:Concept) WHERE c.name STARTS WITH "
+                            "'library:shelf/grows#' AND c.admitted = true RETURN c.name $$) AS (n agtype)").fetchall()
+        check("P1 precondition: the untagged book's sections are admitted children", len(kids) >= 2, repr(kids))
+        for nm in ("block", "abs", "dup"):
+            adm, txt = node(f"library:shelf/{nm}")
+            check(f"P2-4 {nm}: dark, no plant in its text", adm is False and PLANT not in txt, (adm, txt))
+        (LIB / "grows.md").write_text(f'---\ntitle: "Grows"\ntags: [agents, career]\n---\n{BIG}')
+        ing.run_ingest(fx["dsn"])
+        check("P1 tagged career after admission: no library node leaks the plant", not leaked(), repr(leaked()))
+        adm, txt = node("library:shelf/grows")
+        check("P1 …and the parent is dark, title only", adm is False and txt.strip('"') == "Grows", (adm, txt))
         res = C.check(conn, [DECL], root)
         check("S2g after the rebuild → FRESH", res and res[0][1] == "FRESH", repr(res))
         (LIB / "clean.md").write_text('---\ntitle: "Clean"\ntags: [org]\n---\nbeta body, edited\n')
