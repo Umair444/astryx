@@ -10,7 +10,7 @@ proprioception, not supervision.
 SOURCES. Context: the session's own transcript tail (the hook is handed the path; the last
 usage block IS the load, accurate mid-session). Window proof + plan gauges: postgres —
 turns.raw_payload->usage->context high-water proves a window floor (an observed load of N
-is durable proof the window >= N), and the latest fresh usage_snapshot carries the account's
+is proof the window >= N, read from the newest 200 turns, so the proof is RECENT, not durable), and the latest fresh usage_snapshot carries the account's
 5h/7d utilization written by the Stop hook. The DB is the truth; no inference engine, no
 var/ state. (Replaces the tokenwatch high-water machinery, deleted the same day.)
 
@@ -58,9 +58,9 @@ try:
         import psycopg
         dsn = next(line.split("=", 1)[1].strip()
                    for line in open(REPO + "/.env") if line.startswith("ASTRYX_DSN="))
-        # every statement is capped: this runs inside a 5s prompt-hook budget, on every prompt, for every
+        # every statement is capped (worst path 1s connect + 3 x 0.9s, under 5s): this runs inside a 5s prompt-hook budget, on every prompt, for every
         # agent, and a slow DB must cost the line, never the wake (owner 10-10: the hook timed out)
-        with psycopg.connect(dsn, connect_timeout=2, options="-c statement_timeout=1500") as conn:
+        with psycopg.connect(dsn, connect_timeout=1, options="-c statement_timeout=900") as conn:
             if agent:
                 # the high-water over the agent's RECENT turns: max() over all of them read every jsonb
                 # payload the agent ever wrote (1.6s for seed on 10-10, growing with every turn)
