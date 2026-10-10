@@ -254,7 +254,7 @@ def run(branch: str, main_ref: str = "main") -> int:
             r1, r2 = sums["branch"]["sqlguard_red"], again["sqlguard_red"]
             # a branch-only sqlguard finding must REPRODUCE too (FLAKY != REGRESSED)
             sums["branch"]["sqlguard_red"] = None if r1 is None or r2 is None else {i: l for i, l in r1.items() if i in r2}
-        rc = report(sha, sums, witness, est, refs=gate_refs(repo["branch"]))
+        rc = report(sha, sums, witness, est, refs=gate_refs(repo["branch"]), touched=touched_files(sha))
     except prep.Refuse as e:
         print(f"branch_check: REFUSED (rc 77): {e}")
         rc = 77
@@ -266,7 +266,19 @@ def run(branch: str, main_ref: str = "main") -> int:
     return rc
 
 
-def report(sha: dict, sums: dict, witness: dict, est: dict, refs: dict = None) -> int:
+def touched_files(sha: dict) -> set:
+    """The files the branch changes (main..branch), from the live repo; empty if git can't say."""
+    p = subprocess.run(["git", "diff", "--name-only", sha["main"], sha["branch"]], cwd=LIVE, capture_output=True, text=True)
+    return set(p.stdout.split()) if p.returncode == 0 else set()
+
+
+def sqlguard_module(line: str):
+    """'R-NEW nucleus/x.py::f :: …' → 'nucleus/x.py' (None if the line names no module)."""
+    mt = re.match(r"R-[A-Z]+ (\S+?)::", line)
+    return mt.group(1) if mt else None
+
+
+def report(sha: dict, sums: dict, witness: dict, est: dict, refs: dict = None, touched: set = None) -> int:
     m, b = sums["main"], sums["branch"]
     print(f"branch_check {sha['branch'][:7]} vs main {sha['main'][:7]}")
     for side in ("main", "branch"):
@@ -293,6 +305,16 @@ def report(sha: dict, sums: dict, witness: dict, est: dict, refs: dict = None) -
         regressed += [f"{SQLGUARD_GATE} → {l}" for l in sg_new if l not in excused]
         print(f"  sqlguard judged DIFFERENTIALLY: {len(br)} RED on the branch, {len(mr)} on main, "
               f"{len(sg_new)} only on the branch")
+        # the per-site differential a reviewer otherwise rebuilds by hand from KEEP_LOGS (a2 night-review 10-11):
+        # which of main's reds the branch clears, and which reds it leaves standing in the very files it touches
+        cleared = sorted(l for i, l in mr.items() if i not in br)
+        standing = sorted(l for i, l in br.items() if i in mr and sqlguard_module(l) in (touched or set()))
+        for label, xs in (("sqlguard sites the branch CLEARS", cleared),
+                          ("sqlguard sites still RED in files the branch touches", standing)):
+            if xs:
+                print(f"  {label}: {len(xs)}")
+                for x in xs:
+                    print(f"    {x}")
     fixed = sorted(set(m["failed"]) - set(b["failed"]))
     newly_unverified = sorted(set(b["unverified"]) - set(m["unverified"]))
     for label, xs in (("REGRESSED (fails on the branch, not on main, and again on a rerun)", regressed),
