@@ -14,6 +14,7 @@ import importlib.util
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -180,6 +181,44 @@ else:
     time.sleep(0.3)
     check("X3 the page's loopback references reached the listener ZERO times", HITS == [], HITS)
     srv.shutdown()
+
+    # X4 (a1 #44856 F1): the renderer reads nothing outside the html's own folder.
+    outside2 = Path(tempfile.mkdtemp(prefix="docpdf-canary.")).resolve()
+    (outside2 / "secret.txt").write_text("CANARY-OUTSIDE-7731")
+    sub = root / "x4"; sub.mkdir()
+    (sub / "sibling.txt").write_text("SIBLING-INSIDE-4410")
+    sec = (outside2 / "secret.txt").as_uri()
+    (sub / "x4.html").write_text(f"""<body><p>Example Person</p>
+<iframe src="sibling.txt"></iframe>
+<iframe src="{sec}"></iframe><object data="{sec}"></object><embed src="{sec}">
+</body>""")
+    o = R.html_to_pdf(str(sub / "x4.html"), str(sub / "x4.pdf"))
+    txt = subprocess.run(["pdftotext", str(sub / "x4.pdf"), "-"], capture_output=True,
+                         text=True).stdout if not is_err(o) else ""
+    check("X4 control: a sibling file in the doc's folder DOES render (the frame works)",
+          "SIBLING-INSIDE-4410" in txt, o)
+    check("X4 file:// iframe/object/embed outside the folder: canary ABSENT", not is_err(o)
+          and "CANARY-OUTSIDE-7731" not in txt, txt[:200])
+    shutil.rmtree(outside2)
+
+    # X5 (a1 #44856 F2): no protocol leaves, WebRTC/UDP included.
+    import socket
+    us = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); us.bind(("127.0.0.1", 0)); us.settimeout(0.1)
+    uport = us.getsockname()[1]
+    (root / "x5.html").write_text(f"""<body><p>Example Person</p><script>
+const pc=new RTCPeerConnection({{iceServers:[{{urls:"stun:127.0.0.1:{uport}"}}]}});
+pc.createDataChannel("x");pc.createOffer().then(o=>pc.setLocalDescription(o));
+</script><p>pad</p></body>""")
+    R.html_to_pdf(str(root / "x5.html"), str(root / "x5.pdf"))
+    dgrams = 0
+    t_end = time.time() + 2
+    while time.time() < t_end:
+        try:
+            us.recvfrom(2048); dgrams += 1
+        except socket.timeout:
+            pass
+    us.close()
+    check("X5 a WebRTC STUN page sends ZERO datagrams to a real UDP listener", dgrams == 0, dgrams)
 
 shutil.rmtree(root)
 print(f"\n{'FAIL' if fails else 'OK'}: {len(fails)} failing")

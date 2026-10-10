@@ -8,8 +8,9 @@ under a delivery name. Generic: CVs, reports, one-pagers — the caller supplies
 Boundaries (the HTML is a document, never a browser session):
 - paths: absolute, resolved (symlinks and `..` followed) and confined to ALLOWED_ROOT
   (default <repo>/homes; DOCPDF_ROOT overrides); input must end .html/.htm, outputs .pdf.
-- network: Chromium runs behind a dead proxy, so a page cannot fetch anything (no remote fonts,
-  images, or beacons; file:// still loads). Inline your CSS.
+- sandbox: Chromium runs inside bwrap with its own network namespace and a filesystem of /usr,
+  fonts, the html's directory (read-only) and the output directory only. The page reaches no
+  network (any protocol) and no file outside its own folder. Keep assets beside it.
 - fail closed: a missing Chromium, a render failure, a timeout, an empty/unreadable PDF, or a
   page cap exceeded is "error: ...", and a failed render never overwrites a good PDF.
 
@@ -66,19 +67,33 @@ def _chromium() -> str:
 
 
 def _render(html: Path, out: Path) -> None:
-    """Chromium print-to-pdf into `out`. The one process seam: tests replace it."""
-    with tempfile.TemporaryDirectory(prefix="docpdf-profile.") as prof:
-        cmd = [_chromium(), "--headless", "--disable-gpu", "--no-first-run",
-               f"--user-data-dir={prof}",
-               # a dead proxy for every scheme, loopback included: the page fetches nothing
-               "--proxy-server=socks5://127.0.0.1:9", "--proxy-bypass-list=<-loopback>",
-               "--no-pdf-header-footer", f"--print-to-pdf={out}", html.as_uri()]
-        try:
-            r = subprocess.run(cmd, capture_output=True, timeout=RENDER_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            raise DocError(f"render timed out after {RENDER_TIMEOUT}s") from None
-        if r.returncode != 0:
-            raise DocError(f"chromium exited {r.returncode}")
+    """Chromium print-to-pdf into `out`, inside a bwrap sandbox. The one process seam: tests
+    replace it. The sandbox is the boundary (a1 REVISE #44856): its own network namespace
+    (no protocol leaves, WebRTC/UDP included), and a filesystem holding only /usr, fonts, the
+    html's own directory (read-only, at /doc) and the output directory (at /out), so a
+    file:// iframe/object/embed can read nothing outside the document's folder. No bwrap →
+    error; never an unsandboxed render. The dead proxy is a second layer. (scriptEnabled=false is NOT used: it makes headless print-to-pdf write nothing.)"""
+    bwrap = shutil.which("bwrap")
+    if not bwrap:
+        raise DocError("bwrap is not installed; refusing to render unsandboxed")
+    chromium = _chromium()
+    cmd = [bwrap, "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib",
+           "--symlink", "usr/lib", "/lib64", "--symlink", "usr/bin", "/bin",
+           "--ro-bind", "/etc/fonts", "/etc/fonts", "--proc", "/proc", "--dev", "/dev",
+           "--tmpfs", "/tmp", "--ro-bind", str(html.parent), "/doc",
+           "--bind", str(out.parent), "/out", "--unshare-all", "--die-with-parent",
+           "--setenv", "HOME", "/tmp",
+           chromium, "--headless", "--disable-gpu", "--no-sandbox", "--no-first-run",
+           "--user-data-dir=/tmp/prof",
+           "--proxy-server=socks5://127.0.0.1:9", "--proxy-bypass-list=<-loopback>",
+           "--no-pdf-header-footer", f"--print-to-pdf=/out/{out.name}",
+           (Path("/doc") / html.name).as_uri()]
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=RENDER_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        raise DocError(f"render timed out after {RENDER_TIMEOUT}s") from None
+    if r.returncode != 0:
+        raise DocError(f"sandboxed chromium exited {r.returncode}")
 
 
 def _inspect(pdf: Path) -> dict:
@@ -105,7 +120,7 @@ def html_to_pdf(html_path: str, pdf_path: str, max_pages: int = 0, copy_to: str 
     Paths are absolute and must sit under the allowed root (the org's homes/ by default).
     max_pages > 0 fails the call (and leaves any existing PDF untouched) when the render runs
     longer. copy_to (optional .pdf path) receives a byte-identical copy, e.g. a delivery name.
-    The page cannot fetch from the network; inline CSS and fonts.
+    Sandboxed: no network, no files outside the html's own folder.
     Returns JSON: pdf, pages, bytes, text_chars, first_text_line, copy. Any failure is
     "error: ..." (never a half-written PDF)."""
     try:
@@ -128,7 +143,9 @@ def html_to_pdf(html_path: str, pdf_path: str, max_pages: int = 0, copy_to: str 
                 raise DocError("PDF has no extractable text (an ATS would read it as blank)")
             tmp.replace(out)
         if dest:
-            shutil.copyfile(out, dest)
+            if dest.is_symlink():
+                raise DocError("copy_to is a symlink; refusing to write through it")
+            shutil.copyfile(out, dest, follow_symlinks=False)
         first = next((l.strip() for l in text.splitlines() if l.strip()), "")
         return json.dumps({"pdf": str(out), "pages": meta["pages"], "bytes": out.stat().st_size,
                            "text_chars": len(text), "first_text_line": first[:120],
