@@ -65,7 +65,11 @@ with tempfile.TemporaryDirectory() as td:
             raise SystemExit(f"node driver failed: {r.stderr[-400:]}")
         return json.loads(r.stdout)
 
-    import numpy as np
+    try:
+        import numpy as np
+    except ImportError as e:
+        print(f"SKIP: {e} — needs the org runtime; VERIFIED NOTHING")
+        sys.exit(77)
     rng = np.random.default_rng(8674)
     quiet = (rng.standard_normal(48000 * 5) * 10 ** (-60 / 20)).astype(np.float32)
     (t / "quiet.f32").write_bytes(quiet.tobytes())
