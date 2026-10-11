@@ -155,6 +155,7 @@ EXEMPT = {
     # prompt, which is the whole point of it (the standing rule it serves is about
     # what a human TYPES; the shell wrapper that lies is not present in scripts).
     "nucleus/estate_grep.sh": "manual: the estate search an agent TYPES — org-news #12934 names it as the rule's implementation; its oracle test_estate_grep.py is what check.sh runs",
+    "nucleus/review_range.sh": "manual: the range an agent TYPES for a review-request or merge-ready marker (a4 night-review 10-12); its oracle test_review_range.py is what check.sh runs",
     "nucleus/apply_receipt.py": "manual: operator-run at deploy — seed applies a PASSed gitignored body with it and posts the "
                                 "`applied:` receipt it prints (plan-5791 staging protocol, a3 BC-3); its oracle "
                                 "test_merge_ready.py is what check.sh runs",
