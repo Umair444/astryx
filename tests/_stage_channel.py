@@ -2,7 +2,9 @@
 doorbell). Staging only server.mjs broke all three on 10-11: 0c95e37 made it import ./trigger_name.mjs statically,
 and the lone copy crashed at startup ("the probe server never LISTENed"). So the server's sibling modules are staged
 by DERIVATION (every channel/*.mjs), with node_modules linked, never a hand list. A new oracle that stages the
-server calls this; tests/test_stage_channel_users.py fails any test that copies server.mjs by itself."""
+server calls this. tests/test_stage_channel_users.py is a SPELLING detector (it catches the 10-11 spellings and checks
+the helper has users); the real boundary is behavioural: a server staged without its siblings can't LISTEN, so its own
+oracle reads RED or 77 (a2 #46304)."""
 import shutil
 from pathlib import Path
 
