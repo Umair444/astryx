@@ -12,7 +12,7 @@
 //     refusing first means the text never claims an attachment that isn't there);
 //   · with a sender: the file must resolve inside the SENDER's attachable roots — the early mirror of
 //     bridges/embed_root.py (plan-9139, a1 #49775), which is the enforcement. Home (minus .people), its own Claude
-//     scratchpads, media/, tier/; never an .env* name. tier/ is allowed HERE because only the bridge knows the
+//     scratchpads, media/, tier/; never an .env* name, never a dot-path under the home (steward #49918 F1a). tier/ is allowed HERE because only the bridge knows the
 //     audience (owner-only or not) — the bridge refuses tier/ toward anyone else and says so on the receipt.
 import { statSync, realpathSync } from 'node:fs'
 import { isAbsolute, relative, sep, basename } from 'node:path'
@@ -65,7 +65,10 @@ export function embedProblems(body, { sender, repo, scratchBase } = {}) {
         const rp = real(p)
         if (basename(rp).startsWith('.env')) out.push(`[[file:${p}]]: an .env file is never attached`)
         else if (!roots) out.push(`[[file:${p}]]: sender ${JSON.stringify(sender)} is not an agent name`)
-        else if (under(rp, `${roots.home}/.people`)) out.push(`[[file:${p}]]: the people graph is never attached`)
+        else if (under(rp, roots.home) && relative(roots.home, rp).split(sep).some((c) => c.startsWith('.'))) {
+          out.push(`[[file:${p}]]: a dot-path in your home (state or credentials: .people, .browser-profile, .claude) ` +
+                   'is never attached; move the file to a plain path')
+        }
         else if (!roots.list.some((r) => under(rp, r))) {
           out.push(`[[file:${p}]] is outside ${sender}'s attachable roots (its home, its scratchpad, media/, tier/); ` +
                    'the bridge would refuse it. Copy the file into your home or media/ first')

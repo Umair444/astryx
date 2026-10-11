@@ -6,7 +6,8 @@ to the chat, so a sender needed no read capability to exfiltrate a file — nami
 (a group, a guest) a body the outside steered ("attach /…/.env") shipped the file. The boundary is HERE, at the
 reader, and it is derived from the sender's IDENTITY (the row's from_agent), never from the body or the thread:
 
-  allowed roots   homes/<from_agent>/                     the sender's own home (minus .people, the people graph)
+  allowed roots   homes/<from_agent>/                     the sender's own home, minus every dot-path under it
+                                                          (.people, .browser-profile, .claude: state, credentials)
                   /tmp/claude-<uid>/<home-encoded>/         the sender's own Claude scratchpads, every session
                   media/                                  the org's shared, deliberately-placed media
                   tier/                                   ONLY when the audience is the owner alone
@@ -53,7 +54,8 @@ def scratch_root(home: Path) -> Path:
 
 
 def roots(from_agent: str, audience_is_owner: bool) -> list[Path]:
-    """The resolved directories `from_agent` may attach from, toward this audience. [] for a non-agent name."""
+    """The resolved directories `from_agent` may attach from, toward this audience. [] for a non-agent name.
+    roots[0] is the home and roots[1] the scratch root."""
     if not isinstance(from_agent, str) or not AGENT_NAME.fullmatch(from_agent):
         return []
     home = HOMES / from_agent
@@ -71,8 +73,10 @@ def _judge(real: Path, from_agent: str, audience_is_owner: bool) -> str | None:
     if not rs:
         return f"sender {from_agent!r} is not an agent name"
     home = rs[0]
-    if real.is_relative_to(home / ".people"):
-        return "the people graph (.people) is never attached"
+    if real.is_relative_to(home) and any(part.startswith(".") for part in real.relative_to(home).parts):
+        # .people (the people graph), .browser-profile (cookies, sessions), .claude, .mcp.json: state and
+        # credentials, never attachments (steward #49918 F1a). A file meant for a human lives in a plain path.
+        return "a dot-path in the sender's home (state or credentials) is never attached"
     if any(real.is_relative_to(r) for r in rs):
         return None
     if not audience_is_owner and real.is_relative_to(_real(TIER)):

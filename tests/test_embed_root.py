@@ -5,9 +5,9 @@ a4 #49789, steward #49904). Three parts:
   WIRING  each bridge's outbound file loop reads ONLY through read_checked(f, agent, owner_only(<channel>, route)),
           with agent = row["from_agent"], and no raw read of the path is left.
   CENSUS  `--census`, live host only (rc 77 NOT SEARCHED without a DSN): every [[file:]] ever sent to a human on a BRIDGE
-          surface up to msg 49134, through the rule. Exactly two are refused: a /tmp path outside the sender's
-          scratchpad (msg 933), and a tier/ file that was delivered to a WhatsApp GROUP (msg 19814): the leak class
-          this closes. Canvas rows (cv:) are out of scope: the canvas has its own viewer-keyed gate.
+          surface up to msg 49134, through the rule. Refused: a /tmp path outside the sender's scratchpad (msg 933),
+          a tier/ file delivered to a WhatsApp GROUP (msg 19814; the leak class this closes), and 2 embeds under a
+          home dot-dir (the dot rule). Canvas rows (cv:) are out of scope: the canvas has its own viewer-keyed gate.
 """
 import json
 import os
@@ -125,6 +125,15 @@ arm("owner_only: a Telegram group is not", not E.owner_only("telegram", {"enable
 arm("owner_only: a Discord channel is not (channels are groups)", not E.owner_only("discord", {"enabled": True, "chat": "1000000000000000001", "counterpart": "owner"}))
 arm("owner_only: a disabled or missing route is not", not E.owner_only("whatsapp", {**route_dm_owner, "enabled": False}) and not E.owner_only("whatsapp", None))
 
+# Dot-paths and tier homes (steward #49918 F1):
+prof = E.HOMES / "alpha" / ".browser-profile" / "Default"
+prof.mkdir(parents=True)
+(prof / "Cookies").write_bytes(b"session")
+(E.HOMES / "alpha" / ".mcp.json").write_text("{}")
+arm("a .browser-profile file in the home: refused, even toward the owner", refused(prof / "Cookies", owner=True))
+arm("a dot-file directly in the home (.mcp.json): refused", refused(E.HOMES / "alpha" / ".mcp.json", owner=True))
+arm("control: a plain non-dot file in the sender's home goes to a group", not refused(files["home"], owner=False))
+
 # ── WIRING ───────────────────────────────────────────────────────────────────────────────────────────────────────
 for ch, extra_bad in (("discord", ("path.read_bytes()", "discord.File(str(p))")),
                       ("telegram", ("p.read_bytes()",)),
@@ -148,6 +157,7 @@ for ch, extra_bad in (("discord", ("path.read_bytes()", "discord.File(str(p))"))
         or '_fail(f"refused: {e}")' in src)
 
 # ── CENSUS (live host) ───────────────────────────────────────────────────────────────────────────────────────────
+DOT_AND_TWO = 4   # measured 2026-10-12: 933, 19814, and 2 embeds under a home dot-dir (.playwright-mcp)
 LIVE = Path(os.environ.get("ASTRYX_LIVE_REPO") or REPO)   # a worktree has no .env/homes/routes: point it at the host
 
 
@@ -172,7 +182,7 @@ def census():
         R[ch] = json.loads(f.read_text()) if f.is_file() else []
     def route(ch, chat):
         return next((r for r in R[ch] if str(r.get("chat")) == str(chat) and r.get("enabled")), None)
-    out, n = set(), 0
+    out, n, allowed_n = set(), 0, 0
     for mid, frm, thread, to, body in rows:
         if thread.startswith("dc:") or to.startswith("dc-"):
             ch, chat = "discord", thread[3:] if thread.startswith("dc:") else to[3:]
@@ -187,7 +197,9 @@ def census():
             real, _ = E.allowed(p, frm, E.owner_only(ch, route(ch, chat)))
             if real is None:
                 out.add(mid)
-    return n, out
+            else:
+                allowed_n += 1
+    return n, out, allowed_n
 
 searched = True
 if "--census" in sys.argv:            # its own check.sh line, so a no-DSN tree reads only the CENSUS as NOT SEARCHED
@@ -200,9 +212,9 @@ if res is None:
     print("  NOT SEARCHED  census: no DSN or no psycopg here (a committed-only tree)")
     searched = False
 elif res != "skip":
-    n, ids = res
-    arm(f"census: {n} real bridge-surface embeds; refused exactly msgs 933 (/tmp) and 19814 (tier/ to a group), got {sorted(ids)}",
-        ids == {933, 19814} and n >= 35)
+    n, ids, ok_n = res
+    arm(f"census: of {n} real embeds, refused exactly 933 (/tmp), 19814 (tier/ to a group) and the dot-path "
+        f"screenshots ({sorted(ids)})", {933, 19814} <= ids and ok_n == n - DOT_AND_TWO and n >= 35)
 
 import shutil  # noqa: E402
 shutil.rmtree(tmp, ignore_errors=True)
