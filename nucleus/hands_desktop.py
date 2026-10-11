@@ -36,10 +36,16 @@ OWNER STOP: the owner can stop an agent's hands from the observatory at any mome
 in the state dir. While it exists every action refuses with "the owner stopped your hands", and
 the agent is told so. Resume removes it.
 
+CAPS (plan-7862, seed's binding item): every AGENT (the resident, not the desktop) has a STEP cap and a WALL-TIME
+cap per session (a run of its actions with no gap longer than HANDS_CAP_IDLE_S). At either cap every call refuses,
+naming the cap, until the agent has been idle that long or the owner resets it. .env: HANDS_STEP_CAP (300),
+HANDS_WALL_CAP_S (3600), HANDS_CAP_IDLE_S (600).
+
     venv/bin/python nucleus/hands_desktop.py up <agent>
     venv/bin/python nucleus/hands_desktop.py down <agent>
     venv/bin/python nucleus/hands_desktop.py status [<agent>]
     venv/bin/python nucleus/hands_desktop.py shot <agent> <out.jpg>
+    venv/bin/python nucleus/hands_desktop.py caps-reset <agent>      (a fresh session for that agent)
 """
 from __future__ import annotations
 
@@ -370,6 +376,92 @@ def stop(agent: str, why: str = "") -> None:
 
 def resume(agent: str) -> None:
     (state_dir(agent) / "stopped").unlink(missing_ok=True)
+
+
+# ---- caps: a STEP cap and a WALL-TIME cap per agent session (plan-7862, seed's binding item #38260, #44137) ----
+# Keyed by the AGENT (the resident), not the desktop: a pool desk is shared, and one agent's runaway loop must not stop
+# another's work. A SESSION is a run of an agent's actions with no gap longer than CAP_IDLE_S; a new session starts
+# fresh. A loop never idles, so a capped loop stays refused; an agent that pauses gets a fresh session. The caps
+# protect the owner's time (and tokens), not a cage: the owner can reset an agent's session at any moment.
+# Every tool call is a step (a look costs tokens too); a multi-step `do` charges its steps.
+CAPS_DIR = STATE_ROOT / ".caps"            # a name the desktop list never shows (NAME_RE can't start with ".")
+
+
+def _env_int(key: str, default: int) -> int:
+    v = os.environ.get(key)
+    if v is None:
+        try:
+            for line in (Path(__file__).resolve().parents[1] / ".env").read_text().splitlines():
+                if line.startswith(f"{key}="):
+                    v = line.split("=", 1)[1].strip()
+        except OSError:
+            pass
+    try:
+        n = int(v) if v not in (None, "") else default
+        return n if n > 0 else default
+    except ValueError:
+        return default
+
+
+def caps() -> dict:
+    """The caps in force: .env (HANDS_STEP_CAP, HANDS_WALL_CAP_S, HANDS_CAP_IDLE_S) over the defaults."""
+    return {"steps": _env_int("HANDS_STEP_CAP", 300), "wall_s": _env_int("HANDS_WALL_CAP_S", 3600),
+            "idle_s": _env_int("HANDS_CAP_IDLE_S", 600)}
+
+
+class Capped(HandsError):
+    pass
+
+
+def charge(agent: str, n: int = 1, now: float | None = None) -> dict:
+    """Count `n` steps for `agent`'s session, or raise Capped naming the cap that's spent. Atomic per agent (a file
+    lock: an agent's hands and phone servers share one count). A refused charge is NOT counted."""
+    import fcntl
+    if not agent:
+        raise HandsError("no agent to charge: ASTRYX_AGENT is not set")
+    c = caps()
+    now = time.time() if now is None else now
+    CAPS_DIR.mkdir(parents=True, exist_ok=True)
+    f = CAPS_DIR / f"{_name(agent)}.json"
+    with open(CAPS_DIR / f"{_name(agent)}.lock", "w") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        try:
+            st = json.loads(f.read_text())
+            assert isinstance(st.get("start"), (int, float)) and isinstance(st.get("steps"), int)
+        except FileNotFoundError:
+            st = None
+        except (OSError, ValueError, AssertionError):
+            # an unreadable count is not a fresh session: fail closed, like the stop flag (a3 #42085)
+            raise Capped("your hands' step count can't be read, so they're stopped. Tell the owner "
+                         f"(`nucleus/hands_desktop.py caps-reset {agent}` clears it).")
+        if st is None or now - st.get("last", st["start"]) > c["idle_s"]:
+            st = {"start": now, "last": now, "steps": 0}
+        if st["steps"] + n > c["steps"]:
+            raise Capped(f"your hands hit the STEP cap: {st['steps']} steps this session (cap {c['steps']}). "
+                         f"Stop here and tell the owner where you were. They come back after "
+                         f"{c['idle_s'] // 60} idle minutes, or when the owner resets them.")
+        if now - st["start"] > c["wall_s"]:
+            raise Capped(f"your hands hit the WALL-TIME cap: this session is {int(now - st['start']) // 60} minutes "
+                         f"old (cap {c['wall_s'] // 60}). Stop here and tell the owner where you were. They come "
+                         f"back after {c['idle_s'] // 60} idle minutes, or when the owner resets them.")
+        st["steps"] += n
+        st["last"] = now
+        tmp = f.with_suffix(".tmp")
+        tmp.write_text(json.dumps(st))
+        tmp.replace(f)
+        return {**st, **{f"cap_{k}": v for k, v in c.items()}}
+
+
+def caps_reset(agent: str) -> None:
+    (CAPS_DIR / f"{_name(agent)}.json").unlink(missing_ok=True)
+
+
+def session(agent: str) -> dict | None:
+    """An agent's current cap session, for the observatory and status: {start, last, steps} or None."""
+    try:
+        return json.loads((CAPS_DIR / f"{_name(agent)}.json").read_text())
+    except (OSError, ValueError):
+        return None
 
 
 # ---- the shared pool of background desktops (owner, 10-10) ----------------------------------
@@ -836,6 +928,9 @@ def main(argv: list[str]) -> int:
             stop(rest[0], " ".join(rest[1:]))
         elif cmd == "resume":
             resume(rest[0])
+        elif cmd == "caps-reset":
+            caps_reset(rest[0])
+            print(f"{rest[0]}: a fresh session (caps {caps()})")
         else:
             print(f"unknown command {cmd}", file=sys.stderr)
             return 2

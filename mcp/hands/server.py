@@ -157,8 +157,11 @@ def look(screen: str, zoom: str = "") -> list:
     """See a screen (≤960 wide; its pixels are your coordinates). screen: "laptop" | "background"
     (required). zoom="x,y,w,h" shows just that region at full resolution, for small text."""
     try:
+        hd.charge(AGENT)
         a = _ready(screen)
         return [_state(a), _pic(a, zoom)]
+    except hd.Capped as e:
+        return [f"CAPPED: {e}"]
     except hd.HandsError as e:
         return [f"hands error: {e}"]
 
@@ -175,6 +178,8 @@ def act(action: str, screen: str, x: int = -1, y: int = -1, text: str = "", x2: 
     if action == "done":
         return [f"released {', '.join(hd.release(AGENT)) or 'nothing (you held no desktop)'}"]
     try:
+        # a `do` script is charged its steps BEFORE it runs, so a capped agent can't spend past the cap in one call
+        hd.charge(AGENT, max(1, len(_split(text))) if action == "do" else 1)
         a = _ready(screen)
         settle = hd.SETTLE_S
         pt = lambda: hd.view_to_desktop(a, x, y)  # noqa: E731
@@ -223,6 +228,8 @@ def act(action: str, screen: str, x: int = -1, y: int = -1, text: str = "", x2: 
         return out
     except hd.Stopped as e:
         return [f"STOPPED: {e}. Don't retry. Tell the owner where you were in the task."]
+    except hd.Capped as e:
+        return [f"CAPPED: {e}"]
     except hd.HandsError as e:
         return [f"hands error: {e}"]
 
