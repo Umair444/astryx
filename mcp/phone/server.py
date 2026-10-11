@@ -13,7 +13,8 @@ TWO tools, the same shape and token budget as hands:
     act(action, device, …)     do one thing; a short text answer
 
 Every call that touches a phone is charged to the agent's Hands caps (nucleus/hands_desktop.charge): ONE per-agent
-budget across its desktop and its phone; a spent cap answers "CAPPED: …". Listing phones and `done` are free.
+budget across its desktop and its phone; a spent cap answers "CAPPED: …". Listing phones, `done` and `shutdown` are
+free, and `shutdown` works even when the agent is stopped or capped (it only lowers capability; driver-only).
 
 `device` is the phone's name (an AVD; `act("phones")` lists them). ONE agent drives a phone at a time: a hold on
 'android:<device>' (C4) that lapses 5 minutes after the agent's last action, or on act("done").
@@ -123,6 +124,11 @@ def stamp(serial: str | None, force_personal: bool = False, before: dict | None 
     return STAMP + json.dumps(s, separators=(",", ":"))
 
 
+def _agent() -> None:
+    if not AGENT:
+        raise droid.AndroidError("ASTRYX_AGENT is not set: whose hands are these?")
+
+
 def _guard(device: str) -> str:
     """Who's asking, is the owner's stop up, and is this agent the phone's one driver? Returns the adb serial, for
     OUR adb calls (the surface stamp). Upstream names an emulator by its AVD name, not its serial (measured: its
@@ -154,6 +160,7 @@ async def look(device: str, text: bool = False) -> list:
     """See the phone. device = its name (required). text=True returns the on-screen elements with their
     coordinates instead of a picture (cheaper, exact for tapping)."""
     try:
+        _agent()
         hd.charge(AGENT)                         # one per-agent budget across hands and the phone (plan-7862 caps)
         s = _guard(device)
         before = droid.surface(s)
@@ -181,16 +188,18 @@ async def act(action: str, device: str = "", x: int = -1, y: int = -1, text: str
         if action == "done":
             droid.release(device, AGENT)
             return [f"released {device}", stamp(None)]
-        if action in ("boot", "shutdown"):
+        if action == "shutdown":
+            # FREE, and allowed when the agent is STOPPED or CAPPED (a4 #47955): switching a phone off only lowers
+            # capability, and a phone left running holds ~2.6 GB on a host that OOM-kills builds. Still driver-only.
+            _agent()
+            droid.drive(device, AGENT)
+            return [("stopped " if droid.shutdown(device) else "still running: ") + device, stamp(None)]
+        if action == "boot":
+            _agent()
             hd.charge(AGENT)
-            if not AGENT:
-                raise droid.AndroidError("ASTRYX_AGENT is not set: whose hands are these?")
             why = hd.stopped(AGENT)
             if why:
                 raise hd.Stopped(why)
-            if action == "shutdown":
-                droid.drive(device, AGENT)       # only the phone's driver may switch it off
-                return [("stopped " if droid.shutdown(device) else "still running: ") + device, stamp(None)]
             s = await asyncio.to_thread(droid.boot, device, AGENT)
             droid.drive(device, AGENT)
             missed = await asyncio.to_thread(droid.harden, device, s)
@@ -213,6 +222,7 @@ async def act(action: str, device: str = "", x: int = -1, y: int = -1, text: str
                     return [f"{action} needs {ours}", stamp(None)]
                 continue
             args[theirs] = v
+        _agent()
         hd.charge(AGENT)
         s = _guard(device)
         before = droid.surface(s)

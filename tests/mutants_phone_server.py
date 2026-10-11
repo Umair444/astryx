@@ -30,8 +30,16 @@ MUTANTS = {
         ('        hd.charge(AGENT)                         # one per-agent budget across hands and the phone (plan-7862 caps)\n',
          ''),
     "phone actions aren't charged":
-        ('            args[theirs] = v\n        hd.charge(AGENT)\n', '            args[theirs] = v\n'),
+        ('            args[theirs] = v\n        _agent()\n        hd.charge(AGENT)\n', '            args[theirs] = v\n        _agent()\n'),
     "boot isn't charged":
-        ('        if action in ("boot", "shutdown"):\n            hd.charge(AGENT)\n',
-         '        if action in ("boot", "shutdown"):\n'),
+        ('        if action == "boot":\n            _agent()\n            hd.charge(AGENT)\n',
+         '        if action == "boot":\n            _agent()\n'),
+    "shutdown is charged":
+        ('            _agent()\n            droid.drive(device, AGENT)\n',
+         '            _agent()\n            hd.charge(AGENT)\n            droid.drive(device, AGENT)\n'),
+    "shutdown is refused when the agent is stopped":
+        ('            _agent()\n            droid.drive(device, AGENT)\n',
+         '            _agent()\n            if hd.stopped(AGENT):\n                raise hd.Stopped(hd.stopped(AGENT))\n            droid.drive(device, AGENT)\n'),
+    "shutdown skips the driver hold":
+        ('            _agent()\n            droid.drive(device, AGENT)\n', '            _agent()\n'),
 }
