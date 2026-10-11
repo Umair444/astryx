@@ -26,4 +26,12 @@ MUTANTS = {
     'the reviewed-set gate is dropped':
         ('    if tool not in REVIEWED:\n',
          '    if False:\n'),
+    "a phone look isn't charged to the agent's caps":
+        ('        hd.charge(AGENT)                         # one per-agent budget across hands and the phone (plan-7862 caps)\n',
+         ''),
+    "phone actions aren't charged":
+        ('            args[theirs] = v\n        hd.charge(AGENT)\n', '            args[theirs] = v\n'),
+    "boot isn't charged":
+        ('        if action in ("boot", "shutdown"):\n            hd.charge(AGENT)\n',
+         '        if action in ("boot", "shutdown"):\n'),
 }
