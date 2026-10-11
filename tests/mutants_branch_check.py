@@ -74,4 +74,8 @@ MUTANTS = {
         (', touched=touched_files(sha, repo["branch"]))', ")"),
     "O23 the scope drops the modules a changed oracle imports (voice_mint::record, 10-11, falls out of scope)":
         ('        out |= {m.replace(".", "/") + ".py" for m in module_refs(tree)}', "        pass"),
+    "O24 the scope diffs two trees, not from the merge-base (main's drift past the fork is pinned on the branch: a4 #45033)":
+        ("f\"{sha['main']}...{sha['branch']}\"", 'sha["main"], sha["branch"]'),
+    "O25 an extractor red (a FILE, no '::') never reaches the in-scope list (a4 #45033 F2)":
+        (' or re.match(r"R-EXTRACT (\\S+?):?(?:\\s|$)", line)', ""),
 }
