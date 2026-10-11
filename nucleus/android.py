@@ -158,8 +158,55 @@ def booted(s: str) -> bool:
     return adb("shell", "getprop", "sys.boot_completed", serial=s, timeout=10).stdout.strip() == "1"
 
 
+PHONE_DESKTOP = "phone-{}"
+
+
+def phone_desktop(avd: str) -> str:
+    """THE name of a phone's desktop (plan-8675 S2, a4 B2: one naming function, no second spelling). The phone runs in
+    its own Hands desktop so the owner watches and joins it in the observatory, and that desktop's stop flag (the one
+    the observatory's stop button writes) stops the phone. Hands' agent tools can't reach it: they resolve only
+    "laptop" or a pool desk (desk-*), an allowlist (a2 #48210)."""
+    return PHONE_DESKTOP.format(avd)
+
+
+def avd_of_desktop(name: str) -> str | None:
+    """The inverse of phone_desktop() from the SAME template: the AVD whose desktop `name` is, else None."""
+    head, tail = PHONE_DESKTOP.split("{}")
+    if name.startswith(head) and name.endswith(tail) and len(name) > len(head) + len(tail):
+        return name[len(head):len(name) - len(tail)]
+    return None
+
+
+def viewed(avd: str) -> bool:
+    """Is the phone running in its own desktop (live view), rather than headless?"""
+    from nucleus import hands_desktop as hd
+    try:
+        return hd.alive(phone_desktop(avd)) and bool(emulator_pids(avd))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _start_windowed(avd: str) -> bool:
+    """Start the emulator as a window in the phone's own desktop. False if no desktop can start here (no sway etc.):
+    the caller falls back to headless, and says there's no live view."""
+    from nucleus import hands_desktop as hd
+    desk = phone_desktop(avd)
+    try:
+        hd.up(desk)
+    except hd.HandsError:
+        return False
+    env = {"ANDROID_SDK_ROOT": str(sdk()), "QT_QPA_PLATFORM": "xcb"}      # Xwayland inside the desktop (measured)
+    if os.environ.get("ANDROID_AVD_HOME"):
+        env["ANDROID_AVD_HOME"] = os.environ["ANDROID_AVD_HOME"]
+    argv = ["env", *(f"{k}={v}" for k, v in env.items()), str(sdk() / "emulator" / "emulator"), "-avd", avd,
+            "-no-audio", "-gpu", "swiftshader_indirect", "-no-boot-anim"]
+    hd._sway(desk, "exec " + " ".join(hd._q(a) for a in argv))
+    return True
+
+
 def boot(avd: str, agent: str) -> str:
-    """Start `avd` headless if it isn't running, holding the VM slot first. Returns its serial when booted."""
+    """Start `avd` if it isn't running, holding the VM slot first: in its own desktop (live view) where one can start,
+    else headless. Returns its serial when booted."""
     if not (sdk() / "emulator" / "emulator").exists():
         raise AndroidError(f"no Android emulator at {sdk()}: run nucleus/android_setup.sh (ANDROID_ENABLED=1)")
     holder = f"android:{avd}"
@@ -167,7 +214,7 @@ def boot(avd: str, agent: str) -> str:
         raise AndroidError("the Windows VM is running: the Android emulator and the Windows VM don't fit in this "
                            "machine's RAM together. Stop it first, or ask the owner.")
     claim_slot(holder)
-    if not emulator_pids(avd):
+    if not emulator_pids(avd) and not _start_windowed(avd):
         log = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp") / f"astryx-android-{avd}.log"
         subprocess.Popen([str(sdk() / "emulator" / "emulator"), "-avd", avd, "-no-window", "-no-audio",
                           "-gpu", "swiftshader_indirect", "-no-boot-anim"],
@@ -235,6 +282,12 @@ def shutdown(avd: str) -> bool:
         time.sleep(1)
     gone = not emulator_pids(avd)
     if gone:
+        from nucleus import hands_desktop as hd
+        try:
+            if hd.alive(phone_desktop(avd)):
+                hd.down(phone_desktop(avd))      # its state dir (and any owner STOP in it) stays
+        except Exception:  # noqa: BLE001
+            pass
         free_slot(f"android:{avd}")
         with _db() as c:                         # nobody drives a phone that isn't there
             row = L.get(c, f"android:{avd}")

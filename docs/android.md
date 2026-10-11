@@ -56,11 +56,31 @@ To turn it off, set `ANDROID_ENABLED=0` (or remove the line) and respawn. The SD
 
 ## Watching, joining and stopping
 
-- **Stop an agent's phone:** `venv/bin/python nucleus/hands_desktop.py stop <agent>` refuses every phone action by
-  that agent until `… resume <agent>`. `venv/bin/python nucleus/android.py shutdown` switches the phone off.
-  The observatory's Hands stop button does **not** reach a phone yet: it stops a *desktop*, by the desktop's name.
-- **Watch, join and stop from the observatory:** not in this release. The phone runs without a window; a live view
-  with its own stop, gated to the owner's session, is the next slice.
+Where the org's machine can run a Hands desktop (sway, wayvnc), `act("boot")` starts the phone **in its own
+desktop**, named `phone-<the phone's name>`. The emulator is a window there, so:
+
+- **Watch** it in the observatory's Hands view like any desktop, live.
+- **Join**: click into it. Your clicks go to the phone through the desktop's own seat; the agent acts through the
+  phone's own channel (adb), which moves no cursor, so the two of you don't fight over one pointer.
+- **Stop**: the stop button on that desktop. Every phone action by any agent is then refused, until you resume.
+  Switching the phone off still works while stopped.
+
+Agents can't drive that desktop with their Hands tools: those only ever reach your laptop screen or a desk from the
+shared pool (desk-1, desk-2, …), and the phone's desktop is never one of them.
+
+**Without a desktop** (no sway on the machine), the phone boots headless and says "no live view". Your only stops are
+then `venv/bin/python nucleus/hands_desktop.py stop <agent>` (refuses that agent's phone actions until `… resume`) and
+`venv/bin/python nucleus/android.py shutdown`.
+
+**What the stop can't promise.** It prevents an agent's *phone* and *Hands* tools from acting. It doesn't prevent an
+agent that is working on **your laptop screen** (Hands' `laptop`): with the observatory open there, that agent could
+click into the phone's view or press resume, and nothing can tell its click from yours. That case is detected, not
+prevented: a resume of a phone's desktop within 60 seconds of any agent acting on your laptop is flagged to the org
+(`nucleus/shipped_triggers/phone_resume_sweep.py`; install it with
+`printf 'from nucleus.shipped_triggers.phone_resume_sweep import phone_resume_sweep  # noqa: F401\n' > triggers/seed/phone_resume_sweep.py`).
+
+The view and every Hands route are owner-only: they need the observatory's owner key, which is never written to the
+service's log (`key=<redacted>`).
 
 ## Privacy
 
@@ -74,6 +94,10 @@ What's on a phone screen is often personal (messages, bank balances, one-time co
 - The phone is set not to show notification pop-ups or notification text on its lock screen, on every boot.
 - The phone's data files (which hold app logins) are made readable by the org's user only, on every boot.
 - The upstream's anonymous usage telemetry is switched off, and it gets an environment built for it, not yours.
+- The live view stores nothing (it's a stream). The one way to write a phone's pixels to a file is the command line:
+  `nucleus/hands_desktop.py shot phone-<name> <file>`, an act of whoever runs it on this machine.
+- The phone's data is in no backup the org makes (`nucleus/backup.sh` doesn't carry `~/.android`) and, on a machine
+  whose snapshots cover only `/` (not `/home`), in no snapshot either. Losing it means signing in again.
 
 What this can't promise: the model provider sees the screenshots an agent looks at (that's how it sees), and an
 agent that has seen something can still mention it later in its own words.

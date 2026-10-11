@@ -365,6 +365,10 @@ run "hands desktop: real clicks/typing land, owner stop refuses, two small tools
 # and otherwise reads UNVERIFIED here, never green.
 run "phone facade: upstream census, allowlist, telemetry off, surface stamp, phone strip, HELD leases" "$PY" tests/test_phone_facade.py
 run "android device: an agent drives Settings on a real phone (77 unless ANDROID_DEVICE_TEST=1 and set up)" "$PY" tests/test_android_device.py
+# S2 (plan-8675): the phone in its own Hands desktop, stopped from the observatory's REAL routes; Hands can't reach it
+# (allowlist pinned); one spelling of its name; the resume-near-a-laptop-act sweep; persistence by omission; and the
+# VNC key never in the journal (in-process + one live owner connect). No phone needed.
+run "phone view: owner stop via the real routes, Hands can't reach it, resume sweep, no key in the log" "$PY" tests/test_phone_view.py
 # Hands caps (seed's binding item, #44137): a STEP and a WALL-TIME cap per AGENT session, refusing with the cap named;
 # idle resets a session, a loop stays capped; atomic across processes; charged before any desktop is touched.
 run "hands caps: per-agent step + wall caps, idle reset, atomic, charged before the desktop" "$PY" tests/test_hands_caps.py

@@ -369,14 +369,54 @@ def stopped(agent: str) -> str | None:
         return "the stop flag can't be read, so your hands are stopped"
 
 
+def _append(path: Path, line: str, keep: int = 5000) -> None:
+    """Append one line, keeping the last `keep`. Names and times only, never text."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a") as f:
+            f.write(line.rstrip("\n") + "\n")
+        if path.stat().st_size > keep * 120:
+            lines = path.read_text().splitlines()[-keep:]
+            path.write_text("\n".join(lines) + "\n")
+    except OSError:
+        pass
+
+
 def stop(agent: str, why: str = "") -> None:
     sd = state_dir(agent)
     sd.mkdir(parents=True, exist_ok=True)
     (sd / "stopped").write_text(why or "the owner stopped your hands")
+    _append(sd / "owner_log", f"{time.time():.3f} stop")
 
 
 def resume(agent: str) -> None:
     (state_dir(agent) / "stopped").unlink(missing_ok=True)
+    _append(state_dir(agent) / "owner_log", f"{time.time():.3f} resume")
+
+
+def owner_log(agent: str) -> list[tuple[float, str]]:
+    """This desktop's stop/resume history: [(ts, "stop"|"resume")]."""
+    out = []
+    try:
+        for line in (state_dir(agent) / "owner_log").read_text().splitlines():
+            ts, verb = line.split()[:2]
+            out.append((float(ts), verb))
+    except (OSError, ValueError):
+        pass
+    return out
+
+
+def laptop_acts() -> list[tuple[float, str, str]]:
+    """Every agent ACTION on the owner's real screen: [(ts, action name, agent)]. Never the action's text. A resume of
+    a phone's desktop near one of these may have been clicked by that agent, not the owner (plan-8675 C2)."""
+    out = []
+    try:
+        for line in (state_dir(LAPTOP) / "acts.log").read_text().splitlines():
+            ts, act, who = (line.split() + ["?", "?"])[:3]
+            out.append((float(ts), act, who))
+    except (OSError, ValueError):
+        pass
+    return out
 
 
 # ---- caps: a STEP cap and a WALL-TIME cap per agent session (plan-7862, seed's binding item #38260, #44137) ----
@@ -637,6 +677,9 @@ def _guard(agent: str, act: str = "") -> None:
                 f"{time.time():.0f} {act} {os.environ.get('ASTRYX_AGENT', '') or agent}")
         except OSError:
             pass
+        if is_laptop(agent):            # a history for the laptop only: the owner's screen (plan-8675 C2)
+            _append(state_dir(agent) / "acts.log",
+                    f"{time.time():.3f} {act} {os.environ.get('ASTRYX_AGENT', '') or '?'}")
 
 
 def last_act(agent: str) -> tuple[float, str, str] | None:

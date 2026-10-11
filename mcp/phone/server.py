@@ -135,11 +135,13 @@ def _guard(device: str) -> str:
     `mobilecli devices` lists {"id": "<avd>"}), so upstream calls take `device` itself."""
     if not AGENT:
         raise droid.AndroidError("ASTRYX_AGENT is not set: whose hands are these?")
-    why = hd.stopped(AGENT)
-    if why:
-        raise hd.Stopped(why)
     if not device:
         raise droid.AndroidError('name the phone: device="<name>" (act("phones") lists them)')
+    # Two stops, either refuses: the AGENT's flag (the CLI: hands_desktop.py stop <agent>) and the PHONE's desktop
+    # flag, the one the observatory's Hands stop button writes for that desktop (plan-8675 S2, a4 #47651c).
+    why = hd.stopped(AGENT) or hd.stopped(droid.phone_desktop(device))
+    if why:
+        raise hd.Stopped(why)
     droid.drive(device, AGENT)
     s = droid.serial(device)
     if not s:
@@ -197,7 +199,7 @@ async def act(action: str, device: str = "", x: int = -1, y: int = -1, text: str
         if action == "boot":
             _agent()
             hd.charge(AGENT)
-            why = hd.stopped(AGENT)
+            why = hd.stopped(AGENT) or hd.stopped(droid.phone_desktop(device))
             if why:
                 raise hd.Stopped(why)
             s = await asyncio.to_thread(droid.boot, device, AGENT)
@@ -205,7 +207,11 @@ async def act(action: str, device: str = "", x: int = -1, y: int = -1, text: str
             missed = await asyncio.to_thread(droid.harden, device, s)
             quiet = "notification pop-ups and lock-screen text are off" if not missed else \
                 f"WARNING: couldn't switch off {', '.join(missed)} (the phone was too slow); pop-ups may show"
-            return [f"{device} is up ({s}); {quiet}", stamp(s)]
+            view = (f"the owner can watch and join it in the observatory (desktop {droid.phone_desktop(device)}), "
+                    f"and stop it there") if droid.viewed(device) else \
+                ("no live view (headless: no desktop could start here), so the owner's stops are the CLI "
+                 "(hands_desktop.py stop <agent>) and shutdown")
+            return [f"{device} is up ({s}); {view}; {quiet}", stamp(s)]
         if action not in VERBS:
             return [f"unknown action {action!r}", stamp(None)]
         tool, fields = VERBS[action]
