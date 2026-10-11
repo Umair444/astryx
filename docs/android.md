@@ -35,6 +35,17 @@ upgrade that adds a tool fails the check instead of quietly reaching agents.
 If the org also runs a Windows VM, only one of the two may run at a time: a lease (`vm-slot`) enforces it, and the
 phone refuses to start while Windows is up, saying so.
 
+**The Windows VM runs on demand.** When an agent opens its viewer (`127.0.0.1:8006`) through Hands, Hands first takes
+the `vm-slot`, then starts the VM if it's stopped; if the phone holds the slot, the open is refused, naming it. A VM
+that an agent started this way is **stopped again after 15 minutes with nobody connected** to its viewer or RDP port
+(`nucleus/shipped_triggers/windows_idle_stop.py`, installed by `./init.sh` where a Windows container exists), and the
+slot is freed for the phone.
+
+That stop is a **hard stop**: the Windows guest ignores shutdown requests, so after about 100 seconds the VM is killed.
+Save your work inside it, or stay connected to keep it running. `HANDS_WINDOWS_IDLE_S` in `.env` sets the idle window
+in seconds (default 900); `0` turns the stop off. A Windows VM that was **already running** when an agent opened it
+(you started it, or it was up anyway) is never stopped this way.
+
 ## Enable it
 
 1. Read Google's Android SDK licence: <https://developer.android.com/studio/terms>. Accepting it is **your** act as

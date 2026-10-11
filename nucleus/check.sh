@@ -370,6 +370,10 @@ run "android device: an agent drives Settings on a real phone (77 unless ANDROID
 # VNC key never in the journal (in-process + one live owner connect). No phone needed.
 run "phone view: owner stop via the real routes, Hands can't reach it, resume sweep, no key in the log" "$PY" tests/test_phone_view.py
 run "init.sh phonesweep: the phone resume sweep installs itself only where phones are opted in" "$PY" tests/test_init_phonesweep.py
+# C5 (plan-8675): the Windows VM on demand. Opening its viewer claims the vm-slot then starts it (refused, naming the
+# holder, while the phone has it); only a run that an open STARTED is ever stopped idle, asynchronously. Stand-in only.
+run "windows on demand: claim before start, refuse naming the holder, idle stop only of its own starts" "$PY" tests/test_windows_ondemand.py
+run "init.sh winidle: the Windows idle stop installs itself only where a Windows container exists" "$PY" tests/test_init_winidle.py
 # Hands caps (seed's binding item, #44137): a STEP and a WALL-TIME cap per AGENT session, refusing with the cap named;
 # idle resets a session, a loop stays capped; atomic across processes; charged before any desktop is touched.
 run "hands caps: per-agent step + wall caps, idle reset, atomic, charged before the desktop" "$PY" tests/test_hands_caps.py

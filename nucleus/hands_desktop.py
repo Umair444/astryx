@@ -948,6 +948,43 @@ def browser_argv(agent: str, url: str = "") -> list[str]:
     return argv
 
 
+# ---- the Windows VM, on demand (plan-8675 C5, a4 #42255 / #48958) -------------------------------------------------
+# Opening the Windows VM's viewer (127.0.0.1:<HANDS_WINDOWS_PORT>, the port the proxy already allows) first HOLDS the
+# vm-slot for "windows" (the same atomic claim the phone uses: the phone and Windows measured not to fit in RAM
+# together), then starts the container if it's stopped. If the phone holds the slot, the open is refused, naming it.
+# A start made HERE is recorded (WINDOWS_STARTED): only such a run is ever stopped for being idle
+# (nucleus/shipped_triggers/windows_idle_stop.py). A VM that was already running is held, never auto-stopped.
+WINDOWS_PORT = int(os.environ.get("HANDS_WINDOWS_PORT") or 8006)
+WINDOWS_STARTED = STATE_ROOT / ".windows_started"
+
+
+def is_windows_viewer(what: str) -> bool:
+    m = re.match(r"^(?:https?://)?(?:127\.0\.0\.1|localhost):(\d+)(?:[/?#]|$)", (what or "").strip())
+    return bool(m) and int(m.group(1)) == WINDOWS_PORT
+
+
+def windows_up(agent: str) -> bool:
+    """Hold the vm-slot for Windows and start its container if it's stopped. True iff THIS call started it."""
+    from nucleus import android
+    try:
+        android.claim_slot("windows")
+    except android.AndroidError as e:
+        raise HandsError(f"can't open the Windows VM: {e}")
+    if android.windows_running():
+        return False
+    r = subprocess.run(["docker", "start", android.WINDOWS_CONTAINER], capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        android.free_slot("windows")
+        raise HandsError(f"the Windows VM wouldn't start: {(r.stderr or r.stdout).strip()[:200]}")
+    try:
+        STATE_ROOT.mkdir(parents=True, exist_ok=True)
+        WINDOWS_STARTED.write_text(json.dumps({"ts": time.time(), "by": os.environ.get("ASTRYX_AGENT", "") or agent,
+                                               "container": android.WINDOWS_CONTAINER}))
+    except OSError:
+        pass
+    return True
+
+
 def open_(agent: str, what: str) -> None:
     """A URL opens in the agent's browser (its own, persistent profile); anything else is run as
     a program inside the agent's desktop (e.g. "libreoffice --calc", "nautilus", "foot")."""
@@ -955,6 +992,8 @@ def open_(agent: str, what: str) -> None:
     what = (what or "").strip()
     if not what:
         raise HandsError("open what?")
+    if is_windows_viewer(what):
+        windows_up(agent)
     is_url = re.match(r"^(https?|file)://", what) or re.match(r"^[\w.-]+\.[a-z]{2,}(/|$)", what)
     if is_laptop(agent):
         # on his screen, in HIS browser and apps: a URL opens as a tab in his own browser
