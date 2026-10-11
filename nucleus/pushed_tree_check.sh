@@ -51,6 +51,11 @@ REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || {
 # locates its own repository. check.sh scrubs again at its own entry.
 # Oracle: tests/test_git_env_isolation.py.
 for v in $(compgen -e | grep "^GIT_"); do unset "$v"; done
+# The committed tree must not reach the LIVE database or any credential through the caller's environment either
+# (a4 #45773: with ASTRYX_DSN exported, oracles saw a DSN, skipped their 77 path and crashed on psycopg). Unset every
+# ASTRYX_*, PG* and *_DSN, and every NAME the live .env declares (names only; no value is read). The set is derived.
+# Oracle: tests/test_pushed_tree_env.py.
+for v in $(compgen -e | grep -E '^(ASTRYX_|PG)|_DSN$'; [ -f "$REPO/.env" ] && sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' "$REPO/.env"); do unset "$v" 2>/dev/null || true; done  # env-scrub
 cd "$REPO" || exit 77
 
 REF="${1:-HEAD}"
