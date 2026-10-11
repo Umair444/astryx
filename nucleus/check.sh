@@ -69,7 +69,11 @@ GATE_CAP=${CHECK_GATE_CAP:-1200}
 GATE_KILL_AFTER=${CHECK_GATE_KILL_AFTER:-15}
 GATE_PGID=""
 GATE_OUT=$(mktemp "${TMPDIR:-/tmp}/check-gate.XXXXXX")
-_gate_reap() { [ -n "$GATE_PGID" ] && kill -TERM -- "-$GATE_PGID" 2>/dev/null; GATE_PGID=""; }
+# The group kill can race the fork: `$!` is known before the forked timeout has called setpgid, so a signal in that
+# millisecond finds no group (a4 #45258 measured 1 survivor in 40). Then signal timeout itself: it forwards a TERM to
+# its child, and a timeout killed before it set its handler never started the gate at all.
+_gate_reap() { [ -n "$GATE_PGID" ] && { kill -TERM -- "-$GATE_PGID" 2>/dev/null || kill -TERM "$GATE_PGID" 2>/dev/null; }
+               GATE_PGID=""; }
 trap '_gate_reap; rm -f "$GATE_OUT"' EXIT
 trap '_gate_reap; exit 130' INT
 trap '_gate_reap; exit 143' TERM
@@ -78,6 +82,10 @@ run() {
   if [[ ${1:-} == --cap=* ]]; then cap=${1#--cap=}; shift; fi
   local label=$1; shift
   printf '\033[36m▶\033[0m %s\n' "$label"
+  if ! [[ $cap =~ ^[1-9][0-9]*$ ]]; then        # whole seconds only: the wall judge compares integer SECONDS
+    fail=1; FAILED+=("$label (bad cap '$cap')"); printf '\033[31m  ✗ %s — bad cap %q (whole seconds)\033[0m\n' "$label" "$cap"
+    return
+  fi
   local out rc t0=$SECONDS timed_out=""
   ASTRYX_SQLGUARD_GATE="$label" timeout -k "$GATE_KILL_AFTER" "$cap" "$@" >"$GATE_OUT" 2>&1 </dev/null &
   GATE_PGID=$!          # timeout makes itself its group's leader, so its pid IS the gate's process group id

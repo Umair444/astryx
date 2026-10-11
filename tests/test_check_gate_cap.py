@@ -30,10 +30,15 @@ def check(name, ok, detail=""):
         fails.append(name)
 
 
-def drive(body, env="", timeout=60):
+def drive(body, env="", timeout=20):
+    """A run that outlives `timeout` is reported as (TIMEOUT, -1): each arm then FAILS and the next arm still runs,
+    so a RED control against an uncapped check.sh reds EVERY arm instead of crashing at the first (a4 #45258)."""
     script = f'CHECK_LIB_ONLY=1 source "{CHECK}"\nunset CHECK_LIB_ONLY\n{env}\n{body}\nverdict\n'
     t0 = time.monotonic()
-    p = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=timeout, cwd=REPO)
+    try:
+        p = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=timeout, cwd=REPO)
+    except subprocess.TimeoutExpired:
+        return "TIMEOUT: the driven run outlived the harness", -1, time.monotonic() - t0
     return p.stdout + p.stderr, p.returncode, time.monotonic() - t0
 
 
@@ -85,6 +90,10 @@ with tempfile.TemporaryDirectory() as td:
     check("`run --cap=1` caps that gate below a 600s default", "capped — TIMED OUT after 1s" in out and dt < 10,
           f"{dt:.1f}s {out[-200:]}")
 
+    out, rc, _ = drive('run --cap=1.5 "frac" true', caps)
+    check("a non-integer cap is refused, named, and counted FAILED (the wall judge is whole seconds)",
+          "frac — bad cap" in out and rc == 1, out[-200:])
+
     print("passthrough:")
     out, rc, _ = drive('run "ok" true\nrun "bad" bash -c "exit 3"\nrun "skipper" bash -c "exit 77"\n'
                        'run "self124" bash -c "exit 124"', caps)
@@ -113,6 +122,30 @@ with tempfile.TemporaryDirectory() as td:
     check("a TERM to check.sh kills its running gate AND the gate's grandchild (no orphan)",
           g is not None and ggc is not None and not alive(g) and not alive(ggc), f"gate {g} gc {ggc}")
     check("…and check.sh itself exits 143", p.returncode == 143, f"rc {p.returncode}")
+
+with tempfile.TemporaryDirectory() as td:
+    td = Path(td)
+    print("race (a TERM in the first milliseconds of a gate):")
+    import random
+    survivors, tries = 0, 40
+    for i in range(tries):
+        pf = td / f"r{i}"
+        script = (f'CHECK_LIB_ONLY=1 source "{CHECK}"\nunset CHECK_LIB_ONLY\nGATE_CAP=600\n'
+                  f'run "race" bash -c \'echo $$ > {pf}; sleep 60\'\nverdict\n')
+        p = subprocess.Popen(["bash", "-c", script], cwd=REPO, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(0.03 + random.uniform(0.001, 0.009))   # past bash + source startup, into run()'s fork window
+        p.send_signal(signal.SIGTERM)
+        try:
+            p.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            p.kill()
+        time.sleep(0.3)
+        g = int(pf.read_text().split()[0]) if pf.exists() and pf.read_text().strip() else None
+        if g is not None and alive(g):
+            survivors += 1
+            os.kill(g, signal.SIGKILL)
+    check(f"{tries} TERMs landing in a gate's first milliseconds leave 0 surviving gates (the setpgid race)",
+          survivors == 0, f"{survivors} survived")
 
 print(f"\n{'FAIL: ' + str(len(fails)) + ' arm(s)' if fails else 'ALL PASS'}")
 sys.exit(1 if fails else 0)
