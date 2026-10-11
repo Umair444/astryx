@@ -74,8 +74,11 @@ def make_backend(spec: str | None = None):
 class SttQueue:
     """Bounded, drop-oldest, one worker thread. `sink(item, text, stt_ms)` stores a result; it is never logged."""
 
-    def __init__(self, backend, sink, maxlen: int = 8, degrade_window_s: int = 600):
+    def __init__(self, backend, sink, maxlen: int = 8, degrade_window_s: int = 600, flush: bool = False):
+        # flush=True (owner, 2026-10-11): a segment arriving at a FULL queue means the room is noisy (a TV), not
+        # talking, so the whole backlog is discarded and only the newest segment is kept, instead of dropping one.
         self.backend, self.sink, self.maxlen, self.window = backend, sink, maxlen, degrade_window_s
+        self.flush = flush
         self.q: deque = deque()
         self.cv = threading.Condition()
         self.dropped = 0
@@ -100,14 +103,15 @@ class SttQueue:
             self.cv.notify_all()
 
     def put(self, item: dict) -> int:
-        """Enqueue; returns how many segments were dropped to make room (0 or 1)."""
+        """Enqueue; returns how many segments were dropped to make room (0 or 1; with flush, the whole backlog)."""
         with self.cv:
             n = 0
-            while len(self.q) >= self.maxlen:
-                self.q.popleft()                   # the OLDEST goes; its audio is discarded, never stored
-                self.dropped += 1
-                self.drop_times.append(time.monotonic())
-                n += 1
+            if len(self.q) >= self.maxlen:
+                n = len(self.q) if self.flush else len(self.q) - self.maxlen + 1
+                for _ in range(n):
+                    self.q.popleft()               # the OLDEST go; their audio is discarded, never stored
+                    self.dropped += 1
+                    self.drop_times.append(time.monotonic())
             self.q.append(item)
             self.cv.notify()
             return n

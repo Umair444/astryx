@@ -261,7 +261,8 @@ def _sink(item, text, stt_ms):
 @asynccontextmanager
 async def lifespan(_):
     global queue
-    queue = ear_stt.SttQueue(make_backend(), _sink, maxlen=int(env("EAR_QUEUE_MAX", "8"))).start()
+    queue = ear_stt.SttQueue(make_backend(), _sink, maxlen=int(env("EAR_QUEUE_MAX", "2")),
+                             flush=True).start()
     await asyncio.to_thread(store.maintain, True)
     hearing.start()
     yield

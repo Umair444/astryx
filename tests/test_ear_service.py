@@ -240,6 +240,10 @@ try:
         want("the newest segments survive (processed: 0 in flight, then 3, 4, 5; 1 and 2 were dropped)",
              done == [0, 3, 4, 5], str(done))
         q.stop()
+        fl = ear_stt.SttQueue(None, None, maxlen=2, flush=True)    # not started: put() alone decides
+        got = [fl.put({"seq": i}) for i in range(5)]
+        want("flush mode (owner 10-11): a 3rd segment at a full queue discards the WHOLE backlog, keeping the newest",
+             got == [0, 0, 2, 0, 2] and [x["seq"] for x in fl.q] == [4], f"{got} {[x['seq'] for x in fl.q]}")
         bad = ear_stt.SttQueue(Fake(fail_load=True), lambda *a: None).start()
         time.sleep(0.3)
         st = bad.status()
