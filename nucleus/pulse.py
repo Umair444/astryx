@@ -105,6 +105,10 @@ def reconcile(conn):
                 coalesce_key=f"file {f.name}")
             continue
         for t in found:
+            # RETIRED (plan-9853 D2): trigger_rm's tombstone, per (agent, name). The file still defines it, so without
+            # this the upsert below re-enables it within a minute. Not in `seen` either, so the loop after disables it.
+            if (REPO / "triggers" / agent / ".retired" / t["name"]).exists():
+                continue
             seen.add((agent, t["name"]))
             conn.execute(
                 """INSERT INTO triggers (agent, name, schedule, kind, check_src, note, next_fire)

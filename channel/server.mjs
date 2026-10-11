@@ -10,6 +10,7 @@ import { z } from 'zod'
 import pg from 'pg'
 import { readFileSync } from 'node:fs'
 import { triggerFile } from './trigger_name.mjs'
+import { retire, clear, triggerNames } from './tombstone.mjs'
 
 const AGENT = process.env.ASTRYX_AGENT
 if (!AGENT) { console.error('ASTRYX_AGENT env required'); process.exit(1) }
@@ -179,10 +180,13 @@ const TOOLS = [
   },
   {
     name: 'trigger_rm',
-    description: 'Disable one of your triggers by name.',
+    description: 'Disable one of your triggers by name. A python trigger stays RETIRED (the pulse never re-enables it, '
+      + 'though its file still defines it) until trigger_set writes it again.',
     inputSchema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
   },
 ]
+
+const TRIGGERS_ROOT = new URL('../triggers/', import.meta.url)
 
 async function handleTool(name, a) {
   if (name === 'send') {
@@ -310,6 +314,7 @@ async function handleTool(name, a) {
       const file = triggerFile(dir, a.name)                 // refuses '../x', '/etc/x', 'a b' — before any write
       await import('node:fs/promises').then(fs => fs.mkdir(dir, { recursive: true })
         .then(() => fs.writeFile(file, a.check)))
+      await clear(TRIGGERS_ROOT, AGENT, triggerNames(a.check))   // writing a name again un-retires it (a3 BC-2)
       return `triggers/${AGENT}/${file.pathname.split('/').pop()} written — the pulse registers its @trigger `
         + `functions within a minute (schedules come from the decorators in the file)`
     }
@@ -320,6 +325,7 @@ async function handleTool(name, a) {
        ON CONFLICT (agent, name) DO UPDATE
          SET schedule=$3, kind=$4, check_src=$5, note=$6, enabled=true, next_fire=now()`,
       [AGENT, a.name, a.schedule, a.kind || 'heartbeat', a.check || null, a.note || null])
+    await clear(TRIGGERS_ROOT, AGENT, [a.name])
     return `trigger ${a.name} set: ${a.kind || 'heartbeat'} on '${a.schedule}'`
   }
   if (name === 'trigger_list') {
@@ -332,8 +338,14 @@ async function handleTool(name, a) {
       + `${t.note ? ' — ' + t.note : ''}`).join('\n') || '(no triggers; you never wake yourself)'
   }
   if (name === 'trigger_rm') {
-    await pool.query(`UPDATE triggers SET enabled=false WHERE agent=$1 AND name=$2`,
+    const r = await pool.query(`UPDATE triggers SET enabled=false WHERE agent=$1 AND name=$2 RETURNING kind`,
       [AGENT, a.name])
+    // A python trigger's row alone is re-enabled by the pulse within a minute (its file still defines it), so its
+    // retirement is the TOMBSTONE, per (agent, name) (plan-9853 D2).
+    if (r.rows.some(x => x.kind === 'python')) {
+      await retire(TRIGGERS_ROOT, AGENT, a.name)
+      return `trigger ${a.name} retired: the pulse won't re-enable it; trigger_set writes it again to bring it back`
+    }
     return `trigger ${a.name} disabled`
   }
   throw new Error(`unknown tool ${name}`)
