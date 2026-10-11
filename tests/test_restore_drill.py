@@ -82,6 +82,22 @@ if not have:
     print(f"\n{'FAIL' if fails else 'SKIP (partial)'}")
     sys.exit(1 if fails else 77)
 
+import importlib.util  # noqa: E402
+
+# psycopg is part of the live precondition too. A committed-only tree (pushed_tree_check, CI, a fresh clone) runs
+# this under a python with no venv, and on a host that HAS docker and the image the `have` gate above passes, so the
+# bare import below crashed the whole gate (seed #45406). Estate polarity, as test_sqlguard and test_pg_design use:
+# no triggers/ means a committed-only tree, so SKIP 77; triggers/ present means a LIVE host whose interpreter lost
+# psycopg, so BROKEN, rc 1, never a quiet skip.
+if importlib.util.find_spec("psycopg") is None:
+    if (REPO / "triggers").is_dir():
+        print("  FAIL  live: BROKEN: a live host (triggers/ present) whose python can't import psycopg")
+        print(f"\nFAIL: {len(fails) + 1} arm(s)")
+        sys.exit(1)
+    print("  SKIP  live: no psycopg in this interpreter (a committed-only tree: no venv, no estate)")
+    print(f"\n{'FAIL' if fails else 'SKIP (partial)'}")
+    sys.exit(1 if fails else 77)
+
 import psycopg  # noqa: E402
 
 from nucleus import pg_role_sync  # noqa: E402
