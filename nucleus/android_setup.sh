@@ -20,7 +20,9 @@
 # held 2.6–2.9 GB), ~4 GB disk for the SDK plus ~3 GB for the phone.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-envv() { grep -m1 "^$1=" "$ROOT/.env" 2>/dev/null | cut -d= -f2- || true; }
+# A setting from the process environment first (so a test run overrides it without WRITING a .env: a copied .env is a
+# second holder of the org's secrets), else from .env.
+envv() { if [ -n "${!1:-}" ]; then printf '%s\n' "${!1}"; else grep -m1 "^$1=" "$ROOT/.env" 2>/dev/null | cut -d= -f2- || true; fi; }
 ENABLED=$(envv ANDROID_ENABLED)
 LICENSE=$(envv ANDROID_SDK_LICENSE)
 SDK=$(envv ANDROID_SDK_ROOT); SDK=${SDK:-$HOME/Android/Sdk}; SDK=${SDK/#\~/$HOME}

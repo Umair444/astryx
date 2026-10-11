@@ -17,7 +17,9 @@ in a throwaway fixture database (ANDROID_DSN, set explicitly); stop flags in a t
   D6 a second agent acting on the phone is refused, naming the driver (C4); after act("done") it may drive
   D7 the agent's stop flag (hands_desktop.stop <agent>, today's CLI path) refuses its phone actions; resume restores
      them. NOT the observatory's button: that stops a DESKTOP by its name and doesn't reach a phone (S2)
-  D8 shutdown frees the VM slot and the phone's driver hold; with a "Windows VM" running (a stand-in container named
+  D1v (S2) the phone boots in its own desktop: the answer offers the observatory view, the emulator window is there
+  D7b (S2) the OWNER's stop through the observatory's real route refuses a REAL phone action; resume restores it
+  D8 shutdown (and takes the phone's desktop down) frees the VM slot and the phone's driver hold; with a "Windows VM" running (a stand-in container named
      by WINDOWS_CONTAINER) boot is refused and the phone stays off
 """
 import asyncio
@@ -32,6 +34,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 fails, unverified = [], []
+unverified_view = []
 
 
 def want(label, cond, why=""):
@@ -53,7 +56,10 @@ if rc.returncode != 0 or not rc.stdout.startswith("ready"):          # "off" exi
     skip(f"the phone isn't set up here ({rc.stdout.strip() or rc.stderr.strip()})")
 STAND_IN = f"astryx-test-vm-{os.getpid()}"
 os.environ["ASTRYX_HANDS_STATE"] = tempfile.mkdtemp(prefix="phone-oracle-state-")
+os.environ["ASTRYX_HANDS_HOME"] = tempfile.mkdtemp(prefix="phone-oracle-home-")
+os.environ["ASTRYX_HANDS_UNIT_PREFIX"] = f"astryx-hands-test{os.getpid()}-"   # never the org's real phone desktop
 os.environ["ASTRYX_AGENT"] = "phone-oracle-a"
+os.environ["OBS_KEY"] = "test-owner-key-device"
 
 from nucleus import android as droid  # noqa: E402
 if droid.windows_running():
@@ -123,6 +129,17 @@ try:
         want("D1 the phone boots through act('boot')", up and "is up" in str(out[0]), str(out[:1]))
         if not up:
             raise SystemExit("no phone: the remaining arms can't run")
+        # ── D1v: S2, the phone in its own desktop (live view) ──────────────────────────────────────────────────
+        DESK = droid.phone_desktop(AVD)
+        if not droid.viewed(AVD):
+            print(f"  UNVERIFIED D1v: the phone booted headless here (no desktop could start): {str(out[0])[:120]}")
+            unverified_view.append("D1v")
+        else:
+            titles = [w.get("title") or "" for w in hd.windows(DESK)]
+            want("D1v the boot answer offers the observatory view", "watch and join it in the observatory" in str(out[0]),
+                 str(out[:1]))
+            want("D1v the phone runs in its own desktop, its emulator window there",
+                 any("Android Emulator" in t for t in titles), str(titles))
         vals = [A(f"shell settings get {ns} {k}").stdout.strip() for ns, k, _ in droid.QUIET]
         want("D1 every boot setting reads back as set (pop-ups off, lock-screen text off, awake)",
              vals == [v for _, _, v in droid.QUIET], f"{vals} vs {[v for _, _, v in droid.QUIET]}")
@@ -203,6 +220,23 @@ try:
         hd.resume("phone-oracle-b")
         out = run(srv.act("button", device=AVD, button="HOME"))
         want("D7 resume restores it (upstream pressed HOME)", "Pressed the button: HOME" in str(out[0]), str(out[:1]))
+        # ── D7b: the OWNER's stop through the observatory's REAL route, on a real phone (a4 #47651c) ─────────────
+        if droid.viewed(AVD):
+            sys.path.insert(0, str(REPO / "observatory" / "api"))
+            import main as obs
+            from fastapi.testclient import TestClient
+            cl = TestClient(obs.app)
+            OWNER = {"x-obs-key": os.environ["OBS_KEY"]}
+            r = cl.post(f"/api/hands/{droid.phone_desktop(AVD)}/stop", headers=OWNER)
+            out = run(srv.act("button", device=AVD, button="HOME"))
+            want("D7b the owner's stop button (the real route) refuses a REAL phone action",
+                 r.status_code == 200 and str(out[0]).startswith("STOPPED"), f"{r.status_code} {out[:1]}")
+            r = cl.post(f"/api/hands/{droid.phone_desktop(AVD)}/resume", headers=OWNER)
+            out = run(srv.act("button", device=AVD, button="HOME"))
+            want("D7b ...and the owner's resume (the real route) lets it act again",
+                 r.status_code == 200 and "Pressed the button: HOME" in str(out[0]), f"{r.status_code} {out[:1]}")
+        else:
+            unverified_view.append("D7b")
         # ── D8 ─────────────────────────────────────────────────────────────────────────────────────────────────
         out = run(srv.act("shutdown", device=AVD))
         import psycopg
@@ -210,6 +244,7 @@ try:
             rows = dict(c.execute("SELECT resource, state FROM leases WHERE resource IN ('vm-slot', %s)",
                                   (f"android:{AVD}",)).fetchall())
         want("D8 shutdown stops the phone", not droid.emulator_pids(AVD), str(out[:1]))
+        want("D8 ...and takes its desktop down", not hd.alive(droid.phone_desktop(AVD)))
         want("D8 ...and frees the VM slot and the driver hold", set(rows.values()) <= {"free"}, str(rows))
         img = "astryx-hands-cell" if subprocess.run(["docker", "image", "inspect", "astryx-hands-cell"],
                                                      capture_output=True).returncode == 0 else None
@@ -227,6 +262,12 @@ try:
 finally:
     if droid.emulator_pids(AVD):
         droid.adb("emu", "kill", serial=droid.serial(AVD), timeout=20)
+    try:
+        if hd.alive(droid.phone_desktop(AVD)):
+            hd.down(droid.phone_desktop(AVD))
+    except Exception:  # noqa: BLE001
+        pass
+    shutil.rmtree(os.environ["ASTRYX_HANDS_HOME"], ignore_errors=True)
     subprocess.run(["docker", "rm", "-f", STAND_IN], capture_output=True)
     shutil.rmtree(os.environ["ASTRYX_HANDS_STATE"], ignore_errors=True)
     droid.adb("kill-server", timeout=10)
@@ -234,7 +275,7 @@ finally:
 if fails:
     print(f"FAIL: {len(fails)} arm(s)")
     sys.exit(1)
-if unverified:
-    print(f"NOT VERIFIED: {', '.join(unverified)} (every other arm passed)")
+if unverified or unverified_view:
+    print(f"NOT VERIFIED: {', '.join(unverified + unverified_view)} (every other arm passed)")
     sys.exit(77)
 print("PASS: an agent drove a real phone through the facade on a public app; stamp, leases, stop and vm-slot hold")
