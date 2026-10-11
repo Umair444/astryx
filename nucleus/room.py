@@ -62,7 +62,10 @@ def address(text: str, names: list[str] | None = None) -> tuple[str, str] | None
         if not agent and i == first:              # a sound-alike only as the word that opens the sentence
             agent = ALIASES.get(w)
             if not agent:
-                close = difflib.get_close_matches(w, names, n=1, cutoff=0.84)
+                # right after a greeting ("hello schneed") a name is all but certain, so whisper's mangling is
+                # forgiven more (10-11: the owner's "hello seed" came back "Hello, Schneed." — ratio 0.73)
+                cutoff = 0.7 if first > 0 else 0.84
+                close = difflib.get_close_matches(w, names, n=1, cutoff=cutoff)
                 agent = close[0] if close else None
         if agent:
             return agent, text.strip()

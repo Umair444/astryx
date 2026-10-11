@@ -62,9 +62,11 @@ class WhisperBackend:
 
     def transcribe(self, pcm: np.ndarray) -> str:
         self.load()
-        # language=None: the owner speaks Urdu, Punjabi, English and mixes; whisper detects. vad_filter uses the
-        # bundled silero model (local) to cut non-speech the browser's energy VAD let through.
-        segs, _ = self._m.transcribe(pcm, beam_size=self.beam, language=None, vad_filter=True,
+        # English only (owner, 10-11): language detection turned TV audio into Portuguese/Spanish/Hindi lines and
+        # misheard names; pinning English also skips the detection pass. EAR_STT_LANG=auto restores detection.
+        # vad_filter uses the bundled silero model (local) to cut non-speech the browser's energy VAD let through.
+        lang = _env("EAR_STT_LANG", "en")
+        segs, _ = self._m.transcribe(pcm, beam_size=self.beam, language=None if lang == "auto" else lang, vad_filter=True,
                                      condition_on_previous_text=False)
         return " ".join(s.text.strip() for s in segs).strip()
 
@@ -136,6 +138,12 @@ class SttQueue:
         then, oldest first, as many as keep the queued audio under max_s)."""
         with self.cv:
             n, ms = 0, int(item.get("dur_ms") or 0)
+            if item.get("priority"):               # a clip that named an agent: the idle-time guesses make way for it
+                for old in [x for x in self.q if x.get("opportunistic")]:
+                    self.q.remove(old)
+                    self.queued_ms -= int(old.get("dur_ms") or 0)
+                    self.dropped += 1
+                    n += 1
             full = self.flush and len(self.q) >= self.maxlen
             while self.q and (full or len(self.q) >= self.maxlen or self.queued_ms + ms > self.max_ms):
                 old = self.q.popleft()             # the OLDEST goes; its audio is discarded, never stored
@@ -143,10 +151,18 @@ class SttQueue:
                 self.dropped += 1
                 self.drop_times.append(time.monotonic())
                 n += 1
-            self.q.append(item)
+            if item.get("priority"):
+                self.q.appendleft(item)
+            else:
+                self.q.append(item)
             self.queued_ms += ms
             self.cv.notify()
             return n
+
+    def idle(self) -> bool:
+        """Nothing queued and nothing being transcribed: a spare moment for a clip the wake word didn't vouch for."""
+        with self.cv:
+            return not self.q and not self.busy
 
     def _run(self):
         try:

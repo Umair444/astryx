@@ -42,6 +42,7 @@ import secrets
 import threading
 import time
 import wave
+from pathlib import Path
 from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
 
@@ -63,6 +64,7 @@ RESOURCE = f"ear:{ROOM}"
 MAIN_DSN = env("ASTRYX_DSN")
 MAX_BYTES = 2_000_000                       # 30 s of 16 kHz PCM16 is 960 KB
 MAX_S, MIN_S = 30.0, 0.25
+OPPORTUNISTIC_MAX_MS = 6000                    # an unnamed clip this short may be transcribed when whisper is idle
 WAKE = env("EAR_WAKE", "on") != "off"           # the wake word gate (nucleus/wake.py); EAR_WAKE=off transcribes all
 MAINTAIN_EVERY_S = 600
 REPLY_WINDOW = "15 minutes"                 # how long the ear sheet keeps showing a reply
@@ -289,10 +291,33 @@ def wake_body(hid: int) -> str:
 hearing = Hearing(MAIN_DSN)
 
 
+MISSES = Path(__file__).resolve().parent.parent / "var" / "ear" / "wake_misses"
+
+
+def _keep_miss(pcm, keep: int = 20):
+    """The wake word's misses, kept (the last 20, local, gitignored var/) to tune its threshold on real voices.
+    Owner 10-11: privacy hardening comes later; these are clips that ADDRESSED an agent, never ambient talk."""
+    try:
+        MISSES.mkdir(parents=True, exist_ok=True)
+        f = MISSES / f"{time.strftime('%Y%m%dT%H%M%S')}.wav"
+        with wave.open(str(f), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(ear_stt.SR)
+            w.writeframes((np.clip(pcm, -1, 1) * 32767).astype("<i2").tobytes())
+        for old in sorted(MISSES.glob("*.wav"))[:-keep]:
+            old.unlink()
+    except Exception:                                           # noqa: BLE001: tuning data is never worth a failure
+        pass
+
+
 def _sink(item, text, stt_ms):
     row = store.insert(item, text, stt_ms, queue.backend.name if queue else "?")
     if row and text.strip():
-        store.route_room(text, row, item.get("pcm"), item.get("wake"))
+        mid = store.route_room(text, row, item.get("pcm"), item.get("wake"))
+        if mid and item.get("opportunistic"):                   # whisper heard a name the wake word missed
+            store.wake["missed"] = store.wake.get("missed", 0) + 1
+            _keep_miss(item["pcm"])
     if row:
         hearing.put({"id": row[1], "ts": row[0].isoformat(), "ts_raw": row[0], "text": text, "view": item.get("view")})
 
@@ -518,8 +543,13 @@ async def utterance(request: Request):
         g = await asyncio.to_thread(store.wake_gate, pcm)
         store.wake["unaddressed" if g is None else "open" if g == wake.OPEN else "talking" if g == "talking" else "named"] += 1
         if g is None:
-            return JSONResponse({"queued": False, "unaddressed": True, "lease": L.indicator(row)}, status_code=202)
-        if g not in (wake.OPEN, "talking"):
-            item["wake"] = g
+            # the wake word didn't hear a name. It misses real voices (10-11: the owner's "seed, it's Umair", twice),
+            # so a SHORT clip is still transcribed when whisper is idle, and the router decides by the words; long
+            # clips (a TV running on) and anything while whisper is busy are dropped unheard.
+            if dur_ms > OPPORTUNISTIC_MAX_MS or not queue.idle():
+                return JSONResponse({"queued": False, "unaddressed": True, "lease": L.indicator(row)}, status_code=202)
+            item["opportunistic"] = True
+        elif g not in (wake.OPEN, "talking"):
+            item["wake"], item["priority"] = g, True
     dropped = queue.put(item)
     return JSONResponse({"queued": True, "dropped_now": dropped, "lease": L.indicator(row)}, status_code=202)

@@ -28,7 +28,8 @@ cases = {
     "Stewart can you check the backups": "steward",                       # whisper's spelling, forgiven
     "the weather is nice today": None, "what is going on seed": "seed",   # a name ANYWHERE addresses (owner 10-11)
     "can you ask painter to redo it": "painter", "what's seed's status": "seed",
-    "please take a seat over there": None,                               # a sound-alike only counts near the start
+    "please take a seat over there": None,
+    "Hello, Schneed.": "seed", "Schneed what is up": None,              # forgiven more right after a greeting                               # a sound-alike only counts near the start
     "": None,
 }
 for text, want in cases.items():

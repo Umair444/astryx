@@ -377,6 +377,12 @@ try:
                 time.sleep(0.05)
             want("processed: 0 (in flight), then 5", done2 == [0, 5], str(done2))
             q2.stop()
+        pq = ear_stt.SttQueue(None, None, maxlen=2, flush=True)    # not started: put() alone decides
+        pq.put({"seq": "guess", "opportunistic": True, "dur_ms": 2000})
+        idle_with_one = pq.idle()
+        pq.put({"seq": "named", "priority": True, "dur_ms": 2000})
+        want("a clip that named an agent jumps the queue and evicts the idle-time guesses (owner test 10-11)",
+             [x["seq"] for x in pq.q] == ["named"] and not idle_with_one, str([x["seq"] for x in pq.q]))
         bad = ear_stt.SttQueue(Fake(fail_load=True), lambda *a: None).start()
         time.sleep(0.3)
         st = bad.status()
