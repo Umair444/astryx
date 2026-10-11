@@ -24,6 +24,9 @@ const IDLE_MS = 60_000
 let st: VoiceState = { phase: 'idle', mood: 'idle', error: '', minutes: 0, cap: 60, heard: '', said: '', acting: '' }
 const subs = new Set<() => void>()
 const patch = (p: Partial<VoiceState>) => { st = { ...st, ...p }; subs.forEach((f) => f()) }
+/** The live voice owns the room while it's on: the ear holds its uploads (components/EarControl.tsx), so one
+ *  sentence isn't heard twice and forwarded to an agent behind the live conversation's back (owner, 10-11). */
+export function liveOn(): boolean { return st.phase === 'live' || st.phase === 'connecting' }
 export function useVoice(): VoiceState { return useSyncExternalStore((f) => { subs.add(f); return () => { subs.delete(f) } }, () => st) }
 
 let pc: RTCPeerConnection | null = null

@@ -6,6 +6,7 @@ import { EnergyVad, wav } from '../ear/vad'
 import { earLook, type Mic } from '../ear/look'
 import AgentFace from './AgentFace'
 import { Action } from '../ui/kit'
+import { liveOn } from '../pilot/voice'
 
 /* hearing S1 (plan-8674): the observatory holds the mic. This pill is ALWAYS in the header for the owner (rule (d):
    mic state is never hidden) and its one button is the one-tap MUTE. The room's state lives server-side (the
@@ -96,6 +97,7 @@ export default function EarControl({ view }: { view: string }) {
   }, [])
 
   const upload = useCallback(async (pcm: Int16Array) => {
+    if (liveOn()) return                                 // the live voice is hearing the room; the ear steps aside
     try {
       const r = await ear('utterance', undefined, wav(pcm),
         `?holder=${HOLDER}&view=${encodeURIComponent(viewRef.current)}`)
