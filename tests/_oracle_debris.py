@@ -11,7 +11,7 @@ import re
 import shutil
 from pathlib import Path
 
-from psycopg import sql
+from psycopg import errors, sql
 
 # Every run role an oracle makes is a TEST role (nucleus/runscope.py TEST_STAMP): set here, at import, because every
 # RunScope oracle imports this module before it opens a scope, and mutation_probe runs oracles outside check.sh.
@@ -33,8 +33,13 @@ def _gone(pid: int) -> bool:
 
 
 def _drop_db(adm, d):
-    adm.execute(sql.SQL("ALTER DATABASE {} IS_TEMPLATE false").format(sql.Identifier(d)))
-    adm.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(d)))
+    # DROP first; clear IS_TEMPLATE only on the server's template refusal (42809). ALTER-first FATALs on an INVALID
+    # database (an interrupted DROP) and closes the connection; an invalid database can always be dropped.
+    try:
+        adm.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(d)))
+    except errors.WrongObjectType:
+        adm.execute(sql.SQL("ALTER DATABASE {} IS_TEMPLATE false").format(sql.Identifier(d)))
+        adm.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(d)))
 
 
 def reap(adm) -> list:
@@ -53,21 +58,39 @@ def reap(adm) -> list:
                 reaped.append(d)
             adm.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(r)))
             reaped.append(r)
+    # Scopes sit at ORACLE_BASE/<run id>, or one level down at ORACLE_BASE/o<pid>/<run id> (test_runscope's per-oracle
+    # subdir). Reading only the top level missed every killed test_runscope's real-epoch role and its databases
+    # (10-11: bc_2741292x… outlived its check_watch run and had to be dropped by hand).
+    subdirs, scopes = [], []
     if ORACLE_BASE.is_dir():
-        for scope in ORACLE_BASE.iterdir():
+        for top in ORACLE_BASE.iterdir():
+            if not top.is_dir():
+                continue
+            if (top / "lock.json").exists():
+                scopes.append(top)
+            elif re.fullmatch(r"o\d+", top.name):
+                subdirs.append(top)
+                scopes += [s for s in top.iterdir() if s.is_dir()]
+    for scope in scopes:
+        try:
+            lock = json.loads((scope / "lock.json").read_text())
+        except (OSError, ValueError):
+            continue
+        role = f"bc_{scope.name}".lower()
+        if lock.get("role") != role or not _gone(int(lock.get("pid", 0))):
+            continue
+        if adm.execute("SELECT 1 FROM pg_roles WHERE rolname=%s", (role,)).fetchone():
+            for (d,) in adm.execute("SELECT d.datname FROM pg_database d JOIN pg_roles r ON r.oid=d.datdba "
+                                    "WHERE r.rolname=%s", (role,)).fetchall():
+                _drop_db(adm, d)
+                reaped.append(d)
+            adm.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))
+            reaped.append(role)
+        shutil.rmtree(scope, ignore_errors=True)
+    for sub in subdirs:                                 # a dead oracle's emptied o<pid>: rmdir only, never a tree
+        if _gone(int(sub.name[1:])):
             try:
-                lock = json.loads((scope / "lock.json").read_text())
-            except (OSError, ValueError):
-                continue
-            role = f"bc_{scope.name}".lower()
-            if lock.get("role") != role or not _gone(int(lock.get("pid", 0))):
-                continue
-            if adm.execute("SELECT 1 FROM pg_roles WHERE rolname=%s", (role,)).fetchone():
-                for (d,) in adm.execute("SELECT d.datname FROM pg_database d JOIN pg_roles r ON r.oid=d.datdba "
-                                        "WHERE r.rolname=%s", (role,)).fetchall():
-                    _drop_db(adm, d)
-                    reaped.append(d)
-                adm.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))
-                reaped.append(role)
-            shutil.rmtree(scope, ignore_errors=True)
+                sub.rmdir()
+            except OSError:
+                pass
     return reaped

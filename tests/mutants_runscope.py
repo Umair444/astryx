@@ -72,4 +72,22 @@ MUTANTS = {
     "R23 a scoped oracle sweep rejects its own test stamp (an oracle's crashed run is never reaped)":
         ("            ok = {MACHINE_ID} if only is None else {MACHINE_ID, TEST_STAMP}",
          "            ok = {MACHINE_ID}"),
+    "R24 the census REAPS what it reads (a standing read that drops a live operator's debris evidence)":
+        ("    dead = [d.name for d, _ in dead_scopes(base, unprovable)]",
+         "    dead = [x[\"scope\"] for x in sweep(admin_dsn, base, only=only) if not x.get(\"orphan\")]"),
+    "R25 the census calls a lockless dir debris (an unprovable dir accused)":
+        ("    return {\"dead_scopes\": dead, \"orphans\": orphans,",
+         "    return {\"dead_scopes\": dead + unprovable, \"orphans\": orphans,"),
+    "R26 the census counts another host's (or an oracle's) orphan as this host's debris":
+        ("    return {\"dead_scopes\": dead, \"orphans\": orphans,", "    return {\"dead_scopes\": dead, \"orphans\": orphans + foreign,"),
+    "R27 the census keys on AGE, not liveness (a live scope older than a minute is accused)":
+        ("    dead = [d.name for d, _ in dead_scopes(base, unprovable)]",
+         "    dead = [d.name for d in sorted((base or SCOPE_ROOT).iterdir()) if d.is_dir() and (d / \"lock.json\").exists()\n"
+         "            and time.time() - (d / \"lock.json\").stat().st_mtime > 0]"),
+    "R28 IS_TEMPLATE is ALTERed BEFORE the drop (an INVALID database FATALs and closes the connection: 10-11)":
+        ("                    try:\n                        c.execute(sql.SQL(\"DROP DATABASE {} WITH (FORCE)\").format(sql.Identifier(db)))\n"
+         "                    except psycopg.errors.WrongObjectType:\n",
+         "                    c.execute(sql.SQL(\"ALTER DATABASE {} IS_TEMPLATE false\").format(sql.Identifier(db)))\n"
+         "                    if True:\n                        c.execute(sql.SQL(\"DROP DATABASE {} WITH (FORCE)\").format(sql.Identifier(db)))\n"
+         "                    if False:\n"),
 }

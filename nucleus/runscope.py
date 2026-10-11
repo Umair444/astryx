@@ -267,8 +267,15 @@ def _drop_owned(admin_dsn: str, role: str) -> dict:
         with psycopg.connect(admin_dsn, autocommit=True) as c:
             for db in owned_dbs(admin_dsn, role, c):
                 try:
-                    c.execute(sql.SQL("ALTER DATABASE {} IS_TEMPLATE false").format(sql.Identifier(db)))
-                    c.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(db)))
+                    # DROP first; clear IS_TEMPLATE only when the server refuses a TEMPLATE (42809, an ordinary
+                    # ERROR). Not ALTER-first: an INVALID database (an interrupted DROP, e.g. its run was killed)
+                    # answers ALTER with FATAL and closes this connection, so every later drop here failed too
+                    # (10-11, bc_2741292x…_tpl). An invalid database can always be dropped.
+                    try:
+                        c.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(db)))
+                    except psycopg.errors.WrongObjectType:
+                        c.execute(sql.SQL("ALTER DATABASE {} IS_TEMPLATE false").format(sql.Identifier(db)))
+                        c.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(db)))
                     out["dropped"].append(db)
                 except psycopg.Error as e:
                     out["errors"].append(f"{db}: {type(e).__name__}")
@@ -285,17 +292,46 @@ def _drop_owned(admin_dsn: str, role: str) -> dict:
     return out
 
 
-def sweep(admin_dsn: str, base: Path = None, only=None) -> list:
-    """Reap every scope under `base` whose lock's process is gone (pid AND start time). Returns their reports."""
+def dead_scopes(base: Path = None, unprovable: list = None) -> list:
+    """(dir, lock) of every scope under `base` whose lock's process is gone (pid AND start time). The sweep reaps
+    exactly these, and the census reports exactly these: one predicate, so the two can't disagree. A dir with no
+    readable lock is not a scope we can prove is ours: appended to `unprovable` (reported), never returned."""
     base = base or SCOPE_ROOT
-    reaped = []
+    out = []
     for d in sorted(p for p in base.iterdir() if p.is_dir()) if base.is_dir() else []:
         try:
             lock = json.loads((d / "lock.json").read_text())
         except (OSError, ValueError):
-            continue                                   # not a scope we can prove is ours: never touch it
-        if alive(lock):
+            if unprovable is not None:
+                unprovable.append(d.name)
             continue
+        if not alive(lock):
+            out.append((d, lock))
+    return out
+
+
+def census(admin_dsn: str, base: Path = None, only=None) -> dict:
+    """READ-ONLY: what sweep() WOULD reap, and what it would only report. Nothing is dropped or removed.
+
+    sweep() runs only at the start of a branch_check, so a killed run's debris stays until someone runs one again.
+    This is the standing read of that gap. It keys on the SWEEP'S OWN predicate (a dead (pid, starttime), or a role
+    whose creator is gone), never on AGE: a healthy full run takes over 50 minutes, and an age rule accuses it
+    (steward #45223 → a4 #45225, measured on two live runs that an age rule would have called leaks).
+      dead_scopes  scope dirs whose process is gone           (debris: sweep reaps them)
+      orphans      this host's run roles whose creator is gone (debris: sweep reaps them)
+      foreign      orphans another host (or an oracle) stamped  (reported, never debris here)
+      unprovable   dirs under the root with no readable lock     (reported, never touched)"""
+    unprovable, foreign, synthetic = [], [], []
+    dead = [d.name for d, _ in dead_scopes(base, unprovable)]
+    orphans = orphan_roles(admin_dsn, only=only, foreign=foreign, synthetic=synthetic)
+    return {"dead_scopes": dead, "orphans": orphans, "foreign": sorted(foreign), "unprovable": unprovable}
+
+
+def sweep(admin_dsn: str, base: Path = None, only=None) -> list:
+    """Reap every scope under `base` whose lock's process is gone (pid AND start time). Returns their reports."""
+    base = base or SCOPE_ROOT
+    reaped = []
+    for d, lock in dead_scopes(base):                  # a dir with no readable lock: never touched
         rep = teardown(admin_dsn, str(lock.get("role", "")), d, base)
         reaped.append({"scope": d.name, **rep})
     foreign, synthetic = [], []
@@ -313,3 +349,27 @@ def sweep(admin_dsn: str, base: Path = None, only=None) -> list:
                        "skipped": "not stamped with this machine's id: another host's (or a pre-stamp) run role. "
                                   "Reported, never dropped"})
     return reaped
+
+
+def main(argv=None) -> int:
+    """`python -m nucleus.runscope census`: the read-only census. rc 0 none · 1 debris (named) · 77 no DSN.
+    Names are role and run ids only (pid x epoch): metadata, nothing a run carried."""
+    import sys
+    argv = sys.argv[1:] if argv is None else argv
+    if argv != ["census"]:
+        print("usage: python -m nucleus.runscope census")
+        return 2
+    dsn = os.environ.get("ASTRYX_DSN")
+    if not dsn:
+        print("runscope census: NOT SEARCHED (rc 77): no ASTRYX_DSN")
+        return 77
+    c = census(dsn)
+    for k in ("dead_scopes", "orphans", "foreign", "unprovable"):
+        print(f"  {k}: {len(c[k])}" + "".join(f"\n    {x}" for x in c[k]))
+    debris = len(c["dead_scopes"]) + len(c["orphans"])
+    print(f"runscope census: {debris} debris (sweep would reap), {len(c['foreign']) + len(c['unprovable'])} reported")
+    return 1 if debris else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

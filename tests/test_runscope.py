@@ -90,7 +90,7 @@ def main():
         print("NOT SEARCHED: this role can't CREATE ROLE/DATABASE. Nothing was verified.")
         return 77
     sys.path.insert(0, str(REPO / "tests"))
-    from _oracle_debris import ORACLE_BASE, reap
+    from _oracle_debris import ORACLE_BASE, _drop_db, reap
     reap(adm)                                                    # a killed earlier run's debris, by raw SQL
     role_exists = lambda r: bool(adm.execute("SELECT 1 FROM pg_roles WHERE rolname=%s", (r,)).fetchone())
     base = ORACLE_BASE / f"o{os.getpid()}"                         # per-oracle subdir: its own scopes only
@@ -153,7 +153,7 @@ def main():
         gone = lambda d: not adm.execute("SELECT 1 FROM pg_database WHERE datname=%s", (d,)).fetchone()
         check("teardown drops every database the role owns, whatever its name", gone(a) and gone(odd),
               str(rep))
-        check("teardown drops a run-owned TEMPLATE database (IS_TEMPLATE cleared first; a2 binding)", gone(tpl),
+        check("teardown drops a run-owned TEMPLATE database (IS_TEMPLATE cleared on the server's template refusal; a2 binding)", gone(tpl),
               str(rep))
         check("teardown drops the role and the root, and reports no leak",
               not role_exists(s.role) and not s.root.exists() and rep["leaked"] == [] and not rep["errors"], str(rep))
@@ -174,6 +174,18 @@ def main():
         lv = rs.live(base)
         check("live(): a live scope counts; a dead one and a REUSED pid don't (the eviction guard, seed #34141)",
               t_live.run_id in lv and t_dead.run_id not in lv and t_reused.run_id not in lv, str(lv))
+        # census (steward #45223 → a4 #45225): the sweep's OWN predicate, read-only, never age. The live scope is
+        # minutes old and the dead one seconds old, so an age rule would get both wrong.
+        (base / "no-lock-here").mkdir()
+        cen = rs.census(dsn, base, only=set(extra_roles))
+        check("census: a scope whose process is GONE (dead pid, reused pid) is debris; a LIVE one is not",
+              t_dead.run_id in cen["dead_scopes"] and t_reused.run_id in cen["dead_scopes"]
+              and t_live.run_id not in cen["dead_scopes"], str(cen))
+        check("…a dir with no readable lock is reported as unprovable, never as debris",
+              cen["unprovable"] == ["no-lock-here"] and "no-lock-here" not in cen["dead_scopes"], str(cen))
+        check("…and the census is READ-ONLY: the dead scope's role and root survive it",
+              role_exists(t_dead.role) and t_dead.root.exists(), t_dead.role)
+        (base / "no-lock-here").rmdir()
         reaped = {x["scope"] for x in rs.sweep(dsn, base, only=set(extra_roles))}
         check("sweep reaps a scope whose process is gone", t_dead.run_id in reaped and not role_exists(t_dead.role),
               str(reaped))
@@ -226,7 +238,12 @@ def main():
         adm.execute(sql.SQL("COMMENT ON ROLE {} IS {}").format(sql.Identifier(prod_orphan), sql.Literal(rs.MACHINE_ID)))
         fg = []
         un = rs.orphan_roles(dsn, foreign=fg)
+        cen = rs.census(dsn, Path(tempfile.mkdtemp(prefix="runscope-census-")))
         adm.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(prod_orphan)))       # ours: cleaned by hand
+        check("census: a dead-creator role stamped by THIS host is debris (orphans); a LIVE run's role is not",
+              prod_orphan in cen["orphans"] and nolock.role not in cen["orphans"], str(cen)[:300])
+        check("…an oracle's crashed child (TEST stamp) is reported as foreign, never debris",
+              not crashed or (crashed in cen["foreign"] and crashed not in cen["orphans"]), str(cen)[:300])
         nstamp = adm.execute("SELECT shobj_description(oid, 'pg_authid') FROM pg_roles WHERE rolname = %s",
                              (nolock.role,)).fetchone()
         check("TEST stamp: an oracle-made run role carries test:<machine-id>, in-process (this oracle's own scope, "
@@ -298,6 +315,35 @@ def main():
               again["dropped"] == [] and not again["leaked"] and not again["role_left"] and not again["errors"],
               str(again))
 
+        # ── an INVALID database (an interrupted DROP: datconnlimit -2) can't be ALTERed: the server answers FATAL and
+        # closes the connection, so every later drop in the same teardown failed (10-11, bc_2741292x…_tpl) ───────
+        inv = rs.RunScope(dsn, root=base).open()
+        extra_roles.append(inv.role)
+        bad, after = inv.create_db(f"{inv.role}_a_invalid"), inv.create_db(f"{inv.role}_b_after")   # sorted: bad first
+        adm.execute("UPDATE pg_database SET datconnlimit = -2 WHERE datname = %s", (bad,))     # the server's own mark
+        rep_inv = rs._drop_owned(dsn, inv.role)
+        check("teardown drops an INVALID database, and the ones after it on the same connection, then the role",
+              rep_inv["dropped"] == [bad, after] and not rep_inv["errors"] and rep_inv["role_left"] is False,
+              str(rep_inv))
+        import shutil as _shi
+        _shi.rmtree(inv.root, ignore_errors=True)
+
+        # ── the oracle reaper reads NESTED scopes: test_runscope's own o<pid>/<run id> (10-11: a killed
+        # check_watch test_runscope's role and DBs were never reaped, since reap() read only the top level) ──────
+        dead2 = subprocess.Popen(["true"]); dead2.wait()
+        nest = ORACLE_BASE / f"o{dead2.pid}"
+        nscope = nest / f"{dead2.pid}x{int(time.time())}"
+        nrole = f"{rs.ROLE_PREFIX}{nscope.name}"
+        nscope.mkdir(parents=True)
+        (nscope / "lock.json").write_text(json.dumps({"pid": dead2.pid, "starttime": 1, "role": nrole}))
+        adm.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(nrole)))
+        extra_roles.append(nrole)
+        adm.execute(sql.SQL("CREATE DATABASE {} OWNER {}").format(sql.Identifier(f"{nrole}_n"), sql.Identifier(nrole)))
+        got_n = reap(adm)
+        check("reap(): a dead oracle's scope NESTED under o<pid>/ is reaped (its role and DBs), and the emptied "
+              "o<pid> dir is removed", nrole in got_n and f"{nrole}_n" in got_n and not role_exists(nrole)
+              and not nest.exists(), f"reaped={got_n} nest_left={nest.exists()}")
+
         # ── refusal: a lockfile is data ──────────────────────────────────────────────────────────────────
         victim = rs.RunScope(dsn, root=base).open()                  # a real role that must SURVIVE
         extra_roles.append(victim.role)
@@ -323,8 +369,7 @@ def main():
                 continue
             for (db,) in adm.execute("SELECT d.datname FROM pg_database d JOIN pg_roles o ON o.oid = d.datdba "
                                      "WHERE o.rolname = %s", (r,)).fetchall():
-                adm.execute(sql.SQL("ALTER DATABASE {} IS_TEMPLATE false").format(sql.Identifier(db)))
-                adm.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(db)))
+                _drop_db(adm, db)                                   # raw SQL; an INVALID db is dropped without ALTER
             adm.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(r)))
         import shutil
         shutil.rmtree(base, ignore_errors=True)
