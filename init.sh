@@ -696,12 +696,29 @@ EOF
 }
 # <<< phone sweep install
 
+# >>> windows idle install
+# windows_idle_stop (plan-8675 C5): stops an agent-STARTED Windows VM nobody has used for HANDS_WINDOWS_IDLE_S and frees
+# the vm-slot. Installed only where this host HAS a Windows container (WINDOWS_CONTAINER, default `windows`), and
+# deferentially: any agent already owning a windows_idle_stop stands it down.
+_windows_here() { command -v docker >/dev/null 2>&1 && docker inspect "${WINDOWS_CONTAINER:-windows}" >/dev/null 2>&1; }
+_chk_winidle() { _windows_here || return 0; ls triggers/*/windows_idle_stop.py >/dev/null 2>&1; }
+_act_winidle() {
+  mkdir -p triggers/seed
+  cat > triggers/seed/windows_idle_stop.py <<'EOF'
+"""Live install of the shipped Windows idle stop (one writer: nucleus/shipped_triggers/windows_idle_stop.py).
+Installed by init.sh where a Windows container exists; move it to another agent if one should own it."""
+from nucleus.shipped_triggers.windows_idle_stop import windows_idle_stop  # noqa: F401
+EOF
+  say "installed the Windows idle stop (seed): an agent-started Windows VM stops after HANDS_WINDOWS_IDLE_S idle"
+}
+# <<< windows idle install
+
 # the precondition DAG, in dependency order (top depends on nothing).  name|class
 RECONCILE_NODES=(
   "pg|interior" "pgready|wait" "schema|interior" "harden|interior" "hardencut|halt" "venv|interior" "deps|interior"
   "peoplegate|interior" "derivedgraphs|interior" "geoschema|interior" "model|interior" "chan|interior" "obs|interior" "obskey|interior" "ident|interior"
   "units|interior" "law|interior" "prehook|interior" "ccompact|interior" "prreview|interior" "androidlic|halt"
-  "android|interior" "phonesweep|interior" "login|halt"
+  "android|interior" "phonesweep|interior" "winidle|interior" "login|halt"
   "seed|interior" "prompt|interior")
 
 reconcile() {
