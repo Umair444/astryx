@@ -284,6 +284,14 @@ def _sink(item, text, stt_ms):
         hearing.put({"id": row[1], "ts": row[0].isoformat(), "ts_raw": row[0], "text": text, "view": item.get("view")})
 
 
+def _warm_wake():
+    """The wake word's first load imports sherpa_onnx + sentencepiece while the worker may be importing faster_whisper:
+    it takes ear_stt's one import lock too (seed #46821), so no two of the ear's model imports ever overlap."""
+    from nucleus import room, wake
+    with ear_stt._IMPORT:
+        wake.heard(np.zeros(8000, np.float32), room.roster())
+
+
 @asynccontextmanager
 async def lifespan(_):
     global queue
@@ -291,8 +299,7 @@ async def lifespan(_):
                              max_s=float(env("EAR_QUEUE_MAX_S", "20"))).start()
     await asyncio.to_thread(store.maintain, True)
     if WAKE:                                                    # load the wake word now, not on the first sentence
-        from nucleus import room, wake
-        asyncio.get_running_loop().run_in_executor(None, wake.heard, np.zeros(8000, np.float32), room.roster())
+        asyncio.get_running_loop().run_in_executor(None, _warm_wake)
     hearing.start()
     yield
     queue.stop()
