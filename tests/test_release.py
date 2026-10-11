@@ -178,7 +178,7 @@ with tempfile.TemporaryDirectory() as td:
     out = R.release("canopus-career", lbl, SENT, routes, KEY, store)
     flat = json.dumps(out)
     check("the sender's one owner-only route is the destination", out["route_key"] == R.route_key(KEY, "whatsapp", DM))
-    check("the result carries NO body and NO chat id", SENT not in flat and "101" not in flat, flat)
+    check("the result carries NO body and NO chat id", SENT not in flat and "101@s.whatsapp.net" not in flat, flat)   # the whole id: "101" alone could match MAC/pointer hex
     check("…but its pointer resolves to the body in the tier store", store.get(out["pointer"], lbl) == SENT)
     check("the audit fields are there: bytes, keyed body MAC, route-file sha, label",
           out["bytes"] == len(SENT) and out["body_mac"] == R.body_mac(KEY, SENT)
@@ -212,7 +212,7 @@ check("a reply on an ORG inbound thread keeps that thread (derived, not chosen)"
 chan = R.agent_send("gemini-family", R.label(["family"]), "seed", "wa:101@s.whatsapp.net", "chat", SENT,
                     inbound_thread="wa:101@s.whatsapp.net")
 check("a reply on a CHANNEL inbound thread does NOT carry it onto the wire (a3 F2): tier-<sender>",
-      chan["thread"] == "tier-gemini-family" and "101" not in json.dumps(chan))
+      chan["thread"] == "tier-gemini-family" and "101@s.whatsapp.net" not in json.dumps(chan))
 odd = R.agent_send("gemini-family", R.label(["family"]), "seed", "zz:anything", "chat", SENT, inbound_thread="zz:anything")
 check("…and an UNLISTED prefix fails closed the same way (an allowlist, not a channel list)",
       odd["thread"] == "tier-gemini-family")
