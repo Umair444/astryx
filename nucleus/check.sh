@@ -767,6 +767,9 @@ run "persona / no chat text stored"  "$PY" tests/test_persona.py
 # plan-9139 S1a: the one door for personal-tier content (label algebra, live audience, stamp, tier store).
 # Pure, no DB; tests/mutants_release.py is its mutant set (14 wrong doors, all caught at authoring).
 run "release: personal-tier content reaches only an audience within its readers" "$PY" tests/test_release.py
+# plan-9139 S1b (python seats): the label comes from the charter and a malformed grant refuses; a labelled
+# AUTO-DELIVER and send go through the door (stamped pointer rows, no body); every refusal writes no row.
+run "release seats: a labelled member writes only through the door" "$PY" tests/test_release_seats.py
 if "$PY" -c 'import av' 2>/dev/null; then
   run "media in-process decode"        "$PY" nucleus/media_probe.py
 else

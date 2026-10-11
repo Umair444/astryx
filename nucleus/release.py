@@ -277,3 +277,156 @@ def agent_send(sender: str, lbl: frozenset, to: str, thread, intent, body: str, 
     th = inbound_thread if keep else f"tier-{sender}"
     return {"to": to, "thread": th[:METADATA_CAP], "intent": intent if intent in INTENTS else "chat",
             "body": f"[tier-labelled {_label_text(lbl)}: {len(body.encode())} bytes withheld]"[:METADATA_CAP]}
+
+
+# ── S1b: the label's source, the seats' one send, the CLI the channel server shells out to ──────────────────────────
+class GrantError(Refused):
+    """A Grants entry that LOOKS like a private grant but isn't exactly `owner_private:<declared tier>`. It refuses,
+    never reads as 'unlabelled': a typo in the one identity meant to be private would otherwise put its content on
+    the wire by today's raw path (a4 #46035)."""
+
+
+GRANT_PREFIX = "owner_private:"
+OWNER_ADDRESSES = frozenset({"owner"})       # the only channel-bound destination a labelled member may address
+
+
+def charter(agent: str, agents_dir: Path | None = None) -> Path | None:
+    """The agent's charter through the org's ONE resolver (nucleus/charter.resolve: any depth, examples/ and .git
+    excluded, a duplicated stem raises), the same one nucleus/tier.py reads (a3 #46041). Only an EXACT name
+    resolves: resolve() sanitises, so 'seed*' would otherwise mean seed.md, a glob passing as an identity."""
+    from nucleus import charter as C
+    d = Path(agents_dir) if agents_dir else REPO / "agents"
+    if not agent or "".join(c for c in agent if c.isalnum() or c in "-_").lower() != agent:
+        return None
+    try:
+        return C.resolve(agent, d)
+    except C.Collision as e:
+        raise GrantError(f"{agent}: {str(e).splitlines()[0]}")
+
+
+def label_of(agent: str, agents_dir: Path | None = None) -> frozenset:
+    """The label a session of `agent` carries: the tiers its charter's `Grants:` line names as
+    `owner_private:<tier>` (v4 D2a: the identity IS the role). No such grant → ORG; NO CHARTER → GrantError
+    (tier.py's polarity: an unresolvable identity is private, never public). Any entry that
+    mentions 'private' or a declared tier name but isn't exactly a declared grant → GrantError, named."""
+    p = charter(agent, agents_dir)
+    if p is None:                    # UNKNOWN, never ORG: a labelled member whose charter moved, or whose name drifted
+        raise GrantError(f"no charter resolves for {agent!r}: its label is UNKNOWN, so it can't send as org")
+    line = next((ln for ln in p.read_text(errors="replace").splitlines() if ln.startswith("Grants:")), "")
+    tiers = set()
+    for e in (x.strip() for x in line.split(":", 1)[1].split(",") if line) if line else ():
+        if not e:
+            continue
+        if e.startswith(GRANT_PREFIX) and e[len(GRANT_PREFIX):] in TIERS:
+            tiers.add(e[len(GRANT_PREFIX):])
+        elif re.search(r"private", e, re.I) or any(t in e.lower() for t in TIERS):
+            raise GrantError(f"{agent}'s Grants entry {e!r} is not exactly {GRANT_PREFIX}<one of "
+                             f"{','.join(sorted(TIERS))}>: refusing rather than running unlabelled")
+    return frozenset(tiers)
+
+
+def declared_routes(bridges_dir: Path | None = None) -> list:
+    """(channel, route, routes_file) for every route declared in bridges/routes-<channel>.json (v4 D5's route
+    domain). A route's `tier`, when present, must be a declared tier, or the whole read refuses (a4 #46035)."""
+    out = []
+    for f in sorted((Path(bridges_dir) if bridges_dir else REPO / "bridges").glob("routes-*.json")):
+        import json
+        try:
+            rows = json.loads(f.read_text())
+        except (OSError, ValueError):
+            raise Refused(f"{f.name} is unreadable: no route can be established")
+        for r in rows if isinstance(rows, list) else []:
+            t = r.get("tier")
+            if t is not None and t not in TIERS:
+                raise GrantError(f"a route in {f.name} declares tier {t!r}, which is not a declared tier")
+            out.append((f.stem.split("-", 1)[1], r, f))
+    return out
+
+
+def send_row(cur, sender: str, lbl: frozenset, to: str, thread, intent, body: str, *, key: bytes,
+             store: TierStore, routes, members=None, inbound_thread=None, agents_dir: Path | None = None) -> int:
+    """The ONE write every seat makes for a LABELLED sender (server.mjs send, step.py AUTO-DELIVER). Returns the id.
+
+      to 'owner'       release(): a pending row whose body is a size marker, thread `tier-<sender>` (no chat id
+                       on the wire: the destination is the stamp's route, S1c), and delivery.release carrying the
+                       pointer, keyed body MAC, route key, route-file sha, label and the STAMP over the row id.
+      to an agent      agent_send()'s shape: body withheld, thread derived, intent clamped.
+      to anything else no charter names (a person's wa-/tg-/dc-/cv- address, a typo): Refused, an allowlist.
+    Any refusal raises BEFORE a row is written: no key, no route, a bad label. An ORG label is not this path."""
+    import json
+    if not lbl:
+        raise Refused("send_row is the labelled path; an org-labelled sender keeps today's write")
+    if to in OWNER_ADDRESSES:
+        rel = release(sender, lbl, body, routes, key, store, members)
+        marker = f"[released: {rel['bytes']} bytes, {rel['label']}]"
+        rid = cur.execute(
+            "INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, intent, body, delivery) "
+            "VALUES (%s,'local',%s,'local',%s,'chat',%s,%s) RETURNING id",
+            (sender, to, f"tier-{sender}"[:METADATA_CAP], marker, json.dumps({"release": rel}))).fetchone()[0]
+        rel["stamp"] = stamp(key, rid, rel["route_key"], lbl, rel["pointer"], rel["body_mac"])
+        cur.execute("UPDATE messages SET delivery = %s WHERE id = %s", (json.dumps({"release": rel}), rid))
+        return rid
+    if charter(to, agents_dir) is None:            # an allowlist: a person's channel address (wa-/tg-/…), a new
+        raise Refused("a labelled member's non-owner send goes only to an AGENT (a charter by that name); "
+                      "this address has none")    # channel's prefix, or a typo all fail closed
+    shape = agent_send(sender, lbl, to, thread, intent, body, inbound_thread)
+    return cur.execute(
+        "INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, intent, body) "
+        "VALUES (%s,'local',%s,'local',%s,%s,%s) RETURNING id",
+        (sender, shape["to"], shape["thread"], shape["intent"], shape["body"])).fetchone()[0]
+
+
+def _dsn() -> str:
+    v = os.environ.get("ASTRYX_DSN")
+    if v:
+        return v
+    for ln in (REPO / ".env").read_text().splitlines():
+        if ln.startswith("ASTRYX_DSN="):
+            return ln.split("=", 1)[1].strip()
+    raise Refused("no ASTRYX_DSN")
+
+
+def main(argv=None) -> int:
+    """The channel server's door into this module (server.mjs is node; the door is ONE, here):
+
+        python -m nucleus.release label <agent>   JSON list of the agent's tiers; rc 1 on a malformed grant
+        python -m nucleus.release send            stdin {to, thread, intent, body, inbound_thread}; sender is
+                                                  $ASTRYX_AGENT; prints {"id": n} or {"error": reason}; rc 0 / 1
+        python -m nucleus.release read <pointer>  the body, for $ASTRYX_AGENT, only if the pointer's tier is in
+                                                  its label (a3's cross-tier refusal); rc 1 otherwise
+    Errors print a reason that carries no content, jid or chat id."""
+    import json
+    import sys
+    argv = sys.argv[1:] if argv is None else argv
+    try:
+        if argv[:1] == ["label"] and len(argv) == 2:
+            print(json.dumps(sorted(label_of(argv[1]))))
+            return 0
+        agent = os.environ.get("ASTRYX_AGENT") or ""
+        if argv == ["send"]:
+            req = json.loads(sys.stdin.read())
+            lbl = label_of(agent)
+            import psycopg
+            with psycopg.connect(_dsn(), autocommit=False) as c, c.cursor() as cur:
+                rid = send_row(cur, agent, lbl, str(req.get("to", "")), req.get("thread"), req.get("intent"),
+                               str(req.get("body", "")), key=mac_key(), store=TierStore(),
+                               routes=declared_routes(), inbound_thread=req.get("inbound_thread"))
+                c.commit()
+            print(json.dumps({"id": rid}))
+            return 0
+        if argv[:1] == ["read"] and len(argv) == 2:
+            lbl = label_of(agent)
+            tier = argv[1].partition("/")[0]
+            if not lbl or tier != TierStore.tier_dir(lbl):
+                raise Refused("the pointer's tier is not this member's label")
+            sys.stdout.write(TierStore().get(argv[1], lbl))
+            return 0
+    except Refused as e:
+        print(json.dumps({"error": str(e)}))
+        return 1
+    print("usage: python -m nucleus.release label <agent> | send | read <pointer>", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

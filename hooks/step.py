@@ -216,6 +216,48 @@ def strip_pixels(obj, _laptop_ids=None):
     return {k: strip_pixels(v, _laptop_ids) for k, v in obj.items()}
 
 
+def _label(agent):
+    """(label, None) for this agent's session, or (None, reason) when its grant is malformed (plan-9139 S1b). An ORG
+    agent reads (frozenset(), None) and keeps today's path byte for byte."""
+    from nucleus import release
+    try:
+        return release.label_of(agent), None
+    except release.Refused as e:
+        return None, f"malformed grant ({type(e).__name__})"
+
+
+def _labelled_auto_deliver(cur, agent, lbl, why, src, last_text, turn_id):
+    """A LABELLED member's forgotten reply goes through the one door (nucleus/release.py), never a raw INSERT
+    (v4 D1: AUTO-DELIVER is a seat). Refused (no key, no owner-only route, a person's address, a bad grant) → NO
+    row, a metadata-only error step, and one constant-text notice through the same door so the owner doesn't stare
+    at a frozen bubble (a4 #46035 note 3). The notice carries a reason CLASS, never content."""
+    from nucleus import release
+    reason = why
+    if not reason:
+        import contextlib
+        sp = getattr(getattr(cur, "connection", None), "transaction", None)
+        try:                             # a SAVEPOINT: a failed labelled write must not abort the turn's own row
+            with (sp() if sp else contextlib.nullcontext()):
+                rid = release.send_row(cur, agent, lbl, src[0], src[2], "chat", last_text, key=release.mac_key(),
+                                       store=release.TierStore(), routes=release.declared_routes())
+                cur.execute("UPDATE messages SET turn_id=%s WHERE id=%s", (turn_id, rid))
+            return
+        except release.Refused as e:
+            reason = type(e).__name__ if type(e) is not release.Refused else "refused"
+            reason = f"{reason}: {str(e)[:80]}"
+        except Exception as e:  # noqa: BLE001 — any other failure is a withheld reply, never a raw INSERT
+            reason = f"error: {type(e).__name__}"
+    cur.execute("INSERT INTO steps (agent, kind, content) VALUES (%s,'error',%s)",
+                (agent, f"auto-deliver withheld (plan-9139): {reason}"))
+    if lbl:
+        try:
+            release.send_row(cur, agent, lbl, "owner", None, "chat", "a private reply was withheld: " +
+                             reason.split(":")[0], key=release.mac_key(), store=release.TierStore(),
+                             routes=release.declared_routes())
+        except release.Refused:
+            pass                         # no key or no route: the notice can't go either; the error step stands
+
+
 def handle_stop(cur, agent, h):
     """Reconstruct the just-finished turn and write it. Returns (turn_id, last_text, tin, tout)."""
     try:
@@ -429,10 +471,14 @@ def handle_stop(cur, agent, h):
                 "SELECT count(*) FROM messages WHERE turn_id=%s AND to_agent=%s",
                 (turn_id, src[0])).fetchone()[0]
             if not already:
-                cur.execute(
-                    "INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, "
-                    "intent, body, turn_id) VALUES (%s,'local',%s,'local',%s,'chat',%s,%s)",
-                    (agent, src[0], src[2], last_text, turn_id))
+                lbl, why = _label(agent)
+                if lbl or why:
+                    _labelled_auto_deliver(cur, agent, lbl, why, src, last_text, turn_id)
+                else:
+                    cur.execute(
+                        "INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, "
+                        "intent, body, turn_id) VALUES (%s,'local',%s,'local',%s,'chat',%s,%s)",
+                        (agent, src[0], src[2], last_text, turn_id))
     return turn_id, last_text, tin, tout
 
 

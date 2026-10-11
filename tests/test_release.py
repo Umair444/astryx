@@ -180,6 +180,10 @@ with tempfile.TemporaryDirectory() as td:
     check("the sender's one owner-only route is the destination", out["route_key"] == R.route_key(KEY, "whatsapp", DM))
     check("the result carries NO body and NO chat id", SENT not in flat and "101@s.whatsapp.net" not in flat, flat)   # the whole id: "101" alone could match MAC/pointer hex
     check("…but its pointer resolves to the body in the tier store", store.get(out["pointer"], lbl) == SENT)
+    check("the result's KEY SET is exactly the metadata fields, so a future `chat`/`to` field fails (a3 #46038)",
+          set(out) == {"pointer", "bytes", "body_mac", "channel", "route_key", "route_sha", "label"}, str(sorted(out)))
+    check("…and the bare fixture number is absent from the non-crypto fields (channel, label, bytes)",
+          "101" not in f"{out['channel']}|{out['label']}|{out['bytes']}")
     check("the audit fields are there: bytes, keyed body MAC, route-file sha, label",
           out["bytes"] == len(SENT) and out["body_mac"] == R.body_mac(KEY, SENT)
           and out["route_sha"] == hashlib.sha256(rfile.read_bytes()).hexdigest() and out["label"] == "career")
