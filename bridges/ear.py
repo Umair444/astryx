@@ -552,4 +552,5 @@ async def utterance(request: Request):
         elif g not in (wake.OPEN, "talking"):
             item["wake"], item["priority"] = g, True
     dropped = queue.put(item)
-    return JSONResponse({"queued": True, "dropped_now": dropped, "lease": L.indicator(row)}, status_code=202)
+    extra = {"unaddressed": True, "opportunistic": True} if item.get("opportunistic") else {}   # no name heard; idle-time guess
+    return JSONResponse({"queued": True, "dropped_now": dropped, **extra, "lease": L.indicator(row)}, status_code=202)
