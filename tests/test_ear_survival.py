@@ -186,6 +186,11 @@ try:
     # can leave a live DSN behind when it dies.
     (stage / "channel").mkdir()
     shutil.copy2(SERVER, stage / "channel" / "server.mjs")
+    # server.mjs's sibling modules too (DERIVED, not listed): a static import of one that isn't staged crashes the copy
+    # at startup (10-11: channel/trigger_name.mjs, imported statically since 0c95e37, failed both survival oracles)
+    for mod in (REPO / "channel").glob("*.mjs"):
+        if mod.name != "server.mjs":
+            shutil.copy2(mod, stage / "channel" / mod.name)
     (stage / "channel" / "node_modules").symlink_to(REPO / "channel" / "node_modules")
     (stage / ".env").write_text(f"ASTRYX_DSN={PROBE_DSN}\n")
 
