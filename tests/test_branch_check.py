@@ -168,6 +168,11 @@ def main():
         'run "own gate" "$PY" -m tests.test_own\n'
         'run "quoted \\"=ax\\" gate" "$PY" tests/test_word.py\n')
     (dk / "tests" / "test_ear.py").write_text("from nucleus import subj\n")
+    (dk / "nucleus" / "subj.py").write_text("from nucleus import deep\n")
+    (dk / "nucleus" / "deep.py").write_text("x = 1\n")
+    (dk / "channel" / "server.mjs").write_text("import { f } from './sib.mjs'\nconst g = await import('./lazy.mjs')\n")
+    (dk / "channel" / "sib.mjs").write_text("export const f = 1\n")
+    (dk / "channel" / "lazy.mjs").write_text("export const g = 1\n")
     (dk / "tests" / "t_node.mjs").write_text("const s = new URL('../channel/server.mjs', import.meta.url)\n")
     (dk / "tests" / "t_sh.sh").write_text("grep -c ^run nucleus/check.sh\n")   # names check.sh, as many oracles do
     (dk / "tests" / "test_word.py").write_text("# the server answers; reserver.mjs is another file\n")
@@ -177,7 +182,7 @@ def main():
           of.get("ear gate") == {"tests/test_ear.py"} and of.get("node gate") == {"tests/t_node.mjs"}
           and of.get("own gate") == {"tests/test_own.py"} and 'quoted "=ax" gate' in of, of)
     gates = ["ear gate", "node gate", "bash gate", "word gate", "own gate"]
-    ds = dict(bc.dark_scope(gates, of, {"nucleus/subj.py", "channel/server.mjs", "tests/test_own.py"}, dk))
+    ds = {g: f for g, f, _ in bc.dark_scope(gates, of, {"nucleus/subj.py", "channel/server.mjs", "tests/test_own.py"}, dk)}
     check("dark_scope: a python oracle IMPORTING a changed module, a node oracle NAMING a changed file, and a changed "
           "oracle itself are each in scope", ds.get("ear gate") == "nucleus/subj.py"
           and ds.get("node gate") == "channel/server.mjs" and ds.get("own gate") == "tests/test_own.py", ds)
@@ -185,6 +190,13 @@ def main():
           "unrelated oracle isn't named", "word gate" not in ds and "bash gate" not in ds, ds)
     check("…a branch that only touches check.sh (every branch adding a gate does) puts no dark gate in scope",
           bc.dark_scope(gates, of, {"nucleus/check.sh"}, dk) == [], bc.dark_scope(gates, of, {"nucleus/check.sh"}, dk))
+    tr = {g: (f, v) for g, f, v in bc.dark_scope(gates, of, {"channel/sib.mjs", "nucleus/deep.py"}, dk)}
+    check("a4 #49641: TRANSITIVE — a node oracle naming server.mjs reaches a sibling server.mjs IMPORTS, and a python "
+          "oracle reaches a module its import imports; each named with the file it came through",
+          tr.get("node gate") == ("channel/sib.mjs", "channel/server.mjs")
+          and tr.get("ear gate") == ("nucleus/deep.py", "nucleus/subj.py") and "bash gate" not in tr, tr)
+    lz = {g: f for g, f, _ in bc.dark_scope(gates, of, {"channel/lazy.mjs"}, dk)}
+    check("…a DYNAMIC import('./x.mjs') is followed too", lz.get("node gate") == "channel/lazy.mjs", lz)
     dm = {"failed": [], "unverified": ["node gate", "bash gate"], "line": "check: m"}
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):

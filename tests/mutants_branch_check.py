@@ -78,20 +78,24 @@ MUTANTS = {
         ("f\"{sha['main']}...{sha['branch']}\"", 'sha["main"], sha["branch"]'),
     "O25 an extractor red (a FILE, no '::') never reaches the in-scope list (a4 #45033 F2)":
         (' or re.match(r"R-EXTRACT (\\S+?):?(?:\\s|$)", line)', ""),
-    "O26 dark_scope reads only python imports (a node oracle naming server.mjs is missed: the 10-11 class)":
-        ("                if (f.endswith(\".py\") and f[:-3].replace(\"/\", \".\") in mods) or f in text \\\n"
-         "                        or re.search(rf\"(?<![\\w-]){re.escape(name)}(?![\\w-])\", text):",
-         "                if f.endswith(\".py\") and f[:-3].replace(\"/\", \".\") in mods:"),
-    "O27 a bare STEM counts as a reference (every oracle that says 'server' is in scope)":
-        ("                name = f.rsplit(\"/\", 1)[-1]", "                name = f.rsplit(\"/\", 1)[-1].rsplit(\".\", 1)[0]"),
     "O28 check.sh isn't left out (every branch that adds a gate puts half the dark list in scope)":
         ('SCOPE_NOISE = frozenset({"nucleus/check.sh"})', "SCOPE_NOISE = frozenset()"),
-    "O29 a CHANGED oracle isn't itself in scope":
-        ("            if o in changed:\n                hit = o\n                break\n", ""),
     "O30 a label carrying \\\" is kept escaped (never matches what check.sh prints)":
         ("        label = label.replace('\\\\\"', '\"')", "        pass"),
     "O31 production never hands report() the oracles (the in-scope list is dead code)":
         ("\n                    oracles=gate_files(repo[\"branch\"]), changed=changed_files(sha), repo=repo[\"branch\"])", ")"),
+    "O26 a file the oracle NAMES isn't followed (only imports: the 10-11 node oracle naming server.mjs is missed)":
+        ("            for name in _NAMED_RX.findall(t):\n                for q in idx.get(name, ()):\n"
+         "                    seeds.setdefault(q, q)\n", ""),
+    "O27 a bare WORD counts as a file reference (every oracle that says 'server' reaches server.mjs)":
+        ("            for name in _NAMED_RX.findall(t):",
+         "            for name in _NAMED_RX.findall(t) + [w + \".mjs\" for w in re.findall(r\"\\w+\", t)]:"),
+    "O29 a CHANGED oracle isn't itself in scope":
+        ("            seeds.setdefault(o, None)\n", ""),
     "O32 the name match is a SUBSTRING (reserver.mjs reads as server.mjs)":
-        ("re.search(rf\"(?<![\\w-]){re.escape(name)}(?![\\w-])\", text)", "name in text"),
+        ("            for name in _NAMED_RX.findall(t):", "            for name in [n for n in idx if n in t]:"),
+    "O33 no TRANSITIVE step (a sibling server.mjs imports is out of scope: a4 #49641)":
+        ("        reached, todo = dict(seeds), list(seeds)", "        reached, todo = dict(seeds), []"),
+    "O34 js/mjs imports are never read (the node side of the closure is dead)":
+        ("        for spec in _JS_IMPORT_RX.findall(text):", "        for spec in []:"),
 }

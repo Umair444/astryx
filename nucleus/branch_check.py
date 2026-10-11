@@ -33,6 +33,7 @@ import re
 import shutil
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 
 import psycopg
@@ -311,36 +312,87 @@ def gate_files(repo: Path) -> dict:
     return out
 
 
+_NAMED_RX = re.compile(r"(?<![\w-])([\w.-]+\.(?:py|mjs|js|ts|sh))(?![\w-])")     # a file name WITH its extension
+_JS_IMPORT_RX = re.compile(r"""(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)['"](\.{1,2}/[^'"]+)['"]""")
+_WALK_SKIP = frozenset({".git", "node_modules", "venv", "__pycache__", "dist"})
+
+
+def _file_index(repo: Path) -> dict:
+    """{file name: {repo-relative paths}} over the repo's oracle-suffixed files (node_modules, venv, dist skipped)."""
+    idx = {}
+    for root, dirs, files in os.walk(repo):
+        dirs[:] = [d for d in dirs if d not in _WALK_SKIP]
+        for n in files:
+            if n.endswith(_ORACLE_SUFFIXES):
+                idx.setdefault(n, set()).add(os.path.relpath(os.path.join(root, n), repo))
+    return idx
+
+
+def _imports(repo: Path, f: str, text: str) -> set:
+    """The repo files `f` imports statically: python via module_refs, js/mjs/ts relative specifiers (static `from`,
+    bare `import '…'`, dynamic `import('…')`) resolved against f's directory."""
+    out = set()
+    if f.endswith(".py"):
+        try:
+            with warnings.catch_warnings():             # a repo file's own invalid escapes are its business, not ours
+                warnings.simplefilter("ignore")
+                mods = module_refs(ast.parse(text))
+        except (SyntaxError, ValueError):
+            return out
+        for m in mods:
+            for c in (m.replace(".", "/") + ".py", m.replace(".", "/") + "/__init__.py"):
+                if (repo / c).is_file():
+                    out.add(c)
+    elif f.endswith((".mjs", ".js", ".ts")):
+        for spec in _JS_IMPORT_RX.findall(text):
+            c = os.path.normpath(os.path.join(os.path.dirname(f), spec))
+            if (repo / c).is_file():
+                out.add(c)
+    return out
+
+
 def dark_scope(dark_gates, oracles: dict, changed: set, repo: Path) -> list:
-    """[(gate, changed file)] for each dark gate whose oracle references a file the branch changes (first match)."""
+    """[(gate, changed file, via)] for each dark gate whose oracle REACHES a file the branch changes: the oracle file
+    itself, a file it names (path or file name with extension; never a bare stem), or anything those import,
+    TRANSITIVELY (a4 #49641: since #46291 the ear/wake/doorbell oracles name only server.mjs, which imports its
+    sibling modules; a branch touching only a sibling must still put them in scope). `via` is the file the oracle
+    named or imported first on the way (None when it's the changed file itself)."""
     changed = {f for f in changed if f not in SCOPE_NOISE and not f.endswith("__init__.py")}
+    if not changed:
+        return []
+    idx = _file_index(repo)
+    texts = {}
+
+    def read(f):
+        if f not in texts:
+            try:
+                texts[f] = (repo / f).read_text(errors="replace")
+            except OSError:
+                texts[f] = ""
+        return texts[f]
+
     out = []
     for g in dark_gates:
-        hit = None
+        seeds = {}                                  # reached file → the seed it came through
         for o in sorted(oracles.get(g, ())):
-            if o in changed:
-                hit = o
-                break
-            try:
-                text = (repo / o).read_text(errors="replace")
-            except OSError:
-                continue
-            mods = set()
-            if o.endswith(".py"):
-                try:
-                    mods = module_refs(ast.parse(text))
-                except (SyntaxError, ValueError):
-                    pass
-            for f in sorted(changed):
-                name = f.rsplit("/", 1)[-1]
-                if (f.endswith(".py") and f[:-3].replace("/", ".") in mods) or f in text \
-                        or re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", text):
-                    hit = f
-                    break
-            if hit:
-                break
+            seeds.setdefault(o, None)
+            t = read(o)
+            for name in _NAMED_RX.findall(t):
+                for q in idx.get(name, ()):
+                    seeds.setdefault(q, q)
+            for q in _imports(repo, o, t):
+                seeds.setdefault(q, q)
+        reached, todo = dict(seeds), list(seeds)
+        while todo:
+            f = todo.pop()
+            for q in _imports(repo, f, read(f)):
+                if q not in reached:
+                    reached[q] = reached[f] or q
+                    todo.append(q)
+        hit = next((f for f in sorted(changed) if f in reached), None)
         if hit:
-            out.append((g, hit))
+            via = reached[hit]
+            out.append((g, hit, None if via == hit else via))
     return out
 
 
@@ -438,8 +490,8 @@ def report(sha: dict, sums: dict, witness: dict, est: dict, refs: dict = None, t
         if ds:
             print(f"  VERIFIED NOTHING and IN SCOPE (its oracle references a file the branch changes): run it DIRECTLY "
                   f"in a worktree before a PASS: {len(ds)}")
-            for g, f in ds:
-                print(f"    ○ {g}\n      ← {f}")
+            for g, f, via in ds:
+                print(f"    ○ {g}\n      ← {f}" + (f" (via {via})" if via else ""))
     skipped = est["branch"]["skipped_credential"]
     if skipped:
         print(f"  VERIFIED NOTHING: {len(skipped)} estate file(s) carry a credential and weren't copied: {skipped}")
