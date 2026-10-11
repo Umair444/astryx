@@ -98,13 +98,15 @@ if [ -f "$_stamp" ]; then
     sed 's/\x1b\[[0-9;]*m//g' "$_stamp.log" | awk -v names="$_f" '
       BEGIN { n = split(names, a, "\n"); for (i = 1; i <= n; i++) { sub(/^ +/, "", a[i]); want[a[i]] = 1 } }
       { line = $0; sub(/^ +/, "", line) }
-      line ~ /^✓ / { sig = ""; next }
+      line ~ /^(✓|○|▶) / { sig = ""; next }                # every gate boundary: a passed, skipped
+                                                          # (○) or starting (▶) gate: text above it is not the next gate (steward F1)
       line ~ /^✗ / { name = line; sub(/^✗ /, "", name)
                      if (name in want && !(name in done)) {
                        done[name] = 1
                        printf "  %s\n    ↳ %s\n", name, (sig != "" ? substr(sig, 1, 160) : "(no error line in its block; read the log)")
                        sig = ""; next } }
-      sig == "" && line ~ /FAIL|[Ee]rror[:s.]|✗/ { sig = line }'
+      line ~ /^(ok|PASS)[ \t]/ { next }                     # a PASSING arm may say "FAIL" (steward F2)
+      sig == "" && line ~ /^FAIL[: ]|[Ee]rror[:s.]|^✗ / { sig = line }'
   fi
   # UNVERIFIED NAMES, not just the count. A count of "unverified=1" is a false-silence trap: if
   # a baseline unverified gate gets fixed while a DIFFERENT gate silently goes unverified, the
