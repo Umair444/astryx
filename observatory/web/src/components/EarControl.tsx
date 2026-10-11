@@ -3,6 +3,7 @@ import { Popover } from '@mantine/core'
 import { motion } from 'motion/react'
 import { obsKey } from '../api'
 import { EnergyVad, wav } from '../ear/vad'
+import { earLook, type Mic } from '../ear/look'
 import AgentFace from './AgentFace'
 import { Action } from '../ui/kit'
 
@@ -17,17 +18,22 @@ import { Action } from '../ui/kit'
    orb and one word. The orb swells with the smoothed mic level only while speech is heard, then settles. Tap opens a
    sheet that shows the ROOM: who is attending (faces, the crew-strip way), one serif line for the state, one action.
    Muted is warn and calm. A caught name (S2) glows on that agent's face for a few seconds, the one glow on screen.
-   `attending` and `caught` are S2's to fill; until then the sheet says so plainly. */
+   `attending` and `caught` are S2's to fill; until then the sheet says so plainly.
 
-type Mic = 'off' | 'listening' | 'stale' | 'muted' | 'focal' | 'reverting' | 'unknown'
+   THE ROOM ANSWERS HERE (seed #46319): until S4 gives the room a voice, an agent's reply to the owner on the room's
+   thread (ear-<room>) is shown in the sheet, with a dot on the pill until the sheet is opened. The ear marks it
+   delivered as it serves it: this sheet is the surface that thread belongs to. */
+
+interface Reply { id: number; from: string; body: string; ts: string; seen?: boolean }
 interface Status {
   lease: { mic: Mic; holder: string | null }
-  stt: { degraded: boolean; reasons: string[]; queue: number; backend: string; rtf_last: number | null }
+  stt: { degraded: boolean; reasons: string[]; queue: number; backend: string; rtf_last: number | null; behind_s?: number }
   store: { ok: boolean }
   ttl_days?: number
   backup_days?: number                                   // backup.sh keeps the last N nightly dumps
   attending?: string[]                                   // S2: agents given hearing
   caught?: { agent: string; at: string } | null           // S2: the last name heard, never the words
+  replies?: Reply[]                                      // agents' replies to the owner on ear-<room>, oldest first
 }
 
 const CAUGHT_MS = 4000
@@ -57,6 +63,7 @@ export default function EarControl({ view }: { view: string }) {
   const [hearing, setHearing] = useState(false)
   const [problem, setProblem] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
+  const [seen, setSeen] = useState(0)                   // the newest reply id the owner has had the sheet open for
   const level = useRef(0)                                // smoothed mic level 0..1, read by the orbs each frame
   const orbs = useRef(new Set<HTMLElement>())
   const media = useRef<{ stream: MediaStream; ctx: AudioContext; node: ScriptProcessorNode; vad: EnergyVad } | null>(null)
@@ -216,14 +223,17 @@ export default function EarControl({ view }: { view: string }) {
   const caught = status?.caught && Date.now() - Date.parse(status.caught.at) < CAUGHT_MS ? status.caught.agent : null
 
   // one state, read four ways: the word on the pill, the orb's tone, the sheet's serif line, the one action
-  type Look = { word: string; line: string; tone: 'accent' | 'warn' | 'mute'; live: boolean; action: 'listen' | 'mute' | 'unmute' | null }
-  let look: Look
-  if (offline) look = { word: 'ear offline', line: 'The ear is offline', tone: 'mute', live: false, action: null }
-  else if (mic === 'muted') look = { word: 'Muted', line: 'The room is muted', tone: 'warn', live: false, action: 'unmute' }
-  else if (capturing) look = { word: hearing ? 'hearing' : 'listening', line: hearing ? 'Catching that…' : 'The room is listening', tone: 'accent', live: true, action: 'mute' }
-  else if (mic === 'listening' && !mine) look = { word: 'listening', line: 'Another tab is listening', tone: 'accent', live: true, action: 'mute' }
-  else if (mic === 'stale' || mic === 'reverting') look = { word: 'ear lost', line: 'The ear lost its tab', tone: 'warn', live: false, action: 'listen' }
-  else look = { word: 'mic off', line: 'The room is quiet', tone: 'mute', live: false, action: 'listen' }
+  const look = earLook({ offline, mic, capturing, mine, hearing, behind_s: status?.stt.behind_s })
+  const replies = status?.replies ?? []
+  const shown = replies.slice(-3)
+  // OPENING the sheet with a reply showing is its delivery (a4 #46445): the poll only reads, this marks
+  const unseen = shown.filter((r) => !r.seen && r.id > seen).map((r) => r.id)
+  useEffect(() => {
+    if (!open || !unseen.length) return
+    const top = Math.max(...unseen)                        // a failed mark leaves it pending (honest) and unread here
+    ear('replies/seen', { ids: unseen }).then((r) => { if (r.ok) setSeen((s) => Math.max(s, top)) }).catch(() => {})
+  }, [open, unseen.join(',')])                             // eslint-disable-line react-hooks/exhaustive-deps
+  const unread = !open && replies.some((r) => !r.seen && r.id > seen)
   const act = look.action === 'mute' ? mute : look.action === 'unmute' ? unmute : look.action === 'listen' ? start : undefined
   const orbTone = look.tone === 'accent' ? 'var(--t-accent)' : look.tone === 'warn' ? 'var(--t-warn)' : 'var(--t-mute)'
   const reasons = [...(status?.stt.reasons ?? []), ...(status && !status.store.ok ? ['store offline'] : [])]
@@ -248,6 +258,7 @@ export default function EarControl({ view }: { view: string }) {
           </span>
           <span className={look.tone === 'warn' || offline ? '' : 'hidden sm:inline'}>{look.word}</span>
           {degraded && !offline && look.tone !== 'warn' && <span className="w-1.5 h-1.5 rounded-full bg-warn" title="degraded" />}
+          {unread && <span className="w-1.5 h-1.5 rounded-full bg-accent" title="a reply from the room" />}
           {attending.length > 0 && (
             <span className="hidden sm:flex items-center ml-0.5">
               {attending.slice(0, 3).map((n, i) => (
@@ -276,12 +287,7 @@ export default function EarControl({ view }: { view: string }) {
             </span>
             <div className="min-w-0">
               <div className="lib-display text-[26px] leading-[1.1] text-ink">{look.line}</div>
-              <div className="text-[12px] text-ink-mute mt-0.5" aria-live="polite">
-                {look.action === 'mute' && mine ? 'This tab holds the mic.' :
-                  look.action === 'mute' ? 'Muting here stops it everywhere.' :
-                  look.tone === 'warn' && mic === 'muted' ? 'Nothing is captured until you unmute.' :
-                  offline ? 'Nothing is being heard. The page works as normal.' : 'Nothing is being heard.'}
-              </div>
+              <div className="text-[12px] text-ink-mute mt-0.5" aria-live="polite">{look.sub}</div>
             </div>
           </div>
 
@@ -307,6 +313,25 @@ export default function EarControl({ view }: { view: string }) {
               </div>
             )}
           </div>
+
+          {replies.length > 0 && (
+            <div className="mt-5">
+              <div className="text-[11px] uppercase tracking-[.08em] text-ink-mute mb-2">The room answered</div>
+              <div className="flex flex-col gap-2" aria-live="polite">
+                {shown.map((r) => (
+                  <motion.div key={r.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.3, ease: 'easeOut' }} className="flex items-start gap-2">
+                    <span className="shrink-0 mt-0.5"><AgentFace name={r.from} size={20} /></span>
+                    <div className="min-w-0 text-[12px] leading-snug">
+                      <span className="text-ink">{r.from}</span>
+                      <span className="text-ink-mute"> · {new Date(r.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      <div className="text-ink-dim whitespace-pre-wrap break-words">{r.body}</div>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {(problem || (degraded && !offline)) && (
             <div className="mt-4 rounded-xl bg-warn/10 text-warn text-[12px] px-3 py-2 leading-snug">
