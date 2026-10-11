@@ -247,6 +247,31 @@ def stored_graph_digest(conn, graph: str):
     return rows[0] if len(rows) == 1 else None          # zero or several Meta vertices: not one digest
 
 
+# A table copy's digest readers, STATIC SQL by table (as META_SQL is by graph). library.passage's copy is three
+# tables written by one writer in one transaction; each row carries the root digest, and the copy is ONE digest only
+# when all three agree and stats holds its single row (an empty passage table still stamps through stats).
+LIBRARY_PASSAGE_DIGEST_SQL = (
+    "SELECT DISTINCT d FROM (SELECT root_digest AS d FROM library.passage UNION ALL "
+    "SELECT root_digest FROM library.lexeme_df UNION ALL SELECT root_digest FROM library.stats) s")
+LIBRARY_STATS_ROWS_SQL = "SELECT count(*) FROM library.stats"
+TABLE_DIGEST_SQL = {"library.passage": "LIBRARY_PASSAGE_DIGEST_SQL"}
+
+
+def stored_table_digest(conn, table: str):
+    """The root digest a table copy carries, or None (absent, empty, or more than one ⇒ the caller reads STALE)."""
+    if table != "library.passage":                     # no static reader (TABLE_DIGEST_SQL): check() is LOUD first
+        return None
+    with conn.cursor() as cur:
+        if not all(_exists(cur, t) for t in ("library.passage", "library.lexeme_df", "library.stats")):
+            return None
+        cur.execute(LIBRARY_STATS_ROWS_SQL)
+        if cur.fetchone()[0] != 1:
+            return None
+        cur.execute(LIBRARY_PASSAGE_DIGEST_SQL)
+        rows = [r[0] for r in cur.fetchall()]
+    return rows[0] if len(rows) == 1 and rows[0] else None
+
+
 def stamped_graphs(conn) -> set:
     """Every AGE graph carrying a Meta label: each is a copy, declared or not."""
     with conn.cursor() as cur:
@@ -274,7 +299,10 @@ def stray_writers(d: dict, root: Path = None, inv: dict = None):
     if d.get("kind") == "age_graph":
         found = graph_writers(d["graph"], root)
     elif d.get("kind") == "sql_table":
-        found = sql_writers(d["table"], inv)
+        found = {}
+        for t in [d["table"]] + list(d.get("also_tables", [])):   # every table the copy spans, one writer for all
+            for mod, k in sql_writers(t, inv).items():
+                found[mod] = "writer" if "writer" in (k, found.get(mod)) else k
     else:
         found = {}
     return found, {r: k for r, k in found.items() if not _excused(r, d, root, k)}
@@ -314,7 +342,17 @@ def check(conn=None, decls=None, root: Path = None, inv: dict = None) -> list:
             if any(r not in READS for r in d.get("reads", [])):
                 out.append((name, "LOUD", f"reads {d['reads']} not all in the closed set {sorted(READS)}"))
                 continue
-            if d["kind"] == "age_graph":
+            if d["kind"] in ("age_graph", "sql_table") and conn is None:
+                out.append((name, "LOUD", "no database connection to read the stored digest"))
+                continue
+            if d["kind"] == "sql_table":
+                if d["table"] not in TABLE_DIGEST_SQL:
+                    out.append((name, "LOUD", f"no static digest reader for table {d['table']!r} (TABLE_DIGEST_SQL)"))
+                    continue
+                with conn.cursor() as cur:
+                    want = copy_digest(want, {r: read_rows(cur, r) for r in d.get("reads", [])})
+                have = stored_table_digest(conn, d["table"])
+            elif d["kind"] == "age_graph":
                 if conn is None:
                     out.append((name, "LOUD", "no database connection to read the stored digest"))
                     continue

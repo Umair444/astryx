@@ -835,3 +835,69 @@ CREATE TABLE IF NOT EXISTS hearings (
   fetched_at       timestamptz                          -- the last ear_fetch.py read (door 2 is counted, never silent)
 );
 CREATE INDEX IF NOT EXISTS hearings_agent_ts ON hearings (agent, ts DESC);
+
+-- LIBRARY PASSAGES (plan-8018 S3; memory #49623, a3 #49626, seed #49625): the retrieval copy of graph `memory`.
+-- One passage per ADMITTED Concept (a page, or one of its heading-grain sections). Outside the graph's namespace
+-- (a1: drop_graph would cascade into it). ONE writer: memory/graph/ingest.py, inside the graph build's own
+-- transaction, AFTER its derive-at-use cleanup, by DELETE + INSERT (never TRUNCATE: its ACCESS EXCLUSIVE lock
+-- would block every search for the whole build, and it isn't MVCC-safe). Every row carries the graph's ROOT
+-- digest (copies.json `table:library.passage`). `len` is the passage's TOKEN count in tf's own units: the sum
+-- of its tsvector positions. tsvector caps a lexeme at 256 positions (tf saturates there; at k1=1.2 that term
+-- is already within 0.5% of its ceiling) and positions at 16383 (the writer refuses a passage that reaches it).
+CREATE SCHEMA IF NOT EXISTS library;
+CREATE TABLE IF NOT EXISTS library.passage (
+  node_id     text PRIMARY KEY,                       -- the graph name: library:<shelf>/<slug>[#anchor] | <wiki stem>[#anchor]
+  heading     text NOT NULL,
+  text        text NOT NULL,
+  tsv         tsvector GENERATED ALWAYS AS (to_tsvector('english', text)) STORED,
+  len         int NOT NULL CHECK (len >= 0),
+  root_digest text NOT NULL
+);
+CREATE INDEX IF NOT EXISTS passage_tsv ON library.passage USING gin (tsv);
+-- BM25's corpus statistics, refilled by the same writer from ts_stat over the same snapshot (declared with the
+-- passage copy: same writer, same digest).
+CREATE TABLE IF NOT EXISTS library.lexeme_df (
+  word        text PRIMARY KEY,
+  ndoc        int NOT NULL CHECK (ndoc > 0),
+  root_digest text NOT NULL
+);
+CREATE TABLE IF NOT EXISTS library.stats (
+  one         boolean PRIMARY KEY DEFAULT true CHECK (one),   -- a single row
+  n           int NOT NULL CHECK (n >= 0),
+  avgdl       float8 NOT NULL CHECK (avgdl >= 0),
+  root_digest text NOT NULL
+);
+
+-- THE READER: Okapi BM25 (k1 = 1.2, b = 0.75, idf = ln(1 + (N - df + 0.5) / (df + 0.5))), any-term match.
+-- q is normalised by the 'english' config, the same one that built tsv, so both sides are the same lexemes.
+-- An empty, whitespace or stopword-only q has no lexemes and returns 0 rows. The snippet is PLAIN TEXT with
+-- the matched terms between ⟦ and ⟧, never HTML (seed #49625: the desk escapes it once and styles the marks).
+CREATE OR REPLACE FUNCTION library.search(q text, k int DEFAULT 10)
+RETURNS TABLE(node_id text, heading text, snippet text, score float8)
+LANGUAGE sql STABLE AS $fn$
+  WITH terms AS (
+    SELECT DISTINCT w AS word FROM unnest(tsvector_to_array(to_tsvector('english', coalesce(q, '')))) AS w
+  ), st AS (
+    SELECT n, avgdl FROM library.stats
+  ), hits AS (
+    SELECT p.node_id, p.len, coalesce(array_length(u.positions, 1), 0) AS tf, d.ndoc
+    FROM library.passage p
+    CROSS JOIN LATERAL unnest(p.tsv) AS u(lexeme, positions, weights)
+    JOIN terms t ON t.word = u.lexeme
+    JOIN library.lexeme_df d ON d.word = u.lexeme
+  ), scored AS (
+    SELECT h.node_id,
+           sum(ln(1 + (st.n - h.ndoc + 0.5) / (h.ndoc + 0.5))
+               * (h.tf * (1.2 + 1)) / (h.tf + 1.2 * (1 - 0.75 + 0.75 * h.len / nullif(st.avgdl, 0))))::float8 AS score
+    FROM hits h CROSS JOIN st
+    GROUP BY h.node_id
+  ), orq AS (
+    SELECT to_tsquery('simple', string_agg(quote_literal(word), ' | ')) AS tq FROM terms
+  )
+  SELECT p.node_id, p.heading,
+         ts_headline('english', p.text, orq.tq, 'StartSel=⟦, StopSel=⟧, MaxWords=30, MinWords=10'),
+         s.score
+  FROM scored s JOIN library.passage p USING (node_id) CROSS JOIN orq
+  ORDER BY s.score DESC, s.node_id
+  LIMIT greatest(coalesce(k, 10), 0)
+$fn$;
