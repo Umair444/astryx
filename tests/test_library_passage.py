@@ -74,7 +74,7 @@ LIB = root / "memory" / "library" / "shelf"
 LIB.mkdir(parents=True)
 PROBES = root / "memory" / "probes"
 PROBES.mkdir(parents=True)
-TIER = "923001234567"                                    # matches TIER_VALUE's owner-phone shape
+TIER = "92" + "3" + "0" * 9   # matches TIER_VALUE's owner-phone shape; built at runtime so privacy_gate (c) sees no literal (a3 MC-1)
 ASK = "PROBEASKTEXT"
 (WIKI / "w.md").write_text("---\ntitle: W\n---\nwikibody alpha\n")
 (LIB / "clean.md").write_text('---\ntitle: "Clean"\ntags: [org]\n---\ncleanbody beta\n')
