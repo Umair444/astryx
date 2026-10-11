@@ -33,7 +33,17 @@ STUB
 # ps: quiet unless FAKE_BUSY names a running check
 cat > "$T/bin/ps" <<STUB
 #!/usr/bin/env bash
-[ -n "\${FAKE_BUSY:-}" ] && echo "  4242 bash nucleus/check.sh"
+case "\$*" in
+  *ppid*)   # the process TREE: FAKE_HELD puts a check.sh under ax-good's pane (pid 5000) via a claude child;
+            # FAKE_STRAY puts one under an unrelated parent (the control)
+    echo "    PID  PPID ARGS"
+    echo "   5000     1 claude --resume"
+    echo "   5100  5000 node channel/server.mjs"
+    [ -n "\${FAKE_HELD:-}" ] && echo "   6000  5100 bash nucleus/check.sh"
+    [ -n "\${FAKE_STRAY:-}" ] && echo "   7000   900 bash nucleus/check.sh"
+    ;;
+  *) [ -n "\${FAKE_BUSY:-}" ] && echo "  4242 bash nucleus/check.sh" ;;
+esac
 exit 0
 STUB
 for c in psql tmux curl; do printf '#!/usr/bin/env bash\necho "%s $*" >> "%s"\nexit 0\n' "$c" "$LOG" > "$T/bin/$c"; done
@@ -47,6 +57,7 @@ printf '#!/usr/bin/env bash\necho "systemctl $*" >> "%s"\n[ "$1" = list-unit-fil
 cat > "$T/bin/tmux" <<STUB
 #!/usr/bin/env bash
 echo "tmux \$*" >> "$LOG"
+[ "\$1" = list-panes ] && case "\$*" in *=ax-good:*) echo 5000;; esac
 if [ "\$1" = capture-pane ]; then
   for t in "\$@"; do case "\$t" in =*:*) ;; =*) echo "can't find pane: \${t}" >&2; exit 1;; esac; done
   echo "bypass permissions on"
@@ -56,7 +67,7 @@ STUB
 chmod +x "$T"/bin/* "$T/root/venv/bin/python" "$T/root/nucleus/spawn.sh"
 out=$(PATH="$T/bin:$PATH" ROOT="$T/root" ASTRYX_AGENT= bash -c '
   set -euo pipefail
-  eval "$(sed -n "/^ears() {/,/^}/p; /^ears_of() /p; /^restart_org() {/,/^}/p" "'"$REPO"'/nucleus/deploy.sh")"
+  eval "$(sed -n "/^ears() {/,/^}/p; /^ears_of() /p; /^guarded_under() {/,/^}/p; /^restart_org() {/,/^}/p" "'"$REPO"'/nucleus/deploy.sh")"
   sleep() { :; }
   restart_org' 2>&1); rc=$?
 fails=0
@@ -73,7 +84,7 @@ arm "control: a full restart asks docker for the db and RESTARTS the enabled uni
 rm -f "$T/root/spawned-good"; : > "$LOG"
 out2=$(PATH="$T/bin:$PATH" ROOT="$T/root" ASTRYX_AGENT= bash -c '
   set -euo pipefail
-  eval "$(sed -n "/^ears() {/,/^}/p; /^ears_of() /p; /^restart_org() {/,/^}/p" "'"$REPO"'/nucleus/deploy.sh")"
+  eval "$(sed -n "/^ears() {/,/^}/p; /^ears_of() /p; /^guarded_under() {/,/^}/p; /^restart_org() {/,/^}/p" "'"$REPO"'/nucleus/deploy.sh")"
   sleep() { :; }
   restart_org residents' 2>&1)
 arm "residents: no docker call at all (the database is not bounced)" '! grep -q "^docker " "$LOG"'
@@ -81,11 +92,11 @@ arm "residents: no unit is restarted (the verify step may still READ unit states
 arm "residents: the residents are still rolled (kill-session + spawn)" 'grep -q "kill-session" "$LOG" && grep -q "✓ good resident" <<<"$out2"'
 arm "residents: the pulse is paused and started again" 'grep -q "stop astryx-pulse.timer" "$LOG" && grep -q "start astryx-pulse.timer" "$LOG"'
 # the busy guard: a full restart with a check running refuses BEFORE the database bounce; --force overrides
-run_full() { : > "$LOG"; rm -f "$T/root/spawned-good"; PATH="$T/bin:$PATH" ROOT="$T/root" ASTRYX_AGENT= FAKE_BUSY="$1" bash -c '
+run_full() { : > "$LOG"; rm -f "$T/root/spawned-good"; PATH="$T/bin:$PATH" ROOT="$T/root" ASTRYX_AGENT= FAKE_BUSY="$1" FAKE_HELD="${3:-}" FAKE_STRAY="${4:-}" bash -c '
   set -euo pipefail
-  eval "$(sed -n "/^ears() {/,/^}/p; /^ears_of() /p; /^restart_org() {/,/^}/p" "'"$REPO"'/nucleus/deploy.sh")"
+  eval "$(sed -n "/^ears() {/,/^}/p; /^ears_of() /p; /^guarded_under() {/,/^}/p; /^restart_org() {/,/^}/p" "'"$REPO"'/nucleus/deploy.sh")"
   sleep() { :; }
-  restart_org '"$2"'' 2>&1; }
+  restart_org '"$2"' '"${5:-}"'' 2>&1; }
 out3=$(run_full 1 ""); rc3=$?
 arm "busy: a running check.sh refuses the full restart, named, rc 1" '[ $rc3 = 1 ] && grep -q "refusing to restart the database" <<<"$out3" && grep -q "check.sh" <<<"$out3"'
 arm "busy: refused BEFORE anything is touched (no db restart, no pulse stop, no kill-session)" '! grep -q "docker restart" "$LOG" && ! grep -q "stop astryx-pulse" "$LOG" && ! grep -q "kill-session" "$LOG"'
@@ -96,4 +107,11 @@ arm "quiet host: a plain full restart restarts the database" 'grep -q "docker re
 out6=$(run_full 1 residents)
 log6=$(cat "$LOG")
 arm "busy + residents: the guard does not apply (no db touched), residents still roll" '! grep -q "refusing to restart the database" <<<"$out6" && ! grep -q "docker restart" <<<"$log6" && grep -q "✓ good resident" <<<"$out6"'
+# a resident with a check running UNDER its pane is never killed mid-verdict (a3 #45388)
+out7=$(run_full "" residents 1)
+arm "held: a check under good's pane keeps good unrolled, named (no kill-session for good)" 'grep -q "good: NOT rolled — a check it launched is still running" <<<"$out7" && ! grep -q "kill-session -t =ax-good" "$LOG"'
+out8=$(run_full "" residents "" 1)
+arm "control: a check under an unrelated parent does not hold good (rolled)" '! grep -q "NOT rolled" <<<"$out8" && grep -q "kill-session -t =ax-good" "$LOG"'
+out9=$(run_full "" residents 1 "" force)
+arm "held + force: good is rolled anyway" 'grep -q "kill-session -t =ax-good" "$LOG" && ! grep -q "NOT rolled" <<<"$out9"'
 [ $fails = 0 ] && echo PASS || { echo "$out" | tail -8; echo "FAIL ($fails)"; exit 1; }

@@ -80,17 +80,30 @@ PY
   )
 }
 ears_of() { ears | awk -v a="$1" '$1==a {print $2}'; }
+# The guarded processes (a check, mutation probe, restore drill, branch_check) that DESCEND from resident $1's tmux
+# pane: a check a resident launched in the background is a child of its claude process, so killing the session kills
+# it mid-verdict (a3 #45388). Prints "pid args" per hit; the bracket classes keep the grep from matching itself.
+guarded_under() {
+  local pane; pane=$(tmux list-panes -t "=ax-$1:" -F '#{pane_pid}' 2>/dev/null | head -1)
+  [ -n "$pane" ] || return 0
+  ps -eo pid,ppid,args | awk -v pane="$pane" '
+    NR > 1 { pp[$1] = $2; line[$1] = $0 }
+    END { for (p in line) if (line[p] ~ /check[.]sh|mutation_prob[e]|restore_dril[l]|branch_chec[k]/ && line[p] !~ /awk -v pane/) {
+            q = p; for (i = 0; i < 64 && q > 1; i++) { if (q == pane) { sub(/^ *[0-9]+ +[0-9]+ +/, "", line[p]); print p, line[p]; break } q = pp[q] } } }'
+}
 
 restart_org() {
   # `restart_org residents` rolls ONLY the residents (same idle wait, same verify, the pulse paused around it): the
   # database and the services are left alone. A plain restart bounced genesis-pg under another agent's running check
   # on 10-11 when all seed wanted was every channel server reloading server.mjs (seed #45236).
-  local only="${1:-}"
+  local only="${1:-}" force=""
+  [ "$only" = force ] && { only=""; force=1; }
+  [ "${2:-}" = force ] && force=1
   local DSN; DSN=$(grep '^ASTRYX_DSN=' "$ROOT/.env" | cut -d= -f2-)
   local me="${ASTRYX_AGENT:-}" bad=0
   local pgc=""
   [ "$only" = residents ] || pgc=$(docker ps --format '{{.Names}}\t{{.Ports}}' | awk -F'\t' '/->5432\/tcp/ {print $1; exit}')
-  if [ -n "$pgc" ] && [ "$only" != force ]; then
+  if [ -n "$pgc" ] && [ -z "$force" ]; then
     # a database bounce under a running check or drill turns its verdicts into noise (10-11, seed #45236). Refuse while
     # one is live; `deploy.sh restart --force` overrides. The bracket classes keep this grep from matching itself.
     local live; live=$(ps -eo pid,args | grep -v grep | grep -E 'check[.]sh|mutation_prob[e]|restore_dril[l]|branch_chec[k]' | head -5 || true)
@@ -129,6 +142,11 @@ restart_org() {
       busy=$(psql "$DSN" -tAc "SELECT (SELECT count(*) FROM steps WHERE agent='$a' AND ts > now()-interval '2 minutes')
                                  + (SELECT count(*) FROM messages WHERE to_agent='$a' AND status='pending')" 2>/dev/null || echo 0)
       if [ "${busy:-0}" != 0 ] && [ $SECONDS -lt $deadline ]; then next+=("$a"); continue; fi
+      local held; held=$(guarded_under "$a")
+      if [ -n "$held" ] && [ -z "$force" ]; then       # never kill a check mid-verdict; --force overrides
+        echo "  ✗ $a: NOT rolled — a check it launched is still running ($(head -1 <<<"$held" | cut -c1-90)); re-run when it ends, or --force"
+        bad=1; continue
+      fi
       tmux kill-session -t "=ax-$a" 2>/dev/null || true
       local p left
       for _ in $(seq 1 30); do [ -z "$(ears_of "$a")" ] && break; sleep 0.5; done
@@ -200,7 +218,7 @@ case "$what" in
           sudo systemctl daemon-reload && echo "  ✓ units synced + daemon reloaded" ;;
   all)    build_web && restart astryx-observatory && restart astryx-whatsapp ;;
   restart) if [ "${2:-}" = --force ]; then restart_org force; else restart_org; fi ;;                                         # the WHOLE org: db, services, residents
-  residents) restart_org residents ;;                             # ONLY the residents: no db, no services
+  residents) if [ "${2:-}" = --force ]; then restart_org residents force; else restart_org residents; fi ;;                             # ONLY the residents: no db, no services
   reload) shift; bs=("$@"); [ ${#bs[@]} -eq 0 ] && bs=(whatsapp telegram discord)
           rc=0; for b in "${bs[@]}"; do reload "$b" || rc=1; done; exit $rc ;;
   *) echo "usage: deploy.sh [web|obs|api|bridge|tg|dc|gw|units|all|restart|residents|reload [bridge...]]  (default: all)"; exit 1 ;;
