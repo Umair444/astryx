@@ -764,6 +764,9 @@ run "people graph / no jid escapes"  "$PY" tests/test_people.py
 # message text survives into the output — fixtures carry sentinel strings and the
 # whole result is searched for them, so a future "topic" field turns this red.
 run "persona / no chat text stored"  "$PY" tests/test_persona.py
+# plan-9139 S1a: the one door for personal-tier content (label algebra, live audience, stamp, tier store).
+# Pure, no DB; tests/mutants_release.py is its mutant set (14 wrong doors, all caught at authoring).
+run "release: personal-tier content reaches only an audience within its readers" "$PY" tests/test_release.py
 if "$PY" -c 'import av' 2>/dev/null; then
   run "media in-process decode"        "$PY" nucleus/media_probe.py
 else
