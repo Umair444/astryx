@@ -11,21 +11,30 @@ ENV = "HANDS_DESKTOP_SRC"
 TIMEOUT = 120
 
 MUTANTS = {
+    "a refusal doesn't move `last` (a3 #47653 F1: a hammering loop is metered, not stopped)":
+        ('        st["last"] = max(now, st.get("last", now))                  # a refusal is activity too (F1)\n        if why:\n            save(st)\n            raise Capped(why)\n',
+         '        if why:\n            raise Capped(why)\n        st["last"] = max(now, st.get("last", now))\n'),
     'a refused charge is counted anyway':
-        ('        if st["steps"] + n > c["steps"]:\n            raise Capped(',
-         '        if st["steps"] + n > c["steps"]:\n            st["steps"] += n\n            f.write_text(json.dumps(st))\n            raise Capped('),
+        ('        if why:\n            save(st)\n            raise Capped(why)\n',
+         '        if why:\n            st["steps"] += n\n            save(st)\n            raise Capped(why)\n'),
     'a multi-step charge only checks one step':
         ('if st["steps"] + n > c["steps"]:',
          'if st["steps"] + 1 > c["steps"]:'),
     'no wall-time cap':
-        ('        if now - st["start"] > c["wall_s"]:\n',
-         '        if False:\n'),
+        ('        elif now - st["start"] > c["wall_s"]:\n',
+         '        elif False:\n'),
+    'no daily cap':
+        ('        elif st.get("day_steps", 0) + n > c["day_steps"]:\n',
+         '        elif False:\n'),
+    'a session reset also resets the day':
+        ('            st = {**st, "start": now, "last": now, "steps": 0}\n',
+         '            st = {"start": now, "last": now, "steps": 0}\n'),
+    'a clock stepped back suspends the wall clock':
+        ('        if now < st["start"]:',
+         '        if False:'),
     'idle never resets a session':
-        ('        if st is None or now - st.get("last", st["start"]) > c["idle_s"]:\n',
-         '        if st is None:\n'),
-    'idle is measured from the session START, not the last action':
-        ('now - st.get("last", st["start"]) > c["idle_s"]',
-         'now - st["start"] > c["idle_s"]'),
+        ('        elif now - st.get("last", st["start"]) > c["idle_s"]:',
+         '        elif False:'),
     'an unreadable count is a fresh session':
         ('        except (OSError, ValueError, AssertionError):\n            # an unreadable count',
          '        except (OSError, ValueError, AssertionError):\n            st = None\n        if False:\n            # an unreadable count'),

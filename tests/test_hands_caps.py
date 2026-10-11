@@ -6,8 +6,10 @@
   C1 STEP: N charges pass, the (N+1)th refuses naming the STEP cap, and a refused charge is never counted
   C2 a multi-step charge (a `do` script) that would cross the cap is refused WHOLE, not run up to it
   C3 WALL: inside the wall cap a charge passes; past it, it refuses naming the WALL-TIME cap
-  C4 IDLE: after a gap longer than the idle window the agent gets a fresh session (a paused agent is back), while a
-     loop that never idles stays capped (control: a gap just under the window does NOT reset)
+  C4 IDLE: a loop hammering at its cap once a second for idle+100 s stays capped (a REFUSED call is activity, a3
+     #47653 F1); after true silence longer than the idle window it gets a fresh session (control: just under, no)
+  C10 DAILY: a loop that pauses past the idle window between steps is still bounded per UTC day (a3 N2)
+  C11 a wall clock stepped backward restarts the session's wall clock (a3 N3)
   C5 PER AGENT: one agent at its cap doesn't touch another agent's hands (a pool desk is shared; keying by desktop
      would stop the other agent)
   C6 an unreadable count fails CLOSED (refuses), never reads as a fresh session; caps-reset clears it
@@ -77,11 +79,25 @@ want("C3 inside the wall cap a charge passes", refused("zz-c", now=T0 + 59) is N
 r = refused("zz-c", now=T0 + 61)
 want("C3 past it, it refuses naming the WALL-TIME cap", r is not None and "WALL-TIME" in r, str(r))
 # ── C4 ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+# a3 #47653 F1: a REFUSED call is activity. A loop hammering at its cap must stay capped however long it hammers; only
+# true silence for longer than the idle window gives a fresh session.
 last = (hd.session("zz-a") or {}).get("last", T0 + 2)
-want("C4 a gap just UNDER the idle window doesn't reset a capped agent (control)",
-     refused("zz-a", now=last + 599) is not None)
-want("C4 after a gap LONGER than the idle window the agent has a fresh session",
-     refused("zz-a", now=last + 601) is None and (hd.session("zz-a") or {}).get("steps") == 1, str(hd.session("zz-a")))
+t = last
+still = True
+for k in range(1, 700 + 1):                         # once a second for idle_s + 100 s, never pausing
+    t = last + k
+    if refused("zz-a", now=t) is None:
+        still = False
+        break
+want("C4 a loop hammering at its cap once a second for idle+100 s stays CAPPED (a refusal is activity)", still,
+     f"uncapped at +{t - last:.0f}s")
+want("C4 ...and its refusals counted no steps (still 3)", (hd.session("zz-a") or {}).get("steps") == 3,
+     str(hd.session("zz-a")))
+want("C4 a gap just UNDER the idle window after the last call doesn't reset (control)",
+     refused("zz-a", now=t + 599) is not None)
+t2 = (hd.session("zz-a") or {})["last"]
+want("C4 true silence LONGER than the idle window gives a fresh session",
+     refused("zz-a", now=t2 + 601) is None and (hd.session("zz-a") or {}).get("steps") == 1, str(hd.session("zz-a")))
 # ── C5 ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 for i in range(3):
     refused("zz-d", now=T0 + i)
@@ -93,6 +109,26 @@ r = refused("zz-f", now=T0)
 want("C6 an unreadable count refuses (fails closed), never a fresh session", r is not None, str(r))
 hd.caps_reset("zz-f")
 want("C6 caps-reset clears it", refused("zz-f", now=T0) is None)
+# ── C10 / C11 ──────────────────────────────────────────────────────────────────────────────────────────────────
+os.environ["HANDS_DAY_STEP_CAP"] = "5"
+os.environ["HANDS_STEP_CAP"] = "100"
+D = 2_000_000_000.0                                  # a UTC day boundary is far from these offsets
+D = D - (D % 86400) + 3600
+hd.caps_reset("zz-day")
+burst = [refused("zz-day", now=D + k * 700) for k in range(5)]   # 5 sessions apart (gaps > idle), 1 step each
+r = refused("zz-day", now=D + 5 * 700)
+want("C10 DAILY: a loop that pauses past the idle window between steps is still bounded per day",
+     all(b is None for b in burst) and r is not None and "DAILY cap" in r, f"{burst} / {r}")
+want("C10 ...and the next UTC day it may work again", refused("zz-day", now=D + 86400) is None)
+os.environ["HANDS_DAY_STEP_CAP"] = "2000"
+os.environ["HANDS_STEP_CAP"] = "3"
+hd.caps_reset("zz-clock")
+refused("zz-clock", now=T0 + 1000)
+refused("zz-clock", now=T0 + 10)                       # the wall clock stepped back 990 s
+st = hd.session("zz-clock") or {}
+want("C11 a clock stepped BACKWARD restarts the session's wall clock instead of suspending it",
+     st.get("start") == T0 + 10, str(st))
+
 # ── C7 ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 os.environ["HANDS_STEP_CAP"] = "10"
 

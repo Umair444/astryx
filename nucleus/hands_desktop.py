@@ -37,9 +37,10 @@ in the state dir. While it exists every action refuses with "the owner stopped y
 the agent is told so. Resume removes it.
 
 CAPS (plan-7862, seed's binding item): every AGENT (the resident, not the desktop) has a STEP cap and a WALL-TIME
-cap per session (a run of its actions with no gap longer than HANDS_CAP_IDLE_S). At either cap every call refuses,
-naming the cap, until the agent has been idle that long or the owner resets it. .env: HANDS_STEP_CAP (300),
-HANDS_WALL_CAP_S (3600), HANDS_CAP_IDLE_S (600).
+cap per session (a run of its calls with no gap longer than HANDS_CAP_IDLE_S; a REFUSED call counts as a call), and
+a DAILY step cap. At a cap every call refuses, naming it, until the agent has made no calls at all for that long (or,
+for the daily cap, the UTC day turns), or the owner resets it. .env: HANDS_STEP_CAP (300), HANDS_WALL_CAP_S (3600),
+HANDS_CAP_IDLE_S (600), HANDS_DAY_STEP_CAP (2000). Same-uid grade: a guard against runaway loops, not a cage.
 
     venv/bin/python nucleus/hands_desktop.py up <agent>
     venv/bin/python nucleus/hands_desktop.py down <agent>
@@ -404,9 +405,9 @@ def _env_int(key: str, default: int) -> int:
 
 
 def caps() -> dict:
-    """The caps in force: .env (HANDS_STEP_CAP, HANDS_WALL_CAP_S, HANDS_CAP_IDLE_S) over the defaults."""
+    """The caps in force: .env (HANDS_STEP_CAP, HANDS_WALL_CAP_S, HANDS_CAP_IDLE_S, HANDS_DAY_STEP_CAP) over defaults."""
     return {"steps": _env_int("HANDS_STEP_CAP", 300), "wall_s": _env_int("HANDS_WALL_CAP_S", 3600),
-            "idle_s": _env_int("HANDS_CAP_IDLE_S", 600)}
+            "idle_s": _env_int("HANDS_CAP_IDLE_S", 600), "day_steps": _env_int("HANDS_DAY_STEP_CAP", 2000)}
 
 
 class Capped(HandsError):
@@ -415,14 +416,29 @@ class Capped(HandsError):
 
 def charge(agent: str, n: int = 1, now: float | None = None) -> dict:
     """Count `n` steps for `agent`'s session, or raise Capped naming the cap that's spent. Atomic per agent (a file
-    lock: an agent's hands and phone servers share one count). A refused charge is NOT counted."""
+    lock: an agent's hands and phone servers share one count).
+
+    A refused charge counts no STEPS, but it IS activity: it moves `last`, so an agent hammering at its cap is never
+    "idle" and never earns a fresh session (a3 #47653 F1: refusals that didn't touch `last` let a loop that never
+    paused come back every idle window, metered forever). Only true silence for HANDS_CAP_IDLE_S starts a session.
+    A DAILY ceiling (per UTC date) bounds a loop that does pause past the idle window between bursts (a3 N2).
+    GRADE: same-uid, like the stop flag. A resident with Bash can reset or delete its own count, so this guards
+    against RUNAWAY LOOPS and accidents, not against an agent that means to get round it (owner ruling 10-09: agents
+    are trusted)."""
     import fcntl
     if not agent:
         raise HandsError("no agent to charge: ASTRYX_AGENT is not set")
     c = caps()
     now = time.time() if now is None else now
+    day = time.strftime("%Y-%m-%d", time.gmtime(now))
     CAPS_DIR.mkdir(parents=True, exist_ok=True)
     f = CAPS_DIR / f"{_name(agent)}.json"
+
+    def save(st: dict) -> None:
+        tmp = f.with_suffix(".tmp")
+        tmp.write_text(json.dumps(st))
+        tmp.replace(f)
+
     with open(CAPS_DIR / f"{_name(agent)}.lock", "w") as lk:
         fcntl.flock(lk, fcntl.LOCK_EX)
         try:
@@ -434,21 +450,34 @@ def charge(agent: str, n: int = 1, now: float | None = None) -> dict:
             # an unreadable count is not a fresh session: fail closed, like the stop flag (a3 #42085)
             raise Capped("your hands' step count can't be read, so they're stopped. Tell the owner "
                          f"(`nucleus/hands_desktop.py caps-reset {agent}` clears it).")
-        if st is None or now - st.get("last", st["start"]) > c["idle_s"]:
+        if st is None:
             st = {"start": now, "last": now, "steps": 0}
+        elif now - st.get("last", st["start"]) > c["idle_s"]:      # true silence: a fresh session, the day carries
+            st = {**st, "start": now, "last": now, "steps": 0}
+        if now < st["start"]:                                       # the clock stepped back: restart the wall clock
+            st["start"] = now
+        if st.get("day") != day:
+            st["day"], st["day_steps"] = day, 0
+        come_back = (f"They come back after {c['idle_s'] // 60} minutes with no calls at all, or when the owner "
+                     f"resets them.")
+        why = None
         if st["steps"] + n > c["steps"]:
-            raise Capped(f"your hands hit the STEP cap: {st['steps']} steps this session (cap {c['steps']}). "
-                         f"Stop here and tell the owner where you were. They come back after "
-                         f"{c['idle_s'] // 60} idle minutes, or when the owner resets them.")
-        if now - st["start"] > c["wall_s"]:
-            raise Capped(f"your hands hit the WALL-TIME cap: this session is {int(now - st['start']) // 60} minutes "
-                         f"old (cap {c['wall_s'] // 60}). Stop here and tell the owner where you were. They come "
-                         f"back after {c['idle_s'] // 60} idle minutes, or when the owner resets them.")
+            why = (f"your hands hit the STEP cap: {st['steps']} steps this session (cap {c['steps']}). "
+                   f"Stop here and tell the owner where you were. {come_back}")
+        elif now - st["start"] > c["wall_s"]:
+            why = (f"your hands hit the WALL-TIME cap: this session is {int(now - st['start']) // 60} minutes old "
+                   f"(cap {c['wall_s'] // 60}). Stop here and tell the owner where you were. {come_back}")
+        elif st.get("day_steps", 0) + n > c["day_steps"]:
+            why = (f"your hands hit the DAILY cap: {st.get('day_steps', 0)} steps today, UTC (cap {c['day_steps']}). "
+                   f"Stop here and tell the owner where you were; they come back tomorrow (UTC) or when the owner "
+                   f"resets them.")
+        st["last"] = max(now, st.get("last", now))                  # a refusal is activity too (F1)
+        if why:
+            save(st)
+            raise Capped(why)
         st["steps"] += n
-        st["last"] = now
-        tmp = f.with_suffix(".tmp")
-        tmp.write_text(json.dumps(st))
-        tmp.replace(f)
+        st["day_steps"] = st.get("day_steps", 0) + n
+        save(st)
         return {**st, **{f"cap_{k}": v for k, v in c.items()}}
 
 
