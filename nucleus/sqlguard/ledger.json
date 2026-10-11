@@ -37,6 +37,10 @@
   "bridges/ear.py::Store.ping\u001fselect 1": [
    "hearing service"
   ],
+  "bridges/ear.py::Store.route_room\u001fupdate utterances set speaker=? where ts=? and id=?": [
+   "hearing: ear service (owner-gated upload, no text in logs or on the wire, RTF)",
+   "the Room's SQL on a fixture schema: voiceprints, the router, the ear's speaker stamp, the speaker's claim/voice/ask"
+  ],
   "bridges/providers/canvas.py::CanvasProvider.list_chats\u001fselect thread, user_name, agent, title from canvas_threads where not archived order by updated_at desc limit 100": [
    "canvas: trust lines, claim, shell"
   ],
@@ -438,6 +442,17 @@
   "observatory/api/main.py::trigger_detail\u001fselect id, ts, left(body, 600) as body from messages where from_agent='pulse' and to_agent=? and left(body, length(?)) = ? order by id desc limit 8": [
    "observatory: agents as people"
   ],
+  "observatory/api/room.py::ask\u001finsert into messages (from_agent, to_agent, thread, intent, body) values ('room', ?, ?, 'chat', ?) returning id": [
+   "the Room's SQL on a fixture schema: voiceprints, the router, the ear's speaker stamp, the speaker's claim/voice/ask"
+  ],
+  "observatory/api/room.py::claim_and_act\u001fupdate messages set status='delivered' where id in (select id from messages where to_agent='room' and status='pending' order by id limit 5 for update skip locked) returning id, from_agent, intent, body": [
+   "hearing: ear service (owner-gated upload, no text in logs or on the wire, RTF)",
+   "observatory: agents as people",
+   "the Room's SQL on a fixture schema: voiceprints, the router, the ear's speaker stamp, the speaker's claim/voice/ask"
+  ],
+  "observatory/api/room.py::claim_and_act\u001fupdate voices set name=?, trust=?, verified_by=?, evidence=? where label=?": [
+   "the Room's SQL on a fixture schema: voiceprints, the router, the ear's speaker stamp, the speaker's claim/voice/ask"
+  ],
   "sha256:0f53663b8303f90b9217216341c3b328d389279ed76a0839b9bb429e9d19777f": [
    "weekly econ review: insures constitutive set, layer-1 stays FYI, L3 retired"
   ],
@@ -464,6 +479,9 @@
   ],
   "sha256:66bde10a66ab0e79c68c7957d45e85bf1f2f4787ab081bad9b90467cc356ed9d": [
    "plan-lifecycle trigger oracle"
+  ],
+  "sha256:6acb4cabae62fd2ddb00def62555252f4e76e8f0f27ad1f1b9b1c1f29537af8f": [
+   "outbound-stuck classifier"
   ],
   "sha256:70f696f8edd27c049c197a59a1d029e5007c99563b5db9cc7558ebee7fe1cd8c": [
    "plan-lifecycle trigger oracle"
@@ -556,6 +574,17 @@
     "state": "done"
    }
   },
+  "tests/test_room_db.py": {
+   "gates": [
+    "the Room's SQL on a fixture schema: voiceprints, the router, the ear's speaker stamp, the speaker's claim/voice/ask"
+   ],
+   "listed_since": "2026-10-11",
+   "reason": "the Room (owner 10-11): derived only for ear_store.maintain()'s run-time CREATE TABLE \u2026 PARTITION OF utterances inside nucleus/sqlguard/fixture.py's stamped fixture_db; the same misclassification as tests/test_ear_store.py and tests/test_hearing.py",
+   "trip": {
+    "goal": 8674,
+    "state": "open"
+   }
+  },
   "tests/test_tool_ledger.py": {
    "gates": [
     "tool ledger: ids only, ledger authorship"
@@ -588,7 +617,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 338,
+  "debt_rows": 342,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -721,6 +750,12 @@
    "debt": "EXECUTED/FIXTURE-DDL",
    "reason": "hearing S1 (plan-8674): `SELECT 1` health probe of the ear's store connection; no relation to stamp.",
    "tk": "sha256t:b8871308c48c6e98f085ea24c99aaa87f32fcbbf062398ec29662ad5d76ce027"
+  },
+  "bridges/ear.py::Store.route_room\u001fupdate utterances set speaker=? where ts=? and id=?": {
+   "admitted": "2026-10-11",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "the Room (owner 10-11): tests/test_room_db.py stamps a present (1 row) and a missing (0 rows) utterance; utterances is written into ear_store.maintain()'s run-time day partition, unstamped, the same FIXTURE-DDL as the ear's other listed sites (a4 #43670)",
+   "tk": "sha256t:d194378734d89829f1302599888a2cb741897bb42e63347e28cfa15b5977c033"
   },
   "bridges/gateway.py::inbox\u001finsert into messages (from_agent, from_org, to_agent, to_org, thread, intent, body, sig) values (?, ?, ?, 'local', ?, ?, ?, ?)": {
    "debt": "UNEXECUTED",
@@ -2003,6 +2038,24 @@
    "reason": "seed",
    "tk": "sha256t:1d01b7fa0e0d1f496a392b8654418a88ccb555bf41da4eb3d6f1cdfc3e088b98"
   },
+  "observatory/api/room.py::ask\u001finsert into messages (from_agent, to_agent, thread, intent, body) values ('room', ?, ?, 'chat', ?) returning id": {
+   "admitted": "2026-10-11",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "the Room (owner 10-11): the live voice's ask_agent insert, run and asserted by tests/test_room_db.py on asyncpg against fixture_db; no WHERE, so (W) is N/A; FIXTURE-DDL only because asyncpg has no table OID for the stamp",
+   "tk": "sha256t:7a14e74e6dd7073d4a3af71fe5e8f7fb29393a4144fc9889bc9ee205c54e8d24"
+  },
+  "observatory/api/room.py::claim_and_act\u001fupdate messages set status='delivered' where id in (select id from messages where to_agent='room' and status='pending' order by id limit 5 for update skip locked) returning id, from_agent, intent, body": {
+   "admitted": "2026-10-11",
+   "debt": "EXECUTED",
+   "reason": "the Room (owner 10-11): tests/test_room_db.py claims 0 rows, then 3 (asserted), on asyncpg against fixture_db; the asyncpg RETURNING count isn't witnessed by the shim, so (W) stays EXECUTED",
+   "tk": "sha256t:e6f920f468dc179b75bec32f2870bffec9ded8083a95e94c362a896684de7d6f"
+  },
+  "observatory/api/room.py::claim_and_act\u001fupdate voices set name=?, trust=?, verified_by=?, evidence=? where label=?": {
+   "admitted": "2026-10-11",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "the Room (owner 10-11): run to 0 and 1 rows by tests/test_room_db.py (a known and an unknown voice label) on asyncpg against fixture_db; asyncpg carries no table OID, so the stamp can't be credited (FIXTURE-DDL), same as the observatory's other asyncpg writes",
+   "tk": "sha256t:0b4b41aa0c43a1c2a6f4e43cf20c21f8083241e8371f251216c3478a92188536"
+  },
   "sha256:021f9e2ed69a44a4fa6d9b2db0b044e8ddc045243609df64fc65bbd9057ef3c4": {
    "admitted": "2026-09-29",
    "debt": "UNEXECUTED",
@@ -2180,6 +2233,12 @@
    "reason": "seed",
    "tk": "sha256t:c40537eae21f09b1dbae332bd2babef605c27b0a333b76e9278e7c5d7f75f427"
   },
+  "sha256:6acb4cabae62fd2ddb00def62555252f4e76e8f0f27ad1f1b9b1c1f29537af8f": {
+   "admitted": "2026-10-11",
+   "debt": "EXECUTED",
+   "reason": "steward's outbound_stuck body re-applied 10-11 (receipt #46829, PASS #46826: ear-<room> threads are sheet-delivered); the old seed-era UNEXECUTED row (d0d080335f) was shrunk, and the new body is EXECUTED by painter's bucket arms; RESPONSIVE needs those arms on a stamped fixture (painter/ear-backlog)",
+   "tk": "sha256t:7563347c086d7d4dc493b44b7f0805163c3078f83209660509be42a33359c05b"
+  },
   "sha256:6e3b800fd2864880ad2e6c6d119e3cd78eabb482f01337c42c1df1057dc401ce": {
    "debt": "UNEXECUTED",
    "reason": "seed",
@@ -2337,11 +2396,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:62cf9c15362018930ec083f212093ee0bdbe7735924804e04acfc612494ee38d"
-  },
-  "sha256:d0d080335f48c270bc0b8bc88c62d5dcfd7f9798dbcfadf5127cd8444d197cc8": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:cf0412864104bda5ff70d647159a70a2c78507a7b305750fbed2f4c02d8dba91"
   },
   "sha256:d6aae41b3bc8b376c4e74088acd844a8743bd8dfa1dfbb747ddfc54709ef8d06": {
    "debt": "UNEXECUTED",
