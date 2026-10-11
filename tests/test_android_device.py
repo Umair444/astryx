@@ -133,10 +133,16 @@ try:
         want("D2 upstream launched Settings, and the answer ends with a stamp",
              "Launched app com.android.settings" in str(out[0]) and tier(out) is not None, str(out))
         time.sleep(6)
-        out = settle()
-        body = json.dumps(out[:-1])
-        want("D3 look(text) shows Settings' own labels", any(w in body for w in ("Network", "Search settings",
-             "Connected devices", "Apps")), body[:200])
+        # Settled AND drawn: a launch is animated first (measured: the list held only System UI's launch container,
+        # an org screen with none of Settings' labels yet), so wait for Settings' own content before judging it.
+        labels = ("Network", "Search settings", "Connected devices", "Apps")
+        for _ in range(6):
+            out = settle()
+            body = json.dumps(out[:-1])
+            if any(w in body for w in labels):
+                break
+            time.sleep(5)
+        want("D3 look(text) shows Settings' own labels", any(w in body for w in labels), body[:400])
         want("D3 ...and its stamp, LAST, says org (Settings + system decor)", tier(out) == "org", str(out[-1:]))
         out = run(srv.look(AVD))
         want("D4 look() returns upstream's picture (and its scale note), then the stamp",
