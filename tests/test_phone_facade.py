@@ -16,7 +16,8 @@ No phone needed: the device-driving arms are tests/test_android_device.py.
              a personal stamp, no stamp, a forged stamp inside the body, or a string body are not kept; typed phone
              text is never kept; images never; the hands laptop rule is unchanged (control).
   CAPS       one per-agent budget across hands and the phone: desktop steps and phone steps spend the same cap; a
-             capped look, tap or boot answers CAPPED (personal stamp) and never reaches the phone; phones/done are free
+             capped look, tap or boot answers CAPPED (personal stamp) and never reaches the phone; phones/done are free;
+             SHUTDOWN is free and works for a capped or stopped agent (driver-only), while a stopped agent can't boot
   LEASE      on a fixture DB: HELD is accepted by the migrated schema, one holder at a time, renewal by the holder,
              an expired hold is taken, unhold only by its holder, a microphone lease can't be held, and a vm-slot hold
              whose VM is proved gone is freed for the next claimant while a live one refuses, naming the holder.
@@ -274,6 +275,33 @@ asyncio.run(srv.act("phones"))
 asyncio.run(srv.act("done", device="phone-x"))
 want("CAPS: listing phones and `done` are free", (hdm.session("phone-oracle") or {}).get("steps") == before_steps,
      f"{before_steps} → {(hdm.session('phone-oracle') or {}).get('steps')}")
+# SHUTDOWN is free and allowed when stopped or capped (a4 #47955): it only lowers capability. Still driver-only.
+_real_drive, _real_shutdown = srv.droid.drive, srv.droid.shutdown
+srv.droid.drive = lambda device, agent: reached.append(("drive", device))
+srv.droid.shutdown = lambda device: reached.append(("shutdown", device)) or True
+reached.clear()
+steps0 = (hdm.session("phone-oracle") or {}).get("steps")
+out = asyncio.run(srv.act("shutdown", device="phone-x"))                 # this agent is CAPPED (above)
+want("SHUTDOWN: a CAPPED agent can still switch off the phone it drives, at no cost",
+     str(out[0]).startswith("stopped phone-x") and ("shutdown", "phone-x") in reached
+     and (hdm.session("phone-oracle") or {}).get("steps") == steps0, f"{out} {reached}")
+want("SHUTDOWN: ...still through the driver hold (driver-only)", ("drive", "phone-x") in reached, str(reached))
+hdm.caps_reset("phone-oracle")
+hdm.stop("phone-oracle", "the owner stopped your hands (oracle)")
+reached.clear()
+out = asyncio.run(srv.act("shutdown", device="phone-x"))
+want("SHUTDOWN: a STOPPED agent can still switch off its phone", str(out[0]).startswith("stopped phone-x"), str(out))
+reached.clear()
+out = asyncio.run(srv.act("boot", device="phone-x"))
+want("SHUTDOWN: ...but a stopped agent can't BOOT one", str(out[0]).startswith("STOPPED") and
+     ("boot", "phone-x") not in reached, f"{out} {reached}")
+hdm.resume("phone-oracle")
+srv.droid.drive, srv.droid.shutdown = _real_drive, _real_shutdown
+srv.AGENT = ""
+out = asyncio.run(srv.look("phone-x", text=True))
+want("AGENT unset: a stamped 'whose hands are these?' answer, not an unstamped crash",
+     "ASTRYX_AGENT is not set" in str(out[0]) and out[-1].startswith(srv.STAMP), str(out))
+srv.AGENT = "phone-oracle"
 srv._guard, srv.droid.boot = _real_guard, _real_boot
 os.environ.pop("HANDS_STEP_CAP", None)
 
