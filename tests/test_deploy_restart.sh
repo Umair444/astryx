@@ -27,8 +27,8 @@ for c in psql docker tmux curl; do printf '#!/usr/bin/env bash\necho "%s $*" >> 
 # psql: "busy" queries answer 0
 printf '#!/usr/bin/env bash\necho "psql $*" >> "%s"\ncase "$*" in *count*) echo 0;; esac\nexit 0\n' "$LOG" > "$T/bin/psql"
 printf '#!/usr/bin/env bash\necho "sudo $*" >> "%s"\nexit 0\n' "$LOG" > "$T/bin/sudo"
-# systemctl: no enabled units to restart; is-active answers yes
-printf '#!/usr/bin/env bash\necho "systemctl $*" >> "%s"\nexit 0\n' "$LOG" > "$T/bin/systemctl"
+# systemctl: ONE enabled unit (so a full restart really restarts something); is-active answers yes
+printf '#!/usr/bin/env bash\necho "systemctl $*" >> "%s"\n[ "$1" = list-unit-files ] && echo "astryx-observatory.service enabled enabled"\nexit 0\n' "$LOG" > "$T/bin/systemctl"
 # tmux pane shows the ready mode line for "good"; like real tmux, an exact "=name" with no ":" is a
 # session, not a pane, and capture-pane can't find it (the 10-10 restart reported 16 live agents ✗)
 cat > "$T/bin/tmux" <<STUB
@@ -54,4 +54,17 @@ arm "it ends INCOMPLETE with rc 1, never \"the org is back\"" '[ $rc = 1 ] && gr
 arm "a ready resident passes the ready check" 'grep -q "^tmux capture-pane" "$LOG" && ! grep -q "good: spawned, but" <<<"$out"'
 arm "the pulse is started again after the failure" 'grep -q "sudo systemctl start astryx-pulse.timer" "$LOG"'
 arm "the pulse was paused before any resident restart" '[ "$(grep -n "stop astryx-pulse.timer" "$LOG" | head -1 | cut -d: -f1)" -lt "$(grep -n "kill-session" "$LOG" | head -1 | cut -d: -f1)" ]'
+# the full run DID ask docker for the database container and systemctl for the units (the control for the arms below)
+arm "control: a full restart asks docker for the db and RESTARTS the enabled unit" 'grep -q "^docker ps" "$LOG" && grep -q "systemctl restart astryx-observatory" "$LOG"'
+# `restart_org residents` (deploy.sh residents): the residents roll, the database and the services are never touched
+rm -f "$T/root/spawned-good"; : > "$LOG"
+out2=$(PATH="$T/bin:$PATH" ROOT="$T/root" ASTRYX_AGENT= bash -c '
+  set -euo pipefail
+  eval "$(sed -n "/^ears() {/,/^}/p; /^ears_of() /p; /^restart_org() {/,/^}/p" "'"$REPO"'/nucleus/deploy.sh")"
+  sleep() { :; }
+  restart_org residents' 2>&1)
+arm "residents: no docker call at all (the database is not bounced)" '! grep -q "^docker " "$LOG"'
+arm "residents: no unit is restarted (the verify step may still READ unit states)" '! grep -qE "systemctl restart astryx-" "$LOG"'
+arm "residents: the residents are still rolled (kill-session + spawn)" 'grep -q "kill-session" "$LOG" && grep -q "✓ good resident" <<<"$out2"'
+arm "residents: the pulse is paused and started again" 'grep -q "stop astryx-pulse.timer" "$LOG" && grep -q "start astryx-pulse.timer" "$LOG"'
 [ $fails = 0 ] && echo PASS || { echo "$out" | tail -8; echo "FAIL ($fails)"; exit 1; }

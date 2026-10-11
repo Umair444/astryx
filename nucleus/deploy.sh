@@ -82,9 +82,14 @@ PY
 ears_of() { ears | awk -v a="$1" '$1==a {print $2}'; }
 
 restart_org() {
+  # `restart_org residents` rolls ONLY the residents (same idle wait, same verify, the pulse paused around it): the
+  # database and the services are left alone. A plain restart bounced genesis-pg under another agent's running check
+  # on 10-11 when all seed wanted was every channel server reloading server.mjs (seed #45236).
+  local only="${1:-}"
   local DSN; DSN=$(grep '^ASTRYX_DSN=' "$ROOT/.env" | cut -d= -f2-)
   local me="${ASTRYX_AGENT:-}" bad=0
-  local pgc; pgc=$(docker ps --format '{{.Names}}\t{{.Ports}}' | awk -F'\t' '/->5432\/tcp/ {print $1; exit}')
+  local pgc=""
+  [ "$only" = residents ] || pgc=$(docker ps --format '{{.Names}}\t{{.Ports}}' | awk -F'\t' '/->5432\/tcp/ {print $1; exit}')
   if [ -n "$pgc" ]; then
     echo "· restarting the database ($pgc)…"; docker restart "$pgc" >/dev/null
     for _ in $(seq 1 60); do psql "$DSN" -qc 'SELECT 1' >/dev/null 2>&1 && break; sleep 2; done
@@ -95,9 +100,10 @@ restart_org() {
   # ANY exit from here (an abort under set -e, a Ctrl-C, a return) starts the pulse again: a paused
   # pulse left behind would sit with every trigger dark, silently (a2 #42367)
   trap 'sudo systemctl start astryx-pulse.timer >/dev/null 2>&1 || true' RETURN EXIT INT TERM
-  echo "· restarting services…"
+  [ "$only" = residents ] && echo "· residents only: the database and the services are left running"
+  [ "$only" = residents ] || echo "· restarting services…"
   local u
-  for u in $(systemctl list-unit-files 'astryx-*' --no-legend | awk '$2=="enabled" {print $1}'); do
+  for u in $( [ "$only" = residents ] || systemctl list-unit-files 'astryx-*' --no-legend | awk '$2=="enabled" {print $1}'); do
     case "$u" in astryx-residents.service|astryx-pulse.timer|astryx-pulse.service) continue ;; esac
     if sudo systemctl restart "$u"; then echo "  ✓ $u $(systemctl is-active "$u")"; else echo "  ✗ $u failed to restart"; bad=1; fi
   done
@@ -184,8 +190,9 @@ case "$what" in
           sudo systemctl daemon-reload && echo "  ✓ units synced + daemon reloaded" ;;
   all)    build_web && restart astryx-observatory && restart astryx-whatsapp ;;
   restart) restart_org ;;                                         # the WHOLE org: db, services, residents
+  residents) restart_org residents ;;                             # ONLY the residents: no db, no services
   reload) shift; bs=("$@"); [ ${#bs[@]} -eq 0 ] && bs=(whatsapp telegram discord)
           rc=0; for b in "${bs[@]}"; do reload "$b" || rc=1; done; exit $rc ;;
-  *) echo "usage: deploy.sh [web|obs|api|bridge|tg|dc|gw|units|all|restart|reload [bridge...]]  (default: all)"; exit 1 ;;
+  *) echo "usage: deploy.sh [web|obs|api|bridge|tg|dc|gw|units|all|restart|residents|reload [bridge...]]  (default: all)"; exit 1 ;;
 esac
 echo "deploy: $what done."
