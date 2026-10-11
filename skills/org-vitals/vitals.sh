@@ -87,6 +87,25 @@ if [ -f "$_stamp" ]; then
     "$([ "$_age_h" -gt 26 ] && printf '  ⚠ >26h — steward/check_stamp owns the call, but glance' || true)"
   _f="$(awk '/^FAILED:/{f=1;next} /^[A-Z]+:/{f=0} f && NF' "$_stamp")"
   [ -n "$_f" ] && printf 'FAILED:\n%s\n' "$_f" || echo "  (no FAILED gates in the stamp)"
+  # EACH red's OWN first error line, from the run's log: the block between the previous gate
+  # marker and its ✗. A red set is not one cause. On 10-11 I filed 8 reds under "seed restarted
+  # pg mid-run", and 2 of them said "the probe server never LISTENed", which was a code
+  # regression the clean re-run kept red (seed #46287). Attribute by signature, not by timing.
+  if [ -n "$_f" ] && [ -f "$_stamp.log" ]; then
+    echo "first error line per FAILED gate ($_stamp.log; attribute by THIS, not by timing):"
+    # A gate marker is a ✗ line naming a stamp FAILED gate, first time only: sqlguard prints its
+    # own nested ✗ rows, and check.sh's closing FAILED block repeats every name.
+    sed 's/\x1b\[[0-9;]*m//g' "$_stamp.log" | awk -v names="$_f" '
+      BEGIN { n = split(names, a, "\n"); for (i = 1; i <= n; i++) { sub(/^ +/, "", a[i]); want[a[i]] = 1 } }
+      { line = $0; sub(/^ +/, "", line) }
+      line ~ /^✓ / { sig = ""; next }
+      line ~ /^✗ / { name = line; sub(/^✗ /, "", name)
+                     if (name in want && !(name in done)) {
+                       done[name] = 1
+                       printf "  %s\n    ↳ %s\n", name, (sig != "" ? substr(sig, 1, 160) : "(no error line in its block; read the log)")
+                       sig = ""; next } }
+      sig == "" && line ~ /FAIL|[Ee]rror[:s.]|✗/ { sig = line }'
+  fi
   # UNVERIFIED NAMES, not just the count. A count of "unverified=1" is a false-silence trap: if
   # a baseline unverified gate gets fixed while a DIFFERENT gate silently goes unverified, the
   # count stays 1 and it gets waved off as baseline. Surface the identities so the caller compares NAME vs
