@@ -84,4 +84,7 @@ MUTANTS = {
         ("    dead = [d.name for d, _ in dead_scopes(base, unprovable)]",
          "    dead = [d.name for d in sorted((base or SCOPE_ROOT).iterdir()) if d.is_dir() and (d / \"lock.json\").exists()\n"
          "            and time.time() - (d / \"lock.json\").stat().st_mtime > 0]"),
+    "R28 an INVALID database is ALTERed before DROP (FATAL closes the connection; every later drop fails: 10-11)":
+        ("                    if not c.execute(\"SELECT datconnlimit = -2 FROM pg_database WHERE datname = %s\", (db,)).fetchone()[0]:\n"
+         "                        c.execute(", "                    if True:\n                        c.execute("),
 }

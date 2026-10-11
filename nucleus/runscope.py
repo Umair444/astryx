@@ -267,7 +267,11 @@ def _drop_owned(admin_dsn: str, role: str) -> dict:
         with psycopg.connect(admin_dsn, autocommit=True) as c:
             for db in owned_dbs(admin_dsn, role, c):
                 try:
-                    c.execute(sql.SQL("ALTER DATABASE {} IS_TEMPLATE false").format(sql.Identifier(db)))
+                    # An INVALID database (datconnlimit -2: a DROP interrupted mid-way, e.g. its run was killed)
+                    # can't be ALTERed: the server answers FATAL and closes this connection, so every later drop
+                    # here failed too (10-11, bc_2741292x…_tpl). It can always be DROPped, so skip only the ALTER.
+                    if not c.execute("SELECT datconnlimit = -2 FROM pg_database WHERE datname = %s", (db,)).fetchone()[0]:
+                        c.execute(sql.SQL("ALTER DATABASE {} IS_TEMPLATE false").format(sql.Identifier(db)))
                     c.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(db)))
                     out["dropped"].append(db)
                 except psycopg.Error as e:

@@ -90,7 +90,7 @@ def main():
         print("NOT SEARCHED: this role can't CREATE ROLE/DATABASE. Nothing was verified.")
         return 77
     sys.path.insert(0, str(REPO / "tests"))
-    from _oracle_debris import ORACLE_BASE, reap
+    from _oracle_debris import ORACLE_BASE, _drop_db, reap
     reap(adm)                                                    # a killed earlier run's debris, by raw SQL
     role_exists = lambda r: bool(adm.execute("SELECT 1 FROM pg_roles WHERE rolname=%s", (r,)).fetchone())
     base = ORACLE_BASE / f"o{os.getpid()}"                         # per-oracle subdir: its own scopes only
@@ -315,6 +315,35 @@ def main():
               again["dropped"] == [] and not again["leaked"] and not again["role_left"] and not again["errors"],
               str(again))
 
+        # ── an INVALID database (an interrupted DROP: datconnlimit -2) can't be ALTERed: the server answers FATAL and
+        # closes the connection, so every later drop in the same teardown failed (10-11, bc_2741292x…_tpl) ───────
+        inv = rs.RunScope(dsn, root=base).open()
+        extra_roles.append(inv.role)
+        bad, after = inv.create_db(f"{inv.role}_a_invalid"), inv.create_db(f"{inv.role}_b_after")   # sorted: bad first
+        adm.execute("UPDATE pg_database SET datconnlimit = -2 WHERE datname = %s", (bad,))     # the server's own mark
+        rep_inv = rs._drop_owned(dsn, inv.role)
+        check("teardown drops an INVALID database, and the ones after it on the same connection, then the role",
+              rep_inv["dropped"] == [bad, after] and not rep_inv["errors"] and rep_inv["role_left"] is False,
+              str(rep_inv))
+        import shutil as _shi
+        _shi.rmtree(inv.root, ignore_errors=True)
+
+        # ── the oracle reaper reads NESTED scopes: test_runscope's own o<pid>/<run id> (10-11: a killed
+        # check_watch test_runscope's role and DBs were never reaped, since reap() read only the top level) ──────
+        dead2 = subprocess.Popen(["true"]); dead2.wait()
+        nest = ORACLE_BASE / f"o{dead2.pid}"
+        nscope = nest / f"{dead2.pid}x{int(time.time())}"
+        nrole = f"{rs.ROLE_PREFIX}{nscope.name}"
+        nscope.mkdir(parents=True)
+        (nscope / "lock.json").write_text(json.dumps({"pid": dead2.pid, "starttime": 1, "role": nrole}))
+        adm.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(nrole)))
+        extra_roles.append(nrole)
+        adm.execute(sql.SQL("CREATE DATABASE {} OWNER {}").format(sql.Identifier(f"{nrole}_n"), sql.Identifier(nrole)))
+        got_n = reap(adm)
+        check("reap(): a dead oracle's scope NESTED under o<pid>/ is reaped (its role and DBs), and the emptied "
+              "o<pid> dir is removed", nrole in got_n and f"{nrole}_n" in got_n and not role_exists(nrole)
+              and not nest.exists(), f"reaped={got_n} nest_left={nest.exists()}")
+
         # ── refusal: a lockfile is data ──────────────────────────────────────────────────────────────────
         victim = rs.RunScope(dsn, root=base).open()                  # a real role that must SURVIVE
         extra_roles.append(victim.role)
@@ -340,8 +369,7 @@ def main():
                 continue
             for (db,) in adm.execute("SELECT d.datname FROM pg_database d JOIN pg_roles o ON o.oid = d.datdba "
                                      "WHERE o.rolname = %s", (r,)).fetchall():
-                adm.execute(sql.SQL("ALTER DATABASE {} IS_TEMPLATE false").format(sql.Identifier(db)))
-                adm.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(db)))
+                _drop_db(adm, db)                                   # raw SQL; an INVALID db is dropped without ALTER
             adm.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(r)))
         import shutil
         shutil.rmtree(base, ignore_errors=True)
