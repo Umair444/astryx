@@ -412,6 +412,9 @@ run "mutant machinery smoke (one family)" bash nucleus/probe_all.sh --smoke
 # every oracle is INVOKED; this one proves an invoked oracle actually RAN. Drives this
 # file's own run()/verdict() against synthetic gates. Pure stdlib, no DB.
 run "a skip is not a pass (verdict accounting)" "$PY" tests/test_check_verdict.py
+# per-gate wall clock (seed #45252): an expired gate is ✗ TIMED OUT and its whole process group dies; a signal to
+# check.sh reaches the running gate. Driven through the REAL run() with stub gates and 1-2s caps.
+run "check.sh gate cap: an expired gate is TIMED OUT and its group killed" "$PY" tests/test_check_gate_cap.py
 # The gate on the OTHER actuator. .git/hooks/pre-push is a COPY of the tracked hooks/pre-push,
 # so the reviewed artifact and the executed one are two writers of one fact with no reconciler
 # — and privacy_gate already rides on that copy. Proves the installed hook matches byte for
