@@ -8,15 +8,15 @@ REPO = Path(__file__).resolve().parent.parent
 SUBJECT = REPO / "init.sh"
 ORACLE = REPO / "tests" / "test_init_phonesweep.py"
 ENV = "INIT_PHONESWEEP_SRC"
-TIMEOUT = 120
+TIMEOUT = 300
 
 MUTANTS = {
     'installs without the opt-in':
         ('_chk_phonesweep() { _android_on || return 0; ',
          '_chk_phonesweep() { '),
     'only looks under seed (not deferential)':
-        ('ls triggers/*/phone_resume_sweep.py',
-         'ls triggers/seed/phone_resume_sweep.py'),
+        ('_trigger_chk phone_resume_sweep; }',
+         '[ -e triggers/seed/phone_resume_sweep.py ]; }'),
     "the node isn't in the reconciler's order":
         ('"android|interior" "phonesweep|interior" ',
          '"android|interior" '),

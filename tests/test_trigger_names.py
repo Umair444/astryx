@@ -47,7 +47,7 @@ except ImportError as e:
 import trigger_tree  # noqa: E402
 
 T = Path(tempfile.mkdtemp(prefix="tnames-oracle-"))
-trigger_tree.build(T)
+trigger_tree.build(T, os.environ.get("TRIGGER_NAMES_SRC"))   # the seam: a mutant under the probe
 PY = str(T / "venv/bin/python")
 NODSN = "postgresql://nobody@127.0.0.1:1/none"
 
