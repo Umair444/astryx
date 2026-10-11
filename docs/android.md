@@ -74,10 +74,11 @@ then `venv/bin/python nucleus/hands_desktop.py stop <agent>` (refuses that agent
 
 **What the stop can't promise.** It prevents an agent's *phone* and *Hands* tools from acting. It doesn't prevent an
 agent that is working on **your laptop screen** (Hands' `laptop`): with the observatory open there, that agent could
-click into the phone's view or press resume, and nothing can tell its click from yours. That case is detected, not
-prevented: a resume of a phone's desktop within 60 seconds of any agent acting on your laptop is flagged to the org
-(`nucleus/shipped_triggers/phone_resume_sweep.py`; install it with
-`printf 'from nucleus.shipped_triggers.phone_resume_sweep import phone_resume_sweep  # noqa: F401\n' > triggers/seed/phone_resume_sweep.py`).
+click into the phone's view, or press resume, and nothing can tell its click from yours. Of those two, only the
+**resume is detected**: a resume of a phone's desktop within 60 seconds of any agent acting on your laptop is flagged
+to the org. **Driving the phone through its view from your laptop is neither prevented nor detected.** The
+detector is `nucleus/shipped_triggers/phone_resume_sweep.py`; install it with
+`printf 'from nucleus.shipped_triggers.phone_resume_sweep import phone_resume_sweep  # noqa: F401\n' > triggers/seed/phone_resume_sweep.py`.
 
 The view and every Hands route are owner-only: they need the observatory's owner key, which is never written to the
 service's log (`key=<redacted>`).
