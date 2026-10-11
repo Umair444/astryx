@@ -63,7 +63,11 @@ block = rv[i_drill:rv.find("esac", i_drill)]
 check("…and every non-zero (NOT RUN, a timeout, a failed step) sets fail=1",
       "124)" in block and re.search(r"\*\)\s*fail=1", block) is not None, block)
 dr = DRILL.read_text()
-check("the drill applies the roles file BEFORE pg_role_sync apply (the reconcile is the role's last writer, a1 #45231)",
+# The ORDER is the SECOND layer behind arm D's refusal (a password-bearing roles file is never applied), so it can only
+# be pinned by position here, not shown behaviourally. Two layers guard one failure: an operator who removes the
+# refusal still can't undo the reconcile. Don't drop this as redundant with D (a1 #45250).
+check("the drill applies the roles file BEFORE pg_role_sync apply (layer 2 behind D's refusal: the reconcile is the "
+      "role's last writer, a1 #45231)",
       0 < dr.find('psql -X -q -v ON_ERROR_STOP=0') < dr.find('-m nucleus.pg_role_sync apply'))
 check("…including 3, roles NOT VERIFIED on the newest dump", re.search(r"\n\s*3\)[^\n]*fail=1", block) is not None,
       block)
