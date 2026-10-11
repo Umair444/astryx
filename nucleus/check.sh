@@ -248,6 +248,9 @@ run "init.sh start directory: the repo, through any link to init.sh" "$PY" tests
 # nucleus/merge_check.sh: the merged-tree chain before a merge request, base resolved ONCE (merge parent == control),
 # a conflict refused (never a wrong tree), transient links removed. Hermetic. Mutants: tests/mutants_merge_check.py.
 run "merge_check: one base read, conflicts refused, links removed" "$PY" tests/test_merge_check.py
+# nucleus/review_range.sh: a review range is the MERGE-BASE..the branch head, both read from git; --check refuses the
+# merged-ONTO sha, an older base, a stale or unresolvable head (a4 night-review 10-12). Mutants: tests/mutants_review_range.py.
+run "review_range: base is the merge-base, head is the branch, typed shas refused" "$PY" tests/test_review_range.py
 # the database's SHAPE, which the stamp can't see (a1 #38264): live == a fresh apply of the schema files, table by
 # table, column by column, with types. Catches a column added inside an existing CREATE TABLE IF NOT EXISTS (a no-op
 # on a live host) and a hand DROP. Live read is read-only. Mutants: tests/mutants_schema_parity.py.
