@@ -100,6 +100,7 @@ timeout "$DRILL_CAP" bash nucleus/restore_drill.sh "$newest"; drc=$?
 case "$drc" in
   0) ;;
   124) echo "  ✗ restore-drill: TIMED OUT after ${DRILL_CAP}s (the drill's own trap tears it down)" >&2; fail=1 ;;
+  3) echo "  ✗ restore-drill: the newest dump has no paired .roles.sql, so its roles are NOT VERIFIED (backup.sh writes one beside every dump)" >&2; fail=1 ;;
   *) fail=1 ;;
 esac
 

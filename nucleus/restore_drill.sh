@@ -12,9 +12,14 @@
 #   2. a temp passfile holding a random value (the "restored ~/.pgpass"), created 0600, never printed;
 #   3. PREMISE: `pg_role_sync check` FAILS (the placeholder is what the server holds), else the drill proves nothing;
 #   4. `pg_role_sync apply`, then `check` passes, and the placeholder is refused;
-#   5. pg_restore the dump INTO that server, and the core tables come back populated.
+#   5. the paired ROLES file (backup.sh's astryx-<ts>.roles.sql: globals, no passwords) applied, so the groups the
+#      dump's GRANTs name exist (a1 #45221: without it pg_restore drops every grant to astryx_resident/people_cleared);
+#   6. pg_restore the dump INTO that server with ZERO error lines, and the core tables come back populated.
+# A dump older than roles capture has no paired file: its roles are NOT VERIFIED (exit 3), and its pg_restore error
+# lines are reported but not gated, since missing roles are exactly what they would be (seed #45224).
 # Teardown (container, volume, temp dir) runs in a trap. CPU at low weight and the client side under nice/ionice idle;
-# the caller holds the wall cap. Exit 0 drilled · 1 a step failed · 2 NOT RUN (no docker, no image, no start).
+# the caller holds the wall cap. Exit 0 drilled · 1 a step failed · 2 NOT RUN (no docker, no image, no start) ·
+# 3 drilled, roles NOT VERIFIED (no paired roles file).
 set -uo pipefail
 cd "$(dirname "$0")/.."
 . nucleus/pgcontainer.sh
@@ -83,13 +88,39 @@ printf '%s' "$placeholder" | login "$DB" stdin >/dev/null 2>&1; rc=$?
 [ "$rc" = 3 ] && echo "  ✓ restore-drill: the initdb placeholder is refused" \
   || { echo "  ✗ restore-drill: the placeholder was not refused (login rc $rc)" >&2; fail=1; }
 
+# the ROLES before the data: the bootstrap role already exists (initdb made it), so its CREATE line is dropped and its
+# ALTER (attributes only: the file has no password) still applies. psql's stderr is kept, never printed, and counted.
+roles_file="${dump%.dump}.roles.sql"
+if [ -f "$roles_file" ]; then
+  nroles=$(grep -c '^CREATE ROLE ' "$roles_file")
+  grep -v -E "^CREATE ROLE \"?$ROLE\"?;\$" "$roles_file" \
+    | docker exec -i "$name" psql -X -q -v ON_ERROR_STOP=0 -U "$ROLE" -d postgres >/dev/null 2>"$tmp/roles.err"
+  rerr=$(grep -c 'ERROR:' "$tmp/roles.err" 2>/dev/null); rerr=${rerr:-0}
+  # every role the file names must now EXIST on the server: an applied file with 0 errors that created nothing is
+  # still a missing role (compared as sorted name lists, never printed)
+  missing=$(comm -23 <(sed -n -E 's/^CREATE ROLE "?([^";]+)"?;$/\1/p' "$roles_file" | sort -u) \
+                     <(docker exec "$name" psql -X -tA -U "$ROLE" -d postgres -c "SELECT rolname FROM pg_roles" | sort -u) | wc -l)
+  if [ "$rerr" = 0 ] && [ "$missing" = 0 ]; then
+    echo "  ✓ restore-drill: the paired roles file applied ($nroles roles, 0 errors, every one present)"
+  else echo "  ✗ restore-drill: roles file: $rerr error line(s), $missing named role(s) absent (text withheld)" >&2; fail=1; fi
+else
+  roles_file=""
+  echo "  ○ restore-drill: roles NOT VERIFIED: no ${dump##*/}'s .roles.sql paired (the dump predates roles capture)"
+fi
+
 # the dump onto THAT server (its extensions must exist in the declared image, or this is where it shows)
 # stderr kept (never printed: it can quote the dump's DDL), and its ERROR-line COUNT reported, so a missing
 # extension or a failed index is visible even while the four tables below have rows (a1 #45217 follow-up 2)
 nice -n19 ionice -c3 docker exec -i "$name" pg_restore --no-owner -U "$ROLE" -d "$DB" < "$dump" >/dev/null 2>"$tmp/restore.err"
 prc=$?
 nerr=$(grep -c 'error:' "$tmp/restore.err" 2>/dev/null); nerr=${nerr:-0}
-echo "  restore-drill: pg_restore rc $prc, $nerr error line(s) (text withheld; the row counts below are the gate)"
+if [ -z "$roles_file" ]; then
+  echo "  restore-drill: pg_restore rc $prc, $nerr error line(s) (text withheld; not gated: the roles are unverified)"
+elif [ "$nerr" = 0 ]; then
+  echo "  ✓ restore-drill: pg_restore rc $prc, 0 error lines (every grant found its role)"
+else
+  echo "  ✗ restore-drill: pg_restore rc $prc, $nerr error line(s) (text withheld): the restore is INCOMPLETE" >&2; fail=1
+fi
 # counts over TCP through the synced role (PGPASSFILE above), by host psql as restore_verify reads: the drill runs no
 # python SQL of its own, so it adds no site the sqlguard inventory would have to know
 for t in steps messages goals triggers; do
@@ -97,4 +128,5 @@ for t in steps messages goals triggers; do
   if [ -n "$n" ] && [ "$n" -gt 0 ] 2>/dev/null; then echo "  ✓ restore-drill: $t restored $n rows, read through the synced role"
   else echo "  ✗ restore-drill: $t did not restore onto the drill server" >&2; fail=1; fi
 done
+[ "$fail" = 0 ] && [ -z "$roles_file" ] && exit 3
 exit "$fail"
