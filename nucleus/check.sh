@@ -87,6 +87,8 @@ run() {
   printf '%s\n' "$out"
   # 124 is timeout's own expiry code (137 after the SIGKILL); a gate can also exit 124 itself, so the WALL is the judge
   if { [ "$rc" = 124 ] || [ "$rc" = 137 ]; } && [ $((SECONDS - t0)) -ge "$cap" ]; then timed_out=1; fi
+  # optional per-gate timing, so a cap is set from measured durations rather than guessed (one tsv row per gate)
+  [ -n "${CHECK_GATE_TIMES:-}" ] && printf '%s\t%s\t%s\n' "$((SECONDS - t0))" "$rc" "$label" >> "$CHECK_GATE_TIMES"
   # The belt. A gate that ANNOUNCES a skip and still exits 0 has broken the protocol —
   # it is the exact defect this accounting exists to catch, so it is reported as a
   # violation rather than quietly trusted. Narrow by construction: only a line whose
