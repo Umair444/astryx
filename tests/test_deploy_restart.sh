@@ -41,6 +41,7 @@ case "\$*" in
     echo "   5100  5000 node channel/server.mjs"
     [ -n "\${FAKE_HELD:-}" ] && echo "   6000  5100 bash nucleus/check.sh"
     [ -n "\${FAKE_STRAY:-}" ] && echo "   7000   900 bash nucleus/check.sh"
+    [ -n "\${FAKE_WIN2:-}" ] && echo "   5500     1 bash" && echo "   8000  5500 bash nucleus/check.sh"
     ;;
   *) [ -n "\${FAKE_BUSY:-}" ] && echo "  4242 bash nucleus/check.sh" ;;
 esac
@@ -57,7 +58,8 @@ printf '#!/usr/bin/env bash\necho "systemctl $*" >> "%s"\n[ "$1" = list-unit-fil
 cat > "$T/bin/tmux" <<STUB
 #!/usr/bin/env bash
 echo "tmux \$*" >> "$LOG"
-[ "\$1" = list-panes ] && case "\$*" in *=ax-good:*) echo 5000;; esac
+# list-panes -s lists EVERY pane of the session: ax-good has a second window whose pane is pid 5500
+[ "\$1" = list-panes ] && case "\$*" in *-s*=ax-good*) printf '5000\n5500\n';; *=ax-good:*) echo 5000;; esac
 if [ "\$1" = capture-pane ]; then
   for t in "\$@"; do case "\$t" in =*:*) ;; =*) echo "can't find pane: \${t}" >&2; exit 1;; esac; done
   echo "bypass permissions on"
@@ -92,7 +94,7 @@ arm "residents: no unit is restarted (the verify step may still READ unit states
 arm "residents: the residents are still rolled (kill-session + spawn)" 'grep -q "kill-session" "$LOG" && grep -q "✓ good resident" <<<"$out2"'
 arm "residents: the pulse is paused and started again" 'grep -q "stop astryx-pulse.timer" "$LOG" && grep -q "start astryx-pulse.timer" "$LOG"'
 # the busy guard: a full restart with a check running refuses BEFORE the database bounce; --force overrides
-run_full() { : > "$LOG"; rm -f "$T/root/spawned-good"; PATH="$T/bin:$PATH" ROOT="$T/root" ASTRYX_AGENT= FAKE_BUSY="$1" FAKE_HELD="${3:-}" FAKE_STRAY="${4:-}" bash -c '
+run_full() { : > "$LOG"; rm -f "$T/root/spawned-good"; PATH="$T/bin:$PATH" ROOT="$T/root" ASTRYX_AGENT= FAKE_BUSY="$1" FAKE_HELD="${3:-}" FAKE_STRAY="${4:-}" FAKE_WIN2="${6:-}" bash -c '
   set -euo pipefail
   eval "$(sed -n "/^ears() {/,/^}/p; /^ears_of() /p; /^guarded_under() {/,/^}/p; /^restart_org() {/,/^}/p" "'"$REPO"'/nucleus/deploy.sh")"
   sleep() { :; }
@@ -112,6 +114,8 @@ out7=$(run_full "" residents 1)
 arm "held: a check under good's pane keeps good unrolled, named (no kill-session for good)" 'grep -q "good: NOT rolled — a check it launched is still running" <<<"$out7" && ! grep -q "kill-session -t =ax-good" "$LOG"'
 out8=$(run_full "" residents "" 1)
 arm "control: a check under an unrelated parent does not hold good (rolled)" '! grep -q "NOT rolled" <<<"$out8" && grep -q "kill-session -t =ax-good" "$LOG"'
+out10=$(run_full "" residents "" "" "" 1)
+arm "held in a SECOND window: a check under ax-good's other pane keeps good unrolled" 'grep -q "good: NOT rolled" <<<"$out10" && ! grep -q "kill-session -t =ax-good" "$LOG"'
 out9=$(run_full "" residents 1 "" force)
 arm "held + force: good is rolled anyway" 'grep -q "kill-session -t =ax-good" "$LOG" && ! grep -q "NOT rolled" <<<"$out9"'
 [ $fails = 0 ] && echo PASS || { echo "$out" | tail -8; echo "FAIL ($fails)"; exit 1; }
