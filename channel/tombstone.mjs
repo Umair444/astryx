@@ -4,6 +4,7 @@
 // (agent, name), trigger_set and `init.sh --reinstall`, clear it. One writer of the fact (trigger_rm); readers: the
 // pulse and init.sh. It rides triggers/ (state.tgz), so it survives a restore and a respawn.
 import { mkdir, writeFile, unlink } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
 import { TRIGGER_NAME } from './trigger_name.mjs'
 
 /** The tombstone's file URL under `root` (the triggers/ directory URL) for (agent, name), or throws. */
@@ -27,13 +28,16 @@ export async function clear(root, agent, names) {
   }
 }
 
-/** The names a python trigger file DEFINES with @trigger at the top level (the decorator line, any further decorators,
- *  then `def name(`). For CLEARING tombstones on trigger_set: a form this misses leaves that name retired (the safe
- *  direction: it stays off), and plan-9853's helper replaces it with the exact model. */
-export function triggerNames(src) {
-  const out = []
-  for (const m of String(src ?? '').matchAll(/^@trigger\b[^\n]*\n(?:@[^\n]*\n)*(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(/gm)) {
-    if (TRIGGER_NAME.test(m[1])) out.push(m[1])
-  }
-  return out
+/** The names a python trigger file DEFINES, exactly as the pulse registers them: `pulse.py --names <file>` runs the
+ *  pulse's own discover (the import closure, so a shim's shipped trigger counts; any decorator layout). trigger_set
+ *  clears exactly these (a4 #49496: a source regex missed 40 of 49 real defs and every shim). A file that doesn't load
+ *  yields [], and the pulse's once-per-tombstone notice says what is still retired. */
+export function definedNames(file, { py, pulse, timeout = 25_000 } = {}) {
+  return new Promise((resolve) => {
+    execFile(py, [pulse, '--names', file], { timeout }, (err, stdout) => {
+      let names = []
+      try { names = err ? [] : JSON.parse(stdout) } catch { names = [] }
+      resolve(Array.isArray(names) ? names.filter(n => TRIGGER_NAME.test(String(n))) : [])
+    })
+  })
 }

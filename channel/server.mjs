@@ -10,7 +10,7 @@ import { z } from 'zod'
 import pg from 'pg'
 import { readFileSync } from 'node:fs'
 import { triggerFile } from './trigger_name.mjs'
-import { retire, clear, triggerNames } from './tombstone.mjs'
+import { retire, clear, definedNames } from './tombstone.mjs'
 
 const AGENT = process.env.ASTRYX_AGENT
 if (!AGENT) { console.error('ASTRYX_AGENT env required'); process.exit(1) }
@@ -187,6 +187,8 @@ const TOOLS = [
 ]
 
 const TRIGGERS_ROOT = new URL('../triggers/', import.meta.url)
+const PULSE = new URL('../nucleus/pulse.py', import.meta.url).pathname
+const PULSE_PY = new URL('../venv/bin/python', import.meta.url).pathname
 
 async function handleTool(name, a) {
   if (name === 'send') {
@@ -314,9 +316,12 @@ async function handleTool(name, a) {
       const file = triggerFile(dir, a.name)                 // refuses '../x', '/etc/x', 'a b' — before any write
       await import('node:fs/promises').then(fs => fs.mkdir(dir, { recursive: true })
         .then(() => fs.writeFile(file, a.check)))
-      await clear(TRIGGERS_ROOT, AGENT, triggerNames(a.check))   // writing a name again un-retires it (a3 BC-2)
+      // writing a name again un-retires it (a3 BC-2): exactly the names the pulse will register from this file
+      const revived = await definedNames(file.pathname, { py: PULSE_PY, pulse: PULSE })
+      await clear(TRIGGERS_ROOT, AGENT, revived)
       return `triggers/${AGENT}/${file.pathname.split('/').pop()} written — the pulse registers its @trigger `
         + `functions within a minute (schedules come from the decorators in the file)`
+        + (revived.length ? `; it defines ${revived.join(', ')}, none of them retired now` : '')
     }
     if (!a.schedule) throw new Error('schedule required for heartbeat/sql triggers')
     await pool.query(
