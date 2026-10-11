@@ -171,5 +171,18 @@ with tempfile.TemporaryDirectory() as td:
     check("window 3: a single TERM to a JUST-forked child can be lost; 20 immediate reaps leave 0 alive "
           "(the SIGKILL escalation)", lost == 0, f"{lost}/20 alive")
 
+print("invariant (a4 #45534):")
+# `jobs -p` in the reap would list a FINISHED-but-unwaited job by a stale pid, which a reused pid could make an
+# unrelated group. That is unreachable only while check.sh's ONE background launch is run()'s gate, which run()
+# always `wait`s. So: exactly one backgrounding `&` in check.sh's code, and it is inside run().
+import re as _re
+src = CHECK.read_text().splitlines()
+bg = [(n, ln) for n, ln in enumerate(src, 1)
+      if not ln.lstrip().startswith("#") and _re.search(r"(?<![&>|0-9])&(?![&>])\s*(?:$|#)", ln)]
+r0 = next(n for n, ln in enumerate(src, 1) if ln.startswith("run() {"))
+r1 = next(n for n, ln in enumerate(src, 1) if n > r0 and ln.startswith("}"))
+check("check.sh backgrounds exactly ONE command, run()'s waited gate (so `jobs -p` can't name a stale pid)",
+      len(bg) == 1 and r0 < bg[0][0] < r1, str([n for n, _ in bg]))
+
 print(f"\n{'FAIL: ' + str(len(fails)) + ' arm(s)' if fails else 'ALL PASS'}")
 sys.exit(1 if fails else 0)

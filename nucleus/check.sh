@@ -82,6 +82,8 @@ GATE_OUT=$(mktemp "${TMPDIR:-/tmp}/check-gate.XXXXXX")
 # has not exec'd timeout yet, so it has no gate child to orphan.
 _gate_reap() {
   local j targets n
+  # `jobs -p` is safe ONLY because check.sh backgrounds exactly one command, run()'s gate, which run() always waits
+  # (a finished-but-unwaited job would linger here by a stale pid). tests/test_check_gate_cap.py pins that invariant.
   targets="$GATE_PGID $(jobs -p)"
   GATE_PGID=""
   for j in $targets; do kill -TERM -- "-$j" 2>/dev/null || kill -TERM "$j" 2>/dev/null; done
