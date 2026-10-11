@@ -24,7 +24,7 @@ MUTANTS = {
     # A trailing comma that is valid only when nothing follows: invisible until a grant splices
     # in ($EXTRA starts with its own comma). The LAST server before $EXTRA is hands since cd0005c.
     "P2 a comma that breaks only with a grant spliced in":
-        ('"unix:path=/run/user/$(id -u)/bus" } }$EXTRA } }', '"unix:path=/run/user/$(id -u)/bus" } },$EXTRA } }'),
+        ('"unix:path=/run/user/$(id -u)/bus" } }$PHONE$EXTRA } }', '"unix:path=/run/user/$(id -u)/bus" } }$PHONE,$EXTRA } }'),
     # Same group as usage.py: the nudge then shares usage.py's entry, the layout a4 excluded (W1).
     "P3 the nudge shares usage.py's group":
         ('"timeout": 5 } ] },\n      { "hooks": [\n      { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/nudge.py"',

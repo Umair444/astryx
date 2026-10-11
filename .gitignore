@@ -63,3 +63,4 @@ tier/
 var/
 infra/pg/.env
 infra/pg/data/
+mcp/phone/upstream/node_modules/

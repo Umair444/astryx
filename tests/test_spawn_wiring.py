@@ -28,6 +28,8 @@ as a logged side effect, never as a session.
   R7 <outdir> is 0700 and settings.json is 0600
   R9 an EXISTING <outdir> is refused and left byte-identical: render never overwrites (else
      `--render seed ~` truncates the owner's own ~/.claude/settings.json)
+  R10 ANDROID_ENABLED=1 in .env adds the phone server (plan-8675), named for the agent; without it,
+      R2's exact set shows it absent
   R8 a stationed agent renders nothing (it has no home), exit 0
   S5 station.py never references the door, the registry, or --mcp-config
 """
@@ -170,6 +172,25 @@ try:
     check("R3 the provider token splice lands, as in a real spawn",
           env_.get("ANTHROPIC_AUTH_TOKEN") == TOKEN, str(sorted(env_)))
     check("R5 no side effect for the grant render either", calls == [], str(calls))
+
+    # ── R10: the phone (plan-8675) only where the org opted in (ANDROID_ENABLED=1) ───────
+    envf = root / ".env"
+    plain = envf.read_text()
+    envf.write_text(plain + "ANDROID_ENABLED=1\n")
+    out = outs / "zzres-phone"
+    r, calls = render(root, "zzres", out)
+    envf.write_text(plain)
+    try:
+        servers = json.loads((out / ".mcp.json").read_text())["mcpServers"]
+    except Exception as e:  # noqa: BLE001
+        servers = {}
+        check("R10 the opted-in render is valid JSON", False, f"{e}: {r.stderr[-200:]}")
+    check("R10 ANDROID_ENABLED=1 → {astryx, tools, hands, phone}",
+          set(servers) == {"astryx", "tools", "hands", "phone"}, str(sorted(servers)))
+    ph = servers.get("phone") or {}
+    check("R10 the phone server is the tree's mcp/phone/server.py, named for this agent",
+          ph.get("args") == [f"{root}/mcp/phone/server.py"] and (ph.get("env") or {}).get("ASTRYX_AGENT") == "zzres",
+          str(ph))
 
     # ── R5: an agent that is ALREADY resident still renders, with no side effect ────────
     out = outs / "zzres-live"
