@@ -26,7 +26,9 @@ cases = {
     "seed, what is going on": "seed", "Hey seed what's going on?": "seed", "hello seed": "seed",
     "Astryx, change the theme to nord": "seed", "okay so painter tell me": "painter", "Sid, are you there": "seed",
     "Stewart can you check the backups": "steward",                       # whisper's spelling, forgiven
-    "the weather is nice today": None, "I told seed yesterday": None,     # a name later in the sentence: not addressed
+    "the weather is nice today": None, "what is going on seed": "seed",   # a name ANYWHERE addresses (owner 10-11)
+    "can you ask painter to redo it": "painter", "what's seed's status": "seed",
+    "please take a seat over there": None,                               # a sound-alike only counts near the start
     "": None,
 }
 for text, want in cases.items():
@@ -40,14 +42,18 @@ arm("the message tells the agent how to answer the room, drive the screen, go li
 
 
 class Conn:
-    def __init__(self):
-        self.rows = []
+    def __init__(self, talking=None):
+        self.rows, self.talking, self._last = [], talking, None
 
     def execute(self, sql, args):
-        self.rows.append(args)
+        self._last = sql
+        if sql.lstrip().startswith("INSERT"):
+            self.rows.append(args)
         return self
 
     def fetchone(self):
+        if self._last.lstrip().startswith("SELECT"):
+            return (self.talking,) if self.talking else None
         return (len(self.rows),)
 
 
@@ -58,6 +64,11 @@ m3 = room.route(c, "nice weather", 3, names=NAMES)
 arm("an addressed sentence goes on the wire to its agent", m1 == 1 and c.rows[0][0] == "seed" and c.rows[0][1] == room.THREAD)
 arm("the same words twice within seconds (whisper repeats) go once", m2 is None and len(c.rows) == 1)
 arm("ambient talk stays in the room (no wire message)", m3 is None and len(c.rows) == 1)
+c2 = Conn(talking="painter")
+m4 = room.route(c2, "and make it darker please", 4, names=NAMES)
+arm("a follow-up without a name goes to the agent the room is talking with", m4 == 1 and c2.rows[0][0] == "painter")
+m5 = room.route(c2, "seed what do you think", 5, names=NAMES)
+arm("naming another agent mid-conversation switches to it", m5 == 2 and c2.rows[1][0] == "seed")
 
 arm("voiceprint: no print reads as unidentified", voiceprint.describe(None)[0].startswith("unidentified"))
 arm("voiceprint: a new voice tells the agent to ask who it is",

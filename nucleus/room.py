@@ -20,6 +20,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 THREAD = "room:observatory"
 ALIASES = {"astryx": "seed", "astrix": "seed", "astrics": "seed", "astryxx": "seed", "seat": "seed", "cede": "seed", "sid": "seed", "seeds": "seed"}
+GREETINGS = {"hey", "hi", "hello", "ok", "okay", "so", "um", "uh", "yo", "listen"}
 _roster_cache: tuple[float, list[str]] = (0.0, [])
 _recent: dict[str, float] = {}
 
@@ -45,23 +46,43 @@ def _norm(w: str) -> str:
 
 
 def address(text: str, names: list[str] | None = None) -> tuple[str, str] | None:
-    """(agent, the rest) when the sentence opens by addressing an agent within its first few words: "seed, …",
-    "hey painter …", "okay astryx …". Whisper's spellings are forgiven by a close match on the name."""
+    """(agent, the text) when the sentence names an agent ANYWHERE, like @seed in a chat (owner, 10-11): "seed,
+    what's going on", "what's going on seed", "ask painter to …". An exact name counts anywhere; whisper's misspellings
+    (a close match, or a sound-alike in ALIASES such as "seat"/"sid") only as the sentence's opening word, where a name is being
+    called out and not a word being used ("take a seat"). The first agent named wins."""
     names = names if names is not None else roster()
-    words = text.strip().split()
-    for i, raw in enumerate(words[:4]):
-        w = _norm(raw)
-        if not w or w in ("hey", "hi", "hello", "ok", "okay", "so", "um", "uh", "yo", "listen"):
+    words = [_norm(w) for w in text.strip().split()]
+    first = next((i for i, w in enumerate(words) if w and w not in GREETINGS), -1)
+    for i, w in enumerate(words):
+        if not w:
             continue
-        agent = ALIASES.get(w) or (w if w in names else None)
-        if not agent:
-            close = difflib.get_close_matches(w, names, n=1, cutoff=0.84)
-            agent = close[0] if close else None
+        agent = w if w in names else (w[:-1] if w.endswith("s") and w[:-1] in names else None)   # "seed's"
+        if not agent and w in ("astryx", "astrix"):
+            agent = "seed"
+        if not agent and i == first:              # a sound-alike only as the word that opens the sentence
+            agent = ALIASES.get(w)
+            if not agent:
+                close = difflib.get_close_matches(w, names, n=1, cutoff=0.84)
+                agent = close[0] if close else None
         if agent:
-            return agent, " ".join(words[i + 1:]).lstrip(",.:;!? ") or text.strip()
-        if i >= 1:                                  # past a greeting word without a name: not addressed
-            break
+            return agent, text.strip()
     return None
+
+
+FOLLOW_S = 90                                       # a conversation: unaddressed speech goes to whoever is talking
+
+
+def conversing(conn) -> str | None:
+    """The agent the room is in conversation with: the last one to answer the room, or to be addressed, within
+    FOLLOW_S seconds. A follow-up needs no name, as in a real conversation."""
+    try:
+        row = conn.execute(
+            "SELECT CASE WHEN to_agent='room' THEN from_agent ELSE to_agent END FROM messages "
+            "WHERE (to_agent='room' OR from_agent='room') AND thread=%s AND ts > now() - make_interval(secs => %s) "
+            "ORDER BY id DESC LIMIT 1", (THREAD, FOLLOW_S)).fetchone()
+        return row[0] if row else None
+    except Exception:                               # noqa: BLE001: a follow-up is a convenience, never a failure
+        return None
 
 
 def body(text: str, speaker: str, confidence: float | None) -> str:
@@ -87,9 +108,9 @@ def route(conn, text: str, utterance_id: int | None = None, speaker: str = "unid
     """Put an addressed sentence on the wire to its agent. Returns the message id, or None when nobody was
     addressed (ambient talk stays in the room) or the same words just went (whisper repeats)."""
     hit = address(text, names)
-    if not hit:
+    agent = hit[0] if hit else conversing(conn)
+    if not agent:
         return None
-    agent, _rest = hit
     key = f"{agent}:{_norm(text)}"
     now = time.time()
     if now - _recent.get(key, 0) < 8:
