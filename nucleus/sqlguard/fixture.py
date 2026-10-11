@@ -229,6 +229,11 @@ def fixture_db(extra: tuple = ()):
             c.execute(SCHEMA.read_text())          # the WHOLE file, the same bytes init.sh applies
             for ddl in extra:
                 c.execute(ddl)
+            # format_type() qualifies a type by the CALLER's search_path, and the checker reads signatures on a
+            # default-path side connection. An extra that leaves search_path at ag_catalog stamped every AGE
+            # label table `graphid` against a check-time `ag_catalog.graphid`, and that one mismatch withheld
+            # DB-grain credit from every write in the fixture (forge #50063). Stamp under the default path.
+            c.execute("RESET search_path")
             n = _stamp_all(c, sha)
         yield {"dbname": name, "dsn": dsn, "url": url(dsn), "file_sha": sha, "relations": n,
                "apply_s": round(time.monotonic() - t0, 3)}
