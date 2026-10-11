@@ -174,6 +174,18 @@ def main():
         lv = rs.live(base)
         check("live(): a live scope counts; a dead one and a REUSED pid don't (the eviction guard, seed #34141)",
               t_live.run_id in lv and t_dead.run_id not in lv and t_reused.run_id not in lv, str(lv))
+        # census (steward #45223 → a4 #45225): the sweep's OWN predicate, read-only, never age. The live scope is
+        # minutes old and the dead one seconds old, so an age rule would get both wrong.
+        (base / "no-lock-here").mkdir()
+        cen = rs.census(dsn, base, only=set(extra_roles))
+        check("census: a scope whose process is GONE (dead pid, reused pid) is debris; a LIVE one is not",
+              t_dead.run_id in cen["dead_scopes"] and t_reused.run_id in cen["dead_scopes"]
+              and t_live.run_id not in cen["dead_scopes"], str(cen))
+        check("…a dir with no readable lock is reported as unprovable, never as debris",
+              cen["unprovable"] == ["no-lock-here"] and "no-lock-here" not in cen["dead_scopes"], str(cen))
+        check("…and the census is READ-ONLY: the dead scope's role and root survive it",
+              role_exists(t_dead.role) and t_dead.root.exists(), t_dead.role)
+        (base / "no-lock-here").rmdir()
         reaped = {x["scope"] for x in rs.sweep(dsn, base, only=set(extra_roles))}
         check("sweep reaps a scope whose process is gone", t_dead.run_id in reaped and not role_exists(t_dead.role),
               str(reaped))
@@ -226,7 +238,12 @@ def main():
         adm.execute(sql.SQL("COMMENT ON ROLE {} IS {}").format(sql.Identifier(prod_orphan), sql.Literal(rs.MACHINE_ID)))
         fg = []
         un = rs.orphan_roles(dsn, foreign=fg)
+        cen = rs.census(dsn, Path(tempfile.mkdtemp(prefix="runscope-census-")))
         adm.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(prod_orphan)))       # ours: cleaned by hand
+        check("census: a dead-creator role stamped by THIS host is debris (orphans); a LIVE run's role is not",
+              prod_orphan in cen["orphans"] and nolock.role not in cen["orphans"], str(cen)[:300])
+        check("…an oracle's crashed child (TEST stamp) is reported as foreign, never debris",
+              not crashed or (crashed in cen["foreign"] and crashed not in cen["orphans"]), str(cen)[:300])
         nstamp = adm.execute("SELECT shobj_description(oid, 'pg_authid') FROM pg_roles WHERE rolname = %s",
                              (nolock.role,)).fetchone()
         check("TEST stamp: an oracle-made run role carries test:<machine-id>, in-process (this oracle's own scope, "
