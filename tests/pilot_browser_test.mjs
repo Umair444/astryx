@@ -52,7 +52,20 @@ const tree = (root) => {
   const out = []; const walk = (p) => { for (const c of kids.get(p) ?? []) { out.push(c); walk(c) } }
   walk(root); return out
 }
-const cleanup = () => { for (const k of kids) { for (const pid of [...tree(k.pid), k.pid]) try { process.kill(pid, 'SIGKILL') } catch {} } }
+// a child that already exited is skipped (its pid could be reused); then, as a belt, any process whose argv carries
+// this run's unique chromium profile dir is killed too: every chromium child does carry it (13/13 measured), so a
+// renderer reparented by a crashed main is still found (measured: they also exit by themselves within 3s)
+const byArgv = (needle) => readdirSync('/proc').filter((d) => /^\d+$/.test(d)).filter((d) => {
+  try { return readFileSync(`/proc/${d}/cmdline`, 'utf8').includes(needle) } catch { return false }
+}).map(Number).filter((pid) => pid !== process.pid)
+let PROFILE = ''
+const cleanup = () => {
+  for (const k of kids) {
+    if (k.exitCode !== null || k.signalCode !== null) continue
+    for (const pid of [...tree(k.pid), k.pid]) try { process.kill(pid, 'SIGKILL') } catch {}
+  }
+  if (PROFILE) for (const pid of byArgv(`--user-data-dir=${PROFILE}`)) try { process.kill(pid, 'SIGKILL') } catch {}
+}
 process.on('exit', cleanup)
 // a hung run is a FAIL that names itself, never a process that holds a check.sh slot for hours (steward #45245: one
 // run hung 3h37m). The whole gate gets WALL_MS; every CDP call gets CALL_MS (a dead chromium never answers).
@@ -70,6 +83,7 @@ if (!URL0) {
 await until('the dev server to answer', async () => (await fetch(URL0)).ok)
 await until('the app entry module to compile', async () => (await fetch(new URL('/src/main.tsx', URL0))).ok)
 const prof = mkdtempSync(join(tmpdir(), 'pilot-cdp-'))
+PROFILE = prof
 process.on('exit', () => { try { rmSync(prof, { recursive: true, force: true, maxRetries: 5 }) } catch {} })   // chromium may still be writing as it exits
 const port = 9334
 kids.push(spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${prof}`, '--window-size=1280,860', 'about:blank'], { stdio: 'ignore' }))
