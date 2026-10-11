@@ -72,8 +72,14 @@ GATE_OUT=$(mktemp "${TMPDIR:-/tmp}/check-gate.XXXXXX")
 # The group kill can race the fork: `$!` is known before the forked timeout has called setpgid, so a signal in that
 # millisecond finds no group (a4 #45258 measured 1 survivor in 40). Then signal timeout itself: it forwards a TERM to
 # its child, and a timeout killed before it set its handler never started the gate at all.
-_gate_reap() { [ -n "$GATE_PGID" ] && { kill -TERM -- "-$GATE_PGID" 2>/dev/null || kill -TERM "$GATE_PGID" 2>/dev/null; }
-               GATE_PGID=""; }
+# And a signal can land between the fork and `GATE_PGID=$!` (a4 #45394 saw survivors on the arm), when the variable is
+# still empty: so every background job of this shell is reaped too, by group and then by pid. check.sh starts no
+# background job but a gate, so `jobs -p` names exactly the gate's timeout.
+_gate_reap() {
+  local j
+  for j in $GATE_PGID $(jobs -p); do kill -TERM -- "-$j" 2>/dev/null || kill -TERM "$j" 2>/dev/null; done
+  GATE_PGID=""
+}
 trap '_gate_reap; rm -f "$GATE_OUT"' EXIT
 trap '_gate_reap; exit 130' INT
 trap '_gate_reap; exit 143' TERM

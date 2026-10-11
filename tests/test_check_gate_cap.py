@@ -144,8 +144,24 @@ with tempfile.TemporaryDirectory() as td:
         if g is not None and alive(g):
             survivors += 1
             os.kill(g, signal.SIGKILL)
-    check(f"{tries} TERMs landing in a gate's first milliseconds leave 0 surviving gates (the setpgid race)",
-          survivors == 0, f"{survivors} survived")
+    # A TIMING arm can't be the RED (a4 #45394: it passed with the fix reverted): REPORTED, never asserted. The two
+    # deterministic arms below pin each window instead.
+    print(f"  INFO  smoke: {tries} TERMs in a gate's first milliseconds left {survivors} surviving gate(s)")
+
+    print("reap (deterministic, one arm per window):")
+
+    def reap_case(setup):
+        script = (f'CHECK_LIB_ONLY=1 source "{CHECK}"\nunset CHECK_LIB_ONLY\n{setup}\n'
+                  f'echo $victim > {td}/victim\n_gate_reap\nsleep 0.5\n'
+                  f'kill -0 $victim 2>/dev/null && echo ALIVE || echo DEAD\nkill -9 $victim 2>/dev/null; true\n')
+        p = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30, cwd=REPO)
+        return p.stdout.strip().splitlines()[-1:] == ["DEAD"], p.stdout[-200:] + p.stderr[-200:]
+
+    ok, det = reap_case('sleep 300 & victim=$!; GATE_PGID=$victim')
+    check("window 1: GATE_PGID names a process that is NOT a group leader (the group isn't formed) → still killed",
+          ok, det)
+    ok, det = reap_case('sleep 300 & victim=$!; GATE_PGID=""')
+    check("window 2: the gate was forked but GATE_PGID is still EMPTY → killed via the shell's jobs", ok, det)
 
 print(f"\n{'FAIL: ' + str(len(fails)) + ' arm(s)' if fails else 'ALL PASS'}")
 sys.exit(1 if fails else 0)
