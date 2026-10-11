@@ -291,20 +291,27 @@ OWNER_ADDRESSES = frozenset({"owner"})       # the only channel-bound destinatio
 
 
 def charter(agent: str, agents_dir: Path | None = None) -> Path | None:
-    """The agent's charter, found by name at any depth (spawn.sh's rule). Two charters with one name → Refused."""
-    hits = sorted((Path(agents_dir) if agents_dir else REPO / "agents").rglob(f"{agent}.md"))
-    if len(hits) > 1:
-        raise GrantError(f"{len(hits)} charters are named {agent}.md: the identity is ambiguous")
-    return hits[0] if hits else None
+    """The agent's charter through the org's ONE resolver (nucleus/charter.resolve: any depth, examples/ and .git
+    excluded, a duplicated stem raises), the same one nucleus/tier.py reads (a3 #46041). Only an EXACT name
+    resolves: resolve() sanitises, so 'seed*' would otherwise mean seed.md, a glob passing as an identity."""
+    from nucleus import charter as C
+    d = Path(agents_dir) if agents_dir else REPO / "agents"
+    if not agent or "".join(c for c in agent if c.isalnum() or c in "-_").lower() != agent:
+        return None
+    try:
+        return C.resolve(agent, d)
+    except C.Collision as e:
+        raise GrantError(f"{agent}: {str(e).splitlines()[0]}")
 
 
 def label_of(agent: str, agents_dir: Path | None = None) -> frozenset:
     """The label a session of `agent` carries: the tiers its charter's `Grants:` line names as
-    `owner_private:<tier>` (v4 D2a: the identity IS the role). No charter or no such grant → ORG. Any entry that
+    `owner_private:<tier>` (v4 D2a: the identity IS the role). No such grant → ORG; NO CHARTER → GrantError
+    (tier.py's polarity: an unresolvable identity is private, never public). Any entry that
     mentions 'private' or a declared tier name but isn't exactly a declared grant → GrantError, named."""
     p = charter(agent, agents_dir)
-    if p is None:
-        return ORG
+    if p is None:                    # UNKNOWN, never ORG: a labelled member whose charter moved, or whose name drifted
+        raise GrantError(f"no charter resolves for {agent!r}: its label is UNKNOWN, so it can't send as org")
     line = next((ln for ln in p.read_text(errors="replace").splitlines() if ln.startswith("Grants:")), "")
     tiers = set()
     for e in (x.strip() for x in line.split(":", 1)[1].split(",") if line) if line else ():

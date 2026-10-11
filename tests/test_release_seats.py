@@ -59,7 +59,15 @@ os.environ[R.MAC_KEY_ENV] = KEY
 print("label:")
 check("an exact grant labels the member {career}", R.label_of("member") == {"career"})
 check("no private grant → ORG", R.label_of("plain") == R.ORG)
-check("no charter at all → ORG (it can't be a tier member)", R.label_of("nobody") == R.ORG)
+check("NO charter → REFUSED (UNKNOWN), never ORG: a moved or renamed member must not fall back to raw sends "
+      "(a3 #46041)", isinstance(refused(R.label_of, "nobody"), R.GrantError))
+# shipped examples are `<name>.example.md` or live under a `*.example/` dir (agents/abstractors.example/…): the org
+# resolver excludes both; a raw rglob of `member.md` matched the second and refused the real member as a collision
+(root / "agents" / "members.example").mkdir()
+(root / "agents" / "members.example" / "member.md").write_text("# shipped example with the member's stem\n")
+(root / "agents" / "member.example.md").write_text("# shipped example\n")
+check("a shipped example twin of the member's stem does NOT collide (the org resolver excludes *.example)",
+      R.label_of("member") == {"career"})
 for bad in ("owner-private:career", "owner_private: career", "owner_private:Career", "owner_private:carrer",
             "career", "private_notes"):
     (root / "agents" / "bad.md").write_text(f"# bad\nGrants: gmail, {bad}\n")
@@ -136,6 +144,9 @@ try:
         check("to a person's channel address (wa-…) → refused, NO row",
               refused(R.send_row, c.cursor(), "member", lbl, "wa-555", None, "chat", SENT, key=KEY.encode(),
                       store=store, routes=routes) is not None and count(c) == n)
+        check("to a GLOB that sanitises to an agent ('peer*') → refused, NO row (an identity is an exact name)",
+              refused(R.send_row, c.cursor(), "member", lbl, "peer*", None, "chat", SENT, key=KEY.encode(),
+                      store=store, routes=routes) is not None and count(c) == n)
         check("from a sender with no owner-only route → refused, NO row",
               refused(R.send_row, c.cursor(), "other", lbl, "owner", None, "chat", SENT, key=KEY.encode(),
                       store=store, routes=routes) is not None and count(c) == n)
@@ -187,6 +198,11 @@ try:
     check("NO KEY at the seat → NO messages row, and a metadata-only error step says why",
           new == [] and errs and "auto-deliver withheld" in errs[0] and SENT not in errs[0], f"{new} {errs}")
     os.environ[R.MAC_KEY_ENV] = KEY
+    (root / "agents" / "canopus" / "member.md").rename(root / "member.md.moved")
+    res, new, errs = stop("member")
+    check("the member's charter MOVED away → its forgotten reply is WITHHELD (no row), never the raw INSERT",
+          new == [] and errs and "auto-deliver withheld" in errs[0] and SENT not in errs[0], f"{new} {errs}")
+    (root / "member.md.moved").rename(root / "agents" / "canopus" / "member.md")
     res, new, errs = stop("plain")
     check("CONTROL: an UNLABELLED agent's AUTO-DELIVER is today's row (the body, on the src thread)",
           len(new) == 1 and new[0][3] == SENT and new[0][2] == "wa:101@s.whatsapp.net", str(new)[:200])
