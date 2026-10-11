@@ -9,7 +9,7 @@ import { bindPilotConfirm, claimConfirm } from '../pilot/Confirm'
    transient activation C3 requires); collapsing it hangs up, and so does a minute of quiet. While open, the orb shows
    the pending write or actuate prompt itself and <PilotConfirm/> steps aside (claimConfirm). Its button reaches the
    executor only through bindPilotConfirm, on the native event (a4 #44264); dismiss carries a nonce but runs nothing. */
-export default function VoicePilot() {
+export default function VoicePilot({ hidden = false }: { hidden?: boolean }) {
   const v = useVoice()
   const [open, setOpen] = useState(false)
   const live = v.phase === 'live' || v.phase === 'connecting'
@@ -17,6 +17,12 @@ export default function VoicePilot() {
   const start = useCallback(() => { setOpen(true); connect() }, [])
   const close = useCallback(() => { setOpen(false); hangup() }, [])
   useEffect(() => () => hangup(), [])
+  // the Room hands a live conversation over (ui/room.tsx room_live): the orb opens itself; ONE voice, no Talk button
+  useEffect(() => {
+    const live = () => setOpen(true)
+    window.addEventListener('ax:live', live)
+    return () => window.removeEventListener('ax:live', live)
+  }, [])
   useEffect(() => (open ? claimConfirm() : undefined), [open])
   const pending = usePilotPending()
 
@@ -25,7 +31,7 @@ export default function VoicePilot() {
 
   return (
     <>
-      <button onClick={() => (open ? close() : start())} title={live ? 'End the voice session' : 'Talk to the observatory'}
+      {!hidden && <button onClick={() => (open ? close() : start())} title={live ? 'End the voice session' : 'Talk to the observatory'}
         aria-label={live ? 'End voice' : 'Talk'}
         className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] transition-colors ${live
           ? 'text-ink border-[color-mix(in_srgb,var(--t-accent)_45%,var(--t-line))] bg-[color-mix(in_srgb,var(--t-accent)_14%,transparent)]'
@@ -33,7 +39,7 @@ export default function VoicePilot() {
         <motion.span className="w-2.5 h-2.5 rounded-full" style={{ background: 'radial-gradient(circle at 35% 35%, var(--t-accent2), var(--t-accent))' }}
           animate={live ? { scale: [1, 1.35, 1] } : { scale: 1 }} transition={live ? { duration: 1.6, repeat: Infinity } : {}} />
         {v.phase === 'connecting' ? 'connecting' : live ? 'talking' : 'Talk'}
-      </button>
+      </button>}
       <VoiceOrb open={open} state={state} inLevel={levels.mic} outLevel={levels.out} agents={agents}
         reply={null} confirm={pending} bind={bindPilotConfirm} onDismiss={pilot.dismiss} onClose={close} />
       {open && (v.error || v.heard || v.acting || v.phase === 'live') && (

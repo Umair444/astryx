@@ -51,15 +51,24 @@ tool AT ONCE, then confirm in a few words ("Done, Nord."). Never describe what y
 - Opening an agent's desktop needs his tap: when a tool says it is waiting for him, say "Tap Allow on the \
 screen." and nothing more.
 - If a tool refuses or fails, say why in one sentence. Never claim something happened unless a tool result says so.
-- You cannot ask agents to do work yet. If he asks for that, say it is coming next and he can use the wire.
+- For real work or questions about the org, call ask_agent (seed by default) and say who you asked in a few words;
+  their answer is spoken in the room in their own voice, so don't repeat it.
 
 Privacy: the owner's personal matters (career, family, money, health, credentials, location) stay out of this \
 conversation; it runs on an outside service."""
 
 
 def _tools() -> list[dict]:
+    ask = {"type": "function", "name": "ask_agent",
+           "description": "Hand a request to one of the org's agents (seed is the default host; forge builds tools, "
+                          "painter does design, steward runs infrastructure, canopus careers, memory knows the org's "
+                          "past). Their answer is spoken in the room in their own voice. Use it for anything that is "
+                          "real work, not a screen change.",
+           "parameters": {"type": "object", "additionalProperties": False, "required": ["agent", "message"],
+                          "properties": {"agent": {"type": "string", "maxLength": 64},
+                                         "message": {"type": "string", "maxLength": 2000}}}}
     return [{"type": "function", "name": a["name"], "description": a["description"], "parameters": a["parameters"]}
-            for a in load_catalog()["actions"]]
+            for a in load_catalog()["actions"]] + [ask]
 
 
 def deny(code: int, msg: str, **extra):
