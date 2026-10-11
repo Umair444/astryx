@@ -221,6 +221,26 @@ try:
     res = C.check(conn, [DECL], root)
     check("T8 after a build → FRESH", bool(res) and res[0][1] == "FRESH", repr(res))
 
+    # T10 — the position cap: a page past 16383 tsvector positions refuses the whole build, the previous one stands.
+    # Also the cap probe's ≥1-row witness for sqlguard (seed #50064). Distinct words: a lexeme keeps ≤256 positions.
+    P10 = passages()
+    (LIB / "huge.md").write_text('---\ntitle: "Huge"\ntags: [org]\n---\n'
+                                 + " ".join(f"w{i}" for i in range(17000)) + "\n")
+    _, err = build()
+    (LIB / "huge.md").unlink()
+    check("T10 a page past the position cap refuses the build", isinstance(err, SystemExit)
+          and "position cap" in str(err), repr(err))
+    check("T10 the previous passages stand", passages() == P10 and bool(P10))
+
+    # T11 — nothing admitted: empty roots build to zero passages (the admitted read's 0-row witness, seed #50064)
+    keep = (ing.WIKI, ing.LIBRARY)
+    ing.WIKI, ing.LIBRARY = Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp())
+    _, err = build()
+    ing.WIKI, ing.LIBRARY = keep
+    check("T11 empty roots → a clean build with zero passages", err is None and passages() == {}, repr(err))
+    _, err = build()
+    check("T11 CONTROL: the roots restored → passages again", err is None and passages() == P10, repr(err))
+
     # T6 — BM25 against a hand oracle, in a transaction rolled back after
     docs = [("d1", "zebra cat"), ("d2", "cat cat dog bird fish"), ("d3", "cat dog bird fish lion tiger wolf <i>x</i>")]
     try:
