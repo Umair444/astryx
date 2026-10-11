@@ -10,6 +10,7 @@ Install (after schema.sql carries `utterances`):
   printf 'from nucleus.shipped_triggers.ear_retention import ear_retention  # noqa: F401\\n' \\
       > triggers/seed/ear_retention.py
 """
+# shipped-optional: the ear is opt-in (EAR_ENABLED=1); docs/hearing.md (S1 step 5) installs this with it, not init.sh
 from __future__ import annotations
 
 import time
