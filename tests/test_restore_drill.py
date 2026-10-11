@@ -82,19 +82,18 @@ if not have:
     print(f"\n{'FAIL' if fails else 'SKIP (partial)'}")
     sys.exit(1 if fails else 77)
 
-import importlib.util  # noqa: E402
+# psycopg is part of the live precondition too (seed #45406). The committed-only vs live-host rule is
+# nucleus/sqlguard/estate.absent's, ONE definition (a1 #45410): no triggers/ → 77, triggers/ present → BROKEN, 1.
+from nucleus.sqlguard import estate  # noqa: E402
 
-# psycopg is part of the live precondition too. A committed-only tree (pushed_tree_check, CI, a fresh clone) runs
-# this under a python with no venv, and on a host that HAS docker and the image the `have` gate above passes, so the
-# bare import below crashed the whole gate (seed #45406). Estate polarity, as test_sqlguard and test_pg_design use:
-# no triggers/ means a committed-only tree, so SKIP 77; triggers/ present means a LIVE host whose interpreter lost
-# psycopg, so BROKEN, rc 1, never a quiet skip.
-if importlib.util.find_spec("psycopg") is None:
-    if (REPO / "triggers").is_dir():
-        print("  FAIL  live: BROKEN: a live host (triggers/ present) whose python can't import psycopg")
+_absent = estate.absent(REPO, deps=("psycopg",), env=False)
+if _absent:
+    _rc, _why = _absent
+    if _rc == 1:
+        print(f"  FAIL  live: BROKEN: {_why}")
         print(f"\nFAIL: {len(fails) + 1} arm(s)")
         sys.exit(1)
-    print("  SKIP  live: no psycopg in this interpreter (a committed-only tree: no venv, no estate)")
+    print(f"  SKIP  live: {_why}")
     print(f"\n{'FAIL' if fails else 'SKIP (partial)'}")
     sys.exit(1 if fails else 77)
 
@@ -117,7 +116,9 @@ def drill(dump):
     r = subprocess.run(["timeout", "600", "bash", "nucleus/restore_drill.sh", str(dump)], cwd=REPO,
                        capture_output=True, text=True, timeout=620)
     out = r.stdout + r.stderr
-    print("\n".join("        " + x for x in out.splitlines()))
+    # each drill line behind "| ": check.sh's belt reads a line whose first token is SKIP or ○ as the GATE announcing a
+    # skip, and drill B's own "○ roles NOT VERIFIED" line made this whole gate read UNVERIFIED (measured, 10-11)
+    print("\n".join("        | " + x for x in out.splitlines()))
     MINE.update(re.findall(r"container (astryx-restore-drill-\d+)\)", out))
     return r.returncode, out
 
