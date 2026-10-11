@@ -1,15 +1,22 @@
 # Restoring the org from a backup
 
-A backup is a pair in `backups/`: `astryx-<ts>.dump` (pg_dump custom format) and `astryx-<ts>.state.tgz` (the
-gitignored estate the dump can't carry: `triggers/`, `memory/`, `~/.pgpass`, … — see `nucleus/backup.sh`). This is
+A backup is a set of three in `backups/`, sharing a timestamp: `astryx-<ts>.dump` (pg_dump custom format),
+`astryx-<ts>.state.tgz` (the gitignored estate the dump can't carry: `triggers/`, `memory/`, `~/.pgpass`, … — see
+`nucleus/backup.sh`), and `astryx-<ts>.roles.sql` (the cluster's roles: `pg_dumpall --roles-only
+--no-role-passwords`, names and attributes, no password material). This is
 the path for an EMPTY server: a new disk, a lost data dir, a new host.
 
-## The one seam: the role's password
+## Two seams: the role's password, and the roles themselves
 
 The org's DSN carries no password; every client reads it from `~/.pgpass`. On an empty data dir, the image's initdb
 creates `POSTGRES_USER` with `infra/pg/.env`'s `POSTGRES_PASSWORD`, which on an existing org is a deliberate
 placeholder (a live value there would sit in `docker inspect genesis-pg`; #5497). So after a restore, the server holds
 the placeholder and the restored `~/.pgpass` holds the real value, and every login fails until step 4 reconciles them.
+
+The second seam: a per-database dump carries the GRANTs but not the ROLES they name. On an empty data dir only the
+bootstrap role exists, so without the roles file `astryx_resident` and `people_cleared` (the groups the privilege
+census and the people gate rest on) are absent, and pg_restore drops every grant to them with `role ... does not
+exist`, while the rows still come back. Step 5 restores them first.
 
 ## Steps, in order
 
@@ -24,14 +31,21 @@ the placeholder and the restored `~/.pgpass` holds the real value, and every log
 4. **Reconcile:** `venv/bin/python -m nucleus.pg_role_sync apply`. It sets the role's password FROM `~/.pgpass`, as a
    client-side SCRAM verifier over the container's local socket; the value is never printed or sent as plaintext.
    Then `check` passes.
-5. **The data.** `docker exec -i genesis-pg pg_restore --no-owner -U genesis -d astryx < backups/astryx-<ts>.dump`.
-   pg_restore can warn on ignorable items; the row counts are the gate.
-6. **Verify:** `bash nucleus/restore_verify.sh`, then `./init.sh doctor`.
+5. **The roles.** Apply the paired roles file, minus the bootstrap role's own CREATE (initdb already made it):
+   `grep -v '^CREATE ROLE genesis;$' backups/astryx-<ts>.roles.sql | docker exec -i genesis-pg psql -X -U genesis -d postgres`.
+   Every role the file names must then be in `pg_roles`. The file holds no passwords: the only LOGIN role the org
+   uses is the one step 4 just synced.
+6. **The data.** `docker exec -i genesis-pg pg_restore --no-owner -U genesis -d astryx < backups/astryx-<ts>.dump`.
+   With the roles in place this reports ZERO errors; an error here means the restore is incomplete, whatever the row
+   counts say.
+7. **Verify:** `bash nucleus/restore_verify.sh`, then `./init.sh doctor`.
 
 ## How this path is proven
 
-`nucleus/restore_drill.sh` rehearses steps 1–5 on a throwaway server every week, inside `restore_verify.sh`: an empty
+`nucleus/restore_drill.sh` rehearses steps 1–6 on a throwaway server every week, inside `restore_verify.sh`: an empty
 docker volume, initdb with a placeholder, a temp passfile with a random value, `check` failing first (the premise),
-`apply`, `check` passing, the placeholder refused, and the newest dump restored and read through the synced role. A
-drill that can't run (no docker, no image) fails the run; `backups/.last-restore-ok` says OK only when every step,
+`apply`, `check` passing, the placeholder refused, the paired roles file applied with every role present, and the
+newest dump restored with zero error lines and read through the synced role. A dump older than roles capture has no
+roles file: the drill says roles NOT VERIFIED (exit 3), and restore_verify fails the run on it. A drill that can't
+run (no docker, no image) fails the run; `backups/.last-restore-ok` says OK only when every step,
 the drill included, passed. `tests/test_restore_drill.py` drills a small fixture dump on every check.

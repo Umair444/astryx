@@ -231,7 +231,45 @@ def main():
                       f"{len(dropped)} snapshot-era file(s) missing from the tarball: "
                       + ", ".join(dropped[:5]) + (" …" if len(dropped) > 5 else ""))
 
+    roles_arm()
     return verdict()
+
+
+# ── the CLUSTER'S roles: an input no file glob can see (a1 #45221, seed #45224) ─────────────────────────────────
+# A per-database dump carries GRANTs but not the ROLES they name; backup.sh writes astryx-<ts>.roles.sql (globals,
+# no passwords) beside each dump. The authority for "which roles must it carry" is the DUMP's OWN grants, read
+# from its ACL entries, never a list kept here: every role a GRANT in the newest dump names must be CREATEd in its
+# paired roles file. A newest dump older than roles capture has no file: NOT RUN, never a pass.
+def roles_arm():
+    import re
+    import tempfile
+    dumps = sorted((REPO / "backups").glob("astryx-*.dump"), key=lambda p: p.stat().st_mtime)
+    if not dumps:
+        skip("the newest dump's roles file carries every role its grants name", "no dump on disk")
+        return
+    newest = dumps[-1]
+    rf = newest.with_suffix(".roles.sql")
+    if not rf.exists():
+        skip("the newest dump's roles file carries every role its grants name",
+             f"{newest.name} predates roles capture (backup.sh writes one from its next run)")
+        return
+    text = rf.read_text()
+    check(f"{rf.name} carries no password material (--no-role-passwords)",
+          not re.search(r"PASSWORD '|SCRAM-SHA-256|md5[0-9a-f]{32}", text))
+    created = set(re.findall(r'^CREATE ROLE "?([^";]+)"?;$', text, re.M))
+    try:
+        lst = subprocess.run(["pg_restore", "-l", str(newest)], capture_output=True, text=True, timeout=120)
+        with tempfile.NamedTemporaryFile("w", suffix=".list") as tl:
+            tl.write("\n".join(ln for ln in lst.stdout.splitlines() if " ACL " in ln) + "\n")
+            tl.flush()
+            acl = subprocess.run(["pg_restore", "-L", tl.name, "-f", "-", str(newest)], capture_output=True,
+                                 text=True, timeout=300)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        skip("the newest dump's roles file carries every role its grants name", f"pg_restore: {type(e).__name__}")
+        return
+    named = set(re.findall(r'^GRANT .* TO "?([A-Za-z_][\w$]*)"?', acl.stdout, re.M)) - {"PUBLIC"}
+    check(f"every role the newest dump's GRANTs name is in {rf.name} ({len(named)} named, {len(created)} created)",
+          bool(named) and named <= created, f"absent from the roles file: {len(named - created)} role(s)")
 
 
 def verdict():

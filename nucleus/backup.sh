@@ -136,6 +136,7 @@ mkdir -p backups
 ts=$(date +%Y%m%dT%H%M%S)
 out="backups/astryx-$ts.dump"
 state="backups/astryx-$ts.state.tgz"
+roles="backups/astryx-$ts.roles.sql"
 
 # ── STAGE, VALIDATE, THEN PUBLISH ──────────────────────────────────────────────────
 # Everything is built under a `.part` suffix and renamed into place only once it is known
@@ -162,7 +163,8 @@ state="backups/astryx-$ts.state.tgz"
 # moves the guarantee from "we clean up afterwards" to "it was never there to clean up".
 part="$out.part"
 statepart="$state.part"
-trap 'rm -f "$part" "$statepart"' EXIT
+rolespart="$roles.part"
+trap 'rm -f "$part" "$statepart" "$rolespart"' EXIT
 
 # ── wait for the database, bounded ─────────────────────────────────────────────────
 # The timer is Persistent=true, so a missed 04:00 run fires at boot — which means the run
@@ -212,6 +214,26 @@ if [ ! -s "$part" ] || ! head -c 5 "$part" | grep -q 'PGDMP'; then
   exit 1
 fi
 
+# THE CLUSTER'S ROLES next to the dump (a1 #45221, seed #45224). A per-database pg_dump carries the GRANTs but not
+# the ROLES they name, so after an empty-data-dir restore astryx_resident and people_cleared (the NOLOGIN groups the
+# privilege census and the people gate rest on) do not exist, pg_restore drops their grants with `role ... does not
+# exist`, and the four-table counts still pass: the rows come back, the access design does not. Globals only, with
+# --no-role-passwords, so this file holds names and attributes and NO password material; the validation below
+# refuses it otherwise. The pair rule holds: dump, state and roles ship together or none does.
+if command -v pg_dumpall >/dev/null; then
+  pg_dumpall --roles-only --no-role-passwords -d "$DSN" > "$rolespart"
+else
+  pg_exec pg_dumpall --roles-only --no-role-passwords -U "$(pg_dsn_user "$DSN")" > "$rolespart"
+fi
+if [ ! -s "$rolespart" ] || ! grep -q '^CREATE ROLE ' "$rolespart"; then
+  echo "backup: roles dump is empty or has no CREATE ROLE — discarding (no backup written)" >&2
+  exit 1
+fi
+if grep -qE "PASSWORD '|SCRAM-SHA-256|md5[0-9a-f]{32}" "$rolespart"; then
+  echo "backup: roles dump carries password material — refusing to write it (no backup written)" >&2
+  exit 1
+fi
+
 # operational state next to the dump — the gitignored dirs that live in NO repo and are NOT
 # regenerable: triggers/ (the entire automated immune layer — privacy, metabolism, federation,
 # liveness) and memory/ (the compiled wiki). The pg_dump captures the triggers TABLE, but its
@@ -251,10 +273,12 @@ fi
 # evaluates false is itself a non-zero command, so the fresh-org path (no state to pair)
 # would have exited 1 right here — a guard clause that aborts the thing it was guarding.
 if [ -n "$state" ]; then mv "$statepart" "$state"; fi
+mv "$rolespart" "$roles"
 mv "$part" "$out"
 
 # rotate: keep the newest N of EACH artifact; dump + state share a timestamp so they rotate paired
 ls -1t backups/astryx-*.dump      2>/dev/null | tail -n +$((KEEP + 1)) | xargs -r rm -f
 ls -1t backups/astryx-*.state.tgz 2>/dev/null | tail -n +$((KEEP + 1)) | xargs -r rm -f
+ls -1t backups/astryx-*.roles.sql 2>/dev/null | tail -n +$((KEEP + 1)) | xargs -r rm -f
 
-echo "backup: wrote $out ($(du -h "$out" | cut -f1))${state:+ + ${state##*/} ($(du -h "$state" | cut -f1))}; keeping last $KEEP ($(ls -1 backups/astryx-*.dump | wc -l) dumps on disk)"
+echo "backup: wrote $out ($(du -h "$out" | cut -f1))${state:+ + ${state##*/} ($(du -h "$state" | cut -f1))} + ${roles##*/} ($(grep -c '^CREATE ROLE ' "$roles") roles); keeping last $KEEP ($(ls -1 backups/astryx-*.dump | wc -l) dumps on disk)"
