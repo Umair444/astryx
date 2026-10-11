@@ -34,6 +34,7 @@ under test here (seed #23668; the general sqlguard rule for driver SQL is a4's c
 
 Exits 77 when the substrate (node + pg modules, a buildable fixture database) is absent.
 """
+from _stage_channel import stage_server  # noqa: E402
 import ast
 import asyncio
 import importlib
@@ -166,9 +167,7 @@ try:
 
     if EAR:
         # ── the REAL server, staged outside the repo (ear-survival pattern) ──────────────────
-        (stage / "channel").mkdir()
-        shutil.copy2(SERVER, stage / "channel" / "server.mjs")
-        (stage / "channel" / "node_modules").symlink_to(REPO / "channel" / "node_modules")
+        stage_server(stage / "channel", SERVER)          # server.mjs + its sibling modules (tests/_stage_channel.py)
         (stage / ".env").write_text(f"ASTRYX_DSN={PROBE_DSN}\n")
         env = {**os.environ, "ASTRYX_AGENT": PROBE_AGENT, "ASTRYX_DSN": PROBE_DSN,
                "ASTRYX_SUBS_REFRESH_MS": "500"}
