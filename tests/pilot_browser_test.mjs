@@ -41,6 +41,11 @@ async function until(what, test, ms = 60000) {
 const kids = []
 const cleanup = () => { for (const k of kids) try { k.kill() } catch {} }
 process.on('exit', cleanup)
+// a hung run is a FAIL that names itself, never a process that holds a check.sh slot for hours (steward #45245: one
+// run hung 3h37m). The whole gate gets WALL_MS; every CDP call gets CALL_MS (a dead chromium never answers).
+const WALL_MS = Number(process.env.PILOT_GATE_WALL_MS || 600000)
+const CALL_MS = 30000
+setTimeout(() => { console.log(`  FAIL  the gate exceeded its ${WALL_MS / 1000}s wall clock (a hang, not a verdict)`); console.log('FAIL (1)'); cleanup(); process.exit(1) }, WALL_MS)
 
 let URL0 = process.argv[2]
 if (!URL0) {
@@ -67,7 +72,13 @@ ws.addEventListener('message', (m) => {
   if (d.id && waits.has(d.id)) { waits.get(d.id)(d); waits.delete(d.id) }
   if (d.method === 'Runtime.exceptionThrown') errors.push((d.params.exceptionDetails.exception?.description || d.params.exceptionDetails.text || '').split('\n')[0])
 })
-const cdp = (method, params = {}) => new Promise((r) => { const i = ++id; waits.set(i, r); ws.send(JSON.stringify({ id: i, method, params })) })
+const cdp = (method, params = {}) => new Promise((r, reject) => {
+  const i = ++id
+  const t = setTimeout(() => { waits.delete(i); reject(new Error(`CDP ${method} gave no answer in ${CALL_MS / 1000}s`)) }, CALL_MS)
+  waits.set(i, (d) => { clearTimeout(t); r(d) })
+  ws.send(JSON.stringify({ id: i, method, params }))
+})
+process.on('unhandledRejection', (e) => { console.log(`  FAIL  ${e?.message || e}`); console.log('FAIL (1)'); cleanup(); process.exit(1) })
 const ev = async (expr) => (await cdp('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })).result?.result?.value
 const keyEv = (type, key, code, vk, extra = {}) => cdp('Input.dispatchKeyEvent', { type, key, code, windowsVirtualKeyCode: vk, ...extra })
 const press = async (key, code, vk) => { await keyEv('keyDown', key, code, vk, key === ' ' ? { text: ' ' } : key === 'Enter' ? { text: '\r' } : {}); await keyEv('keyUp', key, code, vk) }
