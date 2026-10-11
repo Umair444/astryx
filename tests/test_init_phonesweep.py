@@ -7,6 +7,7 @@ only where the org opted in to phones. Hermetic: the node's block runs in throwa
      a shim that imports the SHIPPED trigger, and the node then reads green
   P3 deferential: another agent already owns a phone_resume_sweep → nothing is added under seed
   P4 the node is in the reconciler's order, after android (so the SDK is there before its detector)
+  P5 opted in by PROCESS ENV (android_setup.sh reads env first): the detector installs too (a4 #48950 note 1)
 """
 import os
 import re
@@ -34,11 +35,15 @@ if not m:
     sys.exit(1)
 
 
-def reconcile(d: Path) -> tuple[int, int]:
-    """The reconciler's own step for one interior node: chk; if red, act; chk again. Returns (first chk, last chk)."""
+def reconcile(d: Path, env_enabled: str | None = None) -> tuple[int, int]:
+    """The reconciler's own step for one interior node: chk; if red, act; chk again. Returns (first chk, last chk).
+    ANDROID_ENABLED in the process env is set by the ARM, never inherited from whoever runs this oracle."""
     script = ("say() { :; }\n" + m.group(0) +
               "\n_chk_phonesweep; a=$?\nif [ $a -ne 0 ]; then _act_phonesweep; fi\n_chk_phonesweep; b=$?\necho \"$a $b\"\n")
-    r = subprocess.run(["bash", "-c", script], cwd=d, capture_output=True, text=True, timeout=30)
+    env = {k: v for k, v in os.environ.items() if k != "ANDROID_ENABLED"}
+    if env_enabled is not None:
+        env["ANDROID_ENABLED"] = env_enabled
+    r = subprocess.run(["bash", "-c", script], cwd=d, capture_output=True, text=True, timeout=30, env=env)
     a, b = (r.stdout.strip().split() + ["?", "?"])[:2]
     return a, b
 
@@ -60,6 +65,12 @@ with tempfile.TemporaryDirectory() as td:
           a != "0" and b == "0" and (d / SHIM).exists(), f"chk={a},{b}")
     check("P2 the shim imports the SHIPPED trigger (one writer)",
           "from nucleus.shipped_triggers.phone_resume_sweep import phone_resume_sweep" in body, body[:120])
+with tempfile.TemporaryDirectory() as td:            # opted in by PROCESS ENV, as android_setup.sh honours (env first)
+    d = Path(td)
+    (d / ".env").write_text("ASTRYX_DSN=postgresql://nobody@127.0.0.1:1/none\n")
+    a, b = reconcile(d, env_enabled="1")
+    check("P5 opted in by process env (android_setup.sh's order): the detector installs too, never phones alone",
+          a != "0" and b == "0" and (d / SHIM).exists(), f"chk={a},{b} shim={(d / SHIM).exists()}")
 with tempfile.TemporaryDirectory() as td:
     d = Path(td)
     (d / ".env").write_text("ANDROID_ENABLED=1\n")
