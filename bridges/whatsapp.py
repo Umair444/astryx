@@ -33,7 +33,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -41,6 +40,7 @@ from pathlib import Path
 import asyncpg
 from fastapi import FastAPI, Request, Response
 
+from .embed_root import Refused, owner_only, read_checked
 from .common import (HERE, MEDIA_DIR, Outcome, route_target, describe_media,
                      env, listen, load_routes,
                      record_poll, resolve_quoted_body, split_files, split_polls,
@@ -153,9 +153,11 @@ async def fetch_media(chat: str, msgid: str, media: str) -> Path | str:
     return f"<{media} attached, file never landed in the store>"
 
 
-async def send_files(chat: str, files: list[str], out: Outcome | None = None):
-    """Attachments. `out` is optional so existing callers keep working; when supplied,
-    every skipped or failed upload reaches the receipt instead of vanishing."""
+async def send_files(chat: str, files: list[str], out: Outcome | None = None, *, agent: str):
+    """Attachments. `out` is optional; when supplied, every skipped or failed upload reaches
+    the receipt instead of vanishing. `agent` (the row's from_agent) is REQUIRED: each path is
+    judged against the SENDER's roots before the bridge reads it (bridges/embed_root.py,
+    a1 #49775), because this bridge reads as its own uid and would otherwise ship any file."""
     def _fail(detail):
         if out is not None:
             out.failed("file", detail)
@@ -171,15 +173,16 @@ async def send_files(chat: str, files: list[str], out: Outcome | None = None):
         return
     outbox = Path(DATA_HOST) / "astryx-outbox"
     outbox.mkdir(exist_ok=True)
+    route = next((r for r in routes() if str(r.get("chat")) == chat), None)
     for f in files:
-        src = Path(f)
-        if not src.is_file():
-            # Was a silent `continue`, while the body still said "attached".
-            _fail(f"path not found: {f}")
+        try:                              # never silent: the body may still say "attached"
+            name, data = read_checked(f, agent, owner_only("whatsapp", route))
+        except Refused as e:
+            _fail(f"refused: {e}")
             continue
-        dst = outbox / f"{int(time.time())}-{src.name}"
+        dst = outbox / f"{int(time.time())}-{name}"
         try:
-            shutil.copy(src, dst)
+            dst.write_bytes(data)
             await wacli("send", "file", "--to", chat,
                         "--file", f"{DATA_CTR}/astryx-outbox/{dst.name}")
         except Exception as e:
@@ -553,7 +556,7 @@ async def deliver(row):
                 out.sent(res.message_id)
             else:
                 out.failed("text", res.error or "provider reported not-ok")
-        await send_files(chat, files, out)
+        await send_files(chat, files, out, agent=agent)
         for q, opts, multi in polls:
             try:
                 await send_poll(chat, agent, q, opts, multi)
