@@ -15,6 +15,8 @@ No phone needed: the device-driving arms are tests/test_android_device.py.
   STRIP      step.py over a synthetic transcript: a phone result is kept only under an "org" stamp in its LAST block;
              a personal stamp, no stamp, a forged stamp inside the body, or a string body are not kept; typed phone
              text is never kept; images never; the hands laptop rule is unchanged (control).
+  CAPS       one per-agent budget across hands and the phone: desktop steps and phone steps spend the same cap; a
+             capped look, tap or boot answers CAPPED (personal stamp) and never reaches the phone; phones/done are free
   LEASE      on a fixture DB: HELD is accepted by the migrated schema, one holder at a time, renewal by the holder,
              an expired hold is taken, unhold only by its holder, a microphone lease can't be held, and a vm-slot hold
              whose VM is proved gone is freed for the next claimant while a live one refuses, naming the holder.
@@ -52,6 +54,8 @@ except ImportError as e:
 HAVE_UPSTREAM = bool(shutil.which("node")) and UPSTREAM.exists()
 
 os.environ["ASTRYX_AGENT"] = "phone-oracle"
+import tempfile  # noqa: E402
+os.environ["ASTRYX_HANDS_STATE"] = tempfile.mkdtemp(prefix="phone-oracle-hands-")   # caps + stop flags, never the org's
 os.environ["ORACLE_CANARY_ENV"] = "must-not-reach-upstream"
 import importlib.util  # noqa: E402
 import nucleus  # noqa: E402
@@ -228,6 +232,50 @@ want("STRIP: a phone screenshot is never kept, even under an org stamp", "aGVsbG
      "image_omitted" in json.dumps(res["p6"]))
 want("STRIP: an unrelated tool result is untouched (control)", res["p6x"] == "unrelated")
 want("STRIP: the hands laptop rule is unchanged (control)", res["h1"] == step.LAPTOP_OMITTED)
+
+# ── CAPS: one per-agent budget across hands and the phone (plan-7862 caps; seed #47660) ─────────────────────────
+hdm = srv.hd
+os.environ["HANDS_STEP_CAP"] = "3"
+reached = []
+_real_guard, _real_boot = srv._guard, srv.droid.boot
+
+
+def _sentinel_guard(device):
+    reached.append(("guard", device))
+    raise srv.droid.AndroidError("reached-guard")
+
+
+def _sentinel_boot(device, agent):
+    reached.append(("boot", device))
+    raise srv.droid.AndroidError("reached-boot")
+
+
+srv._guard, srv.droid.boot = _sentinel_guard, _sentinel_boot
+hdm.caps_reset("phone-oracle")
+out = asyncio.run(srv.look("phone-x", text=True))
+want("CAPS: an uncapped phone look reaches the phone layer (positive control)",
+     reached == [("guard", "phone-x")] and "reached-guard" in str(out[0]), str(out))
+hdm.charge("phone-oracle")                    # two steps spent on the DESKTOP, as the hands server charges them
+hdm.charge("phone-oracle")
+reached.clear()
+out = asyncio.run(srv.look("phone-x", text=True))
+want("CAPS: desktop steps + phone steps share ONE budget: after 2 hands steps and 1 phone look (cap 3) the next look "
+     "is CAPPED and never reaches the phone", str(out[0]).startswith("CAPPED") and not reached, f"{out} {reached}")
+want("CAPS: ...and the CAPPED answer ends with a PERSONAL stamp", out[-1].startswith(srv.STAMP)
+     and json.loads(out[-1][len(srv.STAMP):])["tier"] == "personal", str(out[-1:]))
+reached.clear()
+out = asyncio.run(srv.act("tap", device="phone-x", x=1, y=1))
+want("CAPS: a capped tap never reaches the phone", str(out[0]).startswith("CAPPED") and not reached, f"{out} {reached}")
+reached.clear()
+out = asyncio.run(srv.act("boot", device="phone-x"))
+want("CAPS: a capped boot never starts a phone", str(out[0]).startswith("CAPPED") and not reached, f"{out} {reached}")
+before_steps = (hdm.session("phone-oracle") or {}).get("steps")
+asyncio.run(srv.act("phones"))
+asyncio.run(srv.act("done", device="phone-x"))
+want("CAPS: listing phones and `done` are free", (hdm.session("phone-oracle") or {}).get("steps") == before_steps,
+     f"{before_steps} → {(hdm.session('phone-oracle') or {}).get('steps')}")
+srv._guard, srv.droid.boot = _real_guard, _real_boot
+os.environ.pop("HANDS_STEP_CAP", None)
 
 # ── LEASE ─────────────────────────────────────────────────────────────────────────────────────────────────────
 try:
