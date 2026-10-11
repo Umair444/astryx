@@ -84,12 +84,14 @@ ears_of() { ears | awk -v a="$1" '$1==a {print $2}'; }
 # pane: a check a resident launched in the background is a child of its claude process, so killing the session kills
 # it mid-verdict (a3 #45388). Prints "pid args" per hit; the bracket classes keep the grep from matching itself.
 guarded_under() {
-  local pane; pane=$(tmux list-panes -t "=ax-$1:" -F '#{pane_pid}' 2>/dev/null | head -1)
-  [ -n "$pane" ] || return 0
-  ps -eo pid,ppid,args | awk -v pane="$pane" '
+  # EVERY pane of the session (-s), not just the current window's: a check run in a second window counts too (a3 #45400)
+  local panes; panes=$(tmux list-panes -s -t "=ax-$1" -F '#{pane_pid}' 2>/dev/null | paste -sd, -)
+  [ -n "$panes" ] || return 0
+  ps -eo pid,ppid,args | awk -v panes="$panes" '
+    BEGIN { n = split(panes, a, ","); for (i = 1; i <= n; i++) pane[a[i]] = 1 }
     NR > 1 { pp[$1] = $2; line[$1] = $0 }
-    END { for (p in line) if (line[p] ~ /check[.]sh|mutation_prob[e]|restore_dril[l]|branch_chec[k]/ && line[p] !~ /awk -v pane/) {
-            q = p; for (i = 0; i < 64 && q > 1; i++) { if (q == pane) { sub(/^ *[0-9]+ +[0-9]+ +/, "", line[p]); print p, line[p]; break } q = pp[q] } } }'
+    END { for (p in line) if (line[p] ~ /check[.]sh|mutation_prob[e]|restore_dril[l]|branch_chec[k]/ && line[p] !~ /awk -v panes/) {
+            q = p; for (i = 0; i < 64 && q > 1; i++) { if (q in pane) { sub(/^ *[0-9]+ +[0-9]+ +/, "", line[p]); print p, line[p]; break } q = pp[q] } } }'
 }
 
 restart_org() {
