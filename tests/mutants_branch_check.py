@@ -52,8 +52,8 @@ MUTANTS = {
     "O15 a gate newly dark on the branch isn't counted (a2 #37112's CREATEROLE skip reads REGRESSED)":
         ('dark_gates = sorted(set(both) | (set(b["unverified"]) - set(m["unverified"])))', 'dark_gates = sorted(set(both))'),
     "O16 production never hands report() the references (the excuse is dead code)":
-        ('        rc = report(sha, sums, witness, est, refs=gate_refs(repo["branch"]), touched=touched_files(sha, repo["branch"]))',
-         '        rc = report(sha, sums, witness, est, touched=touched_files(sha, repo["branch"]))'),
+        ('        rc = report(sha, sums, witness, est, refs=gate_refs(repo["branch"]), touched=touched_files(sha, repo["branch"]),',
+         '        rc = report(sha, sums, witness, est, touched=touched_files(sha, repo["branch"]),'),
     "O17 a nested import is missed (only module-level imports are read)":
         ('    for n in ast.walk(tree):\n        if isinstance(n, ast.Import):',
          '    for n in tree.body:\n        if isinstance(n, ast.Import):'),
@@ -71,11 +71,27 @@ MUTANTS = {
         ("        standing = sorted(l for i, l in br.items() if i in mr and sqlguard_module(l) in (touched or set()))",
          "        standing = sorted(l for i, l in br.items() if i in mr)"),
     "O22 production never hands report() the branch's scope (the in-scope list is dead code)":
-        (', touched=touched_files(sha, repo["branch"]))', ")"),
+        (', touched=touched_files(sha, repo["branch"]),', ","),
     "O23 the scope drops the modules a changed oracle imports (voice_mint::record, 10-11, falls out of scope)":
         ('        out |= {m.replace(".", "/") + ".py" for m in module_refs(tree)}', "        pass"),
     "O24 the scope diffs two trees, not from the merge-base (main's drift past the fork is pinned on the branch: a4 #45033)":
         ("f\"{sha['main']}...{sha['branch']}\"", 'sha["main"], sha["branch"]'),
     "O25 an extractor red (a FILE, no '::') never reaches the in-scope list (a4 #45033 F2)":
         (' or re.match(r"R-EXTRACT (\\S+?):?(?:\\s|$)", line)', ""),
+    "O26 dark_scope reads only python imports (a node oracle naming server.mjs is missed: the 10-11 class)":
+        ("                if (f.endswith(\".py\") and f[:-3].replace(\"/\", \".\") in mods) or f in text \\\n"
+         "                        or re.search(rf\"(?<![\\w-]){re.escape(name)}(?![\\w-])\", text):",
+         "                if f.endswith(\".py\") and f[:-3].replace(\"/\", \".\") in mods:"),
+    "O27 a bare STEM counts as a reference (every oracle that says 'server' is in scope)":
+        ("                name = f.rsplit(\"/\", 1)[-1]", "                name = f.rsplit(\"/\", 1)[-1].rsplit(\".\", 1)[0]"),
+    "O28 check.sh isn't left out (every branch that adds a gate puts half the dark list in scope)":
+        ('SCOPE_NOISE = frozenset({"nucleus/check.sh"})', "SCOPE_NOISE = frozenset()"),
+    "O29 a CHANGED oracle isn't itself in scope":
+        ("            if o in changed:\n                hit = o\n                break\n", ""),
+    "O30 a label carrying \\\" is kept escaped (never matches what check.sh prints)":
+        ("        label = label.replace('\\\\\"', '\"')", "        pass"),
+    "O31 production never hands report() the oracles (the in-scope list is dead code)":
+        ("\n                    oracles=gate_files(repo[\"branch\"]), changed=changed_files(sha), repo=repo[\"branch\"])", ")"),
+    "O32 the name match is a SUBSTRING (reserver.mjs reads as server.mjs)":
+        ("re.search(rf\"(?<![\\w-]){re.escape(name)}(?![\\w-])\", text)", "name in text"),
 }

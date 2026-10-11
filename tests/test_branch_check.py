@@ -155,6 +155,56 @@ def main():
     rc, out = rep({**base_sg, "sqlguard_red": ext}, {**shifted, "sqlguard_red": ext}, touched={"tests/test_x.py", "tests/test_y.py"})
     check("an R-EXTRACT red (a FILE, no '::', either form) in the branch's scope is listed as still RED (a4 #45033 F2)",
           "still RED in the branch's scope (files it changes, modules they import): 2" in out, out)
+    # a2 night-review 10-12: a DARK gate whose oracle references a file the branch changes is named, to be run directly
+    # (10-11: seed/trigger-name-guard PASSed while the ear/wake/doorbell oracles, which stage channel/server.mjs, were dark)
+    dk = Path(tempfile.mkdtemp(prefix="bc-dark-"))
+    for d in ("nucleus", "tests", "channel"):
+        (dk / d).mkdir()
+    (dk / "nucleus" / "check.sh").write_text(
+        'run "ear gate" "$PY" tests/test_ear.py\n'
+        'run "node gate" node tests/t_node.mjs\n'
+        'run "bash gate" bash tests/t_sh.sh\n'
+        'run "word gate" "$PY" tests/test_word.py\n'
+        'run "own gate" "$PY" -m tests.test_own\n'
+        'run "quoted \\"=ax\\" gate" "$PY" tests/test_word.py\n')
+    (dk / "tests" / "test_ear.py").write_text("from nucleus import subj\n")
+    (dk / "tests" / "t_node.mjs").write_text("const s = new URL('../channel/server.mjs', import.meta.url)\n")
+    (dk / "tests" / "t_sh.sh").write_text("grep -c ^run nucleus/check.sh\n")   # names check.sh, as many oracles do
+    (dk / "tests" / "test_word.py").write_text("# the server answers; reserver.mjs is another file\n")
+    (dk / "tests" / "test_own.py").write_text("x = 1\n")
+    of = bc.gate_files(dk)
+    check("gate_files: every run line maps to its oracle file(s), any language, -m included, a \\\" label unescaped",
+          of.get("ear gate") == {"tests/test_ear.py"} and of.get("node gate") == {"tests/t_node.mjs"}
+          and of.get("own gate") == {"tests/test_own.py"} and 'quoted "=ax" gate' in of, of)
+    gates = ["ear gate", "node gate", "bash gate", "word gate", "own gate"]
+    ds = dict(bc.dark_scope(gates, of, {"nucleus/subj.py", "channel/server.mjs", "tests/test_own.py"}, dk))
+    check("dark_scope: a python oracle IMPORTING a changed module, a node oracle NAMING a changed file, and a changed "
+          "oracle itself are each in scope", ds.get("ear gate") == "nucleus/subj.py"
+          and ds.get("node gate") == "channel/server.mjs" and ds.get("own gate") == "tests/test_own.py", ds)
+    check("…a bare stem ('server') or a longer name containing the file's ('reserver.mjs') is NOT a reference, and an "
+          "unrelated oracle isn't named", "word gate" not in ds and "bash gate" not in ds, ds)
+    check("…a branch that only touches check.sh (every branch adding a gate does) puts no dark gate in scope",
+          bc.dark_scope(gates, of, {"nucleus/check.sh"}, dk) == [], bc.dark_scope(gates, of, {"nucleus/check.sh"}, dk))
+    dm = {"failed": [], "unverified": ["node gate", "bash gate"], "line": "check: m"}
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = bc.report(sha, {"main": dm, "branch": dict(dm)}, {"main": 0, "branch": 0}, est,
+                       oracles=of, changed={"channel/server.mjs"}, repo=dk)
+    out = buf.getvalue()
+    check("report names the dark gate IN SCOPE with the file it references, and the rc is unchanged (report-only)",
+          rc == 0 and "VERIFIED NOTHING and IN SCOPE" in out and "    ○ node gate\n      ← channel/server.mjs" in out
+          and "○ bash gate\n      ←" not in out, out)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        bc.report(sha, {"main": dm, "branch": dict(dm)}, {"main": 0, "branch": 0}, est)
+    check("…with no changed set, nothing is called in scope (never a guess)", "IN SCOPE" not in buf.getvalue(),
+          buf.getvalue())
+    check("branch_check.run passes report() the branch's oracles and changed files (oracles=gate_files(repo['branch']), "
+          "changed=changed_files(sha))",
+          len(reps) == 1 and any(k.arg == "oracles" and "gate_files" in ast.dump(k.value)
+                                 and "'branch'" in ast.unparse(k.value) for k in reps[0].keywords)
+          and any(k.arg == "changed" and "changed_files" in ast.dump(k.value) for k in reps[0].keywords),
+          ast.dump(reps[0]) if reps else "no report call in run()")
     # a4 #36860 + a2 #37119: an UNEXECUTED branch-only R-NEW is UNVERIFIABLE HERE only when a gate that verified
     # nothing has an ORACLE REFERENCING the site's module (a relation, not co-occurrence); else it's REGRESSED
     unex = "R-NEW c.py::h :: select 3: UNEXECUTED and not in the ledger. Make it RESPONSIVE, or admit it"

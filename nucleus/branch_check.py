@@ -260,7 +260,8 @@ def run(branch: str, main_ref: str = "main") -> int:
             r1, r2 = sums["branch"]["sqlguard_red"], again["sqlguard_red"]
             # a branch-only sqlguard finding must REPRODUCE too (FLAKY != REGRESSED)
             sums["branch"]["sqlguard_red"] = None if r1 is None or r2 is None else {i: l for i, l in r1.items() if i in r2}
-        rc = report(sha, sums, witness, est, refs=gate_refs(repo["branch"]), touched=touched_files(sha, repo["branch"]))
+        rc = report(sha, sums, witness, est, refs=gate_refs(repo["branch"]), touched=touched_files(sha, repo["branch"]),
+                    oracles=gate_files(repo["branch"]), changed=changed_files(sha), repo=repo["branch"])
     except prep.Refuse as e:
         print(f"branch_check: REFUSED (rc 77): {e}")
         rc = 77
@@ -272,16 +273,83 @@ def run(branch: str, main_ref: str = "main") -> int:
     return rc
 
 
+def changed_files(sha: dict) -> set:
+    """The files the branch changes: main...branch (THREE dots, from the merge-base), from the live repo. Empty if git
+    can't say: never a guess."""
+    p = subprocess.run(["git", "diff", "--name-only", f"{sha['main']}...{sha['branch']}"], cwd=LIVE, capture_output=True,
+                       text=True)
+    return set(p.stdout.split()) if p.returncode == 0 else set()
+
+
+# ── a DARK gate whose oracle references a file the branch changes (a2 night-review 10-12) ───────────────────────────
+# 10-11: seed/trigger-name-guard PASSed on a run where "channel ear survives a db blip" and "lost wakes recovered at
+# spawn" verified nothing; both stage channel/server.mjs, the file the branch changed, and both broke on main. The
+# VERIFIED NOTHING list read as environment. This is a DETECTOR (it tells the reviewer to run a gate directly), so
+# its relation is deliberately WIDER than covering_gate's (which EXCUSES, and must be strict): a spurious line costs a
+# glance, a missed one costs a regression. Any oracle language (python, node, bash); the oracle file itself changed,
+# a touched python module it imports, or the touched file's path or file name (extension included, never a bare stem)
+# in its text. nucleus/check.sh is left out: nearly every branch touches it to add its own gate.
+SCOPE_NOISE = frozenset({"nucleus/check.sh"})
+_GATE_RX = re.compile(r'^run "((?:[^"\\]|\\.)+)"\s+(.*)$', re.M)     # a label may carry \" (the tmux gate's does)
+_ORACLE_SUFFIXES = (".py", ".sh", ".mjs", ".js", ".ts")
+
+
+def gate_files(repo: Path) -> dict:
+    """{check.sh label: the repo-relative oracle files its run line names} (`-m pkg.mod` → pkg/mod.py; any argument that
+    is a file in the repo with an oracle suffix). Read from the branch's own check.sh."""
+    try:
+        text = (repo / "nucleus" / "check.sh").read_text()
+    except OSError:
+        return {}
+    out = {}
+    for label, rest in _GATE_RX.findall(text):
+        label = label.replace('\\"', '"')                  # bash prints the label unescaped; match what it prints
+        toks = rest.replace('"', " ").split()
+        files = {toks[i + 1].replace(".", "/") + ".py" for i, t in enumerate(toks[:-1]) if t == "-m"}
+        files |= {t for t in toks if t.endswith(_ORACLE_SUFFIXES)}
+        out[label] = {f for f in files if (repo / f).is_file()}
+    return out
+
+
+def dark_scope(dark_gates, oracles: dict, changed: set, repo: Path) -> list:
+    """[(gate, changed file)] for each dark gate whose oracle references a file the branch changes (first match)."""
+    changed = {f for f in changed if f not in SCOPE_NOISE and not f.endswith("__init__.py")}
+    out = []
+    for g in dark_gates:
+        hit = None
+        for o in sorted(oracles.get(g, ())):
+            if o in changed:
+                hit = o
+                break
+            try:
+                text = (repo / o).read_text(errors="replace")
+            except OSError:
+                continue
+            mods = set()
+            if o.endswith(".py"):
+                try:
+                    mods = module_refs(ast.parse(text))
+                except (SyntaxError, ValueError):
+                    pass
+            for f in sorted(changed):
+                name = f.rsplit("/", 1)[-1]
+                if (f.endswith(".py") and f[:-3].replace("/", ".") in mods) or f in text \
+                        or re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", text):
+                    hit = f
+                    break
+            if hit:
+                break
+        if hit:
+            out.append((g, hit))
+    return out
+
+
 def touched_files(sha: dict, repo: Path = None) -> set:
     """The branch's scope: the files it changes (main...branch, from the live repo), plus every module a CHANGED .py
     file imports (module_refs), so a red left in a module the branch's own new oracle drives is in scope too.
     THREE dots: the diff from the merge-base, so once main moves past the fork, main's own changes never read as the
     branch's (a4 #45033: two-dot gave 6 files on 5f230fc, 3 of them seed's). Empty if git can't say: never a guess."""
-    p = subprocess.run(["git", "diff", "--name-only", f"{sha['main']}...{sha['branch']}"], cwd=LIVE, capture_output=True,
-                       text=True)
-    if p.returncode != 0:
-        return set()
-    files = set(p.stdout.split())
+    files = changed_files(sha)
     out = set(files)
     for f in files:
         if not f.endswith(".py") or repo is None:
@@ -301,7 +369,8 @@ def sqlguard_module(line: str):
     return mt.group(1) if mt else None
 
 
-def report(sha: dict, sums: dict, witness: dict, est: dict, refs: dict = None, touched: set = None) -> int:
+def report(sha: dict, sums: dict, witness: dict, est: dict, refs: dict = None, touched: set = None,
+           oracles: dict = None, changed: set = None, repo: Path = None) -> int:
     m, b = sums["main"], sums["branch"]
     print(f"branch_check {sha['branch'][:7]} vs main {sha['main'][:7]}")
     for side in ("main", "branch"):
@@ -364,6 +433,13 @@ def report(sha: dict, sums: dict, witness: dict, est: dict, refs: dict = None, t
     print(f"  VERIFIED NOTHING under branch_check (both sides; coverage this run did not provide): {len(both)}")
     for x in both:
         print(f"    ○ {x}")
+    if oracles and changed and repo is not None:
+        ds = dark_scope(dark_gates, oracles, changed, repo)
+        if ds:
+            print(f"  VERIFIED NOTHING and IN SCOPE (its oracle references a file the branch changes): run it DIRECTLY "
+                  f"in a worktree before a PASS: {len(ds)}")
+            for g, f in ds:
+                print(f"    ○ {g}\n      ← {f}")
     skipped = est["branch"]["skipped_credential"]
     if skipped:
         print(f"  VERIFIED NOTHING: {len(skipped)} estate file(s) carry a credential and weren't copied: {skipped}")
