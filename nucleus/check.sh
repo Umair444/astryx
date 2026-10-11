@@ -58,12 +58,35 @@ verified=0
 declare -a UNVERIFIED=()
 declare -a FAILED=()
 declare -a LIARS=()
+# EVERY GATE HAS A WALL CLOCK (seed #45252). A wedged chromium under the pilot gate held a whole run open for 3h36m
+# (a4 #45241), and with it every agent waiting for "no check.sh running". So each gate runs under GNU `timeout`, which
+# puts the gate in its OWN process group and signals that whole group on expiry (grandchildren, chromium and vite
+# included), then SIGKILLs it CHECK_GATE_KILL_AFTER seconds later. An expired gate is ✗ TIMED OUT: a failure, named,
+# never a pass and never 77. The default is generous; a known-long gate takes `run --cap=<s> "<label>" cmd…`.
+# The gate runs in the BACKGROUND and is waited on, so a signal to check.sh itself (Ctrl-C, an outer timeout, a kill)
+# reaches the trap below, which kills the running gate's group. Before this, killing check.sh orphaned its gate.
+GATE_CAP=${CHECK_GATE_CAP:-1200}
+GATE_KILL_AFTER=${CHECK_GATE_KILL_AFTER:-15}
+GATE_PGID=""
+GATE_OUT=$(mktemp "${TMPDIR:-/tmp}/check-gate.XXXXXX")
+_gate_reap() { [ -n "$GATE_PGID" ] && kill -TERM -- "-$GATE_PGID" 2>/dev/null; GATE_PGID=""; }
+trap '_gate_reap; rm -f "$GATE_OUT"' EXIT
+trap '_gate_reap; exit 130' INT
+trap '_gate_reap; exit 143' TERM
 run() {
+  local cap=$GATE_CAP
+  if [[ ${1:-} == --cap=* ]]; then cap=${1#--cap=}; shift; fi
   local label=$1; shift
   printf '\033[36m▶\033[0m %s\n' "$label"
-  local out rc
-  out=$(ASTRYX_SQLGUARD_GATE="$label" "$@" 2>&1); rc=$?
+  local out rc t0=$SECONDS timed_out=""
+  ASTRYX_SQLGUARD_GATE="$label" timeout -k "$GATE_KILL_AFTER" "$cap" "$@" >"$GATE_OUT" 2>&1 </dev/null &
+  GATE_PGID=$!          # timeout makes itself its group's leader, so its pid IS the gate's process group id
+  wait "$GATE_PGID"; rc=$?
+  GATE_PGID=""
+  out=$(cat "$GATE_OUT")
   printf '%s\n' "$out"
+  # 124 is timeout's own expiry code (137 after the SIGKILL); a gate can also exit 124 itself, so the WALL is the judge
+  if { [ "$rc" = 124 ] || [ "$rc" = 137 ]; } && [ $((SECONDS - t0)) -ge "$cap" ]; then timed_out=1; fi
   # The belt. A gate that ANNOUNCES a skip and still exits 0 has broken the protocol —
   # it is the exact defect this accounting exists to catch, so it is reported as a
   # violation rather than quietly trusted. Narrow by construction: only a line whose
@@ -88,6 +111,11 @@ run() {
   # sqlguard (goal 4243): the effective rc per gate. The judge reads this to decide whether a site's NEGATIVE
   # verdict saw a complete search (C1: every covering gate exited 0).
   [ -n "${ASTRYX_SQLGUARD_DIR:-}" ] && printf '%s\t%s\n' "$label" "$rc" >> "$ASTRYX_SQLGUARD_DIR/gates.tsv"
+  if [ -n "$timed_out" ]; then
+    fail=1; FAILED+=("$label (TIMED OUT after ${cap}s)")
+    printf '\033[31m  ✗ %s — TIMED OUT after %ss (its process group was killed)\033[0m\n' "$label" "$cap"
+    return
+  fi
   case $rc in
     0)  verified=$((verified+1)); printf '\033[32m  ✓ %s\033[0m\n' "$label" ;;
     "$EXIT_SKIP")
