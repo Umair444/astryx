@@ -75,10 +75,11 @@ GATE_OUT=$(mktemp "${TMPDIR:-/tmp}/check-gate.XXXXXX")
 # And a signal can land between the fork and `GATE_PGID=$!` (a4 #45394 saw survivors on the arm), when the variable is
 # still empty: so every background job of this shell is reaped too, by group and then by pid. check.sh starts no
 # background job but a gate, so `jobs -p` names exactly the gate's timeout.
-# And a TERM can be LOST: a child forked while this shell traps TERM defers the signal, then resets the trap before it
-# execs, and the pending TERM is dropped (measured: 19 of 20 just-forked children survived a TERM with check.sh's trap
-# installed, 0 of 20 without it). So whatever is still alive after a short grace gets SIGKILL, which no trap defers.
-# A target killed that early has not exec'd timeout yet, so it has no gate child to orphan.
+# And a single TERM to a JUST-forked child can be lost: measured with check.sh sourced, one TERM right after `cmd &`
+# left 20 of 20 children alive (19/20 even with its TERM trap removed), while the same TERM 0.2s later, or in a bare
+# shell with or without any trap, killed 20/20. The mechanism is NOT identified, so the reap doesn't depend on one:
+# whatever is still alive after a 1s grace gets SIGKILL, which nothing can catch or defer. A target killed that early
+# has not exec'd timeout yet, so it has no gate child to orphan.
 _gate_reap() {
   local j targets n
   targets="$GATE_PGID $(jobs -p)"
