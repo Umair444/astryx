@@ -681,7 +681,9 @@ _act_android() { say "android: installing the pinned SDK packages and the phone 
 # phone_resume_sweep (plan-8675 S2, a3 C2): the detector for a phone RESUME near an agent's act on the owner's laptop
 # ships as a reference trigger; this installs its live shim, but only where the org OPTED IN to phones
 # (ANDROID_ENABLED=1). Deferential like ccompact: if any agent already owns a phone_resume_sweep, it stands down.
-_android_on() { [ "$(grep -m1 '^ANDROID_ENABLED=' .env 2>/dev/null | cut -d= -f2-)" = 1 ]; }
+# The SAME source order as nucleus/android_setup.sh (process env first, then .env): an org that opts in by env gets the
+# detector with its phones, never the phones alone (a4 #48950 note 1: the other order fails open for a detector).
+_android_on() { [ "${ANDROID_ENABLED:-$(grep -m1 '^ANDROID_ENABLED=' .env 2>/dev/null | cut -d= -f2-)}" = 1 ]; }
 _chk_phonesweep() { _android_on || return 0; ls triggers/*/phone_resume_sweep.py >/dev/null 2>&1; }
 _act_phonesweep() {
   mkdir -p triggers/seed
