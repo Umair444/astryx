@@ -104,11 +104,11 @@ def body(text: str, speaker: str, confidence: float | None) -> str:
 
 
 def route(conn, text: str, utterance_id: int | None = None, speaker: str = "unidentified",
-          confidence: float | None = None, names: list[str] | None = None) -> int | None:
+          confidence: float | None = None, names: list[str] | None = None, wake: str | None = None) -> int | None:
     """Put an addressed sentence on the wire to its agent. Returns the message id, or None when nobody was
     addressed (ambient talk stays in the room) or the same words just went (whisper repeats)."""
     hit = address(text, names)
-    agent = hit[0] if hit else conversing(conn)
+    agent = hit[0] if hit else (wake or conversing(conn))   # wake: the name the wake word heard (whisper misspelt it)
     if not agent:
         return None
     key = f"{agent}:{_norm(text)}"

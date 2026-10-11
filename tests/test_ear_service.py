@@ -124,7 +124,7 @@ def free_port():
 
 try:
     with fixture_db() as fx:
-        os.environ.update({"ASTRYX_DSN": fx["dsn"], "OBS_KEY": KEY, "EAR_ROOM": "test"})
+        os.environ.update({"ASTRYX_DSN": fx["dsn"], "OBS_KEY": KEY, "EAR_ROOM": "test", "EAR_WAKE": "off"})   # the gate is test_room's; these arms test transcription
         import bridges.ear as ear                                   # reads the env above at import
         fake = Fake()
         ear.make_backend = lambda: fake
@@ -289,7 +289,7 @@ try:
                     f"uvicorn.run(ear.app, host='127.0.0.1', port={port}, log_level='info')\n")
                 log = TMP / f"{label}.log"
                 env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-                env.update({"EAR_STT_BACKEND": "cpu", "PYTHONUNBUFFERED": "1"})
+                env.update({"EAR_STT_BACKEND": "cpu", "PYTHONUNBUFFERED": "1", "EAR_WAKE": "off"})
                 fh = open(log, "wb")
                 p = subprocess.Popen([sys.executable, "-I", str(runner)], cwd=TMP, env=env, stdout=fh,
                                      stderr=subprocess.STDOUT)

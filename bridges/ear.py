@@ -58,6 +58,7 @@ RESOURCE = f"ear:{ROOM}"
 MAIN_DSN = env("ASTRYX_DSN")
 MAX_BYTES = 2_000_000                       # 30 s of 16 kHz PCM16 is 960 KB
 MAX_S, MIN_S = 30.0, 0.25
+WAKE = env("EAR_WAKE", "on") != "off"           # the wake word gate (nucleus/wake.py); EAR_WAKE=off transcribes all
 MAINTAIN_EVERY_S = 600
 
 queue: ear_stt.SttQueue | None = None
@@ -71,6 +72,8 @@ class Store:
         self.ok, self.error, self.maintained = False, None, 0.0
         self.last_maintain: dict | None = None
         self.room_error: str | None = None
+        self.talking, self.talk_at = None, 0.0
+        self.wake = {"named": 0, "talking": 0, "unaddressed": 0, "open": 0}
 
     def _conn(self):
         if self.c is None or self.c.closed:
@@ -107,7 +110,23 @@ class Store:
                     self.ok, self.error, self.c = False, type(e).__name__, None
                     raise
 
-    def route_room(self, text: str, row, pcm=None):
+    def wake_gate(self, pcm):
+        """nucleus/wake.py: the agent named in this segment, "talking" while the room is in a conversation (every
+        segment goes through), wake.OPEN when the gate can't judge, else None (nobody was addressed: not transcribed)."""
+        from nucleus import room, wake
+        now = time.monotonic()
+        if now - self.talk_at > 2:                              # one DB look per 2 s, not per segment
+            with self.lock:
+                try:
+                    self.talking = room.conversing(self._conn())
+                except Exception:                               # noqa: BLE001
+                    self.talking = None
+            self.talk_at = now
+        if self.talking:
+            return "talking"
+        return wake.heard(pcm, room.roster())
+
+    def route_room(self, text: str, row, pcm=None, wake=None):
         """The Room (nucleus/room.py): WHO said it (nucleus/voiceprint.py, recorded on the utterance), then, when the
         sentence ADDRESSES an agent, the wire message to it. Fail-open: neither ever costs the room its transcript."""
         from nucleus import room, voiceprint
@@ -122,7 +141,7 @@ class Store:
                 if v:
                     c.execute("UPDATE utterances SET speaker=%s WHERE ts=%s AND id=%s", (v["label"], row[0], row[1]))
                 who, conf = voiceprint.describe(v)
-                return room.route(c, text, row[1], who, conf)
+                return room.route(c, text, row[1], who, conf, wake=wake)
             except Exception as e:                              # noqa: BLE001: counted, never raised
                 self.room_error = type(e).__name__
                 return None
@@ -253,7 +272,7 @@ hearing = Hearing(MAIN_DSN)
 def _sink(item, text, stt_ms):
     row = store.insert(item, text, stt_ms, queue.backend.name if queue else "?")
     if row and text.strip():
-        store.route_room(text, row, item.get("pcm"))
+        store.route_room(text, row, item.get("pcm"), item.get("wake"))
     if row:
         hearing.put({"id": row[1], "ts": row[0].isoformat(), "ts_raw": row[0], "text": text, "view": item.get("view")})
 
@@ -264,6 +283,9 @@ async def lifespan(_):
     queue = ear_stt.SttQueue(make_backend(), _sink, maxlen=int(env("EAR_QUEUE_MAX", "2")),
                              flush=True).start()
     await asyncio.to_thread(store.maintain, True)
+    if WAKE:                                                    # load the wake word now, not on the first sentence
+        from nucleus import room, wake
+        asyncio.get_running_loop().run_in_executor(None, wake.heard, np.zeros(8000, np.float32), room.roster())
     hearing.start()
     yield
     queue.stop()
@@ -324,7 +346,13 @@ async def status():
         st = {**st, "degraded": True, "reasons": st.get("reasons", []) + [f"store offline ({store.error})"]}
     return {"room": ROOM, "lease": await _indicator(), "stt": st, "store": {"ok": store_ok, "error": store.error},
             "ttl_days": S.ttl_days(), "backup_days": S.BACKUP_KEEP_DAYS,
-            "attending": hearing.pool.attending(), "caught": hearing.caught, "hearing": hearing.status()}
+            "attending": hearing.pool.attending(), "caught": hearing.caught, "hearing": hearing.status(),
+            "wake": {"on": WAKE, **store.wake, "talking_with": store.talking, "error": _wake_error()}}
+
+
+def _wake_error():
+    from nucleus import wake
+    return wake.error()
 
 
 async def _holder(request: Request) -> str | None:
@@ -415,5 +443,14 @@ async def utterance(request: Request):
         return deny(422, "segment too short")
     if not store.ok and not await asyncio.to_thread(store.ping):
         return deny(503, "ear store offline")
-    dropped = queue.put({"pcm": pcm, "dur_ms": dur_ms, "view": view})
+    item = {"pcm": pcm, "dur_ms": dur_ms, "view": view}
+    if WAKE:                                                    # the wake word: only speech TO the org is transcribed
+        from nucleus import wake
+        g = await asyncio.to_thread(store.wake_gate, pcm)
+        store.wake["unaddressed" if g is None else "open" if g == wake.OPEN else "talking" if g == "talking" else "named"] += 1
+        if g is None:
+            return JSONResponse({"queued": False, "unaddressed": True, "lease": L.indicator(row)}, status_code=202)
+        if g not in (wake.OPEN, "talking"):
+            item["wake"] = g
+    dropped = queue.put(item)
     return JSONResponse({"queued": True, "dropped_now": dropped, "lease": L.indicator(row)}, status_code=202)

@@ -659,11 +659,13 @@ EOF
 _chk_model() {
   echo " $(active_dep_groups) " | grep -q ' media ' || return 0   # no voice channel → nothing to cache
   venv/bin/python -c 'from faster_whisper import WhisperModel; WhisperModel("small", device="cpu", compute_type="int8", local_files_only=True)' 2>/dev/null \
-    && venv/bin/python -c 'import hashlib, sys; from nucleus import voiceprint as v; sys.exit(0 if v.MODEL.is_file() and hashlib.sha256(v.MODEL.read_bytes()).hexdigest() == v.MODEL_SHA else 1)' 2>/dev/null; }
+    && venv/bin/python -c 'import hashlib, sys; from nucleus import voiceprint as v; sys.exit(0 if v.MODEL.is_file() and hashlib.sha256(v.MODEL.read_bytes()).hexdigest() == v.MODEL_SHA else 1)' 2>/dev/null \
+    && venv/bin/python -c 'import hashlib, sys; from nucleus import wake as w; sys.exit(0 if all((w.DIR / f).is_file() and hashlib.sha256((w.DIR / f).read_bytes()).hexdigest() == h for f, h in w.FILES.items()) else 1)' 2>/dev/null; }
 _act_model() {
   say "prefetching the transcription model (once, under the reconciler — never on the message path)"
   venv/bin/python -c 'from faster_whisper import WhisperModel; WhisperModel("small", device="cpu", compute_type="int8")' >/dev/null 2>&1
-  venv/bin/python -m nucleus.voiceprint fetch >/dev/null 2>&1; }   # the Room's speaker model (sha-pinned)
+  venv/bin/python -m nucleus.voiceprint fetch >/dev/null 2>&1      # the Room's speaker model (sha-pinned)
+  venv/bin/python -m nucleus.wake fetch >/dev/null 2>&1; }         # the Room's wake word (sha-pinned)
 
 # the precondition DAG, in dependency order (top depends on nothing).  name|class
 RECONCILE_NODES=(

@@ -70,6 +70,18 @@ arm("a follow-up without a name goes to the agent the room is talking with", m4 
 m5 = room.route(c2, "seed what do you think", 5, names=NAMES)
 arm("naming another agent mid-conversation switches to it", m5 == 2 and c2.rows[1][0] == "seed")
 
+m6 = room.route(Conn(), "what's going on cede", 6, names=NAMES, wake="seed")
+arm("the wake word's name routes a sentence whisper misspelt", m6 == 1)
+
+from nucleus import wake  # noqa: E402
+arm("wake: names are spelled as said (abstractor-1 → ABSTRACTOR ONE, p1 → P ONE, astryx sounds like ASTRIX)",
+    wake.phrases("abstractor-1") == ["ABSTRACTOR ONE"] and wake.phrases("p1") == ["P ONE"]
+    and "ASTRIX" in wake.phrases("astryx") and wake.phrases("painter") == ["PAINTER"])
+wake._spotter = lambda names: (_ for _ in ()).throw(RuntimeError("no model"))
+wake._state["kws"] = None
+arm("wake: a gate that can't load fails OPEN (the ear transcribes as before), naming the error by type",
+    wake.heard(__import__("numpy").zeros(16000, "float32"), NAMES) == wake.OPEN and wake.error() == "RuntimeError")
+
 arm("voiceprint: no print reads as unidentified", voiceprint.describe(None)[0].startswith("unidentified"))
 arm("voiceprint: a new voice tells the agent to ask who it is",
     "NEW voice" in voiceprint.describe({"label": "voice-4", "name": None, "trust": "unknown", "sim": None, "new": True})[0])
