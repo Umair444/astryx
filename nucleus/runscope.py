@@ -267,12 +267,15 @@ def _drop_owned(admin_dsn: str, role: str) -> dict:
         with psycopg.connect(admin_dsn, autocommit=True) as c:
             for db in owned_dbs(admin_dsn, role, c):
                 try:
-                    # An INVALID database (datconnlimit -2: a DROP interrupted mid-way, e.g. its run was killed)
-                    # can't be ALTERed: the server answers FATAL and closes this connection, so every later drop
-                    # here failed too (10-11, bc_2741292x…_tpl). It can always be DROPped, so skip only the ALTER.
-                    if not c.execute("SELECT datconnlimit = -2 FROM pg_database WHERE datname = %s", (db,)).fetchone()[0]:
+                    # DROP first; clear IS_TEMPLATE only when the server refuses a TEMPLATE (42809, an ordinary
+                    # ERROR). Not ALTER-first: an INVALID database (an interrupted DROP, e.g. its run was killed)
+                    # answers ALTER with FATAL and closes this connection, so every later drop here failed too
+                    # (10-11, bc_2741292x…_tpl). An invalid database can always be dropped.
+                    try:
+                        c.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(db)))
+                    except psycopg.errors.WrongObjectType:
                         c.execute(sql.SQL("ALTER DATABASE {} IS_TEMPLATE false").format(sql.Identifier(db)))
-                    c.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(db)))
+                        c.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(db)))
                     out["dropped"].append(db)
                 except psycopg.Error as e:
                     out["errors"].append(f"{db}: {type(e).__name__}")

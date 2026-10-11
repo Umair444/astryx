@@ -11,7 +11,7 @@ import re
 import shutil
 from pathlib import Path
 
-from psycopg import sql
+from psycopg import errors, sql
 
 # Every run role an oracle makes is a TEST role (nucleus/runscope.py TEST_STAMP): set here, at import, because every
 # RunScope oracle imports this module before it opens a scope, and mutation_probe runs oracles outside check.sh.
@@ -33,10 +33,13 @@ def _gone(pid: int) -> bool:
 
 
 def _drop_db(adm, d):
-    # an INVALID database (an interrupted DROP) FATALs on ALTER and closes the connection; it can always be dropped
-    if not adm.execute("SELECT datconnlimit = -2 FROM pg_database WHERE datname = %s", (d,)).fetchone()[0]:
+    # DROP first; clear IS_TEMPLATE only on the server's template refusal (42809). ALTER-first FATALs on an INVALID
+    # database (an interrupted DROP) and closes the connection; an invalid database can always be dropped.
+    try:
+        adm.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(d)))
+    except errors.WrongObjectType:
         adm.execute(sql.SQL("ALTER DATABASE {} IS_TEMPLATE false").format(sql.Identifier(d)))
-    adm.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(d)))
+        adm.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(d)))
 
 
 def reap(adm) -> list:

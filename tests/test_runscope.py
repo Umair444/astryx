@@ -153,7 +153,7 @@ def main():
         gone = lambda d: not adm.execute("SELECT 1 FROM pg_database WHERE datname=%s", (d,)).fetchone()
         check("teardown drops every database the role owns, whatever its name", gone(a) and gone(odd),
               str(rep))
-        check("teardown drops a run-owned TEMPLATE database (IS_TEMPLATE cleared first; a2 binding)", gone(tpl),
+        check("teardown drops a run-owned TEMPLATE database (IS_TEMPLATE cleared on the server's template refusal; a2 binding)", gone(tpl),
               str(rep))
         check("teardown drops the role and the root, and reports no leak",
               not role_exists(s.role) and not s.root.exists() and rep["leaked"] == [] and not rep["errors"], str(rep))
