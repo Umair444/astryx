@@ -6,6 +6,8 @@ mechanism for B1), a3 #48213 (C1, C2), a1 #48216 (B5).
   STOP  through the observatory's REAL routes, as hands.tsx sends them: an owner POST /api/hands/<phone desktop>/stop
         → the phone facade refuses look and act; shutdown still passes the stop; owner resume → it acts again.
         A NON-owner POST (no key, or a wrong key) → 403, and the phone still answers. Nothing here writes a flag itself.
+  B3    a viewed boot says "watch and join it in the observatory"; a headless one says "no live view" and names the
+        CLI and shutdown as the owner's stops
   B1    the phone's desktop is unreachable by Hands' agent tools, by ALLOWLIST: pool() lists only desk-*, acquire()
         never yields the phone desktop even when every pool desk is taken, and _ready() refuses its name.
         Control: "background" resolves to a desk-*.
@@ -129,6 +131,21 @@ for label, hdrs in (("no key", {}), ("a wrong key", {"x-obs-key": "not-the-key"}
     out = asyncio.run(srv.act("tap", device=AVD, x=1, y=1))
     want(f"STOP: a NON-owner POST ({label}) is refused 403 and the phone still answers (control)",
          r.status_code == 403 and "reached-drive" in str(out), f"{r.status_code} {out[:1]}")
+
+# ── B3: the boot answer says which kind of stop the owner has (a4 #48590: pin the headless wording too) ─────────
+_saved = (srv.droid.boot, srv.droid.viewed, srv.droid.harden)
+srv.droid.drive = lambda d, a: None
+srv.droid.boot = lambda d, a: "emulator-9"
+srv.droid.harden = lambda d, s: []
+for viewed, must in ((True, "watch and join it in the observatory"), (False, "no live view")):
+    srv.droid.viewed = lambda d, v=viewed: v
+    out = asyncio.run(srv.act("boot", device=AVD))
+    want(f"B3: a {'viewed' if viewed else 'HEADLESS'} boot says so ({must!r})", must in str(out[0]), str(out[:1]))
+    if not viewed:
+        want("B3: ...and names the stops that exist there (the CLI and shutdown)", "CLI" in str(out[0])
+             and "shutdown" in str(out[0]), str(out[:1]))
+srv.droid.boot, srv.droid.viewed, srv.droid.harden = _saved
+srv.droid.drive = _sentinel_drive
 
 # ── B1: the phone desktop is unreachable by Hands' agent tools (the allowlist, pinned) ─────────────────────────────
 for d in (DESK, "desk-1"):

@@ -677,12 +677,29 @@ _chk_android() { case "$(_android_rc)" in 0|77|3) return 0 ;; *) return 1 ;; esa
 _act_android() { say "android: installing the pinned SDK packages and the phone (ANDROID_ENABLED=1)"
   nucleus/android_setup.sh install || true; }
 
+# >>> phone sweep install
+# phone_resume_sweep (plan-8675 S2, a3 C2): the detector for a phone RESUME near an agent's act on the owner's laptop
+# ships as a reference trigger; this installs its live shim, but only where the org OPTED IN to phones
+# (ANDROID_ENABLED=1). Deferential like ccompact: if any agent already owns a phone_resume_sweep, it stands down.
+_android_on() { [ "$(grep -m1 '^ANDROID_ENABLED=' .env 2>/dev/null | cut -d= -f2-)" = 1 ]; }
+_chk_phonesweep() { _android_on || return 0; ls triggers/*/phone_resume_sweep.py >/dev/null 2>&1; }
+_act_phonesweep() {
+  mkdir -p triggers/seed
+  cat > triggers/seed/phone_resume_sweep.py <<'EOF'
+"""Live install of the shipped phone resume sweep (one writer: nucleus/shipped_triggers/phone_resume_sweep.py).
+Installed by init.sh where ANDROID_ENABLED=1; move it to another agent if one should own the alarm."""
+from nucleus.shipped_triggers.phone_resume_sweep import phone_resume_sweep  # noqa: F401
+EOF
+  say "installed the phone resume sweep (seed): flags a phone resume near an agent's act on your laptop"
+}
+# <<< phone sweep install
+
 # the precondition DAG, in dependency order (top depends on nothing).  name|class
 RECONCILE_NODES=(
   "pg|interior" "pgready|wait" "schema|interior" "harden|interior" "hardencut|halt" "venv|interior" "deps|interior"
   "peoplegate|interior" "derivedgraphs|interior" "geoschema|interior" "model|interior" "chan|interior" "obs|interior" "obskey|interior" "ident|interior"
   "units|interior" "law|interior" "prehook|interior" "ccompact|interior" "prreview|interior" "androidlic|halt"
-  "android|interior" "login|halt"
+  "android|interior" "phonesweep|interior" "login|halt"
   "seed|interior" "prompt|interior")
 
 reconcile() {
