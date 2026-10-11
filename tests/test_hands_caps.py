@@ -119,42 +119,56 @@ names = [d.get("agent") for d in hd.status()]
 want("C8 the caps store is never listed as a desktop", ".caps" not in names and not any(
      str(n).startswith(".") for n in names), str(names))
 # ── C9 ─────────────────────────────────────────────────────────────────────────────────────────────────────────
-os.environ["ASTRYX_AGENT"] = "zz-srv"
-_v = importlib.util.spec_from_file_location("hands_server", os.environ.get("HANDS_SERVER_SRC")
-                                            or REPO / "mcp/hands/server.py")
-srv = importlib.util.module_from_spec(_v)
-_v.loader.exec_module(srv)
-reached = []
+def c9():
+    """The server's wiring: it needs the MCP SDK (a committed-only tree under a bare python3 lacks it)."""
+    global reached
+    os.environ["ASTRYX_AGENT"] = "zz-srv"
+    _v = importlib.util.spec_from_file_location("hands_server", os.environ.get("HANDS_SERVER_SRC")
+                                                or REPO / "mcp/hands/server.py")
+    srv = importlib.util.module_from_spec(_v)
+    _v.loader.exec_module(srv)
+    reached = []
+
+    def fake_ready(screen):
+        reached.append(screen)
+        raise hd.HandsError("reached-desktop")
+
+    srv._ready = fake_ready
+    hd.caps_reset("zz-srv")
+    out = srv.look("background")
+    want("C9 an uncapped look reaches the desktop (positive control)", reached == ["background"] and
+         "reached-desktop" in str(out), str(out))
+    srv.act("click", "background", 1, 1)
+    srv.act("click", "background", 1, 1)
+    reached.clear()
+    out = srv.look("background")
+    want("C9 at the cap (3 calls made), look refuses CAPPED and never reaches a desktop",
+         str(out[0]).startswith("CAPPED") and not reached, f"{out} reached={reached}")
+    reached.clear()
+    out = srv.act("click", "background", 1, 1)
+    want("C9 ...and so does act", str(out[0]).startswith("CAPPED") and not reached, f"{out} reached={reached}")
+    hd.caps_reset("zz-srv")
+    reached.clear()
+    out = srv.act("do", "background", text="key a; key b; key c; key d")
+    want("C9 a 4-step `do` against a cap of 3 is refused UP FRONT, never reaching a desktop",
+         str(out[0]).startswith("CAPPED") and not reached, f"{out} reached={reached}")
+    want("C9 `done` isn't charged", str(srv.act("done", "background")[0]).startswith("released")
+         and (hd.session("zz-srv") or {}).get("steps", 0) == 0, str(hd.session("zz-srv")))
 
 
-def fake_ready(screen):
-    reached.append(screen)
-    raise hd.HandsError("reached-desktop")
-
-
-srv._ready = fake_ready
-hd.caps_reset("zz-srv")
-out = srv.look("background")
-want("C9 an uncapped look reaches the desktop (positive control)", reached == ["background"] and
-     "reached-desktop" in str(out), str(out))
-srv.act("click", "background", 1, 1)
-srv.act("click", "background", 1, 1)
-reached.clear()
-out = srv.look("background")
-want("C9 at the cap (3 calls made), look refuses CAPPED and never reaches a desktop",
-     str(out[0]).startswith("CAPPED") and not reached, f"{out} reached={reached}")
-reached.clear()
-out = srv.act("click", "background", 1, 1)
-want("C9 ...and so does act", str(out[0]).startswith("CAPPED") and not reached, f"{out} reached={reached}")
-hd.caps_reset("zz-srv")
-reached.clear()
-out = srv.act("do", "background", text="key a; key b; key c; key d")
-want("C9 a 4-step `do` against a cap of 3 is refused UP FRONT, never reaching a desktop",
-     str(out[0]).startswith("CAPPED") and not reached, f"{out} reached={reached}")
-want("C9 `done` isn't charged", str(srv.act("done", "background")[0]).startswith("released")
-     and (hd.session("zz-srv") or {}).get("steps", 0) == 0, str(hd.session("zz-srv")))
+try:
+    import mcp.server.fastmcp  # noqa: F401
+    HAVE_MCP = True
+except ImportError:
+    HAVE_MCP = False
+    print("  UNVERIFIED C9 (the server's wiring): the MCP SDK isn't importable here (no venv); C1–C8 still ran")
+if HAVE_MCP:
+    c9()
 
 if fails:
     print(f"FAIL: {len(fails)} arm(s)")
     sys.exit(1)
+if not HAVE_MCP:
+    print("NOT VERIFIED: C9 (no MCP SDK here; C1–C8 passed)")
+    sys.exit(77)
 print("PASS: hands caps (step, wall, idle reset, per agent, fail-closed, atomic, wired before any desktop)")
