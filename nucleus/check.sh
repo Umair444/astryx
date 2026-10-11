@@ -628,6 +628,7 @@ run "wiki/estate drift floor (5->1)"  "$PY" tests/test_drift.py
 run "library_compile + compile_lag: SQL in a fixture"  "$PY" tests/test_library_compile.py
 # plan-8018 S3: library.passage + BM25 library.search over the REAL (gitignored) ingest in a fixture DB; 77 where memory/ is absent
 run "library passages + BM25 search: tier-clean, derive-at-use, DELETE-not-TRUNCATE, hand-oracle scores" "$PY" tests/test_library_passage.py
+run "library search endpoint: book/wiki mapping, plain-text marks, blank q, unavailable not 500" "$PY" tests/test_library_search_api.py
 run "people_essence: SQL in a fixture"  "$PY" tests/test_people_essence.py
 # Class-1 of the prove-family oracle (scout, plan-15): drives all seven containment
 # verdicts BOTH ways against synthetic trees via G15_ENVF/G15_SCAN_ROOTS. Its output

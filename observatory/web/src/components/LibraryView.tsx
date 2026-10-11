@@ -189,6 +189,10 @@ function BookCard({ b, onOpen }: { b: Card; onOpen: () => void }) {
 }
 
 /* ------------------------------------------------------------------ the reference desk */
+type SrvHit = { id: string; kind: 'book' | 'wiki'; shelf: string | null; slug: string; anchor: string | null; heading: string | null; snippet: string; score: number }
+type Row = { key: string; title: string; label: string; section: string | null; body: ReactNode; open: () => void }
+/** library.search's snippet is plain text with matches marked ⟦…⟧ (never HTML): React escapes the text, we style the marks. */
+const marked_ = (t: string) => t.split(/⟦|⟧/).map((p, i) => (i % 2 ? <mark key={i} className="lib-mark">{p}</mark> : p))
 // Type: the shelves are searched as you go. Enter: the question goes to the librarian (memory) on an
 // obs:library-<hex> thread, the volumes it is reading show at once, and its answer lands inline.
 function Desk({ idx, bySlug, go }: { idx: Index; bySlug: Map<string, Card>; go: (s?: string, b?: string) => void }) {
@@ -204,8 +208,49 @@ function Desk({ idx, bySlug, go }: { idx: Index; bySlug: Map<string, Card>; go: 
     m.addAll(idx.books.map((b) => ({ ...b, id: `${b.shelf}/${b.slug}`, tagline: (b.tags ?? []).join(' ') })))
     return m
   }, [idx])
-  const hits = useMemo(() => (q.trim().length > 1 ? ms.search(q.trim()).slice(0, 6) : []), [ms, q])
+  const snippet = (text: string) => {
+    const words = q.trim().toLowerCase().split(/\s+/).filter((w) => w.length > 1)
+    const low = text.toLowerCase()
+    const at = words.map((w) => low.indexOf(w)).filter((i) => i >= 0).sort((a, b) => a - b)[0] ?? -1
+    if (at < 0) return null
+    const from = Math.max(0, at - 60), piece = text.slice(from, at + 140)
+    const re = new RegExp(`(${words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'ig')
+    return <>{from > 0 ? '…' : ''}{piece.split(re).map((p, i) => (i % 2 ? <mark key={i} className="lib-mark">{p}</mark> : p))}…</>
+  }
+  const local = useMemo(() => (q.trim().length > 1 ? ms.search(q.trim()).slice(0, 6) : []), [ms, q])
   const shelfTitle = useMemo(() => new Map([...idx.shelves.map((s) => [s.id, s.title] as const), ['chronicle', 'The Journal'] as const]), [idx])
+  // memory's BM25 over every admitted passage (plan-8018 S3) — books AND wiki pages, ranked by the server. The
+  // in-browser MiniSearch stays as the fallback for an org without library.search (or a failed fetch).
+  const [srv, setSrv] = useState<SrvHit[] | null>(null)
+  useEffect(() => {
+    const t = q.trim()
+    if (t.length < 2) { setSrv(null); return }
+    let live = true
+    const id = setTimeout(() => {
+      api<{ hits: SrvHit[]; unavailable?: boolean }>(`/memory/search?q=${encodeURIComponent(t)}&k=12`)
+        .then((d) => live && setSrv(d.unavailable ? null : d.hits)).catch(() => live && setSrv(null))
+    }, 140)
+    return () => { live = false; clearTimeout(id) }
+  }, [q])
+  const hits: Row[] = useMemo(() => {
+    if (srv) {
+      const seen = new Set<string>()
+      return srv.filter((h) => { const k = h.kind === 'book' ? `${h.shelf}/${h.slug}` : h.slug; return !seen.has(k) && !!seen.add(k) })
+        .slice(0, 7).map((h) => {
+          const b = h.kind === 'book' ? bySlug.get(h.slug) : undefined
+          return {
+            key: h.id, title: b?.title ?? h.heading ?? h.slug,
+            label: h.kind === 'book' ? (shelfTitle.get(h.shelf ?? '') ?? h.shelf ?? '') : 'Wiki',
+            section: b && h.heading && h.heading !== b.title ? h.heading : null,
+            body: marked_(h.snippet),
+            open: () => (h.kind === 'book' && h.shelf ? go(h.shelf, h.slug) : void (location.hash = '#/memory')),
+          }
+        })
+    }
+    return local.map((h) => ({ key: h.id as string, title: h.title as string, label: shelfTitle.get(h.shelf as string) ?? (h.shelf as string),
+      section: null, body: snippet(h.text as string) ?? (h.abstract as string), open: () => go(h.shelf as string, h.slug as string) }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [srv, local, bySlug, shelfTitle, go])
   useEffect(() => setSel(-1), [q])
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
@@ -234,15 +279,6 @@ function Desk({ idx, bySlug, go }: { idx: Index; bySlug: Map<string, Card>; go: 
     }
   }
 
-  const snippet = (text: string) => {
-    const words = q.trim().toLowerCase().split(/\s+/).filter((w) => w.length > 1)
-    const low = text.toLowerCase()
-    const at = words.map((w) => low.indexOf(w)).filter((i) => i >= 0).sort((a, b) => a - b)[0] ?? -1
-    if (at < 0) return null
-    const from = Math.max(0, at - 60), piece = text.slice(from, at + 140)
-    const re = new RegExp(`(${words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'ig')
-    return <>{from > 0 ? '…' : ''}{piece.split(re).map((p, i) => (i % 2 ? <mark key={i} className="lib-mark">{p}</mark> : p))}…</>
-  }
   const answerHtml = useMemo(() => (ask?.answer ? render(ask.answer, bySlug) : ''), [ask?.answer, bySlug])
 
   return (
@@ -253,7 +289,7 @@ function Desk({ idx, bySlug, go }: { idx: Index; bySlug: Map<string, Card>; go: 
           onKeyDown={(e) => {
             if (e.key === 'ArrowDown') { e.preventDefault(); setSel((v) => Math.min(hits.length - 1, v + 1)) }
             else if (e.key === 'ArrowUp') { e.preventDefault(); setSel((v) => Math.max(-1, v - 1)) }
-            else if (e.key === 'Enter') { if (sel >= 0 && hits[sel]) go(hits[sel].shelf, hits[sel].slug); else if (q.trim()) librarian(q.trim()) }
+            else if (e.key === 'Enter') { if (sel >= 0 && hits[sel]) hits[sel].open(); else if (q.trim()) librarian(q.trim()) }
             else if (e.key === 'Escape') setQ('')
           }}
           className="flex-1 min-w-0 bg-transparent outline-none text-[16px] text-ink placeholder:text-ink-mute" />
@@ -270,13 +306,14 @@ function Desk({ idx, bySlug, go }: { idx: Index; bySlug: Map<string, Card>; go: 
               <span className="ml-auto text-[11px] text-ink-mute">Enter</span>
             </button>
             {hits.map((h, i) => (
-              <button key={h.id} onMouseEnter={() => setSel(i)} onClick={() => go(h.shelf, h.slug)}
+              <button key={h.key} onMouseEnter={() => setSel(i)} onClick={h.open}
                 className={`w-full text-left px-5 py-3 border-b border-line/60 last:border-0 ${i === sel ? 'bg-deck-3' : ''}`}>
-                <div className="flex items-baseline gap-2">
-                  <span className="lib-display text-[19px] text-ink">{h.title}</span>
-                  <span className="text-[11px] uppercase tracking-[0.14em] text-ink-mute">{shelfTitle.get(h.shelf) ?? h.shelf}</span>
+                <div className="flex items-baseline gap-2 min-w-0">
+                  <span className="lib-display text-[19px] text-ink truncate">{h.title}</span>
+                  <span className="text-[11px] uppercase tracking-[0.14em] text-ink-mute shrink-0">{h.label}</span>
                 </div>
-                <div className="mt-0.5 text-[13px] leading-snug text-ink-dim line-clamp-2">{snippet(h.text) ?? h.abstract}</div>
+                {h.section && <div className="text-[12px] text-cyan/90 truncate">§ {h.section}</div>}
+                <div className="mt-0.5 text-[13px] leading-snug text-ink-dim line-clamp-2">{h.body}</div>
               </button>
             ))}
           </motion.div>

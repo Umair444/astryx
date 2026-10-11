@@ -2899,6 +2899,28 @@ async def library_index():
     return {"shelves": sorted(shelves, key=lambda s: s.get("order", 99)), "books": books}
 
 
+@app.get("/api/memory/search")
+async def library_search(q: str = "", k: int = 8):
+    """The reference desk's search: memory's BM25 over every admitted passage (library.search, plan-8018 S3). Each
+    hit is a graph name: `library:<shelf>/<slug>[#anchor]` for a book, a wiki stem otherwise. The snippet is plain
+    text with matches marked ⟦…⟧ (never HTML); the desk escapes it and styles the marks."""
+    q = q.strip()[:200]
+    if not q:
+        return {"hits": []}
+    try:
+        rows = await pool.fetch("SELECT node_id, heading, snippet, score FROM library.search($1, $2)", q, max(1, min(k, 25)))
+    except asyncpg.PostgresError:                           # library.* absent (an org before 8018 S3): no server hits
+        return {"hits": [], "unavailable": True}
+    hits = []
+    for r in rows:
+        nid = r["node_id"]
+        m = re.match(r"^library:([a-z0-9][a-z0-9-]*)/([a-z0-9][a-z0-9-]*)(?:#(.*))?$", nid)
+        hits.append({"id": nid, "kind": "book" if m else "wiki", "shelf": m.group(1) if m else None,
+                     "slug": m.group(2) if m else nid.split("#")[0], "anchor": (m.group(3) if m else None),
+                     "heading": r["heading"], "snippet": r["snippet"], "score": float(r["score"])})
+    return {"hits": hits}
+
+
 @app.get("/api/memory/library/{shelf}/{slug}")
 async def library_book(shelf: str, slug: str):
     """One book: its frontmatter and markdown body."""
