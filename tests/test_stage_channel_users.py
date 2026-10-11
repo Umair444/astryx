@@ -2,7 +2,9 @@
 """test_stage_channel_users — no oracle stages channel/server.mjs BY ITSELF (10-11: three oracles copied server.mjs
 alone, so its static sibling import ./trigger_name.mjs was missing and the staged ear crashed at startup). Staging goes
 through tests/_stage_channel.stage_server, which copies the sibling modules by derivation. Static: reads every
-tracked tests/*.py, runs nothing."""
+tracked tests/*.py, runs nothing. It is a SPELLING detector, fail-fast only: it catches the 10-11 spellings (a copy
+whose call names 'server.mjs' or SERVER), not a renamed variable (a2's mutant B: SRV = …; copy2(SRV, …) passes it).
+The boundary itself is behavioural: a lone-staged server can't LISTEN, so its own oracle goes RED or 77."""
 import re
 import sys
 from pathlib import Path
