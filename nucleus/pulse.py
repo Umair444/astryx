@@ -72,6 +72,23 @@ def discover(path: Path) -> list[dict] | str:
     return json.loads(r.stdout)
 
 
+def retired_notice(conn, agent: str, name: str, fname: str, tomb: Path):
+    """Say ONCE per tombstone that a name its file defines is held off by it (a4 #49496): a re-create that failed to
+    clear it is then visible, never a silent no-op. Once = no such message to the agent since the tombstone was
+    written (its mtime), so the 60 s timer never repeats it and a fresh trigger_rm earns a fresh notice."""
+    key = f"retired {name}"
+    try:
+        since = datetime.fromtimestamp(tomb.stat().st_mtime).astimezone()
+        if conn.execute("SELECT 1 FROM messages WHERE to_agent=%s AND from_agent='pulse' AND body LIKE %s "
+                        "AND ts >= %s LIMIT 1", (agent, f"[trigger {key}]%", since)).fetchone():
+            return
+    except Exception:
+        return                                          # never let the notice break reconcile
+    say(agent, f"[trigger {key}] {name} is defined in triggers/{agent}/{fname} but RETIRED by trigger_rm "
+               f"(triggers/{agent}/.retired/{name}), so the pulse keeps it off. To revive it, trigger_set the file "
+               f"again.", conn, coalesce_key=key)
+
+
 def reconcile(conn):
     seen: set[tuple[str, str]] = set()
     for f in sorted((REPO / "triggers").glob("*/*.py")):
@@ -105,6 +122,12 @@ def reconcile(conn):
                 coalesce_key=f"file {f.name}")
             continue
         for t in found:
+            # RETIRED (plan-9853 D2): trigger_rm's tombstone, per (agent, name). The file still defines it, so without
+            # this the upsert below re-enables it within a minute. Not in `seen` either, so the loop after disables it.
+            tomb = REPO / "triggers" / agent / ".retired" / t["name"]
+            if tomb.exists():
+                retired_notice(conn, agent, t["name"], f.name, tomb)
+                continue
             seen.add((agent, t["name"]))
             conn.execute(
                 """INSERT INTO triggers (agent, name, schedule, kind, check_src, note, next_fire)
@@ -395,6 +418,17 @@ def tick():
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["--names"] and len(sys.argv) == 3:
+        # The names reconcile would register from ONE file (discover: its import closure, multi-line decorators,
+        # shims), as a JSON list; rc 1 with the reason if it doesn't load. trigger_set clears exactly these
+        # tombstones (a4 #49496). Run by the caller's interpreter, as the tick's own children are.
+        PY = sys.executable
+        found = discover(Path(sys.argv[2]).resolve())
+        if isinstance(found, str):
+            print(found, file=sys.stderr)
+            sys.exit(1)
+        print(json.dumps([t["name"] for t in found]))
+        sys.exit(0)
     try:
         tick()
     except Exception as e:

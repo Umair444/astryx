@@ -627,8 +627,9 @@ _act_ccompact() {
   cat > triggers/seed/context_compact.py <<'EOF'
 """Live install of the shipped context-compact trigger. The logic lives TRACKED in
 nucleus/shipped_triggers/context_compact.py (one writer; this shim only deploys it).
-Installed by init.sh at founding; the org may replace it with an agent-authored one —
-delete this file and the pulse retires it on the next tick."""
+Installed by init.sh at founding; the org may replace it with an agent-authored one.
+To retire it: `trigger_rm context_compact` (a tombstone the pulse honours). Deleting this file
+does NOT retire it: init.sh would install it again."""
 from nucleus.shipped_triggers.context_compact import context_compact  # noqa: F401
 EOF
   say "installed context-compact trigger (seed) — /compact for any session past 80% of its window"
