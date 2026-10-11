@@ -90,6 +90,16 @@ restart_org() {
   local me="${ASTRYX_AGENT:-}" bad=0
   local pgc=""
   [ "$only" = residents ] || pgc=$(docker ps --format '{{.Names}}\t{{.Ports}}' | awk -F'\t' '/->5432\/tcp/ {print $1; exit}')
+  if [ -n "$pgc" ] && [ "$only" != force ]; then
+    # a database bounce under a running check or drill turns its verdicts into noise (10-11, seed #45236). Refuse while
+    # one is live; `deploy.sh restart --force` overrides. The bracket classes keep this grep from matching itself.
+    local live; live=$(ps -eo pid,args | grep -v grep | grep -E 'check[.]sh|mutation_prob[e]|restore_dril[l]|branch_chec[k]' | head -5 || true)
+    if [ -n "$live" ]; then
+      echo "  ✗ refusing to restart the database: a check or drill is running (deploy.sh residents leaves the db alone;"
+      echo "    deploy.sh restart --force overrides):"; printf '      %s\n' "$live" | cut -c1-140
+      return 1
+    fi
+  fi
   if [ -n "$pgc" ]; then
     echo "· restarting the database ($pgc)…"; docker restart "$pgc" >/dev/null
     for _ in $(seq 1 60); do psql "$DSN" -qc 'SELECT 1' >/dev/null 2>&1 && break; sleep 2; done
@@ -189,7 +199,7 @@ case "$what" in
           sudo cp "$ROOT"/units/astryx-*.service "$ROOT"/units/astryx-*.timer /etc/systemd/system/
           sudo systemctl daemon-reload && echo "  ✓ units synced + daemon reloaded" ;;
   all)    build_web && restart astryx-observatory && restart astryx-whatsapp ;;
-  restart) restart_org ;;                                         # the WHOLE org: db, services, residents
+  restart) if [ "${2:-}" = --force ]; then restart_org force; else restart_org; fi ;;                                         # the WHOLE org: db, services, residents
   residents) restart_org residents ;;                             # ONLY the residents: no db, no services
   reload) shift; bs=("$@"); [ ${#bs[@]} -eq 0 ] && bs=(whatsapp telegram discord)
           rc=0; for b in "${bs[@]}"; do reload "$b" || rc=1; done; exit $rc ;;
