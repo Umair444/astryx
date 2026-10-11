@@ -15,8 +15,9 @@ mcp/phone (two tools, the same shape as hands). This module is the device layer 
   surface(serial)       {tier, packages, unlisted}: which windows are visible, classified by mcp/phone's public
                         manifest (C3)
 
-The owner's STOP is Hands' own stop flag (nucleus/hands_desktop.stopped): one stop covers an agent's desktop and
-its phone. Nothing here stores screen content.
+The STOP is Hands' stop flag keyed by the AGENT's name (nucleus/hands_desktop.stopped; set with `hands_desktop.py stop
+<agent>`). The observatory's Hands stop button keys by DESKTOP name, so it doesn't reach a phone yet: the phone's own
+view and stop in the observatory is the next slice. Nothing here stores screen content.
 
     venv/bin/python nucleus/android.py status
     venv/bin/python nucleus/android.py boot <avd> <agent>

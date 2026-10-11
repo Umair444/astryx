@@ -56,10 +56,11 @@ To turn it off, set `ANDROID_ENABLED=0` (or remove the line) and respawn. The SD
 
 ## Watching, joining and stopping
 
-- **Stop:** the owner's stop for an agent's hands (observatory → Hands → stop) also stops its phone: every phone
-  action is refused until the owner resumes. `venv/bin/python nucleus/android.py shutdown` switches the phone off.
-- **Watch and join live:** not in this release. The phone runs without a window; a live view, gated to the owner's
-  session, is the next slice.
+- **Stop an agent's phone:** `venv/bin/python nucleus/hands_desktop.py stop <agent>` refuses every phone action by
+  that agent until `… resume <agent>`. `venv/bin/python nucleus/android.py shutdown` switches the phone off.
+  The observatory's Hands stop button does **not** reach a phone yet: it stops a *desktop*, by the desktop's name.
+- **Watch, join and stop from the observatory:** not in this release. The phone runs without a window; a live view
+  with its own stop, gated to the owner's session, is the next slice.
 
 ## Privacy
 

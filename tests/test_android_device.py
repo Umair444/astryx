@@ -15,7 +15,8 @@ in a throwaway fixture database (ANDROID_DSN, set explicitly); stop flags in a t
   D5 a notification POSTED with the shade closed adds no window off the public list (heads-up is off: the status bar
      shows an icon, no text); the shade PULLED DOWN makes the stamp "personal" (C3 RED arm)
   D6 a second agent acting on the phone is refused, naming the driver (C4); after act("done") it may drive
-  D7 the owner's stop for an agent refuses its phone actions; resume restores them
+  D7 the agent's stop flag (hands_desktop.stop <agent>, today's CLI path) refuses its phone actions; resume restores
+     them. NOT the observatory's button: that stops a DESKTOP by its name and doesn't reach a phone (S2)
   D8 shutdown frees the VM slot and the phone's driver hold; with a "Windows VM" running (a stand-in container named
      by WINDOWS_CONTAINER) boot is refused and the phone stays off
 """
@@ -198,7 +199,7 @@ try:
         # ── D7 ─────────────────────────────────────────────────────────────────────────────────────────────────
         hd.stop("phone-oracle-b", "the owner stopped your hands (oracle)")
         out = run(srv.act("foreground", device=AVD))
-        want("D7 the owner's stop refuses the agent's phone action", str(out[0]).startswith("STOPPED"), str(out[:1]))
+        want("D7 the agent's stop flag refuses its phone action", str(out[0]).startswith("STOPPED"), str(out[:1]))
         hd.resume("phone-oracle-b")
         out = run(srv.act("button", device=AVD, button="HOME"))
         want("D7 resume restores it (upstream pressed HOME)", "Pressed the button: HOME" in str(out[0]), str(out[:1]))
