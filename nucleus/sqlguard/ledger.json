@@ -40,8 +40,8 @@
   "bridges/providers/canvas.py::CanvasProvider.list_chats\u001fselect thread, user_name, agent, title from canvas_threads where not archived order by updated_at desc limit 100": [
    "canvas: trust lines, claim, shell"
   ],
-  "hooks/step.py::handle_stop\u001finsert into turns (agent, session_id, started_at, ended_at, duration_ms, source, input_prompt, input_msg_id, num_responses, num_tools, char_count, tokens_in, tokens_out, model, stop_reason, raw_payload, usage_snapshot, goal_id) values (?,?,?::timestamptz, now(), ?, ?,?,?,?,?,?,?,?,?,?,?,?,?) returning id": [
-   "doctor units-drift: a live orphan is not told to self-delete"
+  "hooks/step.py::_labelled_auto_deliver\u001fupdate messages set turn_id=? where id=?": [
+   "release seats: a labelled member writes only through the door"
   ],
   "hooks/step.py::handle_stop\u001fupdate classifications set turn_id=? where agent=? and turn_id is null and (session_id is null or session_id = ?) and ts >= ?::timestamptz - interval '10 seconds'": [
    "doctor units-drift: a live orphan is not told to self-delete"
@@ -49,16 +49,7 @@
   "hooks/step.py::handle_stop\u001fupdate messages set turn_id=? where from_agent=? and from_org='local' and turn_id is null and ts >= ?::timestamptz": [
    "doctor units-drift: a live orphan is not told to self-delete"
   ],
-  "hooks/step.py::handle_stop\u001fupdate steps set turn_id=? where agent=? and turn_id is null and ts >= ?::timestamptz": [
-   "doctor units-drift: a live orphan is not told to self-delete"
-  ],
-  "hooks/step.py::handle_stop\u001fupdate turns set num_steps=(select count(*) from steps where turn_id=?) where id=?": [
-   "doctor units-drift: a live orphan is not told to self-delete"
-  ],
   "hooks/step.py::main\u001finsert into steps (agent, kind, content, turn_id, tokens_in, tokens_out) values (?,'response',?,?,?,?)": [
-   "doctor units-drift: a live orphan is not told to self-delete"
-  ],
-  "hooks/step.py::usage_snapshot\u001fselect ended_at from turns where usage_snapshot is not null order by ended_at desc limit 1": [
    "doctor units-drift: a live orphan is not told to self-delete"
   ],
   "mcp/memory/resolvers.py::_run_cypher\u001f*": [
@@ -229,6 +220,9 @@
   ],
   "nucleus/privilege_census.py::live\u001fselect rolname, rolsuper, rolcreatedb, rolcreaterole from pg_roles where rolcanlogin and rolname !~ '^bc_' order by 1": [
    "privilege census: classes discriminate, surfaces and DSN sources assigned"
+  ],
+  "nucleus/release.py::send_row\u001fupdate messages set delivery = ? where id = ?": [
+   "release seats: a labelled member writes only through the door"
   ],
   "nucleus/rotate_db_password.py::rotate\u001fselect rolpassword from pg_authid where rolname=?": [
    "db password rotation leaks nothing (5497 S3b BC-1)"
@@ -594,7 +588,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 342,
+  "debt_rows": 338,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -849,25 +843,16 @@
    "reason": "seed",
    "tk": "sha256t:0c5ea99366c26d18ee0d1bab61874a0d1027af520726019ffcee82cfa801dfba"
   },
-  "hooks/step.py::handle_stop\u001finsert into messages (from_agent, from_org, to_agent, to_org, thread, intent, body, turn_id) values (?,'local',?,'local',?,'chat',?,?)": {
-   "debt": "NOT-SEARCHED-AT-SEED",
-   "reason": "seed",
-   "tk": "sha256t:cf329025297d9be7539c49fce2f422283895aee01ab0060723c185b692592e71"
-  },
-  "hooks/step.py::handle_stop\u001finsert into turns (agent, session_id, started_at, ended_at, duration_ms, source, input_prompt, input_msg_id, num_responses, num_tools, char_count, tokens_in, tokens_out, model, stop_reason, raw_payload, usage_snapshot, goal_id) values (?,?,?::timestamptz, now(), ?, ?,?,?,?,?,?,?,?,?,?,?,?,?) returning id": {
+  "hooks/step.py::_labelled_auto_deliver\u001fupdate messages set turn_id=? where id=?": {
+   "admitted": "2026-10-11",
    "debt": "EXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:4bf593c31942ff5d940fb064106004756b44e442773537ad8b6ce21f43673d62"
+   "reason": "plan-9139 S1b: stamps turn_id on the row send_row just inserted (its RETURNING id, same savepoint), so exactly 1 row by construction; driven in a stamped fixture by tests/test_release_seats.py",
+   "tk": "sha256t:49ee6a665c1289aa4d72b3ff31f8ed59208e53f00a28a67731e17be21dee12ff"
   },
   "hooks/step.py::handle_stop\u001fselect (regexp_match(thread, '^(?:plan|goal)-(\\d+)$'))[1]::bigint from messages where id=?": {
    "debt": "NOT-SEARCHED-AT-SEED",
    "reason": "seed",
    "tk": "sha256t:18de4898d3209b446c984c31c569e404175d455749eef4a9652cbf91a18e4702"
-  },
-  "hooks/step.py::handle_stop\u001fselect count(*) from messages where turn_id=? and to_agent=?": {
-   "debt": "NOT-SEARCHED-AT-SEED",
-   "reason": "seed",
-   "tk": "sha256t:f55451d664f34f93ebd66406109423fb08717970db4e633469953565917b6c1e"
   },
   "hooks/step.py::handle_stop\u001fselect from_agent, from_org, thread from messages where id=?": {
    "debt": "NOT-SEARCHED-AT-SEED",
@@ -883,16 +868,6 @@
    "debt": "EXECUTED",
    "reason": "seed",
    "tk": "sha256t:f09629621bb079493a9acd454057f9546e912b7a3e064a5752838f16ab02f466"
-  },
-  "hooks/step.py::handle_stop\u001fupdate steps set turn_id=? where agent=? and turn_id is null and ts >= ?::timestamptz": {
-   "debt": "EXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:1b330334f809aee1e3c9096bfd1bcedbeab9a2436f3824dc548cf84253e266e5"
-  },
-  "hooks/step.py::handle_stop\u001fupdate turns set num_steps=(select count(*) from steps where turn_id=?) where id=?": {
-   "debt": "EXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:6d376c1c0d3cc3ec7735279fea10cfe0635118bc71ca075892964bfb87e225b4"
   },
   "hooks/step.py::main\u001finsert into steps (agent, kind, content) values (?,'response',?)": {
    "debt": "NOT-SEARCHED-AT-SEED",
@@ -918,11 +893,6 @@
    "debt": "EXECUTED",
    "reason": "seed",
    "tk": "sha256t:ef9b4d50690bc80791e620f4d09f359fce22df06f02956d370adc376790d5db9"
-  },
-  "hooks/step.py::usage_snapshot\u001fselect ended_at from turns where usage_snapshot is not null order by ended_at desc limit 1": {
-   "debt": "EXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:9d2fb8b3bdf77ab1a65a4c4c0476873ba1bc0489f423d91fb2523eedc76421fd"
   },
   "hooks/usage.py::<module>\u001fselect coalesce(max((raw_payload->'usage'->>'context')::bigint),0) from (select raw_payload from turns where agent=? order by id desc limit 200) t": {
    "admitted": "2026-10-11",
@@ -1302,6 +1272,12 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:aca2cbe30c6f7b2d5fb7497de96e37ccd8c19d36c92f0312aae33a84180c53e1"
+  },
+  "nucleus/release.py::send_row\u001fupdate messages set delivery = ? where id = ?": {
+   "admitted": "2026-10-11",
+   "debt": "EXECUTED",
+   "reason": "plan-9139 S1b: writes the stamp onto the row the same transaction's INSERT \u2026 RETURNING id just created, so it affects exactly 1 row by construction and the 0-row arm doesn't exist; driven in a stamped fixture by tests/test_release_seats.py, but an UPDATE by primary key has no WHERE that can respond",
+   "tk": "sha256t:8c49daa55f2023987724b4198bf32a0b1d573d894b6856332c2224cf0baff2a9"
   },
   "nucleus/rotate_db_password.py::at_rest_count\u001fselect count(*) from turns where position(? in raw_payload::text) > 0 or position(? in coalesce(input_prompt,'')) > 0": {
    "admitted": "2026-09-30",
