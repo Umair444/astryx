@@ -86,12 +86,33 @@ with fixture_db() as fx:
     nxt["e"] = unit(1, 0)
     arm("an empty table starts the numbering again at voice-1", voiceprint.identify(c, clip)["label"] == "voice-1")
 
+    # the 10-11 lesson: a trusted print only learns from near-certain, short clips (it learnt a TV and matched it)
+    c.execute("DELETE FROM voices")
+    c.execute("INSERT INTO voices (label, name, trust, embedding) VALUES ('voice-1', 'Umair', 'owner', %s)", (unit(1, 0).tolist(),))
+    nxt["e"] = unit(1, 0.9)                                  # cos 0.74: above LEARN, below LEARN_TRUSTED
+    cs = float(np.dot(nxt["e"], unit(1, 0)))
+    voiceprint.identify(c, clip)
+    n1 = c.execute("SELECT n FROM voices WHERE label='voice-1'").fetchone()[0]
+    arm(f"a trusted print doesn't learn from a mere match (cos {cs:.2f} < {voiceprint.LEARN_TRUSTED})",
+        cs < voiceprint.LEARN_TRUSTED and n1 == 1, (cs, n1))
+    nxt["e"] = unit(1, 0)
+    voiceprint.identify(c, np.zeros(16000 * 10, np.float32))
+    n2 = c.execute("SELECT n FROM voices WHERE label='voice-1'").fetchone()[0]
+    arm("no print learns from a long (likely mixed) clip", n2 == 1, n2)
+    voiceprint.identify(c, clip)
+    arm("…but a near-certain short clip still sharpens it", c.execute("SELECT n FROM voices WHERE label='voice-1'").fetchone()[0] == 2)
+    arm("similarity to a known voice is its cosine", abs(voiceprint.similarity(c, clip, "voice-1") - 1.0) < 1e-3)
+    arm("similarity to an unknown label can't be judged (None)", voiceprint.similarity(c, clip, "voice-404") is None)
+
     # ── the router ─────────────────────────────────────────────────────────────────────────────────────────────
     arm("no conversation in an empty room", room.conversing(c) is None)
     mid = room.route(c, "seed, what is going on", 1, "voice-1: Umair · trust owner", 0.9, names=["seed", "painter"])
     row = c.execute("SELECT from_agent, to_agent, thread FROM messages WHERE id=%s", (mid,)).fetchone()
     arm("an addressed sentence is a wire row from 'room' to the agent on the room thread", row == ("room", "seed", room.THREAD), row)
-    arm("…and the room is now in conversation with that agent", room.conversing(c) == "seed")
+    arm("the room's own forwarded clip doesn't open a conversation (it would renew itself)", room.conversing(c) is None)
+    c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES ('seed', 'room', %s, 'voice', '{}')",
+              (room.THREAD,))
+    arm("a voice record isn't a conversational turn", room.conversing(c) is None)
     c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES ('painter', 'room', %s, 'chat', 'hi')",
               (room.THREAD,))
     arm("an agent answering the room takes the conversation", room.conversing(c) == "painter")

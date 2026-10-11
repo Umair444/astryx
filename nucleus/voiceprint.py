@@ -20,6 +20,8 @@ MODEL_URL = ("https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-re
              "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx")
 MATCH = float(os.environ.get("VOICEPRINT_MATCH", "0.55"))      # cosine at/above: the same voice
 LEARN = float(os.environ.get("VOICEPRINT_LEARN", "0.62"))      # cosine at/above: fold the clip into the print
+LEARN_TRUSTED = float(os.environ.get("VOICEPRINT_LEARN_TRUSTED", "0.80"))  # a trusted print only learns from near-certain matches
+LEARN_MAX_S = 8.0                                              # longer clips are usually mixed (a TV under the talker): never learnt
 MIN_S = 1.0                                                    # shorter clips carry too little voice to judge
 _ex = None
 _lock = threading.Lock()
@@ -59,7 +61,10 @@ def identify(conn, pcm: np.ndarray, sr: int = 16000) -> dict | None:
             best, best_sim = row, sim
     if best is not None and best_sim >= MATCH:
         vid, label, name, trust, emb, n = best
-        if best_sim >= LEARN:                                   # sharpen the print: a running mean of matches
+        # sharpen the print (a running mean of matches), but never from a long clip, and a trusted print only from a
+        # near-certain match: on 10-11 an owner print learnt TV clips and then matched the TV as the owner at 83%
+        bar = LEARN_TRUSTED if trust in ("owner", "verified") else LEARN
+        if best_sim >= bar and len(pcm) <= LEARN_MAX_S * sr:
             merged = (np.asarray(emb, dtype=np.float32) * n + e) / (n + 1)
             conn.execute("UPDATE voices SET embedding=%s, n=n+1, last_heard=now() WHERE id=%s",
                          (merged.tolist(), vid))
@@ -71,6 +76,16 @@ def identify(conn, pcm: np.ndarray, sr: int = 16000) -> dict | None:
     label = f"voice-{nxt}"
     conn.execute("INSERT INTO voices (label, embedding) VALUES (%s, %s)", (label, e.tolist()))
     return {"label": label, "name": None, "trust": "unknown", "sim": round(best_sim, 3) if best else None, "new": True}
+
+
+def similarity(conn, pcm: np.ndarray, label: str, sr: int = 16000) -> float | None:
+    """How much a clip sounds like one known voice (cosine), or None when it can't be judged. Read-only."""
+    e = embed(pcm, sr)
+    row = conn.execute("SELECT embedding FROM voices WHERE label=%s", (label,)).fetchone() if e is not None else None
+    if not row or row[0] is None:
+        return None
+    v = np.asarray(row[0], dtype=np.float32)
+    return float(np.dot(e, v / (np.linalg.norm(v) or 1)))
 
 
 def describe(v: dict | None) -> tuple[str, float | None]:

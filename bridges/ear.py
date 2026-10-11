@@ -80,6 +80,7 @@ class Store:
         self.last_maintain: dict | None = None
         self.room_error: str | None = None
         self.talking, self.talk_at = None, 0.0
+        self.talker: str | None = None                         # the voice that last addressed an agent by name
         self.wake = {"named": 0, "talking": 0, "unaddressed": 0, "open": 0}
 
     def _conn(self):
@@ -129,8 +130,18 @@ class Store:
                 except Exception:                               # noqa: BLE001
                     self.talking = None
             self.talk_at = now
-        if self.talking:
-            return "talking"
+        if self.talking:                                        # a follow-up: only from the voice that started it
+            if not self.talker:
+                return "talking"
+            from nucleus import voiceprint
+            with self.lock:
+                try:
+                    sim = voiceprint.similarity(self._conn(), pcm, self.talker)
+                except Exception:                               # noqa: BLE001: can't judge → let it through
+                    sim = None
+            if sim is None or sim >= voiceprint.MATCH:
+                return "talking"
+            return wake.heard(pcm, room.roster())             # another voice must name an agent, like anyone
         return wake.heard(pcm, room.roster())
 
     def route_room(self, text: str, row, pcm=None, wake=None):
@@ -148,6 +159,8 @@ class Store:
                 if v:
                     c.execute("UPDATE utterances SET speaker=%s WHERE ts=%s AND id=%s", (v["label"], row[0], row[1]))
                 who, conf = voiceprint.describe(v)
+                if v and (wake or room.address(text)):          # named an agent: this voice owns the follow-ups
+                    self.talker = v["label"]
                 return room.route(c, text, row[1], who, conf, wake=wake)
             except Exception as e:                              # noqa: BLE001: counted, never raised
                 self.room_error = type(e).__name__

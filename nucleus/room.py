@@ -73,13 +73,14 @@ FOLLOW_S = 90                                       # a conversation: unaddresse
 
 
 def conversing(conn) -> str | None:
-    """The agent the room is in conversation with: the last one to answer the room, or to be addressed, within
-    FOLLOW_S seconds. A follow-up needs no name, as in a real conversation."""
+    """The agent the room is in conversation with: the last one to SPEAK to the room (a chat reply) within FOLLOW_S
+    seconds. A follow-up needs no name, as in a real conversation. Only spoken replies open the window: counting the
+    room's own forwarded clips made it self-renewing (10-11: each forwarded TV line held the window open for the
+    next), and a voice record or a screen action isn't a conversational turn."""
     try:
         row = conn.execute(
-            "SELECT CASE WHEN to_agent='room' THEN from_agent ELSE to_agent END FROM messages "
-            "WHERE (to_agent='room' OR from_agent='room') AND thread=%s AND ts > now() - make_interval(secs => %s) "
-            "ORDER BY id DESC LIMIT 1", (THREAD, FOLLOW_S)).fetchone()
+            "SELECT from_agent FROM messages WHERE to_agent='room' AND coalesce(intent, 'chat')='chat' AND thread=%s "
+            "AND ts > now() - make_interval(secs => %s) ORDER BY id DESC LIMIT 1", (THREAD, FOLLOW_S)).fetchone()
         return row[0] if row else None
     except Exception:                               # noqa: BLE001: a follow-up is a convenience, never a failure
         return None
