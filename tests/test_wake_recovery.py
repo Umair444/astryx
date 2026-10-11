@@ -52,6 +52,7 @@ test that only asserts what did NOT arrive.
 
 Run: venv/bin/python tests/test_wake_recovery.py   (wire into nucleus/check.sh)
 """
+from _stage_channel import stage_server  # noqa: E402
 import json
 import os
 import re
@@ -180,13 +181,7 @@ def start_server(tag: str, **env_extra) -> tuple[subprocess.Popen, Path]:
     """
     d = stage / tag
     (d / "channel").mkdir(parents=True)
-    shutil.copy2(SERVER, d / "channel" / "server.mjs")
-    # server.mjs's sibling modules too (DERIVED, not listed): a static import of one that isn't staged crashes the copy
-    # at startup (10-11: channel/trigger_name.mjs, imported statically since 0c95e37, failed both survival oracles)
-    for mod in (REPO / "channel").glob("*.mjs"):
-        if mod.name != "server.mjs":
-            shutil.copy2(mod, d / "channel" / mod.name)
-    (d / "channel" / "node_modules").symlink_to(REPO / "channel" / "node_modules")
+    stage_server(d / "channel", SERVER)          # server.mjs + its sibling modules (tests/_stage_channel.py)
     (d / ".env").write_text(f"ASTRYX_DSN={PROBE_DSN}\n")
     env = {**os.environ, "ASTRYX_AGENT": PROBE_AGENT, "ASTRYX_DSN": PROBE_DSN,
            "ASTRYX_SUBS_REFRESH_MS": "60000", **env_extra}
