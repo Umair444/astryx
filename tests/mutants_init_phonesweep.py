@@ -1,0 +1,26 @@
+"""Authored mutants for init.sh's phonesweep node (tests/test_init_phonesweep.py), run by nucleus/mutation_probe.py:
+
+    venv/bin/python nucleus/mutation_probe.py tests/mutants_init_phonesweep.py
+"""
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+SUBJECT = REPO / "init.sh"
+ORACLE = REPO / "tests" / "test_init_phonesweep.py"
+ENV = "INIT_PHONESWEEP_SRC"
+TIMEOUT = 120
+
+MUTANTS = {
+    'installs without the opt-in':
+        ('_chk_phonesweep() { _android_on || return 0; ',
+         '_chk_phonesweep() { '),
+    'only looks under seed (not deferential)':
+        ('ls triggers/*/phone_resume_sweep.py',
+         'ls triggers/seed/phone_resume_sweep.py'),
+    "the node isn't in the reconciler's order":
+        ('"android|interior" "phonesweep|interior" ',
+         '"android|interior" '),
+    'the shim imports something else':
+        ('from nucleus.shipped_triggers.phone_resume_sweep import phone_resume_sweep  # noqa: F401\nEOF',
+         'from nucleus.shipped_triggers.context_compact import context_compact  # noqa: F401\nEOF'),
+}

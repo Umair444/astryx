@@ -17,4 +17,6 @@ MUTANTS = {
     "boot ignores the phone desktop's stop":
         ('            why = hd.stopped(AGENT) or hd.stopped(droid.phone_desktop(device))\n            if why:\n                raise hd.Stopped(why)\n            s = await',
          '            why = hd.stopped(AGENT)\n            if why:\n                raise hd.Stopped(why)\n            s = await'),
+    "the boot answer claims a live view when headless":
+        ('if droid.viewed(device) else', 'if True else'),
 }
