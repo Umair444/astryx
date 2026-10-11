@@ -114,15 +114,15 @@ with open(big, "wb") as f:
     f.truncate(E.MAX_BYTES + 1)
 arm("over the size limit: refused", refused(big))
 
-route_dm_owner = {"enabled": True, "chat": "920000000001@s.whatsapp.net", "counterpart": "owner"}
-route_dm_undeclared = {"enabled": True, "chat": "920000000001@s.whatsapp.net"}
-route_group = {"enabled": True, "chat": "120363000000000000@g.us", "counterpart": "owner"}
+route_dm_owner = {"enabled": True, "chat": "1@s.whatsapp.net", "counterpart": "owner"}
+route_dm_undeclared = {"enabled": True, "chat": "1@s.whatsapp.net"}
+route_group = {"enabled": True, "chat": "2@g.us", "counterpart": "owner"}
 arm("owner_only: a WhatsApp DM route declaring counterpart owner", E.owner_only("whatsapp", route_dm_owner))
 arm("owner_only: a DM with no declared counterpart is not", not E.owner_only("whatsapp", route_dm_undeclared))
 arm("owner_only: a group is not, whatever it declares", not E.owner_only("whatsapp", route_group))
-arm("owner_only: a Telegram private chat declaring owner", E.owner_only("telegram", {"enabled": True, "chat": "7000000001", "counterpart": "owner"}))
+arm("owner_only: a Telegram private chat declaring owner", E.owner_only("telegram", {"enabled": True, "chat": "7", "counterpart": "owner"}))
 arm("owner_only: a Telegram group is not", not E.owner_only("telegram", {"enabled": True, "chat": "-100123", "counterpart": "owner"}))
-arm("owner_only: a Discord channel is not (channels are groups)", not E.owner_only("discord", {"enabled": True, "chat": "1000000000000000001", "counterpart": "owner"}))
+arm("owner_only: a Discord channel is not (channels are groups)", not E.owner_only("discord", {"enabled": True, "chat": "1", "counterpart": "owner"}))
 arm("owner_only: a disabled or missing route is not", not E.owner_only("whatsapp", {**route_dm_owner, "enabled": False}) and not E.owner_only("whatsapp", None))
 
 # Dot-paths and tier homes (steward #49918 F1):
