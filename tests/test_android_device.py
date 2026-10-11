@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Oracle: an agent drives a real Android phone through the facade, end to end, on a PUBLIC app (plan-8675 S1).
 
-    venv/bin/python tests/test_android_device.py      (77 unless this org opted in and the phone is installed)
+    ANDROID_DEVICE_TEST=1 venv/bin/python tests/test_android_device.py
+    (77 without that, and unless this org opted in and the phone is installed: check.sh runs it, and it says so)
 
 It boots the org's phone (ANDROID_AVD) through act("boot"), drives Settings, and switches it off again. Leases live
 in a throwaway fixture database (ANDROID_DSN, set explicitly); stop flags in a throwaway state dir. Never a money app.
@@ -43,8 +44,11 @@ def skip(why):
     sys.exit(77)
 
 
+if os.environ.get("ANDROID_DEVICE_TEST") != "1":
+    skip("it boots a ~3 GB phone for minutes, so it runs only on request: ANDROID_DEVICE_TEST=1 "
+         "venv/bin/python tests/test_android_device.py")
 rc = subprocess.run([str(REPO / "nucleus/android_setup.sh"), "check"], capture_output=True, text=True)
-if rc.returncode != 0:
+if rc.returncode != 0 or not rc.stdout.startswith("ready"):          # "off" exits 0 too: only "ready" runs
     skip(f"the phone isn't set up here ({rc.stdout.strip() or rc.stderr.strip()})")
 STAND_IN = f"astryx-test-vm-{os.getpid()}"
 os.environ["ASTRYX_HANDS_STATE"] = tempfile.mkdtemp(prefix="phone-oracle-state-")

@@ -293,8 +293,10 @@ run "hands cell: per-lease egress, wipe on kill, step + wall caps" "$PY" tests/t
 run "hands desktop: real clicks/typing land, owner stop refuses, two small tools" "$PY" tests/test_hands_desktop.py
 # The phone (plan-8675): the facade's census/allowlist/telemetry, the surface stamp, step.py's phone strip and the HELD
 # leases, with no device (77 where the pinned upstream isn't installed). tests/test_android_device.py drives a REAL
-# phone end to end; it boots a ~3 GB emulator for minutes, so it runs by hand for receipts, not on every check.
+# phone end to end; it boots a ~3 GB emulator for minutes, so it verifies only when asked (ANDROID_DEVICE_TEST=1)
+# and otherwise reads UNVERIFIED here, never green.
 run "phone facade: upstream census, allowlist, telemetry off, surface stamp, phone strip, HELD leases" "$PY" tests/test_phone_facade.py
+run "android device: an agent drives Settings on a real phone (77 unless ANDROID_DEVICE_TEST=1 and set up)" "$PY" tests/test_android_device.py
 # every org's database is localhost-only (owner 10-10): doctor's _pg_exposure, with ss that can't answer → UNVERIFIED
 run "doctor: postgres localhost-only, unverified when ss can't answer" bash tests/test_doctor_pg_exposure.sh
 # turns retention (owner 10-10: "add retention to save space"): old turns lose image bytes, keep their words

@@ -41,6 +41,12 @@ def want(label, cond, why=""):
         fails.append(label)
 
 
+try:                       # the MCP SDK (the facade's runtime). Without it this interpreter isn't the org's venv: under a
+    from mcp import ClientSession  # noqa: F401  bare python3 `import mcp` even resolves to the repo's own mcp/ dir.
+except ImportError as e:
+    print(f"SKIP: the MCP SDK isn't importable here ({e}): run with the org's venv. Nothing was verified here.")
+    sys.exit(77)
+
 # The upstream is installed only where an org opted in (android_setup.sh). Without it, the arms that need a live
 # upstream process (CENSUS, the live half of ALLOWLIST, TELEMETRY) are UNVERIFIED; every other arm still runs.
 HAVE_UPSTREAM = bool(shutil.which("node")) and UPSTREAM.exists()
