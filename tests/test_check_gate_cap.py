@@ -171,6 +171,19 @@ with tempfile.TemporaryDirectory() as td:
     check("window 3: a single TERM to a JUST-forked child can be lost; 20 immediate reaps leave 0 alive "
           "(the SIGKILL escalation)", lost == 0, f"{lost}/20 alive")
 
+print("timing file:")
+with tempfile.TemporaryDirectory() as td2:
+    tf = Path(td2) / "times.tsv"
+    out, rc, _ = drive('run "t1" true\nrun "t2" bash -c \'echo "${CHECK_GATE_TIMES:-unset}"\'',
+                       f"GATE_TIMES_FILE={tf}")
+    rows = tf.read_text().splitlines() if tf.exists() else []
+    check("each gate writes ONE timing row (secs, rc, label) to the top-level file",
+          [r.split("\t")[2] for r in rows] == ["t1", "t2"], str(rows))
+    p2 = subprocess.run(["bash", "-c", f'CHECK_GATE_TIMES={tf} CHECK_LIB_ONLY=1 source "{CHECK}"; '
+                         'echo "child sees: ${CHECK_GATE_TIMES:-unset}"'], capture_output=True, text=True, cwd=REPO)
+    check("…and CHECK_GATE_TIMES is NOT passed down to gates (no nested run appends to it)",
+          "child sees: unset" in p2.stdout, p2.stdout[-200:])
+
 print("invariant (a4 #45534):")
 # `jobs -p` in the reap would list a FINISHED-but-unwaited job by a stale pid, which a reused pid could make an
 # unrelated group. That is unreachable only while check.sh's ONE background launch is run()'s gate, which run()

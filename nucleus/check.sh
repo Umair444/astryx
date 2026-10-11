@@ -67,6 +67,10 @@ declare -a LIARS=()
 # reaches the trap below, which kills the running gate's group. Before this, killing check.sh orphaned its gate.
 GATE_CAP=${CHECK_GATE_CAP:-1200}
 GATE_KILL_AFTER=${CHECK_GATE_KILL_AFTER:-15}
+# read once and NOT passed down: a gate that runs check.sh's run() itself (test_check_gate_cap's stubs, a nested
+# branch_check suite) would otherwise append its own rows to the top-level run's timing file (1714 rows for ~155 gates)
+GATE_TIMES_FILE=${CHECK_GATE_TIMES:-}
+unset CHECK_GATE_TIMES
 GATE_PGID=""
 GATE_OUT=$(mktemp "${TMPDIR:-/tmp}/check-gate.XXXXXX")
 # The group kill can race the fork: `$!` is known before the forked timeout has called setpgid, so a signal in that
@@ -117,7 +121,7 @@ run() {
   # 124 is timeout's own expiry code (137 after the SIGKILL); a gate can also exit 124 itself, so the WALL is the judge
   if { [ "$rc" = 124 ] || [ "$rc" = 137 ]; } && [ $((SECONDS - t0)) -ge "$cap" ]; then timed_out=1; fi
   # optional per-gate timing, so a cap is set from measured durations rather than guessed (one tsv row per gate)
-  [ -n "${CHECK_GATE_TIMES:-}" ] && printf '%s\t%s\t%s\n' "$((SECONDS - t0))" "$rc" "$label" >> "$CHECK_GATE_TIMES"
+  [ -n "$GATE_TIMES_FILE" ] && printf '%s\t%s\t%s\n' "$((SECONDS - t0))" "$rc" "$label" >> "$GATE_TIMES_FILE"
   # The belt. A gate that ANNOUNCES a skip and still exits 0 has broken the protocol —
   # it is the exact defect this accounting exists to catch, so it is reported as a
   # violation rather than quietly trusted. Narrow by construction: only a line whose
