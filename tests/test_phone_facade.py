@@ -10,13 +10,15 @@ No phone needed: the device-driving arms are tests/test_android_device.py.
              and inherits nothing else: no ASTRYX_DSN, no ASTRYX_AGENT (control: a variable set in OUR env is absent).
   SURFACE    window-list fixtures: Settings + system decor → org; the notification shade open → personal; an unknown
              window → personal; nothing visible → personal; an unreadable list → personal.
+  RACE       surface.combine: the stamp is org only if the readings BEFORE and AFTER the upstream call are both org and
+             no element id in the text names an unlisted package (the probe measured content and stamp disagreeing)
   STRIP      step.py over a synthetic transcript: a phone result is kept only under an "org" stamp in its LAST block;
              a personal stamp, no stamp, a forged stamp inside the body, or a string body are not kept; typed phone
              text is never kept; images never; the hands laptop rule is unchanged (control).
   LEASE      on a fixture DB: HELD is accepted by the migrated schema, one holder at a time, renewal by the holder,
              an expired hold is taken, unhold only by its holder, a microphone lease can't be held, and a vm-slot hold
              whose VM is proved gone is freed for the next claimant while a live one refuses, naming the holder.
-Exit 77 if node or the pinned upstream isn't installed (the facade isn't set up here), or there's no fixture DB.
+Exit 77 (after running every other arm) if node or the pinned upstream isn't installed, or there's no fixture DB.
 """
 import asyncio
 import json
@@ -39,10 +41,9 @@ def want(label, cond, why=""):
         fails.append(label)
 
 
-if not shutil.which("node") or not UPSTREAM.exists():
-    print("SKIP: node or the pinned upstream isn't installed (mcp/phone/upstream: npm ci --ignore-scripts). "
-          "Nothing was verified here.")
-    sys.exit(77)
+# The upstream is installed only where an org opted in (android_setup.sh). Without it, the arms that need a live
+# upstream process (CENSUS, the live half of ALLOWLIST, TELEMETRY) are UNVERIFIED; every other arm still runs.
+HAVE_UPSTREAM = bool(shutil.which("node")) and UPSTREAM.exists()
 
 os.environ["ASTRYX_AGENT"] = "phone-oracle"
 os.environ["ORACLE_CANARY_ENV"] = "must-not-reach-upstream"
@@ -106,11 +107,6 @@ async def census_and_env():
                 continue
         return live, env
 
-live, env = asyncio.run(census_and_env())
-want("CENSUS: upstream's live tools/list is exactly the 33 reviewed-for names", live == KNOWN_UPSTREAM,
-     f"added={sorted(live - KNOWN_UPSTREAM)} gone={sorted(KNOWN_UPSTREAM - live)}")
-want("ALLOWLIST: every facade verb names a live upstream tool", srv.REVIEWED <= live,
-     f"missing={sorted(srv.REVIEWED - live)}")
 want("ALLOWLIST: no denied tool is reachable through the facade", not (srv.REVIEWED & DENIED),
      f"reachable={sorted(srv.REVIEWED & DENIED)}")
 want("ALLOWLIST: the facade reaches 13 tools, no more", len(srv.REVIEWED) == 13, str(len(srv.REVIEWED)))
@@ -119,12 +115,22 @@ try:
     want("ALLOWLIST: naming a denied tool is refused", False, "it ran")
 except srv.droid.AndroidError:
     want("ALLOWLIST: naming a denied tool is refused", True)
-want("TELEMETRY: the spawned upstream process was found (control for the arms below)", env is not None)
-if env is not None:
-    want("TELEMETRY: MOBILEMCP_DISABLE_TELEMETRY=1 in the spawned process's environ",
-         env.get("MOBILEMCP_DISABLE_TELEMETRY") == "1", str(env.get("MOBILEMCP_DISABLE_TELEMETRY")))
-    want("TELEMETRY: our environment doesn't leak in (canary, DSN, agent name absent)",
-         not ({"ORACLE_CANARY_ENV", "ASTRYX_DSN", "ASTRYX_AGENT"} & set(env)), sorted(env))
+if not HAVE_UPSTREAM:
+    print("  UNVERIFIED CENSUS, live ALLOWLIST, TELEMETRY: node or the pinned upstream isn't installed here "
+          "(nucleus/android_setup.sh install, or mcp/phone/upstream: npm ci --ignore-scripts)")
+    skipped.append("CENSUS/TELEMETRY (no upstream)")
+else:
+    live, env = asyncio.run(census_and_env())
+    want("CENSUS: upstream's live tools/list is exactly the 33 reviewed-for names", live == KNOWN_UPSTREAM,
+         f"added={sorted(live - KNOWN_UPSTREAM)} gone={sorted(KNOWN_UPSTREAM - live)}")
+    want("ALLOWLIST: every facade verb names a live upstream tool", srv.REVIEWED <= live,
+         f"missing={sorted(srv.REVIEWED - live)}")
+    want("TELEMETRY: the spawned upstream process was found (control for the arms below)", env is not None)
+    if env is not None:
+        want("TELEMETRY: MOBILEMCP_DISABLE_TELEMETRY=1 in the spawned process's environ",
+             env.get("MOBILEMCP_DISABLE_TELEMETRY") == "1", str(env.get("MOBILEMCP_DISABLE_TELEMETRY")))
+        want("TELEMETRY: our environment doesn't leak in (canary, DSN, agent name absent)",
+             not ({"ORACLE_CANARY_ENV", "ASTRYX_DSN", "ASTRYX_AGENT"} & set(env)), sorted(env))
 
 # ── SURFACE ───────────────────────────────────────────────────────────────────────────────────────────────────
 def dump(*wins):
@@ -160,6 +166,19 @@ want("SURFACE: a public title owned by ANOTHER package isn't public (the package
      surface.classify(surface.windows(dump(*BASE[:5], ("StatusBar", "com.example.chat", True))))["tier"] == "personal")
 want("SURFACE: droid.surface() on an unreachable device → personal (fails closed)",
      srv.droid.surface("emulator-0000")["tier"] == "personal")
+
+ORG_R = {"tier": "org", "packages": ["com.android.settings"], "unlisted": []}
+PERS_R = {"tier": "personal", "packages": ["com.example.chat"], "unlisted": ["com.example.chat:x"]}
+want("RACE: a personal reading BEFORE the call taints the result even if the screen is public after",
+     surface.combine(PERS_R, ORG_R)["tier"] == "personal")
+want("RACE: a personal reading AFTER taints it too", surface.combine(ORG_R, PERS_R)["tier"] == "personal")
+want("RACE: org before and after, content with only framework + Settings ids → org (positive control)",
+     surface.combine(ORG_R, ORG_R, content='@e1 TextView id="android:id/title" @e2 id="com.android.settings:id/x"')
+     ["tier"] == "org")
+c = surface.combine(ORG_R, ORG_R, content='@e1 TextView text="hi" id="com.example.bank:id/balance"')
+want("RACE: an element id from an unlisted package taints an all-org reading (content is evidence)",
+     c["tier"] == "personal" and "element id: com.example.bank" in c["unlisted"], json.dumps(c))
+want("RACE: no readings at all → personal", surface.combine(content="")["tier"] == "personal")
 
 # ── STRIP ─────────────────────────────────────────────────────────────────────────────────────────────────────
 sys.path.insert(0, str(REPO / "hooks"))

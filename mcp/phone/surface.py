@@ -58,3 +58,28 @@ def classify(wins: list[dict], manifest: list[dict] | None = None) -> dict:
     return {"tier": "personal" if unlisted or not visible else "org",
             "packages": sorted({w["package"] or "?" for w in visible}),
             "unlisted": [f'{w["package"]}:{w["title"]}' for w in unlisted]}
+
+
+_ID = re.compile(r'\bid="(?P<pkg>[A-Za-z0-9_.]+):id/')
+FRAMEWORK = "android"           # android:id/… is the framework's own ids, used by every app's dialogs and layouts
+
+
+def element_packages(text: str) -> set[str]:
+    """The packages named by resource ids in an element list (`id="com.example:id/inbox"`): evidence from the
+    content itself, independent of when the window list was read."""
+    return {m["pkg"] for m in _ID.finditer(text or "")}
+
+
+def combine(*stamps: dict, content: str = "", manifest: list[dict] | None = None) -> dict:
+    """One verdict from several readings. ORG only if EVERY window reading was org AND no resource id in `content`
+    belongs to a package the manifest doesn't list. A screen read before and after an upstream call can still miss a
+    change in between: two readings bound that race, they don't close it (images are never kept, so only text
+    results depend on this)."""
+    manifest = load_manifest() if manifest is None else manifest
+    public_pkgs = {r["package"] for r in manifest} | {FRAMEWORK}
+    foreign = sorted(element_packages(content) - public_pkgs)
+    unlisted = sorted({u for s in stamps for u in s.get("unlisted", [])} | {f"element id: {p}" for p in foreign})
+    org = bool(stamps) and all(s.get("tier") == "org" for s in stamps) and not foreign
+    return {"tier": "org" if org else "personal",
+            "packages": sorted({p for s in stamps for p in s.get("packages", [])}), "unlisted": unlisted}
+

@@ -662,11 +662,22 @@ _act_model() {
   say "prefetching the transcription model (once, under the reconciler — never on the message path)"
   venv/bin/python -c 'from faster_whisper import WhisperModel; WhisperModel("small", device="cpu", compute_type="int8")' >/dev/null 2>&1; }
 
+# android (plan-8675): an OPT-IN phone for the agents (ANDROID_ENABLED=1). Off, or no KVM → nothing to do (green; doctor
+# says which). The SDK licence is the operator's act, so it's a HALT node (yours to resolve) and never stalls the rest;
+# android_setup.sh installs exact pinned archives, checksum-verified, user-locally (no Java, no sudo).
+_android_rc() { local rc=0; nucleus/android_setup.sh check >/dev/null 2>&1 || rc=$?; echo "$rc"; }
+_chk_androidlic() { [ "$(_android_rc)" != 3 ]; }
+_act_androidlic() { return 1; }
+_chk_android() { case "$(_android_rc)" in 0|77|3) return 0 ;; *) return 1 ;; esac; }
+_act_android() { say "android: installing the pinned SDK packages and the phone (ANDROID_ENABLED=1)"
+  nucleus/android_setup.sh install || true; }
+
 # the precondition DAG, in dependency order (top depends on nothing).  name|class
 RECONCILE_NODES=(
   "pg|interior" "pgready|wait" "schema|interior" "harden|interior" "hardencut|halt" "venv|interior" "deps|interior"
   "peoplegate|interior" "derivedgraphs|interior" "geoschema|interior" "model|interior" "chan|interior" "obs|interior" "obskey|interior" "ident|interior"
-  "units|interior" "law|interior" "prehook|interior" "ccompact|interior" "prreview|interior" "login|halt"
+  "units|interior" "law|interior" "prehook|interior" "ccompact|interior" "prreview|interior" "androidlic|halt"
+  "android|interior" "login|halt"
   "seed|interior" "prompt|interior")
 
 reconcile() {
@@ -852,6 +863,13 @@ if [ "${1:-}" = "doctor" ]; then
     bad ".env missing — run ./init.sh"
   fi
   [ -f local.md ] && ok "local.md exists" || bad "local.md missing — the owner's law; run ./init.sh"
+  # android (plan-8675, opt-in): the setup script's own check is the observable
+  _arc=0; _amsg=$(nucleus/android_setup.sh check 2>&1) || _arc=$?
+  case "$_arc" in
+    0)  ok "android: $_amsg" ;;
+    77) warn "android: $_amsg" ;;
+    *)  bad "android: $_amsg" ;;
+  esac
   # deps: assert FROM the manifest (same authority install uses) — core + this org's
   # active groups must all IMPORT (the terminal observable, not a hand-list), AND the
   # AST coverage assert must find no undeclared third-party import (catches the next

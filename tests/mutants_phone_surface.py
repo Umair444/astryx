@@ -26,4 +26,11 @@ MUTANTS = {
     "the owning package isn't checked":
         ('w["package"] == r["package"] and r["title"]',
          'r["title"]'),
+    'combine trusts the LAST reading only':
+        ('    org = bool(stamps) and all(s.get("tier") == "org" for s in stamps) and not foreign\n',
+         '    org = bool(stamps) and stamps[-1].get("tier") == "org" and not foreign\n'),
+    'element ids are ignored':
+        ('    foreign = sorted(element_packages(content) - public_pkgs)\n', '    foreign = []\n'),
+    'no readings reads as org':
+        ('    org = bool(stamps) and all(', '    org = all('),
 }

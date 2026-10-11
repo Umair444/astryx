@@ -38,6 +38,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(REPO))
 from nucleus import android as droid  # noqa: E402
+import surface as _surface  # noqa: E402  (android.py put mcp/phone on the path; the same module it classifies with)
 from nucleus import hands_desktop as hd  # noqa: E402
 
 AGENT = os.environ.get("ASTRYX_AGENT", "")
@@ -108,15 +109,21 @@ async def call_upstream(tool: str, args: dict) -> list:
     return out
 
 
-def stamp(serial: str | None, force_personal: bool = False) -> str:
-    s = droid.surface(serial) if serial else {"tier": "personal", "packages": [], "unlisted": ["no device"]}
+def stamp(serial: str | None, force_personal: bool = False, before: dict | None = None, content: list = ()) -> str:
+    """The surface stamp: the windows NOW, combined with the reading taken BEFORE the upstream call (if any) and the
+    package ids inside the text content. Org only if all of them are."""
+    now = droid.surface(serial) if serial else {"tier": "personal", "packages": [], "unlisted": ["no device"]}
+    text = "\n".join(c for c in content if isinstance(c, str))
+    s = _surface.combine(*([before] if before else []), now, content=text)
     if force_personal:
         s = {**s, "tier": "personal"}
     return STAMP + json.dumps(s, separators=(",", ":"))
 
 
 def _guard(device: str) -> str:
-    """Who's asking, is the owner's stop up, and is this agent the phone's one driver? Returns the serial."""
+    """Who's asking, is the owner's stop up, and is this agent the phone's one driver? Returns the adb serial, for
+    OUR adb calls (the surface stamp). Upstream names an emulator by its AVD name, not its serial (measured: its
+    `mobilecli devices` lists {"id": "<avd>"}), so upstream calls take `device` itself."""
     if not AGENT:
         raise droid.AndroidError("ASTRYX_AGENT is not set: whose hands are these?")
     why = hd.stopped(AGENT)
@@ -145,8 +152,9 @@ async def look(device: str, text: bool = False) -> list:
     coordinates instead of a picture (cheaper, exact for tapping)."""
     try:
         s = _guard(device)
-        out = await call_upstream(LOOK_TEXT if text else LOOK_IMAGE, {"device": s})
-        return out + [stamp(s)]
+        before = droid.surface(s)
+        out = await call_upstream(LOOK_TEXT if text else LOOK_IMAGE, {"device": device})
+        return out + [stamp(s, before=before, content=out)]
     except hd.Stopped as e:
         return [f"STOPPED: {e}. Don't retry. Tell the owner where you were in the task.", stamp(None)]
     except (droid.AndroidError, asyncio.TimeoutError) as e:
@@ -178,7 +186,10 @@ async def act(action: str, device: str = "", x: int = -1, y: int = -1, text: str
                 return [("stopped " if droid.shutdown(device) else "still running: ") + device, stamp(None)]
             s = await asyncio.to_thread(droid.boot, device, AGENT)
             droid.drive(device, AGENT)
-            return [f"{device} is up ({s})", stamp(s)]
+            missed = await asyncio.to_thread(droid.harden, device, s)
+            quiet = "notification pop-ups and lock-screen text are off" if not missed else \
+                f"WARNING: couldn't switch off {', '.join(missed)} (the phone was too slow); pop-ups may show"
+            return [f"{device} is up ({s}); {quiet}", stamp(s)]
         if action not in VERBS:
             return [f"unknown action {action!r}", stamp(None)]
         tool, fields = VERBS[action]
@@ -196,8 +207,9 @@ async def act(action: str, device: str = "", x: int = -1, y: int = -1, text: str
                 continue
             args[theirs] = v
         s = _guard(device)
-        out = await call_upstream(tool, {"device": s, **args})
-        return out + [stamp(s, force_personal=action in ALWAYS_PERSONAL)]
+        before = droid.surface(s)
+        out = await call_upstream(tool, {"device": device, **args})
+        return out + [stamp(s, force_personal=action in ALWAYS_PERSONAL, before=before, content=out)]
     except hd.Stopped as e:
         return [f"STOPPED: {e}. Don't retry. Tell the owner where you were in the task.", stamp(None)]
     except (droid.AndroidError, asyncio.TimeoutError) as e:

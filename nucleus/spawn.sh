@@ -154,6 +154,15 @@ done
 # holds Bash and the door runs registered scripts only, never a granted MCP server. It is
 # deliberately NOT given to STATIONED agents (nucleus/station.py, --tools "" fail-closed), where
 # it WOULD be a new execution capability. tests/test_spawn_wiring.py pins both halves.
+# phone = an Android phone under the agent's hands (plan-8675), only where the org OPTED IN (ANDROID_ENABLED=1 in
+# .env; nucleus/android_setup.sh installs it). Every resident then gets it, like hands. Its server is a facade over
+# a pinned upstream: it reaches 13 reviewed tools and builds the upstream's environment itself.
+PHONE=""
+if [ "$(grep -m1 '^ANDROID_ENABLED=' "$ROOT/.env" 2>/dev/null | cut -d= -f2-)" = 1 ]; then
+  PHONE=",
+  \"phone\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/phone/server.py\"],
+    \"env\": { \"ASTRYX_AGENT\": \"$AGENT\" } }"
+fi
 cat > "$HOME_D/.mcp.json" <<EOF
 { "mcpServers": { "astryx": {
     "command": "$NODE",
@@ -163,7 +172,7 @@ cat > "$HOME_D/.mcp.json" <<EOF
   "tools": { "command": "$ROOT/venv/bin/python", "args": ["$ROOT/mcp/tools/server.py"] },
   "hands": { "command": "$ROOT/venv/bin/python", "args": ["$ROOT/mcp/hands/server.py"],
     "env": { "ASTRYX_AGENT": "$AGENT", "XDG_RUNTIME_DIR": "/run/user/$(id -u)",
-      "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/$(id -u)/bus" } }$EXTRA } }
+      "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/$(id -u)/bus" } }$PHONE$EXTRA } }
 EOF
 
 # think: charter line "Think: off" zeroes extended thinking for reflex-class

@@ -71,8 +71,13 @@ def default_avd() -> str:
 
 
 def adb(*args: str, timeout: float = 30, serial: str | None = None) -> subprocess.CompletedProcess:
+    """adb, bounded. A phone that doesn't answer in time raises AndroidError (callers handle that one type): a slow
+    emulator just after boot, under a loaded host, measured >20 s for a `settings put`."""
     cmd = [str(sdk() / "platform-tools" / "adb"), *(["-s", serial] if serial else []), *args]
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise AndroidError(f"the phone didn't answer `adb {' '.join(args[:3])}` within {timeout:.0f}s")
 
 
 def _db():
@@ -173,6 +178,50 @@ def boot(avd: str, agent: str) -> str:
             return s
         time.sleep(3)
     raise AndroidError(f"{avd} didn't finish booting in {BOOT_MAX_S}s")
+
+
+# Notifications must not render a PERSONAL app's text over a public one (a4 #42240 C3's belt): no heads-up pop-ups,
+# no notification content on the lock screen. Re-applied on every boot (three cheap calls), so a phone made anywhere
+# gets them, and a changed setting comes back.
+QUIET = (("global", "heads_up_notifications_enabled", "0"),
+         ("secure", "lock_screen_show_notifications", "0"),
+         ("secure", "lock_screen_allow_private_notifications", "0"),
+         # Awake while running: a phone agents drive must not doze between their actions (measured: the display
+         # slept, every window went invisible, and a dozing phone answers nothing useful). 7 = on AC/USB/wireless.
+         ("global", "stay_on_while_plugged_in", "7"))
+
+
+def harden(avd: str, s: str, patience_s: float = 180) -> list[str]:
+    """Apply QUIET and owner-only file modes. Returns the settings it could NOT apply (empty = all applied). A phone
+    just booted can be too slow to answer for a while, so each setting is retried until `patience_s` runs out."""
+    missed = []
+    deadline = time.time() + patience_s
+    for ns, key, val in QUIET:
+        while True:
+            try:
+                adb("shell", "settings", "put", ns, key, val, serial=s, timeout=30)
+                if adb("shell", "settings", "get", ns, key, serial=s, timeout=30).stdout.strip() == val:
+                    break
+            except AndroidError:
+                pass
+            if time.time() > deadline:
+                missed.append(key)
+                break
+            time.sleep(5)
+    for cmd in (("input", "keyevent", "KEYCODE_WAKEUP"), ("wm", "dismiss-keyguard")):
+        try:
+            adb("shell", *cmd, serial=s, timeout=30)
+        except AndroidError:
+            pass
+    # The phone's data (its userdata image, its snapshots) holds app sessions: the emulator creates them readable by
+    # everyone (S0: userdata-qemu.img.qcow2 0644, snapshots/ 0755). Owner-only, re-asserted every boot (a1 A7).
+    home = Path(os.environ.get("ANDROID_AVD_HOME") or Path.home() / ".android" / "avd") / f"{avd}.avd"
+    for p in [home, *home.rglob("*")]:
+        try:
+            p.chmod(0o700 if p.is_dir() else 0o600)
+        except OSError:
+            pass
+    return missed
 
 
 def shutdown(avd: str) -> bool:

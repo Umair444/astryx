@@ -291,6 +291,10 @@ run "hands cell: per-lease egress, wipe on kill, step + wall caps" "$PY" tests/t
 # agent's own REAL desktop on this machine (headless sway + its own seat via wayvnc), watched, joined and
 # stopped from the observatory. Two tools, text replies, a 960x600 view: the token budget is pinned.
 run "hands desktop: real clicks/typing land, owner stop refuses, two small tools" "$PY" tests/test_hands_desktop.py
+# The phone (plan-8675): the facade's census/allowlist/telemetry, the surface stamp, step.py's phone strip and the HELD
+# leases, with no device (77 where the pinned upstream isn't installed). tests/test_android_device.py drives a REAL
+# phone end to end; it boots a ~3 GB emulator for minutes, so it runs by hand for receipts, not on every check.
+run "phone facade: upstream census, allowlist, telemetry off, surface stamp, phone strip, HELD leases" "$PY" tests/test_phone_facade.py
 # every org's database is localhost-only (owner 10-10): doctor's _pg_exposure, with ss that can't answer → UNVERIFIED
 run "doctor: postgres localhost-only, unverified when ss can't answer" bash tests/test_doctor_pg_exposure.sh
 # turns retention (owner 10-10: "add retention to save space"): old turns lose image bytes, keep their words
