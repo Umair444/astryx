@@ -72,7 +72,10 @@ def main():
                       f"git -C {r} commit -q --allow-empty -m concurrent; "
                       f"echo \"FAILED (1):\"; echo \"  ✗ a gate\"; echo; echo \"check: FAILURES above\"'")
         stub_ptc = f"sh -c 'echo PTC $0 >> {rec}'"
-        env = {**os.environ, "MERGE_CHECK_CHECK": stub_check, "MERGE_CHECK_PTC": stub_ptc,
+        # HERMETIC: a caller's own MERGE_CHECK_* settings never reach the runs under test (forge #48470: an outer
+        # MERGE_CHECK_FULL=0 skipped every inner full check, and this oracle read RED inside a merge_check only)
+        base_env = {k: v for k, v in os.environ.items() if not k.startswith("MERGE_CHECK_")}
+        env = {**base_env, "MERGE_CHECK_CHECK": stub_check, "MERGE_CHECK_PTC": stub_ptc,
                "TMPDIR": str(t)}                       # scratch trees die with the temp dir, even a mutant's leaked ones
         p = subprocess.run(["bash", str(r / "nucleus" / "merge_check.sh"), "feat"], cwd=r, env=env,
                            capture_output=True, text=True, timeout=120)
@@ -147,6 +150,15 @@ def main():
                            capture_output=True, text=True, timeout=60)
         check("an orphaned scratch tree holding live links is NAMED, and not touched",
               "ORPHAN?" in p.stdout and str(orphan) in p.stdout and (orphan / ".env").is_symlink(), p.stdout[-300:])
+        # NOT HANDED DOWN: what merge_check runs (the full check, pushed_tree_check) sees none of its MERGE_CHECK_* settings,
+        # or a nested merge_check (test_merge_check inside the check) inherits them (forge #48470)
+        seen = t / "seen_env"
+        probe = f"sh -c 'env | grep -c ^MERGE_CHECK_ >> {seen}; true'"
+        subprocess.run(["bash", str(r / "nucleus" / "merge_check.sh"), "feat"], cwd=r, capture_output=True, text=True, timeout=120,
+                       env={**env, "MERGE_CHECK_CHECK": probe, "MERGE_CHECK_PTC": probe, "MERGE_CHECK_CANARY": "x"})
+        counts = seen.read_text().split() if seen.exists() else []
+        check("its MERGE_CHECK_* settings are NOT handed to the full check or pushed_tree_check (a nested run inherits none)",
+              len(counts) == 3 and set(counts) == {"0"}, str(counts))
     # ONE definition: the script's exclude list must equal the ledger's (no second hand-kept copy drifting)
     import re as _re
     sys.path.insert(0, str(REPO))

@@ -53,12 +53,17 @@ echo "merge_check: base $BASE_REF=$M  branch $BR=$B  merged=$T"
 WT=$(mktemp -d "${TMPDIR:-/tmp}/merge-check.XXXXXX")/tree
 CHECK=${MERGE_CHECK_CHECK:-"bash nucleus/check.sh"}
 PTC=${MERGE_CHECK_PTC:-"bash $LIVE/nucleus/pushed_tree_check.sh"}
+FULL=${MERGE_CHECK_FULL:-1}
+# This run's OWN settings are read once, above, and NEVER handed down: the full check and pushed_tree_check run
+# test_merge_check, which runs a merge_check of its own. With MERGE_CHECK_FULL=0 inherited, that inner run skipped
+# its full check and the oracle read RED on BOTH sides, only inside a merge_check (forge #48470, measured).
+for v in $(compgen -e | grep '^MERGE_CHECK_'); do unset "$v"; done
 rc_links=0
 git worktree list --porcelain | sed -n 's/^worktree //p' | grep '/merge-check\.[^/]*/tree$' | while IFS= read -r o; do
   n=$(find "$o" -type l -lname "$LIVE/*" 2>/dev/null | wc -l)
   [ "$n" -gt 0 ] && echo "  ORPHAN? a scratch tree holds $n live link(s): $o (a killed run, or a run in progress; not touched)"
 done
-if [ "${MERGE_CHECK_FULL:-1}" != 0 ]; then
+if [ "$FULL" != 0 ]; then
   git worktree add --detach "$WT" "$T" >/dev/null 2>&1 || { echo "merge_check: worktree failed"; exit 2; }
   made=()
   ESTATE_EXCLUDE="venv/ .venv/ homes/ node_modules/ backups/ media/ observatory/web/dist/ .env"   # == ledger.py's

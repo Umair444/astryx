@@ -35,4 +35,6 @@ MUTANTS = {
         ('  wrote=$(for l in $estate; do', '  wrote=$(for l in "${made[@]}"; do'),
     "K9 an orphan holding live links goes unnamed (a SIGKILLed run's links stay in /tmp, silent)":
         ('[ "$n" -gt 0 ] && echo "  ORPHAN?', '[ "$n" -lt 0 ] && echo "  ORPHAN?'),
+    "K13 the run hands its own MERGE_CHECK_* settings down (a nested merge_check inherits MERGE_CHECK_FULL=0: forge #48470)":
+        ("for v in $(compgen -e | grep '^MERGE_CHECK_'); do unset \"$v\"; done\n", ""),
 }
