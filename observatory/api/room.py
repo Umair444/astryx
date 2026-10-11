@@ -82,6 +82,11 @@ async def claim_and_act(pool) -> int:
         if intent == "voice":                            # an agent established who a voice is
             try:
                 v = json.loads(text)
+                if v.get("merge_into"):                  # two prints are one person: fold the first into the second
+                    ok = await merge_voices(pool, str(v.get("voice")), str(v["merge_into"]))
+                    _broadcast({"type": "room_voice", "id": r["id"], "agent": agent, "voice": v.get("voice"),
+                                "merged_into": v["merge_into"], "ok": ok})
+                    continue
                 trust = v.get("trust") if v.get("trust") in ("unknown", "claimed", "verified", "owner") else "claimed"
                 n = await pool.execute(
                     "UPDATE voices SET name=$2, trust=$3, verified_by=$4, evidence=$5 WHERE label=$1",
@@ -99,6 +104,25 @@ async def claim_and_act(pool) -> int:
         _broadcast({"type": "room_say", "id": r["id"], "agent": agent, "text": text[:1200],
                     "audio": None if err else f"/api/room/audio/{r['id']}", "error": err})
     return len(rows)
+
+
+async def merge_voices(pool, src: str, dst: str) -> bool:
+    """Fold voice `src` into `dst` (one person heard at two mic distances, 10-11): dst's print becomes the n-weighted
+    mean of both, and src is deleted. dst keeps its own name and trust: a merge never raises trust. False when either
+    label is missing or they are the same."""
+    if src == dst:
+        return False
+    async with pool.acquire() as c:
+        async with c.transaction():
+            a = await c.fetchrow("SELECT embedding, n FROM voices WHERE label=$1 FOR UPDATE", src)
+            b = await c.fetchrow("SELECT embedding, n FROM voices WHERE label=$1 FOR UPDATE", dst)
+            if a is None or b is None:
+                return False
+            na, nb = a["n"] or 1, b["n"] or 1
+            mean = [(x * na + y * nb) / (na + nb) for x, y in zip(a["embedding"], b["embedding"])]
+            await c.execute("UPDATE voices SET embedding=$2, n=$3, last_heard=now() WHERE label=$1", dst, mean, na + nb)
+            await c.execute("DELETE FROM voices WHERE label=$1", src)
+    return True
 
 
 async def speaker_task():

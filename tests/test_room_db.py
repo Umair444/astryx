@@ -152,6 +152,17 @@ with fixture_db() as fx:
             arm("recording an unknown voice touches nothing (not ok)", by.get("voice-99", {}).get("ok") is False, by)
             trust = await pool.fetchval("SELECT trust FROM voices WHERE label='voice-1'")
             arm("the voice's trust is in the table", trust == "owner", trust)
+            await pool.execute("DELETE FROM voices")
+            await pool.execute("INSERT INTO voices (label, name, trust, embedding, n) VALUES "
+                               "('voice-2', 'Umair', 'owner', $1, 3), ('voice-5', 'Umair', 'claimed', $2, 1)",
+                               unit(1, 0).tolist(), unit(0, 1).tolist())
+            arm("merging a print into itself is refused", await speaker.merge_voices(pool, "voice-2", "voice-2") is False)
+            arm("merging a missing print is refused", await speaker.merge_voices(pool, "voice-9", "voice-2") is False)
+            ok = await speaker.merge_voices(pool, "voice-5", "voice-2")
+            rows = await pool.fetch("SELECT label, trust, n, embedding FROM voices ORDER BY label")
+            arm("a merge folds the print in (n-weighted mean), deletes it, and keeps the target's trust",
+                ok and [x["label"] for x in rows] == ["voice-2"] and rows[0]["trust"] == "owner" and rows[0]["n"] == 4
+                and abs(rows[0]["embedding"][0] - 0.75) < 1e-4 and abs(rows[0]["embedding"][1] - 0.25) < 1e-4, rows)
             room._roster_cache = (1e18, ["seed", "painter"])
             r = await speaker.ask(speaker.Ask(agent="painter", message="make it darker"))
             arm("the live voice's ask_agent is a wire row to the agent",

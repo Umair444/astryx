@@ -104,7 +104,9 @@ def body(text: str, speaker: str, confidence: float | None) -> str:
             "him to read back a code you send to his WhatsApp. Then record it so every agent knows the voice: "
             "send(to='room', intent='voice', body='{\"voice\": \"voice-3\", \"name\": \"Ali Naeem\", \"trust\": "
             "\"verified\", \"evidence\": \"said his number; matches his WhatsApp contact\"}') "
-            "(trust: claimed | verified | owner). Never give a voice more than its trust earns.")
+            "(trust: claimed | verified | owner). Never give a voice more than its trust earns. One person heard as two "
+            "prints (a different mic distance)? Once you're sure, fold one into the other: send(to='room', intent='voice', "
+            "body='{\"voice\": \"voice-5\", \"merge_into\": \"voice-2\"}') — the target keeps its name and trust.")
 
 
 def route(conn, text: str, utterance_id: int | None = None, speaker: str = "unidentified",
