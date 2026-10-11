@@ -11,9 +11,9 @@ ENV = "WIN_IDLE_SRC"
 TIMEOUT = 300
 
 MUTANTS = {
-    "a VM it didn't start is stopped too (a4 #48958)":
+    "a VM it didn't start is taken for ours (a record fabricated for it, run identity included: a4 #48958)":
         ("    if rec is None:                                     # not started by an agent's open: never stopped here\n        state.clear()\n        return None\n",
-         '    if rec is None:\n        rec = {"ts": 0.0}\n'),
+         '    if rec is None:\n        rec = {"ts": 0.0, "started_at": hd.container_started_at(android.WINDOWS_CONTAINER)}\n'),
     'connections are ignored':
         ('    if n > 0:\n        state["busy"] = now\n        return None\n',
          ''),
@@ -26,4 +26,6 @@ MUTANTS = {
     'the stop BLOCKS the tick (~100 s past the pulse budget)':
         ('    subprocess.Popen(["docker", "stop", "-t", "120", rec.get("container") or android.WINDOWS_CONTAINER],\n                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)',
          '    subprocess.run(["docker", "stop", "-t", "120", rec.get("container") or android.WINDOWS_CONTAINER],\n                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); time.sleep(4)'),
+    "the record's run identity isn't compared (a restarted, owner-started run inherits it: a4 #49102)":
+        ("    if live != rec.get(\"started_at\"):\n", "    if False:\n"),
 }

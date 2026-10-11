@@ -4,10 +4,11 @@ The Windows VM runs on demand: an agent opening its viewer starts it (nucleus/ha
 vm-slot). This stops it again when nobody has been connected for HANDS_WINDOWS_IDLE_S (default 900; 0 disables), and
 frees the vm-slot so the phone can run.
 
-ONLY a run that windows_up STARTED (its record, hands_desktop.WINDOWS_STARTED) is ever stopped. A VM the owner started,
-or one already running when an agent opened it, is never stopped here: "no connection" means nobody is WATCHING, not
-that nothing is RUNNING (an install, a download, a render), and the stop is a hard kill (S0, measured: the guest
-ignores ACPI and dockur kills qemu after ~100 s).
+ONLY a run that windows_up STARTED is ever stopped: its record (hands_desktop.WINDOWS_STARTED) is bound to that run by
+the container's own StartedAt, so a later run of the same container (a restart, or a host reboot and the restart
+policy) is not it. A VM the owner started, or one already running when an agent opened it, is never stopped here:
+"no connection" means nobody is WATCHING, not that nothing is RUNNING (an install, a download, a render), and the stop
+is a hard kill (S0, measured: the guest ignores ACPI and dockur kills qemu after ~100 s).
 
 Pulse budget: the stop takes ~100 s, so a tick only ISSUES it (detached) and returns; a later tick, seeing the container
 stopped, frees the slot and clears the record. The phone can't take the slot while Windows still holds its RAM.
@@ -62,6 +63,16 @@ def tick(state: dict, now: float | None = None, conns=None) -> str | None:
         state.clear()
         return ("the Windows VM is stopped and its slot is free (it had been idle)" if was else None)
     if state.get("stopping"):                           # a stop is under way: wait for it
+        return None
+    # The record must describe THIS run: the live container's StartedAt equals the one recorded at its start. A later
+    # run (the owner's restart, a host reboot and the restart policy) is not ours: drop the record, never stop it; the
+    # slot stays held while it runs (a4 #49102). If docker can't say, don't stop.
+    live = hd.container_started_at(rec.get("container") or android.WINDOWS_CONTAINER)
+    if live is None:
+        return None
+    if live != rec.get("started_at"):
+        hd.WINDOWS_STARTED.unlink(missing_ok=True)
+        state.clear()
         return None
     limit = idle_s()
     if limit <= 0:

@@ -13,6 +13,8 @@ it, and the vm-slot lives in a fixture database.
   W6 (iii) a live connection keeps an agent-started VM up
   W7 HANDS_WINDOWS_IDLE_S=0 disables the stop
   W8 the viewer-URL test is exact (port and host), not a substring
+  W9 the record is bound to ITS run by the container's StartedAt: a later run (restarted out of band, or brought back
+     by a host reboot) is never stopped as ours, and the stale record is dropped (a4 #49102)
 Needs docker, a local image for the stand-in and a fixture database, else 77.
 """
 import json
@@ -162,6 +164,17 @@ try:
             st = {}
             want("W5 ...and it is NEVER auto-stopped, however idle",
                  stop_mod.tick(st, now=time.time() + 10 ** 6, conns=none) is None and running())
+            L.unhold(c, "vm-slot", "windows")
+            # ── W9: the record is bound to ITS run (a4 #49102) ───────────────────────────────────────────────────
+            fresh_stand_in()
+            hd.open_(DESK, "http://127.0.0.1:8006/")
+            rec9 = json.loads(hd.WINDOWS_STARTED.read_text())
+            docker("restart", "-t", "2", STAND_IN)                 # out of band: the owner's restart, or a reboot
+            st = {}
+            out9 = stop_mod.tick(st, now=rec9["ts"] + 10 ** 6, conns=none)
+            want("W9 a LATER run of the container (restarted out of band) is never stopped as ours, and the stale "
+                 "record is dropped", out9 is None and running() and not hd.WINDOWS_STARTED.exists()
+                 and rec9.get("started_at"), f"out={out9} running={running()} rec={rec9}")
             L.unhold(c, "vm-slot", "windows")
             # ── W6 (iii) + W7 ───────────────────────────────────────────────────────────────────────────────────
             fresh_stand_in()

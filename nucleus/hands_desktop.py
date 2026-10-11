@@ -976,13 +976,27 @@ def windows_up(agent: str) -> bool:
     if r.returncode != 0:
         android.free_slot("windows")
         raise HandsError(f"the Windows VM wouldn't start: {(r.stderr or r.stdout).strip()[:200]}")
+    # The record is bound to THIS run by the container's own start identity: a later run (the owner's restart, or a
+    # host reboot bringing the container back by its restart policy) has another StartedAt, and is never taken for
+    # ours (a4 #49102).
+    started_at = container_started_at(android.WINDOWS_CONTAINER)
     try:
         STATE_ROOT.mkdir(parents=True, exist_ok=True)
         WINDOWS_STARTED.write_text(json.dumps({"ts": time.time(), "by": os.environ.get("ASTRYX_AGENT", "") or agent,
-                                               "container": android.WINDOWS_CONTAINER}))
+                                               "container": android.WINDOWS_CONTAINER, "started_at": started_at}))
     except OSError:
         pass
     return True
+
+
+def container_started_at(name: str) -> str | None:
+    """The container's own start identity (docker's State.StartedAt), or None if docker can't say."""
+    try:
+        r = subprocess.run(["docker", "inspect", "-f", "{{.State.StartedAt}}", name], capture_output=True, text=True,
+                           timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return r.stdout.strip() or None if r.returncode == 0 else None
 
 
 def open_(agent: str, what: str) -> None:
