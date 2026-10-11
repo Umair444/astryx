@@ -14,7 +14,7 @@ import { connect as connectLive } from '../pilot/voice'
    can drive the screen (room_screen → the pilot's AGENT principal) or hand the room to the realtime voice for a live
    back-and-forth (room_live → the voice orb, briefed).
 
-   Who floats: seed always (the room's host), plus every agent addressed or heard in the last 20 minutes. The active
+   Who floats: seed always (the room's host), plus every agent addressed or heard in the last 5 minutes. The active
    one flies to the stage (bottom centre, large) through listening → thinking → speaking; the rest drift on the bench
    (bottom right). Pointer-transparent except the faces, so it never blocks a tab underneath. */
 
@@ -22,7 +22,7 @@ type Mood = 'idle' | 'listening' | 'thinking' | 'speaking' | 'acting'
 interface Member { agent: string; mood: Mood; since: number; line?: string; heard?: string }
 type Ev = { type: string; [k: string]: any }
 
-const STAY_MS = 20 * 60 * 1000
+const STAY_MS = 5 * 60 * 1000                             // a guest leaves 5 min after its last word in the room (owner 10-11)
 const THINK_TIMEOUT_MS = 4 * 60 * 1000
 
 /** The quoted words from a room message body (nucleus/room.py's format), else the body's first line. */
