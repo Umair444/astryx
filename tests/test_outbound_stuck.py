@@ -204,6 +204,28 @@ def test_bridge_carve_out_is_pending_only():
     assert _ids(g["fresh"]) == {"3"}, g
 
 
+# An owner reply on ear-<room> is delivered by the ear SHEET (bridges/ear.py /ear/api/replies/seen, when the owner
+# opens it), not by a bridge: the WhatsApp bridge is RIGHT to skip it (#46315, steward #46578; seed #46821).
+def test_ear_sheet_reply_routes_to_sheet_not_bridge():
+    """It is owner-addressed, so ALSO bridge-shaped: the sheet carve-out must precede the bridge's."""
+    g = bucket([_fentry(46315, "pending", 6)], _meta(46315, bridge_delivered=True, sheet_delivered=True))
+    assert _ids(g["sheet"]) == {"46315"}, g["sheet"]
+    assert g["bridge"] == [] and g["deaf"] == [], g
+
+
+def test_counterexample_without_the_sheet_flag_ear_reply_reads_as_bridge_fault():
+    """PROVES the sheet class CAN FAIL — the pre-fix state: without sheet_delivered the same row gets the bridge's
+    'producer addressing fault' advice, the misread steward #46578 made of #46315."""
+    g = bucket([_fentry(46315, "pending", 6)], _meta(46315, bridge_delivered=True))
+    assert _ids(g["bridge"]) == {"46315"} and g.get("sheet", []) == [], g
+
+
+def test_sheet_carve_out_is_pending_only():
+    """A dead ear-sheet row is a real failure, not an unopened sheet: it belongs in the age split."""
+    g = bucket([_fentry(4, "dead", 72)], _meta(4, bridge_delivered=True, sheet_delivered=True))
+    assert g["sheet"] == [] and _ids(g["fresh"]) == {"4"}, g
+
+
 # ------------------------------------------------ (e) NO SUCH RESIDENT is not DEAF (2026-10-09)
 # memory wrote to_agent='a3' (a nickname); this guard said "DEAF RECIPIENT a3 — restart it", a remedy
 # that would have killed a HEALTHY abstractor-3. A name with no resident charter has no server.mjs to

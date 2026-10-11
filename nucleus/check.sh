@@ -744,8 +744,9 @@ run "canvas voice: cap, tier fence, owner" "$PY" tests/test_canvas_voice.py
 # reaches the wire (messages). The browser VAD sends only speech. The unit is presence-gated. Fixture DBs only.
 run "hearing: utterances retention (day partitions, DROP, TTL arm, trigger)" "$PY" tests/test_ear_store.py
 run "hearing: lease seam (EAR/MUTED, one ear per room)" "$PY" tests/test_ear_lease.py
-run "hearing: ear service (owner-gated upload, no text in logs or on the wire, RTF)" "$PY" tests/test_ear_service.py
+run "hearing: ear service (owner-gated upload, speech gate, seconds-bounded queue, replies on the sheet, no text in logs or on the wire, RTF)" "$PY" tests/test_ear_service.py
 run "hearing: in-browser VAD sends only speech" "$PY" tests/test_ear_vad.py
+run "hearing: the ear pill shows lag as 'catching up' (earLook)" "$PY" tests/test_ear_look.py
 run "hearing: ear unit is presence-gated, loopback only" "$PY" tests/test_ear_unit.py
 run "init units: senses, geoloc and growbot are declared (growbot's state follows where its body runs)" "$PY" tests/test_units_declared.py
 # HEARING S2 (a4 #42048 D3 + D5): hear() runs in a bwrap'd worker (no DSN, no net, no /home, stdout/stderr null) with

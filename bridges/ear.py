@@ -3,7 +3,8 @@
   browser    the observatory page holds the mic. An in-browser VAD cuts speech segments; each one is POSTed here as
              16 kHz mono WAV. Nothing else is uploaded (no silence, no continuous stream).
   stt        bridges/ear_stt.py: a pluggable backend (cpu faster-whisper now, cuda later) behind a bounded,
-             drop-oldest queue. Audio is decoded in memory and never written to disk.
+             drop-oldest queue, with a speech gate in front of it (silero: a clip with no speech never queues).
+             Audio is decoded in memory and never written to disk.
   store      each non-empty transcript is ONE row in `utterances`, in the org's one database (schema.sql; owner
              ruling 2026-10-10: shared and usable by every agent), with day-partition DROP retention
              (nucleus/ear_store.py). The transcript is NEVER put on the wire (`messages`) and never logged: the
@@ -13,6 +14,10 @@
              bwrap'd worker with a deadline (nucleus/hear_pool.py). A validated pass is a text-free `hearings`
              pointer plus, under the hourly wake cap, one wake. The agent reads the addressed span with
              nucleus/ear_fetch.py, fenced so the step hook redacts it (nucleus/ear_fence.py).
+  replies    (seed #46319) an agent's reply to the owner on the room's thread (ear-<room>) is served in the owner's
+             status for the ear sheet to show. Status is READ-ONLY (every tab polls it): a reply is marked delivered
+             only when the sheet OPENS with it showing (POST /ear/api/replies/seen, a4 #46445). One nobody opened
+             stays pending, visible as undelivered owner mail. Only the owner's own key reads or marks it.
   lease      the room's mic state lives in the `leases` row (D4, nucleus/ear_lease.py): one ear per room,
              claimed atomically by one browser tab, heartbeat TTL, MUTED with no TTL. An upload is accepted only from
              the live holder; while MUTED every upload is refused (the mute is enforced HERE, not only in the page).
@@ -60,6 +65,8 @@ MAX_BYTES = 2_000_000                       # 30 s of 16 kHz PCM16 is 960 KB
 MAX_S, MIN_S = 30.0, 0.25
 WAKE = env("EAR_WAKE", "on") != "off"           # the wake word gate (nucleus/wake.py); EAR_WAKE=off transcribes all
 MAINTAIN_EVERY_S = 600
+REPLY_WINDOW = "15 minutes"                 # how long the ear sheet keeps showing a reply
+speech_ms = ear_stt.speech_ms               # the gate; a module global so an oracle can substitute it
 
 queue: ear_stt.SttQueue | None = None
 
@@ -277,15 +284,22 @@ def _sink(item, text, stt_ms):
         hearing.put({"id": row[1], "ts": row[0].isoformat(), "ts_raw": row[0], "text": text, "view": item.get("view")})
 
 
+def _warm_wake():
+    """The wake word's first load imports sherpa_onnx + sentencepiece while the worker may be importing faster_whisper:
+    it takes ear_stt's one import lock too (seed #46821), so no two of the ear's model imports ever overlap."""
+    from nucleus import room, wake
+    with ear_stt._IMPORT:
+        wake.heard(np.zeros(8000, np.float32), room.roster())
+
+
 @asynccontextmanager
 async def lifespan(_):
     global queue
-    queue = ear_stt.SttQueue(make_backend(), _sink, maxlen=int(env("EAR_QUEUE_MAX", "2")),
-                             flush=True).start()
+    queue = ear_stt.SttQueue(make_backend(), _sink, maxlen=int(env("EAR_QUEUE_MAX", "2")), flush=True,
+                             max_s=float(env("EAR_QUEUE_MAX_S", "20"))).start()
     await asyncio.to_thread(store.maintain, True)
     if WAKE:                                                    # load the wake word now, not on the first sentence
-        from nucleus import room, wake
-        asyncio.get_running_loop().run_in_executor(None, wake.heard, np.zeros(8000, np.float32), room.roster())
+        asyncio.get_running_loop().run_in_executor(None, _warm_wake)
     hearing.start()
     yield
     queue.stop()
@@ -331,6 +345,26 @@ def _lease(conn):
     return L.get(conn, RESOURCE)
 
 
+def _replies(conn) -> list[dict]:
+    """Agents' replies to the owner on the room's thread, oldest first, pending ones included. READ-ONLY: the sheet
+    polls this from every tab, so serving a reply is not its delivery (a4 #46445); /ear/api/replies/seen is."""
+    rows = conn.execute(
+        "SELECT id, from_agent, body, ts, status FROM messages WHERE to_agent = 'owner' AND thread = %s "
+        "AND ts > now() - %s::interval ORDER BY id DESC LIMIT 5", (f"ear-{ROOM}", REPLY_WINDOW)).fetchall()
+    return [{"id": r[0], "from": r[1], "body": r[2], "ts": r[3].isoformat(), "seen": r[4] != "pending"}
+            for r in reversed(rows)]
+
+
+def _seen(conn, ids: list[int]) -> int:
+    """The owner OPENED the sheet with these replies showing: that is their delivery. Scoped to the room's own
+    owner-addressed pending rows, so no id from elsewhere is ever marked. RETURNING names the one relation it
+    touches (sqlguard credits it by that relation's stamp, not the whole fixture's)."""
+    return len(conn.execute("UPDATE messages SET status = 'delivered', delivered_at = now(), "
+                            "delivery = jsonb_build_object('ok', true, 'handle', 'observatory:ear') "
+                            "WHERE id = ANY(%s) AND to_agent = 'owner' AND thread = %s AND status = 'pending' "
+                            "RETURNING id", (ids, f"ear-{ROOM}")).fetchall())
+
+
 async def _indicator() -> dict:
     try:
         return L.indicator(await asyncio.to_thread(main_db.run, _lease))
@@ -344,7 +378,12 @@ async def status():
     store_ok = await asyncio.to_thread(store.ping)
     if not store_ok:
         st = {**st, "degraded": True, "reasons": st.get("reasons", []) + [f"store offline ({store.error})"]}
+    try:
+        replies = await asyncio.to_thread(main_db.run, _replies)
+    except psycopg.Error:
+        replies = []                                               # fail open: the sheet shows the rest
     return {"room": ROOM, "lease": await _indicator(), "stt": st, "store": {"ok": store_ok, "error": store.error},
+            "replies": replies,
             "ttl_days": S.ttl_days(), "backup_days": S.BACKUP_KEEP_DAYS,
             "attending": hearing.pool.attending(), "caught": hearing.caught, "hearing": hearing.status(),
             "wake": {"on": WAKE, **store.wake, "talking_with": store.talking, "error": _wake_error()}}
@@ -353,6 +392,16 @@ async def status():
 def _wake_error():
     from nucleus import wake
     return wake.error()
+
+
+@app.post("/ear/api/replies/seen")
+async def replies_seen(request: Request):
+    try:
+        ids = [int(i) for i in (await request.json()).get("ids", [])][:20]
+    except Exception:                                              # noqa: BLE001
+        return deny(400, "ids required")
+    n = await asyncio.to_thread(main_db.run, _seen, ids) if ids else 0
+    return {"delivered": n}
 
 
 async def _holder(request: Request) -> str | None:
@@ -443,6 +492,13 @@ async def utterance(request: Request):
         return deny(422, "segment too short")
     if not store.ok and not await asyncio.to_thread(store.ping):
         return deny(503, "ear store offline")
+    try:
+        heard = await asyncio.to_thread(speech_ms, pcm)
+    except Exception as e:                                         # noqa: BLE001  fail open: whisper filters too
+        heard, queue.gate_error = None, type(e).__name__
+    if heard is not None and heard < ear_stt.MIN_SPEECH_MS:       # silence/noise names nobody: before the wake word
+        queue.gated += 1
+        return JSONResponse({"queued": False, "gated": True, "lease": L.indicator(row)})
     item = {"pcm": pcm, "dur_ms": dur_ms, "view": view}
     if WAKE:                                                    # the wake word: only speech TO the org is transcribed
         from nucleus import wake

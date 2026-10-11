@@ -11,14 +11,27 @@ Arms (each with its RED control):
   LEASE        an upload from a tab that doesn't hold the ear → 409, 0 rows; while MUTED → 423, 0 rows (the mute is
                enforced server-side); unmute → claim → accepted again.
   AUDIO        stereo / 8 kHz → 415; over 30 s → 413; under 0.25 s → 422; nothing queued.
+  SPEECH GATE  (seed #46317: ambient clips sat whisper's queue for minutes) silero, the same VAD whisper runs inside,
+               checks each upload BEFORE it queues: loud white noise, mains hum and a pure tone → 200 gated, 0 rows,
+               counted; the real speech clip → 202 and a row (positive control). With the wake word on, the gate runs
+               FIRST: noise never reaches it (RED control: speech does, → 202 unaddressed).
   QUEUE        drop-OLDEST: a blocked backend + a full queue drops the oldest segments, keeps the newest, and the
-               status says DEGRADED with the reason; a backend that fails to load is DEGRADED.
+               status says DEGRADED with the reason; a backend that fails to load is DEGRADED. A second bound on
+               queued AUDIO SECONDS (not just clips) keeps the newest clip's wait short, and the status carries
+               behind_s (queued + in flight, times the measured RTF) for the pill's "catching up". FLUSH (owner
+               10-11, the live cap 2): a 3rd segment at a full queue discards the whole backlog, keeping the newest;
+               the seconds bound still applies on top.
   NO TEXT IN LOGS  the REAL service (uvicorn subprocess, real faster-whisper on CPU) transcribes a known clip: the row
                carries its words (positive control) and the service's entire stdout+stderr carries none of them.
                RED control: the same service with a sink that print()s the text → the same grep finds the words.
   NOT ON THE WIRE  the transcript never reaches `messages` (the wire): after every upload (fake and real whisper) no
                messages row carries it and the messages count is unchanged; and bridges/ear.py has no code path that
                writes messages or notifies. RED control: a planted messages row with the text IS seen by the same check.
+  REPLIES      (seed #46319: painter's reply sat pending, no surface claimed the room's thread) an agent's message to
+               the owner on ear-<room> comes back in the owner's status; one on another thread, or to another agent,
+               is not shown. Status is READ-ONLY: polled 5 times, the reply stays PENDING (RED: serving-as-delivery
+               flipped it, a4 #46445). POST /replies/seen (the sheet opening) delivers it; with another thread's or a
+               peer's id it changes 0 rows; without the owner key, 401.
   RTF          MEASURED: model, compute type, clip length, wall time, real-time factor and load average, printed.
 NOT RUN (77) where a fixture database can't be made, or the clip/model/ffmpeg aren't on the host.
 """
@@ -71,9 +84,10 @@ CLIP_PARTS = ["Front_Left", "Front_Center", "Front_Right", "Rear_Left", "Rear_Ri
 
 
 
-def wav(seconds=1.0, rate=16000, channels=1, tone=220.0) -> bytes:
+def wav(seconds=1.0, rate=16000, channels=1, tone=220.0, pcm=None) -> bytes:
     n = int(seconds * rate)
-    x = (0.2 * np.sin(2 * np.pi * tone * np.arange(n) / rate) * 32767).astype("<i2")
+    x = (0.2 * np.sin(2 * np.pi * tone * np.arange(n) / rate) if pcm is None else pcm)
+    x = (np.clip(x, -1, 1) * 32767).astype("<i2")
     if channels == 2:
         x = np.repeat(x, 2)
     b = io.BytesIO()
@@ -128,6 +142,9 @@ try:
         import bridges.ear as ear                                   # reads the env above at import
         fake = Fake()
         ear.make_backend = lambda: fake
+        real_gate = getattr(ear, "speech_ms", None)
+        all_speech = lambda pcm: len(pcm) * 1000 // 16000         # noqa: E731  the fake arms upload tones
+        ear.speech_ms = all_speech
         ear_admin = psycopg.connect(fx["dsn"], autocommit=True)
         wire0 = ear_admin.execute("SELECT count(*) FROM messages").fetchone()[0]
         O = {"x-obs-key": KEY}
@@ -193,6 +210,53 @@ try:
             st = cl.get("/ear/api/status", headers=O).json()
             want("status: backend named, store ok, not degraded", st["stt"]["backend"] == "fake:test"
                  and st["store"]["ok"] and not st["stt"]["degraded"], json.dumps(st))
+            want("status carries behind_s (the pill's 'catching up') and the gated count",
+                 "behind_s" in st["stt"] and "gated" in st["stt"], json.dumps(st["stt"]))
+
+            print("speech gate (before the queue)")
+            if real_gate is None:
+                want("bridges/ear.py has a speech gate (speech_ms) in front of the queue", False, "absent")
+            else:
+                ear.speech_ms = real_gate
+                rng = np.random.default_rng(46317)
+                n0, g0 = rows(ear_admin), cl.get("/ear/api/status", headers=O).json()["stt"].get("gated", 0)
+                for label, body in (("2 s of loud white noise (-20 dBFS)", wav(pcm=rng.standard_normal(32000) * 0.1)),
+                                    ("2 s of mains hum (120 Hz)",
+                                     wav(pcm=0.2 * np.sin(2 * np.pi * 120 * np.arange(32000) / 16000))),
+                                    ("a 1.5 s pure tone", wav(1.5))):
+                    r = cl.post("/ear/api/utterance?holder=tab1", content=body, headers=O)
+                    j = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+                    want(f"{label} → 200 gated, not queued", r.status_code == 200 and j.get("gated") is True
+                         and j.get("queued") is False, f"{r.status_code} {r.text[:120]}")
+                time.sleep(0.3)
+                g1 = cl.get("/ear/api/status", headers=O).json()["stt"].get("gated", 0)
+                want("no gated clip produced a row, and the status counts all 3", rows(ear_admin) == n0 and g1 == g0 + 3,
+                     f"rows {n0}→{rows(ear_admin)} gated {g0}→{g1}")
+                # ORDER (seed #46577): silence names nobody, so the gate runs BEFORE the wake word (4be1481)
+                woke, wake_gate, ear.WAKE = [], ear.store.wake_gate, True
+                ear.store.wake_gate = lambda pcm: woke.append(len(pcm))  # → None: "nobody was addressed"
+                try:
+                    r = cl.post("/ear/api/utterance?holder=tab1", content=wav(pcm=rng.standard_normal(32000) * 0.1),
+                                headers=O)
+                    want("wake on: noise is gated before the wake word runs (no wake call)",
+                         r.status_code == 200 and r.json().get("gated") is True and woke == [], f"{r.text[:120]} {woke}")
+                    ear.speech_ms = all_speech
+                    r = cl.post("/ear/api/utterance?holder=tab1", content=wav(1.0), headers=O)
+                    want("RED control: speech passes the gate and DOES reach the wake word (202 unaddressed)",
+                         r.status_code == 202 and r.json().get("unaddressed") is True and len(woke) == 1,
+                         f"{r.status_code} {r.text[:120]} {woke}")
+                finally:
+                    ear.store.wake_gate, ear.WAKE, ear.speech_ms = wake_gate, False, real_gate
+                if (ALSA / "Front_Center.wav").is_file() and shutil.which("ffmpeg"):
+                    fc = TMP / "fc.wav"
+                    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(ALSA / "Front_Center.wav"), "-ar",
+                                    "16000", "-ac", "1", "-sample_fmt", "s16", str(fc)], check=True)
+                    r = cl.post("/ear/api/utterance?holder=tab1", content=fc.read_bytes(), headers=O)
+                    want("positive control: a real spoken clip passes the gate → 202 and one row",
+                         r.status_code == 202 and settle(n0 + 1) == n0 + 1, f"{r.status_code} {r.text[:120]}")
+                else:
+                    skipped.append("speech-gate positive control")
+                ear.speech_ms = all_speech
 
         print("not on the wire")
         want("NOT ON THE WIRE: after the uploads no messages row carries the transcript, and the wire count is unchanged",
@@ -220,6 +284,40 @@ try:
              len(sites) == 1 and isinstance(body, ast.Call) and getattr(body.func, "id", "") == "wake_body"
              and len(wb) == 1 and [a.arg for a in wb[0].args.args] == ["hid"], f"{len(sites)} sites")
 
+        print("replies (the room answers on the ear sheet)")
+        mk = lambda frm, to, th, body: ear_admin.execute(               # noqa: E731
+            "INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES (%s, %s, %s, 'chat', %s) "
+            "RETURNING id", (frm, to, th, body)).fetchone()[0]
+        mine = mk("painter", "owner", "ear-test", "painter: heard you, nothing asked")
+        other = mk("painter", "owner", "cv:canvas-9", "a canvas reply")
+        peer = mk("painter", "seed", "ear-test", "to seed, not the owner")
+        state = lambda: dict(ear_admin.execute("SELECT id, status FROM messages WHERE id = ANY(%s)",  # noqa: E731
+                                               ([mine, other, peer],)).fetchall())
+        with TestClient(ear.app) as cl:
+            for _ in range(5):                                      # every tab polls status; none of it is delivery
+                got = cl.get("/ear/api/status", headers=O).json().get("replies")
+            polled = state()
+            stray = cl.post("/ear/api/replies/seen", headers=O, json={"ids": [other, peer]})
+            after_stray = state()
+            nokey = cl.post("/ear/api/replies/seen", json={"ids": [mine]}).status_code
+            seen = cl.post("/ear/api/replies/seen", headers=O, json={"ids": [mine]})
+            again = cl.get("/ear/api/status", headers=O).json().get("replies")
+        want("an agent's reply to the owner on ear-<room> is in the status: who, what, when, not yet seen",
+             isinstance(got, list) and [(x.get("id"), x.get("from"), x.get("body"), x.get("seen")) for x in got]
+             == [(mine, "painter", "painter: heard you, nothing asked", False)] and all(x.get("ts") for x in got),
+             str(got))
+        want("RED: status polled 5 times marks NOTHING delivered (a poll is not the owner seeing it, a4 #46445)",
+             polled == {mine: "pending", other: "pending", peer: "pending"}, str(polled))
+        want("/replies/seen with another thread's id and a peer's id changes 0 rows",
+             stray.status_code == 200 and stray.json().get("delivered") == 0
+             and after_stray == {mine: "pending", other: "pending", peer: "pending"}, f"{stray.text} {after_stray}")
+        want("/replies/seen without the owner key → 401", nokey == 401, str(nokey))
+        stat = state()
+        want("the sheet OPENED with it showing (/replies/seen) → delivered; the others stay pending; status says seen",
+             seen.json().get("delivered") == 1 and stat == {mine: "delivered", other: "pending", peer: "pending"}
+             and [x.get("seen") for x in again] == [True], f"{seen.text} {stat} {again}")
+        ear_admin.execute("DELETE FROM messages WHERE id = ANY(%s)", ([mine, other, peer],))
+
         print("queue (drop-oldest, degraded)")
         from bridges import ear_stt
         slow = Fake()
@@ -240,10 +338,45 @@ try:
         want("the newest segments survive (processed: 0 in flight, then 3, 4, 5; 1 and 2 were dropped)",
              done == [0, 3, 4, 5], str(done))
         q.stop()
+
         fl = ear_stt.SttQueue(None, None, maxlen=2, flush=True)    # not started: put() alone decides
         got = [fl.put({"seq": i}) for i in range(5)]
         want("flush mode (owner 10-11): a 3rd segment at a full queue discards the WHOLE backlog, keeping the newest",
              got == [0, 0, 2, 0, 2] and [x["seq"] for x in fl.q] == [4], f"{got} {[x['seq'] for x in fl.q]}")
+        fs = ear_stt.SttQueue(None, None, maxlen=2, flush=True, max_s=20)
+        got = [fs.put({"seq": i, "dur_ms": 15000}) for i in range(2)]
+        want("flush mode keeps the seconds bound on top: a 2nd 15 s clip drops the 1st (30 s > 20 s), queued_s 15",
+             got == [0, 1] and [x["seq"] for x in fs.q] == [1] and fs.queued_ms == 15000, f"{got} {fs.queued_ms}")
+        print("queue (audio-seconds bound: the newest clip's wait stays short)")
+        slow2 = Fake()
+        slow2.gate = threading.Event()
+        done2 = []
+        try:
+            q2 = ear_stt.SttQueue(slow2, lambda item, text, ms: done2.append(item["seq"]), maxlen=8, max_s=20).start()
+        except TypeError as e:
+            q2 = None
+            want("SttQueue takes max_s, a bound on queued AUDIO seconds", False, str(e))
+        if q2:
+            def clip_s(i, s):
+                return {"pcm": np.zeros(int(16000 * s), np.float32), "dur_ms": int(s * 1000), "seq": i}
+            q2.put(clip_s(0, 10))
+            time.sleep(0.3)                                         # seq 0 is in flight, blocked
+            drops = sum(q2.put(clip_s(i, 10)) for i in range(1, 5))
+            st = q2.status()
+            want("8 slots but 20 s of audio: four 10 s clips → the 2 OLDEST dropped, 20 s queued",
+                 drops == 2 and st["queue"] == 2 and st.get("queued_s") == 20.0, json.dumps(st))
+            want("behind_s = (20 s queued + 10 s in flight) × RTF 1.0 (none measured yet) = 30 s",
+                 st.get("behind_s") == 30.0, json.dumps(st))
+            q2.put(clip_s(5, 25))
+            st = q2.status()
+            want("one clip longer than the bound queues ALONE (the newest always survives)",
+                 st["queue"] == 1 and st.get("queued_s") == 25.0, json.dumps(st))
+            slow2.gate.set()
+            t0 = time.time()
+            while len(done2) < 2 and time.time() - t0 < 10:
+                time.sleep(0.05)
+            want("processed: 0 (in flight), then 5", done2 == [0, 5], str(done2))
+            q2.stop()
         bad = ear_stt.SttQueue(Fake(fail_load=True), lambda *a: None).start()
         time.sleep(0.3)
         st = bad.status()
