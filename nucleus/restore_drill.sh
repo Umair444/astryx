@@ -12,8 +12,9 @@
 #   2. a temp passfile holding a random value (the "restored ~/.pgpass"), created 0600, never printed;
 #   3. PREMISE: `pg_role_sync check` FAILS (the placeholder is what the server holds), else the drill proves nothing;
 #   4. `pg_role_sync apply`, then `check` passes, and the placeholder is refused;
-#   5. the paired ROLES file (backup.sh's astryx-<ts>.roles.sql: globals, no passwords) applied, so the groups the
-#      dump's GRANTs name exist (a1 #45221: without it pg_restore drops every grant to astryx_resident/people_cleared);
+#   (the paired ROLES file, backup.sh's astryx-<ts>.roles.sql, is applied right after step 1 and BEFORE steps 3–4, so
+#      the password reconcile is the role's last writer; a file with password material is refused: a1 #45231. It
+#      makes the groups the dump's GRANTs name exist; without it pg_restore drops their grants, a1 #45221);
 #   6. pg_restore the dump INTO that server with ZERO error lines, and the core tables come back populated.
 # A dump older than roles capture has no paired file: its roles are NOT VERIFIED (exit 3), and its pg_restore error
 # lines are reported but not gated, since missing roles are exactly what they would be (seed #45224).
@@ -66,32 +67,19 @@ for _ in $(seq 1 90); do
   sleep 2
 done
 [ "$ready" = 1 ] || notrun "the drill server never accepted its initdb login within 180s"
-echo "  ✓ restore-drill: empty data dir initdb'd from $IMAGE (role $ROLE holds the placeholder)"
+echo "  ✓ restore-drill: empty data dir initdb'd from $IMAGE (role $ROLE holds the placeholder; container $name)"
 
-# the "restored ~/.pgpass": a random value, written 0600 at create, never echoed
-"$PY" -c '
-import os, secrets, sys
-fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-os.write(fd, f"127.0.0.1:{sys.argv[2]}:*:{sys.argv[3]}:{secrets.token_urlsafe(24)}\n".encode()); os.close(fd)' \
-  "$tmp/pgpass" "$port" "$ROLE"
-export PGPASSFILE="$tmp/pgpass" ASTRYX_PG_CONTAINER="$name" ASTRYX_DSN="postgresql://$ROLE@127.0.0.1:$port/$DB"
 fail=0
-if "$PY" -m nucleus.pg_role_sync check >/dev/null 2>&1; then
-  echo "  ✗ restore-drill: PREMISE BROKEN: the pgpass value logged in BEFORE the sync; the drill proves nothing" >&2
-  fail=1
-fi
-out=$("$PY" -m nucleus.pg_role_sync apply 2>&1) || { echo "  ✗ restore-drill: $out" >&2; fail=1; }
-out=$("$PY" -m nucleus.pg_role_sync check 2>&1) \
-  && echo "  ✓ restore-drill: after pg_role_sync apply the restored pgpass value logs in" \
-  || { echo "  ✗ restore-drill: $out" >&2; fail=1; }
-printf '%s' "$placeholder" | login "$DB" stdin >/dev/null 2>&1; rc=$?
-[ "$rc" = 3 ] && echo "  ✓ restore-drill: the initdb placeholder is refused" \
-  || { echo "  ✗ restore-drill: the placeholder was not refused (login rc $rc)" >&2; fail=1; }
-
-# the ROLES before the data: the bootstrap role already exists (initdb made it), so its CREATE line is dropped and its
-# ALTER (attributes only: the file has no password) still applies. psql's stderr is kept, never printed, and counted.
+# the ROLES FIRST, before the password reconcile, so pg_role_sync is the LAST writer of the role's password (a1
+# #45231): a hand-made `pg_dumpall --roles-only` at disaster time carries SCRAM verifiers by default, and applied after
+# the sync it would silently undo it. A file with password material is REFUSED here anyway, before psql sees it.
+# The bootstrap role already exists (initdb made it), so its CREATE line is dropped; its ALTER (attributes) applies.
+# psql's stderr is kept, never printed, and counted.
 roles_file="${dump%.dump}.roles.sql"
-if [ -f "$roles_file" ]; then
+if [ -f "$roles_file" ] && grep -qE "PASSWORD '|SCRAM-SHA-256|md5[0-9a-f]{32}" "$roles_file"; then
+  echo "  ✗ restore-drill: the roles file carries password material: refused before apply (make it with --no-role-passwords)" >&2
+  fail=1
+elif [ -f "$roles_file" ]; then
   nroles=$(grep -c '^CREATE ROLE ' "$roles_file")
   grep -v -E "^CREATE ROLE \"?$ROLE\"?;\$" "$roles_file" \
     | docker exec -i "$name" psql -X -q -v ON_ERROR_STOP=0 -U "$ROLE" -d postgres >/dev/null 2>"$tmp/roles.err"
@@ -107,6 +95,25 @@ else
   roles_file=""
   echo "  ○ restore-drill: roles NOT VERIFIED: no ${dump##*/}'s .roles.sql paired (the dump predates roles capture)"
 fi
+
+# the "restored ~/.pgpass": a random value, written 0600 at create, never echoed
+"$PY" -c '
+import os, secrets, sys
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+os.write(fd, f"127.0.0.1:{sys.argv[2]}:*:{sys.argv[3]}:{secrets.token_urlsafe(24)}\n".encode()); os.close(fd)' \
+  "$tmp/pgpass" "$port" "$ROLE"
+export PGPASSFILE="$tmp/pgpass" ASTRYX_PG_CONTAINER="$name" ASTRYX_DSN="postgresql://$ROLE@127.0.0.1:$port/$DB"
+if "$PY" -m nucleus.pg_role_sync check >/dev/null 2>&1; then
+  echo "  ✗ restore-drill: PREMISE BROKEN: the pgpass value logged in BEFORE the sync; the drill proves nothing" >&2
+  fail=1
+fi
+out=$("$PY" -m nucleus.pg_role_sync apply 2>&1) || { echo "  ✗ restore-drill: $out" >&2; fail=1; }
+out=$("$PY" -m nucleus.pg_role_sync check 2>&1) \
+  && echo "  ✓ restore-drill: after pg_role_sync apply the restored pgpass value logs in" \
+  || { echo "  ✗ restore-drill: $out" >&2; fail=1; }
+printf '%s' "$placeholder" | login "$DB" stdin >/dev/null 2>&1; rc=$?
+[ "$rc" = 3 ] && echo "  ✓ restore-drill: the initdb placeholder is refused" \
+  || { echo "  ✗ restore-drill: the placeholder was not refused (login rc $rc)" >&2; fail=1; }
 
 # the dump onto THAT server (its extensions must exist in the declared image, or this is where it shows)
 # stderr kept (never printed: it can quote the dump's DDL), and its ERROR-line COUNT reported, so a missing

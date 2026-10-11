@@ -62,6 +62,13 @@ check("…under a wall cap", bool(re.search(r'timeout "\$DRILL_CAP" bash nucleus
 block = rv[i_drill:rv.find("esac", i_drill)]
 check("…and every non-zero (NOT RUN, a timeout, a failed step) sets fail=1",
       "124)" in block and re.search(r"\*\)\s*fail=1", block) is not None, block)
+dr = DRILL.read_text()
+# The ORDER is the SECOND layer behind arm D's refusal (a password-bearing roles file is never applied), so it can only
+# be pinned by position here, not shown behaviourally. Two layers guard one failure: an operator who removes the
+# refusal still can't undo the reconcile. Don't drop this as redundant with D (a1 #45250).
+check("the drill applies the roles file BEFORE pg_role_sync apply (layer 2 behind D's refusal: the reconcile is the "
+      "role's last writer, a1 #45231)",
+      0 < dr.find('psql -X -q -v ON_ERROR_STOP=0') < dr.find('-m nucleus.pg_role_sync apply'))
 check("…including 3, roles NOT VERIFIED on the newest dump", re.search(r"\n\s*3\)[^\n]*fail=1", block) is not None,
       block)
 
@@ -87,11 +94,15 @@ live = psycopg.connect(pg_role_sync._live_dsn(), autocommit=True)   # without th
 live.execute(f"CREATE ROLE {FXROLE} NOLOGIN")
 
 
+MINE = set()   # the drill containers THIS test started (named in each drill's ✓ line): other agents drill too
+
+
 def drill(dump):
     r = subprocess.run(["timeout", "600", "bash", "nucleus/restore_drill.sh", str(dump)], cwd=REPO,
                        capture_output=True, text=True, timeout=620)
     out = r.stdout + r.stderr
     print("\n".join("        " + x for x in out.splitlines()))
+    MINE.update(re.findall(r"container (astryx-restore-drill-\d+)\)", out))
     return r.returncode, out
 
 
@@ -119,8 +130,6 @@ try:
         check("the paired roles file was made, names the fixture role, and carries no password material",
               g.returncode == 0 and f"CREATE ROLE {FXROLE};" in rtext and "PASSWORD '" not in rtext
               and "SCRAM-SHA-256" not in rtext)
-        before = set(subprocess.run(["docker", "ps", "-aq", "--filter", "name=astryx-restore-drill-"],
-                                    capture_output=True, text=True).stdout.split())
 
         print("  [A] dump + its roles file:")
         rc, out = drill(dump)
@@ -146,12 +155,21 @@ try:
         rc, out = drill(dump)
         check("C: exit 1, the restore named INCOMPLETE", rc == 1 and "the restore is INCOMPLETE" in out, f"rc {rc}")
 
-        after = set(subprocess.run(["docker", "ps", "-aq", "--filter", "name=astryx-restore-drill-"],
-                                   capture_output=True, text=True).stdout.split())
-        vols = subprocess.run(["docker", "volume", "ls", "-q", "--filter", "name=astryx-restore-drill-"],
-                              capture_output=True, text=True).stdout.split()
-        check("teardown: no drill container and no drill volume remain", after <= before and not vols,
-              f"containers {after - before}, volumes {vols}")
+        print("  [D] a roles file carrying a password verifier (pg_dumpall's default, hand-made at disaster time):")
+        roles.write_text((Path(td) / "held.sql").read_text()
+                         + "ALTER ROLE genesis WITH PASSWORD 'SCRAM-SHA-256$4096:AAAA$BBBB:CCCC';\n")
+        rc, out = drill(dump)
+        check("D: refused BEFORE apply, rc 1, naming password material", rc == 1 and "carries password material" in out
+              and "the paired roles file applied" not in out, f"rc {rc}")
+        check("D: …and the reconcile still holds (the restored pgpass value logs in)",
+              "✓ restore-drill: after pg_role_sync apply the restored pgpass value logs in" in out)
+
+        names = set(subprocess.run(["docker", "ps", "-a", "--format", "{{.Names}}"], capture_output=True,
+                                   text=True).stdout.split())
+        vols = set(subprocess.run(["docker", "volume", "ls", "-q"], capture_output=True, text=True).stdout.split())
+        check("teardown: none of THIS test's drill containers or volumes remain (scoped by name: others drill too)",
+              len(MINE) >= 4 and not (MINE & names) and not (MINE & vols),
+              f"mine {len(MINE)}, left: containers {MINE & names}, volumes {MINE & vols}")
 finally:
     live.execute(f"DROP ROLE IF EXISTS {FXROLE}")   # after the fixture DB (and its grant) is gone
     live.close()

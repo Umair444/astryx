@@ -28,13 +28,15 @@ exist`, while the rows still come back. Step 5 restores them first.
    Keep `~/.pgpass` at mode 0600 (libpq ignores a looser one).
 3. **Prove the seam is there:** `venv/bin/python -m nucleus.pg_role_sync check` fails with "the server's verifier and
    the pgpass value disagree". (If it passes, the data dir wasn't empty; stop and look.)
-4. **Reconcile:** `venv/bin/python -m nucleus.pg_role_sync apply`. It sets the role's password FROM `~/.pgpass`, as a
+4. **The roles.** Apply the paired roles file, minus the bootstrap role's own CREATE (initdb already made it):
+   `grep -v '^CREATE ROLE genesis;$' backups/astryx-<ts>.roles.sql | docker exec -i genesis-pg psql -X -U genesis -d postgres`.
+   Every role the file names must then be in `pg_roles`. Roles go in BEFORE the reconcile, so step 5 is the last
+   writer of the role's password. A roles file made by hand at disaster time must use `--no-role-passwords`:
+   pg_dumpall's default carries the SCRAM verifiers, and `grep -E "PASSWORD '|SCRAM-SHA-256"` on it must find
+   nothing before you apply it (the drill refuses such a file).
+5. **Reconcile:** `venv/bin/python -m nucleus.pg_role_sync apply`. It sets the role's password FROM `~/.pgpass`, as a
    client-side SCRAM verifier over the container's local socket; the value is never printed or sent as plaintext.
    Then `check` passes.
-5. **The roles.** Apply the paired roles file, minus the bootstrap role's own CREATE (initdb already made it):
-   `grep -v '^CREATE ROLE genesis;$' backups/astryx-<ts>.roles.sql | docker exec -i genesis-pg psql -X -U genesis -d postgres`.
-   Every role the file names must then be in `pg_roles`. The file holds no passwords: the only LOGIN role the org
-   uses is the one step 4 just synced.
 6. **The data.** `docker exec -i genesis-pg pg_restore --no-owner -U genesis -d astryx < backups/astryx-<ts>.dump`.
    With the roles in place this reports ZERO errors; an error here means the restore is incomplete, whatever the row
    counts say.
@@ -44,7 +46,8 @@ exist`, while the rows still come back. Step 5 restores them first.
 
 `nucleus/restore_drill.sh` rehearses steps 1–6 on a throwaway server every week, inside `restore_verify.sh`: an empty
 docker volume, initdb with a placeholder, a temp passfile with a random value, `check` failing first (the premise),
-`apply`, `check` passing, the placeholder refused, the paired roles file applied with every role present, and the
+the paired roles file applied with every role present (a file with password material refused), `apply`, `check`
+passing, the placeholder refused, and the
 newest dump restored with zero error lines and read through the synced role. A dump older than roles capture has no
 roles file: the drill says roles NOT VERIFIED (exit 3), and restore_verify fails the run on it. A drill that can't
 run (no docker, no image) fails the run; `backups/.last-restore-ok` says OK only when every step,
