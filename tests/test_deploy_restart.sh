@@ -23,7 +23,20 @@ if [ "$1" = bad ]; then echo "'bad' already has a live body outside tmux — ref
 touch "$(dirname "$0")/../spawned-$1"
 echo "$1 resident (tmux:ax-$1, boot=resumed)"
 P
-for c in psql docker tmux curl; do printf '#!/usr/bin/env bash\necho "%s $*" >> "%s"\nexit 0\n' "$c" "$LOG" > "$T/bin/$c"; done
+# docker: `docker ps` reports the database container, so the db-restart path (and the busy guard before it) runs
+cat > "$T/bin/docker" <<STUB
+#!/usr/bin/env bash
+echo "docker \$*" >> "$LOG"
+[ "\$1" = ps ] && printf 'genesis-pg\t127.0.0.1:5432->5432/tcp\n'
+exit 0
+STUB
+# ps: quiet unless FAKE_BUSY names a running check
+cat > "$T/bin/ps" <<STUB
+#!/usr/bin/env bash
+[ -n "\${FAKE_BUSY:-}" ] && echo "  4242 bash nucleus/check.sh"
+exit 0
+STUB
+for c in psql tmux curl; do printf '#!/usr/bin/env bash\necho "%s $*" >> "%s"\nexit 0\n' "$c" "$LOG" > "$T/bin/$c"; done
 # psql: "busy" queries answer 0
 printf '#!/usr/bin/env bash\necho "psql $*" >> "%s"\ncase "$*" in *count*) echo 0;; esac\nexit 0\n' "$LOG" > "$T/bin/psql"
 printf '#!/usr/bin/env bash\necho "sudo $*" >> "%s"\nexit 0\n' "$LOG" > "$T/bin/sudo"
@@ -67,4 +80,20 @@ arm "residents: no docker call at all (the database is not bounced)" '! grep -q 
 arm "residents: no unit is restarted (the verify step may still READ unit states)" '! grep -qE "systemctl restart astryx-" "$LOG"'
 arm "residents: the residents are still rolled (kill-session + spawn)" 'grep -q "kill-session" "$LOG" && grep -q "✓ good resident" <<<"$out2"'
 arm "residents: the pulse is paused and started again" 'grep -q "stop astryx-pulse.timer" "$LOG" && grep -q "start astryx-pulse.timer" "$LOG"'
+# the busy guard: a full restart with a check running refuses BEFORE the database bounce; --force overrides
+run_full() { : > "$LOG"; rm -f "$T/root/spawned-good"; PATH="$T/bin:$PATH" ROOT="$T/root" ASTRYX_AGENT= FAKE_BUSY="$1" bash -c '
+  set -euo pipefail
+  eval "$(sed -n "/^ears() {/,/^}/p; /^ears_of() /p; /^restart_org() {/,/^}/p" "'"$REPO"'/nucleus/deploy.sh")"
+  sleep() { :; }
+  restart_org '"$2"'' 2>&1; }
+out3=$(run_full 1 ""); rc3=$?
+arm "busy: a running check.sh refuses the full restart, named, rc 1" '[ $rc3 = 1 ] && grep -q "refusing to restart the database" <<<"$out3" && grep -q "check.sh" <<<"$out3"'
+arm "busy: refused BEFORE anything is touched (no db restart, no pulse stop, no kill-session)" '! grep -q "docker restart" "$LOG" && ! grep -q "stop astryx-pulse" "$LOG" && ! grep -q "kill-session" "$LOG"'
+out4=$(run_full 1 force)
+arm "busy + --force: the database IS restarted" 'grep -q "docker restart genesis-pg" "$LOG"'
+out5=$(run_full "" "")
+arm "quiet host: a plain full restart restarts the database" 'grep -q "docker restart genesis-pg" "$LOG"'
+out6=$(run_full 1 residents)
+log6=$(cat "$LOG")
+arm "busy + residents: the guard does not apply (no db touched), residents still roll" '! grep -q "refusing to restart the database" <<<"$out6" && ! grep -q "docker restart" <<<"$log6" && grep -q "✓ good resident" <<<"$out6"'
 [ $fails = 0 ] && echo PASS || { echo "$out" | tail -8; echo "FAIL ($fails)"; exit 1; }
