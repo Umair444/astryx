@@ -1268,11 +1268,6 @@
    "reason": "people library 1a: a pg_catalog read (pg_roles/pg_database/pg_attribute), so RESPONSIVE is unreachable by the judge's relation rule; executed by test_people_gate / test_privilege_census",
    "tk": "sha256t:046b20c0dabd11548bae9814467a482cc75a8bc3ba33df01baa1bf6468820550"
   },
-  "nucleus/pulse.py::reconcile\u001finsert into triggers (agent, name, schedule, kind, check_src, note, next_fire) values (?, ?, ?, 'python', ?, ?, now()) on conflict (agent, name) do update set schedule = ?, check_src = ?, note = ?, enabled = true": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:5856acfa01ff75f878002e4ca1cabc283182bcd4293f6d0ad5ae82c02ecaaff4"
-  },
   "nucleus/pulse.py::reconcile\u001fselect agent, name from triggers where kind='python' and enabled": {
    "debt": "UNEXECUTED",
    "reason": "seed",
