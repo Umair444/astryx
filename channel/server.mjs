@@ -199,18 +199,26 @@ async function handleTool(name, a) {
     // judge the EXACT values the INSERT writes below (a3 #38028 A1, parity): toAgent for a local row; for
     // any other toOrg the pair as written, so an empty or spaced org is refused too (a3 #38032)
     const { note } = await checkAddress(toOrg === 'local' ? toAgent : `${toAgent}@${toOrg}`)
+    // A channel surface (owner / wa-/tg-/dc-) is delivered by a bridge, which writes
+    // the outcome back into the row (see the receipt wait below).
+    const channelBound = toOrg === 'local' &&
+      (toAgent === 'owner' || /^(wa|tg|dc)-/.test(toAgent))
+    // A malformed [[poll:]] / [[file:]] reaches the human as raw brackets, or not at all (channel/embeds.mjs).
+    // Refuse it HERE, before the INSERT, so nothing half-rendered leaves.
+    if (channelBound) {
+      const { embedProblems } = await import('./embeds.mjs')
+      const bad = embedProblems(a.body)
+      if (bad.length) return `send REFUSED, nothing sent: ${bad.join('; ')}`
+    }
     const thread = a.thread || `t-${Date.now().toString(36)}`
     const ins = await pool.query(
       `INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, intent, body)
        VALUES ($1,'local',$2,$3,$4,$5,$6) RETURNING id`,
       [AGENT, toAgent, toOrg, thread, a.intent || 'chat', a.body])
     const id = ins.rows[0].id
-    // A channel surface (owner / wa-/tg-/dc-) is delivered by a bridge, which writes
-    // the outcome back into the row. Await it, so the caller sees where the message
-    // landed instead of walking away after the insert — the feedback loop. Internal
-    // agent-to-agent messages have no such receipt and return immediately.
-    const channelBound = toOrg === 'local' &&
-      (toAgent === 'owner' || /^(wa|tg|dc)-/.test(toAgent))
+    // Await the bridge's receipt, so the caller sees where the message landed instead of
+    // walking away after the insert — the feedback loop. Internal agent-to-agent messages
+    // have no such receipt and return immediately.
     if (!channelBound) return `sent to ${a.to} (thread ${thread}, msg ${id})${note}`
     const deadline = Date.now() + 20_000
     while (Date.now() < deadline) {
