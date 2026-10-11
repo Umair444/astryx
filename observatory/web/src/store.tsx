@@ -133,6 +133,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       } catch {
         return
       }
+      // the Room (ui/room.tsx) and anything else that wants the raw stream listens here: one connection, many ears
+      window.dispatchEvent(new CustomEvent('ax:event', { detail: e }))
       if (e.type === 'message') {
         const { type: _t, ...m } = e
         setMessages((cur) => (cur.some((x) => x.id === m.id) ? cur : [...cur, m as Msg]))

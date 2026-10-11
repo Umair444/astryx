@@ -56,7 +56,7 @@ export const levels = { mic: () => rms(micAn), out: () => rms(outAn) }
 
 interface Minted { value: string; model: string; usage_id: number; minutes_today: number; cap: number; calls_url: string }
 
-export async function connect(): Promise<void> {
+export async function connect(brief?: string): Promise<void> {
   if (st.phase === 'connecting' || st.phase === 'live') return
   patch({ phase: 'connecting', mood: 'thinking', error: '', heard: '', said: '', acting: '' })
   try {
@@ -86,6 +86,11 @@ export async function connect(): Promise<void> {
     dc.onopen = () => {
       connectedAt = Date.now(); touch()
       patch({ phase: 'live', mood: 'listening' })
+      if (brief) {                                    // a room agent handed over: open the live voice already briefed
+        toProvider({ type: 'conversation.item.create', item: { type: 'message', role: 'system',
+          content: [{ type: 'input_text', text: `An agent in the room handed you this conversation. Their brief: ${brief}` }] } })
+        toProvider({ type: 'response.create' })
+      }
       beat = setInterval(() => {
         reportUsage()
         if (Date.now() - lastActive > IDLE_MS && !responding) hangup('closed after a minute of quiet')
@@ -151,6 +156,15 @@ async function runTool(callId: string, name: string, raw: string) {
   let args: unknown = {}
   try { args = raw ? JSON.parse(raw) : {} } catch { args = null }
   patch({ mood: 'working', acting: name })
+  if (name === 'ask_agent' && args && typeof args === 'object') {   // the room: a request to an agent, on the wire
+    const a = args as { agent?: string; message?: string }
+    let ok = true
+    try { await apiPost('/room/ask', { agent: a.agent, message: a.message }) } catch { ok = false }
+    toProvider({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: callId,
+      output: JSON.stringify(ok ? { ok: true, note: `asked ${a.agent}; their answer will be spoken in the room in their own voice` } : { ok: false, error: 'could not reach the room' }) } })
+    patch({ acting: '' })
+    return
+  }
   const out = args === null
     ? ({ status: 'refused', action: name, reason: 'arguments were not valid JSON' } as const)
     : await pilot.room.run(name, args)

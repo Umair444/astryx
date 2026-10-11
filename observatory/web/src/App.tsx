@@ -22,6 +22,7 @@ import VegaChat from './components/VegaChat'
 import PulseStrip from './components/PulseStrip'
 import EarControl from './components/EarControl'
 import VoicePilot from './components/VoicePilot'
+import RoomLayer from './ui/room'
 import Palette from './components/Palette'
 import { PilotHost } from './pilot'
 import PilotConfirm from './pilot/Confirm'
@@ -252,7 +253,7 @@ function Shell() {
                 </span>
               </>
             )}
-            {who.owner && <VoicePilot />}
+            {who.owner && <VoicePilot hidden />}
             {who.owner && <EarControl view={route.tab} />}
             <KeyBadge />
           </span>
@@ -314,6 +315,7 @@ function Shell() {
       {who.owner && <PilotConfirm />}
       {agentOpen && <AgentDrawer name={agentOpen} onClose={() => setAgentOpen(null)} />}
       {who.owner && <DesktopOverlay />}
+      {who.owner && <RoomLayer />}
       {/* VEGA is the PUBLIC concierge and floats bottom-right on every view; the Memory
           tab is owner-only and docks its own ask box in that exact corner, so the two
           buttons overlapped. Hidden here rather than nudged — a public greeter on a

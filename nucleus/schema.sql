@@ -783,6 +783,24 @@ CREATE TABLE IF NOT EXISTS utterances (
   PRIMARY KEY (ts, id)
 ) PARTITION BY RANGE (ts);
 
+-- VOICES (the Room, owner brief 2026-10-11): who is speaking in the room. Every utterance's audio is matched against
+-- these prints (nucleus/voiceprint.py, CAM++ speaker embeddings on CPU); a voice the ear has never heard becomes a new
+-- `voice-N` with no name. Agents ESTABLISH who a voice is (ask, check the WhatsApp contacts, ask for their number…)
+-- and record it with send(to='room', intent='voice'); trust is their judgment, recorded with its evidence. The
+-- embedding is a running mean over every match, so a print sharpens with use. Public to every agent, like all org data.
+CREATE TABLE IF NOT EXISTS voices (
+  id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  label       text NOT NULL UNIQUE,                                   -- voice-N, stable
+  name        text,                                                   -- who the agents established it is
+  trust       text NOT NULL DEFAULT 'unknown' CHECK (trust IN ('unknown', 'claimed', 'verified', 'owner')),
+  verified_by text,                                                   -- the agent that set name/trust
+  evidence    text,                                                   -- how (e.g. "said his number; matches the WhatsApp contact")
+  embedding   real[] NOT NULL,
+  n           int NOT NULL DEFAULT 1,
+  first_heard timestamptz NOT NULL DEFAULT now(),
+  last_heard  timestamptz NOT NULL DEFAULT now()
+);
+
 -- HEARINGS (plan-8674 S2, a4 #42048 D5): an agent's hear() caught its name in an utterance. This row is the POINTER
 -- the agent is woken with, and it carries NO TEXT by design (no text column exists): the words stay in `utterances`,
 -- reachable only through nucleus/ear_fetch.py as the addressed span (≤30 words from the name), fenced. When the

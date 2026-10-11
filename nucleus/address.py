@@ -40,6 +40,7 @@ SURFACES = (
     ("discord",     re.compile(r"^dc-[^\s@]+$"),            "bridges/discord.py",  "to_agent LIKE 'dc-%'"),
     ("canvas user", re.compile(r"^cv-[^\s@]+$"),            "bridges/canvas.py",   "to_agent LIKE 'cv-%'"),
     ("canvas page", re.compile(r"^canvas-\d+$"),            "bridges/canvas.py",   "to_agent LIKE 'canvas-%'"),
+    ("room",        re.compile(r"^room$"),                  "observatory/api/room.py", "to_agent='room'"),
 )
 
 

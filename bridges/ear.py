@@ -70,6 +70,7 @@ class Store:
         self.dsn, self.c, self.lock = dsn, None, threading.RLock()
         self.ok, self.error, self.maintained = False, None, 0.0
         self.last_maintain: dict | None = None
+        self.room_error: str | None = None
 
     def _conn(self):
         if self.c is None or self.c.closed:
@@ -105,6 +106,26 @@ class Store:
                 except psycopg.Error as e:
                     self.ok, self.error, self.c = False, type(e).__name__, None
                     raise
+
+    def route_room(self, text: str, row, pcm=None):
+        """The Room (nucleus/room.py): WHO said it (nucleus/voiceprint.py, recorded on the utterance), then, when the
+        sentence ADDRESSES an agent, the wire message to it. Fail-open: neither ever costs the room its transcript."""
+        from nucleus import room, voiceprint
+        with self.lock:
+            try:
+                c = self._conn()
+                v = None
+                try:
+                    v = voiceprint.identify(c, pcm) if pcm is not None else None
+                except Exception as e:                          # noqa: BLE001: no voiceprint, the room carries on
+                    self.room_error = f"voiceprint {type(e).__name__}"
+                if v:
+                    c.execute("UPDATE utterances SET speaker=%s WHERE ts=%s AND id=%s", (v["label"], row[0], row[1]))
+                who, conf = voiceprint.describe(v)
+                return room.route(c, text, row[1], who, conf)
+            except Exception as e:                              # noqa: BLE001: counted, never raised
+                self.room_error = type(e).__name__
+                return None
 
     def ping(self) -> bool:
         with self.lock:
@@ -231,6 +252,8 @@ hearing = Hearing(MAIN_DSN)
 
 def _sink(item, text, stt_ms):
     row = store.insert(item, text, stt_ms, queue.backend.name if queue else "?")
+    if row and text.strip():
+        store.route_room(text, row, item.get("pcm"))
     if row:
         hearing.put({"id": row[1], "ts": row[0].isoformat(), "ts_raw": row[0], "text": text, "view": item.get("view")})
 

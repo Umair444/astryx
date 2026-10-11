@@ -271,6 +271,8 @@ async def listen_task():
                         "SELECT * FROM messages WHERE id = $1", int(payload))
                     if row:
                         data = {"type": "message", **msg(row)}
+                        if row["to_agent"] == "room":
+                            _room.nudge()
                 if data:
                     for cq in list(sse_clients):
                         cq.put_nowait(data)
@@ -283,8 +285,10 @@ async def lifespan(app: FastAPI):
     global pool
     pool = await asyncpg.create_pool(DSN, min_size=1, max_size=4)
     task = asyncio.create_task(listen_task())
+    room_task = asyncio.create_task(_room.speaker_task())
     yield
     task.cancel()
+    room_task.cancel()
     await pool.close()
 
 
@@ -296,6 +300,18 @@ app = FastAPI(lifespan=lifespan)
 from observatory.api import pilot_voice as _pilot_voice  # noqa: E402
 _pilot_voice.bind(lambda: pool)
 app.include_router(_pilot_voice.router)
+
+# the Room's speaker: agents answer the room with send(to='room'); spoken in their voice, or run on the screen
+from observatory.api import room as _room  # noqa: E402
+
+
+def _fanout(data: dict) -> None:
+    for cq in list(sse_clients):
+        cq.put_nowait(data)
+
+
+_room.bind(lambda: pool, _fanout)
+app.include_router(_room.router)
 
 
 @app.middleware("http")
