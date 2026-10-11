@@ -365,6 +365,9 @@ run "hands desktop: real clicks/typing land, owner stop refuses, two small tools
 # and otherwise reads UNVERIFIED here, never green.
 run "phone facade: upstream census, allowlist, telemetry off, surface stamp, phone strip, HELD leases" "$PY" tests/test_phone_facade.py
 run "android device: an agent drives Settings on a real phone (77 unless ANDROID_DEVICE_TEST=1 and set up)" "$PY" tests/test_android_device.py
+# Hands caps (seed's binding item, #44137): a STEP and a WALL-TIME cap per AGENT session, refusing with the cap named;
+# idle resets a session, a loop stays capped; atomic across processes; charged before any desktop is touched.
+run "hands caps: per-agent step + wall caps, idle reset, atomic, charged before the desktop" "$PY" tests/test_hands_caps.py
 # every org's database is localhost-only (owner 10-10): doctor's _pg_exposure, with ss that can't answer → UNVERIFIED
 run "doctor: postgres localhost-only, unverified when ss can't answer" bash tests/test_doctor_pg_exposure.sh
 # turns retention (owner 10-10: "add retention to save space"): old turns lose image bytes, keep their words
