@@ -251,9 +251,22 @@ try:
                     fc = TMP / "fc.wav"
                     subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(ALSA / "Front_Center.wav"), "-ar",
                                     "16000", "-ac", "1", "-sample_fmt", "s16", str(fc)], check=True)
+                    # the RED control's clip above is queued opportunistically when whisper is idle (7e14748), and its
+                    # row lands whenever the worker gets to it: drain first and count from THERE, or that row races
+                    # this arm's count (a4 #48591; a positive control that flakes reads like a broken gate)
+                    t0 = time.monotonic()
+                    while time.monotonic() - t0 < 10 and not ear.queue.idle():
+                        time.sleep(0.05)
+                    n1, t0 = rows(ear_admin), time.monotonic()
                     r = cl.post("/ear/api/utterance?holder=tab1", content=fc.read_bytes(), headers=O)
-                    want("positive control: a real spoken clip passes the gate → 202 and one row",
-                         r.status_code == 202 and settle(n0 + 1) == n0 + 1, f"{r.status_code} {r.text[:120]}")
+                    settle(n1 + 1)
+                    waited = time.monotonic() - t0
+                    while time.monotonic() - t0 < 10 and not ear.queue.idle():
+                        time.sleep(0.05)
+                    n2 = rows(ear_admin)
+                    want(f"positive control: a real spoken clip passes the gate → 202 and exactly one row "
+                         f"(waited {waited:.2f}s)", r.status_code == 202 and n2 == n1 + 1,
+                         f"{r.status_code} {r.text[:120]} rows {n1}→{n2}")
                 else:
                     skipped.append("speech-gate positive control")
                 ear.speech_ms = all_speech
