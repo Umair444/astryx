@@ -207,7 +207,7 @@ async function handleTool(name, a) {
     // Refuse it HERE, before the INSERT, so nothing half-rendered leaves.
     if (channelBound) {
       const { embedProblems } = await import('./embeds.mjs')
-      const bad = embedProblems(a.body)
+      const bad = embedProblems(a.body, { sender: AGENT })   // the sender is this session's identity, never the body
       if (bad.length) return `send REFUSED, nothing sent: ${bad.join('; ')}`
     }
     const thread = a.thread || `t-${Date.now().toString(36)}`

@@ -9,15 +9,34 @@
 //   · a poll needs a question + 2..MAX_OPTIONS options (`multi=N` is not an option); Discord and Telegram cap at 10
 //     and truncate silently past it, so 10 is the portable ceiling;
 //   · a file path must be absolute and name an existing file (the bridges send a "NOT sent" note after the fact;
-//     refusing first means the text never claims an attachment that isn't there).
-import { statSync } from 'node:fs'
-import { isAbsolute } from 'node:path'
+//     refusing first means the text never claims an attachment that isn't there);
+//   · with a sender: the file must resolve inside the SENDER's attachable roots — the early mirror of
+//     bridges/embed_root.py (plan-9139, a1 #49775), which is the enforcement. Home (minus .people), its own Claude
+//     scratchpads, media/, tier/; never an .env* name. tier/ is allowed HERE because only the bridge knows the
+//     audience (owner-only or not) — the bridge refuses tier/ toward anyone else and says so on the receipt.
+import { statSync, realpathSync } from 'node:fs'
+import { isAbsolute, relative, sep, basename } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const REPO = fileURLToPath(new URL('..', import.meta.url)).replace(/\/+$/, '')
+const AGENT_NAME = /^[a-z][a-z0-9_-]*$/
+const real = (p) => { try { return realpathSync(p) } catch { return p } }
+const under = (p, root) => { const r = relative(root, p); return r === '' || (!r.startsWith('..') && !r.startsWith(sep) && r !== '..') }
+
+/** The resolved roots `sender` may attach from (mirrors bridges/embed_root.py roots(sender, owner=True)). */
+export function senderRoots(sender, { repo = REPO, scratchBase = `/tmp/claude-${process.getuid()}` } = {}) {
+  if (!AGENT_NAME.test(String(sender ?? ''))) return null
+  const home = `${repo}/homes/${sender}`
+  return { home: real(home), list: [home, `${scratchBase}/${home.replace(/[^A-Za-z0-9]/g, '-')}`,
+    `${repo}/media`, `${repo}/tier`].map(real) }
+}
 
 export const MAX_OPTIONS = 10
 
 /** Problems with the [[poll:]] / [[file:]] embeds in `body`; [] when every embed will render. */
-export function embedProblems(body) {
+export function embedProblems(body, { sender, repo, scratchBase } = {}) {
   const text = String(body ?? '')
+  const roots = sender === undefined ? undefined : senderRoots(sender, { repo, scratchBase })
   const out = []
   const re = /\[\[(poll|file):/g
   let m
@@ -42,6 +61,16 @@ export function embedProblems(body) {
       let ok = false
       try { ok = isAbsolute(p) && statSync(p).isFile() } catch { ok = false }
       if (!ok) out.push(`[[file:${p}]] is not an absolute path to an existing file`)
+      else if (roots !== undefined) {
+        const rp = real(p)
+        if (basename(rp).startsWith('.env')) out.push(`[[file:${p}]]: an .env file is never attached`)
+        else if (!roots) out.push(`[[file:${p}]]: sender ${JSON.stringify(sender)} is not an agent name`)
+        else if (under(rp, `${roots.home}/.people`)) out.push(`[[file:${p}]]: the people graph is never attached`)
+        else if (!roots.list.some((r) => under(rp, r))) {
+          out.push(`[[file:${p}]] is outside ${sender}'s attachable roots (its home, its scratchpad, media/, tier/); ` +
+                   'the bridge would refuse it. Copy the file into your home or media/ first')
+        }
+      }
     }
     re.lastIndex = Math.max(re.lastIndex, close + 2)   // never backwards: a bad `close` can't loop
   }
