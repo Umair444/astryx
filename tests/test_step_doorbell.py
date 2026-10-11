@@ -134,6 +134,7 @@ if f"/{fx['dbname']}" not in PROBE_DSN:
     skip("could not derive a URL DSN for the fixture database (unexpected ASTRYX_DSN shape)")
 stage = Path(tempfile.mkdtemp(prefix="doorbell-"))
 proc = None
+EAR_UNSEARCHED = None
 
 
 def wait_for(pred, timeout, tick=0.2):
@@ -184,25 +185,31 @@ try:
                 ok_first = True
                 break
         if not ok_first:
-            skip("the staged ear never pushed a real subscribed step (no positive control), "
-                 "so no silence below could mean anything")
-        check("C1 positive control: a real step of the subscribed agent is pushed", ok_first)
+            # NOT a whole-file skip: B1 (step_line) needs only the fixture, and skipping it here left step_line's
+            # sqlguard grade hostage to the ear (it fell to EXECUTED and read R-NEW whenever the staged ear
+            # couldn't start, 10-11). The ear is reported unsearched and the file exits 77 AFTER B1 runs.
+            EAR_UNSEARCHED = "the staged ear never pushed a real subscribed step (no positive control)"
+            print(f"  ○ C1/C2 the staged channel ear — NOT SEARCHED: {EAR_UNSEARCHED}")
+            secret_id = step("zzy", "SECRET-zzy-content")
+            empty_id = step("", "SECRET-empty-agent-content")
+        else:
+            check("C1 positive control: a real step of the subscribed agent is pushed", ok_first)
 
-        secret_id = step("zzy", "SECRET-zzy-content")             # zzy: nobody subscribes
-        empty_id = step("", "SECRET-empty-agent-content")         # agent '' IS a legal value
-        db.execute("SELECT pg_notify('astryx_steps', %s)",
-                   (json.dumps({"id": secret_id, "agent": "zzx", "kind": "tool"}),))
-        db.execute("SELECT pg_notify('astryx_steps', %s)",
-                   (json.dumps({"id": empty_id, "agent": "", "kind": "tool"}),))
-        after_id = step("zzx", "LEGIT-after-forgery")
-        arrived = wait_for(lambda: "LEGIT-after-forgery" in stdout_text(), 10)
-        check("C1 a real step AFTER the forgery arrives (the ear listened throughout)", arrived)
-        check("C1 a forged payload pushed NOTHING of the other agent's step",
-              "SECRET-zzy-content" not in stdout_text(),
-              "the other agent's step content was pushed under the zzx subscription")
-        check("C2 an agent:\"\" payload pushed nothing, with a '' step AND a '' subscription present",
-              "SECRET-empty-agent-content" not in stdout_text(),
-              "the '' step was pushed: the empty-agent early return is gone")
+            secret_id = step("zzy", "SECRET-zzy-content")             # zzy: nobody subscribes
+            empty_id = step("", "SECRET-empty-agent-content")         # agent '' IS a legal value
+            db.execute("SELECT pg_notify('astryx_steps', %s)",
+                       (json.dumps({"id": secret_id, "agent": "zzx", "kind": "tool"}),))
+            db.execute("SELECT pg_notify('astryx_steps', %s)",
+                       (json.dumps({"id": empty_id, "agent": "", "kind": "tool"}),))
+            after_id = step("zzx", "LEGIT-after-forgery")
+            arrived = wait_for(lambda: "LEGIT-after-forgery" in stdout_text(), 10)
+            check("C1 a real step AFTER the forgery arrives (the ear listened throughout)", arrived)
+            check("C1 a forged payload pushed NOTHING of the other agent's step",
+                  "SECRET-zzy-content" not in stdout_text(),
+                  "the other agent's step content was pushed under the zzx subscription")
+            check("C2 an agent:\"\" payload pushed nothing, with a '' step AND a '' subscription present",
+                  "SECRET-empty-agent-content" not in stdout_text(),
+                  "the '' step was pushed: the empty-agent early return is gone")
     else:
         print("  ○ C1/C2 the staged channel ear — NOT SEARCHED: node or channel/node_modules/pg absent")
         secret_id = step("zzy", "SECRET-zzy-content")
@@ -253,4 +260,7 @@ finally:
 if fails:
     print(f"\nFAIL: {len(fails)} doorbell invariant(s) broken")
     sys.exit(1)
+if EAR_UNSEARCHED:
+    print(f"\nSKIP (partial): B1 step_line verified; the ear was not: {EAR_UNSEARCHED}")
+    sys.exit(77)
 print("\nPASS: a steps doorbell resolves only to a step of the agent it names")
