@@ -392,6 +392,8 @@ run "channel oracles: none stages server.mjs without its sibling modules (10-11)
 run "pushed_tree_check: the committed tree inherits no database or credential env (a4, 10-11)" "$PY" tests/test_pushed_tree_env.py
 run "trigger_set: a python trigger name can never write outside triggers/<agent>/ (a2 #45063)" node tests/test_trigger_name.mjs
 run "send: a malformed [[poll:]]/[[file:]] to a human surface is refused before the INSERT, in parity with the bridge grammar" node tests/test_send_embeds.mjs
+run "bridges: a [[file:]] embed is read only from the SENDER's roots (home, scratchpad, media/; tier/ to the owner alone), realpath + O_NOFOLLOW + /proc" "$PY" tests/test_embed_root.py
+run "bridges: every real [[file:]] ever sent to a human, through the root rule (933 /tmp + 19814 tier/-to-group + 2 home dot-path embeds refused)" "$PY" tests/test_embed_root.py --census
 run "observatory pilot: one action catalog, matrix-gated executor, handler parity (plan-9000 S1)" "$PY" tests/test_pilot_s1.py
 run "observatory pilot: the owner-tap confirm under trusted input in chromium (plan-9000 S1 arms i-v)" node tests/pilot_browser_test.mjs
 run "observatory pilot: what leaves for the realtime provider is the allowlisted projection only (plan-9000 S2, C1)" node tests/pilot_egress_test.ts observatory/pilot/catalog.json

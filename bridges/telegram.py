@@ -35,6 +35,7 @@ import asyncpg
 import httpx
 from fastapi import FastAPI
 
+from .embed_root import Refused, owner_only, read_checked
 from .common import (HERE, Outcome, reacted_message, reaction_signal, route_target, describe_media, env, listen,
                      load_routes, media_path,
                      record_poll, resolve_quoted_body, split_files, split_polls,
@@ -98,18 +99,21 @@ async def deliver(row):
                 out.sent(res.message_id)
             else:
                 out.failed("text", res.error or "provider reported not-ok")
+        route = next((r for r in routes() if str(r.get("chat")) == chat), None)
         for f in files:
             p = Path(f)
-            if not p.is_file():
-                out.failed("file", f"path not found: {f}")
+            try:                                   # the SENDER's roots, not the bridge's reach (embed_root.py)
+                name, data = read_checked(f, agent, owner_only("telegram", route))
+            except Refused as e:
+                out.failed("file", f"refused: {e}")
                 await tg("sendMessage", chat_id=int(chat),
-                         text=f"(file {p.name} was NOT sent — path not found)")
+                         text=f"(file {p.name} was NOT sent — {e})")
                 continue
-            method, field = ("sendPhoto", "photo") if p.suffix.lower() in (
+            method, field = ("sendPhoto", "photo") if Path(name).suffix.lower() in (
                 ".png", ".jpg", ".jpeg", ".webp") else ("sendDocument", "document")
             try:
                 r = await http.post(f"{API}/{method}", data={"chat_id": chat},
-                                    files={field: (p.name, p.read_bytes())}, timeout=300)
+                                    files={field: (name, data)}, timeout=300)
                 if not r.json().get("ok"):
                     raise RuntimeError(str(r.json().get("description", "sendfile not ok"))[:120])
             except Exception as e:

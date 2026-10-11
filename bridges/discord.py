@@ -25,6 +25,7 @@ Run: uvicorn bridges.discord:app --host 127.0.0.1 --port 8479   (repo root)
 
 import asyncio
 import datetime
+import io
 import json
 import time
 from contextlib import asynccontextmanager
@@ -35,6 +36,7 @@ import discord
 import httpx
 from fastapi import FastAPI
 
+from .embed_root import Refused, owner_only, read_checked
 from .common import (HERE, Outcome, agent_exists, reacted_message, reaction_signal, route_target, describe_media, env, listen,
                      load_routes, media_path,
                      record_poll, resolve_quoted_body, split_files, split_polls,
@@ -81,12 +83,12 @@ async def hook_edit(url: str, msg_id: str, text: str) -> bool:
         return r.status_code < 300
 
 
-async def hook_file(url: str, agent: str, path: Path) -> str | None:
+async def hook_file(url: str, agent: str, name: str, data: bytes) -> str | None:
     """Post a file through the webhook, so media carries the agent's name too."""
     async with httpx.AsyncClient() as hx:
         r = await hx.post(url, params={"wait": "true"},
                           data={"payload_json": json.dumps({"username": display_name(agent)})},
-                          files={"files[0]": (path.name, path.read_bytes())}, timeout=120)
+                          files={"files[0]": (name, data)}, timeout=120)
         return (r.json() or {}).get("id") if r.status_code < 300 else None
 
 
@@ -140,18 +142,19 @@ async def deliver(row):
                 out.sent(mid)                      # id enables reaction attribution
         for f in files:
             p = Path(f)
-            if not p.is_file():
-                # Was a silent `continue`. The body still says "screenshot below", so a
-                # mistyped or moved path told the reader an artifact was attached that
-                # never left. On the Law-6 submit checkpoint the owner approves an
-                # IRREVERSIBLE act on the strength of that image, so a skipped upload
-                # must never be indistinguishable from a delivered one.
-                out.failed("file", f"path not found: {f}")
-                await ch.send(f"(file {p.name} was NOT sent — path not found)")
+            try:
+                # The bridge reads as ITS uid, so the path is judged against the SENDER's roots
+                # (bridges/embed_root.py; a1 #49775). A refused or missing file is never silent:
+                # the body may say "screenshot below", and on the Law-6 submit checkpoint the owner
+                # approves an IRREVERSIBLE act on the strength of that image.
+                name, data = read_checked(f, agent, owner_only("discord", route))
+            except Refused as e:
+                out.failed("file", f"refused: {e}")
+                await ch.send(f"(file {p.name} was NOT sent — {e})")
                 continue
             try:                                   # webhook so media carries the agent's name
-                if not (hook and await hook_file(hook, agent, p)):
-                    await ch.send(file=discord.File(str(p)))
+                if not (hook and await hook_file(hook, agent, name, data)):
+                    await ch.send(file=discord.File(io.BytesIO(data), filename=name))
             except Exception as e:
                 out.failed("file", e)
                 await ch.send(f"(file {p.name} failed to send)")
