@@ -162,6 +162,12 @@ with tempfile.TemporaryDirectory() as td:
           ok, det)
     ok, det = reap_case('sleep 300 & victim=$!; GATE_PGID=""')
     check("window 2: the gate was forked but GATE_PGID is still EMPTY → killed via the shell's jobs", ok, det)
+    lost = 0
+    for _ in range(20):
+        ok, det = reap_case('sleep 300 & victim=$!; GATE_PGID=$victim')
+        lost += not ok
+    check("window 3: a TERM to a JUST-forked child is lost under check.sh's trap; 20 immediate reaps leave 0 alive "
+          "(the SIGKILL escalation)", lost == 0, f"{lost}/20 alive")
 
 print(f"\n{'FAIL: ' + str(len(fails)) + ' arm(s)' if fails else 'ALL PASS'}")
 sys.exit(1 if fails else 0)
