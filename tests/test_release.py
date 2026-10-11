@@ -50,9 +50,9 @@ def refused(fn, *a, **k):
 
 KEY = b"k" * 40
 SENT = "S1A-SENTINEL-body-7f3a"
-DM = {"chat": "100000000001@s.whatsapp.net", "agent": "canopus-career", "enabled": True, "counterpart": "owner"}
-GROUP = {"chat": "120300000000000001@g.us", "agent": "gemini-family", "enabled": True,
-         "owner_ids": ["100000000001@s.whatsapp.net"]}
+DM = {"chat": "101@s.whatsapp.net", "agent": "canopus-career", "enabled": True, "counterpart": "owner"}
+GROUP = {"chat": "901@g.us", "agent": "gemini-family", "enabled": True,
+         "owner_ids": ["101@s.whatsapp.net"]}
 
 print("label:")
 check("ORG reads as unrestricted", R.readers(R.ORG) is None)
@@ -88,9 +88,9 @@ check("a group whose membership read FAILS → UNKNOWN (the sync daemon's lock, 
       R.audience("whatsapp", GROUP, boom) is R.UNKNOWN)
 check("a group whose read returns nobody → UNKNOWN", R.audience("whatsapp", GROUP, lambda c, x: []) is R.UNKNOWN)
 check("a group of only the owner's declared ids → {owner}",
-      R.audience("whatsapp", GROUP, lambda c, x: ["100000000001@s.whatsapp.net"]) == {R.OWNER})
+      R.audience("whatsapp", GROUP, lambda c, x: ["101@s.whatsapp.net"]) == {R.OWNER})
 calls = []
-roster = [["100000000001@s.whatsapp.net"], ["100000000001@s.whatsapp.net", "100000000999@s.whatsapp.net"]]
+roster = [["101@s.whatsapp.net"], ["101@s.whatsapp.net", "199@s.whatsapp.net"]]
 
 
 def live(ch, chat):
@@ -104,7 +104,7 @@ check("membership is read LIVE on every call, never cached (a2's carried trip)",
 check("…so a member added between two releases is SEEN: the second is refused",
       R.releasable(R.label(["family"]), a1) and not R.releasable(R.label(["family"]), a2), f"{a1} {a2}")
 check("an outsider principal carries no id (only its position)",
-      all("100000000999" not in p for p in a2), str(a2))
+      all("199" not in p for p in a2), str(a2))
 
 print("keys and MACs:")
 check("no key in the env → Refused (no key, no door)", refused(R.mac_key, {}) is not None)
@@ -173,12 +173,12 @@ with tempfile.TemporaryDirectory() as td:
     store = R.TierStore(Path(td) / "store")
     rfile = Path(td) / "routes.json"
     rfile.write_text(json.dumps([DM]))
-    other_dm = {**DM, "agent": "someone-else", "chat": "100000000002@s.whatsapp.net"}
+    other_dm = {**DM, "agent": "someone-else", "chat": "102@s.whatsapp.net"}
     routes = [("whatsapp", DM, rfile), ("whatsapp", other_dm, rfile), ("whatsapp", GROUP, rfile)]
     out = R.release("canopus-career", lbl, SENT, routes, KEY, store)
     flat = json.dumps(out)
     check("the sender's one owner-only route is the destination", out["route_key"] == R.route_key(KEY, "whatsapp", DM))
-    check("the result carries NO body and NO chat id", SENT not in flat and "100000000001" not in flat, flat)
+    check("the result carries NO body and NO chat id", SENT not in flat and "101" not in flat, flat)
     check("…but its pointer resolves to the body in the tier store", store.get(out["pointer"], lbl) == SENT)
     check("the audit fields are there: bytes, keyed body MAC, route-file sha, label",
           out["bytes"] == len(SENT) and out["body_mac"] == R.body_mac(KEY, SENT)
@@ -209,10 +209,10 @@ reply = R.agent_send("gemini-family", R.label(["family"]), "seed", "t-ab12cd", "
                      inbound_thread="t-ab12cd")
 check("a reply on an ORG inbound thread keeps that thread (derived, not chosen)", reply["thread"] == "t-ab12cd"
       and reply["intent"] == "receipt")
-chan = R.agent_send("gemini-family", R.label(["family"]), "seed", "wa:100000000001@s.whatsapp.net", "chat", SENT,
-                    inbound_thread="wa:100000000001@s.whatsapp.net")
+chan = R.agent_send("gemini-family", R.label(["family"]), "seed", "wa:101@s.whatsapp.net", "chat", SENT,
+                    inbound_thread="wa:101@s.whatsapp.net")
 check("a reply on a CHANNEL inbound thread does NOT carry it onto the wire (a3 F2): tier-<sender>",
-      chan["thread"] == "tier-gemini-family" and "100000000001" not in json.dumps(chan))
+      chan["thread"] == "tier-gemini-family" and "101" not in json.dumps(chan))
 odd = R.agent_send("gemini-family", R.label(["family"]), "seed", "zz:anything", "chat", SENT, inbound_thread="zz:anything")
 check("…and an UNLISTED prefix fails closed the same way (an allowlist, not a channel list)",
       odd["thread"] == "tier-gemini-family")
