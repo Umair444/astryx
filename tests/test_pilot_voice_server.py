@@ -116,8 +116,9 @@ body = r.json() if r.status_code == 200 else {}
 arm("the owner mints a session (200, the ephemeral value)", r.status_code == 200 and body.get("value") == "ek_test_ephemeral", r.status_code)
 arm("the real key is never in the response", "sk-test" not in r.text)
 arm("one ledger row, user observatory-owner", len(led.rows) == 1 and led.rows[0]["user"] == "observatory-owner")
-arm("the minted session's tools are the catalog actions", sorted(t["name"] for t in minted[0]["session"]["tools"]) ==
-    sorted(a["name"] for a in __import__("json").loads((REPO / "observatory/pilot/catalog.json").read_text())["actions"]))
+# the catalog's actions, plus the Room's one bridge to the org: ask_agent (owner brief 10-11, observatory/api/room.py)
+arm("the minted session's tools are the catalog actions plus ask_agent", sorted(t["name"] for t in minted[0]["session"]["tools"]) ==
+    sorted([a["name"] for a in __import__("json").loads((REPO / "observatory/pilot/catalog.json").read_text())["actions"]] + ["ask_agent"]))
 
 # (c) one ledger, one cap, across canvas and the observatory
 from bridges import canvas as C  # noqa: E402
