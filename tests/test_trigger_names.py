@@ -15,7 +15,7 @@ and is checked against the PULSE's own discover() (`pulse.py --names`), the sema
   D  the table unreadable → would-be-absent names DEFER; installed ones still read installed
   E  import-safe with no .env and no ASTRYX_DSN (a4 #49617): it answers (deferred), never crashes
   B  a1 BC-1: every construct the model doesn't positively understand makes the file BLIND → DEFERRED (17 fixtures,
-     one at a time, each named in the detail; `names` exits 3), with a fully-understood control beside them
+     one at a time, each named in the detail with its exits, a4 #50070; `names` exits 3), with a control beside them
   P  parity: names == discover for every non-blind fixture AND for the live corpus (triggers/*/*.py, where present)
 Needs a fixture database, else 77.
 """
@@ -210,8 +210,9 @@ try:
                 f = put(f"triggers/blind/b{i}.py", body)
                 rc, out, _ = state("zz_none", dsn=DSN)
                 nrc, _n = names_cli(f)
-                want(f"B {label} → BLIND: zz_none DEFERS naming the file, and `names` exits 3",
-                     rc == 3 and f"triggers/blind/b{i}.py" in out and nrc == 3, f"rc={rc} names_rc={nrc} {out[:160]}")
+                want(f"B {label} → BLIND: zz_none DEFERS naming the file and its exits, and `names` exits 3",
+                     rc == 3 and f"triggers/blind/b{i}.py" in out and "fix or move that file" in out
+                     and "./init.sh --reinstall zz_none" in out and nrc == 3, f"rc={rc} names_rc={nrc} {out[:160]}")
                 f.unlink()
             rc, out, _ = state("zz_none", dsn=DSN)
             want("B control: with the blind file gone, zz_none is absent again", rc == 2, f"{rc} {out}")

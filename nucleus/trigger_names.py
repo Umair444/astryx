@@ -365,9 +365,10 @@ def state(name: str, target: str = "seed", repo: Path | None = None) -> tuple[st
             blind.append(r.blind[0])
     if retired(target):
         return "retired", f"triggers/{target}/.retired/{name} (trigger_rm's tombstone)"
-    if blind:
+    if blind:                                       # global scope: one unreadable file defers EVERY absent install,
         return "deferred", (f"{len(blind)} trigger file(s) this can't read statically, so {name} may be defined "
-                            f"there: {'; '.join(blind[:3])}")
+                            f"there: {'; '.join(blind[:3])}. Exit: fix or move that file (or "
+                            f"`./init.sh --reinstall {name}` to install it anyway)")   # so name the way out (a4 #50070)
     rows = _python_rows(name, repo)
     if rows is None:
         return "deferred", "the triggers table can't be read, so a legacy row for it can't be ruled out"
