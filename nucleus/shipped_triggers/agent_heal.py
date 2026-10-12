@@ -12,7 +12,8 @@ own too, and nothing restarts the hub, so seed sat deaf ~2h with owner WhatsApp 
 tmux body is alive but has NO ear (no channel/server.mjs process carrying ASTRYX_AGENT=<it> in /proc/<pid>/environ;
 argv can name anyone, the environ is the ear's identity) AND has local rows pending past DEAF_PENDING_S AND whose
 pane is IDLE ("done <time>" above an empty prompt, no "esc to interrupt") is restarted: its pane is captured to
-homes/<it>/deaf-<utc>.pane (0600) FIRST, then kill-session, then spawn() as arm one does, and the next ticks report
+homes/<it>/.deaf-<utc>.pane (0600; DOT-named, so embed_root refuses it as a [[file:]] to every
+audience: a pane can show tier content, steward MC-1 #50610) FIRST, then kill-session, then spawn() as arm one does, and the next ticks report
 its ears and the pending rows draining. A BUSY pane is never killed: it is reported and re-checked every tick. A
 dead ear with nothing pending is idle, not deaf, and silent.
 
@@ -94,9 +95,10 @@ def spawn(name: str) -> tuple[bool, str]:
     return r.returncode == 0 and "refusing" not in last[0].lower(), last[0][:160]
 
 
-def heal(state: dict, now: float | None = None, want=expected, have=bodies, do=spawn) -> dict:
+def heal(state: dict, now: float | None = None, want=None, have=None, do=None) -> dict:
     """One pass. Returns {healed, failed, gave_up, blind}; state["attempts"] holds each agent's recent spawn times."""
     now = time.time() if now is None else now
+    want, have, do = want or expected, have or bodies, do or spawn
     out = {"healed": [], "failed": [], "gave_up": [], "blind": False}
     live = have()
     if live is None:
@@ -191,11 +193,16 @@ def idle(text: str) -> bool:
     return any(DONE.search(ln) for ln in lines[:prompts[-1]])
 
 
+def pane_file(name: str, now: float) -> Path:
+    """Where a deaf body's pane is kept: its own (gitignored) home, DOT-named so no [[file:]] embed can carry it to any
+    surface (bridges/embed_root refuses every dot-path under a home; a pane can show tier content, steward MC-1)."""
+    return REPO / "homes" / name / f".deaf-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime(now))}.pane"
+
+
 def save(name: str, text: str, now: float) -> Path:
-    """The pane, captured BEFORE the kill, 0600 under the agent's own (gitignored) home."""
-    d = REPO / "homes" / name
-    d.mkdir(parents=True, exist_ok=True)
-    f = d / f"deaf-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime(now))}.pane"
+    """The pane, captured BEFORE the kill, 0600 at pane_file()."""
+    f = pane_file(name, now)
+    f.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as fh:
         fh.write(text)
@@ -210,12 +217,13 @@ def kill(name: str) -> bool:
         return False
 
 
-def deaf(state: dict, now: float, budget: int, want=expected, listen=ears, late=stale, look=pane, cut=kill,
-         do=spawn, keep=save) -> dict:
+def deaf(state: dict, now: float, budget: int, want=None, listen=None, late=None, look=None, cut=None, do=None,
+         keep=None) -> dict:
     """Arm two, one pass. Returns {restarted, failed, busy, gave_up, verified, blind}; restarts share
     state["attempts"] (one crash-loop count with arm one) and are verified on later ticks via state["verify"]."""
     out = {"restarted": [], "failed": [], "busy": [], "gave_up": [], "verified": [], "blind": False}
-    heard, queued = listen(), late()
+    want, do, look, cut, keep = want or expected, do or spawn, look or pane, cut or kill, keep or save
+    heard, queued = (listen or ears)(), (late or stale)()
     if heard is None or queued is None:
         out["blind"] = True
         return out

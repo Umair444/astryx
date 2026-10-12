@@ -213,5 +213,37 @@ with tempfile.TemporaryDirectory() as proc:
 arm("ears(): counted by ENVIRON identity; 'seed' in another ear's argv, or a non-ear naming seed, is no seed ear",
     got == {"forge": 2, "steward": 1}, got)
 
+sys.path.insert(0, str(REPO / "bridges"))
+import embed_root  # noqa: E402
+kept = H.pane_file("seed", 0)
+arm("the saved pane is DOT-named in the agent's own home (MC-1)", kept.name.startswith(".deaf-")
+    and kept.parent == REPO / "homes" / "seed", kept)
+arm("…so embed_root refuses it as a [[file:]] even to the owner alone", embed_root.allowed(str(kept), "seed", True)[0]
+    is None and embed_root.allowed(str(kept), "seed", False)[0] is None)
+with tempfile.TemporaryDirectory() as tmp:
+    real_repo, H.REPO = H.REPO, Path(tmp)
+    try:
+        f = H.save("x", "pane text", 0)
+        arm("save() writes pane_file() 0600, with the text", f == H.pane_file("x", 0) and f.read_text() == "pane text"
+            and (f.stat().st_mode & 0o777) == 0o600, oct(f.stat().st_mode))
+    finally:
+        H.REPO = real_repo
+
+# smoke: the TRIGGER FUNCTION itself (its one-line wiring), every probe stubbed at the module
+from types import SimpleNamespace  # noqa: E402
+stubs = {"expected": lambda: ["x"], "bodies": lambda: {"x"}, "ears": lambda: {}, "stale": lambda: {"x": (2, 600)},
+         "pane": lambda n: (IDLE, 3600), "save": lambda n, t, now: Path("/fake/.deaf.pane"), "kill": lambda n: True,
+         "spawn": lambda n: (True, "ok")}
+real = {k: getattr(H, k) for k in stubs}
+try:
+    for k, v in stubs.items():
+        setattr(H, k, v)
+    m = H.agent_heal(SimpleNamespace(state={})) or ""
+finally:
+    for k, v in real.items():
+        setattr(H, k, v)
+arm("agent_heal(ctx) wires arm two in (a deaf idle body is restarted through the trigger itself)",
+    "restarted 1 DEAF" in m, m)
+
 print("ALL PASS" if not fails else f"FAIL ({fails})")
 sys.exit(1 if fails else 0)
