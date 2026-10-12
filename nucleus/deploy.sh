@@ -98,6 +98,13 @@ restart_org() {
   # `restart_org residents` rolls ONLY the residents (same idle wait, same verify, the pulse paused around it): the
   # database and the services are left alone. A plain restart bounced genesis-pg under another agent's running check
   # on 10-11 when all seed wanted was every channel server reloading server.mjs (seed #45236).
+  # NEVER as root (seed 10-12): residents live in the org user's tmux and run as that user. Under sudo, tmux
+  # kill-session hit ROOT's (empty) server so the real sessions survived while their ears were killed, and spawn (once
+  # node was on PATH) started agents in root's tmux, as root. This script sudos only where it must.
+  if [ "$(id -u)" = 0 ]; then
+    echo "  ✗ refusing: run deploy.sh restart/residents as the org's user, not root (it sudos only where it needs to)"
+    return 1
+  fi
   local only="${1:-}" force=""
   [ "$only" = force ] && { only=""; force=1; }
   [ "${2:-}" = force ] && force=1
