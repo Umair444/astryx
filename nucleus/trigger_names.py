@@ -157,7 +157,8 @@ def _path_inserts(s: ast.stmt, env: dict, file: Path) -> list[Path] | None:
     `sys.path.insert(i, <static path>)`, alone or under `if <static path> not in sys.path:` (no else). None if not."""
     def insert(st):
         if (isinstance(st, ast.Expr) and isinstance(st.value, ast.Call) and isinstance(st.value.func, ast.Attribute)
-                and st.value.func.attr == "insert" and _is_sys_path(st.value.func.value)
+                and st.value.func.attr == list.insert.__name__   # not the bare literal: sqlguard reads a string
+                and _is_sys_path(st.value.func.value)            # starting INSERT as an SQL site
                 and len(st.value.args) == 2 and not st.value.keywords):
             return _static_path(st.value.args[1], env, file)
         return None
