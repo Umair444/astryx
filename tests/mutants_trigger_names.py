@@ -71,8 +71,7 @@ MUTANTS = {
          ""),
     # the states
     "a blind file doesn't defer (a would-be-absent name reads absent)":
-        ("    if blind:\n        return \"deferred\"",
-         "    if False:\n        return \"deferred\""),
+        ("    if blind:", "    if False:"),
     "a tombstoned copy still counts as installed":
         ("            if not retired(agent):\n",
          "            if True:\n"),
@@ -91,4 +90,7 @@ MUTANTS = {
     "needs .env at import (a4 #49617): no DSN is a crash":
         ("    except OSError:\n        pass\n    return None\n",
          "    except OSError:\n        raise\n    return None\n"),
+    "a blind deferral doesn't name its exit (a4 #50070)":
+        ("f\"there: {'; '.join(blind[:3])}. Exit: fix or move that file (or \"",
+         "f\"there: {'; '.join(blind[:3])}. (or \""),
 }
