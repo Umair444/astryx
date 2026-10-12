@@ -616,12 +616,27 @@ _act_prehook() {
   cp hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 }
 
+# >>> trigger state
+# "Is trigger N installed?" has ONE answer, nucleus/trigger_names.py (plan-9853): the PULSE's registration semantics (a
+# file's import closure, by NAME, under any agent and any filename, so an owner's copy named differently counts), minus
+# trigger_rm's tombstones, with a LEGACY row (a python row no file defines) and anything it can't read statically
+# reading DEFERRED. A node installs ONLY on absent. Deferred is never installed and never silent: doctor names it every
+# run. An unreadable answer is not "absent" either: no install. `./init.sh --reinstall N` is the owner's override.
+_trigger_state() { venv/bin/python -m nucleus.trigger_names state "$1" --target seed; }
+_trigger_chk() {
+  local s; s=$(_trigger_state "$1" 2>/dev/null); s=${s%% *}
+  [ "${_REINSTALL:-}" = "$1" ] && [ "$s" = deferred ] && return 1     # the owner chose: install it
+  [ "$s" != absent ]
+}
+# <<< trigger state
+
 # context-compact: a fresh org gets context hygiene from day one — a thin shim under the
 # seed's triggers imports the TRACKED reference (nucleus/shipped_triggers/), so the logic
 # has one writer and `git pull` updates it. DEFERENTIAL: in a grown org agents author
 # their own triggers, so if ANY agent already owns a context_compact the installer stands
-# down (a duplicated actuator would double-send /compact — the cross-agent dedup law).
-_chk_ccompact() { ls triggers/*/context_compact.py >/dev/null 2>&1; }
+# down (a duplicated actuator would double-send /compact — the cross-agent dedup law). "Owns" is by trigger NAME, any
+# filename (_trigger_chk), and a retired one stays retired.
+_chk_ccompact() { _trigger_chk context_compact; }
 _act_ccompact() {
   mkdir -p triggers/seed
   cat > triggers/seed/context_compact.py <<'EOF'
@@ -639,14 +654,15 @@ EOF
 # a reviewer accepts/rejects — never the same mind). Installed under seed at founding;
 # a grown org moves the seat (ours: steward). Deferential like ccompact: any existing
 # pr_review stands the installer down.
-_chk_prreview() { ls triggers/*/pr_review.py >/dev/null 2>&1; }
+_chk_prreview() { _trigger_chk pr_review; }
 _act_prreview() {
   mkdir -p triggers/seed
   cat > triggers/seed/pr_review.py <<'EOF'
 """Live install of the shipped pr-review trigger (one writer:
 nucleus/shipped_triggers/pr_review.py). Reviewer seat at founding is the seed; move this
 file to the immune-system agent (steward) once one exists — proposer and reviewer must
-never be the same mind."""
+never be the same mind. To retire it: `trigger_rm pr_review` (a tombstone the pulse honours).
+Deleting this file does NOT retire it: init.sh would install it again."""
 from nucleus.shipped_triggers.pr_review import pr_review  # noqa: F401
 EOF
   say "installed pr-review trigger (seed) — open PRs / medic branches wake the reviewer"
@@ -685,7 +701,7 @@ _act_android() { say "android: installing the pinned SDK packages and the phone 
 # The SAME source order as nucleus/android_setup.sh (process env first, then .env): an org that opts in by env gets the
 # detector with its phones, never the phones alone (a4 #48950 note 1: the other order fails open for a detector).
 _android_on() { [ "${ANDROID_ENABLED:-$(grep -m1 '^ANDROID_ENABLED=' .env 2>/dev/null | cut -d= -f2-)}" = 1 ]; }
-_chk_phonesweep() { _android_on || return 0; ls triggers/*/phone_resume_sweep.py >/dev/null 2>&1; }
+_chk_phonesweep() { _android_on || return 0; _trigger_chk phone_resume_sweep; }
 _act_phonesweep() {
   mkdir -p triggers/seed
   cat > triggers/seed/phone_resume_sweep.py <<'EOF'
@@ -702,7 +718,7 @@ EOF
 # the vm-slot. Installed only where this host HAS a Windows container (WINDOWS_CONTAINER, default `windows`), and
 # deferentially: any agent already owning a windows_idle_stop stands it down.
 _windows_here() { command -v docker >/dev/null 2>&1 && docker inspect "${WINDOWS_CONTAINER:-windows}" >/dev/null 2>&1; }
-_chk_winidle() { _windows_here || return 0; ls triggers/*/windows_idle_stop.py >/dev/null 2>&1; }
+_chk_winidle() { _windows_here || return 0; _trigger_chk windows_idle_stop; }
 _act_winidle() {
   mkdir -p triggers/seed
   cat > triggers/seed/windows_idle_stop.py <<'EOF'
@@ -721,6 +737,29 @@ RECONCILE_NODES=(
   "units|interior" "law|interior" "prehook|interior" "ccompact|interior" "prreview|interior" "androidlic|halt"
   "android|interior" "phonesweep|interior" "winidle|interior" "login|halt"
   "seed|interior" "prompt|interior")
+
+# >>> trigger reinstall
+# The shipped triggers init.sh installs, name|node. `./init.sh --reinstall N` is the owner's exit from a DEFERRED name
+# (doctor says when): it clears seed's tombstone for N (a creator of (seed, N) erases it, a3 BC-2) and installs N unless
+# it is installed already or this host doesn't use it (the node's own gate).
+TRIGGER_NODES=("context_compact|ccompact" "pr_review|prreview" "phone_resume_sweep|phonesweep" "windows_idle_stop|winidle")
+reinstall_trigger() {
+  local n=$1 node="" e st
+  for e in "${TRIGGER_NODES[@]}"; do [ "${e%%|*}" = "$n" ] && node=${e##*|}; done
+  [ -n "$node" ] || die "--reinstall: '$n' is not a trigger init.sh installs (one of: ${TRIGGER_NODES[*]%%|*})"
+  rm -f "triggers/seed/.retired/$n"
+  if _REINSTALL=$n _chk_"$node"; then
+    st=$(_trigger_state "$n" 2>&1)
+    case "$st" in
+      absent*) say "$n: this host doesn't use it (the $node node's gate is off); nothing installed" ;;
+      *)       say "$n: nothing installed — ${st}" ;;
+    esac
+    return 0
+  fi
+  _act_"$node"
+  say "$n: $(_trigger_state "$n" 2>&1)"
+}
+# <<< trigger reinstall
 
 reconcile() {
   local maxpass=4 pass=0
@@ -912,6 +951,23 @@ if [ "${1:-}" = "doctor" ]; then
     77) warn "android: $_amsg" ;;
     *)  bad "android: $_amsg" ;;
   esac
+  # >>> trigger doctor
+  # shipped triggers (plan-9853): the ONE helper's answer per name, every run. Deferred is loud and standing.
+  if [ -x venv/bin/python ]; then
+    for _te in "${TRIGGER_NODES[@]}"; do
+      _tn=${_te%%|*}; _tnode=${_te##*|}
+      _ts=$(_trigger_state "$_tn" 2>&1); _tk=${_ts%% *}
+      case "$_tk" in
+        installed) ok "trigger $_tn installed (${_ts#installed })" ;;
+        retired)   ok "trigger $_tn retired (${_ts#retired })" ;;
+        absent)    if _chk_"$_tnode" >/dev/null 2>&1; then ok "trigger $_tn: not used on this host"
+                   else bad "trigger $_tn absent: ./init.sh installs it"; fi ;;
+        deferred)  warn "trigger $_tn DEFERRED, so init.sh won't install it: ${_ts#deferred }" ;;
+        *)         bad "trigger $_tn: nucleus/trigger_names.py gave no answer: ${_ts:0:200}" ;;
+      esac
+    done
+  fi
+  # <<< trigger doctor
   # deps: assert FROM the manifest (same authority install uses) — core + this org's
   # active groups must all IMPORT (the terminal observable, not a hand-list), AND the
   # AST coverage assert must find no undeclared third-party import (catches the next
@@ -1119,5 +1175,6 @@ case "${1:-setup}" in
   # send-keys — read-only preserves that invariant while you watch it think.
   connect)  a=${2:?usage: ./init.sh connect <agent>}; exec tmux attach -r -t "=ax-$a" ;;
   join)     u=${2:?usage: ./init.sh join <peer-url>}; exec venv/bin/python nucleus/introduce.py "$u" ;;
-  *) die "unknown command '$1' — usage: ./init.sh [setup|doctor|wall|connect <agent>|channels|join <url>]" ;;
+  --reinstall|reinstall) reinstall_trigger "${2:?usage: ./init.sh --reinstall <trigger>}" ;;
+  *) die "unknown command '$1' — usage: ./init.sh [setup|doctor|wall|connect <agent>|channels|join <url>|--reinstall <trigger>]" ;;
 esac

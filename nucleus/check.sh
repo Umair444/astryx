@@ -568,6 +568,10 @@ run "trigger bodies resolve"          "$PY" tests/test_trigger_smoke.py
 # plan-9853 D2: a python trigger's retirement is trigger_rm's per-(agent, name) TOMBSTONE, which the pulse honours (it
 # used to re-enable the row within a minute); trigger_set clears it. Runs tests/test_tombstone.mjs (the wiring) too.
 run "trigger tombstone: trigger_rm retires a python trigger for good, per agent and name" "$PY" tests/test_trigger_tombstone.py
+# plan-9853 D1/D3/D4: "is trigger N installed?" is ONE helper modelling the pulse (checked against discover()), and
+# every init.sh trigger install asks it by NAME
+run "trigger names: the pulse's registration model (closure, blind → defer, retired per target, legacy, parity)" "$PY" tests/test_trigger_names.py
+run "init.sh trigger installs: by NAME through the helper, never over a retirement or a legacy row; --reinstall; census" "$PY" tests/test_init_trigger_names.py
 
 run "A2A card canonicalisation (JCS)" "$PY" tests/test_card_canon.py
 # the org economy: G = W/(Φ·K), value enters only at the boundary (goals.done_at),
