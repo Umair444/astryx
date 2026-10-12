@@ -59,6 +59,7 @@ class Speaker {
       }
       if (this.ctx.state === 'suspended') await this.ctx.resume()
       const r = await fetch(item.url, { headers: { 'x-obs-key': obsKey() } })
+      if (this.el.src.startsWith('blob:')) URL.revokeObjectURL(this.el.src)   // one clip's memory at a time, not one per reply forever
       this.el.src = URL.createObjectURL(await r.blob())
       await this.el.play()
       await new Promise<void>((res) => { this.el.onended = () => res(); this.el.onerror = () => res() })
