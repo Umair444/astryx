@@ -729,20 +729,33 @@ EOF
   say "installed the Windows idle stop (seed): an agent-started Windows VM stops after HANDS_WINDOWS_IDLE_S idle"
 }
 # <<< windows idle install
+# agent_heal (owner 10-12: "restart should be smooth and preferably automatic"): every minute, a resident whose tmux body
+# died is respawned (crash-loop guarded) — the actuator behind agent_dark's alarm. Every org gets it; deferential like
+# ccompact: any agent already owning an agent_heal stands the installer down.
+_chk_agentheal() { _trigger_chk agent_heal; }
+_act_agentheal() {
+  mkdir -p triggers/seed
+  cat > triggers/seed/agent_heal.py <<'EOF2'
+"""Live install of the shipped agent heal (one writer: nucleus/shipped_triggers/agent_heal.py). To retire it:
+`trigger_rm agent_heal` (a tombstone the pulse honours). Deleting this file does NOT retire it: init.sh would reinstall."""
+from nucleus.shipped_triggers.agent_heal import agent_heal  # noqa: F401
+EOF2
+  say "installed agent heal (seed): a resident whose body dies is respawned within a minute"
+}
 
 # the precondition DAG, in dependency order (top depends on nothing).  name|class
 RECONCILE_NODES=(
   "pg|interior" "pgready|wait" "schema|interior" "harden|interior" "hardencut|halt" "venv|interior" "deps|interior"
   "peoplegate|interior" "derivedgraphs|interior" "geoschema|interior" "model|interior" "chan|interior" "obs|interior" "obskey|interior" "ident|interior"
   "units|interior" "law|interior" "prehook|interior" "ccompact|interior" "prreview|interior" "androidlic|halt"
-  "android|interior" "phonesweep|interior" "winidle|interior" "login|halt"
+  "android|interior" "phonesweep|interior" "winidle|interior" "agentheal|interior" "login|halt"
   "seed|interior" "prompt|interior")
 
 # >>> trigger reinstall
 # The shipped triggers init.sh installs, name|node. `./init.sh --reinstall N` is the owner's exit from a DEFERRED name
 # (doctor says when): it clears seed's tombstone for N (a creator of (seed, N) erases it, a3 BC-2) and installs N unless
 # it is installed already or this host doesn't use it (the node's own gate).
-TRIGGER_NODES=("context_compact|ccompact" "pr_review|prreview" "phone_resume_sweep|phonesweep" "windows_idle_stop|winidle")
+TRIGGER_NODES=("context_compact|ccompact" "pr_review|prreview" "phone_resume_sweep|phonesweep" "windows_idle_stop|winidle" "agent_heal|agentheal")
 reinstall_trigger() {
   local n=$1 node="" e st
   for e in "${TRIGGER_NODES[@]}"; do [ "${e%%|*}" = "$n" ] && node=${e##*|}; done

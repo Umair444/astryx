@@ -78,7 +78,17 @@ SESS="ax-$AGENT"
 HOME_D="$ROOT/homes/$AGENT"
 [ -n "$RENDER" ] && HOME_D="$OUT"
 NODE=${ASTRYX_NODE:-$(command -v node || true)}
-[ -n "$NODE" ] || { echo "spawn: node not found on PATH (set ASTRYX_NODE)"; exit 1; }
+# A version manager (mise, nvm) puts node in the user's interactive PATH only: systemd units (astryx-residents at
+# boot) and sudo see a bare PATH. 10-12: a reboot spawned 1 of 17 residents for exactly this. Ask the manager.
+if [ -z "$NODE" ]; then
+  for m in mise "$HOME/.local/bin/mise" /usr/bin/mise; do
+    command -v "$m" >/dev/null 2>&1 && NODE=$(cd "$ROOT" && "$m" which node 2>/dev/null) && [ -x "$NODE" ] && break
+    NODE=""
+  done
+fi
+[ -z "$NODE" ] && [ -x "$HOME/.local/share/mise/shims/node" ] && NODE="$HOME/.local/share/mise/shims/node"
+[ -z "$NODE" ] && NODE=$(ls -d "$HOME"/.nvm/versions/node/*/bin/node 2>/dev/null | sort -V | tail -1)
+[ -n "$NODE" ] || { echo "spawn: node not found on PATH or via mise/nvm (set ASTRYX_NODE)"; exit 1; }
 
 # Default heartbeat: every agent wakes on its own rhythm (charter line
 # "Heartbeat: <cron>", default daily 09:00) and retunes it with trigger_set.
