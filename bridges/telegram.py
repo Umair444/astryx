@@ -11,7 +11,7 @@ Platform translation ONLY; everything shared lives in common.py:
   polls     [[poll:]] -> sendPoll (non-anonymous so votes come back);
             poll_answer updates carry the voter's CURRENT selections directly
 
-api.telegram.org is ISP-blocked in Pakistan (PTA, SNI+IP level, verified
+api.telegram.org is ISP-blocked in some countries (SNI+IP level, verified
 2026-07-25): TG_API_BASE points at a relay (Cloudflare Worker) and/or TG_PROXY
 routes through any http/socks5 proxy — either unblocks without a code change.
 
