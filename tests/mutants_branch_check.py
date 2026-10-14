@@ -18,7 +18,7 @@ ENV = "BRANCH_CHECK_SRC"
 # run() is exercised end to end only by a real run, never by this oracle; its arm is the next e2e run's report.
 MUTANTS = {
     "O1 a statement reaching PROD doesn't fail the run":
-        ("    if any(witness.values()):\n        return 1\n", ""),
+        ("    return any(witness.values())", "    return False"),
     "O2 FLAKY is counted as REGRESSED":
         ("    regressed = sorted(set(b[\"failed\"]) - set(m[\"failed\"]))",
          "    regressed = sorted((set(b[\"failed\"]) | set(b.get(\"flaky\", []))) - set(m[\"failed\"]))"),
@@ -112,4 +112,22 @@ MUTANTS = {
         ("            out |= set(parts[1:])", "            out |= set(parts[-1:])"),
     "O40 production never hands report() the membership changes (the census line is dead code)":
         (",\n                    members=membership_changes(sha))", ")"),
+    "O41 a side with no verdict line is compared anyway (an empty branch side reads as no regression)":
+        ('    dead = [s for s in ("main", "branch") if not sums[s].get("line")]', "    dead = []"),
+    "O42 only the MAIN side's verdict is required (a dead branch suite still reads clean)":
+        ('    dead = [s for s in ("main", "branch") if not sums[s].get("line")]',
+         '    dead = [s for s in ("main",) if not sums[s].get("line")]'),
+    "O43 the dead side's refusal is not a refusal (rc 0: the run reads as a pass)":
+        ("        return 1 if _estate_and_witness(est, witness) else 77",
+         "        return 1 if _estate_and_witness(est, witness) else 0"),
+    "O44 NO VERDICT returns before the WITNESS (a suite that wrote to prod and then died reads as unknown; a4 #53077)":
+        ("        return 1 if _estate_and_witness(est, witness) else 77", "        return 77"),
+    "O45 a suite past SUITE_TIMEOUT is a traceback again (that side's trace, and its prod writes, never read)":
+        ("    except subprocess.TimeoutExpired as e:", "    except OSError as e:"),
+    "O46 a timed-out suite's partial output is dropped (its rc is still 'timeout', its sets nothing)":
+        ("        return dec(e.stdout), dec(e.stderr), \"timeout\"", "        return \"\", dec(e.stderr), \"timeout\""),
+    "O47 run() calls check.sh directly again, around run_suite":
+        ('                stdout, stderr, rc = run_suite(a + ["bash", "devtools/check.sh"], env)',
+         '                stdout, stderr, rc = (lambda p: (p.stdout, p.stderr, p.returncode))(subprocess.run(a + ["bash", '
+         '"devtools/check.sh"], env=env, capture_output=True, text=True, timeout=SUITE_TIMEOUT))'),
 }
