@@ -797,6 +797,9 @@ run "init units: senses, geoloc and growbot are declared (growbot's state follow
 run "hearing: hear() workers, pointer, span-fetch, fence" "$PY" tests/test_hearing.py
 run "voice orb: its confirm reaches the executor only on the native event (arms ii-v, forged, dwell after entrance), states, reduced motion" "$PY" tests/test_voice_orb.py
 run "gateway: name@surface replies re-addressed local" "$PY" tests/test_gateway_surface.py
+# goal 10224 S5: three real gateways on throwaway DBs; two NAT'd orgs meet and talk through the relay,
+# tampered and duplicate envelopes die, the wizard's .env edits hold. Measured ~85s.
+run --cap=300 "relay: two NAT'd orgs exchange signed messages through the relay; wizard .env edits" "$PY" tests/test_relay.py
 # The human ontology. Its lead assertion is the PRIVACY one and it is derived from the
 # live owner instruments, so a new PII shape in relations.md goes red without anyone
 # remembering to update a pattern list.
