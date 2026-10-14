@@ -69,6 +69,42 @@ def main():
     rc, out = rr("--check", "feat", "abc")
     check("a non-range argument exits 2", rc == 2 and "not a range" in out, out)
 
+    # ---- the REORG note (a3 night-review 10-15, seed #52734). A reorg that leaves stubs at old paths: the anchor is the
+    # commit that ADDED devtools/reorg/map.tsv, reached through a --no-ff merge as on the live main (c80fcbe in ec70478).
+    pre_main = git("rev-parse", "main")
+    git("checkout", "-qb", "pre")                                         # cut BEFORE the reorg, edits the old paths
+    (t / "nucleus" / "sub").mkdir(parents=True)
+    (t / "nucleus" / "a.py").write_text("a"); (t / "nucleus" / "sub" / "x.py").write_text("x"); (t / "kept.py").write_text("k")
+    git("add", "."); git("commit", "-qm", "pre-reorg edits")
+    git("checkout", "-q", "main"); git("checkout", "-qb", "reorg")
+    (t / "devtools" / "reorg").mkdir(parents=True)
+    (t / "devtools" / "reorg" / "map.tsv").write_text(
+        "# old<TAB>new<TAB>module\nnucleus/a.py\tsrc/a.py\ta\nnucleus/sub/\tsrc/sub/\t-\n")
+    git("add", "."); git("commit", "-qm", "reorg map")
+    adder = git("rev-parse", "HEAD")
+    git("checkout", "-q", "main"); git("merge", "-q", "--no-ff", "-m", "merge reorg", "reorg")
+    merge = git("rev-parse", "HEAD")
+    git("checkout", "-qb", "atmerge")                                     # cut AT the merge: has the new layout
+    (t / "src").mkdir(); (t / "src" / "a.py").write_text("a2"); git("add", "."); git("commit", "-qm", "post edit")
+    git("checkout", "-q", "main"); (t / "m4").write_text("4"); git("add", "."); git("commit", "-qm", "later fix")
+
+    rc, out = rr("pre")
+    check("reorg: a branch cut before the reorg is told to rebase, naming the commit that added the map",
+          rc == 0 and "predates the reorg" in out and adder[:12] in out, out)
+    check("reorg: each edit at an old path is listed with its new path, a directory row by prefix (sub/x.py), "
+          "and an unmapped file is not", "nucleus/a.py  ->  src/a.py" in out and "nucleus/sub/x.py  ->  src/sub/x.py" in out
+          and "kept.py" not in out and "2 file(s) edited at pre-reorg paths" in out, out)
+    rc, out = rr("atmerge")
+    check("reorg: a branch cut AT the reorg merge reads clean (no rebase ask, none edited)",
+          rc == 0 and "predates" not in out and "reorg paths: none edited" in out, out)
+    rc, out = rr("--check", "pre", f"{pre_main[:12]}..{git('rev-parse', 'pre')[:12]}")
+    check("reorg: the note never changes --check's rc (a correct range stays rc 0)", rc == 0 and "✓" in out
+          and "predates" in out, out)
+    rc, out = rr("pre", pre_main)
+    check("reorg: against a base ref with no map (before any reorg) the note is silent", rc == 0 and "REORG" not in out
+          and "reorg paths" not in out, out)
+    assert merge
+
     print(f"\n{'FAIL' if fails else 'PASS'}: review_range ({len(fails)} failing)")
     return 1 if fails else 0
 

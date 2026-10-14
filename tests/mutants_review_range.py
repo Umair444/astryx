@@ -19,4 +19,12 @@ MUTANTS = {
         ('BS=$(sha "$B") || { echo "  ✗ $B doesn\'t resolve to a commit"; bad=1; }', 'BS=$(sha "$B")'),
     "V5 the three-dot form isn't normalised (A...B reads its head as '.B')":
         ('B=${B#.}', 'B=$B'),
+    "V6 the reorg anchor is never compared with the base (a branch cut AT the merge reads 'predates')":
+        ('! git merge-base --is-ancestor "$anchor" "$MB"', 'true'),
+    "V7 a directory row ('nucleus/sub/') is ignored: only exact paths are flagged":
+        ('if ($0 == o || (o ~ /\\/$/ && index($0, o) == 1))', 'if ($0 == o)'),
+    "V8 the map is read from the branch head, not the base ref (a pre-reorg branch has none: nothing flagged)":
+        ('<(git show "$BASE_SHA:$MAP")', '<(git show "$HEAD_SHA:$MAP" 2>/dev/null)'),
+    "V9 the note swallows the range's rc (--check of a wrong range exits 0)":
+        ('reorg_note\nexit $bad', 'reorg_note\nexit 0'),
 }
