@@ -7,8 +7,11 @@ RECURRENCE (goal 4227, S4).
 
 The REAL hook runs as a subprocess from a temp repo tree (it derives REPO from its own path),
 with its .env written per case, so the axis under test (the endpoint) is set EXPLICITLY for
-each case and never inherited. The DB side runs in a throwaway schema via PGOPTIONS
-search_path, with no public fallback. The classifier is a fake loopback server whose behaviour
+each case and never inherited. The DB side runs in THROWAWAY DATABASES from
+nucleus/sqlguard/fixture.py's fixture_db() (schema.sql applied whole, stamped, dropped after),
+never the production server's own database: the hook's .env carries the fixture's DSN. N9's
+unmigrated shape is a second fixture whose classifications lost `nudged` (the applier's extra
+DDL, not a hand CREATE in this file). The classifier is a fake loopback server whose behaviour
 each case picks.
 
   N1 STATIC: no exit/sys.exit/os._exit/SystemExit with a non-zero code anywhere in the file
@@ -49,7 +52,6 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 EXIT_SKIP = 77
 SUBJECT = Path(os.environ.get("NUDGE_SRC") or REPO / "hooks" / "nudge.py")
-ENV = REPO / ".env"
 PY = sys.executable
 HARD_S = 1.5                    # the hook's own deadline (N3 checks it against the REAL value)
 RELAXED_S = 20                  # the deadline for LOGIC arms, whose subject isn't latency
@@ -96,17 +98,16 @@ for node in ast.walk(tree_):
 check("N1 no non-zero exit anywhere in the hook (exit 2 blocks the prompt)", not bad,
       "; ".join(bad))
 
-if not ENV.exists():
-    print("SKIP: .env absent — static arm only; nothing behavioural verified.")
-    sys.exit(EXIT_SKIP if not fails else 1)
-try:
-    import psycopg
-    DSN = next(l.split("=", 1)[1].strip() for l in ENV.read_text().splitlines()
-               if l.startswith("ASTRYX_DSN="))
-    admin = psycopg.connect(DSN, autocommit=True, connect_timeout=5)
-except Exception as e:  # noqa: BLE001
-    print(f"SKIP: no reachable DB ({type(e).__name__}) — static arm only.")
-    sys.exit(EXIT_SKIP if not fails else 1)
+# The DB side: N1 above runs on any tree; everything below needs a fixture database. The estate
+# decides absent (77) vs broken (1), as for every sqlguard oracle; a failed N1 still reads RED.
+sys.path.insert(0, str(REPO))
+from nucleus.sqlguard.estate import absent  # noqa: E402
+_gone = absent(REPO, deps=("psycopg",))
+if _gone:
+    print(f"  {'NOT SEARCHED' if _gone[0] == EXIT_SKIP else 'BROKEN'}: {_gone[1]} (static arm only)")
+    sys.exit(_gone[0] if not fails else 1)
+import psycopg  # noqa: E402
+from nucleus.sqlguard.fixture import FixtureUnavailable, fixture_db  # noqa: E402
 
 
 # ── the fake classifier ──────────────────────────────────────────────────────────────────
@@ -195,11 +196,11 @@ def make_tree(deadline=None):
     return t
 
 
-def run(root, sch, url=None, prompt="refactor the ledger", agent="zzpub", extra=""):
-    lines = [f"ASTRYX_DSN={DSN}"] + ([f"ASTRYX_CLASSIFIER_URL={url}"] if url else [])
+def run(root, dsn, url=None, prompt="refactor the ledger", agent="zzpub", extra=""):
+    """The hook against `dsn` (a fixture database's): its .env is the ONLY place it finds one."""
+    lines = [f"ASTRYX_DSN={dsn}"] + ([f"ASTRYX_CLASSIFIER_URL={url}"] if url else [])
     (root / ".env").write_text("\n".join(lines) + "\n" + extra)
-    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "ASTRYX_AGENT": agent,
-           "PGOPTIONS": f"-c search_path={sch}"}
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "ASTRYX_AGENT": agent}
     t0 = time.monotonic()
     r = subprocess.run([PY, str(root / "hooks" / "nudge.py")],
                        input=json.dumps({"hook_event_name": "UserPromptSubmit",
@@ -227,22 +228,37 @@ def interp_baseline() -> float:
     return sorted(ts)[1]
 
 
-def ddl(name):
-    text = (REPO / "nucleus" / "schema.sql").read_text()
-    i = text.index(f"CREATE TABLE IF NOT EXISTS {name} (")
-    return text[i:text.index("\n);", i) + 3]
+# N9's DB: the shape an unmigrated server has, a classifications table without `nudged`. Built by
+# the applier (extra DDL runs before the stamp), so this file issues no DDL of its own.
+UNMIGRATED = ("ALTER TABLE classifications DROP COLUMN nudged",)
 
-
-SCH = f"t_nudge_{os.getpid()}"
 strict = make_tree()                    # the REAL deadline: N3 only
 root = make_tree(deadline=RELAXED_S)    # every logic arm
+
+
+def _drop_trees():
+    shutil.rmtree(root, ignore_errors=True)
+    shutil.rmtree(strict, ignore_errors=True)
+
+
+_fx, _fx_old = fixture_db(), fixture_db(extra=UNMIGRATED)
+try:
+    fx = _fx.__enter__()
+except FixtureUnavailable as e:
+    _drop_trees()
+    print(f"  NOT SEARCHED: no fixture database ({e}) — static arm only.")
+    sys.exit(EXIT_SKIP if not fails else 1)
+try:
+    fx_old = _fx_old.__enter__()
+except BaseException:
+    _fx.__exit__(None, None, None)
+    _drop_trees()
+    raise
+DB, DB_OLD = fx["dsn"], fx_old["dsn"]      # what run() points the hook at: one fixture DB per shape
+admin = None
 exits = []
 try:
-    admin.execute(f"DROP SCHEMA IF EXISTS {SCH} CASCADE")
-    admin.execute(f"CREATE SCHEMA {SCH}")
-    admin.execute(f"SET search_path TO {SCH}")
-    for t in ("turns", "steps", "classifications"):
-        admin.execute(ddl(t))
+    admin = psycopg.connect(DB, autocommit=True)
     rows = lambda: admin.execute("SELECT agent, family, tier, classifier, session_id "  # noqa: E731
                                  "FROM classifications ORDER BY id").fetchall()
     url = f"http://127.0.0.1:{PORT}/classify"
@@ -253,7 +269,7 @@ try:
     Fake.mode = "ok"
     base = interp_baseline()
     bound = HARD_S + max(1.0, 2 * base)
-    r, dt = run(strict, SCH, None)
+    r, dt = run(strict, DB, None)
     exits.append(r.returncode)
     check(f"N3 unset: silent, within the bound (independent baseline {base:.2f}s, "
           f"bound {bound:.2f}s)", r.stdout == "" and dt < bound,
@@ -263,7 +279,7 @@ try:
                           ("DRIP (beats any per-socket timeout)", url, "drip"),
                           ("garbage body", url, "garbage")):
         Fake.mode = mode
-        r, dt = run(strict, SCH, u)
+        r, dt = run(strict, DB, u)
         exits.append(r.returncode)
         check(f"N3 {name}: silent, within the deadline + start-up",
               r.stdout == "" and dt < bound, f"stdout={r.stdout[:80]!r} took {dt:.2f}s, bound {bound:.2f}s")
@@ -276,7 +292,7 @@ try:
     if ip:
         refused.append(f"http://{ip}:{PORT}/c")     # routable AND reaches the fake if connected
     for u in refused:
-        r, _ = run(root, SCH, u)
+        r, _ = run(root, DB, u)
         exits.append(r.returncode)
         check(f"N4 refused, silent: {u.split('//')[1][:28]}", r.stdout == "", f"{r.stdout[:60]!r}")
     check(f"N4 the refused endpoints got ZERO requests (a connect would be a hit; "
@@ -286,7 +302,7 @@ try:
                            "AND content LIKE 'nudge:%'").fetchone()
     check("N4 the refusal is logged once (deduped), without the URL",
           logged[0] == 1 and "localhost" not in (logged[1] or ""), str(logged))
-    r, _ = run(root, SCH, f"http://localhost:{PORT}/classify",
+    r, _ = run(root, DB, f"http://localhost:{PORT}/classify",
                extra="ASTRYX_CLASSIFIER_ALLOW_REMOTE=1\n")
     check("N4 the owner flag lifts the refusal (localhost reached)", Fake.hits == 1,
           f"hits={Fake.hits}")
@@ -294,7 +310,7 @@ try:
 
     # ── N5 a content-private agent is never classified ───────────────────────────────────
     Fake.hits = 0
-    r, _ = run(root, SCH, url, agent="zzpriv", prompt=f"career {SECRET}")
+    r, _ = run(root, DB, url, agent="zzpriv", prompt=f"career {SECRET}")
     exits.append(r.returncode)
     check("N5 content-private agent (a gmail grant): zero requests, no row, silent",
           Fake.hits == 0 and rows() == [] and r.stdout == "", f"hits={Fake.hits} rows={rows()}")
@@ -303,25 +319,25 @@ try:
     # One discriminator per arm: complex-novel gets its OWN family, so its nudge (and the
     # cooldown record it writes) can't touch the recurrence arms below.
     Fake.reply = {"family": "novel.thing", "tier": "complex", "model": "fake-1"}
-    r, _ = run(root, SCH, url, prompt=f"write a new poller {SECRET}")
+    r, _ = run(root, DB, url, prompt=f"write a new poller {SECRET}")
     exits.append(r.returncode)
     check("N6 complex + novel → the decompose nudge", "[tools] Complex task" in r.stdout,
           r.stdout[:120])
     Fake.reply = {"family": "build.tool", "tier": "simple"}
     for _ in range(3):
-        r, _ = run(root, SCH, url)
+        r, _ = run(root, DB, url)
     check("N6 simple + not yet recurring (2 prior) → nothing", r.stdout == "", r.stdout[:120])
-    r, _ = run(root, SCH, url)
+    r, _ = run(root, DB, url)
     exits.append(r.returncode)
     check("N6 3 prior of the family → the registry nudge, naming the skill",
           "[tools] Recurring work" in r.stdout and "toolreg.py find" in r.stdout
           and "skills/tool-building/SKILL.md" in r.stdout, r.stdout[:160])
 
     # ── N8 the cooldown ──────────────────────────────────────────────────────────────────
-    outs = [run(root, SCH, url)[0].stdout for _ in range(3)]
+    outs = [run(root, DB, url)[0].stdout for _ in range(3)]
     check("N8 the SAME agent's next 3 wakes of that family → silence (cooldown)",
           outs == ["", "", ""], str([o[:40] for o in outs]))
-    r, _ = run(root, SCH, url, agent="zzpub2")
+    r, _ = run(root, DB, url, agent="zzpub2")
     check("N8 a SECOND agent still gets its first nudge for the family",
           "[tools] Recurring work" in r.stdout, r.stdout[:120])
     nudged = admin.execute("SELECT agent, count(*) FROM classifications "
@@ -330,15 +346,15 @@ try:
           nudged == [("zzpub", 1), ("zzpub2", 1)], str(nudged))
     admin.execute("UPDATE classifications SET ts = ts - interval '8 days' "
                   "WHERE agent='zzpub' AND family='build.tool' AND nudged")
-    r, _ = run(root, SCH, url)
+    r, _ = run(root, DB, url)
     check("N8 after the window the agent is nudged again", "[tools] Recurring work" in r.stdout,
           r.stdout[:120])
 
     Fake.reply = {"family": "build.tool", "tier": "trivial"}
-    r, _ = run(root, SCH, url, agent="zzpub2")
+    r, _ = run(root, DB, url, agent="zzpub2")
     check("N6 recurring but trivial → nothing", r.stdout == "", r.stdout[:120])
     Fake.reply = {"family": "one.off", "tier": "simple"}
-    r, _ = run(root, SCH, url)
+    r, _ = run(root, DB, url)
     check("N6 a different family doesn't inherit build.tool's recurrence", r.stdout == "",
           r.stdout[:120])
 
@@ -347,7 +363,7 @@ try:
         [list(x) for x in admin.execute("SELECT content FROM steps").fetchall()])
     check("N7 the prompt's secret is in no classification row and no step", SECRET not in blob)
     Fake.hits = 0
-    r, _ = run(root, SCH, url, agent="zz-no-charter")
+    r, _ = run(root, DB, url, agent="zz-no-charter")
     check("N5 an agent with NO charter is treated as private (fail-closed)",
           Fake.hits == 0 and r.stdout == "", f"hits={Fake.hits}")
     check("N7 rows hold labels only (agent, family, tier, classifier, session)",
@@ -355,44 +371,42 @@ try:
           str(rows()[:3]))
     n = len(rows())
     Fake.mode = "echo"
-    r, _ = run(root, SCH, url, prompt=f"echo {SECRET}")
+    r, _ = run(root, DB, url, prompt=f"echo {SECRET}")
     exits.append(r.returncode)
     check("N7 a classifier echoing the prompt as its label → no row, silent",
           len(rows()) == n and r.stdout == "", f"rows {n}->{len(rows())}")
     Fake.mode = "ok"
 
     # ── N9 an unmigrated DB is visible ───────────────────────────────────────────────────
-    SCH_OLD = f"{SCH}_old"
-    admin.execute(f"DROP SCHEMA IF EXISTS {SCH_OLD} CASCADE")
-    admin.execute(f"CREATE SCHEMA {SCH_OLD}")
-    admin.execute(f"SET search_path TO {SCH_OLD}")
-    for t in ("turns", "steps"):
-        admin.execute(ddl(t))
-    old_cls = "\n".join(l for l in ddl("classifications").splitlines() if "nudged" not in l)
-    old_cls = old_cls.replace("{1,64}$'),\n);", "{1,64}$')\n);")
-    admin.execute(old_cls)
+    old = psycopg.connect(DB_OLD, autocommit=True)
+    check("N9 precondition: the unmigrated fixture's classifications has NO nudged column",
+          old.execute("SELECT count(*) FROM information_schema.columns WHERE table_schema='public' "
+                      "AND table_name='classifications' AND column_name='nudged'").fetchone()[0] == 0)
     Fake.mode, Fake.reply = "ok", {"family": "build.tool", "tier": "complex"}
     outs9 = []
     for _ in range(2):
-        r, _ = run(root, SCH_OLD, url)
+        r, _ = run(root, DB_OLD, url)
         exits.append(r.returncode)
         outs9.append(r.stdout)
-    errs = admin.execute("SELECT content FROM steps WHERE kind='error'").fetchall()
+    errs = old.execute("SELECT content FROM steps WHERE kind='error'").fetchall()
     check("N9 unmigrated DB: silent both times", outs9 == ["", ""], str(outs9))
     check("N9 ...ONE error step (rate-limited), naming the exception CLASS",
           len(errs) == 1 and errs[0][0] == "nudge: classification write failed (UndefinedColumn)",
           str(errs))
-    admin.execute(f"SET search_path TO {SCH}")
-    admin.execute(f"DROP SCHEMA IF EXISTS {SCH_OLD} CASCADE")
+    old.close()
 
     check("N2 every behavioural case exited 0", set(exits) == {0}, str(exits))
 finally:
     srv.shutdown()
     try:
-        admin.execute(f"DROP SCHEMA IF EXISTS {SCH} CASCADE")
+        if admin is not None:
+            admin.close()
+        try:
+            _fx_old.__exit__(None, None, None)     # each drops its database WITH (FORCE)
+        finally:
+            _fx.__exit__(None, None, None)
     finally:
-        shutil.rmtree(root, ignore_errors=True)
-        shutil.rmtree(strict, ignore_errors=True)
+        _drop_trees()
 
 if fails:
     print(f"\nFAIL: {len(fails)} nudge invariant(s) broken")
