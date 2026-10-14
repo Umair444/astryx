@@ -571,7 +571,8 @@ def parser() -> argparse.ArgumentParser:
         description="ASTRYX — an org of Claude Code agents on one machine.\n\n"
                     "Start with `astryx init`: it checks the machine, sets up the org, and starts the seed,\n"
                     "which walks you through the rest.",
-        epilog="Every verb works by hand too. Home: --home, else ASTRYX_HOME, else the org you're in.\n"
+        epilog="Every verb works by hand too. Home: --home, else ASTRYX_HOME (a git checkout ignores it unless it\n"
+               "names that checkout), else the org you're in.\n"
                "Docs: README.md · CLAUDE.md")
     p.add_argument("--home", metavar="DIR", help="the org's home directory")
     sub = p.add_subparsers(dest="verb", metavar="<command>", title="commands")

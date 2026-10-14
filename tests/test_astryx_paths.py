@@ -6,13 +6,21 @@
 Each rung is driven through resolve_home's injectable inputs over temp trees, and each is shown to LOSE to the rung
 above it. Hermetic: no database, no network.
 """
+import importlib.util
+import os
 import sys
 import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO / "src"))
-from astryx import paths  # noqa: E402
+SRC = os.environ.get("PATHS_SRC")       # the mutation probe hands a mutant copy of paths.py here
+if SRC:
+    spec = importlib.util.spec_from_file_location("paths_under_test", SRC)
+    paths = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(paths)
+else:
+    sys.path.insert(0, str(REPO / "src"))
+    from astryx import paths  # noqa: E402
 
 fails = []
 
@@ -84,9 +92,19 @@ def main():
     h, why = paths.resolve_home(env={}, cwd=wt / "nucleus", package=wpkg, user_home=user)
     arm("a worktree that marks ITSELF a home is found by the marker rung", (h, why) == (wt, "marker"), f"{h} {why}")
 
-    h, why = paths.resolve_home(env={"ASTRYX_HOME": str(t / "x" / ".." / "elsewhere")}, cwd=plain, package=pkg,
+    h, why = paths.resolve_home(env={"ASTRYX_HOME": str(t / "x" / ".." / "elsewhere")}, cwd=plain, package=wheel_pkg,
                                 user_home=user)
-    arm("rung 1 ASTRYX_HOME beats everything (and is normalised)", (h, why) == (t / "elsewhere", "env"), f"{h} {why}")
+    arm("rung 1: a WHEEL install takes ASTRYX_HOME over everything (and normalises it)",
+        (h, why) == (t / "elsewhere", "env"), f"{h} {why}")
+    h, why = paths.resolve_home(env={"ASTRYX_HOME": str(co / "src" / "..")}, cwd=plain, package=pkg, user_home=user)
+    arm("rung 1: a checkout takes ASTRYX_HOME when it names that checkout itself", (h, why) == (co, "env"),
+        f"{h} {why}")
+    # a2 #52637: the units and resident shells carry the LIVE home; a worktree run from one must not resolve to it
+    h, why = paths.resolve_home(env={"ASTRYX_HOME": str(live)}, cwd=plain, package=pkg, user_home=user)
+    arm("rung 1: a DIFFERENT checkout skips an inherited ASTRYX_HOME (a worktree in a live shell is itself, not live)",
+        (h, why) == (co, "checkout"), f"{h} {why}")
+    h, why = paths.resolve_home(env={"ASTRYX_HOME": str(live)}, cwd=wt / "nucleus", package=pkg, user_home=user)
+    arm("  ...and falls through to the marker rung when the cwd is marked", (h, why) == (wt, "marker"), f"{h} {why}")
     h, why = paths.resolve_home(env={"ASTRYX_HOME": ""}, cwd=plain, package=pkg, user_home=user)
     arm("an EMPTY ASTRYX_HOME falls through", why == "checkout", why)
 
@@ -95,10 +113,11 @@ def main():
     h, why = paths.resolve_home(env={}, cwd=user, package=wheel_pkg, user_home=user)
     arm("a .astryx DIRECTORY is not a marker", (h, why) == (user / ".astryx", "default"), f"{h} {why}")
 
-    arm("this checkout resolves as a checkout", paths.checkout_root() == REPO, str(paths.checkout_root()))
-    h, why = paths.resolve_home(env={})
-    arm("THIS checkout (a worktree nested in the live org) resolves HOME to itself, never the live org",
-        h == REPO and why in ("checkout", "marker"), f"{h} {why}")
+    if not SRC:      # these read where the module FILE lives; a mutant copy lives in a temp dir
+        arm("this checkout resolves as a checkout", paths.checkout_root() == REPO, str(paths.checkout_root()))
+        h, why = paths.resolve_home(env={})
+        arm("THIS checkout (a worktree nested in the live org) resolves HOME to itself, never the live org",
+            h == REPO and why in ("checkout", "marker"), f"{h} {why}")
     print(f"\n{'FAIL' if fails else 'ALL PASS'}: astryx paths ({len(fails)} failing)")
     return 1 if fails else 0
 
