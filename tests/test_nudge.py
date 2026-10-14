@@ -155,7 +155,9 @@ srv = ThreadingHTTPServer(("0.0.0.0", 0), H)
 srv.daemon_threads = True
 threading.Thread(target=srv.serve_forever, daemon=True).start()
 PORT = srv.server_address[1]
-s = socket.socket(); s.bind(("127.0.0.1", 0)); DOWN = s.getsockname()[1]; s.close()
+# a port that REFUSES: bound and never listening, held for the whole run (plan-10108 D3). Released, its number was free
+# for a concurrent gate to listen on, and a "down" target would then answer.
+_DOWN_SOCK = socket.socket(); _DOWN_SOCK.bind(("127.0.0.1", 0)); DOWN = _DOWN_SOCK.getsockname()[1]
 
 
 def lan_ip():

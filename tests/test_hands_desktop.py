@@ -46,17 +46,23 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 import http.server  # noqa: E402
-import socket  # noqa: E402
 import threading  # noqa: E402
 
 
-def _free_port() -> int:
-    with socket.socket() as so:
-        so.bind(("127.0.0.1", 0))
-        return so.getsockname()[1]
+class _Hit(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        HITS[self.server.server_address[1]] += 1
+        self.send_response(204)
+        self.end_headers()
+
+    def log_message(self, *a):
+        pass
 
 
-P_OK, P_NO = _free_port(), _free_port()
+# bind(0)-and-serve (plan-10108 D3): each probe listener is BOUND now, on a port the kernel picks, and later served on
+# that same socket. A probe-then-release handed its number back for any concurrent gate to take before _listen rebound it.
+_BOUND = [http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Hit) for _ in range(2)]
+P_OK, P_NO = (b.server_address[1] for b in _BOUND)
 HITS = {P_OK: 0, P_NO: 0}
 os.environ["HANDS_LOCAL_ALLOW"] = str(P_OK)        # inherited by the desktop's proxy
 
@@ -281,15 +287,7 @@ def mcp_arms():
 
 
 def _listen(port):
-    class H(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            HITS[port] += 1
-            self.send_response(204)
-            self.end_headers()
-
-        def log_message(self, *a):
-            pass
-    srv = http.server.ThreadingHTTPServer(("127.0.0.1", port), H)
+    srv = next(b for b in _BOUND if b.server_address[1] == port)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv
 
