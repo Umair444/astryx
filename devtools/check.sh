@@ -39,6 +39,11 @@ set -uo pipefail
 # (2026-09-30). This is the chokepoint every gate's environment passes through, so the scrub
 # lives here for every caller. Oracle: tests/test_git_env_isolation.py.
 for v in $(compgen -e | grep "^GIT_"); do unset "$v"; done
+# No gate runs AS the caller either. A gate's child `claude -p` runs the user-wide Stop hook (hooks/step.py), which
+# writes turns and steps to prod under ASTRYX_AGENT. With a resident's name inherited, init.sh's login probe credited
+# fake turns to it (a2 #53059), and so would any stationed call or future probe. The pulse's run_check already runs
+# every gate with no name (systemd env), so no gate needs one. Oracle: tests/test_check_noagent.py.
+unset ASTRYX_AGENT
 cd "$(dirname "$0")/.."
 PY=${PY:-venv/bin/python}; [ -x "$PY" ] || PY=python3
 
@@ -398,6 +403,7 @@ run "init.sh phonesweep: the phone resume sweep installs itself only where phone
 # holder, while the phone has it); only a run that an open STARTED is ever stopped idle, asynchronously. Stand-in only.
 run "windows on demand: claim before start, refuse naming the holder, idle stop only of its own starts" "$PY" tests/test_windows_ondemand.py
 run "init.sh winidle: the Windows idle stop installs itself only where a Windows container exists" "$PY" tests/test_init_winidle.py
+run "check.sh: gates run with no agent name (a child claude writes no turn as the caller)" "$PY" tests/test_check_noagent.py
 # init.sh login probes (a2 #53059): the probe's claude -p runs the Stop hook, which wrote a fake turn to prod under the
 # caller's inherited ASTRYX_AGENT. A fake claude on PATH sees it UNSET; static: every claude -p carries env -u.
 run "init.sh login probes: claude -p runs with no agent name (writes no turn)" "$PY" tests/test_init_probe_agent.py
