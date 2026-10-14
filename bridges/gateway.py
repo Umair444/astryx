@@ -22,9 +22,16 @@ Identity is the org's Ed25519 key; the name is a label. The envelope signature,
 not the transport, is the integrity layer. Both sides keep every signed
 envelope: dual, non-repudiable history.
 
+  relay     bridges/relay.py. With ASTRYX_RELAY=<base> set, this gateway registers
+            there, sends to peers that have no URL through it, and long-polls its
+            mailbox; what it collects goes through the same introduce/inbox checks
+            as a direct POST. With ASTRYX_RELAY_HOST=1 it also HOSTS a relay.
+
 Run: uvicorn gateway:app --host 0.0.0.0 --port 8845   (from bridges/)
 Env: ASTRYX_ORG (name), ASTRYX_SECRET_KEY (hex seed), ASTRYX_URL (public base,
-     empty when NAT'd), ASTRYX_DSN.
+     empty when NAT'd), ASTRYX_DSN, ASTRYX_RELAY (relay base url, optional),
+     ASTRYX_RELAY_LISTED (1 = list this org in the relay directory),
+     ASTRYX_RELAY_HOST (1 = host a relay here).
 """
 
 import asyncio
@@ -50,7 +57,7 @@ REPO = HERE.parent
 
 def _env(key: str, default: str = "") -> str:
     import os
-    if os.environ.get(key):
+    if key in os.environ:                        # set, even to empty, beats the file (NAT = empty URL)
         return os.environ[key]
     env = REPO / ".env"
     if env.is_file():
@@ -64,6 +71,9 @@ ORG = _env("ASTRYX_ORG", "local")
 URL = _env("ASTRYX_URL")
 KEY = SigningKey(_env("ASTRYX_SECRET_KEY").encode(), encoder=HexEncoder)
 PUB = KEY.verify_key.encode(HexEncoder).decode()
+RELAY = _env("ASTRYX_RELAY").rstrip("/")
+RELAY_LISTED = _env("ASTRYX_RELAY_LISTED") == "1"
+RELAY_HOST = _env("ASTRYX_RELAY_HOST") == "1"
 
 # the ONE tier oracle (plan-18) — the card's roster is exactly content_public_agents,
 # fail-closed, so a tier-private agent can never be advertised to the world.
@@ -75,12 +85,14 @@ from nucleus.orgname import RESERVED_ORGS, org_ok, peer_url_ok  # noqa: E402
 # .git, NON_CHARTERS). The card only annotates; deriving names here keeps a runbook like
 # onboard.md from drifting onto the public card (card_assert.py's two-writers warning).
 from nucleus import charter  # noqa: E402
+from bridges import relay as relay_mod  # noqa: E402
 
 SKEW = 600                      # seconds of envelope timestamp tolerance
 BODY_MAX = 16000
 INBOX_RATE = 60                 # envelopes/hour per introduced org
 INTRO_RATE = 5                  # introductions/hour per IP
 HOLD = 25                       # pickup long-poll seconds
+RELAY_WINDOW = 3 * 86400        # a relayed envelope may wait in a mailbox this long (relay TTL)
 
 pool: asyncpg.Pool | None = None
 outbound_bell: asyncio.Queue = asyncio.Queue()
@@ -107,9 +119,9 @@ def verify(d: dict, pubkey_hex: str) -> bool:
         return False
 
 
-def fresh(ts) -> bool:
+def fresh(ts, window: float = SKEW) -> bool:
     try:
-        return abs(time.time() - float(ts)) < SKEW
+        return abs(time.time() - float(ts)) < window
     except Exception:
         return False
 
@@ -339,7 +351,7 @@ async def agent_card():
 
 
 @app.post("/astryx/introduce")
-async def introduce(request: Request):
+async def introduce_door(request: Request):
     ip = request.client.host if request.client else "?"
     if rated(f"intro:{ip}", INTRO_RATE):
         return Response(status_code=429)
@@ -347,8 +359,16 @@ async def introduce(request: Request):
         d = await request.json()
     except Exception:
         return Response(status_code=400)
+    return await introduce(d)
+
+
+async def introduce(d: dict, window: float = SKEW):
+    """A signed hello, from the door or from a relay mailbox: one set of checks for both.
+    `window` widens freshness for a hello that waited in a mailbox."""
+    if not isinstance(d, dict):
+        return Response(status_code=400)
     org, pub = str(d.get("org", ""))[:80], str(d.get("pubkey", ""))
-    if not org or not pub or org == ORG or not fresh(d.get("ts")):
+    if not org or not pub or org == ORG or not fresh(d.get("ts"), window):
         return Response(status_code=400)
     if not org_ok(org):
         return Response(status_code=400)         # reserved name or illegal charset
@@ -408,24 +428,35 @@ def reach(caps_raw, status: str, req_to: str, req_intent: str):
 
 
 @app.post("/astryx/inbox")
-async def inbox(request: Request):
+async def inbox_door(request: Request):
     try:
         e = await request.json()
     except Exception:
+        return Response(status_code=400)
+    return await inbox(e)
+
+
+async def inbox(e: dict, window: float = SKEW):
+    """One verification and insert path for every inbound envelope: a direct POST, or one
+    collected from a relay mailbox (`window` = how long it may have waited there)."""
+    if not isinstance(e, dict):
         return Response(status_code=400)
     from_agent, _, from_org = str(e.get("from", "")).partition("@")
     peer = await pool.fetchrow(
         "SELECT pubkey, status, caps_granted FROM peers WHERE org=$1", from_org)
     if not peer or peer["status"] in ("stranger", "revoked"):
         return Response(status_code=403)
-    if not fresh(e.get("ts")) or not verify(e, peer["pubkey"]):
+    if not fresh(e.get("ts"), window) or not verify(e, peer["pubkey"]):
         return Response(status_code=403)
     eid = str(e.get("id", ""))
     now = time.time()
-    for k in [k for k, t in seen_ids.items() if now - t > SKEW * 2]:
+    for k in [k for k, t in seen_ids.items() if now - t > max(SKEW, window) * 2]:
         del seen_ids[k]
     if not eid or eid in seen_ids:
         return {"ok": True}                      # replay: acknowledged, ignored
+    if window > SKEW and await pool.fetchval(
+            "SELECT count(*) FROM messages WHERE from_org=$1 AND sig=$2", from_org, e.get("sig")):
+        return {"ok": True}                      # a relayed copy outlives seen_ids: the row is the memory
     seen_ids[eid] = now
     # Rung 1 — per-peer capability attenuation, enforced at the one off-uid door.
     to_agent, intent, rate, intent_ok = reach(
@@ -499,7 +530,12 @@ async def push(row) -> bool:
             f"(run nucleus/introduce.py first)")
         return True
     if not peer["url"]:
-        return False                             # NAT peer: they will pick up
+        if RELAY and await relay_send(row["to_org"], "msg", envelope(row)):
+            await pool.execute(
+                "UPDATE messages SET status='delivered', delivered_at=now() WHERE id=$1",
+                row["id"])                       # delivered = the relay accepted it into their mailbox
+            return True
+        return False                             # NAT peer: they pick up (from us, or via the relay)
     try:
         async with httpx.AsyncClient(timeout=15) as c:
             r = await c.post(f"{peer['url'].rstrip('/')}/astryx/inbox",
@@ -591,6 +627,72 @@ async def pickup_task():
             await asyncio.sleep(10)
 
 
+# -------------------------------------------------------------- relay client
+async def relay_send(to: str, kind: str, e: dict) -> bool:
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.post(f"{RELAY}/relay/send", json={"to": to, "kind": kind, "envelope": e})
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+async def relay_register() -> bool:
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.post(f"{RELAY}/relay/register",
+                             json=relay_mod.register_claim(KEY, ORG, URL, RELAY_LISTED))
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+async def relay_take(item: dict) -> None:
+    """One collected mailbox item, through the SAME checks a direct POST gets. A hello is
+    answered once with our own signed hello, marked reply, so the exchange ends there."""
+    e, kind = item.get("envelope"), item.get("kind")
+    if not isinstance(e, dict):
+        return
+    if kind == "hello":
+        if str(e.get("org", "")) != item.get("from_org"):
+            return
+        r = await introduce(e, window=RELAY_WINDOW)
+        if not isinstance(r, Response) and not e.get("reply"):
+            await relay_send(e["org"], "hello", sign({
+                "astryx": 0, "org": ORG, "pubkey": PUB, "url": URL or None,
+                "ts": time.time(), "reply": True}))
+    elif kind == "msg":
+        await inbox(e, window=RELAY_WINDOW)
+
+
+async def relay_task():
+    """With ASTRYX_RELAY set: register (hourly), then long-poll our mailbox. `since` is the ack."""
+    if not RELAY:
+        return
+    since, registered_at = 0, 0.0
+    while True:
+        try:
+            if time.time() - registered_at > 3600:
+                if not await relay_register():
+                    await asyncio.sleep(15)
+                    continue
+                registered_at = time.time()
+            async with httpx.AsyncClient(timeout=relay_mod.HOLD + 15) as c:
+                r = await c.get(f"{RELAY}/relay/pickup",
+                                params=relay_mod.pickup_claim(KEY, ORG, since))
+            if r.status_code == 403:
+                registered_at = 0.0              # the relay forgot us: register again
+                continue
+            if r.status_code != 200:
+                await asyncio.sleep(5)
+                continue
+            for item in r.json().get("mail", []):
+                await relay_take(item)
+                since = max(since, int(item.get("id", 0)))
+        except Exception:
+            await asyncio.sleep(5)
+
+
 async def card_refresh_task():
     """Event-invalidated materialized view: regenerate the card only when its source
     (roster ∪ tier ∪ key) actually changes. Bounded staleness = the poll interval."""
@@ -609,10 +711,16 @@ async def lifespan(app: FastAPI):
     pool = await asyncpg.create_pool(DSN, min_size=1, max_size=3)
     _regen_card()                                    # serve pre-generated bytes from the first request
     tasks = [asyncio.create_task(listen_task()), asyncio.create_task(pickup_task()),
-             asyncio.create_task(card_refresh_task())]
+             asyncio.create_task(card_refresh_task()), asyncio.create_task(relay_task())]
     yield
     for t in tasks:
         t.cancel()
     await pool.close()
 
 app.router.lifespan_context = lifespan
+
+if RELAY_HOST:
+    # the relay is its own surface (relay_orgs, relay_mail): it never writes peers or messages
+    app.include_router(relay_mod.make_router(
+        lambda: pool, org_ok, lambda: {"org": ORG, "pubkey": PUB, "url": URL or None}, rated,
+        allow_private_reach=_env("ASTRYX_RELAY_REACH_PRIVATE") == "1"))

@@ -716,7 +716,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 338,
+  "debt_rows": 330,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 7,
@@ -856,31 +856,6 @@
    "reason": "the Room (owner 10-11): tests/test_room_db.py stamps a present (1 row) and a missing (0 rows) utterance; utterances is written into ear_store.maintain()'s run-time day partition, unstamped, the same FIXTURE-DDL as the ear's other listed sites (a4 #43670)",
    "tk": "sha256t:d194378734d89829f1302599888a2cb741897bb42e63347e28cfa15b5977c033"
   },
-  "bridges/gateway.py::inbox\u001finsert into messages (from_agent, from_org, to_agent, to_org, thread, intent, body, sig) values (?, ?, ?, 'local', ?, ?, ?, ?)": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:a029539220696570e452cc3152da7c2fc1d9715e06a6c8b905103bd753b4a2a1"
-  },
-  "bridges/gateway.py::inbox\u001fselect pubkey, status, caps_granted from peers where org=?": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:1edcf004fa07252c697dbb336c9bbc2e7d64a1d84f9e1e4683966a5d2910a6f4"
-  },
-  "bridges/gateway.py::introduce\u001finsert into messages (from_agent, from_org, to_agent, intent, body) values ('gateway', 'local', 'seed', 'introduce', ?)": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:b985bb987666884447485d1f66a27b10bb311e414fdf59a26352eb63101c1223"
-  },
-  "bridges/gateway.py::introduce\u001finsert into peers (org, url, pubkey, status, notes) values (?, ?, ?, 'introduced', 'introduced itself') on conflict (org) do update set url=?, pubkey=?": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:56e37b963a7f257d88d48474b74adfa964c867aac3649d452b003d3342f4a77a"
-  },
-  "bridges/gateway.py::introduce\u001fselect pubkey, status from peers where org=?": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:13604b226e87ecb81af076a11581f92c579cb39994df767eaafae6bc4cdf0b17"
-  },
   "bridges/gateway.py::listen_task\u001fselect * from messages where id=? and status='pending'": {
    "debt": "UNEXECUTED",
    "reason": "seed",
@@ -920,16 +895,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:193d2da66fc650495ee816e595d2b5e1b144fe3b338df08a7298d248686aa7d8"
-  },
-  "bridges/gateway.py::push\u001finsert into messages (from_agent, to_agent, intent, body) values ('gateway', ?, 'error', ?)": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:297b1e92a6d2c80aa5f64233236a1b266b427b19872037042e1010e1e5a02205"
-  },
-  "bridges/gateway.py::push\u001fselect url, pubkey, status from peers where org=?": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:d442163045b884d1d31debf7d9ab905e5374d613c12cc6ee235cee8e5492487c"
   },
   "bridges/gateway.py::push\u001fupdate messages set status='dead' where id=?": {
    "debt": "UNEXECUTED",
@@ -1249,11 +1214,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:8090f2d2a20a175c03efeed8a9d425baac3e994a4da83ab7a96d38f4cfbb178c"
-  },
-  "nucleus/introduce.py::main\u001finsert into peers (org, url, pubkey, status, notes) values (?, ?, ?, 'introduced', 'we introduced ourselves') on conflict (org) do update set url=excluded.url, pubkey=excluded.pubkey": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:07092a8dbeeeb369cbe12e0d9482b01f2c8652961151c7f8b673f3c217373141"
   },
   "nucleus/memgraph.py::build_system1\u001fselect body from messages where body ~ '^org-news #[0-9]+' order by id": {
    "debt": "NOT-SEARCHED-AT-SEED",
