@@ -36,7 +36,7 @@ import os
 import sys
 from pathlib import Path
 
-from astryx.security.sqlguard.normalize import is_site, is_write, norm
+from astryx.security.sqlguard.normalize import is_bare_verb, is_site, is_write, norm
 
 REPO = Path(os.environ.get("ASTRYX_SQLGUARD_ROOT") or repo_root(__file__)).resolve()
 SKIP_DIRS = {"venv", ".venv", "node_modules", "homes", ".git", "__pycache__", "dist", "build"}
@@ -53,11 +53,37 @@ EXCLUDED_ROOTS = {
 EXEMPT = {"src/astryx/security/sqlguard/shim/sitecustomize.py"}
 
 
+def _common_dir(d: Path):
+    """The git COMMON dir a checkout at d belongs to (None if d isn't a checkout root). A linked worktree's .git is a
+    `gitdir:` file whose admin dir names its common dir in `commondir`."""
+    g = d / ".git"
+    try:
+        if g.is_dir():
+            return g.resolve()
+        if g.is_file():
+            admin = Path(g.read_text().split("gitdir:", 1)[1].strip())
+            admin = admin if admin.is_absolute() else (d / admin)
+            cd = admin / "commondir"
+            return ((admin / cd.read_text().strip()) if cd.is_file() else admin).resolve()
+    except (OSError, IndexError):
+        return None
+    return None
+
+
+# Another CHECKOUT of this same repository under the tree (10-14: the estate's .claude/worktrees/ held 7 subagent
+# worktrees, linked into every merge_check tree) is another branch's copy, not this tree's code. Pruned and DECLARED in
+# the report; a nested repo that ISN'T this one (agents/) is still walked.
+OTHER_CHECKOUTS = set()
+
+
 def _py_files(include_tests: bool):
+    mine = _common_dir(REPO)
     for dirpath, dirnames, filenames in os.walk(REPO, followlinks=True):
         rel = os.path.relpath(dirpath, REPO)
         top = rel.split(os.sep)[0]
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS
+        twins = {d for d in dirnames if mine is not None and _common_dir(Path(dirpath) / d) == mine}
+        OTHER_CHECKOUTS.update(os.path.normpath(os.path.join(rel, d)) for d in twins)
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and d not in twins
                        and not (rel == "." and d == "tests" and not include_tests)
                        and not (rel == "." and d in EXCLUDED_ROOTS)]
         if top in SKIP_DIRS:
@@ -210,7 +236,7 @@ def inventory_file(path: Path, rel: str):
     for st in tree.body:
         if isinstance(st, (ast.Assign, ast.AnnAssign)) and st.value is not None:
             tg = st.targets[0] if isinstance(st, ast.Assign) else st.target
-            if isinstance(tg, ast.Name) and tg.id not in consts and is_site(_head(st.value)):
+            if isinstance(tg, ast.Name) and tg.id not in consts and is_site(_head(st.value), form="head"):
                 unresolved_consts.add(tg.id)
     docs = _docstring_ids(tree)
     parent = {}
@@ -233,12 +259,49 @@ def inventory_file(path: Path, rel: str):
                 cur = functions.setdefault(f"{rel}::{prefix}<lambda>", {"sites": {}, "unresolved": []})
                 cur["sites"].update(got["sites"])
                 cur["unresolved"] = sorted(set(cur["unresolved"]) | set(got["unresolved"]))
+                if got.get("bare_unsafe"):
+                    cur["bare_unsafe"] = sorted(set(cur.get("bare_unsafe", [])) | set(got["bare_unsafe"]))
                 visit(child, prefix + "<lambda>.<locals>.")
             else:
                 visit(child, prefix)
 
+    def _bare_use_safe(n) -> bool:
+        """plan-10107 D5 (a3 BC-1): a bare-verb literal is no longer a site, so it is SAFE to drop only where its USE
+        can't be a composed query's head: a comparison operand; a member of a container that is the right side of
+        `in`/`not in` or a `for`/comprehension iterable; a dict key or value. Classified by AST USE, never by a list
+        of execute-method names (a wrapper outside such a list would read as "no execute" and fail open)."""
+        p = parent.get(id(n))
+        if isinstance(p, ast.Compare) or isinstance(p, ast.Dict):
+            return True
+        if isinstance(p, (ast.Tuple, ast.List, ast.Set)):
+            pp = parent.get(id(p))
+            if isinstance(pp, ast.Compare) and p in pp.comparators \
+                    and all(isinstance(o, (ast.In, ast.NotIn)) for o in pp.ops):
+                return True
+            if isinstance(pp, (ast.For, ast.AsyncFor, ast.comprehension)) and pp.iter is p:
+                return True
+        return False
+
+    def _composed(n):
+        p = parent.get(id(n))
+        return (isinstance(p, ast.Attribute) and p.attr == "format") \
+            or (isinstance(p, ast.BinOp) and isinstance(p.op, ast.Mod) and p.left is n) \
+            or (isinstance(p, ast.Call) and getattr(p.func, "attr", getattr(p.func, "id", "")) == "SQL")
+
+    def _in_resolved_concat(n) -> bool:
+        """a4 #52387 note (a): a bare-verb const Name inside a `+` chain that RESOLVES to a statement is recorded by that
+        chain's site, so it isn't a lone trace. Only then: `VERB + " INTO " + tbl` doesn't resolve, and `_head` reads no
+        Name, so the Name's own flag is that composition's only trace and must stand."""
+        top = n
+        while isinstance(parent.get(id(top)), ast.BinOp) and isinstance(parent[id(top)].op, ast.Add):
+            top = parent[id(top)]
+        if top is n or _composed(top):
+            return False
+        text = _resolve(top, consts)
+        return text is not None and is_site(text, form="statement")
+
     def _collect(fn, skip=frozenset()):
-        sites, unresolved = {}, []
+        sites, unresolved, bare_unsafe = {}, [], []
         for n in _own_nodes(fn):
             if id(n) in docs or id(n) in skip:
                 continue
@@ -265,14 +328,19 @@ def inventory_file(path: Path, rel: str):
                                                                    and isinstance(n.op, ast.Add)):
                 text = None if composed else _resolve(n, consts)
                 if text is None:
-                    if is_site(_head(n)):
+                    if is_site(_head(n), form="head"):
                         unresolved.append(getattr(n, "lineno", 0))
                     continue
             else:
                 continue
-            if is_site(text):
+            if is_site(text, form="statement"):
                 sites.setdefault(norm(text), {"line": getattr(n, "lineno", 0), "write": is_write(text)})
-        return {"sites": sites, "unresolved": sorted(set(unresolved))}
+            elif is_bare_verb(text) and not _bare_use_safe(n) and not _in_resolved_concat(n):
+                bare_unsafe.append(getattr(n, "lineno", 0))   # maybe a composed query's only trace: needs a `*` row
+        out = {"sites": sites, "unresolved": sorted(set(unresolved))}
+        if bare_unsafe:
+            out["bare_unsafe"] = sorted(set(bare_unsafe))
+        return out
 
     visit(tree, "")
     # Module-level code executes under co_qualname "<module>". Its INLINE SQL is a site, but a module-level
@@ -283,7 +351,7 @@ def inventory_file(path: Path, rel: str):
         st, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))], type_ignores=[])
     m = _collect(mod, skip=defs)
     functions[f"{rel}::<module>"] = m
-    return {k: v for k, v in functions.items() if v["sites"] or v["unresolved"]}
+    return {k: v for k, v in functions.items() if v["sites"] or v["unresolved"] or v.get("bare_unsafe")}
 
 
 def reads_schema_sql(path: Path) -> bool:
@@ -326,7 +394,8 @@ def build() -> dict:
                         if str(p.relative_to(REPO)) not in NOT_READERS and reads_schema_sql(p))
     # triggers/ is gitignored: a clone or worktree without it has NOT SEARCHED the class's home. That's never clean.
     return {"functions": functions, "oracle": oracle, "unparseable": sorted(unparseable), "extractors": extractors,
-            "exempt": sorted(EXEMPT), "excluded": sorted(EXCLUDED_ROOTS), "triggers_absent": not (REPO / "triggers").is_dir(), "root": str(REPO)}
+            "exempt": sorted(EXEMPT), "excluded": sorted(EXCLUDED_ROOTS), "other_checkouts": sorted(OTHER_CHECKOUTS),
+            "triggers_absent": not (REPO / "triggers").is_dir(), "root": str(REPO)}
 
 
 if __name__ == "__main__":
