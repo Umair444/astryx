@@ -171,6 +171,10 @@ SIG_SQL = ("SELECT a.attname, format_type(a.atttypid, a.atttypmod), "
            "coalesce(pg_get_expr(d.adbin, d.adrelid), ''), a.attnotnull "
            "FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum "
            "WHERE a.attrelid=%s AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attname")
+# format_type() and pg_get_expr() render a name relative to the CALLER's search_path (`graphid` vs
+# `ag_catalog.graphid`, `nextval('s'::regclass)` vs `nextval('sp.s'::regclass)`). So the signer and the checker
+# BOTH read signatures under this one fixed path (a3 #50071), never whatever path a DDL extra or a DSN left behind.
+SIG_PATH = "SET LOCAL search_path = pg_catalog"
 
 
 def signature(conn, oid: int) -> str:
@@ -179,6 +183,12 @@ def signature(conn, oid: int) -> str:
 
 
 def _stamp_all(conn, sha: str) -> int:
+    with conn.transaction():
+        conn.execute(SIG_PATH)                       # LOCAL: the pin ends with the stamp, never leaks to the caller
+        return _stamp_rels(conn, sha)
+
+
+def _stamp_rels(conn, sha: str) -> int:
     rels = conn.execute("SELECT c.oid, quote_ident(n.nspname)||'.'||quote_ident(c.relname) " + _ORG_RELS).fetchall()
     for oid, qname in rels:
         kind = "VIEW" if conn.execute("SELECT relkind FROM pg_class WHERE oid=%s",
@@ -229,11 +239,9 @@ def fixture_db(extra: tuple = ()):
             c.execute(SCHEMA.read_text())          # the WHOLE file, the same bytes init.sh applies
             for ddl in extra:
                 c.execute(ddl)
-            # format_type() qualifies a type by the CALLER's search_path, and the checker reads signatures on a
-            # default-path side connection. An extra that leaves search_path at ag_catalog stamped every AGE
-            # label table `graphid` against a check-time `ag_catalog.graphid`, and that one mismatch withheld
-            # DB-grain credit from every write in the fixture (forge #50063). Stamp under the default path.
-            c.execute("RESET search_path")
+            # An extra that left search_path at ag_catalog once stamped every AGE label table `graphid` against a
+            # check-time `ag_catalog.graphid`, which withheld DB-grain credit from every write in the fixture
+            # (forge #50063). _stamp_all pins SIG_PATH itself, so no extra's path reaches the signature.
             n = _stamp_all(c, sha)
         yield {"dbname": name, "dsn": dsn, "url": url(dsn), "file_sha": sha, "relations": n,
                "apply_s": round(time.monotonic() - t0, 3)}
@@ -275,6 +283,7 @@ def _side_conn(dbname: str):
         c = _side[dbname] = psycopg.connect(make_conninfo(live_dsn(), dbname=dbname), autocommit=True)
         c.execute("SET lock_timeout = '250ms'")
         c.execute("SET statement_timeout = '2s'")
+        c.execute(SIG_PATH.replace("LOCAL ", ""))   # session-wide: this connection only ever reads signatures
     return c
 
 
