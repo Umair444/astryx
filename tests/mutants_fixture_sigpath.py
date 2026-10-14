@@ -16,8 +16,8 @@ MUTANTS = {
         ('        c.execute(SIG_PATH.replace("LOCAL ", ""))',
          '        pass'),
     "S2 the signer is unpinned (stamps on whatever path the extras left)":
-        ('        conn.execute(SIG_PATH)  ',
-         '        pass  '),
+        ('        conn.execute(SIG_PATH)\n        return _stamp_rels',
+         '        pass\n        return _stamp_rels'),
     "S3 one shared path that is NOT fixed (both sides RESET to the role default)":
         ('SIG_PATH = "SET LOCAL search_path = pg_catalog"',
          'SIG_PATH = "SET LOCAL search_path TO DEFAULT"'),
