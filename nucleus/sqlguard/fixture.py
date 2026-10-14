@@ -178,13 +178,18 @@ SIG_PATH = "SET LOCAL search_path = pg_catalog"
 
 
 def signature(conn, oid: int) -> str:
+    """PRECONDITION: `conn` is on SIG_PATH (the signer's SET LOCAL, or _side_conn's pin). Any other path renders
+    names differently, and the signature then silently disagrees with one taken on SIG_PATH (a3 #51125)."""
     rows = conn.execute(SIG_SQL, (oid,)).fetchall()
     return hashlib.sha256(repr(rows).encode()).hexdigest()
 
 
 def _stamp_all(conn, sha: str) -> int:
+    # SET LOCAL ends at the end of the TOP-LEVEL transaction. fixture_db's applier is autocommit, so this opens a real
+    # transaction and the pin ends with it. Inside a caller's transaction this would be a savepoint, and the pin
+    # would outlive it into the caller's session (a3 #51125).
     with conn.transaction():
-        conn.execute(SIG_PATH)                       # LOCAL: the pin ends with the stamp, never leaks to the caller
+        conn.execute(SIG_PATH)
         return _stamp_rels(conn, sha)
 
 
