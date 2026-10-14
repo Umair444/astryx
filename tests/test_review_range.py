@@ -74,12 +74,13 @@ def main():
     pre_main = git("rev-parse", "main")
     git("checkout", "-qb", "pre")                                         # cut BEFORE the reorg, edits the old paths
     (t / "nucleus" / "sub").mkdir(parents=True)
-    (t / "nucleus" / "a.py").write_text("a"); (t / "nucleus" / "sub" / "x.py").write_text("x"); (t / "kept.py").write_text("k")
+    (t / "nucleus" / "a.py").write_text("a"); (t / "nucleus" / "sub" / "x.py").write_text("x"); (t / "nucleus" / "sub" / "y.py").write_text("y"); (t / "kept.py").write_text("k")
     git("add", "."); git("commit", "-qm", "pre-reorg edits")
     git("checkout", "-q", "main"); git("checkout", "-qb", "reorg")
     (t / "devtools" / "reorg").mkdir(parents=True)
     (t / "devtools" / "reorg" / "map.tsv").write_text(
-        "# old<TAB>new<TAB>module\nnucleus/a.py\tsrc/a.py\ta\nnucleus/sub/\tsrc/sub/\t-\n")
+        "# old<TAB>new<TAB>module\nnucleus/a.py\tsrc/a.py\ta\nnucleus/sub/\tsrc/sub/\t-\n"
+        "nucleus/sub/y.py\tsrc/other/y.py\ty\n")                      # an exact row under the directory row
     git("add", "."); git("commit", "-qm", "reorg map")
     adder = git("rev-parse", "HEAD")
     git("checkout", "-q", "main"); git("merge", "-q", "--no-ff", "-m", "merge reorg", "reorg")
@@ -93,7 +94,9 @@ def main():
           rc == 0 and "predates the reorg" in out and adder[:12] in out, out)
     check("reorg: each edit at an old path is listed with its new path, a directory row by prefix (sub/x.py), "
           "and an unmapped file is not", "nucleus/a.py  ->  src/a.py" in out and "nucleus/sub/x.py  ->  src/sub/x.py" in out
-          and "kept.py" not in out and "2 file(s) edited at pre-reorg paths" in out, out)
+          and "kept.py" not in out and "3 file(s) edited at pre-reorg paths" in out, out)
+    check("reorg: an exact row beats the directory row it sits under (y.py goes to its OWN target)",
+          "nucleus/sub/y.py  ->  src/other/y.py" in out and "src/sub/y.py" not in out, out)
     rc, out = rr("atmerge")
     check("reorg: a branch cut AT the reorg merge reads clean (no rebase ask, none edited)",
           rc == 0 and "predates" not in out and "reorg paths: none edited" in out, out)

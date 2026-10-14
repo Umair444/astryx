@@ -43,7 +43,8 @@ reorg_note() {
     && echo "  REORG: base ${MB:0:12} predates the reorg (${anchor:0:12} added $MAP): ask for a rebase onto $BASE_REF"
   stale=$(git diff --name-only "$MB" "$HEAD_SHA" | awk -F'\t' '
     NR == FNR { if ($0 !~ /^#/ && NF >= 2) m[$1] = $2; next }
-    { for (o in m) if ($0 == o || (o ~ /\/$/ && index($0, o) == 1)) {
+    ($0 in m) { print "    " $0 "  ->  " m[$0]; next }          # an exact row wins; awk visits m in no fixed order
+    { for (o in m) if (o ~ /\/$/ && index($0, o) == 1) {
         print "    " $0 "  ->  " m[o] substr($0, length(o) + 1); break } }' <(git show "$BASE_SHA:$MAP") -)
   if [ -n "$stale" ]; then
     echo "  REORG: $(printf '%s\n' "$stale" | wc -l) file(s) edited at pre-reorg paths (stubs on $BASE_REF):"
