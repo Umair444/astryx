@@ -457,6 +457,10 @@ run "jobs MCP: fail-closed ATS status + sponsor-register lookup" "$PY" tests/tes
 # touching a good PDF; paths confined to the root; the page fetches nothing (real Chromium vs a
 # real loopback listener: 0 hits). Mutants: proxy flag removed → X3 RED; confinement off → 6 RED.
 run "docpdf MCP: verified render, confined paths, no network from the page" "$PY" tests/test_docpdf_mcp.py
+# gmail MCP: a Gmail query reaches IMAP byte-exact (quotes, backslash, non-ASCII, OR braces) as a
+# literal; inlined as "{query}" any quote got BAD. Real imaplib vs a strict fake IMAP on loopback;
+# the old inline form is the mutant and must fail the quote arm. Imports without .env.
+run "gmail MCP: byte-exact search query, imports without .env" "$PY" tests/test_gmail_mcp.py
 # the tool nudge, O5 (goal 4227, S4): the REAL UserPromptSubmit hook against a fake loopback
 # classifier. It never exits non-zero (static, from the AST), stays silent and inside its hard
 # deadline whether the classifier is unset/down/hung/DRIPPING, refuses non-loopback endpoints
