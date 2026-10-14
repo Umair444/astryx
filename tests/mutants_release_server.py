@@ -20,15 +20,18 @@ MUTANTS = {
          "  LABEL = []\n"),
 
     "R0 UNKNOWN (no charter, or no door) is treated as org":
-        ("const LABELLED = LABEL === null || LABEL.length > 0", "const LABELLED = LABEL !== null && LABEL.length > 0"),
+        ("const labelled = lbl => lbl === null || lbl.length > 0", "const labelled = lbl => lbl !== null && lbl.length > 0"),
 
     "R2 a labelled send skips the door (today's raw INSERT)":
-        ("    if (LABELLED) {\n      const inbound", "    if (false) {\n      const inbound"),
+        ("    if (labelled(lbl)) {\n      const inbound", "    if (false) {\n      const inbound"),
 
     "R3 a labelled member's permission request is relayed":
-        ("  if (LABELLED) {\n    await mcp.notification({", "  if (false) {\n    await mcp.notification({"),
+        ("  if (labelled(lbl)) {\n    await mcp.notification({", "  if (false) {\n    await mcp.notification({"),
 
     "R4 any thread the member names is passed as the inbound one":
         ("const inbound = a.thread && seenThreads.has(a.thread) ? a.thread : null",
          "const inbound = a.thread ?? null"),
+
+    "R5 an UNKNOWN label is never read again (frozen at spawn)":
+        ("  if (LABEL !== null) return LABEL\n  LABEL = await readLabel(AGENT)\n", "  return LABEL\n"),
 }

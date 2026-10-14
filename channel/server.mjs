@@ -47,9 +47,18 @@ try {
   console.error(`[channel] refusing to start "${AGENT}": its tier label could not be read (${e.message})`)
   process.exit(1)
 }
-const LABELLED = LABEL === null || LABEL.length > 0
 if (LABEL === null) console.error(`[channel] "${AGENT}" has no readable tier label (UNKNOWN): its ear runs, and every ` +
-  `send is refused until a charter resolves for it (plan-9139)`)
+  `send is refused until a label can be read for it (plan-9139)`)
+// An UNKNOWN label is read AGAIN at each send and permission request, so a transient failure at spawn (a timeout, a
+// broken import mid-deploy) can't freeze an org member mute for its whole session, and a charter that appears later
+// takes effect (a4 #52388). A label once read is kept. A malformed grant appearing mid-session THROWS: that send is
+// refused, named. Nothing reaches the raw INSERT while the label is unknown.
+async function currentLabel() {
+  if (LABEL !== null) return LABEL
+  LABEL = await readLabel(AGENT)
+  return LABEL
+}
+const labelled = lbl => lbl === null || lbl.length > 0
 const seenThreads = new Set()       // threads delivered to this session: a labelled reply may keep only one of these
 
 // ---- who is INTERNAL, decided by something a stranger cannot author ----------------
@@ -247,12 +256,14 @@ async function handleTool(name, a) {
     }
     // A LABELLED member never INSERTs: the door writes the row (owner → a release marker + stamp; an agent → a
     // body-withheld, derived-thread row; anything else, a federation address included → refused, no row).
-    if (LABELLED) {
+    let lbl
+    try { lbl = await currentLabel() } catch (e) { return `send REFUSED, nothing sent: ${e.message}` }
+    if (labelled(lbl)) {
       const inbound = a.thread && seenThreads.has(a.thread) ? a.thread : null
       try {
         const id = await releaseSend(AGENT, { to: a.to, thread: a.thread ?? null, intent: a.intent ?? null,
           body: String(a.body ?? ''), inbound_thread: inbound })
-        return `released through the tier door · msg ${id} (${(LABEL || ['unknown']).join('+')}; the wire row carries no content)`
+        return `released through the tier door · msg ${id} (${(lbl || ['unknown']).join('+')}; the wire row carries no content)`
       } catch (e) {
         return `send REFUSED, nothing sent: ${e.message}`
       }
@@ -462,7 +473,9 @@ const PERMIT_SURFACES = permitSurfaces()
 mcp.setNotificationHandler(PermissionRequestSchema, async ({ params: p }) => {
   // A LABELLED member's request is DENIED here, never relayed: its tool-call text is tier content, and the relay
   // writes it onto owner-bound wire rows (plan-9139 #46033 seat 5, a4 #46035: fail closed beats a second stamped path).
-  if (LABELLED) {
+  let lbl = null
+  try { lbl = await currentLabel() } catch { /* malformed: denied below, like UNKNOWN */ }
+  if (labelled(lbl)) {
     await mcp.notification({
       method: 'notifications/claude/channel/permission',
       params: { request_id: p.request_id, behavior: 'deny' },

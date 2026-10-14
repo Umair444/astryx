@@ -11,7 +11,8 @@ The database is a throwaway created for this run and dropped after it; the org's
   L   a malformed private grant (each of a4 #46035's spellings) REFUSES the server's start, named; an identity with
       no charter starts UNKNOWN (its ear works, its sends and permission requests are refused); an exact grant starts
       labelled; an unlabelled charter starts as today
-  D   a door that can't run: an org charter starts UNKNOWN, and its send is refused with no row
+  D   a door that can't run: an org charter starts UNKNOWN, and while it still can't run its send is refused with
+      no row (D″); once it runs, the label is read again and the next send and permission take today's path (D′)
   S   a labelled send: to the owner → one row whose body is a size marker, the sentinel nowhere in messages, a stamp
       that open_stamped() resolves to the body; to an agent → body withheld, thread derived, intent clamped, and a
       reply on a thread delivered to this session keeps it; to a person's address or a federation address → refused,
@@ -345,10 +346,19 @@ try:
               p2.err.read_text(errors="replace")[-300:])
         before = nrows()
         reply = p2.send(to="peer", body="no door")
-        check("…and its send is REFUSED (the door could not run), NO row", "REFUSED" in reply
+        check("D″ while the door still can't run, its send is REFUSED (could not run), NO row", "REFUSED" in reply
               and "could not run" in reply and nrows() == before, reply)
     finally:
         door.with_suffix(".away").rename(door)
+    # D′ (a4 #52388): UNKNOWN is re-read at each send, so a door that failed only at spawn doesn't mute an org member
+    before = nrows()
+    reply = p2.send(to="peer", thread="t-heal01", body="the door is back")
+    new = db.execute("SELECT from_agent, to_agent, thread, body, delivery FROM messages ORDER BY id").fetchall()[before:]
+    check("D′ the door runs again: the next send takes TODAY's path (one raw row, body as written, delivery NULL)",
+          new == [("plain2", "peer", "t-heal01", "the door is back", None)], repr(new) + " " + reply)
+    p2.permission("pqrst")
+    check("D′ …and its permission request is relayed as today", wait_for(lambda: db.execute(
+        "SELECT count(*) FROM messages WHERE intent='permission' AND from_agent='plain2'").fetchone()[0] >= 1, 15))
 
     print("U. the unlabelled control:")
     before = nrows()
