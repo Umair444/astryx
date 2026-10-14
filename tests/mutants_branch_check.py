@@ -112,4 +112,13 @@ MUTANTS = {
         ("            out |= set(parts[1:])", "            out |= set(parts[-1:])"),
     "O40 production never hands report() the membership changes (the census line is dead code)":
         (",\n                    members=membership_changes(sha))", ")"),
+    "O41 a side with no verdict line is compared anyway (an empty branch side reads as no regression)":
+        ('    dead = [s for s in ("main", "branch") if not sums[s].get("line")]', "    dead = []"),
+    "O42 only the MAIN side's verdict is required (a dead branch suite still reads clean)":
+        ('    dead = [s for s in ("main", "branch") if not sums[s].get("line")]',
+         '    dead = [s for s in ("main",) if not sums[s].get("line")]'),
+    "O43 the dead side's refusal is not a refusal (rc 0: the run reads as a pass)":
+        ("                  f\"summary, so its sets are empty, not clean. Nothing about the branch was judged (rc 77).\")\n"
+         "        return 77", "                  f\"summary, so its sets are empty, not clean. Nothing about the branch was "
+         "judged (rc 77).\")\n        return 0"),
 }

@@ -256,6 +256,7 @@ def run(branch: str, main_ref: str = "main") -> int:
             if os.environ.get("BRANCH_CHECK_KEEP_LOGS"):
                 (scope.base / f"{scope.run_id}-{side}{attempt}.log").write_text(p.stdout + p.stderr)
             out = summary(p.stdout)
+            out["rc"] = p.returncode
             out["sqlguard_red"] = sqlguard_red(trace)
             return out, prod_statements(trace, prod_db)
         sums, witness = {}, {}
@@ -483,6 +484,16 @@ def report(sha: dict, sums: dict, witness: dict, est: dict, refs: dict = None, t
     print(f"branch_check {sha['branch'][:7]} vs main {sha['main'][:7]}")
     for side in ("main", "branch"):
         print(f"  {side:6s} {sums[side]['line']}")                  # check.sh's own verdict line, verbatim
+    # A side whose suite never printed check.sh's verdict (killed, timed out, crashed before summary()) has EMPTY sets,
+    # and an empty set is not "nothing failed": an empty BRANCH side reads as no regression (rc 0, main's failures
+    # "fixed by the branch"), an empty MAIN side as every branch failure regressed. Neither compares anything (steward
+    # 10-15: 26ededb's main side came back with no line, and the report ran as a differential anyway).
+    dead = [s for s in ("main", "branch") if not sums[s].get("line")]
+    if dead:
+        for s in dead:
+            print(f"  NO VERDICT from the {s} suite (check.sh rc {sums[s].get('rc', '?')}): it never printed its "
+                  f"summary, so its sets are empty, not clean. Nothing about the branch was judged (rc 77).")
+        return 77
     regressed = sorted(set(b["failed"]) - set(m["failed"]))
     mr, br = m.get("sqlguard_red"), b.get("sqlguard_red")
     judged = mr is not None and br is not None

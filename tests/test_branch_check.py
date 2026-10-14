@@ -90,6 +90,15 @@ def main():
           rc == 0 and "check: m" in out and "VERIFIED NOTHING under branch_check" in out and "○ u" in out, out)
     check("a gate FAILING ON BOTH SIDES is listed by name (\"no regression\" over dead gates isn't coverage)",
           "FAILED ON BOTH SIDES" in out and "    ✗ x" in out, out)
+    # ── steward 10-15: a side whose suite never printed check.sh's verdict compares NOTHING ─────────────────────────
+    dead = {"failed": [], "unverified": [], "line": "", "rc": -9}
+    rc, out = rep(base, dict(dead))
+    check("an empty BRANCH side (no verdict line) is NO VERDICT → rc 77, never 'no regression' (rc 0)",
+          rc == 77 and "NO VERDICT from the branch suite" in out and "rc -9" in out and "fixed by the branch" not in out,
+          out)
+    rc, out = rep(dict(dead), {"failed": ["x", "y"], "unverified": ["u"], "line": "check: b"})
+    check("an empty MAIN side is NO VERDICT → rc 77, its branch failures never named REGRESSED",
+          rc == 77 and "NO VERDICT from the main suite" in out and "REGRESSED" not in out, out)
     # ── a3 D1 #35480: PRODUCTION sweeps org-wide (only=None); only an oracle scopes its sweep to its own roles ─────
     import ast
     srcp = Path(os.environ.get("BRANCH_CHECK_SRC") or (REPO / "devtools" / "branch_check.py"))
