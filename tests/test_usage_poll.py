@@ -21,13 +21,12 @@ tests nothing (terminal-test law). The five arms:
   READ    every gauge reader references the authority, none is left on the raw turns-only
           query — control: the census flags a synthetic half-ship.
 
-DB arms run against the REAL schema.sql DDL in a throwaway schema (never the production
-usage_polls/turns): the CREATE VIEW text is extracted from schema.sql — the authority,
-not a hand copy — so the test validates the shipped views, and a seam never writes prod.
+DB arms run in a THROWAWAY DATABASE from nucleus/sqlguard/fixture.py's fixture_db(): schema.sql
+applied whole (the same bytes init.sh applies, so the views are the shipped ones, not a hand
+copy), stamped, and dropped afterwards. Nothing touches the production server's own database.
 """
 import importlib.util
 import json
-import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -81,16 +80,10 @@ check("WRITE RED-control: correct and inverted-threshold DISAGREE on a stale aut
       _stale([{"age_seconds": STALE_S + 1}]) != _inverted([{"age_seconds": STALE_S + 1}]))
 
 
-# ── DB arms: hermetic temp schema built from the REAL schema.sql view DDL ────────────
-import psycopg
+# ── DB arms: a throwaway fixture database, the REAL schema applied whole ────────────
+import psycopg  # noqa: E402
+from nucleus.sqlguard.fixture import FixtureUnavailable, fixture_db  # noqa: E402
 
-DSN = next(l.split("=", 1)[1].strip()
-           for l in (REPO / ".env").read_text().splitlines()
-           if l.startswith("ASTRYX_DSN="))
-BLOCK = ((REPO / "nucleus" / "schema.sql").read_text()
-         .split("-- >>> usage-authority")[1].split("-- <<< usage-authority")[0]
-         .split("\n", 1)[1])   # drop the marker-line tail, keep the DDL
-SCH = f"t3833_{os.getpid()}"
 NOW = datetime.now(timezone.utc)
 
 
@@ -132,21 +125,16 @@ def _served_snaps(conn):
             for r in conn.execute("SELECT snapshot FROM usage_readings").fetchall()]
 
 
-conn = psycopg.connect(DSN, autocommit=True)
+_fx = fixture_db()
 try:
-    conn.execute(f"DROP SCHEMA IF EXISTS {SCH} CASCADE")
-    conn.execute(f"CREATE SCHEMA {SCH}")
-    # SCH ONLY — never `SCH, public`: the DDL below runs `DROP VIEW IF EXISTS current_usage`,
-    # which with public in the path would resolve to and DROP the PRODUCTION view. pg_catalog
-    # (types, now(), EXTRACT) is always implicitly searched, so SCH-only is sufficient and
-    # fully isolates the seam from production.
-    conn.execute(f"SET search_path TO {SCH}")
-    conn.execute("CREATE TABLE turns (usage_snapshot jsonb, agent text)")
-    # strip line-comments FIRST (they contain semicolons), then split on real terminators
-    _clean = "\n".join(line.split("--", 1)[0] for line in BLOCK.splitlines())
-    for stmt in _clean.split(";"):
-        if stmt.strip():
-            conn.execute(stmt)
+    fx = _fx.__enter__()
+except FixtureUnavailable as e:
+    print(f"SKIP — usage-authority: no fixture database ({e}).")
+    sys.exit(77)
+conn = None
+try:
+    # the fixture's OWN database: schema.sql's turns, usage_polls and both views, nothing else in it
+    conn = psycopg.connect(fx["dsn"], autocommit=True)
 
     def reset():
         conn.execute("DELETE FROM turns")
@@ -214,8 +202,11 @@ try:
           "on the served surface (containment)",
           any("spend" in k.lower() for k in hits2))
 finally:
-    conn.execute(f"DROP SCHEMA IF EXISTS {SCH} CASCADE")
-    conn.close()
+    try:
+        if conn is not None:
+            conn.close()
+    finally:
+        _fx.__exit__(None, None, None)          # drops the fixture database WITH (FORCE)
 
 
 # ── READ census (PRIMARY): every gauge reader on the authority, none on the raw query ─
