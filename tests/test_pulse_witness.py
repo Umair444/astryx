@@ -84,6 +84,9 @@ class Harness:
         self.sent.append(body)
 
     def witness(self, **kw):
+        # hermetic: no pause declaration and no systemd read unless an arm injects them
+        kw.setdefault("read_pause", lambda now: None)
+        kw.setdefault("read_stop", lambda now: None)
         return W.PulseWitness(self.read, self.send, clock=self.now, mono=self.m, **kw)
 
 
@@ -199,6 +202,163 @@ h6.mono += W.CHECK_SEC + 1; h6.wall += W.CHECK_SEC + 1
 run(w6.tick())                                             # dies again -> must ring
 check("RE-ARM: recovery clears the latch so the next death rings again",
       recovered and len(h6.sent) == 3, f"sent={len(h6.sent)} recovered={recovered}")
+
+
+# ── A DECLARED PAUSE (a1 #50699, seed #50722) ──────────────────────────────────────────
+# Arms (a)-(d) plus the edges where a pause could SILENCE the only off-body detector.
+import json as _json
+import subprocess as _sp
+import tempfile as _tf
+import time as _time
+
+DECL = {"by": "owner", "reason": "maintenance window", "at": "2026-10-12T05:21:50Z"}
+DAY = 24 * 3600
+
+
+def _paused_witness(age, decl, stop=None):
+    h = Harness(age)
+    w = h.witness(read_pause=lambda now: decl, read_stop=lambda now: stop)
+    return h, w
+
+
+def _tick(h, w, wall_step):
+    h.mono += W.CHECK_SEC + 1
+    h.wall += wall_step
+    run(w.tick())
+
+
+# (a) declared pause -> PAUSED body, daily cadence, never DOWN
+h, w = _paused_witness(DEAD, DECL, stop=49 * 3600)
+run(w.tick())
+first = h.sent[0] if h.sent else ""
+check("(a) a stale clock under a declared pause rings PAUSED, not DOWN",
+      len(h.sent) == 1 and "PAUSED" in first and "DOWN" not in first, first)
+check("(a) the PAUSED body names who, why and how to resume",
+      "owner" in first and "maintenance window" in first and "pause.sh off" in first, first)
+check("(a) the PAUSED body carries the stop's age from systemd (steward)", "49.0h ago" in first, first)
+_tick(h, w, W.RENAG_SEC + 1)                       # past the 3h DOWN ladder
+held_past_3h = len(h.sent) == 1
+_tick(h, w, DAY)                                   # past a day
+check("(a) a declared pause does NOT re-ring at the 3h DOWN cadence",
+      held_past_3h, f"sent={len(h.sent)}")
+check("(a) ...but re-rings daily: a forgotten pause is never silent",
+      len(h.sent) == 2 and "PAUSED" in h.sent[1], f"sent={len(h.sent)}")
+
+# (b) no declaration -> today's DOWN at 3h (unchanged; the STANDING arm above pins the ladder)
+h, w = _paused_witness(DEAD, None)
+run(w.tick())
+check("(b) no declaration -> DOWN, and it says no pause is declared",
+      len(h.sent) == 1 and "DOWN" in h.sent[0] and "No pause is declared" in h.sent[0],
+      h.sent[0] if h.sent else "(nothing)")
+
+# (c) a declaration past `until` reads as NONE -> DOWN (the pure reader, on real files)
+with _tf.TemporaryDirectory() as td:
+    p = Path(td) / "org_pause.json"
+    now = 1_800_000_000.0                          # 2027-01-15
+    def _write(d): p.write_text(_json.dumps(d))
+    _write({**DECL, "until": "2026-01-01T00:00:00Z"})
+    check("(c) an expired declaration reads as no pause", W.read_pause_declaration(p, now) is None)
+    _write({**DECL, "until": "2099-01-01T00:00:00Z"})
+    check("(c) control: an unexpired declaration is read", W.read_pause_declaration(p, now) is not None)
+    _write({**DECL})
+    check("(c) control: a declaration with no until is read", W.read_pause_declaration(p, now) is not None)
+    for label, body in (("malformed JSON", "{not json"), ("no reason", _json.dumps({"by": "x", "at": DECL["at"]})),
+                        ("blank reason", _json.dumps({**DECL, "reason": "  "})),
+                        ("unparseable at", _json.dumps({**DECL, "at": "yesterday"})),
+                        ("not an object", _json.dumps(["pause"]))):
+        p.write_text(body)
+        check(f"(c) {label} -> no pause (fails toward DOWN, never silence)",
+              W.read_pause_declaration(p, now) is None)
+    p.unlink()
+    check("(c) an absent file -> no pause", W.read_pause_declaration(p, now) is None)
+
+# a pause that EXPIRES while stale rings DOWN at once, not a day later (the kind changed)
+state = {"decl": DECL}
+h = Harness(DEAD)
+w = h.witness(read_pause=lambda now: state["decl"])
+run(w.tick())                                      # PAUSED
+state["decl"] = None                               # until passed / file removed
+_tick(h, w, W.CHECK_SEC + 1)                       # minutes later, well inside both ladders
+check("a pause that lapses while the clock is still dead rings DOWN at once",
+      len(h.sent) == 2 and "DOWN" in h.sent[1], f"sent={[s[:12] for s in h.sent]}")
+# and a pause declared DURING an outage rings PAUSED once, then holds daily
+state["decl"] = DECL
+_tick(h, w, W.CHECK_SEC + 1)
+check("a pause declared during a DOWN rings PAUSED once (the kind changed)",
+      len(h.sent) == 3 and "PAUSED" in h.sent[2], f"sent={len(h.sent)}")
+
+# a pause reader that RAISES is no pause -> DOWN, and tick() still never raises
+def _boom(now): raise OSError("disk")
+h = Harness(DEAD)
+w = h.witness(read_pause=_boom)
+run(w.tick())
+check("a raising pause reader reads as no pause -> DOWN (never silence)",
+      len(h.sent) == 1 and "DOWN" in h.sent[0])
+# recovery from a pause clears the kind too, so the next death is judged afresh
+h, w = _paused_witness(DEAD, DECL)
+run(w.tick())
+h._age = HEALTHY
+_tick(h, w, W.CHECK_SEC + 1)
+check("a resumed clock after a pause sends the recovery and clears the latch",
+      len(h.sent) == 2 and "resumed" in h.sent[1] and w.alarmed is False and w.last_kind is None)
+
+# the stop-age reader: only while the timer is INACTIVE (the timestamp outlives a restart)
+def _stop_age_with(stdout):
+    real = _sp.run
+    _sp.run = lambda *a, **k: type("R", (), {"stdout": stdout})()
+    try:
+        return W.read_stop_age(1_000_000.0)
+    finally:
+        _sp.run = real
+check("stop age: an inactive timer gives seconds since InactiveEnterTimestamp",
+      _stop_age_with("ActiveState=inactive\nInactiveEnterTimestamp=@999000\n") == 1000.0)
+check("stop age: an ACTIVE timer gives None (a past stop is not a current one)",
+      _stop_age_with("ActiveState=active\nInactiveEnterTimestamp=@999000\n") is None)
+check("stop age: unreadable output gives None", _stop_age_with("") is None)
+
+# (d) pause.sh keeps the stop and the declaration together (a copy in a temp tree, a fake sudo)
+PAUSE_SH = REPO / "nucleus" / "pause.sh"
+with _tf.TemporaryDirectory() as td:
+    root = Path(td)
+    (root / "nucleus").mkdir()
+    (root / "nucleus" / "pause.sh").write_bytes(PAUSE_SH.read_bytes())
+    bindir = root / "bin"
+    bindir.mkdir()
+    (bindir / "sudo").write_text('#!/bin/sh\necho "$@" >> "$FAKE_SUDO_LOG"\nexit "${FAKE_SUDO_RC:-0}"\n')
+    (bindir / "sudo").chmod(0o755)
+    decl = root / "var" / "org_pause.json"
+    log = root / "sudo.log"
+
+    def pause(*args, rc=0):
+        env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "FAKE_SUDO_LOG": str(log),
+               "FAKE_SUDO_RC": str(rc), "ASTRYX_AGENT": "owner"}
+        return _sp.run(["bash", str(root / "nucleus" / "pause.sh"), *args], env=env,
+                       capture_output=True, text=True, timeout=30)
+
+    r = pause("on", "maintenance window", "2099-01-01 09:00")
+    d = _json.loads(decl.read_text()) if decl.exists() else {}
+    check("(d) on: rc 0, the timer is stopped and the declaration written",
+          r.returncode == 0 and "systemctl stop astryx-pulse.timer" in log.read_text()
+          and d.get("reason") == "maintenance window" and d.get("by") == "owner"
+          and d.get("until") == "2099-01-01T09:00:00Z", r.stderr + r.stdout)
+    check("(d) ...and the witness's own reader accepts what pause.sh wrote",
+          W.read_pause_declaration(decl, _time.time()) is not None)
+    r = pause("off")
+    check("(d) off: rc 0, the timer is started and the declaration withdrawn",
+          r.returncode == 0 and "systemctl start astryx-pulse.timer" in log.read_text()
+          and not decl.exists(), r.stderr + r.stdout)
+    r = pause("on", "maintenance window", rc=1)
+    check("(d) a FAILED stop leaves no declaration (never declared without a stop)",
+          r.returncode == 1 and not decl.exists(), r.stderr)
+    pause("on", "maintenance window")
+    r = pause("off", rc=1)
+    check("(d) a FAILED start keeps the declaration (a pause nobody could end stays declared)",
+          r.returncode == 1 and decl.exists(), r.stderr)
+    r = pause("on", "   ")
+    check("(d) a blank reason is refused before anything is stopped",
+          r.returncode == 2, r.stderr)
+    r = pause("on", "x", "not a date at all")
+    check("(d) an unreadable until is refused", r.returncode == 2, r.stderr)
 
 
 # ── verdict (house protocol: FAIL -> exit 1; no skips here, it is pure stdlib) ─────────
