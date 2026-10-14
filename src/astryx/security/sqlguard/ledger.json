@@ -694,7 +694,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 329,
+  "debt_rows": 328,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 5,
@@ -2343,11 +2343,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:fcf65f5436cd95de6a98d1a0b89086147e59c4dcab1a1f014083e09759ddcacf"
-  },
-  "src/astryx/pulse/pulse.py::say\u001fselect 1 from messages where to_agent=? and from_agent='pulse' and status='pending' and body like ? limit 1": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:4714676c3924c5a99cd2e26e4d5a39740f572f54d2b4474f6b8c82e6f8b3676f"
   },
   "src/astryx/pulse/pulse.py::tick\u001fselect id, agent, name, schedule, kind, check_src, state, note, premium from triggers where enabled and next_fire <= now() order by next_fire for update skip locked": {
    "debt": "UNEXECUTED",
