@@ -220,6 +220,29 @@ try:
     arm("walk: finds claude through a shell parent, with a spaced comm above it",
         "on the wire" in json.loads(r.stdout or "{}").get("systemMessage", ""), r.stdout + r.stderr)
 
+    # ── the org never embodies a joined agent (spawn.sh skips a `Plugin: joined` charter) ─────────
+    # A copied root (spawn.sh + charter.py) in --render mode: render never touches the DB or tmux, so even a
+    # missing guard could only write files into the render dir, which this arm then sees.
+    root = tmp / "spawnroot"
+    (root / "nucleus").mkdir(parents=True)
+    for f in ("spawn.sh", "charter.py"):
+        shutil.copy2(REPO / "nucleus" / f, root / "nucleus" / f)
+    (root / "venv" / "bin").mkdir(parents=True)
+    (root / "venv" / "bin" / "python").symlink_to(sys.executable)
+    (root / "agents").mkdir()
+    shutil.copy2(home / "agents" / "laptop.md", root / "agents" / "laptop.md")   # the charter join wrote
+    (root / "agents" / "plain.md").write_text("# plain\n")
+    rend = tmp / "render-joined"
+    r = subprocess.run(["bash", str(root / "nucleus" / "spawn.sh"), "--render", "laptop", str(rend)],
+                       capture_output=True, text=True, timeout=60)
+    arm("spawn.sh: a charter join wrote is never embodied (skip, exit 0, nothing rendered)",
+        r.returncode == 0 and "nothing to spawn" in r.stdout and not any(rend.iterdir()), r.stdout + r.stderr)
+    rend2 = tmp / "render-plain"
+    r = subprocess.run(["bash", str(root / "nucleus" / "spawn.sh"), "--render", "plain", str(rend2)],
+                       capture_output=True, text=True, timeout=60)
+    arm("spawn.sh: an ordinary charter goes on past the guard (it fires on that line only)",
+        "nothing to spawn" not in r.stdout + r.stderr and rend2.exists(), r.stdout + r.stderr)
+
     # ── leave ─────────────────────────────────────────────────────────────────────────────────────
     r = hook("leave", "--data", str(data), "--project", str(project))
     r2, out = start(["claude"])
