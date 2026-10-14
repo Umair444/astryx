@@ -89,10 +89,13 @@ from bridges import relay as relay_mod  # noqa: E402
 
 SKEW = 600                      # seconds of envelope timestamp tolerance
 BODY_MAX = 16000
-INBOX_RATE = 60                 # envelopes/hour per introduced org
+INBOX_RATE = int(_env("ASTRYX_INBOX_RATE", "60"))   # envelopes/hour per introduced org
+RATE_WINDOW = float(_env("ASTRYX_RATE_WINDOW", "3600"))  # seconds a rate cap counts over (tests shorten it)
 INTRO_RATE = 5                  # introductions/hour per IP
 HOLD = 25                       # pickup long-poll seconds
 RELAY_WINDOW = 3 * 86400        # a relayed envelope may wait in a mailbox this long (relay TTL)
+RELAY_BACKOFF = float(_env("ASTRYX_RELAY_BACKOFF", "60"))  # seconds to wait when our own door says 429
+RELAY_TRIES = 3                 # a mailbox item that raises is retried this often, then skipped
 
 pool: asyncpg.Pool | None = None
 outbound_bell: asyncio.Queue = asyncio.Queue()
@@ -128,7 +131,7 @@ def fresh(ts, window: float = SKEW) -> bool:
 
 def rated(key: str, per_hour: int) -> bool:
     now = time.time()
-    hits = [t for t in rates.get(key, []) if now - t < 3600]
+    hits = [t for t in rates.get(key, []) if now - t < RATE_WINDOW]
     if len(hits) >= per_hour:
         rates[key] = hits
         return True
@@ -457,7 +460,6 @@ async def inbox(e: dict, window: float = SKEW):
     if window > SKEW and await pool.fetchval(
             "SELECT count(*) FROM messages WHERE from_org=$1 AND sig=$2", from_org, e.get("sig")):
         return {"ok": True}                      # a relayed copy outlives seen_ids: the row is the memory
-    seen_ids[eid] = now
     # Rung 1 — per-peer capability attenuation, enforced at the one off-uid door.
     to_agent, intent, rate, intent_ok = reach(
         peer["caps_granted"], peer["status"],
@@ -470,12 +472,18 @@ async def inbox(e: dict, window: float = SKEW):
     body = str(e.get("body", ""))[:BODY_MAX]
     if not body:
         return Response(status_code=400)
-    await pool.execute(
-        """INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread,
-                                 intent, body, sig)
-           VALUES ($1, $2, $3, 'local', $4, $5, $6, $7)""",
-        from_agent[:64], from_org, to_agent, e.get("thread"),
-        intent, body, e.get("sig"))
+    # seen only once it is past the caps: a 429'd relay item comes back with the SAME id
+    seen_ids[eid] = now
+    try:
+        await pool.execute(
+            """INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread,
+                                     intent, body, sig)
+               VALUES ($1, $2, $3, 'local', $4, $5, $6, $7)""",
+            from_agent[:64], from_org, to_agent, e.get("thread"),
+            intent, body, e.get("sig"))
+    except Exception:
+        seen_ids.pop(eid, None)                  # not landed: a retry must not read as a replay
+        raise
     return {"ok": True, "id": eid}
 
 
@@ -647,22 +655,27 @@ async def relay_register() -> bool:
         return False
 
 
-async def relay_take(item: dict) -> None:
+async def relay_take(item: dict) -> bool:
     """One collected mailbox item, through the SAME checks a direct POST gets. A hello is
-    answered once with our own signed hello, marked reply, so the exchange ends there."""
+    answered once with our own signed hello, marked reply, so the exchange ends there.
+    True = settled (landed, or refused for good: ack it). False = our door said 429: the
+    sender already counts it delivered, so it must stay in the mailbox until we have room."""
     e, kind = item.get("envelope"), item.get("kind")
     if not isinstance(e, dict):
-        return
+        return True
     if kind == "hello":
         if str(e.get("org", "")) != item.get("from_org"):
-            return
+            return True
         r = await introduce(e, window=RELAY_WINDOW)
         if not isinstance(r, Response) and not e.get("reply"):
             await relay_send(e["org"], "hello", sign({
                 "astryx": 0, "org": ORG, "pubkey": PUB, "url": URL or None,
                 "ts": time.time(), "reply": True}))
     elif kind == "msg":
-        await inbox(e, window=RELAY_WINDOW)
+        r = await inbox(e, window=RELAY_WINDOW)
+        if isinstance(r, Response) and r.status_code == 429:
+            return False
+    return True
 
 
 async def relay_task():
@@ -670,6 +683,7 @@ async def relay_task():
     if not RELAY:
         return
     since, registered_at = 0, 0.0
+    tries: dict[int, int] = {}                   # mailbox id -> times it raised
     while True:
         try:
             if time.time() - registered_at > 3600:
@@ -686,9 +700,29 @@ async def relay_task():
             if r.status_code != 200:
                 await asyncio.sleep(5)
                 continue
+            pause = 0.0
             for item in r.json().get("mail", []):
-                await relay_take(item)
-                since = max(since, int(item.get("id", 0)))
+                iid = int(item.get("id", 0))
+                try:
+                    settled = await relay_take(item)
+                except Exception as ex:
+                    # one bad item must not head every batch until the TTL: retry it a few times
+                    # (a transient DB error heals), then skip it, loudly
+                    tries[iid] = tries.get(iid, 0) + 1
+                    print(f"gateway relay: mailbox item {iid} from {item.get('from_org')} raised "
+                          f"{type(ex).__name__}: {ex} (attempt {tries[iid]}/{RELAY_TRIES})",
+                          file=sys.stderr, flush=True)
+                    settled = tries[iid] >= RELAY_TRIES
+                    if not settled:
+                        pause = min(5.0, RELAY_BACKOFF)
+                        break
+                if not settled:                  # rate-capped at our own door: keep it, back off
+                    pause = RELAY_BACKOFF
+                    break
+                tries.pop(iid, None)
+                since = max(since, iid)
+            if pause:
+                await asyncio.sleep(pause)
         except Exception:
             await asyncio.sleep(5)
 
@@ -710,6 +744,11 @@ async def lifespan(app: FastAPI):
     global pool
     pool = await asyncpg.create_pool(DSN, min_size=1, max_size=3)
     _regen_card()                                    # serve pre-generated bytes from the first request
+    if RELAY_HOST:                                   # the host is findable by name on its own relay
+        try:
+            await relay_mod.self_register(pool, ORG, PUB, URL)
+        except Exception as ex:
+            print(f"gateway relay: host self-registration failed: {type(ex).__name__}", file=sys.stderr)
     tasks = [asyncio.create_task(listen_task()), asyncio.create_task(pickup_task()),
              asyncio.create_task(card_refresh_task()), asyncio.create_task(relay_task())]
     yield

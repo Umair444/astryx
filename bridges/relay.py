@@ -102,6 +102,15 @@ def public_target(url: str) -> bool:
     return bool(infos)
 
 
+async def self_register(pool, org: str, pubkey: str, url: str | None) -> None:
+    """The host's own row, listed with its URL, so `introduce.py <host-name>` finds it and goes
+    direct. The host holds its name here by right: its key replaces whatever held it."""
+    await pool.execute(
+        """INSERT INTO relay_orgs (org, pubkey, url, listed) VALUES ($1, $2, $3, true)
+           ON CONFLICT (org) DO UPDATE SET pubkey=$2, url=$3, listed=true, last_seen=now()""",
+        org, pubkey, url or None)
+
+
 # ------------------------------------------------------------------------ the router
 def make_router(get_pool, org_ok, host_identity, rated, allow_private_reach=False) -> APIRouter:
     """get_pool() -> the gateway's asyncpg pool; org_ok = the door's name policy;

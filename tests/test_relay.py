@@ -10,6 +10,7 @@ the mailbox past the relay), a duplicate is dropped, the directory is opt-in, re
 the target's key, and the wizard's .env edits hold for each choice (temp .env files).
 Every wait is on a condition with a named deadline. The live database is never touched.
 """
+import asyncio
 import contextlib
 import io
 import json
@@ -37,6 +38,7 @@ from nucleus import federate, introduce as intro  # noqa: E402
 from nucleus.sqlguard.fixture import fixture_db  # noqa: E402
 
 PY = sys.executable
+B_RATE = 5                                   # B's inbox cap per window (ASTRYX_INBOX_RATE)
 fails = 0
 
 
@@ -73,7 +75,7 @@ def q(dsn, sql, *args):
 
 
 class Org:
-    def __init__(self, name, fx, port, logdir, url="", relay_url="", listed=False, host=False):
+    def __init__(self, name, fx, port, logdir, url="", relay_url="", listed=False, host=False, extra=None):
         self.name, self.dsn, self.port = name, fx["dsn"], port
         self.base = f"http://127.0.0.1:{port}"
         self.key = SigningKey.generate()
@@ -83,7 +85,7 @@ class Org:
                     "ASTRYX_DSN": fx["url"], "ASTRYX_URL": url, "ASTRYX_RELAY": relay_url,
                     "ASTRYX_RELAY_LISTED": "1" if listed else "0",
                     "ASTRYX_RELAY_HOST": "1" if host else "0",
-                    "ASTRYX_RELAY_REACH_PRIVATE": "1" if host else "0"}
+                    "ASTRYX_RELAY_REACH_PRIVATE": "1" if host else "0", **(extra or {})}
         self.log = Path(logdir) / f"{name}.log"
         self.start()
 
@@ -126,7 +128,9 @@ def run(fr, fa, fb, tmp):
         rel = R.base
         A = Org("orga.test", fa, free_port(), tmp, relay_url=rel, listed=True)
         orgs.append(A)
-        B = Org("orgb.test", fb, free_port(), tmp, relay_url=rel, listed=False)
+        # B's own door is capped small and fast, so the over-the-cap arm runs in seconds
+        B = Org("orgb.test", fb, free_port(), tmp, relay_url=rel, listed=False,
+                extra={"ASTRYX_INBOX_RATE": str(B_RATE), "ASTRYX_RATE_WINDOW": "4", "ASTRYX_RELAY_BACKOFF": "1"})
         orgs.append(B)
         for o in orgs:
             if not o.up():
@@ -220,6 +224,28 @@ def run(fr, fa, fb, tmp):
         arrived = wait(lambda: landed(B, "orga.test", canary4), 20, "canary after the post-restart duplicate")
         arm("a duplicate relayed after the recipient restarts still lands once (the row is the memory)",
             bool(arrived) and landed(B, "orga.test", dup["body"]) == 1, (back, landed(B, "orga.test", dup["body"])))
+        # R1: over B's own inbox cap. Each of these is "delivered" for the sender the moment the relay
+        # takes it, so a 429 at B's door must leave it in the mailbox for later, never ack it away.
+        burst = [f"burst {i} {uuid.uuid4().hex[:6]}" for i in range(B_RATE + 1)]
+        codes = [httpx.post(f"{rel}/relay/send", json={"to": "orgb.test", "kind": "msg", "envelope":
+                 A.envelope("seed@orgb.test", b)}).status_code for b in burst]
+        allin = wait(lambda: all(landed(B, "orga.test", b) == 1 for b in burst), 40,
+                     f"all {len(burst)} of a burst over B's cap of {B_RATE} land")
+        arm(f"R1: {len(burst)} envelopes against an inbox cap of {B_RATE} all land, eventually (429 = keep, back off)",
+            codes == [200] * len(burst) and bool(allin),
+            (codes, [landed(B, "orga.test", b) for b in burst], B.tail()))
+        # R2: an item that RAISES (a dict thread breaks the INSERT) must not jam the mailbox
+        bad = A.envelope("seed@orgb.test", f"raises {uuid.uuid4().hex[:6]}")
+        bad["thread"] = {"not": "text"}
+        bad = relay.signed(bad, A.key)
+        good = f"after the raiser {uuid.uuid4().hex[:6]}"
+        c1 = httpx.post(f"{rel}/relay/send", json={"to": "orgb.test", "kind": "msg", "envelope": bad}).status_code
+        httpx.post(f"{rel}/relay/send", json={"to": "orgb.test", "kind": "msg",
+                                              "envelope": A.envelope("seed@orgb.test", good)})
+        through = wait(lambda: landed(B, "orga.test", good), 40, "the good envelope behind the raiser lands")
+        arm("R2: a validly signed item that raises is retried, then skipped; the one behind it lands",
+            c1 == 200 and bool(through) and landed(B, "orga.test", bad["body"]) == 0
+            and f"(attempt {3}/3)" in B.log.read_text(), (c1, B.tail()))
         left = q(R.dsn, "SELECT count(*) FROM relay_mail WHERE to_org='orgb.test'")[0][0]
         arm("collected mail is acked off the relay", bool(wait(
             lambda: q(R.dsn, "SELECT count(*) FROM relay_mail WHERE to_org='orgb.test'")[0][0] == 0,
@@ -230,6 +256,26 @@ def run(fr, fa, fb, tmp):
         r = httpx.post(f"{rel}/relay/send", json={"to": "nobody.test", "kind": "msg",
                                                   "envelope": A.envelope("seed@nobody.test", "x")})
         arm("an unknown recipient is a 404, not a silent drop", r.status_code == 404, r.status_code)
+
+        # (b): the host registers itself on its own relay, listed with its URL, so a NAT org finds it by
+        # NAME and introduces directly (`introduce.py relayhost.test`)
+        hd = httpx.get(f"{rel}/relay/directory", params={"org": "relayhost.test"}).json()["orgs"]
+        arm("the relay's host is listed on its own relay, with its URL and key",
+            hd == [{**hd[0], "org": "relayhost.test", "pubkey": R.pub, "url": R.base}] if hd else False, hd)
+        benv = {**B.env, "ASTRYX_DSN": B.dsn}
+        real_load, intro.load_env = intro.load_env, (lambda path=None: benv)
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                intro.main(["relayhost.test"])
+        finally:
+            intro.load_env = real_load
+        arm("`introduce.py <host-name>` finds the host by name and introduces DIRECTLY",
+            "directly" in out.getvalue()
+            and q(B.dsn, "SELECT url, pubkey FROM peers WHERE org='relayhost.test'") == [(R.base, R.pub)]
+            and q(R.dsn, "SELECT pubkey FROM peers WHERE org='orgb.test'") == [(B.pub,)]
+            and q(R.dsn, "SELECT count(*) FROM relay_mail WHERE to_org='relayhost.test'")[0][0] == 0,
+            out.getvalue())
         ghost = SigningKey.generate()
         e = relay.signed({"astryx": 0, "id": str(uuid.uuid4()), "from": "x@ghost.test", "to": "seed@orgb.test",
                           "thread": None, "intent": "chat", "body": "hi", "ts": time.time()}, ghost)
@@ -347,9 +393,40 @@ def run(fr, fa, fb, tmp):
             o.stop()
 
 
+async def proxy_arms():
+    """(a): behind cloudflared every client is 127.0.0.1. The unit runs uvicorn with --proxy-headers
+    --forwarded-allow-ips 127.0.0.1, so the per-IP introduce cap keys on X-Forwarded-For from the tunnel,
+    and on the real address from anyone else. Driven through uvicorn's own ProxyHeadersMiddleware around
+    the real gateway app (the cap fires before any DB read, so no lifespan is needed)."""
+    unit = [l for l in (REPO / "init.sh").read_text().splitlines() if "uvicorn gateway:app" in l]
+    arm("the generated gateway unit trusts X-Forwarded-For from 127.0.0.1 only",
+        len(unit) == 1 and "--proxy-headers --forwarded-allow-ips 127.0.0.1" in unit[0], unit)
+    for k, v in {"ASTRYX_ORG": "proxytest.test", "ASTRYX_SECRET_KEY": "22" * 32, "ASTRYX_URL": "",
+                 "ASTRYX_RELAY": "", "ASTRYX_RELAY_HOST": "0", "ASTRYX_DSN": "postgresql:///unused"}.items():
+        os.environ[k] = v
+    import bridges.gateway as gw
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+    app = ProxyHeadersMiddleware(gw.app, trusted_hosts="127.0.0.1")
+
+    async def knock(client_ip, xff):
+        t = httpx.ASGITransport(app=app, client=(client_ip, 5000))
+        async with httpx.AsyncClient(transport=t, base_url="http://gw") as c:
+            return (await c.post("/astryx/introduce", content=b"{}",
+                                 headers={"x-forwarded-for": xff})).status_code
+    tunnel = [await knock("127.0.0.1", "198.51.100.7") for _ in range(gw.INTRO_RATE + 1)]
+    other = await knock("127.0.0.1", "198.51.100.8")
+    arm("through the tunnel (127.0.0.1 + XFF) the cap keys on the forwarded IP",
+        tunnel[:-1] == [400] * gw.INTRO_RATE and tunnel[-1] == 429 and other == 400, (tunnel, other))
+    direct = [await knock("203.0.113.9", f"198.51.100.{i}") for i in range(gw.INTRO_RATE + 1)]
+    spoof = await knock("203.0.113.10", "198.51.100.7")
+    arm("from any other address XFF is ignored: the cap keys on the real client",
+        direct[:-1] == [400] * gw.INTRO_RATE and direct[-1] == 429 and spoof == 400, (direct, spoof))
+
+
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory(prefix="test-relay-") as tmp, \
             fixture_db() as fr, fixture_db() as fa, fixture_db() as fb:
         run(fr, fa, fb, Path(tmp))
+    asyncio.run(proxy_arms())
     print(f"{'ALL PASS' if not fails else 'FAIL'}: relay federation ({fails} failing)")
     sys.exit(1 if fails else 0)

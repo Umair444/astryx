@@ -6,6 +6,7 @@
 
 Direct: sends our signed hello to their /astryx/introduce, verifies the signed reply,
 stores their identity in peers, and prints the result.
+By name, an org listed on the relay WITH a URL (the relay's host is) is introduced directly.
 Through the relay (for an org with no public door): drops our signed hello in their relay
 mailbox. Their gateway admits us and answers with its own signed hello the same way, which
 our gateway stores when its relay loop collects it. If they are listed in the relay
@@ -90,6 +91,8 @@ def introduce_via_relay(org, env=None) -> dict:
     if not relay:
         raise RuntimeError("no ASTRYX_RELAY in .env: run the federation wizard (astryx federate)")
     listed = httpx.get(f"{relay}/relay/directory", params={"org": org}, timeout=20).json().get("orgs", [])
+    if listed and listed[0].get("url"):          # they have a public door (the relay's host does):
+        return introduce(listed[0]["url"], env)  # knock on it directly, signed reply and all
     if listed:                                   # listed: store their key now (trust on first use)
         store_peer(env, org, listed[0].get("url"), listed[0]["pubkey"], "met through the relay")
     r = httpx.post(f"{relay}/relay/send", json={"to": org, "kind": "hello", "envelope": hello(env)},
@@ -114,7 +117,10 @@ def main(argv=None):
             print(f"their key: {them['pubkey'][:16]}…  status: introduced")
         else:
             them = introduce_via_relay(target)
-            print(f"hello sent to '{target}' through the relay; their gateway answers the same way")
+            if them.get("url"):
+                print(f"introduced to '{them['org']}' directly at {them['url']} (found by name on the relay)")
+            else:
+                print(f"hello sent to '{target}' through the relay; their gateway answers the same way")
     except RuntimeError as e:
         sys.exit(str(e))
     print(f"agents can now: send(to='seed@{them['org']}', body='hello')")

@@ -122,13 +122,16 @@ EOF
   # generator block here kept emitting units for the deleted nucleus/pulse_watch.py
   # — a unit that cannot start plus a second clock, on every fresh host (scout,
   # 2026-08-25).
+  # --proxy-headers: cloudflared (relay.umairfiaz.com) reaches the gateway from localhost, so without it every
+  # client is 127.0.0.1 and the per-IP introduce cap is one global bucket. X-Forwarded-For is trusted ONLY from
+  # 127.0.0.1; a direct client from anywhere else keeps its own address (tests/test_relay.py).
   cat > "$UD/astryx-gateway.service" <<EOF
 [Unit]
 Description=astryx gateway — the org's one door to other orgs (:8845)
 After=network.target
 [Service]
 WorkingDirectory=$PWD/bridges
-ExecStart=$PWD/venv/bin/uvicorn gateway:app --host 0.0.0.0 --port 8845
+ExecStart=$PWD/venv/bin/uvicorn gateway:app --host 0.0.0.0 --port 8845 --proxy-headers --forwarded-allow-ips 127.0.0.1
 Restart=always
 RestartSec=5
 User=$USER
