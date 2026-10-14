@@ -3,6 +3,10 @@
 (.env, local.md, homes/, agents/<private>, triggers/, memory/) can reach a wheel or a sdist. tests/,
 harness/ and docs/ are left out on purpose: they are the repo's, not an org's. Constants only; the build
 hook loads this file with runpy, without importing the package.
+
+TODO(plan-10224 S4): before the FIRST PUBLISHED build, move this from directory prefixes to a FILE-LEVEL allowlist.
+A prefix ships every file a future commit adds under nucleus/, bridges/, mcp/ ... unreviewed; S4's scrub (the
+personal lines, the #NNNN ids, the canopus/gemini/vega special cases) has to land first.
 """
 
 TREE_FILES = (

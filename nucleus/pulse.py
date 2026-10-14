@@ -89,7 +89,32 @@ def retired_notice(conn, agent: str, name: str, fname: str, tomb: Path):
                f"again.", conn, coalesce_key=key)
 
 
-def reconcile(conn):
+CANARY_TO = "seed"
+
+
+def astryx_canary() -> str | None:
+    """Can a discover() child import astryx at all? None if yes, else the error. Same interpreter, cwd and `-c` shape
+    as discover(), so it fails exactly when every discover() would. One failure here is the ORG's (a checkout caught
+    mid-write: git lays down the root astryx.py shim before src/astryx/, plan-10224 B1), never a trigger file's."""
+    try:
+        r = subprocess.run([PY, "-c", "import astryx; astryx.trigger; astryx._registry"], capture_output=True,
+                           text=True, timeout=20, cwd=REPO)
+    except Exception as e:
+        return str(e)
+    return None if r.returncode == 0 else (r.stderr.strip()[-500:] or f"exit {r.returncode}")
+
+
+def reconcile(conn) -> bool:
+    """Upsert every trigger file's registry; False (and nothing touched) when astryx itself can't be imported."""
+    # THE CANARY. When `import astryx` fails, EVERY file below fails to load, and the loop would read each one as
+    # broken: one "failed to load ... DISABLES" wake per file, then the retirement loop switching every python
+    # trigger off for the tick. One org-level alarm instead; nothing disabled, no per-file wakes.
+    err = astryx_canary()
+    if err:
+        say(CANARY_TO, f"[trigger astryx import] the pulse can't import astryx, so this tick reconciled and evaluated "
+                       f"NO python trigger (all stay enabled; it retries every minute): {err}", conn,
+            coalesce_key="astryx import")
+        return False
     seen: set[tuple[str, str]] = set()
     for f in sorted((REPO / "triggers").glob("*/*.py")):
         agent = f.parent.name
@@ -143,6 +168,7 @@ def reconcile(conn):
         if (a, n) not in seen:
             conn.execute("UPDATE triggers SET enabled=false WHERE agent=%s AND name=%s",
                          (a, n))
+    return True
 
 
 # ----------------------------------------------------------------- evaluate
@@ -395,12 +421,12 @@ def tick():
     # 2026-07-25; the night-review fired at 7-9am PKT for two days).
     now = datetime.now().astimezone()
     with psycopg.connect(DSN, autocommit=True) as conn:
-        reconcile(conn)
-        with conn.transaction():
+        py_ok = reconcile(conn)        # False: astryx won't import, so python checks are left unclaimed (they'd
+        with conn.transaction():       # each crash on the same ImportError); they fire once it imports again
             due = conn.execute(
                 """SELECT id, agent, name, schedule, kind, check_src, state, note, premium
-                   FROM triggers WHERE enabled AND next_fire <= now()
-                   ORDER BY next_fire FOR UPDATE SKIP LOCKED""").fetchall()
+                   FROM triggers WHERE enabled AND next_fire <= now() AND (%s OR kind <> 'python')
+                   ORDER BY next_fire FOR UPDATE SKIP LOCKED""", (py_ok,)).fetchall()
             cols = ["id", "agent", "name", "schedule", "kind", "check_src", "state",
                     "note", "premium"]
             due = [dict(zip(cols, r)) for r in due]

@@ -254,6 +254,9 @@ run "astryx package: one registry on every import path" "$PY" tests/test_astryx_
 run "astryx paths: HOME resolves env > marker > checkout > ~/.astryx" "$PY" tests/test_astryx_paths.py
 run "astryx config: the one .env reader, in-place 0600 writer" "$PY" tests/test_astryx_config.py
 run "astryx cli: verbs dispatch, user errors calm, secrets never printed" "$PY" tests/test_astryx_cli.py
+# The pulse's astryx-import canary: a shim with no src/astryx (mid-checkout) disables nothing and alarms once.
+# Fixture DB. Mutants: tests/mutants_pulse_import_canary.py.
+run "pulse canary: astryx won't import -> one alarm, every trigger stays enabled" "$PY" tests/test_pulse_import_canary.py
 # nucleus/merge_check.sh: the merged-tree chain before a merge request, base resolved ONCE (merge parent == control),
 # a conflict refused (never a wrong tree), transient links removed. Hermetic. Mutants: tests/mutants_merge_check.py.
 run "merge_check: one base read, conflicts refused, links removed" "$PY" tests/test_merge_check.py

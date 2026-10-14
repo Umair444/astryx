@@ -45,7 +45,15 @@ class DepsMetadata(MetadataHookInterface):
 def tree_files(root: Path) -> list[str]:
     man = runpy.run_path(str(root / "src" / "astryx" / "_data" / "manifest.py"))
     if (root / ".git").exists():
-        out = subprocess.run(["git", "-C", str(root), "ls-files", "-z"], capture_output=True, check=True).stdout
+        # The COMMITTED tree (HEAD), not the index: ls-files would ship whatever happens to be staged. A tracked
+        # file modified or staged on disk would make the shipped bytes differ from HEAD, so a dirty tree is refused.
+        dirty = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
+                               capture_output=True, text=True, check=True).stdout.strip()
+        if dirty:
+            raise RuntimeError("astryx: refusing to build from a dirty tree (commit or discard these first):\n"
+                               + dirty)
+        out = subprocess.run(["git", "-C", str(root), "ls-tree", "-r", "-z", "--name-only", "HEAD"],
+                             capture_output=True, check=True).stdout
         rels = [r for r in out.decode().split("\0") if r]
     elif (root / "PKG-INFO").is_file():                       # an unpacked sdist: already the allowlisted tree
         rels = [str(p.relative_to(root)) for p in root.rglob("*") if p.is_file()]

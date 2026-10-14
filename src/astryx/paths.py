@@ -4,13 +4,16 @@ CODE is where this package's code lives. HOME is the org's data root (.env, loca
 resolved in this order, first hit wins:
 
   1. env       ASTRYX_HOME
-  2. marker    walking up from cwd: a `.astryx` FILE, or local.md + .env side by side
+  2. marker    a `.astryx` FILE, walking up from cwd, but never past the first directory holding `.git`
   3. checkout  CODE is a git checkout (an editable / dev install): its root
   4. default   ~/.astryx
 
-`.astryx` must be a file: the default HOME is itself a directory named ~/.astryx, and a walk up from ~
-must not mistake it for a marker. In a dev checkout HOME == the checkout, so nothing changes for the
-org that runs from one.
+Only the explicit marker counts (not local.md + .env): a worktree nested inside the live org's tree
+(.claude/worktrees/<x>/) walked up into the LIVE org. The walk stops at a git root for the same reason: a checkout
+is its own org unless it says otherwise, so a nested worktree falls through to the checkout rung (itself), never to
+a home above it. `.astryx` must be a file: the default HOME is itself a directory named ~/.astryx, and a walk up
+from ~ must not mistake it for a marker. In a dev checkout HOME == the checkout, so nothing changes for the org
+that runs from one.
 """
 from __future__ import annotations
 
@@ -31,14 +34,18 @@ def checkout_root(package: Path = PACKAGE) -> Path | None:
 
 
 def is_home(d: Path) -> bool:
-    return (d / MARKER).is_file() or ((d / "local.md").is_file() and (d / ".env").is_file())
+    return (d / MARKER).is_file()
 
 
 def find_marker(start: Path | None = None) -> Path | None:
+    """The nearest directory with a `.astryx` file, walking up from `start`; the walk ends at the first git root
+    (`.git` file or dir), checked after that directory's own marker."""
     d = Path(start or Path.cwd()).resolve()
     for p in (d, *d.parents):
         if is_home(p):
             return p
+        if (p / ".git").exists():
+            return None
     return None
 
 

@@ -44,7 +44,9 @@ def source_files() -> tuple[str, list[tuple[str, Path]]]:
         return "wheel", [(r, p) for r, p in files if manifest.wanted(r)]
     root = paths.checkout_root()
     if root is not None:
-        out = subprocess.run(["git", "-C", str(root), "ls-files", "-z"], capture_output=True, check=True).stdout
+        # HEAD's tree, as the wheel build reads it (never the index); the bytes copied are the working tree's
+        out = subprocess.run(["git", "-C", str(root), "ls-tree", "-r", "-z", "--name-only", "HEAD"],
+                             capture_output=True, check=True).stdout
         rels = [r for r in out.decode().split("\0") if r and manifest.wanted(r)]
         return "checkout", [(r, root / r) for r in rels if (root / r).is_file() and not (root / r).is_symlink()]
     return "none", []
