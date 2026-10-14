@@ -344,6 +344,33 @@ def main():
               "o<pid> dir is removed", nrole in got_n and f"{nrole}_n" in got_n and not role_exists(nrole)
               and not nest.exists(), f"reaped={got_n} nest_left={nest.exists()}")
 
+        # ── the reaper's DIR-LESS pass (10-14: bc_2129081x… outlived its dir and runscope_census nagged 3+ hours). One
+        # positive and three controls, each differing from it on ONE axis: the production stamp, a fresh epoch (an
+        # oracle may be HOLDING it, as F1 does), a live pid ──────────────────────────────────────────────────────────
+        from _oracle_debris import DIRLESS_GRACE_S
+        dead3 = subprocess.Popen(["true"]); dead3.wait()
+        old = int(time.time()) - DIRLESS_GRACE_S - 60
+
+        def dirless(pid, epoch, stamp):
+            r = f"{rs.ROLE_PREFIX}{pid}x{epoch}"
+            adm.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(r)))
+            extra_roles.append(r)
+            adm.execute(sql.SQL("COMMENT ON ROLE {} IS {}").format(sql.Identifier(r), sql.Literal(stamp)))
+            adm.execute(sql.SQL("CREATE DATABASE {} OWNER {}").format(sql.Identifier(f"{r}_d"), sql.Identifier(r)))
+            return r
+        d_pos = dirless(dead3.pid, old, rs.TEST_STAMP)
+        d_prod = dirless(dead3.pid, old + 1, rs.MACHINE_ID)
+        d_fresh = dirless(dead3.pid, int(time.time()), rs.TEST_STAMP)
+        d_live = dirless(os.getpid(), old + 2, rs.TEST_STAMP)
+        got_d = reap(adm)
+        check("reap(): a dead TEST-stamped run role whose dir is GONE, past the grace, is reaped (role and its DB)",
+              d_pos in got_d and f"{d_pos}_d" in got_d and not role_exists(d_pos), f"reaped={got_d}")
+        check("…a PRODUCTION-stamped one (the bare machine id) is never touched by the oracle reaper",
+              role_exists(d_prod) and d_prod not in got_d, f"reaped={got_d}")
+        check("…a FRESH one is kept (an oracle may be holding it: F1's crashed child is exactly this shape)",
+              role_exists(d_fresh) and d_fresh not in got_d, f"reaped={got_d}")
+        check("…one whose creating pid is ALIVE is kept", role_exists(d_live) and d_live not in got_d, f"reaped={got_d}")
+
         # ── refusal: a lockfile is data ──────────────────────────────────────────────────────────────────
         victim = rs.RunScope(dsn, root=base).open()                  # a real role that must SURVIVE
         extra_roles.append(victim.role)
