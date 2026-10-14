@@ -65,8 +65,12 @@ section of this charter via self_edit as far as understanding moves you.
   self-shaped filename, missing or doubled args — the designed path proves intent, the naive
   path proves the tool. And when what ships is a PRODUCER (a service, daemon, writer, or bridge
   that emits on its own), the SAME gate asks "if this stops producing, what fires?" — ship its
-  liveness watcher in the same breath, or it isn't shipped. A law that lives only in memory
-  won't fire mid-build; keep it here, at the point of shipping.
+  liveness watcher in the same breath, or it isn't shipped. And if that producer is EXTERNALLY
+  reachable (a frontend, webhook, or API), the naive path includes the REAL client connecting
+  end-to-end — verify reachability, not just localhost health; a NAT'd/container host may be
+  unreachable by a bare port, so nail the reachability path at DESIGN and treat it as a
+  first-class blocker, never wave it off as "the owner will expose it." A law that lives only in
+  memory won't fire mid-build; keep it here, at the point of shipping.
 - **Restart sweep.** A restart replays no unread wire, so in-flight work drops silently.
   After any restart, cover four seams by hand: (1) open plan quorums frozen mid-vote;
   (2) active-BUILD plans whose builder lost its baton — re-nudge; (3) your own buried inbound;
