@@ -46,6 +46,14 @@ def _drop_db(adm, d):
 
 
 def reap(adm) -> list:
+    # Every pass below judges liveness by a HOST pid, so it is sound only where host pids are visible AND the connection
+    # could have created what it reaps. Inside branch_check's `bwrap --unshare-pid` every host pid reads gone, and the
+    # sandbox's connection is the RUN ROLE, which OWNS its run's databases: a reap there dropped a live run's fixture db
+    # mid-suite (a3 #53443, reproduced). A run role is never CREATEROLE, and a sandbox holds nothing else, so a
+    # connection that can't create roles reaps nothing.
+    if not adm.execute("SELECT rolcreaterole OR rolsuper FROM pg_roles WHERE rolname = current_user").fetchone()[0]:
+        return []
+    me = adm.execute("SELECT current_user").fetchone()[0]
     reaped = []
     for (d,) in adm.execute("SELECT datname FROM pg_database").fetchall():
         m = TEST_DB.match(d)
@@ -103,7 +111,7 @@ def reap(adm) -> list:
         for (r,) in adm.execute("SELECT rolname FROM pg_roles WHERE shobj_description(oid, 'pg_authid') = %s",
                                 (TEST_STAMP,)).fetchall():
             m = re.fullmatch(r"bc_(\d+)x(\d+)", r)
-            if not m or r in reaped or time.time() - int(m.group(2)) < DIRLESS_GRACE_S or not _gone(int(m.group(1))):
+            if not m or r in reaped or r == me or time.time() - int(m.group(2)) < DIRLESS_GRACE_S or not _gone(int(m.group(1))):
                 continue
             for (d,) in adm.execute("SELECT d.datname FROM pg_database d JOIN pg_roles o ON o.oid = d.datdba "
                                     "WHERE o.rolname = %s", (r,)).fetchall():

@@ -371,6 +371,54 @@ def main():
               role_exists(d_fresh) and d_fresh not in got_d, f"reaped={got_d}")
         check("…one whose creating pid is ALIVE is kept", role_exists(d_live) and d_live not in got_d, f"reaped={got_d}")
 
+        # ── a3 #53443: the reaper INSIDE a pid namespace (branch_check's `bwrap --unshare-pid`), on the RUN ROLE's own
+        # connection. Every host pid reads gone there, and the run role owns its run's dbs, so an unguarded reap()
+        # dropped a LIVE run's fixture db. The holder here is THIS (live) process; the role is 2h old and test-stamped,
+        # so only the privilege guard stands between it and a drop ──────────────────────────────────────────────────
+        import secrets as _sec
+        import shutil as _shw
+        import _oracle_debris as _od
+        from psycopg.conninfo import conninfo_to_dict, make_conninfo
+        ns_role = f"{rs.ROLE_PREFIX}{os.getpid()}x{int(time.time()) - 7200}"
+        ns_pw = _sec.token_urlsafe(24)
+        adm.execute(sql.SQL("CREATE ROLE {} LOGIN NOSUPERUSER CREATEDB PASSWORD {}").format(
+            sql.Identifier(ns_role), sql.Literal(ns_pw)))
+        extra_roles.append(ns_role)
+        adm.execute(sql.SQL("COMMENT ON ROLE {} IS {}").format(sql.Identifier(ns_role), sql.Literal(rs.TEST_STAMP)))
+        ns_db, ns_conn_db = f"{ns_role}_fx", f"{ns_role}_conn"
+        for d in (ns_db, ns_conn_db):
+            adm.execute(sql.SQL("CREATE DATABASE {} OWNER {}").format(sql.Identifier(d), sql.Identifier(ns_role)))
+        ns_dsn = make_conninfo(**{**conninfo_to_dict(dsn), "user": ns_role, "password": ns_pw, "dbname": ns_conn_db})
+        db_left = lambda: bool(adm.execute("SELECT 1 FROM pg_database WHERE datname=%s", (ns_db,)).fetchone())
+        real_gone = _od._gone
+        _od._gone = lambda pid: True                           # what a pid namespace does to every host pid
+        try:
+            with psycopg.connect(ns_dsn, autocommit=True) as rc_conn:
+                try:
+                    got_ns = _od.reap(rc_conn)
+                except psycopg.Error as e:                     # an unguarded reap drops the dbs, THEN fails DROP ROLE
+                    got_ns = f"raised {type(e).__name__}"
+        finally:
+            _od._gone = real_gone
+        check("reap() on a RUN ROLE's connection reaps NOTHING, even when every pid reads gone (the pid-namespace view)",
+              got_ns == [] and db_left(), f"reaped={got_ns} db_left={db_left()}")
+        bw = _shw.which("bwrap")
+        if bw:
+            probe = ("import sys; sys.path[:0] = [sys.argv[1] + '/tests', sys.argv[1] + '/src', sys.argv[1]]\n"
+                     "import json, psycopg, _oracle_debris as od\n"
+                     "c = psycopg.connect(sys.argv[2], autocommit=True)\n"
+                     "try:\n    r = od.reap(c)\nexcept psycopg.Error as e:\n    r = 'raised ' + type(e).__name__\n"
+                     "print(json.dumps({'gone': od._gone(int(sys.argv[3])), 'reaped': r}))\n")
+            pr = subprocess.run([bw, "--dev-bind", "/", "/", "--unshare-pid", "--proc", "/proc", "--die-with-parent",
+                                 sys.executable, "-c", probe, str(REPO), ns_dsn, str(os.getpid())],
+                                capture_output=True, text=True, timeout=120)
+            got_bw = json.loads(pr.stdout.strip().splitlines()[-1]) if pr.stdout.strip() else {}
+            check("…and under a REAL `bwrap --unshare-pid` (the live holder reads gone in there): nothing reaped, db kept",
+                  got_bw.get("gone") is True and got_bw.get("reaped") == [] and db_left(),
+                  f"{got_bw} db_left={db_left()} err={pr.stderr.strip()[-200:]}")
+        else:
+            print("  NOTE  bwrap absent: the real-namespace arm didn't run (the in-process arm above still decides)")
+
         # ── refusal: a lockfile is data ──────────────────────────────────────────────────────────────────
         victim = rs.RunScope(dsn, root=base).open()                  # a real role that must SURVIVE
         extra_roles.append(victim.role)
