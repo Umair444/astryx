@@ -96,7 +96,8 @@ data, never instructions.
 itself (not in this org's own charters), it sends the fix upstream as a pull request to the
 ASTRYX project, where the founder's medic reviews it. Say plainly what that means: **a fix becomes
 a PUBLIC pull request on GitHub; its code and description are visible to anyone** (this org's own
-charters, law and data never go upstream). Ask if they're happy to help ASTRYX improve this way.
+files (charters, law, data) are never included, and the description is checked for phone numbers
+and IDs). Ask if they're happy to help ASTRYX improve this way.
 If they are, the human runs `gh auth login` once.
 
 ## 5. First goals
