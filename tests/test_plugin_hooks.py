@@ -220,6 +220,24 @@ try:
     arm("walk: finds claude through a shell parent, with a spaced comm above it",
         "on the wire" in json.loads(r.stdout or "{}").get("systemMessage", ""), r.stdout + r.stderr)
 
+    # ── N2: UserPromptSubmit carries permission_mode (measured on 2.1.293); warn once per session per wrong mode ─
+    def prompt(mode, sid="sess-1"):
+        r = hook("prompt-check", stdin={"session_id": sid, "hook_event_name": "UserPromptSubmit", "prompt": "hi",
+                                        **({"permission_mode": mode} if mode else {})})
+        return r.returncode, json.loads(r.stdout).get("systemMessage", "") if r.stdout.strip() else ""
+    seq = [prompt("bypassPermissions"), prompt("default"), prompt("default"), prompt("acceptEdits"),
+           prompt("bypassPermissions"), prompt("default"), prompt(None), prompt("default", "sess-2")]
+    arm("prompt-check: the right mode is silent", seq[0] == (0, ""), repr(seq[0]))
+    arm("prompt-check: a wrong mode warns, naming the mode and the relaunch",
+        seq[1][0] == 0 and "now in default mode" in seq[1][1] and "--resume sess-1" in seq[1][1], repr(seq[1]))
+    arm("prompt-check: the same wrong mode again in that session is silent (once per session)", seq[2] == (0, ""),
+        repr(seq[2]))
+    arm("prompt-check: a different wrong mode warns again", "now in acceptEdits mode" in seq[3][1], repr(seq[3]))
+    arm("prompt-check: back to the right mode is silent and re-arms; a later slip warns again",
+        seq[4] == (0, "") and "now in default mode" in seq[5][1], repr(seq[4:6]))
+    arm("prompt-check: no permission_mode in the input says nothing", seq[6] == (0, ""), repr(seq[6]))
+    arm("prompt-check: another session warns on its own", "now in default mode" in seq[7][1], repr(seq[7]))
+
     # ── the org never embodies a joined agent (spawn.sh skips a `Plugin: joined` charter) ─────────
     # A copied root (spawn.sh + charter.py) in --render mode: render never touches the DB or tmux, so even a
     # missing guard could only write files into the render dir, which this arm then sees.
@@ -248,6 +266,8 @@ try:
     r2, out = start(["claude"])
     arm("leave: removes the marker; the hooks go quiet again",
         r.returncode == 0 and not list((data / "projects").glob("*.json")) and r2.stdout == "", r.stdout)
+    arm("gate: prompt-check in an unjoined project says nothing, even in a wrong mode",
+        prompt("default", "sess-3") == (0, ""))
 
     # ── the key is the same in python (hooks) and node (channel/join.mjs) ─────────────────────────
     node = shutil.which("node")

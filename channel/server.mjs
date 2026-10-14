@@ -700,9 +700,12 @@ async function listen() {
 // plugin's manifest; the repo's residents leave it unset and behave as before) the server holds a session-level
 // advisory lock on a DEDICATED connection for its whole life, and a second body refuses to start, loudly.
 // The lock rides that connection: if it drops, the server takes the lock again, and exits if another body took it.
+// A drop can arrive as 'error' or as a bare 'end' (a server-closed socket need not error), so BOTH re-arm, once per
+// connection. application_name names the lock's backend in pg_stat_activity (tests/test_channel_home.py kills it).
 const ONE_BODY = process.env.ASTRYX_ONE_BODY === '1'
 async function holdBody(first) {
-  const c = new pg.Client({ connectionString: DSN, connectionTimeoutMillis: 10_000 })
+  const c = new pg.Client({ connectionString: DSN, connectionTimeoutMillis: 10_000,
+    application_name: `astryx-body:${AGENT}`.slice(0, 63) })
   let ok
   try {
     await c.connect()
@@ -721,8 +724,16 @@ async function holdBody(first) {
       `different name.`)
     process.exit(1)
   }
-  c.once('error', () => { try { c.end() } catch {}; setTimeout(() => holdBody(false), 3000) })   // once: one re-arm per loss
-  c.on('error', () => {})
+  let lost = false
+  const rearm = () => {
+    if (lost) return                                 // 'error' then 'end' for one loss: one re-arm
+    lost = true
+    console.error(`[channel] the one-body lock's connection for "${AGENT}" dropped; taking the lock again`)
+    try { c.end() } catch {}
+    setTimeout(() => holdBody(false), 3000)
+  }
+  c.on('error', rearm)
+  c.on('end', rearm)
 }
 if (ONE_BODY) await holdBody(true)
 

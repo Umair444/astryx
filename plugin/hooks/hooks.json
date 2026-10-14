@@ -10,6 +10,7 @@
     "Stop": [ { "hooks": [
       { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/astryx_hook.py relay step", "timeout": 11 } ] } ],
     "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/astryx_hook.py prompt-check", "timeout": 5 } ] },
       { "hooks": [ { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/astryx_hook.py relay usage", "timeout": 6 } ] },
       { "hooks": [ { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/astryx_hook.py relay nudge", "timeout": 4 } ] } ]
   }

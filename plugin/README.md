@@ -69,7 +69,8 @@ Read this before installing. Everything below happens on your machine, against y
   dormant: no database connection, no tools. The join marker is a file under the plugin's data
   directory (`~/.claude/plugins/data/astryx-<marketplace>/projects/`).
 - **One body per name.** The wire server holds a postgres advisory lock for its agent name, so a
-  second session under the same name refuses to start instead of splitting the agent's messages.
+  second plugin session under the same name refuses to start instead of splitting the agent's
+  messages. `/astryx:join` refuses any name the org's own agents already use.
 - **Dependencies from the lockfile.** Claude Code installs the server's Node packages
   (`@modelcontextprotocol/sdk`, `pg`, `zod`) from the bundled `package-lock.json` at install.
 - **Federation, only if you ask for it.** `/astryx:federate` can register your org with the

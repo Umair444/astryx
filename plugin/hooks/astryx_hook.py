@@ -9,6 +9,8 @@ sha256(realpath(project dir))[:32]. channel/join.mjs reads the same key, so the 
                          (--permission-mode bypassPermissions, or default for a `Permissions: relay` charter, and
                          --dangerously-load-development-channels naming this plugin), and prints the exact
                          relaunch command when one is missing.
+  prompt-check           UserPromptSubmit: the input's permission_mode (SessionStart has none) against the same
+                         rule; warns once per session per wrong mode.
   relay <step|usage|nudge>   runs <astryx_home>/hooks/<name>.py with the venv python of the user's astryx checkout,
                          as the joined agent. Pre/PostToolUse and Stop record steps; UserPromptSubmit reads usage.
   join <agent>           marks this project joined as <agent> (refuses a live resident's name).
@@ -226,6 +228,41 @@ def cmd_session_start(a) -> int:
     return 0
 
 
+def cmd_prompt_check(a) -> int:
+    """UserPromptSubmit carries permission_mode (measured on 2.1.293; SessionStart doesn't), so a session that
+    started right but was switched out of its mode (shift-tab, /permissions) is caught here. Warn ONCE per session
+    per wrong mode: a marker under <data>/sessions/ dedups, keyed on (session, mode), and a return to the right mode
+    clears it so a later slip warns again."""
+    try:
+        h = json.load(sys.stdin)
+    except ValueError:
+        return 0
+    data = data_dir()
+    m = joined(data, project_dir(h.get("cwd") if not os.environ.get("CLAUDE_PROJECT_DIR") else None))
+    mode, sid = h.get("permission_mode"), str(h.get("session_id") or "")
+    if m is None or not mode or not re.fullmatch(r"[A-Za-z0-9-]{1,80}", sid):
+        return 0
+    perm = charter_perm(astryx_home(m), m["agent"])
+    want = wanted_mode(perm)
+    seen = data / "sessions" / f"{sid}.mode"
+    if mode == want:
+        seen.unlink(missing_ok=True)
+        return 0
+    try:
+        if seen.read_text().strip() == mode:
+            return 0
+    except OSError:
+        pass
+    seen.parent.mkdir(parents=True, exist_ok=True)
+    seen.write_text(mode + "\n")
+    msg = (f"ASTRYX: this session (agent {m['agent']}) is now in {mode} mode; an astryx session runs in {want}"
+           + (" (its charter says Permissions: relay)" if want == "default" else "")
+           + f". Switch back, or relaunch:\n  {relaunch(perm, sid)}")
+    print(json.dumps({"systemMessage": msg, "hookSpecificOutput": {
+        "hookEventName": "UserPromptSubmit", "additionalContext": msg + "\nTell the user this once."}}))
+    return 0
+
+
 def cmd_relay(a) -> int:
     script = RELAYS.get(a.name)
     m = joined(data_dir(), project_dir())
@@ -325,6 +362,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="astryx_hook.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("session-start").set_defaults(fn=cmd_session_start)
+    sub.add_parser("prompt-check").set_defaults(fn=cmd_prompt_check)
     r = sub.add_parser("relay")
     r.add_argument("name")
     r.set_defaults(fn=cmd_relay)
@@ -341,7 +379,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return a.fn(a)
     except Exception as e:                          # a hook must never break the session
-        if a.cmd in ("session-start", "relay"):
+        if a.cmd in ("session-start", "prompt-check", "relay"):
             print(f"astryx hook: {type(e).__name__}: {e}", file=sys.stderr)
             return 0
         raise

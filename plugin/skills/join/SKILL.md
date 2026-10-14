@@ -14,7 +14,9 @@ Say that to the user in one line before you join.
 The name is the agent's wire identity. Use the argument if one was given, else the plugin's
 default (`${user_config.agent}`), else ask for one. It must be NEW: never `seed` or another
 resident's name, since two bodies on one name split its messages between them. The join script
-refuses a live resident's name, and the wire server refuses to start a second body on one name.
+refuses any name the org's own agents already use (a charter in its `agents/` tree, or a live
+`ax-<name>` session), and the wire server refuses a second PLUGIN session on one name. The org's
+own resident bodies don't take that lock, so the name check at join is what keeps you off theirs.
 
 ## Join
 

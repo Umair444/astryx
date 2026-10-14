@@ -175,6 +175,9 @@ try:
         r = s.init()
         arm("ASTRYX_HOME: the server starts and answers initialize with no ../.env and no ASTRYX_DSN", bool(r),
             (tmp / "home.err").read_text(errors="replace")[-300:])
+        instr = ((r or {}).get("result") or {}).get("instructions", "")
+        arm('repo mode: the instructions name <channel source="astryx" …> (what spawn.sh residents receive)',
+            'Org messages arrive as <channel source="astryx" from=' in instr, instr[:200])
         r = s.call("tools/call", {"name": "send", "arguments": {"to": "someone", "body": "hello from elsewhere"}})
         text = json.dumps(r or {})
         arm("ASTRYX_HOME: send consulted <home>/venv/bin/python <home>/nucleus/address.py",
@@ -235,7 +238,9 @@ try:
         joined_env = {**dormant_env, "ASTRYX_HOME": str(home), "ASTRYX_AGENT": "ignored-default"}
         s5 = Mcp(server, joined_env, project, tmp / "joined.err")
         servers.append(s5)
-        s5.init()
+        instr = (((s5.init() or {}).get("result") or {}).get("instructions", ""))
+        arm('joined mode: the instructions name the plugin\'s channel tag, source="plugin:astryx:astryx"',
+            'arrive as <channel source="plugin:astryx:astryx" from=' in instr, instr[:200])
         tools = s5.call("tools/list")
         names = [t["name"] for t in (tools or {}).get("result", {}).get("tools", [])]
         arm("joined: the server reads the hook's marker (same project key) and serves the wire tools",
@@ -278,6 +283,41 @@ try:
                 time.sleep(0.5)
         arm("one body: once the first body is gone, a new one starts", ok,
             (tmp / "body5.err").read_text(errors="replace")[-300:])
+
+        # ── 6. the lock survives its connection dying: A takes it again, so B is still refused ──
+        # A postgres restart or an idle-killer ends the lock's backend; the session lock goes with it. Kill exactly
+        # A's lock backend (its application_name), then start B. Whichever wins, never two live bodies: A retakes
+        # and B is refused, or B won the race and A exits loudly on its retake.
+        rearm = base_env(ASTRYX_AGENT="rearmprobe", ASTRYX_HOME=str(home), ASTRYX_ONE_BODY="1")
+        a = Mcp(server, rearm, tmp, tmp / "rearmA.err")
+        servers.append(a)
+        a.init()
+        lock_sql = ("SELECT a.pid FROM pg_stat_activity a JOIN pg_locks l ON l.pid = a.pid "
+                    "WHERE a.application_name = 'astryx-body:rearmprobe' AND l.locktype = 'advisory' AND l.granted")
+        with psycopg.connect(fx["dsn"], autocommit=True) as db:
+            held = [p for (p,) in db.execute(lock_sql).fetchall()]
+            arm("re-arm: body A holds the lock on a backend named astryx-body:<agent>", len(held) == 1, repr(held))
+            killed = db.execute("SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity "
+                                "WHERE application_name = 'astryx-body:rearmprobe'").fetchone()[0]
+            retaken = []
+            end = time.monotonic() + 20
+            while time.monotonic() < end and not retaken:
+                time.sleep(0.3)
+                retaken = [p for (p,) in db.execute(lock_sql).fetchall() if p not in held]
+        arm("re-arm: after its lock backend is killed, A takes the lock again on a new backend",
+            killed >= 1 and len(retaken) == 1 and a.p.poll() is None,
+            f"killed={killed} retaken={retaken} {(tmp / 'rearmA.err').read_text(errors='replace')[-300:]}")
+        b = Mcp(server, rearm, tmp, tmp / "rearmB.err")
+        servers.append(b)
+        b.init()
+        wait_exit(b.p, 8)
+        time.sleep(4)                                   # A's re-arm delay is 3s: let a late retake decide too
+        live = [x for x in (a, b) if x.p.poll() is None]
+        arm("re-arm: never two live bodies (B refused, or A exits loudly)",
+            len(live) == 1 and ("ANOTHER BODY" in (tmp / "rearmB.err").read_text(errors="replace")
+                                or "ANOTHER BODY" in (tmp / "rearmA.err").read_text(errors="replace")),
+            f"live={len(live)} A={(tmp / 'rearmA.err').read_text(errors='replace')[-200:]} "
+            f"B={(tmp / 'rearmB.err').read_text(errors='replace')[-200:]}")
     finally:
         for s in servers:
             try:
