@@ -23,4 +23,10 @@ MUTANTS = {
     "I7 ingress skips the audience check (groups, undeclared DMs)":
         ("    if not releasable(lbl, audience(channel, route)):\n        raise Refused(f\"the route's audience",
          "    if False:\n        raise Refused(f\"the route's audience"),
+    "I8 a store OSError escapes ingress (the bridge loses the owner's message; a4 #53081)":
+        ("    except OSError as e:          # a full disk", "    except ValueError as e:          # a full disk"),
+    "I9 a failed write leaves its half-body behind":
+        ("            os.unlink(d / ptr)                            # no half-body", "            pass  # no half-body"),
+    "I10 one write call, whatever it wrote (a short write truncates the body)":
+        ("                data = data[os.write(fd, data):]", "                os.write(fd, data); data = data[:0]"),
 }

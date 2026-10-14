@@ -209,14 +209,16 @@ def split_polls(text: str, max_options: int = 12) -> tuple[str, list[tuple[str, 
 # ----------------------------------------------------------------------- wire
 async def wire_insert(pool, from_agent: str, from_org: str, to_agent: str,
                       thread: str | None, intent: str, body: str, meta: dict | None = None,
-                      route: dict | None = None):
+                      route: dict | None = None, said: str | None = None):
     # `meta` carries INBOUND context the wire row otherwise loses: the real sender identity
     # (jid/phone/push_name — from_agent collapses a trusted sender to 'owner') and reply/quote
     # context (which message it answered, + that message's body). Stored in the `delivery`
     # jsonb, which is unused on an inbound row. server.mjs surfaces it on the <channel> tag.
     #
     # `route` (plan-9139 S1b-2b): the inbound chat sites pass the route the message arrived on. A route that
-    # DECLARES a tier, or anything that looks like one, never reaches the raw row: see _tier_ingress.
+    # DECLARES a tier, or anything that looks like one, never reaches the raw row: see _tier_ingress. `said` is the text
+    # as the human typed it, before route_target stripped an @mention: a tier route stores THAT (a4 #53081), so its
+    # member sees who the owner tried to address.
     if route is not None:
         from astryx.security import release as R
         try:
@@ -224,7 +226,8 @@ async def wire_insert(pool, from_agent: str, from_org: str, to_agent: str,
         except R.GrantError:
             tiered = True                      # a malformed declaration is judged (and refused) by the door
         if tiered:
-            return await _tier_ingress(pool, R, from_agent, from_org, thread, intent, body, meta, route)
+            text = body if said is None else said
+            return await _tier_ingress(pool, R, from_agent, from_org, thread, intent, text, meta, route)
     await pool.execute(
         "INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body, delivery) "
         "VALUES ($1,$2,$3,$4,$5,$6,$7)", from_agent, from_org, to_agent, thread, intent, body,

@@ -367,9 +367,10 @@ async def hook(request: Request):
         meta["reply_to_body"] = ((m.get("ReplyToDisplay") or "").strip()
                                  or await resolve_quoted_body(pool, rid))
 
+    said = text
     agent, text = await route_target(pool, f"wa:{chat}", text, route["agent"])
 
-    await wire_insert(pool, sender, "whatsapp", agent, f"wa:{chat}", "chat", text, meta, route=route)
+    await wire_insert(pool, sender, "whatsapp", agent, f"wa:{chat}", "chat", text, meta, route=route, said=said)
 
     if route.get("live_steps") and trusted:
         jobs[agent] = {"chat": chat, "thread": f"wa:{chat}", "opened": now,

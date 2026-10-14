@@ -18,4 +18,11 @@ MUTANTS = {
     "B4 a refusal falls back to the raw row":
         ("        out = \"[tier-routed message withheld: \" + type(e).__name__ + \"]\"\n",
          "        out = body\n"),
+    "B5 a tier route stores the STRIPPED text (said= ignored: the @mention lost)":
+        ("            text = body if said is None else said", "            text = body"),
+    "B6 said= reaches the untiered raw row too":
+        ("        json.dumps(meta) if meta else None)", "        json.dumps(meta) if meta else None) if said is None else await pool.execute(\n"
+         "        \"INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body, delivery) \"\n"
+         "        \"VALUES ($1,$2,$3,$4,$5,$6,$7)\", from_agent, from_org, to_agent, thread, intent, said,\n"
+         "        json.dumps(meta) if meta else None)"),
 }

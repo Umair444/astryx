@@ -218,7 +218,12 @@ class TierStore:
         ptr = secrets.token_urlsafe(24)
         fd = os.open(d / ptr, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         try:
-            os.write(fd, body.encode())
+            data = memoryview(body.encode())
+            while data:                                   # os.write may write SHORT; a body is all of it or nothing
+                data = data[os.write(fd, data):]
+        except OSError:
+            os.unlink(d / ptr)                            # no half-body left under a pointer nothing names
+            raise
         finally:
             os.close(fd)
         return f"{tier}/{ptr}"
@@ -370,7 +375,10 @@ def ingress(channel: str, route: dict, body: str, key: bytes, store: "TierStore"
     lbl = frozenset({tier})
     if not releasable(lbl, audience(channel, route)):
         raise Refused(f"the route's audience isn't within readers({tier}): only a DM declared as the owner's")
-    pointer = store.put(lbl, body)
+    try:
+        pointer = store.put(lbl, body)
+    except OSError as e:          # a full disk, a bad permission, no tier root: every caller WITHHOLDS (a4 #53081)
+        raise Refused(f"the {tier} store could not take the body ({type(e).__name__})") from None
     return (f"[tier-routed: {len(body.encode())} bytes, {tier}]",
             {"ingress": {"pointer": pointer, "body_mac": body_mac(key, body), "tier": tier}})
 

@@ -241,8 +241,9 @@ async def on_message(msg: dict):
         meta["reply_to_id"] = str(rid)
         meta["reply_to_body"] = ((rep.get("text") or rep.get("caption") or "").strip()
                                  or await resolve_quoted_body(pool, rid))
+    said = text
     agent, text = await route_target(pool, f"tg:{chat}", text, route["agent"])
-    await wire_insert(pool, who, "telegram", agent, f"tg:{chat}", "chat", text, meta, route=route)
+    await wire_insert(pool, who, "telegram", agent, f"tg:{chat}", "chat", text, meta, route=route, said=said)
     if route.get("live_steps") and trusted:
         jobs[agent] = {"chat": chat, "ph_id": None, "sent": ""}
         try:

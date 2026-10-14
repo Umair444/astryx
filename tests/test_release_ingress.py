@@ -111,6 +111,35 @@ with redirect_stdout(buf3):
 check("CLI: `read <pointer>` without its MAC is not a read (usage, no body)", rc2 == 2 and SENT not in buf.getvalue())
 check("CLI: `read <pointer> <mac>` returns the body", rc3 == 0 and buf3.getvalue() == SENT)
 
+print("store:")
+_real_write = R.os.write
+def _enospc(fd, data):
+    raise OSError(28, "No space left on device")
+R.os.write = _enospc
+n_before = sum(1 for p in (root / "tier" / "release").rglob("*") if p.is_file())
+try:
+    store.put(frozenset({"career"}), SENT)
+    raised = False
+except OSError:
+    raised = True
+finally:
+    R.os.write = _real_write
+check("a write that fails leaves NO half-body under a pointer (put is all or nothing)",
+      raised and sum(1 for p in (root / "tier" / "release").rglob("*") if p.is_file()) == n_before)
+R.os.write = lambda fd, data: _real_write(fd, bytes(data[:1]))      # the kernel may write SHORT: one byte a call
+try:
+    p1 = store.put(frozenset({"career"}), SENT)
+finally:
+    R.os.write = _real_write
+check("a SHORT write still stores the whole body", store.get(p1, frozenset({"career"})) == SENT)
+R.os.write = _enospc
+try:
+    e = refused(R.ingress, "whatsapp", DM, SENT, KEY.encode(), store)
+finally:
+    R.os.write = _real_write
+check("ingress maps a store OSError to Refused (every caller withholds; a4 #53081)",
+      e is not None and "store could not take the body" in str(e) and SENT not in str(e), repr(e))
+
 print("pairing:")
 # every insert a bridge makes FROM its own channel (an inbound human's text, a poll a human posted, a vote) passes
 # the route it arrived on, so a tier route can never be bypassed by one site; the pulse-witness row (from 'local')
@@ -121,6 +150,11 @@ for f, ch in (("whatsapp.py", "whatsapp"), ("discord.py", "discord"), ("telegram
              and len(n.args) > 2 and isinstance(n.args[2], ast.Constant) and n.args[2].value == ch]
     bare = [n.lineno for n in calls if not any(k.arg == "route" for k in n.keywords)]
     check(f"{f}: all {len(calls)} of its own-channel inserts pass route=", calls and not bare, f"bare at {bare}")
+    tree = ast.parse((REPO / "bridges" / f).read_text())
+    targets = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "route_target"]
+    saids = [n for n in calls if any(k.arg == "said" for k in n.keywords)]
+    check(f"{f}: each route_target'd insert passes said= (a tier route stores the text as typed)",
+          targets and len(saids) == len(targets), f"route_target {len(targets)}, said= {len(saids)}")
 
 try:
     import asyncpg
@@ -199,6 +233,25 @@ async def db_arms():
             check("no release key: WITHHELD, nothing stored", row[4].startswith("[tier-routed message withheld")
                   and files() == n0 and SENT not in blob(), repr(row[4:]))
 
+            cdir = root / "tier" / "release" / "career"
+            n0 = files()
+            cdir.chmod(0o500)                   # the tier store can't take a body (a4 #53081: was a traceback, no row)
+            try:
+                await common.wire_insert(pool, "owner", "whatsapp", "member", "wa:x", "chat", f"u {SENT}", meta,
+                                         route=DM)
+            finally:
+                cdir.chmod(0o700)
+            row = last()
+            check("an UNWRITABLE store: one WITHHELD row (Refused), nothing stored, no content",
+                  row[4] == "[tier-routed message withheld: Refused]" and "ingress_withheld" in (row[5] or {})
+                  and files() == n0 and SENT not in blob(), repr(row[4:]))
+            await common.wire_insert(pool, "owner", "whatsapp", "seed", "wa:202@s.whatsapp.net", "chat", f"hi {SENT}",
+                                     {}, route=DM, said=f"@seed hi {SENT}")
+            ing = (last()[5] or {}).get("ingress", {})
+            body = R.read_for("member", ing.get("pointer"), ing.get("body_mac"), key=KEY.encode(), store=R.TierStore())
+            check("a tier route stores the text AS TYPED (the @mention kept, so the member sees who was addressed)",
+                  body == f"@seed hi {SENT}" and last()[1] == "member", body)
+
             print("today's path:")
             plain_route = {k: v for k, v in DM.items() if k != "tier"}
             m2 = {"sender_jid": "202@s.whatsapp.net", "reply_to_body": "quoted as ever"}
@@ -206,6 +259,10 @@ async def db_arms():
                                      route=plain_route)
             check("an untiered route: today's row (to the @mention, body and meta as given)",
                   last() == ("owner", "seed", "wa:9", "chat", "plain text", m2), repr(last()))
+            await common.wire_insert(pool, "owner", "whatsapp", "seed", "wa:9", "chat", "stripped", m2,
+                                     route=plain_route, said="@seed stripped")
+            check("an untiered route ignores said= (today's row carries the stripped text, as ever)",
+                  last() == ("owner", "seed", "wa:9", "chat", "stripped", m2), repr(last()))
             await common.wire_insert(pool, "owner", "whatsapp", "seed", "wa:9", "chat", "no route", m2)
             check("no route passed: today's row", last() == ("owner", "seed", "wa:9", "chat", "no route", m2),
                   repr(last()))

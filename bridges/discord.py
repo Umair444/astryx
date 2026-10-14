@@ -278,8 +278,9 @@ async def on_message(msg: discord.Message):
         resolved = getattr(ref, "resolved", None)
         rbody = resolved.content if isinstance(resolved, discord.Message) else ""
         meta["reply_to_body"] = (rbody or "").strip() or await resolve_quoted_body(pool, ref.message_id)
+    said = text
     agent, text = await route_target(pool, f"dc:{cid}", text, route["agent"])
-    await wire_insert(pool, who, "discord", agent, f"dc:{cid}", "chat", text, meta, route=route)
+    await wire_insert(pool, who, "discord", agent, f"dc:{cid}", "chat", text, meta, route=route, said=said)
     if route.get("live_steps") and trusted:
         jobs[agent] = {"chat": cid, "ph": None, "sent": ""}
         try:
