@@ -113,9 +113,10 @@ try:
     cfg.write_text(json.dumps({"out": json.dumps([pr(4, "1" * 40)])}))
     prs, why = T.listing(UP)
     arm("listing(): gh answers → the PRs", why is None and prs and prs[0]["number"] == 4, (prs, why))
-    cfg.write_text(json.dumps({"auth_rc": 1}))
+    cfg.write_text(json.dumps({"rc": 4, "err": "To get started with GitHub CLI, please run:  gh auth login"}))
     prs, why = T.listing(UP)
-    arm("listing(): gh logged out → None and `gh auth login`", prs is None and "gh auth login" in why, why)
+    arm("listing(): gh logged out → None and `gh auth login`, in ONE gh call (inside the pulse's 30s)",
+        prs is None and "run `gh auth login` as the pulse's user" in why, why)
     cfg.write_text(json.dumps({"rc": 1, "err": "HTTP 404: Not Found"}))
     prs, why = T.listing(UP)
     arm("listing(): gh errors → None and the error", prs is None and "404" in why, why)

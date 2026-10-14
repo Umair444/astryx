@@ -55,7 +55,7 @@ def out(s, rc=0, err=""):
 if a[:2] == ["auth", "status"]:
     out("", cfg.get("auth_rc", 0), "You are not logged into any GitHub hosts." if cfg.get("auth_rc") else "")
 if a[:2] == ["api", "user"]:
-    out(cfg["login"] + "\n")
+    out("" if cfg.get("user_rc") else cfg["login"] + "\n", cfg.get("user_rc", 0), "HTTP 401" if cfg.get("user_rc") else "")
 if a[:2] == ["pr", "list"]:
     out(json.dumps(cfg.get("prs", [])), cfg.get("list_rc", 0), cfg.get("list_err", ""))
 if a[:2] == ["pr", "comment"]:
@@ -234,6 +234,11 @@ arm("U5 no gh on PATH → exit 77, says to install it and `gh auth login`",
 rc, out, calls = run(r, cfg={"auth_rc": 1})
 arm("U5 gh logged out → exit 77, says `gh auth login`, nothing beyond auth status was called",
     rc == 77 and "gh auth login" in out and [c["argv"][:2] for c in calls] == [["auth", "status"]], (rc, out, calls))
+
+rc, out, calls = run(r, cfg={"user_rc": 1})
+arm("U5 gh can't say who it is → exit 1, named; no fork, push or PR (an empty login would break cap and head)",
+    rc == 1 and "gave no login" in out and not did(calls, "repo", "fork") and not did(calls, "pr", "create"),
+    (rc, out, calls))
 
 # U6 the fork path
 r, host = fixture()

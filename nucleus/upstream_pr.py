@@ -264,7 +264,11 @@ def main(argv=None) -> int:
         return EXIT_REFUSED
 
     body = make_body(symptom, cause, remedy, proof, version(repo), platform_line(), setting("ASTRYX_ORG", "", repo))
-    hits = privacy(repo, sha, body)
+    try:
+        hits = privacy(repo, sha, body)
+    except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
+        print(f"upstream_pr: the privacy gate could not run, so nothing is sent: {e}")
+        return 1
     if hits:
         print("upstream_pr: REFUSED by the privacy gate:\n" + "\n".join(hits))
         return EXIT_REFUSED
@@ -281,7 +285,10 @@ def main(argv=None) -> int:
     up = upstream(repo)
     bodyf = Path(tempfile.mkdtemp(prefix="astryx-upstream-body-")) / "body.md"
     try:
-        login = gh(["api", "user", "--jq", ".login"], repo).stdout.strip()
+        r = gh(["api", "user", "--jq", ".login"], repo)
+        login = r.stdout.strip() if r.returncode == 0 else ""
+        if not login:                                      # no login: no cap, no fork name, no head. Stop.
+            raise RuntimeError(f"`gh api user` gave no login: {(r.stderr or r.stdout).strip()[:300]}")
         prs = _json(gh(["pr", "list", "--repo", up, "--state", "open", "--limit", "200",
                         "--json", "number,title,body,url,author"], repo), "gh pr list") or []
         dup = find_dup(prs, a.title, cause)

@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -42,17 +44,19 @@ def triager() -> str:
 
 
 def listing(up: str) -> tuple[list[dict] | None, str | None]:
-    """(open PRs, None) or (None, why it can't see them)."""
-    why = U.gh_problem(REPO)
-    if why:
-        return None, why
+    """(open PRs, None) or (None, why it can't see them). ONE gh call, well inside the pulse's 30s kill: a logged-out
+    gh says so in pr list's own stderr, so no separate `gh auth status` round-trip."""
+    if not shutil.which("gh"):
+        return None, "gh (GitHub CLI) is not installed: install it (https://cli.github.com), then run `gh auth login`"
     try:
         r = subprocess.run(["gh", "pr", "list", "--repo", up, "--state", "open", "--limit", "100", "--json", FIELDS],
                            capture_output=True, text=True, cwd=REPO, env=U._env(REPO), timeout=20)
     except Exception as e:                                 # noqa: BLE001
         return None, f"`gh pr list --repo {up}` could not run: {e}"
     if r.returncode != 0:
-        return None, f"`gh pr list --repo {up}` failed: {(r.stderr or r.stdout).strip()[:200]}"
+        err = (r.stderr or r.stdout).strip()
+        hint = " — run `gh auth login` as the pulse's user" if re.search(r"auth login|not logged|GH_TOKEN", err) else ""
+        return None, f"`gh pr list --repo {up}` failed: {err[:200]}{hint}"
     try:
         return list(json.loads(r.stdout or "[]")), None
     except ValueError as e:
