@@ -3,7 +3,7 @@
 CODE is where this package's code lives. HOME is the org's data root (.env, local.md, homes/, var/ ...),
 resolved in this order, first hit wins:
 
-  1. env       ASTRYX_HOME
+  1. env       ASTRYX_HOME, unless this code is a DIFFERENT checkout (then the env names a foreign org: skip it)
   2. marker    a `.astryx` FILE, walking up from cwd, but never past the first directory holding `.git`
   3. checkout  CODE is a git checkout (an editable / dev install): its root
   4. default   ~/.astryx
@@ -14,6 +14,12 @@ is its own org unless it says otherwise, so a nested worktree falls through to t
 a home above it. `.astryx` must be a file: the default HOME is itself a directory named ~/.astryx, and a walk up
 from ~ must not mistake it for a marker. In a dev checkout HOME == the checkout, so nothing changes for the org
 that runs from one.
+
+Rung 1 is not unconditional (a2 #52637, plan-10224 BC-A): the generated units and every resident shell carry the LIVE
+ASTRYX_HOME, so a worktree run from such a shell would otherwise resolve to the live org, which is the leak a worktree
+with the live .env linked showed on 10-14 (it ran live trigger bodies). A wheel install has no checkout, and there the
+env is the only authority; a checkout honours it only when it names that checkout itself. So an operator running
+`astryx <verb>` from a worktree acts on the worktree; the live org is `cd` into it.
 """
 from __future__ import annotations
 
@@ -53,12 +59,14 @@ def resolve_home(env: dict | None = None, cwd: Path | None = None, package: Path
                  user_home: Path | None = None) -> tuple[Path, str]:
     """(HOME, which rung found it). Every input is injectable so each rung is testable."""
     env = os.environ if env is None else env
+    root = checkout_root(package)
     if env.get("ASTRYX_HOME"):
-        return Path(env["ASTRYX_HOME"]).expanduser().resolve(), "env"
+        h = Path(env["ASTRYX_HOME"]).expanduser().resolve()
+        if root is None or root.resolve() == h:
+            return h, "env"
     m = find_marker(cwd)
     if m is not None:
         return m, "marker"
-    root = checkout_root(package)
     if root is not None:
         return root, "checkout"
     return (Path(user_home) if user_home else Path.home()) / ".astryx", "default"
