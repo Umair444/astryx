@@ -199,4 +199,32 @@ out=$(PATH="$T/bare:$GITDIR" HOME="$T/h3" ASTRYX_PROC_VERSION="$T/pv" ASTRYX_OS_
 arm   "(D6) ~/astryx exists but isn't a clone → stops, touches nothing" "$( [ "$rc" != 0 ] && echo stopped)" stopped
 has   "(D6) and says so" "$out" "exists and isn't a git clone"
 
+# D10: every missing prerequisite blocks the handover by default; only pipx is optional, and a docker-daemon line
+#      waits for the relogin pause instead (a2 #51934 N1b: a denylist let tmux / the compose plugin / Homebrew through)
+mb() { ASTRYX_INSTALL_SOURCE_ONLY=1 bash -c '. ./install.sh; MISSING=("$@"); RELOGIN=${RL:-0}; missing_blocks' _ "$@"; echo $?; }
+arm "(D10) a missing tmux blocks"                          "$(mb 'tmux: sudo apt-get install -y tmux')" 0
+arm "(D10) the docker compose plugin blocks"               "$(mb 'docker compose plugin: https://x')" 0
+arm "(D10) a prerequisite nobody listed yet blocks"        "$(mb 'frobnicator: install it')" 0
+arm "(D10) pipx alone does not block"                      "$(mb 'pipx: python -m pip install --user pipx')" 1
+arm "(D10) the docker daemon blocks without a relogin"     "$(mb 'docker daemon reachable without sudo')" 0
+arm "(D10) ...but not while the relogin pause is pending"  "$(RL=1 mb 'docker daemon reachable without sudo')" 1
+arm "(D10) nothing missing → no block"                     "$(mb)" 1
+
+# D11: a blocking MISSING really STOPS a real (non-dry) run before init (N1a: `exit 1` → `:` survived)
+out=$(ASTRYX_INSTALL_SOURCE_ONLY=1 bash -c '
+  . ./install.sh
+  detect_platform() { OS=linux WSL=no DISTRO=ubuntu PKG=apt; }
+  need_simple() { :; }; check_python() { :; }; check_pipx() { :; }; check_node() { :; }; check_docker() { :; }
+  check_claude() { MISSING+=("claude: install it"); }
+  install_astryx() { :; }; run_init() { echo INIT-RAN; }
+  main' 2>&1); rc=$?
+arm   "(D11) a blocking prerequisite stops a real run (rc != 0)" "$( [ "$rc" != 0 ] && echo stopped)" stopped
+hasnt "(D11) ...before init runs" "$out" "INIT-RAN"
+has   "(D11) ...and says to re-run the same line" "$out" "run the same install line again"
+
+# D12: the WhatsApp setup hint never expands a secret into printed output (a2 #51934: keep the run-time read)
+blk=$(sed -n '/^if \[ "${1:-}" = "whatsapp" \]/,/^fi/p' init.sh)
+leak=$(printf '%s\n' "$blk" | command grep -nE '^\s*(say|echo|printf)\b' | command grep -E '\$\{?[A-Z_]*SECRET' || true)
+arm   "(D12) no say/echo in the whatsapp block expands a \$..SECRET variable" "$leak" ""
+
 [ "$fails" = 0 ] && echo PASS || { echo "FAIL ($fails)"; exit 1; }

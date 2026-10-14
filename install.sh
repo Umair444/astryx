@@ -328,6 +328,20 @@ run_init() {
   fi
 }
 
+# Does anything in MISSING stop the handover to init? Every missing prerequisite blocks by DEFAULT (a2 #51934: a
+# denylist let the next prerequisite added slip through); only the listed ones are optional. 0 = blocks.
+missing_blocks() {
+  local m
+  for m in "${MISSING[@]}"; do
+    case "$m" in
+      pipx:*) ;;                                                  # setup works without the CLI's installer
+      "docker daemon"*) [ "$RELOGIN" = 1 ] || return 0 ;;         # just joined the docker group: the relogin pause says what to do
+      *) return 0 ;;
+    esac
+  done
+  return 1
+}
+
 usage() {   # inline, not read from $0: under `curl | bash`, $0 is "bash" (a2 N2)
   cat <<'EOF'
 astryx install: the one-line bootstrap for Linux, macOS and WSL2.
@@ -397,10 +411,9 @@ EOF
 
   if [ "${#MISSING[@]}" -gt 0 ]; then
     say "still to do:"
-    local m blocking=0; for m in "${MISSING[@]}"; do warn "$m"
-      case "$m" in python*|docker:*|"docker daemon"*|claude:*|node*) blocking=1 ;; esac; done
+    local m; for m in "${MISSING[@]}"; do warn "$m"; done
     # setup can't succeed without these, and fails later with a less clear error (a2 N1): stop here instead
-    if [ "$blocking" = 1 ] && [ "$DO_INIT" = 1 ] && [ "$DRY" = 0 ]; then
+    if missing_blocks && [ "$DO_INIT" = 1 ] && [ "$DRY" = 0 ]; then
       say "fix the lines above, then run the same install line again. It skips what's done and carries on."
       exit 1
     fi
@@ -411,4 +424,4 @@ EOF
   say "done. 'astryx doctor' (or ./init.sh doctor) checks everything any time."
 }
 
-main "$@"
+[ -n "${ASTRYX_INSTALL_SOURCE_ONLY:-}" ] || main "$@"   # tests source the functions without running
