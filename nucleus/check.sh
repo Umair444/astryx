@@ -575,6 +575,7 @@ run "trigger tombstone: trigger_rm retires a python trigger for good, per agent 
 run "trigger names: the pulse's registration model (closure, blind → defer, retired per target, legacy, parity)" "$PY" tests/test_trigger_names.py
 run "agent heal: a dead resident body is respawned, a DEAF idle one restarted (busy never cut), live ones never touched, crash loops stop, a blind tmux or db acts on nothing" "$PY" tests/test_agent_heal.py
 run "agent heal arm two: its pending-rows SQL in a fixture" "$PY" tests/test_agent_heal_sql.py
+run "launch flags: a body missing the channel flag or its charter's permission mode is named" "$PY" tests/test_launch_flags.py
 run "init.sh trigger installs: by NAME through the helper, never over a retirement or a legacy row; --reinstall; census" "$PY" tests/test_init_trigger_names.py
 
 run "A2A card canonicalisation (JCS)" "$PY" tests/test_card_canon.py
