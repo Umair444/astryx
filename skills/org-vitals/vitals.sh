@@ -44,14 +44,19 @@ hr "continuity — any >6h hole in agent steps, and WHY (read this before judgin
 # The window's first step is lagged against the last step BEFORE the window, so a gap that began
 # before the window opened (an org dark >14d, just back) is still named, not hidden by a NULL lag.
 # A steps hole has TWO causes, and they mean opposite things (steward #34886). It is classified by
-# the longest MESSAGE silence inside it. The pulse writes a message at least every 4h while it runs
-# (60d max quiet-but-up silence: 4.0h), so:
+# the longest silence of the PULSE'S OWN rows inside it (from_agent='pulse'). The pulse writes one at
+# least every 4h while it runs (60d to 10-14, pulse rows only: max quiet-but-up 4.0h; every outage
+# >=29h), so:
 #   >6h silent  -> HOST/PULSE DARK: benign for the reds below.
 #   <=6h silent -> PULSE UP, NO AGENT TURNED: a wedge or a quota shed. That is a FINDING.
 # Not "any message inside": the pulse boots before the agents, so a real outage holds messages
-# at its tail (09-30→10-09: 29 msgs, 210.2h silent).
+# at its tail (09-30→10-09: 29 msgs, 210.2h silent). And not ANY sender's silence: 10-12→10-14 the
+# pulse timer was STOPPED 48.7h, but pulse-witness wrote its "pulse looks DOWN" alarm every 3h
+# (plus bridge inbound), so an any-message silence read 3.0h and named the dark org "PULSE UP" —
+# the alarm about the outage hid the outage (medic 10-14; the same defect steward #50711 cuts in
+# stale_goals).
 _gap="$(q "WITH g AS (SELECT prev, ts FROM (SELECT ts, coalesce(lag(ts) OVER (ORDER BY ts), (SELECT max(ts) FROM steps WHERE ts <= now()-interval '${VITALS_DARK_DAYS:-14} days')) prev FROM steps WHERE ts > now()-interval '${VITALS_DARK_DAYS:-14} days') s WHERE ts-prev > interval '6 hours' ORDER BY ts DESC LIMIT 3),
- c AS (SELECT g.prev, g.ts, (SELECT max(t-pt) FROM (SELECT t, lag(t) OVER (ORDER BY t) pt FROM (SELECT g.prev t UNION ALL SELECT m.ts FROM messages m WHERE m.ts > g.prev AND m.ts < g.ts UNION ALL SELECT g.ts) x) y) sil FROM g)
+ c AS (SELECT g.prev, g.ts, (SELECT max(t-pt) FROM (SELECT t, lag(t) OVER (ORDER BY t) pt FROM (SELECT g.prev t UNION ALL SELECT m.ts FROM messages m WHERE m.from_agent = 'pulse' AND m.ts > g.prev AND m.ts < g.ts UNION ALL SELECT g.ts) x) y) sil FROM g)
  SELECT CASE WHEN sil > interval '6 hours' THEN 'HOST/PULSE DARK          ' ELSE 'PULSE UP, NO AGENT TURNED' END||'  '||to_char(prev AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI\"Z\"')||' → '||to_char(ts AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI\"Z\"')||'  no steps '||round(EXTRACT(EPOCH FROM ts-prev)/3600.0,1)||'h, longest message silence '||round(EXTRACT(EPOCH FROM sil)/3600.0,1)||'h  (resumed '||round(EXTRACT(EPOCH FROM now()-ts)/3600.0,1)||'h ago)' FROM c ORDER BY ts DESC")"
 if [ -n "$_gap" ]; then
   printf '%s\n' "$_gap"
