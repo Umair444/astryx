@@ -39,7 +39,7 @@ arm("a healthy org: nothing spawned, nothing said", H.tick(st, 0, **w.kw()) is N
 
 w = World(["a", "b", "c"], {"a", "c"})
 msg = H.tick({}, 0, **w.kw())
-arm("a dead body is respawned, and said", w.spawned == ["b"] and "respawned 1" in msg and "b" in msg, (w.spawned, msg))
+arm("a dead body is respawned, and said", w.spawned == ["b"] and "spawn launched for 1" in msg and "b" in msg, (w.spawned, msg))
 
 w = World(["a", "b", "c"], {"a", "c"})
 w.live.discard("b")
@@ -244,6 +244,26 @@ finally:
         setattr(H, k, v)
 arm("agent_heal(ctx) wires arm two in (a deaf idle body is restarted through the trigger itself)",
     "restarted 1 DEAF" in m, m)
+
+import signal, tempfile, time  # noqa: E402
+with tempfile.TemporaryDirectory() as d:     # the REAL spawn(): a slow spawn.sh must not hold the tick (pulse kills at 30s)
+    stub, mark = Path(d) / "spawn.sh", Path(d) / "pid"
+    stub.write_text(f"#!/bin/sh\necho $$ > {mark}\nsleep 20\n")
+    stub.chmod(0o755)
+    t0 = time.time()
+    ok, why = H.spawn("zz-heal-test", script=stub)
+    took = time.time() - t0
+    for _ in range(50):
+        if mark.exists() and mark.read_text().strip():
+            break
+        time.sleep(0.1)
+    pid = int(mark.read_text()) if mark.exists() and mark.read_text().strip() else None
+    alive = pid is not None and Path(f"/proc/{pid}").exists()
+    if alive:
+        os.kill(pid, signal.SIGKILL)
+    (H.REPO / "var" / "agent_heal" / "zz-heal-test.spawn.log").unlink(missing_ok=True)
+arm("the real spawn() returns at once while spawn.sh keeps running (a tick never waits out a boot)",
+    ok and took < 2 and alive and why.endswith("zz-heal-test.spawn.log"), (ok, round(took, 2), alive, why))
 
 print("ALL PASS" if not fails else f"FAIL ({fails})")
 sys.exit(1 if fails else 0)

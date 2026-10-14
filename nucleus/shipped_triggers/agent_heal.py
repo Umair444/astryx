@@ -45,7 +45,6 @@ REPO = Path(__file__).resolve().parents[2]
 HEAL_PER_TICK = 4
 CRASH_MAX = 3
 CRASH_WINDOW_S = 1800
-SPAWN_TIMEOUT_S = 90
 DEAF_PENDING_S = 300        # rows to it pending this long, with no ear, is deaf (a brief MCP restart doesn't age them)
 DEAF_GRACE_S = 300          # a body this young is still bringing its ear up
 IDLE_TAIL = 12              # the pane's last non-blank lines that decide IDLE
@@ -85,14 +84,19 @@ def bodies() -> set[str] | None:
     return {s[3:] for s in r.stdout.split() if s.startswith("ax-")}
 
 
-def spawn(name: str) -> tuple[bool, str]:
+def spawn(name: str, script: Path | None = None) -> tuple[bool, str]:
+    """LAUNCH spawn.sh detached and return at once: a boot waits up to a minute on its dialogs, and pulse kills any check
+    past 30s, taking this tick's crash-loop count with it (10-14: 4 spawns a tick timed out every tick). A launch that
+    dies leaves no body; the next tick sees that and the crash-loop guard counts it. Its output is in the log named."""
+    log = REPO / "var" / "agent_heal" / f"{name}.spawn.log"
     try:
-        r = subprocess.run([str(REPO / "nucleus" / "spawn.sh"), name], cwd=REPO, capture_output=True, text=True,
-                           timeout=SPAWN_TIMEOUT_S)
-    except subprocess.TimeoutExpired:
-        return False, f"spawn.sh timed out after {SPAWN_TIMEOUT_S}s"
-    last = ((r.stdout or "") + (r.stderr or "")).strip().splitlines()[-1:] or [""]
-    return r.returncode == 0 and "refusing" not in last[0].lower(), last[0][:160]
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with open(log, "wb") as f:
+            subprocess.Popen([str(script or REPO / "nucleus" / "spawn.sh"), name], cwd=REPO, stdin=subprocess.DEVNULL,
+                             stdout=f, stderr=subprocess.STDOUT, start_new_session=True)
+    except OSError as e:
+        return False, f"spawn.sh could not start: {e}"[:160]
+    return True, str(log.relative_to(REPO))
 
 
 def heal(state: dict, now: float | None = None, want=None, have=None, do=None) -> dict:
@@ -281,7 +285,8 @@ def tick(state: dict, now: float | None = None, deaf_kw: dict | None = None, **k
         d = {"restarted": [], "failed": [], "busy": [], "verified": []}
     parts = []
     if r["healed"]:
-        parts.append(f"respawned {len(r['healed'])} resident(s) whose body had died: {', '.join(r['healed'])}")
+        parts.append(f"spawn launched for {len(r['healed'])} resident(s) whose body had died: {', '.join(r['healed'])} "
+                     "(a launch that fails shows as dark next tick; output in var/agent_heal/<name>.spawn.log)")
     if r["failed"]:
         parts.append(f"could NOT respawn: {'; '.join(r['failed'])}")
     if d["restarted"]:
