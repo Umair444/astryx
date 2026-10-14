@@ -843,6 +843,11 @@ run "release: personal-tier content reaches only an audience within its readers"
 # plan-9139 S1b (python seats): the label comes from the charter and a malformed grant refuses; a labelled
 # AUTO-DELIVER and send go through the door (stamped pointer rows, no body); every refusal writes no row.
 run "release seats: a labelled member writes only through the door" "$PY" tests/test_release_seats.py
+# plan-9139 S1b-2 (node seats): the REAL channel server, staged in a fixture home whose door is a copy (its REPO is
+# proved to be the fixture first), on a throwaway DB. A malformed grant or no charter refuses the start; a labelled
+# send goes through the door (no content on the wire, nothing written on a refusal); a labelled permission request is
+# denied, never relayed; the unlabelled control is today's row. Mutants: tests/mutants_release_server.py.
+run "release server: a labelled member's channel seats go through the door" "$PY" tests/test_release_server.py
 if "$PY" -c 'import av' 2>/dev/null; then
   run "media in-process decode"        "$PY" src/astryx/core/media_probe.py
 else

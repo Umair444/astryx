@@ -34,6 +34,20 @@ const AGENT = JOIN.agent
 if (!AGENT) { console.error('ASTRYX_AGENT env required'); process.exit(1) }
 const DSN = dsn()                  // ASTRYX_DSN from the env, else <ASTRYX_HOME>/.env (home.mjs; default home = ..)
 const SOURCE = JOIN.mode === 'joined' ? 'plugin:astryx:astryx' : 'astryx'   // the <channel source=…> Claude Code renders
+// plan-9139 S1b-2: the label this session carries, read ONCE from the identity (release.py label_of: the charter's
+// Grants line), never from anything the agent says. A malformed private grant, a missing charter or an unrunnable
+// door REFUSES the start (a4 #46035): a member meant to be private must never run as org on a typo. [] = org, and
+// an org session's every path below is the one this file always had.
+const { readLabel, releaseSend } = await import('./release.mjs')
+let LABEL
+try {
+  LABEL = await readLabel(AGENT)
+} catch (e) {
+  console.error(`[channel] refusing to start "${AGENT}": its tier label could not be read (${e.message})`)
+  process.exit(1)
+}
+const LABELLED = LABEL.length > 0
+const seenThreads = new Set()       // threads delivered to this session: a labelled reply may keep only one of these
 
 // ---- who is INTERNAL, decided by something a stranger cannot author ----------------
 // `from_org === 'local'` used to answer this. But `local` is a plain string in a column a
@@ -227,6 +241,18 @@ async function handleTool(name, a) {
       const { embedProblems } = await import('./embeds.mjs')
       const bad = embedProblems(a.body, { sender: AGENT })   // the sender is this session's identity, never the body
       if (bad.length) return `send REFUSED, nothing sent: ${bad.join('; ')}`
+    }
+    // A LABELLED member never INSERTs: the door writes the row (owner → a release marker + stamp; an agent → a
+    // body-withheld, derived-thread row; anything else, a federation address included → refused, no row).
+    if (LABELLED) {
+      const inbound = a.thread && seenThreads.has(a.thread) ? a.thread : null
+      try {
+        const id = await releaseSend(AGENT, { to: a.to, thread: a.thread ?? null, intent: a.intent ?? null,
+          body: String(a.body ?? ''), inbound_thread: inbound })
+        return `released through the tier door · msg ${id} (${LABEL.join('+')}; the wire row carries no content)`
+      } catch (e) {
+        return `send REFUSED, nothing sent: ${e.message}`
+      }
     }
     const thread = a.thread || `t-${Date.now().toString(36)}`
     const ins = await pool.query(
@@ -431,6 +457,17 @@ function permitSurfaces() {
 const PERMIT_SURFACES = permitSurfaces()
 
 mcp.setNotificationHandler(PermissionRequestSchema, async ({ params: p }) => {
+  // A LABELLED member's request is DENIED here, never relayed: its tool-call text is tier content, and the relay
+  // writes it onto owner-bound wire rows (plan-9139 #46033 seat 5, a4 #46035: fail closed beats a second stamped path).
+  if (LABELLED) {
+    await mcp.notification({
+      method: 'notifications/claude/channel/permission',
+      params: { request_id: p.request_id, behavior: 'deny' },
+    })
+    console.error(`[channel] permission request ${p.request_id} DENIED: "${AGENT}" is tier-labelled, so its ` +
+      `tool calls are never relayed to the wire (plan-9139)`)
+    return
+  }
   openPermits.add(p.request_id)
   const preview = p.input_preview.length > 700
     ? p.input_preview.slice(0, 350) + ' … ' + p.input_preview.slice(-350) : p.input_preview
@@ -495,6 +532,7 @@ async function pushMessage(row) {
   // timestamp and the reason, and decides for itself whether the wake is still worth
   // acting on. A heuristic that guessed staleness here would be guessing about a
   // judgement the reader can make with the facts.
+  if (row.thread) seenThreads.add(row.thread)    // the threads a labelled reply may keep (release.agent_send)
   const again = Number(row.delivery?.recovered || 0)
   const content = again
     ? `[redelivered wake · sent ${new Date(row.ts).toISOString()} · the session it was ` +
