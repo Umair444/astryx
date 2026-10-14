@@ -471,6 +471,7 @@ run "bridges: a [[file:]] embed is read only from the SENDER's roots (home, scra
 run "bridges: every real [[file:]] ever sent to a human, through the root rule (933 /tmp + 19814 tier/-to-group + 2 home dot-path embeds refused)" "$PY" tests/test_embed_root.py --census
 run "observatory pilot: one action catalog, matrix-gated executor, handler parity (plan-9000 S1)" "$PY" tests/test_pilot_s1.py
 run "observatory pilot: the owner-tap confirm under trusted input in chromium (plan-9000 S1 arms i-v)" node tests/pilot_browser_test.mjs
+run "concurrent browser gates: two pilots and two voice orbs 1 s apart, a squatter on the old ports, each gate's own vite cache (plan-10108)" "$PY" tests/test_gate_concurrency.py
 run "observatory pilot: what leaves for the realtime provider is the allowlisted projection only (plan-9000 S2, C1)" node tests/pilot_egress_test.ts observatory/pilot/catalog.json
 run "observatory pilot voice: owner-only routes, one ledger and one cap across canvas and the observatory (plan-9000 S2, C4)" "$PY" tests/test_pilot_voice_server.py
 run "deploy build: a failed build or restart stops the deploy, the build runs as the caller, the banner prints no key" bash tests/test_deploy_build.sh

@@ -19,7 +19,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
+// PILOT_REPO: tests/test_gate_concurrency.py runs a MUTANT copy of this file from a temp dir (its seam)
+const REPO = process.env.PILOT_REPO || join(dirname(fileURLToPath(import.meta.url)), '..')
 const CHROME = ['/usr/bin/chromium', '/usr/bin/google-chrome-stable', '/usr/bin/chromium-browser'].find(existsSync)
 const WEB = join(REPO, 'observatory/web')
 const envPath = join(REPO, '.env')
