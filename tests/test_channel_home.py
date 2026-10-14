@@ -167,7 +167,7 @@ try:
         py = home / "venv" / "bin" / "python"
         py.write_text(f"#!/bin/sh\necho \"$@\" > '{probe}'\nexit 0\n")    # the stub python: proves WHICH python ran
         py.chmod(0o755)
-        (home / "src" / "astryx" / "core" / "address.py").write_text("# stub: the stub python above records that it was asked\n")
+        (home / "nucleus" / "address.py").write_text("# stub: the stub python above records that it was asked\n")
         arm("layout: the staged channel dir has no .env beside it", not (stage / ".env").exists())
 
         # ── 1. ASTRYX_HOME: DSN from <home>/.env, python and nucleus/ from <home> ──
@@ -182,8 +182,8 @@ try:
             'Org messages arrive as <channel source="astryx" from=' in instr, instr[:200])
         r = s.call("tools/call", {"name": "send", "arguments": {"to": "someone", "body": "hello from elsewhere"}})
         text = json.dumps(r or {})
-        arm("ASTRYX_HOME: send consulted <home>/venv/bin/python <home>/src/astryx/core/address.py",
-            probe.exists() and str(home / "src" / "astryx" / "core" / "address.py") in probe.read_text(), text[-300:])
+        arm("ASTRYX_HOME: send consulted <home>/venv/bin/python <home>/nucleus/address.py (channel/ reaches it through the stub, by design)",
+            probe.exists() and str(home / "nucleus" / "address.py") in probe.read_text(), text[-300:])
         with psycopg.connect(fx["dsn"], autocommit=True) as db:
             row = db.execute("SELECT from_agent, to_agent, body FROM messages WHERE from_agent='homeprobe' "
                              "ORDER BY id DESC LIMIT 1").fetchone()

@@ -31,10 +31,9 @@ Install:
   printf 'from astryx.pulse.shipped_triggers.agent_heal import agent_heal  # noqa: F401\\n' > triggers/seed/agent_heal.py
 """
 from __future__ import annotations
-if not __package__:  # run by path: the checkout root goes first on sys.path so `astryx` resolves (goal 10224 S4)
-    import sys as _sys, os as _os
-    _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__)))))))
-from astryx.paths import repo_root  # noqa: E402
+# imported as a module only (a trigger shim imports it), never run by path, so no sys.path preamble: an import
+# inside a top-level conditional makes the trigger_names static reader defer every lookup (reorg 10-14)
+from astryx.paths import repo_root
 
 import os
 import re

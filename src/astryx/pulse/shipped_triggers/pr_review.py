@@ -14,10 +14,9 @@ it is merged or closed; dedup is on the SET of open items, so a new PR joining r
 even if an old one was already nagging; recovery (list empty) re-arms.
 """
 from __future__ import annotations
-if not __package__:  # run by path: the checkout root goes first on sys.path so `astryx` resolves (goal 10224 S4)
-    import sys as _sys, os as _os
-    _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__)))))))
-from astryx.paths import repo_root  # noqa: E402
+# imported as a module only (a trigger shim imports it), never run by path, so no sys.path preamble: an import
+# inside a top-level conditional makes the trigger_names static reader defer every lookup (reorg 10-14)
+from astryx.paths import repo_root
 
 import json
 import subprocess
