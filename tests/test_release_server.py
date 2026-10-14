@@ -8,8 +8,10 @@ key and tier/ (repo_root follows realpath), so arm H0 proves the door's REPO is 
 The database is a throwaway created for this run and dropped after it; the org's own database is never written.
 
   H0  the staged door's REPO is the fixture home
-  L   a malformed private grant (each of a4 #46035's spellings) and a missing charter REFUSE the server's start,
-      named, and it never LISTENs; an exact grant starts labelled; an unlabelled charter starts as today
+  L   a malformed private grant (each of a4 #46035's spellings) REFUSES the server's start, named; an identity with
+      no charter starts UNKNOWN (its ear works, its sends and permission requests are refused); an exact grant starts
+      labelled; an unlabelled charter starts as today
+  D   a door that can't run: an org charter starts UNKNOWN, and its send is refused with no row
   S   a labelled send: to the owner → one row whose body is a size marker, the sentinel nowhere in messages, a stamp
       that open_stamped() resolves to the body; to an agent → body withheld, thread derived, intent clamped, and a
       reply on a thread delivered to this session keeps it; to a person's address or a federation address → refused,
@@ -246,8 +248,8 @@ try:
               f"rc={b.p.poll()} stderr={err[-300:]!r}")
         (home / "agents" / f"bad{i}.md").unlink()
     gerr = ghost.err.read_text(errors="replace")
-    check("no charter for the identity: REFUSES (UNKNOWN is private, never org)",
-          ghost.p.poll() not in (0, None) and "no charter resolves for 'ghost'" in gerr, gerr[-300:])
+    check("no charter for the identity: the body STARTS (its ear works) but says it is UNKNOWN",
+          ghost.p.poll() is None and "no readable tier label (UNKNOWN)" in gerr, gerr[-300:])
     member = Body("member")
     check("an exact grant starts (and LISTENs)", wait_for(lambda: member.listening(1), 25),
           member.err.read_text(errors="replace")[-400:])
@@ -302,6 +304,15 @@ try:
         reply = member.send(to=to, body=f"y {SENT}")
         check(f"to {to!r}: REFUSED by the door's allowlist, and NO row", "REFUSED" in reply and nrows() == before
               and "goes only to an AGENT" in reply, reply)
+    before = nrows()
+    reply = ghost.send(to="peer", body=f"g {SENT}")
+    check("UNKNOWN: a send is REFUSED by the door, named, and NO row (never today's raw path)",
+          "REFUSED" in reply and "no charter resolves for 'ghost'" in reply and nrows() == before, reply)
+    ghost.permission("klmno")
+    check("UNKNOWN: a permission request is DENIED, never relayed",
+          wait_for(lambda: any(m.get("method") == "notifications/claude/channel/permission"
+                               and m["params"] == {"request_id": "klmno", "behavior": "deny"}
+                               for m in ghost.lines()), 15))
     write_env(False)
     before = nrows()
     reply = member.send(to="owner", body=f"z {SENT}")
@@ -322,6 +333,22 @@ try:
     plain.permission("fghij")
     check("the unlabelled control's request is relayed as today (an owner row)", wait_for(lambda: db.execute(
         "SELECT count(*) FROM messages WHERE intent='permission' AND from_agent='plain'").fetchone()[0] >= 1, 15))
+
+    print("D. a door that can't run:")
+    door = home / "src" / "astryx" / "security" / "release.py"
+    door.rename(door.with_suffix(".away"))
+    (home / "agents" / "plain2.md").write_text("# plain2\nGrants: gmail\n")
+    try:
+        p2 = Body("plain2")
+        check("an org charter whose door can't run starts UNKNOWN, never as org", wait_for(lambda: p2.p.poll() is None
+              and "no readable tier label (UNKNOWN)" in p2.err.read_text(errors="replace"), 15),
+              p2.err.read_text(errors="replace")[-300:])
+        before = nrows()
+        reply = p2.send(to="peer", body="no door")
+        check("…and its send is REFUSED (the door could not run), NO row", "REFUSED" in reply
+              and "could not run" in reply and nrows() == before, reply)
+    finally:
+        door.with_suffix(".away").rename(door)
 
     print("U. the unlabelled control:")
     before = nrows()

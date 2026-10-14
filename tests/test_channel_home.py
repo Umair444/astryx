@@ -165,7 +165,10 @@ try:
         (home / ".env").write_text(f"ASTRYX_DSN={NODE_DSN}\n")
         probe = tmp / "address-called"
         py = home / "venv" / "bin" / "python"
-        py.write_text(f"#!/bin/sh\necho \"$@\" > '{probe}'\nexit 0\n")    # the stub python: proves WHICH python ran
+        # the stub python: proves WHICH python ran. It answers the tier door's `label` call as an org identity ([]), the
+        # one answer under which send keeps today's path (plan-9139 S1b-2: an unanswered label is UNKNOWN, sends refused)
+        py.write_text(f"#!/bin/sh\ncase \"$1\" in *release.py) echo '[]'; exit 0;; esac\n"
+                      f"echo \"$@\" > '{probe}'\nexit 0\n")
         py.chmod(0o755)
         (home / "nucleus" / "address.py").write_text("# stub: the stub python above records that it was asked\n")
         arm("layout: the staged channel dir has no .env beside it", not (stage / ".env").exists())

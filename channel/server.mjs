@@ -35,9 +35,10 @@ if (!AGENT) { console.error('ASTRYX_AGENT env required'); process.exit(1) }
 const DSN = dsn()                  // ASTRYX_DSN from the env, else <ASTRYX_HOME>/.env (home.mjs; default home = ..)
 const SOURCE = JOIN.mode === 'joined' ? 'plugin:astryx:astryx' : 'astryx'   // the <channel source=…> Claude Code renders
 // plan-9139 S1b-2: the label this session carries, read ONCE from the identity (release.py label_of: the charter's
-// Grants line), never from anything the agent says. A malformed private grant, a missing charter or an unrunnable
-// door REFUSES the start (a4 #46035): a member meant to be private must never run as org on a typo. [] = org, and
-// an org session's every path below is the one this file always had.
+// Grants line), never from anything the agent says. A MALFORMED private grant refuses the start (a4 #46035): a member
+// meant to be private must never run as org on a typo. No charter, or a door that can't run, is UNKNOWN (null): the
+// body starts and its ear works, but every send goes to the door, which refuses it; nothing reaches the raw INSERT.
+// Only [] (org) keeps the paths this file always had.
 const { readLabel, releaseSend } = await import('./release.mjs')
 let LABEL
 try {
@@ -46,7 +47,9 @@ try {
   console.error(`[channel] refusing to start "${AGENT}": its tier label could not be read (${e.message})`)
   process.exit(1)
 }
-const LABELLED = LABEL.length > 0
+const LABELLED = LABEL === null || LABEL.length > 0
+if (LABEL === null) console.error(`[channel] "${AGENT}" has no readable tier label (UNKNOWN): its ear runs, and every ` +
+  `send is refused until a charter resolves for it (plan-9139)`)
 const seenThreads = new Set()       // threads delivered to this session: a labelled reply may keep only one of these
 
 // ---- who is INTERNAL, decided by something a stranger cannot author ----------------
@@ -249,7 +252,7 @@ async function handleTool(name, a) {
       try {
         const id = await releaseSend(AGENT, { to: a.to, thread: a.thread ?? null, intent: a.intent ?? null,
           body: String(a.body ?? ''), inbound_thread: inbound })
-        return `released through the tier door · msg ${id} (${LABEL.join('+')}; the wire row carries no content)`
+        return `released through the tier door · msg ${id} (${(LABEL || ['unknown']).join('+')}; the wire row carries no content)`
       } catch (e) {
         return `send REFUSED, nothing sent: ${e.message}`
       }

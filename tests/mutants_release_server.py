@@ -14,10 +14,13 @@ ORACLE = REPO / "tests" / "test_release_server.py"
 ENV = "CHANNEL_SERVER_SRC"
 
 MUTANTS = {
-    "R1 an unreadable label falls back to org instead of refusing the start":
+    "R1 a malformed grant falls back to org instead of refusing the start":
         ('  console.error(`[channel] refusing to start "${AGENT}": its tier label could not be read (${e.message})`)\n'
          '  process.exit(1)\n',
          "  LABEL = []\n"),
+
+    "R0 UNKNOWN (no charter, or no door) is treated as org":
+        ("const LABELLED = LABEL === null || LABEL.length > 0", "const LABELLED = LABEL !== null && LABEL.length > 0"),
 
     "R2 a labelled send skips the door (today's raw INSERT)":
         ("    if (LABELLED) {\n      const inbound", "    if (false) {\n      const inbound"),

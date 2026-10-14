@@ -290,6 +290,12 @@ class GrantError(Refused):
     the wire by today's raw path (a4 #46035)."""
 
 
+class UnknownLabel(GrantError):
+    """No charter resolves for the identity: its label is UNKNOWN. Still never ORG, but not a malformed grant either.
+    The channel server STARTS such a body (its ear works) with every send refused (S1b-2), as step.py withholds;
+    only a malformed grant refuses the start (a4 #46035). `label` exits 3 for it, 1 for a malformed grant."""
+
+
 GRANT_PREFIX = "owner_private:"
 OWNER_ADDRESSES = frozenset({"owner"})       # the only channel-bound destination a labelled member may address
 
@@ -315,7 +321,7 @@ def label_of(agent: str, agents_dir: Path | None = None) -> frozenset:
     mentions 'private' or a declared tier name but isn't exactly a declared grant → GrantError, named."""
     p = charter(agent, agents_dir)
     if p is None:                    # UNKNOWN, never ORG: a labelled member whose charter moved, or whose name drifted
-        raise GrantError(f"no charter resolves for {agent!r}: its label is UNKNOWN, so it can't send as org")
+        raise UnknownLabel(f"no charter resolves for {agent!r}: its label is UNKNOWN, so it can't send as org")
     line = next((ln for ln in p.read_text(errors="replace").splitlines() if ln.startswith("Grants:")), "")
     tiers = set()
     for e in (x.strip() for x in line.split(":", 1)[1].split(",") if line) if line else ():
@@ -393,7 +399,8 @@ def _dsn() -> str:
 def main(argv=None) -> int:
     """The channel server's door into this module (server.mjs is node; the door is ONE, here):
 
-        python -m astryx.security.release label <agent>   JSON list of the agent's tiers; rc 1 on a malformed grant
+        python -m astryx.security.release label <agent>   JSON list of the agent's tiers; rc 1 on a malformed grant,
+                                                  rc 3 when no charter resolves (UNKNOWN)
         python -m astryx.security.release send            stdin {to, thread, intent, body, inbound_thread}; sender is
                                                   $ASTRYX_AGENT; prints {"id": n} or {"error": reason}; rc 0 / 1
         python -m astryx.security.release read <pointer>  the body, for $ASTRYX_AGENT, only if the pointer's tier is in
@@ -404,7 +411,11 @@ def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     try:
         if argv[:1] == ["label"] and len(argv) == 2:
-            print(json.dumps(sorted(label_of(argv[1]))))
+            try:
+                print(json.dumps(sorted(label_of(argv[1]))))
+            except UnknownLabel as e:
+                print(json.dumps({"error": str(e), "unknown": True}))
+                return 3
             return 0
         agent = os.environ.get("ASTRYX_AGENT") or ""
         if argv == ["send"]:
