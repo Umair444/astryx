@@ -138,6 +138,18 @@ def admin_dsn() -> str:
 _HEAD = {"failed": re.compile(r"^FAILED \(\d+\):$"), "unverified": re.compile(r"^UNVERIFIED \(\d+\) — ")}
 
 
+def run_suite(argv: list, env: dict, timeout: int = None) -> tuple:
+    """(stdout, stderr, rc) of one side's check.sh. A suite past SUITE_TIMEOUT is rc "timeout" with its PARTIAL output,
+    never a traceback: the caller still reads that side's sqlguard trace, so its prod writes are counted (a4 #53077)."""
+    try:
+        p = subprocess.run(argv, env=env, capture_output=True, text=True,
+                           timeout=SUITE_TIMEOUT if timeout is None else timeout)
+        return p.stdout, p.stderr, p.returncode
+    except subprocess.TimeoutExpired as e:
+        dec = lambda b: b.decode(errors="replace") if isinstance(b, bytes) else (b or "")   # bytes even with text=True
+        return dec(e.stdout), dec(e.stderr), "timeout"
+
+
 def summary(log: str) -> dict:
     """check.sh's OWN verdict sets, parsed from the block it prints LAST (check.sh:109-124): {failed, unverified, line}.
     Only that trailing block counts. A gate's own output can print a "FAILED (3): …" line and "  ✗ …" items (the
@@ -251,12 +263,11 @@ def run(branch: str, main_ref: str = "main") -> int:
                    "ASTRYX_SQLGUARD_DIR": str(trace)}
             a = sb.argv(repo[side], tmp[side], ro_extra=[LIVE / p for p in est[side]["linked_private"]], node=node)
             with sb.PgBridge(sock[side]):
-                p = subprocess.run(a + ["bash", "devtools/check.sh"], env=env, capture_output=True, text=True,
-                                   timeout=SUITE_TIMEOUT)
+                stdout, stderr, rc = run_suite(a + ["bash", "devtools/check.sh"], env)
             if os.environ.get("BRANCH_CHECK_KEEP_LOGS"):
-                (scope.base / f"{scope.run_id}-{side}{attempt}.log").write_text(p.stdout + p.stderr)
-            out = summary(p.stdout)
-            out["rc"] = p.returncode
+                (scope.base / f"{scope.run_id}-{side}{attempt}.log").write_text(stdout + stderr)
+            out = summary(stdout)
+            out["rc"] = rc
             out["sqlguard_red"] = sqlguard_red(trace)
             return out, prod_statements(trace, prod_db)
         sums, witness = {}, {}
@@ -492,8 +503,11 @@ def report(sha: dict, sums: dict, witness: dict, est: dict, refs: dict = None, t
     if dead:
         for s in dead:
             print(f"  NO VERDICT from the {s} suite (check.sh rc {sums[s].get('rc', '?')}): it never printed its "
-                  f"summary, so its sets are empty, not clean. Nothing about the branch was judged (rc 77).")
-        return 77
+                  f"summary, so its sets are empty, not clean. No differential was judged; rerun with "
+                  f"BRANCH_CHECK_KEEP_LOGS=1 to keep <run>-<side>N.log.")
+        # the WITNESS is read from the sqlguard trace, not the verdict line: a suite that wrote to prod and then died
+        # is still RED (a4 #53077), and NO VERDICT must never hide it
+        return 1 if _estate_and_witness(est, witness) else 77
     regressed = sorted(set(b["failed"]) - set(m["failed"]))
     mr, br = m.get("sqlguard_red"), b.get("sqlguard_red")
     judged = mr is not None and br is not None
@@ -559,15 +573,21 @@ def report(sha: dict, sums: dict, witness: dict, est: dict, refs: dict = None, t
                   f"in a worktree before a PASS: {len(ds)}")
             for g, f, via in ds:
                 print(f"    ○ {g}\n      ← {f}" + (f" ({via})" if via and " " in via else f" (via {via})" if via else ""))
+    if _estate_and_witness(est, witness):
+        return 1
+    return 1 if regressed else 0
+
+
+def _estate_and_witness(est: dict, witness: dict) -> bool:
+    """The lines that hold with or without a verdict: estate files not copied, and statements that reached PROD. True
+    if any did (the run is RED)."""
     skipped = est["branch"]["skipped_credential"]
     if skipped:
         print(f"  VERIFIED NOTHING: {len(skipped)} estate file(s) carry a credential and weren't copied: {skipped}")
     for side, n in witness.items():
         if n:
             print(f"  WITNESS: {n} statement(s) reached the PROD database from the {side} run")
-    if any(witness.values()):
-        return 1
-    return 1 if regressed else 0
+    return any(witness.values())
 
 
 if __name__ == "__main__":

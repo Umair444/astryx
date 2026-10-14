@@ -99,6 +99,21 @@ def main():
     rc, out = rep(dict(dead), {"failed": ["x", "y"], "unverified": ["u"], "line": "check: b"})
     check("an empty MAIN side is NO VERDICT → rc 77, its branch failures never named REGRESSED",
           rc == 77 and "NO VERDICT from the main suite" in out and "REGRESSED" not in out, out)
+    # a4 #53077: NO VERDICT replaces the DIFFERENTIAL only; the prod witness comes from the trace and still fails the run
+    rc, out = rep(base, dict(dead), {"main": 0, "branch": 3})
+    check("a dead side that WROTE TO PROD is still RED → rc 1, NO VERDICT and WITNESS both printed",
+          rc == 1 and "NO VERDICT from the branch suite" in out and "WITNESS: 3 statement(s)" in out, out)
+    import time
+    t0 = time.monotonic()
+    so, se, src = bc.run_suite(["bash", "-c", "echo partial-out; echo partial-err >&2; sleep 30"], dict(os.environ),
+                               timeout=1)
+    check("a suite past its timeout returns rc 'timeout' and its PARTIAL output, never a traceback",
+          src == "timeout" and so == "partial-out\n" and "partial-err" in se and time.monotonic() - t0 < 15,
+          repr((so, se, src)))
+    check("…and that partial output has no verdict line, so report() reads it as NO VERDICT",
+          bc.summary(so)["line"] == "")
+    so, se, src = bc.run_suite(["bash", "-c", "echo done; exit 3"], dict(os.environ), timeout=30)
+    check("a suite that finishes returns its own rc and output", (so, src) == ("done\n", 3), repr((so, se, src)))
     # ── a3 D1 #35480: PRODUCTION sweeps org-wide (only=None); only an oracle scopes its sweep to its own roles ─────
     import ast
     srcp = Path(os.environ.get("BRANCH_CHECK_SRC") or (REPO / "devtools" / "branch_check.py"))
@@ -106,6 +121,12 @@ def main():
     sweeps = [c for c in ast.walk(runfn) if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
               and c.func.attr == "sweep"]
     reps = [c for c in ast.walk(runfn) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == "report"]
+    suites = [c for c in ast.walk(runfn) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+              and c.func.id == "run_suite"]
+    raw = [c.lineno for c in ast.walk(runfn) if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+           and c.func.attr == "run" and "check.sh" in ast.unparse(c)]
+    check("run() runs check.sh only through run_suite (a timed-out side's trace is still read)",
+          suites and not raw, f"run_suite calls {len(suites)}, raw check.sh runs at {raw}")
     check("branch_check.run passes report() the BRANCH's oracle references (refs=gate_refs(repo['branch']))",
           len(reps) == 1 and any(k.arg == "refs" and "gate_refs" in ast.dump(k.value) and "'branch'" in ast.unparse(k.value)
                                  for k in reps[0].keywords), ast.dump(reps[0]) if reps else "no report call in run()")
