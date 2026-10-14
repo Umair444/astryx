@@ -245,8 +245,10 @@ try:
     (root / "nucleus").mkdir(parents=True)
     for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
         (root / _d).mkdir(parents=True, exist_ok=True)
-    for f in ("spawn.sh", "charter.py"):
-        shutil.copy2(REPO / "nucleus" / f, root / "nucleus" / f)
+    for f in ("scripts/spawn.sh", "src/astryx/core/charter.py", "astryx.py", "src/astryx/__init__.py",
+              "src/astryx/paths.py", "src/astryx/_version.py"):    # the moved tree (goal 10224 S4)
+        (root / f).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO / f, root / f)
     (root / "venv" / "bin").mkdir(parents=True)
     (root / "venv" / "bin" / "python").symlink_to(sys.executable)
     (root / "agents").mkdir()
