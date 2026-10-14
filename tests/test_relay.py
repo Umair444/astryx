@@ -305,8 +305,11 @@ def run(fr, fa, fb, tmp):
         lost = f"to nobody {uuid.uuid4().hex[:6]}"
         q(A.dsn, "INSERT INTO messages (from_agent, to_agent, to_org, intent, body) "
                  "VALUES ('alice', 'seed', 'nobody.test', 'chat', %s) RETURNING id", lost)
-        dead = wait(lambda: q(A.dsn, "SELECT status FROM messages WHERE body=%s", lost) == [("dead",)], 20,
-                    "a row to an org we never met goes dead")
+        # the gateway marks the row dead and THEN inserts the error, two statements: wait on both, or a loaded host
+        # reads the count between them (RED in seed's 10-15 full check, green alone)
+        dead = wait(lambda: q(A.dsn, "SELECT status FROM messages WHERE body=%s", lost) == [("dead",)]
+                    and q(A.dsn, "SELECT count(*) FROM messages WHERE to_agent='alice' AND intent='error'")[0][0] >= 1,
+                    20, "a row to an org we never met goes dead AND its sender gets the error")
         arm("a row to an org we never met dies with an error to its sender (unchanged behaviour)",
             bool(dead) and q(A.dsn, "SELECT count(*) FROM messages WHERE to_agent='alice' AND intent='error'")[0][0] == 1)
 
