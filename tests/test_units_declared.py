@@ -65,8 +65,8 @@ no_sensor = gen({"src/astryx/pulse/senses.py": ""})
 want("RED control: the server module with NO sensor → no senses unit", "astryx-senses.service" not in no_sensor["units"])
 s = gen({"src/astryx/pulse/senses.py": "", "sensors/seed/ping.py": ""})
 su = s["units"].get("astryx-senses.service", "")
-want("module + one sensor → astryx-senses.service, running src/astryx/pulse/senses.py, restarting, with [Install]",
-     "src/astryx/pulse/senses.py" in su and "Restart=always" in su and "[Install]" in su and "User=tester" in su, su)
+want("module + one sensor → astryx-senses.service, running -m astryx.pulse.senses, restarting, with [Install]",
+     "-m astryx.pulse.senses" in su and "Restart=always" in su and "[Install]" in su and "User=tester" in su, su)
 
 print("geoloc:")
 want("RED control: the bridge without its env file → no geoloc unit",
