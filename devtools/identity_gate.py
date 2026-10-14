@@ -15,6 +15,18 @@ Two readings that fail differently, plus the assertion that they agree:
 PASS when inside is this tree's src/astryx/paths.py and outside is absent (nothing installed) or that
 same file. Anything else is RED and names both paths. Run from the tree root:
     venv/bin/python devtools/identity_gate.py
+
+THE INSTALLER'S RIDER (a2 #53072, binding on whoever first runs `pip install -e` into a venv worktrees
+share): as built, the only satisfiable state is "nothing installed". D1's remedy for runners (export
+PYTHONPATH=<tree>/src) does NOT clear this gate, because OUTSIDE is -I and judges presence, and INSIDE runs
+where the shim always wins. That fails closed on purpose, so never make it green by softening a reading.
+At the trip, add the RUNNER-SHAPED reading as the decisive one:
+- a probe SCRIPT under <tree>/tests/ (sys.path[0] = tests/, not the tree root);
+- run in the env check.sh exports, with the PYTHONPATH=<tree>/src export added there;
+- RED iff it imports anything but <tree>/src/astryx/paths.py.
+OUTSIDE then becomes an informational line naming the shadow.
+Arms: installed + no export -> RED; installed + export -> PASS. Mutant: judge OUTSIDE's presence alone ->
+the remedied case reads RED. Without an install the alternative is a per-tree venv.
 """
 from __future__ import annotations
 
