@@ -17,4 +17,6 @@ MUTANTS = {
     "the doctor's probe inherits the caller's name":
         ("_login_out=$(printf 'reply with exactly: ok' | env -u ASTRYX_AGENT timeout",
          "_login_out=$(printf 'reply with exactly: ok' | timeout"),
+    "a third probe spelled --print, with no env -u (a2 #53067)":
+        ("_chk_login() {", "_extra_probe() { printf x | claude --print --model haiku; }\n_chk_login() {"),
 }

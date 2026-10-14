@@ -42,8 +42,8 @@ with tempfile.TemporaryDirectory() as td:
         check("P1 _chk_login reaches claude with ASTRYX_AGENT unset", got == "UNSET", got)
         check("P1 ...and still reads the answer (rc 0)", r.returncode == 0, f"rc {r.returncode} {r.stderr[-200:]}")
 
-lines = [l for l in src.splitlines() if re.search(r"\bclaude -p\b", l) and not l.lstrip().startswith("#")]
-bad = [l.strip() for l in lines if not re.search(r"env -u ASTRYX_AGENT\b[^|]*\bclaude -p\b", l)]
+lines = [l for l in src.splitlines() if re.search(r"\bclaude (-p|--print)\b", l) and not l.lstrip().startswith("#")]
+bad = [l.strip() for l in lines if not re.search(r"env -u ASTRYX_AGENT\b[^|]*\bclaude (-p|--print)\b", l)]
 check("P2 init.sh has claude -p probes to check", len(lines) >= 2, str(len(lines)))
 check("P2 every claude -p in init.sh runs under env -u ASTRYX_AGENT", not bad, "; ".join(bad)[:300])
 
