@@ -392,6 +392,9 @@ run "init.sh phonesweep: the phone resume sweep installs itself only where phone
 # holder, while the phone has it); only a run that an open STARTED is ever stopped idle, asynchronously. Stand-in only.
 run "windows on demand: claim before start, refuse naming the holder, idle stop only of its own starts" "$PY" tests/test_windows_ondemand.py
 run "init.sh winidle: the Windows idle stop installs itself only where a Windows container exists" "$PY" tests/test_init_winidle.py
+# init.sh login probes (a2 #53059): the probe's claude -p runs the Stop hook, which wrote a fake turn to prod under the
+# caller's inherited ASTRYX_AGENT. A fake claude on PATH sees it UNSET; static: every claude -p carries env -u.
+run "init.sh login probes: claude -p runs with no agent name (writes no turn)" "$PY" tests/test_init_probe_agent.py
 # Hands caps (seed's binding item, #44137): a STEP and a WALL-TIME cap per AGENT session, refusing with the cap named;
 # idle resets a session, a loop stays capped; atomic across processes; charged before any desktop is touched.
 run "hands caps: per-agent step + wall caps, idle reset, atomic, charged before the desktop" "$PY" tests/test_hands_caps.py
