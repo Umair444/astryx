@@ -81,6 +81,8 @@ check("WRITE RED-control: correct and inverted-threshold DISAGREE on a stale aut
 
 
 # ── DB arms: a throwaway fixture database, the REAL schema applied whole ────────────
+from nucleus.sqlguard.estate import gate  # noqa: E402
+gate("test_usage_poll", REPO, deps=("psycopg",))   # a .env with no DSN, or no psycopg: absent vs broken
 import psycopg  # noqa: E402
 from nucleus.sqlguard.fixture import FixtureUnavailable, fixture_db  # noqa: E402
 
