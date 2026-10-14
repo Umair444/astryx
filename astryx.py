@@ -1,35 +1,35 @@
-"""astryx — the tiny library agents import to author triggers.
+"""Shim: the astryx package lives in src/astryx/ (plan-10224 S1). `from astryx import trigger` as before.
 
-    from astryx import trigger
-
-    @trigger("*/15 * * * *", note="what this watches")
-    def my_condition(ctx):
-        ...
-        return None            # silence, or
-        return "message body"  # fire: arrives on your channel as a wire message
-
-Files live in triggers/<agent>/*.py. The pulse discovers decorated functions,
-registers them in the triggers table, and evaluates each on its schedule in an
-isolated subprocess. ctx gives a check its world:
-
-    ctx.sql(query, params=())   rows from the org's postgres, list of dicts
-    ctx.http(url)               a page or API body, 15s timeout
-    ctx.state                   dict persisted between runs: baselines, seen
-                                ids, yesterday's numbers. Mutate it freely.
-
-The pulse is AT-LEAST-ONCE: a firing's side effect (a send, a row it writes) can
-run more than once if the run is interrupted between the effect and the ctx.state
-write-back. ctx.state is safe for throttling and baselines; for a side effect that
-must not duplicate, dedup on durable state — query the effect itself, or a column —
-not ctx.state.
+The pulse discovers triggers with cwd = the org root, so `import astryx` finds THIS file before any
+installed package. It can't import the package (the names collide), so it BECOMES it: it runs
+src/astryx/__init__.py in its own namespace and sets `__path__`, so `astryx.trigger`, `astryx._registry`
+and `astryx.paths` are the package's, and a process holds ONE `astryx` module and ONE `_registry`
+whichever path won. Without src/astryx beside it (a test tree that copied only this file), it binds to an
+astryx package found on sys.path instead. Oracle: tests/test_astryx_registry.py.
 """
+import os as _os
+import sys as _sys
 
-_registry: list[dict] = []
+
+def _locate():
+    here = _os.path.dirname(_os.path.abspath(__file__))
+    beside = _os.path.join(here, "src", "astryx")
+    if _os.path.isfile(_os.path.join(beside, "__init__.py")):
+        return beside
+    for entry in _sys.path:
+        base = _os.path.abspath(entry or _os.getcwd())
+        if base != here and _os.path.isfile(_os.path.join(base, "astryx", "__init__.py")):
+            return _os.path.join(base, "astryx")
+    raise ImportError("astryx: no src/astryx/ beside astryx.py and no astryx package on sys.path")
 
 
-def trigger(schedule: str, note: str = ""):
-    def wrap(fn):
-        _registry.append({"name": fn.__name__, "schedule": schedule,
-                          "note": note, "fn": fn})
-        return fn
-    return wrap
+__path__ = [_locate()]
+__package__ = __name__
+_init = _os.path.join(__path__[0], "__init__.py")
+with open(_init, encoding="utf-8") as _f:
+    exec(compile(_f.read(), _init, "exec"))
+del _f, _init, _locate, _os, _sys
+
+if __name__ == "__main__":         # `python -m astryx` from the org root runs THIS file, not __main__.py
+    from astryx.cli import main
+    raise SystemExit(main())

@@ -37,6 +37,11 @@ runtime.json
 !**/runners*.example.conf
 units/
 __pycache__/
+# python packaging (plan-10224): build outputs, and the HOME marker `astryx init` writes
+/dist/
+/build/
+*.egg-info/
+/.astryx
 media/
 triggers/
 sensors/
