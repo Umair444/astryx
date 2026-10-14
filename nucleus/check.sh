@@ -575,6 +575,10 @@ run "trigger tombstone: trigger_rm retires a python trigger for good, per agent 
 run "trigger names: the pulse's registration model (closure, blind → defer, retired per target, legacy, parity)" "$PY" tests/test_trigger_names.py
 run "agent heal: a dead resident body is respawned, a DEAF idle one restarted (busy never cut), live ones never touched, crash loops stop, a blind tmux or db acts on nothing" "$PY" tests/test_agent_heal.py
 run "agent heal arm two: its pending-rows SQL in a fixture" "$PY" tests/test_agent_heal_sql.py
+# goal 10224 S6: medic sends a framework fix upstream (fork + PR, never instance data, privacy-gated, deduped, capped,
+# 77 without gh), and the upstream org's medic hears each outside PR once per head, fenced as DATA. A fake gh; no GitHub.
+run "upstream PR tool: instance paths and privacy hits refused, dedup to a comment, the cap, fork or not, 77 without gh" "$PY" tests/test_upstream_pr.py
+run "upstream PR watch: each outside PR reaches medic once per head, fenced as DATA; gh trouble said once per change" "$PY" tests/test_upstream_prs.py
 run "init.sh trigger installs: by NAME through the helper, never over a retirement or a legacy row; --reinstall; census" "$PY" tests/test_init_trigger_names.py
 
 run "A2A card canonicalisation (JCS)" "$PY" tests/test_card_canon.py
