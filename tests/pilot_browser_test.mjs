@@ -5,7 +5,9 @@
 //
 //   node tests/pilot_browser_test.mjs [observatory dev URL]
 //
-// With no URL it starts a vite dev server from observatory/web on 127.0.0.1:5181 and stops it after. It reads
+// With no URL it starts a vite dev server from observatory/web and stops it after. Every listener is found through what
+// THIS gate owns (plan-10108 D3): vite picks a free port itself and the URL is read from its own stdout; chromium takes
+// port 0 and its port is read from its own profile's DevToolsActivePort. Concurrent gates never share one. It reads
 // OBS_KEY from .env into a throwaway chromium profile (never printed) and talks to the live API read-only. The
 // actuate it confirms is open_desktop for an agent with no desktop, so the handler runs and fails harmlessly.
 // Absent chromium, node_modules or key: exit 77 on a committed-only tree (no triggers/), but 1, BROKEN, on a LIVE
@@ -75,9 +77,18 @@ setTimeout(() => { console.log(`  FAIL  the gate exceeded its ${WALL_MS / 1000}s
 
 let URL0 = process.argv[2]
 if (!URL0) {
-  const vite = spawn(join(WEB, 'node_modules/.bin/vite'), ['--port', '5181', '--strictPort', '--host', '127.0.0.1'], { cwd: WEB, stdio: 'ignore' })
+  // no --port/--strictPort: vite listens on a free port itself (on EADDRINUSE it takes the next, never a probe-then-
+  // release), and the gate learns the port FROM vite's own stdout. Its dependency cache is this gate's (D2).
+  const cache = process.env.VITE_CACHE_DIR || mkdtempSync(join(tmpdir(), 'pilot-vite-'))
+  if (!process.env.VITE_CACHE_DIR) process.on('exit', () => { try { rmSync(cache, { recursive: true, force: true }) } catch {} })
+  const vite = spawn(join(WEB, 'node_modules/.bin/vite'), ['--host', '127.0.0.1'], { cwd: WEB, stdio: ['ignore', 'pipe', 'ignore'],
+    env: { ...process.env, VITE_CACHE_DIR: cache } })
   kids.push(vite)
-  URL0 = 'http://127.0.0.1:5181/'
+  let said = ''
+  vite.stdout.setEncoding('utf8')
+  vite.stdout.on('data', (d) => { if (said.length < 65536) said += d })   // keeps DRAINING after the URL (a full pipe stalls vite)
+  const local = await until('vite to print its own URL', async () => said.replace(/\x1b\[[0-9;]*m/g, '').match(/Local:\s+(http:\/\/127\.0\.0\.1:\d+\/)/)?.[1])
+  URL0 = local
 }
 // vite serves index.html before its first dependency optimization finishes; wait for the app's entry module too
 await until('the dev server to answer', async () => (await fetch(URL0)).ok)
@@ -85,8 +96,12 @@ await until('the app entry module to compile', async () => (await fetch(new URL(
 const prof = mkdtempSync(join(tmpdir(), 'pilot-cdp-'))
 PROFILE = prof
 process.on('exit', () => { try { rmSync(prof, { recursive: true, force: true, maxRetries: 5 }) } catch {} })   // chromium may still be writing as it exits
-const port = 9334
-kids.push(spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${prof}`, '--window-size=1280,860', 'about:blank'], { stdio: 'ignore' }))
+// port 0: chromium binds a free port itself and writes it to <its own profile>/DevToolsActivePort (line 1)
+kids.push(spawn(CHROME, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${prof}`, '--window-size=1280,860', 'about:blank'], { stdio: 'ignore' }))
+const port = await until('chromium to write its own DevToolsActivePort', async () => {
+  const p = Number(readFileSync(join(prof, 'DevToolsActivePort'), 'utf8').split('\n')[0])
+  return p > 0 ? p : null
+}, 30000)
 let ws
 const page = await until('chromium\'s debugging port', async () => (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find((t) => t.type === 'page'), 30000)
 ws = new WebSocket(page.webSocketDebuggerUrl)
