@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """test_pushed_tree_env — pushed_tree_check runs the committed tree with NO inherited database or credential env
-(a4 #45773). The scrub line is read FROM nucleus/pushed_tree_check.sh (the line tagged `# env-scrub`) and executed
+(a4 #45773). The scrub line is read FROM devtools/pushed_tree_check.sh (the line tagged `# env-scrub`) and executed
 under a planted environment with a fixture .env; no real secret is read, and nothing is pushed or checked out."""
 import os
 import subprocess
@@ -19,10 +19,10 @@ def arm(name, ok, detail=""):
         fails += 1
 
 
-src = (REPO / "nucleus/pushed_tree_check.sh").read_text()
+src = (REPO / "devtools/pushed_tree_check.sh").read_text()
 line = next((ln for ln in src.splitlines() if ln.rstrip().endswith("# env-scrub")), None)
 arm("pushed_tree_check carries the env-scrub line", line is not None)
-order = src.find("# env-scrub") < src.find("bash nucleus/check.sh") if line else False
+order = src.find("# env-scrub") < src.find("bash devtools/check.sh") if line else False
 arm("the scrub runs before check.sh is launched", order)
 if line is None:
     print(f"FAIL ({fails})"); sys.exit(1)

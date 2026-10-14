@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle for nucleus/estate_grep.sh — the three properties, both directions.
+"""Oracle for devtools/estate_grep.sh — the three properties, both directions.
 
 Hermetic: builds its own corpus in a tmpdir, never reads the repo or any agent's
 estate. Exits 77 (SKIP, not PASS) if the subject is absent.
@@ -20,7 +20,7 @@ fixtures are derived from the subject proves only that the subject agrees with i
 import os, subprocess, sys, tempfile, pathlib
 
 HERE = pathlib.Path(__file__).resolve().parent
-SUBJECT = HERE.parent / "nucleus" / "estate_grep.sh"   # oracle moved to tests/; subject stayed an organ
+SUBJECT = HERE.parent / "devtools" / "estate_grep.sh"   # oracle moved to tests/; subject stayed an organ
 if not SUBJECT.is_file():
     print(f"SKIP: {SUBJECT} absent"); sys.exit(77)
 

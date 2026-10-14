@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Oracle for market_decay's ROUTING (triggers/steward/market_decay.py) — O3, goal 4227 S1b.
 
-    venv/bin/python tests/test_market_decay_advisory.py    (also run by nucleus/check.sh)
+    venv/bin/python tests/test_market_decay_advisory.py    (also run by devtools/check.sh)
 
 THE LAW THIS PINS (owner, 2026-09-29): no budgets, nothing enforced, NO trigger killing —
 measure rent only. market_decay was the org's sole economic actuator: it set enabled=false on

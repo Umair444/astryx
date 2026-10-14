@@ -1,6 +1,6 @@
-"""Authored mutants for init.sh's phonesweep node (tests/test_init_phonesweep.py), run by nucleus/mutation_probe.py:
+"""Authored mutants for init.sh's phonesweep node (tests/test_init_phonesweep.py), run by devtools/mutation_probe.py:
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_init_phonesweep.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_init_phonesweep.py
 """
 from pathlib import Path
 
@@ -21,8 +21,8 @@ MUTANTS = {
         ('"android|interior" "phonesweep|interior" ',
          '"android|interior" '),
     'the shim imports something else':
-        ('from nucleus.shipped_triggers.phone_resume_sweep import phone_resume_sweep  # noqa: F401\nEOF',
-         'from nucleus.shipped_triggers.context_compact import context_compact  # noqa: F401\nEOF'),
+        ('from astryx.pulse.shipped_triggers.phone_resume_sweep import phone_resume_sweep  # noqa: F401\nEOF',
+         'from astryx.pulse.shipped_triggers.context_compact import context_compact  # noqa: F401\nEOF'),
     "the opt-in is read from .env only (an org opted in by env gets phones without the detector)":
         ('_android_on() { [ "${ANDROID_ENABLED:-$(grep -m1 \'^ANDROID_ENABLED=\' .env 2>/dev/null | cut -d= -f2-)}" = 1 ]; }',
          '_android_on() { [ "$(grep -m1 \'^ANDROID_ENABLED=\' .env 2>/dev/null | cut -d= -f2-)" = 1 ]; }'),

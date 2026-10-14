@@ -17,7 +17,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "observatory/api"))
-from nucleus.sqlguard.estate import gate  # noqa: E402
+from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate("test_pilot_voice_server", REPO, deps=("fastapi", "asyncpg", "httpx"))
 fails = 0
 
@@ -51,7 +51,7 @@ class Ledger:
 os.environ["OPENAI_API_KEY"] = "sk-test-NEVER-RETURNED"
 os.environ["CANVAS_VOICE_DAILY_MINUTES"] = "5"
 os.environ["OBS_KEY"] = "test-owner-key"               # hermetic: never the live owner credential (a2 #44477 B1)
-from nucleus import voice_mint as V  # noqa: E402
+from astryx.hearing import voice_mint as V  # noqa: E402
 minted = []
 
 
@@ -62,7 +62,7 @@ V.mint = fake_mint
 
 # (e) FIRST, so no route arm's failure can hide it from sqlguard (a2 #44477 B1): the ledger's SQL against a REAL schema: a throwaway fixture database with schema.sql applied whole, so each
 # statement voice_mint issues runs on the declared canvas_voice_usage (sqlguard: RESPONSIVE, not merely stubbed)
-from nucleus.sqlguard.fixture import fixture_db  # noqa: E402
+from astryx.security.sqlguard.fixture import fixture_db  # noqa: E402
 import asyncpg  # noqa: E402
 
 

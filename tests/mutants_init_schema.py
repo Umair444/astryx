@@ -1,6 +1,6 @@
-"""Mutants for init.sh's schema node (tests/test_init_schema.py), run by nucleus/mutation_probe.py.
+"""Mutants for init.sh's schema node (tests/test_init_schema.py), run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_init_schema.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_init_schema.py
 
 Every arm runs on the oracle's own scratch database, so no mutant can reach a live schema.
 """

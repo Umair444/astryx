@@ -54,7 +54,7 @@ def skip(name, why):
 REGENERABLE = {
     "venv/":                          "pip install -r requirements.txt",
     "channel/node_modules/":          "npm install",
-    "dist/":                          "python nucleus/build_plugin.py (the plugin) / python -m build (the wheel)",
+    "dist/":                          "python devtools/build_plugin.py (the plugin) / python -m build (the wheel)",
     "observatory/web/node_modules/":  "npm install",
     "observatory/web/dist/":          "npm run build (deploy.sh web)",
     "observatory/web/tsconfig.tsbuildinfo": "tsc build artifact",
@@ -107,7 +107,7 @@ def main():
         skip("derive ignored paths from git", "no ignored paths reported")
         return verdict()
 
-    r2 = subprocess.run(["bash", str(REPO / "nucleus" / "backup.sh"), "--list-state"],
+    r2 = subprocess.run(["bash", str(REPO / "scripts" / "backup.sh"), "--list-state"],
                         cwd=REPO, capture_output=True, text=True)
     if r2.returncode != 0:
         skip("ask backup.sh what it captures", f"--list-state exited {r2.returncode}")
@@ -136,7 +136,7 @@ def main():
     # population above can't see it. Moving a copy must not silently drop the only backed-up
     # one, so the expected set comes from the holder manifest's `backup` flag, not from here.
     import json
-    manifest = json.loads((REPO / "nucleus" / "secret_holders.json").read_text())
+    manifest = json.loads((REPO / "src" / "astryx" / "data" / "secret_holders.json").read_text())
     must = [h["path"] for h in manifest["holders"] if h.get("backup")]
     check("the holder manifest names what a restore needs (backup:true is non-empty)",
           bool(must), "no holder is flagged backup:true: the arm below would be vacuous")
@@ -154,7 +154,7 @@ def main():
     arts = sorted(REPO.glob("backups/*.state.tgz"), key=lambda p: p.stat().st_mtime)
     if not arts:
         skip("the newest real artifact carries the inputs", "no .state.tgz on disk")
-    elif arts[-1].stat().st_mtime < (REPO / "nucleus" / "backup.sh").stat().st_mtime:
+    elif arts[-1].stat().st_mtime < (REPO / "scripts" / "backup.sh").stat().st_mtime:
         skip("the newest real artifact carries the inputs",
              f"{arts[-1].name} predates backup.sh — not yet re-run")
     else:
@@ -181,7 +181,7 @@ def main():
     home = Path.home()
     try:
         sys.path.insert(0, str(REPO))
-        from nucleus import charter
+        from astryx.core import charter
         roster = charter.roster()
     except Exception as e:                                   # noqa: BLE001
         skip("agent memory is captured", f"roster unavailable ({type(e).__name__})")

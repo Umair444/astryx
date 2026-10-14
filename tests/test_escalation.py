@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gates for nucleus/escalation.py — the consumption-aware escalation facility (#2457).
+"""Gates for src/astryx/core/escalation.py — the consumption-aware escalation facility (#2457).
 
 Exit 0 pass · 1 fail · 77 a gate could not run.
 
@@ -17,7 +17,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 # THE SUBJECT IS OVERRIDABLE, and this is not a convenience. The first version of this
-# oracle did `from nucleus import escalation`, so mutation_probe mutated a copy, set
+# oracle did `from astryx.core import escalation`, so mutation_probe mutated a copy, set
 # ESCALATION_SRC, and the oracle imported the REAL module and passed — all ten mutants
 # reported NOT PROBED. Ten survivors is not ten holes; it is the signature of a test that
 # never read the thing it was pointed at. An oracle that ignores its own subject argument
@@ -37,7 +37,7 @@ if not _override:
     # takes this import, so the probe stays honest. (Wording per a4, msg 13613:
     # explain a line by what it DOES, not by what observes it, or the next copier
     # inherits gate-appeasement.)
-    from nucleus import escalation as esc       # noqa: E402
+    from astryx.core import escalation as esc       # noqa: E402
     SUBJECT = Path(esc.__file__)
 else:
     SUBJECT = Path(_override)
@@ -181,7 +181,7 @@ def main():
     # once, sitting next to a floor that still cites it. Gaps are PULSE-fire gaps (org-clock
     # liveness), so an innocent human-idle window no longer inflates the violator.
     try:
-        from nucleus import wake_audit as _wa
+        from astryx.core import wake_audit as _wa
         import psycopg
         with psycopg.connect(_wa.dsn(), connect_timeout=5) as c:
             # float(), not the raw row: postgres EXTRACT returns Decimal, and Decimal

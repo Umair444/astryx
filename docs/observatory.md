@@ -30,7 +30,7 @@ observatory as a rate-limited, tool-less concierge for visitors.
 ## `wall.sh` — the terminal wall
 
 ```
-nucleus/wall.sh
+scripts/wall.sh
 ```
 
 A tmux wall of every agent's live step stream — the org as a NOC. One pane per

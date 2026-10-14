@@ -1,7 +1,7 @@
-"""Authored mutants for nucleus/spawn.sh's goal-4227 wiring (the registry door + the tool nudge),
-run by nucleus/mutation_probe.py.
+"""Authored mutants for scripts/spawn.sh's goal-4227 wiring (the registry door + the tool nudge),
+run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_spawn_wiring.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_spawn_wiring.py
 
 Each is a plausible way the wiring breaks while the file still looks right: the door dropped,
 a JSON comma that only breaks when a grant is spliced in, the nudge moved into usage.py's group,
@@ -14,7 +14,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-SUBJECT = REPO / "nucleus" / "spawn.sh"
+SUBJECT = REPO / "scripts" / "spawn.sh"
 ORACLE = REPO / "tests" / "test_spawn_wiring.py"
 ENV = "SPAWN_SRC"
 

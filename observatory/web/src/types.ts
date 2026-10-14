@@ -166,7 +166,7 @@ export interface EconSummary {
   agents_24h: number
 }
 
-/* ── the dissipative-system layer (nucleus/econ.py) — served under the `econ` key ──
+/* ── the dissipative-system layer (src/astryx/econ/econ.py) — served under the `econ` key ──
    The org as a measured dissipative structure. One law: G = W / (Φ·K).
    Φ = billable flux, W = budgets of goals VERIFIED in window (value enters only at
    the boundary), K = compressed self-description bytes, Q = heat = flux that
@@ -391,7 +391,7 @@ export interface WhoAmI {
 }
 
 /* /api/events SSE payloads */
-/* nucleus/presence.py — where an agent's attention is right now (owner-only) */
+/* src/astryx/core/presence.py — where an agent's attention is right now (owner-only) */
 export interface Presence {
   agent: string
   surface: string | null

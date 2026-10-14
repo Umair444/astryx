@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle for nucleus/copies.py, the derived-copy registry v0 (plan-8018 S1; a4 #39173 §7, a3 #39182 BC-1).
+"""Oracle for src/astryx/core/copies.py, the derived-copy registry v0 (plan-8018 S1; a4 #39173 §7, a3 #39182 BC-1).
 
 Every arm builds its own throwaway estate in a temp dir, so the live tree's writers never decide a verdict here.
 Arms (RED / GREEN / CONTROL):
@@ -44,13 +44,13 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
-from nucleus.sqlguard.estate import gate  # noqa: E402
+from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate("test_copies", REPO, deps=("psycopg",))
 
 try:
     import psycopg
-    from nucleus import copies as C
-    from nucleus.sqlguard.fixture import fixture_db
+    from astryx.core import copies as C
+    from astryx.security.sqlguard.fixture import fixture_db
 except Exception as e:  # noqa: BLE001
     print(f"SKIP: a subject isn't importable ({type(e).__name__}: {e}).")
     sys.exit(77)
@@ -152,11 +152,13 @@ check("W6 a writer of ANOTHER graph by literal → not listed", "other.py" not i
 
 print("the live tree (S1-live, after e55c65f read LOUD on its own scanner and test):")
 (root / "nucleus").mkdir(exist_ok=True)
-(root / "nucleus" / "copies.py").write_text((REPO / "nucleus" / "copies.py").read_text())
+for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
+    (root / _d).mkdir(parents=True, exist_ok=True)
+(root / "src" / "astryx" / "core" / "copies.py").write_text((REPO / "src" / "astryx" / "core" / "copies.py").read_text())
 found = C.graph_writers("memory", root)
 check("S2 the scanner's own prose (MERGE/DELETE/create_graph() in comments) → not listed",
-      "nucleus/copies.py" not in found, repr(found))
-(root / "nucleus" / "copies.py").unlink()
+      "src/astryx/core/copies.py" not in found, repr(found))
+(root / "src" / "astryx" / "core" / "copies.py").unlink()
 (root / "ddl_prose.py").write_text("# we call create_graph() and drop_graph() elsewhere\n"
                                    "Q = \"SELECT * FROM cypher('memory', $$ MATCH (n) RETURN n $$) AS (v agtype)\"\n")
 (root / "ddl_call.py").write_text("def f(cur):\n    cur.execute(\"SELECT create_graph('memory')\")\n")

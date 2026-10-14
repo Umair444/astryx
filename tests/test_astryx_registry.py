@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Oracle: `import astryx` yields ONE module and ONE `_registry` on every import path (plan-10224 S1).
 
-The pulse imports astryx every minute (nucleus/pulse.py discover: `python -c "import astryx; runpy.run_path(<file>);
+The pulse imports astryx every minute (src/astryx/pulse/pulse.py discover: `python -c "import astryx; runpy.run_path(<file>);
 ... astryx._registry"` with cwd = the org root), and a trigger file does `from astryx import trigger`. If the root
 shim and the src/astryx package ever became two module objects, a decorator would append to one registry while the
 pulse read the other, and every trigger would silently vanish. Each arm runs a fresh interpreter. Hermetic.
@@ -53,7 +53,7 @@ def main():
     f = td / "t.py"
     f.write_text(TRIG)
 
-    src = (REPO / "nucleus" / "pulse.py").read_text()
+    src = (REPO / "src" / "astryx" / "pulse" / "pulse.py").read_text()
     m = re.search(r'prog = \((.*?)\)\n', src, re.S)
     arm("pulse.discover still imports astryx and reads astryx._registry",
         bool(m) and "import astryx;" in m.group(1) and "astryx._registry" in m.group(1))

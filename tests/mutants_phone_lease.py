@@ -1,11 +1,11 @@
-"""Authored mutants for nucleus/ear_lease.py (plan-8675 S1), run by nucleus/mutation_probe.py:
+"""Authored mutants for src/astryx/hearing/ear_lease.py (plan-8675 S1), run by devtools/mutation_probe.py:
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_phone_lease.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_phone_lease.py
 """
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-SUBJECT = REPO / "nucleus/ear_lease.py"
+SUBJECT = REPO / "src/astryx/hearing/ear_lease.py"
 ORACLE = REPO / "tests" / "test_phone_facade.py"
 ENV = "EAR_LEASE_SRC"
 TIMEOUT = 120

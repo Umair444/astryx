@@ -30,7 +30,7 @@ be repeated on anything M-next adds):
     fail toward FALSE GREEN. All three now carry an explicit precondition and report UNVERIFIED
     when it is absent.
 
-Run by nucleus/check.sh. Exits 77 (SKIP) if either script is absent.
+Run by devtools/check.sh. Exits 77 (SKIP) if either script is absent.
 """
 import os
 import re

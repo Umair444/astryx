@@ -11,11 +11,11 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
-from nucleus.sqlguard.estate import gate  # noqa: E402
+from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate("test_library_search_api", REPO, deps=("psycopg", "asyncpg", "fastapi"))
 import asyncpg  # noqa: E402
 import psycopg  # noqa: E402
-from nucleus.sqlguard.fixture import fixture_db  # noqa: E402
+from astryx.security.sqlguard.fixture import fixture_db  # noqa: E402
 
 fails = 0
 

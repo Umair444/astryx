@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Oracle for check.sh's per-gate wall clock (seed #45252, after a wedged chromium held a run open 3h36m, a4 #45241).
 
-Drives the REAL run() by sourcing nucleus/check.sh with CHECK_LIB_ONLY=1 (as test_check_verdict does), with stub
+Drives the REAL run() by sourcing devtools/check.sh with CHECK_LIB_ONLY=1 (as test_check_verdict does), with stub
 gates and caps of a second or two:
   EXPIRY      a gate past its cap is ✗ TIMED OUT, counted FAILED (never a pass, never 77), and its pid is gone
   GROUP       a grandchild the gate forked dies with it, and so does one that IGNORES SIGTERM (the -k SIGKILL)
@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-CHECK = REPO / "nucleus" / "check.sh"
+CHECK = REPO / "devtools" / "check.sh"
 fails = []
 
 

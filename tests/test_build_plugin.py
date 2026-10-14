@@ -1,4 +1,4 @@
-"""The plugin repo is GENERATED from this one (nucleus/build_plugin.py); its copies must match the repo (drift).
+"""The plugin repo is GENERATED from this one (devtools/build_plugin.py); its copies must match the repo (drift).
 
 The plugin ships copies: channel/*.mjs, the channel's package.json and lockfile, LICENSE, the seed's charter and
 onboarding runbook. A copy that drifts from the repo is a plugin running yesterday's wire. So:
@@ -128,7 +128,7 @@ try:
     dist = bp.DEFAULT_OUT
     if dist.exists():
         probs = bp.check(dist)
-        arm(f"dist: {dist.relative_to(REPO)} matches the repo (rebuild: python nucleus/build_plugin.py)",
+        arm(f"dist: {dist.relative_to(REPO)} matches the repo (rebuild: python devtools/build_plugin.py)",
             probs == [], "\n".join(probs))
 finally:
     shutil.rmtree(tmp, ignore_errors=True)

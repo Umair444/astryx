@@ -5,7 +5,7 @@ join marker for the project every subcommand exits 0 having done NOTHING: sessio
 never executes the org's step.py (a stub that would leave a file proves it didn't run).
 
 FLAGS (owner ruling R2). An astryx session runs with --permission-mode bypassPermissions (default for a charter
-with `Permissions: relay`, the rule of nucleus/launch_flags.py) AND --dangerously-load-development-channels naming
+with `Permissions: relay`, the rule of src/astryx/core/launch_flags.py) AND --dangerously-load-development-channels naming
 this plugin. The check reads permission_mode from the hook's input when Claude Code sends it, and the claude argv by
 walking up /proc from the hook's parent. A fake /proc tree drives every arm: both present, each missing, relay mode,
 the hook-input mode winning over argv, server:astryx and comma lists, an unreadable argv, and the marketplace in the
@@ -243,6 +243,8 @@ try:
     # missing guard could only write files into the render dir, which this arm then sees.
     root = tmp / "spawnroot"
     (root / "nucleus").mkdir(parents=True)
+    for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
+        (root / _d).mkdir(parents=True, exist_ok=True)
     for f in ("spawn.sh", "charter.py"):
         shutil.copy2(REPO / "nucleus" / f, root / "nucleus" / f)
     (root / "venv" / "bin").mkdir(parents=True)
@@ -251,12 +253,12 @@ try:
     shutil.copy2(home / "agents" / "laptop.md", root / "agents" / "laptop.md")   # the charter join wrote
     (root / "agents" / "plain.md").write_text("# plain\n")
     rend = tmp / "render-joined"
-    r = subprocess.run(["bash", str(root / "nucleus" / "spawn.sh"), "--render", "laptop", str(rend)],
+    r = subprocess.run(["bash", str(root / "scripts" / "spawn.sh"), "--render", "laptop", str(rend)],
                        capture_output=True, text=True, timeout=60)
     arm("spawn.sh: a charter join wrote is never embodied (skip, exit 0, nothing rendered)",
         r.returncode == 0 and "nothing to spawn" in r.stdout and not any(rend.iterdir()), r.stdout + r.stderr)
     rend2 = tmp / "render-plain"
-    r = subprocess.run(["bash", str(root / "nucleus" / "spawn.sh"), "--render", "plain", str(rend2)],
+    r = subprocess.run(["bash", str(root / "scripts" / "spawn.sh"), "--render", "plain", str(rend2)],
                        capture_output=True, text=True, timeout=60)
     arm("spawn.sh: an ordinary charter goes on past the guard (it fires on that line only)",
         "nothing to spawn" not in r.stdout + r.stderr and rend2.exists(), r.stdout + r.stderr)

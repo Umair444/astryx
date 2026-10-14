@@ -2,9 +2,9 @@
 """Oracle: plan-7862 "Hands" S1, the cell. Per-lease egress, no model-API pinhole, no secrets,
 kill wipes, and a lease dies at its STEP cap or its WALL-TIME cap (seed #38260).
 
-    venv/bin/python tests/test_hands_cell.py        (also run by nucleus/check.sh)
+    venv/bin/python tests/test_hands_cell.py        (also run by devtools/check.sh)
 
-It drives the REAL executor (nucleus/hands.py) and the real images (astryx-hands-cell,
+It drives the REAL executor (src/astryx/hands/hands.py) and the real images (astryx-hands-cell,
 astryx-hands-proxy) against a throwaway, sqlguard-stamped lease table (HANDS_DSN, set explicitly).
 Real public hosts stand in for a lease's allowed site: example.com is allowed, example.org isn't.
 
@@ -87,9 +87,9 @@ for img in ("astryx-hands-cell", "astryx-hands-proxy"):
         skip(f"image {img} isn't built (harness/hands/build.sh)")
 
 sys.path.insert(0, str(REPO))
-from nucleus.sqlguard.estate import gate  # noqa: E402
+from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate("test_hands_cell", REPO, deps=("psycopg",))   # a committed-only tree (no venv): 77, not an import crash
-from nucleus.sqlguard.fixture import fixture_db  # noqa: E402
+from astryx.security.sqlguard.fixture import fixture_db  # noqa: E402
 
 _fx = fixture_db()
 try:
@@ -110,7 +110,7 @@ if SUBJECT:                                          # the subject under test, b
     hands = importlib.util.module_from_spec(_spec)
     _spec.loader.exec_module(hands)
 else:
-    from nucleus import hands  # noqa: E402  (after the env is set: hands reads it per call)
+    from astryx.hands import hands  # noqa: E402  (after the env is set: hands reads it per call)
 
 made = []
 

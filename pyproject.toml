@@ -15,7 +15,7 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS",
 ]
-# dependencies and extras are DERIVED from nucleus/deps.conf (the one dependency authority) by
+# dependencies and extras are DERIVED from src/astryx/data/deps.conf (the one dependency authority) by
 # hatch_build.py: core + cli -> dependencies; media, discord, dev -> extras. Never list them here.
 dynamic = ["version", "dependencies", "optional-dependencies"]
 

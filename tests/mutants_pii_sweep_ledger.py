@@ -1,6 +1,6 @@
-"""Authored mutants for triggers/steward/pii_sweep.py — run by nucleus/mutation_probe.py.
+"""Authored mutants for triggers/steward/pii_sweep.py — run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_pii_sweep_ledger.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_pii_sweep_ledger.py
 
 THE LIST IS THE JUDGEMENT, WHICH IS WHY IT IS AUTHORED. Every entry below is a way this
 guard HAS been wrong or was one edit away from being wrong on 2026-08-16, when its

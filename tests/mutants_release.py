@@ -1,10 +1,10 @@
-"""Mutants for nucleus/release.py (plan-9139 S1a). Each is a wrong door the design names: an unknown tier that
+"""Mutants for src/astryx/security/release.py (plan-9139 S1a). Each is a wrong door the design names: an unknown tier that
 releases wide, a cached membership, a guessed destination, a borrowed route, a caller-chosen thread, a bare hash,
 an empty audience that passes, a pointer that traverses. The oracle is tests/test_release.py."""
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-SUBJECT = REPO / "nucleus" / "release.py"
+SUBJECT = REPO / "src" / "astryx" / "security" / "release.py"
 ORACLE = REPO / "tests" / "test_release.py"
 ENV = "RELEASE_SRC"
 MUTANTS = {

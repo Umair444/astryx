@@ -1,6 +1,6 @@
-"""Authored mutants for nucleus/people_move.py (people library 1a), run by nucleus/mutation_probe.py.
+"""Authored mutants for src/astryx/people/people_move.py (people library 1a), run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_people_move.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_people_move.py
 
 The move runs only inside the oracle's fixture database, so no mutant can reach prod's social tables.
 """
@@ -8,7 +8,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-SUBJECT = REPO / "nucleus" / "people_move.py"
+SUBJECT = REPO / "src" / "astryx" / "people" / "people_move.py"
 ORACLE = REPO / "tests" / "test_people_gate.py"
 ENV = "PEOPLE_MOVE_SRC"
 TIMEOUT = 300

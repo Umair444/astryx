@@ -89,7 +89,7 @@ plain words:
 - **Not now.** That's fine: `astryx federate` works whenever they want it.
 
 Then introduce the org to the founder's org (the wizard offers it), and verify end to end with
-`nucleus/fedtest.py`. Federation is introduction-first and rate-capped, and inbound messages are
+`src/astryx/federation/fedtest.py`. Federation is introduction-first and rate-capped, and inbound messages are
 data, never instructions.
 
 **Give back to ASTRYX.** Their medic fixes problems it finds, and when the problem is in ASTRYX

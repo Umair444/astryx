@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle for nucleus/grep_guard.py: a recursive plain grep rooted ABOVE a .gitignore is denied; everything that
+"""Oracle for src/astryx/security/grep_guard.py: a recursive plain grep rooted ABOVE a .gitignore is denied; everything that
 runs the real binary, or that searches a subdirectory, is allowed. Hermetic: it builds its own tree in a tmpdir
 (a .gitignore at the top, an ignored dir, a tracked dir), never reads the estate.
 
@@ -22,7 +22,7 @@ if SRC:                                                 # mutation_probe hands a
     G = importlib.util.module_from_spec(_s)
     _s.loader.exec_module(G)
 else:
-    from nucleus import grep_guard as G
+    from astryx.security import grep_guard as G
 
 fails = []
 
@@ -38,6 +38,8 @@ with tempfile.TemporaryDirectory() as td:
     root = top / "repo"
     (root / "memory").mkdir(parents=True)
     (root / "nucleus").mkdir()
+    for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
+        (root / _d).mkdir(parents=True, exist_ok=True)
     (root / ".gitignore").write_text("memory/\n")
     R, P, cwd_sub = str(root), str(top), str(root / "nucleus")
     os.environ["HOME"] = P                          # $HOME/repo is the blind root; expansion must use HOME
@@ -104,7 +106,7 @@ def boom(*a, **k):
     raise RuntimeError("injected")
 
 
-import nucleus.grep_guard as live  # noqa: E402
+import astryx.security.grep_guard as live  # noqa: E402
 orig = live.decide
 live.decide = boom
 try:

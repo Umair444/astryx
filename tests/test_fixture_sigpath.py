@@ -18,9 +18,9 @@ for _k in [k for k in os.environ if k.startswith("GIT_")]:
     del os.environ[_k]
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
-from nucleus.sqlguard.estate import gate  # noqa: E402
+from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate("test_fixture_sigpath", REPO, deps=("psycopg",))
-SRC = os.environ.get("SQLGUARD_FIXTURE_SRC") or str(REPO / "nucleus" / "sqlguard" / "fixture.py")  # mutation_probe swaps it
+SRC = os.environ.get("SQLGUARD_FIXTURE_SRC") or str(REPO / "src" / "astryx" / "security" / "sqlguard" / "fixture.py")  # mutation_probe swaps it
 import importlib.util  # noqa: E402
 os.environ.setdefault("ASTRYX_SQLGUARD_ROOT", str(REPO))
 _sp = importlib.util.spec_from_file_location("fixture_under_test", SRC)

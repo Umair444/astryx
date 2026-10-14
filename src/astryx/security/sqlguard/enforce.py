@@ -1,0 +1,230 @@
+#!/usr/bin/env python3
+"""sqlguard ENFORCEMENT (goal 4243, B1). judge.py grades; this decides. Kept apart so each can be tested alone.
+
+    venv/bin/python -m astryx.security.sqlguard.enforce <trace_dir>    # rc 0 pass · 1 RED · 77 NOT SEARCHED (run level)
+
+RED:
+  R-NEW     a site below RESPONSIVE that the ledger doesn't list (growth is only via `ledger admit`, whose reason
+            then prints every run). EXCEPT EX3: a site capped at FIXTURE-DDL
+            SOLELY because every covering gate belongs to a LISTED extractor still inside its window is REPORTED.
+  R-STALE   a ledger row whose site climbed to RESPONSIVE, or no longer exists. This forces the shrink.
+  R-BLIND   reverse agreement: runtime saw SQL the inventory doesn't know.
+  R-CLOCK   a site NOT SEARCHED for more than NS_RUNS runs AND more than NS_DAYS days (per site, in
+            sqlguard_seen).
+  R-LEAK    this run's astryx_fx_<run> database is still present; or a foreign astryx_fx_* has been present
+            ≥ LEAK_RUNS runs AND ≥ LEAK_AGE since first seen (pg_database records no creation time).
+  R-EXTRACT an extractor derived from the trace that isn't listed; a listed one whose gate COMPLETED rc=0 without
+            building an unstamped fixture (stale: shrink it); a listed one past EX_DAYS (EX2 clock).
+            A listed extractor whose gate skipped or failed is left alone (the F-b absence rule).
+NOT SEARCHED (run level, rc 77, never a pass): shim internal errors; triggers/ absent; the canary site not
+RESPONSIVE; the state table absent (apply schema.sql).
+Every answer prints judge.REMAINDER, the ceiling of what RESPONSIVE certifies.
+"""
+if not __package__:  # run by path: the checkout root goes first on sys.path so `astryx` resolves (goal 10224 S4)
+    import sys as _sys, os as _os
+    _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__)))))))
+from astryx.paths import repo_root  # noqa: E402
+import datetime
+import hashlib
+import json
+import os
+import sys
+from pathlib import Path
+
+if __name__ == "__main__":             # before ANY dependency import: a bare interpreter must reach the gate
+    from astryx.security.sqlguard.estate import gate
+    gate("enforce", Path(os.environ.get("ASTRYX_SQLGUARD_ROOT") or repo_root(__file__)))
+
+import psycopg
+
+from astryx.security.sqlguard import judge
+from astryx.security.sqlguard.fixture import live_dsn, run_id
+from astryx.security.sqlguard.privacy import handle, label, ledger_key, ignored, text_key
+
+NS_RUNS, NS_DAYS = 7, 3                    # the per-site NOT SEARCHED clock (declared)
+LEAK_RUNS, LEAK_AGE = 3, datetime.timedelta(hours=1)
+EX_DAYS = 30                               # EX2: a listed extractor's migration window (declared)
+CANARY = "src/astryx/security/sqlguard/canary.py::canary"
+
+
+def load_ledger(path=None):
+    p = path or (judge.REPO / "src" / "astryx" / "security" / "sqlguard" / "ledger.json")
+    return json.loads(open(p).read()) if os.path.exists(p) else None
+
+
+def _clock(conn, kind, keys):
+    """Upsert the keys seen this run, delete resolved ones, and return {key: (first_seen, runs)}."""
+    now = datetime.datetime.now(datetime.UTC)
+    out = {}
+    for k in keys:
+        r = conn.execute("INSERT INTO sqlguard_seen (kind, key) VALUES (%s,%s) ON CONFLICT (kind, key) DO UPDATE "
+                         "SET last_seen=now(), runs=sqlguard_seen.runs+1 RETURNING first_seen, runs",
+                         (kind, k)).fetchone()
+        out[k] = r
+    conn.execute("DELETE FROM sqlguard_seen WHERE kind=%s AND NOT (key = ANY(%s))", (kind, list(keys)))
+    return out, now
+
+
+def enforce(trace_dir, ledger=None, dsn=None, rep=None):
+    ledger = ledger if ledger is not None else load_ledger()
+    # The ledger's covering map (the last clean run) is unioned in, so a gate that crashed before reaching a
+    # site still COVERS it and the site grades NOT SEARCHED, never a false UNEXECUTED (C1).
+    rep = rep or judge.judge(trace_dir, stored_covering=(ledger or {}).get("covering"))
+    red, report, not_searched = [], [], list(rep["run_not_searched"])
+    ids = []                                        # parallel to red: each finding's STABLE identity (plan-4918 D4)
+
+    def R(ident: str, line: str):
+        """A RED finding, keyed by what it IS (class + ledger key/file/text), never by a rendered line: an R-BLIND
+        frame carries file:LINE, and unchanged code shifts lines between two trees (a3 C4). Stored hashed."""
+        red.append(line)
+        ids.append(hashlib.sha256(ident.encode()).hexdigest()[:24])
+    if ledger is None:
+        not_searched.append("no ledger.json: seed it first (ledger seed)")
+        return {"rc": 77, "red": red, "report": report, "not_searched": not_searched}
+    rows = ledger.get("rows", {})
+    listed = ledger.get("extractors", {})
+    gates = rep["gates"]
+    today = datetime.date.today()
+
+    canary = [v for k, v in rep["sites"].items() if k.startswith(CANARY + "\x1f")]
+    if not canary or any(v["rung"] != "RESPONSIVE" for v in canary):
+        not_searched.append(f"canary not RESPONSIVE ({[v['rung'] for v in canary] or 'absent'}): "
+                            f"the shim can't be trusted this run")
+
+    # EX2 window: a listed extractor inside its window shields its sites (EX3); past it → RED.
+    open_gates = set()
+    for f, meta in listed.items():
+        since = datetime.date.fromisoformat(meta.get("listed_since", str(today)))
+        if (today - since).days > EX_DAYS:
+            R(f"R-EXTRACT window {f}", f"R-EXTRACT {f}: listed {(today - since).days}d > {EX_DAYS}d (trip: {meta.get('trip')})")
+        else:
+            open_gates.update(meta.get("gates", []))
+    derived = rep["extractors"]
+    for f, gs in derived.items():
+        if f not in listed:
+            R(f"R-EXTRACT unlisted {f}", f"R-EXTRACT {f} builds an UNSTAMPED fixture and isn't listed: migrate it to "
+                       f"src/astryx/security/sqlguard/fixture.py, or list it with a reason and a trip")
+    for f, meta in listed.items():
+        if f not in derived:
+            gs = meta.get("gates", [])
+            if gs and all(gates.get(g) == 0 for g in gs):
+                R(f"R-EXTRACT gone {f}", f"R-EXTRACT {f} no longer builds an unstamped fixture (its gate completed rc=0): "
+                           f"remove it from the list (shrink)")
+            # else: a skipped or failed gate says nothing about absence (F-b), so leave it listed
+
+    ns_keys = []
+    for key, s in rep["sites"].items():
+        fn, _, text = key.partition("\x1f")
+        row = rows.get(ledger_key(key))
+        if s["rung"] == "RESPONSIVE":
+            if row and s.get("live_only"):
+                # the ledger moves only on REPRODUCIBLE evidence: a climb read off live data flaps back next run
+                report.append(f"LIVE-ONLY climb {label(key)}: RESPONSIVE on live data this run, still listed as "
+                              f"{row['debt']}. Not reproducible, so not shrunk: exercise it in a stamped fixture")
+            elif row:
+                R(f"R-STALE climbed {ledger_key(key)}", f"R-STALE {label(key)}: now RESPONSIVE but still listed as {row['debt']} (shrink)")
+            continue
+        if s["rung"] == "NOT SEARCHED":
+            ns_keys.append(key)
+            continue
+        if row:
+            if row.get("reason", "seed") != "seed":             # an ADMITTED row: its reason prints every run
+                report.append(f"ADMITTED {label(key)} ({row['debt']}, {row.get('admitted', '?')}): {row['reason']}")
+            continue                                            # known debt, with its address
+        cov = rep["covering"].get(key, [])
+        if s["rung"] == "EXECUTED/FIXTURE-DDL" and cov and set(cov) <= open_gates:
+            report.append(f"EX3 {label(key)}: capped at FIXTURE-DDL by a LISTED extractor (reported, not RED)")
+            continue
+        R(f"R-NEW {ledger_key(key)}", f"R-NEW {label(key)}: {s['rung']} and not in the ledger. Make it RESPONSIVE, or admit it: "
+                   f"ledger admit <trace_dir> {handle(key)} '<reason>'")
+    # the declared live-only residual, MEASURED each run rather than remembered as a dated count (a3 #29426)
+    lo = sum(1 for k, s in rep["sites"].items() if s.get("live_only") and ledger_key(k) not in rows)
+    if lo:
+        report.append(f"{lo} unlisted RESPONSIVE site(s) are live-only (witnesses from live data: not reproducible)")
+    live_keys = {ledger_key(k) for k in rep["sites"]}
+    for key in rows:
+        if key not in live_keys:
+            shown = "a hashed (gitignored-origin) site" if key.startswith("sha256:") else label(key)
+            R(f"R-STALE absent {key}", f"R-STALE {shown}: listed, but its key is absent (the site was deleted, or moved by a rename): "
+                       f"`ledger shrink <trace_dir>` re-keys a unique move and drops the rest")
+    for b in rep["blind"]:
+        path = b["frame"][0]
+        what = "" if (path.startswith("tier/") or ignored(path)) else f": {b['t'][:70]!r}"
+        R(f"R-BLIND {path}::{b['frame'][1]}::{b['t']}",                       # frame[2] (the LINE) never keyed
+          f"R-BLIND {path}::{b['frame'][1]} ran SQL the inventory doesn't know{what}")
+
+    try:
+        with psycopg.connect(dsn or live_dsn(), autocommit=True, connect_timeout=5) as c:
+            if not c.execute("SELECT to_regclass('sqlguard_seen')").fetchone()[0]:
+                not_searched.append("state table sqlguard_seen absent: apply src/astryx/sql/schema.sql")
+            else:
+                # Keyed by text_key (digests at rest, P1) and NOT by qualname, so renaming the function around an
+                # unobserved site doesn't reset its clock (a3 #22780). Same text in one file shares a clock: the older
+                # first-seen wins, which is the loud direction.
+                tks = {}
+                for k in ns_keys:
+                    tks.setdefault(text_key(k), k)
+                seen, now = _clock(c, "ns_site", list(tks))
+                for tk, (first, runs) in seen.items():
+                    age = now - first
+                    if runs > NS_RUNS and age.days >= NS_DAYS:
+                        R(f"R-CLOCK {tk}", f"R-CLOCK {label(tks[tk])}: NOT SEARCHED for {runs} runs / {age.days}d")
+                for f, meta in listed.items():                  # P2: machine-checkable trips
+                    trip = meta.get("trip") or {}
+                    if isinstance(trip, dict) and trip.get("goal") and c.execute(
+                            "SELECT 1 FROM goals WHERE id=%s AND state=%s", (trip["goal"], trip.get("state", "done"))
+                    ).fetchone():
+                        R(f"R-EXTRACT trip {f}", f"R-EXTRACT {f}: its trip fired (goal {trip['goal']} is "
+                                   f"{trip.get('state', 'done')}), so migrate it to src/astryx/security/sqlguard/fixture.py")
+                fx = [r[0] for r in c.execute("SELECT datname FROM pg_database WHERE datname LIKE 'astryx_fx_%'")]
+                mine = f"astryx_fx_{run_id()}_".lower()
+                for d in fx:
+                    if d.startswith(mine):
+                        R("R-LEAK this run", f"R-LEAK {d}: this run's fixture DB is still present")
+                foreign = [d for d in fx if not d.startswith(mine)]
+                fseen, now = _clock(c, "fx_db", foreign)
+                for d, (first, runs) in fseen.items():
+                    if runs >= LEAK_RUNS and now - first >= LEAK_AGE:
+                        R(f"R-LEAK foreign {d}", f"R-LEAK {d}: a foreign fixture DB present for {runs} runs since {first:%F %T}")
+    except psycopg.Error as e:
+        not_searched.append(f"state/leak checks couldn't run: {type(e).__name__}")
+
+    from astryx.security.sqlguard import privacy
+    if privacy.ERRORS:                                             # a3 D-P: the privacy authority couldn't answer
+        not_searched.append(f"privacy classification failed ({len(privacy.ERRORS)}); findings for those "
+                            f"sites were redacted, never printed in plaintext")
+    rc = 77 if not_searched else (1 if red else 0)
+    return {"rc": rc, "red": red, "red_ids": ids, "report": report, "not_searched": not_searched}
+
+
+def write_red(trace_dir, out) -> None:
+    """red.json beside report.json: [{id, line}] for a differential reader (branch_check, plan-4918 D4). The line is
+    the rendered finding, already privacy-safe (it is printed); the id is the hashed identity."""
+    if trace_dir and os.path.isdir(trace_dir):
+        with open(os.path.join(trace_dir, "red.json"), "w") as f:
+            json.dump([{"id": i, "line": l} for i, l in zip(out.get("red_ids", []), out["red"])], f)
+
+
+def render(out) -> list:
+    """The printed verdict. A REPORTED/ADMITTED row is marked `·`, never `○`: check.sh's protocol reads a line
+    whose first token is SKIP or ○ as a SKIP ANNOUNCEMENT, so `○` would count this enforcing, rc-0 gate as
+    UNVERIFIED on every run that has an admitted row. That's the guard going dark while it works (seed #24103)."""
+    lines = [f"  NOT SEARCHED: {n}" for n in out["not_searched"]]
+    lines += [f"  \033[31m✗\033[0m {r}" for r in out["red"]]
+    lines += [f"  · {r}" for r in out["report"]]
+    lines.append(f"sqlguard enforce: rc={out['rc']} · RED {len(out['red'])} · reported {len(out['report'])} · "
+                 f"not-searched {len(out['not_searched'])}")
+    return lines
+
+
+if __name__ == "__main__":
+    d = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("ASTRYX_SQLGUARD_DIR", "")
+    led = load_ledger()
+    rep = judge.judge(d, stored_covering=(led or {}).get("covering"))
+    judge.print_report(rep)
+    judge.write_report(d, rep)                  # ledger admit reads it
+    out = enforce(d, ledger=led, rep=rep)
+    write_red(d, out)
+    print("\n".join(render(out)))
+    print("  " + judge.REMAINDER)
+    sys.exit(out["rc"])

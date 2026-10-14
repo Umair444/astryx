@@ -41,10 +41,10 @@ def check(name, ok, detail=""):
 
 
 try:
-    from nucleus import secret_sweep as sw
-    from nucleus import secretset as ss
+    from astryx.security import secret_sweep as sw
+    from astryx.security import secretset as ss
 except Exception as exc:                                    # noqa: BLE001
-    check("nucleus.secret_sweep imports", False, f"{type(exc).__name__}: {exc}")
+    check("astryx.security.secret_sweep imports", False, f"{type(exc).__name__}: {exc}")
     print(f"\nFAIL: {len(fails)} arm(s) red")
     sys.exit(1)
 
@@ -152,7 +152,7 @@ def environment_absent() -> str | None:
     except ImportError:
         return "psycopg not importable"
     try:
-        from nucleus.sqlguard.fixture import live_dsn
+        from astryx.security.sqlguard.fixture import live_dsn
         dsn = live_dsn()
     except (OSError, StopIteration):
         return "no ASTRYX_DSN in .env"
@@ -172,7 +172,7 @@ def arm_turns(tmp: Path):
         return
     import psycopg
     from psycopg.types.json import Jsonb
-    from nucleus.sqlguard.fixture import fixture_db
+    from astryx.security.sqlguard.fixture import fixture_db
     S = secrets(tmp)
     try:
         cm = fixture_db()
@@ -212,7 +212,7 @@ def arm_polarity(tmp: Path):
     if environment_absent():
         return                                              # W5 already recorded why nothing ran
     import psycopg
-    import nucleus.sqlguard.fixture as fx
+    import astryx.security.sqlguard.fixture as fx
     real, n_fail, n_skip = fx.fixture_db, len(fails), len(skipped)
 
     def broken(*a, **k):

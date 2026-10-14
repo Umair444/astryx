@@ -1,7 +1,7 @@
 """Authored mutants for mcp/tools/server.py (the registry door, goal 4227 S4), run by
-nucleus/mutation_probe.py.
+devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_tools_door.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_tools_door.py
 
 Each mutant is a way the door could become a NEW capability rather than a convenience: running
 what isn't registered, running through a shell, holding a process open, or starting an MCP

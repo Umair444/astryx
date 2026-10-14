@@ -1,6 +1,6 @@
 """Mutants for init.sh's dispatcher link (tests/test_init_link.py). Hermetic.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_init_link.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_init_link.py
 """
 from pathlib import Path
 

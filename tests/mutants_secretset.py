@@ -1,9 +1,9 @@
-"""Authored mutants for nucleus/secretset.py — run by nucleus/mutation_probe.py.
+"""Authored mutants for src/astryx/security/secretset.py — run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_secretset.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_secretset.py
 
 THE SUBJECT IS secretset.py (the org's one answer to "what is secret here?") AND THE ORACLE IS
-tests/test_secretset.py, loaded through SECRETSET_SRC and installed as nucleus.secretset, so the
+tests/test_secretset.py, loaded through SECRETSET_SRC and installed as astryx.security.secretset, so the
 S1a arms that drive hooks/step.py see the mutant too.
 
 WHY THIS FILE EXISTS (a1 night-review 2026-10-09). Building plan-5497 I checked about fifteen arms
@@ -19,7 +19,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-SUBJECT = REPO / "nucleus" / "secretset.py"
+SUBJECT = REPO / "src" / "astryx" / "security" / "secretset.py"
 ORACLE = REPO / "tests" / "test_secretset.py"
 ENV = "SECRETSET_SRC"
 

@@ -72,6 +72,7 @@ ExecStart=$PWD/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8090
 Restart=always
 RestartSec=5
 User=$USER
+Environment=ASTRYX_HOME=$PWD
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -85,6 +86,7 @@ ExecStart=$PWD/venv/bin/uvicorn bridges.canvas:root --host 127.0.0.1 --port 8091
 Restart=always
 RestartSec=5
 User=$USER
+Environment=ASTRYX_HOME=$PWD
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -94,8 +96,9 @@ Description=astryx pulse — one tick of the trigger clock
 [Service]
 Type=oneshot
 WorkingDirectory=$PWD
-ExecStart=$PWD/venv/bin/python $PWD/nucleus/pulse.py
+ExecStart=$PWD/venv/bin/python -m astryx.pulse.pulse
 User=$USER
+Environment=ASTRYX_HOME=$PWD
 # KillMode=process, NOT the default control-group: this oneshot BY DESIGN spawns detached
 # long jobs (org_runners _launch: backup/check/restore-verify/mutant-battery) that must
 # outlive the ~seconds tick. control-group kill reaps the whole cgroup when pulse.py exits,
@@ -135,6 +138,7 @@ ExecStart=$PWD/venv/bin/uvicorn gateway:app --host 0.0.0.0 --port 8845 --proxy-h
 Restart=always
 RestartSec=5
 User=$USER
+Environment=ASTRYX_HOME=$PWD
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -151,9 +155,10 @@ Wants=network-online.target docker.service
 Type=oneshot
 RemainAfterExit=yes
 User=$USER
+Environment=ASTRYX_HOME=$PWD
 Environment=HOME=$HOME
 Environment=PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=$PWD/nucleus/spawn-all.sh
+ExecStart=$PWD/scripts/spawn-all.sh
 
 [Install]
 WantedBy=multi-user.target
@@ -171,6 +176,7 @@ ExecStart=$PWD/venv/bin/uvicorn bridges.whatsapp:app --host $(_docker_host_ip) -
 Restart=always
 RestartSec=5
 User=$USER
+Environment=ASTRYX_HOME=$PWD
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -184,6 +190,7 @@ ExecStart=$PWD/venv/bin/uvicorn bridges.discord:app --host 127.0.0.1 --port 8479
 Restart=always
 RestartSec=5
 User=$USER
+Environment=ASTRYX_HOME=$PWD
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -197,6 +204,7 @@ ExecStart=$PWD/venv/bin/uvicorn bridges.telegram:app --host 127.0.0.1 --port 847
 Restart=always
 RestartSec=5
 User=$USER
+Environment=ASTRYX_HOME=$PWD
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -209,11 +217,11 @@ EOF
   # presence-gated exactly like a channel, generating one astryx-<sense>.service unit.)
   UNITS_EXPECT_DISABLED=""        # units declared here that must be INSTALLED but NOT enabled (doctor checks both ways)
 
-  # ── 3c. senses — the afferent API layer (nucleus/senses.py serves sensors/<agent>/*.py on :8460) ─────────
+  # ── 3c. senses — the afferent API layer (src/astryx/pulse/senses.py serves sensors/<agent>/*.py on :8460) ─────────
   # Declared 10-10 (seed #43920: it ran, enabled and active, while nothing generated it). Presence signal = the server
   # module + at least one sensor: writing sensors/<agent>/<name>.py IS deploying (senses.py's own law), so an org with
   # no sensor grows no service.
-  if [ -f nucleus/senses.py ] && compgen -G "sensors/*/*.py" >/dev/null; then
+  if [ -f src/astryx/pulse/senses.py ] && compgen -G "sensors/*/*.py" >/dev/null; then
     cat > "$UD/astryx-senses.service" <<EOF
 [Unit]
 Description=astryx senses — the afferent API layer (sensors/<agent>/*.py served on :8460)
@@ -222,8 +230,9 @@ After=network.target docker.service
 [Service]
 Type=simple
 User=$USER
+Environment=ASTRYX_HOME=$PWD
 WorkingDirectory=$PWD
-ExecStart=$PWD/venv/bin/python $PWD/nucleus/senses.py
+ExecStart=$PWD/venv/bin/python -m astryx.pulse.senses
 Restart=always
 RestartSec=3
 
@@ -248,6 +257,7 @@ ExecStart=$PWD/venv/bin/uvicorn geoloc:app --host 0.0.0.0 --port 8766
 Restart=always
 RestartSec=5
 User=$USER
+Environment=ASTRYX_HOME=$PWD
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -268,6 +278,7 @@ ExecStart=$PWD/venv/bin/uvicorn bridges.ear:app --host 127.0.0.1 --port 8092
 Restart=always
 RestartSec=5
 User=$USER
+Environment=ASTRYX_HOME=$PWD
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -288,7 +299,7 @@ EOF
   # The unit is DECLARED whenever the module and a live grant exist (seed #43920: it sat on disk and in systemd with
   # nothing generating it). WHERE the body runs decides only its STATE: a local body's unit must be enabled; a remote
   # body (GROWBOT_BODY_URL elsewhere: the chip serves the protocol itself) must leave it installed and NOT enabled.
-  if [ -f nucleus/growbot_body.py ] && \
+  if [ -f src/astryx/contrib/growbot_body.py ] && \
      grep -rqsE '^Grants:.*\bgrowbot\b' --exclude='*.example.md' agents/; then
     { [ -z "$gb_url" ] || echo "$gb_url" | grep -qE '127\.0\.0\.1|localhost'; } \
       || UNITS_EXPECT_DISABLED="$UNITS_EXPECT_DISABLED astryx-growbot.service"
@@ -299,10 +310,11 @@ After=network.target
 [Service]
 WorkingDirectory=$PWD
 EnvironmentFile=-$PWD/.env
-ExecStart=$PWD/venv/bin/python $PWD/nucleus/growbot_body.py
+ExecStart=$PWD/venv/bin/python -m astryx.contrib.growbot_body
 Restart=always
 RestartSec=3
 User=$USER
+Environment=ASTRYX_HOME=$PWD
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -320,7 +332,7 @@ EOF
       case "$stem" in \#*) continue;; esac
       agent=$(echo "$agent" | xargs); oncal=$(echo "$oncal" | xargs)
       execp=$(echo "$execp" | xargs); desc=$(echo "$desc" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-      if [ "$agent" != org ] && ! venv/bin/python nucleus/charter.py "$agent" >/dev/null 2>&1; then
+      if [ "$agent" != org ] && ! venv/bin/python src/astryx/core/charter.py "$agent" >/dev/null 2>&1; then
         echo "  runner '$stem': agent '$agent' not in roster — no unit generated" >&2; continue
       fi
       case "$execp" in
@@ -335,6 +347,7 @@ Type=oneshot
 WorkingDirectory=$PWD
 ExecStart=$rexec
 User=$USER
+Environment=ASTRYX_HOME=$PWD
 EOF
       cat > "$UD/astryx-$stem.timer" <<EOF
 [Unit]
@@ -392,8 +405,8 @@ PYEOF
 #   halt     — a PERMANENT boundary the org can't drive (missing tool, human login) →
 #              report, don't spin. Interior converges around it; the human resolves it.
 dsn() { grep '^ASTRYX_DSN=' .env 2>/dev/null | cut -d= -f2-; }
-. nucleus/pgcontainer.sh                     # PG_CONTAINER: the one declared postgres (infra/pg/docker-compose.yml)
-. nucleus/docker_host_ip.sh                   # _docker_host_ip: how containers reach this host (was a literal 172.17.0.1)
+. scripts/pgcontainer.sh                     # PG_CONTAINER: the one declared postgres (infra/pg/docker-compose.yml)
+. scripts/docker_host_ip.sh                   # _docker_host_ip: how containers reach this host (was a literal 172.17.0.1)
 # wsl2 | wsl1 | no: is this Linux running under Windows' WSL? (doctor, goal 10224 S3). WSL2 kernels say
 # "microsoft-standard-WSL2" (older ones "-microsoft-standard"); WSL1 says "Microsoft" with a capital M. WSL_DISTRO_NAME is
 # set in every WSL shell, the fallback when /proc/version can't be read. The path is overridable for tests.
@@ -461,7 +474,7 @@ _chk_pgready() { psql_q -c 'SELECT 1' >/dev/null 2>&1; }          # wait (transi
 # schema.sql is idempotent (IF NOT EXISTS / DO blocks), so a re-apply on any change is safe. The act applies a COPY,
 # stamps THAT copy's sha, and stamps only after a clean ON_ERROR_STOP apply: a failed apply stays RED. psql_q feeds
 # stdin, so the docker-psql path applies the same bytes.
-_SCHEMA_FILE="${ASTRYX_SCHEMA:-nucleus/schema.sql}"
+_SCHEMA_FILE="${ASTRYX_SCHEMA:-src/astryx/sql/schema.sql}"
 _STAMP_Q="SELECT sha FROM schema_applied WHERE id = 1"
 _sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }  # macOS
 _chk_schema() { local have want; have=$(psql_q -X -tA -c "$_STAMP_Q" 2>/dev/null) || return 1
@@ -470,7 +483,7 @@ _act_schema() { say "applying schema (schema.sql differs from what this database
   local tmp sha rc; tmp=$(mktemp) || return 1; cp "$_SCHEMA_FILE" "$tmp" || { rm -f "$tmp"; return 1; }
   # COMMIT FIRST (seed 2026-10-09: an uncommitted ALTER applied to prod read schema-parity EXTRA on every committed
   # tree for an hour). The EXACT bytes about to be applied must equal HEAD's — compared after the copy (no TOCTOU),
-  # with a path relative to -C by construction ("./basename": the default "nucleus/schema.sql" is relative), so a
+  # with a path relative to -C by construction ("./basename": the default "src/astryx/sql/schema.sql" is relative), so a
   # modified, staged-but-uncommitted or never-tracked file is refused (a4 #41136 R1/R2). No git → skip; the override is loud.
   local d; d=$(dirname "$_SCHEMA_FILE")
   if env -u GIT_DIR -u GIT_WORK_TREE git -C "$d" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
@@ -489,13 +502,13 @@ _act_schema() { say "applying schema (schema.sql differs from what this database
 # <<< schema
 
 # >>> geoschema (owner 10-10: "the design on github should match local"; steward #42345 F1)
-# The `geo` database's design is nucleus/schema_geo.sql (DDL only; the location rows are personal tier and never in
+# The `geo` database's design is src/astryx/sql/schema_geo.sql (DDL only; the location rows are personal tier and never in
 # git). The check is cheap (every declared table exists); schema_parity's check.sh gate is the full judge. The act
 # births the database zero-window if missing and refuses a file that isn't committed, like the schema node.
-_chk_geoschema() { venv/bin/python -m nucleus.schema_parity present geo >/dev/null 2>&1 \
-  && venv/bin/python -m nucleus.schema_parity readable geo >/dev/null 2>&1; }   # declared AND readable by every resident
-_act_geoschema() { say "geo: applying nucleus/schema_geo.sql (the declared design of the geo database)"
-  venv/bin/python -m nucleus.schema_parity apply geo >/dev/null; }
+_chk_geoschema() { venv/bin/python -m astryx.pg.schema_parity present geo >/dev/null 2>&1 \
+  && venv/bin/python -m astryx.pg.schema_parity readable geo >/dev/null 2>&1; }   # declared AND readable by every resident
+_act_geoschema() { say "geo: applying src/astryx/sql/schema_geo.sql (the declared design of the geo database)"
+  venv/bin/python -m astryx.pg.schema_parity apply geo >/dev/null; }
 # <<< geoschema
 
 # >>> harden (plan-4918 P0-a)
@@ -535,14 +548,14 @@ _act_harden() { say "revoking PUBLIC CONNECT on the org's databases (plan-4918 P
 
 # people library 1a: social_relation's grants, the people_cleared / astryx_resident roles (resident NOLOGIN until
 # 1b), and the private AGE database astryx_people, born zero-window. The check and the act are one module.
-_chk_peoplegate() { venv/bin/python -m nucleus.people_gate check; }
+_chk_peoplegate() { venv/bin/python -m astryx.people.people_gate check; }
 _act_peoplegate() { say "people gate: every resident reads the people library; PUBLIC doesn't (owner ruling 10-10)"
-  venv/bin/python -m nucleus.people_gate apply >/dev/null; }
+  venv/bin/python -m astryx.people.people_gate apply >/dev/null; }
 # The derived graph databases, as social_age.DESIGN declares them (owner 10-10: "the design on github should match
 # local"). ensure creates a missing database or extension, then rebuilds; the check is read-only.
-_chk_derivedgraphs() { venv/bin/python nucleus/social_age.py check >/dev/null; }
+_chk_derivedgraphs() { venv/bin/python src/astryx/memory/social_age.py check >/dev/null; }
 _act_derivedgraphs() { say "derived graphs: astryx_social / astryx_people as social_age.DESIGN declares"
-  venv/bin/python nucleus/social_age.py ensure >/dev/null; }
+  venv/bin/python src/astryx/memory/social_age.py ensure >/dev/null; }
 
 # >>> dispatcher link
 # The repo's `astryx` is a TRACKED symlink to the RELATIVE `init.sh`. Rewriting it to "$PWD/init.sh" dirtied the tree
@@ -579,12 +592,12 @@ _act_venv() { say "python venv"
   if command -v uv >/dev/null; then uv venv venv --seed >/dev/null
   else python3 -m venv venv; fi; }
 
-_chk_deps() { venv/bin/python nucleus/deps.py check $(active_dep_groups) >/dev/null 2>&1; }
+_chk_deps() { venv/bin/python src/astryx/core/deps.py check $(active_dep_groups) >/dev/null 2>&1; }
 _act_deps() { local g; g=$(active_dep_groups); say "python deps ($g)"
   if command -v uv >/dev/null; then
-    uv pip install -q --python venv/bin/python $(venv/bin/python nucleus/deps.py install-list $g)
+    uv pip install -q --python venv/bin/python $(venv/bin/python src/astryx/core/deps.py install-list $g)
   else
-    venv/bin/pip -q install $(venv/bin/python nucleus/deps.py install-list $g)
+    venv/bin/pip -q install $(venv/bin/python src/astryx/core/deps.py install-list $g)
   fi; }
 
 _chk_chan() { [ -d channel/node_modules ]; }
@@ -632,7 +645,7 @@ _chk_login() { printf 'reply with exactly: ok' | timeout 30 claude -p --model ha
 # seed: interior but NON-PERSISTENT (the body can crash) → re-checked & re-spawned every
 # pass. spawn.sh is idempotent (has-session guard), so re-actuation is safe.
 _chk_seed() { tmux has-session -t "=ax-seed" 2>/dev/null; }
-_act_seed() { say "spawning the seed"; nucleus/spawn.sh seed >/dev/null; }
+_act_seed() { say "spawning the seed"; scripts/spawn.sh seed >/dev/null; }
 
 # initial prompt DELIVERED ON THE WIRE (a messages row → the doorbell), never send-keys.
 _chk_prompt() { [ "$(psql_q -tAc "SELECT count(*) FROM messages WHERE to_agent='seed' AND from_agent='owner'" 2>/dev/null | tr -d '[:space:]')" != "0" ]; }
@@ -659,12 +672,12 @@ _act_prehook() {
 }
 
 # >>> trigger state
-# "Is trigger N installed?" has ONE answer, nucleus/trigger_names.py (plan-9853): the PULSE's registration semantics (a
+# "Is trigger N installed?" has ONE answer, src/astryx/core/trigger_names.py (plan-9853): the PULSE's registration semantics (a
 # file's import closure, by NAME, under any agent and any filename, so an owner's copy named differently counts), minus
 # trigger_rm's tombstones, with a LEGACY row (a python row no file defines) and anything it can't read statically
 # reading DEFERRED. A node installs ONLY on absent. Deferred is never installed and never silent: doctor names it every
 # run. An unreadable answer is not "absent" either: no install. `./init.sh --reinstall N` is the owner's override.
-_trigger_state() { venv/bin/python -m nucleus.trigger_names state "$1" --target seed; }
+_trigger_state() { venv/bin/python -m astryx.core.trigger_names state "$1" --target seed; }
 _trigger_chk() {
   local s; s=$(_trigger_state "$1" 2>/dev/null); s=${s%% *}
   [ "${_REINSTALL:-}" = "$1" ] && [ "$s" = deferred ] && return 1     # the owner chose: install it
@@ -673,7 +686,7 @@ _trigger_chk() {
 # <<< trigger state
 
 # context-compact: a fresh org gets context hygiene from day one — a thin shim under the
-# seed's triggers imports the TRACKED reference (nucleus/shipped_triggers/), so the logic
+# seed's triggers imports the TRACKED reference (src/astryx/pulse/shipped_triggers/), so the logic
 # has one writer and `git pull` updates it. DEFERENTIAL: in a grown org agents author
 # their own triggers, so if ANY agent already owns a context_compact the installer stands
 # down (a duplicated actuator would double-send /compact — the cross-agent dedup law). "Owns" is by trigger NAME, any
@@ -683,11 +696,11 @@ _act_ccompact() {
   mkdir -p triggers/seed
   cat > triggers/seed/context_compact.py <<'EOF'
 """Live install of the shipped context-compact trigger. The logic lives TRACKED in
-nucleus/shipped_triggers/context_compact.py (one writer; this shim only deploys it).
+src/astryx/pulse/shipped_triggers/context_compact.py (one writer; this shim only deploys it).
 Installed by init.sh at founding; the org may replace it with an agent-authored one.
 To retire it: `trigger_rm context_compact` (a tombstone the pulse honours). Deleting this file
 does NOT retire it: init.sh would install it again."""
-from nucleus.shipped_triggers.context_compact import context_compact  # noqa: F401
+from astryx.pulse.shipped_triggers.context_compact import context_compact  # noqa: F401
 EOF
   say "installed context-compact trigger (seed) — /compact for any session past 80% of its window"
 }
@@ -701,11 +714,11 @@ _act_prreview() {
   mkdir -p triggers/seed
   cat > triggers/seed/pr_review.py <<'EOF'
 """Live install of the shipped pr-review trigger (one writer:
-nucleus/shipped_triggers/pr_review.py). Reviewer seat at founding is the seed; move this
+src/astryx/pulse/shipped_triggers/pr_review.py). Reviewer seat at founding is the seed; move this
 file to the immune-system agent (steward) once one exists — proposer and reviewer must
 never be the same mind. To retire it: `trigger_rm pr_review` (a tombstone the pulse honours).
 Deleting this file does NOT retire it: init.sh would install it again."""
-from nucleus.shipped_triggers.pr_review import pr_review  # noqa: F401
+from astryx.pulse.shipped_triggers.pr_review import pr_review  # noqa: F401
 EOF
   say "installed pr-review trigger (seed) — open PRs / medic branches wake the reviewer"
 }
@@ -718,38 +731,38 @@ EOF
 _chk_model() {
   echo " $(active_dep_groups) " | grep -q ' media ' || return 0   # no voice channel → nothing to cache
   venv/bin/python -c 'from faster_whisper import WhisperModel; WhisperModel("small", device="cpu", compute_type="int8", local_files_only=True)' 2>/dev/null \
-    && venv/bin/python -c 'import hashlib, sys; from nucleus import voiceprint as v; sys.exit(0 if v.MODEL.is_file() and hashlib.sha256(v.MODEL.read_bytes()).hexdigest() == v.MODEL_SHA else 1)' 2>/dev/null \
-    && venv/bin/python -c 'import hashlib, sys; from nucleus import wake as w; sys.exit(0 if all((w.DIR / f).is_file() and hashlib.sha256((w.DIR / f).read_bytes()).hexdigest() == h for f, h in w.FILES.items()) else 1)' 2>/dev/null; }
+    && venv/bin/python -c 'import hashlib, sys; from astryx.hearing import voiceprint as v; sys.exit(0 if v.MODEL.is_file() and hashlib.sha256(v.MODEL.read_bytes()).hexdigest() == v.MODEL_SHA else 1)' 2>/dev/null \
+    && venv/bin/python -c 'import hashlib, sys; from astryx.hearing import wake as w; sys.exit(0 if all((w.DIR / f).is_file() and hashlib.sha256((w.DIR / f).read_bytes()).hexdigest() == h for f, h in w.FILES.items()) else 1)' 2>/dev/null; }
 _act_model() {
   say "prefetching the transcription model (once, under the reconciler — never on the message path)"
   venv/bin/python -c 'from faster_whisper import WhisperModel; WhisperModel("small", device="cpu", compute_type="int8")' >/dev/null 2>&1
-  venv/bin/python -m nucleus.voiceprint fetch >/dev/null 2>&1      # the Room's speaker model (sha-pinned)
-  venv/bin/python -m nucleus.wake fetch >/dev/null 2>&1; }         # the Room's wake word (sha-pinned)
+  venv/bin/python -m astryx.hearing.voiceprint fetch >/dev/null 2>&1      # the Room's speaker model (sha-pinned)
+  venv/bin/python -m astryx.hearing.wake fetch >/dev/null 2>&1; }         # the Room's wake word (sha-pinned)
 
 # android (plan-8675): an OPT-IN phone for the agents (ANDROID_ENABLED=1). Off, or no KVM → nothing to do (green; doctor
 # says which). The SDK licence is the operator's act, so it's a HALT node (yours to resolve) and never stalls the rest;
 # android_setup.sh installs exact pinned archives, checksum-verified, user-locally (no Java, no sudo).
-_android_rc() { local rc=0; nucleus/android_setup.sh check >/dev/null 2>&1 || rc=$?; echo "$rc"; }
+_android_rc() { local rc=0; scripts/android_setup.sh check >/dev/null 2>&1 || rc=$?; echo "$rc"; }
 _chk_androidlic() { [ "$(_android_rc)" != 3 ]; }
 _act_androidlic() { return 1; }
 _chk_android() { case "$(_android_rc)" in 0|77|3) return 0 ;; *) return 1 ;; esac; }
 _act_android() { say "android: installing the pinned SDK packages and the phone (ANDROID_ENABLED=1)"
-  nucleus/android_setup.sh install || true; }
+  scripts/android_setup.sh install || true; }
 
 # >>> phone sweep install
 # phone_resume_sweep (plan-8675 S2, a3 C2): the detector for a phone RESUME near an agent's act on the owner's laptop
 # ships as a reference trigger; this installs its live shim, but only where the org OPTED IN to phones
 # (ANDROID_ENABLED=1). Deferential like ccompact: if any agent already owns a phone_resume_sweep, it stands down.
-# The SAME source order as nucleus/android_setup.sh (process env first, then .env): an org that opts in by env gets the
+# The SAME source order as scripts/android_setup.sh (process env first, then .env): an org that opts in by env gets the
 # detector with its phones, never the phones alone (a4 #48950 note 1: the other order fails open for a detector).
 _android_on() { [ "${ANDROID_ENABLED:-$(grep -m1 '^ANDROID_ENABLED=' .env 2>/dev/null | cut -d= -f2-)}" = 1 ]; }
 _chk_phonesweep() { _android_on || return 0; _trigger_chk phone_resume_sweep; }
 _act_phonesweep() {
   mkdir -p triggers/seed
   cat > triggers/seed/phone_resume_sweep.py <<'EOF'
-"""Live install of the shipped phone resume sweep (one writer: nucleus/shipped_triggers/phone_resume_sweep.py).
+"""Live install of the shipped phone resume sweep (one writer: src/astryx/pulse/shipped_triggers/phone_resume_sweep.py).
 Installed by init.sh where ANDROID_ENABLED=1; move it to another agent if one should own the alarm."""
-from nucleus.shipped_triggers.phone_resume_sweep import phone_resume_sweep  # noqa: F401
+from astryx.pulse.shipped_triggers.phone_resume_sweep import phone_resume_sweep  # noqa: F401
 EOF
   say "installed the phone resume sweep (seed): flags a phone resume near an agent's act on your laptop"
 }
@@ -764,9 +777,9 @@ _chk_winidle() { _windows_here || return 0; _trigger_chk windows_idle_stop; }
 _act_winidle() {
   mkdir -p triggers/seed
   cat > triggers/seed/windows_idle_stop.py <<'EOF'
-"""Live install of the shipped Windows idle stop (one writer: nucleus/shipped_triggers/windows_idle_stop.py).
+"""Live install of the shipped Windows idle stop (one writer: src/astryx/pulse/shipped_triggers/windows_idle_stop.py).
 Installed by init.sh where a Windows container exists; move it to another agent if one should own it."""
-from nucleus.shipped_triggers.windows_idle_stop import windows_idle_stop  # noqa: F401
+from astryx.pulse.shipped_triggers.windows_idle_stop import windows_idle_stop  # noqa: F401
 EOF
   say "installed the Windows idle stop (seed): an agent-started Windows VM stops after HANDS_WINDOWS_IDLE_S idle"
 }
@@ -778,23 +791,23 @@ _chk_agentheal() { _trigger_chk agent_heal; }
 _act_agentheal() {
   mkdir -p triggers/seed
   cat > triggers/seed/agent_heal.py <<'EOF2'
-"""Live install of the shipped agent heal (one writer: nucleus/shipped_triggers/agent_heal.py). To retire it:
+"""Live install of the shipped agent heal (one writer: src/astryx/pulse/shipped_triggers/agent_heal.py). To retire it:
 `trigger_rm agent_heal` (a tombstone the pulse honours). Deleting this file does NOT retire it: init.sh would reinstall."""
-from nucleus.shipped_triggers.agent_heal import agent_heal  # noqa: F401
+from astryx.pulse.shipped_triggers.agent_heal import agent_heal  # noqa: F401
 EOF2
   say "installed agent heal (seed): a resident whose body dies is respawned within a minute"
 }
 # upstream_prs (goal 10224 S6, owner 10-14): in the org that IS the upstream astryx repo, each outside PR (new, or a new
 # head) reaches medic once, its body fenced as DATA. Gated: origin == ASTRYX_UPSTREAM and ASTRYX_UPSTREAM_ROLE=upstream
 # (env or .env; a plain clone has the same origin, so the role is the owner's declaration). Deferential like ccompact.
-_upstream_here() { venv/bin/python -m nucleus.upstream_pr --is-upstream >/dev/null 2>&1; }
+_upstream_here() { venv/bin/python -m astryx.core.upstream_pr --is-upstream >/dev/null 2>&1; }
 _chk_upstreamprs() { _upstream_here || return 0; _trigger_chk upstream_prs; }
 _act_upstreamprs() {
   mkdir -p triggers/seed
   cat > triggers/seed/upstream_prs.py <<'EOF2'
-"""Live install of the shipped upstream PR watch (one writer: nucleus/shipped_triggers/upstream_prs.py). To retire it:
+"""Live install of the shipped upstream PR watch (one writer: src/astryx/pulse/shipped_triggers/upstream_prs.py). To retire it:
 `trigger_rm upstream_prs` (a tombstone the pulse honours). Deleting this file does NOT retire it: init.sh would reinstall."""
-from nucleus.shipped_triggers.upstream_prs import upstream_prs  # noqa: F401
+from astryx.pulse.shipped_triggers.upstream_prs import upstream_prs  # noqa: F401
 EOF2
   say "installed the upstream PR watch (seed): each outside PR to this repo reaches medic for triage"
 }
@@ -866,7 +879,7 @@ reconcile() {
 # ── maintainer referral — TRANSPARENT + OPT-IN + STATIC, never silent/baked-in ──
 # local.md forbids growth-hacks / deception / anything that embarrasses Umair; a hidden
 # monetization in an OSS installer is that exact line. So three guards, all asserted in
-# CI (nucleus/referral_guard.sh): shown ONLY interactively (a non-TTY default/CI/headless
+# CI (devtools/referral_guard.sh): shown ONLY interactively (a non-TTY default/CI/headless
 # run never reaches it), default No, and the id below is a STATIC LITERAL — never fetched
 # or env-templated, so the audited source IS the runtime value. Empty = OFF (the default);
 # the maintainer opts IN by setting their own static referral code here.
@@ -907,11 +920,11 @@ setup() {
   # tier/personas.json: relationship LABELS, no message content.
   if [ -n "${WA_CLI:-}" ] && venv/bin/python -c "import sys" 2>/dev/null; then
     say "building the people graph from your connected channels (first pass)"
-    venv/bin/python nucleus/people.py  >/dev/null 2>&1 || true
-    venv/bin/python nucleus/persona.py >/dev/null 2>&1 || true
+    venv/bin/python src/astryx/people/people.py  >/dev/null 2>&1 || true
+    venv/bin/python src/astryx/people/persona.py >/dev/null 2>&1 || true
     # The labelling pass costs model calls, so it is bounded here and left for the nightly
     # sweep to extend. Failure is non-fatal: an unlabelled graph is still a useful graph.
-    venv/bin/python nucleus/persona_llm.py 25 >/dev/null 2>&1 || true
+    venv/bin/python src/astryx/people/persona_llm.py 25 >/dev/null 2>&1 || true
     ok "people graph built — open the observatory Memory tab, People lens"
   fi
   referral_optin       # opt-in, interactive-only (see the function's CI-asserted guards)
@@ -920,7 +933,7 @@ setup() {
   local inst
   inst=$(_enable_list units $(ls units 2>/dev/null))
   say "install the org's services (sudo; residents.service among them = reboot-safety):"
-  say "  sudo ./nucleus/deploy.sh units          # cp units/*.{service,timer} → /etc + daemon-reload"
+  say "  sudo ./scripts/deploy.sh units          # cp units/*.{service,timer} → /etc + daemon-reload"
   say "  sudo systemctl enable --now$inst"
   # OBS_KEY is a CREDENTIAL: shown in the TERMINAL and copied to the CLIPBOARD only —
   # it never touches the wire, a step, or a committed file (it lives in .env, gitignored;
@@ -1012,14 +1025,14 @@ if [ "${1:-}" = "doctor" ]; then
   [ -f local.md ] && ok "local.md exists" || bad "local.md missing — the owner's law; run ./init.sh"
   # every live resident body carries the flags the org depends on (owner 10-14): the wire's channel flag (without it
   # the doorbell is dropped silently) and its charter's permission mode (bypassPermissions, or default for relay)
-  _lf=$("${PY:-venv/bin/python}" -m nucleus.launch_flags 2>&1); _lf_rc=$?
+  _lf=$("${PY:-venv/bin/python}" -m astryx.core.launch_flags 2>&1); _lf_rc=$?
   case $_lf_rc in
     0)  ok "every resident body runs with --dangerously-load-development-channels and its charter's permission mode" ;;
     77) warn "launch flags NOT PROVEN: $(printf '%s' "$_lf" | tail -1)"; printf '%s\n' "$_lf" | command grep '^  ?' ;;
     *)  bad "a resident body is missing a launch flag ($(printf '%s' "$_lf" | tail -1)):"; printf '%s\n' "$_lf" | command grep -E '^  (✗|\?)' ;;
   esac
   # android (plan-8675, opt-in): the setup script's own check is the observable
-  _arc=0; _amsg=$(nucleus/android_setup.sh check 2>&1) || _arc=$?
+  _arc=0; _amsg=$(scripts/android_setup.sh check 2>&1) || _arc=$?
   case "$_arc" in
     0)  ok "android: $_amsg" ;;
     77) warn "android: $_amsg" ;;
@@ -1037,7 +1050,7 @@ if [ "${1:-}" = "doctor" ]; then
         absent)    if _chk_"$_tnode" >/dev/null 2>&1; then ok "trigger $_tn: not used on this host"
                    else bad "trigger $_tn absent: ./init.sh installs it"; fi ;;
         deferred)  warn "trigger $_tn DEFERRED, so init.sh won't install it: ${_ts#deferred }" ;;
-        *)         bad "trigger $_tn: nucleus/trigger_names.py gave no answer: ${_ts:0:200}" ;;
+        *)         bad "trigger $_tn: src/astryx/core/trigger_names.py gave no answer: ${_ts:0:200}" ;;
       esac
     done
   fi
@@ -1048,18 +1061,18 @@ if [ "${1:-}" = "doctor" ]; then
   # faster_whisper — a function-local import a grep would miss).
   if [ -d venv ]; then
     DGROUPS=$(active_dep_groups)
-    venv/bin/python nucleus/deps.py check $DGROUPS >/dev/null 2>&1 \
+    venv/bin/python src/astryx/core/deps.py check $DGROUPS >/dev/null 2>&1 \
       && ok "python deps ($DGROUPS import OK)" \
-      || bad "python deps missing — rerun ./init.sh  (venv/bin/python nucleus/deps.py check $DGROUPS)"
-    venv/bin/python nucleus/deps.py coverage >/dev/null 2>&1 \
+      || bad "python deps missing — rerun ./init.sh  (venv/bin/python src/astryx/core/deps.py check $DGROUPS)"
+    venv/bin/python src/astryx/core/deps.py coverage >/dev/null 2>&1 \
       && ok "dep manifest covers every import" \
-      || bad "UNDECLARED third-party import — add it to nucleus/deps.conf (venv/bin/python nucleus/deps.py coverage)"
+      || bad "UNDECLARED third-party import — add it to src/astryx/data/deps.conf (venv/bin/python src/astryx/core/deps.py coverage)"
     # media TERMINAL observable: real in-process decode, not `import av` — a half-broken
     # wheel imports fine and decodes nothing, which is the silent-None-on-first-voice gap.
     if echo " $DGROUPS " | grep -q ' media '; then
-      venv/bin/python nucleus/media_probe.py >/dev/null 2>&1 \
+      venv/bin/python src/astryx/core/media_probe.py >/dev/null 2>&1 \
         && ok "media: in-process decode works (libav, no ffmpeg shell-out)" \
-        || bad "media stack can't decode — voice notes would SILENTLY drop (nucleus/media_probe.py)"
+        || bad "media stack can't decode — voice notes would SILENTLY drop (src/astryx/core/media_probe.py)"
       # the transcription MODEL is a separate node from decode: cached (loads offline) or
       # the first voice note is a silent None. Prefetched under the reconciler, not at runtime.
       venv/bin/python -c 'from faster_whisper import WhisperModel; WhisperModel("small", device="cpu", compute_type="int8", local_files_only=True)' 2>/dev/null \
@@ -1116,7 +1129,7 @@ if [ "${1:-}" = "doctor" ]; then
     # and read as "static" (fine); it's the .timer that must be enabled.
     _units_state $gen_list
     [ -n "$wrongly_on" ] && bad "units declared NOT enabled are enabled (a host service for a remote body):$wrongly_on"
-    [ -n "$off_missing" ] && bad "declared installed-but-disabled units are NOT installed (sudo ./nucleus/deploy.sh units):$off_missing"
+    [ -n "$off_missing" ] && bad "declared installed-but-disabled units are NOT installed (sudo ./scripts/deploy.sh units):$off_missing"
     [ -n "$off_ok" ] && ok "declared installed-but-disabled:$off_ok"
     if [ -z "$notenabled" ]; then ok "every derived unit enabled/static (reboot-safe)"
     else bad "derived units NOT installed/enabled (won't survive a reboot):$notenabled"
@@ -1126,7 +1139,7 @@ if [ "${1:-}" = "doctor" ]; then
          # mode is the one cp idiom; static oneshots ride the cp, the [Install]-bearing
          # units are enabled BY NAME against the /etc copy (root fs, never dangles).
          inst=$(_enable_list "$GEN" $notenabled)
-         warn "install: sudo ./nucleus/deploy.sh units   (cp units → /etc + daemon-reload)"
+         warn "install: sudo ./scripts/deploy.sh units   (cp units → /etc + daemon-reload)"
          [ -n "$inst" ] && warn "enable:  sudo systemctl enable --now$inst"
     fi
     # (iii) reverse — no astryx unit systemd knows that the derivation did NOT
@@ -1141,7 +1154,7 @@ if [ "${1:-}" = "doctor" ]; then
   elif [ "$(uname -s 2>/dev/null)" = Darwin ]; then
     # macOS has launchd, not systemd. Generated plists are a TODO (goal 10224 S3); until then the pulse rides cron.
     warn "macOS: no systemd; services run under launchd (~/Library/LaunchAgents/*.plist). astryx does not generate plists yet (TODO, goal 10224 S3)."
-    warn "  until then, the pulse via cron:  * * * * * $PWD/venv/bin/python $PWD/nucleus/pulse.py"
+    warn "  until then, the pulse via cron:  * * * * * $PWD/venv/bin/python $PWD/src/astryx/pulse/pulse.py"
   elif [ "$_wk" = no ]; then
     bad "no systemd as PID 1 (PID 1 is $(_pid1)) — astryx's services and the pulse are systemd units"
   fi
@@ -1179,7 +1192,7 @@ if [ "${1:-}" = "doctor" ]; then
   # charter is an orphan mind (the resolution goes through the ONE resolver).
   orphanbody=""
   for s in $(tmux ls 2>/dev/null | sed -n 's/^ax-\([^:]*\):.*/\1/p'); do
-    venv/bin/python nucleus/charter.py "$s" >/dev/null 2>&1 || orphanbody="$orphanbody $s"
+    venv/bin/python src/astryx/core/charter.py "$s" >/dev/null 2>&1 || orphanbody="$orphanbody $s"
   done
   [ -z "$orphanbody" ] && ok "every ax-* tmux body maps to a charter" \
     || bad "tmux bodies with no charter (orphan minds):$orphanbody"
@@ -1193,7 +1206,7 @@ if [ "${1:-}" = "doctor" ]; then
     [ -f "$rf" ] || continue
     while read -r a; do
       [ -z "$a" ] && continue
-      venv/bin/python nucleus/charter.py "$a" >/dev/null 2>&1 || routebad="$routebad ${rf##*/}→$a"
+      venv/bin/python src/astryx/core/charter.py "$a" >/dev/null 2>&1 || routebad="$routebad ${rf##*/}→$a"
     done < <(venv/bin/python -c "import json; [print(r.get('agent','')) for r in json.load(open('$rf')) if r.get('enabled')]" 2>/dev/null)
   done
   [ -z "$routebad" ] && ok "every enabled route targets a real agent" \
@@ -1203,7 +1216,7 @@ if [ "${1:-}" = "doctor" ]; then
   # disk (reads local file mtimes only, never the dump's PII content). Red if stale/absent.
   newest_bk=$(ls -1t backups/astryx-*.dump 2>/dev/null | head -1)
   if [ -z "$newest_bk" ]; then
-    bad "NO database backup — org state is a single docker volume (run ./nucleus/backup.sh; enable astryx-backup.timer)"
+    bad "NO database backup — org state is a single docker volume (run ./scripts/backup.sh; enable astryx-backup.timer)"
   elif [ "$(( $(date +%s) - $(stat -c %Y "$newest_bk") ))" -gt 90000 ]; then
     bad "database backup STALE (>25h): ${newest_bk##*/} — is astryx-backup.timer enabled & firing?"
   else
@@ -1220,22 +1233,22 @@ if [ "${1:-}" = "doctor" ]; then
     if [ "$(cut -d" " -f1 backups/.last-restore-ok)" = "FAILED" ]; then
       bad "backup restore-verify FAILED on its last run ($(cut -d" " -f2 backups/.last-restore-ok)) — the newest dump does NOT restore"
     elif [ "$(( $(date +%s) - $(stat -c %Y backups/.last-restore-ok) ))" -gt 691200 ]; then
-      bad "backup restore-verify STALE (>8d): a dump may have stopped restoring (nucleus/restore_verify.sh)"
+      bad "backup restore-verify STALE (>8d): a dump may have stopped restoring (scripts/restore_verify.sh)"
     else
       ok "backup restore-verified ($(cat backups/.last-restore-ok), <8d — proven-restorable)"
     fi
   elif [ -n "$newest_bk" ]; then
-    warn "backup never restore-verified — run nucleus/restore_verify.sh (a dump you can't restore is a hope, not a backup)"
+    warn "backup never restore-verified — run scripts/restore_verify.sh (a dump you can't restore is a hope, not a backup)"
   fi
   # A2A card (plan-20): assert the SERVED /.well-known/agent-card.json exposes EXACTLY the
   # public roster (== the fail-closed tier oracle) with zero tier-private agents, signed with
   # the introduce key. Runs against the live gateway on the SERVED bytes — the grade-1 check
   # that a new public endpoint can't silently leak a tier-private agent to the world.
   if [ -d venv ]; then
-    rc=0; venv/bin/python nucleus/card_assert.py http://127.0.0.1:8845 >/dev/null 2>&1 || rc=$?
+    rc=0; venv/bin/python src/astryx/federation/card_assert.py http://127.0.0.1:8845 >/dev/null 2>&1 || rc=$?
     if [ "$rc" = 0 ]; then ok "A2A card: roster ≡ public oracle, zero tier-private, signed"
     elif [ "$rc" = 2 ]; then warn "A2A card not served yet — gateway not redeployed with plan-20"
-    else bad "A2A card LEAK/mismatch — tier-private agent or wrong key on the PUBLIC card (nucleus/card_assert.py :8845)"; fi
+    else bad "A2A card LEAK/mismatch — tier-private agent or wrong key on the PUBLIC card (src/astryx/federation/card_assert.py :8845)"; fi
   fi
   # pre-push privacy hook installed & matching the tracked template (built-vs-live: the
   # gate must actually RUN on push, not just exist — a re-clone drops the un-versioned hook).
@@ -1246,7 +1259,7 @@ if [ "${1:-}" = "doctor" ]; then
       bad "pre-push privacy hook missing/stale — privacy_gate won't run on push (./init.sh installs it)"
     fi
   fi
-  tmux has-session -t =ax-seed 2>/dev/null && ok "seed resident alive" || warn "seed not resident — nucleus/spawn.sh seed"
+  tmux has-session -t =ax-seed 2>/dev/null && ok "seed resident alive" || warn "seed not resident — scripts/spawn.sh seed"
   [ -z "$FAIL" ] && say "doctor: healthy" || say "doctor: fix the ✗ lines above (sudo lines are for your human)"
   exit 0
 fi
@@ -1271,7 +1284,7 @@ if [ "${1:-}" = "whatsapp" ] || [ "${1:-}" = "channels" ]; then
   say "    --webhook-secret \"\$(sed -n 's/^WA_WEBHOOK_SECRET=//p' '$PWD/.env')\" --webhook-allow-private"
   grep -q '^WA_DATA_HOST=' .env || echo "WA_DATA_HOST=$PWD/wacli-data" >> .env
   say "then install the bridge (cp to /etc, not symlink — /home may be a separate mount):"
-  say "  sudo ./nucleus/deploy.sh units && sudo systemctl enable --now astryx-whatsapp.service"
+  say "  sudo ./scripts/deploy.sh units && sudo systemctl enable --now astryx-whatsapp.service"
   exit 0
 fi
 
@@ -1280,11 +1293,11 @@ fi
 # symlinks here so `astryx <verb>` works from anywhere.
 case "${1:-setup}" in
   setup|"") setup ;;
-  wall)     exec nucleus/wall.sh ;;
+  wall)     exec scripts/wall.sh ;;
   # connect attaches READ-ONLY (-r): a resident's only input is the wire, never
   # send-keys — read-only preserves that invariant while you watch it think.
   connect)  a=${2:?usage: ./init.sh connect <agent>}; exec tmux attach -r -t "=ax-$a" ;;
-  join)     u=${2:?usage: ./init.sh join <peer-url>}; exec venv/bin/python nucleus/introduce.py "$u" ;;
+  join)     u=${2:?usage: ./init.sh join <peer-url>}; exec venv/bin/python src/astryx/federation/introduce.py "$u" ;;
   --reinstall|reinstall) reinstall_trigger "${2:?usage: ./init.sh --reinstall <trigger>}" ;;
   *) die "unknown command '$1' — usage: ./init.sh [setup|doctor|wall|connect <agent>|channels|join <url>|--reinstall <trigger>]" ;;
 esac

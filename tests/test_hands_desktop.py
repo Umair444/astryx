@@ -65,9 +65,9 @@ os.environ["ASTRYX_HANDS_STATE"] = str(TMP / "state")
 os.environ["ASTRYX_HANDS_HOME"] = str(TMP / "home")
 # its own unit names too: a test pool's desk-1 must never be (or stop) the real desk-1
 os.environ["ASTRYX_HANDS_UNIT_PREFIX"] = f"astryx-hands-test{os.getpid()}-"
-from nucleus.sqlguard.estate import gate  # noqa: E402
+from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate("test_hands_desktop", REPO, deps=("mcp.server",), env=False)   # a committed-only tree (no venv): 77, not an import crash
-from nucleus import hands_desktop as hd  # noqa: E402
+from astryx.hands import hands_desktop as hd  # noqa: E402
 
 AGENT = f"t-hands-{os.getpid()}"
 fails = 0
@@ -323,7 +323,7 @@ def fence_arms():
 
 def redact_arms():
     import logging
-    from nucleus import logredact
+    from astryx.security import logredact
     rec = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s HTTP/%s" %d',
                             ("127.0.0.1:5", "GET", "/api/hands/x/vnc?key=SECRETVALUE&a=1", "1.1",
                              101), None)

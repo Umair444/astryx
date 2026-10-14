@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle for nucleus/restore_drill.sh, the empty-data-dir restore rehearsal (#5497, seed #44479/#44481).
+"""Oracle for scripts/restore_drill.sh, the empty-data-dir restore rehearsal (#5497, seed #44479/#44481).
 
   NOT RUN   with no docker on PATH, and with docker present but the declared image absent, the drill exits 2 and says
             NOT RUN, naming why. It never exits 0 for a path it didn't walk.
@@ -19,7 +19,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
-DRILL = REPO / "nucleus" / "restore_drill.sh"
+DRILL = REPO / "scripts" / "restore_drill.sh"
 fails = []
 
 
@@ -55,10 +55,10 @@ with tempfile.TemporaryDirectory() as td:
           f"rc {r.returncode}: {r.stderr[-200:]}")
 
 print("wiring:")
-rv = (REPO / "nucleus" / "restore_verify.sh").read_text()
-i_drill, i_ok = rv.find("bash nucleus/restore_drill.sh"), rv.find('echo "OK $(date')
+rv = (REPO / "scripts" / "restore_verify.sh").read_text()
+i_drill, i_ok = rv.find("bash scripts/restore_drill.sh"), rv.find('echo "OK $(date')
 check("restore_verify runs the drill, and BEFORE the OK stamp", 0 < i_drill < i_ok, f"{i_drill} vs {i_ok}")
-check("…under a wall cap", bool(re.search(r'timeout "\$DRILL_CAP" bash nucleus/restore_drill\.sh', rv)))
+check("…under a wall cap", bool(re.search(r'timeout "\$DRILL_CAP" bash scripts/restore_drill\.sh', rv)))
 block = rv[i_drill:rv.find("esac", i_drill)]
 check("…and every non-zero (NOT RUN, a timeout, a failed step) sets fail=1",
       "124)" in block and re.search(r"\*\)\s*fail=1", block) is not None, block)
@@ -68,7 +68,7 @@ dr = DRILL.read_text()
 # refusal still can't undo the reconcile. Don't drop this as redundant with D (a1 #45250).
 check("the drill applies the roles file BEFORE pg_role_sync apply (layer 2 behind D's refusal: the reconcile is the "
       "role's last writer, a1 #45231)",
-      0 < dr.find('psql -X -q -v ON_ERROR_STOP=0') < dr.find('-m nucleus.pg_role_sync apply'))
+      0 < dr.find('psql -X -q -v ON_ERROR_STOP=0') < dr.find('-m astryx.security.pg_role_sync apply'))
 check("…including 3, roles NOT VERIFIED on the newest dump", re.search(r"\n\s*3\)[^\n]*fail=1", block) is not None,
       block)
 
@@ -83,8 +83,8 @@ if not have:
     sys.exit(1 if fails else 77)
 
 # psycopg is part of the live precondition too (seed #45406). The committed-only vs live-host rule is
-# nucleus/sqlguard/estate.absent's, ONE definition (a1 #45410): no triggers/ → 77, triggers/ present → BROKEN, 1.
-from nucleus.sqlguard import estate  # noqa: E402
+# src/astryx/security/sqlguard/estate.absent's, ONE definition (a1 #45410): no triggers/ → 77, triggers/ present → BROKEN, 1.
+from astryx.security.sqlguard import estate  # noqa: E402
 
 _absent = estate.absent(REPO, deps=("psycopg",), env=False)
 if _absent:
@@ -99,8 +99,8 @@ if _absent:
 
 import psycopg  # noqa: E402
 
-from nucleus import pg_role_sync  # noqa: E402
-from nucleus.sqlguard.fixture import fixture_db  # noqa: E402
+from astryx.security import pg_role_sync  # noqa: E402
+from astryx.security.sqlguard.fixture import fixture_db  # noqa: E402
 
 import os  # noqa: E402
 
@@ -113,7 +113,7 @@ MINE = set()   # the drill containers THIS test started (named in each drill's �
 
 
 def drill(dump):
-    r = subprocess.run(["timeout", "600", "bash", "nucleus/restore_drill.sh", str(dump)], cwd=REPO,
+    r = subprocess.run(["timeout", "600", "bash", "scripts/restore_drill.sh", str(dump)], cwd=REPO,
                        capture_output=True, text=True, timeout=620)
     out = r.stdout + r.stderr
     # each drill line behind "| ": check.sh's belt reads a line whose first token is SKIP or ○ as the GATE announcing a

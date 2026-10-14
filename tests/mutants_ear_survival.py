@@ -1,6 +1,6 @@
 """Authored mutants for channel/server.mjs's ear-survival guard — run by mutation_probe.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_ear_survival.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_ear_survival.py
 
 THE LIST IS THE JUDGEMENT. Each entry is a way the fix for the 2026-08-14 deafness could
 plausibly be undone or written wrong. Two of them (M1, M2) are the pre-fix code verbatim,

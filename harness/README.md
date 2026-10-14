@@ -29,7 +29,7 @@ non-isolated body.** The escapes, each grounded first-hand against the live subs
 - **ESCAPE B — in-band wire → real postgres, no Bash, no network.**
   `channel/server.mjs:15` resolves the DSN from `new URL('../.env', import.meta.url)` —
   the **server script's own sibling** = `/home/umair/astryx/.env` (real), **ignoring
-  `process.env`**. `nucleus/spawn.sh:96-100` wires the `astryx` MCP **unconditionally**
+  `process.env`**. `scripts/spawn.sh:96-100` wires the `astryx` MCP **unconditionally**
   (every agent, Grants-less included). So a base-MCP test agent's `send` / `self_edit` /
   `trigger_set` write to **real postgres**.
 - **ESCAPE C — hooks → real postgres.** `hooks/step.py:21` — `DSN_FILE =

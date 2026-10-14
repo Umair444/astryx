@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Oracle for nucleus/check_watch.sh — the PRODUCER of the live-tree gate stamp.
+"""Oracle for devtools/check_watch.sh — the PRODUCER of the live-tree gate stamp.
 
-    venv/bin/python tests/test_check_watch.py     (also run by nucleus/check.sh)
+    venv/bin/python tests/test_check_watch.py     (also run by devtools/check.sh)
 
 WHY THIS EXISTS. check_watch.sh runs the whole gate suite from a systemd timer and writes
 one line that a pulse trigger then trusts completely. It is a parser and a classifier
@@ -36,7 +36,7 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-RUNNER = Path(os.environ.get("CHECK_WATCH_SRC") or (REPO / "nucleus" / "check_watch.sh"))
+RUNNER = Path(os.environ.get("CHECK_WATCH_SRC") or (REPO / "devtools" / "check_watch.sh"))
 HEAD_RE = re.compile(r"^(\S+) (\S+) rc=(-?\d+) verified=(\d+) failed=(\d+) unverified=(\d+)"
                      r"(?: by=(\S+))?$")
 fails = []

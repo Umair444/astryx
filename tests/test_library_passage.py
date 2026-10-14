@@ -39,13 +39,13 @@ if missing:
           "asserted.")
     sys.exit(77)
 sys.path.insert(0, str(REPO))
-from nucleus.sqlguard.estate import gate  # noqa: E402
+from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate("test_library_passage", REPO, deps=("psycopg",))
 
 try:
     import psycopg
-    from nucleus import copies as C
-    from nucleus.sqlguard.fixture import fixture_db
+    from astryx.core import copies as C
+    from astryx.security.sqlguard.fixture import fixture_db
 except Exception as e:  # noqa: BLE001
     print(f"SKIP: the harness isn't importable ({type(e).__name__}: {e}).")
     sys.exit(77)
@@ -88,7 +88,7 @@ for i, fm in enumerate(("type: probe-set", "Type: probe-set", "type: Probe-Set")
 ROOTS = ["memory/wiki/*.md", "memory/library/**/*.md", "memory/ontology.md"]
 DECL = {"name": "table:library.passage", "kind": "sql_table", "table": "library.passage",
         "also_tables": ["library.lexeme_df", "library.stats"], "comparator": "root_digest", "roots": ROOTS,
-        "reads": ["kg.claim incidence"], "writers": ["memory/graph/ingest.py"], "schema": ["nucleus/schema.sql"],
+        "reads": ["kg.claim incidence"], "writers": ["memory/graph/ingest.py"], "schema": ["src/astryx/sql/schema.sql"],
         "test_writers": ["tests/test_library_passage.py"]}
 
 VLABELS = ("Agent", "Concept", "Goal", "Milestone", "RelType", "Thread", "Meta", "Person")

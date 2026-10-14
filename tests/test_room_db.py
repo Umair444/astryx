@@ -12,12 +12,12 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
-from nucleus.sqlguard.estate import gate  # noqa: E402
+from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate("test_room_db", REPO, deps=("psycopg", "asyncpg", "numpy", "fastapi"))
 import asyncpg  # noqa: E402
 import numpy as np  # noqa: E402
 import psycopg  # noqa: E402
-from nucleus.sqlguard.fixture import fixture_db  # noqa: E402
+from astryx.security.sqlguard.fixture import fixture_db  # noqa: E402
 
 fails = 0
 
@@ -53,7 +53,7 @@ class DeletesAfterSelect:
 
 with fixture_db() as fx:
     os.environ.update({"ASTRYX_DSN": fx["dsn"], "OBS_KEY": "test-room-db", "EAR_ROOM": "test", "EAR_WAKE": "off"})
-    from nucleus import room, voiceprint
+    from astryx.hearing import room, voiceprint
     c = psycopg.connect(fx["dsn"], autocommit=True)
 
     # ── voiceprints ────────────────────────────────────────────────────────────────────────────────────────────

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Oracle: init.sh's trigger installs ask nucleus/trigger_names.py, by NAME (plan-9853 D3/D4; goal from #49101).
+"""Oracle: init.sh's trigger installs ask src/astryx/core/trigger_names.py, by NAME (plan-9853 D3/D4; goal from #49101).
 init.sh's own blocks (`# >>> trigger state` … `# <<< trigger reinstall`, and `# >>> trigger doctor`) run in throwaway
 trees (tests/trigger_tree) against a fixture database, as the reconciler runs a node: chk; if red, act; chk again.
 
   N1 THE GOAL: an owner's copy under ANOTHER agent and filename → ccompact reads green, nothing added under seed;
-     also in the submodule form (`from nucleus.shipped_triggers import context_compact`, a2 R2)
+     also in the submodule form (`from astryx.pulse.shipped_triggers import context_compact`, a2 R2)
   N2 nothing anywhere → the node installs seed's shim, then reads green; a second pass adds nothing (convergence)
   N3 seed's tombstone (trigger_rm) → green, nothing added
   N4 a3 BC-1: ANOTHER agent's tombstoned copy → seed's install still happens, once
@@ -15,7 +15,7 @@ trees (tests/trigger_tree) against a fixture database, as the reconciler runs a 
   N8 doctor: installed → ✓ naming the file; absent with the node's gate off → "not used on this host"; absent with the
      gate on → ✗ "absent"; retired → ✓ naming the tombstone
   N9 census (a): every _chk_ that tests a trigger calls the helper; no `ls triggers/` glob remains
-     census (b): every nucleus/shipped_triggers/*.py has an init.sh install through the helper, or `# shipped-optional:`
+     census (b): every src/astryx/pulse/shipped_triggers/*.py has an init.sh install through the helper, or `# shipped-optional:`
 Needs a fixture database, else 77.
 """
 import os
@@ -40,7 +40,7 @@ def want(label, cond, why=""):
 
 try:
     import psycopg
-    from nucleus.sqlguard.fixture import fixture_db, FixtureUnavailable
+    from astryx.security.sqlguard.fixture import fixture_db, FixtureUnavailable
 except ImportError as e:
     print(f"SKIP: deps ({e}). Nothing was verified here.")
     sys.exit(77)
@@ -94,7 +94,7 @@ try:
         with psycopg.connect(DSN, autocommit=True) as c:
             # N1 the goal
             for label, body in (("the shim", CC),
-                                ("the submodule form", "from nucleus.shipped_triggers import context_compact  # noqa\n")):
+                                ("the submodule form", "from astryx.pulse.shipped_triggers import context_compact  # noqa\n")):
                 t = tree()
                 put(t, "triggers/umair/my_hygiene.py", body)
                 a, b = node(t, "ccompact", DSN)
@@ -105,7 +105,7 @@ try:
             a, b = node(t, "ccompact", DSN)
             body = (t / SEED / "context_compact.py").read_text() if (t / SEED / "context_compact.py").exists() else ""
             want("N2 nothing anywhere → RED, the node installs seed's shim, then green",
-                 a != "0" and b == "0" and "from nucleus.shipped_triggers.context_compact import context_compact" in body,
+                 a != "0" and b == "0" and "from astryx.pulse.shipped_triggers.context_compact import context_compact" in body,
                  f"chk={a},{b}")
             before = sorted(p.relative_to(t) for p in (t / "triggers").rglob("*"))
             a2, _ = node(t, "ccompact", DSN)
@@ -162,7 +162,7 @@ try:
             want("N7 the table unreadable → green, nothing installed (deferred, never guessed absent)",
                  a == "0" and not (t / SEED / "context_compact.py").exists(), f"chk={a}")
             t = tree()
-            put(t, "triggers/umair/odd.py", "try:\n    from nucleus.shipped_triggers.context_compact import *  # noqa\n"
+            put(t, "triggers/umair/odd.py", "try:\n    from astryx.pulse.shipped_triggers.context_compact import *  # noqa\n"
                                             "except ImportError:\n    pass\n")
             a, _ = node(t, "ccompact", DSN)
             want("N7 a file the model can't read (BLIND) → green, nothing installed",
@@ -191,14 +191,14 @@ except FixtureUnavailable as e:
 
 # N9 census, over init.sh itself and the shipped modules
 chks = dict(re.findall(r"^(_chk_\w+)\(\) \{(.*?)\}[ \t]*$", src, re.M | re.S))   # each body, to its first line-final }
-shipped = sorted(p.stem for p in (REPO / "nucleus/shipped_triggers").glob("*.py") if p.stem != "__init__")
+shipped = sorted(p.stem for p in (REPO / "src/astryx/pulse/shipped_triggers").glob("*.py") if p.stem != "__init__")
 testing = {k: v for k, v in chks.items() if "triggers/" in v or any(s in v for s in shipped)}
 want(f"N9 (a) every _chk_ that tests a trigger ({len(testing)}) calls the helper (_trigger_chk)",
      len(testing) >= 4 and all("_trigger_chk" in v for v in testing.values()),
      str({k: v.strip()[:60] for k, v in testing.items() if "_trigger_chk" not in v}))
 want("N9 (a) no filename glob over triggers/ decides an install any more", not re.search(r"ls triggers/\*", src))
 missing = [s for s in shipped if not re.search(rf"_trigger_chk {s}\b", src)
-           and "# shipped-optional:" not in (REPO / f"nucleus/shipped_triggers/{s}.py").read_text()]
+           and "# shipped-optional:" not in (REPO / f"src/astryx/pulse/shipped_triggers/{s}.py").read_text()]
 want(f"N9 (b) every shipped trigger ({len(shipped)}) installs through the helper or declares # shipped-optional:",
      not missing, str(missing))
 

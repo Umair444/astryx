@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hermetic test of nucleus/memgraph.py — the org's recall-graph compiler.
+"""Hermetic test of src/astryx/memory/memgraph.py — the org's recall-graph compiler.
 
 Four invariants, in order of how badly their absence would hurt:
 
@@ -22,7 +22,7 @@ Four invariants, in order of how badly their absence would hurt:
  4. NO INVENTED EDGES. No self-edges, no edges to nodes that do not exist, and the
     `[[poll: ...]]` syntax example in tools.md must never become a node.
 
-The postgres arms write to a THROWAWAY database (nucleus/sqlguard/fixture.py), never the
+The postgres arms write to a THROWAWAY database (src/astryx/security/sqlguard/fixture.py), never the
 live kg: a write from here served ask() a trimmed graph mid-run, and a worktree run
 published its own compile to production (2026-09-30: 790 -> 761 nodes, restored). Each
 arm proves the live kg's (node count, max built_at) is unchanged across it.
@@ -36,7 +36,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from nucleus import memgraph as mg  # noqa: E402
+from astryx.memory import memgraph as mg  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 WIKI = REPO / "memory" / "wiki"
@@ -268,7 +268,7 @@ def test_absent_estate_is_an_empty_graph_not_a_crash():
     # the test working: a compiler that grew a source and a test that still described the
     # old one. Both files are gitignored, so on an actual clean checkout both are absent
     # and the assertion below is unchanged in intent.
-    from nucleus import world
+    from astryx.memory import world
     real, real_world = mg.WIKI, world.REPO
     try:
         mg.WIKI = REPO / "does" / "not" / "exist"
@@ -286,7 +286,7 @@ def test_world_layer_never_mints_a_person():
     guarantee used to be ONE early `return` above intact minting code, untested, in a graph
     rebuilt on a schedule. Driven with a taxonomy that HAS a circle and a member, so it goes
     RED the moment anything turns a member into a node again."""
-    from nucleus import world
+    from astryx.memory import world
     real = world.taxonomy
     world.taxonomy = lambda *a, **k: {
         "categories": {"family": [{"slug": "fixture-member", "name": "Fixture Member",
@@ -332,7 +332,7 @@ def _live_kg():
 def _store():
     """A throwaway database with the kg schema applied (and stamped) by the one fixture
     applier. Yields its dsn. On exit, proves the live kg was not touched."""
-    from nucleus.sqlguard.fixture import fixture_db, PREFIX
+    from astryx.security.sqlguard.fixture import fixture_db, PREFIX
     before = _live_kg()
     with fixture_db(extra=(mg.SCHEMA_SQL,)) as fx:
         assert fx["dbname"].startswith(PREFIX), "the fixture is not a throwaway database"

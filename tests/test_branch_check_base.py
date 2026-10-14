@@ -35,8 +35,8 @@ def main():
         bp = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(bp)
     else:
-        from nucleus import branch_check_prep as bp
-    from nucleus import runscope as rs
+        from devtools import branch_check_prep as bp
+    from astryx.pg import runscope as rs
     from _oracle_debris import ORACLE_BASE, reap
     adm = psycopg.connect(dsn, autocommit=True)
     if not adm.execute("SELECT rolcreaterole AND rolcreatedb OR rolsuper FROM pg_roles WHERE rolname = current_user").fetchone()[0]:

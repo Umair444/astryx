@@ -67,7 +67,9 @@ class Fake:
 def home_tree():
     h = Path(tempfile.mkdtemp(prefix="astryx-cli-")).resolve()
     (h / "nucleus").mkdir()
-    for f in ("init.sh", "nucleus/pause.sh", "nucleus/spawn.sh"):
+    for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
+        (h / _d).mkdir(parents=True, exist_ok=True)
+    for f in ("init.sh", "scripts/pause.sh", "scripts/spawn.sh"):
         (h / f).write_text("#!/bin/sh\n")
     (h / ".env").write_text(f"ASTRYX_ORG=testorg\nOBS_KEY={OBS}\n# keep me\nASTRYX_DSN=postgresql://x\n")
     os.chmod(h / ".env", 0o640)
@@ -116,10 +118,10 @@ def main():
                        (["wall"], ["bash", str(h / "init.sh"), "wall"]),
                        (["join", "http://peer:8845"], ["bash", str(h / "init.sh"), "join", "http://peer:8845"]),
                        (["connect", "forge"], ["bash", str(h / "init.sh"), "connect", "forge"]),
-                       (["spawn", "forge"], ["bash", str(h / "nucleus/spawn.sh"), "forge"]),
+                       (["spawn", "forge"], ["bash", str(h / "scripts/spawn.sh"), "forge"]),
                        (["pause", "on", "maintenance", "tomorrow 9am"],
-                        ["bash", str(h / "nucleus/pause.sh"), "on", "maintenance", "tomorrow 9am"]),
-                       (["pause", "status"], ["bash", str(h / "nucleus/pause.sh"), "status"])):
+                        ["bash", str(h / "scripts/pause.sh"), "on", "maintenance", "tomorrow 9am"]),
+                       (["pause", "status"], ["bash", str(h / "scripts/pause.sh"), "status"])):
         f = Fake()
         rc, o = call(argv + H, f)
         c = f.calls[-1] if f.calls else {}
@@ -140,17 +142,17 @@ def main():
         "astryx-pulse.timer" not in o and "astryx-runner@" not in o, o)
     f = Fake(sudo=True)
     rc, o = call(["down"] + H, f)
-    ran = [x["cmd"] for x in f.calls if x["cmd"][0] in (str(h / "nucleus/pause.sh"), "sudo") and x["cmd"][1] != "-n"]
+    ran = [x["cmd"] for x in f.calls if x["cmd"][0] in (str(h / "scripts/pause.sh"), "sudo") and x["cmd"][1] != "-n"]
     arm("down with sudo RUNS pause.sh on <reason> first, then the stop",
-        len(ran) == 2 and ran[0][:2] == [str(h / "nucleus/pause.sh"), "on"] and ran[0][2]
+        len(ran) == 2 and ran[0][:2] == [str(h / "scripts/pause.sh"), "on"] and ran[0][2]
         and ran[1] == ["sudo", "systemctl", "stop", "astryx-observatory.service"], str(ran))
     (h / "var").mkdir()
     (h / "var" / "org_pause.json").write_text(json.dumps({"reason": "disk work"}))
     f = Fake(sudo=True)
     rc, o = call(["up"] + H, f)
-    ran = [x["cmd"] for x in f.calls if x["cmd"][0] in (str(h / "nucleus/pause.sh"), "sudo") and x["cmd"][1] != "-n"]
+    ran = [x["cmd"] for x in f.calls if x["cmd"][0] in (str(h / "scripts/pause.sh"), "sudo") and x["cmd"][1] != "-n"]
     arm("up while paused: start the services, then pause.sh off (never a bare timer start)",
-        ran == [["sudo", "systemctl", "start", "astryx-observatory.service"], [str(h / "nucleus/pause.sh"), "off"]],
+        ran == [["sudo", "systemctl", "start", "astryx-observatory.service"], [str(h / "scripts/pause.sh"), "off"]],
         str(ran))
     (h / "var" / "org_pause.json").unlink()
     f = Fake(sudo=True)
@@ -159,18 +161,16 @@ def main():
         "sudo systemctl start astryx-pulse.timer" in o and not f.of(lambda c: c[:2] == ["sudo", "systemctl"]), o)
 
     # ---- federate
-    f = Fake()
-    rc, o = call(["federate"] + H, f)
-    arm("federate without nucleus/federate.py says it's coming, rc 0", rc == 0 and "coming" in o, o)
-    (h / "nucleus" / "__init__.py").write_text("")
-    (h / "nucleus" / "federate.py").write_text(
-        "import pathlib\ndef main(argv):\n    pathlib.Path(%r).write_text(repr(argv))\n    return 0\n"
-        % str(h / "fed.out"))
-    for k in [k for k in sys.modules if k == "nucleus" or k.startswith("nucleus.")]:
-        del sys.modules[k]
+    # goal 10224 S4: the wizard ships IN the package (astryx.federation.federate), so "not there yet" can't
+    # happen. The fake is a module object in its place, never the real wizard (it would knock on the live relay).
+    import types
+    fake = types.ModuleType("astryx.federation.federate")
+    fake.main = lambda argv: (h / "fed.out").write_text(repr(argv)) and 0
+    real_fed = sys.modules.get("astryx.federation.federate")
+    sys.modules["astryx.federation.federate"] = fake
     sys.path.insert(0, str(h))
     rc, o = call(["federate"] + H + ["relay"], Fake())
-    arm("federate calls nucleus.federate.main(rest) when it exists",
+    arm("federate calls astryx.federation.federate.main(rest) when it exists",
         rc == 0 and (h / "fed.out").is_file() and (h / "fed.out").read_text() == "['relay']",
         (h / "fed.out").read_text() if (h / "fed.out").is_file() else o)
     rc, o = call(["federate"] + H + ["--relay", "https://r.example", "--no-introduce"], Fake())
@@ -181,6 +181,10 @@ def main():
     rc, o = call(["status"] + H + ["--bogus"], Fake())
     arm("an unknown flag on a NON-passthrough verb is still an error", rc != 0, (rc, o))
     sys.path.remove(str(h))
+    if real_fed is None:
+        sys.modules.pop("astryx.federation.federate", None)
+    else:
+        sys.modules["astryx.federation.federate"] = real_fed
 
     # ---- migrate / version / retire / user errors
     rc, o = call(["migrate"] + H, Fake())
@@ -247,11 +251,11 @@ def main():
     arm("init hands off to the seed (attach + observatory, key by location only)",
         "the seed is up" in o and "tmux attach -t ax-seed" in o and "as OBS_KEY" in o, o[-400:])
     arm("the installed tree holds the allowlist only (no tests/, harness/, docs/, .env, local.md, homes/)",
-        (fresh / "nucleus" / "spawn.sh").is_file() and (fresh / "agents" / "seed" / "seed.md").is_file()
+        (fresh / "scripts" / "spawn.sh").is_file() and (fresh / "agents" / "seed" / "seed.md").is_file()
         and not any((fresh / x).exists() for x in ("tests", "harness", "docs", ".env", "local.md", "homes")),
         str(sorted(p.name for p in fresh.iterdir())))
     arm("scripts are executable, the marker is written, the dispatcher link is relative",
-        os.access(fresh / "init.sh", os.X_OK) and os.access(fresh / "nucleus" / "pause.sh", os.X_OK)
+        os.access(fresh / "init.sh", os.X_OK) and os.access(fresh / "scripts" / "pause.sh", os.X_OK)
         and (fresh / ".astryx").is_file() and os.readlink(fresh / "astryx") == "init.sh")
     f = Fake(init_rc=3)
     rc, o = call(["init", "--yes", "--home", str(fresh)], f)

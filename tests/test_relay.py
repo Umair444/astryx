@@ -26,7 +26,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from nucleus.sqlguard.estate import gate  # noqa: E402
+from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate('test_relay', REPO, deps=('psycopg', 'asyncpg', 'fastapi', 'nacl', 'httpx', 'uvicorn'))
 import httpx  # noqa: E402
 import psycopg  # noqa: E402
@@ -34,8 +34,8 @@ from nacl.encoding import HexEncoder  # noqa: E402
 from nacl.signing import SigningKey  # noqa: E402
 
 from bridges import relay  # noqa: E402
-from nucleus import federate, introduce as intro  # noqa: E402
-from nucleus.sqlguard.fixture import fixture_db  # noqa: E402
+from astryx.federation import federate, introduce as intro  # noqa: E402
+from astryx.security.sqlguard.fixture import fixture_db  # noqa: E402
 
 PY = sys.executable
 B_RATE = 5                                   # B's inbox cap per window (ASTRYX_INBOX_RATE)

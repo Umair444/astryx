@@ -25,7 +25,7 @@ spend, and STRICTER — extractive quotes page text verbatim, so a leaked page s
 literally rather than at an LLM's discretion. The substrate is sqlguard's fixture_db(): a
 throwaway database that carries AGE for a superuser (schema.sql creates it) AND for
 branch_check's NOSUPERUSER run role (ASTRYX_FIXTURE_TEMPLATE, a template that already has it).
-AGE sessions go through nucleus/agelib.py, which LOADs only as a superuser. SKIP 77 when there
+AGE sessions go through src/astryx/memory/agelib.py, which LOADs only as a superuser. SKIP 77 when there
 is no fixture or no AGE in it. Run by check.sh.
 """
 import importlib.util
@@ -76,8 +76,8 @@ def want(label, cond):
 # ── throwaway substrate ──────────────────────────────────────────────────────────────
 sys.path.insert(1, str(REPO))       # AFTER mcp/memory, so the installed `mcp` package still wins
 try:
-    from nucleus import agelib
-    from nucleus.sqlguard.fixture import fixture_db, FixtureUnavailable
+    from astryx.memory import agelib
+    from astryx.security.sqlguard.fixture import fixture_db, FixtureUnavailable
 except Exception as e:                                             # noqa: BLE001
     skip(f"{type(e).__name__}: {e} — no fixture applier")
 

@@ -3,11 +3,11 @@
 nothing generated them, so doctor read them as undeclared and a regenerate + deploy would have deleted two live ones).
 
 The units() block is extracted from init.sh and run in bash (-euo pipefail) against a throwaway tree, each signal alone:
-  senses   nucleus/senses.py + a sensors/<agent>/*.py → astryx-senses.service; no sensor → none (writing a sensor IS
+  senses   src/astryx/pulse/senses.py + a sensors/<agent>/*.py → astryx-senses.service; no sensor → none (writing a sensor IS
            deploying; an org without one grows no service).
   geoloc   bridges/geoloc.py + $HOME/.config/astryx/geoloc.env → astryx-geoloc.service (0.0.0.0:8766: the phone posts to
            it); either one absent → none.
-  growbot  nucleus/growbot_body.py + a LIVE charter granting growbot → the unit, ALWAYS; a REMOTE body (GROWBOT_BODY_URL
+  growbot  src/astryx/contrib/growbot_body.py + a LIVE charter granting growbot → the unit, ALWAYS; a REMOTE body (GROWBOT_BODY_URL
            elsewhere) puts it in UNITS_EXPECT_DISABLED (installed, NOT enabled), a local or empty one doesn't; a grant only
            in an .example.md → no unit.
 """
@@ -61,12 +61,12 @@ want("the bare tree generates (rc 0) and declares none of the three",
      f"{base['rc']} {base['err'][-200:]} {sorted(base['units'])}")
 
 print("senses:")
-no_sensor = gen({"nucleus/senses.py": ""})
+no_sensor = gen({"src/astryx/pulse/senses.py": ""})
 want("RED control: the server module with NO sensor → no senses unit", "astryx-senses.service" not in no_sensor["units"])
-s = gen({"nucleus/senses.py": "", "sensors/seed/ping.py": ""})
+s = gen({"src/astryx/pulse/senses.py": "", "sensors/seed/ping.py": ""})
 su = s["units"].get("astryx-senses.service", "")
-want("module + one sensor → astryx-senses.service, running nucleus/senses.py, restarting, with [Install]",
-     "nucleus/senses.py" in su and "Restart=always" in su and "[Install]" in su and "User=tester" in su, su)
+want("module + one sensor → astryx-senses.service, running src/astryx/pulse/senses.py, restarting, with [Install]",
+     "src/astryx/pulse/senses.py" in su and "Restart=always" in su and "[Install]" in su and "User=tester" in su, su)
 
 print("geoloc:")
 want("RED control: the bridge without its env file → no geoloc unit",
@@ -79,9 +79,9 @@ want("bridge + env file → astryx-geoloc.service on 0.0.0.0:8766 (the phone pos
      "geoloc:app --host 0.0.0.0 --port 8766" in gu and "/.config/astryx/geoloc.env" in gu and "[Install]" in gu, gu)
 
 print("growbot:")
-grant = {"nucleus/growbot_body.py": "", "agents/growbot.md": "# growbot\nGrants: growbot\n"}
+grant = {"src/astryx/contrib/growbot_body.py": "", "agents/growbot.md": "# growbot\nGrants: growbot\n"}
 want("RED control: a grant only in an .example.md → no growbot unit",
-     "astryx-growbot.service" not in gen({"nucleus/growbot_body.py": "",
+     "astryx-growbot.service" not in gen({"src/astryx/contrib/growbot_body.py": "",
                                           "agents/growbot.example.md": "Grants: growbot\n"})["units"])
 loc = gen(grant)
 want("a LOCAL body (no GROWBOT_BODY_URL) → the unit, and NOT expected-disabled (it must be enabled)",

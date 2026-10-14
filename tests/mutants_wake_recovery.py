@@ -1,6 +1,6 @@
 """Authored mutants for channel/server.mjs's lost-wake recovery — run by mutation_probe.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_wake_recovery.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_wake_recovery.py
 
 THE LIST IS THE JUDGEMENT. Recovery has two failure directions and they pull against each
 other, so a mutant set that only attacks one of them would licence the other. M1 is the

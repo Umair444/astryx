@@ -23,7 +23,7 @@ Platform translation ONLY; everything shared lives in common.py:
 Config: .env for secrets, routes-whatsapp.json for chats (trusted_jids =
 sender JIDs stamped `owner`; others are `wa-<number>` on open routes).
 
-Run: uvicorn bridges.whatsapp:app --host "$(nucleus/docker_host_ip.sh)" --port 8477  (repo root)
+Run: uvicorn bridges.whatsapp:app --host "$(scripts/docker_host_ip.sh)" --port 8477  (repo root)
      (the docker host address: 172.17.0.1 on docker-ce Linux; ASTRYX_DOCKER_HOST_IP overrides)
 """
 

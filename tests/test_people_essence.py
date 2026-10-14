@@ -30,7 +30,7 @@ if not BODY.exists():
     print(f"SKIP: {BODY.relative_to(REPO) if BODY.is_relative_to(REPO) else BODY} absent (gitignored) — nothing asserted.")
     sys.exit(77)
 sys.path.insert(0, str(REPO))
-from nucleus.sqlguard.estate import gate  # noqa: E402
+from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate("test_people_essence", REPO, deps=("psycopg",))
 
 
@@ -43,9 +43,9 @@ def load(name, path):
 
 try:
     pe = load("people_essence_under_test", BODY)
-    pr = load("pulse_run_pe", REPO / "nucleus" / "pulse_run.py")
+    pr = load("pulse_run_pe", REPO / "src" / "astryx" / "pulse" / "pulse_run.py")
     import psycopg
-    from nucleus.sqlguard.fixture import fixture_db
+    from astryx.security.sqlguard.fixture import fixture_db
 except Exception as e:  # noqa: BLE001
     print(f"SKIP: a subject isn't importable ({type(e).__name__}: {e}).")
     sys.exit(77)

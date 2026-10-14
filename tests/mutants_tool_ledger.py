@@ -1,6 +1,6 @@
-"""Authored mutants for hooks/step.py's tool ledger (goal 4227, S0), run by nucleus/mutation_probe.py.
+"""Authored mutants for hooks/step.py's tool ledger (goal 4227, S0), run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_tool_ledger.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_tool_ledger.py
 
 Why these, and not a generic mutator. Several oracle arms PASS vacuously against the pre-4227
 hook. L2 (no secret in meta) and L5 (a toolreg failure never costs the row) both hold for a hook

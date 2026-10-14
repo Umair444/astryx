@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle for the CANVAS privacy pair: nucleus/canvas.py:share_blockers (the share GATE, tracked) and
+"""Oracle for the CANVAS privacy pair: src/astryx/core/canvas.py:share_blockers (the share GATE, tracked) and
 triggers/steward/pii_sweep.py:pii_canvas (the SWEEP whose state it reads, gitignored).
 
     venv/bin/python tests/test_pii_canvas.py   (PII_SWEEP_SRC=<path> overrides the sweep body)
@@ -45,8 +45,8 @@ def check(name, ok, detail=""):
 
 try:
     import psycopg
-    from nucleus import canvas as cv
-    from nucleus.sqlguard.fixture import fixture_db
+    from astryx.core import canvas as cv
+    from astryx.security.sqlguard.fixture import fixture_db
     _fx = fixture_db()
     fx = _fx.__enter__()
 except Exception as e:  # noqa: BLE001
@@ -143,7 +143,7 @@ try:
             mod = importlib.util.module_from_spec(_s)
             _s.loader.exec_module(mod)
             fire = mod.pii_canvas
-            _p = importlib.util.spec_from_file_location("pulse_run_pc", REPO / "nucleus" / "pulse_run.py")
+            _p = importlib.util.spec_from_file_location("pulse_run_pc", REPO / "src" / "astryx" / "pulse" / "pulse_run.py")
             pr = importlib.util.module_from_spec(_p)
             _p.loader.exec_module(pr)
         except Exception as e:  # noqa: BLE001

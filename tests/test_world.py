@@ -1,4 +1,4 @@
-"""Oracle for nucleus/world.py — the human ontology layer.
+"""Oracle for src/astryx/memory/world.py — the human ontology layer.
 
 THE PROPERTY THAT MATTERS IS THE PRIVACY ONE, and it is the reason this file leads with
 it. world.py reads `relations.md`, which contains real phone numbers, and feeds a graph
@@ -15,7 +15,7 @@ real number), per the org's fixture law. The privacy case deliberately uses no l
 all — it derives its subjects from the file at runtime, so this test never becomes a place
 where a real number is written down.
 
-Run: venv/bin/python tests/test_world.py   (also wired into nucleus/check.sh)
+Run: venv/bin/python tests/test_world.py   (also wired into devtools/check.sh)
 """
 import re
 import sys
@@ -24,7 +24,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from nucleus import world  # noqa: E402
+from astryx.memory import world  # noqa: E402
 
 FAKE = """# fixture
 ## People
@@ -194,7 +194,7 @@ def test_a_refused_facet_is_refused_LOUDLY():
     the axis it refused, so the declarer learns the moment the reader ships."""
     import contextlib
     import io
-    from nucleus import ontology as ont
+    from astryx.memory import ontology as ont
     real = ont.load
     ont.load = lambda: {"facets": {"goodaxis": r"\b(alpha|beta)\b",
                                    "badaxis": r"(unbalanced"}}

@@ -1,4 +1,4 @@
-"""Oracle for nucleus/check.sh's OWN coverage — the aggregator's blind spot.
+"""Oracle for devtools/check.sh's OWN coverage — the aggregator's blind spot.
 
 check.sh exists because "a test nothing runs only proves its last manual invocation"
 (its own header). It never applied that thesis to itself: its oracle list is a
@@ -31,7 +31,7 @@ notices; disable the block around it and only the runtime does — and a third a
 requires them to AGREE on the live file, because a disagreement means one of them has gone
 wrong about check.sh rather than about a mutant.
 
-WHY THE SECOND ONE EXISTS, and it is not a hypothetical: `nucleus/mutation_probe.py`
+WHY THE SECOND ONE EXISTS, and it is not a hypothetical: `devtools/mutation_probe.py`
 (abstractor-4) with the authored mutants in `tests/mutants_check_coverage.py`. Mutant M4
 wrapped a live `run` line in `if false; then ... fi` — still a line, never a gate — and
 EVERY assertion in this file passed. The gate certified an oracle that could not execute,
@@ -60,7 +60,7 @@ GRADED HONESTLY, two limits:
    unwired non-test check ever appears, THAT is the trigger to generalise this — and
    the honest fix then is a declared kind, not a cleverer regex.
 
-Run: venv/bin/python tests/test_check_coverage.py   (also wired into nucleus/check.sh)
+Run: venv/bin/python tests/test_check_coverage.py   (also wired into devtools/check.sh)
 """
 import os
 import re
@@ -71,10 +71,10 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-# Env-overridable so nucleus/mutation_probe.py can run this oracle against a deliberately
+# Env-overridable so devtools/mutation_probe.py can run this oracle against a deliberately
 # WRONG check.sh and record which assertion notices. Defaults to the real file, so nothing
 # changes for check.sh or a human run. (Opted in 2026-08-14; see tests/mutants_check_coverage.py.)
-CHECK_SH = Path(os.environ.get("CHECK_SH_SRC", REPO / "nucleus" / "check.sh"))
+CHECK_SH = Path(os.environ.get("CHECK_SH_SRC", REPO / "devtools" / "check.sh"))
 
 # A shell line only counts if it is a live `run` invocation. Comments are stripped
 # first: commenting a test out is the realistic drift (someone silences a red test
@@ -131,7 +131,7 @@ def committed_oracles():
     runs five agents in ONE shared working tree, so a half-built oracle sitting untracked
     for an evening turned the whole suite red — for a reason unrelated to what these gates
     guard, which is the surest way to teach people to stop reading a suite (steward,
-    2026-08-15: `bash nucleus/check.sh` on the live tree, red on WIP alone).
+    2026-08-15: `bash devtools/check.sh` on the live tree, red on WIP alone).
 
     The law these gates enforce — a test nothing runs proves only its last manual
     invocation — ATTACHES AT COMMIT, because that is when the oracle starts appearing in
@@ -271,7 +271,7 @@ def test_every_oracle_in_nucleus_is_invoked_by_check_sh():
     is internally consistent with itself."""
     missing = sorted(committed_oracles() - invoked_oracles(CHECK_SH.read_text()))
     assert not missing, (
-        "committed oracle(s) that nucleus/check.sh never runs: "
+        "committed oracle(s) that devtools/check.sh never runs: "
         + ", ".join(missing)
         + " — a test nothing runs proves only its last manual invocation. Add a "
           "`run \"<label>\" \"$PY\" tests/<file>` line (`bash tests/<file>` for a .sh) to check.sh."

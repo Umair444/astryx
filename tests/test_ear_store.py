@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle: hearing's utterance retention (plan-8674 S1): `utterances` in schema.sql + nucleus/ear_store.py + the shipped
+"""Oracle: hearing's utterance retention (plan-8674 S1): `utterances` in schema.sql + src/astryx/hearing/ear_store.py + the shipped
 retention trigger, on a FIXTURE database (schema.sql applied whole, dropped after; nothing live is touched).
 
 Arms, each with its RED control:
@@ -26,12 +26,12 @@ sys.path.insert(0, str(REPO))
 try:
     import psycopg
     from psycopg import sql
-    from nucleus.sqlguard.fixture import FixtureUnavailable, fixture_db
+    from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db
 except Exception as e:                                              # noqa: BLE001
     print(f"SKIP: {type(e).__name__}: {e}")
     sys.exit(77)
-from nucleus import ear_store as E  # noqa: E402
-from nucleus.shipped_triggers import ear_retention as T  # noqa: E402
+from astryx.hearing import ear_store as E  # noqa: E402
+from astryx.pulse.shipped_triggers import ear_retention as T  # noqa: E402
 
 fails = []
 
@@ -130,7 +130,7 @@ try:
         # a4 R2: a branch-check run base (nucleus/branch_check_prep.build_base pg_dumps the whole DB) copies the
         # utterances TABLE but never its rows. Same argv list build_base uses, on this fixture.
         import subprocess
-        from nucleus import branch_check_prep as bp
+        from devtools import branch_check_prep as bp
         c.execute("INSERT INTO utterances (text, view, backend) VALUES ('words a base must not copy', 'test', 'none')")
 
         def dumped(extra):
@@ -148,7 +148,7 @@ try:
 
         # the owner's footnote names backup.sh's keep: the constant must be backup.sh's own default (a4 #43410 R1)
         import re
-        keep = re.search(r"^KEEP=\$\{1:-(\d+)\}", (REPO / "nucleus/backup.sh").read_text(), re.M)
+        keep = re.search(r"^KEEP=\$\{1:-(\d+)\}", (REPO / "scripts/backup.sh").read_text(), re.M)
         want("BACKUP_KEEP_DAYS is backup.sh's KEEP default (what the ear footnote tells the owner)",
              keep is not None and int(keep.group(1)) == E.BACKUP_KEEP_DAYS, f"{keep and keep.group(1)} vs {E.BACKUP_KEEP_DAYS}")
 

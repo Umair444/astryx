@@ -8,9 +8,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
-from nucleus.sqlguard.estate import gate  # noqa: E402
+from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate("test_room", REPO, deps=("numpy", "fastapi"), env=False)
-from nucleus import room, voiceprint  # noqa: E402
+from astryx.hearing import room, voiceprint  # noqa: E402
 fails = 0
 
 
@@ -74,7 +74,7 @@ arm("naming another agent mid-conversation switches to it", m5 == 2 and c2.rows[
 m6 = room.route(Conn(), "what's going on cede", 6, names=NAMES, wake="seed")
 arm("the wake word's name routes a sentence whisper misspelt", m6 == 1)
 
-from nucleus import wake  # noqa: E402
+from astryx.hearing import wake  # noqa: E402
 arm("wake: names are spelled as said (abstractor-1 → ABSTRACTOR ONE, p1 → P ONE, astryx sounds like ASTRIX)",
     wake.phrases("abstractor-1") == ["ABSTRACTOR ONE"] and wake.phrases("p1") == ["P ONE"]
     and "ASTRIX" in wake.phrases("astryx") and wake.phrases("painter") == ["PAINTER"])

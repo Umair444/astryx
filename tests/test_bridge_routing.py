@@ -2,7 +2,7 @@
 """Oracle: an unaddressed human reply on a channel thread routes to whoever the conversation is
 WITH: the newest agent-bearing row on the thread (seed #33250, canopus #33249).
 
-    venv/bin/python tests/test_bridge_routing.py        (also run by nucleus/check.sh)
+    venv/bin/python tests/test_bridge_routing.py        (also run by devtools/check.sh)
     ROUTE_SRC=<path> …                                  (the subject; mutation_probe sets it)
 
 bridges/common.py route_target() is shared by discord, whatsapp and telegram. It used to route
@@ -75,7 +75,7 @@ if not ADMIN:
     skip("no ASTRYX_DSN")
 
 sys.path.insert(0, str(REPO))
-from nucleus.sqlguard.fixture import fixture_db  # noqa: E402 — the ONE applier
+from astryx.security.sqlguard.fixture import fixture_db  # noqa: E402 — the ONE applier
 
 _fx = fixture_db()
 try:

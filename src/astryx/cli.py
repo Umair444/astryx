@@ -366,7 +366,7 @@ def cmd_up(ctx: Ctx, a) -> int:
         raise CliError("no astryx units are installed yet", fix="astryx init   (it prints the install lines)")
     lines = [["sudo", "systemctl", "start", *svcs]] if svcs else []
     if (ctx.home / "var" / "org_pause.json").is_file():
-        lines.append([str(root / "nucleus" / "pause.sh"), "off"])
+        lines.append([str(root / "scripts" / "pause.sh"), "off"])
     else:
         lines.append(["sudo", "systemctl", "start", "astryx-pulse.timer"])
     return _do(ctx, lines, a)
@@ -377,7 +377,7 @@ def cmd_down(ctx: Ctx, a) -> int:
     ctx.ui.header("down", "the pulse is paused WITH a declared reason, so the witness reads PAUSED, not DOWN")
     reason = a.reason or f"astryx down by {getpass.getuser()}"
     svcs = [u for u in _unit_files() if u.endswith(".service") and u != "astryx-pulse.service"]
-    lines = [[str(root / "nucleus" / "pause.sh"), "on", reason]]
+    lines = [[str(root / "scripts" / "pause.sh"), "on", reason]]
     if svcs:
         lines.append(["sudo", "systemctl", "stop", *svcs])
     rc = _do(ctx, lines, a)
@@ -389,11 +389,11 @@ def cmd_pause(ctx: Ctx, a) -> int:
     args = [a.action] + ([a.reason] if a.reason else []) + ([a.until] if a.until else [])
     if a.action == "on" and not a.reason:
         raise CliError("a pause needs a reason", fix='astryx pause on "<reason>" [until]', code=2)
-    return script(ctx, "nucleus/pause.sh", *args)
+    return script(ctx, "scripts/pause.sh", *args)
 
 
 def cmd_spawn(ctx: Ctx, a) -> int:
-    return script(ctx, "nucleus/spawn.sh", a.agent)
+    return script(ctx, "scripts/spawn.sh", a.agent)
 
 
 def cmd_retire(ctx: Ctx, a) -> int:
@@ -401,7 +401,7 @@ def cmd_retire(ctx: Ctx, a) -> int:
     ui = ctx.ui
     if a.agent == "seed":
         raise CliError("the seed is the founding agent; it isn't retired")
-    r = run([sys.executable, str(root / "nucleus" / "charter.py"), a.agent], cwd=root, capture=True)
+    r = run([sys.executable, str(root / "src" / "astryx" / "core" / "charter.py"), a.agent], cwd=root, capture=True)
     path = (r.stdout or "").strip() if r.returncode == 0 else ""
     ui.header(f"retire {a.agent}", "retiring is the seed's act: archive the charter; the nucleus stops resurrecting it")
     if not path:
@@ -420,9 +420,9 @@ def cmd_federate(ctx: Ctx, a) -> int:
         sys.path.insert(0, str(root))
     try:
         import importlib
-        mod = importlib.import_module("nucleus.federate")
+        mod = importlib.import_module("astryx.federation.federate")
     except ModuleNotFoundError as e:
-        if e.name not in ("nucleus.federate", "nucleus"):
+        if e.name not in ("astryx.federation.federate", "nucleus"):
             raise
         ctx.ui.header("federate", "the federation wizard (relay or public address) is coming")
         ctx.ui.note("  For now, join a peer by hand:")
@@ -477,7 +477,7 @@ def _channel_next(ctx: Ctx, name: str) -> int:
                                               "see bridges/routes.example.json)")
     ui.note("  then generate and start the bridge:")
     ui.cmd("astryx init")
-    ui.cmd(f"sudo ./nucleus/deploy.sh units && sudo systemctl enable --now {ch['unit']}")
+    ui.cmd(f"sudo ./scripts/deploy.sh units && sudo systemctl enable --now {ch['unit']}")
     return 0
 
 

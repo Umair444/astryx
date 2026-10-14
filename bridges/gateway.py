@@ -78,13 +78,13 @@ RELAY_HOST = _env("ASTRYX_RELAY_HOST") == "1"
 # the ONE tier oracle (plan-18) — the card's roster is exactly content_public_agents,
 # fail-closed, so a tier-private agent can never be advertised to the world.
 sys.path.insert(0, str(REPO))
-from nucleus.tier import content_public_agents  # noqa: E402
-# the door's name policy — see nucleus/orgname.py for why a name is a trust label
-from nucleus.orgname import RESERVED_ORGS, org_ok, peer_url_ok  # noqa: E402
+from astryx.core.tier import content_public_agents  # noqa: E402
+# the door's name policy — see src/astryx/core/orgname.py for why a name is a trust label
+from astryx.core.orgname import RESERVED_ORGS, org_ok, peer_url_ok  # noqa: E402
 # WHO is an agent is charter.roster()'s call — the ONE exclusion authority (examples,
 # .git, NON_CHARTERS). The card only annotates; deriving names here keeps a runbook like
 # onboard.md from drifting onto the public card (card_assert.py's two-writers warning).
-from nucleus import charter  # noqa: E402
+from astryx.core import charter  # noqa: E402
 from bridges import relay as relay_mod  # noqa: E402
 
 SKEW = 600                      # seconds of envelope timestamp tolerance
@@ -237,7 +237,7 @@ def _assert_jcs_safe(node, path: str = "card") -> None:
         sort_keys=True orders by code point; the two disagree above U+FFFF.
 
     Rather than let either ship wrong bytes, stop. The alternative — canonicalising with the
-    verifier's rfc8785 — is deliberately NOT taken: nucleus/card_assert.py check (iv) proves
+    verifier's rfc8785 — is deliberately NOT taken: src/astryx/federation/card_assert.py check (iv) proves
     our emission against that library every hour, and it can only do that while the two sides
     share no code. Detection stays independent; this keeps emission honest at the boundary."""
     if isinstance(node, float):
@@ -264,7 +264,7 @@ def _sign_card(card: dict) -> list:
     so stdlib's default \\uXXXX escaping made three em-dashes in `description` sign over bytes
     no conformant verifier could reconstruct — the card verified against ITSELF and read as
     SIGNATURE INVALID (i.e. spoofed) to the world. The standing proof that this stays fixed is
-    nucleus/card_assert.py check (iv), which re-derives the payload with a THIRD-PARTY JCS
+    src/astryx/federation/card_assert.py check (iv), which re-derives the payload with a THIRD-PARTY JCS
     implementation and shares no code with this function — deliberately, since a verifier
     using the producer's own serialiser can only ever prove conformance-to-self.
 
@@ -535,7 +535,7 @@ async def push(row) -> bool:
             "INSERT INTO messages (from_agent, to_agent, intent, body) "
             "VALUES ('gateway', $1, 'error', $2)", row["from_agent"],
             f"cannot deliver to {row['to_org']}: not an introduced peer "
-            f"(run nucleus/introduce.py first)")
+            f"(run src/astryx/federation/introduce.py first)")
         return True
     if not peer["url"]:
         if RELAY and await relay_send(row["to_org"], "msg", envelope(row)):

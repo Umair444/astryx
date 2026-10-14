@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle for nucleus/schema_parity.py (a1 #38264): the LIVE catalog has every table and column the schema files
+"""Oracle for src/astryx/pg/schema_parity.py (a1 #38264): the LIVE catalog has every table and column the schema files
 define, with the same types, so a column added inside an existing `CREATE TABLE IF NOT EXISTS` block (a no-op on a
 live host, stamped green by init's schema node) or a hand DROP reads RED.
 
@@ -34,12 +34,12 @@ def main():
     src = os.environ.get("SCHEMA_PARITY_SRC")                       # mutation_probe hands a mutant copy here
     if src:
         import importlib.util
-        spec = importlib.util.spec_from_file_location("nucleus.schema_parity", src)
+        spec = importlib.util.spec_from_file_location("astryx.pg.schema_parity", src)
         P = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(P)
     else:
-        from nucleus import schema_parity as P
-    from nucleus.sqlguard.fixture import FixtureUnavailable, fixture_db, live_dsn
+        from astryx.pg import schema_parity as P
+    from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db, live_dsn
 
     try:
         with fixture_db(extra=P.expected_extra()) as fx, psycopg.connect(fx["dsn"], autocommit=True) as c:
@@ -188,7 +188,7 @@ def main():
         print(f"  (reported, not judged: {len(live['live_only'])} live-only table(s))")
 
     # GEO (owner 10-10 "the design on github should match local"; steward #42345 F1): a SCOPED database. Its file is
-    # nucleus/schema_geo.sql; only `track` is judged, and there a live-only table IS drift (nobody else writes into it).
+    # src/astryx/sql/schema_geo.sql; only `track` is judged, and there a live-only table IS drift (nobody else writes into it).
     from psycopg.conninfo import make_conninfo
     tabs = P.declared_tables("geo")
     check("GEO: the file declares its three tables (anti-vacuity: the presence check has something to check)",
@@ -243,7 +243,7 @@ def main():
                   P.run(gx["dsn"], db="geo")["drift"] is False)
             check("GEO: exclusivity is DECLARED per database, never inferred from a scope (a4 #42525)",
                   P.DATABASES["geo"].get("exclusive") is True and P.DATABASES["astryx"].get("exclusive") is False)
-            from nucleus import people_gate
+            from astryx.people import people_gate
             check("GEO: the birth path's resident is people_gate's RESIDENT", P.RESIDENT == people_gate.RESIDENT)
             with psycopg.connect(gx["dsn"], autocommit=True) as c:
                 c.execute("DROP TABLE track.presence")
@@ -263,7 +263,9 @@ def main():
     real_repo = P.REPO
     with tempfile.TemporaryDirectory() as td:
         (Path(td) / "nucleus").mkdir()
-        (Path(td) / "nucleus" / "schema_geo.sql").write_text("-- an uncommitted edit\n")
+        for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
+            (Path(td) / _d).mkdir(parents=True, exist_ok=True)
+        (Path(td) / "src" / "astryx" / "sql" / "schema_geo.sql").write_text("-- an uncommitted edit\n")
         P.REPO = Path(td)
         try:
             # a DEAD admin DSN: the refusal must come before any connection, so a mutant that drops the git check

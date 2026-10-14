@@ -1,7 +1,7 @@
 """A throwaway repo tree for the plan-9853 oracles (tests/test_trigger_names.py, tests/test_init_trigger_names.py).
 
 It holds what the shipped triggers' import closures reach (astryx.py, nucleus/, mcp/phone/surface.py), the helper under
-test (the caller's helper_src: a mutant under the probe) as nucleus/trigger_names.py, the pulse as nucleus/pulse.py (so
+test (the caller's helper_src: a mutant under the probe) as src/astryx/core/trigger_names.py, the pulse as src/astryx/pulse/pulse.py (so
 `pulse.py --names` discovers THIS tree, the parity oracle), venv/bin/python execing this interpreter, and an empty
 triggers/.
 No .env: the helper must be import-safe without one (a4 #49617); a caller wanting a database sets ASTRYX_DSN.
@@ -18,7 +18,7 @@ def build(root: Path, helper_src: str | None = None) -> Path:
     shutil.copy(REPO / "astryx.py", root / "astryx.py")           # the shim, and the package it becomes
     shutil.copytree(REPO / "src" / "astryx", root / "src" / "astryx", ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copytree(REPO / "nucleus", root / "nucleus", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-    shutil.copy(helper_src or REPO / "nucleus/trigger_names.py", root / "nucleus" / "trigger_names.py")
+    shutil.copy(helper_src or REPO / "src/astryx/core/trigger_names.py", root / "src" / "astryx" / "core" / "trigger_names.py")
     (root / "mcp" / "phone").mkdir(parents=True)
     shutil.copy(REPO / "mcp/phone/surface.py", root / "mcp/phone/surface.py")
     (root / "venv" / "bin").mkdir(parents=True)
@@ -31,4 +31,4 @@ def build(root: Path, helper_src: str | None = None) -> Path:
 
 def shim(module: str) -> str:
     """The init.sh shim's import line for a shipped trigger."""
-    return f"from nucleus.shipped_triggers.{module} import {module}  # noqa: F401\n"
+    return f"from astryx.pulse.shipped_triggers.{module} import {module}  # noqa: F401\n"

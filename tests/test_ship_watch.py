@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Oracle for triggers/seed/tool_ship_watch.py — goal 3909, the vanish-masks-fresh class.
 
-    venv/bin/python tests/test_ship_watch.py         (also run by nucleus/check.sh)
+    venv/bin/python tests/test_ship_watch.py         (also run by devtools/check.sh)
 
 The subject is the most regression-prone file in the tree (its own comments log three prior
 edit-regressions), and its defect is the silent kind: a dead announcement path presents as

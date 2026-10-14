@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle for nucleus/legend_guard.py — the economy heat-definition drift guard (goal 3408).
+"""Oracle for src/astryx/econ/legend_guard.py — the economy heat-definition drift guard (goal 3408).
 
 Every arm that names an INVERSION was run RED first against a guard that would wave it
 through; each is a real failure mode, not a restatement of the code:
@@ -16,7 +16,7 @@ through; each is a real failure mode, not a restatement of the code:
      NOT fire — the guard flags a unit MIX, not every arithmetic op.
   6. the guard holds the REAL live tree (the actual fixed mcp/org/server.py + econ.py) green.
 
-Run by nucleus/check.sh. legend_guard.py is TRACKED (nucleus/), so no SKIP path — the
+Run by devtools/check.sh. legend_guard.py is TRACKED (nucleus/), so no SKIP path — the
 subject is always present.
 """
 import sys
@@ -24,7 +24,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
-from nucleus.legend_guard import scan_source, main as guard_main  # noqa: E402
+from astryx.econ.legend_guard import scan_source, main as guard_main  # noqa: E402
 
 fails: list[str] = []
 
@@ -156,7 +156,7 @@ check("...and the same shape bound to `w` STILL fires (name fallback keeps w a b
 # ── 6. the guard holds the REAL live tree green (substrate, not a fixture) ────────────
 print("\nLIVE ARM — the real economy surfaces must be same-base:")
 rc = guard_main([])
-check("nucleus/legend_guard.py main() exits 0 on the live tree", rc, 0)
+check("src/astryx/econ/legend_guard.py main() exits 0 on the live tree", rc, 0)
 
 print()
 if fails:

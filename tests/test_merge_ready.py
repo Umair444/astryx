@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle for triggers/seed/merge_ready.py — the merge-ready watch (plan-5791) — and nucleus/apply_receipt.py.
+"""Oracle for triggers/seed/merge_ready.py — the merge-ready watch (plan-5791) — and devtools/apply_receipt.py.
 
     venv/bin/python tests/test_merge_ready.py   (MERGE_READY_SRC=<path> overrides the subject)
 
@@ -46,7 +46,7 @@ for _k in [k for k in os.environ if k.startswith("GIT_")]:
 REPO = Path(__file__).resolve().parents[1]
 BODY = Path(os.environ.get("MERGE_READY_SRC") or REPO / "triggers" / "seed" / "merge_ready.py")
 PY = sys.executable
-HELPER = REPO / "nucleus" / "apply_receipt.py"
+HELPER = REPO / "devtools" / "apply_receipt.py"
 fails, skips = [], []
 
 
@@ -211,7 +211,7 @@ check("  branch-only evidence FROM the sender never makes it SELF-MARKED (only a
 check("a note-to-self is not an announcement → UNREQUESTED",
       m.request_flag("a9", [], [{"id": 1, "from_agent": "a9", "to_agent": "a9"}])[0] == "UNREQUESTED")
 try:
-    _p = importlib.util.spec_from_file_location("pulse_run_mr", REPO / "nucleus" / "pulse_run.py")
+    _p = importlib.util.spec_from_file_location("pulse_run_mr", REPO / "src" / "astryx" / "pulse" / "pulse_run.py")
     pr = importlib.util.module_from_spec(_p)
     _p.loader.exec_module(pr)
     live = pr.Ctx({})
@@ -913,7 +913,7 @@ check("  a state-derived notice (it clears itself) leads the pinned ones",
 print("\n9. entrypoint (pulse_run.Ctx on a sqlguard fixture):")
 try:
     import psycopg
-    from nucleus.sqlguard.fixture import fixture_db
+    from astryx.security.sqlguard.fixture import fixture_db
     _fx = fixture_db()
     fx = _fx.__enter__()
 except Exception as e:  # noqa: BLE001

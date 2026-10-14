@@ -4,7 +4,7 @@
 Hits a running observatory as an ANONYMOUS visitor and proves that NO content-class
 public endpoint returns any content for a grant-derived-private agent — the invariant
 that keeps a newly-widened endpoint from silently re-opening the personal-tier leak.
-The private set is DERIVED live from the tree via nucleus/tier.py (never hardcoded),
+The private set is DERIVED live from the tree via src/astryx/core/tier.py (never hardcoded),
 so it tracks the roster: add a PII-granted agent and it is checked automatically.
 
 Run against any instance (owner key optional, only used to prove the floor is
@@ -18,7 +18,7 @@ import json
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-from nucleus.tier import is_content_public  # noqa: E402
+from astryx.core.tier import is_content_public  # noqa: E402
 
 BASE = sys.argv[1].rstrip("/") if len(sys.argv) > 1 else "http://127.0.0.1:8090"
 KEY = sys.argv[2] if len(sys.argv) > 2 else None

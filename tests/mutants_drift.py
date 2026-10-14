@@ -1,6 +1,6 @@
 """Authored mutants for memory's consolidated drift-lint — run by mutation_probe.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_drift.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_drift.py
 
 These are the SAME six defects the retired mutants_wiki_drift.py pinned, re-aimed at
 memory/lints/drift.py — the 5→1 consolidation must not lose kill-coverage when it retires the

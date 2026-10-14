@@ -15,7 +15,7 @@ TREE_FILES = (
 )
 TREE_DIRS = (
     "agents/", "assets/", "bridges/", "canvas/", "channel/", "hooks/", "infra/",
-    "mcp/", "nucleus/", "observatory/", "skills/", "src/astryx/",
+    "mcp/", "nucleus/", "observatory/", "scripts/", "skills/", "src/astryx/",
 )
 NEVER = ("tests/", "harness/", "docs/", "homes/", "triggers/", "memory/", "var/", "venv/")
 

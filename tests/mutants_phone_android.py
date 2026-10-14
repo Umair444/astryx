@@ -1,6 +1,6 @@
-"""Authored mutants for nucleus/android.py (plan-8675 S1), run by nucleus/mutation_probe.py:
+"""Authored mutants for src/astryx/hands/android.py (plan-8675 S1), run by devtools/mutation_probe.py:
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_phone_android.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_phone_android.py
 
 NOT AUTHORED HERE, device-only (tests/test_android_device.py): drive() not holding the phone, boot() ignoring a
 running Windows VM.
@@ -8,7 +8,7 @@ running Windows VM.
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-SUBJECT = REPO / "nucleus/android.py"
+SUBJECT = REPO / "src/astryx/hands/android.py"
 ORACLE = REPO / "tests" / "test_phone_facade.py"
 ENV = "ANDROID_SRC"
 TIMEOUT = 120

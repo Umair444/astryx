@@ -1,11 +1,11 @@
 """Mutants for the pulse's astryx-import canary (tests/test_pulse_import_canary.py). Needs a fixture database.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_pulse_import_canary.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_pulse_import_canary.py
 """
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-SUBJECT = REPO / "nucleus" / "pulse.py"
+SUBJECT = REPO / "src" / "astryx" / "pulse" / "pulse.py"
 ORACLE = REPO / "tests" / "test_pulse_import_canary.py"
 ENV = "PULSE_SRC"
 MUTANTS = {

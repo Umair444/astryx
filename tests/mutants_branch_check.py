@@ -1,6 +1,6 @@
-"""Authored mutants for nucleus/branch_check.py (plan-4918 P2), run by nucleus/mutation_probe.py.
+"""Authored mutants for devtools/branch_check.py (plan-4918 P2), run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_branch_check.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_branch_check.py
 
 NOT authored, and declared: (1) removing the P0-b call would run a full prod dump first, beyond mutation_probe's
 per-oracle budget; require_hardened itself is mutation-tested in tests/mutants_branch_check_prep.py. (2) The
@@ -10,7 +10,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-SUBJECT = REPO / "nucleus" / "branch_check.py"
+SUBJECT = REPO / "devtools" / "branch_check.py"
 ORACLE = REPO / "tests" / "test_branch_check.py"
 ENV = "BRANCH_CHECK_SRC"
 
@@ -73,14 +73,14 @@ MUTANTS = {
     "O22 production never hands report() the branch's scope (the in-scope list is dead code)":
         (', touched=touched_files(sha, repo["branch"]),', ","),
     "O23 the scope drops the modules a changed oracle imports (voice_mint::record, 10-11, falls out of scope)":
-        ('        out |= {m.replace(".", "/") + ".py" for m in module_refs(tree)}', "        pass"),
+        ('        out |= {_modfile(m) for m in module_refs(tree)}', "        pass"),
     "O24 the scope diffs two trees, not from the merge-base (main's drift past the fork is pinned on the branch: a4 #45033)":
         ("[\"git\", \"diff\", \"--name-only\", f\"{sha['main']}...{sha['branch']}\"]",
          '["git", "diff", "--name-only", sha["main"], sha["branch"]]'),
     "O25 an extractor red (a FILE, no '::') never reaches the in-scope list (a4 #45033 F2)":
         (' or re.match(r"R-EXTRACT (\\S+?):?(?:\\s|$)", line)', ""),
     "O28 check.sh isn't left out (every branch that adds a gate puts half the dark list in scope)":
-        ('SCOPE_NOISE = frozenset({"nucleus/check.sh"})', "SCOPE_NOISE = frozenset()"),
+        ('SCOPE_NOISE = frozenset({"devtools/check.sh"})', "SCOPE_NOISE = frozenset()"),
     "O30 a label carrying \\\" is kept escaped (never matches what check.sh prints)":
         ("        label = label.replace('\\\\\"', '\"')", "        pass"),
     "O31 production never hands report() the oracles (the in-scope list is dead code)":

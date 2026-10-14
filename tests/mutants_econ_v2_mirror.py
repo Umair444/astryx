@@ -1,6 +1,6 @@
-"""Authored mutants for nucleus/econ.py's S2 surface — run by nucleus/mutation_probe.py.
+"""Authored mutants for src/astryx/econ/econ.py's S2 surface — run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_econ_v2_mirror.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_econ_v2_mirror.py
 
 THE LIST IS THE JUDGEMENT: each is a plausible wrong S2 — a gate that admits the tainted v2.0
 rows, a ledger read that counts unversioned calls, a mirror that counts self-use or leaks a
@@ -11,7 +11,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-SUBJECT = REPO / "nucleus" / "econ.py"
+SUBJECT = REPO / "src" / "astryx" / "econ" / "econ.py"
 ORACLE = REPO / "tests" / "test_econ_v2_mirror.py"
 ENV = "ECON_SRC"
 

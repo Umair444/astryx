@@ -58,9 +58,9 @@ if subprocess.run(["docker", "logs", "--tail", "1", "genesis-pg"], capture_outpu
     skip("docker logs genesis-pg unreadable: the server-log arms would be vacuous")
 
 try:
-    from nucleus import rotate_db_password as rot
+    from astryx.security import rotate_db_password as rot
 except Exception as exc:                                      # noqa: BLE001 — RED on a tree without S3b
-    check("nucleus.rotate_db_password imports", False, f"{type(exc).__name__}: {exc}")
+    check("astryx.security.rotate_db_password imports", False, f"{type(exc).__name__}: {exc}")
     print(f"\nFAIL: {len(fails)} arm(s) red")
     sys.exit(1)
 
@@ -121,7 +121,7 @@ def main():
                   can(passfile=str(pp)))
 
             # R1-R4: a real run, in a subprocess, so its stdout/stderr are exactly what an operator sees
-            r = subprocess.run([sys.executable, "-m", "nucleus.rotate_db_password", "--role", ROLE,
+            r = subprocess.run([sys.executable, "-m", "astryx.security.rotate_db_password", "--role", ROLE,
                                 "--host", HOST, "--port", PORT, "--db", DB, "--pgpass", str(pp),
                                 "--fixture", "--admin-dsn-env", "ASTRYX_DSN"], cwd=REPO,
                                env={**os.environ, "ASTRYX_DSN": DSN}, capture_output=True, text=True, timeout=60)
@@ -167,7 +167,7 @@ def main():
             svc = Path(d) / "svc"
             svc.mkdir()
             (svc / "a.env").write_text(f"DSN=postgresql://{ROLE}:{rot._esc(new)}@h/db\n")
-            from nucleus import secretset as ss
+            from astryx.security import secretset as ss
             saved = (ss.holders, rot.at_rest_count, rot.stale_consumers)
             try:
                 ss.holders = lambda path=None: {"scan_roots": [str(svc / "*.env")], "holders": [],

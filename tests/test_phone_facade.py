@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle: the phone facade (plan-8675 S1: mcp/phone, nucleus/android.py, hooks/step.py's phone strip, the HELD lease).
+"""Oracle: the phone facade (plan-8675 S1: mcp/phone, src/astryx/hands/android.py, hooks/step.py's phone strip, the HELD lease).
 No phone needed: the device-driving arms are tests/test_android_device.py.
 
   CENSUS     the pinned upstream's LIVE tools/list equals the 33 names below, written out here from upstream 1.0.9's
@@ -76,8 +76,8 @@ def _load(modname, default, env):
 
 
 surface = _load("surface", "mcp/phone/surface.py", "PHONE_SURFACE_SRC")
-_load("nucleus.ear_lease", "nucleus/ear_lease.py", "EAR_LEASE_SRC")
-_load("nucleus.android", "nucleus/android.py", "ANDROID_SRC")
+_load("astryx.hearing.ear_lease", "src/astryx/hearing/ear_lease.py", "EAR_LEASE_SRC")
+_load("astryx.hands.android", "src/astryx/hands/android.py", "ANDROID_SRC")
 srv = _load("phone_server", "mcp/phone/server.py", "PHONE_SERVER_SRC")
 
 # Upstream @mobilenext/mobile-mcp 1.0.9's tools/list, as measured 2026-10-10 (33 names).
@@ -128,7 +128,7 @@ except srv.droid.AndroidError:
     want("ALLOWLIST: naming a denied tool is refused", True)
 if not HAVE_UPSTREAM:
     print("  UNVERIFIED CENSUS, live ALLOWLIST, TELEMETRY: node or the pinned upstream isn't installed here "
-          "(nucleus/android_setup.sh install, or mcp/phone/upstream: npm ci --ignore-scripts)")
+          "(scripts/android_setup.sh install, or mcp/phone/upstream: npm ci --ignore-scripts)")
     skipped.append("CENSUS/TELEMETRY (no upstream)")
 else:
     live, env = asyncio.run(census_and_env())
@@ -308,8 +308,8 @@ os.environ.pop("HANDS_STEP_CAP", None)
 # ── LEASE ─────────────────────────────────────────────────────────────────────────────────────────────────────
 try:
     import psycopg
-    from nucleus.sqlguard.fixture import fixture_db
-    L = sys.modules["nucleus.ear_lease"]
+    from astryx.security.sqlguard.fixture import fixture_db
+    L = sys.modules["astryx.hearing.ear_lease"]
     with fixture_db() as fx:
         os.environ["ANDROID_DSN"] = fx["dsn"]                      # the axis, set explicitly
         with psycopg.connect(fx["dsn"], autocommit=True) as c:

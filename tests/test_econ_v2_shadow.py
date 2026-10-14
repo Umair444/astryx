@@ -36,7 +36,7 @@ sys.path.insert(0, str(REPO))
 try:
     import psycopg  # noqa: E402
 
-    from nucleus import econ  # noqa: E402
+    from astryx.econ import econ  # noqa: E402
 except ImportError as exc:
     print(f"SKIP: {exc} — no venv (fresh clone); the v2 oracle needs the org runtime")
     sys.exit(77)
@@ -63,7 +63,7 @@ def _v2_source_names():
     the first version of this probe intersected exact strings and a mutant that added
     `g.budget_tokens` to v2's SQL SURVIVED it. So identifiers are matched exactly and every
     string literal (incl. f-string parts) is searched by substring."""
-    tree = ast.parse((REPO / "nucleus" / "econ.py").read_text())
+    tree = ast.parse((REPO / "src" / "astryx" / "econ" / "econ.py").read_text())
     roots = [n for n in tree.body if isinstance(n, ast.FunctionDef)
              and (n.name.startswith("v2") or n.name.startswith("_v2"))]
     fns = list(roots)
@@ -86,7 +86,7 @@ def _v2_source_names():
 def demand_arm(dsn):
     import json as _json
     import contextlib
-    from nucleus.sqlguard.fixture import FixtureUnavailable, fixture_db
+    from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db
     # a stamped FIXTURE database (schema.sql applied whole, so the load-bearing DEFAULT 'local' is the real one);
     # it replaced a temp schema whose own CREATE TABLEs tripped R-EXTRACT at the 4227 close
     live = psycopg.connect(dsn, autocommit=True)

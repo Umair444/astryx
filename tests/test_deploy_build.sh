@@ -15,9 +15,9 @@ fails=0
 arm() { if eval "$2"; then echo "  PASS  $1"; else echo "  FAIL  $1"; fails=$((fails+1)); fi; }
 
 setup() {   # $1: npm rc, $2: systemctl-restart rc, $3: uid the stub `id` reports
-  rm -rf "$T/root" "$T/bin"; mkdir -p "$T/root/nucleus" "$T/root/observatory/web" "$T/bin"
-  cp "$REPO/nucleus/deploy.sh" "$T/root/nucleus/deploy.sh"
-  cp "$REPO/nucleus/docker_host_ip.sh" "$T/root/nucleus/docker_host_ip.sh"   # deploy.sh sources it (goal 10224 S3)
+  rm -rf "$T/root" "$T/bin"; mkdir -p "$T/root/nucleus" "$T/root/scripts" "$T/root/devtools" "$T/root/observatory/web" "$T/bin"
+  cp "$REPO/scripts/deploy.sh" "$T/root/scripts/deploy.sh"
+  cp "$REPO/scripts/docker_host_ip.sh" "$T/root/scripts/docker_host_ip.sh"   # deploy.sh sources it (goal 10224 S3)
   : > "$T/log"
   printf '#!/usr/bin/env bash\necho "npm $* as=${STUB_AS:-self}" >> "%s"\nexit %s\n' "$T/log" "$1" > "$T/bin/npm"
   # $2: restart rc for EVERY unit, or "first" = only astryx-observatory's restart fails (the `all` arm, a2 R1)
@@ -38,7 +38,7 @@ P
   printf '#!/usr/bin/env bash\n[ "$1" = -u ] && echo %s && exit 0\nexec /usr/bin/id "$@"\n' "$3" > "$T/bin/id"
   chmod +x "$T"/bin/*
 }
-run() { PATH="$T/bin:$PATH" SUDO_USER="${1:-}" bash "$T/root/nucleus/deploy.sh" "${2:-obs}" 2>&1; }
+run() { PATH="$T/bin:$PATH" SUDO_USER="${1:-}" bash "$T/root/scripts/deploy.sh" "${2:-obs}" 2>&1; }
 
 setup 1 0 1000; out=$(run); rc=$?
 arm "1. a failing web build → rc 1 and ABORTED" '[ $rc = 1 ] && grep -q "ABORTED — the build failed" <<<"$out"'
@@ -66,7 +66,7 @@ arm "4c. \`all\` with the FIRST restart failing → rc 1, ABORTED at it, the nex
   '[ $rc = 1 ] && grep -q "ABORTED at astryx-observatory" <<<"$out" && ! grep -q "restart astryx-whatsapp" "$T/log" && ! grep -q "deploy: all done" <<<"$out"'
 # 3b. a2 R3: the build path reaches the user's shell as DATA (a quote in it can't break or inject)
 arm "3b. the sudo build passes the path as an argument (bash -lc '…\$1…' _ <dir>), never inside the shell text" \
-  'grep -q "bash -lc '"'"'cd \"\$1\" && npm run build'"'"' _ " "$REPO/nucleus/deploy.sh"'
+  'grep -q "bash -lc '"'"'cd \"\$1\" && npm run build'"'"' _ " "$REPO/scripts/deploy.sh"'
 
 # 5b. a2 R2: BEHAVIOURAL — run the real banner block with a sentinel OBS_KEY; the sentinel must never reach stdout
 #     (a print-verb denylist missed printf: any verb that prints the key is the defect)

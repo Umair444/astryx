@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Oracle for nucleus/check.sh's SKIP accounting — the verdict may never out-claim its parts.
+"""Oracle for devtools/check.sh's SKIP accounting — the verdict may never out-claim its parts.
 
-    venv/bin/python tests/test_check_verdict.py      (also run by nucleus/check.sh)
+    venv/bin/python tests/test_check_verdict.py      (also run by devtools/check.sh)
 
 THE DEFECT THIS PINS, reproduced on a clean checkout of HEAD on 2026-08-14: check.sh ran
 its full suite, five gates verified NOTHING — two of them because the trigger BODY under
@@ -15,7 +15,7 @@ invoked oracle actually RUN." A suite can only ever assert about what it can OBS
 check.sh could not observe the difference between a gate that passed and a gate that never
 executed, because both arrived as exit 0.
 
-WHAT IS ASSERTED HERE, and why against the REAL file. This sources nucleus/check.sh with
+WHAT IS ASSERTED HERE, and why against the REAL file. This sources devtools/check.sh with
 CHECK_LIB_ONLY=1 — which returns before any real gate runs — and then drives the actual
 run()/skip()/verdict() functions with SYNTHETIC gates. A reimplementation of the classifier
 here would prove only that this file agrees with itself; the whole reason the original
@@ -44,7 +44,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-CHECK = REPO / "nucleus" / "check.sh"
+CHECK = REPO / "devtools" / "check.sh"
 
 fails: list[str] = []
 

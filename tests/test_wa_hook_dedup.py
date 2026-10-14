@@ -1,7 +1,7 @@
 """Oracle: /hook delivers a WhatsApp message to the wire exactly once, even when its first webhook
 arrives EMPTY (seed #38553, owner 2026-10-09: "my whatsapp message in astryx group didn't reach you").
 
-    venv/bin/python tests/test_wa_hook_dedup.py        (also run by nucleus/check.sh)
+    venv/bin/python tests/test_wa_hook_dedup.py        (also run by devtools/check.sh)
     WA_SRC=<path> …                                    (the subject; default bridges/whatsapp.py)
 
 The incident, from metadata only: wacli posted one EMPTY live event for the owner's id, and its
@@ -37,7 +37,7 @@ os.environ["WA_WEBHOOK_SECRET"] = "oracle-secret"           # synthetic: never t
 os.environ["ASTRYX_DSN"] = "postgresql://oracle@127.0.0.1:1/none"   # never connected
 os.environ["WA_CLI"] = "false"
 sys.path.insert(0, str(REPO))
-from nucleus.sqlguard.estate import gate  # noqa: E402
+from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate("test_wa_hook_dedup", REPO, deps=("fastapi", "asyncpg"))   # a committed-only tree: 77, not an import crash
 import bridges  # noqa: E402  (the package, so the subject's relative imports resolve)
 

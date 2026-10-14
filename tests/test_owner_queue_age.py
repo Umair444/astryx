@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Oracle for owner_queue_age's RESTORE-INDEPENDENT age signal (triggers/steward/owner_queue_age.py).
 
-    venv/bin/python tests/test_owner_queue_age.py      (also run by nucleus/check.sh)
+    venv/bin/python tests/test_owner_queue_age.py      (also run by devtools/check.sh)
 
 THE GAP THIS PINS (2026-09-13, my own guard). owner_queue_age flags public-destined work
 that sits uncommitted past AGE_DAYS at the owner gate. It USED to age by filesystem mtime —

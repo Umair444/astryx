@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hermetic test of nucleus/ontology.py — the typed layer's lint.
+"""Hermetic test of src/astryx/memory/ontology.py — the typed layer's lint.
 
 THE PROPERTY THAT MATTERS: every finding must be FALSIFIABLE and DERIVED. "Organise the
 estate for readability" is not a check — it cannot go red, so it would be graph theatre
@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from nucleus import ontology as ont  # noqa: E402
+from astryx.memory import ontology as ont  # noqa: E402
 
 
 def _page(slug, ptype, rels, cats=None):

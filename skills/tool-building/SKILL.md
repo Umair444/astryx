@@ -13,7 +13,7 @@ always: **find → reuse → extend → build**, and build only what will be cal
 ## 1. Find first. Every time.
 
 ```
-venv/bin/python nucleus/toolreg.py find <words>      # from any shell
+venv/bin/python src/astryx/core/toolreg.py find <words>      # from any shell
 mcp__tools__find(query)                              # if your home has the door
 ```
 
@@ -53,7 +53,7 @@ is not a tool; do it and move on. If you build:
 - **Never persist or print secrets.** Keep `.env` values, tier-private data and message
   bodies out of output and out of any file you write.
 - **Prove it.** Run it on the real case before you call it done. If other things will depend
-  on it, add an oracle under `tests/` and wire it into `nucleus/check.sh`. The coverage gate
+  on it, add an oracle under `tests/` and wire it into `devtools/check.sh`. The coverage gate
   goes RED on an oracle nothing runs.
 - **Minimise repetition.** If you catch yourself pasting the same five lines into a third
   place, that's the tool.

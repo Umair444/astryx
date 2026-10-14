@@ -1,6 +1,6 @@
 """Mutants for init.sh's start directory (tests/test_init_self_dir.py). Hermetic.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_init_self_dir.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_init_self_dir.py
 """
 from pathlib import Path
 

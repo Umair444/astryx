@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle for nucleus/social_age.py's DECLARED DESIGN (owner 10-10 via seed #42323 (b): "the design on github should match
+"""Oracle for src/astryx/memory/social_age.py's DECLARED DESIGN (owner 10-10 via seed #42323 (b): "the design on github should match
 local"). astryx_social and astryx_people hold nothing but one derived graph each, so their design is DESIGN: the database,
 its extensions and the graph's labels. `drift` compares the live catalog to it; `ensure` creates what it declares.
 
@@ -23,7 +23,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from nucleus.sqlguard.estate import gate  # noqa: E402
+from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate("test_social_age_design", REPO, deps=("psycopg",))   # a committed-only tree (no venv): 77, not an import crash
 import psycopg                                          # noqa: E402
 from psycopg import sql                                 # noqa: E402
@@ -31,12 +31,12 @@ from psycopg.conninfo import make_conninfo              # noqa: E402
 
 if os.environ.get("SOCIAL_AGE_SRC"):                    # mutation_probe hands a mutant copy here
     import importlib.util
-    _spec = importlib.util.spec_from_file_location("nucleus.social_age", os.environ["SOCIAL_AGE_SRC"])
+    _spec = importlib.util.spec_from_file_location("astryx.memory.social_age", os.environ["SOCIAL_AGE_SRC"])
     sa = importlib.util.module_from_spec(_spec)
-    sys.modules["nucleus.social_age"] = sa
+    sys.modules["astryx.memory.social_age"] = sa
     _spec.loader.exec_module(sa)
 else:
-    from nucleus import social_age as sa                # noqa: E402
+    from astryx.memory import social_age as sa                # noqa: E402
 
 fails = []
 PFX = "astryx_sadz_"                                    # this oracle's scratch namespace: <PFX><pid>_<role>
@@ -95,7 +95,7 @@ def build(db, design):
 
 def cur_in(db):
     c = psycopg.connect(dsn_for(db), autocommit=True)
-    from nucleus import agelib
+    from astryx.memory import agelib
     agelib.prepare(c)
     return c
 
@@ -114,7 +114,7 @@ except (psycopg.Error, PermissionError, OSError) as e:
 reap(adm)
 try:
     print("design:")
-    from nucleus import people_gate
+    from astryx.people import people_gate
     check("DESIGN's CONNECT roles are people_gate's RESIDENT / CLEARED (one name per role)",
           all(set(sa.DESIGN[g]["connect"]) == {people_gate.RESIDENT, people_gate.CLEARED} for g in (sa.GRAPH, sa.PRIVATE)),
           str(sa.DESIGN))
@@ -191,8 +191,8 @@ try:
 
     print("tables (a3 #42994: 'r' is the realistic ad-hoc kind, and views alone let a dropped 'r' survive):")
     # minted by the STAMPED applier (fixture_db's extra), never by this oracle's own CREATE TABLE (sqlguard EX)
-    from nucleus import agelib
-    from nucleus.sqlguard.fixture import fixture_db as _fx, FixtureUnavailable as _FxU
+    from astryx.memory import agelib
+    from astryx.security.sqlguard.fixture import fixture_db as _fx, FixtureUnavailable as _FxU
     TG = f"{PFX}{os.getpid()}_tg"
     try:
         with _fx(extra=("LOAD 'age'", "CREATE EXTENSION IF NOT EXISTS age", agelib.PATH,
@@ -217,7 +217,7 @@ try:
 
     print("rebuild:")
     try:
-        from nucleus.sqlguard.fixture import fixture_db, FixtureUnavailable
+        from astryx.security.sqlguard.fixture import fixture_db, FixtureUnavailable
     except ImportError as e:
         fixture_db, FixtureUnavailable = None, type(e)
     try:

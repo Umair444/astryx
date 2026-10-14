@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle: D4's lease seam (plan-8674 S1, nucleus/ear_lease.py) on a fixture database (schema.sql applied whole).
+"""Oracle: D4's lease seam (plan-8674 S1, src/astryx/hearing/ear_lease.py) on a fixture database (schema.sql applied whole).
 
 Arms, each with a RED control:
   ATOMIC    two holders race a claim from free: exactly one wins (the second's UPDATE matches 0 rows).
@@ -19,11 +19,11 @@ sys.path.insert(0, str(REPO))
 
 try:
     import psycopg
-    from nucleus.sqlguard.fixture import FixtureUnavailable, fixture_db
+    from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db
 except Exception as e:                                              # noqa: BLE001
     print(f"SKIP: {type(e).__name__}: {e}")
     sys.exit(77)
-from nucleus import ear_lease as L  # noqa: E402
+from astryx.hearing import ear_lease as L  # noqa: E402
 
 fails = []
 

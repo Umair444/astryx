@@ -46,7 +46,7 @@ pulse timer, so it survives a pulse stop. If the bridge is down, its own silence
 messages at all) is the signal, owned by delivery health, not by this file.
 
 A DECLARED PAUSE (a1 #50699, seed #50722). The owner can pause the org on purpose
-(nucleus/pause.sh stops the timer and writes var/org_pause.json). On 10-12 an ordered pause
+(scripts/pause.sh stops the timer and writes var/org_pause.json). On 10-12 an ordered pause
 drew 15 "DOWN" alarms over 49h, and an alarm that is right but expected teaches its reader to
 dismiss exactly that message, while this is the org's ONLY detector that survives a dead
 pulse. So a stale clock under a VALID declaration is PAUSED, not DOWN:
@@ -192,7 +192,7 @@ def _paused_body(decl: dict, age_sec: float, stop_age: Optional[float] = None) -
     return (f"⏸️ ASTRYX is PAUSED by {decl.get('by') or 'unknown'} since "
             f"{decl.get('at')}{until} ({str(decl.get('reason')).strip()[:200]}). No trigger "
             f"has been evaluated in {age_sec/60:.0f} min, as expected while paused."
-            f"{_since(stop_age)} To resume: `nucleus/pause.sh off` (or "
+            f"{_since(stop_age)} To resume: `scripts/pause.sh off` (or "
             f"`sudo systemctl start astryx-pulse.timer`). This reminder repeats daily. "
             f"— pulse-witness (whatsapp bridge)")
 

@@ -41,14 +41,16 @@ def git(cwd, *a):
 def synthetic_live(tmp: Path) -> Path:
     """A tiny live repo: tracked code, a gitignored estate (one plain file, one carrying the fake secret), a .env."""
     live = tmp / "live"
-    (live / "nucleus" / "sqlguard").mkdir(parents=True)
-    shutil.copy2(REPO / "nucleus" / "sqlguard" / "ledger.py", live / "nucleus" / "sqlguard" / "ledger.py")
+    (live / "src" / "astryx" / "security" / "sqlguard").mkdir(parents=True)
+    shutil.copy2(REPO / "src" / "astryx" / "security" / "sqlguard" / "ledger.py", live / "src" / "astryx" / "security" / "sqlguard" / "ledger.py")
     for f in ("__init__.py", "privacy.py", "judge.py", "inventory.py", "normalize.py", "drivers.py", "fixture.py"):
-        src = REPO / "nucleus" / "sqlguard" / f
+        src = REPO / "src" / "astryx" / "security" / "sqlguard" / f
         if src.exists():
-            shutil.copy2(src, live / "nucleus" / "sqlguard" / f)
-    (live / "nucleus" / "__init__.py").write_text("")
-    (live / "nucleus" / "schema.sql").write_text("-- synthetic\n")
+            shutil.copy2(src, live / "src" / "astryx" / "security" / "sqlguard" / f)
+    from _astryx_skel import skeleton                  # goal 10224 S4: the astryx spine in the fake repo
+    skeleton(live, "src/astryx/security/__init__.py")
+    Path.mkdir(live / "src" / "astryx" / "sql", parents=True, exist_ok=True)
+    (live / "src" / "astryx" / "sql" / "schema.sql").write_text("-- synthetic\n")
     (live / "code.py").write_text("x = 1\n")
     (live / ".gitignore").write_text("triggers/\n.env\ntier/\n")
     (live / "tier").mkdir()
@@ -80,8 +82,8 @@ def main():
             bp = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(bp)
         else:
-            from nucleus import branch_check_prep as bp
-        from nucleus import runscope as rs
+            from devtools import branch_check_prep as bp
+        from astryx.pg import runscope as rs
     except ImportError as e:
         check("branch_check_prep importable", False, str(e))
         return 1
@@ -222,7 +224,7 @@ def main():
             agelib = importlib.util.module_from_spec(asp)
             asp.loader.exec_module(agelib)
         else:
-            from nucleus import agelib
+            from astryx.memory import agelib
         class Spy:
             def __init__(self, c):
                 self.c, self.q = c, []
@@ -255,7 +257,9 @@ def main():
         # ── fixture_db AS THE RUN ROLE: the template hook is what gives it the extensions (a2's fail-open) ───
         froot = tmp / "froot"
         (froot / "nucleus").mkdir(parents=True)
-        shutil.copy2(REPO / "nucleus" / "schema.sql", froot / "nucleus" / "schema.sql")
+        for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
+            (froot / _d).mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO / "src" / "astryx" / "sql" / "schema.sql", froot / "src" / "astryx" / "sql" / "schema.sql")
         (froot / ".env").write_text(f"ASTRYX_DSN={scope.dsn(own)}\n")
         def _private_trace(e):
             # This child is RE-ROOTED at a fake repo (ASTRYX_SQLGUARD_ROOT), so its shim can't attribute a frame to
@@ -271,7 +275,7 @@ def main():
                     "psycopg.Connection.execute = spy\n"
                     "src = os.environ.get('SQLGUARD_FIXTURE_SRC')\n"      # mutation_probe swaps fixture.py here
                     "if src:\n    sp = importlib.util.spec_from_file_location('fixture', src); fixture = importlib.util.module_from_spec(sp); sp.loader.exec_module(fixture)\n"
-                    "else:\n    from nucleus.sqlguard import fixture\n"
+                    "else:\n    from astryx.security.sqlguard import fixture\n"
                     "with fixture.fixture_db() as fx:\n"
                     "    c = psycopg.connect(fx['dsn'])\n"
                     "    ex = sorted(r[0] for r in c.execute('select extname from pg_extension'))\n"
@@ -318,8 +322,8 @@ def main():
             fxmod = importlib.util.module_from_spec(fsp)
             fsp.loader.exec_module(fxmod)
         else:
-            from nucleus.sqlguard import fixture as fxmod
-        from nucleus import branch_check_sandbox as sbx
+            from astryx.security.sqlguard import fixture as fxmod
+        from devtools import branch_check_sandbox as sbx
         sdir = tmp / "sock"
         sdir.mkdir()
         sock_url = fxmod.url(scope.dsn(own, socket_dir=sdir))
@@ -349,7 +353,7 @@ def main():
         probe_ex = ("import os,sys,importlib.util; sys.path.insert(0, sys.argv[1])\n"
                     "src = os.environ.get('SQLGUARD_FIXTURE_SRC')\n"
                     "if src:\n    sp = importlib.util.spec_from_file_location('fixture', src); fixture = importlib.util.module_from_spec(sp); sp.loader.exec_module(fixture)\n"
-                    "else:\n    from nucleus.sqlguard import fixture\n"
+                    "else:\n    from astryx.security.sqlguard import fixture\n"
                     "try:\n    with fixture.fixture_db() as fx: print('OPENED')\n"
                     "except fixture.FixtureUnavailable: print('FixtureUnavailable')\n"
                     "except Exception as e: print(type(e).__module__ + '.' + type(e).__name__)")
@@ -361,13 +365,17 @@ def main():
             return (r.stdout.strip().splitlines() or [r.stderr[-200:]])[-1]
         dead = tmp / "dead"
         (dead / "nucleus").mkdir(parents=True)
-        shutil.copy2(REPO / "nucleus" / "schema.sql", dead / "nucleus" / "schema.sql")
+        for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
+            (dead / _d).mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO / "src" / "astryx" / "sql" / "schema.sql", dead / "src" / "astryx" / "sql" / "schema.sql")
         (dead / ".env").write_text("ASTRYX_DSN=postgresql://nobody@127.0.0.1:1/x?connect_timeout=2\n")
         out = fx_outcome(dead)
         check("FixtureUnavailable: an unreachable server is the ENVIRONMENT class", out == "FixtureUnavailable", out)
         broken = tmp / "broken"
         (broken / "nucleus").mkdir(parents=True)
-        (broken / "nucleus" / "schema.sql").write_text("CREATE TABLEE nope (x int);\n")
+        for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
+            (broken / _d).mkdir(parents=True, exist_ok=True)
+        (broken / "src" / "astryx" / "sql" / "schema.sql").write_text("CREATE TABLEE nope (x int);\n")
         (broken / ".env").write_text(f"ASTRYX_DSN={scope.dsn(own)}\n")
         out = fx_outcome(broken)
         check("a BROKEN schema.sql propagates as itself (a psycopg SyntaxError), never as FixtureUnavailable",
@@ -448,7 +456,7 @@ def main():
         clean = bp.private_repo(live, main_sha, tmp / "run" / "clean", main_sha=main_sha)
         check("…and a history with no credential has no hits", bp.history_secret_hits(clean, secrets_) == [])
         vals = {s.value for s in secrets_}
-        check("secret_set comes from nucleus.secretset: the DSN password, the API key and AUTOREMOTE's key= are secret",
+        check("secret_set comes from astryx.security.secretset: the DSN password, the API key and AUTOREMOTE's key= are secret",
               FAKE in vals and f"sk-{FAKE}" in vals and ARKEY in vals and "org.test" not in vals, "")
         rep = bp.copy_estate(live, repo, secrets_)
         check("estate: a plain gitignored file is copied", (repo / "triggers/t/plain.py").is_file(), str(rep))
@@ -472,7 +480,7 @@ def main():
               "leak.py:1" in hits and not any(FAKE in h for h in hits), str(hits))
         envp = bp.write_env(repo, "postgresql://run@127.0.0.1/x", live)
         text = envp.read_text()
-        from nucleus import secretset
+        from astryx.security import secretset
         check("BC-2: ENV_ALLOW is EMPTY (measured, #34686); a key re-enters only with a RED-without/GREEN-with proof",
               bp.ENV_ALLOW == (), str(bp.ENV_ALLOW))
         check("generated .env: the run DSN ONLY (no live key, not even a non-secret ASTRYX_ORG), mode 600",

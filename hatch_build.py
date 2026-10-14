@@ -1,6 +1,6 @@
 """Build hooks for the astryx wheel and sdist (plan-10224 S1/S3).
 
-Metadata: dependencies and extras come from nucleus/deps.conf, the repo's one dependency authority
+Metadata: dependencies and extras come from src/astryx/data/deps.conf, the repo's one dependency authority
 (core + cli -> dependencies; media, discord, dev -> extras), so pyproject never carries a second list.
 
 Files: the org's runtime tree (what init.sh needs) ships from git-TRACKED files only, filtered by the
@@ -23,7 +23,7 @@ EXTRAS = ("media", "discord", "dev")
 
 def deps_groups(root: Path) -> dict:
     groups: dict = {}
-    for line in (root / "nucleus" / "deps.conf").read_text().splitlines():
+    for line in (root / "src" / "astryx" / "data" / "deps.conf").read_text().splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue

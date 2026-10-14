@@ -1,11 +1,11 @@
-"""Authored mutants for nucleus/trigger_names.py (plan-9853 D1/D3), run by nucleus/mutation_probe.py:
+"""Authored mutants for src/astryx/core/trigger_names.py (plan-9853 D1/D3), run by devtools/mutation_probe.py:
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_trigger_names.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_trigger_names.py
 """
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-SUBJECT = REPO / "nucleus/trigger_names.py"
+SUBJECT = REPO / "src/astryx/core/trigger_names.py"
 ORACLE = REPO / "tests" / "test_trigger_names.py"
 ENV = "TRIGGER_NAMES_SRC"
 TIMEOUT = 900

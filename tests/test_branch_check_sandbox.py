@@ -37,8 +37,8 @@ def main():
         sb = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(sb)
     else:
-        from nucleus import branch_check_sandbox as sb
-    from nucleus import runscope as rs
+        from devtools import branch_check_sandbox as sb
+    from astryx.pg import runscope as rs
     from _oracle_debris import ORACLE_BASE, reap
     live = sb.LIVE
     if not (live / ".env").is_file():
@@ -65,7 +65,7 @@ def main():
                    "run_conn": {**cfg["run_conn"], "host": "127.0.0.1"}}          # OUTSIDE: the same probes over TCP
         bridge = sb.PgBridge(sock).__enter__()
         py = str(live / "venv" / "bin" / "python")
-        probe_src = Path(src) if src else REPO / "nucleus" / "branch_check_sandbox.py"
+        probe_src = Path(src) if src else REPO / "devtools" / "branch_check_sandbox.py"
 
         def inside(ro_extra=(), home=None, c=cfg, share_net=False):
             a = sb.argv(repo, run_tmp, ro_extra=ro_extra, live=live, probe_src=probe_src, share_net=share_net)

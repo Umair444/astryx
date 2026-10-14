@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Oracle: the registry door's find() ranks the tool a question is ABOUT (toolreg, goal 4227 S4).
 
-    venv/bin/python tests/test_toolreg_find.py         (also run by nucleus/check.sh)
+    venv/bin/python tests/test_toolreg_find.py         (also run by devtools/check.sh)
     TOOLREG_SRC=<path> …                               (the subject; mutation_probe sets it)
 
 steward's report (#25795): "is the org healthy" returned list_models and dag_list, and not the
@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-SRC = Path(os.environ.get("TOOLREG_SRC") or REPO / "nucleus" / "toolreg.py")
+SRC = Path(os.environ.get("TOOLREG_SRC") or REPO / "src" / "astryx" / "core" / "toolreg.py")
 fails = []
 
 

@@ -1,6 +1,6 @@
-"""Authored mutants for nucleus/runscope.py (plan-4918 R1), run by nucleus/mutation_probe.py.
+"""Authored mutants for src/astryx/pg/runscope.py (plan-4918 R1), run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_runscope.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_runscope.py
 
 One per property the primitive rests on: ownership-derived teardown, the template clear, the (pid, starttime)
 liveness key, and the refusal of a scope that isn't bound to its own directory.
@@ -9,7 +9,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-SUBJECT = REPO / "nucleus" / "runscope.py"
+SUBJECT = REPO / "src" / "astryx" / "pg" / "runscope.py"
 ORACLE = REPO / "tests" / "test_runscope.py"
 ENV = "RUNSCOPE_SRC"
 

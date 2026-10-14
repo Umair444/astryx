@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle for nucleus/release.py, the one door for personal-tier content (plan-9139 S1a).
+"""Oracle for src/astryx/security/release.py, the one door for personal-tier content (plan-9139 S1a).
 
 Pure: no database, no bridge, no network. Every route and id below is a FIXTURE (synthetic jids, a synthetic key);
 nothing here reads the live routes files. Arms, in the design's terms (v4 #45058 and the binding set #45071):
@@ -29,7 +29,7 @@ if os.environ.get("RELEASE_SRC"):                 # the mutation probe hands a m
     _spec.loader.exec_module(R)
     R.REPO = REPO
 else:
-    from nucleus import release as R  # noqa: E402
+    from astryx.security import release as R  # noqa: E402
 
 fails = []
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle for nucleus/review_range.sh: a review range's base is the MERGE-BASE and its head is the BRANCH, both read
+"""Oracle for devtools/review_range.sh: a review range's base is the MERGE-BASE and its head is the BRANCH, both read
 from git (a4 night-review 10-12). Hermetic: a throwaway repo where main moves past the fork, so the three 10-11
 errors (the merged-ONTO sha as base, a base older than the fork, a typed head that doesn't resolve) each have an arm.
 
@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-SRC = Path(os.environ.get("REVIEW_RANGE_SRC") or (REPO / "nucleus" / "review_range.sh"))
+SRC = Path(os.environ.get("REVIEW_RANGE_SRC") or (REPO / "devtools" / "review_range.sh"))
 fails = []
 
 

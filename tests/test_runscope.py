@@ -50,7 +50,7 @@ def main():
             rs = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(rs)
         else:
-            from nucleus import runscope as rs
+            from astryx.pg import runscope as rs
     except ImportError as e:
         check("runscope importable", False, str(e))
         return 1
@@ -197,7 +197,7 @@ def main():
 
         # ── F1 (a2 #34875): orphans read from POSTGRES; the lock dir is gone (a reboot wipes /tmp) ──────────
         crash_src = ("import os, sys; sys.path.insert(0, sys.argv[1]); from pathlib import Path\n"
-                     "from nucleus import runscope as rs\n"
+                     "from astryx.pg import runscope as rs\n"
                      "s = rs.RunScope(os.environ['ASTRYX_DSN'], root=Path(sys.argv[2])).open()\n"
                      "s.create_db(s.role + '_crashed'); print(s.role)\n")     # exits WITHOUT teardown: a crash
         child = subprocess.run([sys.executable, "-c", crash_src, str(REPO), str(base)],

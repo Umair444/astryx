@@ -1,11 +1,11 @@
-"""Mutants for nucleus/merge_check.sh (tests/test_merge_check.py). Hermetic.
+"""Mutants for devtools/merge_check.sh (tests/test_merge_check.py). Hermetic.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_merge_check.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_merge_check.py
 """
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-SUBJECT = REPO / "nucleus" / "merge_check.sh"
+SUBJECT = REPO / "devtools" / "merge_check.sh"
 ORACLE = REPO / "tests" / "test_merge_check.py"
 ENV = "MERGE_CHECK_SRC"
 MUTANTS = {

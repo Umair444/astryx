@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle: CANVAS (bridges/canvas.py, bridges/canvas_shell.py, nucleus/canvas.py) against a real schema.
+"""Oracle: CANVAS (bridges/canvas.py, bridges/canvas_shell.py, src/astryx/core/canvas.py) against a real schema.
 
 A throwaway fixture DATABASE (sqlguard's one applier) so NOTIFY and every write stay off production.
 The API runs in-process (TestClient on the prefixed ASGI app, lifespan and wire tap included).
@@ -15,9 +15,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from nucleus.sqlguard.estate import gate  # noqa: E402
+from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate('test_canvas', REPO, deps=('psycopg', 'asyncpg', 'fastapi'))   # a committed-only tree: 77, not a crash
-from nucleus.sqlguard.fixture import fixture_db  # noqa: E402
+from astryx.security.sqlguard.fixture import fixture_db  # noqa: E402
 
 fails = 0
 
@@ -29,8 +29,8 @@ def arm(name, ok, detail=""):
 
 
 def pure():
-    from nucleus import canvas as cv
-    from nucleus.orgname import org_ok
+    from astryx.core import canvas as cv
+    from astryx.core.orgname import org_ok
     from bridges.canvas_shell import render
     print("pure")
     arm("ids: 12 / canvas-12 / cv:canvas-12 all name 12",
@@ -57,8 +57,8 @@ def pure():
 
 def library(dsn):
     import psycopg
-    from nucleus import canvas as cv
-    print("library (nucleus/canvas.py)")
+    from astryx.core import canvas as cv
+    print("library (src/astryx/core/canvas.py)")
     with psycopg.connect(dsn) as c:
         cid = cv.create(c, "Probe", "forge", "owner", "b")
         arm("create registers the canvas's own thread",
@@ -97,7 +97,7 @@ def library(dsn):
 def api(url):
     from fastapi.testclient import TestClient
     import bridges.canvas as b
-    from nucleus import canvas as cv_lib
+    from astryx.core import canvas as cv_lib
     print("api (bridges/canvas.py, in-process)")
     H = {"x-astryx": "1"}
     A = "/canvas/api"
@@ -303,7 +303,7 @@ def coverage(url):
     from fastapi.testclient import TestClient
     import bridges.canvas as b
     from bridges.providers.canvas import CanvasProvider
-    from nucleus import canvas as cv
+    from astryx.core import canvas as cv
     print("coverage (every SQL site, found and not-found)")
     H = {"x-astryx": "1"}
     A = "/canvas/api"
@@ -423,7 +423,7 @@ def coverage(url):
             (rm, again, crew3, pr2, told))
         arm("the keeper can't be removed; a removal without the CSRF header is refused",
             keep.status_code == 400 and nohdr.status_code == 403, (keep.status_code, nohdr.status_code))
-        from nucleus import canvas as ncv
+        from astryx.core import canvas as ncv
         arm("a released agent can no longer publish the canvas", not ncv.may_write(full['agent'], "forge", crew3), crew3)
         arm("logout ends the session", cl.post(f"{A}/logout", headers=H).status_code == 200 and cl.get(f"{A}/me").status_code == 401)
         cl.post(f"{A}/logout", headers=H)                                          # logout: 0 rows
@@ -480,7 +480,7 @@ def coverage(url):
               cv.main(["versions", str(empty["id"])]), cv.main(["show", str(full["id"])]),
               cv.main(["show", str(full["id"]), "--version", "42"])]
     # presence: the general primitive, its CLI both ways
-    from nucleus import presence as pres
+    from astryx.core import presence as pres
     pout = io.StringIO()
     os.environ["ASTRYX_AGENT"] = "scout"
     with contextlib.redirect_stdout(pout):

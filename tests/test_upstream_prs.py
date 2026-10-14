@@ -20,7 +20,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
-from nucleus.shipped_triggers import upstream_prs as T  # noqa: E402
+from astryx.pulse.shipped_triggers import upstream_prs as T  # noqa: E402
 
 fails = 0
 UP = "acme-up/astryx"
@@ -182,7 +182,7 @@ finally:
     T.U.is_upstream, T.listing = real, real_l
 
 # T8 the other half: pr_review (steward's "run check.sh, merge" protocol) never takes a fork's PR
-from nucleus.shipped_triggers import pr_review as R  # noqa: E402
+from astryx.pulse.shipped_triggers import pr_review as R  # noqa: E402
 real_run = R._run
 R._run = lambda cmd, timeout=15: json.dumps([{"number": 1, "title": "own", "headRefName": "medic/x",
                                               "isCrossRepository": False},

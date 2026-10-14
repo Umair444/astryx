@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """test_agent_heal_sql — arm two's one SQL site (stale(): the rows a deaf resident is sitting on) run against a
-throwaway fixture database (nucleus/sqlguard/fixture.py), so sqlguard OBSERVES it. Exit 0 pass · 1 fail · 77 could-not-run."""
+throwaway fixture database (src/astryx/security/sqlguard/fixture.py), so sqlguard OBSERVES it. Exit 0 pass · 1 fail · 77 could-not-run."""
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
-from nucleus.sqlguard.estate import gate  # noqa: E402
+from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate("test_agent_heal_sql", REPO, deps=("psycopg",))
 
 try:
     import psycopg
-    from nucleus.shipped_triggers import agent_heal as H
-    from nucleus.sqlguard.fixture import fixture_db
+    from astryx.pulse.shipped_triggers import agent_heal as H
+    from astryx.security.sqlguard.fixture import fixture_db
 except Exception as e:  # noqa: BLE001
     print(f"SKIP: a subject isn't importable ({type(e).__name__}: {e}).")
     sys.exit(77)

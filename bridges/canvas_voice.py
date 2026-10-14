@@ -14,7 +14,7 @@ in the browser against this app's own API, and reports what the agents actually 
            (default 60) refuses new sessions and tells live ones to hang up. A session that never
            reports is billed a floor minute, so a silent client can't mint for free.
   policy   realtime is an EXTERNAL processor. Its tools may reach only agents whose content is
-           public (nucleus.tier.is_content_public) plus the owner's home agent — never the
+           public (astryx.core.tier.is_content_public) plus the owner's home agent — never the
            career/family/memory tier. The allowlist ships to the client AND is enforced here on
            every server-side tool path (/api/voice/ask, /api/voice/canvas/{id}/ask).
 
@@ -32,7 +32,7 @@ import urllib.request
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
-from nucleus.tier import is_content_public
+from astryx.core.tier import is_content_public
 from . import canvas as C                          # the host app (pool, _say, …) — read at call time
 from .common import agent_exists, env
 
@@ -47,7 +47,7 @@ FLOOR_SECONDS = 60                                 # a minted session that never
 
 
 def _cap_minutes() -> float:
-    from nucleus.voice_mint import cap_minutes      # ONE cap for every voice surface (plan-9000 C4)
+    from astryx.hearing.voice_mint import cap_minutes      # ONE cap for every voice surface (plan-9000 C4)
     return cap_minutes()
 
 
@@ -91,7 +91,7 @@ DAY = "date_trunc('day', now())"
 
 
 async def minutes_today() -> float:
-    from nucleus.voice_mint import minutes_today as shared   # canvas + observatory pilot, one ledger (C4)
+    from astryx.hearing.voice_mint import minutes_today as shared   # canvas + observatory pilot, one ledger (C4)
     return await shared(C.pool)
 
 

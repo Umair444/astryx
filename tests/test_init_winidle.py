@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Oracle: init.sh's winidle node (plan-8675 C5): the Windows idle stop installs itself only where this host HAS a
 Windows container. The node's block runs in throwaway trees (tests/trigger_tree, with
-nucleus/trigger_names.py, which the node asks) against a fixture database, with a fake `docker` first on PATH.
+src/astryx/core/trigger_names.py, which the node asks) against a fixture database, with a fake `docker` first on PATH.
 
   I1 no Windows container (docker inspect fails): green, nothing installed
   I2 a Windows container exists: the reconciler step installs triggers/seed/windows_idle_stop.py, a shim importing
@@ -30,12 +30,12 @@ def check(name, ok, detail=""):
 
 
 src = INIT.read_text()
-# the node asks nucleus/trigger_names.py (plan-9853), so it runs in a tree that has the helper, against a
+# the node asks src/astryx/core/trigger_names.py (plan-9853), so it runs in a tree that has the helper, against a
 # fixture database (a name is absent only if no row says otherwise)
 STATE = re.search(r"^# >>> trigger state$.*?^# <<< trigger state$", src, re.S | re.M)
 try:
     import trigger_tree
-    from nucleus.sqlguard.fixture import fixture_db, FixtureUnavailable
+    from astryx.security.sqlguard.fixture import fixture_db, FixtureUnavailable
     _FX = fixture_db()
     DSN = _FX.__enter__()["dsn"]
 except Exception as e:  # noqa: BLE001
@@ -77,7 +77,7 @@ with tempfile.TemporaryDirectory() as td:
     check("I2 a Windows container: starts RED, the reconciler installs the shim, then green",
           a != "0" and b == "0" and (d / SHIM).exists(), f"chk={a},{b}")
     check("I2 the shim imports the SHIPPED trigger",
-          "from nucleus.shipped_triggers.windows_idle_stop import windows_idle_stop" in body, body[:100])
+          "from astryx.pulse.shipped_triggers.windows_idle_stop import windows_idle_stop" in body, body[:100])
 with tempfile.TemporaryDirectory() as td:
     d = trigger_tree.build(Path(td))
     a, b = reconcile(d, {"win11"}, container="win11")

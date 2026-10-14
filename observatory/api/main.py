@@ -42,7 +42,7 @@ DIST = ROOT / "web" / "dist"
 # (bridges/providers) for contact resolution, rather than re-implementing it here.
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
-from nucleus import charter as _charter  # noqa: E402 — the one roster rule
+from astryx.core import charter as _charter  # noqa: E402 — the one roster rule
 
 def _dsn() -> str:
     if os.environ.get("ASTRYX_DSN"):
@@ -86,7 +86,7 @@ VEGA_HOME = Path(tempfile.gettempdir()) / "astryx-vega-conjure"
 # The default-DENY allowlist. Two CONTENT-class endpoints (/api/agents, /api/steps)
 # are public but tier-FLOORED inside the handler (plan-18 LANE 2): metadata for every
 # agent, but step/last_content bodies only for grant-derived content-public agents
-# (nucleus/tier.py, fail-closed). A content-class path must NOT be added here without
+# (src/astryx/core/tier.py, fail-closed). A content-class path must NOT be added here without
 # applying that floor — the grade-3 assert (tests/test_tier.py) fails if it is.
 # An agent's FACE is metadata (it exists, it looks like this), public like its name in /api/agents;
 # an <img> cannot send the owner header, so the avatar route is the one parameterised public path.
@@ -401,7 +401,7 @@ def agent_meta() -> dict[str, dict]:
     for f in root.rglob("*.md"):
         parts = f.relative_to(root).parts
         if not _charter.is_charter(f, root):
-            continue                    # the ONE rule (nucleus/charter.py): examples, structural
+            continue                    # the ONE rule (src/astryx/core/charter.py): examples, structural
                                         # files, and documents beside a self-folder charter
         # self-folder form: agents/<name>/<name>.md — the folder is the agent's own
         # home, not a composite level, so it drops out of the group path
@@ -442,14 +442,14 @@ async def agents(request: Request):
         "SELECT agent, mode() WITHIN GROUP (ORDER BY model) AS model FROM turns "
         "WHERE model IS NOT NULL AND ended_at > now() - interval '2 days' GROUP BY agent")}
 
-    from nucleus import charter
+    from astryx.core import charter
 
     def enrich(a: str) -> dict:
         m = meta.get(a, nogroup)
         return {"group_path": m["group_path"], "rank": m["rank"],
                 "model": actual.get(a) or m.get("model_pin") or "opus",
                 "type": charter.agent_type(a) or "resident"}
-    # THE TREE IS THE REGISTRY: an agent is a charter (nucleus/charter.py), not a name that once
+    # THE TREE IS THE REGISTRY: an agent is a charter (src/astryx/core/charter.py), not a name that once
     # wrote a step. Without this, a body spawned in error (seed's onboard.md, 10-09) lived on in the
     # roster and on the Floor through its old step rows.
     registry = set(charter.roster())
@@ -478,7 +478,7 @@ async def agents(request: Request):
         # tier line (the plan-16 side-channel), and last_content is the body itself.
         # Anon-only: the owner view (is_owner) keeps full metrics. Same fail-closed
         # polarity as the content floor — driven by the one tier authority.
-        from nucleus.tier import is_content_public
+        from astryx.core.tier import is_content_public
         for row in out:
             # last_content is a 120-char slice of the agent's most recent STEP BODY, so
             # it is the same content /api/steps was just gated for — a second door to the
@@ -540,11 +540,11 @@ async def steps(request: Request, agent: str | None = None, kind: str | None = N
     cond, args = [], []
     if not is_owner(request):
         # CONTENT-class floor: anonymous sees step bodies ONLY for grant-derived
-        # content-public agents (nucleus/tier.py). POSITIVE `agent = ANY(public)` —
+        # content-public agents (src/astryx/core/tier.py). POSITIVE `agent = ANY(public)` —
         # fail-closed: a private or unknown agent yields zero rows, and an anon
         # request for a private agent's steps (?agent=canopus) returns []. Never the
         # complement (NOT IN private) — a new private agent would leak through that.
-        from nucleus.tier import content_public_agents
+        from astryx.core.tier import content_public_agents
         pub = sorted(content_public_agents(agent_meta().keys()))
         args.append(pub); cond.append(f"agent = ANY(${len(args)})")
     if agent:
@@ -709,14 +709,14 @@ async def economy():
             "seven_day_eta_100": eta7, "seven_day_rate_pp_h": rate7,
         }
 
-    # ── the dissipative-system layer: daily econ rows (nucleus/econ.py, the ONE
+    # ── the dissipative-system layer: daily econ rows (src/astryx/econ/econ.py, the ONE
     # implementation of the equations) + a live today-so-far reading. The API serves the
     # RAW series; the client holds the equations, so the playground's sliders recompute
     # G/η locally without another request.
     # Goal 4227 S2: the v1 fields (W = sum of budgets) are FROZEN and labeled budget-era; each
     # point carries its v2 records ONLY through econ.v2_view (the version gate), else None —
     # a v2.0 or pre-v2 day shows no v2, never a back-filled one.
-    from nucleus.econ import v2_view
+    from astryx.econ.econ import v2_view
     econ_rows = await pool.fetch(
         "SELECT day::text AS day, metrics FROM econ ORDER BY day DESC LIMIT 90")
     econ_series = []
@@ -749,7 +749,7 @@ async def economy():
         from datetime import datetime, timezone
 
         import psycopg
-        from nucleus import econ as E
+        from astryx.econ import econ as E
         now = datetime.now(timezone.utc)
         day = now.date().isoformat()
         with psycopg.connect(E._dsn(), connect_timeout=3) as conn:
@@ -882,10 +882,10 @@ async def tools():
         except Exception:
             pass
     # senses — the afferent layer (sensors/<agent>/*.py, served by astryx-senses on :8460).
-    # Derived from the tree via the ONE index in nucleus/senses.py; file reads only, no
+    # Derived from the tree via the ONE index in src/astryx/pulse/senses.py; file reads only, no
     # FastAPI import happens at module scope so this stays cheap and safe here.
     try:
-        from nucleus.senses import senses_index
+        from astryx.pulse.senses import senses_index
         senses = senses_index()
     except Exception:
         senses = []
@@ -923,11 +923,11 @@ async def dag_run_detail(run_id: int):
 
 def _charter_path(name: str) -> Path | None:
     """The charter for `name`, at ANY depth in agents/ — resolved through the ONE
-    shared resolver (nucleus/charter.py) that spawn.sh and init.sh also use, so
+    shared resolver (src/astryx/core/charter.py) that spawn.sh and init.sh also use, so
     this can no longer drift from them. A duplicated stem is a corrupted registry:
     the resolver raises, and we fail CLOSED (None → the endpoint stays dark) rather
     than silently serve an ambiguous charter, which is what the old local copy did."""
-    from nucleus.charter import resolve, Collision
+    from astryx.core.charter import resolve, Collision
     try:
         return resolve(name)
     except Collision:
@@ -972,7 +972,7 @@ async def charter_put(name: str, edit: CharterEdit, request: Request):
 # Each resident is its own `claude` process and may run on a different provider (Anthropic
 # direct, a GLM/Huawei endpoint, an OpenAI-compatible gateway) with its own key + model map.
 # The owner sets that here; spawn.sh injects it into homes/<name>/.claude/settings.json's env
-# block on the next respawn (see nucleus/runtime_env.py). SECRETS NEVER TRANSIT THIS API:
+# block on the next respawn (see src/astryx/core/runtime_env.py). SECRETS NEVER TRANSIT THIS API:
 # runtime.json stores the NAME of the .env key holding the token, never the value — read
 # redacts, write refuses a token value. No entry for an agent → it uses the org's default.
 RUNTIME_PATH = REPO / "runtime.json"
@@ -1132,7 +1132,7 @@ async def agent_create(body: AgentCreate, request: Request):
         target.write_text(body.charter)
     except Exception as e:
         return Response(f"could not write charter: {e}", status_code=500)
-    r = subprocess.run(["bash", str(REPO / "nucleus" / "spawn.sh"), name],
+    r = subprocess.run(["bash", str(REPO / "scripts" / "spawn.sh"), name],
                        capture_output=True, text=True, timeout=90)
     return {"ok": r.returncode == 0, "name": name,
             "charter_path": str(target.relative_to(REPO)),
@@ -1175,7 +1175,7 @@ async def agent_spawn(name: str, request: Request):
     f = _charter_path(name)
     if not f:
         return Response("no such charter", status_code=404)
-    r = subprocess.run(["bash", str(REPO / "nucleus" / "spawn.sh"), name],
+    r = subprocess.run(["bash", str(REPO / "scripts" / "spawn.sh"), name],
                        capture_output=True, text=True, timeout=90)
     return {"ok": r.returncode == 0, "name": name, "rc": r.returncode,
             "out": (r.stdout + r.stderr)[-800:], "live": name in tmux_alive()}
@@ -1588,7 +1588,7 @@ async def network_cypher(q: CypherQ, request: Request):
     dsn = os.environ.get("SOCIAL_DSN", "") or DSN.rsplit("/", 1)[0] + "/astryx_social"
     try:
         async with await psycopg.AsyncConnection.connect(dsn, autocommit=True) as conn:
-            from nucleus import agelib
+            from astryx.memory import agelib
             await agelib.aprepare(conn)       # LOAD as a superuser; a run role has AGE preloaded (plan-4918 D1)
             await conn.execute("SET statement_timeout = '10s'")
             # AGE's contract: the SQL column list must match the cypher RETURN arity.
@@ -1702,7 +1702,7 @@ class VegaMsg(BaseModel):
 vega_hits: dict[str, list[float]] = {}
 
 
-from nucleus.claude_bin import claude_bin  # noqa: E402
+from astryx.core.claude_bin import claude_bin  # noqa: E402
 
 
 @app.post("/api/vega")
@@ -1988,7 +1988,7 @@ def _presence(r) -> dict:
 
 @app.get("/api/presence")
 async def presence_all(request: Request):
-    """Where every agent's attention is (nucleus/presence.py). Owner-only: a surface name can
+    """Where every agent's attention is (src/astryx/core/presence.py). Owner-only: a surface name can
     carry a private canvas or thread."""
     if not is_owner(request):
         return Response(status_code=403)
@@ -2655,7 +2655,7 @@ async def wire_contacts(q: str, channel: str = ""):
 
 # ---------------------------------------------------------------- memory / recall graph
 # The org's recall system: a typed knowledge graph compiled from BOTH layers — System 1
-# (the raw wire) and System 2 (memory's compiled wiki) — by nucleus/memgraph.py.
+# (the raw wire) and System 2 (memory's compiled wiki) — by src/astryx/memory/memgraph.py.
 #
 # EVERY PATH HERE IS OWNER-ONLY, and deliberately so. The middleware is default-DENY on
 # exact string match, so simply not adding these to PUBLIC_PATHS gates them; there is no
@@ -2669,7 +2669,7 @@ async def wire_contacts(q: str, channel: str = ""):
 #  - The gate matches on request.url.path, which EXCLUDES the query string. So a public
 #    endpoint here must never take a parameter that can widen its output; widening lives
 #    at a different path.
-#  - nucleus/tier.py keys AGENT content and does not reach the wiki at all. A page body is
+#  - src/astryx/core/tier.py keys AGENT content and does not reach the wiki at all. A page body is
 #    memory's compiled content, and goal TITLES (goal-16 is "low-latency recruiter-reply
 #    signal") are owner-career-adjacent. No wiki body or goal title is public at any tier.
 MEMORY_WIKI = REPO / "memory" / "wiki"
@@ -2685,7 +2685,7 @@ def _memgraph_read() -> dict | None:
     """
     try:
         sys.path.insert(0, str(REPO))
-        from nucleus import memgraph
+        from astryx.memory import memgraph
         g = memgraph.read_pg()
         return g if g.get("nodes") or g.get("notes") else None
     except Exception:
@@ -2712,14 +2712,14 @@ async def memory_graph(fresh: int = 0):
     if fresh:
         try:
             sys.path.insert(0, str(REPO))
-            from nucleus import memgraph
+            from astryx.memory import memgraph
             memgraph.write_pg(memgraph.compile_graph())
         except Exception as e:
             return {"error": f"compile failed: {type(e).__name__}: {e}", "nodes": [], "edges": []}
     g = _memgraph_read()
     if g is None:
         return {"nodes": [], "edges": [], "regions": [], "stats": {},
-                "notes": ["no compiled graph yet — run: venv/bin/python nucleus/memgraph.py build"]}
+                "notes": ["no compiled graph yet — run: venv/bin/python src/astryx/memory/memgraph.py build"]}
     g["age_s"] = _graph_age(g)
     return g
 
@@ -2731,7 +2731,7 @@ async def memory_world():
     This is the lens the graph was missing. The recall graph and the ontology lens are both
     the org describing ITSELF; measured, `kg.node` held 336 nodes and zero about a person,
     a company or anything in the owner's life. This one is derived from the owner's own
-    instruments (relations.md, owner.md) by nucleus/world.py.
+    instruments (relations.md, owner.md) by src/astryx/memory/world.py.
 
     A FILTER over the compiled graph rather than a second source: the world layer is
     compiled into kg.node like everything else, so this cannot drift from what the graph
@@ -2745,7 +2745,7 @@ async def memory_world():
     g = _memgraph_read()
     if g is None:
         return {"nodes": [], "edges": [], "regions": [], "stats": {},
-                "notes": ["no compiled graph yet — run: venv/bin/python nucleus/memgraph.py build"]}
+                "notes": ["no compiled graph yet — run: venv/bin/python src/astryx/memory/memgraph.py build"]}
     nodes = [n for n in g.get("nodes", []) if n.get("layer") == "world"]
     ids = {n["id"] for n in nodes}
     edges = [e for e in g.get("edges", [])
@@ -2782,7 +2782,7 @@ async def memory_ontology():
     """
     import math
     sys.path.insert(0, str(REPO))
-    from nucleus import ontology as ont
+    from astryx.memory import ontology as ont
     pages = ont._pages()
     if not pages:
         return {"nodes": [], "edges": [], "regions": [], "stats": {},
@@ -2956,7 +2956,7 @@ async def memory_page(slug: str):
     meta = {}
     try:
         sys.path.insert(0, str(REPO))
-        from nucleus import okf
+        from astryx.memory import okf
         meta, _ = okf.parse(raw)
     except Exception:
         pass
@@ -3021,7 +3021,7 @@ async def memory_chat(ask: MemoryAsk, request: Request):
     g = _memgraph_read()
     if g and g.get("nodes"):
         sys.path.insert(0, str(REPO))
-        from nucleus import memgraph
+        from astryx.memory import memgraph
         r = memgraph.retrieve(g, text)
 
     thread = (ask.thread or "").strip() or f"obs:estate-{secrets.token_hex(3)}"
@@ -3202,16 +3202,16 @@ async def _pipe(url: str, request: Request, owner_key: bool, down: str):
 
 
 # ---------------------------------------------------------------- access log: no keys
-# ?key= must never reach journald in clear (a3 #42085 F2): nucleus/logredact.py.
-from nucleus import logredact as _logredact  # noqa: E402
+# ?key= must never reach journald in clear (a3 #42085 F2): src/astryx/security/logredact.py.
+from astryx.security import logredact as _logredact  # noqa: E402
 _logredact.install()
 
 
 # ---------------------------------------------------------------- hands (plan-7862)
-# Each agent's own desktop on this machine (nucleus/hands_desktop.py). The owner watches it live,
+# Each agent's own desktop on this machine (src/astryx/hands/hands_desktop.py). The owner watches it live,
 # joins in, and stops it here. OWNER ONLY, every route: a desktop holds his logged-in sessions.
 from fastapi import HTTPException as _HTTPException, WebSocket, WebSocketDisconnect  # noqa: E402
-from nucleus import hands_desktop as _hands  # noqa: E402
+from astryx.hands import hands_desktop as _hands  # noqa: E402
 
 
 def _hands_owner(request: Request) -> None:

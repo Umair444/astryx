@@ -1,6 +1,6 @@
-"""Authored mutants for observatory/api/main.py (plan-8675 S2), run by nucleus/mutation_probe.py:
+"""Authored mutants for observatory/api/main.py (plan-8675 S2), run by devtools/mutation_probe.py:
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_phone_view_obs.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_phone_view_obs.py
 """
 from pathlib import Path
 

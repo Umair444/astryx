@@ -48,7 +48,7 @@ def main():
         bc = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(bc)
     else:
-        from nucleus import branch_check as bc
+        from devtools import branch_check as bc
     s = bc.summary(LOG)
     check("summary: check.sh's own FAILED/UNVERIFIED sets and verdict line, ANSI stripped",
           s["failed"] == ["gate b", "gate c"] and s["unverified"] == ["gate d"] and s["line"].startswith("check: 40"),
@@ -92,7 +92,7 @@ def main():
           "FAILED ON BOTH SIDES" in out and "    ✗ x" in out, out)
     # ── a3 D1 #35480: PRODUCTION sweeps org-wide (only=None); only an oracle scopes its sweep to its own roles ─────
     import ast
-    srcp = Path(os.environ.get("BRANCH_CHECK_SRC") or (REPO / "nucleus" / "branch_check.py"))
+    srcp = Path(os.environ.get("BRANCH_CHECK_SRC") or (REPO / "devtools" / "branch_check.py"))
     runfn = next(n for n in ast.walk(ast.parse(srcp.read_text())) if isinstance(n, ast.FunctionDef) and n.name == "run")
     sweeps = [c for c in ast.walk(runfn) if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
               and c.func.attr == "sweep"]
@@ -134,7 +134,7 @@ def main():
           ast.dump(reps[0]) if reps else "no report call in run()")
     tsc = Path(tempfile.mkdtemp(prefix="bc-scope-"))
     (tsc / "tests").mkdir()
-    (tsc / "tests" / "test_x.py").write_text("from nucleus import voice_mint as V\nimport nucleus.other\n")
+    (tsc / "tests" / "test_x.py").write_text("from astryx.hearing import voice_mint as V\nimport nucleus.other\n")
     real = subprocess.run
     diffs = []
     def fake_git(argv, **kw):
@@ -148,7 +148,7 @@ def main():
     finally:
         bc.subprocess.run = real
     check("the scope is the changed files PLUS the modules a changed .py imports (a red the new oracle drives)",
-          {"tests/test_x.py", "README.md", "nucleus/voice_mint.py", "nucleus/other.py"} <= scope, sorted(scope))
+          {"tests/test_x.py", "README.md", "src/astryx/hearing/voice_mint.py", "nucleus/other.py"} <= scope, sorted(scope))
     check("…diffed from the MERGE-BASE (main...branch, three dots), so main's drift past the fork isn't the branch's (a4 #45033)",
           diffs == [["m...b"]], diffs)
     ext = {"x1": "R-EXTRACT tests/test_x.py: listed 9d > 7d (trip: g)", "x2": "R-EXTRACT tests/test_y.py builds an UNSTAMPED fixture"}
@@ -158,9 +158,9 @@ def main():
     # a2 night-review 10-12: a DARK gate whose oracle references a file the branch changes is named, to be run directly
     # (10-11: seed/trigger-name-guard PASSed while the ear/wake/doorbell oracles, which stage channel/server.mjs, were dark)
     dk = Path(tempfile.mkdtemp(prefix="bc-dark-"))
-    for d in ("nucleus", "tests", "channel"):
+    for d in ("nucleus", "tests", "channel", "devtools"):
         (dk / d).mkdir()
-    (dk / "nucleus" / "check.sh").write_text(
+    (dk / "devtools" / "check.sh").write_text(
         'run "ear gate" "$PY" tests/test_ear.py\n'
         'run "node gate" node tests/t_node.mjs\n'
         'run "bash gate" bash tests/t_sh.sh\n'
@@ -174,7 +174,7 @@ def main():
     (dk / "channel" / "sib.mjs").write_text("export const f = 1\n")
     (dk / "channel" / "lazy.mjs").write_text("export const g = 1\n")
     (dk / "tests" / "t_node.mjs").write_text("const s = new URL('../channel/server.mjs', import.meta.url)\n")
-    (dk / "tests" / "t_sh.sh").write_text("grep -c ^run nucleus/check.sh\n")   # names check.sh, as many oracles do
+    (dk / "tests" / "t_sh.sh").write_text("grep -c ^run devtools/check.sh\n")   # names check.sh, as many oracles do
     (dk / "tests" / "test_word.py").write_text("# the server answers; reserver.mjs is another file\n")
     (dk / "tests" / "test_own.py").write_text("x = 1\n")
     of = bc.gate_files(dk)
@@ -189,7 +189,7 @@ def main():
     check("…a bare stem ('server') or a longer name containing the file's ('reserver.mjs') is NOT a reference, and an "
           "unrelated oracle isn't named", "word gate" not in ds and "bash gate" not in ds, ds)
     check("…a branch that only touches check.sh (every branch adding a gate does) puts no dark gate in scope",
-          bc.dark_scope(gates, of, {"nucleus/check.sh"}, dk) == [], bc.dark_scope(gates, of, {"nucleus/check.sh"}, dk))
+          bc.dark_scope(gates, of, {"devtools/check.sh"}, dk) == [], bc.dark_scope(gates, of, {"devtools/check.sh"}, dk))
     tr = {g: (f, v) for g, f, v in bc.dark_scope(gates, of, {"channel/sib.mjs", "nucleus/deep.py"}, dk)}
     check("a4 #49641: TRANSITIVE — a node oracle naming server.mjs reaches a sibling server.mjs IMPORTS, and a python "
           "oracle reaches a module its import imports; each named with the file it came through",
@@ -201,9 +201,9 @@ def main():
     # only a MEMBERSHIP change (add/delete/rename) changes its set. 10-12: reachability was dark when review_range.sh
     # was ADDED invoked-by-nothing.
     cz = Path(tempfile.mkdtemp(prefix="bc-census-"))
-    for d in ("nucleus", "tests", "units"):
+    for d in ("nucleus", "tests", "units", "devtools"):
         (cz / d).mkdir()
-    (cz / "nucleus" / "check.sh").write_text('run "repo census" "$PY" tests/test_rw.py\n'
+    (cz / "devtools" / "check.sh").write_text('run "repo census" "$PY" tests/test_rw.py\n'
                                              'run "units census" "$PY" tests/test_units.py\n'
                                              'run "plain gate" "$PY" tests/test_plain.py\n')
     (cz / "tests" / "test_rw.py").write_text('import subprocess\nfiles = subprocess.run(["git", "ls-files"]).stdout\n')
@@ -285,12 +285,14 @@ def main():
     # the relation, read statically from a repo's check.sh and oracle files
     tdr = Path(tempfile.mkdtemp(prefix="bc-refs-"))
     (tdr / "nucleus").mkdir()
+    for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
+        (tdr / _d).mkdir(parents=True, exist_ok=True)
     (tdr / "tests").mkdir()
-    (tdr / "nucleus" / "check.sh").write_text('run "g1" "$PY" tests/t1.py\nrun "g2" "$PY" -m nucleus.t2\n'
+    (tdr / "devtools" / "check.sh").write_text('run "g1" "$PY" tests/t1.py\nrun "g2" "$PY" -m nucleus.t2\n'
                                              'run "g3" "$PY" tests/broken.py\nrun "g4" bash tests/t4.sh\n')
     (tdr / "tests" / "t1.py").write_text("import importlib\ndef f():\n    from nucleus import foo\n"
                                          "B = importlib.import_module('nucleus.bar')\nW = 'canvas'\n"
-                                         "T = importlib.import_module('canvas')  # a TOP-LEVEL canvas, not nucleus.canvas\n"
+                                         "T = importlib.import_module('canvas')  # a TOP-LEVEL canvas, not astryx.core.canvas\n"
                                          "SCRIPTS = ('nucleus.qux', 'nucleus/qux.py')\nPATHS = {'k': 'nucleus/qux.py'}\n"
                                          "def g(cg):\n    return cg('nucleus/zed.py')\n")
     (tdr / "nucleus" / "t2.py").write_text("import nucleus.baz as b\n")
@@ -301,17 +303,17 @@ def main():
           "unparseable or non-python oracle is omitted (its sites stay RED)",
           cg("nucleus/foo.py") == "g1" and cg("nucleus/bar.py") == "g1" and cg("nucleus/baz.py") == "g2"
           and set(gr) == {"g1", "g2"}, str({k: sorted(v) for k, v in gr.items()}))
-    check("covering_gate never matches a BARE WORD ('canvas' in an oracle doesn't cover nucleus/canvas.py)",
-          cg("nucleus/canvas.py") is None, str(cg("nucleus/canvas.py")))
+    check("covering_gate never matches a BARE WORD ('canvas' in an oracle doesn't cover src/astryx/core/canvas.py)",
+          cg("src/astryx/core/canvas.py") is None, str(cg("src/astryx/core/canvas.py")))
     check("a3 #38259: a module named only as DATA (a tuple or dict of names, or a non-loader call's argument) is NOT "
           "covered", cg("nucleus/qux.py") is None and cg("nucleus/zed.py") is None,
           f"qux={cg('nucleus/qux.py')} zed={cg('nucleus/zed.py')}")
     self_refs = bc.gate_refs(REPO).get("branch_check: differential verdict, prod witness, clean refusal", set())
-    check("this oracle's own test literals never make it 'cover' what they name (nucleus/canvas.py)",
-          "nucleus/canvas.py" not in self_refs and "nucleus.canvas" not in self_refs, str(sorted(self_refs))[:300])
-    cs = (REPO / "nucleus" / "check.sh").read_text()
+    check("this oracle's own test literals never make it 'cover' what they name (src/astryx/core/canvas.py)",
+          "src/astryx/core/canvas.py" not in self_refs and "astryx.core.canvas" not in self_refs, str(sorted(self_refs))[:300])
+    cs = (REPO / "devtools" / "check.sh").read_text()
     check("SQLGUARD_GATE is exactly check.sh's own label for the enforce gate",
-          f'run "{sg}" "$PY" -m nucleus.sqlguard.enforce' in cs)
+          f'run "{sg}" "$PY" -m astryx.security.sqlguard.enforce' in cs)
     esrc = os.environ.get("ENFORCE_SRC")                              # mutation_probe points this at a mutant
     if esrc:
         import importlib.util
@@ -319,7 +321,7 @@ def main():
         enf = importlib.util.module_from_spec(esp)
         esp.loader.exec_module(enf)
     else:
-        from nucleus.sqlguard import enforce as enf
+        from astryx.security.sqlguard import enforce as enf
     def blind_ids(line, text="select 1"):
         rep_ = {"run_not_searched": [], "extractors": {}, "gates": {}, "covering": {},
                 "sites": {enf.CANARY + "\x1fselect 1": {"rung": "RESPONSIVE"}},
@@ -347,7 +349,7 @@ def main():
         print("NOT SEARCHED (real-estate arm): no ASTRYX_DSN.")
         return 1 if fails else 77
     import psycopg
-    from nucleus import branch_check_prep as prep
+    from devtools import branch_check_prep as prep
     adm = psycopg.connect(dsn, autocommit=True)
     unhardened = prep.unhardened(adm, "no_such_role")
     if unhardened:

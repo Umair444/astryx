@@ -1,6 +1,6 @@
-"""Authored mutants for nucleus/toolreg.py (goal 4227), run by nucleus/mutation_probe.py.
+"""Authored mutants for src/astryx/core/toolreg.py (goal 4227), run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_toolreg.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_toolreg.py
 
 toolreg decides what counts as a CALL and who AUTHORED a tool, which are the two numbers
 usage-GDP is made of. Each mutant is a way those could plausibly go wrong. T1 is not
@@ -11,7 +11,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-SUBJECT = REPO / "nucleus" / "toolreg.py"
+SUBJECT = REPO / "src" / "astryx" / "core" / "toolreg.py"
 ORACLE = REPO / "tests" / "test_tool_ledger.py"
 ENV = "TOOLREG_SRC"
 

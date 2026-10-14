@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Oracle for the BUILDER half of the derived-copy registry (plan-8018 S1): memory/graph/ingest.py stamps the graph
-copy's root digest itself, inside its own transaction, and nucleus/copies.py agrees with it.
+copy's root digest itself, inside its own transaction, and src/astryx/core/copies.py agrees with it.
 
 The subject is gitignored (memory/), so it's path-loaded from INGEST_SRC or REPO/memory/graph/ingest.py, with the
 graph's DDL from INGEST_SCHEMA or REPO/memory/graph/schema.sql; either absent → SKIP 77, naming which. The checker's
@@ -51,13 +51,13 @@ if missing:
           "asserted.")
     sys.exit(77)
 sys.path.insert(0, str(REPO))
-from nucleus.sqlguard.estate import gate  # noqa: E402
+from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate("test_copies_builder", REPO, deps=("psycopg",))
 
 try:
     import psycopg
-    from nucleus import copies as C
-    from nucleus.sqlguard.fixture import fixture_db
+    from astryx.core import copies as C
+    from astryx.security.sqlguard.fixture import fixture_db
     spec = importlib.util.spec_from_file_location("ingest_under_test", SRC)
     ing = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(ing)

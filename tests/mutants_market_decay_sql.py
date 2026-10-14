@@ -1,6 +1,6 @@
-"""Authored mutants for triggers/steward/market_decay.py — run by nucleus/mutation_probe.py.
+"""Authored mutants for triggers/steward/market_decay.py — run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_market_decay_sql.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_market_decay_sql.py
 
 THE LIST IS THE JUDGEMENT. market_decay was the SOLE economic actuator (report-only since goal
 4227 S1b) and its ctx.sql strings went untested until the SQL-surface oracle (the advisory oracle drives only the pure

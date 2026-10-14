@@ -1,7 +1,7 @@
-"""Authored mutants for nucleus/toolreg.py find(): the registry door's ranking, run by
-nucleus/mutation_probe.py.
+"""Authored mutants for src/astryx/core/toolreg.py find(): the registry door's ranking, run by
+devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_toolreg_find.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_toolreg_find.py
 
 One per rule the ranking rests on. Z1 is the pre-fix matching, steward's #25795 case.
 """
@@ -9,7 +9,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-SUBJECT = REPO / "nucleus" / "toolreg.py"
+SUBJECT = REPO / "src" / "astryx" / "core" / "toolreg.py"
 ORACLE = REPO / "tests" / "test_toolreg_find.py"
 ENV = "TOOLREG_SRC"
 

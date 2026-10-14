@@ -1,7 +1,7 @@
 """Authored mutants for channel/server.mjs's steps-doorbell owner match (a4 #22117), run by
-nucleus/mutation_probe.py.
+devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_step_doorbell_channel.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_step_doorbell_channel.py
 
 D2 drops only the `!agent` early return. It's killable because the oracle's fixture holds a real
 step with agent '' and a subscription to ''. Without that fixture the SQL clause would hide it,
