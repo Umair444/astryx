@@ -12,7 +12,7 @@
 // host, where this gate is the proof of a prevention-graded cell and must not switch itself off quietly (a1 #44266).
 // Every wait is on a condition with a deadline, never on time alone, and names itself when it expires.
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -39,8 +39,39 @@ async function until(what, test, ms = 60000) {
   }
 }
 const kids = []
-const cleanup = () => { for (const k of kids) try { k.kill() } catch {} }
+// cleanup kills each child's whole DESCENDANT tree (read from /proc), not just the child: chromium's renderers and
+// vite's workers outlived a kill of the main pid alone when the gate exited fast on a failure (7 chromium processes
+// left, measured 10-11). The children stay in this process group on purpose, so an outer group kill (check.sh's
+// per-gate cap) reaches them too.
+const tree = (root) => {
+  const kids = new Map()
+  for (const d of readdirSync('/proc')) {
+    if (!/^\d+$/.test(d)) continue
+    try { const ppid = Number(readFileSync(`/proc/${d}/stat`, 'utf8').split(') ')[1].split(' ')[1]); (kids.get(ppid) ?? kids.set(ppid, []).get(ppid)).push(Number(d)) } catch {}
+  }
+  const out = []; const walk = (p) => { for (const c of kids.get(p) ?? []) { out.push(c); walk(c) } }
+  walk(root); return out
+}
+// a child that already exited is skipped (its pid could be reused); then, as a belt, any process whose argv carries
+// this run's unique chromium profile dir is killed too: every chromium child does carry it (13/13 measured), so a
+// renderer reparented by a crashed main is still found (measured: they also exit by themselves within 3s)
+const byArgv = (needle) => readdirSync('/proc').filter((d) => /^\d+$/.test(d)).filter((d) => {
+  try { return readFileSync(`/proc/${d}/cmdline`, 'utf8').includes(needle) } catch { return false }
+}).map(Number).filter((pid) => pid !== process.pid)
+let PROFILE = ''
+const cleanup = () => {
+  for (const k of kids) {
+    if (k.exitCode !== null || k.signalCode !== null) continue
+    for (const pid of [...tree(k.pid), k.pid]) try { process.kill(pid, 'SIGKILL') } catch {}
+  }
+  if (PROFILE) for (const pid of byArgv(`--user-data-dir=${PROFILE}`)) try { process.kill(pid, 'SIGKILL') } catch {}
+}
 process.on('exit', cleanup)
+// a hung run is a FAIL that names itself, never a process that holds a check.sh slot for hours (steward #45245: one
+// run hung 3h37m). The whole gate gets WALL_MS; every CDP call gets CALL_MS (a dead chromium never answers).
+const WALL_MS = Number(process.env.PILOT_GATE_WALL_MS || 600000)
+const CALL_MS = 30000
+setTimeout(() => { console.log(`  FAIL  the gate exceeded its ${WALL_MS / 1000}s wall clock (a hang, not a verdict)`); console.log('FAIL (1)'); cleanup(); process.exit(1) }, WALL_MS)
 
 let URL0 = process.argv[2]
 if (!URL0) {
@@ -52,6 +83,7 @@ if (!URL0) {
 await until('the dev server to answer', async () => (await fetch(URL0)).ok)
 await until('the app entry module to compile', async () => (await fetch(new URL('/src/main.tsx', URL0))).ok)
 const prof = mkdtempSync(join(tmpdir(), 'pilot-cdp-'))
+PROFILE = prof
 process.on('exit', () => { try { rmSync(prof, { recursive: true, force: true, maxRetries: 5 }) } catch {} })   // chromium may still be writing as it exits
 const port = 9334
 kids.push(spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${prof}`, '--window-size=1280,860', 'about:blank'], { stdio: 'ignore' }))
@@ -67,7 +99,15 @@ ws.addEventListener('message', (m) => {
   if (d.id && waits.has(d.id)) { waits.get(d.id)(d); waits.delete(d.id) }
   if (d.method === 'Runtime.exceptionThrown') errors.push((d.params.exceptionDetails.exception?.description || d.params.exceptionDetails.text || '').split('\n')[0])
 })
-const cdp = (method, params = {}) => new Promise((r) => { const i = ++id; waits.set(i, r); ws.send(JSON.stringify({ id: i, method, params })) })
+const cdp = (method, params = {}) => new Promise((r, reject) => {
+  const i = ++id
+  const t = setTimeout(() => { waits.delete(i); reject(new Error(`CDP ${method} gave no answer in ${CALL_MS / 1000}s`)) }, CALL_MS)
+  waits.set(i, (d) => { clearTimeout(t); r(d) })
+  ws.send(JSON.stringify({ id: i, method, params }))
+})
+for (const ev of ['unhandledRejection', 'uncaughtException']) {   // a rejected top-level await arrives as the latter
+  process.on(ev, (e) => { console.log(`  FAIL  ${e?.message || e}`); console.log('FAIL (1)'); cleanup(); process.exit(1) })
+}
 const ev = async (expr) => (await cdp('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })).result?.result?.value
 const keyEv = (type, key, code, vk, extra = {}) => cdp('Input.dispatchKeyEvent', { type, key, code, windowsVirtualKeyCode: vk, ...extra })
 const press = async (key, code, vk) => { await keyEv('keyDown', key, code, vk, key === ' ' ? { text: ' ' } : key === 'Enter' ? { text: '\r' } : {}); await keyEv('keyUp', key, code, vk) }
