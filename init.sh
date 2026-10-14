@@ -990,6 +990,14 @@ if [ "${1:-}" = "doctor" ]; then
     bad ".env missing — run ./init.sh"
   fi
   [ -f local.md ] && ok "local.md exists" || bad "local.md missing — the owner's law; run ./init.sh"
+  # every live resident body carries the flags the org depends on (owner 10-14): the wire's channel flag (without it
+  # the doorbell is dropped silently) and its charter's permission mode (bypassPermissions, or default for relay)
+  _lf=$("${PY:-venv/bin/python}" -m nucleus.launch_flags 2>&1); _lf_rc=$?
+  case $_lf_rc in
+    0)  ok "every resident body runs with --dangerously-load-development-channels and its charter's permission mode" ;;
+    77) warn "launch flags NOT PROVEN: $(printf '%s' "$_lf" | tail -1)"; printf '%s\n' "$_lf" | command grep '^  ?' ;;
+    *)  bad "a resident body is missing a launch flag ($(printf '%s' "$_lf" | tail -1)):"; printf '%s\n' "$_lf" | command grep -E '^  (✗|\?)' ;;
+  esac
   # android (plan-8675, opt-in): the setup script's own check is the observable
   _arc=0; _amsg=$(nucleus/android_setup.sh check 2>&1) || _arc=$?
   case "$_arc" in
