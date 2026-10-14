@@ -8,8 +8,9 @@ a charter line `Permissions: relay` asks for `--permission-mode default` instead
 correct for that agent, never a finding). This reads what is ACTUALLY running: the argv of the
 `claude` process under each ax-<name> tmux pane, judged against that agent's charter.
 
-CLI: python -m nucleus.launch_flags   one line per body; exit 0 all good · 1 a body is missing a
-     flag · 77 could not look (no tmux server, or no body found to read).
+CLI: python -m nucleus.launch_flags   one line per body; exit 0 EVERY body was read and is good · 1 a body
+     is missing a flag · 77 not proven: tmux gave no answer, no bodies run, or any body could not be read (an
+     unread body is not evidence: a pane whose claude died looks exactly like one still booting).
 """
 import subprocess
 import sys
@@ -35,7 +36,7 @@ def missing(argv: list[str], perm: str | None) -> list[str]:
     chan = _opt(argv, CHANNELS)
     if chan is None or CHANNEL_SERVER not in chan.split(","):
         out.append(f"{CHANNELS} {CHANNEL_SERVER} (the wire's doorbell is dropped without it)")
-    want = "default" if (perm or "").strip().lower() == "relay" else "bypassPermissions"
+    want = "default" if (perm or "").strip() == "relay" else "bypassPermissions"   # spawn.sh's exact test
     mode = _opt(argv, "--permission-mode")
     if mode != want:
         out.append(f"--permission-mode {want} (running with {mode or 'no --permission-mode'})"
@@ -81,10 +82,10 @@ def claude_argv(pane_pid: int, proc: Path = Path("/proc")) -> list[str] | None:
     return None
 
 
-def bodies() -> dict[str, int] | None:
+def bodies(run=subprocess.run) -> dict[str, int] | None:
     """{agent: pane pid} for every ax-<agent> tmux session; None when tmux can't answer."""
     try:
-        r = subprocess.run(["tmux", "list-panes", "-a", "-F", "#{session_name} #{pane_pid}"],
+        r = run(["tmux", "list-panes", "-a", "-F", "#{session_name} #{pane_pid}"],
                            capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -98,30 +99,32 @@ def bodies() -> dict[str, int] | None:
     return out
 
 
-def main() -> int:
-    live = bodies()
+def main(live=None, read=claude_argv, perm=charter_perm, say=print) -> int:
+    live = bodies() if live is None else live
     if live is None:
-        print("launch flags: UNVERIFIED (tmux gave no answer)")
+        say("launch flags: UNVERIFIED (tmux gave no answer)")
         return 77
     if not live:
-        print("launch flags: no resident bodies running")
+        say("launch flags: no resident bodies running")
         return 77
     bad = unread = 0
     for name, pane in sorted(live.items()):
-        argv = claude_argv(pane)
+        argv = read(pane)
         if argv is None:
-            print(f"  ? {name}: no claude process under its pane (booting, or the body died)")
+            say(f"  ? {name}: no claude process under its pane (booting, or its claude died)")
             unread += 1
             continue
-        gaps = missing(argv, charter_perm(name))
+        gaps = missing(argv, perm(name))
         if gaps:
             bad += 1
-            print(f"  ✗ {name}: missing " + "; ".join(gaps) + f" — restart it: tmux kill-session -t =ax-{name} && nucleus/spawn.sh {name}")
+            say(f"  ✗ {name}: missing " + "; ".join(gaps)
+                + f" — restart it: tmux kill-session -t =ax-{name} && nucleus/spawn.sh {name}")
         else:
-            print(f"  ✓ {name}")
+            say(f"  ✓ {name}")
+    say(f"launch flags: {len(live) - bad - unread}/{len(live)} verified, {bad} missing a flag, {unread} unread")
     if bad:
         return 1
-    return 77 if unread == len(live) else 0
+    return 77 if unread else 0
 
 
 if __name__ == "__main__":
