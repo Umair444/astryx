@@ -60,6 +60,14 @@ if [ "$ATYPE" = "stationed" ]; then
   echo "'$AGENT' is stationed — a stateless claude -p API, not a resident. Invoke it with nucleus/station.py; there is no body to spawn."
   exit 0
 fi
+# A charter the Claude Code plugin's /astryx:join wrote (its line `Plugin: joined`) belongs to a person's own
+# session on the wire: that session IS its body. Embodying it here (spawn-all, or agent_dark's FIX line) would put
+# a second ear on its doorbell, and a resident body never takes the plugin's one-body lock, so the lock can't
+# refuse it. Skip, like stationed. Oracle: tests/test_plugin_hooks.py.
+if grep -q '^Plugin: joined$' "$CHARTER"; then
+  echo "'$AGENT' joined from a Claude Code session (the ASTRYX plugin); that session is its body, so there is nothing to spawn."
+  exit 0
+fi
 # One agent, ONE body: if a channel server already runs under this identity
 # anywhere (e.g. the founder CLI outside tmux), a second spawn would race it
 # on the same doorbell — messages split between bodies invisibly. That was

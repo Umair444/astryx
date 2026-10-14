@@ -48,7 +48,8 @@ if not shutil.which("node"):
     sys.exit(77)
 
 TREE = Path(tempfile.mkdtemp(prefix="tomb-oracle-"))
-shutil.copy(REPO / "astryx.py", TREE / "astryx.py")
+shutil.copy(REPO / "astryx.py", TREE / "astryx.py")                 # the shim, and the package it becomes
+shutil.copytree(REPO / "src" / "astryx", TREE / "src" / "astryx", ignore=shutil.ignore_patterns("__pycache__"))
 FILE = '''from astryx import trigger
 
 

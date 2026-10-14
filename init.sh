@@ -122,13 +122,16 @@ EOF
   # generator block here kept emitting units for the deleted nucleus/pulse_watch.py
   # — a unit that cannot start plus a second clock, on every fresh host (scout,
   # 2026-08-25).
+  # --proxy-headers: cloudflared (relay.umairfiaz.com) reaches the gateway from localhost, so without it every
+  # client is 127.0.0.1 and the per-IP introduce cap is one global bucket. X-Forwarded-For is trusted ONLY from
+  # 127.0.0.1; a direct client from anywhere else keeps its own address (tests/test_relay.py).
   cat > "$UD/astryx-gateway.service" <<EOF
 [Unit]
 Description=astryx gateway — the org's one door to other orgs (:8845)
 After=network.target
 [Service]
 WorkingDirectory=$PWD/bridges
-ExecStart=$PWD/venv/bin/uvicorn gateway:app --host 0.0.0.0 --port 8845
+ExecStart=$PWD/venv/bin/uvicorn gateway:app --host 0.0.0.0 --port 8845 --proxy-headers --forwarded-allow-ips 127.0.0.1
 Restart=always
 RestartSec=5
 User=$USER
@@ -354,6 +357,7 @@ active_dep_groups() {  # which manifest groups this org needs, from the channel 
   for ch in whatsapp discord telegram; do
     [ -f "bridges/routes-$ch.json" ] && { g="$g media"; break; }
   done
+  [ -f bridges/routes-discord.json ] && g="$g discord"   # discord.py: the discord bridge only
   echo "$g"
 }
 
@@ -549,6 +553,24 @@ _act_derivedgraphs() { say "derived graphs: astryx_social / astryx_people as soc
 _link_dispatcher() { [ -f init.sh ] && [ ! -L init.sh ] || return 0
   [ "$(readlink astryx 2>/dev/null)" = "init.sh" ] || ln -sfn init.sh astryx 2>/dev/null; }
 # <<< dispatcher link
+
+# >>> path link
+# `astryx` on PATH: ~/.local/bin/astryx -> this init.sh, but ONLY where nothing else owns the name. A pip install
+# puts the Python CLI's console script there (plan-10224 S3), and the old `ln -sf` on every run replaced it with
+# this script. Written when absent, or re-pointed when it is already a link to SOME init.sh; a regular file, or a
+# link to anything else, is left alone. Oracle: tests/test_init_path_link.py.
+_link_path() { local bin="$HOME/.local/bin" cur
+  [ -d "$bin" ] || return 0
+  if [ -L "$bin/astryx" ]; then
+    cur=$(readlink "$bin/astryx")
+    case "$cur" in */init.sh|init.sh) ;; *) return 0 ;; esac
+    [ "$cur" = "$PWD/init.sh" ] && return 0
+  elif [ -e "$bin/astryx" ]; then
+    return 0
+  fi
+  ln -sfn "$PWD/init.sh" "$bin/astryx" 2>/dev/null \
+    && say "linked: astryx → this repo (run 'astryx doctor' / 'astryx wall' from anywhere)"; }
+# <<< path link
 
 _chk_venv() { [ -d venv ]; }
 # uv when present (fast, modern), python3 -m venv otherwise — SAME venv/ layout either
@@ -762,20 +784,34 @@ from nucleus.shipped_triggers.agent_heal import agent_heal  # noqa: F401
 EOF2
   say "installed agent heal (seed): a resident whose body dies is respawned within a minute"
 }
+# upstream_prs (goal 10224 S6, owner 10-14): in the org that IS the upstream astryx repo, each outside PR (new, or a new
+# head) reaches medic once, its body fenced as DATA. Gated: origin == ASTRYX_UPSTREAM and ASTRYX_UPSTREAM_ROLE=upstream
+# (env or .env; a plain clone has the same origin, so the role is the owner's declaration). Deferential like ccompact.
+_upstream_here() { venv/bin/python -m nucleus.upstream_pr --is-upstream >/dev/null 2>&1; }
+_chk_upstreamprs() { _upstream_here || return 0; _trigger_chk upstream_prs; }
+_act_upstreamprs() {
+  mkdir -p triggers/seed
+  cat > triggers/seed/upstream_prs.py <<'EOF2'
+"""Live install of the shipped upstream PR watch (one writer: nucleus/shipped_triggers/upstream_prs.py). To retire it:
+`trigger_rm upstream_prs` (a tombstone the pulse honours). Deleting this file does NOT retire it: init.sh would reinstall."""
+from nucleus.shipped_triggers.upstream_prs import upstream_prs  # noqa: F401
+EOF2
+  say "installed the upstream PR watch (seed): each outside PR to this repo reaches medic for triage"
+}
 
 # the precondition DAG, in dependency order (top depends on nothing).  name|class
 RECONCILE_NODES=(
   "pg|interior" "pgready|wait" "schema|interior" "harden|interior" "hardencut|halt" "venv|interior" "deps|interior"
   "peoplegate|interior" "derivedgraphs|interior" "geoschema|interior" "model|interior" "chan|interior" "obs|interior" "obskey|interior" "ident|interior"
   "units|interior" "law|interior" "prehook|interior" "ccompact|interior" "prreview|interior" "androidlic|halt"
-  "android|interior" "phonesweep|interior" "winidle|interior" "agentheal|interior" "login|halt"
+  "android|interior" "phonesweep|interior" "winidle|interior" "agentheal|interior" "upstreamprs|interior" "login|halt"
   "seed|interior" "prompt|interior")
 
 # >>> trigger reinstall
 # The shipped triggers init.sh installs, name|node. `./init.sh --reinstall N` is the owner's exit from a DEFERRED name
 # (doctor says when): it clears seed's tombstone for N (a creator of (seed, N) erases it, a3 BC-2) and installs N unless
 # it is installed already or this host doesn't use it (the node's own gate).
-TRIGGER_NODES=("context_compact|ccompact" "pr_review|prreview" "phone_resume_sweep|phonesweep" "windows_idle_stop|winidle" "agent_heal|agentheal")
+TRIGGER_NODES=("context_compact|ccompact" "pr_review|prreview" "phone_resume_sweep|phonesweep" "windows_idle_stop|winidle" "agent_heal|agentheal" "upstream_prs|upstreamprs")
 reinstall_trigger() {
   local n=$1 node="" e st
   for e in "${TRIGGER_NODES[@]}"; do [ "${e%%|*}" = "$n" ] && node=${e##*|}; done
@@ -900,10 +936,7 @@ setup() {
   say "  that key lives in .env (gitignored) — it's a credential: guard it, never paste it in chat or commit it."
   # `astryx` from anywhere — link the one dispatcher onto PATH (no file clutter, one surface).
   _link_dispatcher
-  if [ -d "$HOME/.local/bin" ]; then
-    ln -sf "$PWD/init.sh" "$HOME/.local/bin/astryx" 2>/dev/null \
-      && say "linked: astryx → this repo (run 'astryx doctor' / 'astryx wall' from anywhere)"
-  fi
+  _link_path
   say "watch it think:   astryx wall        (or: astryx connect seed  — read-only)"
   say "whatsapp surface: astryx channels"
 }
@@ -1219,14 +1252,15 @@ if [ "${1:-}" = "whatsapp" ] || [ "${1:-}" = "channels" ]; then
   [ -f bridges/routes.json ] || { cp bridges/routes.example.json bridges/routes.json
     say "created bridges/routes.json — EDIT IT: your chat JIDs and trusted senders"; }
   units
-  SECRET=$(grep '^WA_WEBHOOK_SECRET=' .env | cut -d= -f2-)
+  # The secret is never PRINTED (stdout reaches logs and agent contexts): the docker line reads it from .env
+  # when the human runs it.
   say "wacli does the WhatsApp side and it runs IN DOCKER (native installs misbehave; this is opinionated):"
   say "  git clone https://github.com/openclaw/wacli && cd wacli"
   say "  docker build -t astryx/wacli ."
   say "  docker run -it --rm -v $PWD/wacli-data:/data astryx/wacli auth      # scan the QR"
   say "  docker run -d --name wacli-sync --restart unless-stopped -v $PWD/wacli-data:/data astryx/wacli \\"
   say "    sync --follow --download-media --webhook http://$(_docker_host_ip):8477/hook \\"
-  say "    --webhook-secret $SECRET --webhook-allow-private"
+  say "    --webhook-secret \"\$(sed -n 's/^WA_WEBHOOK_SECRET=//p' '$PWD/.env')\" --webhook-allow-private"
   grep -q '^WA_DATA_HOST=' .env || echo "WA_DATA_HOST=$PWD/wacli-data" >> .env
   say "then install the bridge (cp to /etc, not symlink — /home may be a separate mount):"
   say "  sudo ./nucleus/deploy.sh units && sudo systemctl enable --now astryx-whatsapp.service"

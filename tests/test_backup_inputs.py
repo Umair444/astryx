@@ -54,6 +54,7 @@ def skip(name, why):
 REGENERABLE = {
     "venv/":                          "pip install -r requirements.txt",
     "channel/node_modules/":          "npm install",
+    "dist/":                          "python nucleus/build_plugin.py (the plugin) / python -m build (the wheel)",
     "observatory/web/node_modules/":  "npm install",
     "observatory/web/dist/":          "npm run build (deploy.sh web)",
     "observatory/web/tsconfig.tsbuildinfo": "tsc build artifact",
