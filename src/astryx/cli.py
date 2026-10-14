@@ -593,13 +593,22 @@ def parser() -> argparse.ArgumentParser:
     sp["connect"].add_argument("target", metavar="telegram|discord|whatsapp|<agent>")
     sp["connect"].add_argument("--replace", action="store_true", help="replace a credential that is already set")
     sp["join"].add_argument("url", metavar="PEER_URL")
-    sp["federate"].add_argument("rest", nargs=argparse.REMAINDER)
+    sp["federate"].set_defaults(rest=[])   # every argument the CLI doesn't know passes to the wizard, in order (main)
     return p
+
+
+PASSTHROUGH = ("federate",)   # verbs whose own flags (--relay, --skip, ...) belong to the tool behind them
 
 
 def main(argv=None) -> int:
     p = parser()
-    a = p.parse_args(argv)
+    # argparse's REMAINDER can't begin with a `--flag`: a passthrough verb takes every argument the CLI
+    # itself doesn't know, so `astryx federate --home D --relay URL` gives --home to us and the rest to it
+    a, extra = p.parse_known_args(argv)
+    if extra:
+        if getattr(a, "verb", None) not in PASSTHROUGH:
+            p.error(f"unrecognized arguments: {' '.join(extra)}")
+        a.rest = extra
     if not getattr(a, "verb", None):
         p.print_help()
         return 0

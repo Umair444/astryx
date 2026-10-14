@@ -173,6 +173,13 @@ def main():
     arm("federate calls nucleus.federate.main(rest) when it exists",
         rc == 0 and (h / "fed.out").is_file() and (h / "fed.out").read_text() == "['relay']",
         (h / "fed.out").read_text() if (h / "fed.out").is_file() else o)
+    rc, o = call(["federate"] + H + ["--relay", "https://r.example", "--no-introduce"], Fake())
+    arm("federate passes its own --flags through to the wizard (argparse REMAINDER can't)",
+        rc == 0 and (h / "fed.out").is_file()
+        and (h / "fed.out").read_text() == "['--relay', 'https://r.example', '--no-introduce']",
+        (h / "fed.out").read_text() if (h / "fed.out").is_file() else o)
+    rc, o = call(["status"] + H + ["--bogus"], Fake())
+    arm("an unknown flag on a NON-passthrough verb is still an error", rc != 0, (rc, o))
     sys.path.remove(str(h))
 
     # ---- migrate / version / retire / user errors
