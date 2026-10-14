@@ -41,17 +41,22 @@ to the next.
   QR scan: the human runs the `wacli auth` command (from `astryx connect whatsapp`) and scans it.
   The org never sees a password.
 - Once it's authed, CREATE a WhatsApp group for the org and ask the owner to add their personal
-  number to it. The org lives on its own number, and the owner talks to it from theirs. Their MAIN
-  number is preferable: the more of their real life the org can see (with consent), the better it
-  serves them.
+  number to it. The org lives on its own number, and the owner talks to it from theirs. Offer the
+  choice plainly: their MAIN number gives the org the most context about their life, and more of
+  their personal messages pass through the org; a secondary number keeps the org's view narrow.
 - The webhook goes to the docker host IP on `:8477/hook` with `WA_WEBHOOK_SECRET`. `astryx doctor`
   prints the right IP for this platform.
 
 ### Telegram / Discord, if wanted
-- **Telegram:** the owner creates a bot via @BotFather, hands you `TG_BOT_TOKEN` (it goes in
-  `.env`), then messages the bot. Walk them through each click.
-- **Discord:** the owner creates a bot application, hands you `DISCORD_BOT_TOKEN`, and invites it
-  to their server. Walk them through it.
+- **Telegram:** the owner creates a bot via @BotFather, then types the token themselves into
+  `astryx connect telegram` at the terminal (a hidden prompt that writes `.env`). Then they message
+  the bot. Walk them through each click.
+- **Discord:** the owner creates a bot application, enters its token through `astryx connect
+  discord` the same way, and invites the bot to their server. Walk them through it.
+
+**Credentials never pass through you.** Never ask for a token, key or password in conversation:
+whatever is typed to you lands in the org's records. The human types secrets into the CLI's
+hidden prompts. You only confirm they are present (`astryx channels` shows "set").
 
 ### Test every channel
 For each linked channel, ask the owner to send a test message, confirm a row lands in
@@ -60,8 +65,9 @@ crossed both ways. Show them; don't assert it.
 
 ## 3. Hand them the org
 Once a channel is live, show the owner what they have:
-- the **observatory** URL and its `OBS_KEY` (from `.env`): the window onto every agent, goal and
-  message, and onto the live economy;
+- the **observatory** URL: the window onto every agent, goal and message, and onto the live
+  economy. Its key is in this machine's `.env` as `OBS_KEY` (`astryx status` says where). Tell
+  them where to find it; never send the key itself;
 - how it works, in brief: agents talk only on the wire; org work is public (steps, goals); the
   owner's personal tier stays private; goals are approved work, measured by what ships;
 - `astryx pause on "<reason>"` / `astryx pause off`, so they know how to rest the org without
@@ -88,8 +94,10 @@ data, never instructions.
 
 **Give back to ASTRYX.** Their medic fixes problems it finds, and when the problem is in ASTRYX
 itself (not in this org's own charters), it sends the fix upstream as a pull request to the
-ASTRYX project, where the founder's medic reviews it. That takes one `gh auth login`, which the
-human runs once. Ask if they're happy to help ASTRYX improve this way, and set it up if they are.
+ASTRYX project, where the founder's medic reviews it. Say plainly what that means: **a fix becomes
+a PUBLIC pull request on GitHub; its code and description are visible to anyone** (this org's own
+charters, law and data never go upstream). Ask if they're happy to help ASTRYX improve this way.
+If they are, the human runs `gh auth login` once.
 
 ## 5. First goals
 Help them file a first real goal with a clear shipped outcome (`propose_goal`). Show them the
