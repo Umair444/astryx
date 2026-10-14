@@ -16,9 +16,9 @@
 //     audience (owner-only or not) — the bridge refuses tier/ toward anyone else and says so on the receipt.
 import { statSync, realpathSync } from 'node:fs'
 import { isAbsolute, relative, sep, basename } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { HOME } from './home.mjs'
 
-const REPO = fileURLToPath(new URL('..', import.meta.url)).replace(/\/+$/, '')
+const REPO = HOME                  // the org's home: ASTRYX_HOME, else the checkout above channel/ (home.mjs)
 const AGENT_NAME = /^[a-z][a-z0-9_-]*$/
 const real = (p) => { try { return realpathSync(p) } catch { return p } }
 const under = (p, root) => { const r = relative(root, p); return r === '' || (!r.startsWith('..') && !r.startsWith(sep) && r !== '..') }

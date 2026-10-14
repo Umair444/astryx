@@ -37,7 +37,7 @@ arm('trigger_set python: AFTER the file is written, clear exactly what the pulse
   py.includes('writeFile(file, a.check)')
   && py.indexOf('definedNames(file.pathname, { py: PULSE_PY, pulse: PULSE })') > py.indexOf('writeFile(file, a.check)')
   && py.indexOf('clear(TRIGGERS_ROOT, AGENT, revived)') > py.indexOf('const revived = await definedNames(')
-  && /const PULSE = new URL\('\.\.\/nucleus\/pulse\.py'/.test(s))
+  && /const PULSE = homePath\('nucleus\/pulse\.py'\)/.test(s))   // the pulse of the org's home (channel/home.mjs)
 arm('trigger_set heartbeat/sql: clear(…, [a.name])', set.slice(set.indexOf('if (!a.schedule)')).includes('clear(TRIGGERS_ROOT, AGENT, [a.name])'))
 console.log(fails ? `FAIL: ${fails}` : 'PASS: tombstones (per agent and name), and server.mjs writes and clears them')
 process.exit(fails ? 1 : 0)

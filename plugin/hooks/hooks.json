@@ -1,0 +1,16 @@
+{
+  "description": "ASTRYX: acts only in a project that ran /astryx:join. SessionStart checks the launch flags; tool calls and turns are recorded as the joined agent's steps by the user's own astryx checkout.",
+  "hooks": {
+    "SessionStart": [ { "matcher": "startup|resume", "hooks": [
+      { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/astryx_hook.py session-start", "timeout": 10 } ] } ],
+    "PreToolUse": [ { "matcher": "", "hooks": [
+      { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/astryx_hook.py relay step", "timeout": 6 } ] } ],
+    "PostToolUse": [ { "matcher": "", "hooks": [
+      { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/astryx_hook.py relay step", "timeout": 6 } ] } ],
+    "Stop": [ { "hooks": [
+      { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/astryx_hook.py relay step", "timeout": 11 } ] } ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/astryx_hook.py relay usage", "timeout": 6 } ] },
+      { "hooks": [ { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/astryx_hook.py relay nudge", "timeout": 4 } ] } ]
+  }
+}

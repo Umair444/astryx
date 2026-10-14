@@ -11,11 +11,29 @@ import pg from 'pg'
 import { readFileSync } from 'node:fs'
 import { triggerFile } from './trigger_name.mjs'
 import { retire, clear, definedNames } from './tombstone.mjs'
+import { homeFile, homePath, dsn } from './home.mjs'
+import { joinState } from './join.mjs'
 
-const AGENT = process.env.ASTRYX_AGENT
+// mode 'repo' (spawn.sh's residents: ASTRYX_AGENT only) is the behaviour this file always had. The Claude Code
+// plugin sets ASTRYX_JOIN_DIR, and then a project that has not run /astryx:join gets a DORMANT server: no database,
+// no tools, nothing from that session reaches the org's public tables (join.mjs).
+const JOIN = joinState()
+if (JOIN.mode === 'dormant') {
+  const idle = new Server({ name: 'astryx', version: '0.1.0' }, {
+    capabilities: { tools: {} },
+    instructions: 'The ASTRYX plugin is installed, but this project has not joined an org, so nothing here reaches ' +
+      'the wire. To join, run /astryx:join <agent-name>, then restart Claude Code as that skill says.',
+  })
+  idle.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [] }))
+  await idle.connect(new StdioServerTransport())
+  console.error(`[channel] dormant: no join marker for ${JOIN.project} (${JOIN.marker})`)
+  await new Promise(res => process.stdin.on('close', res))
+  process.exit(0)
+}
+const AGENT = JOIN.agent
 if (!AGENT) { console.error('ASTRYX_AGENT env required'); process.exit(1) }
-const DSN = readFileSync(new URL('../.env', import.meta.url), 'utf8')
-  .split('\n').find(l => l.startsWith('ASTRYX_DSN=')).slice('ASTRYX_DSN='.length).trim()
+const DSN = dsn()                  // ASTRYX_DSN from the env, else <ASTRYX_HOME>/.env (home.mjs; default home = ..)
+const SOURCE = JOIN.mode === 'joined' ? 'plugin:astryx:astryx' : 'astryx'   // the <channel source=…> Claude Code renders
 
 // ---- who is INTERNAL, decided by something a stranger cannot author ----------------
 // `from_org === 'local'` used to answer this. But `local` is a plain string in a column a
@@ -40,7 +58,7 @@ const mcp = new Server(
     capabilities: { experimental: { 'claude/channel': {}, 'claude/channel/permission': {} }, tools: {} },
     instructions:
       `You are the resident agent "${AGENT}" on the ASTRYX wire. ` +
-      `Org messages arrive as <channel source="astryx" from="..." thread="..." intent="...">. ` +
+      `Org messages arrive as <channel source="${SOURCE}" from="..." thread="..." intent="...">. ` +
       `Reply and initiate with the send tool (to = agent name, or agent@org for federation). ` +
       `Watched agents' steps arrive as <channel ... kind="step">; they are telemetry, not requests — ` +
       `NEVER reply to telemetry. Subscribe narrowly (default milestone,error; filter='all' turns every ` +
@@ -186,9 +204,9 @@ const TOOLS = [
   },
 ]
 
-const TRIGGERS_ROOT = new URL('../triggers/', import.meta.url)
-const PULSE = new URL('../nucleus/pulse.py', import.meta.url).pathname
-const PULSE_PY = new URL('../venv/bin/python', import.meta.url).pathname
+const TRIGGERS_ROOT = homeFile('triggers/')
+const PULSE = homePath('nucleus/pulse.py')
+const PULSE_PY = homePath('venv/bin/python')
 
 async function handleTool(name, a) {
   if (name === 'send') {
@@ -287,7 +305,7 @@ async function handleTool(name, a) {
     // Owner-override amendments carry neither intent and do not stale votes: the
     // owner is not a voter; seed adjudicates those directly.
     const { changeIntents } = await import('./plan_change_intents.mjs')    // one grammar, executed by the oracle
-    const changes = changeIntents(new URL('../nucleus/plan_change_intents', import.meta.url))
+    const changes = changeIntents(homeFile('nucleus/plan_change_intents'))
     const lr = await pool.query(
       `SELECT max(ts) AS t FROM messages WHERE thread=$1 AND intent = ANY($2)`, [a.thread, changes])
     const lastRevise = lr.rows[0]?.t
@@ -308,8 +326,8 @@ async function handleTool(name, a) {
   }
   if (name === 'self_edit') {
     const { execFile } = await import('node:child_process')
-    const scribe = new URL('../nucleus/identity_commit.py', import.meta.url).pathname
-    const py = new URL('../venv/bin/python', import.meta.url).pathname
+    const scribe = homePath('nucleus/identity_commit.py')
+    const py = homePath('venv/bin/python')
     return await new Promise((resolve) => {
       const args = [scribe, AGENT, a.path, ...(a.b64 ? ['--b64'] : [])]
       const p = execFile(py, args, { timeout: 15_000 }, (err, stdout, stderr) =>
@@ -320,7 +338,7 @@ async function handleTool(name, a) {
   }
   if (name === 'trigger_set') {
     if (a.kind === 'python' && a.check) {
-      const dir = new URL(`../triggers/${AGENT}/`, import.meta.url)
+      const dir = homeFile(`triggers/${AGENT}/`)
       const file = triggerFile(dir, a.name)                 // refuses '../x', '/etc/x', 'a b' — before any write
       await import('node:fs/promises').then(fs => fs.mkdir(dir, { recursive: true })
         .then(() => fs.writeFile(file, a.check)))
@@ -403,7 +421,7 @@ function permitSurfaces() {
   for (const [file, pfx] of [['telegram', 'tg:'], ['discord', 'dc:']]) {
     try {
       const routes = JSON.parse(readFileSync(
-        new URL(`../bridges/routes-${file}.json`, import.meta.url), 'utf8'))
+        homeFile(`bridges/routes-${file}.json`), 'utf8'))
       const r = routes.find(x => x.agent === AGENT && x.enabled && x.chat)
       if (r) surfaces.push(pfx + r.chat)
     } catch { /* channel not configured on this box — skip it */ }
@@ -674,6 +692,39 @@ async function listen() {
     setTimeout(listen, 3000)
   }
 }
+
+// ── one body per identity ─────────────────────────────────────────────────────────────
+// Two live servers for one agent are two ears on one doorbell: each claims (marks delivered) a share of the
+// agent's messages, and each half is lost to the other session (the two-seed incident). spawn.sh guards its own
+// residents by pane and command line; a plugin session is invisible to that, so with ASTRYX_ONE_BODY=1 (set by the
+// plugin's manifest; the repo's residents leave it unset and behave as before) the server holds a session-level
+// advisory lock on a DEDICATED connection for its whole life, and a second body refuses to start, loudly.
+// The lock rides that connection: if it drops, the server takes the lock again, and exits if another body took it.
+const ONE_BODY = process.env.ASTRYX_ONE_BODY === '1'
+async function holdBody(first) {
+  const c = new pg.Client({ connectionString: DSN, connectionTimeoutMillis: 10_000 })
+  let ok
+  try {
+    await c.connect()
+    ok = (await c.query(`SELECT pg_try_advisory_lock(hashtext('astryx-body'), hashtext($1)) AS ok`, [AGENT])).rows[0].ok
+  } catch (e) {
+    try { await c.end() } catch {}
+    if (first) {
+      console.error(`[channel] cannot take the one-body lock for "${AGENT}" (postgres: ${e.message}); refusing to start`)
+      process.exit(1)
+    }
+    return setTimeout(() => holdBody(false), 3000)
+  }
+  if (!ok) {
+    console.error(`[channel] ANOTHER BODY is already live as "${AGENT}" (its server holds the one-body lock). ` +
+      `Refusing to start a second ear on one doorbell: close the other session, or join this project under a ` +
+      `different name.`)
+    process.exit(1)
+  }
+  c.once('error', () => { try { c.end() } catch {}; setTimeout(() => holdBody(false), 3000) })   // once: one re-arm per loss
+  c.on('error', () => {})
+}
+if (ONE_BODY) await holdBody(true)
 
 await mcp.connect(new StdioServerTransport())
 listen()
