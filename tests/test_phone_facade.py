@@ -55,6 +55,10 @@ except ImportError as e:
 HAVE_UPSTREAM = bool(shutil.which("node")) and UPSTREAM.exists()
 
 os.environ["ASTRYX_AGENT"] = "phone-oracle"
+# android._db() falls back to the live .env ASTRYX_DSN when ANDROID_DSN is unset, so an arm that reaches
+# release()/shutdown() wrote the PROD leases table (a2 #53059: an UPDATE leases matched 0 rows). Until LEASE
+# swaps in its fixture, the facade gets a DSN that cannot connect.
+os.environ["ANDROID_DSN"] = "postgresql://phone-oracle@127.0.0.1:1/none?connect_timeout=1"
 import tempfile  # noqa: E402
 os.environ["ASTRYX_HANDS_STATE"] = tempfile.mkdtemp(prefix="phone-oracle-hands-")   # caps + stop flags, never the org's
 os.environ["ORACLE_CANARY_ENV"] = "must-not-reach-upstream"
@@ -272,9 +276,14 @@ out = asyncio.run(srv.act("boot", device="phone-x"))
 want("CAPS: a capped boot never starts a phone", str(out[0]).startswith("CAPPED") and not reached, f"{out} {reached}")
 before_steps = (hdm.session("phone-oracle") or {}).get("steps")
 asyncio.run(srv.act("phones"))
+_real_release = srv.droid.release                  # `done` unholds a lease row: stubbed, so no database is touched
+srv.droid.release = lambda device, agent: reached.append(("release", device))
+reached.clear()
 asyncio.run(srv.act("done", device="phone-x"))
+srv.droid.release = _real_release
 want("CAPS: listing phones and `done` are free", (hdm.session("phone-oracle") or {}).get("steps") == before_steps,
      f"{before_steps} → {(hdm.session('phone-oracle') or {}).get('steps')}")
+want("CAPS: ...and `done` does give the phone back", ("release", "phone-x") in reached, str(reached))
 # SHUTDOWN is free and allowed when stopped or capped (a4 #47955): it only lowers capability. Still driver-only.
 _real_drive, _real_shutdown = srv.droid.drive, srv.droid.shutdown
 srv.droid.drive = lambda device, agent: reached.append(("drive", device))
@@ -304,6 +313,12 @@ want("AGENT unset: a stamped 'whose hands are these?' answer, not an unstamped c
 srv.AGENT = "phone-oracle"
 srv._guard, srv.droid.boot = _real_guard, _real_boot
 os.environ.pop("HANDS_STEP_CAP", None)
+
+try:
+    srv.droid._db().close()
+    want("DSN: before the fixture, the facade reaches no database", False, "it connected")
+except Exception as e:  # noqa: BLE001
+    want("DSN: before the fixture, the facade reaches no database", "127.0.0.1\", port 1 failed" in str(e), str(e))
 
 # ── LEASE ─────────────────────────────────────────────────────────────────────────────────────────────────────
 try:
