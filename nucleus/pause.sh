@@ -52,8 +52,14 @@ json.dump(d, open(sys.argv[5], "w"))' \
     echo "pause: $UNIT started, declaration withdrawn"
     ;;
   status)
+    state=$(systemctl is-active "$UNIT" 2>/dev/null || true)
     if [ -f "$DECL" ]; then echo "declared: $(cat "$DECL")"; else echo "declared: none"; fi
-    echo "timer: $(systemctl is-active "$UNIT" 2>/dev/null || true)"
+    echo "timer: $state"
+    if [ -f "$DECL" ] && [ "$state" = active ]; then
+      # resumed with a bare `systemctl start`: the witness ignores a declaration older than a stop,
+      # but withdraw it so it can't confuse a reader (steward #50735)
+      echo "pause: STALE declaration (the timer is running). Run: nucleus/pause.sh off" >&2
+    fi
     ;;
   *)
     echo "usage: nucleus/pause.sh on \"<reason>\" [until] | off | status" >&2

@@ -55,7 +55,10 @@ pulse. So a stale clock under a VALID declaration is PAUSED, not DOWN:
   * a declaration past its `until`, a malformed one, or an unreadable one counts as NO
     declaration, so it fails toward DOWN and never toward silence;
   * a CHANGE of kind rings at once (a pause that expires while stale reads DOWN now, not
-    a day later).
+    a day later);
+  * a declaration only covers the stop it EXPLAINS (steward #50735): made no earlier than
+    that stop began (minus 10 min slack) and not in the future. One left behind by a bare
+    `systemctl start` can never excuse a later, unrelated outage. No readable stop, no cover.
 The stop's age comes from systemd (InactiveEnterTimestamp), and only while the timer is
 inactive: that timestamp outlives a restart.
 
@@ -128,6 +131,26 @@ def read_pause_declaration(path: Path, now: float) -> Optional[dict]:
         return d
     except Exception:
         return None
+
+
+COVER_SLACK_SEC = 600    # pause.sh declares a few seconds BEFORE it stops; allow 10 min
+
+
+def covers(decl: Optional[dict], stop_age: Optional[float], now: float, *,
+           slack_sec: float = COVER_SLACK_SEC) -> bool:
+    """Pure. Does this declaration explain the CURRENT stop? (steward #50735) Only if it was
+    made no earlier than the stop began (minus slack, for pause.sh's declare-then-stop order)
+    and not in the future. A declaration left behind by a bare `systemctl start` is older than
+    any later stop, so it can never excuse an unrelated outage. No readable stop -> no cover:
+    the failure leans toward DOWN, as everywhere else in this file."""
+    if decl is None or stop_age is None:
+        return False
+    try:
+        at = datetime.fromisoformat(str(decl["at"])).timestamp()
+    except Exception:
+        return False
+    stop_start = now - stop_age
+    return stop_start - slack_sec <= at <= now
 
 
 def read_stop_age(now: float, timer: str = TIMER) -> Optional[float]:
@@ -226,12 +249,19 @@ class PulseWitness:
                 return                       # a DB blip is UNKNOWN, and unknown is silent
 
             now = self._clock()
-            try:
-                decl = self._read_pause(now)
-            except Exception:
-                decl = None                  # unreadable pause = no pause: fail toward DOWN
+            decl, stop_age = None, None
+            if age is not None and age > self.stale_sec:   # only a stale clock needs the facts
+                try:
+                    decl = self._read_pause(now)
+                except Exception:
+                    decl = None              # unreadable pause = no pause: fail toward DOWN
+                try:
+                    stop_age = self._read_stop(now)
+                except Exception:
+                    stop_age = None
+            paused = covers(decl, stop_age, now)
             verb = classify(age, self.alarmed, self.last_alarm, now,
-                            paused=decl is not None, last_kind=self.last_kind,
+                            paused=paused, last_kind=self.last_kind,
                             stale_sec=self.stale_sec, renag_sec=self.renag_sec,
                             pause_renag_sec=self.pause_renag_sec)
             if verb == SILENT:
@@ -239,10 +269,6 @@ class PulseWitness:
             if verb == RECOVER:
                 body = _recover_body(age)
             else:
-                try:
-                    stop_age = self._read_stop(now)
-                except Exception:
-                    stop_age = None
                 body = (_paused_body(decl, age, stop_age) if verb == PAUSED
                         else _alarm_body(age, stop_age))
             # Send FIRST; only latch on success, so a failed ring is retried next tick

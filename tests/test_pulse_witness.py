@@ -211,13 +211,25 @@ import subprocess as _sp
 import tempfile as _tf
 import time as _time
 
-DECL = {"by": "owner", "reason": "maintenance window", "at": "2026-10-12T05:21:50Z"}
 DAY = 24 * 3600
+WALL0 = 1_000_000.0                       # the Harness's wall epoch
+STOP = 49 * 3600                          # the timer stopped 49h before WALL0
 
 
-def _paused_witness(age, decl, stop=None):
+def _iso(ts):
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(ts, timezone.utc).isoformat()
+
+
+# pause.sh's own order: declared a few seconds BEFORE the stop began
+DECL = {"by": "owner", "reason": "maintenance window", "at": _iso(WALL0 - STOP - 5)}
+
+
+def _paused_witness(age, decl, stop=STOP):
     h = Harness(age)
-    w = h.witness(read_pause=lambda now: decl, read_stop=lambda now: stop)
+    # a FIXED stop start, as systemd's InactiveEnterTimestamp is: the age grows with the clock
+    w = h.witness(read_pause=lambda now: decl,
+                  read_stop=lambda now: None if stop is None else now - (WALL0 - stop))
     return h, w
 
 
@@ -275,7 +287,7 @@ with _tf.TemporaryDirectory() as td:
 # a pause that EXPIRES while stale rings DOWN at once, not a day later (the kind changed)
 state = {"decl": DECL}
 h = Harness(DEAD)
-w = h.witness(read_pause=lambda now: state["decl"])
+w = h.witness(read_pause=lambda now: state["decl"], read_stop=lambda now: now - (WALL0 - STOP))
 run(w.tick())                                      # PAUSED
 state["decl"] = None                               # until passed / file removed
 _tick(h, w, W.CHECK_SEC + 1)                       # minutes later, well inside both ladders
@@ -290,7 +302,7 @@ check("a pause declared during a DOWN rings PAUSED once (the kind changed)",
 # a pause reader that RAISES is no pause -> DOWN, and tick() still never raises
 def _boom(now): raise OSError("disk")
 h = Harness(DEAD)
-w = h.witness(read_pause=_boom)
+w = h.witness(read_pause=_boom, read_stop=lambda now: now - (WALL0 - STOP))
 run(w.tick())
 check("a raising pause reader reads as no pause -> DOWN (never silence)",
       len(h.sent) == 1 and "DOWN" in h.sent[0])
@@ -301,6 +313,32 @@ h._age = HEALTHY
 _tick(h, w, W.CHECK_SEC + 1)
 check("a resumed clock after a pause sends the recovery and clears the latch",
       len(h.sent) == 2 and "resumed" in h.sent[1] and w.alarmed is False and w.last_kind is None)
+
+# COVER (steward #50735): a declaration only excuses the stop it EXPLAINS
+def _rings(decl, stop=STOP):
+    h, w = _paused_witness(DEAD, decl, stop=stop)
+    run(w.tick())
+    return h.sent[0] if h.sent else ""
+stale = {**DECL, "at": _iso(WALL0 - STOP - 11 * 60)}          # 11 min older than the stop
+check("COVER: a declaration made >10 min BEFORE the stop began -> DOWN (it explains an earlier stop)",
+      "DOWN" in _rings(stale), _rings(stale)[:60])
+check("COVER: a FUTURE-dated declaration -> DOWN",
+      "DOWN" in _rings({**DECL, "at": _iso(WALL0 + 30 * DAY)}))
+check("COVER: a declaration made AFTER the stop began (mid-outage) -> PAUSED",
+      "PAUSED" in _rings({**DECL, "at": _iso(WALL0 - STOP + 3600)}))
+check("COVER: pause.sh's order (declared seconds before the stop) -> PAUSED",
+      "PAUSED" in _rings(DECL))
+check("COVER: the stop age unreadable -> DOWN (no readable stop, no cover)",
+      "DOWN" in _rings(DECL, stop=None))
+check("COVER: the realistic shape: a declaration left by a bare `systemctl start` 5 days ago,"
+      " then a NEW stop 1h ago -> DOWN, not PAUSED",
+      "DOWN" in _rings({**DECL, "at": _iso(WALL0 - 5 * DAY)}, stop=3600))
+# the pure predicate at its slack boundary
+check("covers(): 9 min before the stop -> covered; 11 min before -> not",
+      W.covers({"at": _iso(WALL0 - STOP - 540)}, STOP, WALL0)
+      and not W.covers({"at": _iso(WALL0 - STOP - 660)}, STOP, WALL0))
+check("covers(): no declaration, or an unparseable at -> not covered",
+      not W.covers(None, STOP, WALL0) and not W.covers({"at": "soon"}, STOP, WALL0))
 
 # the stop-age reader: only while the timer is INACTIVE (the timestamp outlives a restart)
 def _stop_age_with(stdout):
@@ -354,6 +392,18 @@ with _tf.TemporaryDirectory() as td:
     r = pause("off", rc=1)
     check("(d) a FAILED start keeps the declaration (a pause nobody could end stays declared)",
           r.returncode == 1 and decl.exists(), r.stderr)
+    (bindir / "systemctl").write_text('#!/bin/sh\necho "${FAKE_TIMER_STATE:-inactive}"\n')
+    (bindir / "systemctl").chmod(0o755)
+    def status(state):
+        env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "FAKE_TIMER_STATE": state}
+        return _sp.run(["bash", str(root / "nucleus" / "pause.sh"), "status"], env=env,
+                       capture_output=True, text=True, timeout=30)
+    r = status("active")
+    check("(d) status: a declaration with the timer RUNNING is flagged STALE (resumed by a bare start)",
+          r.returncode == 0 and "STALE declaration" in r.stderr, r.stderr + r.stdout)
+    r = status("inactive")
+    check("(d) status: control: a declaration with the timer stopped is not flagged",
+          "STALE" not in r.stderr, r.stderr)
     r = pause("on", "   ")
     check("(d) a blank reason is refused before anything is stopped",
           r.returncode == 2, r.stderr)
