@@ -90,11 +90,25 @@ said = [T.tick(st, UP, None, "gh is not logged in: run `gh auth login`", w, "med
 arm("T5 gh logged out → said once (to the owner), not every tick, nothing to medic",
     said[0] and "gh auth login" in said[0] and said[1:] == [None, None] and not w.sent, said)
 n = T.tick(st, UP, None, "`gh pr list` failed: HTTP 502", w, "medic")
-arm("T5 a DIFFERENT failure is said again", n and "502" in n, n)
+arm("T5 a transient failure (HTTP 5xx) waits one tick", n is None, n)
+n = T.tick(st, UP, None, "`gh pr list` failed: HTTP 502", w, "medic")
+arm("T5 a DIFFERENT failure, once it persists, is said again", n and "502" in n, n)
 n = T.tick(st, UP, [pr(8, "f" * 40)], None, w, "medic")
 arm("T5 recovery is said, and the queue flows", n and "visible again" in n and len(w.sent) == 1, (n, w.sent))
-n = T.tick(st, UP, None, "`gh pr list` failed: HTTP 502", w, "medic")
-arm("T5 ...and the same failure after recovery is news again", n and "502" in n, n)
+n = [T.tick(st, UP, None, "`gh pr list` failed: HTTP 502", w, "medic") for _ in range(2)][-1]
+arm("T5 ...and the same failure after recovery is news again (once it persists)", n and "502" in n, n)
+
+# T6: a network blip that clears by the next tick says NOTHING (10-14: two blips in an hour paged medic)
+st, w = {}, Wire()
+blip = "`gh pr list --repo Umair444/astryx` failed: error connecting to api.github.com"
+said = [T.tick(st, UP, None, blip, w, "medic"), T.tick(st, UP, [], None, w, "medic")]
+arm("T6 one transient miss then success → silent: no CANNOT, no 'visible again'", said == [None, None], said)
+said = [T.tick(st, UP, None, blip, w, "medic") for _ in range(T.BLIND_AFTER)]
+arm(f"T6 {T.BLIND_AFTER} consecutive transient misses → said once", said[-1] and "CANNOT" in said[-1]
+    and all(x is None for x in said[:-1]), said)
+st = {}
+n = T.tick(st, UP, None, "gh is not logged in: run `gh auth login`", w, "medic")
+arm("T6 a config problem (logged out) is still said at once", n and "gh auth login" in n, n)
 
 # listing() against a fake gh
 bindir = Path(tempfile.mkdtemp(prefix="test-upstream-prs-"))
