@@ -88,25 +88,36 @@ def main():
     r = py(f"import runpy, sys; mod = runpy.run_path({str(f)!r}); import astryx; "
            "print(len(astryx._registry), mod['zz_one'] is astryx._registry[0]['fn'])", td, [REPO])
     arm("pulse_run path: the decorated fn is the registry's fn", r.stdout.strip() == "1 True", r.stderr[-300:])
-    # 7. a tree holding ONLY the shim (an old test fixture) binds to a package on sys.path
+    # 7. a tree holding ONLY the shim: mid-checkout (shim written, src/astryx/ not yet), or an old test fixture.
+    #    The pulse's path must not need src/: triggers still register; only the submodules are unavailable.
     lone = td / "lone"
     lone.mkdir()
     shutil.copy(REPO / "astryx.py", lone / "astryx.py")
-    r = py(PROBE.format(f=str(f)), lone, [lone, SRC])
-    d = json.loads(r.stdout) if r.returncode == 0 else {}
-    arm("shim without src/ beside it binds to the package on sys.path", d.get("names") == ["zz_one"] and d.get("same"),
-        r.stderr[-300:] or str(d))
-    r = py("import astryx", lone, [lone], flags=["-S"])            # -S: no site-packages (an installed astryx)
-    arm("shim with no package anywhere fails with a named ImportError",
-        r.returncode != 0 and "no src/astryx/ beside astryx.py" in r.stderr, r.stderr[-300:])
+    r = py(prog, lone, flags=["-S"])                               # -S: no site-packages (an installed astryx)
+    arm("shim with NO src/ anywhere: the pulse's discover prog still registers the trigger (B1)",
+        r.returncode == 0 and [t["name"] for t in json.loads(r.stdout or "[]")] == ["zz_one"], r.stderr[-300:])
+    r = py("import astryx.paths", lone, [lone], flags=["-S"])
+    arm("...and only the submodules are missing (a plain ModuleNotFoundError)",
+        r.returncode != 0 and "ModuleNotFoundError" in r.stderr, r.stderr[-300:])
     # 8. `python -m astryx` from the org root runs the CLI through the shim
     r = subprocess.run([sys.executable, "-m", "astryx", "version"], cwd=REPO, capture_output=True, text=True,
                        timeout=60)
     arm("`python -m astryx version` at the root runs the CLI", r.returncode == 0 and r.stdout.startswith("astryx "),
         r.stderr[-300:])
-    # 9. the trigger docs stayed with the package: the shim carries no second registry
-    shim = (REPO / "astryx.py").read_text()
-    arm("the shim defines no registry of its own", "_registry" not in re.sub(r'""".*?"""', "", shim, flags=re.S))
+    # 9. the shim's copy of `_registry` and `trigger` is the package's, node for node (so they can't drift)
+    import ast
+
+    def defs(path):
+        t = ast.parse(path.read_text())
+        return {ast.unparse(n) for n in t.body
+                if (isinstance(n, ast.FunctionDef) and n.name == "trigger")
+                or (isinstance(n, ast.AnnAssign) and getattr(n.target, "id", "") == "_registry")}
+    a_, b_ = defs(REPO / "astryx.py"), defs(SRC / "astryx" / "__init__.py")
+    arm("the shim's _registry and trigger are identical to src/astryx/__init__.py's", len(a_) == 2 and a_ == b_,
+        str(a_ ^ b_))
+    shim = re.sub(r'""".*?"""', "", (REPO / "astryx.py").read_text(), flags=re.S)
+    arm("the shim runs no exec/eval/compile/runpy/importlib (trigger_names reads it statically)",
+        not re.search(r"\b(exec|eval|compile|runpy|importlib|__import__)\b", shim))
     shutil.rmtree(td, ignore_errors=True)
     print(f"\n{'FAIL' if fails else 'ALL PASS'}: astryx registry ({len(fails)} failing)")
     return 1 if fails else 0

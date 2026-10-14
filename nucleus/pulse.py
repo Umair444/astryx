@@ -421,15 +421,18 @@ def tick():
     # 2026-07-25; the night-review fired at 7-9am PKT for two days).
     now = datetime.now().astimezone()
     with psycopg.connect(DSN, autocommit=True) as conn:
-        py_ok = reconcile(conn)        # False: astryx won't import, so python checks are left unclaimed (they'd
-        with conn.transaction():       # each crash on the same ImportError); they fire once it imports again
+        py_ok = reconcile(conn)
+        with conn.transaction():
             due = conn.execute(
                 """SELECT id, agent, name, schedule, kind, check_src, state, note, premium
-                   FROM triggers WHERE enabled AND next_fire <= now() AND (%s OR kind <> 'python')
-                   ORDER BY next_fire FOR UPDATE SKIP LOCKED""", (py_ok,)).fetchall()
+                   FROM triggers WHERE enabled AND next_fire <= now()
+                   ORDER BY next_fire FOR UPDATE SKIP LOCKED""").fetchall()
             cols = ["id", "agent", "name", "schedule", "kind", "check_src", "state",
                     "note", "premium"]
             due = [dict(zip(cols, r)) for r in due]
+            if not py_ok:              # astryx won't import: python checks stay unclaimed, clocks unadvanced (each
+                due = [t for t in due if t["kind"] != "python"]   # would crash on the same ImportError); they fire
+                                                                   # on the first tick it imports again
             for t in due:                          # advance clocks inside the claim
                 try:
                     nxt = croniter(t["schedule"], now).get_next(datetime)

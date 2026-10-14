@@ -26,7 +26,7 @@ astryx = "astryx.cli:main"
 Homepage = "https://github.com/Umair444/astryx"
 
 [tool.hatch.version]
-path = "src/astryx/__init__.py"
+path = "src/astryx/_version.py"
 
 [tool.hatch.metadata.hooks.custom]
 

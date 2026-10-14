@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Oracle: plan-10224 B1, the pulse's astryx-import CANARY. The root astryx.py is a shim over src/astryx/; mid-checkout
-git writes it before src/astryx/, and for that tick `import astryx` fails in every discover() child. Without the canary,
-reconcile read EVERY trigger file as broken: one "failed to load … DISABLES" wake per file, then the retirement loop
-switched every python trigger off. The pulse's real reconcile() and tick() run against a fixture database and a
-throwaway tree holding the shim, nucleus/pulse.py and two trigger files.
+"""Oracle: plan-10224 B1, the pulse's astryx-import CANARY. When `import astryx` fails in every discover() child (a
+checkout caught mid-write, a half-written astryx.py), reconcile used to read EVERY trigger file as broken: one "failed
+to load … DISABLES" wake per file, then the retirement loop switched every python trigger off. The pulse's real
+reconcile() and tick() run against a fixture database and a throwaway tree holding the shim, nucleus/pulse.py and two
+trigger files.
 
-  C1 control: with src/astryx beside the shim, every trigger registers enabled, and no alarm
-  C2 src/astryx gone: every trigger STAYS enabled, exactly ONE alarm (to the seed, naming the import error), and
-     zero per-file "failed to load" wakes
-  C3 a second broken tick coalesces: still one pending alarm
-  C4 tick() while broken leaves a DUE python check unclaimed (no "check crashed" wake, next_fire not advanced)
-  C5 src/astryx back: reconcile registers again, the due check is claimed
+  C1  control: with src/astryx beside the shim, every trigger registers enabled, and no alarm
+  C1b src/astryx gone (git writes astryx.py before src/astryx/): the shim alone still loads every trigger, no alarm
+  C2  astryx.py half-written (the import fails): every trigger STAYS enabled, exactly ONE alarm (to the seed, naming
+      the error), and zero per-file "failed to load" wakes
+  C3  a second broken tick coalesces: still one pending alarm
+  C4  tick() while broken leaves a DUE python check unclaimed (no "check crashed" wake, next_fire not advanced)
+  C5  astryx imports again: reconcile registers, the due check is claimed
 
 Needs a fixture database, else 77. Mutants: tests/mutants_pulse_import_canary.py.
 """
@@ -79,14 +80,22 @@ def main():
             arm("C1 control: both triggers register enabled, no alarm",
                 enabled() == {"zz_canary_a": True, "zz_canary_b": True} and msgs("%astryx import%") == 0, str(enabled()))
 
-            shutil.rmtree(TREE / "src")                     # the mid-checkout state: the shim, no src/astryx
+            shutil.rmtree(TREE / "src")                     # mid-checkout: the shim written, src/astryx/ not yet
+            ok = pulse.reconcile(c)
+            arm("C1b the shim with NO src/astryx still loads every trigger: enabled, no alarm (the shim is "
+                "self-sufficient)", ok is True and enabled() == {"zz_canary_a": True, "zz_canary_b": True}
+                and msgs("%astryx import%") == 0 and msgs("[trigger file %") == 0, f"{enabled()} ok={ok}")
+
+            good = (TREE / "astryx.py").read_bytes()        # a half-written astryx.py: the import itself fails
+            (TREE / "astryx.py").write_bytes(good[: len(good) * 2 // 3])
             ok = pulse.reconcile(c)
             alarm = c.execute("SELECT to_agent, body FROM messages WHERE from_agent='pulse' "
                               "AND body LIKE '[trigger astryx import]%'").fetchall()
-            arm("C2 src/astryx gone: every trigger STAYS enabled",
+            arm("C2 astryx won't import: every trigger STAYS enabled",
                 enabled() == {"zz_canary_a": True, "zz_canary_b": True} and ok is False, f"{enabled()} ok={ok}")
             arm("C2 ...exactly ONE alarm, to the seed, naming the import error",
-                len(alarm) == 1 and alarm[0][0] == "seed" and "ImportError" in alarm[0][1], str(alarm))
+                len(alarm) == 1 and alarm[0][0] == "seed" and "Error" in alarm[0][1] and "astryx.py" in alarm[0][1],
+                str(alarm))
             arm("C2 ...and no per-file 'failed to load' wake", msgs("[trigger file %") == 0,
                 str(msgs("[trigger file %")))
             pulse.reconcile(c)
@@ -101,10 +110,11 @@ def main():
             arm("C4 tick() while broken leaves the due python check unclaimed, no 'check crashed' wake",
                 row[0] is None and row[1] is True and msgs("%check crashed%") == 0, f"{row} crashed={msgs('%check crashed%')}")
 
+            (TREE / "astryx.py").write_bytes(good)
             shutil.copytree(REPO / "src" / "astryx", SRC, ignore=shutil.ignore_patterns("__pycache__"))
             pulse.tick()
             row = c.execute("SELECT last_eval FROM triggers WHERE agent='zzagent' AND name='zz_canary_a'").fetchone()
-            arm("C5 src/astryx back: still enabled, and the due check is claimed",
+            arm("C5 astryx imports again: still enabled, and the due check is claimed",
                 enabled() == {"zz_canary_a": True, "zz_canary_b": True} and row[0] is not None, f"{enabled()} {row}")
     finally:
         fxcm.__exit__(None, None, None)

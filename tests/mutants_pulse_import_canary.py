@@ -16,5 +16,5 @@ MUTANTS = {
     "K3 the alarm has no coalesce key (one per minute while broken)":
         ("            coalesce_key=\"astryx import\")", "            coalesce_key=None)"),
     "K4 tick still claims python checks while astryx won't import":
-        ("AND (%s OR kind <> 'python')", "AND (%s OR true)"),
+        ('            if not py_ok:  ', '            if False:  '),
 }

@@ -23,12 +23,12 @@ write-back. ctx.state is safe for throttling and baselines; for a side effect th
 must not duplicate, dedup on durable state — query the effect itself, or a column —
 not ctx.state.
 
-The repo-root shim (astryx.py) executes this file INTO its own namespace, so it stays
-import-light and uses no relative imports: the pulse imports it every minute, and both
-import paths must yield the one `_registry`.
+The repo-root shim (astryx.py) carries a byte-for-byte copy of `_registry` and `trigger`
+below, so the pulse's `import astryx` never depends on src/ (tests/test_astryx_registry.py
+pins the two as identical). Keep this import-light: the pulse imports it every minute.
 """
 
-__version__ = "0.1.0"
+from astryx._version import __version__  # noqa: F401
 
 _registry: list[dict] = []
 
