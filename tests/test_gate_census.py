@@ -131,12 +131,39 @@ check("a marker three lines up does NOT silence it", census(far)["far.py"] == ["
 bare = {"bare.py": "open('/tmp/astryx-fixed.log', 'w')   # shared-on-purpose:\n"}
 check("a marker with no reason does NOT silence it", census(bare)["bare.py"] == ["d"], str(census(bare)))
 
+print("TRACKED: a gitignored file a gate names is the owner's estate, never read")
+import subprocess  # noqa: E402
+with tempfile.TemporaryDirectory() as td:
+    t = Path(td)
+    ge = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    (t / "devtools").mkdir()
+    (t / "tests").mkdir()
+    (t / "devtools" / "check.sh").write_text('run "fx" "$PY" tests/test_fx.py\n')
+    (t / "tests" / "test_fx.py").write_text("# drives estate.py and owned.py\nimport subprocess\n")
+    (t / "estate.py").write_text("open('/tmp/astryx-estate-fixed.log', 'w')\n")
+    (t / "owned.py").write_text("open('/tmp/astryx-owned-fixed.log', 'w')\n")
+    (t / ".gitignore").write_text("estate.py\n")
+    subprocess.run(["git", "init", "-q", str(t)], env=ge, check=True)
+    subprocess.run(["git", "-C", str(t), "add", "-A"], env=ge, check=True)
+    from devtools import branch_check as real_bc                 # the real domain rules, pointed at the fixture repo
+    d = gc.domain(t, bc=real_bc)
+check("a TRACKED file the oracle names is in the domain (the control)", "owned.py" in d, str(sorted(d)))
+check("a GITIGNORED file the oracle names is not", "estate.py" not in d, str(sorted(d)))
+
 print("LIVE: the census over the real gate domain")
 dom = gc.domain(REPO)
 check(f"the domain is the gates' reach ({len(dom)} files), the pilot and voice-orb gates in it",
       len(dom) > 100 and "tests/pilot_browser_test.mjs" in dom and "tests/test_voice_orb.py" in dom)
-check("...TRANSITIVELY: runscope.py, which no gate names and only imports reach, is in it",
-      "src/astryx/pg/runscope.py" in dom)
+from devtools import branch_check as _bc                          # the SEEDS, re-derived: oracles + the files they name
+_idx, seeds = _bc._file_index(REPO), set()
+for _files in _bc.gate_files(REPO).values():
+    for _o in _files:
+        seeds.add(_o)
+        for _nm in _bc._NAMED_RX.findall((REPO / _o).read_text(errors="replace")):
+            seeds |= set(_idx.get(_nm, ()))
+beyond = sorted(dom - seeds)
+check(f"...TRANSITIVELY: {len(beyond)} file(s) no gate names, reached only by import, are in it", len(beyond) >= 10,
+      str(beyond[:5]))
 live = gc.scan(REPO, dom)
 check("no unmarked host-global resource in any gate's reach", not live,
       "; ".join(f"({f['class']}) {f['file']}:{f['line']}" for f in live[:6]))

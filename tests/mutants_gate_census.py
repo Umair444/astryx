@@ -49,4 +49,7 @@ MUTANTS = {
          '        if False:\n'),
     "the domain loses transitive imports":
         ('        todo.extend(bc._imports(repo, f, (repo / f).read_text(errors="replace")))\n', "        pass\n"),
+    "a gitignored estate file a gate names is read (merge_check links the estate in)":
+        ("        if f in reach or not (repo / f).is_file() or (mine is not None and f not in mine):\n",
+         "        if f in reach or not (repo / f).is_file():\n"),
 }

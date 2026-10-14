@@ -336,10 +336,23 @@ def _sh(rel: str, text: str) -> list:
 
 
 # ── domain ─────────────────────────────────────────────────────────────────────────────────────────────────────────
-def domain(repo: Path) -> set:
-    """Every file a gate reaches: branch_check's dark-list domain (oracles, files they name, transitive imports)."""
-    sys.path.insert(0, str(repo))
-    from devtools import branch_check as bc
+def tracked(repo: Path):
+    """The repo's TRACKED files, or None when git can't say (then nothing is filtered)."""
+    import subprocess
+    r = subprocess.run(["git", "-C", str(repo), "ls-files", "-z"], capture_output=True,
+                       env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
+    return set(r.stdout.decode(errors="replace").split("\0")) - {""} if r.returncode == 0 else None
+
+
+def domain(repo: Path, bc=None) -> set:
+    """Every TRACKED file a gate reaches: branch_check's dark-list domain (oracles, files they name, transitive imports).
+    A gitignored estate file a gate merely NAMES (merge_check links the estate in; 10-15: an owner's service a unit test
+    mentions by name) is the owner's, not the branch's: no branch can fix or mark it, and the census never reads it.
+    Residual, named: gitignored code a gate EXECUTES (triggers/) is outside this census."""
+    if bc is None:
+        sys.path.insert(0, str(repo))
+        from devtools import branch_check as bc
+    mine = tracked(repo)
     idx, reach, todo = bc._file_index(repo), set(), []
     for files in bc.gate_files(repo).values():
         for o in files:
@@ -349,7 +362,7 @@ def domain(repo: Path) -> set:
                 todo.extend(idx.get(nm, ()))
     while todo:
         f = todo.pop()
-        if f in reach or not (repo / f).is_file():
+        if f in reach or not (repo / f).is_file() or (mine is not None and f not in mine):
             continue
         reach.add(f)
         todo.extend(bc._imports(repo, f, (repo / f).read_text(errors="replace")))
