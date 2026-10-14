@@ -324,6 +324,26 @@ CREATE TABLE IF NOT EXISTS peers (
   notes      text
 );
 
+-- The relay (bridges/relay.py), used only when this gateway hosts one (ASTRYX_RELAY_HOST=1).
+-- A separate surface from peers/messages: orgs registered here are NOT peers of this org.
+CREATE TABLE IF NOT EXISTS relay_orgs (
+  org        text PRIMARY KEY,
+  pubkey     text NOT NULL UNIQUE,           -- Ed25519 hex; registration is signed by it
+  url        text,                           -- their own public gateway, if any
+  listed     boolean NOT NULL DEFAULT false, -- opted in to /relay/directory
+  registered_at timestamptz NOT NULL DEFAULT now(),
+  last_seen  timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS relay_mail (
+  id         bigserial PRIMARY KEY,
+  to_org     text NOT NULL,
+  from_org   text NOT NULL,
+  kind       text NOT NULL DEFAULT 'msg',    -- msg | hello
+  envelope   text NOT NULL,                  -- the sender-signed JSON, stored verbatim
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS relay_mail_to ON relay_mail (to_org, id);
+
 CREATE TABLE IF NOT EXISTS receipts (
   id         bigserial PRIMARY KEY,
   ts         timestamptz NOT NULL DEFAULT now(),

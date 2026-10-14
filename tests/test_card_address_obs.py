@@ -34,7 +34,7 @@ spec.loader.exec_module(mod)
 
 UTC = timezone.utc
 NOW = datetime(2026, 8, 14, 9, 0, tzinfo=UTC)
-IP = "182.180.56.152"
+IP = "198.51.100.23"  # RFC 5737 documentation address (the drift arm uses another)
 fails: list[str] = []
 
 

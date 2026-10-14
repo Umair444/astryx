@@ -97,8 +97,8 @@ def parse(text: str, source: str = "") -> list[dict]:
     category = ""
     subject: dict | None = None
     # Bullets in these files wrap across physical lines with 2-space indentation and no
-    # marker. Splitting line-by-line shears an entry in half — Salaar's entry lost "lives
-    # in Islamabad" and "colleague at his workplace" that way, so his facets came back
+    # marker. Splitting line-by-line shears an entry in half — one entry lost its
+    # second line (its place and its relation) that way, so its facets came back
     # empty while the facts sat one line below. Join first, using memgraph's joiner rather
     # than a second copy of the rule.
     from nucleus.memgraph import _logical_lines
@@ -168,7 +168,7 @@ def load(repo: Path | None = None) -> list[dict]:
 # phrase-introduced value — rather than a vocabulary of known answers.
 #
 # THIS IS A GENERALITY FIX, and the first cut was a real bug: `place` was
-# `(islamabad|isb|lahore|karachi|pkt)`. That works for exactly one org. astryx is meant to
+# a fixed list of the founding org's own city names. That works for exactly one org. astryx is meant to
 # be cloned, so anyone else running it would have got an empty facet axis and concluded
 # the feature was broken — a defect invisible from inside the org that wrote it. A rule
 # that only fires on data you already have is not a rule, it is a hardcoded answer.

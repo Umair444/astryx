@@ -104,7 +104,7 @@ def test_an_absent_name_is_unknown_not_the_jid():
 def test_an_unreachable_channel_is_UNREAD_not_EMPTY():
     """A channel that is down must not render as 'this person knows nobody'. Silence from a
     broken instrument is not a negative result — the same law that nearly had me report
-    'no Salaar found' from a usage message."""
+    'no such person found' from a usage message."""
     real = people._wa
     try:
         people._wa = lambda *a, **k: None

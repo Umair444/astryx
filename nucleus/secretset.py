@@ -38,6 +38,9 @@ NOT_SECRET = frozenset({
     # hearing (plan-8674 S1): switches and tuning for the ear; none is a credential
     "EAR_ENABLED", "EAR_ROOM", "EAR_STT_BACKEND", "EAR_STT_MODEL", "EAR_STT_BEAM", "EAR_TTL_DAYS", "EAR_QUEUE_MAX",
     "GMAIL_ADDRESS",        # an identifier (tier question, not a credential): see plan-5497 BC-b
+    # distribution (plan-10224): which repo is upstream and whether this org IS it, the federation relay's
+    # public URL, and the docker bridge address; switches and public locations, none grants anything
+    "ASTRYX_UPSTREAM", "ASTRYX_UPSTREAM_ROLE", "ASTRYX_RELAY", "ASTRYX_DOCKER_HOST_IP",
     # a URL query value is secret by default; these name ONE parameter ("<KEY>:<param>") whose
     # value is an ordinary word (it appears in the tree's own code) and grants nothing
     "AUTOREMOTE_GETLOC_URL:message",

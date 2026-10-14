@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "astryx"
+description = "An org of Claude Code agents: a postgres wire, a pulse, and a seed that builds the rest."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+authors = [{ name = "Umair Bin Fiaz" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+]
+# dependencies and extras are DERIVED from nucleus/deps.conf (the one dependency authority) by
+# hatch_build.py: core + cli -> dependencies; media, discord, dev -> extras. Never list them here.
+dynamic = ["version", "dependencies", "optional-dependencies"]
+
+[project.scripts]
+astryx = "astryx.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Umair444/astryx"
+
+[tool.hatch.version]
+path = "src/astryx/_version.py"
+
+[tool.hatch.metadata.hooks.custom]
+
+# The ALLOWLIST. The wheel holds the astryx package, plus the org's runtime tree under
+# astryx/_data/tree, which hatch_build.py adds from git-TRACKED files filtered by
+# src/astryx/_data/manifest.py: never tests/, harness/, docs/, homes/, nor anything gitignored.
+[tool.hatch.build.targets.wheel]
+packages = ["src/astryx"]
+exclude = ["src/astryx/_data/tree"]
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+
+[tool.hatch.build.targets.sdist]
+only-include = ["pyproject.toml", "hatch_build.py"]
+
+[tool.hatch.build.targets.sdist.hooks.custom]
