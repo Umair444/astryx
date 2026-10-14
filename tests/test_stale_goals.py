@@ -280,6 +280,17 @@ if fx is not None:
         # after the goal's "-2h" ts — that sliver is correctly counted; a minute is the honest bound
         check("REAL SQL: a goal whose evidence follows the gaps is discounted (sub-minute) nothing",
               d_new is not None and d_new < 1 / 60, f"dark_h={d_new}")
+        # the pulse-DOWN alarm writes INSIDE an outage: its rows must not bridge the gap they are reporting
+        for ago in ("4 days 12 hours", "4 days 4 hours", "3 days 20 hours", "2 days 12 hours", "2 days 6 hours",
+                    "1 day 12 hours", "1 day", "12 hours", "6 hours"):
+            conn.execute("INSERT INTO messages (from_agent, to_agent, body, ts) VALUES "
+                         "('pulse-witness','owner','pulse looks DOWN', now() - %s::interval)", (ago,))
+        cap.clear()
+        fire(SpyCtx({}, conn))
+        by = {r["id"]: r for r in cap}
+        d_w = float(by[g_old]["dark_s"]) / 3600 if g_old in by else None
+        check("REAL SQL: pulse-witness alarm rows written DURING an outage do not bridge its gaps (10-12 outage)",
+              d_w is not None and abs(d_w - (44 + 67)) < 1.5, f"dark_h={d_w}")
         conn.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body, ts) VALUES "
                      "('abstractor-4','steward',%s,'milestone','end MET', now() - interval '30 hours'), "
                      "('abstractor-4','seed',%s,'chat','not evidence', now() - interval '29 hours'), "
