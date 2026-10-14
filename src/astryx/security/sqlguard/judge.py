@@ -133,7 +133,7 @@ def judge(trace_dir, inv=None, covering=None, stored_covering=None):
                 if tf:
                     extractors.setdefault(tf, set()).add(r.get("gate", ""))
     for r in recs:
-        if not is_site(r["t"]):
+        if not is_site(r["t"], form="statement"):
             continue
         key, text, kind = attribute(r, fns, inv.get("oracle"))
         if kind == "oracle":

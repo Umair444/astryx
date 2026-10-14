@@ -208,6 +208,7 @@ echo "$ASTRYX_SQLGUARD_RUN" > "$ASTRYX_SQLGUARD_DIR/run_id"
 # RESPONSIVE, the whole sqlguard verdict is NOT SEARCHED (a check that can't observe says so).
 run "sqlguard canary: the shim observes through the real Ctx.sql" "$PY" -m astryx.security.sqlguard.canary
 run "sqlguard oracle: privacy (P1) + controls"          "$PY" tests/test_sqlguard.py
+run "sqlguard site forms: a bare verb is no statement, every caller names its form, drops only by safe use" "$PY" tests/test_sqlguard_forms.py
 # a3 night-review 10-09: a range that re-texts a LISTED SQL literal without moving its ledger row is RED before
 # merge, statically (plan-4918 was backed out twice for exactly that). Hermetic, ~2s. Reviewers run the tool:
 #   venv/bin/python -m astryx.security.sqlguard.rekey <base> <head>

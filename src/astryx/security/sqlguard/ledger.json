@@ -694,7 +694,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 328,
+  "debt_rows": 321,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 5,
@@ -1103,16 +1103,6 @@
    "reason": "seed",
    "tk": "sha256t:bb31629bdfe3375ce75c97f738a22c305d6dda433d30371e55a1cd39986a6471"
   },
-  "observatory/api/main.py::_is_read\u001fselect": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:3d5feb5ad6ee23a01b7888d7f0193f9ce848ae3d7befcc87274396fda99df74d"
-  },
-  "observatory/api/main.py::_is_read\u001fwith": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:e47be9981e67eb532f1b577e6a4caff9fb96a8e363fb2c91db1b9c764d4681db"
-  },
   "observatory/api/main.py::agent_profile\u001fselect * from presence where agent=?": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
@@ -1180,11 +1170,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:51aee8803385dca2630884b747ab7565d4a2b8b2bd20de88ed3d2593a3d4ca74"
-  },
-  "observatory/api/main.py::db_query\u001fselect": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:3d5feb5ad6ee23a01b7888d7f0193f9ce848ae3d7befcc87274396fda99df74d"
   },
   "observatory/api/main.py::db_schema\u001fselect table_schema as schema, table_name as name, table_type as type from information_schema.tables where table_schema not in ('pg_catalog','information_schema') order by table_schema, table_name": {
    "debt": "UNEXECUTED",
@@ -1333,16 +1318,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:51aee8803385dca2630884b747ab7565d4a2b8b2bd20de88ed3d2593a3d4ca74"
-  },
-  "observatory/api/main.py::network_cypher\u001fdelete": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:db9fba56574ee17f5f6c2d9e66da2916bc61a717742205489a1fd4884129fb36"
-  },
-  "observatory/api/main.py::network_cypher\u001fmerge": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:0feeb67bffbb7962181d56ffab13cbf4ca0a35cb5b38309faf8d47ee20d47f1b"
   },
   "observatory/api/main.py::network_people\u001fselect a.org, a.src as p1, b.src as p2, count(*) as w from social_edge a join social_edge b on a.org=b.org and a.dst=b.dst and a.src < b.src where a.rel='member-of' and b.rel='member-of' group by 1,2,3 having count(*) >= ?": {
    "debt": "UNEXECUTED",
@@ -1965,18 +1940,6 @@
    "debt": "EXECUTED",
    "reason": "seed",
    "tk": "sha256t:f28d85f59e68ca0b0a26d60dff0ef56860fbcdb27ddc9bc11065b450f25577e2"
-  },
-  "src/astryx/hands/hands_desktop.py::<module>\u001fdelete": {
-   "admitted": "2026-10-10",
-   "debt": "UNEXECUTED",
-   "reason": "X keysym NAME \"Delete\" in the hands key map (KEYSYMS/KEY_ALIASES), not SQL: same false positive as its \"insert\" row (a3 #42104)",
-   "tk": "sha256t:9d276263eacfa29aba75268f8de8c3672dda1c6028aa48012525673309aa8169"
-  },
-  "src/astryx/hands/hands_desktop.py::<module>\u001finsert": {
-   "admitted": "2026-10-10",
-   "debt": "UNEXECUTED",
-   "reason": "X keysym NAME \"insert\" in the hands key map (KEYSYMS/KEY_ALIASES), not SQL: the inventory reads the bare word as an INSERT literal (a3 #42104)",
-   "tk": "sha256t:a0a22b6020deb2fb2d4d1d56e1cb07728283151b748990244933a502c7ec6115"
   },
   "src/astryx/hearing/ear_store.py::main\u001fselect to_regclass('public.utterances')": {
    "admitted": "2026-10-10",

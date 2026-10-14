@@ -744,9 +744,8 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
     arm("a RESPONSIVE read on LIVE data is marked live_only; a stamped-fixture one is not",
         lo("data_const") == [True] and lo("v3_twin_a") == [False], f"{lo('data_const')} {lo('v3_twin_a')}")
     _, NS, err = _py(tmp, _env(tmp, run), "-c", "import json; from astryx.security.sqlguard.normalize import is_site; print(json.dumps("
-                     "[is_site('merge-base'), is_site('update-index'), is_site('MERGE INTO t USING s ON true'), "
-                     "is_site('select(1)'), is_site('SELECT 1'), is_site('SELECT*FROM t'), is_site('SELECT/*c*/1'), "
-                     "is_site('select\"c\" from t')]))")
+                     "[is_site(t, form='statement') for t in ('merge-base', 'update-index', 'MERGE INTO t USING s ON true', "
+                     "'select(1)', 'SELECT 1', 'SELECT*FROM t', 'SELECT/*c*/1', 'select\"c\" from t')]))")
     arm("a site keyword must END its token: CLI argv 'merge-base'/'update-index' are not sites (steward #26944)",
         NS == [False, False, True, True, True, True, True, True], str(NS or err))
     arm("computed-DATA constant via Ctx.sql is GREEN (RESPONSIVE)", _rung(S, "data_const") == "RESPONSIVE",
