@@ -46,11 +46,13 @@ def _run(cmd: list[str], timeout: int = 15) -> str | None:
 def _open_items() -> list[str] | None:
     """Open PRs (preferred) or unreviewed medic/* branches. None = cannot observe."""
     out = _run(["gh", "pr", "list", "--state", "open",
-                "--json", "number,title,headRefName"])
+                "--json", "number,title,headRefName,isCrossRepository"])
     if out is not None:
         try:
+            # a PR from a FORK is an outsider's code: never this protocol's "run check.sh, merge". It is
+            # upstream_prs's, triaged by medic as text until seed decides (goal 10224 S6).
             return [f"PR #{p['number']} ({p['headRefName']}): {p['title'][:80]}"
-                    for p in json.loads(out)]
+                    for p in json.loads(out) if not p.get("isCrossRepository")]
         except Exception:
             return None
     # no gh / no remote: medic branches ahead of main are the review queue

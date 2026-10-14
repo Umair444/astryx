@@ -742,20 +742,34 @@ from nucleus.shipped_triggers.agent_heal import agent_heal  # noqa: F401
 EOF2
   say "installed agent heal (seed): a resident whose body dies is respawned within a minute"
 }
+# upstream_prs (goal 10224 S6, owner 10-14): in the org that IS the upstream astryx repo, each outside PR (new, or a new
+# head) reaches medic once, its body fenced as DATA. Gated: origin == ASTRYX_UPSTREAM and ASTRYX_UPSTREAM_ROLE=upstream
+# (env or .env; a plain clone has the same origin, so the role is the owner's declaration). Deferential like ccompact.
+_upstream_here() { venv/bin/python -m nucleus.upstream_pr --is-upstream >/dev/null 2>&1; }
+_chk_upstreamprs() { _upstream_here || return 0; _trigger_chk upstream_prs; }
+_act_upstreamprs() {
+  mkdir -p triggers/seed
+  cat > triggers/seed/upstream_prs.py <<'EOF2'
+"""Live install of the shipped upstream PR watch (one writer: nucleus/shipped_triggers/upstream_prs.py). To retire it:
+`trigger_rm upstream_prs` (a tombstone the pulse honours). Deleting this file does NOT retire it: init.sh would reinstall."""
+from nucleus.shipped_triggers.upstream_prs import upstream_prs  # noqa: F401
+EOF2
+  say "installed the upstream PR watch (seed): each outside PR to this repo reaches medic for triage"
+}
 
 # the precondition DAG, in dependency order (top depends on nothing).  name|class
 RECONCILE_NODES=(
   "pg|interior" "pgready|wait" "schema|interior" "harden|interior" "hardencut|halt" "venv|interior" "deps|interior"
   "peoplegate|interior" "derivedgraphs|interior" "geoschema|interior" "model|interior" "chan|interior" "obs|interior" "obskey|interior" "ident|interior"
   "units|interior" "law|interior" "prehook|interior" "ccompact|interior" "prreview|interior" "androidlic|halt"
-  "android|interior" "phonesweep|interior" "winidle|interior" "agentheal|interior" "login|halt"
+  "android|interior" "phonesweep|interior" "winidle|interior" "agentheal|interior" "upstreamprs|interior" "login|halt"
   "seed|interior" "prompt|interior")
 
 # >>> trigger reinstall
 # The shipped triggers init.sh installs, name|node. `./init.sh --reinstall N` is the owner's exit from a DEFERRED name
 # (doctor says when): it clears seed's tombstone for N (a creator of (seed, N) erases it, a3 BC-2) and installs N unless
 # it is installed already or this host doesn't use it (the node's own gate).
-TRIGGER_NODES=("context_compact|ccompact" "pr_review|prreview" "phone_resume_sweep|phonesweep" "windows_idle_stop|winidle" "agent_heal|agentheal")
+TRIGGER_NODES=("context_compact|ccompact" "pr_review|prreview" "phone_resume_sweep|phonesweep" "windows_idle_stop|winidle" "agent_heal|agentheal" "upstream_prs|upstreamprs")
 reinstall_trigger() {
   local n=$1 node="" e st
   for e in "${TRIGGER_NODES[@]}"; do [ "${e%%|*}" = "$n" ] && node=${e##*|}; done
