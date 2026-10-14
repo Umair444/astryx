@@ -107,6 +107,7 @@ except ValueError:
 # ── H + D: through the inventory, on fixture files ──────────────────────────────────────────────────────────────
 FIX = '''
 Q = "DELETE " + TBL
+VERB = "insert"
 
 
 def h_concat(cur, tbl):
@@ -162,6 +163,18 @@ def unsafe_wrapper(db, t):
 def unsafe_but_star(cur, t):
     q = "DELETE "
     cur.execute("UPDATE " + t)
+
+
+def concat_resolved(cur):
+    cur.execute(VERB + " INTO t VALUES (1)")
+
+
+def concat_open(cur, tbl):
+    cur.execute(VERB + " INTO " + tbl)
+
+
+def wrap_const(w):
+    w(VERB)
 '''
 with tempfile.TemporaryDirectory() as td:
     f = Path(td) / "fx.py"
@@ -184,6 +197,12 @@ def d5_red(functions):
 red = d5_red(F)
 for n in ("unsafe_augassign", "unsafe_join", "unsafe_wrapper"):
     want(f"D {n}: a bare verb used as a value (no `*` row) → RED, named", f"fx.py::{n}" in red, str(red))
+want("D concat_resolved: a const verb in a `+` chain that resolves is that chain's site, not a lone flag (a4 #52387 (a))",
+     "insert into t values (1)" in fn("concat_resolved")["sites"] and not fn("concat_resolved").get("bare_unsafe"),
+     str(fn("concat_resolved")))
+for n in ("concat_open", "wrap_const"):
+    want(f"D {n}: ...but where nothing else records it, the const verb's own flag stands → RED", f"fx.py::{n}" in red,
+         str(fn(n)))
 want("D unsafe_but_star: the same use WITH a `*` row is covered (not RED)", "fx.py::unsafe_but_star" not in red,
      str(fn("unsafe_but_star")))
 
@@ -332,9 +351,10 @@ for p in _py(REPO):
         by_file[rel] = sorted((form, arg) for _, form, arg in calls)
 want(f"C1 every is_site call in the repo and estate passes form= ({seen} calls), and nothing matches _SITE "
      f"outside normalize.py", not problems, "; ".join(problems[:4]))
-want("C2 the four callers pass D1's forms: inventory module-constant + composed-string heads, its statement caller; judge statement",
+want("C2 the five callers pass D1's forms: inventory module-constant + composed-string heads, its statement caller and the "
+     "resolved-concat check (a4 (a)); judge statement",
      by_file.get("src/astryx/security/sqlguard/inventory.py") == sorted([("head", "_head(st.value)"), ("head", "_head(n)"),
-                                                            ("statement", "text")])
+                                                            ("statement", "text"), ("statement", "text")])
      and by_file.get("src/astryx/security/sqlguard/judge.py") == [("statement", "r['t']")],
      f"{by_file.get('src/astryx/security/sqlguard/inventory.py')} {by_file.get('src/astryx/security/sqlguard/judge.py')}")
 sig = next((n for n in ast.walk(ast.parse(Path(nz.__file__).read_text()))

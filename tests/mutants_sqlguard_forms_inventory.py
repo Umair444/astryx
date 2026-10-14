@@ -49,4 +49,10 @@ MUTANTS = {
          "twins = {d for d in dirnames if _common_dir(Path(dirpath) / d) is not None}"),
     "a pruned checkout is not declared":
         ("        OTHER_CHECKOUTS.update(", "        set().update("),
+    "a const verb in a RESOLVED `+` chain is flagged again (a4 #52387 (a): fail-closed noise)":
+        ("            elif is_bare_verb(text) and not _bare_use_safe(n) and not _in_resolved_concat(n):\n",
+         "            elif is_bare_verb(text) and not _bare_use_safe(n):\n"),
+    "every const Name in a `+` chain is exempt, resolved or not (the open composition's only trace is lost)":
+        ("        text = _resolve(top, consts)\n        return text is not None and is_site(text, form=\"statement\")\n",
+         "        return True\n"),
 }

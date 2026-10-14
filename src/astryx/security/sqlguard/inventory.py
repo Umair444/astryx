@@ -282,6 +282,24 @@ def inventory_file(path: Path, rel: str):
                 return True
         return False
 
+    def _composed(n):
+        p = parent.get(id(n))
+        return (isinstance(p, ast.Attribute) and p.attr == "format") \
+            or (isinstance(p, ast.BinOp) and isinstance(p.op, ast.Mod) and p.left is n) \
+            or (isinstance(p, ast.Call) and getattr(p.func, "attr", getattr(p.func, "id", "")) == "SQL")
+
+    def _in_resolved_concat(n) -> bool:
+        """a4 #52387 note (a): a bare-verb const Name inside a `+` chain that RESOLVES to a statement is recorded by that
+        chain's site, so it isn't a lone trace. Only then: `VERB + " INTO " + tbl` doesn't resolve, and `_head` reads no
+        Name, so the Name's own flag is that composition's only trace and must stand."""
+        top = n
+        while isinstance(parent.get(id(top)), ast.BinOp) and isinstance(parent[id(top)].op, ast.Add):
+            top = parent[id(top)]
+        if top is n or _composed(top):
+            return False
+        text = _resolve(top, consts)
+        return text is not None and is_site(text, form="statement")
+
     def _collect(fn, skip=frozenset()):
         sites, unresolved, bare_unsafe = {}, [], []
         for n in _own_nodes(fn):
@@ -317,7 +335,7 @@ def inventory_file(path: Path, rel: str):
                 continue
             if is_site(text, form="statement"):
                 sites.setdefault(norm(text), {"line": getattr(n, "lineno", 0), "write": is_write(text)})
-            elif is_bare_verb(text) and not _bare_use_safe(n):
+            elif is_bare_verb(text) and not _bare_use_safe(n) and not _in_resolved_concat(n):
                 bare_unsafe.append(getattr(n, "lineno", 0))   # maybe a composed query's only trace: needs a `*` row
         out = {"sites": sites, "unresolved": sorted(set(unresolved))}
         if bare_unsafe:
