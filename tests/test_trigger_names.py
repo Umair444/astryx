@@ -11,7 +11,8 @@ and is checked against the PULSE's own discover() (`pulse.py --names`), the sema
   S  states: S1 absent (control) exit 2; S2 RETIRED per TARGET agent (a3 BC-1): another agent's tombstoned copy
      doesn't retire seed's, seed's own tombstone does (exit 1); an untombstoned copy elsewhere is installed (exit 0)
   L  legacy: a python row with no file and no tombstone → DEFERRED (exit 3) naming the agent and BOTH exits; its
-     tombstone → absent; a non-python row is never legacy (a2 G3)
+     tombstone → absent; a non-python row is never legacy (a2 G3); L3 the row read in-process on the stamped
+     fixture at 0 and ≥1 rows (sqlguard's RESPONSIVE witness for _python_rows, steward #50564)
   D  the table unreadable → would-be-absent names DEFER; installed ones still read installed
   E  import-safe with no .env and no ASTRYX_DSN (a4 #49617): it answers (deferred), never crashes
   B  a1 BC-1: every construct the model doesn't positively understand makes the file BLIND → DEFERRED (17 fixtures,
@@ -193,6 +194,21 @@ try:
             want("L1 ...its tombstone settles it: absent", rc == 2 and out.startswith("absent"), f"{rc} {out}")
             rc, out, _ = state("zz_hb", dsn=DSN)
             want("L2 a NON-python row is never legacy (a2 G3): absent", rc == 2 and out.startswith("absent"), f"{rc} {out}")
+            # L3: the row read itself, IN THIS PROCESS on the stamped fixture (sqlguard credits the repo's own file; the
+            # CLI above runs a tree copy): a python row → its agent; none → []; a heartbeat row is never returned
+            import importlib.util
+            _spec = importlib.util.spec_from_file_location(
+                "trigger_names_rows", os.environ.get("TRIGGER_NAMES_SRC") or REPO / "nucleus/trigger_names.py")
+            _tn = importlib.util.module_from_spec(_spec)
+            _spec.loader.exec_module(_tn)
+            _was = os.environ.get("ASTRYX_DSN")
+            os.environ["ASTRYX_DSN"] = DSN
+            try:
+                one, none, hb = (_tn._python_rows(n, T) for n in ("zz_legacy", "zz_none", "zz_hb"))
+            finally:
+                os.environ.pop("ASTRYX_DSN", None) if _was is None else os.environ.update(ASTRYX_DSN=_was)
+            want("L3 the python-row read: ≥1 row → its agent, 0 rows → [], a heartbeat row never (W: both counts)",
+                 one == ["ghost"] and none == [] and hb == [], f"{one} {none} {hb}")
             # ── D: the table unreadable ────────────────────────────────────────────────────────────────────────────
             rc, out, _ = state("zz_none", dsn=NODSN)
             want("D1 the table unreadable → a would-be-absent name DEFERS", rc == 3 and "can't be read" in out,
