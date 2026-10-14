@@ -384,6 +384,8 @@ run "hands caps: per-agent step + wall caps, idle reset, atomic, charged before 
 run "hands errors: a failed tool says its exit code or signal, never an empty error (the canopus grim report)" "$PY" tests/test_hands_run_errors.py
 # every org's database is localhost-only (owner 10-10): doctor's _pg_exposure, with ss that can't answer → UNVERIFIED
 run "doctor: postgres localhost-only, unverified when ss can't answer" bash tests/test_doctor_pg_exposure.sh
+# goal 10224 S3: doctor's WSL/systemd checks, the docker host address order, install.sh's dry-run (installs nothing)
+run "install + platform: WSL/systemd doctor checks, docker host address order, install.sh dry-run runs nothing" bash tests/test_install_platform.sh
 # turns retention (owner 10-10: "add retention to save space"): old turns lose image bytes, keep their words
 run "turns retention: old images stripped, words kept, recent untouched, idempotent" "$PY" tests/test_turns_retention.py
 # deploy.sh restart's failure paths, all side effects stubbed: a refusing spawn is a named ✗, the run continues,

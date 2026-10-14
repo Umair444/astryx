@@ -17,6 +17,7 @@ arm() { if eval "$2"; then echo "  PASS  $1"; else echo "  FAIL  $1"; fails=$((f
 setup() {   # $1: npm rc, $2: systemctl-restart rc, $3: uid the stub `id` reports
   rm -rf "$T/root" "$T/bin"; mkdir -p "$T/root/nucleus" "$T/root/observatory/web" "$T/bin"
   cp "$REPO/nucleus/deploy.sh" "$T/root/nucleus/deploy.sh"
+  cp "$REPO/nucleus/docker_host_ip.sh" "$T/root/nucleus/docker_host_ip.sh"   # deploy.sh sources it (goal 10224 S3)
   : > "$T/log"
   printf '#!/usr/bin/env bash\necho "npm $* as=${STUB_AS:-self}" >> "%s"\nexit %s\n' "$T/log" "$1" > "$T/bin/npm"
   # $2: restart rc for EVERY unit, or "first" = only astryx-observatory's restart fails (the `all` arm, a2 R1)

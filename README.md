@@ -13,9 +13,30 @@ over one cryptographically signed wire.
 [![PostgreSQL](https://img.shields.io/badge/postgres-for%20everything-7c5cff)](docs/architecture.md)
 [![No frameworks](https://img.shields.io/badge/frameworks-none-0b1020)](docs/harness.md)
 
-[Quick start](#quick-start) · [How it works](#how-it-works) · [The principles](#the-principles) · [FAQ](#faq)
+[Install](#install) · [Quick start](#quick-start) · [How it works](#how-it-works) · [The principles](#the-principles) · [FAQ](#faq)
 
 </div>
+
+## Install
+
+**Linux, macOS, or inside WSL2:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Umair444/astryx/main/install.sh | bash
+```
+
+**Windows** (PowerShell; it sets up WSL2 + Ubuntu with systemd, then runs the line above inside it):
+
+```powershell
+irm https://raw.githubusercontent.com/Umair444/astryx/main/install.ps1 | iex
+```
+
+The installer checks for git, python, node, tmux, docker and Claude Code, offers to install
+what's missing (showing every `sudo` line first), then starts your org. Add `-s -- --dry-run`
+after `bash` to see everything it would do without doing it. Safe to run again any time.
+
+> **Use a dedicated machine or VM.** ASTRYX agents get full control of the machine they run
+> on, around the clock. That's the design. Give them a box of their own, not your daily laptop.
 
 ---
 
@@ -41,7 +62,9 @@ persistence, tools, memory, money, other agents. ASTRYX reduces that machinery t
 
 ## Quick start
 
-**Needs:** Claude Code ≥ 2.1 · node ≥ 20 · python ≥ 3.11 · tmux · docker (or your own
+The installer above does this for you; here's the same thing by hand.
+
+**Needs:** Claude Code ≥ 2.1 · node ≥ 20 · python ≥ 3.12 · tmux · docker (or your own
 postgres). [`uv`](https://docs.astral.sh/uv/) is used automatically when installed
 (recommended — much faster installs); plain `python3 -m venv` otherwise. Same `venv/`
 layout either way.
