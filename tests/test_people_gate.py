@@ -46,7 +46,7 @@ try:
 except Exception as e:                                              # noqa: BLE001
     skip(f"{type(e).__name__}: {e} — needs the org runtime")
 
-from nucleus.sqlguard.fixture import FixtureUnavailable, fixture_db, live_dsn  # noqa: E402
+from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db, live_dsn  # noqa: E402
 
 PID = os.getpid()
 NAME = re.compile(r"^astryx_pgate_(\d+)_(res|clr|mem|inr|inc|priv|net)$")
@@ -122,9 +122,10 @@ def _load(mod, env):
     src = os.environ.get(env)
     if not src:
         return None
-    spec = importlib.util.spec_from_file_location(f"nucleus.{mod}", src)
+    from astryx._reorg import legacy_module           # goal 10224 S4: the mutant replaces the MOVED module too
+    spec = importlib.util.spec_from_file_location(legacy_module(f"nucleus.{mod}"), src)
     m = importlib.util.module_from_spec(spec)
-    sys.modules[f"nucleus.{mod}"] = m
+    sys.modules[f"nucleus.{mod}"] = sys.modules[legacy_module(f"nucleus.{mod}")] = m
     spec.loader.exec_module(m)
     return m
 
@@ -137,9 +138,9 @@ M = _load("people_move", "PEOPLE_MOVE_SRC")
 # STATIC imports when no mutant is handed in: branch_check reads an oracle's imports to know which modules it RUNS,
 # so a sandbox-dark run of this oracle (no CREATEROLE) excuses these subjects' sites by name (a3 #38259)
 if G is None:
-    from nucleus import people_gate as G  # noqa: E402
+    from astryx.people import people_gate as G  # noqa: E402
 if M is None:
-    from nucleus import people_move as M  # noqa: E402
+    from astryx.people import people_move as M  # noqa: E402
 
 reap(admin)
 PW = {r: secrets.token_urlsafe(18) for r in (RES, MEM)}
@@ -169,7 +170,7 @@ def age_db(name):
 
 
 def cypher(dsn, graph, q, cols="r agtype"):
-    from nucleus import agelib
+    from astryx.memory import agelib
     with psycopg.connect(dsn, autocommit=True, connect_timeout=5) as c:
         agelib.prepare(c)
         return c.execute(f"SELECT * FROM cypher('{graph}', $q${q}$q$) AS ({cols})").fetchall()
@@ -303,7 +304,7 @@ try:
         want("MOVE: social_relation holds exactly the moved values (relation->kind, who->context, shape->evidence),"
              " a NULL source never overwrites a value already there (pC), and the kept conflict stays (pB)",
              got == expect, str(got))
-        from nucleus import social_age
+        from astryx.memory import social_age
         r = social_age.rebuild(base=fx["dsn"], social=make_conninfo(ADMIN_DSN, dbname=NET),
                                private=make_conninfo(ADMIN_DSN, dbname=PRIV), resident=RES, cleared=CLR)
         want("the rebuild projects both graphs", r.get("private") == len(DETAILED) and r["knows"] == 3, str(r))
@@ -386,7 +387,7 @@ try:
 
         # CUTOVER: the writers, pointed at the fixture.
         os.environ["ASTRYX_DSN"], os.environ["ASTRYX_ORG"] = fx["dsn"], ORG
-        from nucleus import people, persona
+        from astryx.people import people, persona
         real_wa = people._wa
         people._wa = lambda *a, **k: None                   # main's write_pg ends in dm_refresh: never the live wacli
         try:
@@ -410,7 +411,7 @@ try:
              and back["pA"]["relation"] == "close-friend", f"{n} {back.get('pA')} {back.get('pD')}")
         # persona_llm, with the channel and the model stubbed: it labels an UNLABELLED person into social_relation
         # and skips a labelled one, and never writes social_person.
-        from nucleus import persona_llm
+        from astryx.people import persona_llm
         jids = {"pA@s.whatsapp.net": "pA", "pD@s.whatsapp.net": "pD"}
         real = people._wa, people.pid, persona_llm.classify
         people.pid = lambda j: jids[j]

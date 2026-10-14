@@ -9,7 +9,7 @@ updated while you watch and click), and VOICE on top. Design attacked by abstrac
              ATOMIC claim (UPDATE … FOR UPDATE SKIP LOCKED RETURNING) -> SSE to the viewer's tabs.
              Delivered = stored in the viewer's canvas inbox, readable on next open.
   progress   steps of an agent the viewer is waiting on stream as live lines (common.step_line)
-  canvases   nucleus/canvas.py is the ONE writer (agents via CLI, this app via import). The
+  canvases   src/astryx/core/canvas.py is the ONE writer (agents via CLI, this app via import). The
              astryx_canvas doorbell (ids only) fans version/data changes out over SSE.
 
 TRUST (one line each, the reasons live in a1 #35009):
@@ -43,8 +43,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from nucleus import canvas as cv
-from nucleus import presence as pres
+from astryx.core import canvas as cv
+from astryx.core import presence as pres
 from .canvas_shell import render
 from .common import (MEDIA_DIR, REPO, agent_exists, describe_media, env, media_path, route_target,
                      step_line, wire_insert)
@@ -126,7 +126,7 @@ def deny(code=403, msg="forbidden"):
 
 
 async def sync(fn, *args):
-    """Run a nucleus.canvas operation (psycopg, sync) in a worker thread, in one transaction."""
+    """Run a astryx.core.canvas operation (psycopg, sync) in a worker thread, in one transaction."""
     def go():
         with psycopg.connect(DSN) as conn:
             out = fn(conn, *args)
@@ -377,7 +377,7 @@ async def logout(request: Request):
 
 
 def _roster() -> list[str]:
-    from nucleus import charter
+    from astryx.core import charter
     return charter.roster()
 
 
@@ -568,7 +568,7 @@ def _upload_dir(handle: str) -> Path:
 
 def _never_served(path: Path) -> bool:
     """The floor under every file the canvas hands out: the org's declared secret holders
-    (nucleus/secret_holders.json) and the privacy invariants (CLAUDE.md) — whoever asks, whoever
+    (src/astryx/data/secret_holders.json) and the privacy invariants (CLAUDE.md) — whoever asks, whoever
     embedded it."""
     home = Path.home()
     # the host's credential stores too: the Claude OAuth token every resident runs on (~/.claude), the
@@ -579,7 +579,7 @@ def _never_served(path: Path) -> bool:
     dirs += [d for d in (REPO / "homes").glob("*/.people")]
     files = {REPO / ".env", REPO / "local.md", REPO / "relations.md", REPO / "owner.md", home / ".pgpass"}
     try:
-        from nucleus import secretset
+        from astryx.security import secretset
         for h in secretset.holders().get("holders", []):
             if not str(h.get("path", "")).startswith("docker:"):
                 files.update(secretset._expand(h["path"]))
@@ -799,8 +799,8 @@ async def new_canvas(body: NewCanvas, request: Request):
     await _say(v, f"cv:canvas-{cid}", agent,
                f"NEW CANVAS #{cid} — \"{body.title.strip()}\" (tier {body.tier}) for {v.wire}.\n"
                f"Brief: {brief}\n\n"
-               f"Paint it: `venv/bin/python nucleus/canvas.py guide` (the contract — read it first), then "
-               f"`nucleus/canvas.py publish {cid} page.html`. Live values: `canvas.py set {cid} <key> <json>`. "
+               f"Paint it: `venv/bin/python src/astryx/core/canvas.py guide` (the contract — read it first), then "
+               f"`src/astryx/core/canvas.py publish {cid} page.html`. Live values: `canvas.py set {cid} <key> <json>`. "
                f"Reply on this thread (to {v.wire}) when it is up; the viewer is watching it paint.",
                intent="task")
     c = await pool.fetchrow("SELECT *, version AS ver FROM canvases WHERE id=$1", cid)
@@ -931,15 +931,15 @@ async def canvas_ask(cid: int, body: Ask, request: Request):
         await _say(v, f"cv:canvas-{cid}", agent,
                    f"[canvas #{cid} \"{c['title']}\" v{c['ver']}] {text}{_describe(el)}\n\n"
                    f"(The viewer is watching: your avatar is already over that spot. Narrate with "
-                   f"`nucleus/presence.py focus canvas:{cid} --target '<selector>' --say '…'` as you move; "
-                   f"publish with `nucleus/canvas.py publish {cid} page.html`.{joined})",
+                   f"`src/astryx/core/presence.py focus canvas:{cid} --target '<selector>' --say '…'` as you move; "
+                   f"publish with `src/astryx/core/canvas.py publish {cid} page.html`.{joined})",
                    meta={"canvas": cid, "version": c["ver"], "element": target})
     return {"ok": True}
 
 
 @app.delete("/api/canvases/{cid}/crew/{agent}")
 async def crew_remove(cid: int, agent: str, request: Request):
-    """Send a summoned agent away. The crew is also the write list (nucleus/canvas.py may_write), so
+    """Send a summoned agent away. The crew is also the write list (src/astryx/core/canvas.py may_write), so
     this revokes its right to publish; its presence leaves the canvas and it is told to stop. The
     keeper stays — a canvas always has one."""
     v = V(request)

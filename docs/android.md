@@ -38,7 +38,7 @@ phone refuses to start while Windows is up, saying so.
 **The Windows VM runs on demand.** When an agent opens its viewer (`127.0.0.1:8006`) through Hands, Hands first takes
 the `vm-slot`, then starts the VM if it's stopped; if the phone holds the slot, the open is refused, naming it. A VM
 that an agent started this way is **stopped again after 15 minutes with nobody connected** to its viewer or RDP port
-(`nucleus/shipped_triggers/windows_idle_stop.py`, installed by `./init.sh` where a Windows container exists), and the
+(`src/astryx/pulse/shipped_triggers/windows_idle_stop.py`, installed by `./init.sh` where a Windows container exists), and the
 slot is freed for the phone.
 
 That stop is a **hard stop**: the Windows guest ignores shutdown requests, so after about 100 seconds the VM is killed.
@@ -59,7 +59,7 @@ in seconds (default 900); `0` turns the stop off. A Windows VM that was **alread
    # ANDROID_AVD=astryx-phone            the phone's name
    ```
 3. Run `./init.sh`. It installs exact, checksum-verified archives from `dl.google.com` into your home directory
-   (`nucleus/android_setup.sh install` does the same by hand), creates the phone, and installs the pinned upstream
+   (`scripts/android_setup.sh install` does the same by hand), creates the phone, and installs the pinned upstream
    from its committed lockfile with install scripts disabled.
 4. `./init.sh doctor` reports `android: ready`. Respawn your agents and they have the `phone` tools.
 
@@ -80,16 +80,16 @@ Agents can't drive that desktop with their Hands tools: those only ever reach yo
 shared pool (desk-1, desk-2, …), and the phone's desktop is never one of them.
 
 **Without a desktop** (no sway on the machine), the phone boots headless and says "no live view". Your only stops are
-then `venv/bin/python nucleus/hands_desktop.py stop <agent>` (refuses that agent's phone actions until `… resume`) and
-`venv/bin/python nucleus/android.py shutdown`.
+then `venv/bin/python src/astryx/hands/hands_desktop.py stop <agent>` (refuses that agent's phone actions until `… resume`) and
+`venv/bin/python src/astryx/hands/android.py shutdown`.
 
 **What the stop can't promise.** It prevents an agent's *phone* and *Hands* tools from acting. It doesn't prevent an
 agent that is working on **your laptop screen** (Hands' `laptop`): with the observatory open there, that agent could
 click into the phone's view, or press resume, and nothing can tell its click from yours. Of those two, only the
 **resume is detected**: a resume of a phone's desktop within 60 seconds of any agent acting on your laptop is flagged
 to the org. **Driving the phone through its view from your laptop is neither prevented nor detected.** The
-detector is `nucleus/shipped_triggers/phone_resume_sweep.py`; install it with
-`printf 'from nucleus.shipped_triggers.phone_resume_sweep import phone_resume_sweep  # noqa: F401\n' > triggers/seed/phone_resume_sweep.py`.
+detector is `src/astryx/pulse/shipped_triggers/phone_resume_sweep.py`; install it with
+`printf 'from astryx.pulse.shipped_triggers.phone_resume_sweep import phone_resume_sweep  # noqa: F401\n' > triggers/seed/phone_resume_sweep.py`.
 
 The view and every Hands route are owner-only: they need the observatory's owner key, which is never written to the
 service's log (`key=<redacted>`).
@@ -107,8 +107,8 @@ What's on a phone screen is often personal (messages, bank balances, one-time co
 - The phone's data files (which hold app logins) are made readable by the org's user only, on every boot.
 - The upstream's anonymous usage telemetry is switched off, and it gets an environment built for it, not yours.
 - The live view stores nothing (it's a stream). The one way to write a phone's pixels to a file is the command line:
-  `nucleus/hands_desktop.py shot phone-<name> <file>`, an act of whoever runs it on this machine.
-- The phone's data is in no backup the org makes (`nucleus/backup.sh` doesn't carry `~/.android`) and, on a machine
+  `src/astryx/hands/hands_desktop.py shot phone-<name> <file>`, an act of whoever runs it on this machine.
+- The phone's data is in no backup the org makes (`scripts/backup.sh` doesn't carry `~/.android`) and, on a machine
   whose snapshots cover only `/` (not `/home`), in no snapshot either. Losing it means signing in again.
 
 What this can't promise: the model provider sees the screenshots an agent looks at (that's how it sees), and an

@@ -1,6 +1,6 @@
-"""Authored mutants for triggers/steward/stale_goals.py — run by nucleus/mutation_probe.py.
+"""Authored mutants for triggers/steward/stale_goals.py — run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_stale_goals.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_stale_goals.py
 
 THE LIST IS THE JUDGEMENT. Every entry below is a way THIS guard has already failed, or
 the way its siblings have — restored one line at a time to ask whether the new oracle

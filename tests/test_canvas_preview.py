@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle: `canvas.py preview` (nucleus/canvas.py) — the page in the real shell, screenshotted, READ-ONLY.
+"""Oracle: `canvas.py preview` (src/astryx/core/canvas.py) — the page in the real shell, screenshotted, READ-ONLY.
 
 Hermetic by construction: every arm but one feeds preview an injected data source (`load=`), so no
 row is read or written; the outdirs are throwaway temp dirs. The one LIVE arm runs the real CLI
@@ -20,9 +20,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from nucleus.sqlguard.estate import gate  # noqa: E402
+from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate("test_canvas_preview", REPO, deps=("psycopg",))   # a committed-only tree (no venv): 77, not an import crash
-from nucleus import canvas as cv  # noqa: E402
+from astryx.core import canvas as cv  # noqa: E402
 
 fails, skipped = 0, []
 TMP = Path(tempfile.mkdtemp(prefix="test-cv-preview-"))
@@ -68,7 +68,7 @@ def no_browser():
     finally:
         cv.browser = real
     env = {**os.environ, "PATH": str(TMP / "empty-path")}
-    r = subprocess.run([sys.executable, str(REPO / "nucleus/canvas.py"), "preview", "2", page("nb", "<p>x</p>")],
+    r = subprocess.run([sys.executable, str(REPO / "src/astryx/core/canvas.py"), "preview", "2", page("nb", "<p>x</p>")],
                        capture_output=True, text=True, env=env, timeout=60)
     arm("PATH stripped of chromium: the CLI exits non-zero, says so, renders nothing",
         r.returncode != 0 and "chromium" in r.stderr and not r.stdout.strip(), (r.returncode, r.stderr[-300:]))
@@ -76,10 +76,10 @@ def no_browser():
 
 def isolation():
     print("isolation (publish never depends on preview)")
-    r = subprocess.run([sys.executable, "-c", "import sys; sys.path.insert(0, %r); import nucleus.canvas; "
+    r = subprocess.run([sys.executable, "-c", "import sys; sys.path.insert(0, %r); import astryx.core.canvas; "
                         "print(sorted(m for m in ('http.server', 'bridges.canvas_shell') if m in sys.modules))"
                         % str(REPO)], capture_output=True, text=True, timeout=60)
-    arm("importing nucleus/canvas.py loads neither the kit server nor the shell (preview is lazy)",
+    arm("importing src/astryx/core/canvas.py loads neither the kit server nor the shell (preview is lazy)",
         r.returncode == 0 and r.stdout.strip() == "[]", (r.stdout, r.stderr[-300:]))
 
 

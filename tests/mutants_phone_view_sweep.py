@@ -1,11 +1,11 @@
-"""Authored mutants for nucleus/shipped_triggers/phone_resume_sweep.py (plan-8675 S2), run by nucleus/mutation_probe.py:
+"""Authored mutants for src/astryx/pulse/shipped_triggers/phone_resume_sweep.py (plan-8675 S2), run by devtools/mutation_probe.py:
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_phone_view_sweep.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_phone_view_sweep.py
 """
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-SUBJECT = REPO / "nucleus/shipped_triggers/phone_resume_sweep.py"
+SUBJECT = REPO / "src/astryx/pulse/shipped_triggers/phone_resume_sweep.py"
 ORACLE = REPO / "tests" / "test_phone_view.py"
 ENV = "SWEEP_SRC"
 TIMEOUT = 180

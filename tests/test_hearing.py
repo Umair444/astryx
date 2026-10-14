@@ -31,8 +31,8 @@ sys.path.insert(0, str(REPO))
 if not shutil.which("bwrap"):
     print("SKIP: no bwrap on this host; VERIFIED NOTHING")
     sys.exit(77)
-from nucleus import ear_fence as F  # noqa: E402
-from nucleus import hear_pool as H  # noqa: E402
+from astryx.hearing import ear_fence as F  # noqa: E402
+from astryx.hearing import hear_pool as H  # noqa: E402
 
 fails = []
 
@@ -124,18 +124,18 @@ out = clean({"messages": [{"content": fenced}]})
 want("the step hook's cleaner drops the fenced words", SECRET not in str(out), str(out))
 want("…and keeps the pointer", (not ok) or "{{ear h7 redacted}}" in str(out), str(out))
 if ok:
-    from nucleus.secretset import redact, secret_set
+    from astryx.security.secretset import redact, secret_set
     want("RED control: the secret redaction alone keeps the words", SECRET in str(redact(fenced, secret_set())))
 want("an unterminated (truncated) fence fails closed", SECRET not in F.redact(fenced[:30]))
 
 try:
     import psycopg
     from psycopg import sql
-    from nucleus.sqlguard.fixture import FixtureUnavailable, fixture_db
+    from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db
     os.environ.setdefault("OBS_KEY", "test")
     from bridges import ear as EAR
-    from nucleus import ear_fetch as X
-    from nucleus import ear_store as S
+    from astryx.hearing import ear_fetch as X
+    from astryx.hearing import ear_store as S
 except Exception as e:                                              # noqa: BLE001
     print(f"SKIP POINTER/FETCH: {type(e).__name__}: {e}; VERIFIED ONLY THE ARMS ABOVE")
     shutil.rmtree(tmp)

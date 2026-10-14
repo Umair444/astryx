@@ -3,7 +3,7 @@
 is explicitly exempted with a reason. Nothing lands in nucleus/ and runs nowhere by
 accident.
 
-THE DEFECT THIS CLOSES (found 2026-08-16, live). `nucleus/pushed_tree_check.sh` was
+THE DEFECT THIS CLOSES (found 2026-08-16, live). `devtools/pushed_tree_check.sh` was
 committed as the org's answer to "will check.sh pass on a machine that is not mine?"
 and was invoked by NOTHING — not check.sh, not hooks/pre-push, not init.sh, not a unit,
 not a trigger. Zero references repo-wide, confirmed independently by seed and by its own
@@ -56,7 +56,7 @@ the tracked tree. Each surface is probed and its ABSENCE is classified with
   tracked tree     git ls-files            always present. NOTE hooks/ is TRACKED (the
                                            template init.sh installs), so git hooks are
                                            readable here — I wrongly assumed otherwise.
-  units/           systemd ExecStart       GITIGNORED. nucleus/canopus_inbound.py has NO
+  units/           systemd ExecStart       GITIGNORED. src/astryx/contrib/canopus_inbound.py has NO
                                            tracked invoker at all; its only caller is
                                            units/astryx-canopus-inbound.service. Absent
                                            units/ therefore means UNVERIFIED, not RED.
@@ -92,7 +92,7 @@ unreached, which is information the org keeps. This gate proves a script is REAC
 A SURFACE IT CAN READ; it does not prove the invocation ever executes (a `run` line inside
 `if false` is d0bfbbd's problem, and test_check_coverage owns it for the oracles).
 
-Run: venv/bin/python tests/test_reachability.py   (also wired into nucleus/check.sh)
+Run: venv/bin/python tests/test_reachability.py   (also wired into devtools/check.sh)
      venv/bin/python tests/test_reachability.py --report   (classification, no asserts)
 """
 import ast
@@ -117,6 +117,8 @@ REPO = Path(os.environ.get("REACH_REPO", Path(__file__).resolve().parents[1]))
 # defect as a coverage list written from memory — it just fails silently instead of loudly.
 # Every entry here survived a run that would have called it stale.
 EXEMPT = {
+    "devtools/reorg/apply.py": "operator: the seed runs it by hand in the goal 10224 S4 reorg window",
+    "src/astryx/__main__.py": "`python -m astryx` runs it by the package's name (the console script's twin)",
     # operator diagnostics — running nowhere automatically IS the design. A command
     # documented in CLAUDE.md is deliberately NOT auto-granted reachability: a doc mention
     # is too weak to silence this gate, so a human writes one line here instead.
@@ -124,25 +126,25 @@ EXEMPT = {
     # are triggers). Their invokers live in triggers/steward/org_runners.py, which is
     # GITIGNORED — a git-derived reachability scan is blind exactly there (the oracle-split
     # class), so the edge is declared here by hand, with its location.
-    "nucleus/check_watch.sh":    "invoked by triggers/steward/org_runners.py (gitignored estate; pulse trigger, daily 05:20)",
-    "nucleus/restore_verify.sh": "invoked by triggers/steward/org_runners.py (gitignored estate; pulse trigger, weekly Sun 03:00)",
-    "nucleus/station.py":     "on-demand: the stationed-agent runtime — a backend or operator invokes it per request (claude -p API); nothing schedules it by design",
-    "nucleus/fedtest.py":     "manual: federation end-to-end probe; CLAUDE.md documents the human command",
-    # Hands (plan-7862): both are started by the per-desktop sway config that nucleus/hands_desktop.py
+    "devtools/check_watch.sh":    "invoked by triggers/steward/org_runners.py (gitignored estate; pulse trigger, daily 05:20)",
+    "scripts/restore_verify.sh": "invoked by triggers/steward/org_runners.py (gitignored estate; pulse trigger, weekly Sun 03:00)",
+    "src/astryx/core/station.py":     "on-demand: the stationed-agent runtime — a backend or operator invokes it per request (claude -p API); nothing schedules it by design",
+    "src/astryx/federation/fedtest.py":     "manual: federation end-to-end probe; CLAUDE.md documents the human command",
+    # Hands (plan-7862): both are started by the per-desktop sway config that src/astryx/hands/hands_desktop.py
     # GENERATES (an `exec <venv python> <path>` line written into the state dir at runtime), so the edge
     # lives in a generated file, outside this scanner's committed view. tests/test_hands_desktop.py runs both.
-    "nucleus/hands_seat.py":   "invoked by the sway config nucleus/hands_desktop.py generates (exec line, runtime); the agent's VNC seat",
-    "nucleus/hands_proxy.py":  "invoked by the sway config nucleus/hands_desktop.py generates (exec line, runtime); the background browser's fence",
-    # Hearing (plan-8674 S2): nucleus/hear_pool.py starts the worker inside bwrap at runtime, the path riding a
+    "src/astryx/hands/hands_seat.py":   "invoked by the sway config src/astryx/hands/hands_desktop.py generates (exec line, runtime); the agent's VNC seat",
+    "src/astryx/hands/hands_proxy.py":  "invoked by the sway config src/astryx/hands/hands_desktop.py generates (exec line, runtime); the background browser's fence",
+    # Hearing (plan-8674 S2): src/astryx/hearing/hear_pool.py starts the worker inside bwrap at runtime, the path riding a
     # --ro-bind argument, so no committed launcher names it. tests/test_hearing.py runs it through the pool.
-    "nucleus/hear_worker.py":  "invoked by nucleus/hear_pool.py at runtime (bwrap, one per opted-in agent's hear.py); runs no SQL",
-    "nucleus/esc_latency.py":  "manual: MIN_QUIET_H calibration measurement, run on demand; reports and never recommends, so a timer would only manufacture noise",
-    "nucleus/doorbell.sh":    "manual: operator notify helper, self-declared Usage line",
-    "nucleus/wallpane.sh":    "manual: single-pane variant of wall.sh, invoked by an operator",
-    "nucleus/refresh.sh":     "manual: operator session refresh",
-    "nucleus/growbot_flash.sh": "manual: operator flash step — copies the body firmware "
+    "src/astryx/hearing/hear_worker.py":  "invoked by src/astryx/hearing/hear_pool.py at runtime (bwrap, one per opted-in agent's hear.py); runs no SQL",
+    "devtools/esc_latency.py":  "manual: MIN_QUIET_H calibration measurement, run on demand; reports and never recommends, so a timer would only manufacture noise",
+    "scripts/doorbell.sh":    "manual: operator notify helper, self-declared Usage line",
+    "scripts/wallpane.sh":    "manual: single-pane variant of wall.sh, invoked by an operator",
+    "scripts/refresh.sh":     "manual: operator session refresh",
+    "scripts/growbot_flash.sh": "manual: operator flash step — copies the body firmware "
         "onto the Pico over USB; run once per firmware change, documented in docs/growbot.md",
-    "nucleus/growbot_firmware.py":
+    "src/astryx/contrib/growbot_firmware.py":
         "chip-side: growbot_flash.sh COPIES it onto the Pico as main.py (cp is data "
         "movement, not invocation — this scanner is right to refuse the edge); the chip's "
         "own MicroPython interpreter executes it at power-on. No host process ever runs it.",
@@ -150,9 +152,9 @@ EXEMPT = {
     # failing. Its ORACLE is wired into check.sh; the TOOL is typed by an agent at a
     # prompt, which is the whole point of it (the standing rule it serves is about
     # what a human TYPES; the shell wrapper that lies is not present in scripts).
-    "nucleus/estate_grep.sh": "manual: the estate search an agent TYPES — org-news #12934 names it as the rule's implementation; its oracle test_estate_grep.py is what check.sh runs",
-    "nucleus/review_range.sh": "manual: the range an agent TYPES for a review-request or merge-ready marker (a4 night-review 10-12); its oracle test_review_range.py is what check.sh runs",
-    "nucleus/apply_receipt.py": "manual: operator-run at deploy — seed applies a PASSed gitignored body with it and posts the "
+    "devtools/estate_grep.sh": "manual: the estate search an agent TYPES — org-news #12934 names it as the rule's implementation; its oracle test_estate_grep.py is what check.sh runs",
+    "devtools/review_range.sh": "manual: the range an agent TYPES for a review-request or merge-ready marker (a4 night-review 10-12); its oracle test_review_range.py is what check.sh runs",
+    "devtools/apply_receipt.py": "manual: operator-run at deploy — seed applies a PASSed gitignored body with it and posts the "
                                 "`applied:` receipt it prints (plan-5791 staging protocol, a3 BC-3); its oracle "
                                 "test_merge_ready.py is what check.sh runs",
     # SIX EXEMPTIONS USED TO LIVE HERE — one per tests/mutants_*.py, added one at a
@@ -168,14 +170,14 @@ EXEMPT = {
     # spec, and their `Run:` lines reached it back — a mutual-citation ring. Making them
     # visible is the fix working; whether they should instead be WIRED is a call for
     # whoever owns them, and the exemption is what forces that call to be made out loud.
-    "nucleus/smoke.sh":
-        "manual: doctor-class post-deploy probe, self-declared (`# Usage: nucleus/smoke.sh "
+    "scripts/smoke.sh":
+        "manual: doctor-class post-deploy probe, self-declared (`# Usage: scripts/smoke.sh "
         "[observatory-port]`) and already classified as manual by test_check_coverage.py:56",
-    # invoked by nucleus/spawn.sh (per-agent provider/auth override, read at each spawn) — a
+    # invoked by scripts/spawn.sh (per-agent provider/auth override, read at each spawn) — a
     # SHELL invocation, outside this scanner's committed-python view. charter.py sits in the
     # same spawn.sh line and passes ONLY because python files (mcp/org, observatory) also call
     # it; runtime_env.py has no python caller by design, so the shell invoker is its only one.
-    "nucleus/runtime_env.py": "invoked by nucleus/spawn.sh:133 (shell; outside the committed-python scan)",
+    "src/astryx/core/runtime_env.py": "invoked by scripts/spawn.sh:133 (shell; outside the committed-python scan)",
 }
 
 INTERP = r"(?:bash|sh|zsh|exec|source|\.|python3?|\$PY|\$\{PY\}|venv/bin/python3?|uv\s+run|/usr/bin/env\s+\S+)"
@@ -209,8 +211,20 @@ def population():
     about this gate be that it reddens for no reason. A flaky red is how a gate gets
     bypassed, and a bypassed gate is off forever.
     """
-    return sorted(p for p in _git("ls-tree", "-r", "--name-only", "HEAD", "nucleus/")
-                  if p.endswith((".py", ".sh")))
+    # goal 10224 S4: nucleus/ moved into src/astryx/, devtools/ and scripts/. What stays in nucleus/ is the compat
+    # stubs, whose callers are gitignored or external by construction (their census: var/reorg_stubs/), so a
+    # stub is not a population member; nucleus/__init__.py still is.
+    return sorted(p for p in _git("ls-tree", "-r", "--name-only", "HEAD", "nucleus/", "src/astryx/", "devtools/",
+                                  "scripts/")
+                  if p.endswith((".py", ".sh")) and not _is_reorg_stub(p))
+
+
+def _is_reorg_stub(p):
+    try:
+        head = (REPO / p).read_text(errors="ignore")[:400]
+    except OSError:
+        return False
+    return p.startswith("nucleus/") and f"MOVED: {p} -> " in head
 
 
 def _is_ignored(path, is_dir=False):
@@ -235,6 +249,9 @@ def surfaces():
     texts, missing = [], []
     for p in _git("ls-files"):
         f = REPO / p
+        if _is_reorg_stub(p) or p.startswith("devtools/reorg/") or p in ("src/astryx/_reorg.py",
+                                                                         "tests/test_reorg_roots.py"):
+            continue              # a compat stub, and the reorg's own map/census, are not edges (goal 10224 S4)
         try:
             texts.append((p, f.read_text(errors="ignore")))
         except OSError:
@@ -305,7 +322,7 @@ def _command_word(line, cmd_tail):
 # The first draft of this fix was line-based (skip shell tokens on .py surfaces) and it
 # FALSE-ACCUSED social_age.py, whose real caller is
 #     subprocess.run(
-#         [str(REPO / "venv" / "bin" / "python"), str(REPO / "nucleus" / "social_age.py")],
+#         [str(REPO / "venv" / "bin" / "python"), str(REPO / "src" / "astryx" / "memory" / "social_age.py")],
 # — a genuine invocation whose call and whose path sit on different LINES. A line is the
 # wrong unit for Python; the statement is. So: parse it. ast.walk finds the Call whatever
 # it is spelled with and however it wraps, and finds no Call at all inside a docstring.
@@ -342,7 +359,7 @@ _PY_INDEX = {}
 # morning (the canary in 43b6277 exists because of it). The org's standard shape is a subject
 # path bound to a name and loaded dynamically:
 #
-#     SUBJECT = Path(os.environ.get("ESCALATION_SRC", REPO / "nucleus" / "escalation.py"))
+#     SUBJECT = Path(os.environ.get("ESCALATION_SRC", REPO / "src" / "astryx" / "core" / "escalation.py"))
 #     _spec = importlib.util.spec_from_file_location("under_test", SUBJECT)
 #
 # This parser could not see it, so escalation.py read as reached only by an EXEMPT manual tool
@@ -351,7 +368,7 @@ _PY_INDEX = {}
 # and it fires MORE often as MORE oracles adopt the correct shape.
 #
 # THE COST OF LEAVING IT: a false red is not neutral, because the cheapest way to silence one is
-# to change the SUBJECT. test_escalation.py now carries `from nucleus import escalation as esc
+# to change the SUBJECT. test_escalation.py now carries `from astryx.core import escalation as esc
 # # noqa: E402 — the invoker the gate reads` — a line whose stated purpose is to be seen by this
 # gate, in the file whose own comment explains that a bare import is the wiring fault that let
 # ten mutants survive. It was written carefully (guarded by `if not _override`, so the mutation
@@ -425,11 +442,11 @@ def _py_index(label, text):
 
 
 # A MODULE HAS A DOTTED NAME, AND PYTHON RUNS IT BY THAT NAME TOO (goal 4243, abstractor-4). The stem forms
-# above were written when nucleus/ was flat. A subpackage (nucleus/sqlguard/) is reached in three spellings
+# above were written when nucleus/ was flat. A subpackage (src/astryx/security/sqlguard/) is reached in three spellings
 # this parser couldn't see, and all three were live the day it landed:
-#   `"$PY" -m nucleus.sqlguard.canary`             a module RUN by its dotted name (check.sh)
-#   `from nucleus.sqlguard import inventory`        a submodule IMPORTED by its dotted name
-#   `-m nucleus.sqlguard.x` / any submodule import  ALSO executes the package's __init__.py, which Python
+#   `"$PY" -m astryx.security.sqlguard.canary`             a module RUN by its dotted name (check.sh)
+#   `from astryx.security.sqlguard import inventory`        a submodule IMPORTED by its dotted name
+#   `-m astryx.security.sqlguard.x` / any submodule import  ALSO executes the package's __init__.py, which Python
 #                                                   imports first. So nucleus/__init__.py is DERIVED now, not
 #                                                   exempted: its old exemption was this edge written by hand.
 # And one loader that is neither a call nor an import: a directory on PYTHONPATH makes the interpreter import
@@ -440,6 +457,8 @@ _AUTOLOADED = ("sitecustomize.py", "usercustomize.py")
 
 def _dotted(path):
     """-> (dotted module name, is_package_init), or (None, False) for a non-.py path."""
+    if path.startswith("src/astryx/"):              # goal 10224 S4: the package lives under src/
+        path = path[len("src/"):]
     if path.endswith("/__init__.py"):
         return path[:-len("/__init__.py")].replace("/", "."), True
     if path.endswith(".py"):
@@ -503,9 +522,9 @@ def invocations(path, texts):
     # (tokenwatch, wake_audit, world) whose callers all write `from nucleus import X`
     # — the package-relative form. One missed spelling, three false accusations: an
     # edge type is not covered until every spelling of it is.
-    imp = (re.compile(rf"^\s*(?:from\s+(?:nucleus\.)?{re.escape(stem)}\s+import\b"
-                      rf"|import\s+(?:nucleus\.)?{re.escape(stem)}\b"
-                      rf"|from\s+nucleus\s+import\s+(?:[\w,\s]*\b){re.escape(stem)}\b)")
+    imp = (re.compile(rf"^\s*(?:from\s+(?:nucleus\.|astryx\.[\w.]+\.)?{re.escape(stem)}\s+import\b"
+                      rf"|import\s+(?:nucleus\.|astryx\.[\w.]+\.)?{re.escape(stem)}\b"
+                      rf"|from\s+(?:nucleus|astryx\.[\w.]+)\s+import\s+(?:[\w,\s]*\b){re.escape(stem)}\b)")
            if stem and stem != "__init__" else None)
     dotted, pkg = _dotted(path)
     mod_m = (re.compile(rf"(?:^|\s)-m\s+[\"']?{re.escape(dotted)}{r'(?:\.[\w.]+)?' if pkg else ''}"
@@ -632,25 +651,25 @@ def classify(pop, texts, data=None):
 # ── SELF-TEST ARMS (RED and GREEN, on fixtures the parser must separate) ──────────────
 FIXTURES = [
     ("invoked by check.sh run-line", True,
-     [("nucleus/check.sh", 'run "x" "$PY" tests/test_thing.py')], "tests/test_thing.py"),
+     [("devtools/check.sh", 'run "x" "$PY" tests/test_thing.py')], "tests/test_thing.py"),
     ("invoked bare as a command", True,
-     [("init.sh", "  ./nucleus/backup.sh --now")], "nucleus/backup.sh"),
+     [("init.sh", "  ./scripts/backup.sh --now")], "scripts/backup.sh"),
     ("invoked via ExecStart", True,
-     [("units/a.service", "ExecStart=/home/u/astryx/nucleus/canopus_inbound.py")],
-     "nucleus/canopus_inbound.py"),
+     [("units/a.service", "ExecStart=/home/u/astryx/src/astryx/contrib/canopus_inbound.py")],
+     "src/astryx/contrib/canopus_inbound.py"),
     ("invoked from a subprocess list", True,
-     [("nucleus/pulse.py", '    subprocess.run([PY, "nucleus/pulse_run.py", name])')],
-     "nucleus/pulse_run.py"),
+     [("src/astryx/pulse/pulse.py", '    subprocess.run([PY, "src/astryx/pulse/pulse_run.py", name])')],
+     "src/astryx/pulse/pulse_run.py"),
     ("invoked by exec in a hook", True,
-     [("hooks/pre-push", 'exec "$(git rev-parse --show-toplevel)/nucleus/privacy_gate.sh"')],
-     "nucleus/privacy_gate.sh"),
+     [("hooks/pre-push", 'exec "$(git rev-parse --show-toplevel)/devtools/privacy_gate.sh"')],
+     "devtools/privacy_gate.sh"),
     ("runners.conf row", True,
-     [("nucleus/runners.conf", "backup | org | *-*-* 04:00:00 | nucleus/backup.sh | dump")],
-     "nucleus/backup.sh"),
+     [("nucleus/runners.conf", "backup | org | *-*-* 04:00:00 | scripts/backup.sh | dump")],
+     "scripts/backup.sh"),
     # the RED arm: every one of these is a MENTION, and a mention must not count
     ("comment naming it is not an invocation", False,
-     [("nucleus/backup.sh", "# in privacy_gate's SURFACES, NEVER pushed.")],
-     "nucleus/privacy_gate.sh"),
+     [("scripts/backup.sh", "# in privacy_gate's SURFACES, NEVER pushed.")],
+     "devtools/privacy_gate.sh"),
     # THIS one binds the comment stripping; the fixture above does not, and I only found
     # that out by deleting the strip and watching every negative arm still pass. Prose
     # that merely NAMES a file fails the parser for want of an interpreter token, so it
@@ -658,29 +677,29 @@ FIXTURES = [
     # the wrong clause. A commented-out REAL invocation is the only counterexample the
     # two implementations disagree on.
     ("a commented-out invocation is not an invocation", False,
-     [("nucleus/x.sh", "#  bash nucleus/backup.sh --now   (disabled, see goal-12)")],
-     "nucleus/backup.sh"),
+     [("nucleus/x.sh", "#  bash scripts/backup.sh --now   (disabled, see goal-12)")],
+     "scripts/backup.sh"),
     ("full-line comment with a real command in it", False,
-     [("nucleus/runners.example.conf", "#   backup | org | x | nucleus/backup.sh | note")],
-     "nucleus/backup.sh"),
+     [("src/astryx/data/runners.example.conf", "#   backup | org | x | scripts/backup.sh | note")],
+     "scripts/backup.sh"),
     # These three were VALID-PYTHON'd when .py surfaces started being parsed. As raw
     # fragments they were unparseable, so they passed by falling into the blind bucket
     # instead of by the discrimination they name — a fixture excluded by the wrong clause
     # tests the wrong clause, which is a lesson this file already carries one arm below.
     ("homonymous function definition", False,
      [("observatory/api/main.py", "async def privacy_gate(request):\n    return 1\n")],
-     "nucleus/privacy_gate.sh"),
+     "devtools/privacy_gate.sh"),
     ("error-message string naming the script", False,
      [("init.sh", '    bad "pre-push hook missing — privacy_gate.sh will not run"')],
-     "nucleus/privacy_gate.sh"),
+     "devtools/privacy_gate.sh"),
     ("prose naming the file in a docstring", False,
      [("nucleus/x.py", '"""it, and pushed_tree_check.sh is the instrument that answers it"""')],
-     "nucleus/pushed_tree_check.sh"),
+     "devtools/pushed_tree_check.sh"),
     # THE HOLE THIS RULE CLOSES, and it was live: mutation_probe.py's own `Run:` line
     # granted every mutants spec reachability, and their `Run:` lines granted it back.
     ("a Run: usage example in a docstring is not an invocation", False,
-     [("nucleus/mutation_probe.py",
-       '"""probe.\n\nRun:\n    venv/bin/python nucleus/mutation_probe.py tests/mutants_x.py\n"""')],
+     [("devtools/mutation_probe.py",
+       '"""probe.\n\nRun:\n    venv/bin/python devtools/mutation_probe.py tests/mutants_x.py\n"""')],
      "tests/mutants_x.py"),
     # smoke.sh's live edge: a prose line whose FIRST TOKEN is a basename satisfied
     # _command_word, the rule written for real shell. In a .py surface there is no
@@ -688,41 +707,41 @@ FIXTURES = [
     ("a bare basename first on a line is prose in python", False,
      [("tests/test_check_coverage.py",
        '"""x\n\n   smoke.sh / fedtest.py / doctor-class tools, self-declared MANUAL\n"""')],
-     "nucleus/smoke.sh"),
+     "scripts/smoke.sh"),
     # ...and the true call the line-based draft of this rule false-accused. The Call and
     # the path are on different LINES, which is why the unit had to become the statement.
     ("a subprocess call whose path is on a later line", True,
      [("triggers/seed/people_sweep.py",
        'subprocess.run(\n    [str(REPO / "venv" / "bin" / "python"),\n'
-       '     str(REPO / "nucleus" / "social_age.py")],\n    check=True)')],
-     "nucleus/social_age.py"),
+       '     str(REPO / "src" / "astryx" / "memory" / "social_age.py")],\n    check=True)')],
+     "src/astryx/memory/social_age.py"),
     ("a library is reached by an import", True,
-     [("tests/test_okf.py", "from okf import parse_frontmatter")], "nucleus/okf.py"),
+     [("tests/test_okf.py", "from okf import parse_frontmatter")], "src/astryx/memory/okf.py"),
     ("import of the packaged path", True,
-     [("bridges/gateway.py", "import nucleus.orgname")], "nucleus/orgname.py"),
+     [("bridges/gateway.py", "import astryx.core.orgname")], "src/astryx/core/orgname.py"),
     ("the stem appearing in prose is not an import", False,
      [("nucleus/x.py", "# the tier floor and world layer disagree here")],
-     "nucleus/tier.py"),
+     "src/astryx/core/tier.py"),
     ("package-relative import form", True,
-     [("hooks/usage.py", "                from nucleus import wake_audit")],
-     "nucleus/wake_audit.py"),
+     [("hooks/usage.py", "                from astryx.core import wake_audit")],
+     "src/astryx/core/wake_audit.py"),
     ("package-relative, several names on the line", True,
-     [("triggers/x.py", "        from nucleus import charter, world")], "nucleus/world.py"),
+     [("triggers/x.py", "        from astryx.core import charter; from astryx.memory import world")], "src/astryx/memory/world.py"),
     # The live miss. steward wired pushed_tree_check.sh into hooks/pre-push and this
     # gate STILL accused it: the line runs a quoted, variable-prefixed path directly, with
     # no interpreter token and no line-initial path. The gate built to find unwired files
     # false-accused the one file it had just been proven on. A command word is the FIRST
     # TOKEN, whatever it is spelled with — not a line that starts with a literal path.
     ("quoted variable-prefixed command word", True,
-     [("hooks/pre-push", '  "$REPO/nucleus/pushed_tree_check.sh" "$sha"')],
-     "nucleus/pushed_tree_check.sh"),
+     [("hooks/pre-push", '  "$REPO/devtools/pushed_tree_check.sh" "$sha"')],
+     "devtools/pushed_tree_check.sh"),
     # THE PROBE CHANNEL — one arm per SPELLING, because an edge type is not covered until
     # every spelling of it is, and the third arm is the one that caught my first attempt.
     ("subject bound with a two-arg env default, loaded dynamically", True,
      [("tests/test_escalation.py",
-       'SUBJECT = Path(os.environ.get("ESCALATION_SRC", REPO / "nucleus" / "escalation.py"))\n'
+       'SUBJECT = Path(os.environ.get("ESCALATION_SRC", REPO / "src" / "astryx" / "core" / "escalation.py"))\n'
        '_spec = importlib.util.spec_from_file_location("under_test", SUBJECT)\n')],
-     "nucleus/escalation.py"),
+     "src/astryx/core/escalation.py"),
     ("subject bound with an or-form default, runpy loader", True,
      [("tests/test_stale_goals.py",
        'SUBJECT = Path(os.environ.get("STALE_GOALS_SRC") or (REPO / "nucleus" / "stale_goals.py"))\n'
@@ -735,62 +754,62 @@ FIXTURES = [
      [("tests/test_escalation.py",
        '_override = os.environ.get("ESCALATION_SRC")\n'
        'if not _override:\n'
-       '    SUBJECT = Path(REPO / "nucleus" / "escalation.py")\n'
+       '    SUBJECT = Path(REPO / "src" / "astryx" / "core" / "escalation.py")\n'
        'else:\n'
        '    SUBJECT = Path(_override)\n'
        '_spec = importlib.util.spec_from_file_location("under_test", SUBJECT)\n')],
-     "nucleus/escalation.py"),
+     "src/astryx/core/escalation.py"),
     # THE GUARD: same binding, nothing loads it. Delete the loader_names condition and this fails.
     ("a path bound to a name nothing loads is not an invocation", False,
      [("nucleus/x.py",
-       'DOC = Path(REPO / "nucleus" / "escalation.py")\n'
+       'DOC = Path(REPO / "src" / "astryx" / "core" / "escalation.py")\n'
        'print(DOC)\n')],
-     "nucleus/escalation.py"),
+     "src/astryx/core/escalation.py"),
     ("a loader fed some OTHER subject does not reach this one", False,
      [("tests/test_other.py",
        'SUBJECT = Path(REPO / "nucleus" / "other.py")\n'
        '_spec = importlib.util.spec_from_file_location("u", SUBJECT)\n')],
-     "nucleus/escalation.py"),
+     "src/astryx/core/escalation.py"),
     # THE DOTTED EDGES (goal 4243). Every .py label below is UNIQUE in this list: the parse cache is keyed by
     # label, so a reused label would answer with the previous fixture's parse (my first draft hit it twice).
     # One GREEN per spelling, and a RED beside each that the naive version of
     # the rule would pass: a prefix-sharing module name, a mention in prose, a sibling in the same directory.
     ("run by module name: $PY -m dotted.name", True,
-     [("nucleus/check.sh", 'run "canary" "$PY" -m nucleus.sqlguard.canary')], "nucleus/sqlguard/canary.py"),
+     [("devtools/check.sh", 'run "canary" "$PY" -m astryx.security.sqlguard.canary')], "src/astryx/security/sqlguard/canary.py"),
     ("-m of a module whose name merely STARTS with this one is not this one", False,
-     [("nucleus/check.sh", 'run "x" "$PY" -m nucleus.sqlguard.canary_extra')], "nucleus/sqlguard/canary.py"),
+     [("devtools/check.sh", 'run "x" "$PY" -m astryx.security.sqlguard.canary_extra')], "src/astryx/security/sqlguard/canary.py"),
     ("-m with no interpreter token is prose", False,
-     [("nucleus/x.sh", 'echo "see -m nucleus.sqlguard.canary"')], "nucleus/sqlguard/canary.py"),
+     [("nucleus/x.sh", 'echo "see -m astryx.security.sqlguard.canary"')], "src/astryx/security/sqlguard/canary.py"),
     ("-m of a submodule also runs the package __init__", True,
-     [("nucleus/check.sh", '"$PY" -m nucleus.sqlguard.enforce "$D"')], "nucleus/sqlguard/__init__.py"),
+     [("devtools/check.sh", '"$PY" -m astryx.security.sqlguard.enforce "$D"')], "src/astryx/security/sqlguard/__init__.py"),
     ("-m of a prefix-sharing SIBLING package does not run this __init__", False,
-     [("nucleus/check.sh", '"$PY" -m nucleus.sqlguardx.enforce')], "nucleus/sqlguard/__init__.py"),
+     [("devtools/check.sh", '"$PY" -m nucleus.sqlguardx.enforce')], "src/astryx/security/sqlguard/__init__.py"),
     ("a submodule imported by its dotted name", True,
-     [("nucleus/sqlguard/judge.py", "from nucleus.sqlguard import inventory\n")], "nucleus/sqlguard/inventory.py"),
+     [("src/astryx/security/sqlguard/judge.py", "from astryx.security.sqlguard import inventory\n")], "src/astryx/security/sqlguard/inventory.py"),
     ("a name imported FROM a dotted submodule", True,
-     [("nucleus/sqlguard/enforce.py", "from nucleus.sqlguard.normalize import norm\n")],
-     "nucleus/sqlguard/normalize.py"),
+     [("src/astryx/security/sqlguard/enforce.py", "from astryx.security.sqlguard.normalize import norm\n")],
+     "src/astryx/security/sqlguard/normalize.py"),
     ("a dotted import in a docstring is prose", False,
-     [("nucleus/x.py", '"""use it as: from nucleus.sqlguard import inventory"""\n')],
-     "nucleus/sqlguard/inventory.py"),
+     [("nucleus/x.py", '"""use it as: from astryx.security.sqlguard import inventory"""\n')],
+     "src/astryx/security/sqlguard/inventory.py"),
     ("the package __init__ is reached by importing its package", True,
-     [("tests/test_x.py", "from nucleus import charter\n")], "nucleus/__init__.py"),
+     [("tests/test_x.py", "from astryx.core import charter\n")], "src/astryx/core/__init__.py"),
     ("a subprocess -m list", True,
-     [("tests/test_y.py", 'subprocess.run([PY, "-m", "nucleus.sqlguard.enforce", d])\n')],
-     "nucleus/sqlguard/enforce.py"),
+     [("tests/test_y.py", 'subprocess.run([PY, "-m", "astryx.security.sqlguard.enforce", d])\n')],
+     "src/astryx/security/sqlguard/enforce.py"),
     ("sitecustomize: its directory set on PYTHONPATH", True,
-     [("nucleus/check.sh", 'export PYTHONPATH="$PWD/nucleus/sqlguard/shim${PYTHONPATH:+:$PYTHONPATH}"')],
-     "nucleus/sqlguard/shim/sitecustomize.py"),
+     [("devtools/check.sh", 'export PYTHONPATH="$PWD/src/astryx/security/sqlguard/shim${PYTHONPATH:+:$PYTHONPATH}"')],
+     "src/astryx/security/sqlguard/shim/sitecustomize.py"),
     ("PYTHONPATH loads ONLY sitecustomize, never a sibling module", False,
-     [("nucleus/check.sh", 'export PYTHONPATH="$PWD/nucleus/sqlguard/shim"')], "nucleus/sqlguard/shim/other.py"),
+     [("devtools/check.sh", 'export PYTHONPATH="$PWD/src/astryx/security/sqlguard/shim"')], "src/astryx/security/sqlguard/shim/other.py"),
     ("a prefix-sharing directory on PYTHONPATH is not this one", False,
-     [("nucleus/check.sh", 'export PYTHONPATH="$PWD/nucleus/sqlguard/shimx"')],
-     "nucleus/sqlguard/shim/sitecustomize.py"),
+     [("devtools/check.sh", 'export PYTHONPATH="$PWD/src/astryx/security/sqlguard/shimx"')],
+     "src/astryx/security/sqlguard/shim/sitecustomize.py"),
     ("the shim directory named OUTSIDE a PYTHONPATH assignment is not a load", False,
-     [("nucleus/x.sh", 'ls "$PWD/nucleus/sqlguard/shim"')], "nucleus/sqlguard/shim/sitecustomize.py"),
+     [("nucleus/x.sh", 'ls "$PWD/src/astryx/security/sqlguard/shim"')], "src/astryx/security/sqlguard/shim/sitecustomize.py"),
     ("the same path as an ARGUMENT is not a command word", False,
-     [("nucleus/x.sh", '  echo "see $REPO/nucleus/pushed_tree_check.sh for details"')],
-     "nucleus/pushed_tree_check.sh"),
+     [("nucleus/x.sh", '  echo "see $REPO/devtools/pushed_tree_check.sh for details"')],
+     "devtools/pushed_tree_check.sh"),
 ]
 
 
@@ -816,17 +835,17 @@ def inherited_from_dead(reached, dead):
 # (name, reached, dead, expect_flagged) — the RED arm a2 could not reach from outside.
 INHERITED_FIXTURES = [
     ("child invoked only by an exempt parent",
-     {"nucleus/child.sh": [("nucleus/deploy.sh", "bash nucleus/child.sh")]},
-     {"nucleus/deploy.sh"}, True),
+     {"nucleus/child.sh": [("scripts/deploy.sh", "bash nucleus/child.sh")]},
+     {"scripts/deploy.sh"}, True),
     ("one live parent among dead ones is enough",
-     {"nucleus/child.sh": [("nucleus/deploy.sh", "x"), ("nucleus/check.sh", "y")]},
-     {"nucleus/deploy.sh"}, False),
+     {"nucleus/child.sh": [("scripts/deploy.sh", "x"), ("devtools/check.sh", "y")]},
+     {"scripts/deploy.sh"}, False),
     ("a live parent alone",
-     {"nucleus/child.sh": [("nucleus/check.sh", "bash nucleus/child.sh")]},
-     {"nucleus/deploy.sh"}, False),
+     {"nucleus/child.sh": [("devtools/check.sh", "bash nucleus/child.sh")]},
+     {"scripts/deploy.sh"}, False),
     ("a chain two deep still bottoms out in nothing",
      {"nucleus/child.sh": [("nucleus/mid.sh", "bash nucleus/child.sh")]},
-     {"nucleus/mid.sh", "nucleus/deploy.sh"}, True),
+     {"nucleus/mid.sh", "scripts/deploy.sh"}, True),
 ]
 
 
@@ -849,7 +868,7 @@ def stale_exemptions(exempt, pop, reached, tracked):
     stale an entry. Those entries exist for the host WITHOUT that estate — a fresh clone, CI —
     where the scan can't see the edge, and deleting one on the estate host's word re-accuses
     the file everywhere else. Hit 2026-09-29: teaching the parser dotted imports found
-    nucleus/shipped_triggers/pr_review.py reached from triggers/steward/pr_review.py, which is
+    src/astryx/pulse/shipped_triggers/pr_review.py reached from triggers/steward/pr_review.py, which is
     exactly the edge its exemption already names as outside this scanner's committed view."""
     return [p for p in exempt
             if p not in pop or any(s in tracked for s, _ in reached.get(p, []))]
@@ -858,7 +877,7 @@ def stale_exemptions(exempt, pop, reached, tracked):
 # (exempt path, its hits, want-stale). The exemption stays while only the estate reaches it.
 STALE_FIXTURES = [
     ("an edge only from the gitignored estate keeps the exemption",
-     [("triggers/steward/pr_review.py", "from nucleus.shipped_triggers.pr_review import x")], False),
+     [("triggers/steward/pr_review.py", "from astryx.pulse.shipped_triggers.pr_review import x")], False),
     ("an edge from a committed surface stales it", [("init.sh", "./nucleus/x.sh")], True),
     ("a committed edge beside an estate one still stales it",
      [("triggers/steward/pr_review.py", "import"), ("init.sh", "./nucleus/x.sh")], True),

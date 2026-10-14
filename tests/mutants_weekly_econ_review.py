@@ -1,6 +1,6 @@
-"""Authored mutants for triggers/steward/weekly_economic_review.py — run by nucleus/mutation_probe.py.
+"""Authored mutants for triggers/steward/weekly_economic_review.py — run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_weekly_econ_review.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_weekly_econ_review.py
 
 THE LIST IS THE JUDGEMENT. The ctx.sql SURFACE is what ARM 6 watches (the pure arms stayed GREEN
 through the 2026-09-21 live crash); since goal 4227 S1b there are TWO queries (econ, triggers) —

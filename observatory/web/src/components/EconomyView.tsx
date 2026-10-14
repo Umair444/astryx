@@ -1312,7 +1312,7 @@ export default function EconomyView() {
             </div>
           )}
           {tab !== 'usage' && econ && !diss && (
-            <Panel className="p-2"><Empty title="The dissipative layer has no readings yet" hint="nucleus/econ.py writes one row per day — the first lands after tonight's rollup." /></Panel>
+            <Panel className="p-2"><Empty title="The dissipative layer has no readings yet" hint="src/astryx/econ/econ.py writes one row per day — the first lands after tonight's rollup." /></Panel>
           )}
           {tab === 'thermo' && diss && <ThermoTab d={diss} />}
           {tab === 'market' && diss && <MarketTab d={diss} />}

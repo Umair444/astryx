@@ -3,11 +3,11 @@
 every RESIDENT gets the registry door and the tool nudge, and no STATIONED agent gets the door
 (goal 4227 S4, abstractor-4's W1 + W3; seed's --render follow-up).
 
-    venv/bin/python tests/test_spawn_wiring.py        (also run by nucleus/check.sh)
+    venv/bin/python tests/test_spawn_wiring.py        (also run by devtools/check.sh)
     SPAWN_SRC=<path> …                                 (the subject; mutation_probe sets it)
 
 THE GENERATION PATH, NOT ITS TEXT. spawn.sh runs for real: from a temp repo tree (its copy at
-nucleus/spawn.sh, with FIXTURE charters, local.md, runtime.json and .env), with `--render`. So
+scripts/spawn.sh, with FIXTURE charters, local.md, runtime.json and .env), with `--render`. So
 charter resolution, the grants loop, Think:, runtime_env's provider splice and the heredocs all
 execute exactly as they would in a spawn.
 
@@ -44,8 +44,8 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-SUBJECT = Path(os.environ.get("SPAWN_SRC") or REPO / "nucleus" / "spawn.sh")
-STATION = REPO / "nucleus" / "station.py"
+SUBJECT = Path(os.environ.get("SPAWN_SRC") or REPO / "scripts" / "spawn.sh")
+STATION = REPO / "src" / "astryx" / "core" / "station.py"
 TOKEN = "tok-fixture-4227-render"
 fails = []
 
@@ -61,9 +61,11 @@ def check(name, ok, detail=""):
 def make_tree() -> Path:
     t = Path(tempfile.mkdtemp(prefix="t_render_"))
     (t / "nucleus").mkdir()
-    shutil.copy(SUBJECT, t / "nucleus" / "spawn.sh")
-    for f in ("charter.py", "runtime_env.py"):          # both derive their paths from __file__
-        shutil.copy(REPO / "nucleus" / f, t / "nucleus" / f)
+    for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
+        (t / _d).mkdir(parents=True, exist_ok=True)
+    shutil.copy(SUBJECT, t / "scripts" / "spawn.sh")
+    from _astryx_skel import mirror                     # goal 10224 S4: both derive their paths from __file__
+    mirror(t, copy=("src/astryx/core/charter.py", "src/astryx/core/runtime_env.py"), skip=("scripts/spawn.sh",))
     # The RUNNING interpreter's venv, not <repo>/venv: a worktree or CI clone has none.
     (t / "venv").symlink_to(Path(sys.prefix))
     (t / ".env").write_text("ASTRYX_DSN=postgresql://nobody@127.0.0.1:1/none\n"
@@ -99,7 +101,7 @@ def render(root: Path, agent: str, out: Path, resident=False):
     log = root / "shim.log"
     env = {"PATH": f"{root / 'shims'}:/usr/bin:/bin", "HOME": str(root), "SHIM_LOG": str(log),
            "ASTRYX_NODE": "/N/node", "RESIDENT": "1" if resident else ""}
-    r = subprocess.run(["bash", str(root / "nucleus" / "spawn.sh"), "--render", agent, str(out)],
+    r = subprocess.run(["bash", str(root / "scripts" / "spawn.sh"), "--render", agent, str(out)],
                        env=env, capture_output=True, text=True, timeout=60)
     calls = log.read_text().splitlines() if log.exists() else []
     if log.exists():

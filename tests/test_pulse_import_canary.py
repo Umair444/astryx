@@ -2,7 +2,7 @@
 """Oracle: plan-10224 B1, the pulse's astryx-import CANARY. When `import astryx` fails in every discover() child (a
 checkout caught mid-write, a half-written astryx.py), reconcile used to read EVERY trigger file as broken: one "failed
 to load … DISABLES" wake per file, then the retirement loop switched every python trigger off. The pulse's real
-reconcile() and tick() run against a fixture database and a throwaway tree holding the shim, nucleus/pulse.py and two
+reconcile() and tick() run against a fixture database and a throwaway tree holding the shim, src/astryx/pulse/pulse.py and two
 trigger files.
 
   C1  control: with src/astryx beside the shim, every trigger registers enabled, and no alarm
@@ -34,7 +34,7 @@ def arm(name, ok, detail=""):
 
 try:
     import psycopg
-    from nucleus.sqlguard.fixture import fixture_db
+    from astryx.security.sqlguard.fixture import fixture_db
 except ImportError as e:
     print(f"SKIP: deps ({e}). Nothing was verified here.")
     sys.exit(77)
@@ -44,9 +44,11 @@ shutil.copy(REPO / "astryx.py", TREE / "astryx.py")
 SRC = TREE / "src" / "astryx"
 shutil.copytree(REPO / "src" / "astryx", SRC, ignore=shutil.ignore_patterns("__pycache__"))
 (TREE / "nucleus").mkdir()
-PULSE = TREE / "nucleus" / "pulse.py"
-shutil.copy(os.environ.get("PULSE_SRC") or REPO / "nucleus" / "pulse.py", PULSE)
-shutil.copy(REPO / "nucleus" / "pulse_run.py", TREE / "nucleus" / "pulse_run.py")
+for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
+    (TREE / _d).mkdir(parents=True, exist_ok=True)
+PULSE = TREE / "src" / "astryx" / "pulse" / "pulse.py"
+shutil.copy(os.environ.get("PULSE_SRC") or REPO / "src" / "astryx" / "pulse" / "pulse.py", PULSE)
+shutil.copy(REPO / "src" / "astryx" / "pulse" / "pulse_run.py", TREE / "src" / "astryx" / "pulse" / "pulse_run.py")
 (TREE / "triggers" / "zzagent").mkdir(parents=True)
 for fname, name in (("a.py", "zz_canary_a"), ("b.py", "zz_canary_b")):
     (TREE / "triggers" / "zzagent" / fname).write_text(

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Oracle for triggers/steward/stale_goals.py — the progress law, mechanized.
 
-    venv/bin/python tests/test_stale_goals.py     (also run by nucleus/check.sh)
+    venv/bin/python tests/test_stale_goals.py     (also run by devtools/check.sh)
 
 WHY IT EXISTS AT ALL, AND WHY NOW. This guard is the metabolism patrol — the one that
 decides whether a goal is decaying — and it had no fixture of any kind until the day it
@@ -236,12 +236,12 @@ check("the dark-gap threshold is the declared 6h (premise: an UP org writes at l
 # ── the query EXECUTED (the ctx.sql-blindness class): a stamped fixture DB, never production ────
 try:
     import importlib.util as _ilu
-    _p = _ilu.spec_from_file_location("pulse_run_sg", REPO / "nucleus" / "pulse_run.py")
+    _p = _ilu.spec_from_file_location("pulse_run_sg", REPO / "src" / "astryx" / "pulse" / "pulse_run.py")
     _pr = _ilu.module_from_spec(_p)
     _p.loader.exec_module(_pr)
     import psycopg
     sys.path.insert(0, str(REPO))
-    from nucleus.sqlguard.fixture import fixture_db
+    from astryx.security.sqlguard.fixture import fixture_db
     _fx = fixture_db()
     fx = _fx.__enter__()
 except Exception as e:  # noqa: BLE001

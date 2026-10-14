@@ -1,0 +1,16 @@
+# The message intents that CHANGE a plan under vote. An approve older than the newest row on the thread
+# carrying one of these is STALE: it approved something that is no longer the design.
+#
+# ONE writer, two readers, so the tool and the nets can't disagree (seed #29424):
+#   channel/server.mjs          plan_quorum, the canonical read agents consult
+#   triggers/seed/plan_consensus.py   plan_consensus / plan_stall / plan_verdict_due
+# tests/test_plan_lifecycle.py arm v pins both to this file.
+#
+# 'design' joined 'revise' after plan-4918: a4's rank-4 revision #28982 changed a binding part as
+# intent='design', the old approves kept counting, and plan_quorum read 4/4 fresh.
+# A binding change posted as chat/task is NOT seen here: post changes as design or revise.
+# This set stales VERDICTS only. The climb's cut (consolidated(), plan_climb_due) stays revise-only, because a
+# design re-post by the top must not reopen the refinement climb.
+# Owner-override amendments carry neither intent and don't stale votes: the owner is not a voter.
+revise
+design

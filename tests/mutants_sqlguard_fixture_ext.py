@@ -1,6 +1,6 @@
-"""Authored mutants for nucleus/sqlguard/fixture.py's run-role path (plan-4918 P0-c), run by nucleus/mutation_probe.py.
+"""Authored mutants for src/astryx/security/sqlguard/fixture.py's run-role path (plan-4918 P0-c), run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_sqlguard_fixture_ext.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_sqlguard_fixture_ext.py
 
 The sqlguard harness runs as superuser, which hides both properties: it can COMMENT on extension-owned views, and
 it CREATEs extensions itself. Only the prep oracle's NOSUPERUSER fixture sees them, so that's the oracle here.
@@ -9,7 +9,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-SUBJECT = REPO / "nucleus" / "sqlguard" / "fixture.py"
+SUBJECT = REPO / "src" / "astryx" / "security" / "sqlguard" / "fixture.py"
 ORACLE = REPO / "tests" / "test_branch_check_prep.py"
 ENV = "SQLGUARD_FIXTURE_SRC"
 

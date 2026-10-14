@@ -1,4 +1,4 @@
-"""Oracle for nucleus/dsn_census.py, the S1c-0 gate (plan-5497). Hermetic: no DB, no processes.
+"""Oracle for src/astryx/security/dsn_census.py, the S1c-0 gate (plan-5497). Hermetic: no DB, no processes.
 
 The census decides whether the org may switch to password-less DSNs, so its OWN logic must not be
 able to pass vacuously. Each arm can ALONE go red:
@@ -32,9 +32,9 @@ def check(name, ok, detail=""):
 
 
 try:
-    from nucleus import dsn_census as c
+    from astryx.security import dsn_census as c
 except Exception as exc:                                    # noqa: BLE001
-    check("nucleus.dsn_census imports", False, f"{type(exc).__name__}: {exc}")
+    check("astryx.security.dsn_census imports", False, f"{type(exc).__name__}: {exc}")
     print(f"\nFAIL: {len(fails)} arm(s) red")
     sys.exit(1)
 

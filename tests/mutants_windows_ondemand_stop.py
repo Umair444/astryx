@@ -1,11 +1,11 @@
-"""Authored mutants for nucleus/shipped_triggers/windows_idle_stop.py (plan-8675 C5, Windows on demand), run by nucleus/mutation_probe.py:
+"""Authored mutants for src/astryx/pulse/shipped_triggers/windows_idle_stop.py (plan-8675 C5, Windows on demand), run by devtools/mutation_probe.py:
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_windows_ondemand_stop.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_windows_ondemand_stop.py
 """
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-SUBJECT = REPO / "nucleus/shipped_triggers/windows_idle_stop.py"
+SUBJECT = REPO / "src/astryx/pulse/shipped_triggers/windows_idle_stop.py"
 ORACLE = REPO / "tests" / "test_windows_ondemand.py"
 ENV = "WIN_IDLE_SRC"
 TIMEOUT = 300

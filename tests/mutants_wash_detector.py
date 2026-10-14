@@ -1,6 +1,6 @@
-"""Authored mutants for nucleus/wash_detector.py — run by nucleus/mutation_probe.py.
+"""Authored mutants for src/astryx/econ/wash_detector.py — run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_wash_detector.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_wash_detector.py
 
 THE LIST IS THE JUDGEMENT: each mutant is one of the plausible WRONG ring detectors the oracle's
 docstring names. A survivor is a live oracle gap to surface, not a mutant to drop. Coverage is
@@ -10,7 +10,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-SUBJECT = REPO / "nucleus" / "wash_detector.py"
+SUBJECT = REPO / "src" / "astryx" / "econ" / "wash_detector.py"
 ORACLE = REPO / "tests" / "test_wash_detector.py"
 ENV = "WASH_SRC"
 

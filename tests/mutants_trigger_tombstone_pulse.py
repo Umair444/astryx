@@ -1,11 +1,11 @@
-"""Authored mutants for nucleus/pulse.py (plan-9853 D2, the trigger tombstone), run by nucleus/mutation_probe.py:
+"""Authored mutants for src/astryx/pulse/pulse.py (plan-9853 D2, the trigger tombstone), run by devtools/mutation_probe.py:
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_trigger_tombstone_pulse.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_trigger_tombstone_pulse.py
 """
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-SUBJECT = REPO / "nucleus/pulse.py"
+SUBJECT = REPO / "src/astryx/pulse/pulse.py"
 ORACLE = REPO / "tests" / "test_trigger_tombstone.py"
 ENV = "PULSE_SRC"
 TIMEOUT = 300

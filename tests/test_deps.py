@@ -1,4 +1,4 @@
-"""Hermetic test of the dependency-coverage assert (nucleus/deps.py) — the plan-19
+"""Hermetic test of the dependency-coverage assert (src/astryx/core/deps.py) — the plan-19
 drift-catcher. Proves against a REAL temp repo that coverage:
  - catches a third-party import that is NOT in the manifest (the next faster_whisper);
  - catches it even when the import is FUNCTION-LOCAL (the AST-not-grep mandate —
@@ -13,7 +13,7 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from nucleus import deps  # noqa: E402
+from astryx.core import deps  # noqa: E402
 
 
 def _repo(files: dict) -> Path:
@@ -63,7 +63,7 @@ def test_relative_import_not_a_gap():
 
 def test_mixed_realistic():
     d = _repo({
-        "nucleus/charter.py": "import sys\nfrom pathlib import Path\n",   # stdlib only
+        "src/astryx/core/charter.py": "import sys\nfrom pathlib import Path\n",   # stdlib only
         "bridges/whatsapp.py": "import httpx\nfrom common import x\n",     # httpx third-party
         "bridges/common.py": "x = 1\n",
         "obs/main.py": "def f():\n    import numpy\n",                    # undeclared, fn-local

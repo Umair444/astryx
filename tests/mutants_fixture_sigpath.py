@@ -1,13 +1,13 @@
 """Authored mutants for fixture.py's signature path pin, oracle tests/test_fixture_sigpath.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_fixture_sigpath.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_fixture_sigpath.py
 
 The oracle's fixtures live under a private prefix (astryx_fx_sptest<pid>_), so no mutant touches another run's DB.
 """
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-SUBJECT = REPO / "nucleus" / "sqlguard" / "fixture.py"
+SUBJECT = REPO / "src" / "astryx" / "security" / "sqlguard" / "fixture.py"
 ORACLE = REPO / "tests" / "test_fixture_sigpath.py"
 ENV = "SQLGUARD_FIXTURE_SRC"
 TIMEOUT = 300

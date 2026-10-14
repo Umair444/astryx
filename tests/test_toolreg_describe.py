@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Oracle: a registered tool's search text is its OWN header, never a triple quote from its body.
 
-    venv/bin/python tests/test_toolreg_describe.py        (also run by nucleus/check.sh)
-    TOOLREG_SRC=<path> …                                   (the subject; default nucleus/toolreg.py)
+    venv/bin/python tests/test_toolreg_describe.py        (also run by devtools/check.sh)
+    TOOLREG_SRC=<path> …                                   (the subject; default src/astryx/core/toolreg.py)
 
 toolreg._describe() is the registry door's search text: find() matches words against it, so a
 wrong description makes a tool unfindable. The Python-docstring regex used to run over EVERY
@@ -26,7 +26,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 EXIT_SKIP = 77
-SRC = Path(os.environ.get("TOOLREG_SRC") or REPO / "nucleus" / "toolreg.py")
+SRC = Path(os.environ.get("TOOLREG_SRC") or REPO / "src" / "astryx" / "core" / "toolreg.py")
 fails = []
 
 

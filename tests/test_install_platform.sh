@@ -3,7 +3,7 @@
 #   (A) doctor's WSL detection (_wsl_kind) and PID-1 read (_pid1), through the real helpers with a stubbed /proc/version
 #       and a stubbed `ps`;
 #   (B) doctor's real WSL block, run with stubs: no systemd → the exact /etc/wsl.conf fix + `wsl --shutdown`; WSL1 → bad;
-#   (C) the docker host address resolution order (nucleus/docker_host_ip.sh): env > .env > docker0 > host.docker.internal
+#   (C) the docker host address resolution order (scripts/docker_host_ip.sh): env > .env > docker0 > host.docker.internal
 #       > 172.17.0.1, with `ip`/`getent` stubbed, including the ones that can't answer;
 #   (D) install.sh: parses, and --dry-run on this box and on a simulated bare Ubuntu-on-WSL runs NOTHING (a stub sudo,
 #       git and curl-pipe would leave a marker), refuses root, prefers PyPI only when the package there is this repo,
@@ -67,7 +67,7 @@ arm   "(B4) not WSL → the block prints nothing" "$out" ""
 unset -f ok bad warn docker timeout ps
 
 # ── (C) docker host address: resolution order ───────────────────────────────────────────────────────────────────
-. nucleus/docker_host_ip.sh
+. scripts/docker_host_ip.sh
 unset ASTRYX_DOCKER_HOST_IP
 ip() { [ "$*" = "-4 addr show docker0" ] && printf '6: docker0: <UP>\n    inet 172.18.0.1/16 brd 172.18.255.255 scope global docker0\n'; }
 getent() { [ "$*" = "hosts host.docker.internal" ] && printf '192.168.65.254  host.docker.internal\n'; }
@@ -91,7 +91,7 @@ arm "(C9) init.sh's generated whatsapp unit binds the resolved address, not a li
   "$(grep -c 'bridges.whatsapp:app --host $(_docker_host_ip) --port 8477' init.sh)" 1
 # every remaining mention is inside a comment (the text after a '#')
 arm "(C10) no hardcoded 172.17.0.1 left in init.sh's or deploy.sh's commands" \
-  "$(grep -h '172\.17\.0\.1' init.sh nucleus/deploy.sh | grep -vc '#.*172\.17\.0\.1')" 0
+  "$(grep -h '172\.17\.0\.1' init.sh scripts/deploy.sh | grep -vc '#.*172\.17\.0\.1')" 0
 
 # ── (D) install.sh ──────────────────────────────────────────────────────────────────────────────────────────────
 bash -n install.sh; arm "(D1) install.sh parses (bash -n)" "$?" 0
@@ -180,7 +180,7 @@ has   "(D8) --help prints the flags when piped" "$out" "--dry-run"
 
 # D9: deploy.sh's bridge table holds exactly the three bridges, each host:port (a2 #51669 B1: a missing space
 #     glued telegram into whatsapp's address)
-tbl=$(bash -c '_docker_host_ip() { echo 172.17.0.1; }; ROOT=/x; eval "$(command grep -m1 "^declare -A BADDR=" nucleus/deploy.sh)"; for k in "${!BADDR[@]}"; do printf "%s=%s\n" "$k" "${BADDR[$k]}"; done | sort')
+tbl=$(bash -c '_docker_host_ip() { echo 172.17.0.1; }; ROOT=/x; eval "$(command grep -m1 "^declare -A BADDR=" scripts/deploy.sh)"; for k in "${!BADDR[@]}"; do printf "%s=%s\n" "$k" "${BADDR[$k]}"; done | sort')
 keys=$(printf '%s\n' "$tbl" | cut -d= -f1 | tr '\n' ' ')
 arm   "(D9) the bridge table's keys are exactly discord telegram whatsapp" "$keys" "discord telegram whatsapp "
 bad=$(printf '%s\n' "$tbl" | command grep -cvE '^[a-z]+=[0-9.]+:[0-9]+$' || true)

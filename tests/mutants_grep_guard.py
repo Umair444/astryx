@@ -1,6 +1,6 @@
-"""Authored mutants for nucleus/grep_guard.py, run by nucleus/mutation_probe.py.
+"""Authored mutants for src/astryx/security/grep_guard.py, run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_grep_guard.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_grep_guard.py
 
 Both directions are pinned: mutants that make the guard DENY what runs the real binary or what isn't blind (noise
 trains agents to route around a guard), and mutants that make it ALLOW a blind sweep (the defect it exists for).
@@ -10,7 +10,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-SUBJECT = REPO / "nucleus" / "grep_guard.py"
+SUBJECT = REPO / "src" / "astryx" / "security" / "grep_guard.py"
 ORACLE = REPO / "tests" / "test_grep_guard.py"
 ENV = "GREP_GUARD_SRC"
 

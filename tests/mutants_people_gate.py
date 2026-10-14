@@ -1,7 +1,7 @@
-"""Authored mutants for nucleus/people_gate.py (the people library's access declaration, owner ruling 10-10), run by
-nucleus/mutation_probe.py.
+"""Authored mutants for src/astryx/people/people_gate.py (the people library's access declaration, owner ruling 10-10), run by
+devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_people_gate.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_people_gate.py
 
 One per property the declaration rests on: every resident READS the people library, PUBLIC never does, a re-apply
 repairs drift (a stale column grant from the retired 1a split included), and the relation database is born zero-window.
@@ -15,7 +15,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-SUBJECT = REPO / "nucleus" / "people_gate.py"
+SUBJECT = REPO / "src" / "astryx" / "people" / "people_gate.py"
 ORACLE = REPO / "tests" / "test_people_gate.py"
 ENV = "PEOPLE_GATE_SRC"
 TIMEOUT = 300

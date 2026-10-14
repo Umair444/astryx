@@ -13,11 +13,11 @@ from pathlib import Path
 
 from psycopg import errors, sql
 
-# Every run role an oracle makes is a TEST role (nucleus/runscope.py TEST_STAMP): set here, at import, because every
+# Every run role an oracle makes is a TEST role (src/astryx/pg/runscope.py TEST_STAMP): set here, at import, because every
 # RunScope oracle imports this module before it opens a scope, and mutation_probe runs oracles outside check.sh.
 os.environ.setdefault("ASTRYX_RUNSCOPE_TEST", "1")
 ORACLE_BASE = Path(os.environ.get("ASTRYX_RUNSCOPE_ORACLE_ROOT", "/tmp/astryx-runscope-oracle"))
-from nucleus.branch_check_prep import TEST_DB                    # noqa: E402 (ONE definition, P0-b's refusal reads it too)
+from devtools.branch_check_prep import TEST_DB                    # noqa: E402 (ONE definition, P0-b's refusal reads it too)
 TEST_ROLE = re.compile(r"^astryx_hardendep_(\d+)$"
                        r"|^bc_(\d+)x100[0-3]$")    # runscope's synthetic orphans (reused / outside / foreign / unstamped)        # a LOGIN role test_init_harden plants
 

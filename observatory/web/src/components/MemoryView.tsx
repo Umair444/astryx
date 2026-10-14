@@ -10,7 +10,7 @@ import { Empty, LiveDot, Orb, Panel, SectionHead, Tabs, ViewHeader } from '../ui
 
 /* The Memory tab — the org's recall system, rendered.
  *
- * NO GRAPH LIBRARY, on purpose. nucleus/memgraph.py computes every position server-side
+ * NO GRAPH LIBRARY, on purpose. src/astryx/memory/memgraph.py computes every position server-side
  * and persists it, so the client runs zero simulation: ~285 circles and ~565 paths in one
  * <svg> is nothing, and it buys total control over the look plus positions that are
  * stable across compiles. A force library would re-simulate on every mount and the map
@@ -507,7 +507,7 @@ export default function MemoryView() {
         <div className="flex flex-col items-center gap-6">
         <LensBar lens={lens} setLens={setLens} />
         <Empty title="No compiled graph yet" hint={<>
-          <code className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-deck-3">venv/bin/python nucleus/memgraph.py build</code>
+          <code className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-deck-3">venv/bin/python src/astryx/memory/memgraph.py build</code>
           {g.notes?.map((n, i) => <span key={i} className="block mt-2">{n}</span>)}
         </>} />
         </div>

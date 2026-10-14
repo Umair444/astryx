@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Oracle: a steps doorbell resolves only to a step OF THE AGENT IT NAMES (a4 #22117).
 
-    venv/bin/python tests/test_step_doorbell.py        (also run by nucleus/check.sh)
+    venv/bin/python tests/test_step_doorbell.py        (also run by devtools/check.sh)
     CHANNEL_SERVER_SRC=<path> / STEP_LINE_SRC=<path>   (the subjects; mutation_probe sets one)
 
 The payload on `astryx_steps` is {id, agent, kind}. Both consumers matched the SUBSCRIPTION (or
@@ -25,7 +25,7 @@ depth, graded as such.
   B2 step_line's `agent` is a REQUIRED keyword, and every step_line call in bridges/ passes
      `agent=` (AST: a call can't silently fall back to matching "").
 
-THE DATABASE is sqlguard's stamped fixture (nucleus/sqlguard/fixture.py, the ONE applier), not a
+THE DATABASE is sqlguard's stamped fixture (src/astryx/security/sqlguard/fixture.py, the ONE applier), not a
 hand-built one: an unstamped relation caps every site at FIXTURE-DDL, so step_line's owner-matched
 query could never read RESPONSIVE. B1 then gives that query both witnesses (1 row for the owner,
 0 for the forger). B1 uses ONE asyncpg connection, not a pool: step_line only calls .fetchrow, which
@@ -104,7 +104,7 @@ def dsn():
 
 
 def node_bin():
-    spawn = REPO / "nucleus" / "spawn.sh"
+    spawn = REPO / "scripts" / "spawn.sh"
     if spawn.exists():
         m = re.search(r"^NODE=(\S+)", spawn.read_text(), re.M)
         if m and Path(m.group(1)).is_file():
@@ -120,7 +120,7 @@ if not ADMIN_DSN:
 # ≥1-row arms unrun on fresh trees, so its sqlguard grade flapped between runs (steward #37892).
 EAR = bool(NODE and (REPO / "channel" / "node_modules" / "pg").is_dir())
 sys.path.insert(0, str(REPO))
-from nucleus.sqlguard.fixture import fixture_db  # noqa: E402 — the ONE applier
+from astryx.security.sqlguard.fixture import fixture_db  # noqa: E402 — the ONE applier
 
 _fx = fixture_db()
 try:

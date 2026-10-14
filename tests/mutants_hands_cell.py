@@ -1,6 +1,6 @@
-"""Authored mutants for nucleus/hands.py (plan-7862 Hands, S1), run by nucleus/mutation_probe.py.
+"""Authored mutants for src/astryx/hands/hands.py (plan-7862 Hands, S1), run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_hands_cell.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_hands_cell.py
 
 One per invariant the S1 oracle claims. These need docker and the built images, so the battery is
 slow (each mutant runs the full oracle).
@@ -15,7 +15,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-SUBJECT = REPO / "nucleus" / "hands.py"
+SUBJECT = REPO / "src" / "astryx" / "hands" / "hands.py"
 ORACLE = REPO / "tests" / "test_hands_cell.py"
 ENV = "HANDS_SRC"
 # The full docker oracle takes about 2 minutes, and a mutant that removes the reaper makes H10 poll

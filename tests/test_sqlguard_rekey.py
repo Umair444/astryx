@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle for nucleus/sqlguard/rekey.py: a range that re-texts a LISTED SQL literal without moving its ledger row is
+"""Oracle for src/astryx/security/sqlguard/rekey.py: a range that re-texts a LISTED SQL literal without moving its ledger row is
 RED before merge, statically (a3 night-review 10-09; the shape that backed plan-4918 out twice, seed #33150 #34264).
 
     venv/bin/python tests/test_sqlguard_rekey.py
@@ -17,7 +17,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
-from nucleus.sqlguard import rekey  # noqa: E402
+from astryx.security.sqlguard import rekey  # noqa: E402
 
 fails = []
 
@@ -42,13 +42,15 @@ SUBJECT = 'def q(c, x):\n    return c.execute("SELECT a FROM t WHERE a {op} %s",
 def main():
     with tempfile.TemporaryDirectory() as td:
         r = Path(td)
-        (r / "nucleus" / "sqlguard").mkdir(parents=True)
-        (r / "nucleus" / "__init__.py").write_text("")
-        (r / "nucleus" / "sqlguard" / "__init__.py").write_text("")
+        (r / "src" / "astryx" / "security" / "sqlguard").mkdir(parents=True)
+        Path.mkdir(r / "nucleus")
+        from _astryx_skel import skeleton            # goal 10224 S4: astryx.* needs its spine in the fake repo
+        skeleton(r, "src/astryx/security/__init__.py")
+        (r / "src" / "astryx" / "security" / "sqlguard" / "__init__.py").write_text("")
         for f in ("inventory.py", "normalize.py"):
-            shutil.copy2(REPO / "nucleus" / "sqlguard" / f, r / "nucleus" / "sqlguard" / f)
+            shutil.copy2(REPO / "src" / "astryx" / "security" / "sqlguard" / f, r / "src" / "astryx" / "security" / "sqlguard" / f)
         (r / "nucleus" / "demo.py").write_text(SUBJECT.format(op="LIKE"))
-        led = r / "nucleus" / "sqlguard" / "ledger.json"
+        led = r / "src" / "astryx" / "security" / "sqlguard" / "ledger.json"
         led.write_text(json.dumps({"header": {}, "rows": {}}))
         git(r, "init", "-q", "-b", "main")
         git(r, "add", "-A")
@@ -99,7 +101,7 @@ def main():
 
         # F (a4 #34885): the range CHANGES norm() and deletes a listed site; the ledger is re-keyed into the NEW form.
         # Judged by its OWN normalizer, base's site sat in the OLD key space and read PRE-EXISTING: a false clean.
-        with open(r / "nucleus" / "sqlguard" / "normalize.py", "a") as f:
+        with open(r / "src" / "astryx" / "security" / "sqlguard" / "normalize.py", "a") as f:
             f.write("\n_norm0 = norm\n\n\ndef norm(text):\n    return _norm0(text).upper()\n")
         fn, text = new_key.split("\x1f")
         up_key = f"{fn}\x1f{text.upper()}"

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Oracle: the pre-push hook BEHAVES the way it was reviewed to behave.
 
-    venv/bin/python tests/test_pre_push_contract.py     (also run by nucleus/check.sh)
+    venv/bin/python tests/test_pre_push_contract.py     (also run by devtools/check.sh)
 
 WHY THIS EXISTS BESIDE test_hook_integrity.py, WHICH ALREADY GUARDS THIS FILE.
 That oracle proves the INSTALLED copy is byte-identical to the TRACKED source and
@@ -13,7 +13,7 @@ DO, so the pair covers both halves: integrity says "what runs is what was review
 says "what was reviewed does the job".
 
 HERMETIC. Every case builds a throwaway git repo, drops the REAL tracked hook body into
-it, and puts STUBS at nucleus/privacy_gate.sh and nucleus/pushed_tree_check.sh that log
+it, and puts STUBS at devtools/privacy_gate.sh and devtools/pushed_tree_check.sh that log
 their argv and exit on demand. Nothing here clones, pushes, or touches the live repo, and
 the whole file runs in well under a second — the reason it can sit in check.sh at all.
 
@@ -86,6 +86,8 @@ def run_hook(stdin_text, privacy_rc=0, tree_rc=0, rcmap=None, slurp=False):
         subprocess.run(["git", "init", "-q"], cwd=tmp, check=True,
                        capture_output=True, timeout=30)
         (tmp / "nucleus").mkdir()
+        for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
+            (tmp / _d).mkdir(parents=True, exist_ok=True)
         for name, body in (("privacy_gate.sh", STUB_PRIVACY),
                            ("pushed_tree_check.sh", STUB_TREE)):
             p = tmp / "nucleus" / name

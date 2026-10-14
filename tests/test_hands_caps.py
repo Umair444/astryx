@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Oracle: Hands' per-agent STEP and WALL-TIME caps (plan-7862, seed's binding item #38260, built per #44137).
 
-    venv/bin/python tests/test_hands_caps.py        (also run by nucleus/check.sh; no desktop needed)
+    venv/bin/python tests/test_hands_caps.py        (also run by devtools/check.sh; no desktop needed)
 
   C1 STEP: N charges pass, the (N+1)th refuses naming the STEP cap, and a refused charge is never counted
   C2 a multi-step charge (a `do` script) that would cross the cap is refused WHOLE, not run up to it
@@ -34,12 +34,12 @@ os.environ["HANDS_CAP_IDLE_S"] = "600"
 sys.path.insert(0, str(REPO))
 import importlib.util  # noqa: E402
 _s = importlib.util.spec_from_file_location("hands_desktop", os.environ.get("HANDS_DESKTOP_SRC")
-                                            or REPO / "nucleus/hands_desktop.py")
+                                            or REPO / "src/astryx/hands/hands_desktop.py")
 hd = importlib.util.module_from_spec(_s)
-sys.modules["nucleus.hands_desktop"] = hd
+sys.modules["astryx.hands.hands_desktop"] = hd
 _s.loader.exec_module(hd)
-import nucleus  # noqa: E402
-nucleus.hands_desktop = hd                                  # the server imports THIS module (a mutant, under the probe)
+import astryx.hands  # noqa: E402
+astryx.hands.hands_desktop = hd                                  # the server imports THIS module (a mutant, under the probe)
 
 fails = []
 

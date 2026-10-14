@@ -147,7 +147,7 @@ class TxCtx:
         """goal 4227 S1c: the check SAYS its wakes; here they go through the pulse's own writer (emit)
         inside this rolled-back transaction, so the arms see exactly what the chokepoint delivers."""
         sys.path.insert(0, str(REPO))
-        from nucleus.pulse import emit
+        from astryx.pulse.pulse import emit
         emit(self._conn, dict(kw, to_agent=to, body=body))
 
     def sql(self, query, params=()):
@@ -569,7 +569,7 @@ def v_one_writer_for_change_intents(ctx):
         assert r.returncode == 0, f"node could not run the JS reader: {r.stderr.strip()[:200]}"
         return py, json.loads(r.stdout)
 
-    real = REPO / "nucleus" / "plan_change_intents"
+    real = REPO / "src" / "astryx" / "data" / "plan_change_intents"
     py, jsv = both(real)
     assert py == jsv and {"revise", "design"} <= set(py), (py, jsv)
     variants = {                               # name -> (bytes, expected: a sorted list, or None = both refuse)

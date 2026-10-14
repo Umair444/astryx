@@ -2,13 +2,13 @@
 """Oracle O5: the tool nudge can never block a prompt, never leaks one, and nudges only on
 RECURRENCE (goal 4227, S4).
 
-    venv/bin/python tests/test_nudge.py          (also run by nucleus/check.sh)
+    venv/bin/python tests/test_nudge.py          (also run by devtools/check.sh)
     NUDGE_SRC=<path> …                           (the subject; mutation_probe sets it)
 
 The REAL hook runs as a subprocess from a temp repo tree (it derives REPO from its own path),
 with its .env written per case, so the axis under test (the endpoint) is set EXPLICITLY for
 each case and never inherited. The DB side runs in THROWAWAY DATABASES from
-nucleus/sqlguard/fixture.py's fixture_db() (schema.sql applied whole, stamped, dropped after),
+src/astryx/security/sqlguard/fixture.py's fixture_db() (schema.sql applied whole, stamped, dropped after),
 never the production server's own database: the hook's .env carries the fixture's DSN. N9's
 unmigrated shape is a second fixture whose classifications lost `nudged` (the applier's extra
 DDL, not a hand CREATE in this file). The classifier is a fake loopback server whose behaviour
@@ -101,13 +101,13 @@ check("N1 no non-zero exit anywhere in the hook (exit 2 blocks the prompt)", not
 # The DB side: N1 above runs on any tree; everything below needs a fixture database. The estate
 # decides absent (77) vs broken (1), as for every sqlguard oracle; a failed N1 still reads RED.
 sys.path.insert(0, str(REPO))
-from nucleus.sqlguard.estate import absent  # noqa: E402
+from astryx.security.sqlguard.estate import absent  # noqa: E402
 _gone = absent(REPO, deps=("psycopg",))
 if _gone:
     print(f"  {'NOT SEARCHED' if _gone[0] == EXIT_SKIP else 'BROKEN'}: {_gone[1]} (static arm only)")
     sys.exit(_gone[0] if not fails else 1)
 import psycopg  # noqa: E402
-from nucleus.sqlguard.fixture import FixtureUnavailable, fixture_db  # noqa: E402
+from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db  # noqa: E402
 
 
 # ── the fake classifier ──────────────────────────────────────────────────────────────────
@@ -179,11 +179,10 @@ def make_tree(deadline=None):
     (t / "hooks").mkdir()
     shutil.copy(SUBJECT, t / "hooks" / "nudge.py")
     (t / "nucleus").mkdir()
-    for e in (REPO / "nucleus").iterdir():
-        if e.name in ("charter.py", "tier.py"):
-            shutil.copy(e, t / "nucleus" / e.name)
-        elif e.name != "__pycache__":
-            (t / "nucleus" / e.name).symlink_to(e)
+    for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
+        (t / _d).mkdir(parents=True, exist_ok=True)
+    from _astryx_skel import mirror                  # goal 10224 S4: the package linked, the stubs copied
+    mirror(t, copy=("src/astryx/core/charter.py", "src/astryx/core/tier.py"))
     for name, grants in (("zzpub", ""), ("zzpub2", ""), ("zzpriv", "Grants: gmail\n")):
         (t / "agents" / name).mkdir(parents=True)
         (t / "agents" / name / f"{name}.md").write_text(f"# {name}\n{grants}")

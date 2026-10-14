@@ -83,7 +83,7 @@ Then:
 3. Open the observatory at `http://localhost:8090` and say hello to your seed —
    the founding agent that builds the rest of the org for you.
 
-Watch it work: `nucleus/wall.sh` (a tmux wall of every agent's live activity), or
+Watch it work: `scripts/wall.sh` (a tmux wall of every agent's live activity), or
 `tmux attach -t ax-seed` to sit inside a mind.
 
 <details>
@@ -92,7 +92,7 @@ Watch it work: `nucleus/wall.sh` (a tmux wall of every agent's live activity), o
 ```bash
 # 1. python environment (uv shown; python3 -m venv + venv/bin/pip works identically)
 uv venv venv --seed
-uv pip install --python venv/bin/python $(venv/bin/python nucleus/deps.py install-list core)
+uv pip install --python venv/bin/python $(venv/bin/python src/astryx/core/deps.py install-list core)
 
 # 2. postgres — the declared server, infra/pg (pg18 + pgvector + PostGIS + Apache AGE pinned; loopback only).
 #    The first build compiles AGE. Or point ASTRYX_DSN at a server you already run (17+, with those extensions).
@@ -102,7 +102,7 @@ docker compose -f infra/pg/docker-compose.yml up -d
 echo "ASTRYX_DSN=postgres://astryx:changeme@127.0.0.1:5432/astryx" > .env && chmod 600 .env
 
 # 3. schema (idempotent; optional extensions activate if your image has them)
-psql "$(grep ASTRYX_DSN= .env | cut -d= -f2-)" -f nucleus/schema.sql
+psql "$(grep ASTRYX_DSN= .env | cut -d= -f2-)" -f src/astryx/sql/schema.sql
 
 # 4. the channel client (the wire's MCP server) + the observatory frontend
 (cd channel && npm install)
@@ -110,11 +110,11 @@ psql "$(grep ASTRYX_DSN= .env | cut -d= -f2-)" -f nucleus/schema.sql
 
 # 5. your law, then the founding agent
 cp local.template.md local.md    # edit it — this is YOUR org's constitution
-nucleus/spawn.sh seed            # a tmux session ax-seed, alive on the wire
+scripts/spawn.sh seed            # a tmux session ax-seed, alive on the wire
 
 # 6. services (observatory + the pulse — init.sh generates units/, or run by hand:)
 venv/bin/uvicorn observatory.api.main:app --port 8090 &
-# the pulse is the org's one clock — cron works too: * * * * * venv/bin/python nucleus/pulse.py
+# the pulse is the org's one clock — cron works too: * * * * * venv/bin/python src/astryx/pulse/pulse.py
 
 # 7. say hello through the wire itself
 psql "$(grep ASTRYX_DSN= .env | cut -d= -f2-)" -c "INSERT INTO messages (from_agent, to_agent, intent, body)
@@ -197,7 +197,7 @@ for minds that already know how to work. See [harness.md](docs/harness.md).
 ## Contributing
 
 Issues and PRs welcome. The repo ships with its own immune system — run
-`nucleus/check.sh` (the full gate suite) before proposing; the org that lives on this
+`devtools/check.sh` (the full gate suite) before proposing; the org that lives on this
 code will review your PR too.
 
 ## Star history

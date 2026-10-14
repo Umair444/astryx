@@ -3,7 +3,7 @@
 (triggers/steward/weekly_economic_review.py). Concurred by seed 2026-09-18 (thread
 t-weekly-econ-review, msg 19713).
 
-    venv/bin/python tests/test_weekly_econ_review.py    (also run by nucleus/check.sh)
+    venv/bin/python tests/test_weekly_econ_review.py    (also run by devtools/check.sh)
 
 THE GAP THIS PINS. econ_rollup COMPUTES the P&L nightly (Φ/W/K/G, per-trigger roi, per-agent
 pnl → the econ table); nothing READS it to surface the banker duties the charter names. This
@@ -196,7 +196,7 @@ check("ARM5 no executable string reads goals/funded_by/budget_tokens or renders 
 # No DB / no .env (clean clone) → SKIP the SQL arm, keep the pure arms green.
 try:
     _pr_spec = importlib.util.spec_from_file_location(
-        "pulse_run_under_test", REPO / "nucleus" / "pulse_run.py")
+        "pulse_run_under_test", REPO / "src" / "astryx" / "pulse" / "pulse_run.py")
     _pr = importlib.util.module_from_spec(_pr_spec)
     _pr_spec.loader.exec_module(_pr)      # reads .env for DSN at import — raises on a clean clone
     RunnerCtx = _pr.Ctx

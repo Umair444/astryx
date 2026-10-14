@@ -66,8 +66,8 @@ def _load(modname, default, env):
     return mod
 
 
-hd = _load("nucleus.hands_desktop", "nucleus/hands_desktop.py", "HANDS_DESKTOP_SRC")
-droid = _load("nucleus.android", "nucleus/android.py", "ANDROID_SRC")
+hd = _load("astryx.hands.hands_desktop", "src/astryx/hands/hands_desktop.py", "HANDS_DESKTOP_SRC")
+droid = _load("astryx.hands.android", "src/astryx/hands/android.py", "ANDROID_SRC")
 srv = _load("phone_server", "mcp/phone/server.py", "PHONE_SERVER_SRC")
 sys.path.insert(0, str(REPO / "observatory" / "api"))
 obs = _load("main", "observatory/api/main.py", "OBS_MAIN_SRC")
@@ -176,7 +176,7 @@ want("B2: phone_desktop and avd_of_desktop round-trip, from one template",
 spell = re.compile(r"""f["']phone-\{|["']phone-["']\s*\+|["']phone-\{\}["']""")
 others = []
 for p in subprocess.run(["git", "ls-files", "*.py"], cwd=REPO, capture_output=True, text=True).stdout.split():
-    if p == "nucleus/android.py" or p.startswith("tests/"):   # CODE only: a test's fixture strings build no desktop
+    if p == "src/astryx/hands/android.py" or p.startswith("tests/"):   # CODE only: a test's fixture strings build no desktop
         continue
     try:
         if spell.search((REPO / p).read_text()):
@@ -185,10 +185,10 @@ for p in subprocess.run(["git", "ls-files", "*.py"], cwd=REPO, capture_output=Tr
         pass
 want("B2 control: the scan catches a construction (f-string, concatenation, format template)",
      all(spell.search(x) for x in ('d = f"phone-{avd}"', "d = 'phone-' + avd", 'T = "phone-{}"')))
-want("B2: no code outside nucleus/android.py builds a phone desktop name", not others, str(others))
+want("B2: no code outside src/astryx/hands/android.py builds a phone desktop name", not others, str(others))
 
 # ── C2: the resume sweep ───────────────────────────────────────────────────────────────────────────────────────
-sweep_mod = _load("phone_resume_sweep", "nucleus/shipped_triggers/phone_resume_sweep.py", "SWEEP_SRC")
+sweep_mod = _load("phone_resume_sweep", "src/astryx/pulse/shipped_triggers/phone_resume_sweep.py", "SWEEP_SRC")
 log = hd.state_dir(DESK) / "owner_log"
 acts = hd.state_dir(hd.LAPTOP) / "acts.log"
 acts.parent.mkdir(parents=True, exist_ok=True)
@@ -224,7 +224,7 @@ want("C2 writer: an agent's act on the LAPTOP lands in its act log (name + agent
 
 # ── B4: absent by omission ─────────────────────────────────────────────────────────────────────────────────────
 avd_home = Path(os.environ.get("ANDROID_AVD_HOME") or Path.home() / ".android" / "avd").resolve()
-r = subprocess.run(["bash", "nucleus/backup.sh", "--list-state"], cwd=REPO, capture_output=True, text=True,
+r = subprocess.run(["bash", "scripts/backup.sh", "--list-state"], cwd=REPO, capture_output=True, text=True,
                    timeout=60)
 listed = [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
 if r.returncode != 0 or not listed:
@@ -294,7 +294,7 @@ def _env_file(key):
 live_key = _env_file("OBS_KEY")
 active = subprocess.run(["systemctl", "is-active", "astryx-observatory"], capture_output=True, text=True).stdout.strip()
 running = [d["agent"] for d in json.loads(subprocess.run(
-    [sys.executable, "-c", "import json,sys; sys.path.insert(0,'.'); from nucleus import hands_desktop as h; "
+    [sys.executable, "-c", "import json,sys; sys.path.insert(0,'.'); from astryx.hands import hands_desktop as h; "
      "print(json.dumps(h.status()))"], cwd=REPO, capture_output=True, text=True,
     env={k: v for k, v in os.environ.items() if not k.startswith("ASTRYX_HANDS_")}).stdout or "[]") if d.get("running")]
 if not live_key or active != "active" or not running or not shutil.which("journalctl"):

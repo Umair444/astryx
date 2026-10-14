@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Oracle for triggers/seed/wedge_watch.py — the wedged/marker-gap discriminator.
 
-    venv/bin/python tests/test_wedge_watch.py        (also run by nucleus/check.sh)
+    venv/bin/python tests/test_wedge_watch.py        (also run by devtools/check.sh)
 
 WHAT THIS PINS, and why it is a counterexample test rather than a happy-path one. The
 guard separates two states that look IDENTICAL on the consumption marker alone:
@@ -33,7 +33,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-# The subject is overridable so nucleus/mutation_probe.py can point this oracle at a
+# The subject is overridable so devtools/mutation_probe.py can point this oracle at a
 # deliberately-wrong copy and check that it NOTICES. Defaults to the real trigger, so
 # check.sh and a by-hand run are unaffected.
 TRIGGER = Path(os.environ.get("WEDGE_WATCH_SRC",

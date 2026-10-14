@@ -44,7 +44,7 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-# PII_SWEEP_SRC lets nucleus/mutation_probe.py point this oracle at a MUTATED copy of the
+# PII_SWEEP_SRC lets devtools/mutation_probe.py point this oracle at a MUTATED copy of the
 # guard, which is how the org proves an assertion can actually fail (mutants_pii_sweep_
 # ledger.py). Unset, it is the deployed guard.
 SUBJECT = Path(os.environ.get("PII_SWEEP_SRC")
@@ -279,7 +279,7 @@ def main():
     # measured, 99% in charter.resolve — on a heavy wire day. A crashed eval never saves its
     # watermark, so the backlog only grows and the guard stays blind: the cost has to be
     # bounded by the number of distinct authors, which a busy day does not grow.
-    import nucleus.tier as _tier
+    import astryx.core.tier as _tier
     calls = []
     _real = _tier.is_content_public
 

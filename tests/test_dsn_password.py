@@ -1,4 +1,4 @@
-"""Oracle for nucleus/dsn_password.py, the S1c switch (plan-5497). Hermetic: fixture files only.
+"""Oracle for src/astryx/security/dsn_password.py, the S1c switch (plan-5497). Hermetic: fixture files only.
 
 Each arm can ALONE go red:
   P1 strip REFUSES, writing nothing, when ~/.pgpass has no entry for the DSN's host LITERALLY (a
@@ -34,10 +34,10 @@ def check(name, ok, detail=""):
 
 
 try:
-    from nucleus import dsn_password as dp
-    from nucleus import secretset as ss
+    from astryx.security import dsn_password as dp
+    from astryx.security import secretset as ss
 except Exception as exc:                                    # noqa: BLE001
-    check("nucleus.dsn_password imports", False, f"{type(exc).__name__}: {exc}")
+    check("astryx.security.dsn_password imports", False, f"{type(exc).__name__}: {exc}")
     print(f"\nFAIL: {len(fails)} arm(s) red")
     sys.exit(1)
 

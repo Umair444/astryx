@@ -17,9 +17,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from nucleus.sqlguard.estate import gate  # noqa: E402
+from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate('test_observatory_people', REPO, deps=('psycopg', 'asyncpg', 'fastapi'))   # a committed-only tree: 77, not a crash
-from nucleus.sqlguard.fixture import fixture_db  # noqa: E402
+from astryx.security.sqlguard.fixture import fixture_db  # noqa: E402
 
 fails = 0
 
@@ -32,7 +32,7 @@ def arm(name, ok, detail=""):
 
 def main(url):
     import psycopg
-    from nucleus import charter
+    from astryx.core import charter
     real = charter.roster()
     agent = "painter" if "painter" in real else real[0]
     sys.path.insert(0, str(REPO / "observatory" / "api"))

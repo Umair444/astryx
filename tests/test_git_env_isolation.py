@@ -15,7 +15,7 @@ check.sh inherited it, so every child addressed the SHARED repo instead of its o
 A push from the MAIN tree does not export a GIT_DIR that points elsewhere, which is why this
 stayed hidden until the cherry-pick-onto-origin/main PR flow moved pushes into worktrees.
 
-THE FIX: nucleus/pushed_tree_check.sh unsets EVERY inherited GIT_* right after REPO is
+THE FIX: devtools/pushed_tree_check.sh unsets EVERY inherited GIT_* right after REPO is
 computed, so the clone, the checkout, check.sh and every test below it locate their own
 repository. The set is derived, not listed: the hook also carries GIT_CONFIG_PARAMETERS, the
 pusher's `git -c ...`, which would reach every test's throwaway repo (a3 #28083). check.sh
@@ -23,7 +23,7 @@ runs the same scrub at its entry, the chokepoint for every caller (hooks, branch
 a worktree shell).
 
 HERMETIC. Every arm builds a throwaway repo (a bare remote, a main tree, a linked worktree),
-commits the REAL tracked hooks/pre-push and the REAL nucleus/pushed_tree_check.sh into it,
+commits the REAL tracked hooks/pre-push and the REAL devtools/pushed_tree_check.sh into it,
 and stubs privacy_gate.sh and check.sh. The stub check.sh does what a test did in the
 incident: `git init` in a temp dir. Nothing here touches the live repo, and this process
 scrubs its own GIT_* first, because check.sh can itself run under a worktree hook.
@@ -52,8 +52,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 HOOK = REPO / "hooks" / "pre-push"
-SCRIPT = REPO / "nucleus" / "pushed_tree_check.sh"
-CHECK = REPO / "nucleus" / "check.sh"
+SCRIPT = REPO / "devtools" / "pushed_tree_check.sh"
+CHECK = REPO / "devtools" / "check.sh"
 # The one scrub, byte-identical in both scripts: every exported GIT_* is unset.
 UNSET = 'for v in $(compgen -e | grep "^GIT_"); do unset "$v"; done'
 # The repo-locating variables. Scrubbed from THIS process first: under a worktree hook they
@@ -107,10 +107,14 @@ def build(td: Path, script_body: str) -> tuple:
     git("init", "-q", "-b", "main", str(main), cwd=td, env=env)
     (main / "hooks").mkdir()
     (main / "nucleus").mkdir()
+    for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
+        (main / _d).mkdir(parents=True, exist_ok=True)
     shutil.copy(HOOK, main / "hooks" / "pre-push")
-    for rel, body in (("nucleus/pushed_tree_check.sh", script_body),
-                      ("nucleus/privacy_gate.sh", STUB_PRIVACY),
-                      ("nucleus/check.sh", STUB_CHECK)):
+    for s in ("pushed_tree_check.sh", "privacy_gate.sh"):   # hooks/pre-push still calls the nucleus/ stubs (S4)
+        shutil.copy2(REPO / "nucleus" / s, main / "nucleus" / s)
+    for rel, body in (("devtools/pushed_tree_check.sh", script_body),
+                      ("devtools/privacy_gate.sh", STUB_PRIVACY),
+                      ("devtools/check.sh", STUB_CHECK)):
         (main / rel).write_text(body)
         (main / rel).chmod(0o755)
     git("add", "-A", cwd=main, env=env)
@@ -153,7 +157,7 @@ def tripwire() -> int:
 
 def main() -> int:
     if not (HOOK.is_file() and SCRIPT.is_file()):
-        print("SKIP: hooks/pre-push or nucleus/pushed_tree_check.sh absent — VERIFIED NOTHING")
+        print("SKIP: hooks/pre-push or devtools/pushed_tree_check.sh absent — VERIFIED NOTHING")
         return 77
     real = SCRIPT.read_text()
     check("the real script carries the GIT_* unset line", UNSET in real)

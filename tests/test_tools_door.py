@@ -2,7 +2,7 @@
 """Oracle: the registry door (mcp/tools/server.py, goal 4227 S4) is a convenience, never a new
 capability.
 
-    venv/bin/python tests/test_tools_door.py        (also run by nucleus/check.sh)
+    venv/bin/python tests/test_tools_door.py        (also run by devtools/check.sh)
 
   D1 find() returns registered tools, and the no-hit reply points at the tool-building skill.
   D2 run() refuses anything that isn't a registered script id: tier/, a '..' escape, a shell
@@ -62,7 +62,7 @@ except Exception as e:  # noqa: BLE001 — no mcp package in this env: nothing v
 # ── D1 ────────────────────────────────────────────────────────────────────────────────────
 hits = door.find("registry tool find")
 check("D1 find returns the registry itself for 'registry tool find'",
-      "script:nucleus/toolreg.py" in hits, hits[:200])
+      "script:src/astryx/core/toolreg.py" in hits, hits[:200])
 none = door.find("zzqx9 vbnmq7")
 check("D1 no hit → points at the tool-building skill",
       "skills/tool-building/SKILL.md" in none, none)
@@ -79,7 +79,7 @@ def spy(cmd, *a, **k):
 
 door.subprocess.run = spy
 for bad in ("script:tier/x.py", "script:nucleus/../tests/test_tools_door.py",
-            "script:nucleus/toolreg.py; touch /tmp/pwn", "/bin/sh", "script:nucleus/nope.py"):
+            "script:src/astryx/core/toolreg.py; touch /tmp/pwn", "/bin/sh", "script:nucleus/nope.py"):
     out = door.run(bad)
     check(f"D2 refused: {bad[:44]!r}", out.startswith("refused"), out[:100])
 check("D2 no refused id started a process", started == [], str(started))
@@ -90,7 +90,7 @@ check("D3 an mcp: id gets a pointer to the granted tool name",
 check("D3 ... and NO subprocess was started", started == [], str(started))
 
 marker = Path(tempfile.gettempdir()) / f"door_pwn_{os.getpid()}"
-out = door.run("script:nucleus/toolreg.py", ["find", f"$(touch {marker})", f"`touch {marker}`"])
+out = door.run("script:src/astryx/core/toolreg.py", ["find", f"$(touch {marker})", f"`touch {marker}`"])
 check("D4 a $(…)/backtick argument is passed as data, never executed",
       out.startswith("exit ") and not marker.exists(), out[:120])
 check("D4 the script ran with an argv LIST (no shell)",
@@ -107,7 +107,7 @@ def spy_timeout(cmd, *a, **k):
 
 
 door.subprocess.run = spy_timeout
-door.run("script:nucleus/toolreg.py", ["find", "x"], timeout=10**9)
+door.run("script:src/astryx/core/toolreg.py", ["find", "x"], timeout=10**9)
 check("D5 the timeout is clamped to the door's maximum",
       seen.get("timeout") == door.RUN_TIMEOUT_MAX, str(seen))
 door.subprocess.run = real_run

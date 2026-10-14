@@ -1,9 +1,9 @@
-"""Mutants for nucleus/agelib.py (plan-4918 D1). The oracle is the prep oracle: it holds both a run role (AGE
+"""Mutants for src/astryx/memory/agelib.py (plan-4918 D1). The oracle is the prep oracle: it holds both a run role (AGE
 preloaded, can't LOAD) and a superuser (no preload, must LOAD), so either wrong gate fails one side."""
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-SUBJECT = REPO / "nucleus" / "agelib.py"
+SUBJECT = REPO / "src" / "astryx" / "memory" / "agelib.py"
 ORACLE = REPO / "tests" / "test_branch_check_prep.py"
 ENV = "AGELIB_SRC"
 MUTANTS = {

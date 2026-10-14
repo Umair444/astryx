@@ -50,7 +50,7 @@ if _src:
     econ = importlib.util.module_from_spec(_spec)
     _spec.loader.exec_module(econ)
 else:
-    from nucleus import econ  # noqa: E402
+    from astryx.econ import econ  # noqa: E402
 
 fails = []
 
@@ -163,18 +163,18 @@ check("hooks/usage.py renders the mirror (econ_mirror → econ_line)",
       "econ_mirror" in hook and "econ_line" in hook)
 
 
-# ── 5/6. SQL arms against a stamped FIXTURE database (nucleus/sqlguard/fixture.py: schema.sql applied whole;
+# ── 5/6. SQL arms against a stamped FIXTURE database (src/astryx/security/sqlguard/fixture.py: schema.sql applied whole;
 # the 4227 close tripped R-EXTRACT on the temp schema's own CREATE TABLEs that this replaced) ───────────────
 def sql_arms():
     try:
         import psycopg
-        from nucleus.econ import _dsn    # the REPO's .env — a path-loaded subject lives elsewhere
+        from astryx.econ.econ import _dsn    # the REPO's .env — a path-loaded subject lives elsewhere
         dsn = _dsn()
         live = psycopg.connect(dsn, autocommit=True, connect_timeout=5)
     except Exception as e:  # noqa: BLE001
         print(f"  SKIP  SQL arms — no DB ({type(e).__name__})")
         return False
-    from nucleus.sqlguard.fixture import FixtureUnavailable, fixture_db
+    from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db
     stack = contextlib.ExitStack()
     try:
         try:

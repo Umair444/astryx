@@ -1,6 +1,6 @@
-"""Authored mutants for nucleus/sqlguard/fixture.py's reaper, oracle tests/test_fixture_reaper.py.
+"""Authored mutants for src/astryx/security/sqlguard/fixture.py's reaper, oracle tests/test_fixture_reaper.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_fixture_reaper.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_fixture_reaper.py
 
 The reaper DROPs databases WITH (FORCE), so its battery lives in the tree, not in a message (a3 #39195). Most mutants
 make it MORE aggressive. SAFE BY CONSTRUCTION (seed #34899): the oracle's live arms run under a PRIVATE prefix
@@ -15,7 +15,7 @@ a throwaway cluster, or a check of the candidate set against a planted allowlist
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-SUBJECT = REPO / "nucleus" / "sqlguard" / "fixture.py"
+SUBJECT = REPO / "src" / "astryx" / "security" / "sqlguard" / "fixture.py"
 ORACLE = REPO / "tests" / "test_fixture_reaper.py"
 ENV = "SQLGUARD_FIXTURE_SRC"
 TIMEOUT = 300

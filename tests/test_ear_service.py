@@ -72,7 +72,7 @@ try:
     import numpy as np                                    # the ear's own dep: absent under a bare python3 (pushed_tree_check)
     import psycopg
     from fastapi.testclient import TestClient
-    from nucleus.sqlguard.fixture import FixtureUnavailable, fixture_db
+    from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db
 except Exception as e:                                              # noqa: BLE001
     skip(f"{type(e).__name__}: {e} — needs the org runtime; VERIFIED NOTHING")
 

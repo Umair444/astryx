@@ -260,7 +260,7 @@ def _run_with_roster(roster, sender="seed", to="abstractor-3", to_org="local", c
     """The real entrypoint on one 30h-pending row, with BOTH roster derivations forced to `roster`. `cands` =
     rows the later-rows query returns ({stuck, cand, resend}); every other query gets the stuck row."""
     import types
-    import nucleus.charter as ch
+    import astryx.core.charter as ch
     from datetime import datetime as _dt, timedelta as _td, timezone as _tz
     rows = [{"id": 901, "ts": _dt.now(_tz.utc) - _td(hours=30), "to_agent": to,
              "to_org": to_org, "status": "pending", "from_agent": sender, "external_handle": to_org != "local",
@@ -335,8 +335,8 @@ def test_later_rows_query_on_a_real_db_at_zero_and_one_rows():
     try:
         import psycopg
         import importlib.util
-        from nucleus.sqlguard.fixture import fixture_db
-        sp = importlib.util.spec_from_file_location("pulse_run_os", REPO / "nucleus" / "pulse_run.py")
+        from astryx.security.sqlguard.fixture import fixture_db
+        sp = importlib.util.spec_from_file_location("pulse_run_os", REPO / "src" / "astryx" / "pulse" / "pulse_run.py")
         pr = importlib.util.module_from_spec(sp)
         sp.loader.exec_module(pr)
         fxc = fixture_db()

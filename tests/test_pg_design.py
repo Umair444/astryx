@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Oracle for nucleus/pg_design.py: the RUNNING postgres matches its declared design, infra/pg (owner 10-10: "the design
+"""Oracle for src/astryx/pg/pg_design.py: the RUNNING postgres matches its declared design, infra/pg (owner 10-10: "the design
 on github should match local"; steward F4, plan seed #42759).
 
-  STATIC     the compose file's container_name IS nucleus/pgcontainer.sh's PG_CONTAINER; its port is loopback only; its
+  STATIC     the compose file's container_name IS scripts/pgcontainer.sh's PG_CONTAINER; its port is loopback only; its
              command carries max_connections; the Dockerfile pins AGE to a 40-hex commit (never a moving master) and
              declares the extension versions it carries.
   RED        on synthetic inspect/server records, each drift is named in its own class: a LAN bind, another image, a
@@ -21,11 +21,11 @@ sys.path.insert(0, str(REPO))
 
 if os.environ.get("PG_DESIGN_SRC"):                       # mutation_probe hands a mutant copy here
     import importlib.util
-    _spec = importlib.util.spec_from_file_location("nucleus.pg_design", os.environ["PG_DESIGN_SRC"])
+    _spec = importlib.util.spec_from_file_location("astryx.pg.pg_design", os.environ["PG_DESIGN_SRC"])
     P = importlib.util.module_from_spec(_spec)
     _spec.loader.exec_module(P)
 else:
-    from nucleus import pg_design as P                    # noqa: E402
+    from astryx.pg import pg_design as P                    # noqa: E402
 
 fails, skips = [], []
 

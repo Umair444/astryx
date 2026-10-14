@@ -34,7 +34,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 try:
-    from nucleus import econ, pulse  # noqa: E402
+    from astryx.econ import econ; from astryx.pulse import pulse  # noqa: E402
 except Exception as exc:                                        # noqa: BLE001
     # pulse imports psycopg/croniter and reads ASTRYX_DSN from .env at import time; a bare
     # clone has neither — SKIP (house law: a SKIP is not a PASS, and not a FAIL)

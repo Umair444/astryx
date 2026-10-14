@@ -41,9 +41,9 @@ try:
 except Exception as e:                                              # noqa: BLE001
     skip(f"{type(e).__name__}: {e} — needs the org runtime")
 
-SCHEMA = REPO / "nucleus" / "schema.sql"
+SCHEMA = REPO / "src" / "astryx" / "sql" / "schema.sql"
 if not SCHEMA.exists():
-    skip("nucleus/schema.sql absent")
+    skip("src/astryx/sql/schema.sql absent")
 
 fails: list[str] = []
 
@@ -111,7 +111,7 @@ try:
     # BORN ZERO-WINDOW (a4 #35730): a default CREATE DATABASE grants PUBLIC CONNECT for as long as this
     # oracle runs, and branch_check's P0-b refuses while ANY database it does not own does — so every
     # run of this file could refuse someone's real branch_check. Created closed, PUBLIC revoked, then
-    # opened: the same three steps nucleus/sqlguard/fixture.py uses. (Not fixture_db() itself: this
+    # opened: the same three steps src/astryx/security/sqlguard/fixture.py uses. (Not fixture_db() itself: this
     # oracle's subject is the MIGRATION, which must be applied twice to an EMPTY database.)
     admin.execute(f'CREATE DATABASE "{PROBE_DB}" WITH ALLOW_CONNECTIONS false')
     admin.execute(f'REVOKE CONNECT, TEMPORARY ON DATABASE "{PROBE_DB}" FROM PUBLIC')

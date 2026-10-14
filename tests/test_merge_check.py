@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle for nucleus/merge_check.sh (a4 night-review 10-10): the merged-tree chain resolves its base ONCE, refuses a
+"""Oracle for devtools/merge_check.sh (a4 night-review 10-10): the merged-tree chain resolves its base ONCE, refuses a
 conflict instead of checking a wrong tree, and removes the transient links it placed.
 
 Hermetic: a temp git repo carrying a copy of the script, with MERGE_CHECK_CHECK / MERGE_CHECK_PTC stubs that RECORD
@@ -14,7 +14,7 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-SRC = Path(os.environ.get("MERGE_CHECK_SRC") or (REPO / "nucleus" / "merge_check.sh"))   # mutation_probe's channel
+SRC = Path(os.environ.get("MERGE_CHECK_SRC") or (REPO / "devtools" / "merge_check.sh"))   # mutation_probe's channel
 fails = []
 
 
@@ -33,10 +33,12 @@ def main():
         t = Path(td)
         r = t / "repo"
         (r / "nucleus").mkdir(parents=True)
+        for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
+            (r / _d).mkdir(parents=True, exist_ok=True)
         git(t, "init", "-q", "-b", "main", str(r))
         for k, v in (("user.email", "t@t"), ("user.name", "t")):
             git(r, "config", k, v)
-        shutil.copy(SRC, r / "nucleus" / "merge_check.sh")
+        shutil.copy(SRC, r / "devtools" / "merge_check.sh")
         (r / "f.txt").write_text("base\n")
         (r / ".gitignore").write_text(".env\nagents/secret/\n")
         (r / "agents").mkdir()
@@ -77,7 +79,7 @@ def main():
         base_env = {k: v for k, v in os.environ.items() if not k.startswith("MERGE_CHECK_")}
         env = {**base_env, "MERGE_CHECK_CHECK": stub_check, "MERGE_CHECK_PTC": stub_ptc,
                "TMPDIR": str(t)}                       # scratch trees die with the temp dir, even a mutant's leaked ones
-        p = subprocess.run(["bash", str(r / "nucleus" / "merge_check.sh"), "feat"], cwd=r, env=env,
+        p = subprocess.run(["bash", str(r / "devtools" / "merge_check.sh"), "feat"], cwd=r, env=env,
                            capture_output=True, text=True, timeout=120)
         log = rec.read_text() if rec.exists() else ""
         merged = next((ln.split("merged=")[1].strip() for ln in p.stdout.splitlines() if "merged=" in ln), "")
@@ -108,13 +110,13 @@ def main():
         check("…and the scratch worktree (with its links) is gone afterwards", trees == [], str(trees))
         check("the merged tree's FAILED set is printed", "✗ a gate" in p.stdout, p.stdout[-300:])
         rec.unlink(missing_ok=True)
-        p = subprocess.run(["bash", str(r / "nucleus" / "merge_check.sh"), "clash"], cwd=r, env=env,
+        p = subprocess.run(["bash", str(r / "devtools" / "merge_check.sh"), "clash"], cwd=r, env=env,
                            capture_output=True, text=True, timeout=120)
         log = rec.read_text() if rec.exists() else ""
         check("A CONFLICT IS A REFUSAL: exit 2, the conflicting path named, and NO check or pushed check ran",
               p.returncode == 2 and "CONFLICTS" in p.stdout and "f.txt" in p.stdout and log == "",
               f"rc={p.returncode} {p.stdout[-200:]} log={log!r}")
-        p = subprocess.run(["bash", str(r / "nucleus" / "merge_check.sh"), "no-such-branch"], cwd=r, env=env,
+        p = subprocess.run(["bash", str(r / "devtools" / "merge_check.sh"), "no-such-branch"], cwd=r, env=env,
                            capture_output=True, text=True, timeout=60)
         check("an unknown branch exits 2, naming it", p.returncode == 2 and "no-such-branch" in p.stdout, p.stdout)
         # AN INTERRUPT CLEANS UP (a4 10-10: a stopped run left 38 live links in /tmp). TERM goes to the SCRIPT only, mid-check,
@@ -122,7 +124,7 @@ def main():
         rec.unlink(missing_ok=True)
         done = t / "check_finished"
         slow = (f"sh -c 'test -L .env && echo LINKED >> {rec}; pwd >> {rec}; sleep 4; touch {done}'")
-        q = subprocess.Popen(["bash", str(r / "nucleus" / "merge_check.sh"), "feat"], cwd=r,
+        q = subprocess.Popen(["bash", str(r / "devtools" / "merge_check.sh"), "feat"], cwd=r,
                              env={**env, "MERGE_CHECK_CHECK": slow}, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         import time
         for _ in range(200):
@@ -146,7 +148,7 @@ def main():
         orphan = t / "merge-check.orphan" / "tree"
         git(r, "worktree", "add", "-q", "--detach", str(orphan), "main")
         (orphan / ".env").symlink_to(r / ".env")
-        p = subprocess.run(["bash", str(r / "nucleus" / "merge_check.sh"), "feat"], cwd=r, env={**env, "MERGE_CHECK_FULL": "0"},
+        p = subprocess.run(["bash", str(r / "devtools" / "merge_check.sh"), "feat"], cwd=r, env={**env, "MERGE_CHECK_FULL": "0"},
                            capture_output=True, text=True, timeout=60)
         check("an orphaned scratch tree holding live links is NAMED, and not touched",
               "ORPHAN?" in p.stdout and str(orphan) in p.stdout and (orphan / ".env").is_symlink(), p.stdout[-300:])
@@ -154,7 +156,7 @@ def main():
         # or a nested merge_check (test_merge_check inside the check) inherits them (forge #48470)
         seen = t / "seen_env"
         probe = f"sh -c 'env | grep -c ^MERGE_CHECK_ >> {seen}; true'"
-        subprocess.run(["bash", str(r / "nucleus" / "merge_check.sh"), "feat"], cwd=r, capture_output=True, text=True, timeout=120,
+        subprocess.run(["bash", str(r / "devtools" / "merge_check.sh"), "feat"], cwd=r, capture_output=True, text=True, timeout=120,
                        env={**env, "MERGE_CHECK_CHECK": probe, "MERGE_CHECK_PTC": probe, "MERGE_CHECK_CANARY": "x"})
         counts = seen.read_text().split() if seen.exists() else []
         check("its MERGE_CHECK_* settings are NOT handed to the full check or pushed_tree_check (a nested run inherits none)",
@@ -162,9 +164,9 @@ def main():
     # ONE definition: the script's exclude list must equal the ledger's (no second hand-kept copy drifting)
     import re as _re
     sys.path.insert(0, str(REPO))
-    from nucleus.sqlguard.ledger import ESTATE_EXCLUDE
+    from astryx.security.sqlguard.ledger import ESTATE_EXCLUDE
     mm = _re.search(r'ESTATE_EXCLUDE="([^"]*)"', SRC.read_text())
-    check("the script's ESTATE_EXCLUDE equals nucleus/sqlguard/ledger.py's (parity, not a second list)",
+    check("the script's ESTATE_EXCLUDE equals src/astryx/security/sqlguard/ledger.py's (parity, not a second list)",
           bool(mm) and set(mm.group(1).split()) == set(ESTATE_EXCLUDE), f"{mm.group(1) if mm else None} vs {ESTATE_EXCLUDE}")
     print(f"\n{'FAIL' if fails else 'PASS'}: merge_check ({len(fails)} failing)")
     return 1 if fails else 0

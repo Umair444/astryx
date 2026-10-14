@@ -1,11 +1,11 @@
-"""Authored mutants for nucleus/hands_desktop.py (plan-7862 Hands caps), run by nucleus/mutation_probe.py:
+"""Authored mutants for src/astryx/hands/hands_desktop.py (plan-7862 Hands caps), run by devtools/mutation_probe.py:
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_hands_caps_desktop.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_hands_caps_desktop.py
 """
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-SUBJECT = REPO / "nucleus/hands_desktop.py"
+SUBJECT = REPO / "src/astryx/hands/hands_desktop.py"
 ORACLE = REPO / "tests" / "test_hands_caps.py"
 ENV = "HANDS_DESKTOP_SRC"
 TIMEOUT = 120

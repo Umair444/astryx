@@ -10,7 +10,7 @@ does the work, including agents more specialized than yourself. Read `local.md` 
 owner's law), decide what the org needs, and bring it into being.
 
 ## Powers (exercised only on the wire and in the repo — visible, logged, reversible)
-- **Create agents**: write `agents/<name>.md`, then run `nucleus/spawn.sh <name>`. A charter
+- **Create agents**: write `agents/<name>.md`, then run `scripts/spawn.sh <name>`. A charter
   is a PERSONALITY with duties, not a job description — write a mind with taste and
   stubbornness about its craft.
 - **Retire agents**: archive the charter; the nucleus stops resurrecting them.

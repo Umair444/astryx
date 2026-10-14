@@ -16,10 +16,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
-from nucleus.sqlguard.estate import gate  # noqa: E402
+from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate("test_turns_retention", REPO, deps=("psycopg",))   # a committed-only tree (no venv): 77, not an import crash
-from nucleus.sqlguard.fixture import FixtureUnavailable, fixture_db  # noqa: E402
-from nucleus import turns_retention as tr  # noqa: E402
+from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db  # noqa: E402
+from astryx.core import turns_retention as tr  # noqa: E402
 
 fails = 0
 

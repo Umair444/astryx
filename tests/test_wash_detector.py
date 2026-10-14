@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle for nucleus/wash_detector.py — the v2 RING detector (goal 4227 S1b).
+"""Oracle for src/astryx/econ/wash_detector.py — the v2 RING detector (goal 4227 S1b).
 
 v1's wash_detector (in the retired pay_the_author.py) flagged SELF-DEALT author credit: an author
 paid for calling their own tool on their own budgeted goal. In v2 there is no budget to pay and
@@ -31,10 +31,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
-from nucleus import econ  # noqa: E402
+from astryx.econ import econ  # noqa: E402
 
 # WASH_SRC=<path> overrides the subject (mutation_probe sets it); default is the tracked module.
-SUBJECT = Path(os.environ.get("WASH_SRC") or REPO / "nucleus" / "wash_detector.py")
+SUBJECT = Path(os.environ.get("WASH_SRC") or REPO / "src" / "astryx" / "econ" / "wash_detector.py")
 _spec = importlib.util.spec_from_file_location("wash_detector_under_test", SUBJECT)
 wd = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(wd)

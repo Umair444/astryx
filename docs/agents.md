@@ -15,7 +15,7 @@ The `agents/` directory **is** the org structure:
 - The filename stem is the canonical name everywhere: wire identity, home
   (`homes/<name>`), tmux session (`ax-<name>`), observatory label.
 
-Create an agent by writing a file and running `nucleus/spawn.sh <name>`. Retire one by
+Create an agent by writing a file and running `scripts/spawn.sh <name>`. Retire one by
 archiving its charter. The filesystem is the registry; there is no second list to
 drift.
 
@@ -26,7 +26,7 @@ A `Type:` line in the charter declares what kind of being it is:
 | Type | Lifecycle | State | Cost profile |
 |---|---|---|---|
 | **resident** (default) | permanent body (tmux), on the wire, initiates | full memory, evolves nightly | pays per wake |
-| **stationed** | no body; stateless `claude -p` per request via `nucleus/station.py` | none, by design | pays per call, tools off by default |
+| **stationed** | no body; stateless `claude -p` per request via `src/astryx/core/station.py` | none, by design | pays per call, tools off by default |
 | worker / envoy | *reserved* — bounded-job runner; federation face | | |
 
 A resident is a citizen: it holds the `send` tool, files goals, grows its own triggers

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Oracle for triggers/steward/doorbell_proof.py — the guard on the org's escape hatch.
 
-    venv/bin/python tests/test_doorbell_proof.py     (also run by nucleus/check.sh)
+    venv/bin/python tests/test_doorbell_proof.py     (also run by devtools/check.sh)
 
 THE SUBJECT WATCHES ONE JOIN. A roster-wide wedge leaves no agent able to consume a wake,
 so the only escalation that can survive it is a row written by a systemd-resident process

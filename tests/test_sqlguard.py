@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""sqlguard oracle (goal 4243, B1). Every control on nucleus/sqlguard/DESIGN.md's acceptance list lands here,
+"""sqlguard oracle (goal 4243, B1). Every control on src/astryx/security/sqlguard/DESIGN.md's acceptance list lands here,
 RED-first. This file is built up arm by arm, and check.sh starts enforcing only once it is complete, in one act.
 
     venv/bin/python tests/test_sqlguard.py [ledger.json]      # 0 pass · 1 fail · 77 could-not-run
@@ -44,7 +44,7 @@ def dp_arms():
     import os
     import tempfile
     sys.path.insert(0, str(REPO))
-    from nucleus.sqlguard import privacy, ledger
+    from astryx.security.sqlguard import privacy, ledger
     real_repo, real_path = privacy.REPO, os.environ.get("PATH", "")
     # Test BEHAVIOUR, not the new API: against code without an error list (ee495dd) the arms must FAIL with a
     # name, not crash. A crash is red, but it can't say WHICH property the code violates.
@@ -226,7 +226,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 import psycopg  # noqa: E402
-from nucleus.sqlguard.fixture import fixture_db, live_dsn  # noqa: E402
+from astryx.security.sqlguard.fixture import fixture_db, live_dsn  # noqa: E402
 from subj import arms  # noqa: E402
 
 OUT = {}
@@ -252,7 +252,7 @@ def swallow(f, *a):
 
 
 def main():
-    spec = importlib.util.spec_from_file_location("pulse_run_h", ROOT / "nucleus" / "pulse_run.py")
+    spec = importlib.util.spec_from_file_location("pulse_run_h", ROOT / "src" / "astryx" / "pulse" / "pulse_run.py")
     pr = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(pr)
     ctx = pr.Ctx({})
@@ -342,7 +342,7 @@ def main():
     with fixture_db() as fx:                  # E: schema.sql changed after the stamp
         c = psycopg.connect(fx["dsn"], autocommit=True)
         gid = rows(c)
-        schema = ROOT / "nucleus" / "schema.sql"
+        schema = ROOT / "src" / "astryx" / "sql" / "schema.sql"
         orig = schema.read_bytes()
         try:
             schema.write_bytes(orig + b"\n-- sqlguard harness: a stale sha\n")
@@ -405,7 +405,7 @@ if __name__ == "__main__":
 
 JUDGE_Q = r'''
 import json, sys
-from nucleus.sqlguard import judge
+from astryx.security.sqlguard import judge
 d, cov, stored = sys.argv[1], json.loads(sys.argv[2]), json.loads(sys.argv[3])
 kw = {"stored_covering": stored} if stored else {}
 try:
@@ -426,7 +426,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from nucleus.sqlguard import ledger, privacy  # noqa: E402
+from astryx.security.sqlguard import ledger, privacy  # noqa: E402
 
 OUT = {}
 try:
@@ -488,9 +488,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 import psycopg  # noqa: E402
-from nucleus.sqlguard import enforce, fixture, ledger  # noqa: E402
+from astryx.security.sqlguard import enforce, fixture, ledger  # noqa: E402
 
-CAN = "nucleus/sqlguard/canary.py::canary\x1fselect 1"
+CAN = "src/astryx/security/sqlguard/canary.py::canary\x1fselect 1"
 S1 = "subj/arms.py::v3_twin_b\x1fselect id from goals where id = ?"
 S2 = "subj/arms.py::gone\x1fselect 2"
 OUT = {}
@@ -618,7 +618,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import psycopg  # noqa: E402
-from nucleus.sqlguard.fixture import fixture_db  # noqa: E402
+from astryx.security.sqlguard.fixture import fixture_db  # noqa: E402
 
 with fixture_db() as fx:
     with psycopg.connect(fx["dsn"], autocommit=True) as c:
@@ -631,15 +631,16 @@ def _build_tree(tmp: Path, rev=None):
     import shutil
     if rev:
         (tmp / "nucleus").mkdir(parents=True)
-        arc = subprocess.run(["git", "archive", rev, "nucleus/sqlguard"], cwd=REPO, capture_output=True, check=True)
+        for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
+            (tmp / _d).mkdir(parents=True, exist_ok=True)
+        arc = subprocess.run(["git", "archive", rev, "src/astryx/security/sqlguard"], cwd=REPO, capture_output=True, check=True)
         subprocess.run(["tar", "-x", "-C", str(tmp)], input=arc.stdout, check=True)
-        (tmp / "nucleus" / "sqlguard" / "ledger.json").unlink(missing_ok=True)
+        (tmp / "src" / "astryx" / "security" / "sqlguard" / "ledger.json").unlink(missing_ok=True)
     else:
-        shutil.copytree(REPO / "nucleus" / "sqlguard", tmp / "nucleus" / "sqlguard",
+        shutil.copytree(REPO / "src" / "astryx" / "security" / "sqlguard", tmp / "src" / "astryx" / "security" / "sqlguard",
                         ignore=shutil.ignore_patterns("__pycache__", "ledger.json"))
-    (tmp / "nucleus" / "__init__.py").write_text("")
-    for f in ("pulse_run.py", "schema.sql"):
-        shutil.copy2(REPO / "nucleus" / f, tmp / "nucleus" / f)
+    from _astryx_skel import skeleton                # goal 10224 S4: astryx.* needs its spine in the fake repo
+    skeleton(tmp, "src/astryx/security/__init__.py", "src/astryx/pulse/pulse_run.py", "src/astryx/sql/schema.sql")
     (tmp / ".env").symlink_to((REPO / ".env").resolve())
     (tmp / "triggers").mkdir()
     (tmp / "subj").mkdir()
@@ -665,7 +666,7 @@ def _env(tmp: Path, run: str, trace=None, gate=""):
          "ASTRYX_SQLGUARD_ROOT": str(tmp), "ASTRYX_SQLGUARD_RUN": run}
     if trace is not None:
         e.update(ASTRYX_SQLGUARD_DIR=str(trace), ASTRYX_SQLGUARD_GATE=gate,
-                 PYTHONPATH=str(tmp / "nucleus" / "sqlguard" / "shim"))
+                 PYTHONPATH=str(tmp / "src" / "astryx" / "security" / "sqlguard" / "shim"))
     return e
 
 
@@ -700,7 +701,7 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
     run = (os.environ.get("ASTRYX_SQLGUARD_RUN") or f"th{os.getpid()}").lower()
     trace = tmp / "trace"
     trace.mkdir()
-    rc_c = subprocess.run([sys.executable, "-m", "nucleus.sqlguard.canary"], cwd=tmp, capture_output=True,
+    rc_c = subprocess.run([sys.executable, "-m", "astryx.security.sqlguard.canary"], cwd=tmp, capture_output=True,
                           env=_env(tmp, run, trace, "g-canary")).returncode
     rc_d, drive, err = _py(tmp, _env(tmp, run, trace, "g-main"), "tests/drive.py")
     rc_k = subprocess.run([sys.executable, "tests/clean.py"], cwd=tmp, capture_output=True,
@@ -727,13 +728,13 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
         _rung(S, "apg_known_driver_text") not in ("UNEXECUTED", "<0 sites>"), _rung(S, "apg_known_driver_text"))
     arm("an unresolved repo site rendering to a driver constant is FALLBACK, not driver-internal (tier 2 first)",
         _rung(S, "apg_fallback_driver_text") not in ("UNEXECUTED", "<0 sites>"), _rung(S, "apg_fallback_driver_text"))
-    _, DV, err = _py(tmp, _env(tmp, run), "-c", "import json; from nucleus.sqlguard import drivers as d; print(json.dumps("
+    _, DV, err = _py(tmp, _env(tmp, run), "-c", "import json; from astryx.security.sqlguard import drivers as d; print(json.dumps("
                      "[d.is_internal('select pg_advisory_unlock_all(); close all; unlisten *; reset all;', 'asyncpg'),"
                      " d.is_internal('select pg_advisory_unlock_all(); select 4242', 'asyncpg')]))")
     arm("driver-internal needs EVERY statement to be a driver constant (one foreign statement → not internal)",
         DV == [True, False], str(DV or err))
     arm("V2 the canary through the REAL Ctx.sql is RESPONSIVE",
-        _rung(S, "canary", "nucleus/sqlguard/canary.py") == "RESPONSIVE", _rung(S, "canary", "nucleus/sqlguard/canary.py"))
+        _rung(S, "canary", "src/astryx/security/sqlguard/canary.py") == "RESPONSIVE", _rung(S, "canary", "src/astryx/security/sqlguard/canary.py"))
     arm("V3 twin texts: the executed twin climbs", _rung(S, "v3_twin_a") == "RESPONSIVE", _rung(S, "v3_twin_a"))
     arm("V3 twin texts: the identical, unexecuted twin gets NO credit", _rung(S, "v3_twin_b") == "UNEXECUTED",
         _rung(S, "v3_twin_b"))
@@ -742,7 +743,7 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
     lo = lambda fn, path="subj/arms.py": [v.get("live_only") for k, v in S.items() if k.startswith(f"{path}::{fn}\x1f")]
     arm("a RESPONSIVE read on LIVE data is marked live_only; a stamped-fixture one is not",
         lo("data_const") == [True] and lo("v3_twin_a") == [False], f"{lo('data_const')} {lo('v3_twin_a')}")
-    _, NS, err = _py(tmp, _env(tmp, run), "-c", "import json; from nucleus.sqlguard.normalize import is_site; print(json.dumps("
+    _, NS, err = _py(tmp, _env(tmp, run), "-c", "import json; from astryx.security.sqlguard.normalize import is_site; print(json.dumps("
                      "[is_site('merge-base'), is_site('update-index'), is_site('MERGE INTO t USING s ON true'), "
                      "is_site('select(1)'), is_site('SELECT 1'), is_site('SELECT*FROM t'), is_site('SELECT/*c*/1'), "
                      "is_site('select\"c\" from t')]))")
@@ -813,15 +814,15 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
     # env -i: the canary + shim with NOTHING but the three variables check.sh sets
     t2 = tmp / "trace-envi"
     t2.mkdir()
-    envi = {"PYTHONPATH": str(tmp / "nucleus" / "sqlguard" / "shim"), "ASTRYX_SQLGUARD_DIR": str(t2),
+    envi = {"PYTHONPATH": str(tmp / "src" / "astryx" / "security" / "sqlguard" / "shim"), "ASTRYX_SQLGUARD_DIR": str(t2),
             "ASTRYX_SQLGUARD_GATE": "g-envi"}
-    rc_e = subprocess.run([sys.executable, "-m", "nucleus.sqlguard.canary"], cwd=tmp, env=envi,
+    rc_e = subprocess.run([sys.executable, "-m", "astryx.security.sqlguard.canary"], cwd=tmp, env=envi,
                           capture_output=True).returncode
     (t2 / "gates.tsv").write_text(f"g-envi\t{rc_e}\n")
     _, r4, err = _py(tmp, _env(tmp, run), "-c", JUDGE_Q, str(t2), "{}", "{}")
     arm("env -i: the canary is RESPONSIVE under a bare env",
-        rc_e == 0 and r4 is not None and _rung(r4["sites"], "canary", "nucleus/sqlguard/canary.py") == "RESPONSIVE",
-        f"rc={rc_e} {err if r4 is None else _rung(r4['sites'], 'canary', 'nucleus/sqlguard/canary.py')}")
+        rc_e == 0 and r4 is not None and _rung(r4["sites"], "canary", "src/astryx/security/sqlguard/canary.py") == "RESPONSIVE",
+        f"rc={rc_e} {err if r4 is None else _rung(r4['sites'], 'canary', 'src/astryx/security/sqlguard/canary.py')}")
 
     # ABSENT vs BROKEN (a3 #22659). A committed-only tree (no triggers/) is the shape pushed_tree_check and CI run:
     # a missing .env or dep there is 77, named. The same absences WITH triggers/ are a live host that lost its
@@ -829,8 +830,9 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
     # Built from THIS package, so --against and --mutants reach it.
     import shutil
     bare = tmp / "bare"
-    shutil.copytree(tmp / "nucleus", bare / "nucleus", ignore=shutil.ignore_patterns("__pycache__"))
-    shutil.copy2(REPO / "nucleus" / "sqlguard" / "ledger.json", bare / "nucleus" / "sqlguard" / "ledger.json")
+    shutil.copytree(tmp / "src", bare / "src", ignore=shutil.ignore_patterns("__pycache__"))   # goal 10224 S4
+    shutil.copy2(tmp / "astryx.py", bare / "astryx.py")
+    shutil.copy2(REPO / "src" / "astryx" / "security" / "sqlguard" / "ledger.json", bare / "src" / "astryx" / "security" / "sqlguard" / "ledger.json")
     (bare / "t").mkdir()
     benv = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": os.environ.get("HOME", "/tmp")}
     envf = bare / ".env"
@@ -843,7 +845,7 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
             envf.write_text("SOMETHING_ELSE=1\n")
         (bare / "triggers").mkdir(exist_ok=True) if live else shutil.rmtree(bare / "triggers", ignore_errors=True)
         for mod, extra in (("canary", []), ("enforce", [str(bare / "t")])):
-            p = subprocess.run([sys.executable, *flags, "-m", f"nucleus.sqlguard.{mod}", *extra], cwd=bare,
+            p = subprocess.run([sys.executable, *flags, "-m", f"astryx.security.sqlguard.{mod}", *extra], cwd=bare,
                                env=benv, capture_output=True, text=True)
             arm(f"{name}: {mod} exits {rc} and names {tag}",
                 p.returncode == rc and tag in p.stdout and word in p.stdout and "Traceback" not in p.stderr,
@@ -857,7 +859,7 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
     # positive control: .env and deps present, on a live-shaped tree, runs the canary for real (absence only)
     envf.unlink(missing_ok=True)
     envf.symlink_to((REPO / ".env").resolve())
-    p = subprocess.run([sys.executable, "-m", "nucleus.sqlguard.canary"], cwd=bare, env=benv,
+    p = subprocess.run([sys.executable, "-m", "astryx.security.sqlguard.canary"], cwd=bare, env=benv,
                        capture_output=True, text=True)
     arm("estate control: with .env and deps the canary runs (rc 0)", p.returncode == 0,
         f"rc={p.returncode} {p.stderr.strip().splitlines()[-1:]}")
@@ -902,7 +904,7 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
         has("clock_moved", "R-CLOCK"), str(E.get("clock_moved")))
 
     # the declared excluded roots: var/ is not walked, a prefix-sharing sibling (varx/) still is
-    _, V, err = _py(tmp, _env(tmp, run), "-c", "import json; from nucleus.sqlguard import inventory as i; "
+    _, V, err = _py(tmp, _env(tmp, run), "-c", "import json; from astryx.security.sqlguard import inventory as i; "
                     "b = i.build(); print(json.dumps({'paths': sorted({k.split('::')[0] for k in b['functions']}), "
                     "'excluded': b.get('excluded')}))")
     V = V or {"paths": [], "excluded": err}
@@ -946,7 +948,7 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
     arm("admit restamps header.debt_rows", E.get("admit_restamp") is True, str(E.get("admit_restamp")))
     # check.sh's OWN skip-announcement pattern, read from check.sh (not copied), so the arm follows the protocol
     import re
-    m = re.search(r"grep -qE '([^']*)' <<<\"\$out\"", (REPO / "nucleus" / "check.sh").read_text())
+    m = re.search(r"grep -qE '([^']*)' <<<\"\$out\"", (REPO / "devtools" / "check.sh").read_text())
     skip = re.compile(m.group(1).replace("[[:space:]]", r"\s")) if m else None
     lines = E.get("admitted_lines") or []
     arm("an enforcing rc-0 run WITH an admitted row is not read as a skip by check.sh's protocol (seed #24103)",
@@ -1028,7 +1030,7 @@ def mutant_battery(only=None):
     todo = [m for m in MUTANTS if not only or only in m[3]]
     for f, old, new, want in todo:
         def mutate(tmp, f=f, old=old, new=new):
-            p = tmp / "nucleus" / "sqlguard" / f
+            p = tmp / "src" / "astryx" / "security" / "sqlguard" / f
             s = p.read_text()
             if s.count(old) != 1:
                 raise SystemExit(f"mutant anchor absent or ambiguous in {f}: {old!r}")
@@ -1059,7 +1061,7 @@ def propagate_arms():
     env); inside one it adds exactly the sqlguard variables and the shim path, keeping what the oracle set."""
     import os
     sys.path.insert(0, str(REPO))
-    from nucleus.sqlguard import propagate
+    from astryx.security.sqlguard import propagate
     saved = {k: v for k, v in os.environ.items() if k.startswith("ASTRYX_SQLGUARD_")}
     try:
         for k in saved:
@@ -1097,7 +1099,7 @@ def main():
         print(f"\n{'FAIL' if fails else 'PASS'}: sqlguard harness against {rev} ({len(fails)} failing)")
         return 1 if fails else 0
     args = [a for a in args if not a.startswith("--")]
-    path = Path(args[0]) if args else REPO / "nucleus" / "sqlguard" / "ledger.json"
+    path = Path(args[0]) if args else REPO / "src" / "astryx" / "security" / "sqlguard" / "ledger.json"
     if not path.exists():
         print("SKIP: no ledger.json to check. Nothing was verified.")
         return 77

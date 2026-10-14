@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle for nucleus/pg_role_sync.py: the server's role password is set FROM the pgpass value, and the value never
+"""Oracle for src/astryx/security/pg_role_sync.py: the server's role password is set FROM the pgpass value, and the value never
 leaves the process (#5497, seed #44479: after an empty-data-dir restore, initdb holds infra/pg/.env's placeholder).
 
   PURE   pgpass lookup is libpq's: the FIRST matching line wins, '*' matches anything, \\: and \\\\ unescape, a comment
@@ -19,7 +19,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
-from nucleus import pg_role_sync as R   # noqa: E402
+from astryx.security import pg_role_sync as R   # noqa: E402
 
 fails = []
 
@@ -122,7 +122,7 @@ try:
           not ok_c and "DISAGREE" in why_c and value not in why_a + why_c, why_c)
     ok, why = R.apply(f"postgresql://{role}_absent@127.0.0.1:5432/postgres", admin_user=live.info.user, cont=cont)
     check("an absent pgpass entry is refused before any ALTER, named", not ok and "no pgpass entry" in why, why)
-    r = subprocess.run([str(REPO / "venv" / "bin" / "python"), "-m", "nucleus.pg_role_sync", "check"], cwd=REPO,
+    r = subprocess.run([str(REPO / "venv" / "bin" / "python"), "-m", "astryx.security.pg_role_sync", "check"], cwd=REPO,
                        capture_output=True, text=True, timeout=60, env={**os.environ, "ASTRYX_DSN": dsn})
     check("the CLI's check reads OK", r.returncode == 0 and "OK" in r.stdout, r.stdout + r.stderr[-200:])
     check("the CLI's output never carries the value", value not in r.stdout + r.stderr)

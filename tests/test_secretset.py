@@ -1,6 +1,6 @@
 """Oracle for plan-5497 S0 + S1a: one derived secret set, and a turn writer that never copies one.
 
-S0 (nucleus/secretset.py): the set is DERIVED from the holders (.env, ~/.pgpass), fail-safe (a key
+S0 (src/astryx/security/secretset.py): the set is DERIVED from the holders (.env, ~/.pgpass), fail-safe (a key
 nobody classified is secret), URL-aware (a DSN's password, a capability URL's query value; never
 its host), and reports what it can't guard instead of dropping it.
 S1a (hooks/step.py): turns.raw_payload is the one transcript copy we own, and every pg_dump
@@ -40,26 +40,26 @@ def check(name, ok, detail=""):
 
 
 # mutation_probe contract (tests/mutants_secretset.py): the SUBJECT comes from SECRETSET_SRC when set. It is
-# installed AS nucleus.secretset, because hooks/step.py and secret_guard import that name themselves; a
+# installed AS astryx.security.secretset, because hooks/step.py and secret_guard import that name themselves; a
 # mutant loaded beside the real module would leave the S1a arms testing the real code.
-SUBJECT = Path(os.environ.get("SECRETSET_SRC", REPO / "nucleus" / "secretset.py"))
+SUBJECT = Path(os.environ.get("SECRETSET_SRC", REPO / "src" / "astryx" / "security" / "secretset.py"))
 try:
     if "SECRETSET_SRC" in os.environ:
         import importlib.util
-        import nucleus
-        _spec = importlib.util.spec_from_file_location("nucleus.secretset", SUBJECT)
+        import astryx.security
+        _spec = importlib.util.spec_from_file_location("astryx.security.secretset", SUBJECT)
         ss = importlib.util.module_from_spec(_spec)
-        sys.modules["nucleus.secretset"] = ss
-        nucleus.secretset = ss
+        sys.modules["astryx.security.secretset"] = ss
+        astryx.security.secretset = ss
         _spec.loader.exec_module(ss)
         ss.REPO = REPO                                       # a mutant lives in a temp dir: keep the tree's root
-        ss.ENV_FILE, ss.HOLDERS_FILE = REPO / ".env", REPO / "nucleus" / "secret_holders.json"
+        ss.ENV_FILE, ss.HOLDERS_FILE = REPO / ".env", REPO / "src" / "astryx" / "data" / "secret_holders.json"
         ss.UNIT_DIRS = (REPO / "units",) + tuple(ss.UNIT_DIRS[1:])
     else:
-        from nucleus import secretset as ss
+        from astryx.security import secretset as ss
 except Exception as exc:                                    # noqa: BLE001 — RED on a tree without S0
     ss = None
-    check("nucleus.secretset imports", False, f"{type(exc).__name__}: {exc}")
+    check("astryx.security.secretset imports", False, f"{type(exc).__name__}: {exc}")
 
 # ------------------------------------------------------------------ fixtures (all FAKE)
 TOK = "tok_FAKE_9f3a1c77e0b24d6a"                 # opaque key

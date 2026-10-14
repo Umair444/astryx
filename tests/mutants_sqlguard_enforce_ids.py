@@ -3,7 +3,7 @@ consumer of red.json: it drives the real enforce() on a fabricated report and co
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-SUBJECT = REPO / "nucleus" / "sqlguard" / "enforce.py"
+SUBJECT = REPO / "src" / "astryx" / "security" / "sqlguard" / "enforce.py"
 ORACLE = REPO / "tests" / "test_branch_check.py"
 ENV = "ENFORCE_SRC"
 MUTANTS = {

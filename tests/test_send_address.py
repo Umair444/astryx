@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle for send's address check: nucleus/address.py (the authority) and channel/address.mjs (the seam
+"""Oracle for send's address check: src/astryx/core/address.py (the authority) and channel/address.mjs (the seam
 server.mjs calls before it writes a row). seed #37905's arms, plus the consumer pairing.
 
     venv/bin/python tests/test_send_address.py
@@ -34,7 +34,7 @@ for _k in [k for k in os.environ if k.startswith("GIT_")]:
     del os.environ[_k]
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
-from nucleus import address  # noqa: E402
+from astryx.core import address  # noqa: E402
 
 fails, skips = [], []
 

@@ -24,7 +24,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
-from nucleus import release as R  # noqa: E402
+from astryx.security import release as R  # noqa: E402
 
 fails = []
 SENT = "S1B-SENTINEL-private-reply-4a7c"
@@ -100,7 +100,7 @@ check("`read` of ANOTHER tier's pointer → rc 1, and no body", rc == 1 and "fam
 
 try:
     import psycopg
-    from nucleus.sqlguard.fixture import fixture_db
+    from astryx.security.sqlguard.fixture import fixture_db
     _fx = fixture_db()
     fx = _fx.__enter__()
 except Exception as e:  # noqa: BLE001

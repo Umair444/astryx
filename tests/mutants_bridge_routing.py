@@ -1,7 +1,7 @@
 """Authored mutants for bridges/common.py route_target() (seed #33250, a2 #33257), run by
-nucleus/mutation_probe.py.
+devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_bridge_routing.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_bridge_routing.py
 
 One per clause of the precedence: explicit mention > the newest row the HUMAN saw (their own
 message, or an agent's message TO them, whatever its intent) > the surface default.

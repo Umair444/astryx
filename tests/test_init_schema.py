@@ -58,7 +58,7 @@ def main():
     db = f"astryx_schemaprobe_{os.getpid()}"
     td = Path(tempfile.mkdtemp(prefix="init-schema-"))
     copy = td / "schema.sql"
-    shutil.copy(REPO / "nucleus" / "schema.sql", copy)
+    shutil.copy(REPO / "src" / "astryx" / "sql" / "schema.sql", copy)
     sdsn = make_conninfo(dsn, dbname=db)
 
     def sh(fn, dsn_=None):
@@ -105,10 +105,12 @@ def main():
               r.returncode == 0 and sh("_chk_schema").returncode == 0, r.stderr[-300:])
 
         # COMMIT FIRST (a4 #41136): run the way init really runs — cwd = the repo root, init's own RELATIVE default
-        # path "nucleus/schema.sql" — and refuse anything whose bytes differ from HEAD's: modified, staged, untracked.
+        # path "src/astryx/sql/schema.sql" — and refuse anything whose bytes differ from HEAD's: modified, staged, untracked.
         gd = td / "gitrepo"
         (gd / "nucleus").mkdir(parents=True)
-        gs = gd / "nucleus" / "schema.sql"
+        for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
+            (gd / _d).mkdir(parents=True, exist_ok=True)
+        gs = gd / "src" / "astryx" / "sql" / "schema.sql"
         clean_env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
         g = lambda *a: subprocess.run(["git", "-C", str(gd), *a], capture_output=True, text=True, env=clean_env)
         g("init", "-q")
@@ -125,13 +127,13 @@ def main():
         check("COMMIT FIRST: an UNTRACKED schema.sql is refused (git has never seen it), the stamp unchanged",
               r.returncode != 0 and "committed" in r.stderr and q("SELECT sha FROM schema_applied WHERE id = 1")[0] == before,
               (r.returncode, r.stderr[-200:]))
-        g("add", "nucleus/schema.sql"); commit("base")
+        g("add", "src/astryx/sql/schema.sql"); commit("base")
         gs.write_text(gs.read_text() + "\nCREATE TABLE IF NOT EXISTS zz_schemaprobe_dirty (x int);\n")
         r = sh_git()
         check("COMMIT FIRST: MODIFIED on init's own relative default path is refused, the database untouched",
               r.returncode != 0 and q("SELECT to_regclass('zz_schemaprobe_dirty')")[0] is None
               and q("SELECT sha FROM schema_applied WHERE id = 1")[0] == before, (r.returncode, r.stderr[-200:]))
-        g("add", "nucleus/schema.sql")
+        g("add", "src/astryx/sql/schema.sql")
         r = sh_git()
         check("…STAGED but uncommitted is refused too", r.returncode != 0 and q("SELECT to_regclass('zz_schemaprobe_dirty')")[0] is None,
               (r.returncode, r.stderr[-200:]))

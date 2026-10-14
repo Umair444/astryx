@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Oracle: the observatory renders no budget economics (goal 4227 follow-up, a2 #23159).
 
-    venv/bin/python tests/test_observatory_no_budget_ui.py     (also run by nucleus/check.sh)
+    venv/bin/python tests/test_observatory_no_budget_ui.py     (also run by devtools/check.sh)
     OBS_SRC_DIR=<dir> …                                         (the subject; mutation_probe)
 
 There are no budgets. spent_tokens has NEVER been written (0 on every goal row), so any bar or

@@ -33,8 +33,8 @@ def read(rel):
     return p.read_text()
 
 
-schema = read("nucleus/schema.sql").lower()
-econ = read("nucleus/econ.py").lower()
+schema = read("src/astryx/sql/schema.sql").lower()
+econ = read("src/astryx/econ/econ.py").lower()
 org = read("mcp/org/server.py").lower()
 
 # ── every W-bearing surface carries the honest attribution-grade label + points at 3499 ──

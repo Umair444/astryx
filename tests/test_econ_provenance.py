@@ -99,11 +99,11 @@ head = subprocess.run(["git", "-C", str(REPO), "rev-parse", "main"], capture_out
 
 print("\n3. entrypoint (pulse_run.Ctx on a sqlguard fixture):")
 try:
-    _p = importlib.util.spec_from_file_location("pulse_run_prov", REPO / "nucleus" / "pulse_run.py")
+    _p = importlib.util.spec_from_file_location("pulse_run_prov", REPO / "src" / "astryx" / "pulse" / "pulse_run.py")
     pr = importlib.util.module_from_spec(_p)
     _p.loader.exec_module(pr)
     import psycopg
-    from nucleus.sqlguard.fixture import fixture_db
+    from astryx.security.sqlguard.fixture import fixture_db
     _fx = fixture_db()
     fx = _fx.__enter__()
 except Exception as e:  # noqa: BLE001

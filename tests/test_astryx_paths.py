@@ -69,6 +69,8 @@ def main():
     (wt / ".git").write_text("gitdir: ../../.git/worktrees/agent-x\n")
     (wt / "init.sh").write_text("#!/bin/sh\n")
     (wt / "nucleus").mkdir()
+    for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
+        (wt / _d).mkdir(parents=True, exist_ok=True)
     h, why = paths.resolve_home(env={}, cwd=wt / "nucleus", package=wpkg, user_home=user)
     arm("a nested worktree under a home's .astryx resolves to the WORKTREE (checkout rung), never the parent",
         (h, why) == (wt, "checkout"), f"{h} {why}")

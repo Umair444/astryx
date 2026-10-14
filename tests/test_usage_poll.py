@@ -21,7 +21,7 @@ tests nothing (terminal-test law). The five arms:
   READ    every gauge reader references the authority, none is left on the raw turns-only
           query — control: the census flags a synthetic half-ship.
 
-DB arms run in a THROWAWAY DATABASE from nucleus/sqlguard/fixture.py's fixture_db(): schema.sql
+DB arms run in a THROWAWAY DATABASE from src/astryx/security/sqlguard/fixture.py's fixture_db(): schema.sql
 applied whole (the same bytes init.sh applies, so the views are the shipped ones, not a hand
 copy), stamped, and dropped afterwards. Nothing touches the production server's own database.
 """
@@ -81,10 +81,10 @@ check("WRITE RED-control: correct and inverted-threshold DISAGREE on a stale aut
 
 
 # ── DB arms: a throwaway fixture database, the REAL schema applied whole ────────────
-from nucleus.sqlguard.estate import gate  # noqa: E402
+from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate("test_usage_poll", REPO, deps=("psycopg",))   # a .env with no DSN, or no psycopg: absent vs broken
 import psycopg  # noqa: E402
-from nucleus.sqlguard.fixture import FixtureUnavailable, fixture_db  # noqa: E402
+from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db  # noqa: E402
 
 NOW = datetime.now(timezone.utc)
 
@@ -214,7 +214,7 @@ finally:
 # ── READ census (PRIMARY): every gauge reader on the authority, none on the raw query ─
 READER_SITES = {
     "hooks/usage.py": "the per-agent status line",
-    "nucleus/pulse.py": "the load-shed gauge",
+    "src/astryx/pulse/pulse.py": "the load-shed gauge",
     "mcp/org/server.py": "the org-MCP usage field",
     "observatory/api/main.py": "the dashboard series/latest + /api/usage",
 }

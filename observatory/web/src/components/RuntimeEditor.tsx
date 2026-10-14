@@ -4,7 +4,7 @@ import { api, apiSend, displayName } from '../api'
 /* Owner-only per-agent provider/auth, SHARED by the agent side-drawer and the Agents-tab
    profile modal so both surfaces show one identical editor. Each resident is its own `claude`
    process and may run on a different provider + key + model map; spawn.sh injects this into the
-   agent's settings.json env on respawn (nucleus/runtime_env.py). The token itself NEVER transits
+   agent's settings.json env on respawn (src/astryx/core/runtime_env.py). The token itself NEVER transits
    here — we store only the NAME of the .env key that holds it (redacted on read). Empty
    everything → the agent reverts to the org's ambient default. */
 

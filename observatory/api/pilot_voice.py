@@ -6,7 +6,7 @@
 
 OWNER-ONLY BY OMISSION: none of these paths is in main.PUBLIC_PATHS, so the observatory's default-deny middleware
 answers 403 to anyone without the obs key before a handler runs (the guests flag of canvas does not exist here,
-since :8090 listens on 0.0.0.0; C4). Spend is the shared ledger and cap in nucleus/voice_mint.py.
+since :8090 listens on 0.0.0.0; C4). Spend is the shared ledger and cap in src/astryx/hearing/voice_mint.py.
 
 The voice's tools are the pilot catalog's actions (observatory/pilot/catalog.json), handed to the provider as
 function tools. The provider's calls come back to the BROWSER, where the executor runs each as the `room`
@@ -21,7 +21,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from nucleus import voice_mint as V
+from astryx.hearing import voice_mint as V
 from observatory.pilot.catalog import load as load_catalog
 
 router = APIRouter()

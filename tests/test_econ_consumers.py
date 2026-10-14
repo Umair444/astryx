@@ -5,12 +5,12 @@ plan-4227 #21236 V1 grepped a HAND-KEPT identifier list to find everything that 
 value, and O6 was to pin the result. a2/a4's build condition (#21249): a hand-kept list wears a
 derivation's face — `m["v2"]["mirror"]` matched none of its patterns. So the identifier set is
 DERIVED FROM THE AUTHORITIES, every time this runs:
-  (i)   nucleus/econ.py's public functions (AST) — read via `econ.<name>`, and ANY import from
-        nucleus.econ makes a file a consumer (private helpers included: they are still econ);
+  (i)   src/astryx/econ/econ.py's public functions (AST) — read via `econ.<name>`, and ANY import from
+        astryx.econ.econ makes a file a consumer (private helpers included: they are still econ);
   (ii)  the top-level keys econ.compute() and econ.v2() RETURN (AST) — i.e. every key written
         under econ.metrics and under metrics.v2 — matched as SQL `->'k'` / `->>'k'` and as
         Python `x["k"]` / `x.get("k")`. A key S2 adds to v2 joins the set with no edit here;
-  (iii) the value columns of goals/econ from nucleus/schema.sql (CREATE TABLE + ALTER ... ADD
+  (iii) the value columns of goals/econ from src/astryx/sql/schema.sql (CREATE TABLE + ALTER ... ADD
         COLUMN), matched in executable SQL strings (docstrings excluded, uppercase keywords).
 (iii) cannot be derived: which column is "value" is a judgement. So it is GRADED "coverage over
 the declared column list", and made COMPLETE instead: every goals/econ column must be declared
@@ -38,7 +38,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 EXCLUDE_DIRS = {"venv", "node_modules", "homes", "tests", ".git"}
-AUTHORITY = "nucleus/econ.py"
+AUTHORITY = "src/astryx/econ/econ.py"
 
 # ── (iii) goals/econ columns: DECLARED, but complete (every column classified) ──────────────
 VALUE_COLS = {
@@ -68,10 +68,10 @@ MANIFEST = {
                                 "stage": "S2 done (API); the dashboard UI still charts v1"},
     "memory/graph/ingest.py": {"type": "reporter", "rest": "a goal's budget as a HISTORICAL fact",
                                "stage": "unchanged at S2: a column value, not v1 W; S3 read-only"},
-    "nucleus/wash_detector.py": {"type": "detector", "rest": "NOT_EVALUATED share on no calls",
+    "src/astryx/econ/wash_detector.py": {"type": "detector", "rest": "NOT_EVALUATED share on no calls",
                                  "stage": "migrated S1b (v2 rings, report-only)"},
     "triggers/steward/econ_rollup.py": {"type": "writer", "rest": "archives what compute() returns",
-                                        "stage": "runs the authority, detached (`-m nucleus.econ`, 10-10)"},
+                                        "stage": "runs the authority, detached (`-m astryx.econ.econ`, 10-10)"},
     "triggers/steward/market_decay.py": {"type": "detector", "rest": "reports rent, no retire verb",
                                          "stage": "S1b (was hard); S2 re-keys roi"},
     "triggers/steward/econ_provenance.py": {"type": "detector",
@@ -138,17 +138,18 @@ def reads(src: str, pub, keys, value_cols) -> list[str]:
         return [f"UNPARSEABLE:{e.lineno}"]   # a file the scan cannot read is flagged, not skipped
     docs, why = _docstring_ids(tree), set()
     for n in ast.walk(tree):
-        if isinstance(n, ast.ImportFrom) and n.module == "nucleus.econ":
-            why.add("import nucleus.econ")
-        elif isinstance(n, ast.ImportFrom) and n.module == "nucleus" \
+        if isinstance(n, ast.ImportFrom) and n.module in ("astryx.econ.econ", "nucleus.econ"):  # reorg: keep
+            why.add("import astryx.econ.econ")
+        elif isinstance(n, ast.ImportFrom) and n.module in ("nucleus", "astryx.econ") \
                 and any(a.name == "econ" for a in n.names):
-            why.add("import nucleus.econ")
-        elif isinstance(n, ast.Import) and any(a.name == "nucleus.econ" for a in n.names):
-            why.add("import nucleus.econ")
+            why.add("import astryx.econ.econ")
+        elif isinstance(n, ast.Import) and any(a.name in ("astryx.econ.econ", "nucleus.econ")  # reorg: keep
+                                               for a in n.names):
+            why.add("import astryx.econ.econ")
         elif isinstance(n, (ast.List, ast.Tuple)) and any(
                 isinstance(a, ast.Constant) and a.value == "-m" and isinstance(b, ast.Constant)
-                and b.value == "nucleus.econ" for a, b in zip(n.elts, n.elts[1:])):
-            why.add("runs -m nucleus.econ")       # a subprocess argv running the authority (econ_rollup, 10-10)
+                and b.value in ("astryx.econ.econ", "nucleus.econ") for a, b in zip(n.elts, n.elts[1:])):  # reorg: keep
+            why.add("runs -m astryx.econ.econ")       # a subprocess argv running the authority (econ_rollup, 10-10)
         elif isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) \
                 and n.value.id == "econ" and n.attr in pub:
             why.add(f"econ.{n.attr}")
@@ -171,7 +172,7 @@ def _ignored(rel: str) -> bool:
 
 
 pub, keys, cols = derive_identifiers((REPO / AUTHORITY).read_text(),
-                                     (REPO / "nucleus" / "schema.sql").read_text())
+                                     (REPO / "src" / "astryx" / "sql" / "schema.sql").read_text())
 
 print("DERIVATION (from the authorities, not a list):")
 print(f"        {len(pub)} public econ functions · metrics keys {sorted(keys)} · "
@@ -189,12 +190,12 @@ for label, src, want in [
     ("SQL ->>", "q = \"SELECT metrics->'v2'->>'W' FROM econ\"", True),
     ("the #21249 miss: m['v2']['mirror']", "x = m['v2']['mirror']", True),
     (".get('trigger_roi')", "x = m.get('trigger_roi')", True),
-    ("import from nucleus.econ", "from nucleus.econ import _v2_counted", True),
-    ("from nucleus import econ", "from nucleus import econ", True),
+    ("import from astryx.econ.econ", "from astryx.econ.econ import _v2_counted", True),
+    ("from astryx.econ import econ", "from astryx.econ import econ", True),
     ("econ.<public fn>", "y = econ.thermo(c, a, b)", True),
-    ("a subprocess argv running -m nucleus.econ", "Popen(['timeout', '900', py, '-m', 'nucleus.econ', day])", True),
-    ("CONTROL the module name in prose, not an argv", "s = 'see nucleus.econ for the equations'", False),
-    ("CONTROL -m another module", "Popen([py, '-m', 'nucleus.pulse'])", False),
+    ("a subprocess argv running -m astryx.econ.econ", "Popen(['timeout', '900', py, '-m', 'astryx.econ.econ', day])", True),
+    ("CONTROL the module name in prose, not an argv", "s = 'see astryx.econ.econ for the equations'", False),
+    ("CONTROL -m another module", "Popen([py, '-m', 'astryx.pulse.pulse'])", False),
     ("value column in executable SQL", "q = 'SELECT budget_tokens FROM goals'", True),
     ("CONTROL value column in a DOCSTRING only", '"""SELECT budget_tokens FROM goals"""\nx = 1', False),
     ("CONTROL value column in prose (no SQL keyword)", "s = 'the budget_tokens are retired'", False),
@@ -214,7 +215,7 @@ if not _rets:
 _rets[0].value.keys.append(ast.Constant("mirror_probe"))
 _rets[0].value.values.append(ast.Constant(None))
 _econ_plus = ast.unparse(_t)
-_, keys_plus, _ = derive_identifiers(_econ_plus, (REPO / "nucleus" / "schema.sql").read_text())
+_, keys_plus, _ = derive_identifiers(_econ_plus, (REPO / "src" / "astryx" / "sql" / "schema.sql").read_text())
 check("a NEW key written into v2 is derived automatically (x['mirror_probe'] becomes a consumer)",
       "mirror_probe" in keys_plus and bool(reads("x = m['mirror_probe']", pub, keys_plus, V)))
 

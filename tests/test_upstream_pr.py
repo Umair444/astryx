@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """test_upstream_pr — medic's upstream PR tool (goal 10224 S6). Hermetic: a throwaway git repo (the real .gitignore and
-nucleus/privacy_gate.sh copied in), a FAKE `gh` first on PATH that logs every call and answers from a JSON file, and
+devtools/privacy_gate.sh copied in), a FAKE `gh` first on PATH that logs every call and answers from a JSON file, and
 `url.<local>.pushInsteadOf https://github.com/` in the fixture so every push lands in a local bare repo. Real GitHub is
 never called.
 
@@ -24,9 +24,9 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-TOOL = REPO / "nucleus" / "upstream_pr.py"
+TOOL = REPO / "src" / "astryx" / "core" / "upstream_pr.py"
 sys.path.insert(0, str(REPO))
-from nucleus import upstream_pr as U  # noqa: E402
+from astryx.core import upstream_pr as U  # noqa: E402
 
 fails = 0
 UP = "acme-up/astryx"                    # a fictional upstream: nothing here names the real one
@@ -107,8 +107,10 @@ def fixture(origin=f"https://github.com/{LOGIN}/astryx.git"):
     N[0] += 1
     r, host = ROOT / f"repo-{N[0]}", ROOT / f"host-{N[0]}"
     (r / "nucleus").mkdir(parents=True)
+    for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
+        (r / _d).mkdir(parents=True, exist_ok=True)
     shutil.copy(REPO / ".gitignore", r / ".gitignore")
-    shutil.copy(REPO / "nucleus" / "privacy_gate.sh", r / "nucleus" / "privacy_gate.sh")
+    shutil.copy(REPO / "devtools" / "privacy_gate.sh", r / "devtools" / "privacy_gate.sh")
     (r / "nucleus" / "thing.py").write_text("def f():\n    return 1\n")
     (r / "agents").mkdir()
     (r / "agents" / "medic.example.md").write_text("# medic\n")

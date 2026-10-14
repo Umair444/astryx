@@ -1,11 +1,11 @@
-"""Authored mutants for nucleus/review_range.sh, run by nucleus/mutation_probe.py.
+"""Authored mutants for devtools/review_range.sh, run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_review_range.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_review_range.py
 """
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-SUBJECT = REPO / "nucleus" / "review_range.sh"
+SUBJECT = REPO / "devtools" / "review_range.sh"
 ORACLE = REPO / "tests" / "test_review_range.py"
 ENV = "REVIEW_RANGE_SRC"
 MUTANTS = {

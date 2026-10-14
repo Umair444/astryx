@@ -18,7 +18,7 @@ writes on the first try.
      an earlier report about its peers.
   6. coverage must not silently shrink, and an unreadable file must be NAMED, not skipped.
 
-Run by nucleus/check.sh. Exits 77 (SKIP, not PASS) when the gitignored trigger body is absent,
+Run by devtools/check.sh. Exits 77 (SKIP, not PASS) when the gitignored trigger body is absent,
 which is the honest verdict in a bare CI clone.
 """
 import importlib.util

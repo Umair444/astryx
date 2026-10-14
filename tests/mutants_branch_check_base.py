@@ -1,6 +1,6 @@
-"""Authored mutants for nucleus/branch_check_prep.py's build_base, oracle tests/test_branch_check_base.py.
+"""Authored mutants for devtools/branch_check_prep.py's build_base, oracle tests/test_branch_check_base.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_branch_check_base.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_branch_check_base.py
 
 SAFE BY CONSTRUCTION (seed #34899): the oracle REFUSES, before it runs, any process that would write prod, so a
 mutant that restores INTO prod is stopped at the guard and nothing reaches the live database.
@@ -8,7 +8,7 @@ mutant that restores INTO prod is stopped at the guard and nothing reaches the l
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-SUBJECT = REPO / "nucleus" / "branch_check_prep.py"
+SUBJECT = REPO / "devtools" / "branch_check_prep.py"
 ORACLE = REPO / "tests" / "test_branch_check_base.py"
 ENV = "BRANCH_CHECK_PREP_SRC"
 TIMEOUT = 600

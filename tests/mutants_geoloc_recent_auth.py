@@ -1,7 +1,7 @@
 """Authored mutants for bridges/geoloc.py's /recent auth gate (a3 #32078), run by
-nucleus/mutation_probe.py.
+devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_geoloc_recent_auth.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_geoloc_recent_auth.py
 
 The subject is GITIGNORED (the geoloc estate), so on a clean clone these can't apply and read
 NOT PROBED, never caught. X3 is the version I wrote first and caught by probing before review.

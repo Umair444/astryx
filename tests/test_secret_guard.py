@@ -52,10 +52,10 @@ def check(name, ok, detail=""):
 
 
 try:
-    from nucleus import secret_guard as sg
-    from nucleus import secretset as ss
+    from astryx.security import secret_guard as sg
+    from astryx.security import secretset as ss
 except Exception as exc:                                    # noqa: BLE001 — RED without S1b
-    check("nucleus.secret_guard imports", False, f"{type(exc).__name__}: {exc}")
+    check("astryx.security.secret_guard imports", False, f"{type(exc).__name__}: {exc}")
     print(f"\nFAIL: {len(fails)} arm(s) red")
     sys.exit(1)
 
@@ -131,7 +131,7 @@ def arms(tmp: Path):
                 "set -a; . ./.env; set +a", "for x in .env venv local.md; do ln -s ../$x w/$x; done",
                 "echo 'the token stays in .env, only its key'",
                 "grep -q '^WA_CLI=' .env", "grep -c ASTRYX_DSN .env", "grep -rl DSN .env nucleus",
-                "sed -i '/^TEST_TOKEN=dummy$/d' .env", "grep -nE '(\\.env|venv)' nucleus/check.sh"):
+                "sed -i '/^TEST_TOKEN=dummy$/d' .env", "grep -nE '(\\.env|venv)' devtools/check.sh"):
         r = bash(cmd)
         check(f"G6 silent use ALLOWED (measured false positives): {cmd[:44]}", r is None, str(r))
     # KNOWN GAPS, pinned ALLOWED so the PARTIAL grade stays visible: if one of these ever turns
@@ -232,7 +232,7 @@ def arms_publish_creds(tmp: Path):
     for rel in (".config/gh/hosts.yml", ".ssh/id_ed25519", ".ssh/id_ed25519.pub", ".config/ordinary.txt"):
         (home / rel).write_text("FAKE fixture, not a credential\n")
     saved_home, saved_manifest = os.environ.get("HOME"), ss.HOLDERS_FILE
-    os.environ["HOME"], ss.HOLDERS_FILE = str(home), REPO / "nucleus" / "secret_holders.json"
+    os.environ["HOME"], ss.HOLDERS_FILE = str(home), REPO / "src" / "astryx" / "data" / "secret_holders.json"
     try:
         dec = lambda tool, ti: sg.decide(tool, ti, secrets=[])  # noqa: E731
         for rel in (".config/gh/hosts.yml", ".ssh/id_ed25519"):
@@ -259,7 +259,7 @@ def arms_token_routes(tmp: Path):
         (home / rel).parent.mkdir(parents=True, exist_ok=True)
         (home / rel).write_text("FAKE fixture, not a credential\n")
     saved_home, saved_manifest = os.environ.get("HOME"), ss.HOLDERS_FILE
-    os.environ["HOME"], ss.HOLDERS_FILE = str(home), REPO / "nucleus" / "secret_holders.json"
+    os.environ["HOME"], ss.HOLDERS_FILE = str(home), REPO / "src" / "astryx" / "data" / "secret_holders.json"
     try:
         deny = {"G9a $HOME spelling": ['cat "$HOME/.config/gh/hosts.yml"', "cat ${HOME}/.ssh/id_ed25519"],
                 "G9b gh prints the token": ["gh auth token", "gh auth status --show-token", "gh auth status -t",

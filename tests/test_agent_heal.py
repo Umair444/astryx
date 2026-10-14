@@ -6,7 +6,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
-from nucleus.shipped_triggers import agent_heal as H  # noqa: E402
+from astryx.pulse.shipped_triggers import agent_heal as H  # noqa: E402
 
 fails = 0
 

@@ -1,6 +1,6 @@
-"""Authored mutants for channel/server.mjs's plugin seams (plan-10224 S7), run by nucleus/mutation_probe.py:
+"""Authored mutants for channel/server.mjs's plugin seams (plan-10224 S7), run by devtools/mutation_probe.py:
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_channel_home.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_channel_home.py
 """
 from pathlib import Path
 

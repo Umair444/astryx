@@ -39,7 +39,7 @@ def want(label, cond, why=""):
 
 try:
     import psycopg
-    from nucleus.sqlguard.fixture import fixture_db
+    from astryx.security.sqlguard.fixture import fixture_db
 except ImportError as e:
     print(f"SKIP: deps ({e}). Nothing was verified here.")
     sys.exit(77)
@@ -89,8 +89,10 @@ shutil.copy(REPO / "channel" / "trigger_name.mjs", STAGE / "trigger_name.mjs")
 shutil.copy(os.environ.get("TOMBSTONE_SRC") or REPO / "channel" / "tombstone.mjs", STAGE / "tombstone.mjs")
 # the pulse under test, placed IN the tree so its REPO is the tree (its triggers/, its zzlib), as trigger_set runs it
 (TREE / "nucleus").mkdir()
-PULSE = TREE / "nucleus" / "pulse.py"
-shutil.copy(os.environ.get("PULSE_SRC") or REPO / "nucleus/pulse.py", PULSE)
+for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
+    (TREE / _d).mkdir(parents=True, exist_ok=True)
+PULSE = TREE / "src" / "astryx" / "pulse" / "pulse.py"
+shutil.copy(os.environ.get("PULSE_SRC") or REPO / "src/astryx/pulse/pulse.py", PULSE)
 (TREE / "zzlib").mkdir()
 (TREE / "zzlib" / "__init__.py").write_text("")
 (TREE / "zzlib" / "shipped.py").write_text(SHIPPED)
@@ -188,7 +190,7 @@ try:
     import re as _re
     advice = _re.compile(r"delete (?:this|the) file.{0,60}retire|retires? it.{0,20}(?:delete|remov)", _re.I | _re.S)
     hits = [str(f.relative_to(REPO)) for f in [REPO / "init.sh", *sorted((REPO / "docs").glob("*.md")),
-                                              *sorted((REPO / "nucleus/shipped_triggers").glob("*.py"))]
+                                              *sorted((REPO / "src/astryx/pulse/shipped_triggers").glob("*.py"))]
             if advice.search(f.read_text())]
     want("R6 no shim or doc advises retiring a trigger by deleting its file (control: the pattern catches it)",
          not hits and advice.search("delete this file and the pulse retires it"), str(hits))

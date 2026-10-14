@@ -1,6 +1,6 @@
-"""Authored mutants for nucleus/social_age.py's declared-design check, run by nucleus/mutation_probe.py.
+"""Authored mutants for src/astryx/memory/social_age.py's declared-design check, run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_social_age_design.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_social_age_design.py
 
 Each mutant blinds drift() or weakens ensure() in one way the oracle claims to see. They act only on the oracle's own
 scratch databases, scratch roles and stamped fixtures (pid-scoped names), never a live one.
@@ -9,7 +9,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-SUBJECT = REPO / "nucleus" / "social_age.py"
+SUBJECT = REPO / "src" / "astryx" / "memory" / "social_age.py"
 ORACLE = REPO / "tests" / "test_social_age_design.py"
 ENV = "SOCIAL_AGE_SRC"
 TIMEOUT = 400

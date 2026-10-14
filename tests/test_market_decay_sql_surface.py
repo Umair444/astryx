@@ -19,7 +19,7 @@ and it is REPORTED as rent. Against the pre-S1b body they are RED.
 
 WRITE-SAFETY (the crux of steward's contract), kept although the body no longer writes: the oracle
 must stay safe against a REGRESSION that re-adds a write. So this runs in a THROWAWAY DATABASE from the
-org's ONE fixture applier (nucleus/sqlguard/fixture.py, goal 4243): schema.sql applied WHOLE (the
+org's ONE fixture applier (src/astryx/security/sqlguard/fixture.py, goal 4243): schema.sql applied WHOLE (the
 authority, ALTER-only columns included, so a column rename that breaks a query is caught too), every
 relation stamped, the database dropped in finally. A database, not a temp schema: goal-3833's temp
 schema dropped the PROD view by leaving public reachable, and a schema can't contain pg_notify either
@@ -57,7 +57,7 @@ try:
     _spec.loader.exec_module(m)
     # pulse_run's OWN Ctx (imported, not re-implemented — arity fidelity: a stand-in with a different
     # execute() arity is exactly what masked the 09-21 dry-run). Reads .env DSN at import.
-    _pr_spec = importlib.util.spec_from_file_location("pulse_run_md", REPO / "nucleus" / "pulse_run.py")
+    _pr_spec = importlib.util.spec_from_file_location("pulse_run_md", REPO / "src" / "astryx" / "pulse" / "pulse_run.py")
     pr = importlib.util.module_from_spec(_pr_spec)
     _pr_spec.loader.exec_module(pr)
     import psycopg
@@ -76,7 +76,7 @@ def check(name, ok, detail=""):
             print(f"        {detail}")
 
 
-from nucleus.sqlguard.fixture import FixtureUnavailable, fixture_db  # noqa: E402 — the ONE applier (after the SKIP guard)
+from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db  # noqa: E402 — the ONE applier (after the SKIP guard)
 
 _fx = fixture_db()
 try:

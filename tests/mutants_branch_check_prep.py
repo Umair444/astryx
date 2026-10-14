@@ -1,6 +1,6 @@
-"""Authored mutants for nucleus/branch_check_prep.py (plan-4918 P0/P1), run by nucleus/mutation_probe.py.
+"""Authored mutants for devtools/branch_check_prep.py (plan-4918 P0/P1), run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_branch_check_prep.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_branch_check_prep.py
 
 One per safety property: the NULL-ACL precondition, the template keep set and LIKE escape, the template's
 PUBLIC CONNECT revoke, the credential-bearing file skip, the generated env's allowlist, and the password kept
@@ -13,7 +13,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-SUBJECT = REPO / "nucleus" / "branch_check_prep.py"
+SUBJECT = REPO / "devtools" / "branch_check_prep.py"
 ORACLE = REPO / "tests" / "test_branch_check_prep.py"
 ENV = "BRANCH_CHECK_PREP_SRC"
 

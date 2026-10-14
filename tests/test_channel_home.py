@@ -51,7 +51,7 @@ def skip(why: str) -> None:
 
 
 def node_bin() -> str | None:
-    spawn = REPO / "nucleus" / "spawn.sh"
+    spawn = REPO / "scripts" / "spawn.sh"
     m = re.search(r"^NODE=(\S+)", spawn.read_text(), re.M) if spawn.exists() else None
     if m and Path(m.group(1)).is_file():
         return m.group(1)
@@ -65,7 +65,7 @@ if not (REPO / "channel" / "node_modules" / "pg").is_dir():
     skip("channel/node_modules is absent (run npm ci in channel/)")
 try:
     import psycopg
-    from nucleus.sqlguard.fixture import fixture_db, FixtureUnavailable, url
+    from astryx.security.sqlguard.fixture import fixture_db, FixtureUnavailable, url
 except ModuleNotFoundError:
     skip("psycopg not importable (run with venv/bin/python)")
 
@@ -159,13 +159,15 @@ try:
         home = tmp / "org home"                                    # a space: paths must stay one argument
         (home / "venv" / "bin").mkdir(parents=True)
         (home / "nucleus").mkdir()
+        for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
+            (home / _d).mkdir(parents=True, exist_ok=True)
         NODE_DSN = url(fx["dsn"])                         # node-pg takes a URL, not key=value conninfo
         (home / ".env").write_text(f"ASTRYX_DSN={NODE_DSN}\n")
         probe = tmp / "address-called"
         py = home / "venv" / "bin" / "python"
         py.write_text(f"#!/bin/sh\necho \"$@\" > '{probe}'\nexit 0\n")    # the stub python: proves WHICH python ran
         py.chmod(0o755)
-        (home / "nucleus" / "address.py").write_text("# stub: the stub python above records that it was asked\n")
+        (home / "src" / "astryx" / "core" / "address.py").write_text("# stub: the stub python above records that it was asked\n")
         arm("layout: the staged channel dir has no .env beside it", not (stage / ".env").exists())
 
         # ── 1. ASTRYX_HOME: DSN from <home>/.env, python and nucleus/ from <home> ──
@@ -180,8 +182,8 @@ try:
             'Org messages arrive as <channel source="astryx" from=' in instr, instr[:200])
         r = s.call("tools/call", {"name": "send", "arguments": {"to": "someone", "body": "hello from elsewhere"}})
         text = json.dumps(r or {})
-        arm("ASTRYX_HOME: send consulted <home>/venv/bin/python <home>/nucleus/address.py",
-            probe.exists() and str(home / "nucleus" / "address.py") in probe.read_text(), text[-300:])
+        arm("ASTRYX_HOME: send consulted <home>/venv/bin/python <home>/src/astryx/core/address.py",
+            probe.exists() and str(home / "src" / "astryx" / "core" / "address.py") in probe.read_text(), text[-300:])
         with psycopg.connect(fx["dsn"], autocommit=True) as db:
             row = db.execute("SELECT from_agent, to_agent, body FROM messages WHERE from_agent='homeprobe' "
                              "ORDER BY id DESC LIMIT 1").fetchone()

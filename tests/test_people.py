@@ -1,4 +1,4 @@
-"""Oracle for nucleus/people.py — the channel-derived social graph.
+"""Oracle for src/astryx/people/people.py — the channel-derived social graph.
 
 THE STAKES ARE HIGHER HERE THAN ANYWHERE ELSE IN THE ESTATE. world.py handles a handful of
 people the owner wrote down himself. This module walks his address book: a bounded scan of
@@ -19,7 +19,7 @@ hash that ignores its salt would pass every other test in this file while offeri
 Fixtures are CERTIFIED FAKE: sequential/reserved-range digits that cannot be live numbers.
 No real contact appears in this file.
 
-Run: venv/bin/python tests/test_people.py   (also wired into nucleus/check.sh)
+Run: venv/bin/python tests/test_people.py   (also wired into devtools/check.sh)
 """
 import re
 import sys
@@ -32,7 +32,7 @@ sys.path.insert(0, str(REPO))
 class _Skip(Exception):
     """An arm whose estate is absent on this tree (estate.absent → 77): reported as NOT SEARCHED."""
 
-from nucleus import people  # noqa: E402
+from astryx.people import people  # noqa: E402
 
 # Built by CONCATENATION on purpose: the runtime value must be JID-shaped to exercise
 # the real parsers, but the pre-push privacy gate rightly refuses any JID-shaped
@@ -190,14 +190,14 @@ def test_dm_edges_carry_frequency_and_recency_incrementally():
     the nightly rebuild, and the output is counts only (no name, number or text)."""
     import json as _json
     import os as _os
-    from nucleus.sqlguard.estate import absent
+    from astryx.security.sqlguard.estate import absent
     got = absent(REPO, ("psycopg",))
     if got:                                    # 77 on a committed-only tree; loud (rc 1) on a live host
         if got[0] == 77:
             raise _Skip(got[1])
         raise RuntimeError(got[1])
     import psycopg
-    from nucleus.sqlguard.fixture import fixture_db
+    from astryx.security.sqlguard.fixture import fixture_db
     chats = [{"jid": "111@s.whatsapp.net", "name": "A", "last_message_ts": "2026-10-01T10:00:00Z"},
              {"jid": "222@s.whatsapp.net", "name": "B", "last_message_ts": "2026-09-01T10:00:00Z"},
              {"jid": "333@s.whatsapp.net", "name": "C", "last_message_ts": "2026-08-01T10:00:00Z"}]

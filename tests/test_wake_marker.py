@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gates for nucleus/wake_marker.py — the ONE definition of "was this wake consumed".
+"""Gates for src/astryx/core/wake_marker.py — the ONE definition of "was this wake consumed".
 
 Exit 0 pass · 1 fail · 77 a gate could not run.
 
@@ -17,7 +17,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from nucleus import wake_marker as wm       # noqa: E402
+from astryx.core import wake_marker as wm       # noqa: E402
 
 FAIL, SKIP = [], []
 
@@ -70,7 +70,7 @@ def main():
 
     # ── SQL vs PYTHON, crossed on real rows ─────────────────────────────────────────
     try:
-        from nucleus import wake_audit as wa
+        from astryx.core import wake_audit as wa
         import psycopg
         dsn = wa.dsn()
     except Exception as e:

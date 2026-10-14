@@ -1,7 +1,7 @@
 """Authored mutants for bridges/common.py step_line's owner match (a4 #22117), run by
-nucleus/mutation_probe.py.
+devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_step_doorbell_bridge.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_step_doorbell_bridge.py
 
 E3 drops only the `not agent` early return. It's killable because the fixture holds a real step
 with agent '' (steps.agent is NOT NULL but admits ''); otherwise it would look equivalent only

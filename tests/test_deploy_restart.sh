@@ -6,18 +6,18 @@
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
-mkdir -p "$T/root/nucleus" "$T/root/venv/bin" "$T/bin"
+mkdir -p "$T/root/nucleus" "$T/root/scripts" "$T/root/devtools" "$T/root/venv/bin" "$T/bin"
 LOG="$T/log"; : > "$LOG"
 printf 'ASTRYX_DSN=postgres://x@127.0.0.1:5432/x\n' > "$T/root/.env"
 # the roster: two residents; "bad" refuses to spawn, "good" spawns
 cat > "$T/root/venv/bin/python" <<'P'
 #!/usr/bin/env bash
-if [ "${1:-}" = "nucleus/charter.py" ]; then printf 'bad\ngood\n'; exit 0; fi
+if [ "${1:-}" = "src/astryx/core/charter.py" ]; then printf 'bad\ngood\n'; exit 0; fi
 cat >/dev/null                                           # ears() (run from ROOT): none until "good"
 [ -e spawned-good ] && echo "good 999999999"            # has spawned, then one, so its ready check runs
 exit 0
 P
-cat > "$T/root/nucleus/spawn.sh" <<'P'
+cat > "$T/root/scripts/spawn.sh" <<'P'
 #!/usr/bin/env bash
 if [ "$1" = bad ]; then echo "'bad' already has a live body outside tmux — refusing a second one"; exit 3; fi
 touch "$(dirname "$0")/../spawned-$1"
@@ -39,11 +39,11 @@ case "\$*" in
     echo "    PID  PPID ARGS"
     echo "   5000     1 claude --resume"
     echo "   5100  5000 node channel/server.mjs"
-    [ -n "\${FAKE_HELD:-}" ] && echo "   6000  5100 bash nucleus/check.sh"
-    [ -n "\${FAKE_STRAY:-}" ] && echo "   7000   900 bash nucleus/check.sh"
-    [ -n "\${FAKE_WIN2:-}" ] && echo "   5500     1 bash" && echo "   8000  5500 bash nucleus/check.sh"
+    [ -n "\${FAKE_HELD:-}" ] && echo "   6000  5100 bash devtools/check.sh"
+    [ -n "\${FAKE_STRAY:-}" ] && echo "   7000   900 bash devtools/check.sh"
+    [ -n "\${FAKE_WIN2:-}" ] && echo "   5500     1 bash" && echo "   8000  5500 bash devtools/check.sh"
     ;;
-  *) [ -n "\${FAKE_BUSY:-}" ] && echo "  4242 bash nucleus/check.sh" ;;
+  *) [ -n "\${FAKE_BUSY:-}" ] && echo "  4242 bash devtools/check.sh" ;;
 esac
 exit 0
 STUB
@@ -66,10 +66,10 @@ if [ "\$1" = capture-pane ]; then
 fi
 exit 0
 STUB
-chmod +x "$T"/bin/* "$T/root/venv/bin/python" "$T/root/nucleus/spawn.sh"
+chmod +x "$T"/bin/* "$T/root/venv/bin/python" "$T/root/scripts/spawn.sh"
 out=$(PATH="$T/bin:$PATH" ROOT="$T/root" ASTRYX_AGENT= bash -c '
   set -euo pipefail
-  eval "$(sed -n "/^ears() {/,/^}/p; /^ears_of() /p; /^guarded_under() {/,/^}/p; /^restart_org() {/,/^}/p" "'"$REPO"'/nucleus/deploy.sh")"
+  eval "$(sed -n "/^ears() {/,/^}/p; /^ears_of() /p; /^guarded_under() {/,/^}/p; /^restart_org() {/,/^}/p" "'"$REPO"'/scripts/deploy.sh")"
   sleep() { :; }
   restart_org' 2>&1); rc=$?
 fails=0
@@ -86,7 +86,7 @@ arm "control: a full restart asks docker for the db and RESTARTS the enabled uni
 rm -f "$T/root/spawned-good"; : > "$LOG"
 out2=$(PATH="$T/bin:$PATH" ROOT="$T/root" ASTRYX_AGENT= bash -c '
   set -euo pipefail
-  eval "$(sed -n "/^ears() {/,/^}/p; /^ears_of() /p; /^guarded_under() {/,/^}/p; /^restart_org() {/,/^}/p" "'"$REPO"'/nucleus/deploy.sh")"
+  eval "$(sed -n "/^ears() {/,/^}/p; /^ears_of() /p; /^guarded_under() {/,/^}/p; /^restart_org() {/,/^}/p" "'"$REPO"'/scripts/deploy.sh")"
   sleep() { :; }
   restart_org residents' 2>&1)
 arm "residents: no docker call at all (the database is not bounced)" '! grep -q "^docker " "$LOG"'
@@ -96,7 +96,7 @@ arm "residents: the pulse is paused and started again" 'grep -q "stop astryx-pul
 # the busy guard: a full restart with a check running refuses BEFORE the database bounce; --force overrides
 run_full() { : > "$LOG"; rm -f "$T/root/spawned-good"; PATH="$T/bin:$PATH" ROOT="$T/root" ASTRYX_AGENT= FAKE_BUSY="$1" FAKE_HELD="${3:-}" FAKE_STRAY="${4:-}" FAKE_WIN2="${6:-}" bash -c '
   set -euo pipefail
-  eval "$(sed -n "/^ears() {/,/^}/p; /^ears_of() /p; /^guarded_under() {/,/^}/p; /^restart_org() {/,/^}/p" "'"$REPO"'/nucleus/deploy.sh")"
+  eval "$(sed -n "/^ears() {/,/^}/p; /^ears_of() /p; /^guarded_under() {/,/^}/p; /^restart_org() {/,/^}/p" "'"$REPO"'/scripts/deploy.sh")"
   sleep() { :; }
   restart_org '"$2"' '"${5:-}"'' 2>&1; }
 out3=$(run_full 1 ""); rc3=$?

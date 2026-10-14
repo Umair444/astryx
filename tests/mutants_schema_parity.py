@@ -1,6 +1,6 @@
-"""Authored mutants for nucleus/schema_parity.py (a1 #38264), run by nucleus/mutation_probe.py.
+"""Authored mutants for src/astryx/pg/schema_parity.py (a1 #38264), run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_schema_parity.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_schema_parity.py
 
 Every destructive arm runs on the oracle's own fixture; the live arm only reads, in a read-only session.
 NOT AUTHORED (equivalent): definitions()' internal-trigger exclusion. An internal trigger's OID-derived name never
@@ -9,7 +9,7 @@ appears on BOTH sides, and CHANGED compares only shared names, so including them
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-SUBJECT = REPO / "nucleus" / "schema_parity.py"
+SUBJECT = REPO / "src" / "astryx" / "pg" / "schema_parity.py"
 ORACLE = REPO / "tests" / "test_schema_parity.py"
 ENV = "SCHEMA_PARITY_SRC"
 TIMEOUT = 300

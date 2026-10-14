@@ -1,6 +1,6 @@
-"""Authored mutants for nucleus/check.sh — run by nucleus/mutation_probe.py.
+"""Authored mutants for devtools/check.sh — run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_check_coverage.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_check_coverage.py
 
 THE SUBJECT IS check.sh AND THE ORACLE IS test_check_coverage.py, so each mutant is a
 plausibly-wrong check.sh and the question is whether my coverage gate notices. That gate is
@@ -30,7 +30,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-SUBJECT = REPO / "nucleus" / "check.sh"
+SUBJECT = REPO / "devtools" / "check.sh"
 ORACLE = REPO / "tests" / "test_check_coverage.py"
 ENV = "CHECK_SH_SRC"
 

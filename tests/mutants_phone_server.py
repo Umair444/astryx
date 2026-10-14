@@ -1,6 +1,6 @@
-"""Authored mutants for mcp/phone/server.py (plan-8675 S1), run by nucleus/mutation_probe.py:
+"""Authored mutants for mcp/phone/server.py (plan-8675 S1), run by devtools/mutation_probe.py:
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_phone_server.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_phone_server.py
 
 NOT AUTHORED HERE, device-only (tests/test_android_device.py): the stamp moved off the LAST block, and the
 always-personal app list losing its force. This oracle runs no device, so execution can't reach those lines.

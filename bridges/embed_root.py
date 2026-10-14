@@ -126,8 +126,8 @@ def read_checked(path: str, from_agent: str, audience_is_owner: bool) -> tuple[s
 
 def owner_only(channel: str, route: dict | None) -> bool:
     """Is this route's audience the owner alone? Today: an enabled DM route whose declared counterpart is 'owner'
-    (nucleus.release.chat_kind decides DM vs group). Discord routes are channels, so never. When plan-9139 S1c lands,
+    (astryx.security.release.chat_kind decides DM vs group). Discord routes are channels, so never. When plan-9139 S1c lands,
     its door passes release.audience(...) == {owner} into read_checked instead, and this helper retires."""
-    from nucleus.release import OWNER, chat_kind
+    from astryx.security.release import OWNER, chat_kind
     return (isinstance(route, dict) and bool(route.get("enabled"))
             and chat_kind(channel, route.get("chat")) == "dm" and route.get("counterpart") == OWNER)

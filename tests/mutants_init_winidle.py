@@ -1,6 +1,6 @@
-"""Authored mutants for init.sh's winidle node (tests/test_init_winidle.py), run by nucleus/mutation_probe.py:
+"""Authored mutants for init.sh's winidle node (tests/test_init_winidle.py), run by devtools/mutation_probe.py:
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_init_winidle.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_init_winidle.py
 """
 from pathlib import Path
 

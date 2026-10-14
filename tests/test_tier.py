@@ -1,4 +1,4 @@
-"""Hermetic test of the ONE content-tier authority (nucleus/tier.py) — the grade-3
+"""Hermetic test of the ONE content-tier authority (src/astryx/core/tier.py) — the grade-3
 floor for plan-18 LANE 2. Proves the LOAD-BEARING invariant against a real temp
 agents/ tree: an agent's content is public ONLY IF every grant it holds is a known
 org-actuation grant; ANY grant outside the positive allowlist — a known PII grant OR
@@ -13,7 +13,7 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from nucleus.tier import is_content_public, content_public_agents, ORG_ACTUATION_GRANTS  # noqa: E402
+from astryx.core.tier import is_content_public, content_public_agents, ORG_ACTUATION_GRANTS  # noqa: E402
 
 
 def _tree(grants_by_agent: dict) -> Path:
@@ -218,7 +218,7 @@ def test_every_anonymous_message_path_routes_through_the_authority():
 
 
 # Owner-tier SOURCES — artifacts whose CONTENT is the owner's private material.
-# NOT `nucleus.tier`: that is the AUTHORITY, the classifier that decides what may be shown,
+# NOT `astryx.core.tier`: that is the AUTHORITY, the classifier that decides what may be shown,
 # and a public handler importing it is doing the right thing. The first draft of this list
 # said ("people", "tier") and immediately flagged GET /api/agents for importing
 # `is_content_public` — which would have driven a "fix" REMOVING the very gate that keeps
@@ -227,6 +227,8 @@ def test_every_anonymous_message_path_routes_through_the_authority():
 TIER_SOURCE_PATTERNS = (
     r"['\"]tier/",                                  # the tier/ artifact directory
     r"\bfrom\s+nucleus\s+import\s+people\b",         # the people cache module
+    r"\bfrom\s+astryx\.people\s+import\s+people\b",  # ...where it lives since goal 10224 S4
+    r"\bastryx\.people\.people\b",
     r"\bnucleus\.people\b",
     r"people-graph",
 )

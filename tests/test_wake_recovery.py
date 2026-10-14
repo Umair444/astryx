@@ -50,7 +50,7 @@ hands back nothing to read, this exits 77 (SKIP) rather than reporting the absen
 wrong deliveries as a pass. An unread channel and a correct one look identical to a
 test that only asserts what did NOT arrive.
 
-Run: venv/bin/python tests/test_wake_recovery.py   (wire into nucleus/check.sh)
+Run: venv/bin/python tests/test_wake_recovery.py   (wire into devtools/check.sh)
 """
 from _stage_channel import stage_server  # noqa: E402
 import json
@@ -101,7 +101,7 @@ def dsn() -> str | None:
 
 def node_bin() -> str | None:
     """The node the org actually spawns agents with, not whatever is first on PATH."""
-    spawn = REPO / "nucleus" / "spawn.sh"
+    spawn = REPO / "scripts" / "spawn.sh"
     if spawn.exists():
         m = re.search(r"^NODE=(\S+)", spawn.read_text(), re.M)
         if m and Path(m.group(1)).is_file():
@@ -114,15 +114,15 @@ if not SERVER.exists():
     skip("channel/server.mjs is absent — nothing to test")
 NODE = node_bin()
 if not NODE:
-    skip("no node binary (nucleus/spawn.sh NODE= is absent and node is not on PATH)")
+    skip("no node binary (scripts/spawn.sh NODE= is absent and node is not on PATH)")
 if not (REPO / "channel" / "node_modules" / "pg").is_dir():
     skip("channel/node_modules/pg is absent (a fresh clone: run npm install in channel/)")
 ADMIN_DSN = dsn()
 if not ADMIN_DSN:
     skip("no ASTRYX_DSN (env or .env) — no database to build a fixture in")
-SCHEMA = REPO / "nucleus" / "schema.sql"
+SCHEMA = REPO / "src" / "astryx" / "sql" / "schema.sql"
 if not SCHEMA.exists():
-    skip("nucleus/schema.sql is absent — cannot build a throwaway database")
+    skip("src/astryx/sql/schema.sql is absent — cannot build a throwaway database")
 
 try:
     admin = psycopg.connect(ADMIN_DSN, autocommit=True, connect_timeout=5)

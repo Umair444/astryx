@@ -8,7 +8,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
-from nucleus import launch_flags as L  # noqa: E402
+from astryx.core import launch_flags as L  # noqa: E402
 
 fails = 0
 

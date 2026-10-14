@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle for nucleus/privilege_census.py (people library 1a): the census classifies a statement by the privilege
+"""Oracle for devtools/privilege_census.py (people library 1a): the census classifies a statement by the privilege
 it needs, assigns a file to the surface that runs it, and tells an env-read DSN from a .env-FILE read.
 
 Hermetic: a synthetic tree in a temp dir (ASTRYX_CENSUS_ROOT), no database. Each class has a POSITIVE line and a
@@ -23,7 +23,7 @@ def want(label, cond, why=""):
 
 
 sys.path.insert(0, str(REPO))
-SRC = os.environ.get("PRIVILEGE_CENSUS_SRC") or str(REPO / "nucleus" / "privilege_census.py")   # mutation_probe's
+SRC = os.environ.get("PRIVILEGE_CENSUS_SRC") or str(REPO / "devtools" / "privilege_census.py")   # mutation_probe's
 import importlib.util  # noqa: E402
 _spec = importlib.util.spec_from_file_location("privilege_census_under_test", SRC)
 C = importlib.util.module_from_spec(_spec)

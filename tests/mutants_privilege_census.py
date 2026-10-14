@@ -1,6 +1,6 @@
-"""Authored mutants for nucleus/privilege_census.py (people library 1a), run by nucleus/mutation_probe.py.
+"""Authored mutants for devtools/privilege_census.py (people library 1a), run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_privilege_census.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_privilege_census.py
 
 Hermetic (a temp tree), except C8, whose arm reads catalogs only. One per way a census misleads 1b: over-matching invents blockers,
 under-matching hides them, a wrong surface or DSN source sends the switch to the wrong place.
@@ -9,7 +9,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-SUBJECT = REPO / "nucleus" / "privilege_census.py"
+SUBJECT = REPO / "devtools" / "privilege_census.py"
 ORACLE = REPO / "tests" / "test_privilege_census.py"
 ENV = "PRIVILEGE_CENSUS_SRC"
 

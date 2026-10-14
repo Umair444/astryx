@@ -8,7 +8,7 @@ people; federation is its face to *other orgs*.
 ## How two orgs meet
 
 ```
-you: venv/bin/python nucleus/introduce.py http://their-host:8845
+you: venv/bin/python src/astryx/federation/introduce.py http://their-host:8845
 ```
 
 The gateway (`:8845`) is an org's **one door**. Introduction is a signed hello:
@@ -34,14 +34,14 @@ The wizard asks one question: *how should your org reach the internet of agents?
 
 It then offers to introduce your org to the founder's org and prints the resulting peer
 row. Restart the gateway after the wizard writes `.env`. For scripts and CI:
-`nucleus/federate.py --relay [URL] | --public-url URL | --skip`, plus
+`src/astryx/federation/federate.py --relay [URL] | --public-url URL | --skip`, plus
 `--introduce/--no-introduce` and `--unlisted`.
 
 ## The relay: home orgs reaching home orgs
 
 *Ayesha runs an org on a laptop at home; Bilal runs one on a Raspberry Pi behind his
 ISP's router. Neither can open a port. Both pick option 1. Ayesha runs
-`nucleus/introduce.py bilal-org`; a minute later her agent sends
+`src/astryx/federation/introduce.py bilal-org`; a minute later her agent sends
 `send("seed@bilal-org", "can you review our scoring model?")` and Bilal's seed wakes
 with it, exactly as if the two gateways could see each other.*
 

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Oracle: nucleus/trigger_names.py, "is trigger N installed?" (plan-9853 D1/D3; a4 #49108, a1 BC-1, a2 R2, a3 BC-1).
-The helper runs as init.sh runs it (`venv/bin/python -m nucleus.trigger_names …` in a throwaway tree, tests/trigger_tree)
+"""Oracle: src/astryx/core/trigger_names.py, "is trigger N installed?" (plan-9853 D1/D3; a4 #49108, a1 BC-1, a2 R2, a3 BC-1).
+The helper runs as init.sh runs it (`venv/bin/python -m astryx.core.trigger_names …` in a throwaway tree, tests/trigger_tree)
 and is checked against the PULSE's own discover() (`pulse.py --names`), the semantics it models.
 
   C  the closure, each by its own module so the file that installs it is named: C1 an own def under any filename;
      C2 (i) `from M import a` registers ALL of M; C3 (ii) an alias registers the def's name, never the alias;
      C4 (iii) `import M`; C5 transitive; C6 `from pkg import submodule` (a2 R2), and the real shim in that form;
-     C7 the sys.path idiom (nucleus/android.py's: insert a dir built from __file__, import from it); C8 an
+     C7 the sys.path idiom (src/astryx/hands/android.py's: insert a dir built from __file__, import from it); C8 an
      `if __name__ == "__main__":` block is dead under discover, not blind; C9 the init.sh shim under another name
   S  states: S1 absent (control) exit 2; S2 RETIRED per TARGET agent (a3 BC-1): another agent's tombstoned copy
      doesn't retire seed's, seed's own tombstone does (exit 1); an untombstoned copy elsewhere is installed (exit 0)
@@ -41,7 +41,7 @@ def want(label, cond, why=""):
 
 try:
     import psycopg
-    from nucleus.sqlguard.fixture import fixture_db, FixtureUnavailable
+    from astryx.security.sqlguard.fixture import fixture_db, FixtureUnavailable
 except ImportError as e:
     print(f"SKIP: deps ({e}). Nothing was verified here.")
     sys.exit(77)
@@ -64,13 +64,13 @@ def state(name, target="seed", dsn=None, env=None):
     e = {k: v for k, v in os.environ.items() if k != "ASTRYX_DSN"} if env is None else env
     if dsn:
         e["ASTRYX_DSN"] = dsn
-    r = subprocess.run([PY, "-m", "nucleus.trigger_names", "state", name, "--target", target], cwd=T,
+    r = subprocess.run([PY, "-m", "astryx.core.trigger_names", "state", name, "--target", target], cwd=T,
                        capture_output=True, text=True, timeout=120, env=e)
     return r.returncode, r.stdout.strip(), r.stderr.strip()[-300:]
 
 
 def names_cli(path):
-    r = subprocess.run([PY, "-m", "nucleus.trigger_names", "names", str(path)], cwd=T, capture_output=True, text=True,
+    r = subprocess.run([PY, "-m", "astryx.core.trigger_names", "names", str(path)], cwd=T, capture_output=True, text=True,
                        timeout=60, env={**os.environ, "ASTRYX_DSN": NODSN})
     try:
         return r.returncode, set(json.loads(r.stdout))
@@ -80,7 +80,7 @@ def names_cli(path):
 
 def discover(path, repo=T):
     """The pulse's own answer: `pulse.py --names` (the tree's pulse discovers the tree)."""
-    r = subprocess.run([PY, str(repo / "nucleus/pulse.py"), "--names", str(path)], cwd=repo, capture_output=True,
+    r = subprocess.run([PY, str(repo / "src/astryx/pulse/pulse.py"), "--names", str(path)], cwd=repo, capture_output=True,
                        text=True, timeout=60, env={**os.environ, "ASTRYX_DSN": NODSN})
     return set(json.loads(r.stdout)) if r.returncode == 0 else None
 
@@ -107,7 +107,7 @@ GOOD = {
     "a_iii/iii.py": "import zzpkg.mod_iii  # noqa: F401\n",
     "a_t/t.py": "import zzpkg.mid  # noqa: F401\n",
     "a_sub/sub.py": "from zzpkg.sub import leaf  # noqa: F401\n",
-    "a_sub/cc_submodule_form.py": "from nucleus.shipped_triggers import context_compact  # noqa: F401\n",
+    "a_sub/cc_submodule_form.py": "from astryx.pulse.shipped_triggers import context_compact  # noqa: F401\n",
     "a_path/p.py": "import zzpkg.pathy  # noqa: F401\n",
     "a_main/m.py": TRIG + DEF.format("zz_main") + 'if __name__ == "__main__":\n    import zzpkg.never  # noqa\n',
     "umair/my_review.py": trigger_tree.shim("pr_review"),
@@ -153,7 +153,7 @@ try:
                     ("C4 (iii) `import M` registers M's triggers", "zz_iii", "triggers/a_iii/iii.py"),
                     ("C5 transitive: file → mid → deep", "zz_deep", "triggers/a_t/t.py"),
                     ("C6 `from pkg import submodule` imports the submodule (a2 R2)", "zz_leaf", "triggers/a_sub/sub.py"),
-                    ("C6 ...the real shim in that form: `from nucleus.shipped_triggers import context_compact`",
+                    ("C6 ...the real shim in that form: `from astryx.pulse.shipped_triggers import context_compact`",
                      "context_compact", "triggers/a_sub/cc_submodule_form.py"),
                     ("C7 the sys.path idiom: an inserted dir is searched first, as at runtime", "zz_side",
                      "triggers/a_path/p.py"),
@@ -198,7 +198,7 @@ try:
             # CLI above runs a tree copy): a python row → its agent; none → []; a heartbeat row is never returned
             import importlib.util
             _spec = importlib.util.spec_from_file_location(
-                "trigger_names_rows", os.environ.get("TRIGGER_NAMES_SRC") or REPO / "nucleus/trigger_names.py")
+                "trigger_names_rows", os.environ.get("TRIGGER_NAMES_SRC") or REPO / "src/astryx/core/trigger_names.py")
             _tn = importlib.util.module_from_spec(_spec)
             _spec.loader.exec_module(_tn)
             _was = os.environ.get("ASTRYX_DSN")
@@ -250,7 +250,7 @@ try:
     live = sorted((REPO / "triggers").glob("*/*.py"))
     if live:
         import importlib.util
-        spec = importlib.util.spec_from_file_location("tn_under_test", T / "nucleus/trigger_names.py")
+        spec = importlib.util.spec_from_file_location("tn_under_test", T / "src/astryx/core/trigger_names.py")
         tn = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(tn)
         bad, blind = [], []

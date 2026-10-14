@@ -106,7 +106,7 @@ def astryx_home(marker: dict | None = None) -> Path | None:
     return Path(h).expanduser() if h else None
 
 
-# ── the claude process and its flags (the rules of the repo's nucleus/launch_flags.py) ──
+# ── the claude process and its flags (the rules of the repo's src/astryx/core/launch_flags.py) ──
 def _opt(argv: list[str], flag: str) -> str | None:
     for i, a in enumerate(argv):
         if a == flag and i + 1 < len(argv):

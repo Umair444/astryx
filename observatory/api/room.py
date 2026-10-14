@@ -1,4 +1,4 @@
-"""astryx observatory · the Room's speaker (nucleus/room.py is its ears' router).
+"""astryx observatory · the Room's speaker (src/astryx/hearing/room.py is its ears' router).
 
 An agent answers the room with send(to='room'). Every pending row with to_agent='room' is claimed here, once:
   · intent 'chat' (the default): the body is SPOKEN — OpenAI text-to-speech in that agent's own voice — saved as
@@ -22,7 +22,7 @@ from pathlib import Path
 from fastapi import APIRouter
 from fastapi.responses import FileResponse, JSONResponse
 
-from nucleus import voice_mint as V
+from astryx.hearing import voice_mint as V
 
 router = APIRouter()
 REPO = Path(__file__).resolve().parents[2]
@@ -163,8 +163,8 @@ class Ask(__import__("pydantic").BaseModel):
 
 @router.post("/api/room/ask")
 async def ask(body: Ask):
-    """The live voice's ask_agent: the same wire message a spoken sentence makes (nucleus/room.py's body)."""
-    from nucleus import room as R
+    """The live voice's ask_agent: the same wire message a spoken sentence makes (src/astryx/hearing/room.py's body)."""
+    from astryx.hearing import room as R
     agent = body.agent.strip().lower()
     if agent not in R.roster():
         return JSONResponse({"error": f"no agent named {agent}"}, status_code=404)

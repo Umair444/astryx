@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Oracle for bridges/pulse_witness.py — the out-of-pulse clock witness.
 
-    venv/bin/python tests/test_pulse_witness.py      (also run by nucleus/check.sh)
+    venv/bin/python tests/test_pulse_witness.py      (also run by devtools/check.sh)
 
 The witness is an ACTUATOR that pages a human when the org's one clock dies, riding the
 whatsapp bridge's loop. A page nobody can trust — one that cries at a healthy org, or one
@@ -359,11 +359,13 @@ check("stop age: an ACTIVE timer gives None (a past stop is not a current one)",
 check("stop age: unreadable output gives None", _stop_age_with("") is None)
 
 # (d) pause.sh keeps the stop and the declaration together (a copy in a temp tree, a fake sudo)
-PAUSE_SH = REPO / "nucleus" / "pause.sh"
+PAUSE_SH = REPO / "scripts" / "pause.sh"
 with _tf.TemporaryDirectory() as td:
     root = Path(td)
     (root / "nucleus").mkdir()
-    (root / "nucleus" / "pause.sh").write_bytes(PAUSE_SH.read_bytes())
+    for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
+        (root / _d).mkdir(parents=True, exist_ok=True)
+    (root / "scripts" / "pause.sh").write_bytes(PAUSE_SH.read_bytes())
     bindir = root / "bin"
     bindir.mkdir()
     (bindir / "sudo").write_text('#!/bin/sh\necho "$@" >> "$FAKE_SUDO_LOG"\nexit "${FAKE_SUDO_RC:-0}"\n')
@@ -374,7 +376,7 @@ with _tf.TemporaryDirectory() as td:
     def pause(*args, rc=0):
         env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "FAKE_SUDO_LOG": str(log),
                "FAKE_SUDO_RC": str(rc), "ASTRYX_AGENT": "owner"}
-        return _sp.run(["bash", str(root / "nucleus" / "pause.sh"), *args], env=env,
+        return _sp.run(["bash", str(root / "scripts" / "pause.sh"), *args], env=env,
                        capture_output=True, text=True, timeout=30)
 
     r = pause("on", "maintenance window", "2099-01-01 09:00")
@@ -400,7 +402,7 @@ with _tf.TemporaryDirectory() as td:
     (bindir / "systemctl").chmod(0o755)
     def status(state):
         env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "FAKE_TIMER_STATE": state}
-        return _sp.run(["bash", str(root / "nucleus" / "pause.sh"), "status"], env=env,
+        return _sp.run(["bash", str(root / "scripts" / "pause.sh"), "status"], env=env,
                        capture_output=True, text=True, timeout=30)
     r = status("active")
     check("(d) status: a declaration with the timer RUNNING is flagged STALE (resumed by a bare start)",

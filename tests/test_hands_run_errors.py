@@ -29,7 +29,7 @@ def want(label, cond, why=""):
 
 
 spec = importlib.util.spec_from_file_location("hands_desktop_under_test",
-                                              os.environ.get("HANDS_DESKTOP_SRC") or REPO / "nucleus/hands_desktop.py")
+                                              os.environ.get("HANDS_DESKTOP_SRC") or REPO / "src/astryx/hands/hands_desktop.py")
 hd = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(hd)
 BIN = Path(tempfile.mkdtemp(prefix="hands-run-oracle-"))

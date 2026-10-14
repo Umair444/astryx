@@ -37,7 +37,7 @@ if not shutil.which("tmux"):
 td = tempfile.mkdtemp(prefix="compact_tmux_")
 os.environ["TMUX_TMPDIR"] = td                    # a private server: the real residents' sessions are unreachable
 os.environ.pop("TMUX", None)
-src = os.environ.get("CONTEXT_COMPACT_SRC") or str(REPO / "nucleus" / "shipped_triggers" / "context_compact.py")
+src = os.environ.get("CONTEXT_COMPACT_SRC") or str(REPO / "src" / "astryx" / "pulse" / "shipped_triggers" / "context_compact.py")
 spec = importlib.util.spec_from_file_location("context_compact_under_test", src)
 cc = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cc)

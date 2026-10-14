@@ -2,7 +2,7 @@
 """Oracle: geoloc's GET /recent serves location history ONLY to a caller holding GEOLOC_TOKEN,
 localhost included (a3 #32078).
 
-    venv/bin/python tests/test_geoloc_recent_auth.py      (also run by nucleus/check.sh)
+    venv/bin/python tests/test_geoloc_recent_auth.py      (also run by devtools/check.sh)
     GEOLOC_SRC=<path> …                                   (the subject; mutation_probe sets it)
 
 /recent returns the last 20 location fixes: human-personal tier. It let any 127.0.0.1/::1
@@ -53,7 +53,7 @@ if not SRC.exists():
           f"(gitignored geoloc estate, e.g. a clean clone). Nothing was verified here.")
     sys.exit(77)
 try:
-    # Via fastapi, the DECLARED dependency (nucleus/deps.conf core), and the framework geoloc itself
+    # Via fastapi, the DECLARED dependency (src/astryx/data/deps.conf core), and the framework geoloc itself
     # is written against. It re-exports starlette's TestClient, the same object; importing starlette
     # directly would lean on a transitive dep that the one dep authority doesn't list.
     from fastapi.testclient import TestClient

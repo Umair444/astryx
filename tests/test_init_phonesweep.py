@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Oracle: init.sh's phonesweep node (plan-8675 S2 follow-up, seed #48593): the phone resume sweep installs itself, but
 only where the org opted in to phones. The node's block runs in throwaway trees (tests/trigger_tree, with
-nucleus/trigger_names.py, which the node asks) against a fixture database.
+src/astryx/core/trigger_names.py, which the node asks) against a fixture database.
 
   P1 ANDROID_ENABLED unset (or 0): the node reads green and installs nothing (an org without phones gets no trigger)
   P2 ANDROID_ENABLED=1, no install: the reconciler step (chk, act, chk) installs triggers/seed/phone_resume_sweep.py,
@@ -31,12 +31,12 @@ def check(name, ok, detail=""):
 
 
 src = INIT.read_text()
-# the node asks nucleus/trigger_names.py (plan-9853), so it runs in a tree that has the helper, against a
+# the node asks src/astryx/core/trigger_names.py (plan-9853), so it runs in a tree that has the helper, against a
 # fixture database (a name is absent only if no row says otherwise)
 STATE = re.search(r"^# >>> trigger state$.*?^# <<< trigger state$", src, re.S | re.M)
 try:
     import trigger_tree
-    from nucleus.sqlguard.fixture import fixture_db, FixtureUnavailable
+    from astryx.security.sqlguard.fixture import fixture_db, FixtureUnavailable
     _FX = fixture_db()
     DSN = _FX.__enter__()["dsn"]
 except Exception as e:  # noqa: BLE001
@@ -78,7 +78,7 @@ with tempfile.TemporaryDirectory() as td:
     check("P2 opted in: the node starts RED and the reconciler step installs the shim, then reads green",
           a != "0" and b == "0" and (d / SHIM).exists(), f"chk={a},{b}")
     check("P2 the shim imports the SHIPPED trigger (one writer)",
-          "from nucleus.shipped_triggers.phone_resume_sweep import phone_resume_sweep" in body, body[:120])
+          "from astryx.pulse.shipped_triggers.phone_resume_sweep import phone_resume_sweep" in body, body[:120])
 with tempfile.TemporaryDirectory() as td:            # opted in by PROCESS ENV, as android_setup.sh honours (env first)
     d = trigger_tree.build(Path(td))
     (d / ".env").write_text("ASTRYX_DSN=postgresql://nobody@127.0.0.1:1/none\n")

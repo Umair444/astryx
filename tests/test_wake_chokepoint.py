@@ -7,7 +7,7 @@ the trigger has no survival flag (premium=0), HOLDS it in held_wakes and release
 below 85% (or with the gauge missing). The check's state commits as usual: a held wake is persisted,
 never rewound, so nothing re-detects and nothing floods.
 
-Runs against a THROWAWAY DATABASE (nucleus.sqlguard.fixture: schema.sql applied whole), never the org's.
+Runs against a THROWAWAY DATABASE (astryx.security.sqlguard.fixture: schema.sql applied whole), never the org's.
 It drives pulse.process() with fixture triggers whose checks live in a temp dir. It never calls tick(),
 whose reconcile() would register and run the org's real triggers (backups, runners) inside a test.
 
@@ -65,7 +65,7 @@ sys.path.insert(0, str(REPO))
 
 try:
     import psycopg
-    from nucleus.sqlguard.fixture import fixture_db
+    from astryx.security.sqlguard.fixture import fixture_db
 except Exception as exc:                                        # noqa: BLE001
     print(f"SKIP: {type(exc).__name__}: {exc} — the chokepoint oracle needs the org runtime (venv + .env + postgres)")
     sys.exit(77)
@@ -242,7 +242,7 @@ def main():
 
     with fixture_db() as fx, tempfile.TemporaryDirectory() as td:
         os.environ["ASTRYX_DSN"] = fx["dsn"]        # pulse + pulse_run subprocesses bind to the fixture
-        from nucleus import pulse
+        from astryx.pulse import pulse
         if pulse.DSN != fx["dsn"] or not hasattr(pulse, "process"):
             check("pulse binds ASTRYX_DSN from env and exposes process() (the chokepoint seam)", False,
                   f"DSN is fixture: {pulse.DSN == fx['dsn']}, process: {hasattr(pulse, 'process')}")
@@ -260,7 +260,7 @@ def main():
         Path(checks).write_text(CHECKS)
         conn = psycopg.connect(fx["dsn"], autocommit=True)
         import runpy
-        from nucleus.pulse_run import Ctx
+        from astryx.pulse.pulse_run import Ctx
         tsw = REPO / "triggers" / "seed" / "tool_ship_watch.py"
         news_fn = runpy.run_path(str(tsw))["_news"] if tsw.exists() else None
         empty_news = news_fn(Ctx({})) if news_fn else None     # before any org-news exists

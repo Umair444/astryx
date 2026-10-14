@@ -60,7 +60,7 @@ if IMG is None:
     skip("no local image to run a stand-in container")
 try:
     import psycopg
-    from nucleus.sqlguard.fixture import fixture_db
+    from astryx.security.sqlguard.fixture import fixture_db
 except ImportError as e:
     skip(f"deps ({e})")
 
@@ -78,10 +78,10 @@ def _load(modname, default, env):
     return mod
 
 
-android = _load("nucleus.android", "nucleus/android.py", "ANDROID_SRC")
-hd = _load("nucleus.hands_desktop", "nucleus/hands_desktop.py", "HANDS_DESKTOP_SRC")
-stop_mod = _load("windows_idle_stop", "nucleus/shipped_triggers/windows_idle_stop.py", "WIN_IDLE_SRC")
-from nucleus import ear_lease as L  # noqa: E402
+android = _load("astryx.hands.android", "src/astryx/hands/android.py", "ANDROID_SRC")
+hd = _load("astryx.hands.hands_desktop", "src/astryx/hands/hands_desktop.py", "HANDS_DESKTOP_SRC")
+stop_mod = _load("windows_idle_stop", "src/astryx/pulse/shipped_triggers/windows_idle_stop.py", "WIN_IDLE_SRC")
+from astryx.hearing import ear_lease as L  # noqa: E402
 
 STAND_IN = f"astryx-test-win-{os.getpid()}"
 android.WINDOWS_CONTAINER = STAND_IN

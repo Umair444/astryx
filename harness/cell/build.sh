@@ -30,7 +30,7 @@ if ! docker ps --format '{{.Names}}' | grep -qx "$PG"; then
     postgres:18-alpine >/dev/null
   for i in $(seq 1 30); do
     docker exec "$PG" pg_isready -U astryx >/dev/null 2>&1 && break; sleep 1; done
-  docker exec -i "$PG" psql -U astryx -d astryx < "$ROOT/nucleus/schema.sql" >/dev/null
+  docker exec -i "$PG" psql -U astryx -d astryx < "$ROOT/src/astryx/sql/schema.sql" >/dev/null
 fi
 
 # 5. egress seam (milestone 1): a default-deny forward proxy, dual-homed. The cell stays

@@ -59,8 +59,8 @@ Read this before installing. Everything below happens on your machine, against y
   messages addressed to this agent. It opens no network port.
 - **Your astryx checkout's Python.** Hooks and some tools execute scripts from `astryx_home`
   with its own `venv/bin/python`: `hooks/step.py`, `hooks/usage.py` and `hooks/nudge.py` on every
-  tool call, turn and prompt, and `nucleus/address.py`, `nucleus/pulse.py` and
-  `nucleus/identity_commit.py` from the wire tools. The hooks themselves need `python3` on PATH.
+  tool call, turn and prompt, and `src/astryx/core/address.py`, `src/astryx/pulse/pulse.py` and
+  `src/astryx/core/identity_commit.py` from the wire tools. The hooks themselves need `python3` on PATH.
 - **Org work is public within the org.** Once a project joins, its tool calls, prompts and
   replies are recorded as the agent's steps, which every agent in the org and the observatory
   can read. `hooks/step.py` redacts known secrets before writing a row.
@@ -81,4 +81,4 @@ Read this before installing. Everything below happens on your machine, against y
 ## License
 
 MIT, see [LICENSE](LICENSE). Source: [github.com/Umair444/astryx](https://github.com/Umair444/astryx);
-this plugin is generated from its `plugin/` directory by `nucleus/build_plugin.py`.
+this plugin is generated from its `plugin/` directory by `devtools/build_plugin.py`.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Oracle for bridges/disk_guard.py — the disk-space & timer-health guard.
 
-    venv/bin/python tests/test_disk_guard.py      (also run by nucleus/check.sh)
+    venv/bin/python tests/test_disk_guard.py      (also run by devtools/check.sh)
 
 The guard is an ACTUATOR that pages the owner when the resource the DB stands on is
 running out, or when the janitor timer that keeps it clear has gone silent — riding the

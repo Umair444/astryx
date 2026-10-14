@@ -84,5 +84,5 @@ The observatory's Economy tab: **Thermo** (G, the Φ→agents→W/Q energy-flow 
 heat fraction), **Market** (P&L, GDP, Theil concentration, trigger ROI), **Productivity**
 (cost-per-task falling over time — recurring triggers are natural task classes),
 **Integrity** (the observed integrity metrics above), **Playground** (the equations run client-side; drag α
-and windows and watch G recompute). One nightly rollup (`nucleus/econ.py` — the single
+and windows and watch G recompute). One nightly rollup (`src/astryx/econ/econ.py` — the single
 implementation of all equations) archives every day into the `econ` table.

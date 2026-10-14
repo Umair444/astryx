@@ -9,7 +9,7 @@ import { connect as connectLive } from '../pilot/voice'
 /* THE ROOM (owner brief, 2026-10-11): one voice for the whole org, and the org visibly in the room on every tab.
 
    The ear (EarControl) listens; a sentence that addresses an agent ("seed, …", "astryx, …", "painter, …") goes on the
-   wire to it (nucleus/room.py). That agent answers with send(to='room'): the observatory speaks it in the agent's own
+   wire to it (src/astryx/hearing/room.py). That agent answers with send(to='room'): the observatory speaks it in the agent's own
    voice (observatory/api/room.py) and this layer PLAYS it, captioned, with the speaker glowing to the sound. Agents
    can drive the screen (room_screen → the pilot's AGENT principal) or hand the room to the realtime voice for a live
    back-and-forth (room_live → the voice orb, briefed).
@@ -25,7 +25,7 @@ type Ev = { type: string; [k: string]: any }
 const STAY_MS = 5 * 60 * 1000                             // a guest leaves 5 min after its last word in the room (owner 10-11)
 const THINK_TIMEOUT_MS = 4 * 60 * 1000
 
-/** The quoted words from a room message body (nucleus/room.py's format), else the body's first line. */
+/** The quoted words from a room message body (src/astryx/hearing/room.py's format), else the body's first line. */
 function heardOf(body: string): string {
   const m = body.match(/“([\s\S]*?)”/)
   return (m ? m[1] : body.split('\n')[0]).slice(0, 220)

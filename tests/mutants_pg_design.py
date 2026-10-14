@@ -1,6 +1,6 @@
-"""Authored mutants for nucleus/pg_design.py, run by nucleus/mutation_probe.py.
+"""Authored mutants for src/astryx/pg/pg_design.py, run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_pg_design.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_pg_design.py
 
 Each blinds one class the gate claims to judge. Pure comparator mutants only: the oracle's live arm is read-only.
 """
@@ -8,7 +8,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-SUBJECT = REPO / "nucleus" / "pg_design.py"
+SUBJECT = REPO / "src" / "astryx" / "pg" / "pg_design.py"
 ORACLE = REPO / "tests" / "test_pg_design.py"
 ENV = "PG_DESIGN_SRC"
 TIMEOUT = 120

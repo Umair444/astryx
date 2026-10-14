@@ -1,6 +1,6 @@
-"""Authored mutants for init.sh's trigger installs (plan-9853 D3/D4), run by nucleus/mutation_probe.py:
+"""Authored mutants for init.sh's trigger installs (plan-9853 D3/D4), run by devtools/mutation_probe.py:
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_init_trigger_names.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_init_trigger_names.py
 """
 from pathlib import Path
 

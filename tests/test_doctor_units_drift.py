@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Oracle for the doctor units-drift LIVE-ORPHAN message (init.sh, medic's ad3fec6).
 
-    venv/bin/python tests/test_doctor_units_drift.py     (also run by nucleus/check.sh)
+    venv/bin/python tests/test_doctor_units_drift.py     (also run by devtools/check.sh)
 
 THE FOOTGUN THIS PINS. doctor's units-drift check compares units/ on disk against the
 freshly-DERIVED set; an "orphan" is a unit on disk that the derivation emits no block for.

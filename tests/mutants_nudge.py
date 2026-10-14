@@ -1,6 +1,6 @@
-"""Authored mutants for hooks/nudge.py (goal 4227, S4), run by nucleus/mutation_probe.py.
+"""Authored mutants for hooks/nudge.py (goal 4227, S4), run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_nudge.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_nudge.py
 
 There was no nudge hook before this one, so no pre-existing file can prove the oracle RED.
 Each mutant below stands in for that proof on one invariant: it's the plausible way the hook

@@ -1,6 +1,6 @@
-"""Authored mutants for channel/server.mjs (plan-9853 D2, the trigger tombstone), run by nucleus/mutation_probe.py:
+"""Authored mutants for channel/server.mjs (plan-9853 D2, the trigger tombstone), run by devtools/mutation_probe.py:
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_trigger_tombstone_server.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_trigger_tombstone_server.py
 """
 from pathlib import Path
 

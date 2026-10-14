@@ -1,4 +1,4 @@
-"""Oracle for nucleus/econ.py — the org's economic equations, proven against the REAL DB.
+"""Oracle for src/astryx/econ/econ.py — the org's economic equations, proven against the REAL DB.
 
 What must hold (each arm can ALONE go red):
   1. Conservation frame: thermo() returns phi >= 0, and heat_instant_phi <= phi — heat can
@@ -26,7 +26,7 @@ sys.path.insert(0, str(REPO))
 try:
     import psycopg  # noqa: E402
 
-    from nucleus import econ  # noqa: E402
+    from astryx.econ import econ  # noqa: E402
 except ImportError as exc:
     # a bare clone/CI runs the system python (no venv): the oracle cannot even load its
     # instruments, let alone observe the substrate — SKIP, same law as the missing .env
@@ -106,7 +106,7 @@ def main():
                       "now() - interval '30 days'")[0]))
 
         # rollup self-consistency on yesterday, archived into a stamped FIXTURE database
-        # (nucleus/sqlguard/fixture.py: schema.sql applied whole), never the live one. Until goal
+        # (src/astryx/security/sqlguard/fixture.py: schema.sql applied whole), never the live one. Until goal
         # 4227 S2 this upserted PRODUCTION econ with whatever code ran the suite (steward did exactly
         # that on 09-29); S2 moved it to a temp schema on the live DB, and the 4227 close tripped
         # R-EXTRACT on that schema's own CREATE TABLE. The fixture is seeded with ONE billable turn
@@ -114,7 +114,7 @@ def main():
         # whatever the live substrate holds: phi > 0 with W = 0 must archive G = 0.0, and G must
         # equal its own components.
         import json
-        from nucleus.sqlguard.fixture import FixtureUnavailable, fixture_db
+        from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db
         live_before = conn.execute("SELECT computed_at FROM public.econ ORDER BY day DESC "
                                    "LIMIT 1").fetchone()
         yday = now.date() - timedelta(days=1)

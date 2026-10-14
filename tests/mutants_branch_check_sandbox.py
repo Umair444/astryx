@@ -1,6 +1,6 @@
-"""Authored mutants for nucleus/branch_check_sandbox.py (plan-4918 R3/R5), run by nucleus/mutation_probe.py.
+"""Authored mutants for devtools/branch_check_sandbox.py (plan-4918 R3/R5), run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_branch_check_sandbox.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_branch_check_sandbox.py
 
 One per property: each probe's firing and each vacuity refusal. NOT authored: removing ONE of the two HOME fences
 (HOME = run tmp; the real home never mounted). Either alone keeps ~/.pgpass out, so each single removal is an
@@ -14,7 +14,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-SUBJECT = REPO / "nucleus" / "branch_check_sandbox.py"
+SUBJECT = REPO / "devtools" / "branch_check_sandbox.py"
 ORACLE = REPO / "tests" / "test_branch_check_sandbox.py"
 ENV = "BRANCH_CHECK_SANDBOX_SRC"
 

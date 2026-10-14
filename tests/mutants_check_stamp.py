@@ -1,6 +1,6 @@
-"""Authored mutants for triggers/steward/check_stamp.py — run by nucleus/mutation_probe.py.
+"""Authored mutants for triggers/steward/check_stamp.py — run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_check_stamp.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_check_stamp.py
 
 THE LIST IS THE JUDGEMENT, WHICH IS WHY IT IS AUTHORED. Every entry is a way a guard of
 this shape has ALREADY failed in this org, transplanted onto the new one. That is the

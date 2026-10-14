@@ -1,6 +1,6 @@
-"""Authored mutants for mcp/hands/server.py (plan-7862 Hands caps), run by nucleus/mutation_probe.py:
+"""Authored mutants for mcp/hands/server.py (plan-7862 Hands caps), run by devtools/mutation_probe.py:
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_hands_caps_server.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_hands_caps_server.py
 """
 from pathlib import Path
 

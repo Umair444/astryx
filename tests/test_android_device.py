@@ -51,7 +51,7 @@ def skip(why):
 if os.environ.get("ANDROID_DEVICE_TEST") != "1":
     skip("it boots a ~3 GB phone for minutes, so it runs only on request: ANDROID_DEVICE_TEST=1 "
          "venv/bin/python tests/test_android_device.py")
-rc = subprocess.run([str(REPO / "nucleus/android_setup.sh"), "check"], capture_output=True, text=True)
+rc = subprocess.run([str(REPO / "scripts/android_setup.sh"), "check"], capture_output=True, text=True)
 if rc.returncode != 0 or not rc.stdout.startswith("ready"):          # "off" exits 0 too: only "ready" runs
     skip(f"the phone isn't set up here ({rc.stdout.strip() or rc.stderr.strip()})")
 STAND_IN = f"astryx-test-vm-{os.getpid()}"
@@ -61,19 +61,19 @@ os.environ["ASTRYX_HANDS_UNIT_PREFIX"] = f"astryx-hands-test{os.getpid()}-"   # 
 os.environ["ASTRYX_AGENT"] = "phone-oracle-a"
 os.environ["OBS_KEY"] = "test-owner-key-device"
 
-from nucleus import android as droid  # noqa: E402
+from astryx.hands import android as droid  # noqa: E402
 if droid.windows_running():
     skip("the Windows VM is running: the phone can't run beside it on this machine (that's the vm-slot rule)")
 AVD = droid.default_avd()
 if droid.emulator_pids(AVD):
     skip(f"{AVD} is already running (in use?): this oracle boots and stops it itself")
 
-from nucleus.sqlguard.fixture import fixture_db  # noqa: E402
+from astryx.security.sqlguard.fixture import fixture_db  # noqa: E402
 import importlib.util  # noqa: E402
 _s = importlib.util.spec_from_file_location("phone_server", REPO / "mcp/phone/server.py")
 srv = importlib.util.module_from_spec(_s)
 _s.loader.exec_module(srv)
-from nucleus import hands_desktop as hd  # noqa: E402
+from astryx.hands import hands_desktop as hd  # noqa: E402
 
 STAMP = "astryx-surface: "
 

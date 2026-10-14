@@ -34,7 +34,7 @@ for p in (BODY, DRIFT):
         print(f"SKIP: {p.relative_to(REPO) if p.is_relative_to(REPO) else p} absent (gitignored) — nothing asserted.")
         sys.exit(77)
 sys.path.insert(0, str(REPO))
-from nucleus.sqlguard.estate import gate  # noqa: E402
+from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate("test_library_compile", REPO, deps=("psycopg",))
 
 
@@ -52,9 +52,9 @@ except Exception as e:  # noqa: BLE001
     print(f"FAIL: a present subject doesn't import ({type(e).__name__}: {e}).")
     sys.exit(1)
 try:
-    pr = load("pulse_run_lc", REPO / "nucleus" / "pulse_run.py")
+    pr = load("pulse_run_lc", REPO / "src" / "astryx" / "pulse" / "pulse_run.py")
     import psycopg
-    from nucleus.sqlguard.fixture import fixture_db
+    from astryx.security.sqlguard.fixture import fixture_db
 except Exception as e:  # noqa: BLE001
     print(f"SKIP: the harness isn't importable ({type(e).__name__}: {e}).")
     sys.exit(77)
