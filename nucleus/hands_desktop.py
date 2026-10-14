@@ -647,10 +647,34 @@ def _env(agent: str) -> dict:
     return env
 
 
+# What a signal death means for the tools run here. grim takes the frame through a SHARED-MEMORY buffer: SIGBUS is
+# that buffer's page failing to fault in (host memory or /dev/shm exhausted), measured 10-12 on desk-1 (rc -7, empty
+# stderr, canopus #50568) while the host was over its commit limit.
+_SIGNAL_HINT = {"SIGBUS": "a shared-memory page couldn't be backed: host memory or /dev/shm is exhausted",
+                "SIGKILL": "killed, often by the OOM killer: host memory is exhausted",
+                "SIGSEGV": "it crashed"}
+
+
+def _failure(argv0: str, rc: int, stderr: bytes) -> str:
+    """The error for a failed tool: its exit code or signal ALWAYS, then stderr. A signal death leaves stderr empty,
+    and "grim failed: " with nothing after it is undiagnosable."""
+    import signal
+    if rc < 0:
+        try:
+            name = signal.Signals(-rc).name
+        except ValueError:
+            name = f"signal {-rc}"
+        how = f"killed by {name}" + (f" ({_SIGNAL_HINT[name]})" if name in _SIGNAL_HINT else "")
+    else:
+        how = f"exit {rc}"
+    err = stderr.decode(errors="replace").strip()[:300]
+    return f"{argv0} failed: {how}" + (f": {err}" if err else ", no stderr")
+
+
 def _run(agent: str, argv: list[str], timeout: float = 20, inp: bytes | None = None) -> bytes:
     r = subprocess.run(argv, env=_env(agent), capture_output=True, timeout=timeout, input=inp)
     if r.returncode != 0:
-        raise HandsError(f"{argv[0]} failed: {r.stderr.decode(errors='replace').strip()[:300]}")
+        raise HandsError(_failure(argv[0], r.returncode, r.stderr))
     return r.stdout
 
 

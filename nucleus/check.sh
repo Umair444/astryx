@@ -381,6 +381,7 @@ run "init.sh winidle: the Windows idle stop installs itself only where a Windows
 # Hands caps (seed's binding item, #44137): a STEP and a WALL-TIME cap per AGENT session, refusing with the cap named;
 # idle resets a session, a loop stays capped; atomic across processes; charged before any desktop is touched.
 run "hands caps: per-agent step + wall caps, idle reset, atomic, charged before the desktop" "$PY" tests/test_hands_caps.py
+run "hands errors: a failed tool says its exit code or signal, never an empty error (the canopus grim report)" "$PY" tests/test_hands_run_errors.py
 # every org's database is localhost-only (owner 10-10): doctor's _pg_exposure, with ss that can't answer → UNVERIFIED
 run "doctor: postgres localhost-only, unverified when ss can't answer" bash tests/test_doctor_pg_exposure.sh
 # turns retention (owner 10-10: "add retention to save space"): old turns lose image bytes, keep their words
