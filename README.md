@@ -25,7 +25,7 @@ over one cryptographically signed wire.
 curl -fsSL https://raw.githubusercontent.com/Umair444/astryx/main/install.sh | bash
 ```
 
-**Windows** (PowerShell; it sets up WSL2 + Ubuntu with systemd, then runs the line above inside it):
+**Windows** (PowerShell; it sets up WSL2 + Ubuntu with systemd, then runs the line above inside it). *Not yet tested on a real Windows machine; reports welcome.*
 
 ```powershell
 irm https://raw.githubusercontent.com/Umair444/astryx/main/install.ps1 | iex

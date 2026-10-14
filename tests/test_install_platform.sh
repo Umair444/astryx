@@ -151,18 +151,40 @@ has   "(D4) and says why" "$out" "don't run this as root"
 hasnt "(D4) before any check ran" "$out" "checking what astryx needs"
 ln -sf "$(command -v id)" "$T/bare/id"
 
-# D5: PyPI is used only when the package there is THIS repo
+# D5: never from PyPI, even when a package there names THIS repo: that metadata is written by the uploader, so a
+#     squatter's JSON looks exactly like ours (a2 #51669 B2). The git path is taken either way.
 cp "$T/trap/pipx" "$T/bare/pipx"
-out=$(PATH="$T/bare:$(dirname "$(command -v curl)")" HOME="$T/h" ASTRYX_PROC_VERSION="$T/pv" ASTRYX_OS_RELEASE="$T/osr/os-release" \
-      ASTRYX_PYPI_URL="file://$T/pypi-other.json" "$T/bare/bash" ./install.sh --dry-run --no-init 2>&1)
-has   "(D5) an astryx on PyPI from another repo → not trusted, git clone" "$out" "git clone https://github.com/Umair444/astryx"
-hasnt "(D5) and never pipx install astryx" "$out" '$ pipx install astryx'
-out=$(PATH="$T/bare:$(dirname "$(command -v curl)")" HOME="$T/h" ASTRYX_PROC_VERSION="$T/pv" ASTRYX_OS_RELEASE="$T/osr/os-release" \
-      ASTRYX_PYPI_URL="file://$T/pypi-ours.json" "$T/bare/bash" ./install.sh --dry-run 2>&1)
-has   "(D5) this repo's package on PyPI → pipx install astryx" "$out" '$ pipx install astryx'
-has   "(D5) then astryx init" "$out" '$ astryx init'
-hasnt "(D5) and no clone" "$out" "git clone"
+for f in pypi-other pypi-ours; do
+  out=$(PATH="$T/bare:$(dirname "$(command -v curl)")" HOME="$T/h" ASTRYX_PROC_VERSION="$T/pv" ASTRYX_OS_RELEASE="$T/osr/os-release" \
+        ASTRYX_PYPI_URL="file://$T/$f.json" "$T/bare/bash" ./install.sh --dry-run --no-init 2>&1)
+  has   "(D5) $f.json on PyPI (a squatter can upload either) → git clone" "$out" "git clone https://github.com/Umair444/astryx"
+  hasnt "(D5) $f.json → never pipx install astryx" "$out" '$ pipx install astryx'
+done
 arm   "(D5) nothing ran" "$( [ -e "$T/RAN" ]; echo $?)" 1
+
+# D7: an org already running from the target dir is never pulled and re-inited by accident (a2 N4)
+mkdir -p "$T/h4/astryx/homes/seed" && git -C "$T/h4/astryx" init -q
+mkdir -p "$T/tm" && printf '#!/bin/sh\n[ "$1" = has-session ] && exit 0\nexit 1\n' > "$T/tm/tmux" && chmod +x "$T/tm/tmux"
+out=$(PATH="$T/tm:$T/bare:$(dirname "$(command -v git)")" HOME="$T/h4" ASTRYX_PROC_VERSION="$T/pv" ASTRYX_OS_RELEASE="$T/osr/os-release" \
+      "$T/bare/bash" ./install.sh --dry-run --no-init 2>&1); rc=$?
+arm   "(D7) ax-seed up in the target dir → refused" "$( [ "$rc" != 0 ] && echo refused)" refused
+has   "(D7) and names --upgrade" "$out" "--upgrade"
+hasnt "(D7) no pull" "$out" "pull --ff-only"
+out=$(PATH="$T/tm:$T/bare:$(dirname "$(command -v git)")" HOME="$T/h4" ASTRYX_PROC_VERSION="$T/pv" ASTRYX_OS_RELEASE="$T/osr/os-release" \
+      "$T/bare/bash" ./install.sh --dry-run --no-init --upgrade 2>&1)
+has   "(D7) --upgrade → the pull goes ahead" "$out" "pull --ff-only"
+
+# D8: --help works under `curl | bash`, where $0 is "bash" (a2 N2)
+out=$(bash -s -- --help < ./install.sh 2>&1)
+has   "(D8) --help prints the flags when piped" "$out" "--dry-run"
+
+# D9: deploy.sh's bridge table holds exactly the three bridges, each host:port (a2 #51669 B1: a missing space
+#     glued telegram into whatsapp's address)
+tbl=$(bash -c '_docker_host_ip() { echo 172.17.0.1; }; ROOT=/x; eval "$(command grep -m1 "^declare -A BADDR=" nucleus/deploy.sh)"; for k in "${!BADDR[@]}"; do printf "%s=%s\n" "$k" "${BADDR[$k]}"; done | sort')
+keys=$(printf '%s\n' "$tbl" | cut -d= -f1 | tr '\n' ' ')
+arm   "(D9) the bridge table's keys are exactly discord telegram whatsapp" "$keys" "discord telegram whatsapp "
+bad=$(printf '%s\n' "$tbl" | command grep -cvE '^[a-z]+=[0-9.]+:[0-9]+$' || true)
+arm   "(D9) every address is host:port" "$bad" 0
 
 # D6: idempotent — an existing clone is pulled, never re-cloned; local changes are left alone
 mkdir -p "$T/h2/astryx" && git -C "$T/h2/astryx" init -q && git -C "$T/h2/astryx" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init

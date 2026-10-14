@@ -12,14 +12,14 @@
 #         --yes       say yes to every install prompt (for unattended VMs)
 #         --dir DIR   where the clone lives (default ~/astryx; env ASTRYX_DIR)
 #         --no-init   stop after installing; don't run astryx init
-# Env (mostly for tests): ASTRYX_REPO, ASTRYX_PYPI_URL, ASTRYX_PROC_VERSION, ASTRYX_OS_RELEASE.
+#         --upgrade   allow pulling into a directory where an org is already running
+# Env (mostly for tests): ASTRYX_REPO, ASTRYX_PROC_VERSION, ASTRYX_OS_RELEASE.
 set -euo pipefail
 
 ASTRYX_REPO=${ASTRYX_REPO:-https://github.com/Umair444/astryx}
-ASTRYX_PYPI_URL=${ASTRYX_PYPI_URL:-https://pypi.org/pypi/astryx/json}
 # Claude Code's official native installer (https://code.claude.com/docs/en/setup → "Native Install (Recommended)").
 CLAUDE_INSTALL_URL=https://claude.ai/install.sh
-DRY=0 YES=0 DO_INIT=1
+DRY=0 YES=0 DO_INIT=1 UPGRADE=0
 ASTRYX_DIR=${ASTRYX_DIR:-$HOME/astryx}
 MISSING=()      # human-facing notes for what's still not right at the end
 
@@ -264,13 +264,9 @@ check_claude() {
 }
 
 # ── astryx itself ───────────────────────────────────────────────────────────────────────────────────────────────
-# PyPI only when the package there is THIS project (its metadata points at the repo): a name we don't control would be
-# remote code with full control of this machine.
-pypi_is_ours() {
-  local j
-  j=$(curl -fsSL --max-time 10 "$ASTRYX_PYPI_URL" 2>/dev/null) || return 1
-  case "$j" in *"github.com/Umair444/astryx"*) return 0 ;; *) return 1 ;; esac
-}
+# Always from git, the same root this script came from. A PyPI path waits for a release identified by something an
+# uploader can't write (a sha pinned in this repo, or Trusted Publishing provenance): PyPI metadata naming this repo is
+# written by whoever uploads, so it can't tell us from a squatter (a2 #51669 B2), and the package gets full control.
 
 # An `astryx` on PATH that is the old link to init.sh, not the Python CLI.
 astryx_is_initsh_link() {
@@ -284,18 +280,11 @@ astryx_is_initsh_link() {
 USE_CLI=0
 install_astryx() {
   local link="$HOME/.local/bin/astryx"
-  if command -v pipx >/dev/null 2>&1 && pypi_is_ours; then
-    say "astryx is on PyPI: installing with pipx"
-    if [ -L "$link" ] && case "$(readlink "$link")" in */init.sh) true ;; *) false ;; esac; then
-      warn "$link is the old link to init.sh; the astryx CLI replaces it (init.sh stays, as a shim)"
-      run rm -f "$link"
-    fi
-    if pipx list --short 2>/dev/null | grep -q '^astryx '; then run pipx upgrade astryx
-    else run pipx install astryx; fi
-    USE_CLI=1
-    return 0
+  say "installing astryx from git into $ASTRYX_DIR"
+  if [ -d "$ASTRYX_DIR/.git" ] && [ -d "$ASTRYX_DIR/homes/seed" ] && [ "$UPGRADE" = 0 ] \
+     && tmux has-session -t "=ax-seed" 2>/dev/null; then
+    die "an org is running from $ASTRYX_DIR (ax-seed is up). Re-running here pulls and re-inits a live org; if you mean that, add --upgrade. To start a second org, pick another place with --dir."
   fi
-  say "installing astryx from git into $ASTRYX_DIR (the PyPI package isn't published yet)"
   if [ -d "$ASTRYX_DIR/.git" ]; then
     if [ -n "$(git -C "$ASTRYX_DIR" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
       warn "$ASTRYX_DIR has local changes; leaving it as it is (no pull)"
@@ -309,6 +298,10 @@ install_astryx() {
   fi
   if [ -f "$ASTRYX_DIR/pyproject.toml" ]; then
     if command -v pipx >/dev/null 2>&1; then
+      if [ -L "$link" ] && case "$(readlink "$link")" in */init.sh) true ;; *) false ;; esac; then
+        warn "$link is the old link to init.sh; the astryx CLI replaces it (init.sh stays)"
+        run rm -f "$link"
+      fi
       run pipx install --force --editable "$ASTRYX_DIR" && USE_CLI=1
     else
       warn "pipx missing, so the astryx CLI isn't installed; ./init.sh does the same job"
@@ -335,7 +328,18 @@ run_init() {
   fi
 }
 
-usage() { sed -n '2,17p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; }
+usage() {   # inline, not read from $0: under `curl | bash`, $0 is "bash" (a2 N2)
+  cat <<'EOF'
+astryx install: the one-line bootstrap for Linux, macOS and WSL2.
+  curl -fsSL https://raw.githubusercontent.com/Umair444/astryx/main/install.sh | bash
+  ... | bash -s -- [flags]
+Flags:  --dry-run   print every command it would run, run none of them
+        --yes       say yes to every install prompt (for unattended VMs)
+        --dir DIR   where the clone lives (default ~/astryx; env ASTRYX_DIR)
+        --no-init   stop after installing; don't run astryx init
+        --upgrade   allow pulling into a directory where an org is already running
+EOF
+}
 
 main() {
   while [ $# -gt 0 ]; do
@@ -345,6 +349,7 @@ main() {
       --dir)     ASTRYX_DIR=${2:?--dir needs a path}; shift ;;
       --dir=*)   ASTRYX_DIR=${1#--dir=} ;;
       --no-init) DO_INIT=0 ;;
+      --upgrade) UPGRADE=1 ;;
       -h|--help) usage; exit 0 ;;
       *) die "unknown flag '$1' (try --help)" ;;
     esac
@@ -391,8 +396,14 @@ EOF
   install_astryx
 
   if [ "${#MISSING[@]}" -gt 0 ]; then
-    say "still to do (the setup below will tell you too):"
-    local m; for m in "${MISSING[@]}"; do warn "$m"; done
+    say "still to do:"
+    local m blocking=0; for m in "${MISSING[@]}"; do warn "$m"
+      case "$m" in python*|docker:*|"docker daemon"*|claude:*|node*) blocking=1 ;; esac; done
+    # setup can't succeed without these, and fails later with a less clear error (a2 N1): stop here instead
+    if [ "$blocking" = 1 ] && [ "$DO_INIT" = 1 ] && [ "$DRY" = 0 ]; then
+      say "fix the lines above, then run the same install line again. It skips what's done and carries on."
+      exit 1
+    fi
   fi
   command -v claude >/dev/null 2>&1 && say "Claude Code needs one login, by a human: if you haven't yet, run 'claude' and follow /login."
 
