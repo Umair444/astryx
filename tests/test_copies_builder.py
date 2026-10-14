@@ -221,6 +221,37 @@ try:
         (LIB / "clean.md").write_text('---\ntitle: "Clean"\ntags: [org]\n---\nbeta body, edited\n')
         res = C.check(conn, [DECL], root)
         check("S2g editing a library book → STALE", res and res[0][1] == "STALE", repr(res))
+
+        # K1 — Cypher calls grow at most 1.5 per page (a3 #49768; measured 1.0 batched, 3.0 with cy_unwind
+        # per-row, so this reads the batching, not the corpus). A build past the pulse's 30s check budget
+        # (pulse #49639) was ~4800 calls; this pins the shape before the corpus grows.
+        real_cy, ncalls = ing.cy, [0]
+
+        def counting(*a, **k):
+            ncalls[0] += 1
+            return real_cy(*a, **k)
+
+        def calls_for(pages):
+            r = Path(tempfile.mkdtemp(prefix="callcount_"))
+            (r / "wiki").mkdir()
+            (r / "library" / "shelf").mkdir(parents=True)
+            (r / "ontology.md").write_text("## types\n")
+            for i in range(pages):
+                (r / "library" / "shelf" / f"b{i}.md").write_text(
+                    f'---\ntitle: "B{i}"\ntags: [org]\n---\nintro [[b{(i + 1) % pages}]]\n## One\nalpha\n## Two\nbeta\n')
+                (r / "wiki" / f"w{i}.md").write_text(f"---\ntitle: W{i}\n---\nwiki [[w{(i + 1) % pages}]]\n## S\ngamma\n")
+            ing.WIKI, ing.ONTOLOGY_MD, ing.LIBRARY = r / "wiki", r / "ontology.md", r / "library"
+            ncalls[0] = 0
+            ing.run_ingest(fx["dsn"])
+            return ncalls[0]
+
+        ing.cy = counting
+        try:
+            lo, hi = calls_for(4), calls_for(40)
+        finally:
+            ing.cy = real_cy
+        slope = (hi - lo) / (2 * 40 - 2 * 4)
+        check("K1 Cypher calls per added page ≤ 1.5 (batched edges)", 0 < slope <= 1.5, (lo, hi, slope))
     conn.close()
 finally:
     _fx.__exit__(None, None, None)
