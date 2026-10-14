@@ -6,9 +6,10 @@
 // Unevaluable (python missing, a timeout, a broken tree) → ALLOW with a note: this sits on every send of
 // every agent, and failing closed would mute the whole org at once (secret_guard's rule, a2 #27600).
 import { execFile } from 'node:child_process'
+import { homePath } from './home.mjs'
 
-const PY = new URL('../venv/bin/python', import.meta.url).pathname
-const ADDR = new URL('../nucleus/address.py', import.meta.url).pathname
+const PY = homePath('venv/bin/python')
+const ADDR = homePath('nucleus/address.py')
 
 export function checkAddress(to, { py = PY, addr = ADDR } = {}) {
   return new Promise((resolve, reject) => {
