@@ -245,6 +245,18 @@ run "init.sh dispatcher link: the tracked astryx link stays relative" "$PY" test
 # init.sh starts in the repo however it's invoked: through the PATH link, a chain, or a relative link (a2 #39198).
 # Hermetic. Mutants: tests/mutants_init_self_dir.py.
 run "init.sh start directory: the repo, through any link to init.sh" "$PY" tests/test_init_self_dir.py
+# ~/.local/bin/astryx is written only where nothing else owns it: a pip console script is never replaced (plan-10224).
+run "init.sh PATH link: never over a console script" "$PY" tests/test_init_path_link.py
+# The astryx package (plan-10224 S1/S3). The pulse imports astryx every minute: the root shim and src/astryx must be
+# ONE module with ONE _registry on every path. paths: HOME's four rungs. config: the one .env reader/writer.
+# cli: every verb's dispatch with subprocess stubbed; secrets hidden, written mode 600, never printed. All hermetic.
+run "astryx package: one registry on every import path" "$PY" tests/test_astryx_registry.py
+run "astryx paths: HOME resolves env > marker > checkout > ~/.astryx" "$PY" tests/test_astryx_paths.py
+run "astryx config: the one .env reader, in-place 0600 writer" "$PY" tests/test_astryx_config.py
+run "astryx cli: verbs dispatch, user errors calm, secrets never printed" "$PY" tests/test_astryx_cli.py
+# The pulse's astryx-import canary: a shim with no src/astryx (mid-checkout) disables nothing and alarms once.
+# Fixture DB. Mutants: tests/mutants_pulse_import_canary.py.
+run "pulse canary: astryx won't import -> one alarm, every trigger stays enabled" "$PY" tests/test_pulse_import_canary.py
 # nucleus/merge_check.sh: the merged-tree chain before a merge request, base resolved ONCE (merge parent == control),
 # a conflict refused (never a wrong tree), transient links removed. Hermetic. Mutants: tests/mutants_merge_check.py.
 run "merge_check: one base read, conflicts refused, links removed" "$PY" tests/test_merge_check.py

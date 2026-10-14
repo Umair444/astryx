@@ -1,28 +1,36 @@
-"""astryx — the tiny library agents import to author triggers.
+"""astryx — the tiny library agents import to author triggers (the full docs: src/astryx/__init__.py).
 
     from astryx import trigger
 
     @trigger("*/15 * * * *", note="what this watches")
     def my_condition(ctx):
-        ...
-        return None            # silence, or
-        return "message body"  # fire: arrives on your channel as a wire message
+        return None            # silence, or a message body to fire
 
-Files live in triggers/<agent>/*.py. The pulse discovers decorated functions,
-registers them in the triggers table, and evaluates each on its schedule in an
-isolated subprocess. ctx gives a check its world:
-
-    ctx.sql(query, params=())   rows from the org's postgres, list of dicts
-    ctx.http(url)               a page or API body, 15s timeout
-    ctx.state                   dict persisted between runs: baselines, seen
-                                ids, yesterday's numbers. Mutate it freely.
-
-The pulse is AT-LEAST-ONCE: a firing's side effect (a send, a row it writes) can
-run more than once if the run is interrupted between the effect and the ctx.state
-write-back. ctx.state is safe for throttling and baselines; for a side effect that
-must not duplicate, dedup on durable state — query the effect itself, or a column —
-not ctx.state.
+The pulse discovers triggers with cwd = the org root, so `import astryx` finds THIS file before any installed
+package, and a process holds ONE `astryx` module and ONE `_registry` whichever path won. This file is
+SELF-SUFFICIENT for that: `_registry` and `trigger` below are a copy of src/astryx/__init__.py's (pinned identical
+by tests/test_astryx_registry.py), with no exec and no import of src/, so a checkout caught mid-write (this file
+written, src/astryx/ not yet) still loads every trigger, and trigger_names' static reader sees plain defs.
+`__path__` points at src/astryx/ when it's there, so `astryx.paths`, `astryx.config` and `astryx.cli` resolve as
+the package's submodules; `__version__` is read from it on first use.
 """
+import os as _os
+
+
+def _src():
+    d = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "src", "astryx")
+    return [d] if _os.path.isfile(_os.path.join(d, "__init__.py")) else []
+
+
+__path__ = _src()
+
+
+def __getattr__(name):
+    if name == "__version__":
+        from astryx._version import __version__ as v
+        return v
+    raise AttributeError(f"module 'astryx' has no attribute {name!r}")
+
 
 _registry: list[dict] = []
 
@@ -33,3 +41,8 @@ def trigger(schedule: str, note: str = ""):
                           "note": note, "fn": fn})
         return fn
     return wrap
+
+
+if __name__ == "__main__":         # `python -m astryx` from the org root runs THIS file, not __main__.py
+    from astryx.cli import main
+    raise SystemExit(main())

@@ -15,7 +15,8 @@ REPO = Path(__file__).resolve().parent.parent
 
 def build(root: Path, helper_src: str | None = None) -> Path:
     """helper_src: the trigger_names.py to place (the oracle passes its TRIGGER_NAMES_SRC seam); default the repo's."""
-    shutil.copy(REPO / "astryx.py", root / "astryx.py")
+    shutil.copy(REPO / "astryx.py", root / "astryx.py")           # the shim, and the package it becomes
+    shutil.copytree(REPO / "src" / "astryx", root / "src" / "astryx", ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copytree(REPO / "nucleus", root / "nucleus", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     shutil.copy(helper_src or REPO / "nucleus/trigger_names.py", root / "nucleus" / "trigger_names.py")
     (root / "mcp" / "phone").mkdir(parents=True)
