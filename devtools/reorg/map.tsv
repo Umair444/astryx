@@ -138,3 +138,6 @@ nucleus/plan_change_intents	src/astryx/data/plan_change_intents	-
 nucleus/runners.example.conf	src/astryx/data/runners.example.conf	-
 nucleus/sqlguard/	src/astryx/security/sqlguard/	astryx.security.sqlguard
 nucleus/shipped_triggers/	src/astryx/pulse/shipped_triggers/	astryx.pulse.shipped_triggers
+nucleus/launch_flags.py	src/astryx/core/launch_flags.py	astryx.core.launch_flags
+nucleus/docker_host_ip.sh	scripts/docker_host_ip.sh	-
+nucleus/build_plugin.py	devtools/build_plugin.py	-
