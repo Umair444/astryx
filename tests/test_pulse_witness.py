@@ -58,7 +58,11 @@ def check(name, cond, detail=""):
 
 
 def run(coro):
-    return asyncio.new_event_loop().run_until_complete(coro)
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()          # an unclosed loop's __del__ can print a stray ValueError at exit (steward #50746)
 
 
 class Harness:
