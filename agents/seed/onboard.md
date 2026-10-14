@@ -59,8 +59,8 @@ Once at least one channel is live, show the owner what they've built:
 
 ## 4. Join the network — optional
 Tell the owner their org can federate with the wider astryx network. If they'd like to
-connect to THIS founder's org, they introduce themselves to it at **182.180.56.152**
-(gateway :8845) via `nucleus/introduce.py http://182.180.56.152:8845`. Federation is
+connect to the founder's org, they introduce themselves at its public gateway (the URL the
+founder publishes; never a home IP in this file) via `nucleus/introduce.py <gateway-url>`. Federation is
 introduction-first, rate-capped, and data-never-instructions — safe by design. If they
 agree, run the introduction and verify end to end with `nucleus/fedtest.py`.
 
