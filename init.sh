@@ -167,7 +167,7 @@ Description=astryx whatsapp bridge — owner surface on the wire
 After=network.target docker.service
 [Service]
 WorkingDirectory=$PWD
-ExecStart=$PWD/venv/bin/uvicorn bridges.whatsapp:app --host 172.17.0.1 --port 8477
+ExecStart=$PWD/venv/bin/uvicorn bridges.whatsapp:app --host $(_docker_host_ip) --port 8477
 Restart=always
 RestartSec=5
 User=$USER
@@ -393,6 +393,26 @@ PYEOF
 #              report, don't spin. Interior converges around it; the human resolves it.
 dsn() { grep '^ASTRYX_DSN=' .env 2>/dev/null | cut -d= -f2-; }
 . nucleus/pgcontainer.sh                     # PG_CONTAINER: the one declared postgres (infra/pg/docker-compose.yml)
+. nucleus/docker_host_ip.sh                   # _docker_host_ip: how containers reach this host (was a literal 172.17.0.1)
+# wsl2 | wsl1 | no: is this Linux running under Windows' WSL? (doctor, goal 10224 S3). WSL2 kernels say
+# "microsoft-standard-WSL2" (older ones "-microsoft-standard"); WSL1 says "Microsoft" with a capital M. WSL_DISTRO_NAME is
+# set in every WSL shell, the fallback when /proc/version can't be read. The path is overridable for tests.
+_wsl_kind() {
+  local pv
+  pv=$(cat "${ASTRYX_PROC_VERSION:-/proc/version}" 2>/dev/null || true)
+  case "$pv" in
+    *WSL2*|*microsoft-standard*) echo wsl2; return 0 ;;
+    *Microsoft*) echo wsl1; return 0 ;;
+    *microsoft*) echo wsl2; return 0 ;;
+  esac
+  [ -n "${WSL_DISTRO_NAME:-}" ] && echo wsl2 || echo no
+}
+# The name of PID 1 (systemd, init, launchd, …), or "unknown" when ps can't say. macOS prints a full path: basename it.
+_pid1() {
+  local c
+  c=$(ps -p 1 -o comm= 2>/dev/null | head -1 | tr -d '[:space:]' || true)
+  [ -n "$c" ] && echo "${c##*/}" || echo unknown
+}
 # ok | unverified | "wide <addr …>": is anything but loopback listening on port $1? (doctor; a2 #42283)
 _pg_exposure() {
   local out wide
@@ -1052,6 +1072,7 @@ if [ "${1:-}" = "doctor" ]; then
   [ -d channel/node_modules ] && ok "channel deps" || bad "channel deps — rerun ./init.sh"
   [ -d observatory/web/dist ] && ok "observatory built" || bad "observatory not built — rerun ./init.sh"
   warn() { echo -e "  \033[33m○\033[0m $*"; }
+  _wk=$(_wsl_kind)
   if [ -d /run/systemd/system ]; then
     ok "systemd available"
     # The unit checks are a bidirectional grade-3 reconciler: the expected set is
@@ -1117,8 +1138,42 @@ if [ "${1:-}" = "doctor" ]; then
     [ -z "$undeclared" ] && ok "no undeclared astryx units (nothing runs off-book)" \
       || bad "astryx units systemd knows but NOTHING generates (undeclared):$undeclared"
     rm -rf "$GEN"
+  elif [ "$(uname -s 2>/dev/null)" = Darwin ]; then
+    # macOS has launchd, not systemd. Generated plists are a TODO (goal 10224 S3); until then the pulse rides cron.
+    warn "macOS: no systemd; services run under launchd (~/Library/LaunchAgents/*.plist). astryx does not generate plists yet (TODO, goal 10224 S3)."
+    warn "  until then, the pulse via cron:  * * * * * $PWD/venv/bin/python $PWD/nucleus/pulse.py"
+  elif [ "$_wk" = no ]; then
+    bad "no systemd as PID 1 (PID 1 is $(_pid1)) — astryx's services and the pulse are systemd units"
+  fi
+  # ── platform: WSL (goal 10224 S3) ── every probe guarded; a WSL box with no systemd gets the exact fix.
+  if [ "$_wk" != no ]; then
+    if [ "$_wk" = wsl1 ]; then
+      bad "WSL1 detected — astryx needs WSL2. From Windows PowerShell: wsl --set-version ${WSL_DISTRO_NAME:-Ubuntu} 2"
+    else
+      ok "WSL2 (${WSL_DISTRO_NAME:-distro unnamed})"
+    fi
+    if [ "$(_pid1)" = systemd ]; then
+      ok "WSL: systemd is PID 1"
+    else
+      bad "WSL: systemd is NOT PID 1 (PID 1 is $(_pid1)). Fix inside WSL:  printf '[boot]\\\\nsystemd=true\\\\n' | sudo tee /etc/wsl.conf"
+      warn "  then from Windows PowerShell:  wsl --shutdown   (and reopen the distro)"
+    fi
+    if command -v docker >/dev/null && timeout 10 docker info >/dev/null 2>&1; then
+      ok "WSL: docker is reachable"
+    else
+      bad "WSL: docker is NOT reachable — either start docker-ce inside WSL (sudo systemctl enable --now docker; add yourself: sudo usermod -aG docker $USER) or turn on Docker Desktop → Settings → Resources → WSL integration for this distro"
+    fi
+    warn "WSL: when Windows sleeps, the org sleeps. For an always-on org, keep the machine awake (Power settings → Sleep: Never) or use a Linux host."
+  fi
+  # the address containers reach this host by (wacli's webhook → the whatsapp bridge). It must be an address this host
+  # holds, since the bridge binds it: a Docker Desktop answer (host.docker.internal) may not be bindable from inside WSL.
+  _dhip=$(_docker_host_ip)
+  if ip -4 addr 2>/dev/null | grep -q "inet $_dhip/"; then
+    ok "docker host address $_dhip (held by this host; override with ASTRYX_DOCKER_HOST_IP in .env)"
+  elif command -v ip >/dev/null; then
+    warn "docker host address $_dhip is not an address of this host — the whatsapp bridge can't bind it; set ASTRYX_DOCKER_HOST_IP in .env if you use whatsapp"
   else
-    bad "no systemd (WSL? add [boot] systemd=true to /etc/wsl.conf; macOS? run the pulse from cron)"
+    warn "docker host address $_dhip (unverified: no \`ip\` to check it is local)"
   fi
   # (iii, cont.) every running body maps to a charter — a ax-* tmux session with no
   # charter is an orphan mind (the resolution goes through the ONE resolver).
@@ -1212,7 +1267,7 @@ if [ "${1:-}" = "whatsapp" ] || [ "${1:-}" = "channels" ]; then
   say "  docker build -t astryx/wacli ."
   say "  docker run -it --rm -v $PWD/wacli-data:/data astryx/wacli auth      # scan the QR"
   say "  docker run -d --name wacli-sync --restart unless-stopped -v $PWD/wacli-data:/data astryx/wacli \\"
-  say "    sync --follow --download-media --webhook http://172.17.0.1:8477/hook \\"
+  say "    sync --follow --download-media --webhook http://$(_docker_host_ip):8477/hook \\"
   say "    --webhook-secret \"\$(sed -n 's/^WA_WEBHOOK_SECRET=//p' '$PWD/.env')\" --webhook-allow-private"
   grep -q '^WA_DATA_HOST=' .env || echo "WA_DATA_HOST=$PWD/wacli-data" >> .env
   say "then install the bridge (cp to /etc, not symlink — /home may be a separate mount):"

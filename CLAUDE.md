@@ -31,7 +31,7 @@ Load-bearing; deviating creates the exact failures this repo exists to avoid:
 - **wacli in docker, always** — native installs misbehave (store runtime issues in the
   field). Build the image from wacli main, run sync as a `--restart unless-stopped`
   container; auth first (`docker run -it ... wacli auth`, human scans QR). The bridge reaches
-  it via `WA_CLI=docker exec wacli-sync wacli` in `.env`, webhook to `172.17.0.1:8477/hook`
+  it via `WA_CLI=docker exec wacli-sync wacli` in `.env`, webhook to `<docker host>:8477/hook` (`nucleus/docker_host_ip.sh`; 172.17.0.1 on docker-ce Linux)
   with `WA_WEBHOOK_SECRET`.
 - **services are Python/FastAPI + systemd**; never add Node services (Node is frontend build
   + the channel server only); never hand-roll polling daemons.

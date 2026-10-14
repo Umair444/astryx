@@ -42,7 +42,8 @@ restart() {
 # and can't sudo systemctl: kill the worker (Restart=always respawns it from disk),
 # then verify /health on the NEW pid — so a reload can't be reported done while a
 # bridge is still down or running stale code.
-declare -A BADDR=( [whatsapp]="172.17.0.1:8477" [telegram]="127.0.0.1:8478" [discord]="127.0.0.1:8479" )
+. "$ROOT/nucleus/docker_host_ip.sh"   # the whatsapp bridge binds the docker host address (172.17.0.1 on docker-ce Linux)
+declare -A BADDR=( [whatsapp]="$(_docker_host_ip "$ROOT/.env"):8477" [telegram]="127.0.0.1:8478" [discord]="127.0.0.1:8479" )
 reload() {
   local b=$1 addr=${BADDR[$1]:-} old="" new=""
   [ -z "$addr" ] && { echo "  ✗ unknown bridge: $b"; return 1; }
