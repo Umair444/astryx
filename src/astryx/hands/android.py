@@ -221,6 +221,7 @@ def boot(avd: str, agent: str) -> str:
     if not emulator_pids(avd) and not _start_windowed(avd):
         # the module rule (plan-10108 a3 BC-1): a state root is env-overridable, and a gate sets it under its own TMPDIR.
         # Unset, the live org's log keeps its runtime-dir home.
+        # shared-on-purpose: the live phone's emulator log; a gate that boots it sets ASTRYX_ANDROID_LOG_DIR
         log = Path(os.environ.get("ASTRYX_ANDROID_LOG_DIR") or os.environ.get("XDG_RUNTIME_DIR") or "/tmp") \
             / f"astryx-android-{avd}.log"
         subprocess.Popen([str(sdk() / "emulator" / "emulator"), "-avd", avd, "-no-window", "-no-audio",

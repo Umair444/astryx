@@ -17,6 +17,8 @@ from psycopg import errors, sql
 # Every run role an oracle makes is a TEST role (src/astryx/pg/runscope.py TEST_STAMP): set here, at import, because every
 # RunScope oracle imports this module before it opens a scope, and mutation_probe runs oracles outside check.sh.
 os.environ.setdefault("ASTRYX_RUNSCOPE_TEST", "1")
+# shared-on-purpose: the oracles' cross-run ownership ledger, like runscope's SCOPE_ROOT: the reaper reads a dead run's
+# lock.json here, so it never lives under a gate's TMPDIR (plan-10108 a2 rider #50743)
 ORACLE_BASE = Path(os.environ.get("ASTRYX_RUNSCOPE_ORACLE_ROOT", "/tmp/astryx-runscope-oracle"))
 from devtools.branch_check_prep import TEST_DB                    # noqa: E402 (ONE definition, P0-b's refusal reads it too)
 from astryx.pg.runscope import TEST_STAMP                       # noqa: E402 (the stamp an oracle's run role carries)
