@@ -75,7 +75,8 @@ MUTANTS = {
     "O23 the scope drops the modules a changed oracle imports (voice_mint::record, 10-11, falls out of scope)":
         ('        out |= {m.replace(".", "/") + ".py" for m in module_refs(tree)}', "        pass"),
     "O24 the scope diffs two trees, not from the merge-base (main's drift past the fork is pinned on the branch: a4 #45033)":
-        ("f\"{sha['main']}...{sha['branch']}\"", 'sha["main"], sha["branch"]'),
+        ("[\"git\", \"diff\", \"--name-only\", f\"{sha['main']}...{sha['branch']}\"]",
+         '["git", "diff", "--name-only", sha["main"], sha["branch"]]'),
     "O25 an extractor red (a FILE, no '::') never reaches the in-scope list (a4 #45033 F2)":
         (' or re.match(r"R-EXTRACT (\\S+?):?(?:\\s|$)", line)', ""),
     "O28 check.sh isn't left out (every branch that adds a gate puts half the dark list in scope)":
@@ -83,7 +84,7 @@ MUTANTS = {
     "O30 a label carrying \\\" is kept escaped (never matches what check.sh prints)":
         ("        label = label.replace('\\\\\"', '\"')", "        pass"),
     "O31 production never hands report() the oracles (the in-scope list is dead code)":
-        ("\n                    oracles=gate_files(repo[\"branch\"]), changed=changed_files(sha), repo=repo[\"branch\"])", ")"),
+        ("\n                    oracles=gate_files(repo[\"branch\"]), changed=changed_files(sha), repo=repo[\"branch\"],", ""),
     "O26 a file the oracle NAMES isn't followed (only imports: the 10-11 node oracle naming server.mjs is missed)":
         ("            for name in _NAMED_RX.findall(t):\n                for q in idx.get(name, ()):\n"
          "                    seeds.setdefault(q, q)\n", ""),
@@ -98,4 +99,17 @@ MUTANTS = {
         ("        reached, todo = dict(seeds), list(seeds)", "        reached, todo = dict(seeds), []"),
     "O34 js/mjs imports are never read (the node side of the closure is dead)":
         ("        for spec in _JS_IMPORT_RX.findall(text):", "        for spec in []:"),
+    "O35 the census is never consulted (an ADDED nucleus script with a dark reachability gate reads no line: 10-12)":
+        ("        census = _census_hit(g, oracles, read, members or set())", "        census = None"),
+    "O36 a REPO-WIDE census (git ls-files) isn't recognised":
+        ("        if _REPO_WIDE_RX.search(t):", "        if False:"),
+    "O37 a dir census matches by STRING prefix ('unitsX/' reads as 'units/')":
+        ('            m = next((m for m in sorted(members) if m.startswith(d + "/")), None)',
+         "            m = next((m for m in sorted(members) if m.startswith(d)), None)"),
+    "O38 a MODIFIED file counts as a membership change (every edit-only branch flags every dark census)":
+        ('        if parts and parts[0][:1] in "ADRC":', '        if parts and parts[0][:1] in "ADRCM":'),
+    "O39 a rename keeps only its NEW side (the old path's removal from a census is missed)":
+        ("            out |= set(parts[1:])", "            out |= set(parts[-1:])"),
+    "O40 production never hands report() the membership changes (the census line is dead code)":
+        (",\n                    members=membership_changes(sha))", ")"),
 }

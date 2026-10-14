@@ -197,6 +197,46 @@ def main():
           and tr.get("ear gate") == ("nucleus/deep.py", "nucleus/subj.py") and "bash gate" not in tr, tr)
     lz = {g: f for g, f, _ in bc.dark_scope(gates, of, {"channel/lazy.mjs"}, dk)}
     check("…a DYNAMIC import('./x.mjs') is followed too", lz.get("node gate") == "channel/lazy.mjs", lz)
+    # a2 night-review 10-14: a CENSUS oracle reaches files by ENUMERATING (git ls-files, a dir glob), not by name;
+    # only a MEMBERSHIP change (add/delete/rename) changes its set. 10-12: reachability was dark when review_range.sh
+    # was ADDED invoked-by-nothing.
+    cz = Path(tempfile.mkdtemp(prefix="bc-census-"))
+    for d in ("nucleus", "tests", "units"):
+        (cz / d).mkdir()
+    (cz / "nucleus" / "check.sh").write_text('run "repo census" "$PY" tests/test_rw.py\n'
+                                             'run "units census" "$PY" tests/test_units.py\n'
+                                             'run "plain gate" "$PY" tests/test_plain.py\n')
+    (cz / "tests" / "test_rw.py").write_text('import subprocess\nfiles = subprocess.run(["git", "ls-files"]).stdout\n')
+    (cz / "tests" / "test_units.py").write_text('for f in (REPO / "units").glob("*.service"):\n    pass\n')
+    (cz / "tests" / "test_plain.py").write_text("x = 1\n")
+    cof = bc.gate_files(cz)
+    cg = ["repo census", "units census", "plain gate"]
+    added = {g: (f, why) for g, f, why in bc.dark_scope(cg, cof, {"nucleus/new_tool.sh"}, cz, members={"nucleus/new_tool.sh"})}
+    check("an ADDED file puts a dark REPO-WIDE census in scope (git ls-files), named as a census; a dir census of "
+          "another dir and a plain oracle are not", set(added) == {"repo census"}
+          and added["repo census"][0] == "nucleus/new_tool.sh" and "REPO-WIDE census" in added["repo census"][1], added)
+    unit = {g for g, _, _ in bc.dark_scope(cg, cof, {"units/x.service"}, cz, members={"units/x.service"})}
+    check("…a file added under the dir a census globs puts THAT census in scope", unit == {"repo census", "units census"}, unit)
+    edit = bc.dark_scope(cg, cof, {"nucleus/new_tool.sh", "units/x.service"}, cz, members=set())
+    check("…a MODIFIED file (no membership change) puts no census in scope: edit-only branches stay quiet", edit == [], edit)
+    near = {g for g, _, _ in bc.dark_scope(cg, cof, {"unitsX/y.service"}, cz, members={"unitsX/y.service"})}
+    check("…a dir census matches its dir by PATH PREFIX, not a string prefix ('unitsX/' isn't 'units/')",
+          "units census" not in near, near)
+    check("branch_check.run passes report() the branch's membership changes (members=membership_changes(sha))",
+          len(reps) == 1 and any(k.arg == "members" and "membership_changes" in ast.dump(k.value)
+                                 for k in reps[0].keywords), ast.dump(reps[0]) if reps else "no report call in run()")
+    real = subprocess.run
+    def fake_status(argv, **kw):
+        if argv[:3] == ["git", "diff", "--name-status"]:
+            return subprocess.CompletedProcess(argv, 0, "M\ta.py\nA\tb.sh\nD\tc.py\nR087\told.py\tnew.py\n", "")
+        return real(argv, **kw)
+    bc.subprocess.run = fake_status
+    try:
+        mem = bc.membership_changes({"main": "m", "branch": "b"})
+    finally:
+        bc.subprocess.run = real
+    check("membership_changes: added, deleted and BOTH sides of a rename; a modified file is not a membership change",
+          mem == {"b.sh", "c.py", "old.py", "new.py"}, mem)
     dm = {"failed": [], "unverified": ["node gate", "bash gate"], "line": "check: m"}
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):

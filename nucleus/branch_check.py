@@ -262,7 +262,8 @@ def run(branch: str, main_ref: str = "main") -> int:
             # a branch-only sqlguard finding must REPRODUCE too (FLAKY != REGRESSED)
             sums["branch"]["sqlguard_red"] = None if r1 is None or r2 is None else {i: l for i, l in r1.items() if i in r2}
         rc = report(sha, sums, witness, est, refs=gate_refs(repo["branch"]), touched=touched_files(sha, repo["branch"]),
-                    oracles=gate_files(repo["branch"]), changed=changed_files(sha), repo=repo["branch"])
+                    oracles=gate_files(repo["branch"]), changed=changed_files(sha), repo=repo["branch"],
+                    members=membership_changes(sha))
     except prep.Refuse as e:
         print(f"branch_check: REFUSED (rc 77): {e}")
         rc = 77
@@ -351,7 +352,31 @@ def _imports(repo: Path, f: str, text: str) -> set:
     return out
 
 
-def dark_scope(dark_gates, oracles: dict, changed: set, repo: Path) -> list:
+def membership_changes(sha: dict) -> set:
+    """The paths the branch ADDS, DELETES, RENAMES or COPIES (both sides of a rename), main...branch from the live
+    repo: the changes a CENSUS gate (one that judges a set's membership) is about. Empty if git can't say."""
+    p = subprocess.run(["git", "diff", "--name-status", "-M", f"{sha['main']}...{sha['branch']}"], cwd=LIVE,
+                       capture_output=True, text=True)
+    if p.returncode != 0:
+        return set()
+    out = set()
+    for line in p.stdout.splitlines():
+        parts = line.split("\t")
+        if parts and parts[0][:1] in "ADRC":
+            out |= set(parts[1:])
+    return out
+
+
+# A CENSUS oracle judges membership by ENUMERATING, not by naming (a2 night-review 10-14: test_reachability reads
+# `git ls-files` and was dark when a4's review_range.sh was ADDED invoked-by-nothing; no name or import reached it).
+# Repo-wide: it lists every tracked file. Directory: it globs or lists one constant dir under the repo root. A
+# MODIFIED file doesn't change any census's set, so only membership changes reach these (no noise on edit-only
+# branches).
+_REPO_WIDE_RX = re.compile(r"""["']ls-files["']|\bgit ls-files\b|\b(?:REPO|ROOT)\s*\)?\s*\.rglob\(|os\.walk\(\s*(?:REPO|ROOT)\b""")
+_DIR_CENSUS_RX = re.compile(r"""\b(?:REPO|ROOT)\s*/\s*["']([\w./-]+)["']\s*\)?\s*\.(?:r?glob|iterdir)\(""")
+
+
+def dark_scope(dark_gates, oracles: dict, changed: set, repo: Path, members: set = None) -> list:
     """[(gate, changed file, via)] for each dark gate whose oracle REACHES a file the branch changes: the oracle file
     itself, a file it names (path or file name with extension; never a bare stem), or anything those import,
     TRANSITIVELY (a4 #49641: since #46291 the ear/wake/doorbell oracles name only server.mjs, which imports its
@@ -393,7 +418,28 @@ def dark_scope(dark_gates, oracles: dict, changed: set, repo: Path) -> list:
         if hit:
             via = reached[hit]
             out.append((g, hit, None if via == hit else via))
+            continue
+        census = _census_hit(g, oracles, read, members or set())
+        if census:
+            out.append((g, *census))
     return out
+
+
+def _census_hit(g, oracles: dict, read, members: set):
+    """(member, why) when gate g's oracle is a CENSUS whose domain holds a path the branch adds, deletes or renames."""
+    members = {m for m in members if m not in SCOPE_NOISE}
+    if not members:
+        return None
+    for o in sorted(oracles.get(g, ())):
+        t = read(o)
+        if _REPO_WIDE_RX.search(t):
+            return sorted(members)[0], "a REPO-WIDE census, and the branch adds/deletes/renames files"
+        for d in sorted(set(_DIR_CENSUS_RX.findall(t))):
+            d = d.strip("/")
+            m = next((m for m in sorted(members) if m.startswith(d + "/")), None)
+            if m:
+                return m, f"a census of {d}/, and the branch adds/deletes/renames a file there"
+    return None
 
 
 def touched_files(sha: dict, repo: Path = None) -> set:
@@ -422,7 +468,7 @@ def sqlguard_module(line: str):
 
 
 def report(sha: dict, sums: dict, witness: dict, est: dict, refs: dict = None, touched: set = None,
-           oracles: dict = None, changed: set = None, repo: Path = None) -> int:
+           oracles: dict = None, changed: set = None, repo: Path = None, members: set = None) -> int:
     m, b = sums["main"], sums["branch"]
     print(f"branch_check {sha['branch'][:7]} vs main {sha['main'][:7]}")
     for side in ("main", "branch"):
@@ -486,12 +532,12 @@ def report(sha: dict, sums: dict, witness: dict, est: dict, refs: dict = None, t
     for x in both:
         print(f"    ○ {x}")
     if oracles and changed and repo is not None:
-        ds = dark_scope(dark_gates, oracles, changed, repo)
+        ds = dark_scope(dark_gates, oracles, changed, repo, members=members)
         if ds:
             print(f"  VERIFIED NOTHING and IN SCOPE (its oracle references a file the branch changes): run it DIRECTLY "
                   f"in a worktree before a PASS: {len(ds)}")
             for g, f, via in ds:
-                print(f"    ○ {g}\n      ← {f}" + (f" (via {via})" if via else ""))
+                print(f"    ○ {g}\n      ← {f}" + (f" ({via})" if via and " " in via else f" (via {via})" if via else ""))
     skipped = est["branch"]["skipped_credential"]
     if skipped:
         print(f"  VERIFIED NOTHING: {len(skipped)} estate file(s) carry a credential and weren't copied: {skipped}")
