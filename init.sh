@@ -639,7 +639,9 @@ _act_law() { cp local.template.md local.md; say "created local.md from template 
 
 # login: NOT-actuatable boundary — the terminal observable is an AUTHENTICATED call
 # succeeding (not reachability). A human logs in; halt-report, converge around it.
-_chk_login() { printf 'reply with exactly: ok' | timeout 30 claude -p --model haiku \
+# env -u ASTRYX_AGENT: the probe's claude runs the Stop hook (hooks/step.py), which with an inherited agent name
+# wrote a fake 'reply with exactly: ok' turn + steps to prod under the caller's name (a2 #53059); unnamed, it writes nothing.
+_chk_login() { printf 'reply with exactly: ok' | env -u ASTRYX_AGENT timeout 30 claude -p --model haiku \
   --strict-mcp-config --tools "" 2>/dev/null | grep -q .; }
 
 # seed: interior but NON-PERSISTENT (the body can crash) → re-checked & re-spawned every
@@ -988,7 +990,7 @@ if [ "${1:-}" = "doctor" ]; then
     # code disambiguates WHY a miss happened — timeout(1) exits 124 on no-response, a
     # rejected call exits fast and non-zero. Never assert a cause the probe cannot see.
     _login_err=$(mktemp); _login_rc=0
-    _login_out=$(printf 'reply with exactly: ok' | timeout 30 claude -p --model haiku \
+    _login_out=$(printf 'reply with exactly: ok' | env -u ASTRYX_AGENT timeout 30 claude -p --model haiku \
          --strict-mcp-config --tools "" 2>"$_login_err") || _login_rc=$?
     if [ -n "$_login_out" ]; then
       ok "claude login: an authenticated model call succeeds"
