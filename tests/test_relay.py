@@ -73,7 +73,7 @@ def q(dsn, sql, *args):
 
 
 class Org:
-    def __init__(self, name, fx, port, url="", relay_url="", listed=False, host=False):
+    def __init__(self, name, fx, port, logdir, url="", relay_url="", listed=False, host=False):
         self.name, self.dsn, self.port = name, fx["dsn"], port
         self.base = f"http://127.0.0.1:{port}"
         self.key = SigningKey.generate()
@@ -84,11 +84,19 @@ class Org:
                     "ASTRYX_RELAY_LISTED": "1" if listed else "0",
                     "ASTRYX_RELAY_HOST": "1" if host else "0",
                     "ASTRYX_RELAY_REACH_PRIVATE": "1" if host else "0"}
-        self.log = tempfile.NamedTemporaryFile(prefix=f"relay-{name}-", suffix=".log", delete=False)
-        self.proc = subprocess.Popen(
-            [PY, "-m", "uvicorn", "gateway:app", "--host", "127.0.0.1", "--port", str(port)],
-            cwd=REPO / "bridges", env={**os.environ, **self.env},
-            stdout=self.log, stderr=subprocess.STDOUT)
+        self.log = Path(logdir) / f"{name}.log"
+        self.start()
+
+    def start(self):
+        with open(self.log, "a") as log:
+            self.proc = subprocess.Popen(
+                [PY, "-m", "uvicorn", "gateway:app", "--host", "127.0.0.1", "--port", str(self.port)],
+                cwd=REPO / "bridges", env={**os.environ, **self.env},
+                stdout=log, stderr=subprocess.STDOUT)
+
+    def up(self):
+        return wait(lambda: httpx.get(f"{self.base}/astryx/identity", timeout=2).status_code == 200,
+                    40, f"{self.name} gateway answers /astryx/identity")
 
     def stop(self):
         self.proc.terminate()
@@ -98,7 +106,7 @@ class Org:
             self.proc.kill()
 
     def tail(self):
-        return Path(self.log.name).read_text()[-1500:]
+        return self.log.read_text()[-1500:]
 
     def envelope(self, to, body):
         e = {"astryx": 0, "id": str(uuid.uuid4()), "from": f"alice@{self.name}", "to": to,
@@ -110,22 +118,22 @@ def landed(org, frm, body):
     return q(org.dsn, "SELECT count(*) FROM messages WHERE from_org=%s AND body=%s", frm, body)[0][0]
 
 
-def run(fr, fa, fb):
+def run(fr, fa, fb, tmp):
     port = free_port()                           # the relay host is the one org WITH a public URL
-    R = Org("relayhost.test", fr, port, url=f"http://127.0.0.1:{port}", host=True)
+    R = Org("relayhost.test", fr, port, tmp, url=f"http://127.0.0.1:{port}", host=True)
     orgs = [R]
     try:
         rel = R.base
-        A = Org("orga.test", fa, free_port(), relay_url=rel, listed=True)
+        A = Org("orga.test", fa, free_port(), tmp, relay_url=rel, listed=True)
         orgs.append(A)
-        B = Org("orgb.test", fb, free_port(), relay_url=rel, listed=False)
+        B = Org("orgb.test", fb, free_port(), tmp, relay_url=rel, listed=False)
         orgs.append(B)
         for o in orgs:
-            up = wait(lambda o=o: httpx.get(f"{o.base}/astryx/identity", timeout=2).status_code == 200,
-                      40, f"{o.name} gateway answers /astryx/identity")
-            if not up:
+            if not o.up():
                 arm(f"{o.name} gateway starts", False, o.tail())
                 return
+        # A meets the host directly first (a peer WITH a URL): its pickup_task then has a peer to poll
+        intro.introduce(R.base, {**A.env, "ASTRYX_DSN": A.dsn})
 
         # --- registration and the directory
         reg = wait(lambda: len(q(R.dsn, "SELECT org FROM relay_orgs WHERE org IN ('orga.test','orgb.test')")) == 2,
@@ -199,13 +207,26 @@ def run(fr, fa, fb):
         arrived = wait(lambda: landed(B, "orga.test", canary2), 20, "canary after the duplicate")
         arm("the same envelope relayed twice lands once", codes == [200, 200] and bool(arrived)
             and landed(B, "orga.test", dup["body"]) == 1, (codes, landed(B, "orga.test", dup["body"])))
+        # across a restart: seen_ids is gone, so the row in messages is what drops the copy
+        mark = len(R.log.read_text())
+        B.stop()
+        B.start()
+        back = B.up() and wait(lambda: "POST /relay/register" in R.log.read_text()[mark:], 20,
+                               "B registers again after its restart")
+        httpx.post(f"{rel}/relay/send", json={"to": "orgb.test", "kind": "msg", "envelope": dup})
+        canary4 = f"canary-4 {uuid.uuid4().hex[:6]}"
+        httpx.post(f"{rel}/relay/send", json={"to": "orgb.test", "kind": "msg",
+                                              "envelope": A.envelope("seed@orgb.test", canary4)})
+        arrived = wait(lambda: landed(B, "orga.test", canary4), 20, "canary after the post-restart duplicate")
+        arm("a duplicate relayed after the recipient restarts still lands once (the row is the memory)",
+            bool(arrived) and landed(B, "orga.test", dup["body"]) == 1, (back, landed(B, "orga.test", dup["body"])))
         left = q(R.dsn, "SELECT count(*) FROM relay_mail WHERE to_org='orgb.test'")[0][0]
         arm("collected mail is acked off the relay", bool(wait(
             lambda: q(R.dsn, "SELECT count(*) FROM relay_mail WHERE to_org='orgb.test'")[0][0] == 0,
             40, "B's mailbox empties")), left)
         arm("the relay host's own wire never saw the relayed traffic",
             q(R.dsn, "SELECT count(*) FROM messages WHERE from_org IN ('orga.test','orgb.test')")[0][0] == 0
-            and q(R.dsn, "SELECT count(*) FROM peers")[0][0] == 0)
+            and q(R.dsn, "SELECT count(*) FROM peers WHERE org='orgb.test'")[0][0] == 0)
         r = httpx.post(f"{rel}/relay/send", json={"to": "nobody.test", "kind": "msg",
                                                   "envelope": A.envelope("seed@nobody.test", "x")})
         arm("an unknown recipient is a 404, not a silent drop", r.status_code == 404, r.status_code)
@@ -254,7 +275,6 @@ def run(fr, fa, fb):
             and not relay.public_target("http://192.168.1.5:8845"))
 
         # --- the wizard's .env edits, one temp .env per choice
-        tmp = Path(tempfile.mkdtemp(prefix="federate-"))
         secret = A.env["ASTRYX_SECRET_KEY"]
 
         def envfile(name, url="http://old.example:8845"):
@@ -319,13 +339,17 @@ def run(fr, fa, fb):
         arm("a peer with a URL keeps direct delivery (no relay mailbox involved)",
             bool(got) and q(R.dsn, "SELECT count(*) FROM relay_mail WHERE to_org='relayhost.test'")[0][0] == 0,
             A.tail())
+        polled = wait(lambda: "GET /astryx/pickup?org=orga.test" in R.log.read_text(), 70,
+                      "A's direct pickup_task polls the host (it sleeps 30s while peerless, holds 25s)")
+        arm("a NAT org still long-polls its URL peers directly (pickup_task unchanged)", bool(polled))
     finally:
         for o in orgs:
             o.stop()
 
 
 if __name__ == "__main__":
-    with fixture_db() as fr, fixture_db() as fa, fixture_db() as fb:
-        run(fr, fa, fb)
+    with tempfile.TemporaryDirectory(prefix="test-relay-") as tmp, \
+            fixture_db() as fr, fixture_db() as fa, fixture_db() as fb:
+        run(fr, fa, fb, Path(tmp))
     print(f"{'ALL PASS' if not fails else 'FAIL'}: relay federation ({fails} failing)")
     sys.exit(1 if fails else 0)

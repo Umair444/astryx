@@ -33,7 +33,7 @@ from nacl.signing import SigningKey, VerifyKey
 
 ENVELOPE_MAX = 32000            # bytes of envelope text (the gateway caps a body at 16000)
 SEND_RATE = 300                 # envelopes/hour a registered org may post
-REGISTER_RATE = 20              # registrations/hour per IP
+REGISTER_RATE = 20              # registrations/hour per key (behind a tunnel every IP is 127.0.0.1)
 MAILBOX_MAX = 1000              # undelivered envelopes waiting for one org
 TTL = 3 * 86400                 # seconds an envelope waits before it is dropped
 HOLD = 25                       # pickup long-poll seconds
@@ -116,9 +116,6 @@ def make_router(get_pool, org_ok, host_identity, rated, allow_private_reach=Fals
 
     @router.post("/relay/register")
     async def register(request: Request):
-        ip = request.client.host if request.client else "?"
-        if rated(f"relay-register:{ip}", REGISTER_RATE):
-            return Response(status_code=429)
         try:
             d = await request.json()
         except Exception:
@@ -130,6 +127,8 @@ def make_router(get_pool, org_ok, host_identity, rated, allow_private_reach=Fals
             return Response(status_code=400)
         if not verify(d, pub):
             return Response(status_code=403)
+        if rated(f"relay-register:{pub}", REGISTER_RATE):
+            return Response(status_code=429)
         pool = get_pool()
         held = await pool.fetchrow("SELECT org, pubkey FROM relay_orgs WHERE org=$1 OR pubkey=$2",
                                    org, pub)
