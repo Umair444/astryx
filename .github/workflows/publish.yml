@@ -2,7 +2,7 @@
 # stored anywhere; PyPI trusts this workflow in this repo, and the release carries a provenance
 # attestation naming it. That provenance is what lets install.sh trust a PyPI package later (a2 #51669 B2).
 # One-time setup on pypi.org (owner): add a pending publisher for project "astryx", owner Umair444,
-# repository astryx, workflow publish.yml, environment pypi-release.
+# repository astryx, workflow publish.yml, environment pypi.
 name: publish
 on:
   push:
@@ -31,7 +31,7 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
-    environment: pypi-release
+    environment: pypi
     permissions:
       id-token: write
     steps:
