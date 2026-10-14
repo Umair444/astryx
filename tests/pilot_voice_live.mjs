@@ -34,7 +34,7 @@ async function until(what, test, ms = 60000) {
 }
 kids.push(spawn(PY, ['main:app', '--host', '127.0.0.1', '--port', '8193'], { cwd: join(REPO, 'observatory/api'), stdio: 'ignore' }))
 await until('the API on :8193', async () => (await fetch('http://127.0.0.1:8193/api/overview')).ok)
-kids.push(spawn(join(WEB, 'node_modules/.bin/vite'), ['--port', '5193', '--strictPort', '--host', '127.0.0.1'], { cwd: WEB, stdio: 'ignore', env: { ...process.env, OBS_API: 'http://127.0.0.1:8193' } }))
+kids.push(spawn(join(WEB, 'node_modules/.bin/vite'), ['--port', '5193', '--strictPort', '--host', '127.0.0.1'], { cwd: WEB, stdio: 'ignore', env: { ...process.env, OBS_API: 'http://127.0.0.1:8193', VITE_CACHE_DIR: process.env.VITE_CACHE_DIR || mkdtempSync(join(tmpdir(), 'voice-live-vite-')) } }))   // plan-10108 D2: its own vite cache
 const URL0 = 'http://127.0.0.1:5193/'
 await until('vite', async () => (await fetch(URL0)).ok && (await fetch(URL0 + 'src/main.tsx')).ok)
 const prof = mkdtempSync(join(tmpdir(), 'pilot-voice-'))

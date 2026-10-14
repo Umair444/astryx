@@ -12,7 +12,7 @@ setTimeout(() => { console.log('FAIL wall clock'); done(1) }, 240000)
 async function until(what, f, ms = 60000) { const e = Date.now() + ms; for (;;) { try { const v = await f(); if (v) return v } catch {} if (Date.now() > e) { console.log('FAIL waiting for ' + what); done(1) } await sleep(300) } }
 kids.push(spawn('/home/umair/astryx/venv/bin/uvicorn', ['main:app', '--host', '127.0.0.1', '--port', '8195'], { cwd: join(REPO, 'observatory/api'), stdio: 'ignore' }))
 await until('api', async () => (await fetch('http://127.0.0.1:8195/api/overview')).ok)
-kids.push(spawn(join(REPO, 'observatory/web/node_modules/.bin/vite'), ['--port', '5195', '--strictPort', '--host', '127.0.0.1'], { cwd: join(REPO, 'observatory/web'), stdio: 'ignore', env: { ...process.env, OBS_API: 'http://127.0.0.1:8195' } }))
+kids.push(spawn(join(REPO, 'observatory/web/node_modules/.bin/vite'), ['--port', '5195', '--strictPort', '--host', '127.0.0.1'], { cwd: join(REPO, 'observatory/web'), stdio: 'ignore', env: { ...process.env, OBS_API: 'http://127.0.0.1:8195', VITE_CACHE_DIR: process.env.VITE_CACHE_DIR || mkdtempSync(join(tmpdir(), 'room-vite-')) } }))   // plan-10108 D2: its own vite cache
 await until('vite', async () => (await fetch('http://127.0.0.1:5195/src/main.tsx')).ok)
 kids.push(spawn('/usr/bin/chromium', ['--headless=new', '--remote-debugging-port=9396', `--user-data-dir=${mkdtempSync(join(tmpdir(), 'room-'))}`, '--autoplay-policy=no-user-gesture-required', 'about:blank'], { stdio: 'ignore' }))
 const p = await until('chromium', async () => (await (await fetch('http://127.0.0.1:9396/json/list')).json()).find((t) => t.type === 'page'))
