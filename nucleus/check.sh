@@ -353,6 +353,7 @@ run "tool ledger: ids only, ledger authorship" "$PY" tests/test_tool_ledger.py
 # ugrep shell function and silently skips the gitignored estate. Hermetic; mutants in tests/mutants_grep_guard.py.
 run "grep guard: a blind recursive sweep is denied, the real binary never" "$PY" tests/test_grep_guard.py
 run "fixture_db reaps a killed run's database, never a live one's" "$PY" tests/test_fixture_reaper.py
+run "fixture stamps sign and check under one fixed search_path" "$PY" tests/test_fixture_sigpath.py
 # Hands S1, the browser cell (plan-7862): per-lease default-deny egress, NO model-API pinhole, no
 # secrets or mounts, kill = stop + wipe, and a lease dies at its STEP or WALL-TIME cap (seed #38260).
 # The real executor drives the real images against a throwaway lease table, in its OWN namespace.
