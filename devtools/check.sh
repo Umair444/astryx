@@ -195,6 +195,12 @@ verdict() {
 # copy of it. Everything above is definitions; everything below runs the real gates.
 [ -n "${CHECK_LIB_ONLY:-}" ] && return 0
 
+# FIRST, which astryx does this tree's python import? An installed copy (pip -e of another checkout, a PyPI
+# wheel) shadows the tree for any process that doesn't start at its root, and every gate below would then
+# pass code it never ran (plan-10224 D1). Runs before the sqlguard exports so no PYTHONPATH reaches it.
+# Hermetic. Mutants: tests/mutants_identity_gate.py.
+run "identity gate: this tree's python imports only this tree's astryx" "$PY" tests/test_identity_gate.py
+
 # sqlguard (goal 4243): the driver shim rides every python gate as `sitecustomize`. check.sh sets
 # all three ITSELF, because run_check runs this under pulse's bare systemd env (the runner-env law:
 # ASTRYX_NODE/507e7ea). The run id names this run's fixture databases, so the leak arm only ever looks for
