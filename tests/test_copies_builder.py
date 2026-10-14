@@ -252,6 +252,25 @@ try:
             ing.cy = real_cy
         slope = (hi - lo) / (2 * 40 - 2 * 4)
         check("K1 Cypher calls per added page ≤ 1.5 (batched edges)", 0 < slope <= 1.5, (lo, hi, slope))
+
+        # K2 — the same for WIRE size (a3 MC-1 #50712): the Thread/SPOKE_IN/PLANS writes were most of the 4815
+        # calls, and they move with org threads, not pages. Batched they are ~0 per added thread.
+        def calls_for_threads(n):
+            conn.execute("DELETE FROM messages WHERE thread LIKE 'k2-%%'")
+            for i in range(n):
+                for a in ("k2a", "k2b"):
+                    conn.execute("INSERT INTO messages (from_agent, to_agent, thread, body) VALUES (%s, 'k2c', %s, 'x')",
+                                 (a, f"plan-{i}" if i % 10 == 0 else f"k2-t{i}"))
+            return calls_for(4)
+
+        ing.cy = counting
+        try:
+            tlo, thi = calls_for_threads(5), calls_for_threads(200)
+        finally:
+            ing.cy = real_cy
+            conn.execute("DELETE FROM messages WHERE from_agent IN ('k2a', 'k2b')")
+        tslope = (thi - tlo) / 195
+        check("K2 Cypher calls per added org thread ≤ 0.05 (batched threads)", tslope <= 0.05, (tlo, thi, tslope))
     conn.close()
 finally:
     _fx.__exit__(None, None, None)
