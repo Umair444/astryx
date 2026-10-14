@@ -87,7 +87,7 @@ class World:
             i = args.index("--id") + 1
             return json.dumps({"success": True, "data": {"Text": self.store.get(args[i], "")}})
 
-        async def wire_insert(pool, frm, org, to, thread, intent, body, meta=None):
+        async def wire_insert(pool, frm, org, to, thread, intent, body, meta=None, route=None):   # route: plan-9139 S1b-2b
             self.rows.append((frm, to, thread, intent, body))
 
         async def route_target(pool, thread, text, default):

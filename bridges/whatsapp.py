@@ -298,7 +298,7 @@ async def hook(request: Request):
                 else f"wa-{''.join(c for c in voter_jid.split('@')[0] if c.isdigit()) or 'x'}"
             await wire_insert(pool, sender, "whatsapp", ask, f"wa:{chat}", "poll",
                               vote_body(d.get("question", "?"), changes,
-                                        d.get("aggregates", {})))
+                                        d.get("aggregates", {})), route=route)
         return {"ok": True}
     pc = m.get("Poll") or {}
     if pc.get("Question") and msgid:
@@ -314,7 +314,7 @@ async def hook(request: Request):
             "owner" if sender_jid in route.get("trusted_jids", []) else "wa-x",
             "whatsapp", route["agent"], f"wa:{chat}", "poll",
             f'posted a poll ({msgid}): "{pc.get("Question")}" — '
-            + " | ".join(pc.get("Options", [])))
+            + " | ".join(pc.get("Options", [])), route=route)
         return {"ok": True}
 
     if m.get("FromMe"):
@@ -369,7 +369,7 @@ async def hook(request: Request):
 
     agent, text = await route_target(pool, f"wa:{chat}", text, route["agent"])
 
-    await wire_insert(pool, sender, "whatsapp", agent, f"wa:{chat}", "chat", text, meta)
+    await wire_insert(pool, sender, "whatsapp", agent, f"wa:{chat}", "chat", text, meta, route=route)
 
     if route.get("live_steps") and trusted:
         jobs[agent] = {"chat": chat, "thread": f"wa:{chat}", "opened": now,

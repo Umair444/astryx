@@ -279,7 +279,7 @@ async def on_message(msg: discord.Message):
         rbody = resolved.content if isinstance(resolved, discord.Message) else ""
         meta["reply_to_body"] = (rbody or "").strip() or await resolve_quoted_body(pool, ref.message_id)
     agent, text = await route_target(pool, f"dc:{cid}", text, route["agent"])
-    await wire_insert(pool, who, "discord", agent, f"dc:{cid}", "chat", text, meta)
+    await wire_insert(pool, who, "discord", agent, f"dc:{cid}", "chat", text, meta, route=route)
     if route.get("live_steps") and trusted:
         jobs[agent] = {"chat": cid, "ph": None, "sent": ""}
         try:
@@ -323,7 +323,7 @@ async def _poll_event(payload):
     await wire_insert(
         pool, "owner" if trusted else f"dc-{payload.user_id}", "discord",
         rec["agent"] or (route and route["agent"]) or "seed", f"dc:{cid}", "poll",
-        vote_body(rec["question"], changes, agg))
+        vote_body(rec["question"], changes, agg), route=route)
 
 
 @client.event

@@ -32,7 +32,9 @@ MUTANTS = {
         ('_mac(key, "stamp", str(int(row_id)), rkey, _label_text(lbl), str(pointer), str(bmac))',
          '_mac(key, "stamp", str(int(row_id)), rkey, _label_text(lbl), str(bmac))'),
     "R16 the door skips the body-MAC recompute on the resolved body":
-        ('    if not hmac.compare_digest(body_mac(key, body), str(bmac)):', '    if False:'),
+        ('    if not hmac.compare_digest(body_mac(key, body), str(bmac)):\n        raise Refused("the resolved body is not '
+         'the body that was released")', '    if False:\n        raise Refused("the resolved body is not the body that was '
+         'released")'),     # open_stamped's; read_for's own check is mutants_release_ingress.py I3
     "R17 get() ignores the stamped label's tier dir":
         ('        if tier != self.tier_dir(frozenset(lbl)):', '        if False:'),
     "R18 a reply keeps ANY inbound thread, a channel thread included (a3 F2)":

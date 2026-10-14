@@ -242,7 +242,7 @@ async def on_message(msg: dict):
         meta["reply_to_body"] = ((rep.get("text") or rep.get("caption") or "").strip()
                                  or await resolve_quoted_body(pool, rid))
     agent, text = await route_target(pool, f"tg:{chat}", text, route["agent"])
-    await wire_insert(pool, who, "telegram", agent, f"tg:{chat}", "chat", text, meta)
+    await wire_insert(pool, who, "telegram", agent, f"tg:{chat}", "chat", text, meta, route=route)
     if route.get("live_steps") and trusted:
         jobs[agent] = {"chat": chat, "ph_id": None, "sent": ""}
         try:
@@ -277,7 +277,7 @@ async def on_poll_answer(pa: dict):
     await wire_insert(
         pool, "owner" if trusted else f"tg-{user.get('id')}", "telegram",
         rec["agent"] or (route and route["agent"]) or "seed", chat, "poll",
-        vote_body(rec["question"], changes, agg))
+        vote_body(rec["question"], changes, agg), route=route)
 
 
 async def on_message_reaction(mr: dict):

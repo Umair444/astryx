@@ -24,7 +24,7 @@ function run(args, { input, agent, py = PY, door = DOOR } = {}) {
       // a door that ran answers in JSON; anything else (no python, no door, a crash) is a door that couldn't run.
       // stderr can carry a traceback quoting the request: only its last line, and only to this session
       const ran = said !== null && (!err || typeof err.code === 'number')
-      resolve({ code: err ? err.code : 0, said, ran,
+      resolve({ code: err ? err.code : 0, said, ran, stdout,
         why: (said && said.error) || `the release door could not run (${(stderr || err?.message || '').trim()
           .split('\n').pop().slice(-120)})` })
     })
@@ -48,4 +48,13 @@ export async function releaseSend(agent, req, opts = {}) {
   const r = await run(['send'], { ...opts, agent, input: JSON.stringify(req) })
   if (r.code !== 0 || !Number.isInteger(r.said?.id)) throw new Error(r.why)
   return r.said.id
+}
+
+/** The body behind an inbound tier row's pointer, for this session (release.py read_for: the pointer's tiers ⊆ the
+ * agent's label, and the body carries the row's keyed MAC). THROWS with the door's reason; the caller keeps the
+ * row's marker then. */
+export async function releaseRead(agent, pointer, bodyMac, opts = {}) {
+  const r = await run(['read', String(pointer), String(bodyMac)], { ...opts, agent })
+  if (r.code !== 0) throw new Error(r.why)
+  return r.stdout
 }

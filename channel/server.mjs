@@ -39,7 +39,7 @@ const SOURCE = JOIN.mode === 'joined' ? 'plugin:astryx:astryx' : 'astryx'   // t
 // meant to be private must never run as org on a typo. No charter, or a door that can't run, is UNKNOWN (null): the
 // body starts and its ear works, but every send goes to the door, which refuses it; nothing reaches the raw INSERT.
 // Only [] (org) keeps the paths this file always had.
-const { readLabel, releaseSend } = await import('./release.mjs')
+const { readLabel, releaseSend, releaseRead } = await import('./release.mjs')
 let LABEL
 try {
   LABEL = await readLabel(AGENT)
@@ -549,11 +549,24 @@ async function pushMessage(row) {
   // acting on. A heuristic that guessed staleness here would be guessing about a
   // judgement the reader can make with the facts.
   if (row.thread) seenThreads.add(row.thread)    // the threads a labelled reply may keep (release.agent_send)
+  // plan-9139 S1b-2b: an inbound row from a tier route carries a marker and a pointer. Only a session whose label
+  // (an array: never UNKNOWN, never org) holds that tier resolves it, through the door's read rule; every other
+  // reader, and any refusal, gets the marker as written.
+  let text = row.body
+  const ing = row.delivery?.ingress
+  const lbl = ing ? await currentLabel().catch(() => null) : null    // an UNKNOWN label is read again here too
+  if (ing && Array.isArray(lbl) && lbl.includes(ing.tier)) {
+    try {
+      text = await releaseRead(AGENT, ing.pointer, ing.body_mac)
+    } catch (e) {
+      text = `${row.body} [the tier door would not resolve it: ${e.message}]`
+    }
+  }
   const again = Number(row.delivery?.recovered || 0)
   const content = again
     ? `[redelivered wake · sent ${new Date(row.ts).toISOString()} · the session it was ` +
-      `first delivered to ended before taking any turn, so nothing read it]\n${row.body}`
-    : row.body
+      `first delivered to ended before taking any turn, so nothing read it]\n${text}`
+    : text
   await mcp.notification({
     method: 'notifications/claude/channel',
     params: {

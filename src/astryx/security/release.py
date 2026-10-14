@@ -335,6 +335,65 @@ def label_of(agent: str, agents_dir: Path | None = None) -> frozenset:
     return frozenset(tiers)
 
 
+TIER_KEY = "tier"
+
+
+def route_tier(route) -> str | None:
+    """The tier a route DECLARES (`"tier": "<declared tier>"`), or None when it declares none. A key that LOOKS like
+    a tier declaration but isn't exactly `tier` (Tier, tiers, tier_name…), or a value outside TIERS, raises
+    GrantError: the route grant's polarity (a4 #46035), so a typo can't put a private chat on today's raw path."""
+    if not isinstance(route, dict):
+        return None
+    odd = sorted(str(k) for k in route if "tier" in str(k).lower() and k != TIER_KEY)
+    if odd:
+        raise GrantError(f"route key {odd[0]!r} is not exactly {TIER_KEY!r}: refusing rather than routing it untiered")
+    if TIER_KEY not in route:
+        return None
+    t = route[TIER_KEY]
+    if t not in TIERS:
+        raise GrantError(f"the route declares tier {t!r}, which is not one of {','.join(sorted(TIERS))}")
+    return t
+
+
+def ingress(channel: str, route: dict, body: str, key: bytes, store: "TierStore") -> tuple[str, dict]:
+    """An INBOUND message on a route that declares a tier (S1b-2b, #46033 item 4): the body goes to the tier store
+    and the row carries a size marker plus delivery.ingress {pointer, body_mac, tier}. The labelled member's channel
+    server resolves the pointer (`read`, label-checked); every other reader sees the marker.
+    Refused (GrantError for a bad declaration, Refused otherwise) BEFORE anything is stored when: the route
+    declares no valid tier; it is `open` (a stranger's text would enter the tier store); or its audience isn't within
+    readers(tier), i.e. it isn't a DM declared as the owner's. The caller passes the key, so no key → no call."""
+    tier = route_tier(route)
+    if tier is None:
+        raise Refused("this route declares no tier: ingress is not its path")
+    if route.get("open"):
+        raise GrantError(f"a {tier} route can't be open: a stranger's text would enter the {tier} store")
+    lbl = frozenset({tier})
+    if not releasable(lbl, audience(channel, route)):
+        raise Refused(f"the route's audience isn't within readers({tier}): only a DM declared as the owner's")
+    pointer = store.put(lbl, body)
+    return (f"[tier-routed: {len(body.encode())} bytes, {tier}]",
+            {"ingress": {"pointer": pointer, "body_mac": body_mac(key, body), "tier": tier}})
+
+
+def read_for(agent: str, pointer: str, bmac: str, *, key: bytes, store: "TierStore",
+             agents_dir: Path | None = None) -> str:
+    """The body behind `pointer` for a session of `agent`. THE READ RULE (a3's cross-tier refusal, adopted in
+    #45071; a4 #46035 item 4): the pointer's tiers must ALL be in the agent's own label; an org or UNKNOWN agent
+    reads nothing; and the resolved body must carry the row's keyed MAC, so a swapped file or a pointer lifted from
+    another row resolves to nothing."""
+    lbl = label_of(agent, agents_dir)
+    tiers = frozenset(str(pointer).partition("/")[0].split("+"))
+    if not lbl or not tiers <= lbl:
+        raise Refused("the pointer's tier is not in this member's label")
+    try:
+        body = store.get(pointer, tiers)
+    except OSError:
+        raise Refused("no body under that pointer")
+    if not hmac.compare_digest(body_mac(key, body), str(bmac)):
+        raise Refused("the resolved body is not the body the row names")
+    return body
+
+
 def declared_routes(bridges_dir: Path | None = None) -> list:
     """(channel, route, routes_file) for every route declared in bridges/routes-<channel>.json (v4 D5's route
     domain). A route's `tier`, when present, must be a declared tier, or the whole read refuses (a4 #46035)."""
@@ -346,9 +405,10 @@ def declared_routes(bridges_dir: Path | None = None) -> list:
         except (OSError, ValueError):
             raise Refused(f"{f.name} is unreadable: no route can be established")
         for r in rows if isinstance(rows, list) else []:
-            t = r.get("tier")
-            if t is not None and t not in TIERS:
-                raise GrantError(f"a route in {f.name} declares tier {t!r}, which is not a declared tier")
+            try:
+                route_tier(r)
+            except GrantError as e:
+                raise GrantError(f"a route in {f.name}: {e}")
             out.append((f.stem.split("-", 1)[1], r, f))
     return out
 
@@ -403,8 +463,8 @@ def main(argv=None) -> int:
                                                   rc 3 when no charter resolves (UNKNOWN)
         python -m astryx.security.release send            stdin {to, thread, intent, body, inbound_thread}; sender is
                                                   $ASTRYX_AGENT; prints {"id": n} or {"error": reason}; rc 0 / 1
-        python -m astryx.security.release read <pointer>  the body, for $ASTRYX_AGENT, only if the pointer's tier is in
-                                                  its label (a3's cross-tier refusal); rc 1 otherwise
+        python -m astryx.security.release read <pointer> <body_mac>   the body, for $ASTRYX_AGENT, only under
+                                                  read_for()'s rule (its tiers ⊆ the label, the MAC matches); rc 1
     Errors print a reason that carries no content, jid or chat id."""
     import json
     import sys
@@ -429,17 +489,13 @@ def main(argv=None) -> int:
                 c.commit()
             print(json.dumps({"id": rid}))
             return 0
-        if argv[:1] == ["read"] and len(argv) == 2:
-            lbl = label_of(agent)
-            tier = argv[1].partition("/")[0]
-            if not lbl or tier != TierStore.tier_dir(lbl):
-                raise Refused("the pointer's tier is not this member's label")
-            sys.stdout.write(TierStore().get(argv[1], lbl))
+        if argv[:1] == ["read"] and len(argv) == 3:
+            sys.stdout.write(read_for(agent, argv[1], argv[2], key=mac_key(), store=TierStore()))
             return 0
     except Refused as e:
         print(json.dumps({"error": str(e)}))
         return 1
-    print("usage: python -m astryx.security.release label <agent> | send | read <pointer>", file=sys.stderr)
+    print("usage: python -m astryx.security.release label <agent> | send | read <pointer> <body_mac>", file=sys.stderr)
     return 2
 
 
