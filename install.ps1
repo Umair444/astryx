@@ -58,6 +58,8 @@ function Install-Astryx {
     }
     # Read-only probes inside the distro: no echo, output returned as one trimmed string ('' on failure).
     function Read-InDistro([string]$Cmd, [string]$User) {
+        # Windows PowerShell 5.1 under 'Stop' throws on ANY native stderr, even discarded; a probe must not read noise as ''
+        $ErrorActionPreference = 'Continue'
         $a = @('-d', $Distro)
         if ($User) { $a += @('-u', $User) }
         $a += @('--', 'sh', '-c', (Get-B64Cmd $Cmd))
@@ -67,6 +69,7 @@ function Install-Astryx {
     }
     function Get-WslDistros {
         # NAME / STATE / VERSION rows from `wsl -l -v`; the default distro is marked with '*'.
+        $ErrorActionPreference = 'Continue'   # see Read-InDistro
         $rows = @()
         try { $raw = & wsl.exe -l -v 2>$null } catch { return $rows }
         if ($LASTEXITCODE -ne 0 -or $null -eq $raw) { return $rows }
@@ -104,7 +107,12 @@ function Install-Astryx {
         if ($env:ASTRYX_INSTALL_BASE) { $envs += "`$env:ASTRYX_INSTALL_BASE='$Base'; " }
         $cmd = "$envs$OneLine"
         Show "Start-Process powershell -Verb RunAs -ArgumentList '-NoExit -Command $cmd'"
-        Start-Process powershell.exe -Verb RunAs -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-NoExit', '-Command', $cmd)
+        try {
+            Start-Process powershell.exe -Verb RunAs -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-NoExit', '-Command', $cmd)
+        } catch {
+            Bad 'The Administrator prompt was declined, so nothing changed. Open PowerShell with "Run as administrator" and run:'
+            Write-Host "    $OneLine"
+        }
         return
     }
     Ok 'running as Administrator'
@@ -134,7 +142,15 @@ function Install-Astryx {
 
     # ── 3. WSL and the distro ───────────────────────────────────────────────────────────────────────────────────
     $distros = @()
-    if (Get-Command wsl.exe -ErrorAction SilentlyContinue) { $distros = @(Get-WslDistros) }
+    $hadWsl = [bool](Get-Command wsl.exe -ErrorAction SilentlyContinue)
+    if ($hadWsl) {
+        $distros = @(Get-WslDistros)
+        # wsl.exe ships with Windows; WSL itself is installed only if `wsl --status` succeeds
+        $ErrorActionPreference = 'Continue'
+        & wsl.exe --status *> $null
+        if ($LASTEXITCODE -ne 0 -and $distros.Count -eq 0) { $hadWsl = $false }
+        $ErrorActionPreference = 'Stop'
+    }
     $mine = $distros | Where-Object { $_.Name -eq $Distro } | Select-Object -First 1
     if (-not $mine -and -not $env:ASTRYX_DISTRO) {
         # already running e.g. Ubuntu-24.04? use it rather than installing a second Ubuntu
@@ -143,9 +159,27 @@ function Install-Astryx {
     }
     if (-not $mine) {
         Say "Installing WSL2 with $Distro."
-        $rc = Invoke-Wsl @('--install', '-d', $Distro)
+        Show "wsl --install -d $Distro"
+        $rc = 0
+        if (-not $Dry) {
+            # called directly (not piped), so the distro's first-launch user prompt, when it appears, reaches this console
+            & wsl.exe --install -d $Distro
+            $rc = $LASTEXITCODE
+        }
         if ($rc -ne 0) {
             Bad "wsl --install failed (exit $rc). If it mentions virtualization, enable VT-x/AMD-V in BIOS/UEFI, restart, and run this again."
+            return
+        }
+        if ($hadWsl) {
+            # WSL was already on: no reboot, only the new distro's first launch.
+            Write-Host @"
+
+  $Distro is installed. One step only you can do: open "$Distro" from the Start menu once and
+  create your Linux username and password. Then run the same line again:
+
+    $OneLine
+
+"@
             return
         }
         Write-Host @"

@@ -200,6 +200,14 @@ check_node() {
   pkg_install node || true
 }
 
+# Adding yourself to the docker group only counts from your next login, so this run can't use docker without sudo.
+# RELOGIN makes run_init stop with that sentence instead of letting init.sh die on "permission denied".
+RELOGIN=0
+add_docker_group() {
+  run sudo usermod -aG docker "$(id -un)" || return 1
+  RELOGIN=1
+  return 0
+}
 check_docker() {
   if command -v docker >/dev/null 2>&1; then
     if _t 10 docker info >/dev/null 2>&1; then
@@ -212,8 +220,7 @@ check_docker() {
     if [ "$OS" = linux ]; then
       if ask "start docker at boot and let $(id -un) use it (systemctl enable --now docker; usermod -aG docker)"; then
         run sudo systemctl enable --now docker || true
-        run sudo usermod -aG docker "$(id -un)" || true
-        warn "group change takes effect at your next login. Log out and back in (on WSL: wsl --shutdown from Windows), then re-run this."
+        add_docker_group
       fi
     else
       warn "start Docker Desktop (or colima start), then re-run this."
@@ -233,14 +240,13 @@ check_docker() {
       if ask "install docker-ce (curl -fsSL https://get.docker.com | sudo sh)"; then
         run bash -c "curl -fsSL https://get.docker.com | sudo sh" \
           && run sudo systemctl enable --now docker \
-          && run sudo usermod -aG docker "$(id -un)" \
-          && { warn "docker group: takes effect at your next login (on WSL: wsl --shutdown from Windows, reopen)"; return 0; }
+          && add_docker_group && return 0
       fi
       MISSING+=("docker: curl -fsSL https://get.docker.com | sudo sh && sudo systemctl enable --now docker && sudo usermod -aG docker $(id -un)") ;;
     linux:pacman)
       if pkg_install docker; then
         run sudo systemctl enable --now docker || true
-        run sudo usermod -aG docker "$(id -un)" || true
+        add_docker_group
       fi ;;
     *)
       MISSING+=("docker: https://docs.docker.com/engine/install/") ;;
@@ -312,6 +318,13 @@ install_astryx() {
 
 run_init() {
   if [ "$DO_INIT" = 0 ]; then say "--no-init: done. When you're ready: cd $ASTRYX_DIR && ./init.sh"; return 0; fi
+  if [ "$RELOGIN" = 1 ]; then
+    say "one pause: you were just added to the docker group, which takes effect at your next login."
+    if [ "$WSL" != no ]; then say "  close this terminal, run 'wsl --shutdown' in Windows PowerShell, reopen the distro,"
+    else say "  log out and back in (or reboot),"; fi
+    say "  then run the same install line again. It skips what's done and carries on from here."
+    [ "$DRY" = 1 ] || exit 0
+  fi
   if [ "$USE_CLI" = 1 ] || { command -v astryx >/dev/null 2>&1 && ! astryx_is_initsh_link; }; then
     say "handing over to: astryx init"
     _tty_run astryx init

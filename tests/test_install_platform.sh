@@ -106,7 +106,8 @@ unset ASTRYX_PROC_VERSION
 printf '{"info":{"project_urls":{"Source":"https://github.com/someone-else/astryx"}}}\n' > "$T/pypi-other.json"
 printf '{"info":{"project_urls":{"Source":"https://github.com/Umair444/astryx"}}}\n' > "$T/pypi-ours.json"
 
-# D2: this box, as it is (whatever is installed), with sudo trapped
+# D2: this box, as it is (whatever is installed), with sudo trapped. A deliberate tripwire: once the Python `astryx`
+# CLI is installed on this host, the hand-over arm below should read "$ astryx init" and this arm goes red; update it then.
 out=$(PATH="$T/trap:$PATH" ASTRYX_PYPI_URL="file://$T/absent.json" ./install.sh --dry-run --dir "$T/home/astryx" </dev/null 2>&1); rc=$?
 arm   "(D2) dry-run on this box exits 0" "$rc" 0
 has   "(D2) says it is a dry run" "$out" "DRY RUN: printing every command, running none"
@@ -136,6 +137,8 @@ has   "(D3) docker-ce inside WSL, recommended" "$out" "WSL: installing docker-ce
 has   "(D3) docker via Docker's convenience script" "$out" '$ bash -c curl -fsSL https://get.docker.com | sudo sh'
 has   "(D3) Claude Code via the official native installer" "$out" '$ bash -c curl -fsSL https://claude.ai/install.sh | bash'
 has   "(D3) the clone lands in ~/astryx by default" "$out" "git clone https://github.com/Umair444/astryx $T/h/astryx"
+has   "(D3) joining the docker group → a calm pause before init (not a permission-denied crash)" "$out" "you were just added to the docker group"
+has   "(D3) …with the WSL way to re-login" "$out" "run 'wsl --shutdown' in Windows PowerShell"
 arm   "(D3) nothing ran" "$( [ -e "$T/RAN" ]; echo $?)" 1
 arm   "(D3) apt-get update appears once (idempotent within a run)" "$(printf '%s\n' "$out" | grep -c 'sudo apt-get update')" 1
 
