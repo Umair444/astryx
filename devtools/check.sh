@@ -315,6 +315,9 @@ run "merge_check: one base read, conflicts refused, links removed" "$PY" tests/t
 # devtools/review_range.sh: a review range is the MERGE-BASE..the branch head, both read from git; --check refuses the
 # merged-ONTO sha, an older base, a stale or unresolvable head (a4 night-review 10-12). Mutants: tests/mutants_review_range.py.
 run "review_range: base is the merge-base, head is the branch, typed shas refused" "$PY" tests/test_review_range.py
+# devtools/review_live.py: branch code measured against the LIVE tree (repo_root rebound only for the extract), the
+# child read-only by default and without ASTRYX_AGENT (a3 night-review 10-16, seed #56224). Mutants: tests/mutants_review_live.py.
+run "review_live: branch code reads the live REPO, fixtures untouched, postgres read-only, no agent identity" "$PY" tests/test_review_live.py
 # the database's SHAPE, which the stamp can't see (a1 #38264): live == a fresh apply of the schema files, table by
 # table, column by column, with types. Catches a column added inside an existing CREATE TABLE IF NOT EXISTS (a no-op
 # on a live host) and a hand DROP. Live read is read-only. Mutants: tests/mutants_schema_parity.py.
