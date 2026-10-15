@@ -145,6 +145,13 @@ def main():
                            capture_output=True, text=True, timeout=120)
         check("a log with NO `check:` verdict says NO VERDICT (it used to print nothing, as a clean run does)",
               "NO VERDICT" in p.stdout, p.stdout[-300:])
+        # a log CUT SHORT after a nested run's verdict: that `check:` line is not this run's (a4 #56353 R1: a false green)
+        p = subprocess.run(["bash", str(r / "devtools" / "merge_check.sh"), "feat"], cwd=r,
+                           env={**env, "MERGE_CHECK_CHECK": "sh -c 'echo; echo \"check: ALL CODE INVARIANTS PASS (3 gates verified)\"; "
+                                                           "echo \"  ✓ a later gate\"; echo partial output'"},
+                           capture_output=True, text=True, timeout=120)
+        check("a log TRUNCATED after a nested verdict says NO VERDICT, never quotes the nested PASS as this merge's",
+              "NO VERDICT" in p.stdout and "ALL CODE INVARIANTS PASS" not in p.stdout, p.stdout[-300:])
         # AN INTERRUPT CLEANS UP (a4 10-10: a stopped run left 38 live links in /tmp). TERM goes to the SCRIPT only, mid-check,
         # with the check sleeping: a foreground child would defer the trap until it ended.
         rec.unlink(missing_ok=True)

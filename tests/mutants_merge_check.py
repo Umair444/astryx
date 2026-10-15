@@ -46,4 +46,7 @@ MUTANTS = {
     "K22 the FIRST `check:` line is taken (a nested check.sh run inside an oracle is quoted as this merge's verdict)":
         ('    { line[NR] = $0 } /^check:/ { last = NR }',
          '    { line[NR] = $0 } /^check:/ { if (!last) last = NR }'),
+    'K23 a verdict followed by more output is still taken (a log cut short after a NESTED run reads as its PASS: a4 #56353 R1)':
+        ('      for (i = last + 1; i <= NR; i++) if (line[i] != "" && line[i] !~ /^       /) { print',
+         '      for (i = last + 1; i <= NR; i++) if (0 && line[i] != "" && line[i] !~ /^       /) { print'),
 }

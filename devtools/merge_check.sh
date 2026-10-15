@@ -128,6 +128,9 @@ if [ "$FULL" != 0 ]; then
     { line[NR] = $0 } /^check:/ { last = NR }
     END {
       if (!last) { print "  NO VERDICT: the log has no `check:` line from check.sh (it timed out or crashed); read the log"; exit }
+      # verdict() is the LAST statement of check.sh: the real `check:` line can be followed only by its 7-space continuation.
+      # Anything else after it means this `check:` came from a NESTED run and the log was cut short (a4 #56353 R1).
+      for (i = last + 1; i <= NR; i++) if (line[i] != "" && line[i] !~ /^       /) { print "  NO VERDICT: the last `check:` line (log line " last ") is followed by more output, so it came from a NESTED run, not this one; read the log"; exit }
       s = last - 1; if (line[s] == "") s--
       while (s > 0 && line[s] ~ /^(FAILED \(|UNVERIFIED \(|PROTOCOL |  [✗○] )/) s--
       for (i = s + 1; i <= NR; i++) if (i <= last || line[i] ~ /^       /) print "  " line[i]
