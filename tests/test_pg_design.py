@@ -16,6 +16,12 @@ import re
 import sys
 from pathlib import Path
 
+try:
+    import yaml  # noqa: F401  (pg_design.declared() parses the compose file with it)
+except ImportError as e:
+    print(f"SKIP: deps ({e}). Nothing was verified here.")
+    sys.exit(77)
+
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
