@@ -124,6 +124,58 @@ def _import_ok(root: str) -> bool:
         return False
 
 
+_OPS = ("==", ">=", "<=", "!=", ">", "<")      # the operators judged; anything else is UNJUDGEABLE, never satisfied
+
+
+def _vtuple(v: str) -> tuple | None:
+    """'1.28.1' -> (1, 28, 1); a release segment that isn't plain digits (1.0rc1, a local +tag) -> None."""
+    parts = v.split("+")[0].split(".")
+    return tuple(int(x) for x in parts) if all(x.isdigit() for x in parts) else None
+
+
+def _cmp(a: tuple, b: tuple) -> int:
+    n = max(len(a), len(b))
+    a, b = a + (0,) * (n - len(a)), b + (0,) * (n - len(b))
+    return (a > b) - (a < b)
+
+
+def spec_problem(pip_spec: str, version_of=None) -> str | None:
+    """None when the INSTALLED distribution satisfies pip_spec's version constraints (a spec with none is satisfied
+    by presence, which _import_ok judges); else why not. Presence alone can't see a wrong major: mcp 2.x is
+    importable as `mcp` yet removed mcp.server.fastmcp (a2 #54114). Compared without `packaging`, which core doesn't
+    carry. Fail-closed (a2 #54126): an operator, marker or version this reader can't judge is a problem, never a pass."""
+    import importlib.metadata as md
+    import re
+    m = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(\[[^\]]*\])?(.*)$", pip_spec.strip())
+    if not m:
+        return f"unjudgeable spec {pip_spec!r}"
+    dist, rest = m.group(1), m.group(3).strip()
+    if not rest:
+        return None
+    if ";" in rest or "@" in rest:
+        return f"unjudgeable spec {pip_spec!r} (a marker or URL)"
+    try:
+        have = (version_of or md.version)(dist)
+    except Exception:                                   # noqa: BLE001
+        return f"{dist}: no installed distribution metadata to judge {rest}"
+    hv = _vtuple(have)
+    if hv is None:
+        return f"{dist} {have}: a version this reader can't compare against {rest}"
+    for clause in rest.split(","):
+        clause = clause.strip()
+        op = next((o for o in _OPS if clause.startswith(o)), None)
+        if op is None or clause.startswith(("~=", "===")):
+            return f"unjudgeable clause {clause!r} in {pip_spec!r}"
+        want = _vtuple(clause[len(op):].strip())
+        if want is None:
+            return f"unjudgeable version in {clause!r} of {pip_spec!r}"
+        c = _cmp(hv, want)
+        ok = {"==": c == 0, "!=": c != 0, ">=": c >= 0, "<=": c <= 0, ">": c > 0, "<": c < 0}[op]
+        if not ok:
+            return f"{dist} {have} does not satisfy {clause}"
+    return None
+
+
 def main() -> int:
     args = sys.argv[1:]
     if not args:
@@ -140,11 +192,13 @@ def main() -> int:
         want = rest or ["core"]
         missing = [(pip, imp) for g in want for (pip, imp) in groups.get(g, [])
                    if not _import_ok(imp)]
-        if missing:
-            for pip, imp in missing:
-                print(f"missing: {imp} (pip install {pip})", file=sys.stderr)
-            return 1
-        return 0
+        wrong = [(pip, why) for g in want for (pip, imp) in groups.get(g, [])
+                 if _import_ok(imp) and (why := spec_problem(pip))]
+        for pip, imp in missing:
+            print(f"missing: {imp} (pip install {pip})", file=sys.stderr)
+        for pip, why in wrong:
+            print(f"wrong version: {why} (pip install '{pip}')", file=sys.stderr)
+        return 1 if missing or wrong else 0
 
     if verb == "coverage":
         gaps = coverage_gaps()
