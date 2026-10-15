@@ -6,6 +6,9 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+# The job only reads the repo; the token's default scope follows a repo setting, so this file pins it (steward #55551).
+permissions:
+  contents: read
 jobs:
   invariants:
     runs-on: ubuntu-latest
@@ -14,6 +17,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      # Requirement lines go to pip as written (-r /dev/stdin, never xargs: a ';' marker or a quote would be split).
       # Derived from src/astryx/data/deps.conf through the BUILD's own reader (hatch_build.deps_groups, which also
       # drops the non-installable on-chip marker), so CI and the wheel can't disagree on what a dependency is. A plain
       # install, never `pip install -e .`: an installed astryx would shadow the tree under test (the identity gate
@@ -22,7 +26,7 @@ jobs:
         run: |
           python -m pip install --quiet hatchling
           python -c "import hatch_build as h, pathlib; print('\n'.join(s for g, v in h.deps_groups(pathlib.Path('.')).items() if g != 'media' for s in v))" \
-            | xargs python -m pip install --quiet
+            | python -m pip install --quiet -r /dev/stdin
       # CHECK_ALLOW_SKIP is the VISIBLE exemption, and this is the one place it belongs. check.sh is strict by
       # default: a gate that verifies nothing is RED. A CI clone is the one environment where skipping is
       # legitimate (triggers/, memory/ and the database are absent by construction), so those read amber; check.sh
