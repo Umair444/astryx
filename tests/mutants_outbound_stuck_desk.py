@@ -28,8 +28,8 @@ MUTANTS = {
          "\"\n            \")"),
     "D8 the bridge's remedy loses the caveat":
         ("resend UN-THREADED {DOORBELL} or to a surface", "resend UN-THREADED (the owner doorbell) or to a surface"),
-    "D9 the desk's WHO is dropped (a seed row reads 'was served')":
-        ("({DESK_ROW} AND m.from_agent = 'memory') AS desk_served", "({DESK_ROW}) AS desk_served"),
+    "D9 the desk's WHO is dropped (the owner's own row reads as served)":
+        ("({DESK_ROW} AND m.from_agent <> 'owner') AS desk_served", "({DESK_ROW}) AS desk_served"),
     "D10 the uncarried class is computed and never rendered":
         ("    if desk_uncarried:\n        parts.append(", "    if False:\n        parts.append("),
     "D11 the person desk takes the doorbell remedy":
@@ -42,4 +42,15 @@ MUTANTS = {
     "D14 an uncarried person-desk row ignores the person rule (re-route)":
         ("            (desk_person if m.get(\"desk_person\") else desk_uncarried).append(f)",
          "            desk_uncarried.append(f)"),
+    "D15 the desk's WHO reverts to the pre-858b8db consumer (memory only: seed's served row reads uncarried)":
+        ("({DESK_ROW} AND m.from_agent <> 'owner') AS desk_served",
+         "({DESK_ROW} AND m.from_agent = 'memory') AS desk_served"),
+    # not "reverts to <> 'memory'": desk_served is consulted first, so that mutant only differs on rows desk already
+    # took, an equivalent mutant (it survived). Inverting the WHO changes which rows are uncarried at all.
+    "D16 the uncarried predicate is inverted (the owner's own row falls to the bridge)":
+        ("({DESK_ROW} AND m.from_agent = 'owner') AS desk_uncarried",
+         "({DESK_ROW} AND m.from_agent <> 'owner') AS desk_uncarried"),
+    "D17 the desk render drops the warning that abandoning stops the late serve":
+        ("Do not close it `abandoned` while it still matters: that \"\n            f\"also stops the late serve. ",
+         "\"\n            f\""),
 }

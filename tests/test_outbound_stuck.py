@@ -450,8 +450,9 @@ def _entry(rows):
 
 
 def test_a_desk_thread_from_a_sender_the_desk_does_not_serve_is_uncarried():
-    """a4 #55690 (a): the desk serves from_agent='memory' only (main.py:3045). seed's 08-14 estate row is neither the
-    desk's (it never serves it, late or not) nor the bridge's (which skips the thread by design)."""
+    """a4 #55690 (a), #56053: the desk serves every sender but the owner (painter 858b8db: memory_chat_replies and
+    memory_late_replies, from_agent<>'owner'). The owner's own row on a desk thread is neither the desk's nor the
+    bridge's (which skips the thread by design)."""
     g = bucket([_fentry(9, "pending", 6)], _meta(9, bridge_delivered=True, desk_uncarried=True))
     assert _ids(g["desk_uncarried"]) == {"9"} and g["desk"] == [] and g["bridge"] == [], g
 
@@ -473,21 +474,34 @@ def test_person_desk_render_never_prescribes_a_resend():
 
 def test_uncarried_render_never_says_the_desk_serves_it():
     import re
-    out = _entry(_entry_rows((909, "pending", {"desk_uncarried": True, "from_agent": "seed"})))
+    out = _entry(_entry_rows((909, "pending", {"desk_uncarried": True, "from_agent": "owner"})))
     assert "UNCARRIED BY CONSTRUCTION (1)" in out and "#909" in out, out
     assert "WAS served" not in out and "late answers" not in out and "pgrep" not in out, out
     assert not re.search(r"(?i)un-threaded", out), out
 
 
 def test_an_uncarried_person_desk_row_gets_the_person_rule_not_a_re_route():
-    """a4 #55692: an obs:person- row from a sender the desk doesn't serve is still People detail by construction, so
+    """a4 #55692: an obs:person- row from the sender the desk doesn't serve is still People detail by construction, so
     "re-route it to a surface whose readers may read it" would hand that sender the judgment (b) took away."""
     import re
     g = bucket([_fentry(11, "pending", 6)], _meta(11, bridge_delivered=True, desk_uncarried=True, desk_person=True))
     assert _ids(g["desk_person"]) == {"11"} and g["desk_uncarried"] == [] and g["bridge"] == [], g
-    out = _entry(_entry_rows((910, "pending", {"desk_uncarried": True, "desk_person": True, "from_agent": "seed"})))
+    out = _entry(_entry_rows((910, "pending", {"desk_uncarried": True, "desk_person": True, "from_agent": "owner"})))
     assert "UNSERVED ON THE PERSON DESK (1)" in out and "#910" in out and "UNCARRIED" not in out, out
     assert not re.search(r"(?i)re-route|un-threaded|doorbell", out), out
+
+
+def test_desk_renders_say_late_serve_delivers_it_and_abandoning_stops_it():
+    """painter 858b8db: a desk reply no poll read is served LATE the next time that desk opens, so pending is "nothing
+    to fix", and closing it `abandoned` while it still matters is what would strand it (the late route serves pending
+    rows only). Neither the desk nor the person render may still say it waits on a fix that has shipped."""
+    for flags, head in (({"desk_served": True}, "UNSERVED ON AN OBSERVATORY DESK (1)"),
+                        ({"desk_served": True, "desk_person": True}, "UNSERVED ON THE PERSON DESK (1)")):
+        out = _entry(_entry_rows((911, "pending", flags)))
+        assert head in out and "LATE the next time the owner opens" in out and "also stops the late serve" in out, out
+        assert "until the desk serves late answers" not in out and "never served at all" not in out, out
+    out = _entry(_entry_rows((912, "pending", {"desk_served": True})))
+    assert "NOTHING TO FIX" in out and "so it is not served twice" in out, out
 
 
 def test_desk_render_through_the_real_entrypoint_never_prescribes_the_bridge():
@@ -542,9 +556,11 @@ def test_desk_predicate_on_a_real_db_reads_the_consumers_prefixes_and_who():
         # the main query's WHERE at 0 rows first, on the same stamped fixture (sqlguard's W rung needs 0 and >=1): the
         # desk projections rewrote that site, so it is a NEW site and the later-rows arm's 0 doesn't credit it
         assert _MOD["outbound_stuck"](C({})) is None
-        want = {"UNSERVED ON AN OBSERVATORY DESK": [put("obs:estate-ab12"), put("obs:library-e4523e8f")],
-                "UNSERVED ON THE PERSON DESK": [put("obs:person-77"), put("obs:person-78", "seed")],
-                "UNCARRIED BY CONSTRUCTION": [put("obs:estate-cd34", "seed")],        # the consumer's WHO is memory
+        want = {"UNSERVED ON AN OBSERVATORY DESK": [put("obs:estate-ab12"), put("obs:library-e4523e8f"),
+                                                    put("obs:estate-ef56", "seed")],    # any non-owner sender is served
+                "UNSERVED ON THE PERSON DESK": [put("obs:person-77"), put("obs:person-78", "seed"),
+                                                put("obs:person-79", "owner")],         # the person rule wins
+                "UNCARRIED BY CONSTRUCTION": [put("obs:estate-cd34", "owner")],       # the consumer's WHO: not owner
                 "BRIDGE-DELIVERED RECIPIENT": [put("obs:other-1")],                  # a near-miss no desk serves
                 # every OTHER computed bool of the site read TRUE once too (sqlguard's P rung: both values)
                 "UNSEEN ON THE EAR SHEET": [put("ear-room1")],                                  # sheet_delivered
