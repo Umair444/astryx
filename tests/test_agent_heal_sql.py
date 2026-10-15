@@ -45,6 +45,8 @@ try:
     got = H.stale(300, dsn=fx["dsn"])
     check("only LOCAL rows still PENDING past the age count", got is not None and set(got) == {"x"}, got)
     check("…with their count and the oldest's age", got and got["x"][0] == 3 and 895 <= got["x"][1] <= 960, got)
+    # sqlguard's (W) wants the WHERE seen at 0 rows too, or the site sits at EXECUTED (R-NEW, stamp 10-14 06:41Z)
+    check("nothing pending past the age is an EMPTY inbox ({}), not blind", H.stale(3600, dsn=fx["dsn"]) == {})
     check("an unreachable database is BLIND (None), never an empty inbox",
           H.stale(300, dsn="postgresql://nobody@127.0.0.1:1/none") is None)
 finally:
