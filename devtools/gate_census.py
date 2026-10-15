@@ -344,14 +344,47 @@ def tracked(repo: Path):
     return set(r.stdout.decode(errors="replace").split("\0")) - {""} if r.returncode == 0 else None
 
 
+def load_branch_check(repo: Path):
+    """devtools.branch_check, for its PURE domain rules (gate_files, _file_index, _imports, _NAMED_RX).
+    It imports psycopg (and, through prep and runscope, psycopg.sql) at module top, and check.sh runs gates under a bare
+    `python3` in CI and the pre-push tree, where psycopg is absent (merge_check 10-15: this census crashed there). The
+    domain rules never touch the driver, so when it is ABSENT an import-time stand-in is installed for the load and
+    removed after. Any USE of it raises, so a future import-time use fails loud, never quietly."""
+    import importlib
+    import types
+    sys.path.insert(0, str(repo))
+    try:
+        importlib.import_module("psycopg")
+        return importlib.import_module("devtools.branch_check")
+    except ImportError:
+        pass
+
+    class _Absent(types.ModuleType):
+        def __getattr__(self, name):
+            if name.startswith("__"):
+                raise AttributeError(name)
+            return _Absent(f"{self.__name__}.{name}")
+
+        def __call__(self, *a, **k):
+            raise RuntimeError(f"{self.__name__}: psycopg is absent (the census loads branch_check for its domain only)")
+
+    names = ("psycopg", "psycopg.conninfo", "psycopg.sql", "psycopg.errors", "psycopg.rows", "psycopg.types")
+    for n in names:
+        sys.modules[n] = _Absent(n)
+    try:
+        return importlib.import_module("devtools.branch_check")
+    finally:
+        for n in names:
+            sys.modules.pop(n, None)
+
+
 def domain(repo: Path, bc=None) -> set:
     """Every TRACKED file a gate reaches: branch_check's dark-list domain (oracles, files they name, transitive imports).
     A gitignored estate file a gate merely NAMES (merge_check links the estate in; 10-15: an owner's service a unit test
     mentions by name) is the owner's, not the branch's: no branch can fix or mark it, and the census never reads it.
     Residual, named: gitignored code a gate EXECUTES (triggers/) is outside this census."""
     if bc is None:
-        sys.path.insert(0, str(repo))
-        from devtools import branch_check as bc
+        bc = load_branch_check(repo)
     mine = tracked(repo)
     idx, reach, todo = bc._file_index(repo), set(), []
     for files in bc.gate_files(repo).values():

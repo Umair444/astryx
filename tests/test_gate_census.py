@@ -145,16 +145,34 @@ with tempfile.TemporaryDirectory() as td:
     (t / ".gitignore").write_text("estate.py\n")
     subprocess.run(["git", "init", "-q", str(t)], env=ge, check=True)
     subprocess.run(["git", "-C", str(t), "add", "-A"], env=ge, check=True)
-    from devtools import branch_check as real_bc                 # the real domain rules, pointed at the fixture repo
-    d = gc.domain(t, bc=real_bc)
+    d = gc.domain(t, bc=gc.load_branch_check(REPO))               # the real domain rules, pointed at the fixture repo
 check("a TRACKED file the oracle names is in the domain (the control)", "owned.py" in d, str(sorted(d)))
 check("a GITIGNORED file the oracle names is not", "estate.py" not in d, str(sorted(d)))
+
+print("BARE PYTHON: CI and the pre-push tree run gates under a python3 without psycopg")
+# psycopg is made ABSENT in the child by an import blocker, whatever interpreter runs this (the venv's has it)
+BLOCK = ("import sys, importlib.abc\n"
+         "class _NoPg(importlib.abc.MetaPathFinder):\n"
+         "    def find_spec(self, name, path=None, target=None):\n"
+         "        if name == 'psycopg' or name.startswith('psycopg.'):\n"
+         "            raise ModuleNotFoundError(f'No module named {name!r}')\n"
+         "sys.meta_path.insert(0, _NoPg())\n"
+         "import importlib.util, pathlib\n"
+         "spec = importlib.util.spec_from_file_location('gc', sys.argv[1])\n"
+         "gc = importlib.util.module_from_spec(spec); spec.loader.exec_module(gc)\n"
+         "print(len(gc.domain(pathlib.Path(sys.argv[2]))))\n")
+probe = subprocess.run([sys.executable, "-I", "-c", BLOCK,
+                        os.environ.get("GATE_CENSUS_SRC") or str(REPO / "devtools" / "gate_census.py"), str(REPO)],
+                       capture_output=True, text=True, timeout=120)
+check("with psycopg ABSENT the domain still loads and reaches >100 files",
+      probe.returncode == 0 and probe.stdout.strip().isdigit() and int(probe.stdout.strip()) > 100,
+      (probe.stdout + probe.stderr)[-300:])
 
 print("LIVE: the census over the real gate domain")
 dom = gc.domain(REPO)
 check(f"the domain is the gates' reach ({len(dom)} files), the pilot and voice-orb gates in it",
       len(dom) > 100 and "tests/pilot_browser_test.mjs" in dom and "tests/test_voice_orb.py" in dom)
-from devtools import branch_check as _bc                          # the SEEDS, re-derived: oracles + the files they name
+_bc = gc.load_branch_check(REPO)                                  # the SEEDS, re-derived: oracles + the files they name
 _idx, seeds = _bc._file_index(REPO), set()
 for _files in _bc.gate_files(REPO).values():
     for _o in _files:

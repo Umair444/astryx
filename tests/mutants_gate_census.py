@@ -52,4 +52,7 @@ MUTANTS = {
     "a gitignored estate file a gate names is read (merge_check links the estate in)":
         ("        if f in reach or not (repo / f).is_file() or (mine is not None and f not in mine):\n",
          "        if f in reach or not (repo / f).is_file():\n"),
+    "branch_check is imported plainly (under a bare python3 without psycopg the census crashes: pre-push 10-15)":
+        ("    names = (\"psycopg\", \"psycopg.conninfo\", \"psycopg.sql\", \"psycopg.errors\", \"psycopg.rows\", \"psycopg.types\")\n",
+         "    names = ()\n"),
 }

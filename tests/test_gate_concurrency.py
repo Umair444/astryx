@@ -69,6 +69,7 @@ def tail(out, n=300):
     return out[-n:].replace("\n", " | ")
 
 
+orb_unrun = None
 with tempfile.TemporaryDirectory(prefix="gc-", dir="/tmp") as base:
     base = Path(base)
     ga, gb, gs, go1, go2 = (base / x for x in ("a", "b", "s", "o1", "o2"))
@@ -139,10 +140,16 @@ with tempfile.TemporaryDirectory(prefix="gc-", dir="/tmp") as base:
         time.sleep(1)
         o2 = start([sys.executable, str(ORB)], go2)
         (r1, out1), (r2, out2) = finish(o1), finish(o2)
-        check("the first voice-orb gate passes", r1 == 0, f"rc {r1}: {tail(out1)}")
-        check("the second, 1 s later, passes", r2 == 0, f"rc {r2}: {tail(out2)}")
+        if r1 == 77 and r2 == 77:               # the orb's own prerequisite (websockets) is absent: not run, never a pass
+            orb_unrun = tail(out1, 160)
+        else:
+            check("the first voice-orb gate passes", r1 == 0, f"rc {r1}: {tail(out1)}")
+            check("the second, 1 s later, passes", r2 == 0, f"rc {r2}: {tail(out2)}")
 
 print()
+if not fails and orb_unrun:
+    print(f"SKIP: the pilot arms passed, but the voice-orb arm could not run here ({orb_unrun})")
+    sys.exit(77)
 print("PASS: concurrent browser gates each reach their own verdict" if not fails
       else f"FAIL ({len(fails)}): " + "; ".join(fails))
 sys.exit(1 if fails else 0)
