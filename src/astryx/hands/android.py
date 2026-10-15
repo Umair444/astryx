@@ -75,12 +75,21 @@ def default_avd() -> str:
     return os.environ.get("ANDROID_AVD") or _env_file().get("ANDROID_AVD") or "astryx-phone"
 
 
+def _daemon_env() -> dict:
+    """The environment for what this module starts: the caller's, minus every ASTRYX_* variable. The first `adb` call
+    forks the adb SERVER, which outlives its caller by days, and the emulator runs detached: whatever they inherit, they
+    keep. A gate's ASTRYX_RUNSCOPE_TEST (which stamps a run role TEST), its ASTRYX_AGENT and its sqlguard trace dir
+    were all found in a 67h-old adb server (a3 #53443 (a); seed #53451). Neither tool reads any ASTRYX_* variable, so
+    the whole namespace is dropped: a variable added later can't leak by being missing from a list."""
+    return {k: v for k, v in os.environ.items() if not k.startswith("ASTRYX_")}
+
+
 def adb(*args: str, timeout: float = 30, serial: str | None = None) -> subprocess.CompletedProcess:
     """adb, bounded. A phone that doesn't answer in time raises AndroidError (callers handle that one type): a slow
     emulator just after boot, under a loaded host, measured >20 s for a `settings put`."""
     cmd = [str(sdk() / "platform-tools" / "adb"), *(["-s", serial] if serial else []), *args]
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=_daemon_env())
     except subprocess.TimeoutExpired:
         raise AndroidError(f"the phone didn't answer `adb {' '.join(args[:3])}` within {timeout:.0f}s")
 
@@ -113,7 +122,7 @@ def emulator_pids(avd: str) -> list[int]:
 
 def windows_running() -> bool:
     r = subprocess.run(["docker", "inspect", "--format", "{{.State.Running}}", WINDOWS_CONTAINER],
-                       capture_output=True, text=True, timeout=20)
+                       capture_output=True, text=True, timeout=20, env=_daemon_env())
     return r.returncode == 0 and r.stdout.strip() == "true"
 
 
@@ -222,7 +231,8 @@ def boot(avd: str, agent: str) -> str:
         log = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp") / f"astryx-android-{avd}.log"
         subprocess.Popen([str(sdk() / "emulator" / "emulator"), "-avd", avd, "-no-window", "-no-audio",
                           "-gpu", "swiftshader_indirect", "-no-boot-anim"],
-                         stdout=open(log, "ab"), stderr=subprocess.STDOUT, start_new_session=True)
+                         stdout=open(log, "ab"), stderr=subprocess.STDOUT, start_new_session=True,
+                         env=_daemon_env())
     t0 = time.time()
     while time.time() - t0 < BOOT_MAX_S:
         s = serial(avd)

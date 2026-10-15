@@ -320,6 +320,53 @@ try:
 except Exception as e:  # noqa: BLE001
     want("DSN: before the fixture, the facade reaches no database", "127.0.0.1\", port 1 failed" in str(e), str(e))
 
+# ── DAEMON ENV: what android.py starts never inherits the org's identity (a3 #53443 (a), seed #53451). The first adb
+# call forks the adb SERVER, which outlived its gate by 67h carrying ASTRYX_RUNSCOPE_TEST, ASTRYX_AGENT and a sqlguard
+# trace dir. ─────────────────────────────────────────────────────────────────────────────────────────────────────
+import ast  # noqa: E402
+import subprocess as _sp  # noqa: E402
+_planted = {"ASTRYX_RUNSCOPE_TEST": "1", "ASTRYX_FUTURE_NOT_LISTED": "x", "ANDROID_PROBE_KEEP": "1"}
+_saved = {k: os.environ.get(k) for k in _planted}
+os.environ.update(_planted)
+try:
+    de = getattr(srv.droid, "_daemon_env", lambda: dict(os.environ))()      # absent → the inherited env, so RED
+    want("DAEMON ENV: no ASTRYX_* variable survives, a name nobody listed included (ASTRYX_AGENT is set here too)",
+         not [k for k in de if k.startswith("ASTRYX_")] and os.environ.get("ASTRYX_AGENT"), sorted(k for k in de if k.startswith("ASTRYX_")))
+    want("DAEMON ENV: ...and every other variable is kept (PATH, a planted ANDROID_*)",
+         de.get("PATH") == os.environ.get("PATH") and de.get("ANDROID_PROBE_KEEP") == "1", "")
+    seen = {}
+    _real_run = _sp.run
+    def _cap(cmd, **kw):
+        seen.update(kw)
+        return _sp.CompletedProcess(cmd, 0, "", "")
+    _sp.run = _cap
+    try:
+        srv.droid.adb("version")
+    finally:
+        _sp.run = _real_run
+    ae = seen.get("env")
+    want("DAEMON ENV: adb() (whose first call forks the adb server) runs with that environment",
+         isinstance(ae, dict) and not [k for k in ae if k.startswith("ASTRYX_")] and "PATH" in ae,
+         "no env= passed" if ae is None else sorted(k for k in ae if k.startswith("ASTRYX_")))
+finally:
+    for k, v in _saved.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+_asrc = Path(os.environ.get("ANDROID_SRC") or REPO / "src/astryx/hands/android.py")
+_calls, _bad = 0, []
+for n in ast.walk(ast.parse(_asrc.read_text())):
+    if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name) \
+            and n.func.value.id == "subprocess" and n.func.attr in {"run", "Popen", "call", "check_call", "check_output"}:
+        _calls += 1
+        kw = {k.arg: k.value for k in n.keywords}
+        e = kw.get("env")
+        if not (isinstance(e, ast.Call) and isinstance(e.func, ast.Name) and e.func.id == "_daemon_env"):
+            _bad.append(n.lineno)
+want(f"DAEMON ENV: every subprocess call in android.py ({_calls}) passes env=_daemon_env(), so no launch inherits",
+     _calls >= 3 and not _bad, f"lines without it: {_bad}")
+
 # ── LEASE ─────────────────────────────────────────────────────────────────────────────────────────────────────
 try:
     import psycopg
