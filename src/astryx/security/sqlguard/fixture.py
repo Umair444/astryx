@@ -111,6 +111,22 @@ def verdict(name: str, comment: str | None, alive=_alive, here: tuple | None = N
     return "reap", f"creator pid {st['pid']} is gone"
 
 
+def _drop(admin, name: str) -> str:
+    """DROP a fixture database; which path ran ("force" | "plain"). `WITH (FORCE)` must terminate EVERY backend on it,
+    and on PG 18 (our 18.6) terminating an AUTOVACUUM worker needs pg_signal_autovacuum_worker, which a branch_check
+    run role doesn't hold: a teardown that met autovacuum failed InsufficientPrivilege, at random (steward #55022).
+    A PLAIN DROP signals autovacuum workers on the target itself and waits for them, so the refusal retries
+    plain. Not the grant: that would let every run role interrupt autovacuum on production databases. Any OTHER
+    refusal (another session connected, a template) propagates unchanged, as before."""
+    q = '"{}"'.format(name.replace('"', '""'))
+    try:
+        admin.execute(f"DROP DATABASE IF EXISTS {q} WITH (FORCE)")
+        return "force"
+    except psycopg.errors.InsufficientPrivilege:
+        admin.execute(f"DROP DATABASE IF EXISTS {q}")
+        return "plain"
+
+
 def reap(admin, keep: str = "") -> list[tuple[str, str, str]]:
     """Drop every astryx_fx_* database whose verdict is 'reap'. Never raises: a reaper that fails keeps."""
     out = []
@@ -125,7 +141,7 @@ def reap(admin, keep: str = "") -> list[tuple[str, str, str]]:
         act, why = verdict(name, comment)
         if act == "reap":
             try:
-                admin.execute('DROP DATABASE IF EXISTS "{}" WITH (FORCE)'.format(name.replace('"', '""')))
+                _drop(admin, name)
             except psycopg.Error as e:
                 act, why = "keep", f"drop refused ({type(e).__name__}): {why}"
         out.append((name, act, why))
@@ -259,7 +275,7 @@ def fixture_db(extra: tuple = ()):
             s = _side.pop(name, None)
             if s is not None:
                 s.close()
-            admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+            _drop(admin, name)
         finally:
             admin.close()
 

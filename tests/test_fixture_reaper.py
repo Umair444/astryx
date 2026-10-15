@@ -89,6 +89,57 @@ for name, want in ((f"astryx_fx_sa{L}x1791562319_{L}_0", L), ("astryx_fx_r179156
                    ("astryx_fx_myrun_555_1", 555), ("astryx_fx_weird", None), ("astryx_fx_a_b_c", None)):
     check(f"name_pid({name!r}) = {want}", fxm.name_pid(name) == want, str(fxm.name_pid(name)))
 
+print("\nD. the drop (pure, a recorder connection; steward #55022: autovacuum vs a run role's FORCE):")
+import psycopg  # noqa: E402
+
+
+class Rec:
+    """A connection that records statements and raises a chosen error on the FORCE drop (and, optionally, the plain one)."""
+    def __init__(self, on_force=None, on_plain=None, rows=()):
+        self.q, self.on_force, self.on_plain, self.rows = [], on_force, on_plain, list(rows)
+
+    def execute(self, q, *a):
+        self.q.append(q)
+        if q.startswith("DROP DATABASE") and "WITH (FORCE)" in q and self.on_force:
+            raise self.on_force("refused")
+        if q.startswith("DROP DATABASE") and "WITH (FORCE)" not in q and self.on_plain:
+            raise self.on_plain("refused")
+        rows = self.rows
+        return type("R", (), {"fetchall": lambda _s: rows})()
+
+
+r = Rec()
+check("D1 a drop nothing refuses takes FORCE, once", fxm._drop(r, 'a"b') == "force"
+      and r.q == ['DROP DATABASE IF EXISTS "a""b" WITH (FORCE)'], str(r.q))
+r = Rec(on_force=psycopg.errors.InsufficientPrivilege)
+check("D2 FORCE refused for privilege (an autovacuum worker, PG 18) → the PLAIN drop runs", fxm._drop(r, "x") == "plain"
+      and r.q == ['DROP DATABASE IF EXISTS "x" WITH (FORCE)', 'DROP DATABASE IF EXISTS "x"'], str(r.q))
+for err in (psycopg.errors.ObjectInUse, psycopg.errors.WrongObjectType):
+    r = Rec(on_force=err)
+    try:
+        fxm._drop(r, "x")
+        got = "returned"
+    except err:
+        got = "raised"
+    check(f"D3 any OTHER refusal ({err.__name__}) propagates and never falls back", got == "raised" and len(r.q) == 1,
+          f"{got} {r.q}")
+r = Rec(on_force=psycopg.errors.InsufficientPrivilege, on_plain=psycopg.errors.ObjectInUse)
+try:
+    fxm._drop(r, "x")
+    got = "returned"
+except psycopg.errors.ObjectInUse:
+    got = "raised"
+check("D4 the plain drop still fails LOUDLY when a real session is connected", got == "raised", got)
+dead_name = "astryx_fx_drop_1_0"
+r = Rec(on_force=psycopg.errors.InsufficientPrivilege, rows=[(dead_name, stamp(D))])
+got = fxm.reap(r)
+check("D5 reap() through the autovacuum race DROPS the dead run's db (was kept as 'drop refused')",
+      [g[1] for g in got] == ["reap"] and r.q[-1] == f'DROP DATABASE IF EXISTS "{dead_name}"', str(got))
+r = Rec(on_force=psycopg.errors.ObjectInUse, rows=[(dead_name, stamp(D))])
+got = fxm.reap(r)
+check("D6 ...while any other refusal still KEEPS it, named", [g[1] for g in got] == ["keep"]
+      and "drop refused (ObjectInUse)" in got[0][2], str(got))
+
 print("\nL. live:")
 try:
     import psycopg
