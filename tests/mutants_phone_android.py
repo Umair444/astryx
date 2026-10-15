@@ -14,6 +14,20 @@ ENV = "ANDROID_SRC"
 TIMEOUT = 120
 
 MUTANTS = {
+    "the daemon env keeps the ASTRYX_* namespace (the adb server inherits a gate's identity)":
+        ('    return {k: v for k, v in os.environ.items() if not k.startswith("ASTRYX_")}',
+         '    return dict(os.environ)'),
+    "adb() runs with the inherited environment (its first call forks the long-lived adb server)":
+        ("        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=_daemon_env())",
+         "        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)"),
+    "K1 (a1 #53835): an env-less os.system launch starts the adb server":
+        ('    return r.returncode == 0 and r.stdout.strip() == "true"',
+         '    os.system("adb start-server")\n    return r.returncode == 0 and r.stdout.strip() == "true"'),
+    "K2 (a1 #53835): an aliased Popen import launches without the scrubbed env":
+        ("import subprocess\n", "import subprocess\nfrom subprocess import Popen as _P\n"),
+    "the headless emulator is started with the inherited environment":
+        ("start_new_session=True,\n                         env=_daemon_env())",
+         "start_new_session=True)"),
     "a dead VM's slot hold is never freed":
         (' and not _vm_alive(row["holder"]):\n',
          ' and False:\n'),

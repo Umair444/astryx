@@ -320,6 +320,67 @@ try:
 except Exception as e:  # noqa: BLE001
     want("DSN: before the fixture, the facade reaches no database", "127.0.0.1\", port 1 failed" in str(e), str(e))
 
+# ── DAEMON ENV: what android.py starts never inherits the org's identity (a3 #53443 (a), seed #53451). The first adb
+# call forks the adb SERVER, which outlived its gate by 67h carrying ASTRYX_RUNSCOPE_TEST, ASTRYX_AGENT and a sqlguard
+# trace dir. ─────────────────────────────────────────────────────────────────────────────────────────────────────
+import ast  # noqa: E402
+import subprocess as _sp  # noqa: E402
+_planted = {"ASTRYX_RUNSCOPE_TEST": "1", "ASTRYX_FUTURE_NOT_LISTED": "x", "ANDROID_PROBE_KEEP": "1"}
+_saved = {k: os.environ.get(k) for k in _planted}
+os.environ.update(_planted)
+try:
+    de = getattr(srv.droid, "_daemon_env", lambda: dict(os.environ))()      # absent → the inherited env, so RED
+    want("DAEMON ENV: no ASTRYX_* variable survives, a name nobody listed included (ASTRYX_AGENT is set here too)",
+         not [k for k in de if k.startswith("ASTRYX_")] and os.environ.get("ASTRYX_AGENT"), sorted(k for k in de if k.startswith("ASTRYX_")))
+    want("DAEMON ENV: ...and every other variable is kept (PATH, a planted ANDROID_*)",
+         de.get("PATH") == os.environ.get("PATH") and de.get("ANDROID_PROBE_KEEP") == "1", "")
+    seen = {}
+    _real_run = _sp.run
+    def _cap(cmd, **kw):
+        seen.update(kw)
+        return _sp.CompletedProcess(cmd, 0, "", "")
+    _sp.run = _cap
+    try:
+        srv.droid.adb("version")
+    finally:
+        _sp.run = _real_run
+    ae = seen.get("env")
+    want("DAEMON ENV: adb() (whose first call forks the adb server) runs with that environment",
+         isinstance(ae, dict) and not [k for k in ae if k.startswith("ASTRYX_")] and "PATH" in ae,
+         "no env= passed" if ae is None else sorted(k for k in ae if k.startswith("ASTRYX_")))
+finally:
+    for k, v in _saved.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+_asrc = Path(os.environ.get("ANDROID_SRC") or REPO / "src/astryx/hands/android.py")
+# Every LAUNCH counts, found by the callee's NAME whatever the receiver (a1 #53835: `os.system(...)` and an aliased
+# `from subprocess import Popen as _P` both escaped a census of `subprocess.<x>` attribute calls). A launcher that
+# takes env= must pass _daemon_env(); one that can't (os.system/popen/spawn*/exec*/posix_spawn*) is refused outright,
+# and so is importing a launcher by name. The windowed emulator is the one launch this module doesn't make: sway
+# execs it with sway's own env (the user manager's, plus hands_desktop's ASTRYX_HANDS_AGENT desk label), never ours.
+_WITH_ENV = {"run", "Popen", "call", "check_call", "check_output", "create_subprocess_exec", "create_subprocess_shell"}
+_NO_ENV = {"system", "popen", "posix_spawn", "posix_spawnp"}
+_calls, _bad = 0, []
+for n in ast.walk(ast.parse(_asrc.read_text())):
+    if isinstance(n, ast.ImportFrom) and (n.module == "subprocess" or (n.module in ("os", "asyncio") and any(
+            a.name in _WITH_ENV | _NO_ENV or a.name.startswith(("spawn", "exec")) for a in n.names))):
+        _bad.append(f"{n.lineno}: imports a launcher by name")
+    if not isinstance(n, ast.Call):
+        continue
+    nm = n.func.attr if isinstance(n.func, ast.Attribute) else n.func.id if isinstance(n.func, ast.Name) else ""
+    if nm in _NO_ENV or nm.startswith(("spawn", "exec")) and nm not in ("exec_module",):
+        _calls += 1
+        _bad.append(f"{n.lineno}: {nm}() can't take env=")
+    elif nm in _WITH_ENV:
+        _calls += 1
+        e = {k.arg: k.value for k in n.keywords}.get("env")
+        if not (isinstance(e, ast.Call) and isinstance(e.func, ast.Name) and e.func.id == "_daemon_env"):
+            _bad.append(f"{n.lineno}: {nm}() without env=_daemon_env()")
+want(f"DAEMON ENV: every launch android.py makes ({_calls}, found by callee name, any receiver) passes "
+     f"env=_daemon_env(); no env-less launcher, no launcher imported by name", _calls >= 3 and not _bad, str(_bad))
+
 # ── LEASE ─────────────────────────────────────────────────────────────────────────────────────────────────────
 try:
     import psycopg
