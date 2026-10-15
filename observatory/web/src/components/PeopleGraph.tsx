@@ -351,7 +351,7 @@ function PersonCard({ node, degree, onClose, onConfirm }: { node: PNode; degree:
 function AskMemory({ pid }: { pid: string }) {
   const [q, setQ] = useState('')
   const [busy, setBusy] = useState(false)
-  const [log, setLog] = useState<{ who: 'you' | 'memory'; text: string }[]>([])
+  const [log, setLog] = useState<{ who: string; text: string }[]>([])
   const thread = `obs:person-${pid}`
   const gen = useRef(0)                                    // a newer question, or another person, retires the older poll
   useEffect(() => { gen.current++; setLog([]); setQ(''); setBusy(false) }, [pid])
@@ -366,11 +366,11 @@ function AskMemory({ pid }: { pid: string }) {
       let after = r.sent
       for (let i = 0; i < 90 && gen.current === my; i++) {                       // memory answers on its own clock: poll ~3 min
         await new Promise((res) => setTimeout(res, 2000))
-        const got = await api<{ replies: { id: number; body: string }[] }>(`/memory/chat?thread=${encodeURIComponent(thread)}&after=${after}`)
+        const got = await api<{ replies: { id: number; from: string; body: string }[] }>(`/memory/chat?thread=${encodeURIComponent(thread)}&after=${after}`)
         if (gen.current !== my) break
         if (got.replies.length) {                          // keep reading to the end: a second reply joins the log
           after = got.replies[got.replies.length - 1].id
-          setLog((l) => [...l, ...got.replies.map((x) => ({ who: 'memory' as const, text: x.body }))])
+          setLog((l) => [...l, ...got.replies.map((x) => ({ who: x.from || 'memory', text: x.body }))])
           setBusy(false)
         }
       }
@@ -382,7 +382,7 @@ function AskMemory({ pid }: { pid: string }) {
     <div className="flex flex-col gap-2">
       {log.map((m, i) => (
         <div key={i} className={`text-[12.5px] leading-relaxed rounded-xl px-3 py-2 ${m.who === 'you' ? 'bg-deck-3 text-ink self-end max-w-[90%]' : 'text-ink-dim border border-line'}`}>
-          {m.who === 'memory' && <span className="text-[10.5px] uppercase tracking-[0.14em] text-cyan block mb-0.5">memory</span>}
+          {m.who !== 'you' && <span className="text-[10.5px] uppercase tracking-[0.14em] text-cyan block mb-0.5">{m.who}</span>}
           {m.text}
         </div>
       ))}

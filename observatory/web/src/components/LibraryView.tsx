@@ -9,7 +9,7 @@ import '@fontsource/instrument-serif/400-italic.css'
 import '@fontsource-variable/newsreader'
 import { api, apiPost } from '../api'
 import AgentFace from './AgentFace'
-import LateReplies from './LateReplies'
+import LateReplies, { said } from './LateReplies'
 import { Empty, Skeleton } from '../ui/kit'
 
 /* THE LIBRARY — what the org knows, as a booklet you can browse and search. Memory writes it
@@ -274,11 +274,11 @@ function Desk({ idx, bySlug, go }: { idx: Index; bySlug: Map<string, Card>; go: 
       let after = r.sent, any = false
       for (let i = 0; i < 120 && askGen.current === my; i++) {   // the librarian answers on its own clock (~4 min); read to the end
         await new Promise((res) => setTimeout(res, 2000))  // of the window, so a second reply joins the first (seed #55680)
-        const got = await api<{ replies: { id: number; body: string }[] }>(`/memory/chat?thread=${encodeURIComponent(thread)}&after=${after}`)
+        const got = await api<{ replies: { id: number; from: string; body: string }[] }>(`/memory/chat?thread=${encodeURIComponent(thread)}&after=${after}`)
         if (askGen.current !== my) return
         if (got.replies.length) {
           after = got.replies[got.replies.length - 1].id
-          const more = got.replies.map((x) => x.body).join('\n\n')
+          const more = got.replies.map(said).join('\n\n')
           setAsk((a) => a && { ...a, answer: a.answer ? `${a.answer}\n\n${more}` : more }); any = true
         }
       }

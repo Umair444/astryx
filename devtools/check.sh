@@ -873,6 +873,7 @@ run "canvas preview: real shell, read-only" "$PY" tests/test_canvas_preview.py
 # The observatory shows agents as PEOPLE: the roster is the charter registry (no ghost bodies), faces are
 # public, presence is owner-only, the profile carries NOW, the model is the dominant one. Fixture DB.
 run "observatory: agents as people"     "$PY" tests/test_observatory_people.py
+# Mutants: tests/mutants_observatory_late_replies.py.
 run "observatory: a late desk reply is served once, never stranded" "$PY" tests/test_observatory_late_replies.py
 # Realtime voice is an EXTERNAL processor the owner signed for: the spend cap, the server-side tier fence and the
 # owner gate must hold. OpenAI is never called (the mint is stubbed). Fixture DB.

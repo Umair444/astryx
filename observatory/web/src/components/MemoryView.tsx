@@ -6,7 +6,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useMediaQuery } from '@mantine/hooks'
 import { api, apiPost, fmtAgo } from '../api'
 import Md from './Md'
-import LateReplies from './LateReplies'
+import LateReplies, { said } from './LateReplies'
 import { Empty, LiveDot, Orb, Panel, SectionHead, Tabs, ViewHeader } from '../ui/kit'
 
 /* The Memory tab — the org's recall system, rendered.
@@ -227,12 +227,12 @@ export default function MemoryView() {
       for (let i = 0; i < 60 && askGen.current === my; i++) {   // to the end of the window: a second reply joins the first
         await new Promise((res) => setTimeout(res, 3000))
         try {
-          const rep = await api<{ replies: { id: number; body: string }[] }>(
+          const rep = await api<{ replies: { id: number; from: string; body: string }[] }>(
             `/memory/chat?thread=${encodeURIComponent(r.thread)}&after=${after}`)
           if (askGen.current !== my) break
           if (rep.replies.length) {
             after = rep.replies[rep.replies.length - 1].id
-            const more = rep.replies.map((x) => x.body).join('\n\n'), first = !got
+            const more = rep.replies.map(said).join('\n\n'), first = !got
             setAns((a) => ({ answer: first || !a ? more : `${a.answer}\n\n${more}`, retrieved: a?.retrieved ?? null }))
             got = true
             setAsking(false)                               // answered: the owner may ask again while this one listens on

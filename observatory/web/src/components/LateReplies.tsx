@@ -6,6 +6,9 @@ import Md from './Md'
  * a tab that was closed. The desk asks for them ONCE, when it opens. The server claims and marks each reply
  * as it serves it, so it shows here exactly once. Not on focus: a poll still running in this tab reads by
  * id, not status, and would show the same reply a second time. Dismissing only hides it; it was delivered. */
+/* A live window's answers join into one; a reply from anyone but memory says who wrote it (a4 #56052). */
+export const said = (x: { from?: string; body: string }) => (x.from && x.from !== 'memory' ? `**${x.from}** answered:\n\n${x.body}` : x.body)
+
 type Late = { id: number; from: string; thread: string; question: string; body: string; ts: string }
 
 export default function LateReplies({ prefix, about }: { prefix: 'obs:estate' | 'obs:person-' | 'obs:library-'; about?: (thread: string) => string | null }) {
