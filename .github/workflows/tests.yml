@@ -1,9 +1,10 @@
 # Standing enforcement of the code invariants: runs devtools/check.sh on GitHub's runners, the off-machine twin of
-# the pre-push pushed_tree_check. MANUAL ONLY for now (seed 10-15): a CI runner has no postgres, and nobody has
-# seen this run's first verdict yet, so it fires on workflow_dispatch until a reviewed run shows it reads honestly
-# (amber with the unverified list, not a false red on every public commit). Then it gains push/pull_request.
+# the pre-push pushed_tree_check, on every push and PR (seed 10-15; the first manual runs read 0 FAILED, 74 verified
+# bare). The runner has no postgres and no gitignored estate, so those gates read amber by design.
 name: tests
 on:
+  push:
+  pull_request:
   workflow_dispatch:
 jobs:
   invariants:
@@ -13,6 +14,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      # Derived from src/astryx/data/deps.conf, the one dependency authority, never a second list. A plain install,
+      # never `pip install -e .`: an installed astryx would shadow the tree under test (the identity gate refuses
+      # it). `media` is skipped: whisper/onnx are heavy and its gates need a device.
+      - name: dependencies (deps.conf, every group but media)
+        run: |
+          awk -F'|' '!/^[[:space:]]*(#|$)/ && NF >= 3 { g = $1; s = $2; gsub(/[[:space:]]/, "", g); gsub(/[[:space:]]/, "", s); if (g != "media") print s }' \
+            src/astryx/data/deps.conf | xargs python -m pip install --quiet
       # CHECK_ALLOW_SKIP is the VISIBLE exemption, and this is the one place it belongs. check.sh is strict by
       # default: a gate that verifies nothing is RED. A CI clone is the one environment where skipping is
       # legitimate (triggers/, memory/ and the database are absent by construction), so those read amber; check.sh
