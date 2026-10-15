@@ -88,15 +88,14 @@ for i, fm in enumerate(("type: probe-set", "Type: probe-set", "type: Probe-Set")
 ROOTS = ["memory/wiki/*.md", "memory/library/**/*.md", "memory/ontology.md"]
 DECL = {"name": "table:library.passage", "kind": "sql_table", "table": "library.passage",
         "also_tables": ["library.lexeme_df", "library.stats"], "comparator": "root_digest", "roots": ROOTS,
-        "reads": ["kg.claim incidence"], "writers": ["memory/graph/ingest.py"], "schema": ["src/astryx/sql/schema.sql"],
+        "writers": ["memory/graph/ingest.py"], "schema": ["src/astryx/sql/schema.sql"],
         "test_writers": ["tests/test_library_passage.py"]}
 
 VLABELS = ("Agent", "Concept", "Goal", "Milestone", "RelType", "Thread", "Meta", "Person")
 ELABELS = ("AUTHORED", "CARRIES", "CHILD_OF", "IN_CATEGORY", "LINKS", "OWNS", "PLANS", "REFERENCES", "SPOKE_IN")
 DDL = ("LOAD 'age'; SET search_path = ag_catalog, \"$user\", public;\n" + SCHEMA.read_text() + "\n"
        + "".join(f"SELECT create_vlabel('memory', '{v}');\n" for v in VLABELS)
-       + "".join(f"SELECT create_elabel('memory', '{e}');\n" for e in ELABELS)
-       + "CREATE SCHEMA kg; CREATE TABLE kg.claim (entity text, rel text);\n")
+       + "".join(f"SELECT create_elabel('memory', '{e}');\n" for e in ELABELS))
 
 _fx = fixture_db(extra=(DDL,))
 try:

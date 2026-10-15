@@ -29,8 +29,9 @@ Arms (RED / GREEN / CONTROL):
   D4 RED      a stamped graph with no declaration → LOUD UNDECLARED.
   D5 RED      a missing declarations file, or a comparator outside the closed set → LOUD.
   D6 GREEN    value_equal: equal file copy → FRESH; changed → STALE.
-  K1 RED      the digest folds the kg.claim incidence the build reads: a changed kg.claim row → STALE; an
-              undeclared read name → LOUD.
+  K1          the declaration has no reads (plan-8018 S-retire): the CARRIES incidence is derived from the wiki roots, so
+              a claim line edited in a root page → STALE. RED: the same edit with the wiki glob dropped from the roots
+              reads FRESH (the roots are what carry it). An undeclared read name → LOUD; an unknown name → KeyError.
   E0          the shared existence probe answers true and false; a graph with no static reader yields no digest.
 The builder's own arm (the REAL ingest stamps its digest in its transaction) is tests/test_copies_builder.py: it
 needs the gitignored memory/ tree, so it SKIPs where this file never does.
@@ -78,7 +79,7 @@ def estate():
 
 def decl(**over):
     d = {"name": "graph:memory", "kind": "age_graph", "graph": "memory", "comparator": "root_digest",
-         "roots": ["memory/wiki/*.md", "memory/ontology.md"], "reads": ["kg.claim incidence"],
+         "roots": ["memory/wiki/*.md", "memory/ontology.md"],
          "writers": ["memory/graph/ingest.py"],
          "schema": [], "test_writers": [], "not_writers": {}}
     d.update(over)
@@ -258,13 +259,13 @@ check("D6 a changed copy → STALE", status(C.check(None, [ve], root), "file:dst
 
 print("root digest inside the graph (fixture DB):")
 # Every relation the arms touch is created BEFORE the stamp (fixture_db's `extra`), so sqlguard credits the reads:
-# the graphs, the labels the arms write (AGE creates a label table on first use: DDL), and kg.claim.
+# the graphs, the labels the arms write (AGE creates a label table on first use: DDL), and E0's neutral probe table.
 AGE_DDL = ("LOAD 'age'; SET search_path = ag_catalog, \"$user\", public; "
            "SELECT create_graph('memory'); SELECT create_vlabel('memory', 'Meta'); "
            "SELECT create_vlabel('memory', 'Concept'); "
            "SELECT create_graph('shadow_copy'); SELECT create_vlabel('shadow_copy', 'Meta'); "
            "SELECT create_graph('plain'); "
-           "CREATE SCHEMA kg; CREATE TABLE kg.claim (entity text, rel text)")
+           "CREATE TABLE copies_probe (x int)")
 _fx = fixture_db(extra=(AGE_DDL,))
 try:
     fx = _fx.__enter__()
@@ -282,34 +283,58 @@ try:
         cur.execute(f"SELECT * FROM cypher('{graph}', $q$ MERGE (m:Meta {{name: 'root'}}) "
                     f"SET m.root_digest = '{digest}' $q$) AS (v agtype)")
 
-    check("E0 the existence probe answers both ways", C._exists(cur, "kg.claim") and not C._exists(cur, "kg.absent"))
+    check("E0 the existence probe answers both ways",
+          C._exists(cur, "copies_probe") and not C._exists(cur, "copies_absent_probe"))
     check("E0 an undeclarable graph has no digest reader → None", C.stored_graph_digest(conn, "shadow_copy") is None)
     res = C.check(conn, [decl()], root)
     check("D1 a Meta label but no Meta vertex → STALE",
           status(res)[0] == ("STALE", "the copy carries no root digest"), repr(res))
-    cur.execute("INSERT INTO kg.claim VALUES ('goal-1', 'state'), ('memory', 'type')")
+    check("K1 the live declarations carry no reads (the closed set is empty since S-retire)",
+          C.READS == {} and live and not any(d.get("reads") for d in live), repr(C.READS))
 
-    def want_now():
-        return C.copy_digest(C.root_digest(C.root_files(decl()["roots"], root), root),
-                             {"kg.claim incidence": C.read_rows(cur, "kg.claim incidence")})
+    def want_now(d=None):
+        d = d or decl()
+        return C.copy_digest(C.root_digest(C.root_files(d["roots"], root), root), {})
     want = want_now()
+    check("K1 with no reads the stamped digest IS the root digest (no fold)",
+          want == C.root_digest(C.root_files(decl()["roots"], root), root))
     stamp("memory", want)
     res = C.check(conn, [decl()], root)
     check("D2 the recomputed root digest → FRESH", status(res)[0][0] == "FRESH", repr(res))
-    cur.execute("UPDATE kg.claim SET rel = 'owner' WHERE entity = 'goal-1'")
+    page = root / "memory" / "wiki" / "a.md"
+    body = page.read_text()
+    page.write_text(body + "- state · shipped\n")                 # a claim line: what CARRIES hangs on
     res = C.check(conn, [decl()], root)
-    check("K1 a changed kg.claim row → STALE", status(res)[0][0] == "STALE", repr(res))
-    cur.execute("UPDATE kg.claim SET rel = 'state' WHERE entity = 'goal-1'")
+    check("K1 a claim line edited in a root page → STALE", status(res)[0][0] == "STALE", repr(res))
+    page.write_text(body)
     res = C.check(conn, [decl()], root)
-    check("K1 CONTROL the row restored → FRESH again", status(res)[0][0] == "FRESH", repr(res))
-    res = C.check(conn, [decl(reads=["kg.node everything"])], root)
+    check("K1 CONTROL the page restored → FRESH again", status(res)[0][0] == "FRESH", repr(res))
+    narrow = decl(roots=["memory/ontology.md"])
+    stamp("memory", want_now(narrow))
+    res = C.check(conn, [narrow], root)
+    check("K1 RED precondition: stamped against the narrowed roots → FRESH", status(res)[0][0] == "FRESH", repr(res))
+    page.write_text(body + "- state · shipped\n")
+    res = C.check(conn, [narrow], root)
+    check("K1 RED the same edit with the wiki glob dropped from the roots does NOT read STALE (the roots carry it)",
+          status(res)[0][0] == "FRESH", repr(res))
+    page.write_text(body)
+    stamp("memory", want)
+    res = C.check(conn, [decl(reads=["an undeclared read"])], root)
     check("K1 a read outside the closed set → LOUD", status(res)[0][0] == "LOUD", repr(res))
+    try:
+        C.read_rows(cur, "not a read")
+        unknown = False
+    except KeyError:
+        unknown = True
+    check("K1 an unknown read name raises KeyError", unknown)
     real_reads = dict(C.READS)
-    C.READS["absent probe"] = "kg.absent"
-    check("K1 an absent read relation digests as absent (None), not as empty",
-          C.read_rows(cur, "absent probe") is None)
-    C.READS.clear()
-    C.READS.update(real_reads)
+    C.READS["absent probe"] = "copies_absent_probe"
+    try:
+        check("K1 an absent read relation digests as absent (None), not as empty",
+              C.read_rows(cur, "absent probe") is None)
+    finally:
+        C.READS.clear()
+        C.READS.update(real_reads)
     (root / "memory" / "wiki" / "a.md").write_text("---\ntitle: a\n---\nalpha, edited\n")
     res = C.check(conn, [decl()], root)
     check("D3 a root edited after the stamp → STALE", status(res)[0][0] == "STALE"

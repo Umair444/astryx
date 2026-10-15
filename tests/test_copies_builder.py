@@ -5,8 +5,8 @@ copy's root digest itself, inside its own transaction, and src/astryx/core/copie
 The subject is gitignored (memory/), so it's path-loaded from INGEST_SRC or REPO/memory/graph/ingest.py, with the
 graph's DDL from INGEST_SCHEMA or REPO/memory/graph/schema.sql; either absent → SKIP 77, naming which. The checker's
 own arms live in tests/test_copies.py, which never skips. Arms:
-  I1 GREEN  after a real ingest over a temp estate (wiki + ontology.md + kg.claim rows) → FRESH: the builder's
-            stamp equals the checker's recomputation, read set included.
+  I1 GREEN  after a real ingest over a temp estate (wiki + library + ontology.md) → FRESH: the builder's stamp equals
+            the checker's recomputation (no reads since plan-8018 S-retire: the incidence is the wiki roots' own).
   I2        a fault-injected ingest rolls back: the previous digest survives, and against the edited root it
             now reads STALE (the digest lives and dies with the content).
   S2 (plan-8018 S2: the library enters the graph through the wiki's guard, in its own namespace):
@@ -100,7 +100,7 @@ HD = BIG.replace("## part 1", f"## {PLANT} acme 1")
 (root / "memory" / "wiki" / "w.md").write_text(f'---\ntitle: "W"\n---\n{BIG}')
 (LIB / "a.md").write_text('---\ntitle: "Library a"\ntags: [org]\n---\nlibrary-a body links [[clean]]\n')
 DECL = {"name": "graph:memory", "kind": "age_graph", "graph": "memory", "comparator": "root_digest",
-        "roots": ["memory/wiki/*.md", "memory/library/**/*.md", "memory/ontology.md"], "reads": ["kg.claim incidence"],
+        "roots": ["memory/wiki/*.md", "memory/library/**/*.md", "memory/ontology.md"],
         "writers": ["memory/graph/ingest.py"]}
 
 # Every label the ingest writes exists BEFORE the stamp (AGE creates a label table on first use: DDL).
@@ -108,8 +108,7 @@ VLABELS = ("Agent", "Concept", "Goal", "Milestone", "RelType", "Thread", "Meta")
 ELABELS = ("AUTHORED", "CARRIES", "CHILD_OF", "IN_CATEGORY", "LINKS", "OWNS", "PLANS", "REFERENCES", "SPOKE_IN")
 DDL = ("LOAD 'age'; SET search_path = ag_catalog, \"$user\", public;\n" + SCHEMA.read_text() + "\n"
        + "".join(f"SELECT create_vlabel('memory', '{v}');\n" for v in VLABELS)
-       + "".join(f"SELECT create_elabel('memory', '{e}');\n" for e in ELABELS)
-       + "CREATE SCHEMA kg; CREATE TABLE kg.claim (entity text, rel text);\n")
+       + "".join(f"SELECT create_elabel('memory', '{e}');\n" for e in ELABELS))
 
 _fx = fixture_db(extra=(DDL,))
 try:
@@ -119,9 +118,8 @@ except Exception as e:  # noqa: BLE001
     sys.exit(77)
 try:
     conn = psycopg.connect(fx["dsn"], autocommit=True)
-    conn.execute("INSERT INTO kg.claim VALUES ('a', 'type'), ('goal-1', 'state')")
-    if "copy_digest" not in SRC.read_text():
-        check("I1 the builder stamps a root digest", False, "ingest.py carries no copy_digest stamp")
+    if "SET m.root_digest" not in SRC.read_text():
+        check("I1 the builder stamps a root digest", False, "ingest.py carries no Meta root_digest stamp")
     else:
         ing.WIKI, ing.ONTOLOGY_MD = root / "memory" / "wiki", root / "memory" / "ontology.md"
         ing.LIBRARY = root / "memory" / "library"

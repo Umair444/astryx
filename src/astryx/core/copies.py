@@ -70,8 +70,10 @@ def root_digest(paths, root: Path = None) -> str:
 # set of static queries: the builder reads through read_rows() and the checker re-reads through the same call, so
 # both digest exactly the rows the build consumed. An absent relation digests as absent, never as empty-and-fine.
 # Each read is a module constant executed BY NAME in read_rows, so sqlguard attributes it to that function.
-KG_INCIDENCE_SQL = "SELECT DISTINCT entity, rel FROM kg.claim ORDER BY 1, 2"
-READS = {"kg.claim incidence": "kg.claim"}             # read name → the relation it reads
+# EMPTY since plan-8018 S-retire: its one member was the kg claim incidence, and the ingest's CARRIES incidence is now
+# derived from the wiki roots themselves (memgraph.system2_incidence), so the root digest already covers it. The
+# machinery stays: a declaration naming a read outside this set reads LOUD.
+READS: dict = {}                                       # read name → the relation it reads
 _REGCLASS_SQL = "SELECT to_regclass(%s) IS NOT NULL"
 
 
@@ -85,13 +87,9 @@ def _exists(cur, relation: str) -> bool:
 def read_rows(cur, name: str):
     """The rows of READS[name], or None when its relation is absent (probed first: in one big transaction a failing
     SELECT would poison every later statement)."""
-    if not _exists(cur, READS[name]):
+    if not _exists(cur, READS[name]):                    # an unknown name raises KeyError here
         return None
-    if name == "kg.claim incidence":
-        cur.execute(KG_INCIDENCE_SQL)
-    else:                                                # unreachable while READS and this dispatch agree
-        raise KeyError(f"no static query for read {name!r}")
-    return [tuple(r) for r in cur.fetchall()]
+    raise KeyError(f"no static query for read {name!r}")  # a READS entry with no static query dispatched here
 
 
 def copy_digest(file_digest: str, reads: dict) -> str:
