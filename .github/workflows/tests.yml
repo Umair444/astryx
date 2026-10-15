@@ -1,0 +1,20 @@
+# Standing enforcement of the code invariants: runs devtools/check.sh on GitHub's runners, the off-machine twin of
+# the pre-push pushed_tree_check. MANUAL ONLY for now (seed 10-15): a CI runner has no postgres, and nobody has
+# seen this run's first verdict yet, so it fires on workflow_dispatch until a reviewed run shows it reads honestly
+# (amber with the unverified list, not a false red on every public commit). Then it gains push/pull_request.
+name: tests
+on:
+  workflow_dispatch:
+jobs:
+  invariants:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # CHECK_ALLOW_SKIP is the VISIBLE exemption, and this is the one place it belongs. check.sh is strict by
+      # default: a gate that verifies nothing is RED. A CI clone is the one environment where skipping is
+      # legitimate (triggers/, memory/ and the database are absent by construction), so those read amber; check.sh
+      # still NAMES every unverified gate and never prints ALL CODE INVARIANTS PASS. Read that list.
+      - run: CHECK_ALLOW_SKIP=1 PY=python3 bash devtools/check.sh

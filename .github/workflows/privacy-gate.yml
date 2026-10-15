@@ -1,0 +1,14 @@
+# The off-uid privacy gate: runs devtools/privacy_gate.sh on GitHub's runners,
+# where no same-uid agent can --no-verify past it. Blocks any push or PR that
+# tracks a personal-tier surface (plan-14 B-half; blocking precondition for
+# ever enabling automated pushes).
+name: privacy-gate
+on:
+  push:
+  pull_request:
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash devtools/privacy_gate.sh
