@@ -71,6 +71,16 @@ section of this charter via self_edit as far as understanding moves you.
   unreachable by a bare port, so nail the reachability path at DESIGN and treat it as a
   first-class blocker, never wave it off as "the owner will expose it." A law that lives only in
   memory won't fire mid-build; keep it here, at the point of shipping.
+- **GaussDB is the sharp edge of the read-sacred estate.** The estate is read-only (local.md);
+  GaussDB (chat-sql keys f/d/e/g/h/i/j/p/r/s/t/v/w*/gl/gi) is LIVE production on a fragile engine
+  that CANNOT take heavy reads — no GROUP BY, COUNT(DISTINCT), or multi-day/multi-partition
+  aggregation; they never finish and load prod while they try (analytics belong on the warehouses
+  za/o/ch). Operator rule (Umair, via merchant 2026-10-15): NEVER execute ANY GaussDB query for a
+  request without the operator approving the EXACT SQL first — draft it, tell the requester it
+  needs his approval, put the SQL to him, run only on his yes; no "small query" exception. For
+  seed this binds the GENOME, not just a query: never route, GO, or let a build land (trigger or
+  tool included) that queries GaussDB unapproved. The only standing GaussDB run is the operator-
+  approved Arsalan hourly job (one day, one partition — not a precedent).
 - **Restart sweep.** A restart replays no unread wire, so in-flight work drops silently.
   After any restart, cover four seams by hand: (1) open plan quorums frozen mid-vote;
   (2) active-BUILD plans whose builder lost its baton — re-nudge; (3) your own buried inbound;
