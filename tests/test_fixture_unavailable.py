@@ -9,7 +9,7 @@ triggers/), with ASTRYX_DSN unset:
   U2 test_wake_chokepoint    → 77, says NOT SEARCHED, no traceback
   U3 the same tree with triggers/ present (a LIVE host) → 1, says BROKEN (the control: 77 there would switch the
      guard off quietly)
-ESTATE_SRC points at a mutant estate.py (tests/mutants_fixture_unavailable.py). Exit 0 pass · 1 fail.
+ESTATE_SRC points at a mutant estate.py (tests/mutants_fixture_unavailable.py). Exit 0 pass · 1 fail · 77 not run (no psycopg).
 """
 import os
 import shutil
@@ -28,6 +28,12 @@ def check(name, ok, detail=""):
     if not ok:
         fails.append(name)
 
+
+# The axis is deps PRESENT, database ABSENT (CI's runner). Without psycopg both gates stop at their own deps skip and
+# never reach the fixture, so nothing here could be verified: say so (77), never a FAIL (pushed_tree_check's bare python3).
+if subprocess.run([sys.executable, "-c", "import psycopg"], capture_output=True).returncode != 0:
+    print(f"NOT RUN: {sys.executable} has no psycopg, so neither gate can reach its fixture. Nothing was verified here.")
+    sys.exit(77)
 
 ge = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 tracked = subprocess.run(["git", "-C", str(REPO), "ls-files", "-z"], capture_output=True, env=ge, check=True).stdout
