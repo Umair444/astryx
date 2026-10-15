@@ -30,6 +30,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+import os
 import subprocess
 import sys
 import tempfile
@@ -88,9 +89,13 @@ def station(name: str, message: str, *, timeout: int = TIMEOUT_S,
         cmd += ["--tools", tools]              # scoped allowlist, charter's explicit choice
     else:
         cmd += ["--tools", ""]                 # zero actuators — pure-text API
+    # the stateless call runs the user-wide Stop hook (hooks/step.py), which records its turn under ASTRYX_AGENT. An
+    # INHERITED name filed it under whichever resident or gate invoked the station (a2 #53062); the turn is the
+    # stationed agent's own, so it is attributed to it, every time, whoever calls
+    env = {**os.environ, "ASTRYX_AGENT": name}
     try:
         proc = subprocess.run(cmd, input=message and prompt, text=True,
-                              capture_output=True, timeout=timeout, cwd=str(home))
+                              capture_output=True, timeout=timeout, cwd=str(home), env=env)
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": "timeout", "agent": name, "model": model}
     except Exception as exc:
