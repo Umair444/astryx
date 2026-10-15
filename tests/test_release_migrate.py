@@ -94,8 +94,10 @@ ROUTED = [("whatsapp", {"chat": CHAT, "agent": "member", "enabled": True, "tier"
 check("route_of: the one route of the agent on the channel, one already declaring THIS tier included",
       M.route_of("member", "whatsapp", "career", ROUTED)["chat"] == CHAT
       and M.route_of("member", "whatsapp", "career")["chat"] == CHAT)
-check("route_of: 0 routes, 2 routes and a route declaring ANOTHER tier all refuse",
-      _refuses(lambda: M.route_of("nobody", "whatsapp", "career"))
+check("route_of: 0 routes, 2 routes, a route declaring ANOTHER tier and a route with NO chat all refuse",
+      _refuses(lambda: M.route_of("member", "whatsapp", "career", [("whatsapp", {"agent": "member", "enabled": True},
+                                                                    None)]))
+      and _refuses(lambda: M.route_of("nobody", "whatsapp", "career"))
       and _refuses(lambda: M.route_of("member", "whatsapp", "career", ROUTED * 2))
       and _refuses(lambda: M.route_of("member", "whatsapp", "family", ROUTED)))
 
@@ -144,6 +146,10 @@ try:
     td = home / ".claude" / "projects" / __import__("re").sub(r"[^A-Za-z0-9]", "-", str((root / "homes" / "member").resolve()))
     td.mkdir(parents=True)
     (td / "s.jsonl").write_text(SENT)
+    (td / "s" / "subagents").mkdir(parents=True)                      # a3 F1: the same history one directory down
+    (td / "s" / "subagents" / "a.jsonl").write_text(SENT * 2)
+    (td / "s" / "tool-results").mkdir()
+    (td / "s" / "tool-results" / "r1").write_text(SENT * 3)
 
     print("census:")
     with db.cursor() as cur:
@@ -151,9 +157,11 @@ try:
     check("before: the route's 4 text rows of 6 (thread + handle), its poll, 2 of 3 steps, 2 turns are counted",
           before["messages"] == [6, 4] and before["polls"] == [1, 1] and before["steps"] == [3, 2]
           and before["turns"] == [2, 2] and not before["database_clean"], before)
-    check("…the residuals outside the database are counted (a transcript file) and keep history unclean",
-          before["residuals"]["transcript_files"] == 1 and before["residuals"]["transcript_bytes"] == len(SENT)
-          and not before["history_clean"], before["residuals"])
+    check("…the residuals outside the database are counted RECURSIVELY (the transcript, its subagents, its tool "
+          "results: 3 files) and keep history unclean, the transcript flagged a live sink",
+          before["residuals"]["transcript_files"] == 3 and before["residuals"]["transcript_bytes"] == 6 * len(SENT)
+          and before["residuals"]["transcript_is_live_sink"] is True and not before["history_clean"],
+          before["residuals"])
     blob = J(before)
     check("…and the census is content-blind AND identifier-blind (no body, chat, thread or handle in it)",
           SENT not in blob and CHAT not in blob and "20202" not in blob and "wa:" not in blob, blob)

@@ -21,7 +21,9 @@ only on an EXACT anchored marker (D2), a migrated one only with its pointer: det
 step forms pass too (a3: else every post-S1d step alarms). RESIDUALS outside the database are counted and printed every
 run: the agent's transcript files (its resume store: not moved), the shared auto-memory files named for it or its tier,
 the chronicle editions naming it. While any is non-zero the census never reads "history clean": disposing of them is
-the owner's call, with the backups and pg_dumps made before the move (b).
+the owner's call, with the backups and pg_dumps made before the move (b). The auto-memory count is by FILE NAME only
+(a3 N3: a content rule counts peers' notes about the agent). The transcript dir is counted recursively and is a LIVE
+sink while the agent runs (a3 N1): it can't reach 0 until that dir itself lives in the tier store.
 FUNCTION, accepted: the agent's own query_steps and night review, and the observatory, read markers afterwards; its
 session resolves a pointer through read_for under its label like any tier member.
 ORPHANS, accepted: a blob is written before the transaction commits, so a rolled-back run leaves unreferenced blobs in
@@ -117,6 +119,8 @@ def route_of(agent: str, channel: str, tier: str, routes=None) -> dict:
     t = R.route_tier(hits[0])
     if t not in (None, tier):
         raise R.Refused(f"the route already declares tier {t!r}, not {tier!r}")
+    if not hits[0].get("chat"):                  # a3 N4: no chat = a census of nothing that reads "clean"
+        raise R.Refused("the route names no chat")
     return hits[0]
 
 
@@ -128,14 +132,20 @@ def _transcript_dir(agent: str) -> Path:
 def residuals(agent: str, tier: str) -> dict:
     """Copies of the history OUTSIDE the database, counted (a3 #55033). Never their names or contents."""
     td = _transcript_dir(agent)
-    files = [p for p in td.glob("*.jsonl") if p.is_file()] if td.is_dir() else []
+    # EVERY regular file, recursively (a3 F1): <session>/subagents/*.jsonl and <session>/tool-results/* are the same
+    # history; a top-level glob counted 1 of 82 files, so disposing of one jsonl would have read "clean"
+    files = [p for p in td.rglob("*") if p.is_file() and not p.is_symlink()] if td.is_dir() else []
     mem = Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(R.REPO.resolve())) / "memory"
     memf = [p for p in mem.glob("*") if p.is_file() and (agent in p.name.lower() or tier in p.name.lower())] \
         if mem.is_dir() else []
     chron = R.REPO / "memory" / "library" / "chronicle"
     eds = sum(1 for p in chron.glob("*.md") if agent in p.read_text(errors="replace")) if chron.is_dir() else 0
     return {"transcript_files": len(files), "transcript_bytes": sum(p.stat().st_size for p in files),
-            "automemory_files": len(memf), "chronicle_editions": eds}
+            # a3 N1: a LIVE sink, not history: while the agent runs, Claude Code keeps writing its raw transcript here
+            # (S1d strips the database, not the CLI's own log). It reaches 0 only when that dir moves into the tier
+            # store, a later slice. Said in every census so nobody reads it as a one-time cleanup.
+            "transcript_is_live_sink": True,
+            "automemory_files_named": len(memf), "chronicle_editions": eds}
 
 
 def _route_rows(cur, channel, chat):
@@ -156,7 +166,7 @@ def census(cur, agent: str, channel: str, chat: str, tier: str) -> dict:
            "residuals": residuals(agent, tier)}
     db = sum(v[1] for k, v in out.items() if k != "residuals")
     out["database_clean"] = db == 0
-    out["history_clean"] = db == 0 and not any(out["residuals"].values())
+    out["history_clean"] = db == 0 and not any(v for k, v in out["residuals"].items() if k != "transcript_is_live_sink")
     return out
 
 
