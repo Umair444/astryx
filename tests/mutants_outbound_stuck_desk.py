@@ -39,4 +39,7 @@ MUTANTS = {
         ("        elif m.get(\"desk_uncarried\") and f[2] == \"pending\":\n", "        elif False:\n"),
     "D13 the person projection matches every desk thread":
         ("(m.thread LIKE 'obs:person-%%') AS desk_person", "(m.thread LIKE 'obs:%%') AS desk_person"),
+    "D14 an uncarried person-desk row ignores the person rule (re-route)":
+        ("            (desk_person if m.get(\"desk_person\") else desk_uncarried).append(f)",
+         "            desk_uncarried.append(f)"),
 }

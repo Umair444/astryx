@@ -479,6 +479,17 @@ def test_uncarried_render_never_says_the_desk_serves_it():
     assert not re.search(r"(?i)un-threaded", out), out
 
 
+def test_an_uncarried_person_desk_row_gets_the_person_rule_not_a_re_route():
+    """a4 #55692: an obs:person- row from a sender the desk doesn't serve is still People detail by construction, so
+    "re-route it to a surface whose readers may read it" would hand that sender the judgment (b) took away."""
+    import re
+    g = bucket([_fentry(11, "pending", 6)], _meta(11, bridge_delivered=True, desk_uncarried=True, desk_person=True))
+    assert _ids(g["desk_person"]) == {"11"} and g["desk_uncarried"] == [] and g["bridge"] == [], g
+    out = _entry(_entry_rows((910, "pending", {"desk_uncarried": True, "desk_person": True, "from_agent": "seed"})))
+    assert "UNSERVED ON THE PERSON DESK (1)" in out and "#910" in out and "UNCARRIED" not in out, out
+    assert not re.search(r"(?i)re-route|un-threaded|doorbell", out), out
+
+
 def test_desk_render_through_the_real_entrypoint_never_prescribes_the_bridge():
     out = _entry(_entry_rows((903, "pending", {"desk_served": True})))
     assert out and "UNSERVED ON AN OBSERVATORY DESK (1)" in out and "#903" in out, out
@@ -529,7 +540,7 @@ def test_desk_predicate_on_a_real_db_reads_the_consumers_prefixes_and_who():
                                 "VALUES (%s,'local','owner','local',%s,'x','pending', now() - interval '2 hours') "
                                 "RETURNING id", (frm, thread)).fetchone()[0]
         want = {"UNSERVED ON AN OBSERVATORY DESK": [put("obs:estate-ab12"), put("obs:library-e4523e8f")],
-                "UNSERVED ON THE PERSON DESK": [put("obs:person-77")],
+                "UNSERVED ON THE PERSON DESK": [put("obs:person-77"), put("obs:person-78", "seed")],
                 "UNCARRIED BY CONSTRUCTION": [put("obs:estate-cd34", "seed")],        # the consumer's WHO is memory
                 "BRIDGE-DELIVERED RECIPIENT": [put("obs:other-1")]}                  # a near-miss no desk serves
         out = _MOD["outbound_stuck"](C({})) or ""
