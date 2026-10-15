@@ -66,10 +66,15 @@ done
 if [ "$FULL" != 0 ]; then
   git worktree add --detach "$WT" "$T" >/dev/null 2>&1 || { echo "merge_check: worktree failed"; exit 2; }
   made=()
-  ESTATE_EXCLUDE="venv/ .venv/ homes/ node_modules/ backups/ media/ observatory/web/dist/ .env"   # == ledger.py's
+  ESTATE_EXCLUDE="venv/ .venv/ homes/ node_modules/ backups/ media/ observatory/web/dist/ .env .claude/worktrees/"   # == ledger.py's
   RUNTIME=".env venv channel/node_modules"                     # excluded from the ESTATE, needed to RUN
   SKIP="var/"                                                   # declared: runtime state, regenerable
-  estate=$(git -C "$LIVE" ls-files --others --ignored --exclude-standard --directory | while IFS= read -r p; do
+  # A directory holding ONLY ignored content is listed itself AND each ignored child: drop such a parent (a strict
+  # prefix of another entry) before the exclusions, or `.claude/` re-admits `.claude/worktrees/` (== ledger.py's rule)
+  estate=$(git -C "$LIVE" ls-files --others --ignored --exclude-standard --directory \
+    | awk '{ l[NR] = $0 } END { for (i = 1; i <= NR; i++) { p = l[i]; d = 0
+        if (p ~ /\/$/) for (j = 1; j <= NR; j++) if (j != i && index(l[j], p) == 1) { d = 1; break }
+        if (!d) print p } }' | while IFS= read -r p; do
     case "$p" in *__pycache__*|*.pyc) continue ;; esac
     keep=1; for e in $ESTATE_EXCLUDE $SKIP; do case "/$p" in "/$e"*|*"/$e"*) keep=0 ;; esac; [ "$p" = "$e" ] && keep=0; done
     [ "$keep" = 1 ] && echo "${p%/}"; done)
