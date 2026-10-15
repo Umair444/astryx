@@ -449,6 +449,36 @@ def _entry(rows):
     return _MOD["outbound_stuck"](types.SimpleNamespace(state={}, sql=lambda q, p=(): [] if "AS cand" in q else rows))
 
 
+def test_a_desk_thread_from_a_sender_the_desk_does_not_serve_is_uncarried():
+    """a4 #55690 (a): the desk serves from_agent='memory' only (main.py:3045). seed's 08-14 estate row is neither the
+    desk's (it never serves it, late or not) nor the bridge's (which skips the thread by design)."""
+    g = bucket([_fentry(9, "pending", 6)], _meta(9, bridge_delivered=True, desk_uncarried=True))
+    assert _ids(g["desk_uncarried"]) == {"9"} and g["desk"] == [] and g["bridge"] == [], g
+
+
+def test_the_person_desk_is_its_own_class():
+    g = bucket([_fentry(10, "pending", 6)], _meta(10, bridge_delivered=True, desk_served=True, desk_person=True))
+    assert _ids(g["desk_person"]) == {"10"} and g["desk"] == [] and g["bridge"] == [], g
+
+
+def test_person_desk_render_never_prescribes_a_resend():
+    """a4 #55690 (b): the person desk is People detail by construction, so the default must be the one that can't leak:
+    no un-threaded resend, conditional or not."""
+    import re
+    out = _entry(_entry_rows((908, "pending", {"desk_served": True, "desk_person": True})))
+    assert "UNSERVED ON THE PERSON DESK (1)" in out and "DO NOT RESEND IT ANYWHERE" in out and "#908" in out, out
+    assert not re.search(r"(?i)un-threaded|doorbell", out), out
+    assert "BRIDGE-DELIVERED" not in out and "pgrep" not in out, out
+
+
+def test_uncarried_render_never_says_the_desk_serves_it():
+    import re
+    out = _entry(_entry_rows((909, "pending", {"desk_uncarried": True, "from_agent": "seed"})))
+    assert "UNCARRIED BY CONSTRUCTION (1)" in out and "#909" in out, out
+    assert "WAS served" not in out and "late answers" not in out and "pgrep" not in out, out
+    assert not re.search(r"(?i)un-threaded", out), out
+
+
 def test_desk_render_through_the_real_entrypoint_never_prescribes_the_bridge():
     out = _entry(_entry_rows((903, "pending", {"desk_served": True})))
     assert out and "UNSERVED ON AN OBSERVATORY DESK (1)" in out and "#903" in out, out
@@ -470,9 +500,10 @@ def test_every_un_threaded_remedy_says_the_doorbell_is_a_group():
         assert "not an owner-only surface" in out[h:h + 160] and "never People detail" in out[h:h + 260], out[h:h + 260]
 
 
-def test_desk_predicate_on_a_real_db_reads_the_consumers_prefixes():
-    """The desk_served projection through pulse_run.Ctx on a sqlguard fixture, read TRUE and FALSE: the three prefixes
-    the observatory serves are the desk's; a near-miss obs: thread, and a desk thread addressed to someone else, are not."""
+def test_desk_predicate_on_a_real_db_reads_the_consumers_prefixes_and_who():
+    """The desk projections through pulse_run.Ctx on a sqlguard fixture, read TRUE and FALSE: the three prefixes
+    the observatory serves, from memory, are the desk's (the person prefix its own class); a desk thread from another
+    sender is uncarried (the consumer's WHO, main.py:3045); a near-miss obs: thread is the bridge's."""
     try:
         import psycopg
         import importlib.util
@@ -493,20 +524,22 @@ def test_desk_predicate_on_a_real_db_reads_the_consumers_prefixes():
                 super().__init__(st)
                 s._conn = conn
 
-        def put(to, thread):
+        def put(thread, frm="memory"):
             return conn.execute("INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, body, status, ts) "
-                                "VALUES ('memory','local',%s,'local',%s,'x','pending', now() - interval '2 hours') "
-                                "RETURNING id", (to, thread)).fetchone()[0]
-        desk = [put("owner", t) for t in ("obs:estate-ab12", "obs:person-77", "obs:library-e4523e8f")]
-        near = put("owner", "obs:other-1")                   # an obs: thread no desk serves: the bridge's
+                                "VALUES (%s,'local','owner','local',%s,'x','pending', now() - interval '2 hours') "
+                                "RETURNING id", (frm, thread)).fetchone()[0]
+        want = {"UNSERVED ON AN OBSERVATORY DESK": [put("obs:estate-ab12"), put("obs:library-e4523e8f")],
+                "UNSERVED ON THE PERSON DESK": [put("obs:person-77")],
+                "UNCARRIED BY CONSTRUCTION": [put("obs:estate-cd34", "seed")],        # the consumer's WHO is memory
+                "BRIDGE-DELIVERED RECIPIENT": [put("obs:other-1")]}                  # a near-miss no desk serves
         out = _MOD["outbound_stuck"](C({})) or ""
         # sliced by header, never split on " | ": the bridge's own remedy text holds a shell pipe (`journalctl … | grep`)
-        di, bi = out.find("UNSERVED ON AN OBSERVATORY DESK"), out.find("BRIDGE-DELIVERED RECIPIENT")
-        assert 0 <= di < bi, out                               # rendered desk first, then bridge
-        d, b = out[di:bi], out[bi:]
-        for i in desk:
-            assert f"#{i} " in d and f"#{i} " not in b, (i, out)
-        assert f"#{near} " in b and f"#{near} " not in d, out
+        at = sorted((out.find(h), h) for h in want)
+        assert all(i >= 0 for i, _ in at), out
+        sec = {h: out[i:(at[k + 1][0] if k + 1 < len(at) else len(out))] for k, (i, h) in enumerate(at)}
+        for h, ids in want.items():
+            for i in ids:
+                assert f"#{i} " in sec[h] and not any(f"#{i} " in v for k, v in sec.items() if k != h), (h, i, out)
         conn.close()
     finally:
         fxc.__exit__(None, None, None)
