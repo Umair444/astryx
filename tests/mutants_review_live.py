@@ -18,3 +18,7 @@ MUTANTS = {
     "W4 every root is rebound, a fixture tree's too (an oracle's fake repo judges live)":
         ("return live if Path(r).resolve() == extract else r", "return live"),
 }
+MUTANTS["W5 the DSN is not rewritten (asyncpg ignores PGOPTIONS: its writes reach the database, a4 #56228)"] = \
+    ("        e[\"ASTRYX_DSN\"] = read_only_dsn(dsn)", "        pass")
+MUTANTS["W6 an existing options= is overwritten, not refused (another tool's options silently dropped)"] = \
+    ("        if any(k == \"options\" for k, _ in q):\n            raise Refused", "        if False:\n            raise Refused")

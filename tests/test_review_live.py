@@ -6,9 +6,11 @@
 Every arm MEASURES, through the subject's own CLI, a probe the child runs:
   L1 a module loaded from the EXTRACT has REPO = the live root (the subject's own repo), not the extract
   L2 a fixture tree's root is left alone (an oracle's fake repo still judges itself)
-  L3 a write under the child's default session raises ReadOnlySqlTransaction, on a throwaway fixture DB (never prod);
-     the same write WITHOUT the tool succeeds (anti-vacuity)
+  L3 on a throwaway fixture DB (never prod), a CREATE under the child's default session is refused through EVERY path:
+     L3a psycopg on a DSN the tool never saw (the PGOPTIONS guard), L3b asyncpg on ASTRYX_DSN (asyncpg ignores
+     PGOPTIONS: the DSN rewrite, a4 #56228), L3c psycopg on ASTRYX_DSN; the same three WITHOUT the tool succeed
   L4 ASTRYX_AGENT set in the caller is absent in the child (nothing it runs posts as the reviewer's turn)
+  L5 a DSN already carrying options= is refused (URI and key=value); one without gains the option, its query kept
 Hermetic for L1/L2/L4 (no DB). L3 needs a fixture DB: SKIP (exit 77) if none is reachable.
 """
 import json
@@ -46,16 +48,26 @@ import astryx.paths as P
 import astryx.core.deps as D                   # imported AFTER the patch, as any measured module is
 out = {{"deps_repo": str(D.REPO), "deps_file": D.__file__, "fixture_root": str(P.repo_root({str(FX / 'src/astryx/x.py')!r})),
        "agent": os.environ.get("ASTRYX_AGENT"), "write": None}}
-dsn = os.environ.get("PROBE_DSN")
-if dsn:
-    import psycopg
-    with psycopg.connect(dsn) as c:
+if os.environ.get("PROBE_RAW_DSN"):
+    import asyncio, asyncpg, psycopg
+    def pg(dsn):
+        with psycopg.connect(dsn) as c:
+            try:
+                c.execute("CREATE TABLE review_live_probe (x int)"); c.execute("DROP TABLE review_live_probe")
+                return "allowed"
+            except Exception as e:
+                return type(e).__name__
+    async def apg(dsn):
+        c = await asyncpg.connect(dsn)
         try:
-            c.execute("CREATE TABLE review_live_probe (x int)")
-            c.execute("DROP TABLE review_live_probe")
-            out["write"] = "allowed"
+            await c.execute("CREATE TABLE review_live_probe (x int)"); await c.execute("DROP TABLE review_live_probe")
+            return "allowed"
         except Exception as e:
-            out["write"] = type(e).__name__
+            return type(e).__name__
+        finally:
+            await c.close()
+    out["write"] = {{"raw_psycopg": pg(os.environ["PROBE_RAW_DSN"]), "asyncpg": asyncio.run(apg(os.environ["ASTRYX_DSN"])),
+                    "psycopg": pg(os.environ["ASTRYX_DSN"])}}
 print("PROBE " + json.dumps(out))
 """)
 
@@ -85,6 +97,23 @@ try:
           d.get("deps_repo") == str(EX.resolve()), d)
     check("L2 a fixture tree's root is left alone", t.get("fixture_root") == str(FX.resolve()), t)
     check("L4 ASTRYX_AGENT set in the caller is absent in the child", "agent" in t and t["agent"] is None, t)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("review_live_subject", SUBJECT)
+    RL = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(RL)
+
+    def refuses(d):
+        try:
+            RL.read_only_dsn(d)
+        except RL.Refused:
+            return True
+        return False
+    check("L5 a DSN that already carries options= is refused, URI and key=value (never merged or overwritten)",
+          refuses("postgresql://u@h/db?options=-c%20statement_timeout%3D5") and refuses("host=h options='-c x=1'"))
+    check("L5 …and one without gets the read-only option, its other parameters kept",
+          RL.read_only_dsn("postgresql://u@h/db?sslmode=disable").endswith(
+              "sslmode=disable&options=-c%20default_transaction_read_only%3Don")
+          and RL.read_only_dsn("host=h").endswith("options='-c default_transaction_read_only=on'"))
 
     print("fixture DB:")
     try:
@@ -97,11 +126,24 @@ try:
         sys.exit(1 if fails else 77)
     try:
         dsn = fx["dsn"]
-        t = run_tool({"PROBE_DSN": dsn})
-        check("L3 a write under the child's default session raises ReadOnlySqlTransaction",
-              t.get("write") == "ReadOnlySqlTransaction", t)
-        d = run_direct({"PROBE_DSN": dsn})
-        check("L3 …and the same write without the tool succeeds (the arm can fail)", d.get("write") == "allowed", d)
+        # the fixture hands a key=value DSN; asyncpg takes only URIs, as the estate's asyncpg callers use
+        from urllib.parse import quote
+        from psycopg.conninfo import conninfo_to_dict
+        k = conninfo_to_dict(dsn)
+        auth = quote(k.get("user", ""), safe="") + (":" + quote(k["password"], safe="") if k.get("password") else "")
+        uri = f"postgresql://{auth}@{k.get('host', '127.0.0.1')}:{k.get('port', 5432)}/{quote(k['dbname'], safe='')}"
+        env = {"PROBE_RAW_DSN": dsn, "ASTRYX_DSN": uri}
+        tr = run_tool(env)
+        w = tr.get("write") or tr
+        check("L3a psycopg on a DSN the tool never saw: ReadOnlySqlTransaction (PGOPTIONS)",
+              w.get("raw_psycopg") == "ReadOnlySqlTransaction", w)
+        check("L3b asyncpg on ASTRYX_DSN: ReadOnlySQLTransactionError (the DSN rewrite)",
+              w.get("asyncpg") == "ReadOnlySQLTransactionError", w)
+        check("L3c psycopg on ASTRYX_DSN: ReadOnlySqlTransaction", w.get("psycopg") == "ReadOnlySqlTransaction", w)
+        dr = run_direct(env)
+        d = dr.get("write") or dr
+        check("L3 …and all three succeed without the tool (the arms can fail)",
+              d and all(v == "allowed" for v in d.values()), d)
     finally:
         cm.__exit__(None, None, None)
 finally:
