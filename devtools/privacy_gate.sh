@@ -29,7 +29,9 @@ fi
 # ---- (b) personal-tier surfaces: ignored AND untracked -------------------
 # The manifest of what must never reach the public repo. Route files are
 # derived from the live bridge layout; the rest is the fixed personal tier.
-SURFACES=(.env local.md relations.md owner.md homes memory triggers media
+# directories carry a trailing slash: `git check-ignore` matches a dir-only pattern (triggers/) against a path that
+# does not EXIST only when the path says it is a directory, and in a clean clone (CI) these never exist
+SURFACES=(.env local.md relations.md owner.md homes/ memory/ triggers/ media/
           backups/ wacli-data/ bridges/routes-whatsapp.json bridges/routes-telegram.json
           bridges/routes-discord.json)
 for s in "${SURFACES[@]}"; do
