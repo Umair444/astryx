@@ -80,7 +80,10 @@ def _daemon_env() -> dict:
     forks the adb SERVER, which outlives its caller by days, and the emulator runs detached: whatever they inherit, they
     keep. A gate's ASTRYX_RUNSCOPE_TEST (which stamps a run role TEST), its ASTRYX_AGENT and its sqlguard trace dir
     were all found in a 67h-old adb server (a3 #53443 (a); seed #53451). Neither tool reads any ASTRYX_* variable, so
-    the whole namespace is dropped: a variable added later can't leak by being missing from a list."""
+    the whole namespace is dropped: a variable added later can't leak by being missing from a list.
+    SCOPE: the launches THIS process makes (adb, the headless emulator, docker inspect). The windowed emulator is
+    exec'd by sway with sway's own env, never the caller's: the user manager's plus hands_desktop's ASTRYX_HANDS_AGENT
+    desk label (a1 #53835, measured), which names the desktop and carries no gate's identity."""
     return {k: v for k, v in os.environ.items() if not k.startswith("ASTRYX_")}
 
 

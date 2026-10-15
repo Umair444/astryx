@@ -355,17 +355,31 @@ finally:
         else:
             os.environ[k] = v
 _asrc = Path(os.environ.get("ANDROID_SRC") or REPO / "src/astryx/hands/android.py")
+# Every LAUNCH counts, found by the callee's NAME whatever the receiver (a1 #53835: `os.system(...)` and an aliased
+# `from subprocess import Popen as _P` both escaped a census of `subprocess.<x>` attribute calls). A launcher that
+# takes env= must pass _daemon_env(); one that can't (os.system/popen/spawn*/exec*/posix_spawn*) is refused outright,
+# and so is importing a launcher by name. The windowed emulator is the one launch this module doesn't make: sway
+# execs it with sway's own env (the user manager's, plus hands_desktop's ASTRYX_HANDS_AGENT desk label), never ours.
+_WITH_ENV = {"run", "Popen", "call", "check_call", "check_output", "create_subprocess_exec", "create_subprocess_shell"}
+_NO_ENV = {"system", "popen", "posix_spawn", "posix_spawnp"}
 _calls, _bad = 0, []
 for n in ast.walk(ast.parse(_asrc.read_text())):
-    if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name) \
-            and n.func.value.id == "subprocess" and n.func.attr in {"run", "Popen", "call", "check_call", "check_output"}:
+    if isinstance(n, ast.ImportFrom) and (n.module == "subprocess" or (n.module in ("os", "asyncio") and any(
+            a.name in _WITH_ENV | _NO_ENV or a.name.startswith(("spawn", "exec")) for a in n.names))):
+        _bad.append(f"{n.lineno}: imports a launcher by name")
+    if not isinstance(n, ast.Call):
+        continue
+    nm = n.func.attr if isinstance(n.func, ast.Attribute) else n.func.id if isinstance(n.func, ast.Name) else ""
+    if nm in _NO_ENV or nm.startswith(("spawn", "exec")) and nm not in ("exec_module",):
         _calls += 1
-        kw = {k.arg: k.value for k in n.keywords}
-        e = kw.get("env")
+        _bad.append(f"{n.lineno}: {nm}() can't take env=")
+    elif nm in _WITH_ENV:
+        _calls += 1
+        e = {k.arg: k.value for k in n.keywords}.get("env")
         if not (isinstance(e, ast.Call) and isinstance(e.func, ast.Name) and e.func.id == "_daemon_env"):
-            _bad.append(n.lineno)
-want(f"DAEMON ENV: every subprocess call in android.py ({_calls}) passes env=_daemon_env(), so no launch inherits",
-     _calls >= 3 and not _bad, f"lines without it: {_bad}")
+            _bad.append(f"{n.lineno}: {nm}() without env=_daemon_env()")
+want(f"DAEMON ENV: every launch android.py makes ({_calls}, found by callee name, any receiver) passes "
+     f"env=_daemon_env(); no env-less launcher, no launcher imported by name", _calls >= 3 and not _bad, str(_bad))
 
 # ── LEASE ─────────────────────────────────────────────────────────────────────────────────────────────────────
 try:
