@@ -14,13 +14,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      # Derived from src/astryx/data/deps.conf, the one dependency authority, never a second list. A plain install,
-      # never `pip install -e .`: an installed astryx would shadow the tree under test (the identity gate refuses
-      # it). `media` is skipped: whisper/onnx are heavy and its gates need a device.
-      - name: dependencies (deps.conf, every group but media)
+      # Derived from src/astryx/data/deps.conf through the BUILD's own reader (hatch_build.deps_groups, which also
+      # drops the non-installable on-chip marker), so CI and the wheel can't disagree on what a dependency is. A plain
+      # install, never `pip install -e .`: an installed astryx would shadow the tree under test (the identity gate
+      # refuses it). `media` is skipped: whisper/onnx are heavy and its gates need a device.
+      - name: dependencies (deps.conf via hatch_build, every group but media)
         run: |
-          awk -F'|' '!/^[[:space:]]*(#|$)/ && NF >= 3 { g = $1; s = $2; gsub(/[[:space:]]/, "", g); gsub(/[[:space:]]/, "", s); if (g != "media") print s }' \
-            src/astryx/data/deps.conf | xargs python -m pip install --quiet
+          python -m pip install --quiet hatchling
+          python -c "import hatch_build as h, pathlib; print('\n'.join(s for g, v in h.deps_groups(pathlib.Path('.')).items() if g != 'media' for s in v))" \
+            | xargs python -m pip install --quiet
       # CHECK_ALLOW_SKIP is the VISIBLE exemption, and this is the one place it belongs. check.sh is strict by
       # default: a gate that verifies nothing is RED. A CI clone is the one environment where skipping is
       # legitimate (triggers/, memory/ and the database are absent by construction), so those read amber; check.sh
