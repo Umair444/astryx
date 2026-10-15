@@ -3,7 +3,7 @@
 not yet). It is the blind spot of test_undefined_names' family: a lazy 3.14 annotation hiding a 3.12 import crash.
 
 Two instruments on one question, and an arm that requires them to agree:
-  STATIC   each fixture's expected verdict from the scanner (A1-A12)
+  STATIC   each fixture's expected verdict from the scanner (A1-A12, and B1-B16 from a2 #55539)
   RUNTIME  each fixture run under a real pre-3.14 interpreter: flagged <=> NameError (A13). That arm is what proves the
            scanner's idea of "import-time" is Python's. It uses this interpreter on CI (3.12), else PY312, else
            `uv python find 3.12`, and is UNVERIFIED (a SKIP line) where none exists.
@@ -53,6 +53,43 @@ FIXTURES = {
     "A11 a TYPE_CHECKING import used only in a string annotation: clean":
         ("from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    from decimal import Decimal\n\n\n"
          "def f(x: 'Decimal') -> None:\n    pass\n", False),
+    # a2 #55539: every compound statement runs its body at import, and every binding form binds. The first version
+    # listed both by hand, and each of these was green.
+    "B1 a def inside a module-level `with`":
+        ("from contextlib import nullcontext\nwith nullcontext():\n    def f(p: Later) -> None:\n        pass\n\n\n"
+         "class Later:\n    pass\n", True),
+    "B2 a def inside a module-level `for`":
+        ("for _ in range(1):\n    def f(p: Later) -> None:\n        pass\n\n\nclass Later:\n    pass\n", True),
+    "B3 a def inside a module-level `while`":
+        ("while True:\n    def f(p: Later) -> None:\n        pass\n    break\n\n\nclass Later:\n    pass\n", True),
+    "B4 a def inside a module-level `match` case":
+        ("match 1:\n    case _:\n        def f(p: Later) -> None:\n            pass\n\n\nclass Later:\n    pass\n", True),
+    "B5 a def inside a `for … else`":
+        ("for _ in ():\n    pass\nelse:\n    def f(p: Later) -> None:\n        pass\n\n\nclass Later:\n    pass\n", True),
+    "B6 the name is bound later by a `for` target":
+        ("def f(p: T) -> None:\n    pass\n\n\nfor T in (int,):\n    pass\n", True),
+    "B7 the name is bound later by a `with … as` target":
+        ("from contextlib import nullcontext\n\n\ndef f(p: T) -> None:\n    pass\n\n\nwith nullcontext(int) as T:\n"
+         "    pass\n", True),
+    "B8 the name is bound later by a walrus":
+        ("def f(p: T) -> None:\n    pass\n\n\nprint(T := int)\n", True),
+    "B9 the name is bound later by a `type` statement":
+        ("def f(p: Alias) -> None:\n    pass\n\n\ntype Alias = int\n", True),
+    "B10 the name is bound later by a match capture":
+        ("def f(p: T) -> None:\n    pass\n\n\nmatch int:\n    case T:\n        pass\n", True),
+    "B11 a method names a class attribute assigned further down the class":
+        ("class A:\n    def f(self) -> B:\n        pass\n    B = int\n", True),
+    "B12 a class-body `x: T` above the class's own `T = …`":
+        ("class A:\n    x: B = 1\n    B = int\n", True),
+    "B13 the else of `if not TYPE_CHECKING:` never runs":
+        ("from typing import TYPE_CHECKING\nif not TYPE_CHECKING:\n    pass\nelse:\n    from decimal import Decimal\n\n\n"
+         "def f(x: Decimal) -> None:\n    pass\n", True),
+    "B14 a `for` target used by a def in its own body is bound in time: clean":
+        ("for T in (int,):\n    def f(p: T) -> None:\n        pass\n", False),
+    "B15 a class attribute bound before the method that names it: clean":
+        ("class A:\n    B = int\n    def f(self) -> B:\n        pass\n", False),
+    "B16 a comprehension's target binds nothing at module level: clean, and the later class flags":
+        ("_ = [Later for Later in ()]\n\n\ndef f(p: Later) -> None:\n    pass\n\n\nclass Later:\n    pass\n", True),
 }
 
 fails = 0
