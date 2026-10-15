@@ -6,6 +6,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useMediaQuery } from '@mantine/hooks'
 import { api, apiPost, fmtAgo } from '../api'
 import Md from './Md'
+import LateReplies from './LateReplies'
 import { Empty, LiveDot, Orb, Panel, SectionHead, Tabs, ViewHeader } from '../ui/kit'
 
 /* The Memory tab — the org's recall system, rendered.
@@ -121,6 +122,7 @@ export default function MemoryView() {
   const [hover, setHover] = useState<string | null>(null)
   const [q, setQ] = useState('')
   const [asking, setAsking] = useState(false)
+  const askGen = useRef(0)
   const [thread, setThread] = useState<string | null>(null)
   const [ans, setAns] = useState<Answer | null>(null)
   const [blink, setBlink] = useState(0)        // 1 = ignition, 0.6 = warm, 0 = idle
@@ -201,6 +203,7 @@ export default function MemoryView() {
   async function ask() {
     const text = q.trim()
     if (!text || asking) return
+    const my = ++askGen.current                            // a newer question retires the older one's poll
     setAsking(true)
     try {
       /* THE WIRE, not a conjure (owner ruling 2026-08-14). The question becomes a message
@@ -220,25 +223,29 @@ export default function MemoryView() {
       } else setBlink(0)
       /* Poll for the reply. A resident answers on its own clock; 3s × 60 is a generous
        * window, and timing out SAYS so instead of pretending silence is an answer. */
-      let got = false
-      for (let i = 0; i < 60 && !got; i++) {
+      let got = false, after = r.sent
+      for (let i = 0; i < 60 && askGen.current === my; i++) {   // to the end of the window: a second reply joins the first
         await new Promise((res) => setTimeout(res, 3000))
         try {
           const rep = await api<{ replies: { id: number; body: string }[] }>(
-            `/memory/chat?thread=${encodeURIComponent(r.thread)}&after=${r.sent}`)
+            `/memory/chat?thread=${encodeURIComponent(r.thread)}&after=${after}`)
+          if (askGen.current !== my) break
           if (rep.replies.length) {
-            setAns((a) => ({ answer: rep.replies.map((x) => x.body).join('\n\n'),
-                             retrieved: a?.retrieved ?? null }))
+            after = rep.replies[rep.replies.length - 1].id
+            const more = rep.replies.map((x) => x.body).join('\n\n'), first = !got
+            setAns((a) => ({ answer: first || !a ? more : `${a.answer}\n\n${more}`, retrieved: a?.retrieved ?? null }))
             got = true
+            setAsking(false)                               // answered: the owner may ask again while this one listens on
           }
         } catch { /* poll errors are transient; the loop is the retry */ }
       }
-      if (!got) setAns((a) => ({ answer: 'memory has not replied within this window — the question ' +
-        'is on the wire and the answer will land in its thread; a resident may be mid-task.',
+      /* What actually happens to a reply after this: /api/memory/late serves it the next time Memory opens. */
+      if (!got && askGen.current === my) setAns((a) => ({ answer: 'memory has not replied within this window; a resident may be mid-task. ' +
+        'Its answer will be waiting here the next time you open Memory.',
         retrieved: a?.retrieved ?? null }))
     } catch (e) {
       setAns({ answer: `send failed — ${String(e)}`, retrieved: null })
-    } finally { setAsking(false) }
+    } finally { if (askGen.current === my) setAsking(false) }
   }
 
   const ret = ans?.retrieved ?? null
@@ -844,6 +851,7 @@ export default function MemoryView() {
         * Retrieval ran server-side BEFORE the model was called, so the graph above is
         * lighting up what was actually read — evidence, not the model's self-report. */}
       <div className="absolute left-0 right-0 bottom-0 z-20 px-4 pb-4 pointer-events-none">
+        <div className="pointer-events-auto mx-auto max-w-[760px] mb-2 empty:hidden"><LateReplies prefix="obs:estate" /></div>
         <div className={`ax-panel pointer-events-auto mx-auto rounded-2xl overflow-hidden relative transition-[max-width] duration-300 ${sel ? 'max-w-[min(720px,calc(100%-460px))] mr-[452px]' : 'max-w-[760px]'}`}>
           {/* The cross the owner asked for: the answer panel could be summoned but not
             * dismissed — the old 'clear' rendered only when retrieval succeeded, so a

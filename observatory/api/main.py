@@ -3042,8 +3042,8 @@ async def memory_chat_replies(thread: str, after: int = 0, request: Request = No
     if not thread.startswith(("obs:estate", "obs:person-", "obs:library-")):
         return Response(status_code=400)          # estate, "ask memory about this person" (pid-keyed), the Library's desk
     rows = await pool.fetch(
-        "SELECT id, body, ts FROM messages WHERE thread=$1 AND from_agent='memory' "
-        "AND id > $2 ORDER BY id LIMIT 10", thread, after)
+        "SELECT id, body, ts FROM messages WHERE thread=$1 AND to_agent='owner' AND from_agent<>'owner' "
+        "AND id > $2 ORDER BY id LIMIT 10", thread, after)   # TO the owner, from anyone (memory→steward isn't his)
     if rows:
         # Serving the reply IS its delivery — this screen is the surface the thread
         # belongs to. No bridge will ever mark these (they carry a named non-channel
@@ -3054,6 +3054,36 @@ async def memory_chat_replies(thread: str, after: int = 0, request: Request = No
             "delivery=jsonb_build_object('ok', true, 'handle', 'observatory:estate') "
             "WHERE id = ANY($1::bigint[]) AND status='pending'", [x["id"] for x in rows])
     return {"replies": [{"id": x["id"], "body": x["body"], "ts": x["ts"].isoformat()} for x in rows]}
+
+
+@app.get("/api/memory/late")
+async def memory_late_replies(prefix: str, request: Request = None):
+    """The replies no poll was there to read (steward #55678): a second reply, one after the desk's
+    window, or one to a closed tab. Each desk calls this when it opens and shows what comes back.
+    ONE UPDATE…RETURNING claims and marks them, so a reply is served once, never twice, even to two
+    tabs at once. The handle 'observatory:late' tells outbound_stuck these went out late, not live.
+    Scoped by THREAD, not sender (seed #55684): any agent→owner row on a desk's threads. memory is the
+    only one that answers on them today, but a person or library desk may be answered by another.
+    At most 20 per visit, oldest first; only the rows served are marked, so the rest wait for the next."""
+    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+        return Response(status_code=403)
+    if prefix not in ("obs:estate", "obs:person-", "obs:library-"):
+        return Response(status_code=400)
+    rows = await pool.fetch(
+        "UPDATE messages SET status='delivered', delivered_at=now(), "
+        "delivery=jsonb_build_object('ok', true, 'handle', 'observatory:late') "
+        "WHERE id IN (SELECT id FROM messages WHERE to_agent='owner' AND from_agent<>'owner' "
+        "AND status='pending' AND thread LIKE $1 ORDER BY id LIMIT 20 FOR UPDATE SKIP LOCKED) "
+        "AND status='pending' RETURNING id, from_agent, thread, body, ts",
+        prefix + "%")                                   # a fixed prefix: no LIKE wildcards in it
+    out = []
+    for x in sorted(rows, key=lambda x: x["id"]):
+        q = await pool.fetchrow(
+            "SELECT body FROM messages WHERE thread=$1 AND from_agent='owner' AND id < $2 ORDER BY id DESC LIMIT 1",
+            x["thread"], x["id"])
+        out.append({"id": x["id"], "from": x["from_agent"], "thread": x["thread"], "question": ((q and q["body"]) or "")[:600],
+                    "body": x["body"], "ts": x["ts"].isoformat()})
+    return {"replies": out}
 
 
 class MemoryProposal(BaseModel):

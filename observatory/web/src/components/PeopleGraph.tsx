@@ -1,4 +1,5 @@
 import PeopleConfirm from './PeopleConfirm'
+import LateReplies from './LateReplies'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, apiPost } from '../api'
 import { Empty, Orb, Panel, Skeleton } from '../ui/kit'
@@ -124,8 +125,14 @@ export default function PeopleGraph() {
 
   const chip = 'ax-panel rounded-full px-3 py-1 text-[11.5px] text-ink-dim'
 
+  const personOf = (thread: string) => {   // obs:person-<pid> → the saved name, if there is one
+    const n = g.nodes.find((x) => `obs:person-${x.id}` === thread)
+    return n && n.label !== 'unknown' ? n.label : null
+  }
+
   return (
     <div className="h-full flex flex-col">
+      <div className="px-4 pt-2.5 empty:hidden"><LateReplies prefix="obs:person-" about={personOf} /></div>
       <div className="px-4 py-2.5 flex items-center gap-2 flex-wrap">
         <span className={chip}><b className="text-ink font-semibold tabular-nums">{g.stats.people}</b> people</span>
         <span className={chip}><b className="text-ink font-semibold tabular-nums">{g.stats.knows}</b> relations</span>
@@ -346,27 +353,30 @@ function AskMemory({ pid }: { pid: string }) {
   const [busy, setBusy] = useState(false)
   const [log, setLog] = useState<{ who: 'you' | 'memory'; text: string }[]>([])
   const thread = `obs:person-${pid}`
-  useEffect(() => { setLog([]); setQ('') }, [pid])
+  const gen = useRef(0)                                    // a newer question, or another person, retires the older poll
+  useEffect(() => { gen.current++; setLog([]); setQ(''); setBusy(false) }, [pid])
   async function ask() {
     const text = q.trim()
     if (!text || busy) return
+    const my = ++gen.current
     setBusy(true); setQ('')
     setLog((l) => [...l, { who: 'you', text }])
     try {
       const r = await apiPost<{ sent: number; thread: string }>('/memory/chat', { message: text, thread })
       let after = r.sent
-      for (let i = 0; i < 90; i++) {                       // memory answers on its own clock: poll ~3 min
+      for (let i = 0; i < 90 && gen.current === my; i++) {                       // memory answers on its own clock: poll ~3 min
         await new Promise((res) => setTimeout(res, 2000))
         const got = await api<{ replies: { id: number; body: string }[] }>(`/memory/chat?thread=${encodeURIComponent(thread)}&after=${after}`)
-        if (got.replies.length) {
+        if (gen.current !== my) break
+        if (got.replies.length) {                          // keep reading to the end: a second reply joins the log
           after = got.replies[got.replies.length - 1].id
           setLog((l) => [...l, ...got.replies.map((x) => ({ who: 'memory' as const, text: x.body }))])
-          break
+          setBusy(false)
         }
       }
     } catch (e) {
       setLog((l) => [...l, { who: 'memory', text: `couldn't reach memory: ${e}` }])
-    } finally { setBusy(false) }
+    } finally { if (gen.current === my) setBusy(false) }
   }
   return (
     <div className="flex flex-col gap-2">

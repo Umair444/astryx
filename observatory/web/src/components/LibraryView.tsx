@@ -9,6 +9,7 @@ import '@fontsource/instrument-serif/400-italic.css'
 import '@fontsource-variable/newsreader'
 import { api, apiPost } from '../api'
 import AgentFace from './AgentFace'
+import LateReplies from './LateReplies'
 import { Empty, Skeleton } from '../ui/kit'
 
 /* THE LIBRARY — what the org knows, as a booklet you can browse and search. Memory writes it
@@ -261,19 +262,27 @@ function Desk({ idx, bySlug, go }: { idx: Index; bySlug: Map<string, Card>; go: 
     return () => removeEventListener('keydown', k)
   }, [])
 
+  const askGen = useRef(0)                                 // a newer question retires the older one's poll
   async function librarian(question: string) {
+    const my = ++askGen.current
     const reading = ms.search(question).slice(0, 4).map((h) => bySlug.get(h.slug as string)).filter(Boolean) as Card[]
     setAsk({ q: question, reading, answer: null })
     setQ('')
     try {
       const thread = `obs:library-${Math.random().toString(16).slice(2, 10)}`
       const r = await apiPost<{ sent: number }>('/memory/chat', { message: question, thread })
-      for (let i = 0; i < 120; i++) {                     // the librarian answers on its own clock (~4 min)
-        await new Promise((res) => setTimeout(res, 2000))
-        const got = await api<{ replies: { id: number; body: string }[] }>(`/memory/chat?thread=${encodeURIComponent(thread)}&after=${r.sent}`)
-        if (got.replies.length) { setAsk((a) => a && { ...a, answer: got.replies.map((x) => x.body).join('\n\n') }); return }
+      let after = r.sent, any = false
+      for (let i = 0; i < 120 && askGen.current === my; i++) {   // the librarian answers on its own clock (~4 min); read to the end
+        await new Promise((res) => setTimeout(res, 2000))  // of the window, so a second reply joins the first (seed #55680)
+        const got = await api<{ replies: { id: number; body: string }[] }>(`/memory/chat?thread=${encodeURIComponent(thread)}&after=${after}`)
+        if (askGen.current !== my) return
+        if (got.replies.length) {
+          after = got.replies[got.replies.length - 1].id
+          const more = got.replies.map((x) => x.body).join('\n\n')
+          setAsk((a) => a && { ...a, answer: a.answer ? `${a.answer}\n\n${more}` : more }); any = true
+        }
       }
-      setAsk((a) => a && { ...a, err: 'Memory hasn’t answered yet — it may be mid-task. The question is on its desk.' })
+      if (!any && askGen.current === my) setAsk((a) => a && { ...a, err: 'Memory hasn’t answered yet. It may be mid-task. Its answer will be waiting here the next time you open the Library.' })
     } catch (e) {
       setAsk((a) => a && { ...a, err: String(e) })
     }
@@ -283,6 +292,7 @@ function Desk({ idx, bySlug, go }: { idx: Index; bySlug: Map<string, Card>; go: 
 
   return (
     <div className="relative max-w-2xl mx-auto mt-8 text-left">
+      <div className="mb-4 empty:hidden"><LateReplies prefix="obs:library-" /></div>
       <label className="lib-search flex items-center gap-3 rounded-2xl px-5 h-14">
         <svg viewBox="0 0 24 24" className="w-5 h-5 text-ink-mute shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
         <input ref={input} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ask memory, or search the shelves…"
