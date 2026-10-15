@@ -437,6 +437,7 @@ run "android device: an agent drives Settings on a real phone (77 unless ANDROID
 # (allowlist pinned); one spelling of its name; the resume-near-a-laptop-act sweep; persistence by omission; and the
 # VNC key never in the journal (in-process + one live owner connect). No phone needed.
 run "phone view: owner stop via the real routes, Hands can't reach it, resume sweep, no key in the log" "$PY" tests/test_phone_view.py
+run "phone view on a CI tree: with no .env its arms still run, never an import-time exit (seed 55410)" "$PY" tests/test_phone_view_ci.py
 run "init.sh phonesweep: the phone resume sweep installs itself only where phones are opted in" "$PY" tests/test_init_phonesweep.py
 # C5 (plan-8675): the Windows VM on demand. Opening its viewer claims the vm-slot then starts it (refused, naming the
 # holder, while the phone has it); only a run that an open STARTED is ever stopped idle, asynchronously. Stand-in only.

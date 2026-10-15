@@ -51,6 +51,9 @@ os.environ["ASTRYX_HANDS_HOME"] = str(TMP / "home")
 os.environ["ASTRYX_AGENT"] = "view-oracle"
 TEST_KEY = "test-owner-key-phone-view"
 os.environ["OBS_KEY"] = TEST_KEY
+# The observatory reads a DSN at IMPORT and exits without one (a CI runner has no .env: seed #55410). Its hands routes
+# need no database (no startup below), so the axis is a DEAD one, set here: CI runs every arm, and no arm reaches prod.
+os.environ["ASTRYX_DSN"] = "postgresql://phone-view-oracle@127.0.0.1:9/no-database"
 
 import importlib.util  # noqa: E402
 import nucleus  # noqa: E402
