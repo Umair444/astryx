@@ -208,15 +208,59 @@ def split_polls(text: str, max_options: int = 12) -> tuple[str, list[tuple[str, 
 
 # ----------------------------------------------------------------------- wire
 async def wire_insert(pool, from_agent: str, from_org: str, to_agent: str,
-                      thread: str | None, intent: str, body: str, meta: dict | None = None):
+                      thread: str | None, intent: str, body: str, meta: dict | None = None,
+                      route: dict | None = None, said: str | None = None):
     # `meta` carries INBOUND context the wire row otherwise loses: the real sender identity
     # (jid/phone/push_name — from_agent collapses a trusted sender to 'owner') and reply/quote
     # context (which message it answered, + that message's body). Stored in the `delivery`
     # jsonb, which is unused on an inbound row. server.mjs surfaces it on the <channel> tag.
+    #
+    # `route` (plan-9139 S1b-2b): the inbound chat sites pass the route the message arrived on. A route that
+    # DECLARES a tier, or anything that looks like one, never reaches the raw row: see _tier_ingress. `said` is the text
+    # as the human typed it, before route_target stripped an @mention: a tier route stores THAT (a4 #53081), so its
+    # member sees who the owner tried to address.
+    if route is not None:
+        from astryx.security import release as R
+        try:
+            tiered = R.route_tier(route) is not None
+        except R.GrantError:
+            tiered = True                      # a malformed declaration is judged (and refused) by the door
+        if tiered:
+            text = body if said is None else said
+            return await _tier_ingress(pool, R, from_agent, from_org, thread, intent, text, meta, route)
     await pool.execute(
         "INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body, delivery) "
         "VALUES ($1,$2,$3,$4,$5,$6,$7)", from_agent, from_org, to_agent, thread, intent, body,
         json.dumps(meta) if meta else None)
+
+
+# identity fields an inbound row carries today on every owner message; anything else in meta (the quoted reply's
+# BODY, above all) is content, so on a tier route it travels inside the stored body, never in `delivery`
+_INGRESS_META = ("sender_jid", "phone", "push_name", "sender_id", "username", "display_name", "reply_to_id",
+                 "reply_to_sender_jid")
+
+
+async def _tier_ingress(pool, R, from_agent, from_org, thread, intent, body, meta, route):
+    """An inbound message on a tier route (#46033 item 4). The row goes to the ROUTE's agent only, never to an
+    @mention's (a pointer there is unreadable, and the private surface has one reader); its body is a size marker;
+    delivery carries the pointer, keyed body MAC and tier, plus the identity fields. A quoted reply's text rides in
+    the stored body. Any refusal (a malformed or undeclared tier, an open route, a non-owner audience, no key)
+    stores NOTHING and writes a metadata-only WITHHELD row, so the owner's message is never silently lost."""
+    meta = dict(meta or {})
+    quoted = meta.pop("reply_to_body", "") or ""
+    stored = f"{body}\n[in reply to: {quoted}]" if quoted else body
+    keep = {k: meta[k] for k in _INGRESS_META if k in meta}
+    try:
+        marker, extra = R.ingress(from_org, route, stored, R.mac_key(), R.TierStore())
+        out, delivery = marker, {**keep, **extra}
+    except R.Refused as e:
+        print(f"tier ingress REFUSED on {thread}: {e} (the message was withheld; nothing stored)", flush=True)
+        out = "[tier-routed message withheld: " + type(e).__name__ + "]"
+        delivery = {**keep, "ingress_withheld": str(e)[:200]}
+    await pool.execute(
+        "INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body, delivery) "
+        "VALUES ($1,$2,$3,$4,$5,$6,$7)", from_agent, from_org, route.get("agent"), thread, intent, out,
+        json.dumps(delivery))
 
 
 async def resolve_quoted_body(pool, rid) -> str:

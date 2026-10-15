@@ -868,6 +868,12 @@ run "release seats: a labelled member writes only through the door" "$PY" tests/
 # send goes through the door (no content on the wire, nothing written on a refusal); a labelled permission request is
 # denied, never relayed; the unlabelled control is today's row. Mutants: tests/mutants_release_server.py.
 run "release server: a labelled member's channel seats go through the door" "$PY" tests/test_release_server.py
+# plan-9139 S1b-2b (ingress): a route that declares a tier stores the inbound body in the tier store and writes a
+# marker row to the ROUTE's agent; a malformed/undeclared tier, an open or non-owner route, or no key writes a
+# withheld row and stores nothing; read_for() resolves only for a member whose label holds the pointer's tiers, with
+# the row's MAC; every own-channel bridge insert passes its route. Mutants: tests/mutants_release_ingress.py,
+# tests/mutants_bridge_ingress.py.
+run "release ingress: a tier route's inbound text reaches only its tier's member" "$PY" tests/test_release_ingress.py
 if "$PY" -c 'import av' 2>/dev/null; then
   run "media in-process decode"        "$PY" src/astryx/core/media_probe.py
 else

@@ -19,6 +19,8 @@ The database is a throwaway created for this run and dropped after it; the org's
       NO row; with no release key → refused, NO row
   P   a labelled member's permission request is DENIED on the MCP stream and writes NO row; the unlabelled control's
       is relayed as today
+  I   an inbound tier-route row (S1b-2b): its own tier's member is pushed the BODY, resolved through the door; an
+      org or UNKNOWN session gets the marker; a wrong body MAC gets the marker and the refusal
   U   the unlabelled control's send is today's row, column for column, delivery NULL
 Exit 0 pass · 1 fail · 77 skipped (no node, no node_modules, no database, no CREATEDB).
 """
@@ -321,6 +323,41 @@ try:
           and "no ASTRYX_RELEASE_KEY" in reply, reply)
     write_env(True)
     check("after every arm, the sentinel is still nowhere in messages", sentinel_rows() == 0)
+
+    print("I. an inbound tier-route row (S1b-2b): resolved only for its own tier's member:")
+    INB = "S1B2B-SENTINEL-inbound-for-the-member-3c11"
+    r = subprocess.run([sys.executable, "-c", (
+        "import sys, json; sys.path.insert(0, sys.argv[1]); from astryx.security import release as R; "
+        "print(json.dumps(R.ingress('whatsapp', json.loads(sys.argv[2]), sys.argv[3], R.mac_key(), R.TierStore())))"),
+        str(home / "src"), json.dumps(ROUTE), INB], capture_output=True, text=True, timeout=30)
+    marker, imeta = json.loads(r.stdout) if r.returncode == 0 else ("", {})
+    check("the fixture door stores an inbound body and returns its marker", marker.startswith("[tier-routed: "),
+          r.stdout + r.stderr[-300:])
+
+    def inbound(to: str, delivery: dict) -> int:
+        return db.execute("INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, intent, body, "
+                          "delivery) VALUES ('owner','whatsapp',%s,'local','wa:101@s.whatsapp.net','chat',%s,%s) "
+                          "RETURNING id", (to, marker, json.dumps(delivery))).fetchone()[0]
+
+    def pushed(b: Body, mid: int):
+        got = []
+        wait_for(lambda: got.extend(m["params"]["content"] for m in b.lines()
+                                    if m.get("method") == "notifications/claude/channel"
+                                    and m["params"]["meta"].get("msg_id") == str(mid)) or got, 25)
+        return got[0] if got else None
+
+    got = pushed(member, inbound("member", imeta))
+    check("to the career member: the pushed content IS the body (resolved through the door)", got == INB, repr(got))
+    got = pushed(plain, inbound("plain", imeta))
+    check("to an org session: the marker as written, never the body", got == marker, repr(got))
+    got = pushed(ghost, inbound("ghost", imeta))
+    check("to an UNKNOWN session: the marker as written", got == marker, repr(got))
+    forged = {"ingress": {**imeta.get("ingress", {}), "body_mac": "0" * 64}}
+    got = pushed(member, inbound("member", forged))
+    check("a wrong body MAC: the member gets the marker and the refusal, never the body",
+          got is not None and got.startswith(marker) and "would not resolve" in got and INB not in got, repr(got))
+    check("the inbound body is nowhere in messages", db.execute(
+        "SELECT count(*) FROM messages m WHERE m::text LIKE %s", (f"%{INB}%",)).fetchone()[0] == 0)
 
     print("P. the permission relay:")
     member.permission("abcde")

@@ -34,4 +34,10 @@ MUTANTS = {
 
     "R5 an UNKNOWN label is never read again (frozen at spawn)":
         ("  if (LABEL !== null) return LABEL\n  LABEL = await readLabel(AGENT)\n", "  return LABEL\n"),
+
+    "R6 an inbound tier row is resolved for any labelled session, not only its tier's":
+        ("if (ing && Array.isArray(lbl) && lbl.includes(ing.tier)) {", "if (ing && Array.isArray(lbl)) {"),
+
+    "R7 an inbound tier row is never resolved (the member sees only the marker)":
+        ("if (ing && Array.isArray(lbl) && lbl.includes(ing.tier)) {", "if (false) {"),
 }

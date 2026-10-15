@@ -95,7 +95,7 @@ fam = R.TierStore().put(R.label(["family"]), "fam-body")
 os.environ["ASTRYX_AGENT"] = "member"
 buf = io.StringIO()
 with redirect_stdout(buf):
-    rc = R.main(["read", fam])
+    rc = R.main(["read", fam, R.body_mac(KEY.encode(), "fam-body")])
 check("`read` of ANOTHER tier's pointer → rc 1, and no body", rc == 1 and "fam-body" not in buf.getvalue())
 
 try:
