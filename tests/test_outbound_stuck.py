@@ -489,6 +489,16 @@ def test_an_uncarried_person_desk_row_gets_the_person_rule_not_a_re_route():
     out = _entry(_entry_rows((910, "pending", {"desk_uncarried": True, "desk_person": True, "from_agent": "owner"})))
     assert "UNSERVED ON THE PERSON DESK (1)" in out and "#910" in out and "UNCARRIED" not in out, out
     assert not re.search(r"(?i)re-route|un-threaded|doorbell", out), out
+    # a4 #56190: the desk never serves the owner's own row, so its text must not say it delivers itself
+    assert "delivers itself" not in out and "OWNER's own row here is never served" in out, out
+    assert out.index("OWNER's own row here is never served") < out.index("#910"), out
+
+
+def test_a_mixed_person_section_tells_each_sender_its_own_truth():
+    out = _entry(_entry_rows((913, "pending", {"desk_served": True, "desk_person": True}),
+                             (914, "pending", {"desk_uncarried": True, "desk_person": True, "from_agent": "owner"})))
+    ag, ow = out.index("An agent's reply here delivers itself"), out.index("OWNER's own row here is never served")
+    assert "UNSERVED ON THE PERSON DESK (2)" in out and ag < out.index("#913") < ow < out.index("#914"), out
 
 
 def test_desk_renders_say_late_serve_delivers_it_and_abandoning_stops_it():

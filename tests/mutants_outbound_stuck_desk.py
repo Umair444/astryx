@@ -53,4 +53,8 @@ MUTANTS = {
     "D17 the desk render drops the warning that abandoning stops the late serve":
         ("Do not close it `abandoned` while it still matters: that \"\n            f\"also stops the late serve. ",
          "\"\n            f\""),
+    "D18 the person section drops the owner's-own-row sentence":
+        ("        if own:\n            text += (", "        if False:\n            text += ("),
+    "D19 the person section treats the owner's own row as an agent's (\"delivers itself\")":
+        ("        own = [f for f in desk_person if meta.get(f[0], {}).get(\"desk_uncarried\")]", "        own = []"),
 }
