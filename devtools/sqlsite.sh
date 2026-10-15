@@ -10,18 +10,23 @@
 # --ledger (painter, 10-16, after obs-late-replies spent three ~13-minute merge_check rounds on this): for every
 # site under a prefix (path::function, e.g. observatory/api/main.py::memory_), including UNEXECUTED ones:
 #   ok             RESPONSIVE and unlisted, or below it and listed (admitted debt)
-#   R-NEW          below RESPONSIVE and unlisted: add the arm it lacks, or `ledger admit`
-#   R-STALE        listed, now RESPONSIVE: `ledger shrink` is due
+#   R-NEW          below RESPONSIVE (not NOT SEARCHED) and unlisted: add the arm it lacks, or `ledger admit`
+#   R-STALE        listed, now RESPONSIVE on stamped evidence: `ledger shrink` is due
 #   R-STALE absent a listed key under the prefix that this run never saw (re-texted or deleted)
+#   NOT SEARCHED   enforce's own rule for it (ns_keys, the clock) isn't modelled; never a finding here
+# The per-site verdict mirrors enforce.py's branch order (a4 #56606): a RESPONSIVE site is never R-NEW, live-only
+# or not (a listed live-only climb is enforce's LIVE-ONLY line, not RED); NOT SEARCHED is never R-NEW.
 # It also warns when the oracle has no run line in devtools/check.sh.
 #
 # ADVISORY. One oracle sees only its own sites: a site another gate drives can grade lower here than in the full
-# run, and enforce's run-level rules (EX3 extractors, R-CLOCK, R-LEAK) aren't modelled. merge_check is the verdict.
+# run, and enforce's run-level rules (EX3 extractors, R-CLOCK, R-LEAK) aren't modelled: an unlisted FIXTURE-DDL
+# site that a listed extractor caps (EX3) reads R-NEW here and is only reported there. merge_check is the verdict.
 # Writes nothing outside its temp dir: no admit, no shrink, no sqlguard_seen (judge only, never enforce).
 # Records are attributed to sites by judge's own frame rule (judge.attribute), never by text substring.
 #
 # rc: 0 clean · 1 a finding (--ledger) or the oracle failed · 2 usage · 77 SKIP (no .env: fixture_db can't run)
-# SQLSITE_ROOT picks the checkout (default: this script's); SQLGUARD_LEDGER overrides the ledger file (tests).
+# SQLSITE_ROOT picks the checkout (default: this script's); SQLGUARD_LEDGER overrides the ledger file and
+# SQLSITE_REPORT a judge report (JSON) in place of judge's own, so the verdict table can be driven (tests only).
 set -euo pipefail
 LEDGER_MODE=0
 [ "${1:-}" = "--ledger" ] && { LEDGER_MODE=1; shift; }
@@ -39,19 +44,20 @@ D="$(mktemp -d "${TMPDIR:-/tmp}/sqlsite.XXXXXX")"; trap 'rm -rf "$D"' EXIT
 export ASTRYX_RUNSCOPE_TEST=1 ASTRYX_SQLGUARD_RUN="rsqlsite$$" ASTRYX_SQLGUARD_DIR="$D" PYTHONDONTWRITEBYTECODE=1
 export PYTHONPATH="$ROOT/src/astryx/security/sqlguard/shim${PYTHONPATH:+:$PYTHONPATH}"
 echo "$ASTRYX_SQLGUARD_RUN" > "$D/run_id"
-if [ "$LEDGER_MODE" = 1 ] && ! command grep -qF " $T" devtools/check.sh; then
-  echo "! $T has no run line in devtools/check.sh (the coverage gate goes red, and nothing drives its sites)"
+TR=$(realpath -m --relative-to=. "$T")                   # ./tests/x.py and /abs/…/tests/x.py are tests/x.py
+if [ "$LEDGER_MODE" = 1 ] && ! command grep -E '^[[:space:]]*run ' devtools/check.sh | command grep -qF " $TR"; then
+  echo "! $TR has no run line in devtools/check.sh (the coverage gate goes red, and nothing drives its sites)"
 fi
 rc=0; env -u ASTRYX_AGENT "$PY" "$T" >"$D/test.out" 2>&1 || rc=$?
 echo "test $T rc=$rc"
 [ "$rc" = 0 ] || { echo "test FAILED: the grades below are not evidence. Its tail:"; tail -5 "$D/test.out" | sed 's/^/  | /'; }
 "$PY" -W ignore::SyntaxWarning - "$D" "$LEDGER_MODE" "${SQLGUARD_LEDGER:-$ROOT/src/astryx/security/sqlguard/ledger.json}" "$rc" "$@" <<'EOF'
-import collections, json, sys
+import collections, json, os, sys
 from astryx.security.sqlguard import inventory, judge
 from astryx.security.sqlguard.privacy import ledger_key
 d, ledger_mode, ledger_path, test_rc, args = sys.argv[1], sys.argv[2] == "1", sys.argv[3], int(sys.argv[4]), sys.argv[5:]
 inv = inventory.build()
-rep = judge.judge(d, inv=inv)
+rep = json.load(open(os.environ["SQLSITE_REPORT"])) if os.environ.get("SQLSITE_REPORT") else judge.judge(d, inv=inv)
 seen = collections.defaultdict(list)                     # site key -> its records, by judge's own attribution
 for r in judge.load_traces(d)[0]:
     if not judge.is_site(r["t"], form="statement"):
@@ -82,10 +88,16 @@ for k, s in sorted(rep["sites"].items()):
         continue
     lk = ledger_key(k)
     live.add(lk)
-    listed, resp = lk in rows, s["rung"] == "RESPONSIVE" and not s.get("live_only")
-    v = "R-STALE" if listed and resp else "R-NEW" if not listed and not resp else "ok"
-    bad += v != "ok"
-    print(f"{v:<15} {s['rung']:<20} {show(k)}  {why(k)}")
+    listed, lo = lk in rows, s.get("live_only")
+    if s["rung"] == "RESPONSIVE":                        # enforce: never R-NEW; a live-only climb is never shrunk
+        v = "R-STALE" if listed and not lo else "ok"
+    elif s["rung"] == "NOT SEARCHED":
+        v = "NOT SEARCHED"
+    else:
+        v = "ok" if listed else "R-NEW"
+    bad += v in ("R-NEW", "R-STALE")
+    note = "  (live-only: not reproducible, so enforce neither flags nor shrinks it)" if lo and s["rung"] == "RESPONSIVE" else ""
+    print(f"{v:<15} {s['rung']:<20} {show(k)}  {why(k)}{note}")
 for lk in sorted(rows):
     if mine(lk) and lk not in live:
         bad += 1

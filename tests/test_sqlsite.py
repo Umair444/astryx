@@ -7,7 +7,11 @@ except one listed EXECUTED write, and one listed UNEXECUTED insert it never driv
   - LEDGER doctored (a copy via SQLGUARD_LEDGER): a listed row dropped → R-NEW; a RESPONSIVE site listed → R-STALE;
     a listed key no run produces → R-STALE absent; rc 1;
   - DEFAULT: the substring filter, and row counts by judge's frame attribution (the question read saw 0 and 1);
-  - REGISTRATION: a check.sh-registered oracle draws no warning; an unregistered one does;
+  - VERDICT TABLE (a stub judge report via SQLSITE_REPORT, a4 #56606): enforce's branch order. A RESPONSIVE
+    live-only site, listed or not, and a NOT SEARCHED one are never findings; EXECUTED unlisted is R-NEW;
+    RESPONSIVE listed is R-STALE;
+  - REGISTRATION: a check.sh-registered oracle draws no warning, even spelled ./tests/…; an unregistered one does,
+    and so does one check.sh only mentions in a comment;
   - WRITES NOTHING: ledger.json's sha and the live sqlguard_seen table (count, sum(runs), max(last_seen)) unchanged;
   - SPAWN: the oracle runs with ASTRYX_AGENT unset; a failing oracle says its grades are not evidence (rc 1);
   - SKIP: no .env at the root is 77 with a SKIP line, never an empty pass.
@@ -70,7 +74,7 @@ sha = lambda: hashlib.sha256(LEDGER.read_bytes()).hexdigest()
 tmp = Path(tempfile.mkdtemp(prefix="test_sqlsite."))
 try:
     sha0, seen0 = sha(), seen_state()
-    rc, out = run("--ledger", ORACLE, PREFIX)
+    rc, out = run("--ledger", "./" + ORACLE, PREFIX)
     site_lines = [l for l in out.splitlines() if " observatory/" in l or " src/" in l or " triggers/" in l]
     arm("LEDGER clean: rc 0 and 'clean'", rc == 0 and "clean under" in out, out)
     arm("LEDGER clean: every site line is ok, and there are some", site_lines and all(l.startswith("ok ") for l in site_lines), out)
@@ -111,6 +115,30 @@ try:
     arm("SPAWN: the oracle runs without ASTRYX_AGENT", (tmp / "probe.py.env").read_text() == "None",
         (tmp / "probe.py.env").read_text() if (tmp / "probe.py.env").exists() else "not written")
     arm("REGISTRATION: an unregistered oracle is warned about", any("no run line in devtools/check.sh" in l for l in lines(out, "!")), out)
+
+    rc, out = run("--ledger", "tests/mutants_sqlsite.py", "nothing::")
+    arm("REGISTRATION: an oracle check.sh only mentions in a comment is warned about",
+        any("no run line in devtools/check.sh" in l for l in lines(out, "!")), out)
+
+    ok_py = tmp / "ok.py"
+    ok_py.write_text("pass\n")
+    X = "src/astryx/x.py::f\x1f"
+    stub = {"sites": {X + "select 1": {"rung": "RESPONSIVE", "live_only": True},     # unlisted live-only
+                      X + "select 2": {"rung": "NOT SEARCHED"},                      # unlisted, not searched
+                      X + "select 3": {"rung": "RESPONSIVE", "live_only": True},     # listed live-only: LIVE-ONLY
+                      X + "select 4": {"rung": "EXECUTED"},                          # unlisted: R-NEW
+                      X + "select 5": {"rung": "RESPONSIVE"}}}                       # listed, climbed: R-STALE
+    (tmp / "rep.json").write_text(json.dumps(stub))
+    (tmp / "stub_ledger.json").write_text(json.dumps({"rows": {X + "select 3": {"debt": "EXECUTED"},
+                                                                X + "select 5": {"debt": "EXECUTED"}}}))
+    rc, out = run("--ledger", str(ok_py), "src/astryx/x.py::",
+                  env={"SQLSITE_REPORT": str(tmp / "rep.json"), "SQLGUARD_LEDGER": str(tmp / "stub_ledger.json")})
+    verdict = {l.split("select ")[-1].split()[0]: l.split()[0] for l in out.splitlines() if "x.py::f :: select " in l}
+    arm("VERDICT: an unlisted live-only RESPONSIVE site is ok (enforce: never R-NEW)", verdict.get("1") == "ok", out)
+    arm("VERDICT: an unlisted NOT SEARCHED site is never R-NEW", verdict.get("2") == "NOT", out)
+    arm("VERDICT: a listed live-only climb is ok (enforce: LIVE-ONLY, never shrunk)", verdict.get("3") == "ok", out)
+    arm("VERDICT: controls: unlisted EXECUTED is R-NEW, listed RESPONSIVE is R-STALE, 2 findings, rc 1",
+        verdict.get("4") == "R-NEW" and verdict.get("5") == "R-STALE" and "2 finding(s)" in out and rc == 1, (rc, out))
 
     bad = tmp / "bad.py"
     bad.write_text("import sys\nprint('boom')\nsys.exit(3)\n")
