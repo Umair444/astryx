@@ -128,7 +128,6 @@ EXEMPT = {
     # class), so the edge is declared here by hand, with its location.
     "devtools/check_watch.sh":    "invoked by triggers/steward/org_runners.py (gitignored estate; pulse trigger, daily 05:20)",
     "scripts/restore_verify.sh": "invoked by triggers/steward/org_runners.py (gitignored estate; pulse trigger, weekly Sun 03:00)",
-    "src/astryx/core/station.py":     "on-demand: the stationed-agent runtime — a backend or operator invokes it per request (claude -p API); nothing schedules it by design",
     "src/astryx/federation/fedtest.py":     "manual: federation end-to-end probe; CLAUDE.md documents the human command",
     # Hands (plan-7862): both are started by the per-desktop sway config that src/astryx/hands/hands_desktop.py
     # GENERATES (an `exec <venv python> <path>` line written into the state dir at runtime), so the edge
