@@ -20,6 +20,12 @@ ORACLE = REPO / "tests" / "test_fixture_reaper.py"
 ENV = "SQLGUARD_FIXTURE_SRC"
 TIMEOUT = 300
 MUTANTS = {
+    "D-A the drop never falls back (an autovacuum worker fails a run role's teardown again, steward #55022)":
+        ("    except psycopg.errors.InsufficientPrivilege:\n        admin.execute(f\"DROP DATABASE IF EXISTS {q}\")",
+         "    except NotImplementedError:\n        admin.execute(f\"DROP DATABASE IF EXISTS {q}\")"),
+    "D-B the drop falls back on ANY error (a real connected session is waited out silently)":
+        ("    except psycopg.errors.InsufficientPrivilege:\n        admin.execute(f\"DROP DATABASE IF EXISTS {q}\")",
+         "    except psycopg.Error:\n        admin.execute(f\"DROP DATABASE IF EXISTS {q}\")"),
     "R1 another pid namespace or host is judged (a bwrap run's pid read as a host pid)":
         ('    if not st["pidns"] or st["pidns"] != pidns or st["host"] != host:',
          '    if False:'),
