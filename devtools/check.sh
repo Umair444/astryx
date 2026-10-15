@@ -318,6 +318,10 @@ run "review_range: base is the merge-base, head is the branch, typed shas refuse
 # devtools/review_live.py: branch code measured against the LIVE tree (repo_root rebound only for the extract), the
 # child read-only by default and without ASTRYX_AGENT (a3 night-review 10-16, seed #56224). Mutants: tests/mutants_review_live.py.
 run "review_live: branch code reads the live REPO, fixtures untouched, postgres read-only, no agent identity" "$PY" tests/test_review_live.py
+# devtools/land.sh: the merger's half of a merge-ready marker: clean tracked tree, ff only, live bodies at the PASSed
+# sha, the range's tests run without ASTRYX_AGENT, red rolls main back, the push rc read before the receipt
+# (seed night-review 10-16). Mutants: tests/mutants_land.py.
+run "land: ff only, clean tree, body sha, tests without agent identity, red rolls back, push rc read" "$PY" tests/test_land.py
 # the database's SHAPE, which the stamp can't see (a1 #38264): live == a fresh apply of the schema files, table by
 # table, column by column, with types. Catches a column added inside an existing CREATE TABLE IF NOT EXISTS (a no-op
 # on a live host) and a hand DROP. Live read is read-only. Mutants: tests/mutants_schema_parity.py.
