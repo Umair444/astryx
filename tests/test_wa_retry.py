@@ -8,6 +8,8 @@ witness rings died in the boot window, wacli's store locked and then a 429, and 
   R2 a non-transient error → raised at once; 1 call (never a retry that could double-send)
   R3 transient every time → raised after the bounded retries, naming them; len(WAITS)+1 calls
   R4 ok first → 1 call
+  R5 a warmup-429 WARNING then a send timeout → raised after 1 call (the last stderr line decides)
+  R6 a warning then a transient last line → retried
 
 Hermetic: no DB, no wacli, no network. A fake WA_CLI script plays a scripted sequence of outcomes and counts its calls.
 """
@@ -49,6 +51,10 @@ case "$step" in
   ok)   echo '{"sent":true}'; exit 0;;
   lock) echo 'error: store is locked (another wacli is running?)' >&2; exit 1;;
   429)  echo 'error: info query returned status 429: rate-overlimit' >&2; exit 1;;
+  warntimeout) echo 'warn: send warmup for 123@s.whatsapp.net failed (send will proceed): info query returned status 429: rate-overlimit' >&2
+        echo 'Error: send timed out after 45s' >&2; exit 1;;
+  warnlock) echo 'warn: send warmup for 123@s.whatsapp.net failed (send will proceed): info query returned status 429: rate-overlimit' >&2
+        echo 'error: store is locked (another wacli is running?)' >&2; exit 1;;
   *)    echo 'error: unknown chat 123@s.whatsapp.net' >&2; exit 1;;
 esac
 """)
@@ -79,6 +85,14 @@ check("R3 ...naming the bounded retries", err and f"after {len(wa.WACLI_RETRY_WA
 check("R3 ...in len(WAITS)+1 calls", n == len(wa.WACLI_RETRY_WAITS) + 1, n)
 out, err, n = run("ok")
 check("R4 ok first → 1 call", out and n == 1, (out, n))
+# a3 #54634: wacli prints a 429 as a WARNING before a send that proceeds; a timeout after it may be a delivered message
+out, err, n = run("warntimeout,ok")
+check("R5 a warmup-429 WARNING then 'send timed out' → raised, never retried (no double send)",
+      err and "send timed out after 45s" in err, out)
+check("R5 ...after 1 call", n == 1, n)
+check("R5 ...the raised text is the real error, not the warning", err and "warmup" not in err, err)
+out, err, n = run("warnlock,ok")
+check("R6 a warmup warning then a transient LAST line (store locked) → still retried", out and n == 2, (out, err, n))
 
 print(f"\n{'FAIL' if fails else 'PASS'}: wacli retries only transient errors, bounded ({len(fails)} failing)")
 sys.exit(1 if fails else 0)

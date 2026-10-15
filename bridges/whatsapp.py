@@ -106,7 +106,11 @@ async def wacli(*args: str) -> str:
                 print(f"whatsapp: wacli {' '.join(args[:2])} succeeded after {attempt} transient retr"
                       f"{'y' if attempt == 1 else 'ies'}", flush=True)
             return out.decode(errors="replace")
-        msg = err.decode(errors="replace").strip()[:200]
+        # Classify the LAST stderr line only: that is the error wacli exits with. A 429 also appears EARLIER as a
+        # warning ("warn: send warmup for <jid> failed (send will proceed): ...status 429...") before every send in
+        # a rate-limited window, and searching all of stderr let a following "send timed out after 45s" (the message
+        # node may already be accepted, only the ack lost) be retried: a double send (a3 #54634, reproduced).
+        msg = (err.decode(errors="replace").strip().splitlines() or [""])[-1][:200]
         if wait is None or not WACLI_TRANSIENT.search(msg):
             # a failed call must fail loudly; a silent non-zero exit hides a lost send
             raise RuntimeError(f"wacli {' '.join(args[:2])}: {msg}"

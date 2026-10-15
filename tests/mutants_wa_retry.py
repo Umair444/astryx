@@ -14,4 +14,7 @@ MUTANTS = {
         ("for attempt, wait in enumerate((*WACLI_RETRY_WAITS, None)):", "for attempt, wait in enumerate((None,)):"),
     "unbounded (retries past the last wait)":
         ("if wait is None or not WACLI_TRANSIENT.search(msg):", "if not WACLI_TRANSIENT.search(msg) and wait is not None:"),
+    "classifies the WHOLE stderr (a warmup-429 warning makes a send timeout retry: double send, a3 #54634)":
+        ('msg = (err.decode(errors="replace").strip().splitlines() or [""])[-1][:200]',
+         'msg = err.decode(errors="replace").strip()[:200]'),
 }
