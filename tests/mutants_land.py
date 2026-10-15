@@ -33,4 +33,6 @@ MUTANTS = {
         ('if [ -n "$dirtied" ]; then echo', 'if false; then echo'),
     "N12 untracked files under tests/ devtools/ src/ are not refused (a4 #56483 MC2)":
         ('[ -z "$stray" ] || refuse', 'true || refuse'),
+    "N13 any non-empty body prefix is accepted (a 1-hex prefix passes 1 body in 16: steward #56607)":
+        ('[[ "$want" =~ ^[0-9a-f]{12,64}$ ]] || die', 'true || die'),
 }

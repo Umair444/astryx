@@ -62,6 +62,9 @@ BODY_LINES=()
 for b in ${BODIES[@]+"${BODIES[@]}"}; do
   p=${b%%=*}; want=${b#*=}
   [ "$p" != "$b" ] && [ -n "$want" ] || die "--body wants <path>=<sha256-prefix>, got: $b"
+  # 12 hex minimum (48 bits): a 1-hex prefix matched 1 body in 16 while the RECEIPT printed 12 hex as if checked
+  # (steward #56607). Markers and apply_receipt lines carry the full 64; 12 is the shortest they quote.
+  [[ "$want" =~ ^[0-9a-f]{12,64}$ ]] || die "--body $p: the sha256 must be 12-64 lowercase hex (the PASS marker's), got: '$want'"
   [ -f "$p" ] || refuse "body $p does not exist"
   got=$(sha256sum "$p" | cut -c1-64)
   case "$got" in "$want"*) BODY_LINES+=("$p ${got:0:12}");; *) refuse "body $p is ${got:0:12}, the PASS names ${want:0:12}";; esac

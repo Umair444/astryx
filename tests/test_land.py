@@ -140,6 +140,10 @@ def main():
     rc, out = f.land(f"{f.base}..{f.head}", "--body", "body.py=" + ("0" if good[0] != "0" else "1") + good[1:12])
     check("L5 a live body whose sha256 isn't the PASSed prefix is refused, main untouched",
           rc == 1 and "body body.py" in out and f.main() == f.base, out)
+    for short in (good[:1], good[:11], good[:12].upper(), good[:12] + "zz"):
+        rc, out = f.land(f"{f.base}..{f.head}", "--body", f"body.py={short}", "--no-push")
+        check(f"L5 a body sha that isn't 12-64 lowercase hex ({short!r}) is a usage error, even when it IS a prefix "
+              "(steward #56607)", rc == 2 and "12-64 lowercase hex" in out and f.main() == f.base, out)
     rc, out = f.land(f"{f.base}..{f.head}", "--body", f"body.py={good[:12]}", "--no-push")
     check("L5 …and the PASSed prefix lands, the receipt naming the live sha (--no-push: origin untouched)",
           rc == 0 and f.main() == f.head and f.origin_main() == f.base and f"body.py {good[:12]}" in out
