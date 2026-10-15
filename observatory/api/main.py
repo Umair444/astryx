@@ -3056,6 +3056,13 @@ async def memory_chat_replies(thread: str, after: int = 0, request: Request = No
     return {"replies": [{"id": x["id"], "body": x["body"], "ts": x["ts"].isoformat()} for x in rows]}
 
 
+class MemoryProposal(BaseModel):
+    # deleted with the memory chat rework (0c3c450, 08-14) while this route kept it; on Python 3.14 annotations are
+    # lazy, so the live observatory never noticed, but on 3.12 (CI, many installs) main.py failed to import at all
+    text: str
+    nodes: list[str] = []
+
+
 @app.post("/api/memory/propose")
 async def memory_propose(p: MemoryProposal, request: Request):
     """Route a proposal to the memory agent OVER THE WIRE. Never writes memory/."""
