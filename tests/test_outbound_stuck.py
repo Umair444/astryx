@@ -374,6 +374,36 @@ def test_later_rows_query_on_a_real_db_at_zero_and_one_rows():
         fxc.__exit__(None, None, None)
 
 
+
+# ------------------------------------------------ (e) the DOOR's refusal (plan-9139 S1c)
+# A bridge's door refuses a row TERMINALLY (status 'refused', reason in delivery.door_refused): an unstamped row to a
+# destination on no declared org route, a tiered route, a release that doesn't verify. The same row sent again is
+# refused again, so every remedy above is wrong for it, "RESEND" most of all (a4 #53717).
+def test_refused_routes_to_its_own_class_whatever_its_mechanism():
+    for flags in ({"bridge_delivered": True}, {"pend_server": True}, {"awaiting_peer": True},
+                  {"bridge_delivered": True, "sheet_delivered": True}, {}):
+        g = bucket([_fentry(7, "refused", 2)], _meta(7, **flags))
+        assert _ids(g["refused"]) == {"7"}, (flags, g)
+        assert not any(_ids(v) for k, v in g.items() if k != "refused"), (flags, g)
+
+
+def test_refused_gets_no_grace():
+    """Like `dead`: the door raised and will never retry, so it is reportable the moment it appears."""
+    fire, _ = classify([row(8, "refused", 0.05)], NOW, {})
+    assert fired_ids(fire) == {"8"}, fire
+
+
+def test_refused_render_says_do_not_resend_through_the_real_entrypoint():
+    import types
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    rows = [{"id": 902, "ts": _dt.now(_tz.utc) - _td(hours=2), "to_agent": "owner", "to_org": "local",
+             "status": "refused", "from_agent": "seed", "external_handle": False, "bridge_delivered": True,
+             "sheet_delivered": False, "awaiting_peer_pickup": False, "last_pickup": None}]
+    out = _MOD["outbound_stuck"](types.SimpleNamespace(state={}, sql=lambda q, p=(): [] if "AS cand" in q else rows))
+    assert out and "REFUSED BY THE DOOR (1)" in out and "DO NOT RESEND" in out and "#902" in out, out
+    assert "ACTIONABLE" not in out and "BRIDGE-DELIVERED" not in out and "fix the addressing, RESEND" not in out, out
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
