@@ -649,6 +649,9 @@ run "ontology lint invariants"        "$PY" tests/test_ontology.py
 # function against its own staged copy. SKIPS where triggers/ or pyflakes is absent.
 run "trigger bodies resolve"          "$PY" tests/test_trigger_smoke.py
 run "no undefined name in any tracked .py (pyflakes; a deleted class under a lazy 3.14 annotation hid a 3.12 import crash)" "$PY" tests/test_undefined_names.py
+# ...and the half of that family pyflakes can't see: a name bound somewhere, but not yet when an import-time annotation
+# runs (a later class, a class naming itself, a TYPE_CHECKING-only import). Fixtures checked against a real 3.12.
+run "no import-time annotation names a not-yet-bound name (3.12 NameError, hidden by lazy 3.14)" "$PY" tests/test_eager_annotations.py
 # plan-9853 D2: a python trigger's retirement is trigger_rm's per-(agent, name) TOMBSTONE, which the pulse honours (it
 # used to re-enable the row within a minute); trigger_set clears it. Runs tests/test_tombstone.mjs (the wiring) too.
 run "trigger tombstone: trigger_rm retires a python trigger for good, per agent and name" "$PY" tests/test_trigger_tombstone.py
