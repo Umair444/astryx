@@ -36,7 +36,10 @@ import sys
 import warnings
 from pathlib import Path
 
+import os  # noqa: E402
 REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO))
+from astryx.paths import Checkouts  # noqa: E402
 EXCLUDE_DIRS = {"venv", "node_modules", "homes", "tests", ".git"}
 AUTHORITY = "src/astryx/econ/econ.py"
 
@@ -224,7 +227,14 @@ print("\nCONSUMER SET = TYPED MANIFEST:")
 def scan(repo: Path, pub, keys, value_cols) -> dict:
     """{relpath: reasons} over every .py under `repo` outside EXCLUDE_DIRS (the derived domain)."""
     out = {}
-    for p in sorted(repo.rglob("*.py")):
+    co = Checkouts(repo)        # another checkout of THIS repo is another branch's copy, not a consumer (seed #53453)
+    files = []
+    for dirpath, dirnames, filenames in os.walk(repo):
+        dirnames[:] = co.prune(dirpath, dirnames)
+        files += [Path(dirpath) / f for f in filenames if f.endswith(".py")]
+    if co.unknown:
+        print(f"  NOTE  {co.report()}")
+    for p in sorted(files):
         rel = p.relative_to(repo)
         if set(rel.parts[:-1]) & EXCLUDE_DIRS or str(rel) == AUTHORITY \
                 or p.name.startswith(("test_", "mutants_")):

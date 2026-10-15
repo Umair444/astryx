@@ -42,6 +42,7 @@ from psycopg.conninfo import conninfo_to_dict
 from devtools import branch_check_prep as prep
 from devtools import branch_check_sandbox as sb
 from astryx.pg import runscope as rs
+from astryx.paths import common_dir  # noqa: E402
 
 LIVE = prep.LIVE
 SUITE_TIMEOUT = int(os.environ.get("BRANCH_CHECK_SUITE_TIMEOUT", "3600"))
@@ -260,7 +261,10 @@ def run(branch: str, main_ref: str = "main") -> int:
             trace = tmp[side] / f"sqlguard{attempt}"
             trace.mkdir()
             env = {**sb.env(scope.dsn(clone[side], socket_dir=sock[side]), node), "ASTRYX_FIXTURE_TEMPLATE": tpl[side],
-                   "ASTRYX_SQLGUARD_DIR": str(trace)}
+                   "ASTRYX_SQLGUARD_DIR": str(trace),
+                   # a side tree is `git archive` output (no .git): it DECLARES its source, so a linked worktree inside it
+                   # reads as another checkout of this repo, not subject code (astryx.paths Checkouts, a4 #53469)
+                   "ASTRYX_REPO_COMMON": str(common_dir(LIVE) or "")}
             a = sb.argv(repo[side], tmp[side], ro_extra=[LIVE / p for p in est[side]["linked_private"]], node=node)
             with sb.PgBridge(sock[side]):
                 stdout, stderr, rc = run_suite(a + ["bash", "devtools/check.sh"], env)

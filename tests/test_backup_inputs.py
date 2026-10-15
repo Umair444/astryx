@@ -34,6 +34,8 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO))
+from astryx.paths import Checkouts  # noqa: E402
 FAIL, SKIP = [], []
 
 
@@ -97,12 +99,13 @@ def covered_by(path: str, captured: set) -> bool:
 def main():
     print("backup captures every gitignored INPUT (goal: the class, not the instance)\n")
 
-    r = subprocess.run(["git", "status", "--ignored", "--porcelain"],
+    # -z: core.quotePath would otherwise QUOTE a non-ASCII name ("P/\\303\\274.log"), which is no real path (a2 #54105)
+    r = subprocess.run(["git", "status", "--ignored", "--porcelain", "-z"],
                        cwd=REPO, capture_output=True, text=True)
     if r.returncode != 0:
         skip("derive ignored paths from git", "git status failed")
         return verdict()
-    ignored = [l[3:].strip() for l in r.stdout.splitlines() if l.startswith("!!")]
+    ignored = [e[3:] for e in r.stdout.split("\0") if e.startswith("!! ")]
     if not ignored:
         skip("derive ignored paths from git", "no ignored paths reported")
         return verdict()
@@ -116,7 +119,13 @@ def main():
     print(f"  backup.sh --list-state declares {len(captured)} path(s)")
     print(f"  git reports {len(ignored)} ignored path(s) present\n")
 
-    inputs = [p for p in ignored if not is_regenerable(p)]
+    # another checkout of THIS repo, or a dir holding only such (.claude/worktrees/), is git's own: regenerable by
+    # construction, whatever its path (seed #53453). The shared predicate decides; no path is listed for it here.
+    co = Checkouts(REPO)
+    worktrees = [p for p in ignored if co.holds_only_others(REPO / p.rstrip("/"))]
+    if worktrees:
+        print(f"  REGENERABLE (another checkout of this repo, git's own): {worktrees}")
+    inputs = [p for p in ignored if not is_regenerable(p) and p not in worktrees]
     uncaptured = sorted(p for p in inputs if not covered_by(p, captured))
     check("every gitignored INPUT is in backup.sh's capture set",
           not uncaptured,

@@ -120,3 +120,109 @@ def module_name(relpath: str) -> str:
 
 DATA = PACKAGE / "data"         # registries and manifests read by path (copies.json, deps.conf, ...)
 SQL = PACKAGE / "sql"            # the declared schemas
+
+
+# ── ANOTHER CHECKOUT OF THIS REPOSITORY? (seed #53453, a4 #53469) ──────────────────────────────────────────────
+# It lives here, beside repo_root, because every throwaway tree an oracle builds carries paths.py (the skeleton's
+# spine): a walker anywhere (sqlguard's inventory included) can ask it without a new dependency.
+# Is this directory ANOTHER CHECKOUT OF THIS REPOSITORY? One answer for every walker (seed #53453, a4 #53469).
+#
+# A linked worktree inside the tree (Claude's .claude/worktrees/*, a resident's .worktrees/*, a wt-* at the root) is
+# another branch's copy, not this tree's code. A walker that descends into it reads stale copies as subjects: sqlguard
+# saw 6457 site keys instead of 465 (10-14), and the econ consumer set, the derived-copy registry and the backup census
+# each went RED on every branch while one existed (seed #53453). Every walker asks THIS module, so no fourth copy drifts.
+#
+# The test is the git COMMON dir: a subdirectory whose .git resolves to the same common dir as the tree's source is a
+# checkout of the same repository. A nested repo that ISN'T this one (agents/, the identity tree, its own repo) is NOT
+# pruned: a blanket "has a .git" rule would silently drop it from every scanner (a4 #53469, constraint 1).
+#
+# The tree under check is not always a checkout. branch_check's side trees are `git archive` output, with NO .git, so the
+# tree's own common dir is None and an undeclared walk would prune NOTHING (a4 #53469: the 85 R-NEW). Whoever builds such
+# a tree DECLARES its source in ASTRYX_REPO_COMMON (branch_check does). Undeclared and no .git: the answer is UNKNOWN, and
+# the walker says so; it never silently prunes nothing.
+
+CHECKOUT_SOURCE_ENV = "ASTRYX_REPO_COMMON"
+
+
+def common_dir(d) -> Path | None:
+    """The git COMMON dir a checkout rooted at `d` belongs to (None if `d` isn't a checkout root). A linked worktree's
+    .git is a `gitdir:` file whose admin dir names its common dir in `commondir`."""
+    g = Path(d) / ".git"
+    try:
+        if g.is_dir():
+            return g.resolve()
+        if g.is_file():
+            admin = Path(g.read_text().split("gitdir:", 1)[1].strip())
+            admin = admin if admin.is_absolute() else (Path(d) / admin)
+            cd = admin / "commondir"
+            if cd.is_file():
+                return (admin / cd.read_text().strip()).resolve()
+            # the admin dir isn't readable here (branch_check's sandbox binds no live .git): a linked worktree's admin
+            # dir is <common>/worktrees/<name> by git's own layout, so the pointer's TEXT still names its repository
+            if admin.parent.name == "worktrees":
+                return admin.parent.parent.resolve()
+            return admin.resolve()
+    except (OSError, IndexError):
+        return None
+    return None
+
+
+class Checkouts:
+    """The other checkouts of the repository `root` was made from, found while walking it.
+
+        co = Checkouts(root)
+        for dirpath, dirnames, _ in os.walk(root):
+            dirnames[:] = co.prune(dirpath, dirnames)
+        co.found     # the pruned ones, repo-relative, for the walker's report
+        co.unknown   # True: the source can't be told (no .git, nothing declared) -- say so
+    """
+
+    def __init__(self, root, env=None):
+        self.root = Path(root).resolve()
+        env = os.environ if env is None else env
+        own = common_dir(self.root)
+        declared = env.get(CHECKOUT_SOURCE_ENV)
+        self.mine = {c for c in (own, Path(declared).resolve() if declared else None) if c is not None}
+        self.unknown = not self.mine
+        self.found: set[str] = set()
+        self.unclassified: set[str] = set()   # nested checkout roots met while UNKNOWN: walked, and named, never silent
+
+    def is_other(self, d) -> bool:
+        d = Path(d)
+        if self.unknown or d.resolve() == self.root:
+            return False
+        return common_dir(d) in self.mine
+
+    def prune(self, dirpath, dirnames) -> list:
+        """`dirnames` without the other checkouts among them (each recorded in .found)."""
+        keep = []
+        for name in dirnames:
+            full = Path(dirpath) / name
+            if self.is_other(full):
+                self.found.add(os.path.relpath(full, self.root))
+            else:
+                if self.unknown and (full / ".git").exists():
+                    self.unclassified.add(os.path.relpath(full, self.root))
+                keep.append(name)
+        return keep
+
+    def holds_only_others(self, d, depth: int = 4) -> bool:
+        """True for a directory that IS another checkout, or whose every entry is one or itself holds only such, as
+        `.claude/` holding only `worktrees/<checkouts>` (git lists that PARENT when everything below it is ignored)."""
+        d = Path(d)
+        if self.is_other(d):
+            return True
+        if depth <= 0:
+            return False
+        try:
+            entries = list(d.iterdir())
+        except OSError:
+            return False
+        return bool(entries) and all(e.is_dir() and not e.is_symlink() and self.holds_only_others(e, depth - 1)
+                                     for e in entries)
+
+    def report(self) -> str:
+        if self.unknown:
+            return (f"other checkouts: UNKNOWN (the tree has no .git and {CHECKOUT_SOURCE_ENV} is unset): a linked worktree inside "
+                    "it would be walked as subject code")
+        return f"other checkouts pruned: {sorted(self.found) or 'none'}"

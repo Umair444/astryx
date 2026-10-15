@@ -41,14 +41,10 @@ MUTANTS = {
         ('from astryx.security.sqlguard.normalize import is_bare_verb, is_site, is_write, norm\n',
          'from astryx.security.sqlguard.normalize import is_bare_verb, is_site, is_write, norm\n'
          'from astryx.security.sqlguard.normalize import _SITE\n\n\ndef _probe(t):\n    return _SITE.match(t)\n'),
-    "another checkout of this repo is walked again (the estate's .claude/worktrees/ read as subjects, 10-14)":
-        ("        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and d not in twins\n",
-         "        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS\n"),
-    "EVERY nested repo is pruned, not only this one's checkouts (agents/ would vanish silently)":
-        ("twins = {d for d in dirnames if mine is not None and _common_dir(Path(dirpath) / d) == mine}",
-         "twins = {d for d in dirnames if _common_dir(Path(dirpath) / d) is not None}"),
+    "the inventory stops consulting the shared checkout predicate (the estate's .claude/worktrees/ read as subjects)":
+        ("        kept = co.prune(dirpath, dirnames)\n", "        kept = list(dirnames)\n"),
     "a pruned checkout is not declared":
-        ("        OTHER_CHECKOUTS.update(", "        set().update("),
+        ("        OTHER_CHECKOUTS.update(co.found)\n", "        set().update(co.found)\n"),
     "a const verb in a RESOLVED `+` chain is flagged again (a4 #52387 (a): fail-closed noise)":
         ("            elif is_bare_verb(text) and not _bare_use_safe(n) and not _in_resolved_concat(n):\n",
          "            elif is_bare_verb(text) and not _bare_use_safe(n):\n"),
