@@ -694,7 +694,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 317,
+  "debt_rows": 315,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 5,
@@ -1268,16 +1268,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed 10-09: runs only inside the live LISTEN tap on an astryx_presence doorbell (an id the trigger just wrote); the same read is RESPONSIVE in canvas on_presence (tests/test_canvas.py)",
    "tk": "sha256t:5bbe322b2890c658fe34204fb8794ff82cb2dcdd23f94330d6b7a51208686f1b"
-  },
-  "observatory/api/main.py::memory_chat\u001finsert into messages (from_agent, to_agent, thread, intent, body) values ('owner', 'memory', ?, 'task', ?) returning id": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:2ae0f46f39f7356f7b90c54c31649a33aaf527f4829051781136172eaabea192"
-  },
-  "observatory/api/main.py::memory_chat_replies\u001fselect id, body, ts from messages where thread=? and from_agent='memory' and id > ? order by id limit 10": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:0585e629dbbb216175f7ac5bebd3bd16cdb99d6bb3df3475dd9784ad15c30876"
   },
   "observatory/api/main.py::memory_chat_replies\u001fupdate messages set status='delivered', delivered_at=now(), delivery=jsonb_build_object('ok', true, 'handle', 'observatory:estate') where id = any(?::bigint[]) and status='pending'": {
    "debt": "UNEXECUTED",
