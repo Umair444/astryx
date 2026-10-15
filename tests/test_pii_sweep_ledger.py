@@ -216,6 +216,7 @@ def main():
         return sorted(s for lbl, s in mod["_scan"](text) if lbl == "phone-bare")
     RUN = "39999999123"
     PK = "92" + "0" * 10
+    PK_NATIONAL = "03" + "0" * 9                     # the national 03XX form, 11 digits (a3 #56199)
     check("a CI run id cited as one (run N, run id N, run #N, /actions/runs/N) is NOT flagged as a phone",
           not _phones(f"run {RUN} passed; Run id {RUN}; run #{RUN}; see "
                       f"github.com/o/r/actions/runs/{RUN}/job/1"),
@@ -226,6 +227,9 @@ def main():
     check("...and a 92-prefixed number never takes the exemption, even after 'run'",
           _phones(f"run {PK} now") == [PK],
           "a bare international Pakistani shape was exempted because the word 'run' preceded it")
+    check("...and nor does a 0-prefixed national number (a run id never has a leading 0)",
+          _phones(f"run {PK_NATIONAL} now") == [PK_NATIONAL],
+          "a national-form Pakistani mobile (03…, 11 digits) was exempted because the word 'run' preceded it")
 
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)

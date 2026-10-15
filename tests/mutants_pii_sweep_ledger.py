@@ -65,9 +65,13 @@ MUTANTS = {
         ("            if label == \"phone-bare\" and _is_ci_run_id(text, m):\n",
          "            if False:\n"),
     "M7 the 92-prefix refusal is dropped (run 92… is exempted)":
-        ("    return not m.group(0).startswith(\"92\") and bool(", "    return bool("),
+        ("    return not m.group(0).startswith((\"0\", \"92\")) and bool(",
+         "    return not m.group(0).startswith(\"0\") and bool("),
     "M8 the exemption ignores context (any bare number passes)":
         ("bool(_CI_RUN_CTX.search(text[max(0, m.start() - 24):m.start()]))", "True"),
     "M9 the word boundary goes (rerun N is exempted)":
         ("(?:\\brun\\s+", "(?:run\\s+"),
+    "M10 the leading-0 refusal is dropped (run 03… is exempted)":
+        ("    return not m.group(0).startswith((\"0\", \"92\")) and bool(",
+         "    return not m.group(0).startswith(\"92\") and bool("),
 }
