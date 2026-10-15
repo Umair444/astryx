@@ -878,6 +878,9 @@ run "canvas preview: real shell, read-only" "$PY" tests/test_canvas_preview.py
 run "observatory: agents as people"     "$PY" tests/test_observatory_people.py
 # Mutants: tests/mutants_observatory_late_replies.py.
 run "observatory: a late desk reply is served once, never stranded" "$PY" tests/test_observatory_late_replies.py
+# devtools/sqlsite.sh: one oracle's sqlguard view (rungs + why; --ledger: what enforce would say), advisory, writes
+# nothing. Mutants: tests/mutants_sqlsite.py.
+run "sqlsite: one oracle's sqlguard view, and the ledger diff, write nothing" "$PY" tests/test_sqlsite.py
 # Realtime voice is an EXTERNAL processor the owner signed for: the spend cap, the server-side tier fence and the
 # owner gate must hold. OpenAI is never called (the mint is stubbed). Fixture DB.
 run "canvas voice: cap, tier fence, owner" "$PY" tests/test_canvas_voice.py
