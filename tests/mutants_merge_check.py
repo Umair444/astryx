@@ -37,4 +37,13 @@ MUTANTS = {
         ('[ "$n" -gt 0 ] && echo "  ORPHAN?', '[ "$n" -lt 0 ] && echo "  ORPHAN?'),
     "K13 the run hands its own MERGE_CHECK_* settings down (a nested merge_check inherits MERGE_CHECK_FULL=0: forge #48470)":
         ("for v in $(compgen -e | grep '^MERGE_CHECK_'); do unset \"$v\"; done\n", ""),
+    'K20 the report drops the UNVERIFIED set again (an all-skip run reads like a clean one: a1 night-review 10-16)':
+        ('      for (i = s + 1; i <= NR; i++) if (i <= last || line[i] ~ /^       /) print "  " line[i]',
+         '      for (i = s + 1; i <= NR; i++) if ((i <= last || line[i] ~ /^       /) && line[i] !~ /UNVERIFIED|○/) print "  " line[i]'),
+    'K21 a log with no verdict prints nothing (a timed-out check reads like a clean one)':
+        ('      if (!last) { print "  NO VERDICT: the log has no `check:` line from check.sh (it timed out or crashed); read the log"; exit }',
+         '      if (!last) { exit }'),
+    "K22 the FIRST `check:` line is taken (a nested check.sh run inside an oracle is quoted as this merge's verdict)":
+        ('    { line[NR] = $0 } /^check:/ { last = NR }',
+         '    { line[NR] = $0 } /^check:/ { if (!last) last = NR }'),
 }

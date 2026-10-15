@@ -79,7 +79,11 @@ def main():
                       f"python3 -c \"import pathlib,sys; sys.exit(not any(pathlib.Path(\\\"agents\\\").rglob(\\\"charter.md\\\")))\" "
                       f"&& echo RGLOB >> {rec}; "
                       f"git -C {r} commit -q --allow-empty -m concurrent; "
-                      f"echo \"FAILED (1):\"; echo \"  ✗ a gate\"; echo; echo \"check: FAILURES above\"'")
+                      # a NESTED check's verdict first (an oracle that runs check.sh prints one), then the real one
+                      f"echo \"FAILED (1):\"; echo \"  ✗ nested decoy\"; echo; echo \"check: nested\"; echo \"  ✓ later gate\"; "
+                      f"echo; echo \"FAILED (1):\"; echo \"  ✗ a gate\"; "
+                      f"echo \"UNVERIFIED (1) — this run did NOT check these\"; echo \"  ○ a dark gate\"; echo; "
+                      f"echo \"check: FAILURES above\"'")
         stub_ptc = f"sh -c 'echo PTC $0 >> {rec}'"
         # HERMETIC: a caller's own MERGE_CHECK_* settings never reach the runs under test (forge #48470: an outer
         # MERGE_CHECK_FULL=0 skipped every inner full check, and this oracle read RED inside a merge_check only)
@@ -120,6 +124,11 @@ def main():
         trees = [ln for ln in git(r, "worktree", "list").splitlines() if "merge-check." in ln]
         check("…and the scratch worktree (with its links) is gone afterwards", trees == [], str(trees))
         check("the merged tree's FAILED set is printed", "✗ a gate" in p.stdout, p.stdout[-300:])
+        check("a1 night-review 10-16: …and its UNVERIFIED set, a gate that verified NOTHING about this merge (it was cut, "
+              "so an all-skip run printed exactly what a clean run printed)", "○ a dark gate" in p.stdout, p.stdout[-300:])
+        check("…and check.sh's own `check:` verdict line", "check: FAILURES above" in p.stdout, p.stdout[-300:])
+        check("…from the LAST verdict only: a nested check's block in the same log is never quoted as this merge's",
+              "nested decoy" not in p.stdout and "check: nested" not in p.stdout, p.stdout[-300:])
         rec.unlink(missing_ok=True)
         p = subprocess.run(["bash", str(r / "devtools" / "merge_check.sh"), "clash"], cwd=r, env=env,
                            capture_output=True, text=True, timeout=120)
@@ -130,6 +139,12 @@ def main():
         p = subprocess.run(["bash", str(r / "devtools" / "merge_check.sh"), "no-such-branch"], cwd=r, env=env,
                            capture_output=True, text=True, timeout=60)
         check("an unknown branch exits 2, naming it", p.returncode == 2 and "no-such-branch" in p.stdout, p.stdout)
+        # a check that never reaches its verdict (timed out, crashed) is NAMED, never an empty report that reads as clean
+        p = subprocess.run(["bash", str(r / "devtools" / "merge_check.sh"), "feat"], cwd=r,
+                           env={**env, "MERGE_CHECK_CHECK": "sh -c 'echo \"  ✓ a gate\"; echo partial output'"},
+                           capture_output=True, text=True, timeout=120)
+        check("a log with NO `check:` verdict says NO VERDICT (it used to print nothing, as a clean run does)",
+              "NO VERDICT" in p.stdout, p.stdout[-300:])
         # AN INTERRUPT CLEANS UP (a4 10-10: a stopped run left 38 live links in /tmp). TERM goes to the SCRIPT only, mid-check,
         # with the check sleeping: a foreground child would defer the trap until it ended.
         rec.unlink(missing_ok=True)

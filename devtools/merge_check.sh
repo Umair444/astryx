@@ -119,8 +119,19 @@ if [ "$FULL" != 0 ]; then
   wrote=$(for l in $estate; do
     find "$LIVE/$l" -newer "$MARK" -not -path '*__pycache__*' -not -name '*.pyc' 2>/dev/null; done | head -20)
   [ -n "$wrote" ] && { echo "  LIVE WRITES during the run (a linked path is PRODUCTION; NOT ATTRIBUTED: the run OR a concurrent writer):"; echo "$wrote" | sed 's/^/    /'; }
-  sed 's/\x1b\[[0-9;]*m//g' "$LOG" | tac | sed -n '/^check:/,/^FAILED (/p' | tac | sed -n '/^FAILED (/,/^UNVERIFIED/p' \
-    | grep -v '^UNVERIFIED' | sed 's/^/  /'
+  # THE WHOLE VERDICT, never the FAILED half (a1 night-review 10-16). check.sh's verdict() ends the log with
+  # PROTOCOL / FAILED / UNVERIFIED blocks and its `check:` line; the report quotes that block from the LAST `check:`
+  # line, so an oracle's own nested check output can't stand in for it. It used to keep only FAILED: a run whose
+  # gates all SKIPPED printed exactly what a clean run printed (nothing), and a gate that verified nothing about this
+  # merge never reached the report. A log with no verdict (a timeout, a crash) says so instead of printing nothing.
+  sed 's/\x1b\[[0-9;]*m//g' "$LOG" | awk '
+    { line[NR] = $0 } /^check:/ { last = NR }
+    END {
+      if (!last) { print "  NO VERDICT: the log has no `check:` line from check.sh (it timed out or crashed); read the log"; exit }
+      s = last - 1; if (line[s] == "") s--
+      while (s > 0 && line[s] ~ /^(FAILED \(|UNVERIFIED \(|PROTOCOL |  [✗○] )/) s--
+      for (i = s + 1; i <= NR; i++) if (i <= last || line[i] ~ /^       /) print "  " line[i]
+    }'
   [ "$rc_links" = 0 ] && git worktree remove --force "$WT" >/dev/null 2>&1
 fi
 bash -c "$PTC \"\$1\"" _ "$T" > "$WT.ptc-merged.log" 2>&1; echo "  pushed_tree_check merged ${T:0:7} rc=$?"
