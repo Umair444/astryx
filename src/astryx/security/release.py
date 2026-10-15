@@ -357,7 +357,20 @@ def route_tier(route) -> str | None:
     t = route[TIER_KEY]
     if t not in TIERS:
         raise GrantError(f"the route declares tier {t!r}, which is not one of {','.join(sorted(TIERS))}")
+    if route.get("live_steps"):
+        # live_steps streams STEP text straight to the chat and never passes deliver()'s door: a tiered route can't
+        # have that second egress (a4 #53717), so the declaration itself is refused
+        raise GrantError(f"a {t} route can't carry live_steps: step text would reach the chat around the door")
     return t
+
+
+def live_steps_ok(route) -> bool:
+    """A live_steps job may start only on an ORG route: one declaring live_steps and no tier. A malformed or tiered
+    declaration is never a yes (S1c, a4 #53717)."""
+    try:
+        return bool(isinstance(route, dict) and route.get("live_steps")) and route_tier(route) is None
+    except GrantError:
+        return False
 
 
 def ingress(channel: str, route: dict, body: str, key: bytes, store: "TierStore") -> tuple[str, dict]:
@@ -452,6 +465,58 @@ def send_row(cur, sender: str, lbl: frozenset, to: str, thread, intent, body: st
         "INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, intent, body) "
         "VALUES (%s,'local',%s,'local',%s,%s,%s) RETURNING id",
         (sender, shape["to"], shape["thread"], shape["intent"], shape["body"])).fetchone()[0]
+
+
+# ── S1c: the door at the bridge ───────────────────────────────────────────────────────────────────────────────────
+# Every chat bridge's deliver() asks this first (a4 #45091). A STAMPED row is delivered only through open_stamped(),
+# to the route its stamp names; an UNSTAMPED row only to a DECLARED ORG ROUTE of that bridge (the census exemption).
+# Every other destination is refused: an off-route chat, a tiered route, a route nobody declared. The exemption is
+# keyed on "a declared org route", never on "not labelled" — a destination on NO route is the stray-row case.
+def released(row) -> dict | None:
+    """The row's delivery.release, or None. asyncpg hands jsonb back as text; psycopg as a dict."""
+    d = row.get("delivery") if hasattr(row, "get") else row["delivery"]
+    if isinstance(d, str):
+        import json
+        try:
+            d = json.loads(d)
+        except ValueError:
+            return None
+    rel = d.get("release") if isinstance(d, dict) else None
+    return rel if isinstance(rel, dict) else None
+
+
+def door_stamped(row, channel: str, routes, *, key: bytes, store: "TierStore", members=None) -> tuple[dict, str]:
+    """A released row → (the route its stamp names, the resolved body). The destination is the ONE route of this
+    bridge whose route_key matches the stamp's; delivery.release.channel only pre-filters, it isn't what the stamp
+    binds. The route must STILL release to the label (a route rebound since release fails here). Refused on any miss."""
+    rel = released(row)
+    if rel is None:
+        raise Refused("not a released row")
+    lbl = label(str(rel.get("label") or "").split(",")) if rel.get("label") else ORG
+    if not lbl:
+        raise Refused("a released row with no label")
+    rkey = str(rel.get("route_key") or "")
+    hits = [r for r in routes if hmac.compare_digest(route_key(key, channel, r), rkey)]
+    if len(hits) != 1:
+        raise Refused(f"the stamp names {'no' if not hits else len(hits)} route(s) of this bridge")
+    route = hits[0]
+    if not releasable(lbl, audience(channel, route, members)):
+        raise Refused(f"the stamped route's audience is no longer within readers({_label_text(lbl)})")
+    body = open_stamped(key, store, int(row["id"]), rkey, lbl, str(rel.get("pointer")), str(rel.get("body_mac")),
+                        str(rel.get("stamp") or ""))
+    return route, body
+
+
+def door_org(channel: str, chat, routes) -> dict:
+    """An UNSTAMPED row's destination must be a DECLARED ORG ROUTE of this bridge: enabled, in its routes file,
+    declaring no tier. Returns that route; Refused otherwise (a malformed tier declaration refuses too)."""
+    hits = [r for r in routes if r.get("enabled") and str(r.get("chat")) == str(chat)]
+    if not hits:
+        raise Refused("an unstamped row to a destination on no declared route of this bridge")
+    for r in hits:
+        if route_tier(r) is not None:
+            raise Refused("an unstamped row to a TIERED route: that route takes only released rows")
+    return hits[0]
 
 
 def _dsn() -> str:
