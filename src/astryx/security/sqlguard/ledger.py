@@ -36,15 +36,28 @@ LEDGER = REPO / "src" / "astryx" / "security" / "sqlguard" / "ledger.json"
 # seed hand-listed it and missed bridges/geoloc.py, mcp/geoloc/, harness/ and more (the glob-domain trap, in my
 # own tooling). Only BULK NON-CODE is excluded, declared here. Anything it misses reads as a loud R-NEW in the
 # real tree, never a silent absorption.
+# .claude/worktrees/ holds OTHER checkouts of this repo (subagent worktrees, ignored via .git/info/exclude so they stay
+# out of git status), which made them "estate": merge_check and branch_check linked every one into their trees, and
+# every walker then read other branches' code as this tree's (steward #53465: 85 R-NEW; seed #53468; forge #53471).
+# Other checkouts are never estate.
 ESTATE_EXCLUDE = ("venv/", ".venv/", "homes/", "node_modules/", "backups/", "media/", "observatory/web/dist/",
-                  ".env")
+                  ".env", ".claude/worktrees/")
 
 
 def estate_paths(source_root: Path = REPO) -> list:
     """Gitignored paths in the SOURCE tree (the real one: a worktree's git sees none of them)."""
-    out = subprocess.run(["git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"],
-                         cwd=source_root, capture_output=True, text=True).stdout.split("\n")
-    return sorted(p for p in out if p and "__pycache__" not in p and not p.endswith(".pyc")
+    # -z: git never QUOTES a path then (core.quotePath writes a non-ASCII name as "P/\\303\\274.log", which is no
+    # real path, and once its parent is dropped below nothing else covers it: a2 #54105, measured)
+    out = subprocess.run(["git", "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"],
+                         cwd=source_root, capture_output=True, text=True).stdout.split("\0")
+    out = [p for p in out if p]
+    # git lists a directory holding ONLY ignored content as an entry of its own AND each ignored child under it
+    # (measured: `.claude/` beside `.claude/worktrees/`). The parent is redundant, and keeping it re-admits every
+    # excluded child at once (a fresh install's .claude/ holds only worktrees). So an entry that is a strict prefix of
+    # another listed entry is dropped BEFORE the exclusions; a directory that is itself ignored (venv/) is listed
+    # alone and stays.
+    out = [p for p in out if not (p.endswith("/") and any(q != p and q.startswith(p) for q in out))]
+    return sorted(p for p in out if "__pycache__" not in p and not p.endswith(".pyc")
                   and not any(p == e or p.startswith(e) or f"/{e}" in f"/{p}" for e in ESTATE_EXCLUDE))
 
 
