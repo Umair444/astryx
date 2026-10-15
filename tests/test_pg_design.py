@@ -16,14 +16,14 @@ import re
 import sys
 from pathlib import Path
 
-try:
-    import yaml  # noqa: F401  (pg_design.declared() parses the compose file with it)
-except ImportError as e:
-    print(f"SKIP: deps ({e}). Nothing was verified here.")
-    sys.exit(77)
-
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
+
+# a missing yaml (pg_design.declared() parses the compose file with it) is NOT SEARCHED on a committed-only tree (CI)
+# and BROKEN on a live host; find_spec, so an installed-but-broken yaml still crashes loud. env=False: the static and
+# RED arms run without .env (the live arm skips on its own). steward #53983.
+from astryx.security.sqlguard.estate import gate  # noqa: E402
+gate("test_pg_design", REPO, deps=("yaml",), env=False)
 
 if os.environ.get("PG_DESIGN_SRC"):                       # mutation_probe hands a mutant copy here
     import importlib.util
