@@ -530,12 +530,16 @@ async def push(row) -> bool:
     peer = await pool.fetchrow("SELECT url, pubkey, status FROM peers WHERE org=$1",
                                row["to_org"])
     if not peer or peer["status"] in ("stranger", "revoked"):
-        await pool.execute("UPDATE messages SET status='dead' WHERE id=$1", row["id"])
-        await pool.execute(
-            "INSERT INTO messages (from_agent, to_agent, intent, body) "
-            "VALUES ('gateway', $1, 'error', $2)", row["from_agent"],
-            f"cannot deliver to {row['to_org']}: not an introduced peer "
-            f"(run src/astryx/federation/introduce.py first)")
+        # one transaction: a gateway killed between the two (restart, deploy, OOM) left the row dead, which nothing
+        # retries, and its sender never told: the silent loss the error row exists to prevent (a3 #53459)
+        async with pool.acquire() as c:
+            async with c.transaction():
+                await c.execute("UPDATE messages SET status='dead' WHERE id=$1", row["id"])
+                await c.execute(
+                    "INSERT INTO messages (from_agent, to_agent, intent, body) "
+                    "VALUES ('gateway', $1, 'error', $2)", row["from_agent"],
+                    f"cannot deliver to {row['to_org']}: not an introduced peer "
+                    f"(run src/astryx/federation/introduce.py first)")
         return True
     if not peer["url"]:
         if RELAY and await relay_send(row["to_org"], "msg", envelope(row)):
