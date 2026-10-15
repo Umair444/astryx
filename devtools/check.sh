@@ -723,6 +723,7 @@ run "estate-grep coverage states"     "$PY" tests/test_estate_grep.py
 # on a fresh clone. Carries a counterexample arm: the allowlist polarity is proven to be
 # load-bearing by showing the blocklist version go silent on the same fixture.
 run "outbound-stuck classifier"       "$PY" tests/test_outbound_stuck.py
+run "door census: who reaches a human unstamped, and any delivery that bypassed the door" "$PY" tests/test_door_census.py
 # Pure stdlib (processes and files are injected; a tmpdir stands in for the repo), but the
 # trigger BODY is gitignored, so it SKIPS loudly on a fresh clone rather than passing.
 run "spawn-pinned deployment drift"   "$PY" tests/test_spawn_drift.py
