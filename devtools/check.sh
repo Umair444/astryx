@@ -642,6 +642,9 @@ run "OKF frontmatter additivity"      "$PY" tests/test_okf.py
 # files disagree with nothing to arbitrate. Pure stdlib; the estate arms skip loudly on a
 # clean checkout, and the wire layer is never touched here.
 run "recall-graph compiler"           "$PY" tests/test_memgraph.py
+# plan-8018 S-retire: the kg schema is retired (the graph compiles on request); no tracked file may name a kg
+# relation again outside the dated-history exemptions. Pure stdlib + git; works on a clean checkout.
+run "kg retired: no tracked file names a kg relation (8018 S-retire)" "$PY" tests/test_kg_retired.py
 run "another checkout of this repo: one shared predicate for every walker, a foreign repo still walked, an unknown source named (seed 53453)" "$PY" tests/test_checkouts.py
 run "derived-copy registry: digests + writer count (8018 S1)" "$PY" tests/test_copies.py
 run "derived-copy registry: the graph builder stamps its own digest (8018 S1)" "$PY" tests/test_copies_builder.py
