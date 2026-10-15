@@ -206,6 +206,27 @@ def main():
           "the code-location exclusion swallowed a colon-free address — over-broad, the "
           "UNDER-detection direction a PII guard must never take")
 
+    # ---- 3c) a CI run id cited as one is NOT a phone ------------------------------
+    # CI runs on every push since 10-15 (seed #55672) and agents cite its 11-digit run ids as evidence; the first sweep
+    # after flagged 8 rows, each "run <id>". Three directions: the run shapes don't flag; the SAME digits after other
+    # words still do (context, not value); a 92-prefixed number never takes the exemption. The run id below is FAKE
+    # (well past today's ids). The 92-prefixed fixture is built at runtime so no phone-shaped literal sits in a tracked
+    # file (privacy_gate (c) matches a bare 92+9..10 digits); 92 followed by ten zeros is no Pakistani mobile (923…).
+    def _phones(text):
+        return sorted(s for lbl, s in mod["_scan"](text) if lbl == "phone-bare")
+    RUN = "39999999123"
+    PK = "92" + "0" * 10
+    check("a CI run id cited as one (run N, run id N, run #N, /actions/runs/N) is NOT flagged as a phone",
+          not _phones(f"run {RUN} passed; Run id {RUN}; run #{RUN}; see "
+                      f"github.com/o/r/actions/runs/{RUN}/job/1"),
+          "a GitHub Actions run id after 'run' matched phone-bare — the class that flagged 8 rows on 10-16")
+    check("...and the SAME digits in any other context still flag (shape, not a mute)",
+          _phones(f"call {RUN} today") == [RUN] and _phones(f"rerun {RUN}") == [RUN],
+          "the run-context exemption swallowed a number with no run context before it")
+    check("...and a 92-prefixed number never takes the exemption, even after 'run'",
+          _phones(f"run {PK} now") == [PK],
+          "a bare international Pakistani shape was exempted because the word 'run' preceded it")
+
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         dirty = f"contact sheet: {FAKE_PHONE} and {FAKE_EMAIL}\n"

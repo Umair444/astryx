@@ -13,11 +13,13 @@ NOT PROBED, never "vacuous". The subject is gitignored (`triggers/`), so in a cl
 checkout this file names an estate the repo deliberately does not carry — which
 tests/test_mutants_wellformed.py classifies rather than assumes.
 """
+import os
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-SUBJECT = REPO / "triggers" / "steward" / "pii_sweep.py"
+# PII_SWEEP_STAGED names a staged copy to probe before it is applied (the body is gitignored)
+SUBJECT = Path(os.environ.get("PII_SWEEP_STAGED") or REPO / "triggers" / "steward" / "pii_sweep.py")
 ORACLE = REPO / "tests" / "test_pii_sweep_ledger.py"
 ENV = "PII_SWEEP_SRC"
 
@@ -58,4 +60,14 @@ MUTANTS = {
     "M5 value key := row key (rows counted as decisions)":
         ('                    "vh": hashlib.sha256(snippet.encode()).hexdigest()[:8]}',
          '                    "vh": h}'),
+    # The CI-run-id context exemption (10-16): each mutant is one way it could over- or under-reach.
+    "M6 the run-id exemption is never consulted (every cited run id flags again)":
+        ("            if label == \"phone-bare\" and _is_ci_run_id(text, m):\n",
+         "            if False:\n"),
+    "M7 the 92-prefix refusal is dropped (run 92… is exempted)":
+        ("    return not m.group(0).startswith(\"92\") and bool(", "    return bool("),
+    "M8 the exemption ignores context (any bare number passes)":
+        ("bool(_CI_RUN_CTX.search(text[max(0, m.start() - 24):m.start()]))", "True"),
+    "M9 the word boundary goes (rerun N is exempted)":
+        ("(?:\\brun\\s+", "(?:run\\s+"),
 }
