@@ -35,7 +35,7 @@ SPAWN = Path(os.environ.get("SPAWN_SRC") or REPO / "scripts" / "spawn.sh")
 PY = sys.executable
 SENT = "S1D-SENTINEL-session-text-4b9e"
 MARK = "tier-labelled session"
-fails, roots = [], []
+fails, roots, unverified = [], [], []
 
 
 def check(name, ok, detail=""):
@@ -164,13 +164,14 @@ try:
     check("an ORG identity: the same sentinel is FOUND in its steps and its turn (anti-vacuity)",
           SENT in " ".join(r[3] for r in st) and SENT in " ".join(r[9] for r in tu))
     base = os.environ.get("STEP_BASE_SRC")
-    if not base:
-        g = subprocess.run(["git", "-C", str(REPO), "show", "origin/main:hooks/step.py"], capture_output=True, text=True)
+    for ref in (() if base else ("origin/main", "main")):      # a git-less tree (branch_check's archive, a CI export)
+        g = subprocess.run(["git", "-C", str(REPO), "show", f"{ref}:hooks/step.py"], capture_output=True, text=True)
         if g.returncode == 0:
             bp = Path(tempfile.mkdtemp(prefix="t_s1d_base_")) / "step.py"
             roots.append(bp.parent)
             bp.write_text(g.stdout)
             base = str(bp)
+            break
     if base:
         broot = tree(Path(base), fx["dsn"])
         db.execute("UPDATE steps SET agent='plain-new' WHERE agent='plain'")
@@ -185,8 +186,10 @@ try:
               == [(t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7]) for t in ntu],
               [("steps", [r[:3] for r in bst if r[:3] not in nst], [r for r in nst if r not in [b[:3] for b in bst]]),
                ("turns", [k for k in ("raw_payload",) if btu and ntu and btu[0][7] != ntu[0][6]])])
-    else:
-        check("…main's hook is readable for the byte-identical control", False, "no origin/main:hooks/step.py")
+    else:                                # NOT VERIFIED, never a pass: the run exits 77 if nothing else failed
+        print("  NOT VERIFIED  the org rows' byte-identity to main's hook: no git ref holds hooks/step.py here "
+              "(set STEP_BASE_SRC to main's copy)")
+        unverified.append("byte-identical control")
 
     print("spawn:")
     for agent, cmd, want in (("member", None, True), ("member", "claude -p hi", True),
@@ -265,5 +268,11 @@ check("render creates no tier/ dir (no side effect)", not (rt / "tier").exists()
 
 for d in roots:
     shutil.rmtree(d, ignore_errors=True)
-print(f"\n{'FAIL' if fails else 'PASS'}: {len(fails)} failure(s)")
-sys.exit(1 if fails else 0)
+if fails:
+    print(f"\nFAIL: {len(fails)} failure(s)")
+    sys.exit(1)
+if unverified:
+    print(f"\nNOT VERIFIED (77): {', '.join(unverified)}; every other arm passed")
+    sys.exit(77)
+print("\nPASS: 0 failure(s)")
+sys.exit(0)
