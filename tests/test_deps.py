@@ -88,6 +88,19 @@ def test_spec_in_range_is_fine():
     assert deps.spec_problem("sherpa-onnx==1.13.8", _v("1.13.8")) is None
 
 
+def test_spec_boundary_of_the_cap():
+    """the first broken release is exactly 2.0.0: `<2` must refuse it (a2 #54128 K3: `<` as `<=` let it pass)."""
+    assert "does not satisfy <2" in deps.spec_problem("mcp<2", _v("2.0.0"))
+    assert "does not satisfy <2" in deps.spec_problem("mcp>=1.28,<2", _v("2"))
+    assert deps.spec_problem("mcp<2", _v("1.99.99")) is None
+
+
+def test_spec_not_equal_judged_both_ways():
+    """`!=` is a claimed operator (a2 #54128 K8: inverted, it survived 15/15)."""
+    assert "does not satisfy !=1.5" in deps.spec_problem("x!=1.5", _v("1.5.0"))
+    assert deps.spec_problem("x!=1.5", _v("1.6")) is None
+
+
 def test_spec_below_floor_is_a_problem():
     assert "does not satisfy >=1.28" in deps.spec_problem("mcp>=1.28,<2", _v("1.27.9"))
 
