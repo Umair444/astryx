@@ -13,11 +13,13 @@ CAUGHT or NOT PROBED, never "vacuous". The subject is gitignored (`triggers/`), 
 clean checkout this file names an estate the repo deliberately does not carry —
 tests/test_mutants_wellformed.py classifies that rather than assuming it.
 """
+import os
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-SUBJECT = REPO / "triggers" / "steward" / "stale_goals.py"
+# STALE_GOALS_STAGED: a staged copy of the gitignored body, probed before apply_receipt applies it
+SUBJECT = Path(os.environ.get("STALE_GOALS_STAGED") or REPO / "triggers" / "steward" / "stale_goals.py")
 ORACLE = REPO / "tests" / "test_stale_goals.py"
 ENV = "STALE_GOALS_SRC"
 
@@ -40,8 +42,8 @@ MUTANTS = {
     # The positive allowlist over a free-text column with no CHECK constraint: a typo'd or
     # newly-invented state exits the patrol entirely instead of arriving loud.
     "M3 the state filter becomes a positive allowlist (unknown states vanish)":
-        ('"WHERE g.state <> ALL(%s)", (list(TERMINAL),))',
-         '"WHERE g.state = ANY(%s)", (["active", "proposed"],))'),
+        ('"WHERE g.state <> ALL(%s)", (list(merged), list(merged.values()), list(TERMINAL)))',
+         '"WHERE g.state = ANY(%s)", (list(merged), list(merged.values()), ["active", "proposed"]))'),
 
     # Recovery no longer re-arms: the stored level is the high-water mark rather than the
     # current one, so a goal that heals and relapses is deduped against its own history.
@@ -77,4 +79,13 @@ MUTANTS = {
     "M6 dedup state is never healed for goals that left the board":
         ('    ctx.state["levels"] = {k: v for k, v in next_levels.items() if k in live}',
          '    ctx.state["levels"] = {**reported, **next_levels}'),
+    "D1 a merge on main is not evidence (the term dropped from greatest())":
+        ('coalesce(ev.last_evidence, g.ts), "\n        "                                    coalesce(mg.merged, g.ts)) AS since) e "',
+         'coalesce(ev.last_evidence, g.ts)) AS since) e "'),
+    "D2 a word-glued token credits an id (xplan-7777)":
+        ('MERGE_RX = _re.compile(r"(?<![\\w-])(?:plan|goal)', 'MERGE_RX = _re.compile(r"(?:plan|goal)'),
+    "D3 git unreadable is silent (the flag no longer says the term was unavailable)":
+        ('    nogit = "" if log is not None else', '    nogit = "" if True else'),
+    "D4 the FIRST commit seen wins, not the latest":
+        ("            if gid not in out or t > out[gid]:", "            if gid not in out:"),
 }
