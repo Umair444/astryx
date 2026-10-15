@@ -404,6 +404,113 @@ def test_refused_render_says_do_not_resend_through_the_real_entrypoint():
     assert "ACTIONABLE" not in out and "BRIDGE-DELIVERED" not in out and "fix the addressing, RESEND" not in out, out
 
 
+
+# ------------------------------------------------ (f) the observatory DESK (memory #54646, steward #55678)
+# An owner row on an obs:estate / obs:person- / obs:library- thread is delivered only when the observatory desk SERVES it
+# (observatory/api/main.py memory_chat_replies). It is bridge-shaped too, and the WhatsApp bridge is right to skip it, so
+# the bridge's "resend un-threaded / pgrep the bridge" was a remedy for a mechanism that never carries it.
+def test_desk_reply_routes_to_desk_not_bridge():
+    g = bucket([_fentry(54646, "pending", 6)], _meta(54646, bridge_delivered=True, desk_served=True))
+    assert _ids(g["desk"]) == {"54646"} and g["bridge"] == [], g
+
+
+def test_counterexample_without_the_desk_flag_a_desk_reply_reads_as_bridge_fault():
+    """PROVES the desk class CAN FAIL: the pre-fix state, the same row with no desk_served, is the bridge's."""
+    g = bucket([_fentry(54646, "pending", 6)], _meta(54646, bridge_delivered=True))
+    assert _ids(g["bridge"]) == {"54646"} and g["desk"] == [], g
+
+
+def test_desk_carve_out_is_pending_only():
+    """A dead desk row is a real failure (something raised), not an unserved reply: it belongs in the age split."""
+    g = bucket([_fentry(5, "dead", 72)], _meta(5, bridge_delivered=True, desk_served=True))
+    assert g["desk"] == [] and _ids(g["fresh"]) == {"5"}, g
+
+
+def test_refused_still_outranks_the_desk():
+    g = bucket([_fentry(6, "refused", 2)], _meta(6, bridge_delivered=True, desk_served=True))
+    assert _ids(g["refused"]) == {"6"} and g["desk"] == [], g
+
+
+def _entry_rows(*specs):
+    import types  # noqa: F401
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    out = []
+    for mid, status, flags in specs:
+        r = {"id": mid, "ts": _dt.now(_tz.utc) - _td(hours=2), "to_agent": "owner", "to_org": "local", "status": status,
+             "from_agent": "memory", "external_handle": False, "bridge_delivered": True, "sheet_delivered": False,
+             "desk_served": False, "awaiting_peer_pickup": False, "last_pickup": None}
+        r.update(flags)
+        out.append(r)
+    return out
+
+
+def _entry(rows):
+    import types
+    return _MOD["outbound_stuck"](types.SimpleNamespace(state={}, sql=lambda q, p=(): [] if "AS cand" in q else rows))
+
+
+def test_desk_render_through_the_real_entrypoint_never_prescribes_the_bridge():
+    out = _entry(_entry_rows((903, "pending", {"desk_served": True})))
+    assert out and "UNSERVED ON AN OBSERVATORY DESK (1)" in out and "#903" in out, out
+    assert "BRIDGE-DELIVERED" not in out and "pgrep" not in out and "ACTIONABLE" not in out, out
+
+
+def test_every_un_threaded_remedy_says_the_doorbell_is_a_group():
+    """memory #55679: the doorbell is the org GROUP. Every class whose remedy says "un-threaded" (door, ear sheet, desk,
+    bridge) must say what content it fits, at EVERY occurrence, through the real entrypoint."""
+    import re
+    out = _entry(_entry_rows((904, "refused", {}), (905, "pending", {"sheet_delivered": True}),
+                             (906, "pending", {"desk_served": True}), (907, "pending", {})))
+    for cls in ("REFUSED BY THE DOOR", "UNSEEN ON THE EAR SHEET", "UNSERVED ON AN OBSERVATORY DESK",
+                "BRIDGE-DELIVERED RECIPIENT"):
+        assert cls in out, (cls, out)
+    hits = [m.start() for m in re.finditer(r"(?i)un-threaded", out)]
+    assert len(hits) >= 4, out
+    for h in hits:
+        assert "not an owner-only surface" in out[h:h + 160] and "never People detail" in out[h:h + 260], out[h:h + 260]
+
+
+def test_desk_predicate_on_a_real_db_reads_the_consumers_prefixes():
+    """The desk_served projection through pulse_run.Ctx on a sqlguard fixture, read TRUE and FALSE: the three prefixes
+    the observatory serves are the desk's; a near-miss obs: thread, and a desk thread addressed to someone else, are not."""
+    try:
+        import psycopg
+        import importlib.util
+        from astryx.security.sqlguard.fixture import fixture_db
+        sp = importlib.util.spec_from_file_location("pulse_run_os", REPO / "src" / "astryx" / "pulse" / "pulse_run.py")
+        pr = importlib.util.module_from_spec(sp)
+        sp.loader.exec_module(pr)
+        fxc = fixture_db()
+        fx = fxc.__enter__()
+    except Exception as e:  # noqa: BLE001
+        print(f"    (skipped: no fixture DB — {type(e).__name__})")
+        return
+    try:
+        conn = psycopg.connect(fx["dsn"], autocommit=True)
+
+        class C(pr.Ctx):
+            def __init__(s, st):
+                super().__init__(st)
+                s._conn = conn
+
+        def put(to, thread):
+            return conn.execute("INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, body, status, ts) "
+                                "VALUES ('memory','local',%s,'local',%s,'x','pending', now() - interval '2 hours') "
+                                "RETURNING id", (to, thread)).fetchone()[0]
+        desk = [put("owner", t) for t in ("obs:estate-ab12", "obs:person-77", "obs:library-e4523e8f")]
+        near = put("owner", "obs:other-1")                   # an obs: thread no desk serves: the bridge's
+        out = _MOD["outbound_stuck"](C({})) or ""
+        # sliced by header, never split on " | ": the bridge's own remedy text holds a shell pipe (`journalctl … | grep`)
+        di, bi = out.find("UNSERVED ON AN OBSERVATORY DESK"), out.find("BRIDGE-DELIVERED RECIPIENT")
+        assert 0 <= di < bi, out                               # rendered desk first, then bridge
+        d, b = out[di:bi], out[bi:]
+        for i in desk:
+            assert f"#{i} " in d and f"#{i} " not in b, (i, out)
+        assert f"#{near} " in b and f"#{near} " not in d, out
+        conn.close()
+    finally:
+        fxc.__exit__(None, None, None)
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
