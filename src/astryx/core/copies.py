@@ -33,6 +33,8 @@ import re
 import sys
 from pathlib import Path
 
+from astryx.paths import Checkouts  # noqa: E402
+
 REPO = Path(os.environ.get("ASTRYX_COPIES_ROOT") or repo_root(__file__)).resolve()
 DECLARATIONS = Path(os.environ.get("ASTRYX_COPIES_FILE") or repo_root(__file__) / "src/astryx/data/copies.json")
 COMPARATORS = ("root_digest", "value_equal")
@@ -120,8 +122,11 @@ _LABELLED_WRITE = re.compile(r"\b(?:MERGE|CREATE)\s*\(\s*\w*\s*:\s*\w")
 
 
 def _estate_files(root: Path):
+    # another checkout of THIS repo (a .worktrees/*, a wt-* at the root) is another branch's copy: its tests read as
+    # undeclared writers (seed #53453). The shared predicate prunes it; a foreign nested repo is still walked.
+    co = Checkouts(root)
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        dirnames[:] = [d for d in co.prune(dirpath, dirnames) if d not in SKIP_DIRS]
         for f in filenames:
             if f.endswith(SCAN_EXT):
                 yield Path(dirpath) / f

@@ -228,6 +228,10 @@ def judge(trace_dir, inv=None, covering=None, stored_covering=None):
         run_not_searched.append("triggers/ absent (gitignored estate not present): the class's home was not searched")
     if inv["unparseable"]:
         run_not_searched.append(f"unparseable files: {inv['unparseable']}")
+    if inv.get("other_checkouts_unclassified"):
+        run_not_searched.append(f"nested checkouts walked with no known source (the tree has no .git and ASTRYX_REPO_COMMON "
+                                f"is unset), maybe another branch's copy read as subject code: "
+                                f"{inv['other_checkouts_unclassified']}")
     if shim_errors:
         run_not_searched.append(f"shim internal errors: {shim_errors}")
     return {"counts": dict(counts), "sites": sites, "blind": blind, "direct": direct, "oracle_own": oracle_own,

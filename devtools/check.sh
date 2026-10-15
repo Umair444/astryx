@@ -632,6 +632,7 @@ run "OKF frontmatter additivity"      "$PY" tests/test_okf.py
 # files disagree with nothing to arbitrate. Pure stdlib; the estate arms skip loudly on a
 # clean checkout, and the wire layer is never touched here.
 run "recall-graph compiler"           "$PY" tests/test_memgraph.py
+run "another checkout of this repo: one shared predicate for every walker, a foreign repo still walked, an unknown source named (seed 53453)" "$PY" tests/test_checkouts.py
 run "derived-copy registry: digests + writer count (8018 S1)" "$PY" tests/test_copies.py
 run "derived-copy registry: the graph builder stamps its own digest (8018 S1)" "$PY" tests/test_copies_builder.py
 # The typed layer's lint. Every finding must be FALSIFIABLE and every expected field set

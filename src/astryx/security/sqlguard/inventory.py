@@ -37,6 +37,7 @@ import sys
 from pathlib import Path
 
 from astryx.security.sqlguard.normalize import is_bare_verb, is_site, is_write, norm
+from astryx.paths import Checkouts  # noqa: E402
 
 REPO = Path(os.environ.get("ASTRYX_SQLGUARD_ROOT") or repo_root(__file__)).resolve()
 SKIP_DIRS = {"venv", ".venv", "node_modules", "homes", ".git", "__pycache__", "dist", "build"}
@@ -53,37 +54,24 @@ EXCLUDED_ROOTS = {
 EXEMPT = {"src/astryx/security/sqlguard/shim/sitecustomize.py"}
 
 
-def _common_dir(d: Path):
-    """The git COMMON dir a checkout at d belongs to (None if d isn't a checkout root). A linked worktree's .git is a
-    `gitdir:` file whose admin dir names its common dir in `commondir`."""
-    g = d / ".git"
-    try:
-        if g.is_dir():
-            return g.resolve()
-        if g.is_file():
-            admin = Path(g.read_text().split("gitdir:", 1)[1].strip())
-            admin = admin if admin.is_absolute() else (d / admin)
-            cd = admin / "commondir"
-            return ((admin / cd.read_text().strip()) if cd.is_file() else admin).resolve()
-    except (OSError, IndexError):
-        return None
-    return None
-
-
 # Another CHECKOUT of this same repository under the tree (10-14: the estate's .claude/worktrees/ held 7 subagent
 # worktrees, linked into every merge_check tree) is another branch's copy, not this tree's code. Pruned and DECLARED in
 # the report; a nested repo that ISN'T this one (agents/) is still walked.
 OTHER_CHECKOUTS = set()
+CHECKOUTS_UNKNOWN = [False]     # the tree has no .git and no declared source (astryx.paths Checkouts): said, never silent
+UNCLASSIFIED = set()            # nested checkout roots walked while UNKNOWN: maybe another branch's copy, so NOT SEARCHED
 
 
 def _py_files(include_tests: bool):
-    mine = _common_dir(REPO)
+    co = Checkouts(REPO)        # ONE predicate for every walker (seed #53453); a git-archive tree declares its source
+    CHECKOUTS_UNKNOWN[0] = co.unknown
     for dirpath, dirnames, filenames in os.walk(REPO, followlinks=True):
         rel = os.path.relpath(dirpath, REPO)
         top = rel.split(os.sep)[0]
-        twins = {d for d in dirnames if mine is not None and _common_dir(Path(dirpath) / d) == mine}
-        OTHER_CHECKOUTS.update(os.path.normpath(os.path.join(rel, d)) for d in twins)
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and d not in twins
+        kept = co.prune(dirpath, dirnames)
+        OTHER_CHECKOUTS.update(co.found)
+        UNCLASSIFIED.update(co.unclassified)
+        dirnames[:] = [d for d in kept if d not in SKIP_DIRS
                        and not (rel == "." and d == "tests" and not include_tests)
                        and not (rel == "." and d in EXCLUDED_ROOTS)]
         if top in SKIP_DIRS:
@@ -394,7 +382,7 @@ def build() -> dict:
                         if str(p.relative_to(REPO)) not in NOT_READERS and reads_schema_sql(p))
     # triggers/ is gitignored: a clone or worktree without it has NOT SEARCHED the class's home. That's never clean.
     return {"functions": functions, "oracle": oracle, "unparseable": sorted(unparseable), "extractors": extractors,
-            "exempt": sorted(EXEMPT), "excluded": sorted(EXCLUDED_ROOTS), "other_checkouts": sorted(OTHER_CHECKOUTS),
+            "exempt": sorted(EXEMPT), "excluded": sorted(EXCLUDED_ROOTS), "other_checkouts": sorted(OTHER_CHECKOUTS), "other_checkouts_unknown": CHECKOUTS_UNKNOWN[0], "other_checkouts_unclassified": sorted(UNCLASSIFIED),
             "triggers_absent": not (REPO / "triggers").is_dir(), "root": str(REPO)}
 
 
