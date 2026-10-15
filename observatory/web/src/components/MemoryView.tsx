@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ScrollArea, Textarea } from '@mantine/core'
 import { AnimatePresence, motion } from 'motion/react'
 import { useMediaQuery } from '@mantine/hooks'
-import { api, apiPost, fmtAgo } from '../api'
+import { api, apiPost } from '../api'
 import Md from './Md'
 import LateReplies, { said } from './LateReplies'
 import { Empty, LiveDot, Orb, Panel, SectionHead, Tabs, ViewHeader } from '../ui/kit'
@@ -40,7 +40,7 @@ type Answer = { answer: string; retrieved: Retrieved | null; proposal?: string |
 type Graph = {
   nodes: Node[]; edges: Edge[]; regions: string[]
   stats: { nodes: number; edges: number; claims: number; system1: number; system2: number; by_kind: Record<string, number>; by_class: Record<string, number> }
-  notes: string[]; age_s?: number | null; digest?: string
+  notes: string[]; age_s?: number | null; digest?: string; built_at?: string; error?: string
 }
 
 /* Region palette. Distinct hues, all sitting in the deck's blue-violet family so the tab
@@ -485,10 +485,10 @@ export default function MemoryView() {
   /* The LIBRARY is memory's booklet of what the org knows — the owner's way in, so it opens first. */
   if (lens === 'library') return <LibraryView tabs={<LensBar lens={lens} setLens={setLens} />} />
 
-  /* PEOPLE are not memory's to hold. kg is readable by every agent, so the compiler no longer
-   * mints a person into it (seed 10-09); the owner's people live in the private people graph
+  /* PEOPLE are not memory's to hold. The recall graph is readable by every agent, so the compiler
+   * no longer mints a person into it (seed 10-09); the owner's people live in the private people graph
    * (social_person / social_edge / astryx_social) — the same one Network → People draws. This
-   * lens shows THAT graph, owner-side, instead of an always-empty filter over kg. */
+   * lens shows THAT graph, owner-side, instead of an always-empty filter over the recall graph. */
   if (lens === 'world') {
     return (
       <div className="h-full flex flex-col">
@@ -513,8 +513,9 @@ export default function MemoryView() {
       <div className="h-full grid place-items-center">
         <div className="flex flex-col items-center gap-6">
         <LensBar lens={lens} setLens={setLens} />
-        <Empty title="No compiled graph yet" hint={<>
-          <code className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-deck-3">venv/bin/python src/astryx/memory/memgraph.py build</code>
+        <Empty tone={g.error ? 'bad' : undefined} title={g.error ? 'The graph did not compile' : 'The graph compiled empty'} hint={<>
+          <span className="block">The graph compiles from memory/ and the wire on each load; there is no stored copy.</span>
+          {g.error && <span className="block mt-2">{g.error}</span>}
           {g.notes?.map((n, i) => <span key={i} className="block mt-2">{n}</span>)}
         </>} />
         </div>
@@ -522,7 +523,6 @@ export default function MemoryView() {
     )
   }
 
-  const stale = (g.age_s ?? 0) > 48 * 3600
   const lensLoading = lens === 'ontology' && !onto
 
   /* Mobile: no canvas. Same choice NetworkView makes — a pannable 285-node SVG on a
@@ -531,7 +531,7 @@ export default function MemoryView() {
     return (
       <ScrollArea className="h-full">
         <div className="px-4 py-6">
-          <ViewHeader kicker="what the org knows" title="Memory" live={<Header g={g} stale={stale} />} />
+          <ViewHeader kicker="what the org knows" title="Memory" live={<Header g={g} />} />
           {g.regions.map((r) => {
             const items = g.nodes.filter((n) => n.region === r && (n.kind === 'page' || n.kind === 'goal' || n.kind === 'agent'))
               .sort((a, b) => b.degree - a.degree)
@@ -566,7 +566,7 @@ export default function MemoryView() {
           <div className="pointer-events-auto">
             <div className="text-[11px] uppercase tracking-[0.18em] text-ink-mute mb-1.5">what the org knows</div>
             <h1 className="text-[28px] font-semibold tracking-[-0.02em] leading-none ax-title">Memory</h1>
-            <div className="mt-2"><Header g={g} stale={stale} /></div>
+            <div className="mt-2"><Header g={g} /></div>
             <div className="mt-1.5 text-[13px] text-ink-dim">{LENS_HINT[lens]}</div>
           </div>
           <div className="ml-auto flex flex-col items-end gap-2 pointer-events-auto">
@@ -900,18 +900,16 @@ export default function MemoryView() {
   )
 }
 
-function Header({ g, stale }: { g: Graph; stale: boolean }) {
+function Header({ g }: { g: Graph }) {
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-ink-dim">
-      <span className="flex items-center gap-1.5"><LiveDot state={stale ? 'asleep' : 'awake'} />{g.stats.nodes.toLocaleString()} nodes</span>
+      <span className="flex items-center gap-1.5"><LiveDot state="awake" />{g.stats.nodes.toLocaleString()} nodes</span>
       <span className="text-ink-mute">·</span><span>{g.stats.edges.toLocaleString()} links</span>
       <span className="text-ink-mute">·</span><span>{g.stats.claims.toLocaleString()} claims</span>
       <span className="text-ink-mute font-mono text-[11px]">S2 {g.stats.system2} / S1 {g.stats.system1}</span>
-      {/* A graph that goes stale while staying beautiful is this surface's silent
-        * failure, so the age is stated rather than left to be inferred. */}
-      <span className={stale ? 'text-bad' : 'text-ink-mute'}>
-        · compiled {g.age_s != null ? fmtAgo(new Date(Date.now() - g.age_s * 1000).toISOString()) : '—'}
-      </span>
+      {/* Compiled on every load from memory/ and the wire (plan-8018 S-retire): there is no
+        * stored copy to go stale, so the honest age is "now", not a stored timestamp. */}
+      <span className="text-ink-mute">· compiled on load</span>
     </div>
   )
 }

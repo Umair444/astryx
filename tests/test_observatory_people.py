@@ -129,9 +129,10 @@ def main(url):
             rel == [("p-1", "friend", "close", "owner")], rel)
         arm("memory is told only a COUNT on the wire — no pid, no name, no relation",
             len(notes) == 2 and not any(("p-1" in n or "friend" in n) for n in notes), notes)
-        fr = cl.get("/api/memory/graph?fresh=1", headers=O).json()
-        arm("the Memory view's recompile button compiles (it called a memgraph function that did not exist)",
-            "compile failed" not in str(fr.get("error", "")), fr.get("error"))
+        fr = cl.get("/api/memory/graph", headers=O).json()
+        arm("the Memory view's graph compiles on load (plan-8018 S-retire: no stored copy, no recompile button)",
+            "compile failed" not in str(fr.get("error", "")) and fr.get("built_at") and fr.get("age_s") is not None,
+            fr.get("error"))
         gd = cl.get(f"/api/goals/{gid}", headers=O).json()
         arm("a goal opens in full: sub-goals, its plan thread, each voter's LATEST verdict, its steps",
             gd["goal"]["title"] == "a goal with a plan" and [k["title"] for k in gd["children"]] == ["a sub-goal"]

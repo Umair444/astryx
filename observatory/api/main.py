@@ -2675,26 +2675,25 @@ async def wire_contacts(q: str, channel: str = ""):
 MEMORY_WIKI = REPO / "memory" / "wiki"
 
 
-def _memgraph_read() -> dict | None:
-    """The stored graph, from kg.* — three tables written whole in one transaction.
+async def _memgraph_read() -> dict:
+    """The graph, COMPILED ON REQUEST from memory/ and the wire — there is no stored copy.
 
-    It used to be a JSON file read off disk. The move is the owner's call and the reason
-    is scale: this graph exists to carry an ontology over products, tables and rules, and
-    at 10^4+ nodes a blob means full load per process and full scan per query. Because the
-    graph is DERIVED, the move cost no migration — only the compiler's sink changed.
+    It was a JSON file, then three postgres tables; each was a cached copy with its own
+    freshness to keep and a second writer to drift (plan-8018 S-retire). A compile measured
+    1.1-1.3s, so the request pays it in a worker thread and the event loop never blocks.
+    A failure returns the error shape the old `?fresh=1` recompile returned.
     """
     try:
         sys.path.insert(0, str(REPO))
         from astryx.memory import memgraph
-        g = memgraph.read_pg()
-        return g if g.get("nodes") or g.get("notes") else None
-    except Exception:
-        return None
+        return await asyncio.to_thread(memgraph.compile_graph)
+    except Exception as e:
+        return {"error": f"compile failed: {type(e).__name__}: {e}", "nodes": [], "edges": []}
 
 
 def _graph_age(g: dict) -> int | None:
-    """Seconds since the graph was built, from kg.node.built_at — every row of a build
-    shares one transaction timestamp, so max(built_at) IS the build time."""
+    """Seconds since the graph was compiled, from its own `built_at` (the compile's clock).
+    Compiled on request, so this is the request's own compile time, honestly ~0."""
     b = g.get("built_at")
     if not b:
         return None
@@ -2706,20 +2705,12 @@ def _graph_age(g: dict) -> int | None:
 
 
 @app.get("/api/memory/graph")
-async def memory_graph(fresh: int = 0):
-    """The compiled recall graph. Serves the artifact on disk; `?fresh=1` recompiles
-    first (owner-only path, so this is a deliberate button, not an open recompile)."""
-    if fresh:
-        try:
-            sys.path.insert(0, str(REPO))
-            from astryx.memory import memgraph
-            memgraph.write_pg(memgraph.compile_graph())
-        except Exception as e:
-            return {"error": f"compile failed: {type(e).__name__}: {e}", "nodes": [], "edges": []}
-    g = _memgraph_read()
-    if g is None:
-        return {"nodes": [], "edges": [], "regions": [], "stats": {},
-                "notes": ["no compiled graph yet — run: venv/bin/python src/astryx/memory/memgraph.py build"]}
+async def memory_graph():
+    """The recall graph, compiled on request from memory/ and the wire (no stored copy, so
+    no recompile button: every load IS a compile)."""
+    g = await _memgraph_read()
+    if g.get("error"):
+        return g
     g["age_s"] = _graph_age(g)
     return g
 
@@ -2729,23 +2720,22 @@ async def memory_world():
     """The HUMAN ontology — people, the categories they sit in, the facets that cut across.
 
     This is the lens the graph was missing. The recall graph and the ontology lens are both
-    the org describing ITSELF; measured, `kg.node` held 336 nodes and zero about a person,
+    the org describing ITSELF; measured, the compiled graph held 336 nodes and zero about a person,
     a company or anything in the owner's life. This one is derived from the owner's own
     instruments (relations.md, owner.md) by src/astryx/memory/world.py.
 
     A FILTER over the compiled graph rather than a second source: the world layer is
-    compiled into kg.node like everything else, so this cannot drift from what the graph
-    holds — there is one compiler and one store. Same node/edge shape as the other two
-    lenses so it inherits the renderer.
+    compiled with everything else, on the same request, so this cannot drift from what the
+    graph holds — there is one compiler and no stored copy. Same node/edge shape as the
+    other two lenses so it inherits the renderer.
 
     Identifying VALUES never reach here: world.redact() strips them at parse time, so the
     API is not the thing protecting them — the structure never received them. See
     tests/test_world.py, whose assertion is derived from the live instruments.
     """
-    g = _memgraph_read()
-    if g is None:
-        return {"nodes": [], "edges": [], "regions": [], "stats": {},
-                "notes": ["no compiled graph yet — run: venv/bin/python src/astryx/memory/memgraph.py build"]}
+    g = await _memgraph_read()
+    if g.get("error"):
+        return g
     nodes = [n for n in g.get("nodes", []) if n.get("layer") == "world"]
     ids = {n["id"] for n in nodes}
     edges = [e for e in g.get("edges", [])
@@ -2965,12 +2955,12 @@ async def memory_page(slug: str):
 
 @app.get("/api/memory/build")
 async def memory_build():
-    """Compile freshness. A graph that goes stale while staying beautiful is the silent
-    failure this surface is most prone to, so the age is a first-class field the UI shows
-    rather than something a reader has to infer."""
-    g = _memgraph_read()
-    if g is None:
-        return {"built": False, "age_s": None, "stats": {}, "notes": []}
+    """The on-request compile's report. There is no stored graph to go stale (plan-8018
+    S-retire): this route compiles now, from memory/ and the wire, and says what came out —
+    `built` false with the error when the compile failed."""
+    g = await _memgraph_read()
+    if g.get("error"):
+        return {"built": False, "age_s": None, "stats": {}, "notes": [], "error": g["error"]}
     return {"built": True, "age_s": _graph_age(g), "digest": g.get("digest"),
             "stats": g.get("stats", {}), "regions": g.get("regions", []),
             "notes": g.get("notes", [])}
@@ -3018,8 +3008,8 @@ async def memory_chat(ask: MemoryAsk, request: Request):
     memory_hits.append(now)
 
     r = None
-    g = _memgraph_read()
-    if g and g.get("nodes"):
+    g = await _memgraph_read()
+    if g.get("nodes"):
         sys.path.insert(0, str(REPO))
         from astryx.memory import memgraph
         r = memgraph.retrieve(g, text)

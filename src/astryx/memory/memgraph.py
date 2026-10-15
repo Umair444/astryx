@@ -11,17 +11,12 @@ The org already produces two kinds of knowledge and can read neither as a graph:
 memory's nightly compile is the arrow between them, and that arrow is the most
 interesting thing this org does. This module makes both layers and the arrow legible.
 
-WHERE IT IS STORED: three tables in a `kg` schema, written whole inside one transaction.
-It began as a JSON file, and the argument for that was measured against 287 nodes — a
-graph that exists to be LOOKED AT. It is wrong for the graph this is FOR: an ontology over
-products, tables and rules is 10^4-10^6 nodes, where a blob means full load per process,
-full scan per query, no index and no concurrent writer. Sizing against what exists rather
-than what a thing is for is the error, and the owner caught it.
-
-The store stays MINIMAL and DISPOSABLE: three tables, no build pointer, no status row —
-atomicity comes from the transaction, not from a swap. Every row here is derived from
-memory/ and the org tables, so rollback is `DROP SCHEMA kg CASCADE` plus a recompile, and
-`src/astryx/sql/schema.sql` — the authority for the org's own durable state — is untouched.
+WHERE IT IS STORED: nowhere. The graph compiles ON REQUEST from memory/ and the wire (measured
+1.1-1.3s), so there is no stored copy to go stale and no second writer to drift (plan-8018
+S-retire). It was a JSON file, then three postgres tables; the tables' one remaining reader,
+the ingest's CARRIES incidence, now derives the same rows from the wiki pages it already
+reads (system2_incidence, below). Measured before the cut: the stored DISTINCT (entity, rel)
+set and the pages' own set were the same 500 rows, exactly.
 
 DERIVED PROJECTION, WRITER-COUNT 1. Nothing here ever writes into memory/wiki or the
 database. When the graph and the estate disagree the ESTATE wins; when the estate and the
@@ -46,9 +41,8 @@ and INFERRED when not. Declaring it upgrades a heuristic into a fact and lets a 
 hard-fail instead of guessing.
 
 CLI:
-  memgraph.py build     compile and replace the stored graph (one transaction)
   memgraph.py stats     compile in memory, print the shape, write nothing
-  memgraph.py read      read the STORED graph back and print its shape
+  (`build` and `read` are retired: the graph compiles on request, plan-8018 S-retire)
 """
 from __future__ import annotations
 if not __package__:  # run by path: the checkout root goes first on sys.path so `astryx` resolves (goal 10224 S4)
@@ -62,6 +56,7 @@ import math
 import os
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = repo_root(__file__)
@@ -325,6 +320,33 @@ def _read(p: Path) -> str:
         return ""
 
 
+def _parse_page(p: Path):
+    """ONE writer of a wiki page's parse: (raw, meta, body, dialect, entity, claims, frontmatter error).
+    build_system2 and system2_incidence both read a page through here, so the graph's claims and the
+    ingest's CARRIES incidence can never be two parses of the same file."""
+    raw = _read(p)
+    err = None
+    try:
+        meta, body = okf.parse(raw)
+    except okf.OKFError as e:
+        meta, body, err = {}, raw, e
+    dialect = meta.get("x-dialect") or infer_dialect(body)
+    entity = meta.get("x-entity") or p.stem
+    return raw, meta, body, dialect, entity, parse_claims(body, dialect, entity), err
+
+
+def system2_incidence(pages) -> list[tuple[str, str]]:
+    """Sorted DISTINCT (entity, rel) over the claims of exactly these wiki pages: the incidence
+    memory/graph/ingest.py hangs its CARRIES edges on. It replaced a DISTINCT read of the retired
+    postgres claim table (plan-8018 S-retire); measured live before the cut, the two sets were the same 500 rows.
+    Derived from the pages the ingest already digests as roots, so the root digest covers it with no
+    fold, and nothing outside those pages (a world or wire node's claims) can reach it."""
+    out = set()
+    for p in pages:
+        out.update((c["entity"], c["rel"]) for c in _parse_page(Path(p))[5])
+    return sorted(out)
+
+
 def build_system2(g: Graph) -> None:
     """Pages, briefs, entities, claims, and the compile chain."""
     if not WIKI.is_dir():
@@ -336,15 +358,10 @@ def build_system2(g: Graph) -> None:
     idx_regions = index_regions()
 
     for p in pages:
-        raw = _read(p)
-        try:
-            meta, body = okf.parse(raw)
-        except okf.OKFError as e:
-            meta, body = {}, raw
-            g.notes.append(f"{p.name}: frontmatter ignored ({e})")
-        dialect = meta.get("x-dialect") or infer_dialect(body)
+        raw, meta, body, dialect, entity, claims, err = _parse_page(p)
+        if err:
+            g.notes.append(f"{p.name}: frontmatter ignored ({err})")
         declared = bool(meta.get("x-dialect"))
-        entity = meta.get("x-entity") or p.stem
         nid = g.node(
             f"page:{p.stem}", kind="page", label=p.stem, layer="system2",
             type=meta.get("type") or ("goal" if p.stem.startswith("goal-") else "concept"),
@@ -354,7 +371,6 @@ def build_system2(g: Graph) -> None:
             dialect=dialect, dialect_declared=declared,
             compiled=meta.get("timestamp") or _compiled_date(raw),
         )
-        claims = parse_claims(body, dialect, entity)
         g.nodes[nid]["claims"] = claims
 
         # ANTI-VACUITY, memory's own law: a page with real notation that yields nothing
@@ -739,7 +755,7 @@ def compile_graph(dsn: str | None = None, with_system1: bool = True) -> dict:
     regions = assign_regions(g)
     layout(g, regions)
 
-    # dedupe + sort so the emitted bytes are a pure function of the inputs
+    # dedupe + sort so the emitted bytes are a pure function of the inputs (all but built_at, the clock)
     seen, edges = set(), []
     for e in sorted(g.edges, key=lambda e: (e["src"], e["dst"], e["cls"], e["rel"])):
         k = (e["src"], e["dst"], e["cls"], e["rel"])
@@ -762,6 +778,8 @@ def compile_graph(dsn: str | None = None, with_system1: bool = True) -> dict:
 
     return {
         "version": 1,
+        # the compile's own clock: the graph is compiled on request, so its age is honest (it is now)
+        "built_at": datetime.now(timezone.utc).isoformat(),
         "regions": regions,
         "nodes": nodes,
         "edges": edges,
@@ -773,197 +791,6 @@ def compile_graph(dsn: str | None = None, with_system1: bool = True) -> dict:
             "system1": sum(1 for n in nodes if n.get("layer") == "system1"),
             "system2": sum(1 for n in nodes if n.get("layer") == "system2"),
         },
-    }
-
-
-# ─────────────────────────────────────────────────────── the sink (postgres)
-# THE GRAPH IS DERIVED, so the store is a CACHE and its schema is disposable — which is
-# what makes this a backend swap rather than a migration. Rollback is `DROP SCHEMA kg
-# CASCADE` followed by a recompile; there is no data here that does not exist upstream in
-# memory/ and the org tables.
-#
-# WHY IT MOVED OFF A FILE (owner call, 2026-08-14). The file was right for a 287-node graph
-# that exists to be LOOKED AT and wrong for the graph this is FOR: an ontology over
-# products, tables and rules is 10^4-10^6 nodes, where a JSON blob means full load per
-# process, full scan per query, no index, no partial read and no concurrent writer. The
-# earlier sizing argument measured what existed instead of what it was for.
-#
-# MINIMAL ON PURPOSE — three tables, no build-pointer, no status table. Atomicity comes
-# from the TRANSACTION (delete + insert + commit), not from a swap pointer, so there is
-# no extra state to drift. Kind-specific fields (a goal's `state`, a page's `dialect`, a
-# thread's `size`) live in one jsonb rather than becoming twenty mostly-null columns; the
-# columns are exactly the fields something FILTERS, SORTS or GATES on.
-#
-# pgvector is NOT enabled here. It arrives in the same change that adds the embedding
-# column and populates it — an unused extension is the same defect as an unused table.
-SCHEMA_SQL = """
-CREATE SCHEMA IF NOT EXISTS kg;
-
-CREATE TABLE IF NOT EXISTS kg.node (
-  id         text PRIMARY KEY,
-  kind       text NOT NULL,
-  label      text NOT NULL,
-  layer      text NOT NULL,
-  region     text NOT NULL,
-  type       text,
-  title      text,
-  visibility text NOT NULL DEFAULT 'org',   -- gates the LABEL on any public surface
-  degree     int  NOT NULL DEFAULT 0,
-  x          real, y real, region_i int,
-  attrs      jsonb NOT NULL DEFAULT '{}',   -- the kind-specific tail
-  -- FRESHNESS, without a fourth table. The file sink gave this away as an mtime; here
-  -- every row takes the TRANSACTION timestamp (now() is transaction-start, so a whole
-  -- build shares one value), and max(built_at) is the build time. A graph that goes stale
-  -- while staying beautiful is this surface's silent failure, so the age must be readable.
-  built_at   timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS kg_node_region ON kg.node (region);
-CREATE INDEX IF NOT EXISTS kg_node_kind   ON kg.node (kind);
-CREATE INDEX IF NOT EXISTS kg_node_layer  ON kg.node (layer);
-
-CREATE TABLE IF NOT EXISTS kg.edge (
-  src text NOT NULL REFERENCES kg.node(id) ON DELETE CASCADE,
-  dst text NOT NULL REFERENCES kg.node(id) ON DELETE CASCADE,
-  cls text NOT NULL,
-  rel text NOT NULL,
-  PRIMARY KEY (src, dst, cls, rel)
-);
-CREATE INDEX IF NOT EXISTS kg_edge_dst ON kg.edge (dst);
-
-CREATE TABLE IF NOT EXISTS kg.claim (
-  id         bigserial PRIMARY KEY,
-  node_id    text NOT NULL REFERENCES kg.node(id) ON DELETE CASCADE,
-  entity     text NOT NULL,
-  rel        text NOT NULL,
-  value      text NOT NULL,
-  evidence   text NOT NULL DEFAULT '',
-  confidence text NOT NULL DEFAULT 'observed',
-  contra     boolean NOT NULL DEFAULT false,
-  line       int
-);
-CREATE INDEX IF NOT EXISTS kg_claim_node ON kg.claim (node_id);
-CREATE INDEX IF NOT EXISTS kg_claim_rel  ON kg.claim (rel);
-"""
-
-# Columns promoted out of the node dict; everything else falls into attrs.
-_NODE_COLS = ("id", "kind", "label", "layer", "region", "type", "title",
-              "visibility", "degree", "x", "y", "region_i")
-
-
-def _dsn_or_none(dsn: str | None = None) -> str | None:
-    return dsn or _dsn()
-
-
-def write_pg(graph: dict, dsn: str | None = None, ddl: bool = True) -> dict:
-    """Replace the stored graph in ONE transaction. Readers see the old graph until commit
-    and the new one after — never a half-built one, which is the property the temp-file
-    rename used to provide. Returns {nodes, edges, claims} actually written.
-
-    DELETE-then-INSERT rather than upsert: this is a full rebuild of a derived projection,
-    so a node that vanished upstream must vanish here. An upsert would silently accumulate
-    everything the graph has ever contained, which is the drift a derived store exists to
-    avoid.
-
-    ddl=False skips the CREATE batch, for a store whose kg schema was already applied by
-    its owner: the test fixture applies SCHEMA_SQL through src/astryx/security/sqlguard/fixture.py, so
-    its relations are stamped and no CREATE runs from the oracle.
-    """
-    import psycopg
-    dsn = _dsn_or_none(dsn)
-    if not dsn:
-        raise RuntimeError("no ASTRYX_DSN — cannot write the graph")
-
-    nodes, edges = graph["nodes"], graph["edges"]
-    claims = [(n["id"], c) for n in nodes for c in (n.get("claims") or [])]
-
-    with psycopg.connect(dsn) as conn:
-        with conn.cursor() as cur:
-            if ddl:
-                cur.execute(SCHEMA_SQL)
-            # order matters only for the FK; CASCADE would do it, but being explicit keeps
-            # the intent readable and the plan obvious.
-            cur.execute("DELETE FROM kg.claim")
-            cur.execute("DELETE FROM kg.edge")
-            cur.execute("DELETE FROM kg.node")
-            with cur.copy("COPY kg.node (id,kind,label,layer,region,type,title,visibility,"
-                          "degree,x,y,region_i,attrs) FROM STDIN") as cp:
-                for n in nodes:
-                    attrs = {k: v for k, v in n.items()
-                             if k not in _NODE_COLS and k != "claims"}
-                    cp.write_row((n["id"], n["kind"], n["label"], n["layer"], n["region"],
-                                  n.get("type"), n.get("title"),
-                                  n.get("visibility") or "org", n.get("degree") or 0,
-                                  n.get("x"), n.get("y"), n.get("region_i"),
-                                  json.dumps(attrs)))
-            with cur.copy("COPY kg.edge (src,dst,cls,rel) FROM STDIN") as cp:
-                for e in edges:
-                    cp.write_row((e["src"], e["dst"], e["cls"], e["rel"]))
-            with cur.copy("COPY kg.claim (node_id,entity,rel,value,evidence,confidence,"
-                          "contra,line) FROM STDIN") as cp:
-                for nid, c in claims:
-                    cp.write_row((nid, c["entity"], c["rel"], str(c["value"]),
-                                  c.get("evidence") or "", c.get("confidence") or "observed",
-                                  bool(c.get("contra")), c.get("line")))
-        conn.commit()
-    return {"nodes": len(nodes), "edges": len(edges), "claims": len(claims)}
-
-
-def read_pg(dsn: str | None = None) -> dict:
-    """The stored graph, in the same shape compile_graph() emits — so every consumer
-    (the API, retrieve(), the oracle) is indifferent to which sink produced it."""
-    import psycopg
-    dsn = _dsn_or_none(dsn)
-    if not dsn:
-        return {"nodes": [], "edges": [], "regions": [], "stats": {},
-                "notes": ["no ASTRYX_DSN"]}
-    with psycopg.connect(dsn, row_factory=psycopg.rows.dict_row) as conn:
-        try:
-            nodes = conn.execute(
-                "SELECT id,kind,label,layer,region,type,title,visibility,degree,x,y,"
-                "region_i,attrs FROM kg.node ORDER BY id").fetchall()
-            built = conn.execute("SELECT max(built_at) FROM kg.node").fetchone()["max"]
-        except Exception:
-            return {"nodes": [], "edges": [], "regions": [], "stats": {},
-                    "notes": ["kg schema absent — run: venv/bin/python src/astryx/memory/memgraph.py build"]}
-        edges = conn.execute(
-            "SELECT src,dst,cls,rel FROM kg.edge ORDER BY src,dst,cls,rel").fetchall()
-        claims = conn.execute(
-            "SELECT node_id,entity,rel,value,evidence,confidence,contra,line "
-            "FROM kg.claim ORDER BY node_id,id").fetchall()
-
-    by_node: dict = {}
-    for c in claims:
-        by_node.setdefault(c.pop("node_id"), []).append(c)
-    out = []
-    for n in nodes:
-        attrs = n.pop("attrs") or {}
-        n.update(attrs)
-        # DROP NULL OPTIONALS. A SELECT returns every column, so a node that never set
-        # `title` comes back with title=None while the compiler simply had no such key —
-        # the dicts then differ while no FIELD differs, which is how this hid. Absent and
-        # None must not be two spellings of the same fact, or every consumer has to know
-        # which sink produced its graph.
-        n = {k: v for k, v in n.items() if v is not None}
-        n["claims"] = by_node.get(n["id"], [])
-        out.append(n)
-
-    regions = sorted({n["region"] for n in out},
-                     key=lambda r: (FALLBACK_REGIONS.index(r)
-                                    if r in FALLBACK_REGIONS else 99, r))
-    by_kind: dict = {}
-    by_cls: dict = {}
-    for n in out:
-        by_kind[n["kind"]] = by_kind.get(n["kind"], 0) + 1
-    for e in edges:
-        by_cls[e["cls"]] = by_cls.get(e["cls"], 0) + 1
-    return {
-        "version": 1, "regions": regions, "nodes": out, "edges": edges, "notes": [],
-        "built_at": built.isoformat() if built else None,
-        "stats": {"nodes": len(out), "edges": len(edges),
-                  "claims": sum(len(n["claims"]) for n in out),
-                  "by_kind": by_kind, "by_class": by_cls,
-                  "system1": sum(1 for n in out if n.get("layer") == "system1"),
-                  "system2": sum(1 for n in out if n.get("layer") == "system2")},
     }
 
 
@@ -1082,21 +909,13 @@ def render_context(graph: dict, r: dict, budget: int = 14000) -> str:
 def main() -> int:
     args = sys.argv[1:]
     verb = args[0] if args else "stats"
-    if verb == "read":
-        g = read_pg()
-        print(json.dumps(g["stats"], indent=2))
-        print(f"regions: {', '.join(g['regions'])}")
-        for n in g["notes"]:
-            print(f"  note: {n}", file=sys.stderr)
-        return 0
+    if verb in ("build", "read"):
+        print(f"memgraph: `{verb}` is retired — the graph compiles on request from memory/ and the wire, "
+              f"and there is no stored copy (plan-8018 S-retire). `stats` prints its shape.", file=sys.stderr)
+        return 2
     g = compile_graph(with_system1="--no-wire" not in args)
-    if verb == "build":
-        w = write_pg(g)
-        print(f"memgraph: {w['nodes']} nodes, {w['edges']} edges, {w['claims']} claims "
-              f"-> kg.node / kg.edge / kg.claim")
-    else:
-        print(json.dumps(g["stats"], indent=2))
-        print(f"regions: {', '.join(g['regions'])}")
+    print(json.dumps(g["stats"], indent=2))
+    print(f"regions: {', '.join(g['regions'])}")
     for n in g["notes"]:
         print(f"  note: {n}", file=sys.stderr)
     return 0
