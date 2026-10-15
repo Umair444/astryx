@@ -70,8 +70,9 @@ if [ "$FULL" != 0 ]; then
   RUNTIME=".env venv channel/node_modules"                     # excluded from the ESTATE, needed to RUN
   SKIP="var/"                                                   # declared: runtime state, regenerable
   # A directory holding ONLY ignored content is listed itself AND each ignored child: drop such a parent (a strict
-  # prefix of another entry) before the exclusions, or `.claude/` re-admits `.claude/worktrees/` (== ledger.py's rule)
-  estate=$(git -C "$LIVE" ls-files --others --ignored --exclude-standard --directory \
+  # prefix of another entry) before the exclusions, or `.claude/` re-admits `.claude/worktrees/` (== ledger.py's rule).
+  # -z: never a QUOTED non-ASCII path, which no link could name (a2 #54105)
+  estate=$(git -C "$LIVE" ls-files -z --others --ignored --exclude-standard --directory | tr '\0' '\n' \
     | awk '{ l[NR] = $0 } END { for (i = 1; i <= NR; i++) { p = l[i]; d = 0
         if (p ~ /\/$/) for (j = 1; j <= NR; j++) if (j != i && index(l[j], p) == 1) { d = 1; break }
         if (!d) print p } }' | while IFS= read -r p; do

@@ -46,8 +46,10 @@ ESTATE_EXCLUDE = ("venv/", ".venv/", "homes/", "node_modules/", "backups/", "med
 
 def estate_paths(source_root: Path = REPO) -> list:
     """Gitignored paths in the SOURCE tree (the real one: a worktree's git sees none of them)."""
-    out = subprocess.run(["git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"],
-                         cwd=source_root, capture_output=True, text=True).stdout.split("\n")
+    # -z: git never QUOTES a path then (core.quotePath writes a non-ASCII name as "P/\\303\\274.log", which is no
+    # real path, and once its parent is dropped below nothing else covers it: a2 #54105, measured)
+    out = subprocess.run(["git", "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"],
+                         cwd=source_root, capture_output=True, text=True).stdout.split("\0")
     out = [p for p in out if p]
     # git lists a directory holding ONLY ignored content as an entry of its own AND each ignored child under it
     # (measured: `.claude/` beside `.claude/worktrees/`). The parent is redundant, and keeping it re-admits every

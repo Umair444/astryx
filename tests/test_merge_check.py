@@ -49,6 +49,8 @@ def main():
         (r / ".git" / "info" / "exclude").write_text("**/.claude/worktrees/\n")   # as on live: ignored only here
         (r / ".claude" / "worktrees" / "agent-z").mkdir(parents=True)          # .claude/ holds ONLY a worktree (fresh
         (r / ".claude" / "worktrees" / "agent-z" / "x.py").write_text("other branch\n")   # install): git lists both
+        (r / ".git" / "info" / "exclude").write_text("**/.claude/worktrees/\n*.log\n")
+        (r / ".claude" / "\u00fc.log").write_text("estate\n")                  # a2 #54105: quoted without -z
         (r / "agents" / "secret").mkdir()                                  # …holding a GITIGNORED subdir (a1 #40418)
         (r / "agents" / "secret" / "charter.md").write_text("roster\n")
         (r / "agents" / "secret" / "empty").mkdir()                         # an EMPTY estate dir still exists there
@@ -68,6 +70,7 @@ def main():
         # the stub check: records the cwd's link state AND MOVES main (a concurrent merge landing mid-run)
         stub_check = (f"sh -c 'test -L .env && echo LINKED >> {rec}; "
                       f"test -e .claude/worktrees/agent-z/x.py && echo WTLINKED >> {rec}; "
+                      f"test -e .claude/\u00fc.log && echo UNILINKED >> {rec}; "
                       f"test -f agents/secret/charter.md && echo SUBLINKED >> {rec}; "
                       f"echo written >> agents/secret/charter.md; "
                       f"echo scratch > agents/secret/run_made.txt; "
@@ -98,6 +101,8 @@ def main():
         check("the full check ran with the live estate LINKED in", "LINKED" in log, log)
         check("another checkout under .claude/worktrees/ is NEVER linked in, even when it is all .claude/ holds "
               "(steward #53465)", "WTLINKED" not in log, log)
+        check("…while a NON-ASCII estate file beside it IS linked, under its real name (a2 #54105: ls-files -z)",
+              "UNILINKED" in log, log)
         check("a1 #40418: a GITIGNORED subdir inside a TRACKED dir is linked per entry, and the gate reads it",
               "SUBLINKED" in log, log)
         check("painter #42999: a WALKER sees inside a gitignored DIRECTORY (Python rglob skips a linked dir: link per file)",
@@ -182,13 +187,17 @@ def main():
     with _tf.TemporaryDirectory() as td:
         r = Path(td)
         _sp.run(["git", "init", "-q", str(r)], check=True)
-        (r / ".git" / "info" / "exclude").write_text("**/.claude/worktrees/\n*.ign\n")
-        for f in (".claude/worktrees/agent-x/src/mod.py", "sub/.claude/worktrees/agent-y/a.py", "keep.ign"):
+        (r / ".git" / "info" / "exclude").write_text("**/.claude/worktrees/\n*.ign\nsp ace/\n")
+        for f in (".claude/worktrees/agent-x/src/mod.py", "sub/.claude/worktrees/agent-y/a.py", "keep.ign",
+                  "P/\u00fc.ign", "P/sp ace/x"):
             (r / f).parent.mkdir(parents=True, exist_ok=True)
             (r / f).write_text("x\n")
         ep = estate_paths(r)
     check("estate: another checkout under .claude/worktrees/ (top-level or nested) is never estate; a sibling ignored "
-          "file still is", ep == ["keep.ign"], str(ep))
+          "file still is", "keep.ign" in ep and not [e for e in ep if ".claude" in e], str(ep))
+    check("estate: a NON-ASCII ignored file under a dropped parent survives under its REAL name, never git's quoted "
+          "form (a2 #54105: -z)", "P/\u00fc.ign" in ep and "P/sp ace/" in ep and not [e for e in ep if e.startswith('"')],
+          str(ep))
     print(f"\n{'FAIL' if fails else 'PASS'}: merge_check ({len(fails)} failing)")
     return 1 if fails else 0
 
