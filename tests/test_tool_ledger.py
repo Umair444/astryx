@@ -125,6 +125,10 @@ def tree(broken_toolreg=False):
         shutil.copy(TOOLREG, t / "src" / "astryx" / "core" / "toolreg.py")
     for d in ("mcp", "skills", "tests"):
         (t / d).symlink_to(REPO / d)
+    # plan-9139 S1d: step.py strips the text of any session whose label it can't read, so the fixture identity has an
+    # (org) charter in THIS tree's agents/, or every content arm below would read the tier marker
+    (t / "agents").mkdir()
+    (t / "agents" / "alice.md").write_text("# alice\nfixture org identity\n")
     return t
 
 

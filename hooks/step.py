@@ -252,6 +252,59 @@ def _label(agent):
         return None, f"malformed grant ({type(e).__name__})"
 
 
+# ── plan-9139 S1d: the session side ──────────────────────────────────────────────────────────────────────────────
+# A session of an agent whose charter grants owner_private:<tier> is TIER-LABELLED for its whole life (v4 D2a: the
+# identity is the role; a1 F1/F2, a2 G3: the unit is the session, monotone). Its steps and turns keep METADATA only:
+# tool name, kind, ids, counts, tokens, usage, the tool-identity meta. Every text a tool, a prompt or the model wrote is
+# withheld AT THE WRITE (the auto-deliver release still gets the full reply). A label that can't be read (no charter,
+# a malformed grant, anything raising) strips too: an unknown label is private (D2, arm vi).
+MARK = "tier-labelled session"
+SPAWN_TOOLS = frozenset({"Agent", "Task", "Workflow"})     # tools that start another model session
+
+
+def _strip_reason(agent):
+    """None for an ORG session; else why this session's text is withheld. Never raises."""
+    try:
+        from nucleus import release                # THIS hook's tree's agents/: the live one in production, and a
+        from pathlib import Path                   # fixture tree's own when a test runs a copy of the hook
+        return MARK if release.label_of(agent, Path(REPO) / "agents") else None
+    except Exception as e:  # noqa: BLE001 — UnknownLabel, GrantError, an import that fails: all private
+        return f"{MARK} (label unreadable: {type(e).__name__})"
+
+
+def _cli_names():
+    """The binary names a child session could be started by, DERIVED (seed #45086): spawn.sh's own `CLI=${ASTRYX_CLI:-x}`
+    default, plus ASTRYX_CLI as this process sees it; basenames. Never empty: the known default if nothing reads."""
+    names = set()
+    try:
+        m = re.search(r'^CLI=\$\{ASTRYX_CLI:-([^}]+)\}', open(REPO + "/scripts/spawn.sh").read(), re.M)
+        if m:
+            names.add(m.group(1).strip().strip('"').split()[0])
+    except (OSError, IndexError):
+        pass
+    if os.environ.get("ASTRYX_CLI", "").split():
+        names.add(os.environ["ASTRYX_CLI"].split()[0])
+    return {os.path.basename(n) for n in names if n} or {"claude"}
+
+
+def spawn_guard(tool, ti, strip):
+    """A deny reason when a TIER-LABELLED session would start a child session, else None (seed #45086 4b: REFUSE, don't
+    inherit; a child gets a new session id and the label can't follow it). The Agent/Task/Workflow tools, or a Bash
+    command any of whose words is the CLI binary. Accident grade: `grep claude` is denied too, and an indirection
+    through another program (station.py, tools.run) is S2's server-side verb set."""
+    if not strip:
+        return None
+    if tool in SPAWN_TOOLS:
+        return f"a {MARK} can't start a child session ({tool}): the label can't follow it (plan-9139 S1d)"
+    if tool == "Bash":
+        cmd = (ti or {}).get("command") or ""
+        words = {os.path.basename(w) for w in re.split(r"[\s;|&()`$<>'\"=]+", cmd) if w}
+        hit = sorted(words & _cli_names())
+        if hit:
+            return f"a {MARK} can't run {hit[0]}: a child session would carry none of its label (plan-9139 S1d)"
+    return None
+
+
 def _labelled_auto_deliver(cur, agent, lbl, why, src, last_text, turn_id):
     """A LABELLED member's forgotten reply goes through the one door (nucleus/release.py), never a raw INSERT
     (v4 D1: AUTO-DELIVER is a seat). Refused (no key, no owner-only route, a person's address, a bad grant) → NO
@@ -284,7 +337,7 @@ def _labelled_auto_deliver(cur, agent, lbl, why, src, last_text, turn_id):
             pass                         # no key or no route: the notice can't go either; the error step stands
 
 
-def handle_stop(cur, agent, h):
+def handle_stop(cur, agent, h, strip=None):
     """Reconstruct the just-finished turn and write it. Returns (turn_id, last_text, tin, tout)."""
     try:
         with open(h["transcript_path"]) as f:
@@ -418,6 +471,12 @@ def handle_stop(cur, agent, h):
         cur.execute("INSERT INTO steps (agent, kind, content) VALUES (%s,'error',%s)",
                     (agent, "turn transcript withheld: secret redaction unavailable (plan-5497)"))
 
+    if strip:                            # S1d: the turn's text never reaches the public row; the usage still bills
+        payload = {"withheld": strip, "usage": payload.get("usage")}
+        stored_prompt = f"[{MARK}]"
+    else:
+        stored_prompt = input_prompt
+
     from psycopg.types.json import Jsonb
     usnap = usage_snapshot(cur)          # throttled /api/oauth/usage; None most turns
     # ECONOMY ATTRIBUTION: which goal did this turn serve? Derived from the opening
@@ -439,7 +498,7 @@ def handle_stop(cur, agent, h):
            VALUES (%s,%s,%s::timestamptz, now(), %s, %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
            RETURNING id""",
         (agent, h.get("session_id"), started_at, duration_ms, source,
-         input_prompt, input_msg_id, num_responses, num_tools, char_count,
+         stored_prompt, input_msg_id, num_responses, num_tools, char_count,
          tin, tout, model, stop_reason, Jsonb(payload), usnap, goal_id)).fetchone()
     turn_id = row[0] if row else None
 
@@ -518,10 +577,15 @@ def main():
         return
     ev = h.get("hook_event_name")
 
+    # S1d: the session's label, read ONCE and BEFORE any DB work (a down DB never opens the spawn guard or the strip)
+    strip = _strip_reason(agent)
+
     # SECRETS (plan-5497 S1b): decided BEFORE any DB work, so a down DB never opens the guard.
     denied = guard_err = None
     if ev == "PreToolUse":
         denied, guard_err = secret_guard(h.get("tool_name", "?"), h.get("tool_input") or {})
+        if not denied:
+            denied = spawn_guard(h.get("tool_name", "?"), h.get("tool_input") or {}, strip)
         if not denied and h.get("tool_name") == "Bash":
             denied, gerr = grep_guard((h.get("tool_input") or {}).get("command") or "", h.get("cwd"))
             guard_err = guard_err or gerr
@@ -546,8 +610,11 @@ def main():
             if not detail and tool == "Bash":
                 detail = wall_label(ti.get("command"))
             detail = cleaner()[0](detail)      # a description can quote a secret too
+            if strip:                          # S1d: a description, a path, a target are the session's text
+                detail = f"[{MARK}]"
             if denied:
-                detail = f"DENIED, secret holder: {brief(detail, 200)}"
+                detail = f"DENIED, {'child spawn' if strip and denied.startswith('a ' + MARK) else 'secret holder'}: " \
+                         f"{brief(detail, 200)}"
             cur.execute("INSERT INTO steps (agent, kind, content, meta) VALUES (%s,'tool',%s,%s)",
                         (agent, f"{tool}: {brief(detail)}", ledger_meta(tool, ti)))
             if guard_err:
@@ -571,14 +638,15 @@ def main():
                             (agent, f"{tool} done", meta))
 
         elif ev == "Stop":
-            res = handle_stop(cur, agent, h)
+            res = handle_stop(cur, agent, h, strip)
             # short response step for the wall/status line (full text lives in turns)
             if res:
                 turn_id, last_text, tin, tout = res
                 cur.execute(
                     "INSERT INTO steps (agent, kind, content, turn_id, tokens_in, tokens_out) "
                     "VALUES (%s,'response',%s,%s,%s,%s)",
-                    (agent, (last_text[:2000] or "(tool-only turn)"), turn_id, tin, tout))
+                    (agent, (f"[{MARK}: {len(last_text.encode())} bytes]" if strip
+                             else (last_text[:2000] or "(tool-only turn)")), turn_id, tin, tout))
             else:
                 cur.execute("INSERT INTO steps (agent, kind, content) VALUES (%s,'response',%s)",
                             (agent, "(turn unreadable)"))
