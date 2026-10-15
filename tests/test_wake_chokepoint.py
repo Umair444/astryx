@@ -65,7 +65,8 @@ sys.path.insert(0, str(REPO))
 
 try:
     import psycopg
-    from astryx.security.sqlguard.fixture import fixture_db
+    from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db
+    from astryx.security.sqlguard import estate
 except Exception as exc:                                        # noqa: BLE001
     print(f"SKIP: {type(exc).__name__}: {exc} — the chokepoint oracle needs the org runtime (venv + .env + postgres)")
     sys.exit(77)
@@ -480,4 +481,7 @@ def finish():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except FixtureUnavailable as e:                             # no postgres here: 77 on CI, 1 on a live host
+        estate.unavailable("test_wake_chokepoint", REPO, e)

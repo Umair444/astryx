@@ -42,3 +42,17 @@ def gate(name, repo, deps=("psycopg",), env=True):
         print(f"  {'NOT SEARCHED' if rc == 77 else 'BROKEN'}: {why}")
         print(f"sqlguard {name}: rc={rc} · RED {int(rc == 1)} · reported 0 · not-searched {int(rc == 77)}")
         sys.exit(rc)
+
+
+def unavailable(name, repo, exc):
+    """A fixture database couldn't be had (FixtureUnavailable: no reachable admin DSN, postgres down) AFTER the gate's
+    imports passed. The same estate rule as gate(): a committed-only tree (CI, a fresh clone) is NOT SEARCHED (77);
+    on a LIVE host the runner lost its world, so it's rc 1, loud (seed #54113: two gates crashed uncaught on CI)."""
+    live = (repo / "triggers").is_dir()
+    rc = 1 if live else 77
+    why = f"no fixture database ({type(exc).__name__}: {exc})"
+    print(f"  {'BROKEN' if live else 'NOT SEARCHED'}: {why}" + (", on a LIVE host (triggers/ present)" if live
+                                                                else " (a committed-only tree: triggers/ absent)"))
+    print(f"sqlguard {name}: rc={rc} · RED {int(rc == 1)} · reported 0 · not-searched {int(rc == 77)}")
+    sys.exit(rc)
+

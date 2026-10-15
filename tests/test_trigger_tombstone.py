@@ -39,7 +39,8 @@ def want(label, cond, why=""):
 
 try:
     import psycopg
-    from astryx.security.sqlguard.fixture import fixture_db
+    from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db
+    from astryx.security.sqlguard import estate
 except ImportError as e:
     print(f"SKIP: deps ({e}). Nothing was verified here.")
     sys.exit(77)
@@ -200,6 +201,9 @@ try:
                                         "SERVER_SRC": os.environ.get("SERVER_SRC") or str(REPO / "channel/server.mjs")})
     want("W the tombstone module's arms and server.mjs's wiring pass (tests/test_tombstone.mjs)", r.returncode == 0,
          (r.stdout + r.stderr)[-400:])
+except FixtureUnavailable as e:                                 # no postgres here: 77 on CI, 1 on a live host
+    shutil.rmtree(TREE, ignore_errors=True)
+    estate.unavailable("test_trigger_tombstone", REPO, e)
 finally:
     shutil.rmtree(TREE, ignore_errors=True)
 
