@@ -113,9 +113,9 @@ def verdict(name: str, comment: str | None, alive=_alive, here: tuple | None = N
 
 def _drop(admin, name: str) -> str:
     """DROP a fixture database; which path ran ("force" | "plain"). `WITH (FORCE)` must terminate EVERY backend on it,
-    and on PG 16+ terminating an AUTOVACUUM worker needs pg_signal_autovacuum_worker, which a branch_check run role
-    doesn't hold: a teardown that met autovacuum failed InsufficientPrivilege, at random (steward #55022, measured on
-    18.6). A PLAIN DROP signals autovacuum workers on the target itself and waits for them, so the refusal retries
+    and on PG 18 (our 18.6) terminating an AUTOVACUUM worker needs pg_signal_autovacuum_worker, which a branch_check
+    run role doesn't hold: a teardown that met autovacuum failed InsufficientPrivilege, at random (steward #55022).
+    A PLAIN DROP signals autovacuum workers on the target itself and waits for them, so the refusal retries
     plain. Not the grant: that would let every run role interrupt autovacuum on production databases. Any OTHER
     refusal (another session connected, a template) propagates unchanged, as before."""
     q = '"{}"'.format(name.replace('"', '""'))
