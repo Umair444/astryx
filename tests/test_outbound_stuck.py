@@ -535,14 +535,23 @@ def test_desk_predicate_on_a_real_db_reads_the_consumers_prefixes_and_who():
                 super().__init__(st)
                 s._conn = conn
 
-        def put(thread, frm="memory"):
+        def put(thread, frm="memory", to="owner", to_org="local"):
             return conn.execute("INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, body, status, ts) "
-                                "VALUES (%s,'local','owner','local',%s,'x','pending', now() - interval '2 hours') "
-                                "RETURNING id", (frm, thread)).fetchone()[0]
+                                "VALUES (%s,'local',%s,%s,%s,'x','pending', now() - interval '2 hours') "
+                                "RETURNING id", (frm, to, to_org, thread)).fetchone()[0]
+        # the main query's WHERE at 0 rows first, on the same stamped fixture (sqlguard's W rung needs 0 and >=1): the
+        # desk projections rewrote that site, so it is a NEW site and the later-rows arm's 0 doesn't credit it
+        assert _MOD["outbound_stuck"](C({})) is None
         want = {"UNSERVED ON AN OBSERVATORY DESK": [put("obs:estate-ab12"), put("obs:library-e4523e8f")],
                 "UNSERVED ON THE PERSON DESK": [put("obs:person-77"), put("obs:person-78", "seed")],
                 "UNCARRIED BY CONSTRUCTION": [put("obs:estate-cd34", "seed")],        # the consumer's WHO is memory
-                "BRIDGE-DELIVERED RECIPIENT": [put("obs:other-1")]}                  # a near-miss no desk serves
+                "BRIDGE-DELIVERED RECIPIENT": [put("obs:other-1")],                  # a near-miss no desk serves
+                # every OTHER computed bool of the site read TRUE once too (sqlguard's P rung: both values)
+                "UNSEEN ON THE EAR SHEET": [put("ear-room1")],                                  # sheet_delivered
+                "ACTIONABLE": [put(None, "seed", "wa:100200@s.whatsapp.net")],                  # external_handle
+                "AWAITING PEER PICKUP": [put(None, "seed", "seed", "peer-nat")]}                # awaiting_peer_pickup
+        conn.execute("INSERT INTO peers (org, status, reputation, caps_granted, caps_received, url, last_pickup) "
+                     "VALUES ('peer-nat', 'introduced', 0, '{}', '{}', '', 0)")
         out = _MOD["outbound_stuck"](C({})) or ""
         # sliced by header, never split on " | ": the bridge's own remedy text holds a shell pipe (`journalctl … | grep`)
         at = sorted((out.find(h), h) for h in want)
