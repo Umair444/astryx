@@ -89,6 +89,38 @@ GATE_OUT=$(mktemp "${TMPDIR:-/tmp}/check-gate.XXXXXX")
 # shell with or without any trap, killed 20/20. The mechanism is NOT identified, so the reap doesn't depend on one:
 # whatever is still alive after a 1s grace gets SIGKILL, which nothing can catch or defer. A target killed that early
 # has not exec'd timeout yet, so it has no gate child to orphan.
+# EVERY GATE HAS ITS OWN DIR (plan-10108 D1, a4 #50739): a gate silently assumed it was the only one on the host, and
+# concurrent check.sh runs are routine (10-12: forge's merge_check, seed's harness and a review all ran pilot gates within
+# a minute). run() hands each gate a fresh $G as TMPDIR, so every mkdtemp/tmpdir()-derived profile, cache and scratch is
+# per gate by construction, with no gate edit. XDG_CACHE_HOME rides it (a3 BC-1 i; XDG_RUNTIME_DIR stays the user's), and
+# so does VITE_CACHE_DIR (D2, read by observatory/web/vite.config.ts). The rule: $G holds what the gate OWNS and NOTHING
+# OUTLIVES the gate; whatever a later run reads lives in a declared shared root (`# shared-on-purpose:`), e.g. runscope's
+# SCOPE_ROOT and the oracle reaper's ORACLE_BASE, the cross-run ownership ledgers (a2 rider #50743), never under $G.
+# The ROOT is short (a1 BC-1): a resident's scratchpad TMPDIR is ~80 bytes, `$TMPDIR/g.XXXXXX` then ~90, and a socket a
+# gate binds below it passes AF_UNIX's 108-byte sun_path. So a TMPDIR longer than 40 bytes is not inherited: $G roots at
+# /tmp, and the first gate logs which root was used.
+GATE_ROOT=${TMPDIR:-/tmp}
+GATE_ROOT_WHY="TMPDIR (${#GATE_ROOT} bytes)"
+if [ "${#GATE_ROOT}" -gt 40 ]; then GATE_ROOT_WHY="/tmp, not the ${#GATE_ROOT}-byte TMPDIR (AF_UNIX's 108-byte path)"; GATE_ROOT=/tmp; fi
+GATE_ROOT_LOGGED=""
+GATE_DIR=""
+# Cleanup by OWN $G (a1 F3, a3 R3-3): a descendant that left the gate's process group (start_new_session) survives the group
+# kill, still writing into $G. Every descendant inherited TMPDIR=$G and a chromium names its profile under $G, so those
+# marks ARE ownership: the processes carrying them are killed, then $G is removed. Only file NAMES are read from /proc.
+# The cmdline pattern is the path regex-ESCAPED, so this grep's own argv (`g\.XXXXXX`) never carries the literal it looks
+# for. No terminator: mktemp's suffix is fixed-length, so no other gate's dir has this one as a prefix.
+_gate_dir_rm() {
+  local d=$GATE_DIR p pids re
+  GATE_DIR=""
+  [ -n "$d" ] || return 0
+  re=$(printf '%s' "$d" | sed 's/[][\.*^$+?(){}|]/\\&/g')
+  pids=$( { grep -lasF -- "TMPDIR=$d" /proc/[0-9]*/environ; grep -lasE -- "$re" /proc/[0-9]*/cmdline; } 2>/dev/null \
+          | sed -n 's#^/proc/\([0-9]*\)/.*#\1#p' | sort -u)
+  for p in $pids; do [ "$p" != "$$" ] && [ "$p" != "$BASHPID" ] && kill -KILL "$p" 2>/dev/null; done
+  rm -rf -- "$d" 2>/dev/null || { sleep 0.2; rm -rf -- "$d" 2>/dev/null; }
+  [ -e "$d" ] && printf '  NOTE  the gate dir %s outlived its cleanup\n' "$d"
+  return 0
+}
 _gate_reap() {
   local j targets n
   # `jobs -p` is safe ONLY because check.sh backgrounds exactly one command, run()'s gate, which run() always waits
@@ -104,9 +136,9 @@ _gate_reap() {
   done
   for j in $targets; do kill -KILL -- "-$j" 2>/dev/null || kill -KILL "$j" 2>/dev/null; done
 }
-trap '_gate_reap; rm -f "$GATE_OUT"' EXIT
-trap '_gate_reap; exit 130' INT
-trap '_gate_reap; exit 143' TERM
+trap '_gate_reap; _gate_dir_rm; rm -f "$GATE_OUT"' EXIT
+trap '_gate_reap; _gate_dir_rm; exit 130' INT
+trap '_gate_reap; _gate_dir_rm; exit 143' TERM
 run() {
   local cap=$GATE_CAP
   if [[ ${1:-} == --cap=* ]]; then cap=${1#--cap=}; shift; fi
@@ -117,10 +149,17 @@ run() {
     return
   fi
   local out rc t0=$SECONDS timed_out=""
-  ASTRYX_SQLGUARD_GATE="$label" timeout -k "$GATE_KILL_AFTER" "$cap" "$@" >"$GATE_OUT" 2>&1 </dev/null &
+  if [ -z "$GATE_ROOT_LOGGED" ]; then printf '  (each gate gets its own TMPDIR under %s, rooted at %s)\n' "$GATE_ROOT" "$GATE_ROOT_WHY"; GATE_ROOT_LOGGED=1; fi
+  if ! GATE_DIR=$(mktemp -d "$GATE_ROOT/g.XXXXXX"); then
+    GATE_DIR=""; fail=1; FAILED+=("$label (no gate dir under $GATE_ROOT)"); printf '\033[31m  ✗ %s — could not make its own dir under %s\033[0m\n' "$label" "$GATE_ROOT"
+    return
+  fi
+  ASTRYX_SQLGUARD_GATE="$label" TMPDIR="$GATE_DIR" XDG_CACHE_HOME="$GATE_DIR/cache" VITE_CACHE_DIR="$GATE_DIR/vite" \
+    timeout -k "$GATE_KILL_AFTER" "$cap" "$@" >"$GATE_OUT" 2>&1 </dev/null &
   GATE_PGID=$!          # timeout makes itself its group's leader, so its pid IS the gate's process group id
   wait "$GATE_PGID"; rc=$?
   GATE_PGID=""
+  _gate_dir_rm
   out=$(cat "$GATE_OUT")
   printf '%s\n' "$out"
   # 124 is timeout's own expiry code (137 after the SIGKILL); a gate can also exit 124 itself, so the WALL is the judge
@@ -432,6 +471,7 @@ run "bridges: a [[file:]] embed is read only from the SENDER's roots (home, scra
 run "bridges: every real [[file:]] ever sent to a human, through the root rule (933 /tmp + 19814 tier/-to-group + 2 home dot-path embeds refused)" "$PY" tests/test_embed_root.py --census
 run "observatory pilot: one action catalog, matrix-gated executor, handler parity (plan-9000 S1)" "$PY" tests/test_pilot_s1.py
 run "observatory pilot: the owner-tap confirm under trusted input in chromium (plan-9000 S1 arms i-v)" node tests/pilot_browser_test.mjs
+run "concurrent browser gates: two pilots and two voice orbs 1 s apart, a squatter on the old ports, each gate's own vite cache (plan-10108)" "$PY" tests/test_gate_concurrency.py
 run "observatory pilot: what leaves for the realtime provider is the allowlisted projection only (plan-9000 S2, C1)" node tests/pilot_egress_test.ts observatory/pilot/catalog.json
 run "observatory pilot voice: owner-only routes, one ledger and one cap across canvas and the observatory (plan-9000 S2, C4)" "$PY" tests/test_pilot_voice_server.py
 run "deploy build: a failed build or restart stops the deploy, the build runs as the caller, the banner prints no key" bash tests/test_deploy_build.sh
@@ -515,6 +555,8 @@ run "a skip is not a pass (verdict accounting)" "$PY" tests/test_check_verdict.p
 # per-gate wall clock (seed #45252): an expired gate is ✗ TIMED OUT and its whole process group dies; a signal to
 # check.sh reaches the running gate. Driven through the REAL run() with stub gates and 1-2s caps.
 run "check.sh gate cap: an expired gate is TIMED OUT and its group killed" "$PY" tests/test_check_gate_cap.py
+run "check.sh gate dir: each gate gets its own short TMPDIR, and nothing of it outlives the gate (plan-10108 D1)" "$PY" tests/test_gate_dir.py
+run "gate census: no literal port, probe-then-release or shared-root write in any gate's reach, unless declared (plan-10108 D4)" "$PY" tests/test_gate_census.py
 # The gate on the OTHER actuator. .git/hooks/pre-push is a COPY of the tracked hooks/pre-push,
 # so the reviewed artifact and the executed one are two writers of one fact with no reconciler
 # — and privacy_gate already rides on that copy. Proves the installed hook matches byte for

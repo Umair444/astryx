@@ -42,12 +42,15 @@ name="astryx-restore-drill-$$"
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/astryx-restore-drill.XXXXXX")
 cleanup() { docker rm -f "$name" >/dev/null 2>&1; docker volume rm -f "$name" >/dev/null 2>&1; rm -rf "$tmp"; }
 trap cleanup EXIT
-port=$("$PY" -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
 placeholder="drill-placeholder-$RANDOM$RANDOM"   # the initdb stand-in: NOT a secret (a throwaway server's)
 
 docker run -d --name "$name" --cpu-shares 64 -e POSTGRES_USER="$ROLE" -e POSTGRES_PASSWORD="$placeholder" \
-  -e POSTGRES_DB="$DB" -v "$name":/var/lib/postgresql -p "127.0.0.1:$port:5432" "$IMAGE" >/dev/null 2>&1 \
+  -e POSTGRES_DB="$DB" -v "$name":/var/lib/postgresql -p "127.0.0.1::5432" "$IMAGE" >/dev/null 2>&1 \
   || notrun "docker run of $IMAGE failed"
+# the host port docker bound for us, read from docker, which owns it (plan-10108 D3; a probe-then-release here handed the
+# number to any concurrent run before docker rebound it)
+port=$(docker port "$name" 5432/tcp 2>/dev/null | sed -n 's/^127\.0\.0\.1:\([0-9]*\)$/\1/p' | head -1)
+[ -n "$port" ] || notrun "docker reported no host port for $name"
 
 # observe a login over TCP (the init phase's temp server listens on the socket only, so a TCP login means the real
 # server is up). Exit 0 logged in · 3 password refused · 4 other. The password, when given, comes on stdin.

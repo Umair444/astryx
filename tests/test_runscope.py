@@ -419,6 +419,62 @@ def main():
         else:
             print("  NOTE  bwrap absent: the real-namespace arm didn't run (the in-process arm above still decides)")
 
+        # ── plan-10108 a2 rider (#50743): the ledger OUTLIVES a cap-killed gate's own dir ──────────────────────
+        # check.sh's run() removes a gate's $G when the gate exits, a cap kill included. A runscope ledger under $G
+        # would take the lock.json with it while the role and its DBs stay in postgres, the 10-11 leak made permanent.
+        # So SCOPE_ROOT is declared shared-on-purpose; this drives the REAL run() and proves both halves.
+        gate_py = Path(tempfile.mkdtemp(prefix="rider-")) / "gate.py"
+        gate_py.write_text(
+            "import importlib.util, os, sys, time\n"
+            f"sys.path.insert(0, {str(REPO)!r})\n"
+            "spec = importlib.util.spec_from_file_location('rs', os.environ['RIDER_RS'])\n"
+            "rs = importlib.util.module_from_spec(spec); spec.loader.exec_module(rs)\n"
+            "root = os.path.join(os.environ['TMPDIR'], 'ledger') if sys.argv[1] == 'UNDER_G' else sys.argv[1]\n"
+            "s = rs.RunScope(os.environ['ASTRYX_DSN'], root=rs.Path(root)).open()\n"
+            "s.create_db(s.role + '_rider')\n"
+            "print('ROLE=' + s.role, flush=True)\n"
+            "print('LOCK=' + str(s.root / 'lock.json'), flush=True)\n"
+            "time.sleep(60)\n")
+        rs_src = os.environ.get("RUNSCOPE_SRC") or str(REPO / "src" / "astryx" / "pg" / "runscope.py")
+
+        def capped_gate(where):
+            body = (f'CHECK_LIB_ONLY=1 source "{REPO / "devtools" / "check.sh"}"\nunset CHECK_LIB_ONLY\n'
+                    f'run --cap=8 "rider" "{sys.executable}" "{gate_py}" "{where}"\nverdict\n')
+            env = {**os.environ, "ASTRYX_DSN": dsn, "RIDER_RS": rs_src}
+            out = subprocess.run(["bash", "-c", body], capture_output=True, text=True, timeout=60, cwd=REPO,
+                                 env=env).stdout
+            val = lambda k: next((ln.split("=", 1)[1] for ln in out.splitlines() if ln.startswith(k + "=")), None)
+            return out, val("ROLE"), val("LOCK")
+
+        out, role_k, lock_k = capped_gate(str(base))
+        if role_k:
+            extra_roles.append(role_k)
+        check("rider: the fixture gate is killed by its cap mid-run, holding a role and a DB",
+              "TIMED OUT" in out and role_k is not None and role_exists(role_k), out[-300:])
+        check("rider: its lock.json SURVIVES the removal of the gate's own dir (the ledger is shared, not under $G)",
+              lock_k is not None and Path(lock_k).is_file() and not Path(lock_k).is_relative_to("/tmp/g."), str(lock_k))
+        rs.sweep(dsn, base, only={role_k} if role_k else set())
+        left = adm.execute("SELECT count(*) FROM pg_database d JOIN pg_roles o ON o.oid = d.datdba WHERE o.rolname = %s",
+                           (role_k,)).fetchone()[0] if role_k and role_exists(role_k) else 0
+        check("rider: the next reaper leaves 0 DBs and 0 roles of it", role_k is not None and not role_exists(role_k)
+              and left == 0, f"role_left={role_k and role_exists(role_k)} dbs_left={left}")
+        fake_g = tempfile.mkdtemp(prefix="g.", dir="/tmp")
+        probe = subprocess.run([sys.executable, "-c", "import importlib.util, sys; "
+                                "spec = importlib.util.spec_from_file_location('rs', sys.argv[1]); "
+                                "rs = importlib.util.module_from_spec(spec); spec.loader.exec_module(rs); print(rs.SCOPE_ROOT)",
+                                rs_src], capture_output=True, text=True, timeout=30, cwd=REPO,
+                               env={**{k: v for k, v in os.environ.items() if k != "ASTRYX_RUNSCOPE_ROOT"}, "TMPDIR": fake_g})
+        default_root = probe.stdout.strip()
+        check("rider: SCOPE_ROOT's default never derives from the gate's TMPDIR (it outlives every gate)",
+              bool(default_root) and not default_root.startswith(fake_g), f"{default_root!r} under {fake_g}")
+        os.rmdir(fake_g)
+        out, role_g, lock_g = capped_gate("UNDER_G")
+        if role_g:
+            extra_roles.append(role_g)                                # this control's debris is dropped in finally
+        check("rider RED control: a ledger UNDER $G loses its lock.json with the gate's dir, and the role is left "
+              "behind for no reaper to find", role_g is not None and lock_g is not None and not Path(lock_g).exists()
+              and role_exists(role_g), f"lock={lock_g} exists={lock_g and Path(lock_g).exists()}")
+
         # ── refusal: a lockfile is data ──────────────────────────────────────────────────────────────────
         victim = rs.RunScope(dsn, root=base).open()                  # a real role that must SURVIVE
         extra_roles.append(victim.role)

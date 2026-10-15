@@ -90,4 +90,8 @@ MUTANTS = {
          "                    c.execute(sql.SQL(\"ALTER DATABASE {} IS_TEMPLATE false\").format(sql.Identifier(db)))\n"
          "                    if True:\n                        c.execute(sql.SQL(\"DROP DATABASE {} WITH (FORCE)\").format(sql.Identifier(db)))\n"
          "                    if False:\n"),
+    "R29 SCOPE_ROOT derives from TMPDIR (plan-10108 a2 rider: check.sh removes a gate's $G, the ledger with it)":
+        ('SCOPE_ROOT = Path(os.environ.get("ASTRYX_RUNSCOPE_ROOT", "/tmp/astryx-runscope"))',
+         'SCOPE_ROOT = Path(os.environ.get("ASTRYX_RUNSCOPE_ROOT") or os.path.join(os.environ.get("TMPDIR", "/tmp"), '
+         '"astryx-runscope"))'),
 }

@@ -42,7 +42,6 @@ import os
 import re
 import shutil
 import signal
-import socket
 import subprocess
 import sys
 import tempfile
@@ -54,6 +53,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 EXIT_SKIP = 77
+# shared-on-purpose: the downloaded whisper model is a READ-ONLY cache (`cache` below checks exactly this dir). check.sh
+# points XDG_CACHE_HOME, huggingface's default root, at the gate's own dir (plan-10108 a3 BC-1 i), so the model's home is
+# named here, before huggingface_hub is imported (it reads the variable once), and every server this gate runs inherits it.
+os.environ["HF_HUB_CACHE"] = str(Path.home() / ".cache" / "huggingface" / "hub")
 fails, skipped = [], []
 
 
@@ -126,14 +129,6 @@ class Fake:
             self.gate.wait(20)
         self.seen.append(len(pcm))
         return self.text
-
-
-def free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 try:
@@ -413,7 +408,7 @@ try:
         # ── the real service, real whisper ───────────────────────────────────────────────────────────────────
         print("no text in logs (real service, real faster-whisper)")
         clip = TMP / "known.wav"
-        cache = Path.home() / ".cache/huggingface/hub/models--Systran--faster-whisper-small"
+        cache = Path(os.environ["HF_HUB_CACHE"]) / "models--Systran--faster-whisper-small"
         have = all((ALSA / f"{p}.wav").is_file() for p in CLIP_PARTS) and shutil.which("ffmpeg") and cache.is_dir()
         if not have:
             skipped.append("no-text-in-logs + RTF")
@@ -430,15 +425,21 @@ try:
             ear_admin.execute("TRUNCATE utterances")
 
             def serve(extra_py: str, label: str, during=None):
-                port = free_port()
+                # bind(0)-and-serve (plan-10108 D3): the runner binds a port the kernel picks and serves on THAT socket,
+                # and writes its number for us; a probe-then-release here handed the number to any concurrent gate.
+                portf = TMP / f"{label}.port"
                 runner = TMP / f"run_{label}.py"
                 runner.write_text(
-                    "import sys\n"
+                    "import socket, sys\n"
                     f"sys.path.insert(0, {str(REPO)!r})\n"
                     "import uvicorn\n"
                     "import bridges.ear as ear\n"
                     f"{extra_py}\n"
-                    f"uvicorn.run(ear.app, host='127.0.0.1', port={port}, log_level='info')\n")
+                    "sock = socket.socket()\n"
+                    "sock.bind(('127.0.0.1', 0))\n"
+                    "sock.listen(128)\n"
+                    f"open({str(portf)!r}, 'w').write(str(sock.getsockname()[1]))\n"
+                    "uvicorn.Server(uvicorn.Config(ear.app, log_level='info')).run(sockets=[sock])\n")
                 log = TMP / f"{label}.log"
                 env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
                 env.update({"EAR_STT_BACKEND": "cpu", "PYTHONUNBUFFERED": "1", "EAR_WAKE": "off"})
@@ -446,6 +447,17 @@ try:
                 p = subprocess.Popen([sys.executable, "-I", str(runner)], cwd=TMP, env=env, stdout=fh,
                                      stderr=subprocess.STDOUT)
                 try:
+                    port = None
+                    for _ in range(200):                            # the port, from the server that owns it
+                        if portf.is_file() and portf.read_text().strip():
+                            port = int(portf.read_text())
+                            break
+                        if p.poll() is not None:
+                            break
+                        time.sleep(0.1)
+                    if port is None:                                # every arm that reads this run then FAILS, named
+                        want(f"the {label} server reports the port it bound", False, log.read_text(errors="replace")[-400:])
+                        return None, log.read_text(errors="replace"), {}, 0.0
                     return _drive(p, port, label, during, fh, log)
                 finally:
                     if p.poll() is None:                            # never leave a server behind (a raise included)

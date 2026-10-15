@@ -17,7 +17,10 @@ the room asks, the executor mints the nonce, and window.orb.log records every ac
   SHOTS     every state at desktop and phone width, and reduced motion, written to $ORB_SHOTS (default a temp dir);
             any page error fails the run
 
-Exits 77 without chromium, the websockets module or the observatory's node_modules.
+Exits 77 ONLY without chromium, the websockets module or the observatory's node_modules: a dev server or a DevTools
+endpoint that doesn't come up is a FAIL (plan-10108 G3: a "didn't come up" 77 made the gate dark under contention).
+Every listener is found through what THIS gate owns (plan-10108 D3): vite picks a free port itself and the URL is read
+from its own stdout; chromium takes port 0 and its port is read from its own profile's DevToolsActivePort.
 Run: venv/bin/python tests/test_voice_orb.py [outdir]
 """
 from __future__ import annotations
@@ -28,7 +31,7 @@ import json
 import os
 import re
 import shutil
-import socket
+import threading
 import subprocess
 import sys
 import tempfile
@@ -53,12 +56,43 @@ def skip(why: str) -> None:
     sys.exit(77)
 
 
-def port() -> int:
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
+def broken(why: str) -> None:
+    """A listener this gate started never came up: a FAIL that names itself, never a 77 (G3)."""
+    print(f"  FAIL {why}")
+    print("FAILED 1")
+    sys.exit(1)
+
+
+def own_url(proc: subprocess.Popen, within: float) -> str | None:
+    """The URL vite printed on ITS OWN stdout. A thread keeps draining the pipe after the URL (a full pipe stalls vite)."""
+    found: list[str] = []
+    rx = re.compile(r"Local:\s+(http://127\.0\.0\.1:\d+/)")
+
+    def drain():
+        for line in proc.stdout:
+            m = rx.search(re.sub(r"\x1b\[[0-9;]*m", "", line))
+            if m and not found:
+                found.append(m.group(1))
+    threading.Thread(target=drain, daemon=True).start()
+    until = time.monotonic() + within
+    while time.monotonic() < until and not found and proc.poll() is None:
+        time.sleep(0.1)
+    return found[0] if found else None
+
+
+def own_devtools_port(prof: str, within: float) -> int | None:
+    """The port chromium bound for --remote-debugging-port=0, from <its own profile>/DevToolsActivePort (line 1)."""
+    f = Path(prof) / "DevToolsActivePort"
+    until = time.monotonic() + within
+    while time.monotonic() < until:
+        try:
+            p = int(f.read_text().split("\n")[0])
+            if p > 0:
+                return p
+        except (OSError, ValueError):
+            pass
+        time.sleep(0.1)
+    return None
 
 
 def wait_http(url: str, within: float) -> bool:
@@ -245,20 +279,25 @@ async def shots(page: Page, out: Path) -> None:
 
 async def main(out: Path) -> None:
     import websockets
-    vp, cp = port(), port()
-    vite = subprocess.Popen(["npx", "vite", "--host", "127.0.0.1", "--port", str(vp), "--strictPort"], cwd=WEB,
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    cache = os.environ.get("VITE_CACHE_DIR") or tempfile.mkdtemp(prefix="orb-vite-")   # this gate's own (D2)
+    vite = subprocess.Popen([str(WEB / "node_modules" / ".bin" / "vite"), "--host", "127.0.0.1"], cwd=WEB,
+                            env={**os.environ, "VITE_CACHE_DIR": cache}, stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, text=True, start_new_session=True)
     prof = tempfile.mkdtemp(prefix="orb-chrome-")
     chrome = None
     try:
-        url = f"http://127.0.0.1:{vp}/fixtures/voice-orb.html"
+        base = own_url(vite, 30)
+        if not base:
+            broken("vite never printed its own URL")
+        url = base + "fixtures/voice-orb.html"
         if not wait_http(url, 30):
-            skip("the vite dev server did not come up")
-        chrome = subprocess.Popen([shutil.which("chromium") or "chromium", "--headless=new", f"--remote-debugging-port={cp}",
+            broken(f"the vite dev server at {base} did not answer")
+        chrome = subprocess.Popen([shutil.which("chromium") or "chromium", "--headless=new", "--remote-debugging-port=0",
                                    f"--user-data-dir={prof}", "--no-first-run", "--disable-gpu", "--window-size=1280,820", "about:blank"],
                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-        if not wait_http(f"http://127.0.0.1:{cp}/json/version", 15):
-            skip("chromium's DevTools endpoint did not come up")
+        cp = own_devtools_port(prof, 15)
+        if not cp or not wait_http(f"http://127.0.0.1:{cp}/json/version", 15):
+            broken("chromium's own DevTools endpoint did not come up")
         tab = next(t for t in json.loads(urllib.request.urlopen(f"http://127.0.0.1:{cp}/json/list").read()) if t["type"] == "page")
         async with websockets.connect(tab["webSocketDebuggerUrl"], max_size=None) as ws:
             page = Page(ws)
@@ -271,7 +310,7 @@ async def main(out: Path) -> None:
                     break
             else:
                 state = await page.js("[typeof window.orb, document.body.innerHTML.length, location.href]")
-                skip(f"the fixture never rendered ({state}; errors {page.errors[:3]})")
+                broken(f"the fixture never rendered ({state}; errors {page.errors[:3]})")
             await arms(page)
             await shots(page, out)
             ok(page.errors == [], f"no page errors ({page.errors[:3]})")
@@ -284,6 +323,8 @@ async def main(out: Path) -> None:
                     pass
                 p.wait()
         shutil.rmtree(prof, ignore_errors=True)
+        if not os.environ.get("VITE_CACHE_DIR"):
+            shutil.rmtree(cache, ignore_errors=True)
 
 
 def words_arm() -> None:

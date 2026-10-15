@@ -57,6 +57,7 @@ if rc.returncode != 0 or not rc.stdout.startswith("ready"):          # "off" exi
 STAND_IN = f"astryx-test-vm-{os.getpid()}"
 os.environ["ASTRYX_HANDS_STATE"] = tempfile.mkdtemp(prefix="phone-oracle-state-")
 os.environ["ASTRYX_HANDS_HOME"] = tempfile.mkdtemp(prefix="phone-oracle-home-")
+os.environ["ASTRYX_ANDROID_LOG_DIR"] = tempfile.mkdtemp(prefix="phone-oracle-log-")   # the emulator's log is this run's
 os.environ["ASTRYX_HANDS_UNIT_PREFIX"] = f"astryx-hands-test{os.getpid()}-"   # never the org's real phone desktop
 os.environ["ASTRYX_AGENT"] = "phone-oracle-a"
 os.environ["OBS_KEY"] = "test-owner-key-device"

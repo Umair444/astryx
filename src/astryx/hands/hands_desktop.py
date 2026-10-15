@@ -66,6 +66,7 @@ from pathlib import Path
 
 UID = os.getuid()
 RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{UID}")
+# shared-on-purpose: the live org's desktop pool state (one pool per host); a gate sets ASTRYX_HANDS_STATE under its TMPDIR
 STATE_ROOT = Path(os.environ.get("ASTRYX_HANDS_STATE") or RUNTIME / "astryx-hands")
 HOME_ROOT = Path(os.environ.get("ASTRYX_HANDS_HOME")
                  or Path.home() / ".local" / "share" / "astryx-hands")

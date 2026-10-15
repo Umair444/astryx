@@ -34,6 +34,8 @@ from pathlib import Path
 import psycopg
 from psycopg import sql
 
+# shared-on-purpose: the CROSS-RUN ownership ledger. A later run reaps a dead run's postgres debris FROM its lock.json, so
+# it never lives under a gate's TMPDIR, which is removed when the gate exits (plan-10108 a2 rider #50743)
 SCOPE_ROOT = Path(os.environ.get("ASTRYX_RUNSCOPE_ROOT", "/tmp/astryx-runscope"))
 ROLE_PREFIX = "bc_"
 
