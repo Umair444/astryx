@@ -10,6 +10,7 @@ fixture install is a site dir whose .pth names a src/ (what `pip install -e` wri
   G6  LIVE: this tree with the real interpreter  -> PASS today; the first install that shadows it turns it RED
 Mutants: tests/mutants_identity_gate.py.
 """
+import importlib.util
 import os
 import shutil
 import sys
@@ -17,10 +18,13 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+# The org's subject-loading shape: test_reachability reads a path handed to spec_from_file_location as this gate's
+# invocation edge (an exec(compile(...)) of the same file read as "invoked by nothing").
 SUBJECT = Path(os.environ.get("IDENTITY_GATE_SRC", REPO / "devtools" / "identity_gate.py"))
-ns: dict = {"__name__": "identity_gate_under_test"}
-exec(compile(SUBJECT.read_text(), str(SUBJECT), "exec"), ns)
-check = ns["check"]
+_spec = importlib.util.spec_from_file_location("identity_gate_under_test", SUBJECT)
+_mod = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+check = _mod.check
 PY = sys.executable
 
 fails = 0
