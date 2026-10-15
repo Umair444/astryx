@@ -447,6 +447,23 @@ try:
                           st == "delivered" and w.sends == [(str(route["chat"]), SENT)] and "stamp" in d.get("release", {})
                           and d.get("door") == "released" and SENT not in row_text and str(route["chat"]) not in row_text,
                           (st, d, w.sends))
+                # a released send that FAILS: the platform's own error text (a CLI's stderr, an API description)
+                # may name the chat, so the receipt's error carries part and exception type only (a4 #53846)
+                for ch, route in (("whatsapp", WA_TIER), ("telegram", TG_TIER)):
+                    with c.cursor() as cur:
+                        i = R.send_row(cur, "member", CAREER, "owner", None, "chat", SENT, key=K, store=R.TierStore(),
+                                       routes=[(ch, route, root / f"routes-{ch}.json")])
+
+                    def boom(ch=ch):
+                        raise RuntimeError(f"{ch} send text: S1C-ERR-SENTINEL {route['chat']} said no")
+                    w = World(ch, [], pool=pool, on_send=boom)
+                    await BR[ch].deliver(await pool.fetchrow("SELECT * FROM messages WHERE id=$1", i))
+                    st, d = state(i)
+                    row_text = c.execute("SELECT m::text FROM messages m WHERE id=%s", (i,)).fetchone()[0]
+                    check(f"{ch} (db): a FAILED released send is dead, its error the part and type only — no platform "
+                          f"text, no chat id",
+                          st == "dead" and "RuntimeError" in str(d.get("error")) and "S1C-ERR-SENTINEL" not in row_text
+                          and str(route["chat"]) not in row_text and SENT not in row_text, (st, d))
                 # the 0-row side of each WHERE: a settled row is never re-refused; a receipt for no row writes nothing
                 i = ins("wa:70707@s.whatsapp.net")
                 await BR["whatsapp"].deliver(await pool.fetchrow("SELECT * FROM messages WHERE id=$1", i))

@@ -20,4 +20,6 @@ MUTANTS = {
         ("        R.door_org(channel, chat, routes)\n        return True", "        return True"),
     "C5 the receipt drops the census mark":
         ("        if door:\n            r[\"door\"] = door", "        if False:\n            r[\"door\"] = door"),
+    "C7 a released row's receipt keeps the platform's own error text (it may name the chat; a4 #53846)":
+        ("             \"error\": self.classified if classified else self.error}", "             \"error\": self.error}"),
 }

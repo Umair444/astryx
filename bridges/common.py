@@ -325,6 +325,7 @@ class Outcome:
     def __init__(self):
         self.message_id: str | None = None
         self._entries: list[tuple[bool, str]] = []   # (is_failure, text), in order
+        self._kinds: list[str] = []                  # each FAILURE as "part: ExceptionType" (no platform text)
 
     def sent(self, message_id=None) -> None:
         """A part succeeded; keep the first real platform id (the text's) for the row."""
@@ -334,6 +335,7 @@ class Outcome:
     def failed(self, part: str, detail) -> None:
         """A part FAILED — something was attempted and did not arrive. Fails the row."""
         self._entries.append((True, f"{part}: {self._say(detail)}"[:200]))
+        self._kinds.append(f"{part}: {type(detail).__name__ if isinstance(detail, BaseException) else 'failed'}")
 
     def noted(self, part: str, detail) -> None:
         """A part was DELIBERATELY NOT ATTEMPTED — reported, but does NOT fail the row.
@@ -368,10 +370,19 @@ class Outcome:
     def status(self) -> str:
         return "delivered" if self.ok else "dead"
 
-    def receipt(self, handle: str, rendered: str | None, door: str | None = None) -> str:
+    @property
+    def classified(self) -> str | None:
+        """`error` cut to each failure's PART and exception TYPE, recorded when it failed: never the platform's text.
+        A failed released send's str(e) is the CLI's or the API's own words, which may name the chat (a4 #53846).
+        Notes are dropped: they say what was not attempted, and their detail is free text too."""
+        return "; ".join(self._kinds)[:500] or None
+
+    def receipt(self, handle: str, rendered: str | None, door: str | None = None, classified: bool = False) -> str:
         # `door` (plan-9139 S1c): how the row passed the door. "org-unstamped" is the CENSUS mark (a delivered row
         # no stamp covered, to a declared org route); "released" a stamped row. Additive: the five keys are unchanged.
-        r = {"ok": self.ok, "handle": handle, "message_id": self.message_id, "rendered": rendered, "error": self.error}
+        # `classified` (a released row): `error` carries part and exception type only, never the platform's text.
+        r = {"ok": self.ok, "handle": handle, "message_id": self.message_id, "rendered": rendered,
+             "error": self.classified if classified else self.error}
         if door:
             r["door"] = door
         return json.dumps(r)

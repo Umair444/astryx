@@ -608,7 +608,7 @@ async def deliver(row):
     if stamped:                      # no chat id and no private text back on the wire: the marker, the release
         await pool.execute("UPDATE messages SET status=$2, delivered_at=now(), "
                            "delivery = coalesce(delivery, '{}'::jsonb) || $3::jsonb WHERE id=$1", row["id"], out.status,
-                           out.receipt("whatsapp:release", row["body"], door="released"))
+                           out.receipt("whatsapp:release", row["body"], door="released", classified=True))
     else:
         await pool.execute("UPDATE messages SET status=$2, delivered_at=now(), delivery=$3 WHERE id=$1",
                            row["id"], out.status,

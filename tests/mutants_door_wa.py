@@ -11,8 +11,8 @@ MUTANTS = {
         ("    if not stamped and not await door_org_ok(pool, row, \"whatsapp\", routes(), chat):",
          "    if False:"),
     "W2 a stamped row's receipt names the chat and carries the resolved body":
-        ("out.receipt(\"whatsapp:release\", row[\"body\"], door=\"released\")",
-         "out.receipt(f\"whatsapp:{chat}\", text, door=\"released\")"),
+        ("out.receipt(\"whatsapp:release\", row[\"body\"], door=\"released\", classified=True)",
+         "out.receipt(f\"whatsapp:{chat}\", text, door=\"released\", classified=True)"),
     "W3 a stamped row's destination comes from its thread":
         ("        chat = stamped[0][\"chat\"]", "        chat = thread[3:] or stamped[0][\"chat\"]"),
     "W4 the live_steps job starts on any route that asks (its second egress ungated)":
