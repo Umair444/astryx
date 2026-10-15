@@ -210,6 +210,21 @@ TENV=""
 # before launch would be silently ignored. Token stays in .env; only its NAME is in runtime.json.
 RENV=$("$ROOT/venv/bin/python" "$ROOT/src/astryx/core/runtime_env.py" "$AGENT") || RENV=""
 
+# plan-9139 S1d (S0 D4, seed #45086): a TIER member's auto-memory goes to its own dir under tier/, never the shared
+# one, set in THIS template because every spawn rewrites settings.json (so --resume reads it too). The label comes from
+# the door's own reader over THIS tree's agents/; a label that can't be read (no charter, a malformed grant: it raises)
+# is private here as well. Nothing goes in env: CLAUDE_CODE_DISABLE_AUTO_MEMORY=0 there would force memory back ON.
+LBL=$("$ROOT/venv/bin/python" -c 'import json, sys; from pathlib import Path; sys.path.insert(0, sys.argv[1] + "/src")
+from astryx.security.release import label_of
+print(json.dumps(sorted(label_of(sys.argv[2], Path(sys.argv[1]) / "agents"))))' "$ROOT" "$AGENT" 2>/dev/null) \
+  && LRC=0 || LRC=$?
+MEMDIR=""
+if [ "$LRC" -ne 0 ] || [ "$LBL" != "[]" ]; then
+  MEMDIR=",
+  \"autoMemoryDirectory\": \"$ROOT/tier/memory/$AGENT\""
+  [ -z "$RENDER" ] && install -d -m 700 "$ROOT/tier/memory/$AGENT"
+fi
+
 cat > "$HOME_D/.claude/settings.json" <<EOF
 {
   "env": { "ASTRYX_AGENT": "$AGENT", "ASTRYX_HOME": "$ROOT"$TENV$RENV },
@@ -224,7 +239,7 @@ cat > "$HOME_D/.claude/settings.json" <<EOF
       { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/usage.py", "timeout": 5 } ] },
       { "hooks": [
       { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/nudge.py", "timeout": 3 } ] } ]
-  }
+  }$MEMDIR
 }
 EOF
 

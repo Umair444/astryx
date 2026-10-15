@@ -921,6 +921,7 @@ run "release server: a labelled member's channel seats go through the door" "$PY
 # tests/mutants_bridge_ingress.py.
 run "release ingress: a tier route's inbound text reaches only its tier's member" "$PY" tests/test_release_ingress.py
 run "bridge door: an unstamped row reaches only a declared org route; a stamped one only its stamp's" "$PY" tests/test_bridge_door.py
+run "session strip: a tier-labelled session's steps and turns carry metadata only, it starts no child session" "$PY" tests/test_session_strip.py
 if "$PY" -c 'import av' 2>/dev/null; then
   run "media in-process decode"        "$PY" src/astryx/core/media_probe.py
 else
