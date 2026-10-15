@@ -270,6 +270,43 @@ fire.__globals__["git_log"] = lambda: _GIT["log"]
 check("git unreadable: the flag SAYS the merge term was unavailable (it reads more stale, the loud direction)",
       out and "merge evidence unavailable" in out, f"out={out!r}")
 
+# git_log ITSELF over a fixture repo (a2 #55031: every other arm stubs it, so --all, "" on failure or a wrong root
+# would pass unseen): main only, None for a non-repo, and the default root when the body sits at triggers/steward/
+import shutil as _sh
+import tempfile as _tf
+_real_git_log = mod["git_log"]
+_gr = Path(_tf.mkdtemp(prefix="t_sg_git_"))
+def _g(*a):
+    return subprocess.run(["git", "-C", str(_gr), *a], capture_output=True, text=True,
+                          env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(_gr),
+                               "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t",
+                               "GIT_COMMITTER_EMAIL": "t@x"})
+_g("init", "-q", "-b", "main")
+_g("commit", "-q", "--allow-empty", "-m", "plan-7777 S1: landed on main")
+_g("checkout", "-q", "-b", "side")
+_g("commit", "-q", "--allow-empty", "-m", "plan-8888 S1: only on a side branch")
+_g("checkout", "-q", "main")
+lg = _real_git_log(_gr)
+ev = mod["merge_evidence"](lg or "")
+check("git_log reads MAIN only: a main commit credits plan-7777, a side-branch-only commit never credits plan-8888",
+      lg is not None and 7777 in ev and 8888 not in ev, f"ids={sorted(ev)}")
+_nr = Path(_tf.mkdtemp(prefix="t_sg_norepo_"))
+check("git_log on a directory that is no repo is None (loud), never an empty string (silent)",
+      _real_git_log(_nr) is None, repr(_real_git_log(_nr)))
+(_gr / "triggers" / "steward").mkdir(parents=True)
+_sh.copy(str(SUBJECT), str(_gr / "triggers" / "steward" / "stale_goals.py"))
+for _b in (REPO / "triggers" / "steward" / "bands.py", Path(SUBJECT).parent / "bands.py"):
+    if _b.exists():                    # the body's one triggers import; else it resolves through REPO on sys.path
+        _sh.copy(str(_b), str(_gr / "triggers" / "steward" / "bands.py"))
+        break
+(_gr / "triggers" / "__init__.py").write_text("")
+(_gr / "triggers" / "steward" / "__init__.py").write_text("")
+_placed = runpy.run_path(str(_gr / "triggers" / "steward" / "stale_goals.py"))
+check("…and with the body at <repo>/triggers/steward/, the DEFAULT root is that repo",
+      7777 in mod["merge_evidence"](_placed["git_log"]() or ""), "default root resolved elsewhere")
+for _d in (_gr, _nr):
+    _sh.rmtree(_d, ignore_errors=True)
+
 # ── the query EXECUTED (the ctx.sql-blindness class): a stamped fixture DB, never production ────
 try:
     import importlib.util as _ilu
@@ -362,6 +399,15 @@ if fx is not None:
         fire(SpyCtx({}, conn))
         by = {r["id"]: r for r in cap}
         a_m0 = float(by[g_m]["age_s"]) / 3600 if g_m in by else None
+        future = (_d.now(_tzz.utc) + _td(days=3)).isoformat()
+        _GIT["log"] = f"{future}\x1fplan-{g_m} committed with a clock 3 days fast"
+        cap.clear()
+        fire(SpyCtx({}, conn))
+        _GIT["log"] = ""
+        byf = {r["id"]: r for r in cap}
+        a_f = float(byf[g_m]["age_s"]) / 3600 if g_m in byf else None
+        check("REAL SQL: a commit dated in the FUTURE counts as now, never as fresh-until-then (least(…, now()))",
+              a_f is not None and -0.05 < a_f < 0.1, f"age_h={a_f}")
         check("REAL SQL: with no merges, the same goal reads its full age (the term is the merge, nothing else)",
               a_m0 is not None and a_m0 > 100 and by[g_m].get("merged") is None, f"age_h={a_m0}")
     finally:

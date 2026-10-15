@@ -79,13 +79,24 @@ MUTANTS = {
     "M6 dedup state is never healed for goals that left the board":
         ('    ctx.state["levels"] = {k: v for k, v in next_levels.items() if k in live}',
          '    ctx.state["levels"] = {**reported, **next_levels}'),
-    "D1 a merge on main is not evidence (the term dropped from greatest())":
+    "G1 a merge on main is not evidence (the term dropped from greatest())":
         ('coalesce(ev.last_evidence, g.ts), "\n        "                                    coalesce(mg.merged, g.ts)) AS since) e "',
          'coalesce(ev.last_evidence, g.ts)) AS since) e "'),
-    "D2 a word-glued token credits an id (xplan-7777)":
+    "G2 a word-glued token credits an id (xplan-7777)":
         ('MERGE_RX = _re.compile(r"(?<![\\w-])(?:plan|goal)', 'MERGE_RX = _re.compile(r"(?:plan|goal)'),
-    "D3 git unreadable is silent (the flag no longer says the term was unavailable)":
+    "G3 git unreadable is silent (the flag no longer says the term was unavailable)":
         ('    nogit = "" if log is not None else', '    nogit = "" if True else'),
-    "D4 the FIRST commit seen wins, not the latest":
+    "G4 the FIRST commit seen wins, not the latest":
         ("            if gid not in out or t > out[gid]:", "            if gid not in out:"),
+    "G5 git_log reads every branch (unreviewed side-branch commits credit a goal; a2 T2)":
+        ('"log", "main", f"--since', '"log", "--all", f"--since'),
+    "G6 git unreadable reads as an EMPTY log (silent), not None (a2 T3)":
+        ("        return p.stdout if p.returncode == 0 else None", "        return p.stdout if p.returncode == 0 else \"\""),
+    "G7 the default root is one level too high (a2 T4)":
+        ("        repo = str(repo or _Path(__file__).resolve().parents[2])", "        repo = str(repo or _Path(__file__).resolve().parents[3])"),
+    "G8 a future-dated commit reads fresh until then (no clamp to now())":
+        ('"    SELECT CASE WHEN max(m.t) > now() THEN now() ELSE max(m.t) END AS merged "', '"    SELECT max(m.t) AS merged "'),
+    "G9 the clamp is least(), which IGNORES NULLs: a goal with no merges reads now(), every goal fresh":
+        ('"    SELECT CASE WHEN max(m.t) > now() THEN now() ELSE max(m.t) END AS merged "',
+         '"    SELECT least(max(m.t), now()) AS merged "'),
 }
