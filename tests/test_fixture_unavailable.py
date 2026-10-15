@@ -9,6 +9,8 @@ triggers/), with ASTRYX_DSN unset:
   U2 test_wake_chokepoint    → 77, says NOT SEARCHED, no traceback
   U3 the same tree with triggers/ present (a LIVE host) → 1, says BROKEN (the control: 77 there would switch the
      guard off quietly)
+  U4 the chokepoint with its A24 control already RED, no database, committed-only tree → 1, names it (a4 #55279:
+     a real RED read as NOT SEARCHED on CI)
 ESTATE_SRC points at a mutant estate.py (tests/mutants_fixture_unavailable.py). Exit 0 pass · 1 fail · 77 not run (no psycopg).
 """
 import os
@@ -60,6 +62,20 @@ with tempfile.TemporaryDirectory(prefix="fxu-") as td:
         rc, out = run(gate)
         check(f"U{n} {gate} with no database on a committed-only tree → 77, NOT SEARCHED, no traceback",
               rc == 77 and "NOT SEARCHED" in out and "Traceback" not in out, f"rc {rc}: {out[-300:]}")
+    # U4: a gate that graded an arm RED before asking for the fixture is RED (1), never NOT SEARCHED, on CI's tree too.
+    # The copied chokepoint's own A24 counter is broken (count every say as durable), so its pre-fixture control fails.
+    wake = tree / "tests/test_wake_chokepoint.py"
+    orig = wake.read_text()
+    sig = "def is_durable_say(node) -> bool:\n"
+    check("U4 premise: the chokepoint's A24 counter is where this arm breaks it", orig.count(sig) == 1)
+    wake.write_text(orig.replace(sig, sig + "    return True\n"))
+    rc, out = run("tests/test_wake_chokepoint.py")
+    wake.write_text(orig)
+    check("U4 control: the broken counter fails the A24 control (the arm reaches the line it claims)",
+          "FAIL  A24 control" in out, out[-300:])
+    check("U4 an arm already RED, then no database, on a committed-only tree → 1, names it, no traceback",
+          rc == 1 and "RED before the fixture" in out and "A24 control" in out.split("RED before the fixture")[-1]
+          and "Traceback" not in out, f"rc {rc}: {out[-300:]}")
     (tree / "triggers").mkdir()
     for gate in GATES:
         rc, out = run(gate)

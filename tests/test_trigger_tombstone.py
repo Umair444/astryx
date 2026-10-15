@@ -203,7 +203,7 @@ try:
          (r.stdout + r.stderr)[-400:])
 except FixtureUnavailable as e:                                 # no postgres here: 77 on CI, 1 on a live host
     shutil.rmtree(TREE, ignore_errors=True)
-    estate.unavailable("test_trigger_tombstone", REPO, e)
+    estate.unavailable("test_trigger_tombstone", REPO, e, fails)
 finally:
     shutil.rmtree(TREE, ignore_errors=True)
 

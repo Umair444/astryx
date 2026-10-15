@@ -44,15 +44,20 @@ def gate(name, repo, deps=("psycopg",), env=True):
         sys.exit(rc)
 
 
-def unavailable(name, repo, exc):
+def unavailable(name, repo, exc, failed=()):
     """A fixture database couldn't be had (FixtureUnavailable: no reachable admin DSN, postgres down) AFTER the gate's
     imports passed. The same estate rule as gate(): a committed-only tree (CI, a fresh clone) is NOT SEARCHED (77);
-    on a LIVE host the runner lost its world, so it's rc 1, loud (seed #54113: two gates crashed uncaught on CI)."""
+    on a LIVE host the runner lost its world, so it's rc 1, loud (seed #54113: two gates crashed uncaught on CI).
+    `failed` is the arms the gate already graded red before it asked for the fixture: any of them makes it rc 1 on
+    every tree, so a real RED is never reported as NOT SEARCHED (a4 #55279: the chokepoint's A24 control)."""
+    failed = list(failed)
     live = (repo / "triggers").is_dir()
-    rc = 1 if live else 77
+    rc = 1 if live or failed else 77
     why = f"no fixture database ({type(exc).__name__}: {exc})"
     print(f"  {'BROKEN' if live else 'NOT SEARCHED'}: {why}" + (", on a LIVE host (triggers/ present)" if live
                                                                 else " (a committed-only tree: triggers/ absent)"))
-    print(f"sqlguard {name}: rc={rc} · RED {int(rc == 1)} · reported 0 · not-searched {int(rc == 77)}")
+    if failed:
+        print(f"  RED before the fixture ({len(failed)}): " + "; ".join(failed))
+    print(f"sqlguard {name}: rc={rc} · RED {len(failed) + int(live)} · reported 0 · not-searched {int(not live)}")
     sys.exit(rc)
 

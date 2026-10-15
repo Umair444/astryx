@@ -484,4 +484,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except FixtureUnavailable as e:                             # no postgres here: 77 on CI, 1 on a live host
-        estate.unavailable("test_wake_chokepoint", REPO, e)
+        estate.unavailable("test_wake_chokepoint", REPO, e, fails)
