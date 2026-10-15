@@ -45,7 +45,8 @@ from .embed_root import Refused, owner_only, read_checked
 from .common import (HERE, MEDIA_DIR, Outcome, route_target, describe_media,
                      env, listen, load_routes,
                      record_poll, resolve_quoted_body, split_files, split_polls,
-                     step_line, update_poll_votes, vote_body, vote_changes, wire_insert)
+                     step_line, update_poll_votes, vote_body, vote_changes, wire_insert,
+                     door_open, door_org_ok, live_steps_ok, released)
 from .pulse_witness import PulseWitness
 from .providers.whatsapp import WhatsAppProvider
 
@@ -372,7 +373,7 @@ async def hook(request: Request):
 
     await wire_insert(pool, sender, "whatsapp", agent, f"wa:{chat}", "chat", text, meta, route=route, said=said)
 
-    if route.get("live_steps") and trusted:
+    if live_steps_ok(route) and trusted:          # S1c: never on a tiered route (its second egress)
         jobs[agent] = {"chat": chat, "thread": f"wa:{chat}", "opened": now,
                        "ph_id": None, "latest": "", "sent": "", "busy": False}
         asyncio.get_event_loop().create_task(typing(chat))
@@ -455,9 +456,17 @@ async def deliver(row):
     """Deliver a wire message to WhatsApp and record the outcome in the row's
     `delivery` field, so a send awaiting this result can read where it landed."""
     thread = row["thread"] or ""
-    if thread[:3] in ("tg:", "dc:") or (row["to_agent"] or "")[:3] in ("tg-", "dc-"):
+    stamped = None
+    if released(row) is not None:
+        # plan-9139 S1c: a RELEASED row goes only where its stamp names, with the body from the tier store; the
+        # thread (tier-<sender>) carries no destination. Another bridge's release is left pending for that bridge.
+        stamped = await door_open(pool, row, "whatsapp", routes())
+        if stamped is None:
+            return
+        chat = stamped[0]["chat"]
+    elif thread[:3] in ("tg:", "dc:") or (row["to_agent"] or "")[:3] in ("tg-", "dc-"):
         return                       # another bridge's surface (telegram/discord)
-    if thread.startswith("wa:"):
+    elif thread.startswith("wa:"):
         chat = thread[3:]            # the thread carries the destination
         if not _is_addressable(chat):
             # REFUSE a name. wacli's --to accepts "recipient JID, phone, OR contact/group/
@@ -535,8 +544,10 @@ async def deliver(row):
                   f"routes-whatsapp.json; refusing to guess a destination", flush=True)
     if not chat:
         return
+    if not stamped and not await door_org_ok(pool, row, "whatsapp", routes(), chat):
+        return                       # S1c: an unstamped row only to a declared org route
     agent = row["from_agent"]
-    text, files = split_files(row["body"])
+    text, files = split_files(stamped[1] if stamped else row["body"])
     text, polls = split_polls(text, max_options=12)
     out = Outcome()
     try:
@@ -594,9 +605,14 @@ async def deliver(row):
             pass                                  # cosmetic only — never fails the row
     except Exception as e:
         out.failed("deliver", e)
-    await pool.execute(
-        "UPDATE messages SET status=$2, delivered_at=now(), delivery=$3 WHERE id=$1",
-        row["id"], out.status, out.receipt(f"whatsapp:{chat}", text))
+    if stamped:                      # no chat id and no private text back on the wire: the marker, the release
+        await pool.execute("UPDATE messages SET status=$2, delivered_at=now(), "
+                           "delivery = coalesce(delivery, '{}'::jsonb) || $3::jsonb WHERE id=$1", row["id"], out.status,
+                           out.receipt("whatsapp:release", row["body"], door="released"))
+    else:
+        await pool.execute("UPDATE messages SET status=$2, delivered_at=now(), delivery=$3 WHERE id=$1",
+                           row["id"], out.status,
+                           out.receipt(f"whatsapp:{chat}", text, door="org-unstamped"))
 
 
 # ---------------------------------------------------------------------- app

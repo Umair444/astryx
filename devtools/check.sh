@@ -874,6 +874,7 @@ run "release server: a labelled member's channel seats go through the door" "$PY
 # the row's MAC; every own-channel bridge insert passes its route. Mutants: tests/mutants_release_ingress.py,
 # tests/mutants_bridge_ingress.py.
 run "release ingress: a tier route's inbound text reaches only its tier's member" "$PY" tests/test_release_ingress.py
+run "bridge door: an unstamped row reaches only a declared org route; a stamped one only its stamp's" "$PY" tests/test_bridge_door.py
 if "$PY" -c 'import av' 2>/dev/null; then
   run "media in-process decode"        "$PY" src/astryx/core/media_probe.py
 else

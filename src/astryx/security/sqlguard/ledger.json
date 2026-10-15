@@ -694,7 +694,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 320,
+  "debt_rows": 317,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 5,
@@ -800,11 +800,6 @@
    "reason": "seed",
    "tk": "sha256t:20b396f38d8b675342ce7adaf817280e802852d5b501bd245dd665b9b29ba81b"
   },
-  "bridges/discord.py::deliver\u001fupdate messages set status=?, delivered_at=now(), delivery=? where id=?": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:0204045dfd76201518ffdc738ce74f5271a6ba671ea1a7ca8a0a6290581710a4"
-  },
   "bridges/ear.py::Hearing.record\u001fselect count(*) from hearings where agent = ? and woke and ts > now() - interval '1 hour'": {
    "admitted": "2026-10-10",
    "debt": "EXECUTED/FIXTURE-DDL",
@@ -880,20 +875,10 @@
    "reason": "seed 10-09 canvas: read-only channel listing; \u22651 observed, the empty arm is the trivially-correct empty list",
    "tk": "sha256t:045afc1a84b0629a0964ee47824ff4ab7618684ce135e53b2f68eb1da610a51e"
   },
-  "bridges/telegram.py::deliver\u001fupdate messages set status=?, delivered_at=now(), delivery=? where id=?": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:9cb8f03bbe6b1d69dbe1fea8441c9e1717b4d38fdfc844ded853c741064cc802"
-  },
   "bridges/telegram.py::on_poll_answer\u001fselect * from polls where msg_id=?": {
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:f90c294876e46b32fdc5455a75756777e18e8297aa884c2a1383b8a39ea24708"
-  },
-  "bridges/whatsapp.py::deliver\u001fupdate messages set status=?, delivered_at=now(), delivery=? where id=?": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:6c0c8262a1d641cf3694571a708fbbc0957ebcf1701837f53d40d346d9c4f81d"
   },
   "bridges/whatsapp.py::hook\u001fselect agent from polls where msg_id=?": {
    "debt": "UNEXECUTED",

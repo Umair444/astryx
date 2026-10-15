@@ -40,7 +40,8 @@ from .embed_root import Refused, owner_only, read_checked
 from .common import (HERE, Outcome, agent_exists, reacted_message, reaction_signal, route_target, describe_media, env, listen,
                      load_routes, media_path,
                      record_poll, resolve_quoted_body, split_files, split_polls,
-                     step_line, update_poll_votes, vote_body, vote_changes, wire_insert)
+                     step_line, update_poll_votes, vote_body, vote_changes, wire_insert,
+                     door_open, door_org_ok, live_steps_ok, released)
 
 DSN = env("ASTRYX_DSN")
 TOKEN = env("DISCORD_BOT_TOKEN")
@@ -106,13 +107,22 @@ async def hook_poll(url: str, agent: str, q: str, opts: list, multi: int) -> str
 # ------------------------------------------------------------------- outbound
 async def deliver(row):
     thread = row["thread"] or ""
-    if not (thread.startswith("dc:") or (row["to_agent"] or "").startswith("dc-")):
-        return
-    cid = thread[3:] if thread.startswith("dc:") else (row["to_agent"] or "")[3:]
-    if not cid:
-        return
+    stamped = None
+    if released(row) is not None:                  # plan-9139 S1c: only where its stamp names; the body from the store
+        stamped = await door_open(pool, row, "discord", routes())
+        if stamped is None:
+            return
+        cid = str(stamped[0]["chat"])
+    else:
+        if not (thread.startswith("dc:") or (row["to_agent"] or "").startswith("dc-")):
+            return
+        cid = thread[3:] if thread.startswith("dc:") else (row["to_agent"] or "")[3:]
+        if not cid:
+            return
+        if not await door_org_ok(pool, row, "discord", routes(), cid):
+            return                                 # S1c: an unstamped row only to a declared org route
     agent = row["from_agent"]
-    text, files = split_files(row["body"])
+    text, files = split_files(stamped[1] if stamped else row["body"])
     text, polls = split_polls(text, max_options=10)
     out = Outcome()
     try:
@@ -199,9 +209,14 @@ async def deliver(row):
                     + f" Please reply in text instead. ({type(e).__name__})")
     except Exception as e:
         out.failed("deliver", e)
-    await pool.execute(
-        "UPDATE messages SET status=$2, delivered_at=now(), delivery=$3 WHERE id=$1",
-        row["id"], out.status, out.receipt(f"discord:{cid}", text))
+    if stamped:                                    # no chat id and no private text back on the wire
+        await pool.execute("UPDATE messages SET status=$2, delivered_at=now(), "
+                           "delivery = coalesce(delivery, '{}'::jsonb) || $3::jsonb WHERE id=$1", row["id"], out.status,
+                           out.receipt("discord:release", row["body"], door="released"))
+    else:
+        await pool.execute("UPDATE messages SET status=$2, delivered_at=now(), delivery=$3 WHERE id=$1",
+                           row["id"], out.status,
+                           out.receipt(f"discord:{cid}", text, door="org-unstamped"))
 
 
 async def on_step(ev: dict):
@@ -281,7 +296,7 @@ async def on_message(msg: discord.Message):
     said = text
     agent, text = await route_target(pool, f"dc:{cid}", text, route["agent"])
     await wire_insert(pool, who, "discord", agent, f"dc:{cid}", "chat", text, meta, route=route, said=said)
-    if route.get("live_steps") and trusted:
+    if live_steps_ok(route) and trusted:           # S1c: never on a tiered route (its second egress)
         jobs[agent] = {"chat": cid, "ph": None, "sent": ""}
         try:
             await msg.channel.typing()
@@ -381,8 +396,10 @@ async def lifespan(_):
     pool = await asyncpg.create_pool(DSN, min_size=1, max_size=4)
     t1 = asyncio.create_task(client.start(TOKEN))
     t2 = asyncio.create_task(listen(
-        DSN, "(to_agent='owner' OR to_agent LIKE 'dc-%') "
-             "AND (thread LIKE 'dc:%' OR to_agent LIKE 'dc-%')",
+        DSN, "((to_agent='owner' OR to_agent LIKE 'dc-%') "
+             "AND (thread LIKE 'dc:%' OR to_agent LIKE 'dc-%')) "
+             # plan-9139 S1c: a release this bridge's route was stamped for (its thread, tier-<sender>, names none)
+             "OR (to_agent='owner' AND thread LIKE 'tier-%' AND delivery->'release'->>'channel' = 'discord')",
         deliver, on_step))
     yield
     t1.cancel(); t2.cancel()

@@ -39,7 +39,8 @@ from .embed_root import Refused, owner_only, read_checked
 from .common import (HERE, Outcome, reacted_message, reaction_signal, route_target, describe_media, env, listen,
                      load_routes, media_path,
                      record_poll, resolve_quoted_body, split_files, split_polls,
-                     step_line, update_poll_votes, vote_body, wire_insert)
+                     step_line, update_poll_votes, vote_body, wire_insert,
+                     door_open, door_org_ok, live_steps_ok, released)
 from .providers.telegram import TelegramProvider
 
 PROVIDER = TelegramProvider()          # Bot API send logic
@@ -73,13 +74,22 @@ async def tg(method: str, **params) -> dict:
 # ------------------------------------------------------------------- outbound
 async def deliver(row):
     thread = row["thread"] or ""
-    if not (thread.startswith("tg:") or (row["to_agent"] or "").startswith("tg-")):
-        return                                     # not this surface's row
-    chat = thread[3:] if thread.startswith("tg:") else (row["to_agent"] or "")[3:]
-    if not chat:
-        return
+    stamped = None
+    if released(row) is not None:                  # plan-9139 S1c: only where its stamp names; the body from the store
+        stamped = await door_open(pool, row, "telegram", routes())
+        if stamped is None:
+            return
+        chat = str(stamped[0]["chat"])
+    else:
+        if not (thread.startswith("tg:") or (row["to_agent"] or "").startswith("tg-")):
+            return                                 # not this surface's row
+        chat = thread[3:] if thread.startswith("tg:") else (row["to_agent"] or "")[3:]
+        if not chat:
+            return
+        if not await door_org_ok(pool, row, "telegram", routes(), chat):
+            return                                 # S1c: an unstamped row only to a declared org route
     agent = row["from_agent"]
-    text, files = split_files(row["body"])
+    text, files = split_files(stamped[1] if stamped else row["body"])
     text, polls = split_polls(text, max_options=10)
     out = Outcome()
     try:
@@ -153,9 +163,14 @@ async def deliver(row):
                                + f" Please reply in text instead. ({type(e).__name__})"))
     except Exception as e:
         out.failed("deliver", e)
-    await pool.execute(
-        "UPDATE messages SET status=$2, delivered_at=now(), delivery=$3 WHERE id=$1",
-        row["id"], out.status, out.receipt(f"telegram:{chat}", text))
+    if stamped:                                    # no chat id and no private text back on the wire
+        await pool.execute("UPDATE messages SET status=$2, delivered_at=now(), "
+                           "delivery = coalesce(delivery, '{}'::jsonb) || $3::jsonb WHERE id=$1", row["id"], out.status,
+                           out.receipt("telegram:release", row["body"], door="released"))
+    else:
+        await pool.execute("UPDATE messages SET status=$2, delivered_at=now(), delivery=$3 WHERE id=$1",
+                           row["id"], out.status,
+                           out.receipt(f"telegram:{chat}", text, door="org-unstamped"))
 
 
 async def on_step(ev: dict):
@@ -244,7 +259,7 @@ async def on_message(msg: dict):
     said = text
     agent, text = await route_target(pool, f"tg:{chat}", text, route["agent"])
     await wire_insert(pool, who, "telegram", agent, f"tg:{chat}", "chat", text, meta, route=route, said=said)
-    if route.get("live_steps") and trusted:
+    if live_steps_ok(route) and trusted:           # S1c: never on a tiered route (its second egress)
         jobs[agent] = {"chat": chat, "ph_id": None, "sent": ""}
         try:
             await tg("sendChatAction", chat_id=int(chat), action="typing")
@@ -329,8 +344,10 @@ async def lifespan(_):
     http = httpx.AsyncClient(proxy=PROXY)
     t1 = asyncio.create_task(poll_updates())
     t2 = asyncio.create_task(listen(
-        DSN, "(to_agent='owner' OR to_agent LIKE 'tg-%') "
-             "AND (thread LIKE 'tg:%' OR to_agent LIKE 'tg-%')",
+        DSN, "((to_agent='owner' OR to_agent LIKE 'tg-%') "
+             "AND (thread LIKE 'tg:%' OR to_agent LIKE 'tg-%')) "
+             # plan-9139 S1c: a release this bridge's route was stamped for (its thread, tier-<sender>, names none)
+             "OR (to_agent='owner' AND thread LIKE 'tier-%' AND delivery->'release'->>'channel' = 'telegram')",
         deliver, on_step))
     yield
     t1.cancel(); t2.cancel()

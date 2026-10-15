@@ -368,10 +368,67 @@ class Outcome:
     def status(self) -> str:
         return "delivered" if self.ok else "dead"
 
-    def receipt(self, handle: str, rendered: str | None) -> str:
-        return json.dumps({"ok": self.ok, "handle": handle,
-                           "message_id": self.message_id,
-                           "rendered": rendered, "error": self.error})
+    def receipt(self, handle: str, rendered: str | None, door: str | None = None) -> str:
+        # `door` (plan-9139 S1c): how the row passed the door. "org-unstamped" is the CENSUS mark (a delivered row
+        # no stamp covered, to a declared org route); "released" a stamped row. Additive: the five keys are unchanged.
+        r = {"ok": self.ok, "handle": handle, "message_id": self.message_id, "rendered": rendered, "error": self.error}
+        if door:
+            r["door"] = door
+        return json.dumps(r)
+
+
+# ----------------------------------------------------------------------- the door
+# plan-9139 S1c (a4 #45091): every chat bridge's deliver() asks the door FIRST. A row carrying delivery.release is
+# delivered only through release.door_stamped (its stamp names the route; the body comes from the tier store); any
+# other row only to a DECLARED ORG ROUTE of the bridge (release.door_org), and the receipt carries the census mark.
+# Everything else is REFUSED: status 'refused' (terminal: outbound_stuck watches it, nothing re-tries it), the reason
+# in delivery.door_refused. The release key is read only on the stamped branch: an unstamped row needs none.
+def _release():
+    from astryx.security import release as R
+    return R
+
+
+def released(row) -> dict | None:
+    return _release().released(row)
+
+
+async def door_refuse(pool, row, channel: str, reason) -> None:
+    why = (f"{type(reason).__name__}: {reason}" if isinstance(reason, BaseException) else str(reason))[:200]
+    print(f"{channel}: the door REFUSED outbound msg {row['id']}: {why}", flush=True)
+    await pool.execute(
+        "UPDATE messages SET status='refused', delivered_at=now(), "
+        "delivery = coalesce(delivery, '{}'::jsonb) || $2::jsonb WHERE id=$1 AND status='pending'",
+        row["id"], json.dumps({"ok": False, "handle": f"{channel}:door", "message_id": None, "rendered": None,
+                               "error": None, "door_refused": why}))
+
+
+async def door_open(pool, row, channel: str, routes) -> tuple[dict, str] | None:
+    """A RELEASED row: (its route, the resolved body) when this bridge delivers it. None when it is another bridge's
+    (left pending, untouched) or when the door refused it (status 'refused' written). Never raises."""
+    R = _release()
+    if (R.released(row) or {}).get("channel") != channel:
+        return None                                # another bridge's release: its own consumer delivers it
+    try:
+        return R.door_stamped(row, channel, routes, key=R.mac_key(), store=R.TierStore())
+    except Exception as e:                         # noqa: BLE001 — Refused, or a store that can't be read: refuse
+        await door_refuse(pool, row, channel, e if isinstance(e, R.Refused) else type(e).__name__)
+        return None
+
+
+async def door_org_ok(pool, row, channel: str, routes, chat) -> bool:
+    """An UNSTAMPED row: True when `chat` is a declared org route of this bridge; else the row is refused."""
+    R = _release()
+    try:
+        R.door_org(channel, chat, routes)
+        return True
+    except R.Refused as e:
+        await door_refuse(pool, row, channel, e)
+        return False
+
+
+def live_steps_ok(route) -> bool:
+    return _release().live_steps_ok(route)
+
 
 
 async def record_poll(pool, msg_id: str, chat: str, agent: str | None,
