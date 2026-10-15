@@ -35,19 +35,38 @@ def check(name, ok, detail=""):
 
 ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 ENV.update(GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t",
-           PY=sys.executable, ASTRYX_AGENT="seed")
+           PY=sys.executable, ASTRYX_AGENT="seed", LAND_PROBE=str(REPO / "devtools" / "mutation_probe.py"))
+
+SUB_ORACLE = """import os, sys
+from pathlib import Path
+src = Path(os.environ.get("SUB_SRC") or Path(__file__).resolve().parent.parent / "sub.py")
+ns = {}
+try:
+    exec(src.read_text(), ns)
+except Exception:
+    sys.exit(1)
+sys.exit(0 if ns.get("VALUE") == 1 else 1)
+"""
+
+
+def mutants(old, new):
+    return ("from pathlib import Path\nREPO = Path(__file__).resolve().parent.parent\n"
+            "SUBJECT = REPO / 'sub.py'\nORACLE = REPO / 'tests' / 'test_sub.py'\nENV = 'SUB_SRC'\n"
+            f"MUTANTS = {{'m': ({old!r}, {new!r})}}\n")
 
 
 class Fx:
     """A work repo on main (1 commit, pushed to a bare origin) with branch feat forked from it."""
 
-    def __init__(self, feat_files):
+    def __init__(self, feat_files, base_files=None):
         root = Path(tempfile.mkdtemp(prefix="land-"))
         self.origin, self.w = root / "origin.git", root / "w"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.origin)], env=ENV, check=True)
         subprocess.run(["git", "init", "-q", "-b", "main", str(self.w)], env=ENV, check=True)
-        (self.w / ".gitignore").write_text("ran.txt\nbody.py\n")
+        (self.w / ".gitignore").write_text("ran.txt\nbody.py\n__pycache__/\n")
         (self.w / "README").write_text("r\n")
+        for rel, body in (base_files or {}).items():
+            p = self.w / rel; p.parent.mkdir(parents=True, exist_ok=True); p.write_text(body)
         self.git("add", "."); self.git("commit", "-qm", "base")
         self.git("remote", "add", "origin", str(self.origin)); self.git("push", "-q", "origin", "main")
         self.base = self.git("rev-parse", "HEAD")
@@ -80,8 +99,8 @@ def main():
     check("L1 a green range fast-forwards main and pushes (rc 0, main = origin/main = B)",
           rc == 0 and f.main() == f.head and f.origin_main() == f.head, out)
     rec = [l for l in out.splitlines() if l.startswith("RECEIPT:")]
-    check("L1 one RECEIPT line: LANDED + PUSHED, the test's rc, origin/main read back from git",
-          len(rec) == 1 and "LANDED + PUSHED" in rec[0] and "test_ok.py rc 0" in rec[0]
+    check("L1 one RECEIPT line: LANDED + PUSHED, 'range tests (not check.sh)', the test's rc, origin/main read back from git",
+          len(rec) == 1 and "LANDED + PUSHED" in rec[0] and "range tests (not check.sh)" in rec[0] and "test_ok.py rc 0" in rec[0]
           and f"origin/main = {f.head[:12]}" in rec[0], out)
     ran = f.w / "ran.txt"
     check("L1 the range's test RAN (anti-vacuity: it wrote its marker)", ran.exists(), out)
@@ -144,6 +163,50 @@ def main():
     rc, out = f.land(f"{f.base}..{f.head}")
     check("L8 a failed push exits 3 and says NOT PUSHED (main merged and green, origin unchanged)",
           rc == 3 and "NOT PUSHED" in out and f.main() == f.head and f.origin_main() == f.base, out)
+
+    # L9 commits between main and A (a4 #56483 R1): c1 is nobody's PASS
+    f = Fx({"secret_change": "x\n"})
+    c1 = f.head
+    f.git("checkout", "-q", "feat"); (f.w / "tests").mkdir(exist_ok=True)
+    (f.w / "tests" / "test_ok.py").write_text(OK_TEST); f.git("add", "."); f.git("commit", "-qm", "c2")
+    c2 = f.git("rev-parse", "HEAD"); f.git("checkout", "-q", "main")
+    rc, out = f.land(f"{c1}..{c2}", "--no-push")
+    check("L9 an A newer than main is refused (OLD..A would land unreviewed), main untouched",
+          rc == 1 and "would land unreviewed" in out and f.main() == f.base and not (f.w / "secret_change").exists(), out)
+    rc, out = f.land(f"{f.base}..{c2}", "--no-push")
+    check("L9 …and the whole range from main lands", rc == 0 and f.main() == c2, out)
+
+    # L10 a mutants-only range runs through mutation_probe (a4 #56483 R2)
+    sub = {"sub.py": "VALUE = 1\nOTHER = 5\n", "tests/test_sub.py": SUB_ORACLE}
+    f = Fx({"tests/mutants_sub.py": mutants("VALUE = 1", "VALUE = 2")}, sub)
+    rc, out = f.land(f"{f.base}..{f.head}", "--no-push")
+    check("L10 a mutants-only range runs the PROBE (its CAUGHT line is in the output) and lands",
+          rc == 0 and f.main() == f.head and "1 CAUGHT by the probe" in out and "mutants_sub.py rc 0" in out, out)
+    f = Fx({"tests/mutants_sub.py": mutants("OTHER = 5", "OTHER = 6")}, sub)
+    rc, out = f.land(f"{f.base}..{f.head}", "--no-push")
+    check("L10 …and a mutant the oracle misses is RED: rolled back, never 'rc 0 ()'",
+          rc == 1 and f.main() == f.base and "rolled back" in out, out)
+
+    # L11 a test that writes the tracked tree (a4 #56483 R3)
+    writer = ("import sys\nfrom pathlib import Path\np = Path(__file__).resolve().parent.parent / 'f'\n"
+              "p.write_text(p.read_text() + 'more\\n')\nsys.exit({rc})\n")
+    f = Fx({"f": "one\n", "tests/test_w.py": writer.format(rc=1)})
+    rc, out = f.land(f"{f.base}..{f.head}")
+    check("L11 red and the rollback FAILS (the test dirtied a file the range changed): rc 4, a RECEIPT says main is "
+          "NOT rolled back, nothing pushed",
+          rc == 4 and "RECEIPT: RED, main NOT rolled back" in out and f.main() == f.head and f.origin_main() == f.base, out)
+    f = Fx({"f": "one\n", "tests/test_w.py": writer.format(rc=0)})
+    rc, out = f.land(f"{f.base}..{f.head}")
+    check("L11 a GREEN test that dirtied the tracked tree is red too, naming the file; nothing pushed",
+          rc in (1, 4) and "DIRTIED" in out and " f" in out.split("DIRTIED", 1)[1].splitlines()[0]
+          and f.origin_main() == f.base, out)
+
+    # L12 untracked files where a test could import them (a4 #56483 MC2)
+    f = Fx({"tests/test_ok.py": OK_TEST})
+    (f.w / "tests").mkdir(exist_ok=True); (f.w / "tests" / "stray.py").write_text("X = 1\n")
+    rc, out = f.land(f"{f.base}..{f.head}")
+    check("L12 an untracked file under tests/ is refused before any merge",
+          rc == 1 and "untracked" in out and "stray.py" in out and f.main() == f.base, out)
 
     print(f"\n{'PASS' if not fails else 'FAIL'}: land ({len(fails)} failing)")
     return 1 if fails else 0

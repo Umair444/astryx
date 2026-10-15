@@ -4,17 +4,26 @@
 # The merger's half of a merge-ready marker, as one command (seed night-review 10-16). By hand it was six steps, done
 # six times on 10-15 alone, and each one has a failure on record:
 #   1. the tracked tree is CLEAN: a stash round-trip left privacy_gate.sh unstaged while the commit message claimed the
-#      fix (ad51318, steward #53974), so tests that read the working tree graded a file git did not carry;
-#   2. B fast-forwards main and A is an ancestor of B (no merge commit is invented here; a non-ff range goes back);
+#      fix (ad51318, steward #53974), so tests that read the working tree graded a file git did not carry. Untracked
+#      files under tests/ devtools/ src/ are refused too: a test importing a stray module git doesn't carry is the
+#      same class, other polarity (a4 #56483 MC2);
+#   2. the PASSed range is exactly what lands: A is already in main (OLD..A empty, else commits nobody PASSed ride the
+#      ff: a4 #56483 R1) and B fast-forwards main (no merge commit is invented here; a non-ff range goes back);
 #   3. each --body gitignored file's live sha256 starts with the PASSed prefix (an apply the receipt names, not a guess);
-#   4. the tests the RANGE touches (tests/test_*.py, tests/mutants_*.py), plus any --test, run WITHOUT ASTRYX_AGENT, so a
-#      test that spawns `claude -p` or posts can't become a turn under the merger's name (feedback_child_inherits_identity);
-#      a range with no test and no --test is refused: "verified" needs something that ran;
-#   5. any red test rolls main back to where it was (`git reset --keep`): a red merge never sits on main to be pushed;
+#   4. the tests the RANGE touches, plus any --test, run WITHOUT ASTRYX_AGENT, so a test that spawns `claude -p` or posts
+#      can't become a turn under the merger's name (feedback_child_inherits_identity). A tests/test_*.py runs with $PY; a
+#      tests/mutants_*.py is DATA with no main (run bare it exits 0 having done nothing: a4 #56483 R2), so it runs through
+#      devtools/mutation_probe.py, where a mutant NOT PROBED is red. A range with no test and no --test is refused:
+#      "verified" needs something that ran. These are the RANGE's tests, not check.sh: no sqlguard shim, no gate the
+#      range didn't touch, so the receipt says "range tests", never a suite green. Any non-zero rc is red, 77 included
+#      (a skip is not a pass here: fail closed);
+#   5. a red test, or a test that DIRTIED the tracked tree (itself a finding: it names the files), rolls main back to
+#      where it was (`git reset --keep`): a red merge never sits on main to be pushed;
 #   6. the push's rc is READ before the receipt is printed (10-11: "rc 0" reported for a run that was rc 124).
 # Output ends with one RECEIPT line built from what git and the rcs said, never from the arguments' spelling.
 # rc 0 landed (and pushed unless --no-push); 1 refused or red (main unchanged); 2 usage; 3 merged and green but the
-# push failed (main is ahead of origin: the merge_ready watch shows it as MERGED, NOT PUSHED).
+# push failed (main is ahead of origin: the merge_ready watch shows it as MERGED, NOT PUSHED); 4 RED and the rollback
+# FAILED: main is at the red B, unpushed (a4 #56483 R3; reset it by hand, the RECEIPT line says to what).
 set -uo pipefail
 die() { echo "land: $*"; exit 2; }
 refuse() { echo "land: REFUSED: $*"; exit 1; }
@@ -33,15 +42,19 @@ done
 [ -n "$RANGE" ] || die "usage: land.sh <A>..<B> [--body <path>=<sha256-prefix>]... [--test <file>]... [--no-push]"
 cd "$(git rev-parse --show-toplevel 2>/dev/null)" || die "not in a git repo"
 PY=${PY:-venv/bin/python}; [ -x "$PY" ] || PY=python3
+PROBE=${LAND_PROBE:-devtools/mutation_probe.py}
 TEST_TIMEOUT=${LAND_TEST_TIMEOUT:-900}
 
 [ "$(git symbolic-ref -q --short HEAD)" = main ] || refuse "HEAD is not main"
 git diff --quiet HEAD -- && git diff --cached --quiet -- || refuse "tracked changes in the tree (git status): tests would grade what git does not carry"
+stray=$(git status --porcelain --untracked-files=all -- tests devtools src | grep '^??' | cut -c4- | head -5)
+[ -z "$stray" ] || refuse "untracked files under tests/ devtools/ src/ (a test could import what git does not carry): $(echo $stray)"
 A=${RANGE%%..*}; B=${RANGE#*..}; B=${B#.}
 A_SHA=$(sha "$A") || refuse "A does not resolve: $A"
 B_SHA=$(sha "$B") || refuse "B does not resolve: $B"
 OLD=$(git rev-parse HEAD)
 git merge-base --is-ancestor "$A_SHA" "$B_SHA" || refuse "A ${A_SHA:0:12} is not an ancestor of B ${B_SHA:0:12}"
+git merge-base --is-ancestor "$A_SHA" "$OLD" || refuse "commits ${OLD:0:12}..${A_SHA:0:12} are not in main and not in the PASSed range ${A_SHA:0:12}..${B_SHA:0:12}: they would land unreviewed"
 git merge-base --is-ancestor "$OLD" "$B_SHA" || refuse "B ${B_SHA:0:12} does not fast-forward main ${OLD:0:12} (rebase, or merge by hand)"
 [ "$OLD" != "$B_SHA" ] || refuse "main is already at B ${B_SHA:0:12}"
 
@@ -64,18 +77,29 @@ echo "land: main ${OLD:0:12} -> ${B_SHA:0:12}"
 RED=0; RESULTS=()
 for t in "${TESTS[@]}"; do
   [ -f "$t" ] || { echo "  ✗ $t: no such file at B"; RESULTS+=("$t missing"); RED=1; continue; }
-  out=$(env -u ASTRYX_AGENT timeout "$TEST_TIMEOUT" "$PY" "$t" 2>&1); rc=$?
-  if [ $rc -eq 0 ]; then echo "  ✓ $t: rc 0 ($(printf '%s\n' "$out" | grep -v '^\s*$' | tail -1 | cut -c1-80))"
+  case "$(basename "$t")" in
+    mutants_*.py) out=$(env -u ASTRYX_AGENT timeout "$TEST_TIMEOUT" "$PY" "$PROBE" "$t" 2>&1); rc=$?;;
+    *)            out=$(env -u ASTRYX_AGENT timeout "$TEST_TIMEOUT" "$PY" "$t" 2>&1); rc=$?;;
+  esac
+  case "$(basename "$t")" in
+    mutants_*.py) summary="$(printf '%s\n' "$out" | grep -c '^\s*CAUGHT') CAUGHT by the probe";;
+    *)            summary=$(printf '%s\n' "$out" | grep -v '^\s*$' | tail -1 | cut -c1-80);;
+  esac
+  if [ $rc -eq 0 ]; then echo "  ✓ $t: rc 0 ($summary)"
   else echo "  ✗ $t: rc $rc"; printf '%s\n' "$out" | tail -15 | sed 's/^/      /'; RED=1; fi
   RESULTS+=("$(basename "$t") rc $rc")
 done
+dirtied=$( { git diff --name-only HEAD --; git status --porcelain --untracked-files=all -- tests devtools src | grep '^??' | cut -c4-; } | sort -u | head -10)
+if [ -n "$dirtied" ]; then echo "  ✗ the tests DIRTIED the tracked tree (a test that writes what git carries is a finding): $(echo $dirtied)"; RED=1; fi
 if [ $RED -ne 0 ]; then
-  git reset -q --keep "$OLD" && echo "land: RED: main rolled back to ${OLD:0:12}; nothing pushed" \
-    || echo "land: RED and the rollback FAILED: main is at $(git rev-parse --short=12 HEAD), reset it to ${OLD:0:12} by hand"
-  exit 1
+  if git reset -q --keep "$OLD" 2>/dev/null; then
+    echo "land: RED: main rolled back to ${OLD:0:12}; nothing pushed"; exit 1
+  fi
+  echo "RECEIPT: RED, main NOT rolled back: main is at the red $(git rev-parse --short=12 HEAD), unpushed; reset it to ${OLD:0:12} by hand (git reset --hard ${OLD:0:12} after saving anything the tests wrote)"
+  exit 4
 fi
 
-TAIL="tests: $(IFS=';'; echo "${RESULTS[*]}")"
+TAIL="range tests (not check.sh): $(IFS=';'; echo "${RESULTS[*]}")"
 [ ${#BODY_LINES[@]} -gt 0 ] && TAIL="$TAIL; live body sha256: $(IFS=','; echo "${BODY_LINES[*]}")"
 if [ $PUSH -eq 0 ]; then
   echo "RECEIPT: LANDED (not pushed, --no-push): ${A_SHA:0:12}..${B_SHA:0:12} fast-forwarded main ${OLD:0:12}..${B_SHA:0:12}; $TAIL"
