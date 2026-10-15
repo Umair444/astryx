@@ -4,13 +4,12 @@ define, with the same types, so a column added inside an existing `CREATE TABLE 
 live host, stamped green by init's schema node) or a hand DROP reads RED.
 
   DISCRIMINATION, on a real fixture (never live): shape() is snapshotted, then a column is DROPPED, one ADDED and one
-  RETYPED; compare() must name each in its own class. Extension-owned tables are outside the domain. memgraph's
-  module-owned tables are in the EXPECTED set (or its masked adds would read live-only, reported, never judged).
+  RETYPED; compare() must name each in its own class. Extension-owned tables are outside the domain. No module owns
+  DDL outside the schema files since plan-8018 S-retire (memgraph's kg schema retired): expected_extra() is empty.
   LIVE: run(live) reports no drift, in a READ-ONLY session (a write after the SET is refused).
 Needs a role that can CREATE DATABASE (a fixture), else NOT SEARCHED (77).
 """
 import os
-import re
 import sys
 from pathlib import Path
 
@@ -45,10 +44,8 @@ def main():
         with fixture_db(extra=P.expected_extra()) as fx, psycopg.connect(fx["dsn"], autocommit=True) as c:
             before = P.shape(c)
             obefore = P.objects(c)
-            mem = set(re.findall(r"CREATE TABLE IF NOT EXISTS\s+(\w+(?:\.\w+)?)", P.expected_extra()[0]))
-            names = {f"{s}.{t}" for s, t in before} | {t for _, t in before}
-            check("memgraph's module-owned tables are in the EXPECTED shape (else their drift is never judged)",
-                  bool(mem) and mem <= names, f"{sorted(mem - names)}")
+            check("no module owns DDL outside the schema files (memgraph's kg schema retired, plan-8018 S-retire)",
+                  P.expected_extra() == (), repr(P.expected_extra()))
             ext = c.execute("SELECT count(*) FROM pg_depend d JOIN pg_class k ON k.oid = d.objid "
                             "WHERE d.classid = 'pg_class'::regclass AND d.deptype = 'e' AND k.relkind = 'r'").fetchone()[0]
             check("extension-owned tables (e.g. postgis's spatial_ref_sys) are outside the domain",

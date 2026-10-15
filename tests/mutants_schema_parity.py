@@ -22,8 +22,6 @@ MUTANTS = {
         ('            elif live[t][c] != typ:', '            elif False:'),
     "P4 a missing TABLE isn't seen":
         ('            missing.append(f"table {name}")\n', ''),
-    "P5 memgraph's module-owned DDL leaves the expected set (its drift reads live-only, never judged)":
-        ('    return (memgraph.SCHEMA_SQL,)', '    return ()'),
     "P6 the live session isn't read-only":
         ('    with psycopg.connect(live_dsn, autocommit=True) as c:\n        c.execute("SET default_transaction_read_only = on")\n',
          '    with psycopg.connect(live_dsn, autocommit=True) as c:\n'),     # run()'s live session (readable() sets its own)

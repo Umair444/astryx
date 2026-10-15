@@ -227,7 +227,7 @@ def _stamp_rels(conn, sha: str) -> int:
 def fixture_db(extra: tuple = ()):
     """A fresh database, schema.sql applied whole, every relation stamped; dropped WITH (FORCE) in finally.
 
-    `extra` is DDL a module owns OUTSIDE schema.sql (memgraph.SCHEMA_SQL's kg schema). It is applied here,
+    `extra` is DDL a module owns OUTSIDE schema.sql (or an oracle's own probe relations). It is applied here,
     after schema.sql and BEFORE the stamp, so those relations are stamped too and their CREATE runs under
     this applier rather than in the oracle."""
     name = f"{PREFIX}{run_id()}_{os.getpid()}_{next(_n)}".lower()

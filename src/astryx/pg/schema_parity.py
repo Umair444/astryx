@@ -139,9 +139,10 @@ def compare(expected: dict, live: dict) -> dict:
 
 
 def expected_extra() -> tuple:
-    """DDL the org's modules own OUTSIDE schema.sql (fixture_db's `extra`), so their tables are judged too."""
-    from astryx.memory import memgraph
-    return (memgraph.SCHEMA_SQL,)
+    """DDL the org's modules own OUTSIDE schema.sql (fixture_db's `extra`), so their tables are judged too.
+    EMPTY since plan-8018 S-retire: its one member was memgraph's kg schema, retired with the stored graph (the
+    graph compiles on request). A module that owns DDL again names it here."""
+    return ()
 
 
 # EVERY database the org declares (owner 10-10: "the design on github should match local"; F1 of steward #42345).
