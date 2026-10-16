@@ -267,11 +267,19 @@ def live():
             c.read_only = True
             snap = lambda: c.execute("SELECT key, value::text, updated_at, updated_by FROM canvas_data "  # noqa: E731
                                      "WHERE canvas_id = 2 ORDER BY key").fetchall()
-            pre_rows, pre = snap(), json.dumps(cv.get_data(c, 2), sort_keys=True)
-            c.rollback()
-            rc, out, err = run_main(["preview", "2", page("live", "<p>x</p>"), str(TMP / "live"),
-                                     "--set", "probe.forced=12345"])
-            post_rows, post = snap(), json.dumps(cv.get_data(c, 2), sort_keys=True)
+            # Canvas 2 (Org pulse) has a live writer: painter's org_pulse_refresh trigger rewrites its keys every 5
+            # minutes in a ~6 s burst, so one before/after pair can straddle it and read as a preview write (the
+            # merge_check red of 10-16). A preview that WRITES differs on every attempt; a 5-minute burst can't
+            # straddle three back-to-back ones. The override value is never allowed to land, on any attempt.
+            for _attempt in range(3):
+                pre_rows, pre = snap(), json.dumps(cv.get_data(c, 2), sort_keys=True)
+                c.rollback()
+                rc, out, err = run_main(["preview", "2", page("live", "<p>x</p>"), str(TMP / "live"),
+                                         "--set", "probe.forced=12345"])
+                post_rows, post = snap(), json.dumps(cv.get_data(c, 2), sort_keys=True)
+                c.rollback()
+                if (pre == post and pre_rows == post_rows) or "12345" in post:
+                    break
     except (Exception, SystemExit) as e:
         skip("(c-live) canvas 2 byte-identical after a --set preview", f"DB unreachable ({type(e).__name__})")
         return
