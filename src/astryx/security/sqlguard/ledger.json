@@ -174,13 +174,6 @@
   "src/astryx/core/canvas.py::publish\u001fupdate canvases set version=version+1, updated_at=now() where id=? returning version": [
    "canvas: trust lines, claim, shell"
   ],
-  "src/astryx/core/toolreg.py::authorship\u001fselect agent, split_part(content, ':', 1), meta->>'edits', content from steps where kind = 'tool' and (meta ? 'edits' or content ~ '^(write|edit|multiedit|notebookedit): ') order by id": [
-   "econ v2 mirror + version gate (4227 S2)",
-   "econ v2 shadow (4227 S0)",
-   "tool ledger: ids only, ledger authorship",
-   "wash detector invariants",
-   "wash detector: v2 rings (live, report-only)"
-  ],
   "src/astryx/core/wake_audit.py::consecutive_drops\u001fselect to_agent, id from messages m join (select distinct agent from turns) a on a.agent = m.to_agent where m.status='delivered' and m.ts > now() - make_interval(hours => ?) and m.ts < now() - make_interval(hours => 2) and (?::text is null or m.to_agent = ?) order by m.to_agent, m.id desc": [
    "wake-audit classifier"
   ],
@@ -622,7 +615,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 296,
+  "debt_rows": 295,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 5,
@@ -1696,11 +1689,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:8090f2d2a20a175c03efeed8a9d425baac3e994a4da83ab7a96d38f4cfbb178c"
-  },
-  "src/astryx/core/toolreg.py::authorship\u001fselect agent, split_part(content, ':', 1), meta->>'edits', content from steps where kind = 'tool' and (meta ? 'edits' or content ~ '^(write|edit|multiedit|notebookedit): ') order by id": {
-   "debt": "EXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:cfc2f1cbf2857508b24f1c5aca1304e5d875ae4d6f11d2e264f5299493a93a61"
   },
   "src/astryx/core/toolreg.py::authorship\u001fselect distinct meta->>'registry_id' from steps where meta ? 'registry_id'": {
    "debt": "UNEXECUTED",
