@@ -324,6 +324,11 @@ def fixture_db(extra: tuple = (), lifetime: str = "immediate", batch: Batch | No
     if lifetime == "batch" and batch is None:
         raise ValueError('fixture_db: lifetime="batch" needs batch=, the Batch that drops it')
     name = fresh_name()
+    if lifetime == "batch":
+        # enrolled BEFORE the CREATE: a closed batch refuses here, having made nothing, and every database that exists
+        # is already a member (a name the CREATE never made is "already gone" at the close, BC-6). A close issued while
+        # this block is still open drops it under the caller: closing a batch is the caller's last act.
+        batch.enroll(name)
     try:
         admin = psycopg.connect(live_dsn(), autocommit=True)
     except (OSError, StopIteration, psycopg.OperationalError) as e:
@@ -369,7 +374,7 @@ def fixture_db(extra: tuple = (), lifetime: str = "immediate", batch: Batch | No
             if s is not None:
                 s.close()
             if lifetime == "batch":
-                batch.enroll(name)                   # dropped at the batch's close, concurrently
+                pass                                 # a member since entry: dropped at the batch's close, concurrently
             else:
                 _drop(admin, name)                   # "immediate": gone at block exit, as every caller expects
         finally:

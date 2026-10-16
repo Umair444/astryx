@@ -268,7 +268,17 @@ try:
         late = "accepted"
     except RuntimeError:
         late = "refused"
-    check("B. a closed batch refuses a new member (it would never be dropped)", late == "refused", late)
+    mine = lambda: {r[0] for r in admin.execute("SELECT datname FROM pg_database WHERE starts_with(datname, %s)",  # noqa: E731
+                                                 (fxm.PREFIX,)).fetchall()}
+    before = mine()
+    try:
+        with B.fixture():
+            late2 = "entered"
+    except RuntimeError:
+        late2 = "refused"
+    check("B. a closed batch refuses a new member, by enroll() and at fixture_db entry, BEFORE any CREATE (it would "
+          "never be dropped)", late == "refused" and late2 == "refused" and mine() <= before,
+          f"{late} {late2} new={sorted(mine() - before)}")
 
     # FAILURE BY NAME: one member that can't be dropped (stubbed: a session FORCE can't evict), one real refusal (a
     # TEMPLATE database), one droppable. All are attempted; both failures are raised ONCE, each named.

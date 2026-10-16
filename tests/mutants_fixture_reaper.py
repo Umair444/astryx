@@ -61,6 +61,5 @@ MUTANTS = {
     "Z4 the DEFAULT lifetime no longer drops at block exit (every immediate caller silently becomes batch-like)":
         ('                _drop(admin, name)                   # "immediate"', '                pass                   # "immediate"'),
     "Z5 a \"batch\" member is dropped at block exit anyway (the batch saves nothing)":
-        ('            if lifetime == "batch":\n                batch.enroll(name)',
-         '            if False:\n                batch.enroll(name)'),
+        ('            if lifetime == "batch":\n                pass ', '            if False:\n                pass '),
 }
