@@ -58,6 +58,7 @@ start_svc() {  # name  port  workdir  cmd...
 start_svc bridge      8477 "$ROOT"                 "$ROOT/venv/bin/uvicorn bridges.whatsapp:app --host 0.0.0.0 --port 8477"
 start_svc observatory 8090 "$ROOT/observatory/api" "$ROOT/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8090"
 start_svc gateway     8845 "$ROOT/bridges"         "$ROOT/venv/bin/uvicorn gateway:app --host 0.0.0.0 --port 8845"
+start_svc frontends   8998 "$ROOT"                 "$ROOT/venv/bin/uvicorn bridges.frontends:app --host 0.0.0.0 --port 8998"
 
 # --- 3. the pulse loop — EXACTLY ONE (one-clock ruling) ---
 # No systemd timer here, so the clock is a shell loop: pulse.py is one-shot, the loop
@@ -81,7 +82,7 @@ echo "resume: spawning residents..."
 sleep 3
 echo
 echo "=== resume: verify ==="
-for p in 8477 8090 8845; do port_up "$p" && echo "  :$p up" || echo "  :$p DOWN"; done
+for p in 8477 8090 8845 8998; do port_up "$p" && echo "  :$p up" || echo "  :$p DOWN"; done
 echo "  tmux sessions: $(tmux ls 2>/dev/null | wc -l)"
 echo "  pulse loops:   $(pulse_loops)  (must be 1)"
 echo "  last_eval age: $(psql "$DSN" -qtAc "SELECT now()-max(last_eval) FROM triggers WHERE enabled" 2>/dev/null)"

@@ -2545,6 +2545,11 @@ async def memory_chat_replies(thread: str, after: int = 0, request: Request = No
     return {"replies": [{"id": x["id"], "body": x["body"], "ts": x["ts"].isoformat()} for x in rows]}
 
 
+class MemoryProposal(BaseModel):
+    text: str
+    nodes: list[str] = []
+
+
 @app.post("/api/memory/propose")
 async def memory_propose(p: MemoryProposal, request: Request):
     """Route a proposal to the memory agent OVER THE WIRE. Never writes memory/."""
