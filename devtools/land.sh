@@ -22,8 +22,11 @@
 #   6. the push's rc is READ before the receipt is printed (10-11: "rc 0" reported for a run that was rc 124).
 # Output ends with one RECEIPT line built from what git and the rcs said, never from the arguments' spelling.
 # rc 0 landed (and pushed unless --no-push); 1 refused or red (main unchanged); 2 usage; 3 merged and green but the
-# push failed (main is ahead of origin: the merge_ready watch shows it as MERGED, NOT PUSHED); 4 RED and the rollback
+# push failed (main is ahead of origin: the merge_ready watch shows it as MERGED, NOT PUSHED; the refused push's gate
+# lines are printed as "push gate:"); 4 RED and the rollback
 # FAILED: main is at the red B, unpushed (a4 #56483 R3; reset it by hand, the RECEIPT line says to what).
+# LIMIT (a4 #56861, seen twice on 10-16): every range test must be rc 0, so a range that NARROWS a test already red on
+# main (fixes one cause of several) can't land here. Land it by hand after measuring the failing set on both sides.
 set -uo pipefail
 die() { echo "land: $*"; exit 2; }
 refuse() { echo "land: REFUSED: $*"; exit 1; }
@@ -72,7 +75,9 @@ done
 
 TESTS=()
 while IFS= read -r f; do TESTS+=("$f"); done < <(git diff --name-only --diff-filter=AMR "$A_SHA" "$B_SHA" -- 'tests/test_*.py' 'tests/mutants_*.py')
-for t in ${EXTRA[@]+"${EXTRA[@]}"}; do TESTS+=("$t"); done
+for t in ${EXTRA[@]+"${EXTRA[@]}"}; do
+  case " ${TESTS[*]-} " in *" $t "*) ;; *) TESTS+=("$t");; esac    # a --test the range already names runs once
+done
 [ ${#TESTS[@]} -gt 0 ] || refuse "the range touches no tests/test_*.py or tests/mutants_*.py and no --test was given"
 
 git merge -q --ff-only "$B_SHA" || refuse "git merge --ff-only failed"
@@ -111,6 +116,8 @@ fi
 pout=$(git push origin main 2>&1); prc=$?
 printf '%s\n' "$pout" | tail -2 | sed 's/^/  push: /'
 if [ $prc -ne 0 ]; then
+  # the pre-push gates' own verdict lines, so a refused push names its gate (10-16: e4dbbb3's label was lost to tail -2)
+  printf '%s\n' "$pout" | grep -E '^FAILED \(|^[[:space:]]*✗' | head -12 | sed 's/^/  push gate: /'
   echo "RECEIPT: LANDED, NOT PUSHED (push rc $prc): ${A_SHA:0:12}..${B_SHA:0:12} fast-forwarded main ${OLD:0:12}..${B_SHA:0:12}; $TAIL"
   exit 3
 fi

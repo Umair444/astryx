@@ -212,6 +212,21 @@ def main():
     check("L12 an untracked file under tests/ is refused before any merge",
           rc == 1 and "untracked" in out and "stray.py" in out and f.main() == f.base, out)
 
+    # L13 a refused push names its gate (10-16: the label of a pre-push red was lost to tail -2)
+    f = Fx({"tests/test_ok.py": OK_TEST})
+    hook = f.w / ".git" / "hooks" / "pre-push"
+    hook.write_text("#!/bin/sh\necho 'lots of earlier output'\necho 'FAILED (1):'\necho '  ✗ gate named here'\n"
+                    + "".join(f"echo 'trailing line {i}'\n" for i in range(5)) + "exit 1\n")
+    hook.chmod(0o755)
+    rc, out = f.land(f"{f.base}..{f.head}")
+    check("L13 a refused push prints the pre-push gate's FAILED and ✗ lines as 'push gate:' (rc 3)",
+          rc == 3 and "push gate: FAILED (1):" in out and "push gate:   ✗ gate named here" in out, out)
+
+    # L14 a --test the range already names runs once, not twice
+    f = Fx({"tests/test_ok.py": OK_TEST})
+    rc, out = f.land(f"{f.base}..{f.head}", "--test", "tests/test_ok.py", "--no-push")
+    check("L14 a --test already in the range runs once", rc == 0 and out.count("✓ tests/test_ok.py") == 1, out)
+
     print(f"\n{'PASS' if not fails else 'FAIL'}: land ({len(fails)} failing)")
     return 1 if fails else 0
 
