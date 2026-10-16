@@ -28,6 +28,8 @@ import datetime
 import hashlib
 import json
 import os
+import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -40,11 +42,47 @@ import psycopg
 from astryx.security.sqlguard import judge
 from astryx.security.sqlguard.fixture import live_dsn, run_id
 from astryx.security.sqlguard.privacy import handle, label, ledger_key, ignored, text_key
+from astryx.security.sqlguard.inventory import REPO
 
 NS_RUNS, NS_DAYS = 7, 3                    # the per-site NOT SEARCHED clock (declared)
 LEAK_RUNS, LEAK_AGE = 3, datetime.timedelta(hours=1)
 EX_DAYS = 30                               # EX2: a listed extractor's migration window (declared)
 CANARY = "src/astryx/security/sqlguard/canary.py::canary"
+REASON_MAX = 160                           # a hashed absent row's reason, cut AFTER masking (seed #56874)
+_PATHISH = re.compile(r"(?:~/|/)?[\w.-]+(?:/[\w.-]*)+")
+
+
+def _private(p: str) -> bool:
+    """Display masking, NOT key classification (a3 R1 #56884), so it never writes privacy.ERRORS: free text in
+    the ledger must not turn a RED run into NOT SEARCHED. Closed locally: absolute, ~, tier/ and any `..` segment
+    are private, and so is any answer from git other than an explicit rc 1."""
+    if p[:1] in "~/" or p.startswith("tier/") or ".." in p.split("/"):
+        return True
+    try:
+        r = subprocess.run(["git", "check-ignore", "-q", "--no-index", p], cwd=REPO, capture_output=True, timeout=10)
+    except Exception:
+        return True
+    return r.returncode != 1
+
+
+def said(row) -> str:
+    """What a hashed absent row's own ledger entry says, so its owner can act on the R-STALE (seed #56874). The
+    key itself is a digest and names nothing. `admitted` and `reason` are tracked in git, but reason is free text
+    an author wrote, so it is never echoed raw: every path-shaped token prints as <gitignored path> when its
+    origin is gitignored (privacy.ignored, which fails closed), under tier/, or absolute/home-relative. Then
+    the result is cut to REASON_MAX. Masking runs first, so a cut never shows half a private path."""
+    reason = row.get("reason", "seed")
+    if reason == "seed":
+        return f"a seed row ({row.get('debt', '?')}), no reason recorded"
+
+    def mask(m):
+        tok = m.group(0)
+        p = tok.rstrip(".,;:)'\"")
+        private = _private(p)
+        return ("<gitignored path>" if private else p) + tok[len(p):]
+    r = _PATHISH.sub(mask, str(reason))
+    r = r if len(r) <= REASON_MAX else r[:REASON_MAX - 1] + "…"
+    return f"admitted {row.get('admitted', '?')}: {r}"
 
 
 def load_ledger(path=None):
@@ -144,7 +182,8 @@ def enforce(trace_dir, ledger=None, dsn=None, rep=None):
     live_keys = {ledger_key(k) for k in rep["sites"]}
     for key in rows:
         if key not in live_keys:
-            shown = "a hashed (gitignored-origin) site" if key.startswith("sha256:") else label(key)
+            shown = (f"a hashed (gitignored-origin) site [{said(rows[key])}]" if key.startswith("sha256:")
+                     else label(key))
             R(f"R-STALE absent {key}", f"R-STALE {shown}: listed, but its key is absent (the site was deleted, or moved by a rename): "
                        f"`ledger shrink <trace_dir>` re-keys a unique move and drops the rest")
     for b in rep["blind"]:
