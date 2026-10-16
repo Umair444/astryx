@@ -170,9 +170,6 @@
   "sha256:66bde10a66ab0e79c68c7957d45e85bf1f2f4787ab081bad9b90467cc356ed9d": [
    "plan-lifecycle trigger oracle"
   ],
-  "sha256:6acb4cabae62fd2ddb00def62555252f4e76e8f0f27ad1f1b9b1c1f29537af8f": [
-   "outbound-stuck classifier"
-  ],
   "sha256:70f696f8edd27c049c197a59a1d029e5007c99563b5db9cc7558ebee7fe1cd8c": [
    "plan-lifecycle trigger oracle"
   ],
@@ -694,7 +691,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 315,
+  "debt_rows": 314,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 5,
@@ -1613,12 +1610,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:c40537eae21f09b1dbae332bd2babef605c27b0a333b76e9278e7c5d7f75f427"
-  },
-  "sha256:6acb4cabae62fd2ddb00def62555252f4e76e8f0f27ad1f1b9b1c1f29537af8f": {
-   "admitted": "2026-10-11",
-   "debt": "EXECUTED",
-   "reason": "steward's outbound_stuck body re-applied 10-11 (receipt #46829, PASS #46826: ear-<room> threads are sheet-delivered); the old seed-era UNEXECUTED row (d0d080335f) was shrunk, and the new body is EXECUTED by painter's bucket arms; RESPONSIVE needs those arms on a stamped fixture (painter/ear-backlog)",
-   "tk": "sha256t:7563347c086d7d4dc493b44b7f0805163c3078f83209660509be42a33359c05b"
   },
   "sha256:6e3b800fd2864880ad2e6c6d119e3cd78eabb482f01337c42c1df1057dc401ce": {
    "debt": "UNEXECUTED",
