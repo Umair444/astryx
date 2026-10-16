@@ -470,6 +470,14 @@ def loop_and_tool(G):
           and "  goal_shipped: UNMEASURED (weight 0: goals has no filer column)" in out["lines"]
           and "  pass_land: UNMEASURED (weight 0: no edge of this kind in the cache)" in out["lines"]
           and not any(ln.startswith("  delegation: UNMEASURED") for ln in out["lines"]), "\n".join(out["lines"]))
+    unk = G.who_should_i_ask(A1, g, cov, nodes, T0 + timedelta(days=1), k=5, topic="zzz-no-such-topic")
+    hit = G.who_should_i_ask(A1, g, cov, nodes, T0 + timedelta(days=1), k=5, topic="PLAN-9")
+    check("the tool says an unknown topic matched no edge and ranked without it (naive walk, seed #58432)",
+          "topic: no cached edge's thread contains 'zzz-no-such-topic': ranked WITHOUT it (teleport on the asker)"
+          in unk["lines"] and unk["returned"] == out["returned"], "\n".join(unk["lines"]))
+    check("the tool counts a matched topic's agents (case-insensitive), and no topic prints no topic line",
+          "topic: 4 agent(s) on threads containing 'PLAN-9'" in hit["lines"]
+          and not any(ln.startswith("topic:") for ln in out["lines"]), "\n".join(hit["lines"]))
     low = G.who_should_i_ask(A1, g, {"delegation": 0.4}, nodes, T0 + timedelta(days=1), k=5)
     check("the tool under a sub-50% delegation coverage returns nobody and says why",
           low["returned"] == [] and "  delegation: UNMEASURED (weight 0: coverage 40% under 50%)" in low["lines"],

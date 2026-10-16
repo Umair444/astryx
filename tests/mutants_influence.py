@@ -56,6 +56,9 @@ MUTANTS = {
                                   '            or REVISE_RE.search(x["body"] or "")))'),
     "K4 a merge-ready marker row that also says REVISE no longer closes a cycle (a3 #58419)":
         ('closes = lambda x: (any("error" not in r for r in parse_ready(x["body"]))', 'closes = lambda x: (False'),
+    # the naive walk (seed #58432)
+    "N1 an unknown topic ranks silently (no topic line)": ("    if topic:   # the naive walk", "    if False:   # the naive walk"),
+    "N2 an unknown topic reads as matched": ("if tagents else", "if True else"),
     # BC-A
     "A1 the author/owner-prefix cross-check is dropped": ("            if author != owner:", "            if False:"),
     # BC-D

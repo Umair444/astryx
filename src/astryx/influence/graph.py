@@ -558,6 +558,9 @@ def who_should_i_ask(asker, edges, coverages, nodes, now, k=5, liveness=NO_LIVEN
     top = top_k(sc, asker, k, liveness[1], edges)
     lines = [f"who should {asker} ask{f' about {topic!r}' if topic else ''} (advisory; routing view, PPR d={DAMPING},"
              f" dangling={v['dangling']})", f"liveness: {liveness[0]}"]
+    if topic:   # the naive walk (seed #58432): an unmatched topic must SAY it changed nothing, never rank silently
+        lines.append(f"topic: {len(tagents)} agent(s) on threads containing {topic!r}" if tagents else
+                     f"topic: no cached edge's thread contains {topic!r}: ranked WITHOUT it (teleport on the asker)")
     for k_ in KINDS:
         if w[k_] == 0:
             why = HARD_UNMEASURED.get(k_) or (f"coverage {coverages[k_]:.0%} under {COVERAGE_FLOOR:.0%}"
