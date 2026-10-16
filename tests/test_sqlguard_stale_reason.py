@@ -4,16 +4,34 @@
 and tracing it to steward's outbound_stuck took a cross-report diff.
 
 Hermetic: it drives the real enforce() on a fabricated report and ledger. The DSN is unreachable, so the state
-and leak half reports NOT SEARCHED, and only the RED lines are read. privacy.ignored asks git about the repo's own
-.gitignore. mutation_probe points ENFORCE_SRC at a mutant (tests/mutants_sqlguard_stale_reason.py)."""
+and leak half reports NOT SEARCHED, and only the RED lines are read. What is ignored and what is tracked is decided
+by a FIXTURE repo this file builds (git init + its own .gitignore, set as ASTRYX_SQLGUARD_ROOT), never by the host:
+pushed_tree_check runs on an extract with no .git, where git answers 128 and every path masks (seed #56893). If git
+can't build the fixture, the oracle exits 77. mutation_probe points ENFORCE_SRC at a mutant
+(tests/mutants_sqlguard_stale_reason.py)."""
 import hashlib
 import importlib.util
+import atexit
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
+for k in [k for k in os.environ if k.startswith("GIT_")]:   # a pre-push hook exports GIT_DIR: git must not see the host
+    del os.environ[k]
+FIX = Path(tempfile.mkdtemp(prefix="sqlguard-stale-reason-"))
+atexit.register(shutil.rmtree, FIX, True)
+(FIX / ".gitignore").write_text("triggers/\nmemory/\nhomes/*/probes/\n.env\n")
+try:
+    subprocess.run(["git", "init", "-q", str(FIX)], check=True, capture_output=True, timeout=30)
+except Exception as e:
+    print(f"SKIP: git can't build the fixture repo ({type(e).__name__}); nothing here is evidence")
+    sys.exit(77)
+os.environ["ASTRYX_SQLGUARD_ROOT"] = str(FIX)              # set before enforce imports inventory.REPO
 esrc = os.environ.get("ENFORCE_SRC")
 if esrc:
     spec = importlib.util.spec_from_file_location("enforce_under_test", esrc)
@@ -44,6 +62,16 @@ def stale(rows):
     out = enf.enforce("/nonexistent", ledger={"rows": rows, "extractors": {}}, dsn=DSN, rep=rep)
     return [r for r in out["red"] if r.startswith("R-STALE")], out
 
+
+def ci(p):
+    return subprocess.run(["git", "check-ignore", "-q", "--no-index", p], cwd=FIX, capture_output=True).returncode
+
+
+print("the fixture, not the host, answers:")
+from astryx.security.sqlguard import inventory  # noqa: E402  (main's enforce has no REPO name; the red control must not crash)
+check("(0) sqlguard's REPO is the fixture repo", inventory.REPO == FIX.resolve(), inventory.REPO)
+check("(0) the fixture says a tracked path is NOT ignored (rc 1)", ci("src/astryx/core/pulse_run.py") == 1)
+check("(0) …and a triggers/ path IS ignored (rc 0)", ci("triggers/steward/outbound_stuck.py") == 0)
 
 print("a hashed absent row names its own ledger text:")
 red, _ = stale({H: {"debt": "EXECUTED", "admitted": "2026-10-01", "reason": "steward's outbound_stuck body reads the wire"}})
