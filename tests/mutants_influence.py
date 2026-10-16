@@ -63,7 +63,7 @@ MUTANTS = {
          'roster)):', "            if False:"),
     # R-1 delegation coverage
     "C3 a task answered only outside the grammar reads measured (unanswered = judged)":
-        ("        if later and not any(is_outcome(x) for x in later):", "        if False:"),
+        ("        if later:", "        if False:"),
     # R-2
     "L2 the loop discount is kind-gated again (delegation only)":
         ("hit = any(", 'hit = e["kind"] == "delegation" and any('),

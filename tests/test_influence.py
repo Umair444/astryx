@@ -259,8 +259,11 @@ def delegation(G):
     check("R-1: a task answered ONLY outside the outcome grammar (a chat to the asker) is UNMEASURED, not a measured "
           "zero", 271 not in got and lg["unmeasured"].get("answered outside the outcome grammar") == 2,
           str(dict(lg["unmeasured"])))
-    check("R-1: a task with no reply at all is measured (a judged silence), counted in the 8 of 13",
-          202 not in got and lg["domain"] == 13 and lg["measured"] == 8, f"{lg['measured']}/{lg['domain']}")
+    check("R-1: a task whose only reply is an outcome given to a nearer task is UNMEASURED, its own reason",
+          211 not in got and lg["unmeasured"].get("answered by an outcome the one-to-one rule gave a nearer task") == 1,
+          str(dict(lg["unmeasured"])))
+    check("R-1: a task with no reply at all is measured (a judged silence), counted in the 7 of 13",
+          202 not in got and lg["domain"] == 13 and lg["measured"] == 7, f"{lg['measured']}/{lg['domain']}")
     check("R-1: the yield is edges / tasks (5 of 13)", abs(lg["yield"] - 5 / 13) < 1e-12, str(lg.get("yield")))
     try:
         G.delegation_edges([{**rows[0], "delivery": {}}], ROSTER)

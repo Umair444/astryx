@@ -309,9 +309,9 @@ def delegation_edges(rows, roster):
             edges.append({"kind": "delegation", "src": t["from_agent"], "dst": t["to_agent"], "ts": r["ts"],
                           "ask_ts": t["ts"], "ref": f"msg:{t['id']}>{r['id']} ({r['intent']})", "topic": t["thread"],
                           "authority": [t["id"], r["id"]], "task_id": t["id"]})
-    # R-1 (a3's REVISE): a task is MEASURED iff it has an outcome edge, or the rule judged it: its recipient sent the
-    # asker nothing after it on the thread (a judged silence), or only outcome-grammar rows that answered another
-    # task. A task the recipient answered ONLY outside the grammar (a chat, a verdict-less review) is UNMEASURED.
+    # R-1 (a3's REVISE): a task is MEASURED iff it has an outcome edge, or its recipient sent the asker NOTHING after
+    # it on the thread (a judged silence). Any later reply without an edge is UNMEASURED: answered ONLY outside the
+    # grammar (a chat, a verdict-less review), or only by outcomes the one-to-one rule gave a nearer task.
     replies = defaultdict(list)
     for r in rows:
         if r["thread"] and not is_pulse(r) and r["intent"] != TASK_INTENT:
@@ -321,9 +321,10 @@ def delegation_edges(rows, roster):
         if t["id"] in answered or t["id"] in bad_tasks or not t["thread"]:
             continue
         later = [x for x in replies.get((t["thread"], t["to_agent"], t["from_agent"]), []) if x["id"] > t["id"]]
-        if later and not any(is_outcome(x) for x in later):
+        if later:
             outside.add(t["id"])
-            unmeasured["answered outside the outcome grammar"] += 1
+            unmeasured["answered by an outcome the one-to-one rule gave a nearer task" if any(is_outcome(x) for x in later)
+                       else "answered outside the outcome grammar"] += 1
     unmeasured_tasks = bad_tasks | outside
     askers = defaultdict(set)
     for t in tasks:
