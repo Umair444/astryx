@@ -65,6 +65,16 @@ check("(b) each private path prints as <gitignored path>", line.count("<gitignor
 check("(b) a home-relative path leaves no stray ~ behind", "~<" not in line, line)
 check("(b) control: a TRACKED path stays readable (the mask is not blanket)", TRACKED in line, line)
 
+print("free text never reaches the privacy authority's error list (a3 R1 #56884):")
+from astryx.security.sqlguard import privacy  # noqa: E402
+privacy.ERRORS.clear()
+red, out = stale({H: {"debt": "UNEXECUTED", "admitted": "2026-10-05", "reason": "see ../triggers/steward/outbound_stuck.py"}})
+line = red[0] if red else ""
+check("(g) a ../ path is masked", "../triggers" not in line and "<gitignored path>" in line, line)
+check("(g) privacy.ERRORS stays empty", privacy.ERRORS == [], privacy.ERRORS)
+check("(g) no privacy NOT SEARCHED entry, so the RED stays RED",
+      not any("privacy classification" in n for n in out["not_searched"]), out["not_searched"])
+
 print("the cut runs after the mask:")
 red, _ = stale({H: {"debt": "UNEXECUTED", "admitted": "2026-10-03",
                     "reason": "x" * (RMAX - 20) + " triggers/steward/outbound_stuck.py and more"}})

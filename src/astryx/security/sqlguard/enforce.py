@@ -29,6 +29,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -41,6 +42,7 @@ import psycopg
 from astryx.security.sqlguard import judge
 from astryx.security.sqlguard.fixture import live_dsn, run_id
 from astryx.security.sqlguard.privacy import handle, label, ledger_key, ignored, text_key
+from astryx.security.sqlguard.inventory import REPO
 
 NS_RUNS, NS_DAYS = 7, 3                    # the per-site NOT SEARCHED clock (declared)
 LEAK_RUNS, LEAK_AGE = 3, datetime.timedelta(hours=1)
@@ -48,6 +50,19 @@ EX_DAYS = 30                               # EX2: a listed extractor's migration
 CANARY = "src/astryx/security/sqlguard/canary.py::canary"
 REASON_MAX = 160                           # a hashed absent row's reason, cut AFTER masking (seed #56874)
 _PATHISH = re.compile(r"(?:~/|/)?[\w.-]+(?:/[\w.-]*)+")
+
+
+def _private(p: str) -> bool:
+    """Display masking, NOT key classification (a3 R1 #56884), so it never writes privacy.ERRORS: free text in
+    the ledger must not turn a RED run into NOT SEARCHED. Closed locally: absolute, ~, tier/ and any `..` segment
+    are private, and so is any answer from git other than an explicit rc 1."""
+    if p[:1] in "~/" or p.startswith("tier/") or ".." in p.split("/"):
+        return True
+    try:
+        r = subprocess.run(["git", "check-ignore", "-q", "--no-index", p], cwd=REPO, capture_output=True, timeout=10)
+    except Exception:
+        return True
+    return r.returncode != 1
 
 
 def said(row) -> str:
@@ -63,7 +78,7 @@ def said(row) -> str:
     def mask(m):
         tok = m.group(0)
         p = tok.rstrip(".,;:)'\"")
-        private = p[:1] in "~/" or p.startswith("tier/") or ignored(p)
+        private = _private(p)
         return ("<gitignored path>" if private else p) + tok[len(p):]
     r = _PATHISH.sub(mask, str(reason))
     r = r if len(r) <= REASON_MAX else r[:REASON_MAX - 1] + "…"

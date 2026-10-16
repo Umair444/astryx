@@ -11,12 +11,14 @@ MUTANTS = {
         ('f"a hashed (gitignored-origin) site [{said(rows[key])}]"', '"a hashed (gitignored-origin) site"'),
     "S2 the reason is echoed raw (no mask)":
         ("    r = _PATHISH.sub(mask, str(reason))\n", "    r = str(reason)\n"),
-    "S3 gitignored origins are not masked (only tier/ and absolute)":
-        ('private = p[:1] in "~/" or p.startswith("tier/") or ignored(p)', 'private = p[:1] in "~/" or p.startswith("tier/")'),
+    "S3 gitignored origins are not masked (git is never asked)":
+        ('    return r.returncode != 1\n', '    return False\n'),
     "S4 absolute and home-relative paths are trusted to git":
-        ('private = p[:1] in "~/" or p.startswith("tier/") or ignored(p)', 'private = p.startswith("tier/") or ignored(p)'),
+        ('if p[:1] in "~/" or p.startswith("tier/") or ".." in p.split("/"):', 'if p.startswith("tier/") or ".." in p.split("/"):'),
     "S5 everything path-shaped is masked (blanket)":
-        ('private = p[:1] in "~/" or p.startswith("tier/") or ignored(p)', 'private = True'),
+        ("        private = _private(p)\n", "        private = True\n"),
+    "S11 the mask goes back to the RECORDING authority (free text can turn RED into 77)":
+        ("        private = _private(p)\n", "        private = p[:1] in \"~/\" or p.startswith(\"tier/\") or ignored(p)\n"),
     "S6 the cut runs before the mask":
         ("    r = _PATHISH.sub(mask, str(reason))\n    r = r if len(r) <= REASON_MAX else r[:REASON_MAX - 1] + \"…\"\n",
          "    r = str(reason)[:REASON_MAX]\n    r = _PATHISH.sub(mask, r)\n"),
