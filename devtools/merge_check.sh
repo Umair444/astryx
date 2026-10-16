@@ -67,7 +67,10 @@ if [ "$FULL" != 0 ]; then
   git worktree add --detach "$WT" "$T" >/dev/null 2>&1 || { echo "merge_check: worktree failed"; exit 2; }
   made=()
   ESTATE_EXCLUDE="venv/ .venv/ homes/ node_modules/ backups/ media/ observatory/web/dist/ .env .claude/worktrees/"   # == ledger.py's
-  RUNTIME=".env venv channel/node_modules"                     # excluded from the ESTATE, needed to RUN
+  RUNTIME=".env venv channel/node_modules observatory/web/node_modules"   # excluded from the ESTATE, needed to RUN
+  # observatory/web/node_modules: without it the browser gates (the pilot's owner-tap confirm, check.sh:486) say
+  # BROKEN on a live host, correctly, so every merge_check read ✗ (seed #57617). A link is safe since plan-10108:
+  # check.sh's run() hands each gate its own VITE_CACHE_DIR, so no gate writes the live node_modules/.vite.
   SKIP="var/"                                                   # declared: runtime state, regenerable
   # A directory holding ONLY ignored content is listed itself AND each ignored child: drop such a parent (a strict
   # prefix of another entry) before the exclusions, or `.claude/` re-admits `.claude/worktrees/` (== ledger.py's rule).
