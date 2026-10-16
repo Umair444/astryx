@@ -186,7 +186,8 @@ def sql_arms():
         print("\n5. LEDGER FILTER:")
         tid = c.execute("INSERT INTO turns (agent, goal_id) VALUES ('caller', 7) RETURNING id").fetchone()[0]
         for rid, meta in (("mcp:t/stamped", {"registry_id": "mcp:t/stamped", "v": 1}),
-                          ("mcp:t/unstamped", {"registry_id": "mcp:t/unstamped"})):
+                          ("mcp:t/unstamped", {"registry_id": "mcp:t/unstamped"}),
+                          ("script:nucleus/check.sh", {"registry_id": "script:nucleus/check.sh", "v": 1})):
             c.execute("INSERT INTO steps (agent, kind, content, meta, turn_id) VALUES "
                       "('caller','tool','call',%s::jsonb,%s)", (json.dumps(meta), tid))
         since = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
@@ -199,6 +200,9 @@ def sql_arms():
         check("the ledger read executes against the real DDL", not err, err)
         check("a meta.v-stamped call is counted", "mcp:t/stamped" in got, str(got))
         check("an UNSTAMPED call is not (pre-versioning call semantics)", "mcp:t/unstamped" not in got,
+              str(got))
+        check("a call stamped before the reorg (script:nucleus/check.sh) counts as the tool where it lives now "
+              "(seed #57344: one tool, not two)", "script:devtools/check.sh" in got and "script:nucleus/check.sh" not in got,
               str(got))
 
         print("\n6. READER:")

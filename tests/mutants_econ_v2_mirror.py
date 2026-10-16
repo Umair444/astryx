@@ -37,4 +37,6 @@ MUTANTS = {
     "M7 a degenerate ledger renders as a measured 'no tool of yours'":
         ('''    if not status or status.startswith("NOT_EVALUATED"):''',
          '''    if not status:'''),
+    "M8 the reorg isn't folded: a pre-move call counts as a second tool (seed #57344)":
+        ('    return [(toolreg.canonical(c["rid"]), c["caller"],', '    return [(c["rid"], c["caller"],'),
 }

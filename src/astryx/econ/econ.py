@@ -511,7 +511,8 @@ def _v2_tool_rows(conn, since, until):
             who = toolreg.authorship(cur, sorted({c["rid"] for c in calls}))
     except Exception:
         return [(c["rid"], c["caller"], None, bool(c["dq"])) for c in calls], False
-    return [(c["rid"], c["caller"], (who.get(c["rid"]) or {}).get("author"), bool(c["dq"]))
+    # one tool across the reorg: a call stamped script:nucleus/x before the move IS script:<new>/x (seed #57344)
+    return [(toolreg.canonical(c["rid"]), c["caller"], (who.get(c["rid"]) or {}).get("author"), bool(c["dq"]))
             for c in calls], True
 
 

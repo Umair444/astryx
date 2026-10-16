@@ -24,7 +24,10 @@ MUTANTS = {
 
     # Test the root before resolving '..', and nucleus/../<anything> becomes a tool.
     "T2 '..' not resolved before the root test":
-        ("    p = os.path.normpath(p)\n", "    p = p\n"),
+        ("    p = os.path.normpath(p)\n    p = _MOVED.get(p, p)\n", "    p = p\n    p = _MOVED.get(p, p)\n"),
+    # Not authored: dropping the ABSOLUTE path's normpath. It is masked structurally, not by a weak oracle: the checkout
+    # walk takes its relative path from os.path.relpath (which normalises '..'), and that result meets the same '..' and
+    # root tests, so the line only spares a walk.
 
     # The door's id comes from a model. Trusting it lets any string into the ledger.
     "T3 the door trusts its untrusted id":
@@ -63,4 +66,24 @@ MUTANTS = {
     "T9 bash -n counted as a run":
         ('        if a == "-n" and os.path.basename(head) in _SHELLS:',
          '        if False and os.path.basename(head) in _SHELLS:'),
+
+    "T10 a worktree of this repo is never this repo (every worktree call and Write unattributed again)":
+        ("            got = _in_checkout(p)              # outside the live tree, or a worktree nested in it\n",
+         "            got = None\n"),
+    "T11 ANY directory holding a .git is this repo (another repo's devtools/ becomes our tool)":
+        ("                return (Path(d), os.path.relpath(p, d)) if mine and theirs == mine else None\n",
+         "                return (Path(d), os.path.relpath(p, d))\n"),
+    "T12 a plain dir with devtools/ resolves (no checkout required at all)":
+        ("            if os.path.lexists(os.path.join(d, \".git\")):\n",
+         "            if os.path.isdir(os.path.join(d, \"devtools\")) or os.path.lexists(os.path.join(d, \".git\")):\n"
+         "                return Path(d), os.path.relpath(p, d)\n            if False:\n"),
+    "T13 a Write stamped before the reorg stays under its old path (authorship split across the move)":
+        ("        path = _MOVED.get(path, path)          # a write before the reorg authors the tool where it lives now\n",
+         ""),
+    "T14 an old id isn't canonicalised for authorship (its calls credit nobody)":
+        ("    rid = canonical(rid)\n    if rid.startswith(\"script:\"):", "    if rid.startswith(\"script:\"):"),
+    "T15 canonical() is the identity":
+        ("        return \"script:\" + _MOVED.get(p, p)\n    return rid", "        return rid\n    return rid"),
+    "T16 LEDGER_V not bumped (worktree-path calls stamped with the old semantics' version)":
+        ("LEDGER_V = 2", "LEDGER_V = 1"),
 }

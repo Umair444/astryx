@@ -35,6 +35,11 @@ WHAT IT HOLDS
   L9 a script that is only NAMED (git add x.py, grep … x.py, cat x.py) is not a call. Only
      an execution position counts. The ledger's first live minutes counted every mention,
      which inflated usage with every review and commit.
+  L12 a worktree of THIS repo is this repo (LEDGER_V 2): a call by absolute path into one and a
+     Write there stamp its repo-relative id; the same script in another git repo or in a plain
+     dir that merely has devtools/ is no tool; a worktree's tier/ is never one (seed #57344).
+  L13 one tool across the reorg: a Write stamped under the moved-from path (script:nucleus/x)
+     authors the tool where it lives now, and the old id reads the same author.
 
 BOTH SUBJECTS RUN FROM ONE TEMP REPO TREE: hooks/step.py and src/astryx/core/toolreg.py are copies of
 the subjects, and everything else is symlinked in. Both files derive REPO from their own path,
@@ -361,6 +366,67 @@ try:
     check("L7 no record → 'unknown', never guessed",
           au[ids[3]] == {"author": "unknown", "contributors": [], "provenance": "unknown"},
           str(au[ids[3]]))
+
+    # ── L12: a worktree of THIS repo is this repo (LEDGER_V 2, seed #57344) ───────────────
+    # Builders work in worktrees; a call or a Write there read as no tool, so nothing built in one was ever authored.
+    # The REAL hook runs from a temp tree that is a git repo, against a linked worktree of it, another repo and a
+    # plain dir, each holding the same devtools/ script. Only the worktree may resolve.
+    wroot = tree(); roots.append(wroot)
+    ge = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+    def g(*a, cwd=wroot):
+        return subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", *a], cwd=cwd, env=ge,
+                              capture_output=True, text=True, check=True)
+    g("init", "-q")
+    (wroot / "zz_base").write_text("x\n")
+    g("add", "zz_base")
+    g("commit", "-qm", "base")
+    wt = Path(tempfile.mkdtemp(prefix="t_ledger_wt_")); roots.append(wt); wt.rmdir()
+    g("worktree", "add", "-q", "--detach", str(wt))
+    other = Path(tempfile.mkdtemp(prefix="t_ledger_other_")); roots.append(other)
+    g("init", "-q", cwd=other)
+    plain = Path(tempfile.mkdtemp(prefix="t_ledger_plain_")); roots.append(plain)
+    for d in (wt, other, plain):
+        (d / "devtools").mkdir(exist_ok=True)
+        (d / "devtools" / "zz_wt_tool.sh").write_text("true\n")
+
+    def wpre(tool, ti):
+        hook(wroot, SCH, {"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": ti})
+        return last()[0][3]
+    got = wpre("Bash", {"command": f"bash {wt}/devtools/zz_wt_tool.sh", "description": "wt call"})
+    check("L12 a call by absolute path into a worktree of this repo → its repo-relative id, v 2",
+          got == {"registry_id": "script:devtools/zz_wt_tool.sh", "v": toolreg.LEDGER_V} and toolreg.LEDGER_V >= 2,
+          str(got))
+    got = wpre("Write", {"file_path": f"{wt}/devtools/zz_wt_new.sh", "content": SECRET})
+    check("L12 a Write into a worktree of this repo → {edits} (authorship evidence, from the day it lands)",
+          got == {"edits": "script:devtools/zz_wt_new.sh", "v": toolreg.LEDGER_V}, str(got))
+    for name, d in (("another git repo", other), ("a plain dir that merely has devtools/", plain)):
+        got = wpre("Bash", {"command": f"bash {d}/devtools/zz_wt_tool.sh", "description": "not ours"})
+        check(f"L12 control: the same script in {name} is NO tool", got is None, str(got))
+        got = wpre("Write", {"file_path": f"{d}/devtools/zz_wt_new.sh", "content": "x"})
+        check(f"L12 control: a Write in {name} is no authorship", got is None, str(got))
+    got = wpre("Write", {"file_path": f"{wt}/tier/zz_private.py", "content": "x"})
+    check("L12 a worktree's tier/ is still never a tool", got is None, str(got))
+
+    # ── L13: one tool across the reorg (seed #57344) ──────────────────────────────────────
+    # A call or a Write stamped before goal 10224's move carries the OLD path (script:nucleus/check.sh). It is the same
+    # tool as script:devtools/check.sh, so it has the same author, and authorship merges the events under both paths.
+    admin.execute("DELETE FROM steps")
+    for agent, meta in (("alice", {"edits": "script:nucleus/check.sh"}),        # the Write, stamped pre-move
+                        ("bob", {"edits": "script:devtools/check.sh"})):        # a later edit, post-move
+        admin.execute("INSERT INTO steps (agent, kind, content, meta) VALUES (%s,'tool','Edit: (d)',%s)",
+                      (agent, json.dumps(meta)))
+    admin.execute("UPDATE steps SET content = 'Write: (d)' WHERE agent = 'alice'")
+    au = toolreg.authorship(admin.cursor(), ["script:devtools/check.sh", "script:nucleus/check.sh"])
+    check("L13 a Write stamped under the moved-from path authors the tool where it lives now",
+          au["script:devtools/check.sh"] == {"author": "alice", "contributors": ["bob"], "provenance": "ledger"},
+          str(au["script:devtools/check.sh"]))
+    check("L13 ...and a call stamped with the OLD id reads the same author",
+          au["script:nucleus/check.sh"] == au["script:devtools/check.sh"], str(au["script:nucleus/check.sh"]))
+    check("L13 canonical(): the old id IS the new one; an unmoved or MCP id is unchanged",
+          toolreg.canonical("script:nucleus/check.sh") == "script:devtools/check.sh"
+          and toolreg.canonical("script:devtools/check.sh") == "script:devtools/check.sh"
+          and toolreg.canonical("mcp:astryx/send") == "mcp:astryx/send")
 
     # ── L8: the classifications table refuses a prompt-shaped label ───────────────────────
     for fam, tier, why in (("please fix the failing build in nucleus", "complex", "prompt as family"),

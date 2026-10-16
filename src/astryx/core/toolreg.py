@@ -29,7 +29,7 @@ is 'unknown'. It is graded DETECTION: steps rows are forgeable by anyone at the 
 if not __package__:  # run by path: the checkout root goes first on sys.path so `astryx` resolves (goal 10224 S4)
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
-from astryx.paths import repo_root, module_relpath  # noqa: E402
+from astryx.paths import common_dir, repo_root, module_relpath  # noqa: E402
 try:
     from astryx._reorg import MOVED as _MOVED   # a stub's id is its moved script's id (goal 10224 S4)
 except ImportError:
@@ -51,7 +51,9 @@ REPO_S = str(REPO)
 # timestamp (I1). Rows WITHOUT "v" are the ledger's first live minutes, when any token naming a
 # script counted as a call (inflated), and they must not be read as calls.
 #   1  execution positions only; heredoc bodies are data; bash -n is not a run (a8fbd4a)
-LEDGER_V = 1
+#   2  a path inside ANOTHER checkout of this repo (a worktree) is that checkout's repo-relative path, so a call or a
+#      Write there is stamped like one in the live tree; before, every worktree path read as no tool (seed #57344)
+LEDGER_V = 2
 
 # Where a reusable tool lives. tests/ are oracles, triggers/ are evaluated by the pulse rather
 # than run by an agent, and tier/ is private. None of those is a tool.
@@ -73,24 +75,63 @@ def servers() -> dict:
         return {}
 
 
+_COMMON: list = []
+
+
+def _in_checkout(p: str):
+    """(root, rel) when absolute `p` lies in a checkout of THIS repository: the innermost directory above it holding a
+    .git whose common dir is this repo's (astryx.paths.common_dir, the shared "another checkout" predicate). A dir that
+    merely has a devtools/ inside, or a nested checkout of another repo, is not one. Stat-only; never raises: it runs
+    in hooks/step.py on every call."""
+    try:
+        if not _COMMON:
+            _COMMON.append(common_dir(REPO))
+        mine = _COMMON[0]
+        d = os.path.dirname(p)
+        while d and d != "/":
+            if os.path.lexists(os.path.join(d, ".git")):
+                theirs = common_dir(d)
+                return (Path(d), os.path.relpath(p, d)) if mine and theirs == mine else None
+            d = os.path.dirname(d)
+    except (OSError, ValueError):
+        pass
+    return None
+
+
 def script_id(path: str, must_exist: bool = True) -> str | None:
     """script:<rel> for a path under a tool root, else None. Absolute paths are made relative
-    to the repo. '..' is resolved BEFORE the root test, so nucleus/../tier/x is not a tool."""
+    to the repo, or to the checkout of this repo they lie in (a worktree, LEDGER_V 2). '..' is
+    resolved BEFORE the root test, so nucleus/../tier/x is not a tool."""
     if not path or not isinstance(path, str):
         return None
     p = path.strip().strip("'\"")
-    if p.startswith(REPO_S + "/"):
-        p = p[len(REPO_S) + 1:]
-    elif p.startswith("/"):
-        return None
+    root = REPO
+    if p.startswith("/"):
+        p = os.path.normpath(p)
+        rel = os.path.normpath(p[len(REPO_S) + 1:]) if p.startswith(REPO_S + "/") else None
+        if rel is None or not rel.startswith(TOOL_ROOTS):
+            got = _in_checkout(p)              # outside the live tree, or a worktree nested in it
+            if not got:
+                return None
+            root, rel = got
+        p = rel
     p = os.path.normpath(p)
     p = _MOVED.get(p, p)
     if p.startswith("..") or not p.startswith(TOOL_ROOTS):
         return None
     if must_exist:
-        if not p.endswith(SCRIPT_SUFFIXES) or not (REPO / p).is_file():
+        if not p.endswith(SCRIPT_SUFFIXES) or not (root / p).is_file():
             return None
     return "script:" + p
+
+
+def canonical(rid):
+    """One id per tool across the goal 10224 reorg: script:nucleus/x reads as script:<where x moved>, so a call
+    stamped before the move counts for, and is authored like, the same tool after it."""
+    if isinstance(rid, str) and rid.startswith("script:"):
+        p = rid[len("script:"):]
+        return "script:" + _MOVED.get(p, p)
+    return rid
 
 
 def _module_path(tok: str) -> str | None:
@@ -311,6 +352,7 @@ def _resolve(tool_name: str, tool_input) -> dict:
 
 def source_path(rid: str) -> str | None:
     """The file whose authorship a registry id inherits. An MCP tool inherits its server's."""
+    rid = canonical(rid)
     if rid.startswith("script:"):
         return rid[len("script:"):]
     m = re.fullmatch(r"mcp:([\w.-]+)/[\w.-]+", rid)
@@ -355,6 +397,7 @@ def authorship(cur, ids=None) -> dict:
             if not rid:
                 continue
             path = rid[len("script:"):]
+        path = _MOVED.get(path, path)          # a write before the reorg authors the tool where it lives now
         events.setdefault(path, []).append((agent, tool))
 
     want = ids if ids is not None else None
