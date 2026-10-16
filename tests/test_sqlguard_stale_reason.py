@@ -33,12 +33,18 @@ except Exception as e:
     sys.exit(77)
 os.environ["ASTRYX_SQLGUARD_ROOT"] = str(FIX)              # set before enforce imports inventory.REPO
 esrc = os.environ.get("ENFORCE_SRC")
-if esrc:
-    spec = importlib.util.spec_from_file_location("enforce_under_test", esrc)
-    enf = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(enf)
-else:
-    from astryx.security.sqlguard import enforce as enf
+try:
+    if esrc:
+        spec = importlib.util.spec_from_file_location("enforce_under_test", esrc)
+        enf = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(enf)
+    else:
+        from astryx.security.sqlguard import enforce as enf
+except ModuleNotFoundError as e:   # pushed_tree_check runs PY=python3, which has no psycopg (seed #56893)
+    if (e.name or "").startswith("astryx"):
+        raise                      # our own module missing is a defect, never a skip
+    print(f"SKIP: enforce needs {e.name}, which this interpreter lacks (use venv/bin/python); nothing here is evidence")
+    sys.exit(77)
 
 fails = []
 
