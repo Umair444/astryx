@@ -437,6 +437,7 @@ run "hands cell: per-lease egress, wipe on kill, step + wall caps" "$PY" tests/t
 # agent's own REAL desktop on this machine (headless sway + its own seat via wayvnc), watched, joined and
 # stopped from the observatory. Two tools, text replies, a 960x600 view: the token budget is pinned.
 run "hands desktop: real clicks/typing land, owner stop refuses, two small tools" "$PY" tests/test_hands_desktop.py
+run "hands portal: a desk file chooser opens on the desk, never on the owner screen (seed 57131)" "$PY" tests/test_hands_portal.py
 # The phone (plan-8675): the facade's census/allowlist/telemetry, the surface stamp, step.py's phone strip and the HELD
 # leases, with no device (77 where the pinned upstream isn't installed). tests/test_android_device.py drives a REAL
 # phone end to end; it boots a ~3 GB emulator for minutes, so it verifies only when asked (ANDROID_DEVICE_TEST=1)
