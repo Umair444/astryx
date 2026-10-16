@@ -893,6 +893,9 @@ run "canvas preview: real shell, read-only" "$PY" tests/test_canvas_preview.py
 run "observatory: agents as people"     "$PY" tests/test_observatory_people.py
 # Mutants: tests/mutants_observatory_late_replies.py.
 run "observatory: a late desk reply is served once, never stranded" "$PY" tests/test_observatory_late_replies.py
+# Opening a thread's pane marks the agent→owner replies on it read; the feed showing them never does.
+# Mutants: tests/mutants_observatory_thread_read.py.
+run "observatory: an opened thread pane marks its replies read" "$PY" tests/test_observatory_thread_read.py
 # devtools/sqlsite.sh: one oracle's sqlguard view (rungs + why; --ledger: what enforce would say), advisory, writes
 # nothing. Mutants: tests/mutants_sqlsite.py.
 run "sqlsite: one oracle's sqlguard view, and the ledger diff, write nothing" "$PY" tests/test_sqlsite.py

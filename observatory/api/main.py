@@ -3083,6 +3083,31 @@ async def memory_late_replies(prefix: str, request: Request = None):
     return {"replies": out}
 
 
+class ThreadRead(BaseModel):
+    thread: str
+    upto: int
+
+
+@app.post("/api/thread/read")
+async def thread_read(r: ThreadRead, request: Request):
+    """The owner OPENED this thread's pane: the agent→owner replies it shows are read (seed #57412, steward
+    #57407). The Composer's threads have no bridge to deliver them (WhatsApp refuses thread 'owner'), so
+    without this mark they sat pending and outbound_stuck called them stranded. The feed merely SHOWING a row
+    never marks it: only this explicit act on one thread does, like the desks. Scoped by thread, not sender;
+    to the LOCAL owner only (an owner@peer row is the gateway's); only rows up to the newest one the pane has
+    rendered (upto), so a reply that lands between render and this call is not marked unseen."""
+    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+        return Response(status_code=403)
+    if not r.thread.strip():
+        return Response(status_code=400)
+    rows = await pool.fetch(
+        "UPDATE messages SET status='delivered', delivered_at=now(), "
+        "delivery=jsonb_build_object('ok', true, 'handle', 'observatory:thread') "
+        "WHERE thread=$1 AND id <= $2 AND to_agent='owner' AND to_org='local' AND from_agent<>'owner' "
+        "AND status='pending' RETURNING id", r.thread, r.upto)
+    return {"marked": sorted(x["id"] for x in rows)}
+
+
 class MemoryProposal(BaseModel):
     # deleted with the memory chat rework (0c3c450, 08-14) while this route kept it; on Python 3.14 annotations are
     # lazy, so the live observatory never noticed, but on 3.12 (CI, many installs) main.py failed to import at all
