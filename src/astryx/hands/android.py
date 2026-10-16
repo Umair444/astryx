@@ -102,7 +102,7 @@ def _db():
     dsn = os.environ.get("ANDROID_DSN") or _env_file().get("ASTRYX_DSN")
     if not dsn:
         raise AndroidError("no database: ASTRYX_DSN is not set")
-    return psycopg.connect(dsn, autocommit=True)
+    return psycopg.connect(dsn, autocommit=True, connect_timeout=3)
 
 
 # ---- which VM is resident ------------------------------------------------------------------------------------
