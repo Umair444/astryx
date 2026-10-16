@@ -61,6 +61,15 @@ MUTANTS = {
     "B6 the nodes rider is dropped for delegation":
         ('            if not (is_node(t["from_agent"], t["from_org"], roster) and is_node(t["to_agent"], t["to_org"], '
          'roster)):', "            if False:"),
+    # R-1 delegation coverage
+    "C3 a task answered only outside the grammar reads measured (unanswered = judged)":
+        ("        if later and not any(is_outcome(x) for x in later):", "        if False:"),
+    # R-2
+    "L2 the loop discount is kind-gated again (delegation only)":
+        ("hit = any(", 'hit = e["kind"] == "delegation" and any('),
+    # compute's refusals
+    "G1 compute writes over a 1-name roster": ("    if len(roster) < 2:", "    if False:"),
+    "G2 compute replaces a non-empty cache with nothing": ("    if cache_nonempty and not edges:", "    if False:"),
     # coverage
     "C1 the coverage gate is removed":
         ("if k in HARD_UNMEASURED or coverages.get(k, 0.0) < COVERAGE_FLOOR:", "if k in HARD_UNMEASURED:"),

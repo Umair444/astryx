@@ -256,8 +256,12 @@ def delegation(G):
     check("delegation direction drives the ranking: the recipient outranks the asker", sc[A3] > sc[A4], str(sc))
     check("BC-D (iii): the ambiguous domain lists (t1, abstractor-2) with both askers",
           (("t1", A2), [A1, A3]) in lg["ambiguous"], str(lg["ambiguous"]))
-    check("delegation coverage: tasks judged / tasks (pulse, owner, self and an unanswered mismatch are unmeasured)",
-          lg["domain"] == 13 and lg["measured"] == 9, f"{lg['measured']}/{lg['domain']}")
+    check("R-1: a task answered ONLY outside the outcome grammar (a chat to the asker) is UNMEASURED, not a measured "
+          "zero", 271 not in got and lg["unmeasured"].get("answered outside the outcome grammar") == 2,
+          str(dict(lg["unmeasured"])))
+    check("R-1: a task with no reply at all is measured (a judged silence), counted in the 8 of 13",
+          202 not in got and lg["domain"] == 13 and lg["measured"] == 8, f"{lg['measured']}/{lg['domain']}")
+    check("R-1: the yield is edges / tasks (5 of 13)", abs(lg["yield"] - 5 / 13) < 1e-12, str(lg.get("yield")))
     try:
         G.delegation_edges([{**rows[0], "delivery": {}}], ROSTER)
         check("BC-R: a task row carrying a column the read tools don't return is refused", False)
@@ -381,6 +385,17 @@ def loop_and_tool(G):
     check("loop discount: a later tokenless task from the asker to a returned agent within W is routed (dropped)",
           routed == 1 and edges[0] not in kept, f"routed={routed}")
     check("loop discount: after W, from another asker, or to an unreturned agent → kept", len(kept) == 3)
+    pl = {**de(A1, A3, T0 + timedelta(hours=2)), "kind": "pass_land"}
+    kept, routed = G.loop_discount([pl], [q], 72 * 3600)
+    check("R-2 loop discount: the author asks, the tool returns X, a PASS by X lands within W → discounted",
+          routed == 1 and kept == [], f"routed={routed}")
+    check("compute guard: a roster of < 2 names is refused, named",
+          "roster has 1 name(s)" in (G.refuse_compute(["seed"], False, []) or "")
+          and G.refuse_compute(["seed", A1], False, []) is None)
+    check("compute guard: an empty edge set over a non-empty cache is refused, named; over an empty cache it is not",
+          "non-empty edge cache" in (G.refuse_compute(sorted(ROSTER), True, []) or "")
+          and G.refuse_compute(sorted(ROSTER), False, []) is None
+          and G.refuse_compute(sorted(ROSTER), True, [{"kind": "delegation"}]) is None)
     e = lambda s, d: {"kind": "delegation", "src": s, "dst": d, "ts": T0, "ask_ts": T0, "ref": "", "topic": "plan-9",
                       "authority": []}
     g = [e(A1, A2), e(A1, A3), e(A2, A1), e(A3, A4)]
@@ -460,6 +475,17 @@ def db_arm(tmp_repo):
         check("DB: the GLOBAL view's values are stored per agent", nv == len(R), str(nv))
         check("DB: compute's report names the coverage of each kind",
               any(ln.startswith("  delegation: coverage 100.0% of 1") for ln in lines), "\n".join(lines))
+        snap = lambda: (c.execute("SELECT count(*) FROM influence_edge").fetchone()[0],
+                        c.execute("SELECT count(*) FROM influence_value").fetchone()[0])
+        before = snap()
+        refused = []
+        for kw in ({"roster": ["seed"], "now": now}, {"roster": R, "now": now - timedelta(days=400)}):
+            try:
+                shell.compute(c, 14, tmp_repo, "main", **kw)
+            except shell.Refused as e:
+                refused.append(str(e))
+        check("DB: compute REFUSES a 1-name roster and an empty edge set over a non-empty cache, writing nothing",
+              len(refused) == 2 and snap() == before, f"{refused} {before} -> {snap()}")
         out = shell.ask(c, A1, now=now, roster=R)
         log = c.execute("SELECT asker, returned, view, liveness FROM influence_query ORDER BY id DESC LIMIT 1"
                         ).fetchone()

@@ -38,6 +38,7 @@ LIVE_SQL = "SELECT agent, max(ts) FROM steps WHERE ts >= %s GROUP BY agent"
 QLOG_THERE = "SELECT to_regclass('influence_query')"
 QLOG_SQL = "SELECT asker, returned, ts FROM influence_query WHERE ts >= %s"
 QLOG_ADD = "INSERT INTO influence_query (asker, returned, view, liveness) VALUES (%s, %s, %s, %s)"
+CACHE_ANY = "SELECT 1 FROM influence_edge WHERE scope = %s LIMIT 1"
 CACHE_SQL = "SELECT kind, src, dst, ts, ask_ts, ref, topic, coverage FROM influence_edge WHERE scope = %s"
 CACHE_DROP = "DELETE FROM influence_edge WHERE scope = %s"
 CACHE_ADD = ("INSERT INTO influence_edge (scope, kind, src, dst, ts, ask_ts, ref, topic, coverage, computed_at) "
@@ -129,10 +130,11 @@ def derive(conn, since, until, repo=REPO, ref="main", roster=None, queries_since
     ledgers = {"pass_land": graph.pass_land_edges(merges, parents, by_id, roster, address.suggest),
                "delegation": graph.delegation_edges(in_window, roster)}
     queries = read_queries(conn, queries_since or since - timedelta(hours=LOOP_W_H))
-    kept, routed = graph.loop_discount(ledgers["delegation"]["edges"], queries, LOOP_W_H * 3600)
-    ledgers["delegation"]["edges"] = kept
-    if routed:
-        ledgers["delegation"]["unmeasured"]["routed by the tool (loop discount)"] += routed
+    for k in ("pass_land", "delegation"):
+        kept, routed = graph.loop_discount(ledgers[k]["edges"], queries, LOOP_W_H * 3600)
+        ledgers[k]["edges"] = kept
+        if routed:
+            ledgers[k]["unmeasured"]["routed by the tool (loop discount)"] += routed
     calls, tcov = read_tool_calls(conn, since, until)
     ledgers["tool_call"] = graph.tool_edges(calls, roster, tcov)
     return ledgers, in_window, calls, roster
@@ -148,12 +150,20 @@ def globals_of(ledgers, in_window, calls, roster, now):
 
 
 # ── the verbs ─────────────────────────────────────────────────────────────────────────────────────────────────────
+class Refused(Exception):
+    """compute() wrote nothing, for the named reason (graph.refuse_compute)."""
+
+
 def compute(conn, days=DAYS, repo=REPO, ref="main", now=None, roster=None):
-    """The nightly job: replace the scope's edge cache, append the GLOBAL view's values. Returns the report lines."""
+    """The nightly job: replace the scope's edge cache, append the GLOBAL view's values. Returns the report lines.
+    REFUSES (raises Refused, writes nothing) on a roster of < 2 names or an empty edge set over a non-empty cache."""
     now = now or datetime.now(timezone.utc)
     ledgers, in_window, calls, roster = derive(conn, now - timedelta(days=days), now, repo, ref, roster)
     values, unmapped, w, edges = globals_of(ledgers, in_window, calls, roster, now)
     cov = {k: graph.coverage_of(lg) for k, lg in ledgers.items()}
+    why = graph.refuse_compute(roster, conn.execute(CACHE_ANY, (SCOPE,)).fetchone() is not None, edges)
+    if why:
+        raise Refused(why)
     with conn.transaction():
         conn.execute(CACHE_DROP, (SCOPE,))
         with conn.cursor() as cur:
@@ -175,7 +185,8 @@ def proxy_liveness(conn, now, w_h=LIVE_W_H):
 def ask(conn, asker, topic=None, k=5, now=None, roster=None, liveness=None):
     """WHO SHOULD I ASK: the routing view over the edge cache at QUERY time, never the asker, liveness-filtered (the
     proxy unless one is injected), neighbours beside each. Appends (asker, returned, t, view) to the query log in the
-    SAME call: the loop discount's one writer. Advisory."""
+    SAME call: the loop discount's one writer. Advisory. Liveness defaults to the shell's PROXY here (graph's own
+    default is none); the reply's `liveness:` line names whichever ran."""
     now = now or datetime.now(timezone.utc)
     roster = sorted(roster if roster is not None else charter.roster())
     edges = read_cache(conn)
@@ -241,7 +252,11 @@ def main(argv=None):
             print(f"    {th} -> {rc}: {', '.join(askers)}")
     elif a.verb == "compute":
         with connect(a.dsn, readonly=False) as conn:
-            print("\n".join(compute(conn, a.days, a.repo, a.ref, roster=roster)))
+            try:
+                print("\n".join(compute(conn, a.days, a.repo, a.ref, roster=roster)))
+            except Refused as e:
+                print(f"compute REFUSED, nothing written: {e}", file=sys.stderr)
+                return 2
     elif a.verb == "ask":
         if not a.asker:
             p.error("ask needs <asker>")

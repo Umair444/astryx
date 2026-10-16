@@ -274,7 +274,7 @@ def delegation_edges(rows, roster):
     rows = sorted(check_rows(rows), key=lambda r: r["id"])
     open_by = defaultdict(list)
     edges, unmeasured, tasks = [], Counter(), []
-    bad_tasks, mismatched, answered = set(), set(), set()
+    bad_tasks, answered = set(), set()
     for r in rows:
         if r["intent"] == TASK_INTENT:
             tasks.append(r)
@@ -294,7 +294,6 @@ def delegation_edges(rows, roster):
         if not mine:
             if cands:
                 unmeasured["(i) outcome to_agent is not the open task's asker"] += 1
-                mismatched.update(t["id"] for t in cands)
             continue
         for t in mine[-1:]:                              # (ii): the NEAREST one, and only it
             open_by[(r["thread"], r["from_agent"])].remove(t)
@@ -310,23 +309,40 @@ def delegation_edges(rows, roster):
             edges.append({"kind": "delegation", "src": t["from_agent"], "dst": t["to_agent"], "ts": r["ts"],
                           "ask_ts": t["ts"], "ref": f"msg:{t['id']}>{r['id']} ({r['intent']})", "topic": t["thread"],
                           "authority": [t["id"], r["id"]], "task_id": t["id"]})
-    unmeasured_tasks = bad_tasks | (mismatched - answered)
+    # R-1 (a3's REVISE): a task is MEASURED iff it has an outcome edge, or the rule judged it: its recipient sent the
+    # asker nothing after it on the thread (a judged silence), or only outcome-grammar rows that answered another
+    # task. A task the recipient answered ONLY outside the grammar (a chat, a verdict-less review) is UNMEASURED.
+    replies = defaultdict(list)
+    for r in rows:
+        if r["thread"] and not is_pulse(r) and r["intent"] != TASK_INTENT:
+            replies[(r["thread"], r["from_agent"], r["to_agent"])].append(r)
+    outside = set()
+    for t in tasks:
+        if t["id"] in answered or t["id"] in bad_tasks or not t["thread"]:
+            continue
+        later = [x for x in replies.get((t["thread"], t["to_agent"], t["from_agent"]), []) if x["id"] > t["id"]]
+        if later and not any(is_outcome(x) for x in later):
+            outside.add(t["id"])
+            unmeasured["answered outside the outcome grammar"] += 1
+    unmeasured_tasks = bad_tasks | outside
     askers = defaultdict(set)
     for t in tasks:
         if t["thread"]:
             askers[(t["thread"], t["to_agent"])].add(t["from_agent"])
     ambiguous = sorted((k, sorted(v)) for k, v in askers.items() if len(v) >= 2)
     return {"edges": edges, "unmeasured": unmeasured, "domain": len(tasks),
-            "measured": len(tasks) - len(unmeasured_tasks), "ambiguous": ambiguous}
+            "measured": len(tasks) - len(unmeasured_tasks), "ambiguous": ambiguous,
+            "yield": len(edges) / len(tasks) if tasks else 0.0}
 
 
 def loop_discount(edges, queries, window_s):
-    """THE LOOP DISCOUNT (one writer: the tool's own query log). A delegation edge whose task went from an asker to
-    an agent the tool RETURNED to that asker, within window_s after the query, is ROUTED: the graph would be crediting
-    its own advice. No token is needed from the sender. Returns (kept edges, routed count)."""
+    """THE LOOP DISCOUNT (one writer: the tool's own query log). ANY edge whose ask went from an asker (src) to an
+    agent the tool RETURNED to that asker (dst), within window_s after the query, is ROUTED: the graph would be
+    crediting its own advice. That covers a delegation (ask_ts = the task) and a landed review (ask_ts = the PASS
+    row, src = the author who asked). No token is needed from the sender. Returns (kept edges, routed count)."""
     kept, routed = [], 0
     for e in edges:
-        hit = e["kind"] == "delegation" and any(
+        hit = any(
             q["asker"] == e["src"] and e["dst"] in q["returned"]
             and 0 <= (e["ask_ts"] - q["ts"]).total_seconds() <= window_s for q in queries)
         if hit:
@@ -499,7 +515,8 @@ NO_LIVENESS = ("none", lambda a: True)
 def who_should_i_ask(asker, edges, coverages, nodes, now, k=5, liveness=NO_LIVENESS, topic=None):
     """THE TOOL's logic (advisory). Routing view at QUERY time over the edge cache, teleport on the asker (plus the
     agents linked to `topic`: ends of edges whose thread contains it). `liveness` is an INJECTED (name, predicate);
-    the default is no filter, and the reply prints which filter ran. Returns {returned, lines}."""
+    the default HERE is no filter (`liveness: none`); the shell's ask() injects its steps proxy instead, and the
+    reply's `liveness:` line always names the filter that actually ran. Returns {returned, lines}."""
     w = kind_weights(coverages)
     tagents = sorted({x for e in edges if topic and topic.lower() in (e.get("topic") or "").lower()
                       for x in (e["src"], e["dst"])}) if topic else []
@@ -520,6 +537,17 @@ def who_should_i_ask(asker, edges, coverages, nodes, now, k=5, liveness=NO_LIVEN
     return {"returned": [t["agent"] for t in top], "lines": lines, "view": v["name"]}
 
 
+def refuse_compute(roster, cache_nonempty, edges):
+    """Why compute must NOT write, or None. A roster of < 2 names is a broken agents/ tree (a worktree, a moved
+    tree), not an org with no influence; replacing a non-empty cache with NO edges is a lost authority (git or the
+    wire unreadable), never a measured empty graph."""
+    if len(roster) < 2:
+        return f"roster has {len(roster)} name(s): the agents/ tree is not the org's"
+    if cache_nonempty and not edges:
+        return "would replace a non-empty edge cache with an empty edge set"
+    return None
+
+
 # ── the report ─────────────────────────────────────────────────────────────────────────────────────────────────────
 def report(ledgers, values, agent_unmapped):
     """Lines: per kind its coverage, weight or UNMEASURED (with reasons); per agent its score beside its unmapped
@@ -533,7 +561,8 @@ def report(ledgers, values, agent_unmapped):
             continue
         lg = ledgers.get(k) or {"domain": 0, "measured": 0, "unmeasured": Counter()}
         state = f"weight {w[k]:g}" if w[k] > 0 else f"UNMEASURED (coverage under {COVERAGE_FLOOR:.0%}: weight 0)"
-        lines.append(f"  {k}: coverage {cov.get(k, 0.0):.1%} of {lg['domain']}; edges {len(lg.get('edges', []))};"
+        yl = f" (yield {lg['yield']:.1%})" if "yield" in lg else ""
+        lines.append(f"  {k}: coverage {cov.get(k, 0.0):.1%} of {lg['domain']}; edges {len(lg.get('edges', []))}{yl};"
                      f" {state}")
         for why, n in lg["unmeasured"].most_common():
             lines.append(f"      {n:4d}  UNMEASURED: {why}")
