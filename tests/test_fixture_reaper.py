@@ -14,6 +14,13 @@ collected by the next fixture_db() entry, and nothing a LIVE run owns is ever dr
      stamped with the child's pid → the next fixture_db() entry drops it. A database stamped with a LIVE pid, and
      an unstamped database, are both kept. Only PREFIX names are ever considered. Every live arm runs under a
      PRIVATE prefix, so neither the reaper nor any mutant of it can touch another run's database.
+  B. the LIFETIME seam (plan-11253 S3, a4 #57171; one seam with 11254 #57439 §1): an unknown lifetime, or "batch"
+     without a Batch, refuses before any connect. The DEFAULT ("immediate") is GONE at block exit. A "batch" member
+     SURVIVES its block exit, prefix-named and owner-stamped (so reap() keeps it while we live: the backstop), and
+     Batch.close() drops every member CONCURRENTLY (distinct backend pids AND overlapping drop intervals). BC-6 (a3
+     #57352): a member already gone (dropped by an arm, never made, or whose drop ERRORED after it vanished) counts
+     as dropped. A member that STILL EXISTS and fails (a stubbed ObjectInUse, a real template database) is raised BY
+     NAME, every one, once, after the others were dropped.
   Mutants: tests/mutants_fixture_reaper.py (mutation_probe, via SQLGUARD_FIXTURE_SRC).
 Exit 0 pass · 1 fail · 77 no reachable server (nothing verified).
 """
@@ -140,6 +147,18 @@ got = fxm.reap(r)
 check("D6 ...while any other refusal still KEEPS it, named", [g[1] for g in got] == ["keep"]
       and "drop refused (ObjectInUse)" in got[0][2], str(got))
 
+print("\nB. the lifetime seam (pure: refused before any connect):")
+for kw, why in (({"lifetime": "retire"}, "an unknown lifetime (\"retire\" is plan-11254's)"),
+                ({"lifetime": "batch"}, '"batch" with no Batch to drop it')):
+    try:
+        with fxm.fixture_db(**kw):
+            got = "entered"
+    except ValueError:
+        got = "refused"
+    except Exception as e:  # noqa: BLE001
+        got = f"{type(e).__name__}"
+    check(f"fixture_db refuses {why} with ValueError, before creating anything", got == "refused", got)
+
 print("\nL. live:")
 try:
     import psycopg
@@ -176,6 +195,7 @@ try:
     admin.execute(f"COMMENT ON DATABASE \"{live_name}\" IS '{stamp(L)}'")
 
     with fxm.fixture_db() as fx:                     # the entry under test: it reaps before it creates
+        made.append(fx["dbname"])
         names = {r[0] for r in admin.execute("SELECT datname FROM pg_database").fetchall()}
         check("the next fixture_db() entry DROPPED the killed holder's database", killed not in names, killed)
         check("a database stamped with a LIVE pid is kept", live_name in names)
@@ -183,12 +203,111 @@ try:
         check("the entry's own new database is stamped with this pid",
               fxm._parse_stamp(admin.execute("SELECT shobj_description(oid, 'pg_database') FROM pg_database "
                                              "WHERE datname=%s", (fx["dbname"],)).fetchone()[0])["pid"] == L)
+    exists = lambda n: admin.execute("SELECT 1 FROM pg_database WHERE datname=%s", (n,)).fetchone() is not None  # noqa: E731
+    check("B. the DEFAULT lifetime (\"immediate\") is GONE at block exit (every non-opted caller is unchanged; CONTROL: "
+          "it existed inside the block)", fx["dbname"] in names and not exists(fx["dbname"]), fx["dbname"])
     rep = fxm.reap(admin)
     check("reap() only ever considers its PREFIX's names (here the oracle's private one)",
           all(n.startswith(fxm.PREFIX) for n, _, _ in rep), str(rep))
     check("reap() reports why it kept each one", all(why for _, _, why in rep), str(rep))
+
+    # ── B. THE BATCH (plan-11253 S3). Most members are raw CREATEs enrolled by name (cheap); ONE is a real
+    # fixture_db(lifetime="batch") so the deferral is proven on the applier's own path.
+    def raw(template=False):
+        n = fxm.fresh_name()
+        made.append(n)
+        admin.execute(f'CREATE DATABASE "{n}" ALLOW_CONNECTIONS false' + (" IS_TEMPLATE true" if template else ""))
+        return n
+
+    real_drop = fxm._drop
+    B = fxm.Batch()
+    with B.fixture() as bx:
+        made.append(bx["dbname"])
+    member = bx["dbname"]
+    row = admin.execute("SELECT shobj_description(oid, 'pg_database') FROM pg_database WHERE datname=%s",
+                        (member,)).fetchone()
+    check("B. a \"batch\" member SURVIVES its block exit, enrolled in its Batch", row is not None and member in B.members,
+          f"{member} row={row is not None} members={B.members}")
+    check("...prefix-named and owner-stamped with this pid exactly as today, so reap() KEEPS it while we live (the "
+          "backstop for a process killed before its close)",
+          member.startswith(fxm.PREFIX) and row is not None and (fxm._parse_stamp(row[0]) or {}).get("pid") == L
+          and dict((n, a) for n, a, _ in fxm.reap(admin)).get(member) == "keep", str(row))
+    live_members = [member, B.enroll(raw()), B.enroll(raw())]
+    by_arm = B.enroll(raw())
+    admin.execute(f'DROP DATABASE "{by_arm}"')       # an ARM dropped it before the close
+    never = B.enroll(fxm.fresh_name())               # a stale sweep took it (never present at the close)
+
+    def stub(a, n):                                  # the gone member's drop ERRORS (a plain DROP, a race): BC-6
+        if n == by_arm:
+            raise psycopg.errors.InvalidCatalogName(f'database "{n}" does not exist')
+        return real_drop(a, n)
+    fxm._drop = stub
+    t0, err = time.monotonic(), None
+    try:
+        rep = B.close()
+    except fxm.BatchDropError as e:
+        rep, err = B.report, e
+    finally:
+        fxm._drop = real_drop
+    wall = time.monotonic() - t0
+    check("B. BC-6: members already GONE (dropped by an arm, its drop erroring; never present) count as DROPPED: the "
+          "close raises nothing", err is None, str(err))
+    check("B. after the close NONE of its members remain in pg_database",
+          not any(exists(n) for n in B.members), str([n for n in B.members if exists(n)]))
+    live = [r for r in rep if r["name"] in live_members and r["start"] is not None and r["end"] is not None]
+    pids = {r["pid"] for r in live}
+    overlap = any(a["start"] < b["end"] and b["start"] < a["end"] for a in live for b in live if a is not b)
+    check(f"B. the close drops CONCURRENTLY: {len(live_members)} live members on {len(live_members)} distinct backend "
+          "pids, with overlapping drop intervals (one session, or one at a time, is serial: a3 #57352)",
+          len(live) == len(live_members) and len(pids) == len(live_members) and overlap,
+          f"timed={len(live)} pids={len(pids)} overlap={overlap}")
+    print(f"        (close: {len(B.members)} members in {wall:.2f}s wall; the {len(live)} live drops sum to "
+          f"{sum(r['end'] - r['start'] for r in live):.2f}s)")
+    try:
+        B.enroll(fxm.fresh_name())
+        late = "accepted"
+    except RuntimeError:
+        late = "refused"
+    mine = lambda: {r[0] for r in admin.execute("SELECT datname FROM pg_database WHERE starts_with(datname, %s)",  # noqa: E731
+                                                 (fxm.PREFIX,)).fetchall()}
+    before = mine()
+    try:
+        with B.fixture():
+            late2 = "entered"
+    except RuntimeError:
+        late2 = "refused"
+    check("B. a closed batch refuses a new member, by enroll() and at fixture_db entry, BEFORE any CREATE (it would "
+          "never be dropped)", late == "refused" and late2 == "refused" and mine() <= before,
+          f"{late} {late2} new={sorted(mine() - before)}")
+
+    # FAILURE BY NAME: one member that can't be dropped (stubbed: a session FORCE can't evict), one real refusal (a
+    # TEMPLATE database), one droppable. All are attempted; both failures are raised ONCE, each named.
+    F = fxm.Batch()
+    ok1, stuck, tpl = F.enroll(raw()), F.enroll(raw()), F.enroll(raw(template=True))
+
+    def stub2(a, n):
+        if n == stuck:
+            raise psycopg.errors.ObjectInUse(f'database "{n}" is being accessed by other users')
+        return real_drop(a, n)
+    fxm._drop = stub2
+    try:
+        F.close()
+        err = None
+    except fxm.BatchDropError as e:
+        err = e
+    finally:
+        fxm._drop = real_drop
+    check("B. members that STILL EXIST and fail to drop are raised BY NAME, every one, once (never swallowed)",
+          err is not None and set(err.failed) == {stuck, tpl} and stuck in str(err) and tpl in str(err),
+          str(err))
+    check("...after the droppable member WAS dropped (collect all, then raise)", not exists(ok1) and exists(stuck)
+          and exists(tpl), f"ok1={exists(ok1)} stuck={exists(stuck)} tpl={exists(tpl)}")
 finally:
     for n in made:
+        try:
+            admin.execute(f'ALTER DATABASE "{n}" IS_TEMPLATE false')   # the batch arm's template (no-op otherwise)
+        except Exception:  # noqa: BLE001
+            pass
         try:
             admin.execute(f'DROP DATABASE IF EXISTS "{n}" WITH (FORCE)')
         except Exception:  # noqa: BLE001

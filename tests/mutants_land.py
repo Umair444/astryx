@@ -35,4 +35,12 @@ MUTANTS = {
         ('[ -z "$stray" ] || refuse', 'true || refuse'),
     "N13 any non-empty body prefix is accepted (a 1-hex prefix passes 1 body in 16: steward #56607)":
         ('[[ "$want" =~ ^[0-9a-f]{12,64}$ ]] || die', 'true || die'),
+    "N14 a refused push's gate lines are not printed (only tail -2: 10-16)":
+        ("printf '%s\\n' \"$pout\" | grep -E '^FAILED", "true || printf '%s\\n' \"$pout\" | grep -E '^FAILED"),
+    "N15 a --test already in the range runs twice":
+        ('*" $t "*) ;; *) TESTS+=("$t");;', '*) TESTS+=("$t");;'),
+    "N16 the gate lines keep the FIRST 12 (head), so decoy ✗ arms push the real verdict out (a4 #57476)":
+        ("✗' | tail -12 |", "✗' | head -12 |"),
+    "N17 a --test isn't normalised (./tests/x.py runs twice)":
+        ('  t=$(realpath -m --relative-to=. "$t")', '  :'),
 }

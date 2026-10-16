@@ -437,6 +437,7 @@ run "hands cell: per-lease egress, wipe on kill, step + wall caps" "$PY" tests/t
 # agent's own REAL desktop on this machine (headless sway + its own seat via wayvnc), watched, joined and
 # stopped from the observatory. Two tools, text replies, a 960x600 view: the token budget is pinned.
 run "hands desktop: real clicks/typing land, owner stop refuses, two small tools" "$PY" tests/test_hands_desktop.py
+run "hands portal: a desk file chooser opens on the desk, never on the owner screen (seed 57131)" "$PY" tests/test_hands_portal.py
 # The phone (plan-8675): the facade's census/allowlist/telemetry, the surface stamp, step.py's phone strip and the HELD
 # leases, with no device (77 where the pinned upstream isn't installed). tests/test_android_device.py drives a REAL
 # phone end to end; it boots a ~3 GB emulator for minutes, so it verifies only when asked (ANDROID_DEVICE_TEST=1)
@@ -801,6 +802,7 @@ run "spawn-pinned deployment drift"   "$PY" tests/test_spawn_drift.py
 # mtime to now() and would blind an mtime-based guard (false-staleness). RED-first: the oracle
 # recomputes the OLD mtime age for the restore case, so a regression back to mtime fails it.
 run "owner_queue_age content-first-seen age" "$PY" tests/test_owner_queue_age.py
+run "stopped Hands desk, nobody watching"  "$PY" tests/test_desk_stopped.py
 # market_decay O3 (goal 4227 S1b, owner law 2026-09-29: no trigger killing): market_decay was the
 # org's sole economic actuator; its retire verb is now GONE BY CONSTRUCTION and it reports rent.
 # Two arms: _decide over the full input grid never yields 'retire', and the body's executable
@@ -897,6 +899,9 @@ run "canvas preview: real shell, read-only" "$PY" tests/test_canvas_preview.py
 run "observatory: agents as people"     "$PY" tests/test_observatory_people.py
 # Mutants: tests/mutants_observatory_late_replies.py.
 run "observatory: a late desk reply is served once, never stranded" "$PY" tests/test_observatory_late_replies.py
+# Opening a thread's pane marks the agent→owner replies on it read; the feed showing them never does.
+# Mutants: tests/mutants_observatory_thread_read.py, tests/mutants_owner_surfaces.py (a bridge's threads are never marked).
+run "observatory: an opened thread pane marks its replies read" "$PY" tests/test_observatory_thread_read.py
 # devtools/sqlsite.sh: one oracle's sqlguard view (rungs + why; --ledger: what enforce would say), advisory, writes
 # nothing. Mutants: tests/mutants_sqlsite.py.
 run "sqlsite: one oracle's sqlguard view, and the ledger diff, write nothing" "$PY" tests/test_sqlsite.py

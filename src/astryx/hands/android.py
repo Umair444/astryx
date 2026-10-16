@@ -102,7 +102,7 @@ def _db():
     dsn = os.environ.get("ANDROID_DSN") or _env_file().get("ASTRYX_DSN")
     if not dsn:
         raise AndroidError("no database: ASTRYX_DSN is not set")
-    return psycopg.connect(dsn, autocommit=True)
+    return psycopg.connect(dsn, autocommit=True, connect_timeout=3)
 
 
 # ---- which VM is resident ------------------------------------------------------------------------------------
@@ -325,6 +325,12 @@ def drive(avd: str, agent: str) -> None:
             raise AndroidError(f"{avd} is being driven by {row['holder'] if row else '?'}; one agent drives a "
                                f"phone at a time (its hold lapses {DRIVE_TTL_S // 60} minutes after its last action)")
         L.hold(c, VM_SLOT, f"android:{avd}", SLOT_TTL_S)
+
+
+def driver(avd: str) -> str | None:
+    """The agent holding 'android:<avd>' NOW, else None: a free row, or a hold past its expiry, has no driver."""
+    with _db() as c:
+        return L.live_holder(c, f"android:{avd}")
 
 
 def release(avd: str, agent: str) -> None:

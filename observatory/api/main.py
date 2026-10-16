@@ -43,6 +43,7 @@ DIST = ROOT / "web" / "dist"
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 from astryx.core import charter as _charter  # noqa: E402 — the one roster rule
+from bridges.owner_surfaces import OWNER_ROW_BRIDGED_SQL  # noqa: E402 — the rows a bridge delivers, not the pane
 
 def _dsn() -> str:
     if os.environ.get("ASTRYX_DSN"):
@@ -3081,6 +3082,33 @@ async def memory_late_replies(prefix: str, request: Request = None):
         out.append({"id": x["id"], "from": x["from_agent"], "thread": x["thread"], "question": ((q and q["body"]) or "")[:600],
                     "body": x["body"], "ts": x["ts"].isoformat()})
     return {"replies": out}
+
+
+class ThreadRead(BaseModel):
+    thread: str
+    upto: int
+
+
+@app.post("/api/thread/read")
+async def thread_read(r: ThreadRead, request: Request):
+    """The owner OPENED this thread's pane: the agent→owner replies it shows are read (seed #57412, steward
+    #57407). A named thread like 'owner' has no bridge to deliver them (WhatsApp skips it), so without this
+    mark they sat pending and outbound_stuck called them stranded. The feed merely SHOWING a row never marks
+    it: only this explicit act on one thread does, like the desks. Scoped by thread, not sender; to the LOCAL
+    owner only (an owner@peer row is the gateway's); only rows up to the newest one the pane has rendered
+    (upto), so a reply that lands between render and this call is not marked unseen. NEVER a row a bridge
+    delivers (t-, wa:, threadless, tg:, dc:, cv:, tier releases, ear-; bridges/owner_surfaces.py, a4 #57418):
+    marking it here would stop the bridge from ever sending it to his phone."""
+    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+        return Response(status_code=403)
+    if not r.thread.strip():
+        return Response(status_code=400)
+    rows = await pool.fetch(
+        "UPDATE messages SET status='delivered', delivered_at=now(), "
+        "delivery=jsonb_build_object('ok', true, 'handle', 'observatory:thread') "
+        "WHERE thread=$1 AND id <= $2 AND to_agent='owner' AND to_org='local' AND from_agent<>'owner' "
+        f"AND status='pending' AND NOT {OWNER_ROW_BRIDGED_SQL} RETURNING id", r.thread, r.upto)
+    return {"marked": sorted(x["id"] for x in rows)}
 
 
 class MemoryProposal(BaseModel):

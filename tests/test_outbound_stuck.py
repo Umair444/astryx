@@ -525,14 +525,43 @@ def test_every_un_threaded_remedy_says_the_doorbell_is_a_group():
     bridge) must say what content it fits, at EVERY occurrence, through the real entrypoint."""
     import re
     out = _entry(_entry_rows((904, "refused", {}), (905, "pending", {"sheet_delivered": True}),
-                             (906, "pending", {"desk_served": True}), (907, "pending", {})))
+                             (906, "pending", {"desk_served": True}), (907, "pending", {}),
+                             (908, "pending", {"pane_served": True})))
     for cls in ("REFUSED BY THE DOOR", "UNSEEN ON THE EAR SHEET", "UNSERVED ON AN OBSERVATORY DESK",
-                "BRIDGE-DELIVERED RECIPIENT"):
+                "BRIDGE-DELIVERED RECIPIENT", "UNREAD IN AN OBSERVATORY THREAD PANE"):
         assert cls in out, (cls, out)
     hits = [m.start() for m in re.finditer(r"(?i)un-threaded", out)]
-    assert len(hits) >= 4, out
+    assert len(hits) >= 5, out
     for h in hits:
         assert "not an owner-only surface" in out[h:h + 160] and "never People detail" in out[h:h + 260], out[h:h + 260]
+
+
+# ------------------------------------------------ (g) the observatory THREAD PANE (painter 003bea7, steward #57406)
+# An agent's owner row on a named thread no bridge carries (thread 'owner', a proposals thread) is read when the owner
+# opens that thread's pane (POST /api/thread/read). The bridge's "resend un-threaded" would duplicate it into the group.
+def test_pane_reply_routes_to_pane_not_bridge():
+    g = bucket([_fentry(57176, "pending", 2)], _meta(57176, bridge_delivered=True, pane_served=True))
+    assert _ids(g["pane"]) == {"57176"} and g["bridge"] == [], g
+
+
+def test_counterexample_without_the_pane_flag_a_pane_reply_reads_as_bridge_fault():
+    """PROVES the pane class CAN FAIL: the 10-16 state (#57405), the same row with no pane_served, is the bridge's."""
+    g = bucket([_fentry(57176, "pending", 2)], _meta(57176, bridge_delivered=True))
+    assert _ids(g["bridge"]) == {"57176"} and g["pane"] == [], g
+
+
+def test_pane_carve_out_is_pending_only_and_ranks_below_the_door_and_the_desk():
+    g = bucket([_fentry(1, "dead", 72), _fentry(2, "refused", 2), _fentry(3, "pending", 2)],
+               {**_meta(1, bridge_delivered=True, pane_served=True), **_meta(2, bridge_delivered=True, pane_served=True),
+                **_meta(3, bridge_delivered=True, pane_served=True, desk_served=True)})
+    assert g["pane"] == [] and _ids(g["fresh"]) == {"1"} and _ids(g["refused"]) == {"2"} and _ids(g["desk"]) == {"3"}, g
+
+
+def test_pane_render_through_the_real_entrypoint_never_prescribes_a_resend_of_the_same_text():
+    out = _entry(_entry_rows((913, "pending", {"pane_served": True})))
+    assert "UNREAD IN AN OBSERVATORY THREAD PANE (1)" in out and "#913" in out, out
+    assert "DO NOT resend the same text" in out and "observatory:thread" in out and "DUPLICATE" in out, out
+    assert "BRIDGE-DELIVERED" not in out and "pgrep" not in out and "ACTIONABLE" not in out, out
 
 
 def test_desk_predicate_on_a_real_db_reads_the_consumers_prefixes_and_who():
@@ -571,7 +600,13 @@ def test_desk_predicate_on_a_real_db_reads_the_consumers_prefixes_and_who():
                 "UNSERVED ON THE PERSON DESK": [put("obs:person-77"), put("obs:person-78", "seed"),
                                                 put("obs:person-79", "owner")],         # the person rule wins
                 "UNCARRIED BY CONSTRUCTION": [put("obs:estate-cd34", "owner")],       # the consumer's WHO: not owner
-                "BRIDGE-DELIVERED RECIPIENT": [put("obs:other-1")],                  # a near-miss no desk serves
+                # the thread pane: a named thread no bridge carries (painter's owner_surfaces), from any agent; a desk
+                # near-miss obs: thread is the pane's now, not the bridge's
+                "UNREAD IN AN OBSERVATORY THREAD PANE": [put("obs:other-1"), put("owner", "p1"), put("proposals", "seed")],
+                # every bridged shape stays the bridge's: the wire's auto-minted t- thread, a wa: thread, a release, and
+                # (declared residual) the owner's own row on a pane thread, which the pane's WHO does not mark
+                "BRIDGE-DELIVERED RECIPIENT": [put("t-mvan9elq", "p1"), put("wa:100200@s.whatsapp.net", "seed"),
+                                               put("owner", "owner")],
                 # every OTHER computed bool of the site read TRUE once too (sqlguard's P rung: both values)
                 "UNSEEN ON THE EAR SHEET": [put("ear-room1")],                                  # sheet_delivered
                 "ACTIONABLE": [put(None, "seed", "wa:100200@s.whatsapp.net")],                  # external_handle

@@ -58,7 +58,10 @@ MUTANTS = {
     "G7 the birth path grants the resident nothing (a fresh geo breaks the ruling by construction)":
         ('    for ns in schemas or ():\n        conn.execute(sql.SQL("GRANT USAGE', '    for ns in ():\n        conn.execute(sql.SQL("GRANT USAGE'),
     "G8 birth grants the resident no CONNECT (a fresh geo is closed to every agent)":
-        ('        admin.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(I(db), I(RESIDENT)))\n', ''),
+        # `pass`, not '': deleting the line left an EMPTY `if` body, so G8 was "caught" by an IndentationError at
+        # import, never by the birth arm (measured plan-11253 S2: the mutant crashed the DB-free phase)
+        ('        admin.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(I(db), I(RESIDENT)))\n',
+         '        pass\n'),
     "G9 readable() is blind to a missing CONNECT (init's check reads green on a closed database)":
         ("        if not a.execute(\"SELECT has_database_privilege(%s, %s, 'CONNECT')\", (RESIDENT, db)).fetchone()[0]:",
          "        if False:"),
@@ -69,4 +72,25 @@ MUTANTS = {
          '    return True'),
     "G4 the presence check's table parse goes blind (it would read green over nothing)":
         ('    if not got:                                   # anti-vacuity', '    if False:                                   # anti-vacuity'),
+    # plan-11253 S1 (a4 #57171, a1 #57170/#57173 BC-2): run()'s injected `expected=` and `fixture=`
+    "E1 run() ignores an injected expected and mints a reference anyway (the count grows; caught by the driver counter)":
+        ('    if expected is None:                        # the DEFAULT path',
+         '    if True:                        # the DEFAULT path'),
+    "E2 the default path judges against an EMPTY expected instead of minting (the wiring arms read no drift)":
+        ('        with fixture(extra=extra) as fx, psycopg.connect(fx["dsn"], autocommit=True) as f:\n            expected = read(f)',
+         '        expected = ({}, {}, {})'),
+    "E3 run() ignores an injected fixture= creator and calls fixture_db directly (the drop escapes the batch)":
+        ('        if fixture is None:\n            from', '        if True:\n            from'),
+    "L-G run(db='geo')'s LIVE read is blinded on the injected path (the live geo parity check goes dark)":
+        ('    return judge(spec, _scope(spec["schemas"], *expected), _scope(spec["schemas"], *got))',
+         '    return judge(spec, _scope(spec["schemas"], *expected), _scope(spec["schemas"], *(expected if db == "geo" and fixture is None else got)))'),
+    # plan-11253 S2 (a4 #57171 L2): the readers run INSIDE an arm's BEGIN … ROLLBACK, so a subject that commits the
+    # caller's transaction lands an arm's drift on the shared fixture for good. RESTORED (a fresh read == the captured
+    # state after every rollback) is the arm that must see it, at the arm that leaked.
+    "R1 read() commits the caller's transaction (a rolled-back arm's drift LEAKS onto the one fixture per db)":
+        ('    return shape(conn), objects(conn), definitions(conn)',
+         '    conn.commit()\n    return shape(conn), objects(conn), definitions(conn)'),
+    "R2 grant_read() commits the caller's transaction (the grant arm's ACLs LEAK: RESTORED compares ACLs too)":
+        ('        conn.execute(sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA {} TO {}").format(I(ns), I(RESIDENT)))\n    return True',
+         '        conn.execute(sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA {} TO {}").format(I(ns), I(RESIDENT)))\n    conn.commit()\n    return True'),
 }

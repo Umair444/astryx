@@ -545,7 +545,8 @@ async def deliver(row):
         # The watcher re-fetches ALL pending rows on every wire event, so without
         # memory this line would repeat for the row's whole life. Once per process is
         # enough for a human reading the log; the row itself stays pending because its
-        # consumer is the observatory (which marks it on serve), not this bridge.
+        # consumer is the observatory (which marks it on serve), not this bridge. The shapes this bridge DOES
+        # serve are named once in bridges/owner_surfaces.py: change a branch here, change it there.
         if row["id"] not in _skipped_threads:
             _skipped_threads.add(row["id"])
             print(f"whatsapp: skipped outbound msg {row['id']} — thread {thread!r} names "
