@@ -69,8 +69,9 @@ if [ "$FULL" != 0 ]; then
   ESTATE_EXCLUDE="venv/ .venv/ homes/ node_modules/ backups/ media/ observatory/web/dist/ .env .claude/worktrees/"   # == ledger.py's
   RUNTIME=".env venv channel/node_modules observatory/web/node_modules"   # excluded from the ESTATE, needed to RUN
   # observatory/web/node_modules: without it the browser gates (the pilot's owner-tap confirm, check.sh:486) say
-  # BROKEN on a live host, correctly, so every merge_check read ✗ (seed #57617). A link is safe since plan-10108:
-  # check.sh's run() hands each gate its own VITE_CACHE_DIR, so no gate writes the live node_modules/.vite.
+  # BROKEN on a live host, correctly, so every merge_check read ✗ (seed #57617). check.sh's run() hands each gate its
+  # own VITE_CACHE_DIR (plan-10108), so no gate writes the live node_modules/.vite; Vite still writes its bundled-config
+  # temp, node_modules/.vite-temp, whatever cacheDir says (a4 #57740, measured). The LIVE WRITES scan below names it.
   SKIP="var/"                                                   # declared: runtime state, regenerable
   # A directory holding ONLY ignored content is listed itself AND each ignored child: drop such a parent (a strict
   # prefix of another entry) before the exclusions, or `.claude/` re-admits `.claude/worktrees/` (== ledger.py's rule).
@@ -119,7 +120,8 @@ if [ "$FULL" != 0 ]; then
     if [ -e "$WT/$l" ] || [ -L "$WT/$l" ]; then echo "  LINK SURVIVED: $l"; rc_links=3; fi
   done
   echo "  linked ${#made[@]} estate path(s)"
-  wrote=$(for l in $estate; do
+  # The estate AND the RUNTIME links: a write through .env, venv or a node_modules reaches live just the same (a4 #57740 R1).
+  wrote=$(for l in $estate $RUNTIME; do
     find "$LIVE/$l" -newer "$MARK" -not -path '*__pycache__*' -not -name '*.pyc' 2>/dev/null; done | head -20)
   [ -n "$wrote" ] && { echo "  LIVE WRITES during the run (a linked path is PRODUCTION; NOT ATTRIBUTED: the run OR a concurrent writer):"; echo "$wrote" | sed 's/^/    /'; }
   # THE WHOLE VERDICT, never the FAILED half (a1 night-review 10-16). check.sh's verdict() ends the log with

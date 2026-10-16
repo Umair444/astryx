@@ -32,7 +32,9 @@ MUTANTS = {
     "K11 empty estate directories aren't made (a gate that needs the directory to exist reads it absent)":
         ('        | while IFS= read -r d; do mkdir -p "$WT/$d"; done', '        | while IFS= read -r d; do :; done'),
     "K12 the LIVE WRITES scan walks only the links again (a concurrent writer's new file goes unlisted: a1 #43404)":
-        ('  wrote=$(for l in $estate; do', '  wrote=$(for l in "${made[@]}"; do'),
+        ('  wrote=$(for l in $estate $RUNTIME; do', '  wrote=$(for l in "${made[@]}"; do'),
+    "K14 the LIVE WRITES scan skips the RUNTIME links (a write through .env/venv/node_modules reaches live unnamed: a4 #57740 R1)":
+        ('  wrote=$(for l in $estate $RUNTIME; do', '  wrote=$(for l in $estate; do'),
     "K9 an orphan holding live links goes unnamed (a SIGKILLed run's links stay in /tmp, silent)":
         ('[ "$n" -gt 0 ] && echo "  ORPHAN?', '[ "$n" -lt 0 ] && echo "  ORPHAN?'),
     "K13 the run hands its own MERGE_CHECK_* settings down (a nested merge_check inherits MERGE_CHECK_FULL=0: forge #48470)":
