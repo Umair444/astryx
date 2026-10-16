@@ -75,61 +75,13 @@
   "mcp/memory/resolvers.py::_run_cypher\u001f*": [
    "memory ask() hides tier-private data"
   ],
-  "observatory/api/main.py::agent_profile\u001fselect * from presence where agent=?": [
-   "observatory: agents as people"
-  ],
   "observatory/api/main.py::agent_profile\u001fselect mode() within group (order by model) from turns where agent=? and model is not null and ended_at > now() - interval '2 days'": [
-   "observatory: agents as people"
-  ],
-  "observatory/api/main.py::agent_profile\u001fselect ts, kind, content from steps where agent=? and kind in ('tool','milestone','error') order by id desc limit 8": [
    "observatory: agents as people"
   ],
   "observatory/api/main.py::goal_create\u001finsert into goals (title, owner, state, scope_note) values (?, ?, 'proposed', ?) returning id": [
    "goal budgets frozen, writers retired (4227 S3)"
   ],
-  "observatory/api/main.py::goal_detail\u001fselect * from (select * from messages where thread=? order by id desc limit 60) t order by id": [
-   "observatory: agents as people"
-  ],
-  "observatory/api/main.py::goal_detail\u001fselect * from goals where id=?": [
-   "observatory: agents as people"
-  ],
-  "observatory/api/main.py::goal_detail\u001fselect * from goals where parent_id=? order by id": [
-   "observatory: agents as people"
-  ],
-  "observatory/api/main.py::goal_detail\u001fselect * from steps where goal_id=? order by id desc limit 25": [
-   "observatory: agents as people"
-  ],
-  "observatory/api/main.py::goal_detail\u001fselect count(*) from messages where thread=?": [
-   "observatory: agents as people"
-  ],
-  "observatory/api/main.py::goal_detail\u001fselect distinct on (from_agent) from_agent, intent, ts from messages where thread=? and intent in ('approve', 'revise') order by from_agent, id desc": [
-   "observatory: agents as people"
-  ],
   "observatory/api/main.py::people_answer\u001finsert into social_relation (org, pid, kind, closeness, confidence, updated_at) values (coalesce((select org from social_person where id=? limit 1), 'local'), ?, ?, ?, 'owner', now()) on conflict (org, pid) do update set kind=excluded.kind, closeness=excluded.closeness, confidence='owner', updated_at=now()": [
-   "observatory: agents as people"
-  ],
-  "observatory/api/main.py::person_profile\u001fselect count(distinct b.src) from social_edge a join social_edge b on a.org=b.org and a.dst=b.dst and b.src<>a.src where a.org=? and a.src=? and a.rel='member-of' and b.rel='member-of'": [
-   "observatory: agents as people"
-  ],
-  "observatory/api/main.py::person_profile\u001fselect g.id, g.label, (select count(*) from social_edge m where m.org=e.org and m.dst=e.dst and m.rel='member-of') as size from social_edge e join social_person g on g.org=e.org and g.id=e.dst where e.org=? and e.src=? and e.rel='member-of' order by size desc": [
-   "observatory: agents as people"
-  ],
-  "observatory/api/main.py::person_profile\u001fselect p.org, p.id, p.kind, p.label, p.direct, r.kind as relation, r.context as who, r.evidence as shape, r.confidence, r.closeness from social_person p left join social_relation r on r.org = p.org and r.pid = p.id where p.id=? and p.kind='person'": [
-   "observatory: agents as people"
-  ],
-  "observatory/api/main.py::person_profile\u001fselect weight, first_ts, last_ts, mine from social_edge where org=? and dst=? and rel='dm'": [
-   "observatory: agents as people"
-  ],
-  "observatory/api/main.py::tool_detail\u001fselect agent, ts, left(content, 200) as content from steps where left(content, length(?)) = ? and content not like '% done' order by id desc limit 15": [
-   "observatory: agents as people"
-  ],
-  "observatory/api/main.py::tools_usage\u001fselect split_part(substr(content, length(?) + 1), ' ', 1) as tool, agent, count(*) as n from steps where ts > now() - interval '7 days' and left(content, length(?)) = ? and content not like '% done' group by 1, 2": [
-   "observatory: agents as people"
-  ],
-  "observatory/api/main.py::trigger_detail\u001fselect agent, name, schedule, kind, enabled, check_src, state, last_eval, last_fired, next_fire, note from triggers where agent=? and name=?": [
-   "observatory: agents as people"
-  ],
-  "observatory/api/main.py::trigger_detail\u001fselect id, ts, left(body, 600) as body from messages where from_agent='pulse' and to_agent=? and left(body, length(?)) = ? order by id desc limit 8": [
    "observatory: agents as people"
   ],
   "observatory/api/room.py::ask\u001finsert into messages (from_agent, to_agent, thread, intent, body) values ('room', ?, ?, 'chat', ?) returning id": [
@@ -326,27 +278,6 @@
    "recall-graph compiler"
   ],
   "src/astryx/memory/memgraph.py::build_system1\u001fselect thread, count(*), max(ts)::date, array_agg(distinct from_agent) from messages where thread is not null group by thread order by thread": [
-   "recall-graph compiler"
-  ],
-  "src/astryx/memory/memgraph.py::read_pg\u001fselect id,kind,label,layer,region,type,title,visibility,degree,x,y,region_i,attrs from kg.node order by id": [
-   "recall-graph compiler"
-  ],
-  "src/astryx/memory/memgraph.py::read_pg\u001fselect max(built_at) from kg.node": [
-   "recall-graph compiler"
-  ],
-  "src/astryx/memory/memgraph.py::read_pg\u001fselect node_id,entity,rel,value,evidence,confidence,contra,line from kg.claim order by node_id,id": [
-   "recall-graph compiler"
-  ],
-  "src/astryx/memory/memgraph.py::read_pg\u001fselect src,dst,cls,rel from kg.edge order by src,dst,cls,rel": [
-   "recall-graph compiler"
-  ],
-  "src/astryx/memory/memgraph.py::write_pg\u001fdelete from kg.claim": [
-   "recall-graph compiler"
-  ],
-  "src/astryx/memory/memgraph.py::write_pg\u001fdelete from kg.edge": [
-   "recall-graph compiler"
-  ],
-  "src/astryx/memory/memgraph.py::write_pg\u001fdelete from kg.node": [
    "recall-graph compiler"
   ],
   "src/astryx/memory/social_age.py::_fresh\u001fselect count(*) from ag_graph where name=?": [
@@ -691,7 +622,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 314,
+  "debt_rows": 297,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 5,
@@ -1080,12 +1011,6 @@
    "reason": "seed",
    "tk": "sha256t:bb31629bdfe3375ce75c97f738a22c305d6dda433d30371e55a1cd39986a6471"
   },
-  "observatory/api/main.py::agent_profile\u001fselect * from presence where agent=?": {
-   "admitted": "2026-10-09",
-   "debt": "EXECUTED",
-   "reason": "seed 10-09 agent profile (Now block + recent work): executed in a stamped fixture with BOTH a presence row and none, recent steps and none, by tests/test_observatory_people.py; asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create).",
-   "tk": "sha256t:5bbe322b2890c658fe34204fb8794ff82cb2dcdd23f94330d6b7a51208686f1b"
-  },
   "observatory/api/main.py::agent_profile\u001fselect mode() within group (order by model) from turns where agent=? and model is not null and ended_at > now() - interval '2 days'": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
@@ -1096,17 +1021,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:2a59f98ec4dd4c7300b0948516bdb111e6314a3e035f1b18539ab612dee7afe0"
-  },
-  "observatory/api/main.py::agent_profile\u001fselect peer, sum(n)::bigint as n from ( select to_agent as peer, count(*) as n from messages where from_agent=? and to_agent is not null group by 1 union all select from_agent as peer, count(*) as n from messages where to_agent=? group by 1 ) x where peer is not null and peer <> ? group by peer order by 2 desc limit 10": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:4a632d611a50639c42b7d18883147e67daa6af0aa1999db3f5459e0eb22cae8d"
-  },
-  "observatory/api/main.py::agent_profile\u001fselect ts, kind, content from steps where agent=? and kind in ('tool','milestone','error') order by id desc limit 8": {
-   "admitted": "2026-10-09",
-   "debt": "EXECUTED",
-   "reason": "seed 10-09 agent profile (Now block + recent work): executed in a stamped fixture with BOTH a presence row and none, recent steps and none, by tests/test_observatory_people.py; asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create).",
-   "tk": "sha256t:f014606ca88caf8e9458aa8e9b064b2be5dfdf3c2021cdc69ed67d657a970b27"
   },
   "observatory/api/main.py::brain_completions\u001finsert into messages (from_agent, to_agent, thread, intent, body) values ('owner', 'growbot', ?, 'task', ?) returning id": {
    "debt": "UNEXECUTED",
@@ -1209,42 +1123,6 @@
    "reason": "goal 4227 S3: executed in a stamped fixture by tests/test_goal_budget_frozen.py, but asyncpg exposes no table OID, so the stamp cannot be credited (declared FIXTURE-DDL cap). Shrinks when the observatory moves to psycopg or the cap lifts.",
    "tk": "sha256t:a916f9172621e07e7e52863a720b467bf01af22f3a147f138735410fc8fcb24e"
   },
-  "observatory/api/main.py::goal_detail\u001fselect * from (select * from messages where thread=? order by id desc limit 60) t order by id": {
-   "admitted": "2026-10-09",
-   "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
-   "tk": "sha256t:2592668a5f4bdc219c64a53e36a187411038d5c34d4283a604a4628a6367c36c"
-  },
-  "observatory/api/main.py::goal_detail\u001fselect * from goals where id=?": {
-   "admitted": "2026-10-09",
-   "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
-   "tk": "sha256t:523fb4c297e95b8ee460eb25510707b83eb9421e971efef09b7ad82e52f77044"
-  },
-  "observatory/api/main.py::goal_detail\u001fselect * from goals where parent_id=? order by id": {
-   "admitted": "2026-10-09",
-   "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
-   "tk": "sha256t:7d0871a4b251ac94eb81eba16fed016f948f1546c29b88141265840278a775af"
-  },
-  "observatory/api/main.py::goal_detail\u001fselect * from steps where goal_id=? order by id desc limit 25": {
-   "admitted": "2026-10-09",
-   "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
-   "tk": "sha256t:c82b38cdb5c228b20882faa09fba49a6c38bdb2a91a1748fd495c7642585e420"
-  },
-  "observatory/api/main.py::goal_detail\u001fselect count(*) from messages where thread=?": {
-   "admitted": "2026-10-09",
-   "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
-   "tk": "sha256t:71c1a657ea2867568d396373356f397196eb1374553e58a9b28840be8659327a"
-  },
-  "observatory/api/main.py::goal_detail\u001fselect distinct on (from_agent) from_agent, intent, ts from messages where thread=? and intent in ('approve', 'revise') order by from_agent, id desc": {
-   "admitted": "2026-10-09",
-   "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
-   "tk": "sha256t:a2720195f47e67dbc051fec87428fd5084f8cb344f9ef7fc892b9855acb5edb8"
-  },
   "observatory/api/main.py::goals\u001fselect * from goals order by id desc limit 200": {
    "debt": "UNEXECUTED",
    "reason": "seed",
@@ -1328,30 +1206,6 @@
    "reason": "seed 10-09 people_answer promotes the owner's answer into social_relation (a2 #38791 B1): an INSERT \u2026 ON CONFLICT DO UPDATE always affects exactly one row (insert or update; both observed by tests/test_observatory_people.py), so a 0-row arm does not exist; asyncpg also caps it at FIXTURE-DDL.",
    "tk": "sha256t:f9c72528fa0b53735c7fdb136df735f20a5b169b6bcad8c2a78e5edb0f4c4e69"
   },
-  "observatory/api/main.py::person_profile\u001fselect count(distinct b.src) from social_edge a join social_edge b on a.org=b.org and a.dst=b.dst and b.src<>a.src where a.org=? and a.src=? and a.rel='member-of' and b.rel='member-of'": {
-   "admitted": "2026-10-09",
-   "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
-   "tk": "sha256t:b797bbda02cf76e4866117add3296d8d3cfb5106c0d09644ca8616db20816b61"
-  },
-  "observatory/api/main.py::person_profile\u001fselect g.id, g.label, (select count(*) from social_edge m where m.org=e.org and m.dst=e.dst and m.rel='member-of') as size from social_edge e join social_person g on g.org=e.org and g.id=e.dst where e.org=? and e.src=? and e.rel='member-of' order by size desc": {
-   "admitted": "2026-10-09",
-   "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
-   "tk": "sha256t:9655da8e1a8976f3f3bab17b7d9e95dc052e77bdfbf198f3b0eb1b29aa909ac6"
-  },
-  "observatory/api/main.py::person_profile\u001fselect p.org, p.id, p.kind, p.label, p.direct, r.kind as relation, r.context as who, r.evidence as shape, r.confidence, r.closeness from social_person p left join social_relation r on r.org = p.org and r.pid = p.id where p.id=? and p.kind='person'": {
-   "admitted": "2026-10-09",
-   "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "people library 1a cutover of seed's 10-09 person drawer read: details LEFT JOINed from social_relation. Executed in a stamped fixture by tests/test_observatory_people.py (the person arm, RED with the old endpoint), but asyncpg exposes no table OID, so the stamp can't be credited (the same FIXTURE-DDL cap as the row it replaces)",
-   "tk": "sha256t:3fe578cb65b9ec8150b9c2d055c82596830dd2a7885cbbf025108eae24974796"
-  },
-  "observatory/api/main.py::person_profile\u001fselect weight, first_ts, last_ts, mine from social_edge where org=? and dst=? and rel='dm'": {
-   "admitted": "2026-10-09",
-   "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
-   "tk": "sha256t:79b63e5f87bf2838865e9b22c60d354473b2149c138bc966e5e13ad4b083e6e7"
-  },
   "observatory/api/main.py::steps\u001f*": {
    "debt": "UNEXECUTED",
    "reason": "seed",
@@ -1361,30 +1215,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:dc5b9e860bcdfc873eba07b9fc5e85846cf34d0145870a556fb5eef8107be71d"
-  },
-  "observatory/api/main.py::tool_detail\u001fselect agent, ts, left(content, 200) as content from steps where left(content, length(?)) = ? and content not like '% done' order by id desc limit 15": {
-   "admitted": "2026-10-09",
-   "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
-   "tk": "sha256t:ba69a01145560260ab27a68433333b4064e3a94efae1883bbe7576af50930ddf"
-  },
-  "observatory/api/main.py::tools_usage\u001fselect split_part(substr(content, length(?) + 1), ' ', 1) as tool, agent, count(*) as n from steps where ts > now() - interval '7 days' and left(content, length(?)) = ? and content not like '% done' group by 1, 2": {
-   "admitted": "2026-10-09",
-   "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
-   "tk": "sha256t:26dedd41b91540728f5575bd1cd4bd267dc569f78ace2ef84557769de0155eda"
-  },
-  "observatory/api/main.py::trigger_detail\u001fselect agent, name, schedule, kind, enabled, check_src, state, last_eval, last_fired, next_fire, note from triggers where agent=? and name=?": {
-   "admitted": "2026-10-09",
-   "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
-   "tk": "sha256t:b601e0497f83ecce4ca60a02c93454c6820709a8f3b6cf182730e29c138670cd"
-  },
-  "observatory/api/main.py::trigger_detail\u001fselect id, ts, left(body, 600) as body from messages where from_agent='pulse' and to_agent=? and left(body, length(?)) = ? order by id desc limit 8": {
-   "admitted": "2026-10-09",
-   "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "seed 10-09 observatory details (goal / person / tools drawers): executed in a stamped fixture with BOTH a 0-row and a \u22651-row arm by tests/test_observatory_people.py, but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create). Shrinks when the observatory moves to psycopg or the cap lifts.",
-   "tk": "sha256t:98f4fbf473c16ab52d68c7971e42e19f8b2d95ec86212e551ddc349d66a530b7"
   },
   "observatory/api/main.py::triggers\u001fselect agent, name, schedule, kind, enabled, last_fired, next_fire, note from triggers order by agent, name": {
    "debt": "UNEXECUTED",
