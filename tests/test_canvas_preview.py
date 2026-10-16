@@ -258,39 +258,99 @@ def containment():
     arm("(h) page errors exit 2, so `preview && publish` cannot ship a throwing page", rc == 2, (rc, out, err))
 
 
+def judge_attempts(snap, run, tries=3):
+    """The c-live verdict, lifted so fakes can drive it (a4 #57020). snap() -> {key: (value_text, updated_at,
+    updated_by)} for canvas 2; run() is ONE preview with the override probe.forced=12345. Up to `tries` attempts,
+    each its own snapshot / run / snapshot, and only a CLEAN pair passes (seed #56910).
+
+    Why retry at all: canvas 2 (Org pulse) has a live writer. painter's org_pulse_refresh trigger rewrites its
+    EXISTING keys every 5 minutes in a ~6 s burst, so one pair can straddle it (the merge_check red of 10-16).
+    What the retry must not mask:
+      - the key SET is identical in every snapshot of every attempt: the trigger never adds or removes a key, so a
+        key that appears or vanishes (a one-shot insert, a first-use cache row) fails, whatever a later pair says;
+      - the override's own row (key 'probe' holding forced=12345) fails at once; never a substring of the canvas,
+        whose growing counters may one day contain 12345.
+    DECLARED residual: a ONE-SHOT rewrite of an EXISTING key on attempt 1 is masked by a clean attempt 2, because
+    updated_by can't tell it from the trigger (both stamp 'owner')."""
+    keys0, dirty = None, []
+    for i in range(1, tries + 1):
+        pre = snap()
+        run()
+        post = snap()
+        keys0 = set(pre) if keys0 is None else keys0
+        for when, s in (("before", pre), ("after", post)):
+            if set(s) != keys0:
+                return False, f"attempt {i} {when}: the key set changed ({sorted(set(s) ^ keys0)}): a write, not the trigger"
+        probe = post.get("probe")
+        if probe is not None:
+            try:
+                v = json.loads(probe[0])
+            except ValueError:
+                v = None
+            if isinstance(v, dict) and v.get("forced") == 12345:
+                return False, f"attempt {i}: the override landed in canvas 2's 'probe' row"
+        if pre == post:
+            return True, f"clean pair on attempt {i}" + (f" (dirty before it: {dirty})" if dirty else "")
+        dirty.append(sorted(k for k in keys0 if pre[k] != post[k]))
+    return False, f"no clean pair in {tries} attempts; rows that moved: {dirty}"
+
+
+def attempts_unit():
+    print("c-live verdict (judge_attempts, fakes: the red controls, a4 #57020)")
+
+    def world(states):
+        """snap() walks `states` in order (pre1, post1, pre2, post2, …), then holds the last one: a quiet canvas"""
+        it = iter(states)
+        last = [states[-1]]
+        return lambda: dict(next(it, last[0]))
+    A = {"net": ("1", "t0", "owner"), "msgs": ("[1]", "t0", "owner")}
+    B = {"net": ("2", "t1", "owner"), "msgs": ("[1]", "t0", "owner")}         # the trigger rewrote 'net'
+    C = {"net": ("3", "t2", "owner"), "msgs": ("[1]", "t0", "owner")}
+    noop = lambda: None  # noqa: E731
+    ok, why = judge_attempts(world([A, B, B, B]), noop)
+    arm("unit: a trigger burst on attempt 1, then a clean pair -> PASS", ok, why)
+    ok, why = judge_attempts(world([A, B, B, C, C, A]), noop)
+    arm("unit: a write on every attempt -> FAIL", not ok and "no clean pair" in why, why)
+    one = {**A, "cache": ("{}", "t1", "painter")}
+    ok, why = judge_attempts(world([A, one, one, one]), noop)
+    arm("unit: a ONE-SHOT new key on attempt 1, then clean -> FAIL (the key set)", not ok and "key set" in why, why)
+    ok, why = judge_attempts(world([dict(A, probe=("{}", "t0", "owner")), dict(A, probe=('{"forced": 12345}', "t1", "owner"))]), noop)
+    arm("unit: the override seen in the 'probe' row -> FAIL", not ok and "override landed" in why, why)
+    ok, why = judge_attempts(world([dict(A, net=("123456", "t0", "owner"))] * 2), noop)
+    arm("unit: an unrelated counter containing 12345 -> PASS", ok, why)
+
+
 def live():
     print("live read-only arm (canvas 2, production DB)")
+    last = {}
     try:
         import psycopg
         dsn = cv.dsn()
         with psycopg.connect(dsn, connect_timeout=5) as c:
             c.read_only = True
-            snap = lambda: c.execute("SELECT key, value::text, updated_at, updated_by FROM canvas_data "  # noqa: E731
-                                     "WHERE canvas_id = 2 ORDER BY key").fetchall()
-            # Canvas 2 (Org pulse) has a live writer: painter's org_pulse_refresh trigger rewrites its keys every 5
-            # minutes in a ~6 s burst, so one before/after pair can straddle it and read as a preview write (the
-            # merge_check red of 10-16). A preview that WRITES differs on every attempt; a 5-minute burst can't
-            # straddle three back-to-back ones. The override value is never allowed to land, on any attempt.
-            for _attempt in range(3):
-                pre_rows, pre = snap(), json.dumps(cv.get_data(c, 2), sort_keys=True)
+
+            def snap():
+                rows = c.execute("SELECT key, value::text, updated_at, updated_by FROM canvas_data "
+                                 "WHERE canvas_id = 2").fetchall()
                 c.rollback()
-                rc, out, err = run_main(["preview", "2", page("live", "<p>x</p>"), str(TMP / "live"),
-                                         "--set", "probe.forced=12345"])
-                post_rows, post = snap(), json.dumps(cv.get_data(c, 2), sort_keys=True)
-                c.rollback()
-                if (pre == post and pre_rows == post_rows) or "12345" in post:
-                    break
+                return {k: (v, u, b) for k, v, u, b in rows}
+
+            def run():
+                last["r"] = run_main(["preview", "2", page("live", "<p>x</p>"), str(TMP / "live"),
+                                      "--set", "probe.forced=12345"])
+            ok, why = judge_attempts(snap, run)
     except (Exception, SystemExit) as e:
         skip("(c-live) canvas 2 byte-identical after a --set preview", f"DB unreachable ({type(e).__name__})")
         return
+    rc, out, err = last["r"]
     arm("(c-live) the CLI previewed canvas 2 with an override", rc == 0 and "12345" in
         (TMP / "live" / "preview.html").read_text(), (rc, out, err))
-    arm("(c-live) canvas 2's data is byte-identical after (values, updated_at, updated_by)",
-        pre == post and pre_rows == post_rows and "12345" not in post)
+    arm("(c-live) canvas 2's rows are unchanged around a preview (values, updated_at, updated_by; key set fixed)", ok, why)
 
 
 if __name__ == "__main__":
     try:
+        attempts_unit()
         no_browser()
         isolation()
         if cv.browser():
