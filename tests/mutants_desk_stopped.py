@@ -38,4 +38,6 @@ MUTANTS = {
         ('f"( dport = :{int(port)} )"', 'f"( sport = :{int(port)} )"'),
     "S13 the seat is matched loosely (any python client reads as the seat)":
         ('SEAT = "hands_seat.py"', 'SEAT = "python"'),
+    "S14 another stopper's flag text is dropped (a bailed runner reads as the owner's walk-away)":
+        ('            by = "" if why in (None, OWNER_WHY) else', '            by = "" if True else'),
 }

@@ -77,6 +77,12 @@ tick(st, [], T0 + 120 * MIN)
 check("given back (no longer listed): its state is dropped", "desk-1" not in st, st)
 out = tick({}, [desk(holder="canopus")], T0 + 15 * MIN)
 check("a pool desk names its holder", len(out) == 1 and "held by canopus" in out[0], out)
+own = tick({}, [dict(desk(), why="the owner stopped your hands")], T0 + 15 * MIN)
+other = tick({}, [dict(desk(), why="a review runner bailed")], T0 + 15 * MIN)
+check("a Take over's flag reads plainly; any OTHER stopper's flag text is carried, so a bailed runner never reads "
+      "as the owner's walk-away (stop() is callable by any agent)",
+      "not a Take over" not in own[0] and "not a Take over" in other[0] and "a review runner bailed" in other[0],
+      (own, other))
 two = tick({}, [desk("desk-1"), desk("desk-2", since=T0 + 10 * MIN)], T0 + 20 * MIN)
 check("two desks: each on its own clock (only the one 20m in is told)", len(two) == 1 and two[0].startswith("desk-1"),
       two)
@@ -119,8 +125,9 @@ seen_ports = []
 got = read_desks(HD(rows, {"desk-1": [(T0, "stop")]}), count=lambda p: seen_ports.append(p) or 0)
 check("only stopped desks, and NEVER the laptop (its stop is the owner using his own screen)",
       [d["agent"] for d in got] == ["desk-1", "desk-3"], got)
-check("…since from owner_log; the holder carried; the viewer count asked of the live port only",
-      got[0]["since"] == T0 and got[0]["holder"] == "canopus" and seen_ports == [5911], (got, seen_ports))
+check("…since from owner_log; the holder and the flag's text carried; the viewer count asked of the live port only",
+      got[0]["since"] == T0 and got[0]["holder"] == "canopus" and got[0]["why"] == "the owner stopped your hands"
+      and seen_ports == [5911], (got, seen_ports))
 check("…a desk whose display is down reads 0 viewers (unwatched by construction), its since unknown",
       got[1]["viewers"] == 0 and got[1]["since"] is None, got[1])
 st = {}
@@ -182,6 +189,8 @@ check("nothing before the first rung; then ONE wake to the owner, from steward, 
       and c.said[0][2].get("from_agent") == "steward" and "desk-1, held by canopus" in c.said[0][1]
       and "Give back" in c.said[0][1], c.said)
 check("…and the body is names and durations only (one line per desk)", body(["a: stopped 15m"]).count("\n- ") == 1)
+check("the pulse's path: hands_desktop is imported at MODULE level (desk_stopped(ctx) with no hd= reads the real one)",
+      getattr(M.get("_HD"), "__name__", "") == "astryx.hands.hands_desktop", M.get("_HD"))
 
 print()
 print(f"{'PASS' if not FAILS else 'FAIL'}: {len(FAILS)} failure(s)")
