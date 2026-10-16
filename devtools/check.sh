@@ -561,6 +561,9 @@ run "every committed nucleus script is invoked" "$PY" tests/test_reachability.py
 # declares SUBJECT/ORACLE/ENV/MUTANTS, points at files that exist, and still has patterns
 # that apply. It asserts APPLICABILITY and never discrimination. Pure stdlib, no DB, ~0.1s.
 run "mutants files still point at something real" "$PY" tests/test_mutants_wellformed.py
+# mutation_probe REFUSING names its arm: the baseline oracle's own failing lines are printed, so a one-off loaded refusal
+# is attributable (a4 night 10-16, memory #57741). Hermetic. Mutants: tests/mutants_mutation_probe_refusal.py.
+run "mutation_probe: a refusing baseline prints its own failing lines (never a bare exit code)" "$PY" tests/test_mutation_probe_refusal.py
 # ...and the probe MACHINERY demonstrably runs (one family, ~4s). The full battery is the
 # monthly steward trigger; this edge is what keeps probe_all/mutation_probe auto-reached.
 run "mutant machinery smoke (one family)" bash devtools/probe_all.sh --smoke

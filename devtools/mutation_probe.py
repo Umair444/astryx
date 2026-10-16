@@ -81,7 +81,30 @@ def _load(path: Path):
     return mod
 
 
+REFUSAL_TAIL = 25        # lines of the oracle's own output a REFUSING verdict prints (a4 night 10-16, plan-11253 #57741)
+_FAILING = ("FAIL", "✗", "Traceback", "Error", "SKIP", "NOT SEARCHED", "BROKEN")
+
+
+def _tail(out: str, n: int = REFUSAL_TAIL) -> list:
+    """The oracle's output a refusal shows: every line that names a failure (FAIL, ✗, a Traceback, an *Error, a skip)
+    first, then the last lines, deduplicated in order, at most n. The verdict line alone said "exit 1"; without the
+    failing arm a loaded, one-off refusal can never be attributed (memory #57741: the parity baseline red at load 7.79)."""
+    lines = [ln.rstrip() for ln in (out or "").splitlines() if ln.strip()]
+    hot = [ln for ln in lines if any(k in ln for k in _FAILING)]
+    keep, seen = [], set()
+    for ln in hot + lines[-n:]:
+        if ln not in seen:
+            seen.add(ln)
+            keep.append(ln)
+    return keep[:n]
+
+
 def _run_oracle(oracle: Path, env_var: str, subject_path: Path, timeout: int = DEFAULT_TIMEOUT) -> int:
+    return _run_oracle_out(oracle, env_var, subject_path, timeout)[0]
+
+
+def _run_oracle_out(oracle: Path, env_var: str, subject_path: Path, timeout: int = DEFAULT_TIMEOUT) -> tuple:
+    """(rc, the oracle's combined output). TIMED_OUT keeps whatever it printed before the kill."""
     env = dict(os.environ, **{env_var: str(subject_path)})
     with tempfile.TemporaryDirectory() as trace:
         # A mutant (or the canary) is NOT the inventoried code, so its SQL is not estate evidence: under check.sh's
@@ -92,11 +115,20 @@ def _run_oracle(oracle: Path, env_var: str, subject_path: Path, timeout: int = D
         try:
             r = subprocess.run([sys.executable, str(oracle)], env=env,
                                capture_output=True, text=True, timeout=timeout)
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as e:
             # It used to RAISE, crashing the whole probe after SIGKILLing the oracle mid-run (its finally never ran,
             # so a slow DB oracle stranded debris: a2 F2 #34875). Now it's an outcome: NOT PROBED, named.
-            return TIMED_OUT
-    return r.returncode
+            part = [x.decode(errors="replace") if isinstance(x, bytes) else (x or "") for x in (e.stdout, e.stderr)]
+            return TIMED_OUT, "".join(part)
+    return r.returncode, (r.stdout or "") + (r.stderr or "")
+
+
+def _print_tail(oracle: Path, out: str, when: str) -> None:
+    """The baseline's own failing lines, so a refusal names its arm (a one-off loaded refusal is otherwise lost)."""
+    tail = _tail(out)
+    print(f"  {oracle.name}'s own output ({when}; failing lines first, then its last lines):")
+    for ln in tail or ["(it printed nothing)"]:
+        print(f"    | {ln[:220]}")
 
 
 def probe(spec_path: Path, verbose: bool = True) -> int:
@@ -120,14 +152,16 @@ def probe(spec_path: Path, verbose: bool = True) -> int:
     # below would be meaningless — it would be failing for a reason that has nothing to do
     # with the mutation. Refuse rather than report.
     timeout = int(getattr(spec, "TIMEOUT", DEFAULT_TIMEOUT))
-    base = _run_oracle(oracle, spec.ENV, subject, timeout)
+    base, base_out = _run_oracle_out(oracle, spec.ENV, subject, timeout)
     if base == TIMED_OUT:
         print(f"REFUSING: {oracle.name} did not finish within {timeout}s against the unmutated subject. Declare a "
               f"larger TIMEOUT in the spec; every verdict below would be a guess.")
+        _print_tail(oracle, base_out, "before the kill")
         return 1
     if base != 0:
         print(f"REFUSING: {oracle.name} does not pass against the unmutated subject "
               f"(exit {base}). Fix the oracle first; mutation results would be noise.")
+        _print_tail(oracle, base_out, f"exit {base}")
         return 1
 
     # THE CANARY (memory, msg 13203; forge's instance msg 13200). The BASELINE above asks
