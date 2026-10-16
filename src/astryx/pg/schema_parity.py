@@ -166,16 +166,39 @@ def _scope(schemas, sh, ob, de):
             {k: {n: h for n, h in v.items() if keep(n)} for k, v in de.items()})
 
 
-def run(live_dsn: str, db: str = "astryx") -> dict:
+def read(conn) -> tuple:
+    """(shape, objects, definitions) of one database, UNSCOPED: the impure half of run() (plan-11253 L1, #57171).
+    TRANSACTION-NEUTRAL: it only SELECTs, never commits or rolls back the caller's transaction, so a reader can run
+    inside an arm's open BEGIN … ROLLBACK and see that arm's drift (L2, a2 #57355 measured; the oracle's RESTORED arm)."""
+    return shape(conn), objects(conn), definitions(conn)
+
+
+def run(live_dsn: str, db: str = "astryx", expected: tuple | None = None, fixture=None) -> dict:
+    """judge(read(a fresh apply), read(live)). Production passes neither keyword and mints its reference every call.
+    `expected` is an UNSCOPED read() value the caller already holds (the oracle's LIVE arms pass one captured before
+    any mutation, so they mint nothing); given, no reference is minted and `fixture` is never touched. `fixture` is
+    the reference's CREATOR (default fixture_db), injected, never a branch keyed on being under test (a1 #57170 A,
+    a4 #57171 change 1): S3 hands it the oracle's opt-in batch so the drop is deferred, on the same code path."""
     import psycopg
-    from astryx.security.sqlguard.fixture import fixture_db
     spec = DATABASES[db]
-    extra = expected_extra() if db == "astryx" else tuple((REPO / f).read_text() for f in spec["files"])
-    with fixture_db(extra=extra) as fx, psycopg.connect(fx["dsn"], autocommit=True) as f:
-        exp, exp_o, exp_d = _scope(spec["schemas"], shape(f), objects(f), definitions(f))
+    if expected is None:                        # the DEFAULT path: mint -> apply -> read -> (drop) -> judge
+        if fixture is None:
+            from astryx.security.sqlguard.fixture import fixture_db as fixture
+        extra = expected_extra() if db == "astryx" else tuple((REPO / f).read_text() for f in spec["files"])
+        with fixture(extra=extra) as fx, psycopg.connect(fx["dsn"], autocommit=True) as f:
+            expected = read(f)
     with psycopg.connect(live_dsn, autocommit=True) as c:
         c.execute("SET default_transaction_read_only = on")
-        got, got_o, got_d = _scope(spec["schemas"], shape(c), objects(c), definitions(c))
+        got = read(c)
+    return judge(spec, _scope(spec["schemas"], *expected), _scope(spec["schemas"], *got))
+
+
+def judge(spec: dict, expected: tuple, got: tuple) -> dict:
+    """The PURE verdict over two SCOPED reads: exactly run()'s aggregation over compare(), compare_objects() and
+    compare_definitions(), the fold included (a3 #57163: P9 and P12 live here, not in compare()). run() is
+    read + judge with no other logic, so the oracle grades this on injected values with no database."""
+    exp, exp_o, exp_d = expected
+    got, got_o, got_d = got
     out = compare(exp, got)
     if spec.get("exclusive") and out["live_only"]:
         out["extra"] += [f"table {t} (live-only in an exclusive schema: an ad-hoc table)" for t in out["live_only"]]
