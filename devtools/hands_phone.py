@@ -258,7 +258,7 @@ def main():
     finally:
         if vite:
             os.killpg(vite.pid, signal.SIGTERM)
-        if h.stopped(desk):
+        if h.stopped(desk) and (h.holder(desk) or ("",))[0] == RUNNER:    # never resume a desk someone else holds (a4 #57164 R1)
             h.resume(desk)
         try:                  # close the target's own tab (only if it is the focused one), then free the desk
             if counts(desk) is not None and (h.holder(desk) or ("",))[0] == RUNNER:
