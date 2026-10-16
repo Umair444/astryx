@@ -149,6 +149,12 @@ def main():
         if Counter(paired) != Counter(after):
             print("    NOTE: the paired re-derivation differs from econ._v2_tool_rows (rows moved between the two reads)")
         b = gdp(before)
+        try:
+            toolreg.CORE_SERVERS = ()
+            b_in = gdp(before)
+        finally:
+            toolreg.CORE_SERVERS = saved
+        print(f"    (a) on --before's rows: core in {fmt(b_in)} → core out {fmt(b)}")
         print(f"\n(b) S1's FIXES on the agent-authored domain (before = toolreg@{a.before}, after = this tree):")
         print(f"    before: {fmt(b)}")
         print(f"    after : {fmt(dom)}")
@@ -162,13 +168,14 @@ def main():
         print("\n(b) skipped: no --before ref given")
 
     # transcripts: the stamp counterfactual (b) and instrument B2 (c), over turns that ENDED in the window
-    turns = conn.execute("SELECT agent, raw_payload->'messages' FROM turns "
+    turns = conn.execute("SELECT id, agent, raw_payload->'messages' FROM turns "
                          "WHERE ended_at >= %s AND ended_at < %s AND raw_payload ? 'messages'", (since, until)).fetchall()
     tracked = set(subprocess.run(["git", "-C", str(LIVE), "ls-files", *ROOTS], check=True, capture_output=True,
                                  text=True).stdout.split())
     blocks = named = execd = 0
     gained, gained_ids, gained_edits = 0, Counter(), 0
-    for agent, msgs in turns:
+    per_turn = Counter()
+    for turn_id, agent, msgs in turns:
         for msg in msgs or []:
             m = msg.get("message") if isinstance(msg, dict) else None
             for blk in (m.get("content") if isinstance(m, dict) and isinstance(m.get("content"), list) else []):
@@ -181,6 +188,7 @@ def main():
                         named += 1
                     if any(p in tracked for p in exec_scripts(inp["command"])):
                         execd += 1
+                        per_turn[turn_id] += 1
                 if a.before:
                     nb, na = tb._resolve(name, inp), toolreg._resolve(name, inp)
                     if na.get("registry_id") and not nb.get("registry_id"):
@@ -212,6 +220,22 @@ def main():
           f"ENDED in it, A's is steps stamped in it)")
     print(f"    B2x the same calls with a tracked script at an EXECUTION position (re-derived rule): {execd} "
           f"(A's script: {a_scr}; difference {execd - a_scr:+d}, same window caveat)")
+    # the B2x − A difference, bucketed by turn: A's script rows of the SAME turns, whatever their stamp time
+    a_turn = Counter(dict(conn.execute(r"""
+        SELECT s.turn_id, count(*) FROM steps s JOIN turns t ON t.id = s.turn_id
+        WHERE s.kind = 'tool' AND s.meta ? 'v' AND s.meta->>'registry_id' LIKE 'script:%%'
+          AND t.ended_at >= %s AND t.ended_at < %s GROUP BY 1""", (since, until)).fetchall()))
+    a_in = sum(1 for r in conn.execute(r"""
+        SELECT 1 FROM steps s JOIN turns t ON t.id = s.turn_id
+        WHERE s.kind = 'tool' AND s.meta ? 'v' AND s.meta->>'registry_id' LIKE 'script:%%'
+          AND s.ts >= %s AND s.ts < %s AND NOT (t.ended_at >= %s AND t.ended_at < %s)""",
+        (since, until, since, until)).fetchall())
+    over = sum(max(0, per_turn[t] - a_turn[t]) for t in per_turn)
+    under = sum(max(0, a_turn[t] - per_turn[t]) for t in a_turn)
+    print(f"      by turn: A on the transcript turns' own rows = {sum(a_turn.values())} (A rows stamped in the window "
+          f"whose turn ended outside it: {a_in}); per turn, B2x exceeds A by {over} and A exceeds B2x by {under} "
+          f"(B2x's rule is coarser than toolreg's: a turn's excess is a call it reads as executing that toolreg "
+          f"doesn't, or the reverse)")
 
     # (d) the residual
     if before is not None:
