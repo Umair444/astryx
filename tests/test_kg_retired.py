@@ -3,7 +3,8 @@
 compiles on request (src/astryx/memory/memgraph.py) and the ingest's CARRIES incidence is derived from the wiki
 pages it already digests (memgraph.system2_incidence), so nothing tracked may read or write a kg relation again.
 
-  R0 RED     the pattern hits a planted `SELECT 1 FROM kg.node` line, and NOT `pkg.version` (no false hit inside an
+  R0 RED     the pattern hits a planted read of the retired node table (built at runtime, so this file never
+             names one), and NOT `pkg.version` (no false hit inside an
              identifier), so a clean result below is the pattern seeing, not the pattern blind.
   R1         every TRACKED file (`git ls-files`; a symlink is skipped, its target is tracked and read itself) has
              0 hits outside EXEMPT: historical measurement prose that names the old tables as a dated source.
@@ -20,9 +21,8 @@ KG = re.compile(r"(^|[^A-Za-z0-9_])kg\.[a-z_]")
 EXEMPT = {
     "memory/graph/PROPOSAL.md", "memory/ontology.md", "memory/log.md",   # the estate's own history (untracked anyway)
     "src/astryx/security/grep_guard.py",
-    "src/astryx/memory/ontology.py",      # "THE MEASUREMENT THAT SHAPED THIS (2026-08-14, from kg.claim …)"
+    "src/astryx/memory/ontology.py",      # its 2026-08-14 measurement, cited from the retired claim table
     "src/astryx/memory/world.py",         # the 336-node measurement query, quoted as history
-    "tests/test_kg_retired.py",           # this oracle's own planted line
 }
 fails = []
 
@@ -33,7 +33,8 @@ def check(name, ok, detail=""):
         fails.append(name)
 
 
-check("R0 RED the pattern hits a planted kg read", bool(KG.search('x = "SELECT 1 FROM kg.node"')))
+PLANT = 'x = "SELECT 1 FROM ' + "kg" + '.node"'           # assembled here, so the scan below never meets it
+check("R0 RED the pattern hits a planted kg read", bool(KG.search(PLANT)))
 check("R0 CONTROL the pattern does not hit inside an identifier (pkg.version)", not KG.search("pkg.version"))
 
 try:
