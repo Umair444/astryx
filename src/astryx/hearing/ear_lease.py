@@ -41,6 +41,13 @@ def get(conn, resource: str) -> dict | None:
     return _row(conn.execute(f"SELECT {COLS} FROM leases WHERE resource = %s", (resource,)))
 
 
+def live_holder(conn, resource: str) -> str | None:
+    """Who holds `resource` NOW: a free row, or a hold past its expiry, has no holder (get() returns either)."""
+    r = conn.execute("SELECT holder FROM leases WHERE resource = %s AND state = 'HELD' AND expires_at > now()",
+                     (resource,)).fetchone()
+    return r[0] if r else None
+
+
 def claim(conn, resource: str, holder: str, ttl_s: int = TTL_S) -> dict | None:
     """The row if `holder` now holds the EAR, else None. One statement: two racing tabs can't both win."""
     _ensure(conn, resource)
