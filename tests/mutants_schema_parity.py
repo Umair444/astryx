@@ -69,4 +69,16 @@ MUTANTS = {
          '    return True'),
     "G4 the presence check's table parse goes blind (it would read green over nothing)":
         ('    if not got:                                   # anti-vacuity', '    if False:                                   # anti-vacuity'),
+    # plan-11253 S1 (a4 #57171, a1 #57170/#57173 BC-2): run()'s injected `expected=` and `fixture=`
+    "E1 run() ignores an injected expected and mints a reference anyway (the count grows; caught by the driver counter)":
+        ('    if expected is None:                        # the DEFAULT path',
+         '    if True:                        # the DEFAULT path'),
+    "E2 the default path judges against an EMPTY expected instead of minting (the wiring arms read no drift)":
+        ('        with fixture(extra=extra) as fx, psycopg.connect(fx["dsn"], autocommit=True) as f:\n            expected = read(f)',
+         '        expected = ({}, {}, {})'),
+    "E3 run() ignores an injected fixture= creator and calls fixture_db directly (the drop escapes the batch)":
+        ('        if fixture is None:\n            from', '        if True:\n            from'),
+    "L-G run(db='geo')'s LIVE read is blinded on the injected path (the live geo parity check goes dark)":
+        ('    return judge(spec, _scope(spec["schemas"], *expected), _scope(spec["schemas"], *got))',
+         '    return judge(spec, _scope(spec["schemas"], *expected), _scope(spec["schemas"], *(expected if db == "geo" and fixture is None else got)))'),
 }
