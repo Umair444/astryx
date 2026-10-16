@@ -73,6 +73,8 @@ MANIFEST = {
                                "stage": "unchanged at S2: a column value, not v1 W; S3 read-only"},
     "src/astryx/econ/wash_detector.py": {"type": "detector", "rest": "NOT_EVALUATED share on no calls",
                                  "stage": "migrated S1b (v2 rings, report-only)"},
+    "devtools/tool_census.py": {"type": "reporter", "rest": "prints econ's own NOT_EVALUATED / None; read-only",
+                                "stage": "goal 11324 S1: the live census (domain, fixes, two instruments, residual)"},
     "triggers/steward/econ_rollup.py": {"type": "writer", "rest": "archives what compute() returns",
                                         "stage": "runs the authority, detached (`-m astryx.econ.econ`, 10-10)"},
     "triggers/steward/market_decay.py": {"type": "detector", "rest": "reports rent, no retire verb",

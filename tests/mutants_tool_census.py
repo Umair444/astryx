@@ -16,7 +16,7 @@ TIMEOUT = 300
 
 MUTANTS = {
     "K1 (a)'s 'core in' side keeps the cut (the toggle toggles nothing)":
-        ("        toolreg.CORE_SERVERS = ()\n", "        pass\n"),
+        ("        toolreg.CORE_SERVERS = ()\n        all_in = gdp(after)", "        all_in = gdp(after)"),
     "K2 B1 counts the core servers too":
         (''' - set(toolreg.CORE_SERVERS)   # the domain''', '''   # the domain'''),
     "K3 B2x is naming (any position)":

@@ -25,7 +25,6 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
-CENSUS = os.environ.get("CENSUS_SRC") or str(REPO / "devtools" / "tool_census.py")
 PRE_S1 = "7c30828b"   # main before goal 11324 S1: toolreg with no canonical() and no MOVED fold on Write events
 
 fails = []
@@ -76,9 +75,14 @@ def main():
                                      ("fx-a", "mcp__tools__fx_find: ", "mcp:tools/fx_find")):
             c.execute("INSERT INTO steps (agent, kind, content, meta, turn_id) VALUES (%s,'tool',%s,%s::jsonb,%s)",
                       (caller, content, json.dumps({"registry_id": rid, "v": 1}), tid))
-        r = subprocess.run([sys.executable, "-B", CENSUS, "--days", "1", "--before", PRE_S1, "--dsn", fx["dsn"]],
+        # CENSUS_SRC is mutation_probe's seam. PYTHONPATH keeps what it was given FIRST (the sqlguard shim, when
+        # traced) and adds this tree's src/, so a mutant copy outside the repo still imports astryx.
+        pp = os.pathsep.join(x for x in (os.environ.get("PYTHONPATH"), str(REPO / "src")) if x)
+        r = subprocess.run([sys.executable, "-B",
+                            os.environ.get("CENSUS_SRC") or str(REPO / "devtools" / "tool_census.py"),
+                            "--days", "1", "--before", PRE_S1, "--dsn", fx["dsn"]],
                            capture_output=True, text=True, timeout=300,
-                           env={**os.environ, "ASTRYX_LIVE_REPO": str(REPO), "PYTHONPATH": str(REPO / "src")})
+                           env={**os.environ, "ASTRYX_LIVE_REPO": str(REPO), "PYTHONPATH": pp})
         out = r.stdout
         print("\n".join("    | " + ln for ln in out.splitlines()))
         check("the census runs against the real DDL (rc 0)", r.returncode == 0, r.stderr[-800:])
