@@ -153,6 +153,8 @@ EXEMPT = {
     # what a human TYPES; the shell wrapper that lies is not present in scripts).
     "devtools/estate_grep.sh": "manual: the estate search an agent TYPES — org-news #12934 names it as the rule's implementation; its oracle test_estate_grep.py is what check.sh runs",
     "devtools/land.sh": "manual: the merger runs it on a merge-ready marker's range (seed night-review 10-16); its oracle test_land.py is what check.sh runs",
+    "devtools/sqlsite.sh": "manual: the pre-flight an agent TYPES before a merge_check on a branch with new SQL (seed #56477, "
+                           "medic #56480); its oracle test_sqlsite.py is what check.sh runs",
     "devtools/review_range.sh": "manual: the range an agent TYPES for a review-request or merge-ready marker (a4 night-review 10-12); its oracle test_review_range.py is what check.sh runs",
     "devtools/apply_receipt.py": "manual: operator-run at deploy — seed applies a PASSed gitignored body with it and posts the "
                                 "`applied:` receipt it prints (plan-5791 staging protocol, a3 BC-3); its oracle "
