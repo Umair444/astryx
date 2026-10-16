@@ -801,6 +801,7 @@ run "spawn-pinned deployment drift"   "$PY" tests/test_spawn_drift.py
 # mtime to now() and would blind an mtime-based guard (false-staleness). RED-first: the oracle
 # recomputes the OLD mtime age for the restore case, so a regression back to mtime fails it.
 run "owner_queue_age content-first-seen age" "$PY" tests/test_owner_queue_age.py
+run "stopped Hands desk, nobody watching"  "$PY" tests/test_desk_stopped.py
 # market_decay O3 (goal 4227 S1b, owner law 2026-09-29: no trigger killing): market_decay was the
 # org's sole economic actuator; its retire verb is now GONE BY CONSTRUCTION and it reports rent.
 # Two arms: _decide over the full input grid never yields 'retire', and the body's executable
