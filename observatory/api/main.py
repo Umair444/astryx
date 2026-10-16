@@ -2682,6 +2682,10 @@ async def _memgraph_read() -> dict:
     freshness to keep and a second writer to drift (plan-8018 S-retire). A compile measured
     1.1-1.3s, so the request pays it in a worker thread and the event loop never blocks.
     A failure returns the error shape the old `?fresh=1` recompile returned.
+
+    compile_graph() defaults to with_system1=True, so EVERY view load opens one database
+    connection (psycopg, in that worker thread, connect_timeout=5) to read the wire layer:
+    goals, threads, milestones. No DSN or no psycopg skips that layer with a note, not an error.
     """
     try:
         sys.path.insert(0, str(REPO))

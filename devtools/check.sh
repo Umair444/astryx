@@ -645,6 +645,9 @@ run "recall-graph compiler"           "$PY" tests/test_memgraph.py
 # plan-8018 S-retire: the kg schema is retired (the graph compiles on request); no tracked file may name a kg
 # relation again outside the dated-history exemptions. Pure stdlib + git; works on a clean checkout.
 run "kg retired: no tracked file names a kg relation (8018 S-retire)" "$PY" tests/test_kg_retired.py
+# Its ESTATE leg, a gate of its own: the same pattern and exempt list over the gitignored memory/**/*.py and
+# triggers/**/*.py, where the old graph's writers lived. 77 (UNVERIFIED) where triggers/ is absent; planted RED/CONTROL arms.
+run "kg retired, estate leg: no memory/ or triggers/ .py names a kg relation (8018 S-retire)" "$PY" tests/test_kg_retired_estate.py
 run "another checkout of this repo: one shared predicate for every walker, a foreign repo still walked, an unknown source named (seed 53453)" "$PY" tests/test_checkouts.py
 run "derived-copy registry: digests + writer count (8018 S1)" "$PY" tests/test_copies.py
 run "derived-copy registry: the graph builder stamps its own digest (8018 S1)" "$PY" tests/test_copies_builder.py
