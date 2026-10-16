@@ -260,6 +260,11 @@ try:
           and ghost["residuals"]["aside_bytes"] == 3 * len(SENT) and ghost["database_clean"] is True
           and ghost["history_clean"] is False, ghost["residuals"])
     check("…and the aside count is content-blind too", SENT not in J(ghost), J(ghost)[:200])
+    import re as _re                                                   # a3 #57093: two spellings of one path
+    leaf = _re.findall(r'^ASIDE="\$HOME_D/([^"/]+)"', (REPO / "scripts" / "refresh.sh").read_text(), _re.M)
+    src = (REPO / "src" / "astryx" / "security" / "release_migrate.py").read_text()
+    check("…and the leaf it counts is the one scripts/refresh.sh moves transcripts to (a rename there blinds this)",
+          len(leaf) == 1 and f'/ "homes" / agent / "{leaf[0]}"' in src, leaf)
     with db.cursor() as cur:
         none_moved = M.migrate(cur, "nobody", "whatsapp", "99999@s.whatsapp.net", "career", key=K, store=R.TierStore())
     check("…and a move of it moves nothing", none_moved == {"messages": 0, "polls": 0, "steps": 0, "turns": 0},
