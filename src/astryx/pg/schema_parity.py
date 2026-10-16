@@ -167,7 +167,9 @@ def _scope(schemas, sh, ob, de):
 
 
 def read(conn) -> tuple:
-    """(shape, objects, definitions) of one database, UNSCOPED: the impure half of run() (plan-11253 L1, #57171)."""
+    """(shape, objects, definitions) of one database, UNSCOPED: the impure half of run() (plan-11253 L1, #57171).
+    TRANSACTION-NEUTRAL: it only SELECTs, never commits or rolls back the caller's transaction, so a reader can run
+    inside an arm's open BEGIN … ROLLBACK and see that arm's drift (L2, a2 #57355 measured; the oracle's RESTORED arm)."""
     return shape(conn), objects(conn), definitions(conn)
 
 
