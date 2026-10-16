@@ -33,7 +33,8 @@ LIVE_W_H = 36          # the liveness proxy's W (>= 24h: a daily-heartbeat agent
 LOOP_W_H = 72          # a task within this long after the tool returned its recipient is ROUTED (loop discount)
 SCOPE = "local"
 MSG_SQL = ("SELECT id, ts, from_agent, from_org, to_agent, to_org, thread, intent, body FROM messages "
-           "WHERE id = ANY(%s) OR (ts >= %s AND ts < %s)")
+           "WHERE id = ANY(%s) OR (ts >= %s AND ts < %s) "
+           "OR thread IN (SELECT thread FROM messages WHERE id = ANY(%s))")
 LIVE_SQL = "SELECT agent, max(ts) FROM steps WHERE ts >= %s GROUP BY agent"
 QLOG_THERE = "SELECT to_regclass('influence_query')"
 QLOG_SQL = "SELECT asker, returned, ts FROM influence_query WHERE ts >= %s"
@@ -78,7 +79,9 @@ def git_history(repo=REPO, ref="main"):
 
 # ── the database reads ────────────────────────────────────────────────────────────────────────────────────────────
 def read_messages(conn, since, until, ids=()):
-    cur = conn.execute(MSG_SQL, (sorted(ids), since, until))
+    """ONE read: the cited rows, the window, and the cited rows' whole threads (a review cycle's start may precede the
+    window). Exactly the read tools' columns."""
+    cur = conn.execute(MSG_SQL, (sorted(ids), since, until, sorted(ids)))
     cols = [d.name for d in cur.description]
     return graph.check_rows([dict(zip(cols, r)) for r in cur.fetchall()])
 
@@ -237,7 +240,8 @@ def main(argv=None):
     p.add_argument("--dsn")
     p.add_argument("--repo", default=str(REPO))
     p.add_argument("--ref", default="main")
-    p.add_argument("--agents", default=str(charter.AGENTS), help="the agents/ tree the roster is read from")
+    p.add_argument("--agents", default=str(charter.AGENTS), help="the agents/ tree the roster is read from. From a WORKTREE, report/backtest need "
+                   "--agents <the live tree's agents/>: agents/ is gitignored, so a worktree's roster is seed alone")
     a = p.parse_args(argv)
     roster = charter.roster(Path(a.agents))
     if a.verb == "report":

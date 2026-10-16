@@ -129,7 +129,8 @@ def pass_rows(s):
     c0 = s["c0"][:9]
     mk = lambda i, frm, to, line: row(i, frm, to, "review", f"PASS\nmerge-ready: {line}\n", thread=f"rv-{i}")
     return {r["id"]: r for r in (
-        mk(101, A2, A4, f"feat-a {c0}..{s['A1'][:7]}"),                 # suffix-only branch, abbreviated head
+        row(100, A4, A2, "review", "review request: feat-a", thread="rv-101", ts=T0 + timedelta(hours=1)),
+        {**mk(101, A2, A4, f"feat-a {c0}..{s['A1'][:7]}"), "ts": T0 + timedelta(hours=80)},  # suffix-only, abbreviated
         mk(102, "steward", A1, f"fix-x {c0}..{s['B1']}"),               # two branches share the suffix fix-x
         mk(103, "memory", A3, f"fix-x {c0}..{s['B3']}"),
         mk(104, "steward", A1, f"stale-c {c0}..{s['C1']}"),             # stale, a non-merge commit after it
@@ -198,6 +199,16 @@ def db_free(G, shell, address, tmp):
     sc = G.scores(one, G.global_view({"pass_land": 1.0}, [A2, A4]), [A2, A4], one[0]["ts"] + timedelta(days=1))
     check("pass_land direction drives the ranking: the reviewer outranks the author", sc[A2] > sc[A4], str(sc))
     check("the edge's ts is the merge commit's committer time", e101.get("ts") == commits[s["mA"]]["ts"])
+    check("ask anchor: a PASS's ask_ts is its review cycle's first request, not the answer",
+          e101.get("ask_ts") == T0 + timedelta(hours=1), str(e101.get("ask_ts")))
+    check("ask anchor: every PASS with no request before it falls back to its own ts, and is counted (4 of 5)",
+          lg["ask_fallback"] == 4 and all(e["ask_ts"] == rows[e["authority"][0]]["ts"] for e in lg["edges"]
+                                          if e["authority"][0] != 101), str(lg["ask_fallback"]))
+    kept, routed = G.loop_discount([e101], [{"asker": A4, "returned": [A2], "ts": T0}], 72 * 3600)
+    check("ask anchor (a): query t0, request t0+1h, PASS t0+80h → discounted under W=72h", routed == 1, str(routed))
+    rep = "\n".join(G.report({"pass_land": lg}, {}, {}))
+    check("ask anchor: the report prints the fallback count",
+          "pass_land ask time = answer time (fallback): 4 edges" in rep, rep)
     bad = dict(rows)
     bad[101] = {**rows[101], "delivery": {}}
     try:
@@ -206,6 +217,25 @@ def db_free(G, shell, address, tmp):
     except ValueError:
         check("BC-R: a PASS row carrying a column the read tools don't return is refused", True)
     return sha_of
+
+
+def anchors(G):
+    t = lambda h: T0 + timedelta(hours=h)
+    b = [row(1, A1, A2, "task", thread="rb", ts=t(1)), row(2, A2, A1, "review", "PASS", thread="rb", ts=t(2)),
+         row(3, A1, A2, "review", "review request: round 2", thread="rb", ts=t(3)),
+         row(4, A2, A1, "review", "PASS", thread="rb", ts=t(4))]
+    check("ask anchor (b): a reused thread anchors on the NEW request after the previous PASS",
+          G.review_anchor(b[3], b) == (t(3), False), str(G.review_anchor(b[3], b)))
+    c = [row(1, A1, A2, "task", thread="rc", ts=t(1)), row(2, A2, A1, "review", "REVISE: two fixes", thread="rc",
+                                                           ts=t(2)),
+         row(3, A1, A2, "review", "re-request", thread="rc", ts=t(3)), row(4, A2, A1, "review", "PASS", thread="rc",
+                                                                         ts=t(4))]
+    check("ask anchor (c): request, REVISE, re-request, PASS anchors on the FIRST request (REVISE is no boundary)",
+          G.review_anchor(c[3], c) == (t(1), False), str(G.review_anchor(c[3], c)))
+    d = [row(1, A2, A1, "chat", "starting", thread="rd", ts=t(1)), row(2, A2, A1, "review", "PASS", thread="rd",
+                                                                      ts=t(2))]
+    check("ask anchor (d): no author → reviewer message before the PASS → the PASS's ts, flagged a fallback",
+          G.review_anchor(d[1], d) == (t(2), True), str(G.review_anchor(d[1], d)))
 
 
 def delegation(G):
@@ -526,7 +556,7 @@ def main():
     from astryx.influence import shell
     with tempfile.TemporaryDirectory() as tmp:
         print("DB-FREE")
-        for arm in (lambda: db_free(G, shell, address, tmp), lambda: delegation(G), lambda: tools(G),
+        for arm in (lambda: db_free(G, shell, address, tmp), lambda: anchors(G), lambda: delegation(G), lambda: tools(G),
                     lambda: pagerank(G), lambda: gates(G), lambda: bcr(G, shell), lambda: loop_and_tool(G)):
             try:
                 arm()

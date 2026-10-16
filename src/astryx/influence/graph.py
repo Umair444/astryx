@@ -192,12 +192,38 @@ def merge_branch(subject):
     return m.group(1) if m else None
 
 
+def review_anchor(pass_row, rows):
+    """(ask_ts, fell_back) for a PASS row: the START of its review cycle. The EARLIEST author → reviewer row (intent
+    task or review) on the PASS row's thread AFTER the reviewer's previous PASS to that author there, and BEFORE this
+    PASS. None → the PASS's own ts, flagged as a fallback (the caller counts it). `rows` = any MSG_COLS rows.
+    THE CYCLE BOUNDARY IS THE PREVIOUS PASS ONLY (a4 #58409): a REVISE (verdict or intent) does not close a cycle, so
+    request → REVISE → re-request → PASS anchors on the FIRST request. a3's #58410 text listed REVISE as a boundary,
+    but its arm (c) requires that it isn't, and the arm wins. A review row carrying both words is a REVISE here."""
+    author, reviewer, th = pass_row["to_agent"], pass_row["from_agent"], pass_row["thread"]
+    if not th:
+        return pass_row["ts"], True
+    on = [x for x in rows if x["thread"] == th and x["id"] < pass_row["id"] and not is_pulse(x)]
+    closes = lambda x: (x["intent"] == "review" and bool(PROSE_PASS_RE.search(x["body"] or ""))
+                        and not REVISE_RE.search(x["body"] or ""))
+    lo = max((x["id"] for x in on if x["from_agent"] == reviewer and x["to_agent"] == author and closes(x)),
+             default=-1)
+    asks = [x for x in on if lo < x["id"] and x["from_agent"] == author and x["to_agent"] == reviewer
+            and x["intent"] in (TASK_INTENT, "review")]
+    if not asks:
+        return pass_row["ts"], True
+    return min(asks, key=lambda x: x["id"])["ts"], False
+
+
 def pass_land_edges(merges, parents, msgs_by_id, roster, suggest):
     """pass_land: author → reviewer. merges = [{sha, ts, subject}] (main's first-parent merges in the window),
     parents = {sha: [parent shas]} over main's history, msgs_by_id = {id: MSG_COLS row}. Returns a ledger:
-    {edges, unmeasured: Counter(reason), domain: #merges, measured: #merges with an edge}."""
+    {edges, unmeasured: Counter(reason), domain: #merges, measured: #merges with an edge, ask_fallback: #edges whose
+    ask time is the answer time}. msgs_by_id carries the cited rows AND their threads (review_anchor reads them)."""
     check_rows(msgs_by_id.values())
-    edges, unmeasured, measured = [], Counter(), 0
+    edges, unmeasured, measured, fallback = [], Counter(), 0, 0
+    threads = defaultdict(list)
+    for x in msgs_by_id.values():
+        threads[x["thread"]].append(x)
     for m in merges:
         ids = [int(i) for i in CITED_RE.findall(m["subject"])]
         if not ids:
@@ -244,15 +270,18 @@ def pass_land_edges(merges, parents, msgs_by_id, roster, suggest):
             if author == reviewer:
                 why.append("self-loop")
                 continue
+            ask_ts, fell = review_anchor(row, threads.get(row["thread"], []))
+            fallback += fell
             found.append({"kind": "pass_land", "src": author, "dst": reviewer, "ts": m["ts"],
-                          "ask_ts": row["ts"], "ref": f"sha:{m['sha']} msg:{i} ({joined[1]}; base {joined[0]['base']})",
+                          "ask_ts": ask_ts, "ref": f"sha:{m['sha']} msg:{i} ({joined[1]}; base {joined[0]['base']})",
                           "topic": row.get("thread"), "authority": [i]})
         if found:
             measured += 1
             edges += found
         else:
             unmeasured["; ".join(sorted(set(why))) or "no edge"] += 1
-    return {"edges": edges, "unmeasured": unmeasured, "domain": len(merges), "measured": measured}
+    return {"edges": edges, "unmeasured": unmeasured, "domain": len(merges), "measured": measured,
+            "ask_fallback": fallback}
 
 
 # ── delegation under BC-D ──────────────────────────────────────────────────────────────────────────────────────────
@@ -565,6 +594,8 @@ def report(ledgers, values, agent_unmapped):
         yl = f" (yield {lg['yield']:.1%})" if "yield" in lg else ""
         lines.append(f"  {k}: coverage {cov.get(k, 0.0):.1%} of {lg['domain']}; edges {len(lg.get('edges', []))}{yl};"
                      f" {state}")
+        if "ask_fallback" in lg:
+            lines.append(f"      pass_land ask time = answer time (fallback): {lg['ask_fallback']} edges")
         for why, n in lg["unmeasured"].most_common():
             lines.append(f"      {n:4d}  UNMEASURED: {why}")
     lines.append("agents (global view):")

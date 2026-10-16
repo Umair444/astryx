@@ -48,6 +48,12 @@ MUTANTS = {
                                                     'out.append({"error": "malformed marker" if'),
     "J6 every merge reachable from main lands, not only first-parent ones":
         ("for s in first_parent_chain(parents, tip)", "for s in commits"),
+    # the review-cycle anchor (a4 #58409, a3 #58410)
+    "K1 pass_land's ask is the PASS (answer) time again": ('"ask_ts": ask_ts,', '"ask_ts": row["ts"],'),
+    "K2 the cycle boundary is dropped (the earliest message ever on the thread)":
+        ('asks = [x for x in on if lo < x["id"] and', 'asks = [x for x in on if'),
+    "K3 a REVISE closes a cycle": ('        and not REVISE_RE.search(x["body"] or ""))',
+                                  '        or REVISE_RE.search(x["body"] or ""))'),
     # BC-A
     "A1 the author/owner-prefix cross-check is dropped": ("            if author != owner:", "            if False:"),
     # BC-D
