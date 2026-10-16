@@ -508,9 +508,11 @@ def who_should_i_ask(asker, edges, coverages, nodes, now, k=5, liveness=NO_LIVEN
     top = top_k(sc, asker, k, liveness[1], edges)
     lines = [f"who should {asker} ask{f' about {topic!r}' if topic else ''} (advisory; routing view, PPR d={DAMPING},"
              f" dangling={v['dangling']})", f"liveness: {liveness[0]}"]
-    for k_, kw in sorted(w.items()):
-        if kw == 0:
-            lines.append(f"  {k_}: UNMEASURED (weight 0)")
+    for k_ in KINDS:
+        if w[k_] == 0:
+            why = HARD_UNMEASURED.get(k_) or (f"coverage {coverages[k_]:.0%} under {COVERAGE_FLOOR:.0%}"
+                                               if k_ in coverages else "no edge of this kind in the cache")
+            lines.append(f"  {k_}: UNMEASURED (weight 0: {why})")
     for i, t in enumerate(top, 1):
         lines.append(f"  {i}. {t['agent']}  {t['score']:.4f}  neighbours: {', '.join(t['neighbours']) or '-'}")
     if not top:

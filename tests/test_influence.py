@@ -398,7 +398,15 @@ def loop_and_tool(G):
     check("the tool lists neighbours beside each returned agent",
           any(f"{A2} " in ln and "neighbours: " in ln and A1 in ln.split("neighbours:")[1] for ln in out["lines"]),
           "\n".join(out["lines"]))
-    check("the tool prints every weight-0 kind as UNMEASURED", "  merge_landed: UNMEASURED (weight 0)" in out["lines"])
+    check("the tool prints every weight-0 kind as UNMEASURED, the hard ones with their reasons",
+          "  merge_landed: UNMEASURED (weight 0: no recorded merger: a rule, not a fact)" in out["lines"]
+          and "  goal_shipped: UNMEASURED (weight 0: goals has no filer column)" in out["lines"]
+          and "  pass_land: UNMEASURED (weight 0: no edge of this kind in the cache)" in out["lines"]
+          and not any(ln.startswith("  delegation: UNMEASURED") for ln in out["lines"]), "\n".join(out["lines"]))
+    low = G.who_should_i_ask(A1, g, {"delegation": 0.4}, nodes, T0 + timedelta(days=1), k=5)
+    check("the tool under a sub-50% delegation coverage returns nobody and says why",
+          low["returned"] == [] and "  delegation: UNMEASURED (weight 0: coverage 40% under 50%)" in low["lines"],
+          "\n".join(low["lines"]))
 
 
 def db_arm(tmp_repo):
