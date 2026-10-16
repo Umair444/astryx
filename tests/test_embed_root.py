@@ -12,6 +12,7 @@ a4 #49789, steward #49904). Three parts:
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -158,7 +159,23 @@ for ch, extra_bad in (("discord", ("path.read_bytes()", "discord.File(str(p))"))
 
 # ── CENSUS (live host) ───────────────────────────────────────────────────────────────────────────────────────────
 DOT_AND_TWO = 4   # measured 2026-10-12: 933, 19814, and 2 embeds under a home dot-dir (.playwright-mcp)
-LIVE = Path(os.environ.get("ASTRYX_LIVE_REPO") or REPO)   # a worktree has no .env/homes/routes: point it at the host
+
+
+def live_root(repo: Path) -> Path:
+    """The MAIN working tree, which holds the estate (homes/, media/, tier/, the routes), from any linked worktree of it.
+    merge_check's tree links .env in but NOT homes/ or media/ (its ESTATE_EXCLUDE), so a census judging against REPO
+    there found the DSN, ran, and refused every home and scratchpad embed: red in every merge_check, green live (seed
+    #57615). A clone (CI) is its own main tree, so it stays REPO, and with no .env it reads NOT SEARCHED."""
+    try:
+        r = subprocess.run(["git", "-C", str(repo), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                           capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return repo
+    common = Path(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
+    return common.parent if common is not None and common.name == ".git" else repo
+
+
+LIVE = Path(os.environ.get("ASTRYX_LIVE_REPO") or live_root(REPO))
 
 
 def census():
@@ -200,6 +217,23 @@ def census():
             else:
                 allowed_n += 1
     return n, out, allowed_n
+
+# live_root, hermetic: a scratch repo and a linked worktree of it (the shape of merge_check's tree)
+_g = Path(tempfile.mkdtemp(prefix="embed_live."))
+_env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+_run = lambda *a: subprocess.run(["git", *a], cwd=_g, env=_env, capture_output=True, text=True)  # noqa: E731
+_run("init", "-q", "main")
+(_g / "main" / "f").write_text("x")
+_run("-C", "main", "-c", "user.email=t@t", "-c", "user.name=t", "add", "f")
+_run("-C", "main", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "x")
+_run("-C", "main", "worktree", "add", "-q", "--detach", str(_g / "wt"))
+_main, _wt = (_g / "main").resolve(), (_g / "wt").resolve()
+arm("live_root: a linked worktree (merge_check's tree) resolves to the MAIN tree, which holds homes/ and media/",
+    _wt.is_dir() and live_root(_wt).resolve() == _main)
+arm("…the main tree is its own live root, and a directory outside any repo stays itself",
+    live_root(_main).resolve() == _main and live_root(_g) == _g)
+shutil_ = __import__("shutil")
+shutil_.rmtree(_g, ignore_errors=True)
 
 searched = True
 if "--census" in sys.argv:            # its own check.sh line, so a no-DSN tree reads only the CENSUS as NOT SEARCHED
