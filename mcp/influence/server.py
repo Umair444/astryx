@@ -46,8 +46,14 @@ def who_should_i_ask(topic: str = "", k: int = 5) -> str:
     asker = os.environ.get("ASTRYX_AGENT")
     if not asker:
         return "who_should_i_ask needs ASTRYX_AGENT (the asker): run it as a resident."
+    # k is clamped to 1..17, and a clamp SAYS so (the naive walk: k=0 came back as one agent and k=100 as 13, with no
+    # word that the asked k was not the k that ran).
+    kk = max(1, min(int(k), 17))
     with shell.connect(_env("ASTRYX_DSN"), readonly=False) as conn:
-        return "\n".join(shell.ask(conn, asker, topic or None, max(1, min(int(k), 17)))["lines"])
+        lines = shell.ask(conn, asker, topic or None, kk)["lines"]
+    if kk != int(k):
+        lines.append(f"  (k={int(k)} clamped to {kk}: k runs 1..17)")
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":
