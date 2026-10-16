@@ -12,7 +12,8 @@ export default defineConfig({
     fs: { allow: ['.', '../../canvas/web/src', '../pilot'] },   // + the pilot's action catalog (plan-9000)
     proxy: {
       // OBS_API points a dev server at another observatory (a fixture-backed one for screenshots)
-      '/api': process.env.OBS_API || 'http://127.0.0.1:8090',
+      // ws: the Hands view's VNC socket (/api/hands/<desk>/vnc) rides the same proxy (devtools/hands_phone.py)
+      '/api': { target: process.env.OBS_API || 'http://127.0.0.1:8090', ws: true },
     },
   },
 })

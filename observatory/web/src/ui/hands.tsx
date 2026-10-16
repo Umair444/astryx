@@ -7,7 +7,10 @@ import AgentFace from '../components/AgentFace'
 
 /* Hands is a TOOL (plan-7862), not a place: there is no Hands tab. An agent at a desktop wears a
    small hand beside its face, wherever the org shows it (the roster, the Floor). Clicking the hand
-   opens that desktop live; the owner watches, takes the mouse and keyboard on demand, or stops it.
+   opens that desktop live; the owner watches it, or TAKES IT OVER in one tap (the agent is stopped and
+   the mouse and keyboard are his; seed #57127) and gives it back the same way. Taking over is the
+   stop flag itself: the screen is interactive exactly while the desk is stopped, so a reopened view,
+   another tab or a phone all agree on who has it.
 
    Desktops: `laptop` is the owner's real screen (the agent who last acted there wears the hand);
    any other name is that agent's own background desktop. One poller serves every badge. */
@@ -110,7 +113,10 @@ function Screen({ name, interact, size }: { name: string; interact: boolean; siz
   return (
     <div className="relative w-full max-h-full rounded-xl overflow-hidden bg-black"
       style={{ aspectRatio: `${size[0]} / ${size[1]}`, boxShadow: interact ? '0 0 0 2px var(--t-accent)' : '0 0 0 1px var(--t-line)' }}>
-      <div ref={box} className="absolute inset-0" />
+      {/* While he has it, a finger on the screen is the desk's (noVNC: tap = click, drag, long-press = right
+          click, two fingers = scroll), never the phone's pan or zoom. Watching, the page keeps its gestures. */}
+      <div ref={box} className="absolute inset-0" data-hands-screen={interact ? 'interactive' : 'watching'}
+        style={{ touchAction: interact ? 'none' : 'auto' }} />
       {state !== 'live' && (
         <div className="absolute inset-0 grid place-items-center text-[13px] text-white/60">
           {state === 'connecting' ? 'Connecting…' : 'The desktop closed the connection.'}
@@ -127,19 +133,18 @@ const ACT: Record<string, string> = { click: 'clicking', type_text: 'typing', ke
 export function DesktopOverlay() {
   const name = useSyncExternalStore(subscribe, snapOpen)
   const list = useDesks()
-  const [interact, setInteract] = useState(false)
   const [busy, setBusy] = useState(false)
   const [, tick] = useState(0)
-  useEffect(() => { setInteract(false) }, [name])
   useEffect(() => { const t = setInterval(() => tick((n) => n + 1), 2000); return () => clearInterval(t) }, [])
+  const d = name ? list.find((x) => x.agent === name) : null
+  const laptop = d?.agent === 'laptop'
+  const interact = !!d && !laptop && !!d.stopped        // taken over = stopped: the one source of truth
   useEffect(() => {
     const k = (e: KeyboardEvent) => { if (e.key === 'Escape' && !interact) openDesktop(null) }
     window.addEventListener('keydown', k)
     return () => window.removeEventListener('keydown', k)
   }, [interact])
-  const d = name ? list.find((x) => x.agent === name) : null
   const close = () => { opened = null; emit() }
-  const laptop = d?.agent === 'laptop'
   const who = laptop ? (d?.last_act?.by || '') : d?.kind === 'pool' ? (d?.holder || d?.last_act?.by || '') : (d?.agent || '')
   const acting = !!d?.last_act && Date.now() / 1000 - d.last_act.ts < ACTIVE_S && !d.stopped
   const post = async (what: string) => {
@@ -154,7 +159,7 @@ export function DesktopOverlay() {
         <motion.div key="desk" className="fixed inset-0 z-[300] flex flex-col p-3 sm:p-6 gap-3"
           initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
           style={{ background: 'color-mix(in srgb, var(--t-bg) 86%, transparent)', backdropFilter: 'blur(10px)' }}
-          onMouseDown={(e) => { if (e.target === e.currentTarget) close() }}>
+          onMouseDown={(e) => { if (e.target === e.currentTarget && !interact) close() }}>
           <div className="shrink-0 flex flex-wrap items-center gap-3">
             {who ? <AgentFace name={who} size={34} /> : <span className="w-[34px] h-[34px] grid place-items-center rounded-full border border-line text-ink-dim"><HandSvg size={16} /></span>}
             <div className="min-w-0">
@@ -169,24 +174,22 @@ export function DesktopOverlay() {
               </div>
             </div>
             <span className="flex-1" />
-            {!laptop && (
-              <button onClick={() => setInteract((v) => !v)}
-                className={`px-3.5 py-2 rounded-xl text-[13px] border ${interact ? 'border-[var(--t-accent)] text-ink' : 'border-line text-ink-dim hover:text-ink'}`}>
-                {interact ? 'Interacting: click to just watch' : 'Interact'}
-              </button>
-            )}
-            {d.stopped
-              ? <button disabled={busy} onClick={() => post('resume')} className="ax-action px-4 py-2 rounded-xl text-[13px] font-medium">Give hands back</button>
-              : <button disabled={busy} onClick={() => post('stop')} className="px-4 py-2 rounded-xl text-[13px] font-medium text-white" style={{ background: '#e5484d' }}>
-                  {laptop ? 'Stop agents on my laptop' : `Stop ${d.agent}`}</button>}
+            {laptop
+              ? (d.stopped
+                ? <button disabled={busy} onClick={() => post('resume')} className="ax-action px-4 py-2 rounded-xl text-[13px] font-medium">Give hands back</button>
+                : <button disabled={busy} onClick={() => post('stop')} className="px-4 py-2 rounded-xl text-[13px] font-medium text-white" style={{ background: '#e5484d' }}>Stop agents on my laptop</button>)
+              : (d.stopped
+                ? <button disabled={busy} onClick={() => post('resume')} data-hands="give-back" className="ax-action px-4 py-2 rounded-xl text-[13px] font-medium">Give back</button>
+                : <button disabled={busy} onClick={() => post('stop')} data-hands="take-over" className="px-4 py-2 rounded-xl text-[13px] font-medium text-white" style={{ background: '#e5484d' }}
+                    title={`Stop ${who ? displayName(who) : 'the agent'} and take the mouse and keyboard`}>Take over</button>)}
             <button onClick={close} aria-label="close" className="px-3 py-2 rounded-xl text-[13px] border border-line text-ink-dim hover:text-ink">Close</button>
           </div>
-          <div className="flex-1 min-h-0 grid place-items-center" onMouseDown={(e) => { if (e.target === e.currentTarget) close() }}>
+          <div className="flex-1 min-h-0 grid place-items-center" onMouseDown={(e) => { if (e.target === e.currentTarget && !interact) close() }}>
             {d.running ? <div className="w-full max-w-[min(100%,calc((100dvh-140px)*1.6))]"><Screen name={d.agent} interact={!laptop && interact} size={d.size} /></div>
               : <div className="text-[13px] text-ink-mute">This desktop is closed. Its logins are kept; the agent opens it when it next needs it.</div>}
           </div>
           {laptop && <div className="shrink-0 text-[12px] text-ink-mute text-center">This is your real screen. You're already at its keyboard; an agent here uses your cursor while it works.</div>}
-          {!laptop && interact && <div className="shrink-0 text-[12px] text-ink-mute text-center">You and {who ? displayName(who) : 'the agent'} share one cursor here: your moves take it, and its next action takes it back.</div>}
+          {!laptop && interact && <div className="shrink-0 text-[12px] text-ink-mute text-center">You have it: {who ? displayName(who) : 'the agent'} is stopped until you give it back. On a phone, tap to click, long-press to right-click, two fingers to scroll.</div>}
         </motion.div>
       )}
     </AnimatePresence>,

@@ -1,0 +1,9 @@
+<!doctype html><meta charset=utf-8><title>hands phone target</title>
+<!-- devtools/hands_phone.py opens this on its own pool desk: the window title reports what reached the desk -->
+<style>body{margin:0;font:48px sans-serif;background:#fff}#s{position:fixed;top:0;left:0;right:0;background:#ffd;padding:20px}#tall{height:6000px}</style>
+<div id=s>clicks 0 · right 0 · scrollY 0</div><div id=tall></div>
+<script>let c=0,r=0,last='';const s=document.getElementById('s');
+const draw=()=>document.title=s.textContent=`clicks ${c} · right ${r} · scrollY ${Math.round(scrollY)} ${last}`;
+addEventListener('click',e=>{c++;last=`@${e.clientX},${e.clientY}`;draw()});
+addEventListener('contextmenu',e=>{e.preventDefault();r++;draw()});
+addEventListener('scroll',draw);draw();</script>
