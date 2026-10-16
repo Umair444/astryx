@@ -24,7 +24,9 @@ MUTANTS = {
     "R7 scoped by sender, not thread (every reply to the owner is marked)":
         ("WHERE thread=$1 AND id <= $2 AND to_agent='owner'", "WHERE $1::text IS NOT NULL AND id <= $2 AND to_agent='owner'"),
     "R8 drops status='pending' (a bridge's delivery is re-handled as observatory:thread)":
-        ("\"AND status='pending' RETURNING id\", r.thread, r.upto)", "\"RETURNING id\", r.thread, r.upto)"),
+        ("f\"AND status='pending' AND NOT {OWNER_ROW_BRIDGED_SQL}", "f\"AND NOT {OWNER_ROW_BRIDGED_SQL}"),
+    "R10 drops the bridged exclusion (a t-/wa:/tg:/dc:/cv:/tier/ear row is marked before its bridge sends it)":
+        (" AND NOT {OWNER_ROW_BRIDGED_SQL} RETURNING id", " RETURNING id"),
     "R9 marks under the late desk's handle":
         ("'handle', 'observatory:thread') \"", "'handle', 'observatory:late') \""),
 }

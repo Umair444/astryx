@@ -894,7 +894,7 @@ run "observatory: agents as people"     "$PY" tests/test_observatory_people.py
 # Mutants: tests/mutants_observatory_late_replies.py.
 run "observatory: a late desk reply is served once, never stranded" "$PY" tests/test_observatory_late_replies.py
 # Opening a thread's pane marks the agent→owner replies on it read; the feed showing them never does.
-# Mutants: tests/mutants_observatory_thread_read.py.
+# Mutants: tests/mutants_observatory_thread_read.py, tests/mutants_owner_surfaces.py (a bridge's threads are never marked).
 run "observatory: an opened thread pane marks its replies read" "$PY" tests/test_observatory_thread_read.py
 # devtools/sqlsite.sh: one oracle's sqlguard view (rungs + why; --ledger: what enforce would say), advisory, writes
 # nothing. Mutants: tests/mutants_sqlsite.py.

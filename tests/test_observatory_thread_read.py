@@ -9,12 +9,15 @@ database, with the API in-process:
     'observatory:thread', and the route returns their ids;
   - SCOPE: by thread, not sender (two agents' replies both marked); a row to steward on the same thread, the
     owner's own row, another thread's reply and a NULL-thread reply stay pending;
+  - BRIDGED: a thread a bridge delivers (t-, wa:, tg:, dc:, cv:, tier-, ear-, or a row carrying a release) is never
+    marked, its pane opened or not: the mark would stop the bridge sending it (a4 #57418);
   - ORG: an owner@peer row on the thread is the gateway's and stays pending;
   - UPTO: a reply newer than the newest one the pane rendered stays pending until the next call;
   - ONCE: a second open marks nothing, and a row a bridge already delivered keeps its own handle;
   - FEED: GET /api/messages (whole feed, and one thread) marks nothing;
   - GATE: no key or a wrong key is 403, a blank thread 400.
-The subject is OBS_MAIN_SRC (a mutated copy; tests/mutants_observatory_thread_read.py), else the real main.py.
+The subjects are OBS_MAIN_SRC (a mutated copy; tests/mutants_observatory_thread_read.py), else the real main.py,
+and OWNER_SURFACES_SRC (tests/mutants_owner_surfaces.py), else the real bridges/owner_surfaces.py.
 """
 import importlib.util
 import os
@@ -23,6 +26,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 SUBJECT = Path(os.environ.get("OBS_MAIN_SRC") or REPO / "observatory" / "api" / "main.py")
+SURFACES = Path(os.environ.get("OWNER_SURFACES_SRC") or REPO / "bridges" / "owner_surfaces.py")
 sys.path.insert(0, str(REPO))
 
 from astryx.security.sqlguard.estate import gate  # noqa: E402
@@ -31,7 +35,7 @@ from astryx.security.sqlguard.fixture import fixture_db  # noqa: E402
 
 fails = 0
 O = {"x-obs-key": "test-owner-key"}
-T = "t-composer-1"
+T = "owner"                      # the Composer's thread in #57407: named, and no bridge serves it
 
 
 def arm(name, ok, detail=""):
@@ -43,6 +47,10 @@ def arm(name, ok, detail=""):
 def main(url):
     import psycopg
     sys.path.insert(0, str(REPO / "observatory" / "api"))
+    import bridges
+    s = importlib.util.spec_from_file_location("bridges.owner_surfaces", SURFACES)
+    sys.modules["bridges.owner_surfaces"] = importlib.util.module_from_spec(s)
+    s.loader.exec_module(sys.modules["bridges.owner_surfaces"])   # before main.py, which imports it
     spec = importlib.util.spec_from_file_location("main", SUBJECT)
     obs = importlib.util.module_from_spec(spec)
     sys.modules["main"] = obs
@@ -63,7 +71,7 @@ def main(url):
         side = put(c, "p1", "steward", T, "a note to steward, not the owner's")
         self_ = put(c, "owner", "owner", T, "the owner's note to himself")
         peer = put(c, "p1", "owner", T, "to an owner in another org", org="peer.example")
-        other = put(c, "p1", "owner", "t-another", "another thread's reply")
+        other = put(c, "p1", "owner", "proposals", "another thread's reply")
         bare = put(c, "p1", "owner", None, "a reply with no thread")
         bridged = put(c, "p1", "owner", T, "a bridge already delivered this")
         c.execute("UPDATE messages SET status='delivered', delivered_at=now(), "
@@ -97,6 +105,17 @@ def main(url):
             arm("ONCE: opening it again marks nothing", again == {"marked": []}, again)
             last = cl.post("/api/thread/read", json={"thread": T, "upto": newer}, headers=O).json()
             arm("UPTO: ...until the pane shows it", last == {"marked": [newer]}, last)
+            for th in ("t-x1", "wa:123@s.whatsapp.net", "tg:42", "dc:42", "cv:canvas-2", "tier-p1", "ear-den"):
+                i = put(c, "p1", "owner", th, "a bridge delivers this")
+                got = cl.post("/api/thread/read", json={"thread": th, "upto": i}, headers=O).json()
+                arm(f"BRIDGED: a pending reply on {th.split(':')[0].split('-')[0]}… is not marked, and stays pending",
+                    got == {"marked": []} and status(c, i) == ("pending", None), (got, status(c, i)))
+            rel = put(c, "p1", "owner", "proposals", "a release stamped for telegram")
+            c.execute("UPDATE messages SET delivery=jsonb_build_object('release', jsonb_build_object('channel', 'telegram')) "
+                      "WHERE id=%s", (rel,))
+            got = cl.post("/api/thread/read", json={"thread": "proposals", "upto": rel}, headers=O).json()
+            arm("BRIDGED: a row carrying a release is not marked, even on a bridge-less thread",
+                got == {"marked": [other]} and status(c, rel)[0] == "pending", (got, status(c, rel)))
 
 
 if __name__ == "__main__":
