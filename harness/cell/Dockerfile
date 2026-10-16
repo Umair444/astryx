@@ -5,8 +5,13 @@
 FROM node:20-bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      python3 postgresql-client iproute2 netcat-openbsd ca-certificates \
+      python3 postgresql-client iproute2 netcat-openbsd ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
+
+# The real claude runtime the test agent runs (m2). Installed at BUILD time over the
+# bridge (registry reachable); at RUN time the cell is internal-only + proxy, so this
+# binary can only reach the model API through the allow-list seam. build-net != run-net.
+RUN npm install -g @anthropic-ai/claude-code && claude --version
 
 # The canary tree AT THE EXACT REAL ABSOLUTE PATHS. Because hooks/step.py:21 hardcodes
 # /home/umair/astryx/.env and channel/server.mjs:15 resolves its own sibling ../.env, a

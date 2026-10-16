@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""Hermetic test of nucleus/memgraph.py — the org's recall-graph compiler.
+"""Hermetic test of src/astryx/memory/memgraph.py — the org's recall-graph compiler.
 
 Four invariants, in order of how badly their absence would hurt:
 
  1. CONFORMANCE TO THE LINT THE ORG ALREADY TRUSTS. The compiler's page-link set must be
-    EQUAL to link_integrity.py's, edge for edge. A graph that disagrees with the guard
-    watching the same files is worse than no graph: two instruments, one truth, and
-    nothing to say which. This is conformance-to-SPEC, not conformance-to-self — the
-    lint's regex is re-implemented here rather than imported, and a separate arm proves
-    the copy still matches the real estate so it cannot rot into agreement.
+    EQUAL to link_integrity's (drift.py _wiki_links), edge for edge. A graph that disagrees
+    with the guard watching the same files is worse than no graph: two instruments, one
+    truth, and nothing to say which. The lint is imported by path, never copied, so there
+    is no copy to rot into agreement.
 
  2. DETERMINISM. Same inputs must yield byte-identical output, INCLUDING coordinates.
     Regions are declared rather than clustered precisely because Leiden-style community
@@ -23,22 +22,39 @@ Four invariants, in order of how badly their absence would hurt:
  4. NO INVENTED EDGES. No self-edges, no edges to nodes that do not exist, and the
     `[[poll: ...]]` syntax example in tools.md must never become a node.
 
+There is no store to round-trip any more (plan-8018 S-retire: the graph compiles on request).
+The incidence arms below pin what replaced the store's last reader: system2_incidence equals
+the compiled pages' DISTINCT (entity, rel), sees ONLY the pages it is handed, and moves with them.
+
 Run: venv/bin/python tests/test_memgraph.py   (also collected by pytest, and check.sh).
 """
+import importlib.util
+import tempfile
 import json
-import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from nucleus import memgraph as mg  # noqa: E402
+from astryx.memory import memgraph as mg  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 WIKI = REPO / "memory" / "wiki"
 
-# link_integrity.py's regex, character for character. Copied rather than imported because
-# triggers/ is gitignored and absent from CI; test_copy_has_not_rotted keeps it honest.
-LINT_LINK_RE = re.compile(r"\[\[([a-z0-9-]+)\]\]")
+# The org's trusted link guard, imported by path rather than copied. It is _wiki_links() in
+# memory/lints/drift.py — the reconstructed link_integrity (the standalone
+# triggers/memory/link_integrity.py was retired in the 08-25 shed and folded here 2026-09-10).
+# memory/ is gitignored, so this is absent on a clean clone (SKIP) but PRESENT on the live
+# host, where a skip would mean a dark guard, not a baseline. Importing the real thing rather
+# than copying its regex kills the copy-rot class that already bit this file once (the
+# frontmatter-strip drift, msg 5186) — there is no longer a copy to drift.
+def _load_drift():
+    src = REPO / "memory" / "lints" / "drift.py"
+    if not src.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location("drift_lint", src)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 PAGE_A = """# org — ASTRYX overview
 *compiled 2026-07-20 · compile #2*
@@ -73,21 +89,11 @@ Some framing prose with a · middot in it, which is not a fact line.
 """
 
 
-def _lint_edges() -> set:
+def _edges(link_fn) -> set:
     pages = {p.stem for p in WIKI.glob("*.md")}
     out = set()
     for p in WIKI.glob("*.md"):
-        for t in set(LINT_LINK_RE.findall(p.read_text())):
-            if t in pages and t != p.stem:
-                out.add((p.stem, t))
-    return out
-
-
-def _mine_edges() -> set:
-    pages = {p.stem for p in WIKI.glob("*.md")}
-    out = set()
-    for p in WIKI.glob("*.md"):
-        for t in set(mg.page_links(p.read_text())):
+        for t in set(link_fn(p.read_text())):
             if t in pages and t != p.stem:
                 out.add((p.stem, t))
     return out
@@ -95,60 +101,43 @@ def _mine_edges() -> set:
 
 # ── 1. conformance ────────────────────────────────────────────────────────────────────
 def test_link_set_equals_link_integrity():
+    """CONFORMANCE, the load-bearing arm: the compiler's page-link set must EQUAL the org's
+    trusted link guard, edge for edge — two instruments watching the same files, one truth.
+
+    The guard is _wiki_links() in memory/lints/drift.py, imported live rather than copied
+    (see _load_drift). memory/ is gitignored ⇒ a clean clone SKIPS; the live host HAS it and
+    must VERIFY. A skip HERE, on a host where drift.py exists, is a dark guard masquerading
+    as a baseline — which is exactly how a dropped [[verification|...]] edge hid while this
+    arm compared against a copy of a retired file (memory, 2026-09-21).
+
+    Comparing the two live functions (not a copied regex) also folds in the old
+    copy-vs-original and copy-has-not-rotted arms: `len(mine) > 50` catches either going
+    blind, and equality against the real lint catches drift with nothing left to rot."""
+    drift = _load_drift()
+    if drift is None:
+        print("SKIP: memory/lints/drift.py absent (gitignored) — link conformance not verified")
+        globals()["_UNVERIFIED"] = True
+        return
     if not WIKI.is_dir():
         print("SKIP: memory/wiki absent (gitignored) — link conformance not verified")
         globals()["_UNVERIFIED"] = True
         return
-    lint, mine = _lint_edges(), _mine_edges()
-    assert lint == mine, (f"link sets DIVERGED\n  lint-only: {sorted(lint - mine)}\n"
+    mine, lint = _edges(mg.page_links), _edges(drift._wiki_links)
+    assert lint == mine, (f"link set DIVERGED from the trusted lint (drift._wiki_links)\n"
+                          f"  lint-only: {sorted(lint - mine)}\n"
                           f"  mine-only: {sorted(mine - lint)}")
     assert len(mine) > 50, f"only {len(mine)} edges — one of the two has gone blind"
 
 
-LINT_SRC = REPO / "triggers" / "memory" / "link_integrity.py"
-
-
-def test_copy_equals_the_original():
-    """The copy must equal the ORIGINAL, not merely still match the estate.
-
-    memory (msg 5186) caught that the old version of this arm was conformance-to-self in
-    a subtle dress: it asserted the copied regex still matched pages, which proves the
-    copy matches SOMETHING, never that it equals the thing it copied. And it had ALREADY
-    silently diverged — link_integrity now reads okf.strip(text) so frontmatter is removed
-    before matching, while this file matched the raw bytes. The old arm stayed green for a
-    reason unrelated to equality: frontmatter cannot contain `[[` because okf.py forbids
-    it. A guard passing for the wrong reason is the failure it exists to prevent.
-
-    triggers/ is gitignored, so this SKIPS on a clean clone — but where the original
-    exists, compare against it rather than around it.
-    """
-    if not LINT_SRC.is_file():
-        print("SKIP: triggers/memory/link_integrity.py absent (gitignored) — "
-              "copy-vs-original not verified")
-        globals()["_UNVERIFIED"] = True
-        return
-    m = re.search(r"^LINK_RE\s*=\s*re\.compile\((r?[\"'].*?[\"'])\)",
-                  LINT_SRC.read_text(), re.M)
-    assert m, "LINK_RE not found in link_integrity.py — the copy check is blind; re-point it"
-    original = eval(m.group(1))                      # the literal, not a re-derivation
-    assert original == LINT_LINK_RE.pattern, (
-        f"the copied regex has DRIFTED from the lint:\n"
-        f"  lint : {original!r}\n  copy : {LINT_LINK_RE.pattern!r}")
-
-
-def test_copy_has_not_rotted():
-    """Belt: even equal, both could have gone blind against the real estate."""
-    if not WIKI.is_dir():
-        globals()["_UNVERIFIED"] = True
-        return
-    hits = sum(len(LINT_LINK_RE.findall(p.read_text())) for p in WIKI.glob("*.md"))
-    assert hits > 50, f"copied LINK_RE matched {hits} on the live estate — it has drifted"
-
-
 # ── 2. determinism ────────────────────────────────────────────────────────────────────
+def _bytes(g: dict) -> str:
+    """The compile's bytes minus built_at, its one clock-valued field (the compile time, by design)."""
+    return json.dumps({k: v for k, v in g.items() if k != "built_at"}, sort_keys=True)
+
+
 def test_compile_is_byte_identical_across_runs():
-    a = json.dumps(mg.compile_graph(with_system1=False), sort_keys=True)
-    b = json.dumps(mg.compile_graph(with_system1=False), sort_keys=True)
+    a = _bytes(mg.compile_graph(with_system1=False))
+    b = _bytes(mg.compile_graph(with_system1=False))
     assert a == b, "two compiles of identical inputs differed — something is unordered"
 
 
@@ -283,7 +272,7 @@ def test_absent_estate_is_an_empty_graph_not_a_crash():
     # the test working: a compiler that grew a source and a test that still described the
     # old one. Both files are gitignored, so on an actual clean checkout both are absent
     # and the assertion below is unchanged in intent.
-    from nucleus import world
+    from astryx.memory import world
     real, real_world = mg.WIKI, world.REPO
     try:
         mg.WIKI = REPO / "does" / "not" / "exist"
@@ -295,6 +284,26 @@ def test_absent_estate_is_an_empty_graph_not_a_crash():
         mg.WIKI = real
         world.REPO = real_world
 
+
+def test_world_layer_never_mints_a_person():
+    """People are never kg nodes (owner design 2026-10-09; memory #35895, a3 K1 #36974). The
+    guarantee used to be ONE early `return` above intact minting code, untested, in a graph
+    rebuilt on a schedule. Driven with a taxonomy that HAS a circle and a member, so it goes
+    RED the moment anything turns a member into a node again."""
+    from astryx.memory import world
+    real = world.taxonomy
+    world.taxonomy = lambda *a, **k: {
+        "categories": {"family": [{"slug": "fixture-member", "name": "Fixture Member",
+                                   "facets": {"city": "Nowhere"}, "_ids": []}]},
+        "facets": {"city": "city"}}
+    try:
+        g = mg.compile_graph(with_system1=False)
+    finally:
+        world.taxonomy = real
+    bad = [n["id"] for n in g["nodes"] if n.get("kind") in ("person", "category")
+           or str(n["id"]).startswith(("world:person:", "world:cat:"))]
+    assert not bad, f"kg minted people/circles: {bad[:3]}"
+    assert not any("Fixture Member" in json.dumps(n) for n in g["nodes"]), "a member's name reached kg"
 
 def test_log_chain_sorts_by_date_not_file_order():
     """log.md is append-only but NOT chronological — physical order runs 07-19, 07-20,
@@ -313,73 +322,78 @@ def test_log_chain_sorts_by_date_not_file_order():
             f"compile chain runs backwards: {e['src']} -> {e['dst']}"
 
 
-# ── the postgres sink ─────────────────────────────────────────────────────────────────
-def test_round_trip_through_postgres_is_lossless():
-    """compile -> write_pg -> read_pg must reproduce the graph EXACTLY. Anything the store
-    silently normalises is a second writer of that field: `visibility` defaulted in the
-    COLUMN while the compiler left it None (286 nodes), and `n_claims` was a count derived
-    in two places. Both were found by this assertion and fixed at the single writer —
-    visibility now defaults in the compiler, n_claims was deleted as redundant with
-    len(claims). SKIPS without a DB rather than passing."""
-    if not mg._dsn():
-        print("SKIP: no ASTRYX_DSN — the postgres sink was NOT verified this run")
-        globals()["_UNVERIFIED"] = True
-        return
-    g = mg.compile_graph()
-    mg.write_pg(g)
-    b = mg.read_pg()
-    a_nodes = {n["id"]: n for n in g["nodes"]}
-    b_nodes = {n["id"]: n for n in b["nodes"]}
-    assert set(a_nodes) == set(b_nodes), "node id sets differ"
-    for k in a_nodes:
-        A = {x: y for x, y in a_nodes[k].items() if x != "claims"}
-        B = {x: y for x, y in b_nodes[k].items() if x != "claims"}
-        # compare KEY PRESENCE too, not just values — `differs: []` was this assertion
-        # failing while naming nothing, because a key present-with-None reads equal under
-        # .get() on both sides. A diff message that can print an empty list is a diff
-        # message that can hide the defect it exists to show.
-        assert A == B, (f"{k} differs: values="
-                        f"{[f for f in set(A) & set(B) if A[f] != B[f]]} "
-                        f"only-compiled={sorted(set(A) - set(B))} "
-                        f"only-stored={sorted(set(B) - set(A))}")
-    assert (sorted((e["src"], e["dst"], e["cls"], e["rel"]) for e in g["edges"])
-            == sorted((e["src"], e["dst"], e["cls"], e["rel"]) for e in b["edges"]))
-    assert g["stats"] == b["stats"], "stats differ"
-    assert g["regions"] == b["regions"], "region order differs"
+# ── the incidence that replaced the kg claim store (plan-8018 S-retire) ─────────────────
+def _fixture_wiki() -> Path:
+    """A hermetic wiki: the three fixture pages above, in a temp dir (never the live estate)."""
+    d = Path(tempfile.mkdtemp(prefix="memgraph_wiki_"))
+    (d / "org.md").write_text(PAGE_A)
+    (d / "goal-19.md").write_text(PAGE_B)
+    (d / "verification.md").write_text(PAGE_PROSE)
+    return d
 
 
-def test_a_rebuild_replaces_rather_than_accumulates():
-    """DELETE-then-INSERT, not upsert. A node that vanishes upstream must vanish here —
-    an upsert would silently accumulate everything the graph ever contained, which is the
-    drift a derived store exists to prevent."""
-    if not mg._dsn():
-        globals()["_UNVERIFIED"] = True
-        return
-    g = mg.compile_graph()
-    mg.write_pg(g)
-    full = len(mg.read_pg()["nodes"])
-    trimmed = dict(g, nodes=g["nodes"][:10],
-                   edges=[e for e in g["edges"]
-                          if e["src"] in {n["id"] for n in g["nodes"][:10]}
-                          and e["dst"] in {n["id"] for n in g["nodes"][:10]}])
-    mg.write_pg(trimmed)
-    assert len(mg.read_pg()["nodes"]) == 10, "a shrunken graph did not shrink the store"
-    mg.write_pg(g)                                   # restore
-    assert len(mg.read_pg()["nodes"]) == full
+def _compiled_incidence(g: dict) -> list:
+    """The retired store's `SELECT DISTINCT entity, rel FROM <claims>`, re-expressed over a compile."""
+    return sorted({(c["entity"], c["rel"]) for n in g["nodes"] for c in (n.get("claims") or [])})
 
 
-def test_one_build_shares_one_timestamp():
-    """built_at is the freshness signal the file sink got free from its mtime. now() is
-    transaction-start, so a whole build carries ONE value — if a build ever spanned two,
-    the store was not written atomically."""
-    if not mg._dsn():
-        globals()["_UNVERIFIED"] = True
-        return
-    import psycopg
-    mg.write_pg(mg.compile_graph())
-    with psycopg.connect(mg._dsn()) as c:
-        n = c.execute("SELECT count(DISTINCT built_at) FROM kg.node").fetchone()[0]
-    assert n == 1, f"{n} distinct built_at values in one build — not atomic"
+def _with_wiki(d: Path, fn):
+    real = mg.WIKI
+    mg.WIKI = d
+    try:
+        return fn()
+    finally:
+        mg.WIKI = real
+
+
+def test_incidence_parity_with_the_compiled_claims():
+    """PARITY: system2_incidence over the fixture pages == the DISTINCT (entity, rel) of every
+    claim the compile carries — the set the retired store answered, now derived from the pages."""
+    d = _fixture_wiki()
+    g = _with_wiki(d, lambda: mg.compile_graph(with_system1=False))
+    got = mg.system2_incidence(sorted(d.glob("*.md")))
+    assert got, "the fixture yielded no incidence — the parity below would be vacuous"
+    assert ("goal-19", "state") in got and ("ASTRYX", "mission") in got, got
+    assert got == _compiled_incidence(g), (got, _compiled_incidence(g))
+
+
+def test_incidence_sees_only_the_pages_it_is_handed():
+    """RED/exclusion: a claim planted on a NON-page node (the world layer here) reaches the
+    compile's DISTINCT, and must NOT reach system2_incidence — the incidence is the pages'
+    own, so the ingest's root digest covers all of it."""
+    d = _fixture_wiki()
+    real = mg.build_world
+
+    def plant(g):
+        nid = g.node("world:planted", kind="world", label="planted", layer="world", region="World")
+        g.nodes[nid]["claims"] = [{"entity": "planted", "rel": "planted_rel", "value": "x", "evidence": "",
+                                   "confidence": "observed", "contra": False, "line": 1}]
+    mg.build_world = plant
+    try:
+        g = _with_wiki(d, lambda: mg.compile_graph(with_system1=False))
+    finally:
+        mg.build_world = real
+    assert ("planted", "planted_rel") in _compiled_incidence(g), "the plant did not reach the compile"
+    assert ("planted", "planted_rel") not in mg.system2_incidence(sorted(d.glob("*.md")))
+
+
+def test_incidence_moves_with_a_page_claim():
+    """CONTROL: a claim line added to a fixture page appears in system2_incidence."""
+    d = _fixture_wiki()
+    before = mg.system2_incidence(sorted(d.glob("*.md")))
+    assert ("goal-19", "reviewer") not in before
+    (d / "goal-19.md").write_text(PAGE_B.replace("- owner · forge\n", "- owner · forge\n- reviewer · a3\n"))
+    after = mg.system2_incidence(sorted(d.glob("*.md")))
+    assert ("goal-19", "reviewer") in after, after
+    assert set(before) < set(after)
+
+
+def test_compile_carries_its_own_build_time():
+    """built_at is the compile's clock: the API's age is honest because the graph is compiled now."""
+    from datetime import datetime, timezone
+    g = mg.compile_graph(with_system1=False)
+    age = (datetime.now(timezone.utc) - datetime.fromisoformat(g["built_at"])).total_seconds()
+    assert 0 <= age < 60, age
 
 
 if __name__ == "__main__":

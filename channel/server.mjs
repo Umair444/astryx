@@ -9,11 +9,57 @@ import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprot
 import { z } from 'zod'
 import pg from 'pg'
 import { readFileSync } from 'node:fs'
+import { triggerFile } from './trigger_name.mjs'
+import { retire, clear, definedNames } from './tombstone.mjs'
+import { homeFile, homePath, dsn } from './home.mjs'
+import { joinState } from './join.mjs'
 
-const AGENT = process.env.ASTRYX_AGENT
+// mode 'repo' (spawn.sh's residents: ASTRYX_AGENT only) is the behaviour this file always had. The Claude Code
+// plugin sets ASTRYX_JOIN_DIR, and then a project that has not run /astryx:join gets a DORMANT server: no database,
+// no tools, nothing from that session reaches the org's public tables (join.mjs).
+const JOIN = joinState()
+if (JOIN.mode === 'dormant') {
+  const idle = new Server({ name: 'astryx', version: '0.1.0' }, {
+    capabilities: { tools: {} },
+    instructions: 'The ASTRYX plugin is installed, but this project has not joined an org, so nothing here reaches ' +
+      'the wire. To join, run /astryx:join <agent-name>, then restart Claude Code as that skill says.',
+  })
+  idle.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [] }))
+  await idle.connect(new StdioServerTransport())
+  console.error(`[channel] dormant: no join marker for ${JOIN.project} (${JOIN.marker})`)
+  await new Promise(res => process.stdin.on('close', res))
+  process.exit(0)
+}
+const AGENT = JOIN.agent
 if (!AGENT) { console.error('ASTRYX_AGENT env required'); process.exit(1) }
-const DSN = readFileSync(new URL('../.env', import.meta.url), 'utf8')
-  .split('\n').find(l => l.startsWith('ASTRYX_DSN=')).slice('ASTRYX_DSN='.length).trim()
+const DSN = dsn()                  // ASTRYX_DSN from the env, else <ASTRYX_HOME>/.env (home.mjs; default home = ..)
+const SOURCE = JOIN.mode === 'joined' ? 'plugin:astryx:astryx' : 'astryx'   // the <channel source=…> Claude Code renders
+// plan-9139 S1b-2: the label this session carries, read ONCE from the identity (release.py label_of: the charter's
+// Grants line), never from anything the agent says. A MALFORMED private grant refuses the start (a4 #46035): a member
+// meant to be private must never run as org on a typo. No charter, or a door that can't run, is UNKNOWN (null): the
+// body starts and its ear works, but every send goes to the door, which refuses it; nothing reaches the raw INSERT.
+// Only [] (org) keeps the paths this file always had.
+const { readLabel, releaseSend, releaseRead } = await import('./release.mjs')
+let LABEL
+try {
+  LABEL = await readLabel(AGENT)
+} catch (e) {
+  console.error(`[channel] refusing to start "${AGENT}": its tier label could not be read (${e.message})`)
+  process.exit(1)
+}
+if (LABEL === null) console.error(`[channel] "${AGENT}" has no readable tier label (UNKNOWN): its ear runs, and every ` +
+  `send is refused until a label can be read for it (plan-9139)`)
+// An UNKNOWN label is read AGAIN at each send and permission request, so a transient failure at spawn (a timeout, a
+// broken import mid-deploy) can't freeze an org member mute for its whole session, and a charter that appears later
+// takes effect (a4 #52388). A label once read is kept. A malformed grant appearing mid-session THROWS: that send is
+// refused, named. Nothing reaches the raw INSERT while the label is unknown.
+async function currentLabel() {
+  if (LABEL !== null) return LABEL
+  LABEL = await readLabel(AGENT)
+  return LABEL
+}
+const labelled = lbl => lbl === null || lbl.length > 0
+const seenThreads = new Set()       // threads delivered to this session: a labelled reply may keep only one of these
 
 // ---- who is INTERNAL, decided by something a stranger cannot author ----------------
 // `from_org === 'local'` used to answer this. But `local` is a plain string in a column a
@@ -38,7 +84,7 @@ const mcp = new Server(
     capabilities: { experimental: { 'claude/channel': {}, 'claude/channel/permission': {} }, tools: {} },
     instructions:
       `You are the resident agent "${AGENT}" on the ASTRYX wire. ` +
-      `Org messages arrive as <channel source="astryx" from="..." thread="..." intent="...">. ` +
+      `Org messages arrive as <channel source="${SOURCE}" from="..." thread="..." intent="...">. ` +
       `Reply and initiate with the send tool (to = agent name, or agent@org for federation). ` +
       `Watched agents' steps arrive as <channel ... kind="step">; they are telemetry, not requests — ` +
       `NEVER reply to telemetry. Subscribe narrowly (default milestone,error; filter='all' turns every ` +
@@ -178,27 +224,60 @@ const TOOLS = [
   },
   {
     name: 'trigger_rm',
-    description: 'Disable one of your triggers by name.',
+    description: 'Disable one of your triggers by name. A python trigger stays RETIRED (the pulse never re-enables it, '
+      + 'though its file still defines it) until trigger_set writes it again.',
     inputSchema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
   },
 ]
 
+const TRIGGERS_ROOT = homeFile('triggers/')
+const PULSE = homePath('nucleus/pulse.py')
+const PULSE_PY = homePath('venv/bin/python')
+
 async function handleTool(name, a) {
   if (name === 'send') {
     const [toAgent, toOrg = 'local'] = String(a.to).split('@')
+    // A name nothing consumes would sit pending forever behind an "ok" (two residents addressed "a3" on
+    // 2026-10-09). Refuse it HERE, in the sender's turn, with the canonical name (nucleus/address.py).
+    const { checkAddress } = await import('./address.mjs')
+    // judge the EXACT values the INSERT writes below (a3 #38028 A1, parity): toAgent for a local row; for
+    // any other toOrg the pair as written, so an empty or spaced org is refused too (a3 #38032)
+    const { note } = await checkAddress(toOrg === 'local' ? toAgent : `${toAgent}@${toOrg}`)
+    // A channel surface (owner / wa-/tg-/dc-) is delivered by a bridge, which writes
+    // the outcome back into the row (see the receipt wait below).
+    const channelBound = toOrg === 'local' &&
+      (toAgent === 'owner' || /^(wa|tg|dc)-/.test(toAgent))
+    // A malformed [[poll:]] / [[file:]] reaches the human as raw brackets, or not at all (channel/embeds.mjs).
+    // Refuse it HERE, before the INSERT, so nothing half-rendered leaves.
+    if (channelBound) {
+      const { embedProblems } = await import('./embeds.mjs')
+      const bad = embedProblems(a.body, { sender: AGENT })   // the sender is this session's identity, never the body
+      if (bad.length) return `send REFUSED, nothing sent: ${bad.join('; ')}`
+    }
+    // A LABELLED member never INSERTs: the door writes the row (owner → a release marker + stamp; an agent → a
+    // body-withheld, derived-thread row; anything else, a federation address included → refused, no row).
+    let lbl
+    try { lbl = await currentLabel() } catch (e) { return `send REFUSED, nothing sent: ${e.message}` }
+    if (labelled(lbl)) {
+      const inbound = a.thread && seenThreads.has(a.thread) ? a.thread : null
+      try {
+        const id = await releaseSend(AGENT, { to: a.to, thread: a.thread ?? null, intent: a.intent ?? null,
+          body: String(a.body ?? ''), inbound_thread: inbound })
+        return `released through the tier door · msg ${id} (${(lbl || ['unknown']).join('+')}; the wire row carries no content)`
+      } catch (e) {
+        return `send REFUSED, nothing sent: ${e.message}`
+      }
+    }
     const thread = a.thread || `t-${Date.now().toString(36)}`
     const ins = await pool.query(
       `INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, intent, body)
        VALUES ($1,'local',$2,$3,$4,$5,$6) RETURNING id`,
       [AGENT, toAgent, toOrg, thread, a.intent || 'chat', a.body])
     const id = ins.rows[0].id
-    // A channel surface (owner / wa-/tg-/dc-) is delivered by a bridge, which writes
-    // the outcome back into the row. Await it, so the caller sees where the message
-    // landed instead of walking away after the insert — the feedback loop. Internal
-    // agent-to-agent messages have no such receipt and return immediately.
-    const channelBound = toOrg === 'local' &&
-      (toAgent === 'owner' || /^(wa|tg|dc)-/.test(toAgent))
-    if (!channelBound) return `sent to ${a.to} (thread ${thread}, msg ${id})`
+    // Await the bridge's receipt, so the caller sees where the message landed instead of
+    // walking away after the insert — the feedback loop. Internal agent-to-agent messages
+    // have no such receipt and return immediately.
+    if (!channelBound) return `sent to ${a.to} (thread ${thread}, msg ${id})${note}`
     const deadline = Date.now() + 20_000
     while (Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 300))
@@ -257,11 +336,18 @@ async function handleTool(name, a) {
        FROM messages WHERE thread=$1 AND intent IN ('approve','revise')
        ORDER BY from_agent, id DESC`, [a.thread])
     // "any revise reopens the loop" — mechanized: an approve predating the latest
-    // revise is STALE and does not count (abstractor-4's night-review, 2026-07-22).
-    // Owner-override amendments are not 'revise' rows and do not stale votes: the
+    // CHANGE is STALE and does not count (abstractor-4's night-review, 2026-07-22).
+    // A change is a row whose intent is in nucleus/plan_change_intents (revise, design):
+    // plan-4918's binding revision #28982 was intent='design' and left 4/4 "fresh".
+    // ONE file, also read by triggers/seed/plan_consensus.py, so the tool and the nets
+    // can't disagree (seed #29424). Read per call; unreadable, a non-bare token, or no
+    // 'revise' THROWS, because a shrunk set would stale less (the silent side).
+    // Owner-override amendments carry neither intent and do not stale votes: the
     // owner is not a voter; seed adjudicates those directly.
+    const { changeIntents } = await import('./plan_change_intents.mjs')    // one grammar, executed by the oracle
+    const changes = changeIntents(homeFile('nucleus/plan_change_intents'))
     const lr = await pool.query(
-      `SELECT max(ts) AS t FROM messages WHERE thread=$1 AND intent='revise'`, [a.thread])
+      `SELECT max(ts) AS t FROM messages WHERE thread=$1 AND intent = ANY($2)`, [a.thread, changes])
     const lastRevise = lr.rows[0]?.t
     const fresh = v => v.intent === 'approve' && (!lastRevise || v.ts > lastRevise)
     const gid = /^plan-(\d+)$/.exec(a.thread)?.[1]
@@ -271,17 +357,17 @@ async function handleTool(name, a) {
     if (!r.rows.length) return '(no verdicts on this thread yet)'
     return r.rows.map(v =>
       `${v.intent === 'approve' ? '✔' : '✗'} ${v.from_agent}: ${v.intent}`
-      + (v.intent === 'approve' && lastRevise && v.ts <= lastRevise ? ' STALE (predates last revise)' : '')
+      + (v.intent === 'approve' && lastRevise && v.ts <= lastRevise ? ' STALE (predates last change)' : '')
       + ` [${v.ts.toISOString()}]`)
       .join('\n')
       + `\napprovals: ${r.rows.filter(fresh).length} fresh`
-      + (lastRevise ? ` (last revise ${lastRevise.toISOString()})` : '')
+      + (lastRevise ? ` (last change ${lastRevise.toISOString()})` : '')
       + (goal ? ` — goal ${gid} is ${goal.state}` : '')
   }
   if (name === 'self_edit') {
     const { execFile } = await import('node:child_process')
-    const scribe = new URL('../nucleus/identity_commit.py', import.meta.url).pathname
-    const py = new URL('../venv/bin/python', import.meta.url).pathname
+    const scribe = homePath('nucleus/identity_commit.py')
+    const py = homePath('venv/bin/python')
     return await new Promise((resolve) => {
       const args = [scribe, AGENT, a.path, ...(a.b64 ? ['--b64'] : [])]
       const p = execFile(py, args, { timeout: 15_000 }, (err, stdout, stderr) =>
@@ -292,11 +378,16 @@ async function handleTool(name, a) {
   }
   if (name === 'trigger_set') {
     if (a.kind === 'python' && a.check) {
-      const dir = new URL(`../triggers/${AGENT}/`, import.meta.url)
+      const dir = homeFile(`triggers/${AGENT}/`)
+      const file = triggerFile(dir, a.name)                 // refuses '../x', '/etc/x', 'a b' — before any write
       await import('node:fs/promises').then(fs => fs.mkdir(dir, { recursive: true })
-        .then(() => fs.writeFile(new URL(`${a.name}.py`, dir), a.check)))
-      return `triggers/${AGENT}/${a.name}.py written — the pulse registers its @trigger `
+        .then(() => fs.writeFile(file, a.check)))
+      // writing a name again un-retires it (a3 BC-2): exactly the names the pulse will register from this file
+      const revived = await definedNames(file.pathname, { py: PULSE_PY, pulse: PULSE })
+      await clear(TRIGGERS_ROOT, AGENT, revived)
+      return `triggers/${AGENT}/${file.pathname.split('/').pop()} written — the pulse registers its @trigger `
         + `functions within a minute (schedules come from the decorators in the file)`
+        + (revived.length ? `; it defines ${revived.join(', ')}, none of them retired now` : '')
     }
     if (!a.schedule) throw new Error('schedule required for heartbeat/sql triggers')
     await pool.query(
@@ -305,6 +396,7 @@ async function handleTool(name, a) {
        ON CONFLICT (agent, name) DO UPDATE
          SET schedule=$3, kind=$4, check_src=$5, note=$6, enabled=true, next_fire=now()`,
       [AGENT, a.name, a.schedule, a.kind || 'heartbeat', a.check || null, a.note || null])
+    await clear(TRIGGERS_ROOT, AGENT, [a.name])
     return `trigger ${a.name} set: ${a.kind || 'heartbeat'} on '${a.schedule}'`
   }
   if (name === 'trigger_list') {
@@ -317,8 +409,14 @@ async function handleTool(name, a) {
       + `${t.note ? ' — ' + t.note : ''}`).join('\n') || '(no triggers; you never wake yourself)'
   }
   if (name === 'trigger_rm') {
-    await pool.query(`UPDATE triggers SET enabled=false WHERE agent=$1 AND name=$2`,
+    const r = await pool.query(`UPDATE triggers SET enabled=false WHERE agent=$1 AND name=$2 RETURNING kind`,
       [AGENT, a.name])
+    // A python trigger's row alone is re-enabled by the pulse within a minute (its file still defines it), so its
+    // retirement is the TOMBSTONE, per (agent, name) (plan-9853 D2).
+    if (r.rows.some(x => x.kind === 'python')) {
+      await retire(TRIGGERS_ROOT, AGENT, a.name)
+      return `trigger ${a.name} retired: the pulse won't re-enable it; trigger_set writes it again to bring it back`
+    }
     return `trigger ${a.name} disabled`
   }
   throw new Error(`unknown tool ${name}`)
@@ -363,7 +461,7 @@ function permitSurfaces() {
   for (const [file, pfx] of [['telegram', 'tg:'], ['discord', 'dc:']]) {
     try {
       const routes = JSON.parse(readFileSync(
-        new URL(`../bridges/routes-${file}.json`, import.meta.url), 'utf8'))
+        homeFile(`bridges/routes-${file}.json`), 'utf8'))
       const r = routes.find(x => x.agent === AGENT && x.enabled && x.chat)
       if (r) surfaces.push(pfx + r.chat)
     } catch { /* channel not configured on this box — skip it */ }
@@ -373,6 +471,19 @@ function permitSurfaces() {
 const PERMIT_SURFACES = permitSurfaces()
 
 mcp.setNotificationHandler(PermissionRequestSchema, async ({ params: p }) => {
+  // A LABELLED member's request is DENIED here, never relayed: its tool-call text is tier content, and the relay
+  // writes it onto owner-bound wire rows (plan-9139 #46033 seat 5, a4 #46035: fail closed beats a second stamped path).
+  let lbl = null
+  try { lbl = await currentLabel() } catch { /* malformed: denied below, like UNKNOWN */ }
+  if (labelled(lbl)) {
+    await mcp.notification({
+      method: 'notifications/claude/channel/permission',
+      params: { request_id: p.request_id, behavior: 'deny' },
+    })
+    console.error(`[channel] permission request ${p.request_id} DENIED: "${AGENT}" is tier-labelled, so its ` +
+      `tool calls are never relayed to the wire (plan-9139)`)
+    return
+  }
   openPermits.add(p.request_id)
   const preview = p.input_preview.length > 700
     ? p.input_preview.slice(0, 350) + ' … ' + p.input_preview.slice(-350) : p.input_preview
@@ -437,11 +548,25 @@ async function pushMessage(row) {
   // timestamp and the reason, and decides for itself whether the wake is still worth
   // acting on. A heuristic that guessed staleness here would be guessing about a
   // judgement the reader can make with the facts.
+  if (row.thread) seenThreads.add(row.thread)    // the threads a labelled reply may keep (release.agent_send)
+  // plan-9139 S1b-2b: an inbound row from a tier route carries a marker and a pointer. Only a session whose label
+  // (an array: never UNKNOWN, never org) holds that tier resolves it, through the door's read rule; every other
+  // reader, and any refusal, gets the marker as written.
+  let text = row.body
+  const ing = row.delivery?.ingress
+  const lbl = ing ? await currentLabel().catch(() => null) : null    // an UNKNOWN label is read again here too
+  if (ing && Array.isArray(lbl) && lbl.includes(ing.tier)) {
+    try {
+      text = await releaseRead(AGENT, ing.pointer, ing.body_mac)
+    } catch (e) {
+      text = `${row.body} [the tier door would not resolve it: ${e.message}]`
+    }
+  }
   const again = Number(row.delivery?.recovered || 0)
   const content = again
     ? `[redelivered wake · sent ${new Date(row.ts).toISOString()} · the session it was ` +
-      `first delivered to ended before taking any turn, so nothing read it]\n${row.body}`
-    : row.body
+      `first delivered to ended before taking any turn, so nothing read it]\n${text}`
+    : text
   await mcp.notification({
     method: 'notifications/claude/channel',
     params: {
@@ -506,10 +631,13 @@ async function deliverMessage(id) {
 
 async function maybePushStep(payload) {
   const { id, agent, kind } = JSON.parse(payload)
-  if (agent === AGENT) return
+  if (!agent || agent === AGENT) return
   const sub = subs.find(s => s.target === agent && (s.filter === 'all' || s.filter.split(',').includes(kind)))
   if (!sub) return
-  const r = await pool.query(`SELECT * FROM steps WHERE id=$1`, [id])
+  // The subscription was matched on the payload's AGENT, so the row must BE that agent's: a
+  // payload whose id names another agent's step resolves to nothing, instead of pushing that
+  // step's content under a subscription to someone else (defense in depth, a4 #22117).
+  const r = await pool.query(`SELECT * FROM steps WHERE id=$1 AND agent=$2`, [id, agent])
   const s = r.rows[0]; if (!s) return
   await mcp.notification({
     method: 'notifications/claude/channel',
@@ -631,6 +759,50 @@ async function listen() {
     setTimeout(listen, 3000)
   }
 }
+
+// ── one body per identity ─────────────────────────────────────────────────────────────
+// Two live servers for one agent are two ears on one doorbell: each claims (marks delivered) a share of the
+// agent's messages, and each half is lost to the other session (the two-seed incident). spawn.sh guards its own
+// residents by pane and command line; a plugin session is invisible to that, so with ASTRYX_ONE_BODY=1 (set by the
+// plugin's manifest; the repo's residents leave it unset and behave as before) the server holds a session-level
+// advisory lock on a DEDICATED connection for its whole life, and a second body refuses to start, loudly.
+// The lock rides that connection: if it drops, the server takes the lock again, and exits if another body took it.
+// A drop can arrive as 'error' or as a bare 'end' (a server-closed socket need not error), so BOTH re-arm, once per
+// connection. application_name names the lock's backend in pg_stat_activity (tests/test_channel_home.py kills it).
+const ONE_BODY = process.env.ASTRYX_ONE_BODY === '1'
+async function holdBody(first) {
+  const c = new pg.Client({ connectionString: DSN, connectionTimeoutMillis: 10_000,
+    application_name: `astryx-body:${AGENT}`.slice(0, 63) })
+  let ok
+  try {
+    await c.connect()
+    ok = (await c.query(`SELECT pg_try_advisory_lock(hashtext('astryx-body'), hashtext($1)) AS ok`, [AGENT])).rows[0].ok
+  } catch (e) {
+    try { await c.end() } catch {}
+    if (first) {
+      console.error(`[channel] cannot take the one-body lock for "${AGENT}" (postgres: ${e.message}); refusing to start`)
+      process.exit(1)
+    }
+    return setTimeout(() => holdBody(false), 3000)
+  }
+  if (!ok) {
+    console.error(`[channel] ANOTHER BODY is already live as "${AGENT}" (its server holds the one-body lock). ` +
+      `Refusing to start a second ear on one doorbell: close the other session, or join this project under a ` +
+      `different name.`)
+    process.exit(1)
+  }
+  let lost = false
+  const rearm = () => {
+    if (lost) return                                 // 'error' then 'end' for one loss: one re-arm
+    lost = true
+    console.error(`[channel] the one-body lock's connection for "${AGENT}" dropped; taking the lock again`)
+    try { c.end() } catch {}
+    setTimeout(() => holdBody(false), 3000)
+  }
+  c.on('error', rearm)
+  c.on('end', rearm)
+}
+if (ONE_BODY) await holdBody(true)
 
 await mcp.connect(new StdioServerTransport())
 listen()

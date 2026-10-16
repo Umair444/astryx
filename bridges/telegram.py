@@ -11,7 +11,7 @@ Platform translation ONLY; everything shared lives in common.py:
   polls     [[poll:]] -> sendPoll (non-anonymous so votes come back);
             poll_answer updates carry the voter's CURRENT selections directly
 
-api.telegram.org is ISP-blocked in Pakistan (PTA, SNI+IP level, verified
+api.telegram.org is ISP-blocked in some countries (SNI+IP level, verified
 2026-07-25): TG_API_BASE points at a relay (Cloudflare Worker) and/or TG_PROXY
 routes through any http/socks5 proxy — either unblocks without a code change.
 
@@ -35,10 +35,12 @@ import asyncpg
 import httpx
 from fastapi import FastAPI
 
+from .embed_root import Refused, owner_only, read_checked
 from .common import (HERE, Outcome, reacted_message, reaction_signal, route_target, describe_media, env, listen,
                      load_routes, media_path,
                      record_poll, resolve_quoted_body, split_files, split_polls,
-                     step_line, update_poll_votes, vote_body, wire_insert)
+                     step_line, update_poll_votes, vote_body, wire_insert,
+                     door_open, door_org_ok, live_steps_ok, released)
 from .providers.telegram import TelegramProvider
 
 PROVIDER = TelegramProvider()          # Bot API send logic
@@ -72,13 +74,22 @@ async def tg(method: str, **params) -> dict:
 # ------------------------------------------------------------------- outbound
 async def deliver(row):
     thread = row["thread"] or ""
-    if not (thread.startswith("tg:") or (row["to_agent"] or "").startswith("tg-")):
-        return                                     # not this surface's row
-    chat = thread[3:] if thread.startswith("tg:") else (row["to_agent"] or "")[3:]
-    if not chat:
-        return
+    stamped = None
+    if released(row) is not None:                  # plan-9139 S1c: only where its stamp names; the body from the store
+        stamped = await door_open(pool, row, "telegram", routes())
+        if stamped is None:
+            return
+        chat = str(stamped[0]["chat"])
+    else:
+        if not (thread.startswith("tg:") or (row["to_agent"] or "").startswith("tg-")):
+            return                                 # not this surface's row
+        chat = thread[3:] if thread.startswith("tg:") else (row["to_agent"] or "")[3:]
+        if not chat:
+            return
+        if not await door_org_ok(pool, row, "telegram", routes(), chat):
+            return                                 # S1c: an unstamped row only to a declared org route
     agent = row["from_agent"]
-    text, files = split_files(row["body"])
+    text, files = split_files(stamped[1] if stamped else row["body"])
     text, polls = split_polls(text, max_options=10)
     out = Outcome()
     try:
@@ -98,18 +109,21 @@ async def deliver(row):
                 out.sent(res.message_id)
             else:
                 out.failed("text", res.error or "provider reported not-ok")
+        route = next((r for r in routes() if str(r.get("chat")) == chat), None)
         for f in files:
             p = Path(f)
-            if not p.is_file():
-                out.failed("file", f"path not found: {f}")
+            try:                                   # the SENDER's roots, not the bridge's reach (embed_root.py)
+                name, data = read_checked(f, agent, owner_only("telegram", route))
+            except Refused as e:
+                out.failed("file", f"refused: {e}")
                 await tg("sendMessage", chat_id=int(chat),
-                         text=f"(file {p.name} was NOT sent — path not found)")
+                         text=f"(file {p.name} was NOT sent — {e})")
                 continue
-            method, field = ("sendPhoto", "photo") if p.suffix.lower() in (
+            method, field = ("sendPhoto", "photo") if Path(name).suffix.lower() in (
                 ".png", ".jpg", ".jpeg", ".webp") else ("sendDocument", "document")
             try:
                 r = await http.post(f"{API}/{method}", data={"chat_id": chat},
-                                    files={field: (p.name, p.read_bytes())}, timeout=300)
+                                    files={field: (name, data)}, timeout=300)
                 if not r.json().get("ok"):
                     raise RuntimeError(str(r.json().get("description", "sendfile not ok"))[:120])
             except Exception as e:
@@ -149,9 +163,14 @@ async def deliver(row):
                                + f" Please reply in text instead. ({type(e).__name__})"))
     except Exception as e:
         out.failed("deliver", e)
-    await pool.execute(
-        "UPDATE messages SET status=$2, delivered_at=now(), delivery=$3 WHERE id=$1",
-        row["id"], out.status, out.receipt(f"telegram:{chat}", text))
+    if stamped:                                    # no chat id and no private text back on the wire
+        await pool.execute("UPDATE messages SET status=$2, delivered_at=now(), "
+                           "delivery = coalesce(delivery, '{}'::jsonb) || $3::jsonb WHERE id=$1", row["id"], out.status,
+                           out.receipt("telegram:release", row["body"], door="released", classified=True))
+    else:
+        await pool.execute("UPDATE messages SET status=$2, delivered_at=now(), delivery=$3 WHERE id=$1",
+                           row["id"], out.status,
+                           out.receipt(f"telegram:{chat}", text, door="org-unstamped"))
 
 
 async def on_step(ev: dict):
@@ -159,7 +178,7 @@ async def on_step(ev: dict):
     job = jobs.get(agent)
     if not job:
         return
-    line = await step_line(pool, ev.get("id", 0), kind)
+    line = await step_line(pool, ev.get("id", 0), kind, agent=agent)
     if not line or line == job.get("sent"):
         return
     job["sent"] = line
@@ -237,9 +256,10 @@ async def on_message(msg: dict):
         meta["reply_to_id"] = str(rid)
         meta["reply_to_body"] = ((rep.get("text") or rep.get("caption") or "").strip()
                                  or await resolve_quoted_body(pool, rid))
+    said = text
     agent, text = await route_target(pool, f"tg:{chat}", text, route["agent"])
-    await wire_insert(pool, who, "telegram", agent, f"tg:{chat}", "chat", text, meta)
-    if route.get("live_steps") and trusted:
+    await wire_insert(pool, who, "telegram", agent, f"tg:{chat}", "chat", text, meta, route=route, said=said)
+    if live_steps_ok(route) and trusted:           # S1c: never on a tiered route (its second egress)
         jobs[agent] = {"chat": chat, "ph_id": None, "sent": ""}
         try:
             await tg("sendChatAction", chat_id=int(chat), action="typing")
@@ -273,7 +293,7 @@ async def on_poll_answer(pa: dict):
     await wire_insert(
         pool, "owner" if trusted else f"tg-{user.get('id')}", "telegram",
         rec["agent"] or (route and route["agent"]) or "seed", chat, "poll",
-        vote_body(rec["question"], changes, agg))
+        vote_body(rec["question"], changes, agg), route=route)
 
 
 async def on_message_reaction(mr: dict):
@@ -324,8 +344,10 @@ async def lifespan(_):
     http = httpx.AsyncClient(proxy=PROXY)
     t1 = asyncio.create_task(poll_updates())
     t2 = asyncio.create_task(listen(
-        DSN, "(to_agent='owner' OR to_agent LIKE 'tg-%') "
-             "AND (thread LIKE 'tg:%' OR to_agent LIKE 'tg-%')",
+        DSN, "((to_agent='owner' OR to_agent LIKE 'tg-%') "
+             "AND (thread LIKE 'tg:%' OR to_agent LIKE 'tg-%')) "
+             # plan-9139 S1c: a release this bridge's route was stamped for (its thread, tier-<sender>, names none)
+             "OR (to_agent='owner' AND thread LIKE 'tier-%' AND delivery->'release'->>'channel' = 'telegram')",
         deliver, on_step))
     yield
     t1.cancel(); t2.cancel()

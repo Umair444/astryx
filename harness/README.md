@@ -29,7 +29,7 @@ non-isolated body.** The escapes, each grounded first-hand against the live subs
 - **ESCAPE B — in-band wire → real postgres, no Bash, no network.**
   `channel/server.mjs:15` resolves the DSN from `new URL('../.env', import.meta.url)` —
   the **server script's own sibling** = `/home/umair/astryx/.env` (real), **ignoring
-  `process.env`**. `nucleus/spawn.sh:96-100` wires the `astryx` MCP **unconditionally**
+  `process.env`**. `scripts/spawn.sh:96-100` wires the `astryx` MCP **unconditionally**
   (every agent, Grants-less included). So a base-MCP test agent's `send` / `self_edit` /
   `trigger_set` write to **real postgres**.
 - **ESCAPE C — hooks → real postgres.** `hooks/step.py:21` — `DSN_FILE =
@@ -38,10 +38,10 @@ non-isolated body.** The escapes, each grounded first-hand against the live subs
   row to real postgres.
 - **ESCAPE D — network exfil.** send-to-attacker-host, URL-unfurl, media-upload — and
   (grounded here, NOT in the plan) the real DB is reachable over the network by endpoint,
-  not just via `.env`: `genesis-pg` binds `127.0.0.1:5432`, **`192.168.1.9:5432` (the
-  host's LAN IP)**, and `172.18.0.2:5432` (docker net `pg_default`). An injected agent
-  that guesses `192.168.1.9:5432` reaches the real DB over the LAN even with a canary
-  `.env`. So default-deny egress is doubly load-bearing.
+  not just via `.env`: `genesis-pg` binds `127.0.0.1:5432` and `172.18.0.2:5432` (docker net
+  `pg_default`). Until 2026-10-10 it also bound the host's LAN IP; that binding is gone (owner:
+  every org's database is localhost-only). An injected agent that guesses a host-local endpoint
+  can still reach it even with a canary `.env`, so default-deny egress stays load-bearing.
 
 **Why a same-uid canary-env is INSUFFICIENT and only docker FS-isolation works:** because
 C hardcodes an *absolute* path and B resolves its *own* sibling, a sandbox at a *different

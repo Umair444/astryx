@@ -9,7 +9,7 @@ assumed: `git check-ignore` says whether the repo DELIBERATELY does not carry it
 and absent -> that arm is UNCHECKABLE here and says so by name; absent and tracked -> rot,
 FAIL. Git unable to answer -> FAIL, because a detector that cannot classify must not skip.
 
-WHAT THIS IS FOR. nucleus/mutation_probe.py is an authoring-time instrument, deliberately
+WHAT THIS IS FOR. devtools/mutation_probe.py is an authoring-time instrument, deliberately
 NOT gated in check.sh (steward's ruling, msg 5934, reaffirmed with numbers on 2026-08-15:
 gating the full run costs 100.6s, 94% of it from mutants_ear_survival's real-server arm,
 and a gate slow enough to skip gets skipped — taking the fast gates' reader with it). Full
@@ -43,7 +43,7 @@ an estate this checkout does not carry — this verified nothing and says so wit
 check.sh's protocol. The same polarity every detector here uses, and the reason the skipped
 ARMS are printed by name even on a green run: a partial pass may not wear a full one's claim.
 
-Run: venv/bin/python tests/test_mutants_wellformed.py   (also wired into nucleus/check.sh)
+Run: venv/bin/python tests/test_mutants_wellformed.py   (also wired into devtools/check.sh)
 """
 import importlib.util
 import subprocess

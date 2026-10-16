@@ -1,4 +1,4 @@
-"""Oracle for nucleus/people.py — the channel-derived social graph.
+"""Oracle for src/astryx/people/people.py — the channel-derived social graph.
 
 THE STAKES ARE HIGHER HERE THAN ANYWHERE ELSE IN THE ESTATE. world.py handles a handful of
 people the owner wrote down himself. This module walks his address book: a bounded scan of
@@ -19,7 +19,7 @@ hash that ignores its salt would pass every other test in this file while offeri
 Fixtures are CERTIFIED FAKE: sequential/reserved-range digits that cannot be live numbers.
 No real contact appears in this file.
 
-Run: venv/bin/python tests/test_people.py   (also wired into nucleus/check.sh)
+Run: venv/bin/python tests/test_people.py   (also wired into devtools/check.sh)
 """
 import re
 import sys
@@ -28,7 +28,11 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from nucleus import people  # noqa: E402
+
+class _Skip(Exception):
+    """An arm whose estate is absent on this tree (estate.absent → 77): reported as NOT SEARCHED."""
+
+from astryx.people import people  # noqa: E402
 
 # Built by CONCATENATION on purpose: the runtime value must be JID-shaped to exercise
 # the real parsers, but the pre-push privacy gate rightly refuses any JID-shaped
@@ -100,7 +104,7 @@ def test_an_absent_name_is_unknown_not_the_jid():
 def test_an_unreachable_channel_is_UNREAD_not_EMPTY():
     """A channel that is down must not render as 'this person knows nobody'. Silence from a
     broken instrument is not a negative result — the same law that nearly had me report
-    'no Salaar found' from a usage message."""
+    'no such person found' from a usage message."""
     real = people._wa
     try:
         people._wa = lambda *a, **k: None
@@ -181,17 +185,96 @@ def test_no_raw_jid_reaches_any_emitted_field():
         people._wa = real
 
 
+def test_dm_edges_carry_frequency_and_recency_incrementally():
+    """owner→person dm edges: counts + first/last + mine, refreshed only where a chat moved, kept across
+    the nightly rebuild, and the output is counts only (no name, number or text)."""
+    import json as _json
+    import os as _os
+    from astryx.security.sqlguard.estate import absent
+    got = absent(REPO, ("psycopg",))
+    if got:                                    # 77 on a committed-only tree; loud (rc 1) on a live host
+        if got[0] == 77:
+            raise _Skip(got[1])
+        raise RuntimeError(got[1])
+    import psycopg
+    from astryx.security.sqlguard.fixture import fixture_db
+    chats = [{"jid": "111@s.whatsapp.net", "name": "A", "last_message_ts": "2026-10-01T10:00:00Z"},
+             {"jid": "222@s.whatsapp.net", "name": "B", "last_message_ts": "2026-09-01T10:00:00Z"},
+             {"jid": "333@s.whatsapp.net", "name": "C", "last_message_ts": "2026-08-01T10:00:00Z"}]
+    msgs = {"111@s.whatsapp.net": [{"Timestamp": "2026-01-02T00:00:00Z", "FromMe": True, "Text": "secret-1"},
+                                   {"Timestamp": "2026-10-01T10:00:00Z", "FromMe": False, "Text": "secret-2"}],
+            "222@s.whatsapp.net": [{"Timestamp": "2025-05-05T00:00:00Z", "FromMe": False, "Text": "secret-3"}] * 3}
+    chats.append({"jid": "444@s.whatsapp.net", "name": "D", "last_message_ts": None})   # an empty chat: messages null
+    calls = []
+
+    def stub(*a, **k):
+        calls.append(a[:2])
+        if a[:2] == ("chats", "list"):
+            return {"chats": chats}
+        if a[:2] == ("messages", "list"):
+            jid = a[a.index("--chat") + 1]
+            if jid == "444@s.whatsapp.net":
+                return {"messages": None}
+            return None if jid == "333@s.whatsapp.net" else {"messages": msgs[jid]}
+        return None
+    real, old_dsn = people._wa, _os.environ.get("ASTRYX_DSN")
+    try:
+        with fixture_db() as fx:
+            _os.environ["ASTRYX_DSN"] = fx["url"]
+            people._wa = stub
+            r1 = people.dm_refresh(budget_s=30)
+            assert r1["refreshed"] == 3 and r1["unreadable"] == 1, r1   # the empty chat is a 0-message edge
+            blob = _json.dumps(r1)
+            assert "secret" not in blob and "111" not in blob, "the report must carry counts only"
+            with psycopg.connect(fx["url"]) as c:
+                rows = {r[0]: r[1:] for r in c.execute(
+                    "SELECT dst, weight, mine, first_ts IS NOT NULL, last_ts IS NOT NULL FROM social_edge WHERE rel='dm'")}
+            assert rows[people.pid("111@s.whatsapp.net")] == (2, 1, True, True), rows
+            assert rows[people.pid("222@s.whatsapp.net")][:2] == (3, 0), rows
+            assert r1["store_reaches_back_to"].startswith("2025-05-05"), r1
+            calls.clear()
+            r2 = people.dm_refresh(budget_s=30)
+            assert r2["refreshed"] == 0 and sum(1 for c_ in calls if c_ == ("messages", "list")) == 1, (r2, calls)
+            chats[1]["last_message_ts"] = "2026-10-09T09:00:00Z"            # B wrote again
+            r3 = people.dm_refresh(budget_s=30)
+            assert r3["refreshed"] == 1, r3
+            people._wa = lambda *a, **k: {"chats": []} if a[:2] == ("chats", "list") else None
+            g1 = {"people": {"p-x": {"id": "p-x", "label": "x"}}, "groups": {"g-1": {"id": "g-1", "label": "grp"}},
+                  "edges": [{"src": "p-x", "dst": "g-1", "rel": "member-of"}]}
+            people.write_pg(g1)                                             # a night with a group edge
+            people.write_pg({"people": {}, "groups": {}, "edges": []})     # the nightly rebuild (drops it)
+            with psycopg.connect(fx["url"]) as c:
+                gone = c.execute("SELECT count(*) FROM social_edge WHERE rel='member-of'").fetchone()[0]
+            assert gone == 0, "the rebuild replaces non-dm edges"
+            with psycopg.connect(fx["url"]) as c:
+                kept = c.execute("SELECT count(*) FROM social_edge WHERE rel='dm'").fetchone()[0]
+            assert kept == 3, f"the rebuild must keep dm edges, kept {kept}"
+            people._wa = lambda *a, **k: {"chats": chats} if a[:2] == ("chats", "list") else {
+                "messages": [{"Timestamp": "2026-10-09T00:00:00Z", "FromMe": True}] * 5}
+            st = people.dm_stats("111@s.whatsapp.net", cap=5)
+            assert st["capped"] is True and st["n"] == 5, st
+    finally:
+        people._wa = real
+        if old_dsn is None:
+            _os.environ.pop("ASTRYX_DSN", None)
+        else:
+            _os.environ["ASTRYX_DSN"] = old_dsn
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    failed = 0
+    failed = skipped = 0
     for fn in fns:
         try:
             fn()
             print(f"  ✓ {fn.__name__}")
+        except _Skip as e:
+            skipped += 1
+            print(f"  ○ {fn.__name__} — NOT SEARCHED: {e}")
         except Exception:
             failed += 1
             print(f"  ✗ {fn.__name__}")
             traceback.print_exc()
-    print(f"\n{len(fns) - failed}/{len(fns)} passed")
+    print(f"\n{len(fns) - failed - skipped}/{len(fns)} passed" + (f", {skipped} not searched" if skipped else ""))
     sys.exit(1 if failed else 0)

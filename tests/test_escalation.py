@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gates for nucleus/escalation.py — the consumption-aware escalation facility (#2457).
+"""Gates for src/astryx/core/escalation.py — the consumption-aware escalation facility (#2457).
 
 Exit 0 pass · 1 fail · 77 a gate could not run.
 
@@ -17,7 +17,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 # THE SUBJECT IS OVERRIDABLE, and this is not a convenience. The first version of this
-# oracle did `from nucleus import escalation`, so mutation_probe mutated a copy, set
+# oracle did `from astryx.core import escalation`, so mutation_probe mutated a copy, set
 # ESCALATION_SRC, and the oracle imported the REAL module and passed — all ten mutants
 # reported NOT PROBED. Ten survivors is not ten holes; it is the signature of a test that
 # never read the thing it was pointed at. An oracle that ignores its own subject argument
@@ -37,7 +37,7 @@ if not _override:
     # takes this import, so the probe stays honest. (Wording per a4, msg 13613:
     # explain a line by what it DOES, not by what observes it, or the next copier
     # inherits gate-appeasement.)
-    from nucleus import escalation as esc       # noqa: E402
+    from astryx.core import escalation as esc       # noqa: E402
     SUBJECT = Path(esc.__file__)
 else:
     SUBJECT = Path(_override)
@@ -137,9 +137,12 @@ def main():
           f"floor {esc.ORG_DARK_FLOOR_H} vs violator {esc.INNOCENT_WORST_H}")
     # The floor must keep its VIOLATOR next to it. A floor justified by a comfortable
     # number is the defect a3 caught in ESC_DELIVERY_GRACE_MIN, one plan over.
+    # On the pulse-liveness measure the worst innocent silence is the org's densest guaranteed
+    # pulse fire — the ~4h heartbeat cadence — not a comfortable small number and not near the
+    # floor. A constant outside this band means it has stopped being the measured violator.
     check("the floor's justification cites the number that would violate it",
-          8.0 < esc.INNOCENT_WORST_H < esc.ORG_DARK_FLOOR_H,
-          f"{esc.INNOCENT_WORST_H} is not the measured innocent worst")
+          3.0 < esc.INNOCENT_WORST_H < 6.0 < esc.ORG_DARK_FLOOR_H,
+          f"{esc.INNOCENT_WORST_H} is not the measured innocent worst (~4h heartbeat cadence)")
 
     # ── QUORUM ──────────────────────────────────────────────────────────────────────
     check("quorum counts DISTINCT agents, not fires",
@@ -174,10 +177,11 @@ def main():
     # ── THE VIOLATOR MUST STILL BE THE VIOLATOR ─────────────────────────────────────
     # A floor's justification is an empirical claim, so it can EXPIRE. This re-derives the
     # worst innocent org-wide silence from the wire using the facility's own SQL and fails
-    # if the recorded constant has drifted — otherwise 8.42h becomes a number that was true
-    # once, sitting next to a floor that still cites it.
+    # if the recorded constant has drifted — otherwise 4.0h becomes a number that was true
+    # once, sitting next to a floor that still cites it. Gaps are PULSE-fire gaps (org-clock
+    # liveness), so an innocent human-idle window no longer inflates the violator.
     try:
-        from nucleus import wake_audit as _wa
+        from astryx.core import wake_audit as _wa
         import psycopg
         with psycopg.connect(_wa.dsn(), connect_timeout=5) as c:
             # float(), not the raw row: postgres EXTRACT returns Decimal, and Decimal

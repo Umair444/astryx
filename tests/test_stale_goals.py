@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Oracle for triggers/steward/stale_goals.py — the progress law, mechanized.
 
-    venv/bin/python tests/test_stale_goals.py     (also run by nucleus/check.sh)
+    venv/bin/python tests/test_stale_goals.py     (also run by devtools/check.sh)
 
 WHY IT EXISTS AT ALL, AND WHY NOW. This guard is the metabolism patrol — the one that
 decides whether a goal is decaying — and it had no fixture of any kind until the day it
@@ -87,14 +87,24 @@ class FakeCtx:
         return self.rows
 
 
-def goal(gid, state, days, title="t", owner="steward", epoch_hours=24):
-    """A goal row shaped like the real query's output — ages as DECIMAL, deliberately."""
-    return dict(id=gid, title=title, owner=owner, state=state,
-                epoch_hours=epoch_hours, age_s=Decimal(str(int(days * 86400))))
+def goal(gid, state, days, title="t", owner="steward", epoch_hours=24, dark_days=None):
+    """A goal row shaped like the real query's output — ages as DECIMAL, deliberately.
+    dark_days: host-down time inside the evidence window (the query's dark_s); omitted =
+    the pre-2026-10-09 row shape, which must still decay exactly as before."""
+    row = dict(id=gid, title=title, owner=owner, state=state,
+               epoch_hours=epoch_hours, age_s=Decimal(str(int(days * 86400))))
+    if dark_days is not None:
+        row["dark_s"] = Decimal(str(int(dark_days * 86400)))
+    return row
 
 
 mod = load_subject()
 fire = mod["stale_goals"]
+# hermetic: the merge-evidence term reads git; every arm below that isn't ABOUT it sees an empty log (no merges).
+# Patched in the FUNCTION's globals: runpy.run_path hands back a COPY of the module dict.
+_GIT = {"log": ""}
+if "git_log" in mod:
+    fire.__globals__["git_log"] = lambda: _GIT["log"]
 print("the metabolism patrol cannot crash, cannot go quiet, and cannot cap its ladder:")
 
 # ── the crash: the type the real source actually returns ───────────────────────────
@@ -124,6 +134,20 @@ check("a deliberately BLOCKED goal is still watched — an unre-raised gate read
       "abandonment from outside",
       out and "#4" in out, f"out={out!r}")
 
+# ── the baton: a quiet epoch names who the latest milestone was addressed to ─────────
+row = goal(6, "active", 1)
+row.update(lm_id=39995, lm_from="abstractor-4", lm_to="steward")
+out = fire(FakeCtx([row]))
+check("one dead epoch NAMES the latest plan milestone, its sender and its recipient (#4918's dropped close)",
+      out and "#39995 abstractor-4→steward" in out and "the next move is steward's" in out, f"out={out!r}")
+row = goal(7, "active", 3)
+row.update(lm_id=1, lm_from="a", lm_to="b")
+out = fire(FakeCtx([row]))
+check("...and so does the two-epoch escalation", out and "PROGRESS-LAW" in out and "#1 a→b" in out, f"out={out!r}")
+out = fire(FakeCtx([goal(8, "active", 1)]))
+check("a plan thread with no milestone says nothing about a baton (no invented holder)",
+      out and "latest plan milestone" not in out, f"out={out!r}")
+
 # THE EXCLUSION LIVES IN SQL, NOT IN THE LOOP, and my first version of this assertion
 # handed the Python a shipped goal and demanded silence — which the loop cannot give,
 # because the real query never returns that row. Testing a filter from the wrong side of
@@ -141,9 +165,10 @@ check("the state filter is NEGATIVE (<> ALL) — an unknown state defaults to WA
       "<> ALL" in cap.query and " IN (" not in cap.query,
       "goals.state is free text with no CHECK constraint; a positive allowlist lets a "
       "typo'd or newly-invented state exit the patrol entirely")
-check("...and the excluded set is exactly the closed terminal three",
-      tuple(mod["TERMINAL"]) == ("shipped", "hibernated", "refused")
-      and cap.params and list(cap.params[0]) == list(mod["TERMINAL"]),
+check("...and the excluded set is exactly the closed terminal four (shipped AND done — "
+      "the economy closes to 'done', not 'shipped')",
+      tuple(mod["TERMINAL"]) == ("shipped", "done", "hibernated", "refused")
+      and cap.params and list(cap.params[-1]) == list(mod["TERMINAL"]),
       f"TERMINAL={mod['TERMINAL']} params={cap.params}")
 
 # ── the escalation asks, it does not prescribe ─────────────────────────────────────
@@ -198,5 +223,196 @@ ctx10 = FakeCtx([goal(10, "proposed", 0.5)], {})
 check("a freshly proposed goal is not nagged about at all",
       fire(ctx10) is None, "the first band is 2 days; a new proposal is not a finding")
 
+# ── RUNNING time, not wall time (2026-10-09: host off 8.75d → six goals "9 dead epochs") ──────
+out = fire(FakeCtx([goal(11, "active", 9.6, dark_days=8.75)]))
+check("a goal whose whole silence is host-down time is NOT escalated (the 10-09 false six)",
+      out is None or "#11" not in out, f"out={out!r}")
+out = fire(FakeCtx([goal(12, "active", 10, dark_days=7)]))
+check("...but running-time decay still escalates, and SAYS how much it discounted",
+      out and "#12" in out and "3 epochs" in out and "168h host-down discounted" in out, f"out={out!r}")
+out = fire(FakeCtx([goal(13, "active", 2, dark_days=5)]))
+# (darkness is summed only inside [evidence, now], so it cannot exceed the age; the max(0, …) clamp is
+#  defensive and its removal is an EQUIVALENT mutant — this arm proves only that such a row is quiet)
+check("a row whose darkness exceeds its age is quiet and does not raise",
+      out is None or "#13" not in out, f"out={out!r}")
+check("the dark-gap threshold is the declared 6h (premise: an UP org writes at least every 4h)",
+      mod.get("DARK_GAP") == "6 hours", f"DARK_GAP={mod.get('DARK_GAP')!r}")
+
+# ── MERGES ON MAIN are evidence (follow-up (d)): a goal shipping through reviewed merges must not read dead ──
+print("merge evidence:")
+me = mod["merge_evidence"]
+LOG = "\x1e".join(f"{t}\x1f{s}" for t, s in (
+    ("2026-10-15T08:06:57+05:00", "plan-9139 S1c: the door at the bridge"),
+    ("2026-10-15T07:00:00+05:00", "Merge plan-10107 sqlguard site forms (a4 PASS)"),
+    ("2026-10-14T22:00:00+05:00", "reorg S4 applied (goal 10224)"),
+    ("2026-10-13T10:00:00+05:00", "store: goal-8018 S1, and plan-9139 noted"),
+    ("2026-10-12T10:00:00+05:00", "PLAN-4918 rank one"),
+    ("not-a-time", "plan-555 S1"),
+    ("2026-10-11T10:00:00+05:00", "plan-91390 and xplan-7777 and goal 12 are not these ids")))
+got = me(LOG)
+check("subjects naming plan-<id>, goal <id>, goal-<id> (any case) credit those ids, each at its LATEST commit",
+      set(got) >= {9139, 10107, 10224, 8018, 4918} and got[9139].isoformat() == "2026-10-15T08:06:57+05:00", got)
+check("…never a prefix of a longer number, never a word-glued token, never a bad timestamp",
+      9139 in got and 91390 in got and 7777 not in got and 555 not in got, sorted(got))
+check("…and nothing at all from an empty or absent log", me("") == {} and me(None) == {})
+rev = me("\x1e".join(reversed(LOG.split("\x1e"))))
+check("…the LATEST commit wins whatever order the log arrives in", rev.get(9139) == got.get(9139), rev.get(9139))
+cap = CapturingCtx([goal(5, "active", 1)])
+_GIT["log"] = LOG
+fire(cap)
+_GIT["log"] = ""
+check("the query receives the merge ids and their times as its first two parameters (unnest), TERMINAL last",
+      cap.params and 9139 in list(cap.params[0]) and len(cap.params[0]) == len(cap.params[1])
+      and "unnest(" in cap.query and "mg.merged" in cap.query, f"params={cap.params}")
+fire.__globals__["git_log"] = lambda: None
+out = fire(FakeCtx([goal(14, "active", 1)]))
+fire.__globals__["git_log"] = lambda: _GIT["log"]
+check("git unreadable: the flag SAYS the merge term was unavailable (it reads more stale, the loud direction)",
+      out and "merge evidence unavailable" in out, f"out={out!r}")
+
+# git_log ITSELF over a fixture repo (a2 #55031: every other arm stubs it, so --all, "" on failure or a wrong root
+# would pass unseen): main only, None for a non-repo, and the default root when the body sits at triggers/steward/
+import shutil as _sh
+import tempfile as _tf
+_real_git_log = mod["git_log"]
+_gr = Path(_tf.mkdtemp(prefix="t_sg_git_"))
+def _g(*a):
+    return subprocess.run(["git", "-C", str(_gr), *a], capture_output=True, text=True,
+                          env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(_gr),
+                               "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t",
+                               "GIT_COMMITTER_EMAIL": "t@x"})
+_g("init", "-q", "-b", "main")
+_g("commit", "-q", "--allow-empty", "-m", "plan-7777 S1: landed on main")
+_g("checkout", "-q", "-b", "side")
+_g("commit", "-q", "--allow-empty", "-m", "plan-8888 S1: only on a side branch")
+_g("checkout", "-q", "main")
+lg = _real_git_log(_gr)
+ev = mod["merge_evidence"](lg or "")
+check("git_log reads MAIN only: a main commit credits plan-7777, a side-branch-only commit never credits plan-8888",
+      lg is not None and 7777 in ev and 8888 not in ev, f"ids={sorted(ev)}")
+_nr = Path(_tf.mkdtemp(prefix="t_sg_norepo_"))
+check("git_log on a directory that is no repo is None (loud), never an empty string (silent)",
+      _real_git_log(_nr) is None, repr(_real_git_log(_nr)))
+(_gr / "triggers" / "steward").mkdir(parents=True)
+_sh.copy(str(SUBJECT), str(_gr / "triggers" / "steward" / "stale_goals.py"))
+for _b in (REPO / "triggers" / "steward" / "bands.py", Path(SUBJECT).parent / "bands.py"):
+    if _b.exists():                    # the body's one triggers import; else it resolves through REPO on sys.path
+        _sh.copy(str(_b), str(_gr / "triggers" / "steward" / "bands.py"))
+        break
+(_gr / "triggers" / "__init__.py").write_text("")
+(_gr / "triggers" / "steward" / "__init__.py").write_text("")
+_placed = runpy.run_path(str(_gr / "triggers" / "steward" / "stale_goals.py"))
+check("…and with the body at <repo>/triggers/steward/, the DEFAULT root is that repo",
+      7777 in mod["merge_evidence"](_placed["git_log"]() or ""), "default root resolved elsewhere")
+for _d in (_gr, _nr):
+    _sh.rmtree(_d, ignore_errors=True)
+
+# ── the query EXECUTED (the ctx.sql-blindness class): a stamped fixture DB, never production ────
+try:
+    import importlib.util as _ilu
+    _p = _ilu.spec_from_file_location("pulse_run_sg", REPO / "src" / "astryx" / "pulse" / "pulse_run.py")
+    _pr = _ilu.module_from_spec(_p)
+    _p.loader.exec_module(_pr)
+    import psycopg
+    sys.path.insert(0, str(REPO))
+    from astryx.security.sqlguard.fixture import fixture_db
+    _fx = fixture_db()
+    fx = _fx.__enter__()
+except Exception as e:  # noqa: BLE001
+    print(f"  SKIP  fixture arms — fixture/runner unavailable ({type(e).__name__}: {e})")
+    fx = None
+    fails_skip = True
+if fx is not None:
+    conn = psycopg.connect(fx["dsn"], autocommit=True)
+    try:
+        class TempCtx(_pr.Ctx):
+            def __init__(self, state, connection):
+                super().__init__(state)
+                self._conn = connection
+        fire(TempCtx({}, conn))   # an EMPTY goals table: the query must run and return nothing
+        q = "INSERT INTO goals (title, owner, state, epoch_hours, ts) VALUES (%s,'steward','active',24, now() - %s::interval) RETURNING id"
+        g_old = conn.execute(q, ("predates the outage", "5 days")).fetchone()[0]
+        g_new = conn.execute(q, ("after the outage", "2 hours")).fetchone()[0]
+        for ago in ("5 days", "4 days 20 hours", "3 days", "2 days 21 hours", "2 hours", "1 hour"):
+            conn.execute("INSERT INTO messages (from_agent, to_agent, body, ts) VALUES ('pulse','seed','tick', now() - %s::interval)", (ago,))
+        # gaps: 4d20h→3d = 44h (DARK), 3d→2d21h = 3h (quiet, NOT dark), 2d21h→2h = ~68.9h (DARK)
+        cap = []
+
+        class SpyCtx(TempCtx):
+            def sql(self, q, params=()):
+                rows = super().sql(q, params)
+                if "dark_s" in q:
+                    cap.extend(rows)
+                return rows
+        fire(SpyCtx({}, conn))
+        by = {r["id"]: r for r in cap}
+        d_old = float(by[g_old]["dark_s"]) / 3600 if g_old in by else None
+        d_new = float(by[g_new]["dark_s"]) / 3600 if g_new in by else None
+        check("REAL SQL: the old goal is discounted exactly the two >6h gaps (44h + 68h), not the 3h one",
+              d_old is not None and abs(d_old - (44 + 67)) < 1.5, f"dark_h={d_old}")
+        # each autocommit INSERT has its own now(), so the "-2h" message lands a fraction of a second
+        # after the goal's "-2h" ts — that sliver is correctly counted; a minute is the honest bound
+        check("REAL SQL: a goal whose evidence follows the gaps is discounted (sub-minute) nothing",
+              d_new is not None and d_new < 1 / 60, f"dark_h={d_new}")
+        # the pulse-DOWN alarm writes INSIDE an outage: its rows must not bridge the gap they are reporting
+        for ago in ("4 days 12 hours", "4 days 4 hours", "3 days 20 hours", "2 days 12 hours", "2 days 6 hours",
+                    "1 day 12 hours", "1 day", "12 hours", "6 hours"):
+            conn.execute("INSERT INTO messages (from_agent, to_agent, body, ts) VALUES "
+                         "('pulse-witness','owner','pulse looks DOWN', now() - %s::interval)", (ago,))
+        cap.clear()
+        fire(SpyCtx({}, conn))
+        by = {r["id"]: r for r in cap}
+        d_w = float(by[g_old]["dark_s"]) / 3600 if g_old in by else None
+        check("REAL SQL: pulse-witness alarm rows written DURING an outage do not bridge its gaps (10-12 outage)",
+              d_w is not None and abs(d_w - (44 + 67)) < 1.5, f"dark_h={d_w}")
+        conn.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body, ts) VALUES "
+                     "('abstractor-4','steward',%s,'milestone','end MET', now() - interval '30 hours'), "
+                     "('abstractor-4','seed',%s,'chat','not evidence', now() - interval '29 hours'), "
+                     "('builder','steward',%s,'milestone','older', now() - interval '40 hours')",
+                     (f"plan-{g_old}", f"plan-{g_old}", f"plan-{g_old}"))
+        want = conn.execute("SELECT id FROM messages WHERE thread=%s AND body='end MET'", (f"plan-{g_old}",)).fetchone()[0]
+        cap.clear()
+        fire(SpyCtx({}, conn))
+        by = {r["id"]: r for r in cap}
+        r = by.get(g_old, {})
+        check("REAL SQL: the baton is the NEWEST milestone on the plan thread (not a later chat row, not an older milestone)",
+              r.get("lm_id") == want and r.get("lm_from") == "abstractor-4" and r.get("lm_to") == "steward", f"row={r}")
+        check("REAL SQL: a goal whose plan thread has no milestone carries no baton",
+              by.get(g_new, {}).get("lm_id", "missing") is None, f"row={by.get(g_new)}")
+        # merge evidence through the REAL query: a 5-day-old goal with no milestone, cited by a commit 2h ago
+        g_m = conn.execute(q, ("shipping by merges", "5 days")).fetchone()[0]
+        from datetime import datetime as _d, timedelta as _td, timezone as _tzz
+        recent = (_d.now(_tzz.utc) - _td(hours=2)).isoformat()
+        older = (_d.now(_tzz.utc) - _td(days=9)).isoformat()
+        _GIT["log"] = f"{recent}\x1fplan-{g_m} S1: it landed\x1e{older}\x1fplan-{g_old} long ago"
+        cap.clear()
+        fire(SpyCtx({}, conn))
+        _GIT["log"] = ""
+        by = {r["id"]: r for r in cap}
+        a_m = float(by[g_m]["age_s"]) / 3600 if g_m in by else None
+        a_o = float(by[g_old]["age_s"]) / 3600 if g_old in by else None
+        check("REAL SQL: a merge on main citing the goal 2h ago makes its evidence 2h old, not 5 days",
+              a_m is not None and 1.5 < a_m < 2.5 and by[g_m].get("merged") is not None, f"age_h={a_m}")
+        check("REAL SQL: a merge OLDER than the goal's own evidence doesn't make it look older or newer",
+              a_o is not None and a_o < 31, f"age_h={a_o}")
+        cap.clear()
+        fire(SpyCtx({}, conn))
+        by = {r["id"]: r for r in cap}
+        a_m0 = float(by[g_m]["age_s"]) / 3600 if g_m in by else None
+        future = (_d.now(_tzz.utc) + _td(days=3)).isoformat()
+        _GIT["log"] = f"{future}\x1fplan-{g_m} committed with a clock 3 days fast"
+        cap.clear()
+        fire(SpyCtx({}, conn))
+        _GIT["log"] = ""
+        byf = {r["id"]: r for r in cap}
+        a_f = float(byf[g_m]["age_s"]) / 3600 if g_m in byf else None
+        check("REAL SQL: a commit dated in the FUTURE counts as now, never as fresh-until-then (least(…, now()))",
+              a_f is not None and -0.05 < a_f < 0.1, f"age_h={a_f}")
+        check("REAL SQL: with no merges, the same goal reads its full age (the term is the merge, nothing else)",
+              a_m0 is not None and a_m0 > 100 and by[g_m].get("merged") is None, f"age_h={a_m0}")
+    finally:
+        conn.close()
+        _fx.__exit__(None, None, None)
+
 print("\n" + ("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}"))
-sys.exit(1 if fails else 0)
+sys.exit(1 if fails else (77 if globals().get("fails_skip") else 0))

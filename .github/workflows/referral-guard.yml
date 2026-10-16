@@ -1,0 +1,14 @@
+# The off-uid referral gate: runs devtools/referral_guard.sh on GitHub's runners,
+# where no same-uid agent can --no-verify past it. Proves the maintainer referral
+# stays opt-in + static (plan-19): the default/non-interactive path never shows it,
+# and the referral id is a tracked static literal, never fetched or env-templated.
+name: referral-guard
+on:
+  push:
+  pull_request:
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash devtools/referral_guard.sh

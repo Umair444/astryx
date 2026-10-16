@@ -10,7 +10,7 @@ proprioception, not supervision.
 SOURCES. Context: the session's own transcript tail (the hook is handed the path; the last
 usage block IS the load, accurate mid-session). Window proof + plan gauges: postgres —
 turns.raw_payload->usage->context high-water proves a window floor (an observed load of N
-is durable proof the window >= N), and the latest fresh usage_snapshot carries the account's
+is proof the window >= N, read from the newest 200 turns, so the proof is RECENT, not durable), and the latest fresh usage_snapshot carries the account's
 5h/7d utilization written by the Stop hook. The DB is the truth; no inference engine, no
 var/ state. (Replaces the tokenwatch high-water machinery, deleted the same day.)
 
@@ -60,38 +60,33 @@ try:
         import psycopg
         dsn = next(line.split("=", 1)[1].strip()
                    for line in open(REPO + "/.env") if line.startswith("ASTRYX_DSN="))
-        with psycopg.connect(dsn, connect_timeout=2) as conn:
+        # every statement is capped (worst path 1s connect + 3 x 0.9s, under 5s): this runs inside a 5s prompt-hook budget, on every prompt, for every
+        # agent, and a slow DB must cost the line, never the wake (owner 10-10: the hook timed out)
+        with psycopg.connect(dsn, connect_timeout=1, options="-c statement_timeout=900") as conn:
             if agent:
+                # the high-water over the agent's RECENT turns: max() over all of them read every jsonb
+                # payload the agent ever wrote (1.6s for seed on 10-10, growing with every turn)
                 r = conn.execute(
-                    "SELECT coalesce(max((raw_payload->'usage'->>'context')::bigint),0) "
-                    "FROM turns WHERE agent=%s", (agent,)).fetchone()
+                    "SELECT coalesce(max((raw_payload->'usage'->>'context')::bigint),0) FROM "
+                    "(SELECT raw_payload FROM turns WHERE agent=%s ORDER BY id DESC LIMIT 200) t",
+                    (agent,)).fetchone()
                 high = int(r[0]) if r else 0
             g = conn.execute(
-                "SELECT usage_five_hour_pct, usage_seven_day_pct, usage_five_hour_reset, "
-                "ended_at FROM turns WHERE usage_state='fresh' "
-                "ORDER BY ended_at DESC LIMIT 1").fetchone()
+                "SELECT five_hour_pct, seven_day_pct, five_hour_reset "
+                "FROM current_usage").fetchone()   # unified authority (goal 3833)
             if g and g[0] is not None:
                 reset = str(g[2] or "")[11:16]      # HH:MM of the ISO, blank if absent
                 plan = (f" · plan 5h {g[0]:.0f}%"
                         + (f" (resets {reset}Z)" if reset else "")
                         + (f" · 7d {g[1]:.0f}%" if g[1] is not None else ""))
-            # ── [econ] standing (goal 3407): the org economy in one jargon-free line,
-            # from the nightly econ rollup. Its OWN fail-open try — a standing meter must
-            # never break the wake for every agent on the org. States a factual position,
-            # never an org verdict; neutral token while unpriced (W=0) or no rollup yet.
+            # ── [econ] line: the v2 MIRROR (goal 4227 S2) — this agent's OWN tools' use by
+            # other agents, one precomputed econ row read (never an aggregate in the 5s
+            # prompt budget), version-gated, no rank. Its OWN fail-open try — a meter must
+            # never break the wake for every agent on the org.
             try:
                 sys.path.insert(0, REPO)
-                from nucleus.econ import econ_standing
-                f = econ_standing(conn, agent) if agent else None
-                if not f or not f.get("priced") or not f.get("present") \
-                        or f.get("net") is None:
-                    econ_line = "[econ] between ships · no standing verdict"
-                else:
-                    net, rank, n = f["net"], f.get("rank"), f["n"]
-                    where = f" (rank {rank}/{n})" if rank else ""
-                    lead = ("carrying your weight" if net >= 0
-                            else "running net-negative")
-                    econ_line = f"[econ] {lead} this window · net {net:+,.0f}{where}"
+                from nucleus.econ import econ_line as _render, econ_mirror
+                econ_line = _render(econ_mirror(conn, agent) if agent else None)
             except Exception:
                 econ_line = ""
     except Exception:

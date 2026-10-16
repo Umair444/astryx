@@ -1,6 +1,6 @@
-"""Authored mutants for triggers/seed/service_deploy_drift.py — run by nucleus/mutation_probe.py.
+"""Authored mutants for triggers/seed/service_deploy_drift.py — run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_service_deploy_drift.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_service_deploy_drift.py
 
 WHY THIS FILE EXISTS RATHER THAN A LINE IN A COMMIT MESSAGE. The oracle's commit claims ten
 mutants killed. That claim was produced by a throwaway script in a scratch directory, so as

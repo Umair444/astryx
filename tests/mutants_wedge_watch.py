@@ -1,6 +1,6 @@
-"""Authored mutants for triggers/seed/wedge_watch.py — run by nucleus/mutation_probe.py.
+"""Authored mutants for triggers/seed/wedge_watch.py — run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_wedge_watch.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_wedge_watch.py
 
 THE LIST IS THE JUDGEMENT, WHICH IS WHY IT IS AUTHORED AND NOT GENERATED. Each entry is a
 way this classifier could plausibly be wrong — most of them are ways it HAS been wrong, on

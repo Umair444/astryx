@@ -3,7 +3,7 @@
 
 SCOPE, STATED HONESTLY: this file cannot prove the served card is spec-conformant, and it
 does not try. Proving that requires re-deriving the SERVED bytes with an implementation
-that shares no code with the signer — that is nucleus/card_assert.py check (iv), which uses
+that shares no code with the signer — that is src/astryx/federation/card_assert.py check (iv), which uses
 third-party rfc8785 and runs against the live gateway (hourly, via steward's tier_drift).
 
 What this file does, needing no running org and no pip (pure stdlib, so it runs in CI):
@@ -17,7 +17,7 @@ because it re-canonicalised with the signer's own json.dumps — proving conform
 Three em-dashes in `description` went out as \\uXXXX escapes; a peer reconstructing under
 JCS got 1654 bytes where we signed 1663, which reads not as "unsigned" but as SPOOFED.
 
-    venv/bin/python tests/test_card_canon.py     (also run by nucleus/check.sh)
+    venv/bin/python tests/test_card_canon.py     (also run by devtools/check.sh)
 """
 import json
 import re

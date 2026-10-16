@@ -13,9 +13,30 @@ over one cryptographically signed wire.
 [![PostgreSQL](https://img.shields.io/badge/postgres-for%20everything-7c5cff)](docs/architecture.md)
 [![No frameworks](https://img.shields.io/badge/frameworks-none-0b1020)](docs/harness.md)
 
-[Quick start](#quick-start) · [How it works](#how-it-works) · [The principles](#the-principles) · [FAQ](#faq)
+[Install](#install) · [Quick start](#quick-start) · [How it works](#how-it-works) · [The principles](#the-principles) · [FAQ](#faq)
 
 </div>
+
+## Install
+
+**Linux, macOS, or inside WSL2:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Umair444/astryx/main/install.sh | bash
+```
+
+**Windows** (PowerShell; it sets up WSL2 + Ubuntu with systemd, then runs the line above inside it). *Not yet tested on a real Windows machine; reports welcome.*
+
+```powershell
+irm https://raw.githubusercontent.com/Umair444/astryx/main/install.ps1 | iex
+```
+
+The installer checks for git, python, node, tmux, docker and Claude Code, offers to install
+what's missing (showing every `sudo` line first), then starts your org. Add `-s -- --dry-run`
+after `bash` to see everything it would do without doing it. Safe to run again any time.
+
+> **Use a dedicated machine or VM.** ASTRYX agents get full control of the machine they run
+> on, around the clock. That's the design. Give them a box of their own, not your daily laptop.
 
 ---
 
@@ -41,7 +62,9 @@ persistence, tools, memory, money, other agents. ASTRYX reduces that machinery t
 
 ## Quick start
 
-**Needs:** Claude Code ≥ 2.1 · node ≥ 20 · python ≥ 3.11 · tmux · docker (or your own
+The installer above does this for you; here's the same thing by hand.
+
+**Needs:** Claude Code ≥ 2.1 · node ≥ 20 · python ≥ 3.12 · tmux · docker (or your own
 postgres). [`uv`](https://docs.astral.sh/uv/) is used automatically when installed
 (recommended — much faster installs); plain `python3 -m venv` otherwise. Same `venv/`
 layout either way.
@@ -60,7 +83,7 @@ Then:
 3. Open the observatory at `http://localhost:8090` and say hello to your seed —
    the founding agent that builds the rest of the org for you.
 
-Watch it work: `nucleus/wall.sh` (a tmux wall of every agent's live activity), or
+Watch it work: `scripts/wall.sh` (a tmux wall of every agent's live activity), or
 `tmux attach -t ax-seed` to sit inside a mind.
 
 <details>
@@ -69,16 +92,17 @@ Watch it work: `nucleus/wall.sh` (a tmux wall of every agent's live activity), o
 ```bash
 # 1. python environment (uv shown; python3 -m venv + venv/bin/pip works identically)
 uv venv venv --seed
-uv pip install --python venv/bin/python $(venv/bin/python nucleus/deps.py install-list core)
+uv pip install --python venv/bin/python $(venv/bin/python src/astryx/core/deps.py install-list core)
 
-# 2. postgres — a container (or point ASTRYX_DSN at any server you already run, 17+)
-docker run -d --name astryx-pg --restart unless-stopped \
-  -e POSTGRES_USER=astryx -e POSTGRES_PASSWORD=changeme -e POSTGRES_DB=astryx \
-  -p 127.0.0.1:5433:5432 -v astryx-pgdata:/var/lib/postgresql postgres:18   # 18+ mounts the parent, not /data
-echo "ASTRYX_DSN=postgres://astryx:changeme@127.0.0.1:5433/astryx" > .env && chmod 600 .env
+# 2. postgres — the declared server, infra/pg (pg18 + pgvector + PostGIS + Apache AGE pinned; loopback only).
+#    The first build compiles AGE. Or point ASTRYX_DSN at a server you already run (17+, with those extensions).
+( umask 077; printf 'POSTGRES_USER=astryx\nPOSTGRES_PASSWORD=changeme\n' > infra/pg/.env )   # gitignored
+docker build -t genesis/pg18:age infra/pg     # compiles AGE from its pinned commit: needs github.com, a few minutes
+docker compose -f infra/pg/docker-compose.yml up -d
+echo "ASTRYX_DSN=postgres://astryx:changeme@127.0.0.1:5432/astryx" > .env && chmod 600 .env
 
 # 3. schema (idempotent; optional extensions activate if your image has them)
-psql "$(grep ASTRYX_DSN= .env | cut -d= -f2-)" -f nucleus/schema.sql
+psql "$(grep ASTRYX_DSN= .env | cut -d= -f2-)" -f src/astryx/sql/schema.sql
 
 # 4. the channel client (the wire's MCP server) + the observatory frontend
 (cd channel && npm install)
@@ -86,11 +110,11 @@ psql "$(grep ASTRYX_DSN= .env | cut -d= -f2-)" -f nucleus/schema.sql
 
 # 5. your law, then the founding agent
 cp local.template.md local.md    # edit it — this is YOUR org's constitution
-nucleus/spawn.sh seed            # a tmux session ax-seed, alive on the wire
+scripts/spawn.sh seed            # a tmux session ax-seed, alive on the wire
 
 # 6. services (observatory + the pulse — init.sh generates units/, or run by hand:)
 venv/bin/uvicorn observatory.api.main:app --port 8090 &
-# the pulse is the org's one clock — cron works too: * * * * * venv/bin/python nucleus/pulse.py
+# the pulse is the org's one clock — cron works too: * * * * * venv/bin/python src/astryx/pulse/pulse.py
 
 # 7. say hello through the wire itself
 psql "$(grep ASTRYX_DSN= .env | cut -d= -f2-)" -c "INSERT INTO messages (from_agent, to_agent, intent, body)
@@ -155,9 +179,13 @@ billable cost lands in the ledger, and the Economy tab shows burn, work, and hea
 residents cost nothing — silence is the zero-cost default.
 
 **Is my data safe?** The personal tier (contacts, credentials, your life) is
-structurally separated: gitignored, never on public surfaces, never federated. Org
-work is transparent; your life is not. See the privacy invariants in
-[federation.md](docs/federation.md).
+structurally separated where structure can hold: gitignored, blocked from the public
+repo by a pre-push privacy gate, and its storage is never federated — federation
+exchanges signed wire messages and public agent cards only, and tier-private agents
+can never appear on the card (fail-closed). The one seam structure can't close — a
+personal value slipping into an outbound message — is watched by a standing leak
+detector instead, and we say so rather than claim otherwise. Org work is transparent;
+your life is not. See the privacy invariants in [federation.md](docs/federation.md).
 
 **No static IP?** NAT'd orgs long-poll their peers today; a public relay for home orgs
 is on the roadmap.
@@ -169,7 +197,7 @@ for minds that already know how to work. See [harness.md](docs/harness.md).
 ## Contributing
 
 Issues and PRs welcome. The repo ships with its own immune system — run
-`nucleus/check.sh` (the full gate suite) before proposing; the org that lives on this
+`devtools/check.sh` (the full gate suite) before proposing; the org that lives on this
 code will review your PR too.
 
 ## Star history

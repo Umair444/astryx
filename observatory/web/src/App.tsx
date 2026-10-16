@@ -5,11 +5,13 @@ import { saveObsKey } from './api'
 import { StoreProvider, useStore } from './store'
 import Sidebar from './components/Sidebar'
 import NetworkView from './components/NetworkView'
+import FloorView from './components/FloorView'
 import PeopleView from './components/PeopleView'
 import WireView from './components/WireView'
 import GoalsView from './components/GoalsView'
 import EconomyView from './components/EconomyView'
 import ToolsView from './components/ToolsView'
+import { DesktopOverlay } from './ui/hands'
 import SystemView from './components/SystemView'
 import TheatreView from './components/TheatreView'
 import MemoryView from './components/MemoryView'
@@ -17,6 +19,14 @@ import GrowbotView from './components/GrowbotView'
 import FaceView from './components/FaceView'
 import AgentDrawer from './components/AgentDrawer'
 import VegaChat from './components/VegaChat'
+import PulseStrip from './components/PulseStrip'
+import EarControl from './components/EarControl'
+import VoicePilot from './components/VoicePilot'
+import RoomLayer from './ui/room'
+import Palette from './components/Palette'
+import { PilotHost } from './pilot'
+import PilotConfirm from './pilot/Confirm'
+import { Orb } from './ui/kit'
 
 export type Route =
   | { tab: 'network' }
@@ -30,6 +40,7 @@ export type Route =
   | { tab: 'memory' }
   | { tab: 'growbot' }
   | { tab: 'face' }
+  | { tab: 'floor' }
 
 function parseHash(): Route {
   const h = location.hash.replace(/^#\/?/, '')
@@ -44,16 +55,18 @@ function parseHash(): Route {
   if (tab === 'memory') return { tab: 'memory' }
   if (tab === 'growbot') return { tab: 'growbot' }
   if (tab === 'face') return { tab: 'face' }
-  return { tab: 'network' }
+  if (tab === 'network') return { tab: 'network' }
+  return { tab: 'floor' }          // the Floor is home: the org as a place
 }
 
 export function nav(r: Route) {
-  if (r.tab === 'network') location.hash = '#/'
+  if (r.tab === 'floor') location.hash = '#/'
   else if (r.tab === 'wire') location.hash = `#/wire${r.thread ? '/' + encodeURIComponent(r.thread) : ''}`
   else location.hash = `#/${r.tab}`
 }
 
 const TABS: { key: Route['tab']; label: string; icon: string }[] = [
+  { key: 'floor', label: 'Floor', icon: '◉' },
   { key: 'network', label: 'Network', icon: '☉' },
   { key: 'agents', label: 'Agents', icon: '◍' },
   { key: 'wire', label: 'Wire', icon: '✦' },
@@ -85,14 +98,15 @@ function KeyBadge() {
       <Popover.Target>
         <button
           onClick={() => setOpened((o) => !o)}
-          className={`px-2 py-0.5 rounded border border-line transition-colors duration-75 ${
-            who.owner ? 'text-cyan-soft border-cyan/30' : 'text-ink-mute hover:text-ink-dim'
+          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] transition-colors ${
+            who.owner ? 'text-cyan-soft border-cyan/35 bg-cyan/10' : 'text-ink-mute border-line hover:text-ink-dim hover:border-line-2'
           }`}
         >
+          <span aria-hidden>{who.owner ? '●' : '⚿'}</span>
           {who.owner ? 'owner' : 'read-only'}
         </button>
       </Popover.Target>
-      <Popover.Dropdown className="!bg-deck-2 !border-line">
+      <Popover.Dropdown className="ax-panel !rounded-xl !border-line">
         {who.owner ? (
           <div className="flex items-center gap-2 text-xs text-ink-dim">
             key active
@@ -121,7 +135,7 @@ function KeyBadge() {
               placeholder="key"
               size="xs"
               autoFocus
-              styles={{ input: { background: '#141c3a', border: '1px solid #1d2647' } }}
+              styles={{ input: { background: 'var(--t-panel2)', border: '1px solid var(--t-line)' } }}
             />
           </form>
         )}
@@ -130,37 +144,55 @@ function KeyBadge() {
   )
 }
 
-/* What an anonymous visitor sees on the private tabs: a quiet lock with the
-   same key door the KeyBadge offers. saveObsKey + recheckWho flips everything. */
+/* What an anonymous visitor sees on the private tabs: the org's first impression of a
+   private room — a living orb, one honest line, and the same key door the KeyBadge offers.
+   saveObsKey + recheckWho flips everything. */
 function LockPanel() {
-  const { recheckWho } = useStore()
+  const { recheckWho, overview } = useStore()
   const [val, setVal] = useState('')
+  const [wrong, setWrong] = useState(false)
 
   return (
-    <div className="h-full grid place-items-center starfield">
-      <div className="text-center px-6 py-8 rounded-xl border border-line bg-deck-2/80 max-w-sm">
-        <div className="text-2xl text-ink-mute mb-3">⊘</div>
-        <div className="text-sm text-ink-dim">the agents are private</div>
-        <div className="text-xs text-ink-mute mt-1">this is the network face of the org</div>
+    <div className="h-full grid place-items-center px-5">
+      <div className="relative text-center max-w-md w-full">
+        <div className="relative mx-auto w-[132px] h-[132px] grid place-items-center mb-7">
+          <span className="absolute inset-0 rounded-full border border-cyan/25 animate-ping" style={{ animationDuration: '3.2s' }} />
+          <Orb size={112} />
+        </div>
+        <div className="text-[11px] uppercase tracking-[0.2em] text-ink-mute mb-2">{overview?.org ?? 'astryx'} · private</div>
+        <h1 className="text-[28px] font-semibold tracking-[-0.02em] leading-tight ax-title">The agents are at work</h1>
+        <p className="mt-3 text-[14px] text-ink-dim leading-relaxed">
+          This room belongs to the org's owner. The public face of the org — its floor, its network
+          and the motion of its wire — is open to everyone.
+        </p>
         <form
-          className="mt-5"
+          className="mt-7 flex items-center gap-2 ax-panel rounded-2xl p-1.5 pl-4"
           onSubmit={async (e) => {
             e.preventDefault()
             if (!val.trim()) return
             saveObsKey(val.trim())
             setVal('')
-            await recheckWho()
+            const w = await recheckWho()
+            setWrong(!w.owner)
           }}
         >
-          <TextInput
+          <span className="text-ink-mute text-[13px]" aria-hidden>⚿</span>
+          <input
             type="password"
             value={val}
-            onChange={(e) => setVal(e.currentTarget.value)}
+            onChange={(e) => { setVal(e.currentTarget.value); setWrong(false) }}
             placeholder="owner key"
-            size="xs"
-            styles={{ input: { background: '#141c3a', border: '1px solid #1d2647', textAlign: 'center' } }}
+            aria-label="owner key"
+            className="flex-1 min-w-0 bg-transparent outline-none text-[14px] text-ink placeholder:text-ink-mute py-2"
           />
+          <button type="submit" disabled={!val.trim()} className="ax-action px-4 py-2 rounded-xl text-[13px] font-medium disabled:opacity-40">
+            Enter
+          </button>
         </form>
+        <div className="mt-3 text-[12px] min-h-[1.2em]">
+          {wrong ? <span className="text-bad">that key didn't open it</span>
+            : <span className="text-ink-mute">or step back to the <a href="#/" className="text-cyan-soft hover:underline">Floor</a> · <a href="#/network" className="text-cyan-soft hover:underline">Network</a></span>}
+        </div>
       </div>
     </div>
   )
@@ -178,8 +210,9 @@ function Shell() {
     })
   const isDesktop = useMediaQuery('(min-width: 48em)', true)
   const { overview, who, whoChecked } = useStore()
-  const tabs = who.owner ? TABS : TABS.filter((t) => t.key === 'network')
-  const locked = !who.owner && route.tab !== 'network'
+  // the Floor and the Network are the org's public faces; everything else is the owner's
+  const tabs = who.owner ? TABS : TABS.filter((t) => t.key === 'network' || t.key === 'floor')
+  const locked = !who.owner && route.tab !== 'network' && route.tab !== 'floor'
 
   useEffect(() => {
     const f = () => {
@@ -202,41 +235,26 @@ function Shell() {
       padding={0}
       className="h-full"
     >
-      <AppShell.Header className="starfield !bg-deck !border-line">
+      <AppShell.Header className="!bg-deck/80 !border-line backdrop-blur-xl">
         <Group h="100%" px="md" gap="sm">
           <Burger opened={navOpened} onClick={toggle} hiddenFrom="sm" size="sm" />
           <Tooltip label={deskNav ? 'Hide sidebar' : 'Show sidebar'} openDelay={400}>
-            <Burger opened={deskNav} onClick={toggleDeskNav} visibleFrom="sm" size="sm" />
+            <Burger opened={false} onClick={toggleDeskNav} visibleFrom="sm" size="sm" aria-label="toggle sidebar" />
           </Tooltip>
-          <Text c="cyan.4" fw={600} style={{ letterSpacing: '0.05em' }}>
-            astryx
-          </Text>
-          <Text size="xs" c="dimmed" visibleFrom="xs">
-            · observatory
-          </Text>
-          <div className="hidden sm:flex items-center gap-1 ml-4">
-            {tabs.map((t) => (
-              <button
-                key={t.key}
-                onClick={() => nav({ tab: t.key } as Route)}
-                className={`px-2.5 py-1 rounded-md text-[12px] ${
-                  route.tab === t.key ? 'bg-deck-3 text-cyan-soft' : 'text-ink-dim hover:text-ink'
-                }`}
-              >
-                {t.icon} {t.label}
-              </button>
-            ))}
-          </div>
-          <span className="ml-auto flex items-center gap-2 text-[11px] text-ink-mute">
+          <a href="#/" className="flex items-center gap-2 no-underline sm:hidden"><Orb size={20} /><span className="text-[14px] font-semibold text-ink">astryx</span></a>
+          <div className="flex-1 min-w-0 flex justify-center"><PulseStrip /></div>
+          <span className="flex items-center gap-2 text-[11px] text-ink-mute shrink-0">
             {overview && (
               <>
                 <span className="hidden sm:inline font-mono text-ink-dim">{overview.org}</span>
                 <span className="flex items-center gap-1">
-                  <span className={`w-2 h-2 rounded-full ${overview.live > 0 ? 'bg-emerald-400 animate-pulse' : 'bg-ink-mute/40'}`} />
+                  <span className={`w-2 h-2 rounded-full ${overview.live > 0 ? 'bg-good animate-pulse' : 'bg-ink-mute/40'}`} />
                   {overview.live} live
                 </span>
               </>
             )}
+            {who.owner && <VoicePilot hidden />}
+            {who.owner && <EarControl view={route.tab} />}
             <KeyBadge />
           </span>
         </Group>
@@ -246,14 +264,16 @@ function Shell() {
         <Sidebar route={route} onOpenAgent={setAgentOpen} />
       </AppShell.Navbar>
 
-      <AppShell.Main className="h-dvh" style={{ display: 'flex', flexDirection: 'column' }}>
-        <div className="flex-1 min-h-0">
+      <AppShell.Main className="h-dvh relative" style={{ display: 'flex', flexDirection: 'column' }}>
+        <div className="ax-aurora"><i /><i /><i /></div>
+        <div className="relative z-[1] flex-1 min-h-0">
           {locked ? (
             whoChecked ? ( // hold blank until whoami answers so the owner never flashes the lock
               <LockPanel />
             ) : null
           ) : (
             <>
+              {route.tab === 'floor' && <FloorView onOpenAgent={setAgentOpen} />}
               {route.tab === 'network' && <NetworkView onOpenAgent={setAgentOpen} />}
               {route.tab === 'agents' && <PeopleView />}
               {route.tab === 'wire' && <WireView route={route} onOpenAgent={setAgentOpen} />}
@@ -290,12 +310,17 @@ function Shell() {
         </div>
       </AppShell.Footer>
 
+      <PilotHost route={route} agentOpen={agentOpen} setAgentOpen={setAgentOpen} />
+      <Palette />
+      {who.owner && <PilotConfirm />}
       {agentOpen && <AgentDrawer name={agentOpen} onClose={() => setAgentOpen(null)} />}
+      {who.owner && <DesktopOverlay />}
+      {who.owner && <RoomLayer />}
       {/* VEGA is the PUBLIC concierge and floats bottom-right on every view; the Memory
           tab is owner-only and docks its own ask box in that exact corner, so the two
           buttons overlapped. Hidden here rather than nudged — a public greeter on a
           private tab is redundant, not merely mispositioned. */}
-      {route.tab !== 'memory' && <VegaChat />}
+      {route.tab !== 'memory' && !(route.tab === 'wire' && who.owner) && <VegaChat />}
     </AppShell>
   )
 }

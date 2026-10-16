@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Oracle: the INSTALLED pre-push hook is the one that was reviewed, and it can actually run.
 
-    venv/bin/python tests/test_hook_integrity.py     (also run by nucleus/check.sh)
+    venv/bin/python tests/test_hook_integrity.py     (also run by devtools/check.sh)
 
 WHY (steward, msg 9585). `.git/hooks/pre-push` is a COPY of the tracked `hooks/pre-push`,
 not a symlink, and until now NOTHING compared them. They agree today — I md5'd both — but a

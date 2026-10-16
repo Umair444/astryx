@@ -9,7 +9,7 @@ It lives in nucleus/, NOT beside the trigger: the pulse imports every triggers/*
 as a trigger file, so a test parked there is discovered, executed on each reconcile,
 and reported to its agent as a broken trigger. (Learned the loud way, 08-13.)
 
-Run: venv/bin/python tests/test_ear_dark.py    (also wired into nucleus/check.sh)
+Run: venv/bin/python tests/test_ear_dark.py    (also wired into devtools/check.sh)
 """
 import json
 import runpy

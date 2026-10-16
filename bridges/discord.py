@@ -25,6 +25,7 @@ Run: uvicorn bridges.discord:app --host 127.0.0.1 --port 8479   (repo root)
 
 import asyncio
 import datetime
+import io
 import json
 import time
 from contextlib import asynccontextmanager
@@ -35,10 +36,12 @@ import discord
 import httpx
 from fastapi import FastAPI
 
+from .embed_root import Refused, owner_only, read_checked
 from .common import (HERE, Outcome, agent_exists, reacted_message, reaction_signal, route_target, describe_media, env, listen,
                      load_routes, media_path,
                      record_poll, resolve_quoted_body, split_files, split_polls,
-                     step_line, update_poll_votes, vote_body, vote_changes, wire_insert)
+                     step_line, update_poll_votes, vote_body, vote_changes, wire_insert,
+                     door_open, door_org_ok, live_steps_ok, released)
 
 DSN = env("ASTRYX_DSN")
 TOKEN = env("DISCORD_BOT_TOKEN")
@@ -81,12 +84,12 @@ async def hook_edit(url: str, msg_id: str, text: str) -> bool:
         return r.status_code < 300
 
 
-async def hook_file(url: str, agent: str, path: Path) -> str | None:
+async def hook_file(url: str, agent: str, name: str, data: bytes) -> str | None:
     """Post a file through the webhook, so media carries the agent's name too."""
     async with httpx.AsyncClient() as hx:
         r = await hx.post(url, params={"wait": "true"},
                           data={"payload_json": json.dumps({"username": display_name(agent)})},
-                          files={"files[0]": (path.name, path.read_bytes())}, timeout=120)
+                          files={"files[0]": (name, data)}, timeout=120)
         return (r.json() or {}).get("id") if r.status_code < 300 else None
 
 
@@ -104,13 +107,22 @@ async def hook_poll(url: str, agent: str, q: str, opts: list, multi: int) -> str
 # ------------------------------------------------------------------- outbound
 async def deliver(row):
     thread = row["thread"] or ""
-    if not (thread.startswith("dc:") or (row["to_agent"] or "").startswith("dc-")):
-        return
-    cid = thread[3:] if thread.startswith("dc:") else (row["to_agent"] or "")[3:]
-    if not cid:
-        return
+    stamped = None
+    if released(row) is not None:                  # plan-9139 S1c: only where its stamp names; the body from the store
+        stamped = await door_open(pool, row, "discord", routes())
+        if stamped is None:
+            return
+        cid = str(stamped[0]["chat"])
+    else:
+        if not (thread.startswith("dc:") or (row["to_agent"] or "").startswith("dc-")):
+            return
+        cid = thread[3:] if thread.startswith("dc:") else (row["to_agent"] or "")[3:]
+        if not cid:
+            return
+        if not await door_org_ok(pool, row, "discord", routes(), cid):
+            return                                 # S1c: an unstamped row only to a declared org route
     agent = row["from_agent"]
-    text, files = split_files(row["body"])
+    text, files = split_files(stamped[1] if stamped else row["body"])
     text, polls = split_polls(text, max_options=10)
     out = Outcome()
     try:
@@ -140,18 +152,19 @@ async def deliver(row):
                 out.sent(mid)                      # id enables reaction attribution
         for f in files:
             p = Path(f)
-            if not p.is_file():
-                # Was a silent `continue`. The body still says "screenshot below", so a
-                # mistyped or moved path told the reader an artifact was attached that
-                # never left. On the Law-6 submit checkpoint the owner approves an
-                # IRREVERSIBLE act on the strength of that image, so a skipped upload
-                # must never be indistinguishable from a delivered one.
-                out.failed("file", f"path not found: {f}")
-                await ch.send(f"(file {p.name} was NOT sent — path not found)")
+            try:
+                # The bridge reads as ITS uid, so the path is judged against the SENDER's roots
+                # (bridges/embed_root.py; a1 #49775). A refused or missing file is never silent:
+                # the body may say "screenshot below", and on the Law-6 submit checkpoint the owner
+                # approves an IRREVERSIBLE act on the strength of that image.
+                name, data = read_checked(f, agent, owner_only("discord", route))
+            except Refused as e:
+                out.failed("file", f"refused: {e}")
+                await ch.send(f"(file {p.name} was NOT sent — {e})")
                 continue
             try:                                   # webhook so media carries the agent's name
-                if not (hook and await hook_file(hook, agent, p)):
-                    await ch.send(file=discord.File(str(p)))
+                if not (hook and await hook_file(hook, agent, name, data)):
+                    await ch.send(file=discord.File(io.BytesIO(data), filename=name))
             except Exception as e:
                 out.failed("file", e)
                 await ch.send(f"(file {p.name} failed to send)")
@@ -196,9 +209,14 @@ async def deliver(row):
                     + f" Please reply in text instead. ({type(e).__name__})")
     except Exception as e:
         out.failed("deliver", e)
-    await pool.execute(
-        "UPDATE messages SET status=$2, delivered_at=now(), delivery=$3 WHERE id=$1",
-        row["id"], out.status, out.receipt(f"discord:{cid}", text))
+    if stamped:                                    # no chat id and no private text back on the wire
+        await pool.execute("UPDATE messages SET status=$2, delivered_at=now(), "
+                           "delivery = coalesce(delivery, '{}'::jsonb) || $3::jsonb WHERE id=$1", row["id"], out.status,
+                           out.receipt("discord:release", row["body"], door="released", classified=True))
+    else:
+        await pool.execute("UPDATE messages SET status=$2, delivered_at=now(), delivery=$3 WHERE id=$1",
+                           row["id"], out.status,
+                           out.receipt(f"discord:{cid}", text, door="org-unstamped"))
 
 
 async def on_step(ev: dict):
@@ -206,7 +224,7 @@ async def on_step(ev: dict):
     job = jobs.get(agent)
     if not job:
         return
-    line = await step_line(pool, ev.get("id", 0), kind)
+    line = await step_line(pool, ev.get("id", 0), kind, agent=agent)
     if not line or line == job.get("sent"):
         return
     job["sent"] = line
@@ -275,9 +293,10 @@ async def on_message(msg: discord.Message):
         resolved = getattr(ref, "resolved", None)
         rbody = resolved.content if isinstance(resolved, discord.Message) else ""
         meta["reply_to_body"] = (rbody or "").strip() or await resolve_quoted_body(pool, ref.message_id)
+    said = text
     agent, text = await route_target(pool, f"dc:{cid}", text, route["agent"])
-    await wire_insert(pool, who, "discord", agent, f"dc:{cid}", "chat", text, meta)
-    if route.get("live_steps") and trusted:
+    await wire_insert(pool, who, "discord", agent, f"dc:{cid}", "chat", text, meta, route=route, said=said)
+    if live_steps_ok(route) and trusted:           # S1c: never on a tiered route (its second egress)
         jobs[agent] = {"chat": cid, "ph": None, "sent": ""}
         try:
             await msg.channel.typing()
@@ -320,7 +339,7 @@ async def _poll_event(payload):
     await wire_insert(
         pool, "owner" if trusted else f"dc-{payload.user_id}", "discord",
         rec["agent"] or (route and route["agent"]) or "seed", f"dc:{cid}", "poll",
-        vote_body(rec["question"], changes, agg))
+        vote_body(rec["question"], changes, agg), route=route)
 
 
 @client.event
@@ -377,8 +396,10 @@ async def lifespan(_):
     pool = await asyncpg.create_pool(DSN, min_size=1, max_size=4)
     t1 = asyncio.create_task(client.start(TOKEN))
     t2 = asyncio.create_task(listen(
-        DSN, "(to_agent='owner' OR to_agent LIKE 'dc-%') "
-             "AND (thread LIKE 'dc:%' OR to_agent LIKE 'dc-%')",
+        DSN, "((to_agent='owner' OR to_agent LIKE 'dc-%') "
+             "AND (thread LIKE 'dc:%' OR to_agent LIKE 'dc-%')) "
+             # plan-9139 S1c: a release this bridge's route was stamped for (its thread, tier-<sender>, names none)
+             "OR (to_agent='owner' AND thread LIKE 'tier-%' AND delivery->'release'->>'channel' = 'discord')",
         deliver, on_step))
     yield
     t1.cancel(); t2.cancel()

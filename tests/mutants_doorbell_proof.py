@@ -1,6 +1,6 @@
 """Authored mutants for triggers/steward/doorbell_proof.py — run by mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_doorbell_proof.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_doorbell_proof.py
 
 THE LIST IS THE JUDGEMENT. This guard watches the org's only escape hatch from a
 roster-wide wedge, and its whole value is that it is BORN RED and stays red until one row

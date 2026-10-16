@@ -48,7 +48,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 # SERVICE_DEPLOY_DRIFT_SRC is the mutation probe's channel to this oracle, not a
-# user-facing override: nucleus/mutation_probe.py writes a mutated copy of the trigger
+# user-facing override: devtools/mutation_probe.py writes a mutated copy of the trigger
 # and points this here. Without it the probe would silently drive the REAL trigger and
 # report every mutant caught.
 TRIGGER = Path(os.environ.get("SERVICE_DEPLOY_DRIFT_SRC")

@@ -1,4 +1,4 @@
-"""Oracle for nucleus/check.sh's OWN coverage — the aggregator's blind spot.
+"""Oracle for devtools/check.sh's OWN coverage — the aggregator's blind spot.
 
 check.sh exists because "a test nothing runs only proves its last manual invocation"
 (its own header). It never applied that thesis to itself: its oracle list is a
@@ -31,7 +31,7 @@ notices; disable the block around it and only the runtime does — and a third a
 requires them to AGREE on the live file, because a disagreement means one of them has gone
 wrong about check.sh rather than about a mutant.
 
-WHY THE SECOND ONE EXISTS, and it is not a hypothetical: `nucleus/mutation_probe.py`
+WHY THE SECOND ONE EXISTS, and it is not a hypothetical: `devtools/mutation_probe.py`
 (abstractor-4) with the authored mutants in `tests/mutants_check_coverage.py`. Mutant M4
 wrapped a live `run` line in `if false; then ... fi` — still a line, never a gate — and
 EVERY assertion in this file passed. The gate certified an oracle that could not execute,
@@ -60,26 +60,31 @@ GRADED HONESTLY, two limits:
    unwired non-test check ever appears, THAT is the trigger to generalise this — and
    the honest fix then is a declared kind, not a cleverer regex.
 
-Run: venv/bin/python tests/test_check_coverage.py   (also wired into nucleus/check.sh)
+Run: venv/bin/python tests/test_check_coverage.py   (also wired into devtools/check.sh)
 """
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-# Env-overridable so nucleus/mutation_probe.py can run this oracle against a deliberately
+# Env-overridable so devtools/mutation_probe.py can run this oracle against a deliberately
 # WRONG check.sh and record which assertion notices. Defaults to the real file, so nothing
 # changes for check.sh or a human run. (Opted in 2026-08-14; see tests/mutants_check_coverage.py.)
-CHECK_SH = Path(os.environ.get("CHECK_SH_SRC", REPO / "nucleus" / "check.sh"))
+CHECK_SH = Path(os.environ.get("CHECK_SH_SRC", REPO / "devtools" / "check.sh"))
 
 # A shell line only counts if it is a live `run` invocation. Comments are stripped
 # first: commenting a test out is the realistic drift (someone silences a red test
 # "for now"), and a naive substring search over the whole file would still see the
 # filename and call it covered.
-INVOKE = re.compile(r"^\s*run\b.*?\btests/(test_[A-Za-z0-9_]+\.py)\b")
+# .py OR .sh (seed #42308, a2 #42306): tests/test_doctor_pg_exposure.sh was committed with no run line and
+# no gate saw it — this one globbed test_*.py, test_reachability's population is nucleus/ only. An oracle is
+# an oracle in whichever language it is written; the authority, the parser and the runtime shim all widen.
+ORACLE_SUFFIXES = (".py", ".sh")
+INVOKE = re.compile(r"^\s*run\b.*?\btests/(test_[A-Za-z0-9_]+\.(?:py|sh))\b")
 
 
 def _live_lines(text):
@@ -95,7 +100,7 @@ def _live_lines(text):
 
 
 def invoked_oracles(text):
-    """The set of tests/test_*.py files check.sh actually invokes."""
+    """The set of tests/test_*.{py,sh} files check.sh actually invokes."""
     found = set()
     for line in _live_lines(text):
         m = INVOKE.match(line)
@@ -106,7 +111,7 @@ def invoked_oracles(text):
 
 def oracles_on_disk():
     """THE authority. One derivation, from the place oracles really live."""
-    return {p.name for p in (REPO / "tests").glob("test_*.py")}
+    return {p.name for suf in ORACLE_SUFFIXES for p in (REPO / "tests").glob(f"test_*{suf}")}
 
 
 def committed_oracles():
@@ -126,7 +131,7 @@ def committed_oracles():
     runs five agents in ONE shared working tree, so a half-built oracle sitting untracked
     for an evening turned the whole suite red — for a reason unrelated to what these gates
     guard, which is the surest way to teach people to stop reading a suite (steward,
-    2026-08-15: `bash nucleus/check.sh` on the live tree, red on WIP alone).
+    2026-08-15: `bash devtools/check.sh` on the live tree, red on WIP alone).
 
     The law these gates enforce — a test nothing runs proves only its last manual
     invocation — ATTACHES AT COMMIT, because that is when the oracle starts appearing in
@@ -142,7 +147,7 @@ def committed_oracles():
     r = subprocess.run(["git", "ls-tree", "-r", "--name-only", "HEAD", "tests/"],
                        cwd=REPO, capture_output=True, text=True)
     names = {Path(p).name for p in r.stdout.split()
-             if Path(p).name.startswith("test_") and p.endswith(".py")}
+             if Path(p).name.startswith("test_") and p.endswith(ORACLE_SUFFIXES)}
     return names or oracles_on_disk()
 
 
@@ -191,13 +196,23 @@ def executed_oracles(check_sh):
         log, shim = Path(d) / "rec.log", Path(d) / "pyshim"
         shim.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$@" >> "$REC"\nexit 0\n')
         shim.chmod(0o755)
+        # A SHELL oracle never passes through $PY (`run "…" bash tests/test_x.sh`), so `bash` is shimmed on PATH
+        # too: a tests/test_*.sh argument is RECORDED and not run; anything else execs the real bash, exactly as
+        # before. The outer check.sh is started by absolute path, so it is not the shim.
+        real_bash = shutil.which("bash") or "/bin/bash"
+        bindir = Path(d) / "bin"
+        bindir.mkdir()
+        (bindir / "bash").write_text(
+            f'#!{real_bash}\ncase "$1" in\n  tests/test_*.sh|*/tests/test_*.sh) printf "%s\\n" "$@" >> "$REC"; '
+            f'exit 0;;\nesac\nexec {real_bash} "$@"\n')
+        (bindir / "bash").chmod(0o755)
         # CHECK_ALLOW_SKIP so a shimmed run never exits nonzero on skip accounting; we read
         # the log, never the verdict. cwd lands wherever check.sh's own `cd` puts it, which
         # is harmless: run() passes its arguments through literally and nothing real runs.
         try:
-            subprocess.run(["bash", str(check_sh)],
-                           env=dict(os.environ, PY=str(shim), REC=str(log),
-                                    CHECK_ALLOW_SKIP="1"),
+            subprocess.run([real_bash, str(check_sh)],
+                           env=dict(os.environ, PY=str(shim), REC=str(log), CHECK_ALLOW_SKIP="1",
+                                    PATH=f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}"),
                            capture_output=True, timeout=180)
         except subprocess.TimeoutExpired:
             val = Unverified("nested check.sh run exceeded 180s (loaded host) — "
@@ -209,7 +224,7 @@ def executed_oracles(check_sh):
             return set()
         found = set()
         for line in log.read_text().splitlines():
-            m = re.search(r"(?:^|/)(test_[A-Za-z0-9_]+\.py)$", line.strip())
+            m = re.search(r"(?:^|/)(test_[A-Za-z0-9_]+\.(?:py|sh))$", line.strip())
             if m:
                 found.add(m.group(1))
         _EXECUTED_CACHE[key] = found
@@ -256,10 +271,10 @@ def test_every_oracle_in_nucleus_is_invoked_by_check_sh():
     is internally consistent with itself."""
     missing = sorted(committed_oracles() - invoked_oracles(CHECK_SH.read_text()))
     assert not missing, (
-        "committed oracle(s) that nucleus/check.sh never runs: "
+        "committed oracle(s) that devtools/check.sh never runs: "
         + ", ".join(missing)
         + " — a test nothing runs proves only its last manual invocation. Add a "
-          "`run \"<label>\" \"$PY\" nucleus/<file>` line to check.sh."
+          "`run \"<label>\" \"$PY\" tests/<file>` line (`bash tests/<file>` for a .sh) to check.sh."
     )
 
 
@@ -316,6 +331,16 @@ def test_a_commented_out_invocation_does_not_count():
     assert invoked_oracles('run "x" "$PY" tests/test_x.py  # noqa') == {"test_x.py"}
     # a bare mention in prose is not an invocation
     assert invoked_oracles('echo "see tests/test_x.py"') == set()
+
+
+def test_a_shell_oracle_is_an_oracle():
+    """seed #42308: a committed tests/test_*.sh with no run line must read UNCOVERED. Positive control on the
+    live tree: the one shell oracle committed today is in the authority and parsed from its real run line."""
+    assert invoked_oracles('run "x" bash tests/test_y.sh') == {"test_y.sh"}
+    assert invoked_oracles('# run "x" bash tests/test_y.sh') == set()
+    assert invoked_oracles('echo "see tests/test_y.sh"') == set()
+    sh = {n for n in committed_oracles() if n.endswith(".sh")}
+    assert "test_doctor_pg_exposure.sh" in sh, f"the committed shell oracle is outside the authority: {sorted(sh)}"
 
 
 if __name__ == "__main__":

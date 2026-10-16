@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hermetic test of nucleus/okf.py — the OKF frontmatter authority for the memory estate.
+"""Hermetic test of src/astryx/memory/okf.py — the OKF frontmatter authority for the memory estate.
 
 The invariant that matters is NOT "the parser parses". It is:
 
@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from nucleus.okf import (  # noqa: E402
+from astryx.memory.okf import (  # noqa: E402
     OKFError, parse, render, attach, strip, validate, FORBIDDEN, MAX_VALUE,
 )
 

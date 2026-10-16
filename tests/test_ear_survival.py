@@ -35,8 +35,9 @@ actually landed on the code path under test. If a fault never reaches the path (
 race, a vanished test seam), the case verified NOTHING and this exits 77 (SKIP) rather
 than reporting the survival as a pass -- a fault that missed is not a fix that worked.
 
-Run: venv/bin/python tests/test_ear_survival.py   (also wired into nucleus/check.sh)
+Run: venv/bin/python tests/test_ear_survival.py   (also wired into devtools/check.sh)
 """
+from _stage_channel import stage_server  # noqa: E402
 import os
 import re
 import shutil
@@ -47,7 +48,7 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-# CHANNEL_SERVER_SRC is nucleus/mutation_probe.py's channel for handing this oracle a
+# CHANNEL_SERVER_SRC is devtools/mutation_probe.py's channel for handing this oracle a
 # deliberately-broken copy; the default is always the real file. It selects the SUBJECT,
 # never the axis — every fault below is injected explicitly, per case, by this file.
 SERVER = Path(os.environ.get("CHANNEL_SERVER_SRC", REPO / "channel" / "server.mjs"))
@@ -85,7 +86,7 @@ def dsn() -> str | None:
 
 def node_bin() -> str | None:
     """The node the org actually spawns agents with, not whatever is first on PATH."""
-    spawn = REPO / "nucleus" / "spawn.sh"
+    spawn = REPO / "scripts" / "spawn.sh"
     if spawn.exists():
         m = re.search(r"^NODE=(\S+)", spawn.read_text(), re.M)
         if m and Path(m.group(1)).is_file():
@@ -97,15 +98,15 @@ if not SERVER.exists():
     skip("channel/server.mjs is absent — nothing to test")
 NODE = node_bin()
 if not NODE:
-    skip("no node binary (nucleus/spawn.sh NODE= is absent and node is not on PATH)")
+    skip("no node binary (scripts/spawn.sh NODE= is absent and node is not on PATH)")
 if not (REPO / "channel" / "node_modules" / "pg").is_dir():
     skip("channel/node_modules/pg is absent (a fresh clone: run npm install in channel/)")
 ADMIN_DSN = dsn()
 if not ADMIN_DSN:
     skip("no ASTRYX_DSN (env or .env) — no database to blip")
-SCHEMA = REPO / "nucleus" / "schema.sql"
+SCHEMA = REPO / "src" / "astryx" / "sql" / "schema.sql"
 if not SCHEMA.exists():
-    skip("nucleus/schema.sql is absent — cannot build a throwaway database")
+    skip("src/astryx/sql/schema.sql is absent — cannot build a throwaway database")
 
 try:
     admin = psycopg.connect(ADMIN_DSN, autocommit=True, connect_timeout=5)
@@ -184,9 +185,7 @@ try:
     # from the nearest node_modules, so a staged copy needs both — and staging it
     # OUTSIDE the repo is the point: a test that writes into channel/ to test channel/
     # can leave a live DSN behind when it dies.
-    (stage / "channel").mkdir()
-    shutil.copy2(SERVER, stage / "channel" / "server.mjs")
-    (stage / "channel" / "node_modules").symlink_to(REPO / "channel" / "node_modules")
+    stage_server(stage / "channel", SERVER)          # server.mjs + its sibling modules (tests/_stage_channel.py)
     (stage / ".env").write_text(f"ASTRYX_DSN={PROBE_DSN}\n")
 
     env = {**os.environ, "ASTRYX_AGENT": PROBE_AGENT, "ASTRYX_DSN": PROBE_DSN,

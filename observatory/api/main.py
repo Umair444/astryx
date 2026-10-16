@@ -42,6 +42,7 @@ DIST = ROOT / "web" / "dist"
 # (bridges/providers) for contact resolution, rather than re-implementing it here.
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
+from astryx.core import charter as _charter  # noqa: E402 — the one roster rule
 
 def _dsn() -> str:
     if os.environ.get("ASTRYX_DSN"):
@@ -85,8 +86,11 @@ VEGA_HOME = Path(tempfile.gettempdir()) / "astryx-vega-conjure"
 # The default-DENY allowlist. Two CONTENT-class endpoints (/api/agents, /api/steps)
 # are public but tier-FLOORED inside the handler (plan-18 LANE 2): metadata for every
 # agent, but step/last_content bodies only for grant-derived content-public agents
-# (nucleus/tier.py, fail-closed). A content-class path must NOT be added here without
+# (src/astryx/core/tier.py, fail-closed). A content-class path must NOT be added here without
 # applying that floor — the grade-3 assert (tests/test_tier.py) fails if it is.
+# An agent's FACE is metadata (it exists, it looks like this), public like its name in /api/agents;
+# an <img> cannot send the owner header, so the avatar route is the one parameterised public path.
+_PUBLIC_AVATAR = re.compile(r"^/api/agents/[a-z][a-z0-9_-]{0,40}/avatar$")
 PUBLIC_PATHS = {"/api/overview", "/api/peers", "/api/vega", "/api/whoami",
                 "/api/events", "/api/messages", "/api/agents",
                 "/favicon.svg"}
@@ -230,7 +234,7 @@ async def listen_task():
         try:
             conn = await asyncpg.connect(DSN)
             q: asyncio.Queue = asyncio.Queue()
-            for ch in ("astryx_wire", "astryx_steps", "astryx_dag"):
+            for ch in ("astryx_wire", "astryx_steps", "astryx_dag", "astryx_presence"):
                 await conn.add_listener(
                     ch, lambda c, p, chan, payload: q.put_nowait((chan, payload)))
             conn.add_termination_listener(lambda c: q.put_nowait(("__dead__", "")))
@@ -254,11 +258,21 @@ async def listen_task():
                         data = {"type": "dag", **json.loads(payload)}
                     except Exception:
                         continue
+                elif chan == "astryx_presence":
+                    try:
+                        prow = await conn.fetchrow("SELECT * FROM presence WHERE agent=$1",
+                                                   json.loads(payload).get("agent", ""))
+                    except Exception:
+                        continue
+                    if prow:
+                        data = {"type": "presence", **_presence(prow)}
                 elif chan == "astryx_wire":
                     row = await conn.fetchrow(
                         "SELECT * FROM messages WHERE id = $1", int(payload))
                     if row:
                         data = {"type": "message", **msg(row)}
+                        if row["to_agent"] == "room":
+                            _room.nudge()
                 if data:
                     for cq in list(sse_clients):
                         cq.put_nowait(data)
@@ -271,18 +285,40 @@ async def lifespan(app: FastAPI):
     global pool
     pool = await asyncpg.create_pool(DSN, min_size=1, max_size=4)
     task = asyncio.create_task(listen_task())
+    room_task = asyncio.create_task(_room.speaker_task())
     yield
     task.cancel()
+    room_task.cancel()
     await pool.close()
 
 
 app = FastAPI(lifespan=lifespan)
 
+# plan-9000 S2: the pilot's realtime voice (owner-only by omission from PUBLIC_PATHS; spend via nucleus/voice_mint)
+# imported through the repo package (REPO is on sys.path), so main.py loads the same way under uvicorn and when an
+# oracle loads it by path; the pool is handed over, never re-imported (steward #44464)
+from observatory.api import pilot_voice as _pilot_voice  # noqa: E402
+_pilot_voice.bind(lambda: pool)
+app.include_router(_pilot_voice.router)
+
+# the Room's speaker: agents answer the room with send(to='room'); spoken in their voice, or run on the screen
+from observatory.api import room as _room  # noqa: E402
+
+
+def _fanout(data: dict) -> None:
+    for cq in list(sse_clients):
+        cq.put_nowait(data)
+
+
+_room.bind(lambda: pool, _fanout)
+app.include_router(_room.router)
+
 
 @app.middleware("http")
 async def privacy_gate(request: Request, call_next):
     p = request.url.path
-    if p.startswith("/api/") and p not in PUBLIC_PATHS and not is_owner(request):
+    if (p.startswith("/api/") and p not in PUBLIC_PATHS and not _PUBLIC_AVATAR.match(p)
+            and not is_owner(request)):
         return Response(status_code=403)
     return await call_next(request)
 
@@ -364,10 +400,9 @@ def agent_meta() -> dict[str, dict]:
     out: dict[str, dict] = {}
     for f in root.rglob("*.md"):
         parts = f.relative_to(root).parts
-        if f.name.endswith(".example.md") or any(p.endswith(".example") for p in parts):
-            continue
-        if f.name in (".organ.md", "README.md"):
-            continue                    # reserved names are never charters (plan-2 §1)
+        if not _charter.is_charter(f, root):
+            continue                    # the ONE rule (src/astryx/core/charter.py): examples, structural
+                                        # files, and documents beside a self-folder charter
         # self-folder form: agents/<name>/<name>.md — the folder is the agent's own
         # home, not a composite level, so it drops out of the group path
         if len(parts) >= 2 and parts[-2] == f.stem:
@@ -401,17 +436,25 @@ async def agents(request: Request):
     meta = agent_meta()
     nogroup = {"group_path": [], "rank": None, "model_pin": None}
     # actual model per agent from its latest turn; charter Model: pin as fallback
+    # The DOMINANT model over the last two days, not the last turn's: a resident's session also
+    # logs small auxiliary calls on another model, and "latest" relabelled seed "haiku" (10-09).
     actual = {r["agent"]: r["model"] for r in await pool.fetch(
-        "SELECT DISTINCT ON (agent) agent, model FROM turns "
-        "WHERE model IS NOT NULL ORDER BY agent, id DESC")}
+        "SELECT agent, mode() WITHIN GROUP (ORDER BY model) AS model FROM turns "
+        "WHERE model IS NOT NULL AND ended_at > now() - interval '2 days' GROUP BY agent")}
 
-    from nucleus import charter
+    from astryx.core import charter
 
     def enrich(a: str) -> dict:
         m = meta.get(a, nogroup)
         return {"group_path": m["group_path"], "rank": m["rank"],
                 "model": actual.get(a) or m.get("model_pin") or "opus",
                 "type": charter.agent_type(a) or "resident"}
+    # THE TREE IS THE REGISTRY: an agent is a charter (src/astryx/core/charter.py), not a name that once
+    # wrote a step. Without this, a body spawned in error (seed's onboard.md, 10-09) lived on in the
+    # roster and on the Floor through its old step rows.
+    registry = set(charter.roster())
+    rows = [r for r in rows if r["agent"] in registry]
+    alive = {a for a in alive if a in registry}
     out = [{**dict(r), "last_seen": r["last_seen"].isoformat(),
             "alive": r["agent"] in alive, **enrich(r["agent"])} for r in rows]
     seen = {r["agent"] for r in rows}
@@ -435,7 +478,7 @@ async def agents(request: Request):
         # tier line (the plan-16 side-channel), and last_content is the body itself.
         # Anon-only: the owner view (is_owner) keeps full metrics. Same fail-closed
         # polarity as the content floor — driven by the one tier authority.
-        from nucleus.tier import is_content_public
+        from astryx.core.tier import is_content_public
         for row in out:
             # last_content is a 120-char slice of the agent's most recent STEP BODY, so
             # it is the same content /api/steps was just gated for — a second door to the
@@ -497,11 +540,11 @@ async def steps(request: Request, agent: str | None = None, kind: str | None = N
     cond, args = [], []
     if not is_owner(request):
         # CONTENT-class floor: anonymous sees step bodies ONLY for grant-derived
-        # content-public agents (nucleus/tier.py). POSITIVE `agent = ANY(public)` —
+        # content-public agents (src/astryx/core/tier.py). POSITIVE `agent = ANY(public)` —
         # fail-closed: a private or unknown agent yields zero rows, and an anon
         # request for a private agent's steps (?agent=canopus) returns []. Never the
         # complement (NOT IN private) — a new private agent would leak through that.
-        from nucleus.tier import content_public_agents
+        from astryx.core.tier import content_public_agents
         pub = sorted(content_public_agents(agent_meta().keys()))
         args.append(pub); cond.append(f"agent = ANY(${len(args)})")
     if agent:
@@ -520,6 +563,31 @@ async def steps(request: Request, agent: str | None = None, kind: str | None = N
 async def goals():
     rows = await pool.fetch("SELECT * FROM goals ORDER BY id DESC LIMIT 200")
     return [goal(r) for r in rows]
+
+
+@app.get("/api/goals/{gid}")
+async def goal_detail(gid: int):
+    """One goal, in full: the goal row, its sub-goals, its plan thread (plan-<id>, where the
+    abstractors refine and vote), each abstractor's latest verdict, and the recent steps tagged to
+    it. Owner-only by the privacy gate (not a PUBLIC_PATH)."""
+    g = await pool.fetchrow("SELECT * FROM goals WHERE id=$1", gid)
+    if not g:
+        return Response(status_code=404)
+    thread = f"plan-{gid}"
+    kids = await pool.fetch("SELECT * FROM goals WHERE parent_id=$1 ORDER BY id", gid)
+    msgs = await pool.fetch(
+        "SELECT * FROM (SELECT * FROM messages WHERE thread=$1 ORDER BY id DESC LIMIT 60) t ORDER BY id", thread)
+    total = await pool.fetchval("SELECT count(*) FROM messages WHERE thread=$1", thread)
+    votes = await pool.fetch(
+        "SELECT DISTINCT ON (from_agent) from_agent, intent, ts FROM messages "
+        "WHERE thread=$1 AND intent IN ('approve', 'revise') ORDER BY from_agent, id DESC", thread)
+    steps = await pool.fetch("SELECT * FROM steps WHERE goal_id=$1 ORDER BY id DESC LIMIT 25", gid)
+    return {"goal": {**goal(g), "done_at": g["done_at"].isoformat() if g["done_at"] else None,
+                     "funded_by": g["funded_by"]},
+            "children": [goal(k) for k in kids],
+            "thread": thread, "thread_total": total, "messages": [msg(m) for m in msgs],
+            "votes": [{"agent": v["from_agent"], "intent": v["intent"], "ts": v["ts"].isoformat()} for v in votes],
+            "steps": [step(x) for x in steps]}
 
 
 #  BILLABLE, NOT RAW. steps.tokens_in / turns.tokens_in count cache reads at face value and
@@ -585,15 +653,21 @@ async def economy():
         GROUP BY 1 ORDER BY 2 DESC LIMIT 6
     """)
     # authoritative plan gauges + the fresh %-series that drives the prediction/sparkline
+    # unified authority (goal 3833): the sparkline reads fresh readings from BOTH writers
+    # (turns ∪ usage_polls) so an idle stretch fills with poll points instead of a gap;
+    # `latest` is the single newest-good reading. Aliased to the legacy column names so the
+    # downstream consumer is untouched.
     series = await pool.fetch("""
-        SELECT ended_at, usage_five_hour_pct AS five, usage_seven_day_pct AS seven
-        FROM turns WHERE usage_state='fresh' AND ended_at > now() - interval '6 hours'
-        ORDER BY ended_at
+        SELECT fetched_at AS ended_at, five_hour_pct AS five, seven_day_pct AS seven
+        FROM usage_readings WHERE state='fresh' AND fetched_at > now() - interval '6 hours'
+        ORDER BY fetched_at
     """)
     latest = await pool.fetchrow("""
-        SELECT ended_at, agent, usage_subscription, usage_five_hour_pct, usage_seven_day_pct,
-               usage_seven_day_opus_pct, usage_five_hour_reset, usage_seven_day_reset
-        FROM turns WHERE usage_state='fresh' ORDER BY ended_at DESC LIMIT 1
+        SELECT fetched_at AS ended_at, measured_by AS agent, subscription AS usage_subscription,
+               five_hour_pct AS usage_five_hour_pct, seven_day_pct AS usage_seven_day_pct,
+               seven_day_opus_pct AS usage_seven_day_opus_pct,
+               five_hour_reset AS usage_five_hour_reset, seven_day_reset AS usage_seven_day_reset
+        FROM current_usage
     """)
     goals_rows = await pool.fetch("""
         SELECT id, title, owner, state, budget_tokens, spent_tokens
@@ -635,17 +709,24 @@ async def economy():
             "seven_day_eta_100": eta7, "seven_day_rate_pp_h": rate7,
         }
 
-    # ── the dissipative-system layer: daily econ rows (nucleus/econ.py, the ONE
+    # ── the dissipative-system layer: daily econ rows (src/astryx/econ/econ.py, the ONE
     # implementation of the equations) + a live today-so-far reading. The API serves the
     # RAW series; the client holds the equations, so the playground's sliders recompute
     # G/η locally without another request.
+    # Goal 4227 S2: the v1 fields (W = sum of budgets) are FROZEN and labeled budget-era; each
+    # point carries its v2 records ONLY through econ.v2_view (the version gate), else None —
+    # a v2.0 or pre-v2 day shows no v2, never a back-filled one.
+    from astryx.econ.econ import v2_view
     econ_rows = await pool.fetch(
         "SELECT day::text AS day, metrics FROM econ ORDER BY day DESC LIMIT 90")
     econ_series = []
     for r in reversed(econ_rows):
         m = r["metrics"] if isinstance(r["metrics"], dict) else json.loads(r["metrics"])
         t = m.get("thermo") or {}
+        v2 = v2_view(m)
         econ_series.append({
+            "v2": ({k: v2[k] for k in ("W", "Q", "G", "tool_gdp") if k in v2} | {"version": v2["version"]}
+                   if v2 else None),
             "day": r["day"], "phi": t.get("phi"), "W": t.get("W"),
             "eta": t.get("eta"), "G": m.get("G"),
             "heat_frac": t.get("heat_instant_frac"),
@@ -668,7 +749,7 @@ async def economy():
         from datetime import datetime, timezone
 
         import psycopg
-        from nucleus import econ as E
+        from astryx.econ import econ as E
         now = datetime.now(timezone.utc)
         day = now.date().isoformat()
         with psycopg.connect(E._dsn(), connect_timeout=3) as conn:
@@ -682,7 +763,11 @@ async def economy():
 
     return {
         "authoritative": authoritative,
-        "econ": {"series": econ_series, "latest": econ_latest, "today": econ_today},
+        "econ": {"series": econ_series, "latest": econ_latest, "today": econ_today,
+                 "labels": {"v1": "budget-era: phi/W/eta/G per point are v1, frozen at goal 4227 "
+                                  "(W = sum of budgets), never back-filled into v2",
+                            "v2": "per-point v2 records {value, version, coverage, status}; "
+                                  "None where the day predates the v2 version gate"}},
         "series": [{"t": r["ended_at"].isoformat(),
                     "five": float(r["five"]) if r["five"] is not None else None,
                     "seven": float(r["seven"]) if r["seven"] is not None else None}
@@ -719,16 +804,20 @@ async def usage():
     each AGENT's process — never in this web app. Dollar/spend fields never reach the DB:
     USAGE_ALLOWLIST strips them before a snapshot is ever written.
     """
+    # unified authority (goal 3833): `fresh` is the newest-good reading across BOTH writers
+    # (turns ∪ usage_polls) with its age, so the gauge is fresh during idle and stale never
+    # reads as current; `last` is the newest ATTEMPT any-state (both arms) for honest health.
     fresh = await pool.fetchrow("""
-        SELECT ended_at, agent, usage_snapshot, usage_subscription,
-               usage_five_hour_pct, usage_seven_day_pct, usage_seven_day_opus_pct,
-               usage_five_hour_reset, usage_seven_day_reset
-        FROM turns WHERE usage_state = 'fresh'
-        ORDER BY ended_at DESC LIMIT 1
+        SELECT fetched_at AS ended_at, measured_by AS agent, src, age_seconds,
+               snapshot AS usage_snapshot, subscription AS usage_subscription,
+               five_hour_pct AS usage_five_hour_pct, seven_day_pct AS usage_seven_day_pct,
+               seven_day_opus_pct AS usage_seven_day_opus_pct,
+               five_hour_reset AS usage_five_hour_reset, seven_day_reset AS usage_seven_day_reset
+        FROM current_usage
     """)
     last = await pool.fetchrow("""
-        SELECT ended_at, agent, usage_state FROM turns
-        WHERE usage_snapshot IS NOT NULL ORDER BY ended_at DESC LIMIT 1
+        SELECT fetched_at AS ended_at, measured_by AS agent, state AS usage_state, src
+        FROM usage_readings ORDER BY fetched_at DESC LIMIT 1
     """)
 
     def _iso(v):
@@ -739,17 +828,19 @@ async def usage():
 
     health = {"last_attempt": _iso(last["ended_at"]) if last else None,
               "last_state": last["usage_state"] if last else "never",
-              "last_by": last["agent"] if last else None}
+              "last_by": last["agent"] if last else None,
+              "last_source": last["src"] if last else None}
     if not fresh:
         # no good reading yet — say so honestly, never invent a zero
-        return {"state": health["last_state"], "source": "turns", "data": None, **health}
+        return {"state": health["last_state"], "source": None, "data": None, **health}
 
     snap = fresh["usage_snapshot"]
     if isinstance(snap, str):
         snap = json.loads(snap)
     return {
         "state": "fresh",
-        "source": "turns",
+        "source": fresh["src"],
+        "age_seconds": _f(fresh["age_seconds"]),
         "measured_at": _iso(fresh["ended_at"]),
         "measured_by": fresh["agent"],
         "subscription": fresh["usage_subscription"],
@@ -791,10 +882,10 @@ async def tools():
         except Exception:
             pass
     # senses — the afferent layer (sensors/<agent>/*.py, served by astryx-senses on :8460).
-    # Derived from the tree via the ONE index in nucleus/senses.py; file reads only, no
+    # Derived from the tree via the ONE index in src/astryx/pulse/senses.py; file reads only, no
     # FastAPI import happens at module scope so this stays cheap and safe here.
     try:
-        from nucleus.senses import senses_index
+        from astryx.pulse.senses import senses_index
         senses = senses_index()
     except Exception:
         senses = []
@@ -832,11 +923,11 @@ async def dag_run_detail(run_id: int):
 
 def _charter_path(name: str) -> Path | None:
     """The charter for `name`, at ANY depth in agents/ — resolved through the ONE
-    shared resolver (nucleus/charter.py) that spawn.sh and init.sh also use, so
+    shared resolver (src/astryx/core/charter.py) that spawn.sh and init.sh also use, so
     this can no longer drift from them. A duplicated stem is a corrupted registry:
     the resolver raises, and we fail CLOSED (None → the endpoint stays dark) rather
     than silently serve an ambiguous charter, which is what the old local copy did."""
-    from nucleus.charter import resolve, Collision
+    from astryx.core.charter import resolve, Collision
     try:
         return resolve(name)
     except Collision:
@@ -881,7 +972,7 @@ async def charter_put(name: str, edit: CharterEdit, request: Request):
 # Each resident is its own `claude` process and may run on a different provider (Anthropic
 # direct, a GLM/Huawei endpoint, an OpenAI-compatible gateway) with its own key + model map.
 # The owner sets that here; spawn.sh injects it into homes/<name>/.claude/settings.json's env
-# block on the next respawn (see nucleus/runtime_env.py). SECRETS NEVER TRANSIT THIS API:
+# block on the next respawn (see src/astryx/core/runtime_env.py). SECRETS NEVER TRANSIT THIS API:
 # runtime.json stores the NAME of the .env key holding the token, never the value — read
 # redacts, write refuses a token value. No entry for an agent → it uses the org's default.
 RUNTIME_PATH = REPO / "runtime.json"
@@ -1041,7 +1132,7 @@ async def agent_create(body: AgentCreate, request: Request):
         target.write_text(body.charter)
     except Exception as e:
         return Response(f"could not write charter: {e}", status_code=500)
-    r = subprocess.run(["bash", str(REPO / "nucleus" / "spawn.sh"), name],
+    r = subprocess.run(["bash", str(REPO / "scripts" / "spawn.sh"), name],
                        capture_output=True, text=True, timeout=90)
     return {"ok": r.returncode == 0, "name": name,
             "charter_path": str(target.relative_to(REPO)),
@@ -1067,7 +1158,9 @@ async def agent_retire(name: str, request: Request):
                      f"{stamp}. The name rests; remove this section to revive.\n")
     killed = False
     if name in tmux_alive():
-        k = subprocess.run(["tmux", "kill-session", "-t", f"ax-{name}"],
+        # "=ax-<name>" is an EXACT match: a bare target falls back to a prefix match, and kill-session then kills
+        # ax-<name>x if ax-<name> died between the tmux_alive() check and here (a3 #44075, measured)
+        k = subprocess.run(["tmux", "kill-session", "-t", f"=ax-{name}"],
                            capture_output=True, text=True, timeout=10)
         killed = k.returncode == 0
     return {"ok": True, "name": name, "retired": True, "body_stopped": killed}
@@ -1082,7 +1175,7 @@ async def agent_spawn(name: str, request: Request):
     f = _charter_path(name)
     if not f:
         return Response("no such charter", status_code=404)
-    r = subprocess.run(["bash", str(REPO / "nucleus" / "spawn.sh"), name],
+    r = subprocess.run(["bash", str(REPO / "scripts" / "spawn.sh"), name],
                        capture_output=True, text=True, timeout=90)
     return {"ok": r.returncode == 0, "name": name, "rc": r.returncode,
             "out": (r.stdout + r.stderr)[-800:], "live": name in tmux_alive()}
@@ -1120,6 +1213,151 @@ def unit_state(unit: str) -> dict:
     except Exception as e:
         return {"unit": unit, "active": False, "state": "unknown", "enabled": False,
                 "description": str(e)[:80], "since": None}
+
+
+# ---------------------------------------------------------------- tools: details (owner, via the gate)
+# A tool's arguments and full docstring come from its server's SOURCE (mcp/<srv>/server.py, the file
+# mcp/registry.json launches), read with ast — never imported, so a broken server can't break this.
+_WIRE_SERVER = "astryx (the wire)"
+_WIRE_TOOLS = {"send": "to, body, intent?, thread?", "subscribe": "agent, filter?", "query_steps": "agent?, limit?"}
+
+
+def _server_source(server: str) -> Path | None:
+    try:
+        reg = json.loads((REPO / "mcp" / "registry.json").read_text())
+    except Exception:
+        return None
+    spec = reg.get(server)
+    if not isinstance(spec, dict):
+        return None
+    for a in spec.get("args", []):
+        if str(a).endswith(".py"):
+            f = (REPO / a).resolve()
+            if f.is_file() and (REPO / "mcp") in f.parents:
+                return f
+    return None
+
+
+def _tool_defs(src: Path) -> dict[str, dict]:
+    """{tool: {doc, args:[{name, type, default}]}} for every @<x>.tool()-decorated function."""
+    import ast
+    out: dict[str, dict] = {}
+    try:
+        tree = ast.parse(src.read_text())
+    except Exception:
+        return out
+    for n in ast.walk(tree):
+        if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not any("tool" in ast.unparse(d) for d in n.decorator_list):
+            continue
+        a = n.args
+        pos = a.posonlyargs + a.args
+        defaults = [None] * (len(pos) - len(a.defaults)) + list(a.defaults)
+        args = [{"name": x.arg, "type": ast.unparse(x.annotation) if x.annotation else None,
+                 "default": ast.unparse(d) if d is not None else None}
+                for x, d in zip(pos, defaults) if x.arg not in ("self", "ctx")]
+        args += [{"name": x.arg, "type": ast.unparse(x.annotation) if x.annotation else None,
+                  "default": ast.unparse(d) if d is not None else None}
+                 for x, d in zip(a.kwonlyargs, a.kw_defaults)]
+        out[n.name] = {"doc": ast.get_docstring(n) or "", "args": args,
+                       "returns": ast.unparse(n.returns) if n.returns else None}
+    return out
+
+
+def _mcp_prefix(server: str) -> str:
+    """How a resident's step names a call to this server's tools: mcp__<server>__<tool>."""
+    return "mcp__astryx__" if server == _WIRE_SERVER else f"mcp__{server}__"
+
+
+@app.get("/api/tools/usage")
+async def tools_usage(server: str):
+    """Calls per tool on one server over the last 7 days, and who made them (from steps)."""
+    pre = _mcp_prefix(server)
+    rows = await pool.fetch(
+        "SELECT split_part(substr(content, length($1) + 1), ' ', 1) AS tool, agent, count(*) AS n "
+        "FROM steps WHERE ts > now() - interval '7 days' AND left(content, length($1)) = $1 "
+        "AND content NOT LIKE '% done' GROUP BY 1, 2", pre)
+    tools: dict[str, dict] = {}
+    for r in rows:
+        t = r["tool"].rstrip(":")
+        e = tools.setdefault(t, {"calls": 0, "agents": {}})
+        e["calls"] += r["n"]
+        e["agents"][r["agent"]] = e["agents"].get(r["agent"], 0) + r["n"]
+    return {"server": server, "tools": tools}
+
+
+@app.get("/api/tools/{server}/{tool}")
+async def tool_detail(server: str, tool: str):
+    """One tool: its full docstring and arguments (from source), and its recent calls."""
+    src = None if server == _WIRE_SERVER else _server_source(server)
+    if server != _WIRE_SERVER and not src:
+        return Response(status_code=404)
+    if server == _WIRE_SERVER:
+        if tool not in _WIRE_TOOLS:
+            return Response(status_code=404)
+        d = {"doc": "", "args": [{"name": a.strip().rstrip("?"), "type": None,
+                                  "default": "optional" if a.strip().endswith("?") else None}
+                                 for a in _WIRE_TOOLS[tool].split(",")], "returns": None}
+    else:
+        d = _tool_defs(src).get(tool)
+        if d is None:
+            return Response(status_code=404)
+    pre = f"{_mcp_prefix(server)}{tool}"
+    calls = await pool.fetch(
+        "SELECT agent, ts, left(content, 200) AS content FROM steps "
+        "WHERE left(content, length($1)) = $1 AND content NOT LIKE '% done' ORDER BY id DESC LIMIT 15", pre)
+    return {"server": server, "tool": tool, **d,
+            "source": str(src.relative_to(REPO)) if src else None,
+            "calls": [{"agent": c["agent"], "ts": c["ts"].isoformat(), "content": c["content"]} for c in calls]}
+
+
+@app.get("/api/triggers/{agent}/{name}")
+async def trigger_detail(agent: str, name: str):
+    """One trigger, in full: its check source, state, when it last evaluated and fired, and its
+    recent fires on the wire (pulse → agent, '[trigger <name>…')."""
+    t = await pool.fetchrow(
+        "SELECT agent, name, schedule, kind, enabled, check_src, state, last_eval, last_fired, next_fire, note "
+        "FROM triggers WHERE agent=$1 AND name=$2", agent, name)
+    if not t:
+        return Response(status_code=404)
+    head = f"[trigger {name}"
+    fires = await pool.fetch(
+        "SELECT id, ts, left(body, 600) AS body FROM messages WHERE from_agent='pulse' AND to_agent=$1 "
+        "AND left(body, length($2)) = $2 ORDER BY id DESC LIMIT 8", agent, head)
+    fires = [f for f in fires if f["body"][len(head):len(head) + 1] in ("]", " ")]
+    # a python trigger's check_src names its file; show the code itself (confined to triggers/, capped)
+    root = (REPO / "triggers").resolve()
+    cand = t["check_src"] if t["kind"] == "python" and (t["check_src"] or "").endswith(".py") else f"triggers/{agent}/{name}.py"
+    path = (REPO / cand).resolve()
+    if root not in path.parents:
+        path = REPO / "triggers" / agent / f"{name}.py"
+    code = None
+    if path.is_file():
+        try:
+            code = path.read_text(errors="replace")[:20000]
+        except OSError:
+            code = None
+    iso = lambda v: v.isoformat() if v else None
+    state = t["state"]
+    return {**{k: t[k] for k in ("agent", "name", "schedule", "kind", "enabled", "check_src", "note")},
+            "state": json.loads(state) if isinstance(state, str) else state,
+            "last_eval": iso(t["last_eval"]), "last_fired": iso(t["last_fired"]), "next_fire": iso(t["next_fire"]),
+            "file": str(path.relative_to(REPO)) if path.is_file() else None, "source": code,
+            "fires": [{"id": f["id"], "ts": f["ts"].isoformat(), "body": f["body"]} for f in fires]}
+
+
+@app.get("/api/services/{unit}/log")
+async def service_log(unit: str, lines: int = 40):
+    """The tail of one astryx unit's journal. Only units that ship in units/ (service_units)."""
+    if unit not in service_units():
+        return Response(status_code=404)
+    try:
+        r = subprocess.run(["journalctl", "-u", unit, "-n", str(max(1, min(lines, 200))), "--no-pager",
+                            "-o", "short-iso"], capture_output=True, text=True, timeout=8)
+        return {"unit": unit, "lines": r.stdout.splitlines()[-200:]}
+    except Exception as e:
+        return {"unit": unit, "lines": [], "error": f"{type(e).__name__}: {e}"}
 
 
 @app.get("/api/services")
@@ -1180,9 +1418,11 @@ async def network_people(request: Request, min_shared: int = 1):
     """
     if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
         return Response(status_code=403)
+    # The details come from social_relation (people library 1a); this endpoint is OWNER-GATED above.
     people = await pool.fetch(
-        "SELECT org, id, kind, label, direct, relation, who, shape, confidence "
-        "FROM social_person")
+        "SELECT p.org, p.id, p.kind, p.label, p.direct, r.kind AS relation, r.context AS who, "
+        "r.evidence AS shape, r.confidence "
+        "FROM social_person p LEFT JOIN social_relation r ON r.org = p.org AND r.pid = p.id")
     knows = await pool.fetch(
         "SELECT a.org, a.src AS p1, b.src AS p2, count(*) AS w "
         "FROM social_edge a JOIN social_edge b "
@@ -1203,6 +1443,118 @@ async def network_people(request: Request, min_shared: int = 1):
             "notes": ["edges mean related-at-all (shared context or a direct thread); "
                       "the KIND of relation is deliberately not on this surface",
                       "derived from message senders — silent members are invisible"]}
+
+
+# ---------------------------------------------------------------- people: the owner confirms
+# memory guesses who people are to the owner (pid-keyed, counts-only evidence) in its PRIVATE scratch,
+# never on the wire (local.md: family data is personal tier) and never in a DB table every superuser
+# agent can read until the people_cleared role lands (plan-4918 1a). The owner answers HERE: the name is
+# resolved owner-side from the graph, the answer appended beside the asks, and memory is told only a COUNT.
+_PEOPLE_DIR = Path(os.environ.get("ASTRYX_PEOPLE_DIR") or REPO / "homes" / "memory" / ".people")  # override: oracles
+PEOPLE_KINDS = ["family", "partner", "close friend", "friend", "colleague", "collaborator",
+                "classmate", "acquaintance", "community", "other"]
+PEOPLE_CLOSENESS = ["inner", "close", "regular", "distant"]
+
+
+def _jsonl(path: Path) -> list[dict]:
+    try:
+        return [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+@app.get("/api/people/{pid}/profile")
+async def person_profile(pid: str, request: Request):
+    """Everything the org knows about ONE person, for the owner's eyes: the node (and persona's
+    description where it wrote one), the owner's direct-message history with them (counts and
+    dates, never text), the groups they share, how many people they share them with, memory's
+    private guess and the owner's own answer. Owner-only twice (the gate, and here)."""
+    if not is_owner(request):
+        return Response(status_code=403)
+    # The details come from social_relation (people library 1a), never social_person.
+    p = await pool.fetchrow("SELECT p.org, p.id, p.kind, p.label, p.direct, r.kind AS relation, r.context AS who, "
+                            "r.evidence AS shape, r.confidence, r.closeness "
+                            "FROM social_person p LEFT JOIN social_relation r ON r.org = p.org AND r.pid = p.id "
+                            "WHERE p.id=$1 AND p.kind='person'", pid)
+    if not p:
+        return Response(status_code=404)
+    dm = await pool.fetchrow("SELECT weight, first_ts, last_ts, mine FROM social_edge "
+                             "WHERE org=$1 AND dst=$2 AND rel='dm'", p["org"], pid)
+    groups = await pool.fetch(
+        "SELECT g.id, g.label, (SELECT count(*) FROM social_edge m WHERE m.org=e.org AND m.dst=e.dst "
+        "AND m.rel='member-of') AS size FROM social_edge e JOIN social_person g ON g.org=e.org AND g.id=e.dst "
+        "WHERE e.org=$1 AND e.src=$2 AND e.rel='member-of' ORDER BY size DESC", p["org"], pid)
+    mutuals = await pool.fetchval(
+        "SELECT count(DISTINCT b.src) FROM social_edge a JOIN social_edge b ON a.org=b.org AND a.dst=b.dst "
+        "AND b.src<>a.src WHERE a.org=$1 AND a.src=$2 AND a.rel='member-of' AND b.rel='member-of'", p["org"], pid)
+    ask = next((a for a in reversed(_jsonl(_PEOPLE_DIR / "asks.jsonl")) if a.get("pid") == pid), None)
+    ans = next((a for a in reversed(_jsonl(_PEOPLE_DIR / "answers.jsonl")) if a.get("pid") == pid), None)
+    iso = lambda t: t.isoformat() if t else None
+    return {"person": dict(p),
+            "dm": {"msgs": dm["weight"], "first": iso(dm["first_ts"]), "last": iso(dm["last_ts"]),
+                   "mine": dm["mine"]} if dm else None,
+            "groups": [{"id": g["id"], "label": g["label"], "size": g["size"]} for g in groups],
+            "mutuals": mutuals,
+            "memory_guess": {"kind": ask.get("candidate_kind"), "closeness": ask.get("closeness"),
+                             "confidence": ask.get("confidence")} if ask else None,
+            "your_answer": {"kind": ans.get("kind"), "closeness": ans.get("closeness"),
+                            "skipped": bool(ans.get("skipped"))} if ans else None}
+
+
+@app.get("/api/people/asks")
+async def people_asks(request: Request):
+    if not is_owner(request):
+        return Response(status_code=403)
+    asks = _jsonl(_PEOPLE_DIR / "asks.jsonl")
+    done = {a.get("pid") for a in _jsonl(_PEOPLE_DIR / "answers.jsonl")}
+    open_asks = [a for a in asks if a.get("pid") and a["pid"] not in done]
+    labels = {r["id"]: r["label"] for r in await pool.fetch(
+        "SELECT id, label FROM social_person WHERE id = ANY($1::text[])", [a["pid"] for a in open_asks])}
+    return {"kinds": PEOPLE_KINDS, "closeness": PEOPLE_CLOSENESS, "answered": len(done),
+            "asks": [{"pid": a["pid"], "label": labels.get(a["pid"]) or "someone (no saved name)",
+                      "kind": a.get("candidate_kind"), "closeness": a.get("closeness"),
+                      "confidence": a.get("confidence"), "evidence": a.get("evidence_summary") or {}}
+                     for a in open_asks]}
+
+
+class PeopleAnswer(BaseModel):
+    pid: str
+    kind: str | None = None
+    closeness: str | None = None
+    skip: bool = False
+
+
+@app.post("/api/people/answers")
+async def people_answer(body: PeopleAnswer, request: Request):
+    if not is_owner(request):
+        return Response(status_code=403)
+    asked = {a.get("pid") for a in _jsonl(_PEOPLE_DIR / "asks.jsonl")}
+    if body.pid not in asked:
+        return Response("not an open ask", status_code=404)
+    if not body.skip and (body.kind not in PEOPLE_KINDS or body.closeness not in PEOPLE_CLOSENESS):
+        return Response("kind/closeness must be one of the offered values", status_code=400)
+    row = {"pid": body.pid, "kind": None if body.skip else body.kind,
+           "closeness": None if body.skip else body.closeness, "skipped": body.skip,
+           "answered_at": datetime.now(timezone.utc).isoformat()}
+    f = _PEOPLE_DIR / "answers.jsonl"
+    fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(fd, "a") as out:
+        out.write(json.dumps(row) + "\n")
+    n = len(_jsonl(f))
+    if not body.skip:
+        # ONE authority (a2 #38791 B1): the owner's answer is promoted straight into social_relation,
+        # outranking any model guess (confidence='owner'); answers.jsonl stays as the append-only record.
+        await pool.execute(
+            "INSERT INTO social_relation (org, pid, kind, closeness, confidence, updated_at) "
+            "VALUES (COALESCE((SELECT org FROM social_person WHERE id=$1 LIMIT 1), 'local'), $1, $2, $3, 'owner', now()) "
+            "ON CONFLICT (org, pid) DO UPDATE SET kind=EXCLUDED.kind, closeness=EXCLUDED.closeness, "
+            "confidence='owner', updated_at=now()", body.pid, body.kind, body.closeness)
+    await pool.execute(
+        "INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES "
+        "('owner', 'memory', 't-memory-people', 'receipt', $1)",
+        f"owner answered a people ask in the observatory — answers.jsonl now has {n} line(s). "
+        f"(Counts only on the wire; the answers are in your private scratch.)")
+    return {"ok": True, "answered": n}
 
 
 class CypherQ(BaseModel):
@@ -1236,8 +1588,8 @@ async def network_cypher(q: CypherQ, request: Request):
     dsn = os.environ.get("SOCIAL_DSN", "") or DSN.rsplit("/", 1)[0] + "/astryx_social"
     try:
         async with await psycopg.AsyncConnection.connect(dsn, autocommit=True) as conn:
-            await conn.execute("LOAD 'age'")
-            await conn.execute("SET search_path = ag_catalog, \"$user\", public")
+            from astryx.memory import agelib
+            await agelib.aprepare(conn)       # LOAD as a superuser; a run role has AGE preloaded (plan-4918 D1)
             await conn.execute("SET statement_timeout = '10s'")
             # AGE's contract: the SQL column list must match the cypher RETURN arity.
             # Derived by counting top-level commas in the final RETURN clause — a wrong
@@ -1277,7 +1629,8 @@ class NewGoal(BaseModel):
     title: str
     assignee: str                      # goals.owner = the agent responsible
     scope_note: str | None = None
-    budget_tokens: int | None = None
+    # no budget field: goals carry no budgets (goal 4227 S3). An old client still sending
+    # budget_tokens is ignored (pydantic drops unknown fields), never an error.
 
 
 @app.post("/api/goals")
@@ -1287,9 +1640,9 @@ async def goal_create(g: NewGoal, request: Request):
     if not g.title.strip() or not g.assignee.strip():
         return Response(status_code=400)
     gid = await pool.fetchval(
-        "INSERT INTO goals (title, owner, state, scope_note, budget_tokens) "
-        "VALUES ($1, $2, 'proposed', $3, $4) RETURNING id",
-        g.title.strip(), g.assignee.strip(), g.scope_note, g.budget_tokens or 0)
+        "INSERT INTO goals (title, owner, state, scope_note) "
+        "VALUES ($1, $2, 'proposed', $3) RETURNING id",
+        g.title.strip(), g.assignee.strip(), g.scope_note)
     # the assignment IS a message — the wire doorbell wakes the assignee
     body = (f"Goal #{gid} assigned to you by the owner: {g.title.strip()}"
             + (f"\n\n{g.scope_note}" if g.scope_note else "")
@@ -1349,6 +1702,9 @@ class VegaMsg(BaseModel):
 vega_hits: dict[str, list[float]] = {}
 
 
+from astryx.core.claude_bin import claude_bin  # noqa: E402
+
+
 @app.post("/api/vega")
 async def vega(m: VegaMsg, request: Request):
     vega_md = _charter_path("vega")
@@ -1397,7 +1753,7 @@ async def vega(m: VegaMsg, request: Request):
         #                       regardless of cwd (grade-1; the resident spawn relies
         #                       on this same primitive). Together: no actuator at all.
         proc = await asyncio.create_subprocess_exec(
-            "claude", "-p", "--model", "haiku",
+            claude_bin(), "-p", "--model", "haiku",
             "--tools", "",
             "--strict-mcp-config",
             "--no-session-persistence",
@@ -1408,7 +1764,9 @@ async def vega(m: VegaMsg, request: Request):
         out, _ = await asyncio.wait_for(
             proc.communicate(prompt.encode()), timeout=90)
         reply = out.decode(errors="replace").strip() or "…"
-    except Exception:
+    except Exception as e:
+        # say WHY in the journal: a swallowed FileNotFoundError hid "claude not on the unit's PATH"
+        print(f"vega: conjure failed: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
         reply = "I lost my train of thought. Ask me again."
     return {"reply": reply[:4000]}
 
@@ -1549,9 +1907,16 @@ async def agent_profile(name: str):
                (SELECT count(*) FROM steps WHERE agent=$1)                        AS steps,
                (SELECT min(ts) FROM steps WHERE agent=$1)                         AS first_seen,
                (SELECT max(ts) FROM steps WHERE agent=$1)                         AS last_seen""", name)
+    # dominant recent model, not the last turn's (an auxiliary call relabelled seed, 10-09)
     a_model = await pool.fetchval(
-        "SELECT model FROM turns WHERE agent=$1 AND model IS NOT NULL "
-        "ORDER BY ended_at DESC LIMIT 1", name)
+        "SELECT mode() WITHIN GROUP (ORDER BY model) FROM turns WHERE agent=$1 AND model IS NOT NULL "
+        "AND ended_at > now() - interval '2 days'", name) or await pool.fetchval(
+        "SELECT model FROM turns WHERE agent=$1 AND model IS NOT NULL ORDER BY ended_at DESC LIMIT 1", name)
+    # NOW: where its attention is and what it just did — the agent as a person at work
+    pr = await pool.fetchrow("SELECT * FROM presence WHERE agent=$1", name)
+    recent = await pool.fetch(
+        "SELECT ts, kind, content FROM steps WHERE agent=$1 AND kind IN ('tool','milestone','error') "
+        "ORDER BY id DESC LIMIT 8", name)
     # who this agent actually talks to, both directions on the wire — its relationships
     rel = await pool.fetch("""
         SELECT peer, sum(n)::bigint AS n FROM (
@@ -1590,16 +1955,61 @@ async def agent_profile(name: str):
                          for k, v in dict(stats).items()}},
             "relations": [{"agent": r["peer"], "messages": r["n"]} for r in rel],
             "peers": peers,
-            "history": history}
+            "history": history,
+            "presence": _presence(pr) if pr else None,
+            "recent": [{"ts": r["ts"].isoformat(), "kind": r["kind"], "content": (r["content"] or "")[:200]}
+                       for r in recent]}
+
+
+_AVATAR_TYPES = {".svg": "image/svg+xml", ".png": "image/png", ".webp": "image/webp", ".jpg": "image/jpeg"}
 
 
 @app.get("/api/agents/{name}/avatar")
 async def agent_avatar(name: str):
-    for p in (REPO / "agents").rglob("avatar.*"):
-        if p.parent.name == name:
-            return FileResponse(p, headers={"cache-control": "max-age=300"})
-    return Response(status_code=404)
+    """The avatar the agent authored, beside its charter (resolved by the one charter rule).
+    Agent-authored SVG is served sandboxed: as a document it gets no script and no network."""
+    try:
+        ch = _charter.resolve(name)
+    except _charter.Collision:
+        ch = None
+    pic = next((ch.parent / f"avatar{x}" for x in _AVATAR_TYPES
+                if ch and ch.parent.name == ch.stem and (ch.parent / f"avatar{x}").is_file()), None)
+    if not pic:
+        return Response(status_code=404)
+    return FileResponse(pic, media_type=_AVATAR_TYPES[pic.suffix], headers={
+        "cache-control": "public, max-age=300", "x-content-type-options": "nosniff",
+        "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox"})
 
+
+def _presence(r) -> dict:
+    return {"agent": r["agent"], "surface": r["surface"], "target": r["target"], "say": r["say"],
+            "state": r["state"], "updated_at": r["updated_at"].isoformat()}
+
+
+@app.get("/api/presence")
+async def presence_all(request: Request):
+    """Where every agent's attention is (src/astryx/core/presence.py). Owner-only: a surface name can
+    carry a private canvas or thread."""
+    if not is_owner(request):
+        return Response(status_code=403)
+    return [_presence(r) for r in await pool.fetch("SELECT * FROM presence ORDER BY updated_at DESC")]
+
+
+
+@app.get("/api/pulse")
+async def pulse(request: Request):
+    """Each agent's heartbeat: steps per hour over the last 24h, oldest first (24 buckets). The
+    agent cards draw it as a line, so a glance says who has been working and when. Owner-only:
+    an activity RATE is exactly what the anonymous floor zeroes (plan-18)."""
+    if not is_owner(request):
+        return Response(status_code=403)
+    rows = await pool.fetch(
+        "SELECT agent, least(23, floor(extract(epoch from now() - ts) / 3600))::int AS h, count(*) AS n "
+        "FROM steps WHERE ts > now() - interval '24 hours' GROUP BY 1, 2")
+    out: dict[str, list[int]] = {}
+    for r in rows:
+        out.setdefault(r["agent"], [0] * 24)[23 - r["h"]] = r["n"]
+    return out
 
 # ============================================================ system monitor
 def _gpu() -> list[dict]:
@@ -2245,7 +2655,7 @@ async def wire_contacts(q: str, channel: str = ""):
 
 # ---------------------------------------------------------------- memory / recall graph
 # The org's recall system: a typed knowledge graph compiled from BOTH layers — System 1
-# (the raw wire) and System 2 (memory's compiled wiki) — by nucleus/memgraph.py.
+# (the raw wire) and System 2 (memory's compiled wiki) — by src/astryx/memory/memgraph.py.
 #
 # EVERY PATH HERE IS OWNER-ONLY, and deliberately so. The middleware is default-DENY on
 # exact string match, so simply not adding these to PUBLIC_PATHS gates them; there is no
@@ -2259,32 +2669,35 @@ async def wire_contacts(q: str, channel: str = ""):
 #  - The gate matches on request.url.path, which EXCLUDES the query string. So a public
 #    endpoint here must never take a parameter that can widen its output; widening lives
 #    at a different path.
-#  - nucleus/tier.py keys AGENT content and does not reach the wiki at all. A page body is
+#  - src/astryx/core/tier.py keys AGENT content and does not reach the wiki at all. A page body is
 #    memory's compiled content, and goal TITLES (goal-16 is "low-latency recruiter-reply
 #    signal") are owner-career-adjacent. No wiki body or goal title is public at any tier.
 MEMORY_WIKI = REPO / "memory" / "wiki"
 
 
-def _memgraph_read() -> dict | None:
-    """The stored graph, from kg.* — three tables written whole in one transaction.
+async def _memgraph_read() -> dict:
+    """The graph, COMPILED ON REQUEST from memory/ and the wire — there is no stored copy.
 
-    It used to be a JSON file read off disk. The move is the owner's call and the reason
-    is scale: this graph exists to carry an ontology over products, tables and rules, and
-    at 10^4+ nodes a blob means full load per process and full scan per query. Because the
-    graph is DERIVED, the move cost no migration — only the compiler's sink changed.
+    It was a JSON file, then three postgres tables; each was a cached copy with its own
+    freshness to keep and a second writer to drift (plan-8018 S-retire). A compile measured
+    1.1-1.3s, so the request pays it in a worker thread and the event loop never blocks.
+    A failure returns the error shape the old `?fresh=1` recompile returned.
+
+    compile_graph() defaults to with_system1=True, so EVERY view load opens one database
+    connection (psycopg, in that worker thread, connect_timeout=5) to read the wire layer:
+    goals, threads, milestones. No DSN or no psycopg skips that layer with a note, not an error.
     """
     try:
         sys.path.insert(0, str(REPO))
-        from nucleus import memgraph
-        g = memgraph.read_pg()
-        return g if g.get("nodes") or g.get("notes") else None
-    except Exception:
-        return None
+        from astryx.memory import memgraph
+        return await asyncio.to_thread(memgraph.compile_graph)
+    except Exception as e:
+        return {"error": f"compile failed: {type(e).__name__}: {e}", "nodes": [], "edges": []}
 
 
 def _graph_age(g: dict) -> int | None:
-    """Seconds since the graph was built, from kg.node.built_at — every row of a build
-    shares one transaction timestamp, so max(built_at) IS the build time."""
+    """Seconds since the graph was compiled, from its own `built_at` (the compile's clock).
+    Compiled on request, so this is the request's own compile time, honestly ~0."""
     b = g.get("built_at")
     if not b:
         return None
@@ -2296,20 +2709,12 @@ def _graph_age(g: dict) -> int | None:
 
 
 @app.get("/api/memory/graph")
-async def memory_graph(fresh: int = 0):
-    """The compiled recall graph. Serves the artifact on disk; `?fresh=1` recompiles
-    first (owner-only path, so this is a deliberate button, not an open recompile)."""
-    if fresh:
-        try:
-            sys.path.insert(0, str(REPO))
-            from nucleus import memgraph
-            memgraph.write(memgraph.compile_graph())
-        except Exception as e:
-            return {"error": f"compile failed: {type(e).__name__}: {e}", "nodes": [], "edges": []}
-    g = _memgraph_read()
-    if g is None:
-        return {"nodes": [], "edges": [], "regions": [], "stats": {},
-                "notes": ["no compiled graph yet — run: venv/bin/python nucleus/memgraph.py build"]}
+async def memory_graph():
+    """The recall graph, compiled on request from memory/ and the wire (no stored copy, so
+    no recompile button: every load IS a compile)."""
+    g = await _memgraph_read()
+    if g.get("error"):
+        return g
     g["age_s"] = _graph_age(g)
     return g
 
@@ -2319,23 +2724,22 @@ async def memory_world():
     """The HUMAN ontology — people, the categories they sit in, the facets that cut across.
 
     This is the lens the graph was missing. The recall graph and the ontology lens are both
-    the org describing ITSELF; measured, `kg.node` held 336 nodes and zero about a person,
+    the org describing ITSELF; measured, the compiled graph held 336 nodes and zero about a person,
     a company or anything in the owner's life. This one is derived from the owner's own
-    instruments (relations.md, owner.md) by nucleus/world.py.
+    instruments (relations.md, owner.md) by src/astryx/memory/world.py.
 
     A FILTER over the compiled graph rather than a second source: the world layer is
-    compiled into kg.node like everything else, so this cannot drift from what the graph
-    holds — there is one compiler and one store. Same node/edge shape as the other two
-    lenses so it inherits the renderer.
+    compiled with everything else, on the same request, so this cannot drift from what the
+    graph holds — there is one compiler and no stored copy. Same node/edge shape as the
+    other two lenses so it inherits the renderer.
 
     Identifying VALUES never reach here: world.redact() strips them at parse time, so the
     API is not the thing protecting them — the structure never received them. See
     tests/test_world.py, whose assertion is derived from the live instruments.
     """
-    g = _memgraph_read()
-    if g is None:
-        return {"nodes": [], "edges": [], "regions": [], "stats": {},
-                "notes": ["no compiled graph yet — run: venv/bin/python nucleus/memgraph.py build"]}
+    g = await _memgraph_read()
+    if g.get("error"):
+        return g
     nodes = [n for n in g.get("nodes", []) if n.get("layer") == "world"]
     ids = {n["id"] for n in nodes}
     edges = [e for e in g.get("edges", [])
@@ -2372,7 +2776,7 @@ async def memory_ontology():
     """
     import math
     sys.path.insert(0, str(REPO))
-    from nucleus import ontology as ont
+    from astryx.memory import ontology as ont
     pages = ont._pages()
     if not pages:
         return {"nodes": [], "edges": [], "regions": [], "stats": {},
@@ -2426,6 +2830,107 @@ async def memory_ontology():
             "notes": []}
 
 
+# ---------------------------------------------------------------- the library (memory's booklet)
+# memory writes memory/library/ (shelves.json + <shelf>/<slug>.md with YAML frontmatter, chronicle/
+# YYYY-MM-DD.md as the overnight editions); the observatory only reads it. Owner key only (403
+# otherwise), like /api/memory/page. Since 2026-10-11 personal-lane rows feed it (the owner dropped
+# local.md's RAG clause); career specifics stay meta-only at write time, and cv:/wa:/owner chat rows
+# never enter. Served ONLY from under
+# LIBRARY: shelf and slug must be plain names, and the resolved path must stay inside the root.
+LIBRARY = Path(os.environ.get("ASTRYX_LIBRARY_DIR") or REPO / "memory" / "library")
+_LIB_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,80}$")
+
+
+def _book(f: Path) -> tuple[dict, str] | None:
+    import yaml
+    raw = f.read_text(errors="replace")
+    if not raw.startswith("---"):
+        return {}, raw
+    try:
+        _, fm, body = raw.split("---", 2)
+        meta = yaml.safe_load(fm) or {}
+        return (meta if isinstance(meta, dict) else {}), body.lstrip("\n")
+    except Exception:
+        return None
+
+
+def _plain(md: str) -> str:
+    """Body text for full-text search: markdown syntax and [[link]] brackets out, words in."""
+    t = re.sub(r"```.*?```", " ", md, flags=re.S)
+    t = re.sub(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]", lambda m: m[2] or m[1].replace("-", " "), t)
+    t = re.sub(r"[#>*_`|\[\]()-]+", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+@app.get("/api/memory/library")
+async def library_index():
+    """The shelves and every book's card (frontmatter + slug + plain text for search). Chronicle
+    editions come newest first."""
+    if not LIBRARY.is_dir():
+        return {"shelves": [], "books": []}
+    try:
+        shelves = json.loads((LIBRARY / "shelves.json").read_text())
+    except Exception:
+        shelves = []
+    books = []
+    for f in sorted(LIBRARY.glob("*/*.md")):
+        shelf, slug = f.parent.name, f.stem
+        if not (_LIB_NAME.match(shelf) and _LIB_NAME.match(slug)):
+            continue
+        got = _book(f)
+        if got is None:
+            continue
+        meta, body = got
+        card = {k: (str(v) if k in ("updated", "date") and v is not None else v) for k, v in meta.items()
+                if k in ("title", "abstract", "updated", "tags", "related", "reading_min", "date", "highlights", "books_touched", "order")}
+        books.append({**card, "slug": slug, "shelf": shelf, "title": card.get("title") or slug.replace("-", " "),
+                      "text": _plain(body)[:20000]})
+    nights = sorted((b for b in books if b["shelf"] == "chronicle"), key=lambda b: str(b.get("date") or b["slug"]), reverse=True)
+    # memory's `order` puts each shelf's front page first (goals by number); a book without one goes last
+    rest = sorted((b for b in books if b["shelf"] != "chronicle"),
+                  key=lambda b: (b["shelf"], b["order"] if isinstance(b.get("order"), int) else 999, b["title"].lower()))
+    books = nights + rest
+    return {"shelves": sorted(shelves, key=lambda s: s.get("order", 99)), "books": books}
+
+
+@app.get("/api/memory/search")
+async def library_search(q: str = "", k: int = 8):
+    """The reference desk's search: memory's BM25 over every admitted passage (library.search, plan-8018 S3). Each
+    hit is a graph name: `library:<shelf>/<slug>[#anchor]` for a book, a wiki stem otherwise. The snippet is plain
+    text with matches marked ⟦…⟧ (never HTML); the desk escapes it and styles the marks."""
+    q = q.strip()[:200]
+    if not q:
+        return {"hits": []}
+    try:
+        rows = await pool.fetch("SELECT node_id, heading, snippet, score FROM library.search($1, $2)", q, max(1, min(k, 25)))
+    except asyncpg.PostgresError:                           # library.* absent (an org before 8018 S3): no server hits
+        return {"hits": [], "unavailable": True}
+    hits = []
+    for r in rows:
+        nid = r["node_id"]
+        m = re.match(r"^library:([a-z0-9][a-z0-9-]*)/([a-z0-9][a-z0-9-]*)(?:#(.*))?$", nid)
+        hits.append({"id": nid, "kind": "book" if m else "wiki", "shelf": m.group(1) if m else None,
+                     "slug": m.group(2) if m else nid.split("#")[0], "anchor": (m.group(3) if m else None),
+                     "heading": r["heading"], "snippet": r["snippet"], "score": float(r["score"])})
+    return {"hits": hits}
+
+
+@app.get("/api/memory/library/{shelf}/{slug}")
+async def library_book(shelf: str, slug: str):
+    """One book: its frontmatter and markdown body."""
+    if not (_LIB_NAME.match(shelf) and _LIB_NAME.match(slug)) or not LIBRARY.is_dir():
+        return Response(status_code=404)
+    f = (LIBRARY / shelf / f"{slug}.md").resolve()
+    if not f.is_relative_to(LIBRARY.resolve()) or not f.is_file():
+        return Response(status_code=404)
+    got = _book(f)
+    if got is None:
+        return Response(status_code=422)
+    meta, body = got
+    meta = {k: (str(v) if isinstance(v, (date, datetime)) else v) for k, v in meta.items()}
+    return {"shelf": shelf, "slug": slug, "meta": meta, "markdown": body}
+
+
 @app.get("/api/memory/page/{slug}")
 async def memory_page(slug: str):
     """One wiki page's markdown. Owner-only.
@@ -2445,7 +2950,7 @@ async def memory_page(slug: str):
     meta = {}
     try:
         sys.path.insert(0, str(REPO))
-        from nucleus import okf
+        from astryx.memory import okf
         meta, _ = okf.parse(raw)
     except Exception:
         pass
@@ -2454,12 +2959,12 @@ async def memory_page(slug: str):
 
 @app.get("/api/memory/build")
 async def memory_build():
-    """Compile freshness. A graph that goes stale while staying beautiful is the silent
-    failure this surface is most prone to, so the age is a first-class field the UI shows
-    rather than something a reader has to infer."""
-    g = _memgraph_read()
-    if g is None:
-        return {"built": False, "age_s": None, "stats": {}, "notes": []}
+    """The on-request compile's report. There is no stored graph to go stale (plan-8018
+    S-retire): this route compiles now, from memory/ and the wire, and says what came out —
+    `built` false with the error when the compile failed."""
+    g = await _memgraph_read()
+    if g.get("error"):
+        return {"built": False, "age_s": None, "stats": {}, "notes": [], "error": g["error"]}
     return {"built": True, "age_s": _graph_age(g), "digest": g.get("digest"),
             "stats": g.get("stats", {}), "regions": g.get("regions", []),
             "notes": g.get("notes", [])}
@@ -2507,10 +3012,10 @@ async def memory_chat(ask: MemoryAsk, request: Request):
     memory_hits.append(now)
 
     r = None
-    g = _memgraph_read()
-    if g and g.get("nodes"):
+    g = await _memgraph_read()
+    if g.get("nodes"):
         sys.path.insert(0, str(REPO))
-        from nucleus import memgraph
+        from astryx.memory import memgraph
         r = memgraph.retrieve(g, text)
 
     thread = (ask.thread or "").strip() or f"obs:estate-{secrets.token_hex(3)}"
@@ -2528,11 +3033,12 @@ async def memory_chat_replies(thread: str, after: int = 0, request: Request = No
     open against an agent's think time."""
     if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
         return Response(status_code=403)
-    if not thread.startswith("obs:estate"):
-        return Response(status_code=400)          # this poller reads estate threads only
+    if not thread.startswith(("obs:estate", "obs:person-", "obs:library-")):
+        return Response(status_code=400)          # estate, "ask memory about this person" (pid-keyed), the Library's desk
     rows = await pool.fetch(
-        "SELECT id, body, ts FROM messages WHERE thread=$1 AND from_agent='memory' "
-        "AND id > $2 ORDER BY id LIMIT 10", thread, after)
+        "SELECT id, from_agent, body, ts FROM messages WHERE thread=$1 AND to_agent='owner' AND to_org='local' "
+        "AND from_agent<>'owner' AND id > $2 ORDER BY id LIMIT 10", thread, after)
+    # TO the local owner, from anyone (memory→steward isn't his; owner@peer never left, so it isn't delivered here)
     if rows:
         # Serving the reply IS its delivery — this screen is the surface the thread
         # belongs to. No bridge will ever mark these (they carry a named non-channel
@@ -2542,7 +3048,46 @@ async def memory_chat_replies(thread: str, after: int = 0, request: Request = No
             "UPDATE messages SET status='delivered', delivered_at=now(), "
             "delivery=jsonb_build_object('ok', true, 'handle', 'observatory:estate') "
             "WHERE id = ANY($1::bigint[]) AND status='pending'", [x["id"] for x in rows])
-    return {"replies": [{"id": x["id"], "body": x["body"], "ts": x["ts"].isoformat()} for x in rows]}
+    return {"replies": [{"id": x["id"], "from": x["from_agent"], "body": x["body"], "ts": x["ts"].isoformat()}
+                        for x in rows]}             # from: the desk labels any answer that isn't memory's
+
+
+@app.get("/api/memory/late")
+async def memory_late_replies(prefix: str, request: Request = None):
+    """The replies no poll was there to read (steward #55678): a second reply, one after the desk's
+    window, or one to a closed tab. Each desk calls this when it opens and shows what comes back.
+    ONE UPDATE…RETURNING claims and marks them, so a reply is served once, never twice, even to two
+    tabs at once. The handle 'observatory:late' marks them served late, not in a live window.
+    Scoped by THREAD, not sender (seed #55684): any agent→owner row on a desk's threads, to the LOCAL owner
+    only (to_org='local', as outbound_stuck's DESK_ROW: an owner@peer row is the gateway's, not this screen's). memory is the
+    only one that answers on them today, but a person or library desk may be answered by another.
+    At most 20 per visit, oldest first; only the rows served are marked, so the rest wait for the next."""
+    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+        return Response(status_code=403)
+    if prefix not in ("obs:estate", "obs:person-", "obs:library-"):
+        return Response(status_code=400)
+    rows = await pool.fetch(
+        "UPDATE messages SET status='delivered', delivered_at=now(), "
+        "delivery=jsonb_build_object('ok', true, 'handle', 'observatory:late') "
+        "WHERE id IN (SELECT id FROM messages WHERE to_agent='owner' AND to_org='local' "
+        "AND from_agent<>'owner' AND status='pending' AND thread LIKE $1 ORDER BY id LIMIT 20 FOR UPDATE SKIP LOCKED) "
+        "AND status='pending' RETURNING id, from_agent, thread, body, ts",
+        prefix + "%")                                   # a fixed prefix: no LIKE wildcards in it
+    out = []
+    for x in sorted(rows, key=lambda x: x["id"]):
+        q = await pool.fetchrow(
+            "SELECT body FROM messages WHERE thread=$1 AND from_agent='owner' AND id < $2 ORDER BY id DESC LIMIT 1",
+            x["thread"], x["id"])
+        out.append({"id": x["id"], "from": x["from_agent"], "thread": x["thread"], "question": ((q and q["body"]) or "")[:600],
+                    "body": x["body"], "ts": x["ts"].isoformat()})
+    return {"replies": out}
+
+
+class MemoryProposal(BaseModel):
+    # deleted with the memory chat rework (0c3c450, 08-14) while this route kept it; on Python 3.14 annotations are
+    # lazy, so the live observatory never noticed, but on 3.12 (CI, many installs) main.py failed to import at all
+    text: str
+    nodes: list[str] = []
 
 
 class MemoryProposal(BaseModel):
@@ -2623,6 +3168,195 @@ async def events(request: Request):
     return StreamingResponse(stream(), media_type="text/event-stream",
                              headers={"cache-control": "no-store",
                                       "x-accel-buffering": "no"})
+
+
+# ---------------------------------------------------------------- canvas (proxied)
+# CANVAS — the owner's front door (bridges/canvas.py, :8091 on loopback) — is "routed from the
+# observatory" (owner, 2026-10-09): the tunnel's https host serves it at /canvas/ with no new
+# public hostname, which is also what gives voice mode the secure context a microphone needs.
+# A dumb byte pipe: auth, CSRF and every rule live in the canvas service, never here. Streaming,
+# so its SSE flows. The observatory's own owner key is NOT forwarded as authority (canvas has its
+# own session); x-forwarded-* tell canvas the URL the viewer actually used.
+import http.cookiejar  # noqa: E402
+import httpx  # noqa: E402
+from fastapi import BackgroundTasks  # noqa: E402
+
+CANVAS_UP = "http://127.0.0.1:8091"
+_HOP = {"connection", "keep-alive", "transfer-encoding", "te", "trailer", "upgrade",
+        "proxy-authorization", "proxy-authenticate", "host"}
+_canvas_http: httpx.AsyncClient | None = None
+
+
+@app.api_route("/canvas", methods=["GET", "HEAD"])
+async def canvas_root():
+    return Response(status_code=308, headers={"location": "/canvas/"})
+
+
+@app.api_route("/canvas/{path:path}", methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"])
+async def canvas_proxy(path: str, request: Request):
+    return await _pipe(f"{CANVAS_UP}/canvas/{path}", request, owner_key=False,
+                       down="canvas is not running (astryx-canvas.service)")
+
+
+# EAR (hearing S1, bridges/ear.py on :8092): the observatory page holds the mic, so the ear is reached at /ear/ on
+# this same origin (the secure context getUserMedia needs, no new hostname). Unlike canvas, the ear has no session of
+# its own: its gate IS the observatory owner key, so x-obs-key is forwarded, and the ear service checks it itself
+# (401 without it). This proxy adds no authority: an unauthenticated request reaches the ear and is refused there.
+EAR_UP = "http://127.0.0.1:8092"
+
+
+@app.api_route("/ear/{path:path}", methods=["GET", "POST"])
+async def ear_proxy(path: str, request: Request):
+    return await _pipe(f"{EAR_UP}/ear/{path}", request, owner_key=True,
+                       down="ear offline (astryx-ear.service is not running)")
+
+
+async def _pipe(url: str, request: Request, owner_key: bool, down: str):
+    global _canvas_http
+    if _canvas_http is None:
+        # A jar that STORES NOTHING. httpx's default jar keeps every Set-Cookie it sees and replays
+        # it on later requests — one shared client for all viewers, so the owner's login session
+        # was replayed to every anonymous visitor (caught in the first proxy E2E, 2026-10-09: an
+        # unauthenticated /canvas/api/me answered "owner"). Each browser's own Cookie header is
+        # forwarded as-is; the proxy itself must never remember one.
+        _canvas_http = httpx.AsyncClient(
+            timeout=httpx.Timeout(30, read=None),
+            cookies=http.cookiejar.CookieJar(policy=http.cookiejar.DefaultCookiePolicy(allowed_domains=[])))
+    headers = [(k, v) for k, v in request.headers.items()
+               if k.lower() not in _HOP and (owner_key or k.lower() != "x-obs-key")]
+    headers += [("x-forwarded-host", request.headers.get("x-forwarded-host") or request.headers.get("host", "")),
+                ("x-forwarded-proto", request.headers.get("x-forwarded-proto") or request.url.scheme)]
+    upstream = _canvas_http.build_request(
+        request.method, url, params=request.query_params,
+        headers=headers, content=await request.body())
+    try:
+        r = await _canvas_http.send(upstream, stream=True)
+    except httpx.HTTPError:
+        return Response(down, status_code=502, media_type="text/plain")
+    done = BackgroundTasks()
+    done.add_task(r.aclose)
+    resp = StreamingResponse(r.aiter_raw(), status_code=r.status_code, background=done)
+    resp.raw_headers = [(k, v) for k, v in r.headers.raw if k.decode().lower() not in _HOP]
+    return resp
+
+
+# ---------------------------------------------------------------- access log: no keys
+# ?key= must never reach journald in clear (a3 #42085 F2): src/astryx/security/logredact.py.
+from astryx.security import logredact as _logredact  # noqa: E402
+_logredact.install()
+
+
+# ---------------------------------------------------------------- hands (plan-7862)
+# Each agent's own desktop on this machine (src/astryx/hands/hands_desktop.py). The owner watches it live,
+# joins in, and stops it here. OWNER ONLY, every route: a desktop holds his logged-in sessions.
+from fastapi import HTTPException as _HTTPException, WebSocket, WebSocketDisconnect  # noqa: E402
+from astryx.hands import hands_desktop as _hands  # noqa: E402
+
+
+def _hands_owner(request: Request) -> None:
+    if not is_owner(request):
+        raise _HTTPException(403, "owner only")
+
+
+
+@app.get("/api/hands")
+async def hands_list(request: Request):
+    _hands_owner(request)
+    return await asyncio.to_thread(_hands.status)
+
+
+@app.post("/api/hands/{agent}/stop")
+async def hands_stop(agent: str, request: Request):
+    _hands_owner(request)
+    await asyncio.to_thread(_hands.stop, agent, "the owner stopped your hands")
+    return {"ok": True}
+
+
+@app.post("/api/hands/{agent}/resume")
+async def hands_resume(agent: str, request: Request):
+    _hands_owner(request)
+    await asyncio.to_thread(_hands.resume, agent)
+    return {"ok": True}
+
+
+@app.post("/api/hands/{agent}/up")
+async def hands_up(agent: str, request: Request):
+    _hands_owner(request)
+    try:
+        return await asyncio.to_thread(_hands.up, agent)
+    except _hands.HandsError as e:
+        raise _HTTPException(409, str(e))
+
+
+@app.post("/api/hands/{agent}/down")
+async def hands_down(agent: str, request: Request):
+    _hands_owner(request)
+    return {"ok": await asyncio.to_thread(_hands.down, agent)}
+
+
+@app.get("/api/hands/{agent}/shot.jpg")
+async def hands_shot(agent: str, request: Request):
+    _hands_owner(request)
+    try:
+        jpg = await asyncio.to_thread(_hands.screenshot, agent, 60)
+    except _hands.HandsError as e:
+        raise _HTTPException(404, str(e))
+    return Response(jpg, media_type="image/jpeg", headers={"cache-control": "no-store"})
+
+
+@app.websocket("/api/hands/{agent}/vnc")
+async def hands_vnc(ws: WebSocket, agent: str):
+    """The live desktop for noVNC: a byte pipe from this websocket to the agent's wayvnc on
+    loopback. The key rides in the query string (a browser websocket can't send headers)."""
+    key = ws.query_params.get("key", "")
+    if not (OBS_KEY and secrets.compare_digest(key, OBS_KEY)):
+        await ws.close(code=4403)
+        return
+    st = await asyncio.to_thread(_hands.status, agent)
+    port = st.get("vnc_port") if isinstance(st, dict) else None
+    if not port:
+        await ws.close(code=4404)
+        return
+    proto = ws.headers.get("sec-websocket-protocol", "")
+    await ws.accept(subprotocol="binary" if "binary" in proto else None)
+    try:
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    except OSError:
+        await ws.close(code=4502)
+        return
+
+    async def up_():
+        try:
+            while True:
+                msg = await ws.receive()
+                if msg["type"] == "websocket.disconnect":
+                    break
+                data = msg.get("bytes") or (msg.get("text") or "").encode()
+                if data:
+                    writer.write(data)
+                    await writer.drain()
+        except (WebSocketDisconnect, ConnectionError, RuntimeError):
+            pass
+
+    async def down_():
+        try:
+            while True:
+                data = await reader.read(65536)
+                if not data:
+                    break
+                await ws.send_bytes(data)
+        except (WebSocketDisconnect, ConnectionError, RuntimeError):
+            pass
+
+    tasks = [asyncio.create_task(up_()), asyncio.create_task(down_())]
+    await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    for t in tasks:
+        t.cancel()
+    writer.close()
+    try:
+        await ws.close()
+    except RuntimeError:
+        pass
 
 
 # ---------------------------------------------------------------- static SPA

@@ -26,13 +26,27 @@ can embed it directly; these functions are the reference implementation + a self
 Run (self-test against the live graph):  venv/bin/python memory/graph/resolvers.py
 Env: DSN (falls back to ASTRYX_DSN)
 """
+import importlib.util
 import os
 import sys
+from pathlib import Path
+
+# AGE session setup is nucleus/agelib.py's (plan-4918 D1): a superuser LOADs, a run role
+# (branch_check) has AGE preloaded and must NOT LOAD. Imported by path, because putting the
+# repo root on sys.path would let its mcp/ dir shadow the installed `mcp` package.
+_spec = importlib.util.spec_from_file_location(
+    "agelib", Path(__file__).resolve().parents[2] / "nucleus" / "agelib.py")
+agelib = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(agelib)
 
 try:
     import psycopg
-except ModuleNotFoundError:
-    sys.exit("psycopg not importable — run with the repo venv: venv/bin/python ...")
+except ModuleNotFoundError:                             # pragma: no cover
+    # A library module must NOT sys.exit on import — that raises SystemExit (BaseException),
+    # which escapes a caller's `except Exception` and hard-fails a runtime-less clone instead
+    # of skipping. Mirror server.py's guard: defer the real 'need psycopg' failure to when a
+    # resolver FUNCTION actually connects (the only line that uses psycopg, below).
+    psycopg = None
 
 GRAPH = "memory"
 
@@ -77,8 +91,7 @@ RETURN id(m),
 
 
 def _run_cypher(cur, cypher: str):
-    cur.execute("LOAD 'age';")
-    cur.execute('SET search_path = ag_catalog, "$user", public;')
+    agelib.prepare(cur)
     cur.execute(
         f"SELECT * FROM cypher('{GRAPH}', $cyq$ {cypher} $cyq$) "
         "AS (id agtype, kind agtype, title agtype, text agtype);"
@@ -130,7 +143,9 @@ def _selftest():
     dsn = os.environ.get("DSN") or os.environ.get("ASTRYX_DSN")
     if not dsn:
         sys.exit("set DSN or ASTRYX_DSN")
-    with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
+    # read-only BY CONSTRUCTION, not only by content (a3 #39182 BC-1): a write verb here fails in postgres.
+    with psycopg.connect(dsn, autocommit=True, options="-c default_transaction_read_only=on") as conn, \
+            conn.cursor() as cur:
         rows = corpus(cur)
         print(f"corpus(): {len(rows)} admitted nodes")
         by_kind: dict[str, int] = {}

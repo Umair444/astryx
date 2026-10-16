@@ -1,0 +1,45 @@
+{
+  "_doc": "plan-8675 C3: the phone windows whose content is PUBLIC. A visible window matching no rule makes the surface personal (fail-safe). title is a full-match regex over the window title from `dumpsys window windows`. Measured on android-35 (S0 AVD): NotificationShade is visible only while the shade is open, so it is deliberately absent here.",
+  "public_windows": [
+    {
+      "package": "com.android.systemui",
+      "title": "ScreenDecorOverlay(Bottom)?",
+      "why": "rounded-corner decor: no content"
+    },
+    {
+      "package": "com.android.systemui",
+      "title": "StatusBar",
+      "why": "clock, battery and notification ICONS; the shade's text lives in NotificationShade"
+    },
+    {
+      "package": "com.android.systemui",
+      "title": "NavigationBar\\d*",
+      "why": "back/home/recents buttons"
+    },
+    {
+      "package": "com.google.android.apps.nexuslauncher",
+      "title": "Taskbar",
+      "why": "app icons only"
+    },
+    {
+      "package": "com.android.settings",
+      "title": "(Splash Screen )?com\\.android\\.settings(/.*)?",
+      "why": "S1's public proof app (its activities and its splash screen)"
+    },
+    {
+      "package": "com.google.android.calculator",
+      "title": "(Splash Screen )?com\\.google\\.android\\.calculator(/.*)?",
+      "why": "a harmless public app (its activities and its splash screen)"
+    },
+    {
+      "package": "android",
+      "title": "Application Not Responding: com\\.android\\.systemui",
+      "why": "the 'System UI isn't responding' dialog: no content but that sentence and Wait/Close (measured: endemic under software rendering on a loaded 2-core host; -gpu host is refused there). Any OTHER app's not-responding dialog names that app and stays unlisted."
+    },
+    {
+      "package": "com.android.systemui",
+      "title": "com\\.android\\.systemui\\.wallpapers\\.ImageWallpaper",
+      "why": "the wallpaper: pixels only, and pixels are never kept; it shows behind splash screens (measured)"
+    }
+  ]
+}

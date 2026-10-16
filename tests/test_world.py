@@ -1,4 +1,4 @@
-"""Oracle for nucleus/world.py — the human ontology layer.
+"""Oracle for src/astryx/memory/world.py — the human ontology layer.
 
 THE PROPERTY THAT MATTERS IS THE PRIVACY ONE, and it is the reason this file leads with
 it. world.py reads `relations.md`, which contains real phone numbers, and feeds a graph
@@ -15,7 +15,7 @@ real number), per the org's fixture law. The privacy case deliberately uses no l
 all — it derives its subjects from the file at runtime, so this test never becomes a place
 where a real number is written down.
 
-Run: venv/bin/python tests/test_world.py   (also wired into nucleus/check.sh)
+Run: venv/bin/python tests/test_world.py   (also wired into devtools/check.sh)
 """
 import re
 import sys
@@ -24,12 +24,12 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from nucleus import world  # noqa: E402
+from astryx.memory import world  # noqa: E402
 
 FAKE = """# fixture
 ## People
 - **Test Person** — 1234567890 (WA DM). A colleague at a workplace; same age,
-  lives in Islamabad. Status: invited
+  lives in Tromso. Status: invited
 - a loose note under the category with no name
 
 ## Standing wishes
@@ -118,16 +118,16 @@ def test_redaction_keeps_the_sentence():
     ents = world.parse(FAKE)
     person = next(e for e in ents if e.get("name") == "Test Person")
     blob = " ".join(person["facts"]).lower()
-    assert "colleague" in blob and "islamabad" in blob
+    assert "colleague" in blob and "tromso" in blob
 
 
 def test_continuation_lines_are_joined():
-    """THE REGRESSION. Salaar's entry wrapped across physical lines, so a line-oriented
-    reader took only the first and his facets came back empty while the facts sat one
+    """THE REGRESSION. An entry wrapped across physical lines, so a line-oriented
+    reader took only the first and its facets came back empty while the facts sat one
     line below. Joining must happen BEFORE parsing, never after."""
     ents = world.parse(FAKE)
     person = next(e for e in ents if e.get("name") == "Test Person")
-    assert "islamabad" in " ".join(person["facts"]).lower(), \
+    assert "tromso" in " ".join(person["facts"]).lower(), \
         "a wrapped continuation line was dropped — facts sheared in half"
 
 
@@ -139,10 +139,10 @@ def test_a_prose_heading_is_not_a_person():
 
 
 def test_a_proper_noun_heading_IS_a_subject():
-    """The other direction — owner.md's `## Umair` names a person the bullets describe.
+    """The other direction — owner.md's `## <Name>` names a person the bullets describe.
     Without this the fix above would be a silent over-correction."""
-    ents = world.parse("## Umair\n- Islamabad, PKT. Senior data scientist.\n", source="owner.md")
-    assert any(e.get("name") == "Umair" for e in ents)
+    ents = world.parse("## Alex\n- Tromso, CET. Marine biologist.\n", source="owner.md")
+    assert any(e.get("name") == "Alex" for e in ents)
 
 
 def test_a_loose_note_is_not_invented_into_a_person():
@@ -153,7 +153,7 @@ def test_a_loose_note_is_not_invented_into_a_person():
 
 def test_facets_generalise_to_an_org_that_is_not_this_one():
     """THE PRODUCTION-READINESS TEST, and it caught a real bug. The first `place` pattern
-    was `(islamabad|isb|lahore|karachi|pkt)` — it worked here and would have returned an
+    was a fixed list of the founding org's own city names — it worked here and would have returned an
     empty axis for every other clone of astryx, a defect invisible from inside the org
     that wrote it. A rule that only fires on data you already have is a hardcoded answer.
 
@@ -194,7 +194,7 @@ def test_a_refused_facet_is_refused_LOUDLY():
     the axis it refused, so the declarer learns the moment the reader ships."""
     import contextlib
     import io
-    from nucleus import ontology as ont
+    from astryx.memory import ontology as ont
     real = ont.load
     ont.load = lambda: {"facets": {"goodaxis": r"\b(alpha|beta)\b",
                                    "badaxis": r"(unbalanced"}}
@@ -214,7 +214,7 @@ def test_taxonomy_groups_by_category_and_derives_facets():
     t = world.taxonomy(world.parse(FAKE))
     assert "People" in t["categories"]
     person = t["categories"]["People"][0]
-    assert person["facets"].get("place") == "islamabad"
+    assert person["facets"].get("place") == "tromso"
     assert person["facets"].get("status") == "invited"
 
 

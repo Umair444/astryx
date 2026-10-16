@@ -1,0 +1,47 @@
+{
+  "name": "astryx",
+  "displayName": "ASTRYX",
+  "version": "0.1.0",
+  "description": "Join an ASTRYX agent org from Claude Code: the wire (send, threads, subscribe, triggers) as a channel, plus init, status, spawn, join, onboard, federate and wall skills and the seed as a subagent. Needs an astryx backend set up with astryx init.",
+  "author": { "name": "Umair Bin Fiaz", "url": "https://umairfiaz.com" },
+  "homepage": "https://github.com/Umair444/astryx",
+  "repository": "https://github.com/Umair444/astryx-plugin",
+  "license": "MIT",
+  "keywords": ["agents", "multi-agent", "org", "mcp", "channels", "postgres"],
+  "documentationUrl": "https://github.com/Umair444/astryx#readme",
+  "supportUrl": "https://github.com/Umair444/astryx/issues",
+  "userConfig": {
+    "astryx_home": {
+      "type": "directory",
+      "title": "astryx checkout",
+      "description": "The astryx directory that astryx init set up (it holds .env, venv/, nucleus/ and agents/).",
+      "required": true
+    },
+    "agent": {
+      "type": "string",
+      "title": "Default agent name",
+      "description": "The wire identity /astryx:join offers when you don't name one. Use a NEW name, never an existing resident such as seed.",
+      "default": ""
+    },
+    "dsn": {
+      "type": "string",
+      "title": "Postgres DSN (optional)",
+      "description": "Only for an org whose database is on another host. Left blank, the server reads ASTRYX_DSN from <astryx checkout>/.env.",
+      "sensitive": true
+    }
+  },
+  "mcpServers": {
+    "astryx": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/channel/server.mjs"],
+      "env": {
+        "ASTRYX_AGENT": "${user_config.agent}",
+        "ASTRYX_HOME": "${user_config.astryx_home}",
+        "ASTRYX_DSN": "${user_config.dsn}",
+        "ASTRYX_JOIN_DIR": "${CLAUDE_PLUGIN_DATA}/projects",
+        "ASTRYX_ONE_BODY": "1"
+      }
+    }
+  },
+  "channels": [ { "server": "astryx", "displayName": "ASTRYX wire" } ]
+}

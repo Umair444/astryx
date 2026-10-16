@@ -1,23 +1,55 @@
 @import "tailwindcss";
 
+/* Fallback palette (the Astryx theme) so the page is never unstyled before JS runs;
+   theme.tsx overwrites these on <html> from canvas/web/src/themes.ts. */
+:root {
+  --t-bg: #07091a; --t-bg2: #0b0e22; --t-panel: #10142b; --t-panel2: #161b38;
+  --t-line: #1f2547; --t-line2: #2c3466; --t-fg: #e8ebf7; --t-dim: #a0a8c6; --t-mute: #646d90;
+  --t-accent: #8b7bff; --t-accent2: #38d9f5; --t-good: #34d399; --t-bad: #fb7185;
+  --t-warn: #fbbf24; --t-on: #ffffff;
+  /* hashed hues (agent chips, memory regions) need a lightness that reads on the page */
+  --hue-l: 64%;      /* chip / swatch fill */
+  --hue-l-text: 70%; /* hue used as text */
+  --agent-ink: var(--t-bg); /* initials sitting on an agent-hued chip */
+}
+:root[data-theme="light"] {
+  --hue-l: 44%;
+  --hue-l-text: 38%;
+  --agent-ink: #ffffff;
+}
+
+/* The observatory's own names, re-pointed at the active theme. `inline` keeps the var()
+   in every utility so bg-deck, text-ink-dim, bg-cyan/20 … all follow a theme switch. */
+@theme inline {
+  --color-deck: var(--t-bg);
+  --color-deck-2: var(--t-panel);
+  --color-deck-3: var(--t-panel2);
+  --color-chrome: var(--t-bg2);
+  --color-line: var(--t-line);
+  --color-line-2: var(--t-line2);
+  --color-ink: var(--t-fg);
+  --color-ink-dim: var(--t-dim);
+  --color-ink-mute: var(--t-mute);
+  --color-cyan: var(--t-accent);
+  --color-cyan-soft: var(--t-accent2);
+  --color-good: var(--t-good);
+  --color-bad: var(--t-bad);
+  --color-warn: var(--t-warn);
+  --color-on: var(--t-on);
+  --color-agent-ink: var(--agent-ink);
+}
+
 @theme {
-  --color-deck: #0b1020;
-  --color-deck-2: #0f1630;
-  --color-deck-3: #141c3a;
-  --color-line: #1d2647;
-  --color-ink: #d5ddf5;
-  --color-ink-dim: #9aa7c7;
-  --color-ink-mute: #5b6890;
-  --color-cyan: #22d3ee;
-  --color-cyan-soft: #67e8f9;
   --font-mono: ui-monospace, "JetBrains Mono", "Cascadia Code", monospace;
 }
 
 html, body, #root { height: 100%; }
 body {
-  background: var(--color-deck);
-  color: var(--color-ink);
-  font-family: -apple-system, "Segoe UI", Roboto, "Inter", sans-serif;
+  background: var(--t-bg);
+  color: var(--t-fg);
+  font-family: "Inter Variable", -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
   font-size: 15px;
   overscroll-behavior: none;
 }
@@ -25,22 +57,22 @@ body {
 /* the deck's star-dust — one quiet signature, not confetti */
 .starfield {
   background-image:
-    radial-gradient(1px 1px at 12% 28%, rgba(103,232,249,.5) 0, transparent 100%),
-    radial-gradient(1px 1px at 78% 12%, rgba(232,179,57,.4) 0, transparent 100%),
-    radial-gradient(1.5px 1.5px at 42% 74%, rgba(124,92,255,.35) 0, transparent 100%),
-    radial-gradient(1px 1px at 91% 63%, rgba(47,191,113,.4) 0, transparent 100%),
-    radial-gradient(1px 1px at 23% 89%, rgba(255,92,122,.3) 0, transparent 100%);
+    radial-gradient(1px 1px at 12% 28%, color-mix(in srgb, var(--t-accent2) 50%, transparent) 0, transparent 100%),
+    radial-gradient(1px 1px at 78% 12%, color-mix(in srgb, var(--t-warn) 40%, transparent) 0, transparent 100%),
+    radial-gradient(1.5px 1.5px at 42% 74%, color-mix(in srgb, var(--t-accent) 35%, transparent) 0, transparent 100%),
+    radial-gradient(1px 1px at 91% 63%, color-mix(in srgb, var(--t-good) 40%, transparent) 0, transparent 100%),
+    radial-gradient(1px 1px at 23% 89%, color-mix(in srgb, var(--t-bad) 30%, transparent) 0, transparent 100%);
 }
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-thumb { background: #232d55; border-radius: 4px; }
+::-webkit-scrollbar-thumb { background: var(--t-line2); border-radius: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 
-/* react-flow dark theming */
+/* react-flow theming (colors come from the active theme, see NetworkView) */
 .react-flow__attribution { display: none; }
 .react-flow__node { transition: filter 75ms, transform 75ms; }
 .react-flow__node:hover { filter: brightness(1.35); transform: translateY(-1px); }
@@ -51,3 +83,166 @@ body {
   25% { transform: rotate(-4deg); }
   75% { transform: rotate(4deg); }
 }
+
+:root[data-theme="light"] .react-flow__node:hover { filter: brightness(0.97) drop-shadow(0 2px 6px color-mix(in srgb, var(--t-fg) 12%, transparent)); }
+.react-flow { --xy-background-color: transparent; }
+
+/* the Floor: a quiet, theme-true grid — a room, not a chart */
+.floor-bg {
+  background:
+    radial-gradient(900px 600px at 50% 45%, color-mix(in srgb, var(--t-accent) 7%, transparent), transparent 70%),
+    linear-gradient(color-mix(in srgb, var(--t-line) 55%, transparent) 1px, transparent 1px) 0 0 / 44px 44px,
+    linear-gradient(90deg, color-mix(in srgb, var(--t-line) 55%, transparent) 1px, transparent 1px) 0 0 / 44px 44px,
+    var(--t-bg);
+}
+
+/* ================================================================ THE KIT (ui/kit.tsx)
+   One visual language for every view: glass panels over a slow aurora, things that work
+   breathe, numbers arrive. Every color is a theme token, so all 12 palettes (light ones too)
+   carry it without a per-theme rule. */
+.ax-panel {
+  background: color-mix(in srgb, var(--t-panel) 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--t-line) 85%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--t-fg) 5%, transparent), 0 10px 30px -18px color-mix(in srgb, #000 60%, transparent);
+  backdrop-filter: blur(14px) saturate(1.15);
+}
+.ax-panel-hover { transition: transform .18s cubic-bezier(.2,.8,.2,1), border-color .18s, box-shadow .18s; }
+.ax-panel-hover:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--t-accent) 45%, var(--t-line));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--t-fg) 7%, transparent), 0 18px 40px -20px color-mix(in srgb, var(--t-accent) 55%, transparent);
+}
+.ax-scan {
+  position: absolute; left: 14px; right: 14px; top: -1px; height: 1px; overflow: hidden; border-radius: 1px;
+  background: color-mix(in srgb, var(--t-accent) 18%, transparent);
+}
+.ax-scan::after {
+  content: ""; position: absolute; inset: 0; width: 40%;
+  background: linear-gradient(90deg, transparent, var(--t-accent2), var(--t-accent), transparent);
+  animation: ax-scan 2.6s cubic-bezier(.45,0,.2,1) infinite;
+}
+@keyframes ax-scan { from { transform: translateX(-100%); } to { transform: translateX(260%); } }
+
+.ax-skel {
+  background: linear-gradient(90deg, var(--t-panel2) 0%, color-mix(in srgb, var(--t-line2) 70%, var(--t-panel2)) 50%, var(--t-panel2) 100%);
+  background-size: 200% 100%; animation: ax-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes ax-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+
+.ax-orb {
+  background:
+    radial-gradient(circle at 34% 30%, color-mix(in srgb, #fff 55%, var(--orb)) 0%, transparent 32%),
+    radial-gradient(circle at 50% 55%, var(--orb) 0%, color-mix(in srgb, var(--orb) 40%, transparent) 55%, transparent 72%);
+  box-shadow: 0 0 40px -6px var(--orb);
+  animation: ax-breathe 4.2s ease-in-out infinite;
+}
+@keyframes ax-breathe { 0%, 100% { transform: scale(.94); filter: saturate(.9); } 50% { transform: scale(1.04); filter: saturate(1.2); } }
+
+.ax-action {
+  color: var(--t-on);
+  background: linear-gradient(135deg, var(--t-accent), color-mix(in srgb, var(--t-accent2) 70%, var(--t-accent)));
+  box-shadow: 0 8px 22px -10px var(--t-accent), inset 0 1px 0 color-mix(in srgb, #fff 25%, transparent);
+  transition: transform .15s, box-shadow .15s, filter .15s;
+}
+.ax-action:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.08); box-shadow: 0 12px 28px -10px var(--t-accent); }
+
+.ax-title {
+  background: linear-gradient(180deg, var(--t-fg) 30%, color-mix(in srgb, var(--t-fg) 62%, var(--t-accent)));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+
+/* the aurora: three theme-tinted lights drifting behind every view — the room is never dead */
+.ax-aurora { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0; }
+.ax-aurora i {
+  position: absolute; width: 46vmax; height: 46vmax; border-radius: 50%; filter: blur(90px); opacity: .16;
+  animation: ax-drift 38s ease-in-out infinite alternate;
+}
+.ax-aurora i:nth-child(1) { background: var(--t-accent); left: -12vmax; top: -18vmax; }
+.ax-aurora i:nth-child(2) { background: var(--t-accent2); right: -16vmax; top: 18%; animation-duration: 46s; animation-delay: -12s; opacity: .11; }
+.ax-aurora i:nth-child(3) { background: var(--t-good); left: 30%; bottom: -26vmax; animation-duration: 54s; animation-delay: -30s; opacity: .07; }
+:root[data-theme="light"] .ax-aurora i { opacity: .10; }
+@keyframes ax-drift {
+  0% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(6vmax, 4vmax) scale(1.12); }
+  100% { transform: translate(-4vmax, 7vmax) scale(.95); }
+}
+
+/* ================================================================ THE LIBRARY (LibraryView)
+   A reading room: Instrument Serif for titles, Newsreader for the long column, theme tokens for
+   every colour so all 12 palettes (light ones too) read well. */
+.lib-display { font-family: "Instrument Serif", Georgia, serif; font-weight: 400; letter-spacing: -0.01em; }
+.lib-serif { font-family: "Newsreader Variable", "Newsreader", Georgia, serif; }
+.lib-search {
+  background: color-mix(in srgb, var(--t-panel) 82%, transparent);
+  border: 1px solid var(--t-line2);
+  box-shadow: 0 20px 50px -24px color-mix(in srgb, var(--t-accent) 45%, transparent), inset 0 1px 0 color-mix(in srgb, var(--t-fg) 6%, transparent);
+  backdrop-filter: blur(16px);
+  transition: border-color .15s, box-shadow .15s;
+}
+.lib-search:focus-within { border-color: color-mix(in srgb, var(--t-accent) 60%, var(--t-line2)); box-shadow: 0 0 0 4px color-mix(in srgb, var(--t-accent) 16%, transparent), 0 20px 50px -24px var(--t-accent); }
+.lib-pop { background: var(--t-panel); border: 1px solid var(--t-line2); box-shadow: 0 30px 60px -20px color-mix(in srgb, #000 55%, transparent); }
+.lib-mark { background: color-mix(in srgb, var(--t-accent) 28%, transparent); color: var(--t-fg); border-radius: 3px; padding: 0 2px; }
+.lib-edition {
+  background:
+    radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, var(--t-accent) 22%, transparent) 0%, transparent 55%),
+    radial-gradient(100% 120% at 100% 100%, color-mix(in srgb, var(--t-accent2) 16%, transparent) 0%, transparent 60%),
+    color-mix(in srgb, var(--t-panel) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--t-accent) 28%, var(--t-line));
+  box-shadow: 0 30px 70px -36px var(--t-accent);
+  transition: transform .2s cubic-bezier(.2,.8,.2,1), box-shadow .2s;
+}
+.lib-edition:hover { transform: translateY(-2px); box-shadow: 0 36px 80px -34px var(--t-accent); }
+.lib-card {
+  background: color-mix(in srgb, var(--t-panel) 80%, transparent);
+  border: 1px solid var(--t-line);
+  transition: transform .18s cubic-bezier(.2,.8,.2,1), border-color .18s, box-shadow .18s;
+}
+.lib-card:hover { transform: translateY(-3px); border-color: color-mix(in srgb, var(--t-accent) 45%, var(--t-line)); box-shadow: 0 22px 44px -26px color-mix(in srgb, var(--t-accent) 60%, transparent); }
+.lib-callout { background: color-mix(in srgb, var(--t-accent) 7%, var(--t-panel)); border: 1px solid color-mix(in srgb, var(--t-accent) 22%, var(--t-line)); }
+
+.lib-prose { font-family: "Newsreader Variable", "Newsreader", Georgia, serif; font-size: 19px; line-height: 1.72; color: color-mix(in srgb, var(--t-fg) 86%, var(--t-dim)); }
+.lib-prose > * + * { margin-top: 1.05em; }
+.lib-prose h2 { font-family: "Instrument Serif", Georgia, serif; font-weight: 400; font-size: 34px; line-height: 1.1; color: var(--t-fg); margin-top: 1.9em; scroll-margin-top: 24px; }
+.lib-prose h3 { font-family: "Inter Variable", sans-serif; font-weight: 600; font-size: 17px; letter-spacing: -0.005em; color: var(--t-fg); margin-top: 1.6em; scroll-margin-top: 24px; }
+.lib-prose h4 { font-family: "Inter Variable", sans-serif; font-weight: 600; font-size: 15px; color: var(--t-dim); }
+.lib-prose strong { color: var(--t-fg); font-weight: 600; }
+.lib-prose em { font-style: italic; }
+.lib-prose a { color: var(--t-accent); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--t-accent) 40%, transparent); text-underline-offset: 3px; }
+.lib-prose a.wikilink { text-decoration-style: dotted; }
+.lib-prose a:hover { text-decoration-color: var(--t-accent); }
+.lib-prose .wikilink.missing { color: var(--t-mute); border-bottom: 1px dashed var(--t-line2); }
+.lib-prose ul, .lib-prose ol { padding-left: 1.3em; }
+.lib-prose ul { list-style: disc; } .lib-prose ol { list-style: decimal; }
+.lib-prose li + li { margin-top: .35em; }
+.lib-prose li::marker { color: var(--t-mute); }
+.lib-prose blockquote { border-left: 2px solid var(--t-accent); padding: .2em 0 .2em 1.1em; color: var(--t-dim); font-style: italic; }
+.lib-prose code { font-family: var(--font-mono); font-size: .8em; background: var(--t-panel2); border: 1px solid var(--t-line); border-radius: 5px; padding: .08em .35em; }
+.lib-prose pre { font-family: var(--font-mono); font-size: 13.5px; line-height: 1.55; background: var(--t-panel); border: 1px solid var(--t-line); border-radius: 14px; padding: 1em 1.2em; overflow-x: auto; }
+.lib-prose pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+.lib-prose table { width: 100%; border-collapse: collapse; font-family: "Inter Variable", sans-serif; font-size: 14px; line-height: 1.45; display: block; overflow-x: auto; }
+.lib-prose th { text-align: left; font-weight: 600; color: var(--t-fg); border-bottom: 1px solid var(--t-line2); padding: .6em .8em; white-space: nowrap; }
+.lib-prose td { border-bottom: 1px solid color-mix(in srgb, var(--t-line) 70%, transparent); padding: .55em .8em; vertical-align: top; }
+.lib-prose tr:hover td { background: color-mix(in srgb, var(--t-accent) 5%, transparent); }
+.lib-prose hr { border: 0; height: 1px; background: var(--t-line); margin: 2.4em 0; }
+@media (max-width: 640px) { .lib-prose { font-size: 17.5px; } .lib-prose h2 { font-size: 28px; } }
+
+/* the stacks: a shelf of spines (LibraryView) */
+.lib-shelf {
+  background: linear-gradient(180deg, transparent 0%, transparent calc(100% - 12px), color-mix(in srgb, var(--t-line2) 90%, transparent) calc(100% - 12px), color-mix(in srgb, var(--t-line) 80%, transparent) 100%);
+  box-shadow: inset 0 -14px 18px -14px color-mix(in srgb, #000 50%, transparent);
+}
+.lib-spine {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--spine) 78%, #000) 0%, var(--spine) 18%, color-mix(in srgb, var(--spine) 88%, #fff) 50%, var(--spine) 82%, color-mix(in srgb, var(--spine) 70%, #000) 100%);
+  box-shadow: 0 6px 14px -8px color-mix(in srgb, #000 70%, transparent), inset 0 2px 0 color-mix(in srgb, #fff 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--spine) 60%, #000);
+}
+.lib-spine:hover { box-shadow: 0 16px 26px -10px color-mix(in srgb, var(--t-accent) 60%, #000); }
+.lib-spine-title {
+  writing-mode: vertical-rl; transform: rotate(180deg); font-family: "Instrument Serif", Georgia, serif;
+  font-size: 15px; line-height: 1.05; color: #fff; text-shadow: 0 1px 1px rgba(0,0,0,.35);
+  max-height: calc(100% - 22px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* the voice orb's confirm: a fill that runs across the button for its inert window (VoiceOrb INERT_MS) */
+.ax-inert { width: 0; animation: ax-inert linear forwards; }
+@keyframes ax-inert { to { width: 100%; } }

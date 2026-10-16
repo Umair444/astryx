@@ -1,4 +1,4 @@
-"""Hermetic test of the ONE charter resolver (nucleus/charter.py) — proves the
+"""Hermetic test of the ONE charter resolver (src/astryx/core/charter.py) — proves the
 load-bearing invariants against a REAL temp agents/ tree, every path not just the
 happy one (plan-17, item d):
 
@@ -17,7 +17,7 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from nucleus.charter import resolve, Collision  # noqa: E402
+from astryx.core.charter import resolve, Collision  # noqa: E402
 
 
 def _mk(root: Path, rel: str) -> None:
@@ -45,6 +45,19 @@ def test_self_form_resolves():
 def test_member_resolves_at_depth():
     d = _tree()
     assert resolve("canopus", d) == d / "org/canopus/canopus.md"
+
+
+def test_document_beside_self_folder_charter_is_not_an_agent():
+    # agents/seed/onboard.md is a document seed keeps, not a second agent (it was spawned as one
+    # and drawn in the network map while the rule was a filename list). A composite's members,
+    # which live in their OWN folders, are unaffected.
+    d = _tree()
+    _mk(d, "seed/onboard.md")
+    _mk(d, "org/lead.md")                  # a composite with no org/org.md: a real member
+    from astryx.core.charter import roster
+    names = roster(d)
+    assert "onboard" not in names and resolve("onboard", d) is None
+    assert {"seed", "canopus", "lead"} <= set(names)
 
 
 def test_example_file_never_charter():

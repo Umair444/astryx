@@ -24,18 +24,31 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 REPO = Path(__file__).resolve().parents[2]
-_env = {k: v for k, v in
-        (l.split("=", 1) for l in (REPO / ".env").read_text().splitlines() if "=" in l)}
-ADDR = _env["GMAIL_ADDRESS"].strip()
-PASS = _env["GMAIL_APP_PASSWORD"].strip()
+
+
+def creds() -> tuple[str, str]:
+    """GMAIL_ADDRESS / GMAIL_APP_PASSWORD from the org's .env, read at use, not import."""
+    env = {k: v for k, v in
+           (l.split("=", 1) for l in (REPO / ".env").read_text().splitlines() if "=" in l)}
+    return env["GMAIL_ADDRESS"].strip(), env["GMAIL_APP_PASSWORD"].strip()
+
 
 mcp = FastMCP("astryx-gmail")
 
 
 def imap() -> imaplib.IMAP4_SSL:
     m = imaplib.IMAP4_SSL("imap.gmail.com")
-    m.login(ADDR, PASS)
+    m.login(*creds())
     return m
+
+
+def gm_search(m, query: str) -> list[bytes]:
+    """X-GM-RAW with the query sent as an IMAP literal, so quotes, backslashes and
+    non-ASCII reach Gmail untouched. Inlined as "{query}" it broke on any query
+    containing a quote (subject:"two words" -> BAD Could not parse command)."""
+    m.literal = query.encode("utf-8")
+    _, data = m.search("UTF-8", "X-GM-RAW")
+    return data[0].split()
 
 
 def dec(v) -> str:
@@ -84,8 +97,7 @@ def mail_search(query: str, limit: int = 10) -> list[dict]:
     m = imap()
     try:
         m.select("INBOX", readonly=True)
-        _, data = m.search(None, "X-GM-RAW", f'"{query}"')
-        ids = data[0].split()[-min(limit, 50):]
+        ids = gm_search(m, query)[-min(limit, 50):]
         return list(reversed(fetch_headers(m, ids)))
     finally:
         m.logout()
@@ -125,15 +137,16 @@ def mail_send(to: str, subject: str, body: str, cc: str = "") -> dict:
     """Send a plain-text email from the owner's address. OUTWARD ACT: unless your
     charter says otherwise, sign the body as yourself (the agent), never as the
     owner. Args: to (comma-separated ok), subject, body, optional cc."""
+    addr, pw = creds()
     msg = EmailMessage()
-    msg["From"] = ADDR
+    msg["From"] = addr
     msg["To"] = to
     if cc:
         msg["Cc"] = cc
     msg["Subject"] = subject
     msg.set_content(body)
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
-        s.login(ADDR, PASS)
+        s.login(addr, pw)
         s.send_message(msg)
     return {"sent": True, "to": to, "subject": subject}
 

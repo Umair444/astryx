@@ -1,6 +1,6 @@
-"""Authored mutants for nucleus/escalation.py — run by nucleus/mutation_probe.py.
+"""Authored mutants for src/astryx/core/escalation.py — run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_escalation.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_escalation.py
 
 THE LIST IS THE JUDGEMENT. Each arm kills exactly ONE property of the facility, so a green
 run locates the property that rotted rather than reporting "escalation broke". Every entry
@@ -17,7 +17,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-SUBJECT = REPO / "nucleus" / "escalation.py"
+SUBJECT = REPO / "src" / "astryx" / "core" / "escalation.py"
 ORACLE = REPO / "tests" / "test_escalation.py"
 ENV = "ESCALATION_SRC"
 

@@ -18,6 +18,8 @@ agents/.git/
 /memory/
 observatory/web/node_modules/
 observatory/web/dist/
+canvas/web/node_modules/
+canvas/web/dist/
 
 # geoloc — niche owner-personal location intake (Tasker→endpoint); removed from the
 # PUBLIC tree but kept on the owner's disk so the running service survives (goal
@@ -35,6 +37,11 @@ runtime.json
 !**/runners*.example.conf
 units/
 __pycache__/
+# python packaging (plan-10224): build outputs, and the HOME marker `astryx init` writes
+/dist/
+/build/
+*.egg-info/
+/.astryx
 media/
 triggers/
 sensors/
@@ -53,4 +60,12 @@ harness/results/
 # real-PII test fixtures — re-add only with certified-fake data (leak scrub 2026-07-27)
 mcp/contacts/test_server.py
 tier/
+# career tier (owner-directed 2026-08-28) — the job-application funnel and every career
+# application specific (employers/roles/comp) is human-personal tier per local.md. Already
+# under the homes/ blanket; name-anchored here so a relocation or a homes/ negation can
+# never silently un-ignore it. Meta-reference only (a career tier exists), never content.
+**/career/
 var/
+infra/pg/.env
+infra/pg/data/
+mcp/phone/upstream/node_modules/

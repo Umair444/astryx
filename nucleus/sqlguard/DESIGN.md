@@ -1,0 +1,1 @@
+../../src/astryx/security/sqlguard/DESIGN.md

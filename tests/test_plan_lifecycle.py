@@ -74,15 +74,33 @@ WRITE_TABLES = ("goals", "messages")
 AUDITED_TRIGGERS = {
     # pg_notify only: queued at raise, delivered at COMMIT, discarded on ROLLBACK.
     # Audited 2026-08-13 by reading pg_get_functiondef; re-read it if this hash moves.
+    # Calls no user-defined function (builtin pg_notify only) — re-checked 2026-09-29.
     ("messages", "messages_notify"):
         "90dc3a1274f05949d212c2bcf9fe8dacf90180e37e869596154d63fcb8e1524c",
     # BEFORE UPDATE row trigger stamping goals.done_at (the economy's boundary event).
-    # Audited 2026-08-22 by reading pg_get_functiondef: pure plpgsql, mutates NEW only —
-    # no NOTIFY, no dblink, no COPY, no external write; a NEW mutation is row data and
-    # rolls back with the transaction. Re-read it if this hash moves.
+    # Re-audited 2026-09-29 (goal 4227 S3, steward) by reading pg_get_functiondef on the live DB:
+    # pure plpgsql, mutates NEW.done_at ONLY — S3 removed the funder-naming and with it the
+    # SELECT INTO read from funded_by_watermark; no NOTIFY, no dblink, no COPY, no write to any
+    # other table. Calls no user-defined function (builtin now() only). Transaction-local.
+    # (Previous pin 3b6883024b6a… = the 3499 body.)
+    # Re-read it if this hash moves.
     ("goals", "goals_done_stamp"):
-        "e7dddc10465aea3d1a657f01dde9c4c3eaaeb3026acb087d31ec65969c9f756a",
+        "3ff956b5ec898883ac5725590746214f44cb77b9b621858f0512061eb68b6409",
+    # AFTER INSERT OR UPDATE row trigger freezing the deprecated budget columns (goal 4227 S3).
+    # Audited 2026-09-29 (steward) by reading pg_get_functiondef on the live DB: pure plpgsql,
+    # reads NEW/OLD and at most RAISEs — no write anywhere, no NOTIFY/dblink/COPY. Inside the
+    # scenarios' rolled-back transaction a RAISE only aborts the statement; the scenarios never
+    # set budget_tokens/spent_tokens/funded_by, so it never fires. Calls no user-defined
+    # function. Transaction-local.
+    # Re-read it if this hash moves.
+    ("goals", "goals_budget_frozen"):
+        "b63554be919a50c376f94c067bf1af255c49210064b709f5f52967244f2664f1",
 }
+# tests/test_audited_trigger_pins.py checks these pins against THIS tree's schema.sql in a fixture,
+# so a branch that changes a pinned trigger is RED at review, not after the live apply (S3's lesson).
+# A pin hashes the trigger FUNCTION BODY only: it does not cover CALLEES (plpgsql records no
+# pg_depend on functions it calls). If a pinned body ever calls a user-defined helper, pin the
+# helper too, or the helper can gain a NOTIFY/dblink/write under an unchanged pin (a2 #23791).
 
 
 def preflight_isolation_premise():
@@ -124,6 +142,13 @@ class TxCtx:
 
     def __init__(self, conn):
         self.state, self._conn = {}, conn
+
+    def say(self, to, body, **kw):
+        """goal 4227 S1c: the check SAYS its wakes; here they go through the pulse's own writer (emit)
+        inside this rolled-back transaction, so the arms see exactly what the chokepoint delivers."""
+        sys.path.insert(0, str(REPO))
+        from astryx.pulse.pulse import emit
+        emit(self._conn, dict(kw, to_agent=to, body=body))
 
     def sql(self, query, params=()):
         with self._conn.cursor() as cur:
@@ -370,6 +395,204 @@ def m_climb_clock_ignores_facility_nudges(ctx):
     assert pings(ctx, thread2) == [], \
         "real agent movement inside the grace must hold, nag or no nag"
 
+
+
+def _raw_idea_by_top(ctx, gid, thread, ago):
+    """The TOP rank ORIGINATES the idea (a4 night-review → plan-4918): a rank-1 task, not a design."""
+    ctx.sql("INSERT INTO messages (from_agent,to_agent,thread,intent,body,ts) VALUES "
+            "('abstractor-4','abstractor-1',%s,'task','a raw idea for rank-1', now() - %s::interval)",
+            (thread, ago))
+
+
+@case
+def n_top_originated_is_not_consolidated(ctx):
+    """plan-4918 (2026-09-30): the top rank filed the raw idea and nobody has climbed. The verdict net
+    must stay silent (a raw idea is not a design; 4 approves would activate it unrefined), and the climb
+    net must own the thread: after its grace it pings rank 1."""
+    gid, thread = seed_plan(ctx, [], goal_age="3 hours", make_thread=False)
+    _raw_idea_by_top(ctx, gid, thread, "3 hours")
+    MOD["plan_verdict_due"](ctx)
+    assert pings(ctx, thread, "plan_verdict_due") == [], "a top-rank RAW IDEA opened the verdict phase"
+    MOD["plan_climb_due"](ctx)
+    assert pings(ctx, thread) == ["abstractor-1"], pings(ctx, thread)
+
+
+@case
+def o_top_originated_climb_reaches_top(ctx):
+    """…then ranks 1-3 climb; rank 3 hands off to the top, which hasn't consolidated yet. The climb net
+    pings the TOP (it must not StopIteration on a `posted` set that already holds the originator), and
+    the verdict net stays silent."""
+    gid, thread = seed_plan(ctx, [("abstractor-1", "refine", "5 hours"),
+                                  ("abstractor-2", "refine", "4 hours"),
+                                  ("abstractor-3", "refine", "3 hours")],
+                            goal_age="7 hours", make_thread=False)
+    _raw_idea_by_top(ctx, gid, thread, "6 hours")
+    MOD["plan_verdict_due"](ctx)
+    assert pings(ctx, thread, "plan_verdict_due") == [], "consolidation not reached: no verdict phase"
+    MOD["plan_climb_due"](ctx)
+    assert pings(ctx, thread) == ["abstractor-4"], pings(ctx, thread)
+
+
+@case
+def p_top_originated_then_consolidated(ctx):
+    """…and once the top posts AFTER rank 3's handoff, the verdict phase opens with zero voters."""
+    gid, thread = seed_plan(ctx, [("abstractor-1", "refine", "5 hours"),
+                                  ("abstractor-2", "refine", "4 hours"),
+                                  ("abstractor-3", "refine", "3 hours"),
+                                  ("abstractor-4", "chat", "2 hours")],
+                            goal_age="7 hours", make_thread=False)
+    _raw_idea_by_top(ctx, gid, thread, "6 hours")
+    MOD["plan_climb_due"](ctx)
+    assert pings(ctx, thread) == [], "climb net must stand down at a real consolidation"
+    MOD["plan_verdict_due"](ctx)
+    assert pings(ctx, thread, "plan_verdict_due") == [
+        "abstractor-1", "abstractor-2", "abstractor-3", "abstractor-4"]
+
+
+
+def _msg(ctx, thread, frm, to, intent, ago):
+    ctx.sql("INSERT INTO messages (from_agent,to_agent,thread,intent,body,ts) VALUES "
+            "(%s,%s,%s,%s,'x', now() - %s::interval)", (frm, to, thread, intent, ago))
+
+
+def _climbed_and_consolidated(ctx):
+    """ranks 1-3 climbed (rank 3 handed off to the top), and the top consolidated."""
+    gid, thread = seed_plan(ctx, [("abstractor-1", "refine", "8 hours"),
+                                  ("abstractor-2", "refine", "7 hours"),
+                                  ("abstractor-3", "refine", "6 hours")],
+                            goal_age="9 hours", make_thread=False)
+    _msg(ctx, thread, "abstractor-4", "abstractor-1", "chat", "5 hours")      # the consolidation
+    return gid, thread
+
+
+@case
+def q_rework_at_top_after_revise_reopens_verdicts(ctx):
+    """plan-14/3407/3408/3410/3499 shape (a1 #24567): a revise sends the rework to the TOP, and the top posts
+    its correction with NO fresh rank-3 handoff. It's still consolidated, so the verdict net re-pings all
+    four. PINS the unbounded handoff: bounding it by the revise closes this verdict phase (5 live plans)."""
+    gid, thread = _climbed_and_consolidated(ctx)
+    _msg(ctx, thread, "abstractor-1", "abstractor-4", "revise", "4 hours")    # rework at rank 4
+    _msg(ctx, thread, "abstractor-4", "abstractor-1", "chat", "3 hours")      # the top's correction
+    MOD["plan_verdict_due"](ctx)
+    assert pings(ctx, thread, "plan_verdict_due") == [
+        "abstractor-1", "abstractor-2", "abstractor-3", "abstractor-4"], pings(ctx, thread, "plan_verdict_due")
+
+
+@case
+def r_carried_reconsolidation_stays_consolidated(ctx):
+    """plan-2789 shape (a1 #24567): the top's own REVISE carries the re-consolidation to a lower rank, then
+    verdicts land. The climb net must stay silent through the verdict phase: under a handoff bounded by the
+    revise it would read "not consolidated" and ping rank 2 mid-verdict."""
+    gid, thread = _climbed_and_consolidated(ctx)
+    _msg(ctx, thread, "abstractor-4", "abstractor-1", "revise", "4 hours")    # carried re-consolidation
+    _msg(ctx, thread, "abstractor-1", "abstractor-4", "approve", "3 hours")
+    _msg(ctx, thread, "abstractor-4", "abstractor-1", "approve", "2 hours")
+    MOD["plan_climb_due"](ctx)
+    assert pings(ctx, thread) == [], pings(ctx, thread)
+
+
+
+@case
+def s_chat_down_the_chain_is_not_a_climb(ctx):
+    """plan-4918 shape (2026-09-30): the top files a raw idea; rank 3 posts a note DOWN the chain (to rank 1);
+    rank 1 hands off to rank 2; rank 2 acks DOWN the chain ("refinement pending"). The baton is with RANK 2.
+    A post isn't a climb step, a HANDOFF (a message to a higher rank) is: counting any post named the TOP as
+    next and would have skipped ranks 2 and 3."""
+    gid, thread = seed_plan(ctx, [], goal_age="5 hours", make_thread=False)
+    for frm, to, intent, ago in [("abstractor-4", "abstractor-1", "task", "4 hours"),
+                                 ("abstractor-3", "abstractor-1", "chat", "4 hours"),
+                                 ("abstractor-1", "abstractor-2", "refine", "3 hours"),
+                                 ("abstractor-2", "abstractor-1", "chat", "3 hours")]:
+        ctx.sql("INSERT INTO messages (from_agent,to_agent,thread,intent,body,ts) VALUES "
+                "(%s,%s,%s,%s,'x', now() - %s::interval)", (frm, to, thread, intent, ago))
+    MOD["plan_climb_due"](ctx)
+    assert pings(ctx, thread) == ["abstractor-2"], pings(ctx, thread)
+
+
+def _approved_then_redesigned(ctx):
+    """plan-4918 #28982 shape (seed #29424): all four approve, then the top posts a changed BINDING part as
+    intent='design' (not 'revise'), then one voter re-approves naming it. Only 'revise' staled approvals, so the
+    old approves still counted: plan_quorum read 4/4 fresh and a4 re-collected verdicts by hand."""
+    gid, thread = _climbed_and_consolidated(ctx)
+    for v, ago in [("abstractor-1", "4 hours"), ("abstractor-2", "4 hours"),
+                   ("abstractor-3", "4 hours"), ("abstractor-4", "4 hours")]:
+        _msg(ctx, thread, v, "abstractor-4", "approve", ago)
+    _msg(ctx, thread, "abstractor-4", "abstractor-1", "design", "3 hours")    # the binding revision
+    _msg(ctx, thread, "abstractor-1", "abstractor-4", "approve", "2 hours")   # a1 re-reads and re-approves
+    return gid, thread
+
+
+@case
+def t_design_repost_stales_approvals(ctx):
+    """A design post after approvals STALES them, exactly as a revise does: the quorum is 1/4, not 4/4, and
+    the verdict net re-pings the three whose approve predates the change."""
+    gid, thread = _approved_then_redesigned(ctx)
+    met = MOD["plan_consensus"](ctx) or ""
+    assert f"#{gid} " not in met, f"quorum fired on fixture #{gid}'s approves that predate the design change"
+    MOD["plan_verdict_due"](ctx)
+    assert pings(ctx, thread, "plan_verdict_due") == ["abstractor-2", "abstractor-3", "abstractor-4"], \
+        pings(ctx, thread, "plan_verdict_due")
+
+
+@case
+def u_design_repost_stays_consolidated(ctx):
+    """The design post stales VERDICTS only; it must not reopen the CLIMB. consolidated() keeps the revise-only
+    cut: under the verdict cut the top's own design post sits AT the cut, not after it, so the thread would
+    read un-consolidated and the climb net would ping rank 1 mid-verdict."""
+    gid, thread = _approved_then_redesigned(ctx)
+    MOD["plan_climb_due"](ctx)
+    assert pings(ctx, thread) == [], pings(ctx, thread)
+
+
+@case
+def v_one_writer_for_change_intents(ctx):
+    """The tool and the nets read ONE file under ONE grammar, and this arm RUNS both readers rather than grepping
+    one (a1 #30442): the Python change_intents() and channel/plan_change_intents.mjs's changeIntents(), on the
+    real file and on hand-edit variants. They must agree on every clean variant and BOTH refuse every bad one.
+    An inline comment used to yield the token "design  # note" in both, silently dropping 'design'; a BOM used to
+    split them (JS trim() strips it, Python strip() doesn't)."""
+    import json
+    import subprocess
+    import tempfile
+    js = REPO / "channel" / "plan_change_intents.mjs"
+
+    def both(path):
+        try:
+            py = sorted(MOD["change_intents"](path))
+        except RuntimeError as e:
+            py = f"RAISE {e}"
+        r = subprocess.run(["node", "--input-type=module", "-e",
+                            f"import {{ changeIntents }} from {json.dumps(js.as_uri())}; "
+                            f"try {{ console.log(JSON.stringify(changeIntents(process.argv[1]).sort())) }} "
+                            f"catch (e) {{ console.log(JSON.stringify('RAISE ' + e.message)) }}", str(path)],
+                           capture_output=True, text=True, timeout=30)
+        assert r.returncode == 0, f"node could not run the JS reader: {r.stderr.strip()[:200]}"
+        return py, json.loads(r.stdout)
+
+    real = REPO / "src" / "astryx" / "data" / "plan_change_intents"
+    py, jsv = both(real)
+    assert py == jsv and {"revise", "design"} <= set(py), (py, jsv)
+    variants = {                               # name -> (bytes, expected: a sorted list, or None = both refuse)
+        "crlf+bom+tab-comment": ("\ufeff# head\r\n\t# tabbed note\r\nrevise\r\n\tdesign \r\n".encode(),
+                                 ["design", "revise"]),
+        "bom on a token line":  ("\ufeffrevise\ndesign\n".encode(), ["design", "revise"]),
+        "inline comment":       (b"revise\ndesign  # note\n", None),
+        "no revise":            (b"# only a comment\ndesign\n", None),
+        "capitalised token":    (b"revise\nDesign\n", None),
+    }
+    with tempfile.TemporaryDirectory() as d:
+        for name, (raw, want) in variants.items():
+            f = Path(d) / name.replace(" ", "_")
+            f.write_bytes(raw)
+            py, jsv = both(f)
+            if want is None:
+                assert str(py).startswith("RAISE") and str(jsv).startswith("RAISE"), (name, py, jsv)
+            else:
+                assert py == jsv == want, (name, py, jsv)
+    src = (REPO / "channel" / "server.mjs").read_text()
+    block = src[src.index("if (name === 'plan_quorum')"):src.index("if (name === 'self_edit')")]
+    assert "changeIntents(" in block and "intent='revise'" not in block, \
+        "plan_quorum must stale through changeIntents(), never a hardcoded intent"
 
 def main():
     preflight_isolation_premise()      # fail-closed: never write until rollback is proven

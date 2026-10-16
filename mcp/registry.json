@@ -54,5 +54,26 @@
    "mcp/memory/server.py"
   ],
   "author": "forge"
+ },
+ "tools": {
+  "command": "venv/bin/python",
+  "args": [
+   "mcp/tools/server.py"
+  ],
+  "author": "forge"
+ },
+ "jobs": {
+  "command": "venv/bin/python",
+  "args": [
+   "mcp/jobs/server.py"
+  ],
+  "author": "canopus"
+ },
+ "docpdf": {
+  "command": "venv/bin/python",
+  "args": [
+   "mcp/docpdf/server.py"
+  ],
+  "author": "canopus"
  }
 }

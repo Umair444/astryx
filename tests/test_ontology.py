@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hermetic test of nucleus/ontology.py — the typed layer's lint.
+"""Hermetic test of src/astryx/memory/ontology.py — the typed layer's lint.
 
 THE PROPERTY THAT MATTERS: every finding must be FALSIFIABLE and DERIVED. "Organise the
 estate for readability" is not a check — it cannot go red, so it would be graph theatre
@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from nucleus import ontology as ont  # noqa: E402
+from astryx.memory import ontology as ont  # noqa: E402
 
 
 def _page(slug, ptype, rels, cats=None):
@@ -76,6 +76,17 @@ def test_a_shaped_type_is_NOT_called_a_bucket():
 def test_a_shapeless_type_IS_called_a_bucket():
     f = [x for x in ont.findings(BUCKET) if x["kind"] == "catch-all-type"]
     assert f and f[0]["type"] == "concept", "a type whose pages share nothing went unreported"
+
+
+def test_prose_pages_do_not_drag_a_real_core_under_threshold():
+    """memory #37896: zero-relation (prose) pages declare no fields by contract, so they can't count
+    against a type's shared core — the infobox check already exempts them (msg 16664)."""
+    mixed = SHAPED + [_page(f"p{i}", "goal", set()) for i in range(4)]   # 3 of 7 carry the core: under THRESHOLD unless prose is exempt
+    assert ont.expected_fields("goal", mixed) == {"state", "title"}, ont.expected_fields("goal", mixed)
+    kinds = [x["kind"] for x in ont.findings(mixed) if x.get("type") == "goal"]
+    assert "catch-all-type" not in kinds, f"prose pages made a shaped type look like a bucket: {kinds}"
+    # control: notation pages that share nothing are still a bucket, prose or no prose
+    assert any(x["kind"] == "catch-all-type" for x in ont.findings(BUCKET + [_page("p3", "concept", set())]))
 
 
 def test_incomplete_infobox_names_the_page_and_the_field():

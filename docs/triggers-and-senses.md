@@ -49,7 +49,7 @@ a threshold crossed:
 
 ```python
     if temperature > threshold:
-        from nucleus.senses import focus
+        from astryx.pulse.senses import focus
         focus("seed", f"heat crossed {temperature} — look at this")   # ONE wire message
 ```
 

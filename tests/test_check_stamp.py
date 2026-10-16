@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Oracle for triggers/steward/check_stamp.py — the guard that reads the live-tree stamp.
 
-    venv/bin/python tests/test_check_stamp.py     (also run by nucleus/check.sh)
+    venv/bin/python tests/test_check_stamp.py     (also run by devtools/check.sh)
 
-THE SUBJECT'S JOB. nucleus/check_watch.sh runs the full gate suite on the LIVE tree from a
+THE SUBJECT'S JOB. devtools/check_watch.sh runs the full gate suite on the LIVE tree from a
 systemd timer (the only place the gitignored guard estate exists — CI and the push hook
 both run check.sh inside a clone, where 20 of 36 gates cannot run at all) and stamps the
 OUTCOME to backups/.last-check. This guard reads that stamp on the pulse. The split exists
@@ -331,7 +331,7 @@ with tempfile.TemporaryDirectory() as d:
     # proves the runner writes what it intends, this file proves the guard reads what it
     # expects, and neither notices if the two intentions differ by one token. So here the
     # producer is actually executed and its output goes in unedited.
-    runner = REPO / "nucleus" / "check_watch.sh"
+    runner = REPO / "devtools" / "check_watch.sh"
 
     def produce(suite, cgroup_text="0::/system.slice/astryx-residents.service\n"):
         env = dict(os.environ)

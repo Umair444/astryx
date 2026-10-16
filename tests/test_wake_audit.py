@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle for nucleus/wake_audit.py — the four states, each isolated.
+"""Oracle for src/astryx/core/wake_audit.py — the four states, each isolated.
 
 WHY SYNTHETIC AND NOT A LIVE ASSERTION: the audit's value is entirely in what it does NOT
 report. Run against live data it prints a number nobody can check, and the expensive
@@ -15,7 +15,7 @@ is a pure pg_notify, which postgres delivers at COMMIT — a rollback sends no w
 real agent. Checked in pg_trigger before writing this, because a rolled-back transaction
 isolates ROWS, not side EFFECTS.
 
-    venv/bin/python tests/test_wake_audit.py        (also run by nucleus/check.sh)
+    venv/bin/python tests/test_wake_audit.py        (also run by devtools/check.sh)
 """
 import sys
 from pathlib import Path
@@ -34,7 +34,7 @@ try:
 except ImportError:
     skip("psycopg not importable (run with venv/bin/python)")
 
-from nucleus import wake_audit  # noqa: E402
+from astryx.core import wake_audit  # noqa: E402
 
 try:
     conn = psycopg.connect(wake_audit.dsn(), connect_timeout=5)

@@ -31,7 +31,7 @@ is its author's oracle's job. Shallow is what lets it cover every agent's direct
 without knowing anything about any of them.
 
 pyflakes is a `dev`-group dependency — never installed by init, never checked by doctor —
-so this SKIPS (77) where it is absent, per nucleus/check.sh's convention. Skipping loudly
+so this SKIPS (77) where it is absent, per devtools/check.sh's convention. Skipping loudly
 beats passing vacuously.
 
 Run: venv/bin/python tests/test_trigger_smoke.py

@@ -44,7 +44,7 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-# PII_SWEEP_SRC lets nucleus/mutation_probe.py point this oracle at a MUTATED copy of the
+# PII_SWEEP_SRC lets devtools/mutation_probe.py point this oracle at a MUTATED copy of the
 # guard, which is how the org proves an assertion can actually fail (mutants_pii_sweep_
 # ledger.py). Unset, it is the deployed guard.
 SUBJECT = Path(os.environ.get("PII_SWEEP_SRC")
@@ -173,6 +173,64 @@ def main():
           and mod["_mask"]("wa:15555550123@x") != mod["_mask"]("wa:15555550124@x"),
           "mask is unstable or collides — the ledger key would drift or two chats merge")
 
+    # ---- 3) email precision: a version/tag string is NOT an email -----------------
+    # An email domain's TLD is never all-numeric (RFC 3696 / RFC 1123 — the top label must
+    # contain a letter). `x@v1.0.1` (a version pin, ubiquitous once the org went v1.0) trips
+    # a naive localpart@dotted-domain regex; the guard must reject it while STILL catching a
+    # genuine alpha-TLD address — else the exclusion is a mute. Both directions, certified-
+    # fake fixtures: `.zzq` is a non-delegated TLD (registered to nobody, so a real email by
+    # shape yet owner-nothing), and the negatives are pure version/IP shapes.
+    def _emails(text):
+        return [s for lbl, s in mod["_scan"](text) if lbl == "email"]
+    check("a version/tag string (x@v1.0.1, y@v2.3.4) is NOT flagged as an email",
+          not _emails("shipped astryx@v1.0.1 and image@v2.3.4 and svc@1.2.3.4"),
+          "an all-numeric-TLD 'domain' (a version pin / IP literal) matched as an email — "
+          "the @v1.0.1 false-positive class that fired 3x on plan-2789 (2026-08-25)")
+    check("...and a real alpha-TLD address still IS flagged (the exclusion is not a mute)",
+          _emails("reach qa-fixture@nowhere.zzq for the build") == ["qa-fixture@nowhere.zzq"],
+          "the numeric-TLD exclusion swallowed a genuine alpha-TLD email — over-broad, the "
+          "flattering direction nobody reports")
+
+    # ---- 3b) a file:line source reference is NOT an email -------------------------
+    # `handler@server.py:42`, `util@spawn.sh:77` — `.py`/`.sh` ARE real TLDs, so the
+    # numeric-TLD rule above can't catch them; the `:<line>` SUFFIX is the tell. Recurred
+    # four times (25 rows hand-pinned) because agents cite file:line constantly. Both
+    # directions, and the negative uses the SAME domain minus the suffix so it proves the
+    # rule keys on the SHAPE, not the domain — a colon-free address must still flag.
+    check("a file:line source ref (server.py:42, spawn.sh:77) is NOT flagged as an email",
+          not _emails("see handler@server.py:42 and util@spawn.sh:77 in the trace"),
+          "the `file.ext:line` code-location shape matched as owner-email — the recurring "
+          "false positive that hand-pinned 25 rows before the :line suffix rule (2026-08-27)")
+    check("...and the SAME domain WITHOUT the :line suffix still flags (shape, not a mute)",
+          _emails("mail handler@server.py now") == ["handler@server.py"],
+          "the code-location exclusion swallowed a colon-free address — over-broad, the "
+          "UNDER-detection direction a PII guard must never take")
+
+    # ---- 3c) a CI run id cited as one is NOT a phone ------------------------------
+    # CI runs on every push since 10-15 (seed #55672) and agents cite its 11-digit run ids as evidence; the first sweep
+    # after flagged 8 rows, each "run <id>". Three directions: the run shapes don't flag; the SAME digits after other
+    # words still do (context, not value); a 92-prefixed number never takes the exemption. The run id below is FAKE
+    # (well past today's ids). The 92-prefixed fixture is built at runtime so no phone-shaped literal sits in a tracked
+    # file (privacy_gate (c) matches a bare 92+9..10 digits); 92 followed by ten zeros is no Pakistani mobile (923…).
+    def _phones(text):
+        return sorted(s for lbl, s in mod["_scan"](text) if lbl == "phone-bare")
+    RUN = "39999999123"
+    PK = "92" + "0" * 10
+    PK_NATIONAL = "03" + "0" * 9                     # the national 03XX form, 11 digits (a3 #56199)
+    check("a CI run id cited as one (run N, run id N, run #N, /actions/runs/N) is NOT flagged as a phone",
+          not _phones(f"run {RUN} passed; Run id {RUN}; run #{RUN}; see "
+                      f"github.com/o/r/actions/runs/{RUN}/job/1"),
+          "a GitHub Actions run id after 'run' matched phone-bare — the class that flagged 8 rows on 10-16")
+    check("...and the SAME digits in any other context still flag (shape, not a mute)",
+          _phones(f"call {RUN} today") == [RUN] and _phones(f"rerun {RUN}") == [RUN],
+          "the run-context exemption swallowed a number with no run context before it")
+    check("...and a 92-prefixed number never takes the exemption, even after 'run'",
+          _phones(f"run {PK} now") == [PK],
+          "a bare international Pakistani shape was exempted because the word 'run' preceded it")
+    check("...and nor does a 0-prefixed national number (a run id never has a leading 0)",
+          _phones(f"run {PK_NATIONAL} now") == [PK_NATIONAL],
+          "a national-form Pakistani mobile (03…, 11 digits) was exempted because the word 'run' preceded it")
+
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         dirty = f"contact sheet: {FAKE_PHONE} and {FAKE_EMAIL}\n"
@@ -239,6 +297,42 @@ def main():
         check("a v1 `seen` set is dropped and the loss is recorded, not swallowed",
               st8.get("v1_seen_dropped") == 2 and "seen" not in st8,
               f"state={ {k: v for k, v in st8.items() if k != 'open'} }")
+
+    # ---- cost: the tier lookup is paid once per AUTHOR, never once per row --------------
+    # 2026-09-30 07:20Z the live sweep crashed "timed out after 30s": _tier_private resolved
+    # the agent's charter (a recursive glob of agents/) for EVERY row — 2725 rows = 60.8s
+    # measured, 99% in charter.resolve — on a heavy wire day. A crashed eval never saves its
+    # watermark, so the backlog only grows and the guard stays blind: the cost has to be
+    # bounded by the number of distinct authors, which a busy day does not grow.
+    import astryx.core.tier as _tier
+    calls = []
+    _real = _tier.is_content_public
+
+    def _counting(name):
+        calls.append(name)
+        return True
+
+    class RowsCtx(FakeCtx):
+        def sql(self, q, p=()):
+            self.queries.append(q)
+            if "MAX(id)" in q:
+                return [{"m": 0}]
+            if "FROM messages" in q and "id >" in q:
+                return [{"id": 100 + i, "thread": "t", "from_agent": ("fx-a", "fx-b")[i % 2],
+                         "body": "nothing to see"} for i in range(40)]
+            if "FROM steps" in q and "id >" in q:
+                return [{"id": 500 + i, "agent": ("fx-a", "fx-b")[i % 2], "content": "plain"}
+                        for i in range(40)]
+            return []
+    _tier.is_content_public = _counting
+    try:
+        fixture_tree(tmp_cost := Path(tempfile.mkdtemp()), clean)
+        mod["pii_sweep"].__globals__["REPO"] = tmp_cost
+        mod["pii_sweep"](RowsCtx({"last_msg_id": 1, "last_step_id": 1}))
+    finally:
+        _tier.is_content_public = _real
+    check("80 wire+step rows from 2 authors → the tier lookup runs once per AUTHOR (2), not per row",
+          sorted(calls) == ["fx-a", "fx-b"], f"{len(calls)} lookups: {sorted(set(calls))}")
 
     print("\n" + ("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}"))
     return 1 if fails else 0

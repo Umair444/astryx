@@ -12,6 +12,21 @@ Wired as PreToolUse + PostToolUse + Stop hooks in each home's settings.json.
 The causal graph: turns.input_msg_id -> the message that triggered the turn;
 messages.turn_id -> the turn that produced the message. One message chains two turns.
 
+TOOL LEDGER (goal 4227, S0): a call of a registered tool carries steps.meta — {registry_id} on
+the `tool` row (one per call: COUNT here), {registry_id, result_bytes} on its tool_done/error
+row (the COST), and {edits} on a Write/Edit of a tool's source (authorship evidence, never a
+call). Every one also carries "v", the version of the call semantics that produced it
+(toolreg.LEDGER_V). nucleus/toolreg.py is the one authority on ids. Only the id and a byte count are kept:
+the command, the arguments and the result text are read to resolve the id and then dropped
+(I5). A toolreg failure writes the step WITHOUT meta; it never costs the row.
+
+SECRETS (plan-5497 S1a): this is the writer of turns.raw_payload, the one copy of every transcript
+we OWN, and every pg_dump inherits it. So every declared secret (nucleus/secretset.py, derived from
+.env and ~/.pgpass at write time) is replaced by "[redacted:<name>]" BEFORE any row is written:
+the payload, the input prompt, the reply text and a step's detail. If the set can't be derived,
+the transcript copies are WITHHELD (a marker in their place) and an error step says so. A writer's
+unknown is "don't copy", never "copy raw".
+
 Agent from ASTRYX_AGENT env. The transcript is the hook's own input, not a side-channel:
 nothing else reads it — every consumer reads the tables.
 """
@@ -39,9 +54,80 @@ def brief(v, n=400) -> str:
         return str(v)[:n]
 
 
+def ledger_meta(tool, tool_input, response=None):
+    """steps.meta for one call, or None. Never raises: telemetry must not cost the step row."""
+    try:
+        from nucleus.toolreg import resolve
+        m = resolve(tool, tool_input)
+        if response is not None:
+            if "registry_id" not in m:
+                return None               # tool_done carries only CALL cost, never edits
+            m = {"registry_id": m["registry_id"], "v": m["v"],
+                 "result_bytes": len(json.dumps(response, default=str).encode())}
+        if not m:
+            return None
+        from psycopg.types.json import Jsonb
+        return Jsonb(m)
+    except Exception:
+        return None
+
+
+def wall_label(cmd) -> str:
+    """The public label for a description-less Bash call. It must never raise, and it must never
+    fall back to the command itself."""
+    try:
+        from nucleus.toolreg import command_label
+        return command_label(cmd) if isinstance(cmd, str) else "(command)"
+    except Exception:
+        return "(command)"
+
+
 def dsn() -> str:
     return next(l.split("=", 1)[1].strip()
                for l in open(DSN_FILE) if l.startswith("ASTRYX_DSN="))
+
+
+WITHHELD = "[withheld: secret redaction unavailable]"
+
+
+def cleaner():
+    """(clean(obj), ok). clean redacts every declared secret; when the set can't be derived it
+    replaces every string with WITHHELD, so nothing unredacted is ever written."""
+    try:
+        from nucleus.secretset import redact, secret_set
+        from nucleus.ear_fence import redact as unfence      # a fetched room span keeps its pointer, never its words
+        secrets = secret_set()
+        return (lambda o: unfence(redact(o, secrets))), True
+    except Exception:
+        def withhold(o):
+            if isinstance(o, str):
+                return WITHHELD if o else o
+            if isinstance(o, dict):
+                return {k: withhold(v) for k, v in o.items()}
+            if isinstance(o, (list, tuple)):
+                return type(o)(withhold(x) for x in o)
+            return o
+        return withhold, False
+
+
+def secret_guard(tool, ti):
+    """(deny_reason | None, error | None). The guard's unknown is ALLOW: it is an actuator on every
+    tool call of every agent, so failing closed would block the fleet at once (a2 #27600)."""
+    try:
+        from nucleus.secret_guard import decide
+        return decide(tool, ti), None
+    except Exception as e:
+        return None, f"secret guard unevaluable ({type(e).__name__}): allowed (plan-5497)"
+
+
+def grep_guard(command, cwd):
+    """(deny_reason | None, error | None). A recursive plain grep rooted above a .gitignore silently skips the
+    gitignored estate (#12548/#40752). Same polarity as secret_guard: its unknown is ALLOW."""
+    try:
+        from nucleus.grep_guard import decide
+        return decide(command, cwd), None
+    except Exception as e:
+        return None, f"grep guard unevaluable ({type(e).__name__}): allowed"
 
 
 def is_tool_result(content) -> bool:
@@ -85,7 +171,173 @@ def usage_snapshot(cur):
         return None
 
 
-def handle_stop(cur, agent, h):
+LAPTOP_OMITTED = "[hands laptop output omitted]"
+TYPED_OMITTED = "[typed text omitted]"
+PHONE_OMITTED = "[phone output omitted: not a public screen]"
+PHONE_STAMP = "astryx-surface: "        # mcp/phone/server.py ends EVERY answer with this block
+
+
+def _phone_public(content) -> bool:
+    """A phone tool result is kept only if its LAST block is the facade's surface stamp saying tier "org"
+    (plan-8675 C3). Anything else, including no stamp, an unparseable one or a string body, is not public."""
+    if not isinstance(content, list) or not content:
+        return False
+    last = content[-1]
+    if not (isinstance(last, dict) and last.get("type") == "text"
+            and str(last.get("text", "")).startswith(PHONE_STAMP)):
+        return False
+    try:
+        return json.loads(last["text"][len(PHONE_STAMP):]).get("tier") == "org"
+    except (ValueError, AttributeError):
+        return False
+
+
+def strip_pixels(obj, _laptop_ids=None, _phone_ids=None):
+    """No image is ever KEPT in turns (a3 #42085 L1). The agent saw it (that's its context, the
+    owner's choice); the DB, every pg_dump and every branch_check clone don't keep it: a
+    screenshot of the owner's real screen is his WhatsApp, his family, whatever was open. Each
+    image block becomes {"type": "image_omitted", "sha256", "bytes"}. And a hands tool result
+    taken on screen="laptop" keeps no TEXT body either: an act() answer names his windows."""
+    import hashlib
+    if _laptop_ids is None:
+        _laptop_ids, _phone_ids = set(), set()
+        def find(o):
+            if isinstance(o, dict):
+                if (o.get("type") == "tool_use" and str(o.get("name", "")).startswith("mcp__hands__")
+                        and (o.get("input") or {}).get("screen") != "background"):
+                    _laptop_ids.add(o.get("id"))
+                if o.get("type") == "tool_use" and str(o.get("name", "")).startswith("mcp__phone__"):
+                    _phone_ids.add(o.get("id"))
+                for v in o.values():
+                    find(v)
+            elif isinstance(o, list):
+                for v in o:
+                    find(v)
+        find(obj)
+    if isinstance(obj, list):
+        return [strip_pixels(v, _laptop_ids, _phone_ids) for v in obj]
+    if not isinstance(obj, dict):
+        return obj
+    if obj.get("type") == "image":
+        src = obj.get("source") or {}
+        data = src.get("data") or obj.get("data") or ""
+        raw = data.encode() if isinstance(data, str) else bytes(data)
+        return {"type": "image_omitted", "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
+    if (obj.get("type") == "tool_use" and str(obj.get("name", "")).startswith("mcp__hands__")
+            and (obj.get("input") or {}).get("action") in ("type", "key", "do")):
+        # "do" carries a whole script that can type anything anywhere in it (a3 #42362 R1)
+        # what an agent TYPES can be a password from his Chromium (owner, 10-10: full access):
+        # never kept, on any screen
+        inp = {**obj["input"], "text": TYPED_OMITTED}
+        return {**obj, "input": inp}
+    if (obj.get("type") == "tool_use" and str(obj.get("name", "")).startswith("mcp__phone__")
+            and (obj.get("input") or {}).get("action") == "type"):
+        # what an agent types on a phone can be a password or a one-time code: never kept
+        return {**obj, "input": {**obj["input"], "text": TYPED_OMITTED}}
+    if obj.get("type") == "tool_result" and obj.get("tool_use_id") in _laptop_ids:
+        return {**{k: v for k, v in obj.items() if k != "content"}, "content": LAPTOP_OMITTED}
+    if obj.get("type") == "tool_result" and obj.get("tool_use_id") in (_phone_ids or ()) \
+            and not _phone_public(obj.get("content")):
+        return {**{k: v for k, v in obj.items() if k != "content"}, "content": PHONE_OMITTED}
+    return {k: strip_pixels(v, _laptop_ids, _phone_ids) for k, v in obj.items()}
+
+
+def _label(agent):
+    """(label, None) for this agent's session, or (None, reason) when its grant is malformed (plan-9139 S1b). An ORG
+    agent reads (frozenset(), None) and keeps today's path byte for byte."""
+    from nucleus import release
+    try:
+        return release.label_of(agent), None
+    except release.Refused as e:
+        return None, f"malformed grant ({type(e).__name__})"
+
+
+# ── plan-9139 S1d: the session side ──────────────────────────────────────────────────────────────────────────────
+# A session of an agent whose charter grants owner_private:<tier> is TIER-LABELLED for its whole life (v4 D2a: the
+# identity is the role; a1 F1/F2, a2 G3: the unit is the session, monotone). Its steps and turns keep METADATA only:
+# tool name, kind, ids, counts, tokens, usage, the tool-identity meta. Every text a tool, a prompt or the model wrote is
+# withheld AT THE WRITE (the auto-deliver release still gets the full reply). A label that can't be read (no charter,
+# a malformed grant, anything raising) strips too: an unknown label is private (D2, arm vi).
+MARK = "tier-labelled session"
+SPAWN_TOOLS = frozenset({"Agent", "Task", "Workflow"})     # tools that start another model session
+
+
+def _strip_reason(agent):
+    """None for an ORG session; else why this session's text is withheld. Never raises."""
+    try:
+        from nucleus import release                # THIS hook's tree's agents/: the live one in production, and a
+        from pathlib import Path                   # fixture tree's own when a test runs a copy of the hook
+        return MARK if release.label_of(agent, Path(REPO) / "agents") else None
+    except Exception as e:  # noqa: BLE001 — UnknownLabel, GrantError, an import that fails: all private
+        return f"{MARK} (label unreadable: {type(e).__name__})"
+
+
+def _cli_names():
+    """The binary names a child session could be started by, DERIVED (seed #45086): spawn.sh's own `CLI=${ASTRYX_CLI:-x}`
+    default, plus ASTRYX_CLI as this process sees it; basenames. Never empty: the known default if nothing reads."""
+    names = set()
+    try:
+        m = re.search(r'^CLI=\$\{ASTRYX_CLI:-([^}]+)\}', open(REPO + "/scripts/spawn.sh").read(), re.M)
+        if m:
+            names.add(m.group(1).strip().strip('"').split()[0])
+    except (OSError, IndexError):
+        pass
+    if os.environ.get("ASTRYX_CLI", "").split():
+        names.add(os.environ["ASTRYX_CLI"].split()[0])
+    return {os.path.basename(n) for n in names if n} or {"claude"}
+
+
+def spawn_guard(tool, ti, strip):
+    """A deny reason when a TIER-LABELLED session would start a child session, else None (seed #45086 4b: REFUSE, don't
+    inherit; a child gets a new session id and the label can't follow it). The Agent/Task/Workflow tools, or a Bash
+    command any of whose words is the CLI binary. Accident grade: `grep claude` is denied too, and an indirection
+    through another program (station.py, tools.run) is S2's server-side verb set."""
+    if not strip:
+        return None
+    if tool in SPAWN_TOOLS:
+        return f"a {MARK} can't start a child session ({tool}): the label can't follow it (plan-9139 S1d)"
+    if tool == "Bash":
+        cmd = (ti or {}).get("command") or ""
+        words = {os.path.basename(w) for w in re.split(r"[\s;|&()`$<>'\"=]+", cmd) if w}
+        hit = sorted(words & _cli_names())
+        if hit:
+            return f"a {MARK} can't run {hit[0]}: a child session would carry none of its label (plan-9139 S1d)"
+    return None
+
+
+def _labelled_auto_deliver(cur, agent, lbl, why, src, last_text, turn_id):
+    """A LABELLED member's forgotten reply goes through the one door (nucleus/release.py), never a raw INSERT
+    (v4 D1: AUTO-DELIVER is a seat). Refused (no key, no owner-only route, a person's address, a bad grant) → NO
+    row, a metadata-only error step, and one constant-text notice through the same door so the owner doesn't stare
+    at a frozen bubble (a4 #46035 note 3). The notice carries a reason CLASS, never content."""
+    from nucleus import release
+    reason = why
+    if not reason:
+        import contextlib
+        sp = getattr(getattr(cur, "connection", None), "transaction", None)
+        try:                             # a SAVEPOINT: a failed labelled write must not abort the turn's own row
+            with (sp() if sp else contextlib.nullcontext()):
+                rid = release.send_row(cur, agent, lbl, src[0], src[2], "chat", last_text, key=release.mac_key(),
+                                       store=release.TierStore(), routes=release.declared_routes())
+                cur.execute("UPDATE messages SET turn_id=%s WHERE id=%s", (turn_id, rid))
+            return
+        except release.Refused as e:
+            reason = type(e).__name__ if type(e) is not release.Refused else "refused"
+            reason = f"{reason}: {str(e)[:80]}"
+        except Exception as e:  # noqa: BLE001 — any other failure is a withheld reply, never a raw INSERT
+            reason = f"error: {type(e).__name__}"
+    cur.execute("INSERT INTO steps (agent, kind, content) VALUES (%s,'error',%s)",
+                (agent, f"auto-deliver withheld (plan-9139): {reason}"))
+    if lbl:
+        try:
+            release.send_row(cur, agent, lbl, "owner", None, "chat", "a private reply was withheld: " +
+                             reason.split(":")[0], key=release.mac_key(), store=release.TierStore(),
+                             routes=release.declared_routes())
+        except release.Refused:
+            pass                         # no key or no route: the notice can't go either; the error step stands
+
+
+def handle_stop(cur, agent, h, strip=None):
     """Reconstruct the just-finished turn and write it. Returns (turn_id, last_text, tin, tout)."""
     try:
         with open(h["transcript_path"]) as f:
@@ -136,6 +388,9 @@ def handle_stop(cur, agent, h):
     last_text = ""
     for e in turn:
         m = e.get("message", {}) or {}
+        # ONLY `message`, never the whole entry: a transcript's user entries also carry a top-level
+        # `toolUseResult` copy of every tool result, which strip_pixels() doesn't walk. Storing whole
+        # entries would bring back screenshots and laptop output (a3 #42104).
         messages.append({"type": e.get("type"), "ts": e.get("timestamp"), "message": m})
         if e.get("type") != "assistant":
             continue
@@ -206,6 +461,22 @@ def handle_stop(cur, agent, h):
     except Exception:
         pass
 
+    # SECRETS: nothing below is written before it's cleaned (plan-5497 S1a). The usage block is
+    # numbers only and stays exact, so a withheld turn still bills.
+    clean, clean_ok = cleaner()
+    payload["messages"] = clean(strip_pixels(payload["messages"]))
+    input_prompt, last_text = clean(input_prompt), clean(last_text)
+    if not clean_ok:
+        payload["redaction"] = "unavailable"
+        cur.execute("INSERT INTO steps (agent, kind, content) VALUES (%s,'error',%s)",
+                    (agent, "turn transcript withheld: secret redaction unavailable (plan-5497)"))
+
+    if strip:                            # S1d: the turn's text never reaches the public row; the usage still bills
+        payload = {"withheld": strip, "usage": payload.get("usage")}
+        stored_prompt = f"[{MARK}]"
+    else:
+        stored_prompt = input_prompt
+
     from psycopg.types.json import Jsonb
     usnap = usage_snapshot(cur)          # throttled /api/oauth/usage; None most turns
     # ECONOMY ATTRIBUTION: which goal did this turn serve? Derived from the opening
@@ -227,9 +498,27 @@ def handle_stop(cur, agent, h):
            VALUES (%s,%s,%s::timestamptz, now(), %s, %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
            RETURNING id""",
         (agent, h.get("session_id"), started_at, duration_ms, source,
-         input_prompt, input_msg_id, num_responses, num_tools, char_count,
+         stored_prompt, input_msg_id, num_responses, num_tools, char_count,
          tin, tout, model, stop_reason, Jsonb(payload), usnap, goal_id)).fetchone()
     turn_id = row[0] if row else None
+
+    # The nudge hook labels a prompt before its turn exists; claim its classification rows the
+    # same way steps are claimed below. The row is written around submission, which can fall a
+    # moment BEFORE the transcript's started_at, hence the slack. The previous turn's Stop has
+    # already claimed its own rows. The session filter covers the cases where it hasn't: a
+    # killed body, or two sessions of one agent overlapping (abstractor-4, plan-4227). A savepoint keeps a missing table (a DB that predates
+    # 4227's schema) from aborting the turn row it's riding with.
+    if turn_id is not None and started_at:
+        try:
+            with cur.connection.transaction():
+                cur.execute(
+                    "UPDATE classifications SET turn_id=%s "
+                    "WHERE agent=%s AND turn_id IS NULL "
+                    "AND (session_id IS NULL OR session_id = %s) "
+                    "AND ts >= %s::timestamptz - interval '10 seconds'",
+                    (turn_id, agent, h.get("session_id"), started_at))
+        except Exception:
+            pass
 
     # back-fill this turn's rows (scoped by start time so history is untouched):
     # the tool/response steps it produced, and the messages it sent.
@@ -267,10 +556,14 @@ def handle_stop(cur, agent, h):
                 "SELECT count(*) FROM messages WHERE turn_id=%s AND to_agent=%s",
                 (turn_id, src[0])).fetchone()[0]
             if not already:
-                cur.execute(
-                    "INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, "
-                    "intent, body, turn_id) VALUES (%s,'local',%s,'local',%s,'chat',%s,%s)",
-                    (agent, src[0], src[2], last_text, turn_id))
+                lbl, why = _label(agent)
+                if lbl or why:
+                    _labelled_auto_deliver(cur, agent, lbl, why, src, last_text, turn_id)
+                else:
+                    cur.execute(
+                        "INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, "
+                        "intent, body, turn_id) VALUES (%s,'local',%s,'local',%s,'chat',%s,%s)",
+                        (agent, src[0], src[2], last_text, turn_id))
     return turn_id, last_text, tin, tout
 
 
@@ -284,6 +577,23 @@ def main():
         return
     ev = h.get("hook_event_name")
 
+    # S1d: the session's label, read ONCE and BEFORE any DB work (a down DB never opens the spawn guard or the strip)
+    strip = _strip_reason(agent)
+
+    # SECRETS (plan-5497 S1b): decided BEFORE any DB work, so a down DB never opens the guard.
+    denied = guard_err = None
+    if ev == "PreToolUse":
+        denied, guard_err = secret_guard(h.get("tool_name", "?"), h.get("tool_input") or {})
+        if not denied:
+            denied = spawn_guard(h.get("tool_name", "?"), h.get("tool_input") or {}, strip)
+        if not denied and h.get("tool_name") == "Bash":
+            denied, gerr = grep_guard((h.get("tool_input") or {}).get("command") or "", h.get("cwd"))
+            guard_err = guard_err or gerr
+        if denied:
+            print(json.dumps({"hookSpecificOutput": {
+                "hookEventName": "PreToolUse", "permissionDecision": "deny",
+                "permissionDecisionReason": denied}}), flush=True)
+
     import psycopg
     with psycopg.connect(dsn(), connect_timeout=3) as conn:
         cur = conn.cursor()
@@ -291,32 +601,52 @@ def main():
         if ev == "PreToolUse":
             tool = h.get("tool_name", "?")
             ti = h.get("tool_input") or {}
-            detail = ti.get("description") or ti.get("command") or ti.get("file_path") \
+            # NEVER the raw command: steps are public and memory's nightly drain feeds them
+            # into RAG, and a command's arguments are where a secret lands (an inlined DSN, a
+            # PGPASSWORD=… prefix). A description-less Bash call shows WHAT ran (its registry
+            # id, else the program name) and none of its arguments. seed approved, plan-4227.
+            detail = ti.get("description") or ti.get("file_path") \
                 or ti.get("to") or ti.get("target") or ""
-            cur.execute("INSERT INTO steps (agent, kind, content) VALUES (%s,'tool',%s)",
-                        (agent, f"{tool}: {brief(detail)}"))
+            if not detail and tool == "Bash":
+                detail = wall_label(ti.get("command"))
+            detail = cleaner()[0](detail)      # a description can quote a secret too
+            if strip:                          # S1d: a description, a path, a target are the session's text
+                detail = f"[{MARK}]"
+            if denied:
+                detail = f"DENIED, {'child spawn' if strip and denied.startswith('a ' + MARK) else 'secret holder'}: " \
+                         f"{brief(detail, 200)}"
+            cur.execute("INSERT INTO steps (agent, kind, content, meta) VALUES (%s,'tool',%s,%s)",
+                        (agent, f"{tool}: {brief(detail)}", ledger_meta(tool, ti)))
+            if guard_err:
+                cur.execute("INSERT INTO steps (agent, kind, content) VALUES (%s,'error',%s)",
+                            (agent, guard_err))
 
         elif ev == "PostToolUse":
             tool = h.get("tool_name", "?")
             r = h.get("tool_response")
+            meta = ledger_meta(tool, h.get("tool_input") or {}, r if r is not None else "")
             err = r.get("error") or ("" if r.get("success", True) else "failed") \
                 if isinstance(r, dict) else ""
             if err:
-                cur.execute("INSERT INTO steps (agent, kind, content) VALUES (%s,'error',%s)",
-                            (agent, f"{tool}: {brief(err, 300)}"))
+                # The error TEXT is tool output (a Bash failure carries its stderr), so it's the
+                # same class as the raw command: the wall records THAT the call failed, not what
+                # it printed. (Zero error rows exist today; this closes it before one does.)
+                cur.execute("INSERT INTO steps (agent, kind, content, meta) VALUES (%s,'error',%s,%s)",
+                            (agent, f"{tool}: failed", meta))
             else:
-                cur.execute("INSERT INTO steps (agent, kind, content) VALUES (%s,'tool_done',%s)",
-                            (agent, f"{tool} done"))
+                cur.execute("INSERT INTO steps (agent, kind, content, meta) VALUES (%s,'tool_done',%s,%s)",
+                            (agent, f"{tool} done", meta))
 
         elif ev == "Stop":
-            res = handle_stop(cur, agent, h)
+            res = handle_stop(cur, agent, h, strip)
             # short response step for the wall/status line (full text lives in turns)
             if res:
                 turn_id, last_text, tin, tout = res
                 cur.execute(
                     "INSERT INTO steps (agent, kind, content, turn_id, tokens_in, tokens_out) "
                     "VALUES (%s,'response',%s,%s,%s,%s)",
-                    (agent, (last_text[:2000] or "(tool-only turn)"), turn_id, tin, tout))
+                    (agent, (f"[{MARK}: {len(last_text.encode())} bytes]" if strip
+                             else (last_text[:2000] or "(tool-only turn)")), turn_id, tin, tout))
             else:
                 cur.execute("INSERT INTO steps (agent, kind, content) VALUES (%s,'response',%s)",
                             (agent, "(turn unreadable)"))

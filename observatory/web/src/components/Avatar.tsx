@@ -23,9 +23,9 @@ function hash(name: string): number {
 }
 
 const RING: Record<AvatarStatus, string> = {
-  live: '#34d399', // emerald
-  dormant: '#5b6890', // slate (ink-mute)
-  retired: '#e8b339', // amber tombstone
+  live: 'var(--t-good)', // emerald
+  dormant: 'var(--t-mute)', // slate (ink-mute)
+  retired: 'var(--t-warn)', // amber tombstone
 }
 
 export default function Avatar({

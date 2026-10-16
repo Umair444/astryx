@@ -1,6 +1,6 @@
-"""Authored mutants for hooks/pre-push — run by nucleus/mutation_probe.py.
+"""Authored mutants for hooks/pre-push — run by devtools/mutation_probe.py.
 
-    venv/bin/python nucleus/mutation_probe.py tests/mutants_pre_push_contract.py
+    venv/bin/python devtools/mutation_probe.py tests/mutants_pre_push_contract.py
 
 THE LIST IS THE JUDGEMENT, WHICH IS WHY IT IS AUTHORED. Each entry is a one-line edit that
 leaves the hook running, silent, and green-looking while a guarantee it exists for is gone.
@@ -46,8 +46,8 @@ MUTANTS = {
     # The privacy gate becomes advisory. This is the 07-27 leak class un-gated — and the
     # one mutation here whose damage is irreversible, since a pushed value is public.
     "M4 a red privacy gate no longer blocks":
-        ('"$REPO/nucleus/privacy_gate.sh" || exit 1',
-         '"$REPO/nucleus/privacy_gate.sh" || true'),
+        ('"$REPO/nucleus/privacy_gate.sh" || exit 1',  # reorg: keep (hooks/ calls the stub)
+         '"$REPO/nucleus/privacy_gate.sh" || true'),  # reorg: keep
 
     # Dedup broken: one sha pushed to two refs pays the window twice. Not a correctness
     # hole — a latency one, and latency is exactly what nearly kept this gate unwired.

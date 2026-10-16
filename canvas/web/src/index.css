@@ -1,0 +1,106 @@
+@import "tailwindcss";
+
+/* Every colour is a theme token (src/themes.ts, applied as --t-* on <html>); the Tailwind names are aliases. */
+@theme inline {
+  --color-void: var(--t-bg);
+  --color-ink-900: var(--t-bg2);
+  --color-ink-800: var(--t-panel);
+  --color-ink-700: var(--t-panel2);
+  --color-ink-600: var(--t-line2);
+  --color-line: var(--t-line);
+  --color-line-strong: var(--t-line2);
+  --color-fg: var(--t-fg);
+  --color-fg-dim: var(--t-dim);
+  --color-fg-mute: var(--t-mute);
+  --color-violet: var(--t-accent);
+  --color-cyan: var(--t-accent2);
+  --color-good: var(--t-good);
+  --color-bad: var(--t-bad);
+  --color-warn: var(--t-warn);
+  --color-on: var(--t-on);
+}
+@theme {
+  --font-sans: "Inter", -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-serif: "Instrument Serif", Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--t-bg);
+  color: var(--t-fg);
+  transition: background-color .35s ease, color .35s ease;
+  font-family: var(--font-sans);
+  font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+/* the aurora — one slow, quiet signature behind everything */
+.aurora { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
+.aurora::before, .aurora::after {
+  content: ""; position: absolute; width: 70vmax; height: 70vmax; border-radius: 50%;
+  filter: blur(90px); opacity: .16; animation: drift 38s ease-in-out infinite alternate;
+}
+.aurora::before { background: radial-gradient(circle, var(--t-accent), transparent 65%); top: -35vmax; left: -20vmax; }
+.aurora::after { background: radial-gradient(circle, var(--t-accent2), transparent 65%); bottom: -40vmax; right: -25vmax; animation-delay: -19s; opacity: .11; }
+@keyframes drift { to { transform: translate(8vmax, 6vmax) scale(1.08); } }
+
+.glass { background: color-mix(in srgb, var(--t-bg2) 80%, transparent); backdrop-filter: blur(18px) saturate(1.2); border: 1px solid var(--t-line); }
+.solid { background: var(--t-panel); border: 1px solid var(--t-line); }
+.sig { background: linear-gradient(135deg, var(--t-accent), var(--t-accent2)); color: var(--t-on); }
+.sig-text { background: linear-gradient(135deg, var(--t-accent), var(--t-accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.ring-sig { box-shadow: 0 0 0 1px color-mix(in srgb, var(--t-accent) 40%, transparent), 0 8px 40px -12px color-mix(in srgb, var(--t-accent2) 45%, transparent); }
+
+/* thin, quiet scrollbars */
+* { scrollbar-width: thin; scrollbar-color: var(--t-line2) transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--t-line2); border-radius: 4px; }
+
+/* the shimmer on a live progress line */
+.shimmer {
+  background: linear-gradient(90deg, var(--t-mute) 0%, var(--t-fg) 45%, var(--t-mute) 90%);
+  background-size: 220% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: shimmer 2.2s linear infinite;
+}
+@keyframes shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+
+/* painting placeholder: a canvas not yet painted */
+.easel {
+  background:
+    radial-gradient(600px 300px at 30% 30%, color-mix(in srgb, var(--t-accent) 14%, transparent), transparent 60%),
+    radial-gradient(500px 300px at 70% 70%, color-mix(in srgb, var(--t-accent2) 12%, transparent), transparent 60%),
+    repeating-linear-gradient(135deg, color-mix(in srgb, var(--t-fg) 3%, transparent) 0 2px, transparent 2px 14px);
+}
+.brush { animation: brush 2.6s ease-in-out infinite; }
+@keyframes brush { 0%,100% { transform: translateX(-30%) rotate(-8deg); } 50% { transform: translateX(30%) rotate(8deg); } }
+
+/* markdown inside messages */
+.md { line-height: 1.65; overflow-wrap: anywhere; }
+.md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
+.md p { margin: .55em 0; }
+.md ul, .md ol { margin: .5em 0; padding-left: 1.4em; } .md li { margin: .2em 0; }
+.md ul { list-style: disc; } .md ol { list-style: decimal; }
+.md h1, .md h2, .md h3 { font-weight: 600; margin: 1em 0 .4em; line-height: 1.25; }
+.md h1 { font-size: 1.3em; } .md h2 { font-size: 1.15em; } .md h3 { font-size: 1.02em; }
+.md a { color: var(--t-accent2); text-decoration: underline; text-underline-offset: 2px; }
+.md code { font-family: var(--font-mono); font-size: .86em; background: color-mix(in srgb, var(--t-fg) 8%, transparent); padding: .12em .38em; border-radius: 6px; }
+.md pre { background: var(--t-bg2); border: 1px solid var(--t-line); border-radius: 12px; padding: 12px 14px; overflow-x: auto; margin: .7em 0; }
+.md pre code { background: none; padding: 0; font-size: .84em; }
+.md blockquote { border-left: 2px solid var(--t-accent); padding-left: 12px; color: var(--t-dim); margin: .6em 0; }
+.md table { border-collapse: collapse; margin: .6em 0; display: block; overflow-x: auto; }
+.md th, .md td { border: 1px solid var(--t-line2); padding: 5px 10px; text-align: left; }
+.md hr { border: 0; border-top: 1px solid var(--t-line); margin: 1em 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+/* light themes: the aurora whispers instead of glowing */
+:root[data-theme=light] .aurora::before, :root[data-theme=light] .aurora::after { opacity: .10; }
+/* a quiet focus ring that follows the theme */
+@layer base {
+  :focus-visible { outline: 2px solid color-mix(in srgb, var(--t-accent) 70%, transparent); outline-offset: 2px; }
+}

@@ -23,7 +23,8 @@ Platform translation ONLY; everything shared lives in common.py:
 Config: .env for secrets, routes-whatsapp.json for chats (trusted_jids =
 sender JIDs stamped `owner`; others are `wa-<number>` on open routes).
 
-Run: uvicorn bridges.whatsapp:app --host 172.17.0.1 --port 8477  (repo root)
+Run: uvicorn bridges.whatsapp:app --host "$(scripts/docker_host_ip.sh)" --port 8477  (repo root)
+     (the docker host address: 172.17.0.1 on docker-ce Linux; ASTRYX_DOCKER_HOST_IP overrides)
 """
 
 import asyncio
@@ -33,7 +34,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -41,10 +41,12 @@ from pathlib import Path
 import asyncpg
 from fastapi import FastAPI, Request, Response
 
+from .embed_root import Refused, owner_only, read_checked
 from .common import (HERE, MEDIA_DIR, Outcome, route_target, describe_media,
                      env, listen, load_routes,
                      record_poll, resolve_quoted_body, split_files, split_polls,
-                     step_line, update_poll_votes, vote_body, vote_changes, wire_insert)
+                     step_line, update_poll_votes, vote_body, vote_changes, wire_insert,
+                     door_open, door_org_ok, live_steps_ok, released)
 from .pulse_witness import PulseWitness
 from .providers.whatsapp import WhatsAppProvider
 
@@ -85,16 +87,35 @@ def jid_str(v) -> str:
     return str(v or "")
 
 
+# wacli errors that mean the call never reached WhatsApp, so a retry can't double-send: the store held by another
+# wacli (wacli-sync still starting at boot) and WhatsApp's rate limit on the recipient lookup that precedes a send.
+# On 10-15 the pulse witness's DOWN and RESUMED rings both died this way in the boot window (#54618 store locked,
+# #54624 429 rate-overlimit) and the owner saw neither: the one alarm about a dark org was eaten by the org waking up.
+WACLI_TRANSIENT = re.compile(r"store is locked|status 429|rate-overlimit", re.I)
+WACLI_RETRY_WAITS = (2, 5, 15)                  # seconds before each retry: bounded, ~22 s worst case
+
+
 async def wacli(*args: str) -> str:
-    proc = await asyncio.create_subprocess_exec(
-        *WA_CLI, *args,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    out, err = await asyncio.wait_for(proc.communicate(), timeout=60)
-    if proc.returncode != 0:
-        # a failed call must fail loudly; a silent non-zero exit hides a lost send
-        raise RuntimeError(f"wacli {' '.join(args[:2])}: "
-                           f"{err.decode(errors='replace').strip()[:200]}")
-    return out.decode(errors="replace")
+    for attempt, wait in enumerate((*WACLI_RETRY_WAITS, None)):
+        proc = await asyncio.create_subprocess_exec(
+            *WA_CLI, *args,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=60)
+        if proc.returncode == 0:
+            if attempt:
+                print(f"whatsapp: wacli {' '.join(args[:2])} succeeded after {attempt} transient retr"
+                      f"{'y' if attempt == 1 else 'ies'}", flush=True)
+            return out.decode(errors="replace")
+        # Classify the LAST stderr line only: that is the error wacli exits with. A 429 also appears EARLIER as a
+        # warning ("warn: send warmup for <jid> failed (send will proceed): ...status 429...") before every send in
+        # a rate-limited window, and searching all of stderr let a following "send timed out after 45s" (the message
+        # node may already be accepted, only the ack lost) be retried: a double send (a3 #54634, reproduced).
+        msg = (err.decode(errors="replace").strip().splitlines() or [""])[-1][:200]
+        if wait is None or not WACLI_TRANSIENT.search(msg):
+            # a failed call must fail loudly; a silent non-zero exit hides a lost send
+            raise RuntimeError(f"wacli {' '.join(args[:2])}: {msg}"
+                               + (f" (after {attempt} transient retries)" if attempt else ""))
+        await asyncio.sleep(wait)
 
 
 def find_id(obj) -> str | None:
@@ -153,9 +174,11 @@ async def fetch_media(chat: str, msgid: str, media: str) -> Path | str:
     return f"<{media} attached, file never landed in the store>"
 
 
-async def send_files(chat: str, files: list[str], out: Outcome | None = None):
-    """Attachments. `out` is optional so existing callers keep working; when supplied,
-    every skipped or failed upload reaches the receipt instead of vanishing."""
+async def send_files(chat: str, files: list[str], out: Outcome | None = None, *, agent: str):
+    """Attachments. `out` is optional; when supplied, every skipped or failed upload reaches
+    the receipt instead of vanishing. `agent` (the row's from_agent) is REQUIRED: each path is
+    judged against the SENDER's roots before the bridge reads it (bridges/embed_root.py,
+    a1 #49775), because this bridge reads as its own uid and would otherwise ship any file."""
     def _fail(detail):
         if out is not None:
             out.failed("file", detail)
@@ -171,15 +194,16 @@ async def send_files(chat: str, files: list[str], out: Outcome | None = None):
         return
     outbox = Path(DATA_HOST) / "astryx-outbox"
     outbox.mkdir(exist_ok=True)
+    route = next((r for r in routes() if str(r.get("chat")) == chat), None)
     for f in files:
-        src = Path(f)
-        if not src.is_file():
-            # Was a silent `continue`, while the body still said "attached".
-            _fail(f"path not found: {f}")
+        try:                              # never silent: the body may still say "attached"
+            name, data = read_checked(f, agent, owner_only("whatsapp", route))
+        except Refused as e:
+            _fail(f"refused: {e}")
             continue
-        dst = outbox / f"{int(time.time())}-{src.name}"
+        dst = outbox / f"{int(time.time())}-{name}"
         try:
-            shutil.copy(src, dst)
+            dst.write_bytes(data)
             await wacli("send", "file", "--to", chat,
                         "--file", f"{DATA_CTR}/astryx-outbox/{dst.name}")
         except Exception as e:
@@ -235,6 +259,21 @@ async def health():
     return {"ok": True, "routes": len(routes()), "jobs": list(jobs)}
 
 
+async def stored_text(chat: str, msgid: str, waits=(2, 5, 12)) -> str:
+    """The text wacli's store holds for a message whose webhook arrived empty (an undecrypted
+    placeholder). Retries briefly: the decrypt-retry lands seconds later."""
+    for w in waits:
+        await asyncio.sleep(w)
+        try:
+            d = json.loads(await wacli("messages", "show", "--chat", chat, "--id", msgid, "--json"))
+        except Exception:
+            continue
+        t = ((d.get("data") or {}).get("Text") or "").strip()
+        if t:
+            return t
+    return ""
+
+
 @app.post("/hook")
 async def hook(request: Request):
     body = await request.body()
@@ -258,7 +297,10 @@ async def hook(request: Request):
         del seen_msgids[k]
     if msgid and msgid in seen_msgids:
         return {"ok": True}
-    seen_msgids[msgid] = now
+    # NOT marked seen yet: a message WhatsApp couldn't decrypt first arrives as an EMPTY event and
+    # its decrypted twin comes later with the SAME id. Marking the empty one seen discarded the real
+    # message as a duplicate (owner, 2026-10-09: "my whatsapp message in astryx group didn't reach
+    # you"). An id is marked seen only once it carries something we act on (below).
 
     # ---- polls: bookkeeping runs BEFORE the FromMe drop — a vote cast from the
     # linked phone itself arrives as FromMe and must still count.
@@ -276,7 +318,7 @@ async def hook(request: Request):
                 else f"wa-{''.join(c for c in voter_jid.split('@')[0] if c.isdigit()) or 'x'}"
             await wire_insert(pool, sender, "whatsapp", ask, f"wa:{chat}", "poll",
                               vote_body(d.get("question", "?"), changes,
-                                        d.get("aggregates", {})))
+                                        d.get("aggregates", {})), route=route)
         return {"ok": True}
     pc = m.get("Poll") or {}
     if pc.get("Question") and msgid:
@@ -292,7 +334,7 @@ async def hook(request: Request):
             "owner" if sender_jid in route.get("trusted_jids", []) else "wa-x",
             "whatsapp", route["agent"], f"wa:{chat}", "poll",
             f'posted a poll ({msgid}): "{pc.get("Question")}" — '
-            + " | ".join(pc.get("Options", [])))
+            + " | ".join(pc.get("Options", [])), route=route)
         return {"ok": True}
 
     if m.get("FromMe"):
@@ -305,13 +347,19 @@ async def hook(request: Request):
         got = await fetch_media(chat, msgid, media)
         got = await describe_media(got, media) if isinstance(got, Path) else got
         text = f"{text}\n{got}" if text else got
+    if not text and msgid and not m.get("ReactionToID") and not m.get("ReactionEmoji") and not m.get("Revoked"):
+        # an EMPTY event that isn't a reaction or a revoke: wacli's store may hold the text by now (it
+        # writes a later event for this id there BEFORE posting it). Fetch it from there. A reaction is
+        # keyed on ReactionToID, not the emoji: a removal (or an undecryptable reaction) has none.
+        text = await stored_text(chat, msgid)
     if not text:
-        # Reactions arrive as non-text events; wacli's payload shape isn't confirmed
-        # yet — log one so the handler can be wired to the real shape.
-        blob = json.dumps(m)
-        if "eact" in blob:
-            print(f"wa reaction webhook — keys={list(m)} payload={blob[:400]}", flush=True)
         return {"ok": True}
+    if msgid and msgid in seen_msgids:
+        # re-checked AFTER the awaits above: wacli gives a POST 5s, so the store poll outlives it and the
+        # twin can land (and be delivered) meanwhile. Without this, both rows reach the wire.
+        return {"ok": True}
+    if msgid:
+        seen_msgids[msgid] = now
 
     sender_jid = jid_str(m.get("SenderJID"))
     trusted = sender_jid in route.get("trusted_jids", [])
@@ -339,11 +387,12 @@ async def hook(request: Request):
         meta["reply_to_body"] = ((m.get("ReplyToDisplay") or "").strip()
                                  or await resolve_quoted_body(pool, rid))
 
+    said = text
     agent, text = await route_target(pool, f"wa:{chat}", text, route["agent"])
 
-    await wire_insert(pool, sender, "whatsapp", agent, f"wa:{chat}", "chat", text, meta)
+    await wire_insert(pool, sender, "whatsapp", agent, f"wa:{chat}", "chat", text, meta, route=route, said=said)
 
-    if route.get("live_steps") and trusted:
+    if live_steps_ok(route) and trusted:          # S1c: never on a tiered route (its second egress)
         jobs[agent] = {"chat": chat, "thread": f"wa:{chat}", "opened": now,
                        "ph_id": None, "latest": "", "sent": "", "busy": False}
         asyncio.get_event_loop().create_task(typing(chat))
@@ -368,7 +417,8 @@ async def on_step(ev: dict):
     if time.time() - job["opened"] > JOB_TIMEOUT:
         jobs.pop(agent, None)
         return
-    line = await step_line(pool, int(ev.get("id", 0)), ev.get("kind", ""), agent)
+    line = await step_line(pool, int(ev.get("id", 0)), ev.get("kind", ""), agent=agent,
+                           label=agent)
     if not line:
         return
     job["latest"] = line
@@ -425,9 +475,17 @@ async def deliver(row):
     """Deliver a wire message to WhatsApp and record the outcome in the row's
     `delivery` field, so a send awaiting this result can read where it landed."""
     thread = row["thread"] or ""
-    if thread[:3] in ("tg:", "dc:") or (row["to_agent"] or "")[:3] in ("tg-", "dc-"):
+    stamped = None
+    if released(row) is not None:
+        # plan-9139 S1c: a RELEASED row goes only where its stamp names, with the body from the tier store; the
+        # thread (tier-<sender>) carries no destination. Another bridge's release is left pending for that bridge.
+        stamped = await door_open(pool, row, "whatsapp", routes())
+        if stamped is None:
+            return
+        chat = stamped[0]["chat"]
+    elif thread[:3] in ("tg:", "dc:") or (row["to_agent"] or "")[:3] in ("tg-", "dc-"):
         return                       # another bridge's surface (telegram/discord)
-    if thread.startswith("wa:"):
+    elif thread.startswith("wa:"):
         chat = thread[3:]            # the thread carries the destination
         if not _is_addressable(chat):
             # REFUSE a name. wacli's --to accepts "recipient JID, phone, OR contact/group/
@@ -505,8 +563,10 @@ async def deliver(row):
                   f"routes-whatsapp.json; refusing to guess a destination", flush=True)
     if not chat:
         return
+    if not stamped and not await door_org_ok(pool, row, "whatsapp", routes(), chat):
+        return                       # S1c: an unstamped row only to a declared org route
     agent = row["from_agent"]
-    text, files = split_files(row["body"])
+    text, files = split_files(stamped[1] if stamped else row["body"])
     text, polls = split_polls(text, max_options=12)
     out = Outcome()
     try:
@@ -528,7 +588,7 @@ async def deliver(row):
                 out.sent(res.message_id)
             else:
                 out.failed("text", res.error or "provider reported not-ok")
-        await send_files(chat, files, out)
+        await send_files(chat, files, out, agent=agent)
         for q, opts, multi in polls:
             try:
                 await send_poll(chat, agent, q, opts, multi)
@@ -564,9 +624,14 @@ async def deliver(row):
             pass                                  # cosmetic only — never fails the row
     except Exception as e:
         out.failed("deliver", e)
-    await pool.execute(
-        "UPDATE messages SET status=$2, delivered_at=now(), delivery=$3 WHERE id=$1",
-        row["id"], out.status, out.receipt(f"whatsapp:{chat}", text))
+    if stamped:                      # no chat id and no private text back on the wire: the marker, the release
+        await pool.execute("UPDATE messages SET status=$2, delivered_at=now(), "
+                           "delivery = coalesce(delivery, '{}'::jsonb) || $3::jsonb WHERE id=$1", row["id"], out.status,
+                           out.receipt("whatsapp:release", row["body"], door="released", classified=True))
+    else:
+        await pool.execute("UPDATE messages SET status=$2, delivered_at=now(), delivery=$3 WHERE id=$1",
+                           row["id"], out.status,
+                           out.receipt(f"whatsapp:{chat}", text, door="org-unstamped"))
 
 
 # ---------------------------------------------------------------------- app

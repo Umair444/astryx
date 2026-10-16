@@ -1,4 +1,4 @@
-"""Oracle for nucleus/persona.py — behavioural personas from message history.
+"""Oracle for src/astryx/people/persona.py — behavioural personas from message history.
 
 THE LOAD-BEARING ASSERTION IS THAT NO MESSAGE TEXT SURVIVES. This module reads the owner's
 private conversations with real people. The design promise is that it derives BEHAVIOUR
@@ -16,7 +16,7 @@ rather than a confident number, because a persona is the kind of artifact people
 Fixtures are synthetic and timestamped from a fixed epoch, so every run gets identical
 answers and no live contact appears here.
 
-Run: venv/bin/python tests/test_persona.py   (also wired into nucleus/check.sh)
+Run: venv/bin/python tests/test_persona.py   (also wired into devtools/check.sh)
 """
 import sys
 from pathlib import Path
@@ -24,7 +24,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from nucleus import persona  # noqa: E402
+from astryx.people import persona  # noqa: E402
 
 T0 = 1_750_000_000          # fixed epoch: no wall clock, no drift between runs
 HOUR = 3600
@@ -99,7 +99,7 @@ def test_dormancy_is_reported_rather_than_hidden():
 
 
 def test_an_unreachable_channel_is_UNREAD_not_CHARACTERLESS():
-    from nucleus import people
+    from astryx.people import people
     real = people._wa
     try:
         people._wa = lambda *a, **k: None
@@ -113,7 +113,7 @@ def test_an_unreachable_channel_is_UNREAD_not_CHARACTERLESS():
 def test_the_no_content_promise_is_stated_in_the_output():
     """The note is part of the contract: a reader of this artifact must be told what it is
     NOT, or they will assume the personas were read from what people said."""
-    from nucleus import people
+    from astryx.people import people
     real = people._wa
     try:
         people._wa = lambda *a, **k: ([] if a[0] == "chats" else None)

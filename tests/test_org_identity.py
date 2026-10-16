@@ -8,7 +8,7 @@ breaks is the TRUST FRAMING, which is what the org's entire inbound defense rest
 agent cannot apply data-never-instructions to a body that does not look inbound.
 
 Two independent layers, asserted separately, because each covers the other's gap:
-  (1) THE DOOR — nucleus/orgname.py: a peer may not register a reserved or illegally
+  (1) THE DOOR — src/astryx/core/orgname.py: a peer may not register a reserved or illegally
       shaped name. Prevention, but only go-forward: rows written before it predate it.
   (2) THE DERIVATION — channel/server.mjs PEER_ORG: internal-ness is derived from the
       absence of a `peers` row, which only a LOCAL decision writes, instead of from a
@@ -17,7 +17,7 @@ Two independent layers, asserted separately, because each covers the other's gap
 A door is a promise; a derivation is a property. The point of having both is that neither
 is asked to be the only one.
 
-    venv/bin/python tests/test_org_identity.py      (also run by nucleus/check.sh)
+    venv/bin/python tests/test_org_identity.py      (also run by devtools/check.sh)
 """
 import re
 import sys
@@ -26,7 +26,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from nucleus.orgname import org_ok, peer_url_ok  # noqa: E402
+from astryx.core.orgname import org_ok, peer_url_ok  # noqa: E402
 
 fails: list[str] = []
 

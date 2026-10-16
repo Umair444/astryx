@@ -1,0 +1,519 @@
+#!/usr/bin/env python3
+"""branch_check PREP oracle (plan-4918 P0/P1): the hardening precondition, the cached extension template, the
+private repo, the estate copy and the generated env. Synthetic repos and FAKE secrets; one real pg_dump of prod
+into a run-owned base (torn down). Exits 77 without a DSN that can CREATE ROLE/DATABASE.
+"""
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO))
+fails = []
+FAKE = "fAkE-sEcReT-4918-" + "x" * 12                            # never a real credential
+ARKEY = "fAkEaRkEy4918" + "y" * 10                               # a fake AUTOREMOTE `key=` value
+
+
+def check(name, ok, detail=""):
+    print(f"  {'PASS' if ok else 'FAIL'}  {name}" + (f"  — {detail}" if detail and not ok else ""))
+    if not ok:
+        fails.append(name)
+
+
+def admin_dsn():
+    if os.environ.get("ASTRYX_DSN"):
+        return os.environ["ASTRYX_DSN"]
+    for line in ((REPO / ".env").read_text().splitlines() if (REPO / ".env").is_file() else []):
+        if line.startswith("ASTRYX_DSN="):
+            return line.split("=", 1)[1].strip().strip('"')
+    return None
+
+
+def git(cwd, *a):
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+           "GIT_COMMITTER_EMAIL": "t@t"}
+    return subprocess.run(["git", *a], cwd=cwd, env=env, capture_output=True, text=True, check=True).stdout
+
+
+def synthetic_live(tmp: Path) -> Path:
+    """A tiny live repo: tracked code, a gitignored estate (one plain file, one carrying the fake secret), a .env."""
+    live = tmp / "live"
+    (live / "src" / "astryx" / "security" / "sqlguard").mkdir(parents=True)
+    shutil.copy2(REPO / "src" / "astryx" / "security" / "sqlguard" / "ledger.py", live / "src" / "astryx" / "security" / "sqlguard" / "ledger.py")
+    for f in ("__init__.py", "privacy.py", "judge.py", "inventory.py", "normalize.py", "drivers.py", "fixture.py"):
+        src = REPO / "src" / "astryx" / "security" / "sqlguard" / f
+        if src.exists():
+            shutil.copy2(src, live / "src" / "astryx" / "security" / "sqlguard" / f)
+    from _astryx_skel import skeleton                  # goal 10224 S4: the astryx spine in the fake repo
+    skeleton(live, "src/astryx/security/__init__.py")
+    Path.mkdir(live / "src" / "astryx" / "sql", parents=True, exist_ok=True)
+    (live / "src" / "astryx" / "sql" / "schema.sql").write_text("-- synthetic\n")
+    (live / "code.py").write_text("x = 1\n")
+    (live / ".gitignore").write_text("triggers/\n.env\ntier/\n")
+    (live / "tier").mkdir()
+    (live / "tier" / "personal.md").write_text("human-personal tier: never copied\n")
+    (live / "triggers" / "t").mkdir(parents=True)
+    (live / "triggers" / "t" / "plain.py").write_text("y = 2\n")
+    (live / "triggers" / "t" / "leaky.py").write_text(f"a = 1\nDSN = 'postgresql://u:{FAKE}@h/db'\n")
+    (live / ".env").write_text(f"ASTRYX_DSN=postgresql://u:{FAKE}@h/db\nASTRYX_ORG=org.test\nOPENAI_API_KEY=sk-{FAKE}\n"
+                               f"AUTOREMOTE_GETLOC_URL=https://ar.example/x?key={ARKEY}&message=hello\n")
+    git(live, "init", "-q", "-b", "main")
+    git(live, "add", "-A")
+    git(live, "commit", "-q", "-m", "base")
+    return live
+
+
+def main():
+    dsn = admin_dsn()
+    if not dsn:
+        print("NOT SEARCHED: no ASTRYX_DSN. Nothing was verified.")
+        return 77
+    import psycopg
+    from psycopg import sql
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
+    try:
+        src = os.environ.get("BRANCH_CHECK_PREP_SRC")                 # mutation_probe points this at a mutant copy
+        if src:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("bcprep_under_test", src)
+            bp = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(bp)
+        else:
+            from devtools import branch_check_prep as bp
+        from astryx.pg import runscope as rs
+    except ImportError as e:
+        check("branch_check_prep importable", False, str(e))
+        return 1
+    adm = psycopg.connect(dsn, autocommit=True)
+    if not adm.execute("SELECT rolcreaterole AND rolcreatedb OR rolsuper FROM pg_roles WHERE rolname = current_user").fetchone()[0]:
+        print("NOT SEARCHED: this role can't CREATE ROLE/DATABASE (e.g. branch_check's own run role). Nothing was verified.")
+        return 77
+    sys.path.insert(0, str(REPO / "tests"))
+    from _oracle_debris import ORACLE_BASE, TEST_DB, reap
+    TEST_NAME = lambda n: bool(TEST_DB.match(n))
+    reap(adm)                                                    # a killed earlier run's debris, by raw SQL
+    tmp = Path(tempfile.mkdtemp(prefix="bcprep-oracle-"))
+    made_dbs, scope = [], None
+    try:
+        # ── P0-b: the hardening precondition (a1's binding NULL-ACL arm) ──────────────────────────────────
+        scope = rs.RunScope(dsn, root=ORACLE_BASE).open()
+        nul = f"{scope.role}_nullacl"
+        # every decoy this oracle plants is ALLOW_CONNECTIONS false: a concurrent REAL run's datallowconn scan never
+        # sees it (a2 F3 #34875), while the arms evaluate it by NAME
+        adm.execute(sql.SQL("CREATE DATABASE {} ALLOW_CONNECTIONS false").format(sql.Identifier(nul)))      # admin-owned, NULL datacl
+        made_dbs.append(nul)
+        acl = adm.execute("SELECT datacl FROM pg_database WHERE datname=%s", (nul,)).fetchone()[0]
+        check("fixture: the probe DB has a NULL (default) ACL", acl is None, str(acl))
+        check("P0-b: a NULL-ACL database the run doesn't own is UNHARDENED (the server resolves the default)",
+              nul in bp.unhardened(adm, scope.role, names=[nul]), "")
+        adm.execute(sql.SQL(bp.P0A).format(sql.Identifier(nul)))
+        check("P0-b control: after the P0-a REVOKE it is hardened", nul not in bp.unhardened(adm, scope.role, names=[nul]), "")
+        own = scope.create_db(f"{scope.role}_own")
+        check("P0-b: a database the RUN owns is never counted", own not in bp.unhardened(adm, scope.role, names=[own]), "")
+        # a1 BC-1: the exemption is a LITERAL prefix, never a LIKE: lookalikes are ACCUSED, a real one exempt
+        pid = os.getpid()
+        look = [f"astryxAfxBprod_{pid}", f"astryx-fx-prod-{pid}"]
+        real_fx = f"astryx_fx_bcx_{pid}"                        # an OPEN fixture: a creator regression now
+        live_wp = f"astryx_wakeprobe_{pid}"                        # the declared class, creator ALIVE (this pid)
+        deadp = subprocess.Popen(["true"]); deadp.wait()
+        dead_wp = f"astryx_wakeprobe_{deadp.pid}"                  # the declared class, creator GONE (the 3730269 case)
+        planted = look + [real_fx, live_wp, dead_wp]
+        for d in planted:
+            adm.execute(sql.SQL("CREATE DATABASE {} ALLOW_CONNECTIONS false").format(sql.Identifier(d)))
+            made_dbs.append(d)
+        uh = bp.unhardened(adm, scope.role, names=planted)
+        check("F3: every decoy is INVISIBLE to a real run's scan (ALLOW_CONNECTIONS false), so it can't block one",
+              not any(d in bp.unhardened(adm, scope.role) for d in planted + [nul]), "")
+        check("BC-1: lookalike names ('_' as a wildcard would exempt them) are ACCUSED", all(d in uh for d in look), str(uh))
+        check("a2 BC: an open astryx_fx_ DB is ACCUSED (fixture_db is zero-window now, so it's a creator regression)",
+              real_fx in uh, str(uh))
+        check("W1: TRANSIENT is EMPTY (pinned; a re-added prefix is a decision, and pid-keyed liveness is unsound "
+              "under --unshare-pid)", bp.TRANSIENT == {}, str(bp.TRANSIENT))
+        check("W1: an open wakeprobe DB is ACCUSED like any other, whatever pid its name carries",
+              live_wp in uh and dead_wp in uh, str(uh))
+
+        class Flaky:                                                  # a1 BC-2: a member that errors is ACCUSED
+            def __init__(self, real, bad):
+                self.real, self.bad = real, bad
+            def execute(self, q, params=()):
+                if "has_database_privilege" in q and params and params[0] == self.bad:
+                    raise psycopg.errors.InvalidCatalogName("dropped mid-check")
+                return self.real.execute(q, params)
+        uh2 = bp.unhardened(Flaky(adm, nul), scope.role, names=[nul])
+        check("BC-2: a member whose check ERRORS (dropped mid-check) is ACCUSED as unevaluable, never skipped",
+              f"{nul} (unevaluable)" in uh2, str(uh2))
+        try:
+            bp.require_hardened(adm, "no_such_role_x", names=[live_wp, dead_wp])
+            refused, why = False, "did not refuse"
+        except bp.Refuse as e:
+            why = str(e)
+            refused = (f"{live_wp} (a test DB of LIVE pid {pid}" in why and f"{dead_wp} (a test DB of GONE pid" in why
+                       and bp.P0A.format(live_wp) not in why and bp.P0A.format(dead_wp) not in why)
+        check("refusal names each test DB's creator LIVE (retry) or GONE (debris), with NO REVOKE for either (#34713)",
+              refused, why[-300:])
+        msg = bp.refusal(["some_app_db", f"astryx_earprobe_{deadp.pid}", "astryx_prod_7"])
+        check("refusal: any other database gets seed's P0-a REVOKE; an unlisted digit-suffixed name never 'droppable'",
+              bp.P0A.format("some_app_db") in msg and bp.P0A.format("astryx_prod_7") in msg
+              and f"astryx_earprobe_{deadp.pid} (a test DB of GONE pid" in msg and "astryx_prod_7 (a test DB" not in msg, msg)
+        check("provenance never EXEMPTS: a LIVE oracle's open test DB is still accused",
+              live_wp in bp.unhardened(adm, scope.role, names=[live_wp]))
+
+        # ── the cached extension template (P0-c; keep set; its OWN namespace, exact shape: seed #34141) ────
+        # Every name lives under THIS oracle's pid-scoped prefix, so a concurrent oracle or a real run is never ours
+        # to evict, and ours never theirs. The planted names test each property the eviction must hold.
+        pid = os.getpid()
+        pfx = f"astryx_bctpl_o{pid}_"
+        mine = f"{pid:012x}"
+        stale = pfx + "f" * 12                                     # a stale sha: evicted
+        kept = pfx + "e" * 12                                      # a planted KEPT template: the arm can't be vacuous
+        longer = pfx + "c" * 12 + "_x"                             # not the exact shape: an unanchored `$` evicts it
+        foreign = "zz" + pfx + "b" * 12                            # contains ours: an unanchored `^` evicts it
+        for d in (stale, kept, longer, foreign):
+            adm.execute(sql.SQL("CREATE DATABASE {} ALLOW_CONNECTIONS false").format(sql.Identifier(d)))
+            made_dbs.append(d)
+        class Rec:                                                    # records the statements, delegates the rest
+            def __init__(self, real):
+                self.real, self.seq, self.info = real, [], real.info
+            def execute(self, q, params=None):
+                s = q.as_string(self.real) if hasattr(q, "as_string") else str(q)
+                if "DATABASE" in s:
+                    self.seq.append(s)
+                return self.real.execute(q, params) if params is not None else self.real.execute(q)
+        rec = Rec(adm)
+        tpl = bp.ensure_ext_template(rec, mine, keep={"e" * 12}, prefix=pfx, evict=False)
+        gone = lambda d: not adm.execute("SELECT 1 FROM pg_database WHERE datname=%s", (d,)).fetchone()
+        check("evict=False (another run is alive) evicts NOTHING, the stale sha included", not gone(stale), "")
+        bp.ensure_ext_template(adm, mine, keep={"e" * 12}, prefix=pfx)          # evict=True, template already built
+        tseq = [q for q in rec.seq if tpl in q]
+        check("R3: the template is born CLOSED, then REVOKE, then opened",
+              len(tseq) >= 3 and "ALLOW_CONNECTIONS false" in tseq[0] and tseq[1].startswith("REVOKE CONNECT")
+              and "ALLOW_CONNECTIONS true" in tseq[2], str(tseq[:3]))
+        made_dbs.append(tpl)
+        row = adm.execute("SELECT datistemplate, has_database_privilege('public', datname, 'CONNECT') "
+                          "FROM pg_database WHERE datname=%s", (tpl,)).fetchone()
+        check("the extension template is IS_TEMPLATE and grants no PUBLIC CONNECT", row == (True, False), str(row))
+        check("a stale-sha template NOT in keep is evicted", gone(stale), "")
+        check("eviction keeps the template in the keep set, and the one it just built", not gone(kept) and not gone(tpl))
+        check("eviction never touches a LONGER name than <prefix><12 hex> (anchored at the end)", not gone(longer))
+        check("eviction never touches a FOREIGN name that contains the prefix (anchored at the start)",
+              not gone(foreign))
+        bad = pfx + "."                                            # a regex metacharacter, inside OUR namespace, so a
+        made_dbs.append(bad + mine)                               # mutant that builds it anyway leaves reapable debris
+        try:
+            bp.ensure_ext_template(adm, mine, prefix=bad)
+            refused = False
+        except ValueError:
+            refused = True
+        check("a prefix outside [a-z0-9_] is refused (it must be literal inside the regex)", refused)
+        clone = f"{scope.role}_fx"
+        with psycopg.connect(scope.dsn(own), autocommit=True) as rc_:        # AS THE RUN ROLE (P0-c)
+            rc_.execute(sql.SQL("CREATE DATABASE {} TEMPLATE {}").format(sql.Identifier(clone), sql.Identifier(tpl)))
+        with psycopg.connect(scope.dsn(clone), autocommit=True) as fc:
+            exts = {r[0] for r in fc.execute("SELECT extname FROM pg_extension")}
+        check("P0-c: the NOSUPERUSER run role clones the template, and the clone HAS the extensions",
+              set(bp.TPL_EXTENSIONS) <= exts, str(sorted(exts)))
+
+        # ── AGE as the RUN ROLE (plan-4918 D1, a3 C1b): no LOAD; a role-level preload + ag_catalog USAGE ────────
+        import importlib.util
+        asrc = os.environ.get("AGELIB_SRC")                                # mutation_probe points this at a mutant
+        if asrc:
+            asp = importlib.util.spec_from_file_location("agelib_under_test", asrc)
+            agelib = importlib.util.module_from_spec(asp)
+            asp.loader.exec_module(agelib)
+        else:
+            from astryx.memory import agelib
+        class Spy:
+            def __init__(self, c):
+                self.c, self.q = c, []
+            def execute(self, q, *a):
+                self.q.append(str(q))
+                return self.c.execute(q, *a)
+        pre = adm.execute("SELECT coalesce(bool_or(x = 'session_preload_libraries=age'), false) FROM pg_db_role_setting s "
+                          "JOIN pg_roles r ON r.oid = s.setrole, unnest(s.setconfig) x "
+                          "WHERE r.rolname = %s AND s.setdatabase = 0", (scope.role,)).fetchone()[0]
+        check("D1: the run role carries a role-level AGE preload, set by the admin at open", pre)
+        def age_try(dsn_, graph):
+            with psycopg.connect(dsn_, autocommit=True) as ac:
+                spy = Spy(ac)
+                try:
+                    agelib.prepare(spy)
+                    ac.execute(f"SELECT create_graph('{graph}')")
+                    ac.execute(f"SELECT * FROM cypher('{graph}', $q$ CREATE (n:BcAge) RETURN n $q$) AS (n agtype)")
+                    n = ac.execute(f"SELECT * FROM cypher('{graph}', $q$ MATCH (n:BcAge) RETURN count(n) $q$) "
+                                   "AS (c agtype)").fetchone()[0]
+                    return str(n), spy.q
+                except psycopg.Error as e:
+                    return f"{type(e).__name__}: {str(e).splitlines()[0]}", spy.q
+        got, q = age_try(scope.dsn(clone), "bcage_run")
+        check("C1b: as the run role, prepare() issues NO LOAD and cypher works through the preload",
+              got == "1" and not any("LOAD" in x for x in q), f"{got} {q}")
+        got, q = age_try(make_conninfo(dsn, dbname=clone), "bcage_su")
+        check("C1b: as a superuser, prepare() still LOADs (prod unchanged), and cypher works without any preload",
+              got == "1" and any(x == "LOAD 'age'" for x in q), f"{got} {q}")
+
+        # ── fixture_db AS THE RUN ROLE: the template hook is what gives it the extensions (a2's fail-open) ───
+        froot = tmp / "froot"
+        (froot / "nucleus").mkdir(parents=True)
+        for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
+            (froot / _d).mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO / "src" / "astryx" / "sql" / "schema.sql", froot / "src" / "astryx" / "sql" / "schema.sql")
+        (froot / ".env").write_text(f"ASTRYX_DSN={scope.dsn(own)}\n")
+        def _private_trace(e):
+            # This child is RE-ROOTED at a fake repo (ASTRYX_SQLGUARD_ROOT), so its shim can't attribute a frame to
+            # the real one: under check.sh its probe SQL read BLIND as ?::? (seed #33150). Like test_sqlguard's
+            # _env, a re-rooted child traces into its OWN dir, never the estate's.
+            if "ASTRYX_SQLGUARD_DIR" in e:
+                d = tmp / f"trace-{len(list(tmp.glob('trace-*')))}"
+                d.mkdir()
+                e["ASTRYX_SQLGUARD_DIR"] = str(d)
+        probe_fx = ("import os,sys,json,psycopg,importlib.util; sys.path.insert(0, sys.argv[1])\n"
+                    "seq, real = [], psycopg.Connection.execute\n"      # the helper's statement sequence (a3 BC-5)
+                    "def spy(self, q, *a, **k):\n    s = str(q)\n    seq.append(s) if 'DATABASE' in s else None\n    return real(self, q, *a, **k)\n"
+                    "psycopg.Connection.execute = spy\n"
+                    "src = os.environ.get('SQLGUARD_FIXTURE_SRC')\n"      # mutation_probe swaps fixture.py here
+                    "if src:\n    sp = importlib.util.spec_from_file_location('fixture', src); fixture = importlib.util.module_from_spec(sp); sp.loader.exec_module(fixture)\n"
+                    "else:\n    from astryx.security.sqlguard import fixture\n"
+                    "with fixture.fixture_db() as fx:\n"
+                    "    c = psycopg.connect(fx['dsn'])\n"
+                    "    ex = sorted(r[0] for r in c.execute('select extname from pg_extension'))\n"
+                    "    pub = c.execute(\"select has_database_privilege('public', current_database(), 'CONNECT')\").fetchone()[0]\n"
+                    "    print(json.dumps({'exts': ex, 'public': pub, 'seq': seq})); c.close()")
+        def fx_exts(template):
+            e = {**os.environ, "ASTRYX_SQLGUARD_ROOT": str(froot), "ASTRYX_SQLGUARD_RUN": f"bco{os.getpid()}"}
+            _private_trace(e)
+            e.pop("ASTRYX_FIXTURE_TEMPLATE", None)
+            if template:
+                e["ASTRYX_FIXTURE_TEMPLATE"] = template
+            r = subprocess.run([sys.executable, "-c", probe_fx, str(REPO)], env=e, capture_output=True, text=True, timeout=120)
+            return r.stdout.strip().splitlines()[-1] if r.stdout.strip() else r.stderr[-300:]
+        import json as _json
+        def parsed(s):
+            try:
+                return _json.loads(s)
+            except ValueError:
+                return {"exts": [], "public": None, "raw": s}
+        bare, templ = parsed(fx_exts(None)), parsed(fx_exts(tpl))
+        check("fail-open reproduced: a NOSUPERUSER fixture WITHOUT the template lacks the extensions",
+              "vector" not in bare["exts"], str(bare))
+        check("fixture_db under the run role WITH ASTRYX_FIXTURE_TEMPLATE has vector/postgis/age",
+              all(x in templ["exts"] for x in ("vector", "postgis", "age")), str(templ))
+        # fixture_db's entry REAPS dead runs' databases first (DROP … IF EXISTS, steward/fixture-reaper), so BC-5's
+        # sequence is read from ITS CREATE on; anything before that must be a reaper drop and nothing else.
+        fxall = templ.get("seq", [])
+        fx_at = next((k for k, s in enumerate(fxall) if s.startswith("CREATE DATABASE")), 0)
+        fxseq = fxall[fx_at:]
+        seq = [s.split('"')[0].strip() for s in fxseq][:3]
+        check("BC-5: no window: CREATE … ALLOW_CONNECTIONS false, then REVOKE, then ALTER … ALLOW_CONNECTIONS true",
+              len(seq) == 3 and seq[0].startswith("CREATE DATABASE") and "ALLOW_CONNECTIONS false" in fxseq[0]
+              and seq[1].startswith("REVOKE CONNECT") and "ALLOW_CONNECTIONS true" in fxseq[2]
+              and all(s.startswith("DROP DATABASE IF EXISTS") for s in fxall[:fx_at]), str(fxall))
+        check("BC-4: fixture_db REVOKEs PUBLIC CONNECT at creation, verified by the SERVER (not datacl)",
+              templ["public"] is False and bare["public"] is False, f"{bare.get('public')} {templ.get('public')}")
+
+        # ── fixture.url() over a UNIX SOCKET: the sandbox's only route (first e2e #33638, sqlguard P1's asyncpg) ──
+        import asyncio
+        import importlib.util
+        fsrc = os.environ.get("SQLGUARD_FIXTURE_SRC")
+        if fsrc:
+            fsp = importlib.util.spec_from_file_location("fixture_under_test", fsrc)
+            fxmod = importlib.util.module_from_spec(fsp)
+            fsp.loader.exec_module(fxmod)
+        else:
+            from astryx.security.sqlguard import fixture as fxmod
+        from devtools import branch_check_sandbox as sbx
+        sdir = tmp / "sock"
+        sdir.mkdir()
+        sock_url = fxmod.url(scope.dsn(own, socket_dir=sdir))
+        check("url(): a socket directory rides in ?host=, never in the authority",
+              "@/" + own + "?host=" in sock_url and str(sdir) not in sock_url.split("?")[0], sock_url.split("@")[-1])
+        try:
+            import asyncpg
+        except ModuleNotFoundError:
+            asyncpg = None
+        if asyncpg is None:
+            print("  NOTE  asyncpg absent: the socket-connect arm didn't run")
+        else:
+            async def _via_socket():
+                con = await asyncpg.connect(sock_url, timeout=10)
+                try:
+                    return await con.fetchval("SELECT current_database()")
+                finally:
+                    await con.close()
+            with sbx.PgBridge(sdir):
+                try:
+                    got = asyncio.run(_via_socket())
+                except Exception as e:                                  # the arm's verdict, reported by name
+                    got = f"{type(e).__name__}: {e}"
+            check("asyncpg connects through the bridge SOCKET with url()'s URL", got == own, str(got)[:200])
+
+        # ── FixtureUnavailable: the ENVIRONMENT class only; a broken schema.sql propagates as itself (a1 #31528) ──
+        probe_ex = ("import os,sys,importlib.util; sys.path.insert(0, sys.argv[1])\n"
+                    "src = os.environ.get('SQLGUARD_FIXTURE_SRC')\n"
+                    "if src:\n    sp = importlib.util.spec_from_file_location('fixture', src); fixture = importlib.util.module_from_spec(sp); sp.loader.exec_module(fixture)\n"
+                    "else:\n    from astryx.security.sqlguard import fixture\n"
+                    "try:\n    with fixture.fixture_db() as fx: print('OPENED')\n"
+                    "except fixture.FixtureUnavailable: print('FixtureUnavailable')\n"
+                    "except Exception as e: print(type(e).__module__ + '.' + type(e).__name__)")
+        def fx_outcome(root):
+            e = {**os.environ, "ASTRYX_SQLGUARD_ROOT": str(root), "ASTRYX_SQLGUARD_RUN": f"bcx{os.getpid()}"}
+            _private_trace(e)
+            r = subprocess.run([sys.executable, "-c", probe_ex, str(REPO)], env=e, capture_output=True, text=True,
+                               timeout=120)
+            return (r.stdout.strip().splitlines() or [r.stderr[-200:]])[-1]
+        dead = tmp / "dead"
+        (dead / "nucleus").mkdir(parents=True)
+        for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
+            (dead / _d).mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO / "src" / "astryx" / "sql" / "schema.sql", dead / "src" / "astryx" / "sql" / "schema.sql")
+        (dead / ".env").write_text("ASTRYX_DSN=postgresql://nobody@127.0.0.1:1/x?connect_timeout=2\n")
+        out = fx_outcome(dead)
+        check("FixtureUnavailable: an unreachable server is the ENVIRONMENT class", out == "FixtureUnavailable", out)
+        broken = tmp / "broken"
+        (broken / "nucleus").mkdir(parents=True)
+        for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
+            (broken / _d).mkdir(parents=True, exist_ok=True)
+        (broken / "src" / "astryx" / "sql" / "schema.sql").write_text("CREATE TABLEE nope (x int);\n")
+        (broken / ".env").write_text(f"ASTRYX_DSN={scope.dsn(own)}\n")
+        out = fx_outcome(broken)
+        check("a BROKEN schema.sql propagates as itself (a psycopg SyntaxError), never as FixtureUnavailable",
+              out.endswith("SyntaxError") and "FixtureUnavailable" not in out, out)
+
+        # ── private repo, estate copy, secrets, env ──────────────────────────────────────────────────────
+        live = synthetic_live(tmp)
+        before = git(live, "status", "--porcelain", "--ignored")
+        main_sha = git(live, "rev-parse", "HEAD").strip()
+        # a BRANCH with history: a credential added then deleted (the tree is clean, the history isn't), and one
+        # pasted into a commit MESSAGE (a3 C2b); plus what must never arrive: another branch, and a dangling blob
+        git(live, "switch", "-q", "-c", "feature")
+        (live / "tmp_cfg.py").write_text(f"PW = '{FAKE}'\n")
+        git(live, "add", "tmp_cfg.py")
+        git(live, "commit", "-q", "-m", "wip")
+        git(live, "rm", "-q", "tmp_cfg.py")
+        git(live, "commit", "-q", "-m", "remove it")
+        (live / "code.py").write_text("x = 2\n")
+        git(live, "commit", "-q", "-am", f"fixed the DSN, it was postgresql://u:{FAKE}@h/db")
+        feat = git(live, "rev-parse", "HEAD").strip()
+        git(live, "switch", "-q", "-c", "other", main_sha)
+        (live / "other.py").write_text("o = 1\n")
+        git(live, "add", "other.py")
+        git(live, "commit", "-q", "-m", "someone else's unpushed work")
+        other = git(live, "rev-parse", "HEAD").strip()
+        blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=live, input=f"k={FAKE}\n",
+                              capture_output=True, text=True, check=True).stdout.strip()   # dangling: no ref reaches it
+        git(live, "switch", "-q", "main")
+        before = git(live, "status", "--porcelain", "--ignored")
+        repo = bp.private_repo(live, feat, tmp / "run" / "repo", main_sha=main_sha)
+        has = lambda o: subprocess.run(["git", "cat-file", "-e", o], cwd=repo, capture_output=True).returncode == 0
+        refs = git(repo, "for-each-ref", "--format=%(refname)").split()
+        check("private repo: the side's sha checked out WITH its history, and `main` resolves (D2)",
+              git(repo, "rev-parse", "HEAD").strip() == feat and git(repo, "rev-parse", "main").strip() == main_sha
+              and git(repo, "rev-list", "--count", "HEAD").strip() == "4" and (repo / "code.py").is_file()
+              and git(live, "status", "--porcelain", "--ignored") == before, str(refs))
+        check("C2a: exactly two refs arrive; another live branch doesn't", sorted(refs) == [
+              "refs/heads/branch_check", "refs/heads/main"] and not has(other), str(refs))
+        check("C2a: a DANGLING object carrying a credential in the live store never reaches the clone", not has(blob))
+        secrets_ = bp.secret_set(live)
+        hh = bp.history_secret_hits(repo, secrets_)
+        check("D2: a credential added then DELETED on the branch is found in the history (the tree scan can't)",
+              any(h.endswith("(blob: tmp_cfg.py)") for h in hh) and not any(FAKE in h for h in hh), str(hh))
+        check("C2b: a credential pasted into a commit MESSAGE is found (-S alone never sees it)",
+              any(h.endswith("(commit)") for h in hh) and not any(FAKE in h for h in hh), str(hh))
+        # a3 E1 #34564: an EVIL MERGE. The credential enters in a merge RESOLUTION (in neither parent) and a second
+        # merge removes it: `git log -p` shows no diff for either merge, and the tip is clean, yet
+        # `git show <merge>:e.py` still reads it inside the sandbox.
+        git(live, "switch", "-q", "-c", "evil_a", main_sha)
+        (live / "e.py").write_text("a = 1\n")
+        git(live, "add", "e.py")
+        git(live, "commit", "-q", "-m", "a1")
+        git(live, "switch", "-q", "-c", "evil_b", main_sha)
+        (live / "e.py").write_text("a = 2\n")
+        git(live, "add", "e.py")
+        git(live, "commit", "-q", "-m", "b1")
+        subprocess.run(["git", "merge", "-q", "evil_a"], cwd=live, capture_output=True)        # conflicts, by design
+        (live / "e.py").write_text(f"a = '{FAKE}'\n")
+        git(live, "add", "e.py")
+        git(live, "commit", "-q", "--no-edit")
+        git(live, "switch", "-q", "-c", "evil_c", "evil_a")
+        (live / "e.py").write_text("a = 3\n")
+        git(live, "commit", "-q", "-am", "c1")
+        git(live, "switch", "-q", "evil_b")
+        subprocess.run(["git", "merge", "-q", "evil_c"], cwd=live, capture_output=True)
+        (live / "e.py").write_text("a = 4\n")
+        git(live, "add", "e.py")
+        git(live, "commit", "-q", "--no-edit")
+        evil = git(live, "rev-parse", "HEAD").strip()
+        lp = subprocess.run(["git", "log", "-p", evil], cwd=live, capture_output=True, text=True).stdout
+        git(live, "switch", "-q", "main")
+        er = bp.private_repo(live, evil, tmp / "run" / "evil", main_sha=main_sha)
+        eh = bp.history_secret_hits(er, secrets_)
+        check("E1 control: `git log -p` never shows the evil merge's line, and the tip doesn't carry it",
+              FAKE not in lp and FAKE not in (er / "e.py").read_text())
+        check("E1: a credential introduced by a MERGE resolution and removed by a second merge is found",
+              any(h.endswith("(blob: e.py)") for h in eh) and not any(FAKE in h for h in eh), str(eh))
+        clean = bp.private_repo(live, main_sha, tmp / "run" / "clean", main_sha=main_sha)
+        check("…and a history with no credential has no hits", bp.history_secret_hits(clean, secrets_) == [])
+        vals = {s.value for s in secrets_}
+        check("secret_set comes from astryx.security.secretset: the DSN password, the API key and AUTOREMOTE's key= are secret",
+              FAKE in vals and f"sk-{FAKE}" in vals and ARKEY in vals and "org.test" not in vals, "")
+        rep = bp.copy_estate(live, repo, secrets_)
+        check("estate: a plain gitignored file is copied", (repo / "triggers/t/plain.py").is_file(), str(rep))
+        check("estate: a file carrying a secret is NOT copied, and is listed",
+              not (repo / "triggers/t/leaky.py").exists() and "triggers/t/leaky.py" in rep["skipped_credential"],
+              str(rep))
+        check("estate: .env is never copied (estate_paths excludes it)", not (repo / ".env").exists(), "")
+        check("estate: the human-personal tier is LINKED to live, never copied into the run",
+              (repo / "tier").is_symlink() and (repo / "tier").resolve() == (live / "tier").resolve()
+              and "tier" in rep["linked_private"], str(rep.get("linked_private")))
+        (repo / "leak.py").write_text(f"k = '{FAKE}'\n")
+        git(repo, "add", "leak.py")
+        git(repo, "commit", "-q", "-m", "a branch that commits a credential")
+        (repo / "ar.py").write_text(f"URL = 'https://ar.example/x?key={ARKEY}'\n")
+        git(repo, "add", "ar.py")
+        git(repo, "commit", "-q", "-m", "a branch that commits the AUTOREMOTE key")
+        hits = bp.tracked_secret_hits(repo, secrets_)
+        check("R2: a branch committing the AUTOREMOTE key= value is REFUSED (file:line, value never printed)",
+              "ar.py:1" in hits and not any(ARKEY in h for h in hits), str(hits))
+        check("branch tree: a committed credential is found as file:line, the value never in the output (a3 BC-2)",
+              "leak.py:1" in hits and not any(FAKE in h for h in hits), str(hits))
+        envp = bp.write_env(repo, "postgresql://run@127.0.0.1/x", live)
+        text = envp.read_text()
+        from astryx.security import secretset
+        check("BC-2: ENV_ALLOW is EMPTY (measured, #34686); a key re-enters only with a RED-without/GREEN-with proof",
+              bp.ENV_ALLOW == (), str(bp.ENV_ALLOW))
+        check("generated .env: the run DSN ONLY (no live key, not even a non-secret ASTRYX_ORG), mode 600",
+              text.splitlines() == ["ASTRYX_DSN=postgresql://run@127.0.0.1/x"] and oct(envp.stat().st_mode)[-3:] == "600",
+              str([l.split("=", 1)[0] for l in text.splitlines()]))
+        withnode = bp.write_env(repo, "postgresql://run@127.0.0.1/x", live, node=Path("/r/node")).read_text()
+        check("…plus the RESOLVED node when given (a derived path, not a live value)",
+              withnode.splitlines() == ["ASTRYX_DSN=postgresql://run@127.0.0.1/x", "ASTRYX_NODE=/r/node"],
+              str([l.split("=", 1)[0] for l in withnode.splitlines()]))
+        envp = bp.write_env(repo, "postgresql://run@127.0.0.1/x", live)
+        text = envp.read_text()
+        check("R2: the generated .env holds NOTHING secretset flags (AUTOREMOTE's key= included)",
+              secretset.scan(text, secrets_) == {} and ARKEY not in text, str(secretset.scan(text, secrets_)))
+        # a SYNTHETIC DSN with a fake password: the live DSN is password-less since plan-5497 S1c (the password lives
+        # only in ~/.pgpass), and an arm bound to today's data went vacuous the day that landed
+        fake_dsn = f"postgresql://u:{FAKE}@127.0.0.1:5432/db"
+        ci, env = bp._argv_safe(fake_dsn, "x")
+        check("pg_dump/pg_restore argv carries no password (it travels in the child env only)",
+              FAKE not in ci and env.get("PGPASSWORD") == FAKE and "dbname=x" in ci, ci)
+
+    finally:
+        if scope:
+            scope.close()
+        for d in made_dbs:
+            if not d.startswith(bp.TPL_PREFIX) or TEST_NAME(d):          # never a real cached template
+                if adm.execute("SELECT 1 FROM pg_database WHERE datname=%s", (d,)).fetchone():
+                    adm.execute(sql.SQL("ALTER DATABASE {} IS_TEMPLATE false").format(sql.Identifier(d)))
+                    adm.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(d)))
+        shutil.rmtree(tmp, ignore_errors=True)
+        adm.close()
+    print(f"\n{'FAIL' if fails else 'PASS'}: branch_check prep ({len(fails)} failing)")
+    return 1 if fails else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -50,8 +50,9 @@ hands back nothing to read, this exits 77 (SKIP) rather than reporting the absen
 wrong deliveries as a pass. An unread channel and a correct one look identical to a
 test that only asserts what did NOT arrive.
 
-Run: venv/bin/python tests/test_wake_recovery.py   (wire into nucleus/check.sh)
+Run: venv/bin/python tests/test_wake_recovery.py   (wire into devtools/check.sh)
 """
+from _stage_channel import stage_server  # noqa: E402
 import json
 import os
 import re
@@ -100,7 +101,7 @@ def dsn() -> str | None:
 
 def node_bin() -> str | None:
     """The node the org actually spawns agents with, not whatever is first on PATH."""
-    spawn = REPO / "nucleus" / "spawn.sh"
+    spawn = REPO / "scripts" / "spawn.sh"
     if spawn.exists():
         m = re.search(r"^NODE=(\S+)", spawn.read_text(), re.M)
         if m and Path(m.group(1)).is_file():
@@ -113,15 +114,15 @@ if not SERVER.exists():
     skip("channel/server.mjs is absent — nothing to test")
 NODE = node_bin()
 if not NODE:
-    skip("no node binary (nucleus/spawn.sh NODE= is absent and node is not on PATH)")
+    skip("no node binary (scripts/spawn.sh NODE= is absent and node is not on PATH)")
 if not (REPO / "channel" / "node_modules" / "pg").is_dir():
     skip("channel/node_modules/pg is absent (a fresh clone: run npm install in channel/)")
 ADMIN_DSN = dsn()
 if not ADMIN_DSN:
     skip("no ASTRYX_DSN (env or .env) — no database to build a fixture in")
-SCHEMA = REPO / "nucleus" / "schema.sql"
+SCHEMA = REPO / "src" / "astryx" / "sql" / "schema.sql"
 if not SCHEMA.exists():
-    skip("nucleus/schema.sql is absent — cannot build a throwaway database")
+    skip("src/astryx/sql/schema.sql is absent — cannot build a throwaway database")
 
 try:
     admin = psycopg.connect(ADMIN_DSN, autocommit=True, connect_timeout=5)
@@ -180,8 +181,7 @@ def start_server(tag: str, **env_extra) -> tuple[subprocess.Popen, Path]:
     """
     d = stage / tag
     (d / "channel").mkdir(parents=True)
-    shutil.copy2(SERVER, d / "channel" / "server.mjs")
-    (d / "channel" / "node_modules").symlink_to(REPO / "channel" / "node_modules")
+    stage_server(d / "channel", SERVER)          # server.mjs + its sibling modules (tests/_stage_channel.py)
     (d / ".env").write_text(f"ASTRYX_DSN={PROBE_DSN}\n")
     env = {**os.environ, "ASTRYX_AGENT": PROBE_AGENT, "ASTRYX_DSN": PROBE_DSN,
            "ASTRYX_SUBS_REFRESH_MS": "60000", **env_extra}
@@ -226,7 +226,14 @@ def check(name: str, ok: bool, detail: str) -> None:
 
 try:
     # ------------------------------------------------------ throwaway substrate
-    admin.execute(f'CREATE DATABASE "{PROBE_DB}"')
+    # zero-window (plan-4918 a3 #32897 W1): born CLOSED, PUBLIC CONNECT revoked, then opened, so no concurrent
+    # branch_check run role can CONNECT (and NOTIFY into this wake test) in the gap. This is what let branch_check's
+    # transient-exemption manifest go EMPTY.
+    admin.execute(f'CREATE DATABASE "{PROBE_DB}" ALLOW_CONNECTIONS false')
+    admin.execute(f'REVOKE CONNECT ON DATABASE "{PROBE_DB}" FROM PUBLIC')
+    admin.execute(f'ALTER DATABASE "{PROBE_DB}" ALLOW_CONNECTIONS true')
+    if admin.execute("SELECT has_database_privilege('public', %s, 'CONNECT')", (PROBE_DB,)).fetchone()[0]:
+        failures.append("the probe DB grants PUBLIC CONNECT after its zero-window creation")
     subprocess.run([sys.executable, "-c", "import sys,psycopg;"
                     "psycopg.connect(sys.argv[1],autocommit=True).execute(open(sys.argv[2]).read())",
                     PROBE_DSN, str(SCHEMA)], check=True, capture_output=True, timeout=120)

@@ -34,6 +34,7 @@ import asyncio
 import json
 import os
 import re
+import secrets
 import time
 from pathlib import Path
 
@@ -122,25 +123,58 @@ def address_agent(text: str, default: str) -> tuple[str, str]:
     return default, text
 
 
+# The human's inbound that ANSWERS an agent: a poll vote, the one structured answer bridges issue
+# ids for (live inbound intents: chat, poll, reaction; there's no inbound 'permission', since an
+# answer to a permission prompt arrives as chat). NAMED POSITIVELY, because the failure directions
+# differ. An intent that wrongly counts can steal the next reply: a REACTION can target any old
+# message (abstractor-2 #33265). One that wrongly doesn't count falls back to the last agent
+# message the human saw, which is usually the agent that asked anyway.
+ANSWER_INTENTS = frozenset({"poll"})
+
+
 async def route_target(pool, thread: str, text: str, default: str) -> tuple[str, str]:
     """Resolve which agent an inbound message routes to, and clean the text.
 
-    The conversation is sticky: an @mention wins for this message and — because it
-    becomes the message's to_agent on the wire — sets the thread's target going
-    forward. With no mention, the message continues to the LAST agent addressed on
-    this thread, so a chat stays with whoever you last tagged until you tag someone
-    else. A fresh thread falls back to `default` (the surface's own agent). The wire
-    is the state: "last tagged" is just the previous inbound message's to_agent.
-    Standard on every channel."""
+    PRECEDENCE (seed #33255/#33256/#33262):
+      1. an explicit @mention on THIS message, always. It routes only the message that
+         carries it; it does NOT stick;
+      2. otherwise the newest thing an agent put in front of the human, which is either
+           - an agent's message TO THE HUMAN (ANY intent: chat, poll, receipt, permission…),
+             counted as its from_agent, or
+           - the human's ANSWER to an agent (ANSWER_INTENTS: a poll vote), counted as its
+             to_agent. Free-text chat and reactions (which can point at any old message) don't
+             count.
+         A bare reply answers the most recent agent message the human saw: that's how people
+         reply in chat. The human's own free-text chats don't count, so a past @mention can't
+         pull the next plain reply away from whoever spoke to them since;
+      3. otherwise `default` (the surface's own agent).
+    "To the human" means to a non-agent: the registry of agents is the one authority, so
+    'owner' and every wa-/dc-/tg- person qualify with no name typed here. That's also what
+    lets an agent that STARTS a thread get the first reply.
+
+    What the human SAW is the rule, not an intent allowlist (abstractor-2 #33257): a receipt
+    or permission prompt the bridge renders is the agent speaking, as far as the human can
+    tell. An agent-to-AGENT handoff on the thread (seed → canopus) is not "the conversation",
+    so it never steals the human's next reply. Names with no charter (pulse) are skipped. The
+    wire is the state."""
     agent, cleaned = address_agent(text, "")
-    if agent:                                    # explicit @mention on this message
+    if agent:                                    # 1. explicit @mention on this message
         return agent, cleaned
-    row = await pool.fetchrow(
-        "SELECT to_agent FROM messages WHERE thread=$1 AND intent='chat' "
-        "AND from_org<>'local' AND to_org='local' ORDER BY id DESC LIMIT 1", thread)
-    if row and agent_exists(row["to_agent"]):
-        return row["to_agent"], text
-    return default, text
+    rows = await pool.fetch(
+        "SELECT from_org, from_agent, to_agent, intent FROM messages WHERE thread=$1 "
+        "ORDER BY id DESC LIMIT 50", thread)
+    for r in rows:                               # 2. newest first
+        if r["from_org"] != "local":             # the human's own message: only an ANSWER counts
+            if r["intent"] not in ANSWER_INTENTS:  # chat (a past @mention) / a reaction: no
+                continue
+            who = r["to_agent"]
+        elif not agent_exists(r["to_agent"]):    # an agent speaking TO the human
+            who = r["from_agent"]
+        else:                                    # agent-to-agent: not the conversation
+            continue
+        if agent_exists(who):
+            return who, text
+    return default, text                         # 3.
 
 
 # ---------------------------------------------------------------------- embeds
@@ -175,15 +209,59 @@ def split_polls(text: str, max_options: int = 12) -> tuple[str, list[tuple[str, 
 
 # ----------------------------------------------------------------------- wire
 async def wire_insert(pool, from_agent: str, from_org: str, to_agent: str,
-                      thread: str | None, intent: str, body: str, meta: dict | None = None):
+                      thread: str | None, intent: str, body: str, meta: dict | None = None,
+                      route: dict | None = None, said: str | None = None):
     # `meta` carries INBOUND context the wire row otherwise loses: the real sender identity
     # (jid/phone/push_name — from_agent collapses a trusted sender to 'owner') and reply/quote
     # context (which message it answered, + that message's body). Stored in the `delivery`
     # jsonb, which is unused on an inbound row. server.mjs surfaces it on the <channel> tag.
+    #
+    # `route` (plan-9139 S1b-2b): the inbound chat sites pass the route the message arrived on. A route that
+    # DECLARES a tier, or anything that looks like one, never reaches the raw row: see _tier_ingress. `said` is the text
+    # as the human typed it, before route_target stripped an @mention: a tier route stores THAT (a4 #53081), so its
+    # member sees who the owner tried to address.
+    if route is not None:
+        from astryx.security import release as R
+        try:
+            tiered = R.route_tier(route) is not None
+        except R.GrantError:
+            tiered = True                      # a malformed declaration is judged (and refused) by the door
+        if tiered:
+            text = body if said is None else said
+            return await _tier_ingress(pool, R, from_agent, from_org, thread, intent, text, meta, route)
     await pool.execute(
         "INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body, delivery) "
         "VALUES ($1,$2,$3,$4,$5,$6,$7)", from_agent, from_org, to_agent, thread, intent, body,
         json.dumps(meta) if meta else None)
+
+
+# identity fields an inbound row carries today on every owner message; anything else in meta (the quoted reply's
+# BODY, above all) is content, so on a tier route it travels inside the stored body, never in `delivery`
+_INGRESS_META = ("sender_jid", "phone", "push_name", "sender_id", "username", "display_name", "reply_to_id",
+                 "reply_to_sender_jid")
+
+
+async def _tier_ingress(pool, R, from_agent, from_org, thread, intent, body, meta, route):
+    """An inbound message on a tier route (#46033 item 4). The row goes to the ROUTE's agent only, never to an
+    @mention's (a pointer there is unreadable, and the private surface has one reader); its body is a size marker;
+    delivery carries the pointer, keyed body MAC and tier, plus the identity fields. A quoted reply's text rides in
+    the stored body. Any refusal (a malformed or undeclared tier, an open route, a non-owner audience, no key)
+    stores NOTHING and writes a metadata-only WITHHELD row, so the owner's message is never silently lost."""
+    meta = dict(meta or {})
+    quoted = meta.pop("reply_to_body", "") or ""
+    stored = f"{body}\n[in reply to: {quoted}]" if quoted else body
+    keep = {k: meta[k] for k in _INGRESS_META if k in meta}
+    try:
+        marker, extra = R.ingress(from_org, route, stored, R.mac_key(), R.TierStore())
+        out, delivery = marker, {**keep, **extra}
+    except R.Refused as e:
+        print(f"tier ingress REFUSED on {thread}: {e} (the message was withheld; nothing stored)", flush=True)
+        out = "[tier-routed message withheld: " + type(e).__name__ + "]"
+        delivery = {**keep, "ingress_withheld": str(e)[:200]}
+    await pool.execute(
+        "INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body, delivery) "
+        "VALUES ($1,$2,$3,$4,$5,$6,$7)", from_agent, from_org, route.get("agent"), thread, intent, out,
+        json.dumps(delivery))
 
 
 async def resolve_quoted_body(pool, rid) -> str:
@@ -248,6 +326,7 @@ class Outcome:
     def __init__(self):
         self.message_id: str | None = None
         self._entries: list[tuple[bool, str]] = []   # (is_failure, text), in order
+        self._kinds: list[str] = []                  # each FAILURE as "part: ExceptionType" (no platform text)
 
     def sent(self, message_id=None) -> None:
         """A part succeeded; keep the first real platform id (the text's) for the row."""
@@ -257,6 +336,7 @@ class Outcome:
     def failed(self, part: str, detail) -> None:
         """A part FAILED — something was attempted and did not arrive. Fails the row."""
         self._entries.append((True, f"{part}: {self._say(detail)}"[:200]))
+        self._kinds.append(f"{part}: {type(detail).__name__ if isinstance(detail, BaseException) else 'failed'}")
 
     def noted(self, part: str, detail) -> None:
         """A part was DELIBERATELY NOT ATTEMPTED — reported, but does NOT fail the row.
@@ -291,10 +371,76 @@ class Outcome:
     def status(self) -> str:
         return "delivered" if self.ok else "dead"
 
-    def receipt(self, handle: str, rendered: str | None) -> str:
-        return json.dumps({"ok": self.ok, "handle": handle,
-                           "message_id": self.message_id,
-                           "rendered": rendered, "error": self.error})
+    @property
+    def classified(self) -> str | None:
+        """`error` cut to each failure's PART and exception TYPE, recorded when it failed: never the platform's text.
+        A failed released send's str(e) is the CLI's or the API's own words, which may name the chat (a4 #53846).
+        Notes are dropped: they say what was not attempted, and their detail is free text too."""
+        return "; ".join(self._kinds)[:500] or None
+
+    def receipt(self, handle: str, rendered: str | None, door: str | None = None, classified: bool = False) -> str:
+        # `door` (plan-9139 S1c): how the row passed the door. "org-unstamped" is the CENSUS mark (a delivered row
+        # no stamp covered, to a declared org route); "released" a stamped row. Additive: the five keys are unchanged.
+        # `classified` (a released row): `error` carries part and exception type only, never the platform's text.
+        r = {"ok": self.ok, "handle": handle, "message_id": self.message_id, "rendered": rendered,
+             "error": self.classified if classified else self.error}
+        if door:
+            r["door"] = door
+        return json.dumps(r)
+
+
+# ----------------------------------------------------------------------- the door
+# plan-9139 S1c (a4 #45091): every chat bridge's deliver() asks the door FIRST. A row carrying delivery.release is
+# delivered only through release.door_stamped (its stamp names the route; the body comes from the tier store); any
+# other row only to a DECLARED ORG ROUTE of the bridge (release.door_org), and the receipt carries the census mark.
+# Everything else is REFUSED: status 'refused' (terminal: outbound_stuck watches it, nothing re-tries it), the reason
+# in delivery.door_refused. The release key is read only on the stamped branch: an unstamped row needs none.
+def _release():
+    from astryx.security import release as R
+    return R
+
+
+def released(row) -> dict | None:
+    return _release().released(row)
+
+
+async def door_refuse(pool, row, channel: str, reason) -> None:
+    why = (f"{type(reason).__name__}: {reason}" if isinstance(reason, BaseException) else str(reason))[:200]
+    print(f"{channel}: the door REFUSED outbound msg {row['id']}: {why}", flush=True)
+    await pool.execute(
+        "UPDATE messages SET status='refused', delivered_at=now(), "
+        "delivery = coalesce(delivery, '{}'::jsonb) || $2::jsonb WHERE id=$1 AND status='pending'",
+        row["id"], json.dumps({"ok": False, "handle": f"{channel}:door", "message_id": None, "rendered": None,
+                               "error": None, "door_refused": why}))
+
+
+async def door_open(pool, row, channel: str, routes) -> tuple[dict, str] | None:
+    """A RELEASED row: (its route, the resolved body) when this bridge delivers it. None when it is another bridge's
+    (left pending, untouched) or when the door refused it (status 'refused' written). Never raises."""
+    R = _release()
+    if (R.released(row) or {}).get("channel") != channel:
+        return None                                # another bridge's release: its own consumer delivers it
+    try:
+        return R.door_stamped(row, channel, routes, key=R.mac_key(), store=R.TierStore())
+    except Exception as e:                         # noqa: BLE001 — Refused, or a store that can't be read: refuse
+        await door_refuse(pool, row, channel, e if isinstance(e, R.Refused) else type(e).__name__)
+        return None
+
+
+async def door_org_ok(pool, row, channel: str, routes, chat) -> bool:
+    """An UNSTAMPED row: True when `chat` is a declared org route of this bridge; else the row is refused."""
+    R = _release()
+    try:
+        R.door_org(channel, chat, routes)
+        return True
+    except R.Refused as e:
+        await door_refuse(pool, row, channel, e)
+        return False
+
+
+def live_steps_ok(route) -> bool:
+    return _release().live_steps_ok(route)
+
 
 
 async def record_poll(pool, msg_id: str, chat: str, agent: str | None,
@@ -340,9 +486,13 @@ def vote_body(question: str, changes: list[str], aggregates: dict) -> str:
 
 
 # ----------------------------------------------------------------------- media
-def media_path(prefix: str, name: str) -> Path:
-    MEDIA_DIR.mkdir(exist_ok=True)
-    return MEDIA_DIR / f"{prefix}-{int(time.time())}-{name}"
+def media_path(prefix: str, name: str, sub: str | None = None) -> Path:
+    """Where an inbound file lands. The name carries a RANDOM token, never a timestamp: a guessable
+    name lets anyone who can make the server read a path enumerate other people's files (steward
+    #37433). `sub` puts it in its uploader's own folder (canvas: media/cv/<wire handle>/)."""
+    d = MEDIA_DIR / sub if sub else MEDIA_DIR
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"{prefix}-{secrets.token_hex(12)}-{name}"
 
 
 async def describe_media(path: Path | str, kind: str = "") -> str:
@@ -359,17 +509,23 @@ async def describe_media(path: Path | str, kind: str = "") -> str:
 
 
 # -------------------------------------------------------------------- progress
-async def step_line(pool, step_id: int, kind: str, agent: str = "") -> str | None:
+async def step_line(pool, step_id: int, kind: str, *, agent: str, label: str = "") -> str | None:
     """The steps doorbell payload is {id, agent, kind} only — fetch the content.
-    Pass agent to label the line (useful on group-chat surfaces)."""
-    if kind not in MARK:
+
+    `agent` is the payload's agent and is REQUIRED: the row must belong to it, so a payload
+    whose id names another agent's step resolves to nothing (defense in depth, a4 #22117).
+    It is deliberately separate from `label`, the optional display prefix (useful on
+    group-chat surfaces), because telegram/discord show no label, and matching on their ""
+    would be matching on nothing. An empty agent never matches."""
+    if kind not in MARK or not agent:
         return None
-    row = await pool.fetchrow("SELECT content FROM steps WHERE id=$1", step_id)
+    row = await pool.fetchrow("SELECT content FROM steps WHERE id=$1 AND agent=$2",
+                              step_id, agent)
     if not row:
         return None
     content = "writing a reply" if kind == "response" else row["content"]
-    label = f"{agent} · " if agent else ""
-    return f"{MARK[kind]} {label}{content[:140]}"
+    prefix = f"{label} · " if label else ""
+    return f"{MARK[kind]} {prefix}{content[:140]}"
 
 
 # -------------------------------------------------------------------- doorbell

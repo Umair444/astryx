@@ -6,10 +6,12 @@ import SqlView from './SqlView'
    The split drags to resize, and either half can be hidden entirely. */
 export default function SystemView() {
   const ref = useRef<HTMLDivElement>(null)
-  const [topH, setTopH] = useState(() => +(localStorage.getItem('sys_topH') || 320))
+  // the monitor half opens tall enough for its header and vitals (a new key: the old 320px default
+  // predates the header and would crop it)
+  const [topH, setTopH] = useState(() => +(localStorage.getItem('sys_monH') || Math.round(window.innerHeight * 0.62)))
   const [sqlHidden, setSqlHidden] = useState(() => localStorage.getItem('sys_sqlHidden') === '1')
   const [monHidden, setMonHidden] = useState(() => localStorage.getItem('sys_monHidden') === '1')
-  useEffect(() => { localStorage.setItem('sys_topH', String(topH)) }, [topH])
+  useEffect(() => { localStorage.setItem('sys_monH', String(topH)) }, [topH])
   useEffect(() => { localStorage.setItem('sys_sqlHidden', sqlHidden ? '1' : '0') }, [sqlHidden])
   useEffect(() => { localStorage.setItem('sys_monHidden', monHidden ? '1' : '0') }, [monHidden])
 
@@ -37,12 +39,12 @@ export default function SystemView() {
       {monHidden ? (
         <button
           onClick={() => setMonHidden(false)}
-          className="shrink-0 h-6 border-b border-line text-[10px] uppercase tracking-[0.2em] text-ink-mute hover:text-cyan-soft"
+          className="shrink-0 h-8 border-b border-line text-[10.5px] uppercase tracking-[0.2em] text-ink-mute hover:text-ink hover:bg-deck-3/40 transition-colors"
         >
-          ▾ show monitor
+          ▾ show the monitor
         </button>
       ) : (
-        <div className="min-h-0 border-b border-line" style={sqlHidden ? { flex: 1 } : { height: topH }}>
+        <div className="min-h-0" style={sqlHidden ? { flex: 1 } : { height: topH }}>
           <MonitorView />
         </div>
       )}
@@ -50,13 +52,16 @@ export default function SystemView() {
       {!monHidden && !sqlHidden && (
         <div
           onMouseDown={startDrag}
-          className="group relative h-1.5 shrink-0 cursor-row-resize bg-line/40 hover:bg-cyan-soft/40 flex items-center"
+          className="group relative h-7 shrink-0 cursor-row-resize flex items-center justify-center border-y border-line bg-deck-2/70 backdrop-blur hover:bg-deck-3/60 transition-colors"
+          title="drag to resize"
         >
-          <div className="absolute right-3 flex gap-3" onMouseDown={(e) => e.stopPropagation()}>
-            <button onClick={() => setMonHidden(true)} title="hide monitor" className="text-[10px] text-ink-mute hover:text-cyan-soft">
+          <span className="w-10 h-1 rounded-full bg-line-2 group-hover:bg-cyan/60 transition-colors" />
+          <span className="absolute left-4 text-[10.5px] uppercase tracking-[0.18em] text-ink-mute">SQL workbench</span>
+          <div className="absolute right-3 flex gap-1" onMouseDown={(e) => e.stopPropagation()}>
+            <button onClick={() => setMonHidden(true)} title="hide monitor" className="px-1.5 text-[11px] text-ink-mute hover:text-ink">
               ▲
             </button>
-            <button onClick={() => setSqlHidden(true)} title="hide SQL workbench" className="text-[10px] text-ink-mute hover:text-cyan-soft">
+            <button onClick={() => setSqlHidden(true)} title="hide SQL workbench" className="px-1.5 text-[11px] text-ink-mute hover:text-ink">
               ▼
             </button>
           </div>
@@ -66,12 +71,12 @@ export default function SystemView() {
       {sqlHidden ? (
         <button
           onClick={() => setSqlHidden(false)}
-          className="shrink-0 h-6 border-t border-line text-[10px] uppercase tracking-[0.2em] text-ink-mute hover:text-cyan-soft"
+          className="shrink-0 h-8 border-t border-line text-[10.5px] uppercase tracking-[0.2em] text-ink-mute hover:text-ink hover:bg-deck-3/40 transition-colors"
         >
-          ▴ show SQL workbench
+          ▴ show the SQL workbench
         </button>
       ) : (
-        <div className="flex-1 min-h-0">
+        <div className="flex-1 min-h-0 bg-deck-2/60 backdrop-blur-xl">
           <SqlView />
         </div>
       )}

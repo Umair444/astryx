@@ -1,0 +1,1 @@
+../devtools/build_plugin.py

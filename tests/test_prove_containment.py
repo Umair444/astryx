@@ -36,7 +36,7 @@ not run docker, and says nothing about prove.sh or prove_egress.sh (host-side or
 a separate arm with a weaker claim). Containment itself is proven only by running the real
 script in the real cell. This proves the instrument can fail when it should.
 
-Run by nucleus/check.sh. Exits 77 (SKIP) if the script is absent.
+Run by devtools/check.sh. Exits 77 (SKIP) if the script is absent.
 """
 import os
 import re

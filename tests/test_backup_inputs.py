@@ -34,6 +34,8 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO))
+from astryx.paths import Checkouts  # noqa: E402
 FAIL, SKIP = [], []
 
 
@@ -54,9 +56,13 @@ def skip(name, why):
 REGENERABLE = {
     "venv/":                          "pip install -r requirements.txt",
     "channel/node_modules/":          "npm install",
+    "dist/":                          "python devtools/build_plugin.py (the plugin) / python -m build (the wheel)",
     "observatory/web/node_modules/":  "npm install",
     "observatory/web/dist/":          "npm run build (deploy.sh web)",
     "observatory/web/tsconfig.tsbuildinfo": "tsc build artifact",
+    "canvas/web/node_modules/":       "npm install (init.sh _act_obs)",
+    "canvas/web/dist/":               "npm run build in canvas/web (init.sh _act_obs; includes the vendored kit)",
+    "canvas/web/tsconfig.tsbuildinfo": "tsc build artifact",
     "units/":                         "init.sh units() regenerates from runners.conf",
     "backups/":                       "the artifact itself — capturing it would recurse",
     "homes/":                         "spawn.sh regenerates .mcp.json/settings.json; "
@@ -93,17 +99,18 @@ def covered_by(path: str, captured: set) -> bool:
 def main():
     print("backup captures every gitignored INPUT (goal: the class, not the instance)\n")
 
-    r = subprocess.run(["git", "status", "--ignored", "--porcelain"],
+    # -z: core.quotePath would otherwise QUOTE a non-ASCII name ("P/\\303\\274.log"), which is no real path (a2 #54105)
+    r = subprocess.run(["git", "status", "--ignored", "--porcelain", "-z"],
                        cwd=REPO, capture_output=True, text=True)
     if r.returncode != 0:
         skip("derive ignored paths from git", "git status failed")
         return verdict()
-    ignored = [l[3:].strip() for l in r.stdout.splitlines() if l.startswith("!!")]
+    ignored = [e[3:] for e in r.stdout.split("\0") if e.startswith("!! ")]
     if not ignored:
         skip("derive ignored paths from git", "no ignored paths reported")
         return verdict()
 
-    r2 = subprocess.run(["bash", str(REPO / "nucleus" / "backup.sh"), "--list-state"],
+    r2 = subprocess.run(["bash", str(REPO / "scripts" / "backup.sh"), "--list-state"],
                         cwd=REPO, capture_output=True, text=True)
     if r2.returncode != 0:
         skip("ask backup.sh what it captures", f"--list-state exited {r2.returncode}")
@@ -112,7 +119,13 @@ def main():
     print(f"  backup.sh --list-state declares {len(captured)} path(s)")
     print(f"  git reports {len(ignored)} ignored path(s) present\n")
 
-    inputs = [p for p in ignored if not is_regenerable(p)]
+    # another checkout of THIS repo, or a dir holding only such (.claude/worktrees/), is git's own: regenerable by
+    # construction, whatever its path (seed #53453). The shared predicate decides; no path is listed for it here.
+    co = Checkouts(REPO)
+    worktrees = [p for p in ignored if co.holds_only_others(REPO / p.rstrip("/"))]
+    if worktrees:
+        print(f"  REGENERABLE (another checkout of this repo, git's own): {worktrees}")
+    inputs = [p for p in ignored if not is_regenerable(p) and p not in worktrees]
     uncaptured = sorted(p for p in inputs if not covered_by(p, captured))
     check("every gitignored INPUT is in backup.sh's capture set",
           not uncaptured,
@@ -127,6 +140,22 @@ def main():
         if (REPO / f).exists():
             check(f"pinned: {f} is captured", covered_by(f, captured))
 
+    # ── the backup FOLLOWS THE SECRET (plan-5497, a2 #27944) ───────────────────────────
+    # S1c moves the DB password out of .env into ~/.pgpass, OUTSIDE the repo, so the git-derived
+    # population above can't see it. Moving a copy must not silently drop the only backed-up
+    # one, so the expected set comes from the holder manifest's `backup` flag, not from here.
+    import json
+    manifest = json.loads((REPO / "src" / "astryx" / "data" / "secret_holders.json").read_text())
+    must = [h["path"] for h in manifest["holders"] if h.get("backup")]
+    check("the holder manifest names what a restore needs (backup:true is non-empty)",
+          bool(must), "no holder is flagged backup:true: the arm below would be vacuous")
+    must_rel = []
+    for p in must:
+        rel = p[2:] if p.startswith("~/") else p
+        if ((Path.home() / rel) if p.startswith("~/") else (REPO / p)).exists():
+            must_rel.append(rel)
+            check(f"the backup follows the secret: {p} is captured", covered_by(rel, captured))
+
     # ── and does the REAL artifact carry them? ───────────────────────────────────────
     # The list is a promise; the tarball is the thing a restore actually opens. Only red
     # on an artifact NEWER than backup.sh — an older one legitimately predates the fix,
@@ -134,7 +163,7 @@ def main():
     arts = sorted(REPO.glob("backups/*.state.tgz"), key=lambda p: p.stat().st_mtime)
     if not arts:
         skip("the newest real artifact carries the inputs", "no .state.tgz on disk")
-    elif arts[-1].stat().st_mtime < (REPO / "nucleus" / "backup.sh").stat().st_mtime:
+    elif arts[-1].stat().st_mtime < (REPO / "scripts" / "backup.sh").stat().st_mtime:
         skip("the newest real artifact carries the inputs",
              f"{arts[-1].name} predates backup.sh — not yet re-run")
     else:
@@ -144,7 +173,7 @@ def main():
         except Exception as e:
             skip("the newest real artifact carries the inputs", f"unreadable: {type(e).__name__}")
             return verdict()
-        missing = sorted(p for p in inputs if not covered_by(p, names))
+        missing = sorted(p for p in inputs + must_rel if not covered_by(p, names))
         check(f"the newest artifact ({arts[-1].name}) carries every input",
               not missing, "missing from the tarball: " + ", ".join(missing))
 
@@ -161,7 +190,7 @@ def main():
     home = Path.home()
     try:
         sys.path.insert(0, str(REPO))
-        from nucleus import charter
+        from astryx.core import charter
         roster = charter.roster()
     except Exception as e:                                   # noqa: BLE001
         skip("agent memory is captured", f"roster unavailable ({type(e).__name__})")
@@ -185,19 +214,72 @@ def main():
             for d in existing:
                 rel = str(d.relative_to(home))
                 on_disk = [f for f in d.rglob("*") if f.is_file()]
-                in_tar = [n for n in names if n.startswith(rel + "/") and not n.endswith("/")]
                 if not on_disk:
                     # EMPTY IS A LEGAL, DISTINCT STATE. A gate that can never go green on a
                     # legitimately empty directory is a gate somebody disables.
                     print(f"  EMPTY {rel} — 0 files on disk, nothing to capture (legal)")
                     continue
-                # COUNT-MATCHED, not presence: one file of 185 must read as FAILURE, or the
-                # container-vs-content trap comes back wearing a backup's clothes.
+                # COVERAGE, GUARDED BY THE SNAPSHOT CLOCK — not equal counts. The tarball is
+                # a point-in-time snapshot; agent memory is written at ALL hours. A file whose
+                # mtime is NEWER than the artifact legitimately postdates the snapshot and
+                # cannot be in it (the next backup carries it) — counting it as a gap accuses
+                # the FUTURE, the exact mirror of the "accusing the past" guard on the artifact
+                # check above, and left this gate red for the whole window after every write.
+                # An equal-count test also mis-fires the other way: an edited-since file bumps
+                # its mtime past the snapshot while its captured old version still sits in the
+                # tarball. So the real question is coverage: every file that EXISTED WHEN THE
+                # BACKUP RAN (mtime <= snapshot) must be in the tarball — matched by its EXACT
+                # full path, never a prefix, so the container-vs-content trap the old count
+                # guarded against cannot return. Created-since, edited-since and deleted-since
+                # are all correctly ignored; only a snapshot-era file truly dropped reds.
+                snap = newest.stat().st_mtime
+                dropped = sorted(
+                    str(f.relative_to(home)) for f in on_disk
+                    if f.stat().st_mtime <= snap and str(f.relative_to(home)) not in names)
                 check(f"agent memory captured in full: {rel}",
-                      len(in_tar) == len(on_disk),
-                      f"{len(on_disk)} files on disk vs {len(in_tar)} in the tarball")
+                      not dropped,
+                      f"{len(dropped)} snapshot-era file(s) missing from the tarball: "
+                      + ", ".join(dropped[:5]) + (" …" if len(dropped) > 5 else ""))
 
+    roles_arm()
     return verdict()
+
+
+# ── the CLUSTER'S roles: an input no file glob can see (a1 #45221, seed #45224) ─────────────────────────────────
+# A per-database dump carries GRANTs but not the ROLES they name; backup.sh writes astryx-<ts>.roles.sql (globals,
+# no passwords) beside each dump. The authority for "which roles must it carry" is the DUMP's OWN grants, read
+# from its ACL entries, never a list kept here: every role a GRANT in the newest dump names must be CREATEd in its
+# paired roles file. A newest dump older than roles capture has no file: NOT RUN, never a pass.
+def roles_arm():
+    import re
+    import tempfile
+    dumps = sorted((REPO / "backups").glob("astryx-*.dump"), key=lambda p: p.stat().st_mtime)
+    if not dumps:
+        skip("the newest dump's roles file carries every role its grants name", "no dump on disk")
+        return
+    newest = dumps[-1]
+    rf = newest.with_suffix(".roles.sql")
+    if not rf.exists():
+        skip("the newest dump's roles file carries every role its grants name",
+             f"{newest.name} predates roles capture (backup.sh writes one from its next run)")
+        return
+    text = rf.read_text()
+    check(f"{rf.name} carries no password material (--no-role-passwords)",
+          not re.search(r"PASSWORD '|SCRAM-SHA-256|md5[0-9a-f]{32}", text))
+    created = set(re.findall(r'^CREATE ROLE "?([^";]+)"?;$', text, re.M))
+    try:
+        lst = subprocess.run(["pg_restore", "-l", str(newest)], capture_output=True, text=True, timeout=120)
+        with tempfile.NamedTemporaryFile("w", suffix=".list") as tl:
+            tl.write("\n".join(ln for ln in lst.stdout.splitlines() if " ACL " in ln) + "\n")
+            tl.flush()
+            acl = subprocess.run(["pg_restore", "-L", tl.name, "-f", "-", str(newest)], capture_output=True,
+                                 text=True, timeout=300)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        skip("the newest dump's roles file carries every role its grants name", f"pg_restore: {type(e).__name__}")
+        return
+    named = set(re.findall(r'^GRANT .* TO "?([A-Za-z_][\w$]*)"?', acl.stdout, re.M)) - {"PUBLIC"}
+    check(f"every role the newest dump's GRANTs name is in {rf.name} ({len(named)} named, {len(created)} created)",
+          bool(named) and named <= created, f"absent from the roles file: {len(named - created)} role(s)")
 
 
 def verdict():

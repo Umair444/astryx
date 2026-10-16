@@ -3,7 +3,7 @@
 
 THE LAW (steward's refinement of my 08-14 norm, msg 5843): a guard that RAISES is not blind.
 The pulse catches an evaluator error and turns it into a wire message to the owning agent
-(nucleus/pulse.py:181-182), so a propagated exception is OBSERVABLE. Blindness is CREATED by
+(src/astryx/pulse/pulse.py:181-182), so a propagated exception is OBSERVABLE. Blindness is CREATED by
 the `except: return None` pattern, which converts a loud failure into a silent all-clear.
 
 THE DECISION RULE this file encodes, because "delete all 18 handlers" is the wrong reading —
@@ -28,7 +28,7 @@ independent AST sweep found nine flagged handlers in my directory that my own sw
 surfaced. So this asserts the class, over the live directory, and a new guard of mine that
 swallows an unreadable .env fails here.
 
-Run by nucleus/check.sh. Exits 77 (SKIP) where the gitignored bodies are absent.
+Run by devtools/check.sh. Exits 77 (SKIP) where the gitignored bodies are absent.
 """
 import importlib.util
 import sys

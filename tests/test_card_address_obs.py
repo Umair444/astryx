@@ -12,7 +12,7 @@ Deliberately narrow. The drift/confirmation/re-nag logic is NOT retested here â€
 is unchanged and untouched, and a broad suite bolted on to justify a small edit is how an
 oracle becomes something nobody runs. This asserts the property the edit is FOR.
 
-Run by nucleus/check.sh. Exits 77 (SKIP, not PASS) when the gitignored body is absent.
+Run by devtools/check.sh. Exits 77 (SKIP, not PASS) when the gitignored body is absent.
 """
 import importlib.util
 import sys
@@ -34,7 +34,7 @@ spec.loader.exec_module(mod)
 
 UTC = timezone.utc
 NOW = datetime(2026, 8, 14, 9, 0, tzinfo=UTC)
-IP = "182.180.56.152"
+IP = "198.51.100.23"  # RFC 5737 documentation address (the drift arm uses another)
 fails: list[str] = []
 
 
