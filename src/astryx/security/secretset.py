@@ -45,6 +45,9 @@ NOT_SECRET = frozenset({
     # distribution (plan-10224): which repo is upstream and whether this org IS it, the federation relay's
     # public URL, and the docker bridge address; switches and public locations, none grants anything
     "ASTRYX_UPSTREAM", "ASTRYX_UPSTREAM_ROLE", "ASTRYX_RELAY", "ASTRYX_DOCKER_HOST_IP",
+    # android (plan-8675): an opt-in switch, the operator's licence acknowledgement (a plain word), where the SDK
+    # lives and the phone's name; none grants anything. The licence value blocked ordinary prose (painter #57417)
+    "ANDROID_ENABLED", "ANDROID_SDK_LICENSE", "ANDROID_SDK_ROOT", "ANDROID_AVD",
     # a URL query value is secret by default; these name ONE parameter ("<KEY>:<param>") whose
     # value is an ordinary word (it appears in the tree's own code) and grants nothing
     "AUTOREMOTE_GETLOC_URL:message",
