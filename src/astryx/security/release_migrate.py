@@ -19,7 +19,8 @@ WHAT MOVES (a body that is already one of the door's own exact markers is left a
 THE CENSUS is content-blind and identifier-blind (D3): counts only, never a thread, handle, chat or body. A row passes
 only on an EXACT anchored marker (D2), a migrated one only with its pointer: detection grade, stated. S1d's write-time
 step forms pass too (a3: else every post-S1d step alarms). RESIDUALS outside the database are counted and printed every
-run: the agent's transcript files (its resume store: not moved), the shared auto-memory files named for it or its tier,
+run: the agent's transcript files (its resume store: not moved) and the ones scripts/refresh.sh set aside under
+homes/<agent>/.transcript-aside, the shared auto-memory files named for it or its tier,
 the chronicle editions naming it. While any is non-zero the census never reads "history clean": disposing of them is
 the owner's call, with the backups and pg_dumps made before the move (b). The auto-memory count is by FILE NAME only
 (a3 N3: a content rule counts peers' notes about the agent). The transcript dir is counted recursively and is a LIVE
@@ -140,7 +141,12 @@ def residuals(agent: str, tier: str) -> dict:
         if mem.is_dir() else []
     chron = R.REPO / "memory" / "library" / "chronicle"
     eds = sum(1 for p in chron.glob("*.md") if agent in p.read_text(errors="replace")) if chron.is_dir() else 0
+    # scripts/refresh.sh MOVES the transcript here (seed #57083): the same history, out of the live dir, so a census
+    # reading only the live dir lost 38 MB at canopus's first refresh. Not a live sink: it counts against history_clean
+    aside = R.REPO / "homes" / agent / ".transcript-aside"
+    af = [p for p in aside.rglob("*") if p.is_file() and not p.is_symlink()] if aside.is_dir() else []
     return {"transcript_files": len(files), "transcript_bytes": sum(p.stat().st_size for p in files),
+            "aside_files": len(af), "aside_bytes": sum(p.stat().st_size for p in af),
             # a3 N1: a LIVE sink, not history: while the agent runs, Claude Code keeps writing its raw transcript here
             # (S1d strips the database, not the CLI's own log). It reaches 0 only when that dir moves into the tier
             # store, a later slice. Said in every census so nobody reads it as a one-time cleanup.

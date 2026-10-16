@@ -246,6 +246,20 @@ try:
         empty = M.census(cur, "nobody", "whatsapp", "99999@s.whatsapp.net", "career")
     check("a census of an identity and chat with no history reads all zeros",
           all(v == [0, 0] for k, v in empty.items() if isinstance(v, list)), empty)
+    check("…and with no residual anywhere, history reads clean (the control for the aside arm below)",
+          empty["history_clean"] is True, empty)
+    aside = root / "homes" / "nobody" / ".transcript-aside"
+    (aside / "s" / "subagents").mkdir(parents=True)                    # refresh.sh moves the whole session tree
+    (aside / "a.jsonl").write_text(SENT)
+    (aside / "s" / "subagents" / "b.jsonl").write_text(SENT * 2)
+    with db.cursor() as cur:
+        ghost = M.census(cur, "nobody", "whatsapp", "99999@s.whatsapp.net", "career")
+    check("refresh.sh's .transcript-aside is a residual too, counted RECURSIVELY (2 files), and keeps history "
+          "unclean while the live transcript dir is empty (seed #57083)",
+          ghost["residuals"]["transcript_files"] == 0 and ghost["residuals"]["aside_files"] == 2
+          and ghost["residuals"]["aside_bytes"] == 3 * len(SENT) and ghost["database_clean"] is True
+          and ghost["history_clean"] is False, ghost["residuals"])
+    check("…and the aside count is content-blind too", SENT not in J(ghost), J(ghost)[:200])
     with db.cursor() as cur:
         none_moved = M.migrate(cur, "nobody", "whatsapp", "99999@s.whatsapp.net", "career", key=K, store=R.TierStore())
     check("…and a move of it moves nothing", none_moved == {"messages": 0, "polls": 0, "steps": 0, "turns": 0},

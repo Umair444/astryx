@@ -40,6 +40,14 @@ MUTANTS = {
          "    files = [p for p in td.glob(\"*.jsonl\") if p.is_file()] if td.is_dir() else []"),
     "X13 a route with no chat is migrated (a census of nothing reads clean; a3 N4)":
         ("    if not hits[0].get(\"chat\"):", "    if False:"),
+    "X14 refresh.sh's .transcript-aside isn't counted (the moved history reads as gone; seed #57083)":
+        ("            \"aside_files\": len(af), \"aside_bytes\": sum(p.stat().st_size for p in af),",
+         "            \"aside_files\": 0, \"aside_bytes\": 0,"),
+    "X15 only top-level aside files count (the moved <session>/subagents/ tree is missed)":
+        ("    af = [p for p in aside.rglob(\"*\") if p.is_file() and not p.is_symlink()] if aside.is_dir() else []",
+         "    af = [p for p in aside.glob(\"*\") if p.is_file() and not p.is_symlink()] if aside.is_dir() else []"),
+    "X16 the aside is treated like the live sink (excluded from history_clean)":
+        ("if k != \"transcript_is_live_sink\")", "if k not in (\"transcript_is_live_sink\", \"aside_files\", \"aside_bytes\"))"),
     "X11 --apply reads the key AFTER writing (no key fails mid-move)":
         ("        key = R.mac_key() if a.apply else None", "        key = None"),
 }
