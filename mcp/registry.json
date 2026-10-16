@@ -75,5 +75,12 @@
    "mcp/docpdf/server.py"
   ],
   "author": "canopus"
+ },
+ "influence": {
+  "command": "venv/bin/python",
+  "args": [
+   "mcp/influence/server.py"
+  ],
+  "author": "memory"
  }
 }

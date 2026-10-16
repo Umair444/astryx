@@ -174,6 +174,11 @@ done
 # holds Bash and the door runs registered scripts only, never a granted MCP server. It is
 # deliberately NOT given to STATIONED agents (src/astryx/core/station.py, --tools "" fail-closed), where
 # it WOULD be a new execution capability. tests/test_spawn_wiring.py pins both halves.
+# influence = who_should_i_ask (plan-11324, seed #58432): its OWN server, every RESIDENT, like hands. Not behind the
+# memory grant (that one stays `ask` only): the asker is every resident, and the reply is ABOUT the asker, so
+# ASTRYX_AGENT is written into its env HERE, never inherited (this file is the source of truth for who asks; an
+# inherited value is whatever launched claude). STATIONED agents never reach this heredoc (the Type: stationed exit
+# above), so they never get it. tests/test_spawn_wiring.py pins both halves, and that `Grants: memory` adds memory only.
 # phone = an Android phone under the agent's hands (plan-8675), only where the org OPTED IN (ANDROID_ENABLED=1 in
 # .env; scripts/android_setup.sh installs it). Every resident then gets it, like hands. Its server is a facade over
 # a pinned upstream: it reaches 13 reviewed tools and builds the upstream's environment itself.
@@ -192,7 +197,9 @@ cat > "$HOME_D/.mcp.json" <<EOF
   "tools": { "command": "$ROOT/venv/bin/python", "args": ["$ROOT/mcp/tools/server.py"] },
   "hands": { "command": "$ROOT/venv/bin/python", "args": ["$ROOT/mcp/hands/server.py"],
     "env": { "ASTRYX_AGENT": "$AGENT", "XDG_RUNTIME_DIR": "/run/user/$(id -u)",
-      "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/$(id -u)/bus" } }$PHONE$EXTRA } }
+      "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/$(id -u)/bus" } },
+  "influence": { "command": "$ROOT/venv/bin/python", "args": ["$ROOT/mcp/influence/server.py"],
+    "env": { "ASTRYX_AGENT": "$AGENT" } }$PHONE$EXTRA } }
 EOF
 
 # think: charter line "Think: off" zeroes extended thinking for reflex-class

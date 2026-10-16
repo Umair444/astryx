@@ -205,26 +205,5 @@ def ask(query: str) -> str:
                        "citations": [p["id"] for p in top]})
 
 
-@mcp.tool()
-def who_should_i_ask(topic: str = "", k: int = 5) -> str:
-    """WHO SHOULD I ASK (plan-11324 S2), ADVISORY: the top-k agents by the influence graph's ROUTING view, personalized
-    PageRank with teleport on YOU (plus, given a topic, the agents linked to it), over edges the org's own
-    authorities derived (landed review PASSes, answered delegations). Never returns you; neighbours beside each.
-    LIVENESS is a proxy, printed in the reply: last step within W=36h, not wedge_watch. Both its errors: a WEDGED
-    agent reads live for up to W after its last step; a smaller W would drop healthy agents that wake once a day.
-    Your query is logged (asker, returned, time, view): a task you then send to a returned agent counts as ROUTED and
-    is discounted from the graph, so the tool never credits its own advice. Kinds under 50% coverage weigh 0 and print
-    UNMEASURED. Logic: src/astryx/influence/ (graph.py rules, shell.ask the IO); this wrapper only calls it.
-    Known misattribution: registry.json declares this server's author as forge, so the economy's tool-call edges for
-    this tool credit forge; out of S2's scope, filed for toolreg authorship's owner."""
-    sys.path.insert(0, str(REPO / "src"))
-    from astryx.influence import shell                   # noqa: E402
-    asker = os.environ.get("ASTRYX_AGENT")
-    if not asker:
-        return "who_should_i_ask needs ASTRYX_AGENT (the asker): run it as a resident."
-    with shell.connect(_env("ASTRYX_DSN"), readonly=False) as conn:
-        return "\n".join(shell.ask(conn, asker, topic or None, max(1, min(int(k), 17)))["lines"])
-
-
 if __name__ == "__main__":
     mcp.run()
