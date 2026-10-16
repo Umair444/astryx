@@ -25,6 +25,8 @@ MUTANTS = {
         ("        moved = [p for b, p in both if b[2] in bad and p[2] not in bad]", "        moved = [p for b, p in both if b[2] in bad]"),
     "K5 the removed-checkout cause ignores pre-move paths":
         ("[sp] + [k for k, v in toolreg._MOVED.items() if v == sp]", "[sp]"),
+    "K7 the door's catch-all count reads 0 whatever the ledger holds":
+        ('    door = sum(1 for r in after if r[0] == "mcp:tools/run")', '    door = 0'),
     "K6 'before' authors with this tree's toolreg":
         ("            wb = tb.authorship(cur, sorted({r[0] for r in raw}))", "            wb = toolreg.authorship(cur, sorted({r[0] for r in raw}))"),
 }

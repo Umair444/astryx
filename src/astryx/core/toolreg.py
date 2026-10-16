@@ -98,10 +98,13 @@ def _in_checkout(p: str):
     return None
 
 
-def script_id(path: str, must_exist: bool = True) -> str | None:
+def script_id(path: str, must_exist: bool = True, checkouts: bool = True) -> str | None:
     """script:<rel> for a path under a tool root, else None. Absolute paths are made relative
     to the repo, or to the checkout of this repo they lie in (a worktree, LEDGER_V 2). '..' is
-    resolved BEFORE the root test, so nucleus/../tier/x is not a tool."""
+    resolved BEFORE the root test, so nucleus/../tier/x is not a tool.
+    checkouts=False skips the checkout walk: a path outside the live tree is no tool. A reader of HISTORY passes it,
+    since the walk asks the filesystem NOW whether a checkout exists, and removing a worktree would change the
+    past (a3 #58277)."""
     if not path or not isinstance(path, str):
         return None
     p = path.strip().strip("'\"")
@@ -110,7 +113,7 @@ def script_id(path: str, must_exist: bool = True) -> str | None:
         p = os.path.normpath(p)
         rel = os.path.normpath(p[len(REPO_S) + 1:]) if p.startswith(REPO_S + "/") else None
         if rel is None or not rel.startswith(TOOL_ROOTS):
-            got = _in_checkout(p)              # outside the live tree, or a worktree nested in it
+            got = _in_checkout(p) if checkouts else None   # outside the live tree, or a worktree nested in it
             if not got:
                 return None
             root, rel = got
@@ -381,7 +384,8 @@ def authorship(cur, ids=None) -> dict:
     meta.edits. The second is the legacy step content "Write: /abs/path": before 4227, step.py
     fell back to the file_path as the step detail for Write/Edit, so history has the path in
     content. Legacy content is capped at 400 characters, so a truncated path matches nothing,
-    which leaves the result 'unknown' rather than wrong.
+    which leaves the result 'unknown' rather than wrong. A legacy path is resolved against the live
+    tree only (checkouts=False): whether a worktree still exists today must not rewrite who wrote what.
     The FIRST event on a path decides the author. If it's a Write, that agent is the author.
     If it's an Edit, the file predates the record, so the author is 'unknown'."""
     cur.execute(
@@ -393,7 +397,8 @@ def authorship(cur, ids=None) -> dict:
         path = edits[len("script:"):] if edits else None
         if path is None:
             m = _LEGACY.match(content or "")
-            rid = script_id(m.group(2), must_exist=False) if m else None
+            # history is a pure function of the ledger: a legacy path is judged without the checkout walk
+            rid = script_id(m.group(2), must_exist=False, checkouts=False) if m else None
             if not rid:
                 continue
             path = rid[len("script:"):]

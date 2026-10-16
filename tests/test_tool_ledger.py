@@ -38,6 +38,10 @@ WHAT IT HOLDS
   L12 a worktree of THIS repo is this repo (LEDGER_V 2): a call by absolute path into one and a
      Write there stamp its repo-relative id; the same script in another git repo or in a plain
      dir that merely has devtools/ is no tool; a worktree's tier/ is never one (seed #57344).
+  L14 history is a pure function of the ledger (a3 #58277): a LEGACY "Write: /abs" row inside a worktree reads the
+     same author before and after that worktree is removed (the read skips the checkout walk), while a row the hook
+     STAMPED at write time (meta.edits, LEDGER_V 2) keeps its author through the removal. Control: the walk itself
+     does resolve that path while the worktree exists, so the flag is what holds the result still.
   L13 one tool across the reorg: a Write stamped under the moved-from path (script:nucleus/x)
      authors the tool where it lives now, and the old id reads the same author.
 
@@ -407,6 +411,30 @@ try:
         check(f"L12 control: a Write in {name} is no authorship", got is None, str(got))
     got = wpre("Write", {"file_path": f"{wt}/tier/zz_private.py", "content": "x"})
     check("L12 a worktree's tier/ is still never a tool", got is None, str(got))
+
+    # ── L14: history doesn't read the filesystem (a3 #58277) ────────────────────────────────
+    # the subject as wroot's hook loads it, so REPO is the repo the worktree belongs to and the walk CAN resolve
+    import importlib.util
+    _ws = importlib.util.spec_from_file_location("toolreg_wroot", wroot / "src" / "astryx" / "core" / "toolreg.py")
+    tw = importlib.util.module_from_spec(_ws)
+    _ws.loader.exec_module(tw)
+    hist = f"{wt}/devtools/zz_hist.sh"
+    check("L14 control: the checkout walk resolves a path in the live worktree",
+          tw.script_id(hist, must_exist=False) == "script:devtools/zz_hist.sh", str(tw.script_id(hist, must_exist=False)))
+    check("L14 ...and checkouts=False doesn't walk", tw.script_id(hist, must_exist=False, checkouts=False) is None,
+          str(tw.script_id(hist, must_exist=False, checkouts=False)))
+    admin.execute("DELETE FROM steps")
+    admin.execute("INSERT INTO steps (agent, kind, content, meta) VALUES ('alice','tool',%s,NULL), "
+                  "('bob','tool','Write: (d)',%s)", (f"Write: {hist}", json.dumps({"edits": "script:devtools/zz_hist2.sh"})))
+    hids = ["script:devtools/zz_hist.sh", "script:devtools/zz_hist2.sh"]
+    before_rm = tw.authorship(admin.cursor(), hids)
+    g("worktree", "remove", "--force", str(wt))
+    after_rm = tw.authorship(admin.cursor(), hids)
+    check("L14 a legacy Write in a worktree reads the SAME author before and after the worktree is removed",
+          before_rm[hids[0]] == after_rm[hids[0]] and after_rm[hids[0]]["author"] == "unknown",
+          f"{before_rm[hids[0]]} → {after_rm[hids[0]]}")
+    check("L14 a Write the hook STAMPED (meta.edits) keeps its author through the removal",
+          before_rm[hids[1]]["author"] == after_rm[hids[1]]["author"] == "bob", f"{before_rm[hids[1]]} → {after_rm[hids[1]]}")
 
     # ── L13: one tool across the reorg (seed #57344) ──────────────────────────────────────
     # A call or a Write stamped before goal 10224's move carries the OLD path (script:nucleus/check.sh). It is the same

@@ -133,6 +133,9 @@ def main():
     print("\n(a) DOMAIN CHANGE (declared, not a fix):")
     print(f"    core in : {fmt(all_in)}")
     print(f"    core out: {fmt(dom)}")
+    door = sum(1 for r in after if r[0] == "mcp:tools/run")
+    print(f"    the door's catch-all mcp:tools/run (an id the door couldn't resolve; core, so OUTSIDE the domain rather "
+          f"than unresolved inside it): {door} call(s) (a3 #58277: watch it grow)")
 
     # (b) before vs after on the fixed (agent-authored) domain
     raw = conn.execute(f"""
@@ -265,12 +268,15 @@ def main():
                                     "false) AND content ~ ('^(Write|Edit|MultiEdit|NotebookEdit): /\\S*/(' || %s || ')$')",
                                     (tails,)).fetchone()[0] if sp not in gone_memo else gone_memo[sp]
                 gone_memo[sp] = gone
-                cause["its Writes are recorded only at another checkout's path that no longer resolves"
+                cause["its Writes are recorded only as legacy content at a path outside the live tree"
                       if gone else "no Write or Edit of it in the ledger"] += 1
             else:
                 cause["first recorded event is an Edit (the file predates the ledger)"] += 1
         for k, v in cause.most_common():
             print(f"      {v:6d}  {k}")
+        print("    (the legacy-path cause stops growing for Writes in a git CHECKOUT of this repo: LEDGER_V 2 stamps them at "
+              "write time. A Write in a directory with no .git, such as a git-archive extract, is no tool by design "
+              "and stays unattributed.)")
         top = Counter(r[0] for r in ua).most_common(8)
         print("    top residual ids: " + ", ".join(f"{rid} ×{n}" for rid, n in top))
     conn.close()

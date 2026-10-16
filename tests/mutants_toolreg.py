@@ -68,7 +68,7 @@ MUTANTS = {
          '        if False and os.path.basename(head) in _SHELLS:'),
 
     "T10 a worktree of this repo is never this repo (every worktree call and Write unattributed again)":
-        ("            got = _in_checkout(p)              # outside the live tree, or a worktree nested in it\n",
+        ("            got = _in_checkout(p) if checkouts else None   # outside the live tree, or a worktree nested in it\n",
          "            got = None\n"),
     "T11 ANY directory holding a .git is this repo (another repo's devtools/ becomes our tool)":
         ("                return (Path(d), os.path.relpath(p, d)) if mine and theirs == mine else None\n",
@@ -86,4 +86,9 @@ MUTANTS = {
         ("        return \"script:\" + _MOVED.get(p, p)\n    return rid", "        return rid\n    return rid"),
     "T16 LEDGER_V not bumped (worktree-path calls stamped with the old semantics' version)":
         ("LEDGER_V = 2", "LEDGER_V = 1"),
+    "T17 authorship's legacy read walks checkouts (removing a worktree rewrites history, a3 #58277)":
+        ("rid = script_id(m.group(2), must_exist=False, checkouts=False) if m else None",
+         "rid = script_id(m.group(2), must_exist=False) if m else None"),
+    "T18 checkouts=False is ignored (script_id always walks)":
+        ("got = _in_checkout(p) if checkouts else None", "got = _in_checkout(p)"),
 }
