@@ -15,9 +15,14 @@ MUTANTS = {
     "T2 a timed-out baseline's refusal prints no tail":
         ('        _print_tail(oracle, base_out, "before the kill")\n', ''),
     "T3 the failing lines aren't put first (only the last lines: an early FAIL scrolls away)":
-        ('    for ln in hot + lines[-n:]:', '    for ln in lines[-n:]:'),
+        ('    for ln in first + hot + lines[-n:]:', '    for ln in lines[-n:]:'),
     "T4 a timeout drops what the oracle printed before the kill":
         ('            return TIMED_OUT, "".join(part)', '            return TIMED_OUT, ""'),
     "T5 the block is not capped":
         ('    return keep[:n]', '    return keep'),
+    "T6 the oracle's stdout is block-buffered again (a timeout's kill discards it: a3 #57897 R-1)":
+        ('    env = dict(os.environ, PYTHONUNBUFFERED="1", **{env_var: str(subject_path)})',
+         '    env = dict(os.environ, **{env_var: str(subject_path)})'),
+    "T7 failures aren't ranked above keyword mentions (30 PASS labels crowd the real FAIL out)":
+        ('    for ln in first + hot + lines[-n:]:', '    for ln in hot + first + lines[-n:]:'),
 }

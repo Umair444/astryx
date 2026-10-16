@@ -10,6 +10,7 @@ Hermetic: each arm writes a tiny subject, oracle and spec into a temp dir and ru
   R2  a baseline that TIMES OUT: "did not finish", and what it printed before the kill is shown
   R3  a baseline that prints nothing: the refusal says so, never an empty block
   R4  the shown block is capped (≤ REFUSAL_TAIL lines)
+  R5  a line that IS a failure beats lines that only mention a keyword (no crowd-out at the cap)
   C1  control: a passing baseline prints no tail block, and its mutant is CAUGHT
 """
 import os
@@ -36,7 +37,9 @@ def probe(td: Path, oracle_body: str, timeout: int = 20, mutants=None) -> tuple:
     (td / "spec.py").write_text(
         f"SUBJECT = {str(td / 'subj.py')!r}\nORACLE = {str(td / 'oracle.py')!r}\nENV = 'FIX_SRC'\n"
         f"TIMEOUT = {timeout}\nMUTANTS = {m!r}\n")
-    env = {k: v for k, v in os.environ.items() if k not in ("FIX_SRC", "ASTRYX_SQLGUARD_DIR")}
+    # PYTHONUNBUFFERED out too: an outer mutation_probe sets it for ITS oracle (this file), and inherited here it would
+    # make the subject's own setting unobservable (mutant T6 read NOT PROBED until this line)
+    env = {k: v for k, v in os.environ.items() if k not in ("FIX_SRC", "ASTRYX_SQLGUARD_DIR", "PYTHONUNBUFFERED")}
     # the subject finds `astryx` by its OWN path (dirname(dirname(file))), and mutation_probe writes each mutant into a
     # temp dir: without this every mutant of the probe would die at import and read CAUGHT vacuously
     env["PYTHONPATH"] = str(REPO / "src") + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
@@ -61,7 +64,8 @@ with tempfile.TemporaryDirectory() as t:
           any("arm-zeta-42" in ln for ln in shown(out)), out)
 
     d = t / "r2"; d.mkdir()
-    rc, out = probe(d, "import sys, time\nprint('  FAIL  half-done-77 before the hang', flush=True)\n"
+    # NO flush: a real oracle's check() doesn't flush, and a kill discards a block-buffered pipe (a3 #57897 R-1)
+    rc, out = probe(d, "import sys, time\nprint('  FAIL  half-done-77 before the hang')\n"
                        "time.sleep(30)\n", timeout=2)
     check("R2 a baseline that times out REFUSES with 'did not finish'", rc == 1 and "did not finish" in out, out)
     check("R2 …and shows what it printed before the kill", any("half-done-77" in ln for ln in shown(out)), out)
@@ -75,6 +79,12 @@ with tempfile.TemporaryDirectory() as t:
     rc, out = probe(d, many + "raise SystemExit(1)\n")
     n = len(shown(out))
     check("R4 the shown block is capped (1..25 lines)", 1 <= n <= 25, f"{n} lines")
+
+    d = t / "r5"; d.mkdir()
+    crowd = "".join(f"print('  PASS  label {i} says OperationalError maps to retry')\n" for i in range(30))
+    rc, out = probe(d, crowd + "print('  FAIL  real-broken-arm-7')\nprint('FAIL: 1 failing')\nraise SystemExit(1)\n")
+    check("R5 a real FAIL is shown even after 30 PASS lines that merely MENTION a keyword (no crowd-out)",
+          any("real-broken-arm-7" in ln for ln in shown(out)), out)
 
     d = t / "c1"; d.mkdir()
     rc, out = probe(d, "import os, sys\nsys.exit(0 if 'X = 1' in open(os.environ['FIX_SRC']).read() else 1)\n")

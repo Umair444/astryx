@@ -90,9 +90,12 @@ def _tail(out: str, n: int = REFUSAL_TAIL) -> list:
     first, then the last lines, deduplicated in order, at most n. The verdict line alone said "exit 1"; without the
     failing arm a loaded, one-off refusal can never be attributed (memory #57741: the parity baseline red at load 7.79)."""
     lines = [ln.rstrip() for ln in (out or "").splitlines() if ln.strip()]
-    hot = [ln for ln in lines if any(k in ln for k in _FAILING)]
+    # a line that IS a failure (first token FAIL or ✗) before one that merely MENTIONS a keyword: otherwise >n PASS
+    # labels naming "Error" crowd the real FAIL out of the block (a3 #57897, advisory, measured)
+    first = [ln for ln in lines if ln.split()[0] in ("FAIL", "✗")]
+    hot = [ln for ln in lines if ln not in first and any(k in ln for k in _FAILING)]
     keep, seen = [], set()
-    for ln in hot + lines[-n:]:
+    for ln in first + hot + lines[-n:]:
         if ln not in seen:
             seen.add(ln)
             keep.append(ln)
@@ -105,7 +108,9 @@ def _run_oracle(oracle: Path, env_var: str, subject_path: Path, timeout: int = D
 
 def _run_oracle_out(oracle: Path, env_var: str, subject_path: Path, timeout: int = DEFAULT_TIMEOUT) -> tuple:
     """(rc, the oracle's combined output). TIMED_OUT keeps whatever it printed before the kill."""
-    env = dict(os.environ, **{env_var: str(subject_path)})
+    # PYTHONUNBUFFERED: a Python oracle block-buffers stdout into this pipe, and a timeout's kill discards that buffer,
+    # so without it a timed-out oracle "printed nothing" though it did (a3 #57897 R-1, measured). Buffering only.
+    env = dict(os.environ, PYTHONUNBUFFERED="1", **{env_var: str(subject_path)})
     with tempfile.TemporaryDirectory() as trace:
         # A mutant (or the canary) is NOT the inventoried code, so its SQL is not estate evidence: under check.sh's
         # sqlguard it read BLIND (126 lines, seed #33150, when the smoke family became one with SQL mutants). The
@@ -127,7 +132,8 @@ def _print_tail(oracle: Path, out: str, when: str) -> None:
     """The baseline's own failing lines, so a refusal names its arm (a one-off loaded refusal is otherwise lost)."""
     tail = _tail(out)
     print(f"  {oracle.name}'s own output ({when}; failing lines first, then its last lines):")
-    for ln in tail or ["(it printed nothing)"]:
+    empty = "(nothing captured before the kill)" if when == "before the kill" else "(it printed nothing)"
+    for ln in tail or [empty]:
         print(f"    | {ln[:220]}")
 
 
