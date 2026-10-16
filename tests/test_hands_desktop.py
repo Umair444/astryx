@@ -419,6 +419,8 @@ if __name__ == "__main__":
                 mcp_arms()
                 fence_arms()
                 pool_arms()
+            except hd.HandsSlow as e:     # a desk still STARTING at a deadline: the host is slow, not broken (#57429)
+                skip("the live desktop arms from here on", str(e)[:200])
             finally:
                 down_arms()
                 for d in hd.pool():

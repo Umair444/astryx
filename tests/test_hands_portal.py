@@ -18,6 +18,9 @@ LIVE (a throwaway desk under its own unit prefix and a short state root; never d
   L1 a FileChooser.OpenFile request on the desk bus is answered by a dialog in THAT desk's sway tree
      (RED before the fix, measured once at 09:52 PKT 10-16: request answered, desk tree empty; not re-run)
   L2 the desk's portal frontend picked no hyprland backend (its journal never says "Choosing hyprland.portal")
+  S1-S5 a deadline is classified by MEASUREMENT (fixture desks that run no sway): still starting (sway's execs not
+     run yet, the seat process alive) → HandsSlow → UNVERIFIED; died, the publish chain finished without a session,
+     or no seat process → HandsError → RED (seed #57429: never read a slow host as broken, or as passing)
 Pure arms run first; a red pure arm is rc 1 whatever the live arm says. DESK_SRC points at a mutant hands_desktop.py
 (tests/mutants_hands_portal.py). Exit 0 pass · 1 fail · 77 not run (no sway/gdbus/user manager here).
 """
@@ -112,8 +115,57 @@ try:                               # from here on the state root is removed on E
         unverified.append("L1/L2")
         print("  UNVERIFIED L1/L2: a pure arm is red, so no chooser is requested (it could land on the owner's screen)")
         finish()
+    # S: a desk still STARTING at a deadline is the host being slow (UNVERIFIED); a desk that DIED, or whose step
+    # finished without its result, is broken (RED). Measured from the unit's processes, never from the clock (seed
+    # #57429: the HOLD's load 14 turned a slow desk into a red gate). Fixture desks run no sway and draw nothing.
+    real_cmd = hd._desk_cmd
+
+    def fixture(name, script):
+        hd._desk_cmd = lambda a: real_cmd(a)[:real_cmd(a).index("--") + 1] + ["bash", "-c", script]
+        try:
+            hd.up(name)
+            return "up"
+        except hd.HandsSlow as e:
+            return f"slow: {e}"
+        except hd.HandsError as e:
+            return f"error: {e}"
+        finally:
+            hd._desk_cmd = real_cmd
+            try:
+                hd.down(name)
+            except Exception:
+                pass
+    fx = f"{AGENT}-fx"
+    fsd = hd.state_dir(fx)
+    (ROOT / "wl").write_text("")
+    (ROOT / "ss").write_text("")
+    session = f"printf '%s %s\\n' {ROOT.name}/wl {ROOT / 'ss'} > {fsd}/session"
+    got = fixture(fx, "exec sleep 60")
+    check("S1 a desk whose sway hasn't run its execs at the deadline is SLOW (HandsSlow), not broken",
+          got.startswith("slow:") and "startup execs" in got, got[:200])
+    got = fixture(fx, "exit 3")
+    check("S2 a desk that DIED is broken (HandsError), never slow", got.startswith("error:"), got[:200])
+    got = fixture(fx, f"printf ok > {fsd}/execs; exec sleep 60")
+    check("S3 a desk whose publish chain FINISHED without a session is broken, though its unit is up",
+          got.startswith("error:"), got[:200])
+    got = fixture(fx, f"{session}; exec -a hands_seat.py sleep 60")
+    check("S4 a desk whose seat process runs but hasn't answered is SLOW", got.startswith("slow:") and "seat" in got,
+          got[:200])
+    got = fixture(fx, f"{session}; exec sleep 60")
+    check("S5 a desk with a session but NO seat process is broken", got.startswith("error:"), got[:200])
+    if fails:
+        finish()
+
     t0 = time.time()
-    hd.up(AGENT)
+    try:
+        hd.up(AGENT)
+    except hd.HandsSlow as e:                     # the host is slow: say so, never read it as broken or as passing
+        unverified.append("L1/L2")
+        print(f"  UNVERIFIED L1/L2: {e}")
+        finish()
+    except hd.HandsError as e:
+        check("L0 the fixture desk comes up", False, str(e)[:200])
+        finish()
     got = subprocess.run(["systemctl", "--user", "show", "-p", "UnsetEnvironment", "--value", hd.unit(AGENT)],
                          capture_output=True, text=True, env=user_env).stdout.split()
     if not {"WAYLAND_DISPLAY", "DISPLAY"} <= set(got):

@@ -85,6 +85,11 @@ class Stopped(HandsError):
     pass
 
 
+class HandsSlow(HandsError):
+    """A desk was still STARTING at a deadline (its unit up, the step it waits on still running): the host is slow, not
+    the desk broken. A desk that died, or whose step finished without its result, raises plain HandsError."""
+
+
 LAPTOP = "laptop"
 
 
@@ -296,10 +301,48 @@ focus_follows_mouse no
 mouse_warping none
 workspace_layout tabbed
 exec sh -c 'dbus-update-activation-environment WAYLAND_DISPLAY SWAYSOCK && printf "%s %s\\n" "$WAYLAND_DISPLAY" "$SWAYSOCK" > {sd}/session'
+exec sh -c 'printf ok > {sd}/execs'
 exec wayvnc -r -S {sd}/wayvnc.sock 127.0.0.1 {port}
 exec {sys.executable} {Path(__file__).resolve().parent / "hands_seat.py"} {port} {sd}/seat.sock
 exec {sys.executable} {Path(__file__).resolve().parent / "hands_proxy.py"} {port + 100}
 """
+
+
+def _unit_cmdlines(agent: str) -> list[str] | None:
+    """The command lines of the processes in the agent's desk unit (None if the unit isn't active). Read from its
+    cgroup and /proc/<pid>/cmdline only; never anything's environment."""
+    if _systemctl("is-active", "--quiet", unit(agent)).returncode != 0:
+        return None
+    cg = _systemctl("show", "-p", "ControlGroup", "--value", unit(agent)).stdout.strip()
+    out = []
+    try:
+        for pid in Path(f"/sys/fs/cgroup{cg}/cgroup.procs").read_text().split():
+            try:
+                out.append(Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace"))
+            except OSError:
+                continue
+    except OSError:
+        return None
+    return out
+
+
+def _starting(agent: str, waits_on: str) -> str | None:
+    """Why the desk is still STARTING at a deadline, measured, or None when it's broken. `waits_on` is the step: the
+    session (sway's publish-then-write chain) or the seat (hands_seat.py). sway spawns its execs in config order and the
+    `execs` marker's line comes right after the chain's, so once it exists the chain has been spawned: it is then
+    running (its command line is in the unit) or finished."""
+    procs = _unit_cmdlines(agent)
+    if procs is None:
+        return None                                              # the unit is gone: it died
+    if waits_on == "session":
+        if not (state_dir(agent) / "execs").exists():
+            return "sway hasn't run its startup execs yet"
+        if any("dbus-update-activation-environment" in c for c in procs):
+            return "its display is still being published to the desk bus"
+        return None                                              # the chain finished without a session: broken
+    if any("hands_seat.py" in c for c in procs):
+        return "its seat process is running but hasn't answered yet"
+    return None
 
 
 def up(agent: str) -> dict:
@@ -317,6 +360,7 @@ def up(agent: str) -> dict:
     os.chmod(sd, 0o700)
     os.chmod(hd, 0o700)
     (sd / "session").unlink(missing_ok=True)
+    (sd / "execs").unlink(missing_ok=True)
     _systemctl("reset-failed", unit(agent))
     port = _pick_port(agent)
     (sd / "port").write_text(str(port))
@@ -332,7 +376,11 @@ def up(agent: str) -> dict:
             break
         time.sleep(0.2)
     else:
+        why = _starting(agent, "session")                        # measured BEFORE the teardown erases it
         down(agent)
+        if why:
+            raise HandsSlow(f"the desktop was still starting at the 15s deadline ({why}): the host is slow, not "
+                            f"the desk broken (journalctl --user -u {unit(agent)})")
         raise HandsError("the desktop did not come up within 15s (journalctl --user -u "
                          f"{unit(agent)})")
     # wayvnc starts with the session, then the agent's seat connects to it. Return only when the
@@ -345,6 +393,10 @@ def up(agent: str) -> dict:
         except HandsError:
             time.sleep(0.2)
     else:
+        why = _starting(agent, "seat")
+        if why:
+            raise HandsSlow(f"{agent}'s desktop was still starting at the seat's 15s deadline ({why}): the host is "
+                            f"slow, not the desk broken (journalctl --user -u {unit(agent)})")
         raise HandsError(f"{agent}'s seat never answered (journalctl --user -u {unit(agent)})")
     return status(agent)
 
