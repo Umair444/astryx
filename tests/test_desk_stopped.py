@@ -153,10 +153,11 @@ srv.listen(4)
 port = srv.getsockname()[1]
 n0 = viewers(port)
 seatdir = Path(tempfile.mkdtemp(prefix="desk_seat."))
-(seatdir / "hands_seat.py").write_text(            # the desk's own seat: a permanent client that is never a watcher
+SEAT_FILE = seatdir / M["SEAT"]                    # the guard's own constant, not a second spelling of the name
+SEAT_FILE.write_text(                              # the desk's own seat: a permanent client that is never a watcher
     "import socket, sys, time\ns = socket.create_connection(('127.0.0.1', int(sys.argv[1])))\nprint('up', flush=True)\n"
     "time.sleep(60)\n")
-seat = subprocess.Popen([sys.executable, str(seatdir / "hands_seat.py"), str(port)], stdout=subprocess.PIPE, text=True)
+seat = subprocess.Popen([sys.executable, str(SEAT_FILE), str(port)], stdout=subprocess.PIPE, text=True)
 seat.stdout.readline()
 sconn, _ = srv.accept()
 n_seat = viewers(port)
@@ -170,7 +171,7 @@ seat.wait()
 sconn.close()
 srv.close()
 check("0 viewers on an idle port", n0 == 0, n0)
-check("…the desk's own seat (hands_seat.py, on every live desk) is NOT a viewer (measured 10-16: a raw count read "
+check("…the desk's own seat (its permanent client, on every live desk) is NOT a viewer (measured 10-16: a raw count read "
       "all three live desks as watched)", n_seat == 0, n_seat)
 check("…and a real client beside the seat is exactly 1", n1 == 1, n1)
 
