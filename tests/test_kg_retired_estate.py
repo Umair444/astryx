@@ -16,6 +16,10 @@ The estate root is ASTRYX_KG_ESTATE_ROOT (default: this checkout). The estate ru
 src/astryx/security/sqlguard/estate.py uses: triggers/ absent means a committed-only tree (CI, a clone), so the
 leg is NOT SEARCHED and exits 77 (UNVERIFIED in check.sh, never green); triggers/ present means a live host.
 When the env var is set the file runs only the scan (it is the child the E0 arms drive).
+Why only .py under memory/ and triggers/ (a4 #56888): measured 2026-10-16, after the DROP, over every OTHER
+gitignored file (28,801; venv/, node_modules/, .claude/, backups/ and caches excluded), the pattern hits 11 files,
+all prose or transcript (.md, .jsonl, .txt under homes/ and memory/) and 0 code. Re-measure if the estate grows code
+elsewhere. The database itself is the LIVE leg, its own gate: tests/test_kg_retired_live.py.
 Exit 0 pass · 1 fail · 77 estate absent (triggers/ missing at the root).
 """
 import os

@@ -651,6 +651,8 @@ run "kg retired: no tracked file names a kg relation (8018 S-retire)" "$PY" test
 # Its ESTATE leg, a gate of its own: the same pattern and exempt list over the gitignored memory/**/*.py and
 # triggers/**/*.py, where the old graph's writers lived. 77 (UNVERIFIED) where triggers/ is absent; planted RED/CONTROL arms.
 run "kg retired, estate leg: no memory/ or triggers/ .py names a kg relation (8018 S-retire)" "$PY" tests/test_kg_retired_estate.py
+# Its LIVE leg: the database itself, read-only (the schema was dropped 2026-10-16); planted RED/CONTROL on fixtures. 77 with no DB.
+run "kg retired, live leg: the database holds no kg schema (8018 S-retire)" "$PY" tests/test_kg_retired_live.py
 run "another checkout of this repo: one shared predicate for every walker, a foreign repo still walked, an unknown source named (seed 53453)" "$PY" tests/test_checkouts.py
 run "derived-copy registry: digests + writer count (8018 S1)" "$PY" tests/test_copies.py
 run "derived-copy registry: the graph builder stamps its own digest (8018 S1)" "$PY" tests/test_copies_builder.py

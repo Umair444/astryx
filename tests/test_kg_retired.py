@@ -11,6 +11,7 @@ pages it already digests (memgraph.system2_incidence), so nothing tracked may re
 Works on a clean checkout (no memory/, no triggers/: those are gitignored and never listed by git).
 Exit 0 pass · 1 fail · 77 could-not-run (no git or not a checkout).
 The gitignored estate's code is the ESTATE leg, its own gate: tests/test_kg_retired_estate.py (KG and EXEMPT shared).
+The database is the LIVE leg: tests/test_kg_retired_live.py (read-only; the schema was dropped 2026-10-16, #57047).
 """
 import re
 import subprocess
