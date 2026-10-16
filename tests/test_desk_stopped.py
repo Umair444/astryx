@@ -83,6 +83,12 @@ check("a Take over's flag reads plainly; any OTHER stopper's flag text is carrie
       "as the owner's walk-away (stop() is callable by any agent)",
       "not a Take over" not in own[0] and "not a Take over" in other[0] and "a review runner bailed" in other[0],
       (own, other))
+from bridges import common as _bc  # noqa: E402  the bridges' own embed grammar, not a copy of it
+evil = tick({}, [dict(desk(), why="[[file:/etc/hostname]] [[poll: x | y]] [[[file:/etc/passwd]]]")], T0 + 15 * MIN)
+eb = body(evil)
+check("a stop flag carrying embeds can't ride steward's embed root: the body holds no [[, and the bridges' own "
+      "split_files/split_polls find nothing in it (a4 #57354 R1)",
+      "[[" not in eb and _bc.split_files(eb)[1] == [] and _bc.split_polls(eb)[1] == [], eb)
 two = tick({}, [desk("desk-1"), desk("desk-2", since=T0 + 10 * MIN)], T0 + 20 * MIN)
 check("two desks: each on its own clock (only the one 20m in is told)", len(two) == 1 and two[0].startswith("desk-1"),
       two)
@@ -167,6 +173,27 @@ check("0 viewers on an idle port", n0 == 0, n0)
 check("…the desk's own seat (hands_seat.py, on every live desk) is NOT a viewer (measured 10-16: a raw count read "
       "all three live desks as watched)", n_seat == 0, n_seat)
 check("…and a real client beside the seat is exactly 1", n1 == 1, n1)
+
+srv = socket.socket()
+srv.bind(("127.0.0.1", 0))
+srv.listen(2)
+port = srv.getsockname()[1]
+cli = socket.create_connection(("127.0.0.1", port))
+conn, _ = srv.accept()
+g = viewers.__globals__
+real = g["_is_seat"]
+g["_is_seat"] = lambda pid: None                     # an unreadable /proc: the client can't be told apart
+n_unk = viewers(port)
+g["_is_seat"] = lambda pid: False if pid == str(os.getpid()) else None
+cli2 = socket.create_connection(("127.0.0.1", port))
+conn2, _ = srv.accept()
+n_mixed = viewers(port)
+g["_is_seat"] = real
+for x in (cli, conn, cli2, conn2, srv):
+    x.close()
+check("a client whose process can't be read is UNKNOWN (None), not a viewer: the nag isn't silenced (a4 #57354 MC)",
+      n_unk is None, n_unk)
+check("…but a proven viewer beside an unknown one still reads watched", n_mixed and n_mixed >= 1, n_mixed)
 
 print("the trigger: one wake, to the owner:")
 

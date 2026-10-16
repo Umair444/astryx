@@ -33,11 +33,16 @@ MUTANTS = {
         ('                    "viewers": count(port) if port else 0})',
          '                    "viewers": count(port) if port else 1})'),
     "S11 the desk's own seat is counted as a viewer (every live desk reads watched forever)":
-        ("        if pids and all(_is_seat(p) for p in pids):", "        if False:"),
+        ("        elif not all(seat):", "        else:"),
     "S12 the server end is counted instead of the client's (the seat can't be told apart)":
         ('f"( dport = :{int(port)} )"', 'f"( sport = :{int(port)} )"'),
     "S13 the seat is matched loosely (any python client reads as the seat)":
         ('SEAT = "hands_seat.py"', 'SEAT = "python"'),
     "S14 another stopper's flag text is dropped (a bailed runner reads as the owner's walk-away)":
         ('            by = "" if why in (None, OWNER_WHY) else', '            by = "" if True else'),
+    "S15 the carried flag text keeps its brackets (an embed rides steward's embed root; a4 #57354 R1)":
+        ('            flat = str(why).translate({ord("["): None, ord("]"): None})[:80]', '            flat = str(why)[:80]'),
+    "S16 an unreadable client counts as a viewer (the one unknown that silenced; a4 #57354 MC)":
+        ("        if not seat or None in seat:\n            unknown = True\n        elif not all(seat):",
+         "        if not seat or None in seat or not all(seat):"),
 }
