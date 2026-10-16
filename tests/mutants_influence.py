@@ -52,8 +52,10 @@ MUTANTS = {
     "K1 pass_land's ask is the PASS (answer) time again": ('"ask_ts": ask_ts,', '"ask_ts": row["ts"],'),
     "K2 the cycle boundary is dropped (the earliest message ever on the thread)":
         ('asks = [x for x in on if lo < x["id"] and', 'asks = [x for x in on if'),
-    "K3 a REVISE closes a cycle": ('        and not REVISE_RE.search(x["body"] or ""))',
-                                  '        or REVISE_RE.search(x["body"] or ""))'),
+    "K3 a REVISE closes a cycle": ('            and not REVISE_RE.search(x["body"] or "")))',
+                                  '            or REVISE_RE.search(x["body"] or "")))'),
+    "K4 a merge-ready marker row that also says REVISE no longer closes a cycle (a3 #58419)":
+        ('closes = lambda x: (any("error" not in r for r in parse_ready(x["body"]))', 'closes = lambda x: (False'),
     # BC-A
     "A1 the author/owner-prefix cross-check is dropped": ("            if author != owner:", "            if False:"),
     # BC-D

@@ -198,13 +198,16 @@ def review_anchor(pass_row, rows):
     PASS. None → the PASS's own ts, flagged as a fallback (the caller counts it). `rows` = any MSG_COLS rows.
     THE CYCLE BOUNDARY IS THE PREVIOUS PASS ONLY (a4 #58409): a REVISE (verdict or intent) does not close a cycle, so
     request → REVISE → re-request → PASS anchors on the FIRST request. a3's #58410 text listed REVISE as a boundary,
-    but its arm (c) requires that it isn't, and the arm wins. A review row carrying both words is a REVISE here."""
+    but its arm (c) requires that it isn't, and the arm wins. A review row carrying both words is a REVISE here,
+    UNLESS it carries a real `merge-ready:` marker (a parse_ready entry, not a template or malformed): a marker row
+    closes the cycle whatever else it says (a3 #58419: 11/381 marker rows in 28 days also matched REVISE_RE)."""
     author, reviewer, th = pass_row["to_agent"], pass_row["from_agent"], pass_row["thread"]
     if not th:
         return pass_row["ts"], True
     on = [x for x in rows if x["thread"] == th and x["id"] < pass_row["id"] and not is_pulse(x)]
-    closes = lambda x: (x["intent"] == "review" and bool(PROSE_PASS_RE.search(x["body"] or ""))
-                        and not REVISE_RE.search(x["body"] or ""))
+    closes = lambda x: (any("error" not in r for r in parse_ready(x["body"]))
+                        or (x["intent"] == "review" and bool(PROSE_PASS_RE.search(x["body"] or ""))
+                            and not REVISE_RE.search(x["body"] or "")))
     lo = max((x["id"] for x in on if x["from_agent"] == reviewer and x["to_agent"] == author and closes(x)),
              default=-1)
     asks = [x for x in on if lo < x["id"] and x["from_agent"] == author and x["to_agent"] == reviewer

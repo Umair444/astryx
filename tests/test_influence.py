@@ -236,6 +236,16 @@ def anchors(G):
                                                                       ts=t(2))]
     check("ask anchor (d): no author → reviewer message before the PASS → the PASS's ts, flagged a fallback",
           G.review_anchor(d[1], d) == (t(2), True), str(G.review_anchor(d[1], d)))
+    e = [row(1, A1, A2, "task", thread="re", ts=t(1)),
+         row(2, A2, A1, "review", "re-review after your REVISE: PASS\nmerge-ready: a1/x 1234567..89abcde", thread="re",
+             ts=t(2)),
+         row(3, A1, A2, "review", "review request: round 2", thread="re", ts=t(3)),
+         row(4, A2, A1, "review", "PASS", thread="re", ts=t(4))]
+    check("ask anchor (e): a merge-ready marker row closes the cycle even when it also says REVISE (a3 #58419)",
+          G.review_anchor(e[3], e) == (t(3), False), str(G.review_anchor(e[3], e)))
+    f = [e[0], {**e[1], "body": "REVISE: two fixes, then\nmerge-ready: <branch> <base>..<head>"}, e[2], e[3]]
+    check("ask anchor (e'): a TEMPLATE marker in a REVISE does not close the cycle",
+          G.review_anchor(f[3], f) == (t(1), False), str(G.review_anchor(f[3], f)))
 
 
 def delegation(G):
@@ -401,6 +411,15 @@ def bcr(G, shell):
     cols = [c for c in cols if c and " AS " not in c and not c.startswith("$")]
     check("BC-R: graph.MSG_COLS is exactly read_message's column list (channel/server.mjs)",
           m is not None and tuple(cols) == G.MSG_COLS, f"{cols} vs {G.MSG_COLS}")
+    # PREMISE PIN (steward #58414, a3 #58419): BC-R's "S2 reads what any reader reads" holds BY CONSTRUCTION only while
+    # the read tools have no reader-dependent predicate. The day one appears, this trips, not the column parity above.
+    def wheres(tool):
+        blk = re.search(rf"if \(name === '{tool}'\)(.*?)(?=\n  if \(name ===)", src, re.S)
+        return re.findall(r"WHERE ([^`)]*?)(?=\s+ORDER\b|`|\))", blk.group(1)) if blk else None
+    check("BC-R premise: read_message's SQL filters on exactly `WHERE id=$1` (no reader-dependent predicate)",
+          wheres("read_message") == ["id=$1"], str(wheres("read_message")))
+    check("BC-R premise: query_thread's SQL filters on exactly `WHERE thread=$1` (no reader-dependent predicate)",
+          wheres("query_thread") == ["thread=$1"], str(wheres("query_thread")))
     sel = re.match(r"SELECT (.*?) FROM messages", shell.MSG_SQL)
     check("BC-R: the shell's messages SELECT reads exactly graph.MSG_COLS",
           sel is not None and tuple(c.strip() for c in sel.group(1).split(",")) == G.MSG_COLS)
@@ -568,8 +587,16 @@ def main():
             theirs = lift.read_text()
             names = ("HEX", "REF", "READY_RE", "RANGE_RE", "PROSE_PASS_RE", "REVISE_RE")
             line = lambda txt, n: next((ln for ln in txt.splitlines() if ln.startswith(f"{n} = ")), None)
-            check("verdicts.py: the lifted group is byte-identical to triggers/seed/merge_ready.py's",
-                  all(line(mine, n) == line(theirs, n) is not None for n in names))
+            # Two legal states: before seed's import, a byte-identical copy; after it, merge_ready.py imports all seven
+            # names from verdicts.py and defines none of them (the zero-definitions grep).
+            seven = set(names) | {"MARKER_RE"}
+            imp = re.search(r"^from astryx\.core\.verdicts import (.+?)(?:\s+#.*)?$", theirs, re.M)
+            imported = imp is not None and seven <= {n.strip() for n in imp.group(1).split(",")}
+            defined = re.findall(rf"^({'|'.join(sorted(seven))}) *=", theirs, re.M)
+            check("verdicts.py: triggers/seed/merge_ready.py imports the lifted group (defining none) or copies it byte-"
+                  "identically", (imported and not defined) or all(line(mine, n) == line(theirs, n) is not None
+                                                                   for n in names),
+                  f"imported={imported} defined={defined}")
         else:
             print("  (verdicts lift parity: triggers/seed/merge_ready.py absent on this tree, not compared)")
         print(f"  DB-free phase: {time.monotonic() - t0:.1f}s")
