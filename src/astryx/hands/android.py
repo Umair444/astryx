@@ -327,6 +327,14 @@ def drive(avd: str, agent: str) -> None:
         L.hold(c, VM_SLOT, f"android:{avd}", SLOT_TTL_S)
 
 
+def driver(avd: str) -> str | None:
+    """The agent holding 'android:<avd>' NOW, else None: a free row, or a hold past its expiry, has no driver."""
+    with _db() as c:
+        r = c.execute("SELECT holder FROM leases WHERE resource = %s AND state = 'HELD' AND expires_at > now()",
+                      (f"android:{avd}",)).fetchone()
+    return r[0] if r else None
+
+
 def release(avd: str, agent: str) -> None:
     with _db() as c:
         L.unhold(c, f"android:{avd}", agent)

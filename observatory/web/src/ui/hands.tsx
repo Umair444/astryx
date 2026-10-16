@@ -52,7 +52,8 @@ const snapOpen = () => opened
 
 /** The desktop an agent is using right now, if any: its own, or the owner's laptop. */
 export function deskOf(agent: string, list: Desk[], nowS = Date.now() / 1000): Desk | null {
-  const own = list.find((d) => d.running && (d.kind === 'pool' ? d.holder === agent : d.agent === agent))
+  // a pool desk and a phone's desk both belong to whoever HOLDS them; an agent's own desk is its own name
+  const own = list.find((d) => d.running && (d.kind === 'pool' || d.holder ? d.holder === agent : d.agent === agent))
   const lap = list.find((d) => d.agent === 'laptop' && d.running && d.last_act?.by === agent
     && nowS - d.last_act.ts < RECENT_S)
   if (own && lap) return (lap.last_act!.ts >= (own.last_act?.ts ?? 0)) ? lap : own
@@ -145,7 +146,7 @@ export function DesktopOverlay() {
     return () => window.removeEventListener('keydown', k)
   }, [interact])
   const close = () => { opened = null; emit() }
-  const who = laptop ? (d?.last_act?.by || '') : d?.kind === 'pool' ? (d?.holder || d?.last_act?.by || '') : (d?.agent || '')
+  const who = laptop ? (d?.last_act?.by || '') : d?.kind === 'pool' || d?.holder ? (d?.holder || d?.last_act?.by || '') : (d?.agent || '')
   const acting = !!d?.last_act && Date.now() / 1000 - d.last_act.ts < ACTIVE_S && !d.stopped
   const post = async (what: string) => {
     if (!d) return
@@ -164,7 +165,7 @@ export function DesktopOverlay() {
             {who ? <AgentFace name={who} size={34} /> : <span className="w-[34px] h-[34px] grid place-items-center rounded-full border border-line text-ink-dim"><HandSvg size={16} /></span>}
             <div className="min-w-0">
               <div className="text-[15px] font-semibold text-ink truncate">
-                {laptop ? 'Your laptop' : d.kind === 'pool' ? `Background ${d.agent}${who ? ` · ${displayName(who)}` : ' · free'}` : `${displayName(d.agent)}'s own desktop`}
+                {laptop ? 'Your laptop' : d.kind === 'pool' ? `Background ${d.agent}${who ? ` · ${displayName(who)}` : ' · free'}` : d.agent.startsWith('phone-') ? `Phone${who ? ` · ${displayName(who)}` : ''}` : `${displayName(d.agent)}'s own desktop`}
               </div>
               <div className="text-[12px] text-ink-mute truncate">
                 {d.stopped ? 'stopped by you: every action is refused'

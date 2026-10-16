@@ -616,6 +616,18 @@ def _seed_profile(desk: str) -> None:
                     ignore=shutil.ignore_patterns("Singleton*", "lockfile", "*.lock", "Crash*"))
 
 
+def _phone_driver(agent: str) -> str | None:
+    """A phone's desktop belongs to no agent, so the agent DRIVING it (its 'android:<avd>' hold) is its holder: that is
+    what puts the phone's hands on the driver's avatar in the observatory (owner 10-16: "hands are not on your avatar").
+    Any failure reads None (no holder shown), never an error in the status of every desk."""
+    try:
+        from astryx.hands import android
+        avd = android.avd_of_desktop(agent)
+        return android.driver(avd) if avd else None
+    except Exception:
+        return None
+
+
 def status(agent: str | None = None) -> dict | list:
     if agent is None:
         names = sorted(d.name for d in STATE_ROOT.iterdir()) if STATE_ROOT.exists() else []
@@ -632,7 +644,7 @@ def status(agent: str | None = None) -> dict | list:
            "stopped": stopped(agent), "size": list(size(agent)) if live else [WIDTH, HEIGHT],
            "kind": "laptop" if is_laptop(agent) else "pool" if agent.startswith(POOL_PREFIX)
            else "own",
-           "holder": (holder(agent) or (None,))[0] if agent.startswith(POOL_PREFIX) else None,
+           "holder": (holder(agent) or (None,))[0] if agent.startswith(POOL_PREFIX) else _phone_driver(agent),
            "last_act": {"ts": la[0], "action": la[1], "by": la[2]} if la else None}
     if live:
         try:
