@@ -13,14 +13,18 @@ with no file changing. This leg reads the catalog, in a READ-ONLY session (it ne
 
 The probe is one query over pg_namespace plus to_regclass on the node table, the two facts seed measured at the
 DROP (plan-8018 #57047). The relation name is assembled at runtime, so this file never names one (the tracked leg
-scans it). Exit 0 pass · 1 fail · 77 no reachable database (no .env, server down, or a role that can't CREATE
-DATABASE for the fixture arms): NOT RUN, never a pass.
+scans it). The estate rule (src/astryx/security/sqlguard/estate.py) grades a missing world: psycopg not importable
+or no reachable database is 77 NOT SEARCHED on a committed-only tree (CI, pushed_tree_check: triggers/ absent) and
+rc 1 BROKEN on a live host, where a quiet 77 would switch the gate off. Exit 0 pass · 1 fail · 77 not searched.
 """
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
+
+from astryx.security.sqlguard.estate import gate, unavailable  # noqa: E402  stdlib only, BEFORE any dependency
+gate("test_kg_retired_live", REPO, deps=("psycopg",), env=False)       # the fixture arms need no .env of their own
 
 import psycopg  # noqa: E402
 
@@ -55,16 +59,9 @@ def main():
         with fixture_db() as fx:
             got = probe(fx["dsn"])
             check("L0 CONTROL a plain fixture (schema.sql whole) reads nothing", got == [], f"probe={got}")
-        dsn = live_dsn()
-    except (FixtureUnavailable, StopIteration, OSError) as e:
-        print(f"SKIP: NOT RUN — no reachable database for the fixture or live arms ({type(e).__name__}: {e})")
-        sys.exit(77)
-
-    try:
-        got = probe(dsn)
-    except psycopg.OperationalError as e:
-        print(f"SKIP: NOT RUN — the live database is unreachable ({type(e).__name__})")
-        sys.exit(77 if not fails else 1)
+        got = probe(live_dsn())
+    except (FixtureUnavailable, StopIteration, OSError, psycopg.OperationalError) as e:
+        unavailable("test_kg_retired_live", REPO, e, fails)          # 77 committed-only, 1 live host or a red arm
     check("L1 the live database holds neither the retired schema nor its node table (read-only)", got == [],
           f"still present: {got}")
 
