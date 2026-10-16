@@ -25,6 +25,10 @@ MUTANTS = {
          "        v = \"R-STALE\" if listed and not lo else \"R-NEW\" if lo and not listed else \"ok\""),
     "S8 NOT SEARCHED is graded like any rung below RESPONSIVE":
         ("    elif s[\"rung\"] == \"NOT SEARCHED\":", "    elif False:"),
+    "S10 a privacy classification failure is graded anyway (enforce says NOT SEARCHED)":
+        ("if privacy.ERRORS:", "if False:"),
+    "S11 a stub report replaces judge silently":
+        ("[ -z \"${SQLSITE_REPORT:-}\" ] || echo", "[ -n \"${SQLSITE_REPORT:-}\" ] || echo"),
     "S9 the registration check matches a comment mention":
         ("command grep -E '^[[:space:]]*run ' devtools/check.sh |", "cat devtools/check.sh |"),
 }

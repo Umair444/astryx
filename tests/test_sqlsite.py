@@ -14,7 +14,9 @@ except one listed EXECUTED write, and one listed UNEXECUTED insert it never driv
     and so does one check.sh only mentions in a comment;
   - WRITES NOTHING: ledger.json's sha and the live sqlguard_seen table (count, sum(runs), max(last_seen)) unchanged;
   - SPAWN: the oracle runs with ASTRYX_AGENT unset; a failing oracle says its grades are not evidence (rc 1);
-  - SKIP: no .env at the root is 77 with a SKIP line, never an empty pass.
+  - SKIP: no .env at the root is 77 with a SKIP line, never an empty pass; a privacy classification failure (git
+    can't answer check-ignore) is NOT SEARCHED, 77, and no verdict line (enforce's rule, a4 #56615);
+  - NO PY: no venv and no git checkout to borrow one from is rc 2 with a line saying set PY.
 The subject is SQLSITE_SRC (a mutated copy; tests/mutants_sqlsite.py), else devtools/sqlsite.sh.
 """
 import hashlib
@@ -139,6 +141,23 @@ try:
     arm("VERDICT: a listed live-only climb is ok (enforce: LIVE-ONLY, never shrunk)", verdict.get("3") == "ok", out)
     arm("VERDICT: controls: unlisted EXECUTED is R-NEW, listed RESPONSIVE is R-STALE, 2 findings, rc 1",
         verdict.get("4") == "R-NEW" and verdict.get("5") == "R-STALE" and "2 finding(s)" in out and rc == 1, (rc, out))
+    arm("VERDICT: a stub report is announced, never silent", any("SQLSITE_REPORT=" in l for l in lines(out, "!")), out)
+
+    rc, out = run("--ledger", str(ok_py), "src/astryx/x.py::",
+                  env={"SQLSITE_REPORT": str(tmp / "rep.json"), "SQLGUARD_LEDGER": str(tmp / "stub_ledger.json"),
+                       "GIT_DIR": "/nonexistent", "PY": sys.executable})
+    arm("SKIP: a privacy classification failure is NOT SEARCHED, 77, and no verdict line",
+        rc == 77 and "NOT SEARCHED: privacy classification failed" in out
+        and not [l for l in out.splitlines() if "x.py::f :: select " in l], (rc, out))
+
+    nopy = tmp / "nopy"
+    nopy.mkdir()
+    (nopy / ".env").write_text("")
+    e = {k: v for k, v in os.environ.items() if k != "PY"}
+    p = subprocess.run(["bash", str(SUBJECT), str(ok_py)], capture_output=True, text=True, timeout=60,
+                       env={**e, "SQLSITE_ROOT": str(nopy), "GIT_CEILING_DIRECTORIES": str(tmp)})
+    arm("NO PY: no venv and no git checkout is rc 2 with a 'set PY' line", p.returncode == 2 and "set PY" in p.stdout,
+        (p.returncode, p.stdout, p.stderr))
 
     bad = tmp / "bad.py"
     bad.write_text("import sys\nprint('boom')\nsys.exit(3)\n")

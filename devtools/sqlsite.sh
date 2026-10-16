@@ -38,12 +38,15 @@ ROOT=$PWD
 [ -e .env ] || { echo "SKIP: no .env in $ROOT (fixture_db reads the DSN from it; in a worktree, link it for the run)"; exit 77; }
 PY=${PY:-$ROOT/venv/bin/python}
 if [ ! -x "$PY" ]; then                                  # a worktree has no venv: use the main checkout's
-  PY="$(cd "$(git rev-parse --path-format=absolute --git-common-dir)/.." && pwd)/venv/bin/python"
+  C=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
+    || { echo "sqlsite: no venv in $ROOT and no git checkout to borrow one from: set PY"; exit 2; }
+  PY="$(cd "$C/.." && pwd)/venv/bin/python"
 fi
 D="$(mktemp -d "${TMPDIR:-/tmp}/sqlsite.XXXXXX")"; trap 'rm -rf "$D"' EXIT
 export ASTRYX_RUNSCOPE_TEST=1 ASTRYX_SQLGUARD_RUN="rsqlsite$$" ASTRYX_SQLGUARD_DIR="$D" PYTHONDONTWRITEBYTECODE=1
 export PYTHONPATH="$ROOT/src/astryx/security/sqlguard/shim${PYTHONPATH:+:$PYTHONPATH}"
 echo "$ASTRYX_SQLGUARD_RUN" > "$D/run_id"
+[ -z "${SQLSITE_REPORT:-}" ] || echo "! SQLSITE_REPORT=$SQLSITE_REPORT: verdicts are graded from this file, not this run"
 TR=$(realpath -m --relative-to=. "$T")                   # ./tests/x.py and /abs/…/tests/x.py are tests/x.py
 if [ "$LEDGER_MODE" = 1 ] && ! command grep -E '^[[:space:]]*run ' devtools/check.sh | command grep -qF " $TR"; then
   echo "! $TR has no run line in devtools/check.sh (the coverage gate goes red, and nothing drives its sites)"
@@ -54,6 +57,7 @@ echo "test $T rc=$rc"
 "$PY" -W ignore::SyntaxWarning - "$D" "$LEDGER_MODE" "${SQLGUARD_LEDGER:-$ROOT/src/astryx/security/sqlguard/ledger.json}" "$rc" "$@" <<'EOF'
 import collections, json, os, sys
 from astryx.security.sqlguard import inventory, judge
+from astryx.security.sqlguard import privacy
 from astryx.security.sqlguard.privacy import ledger_key
 d, ledger_mode, ledger_path, test_rc, args = sys.argv[1], sys.argv[2] == "1", sys.argv[3], int(sys.argv[4]), sys.argv[5:]
 inv = inventory.build()
@@ -82,11 +86,16 @@ if not ledger_mode:
     sys.exit(1 if test_rc else 0)
 rows = json.load(open(ledger_path))["rows"]
 mine = lambda k: any(k.startswith(p) for p in args)
+lks = {k: ledger_key(k) for k in rep["sites"] if mine(k)}
+if privacy.ERRORS:                                       # enforce: NOT SEARCHED; an unreadable key is not a finding
+    print(f"NOT SEARCHED: privacy classification failed ({len(privacy.ERRORS)}), e.g. {privacy.ERRORS[0]}: "
+          f"ledger keys can't be read, so no verdict (a4 #56615)")
+    sys.exit(77)
 bad, live = 0, set()
 for k, s in sorted(rep["sites"].items()):
     if not mine(k):
         continue
-    lk = ledger_key(k)
+    lk = lks[k]
     live.add(lk)
     listed, lo = lk in rows, s.get("live_only")
     if s["rung"] == "RESPONSIVE":                        # enforce: never R-NEW; a live-only climb is never shrunk
