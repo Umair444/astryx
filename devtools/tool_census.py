@@ -103,11 +103,14 @@ def fmt(x):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=7)
+    ap.add_argument("--until", help="the window's end, ISO 8601 (default now): re-measure a past window exactly")
     ap.add_argument("--dsn", help="a database other than the org's (tests/test_tool_census.py's fixture)")
     ap.add_argument("--before", help="git ref whose toolreg is the 'before' side of (b) (e.g. the pre-S1 main)")
     a = ap.parse_args()
     import psycopg
-    until = datetime.now(timezone.utc)
+    until = datetime.fromisoformat(a.until) if a.until else datetime.now(timezone.utc)
+    if until.tzinfo is None:
+        until = until.replace(tzinfo=timezone.utc)
     since = until - timedelta(days=a.days)
     conn = psycopg.connect(a.dsn or econ._dsn(), autocommit=True, connect_timeout=5)
     conn.execute("SET default_transaction_read_only = on")
@@ -162,7 +165,8 @@ def main():
         print(f"    canonical() alone (before's authors): {fmt(gdp(canon_only))}: value moves by ids MERGING "
               f"(a pre-move id and its moved id were 2 tools); the rest of the value move is self-use the new "
               f"authors make discountable")
-        print(f"    delta : coverage {dom['coverage'] - b['coverage']:+.2%} · value {dom['value'] - b['value']:+d} · "
+        dv = f"{dom['value'] - b['value']:+d}" if dom["value"] is not None and b["value"] is not None else "n/a"
+        print(f"    delta : coverage {dom['coverage'] - b['coverage']:+.2%} · value {dv} · "
               f"distinct tools {len({r[0] for r in econ._v2_domain(before)})} → {len({r[0] for r in econ._v2_domain(after)})}")
     else:
         print("\n(b) skipped: no --before ref given")
