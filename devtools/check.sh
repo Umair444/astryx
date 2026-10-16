@@ -837,6 +837,10 @@ run "econ v2 mirror + version gate (4227 S2)" "$PY" tests/test_econ_v2_mirror.py
 # LEDGER_V 1 row and a LEDGER_V 2 row of one MOVED tool are one id with one author (a1).
 run "econ tool domain: core servers outside value and coverage, one moved tool is one id across the LEDGER_V bump (11324 S1)" "$PY" tests/test_econ_core_domain.py
 run "tool census: the known-answer fixture reads back as its domain, fixes, instruments and residual say (11324 S1)" "$PY" tests/test_tool_census.py
+# the influence graph (11324 S2): every rule in src/astryx/influence/graph.py, DB-free on a real tempfile git repo and
+# rows of exactly the read tools' columns; ONE fixture arm drives the shell's reads and cache write empty and populated.
+# Mutants: tests/mutants_influence.py.
+run "influence graph: SHA-joined PASSes, BC-D delegation, coverage-gated kinds, PPR known answers, the tool (11324 S2)" "$PY" tests/test_influence.py
 # econ PROVENANCE (steward): a2's trip (#21969) evaluated, not remembered — every v2.1+ econ row's
 # built_from.sha must be an ancestor of main with dirty=false; missing/unknown/foreign/dirty rows are
 # reported with their own remedies (report-only trigger, gitignored body; SKIPs where it is absent).

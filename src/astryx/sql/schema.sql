@@ -921,3 +921,41 @@ LANGUAGE sql STABLE AS $fn$
   ORDER BY s.score DESC, s.node_id
   LIMIT greatest(coalesce(k, 10), 0)
 $fn$;
+
+-- ── the influence graph (plan-11324 S2; src/astryx/influence/) ─────────────────────────────────────────────────────
+-- ONE writer each: shell.compute() materializes the EDGE CACHE (every derived edge, replaced per compute) and appends
+-- the GLOBAL view's values; the "who should I ask" tool appends its own query log (the loop discount's one authority).
+-- An edge cites AUTHORITY REFS only (a merge sha, message ids, a tool id), never a body. `coverage` is its kind's
+-- coverage at compute: under 50% the kind weighs 0 in every view. S3 adds VALUES (scope, view), never a migration.
+CREATE TABLE IF NOT EXISTS influence_edge (
+  scope       text NOT NULL DEFAULT 'local',
+  kind        text NOT NULL,                  -- graph.KINDS
+  src         text NOT NULL,                  -- credit flows src -> dst
+  dst         text NOT NULL,
+  ts          timestamptz NOT NULL,           -- the authority event's time
+  ask_ts      timestamptz NOT NULL,           -- when the ask was made (task / PASS row); the backtest's event time
+  ref         text NOT NULL,                  -- authority refs, never a body
+  topic       text,                           -- the authority row's thread
+  coverage    double precision NOT NULL,
+  computed_at timestamptz NOT NULL,
+  CHECK (src <> dst)
+);
+CREATE INDEX IF NOT EXISTS influence_edge_scope ON influence_edge (scope, kind, ts);
+CREATE TABLE IF NOT EXISTS influence_value (
+  scope       text NOT NULL DEFAULT 'local',
+  view        text NOT NULL,
+  agent       text NOT NULL,
+  value       double precision NOT NULL,
+  unmapped    double precision NOT NULL,      -- the agent's share of activity mapping to no weighted edge kind
+  computed_at timestamptz NOT NULL,
+  PRIMARY KEY (scope, view, agent, computed_at)
+);
+CREATE TABLE IF NOT EXISTS influence_query (
+  id        bigserial PRIMARY KEY,
+  ts        timestamptz NOT NULL DEFAULT now(),
+  asker     text NOT NULL,
+  returned  text[] NOT NULL,
+  view      text NOT NULL,
+  liveness  text NOT NULL                     -- which filter ran, as the reply printed it
+);
+CREATE INDEX IF NOT EXISTS influence_query_ts ON influence_query (ts);
