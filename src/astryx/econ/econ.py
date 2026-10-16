@@ -398,7 +398,9 @@ def integrity(conn, since, until) -> dict:
 # v2.1 (S2): the version gate. v2.0 rows were archived while S0's demand predicate was a
 # tautology (fixed e36a66c) and the ledger counted a script NAMED in a command as called
 # (fixed acfc1ea); readers take only V2_MIN and up, so nobody has to remember which days.
-V2_VERSION = "v2.1"
+# v2.2 (goal 11324 S1): the tool domain is AGENT-AUTHORED tools. The platform's servers (toolreg.CORE_SERVERS)
+# leave the denominator AND the value, so a v2.2 coverage is not comparable with a v2.1 one: the version says so.
+V2_VERSION = "v2.2"
 V2_MIN = (2, 1)
 
 
@@ -436,11 +438,30 @@ def _v2_rec(value, coverage, status) -> dict:
     return {"value": value, "version": V2_VERSION, "coverage": coverage, "status": status}
 
 
+def _v2_core(rid) -> bool:
+    """A call of a CORE server's tool (mcp:<server>/<tool>, server in toolreg.CORE_SERVERS: the wire and the door).
+    The platform is no agent's work, so it is outside the tool domain: never 'resolved', never 'unknown'. The set
+    is toolreg's, read at call time and never re-typed here (a2 #57895, a4 #57896)."""
+    from astryx.core.toolreg import CORE_SERVERS
+    m = re.fullmatch(r"mcp:([\w.-]+)/[\w.-]+", rid) if isinstance(rid, str) else None
+    return bool(m) and m.group(1) in CORE_SERVERS
+
+
+# declared in every tool_gdp status (the I1 record shape is exactly {value, version, coverage, status}: no 5th key)
+V2_DOMAIN = "domain: agent-authored tools, core servers excluded"
+
+
+def _v2_domain(rows) -> list:
+    """THE tool domain (goal 11324 S1, a3 HARD): rows minus core calls, whatever author a core row carries. Every
+    count below starts here, so core can raise neither the denominator, nor coverage, nor the value."""
+    return [r for r in rows if not _v2_core(r[0])]
+
+
 def _v2_counted(rows) -> set:
-    """The (tool, caller, author) triples tool GDP COUNTS: demand-qualified calls whose caller
+    """The (tool, caller, author) triples tool GDP COUNTS: demand-qualified calls in the tool domain whose caller
     is not the tool's author. One definition, shared by _v2_tool_gdp (the value) and
     src/astryx/econ/wash_detector.py (rings over the same edges), so the two cannot drift apart."""
-    return {(rid, caller, author) for rid, caller, author, dq in rows if dq and caller != author}
+    return {(rid, caller, author) for rid, caller, author, dq in _v2_domain(rows) if dq and caller != author}
 
 
 def _v2_tool_gdp(rows, version=V2_VERSION, authorship_ok=True) -> dict:
@@ -448,10 +469,15 @@ def _v2_tool_gdp(rows, version=V2_VERSION, authorship_ok=True) -> dict:
     per tool call. Value = distinct (tool, caller) pairs among demand-qualified calls whose
     caller is not the tool's author (self-use discounted; an 'unknown'/None author is never
     self-discounted). compression = 1, declared: savings per call enter only after the
-    placebo oracle (O4) passes. coverage = the demand-qualified share of observed calls."""
+    placebo oracle (O4) passes. coverage = the demand-qualified share of observed calls, in the
+    tool domain (V2_DOMAIN: core servers' calls are in neither the numerator nor the denominator)."""
     if not rows:
         return {"value": None, "version": version, "coverage": 0,
                 "status": "NOT_EVALUATED: ledger absent (no meta.v-stamped registry_id calls in window)"}
+    rows = _v2_domain(rows)
+    if not rows:
+        return {"value": None, "version": version, "coverage": 0,
+                "status": "NOT_EVALUATED: only core-server calls in window; " + V2_DOMAIN}
     if not authorship_ok:
         return {"value": None, "version": version, "coverage": 0,
                 "status": "NOT_EVALUATED: authorship unavailable (cannot discount self-use)"}
@@ -466,8 +492,8 @@ def _v2_tool_gdp(rows, version=V2_VERSION, authorship_ok=True) -> dict:
     partial = any(r[2] in (None, "unknown") for r in qualified)
     return {"value": len(pairs), "version": version, "coverage": round(cov, 4),
             "status": ("PARTIAL: some counted callers' authors unresolved (self-use not "
-                       "discountable for them); compression=1 declared") if partial
-                      else "OK: usage-GDP, compression=1 declared"}
+                       "discountable for them); compression=1 declared; " + V2_DOMAIN) if partial
+                      else "OK: usage-GDP, compression=1 declared; " + V2_DOMAIN}
 
 
 def _v2_mirror(rows, tool_gdp) -> dict:
