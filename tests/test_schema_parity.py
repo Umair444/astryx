@@ -30,7 +30,12 @@ THE COUNT (a1 BC-1, a3 BC-5 #57352): every CREATE/DROP DATABASE is counted at ps
 both in-process creators share (fixture.py's admin.execute, schema_parity.birth()), installed before any arm. Its
 DOMAIN is in-process psycopg: a creator that shells out to psql escapes it (none exists today). (i)'s RATCHET is
 asserted in-oracle every run: at most MAX_CREATES = 5 (2 arm fixtures + birth + 2 wiring references; a4 #57397).
-"0 drops outside the batch" is S3's.
+THE BATCH (plan-11253 S3, #57171; fixture.py's lifetime seam, the one 11254 extends: #57439 §1): all five are members of
+ONE fixture Batch (the arm fixtures and the wiring references through fixture_db(lifetime="batch"), run()'s injected
+`fixture=` being the batch's creator; birth's database enrolled by name), dropped together at ONE close, concurrently,
+in a `finally` around the whole DB phase. The counter attributes each DROP by the thread that issued it (the close's
+workers are fixture.BATCH_THREAD): 0 DROP DATABASE outside the close (BC-1; E3's real catcher, BC-2), every CREATE named
+a batch member, and after the close none of them in pg_database (Done (vi)). The close's wall time prints on its own.
 THE ESTATE RULE (a4 #57397, src/astryx/security/sqlguard/estate.py): psycopg absent or no fixture database is 77 NOT
 SEARCHED only on a committed-only tree (triggers/ absent); on a LIVE host, or after a red arm, it is rc 1.
 Needs a role that can CREATE DATABASE (a fixture), else the estate rule above.
@@ -40,6 +45,8 @@ import io
 import os
 import re
 import sys
+import threading
+import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -55,9 +62,14 @@ def check(name, ok, detail=""):
 
 # ── THE CREATE-DATABASE COUNTER (BC-1/BC-5). Counted AFTER the execute returns: a refused CREATE made nothing. A
 # Composed statement (birth()'s sql.SQL(...).format) is rendered first, or its CREATE would be invisible.
-COUNT = {"create": 0, "drop": 0}
-MAX_CREATES = 5            # (i)'s ratchet: S2's measured total (a4 #57397); S3 adds "0 drops outside the batch"
-_CREATE = re.compile(r"\s*CREATE\s+DATABASE\b", re.I)
+# S3: a DROP is attributed by the THREAD that issued it. The batch close's workers are named fixture.BATCH_THREAD, so
+# "drop_batch" is the close's and "drop" is everything else, which must be 0. The close runs K threads at once: a lock.
+COUNT = {"create": 0, "drop": 0, "drop_batch": 0}
+CREATED = []               # the name each counted CREATE made (Done (vi): every one a batch member, none left after)
+MAX_CREATES = 5            # (i)'s ratchet: S2's measured total (a4 #57397)
+BATCH_THREAD = "astryx-fixture-batch"      # == fixture.BATCH_THREAD (asserted in main(), so the two can't drift)
+_LOCK = threading.Lock()
+_CREATE = re.compile(r"\s*CREATE\s+DATABASE\s+\"?([^\"\s]+)", re.I)
 _DROP = re.compile(r"\s*DROP\s+DATABASE\b", re.I)
 
 
@@ -73,10 +85,13 @@ def install_counter(psycopg):
                                                       else query.as_string(self))
         except Exception:                                          # noqa: BLE001 — an unrenderable query: its repr
             q = str(query)
-        if _CREATE.match(q):
-            COUNT["create"] += 1
-        elif _DROP.match(q):
-            COUNT["drop"] += 1
+        with _LOCK:
+            m = _CREATE.match(q)
+            if m:
+                COUNT["create"] += 1
+                CREATED.append(m.group(1))
+            elif _DROP.match(q):
+                COUNT["drop_batch" if threading.current_thread().name.startswith(BATCH_THREAD) else "drop"] += 1
         return r
     execute._parity_counter = True
     psycopg.Cursor.execute = execute
@@ -193,7 +208,8 @@ def main():
         spec.loader.exec_module(P)
     else:
         from astryx.pg import schema_parity as P
-    from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db, live_dsn
+    from astryx.security.sqlguard import fixture as FX
+    from astryx.security.sqlguard.fixture import Batch, FixtureUnavailable, fixture_db, fresh_name, live_dsn
     from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
     print("── DB-free phase")
@@ -241,21 +257,28 @@ def main():
                     Probe.wrote = False
             return r
 
+    # THE BATCH (plan-11253 S3): every database this oracle creates is a member, dropped at ONE close in the DB phase's
+    # `finally` (an arm that raises must not leave five dead-pid databases for the next entry's SERIAL reap).
+    BATCH = Batch()
+
     def recording(minted):
-        """run()'s `fixture=` for the WIRING arms: fixture_db itself, recording what it minted, so the arm can tell
-        the injected creator was used (E3) and used once (E2)."""
+        """run()'s `fixture=` for the WIRING arms: the BATCH's creator (fixture_db(lifetime="batch")), recording what it
+        minted, so the arm can tell the injected creator was used (E3) and used once (E2), and that its reference is a
+        batch member (Done (vi))."""
         @contextlib.contextmanager
         def creator(extra=()):
-            with fixture_db(extra=extra) as fx:
+            with BATCH.fixture(extra=extra) as fx:
                 minted.append(fx["dbname"])
                 yield fx
         return creator
 
     def wire(dsn, db):
-        """run()'s DEFAULT path through the injected creator: (result, rc via _report, driver creates, creator mints)."""
-        minted, n0 = [], COUNT["create"]
+        """run()'s DEFAULT path through the injected creator: (result, rc via _report, driver creates, creator mints,
+        DROPs outside the batch during it, every mint a batch member)."""
+        minted, n0, d0 = [], COUNT["create"], COUNT["drop"]
         r = P.run(dsn, db=db, fixture=recording(minted))
-        return r, quiet(P._report, db, r), COUNT["create"] - n0, len(minted)
+        return (r, quiet(P._report, db, r), COUNT["create"] - n0, len(minted), COUNT["drop"] - d0,
+                bool(minted) and all(m in BATCH.members for m in minted))
 
     def live_run(dsn, db, exp):
         """run() on a LIVE database with the captured expected: (result, creates during it)."""
@@ -332,7 +355,7 @@ def main():
     @arm
     def astryx_fixture():
         n0 = COUNT["create"]
-        fx = S["afx"] = stack.enter_context(fixture_db(extra=P.expected_extra()))
+        fx = S["afx"] = stack.enter_context(fixture_db(extra=P.expected_extra(), lifetime="batch", batch=BATCH))
         check("COUNTER: one fixture_db entry counts exactly ONE CREATE DATABASE (the zero-delta arms aren't vacuous)",
               COUNT["create"] - n0 == 1, str(COUNT["create"] - n0))
         with psycopg.connect(fx["dsn"], autocommit=True) as c:
@@ -450,7 +473,7 @@ def main():
         # run() as a whole, on its DEFAULT path: a database that lacks ONLY the messages trigger must read drift through
         # objects alone, and reach the exit code (a3/a1 lens: a computed verdict that never reaches the exit code is a
         # test with no runner)
-        r2, rc, made, minted = wire(fx["dsn"], "astryx")
+        r2, rc, made, minted, dropped, member = wire(fx["dsn"], "astryx")
         check("WIRING (astryx): a database missing ONLY the messages trigger reads DRIFT through run()'s default path "
               "(exactly that trigger MISSING, nothing CHANGED, columns identical), rc 1 through _report",
               r2.get("drift") is True and r2.get("objects_missing") == [f"trigger {t}"] and not r2.get("objects_changed")
@@ -459,6 +482,9 @@ def main():
         check("WIRING (astryx): the default path minted its reference through the INJECTED creator, exactly once "
               "(driver creates == creator mints == 1: E3 ignores fixture=, E2 never mints)",
               made == 1 and minted == 1, f"driver={made} creator={minted}")
+        check("WIRING (astryx): its reference is a BATCH member and NO DROP DATABASE ran during it (E3's real catcher, "
+              "BC-2: a run() that bypasses fixture= drops its reference immediately)", member and dropped == 0,
+              f"member={member} drops outside the batch={dropped}")
 
     # GEO (owner 10-10 "the design on github should match local"; steward #42345 F1): a SCOPED database. Its file is
     # src/astryx/sql/schema_geo.sql; only `track` is judged, and there a live-only table IS drift (nobody else writes into
@@ -479,7 +505,7 @@ def main():
     @arm
     def geo_fixture():
         n0 = COUNT["create"]
-        gx = S["gfx"] = stack.enter_context(fixture_db(extra=geo_sql + PARKED))
+        gx = S["gfx"] = stack.enter_context(fixture_db(extra=geo_sql + PARKED, lifetime="batch", batch=BATCH))
         with psycopg.connect(gx["dsn"], autocommit=True) as c:
             S["gstate"] = state(c)                                  # geo's CAPTURED state: before any arm
             S["gexp"] = S["gstate"][0]
@@ -583,63 +609,92 @@ def main():
               gone == ["track.presence"], str(gone))
         # WIRING (geo), LAST on this fixture: the specific item, not just drift (geo is exclusive, so an EMPTY
         # expected would still read drift through live_only; E2 trips only on the named table)
-        gw, rc, made, minted = wire(gx["dsn"], "geo")
+        gw, rc, made, minted, dropped, member = wire(gx["dsn"], "geo")
         check("WIRING (geo): the committed DROP of track.presence reads MISSING through run()'s default path, rc 1 "
               "through _report", "table track.presence" in gw["missing"] and gw["drift"] is True and rc == 1,
               f"missing={gw['missing']} rc={rc}")
         check("WIRING (geo): the reference was minted through the INJECTED creator, exactly once",
               made == 1 and minted == 1, f"driver={made} creator={minted}")
+        check("WIRING (geo): its reference is a BATCH member and NO DROP DATABASE ran during it (E3, BC-2)",
+              member and dropped == 0, f"member={member} drops outside the batch={dropped}")
 
     @arm
     def geo_birth_converge():
         # the BIRTH path (a4 #42525) and CONVERGENCE (a4 #43925) on ONE scratch database (S2: zz_geo_birth and
         # zz_geo_conn merged, #57168 §2): birth() with no DDL at all (sqlguard EX), then the resident's CONNECT is
-        # revoked and grant_connect() must bring it back
-        zdb = f"zz_geo_birth_{os.getpid()}"
+        # revoked and grant_connect() must bring it back. S3: a BATCH member, enrolled BEFORE birth() (a name never
+        # made is "already gone", BC-6), named by fixture's counter so it can't collide (#57168 §3), and owner-stamped
+        # right after its birth so reap() collects it if this process dies before the close (the backstop).
+        zdb = BATCH.enroll(fresh_name())
         n0 = COUNT["create"]
-        try:
-            with psycopg.connect(live_dsn(), autocommit=True) as a:
-                made = P.birth(a, zdb)
-                pub, res = a.execute("SELECT has_database_privilege('public', %s, 'CONNECT'), "
-                                     "has_database_privilege(%s, %s, 'CONNECT')", (zdb, P.RESIDENT, zdb)).fetchone()
-                again = P.birth(a, zdb)
-                a.execute(f'REVOKE CONNECT ON DATABASE "{zdb}" FROM {P.RESIDENT}')
-                lost = a.execute("SELECT has_database_privilege(%s, %s, 'CONNECT')", (P.RESIDENT, zdb)).fetchone()[0]
-                P.grant_connect(a, zdb)
-                back = a.execute("SELECT has_database_privilege(%s, %s, 'CONNECT')", (P.RESIDENT, zdb)).fetchone()[0]
-                pub2 = a.execute("SELECT has_database_privilege('public', %s, 'CONNECT')", (zdb,)).fetchone()[0]
-            check("GEO BIRTH: birth() makes a missing database closed to PUBLIC, CONNECT for the resident; a second call "
-                  "makes nothing (a4 #42525: revoking PUBLIC and granting nothing breaks the ruling)",
-                  made is True and again is False and pub is False and res is True, f"{made} {again} {pub} {res}")
-            check("COUNTER: birth()'s Composed CREATE DATABASE is counted at the driver (once: the second call makes "
-                  "nothing)", COUNT["create"] - n0 == 1, str(COUNT["create"] - n0))
-            check("CONVERGE: an EXISTING database whose resident CONNECT was lost gets it back from grant_connect(), PUBLIC "
-                  "still nothing (a4 #43925: birth() grants only what it creates)",
-                  lost is False and back is True and pub2 is False, f"{lost} {back} {pub2}")
-        finally:
-            with psycopg.connect(live_dsn(), autocommit=True) as a:
-                a.execute(f'DROP DATABASE IF EXISTS "{zdb}" WITH (FORCE)')
+        with psycopg.connect(live_dsn(), autocommit=True) as a:
+            made = P.birth(a, zdb)
+            if made:
+                a.execute(f"COMMENT ON DATABASE \"{zdb}\" IS '{FX.owner_stamp()}'")    # digits/hex only
+            pub, res = a.execute("SELECT has_database_privilege('public', %s, 'CONNECT'), "
+                                 "has_database_privilege(%s, %s, 'CONNECT')", (zdb, P.RESIDENT, zdb)).fetchone()
+            again = P.birth(a, zdb)
+            a.execute(f'REVOKE CONNECT ON DATABASE "{zdb}" FROM {P.RESIDENT}')
+            lost = a.execute("SELECT has_database_privilege(%s, %s, 'CONNECT')", (P.RESIDENT, zdb)).fetchone()[0]
+            P.grant_connect(a, zdb)
+            back = a.execute("SELECT has_database_privilege(%s, %s, 'CONNECT')", (P.RESIDENT, zdb)).fetchone()[0]
+            pub2 = a.execute("SELECT has_database_privilege('public', %s, 'CONNECT')", (zdb,)).fetchone()[0]
+        check("GEO BIRTH: birth() makes a missing database closed to PUBLIC, CONNECT for the resident; a second call "
+              "makes nothing (a4 #42525: revoking PUBLIC and granting nothing breaks the ruling)",
+              made is True and again is False and pub is False and res is True, f"{made} {again} {pub} {res}")
+        check("COUNTER: birth()'s Composed CREATE DATABASE is counted at the driver (once: the second call makes "
+              "nothing)", COUNT["create"] - n0 == 1, str(COUNT["create"] - n0))
+        check("CONVERGE: an EXISTING database whose resident CONNECT was lost gets it back from grant_connect(), PUBLIC "
+              "still nothing (a4 #43925: birth() grants only what it creates)",
+              lost is False and back is True and pub2 is False, f"{lost} {back} {pub2}")
 
     print("── DB phase")
-    executed = 0
-    with stack:                                                     # the arm fixtures drop when the phase ends
-        for f in DB_ARMS:
-            try:
-                f()
-            except FixtureUnavailable as e:                         # the environment, not the subject: the ESTATE rule
-                print(f"  (DB arm {f.__name__}; {executed}/{len(DB_ARMS)} ran)")
-                # a4 #57397: 77 only on a committed-only tree (triggers/ absent); rc 1 on a LIVE host or after a red arm
-                unavailable("test_schema_parity", REPO, e, fails)
-            executed += 1
+    executed, close_err = 0, None
+    check("the counter's batch-thread name IS fixture.BATCH_THREAD (attribution can't drift)",
+          FX.BATCH_THREAD == BATCH_THREAD, FX.BATCH_THREAD)
+    try:
+        with stack:                                                 # the arm fixtures' block exits: batch, no drop
+            for f in DB_ARMS:
+                try:
+                    f()
+                except FixtureUnavailable as e:                     # the environment, not the subject: the ESTATE rule
+                    print(f"  (DB arm {f.__name__}; {executed}/{len(DB_ARMS)} ran)")
+                    # a4 #57397: 77 only on a committed-only tree (triggers/ absent); rc 1 on a LIVE host or after a red arm
+                    unavailable("test_schema_parity", REPO, e, fails)
+                executed += 1
+    finally:
+        # THE ONE BATCH CLOSE (plan-11253 S3): every member dropped concurrently, then judged by existence (BC-6). In
+        # a `finally`, so an arm that raises still pays one concurrent close, never five serial reaps at the next entry.
+        d0, t0 = COUNT["drop"], time.monotonic()
+        try:
+            BATCH.close()
+        except FX.BatchDropError as e:
+            close_err = e
+        close_s = time.monotonic() - t0
+        close_outside = COUNT["drop"] - d0
     check("(ix) the DB phase executed every DECLARED arm (executed == len(registry), a1 BC-3)",
           executed == len(DB_ARMS) and len(DB_ARMS) > 0, f"{executed}/{len(DB_ARMS)}")
-    # (i) THE RATCHET (a4 #57397, BC-1): S2's measured total is the bound, asserted IN the oracle every run. One arm
-    # fixture per db + the one birth database + the two wiring references = 5 (#57171 change 1). "0 drops outside the
-    # batch" is S3's (the batch doesn't exist yet: every drop here is still immediate).
+    # (i) THE RATCHET (a4 #57397, BC-1): asserted IN the oracle every run. One arm fixture per db + the one birth
+    # database + the two wiring references = 5 (#57171 change 1), and S3's half: 0 DROP DATABASE outside the batch close.
     check(f"(i) RATCHET: at most {MAX_CREATES} CREATE DATABASE this run (astryx arm fixture + geo arm fixture + birth + "
           "2 wiring references)", COUNT["create"] <= MAX_CREATES, f"{COUNT['create']} > {MAX_CREATES}")
-    print(f"  COUNT: {COUNT['create']} CREATE DATABASE, {COUNT['drop']} DROP DATABASE this run (at psycopg's "
-          "Cursor.execute; a psql-subprocess creator is outside this domain)")
+    check("(i) 0 DROP DATABASE outside the batch close (every database dropped at ONE close: BC-1; E3 escapes it, BC-2)",
+          COUNT["drop"] == 0 and close_outside == 0, f"{COUNT['drop']} outside the batch")
+    check("(vi) every database this run CREATED is a batch member (the 2 arm fixtures, birth, the 2 wiring references)",
+          len(CREATED) == COUNT["create"] and set(CREATED) <= set(BATCH.members),
+          f"not members: {sorted(set(CREATED) - set(BATCH.members))}")
+    with psycopg.connect(live_dsn(), autocommit=True) as a:
+        left = [r[0] for r in a.execute("SELECT datname FROM pg_database WHERE datname = ANY(%s)",
+                                        (list(BATCH.members) + CREATED,)).fetchall()]
+    check("(vi) the ONE close dropped them all: none of its members remain in pg_database, and it raised nothing",
+          not left and close_err is None and COUNT["drop_batch"] >= len(set(CREATED)),
+          f"left={left} err={close_err} batch drops={COUNT['drop_batch']}")
+    pids = {r["pid"] for r in BATCH.report if r["pid"] is not None}
+    print(f"  COUNT: {COUNT['create']} CREATE DATABASE, {COUNT['drop']} DROP DATABASE outside the batch, "
+          f"{COUNT['drop_batch']} in its close (at psycopg's Cursor.execute; a psql-subprocess creator is outside "
+          "this domain)")
+    print(f"  BATCH CLOSE: {len(BATCH.members)} members dropped concurrently on {len(pids)} sessions in {close_s:.2f}s "
+          f"wall (the drops sum to {sum(r['end'] - r['start'] for r in BATCH.report if r['end']):.2f}s)")
     print(f"\n{'FAIL' if fails else 'PASS'}: schema parity ({len(fails)} failing)")
     return 1 if fails else 0
 

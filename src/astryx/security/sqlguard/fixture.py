@@ -223,14 +223,112 @@ def _stamp_rels(conn, sha: str) -> int:
     return len(rels)
 
 
+def fresh_name() -> str:
+    """A fixture name, unique per process: PREFIX + `<run>_<pid>_<n>` (the shared tail name_pid() parses). A database a
+    caller makes OUTSIDE fixture_db but hands to a Batch (the parity oracle's birth database) takes it too, so batch
+    members never collide and the reaper's prefix covers them (a4 #57168 §3)."""
+    return f"{PREFIX}{run_id()}_{os.getpid()}_{next(_n)}".lower()
+
+
+# ── THE LIFETIME SEAM (plan-11253 S3, a4 #57171; ONE seam with plan-11254, a4 #57439 §1). fixture_db(lifetime=...):
+#   "immediate" (the DEFAULT, every existing caller): dropped at block exit, as always. Several suites assert "gone at
+#               exit" (the reaper and sigpath arms), so flipping the default is 11254's, behind its own gate.
+#   "batch"     (opt-in, with batch=): NOT dropped at block exit. The name is enrolled in the Batch, which drops every
+#               member at its close, CONCURRENTLY. Each DROP forces a checkpoint and one admin session is serial: a3
+#               measured 3 concurrent drops at 2.9-3.7 s against 19-25 s sequential (#57352).
+# plan-11254's "retire" is one more branch of the SAME exit dispatch below, never a second mechanism. Members keep the
+# PREFIX name and the owner stamp exactly as today, so a process killed before its close leaves databases reap() still
+# collects (the backstop).
+LIFETIMES = ("immediate", "batch")
+BATCH_THREAD = "astryx-fixture-batch"              # the close's worker threads: an execute-layer counter can attribute
+
+
+class BatchDropError(RuntimeError):
+    """Batch.close() could not drop members that STILL EXIST. `failed` = {name: why}; every one is named."""
+
+    def __init__(self, failed: dict):
+        self.failed = dict(failed)
+        super().__init__("fixture batch: %d member(s) still exist after the close: %s" % (
+            len(failed), "; ".join(f"{n} ({w})" for n, w in sorted(failed.items()))))
+
+
+class Batch:
+    """Opt-in batch teardown. Members are fixture_db(lifetime="batch", batch=B) databases (B.fixture is that creator,
+    the shape run()'s `fixture=` takes) and any name a caller enrolls. close() drops them all CONCURRENTLY, one admin
+    session per member, waits for every one, and then judges each by what EXISTS (a3 BC-6 #57352): a member already
+    gone (a stale sweep, an arm, a race) is dropped; only one that still exists is a failure. Failures are collected
+    and raised ONCE, each by name, never swallowed. A context manager: leaving the block closes it."""
+
+    def __init__(self):
+        self.members, self.report, self.closed = [], [], False
+
+    def enroll(self, name: str) -> str:
+        if self.closed:
+            raise RuntimeError(f"fixture batch is closed; {name} would never be dropped")
+        if name not in self.members:
+            self.members.append(name)
+        return name
+
+    def fixture(self, extra: tuple = ()):
+        return fixture_db(extra=extra, lifetime="batch", batch=self)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def _drop_one(self, name: str) -> dict:
+        r = {"name": name, "pid": None, "path": None, "error": None, "start": None, "end": None}
+        try:
+            with psycopg.connect(live_dsn(), autocommit=True) as a:      # its OWN session: one session is serial
+                r["pid"] = a.info.backend_pid
+                r["start"] = time.monotonic()
+                r["path"] = _drop(a, name)
+                r["end"] = time.monotonic()
+        except Exception as e:                       # judged below by existence, never here (BC-6)
+            r["error"] = f"{type(e).__name__}: {e}".strip()
+        return r
+
+    def close(self) -> list[dict]:
+        """Drop every member concurrently and wait. Returns one report per member (name, backend pid, drop path,
+        start/end monotonic, error). Raises BatchDropError naming every member that STILL EXISTS."""
+        if self.closed:
+            return self.report
+        self.closed = True
+        names = list(self.members)
+        if not names:
+            return self.report
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=len(names), thread_name_prefix=BATCH_THREAD) as pool:
+            self.report = list(pool.map(self._drop_one, names))
+        with psycopg.connect(live_dsn(), autocommit=True) as a:
+            left = {r[0] for r in a.execute("SELECT datname FROM pg_database WHERE datname = ANY(%s)",
+                                            (names,)).fetchall()}
+        failed = {r["name"]: r["error"] or "still exists after its drop" for r in self.report if r["name"] in left}
+        if failed:
+            raise BatchDropError(failed)
+        return self.report
+
+
 @contextlib.contextmanager
-def fixture_db(extra: tuple = ()):
-    """A fresh database, schema.sql applied whole, every relation stamped; dropped WITH (FORCE) in finally.
+def fixture_db(extra: tuple = (), lifetime: str = "immediate", batch: Batch | None = None):
+    """A fresh database, schema.sql applied whole, every relation stamped; at block exit, its LIFETIME decides
+    (the seam above): "immediate" (default) drops it WITH (FORCE) in finally; "batch" enrolls it in `batch`.
 
     `extra` is DDL a module owns OUTSIDE schema.sql (or an oracle's own probe relations). It is applied here,
     after schema.sql and BEFORE the stamp, so those relations are stamped too and their CREATE runs under
     this applier rather than in the oracle."""
-    name = f"{PREFIX}{run_id()}_{os.getpid()}_{next(_n)}".lower()
+    if lifetime not in LIFETIMES:
+        raise ValueError(f"fixture_db: unknown lifetime {lifetime!r} (one of {LIFETIMES})")
+    if lifetime == "batch" and batch is None:
+        raise ValueError('fixture_db: lifetime="batch" needs batch=, the Batch that drops it')
+    name = fresh_name()
+    if lifetime == "batch":
+        # enrolled BEFORE the CREATE: a closed batch refuses here, having made nothing, and every database that exists
+        # is already a member (a name the CREATE never made is "already gone" at the close, BC-6). A close issued while
+        # this block is still open drops it under the caller: closing a batch is the caller's last act.
+        batch.enroll(name)
     try:
         admin = psycopg.connect(live_dsn(), autocommit=True)
     except (OSError, StopIteration, psycopg.OperationalError) as e:
@@ -275,7 +373,10 @@ def fixture_db(extra: tuple = ()):
             s = _side.pop(name, None)
             if s is not None:
                 s.close()
-            _drop(admin, name)
+            if lifetime == "batch":
+                pass                                 # a member since entry: dropped at the batch's close, concurrently
+            else:
+                _drop(admin, name)                   # "immediate": gone at block exit, as every caller expects
         finally:
             admin.close()
 

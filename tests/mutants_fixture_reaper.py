@@ -5,6 +5,7 @@
 The reaper DROPs databases WITH (FORCE), so its battery lives in the tree, not in a message (a3 #39195). Most mutants
 make it MORE aggressive. SAFE BY CONSTRUCTION (seed #34899): the oracle's live arms run under a PRIVATE prefix
 (astryx_fx_rptest<pid>_), so an aggressive mutant can only ever see databases the oracle itself made.
+Z1-Z5 (plan-11253 S3) mutate the batch and the lifetime seam; their arms are section B of the oracle.
 Not here, because EQUIVALENT: `keep=` ignored (a3 M7). fixture_db reaps BEFORE its CREATE, so its own name is
 never listed.
 THE BOUNDARY of that construction (a3 #39299): it protects every mutant that judges WITHIN reap()'s candidate set.
@@ -47,4 +48,18 @@ MUTANTS = {
     "R7 no owner stamp written (nothing is ever reapable)":
         ("            admin.execute(f'COMMENT ON DATABASE \"{name}\" IS \\'{owner_stamp()}\\'')",
          "            pass"),
+    # plan-11253 S3 (a4 #57171, a3 BC-6 #57352): the opt-in batch, the lifetime seam 11254 extends (#57439 §1)
+    "Z1 the batch close drops SERIALLY (one worker: each DROP's checkpoint wait is paid in turn, a3's 19-25 s)":
+        ("        with ThreadPoolExecutor(max_workers=len(names), thread_name_prefix=BATCH_THREAD) as pool:",
+         "        with ThreadPoolExecutor(max_workers=1, thread_name_prefix=BATCH_THREAD) as pool:"),
+    "Z2 an already-GONE member whose drop errored is raised (a concurrent sweep turns the run red: BC-6)":
+        ('        failed = {r["name"]: r["error"] or "still exists after its drop" for r in self.report if r["name"] in left}',
+         '        failed = {r["name"]: r["error"] or "still exists after its drop" for r in self.report\n'
+         '                  if r["name"] in left or r["error"]}'),
+    "Z3 a member that still exists and failed is SWALLOWED (the close reads clean over a leak)":
+        ("        if failed:\n            raise BatchDropError(failed)", "        if False:\n            raise BatchDropError(failed)"),
+    "Z4 the DEFAULT lifetime no longer drops at block exit (every immediate caller silently becomes batch-like)":
+        ('                _drop(admin, name)                   # "immediate"', '                pass                   # "immediate"'),
+    "Z5 a \"batch\" member is dropped at block exit anyway (the batch saves nothing)":
+        ('            if lifetime == "batch":\n                pass ', '            if False:\n                pass '),
 }
