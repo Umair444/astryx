@@ -39,4 +39,8 @@ MUTANTS = {
         ("printf '%s\\n' \"$pout\" | grep -E '^FAILED", "true || printf '%s\\n' \"$pout\" | grep -E '^FAILED"),
     "N15 a --test already in the range runs twice":
         ('*" $t "*) ;; *) TESTS+=("$t");;', '*) TESTS+=("$t");;'),
+    "N16 the gate lines keep the FIRST 12 (head), so decoy ✗ arms push the real verdict out (a4 #57476)":
+        ("✗' | tail -12 |", "✗' | head -12 |"),
+    "N17 a --test isn't normalised (./tests/x.py runs twice)":
+        ('  t=$(realpath -m --relative-to=. "$t")', '  :'),
 }

@@ -76,6 +76,7 @@ done
 TESTS=()
 while IFS= read -r f; do TESTS+=("$f"); done < <(git diff --name-only --diff-filter=AMR "$A_SHA" "$B_SHA" -- 'tests/test_*.py' 'tests/mutants_*.py')
 for t in ${EXTRA[@]+"${EXTRA[@]}"}; do
+  t=$(realpath -m --relative-to=. "$t")                             # ./tests/x.py and tests/x.py are one test
   case " ${TESTS[*]-} " in *" $t "*) ;; *) TESTS+=("$t");; esac    # a --test the range already names runs once
 done
 [ ${#TESTS[@]} -gt 0 ] || refuse "the range touches no tests/test_*.py or tests/mutants_*.py and no --test was given"
@@ -117,7 +118,8 @@ pout=$(git push origin main 2>&1); prc=$?
 printf '%s\n' "$pout" | tail -2 | sed 's/^/  push: /'
 if [ $prc -ne 0 ]; then
   # the pre-push gates' own verdict lines, so a refused push names its gate (10-16: e4dbbb3's label was lost to tail -2)
-  printf '%s\n' "$pout" | grep -E '^FAILED \(|^[[:space:]]*✗' | head -12 | sed 's/^/  push gate: /'
+  # tail, not head: check.sh's verdict block is the LAST thing pre-push prints, after every gate's own ✗ arms (a4 #57476)
+  printf '%s\n' "$pout" | grep -E '^FAILED \(|^[[:space:]]*✗' | tail -12 | sed 's/^/  push gate: /'
   echo "RECEIPT: LANDED, NOT PUSHED (push rc $prc): ${A_SHA:0:12}..${B_SHA:0:12} fast-forwarded main ${OLD:0:12}..${B_SHA:0:12}; $TAIL"
   exit 3
 fi
