@@ -15,6 +15,9 @@ ORACLE = REPO / "tests" / "test_org_home.py"
 ENV = "ORG_HOME_ORGS_SRC"
 
 MUTANTS = {
+    "O3 a crash judging the registry exits 1 (python's own), which every guard reads as one org":
+        ("    except Exception as e:  # noqa: BLE001 — anything else REFUSES too",
+         "    except ZeroDivisionError as e:  # noqa: BLE001 — anything else REFUSES too"),
     'O1 two orgs read as one (an off-by-one threshold)':
         ('    return reg is not None and len(reg) > 1',
          '    return reg is not None and len(reg) > 2'),

@@ -120,6 +120,10 @@ def _main(argv) -> int:
     except RegistryError as e:
         print(f"astryx.orgs: {e}", file=sys.stderr)
         return 2
+    except Exception as e:  # noqa: BLE001 — anything else REFUSES too: python's own crash exit is 1, which every
+        # guard reads as "one org, proceed" (a registry nested past the parser's recursion limit did exactly that)
+        print(f"astryx.orgs: the registry could not be judged ({type(e).__name__}): refusing", file=sys.stderr)
+        return 2
     print("usage: python -m astryx.orgs multi", file=sys.stderr)
     return 2
 

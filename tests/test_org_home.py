@@ -18,7 +18,7 @@
   H6 UNITS (BC-S3(2)): the units B renders run through the builder, carry ASTRYX_HOME=B, no PassEnvironment, no
      ImportEnvironment, no PG*, and no EnvironmentFile but B's own .env.
   H7 A MALFORMED REGISTRY FAILS, never reads as absent: config.dsn exits 1 (not a LookupError skip), home.mjs throws,
-     spawn refuses.
+     spawn refuses, and the guards' predicate exits 2 even when judging it CRASHES (never 1, which reads one org).
   H8 ONE ORG: with no registry (and with a ONE-entry registry) orgs.multi is false and the resolver is the old one.
   H9 BACKUP IS THE ORG'S (BC-S2 arm b): scripts/backup.sh run for org A (pg_dump/pg_dumpall/pg_isready are PATH
      shims: no real dump) dumps A's DSN into HOME-A/backups and rotates ONLY A's: B's dumps are untouched (names,
@@ -217,6 +217,13 @@ def arms(fx):
                            env=fx.env(ASTRYX_HOME=str(B)), cwd="/", capture_output=True, text=True, timeout=60)
         check("spawn.sh refuses on it", r.returncode != 0 and not (fx.t / "render-m").exists(),
               (r.stdout + r.stderr)[-200:])
+        # a registry the parser can't even finish (nested past python's recursion limit: RecursionError, not a
+        # ValueError). Python's own crash exit is 1, which every shell guard reads as "one org": it must say 2.
+        fx.reg.write_text('{"orgs": ' + "[" * 100000)
+        r = subprocess.run([str(co / "venv" / "bin" / "python"), "-B", str(co / "src" / "astryx" / "orgs.py"), "multi"],
+                           env=fx.env(), cwd="/", capture_output=True, text=True, timeout=60)
+        check("the guards' predicate (orgs.py multi) REFUSES (2) a registry it can't judge, never 1 (= one org)",
+              r.returncode == 2, f"rc {r.returncode} {r.stderr[-200:]}")
     finally:
         fx.reg.write_text(good)
 
