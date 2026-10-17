@@ -1,0 +1,12 @@
+{
+ "_": "plan-11324 S3a BC-S3 (a3 #58597, a4 #58598): the CLASS of every environment name an org process may carry. When the host runs several orgs (orgs.multi), spawn's pane and every generated unit start from an EMPTY environment (env -i) and keep only the PASS classes (host, pane) from what they inherited, then set the home class from the org's HOME. org names (the ones an org's .env holds: derived from the code and from the HOME's .env at use time, never typed here) and session names are DROPPED, and so is any name in no class. An unclassed name in a process that runs the gate fails it (tests/test_org_home_census.py), so a new name is accused, never silently passed. Patterns are fnmatch globs.",
+ "classes": {
+  "host": ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "LANG", "LANGUAGE", "LC_*", "XDG_RUNTIME_DIR", "XDG_*_HOME", "XDG_*_DIRS", "XDG_SESSION_*", "XDG_CURRENT_DESKTOP", "TMPDIR", "TZ", "DBUS_SESSION_BUS_ADDRESS", "DISPLAY", "WAYLAND_DISPLAY",
+           "MISE_SHELL", "__MISE_*", "OMARCHY_PATH", "EDITOR", "VISUAL", "GIT_EDITOR", "SUDO_EDITOR", "BAT_THEME", "BROWSER", "COLORTERM", "MANPAGER", "MANROFFOPT", "PAGER", "LESS*", "DEBUGINFOD_URLS", "COREPACK_ENABLE_AUTO_PIN", "STARSHIP_SHELL", "VSSCRIPT_PATH", "NoDefaultCurrentDirectoryInExePath", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "HOSTNAME", "MAIL", "MOTD_SHOWN",
+           "ASTRYX_ORG_REGISTRY"],
+  "pane": ["TMUX", "TMUX_PANE"],
+  "session": ["_", "PWD", "OLDPWD", "SHLVL", "STARSHIP_SESSION_KEY", "CLAUDECODE", "CLAUDE_CODE_*", "CLAUDE_EFFORT", "CLAUDE_PID", "AI_AGENT", "INVOCATION_ID", "JOURNAL_STREAM", "SYSTEMD_EXEC_PID", "MEMORY_PRESSURE_WATCH", "MEMORY_PRESSURE_WRITE", "MAX_THINKING_TOKENS", "SSH_*", "SUDO_*"],
+  "home": ["ASTRYX_HOME", "ASTRYX_AGENT", "ASTRYX_DSN"]
+ },
+ "pass": ["host", "pane"]
+}

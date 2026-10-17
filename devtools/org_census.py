@@ -1,0 +1,269 @@
+#!/usr/bin/env python3
+"""plan-11324 S3a's census (BC-S1(2), BC-S2(2), BC-S3(3)): every read of an ORG's state must go through the HOME
+resolver, found by WALKING the code, never by a list of files.
+
+  dsn     a read of ASTRYX_DSN (the environment's, or the .env line's) anywhere but the two resolvers
+          (src/astryx/config.py, channel/home.mjs)                                                       BC-S1(2)
+  estate  a path to an ORG-class .gitignore entry (data/estate_partition.json) built on a CHECKOUT base
+          (REPO, ROOT, repo_root(), parents[n], $PWD in init.sh), and a literal DSN                       BC-S2(2)
+  env     an environment-first read of a name an org's .env holds, anywhere but the resolvers         BC-S3(3)
+
+THE GRAMMAR (stated, so a miss in review reopens it, a2 #58452): text over EXECUTABLE lines (comments and
+docstrings stripped) of .py / .sh / .mjs / .js under DOMAIN, plus init.sh. A DSN assembled from PG* parts is outside
+it; construction (spawn's and the units' built environment) is the half that covers that (a1's caveat).
+
+A site may be DECLARED on its own line with `# org-home: <why>` (`// org-home:` in js): it is then listed, never
+silent. That is for a site that names an estate path in the tree it AUDITS (a scanner over a checkout), and for a
+test's fixture-bound read (a4 #58439 precision 2). Everything else is a finding.
+
+  python devtools/org_census.py [--json] [--root R]     exit 0 no findings · 1 findings
+"""
+from __future__ import annotations
+
+import argparse
+import fnmatch
+import io
+import json
+import re
+import sys
+import tokenize
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parents[1]
+DOMAIN = ("src", "mcp", "devtools", "scripts", "channel", "bridges", "hooks", "observatory/api", "canvas", "tests")
+FILES = ("init.sh",)
+SUFFIX = (".py", ".sh", ".mjs", ".js")
+SKIP_PARTS = {"node_modules", "__pycache__", "dist", "upstream", ".git"}
+RESOLVERS = {"src/astryx/config.py", "channel/home.mjs", "src/astryx/orgs.py", "src/astryx/paths.py",
+             "devtools/org_census.py"}
+DECLARE = re.compile(r"(#|//)\s*org-home:\s*\S")
+
+
+def code_lines(path: Path) -> list[tuple[int, str, str]]:
+    """(lineno, executable text, raw line). Python: tokenize, so comments and string-only statements (docstrings)
+    drop out but string literals inside code stay. Shell/JS: the text before a comment marker at line start."""
+    raw = path.read_text(errors="replace").splitlines()
+    if path.suffix != ".py":
+        out = []
+        for i, ln in enumerate(raw, 1):
+            s = ln.lstrip()
+            if s.startswith("#") or s.startswith("//") or s.startswith("*"):
+                continue
+            out.append((i, ln, ln))
+        return out
+    try:
+        toks = list(tokenize.generate_tokens(io.StringIO("\n".join(raw) + "\n").readline))
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        return [(i, ln, ln) for i, ln in enumerate(raw, 1) if not ln.lstrip().startswith("#")]
+    code = {i: ln for i, ln in enumerate(raw, 1)}     # each line's own text, columns kept (`.parents[2] / ".env"`)
+    drop: set[int] = set()
+    prev = None
+    for t in toks:
+        if t.type == tokenize.COMMENT:
+            code[t.start[0]] = code[t.start[0]][:t.start[1]]
+        elif t.type == tokenize.STRING and (prev is None or prev.type in (tokenize.NEWLINE, tokenize.NL,
+                                                                          tokenize.INDENT, tokenize.DEDENT)):
+            drop.update(range(t.start[0], t.end[0] + 1))    # a docstring / bare string statement: not executable
+        if t.type not in (tokenize.NL, tokenize.COMMENT):
+            prev = t
+    return [(i, code[i], raw[i - 1]) for i in sorted(code) if i not in drop and code[i].strip()]
+
+
+def walk(root: Path):
+    for d in DOMAIN:
+        base = root / d
+        if not base.is_dir():
+            continue
+        for p in sorted(base.rglob("*")):
+            if p.suffix in SUFFIX and p.is_file() and not (SKIP_PARTS & set(p.relative_to(root).parts)):
+                yield p
+    for f in FILES:
+        if (root / f).is_file():
+            yield root / f
+
+
+# ── dsn ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+DSN_READ = [
+    re.compile(r"""environ\s*\.\s*get\s*\(\s*["']ASTRYX_DSN["']"""),
+    re.compile(r"""environ\s*\[\s*["']ASTRYX_DSN["']\s*\](?!\s*=[^=])"""),
+    re.compile(r"""getenv\s*\(\s*["']ASTRYX_DSN["']"""),
+    re.compile(r"""\.get\s*\(\s*["']ASTRYX_DSN["']"""),
+    re.compile(r"""\[\s*["']ASTRYX_DSN["']\s*\](?!\s*=[^=])"""),
+    re.compile(r"""["']\^?ASTRYX_DSN=["']"""),
+    re.compile(r"""process\.env\.ASTRYX_DSN|\benv\.ASTRYX_DSN"""),
+    re.compile(r"""\$\{?ASTRYX_DSN\b"""),
+    re.compile(r"""\^ASTRYX_DSN="""),
+]
+
+
+GENERIC = (3, 4)     # `.get("ASTRYX_DSN")` / `["ASTRYX_DSN"]` on any mapping: in tests that is INSPECTION of a rendered env
+
+
+def dsn_sites(rel: str, lines) -> list:
+    if rel in RESOLVERS:
+        return []
+    test = rel.startswith("tests/")
+    out = []
+    for n, code, raw in lines:
+        k = next((i for i, r in enumerate(DSN_READ) if r.search(code) and not (test and i in GENERIC)), None)
+        if k is not None:
+            out.append((n, raw, f"ASTRYX_DSN [{DSN_READ[k].pattern[:28]}]"))
+    return out
+
+
+# ── estate ──────────────────────────────────────────────────────────────────────────────────────────────────────
+def estate_entries(root: Path) -> list[str]:
+    doc = json.loads((root / "src/astryx/data/estate_partition.json").read_text())
+    return sorted(e for e, c in doc["classes"].items() if c == "org")
+
+
+def estate_token(entry: str) -> str:
+    """One .gitignore entry as the regex of a path's FIRST component(s) after a checkout base: `**/` and the anchoring
+    `/` dropped, a trailing `/` or `/*` meaning the directory, a `*` inside a name matching name characters."""
+    e = entry.strip("/").removeprefix("**/").removesuffix("/*")
+    return r"/".join(re.escape(x).replace(r"\*", r"[\w.*-]*") for x in e.split("/")) + r"(?![\w-])"
+
+
+# A checkout base, then the path's first component: `REPO / "x"`, `join(REPO, 'x')`, f"{REPO}/x", "$ROOT/x".
+BASE = (r"""(?:\b(?:REPO|ROOT|ROOT_DIR|REPO_ROOT|CHECKOUT|HERE)\b|repo_root\s*\([^)]*\)|\.parents\s*\[\s*\d+\s*\]|"""
+        r"""paths\.code\s*\(\s*\)|\$\{?(?:ROOT|REPO|PWD)\}?|\$\(pwd\))""")
+JOIN = r"""[\s)\]}]*(?:/|,)\s*f?["']?/?"""
+# a shell file that cds to its checkout reads bare relative paths from there (backup.sh:15 then :280)
+CD_BASE = re.compile(r"""\bcd\s+["']?(?:\$\{?(?:ROOT|REPO)\}?|\$\(dirname[^)]*\)/\.\.|\$\(cd\s)""")
+# a literal DSN in a DEFAULT position (a2's restore_drill.sh:31 class): `${X:-dsn}`, `or "dsn"`, `|| 'dsn'`,
+# `?? "dsn"`, `default="dsn"`, `.get(k, "dsn")`. A test's unreachable sentinel argument is neither.
+LITERAL_DSN = re.compile(r"""(?::-|\bor\s+|\|\|\s*|\?\?\s*|default\s*=\s*|\.get\s*\([^,()]+,\s*)["']?"""
+                         r"""postgres(?:ql)?://""")
+
+
+def estate_sites(rel: str, lines, toks, cd_base: bool) -> list:
+    if rel in RESOLVERS:
+        return []
+    out = []
+    for n, code, raw in lines:
+        if LITERAL_DSN.search(code):
+            out.append((n, raw, "literal DSN default"))
+            continue
+        hit = next((e for e, t in toks if re.search(BASE + JOIN + t, code)), None)
+        if hit is None and cd_base:
+            hit = next((e for e, t in toks if re.search(r"""(?:^|[\s"'=(<>|;])(?:\./)?""" + t + r"""(?:/|\b)""", code)
+                        and not re.search(r"""^\s*(?:echo|say|printf|warn|note)\b""", code)), None)
+        if hit:
+            out.append((n, raw, hit))
+    return out
+
+
+# ── env ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+def org_names(root: Path) -> dict:
+    """The names an org's .env holds, DERIVED from the code (a3 BC-S3(3)): every name a .env WRITER sets (config.
+    set_env, federate's set_env dict, init.sh's `KEY=… >> .env`) and every name a .env READER reads (config.get /
+    is_set, read_env()[…], `grep '^KEY=' …/.env`). A name the code treats as a .env key IS an org name."""
+    names: dict[str, set] = {}
+
+    def add(n, where):
+        names.setdefault(n, set()).add(where)
+    pats = [
+        re.compile(r"""set_env\s*\(\s*["']([A-Z][A-Z0-9_]+)["']"""),
+        re.compile(r"""config\.(?:get|is_set)\s*\(\s*["']([A-Z][A-Z0-9_]+)["']"""),
+        re.compile(r"""read_env\s*\([^)]*\)\s*(?:\.get\s*\(|\[)\s*["']([A-Z][A-Z0-9_]+)["']"""),
+        re.compile(r"""["']\^([A-Z][A-Z0-9_]+)=["'].*\.env"""),
+        re.compile(r"""echo\s+"?([A-Z][A-Z0-9_]+)=[^>]*>>\s*"?[^ ]*\.env"""),
+        re.compile(r"""^\s*print\(\s*["']([A-Z][A-Z0-9_]+)=""" ),
+    ]
+    # a PRIVATE .env parser (people.py's `_salt()`, a3 #58597): in a file that reads a .env path, a `"KEY="` literal
+    # (startswith / split / find) is a .env key whatever the parser's shape
+    private = re.compile(r"""["']\^?([A-Z][A-Z0-9_]{2,})=["']|(?<!environ)(?<!os\.environ)\.get\(\s*["']([A-Z][A-Z0-9_]{2,})["']|"""
+                         r"""(?<!environ)\[\s*["']([A-Z][A-Z0-9_]{2,})["']\s*\](?!\s*=[^=])""")
+    reads_env = re.compile(r"""["'/]\.env["')]|\.env\b["']?\s*\)""")
+    dict_writer = re.compile(r"""set_env\s*\(\s*\w+\s*,\s*\{([^}]*)\}""")
+    for p in walk(root):
+        rel = p.relative_to(root).as_posix()
+        if rel.startswith("tests/"):
+            continue
+        lines = code_lines(p)
+        if any(reads_env.search(c) for _, c, _ in lines):
+            for _, c, _ in lines:
+                for m in private.finditer(c):
+                    add(next(g for g in m.groups() if g), rel)
+        for n, code, raw in lines:
+            for r in pats[:5]:
+                for m in r.finditer(code if r is not pats[3] else raw):
+                    add(m.group(1), rel)
+            m = dict_writer.search(code)
+            if m:
+                for k in re.findall(r"""["']([A-Z][A-Z0-9_]+)["']\s*:""", m.group(1)):
+                    add(k, rel)
+    return names
+
+
+def env_read(name: str) -> re.Pattern:
+    q = re.escape(name)
+    return re.compile(r"""environ\s*\.\s*get\s*\(\s*["']""" + q + r"""["']|environ\s*\[\s*["']""" + q +
+                      r"""["']\s*\](?!\s*=[^=])|getenv\s*\(\s*["']""" + q + r"""["']|process\.env\.""" + q +
+                      r"""\b|\$\{?""" + q + r"""\b(?!=)""")
+
+
+# an environment read by a COMPUTED name (people.py:78, `for k in ("PEOPLE_SALT", "ASTRYX_ORG"): os.environ.get(k)`):
+# the census can't tell which name, so it's a finding wherever the file holds an org name's literal
+COMPUTED = re.compile(r"""environ\s*\.\s*get\s*\(\s*[A-Za-z_]\w*\s*[,)]|environ\s*\[\s*[A-Za-z_]\w*\s*\](?!\s*=[^=])|"""
+                      r"""getenv\s*\(\s*[A-Za-z_]\w*\s*[,)]""")
+
+
+def env_sites(rel: str, lines, readers, names) -> list:
+    if rel in RESOLVERS:
+        return []
+    out = []
+    holds = None
+    for n, code, raw in lines:
+        hit = next((name for name, r in readers if r.search(code)), None)
+        if hit is None and not rel.startswith("tests/") and COMPUTED.search(code):
+            if holds is None:
+                text = "\n".join(c for _, c, _ in lines)
+                holds = sorted(x for x in names if x != "ASTRYX_DSN" and re.search(rf"""["']{x}["']""", text))
+            if holds:
+                hit = "computed name, file names " + ",".join(holds)
+        if hit:
+            out.append((n, raw, hit))
+    return out
+
+
+def census(root: Path) -> dict:
+    toks = [(e, estate_token(e)) for e in estate_entries(root)]
+    names = org_names(root)
+    readers = [(n, env_read(n)) for n in sorted(names) if n != "ASTRYX_DSN"]
+    res = {"dsn": [], "estate": [], "env": [], "declared": [], "org_names": sorted(names)}
+    for p in walk(root):
+        rel = p.relative_to(root).as_posix()
+        lines = code_lines(p)
+        cd_base = p.suffix == ".sh" and any(CD_BASE.search(c) for _, c, _ in lines) or rel == "init.sh"
+        for kind, sites in (("dsn", dsn_sites(rel, lines)),
+                            ("estate", estate_sites(rel, lines, toks, cd_base)),
+                            ("env", env_sites(rel, lines, readers, names))):
+            for n, raw, what in sites:
+                row = {"kind": kind, "file": rel, "line": n, "what": what}
+                (res["declared"] if DECLARE.search(raw) else res[kind]).append(row)
+    return res
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--root", default=str(HERE))
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args(argv)
+    res = census(Path(a.root).resolve())
+    if a.json:
+        print(json.dumps(res, indent=1))
+    else:
+        print(f"org names derived from the code's .env writers and readers: {len(res['org_names'])}")
+        for k in ("dsn", "estate", "env"):
+            print(f"{k}: {len(res[k])} finding(s)")
+            for r in res[k]:
+                print(f"  {r['file']}:{r['line']}  {r['what']}")
+        print(f"declared (org-home: …): {len(res['declared'])}")
+        for r in res["declared"]:
+            print(f"  {r['kind']:6} {r['file']}:{r['line']}  {r['what']}")
+    return 1 if any(res[k] for k in ("dsn", "estate", "env")) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
