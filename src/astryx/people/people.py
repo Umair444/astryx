@@ -82,9 +82,12 @@ def _salt() -> str:
             return v
     env = REPO / ".env"
     if env.is_file():
-        for line in env.read_text().splitlines():
-            for k in ("PEOPLE_SALT=", "ASTRYX_ORG="):
-                if line.startswith(k):
+        lines = env.read_text().splitlines()
+        # PEOPLE_SALT wins wherever it sits in the file: scanning keys-within-lines returned whichever
+        # line came FIRST, so an appended PEOPLE_SALT lost to an earlier ASTRYX_ORG (memory, 10-16)
+        for k in ("PEOPLE_SALT=", "ASTRYX_ORG="):
+            for line in lines:
+                if line.startswith(k) and line.split("=", 1)[1].strip():
                     return line.split("=", 1)[1].strip()
     return "astryx-unsalted"        # last resort; scan() warns loudly when this is hit
 
