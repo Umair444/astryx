@@ -17,7 +17,9 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -31,7 +33,7 @@ REPO = repo_root(__file__)
 
 
 def load_env(path=None) -> dict:
-    p = Path(path) if path else REPO / ".env"
+    p = Path(path) if path else paths.estate(__file__) / ".env"
     return {k.strip(): v.strip() for k, v in (l.split("=", 1)
             for l in p.read_text().splitlines() if "=" in l and not l.lstrip().startswith("#"))}
 
@@ -55,8 +57,14 @@ def hello(env, reply=False) -> dict:
     return d
 
 
+def _dsn(env) -> str:
+    """The loaded .env's DSN, through the ONE resolver's check (one org: env["ASTRYX_DSN"] exactly; several orgs: a
+    DSN binding another registered org's database is refused, plan-11324 S3a correction 2)."""
+    return config.dsn(environ={**os.environ, "ASTRYX_DSN": env["ASTRYX_DSN"]})  # org-home: the value is the loaded file's
+
+
 def store_peer(env, org, url, pubkey, notes):
-    with psycopg.connect(env["ASTRYX_DSN"], autocommit=True) as conn:
+    with psycopg.connect(_dsn(env), autocommit=True) as conn:
         conn.execute(
             """INSERT INTO peers (org, url, pubkey, status, notes)
                VALUES (%s, %s, %s, 'introduced', %s)
@@ -65,7 +73,7 @@ def store_peer(env, org, url, pubkey, notes):
 
 
 def peer_row(env, org):
-    with psycopg.connect(env["ASTRYX_DSN"], autocommit=True) as conn:
+    with psycopg.connect(_dsn(env), autocommit=True) as conn:
         r = conn.execute("SELECT org, url, status, pubkey FROM peers WHERE org=%s", (org,)).fetchone()
     return None if r is None else {"org": r[0], "url": r[1], "status": r[2], "pubkey": r[3]}
 

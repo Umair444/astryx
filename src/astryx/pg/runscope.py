@@ -361,8 +361,10 @@ def main(argv=None) -> int:
     if argv != ["census"]:
         print("usage: python -m astryx.pg.runscope census")
         return 2
-    dsn = os.environ.get("ASTRYX_DSN")
-    if not dsn:
+    from astryx import config
+    try:      # the ENVIRONMENT's DSN only, as before (no file: os.devnull), through the ONE resolver's check
+        dsn = config.dsn(Path(os.devnull))
+    except LookupError:
         print("runscope census: NOT SEARCHED (rc 77): no ASTRYX_DSN")
         return 77
     c = census(dsn)

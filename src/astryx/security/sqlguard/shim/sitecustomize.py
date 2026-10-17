@@ -125,7 +125,7 @@ if _DIR:
         return _private("normalize").norm(text)
 
     def _initial_schema(options):
-        m = re.search(r"search_path=\"?([A-Za-z0-9_]+)", (options or "") + " " + os.environ.get("PGOPTIONS", ""))
+        m = re.search(r"search_path=\"?([A-Za-z0-9_]+)", (options or "") + " " + os.environ.get("PGOPTIONS", ""))  # org-home: libpq's own env, mirrored
         return m.group(1).lower() if m else "public"
 
     def _track(conn_key, options, t):

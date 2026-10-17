@@ -25,13 +25,25 @@ import runpy
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 sys.path.insert(0, str(REPO))
 
 # The trigger BODY is gitignored, so on a fresh clone or a CI runner there is nothing to
 # test. SKIP LOUDLY (77) rather than pass: a check that silently reports success when it
 # could not run is the "a SKIP is not a PASS" defect in the one place anyone reads it.
 import os as _os  # noqa: E402
-if not _os.environ.get("OUTBOUND_STUCK_SRC") and not (REPO / "triggers" / "steward" / "outbound_stuck.py").exists():
+if not _os.environ.get("OUTBOUND_STUCK_SRC") and not (ESTATE / "triggers" / "steward" / "outbound_stuck.py").exists():
     print("SKIP: triggers/steward/outbound_stuck.py not present (gitignored body) — "
           "the outbound-stuck classifier was NOT verified this run")
     sys.exit(77)
@@ -43,7 +55,7 @@ if not _os.environ.get("OUTBOUND_STUCK_SRC") and not (REPO / "triggers" / "stewa
 # test_plan_lifecycle.py and test_ear_dark.py for exactly this: a body that may be absent
 # is addressed as a file, never as a module.
 import os  # noqa: E402
-SRC = os.environ.get("OUTBOUND_STUCK_SRC") or str(REPO / "triggers" / "steward" / "outbound_stuck.py")
+SRC = os.environ.get("OUTBOUND_STUCK_SRC") or str(ESTATE / "triggers" / "steward" / "outbound_stuck.py")
 _MOD = runpy.run_path(SRC)  # noqa: E402
 classify, SETTLED, BANDS = _MOD["classify"], _MOD["SETTLED"], _MOD["BANDS"]
 bucket = _MOD["bucket"]

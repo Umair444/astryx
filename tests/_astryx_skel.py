@@ -13,7 +13,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 SPINE = ("astryx.py", "src/astryx/__init__.py", "src/astryx/_version.py", "src/astryx/paths.py",
-         "src/astryx/config.py", "src/astryx/_reorg.py")
+         "src/astryx/config.py", "src/astryx/_reorg.py", "src/astryx/orgs.py")   # orgs: paths/config ask it (S3a)
 
 
 def _copy(rel: str, dst: Path, repo: Path):

@@ -21,7 +21,19 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-BODY = Path(os.environ.get("INFLUENCE_COMPUTE_SRC") or REPO / "triggers" / "memory" / "influence_compute.py")
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
+BODY = Path(os.environ.get("INFLUENCE_COMPUTE_SRC") or ESTATE / "triggers" / "memory" / "influence_compute.py")
 if not BODY.exists():
     print(f"SKIP: {BODY.relative_to(REPO) if BODY.is_relative_to(REPO) else BODY} absent (gitignored) — nothing asserted.")
     sys.exit(77)

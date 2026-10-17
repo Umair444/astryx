@@ -5,6 +5,18 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 sys.path.insert(0, str(REPO))
 from astryx.pulse.shipped_triggers import agent_heal as H  # noqa: E402
 
@@ -217,7 +229,7 @@ sys.path.insert(0, str(REPO / "bridges"))
 import embed_root  # noqa: E402
 kept = H.pane_file("seed", 0)
 arm("the saved pane is DOT-named in the agent's own home (MC-1)", kept.name.startswith(".deaf-")
-    and kept.parent == REPO / "homes" / "seed", kept)
+    and kept.parent == ESTATE / "homes" / "seed", kept)
 arm("…so embed_root refuses it as a [[file:]] even to the owner alone", embed_root.allowed(str(kept), "seed", True)[0]
     is None and embed_root.allowed(str(kept), "seed", False)[0] is None)
 with tempfile.TemporaryDirectory() as tmp:
@@ -261,7 +273,7 @@ with tempfile.TemporaryDirectory() as d:     # the REAL spawn(): a slow spawn.sh
     alive = pid is not None and Path(f"/proc/{pid}").exists()
     if alive:
         os.kill(pid, signal.SIGKILL)
-    (H.REPO / "var" / "agent_heal" / "zz-heal-test.spawn.log").unlink(missing_ok=True)
+    (ESTATE / "var" / "agent_heal" / "zz-heal-test.spawn.log").unlink(missing_ok=True)
 arm("the real spawn() returns at once while spawn.sh keeps running (a tick never waits out a boot)",
     ok and took < 2 and alive and why.endswith("zz-heal-test.spawn.log"), (ok, round(took, 2), alive, why))
 

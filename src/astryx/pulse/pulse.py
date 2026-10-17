@@ -22,6 +22,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 
 import hashlib
 import json
@@ -38,10 +39,8 @@ REPO = repo_root(__file__)
 PY = str(REPO / "venv" / "bin" / "python")
 # ASTRYX_DSN from the environment first (goal 4227 S1c: an oracle binds the pulse, and the pulse_run
 # subprocesses that inherit its env, to a throwaway fixture database), else .env as before.
-DSN = os.environ.get("ASTRYX_DSN") or next(
-    l.split("=", 1)[1].strip()
-    for l in (REPO / ".env").read_text().splitlines()
-    if l.startswith("ASTRYX_DSN="))
+ESTATE = paths.estate(__file__)       # the org's .env and triggers/ (its HOME on a multi-org host, plan-11324 S3a)
+DSN = config.dsn(ESTATE / ".env")
 CHECK_TIMEOUT = 30
 PRESSURE_PCT = 85        # 5h gauge at/above this: non-survival wakes are held, not sent
 HOLD_K = 5               # per held key, the newest K are delivered; older ones are elided (kept, marked)
@@ -120,7 +119,7 @@ def reconcile(conn) -> bool:
             coalesce_key="astryx import")
         return False
     seen: set[tuple[str, str]] = set()
-    for f in sorted((REPO / "triggers").glob("*/*.py")):
+    for f in sorted((ESTATE / "triggers").glob("*/*.py")):
         agent = f.parent.name
         try:
             found = discover(f)
@@ -153,7 +152,7 @@ def reconcile(conn) -> bool:
         for t in found:
             # RETIRED (plan-9853 D2): trigger_rm's tombstone, per (agent, name). The file still defines it, so without
             # this the upsert below re-enables it within a minute. Not in `seen` either, so the loop after disables it.
-            tomb = REPO / "triggers" / agent / ".retired" / t["name"]
+            tomb = ESTATE / "triggers" / agent / ".retired" / t["name"]
             if tomb.exists():
                 retired_notice(conn, agent, t["name"], f.name, tomb)
                 continue

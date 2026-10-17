@@ -23,6 +23,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__)))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 import contextlib
 import hashlib
 import itertools
@@ -171,8 +172,10 @@ class FixtureUnavailable(Exception):
 
 
 def live_dsn() -> str:
-    return next(l.split("=", 1)[1].strip() for l in (REPO / ".env").read_text().splitlines()
-                if l.startswith("ASTRYX_DSN="))
+    """The org's DSN (the .env FILE: the admin connection is the org's own, never a fixture's), through the ONE resolver.
+    The .env is the ASTRYX_SQLGUARD_ROOT tree's when one is named (as REPO's was), else the org's estate."""
+    base = REPO if os.environ.get("ASTRYX_SQLGUARD_ROOT") else paths.estate(__file__)
+    return config.dsn(base / ".env", env_first=False)
 
 
 def file_sha() -> str:
@@ -331,7 +334,7 @@ def fixture_db(extra: tuple = (), lifetime: str = "immediate", batch: Batch | No
         batch.enroll(name)
     try:
         admin = psycopg.connect(live_dsn(), autocommit=True)
-    except (OSError, StopIteration, psycopg.OperationalError) as e:
+    except (OSError, StopIteration, LookupError, psycopg.OperationalError) as e:
         raise FixtureUnavailable(f"no reachable admin DSN ({type(e).__name__})") from e
     t0 = time.monotonic()
     reap(admin, keep=name)                           # the dead runs' leftovers first (never raises; keep is default)

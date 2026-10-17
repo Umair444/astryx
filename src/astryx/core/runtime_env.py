@@ -41,6 +41,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 
 import json
 import sys
@@ -64,7 +65,7 @@ def _load_env(path: Path) -> dict[str, str]:
 
 
 def fragment(agent: str) -> str:
-    cfg_path = REPO / "runtime.json"
+    cfg_path = paths.estate(__file__) / "runtime.json"
     if not cfg_path.exists():
         return ""
     try:
@@ -81,7 +82,7 @@ def fragment(agent: str) -> str:
     if base_url:
         # A custom endpoint REQUIRES a resolvable token — otherwise fall back entirely.
         token_env = entry.get("token_env")
-        token = _load_env(REPO / ".env").get(token_env, "") if token_env else ""
+        token = _load_env(paths.estate(__file__) / ".env").get(token_env, "") if token_env else ""
         if not token:
             print(
                 f"runtime_env: agent '{agent}' sets base_url but token_env "

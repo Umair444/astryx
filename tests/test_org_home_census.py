@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""Gate for plan-11324 S3a's census (devtools/org_census.py) and its two declared partitions.
+
+  C1 THE CENSUS IS CLEAN on this tree: no ASTRYX_DSN read outside the resolvers (BC-S1(2)), no checkout-based read of
+     an ORG-class estate path and no literal DSN default (BC-S2(2)), no environment-first read of an org name
+     (BC-S3(3)). Guarded and declared sites are LISTED, with counts.
+  C2 IT SEES THE CLASS (positive controls): run over the tree BEFORE S3a (PRE_S3A, an archive of it), it finds every
+     site the reviewers named: a1's pulse.py DSN, a2's spawn.sh `$ROOT/local.md`, restore_drill.sh's literal default
+     and backup.sh's bare `backups/` rotation, a3's people.py computed-name read and contacts' private .env parse.
+  C3 THE PARTITION (a4 #58453, a2 #58454): every .gitignore entry is classed org | host | build; an entry with no
+     class FAILS (a mutant .gitignore with one extra line goes red); the org class holds local.md, .env and agents/.
+  C4 THE ENVIRONMENT'S CLASSES (a4 #58598 (a)): every name in THIS process's environment is classed (host, pane,
+     session, home) or is an org name (derived from the code's .env writers and readers, or a key of the HOME's .env);
+     no derived org name sits in a PASS class; an unclassed name FAILS (a mutant environment goes red).
+  C5 GUARDS RUN FIRST: each guarded file's prefix (through its guard) exits non-zero under a two-org registry and 0
+     with none, and nothing executable precedes the guard but the declared preamble.
+Seams: ORG_CENSUS_SRC (a mutant census) and org_home_fixture.SEAMS (a mutant subject the census reads in place). Exit 0 · 1 · 77 (PRE_S3A absent from this clone: C2 only).
+"""
+import importlib.util
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO / "src"))
+sys.path.insert(0, str(REPO / "tests"))
+from org_home_fixture import seam_overrides  # noqa: E402
+PRE_S3A = "cda0351"      # main before plan-11324 S3a: every reviewer-named site is still there
+fails = []
+src = os.environ.get("ORG_CENSUS_SRC") or str(REPO / "devtools" / "org_census.py")
+spec = importlib.util.spec_from_file_location("org_census_under_test", src)
+oc = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(oc)
+
+
+def check(name, ok, detail=""):
+    print(f"  {'PASS' if ok else 'FAIL'}  {name}")
+    if not ok:
+        fails.append(name)
+        if detail:
+            print(f"        {detail}")
+
+
+def partition_gaps(root: Path) -> list:
+    doc = json.loads((root / "src/astryx/data/estate_partition.json").read_text())
+    entries = [ln.strip() for ln in (root / ".gitignore").read_text().splitlines()
+               if ln.strip() and not ln.lstrip().startswith(("#", "!"))]
+    return [e for e in entries if doc["classes"].get(e) not in ("org", "host", "build")]
+
+
+def main():
+    print("C1 THE CENSUS IS CLEAN:")
+    res = oc.census(REPO, seam_overrides())
+    for k, what in (("dsn", "ASTRYX_DSN read outside the resolvers"), ("estate", "checkout-based estate read / literal "
+                    "DSN default"), ("env", "environment-first read of an org name")):
+        check(f"no {what}: {len(res[k])}", not res[k],
+              "; ".join(f"{r['file']}:{r['line']} {r['what']}" for r in res[k][:12]))
+    print(f"  ·  guarded: {len(res['guarded'])} site(s) in {len(res['guarded_files'])} file(s); declared: "
+          f"{len(res['declared'])}; org names derived: {len(res['org_names'])}")
+
+    print("\nC2 IT SEES THE CLASS (the tree before S3a):")
+    if subprocess.run(["git", "-C", str(REPO), "cat-file", "-e", PRE_S3A + "^{commit}"], capture_output=True).returncode:
+        print(f"  SKIP  {PRE_S3A} isn't in this clone")
+        pre_ok = False
+    else:
+        pre_ok = True
+        with tempfile.TemporaryDirectory() as td:
+            subprocess.run(f"git -C {REPO} archive {PRE_S3A} | tar -x -C {td}", shell=True, check=True)
+            # the partition and the environment's classes are S3a's own: the old tree is judged by THESE
+            (Path(td) / "src/astryx/data").mkdir(parents=True, exist_ok=True)
+            for f in ("estate_partition.json", "org_env.json"):
+                (Path(td) / "src/astryx/data" / f).write_text((REPO / "src/astryx/data" / f).read_text())
+            old = oc.census(Path(td))
+        rows = [r for k in ("dsn", "estate", "env") for r in old[k]]
+
+        def found(f, line=None, kind=None, what=None):
+            return any(r["file"] == f and (line is None or r["line"] == line) and (kind is None or r["kind"] == kind)
+                       and (what is None or what in r["what"]) for r in rows)
+        for label, args in (("a1: pulse.py's private DSN resolver", ("src/astryx/pulse/pulse.py", None, "dsn")),
+                            ("a2: spawn.sh:122 `$ROOT/local.md`", ("scripts/spawn.sh", 122, "estate", "local.md")),   # org-home: a label naming the class
+                            ("a2: restore_drill.sh:31 `${DSN:-postgresql://…}`", ("scripts/restore_drill.sh", 31,   # org-home: a label naming the class
+                                                                                  "estate", "literal DSN")),
+                            ("a2: backup.sh:280's bare `backups/` rotation", ("scripts/backup.sh", 280, "estate",
+                                                                             "backups/")),
+                            ("a3: people.py's computed-name environment read", ("src/astryx/people/people.py", None,
+                                                                                "env", "PEOPLE_SALT")),
+                            ("a3: contacts' private .env parse on parents[2]", ("mcp/contacts/server.py", None,
+                                                                               "estate", ".env"))):
+            check(f"finds {label}", found(*args))
+        check("...and derives PEOPLE_SALT and WA_CLI as org names (a3's members), from the code alone",
+              {"PEOPLE_SALT", "WA_CLI"} <= set(old["org_names"]), str(old["org_names"]))
+
+    print("\nC3 THE PARTITION:")
+    gaps = partition_gaps(REPO)
+    check("every .gitignore entry is classed org | host | build", not gaps, str(gaps))
+    doc = json.loads((REPO / "src/astryx/data/estate_partition.json").read_text())["classes"]
+    check("the org class holds local.md, .env and agents/", all(doc.get(e) == "org" for e in ("local.md", ".env",
+                                                                                               "agents/*")))
+    with tempfile.TemporaryDirectory() as td:
+        t = Path(td)
+        (t / "src/astryx/data").mkdir(parents=True)
+        (t / "src/astryx/data/estate_partition.json").write_text(
+            (REPO / "src/astryx/data/estate_partition.json").read_text())
+        (t / ".gitignore").write_text((REPO / ".gitignore").read_text() + "\nnewly_ignored_org_file.json\n")
+        check("RED control: a gitignored entry nobody classed fails", partition_gaps(t) == ["newly_ignored_org_file.json"],
+              str(partition_gaps(t)))
+
+    print("\nC4 THE ENVIRONMENT'S CLASSES:")
+    from astryx import config, orgenv, paths
+    cls = orgenv.classes()
+    derived = set(res["org_names"])
+    try:
+        held = set(config.read_env(paths.estate(__file__) / ".env"))
+    except Exception:  # noqa: BLE001
+        held = set()
+
+    def unclassed(names):
+        return sorted(n for n in names if orgenv.class_of(n, cls) is None and n not in derived and n not in held)
+    check("every name in this process's environment is classed or an org name", not unclassed(os.environ),
+          str(unclassed(os.environ)))
+    clash = sorted(n for n in derived if orgenv.class_of(n, cls) in cls["pass"])
+    check("no org name sits in a PASS class (it would ride into another org's pane)", not clash, str(clash))
+    check("RED control: an unclassed name in the environment fails",
+          unclassed({**os.environ, "FX_NOBODY_CLASSED_THIS": "1"}) == unclassed(os.environ) + ["FX_NOBODY_CLASSED_THIS"])
+
+    print("\nC5 GUARDS RUN FIRST:")
+    with tempfile.TemporaryDirectory() as td:
+        reg = Path(td) / "orgs.json"
+        reg.write_text(json.dumps({"orgs": {"fxa": {"home": str(Path(td) / "a"), "db": "fxorg_a"},
+                                            "fxb": {"home": str(Path(td) / "b"), "db": "fxorg_b"}}}))
+        for rel in res["guarded_files"]:
+            text = (REPO / rel).read_text().splitlines(keepends=True)
+            gi = next(i for i, ln in enumerate(text) if oc.GUARD.search(ln))
+            end = next(i for i in range(gi, len(text)) if re.match(r"\s*fi\b", text[i]) or
+                       (i == gi and re.search(r";\s*fi\s*$", text[i])))
+            prefix = "".join(text[:end + 1])
+            pre_exec = [ln for ln in text[:gi] if ln.strip() and not ln.lstrip().startswith("#")]
+            bad = [ln.strip() for ln in pre_exec if not re.match(
+                r"\s*(set -[euo]+|set -euo pipefail|ROOT=|REPO=|PY=|HERE=|_self=|_hops=|_t=|while |done|case |esac|"
+                r"cd |unset |\[ |\{|\}|.*\) _self=|if \[ -e \"\$\{ASTRYX_ORG_REGISTRY)", ln)]
+            with tempfile.TemporaryDirectory() as wd:
+                f = Path(wd) / "prefix.sh"
+                f.write_text(prefix.replace("cd \"$(dirname \"$_self\")\"", f"cd {REPO}"))
+                env = {k: os.environ[k] for k in ("PATH", "HOME", "USER") if k in os.environ}
+                r_multi = subprocess.run(["bash", str(f)], env={**env, "ASTRYX_ORG_REGISTRY": str(reg)}, cwd=REPO,
+                                         capture_output=True, text=True, timeout=30)
+                r_one = subprocess.run(["bash", str(f)], env={**env, "ASTRYX_ORG_REGISTRY": str(Path(wd) / "none")},
+                                       cwd=REPO, capture_output=True, text=True, timeout=30)
+            check(f"{rel}: refuses under two orgs ({r_multi.returncode}), passes with none ({r_one.returncode}), "
+                  "nothing but preamble before it", r_multi.returncode != 0 and r_one.returncode == 0 and not bad,
+                  f"{bad} {r_multi.stderr[-200:]} {r_one.stderr[-200:]}")
+    return 1 if fails else (0 if pre_ok else 77)
+
+
+if __name__ == "__main__":
+    rc = main()
+    print()
+    if rc == 1:
+        print(f"FAILED ({len(fails)}): " + "; ".join(fails))
+    elif rc == 0:
+        print("org census: every org-state read goes through the HOME; the partitions are total")
+    sys.exit(rc)

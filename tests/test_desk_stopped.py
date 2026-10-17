@@ -13,8 +13,20 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 sys.path.insert(0, str(REPO))
-SRC = os.environ.get("DESK_STOPPED_SRC") or str(REPO / "triggers" / "steward" / "desk_stopped.py")
+SRC = os.environ.get("DESK_STOPPED_SRC") or str(ESTATE / "triggers" / "steward" / "desk_stopped.py")
 if not Path(SRC).exists():
     print("SKIP: triggers/steward/desk_stopped.py not present (gitignored body): the stopped-desk guard was NOT "
           "verified this run")

@@ -44,29 +44,22 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 from astryx.core import charter as _charter  # noqa: E402 — the one roster rule
 from bridges.owner_surfaces import OWNER_ROW_BRIDGED_SQL  # noqa: E402 — the rows a bridge delivers, not the pane
+from astryx import config, paths  # noqa: E402 — the ONE resolver (plan-11324 S3a)
+# The org's estate (.env, agents/, triggers/, units/, …): this checkout on one org, the HOME on several. The observatory
+# is in the declared host-scoped set (#58435 S3c); until S3c it serves ONE org, the HOME it was started for.
+ESTATE = paths.estate(__file__)
 
 def _dsn() -> str:
-    if os.environ.get("ASTRYX_DSN"):
-        return os.environ["ASTRYX_DSN"]
-    env = REPO / ".env"
-    if env.is_file():
-        for line in env.read_text().splitlines():
-            if line.startswith("ASTRYX_DSN="):
-                return line.split("=", 1)[1].strip()
-    raise SystemExit("no ASTRYX_DSN in environment or .env")
+    try:
+        return config.dsn(ESTATE / ".env")
+    except LookupError:
+        raise SystemExit("no ASTRYX_DSN in environment or .env") from None
 
 DSN = _dsn()
-ORG = os.environ.get("ASTRYX_ORG", "local")
+ORG = config.org_env("ASTRYX_ORG", "local")      # the environment on one org, exactly; the HOME's .env on several
 
 def _env(key: str) -> str:
-    if os.environ.get(key):
-        return os.environ[key]
-    env = REPO / ".env"
-    if env.is_file():
-        for line in env.read_text().splitlines():
-            if line.startswith(key + "="):
-                return line.split("=", 1)[1].strip()
-    return ""
+    return config.get(key, "", ESTATE / ".env")      # this reader's semantics exactly (env first, then the first line)
 
 OBS_KEY = _env("OBS_KEY")          # owner key: unlocks the composer (POST /api/messages)
 # vega's charter is resolved at any depth via _charter_path("vega") — it lives in
@@ -397,7 +390,7 @@ def agent_meta() -> dict[str, dict]:
     the chain of composite labels from the root down to the agent's own folder, and
     rank (charter line 'Rank: <n>') orders members inside their group; peers omit it.
     Examples (*.example.md files and *.example/ directories) are skipped."""
-    root = REPO / "agents"
+    root = ESTATE / "agents"
     out: dict[str, dict] = {}
     for f in root.rglob("*.md"):
         parts = f.relative_to(root).parts
@@ -976,7 +969,7 @@ async def charter_put(name: str, edit: CharterEdit, request: Request):
 # block on the next respawn (see src/astryx/core/runtime_env.py). SECRETS NEVER TRANSIT THIS API:
 # runtime.json stores the NAME of the .env key holding the token, never the value — read
 # redacts, write refuses a token value. No entry for an agent → it uses the org's default.
-RUNTIME_PATH = REPO / "runtime.json"
+RUNTIME_PATH = ESTATE / "runtime.json"
 
 
 def _load_runtime() -> dict:
@@ -991,7 +984,7 @@ def _load_runtime() -> dict:
 
 def _env_key_names() -> list[str]:
     """NAMES only of .env keys (never values) — lets the UI pick which key holds the token."""
-    f = REPO / ".env"
+    f = ESTATE / ".env"
     if not f.exists():
         return []
     out: list[str] = []
@@ -1121,7 +1114,7 @@ async def agent_create(body: AgentCreate, request: Request):
         return Response("a charter is the agent — it cannot be empty", status_code=400)
     if _charter_path(name):
         return Response(f"'{name}' already exists — names are unique in the tree", status_code=409)
-    agents_dir = REPO / "agents"
+    agents_dir = ESTATE / "agents"
     if body.group:
         g = body.group.strip().lower()
         if not _valid_name(g) or not (agents_dir / g).is_dir():
@@ -1183,7 +1176,7 @@ async def agent_spawn(name: str, request: Request):
 
 
 # ------------------------------------------------------------ services
-UNITS_DIR = REPO / "units"
+UNITS_DIR = ESTATE / "units"
 SERVICE_ACTIONS = {"start", "stop", "restart"}
 
 
@@ -1328,11 +1321,11 @@ async def trigger_detail(agent: str, name: str):
         "AND left(body, length($2)) = $2 ORDER BY id DESC LIMIT 8", agent, head)
     fires = [f for f in fires if f["body"][len(head):len(head) + 1] in ("]", " ")]
     # a python trigger's check_src names its file; show the code itself (confined to triggers/, capped)
-    root = (REPO / "triggers").resolve()
+    root = (ESTATE / "triggers").resolve()
     cand = t["check_src"] if t["kind"] == "python" and (t["check_src"] or "").endswith(".py") else f"triggers/{agent}/{name}.py"
-    path = (REPO / cand).resolve()
+    path = (ESTATE / cand).resolve()           # check_src is org-relative (triggers/<agent>/<name>.py)
     if root not in path.parents:
-        path = REPO / "triggers" / agent / f"{name}.py"
+        path = ESTATE / "triggers" / agent / f"{name}.py"
     code = None
     if path.is_file():
         try:
@@ -1451,7 +1444,7 @@ async def network_people(request: Request, min_shared: int = 1):
 # never on the wire (local.md: family data is personal tier) and never in a DB table every superuser
 # agent can read until the people_cleared role lands (plan-4918 1a). The owner answers HERE: the name is
 # resolved owner-side from the graph, the answer appended beside the asks, and memory is told only a COUNT.
-_PEOPLE_DIR = Path(os.environ.get("ASTRYX_PEOPLE_DIR") or REPO / "homes" / "memory" / ".people")  # override: oracles
+_PEOPLE_DIR = Path(os.environ.get("ASTRYX_PEOPLE_DIR") or ESTATE / "homes" / "memory" / ".people")  # override: oracles
 PEOPLE_KINDS = ["family", "partner", "close friend", "friend", "colleague", "collaborator",
                 "classmate", "acquaintance", "community", "other"]
 PEOPLE_CLOSENESS = ["inner", "close", "regular", "distant"]
@@ -1877,9 +1870,9 @@ async def agent_profile(name: str):
     meta = agent_meta()
     if name not in meta:
         return Response(status_code=404)
-    hits = [p for p in (REPO / "agents").rglob(f"{name}.md")
+    hits = [p for p in (ESTATE / "agents").rglob(f"{name}.md")
             if not p.name.endswith(".example.md")
-            and not any(x.endswith(".example") for x in p.relative_to(REPO / "agents").parts)]
+            and not any(x.endswith(".example") for x in p.relative_to(ESTATE / "agents").parts)]
     if not hits:
         return Response(status_code=404)
     charter = hits[0]
@@ -1935,12 +1928,12 @@ async def agent_profile(name: str):
     live = name in tmux_alive()
     retired = bool(re.search(r"^## Tombstone", text, re.M))
     # identity history: this self's commits in the private log
-    log_path = str(charter.parent.relative_to(REPO / "agents")) \
-        if charter.parent.name == name else str(charter.relative_to(REPO / "agents"))
+    log_path = str(charter.parent.relative_to(ESTATE / "agents")) \
+        if charter.parent.name == name else str(charter.relative_to(ESTATE / "agents"))
     hist = subprocess.run(
         ["git", "log", "--format=%h|%an|%ad|%s", "--date=format:%Y-%m-%d %H:%M", "-15",
          "--", log_path],
-        cwd=REPO / "agents", capture_output=True, text=True).stdout.strip()
+        cwd=ESTATE / "agents", capture_output=True, text=True).stdout.strip()
     history = [dict(zip(("hash", "author", "date", "subject"), l.split("|", 3)))
                for l in hist.splitlines() if l]
     return {"agent": name, "name": name, "bio": bio,
@@ -2346,7 +2339,7 @@ async def sqlfile_del(path: str):
 # owner SEE the wiring and change it — including binding an agent to a contact,
 # resolved through the same provider layer the agents use so a name never
 # silently fuzzy-matches the wrong person (the "Ali Owner" class). Owner-only.
-BRIDGES = REPO / "bridges"
+BRIDGES = ESTATE / "bridges"           # the routes-*.json files are org estate (data/estate_partition.json)
 
 
 def _wire_channels() -> list[str]:
@@ -2673,7 +2666,7 @@ async def wire_contacts(q: str, channel: str = ""):
 #  - src/astryx/core/tier.py keys AGENT content and does not reach the wiki at all. A page body is
 #    memory's compiled content, and goal TITLES (goal-16 is "low-latency recruiter-reply
 #    signal") are owner-career-adjacent. No wiki body or goal title is public at any tier.
-MEMORY_WIKI = REPO / "memory" / "wiki"
+MEMORY_WIKI = ESTATE / "memory" / "wiki"
 
 
 async def _memgraph_read() -> dict:
@@ -2838,7 +2831,7 @@ async def memory_ontology():
 # local.md's RAG clause); career specifics stay meta-only at write time, and cv:/wa:/owner chat rows
 # never enter. Served ONLY from under
 # LIBRARY: shelf and slug must be plain names, and the resolved path must stay inside the root.
-LIBRARY = Path(os.environ.get("ASTRYX_LIBRARY_DIR") or REPO / "memory" / "library")
+LIBRARY = Path(os.environ.get("ASTRYX_LIBRARY_DIR") or ESTATE / "memory" / "library")
 _LIB_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,80}$")
 
 

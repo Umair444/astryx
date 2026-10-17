@@ -54,7 +54,7 @@ PY=${PY:-venv/bin/python}; [ -x "$PY" ] || PY=python3
 # node on PATH from the ASTRYX_NODE anchor (env first, then .env — the same host-config
 # spawn.sh honors; pulse.py loads only ASTRYX_DSN, not the whole .env, so read it here).
 # Harmless where ASTRYX_NODE is unset or node is already found. (seed, steward check_stamp finding 2026-09-20.)
-NODE_BIN=${ASTRYX_NODE:-$(sed -n 's/^ASTRYX_NODE=//p' .env 2>/dev/null | head -1)}
+NODE_BIN=$("$PY" src/astryx/config.py get ASTRYX_NODE 2>/dev/null)   # env first, then the org's settings: the ONE resolver (plan-11324 S3a)
 [ -n "$NODE_BIN" ] && export PATH="$(dirname "$NODE_BIN"):$PATH"
 
 EXIT_SKIP=77

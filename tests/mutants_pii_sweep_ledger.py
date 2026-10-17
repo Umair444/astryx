@@ -18,8 +18,20 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
+
 # PII_SWEEP_STAGED names a staged copy to probe before it is applied (the body is gitignored)
-SUBJECT = Path(os.environ.get("PII_SWEEP_STAGED") or REPO / "triggers" / "steward" / "pii_sweep.py")
+SUBJECT = Path(os.environ.get("PII_SWEEP_STAGED") or ESTATE / "triggers" / "steward" / "pii_sweep.py")
 ORACLE = REPO / "tests" / "test_pii_sweep_ledger.py"
 ENV = "PII_SWEEP_SRC"
 

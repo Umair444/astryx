@@ -35,6 +35,7 @@ import json
 import os
 import re
 import secrets
+import sys
 import time
 from pathlib import Path
 
@@ -44,7 +45,10 @@ from .transcribe import transcribe
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
-MEDIA_DIR = REPO / "media"
+sys.path.insert(0, str(REPO / "src"))   # astryx.config/paths: the ONE resolver, this bridge's own tree (plan-11324 S3a)
+from astryx import config, paths  # noqa: E402
+ESTATE = paths.estate(__file__)          # the org's estate: this checkout on one org, the HOME on several
+MEDIA_DIR = ESTATE / "media"
 
 MARK = {"tool": "◌", "tool_done": "●", "error": "⚠", "response": "◌"}
 
@@ -78,14 +82,16 @@ AUDIO_KINDS = {"voice", "audio", "ptt"}
 
 # ---------------------------------------------------------------------- config
 def env(key: str, default: str = "") -> str:
-    if os.environ.get(key):
-        return os.environ[key]
-    f = REPO / ".env"
-    if f.is_file():
-        for line in f.read_text().splitlines():
-            if line.startswith(key + "="):
-                return line.split("=", 1)[1].strip()
-    return default
+    """`key` from the environment first, else the org's .env: astryx.config.get, whose semantics are exactly this
+    reader's (plan-11324 S3a routes it; every bridge's config goes through here). ASTRYX_DSN goes through
+    config.dsn, which checks an environment DSN against the HOME on a multi-org host."""
+    f = ESTATE / ".env"
+    if key == "ASTRYX_DSN":
+        try:
+            return config.dsn(f)
+        except LookupError:
+            return default
+    return config.get(key, default, f)
 
 
 def load_routes(path: Path) -> list[dict]:
@@ -97,7 +103,7 @@ def load_routes(path: Path) -> list[dict]:
 
 
 # --------------------------------------------------------------------- routing
-AGENTS_DIR = REPO / "agents"
+AGENTS_DIR = ESTATE / "agents"
 _MENTION = re.compile(r"(?:^|\s)@([a-z][a-z0-9_-]*)", re.I)
 
 

@@ -37,6 +37,18 @@ from pathlib import Path
 for _k in [k for k in os.environ if k.startswith("GIT_")]:
     del os.environ[_k]
 REPO = Path(__file__).resolve().parents[1]
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _stage_channel import stage_server  # noqa: E402
 
@@ -68,14 +80,10 @@ def node_bin() -> str | None:
 
 
 def admin_dsn() -> str | None:
-    if os.environ.get("ASTRYX_DSN"):
-        return os.environ["ASTRYX_DSN"].strip()
-    env = REPO / ".env"
-    if env.exists():
-        for ln in env.read_text().splitlines():
-            if ln.startswith("ASTRYX_DSN="):
-                return ln.split("=", 1)[1].strip().strip('"').strip("'")
-    return None
+    try:                     # the ONE resolver (astryx.config.dsn): the environment first, else the estate's .env
+        return _astryx("config", "dsn", ESTATE / ".env")
+    except LookupError:
+        return None
 
 
 NODE = node_bin()

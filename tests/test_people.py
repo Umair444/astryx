@@ -58,7 +58,7 @@ def test_the_id_actually_MOVES_with_the_salt(monkeypatch=None):
     """A hash that ignored its salt would pass every other test here while providing no
     real pseudonymity — the whole defence rests on the salt being secret and USED."""
     import os
-    old = os.environ.get("PEOPLE_SALT")
+    old = os.environ.get("PEOPLE_SALT")  # org-home: fixture-bound: saved to restore after the test sets its own salt
     try:
         os.environ["PEOPLE_SALT"] = "salt-one"
         a = people.pid(FAKE_JID)
@@ -217,7 +217,7 @@ def test_dm_edges_carry_frequency_and_recency_incrementally():
                 return {"messages": None}
             return None if jid == "333@s.whatsapp.net" else {"messages": msgs[jid]}
         return None
-    real, old_dsn = people._wa, _os.environ.get("ASTRYX_DSN")
+    real, old_dsn = people._wa, _os.environ.get("ASTRYX_DSN")  # org-home: fixture-bound: saved to restore after the test binds its fixture
     try:
         with fixture_db() as fx:
             _os.environ["ASTRYX_DSN"] = fx["url"]

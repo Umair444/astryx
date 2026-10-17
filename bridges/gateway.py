@@ -54,12 +54,20 @@ from nacl.signing import SigningKey, VerifyKey
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
+sys.path.insert(0, str(REPO / "src"))   # astryx.config/paths: the ONE resolver (plan-11324 S3a)
+from astryx import config, paths  # noqa: E402
+ESTATE = paths.estate(__file__)          # the org's estate: this checkout on one org, the HOME on several
 
 def _env(key: str, default: str = "") -> str:
-    import os
-    if key in os.environ:                        # set, even to empty, beats the file (NAT = empty URL)
-        return os.environ[key]
-    env = REPO / ".env"
+    if key == "ASTRYX_DSN":
+        try:
+            return config.dsn(ESTATE / ".env")   # checked against the HOME on a multi-org host
+        except LookupError:
+            return default
+    v = config.org_env(key)                      # set, even to empty, beats the file (NAT = empty URL): one org reads
+    if v is not None:                            # the environment exactly so; several orgs read the HOME's .env
+        return v
+    env = ESTATE / ".env"
     if env.is_file():
         for line in env.read_text().splitlines():
             if line.startswith(key + "="):
@@ -186,7 +194,7 @@ def _public_roster() -> list:
     """PUBLIC-tier agents only (content_public_agents, fail-closed), METADATA-CLASS fields
     only — name/group/rank, the plan-18 metadata line (existence/structure, never content).
     A tier-private agent cannot pass the oracle, so it can never reach the card."""
-    agents_dir = REPO / "agents"
+    agents_dir = ESTATE / "agents"
     valid = set(charter.roster())            # the single source of the exclusion rule
     meta = {}
     for p in agents_dir.rglob("*.md"):

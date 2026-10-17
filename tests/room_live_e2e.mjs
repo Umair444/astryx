@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
-const KEY = (readFileSync(join(REPO, '.env'), 'utf8').split('\n').find((l) => l.startsWith('OBS_KEY=')) || '').slice(8).trim()
+const KEY = (readFileSync(join(REPO, '.env'), 'utf8').split('\n').find((l) => l.startsWith('OBS_KEY=')) || '').slice(8).trim()  // org-home: one org: a live probe of this tree's org (see home.mjs: its default is ASTRYX_HOME, not this tree)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const kids = []; const done = (c) => { kids.forEach((k) => { try { k.kill('SIGKILL') } catch {} }); process.exit(c) }
 setTimeout(() => { console.log('FAIL wall clock'); done(1) }, 240000)
@@ -26,7 +26,7 @@ await until('owner view', () => ev(`document.body.innerText.includes('owner')`))
 await sleep(3000)
 // an agent's reply to the room, as send(to='room') writes it
 const { execFileSync } = await import('node:child_process')
-const dsn = (readFileSync(join(REPO, '.env'), 'utf8').split('\n').find((l) => l.startsWith('ASTRYX_DSN=')) || '').slice(11).trim()
+const dsn = (readFileSync(join(REPO, '.env'), 'utf8').split('\n').find((l) => l.startsWith('ASTRYX_DSN=')) || '').slice(11).trim()  // org-home: one org: a live probe of this tree's org (see home.mjs: its default is ASTRYX_HOME, not this tree)
 const t0 = Date.now()
 const mid = execFileSync('psql', [dsn, '-Atc', "INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES ('seed','room','room:observatory','chat','Hi Umair, seed here. The room speaks now.') RETURNING id"]).toString().trim().split('\n')[0]
 console.log('inserted room message', mid)

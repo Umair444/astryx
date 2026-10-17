@@ -21,6 +21,18 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 sys.path.insert(0, str(REPO))
 if os.environ.get("RELEASE_SRC"):                 # the mutation probe hands a mutated copy here
     import importlib.util
@@ -166,7 +178,7 @@ with tempfile.TemporaryDirectory() as td:
           refused(R.open_stamped, KEY, store, 9, rk, R.label(["family"]), p2, bm, fv) is not None)
 default = R.TierStore().root.resolve()
 check("the default store is under the repo's tier/, outside every home (a1 BC-1)",
-      default.is_relative_to((REPO / "tier").resolve()) and not default.is_relative_to((REPO / "homes").resolve()))
+      default.is_relative_to((ESTATE / "tier").resolve()) and not default.is_relative_to((ESTATE / "homes").resolve()))
 
 print("release:")
 with tempfile.TemporaryDirectory() as td:

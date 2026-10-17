@@ -14,6 +14,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 
 import hashlib
 import os
@@ -24,7 +25,7 @@ from pathlib import Path
 import numpy as np
 
 REPO = repo_root(__file__)
-DIR = Path(os.environ.get("WAKE_MODEL_DIR", REPO / "var" / "models" / "kws"))
+DIR = Path(os.environ.get("WAKE_MODEL_DIR", paths.estate(__file__) / "var" / "models" / "kws"))
 PKG = "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01"
 URL = f"https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/{PKG}.tar.bz2"
 STEM = "epoch-12-avg-2-chunk-16-left-64.int8.onnx"

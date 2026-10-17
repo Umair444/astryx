@@ -31,8 +31,20 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-SRC = Path(os.environ.get("INGEST_SRC") or REPO / "memory" / "graph" / "ingest.py")
-SCHEMA = Path(os.environ.get("INGEST_SCHEMA") or REPO / "memory" / "graph" / "schema.sql")
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
+SRC = Path(os.environ.get("INGEST_SRC") or ESTATE / "memory" / "graph" / "ingest.py")
+SCHEMA = Path(os.environ.get("INGEST_SCHEMA") or ESTATE / "memory" / "graph" / "schema.sql")
 missing = [str(p) for p in (SRC, SCHEMA) if not p.exists()]
 if missing:
     print(f"SKIP: {', '.join(missing)} absent (memory/ is gitignored; set INGEST_SRC / INGEST_SCHEMA) — nothing "

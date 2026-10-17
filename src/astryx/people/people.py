@@ -42,6 +42,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 
 import hashlib
 import json
@@ -77,10 +78,10 @@ def _salt() -> str:
     """Local, secret, stable. Falls back to the org id — still local-only, but a dedicated
     PEOPLE_SALT in .env is better because it can be rotated without changing org identity."""
     for k in ("PEOPLE_SALT", "ASTRYX_ORG"):
-        v = os.environ.get(k)
+        v = config.org_env(k)
         if v:
             return v
-    env = REPO / ".env"
+    env = paths.estate(__file__) / ".env"
     if env.is_file():
         for line in env.read_text().splitlines():
             for k in ("PEOPLE_SALT=", "ASTRYX_ORG="):
@@ -97,7 +98,7 @@ def pid(jid: str) -> str:
 def _wa(*args: str, timeout: int = 90):
     """One wacli call, JSON out. Returns None on any failure — a channel being down must
     degrade the sweep, never raise into the pulse."""
-    cli = os.environ.get("WA_CLI", "docker exec wacli-sync wacli").split()
+    cli = config.org_env("WA_CLI", "docker exec wacli-sync wacli").split()
     try:
         r = subprocess.run([*cli, *args, "--json"], capture_output=True,
                            text=True, timeout=timeout)
@@ -224,10 +225,10 @@ def scan(limit_groups: int = MAX_GROUPS, msgs: int = MSGS_PER_GROUP,
 # where the file lives and what never leaves it.
 def _org() -> str:
     import os
-    v = os.environ.get("ASTRYX_ORG")
+    v = config.org_env("ASTRYX_ORG")
     if v:
         return v
-    env = REPO / ".env"
+    env = paths.estate(__file__) / ".env"
     if env.is_file():
         for line in env.read_text().splitlines():
             if line.startswith("ASTRYX_ORG="):
@@ -237,15 +238,10 @@ def _org() -> str:
 
 def _dsn() -> str | None:
     import os
-    v = os.environ.get("ASTRYX_DSN")
-    if v:
-        return v
-    env = REPO / ".env"
-    if env.is_file():
-        for line in env.read_text().splitlines():
-            if line.startswith("ASTRYX_DSN="):
-                return line.split("=", 1)[1].strip()
-    return None
+    try:
+        return config.dsn(paths.estate(__file__) / ".env")
+    except LookupError:
+        return None
 
 
 def write_pg(g: dict, personas: dict | None = None) -> dict:

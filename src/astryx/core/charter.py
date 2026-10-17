@@ -21,10 +21,11 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 import sys
 from pathlib import Path
 
-AGENTS = repo_root(__file__) / "agents"
+AGENTS = paths.estate(__file__) / "agents"     # the org's roster (plan-11324 S3a: its HOME's agents/)
 
 # ── AGENT TYPES ──────────────────────────────────────────────────────────────────────
 # The org has more than one KIND of agent. The type is declared by a `Type:` directive

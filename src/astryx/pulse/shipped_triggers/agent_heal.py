@@ -34,6 +34,7 @@ from __future__ import annotations
 # imported as a module only (a trigger shim imports it), never run by path, so no sys.path preamble: an import
 # inside a top-level conditional makes the trigger_names static reader defer every lookup (reorg 10-14)
 from astryx.paths import repo_root
+from astryx import config, paths  # noqa: E402
 
 import os
 import re
@@ -91,7 +92,7 @@ def spawn(name: str, script: Path | None = None) -> tuple[bool, str]:
     """LAUNCH spawn.sh detached and return at once: a boot waits up to a minute on its dialogs, and pulse kills any check
     past 30s, taking this tick's crash-loop count with it (10-14: 4 spawns a tick timed out every tick). A launch that
     dies leaves no body; the next tick sees that and the crash-loop guard counts it. Its output is in the log named."""
-    log = REPO / "var" / "agent_heal" / f"{name}.spawn.log"
+    log = paths.estate(__file__) / "var" / "agent_heal" / f"{name}.spawn.log"
     try:
         log.parent.mkdir(parents=True, exist_ok=True)
         with open(log, "wb") as f:
@@ -152,13 +153,10 @@ def ears(proc: str = "/proc") -> dict[str, int] | None:
 
 
 def _dsn() -> str:
-    if os.environ.get("ASTRYX_DSN"):
-        return os.environ["ASTRYX_DSN"]
-    f = REPO / ".env"
-    for line in (f.read_text().splitlines() if f.is_file() else []):
-        if line.startswith("ASTRYX_DSN="):
-            return line.split("=", 1)[1].strip()
-    return ""
+    try:
+        return config.dsn(paths.estate(__file__) / ".env")
+    except LookupError:
+        return ""
 
 
 def stale(min_age: int = DEAF_PENDING_S, dsn: str | None = None) -> dict[str, tuple[int, int]] | None:
@@ -203,7 +201,7 @@ def idle(text: str) -> bool:
 def pane_file(name: str, now: float) -> Path:
     """Where a deaf body's pane is kept: its own (gitignored) home, DOT-named so no [[file:]] embed can carry it to any
     surface (bridges/embed_root refuses every dot-path under a home; a pane can show tier content, steward MC-1)."""
-    return REPO / "homes" / name / f".deaf-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime(now))}.pane"
+    return paths.estate(__file__) / "homes" / name / f".deaf-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime(now))}.pane"
 
 
 def save(name: str, text: str, now: float) -> Path:

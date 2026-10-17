@@ -20,15 +20,14 @@ from mcp.server.fastmcp import FastMCP                  # noqa: E402
 mcp = FastMCP("astryx-influence")
 
 
-def _env(key: str) -> str | None:
-    if os.environ.get(key):
-        return os.environ[key].strip()
-    env = REPO / ".env"
-    if env.exists():
-        for line in env.read_text().splitlines():
-            if line.startswith(key + "="):
-                return line[len(key) + 1:].strip().strip('"').strip("'")
-    return None
+def _dsn() -> str | None:
+    """ASTRYX_DSN through the ONE resolver (plan-11324 S3a): the environment, else the org's .env; None if neither."""
+    sys.path.insert(0, str(REPO / "src"))
+    from astryx import config, paths                     # noqa: E402
+    try:
+        return config.dsn(paths.estate(__file__) / ".env")
+    except LookupError:
+        return None
 
 
 @mcp.tool()
@@ -49,7 +48,7 @@ def who_should_i_ask(topic: str = "", k: int = 5) -> str:
     # k is clamped to 1..17, and a clamp SAYS so (the naive walk: k=0 came back as one agent and k=100 as 13, with no
     # word that the asked k was not the k that ran).
     kk = max(1, min(int(k), 17))
-    with shell.connect(_env("ASTRYX_DSN"), readonly=False) as conn:
+    with shell.connect(_dsn(), readonly=False) as conn:
         lines = shell.ask(conn, asker, topic or None, kk)["lines"]
     if kk != int(k):
         lines.append(f"  (k={int(k)} clamped to {kk}: k runs 1..17)")

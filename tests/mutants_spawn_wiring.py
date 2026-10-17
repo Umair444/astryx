@@ -58,7 +58,7 @@ MUTANTS = {
     "Q5 render without umask 077":
         ('  umask 077\n', ''),
     "Q6 render into the repo allowed":
-        ('    "$(realpath -m "$ROOT")"/*) echo "spawn --render: <outdir> must be outside the repo ($OUT)"; exit 1;;',
+        ('    "$(realpath -m "$ROOT")"/*|"$(realpath -m "$ORGH")"/*) echo "spawn --render: <outdir> must be outside the repo and the org\'s HOME ($OUT)"; exit 1;;',
          '    /nonexistent-zz/*) exit 1;;'),
     "Q7 render runs the live-body pgrep guard":
         ('if [ -z "$RENDER" ] && ! tmux has-session -t "=ax-$AGENT"', 'if ! tmux has-session -t "=ax-$AGENT"'),

@@ -46,6 +46,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 
 import email
 import email.header
@@ -57,14 +58,15 @@ from pathlib import Path
 import psycopg
 
 REPO = repo_root(__file__)
+ESTATE = paths.estate(__file__)       # the org's .env and homes/ (plan-11324 S3a: the HOME on a multi-org host)
 _env = {k: v for k, v in
-        (l.split("=", 1) for l in (REPO / ".env").read_text().splitlines() if "=" in l)}
+        (l.split("=", 1) for l in (ESTATE / ".env").read_text().splitlines() if "=" in l)}
 ADDR = _env["GMAIL_ADDRESS"].strip()
 PASS = _env["GMAIL_APP_PASSWORD"].strip()
-DSN = _env["ASTRYX_DSN"].strip()
+DSN = config.dsn(ESTATE / ".env", env_first=False)
 
 AGENT = "canopus"
-STATE = REPO / "homes" / "canopus" / ".inbound_state.json"   # 0600, gitignored, integers only
+STATE = ESTATE / "homes" / "canopus" / ".inbound_state.json"   # 0600, gitignored, integers only
 SCAN_LIMIT = 60         # newest N new UIDs per run — a burst never floods
 
 # --- classification sets (high-precision, tune as mail teaches) --------------
@@ -82,7 +84,7 @@ GENERIC_ATS_DOMAINS = (
 # career targets, so they live ONLY in a gitignored 0600 file, never hardcoded in
 # this trackable poller and never on the wire. Absent file → degrade gracefully to
 # generic-ATS + token detection (still catches recruiter mail, daily sweep backstops).
-_TARGETS_FILE = REPO / "homes" / "canopus" / ".recruiter_targets.json"
+_TARGETS_FILE = ESTATE / "homes" / "canopus" / ".recruiter_targets.json"
 
 
 def _employer_domains() -> tuple[str, ...]:

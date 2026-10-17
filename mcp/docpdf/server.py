@@ -23,12 +23,15 @@ import re
 import shutil
 import subprocess
 import tempfile
+import sys
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
 REPO = Path(__file__).resolve().parents[2]
-ALLOWED_ROOT = Path(os.environ.get("DOCPDF_ROOT") or REPO / "homes").resolve()
+sys.path.insert(0, str(REPO / "src"))   # astryx.paths: the org's estate (its HOME on a multi-org host), plan-11324 S3a
+from astryx import paths  # noqa: E402
+ALLOWED_ROOT = Path(os.environ.get("DOCPDF_ROOT") or paths.estate(__file__) / "homes").resolve()
 RENDER_TIMEOUT = 60
 CHROMIUM_CANDIDATES = ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable")
 

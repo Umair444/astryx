@@ -21,6 +21,15 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 from bridges import embed_root as E  # noqa: E402  (stdlib only)
 
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
 fails = 0
 
 
@@ -179,9 +188,10 @@ LIVE = Path(os.environ.get("ASTRYX_LIVE_REPO") or live_root(REPO))
 
 
 def census():
-    env = LIVE / ".env"
-    dsn = next((ln.split("=", 1)[1].strip() for ln in env.read_text().splitlines()
-                if ln.startswith("ASTRYX_DSN=")), "") if env.is_file() else ""
+    try:                     # the LIVE org's DSN through the ONE resolver (astryx.config.dsn), its .env only as before
+        dsn = _astryx("config", "dsn", LIVE / ".env", None, False)
+    except LookupError:
+        dsn = ""
     try:
         import psycopg
     except ImportError:

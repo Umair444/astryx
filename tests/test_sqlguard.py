@@ -16,6 +16,18 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 fails = []
 
 
@@ -641,7 +653,7 @@ def _build_tree(tmp: Path, rev=None):
                         ignore=shutil.ignore_patterns("__pycache__", "ledger.json"))
     from _astryx_skel import skeleton                # goal 10224 S4: astryx.* needs its spine in the fake repo
     skeleton(tmp, "src/astryx/security/__init__.py", "src/astryx/pulse/pulse_run.py", "src/astryx/sql/schema.sql")
-    (tmp / ".env").symlink_to((REPO / ".env").resolve())
+    (tmp / ".env").symlink_to((ESTATE / ".env").resolve())
     (tmp / "triggers").mkdir()
     (tmp / "subj").mkdir()
     (tmp / "subj" / "__init__.py").write_text("")
@@ -839,7 +851,7 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
     def bare_case(name, env, live, flags, rc, tag, word):
         envf.unlink(missing_ok=True)
         if env == "real":
-            envf.symlink_to((REPO / ".env").resolve())
+            envf.symlink_to((ESTATE / ".env").resolve())
         elif env == "nodsn":
             envf.write_text("SOMETHING_ELSE=1\n")
         (bare / "triggers").mkdir(exist_ok=True) if live else shutil.rmtree(bare / "triggers", ignore_errors=True)
@@ -857,7 +869,7 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
     bare_case("no-DSN", "nodsn", False, [], 1, "ASTRYX_DSN", "BROKEN")                  # misconfigured even when bare
     # positive control: .env and deps present, on a live-shaped tree, runs the canary for real (absence only)
     envf.unlink(missing_ok=True)
-    envf.symlink_to((REPO / ".env").resolve())
+    envf.symlink_to((ESTATE / ".env").resolve())
     p = subprocess.run([sys.executable, "-m", "astryx.security.sqlguard.canary"], cwd=bare, env=benv,
                        capture_output=True, text=True)
     arm("estate control: with .env and deps the canary runs (rc 0)", p.returncode == 0,
@@ -1088,7 +1100,7 @@ def main():
     if "--mutants" in args:
         i = args.index("--mutants")
         return mutant_battery(args[i + 1] if i + 1 < len(args) else None)
-    if not (REPO / ".env").exists():
+    if not (ESTATE / ".env").exists():
         print("NOT SEARCHED: no .env (ASTRYX_DSN), so the harness can't reach postgres. Nothing was verified.")
         return 77
     if "--against" in args:                    # RED-first: this harness against an OLDER package

@@ -140,8 +140,11 @@ def onehop(cur, ids: list[int],
 
 
 def _selftest():
-    dsn = os.environ.get("DSN") or os.environ.get("ASTRYX_DSN")
-    if not dsn:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))   # src/ holds no mcp/ to shadow
+    from astryx import config, paths     # the ONE resolver (plan-11324 S3a)
+    try:
+        dsn = os.environ.get("DSN") or config.dsn(paths.estate(__file__) / ".env")
+    except LookupError:
         sys.exit("set DSN or ASTRYX_DSN")
     # read-only BY CONSTRUCTION, not only by content (a3 #39182 BC-1): a write verb here fails in postgres.
     with psycopg.connect(dsn, autocommit=True, options="-c default_transaction_read_only=on") as conn, \

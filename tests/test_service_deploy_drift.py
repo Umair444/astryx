@@ -45,6 +45,18 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 sys.path.insert(0, str(REPO))
 
 # SERVICE_DEPLOY_DRIFT_SRC is the mutation probe's channel to this oracle, not a
@@ -52,7 +64,7 @@ sys.path.insert(0, str(REPO))
 # and points this here. Without it the probe would silently drive the REAL trigger and
 # report every mutant caught.
 TRIGGER = Path(os.environ.get("SERVICE_DEPLOY_DRIFT_SRC")
-               or (REPO / "triggers" / "seed" / "service_deploy_drift.py"))
+               or (ESTATE / "triggers" / "seed" / "service_deploy_drift.py"))
 if not TRIGGER.exists():
     # triggers/ is gitignored, so a fresh clone (CI) has no body to test. Skip LOUDLY
     # rather than pass — a green tick for a test that never ran is the lie this whole

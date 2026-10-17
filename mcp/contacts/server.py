@@ -29,11 +29,15 @@ import sqlite3
 import subprocess
 import tempfile
 import time
+import sys
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-ENV = Path(__file__).resolve().parents[2] / ".env"
+REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "src"))   # astryx.paths: the org's estate (its HOME on a multi-org host), plan-11324 S3a
+from astryx import paths  # noqa: E402
+ENV = paths.estate(__file__) / ".env"
 _cfg = dict(
     line.split("=", 1)
     for line in ENV.read_text().splitlines()

@@ -44,11 +44,23 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 # PII_SWEEP_SRC lets devtools/mutation_probe.py point this oracle at a MUTATED copy of the
 # guard, which is how the org proves an assertion can actually fail (mutants_pii_sweep_
 # ledger.py). Unset, it is the deployed guard.
 SUBJECT = Path(os.environ.get("PII_SWEEP_SRC")
-               or REPO / "triggers" / "steward" / "pii_sweep.py")
+               or ESTATE / "triggers" / "steward" / "pii_sweep.py")
 EXIT_SKIP = 77
 VALUE_RUN = re.compile(r"\d{7,}")     # the shape a routing id / phone number takes
 

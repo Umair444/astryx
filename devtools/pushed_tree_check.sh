@@ -55,7 +55,7 @@ for v in $(compgen -e | grep "^GIT_"); do unset "$v"; done
 # (a4 #45773: with ASTRYX_DSN exported, oracles saw a DSN, skipped their 77 path and crashed on psycopg). Unset every
 # ASTRYX_*, PG* and *_DSN, and every NAME the live .env declares (names only; no value is read). The set is derived.
 # Oracle: tests/test_pushed_tree_env.py.
-for v in $(compgen -e | grep -E '^(ASTRYX_|PG)|_DSN$'; [ -f "$REPO/.env" ] && sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' "$REPO/.env"); do unset "$v" 2>/dev/null || true; done  # env-scrub
+for v in $(compgen -e | grep -E '^(ASTRYX_|PG)|_DSN$'; [ -f "$REPO/.env" ] && sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' "$REPO/.env"); do unset "$v" 2>/dev/null || true; done  # env-scrub  # org-home: audit, NAMES only from the pushing checkout, to scrub the caller's environment before the pushed tree runs
 cd "$REPO" || exit 77
 
 REF="${1:-HEAD}"

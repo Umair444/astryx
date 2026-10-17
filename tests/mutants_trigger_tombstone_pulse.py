@@ -16,9 +16,9 @@ MUTANTS = {
          '                continue\n',
          ''),
     "any agent's tombstone retires the name everywhere (not per target agent)":
-        ('            tomb = REPO / "triggers" / agent / ".retired" / t["name"]\n',
-         '            tomb = next((d / ".retired" / t["name"] for d in (REPO / "triggers").iterdir()\n'
-         '                         if (d / ".retired" / t["name"]).exists()), REPO / "triggers" / agent / ".retired" / t["name"])\n'),
+        ('            tomb = ESTATE / "triggers" / agent / ".retired" / t["name"]\n',
+         '            tomb = next((d / ".retired" / t["name"] for d in (ESTATE / "triggers").iterdir()\n'
+         '                         if (d / ".retired" / t["name"]).exists()), ESTATE / "triggers" / agent / ".retired" / t["name"])\n'),
     'a held-off name is never said (the re-create miss is silent again)':
         ('                retired_notice(conn, agent, t["name"], f.name, tomb)\n',
          ''),

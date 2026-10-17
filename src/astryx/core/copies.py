@@ -25,6 +25,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 import fnmatch
 import hashlib
 import json
@@ -395,12 +396,12 @@ def check(conn=None, decls=None, root: Path = None, inv: dict = None) -> list:
 
 def main() -> int:
     import psycopg
-    dsn = os.environ.get("ASTRYX_DSN")
-    if not dsn:
-        env = REPO / ".env"
-        for line in (env.read_text().splitlines() if env.is_file() else []):
-            if line.startswith("ASTRYX_DSN="):
-                dsn = line.split("=", 1)[1].strip()
+    # the org's .env: this tree's estate, or the ASTRYX_COPIES_ROOT tree when one is named (as REPO was)
+    env = (REPO if os.environ.get("ASTRYX_COPIES_ROOT") else paths.estate(__file__)) / ".env"
+    try:
+        dsn = config.dsn(env)
+    except LookupError:
+        dsn = None
     with psycopg.connect(dsn) as conn:
         res = check(conn)
     for name, st, detail in res:

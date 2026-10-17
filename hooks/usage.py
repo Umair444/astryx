@@ -56,8 +56,9 @@ try:
     econ_line = ""
     try:
         import psycopg
-        dsn = next(line.split("=", 1)[1].strip()
-                   for line in open(REPO + "/.env") if line.startswith("ASTRYX_DSN="))
+        sys.path.insert(0, REPO)
+        from astryx import config, paths       # the ONE resolver (plan-11324 S3a); the file only, as before
+        dsn = config.dsn(paths.estate(__file__) / ".env", env_first=False)
         # every statement is capped (worst path 1s connect + 3 x 0.9s, under 5s): this runs inside a 5s prompt-hook budget, on every prompt, for every
         # agent, and a slow DB must cost the line, never the wake (owner 10-10: the hook timed out)
         with psycopg.connect(dsn, connect_timeout=1, options="-c statement_timeout=900") as conn:

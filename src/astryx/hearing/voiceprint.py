@@ -10,6 +10,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 
 import os
 import threading
@@ -18,7 +19,7 @@ from pathlib import Path
 import numpy as np
 
 REPO = repo_root(__file__)
-MODEL = Path(os.environ.get("VOICEPRINT_MODEL", REPO / "var" / "models" / "campplus_en.onnx"))
+MODEL = Path(os.environ.get("VOICEPRINT_MODEL", paths.estate(__file__) / "var" / "models" / "campplus_en.onnx"))
 MODEL_SHA = "357a834f702b80161e5b981182c038e18553c1f2ca752ed6cec2052365d4129b"
 MODEL_URL = ("https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/"
              "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx")

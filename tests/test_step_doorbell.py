@@ -50,6 +50,18 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 SERVER = Path(os.environ.get("CHANNEL_SERVER_SRC") or REPO / "channel" / "server.mjs")
 COMMON = Path(os.environ.get("STEP_LINE_SRC") or REPO / "bridges" / "common.py")
 PROBE_AGENT = "doorprobe"
@@ -94,13 +106,10 @@ except ModuleNotFoundError as e:
 
 
 def dsn():
-    env = REPO / ".env"
-    if not env.exists():
+    try:                     # the ONE resolver (astryx.config.dsn), the .env only as before (env_first=False)
+        return _astryx("config", "dsn", ESTATE / ".env", None, False)
+    except LookupError:
         return None
-    for line in env.read_text().splitlines():
-        if line.startswith("ASTRYX_DSN="):
-            return line.split("=", 1)[1].strip().strip('"').strip("'")
-    return None
 
 
 def node_bin():

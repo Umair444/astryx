@@ -37,6 +37,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 
 import json
 import os
@@ -76,10 +77,10 @@ def dsn() -> str:
     """HANDS_DSN for an oracle's throwaway DB (set EXPLICITLY by the test), else the org's DSN."""
     if os.environ.get("HANDS_DSN"):
         return os.environ["HANDS_DSN"]
-    for line in (REPO / ".env").read_text().splitlines():
-        if line.startswith("ASTRYX_DSN="):
-            return line.split("=", 1)[1].strip().strip('"').strip("'")
-    raise SystemExit("no ASTRYX_DSN")
+    try:
+        return config.dsn(paths.estate(__file__) / ".env", env_first=False).strip('"').strip("'")
+    except LookupError:
+        raise SystemExit("no ASTRYX_DSN")
 
 
 def _db():

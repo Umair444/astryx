@@ -13,6 +13,18 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 sys.path.insert(0, str(REPO))
 
 fails = []
@@ -25,14 +37,10 @@ def check(name, ok, detail=""):
 
 
 def admin_dsn():
-    if os.environ.get("ASTRYX_DSN"):
-        return os.environ["ASTRYX_DSN"]
-    env = REPO / ".env"
-    if env.is_file():
-        for line in env.read_text().splitlines():
-            if line.startswith("ASTRYX_DSN="):
-                return line.split("=", 1)[1].strip().strip('"')
-    return None
+    try:                     # the ONE resolver (astryx.config.dsn): the environment first, else the estate's .env
+        return _astryx("config", "dsn", ESTATE / ".env")
+    except LookupError:
+        return None
 
 
 def main():
@@ -198,7 +206,7 @@ def main():
         # ── F1 (a2 #34875): orphans read from POSTGRES; the lock dir is gone (a reboot wipes /tmp) ──────────
         crash_src = ("import os, sys; sys.path.insert(0, sys.argv[1]); from pathlib import Path\n"
                      "from astryx.pg import runscope as rs\n"
-                     "s = rs.RunScope(os.environ['ASTRYX_DSN'], root=Path(sys.argv[2])).open()\n"
+                     "s = rs.RunScope(os.environ['ASTRYX_DSN'], root=Path(sys.argv[2])).open()\n"  # org-home: fixture-bound: the child's env is the DSN the test hands it
                      "s.create_db(s.role + '_crashed'); print(s.role)\n")     # exits WITHOUT teardown: a crash
         child = subprocess.run([sys.executable, "-c", crash_src, str(REPO), str(base)],
                                env={**os.environ, "ASTRYX_DSN": dsn}, capture_output=True, text=True, timeout=60)
@@ -430,7 +438,7 @@ def main():
             "spec = importlib.util.spec_from_file_location('rs', os.environ['RIDER_RS'])\n"
             "rs = importlib.util.module_from_spec(spec); spec.loader.exec_module(rs)\n"
             "root = os.path.join(os.environ['TMPDIR'], 'ledger') if sys.argv[1] == 'UNDER_G' else sys.argv[1]\n"
-            "s = rs.RunScope(os.environ['ASTRYX_DSN'], root=rs.Path(root)).open()\n"
+            "s = rs.RunScope(os.environ['ASTRYX_DSN'], root=rs.Path(root)).open()\n"  # org-home: fixture-bound: the child's env is the DSN the test hands it
             "s.create_db(s.role + '_rider')\n"
             "print('ROLE=' + s.role, flush=True)\n"
             "print('LOCK=' + str(s.root / 'lock.json'), flush=True)\n"

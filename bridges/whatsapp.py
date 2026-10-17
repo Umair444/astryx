@@ -58,7 +58,8 @@ WA_CLI = shlex.split(env("WA_CLI", "docker exec wacli-sync wacli"))
 DATA_HOST = env("WA_DATA_HOST")       # wacli store dir on the host (media on/off switch)
 DATA_CTR = env("WA_DATA_CTR", "/data")    # same dir as the wacli process sees it
 WA_DOCKER = WA_CLI[2] if WA_CLI[:2] == ["docker", "exec"] else ""
-ROUTES_FILE = HERE / "routes-whatsapp.json"
+from .common import ESTATE  # noqa: E402  the org's estate (its HOME on a multi-org host), plan-11324 S3a
+ROUTES_FILE = ESTATE / "bridges" / "routes-whatsapp.json"
 
 JOB_TIMEOUT = 1800    # lifecycle GC only: forget a job nobody answered in 30 min
 

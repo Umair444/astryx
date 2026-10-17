@@ -16,6 +16,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 import argparse
 import sys
 from pathlib import Path
@@ -130,7 +131,7 @@ def main(argv=None) -> int:
     ap.add_argument("--no-introduce", dest="introduce", action="store_false")
     ap.add_argument("--unlisted", action="store_true", help="stay out of the relay directory")
     ap.add_argument("--force", action="store_true", help="write --public-url even if unreachable")
-    ap.add_argument("--env-file", default=str(REPO / ".env"))
+    ap.add_argument("--env-file", default=str(paths.estate(__file__) / ".env"))
     a = ap.parse_args(argv)
     env_path = Path(a.env_file)
     interactive = a.relay is None and a.public_url is None and not a.skip

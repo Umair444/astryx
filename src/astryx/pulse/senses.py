@@ -40,6 +40,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 import importlib.util
 import json
 import sys
@@ -48,7 +49,7 @@ from pathlib import Path
 
 REPO = repo_root(__file__)
 sys.path.insert(0, str(REPO))
-SENSORS = REPO / "sensors"
+SENSORS = paths.estate(__file__) / "sensors"
 PORT = 8460
 
 from fastapi import FastAPI, Request, Response  # noqa: E402
@@ -97,9 +98,7 @@ def senses_index() -> list[dict]:
 
 def _dsn() -> str | None:
     try:
-        return next(line.split("=", 1)[1].strip()
-                    for line in (REPO / ".env").read_text().splitlines()
-                    if line.startswith("ASTRYX_DSN="))
+        return config.dsn(paths.estate(__file__) / ".env", env_first=False)
     except Exception:
         return None
 

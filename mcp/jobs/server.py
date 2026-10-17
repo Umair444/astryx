@@ -25,6 +25,7 @@ import json
 import os
 import re
 import time
+import sys
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -36,12 +37,14 @@ from mcp.server.fastmcp import FastMCP
 logging.getLogger("httpx").setLevel(logging.WARNING)  # no per-request URL lines on stderr
 
 REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "src"))   # astryx.paths: the org's estate (its HOME on a multi-org host), plan-11324 S3a
+from astryx import config, paths  # noqa: E402
 
 
 def _env() -> dict[str, str]:
     try:
         return {k.strip(): v.strip() for k, v in
-                (l.split("=", 1) for l in (REPO / ".env").read_text().splitlines()
+                (l.split("=", 1) for l in (paths.estate(__file__) / ".env").read_text().splitlines()
                  if "=" in l and not l.lstrip().startswith("#"))}
     except OSError:
         return {}
@@ -49,8 +52,8 @@ def _env() -> dict[str, str]:
 
 _cfg = _env()
 TIMEOUT = float(_cfg.get("JOBS_HTTP_TIMEOUT") or 20)
-CACHE_DIR = Path(os.environ.get("JOBS_CACHE_DIR") or _cfg.get("JOBS_CACHE_DIR")
-                 or REPO / "var" / "cache" / "jobs")
+CACHE_DIR = Path(config.org_env("JOBS_CACHE_DIR") or _cfg.get("JOBS_CACHE_DIR")
+                 or paths.estate(__file__) / "var" / "cache" / "jobs")
 UA = "astryx-jobs/1.0 (+public job-posting lookup)"
 
 SPONSOR_PAGE = "https://www.gov.uk/government/publications/register-of-licensed-sponsors-workers"

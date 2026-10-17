@@ -29,6 +29,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 
 import hashlib
 import hmac
@@ -38,6 +39,13 @@ import secrets
 from pathlib import Path
 
 REPO = repo_root(__file__)
+
+
+def _estate() -> Path:
+    """The org's estate, read at CALL time: REPO on one org (exactly what it was, an oracle's `R.REPO = root` rebinding
+    included), the HOME on a multi-org host (plan-11324 S3a)."""
+    from astryx import orgs
+    return paths.home() if orgs.multi() else REPO
 
 OWNER = "owner"
 ORG = frozenset()                       # the org label: no tier, public to the org
@@ -148,7 +156,7 @@ def mac_key(env: dict | None = None) -> bytes:
     """The release key, from the process env or .env. Absent → Refused: no key, no door (fails closed)."""
     v = (env if env is not None else os.environ).get(MAC_KEY_ENV)
     if not v and env is None:
-        f = REPO / ".env"
+        f = _estate() / ".env"
         if f.exists():
             for ln in f.read_text().splitlines():
                 if ln.startswith(MAC_KEY_ENV + "="):
@@ -203,7 +211,7 @@ class TierStore:
     state capture."""
 
     def __init__(self, root: Path | None = None):
-        self.root = Path(root) if root else REPO / "tier" / "release"
+        self.root = Path(root) if root else _estate() / "tier" / "release"
 
     @staticmethod
     def tier_dir(lbl: frozenset) -> str:
@@ -310,7 +318,7 @@ def charter(agent: str, agents_dir: Path | None = None) -> Path | None:
     excluded, a duplicated stem raises), the same one src/astryx/core/tier.py reads (a3 #46041). Only an EXACT name
     resolves: resolve() sanitises, so 'seed*' would otherwise mean seed.md, a glob passing as an identity."""
     from astryx.core import charter as C
-    d = Path(agents_dir) if agents_dir else REPO / "agents"
+    d = Path(agents_dir) if agents_dir else _estate() / "agents"
     if not agent or "".join(c for c in agent if c.isalnum() or c in "-_").lower() != agent:
         return None
     try:
@@ -520,13 +528,10 @@ def door_org(channel: str, chat, routes) -> dict:
 
 
 def _dsn() -> str:
-    v = os.environ.get("ASTRYX_DSN")
-    if v:
-        return v
-    for ln in (REPO / ".env").read_text().splitlines():
-        if ln.startswith("ASTRYX_DSN="):
-            return ln.split("=", 1)[1].strip()
-    raise Refused("no ASTRYX_DSN")
+    try:
+        return config.dsn(_estate() / ".env")
+    except LookupError:
+        raise Refused("no ASTRYX_DSN")
 
 
 def main(argv=None) -> int:

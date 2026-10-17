@@ -28,6 +28,18 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "tests"))
 fails = []
@@ -201,7 +213,7 @@ try:
                 "trigger_names_rows", os.environ.get("TRIGGER_NAMES_SRC") or REPO / "src/astryx/core/trigger_names.py")
             _tn = importlib.util.module_from_spec(_spec)
             _spec.loader.exec_module(_tn)
-            _was = os.environ.get("ASTRYX_DSN")
+            _was = os.environ.get("ASTRYX_DSN")  # org-home: fixture-bound: saved to restore after the test binds its fixture
             os.environ["ASTRYX_DSN"] = DSN
             try:
                 one, none, hb = (_tn._python_rows(n, T) for n in ("zz_legacy", "zz_none", "zz_hb"))
@@ -247,7 +259,7 @@ try:
             bad.append(f"{f.relative_to(T)}: model {sorted(mine or [])} rc={nrc}, discover {sorted(theirs or [])}")
     want(f"P1 names == discover for every fixture file ({len(list((T / 'triggers').glob('*/*.py')))})", not bad,
          "; ".join(bad[:4]))
-    live = sorted((REPO / "triggers").glob("*/*.py"))
+    live = sorted((ESTATE / "triggers").glob("*/*.py"))
     if live:
         import importlib.util
         spec = importlib.util.spec_from_file_location("tn_under_test", T / "src/astryx/core/trigger_names.py")

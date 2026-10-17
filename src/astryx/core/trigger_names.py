@@ -41,6 +41,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 
 import ast
 import importlib.machinery
@@ -335,15 +336,12 @@ def names(path: Path | str, repo: Path | None = None) -> Read:
 
 # ── the row side: read ONLY to tell a legacy row-only name, restricted to kind='python' (a2 G3) ──────────────────
 def _dsn(repo: Path) -> str | None:
-    if os.environ.get("ASTRYX_DSN"):
-        return os.environ["ASTRYX_DSN"]
+    # this module's own tree reads the ORG's .env (its estate: the HOME on a multi-org host); another tree, its own
+    env = (paths.estate(__file__) if Path(repo).resolve() == REPO.resolve() else Path(repo)) / ".env"
     try:
-        for line in (repo / ".env").read_text().splitlines():
-            if line.startswith("ASTRYX_DSN="):
-                return line.split("=", 1)[1].strip()
-    except OSError:
-        pass
-    return None
+        return config.dsn(env)
+    except (LookupError, OSError):
+        return None
 
 
 def _python_rows(name: str, repo: Path) -> list[str] | None:

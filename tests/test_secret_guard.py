@@ -100,7 +100,7 @@ def arms(tmp: Path):
     check("G2b the value deny covers every tool, not just Bash", bool(r), str(r))
 
     for cmd in (f"KEY=$(grep ^OPENAI_API_KEY= {env} | cut -d= -f2-); curl -H \"x: $KEY\" u",
-                f'DSN="$(grep ^ASTRYX_DSN= {env} | cut -d= -f2-)"; psql "$DSN" -c "select 1"'):
+                f'DSN="$(grep ^ASTRYX_DSN= {env} | cut -d= -f2-)"; psql "$DSN" -c "select 1"'):  # org-home: data: a command the guard must refuse
         r = bash(cmd)
         check(f"G3 silent idiom ALLOWED: {cmd[:48]}…", r is None, str(r))
 
@@ -127,7 +127,7 @@ def arms(tmp: Path):
                 f"cat {tmp}/.env.example", "ls venv/bin", "echo hello", "grep -rn dsn nucleus/"):
         r = bash(cmd)
         check(f"G6 ALLOWED: {cmd[:52]}", r is None, str(r))
-    for cmd in (f'psql "$(grep ^ASTRYX_DSN= {env} | cut -d= -f2-)" -c "select 1"',
+    for cmd in (f'psql "$(grep ^ASTRYX_DSN= {env} | cut -d= -f2-)" -c "select 1"',  # org-home: data: a command the guard must refuse
                 "set -a; . ./.env; set +a", "for x in .env venv local.md; do ln -s ../$x w/$x; done",
                 "echo 'the token stays in .env, only its key'",
                 "grep -q '^WA_CLI=' .env", "grep -c ASTRYX_DSN .env", "grep -rl DSN .env nucleus",

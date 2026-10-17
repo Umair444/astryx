@@ -34,10 +34,13 @@ PY = str(REPO / "venv/bin/python")
 
 
 def _dsn() -> str:
-    for line in (REPO / ".env").read_text().splitlines():
-        if line.startswith("ASTRYX_DSN="):
-            return line.split("=", 1)[1].strip()
-    raise RuntimeError("ASTRYX_DSN not in .env")
+    from astryx import config, paths     # the ONE resolver (plan-11324 S3a); REPO is on sys.path (the astryx shim)
+    f = paths.estate(__file__) / ".env"
+    try:
+        return config.dsn(f, env_first=False)        # the file only, as before
+    except LookupError:
+        f.read_text()       # an absent .env raises FileNotFoundError, as before
+        raise RuntimeError("ASTRYX_DSN not in .env") from None
 
 
 def _me() -> str:
@@ -229,7 +232,8 @@ def amend_charter(agent: str, directive: str, section: str = "Standing directive
             text = text[:i] + bullet + "\n" + text[i:]
         else:
             text = text.rstrip() + f"\n\n{header}\n{bullet}\n"
-        rel = str(charter.relative_to(REPO / "agents"))
+        from astryx import paths     # the org's agents/ (its HOME on a multi-org host), plan-11324 S3a
+        rel = str(charter.relative_to(paths.estate(__file__) / "agents"))
         commit = subprocess.run([PY, str(REPO / "nucleus/identity_commit.py"), agent, rel],
                                 input=text, capture_output=True, text=True, timeout=30)
         if commit.returncode != 0:

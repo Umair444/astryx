@@ -10,7 +10,9 @@ resolver, found by WALKING the code, never by a list of files.
 
 THE GRAMMAR (stated, so a miss in review reopens it, a2 #58452): text over EXECUTABLE lines (comments and
 docstrings stripped) of .py / .sh / .mjs / .js under DOMAIN, plus init.sh. A DSN assembled from PG* parts is outside
-it; construction (spawn's and the units' built environment) is the half that covers that (a1's caveat).
+it; construction (spawn's and the units' built environment) is the half that covers that (a1's caveat). A base
+is matched where the path is JOINED onto it; a two-hop base (`B = REPO / "bridges"`, then `B / "routes-x.json"`)
+is outside the grammar (stated; partition B's review fixed the two it found by hand).
 
 A site may be DECLARED on its own line with `# org-home: <why>` (`// org-home:` in js): it is then listed, never
 silent. That is for a site that names an estate path in the tree it AUDITS (a scanner over a checkout), and for a
@@ -126,7 +128,7 @@ def estate_token(entry: str) -> str:
 
 # A checkout base, then the path's first component: `REPO / "x"`, `join(REPO, 'x')`, f"{REPO}/x", "$ROOT/x".
 BASE = (r"""(?:\b(?:REPO|ROOT|ROOT_DIR|REPO_ROOT|CHECKOUT|HERE)\b|repo_root\s*\([^)]*\)|\.parents\s*\[\s*\d+\s*\]|"""
-        r"""paths\.code\s*\(\s*\)|\$\{?(?:ROOT|REPO|PWD)\}?|\$\(pwd\))""")
+        r"""paths\.code\s*\(\s*\)|Path\(\s*__file__\s*\)(?:\.resolve\(\))?(?:\.parent)+|\$\{?(?:ROOT|REPO|PWD)\}?|\$\(pwd\))""")
 JOIN = r"""[\s)\]}]*(?:/|,)\s*f?["']?/?"""
 # a shell file that cds to its checkout reads bare relative paths from there (backup.sh:15 then :280)
 CD_BASE = re.compile(r"""\bcd\s+["']?(?:\$\{?(?:ROOT|REPO)\}?|\$\(dirname[^)]*\)/\.\.|\$\(cd\s)""")
@@ -134,6 +136,19 @@ CD_BASE = re.compile(r"""\bcd\s+["']?(?:\$\{?(?:ROOT|REPO)\}?|\$\(dirname[^)]*\)
 # `?? "dsn"`, `default="dsn"`, `.get(k, "dsn")`. A test's unreachable sentinel argument is neither.
 LITERAL_DSN = re.compile(r"""(?::-|\bor\s+|\|\|\s*|\?\?\s*|default\s*=\s*|\.get\s*\([^,()]+,\s*)["']?"""
                          r"""postgres(?:ql)?://""")
+
+
+# a bare relative path in a shell file that cds to its checkout. A FILE entry (local.md, .env) is its word; a DIRECTORY
+# entry (backups/, triggers/, agents/*) is a path only when a component follows it (`backups/x`) or a file command
+# takes it (`ls backups`, `[ -d memory ]`): the same word bare is a SQL table, a case label or a JSON key
+PATH_CMD = r"""(?:\b(?:cd|ls|mkdir|rm|rmdir|find|tar|du|cp|mv|rsync|chmod|chown|cat|touch|ln)\s+(?:-\S+\s+)*|-[defrswx]\s+)"""
+
+
+def _bare_path(entry: str, tok: str, bare: str) -> bool:
+    lead = r"""(?:^|[\s"'=(<>|;])(?:\./)?"""
+    if not entry.rstrip("*").endswith("/"):
+        return bool(re.search(lead + tok + r"""(?:/|\b)""", bare))
+    return bool(re.search(lead + tok + r"/", bare) or re.search(PATH_CMD + r"""["']?(?:\./)?""" + tok, bare))
 
 
 def estate_sites(rel: str, lines, toks, cd_base: bool) -> list:
@@ -145,9 +160,11 @@ def estate_sites(rel: str, lines, toks, cd_base: bool) -> list:
             out.append((n, raw, "literal DSN default"))
             continue
         hit = next((e for e, t in toks if re.search(BASE + JOIN + t, code)), None)
-        bare = re.sub(r'"[^"]*\s[^"]*"', '""', code)       # a quoted label or message (it has a space) is not a path
+        # a quoted label or message (it has a space) is not a path. Quotes pair left to right (every "…" is consumed
+        # in turn), so the close of "$X" never pairs with the open of the next string
+        bare = re.sub(r'"[^"]*"', lambda m: '""' if re.search(r"\s", m.group()) else m.group(), code)
         if hit is None and cd_base:
-            hit = next((e for e, t in toks if re.search(r"""(?:^|[\s"'=(<>|;])(?:\./)?""" + t + r"""(?:/|\b)""", bare)
+            hit = next((e for e, t in toks if _bare_path(e, t, bare)
                         and not re.search(r"""^\s*(?:echo|say|printf|warn|note)\b""", code)), None)
         if hit:
             out.append((n, raw, hit))
@@ -194,7 +211,10 @@ def org_names(root: Path) -> dict:
             if m:
                 for k in re.findall(r"""["']([A-Z][A-Z0-9_]+)["']\s*:""", m.group(1)):
                     add(k, rel)
-    return names
+    # not org names, whatever a parser's shape suggests: the HOME class is set per process from the HOME (spawn,
+    # orgenv), and PG* is libpq's own environment, which no org's .env defines and the built environment drops
+    home = set(json.loads((root / "src/astryx/data/org_env.json").read_text())["classes"]["home"])
+    return {n: w for n, w in names.items() if n not in home and not n.startswith("PG")}
 
 
 def env_read(name: str) -> re.Pattern:
@@ -220,7 +240,7 @@ def env_sites(rel: str, lines, readers, names) -> list:
         if hit is None and not rel.startswith("tests/") and COMPUTED.search(code):
             if holds is None:
                 text = "\n".join(c for _, c, _ in lines)
-                holds = sorted(x for x in names if x != "ASTRYX_DSN" and re.search(rf"""["']{x}["']""", text))
+                holds = sorted(x for x in names if re.search(rf"""["']{x}["']""", text))
             if holds:
                 hit = "computed name, file names " + ",".join(holds)
         if hit:
@@ -239,15 +259,16 @@ def guarded(p: Path, lines) -> bool:
     return (p.suffix == ".sh" or p.name == "init.sh") and any(GUARD.search(c) for n, c, _ in lines if n <= GUARD_LINES)
 
 
-def census(root: Path) -> dict:
+def census(root: Path, overrides: dict | None = None) -> dict:
+    """`overrides` {repo-relative path: file}: read that file's text in place of the tree's (mutation seams)."""
     toks = [(e, estate_token(e)) for e in estate_entries(root)]
     names = org_names(root)
-    readers = [(n, env_read(n)) for n in sorted(names) if n != "ASTRYX_DSN"]
+    readers = [(n, env_read(n)) for n in sorted(names)]
     res = {"dsn": [], "estate": [], "env": [], "declared": [], "guarded": [], "guarded_files": [],
            "org_names": sorted(names)}
     for p in walk(root):
         rel = p.relative_to(root).as_posix()
-        lines = code_lines(p)
+        lines = code_lines(Path((overrides or {}).get(rel, p)))
         cd_base = p.suffix == ".sh" and any(CD_BASE.search(c) for _, c, _ in lines) or rel == "init.sh"
         g = guarded(p, lines)
         if g:

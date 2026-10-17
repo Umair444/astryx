@@ -11,6 +11,18 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 sys.path.insert(0, str(REPO))
 fails = []
 FAKE = "fAkE-sEcReT-4918-" + "x" * 12                            # never a real credential
@@ -24,12 +36,10 @@ def check(name, ok, detail=""):
 
 
 def admin_dsn():
-    if os.environ.get("ASTRYX_DSN"):
-        return os.environ["ASTRYX_DSN"]
-    for line in ((REPO / ".env").read_text().splitlines() if (REPO / ".env").is_file() else []):
-        if line.startswith("ASTRYX_DSN="):
-            return line.split("=", 1)[1].strip().strip('"')
-    return None
+    try:                     # the ONE resolver (astryx.config.dsn): the environment first, else the estate's .env
+        return _astryx("config", "dsn", ESTATE / ".env")
+    except LookupError:
+        return None
 
 
 def git(cwd, *a):

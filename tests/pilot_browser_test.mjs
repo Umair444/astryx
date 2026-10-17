@@ -23,11 +23,11 @@ import { fileURLToPath } from 'node:url'
 const REPO = process.env.PILOT_REPO || join(dirname(fileURLToPath(import.meta.url)), '..')
 const CHROME = ['/usr/bin/chromium', '/usr/bin/google-chrome-stable', '/usr/bin/chromium-browser'].find(existsSync)
 const WEB = join(REPO, 'observatory/web')
-const envPath = join(REPO, '.env')
+const envPath = join(REPO, '.env')  // org-home: one org: a live probe of this tree's org; no JS estate resolver (home.mjs defaults to ASTRYX_HOME, not this tree)
 const KEY = existsSync(envPath) ? (readFileSync(envPath, 'utf8').split('\n').find((l) => l.startsWith('OBS_KEY=')) || '').slice(8).trim() : ''
 if (!CHROME || !KEY || !existsSync(join(WEB, 'node_modules/.bin/vite'))) {
   const why = !CHROME ? 'no chromium' : !KEY ? 'no OBS_KEY in .env' : 'no observatory/web/node_modules'
-  if (existsSync(join(REPO, 'triggers'))) { console.log(`  BROKEN: ${why} on a live host (triggers/ present)`); process.exit(1) }
+  if (existsSync(join(REPO, 'triggers'))) { console.log(`  BROKEN: ${why} on a live host (triggers/ present)`); process.exit(1) }  // org-home: audit: is THIS tree a live host
   console.log(`  NOT SEARCHED: ${why} (a committed-only tree: triggers/ absent)`)
   process.exit(77)
 }

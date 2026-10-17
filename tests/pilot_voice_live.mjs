@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url'
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
 const WEB = join(REPO, 'observatory/web')
-const KEY = (readFileSync(join(REPO, '.env'), 'utf8').split('\n').find((l) => l.startsWith('OBS_KEY=')) || '').slice(8).trim()
+const KEY = (readFileSync(join(REPO, '.env'), 'utf8').split('\n').find((l) => l.startsWith('OBS_KEY=')) || '').slice(8).trim()  // org-home: one org: a live probe of this tree's org (see home.mjs: its default is ASTRYX_HOME, not this tree)
 const CHROME = ['/usr/bin/chromium', '/usr/bin/google-chrome-stable'].find(existsSync)
 const PY = '/home/umair/astryx/venv/bin/uvicorn'
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))

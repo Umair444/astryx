@@ -172,13 +172,13 @@ def test_validators_fail_on_synthetic_bad_input():
     # under gitignored triggers/ must read as estate; an absent path in tracked nucleus/
     # must read as rot. Neither file exists, so this proves the CLASSIFICATION, not the
     # existence check that precedes it.
-    assert path_is_ignored(REPO / "triggers" / "seed" / "_no_such_trigger.py") is True
+    assert path_is_ignored(REPO / "triggers" / "seed" / "_no_such_trigger.py") is True  # org-home: audit: this checkout's .gitignore classifies the path
     assert path_is_ignored(NUCLEUS / "_no_such_oracle_xyz.py") is False
 
     rot, unch = missing_paths(_Fake(SUBJECT=str(NUCLEUS / "_gone_xyz.py"), ORACLE=__file__))
     assert len(rot) == 1 and "renamed?" in rot[0] and not unch, (rot, unch)
     rot, unch = missing_paths(
-        _Fake(SUBJECT=str(REPO / "triggers" / "seed" / "_gone.py"), ORACLE=__file__))
+        _Fake(SUBJECT=str(REPO / "triggers" / "seed" / "_gone.py"), ORACLE=__file__))  # org-home: audit: a gone subject in this checkout, classified by its .gitignore
     assert not rot and [a for a, _ in unch] == ["SUBJECT"], (rot, unch)
     rot, unch = missing_paths(_Fake(SUBJECT=__file__, ORACLE=__file__))
     assert not rot and not unch, (rot, unch)

@@ -30,6 +30,18 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 SUBJECT = Path(os.environ.get("INFLUENCE_SRC") or REPO / "src" / "astryx" / "influence" / "graph.py")
 fails = []
 
@@ -589,7 +601,7 @@ def main():
                 arm()
             except Exception as e:  # noqa: BLE001  a crashing arm is red, and the rest still report
                 check(f"an arm raised {type(e).__name__}: {e}", False)
-        lift = REPO / "triggers" / "seed" / "merge_ready.py"
+        lift = ESTATE / "triggers" / "seed" / "merge_ready.py"
         if lift.exists():
             mine = (REPO / "src" / "astryx" / "core" / "verdicts.py").read_text()
             theirs = lift.read_text()

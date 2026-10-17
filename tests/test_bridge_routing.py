@@ -46,6 +46,18 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 SUBJECT = Path(os.environ.get("ROUTE_SRC") or REPO / "bridges" / "common.py")
 fails = []
 
@@ -68,9 +80,10 @@ try:
     import psycopg
 except ModuleNotFoundError as e:
     skip(f"{e.name} not importable")
-env = REPO / ".env"
-ADMIN = next((l.split("=", 1)[1].strip().strip('"').strip("'") for l in env.read_text().splitlines()
-              if l.startswith("ASTRYX_DSN=")), None) if env.exists() else None
+try:                         # the ONE resolver (astryx.config.dsn), the .env only as before
+    ADMIN = _astryx("config", "dsn", ESTATE / ".env", None, False)
+except LookupError:
+    ADMIN = None
 if not ADMIN:
     skip("no ASTRYX_DSN")
 

@@ -20,6 +20,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 import base64
 import json
 import sys
@@ -35,7 +36,7 @@ TIER_PRIVATE = {"canopus", "gemini", "p1", "p2"}
 
 
 def _env(key: str) -> str:
-    for line in (REPO / ".env").read_text().splitlines():
+    for line in (paths.estate(__file__) / ".env").read_text().splitlines():
         if line.startswith(key + "="):
             return line.split("=", 1)[1].strip()
     return ""

@@ -28,7 +28,19 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-SUBJECT = REPO / "triggers" / "steward" / "market_decay.py"
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
+
+SUBJECT = ESTATE / "triggers" / "steward" / "market_decay.py"
 ORACLE = REPO / "tests" / "test_market_decay_sql_surface.py"
 ENV = "MARKET_DECAY_SRC"
 

@@ -21,7 +21,7 @@ cat > "$DIR/server.py" <<EOF
 #!/usr/bin/env python3
 """astryx · $NAME MCP server — <one line: what capability this scopes>.
 
-Granted per charter (\`Grants: $NAME\`). Config via the org's .env (never hardcode
+Granted per charter (\`Grants: $NAME\`). Config via astryx.config, the org's settings (never hardcode
 secrets; never echo them — scrub error text)."""
 from __future__ import annotations
 

@@ -130,10 +130,11 @@ def covering_gate(site_path: str, gates, refs: dict):
 
 
 def admin_dsn() -> str:
-    dsn = os.environ.get("ASTRYX_DSN") or prep.read_env(LIVE / ".env").get("ASTRYX_DSN")
-    if not dsn:
-        raise prep.Refuse("no admin DSN (ASTRYX_DSN or the live .env)")
-    return dsn
+    from astryx import config        # the ONE resolver (plan-11324 S3a): the environment, else the live .env
+    try:
+        return config.dsn(LIVE / ".env")
+    except LookupError:
+        raise prep.Refuse("no admin DSN (ASTRYX_DSN or the live .env)") from None
 
 
 _HEAD = {"failed": re.compile(r"^FAILED \(\d+\):$"), "unverified": re.compile(r"^UNVERIFIED \(\d+\) — ")}

@@ -32,6 +32,8 @@ import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "src"))   # astryx.paths: the org's estate (its HOME on a multi-org host), plan-11324 S3a
+from astryx import config, paths  # noqa: E402
 # resolvers.py is VENDORED beside this server (memory's admitted-only resolvers) so the
 # public tool survives a fresh clone — memory/graph/ is gitignored and absent in a clone.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -125,9 +127,10 @@ def window(text: str, query: str, width: int = 2400) -> str:
 
 # ── config ───────────────────────────────────────────────────────────────────────────
 def _env(key: str) -> str | None:
-    if os.environ.get(key):
-        return os.environ[key].strip()
-    env = REPO / ".env"
+    v = config.org_env(key)          # the environment on one org, exactly; the HOME's .env on several (plan-11324 S3a)
+    if v:
+        return v.strip()
+    env = paths.estate(__file__) / ".env"
     if env.exists():
         for line in env.read_text().splitlines():
             if line.startswith(key + "="):
@@ -140,7 +143,10 @@ def retrieve(query: str, topk: int = 5, hop: int = 4) -> tuple[list[dict], list[
     """-> (cited_pages, synthesis_context). cited = the top scored pages; context = those
     plus their admitted one-hop neighbours (bodies resolved from the corpus, which carries
     every admitted body). Returns ([], []) on no match."""
-    dsn = _env("ASTRYX_DSN")
+    try:
+        dsn = config.dsn(paths.estate(__file__) / ".env")     # the ONE resolver (plan-11324 S3a)
+    except LookupError:
+        dsn = None
     if not (psycopg and dsn):
         return [], []
     # read-only BY CONSTRUCTION, not only by content (a3 #39182 BC-1): a write verb here fails in postgres.

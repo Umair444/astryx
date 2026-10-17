@@ -61,6 +61,18 @@ from datetime import datetime
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 sys.path.insert(0, str(REPO))
 
 try:
@@ -190,7 +202,7 @@ def o7_scan():
     """every `INSERT INTO messages` in trigger code, and in the in-repo modules trigger code imports"""
     pat = re.compile(r"INSERT\s+INTO\s+(?:\"?public\"?\.)?\"?messages\"?\b", re.I)
     seen, todo, hits, durable = set(), [], [], {}
-    for p in (REPO / "triggers").rglob("*.py"):
+    for p in (ESTATE / "triggers").rglob("*.py"):
         todo.append(p)
     while todo:
         p = todo.pop()
@@ -231,7 +243,7 @@ def main():
              if is_durable_say(ast.parse(src).body[0].value) != want}
     check("A24 control: durable=flag / =1 / **splat count as durable sites; =False and absent don't",
           not wrong, f"miscounted: {wrong}")
-    if not (REPO / "triggers").is_dir():                # 4243 r1/r2: ABSENT is NOT SEARCHED, never a FAIL
+    if not (ESTATE / "triggers").is_dir():                # 4243 r1/r2: ABSENT is NOT SEARCHED, never a FAIL
         print("  NOT SEARCHED  A16/A24 — no triggers/ tree here (gitignored); runs on the org host")
     else:
         hits, nfiles, durable = o7_scan()
@@ -248,7 +260,7 @@ def main():
             check("pulse binds ASTRYX_DSN from env and exposes process() (the chokepoint seam)", False,
                   f"DSN is fixture: {pulse.DSN == fx['dsn']}, process: {hasattr(pulse, 'process')}")
             return finish()
-        real_tree = (REPO / "agents").is_dir()
+        real_tree = (ESTATE / "agents").is_dir()
         if real_tree:
             pulse._residents = None
             r = pulse.residents()
@@ -262,7 +274,7 @@ def main():
         conn = psycopg.connect(fx["dsn"], autocommit=True)
         import runpy
         from astryx.pulse.pulse_run import Ctx
-        tsw = REPO / "triggers" / "seed" / "tool_ship_watch.py"
+        tsw = ESTATE / "triggers" / "seed" / "tool_ship_watch.py"
         news_fn = runpy.run_path(str(tsw))["_news"] if tsw.exists() else None
         empty_news = news_fn(Ctx({})) if news_fn else None     # before any org-news exists
 

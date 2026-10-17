@@ -19,17 +19,20 @@ import imaplib
 import smtplib
 from email.message import EmailMessage
 from email.utils import parsedate_to_datetime
+import sys
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
 REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "src"))   # astryx.paths: the org's estate (its HOME on a multi-org host), plan-11324 S3a
+from astryx import paths  # noqa: E402
 
 
 def creds() -> tuple[str, str]:
     """GMAIL_ADDRESS / GMAIL_APP_PASSWORD from the org's .env, read at use, not import."""
     env = {k: v for k, v in
-           (l.split("=", 1) for l in (REPO / ".env").read_text().splitlines() if "=" in l)}
+           (l.split("=", 1) for l in (paths.estate(__file__) / ".env").read_text().splitlines() if "=" in l)}
     return env["GMAIL_ADDRESS"].strip(), env["GMAIL_APP_PASSWORD"].strip()
 
 

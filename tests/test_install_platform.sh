@@ -111,7 +111,7 @@ printf '{"info":{"project_urls":{"Source":"https://github.com/Umair444/astryx"}}
 out=$(PATH="$T/trap:$PATH" ASTRYX_PYPI_URL="file://$T/absent.json" ./install.sh --dry-run --dir "$T/home/astryx" </dev/null 2>&1); rc=$?
 arm   "(D2) dry-run on this box exits 0" "$rc" 0
 has   "(D2) says it is a dry run" "$out" "DRY RUN: printing every command, running none"
-has   "(D2) the dedicated-machine paragraph comes first" "$out" "agents get full control of this machine"
+has   "(D2) the dedicated-machine paragraph comes first" "$out" "agents get full control of this machine"  # org-home: message text, not a path
 has   "(D2) installs from git while PyPI has no astryx" "$out" "git clone https://github.com/Umair444/astryx $T/home/astryx"
 has   "(D2) hands over to ./init.sh (no CLI yet)" "$out" '$ ./init.sh'
 arm   "(D2) nothing ran: no sudo/pipx call, no clone on disk" "$( [ -e "$T/RAN" ] || [ -e "$T/home" ]; echo $?)" 1

@@ -16,6 +16,8 @@
 # this tool only does the mechanics correctly once you've decided.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# org-home guard (plan-11324 S3a): one-org only (it reads this checkout's estate); on a multi-org host it refuses first.
+if [ -e "${ASTRYX_ORG_REGISTRY:-/etc/astryx/orgs.json}" ]; then _g=0; "$ROOT"/venv/bin/python "$ROOT"/src/astryx/orgs.py multi || _g=$?; [ "$_g" = 1 ] || { echo "refresh.sh: this host runs several orgs (or its org registry refuses): one-org only, refusing" >&2; exit 3; }; fi
 
 # Naive-path guard: accept a bare name OR a tree/home path (an uninstructed caller may
 # pass 'agents/canopus/canopus.md' or the stem). Normalise to a stem, then resolve

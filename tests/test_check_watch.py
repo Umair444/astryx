@@ -36,6 +36,18 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 RUNNER = Path(os.environ.get("CHECK_WATCH_SRC") or (REPO / "devtools" / "check_watch.sh"))
 HEAD_RE = re.compile(r"^(\S+) (\S+) rc=(-?\d+) verified=(\d+) failed=(\d+) unverified=(\d+)"
                      r"(?: by=(\S+))?$")
@@ -184,7 +196,7 @@ with tempfile.TemporaryDirectory() as d:
     # writes a forged by=timer into the file the pulse guard trusts — silently, from a run
     # nobody would think to attribute. The seams make this script testable; they must not
     # make it dangerous.
-    live = REPO / "backups" / ".last-check"
+    live = ESTATE / "backups" / ".last-check"
     before = live.read_text() if live.exists() else None
     env = dict(os.environ)
     env["CHECK_WATCH_CGROUP"] = str(tmp / "cgroup")
@@ -212,7 +224,7 @@ with tempfile.TemporaryDirectory() as d:
             ("a doubled separator", "backups//.last-check", str(tmp / "log")),
             ("the production LOG, with the stamp diverted",
              str(tmp / "stamp"), "backups/.last-check.log")):
-        log_live = REPO / "backups" / ".last-check.log"
+        log_live = ESTATE / "backups" / ".last-check.log"
         log_before = log_live.read_text() if log_live.exists() else None
         env2 = dict(os.environ)
         env2["CHECK_WATCH_CGROUP"] = str(tmp / "cgroup")

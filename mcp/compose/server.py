@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any, Optional
@@ -42,9 +43,14 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 DAGS = HERE / "dags"
 REGISTRY = json.loads((REPO / "mcp" / "registry.json").read_text())
-DSN = next((l.split("=", 1)[1].strip()
-            for l in (REPO / ".env").read_text().splitlines()
-            if l.startswith("ASTRYX_DSN=")), "")
+sys.path.insert(0, str(REPO / "src"))   # astryx.config: the ONE DSN resolver (plan-11324 S3a); src/ holds no mcp/
+from astryx import config, paths  # noqa: E402
+_ENV = paths.estate(__file__) / ".env"
+try:
+    DSN = config.dsn(_ENV, env_first=False)      # the file only, as before
+except LookupError:
+    _ENV.read_text()        # an absent .env still fails at import, as the read it replaces did; no line reads ""
+    DSN = ""
 
 MAX_DEPTH = 5
 

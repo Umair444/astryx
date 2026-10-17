@@ -5,7 +5,7 @@
 # Zoom (C-b z) shows more lines automatically: height is re-read every cycle.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DSN=$(grep '^ASTRYX_DSN=' "$ROOT/.env" | cut -d= -f2-)
+DSN=$("$ROOT/venv/bin/python" "$ROOT/src/astryx/config.py" dsn --file)   # the ONE resolver (plan-11324 S3a)
 A="${1:?agent}"
 export PGTZ="$(timedatectl show -p Timezone --value 2>/dev/null || echo UTC)"
 

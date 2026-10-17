@@ -24,6 +24,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 import argparse
 import json
 import os
@@ -37,7 +38,7 @@ KEEP = ("HOME", "USER", "LOGNAME", "PATH", "PGPASSFILE")
 SERVICES = ("astryx-observatory", "astryx-gateway", "astryx-whatsapp", "astryx-telegram",
             "astryx-discord", "astryx-senses", "astryx-geoloc", "astryx-growbot",
             "genesis-observer")
-DSN_FILES = (REPO / ".env", Path.home() / "genesis/services/observer/.env")
+DSN_FILES = (paths.estate(__file__) / ".env", Path.home() / "genesis/services/observer/.env")
 
 
 def passwordless(dsn: str) -> str:
@@ -109,7 +110,7 @@ def runners() -> dict[str, dict]:
 
 
 def _node() -> str:
-    env = REPO / ".env"
+    env = paths.estate(__file__) / ".env"
     if not env.exists():                                  # a bare clone: PATH's node
         return "node"
     for line in env.read_text().splitlines():

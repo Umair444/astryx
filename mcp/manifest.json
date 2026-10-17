@@ -2,20 +2,8 @@
   "servers": [
     {
       "server": "compose",
-      "tools": [
-        {
-          "name": "dag_list",
-          "description": "List the org's composite DAGs (name, description, args, node count)."
-        },
-        {
-          "name": "dag_describe",
-          "description": "Full definition of one DAG: nodes, wiring, returns."
-        },
-        {
-          "name": "dag_run",
-          "description": "Run a composite DAG by name. Independent nodes run in parallel;"
-        }
-      ]
+      "error": "unhandled errors in a TaskGroup (1 sub-exception)",
+      "tools": []
     },
     {
       "server": "gmail",
@@ -40,16 +28,8 @@
     },
     {
       "server": "contacts",
-      "tools": [
-        {
-          "name": "contact_search",
-          "description": "Find people in the owner's WhatsApp contacts by name, alias, or number."
-        },
-        {
-          "name": "contact_resolve",
-          "description": "Resolve one WhatsApp jid, phone number, or privacy @lid to who it is."
-        }
-      ]
+      "error": "unhandled errors in a TaskGroup (1 sub-exception)",
+      "tools": []
     },
     {
       "server": "imagegen",
@@ -193,5 +173,5 @@
       ]
     }
   ],
-  "total_tools": 33
+  "total_tools": 28
 }

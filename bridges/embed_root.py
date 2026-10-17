@@ -24,12 +24,17 @@ from __future__ import annotations
 import os
 import re
 import stat
+import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-HOMES = REPO / "homes"
-MEDIA = REPO / "media"
-TIER = REPO / "tier"
+if str(REPO / "src") not in sys.path:
+    sys.path.insert(0, str(REPO / "src"))   # astryx.paths: the org's estate (its HOME on a multi-org host), S3a
+from astryx import paths  # noqa: E402
+ESTATE = paths.estate(__file__)
+HOMES = ESTATE / "homes"
+MEDIA = ESTATE / "media"
+TIER = ESTATE / "tier"
 AGENT_NAME = re.compile(r"[a-z][a-z0-9_-]*")
 SCRATCH_BASE = Path(f"/tmp/claude-{os.getuid()}")   # Claude Code's per-uid temp root
 MAX_BYTES = 100 * 1024 * 1024          # the largest attachment any of the three surfaces accepts is below this

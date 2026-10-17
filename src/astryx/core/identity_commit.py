@@ -28,6 +28,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 import base64
 import re
 import subprocess
@@ -35,7 +36,7 @@ import sys
 from pathlib import Path
 
 ROOT = repo_root(__file__)
-AGENTS = ROOT / "agents"
+AGENTS = paths.estate(__file__) / "agents"
 
 CORE_LINE = re.compile(r"^(Model|Grants|Rank|Heartbeat|Stationed):", re.M)
 CORE_HEADINGS = ("## Law", "## Tombstone")
@@ -158,8 +159,7 @@ def main() -> None:
     if owner_act and target.suffix == ".md":
         try:
             import psycopg
-            dsn = next(l.split("=", 1)[1].strip()
-                       for l in open(ROOT / ".env") if l.startswith("ASTRYX_DSN="))
+            dsn = config.dsn(paths.estate(__file__) / ".env", env_first=False)
             with psycopg.connect(dsn, connect_timeout=3) as conn:
                 conn.execute(
                     "INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, intent, body) "

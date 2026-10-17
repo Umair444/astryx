@@ -51,6 +51,7 @@ import psycopg
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from astryx import paths
 from astryx.hearing import ear_lease as L
 from astryx.hearing import ear_store as S
 from astryx.hearing import hear_pool
@@ -291,7 +292,7 @@ def wake_body(hid: int) -> str:
 hearing = Hearing(MAIN_DSN)
 
 
-MISSES = Path(__file__).resolve().parent.parent / "var" / "ear" / "wake_misses"
+MISSES = paths.estate(__file__) / "var" / "ear" / "wake_misses"    # the org's state: its HOME on a multi-org host
 
 
 def _keep_miss(pcm, keep: int = 20):

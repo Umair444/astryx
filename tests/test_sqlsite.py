@@ -30,11 +30,23 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 SUBJECT = Path(os.environ.get("SQLSITE_SRC") or REPO / "devtools" / "sqlsite.sh")
 LEDGER = REPO / "src" / "astryx" / "security" / "sqlguard" / "ledger.json"
 ORACLE = "tests/test_observatory_late_replies.py"
 PREFIX = "observatory/api/main.py::memory_"
-if not (REPO / ".env").exists():
+if not (ESTATE / ".env").exists():
     print("SKIP: no .env at the repo root (the subject oracle's fixture_db reads the DSN from it)")
     sys.exit(77)
 
@@ -112,7 +124,7 @@ try:
     arm("DEFAULT: rows by judge's attribution (the question read saw 0 and 1)", "rows=[0, 1]" in q and q.startswith("RESPONSIVE"), out)
 
     probe = tmp / "probe.py"
-    probe.write_text("import os, sys\nopen(sys.argv[0] + '.env', 'w').write(repr(os.environ.get('ASTRYX_AGENT')))\n")
+    probe.write_text("import os, sys\nopen(sys.argv[0] + '.env', 'w').write(repr(os.environ.get('ASTRYX_AGENT')))\n")  # org-home: inspection: a probe reports the env it was given
     rc, out = run("--ledger", str(probe), "nothing::", env={"ASTRYX_AGENT": "painter"})
     arm("SPAWN: the oracle runs without ASTRYX_AGENT", (tmp / "probe.py.env").read_text() == "None",
         (tmp / "probe.py.env").read_text() if (tmp / "probe.py.env").exists() else "not written")

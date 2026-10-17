@@ -14,6 +14,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . scripts/pgcontainer.sh                     # PG_CONTAINER: the one declared postgres (infra/pg)
+# plan-11324 S3a (a2 BC-S2 arm (b)): everything below is the ORG's estate (its .env, triggers/, agents/, backups/, …),
+# so the script runs from the org's HOME, never the checkout. One org (no host registry): ORGH is this checkout, byte
+# for byte, without asking python. Several orgs: astryx.paths' HOME (a registered one, or the run refuses), so org
+# A's rotation below lists and removes only A's dumps, never B's.
+ROOT="$PWD"
+ORGH="$ROOT"
+if [ -e "${ASTRYX_ORG_REGISTRY:-/etc/astryx/orgs.json}" ]; then ORGH=$("$ROOT/venv/bin/python" "$ROOT/src/astryx/config.py" estate); fi
+cd "$ORGH"
 KEEP=${1:-14}
 
 # ── what the paired .state.tgz will carry ──────────────────────────────────────────
@@ -39,7 +47,7 @@ state_dirs=""
 # sensors/ ADDED 2026-08-21 with the senses layer (the afferent twin of triggers/):
 # agent-authored endpoint code, gitignored by the same law, unbacked by the same defect
 # class the day it was born — this line is the fix landing WITH the feature, not after it.
-for d in triggers sensors memory agents; do
+for d in triggers sensors memory agents; do   # org-home: relative to $ORGH, the org's HOME (cd above)
   if [ -d "$d" ]; then state_dirs="$state_dirs $d"; fi
 done
 # AUTHORED FILES ADDED 2026-08-20 — the same defect a THIRD time, and the loop above is
@@ -78,13 +86,14 @@ done
 # ignored DIR (captured in the dir loop). Guards drop both cleanly if geoloc is fully removed.
 # infra/pg/.env (10-10): the declared postgres server's compose env (its init password and settings), written
 # by hand at the infra/pg cutover; nothing regenerates it, and a restore of genesis-pg needs it.
-for f in local.md .env owner.md relations.md PLAN.md nucleus/runners.conf \
-         bridges/routes-whatsapp.json bridges/routes-telegram.json \
-         bridges/routes-discord.json mcp/contacts/test_server.py \
-         bridges/geoloc.py infra/pg/.env; do
+state_files=(local.md .env owner.md relations.md PLAN.md nucleus/runners.conf   # org-home: relative to $ORGH, the org's HOME (cd above)
+         bridges/routes-whatsapp.json bridges/routes-telegram.json
+         bridges/routes-discord.json mcp/contacts/test_server.py   # org-home: relative to $ORGH, the org's HOME (cd above)
+         bridges/geoloc.py infra/pg/.env)   # org-home: relative to $ORGH, the org's HOME (cd above)
+for f in "${state_files[@]}"; do
   if [ -f "$f" ]; then state_dirs="$state_dirs $f"; fi
 done
-for d in tier wacli-data mcp/geoloc; do   # present only on orgs that use them; un-regenerable
+for d in tier wacli-data mcp/geoloc; do   # org-home: relative to $ORGH; present only on orgs that use them, un-regenerable
   if [ -d "$d" ]; then state_dirs="$state_dirs $d"; fi
 done
 # AGENT MEMORY ADDED 2026-08-20 (scout msg 13261, seed's ruling 13322/13326). This is the
@@ -129,14 +138,14 @@ if [ "${1:-}" = "--list-state" ]; then
 fi
 
 
-DSN=$(grep '^ASTRYX_DSN=' .env 2>/dev/null | cut -d= -f2-)
-[ -n "$DSN" ] || { echo "backup: no ASTRYX_DSN in .env" >&2; exit 1; }
+DSN=$("$ROOT/venv/bin/python" "$ROOT/src/astryx/config.py" dsn --file 2>/dev/null || true)
+[ -n "$DSN" ] || { echo "backup: no ASTRYX_DSN in .env" >&2; exit 1; }   # org-home: a message
 
-mkdir -p backups
+mkdir -p backups   # org-home: relative to $ORGH, the org's HOME (cd above)
 ts=$(date +%Y%m%dT%H%M%S)
-out="backups/astryx-$ts.dump"
-state="backups/astryx-$ts.state.tgz"
-roles="backups/astryx-$ts.roles.sql"
+out="backups/astryx-$ts.dump"   # org-home: relative to $ORGH, the org's HOME (cd above)
+state="backups/astryx-$ts.state.tgz"   # org-home: relative to $ORGH, the org's HOME (cd above)
+roles="backups/astryx-$ts.roles.sql"   # org-home: relative to $ORGH, the org's HOME (cd above)
 
 # ── STAGE, VALIDATE, THEN PUBLISH ──────────────────────────────────────────────────
 # Everything is built under a `.part` suffix and renamed into place only once it is known
@@ -194,8 +203,7 @@ fi
 # retention BEFORE the dump, so the dump shrinks with it: turns older than 7 days lose their image bytes
 # (words, tool calls and usage stay). Never blocks a backup: a failure OR a hang (lock wait, dead DB)
 # is reported and skipped — the timeout bounds it (a1 #42351 R2).
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ASTRYX_DSN="$DSN" timeout 600 "$ROOT_DIR/venv/bin/python" -m astryx.core.turns_retention --days "${TURNS_IMAGE_DAYS:-7}" \
+ASTRYX_DSN="$DSN" timeout 600 "$ROOT/venv/bin/python" -m astryx.core.turns_retention --days "${TURNS_IMAGE_DAYS:-7}" \
   2>&1 | sed 's/^/backup: /' || echo "backup: turns retention failed — continuing with the dump" >&2
 
 # host pg_dump if present, else the container's (mirrors init.sh's psql/docker split)
@@ -277,8 +285,8 @@ mv "$rolespart" "$roles"
 mv "$part" "$out"
 
 # rotate: keep the newest N of EACH artifact; dump + state share a timestamp so they rotate paired
-ls -1t backups/astryx-*.dump      2>/dev/null | tail -n +$((KEEP + 1)) | xargs -r rm -f
-ls -1t backups/astryx-*.state.tgz 2>/dev/null | tail -n +$((KEEP + 1)) | xargs -r rm -f
-ls -1t backups/astryx-*.roles.sql 2>/dev/null | tail -n +$((KEEP + 1)) | xargs -r rm -f
+ls -1t backups/astryx-*.dump      2>/dev/null | tail -n +$((KEEP + 1)) | xargs -r rm -f   # org-home: relative to $ORGH, the org's HOME (cd above)
+ls -1t backups/astryx-*.state.tgz 2>/dev/null | tail -n +$((KEEP + 1)) | xargs -r rm -f   # org-home: relative to $ORGH, the org's HOME (cd above)
+ls -1t backups/astryx-*.roles.sql 2>/dev/null | tail -n +$((KEEP + 1)) | xargs -r rm -f   # org-home: relative to $ORGH, the org's HOME (cd above)
 
 echo "backup: wrote $out ($(du -h "$out" | cut -f1))${state:+ + ${state##*/} ($(du -h "$state" | cut -f1))} + ${roles##*/} ($(grep -c '^CREATE ROLE ' "$roles") roles); keeping last $KEEP ($(ls -1 backups/astryx-*.dump | wc -l) dumps on disk)"

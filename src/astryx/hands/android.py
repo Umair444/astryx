@@ -28,6 +28,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 
 import os
 import re
@@ -56,7 +57,7 @@ class AndroidError(Exception):
 def _env_file() -> dict:
     out = {}
     try:
-        for line in (REPO / ".env").read_text().splitlines():
+        for line in (paths.estate(__file__) / ".env").read_text().splitlines():
             if "=" in line and not line.lstrip().startswith("#"):
                 k, v = line.split("=", 1)
                 out[k.strip()] = v.strip()
@@ -67,12 +68,12 @@ def _env_file() -> dict:
 
 def sdk() -> Path:
     """ANDROID_SDK_ROOT (env, then .env), else the per-user default the setup installs to."""
-    v = os.environ.get("ANDROID_SDK_ROOT") or _env_file().get("ANDROID_SDK_ROOT")
+    v = config.org_env("ANDROID_SDK_ROOT") or _env_file().get("ANDROID_SDK_ROOT")
     return Path(v).expanduser() if v else Path.home() / "Android" / "Sdk"
 
 
 def default_avd() -> str:
-    return os.environ.get("ANDROID_AVD") or _env_file().get("ANDROID_AVD") or "astryx-phone"
+    return config.org_env("ANDROID_AVD") or _env_file().get("ANDROID_AVD") or "astryx-phone"
 
 
 def _daemon_env() -> dict:
@@ -97,9 +98,17 @@ def adb(*args: str, timeout: float = 30, serial: str | None = None) -> subproces
         raise AndroidError(f"the phone didn't answer `adb {' '.join(args[:3])}` within {timeout:.0f}s")
 
 
+def _file_dsn() -> str | None:
+    """The org's .env DSN, FILE only (as `_env_file().get("ASTRYX_DSN")` was), through the ONE resolver."""
+    try:
+        return config.dsn(paths.estate(__file__) / ".env", env_first=False)
+    except (LookupError, OSError):
+        return None
+
+
 def _db():
     import psycopg
-    dsn = os.environ.get("ANDROID_DSN") or _env_file().get("ASTRYX_DSN")
+    dsn = os.environ.get("ANDROID_DSN") or _file_dsn()
     if not dsn:
         raise AndroidError("no database: ASTRYX_DSN is not set")
     return psycopg.connect(dsn, autocommit=True, connect_timeout=3)

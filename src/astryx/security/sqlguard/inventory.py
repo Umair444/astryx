@@ -383,7 +383,7 @@ def build() -> dict:
     # triggers/ is gitignored: a clone or worktree without it has NOT SEARCHED the class's home. That's never clean.
     return {"functions": functions, "oracle": oracle, "unparseable": sorted(unparseable), "extractors": extractors,
             "exempt": sorted(EXEMPT), "excluded": sorted(EXCLUDED_ROOTS), "other_checkouts": sorted(OTHER_CHECKOUTS), "other_checkouts_unknown": CHECKOUTS_UNKNOWN[0], "other_checkouts_unclassified": sorted(UNCLASSIFIED),
-            "triggers_absent": not (REPO / "triggers").is_dir(), "root": str(REPO)}
+            "triggers_absent": not (REPO / "triggers").is_dir(), "root": str(REPO)}  # org-home: audit of the scanned tree (REPO)
 
 
 if __name__ == "__main__":

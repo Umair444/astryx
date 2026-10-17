@@ -34,7 +34,6 @@ import json, os, re, sys
 from datetime import datetime, timezone
 
 REPO = str(__import__("pathlib").Path(__file__).resolve().parent.parent)
-DSN_FILE = REPO + "/.env"
 sys.path.insert(0, REPO)                 # so the Stop hook can reuse nucleus.usage_refresh
 
 # One /api/oauth/usage call at most this often across the WHOLE org. The gauge is
@@ -83,8 +82,9 @@ def wall_label(cmd) -> str:
 
 
 def dsn() -> str:
-    return next(l.split("=", 1)[1].strip()
-               for l in open(DSN_FILE) if l.startswith("ASTRYX_DSN="))
+    """The org's .env line, through the ONE resolver (plan-11324 S3a): the file only, as before; raises if absent."""
+    from astryx import config, paths
+    return config.dsn(paths.estate(__file__) / ".env", env_first=False)
 
 
 WITHHELD = "[withheld: secret redaction unavailable]"
@@ -266,8 +266,8 @@ def _strip_reason(agent):
     """None for an ORG session; else why this session's text is withheld. Never raises."""
     try:
         from nucleus import release                # THIS hook's tree's agents/: the live one in production, and a
-        from pathlib import Path                   # fixture tree's own when a test runs a copy of the hook
-        return MARK if release.label_of(agent, Path(REPO) / "agents") else None
+        from astryx import paths                   # fixture tree's own when a test runs a copy of the hook (its
+        return MARK if release.label_of(agent, paths.estate(__file__) / "agents") else None   # HOME's on multi-org)
     except Exception as e:  # noqa: BLE001 — UnknownLabel, GrantError, an import that fails: all private
         return f"{MARK} (label unreadable: {type(e).__name__})"
 

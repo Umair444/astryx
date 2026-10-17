@@ -237,7 +237,7 @@ def main():
                                              'run "units census" "$PY" tests/test_units.py\n'
                                              'run "plain gate" "$PY" tests/test_plain.py\n')
     (cz / "tests" / "test_rw.py").write_text('import subprocess\nfiles = subprocess.run(["git", "ls-files"]).stdout\n')
-    (cz / "tests" / "test_units.py").write_text('for f in (REPO / "units").glob("*.service"):\n    pass\n')
+    (cz / "tests" / "test_units.py").write_text('for f in (REPO / "units").glob("*.service"):\n    pass\n')  # org-home: fixture tree data: a fake test file's text
     (cz / "tests" / "test_plain.py").write_text("x = 1\n")
     cof = bc.gate_files(cz)
     cg = ["repo census", "units census", "plain gate"]

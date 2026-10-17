@@ -46,7 +46,7 @@ from pydantic import BaseModel
 from astryx.core import canvas as cv
 from astryx.core import presence as pres
 from .canvas_shell import render
-from .common import (MEDIA_DIR, REPO, agent_exists, describe_media, env, media_path, route_target,
+from .common import (ESTATE, MEDIA_DIR, REPO, agent_exists, describe_media, env, media_path, route_target,
                      step_line, wire_insert)
 from .transcribe import transcribe
 
@@ -382,7 +382,7 @@ def _roster() -> list[str]:
 
 
 def _blurb(name: str) -> str:
-    f = next((p for p in (REPO / "agents").rglob(f"{name}.md")), None)
+    f = next((p for p in (ESTATE / "agents").rglob(f"{name}.md")), None)
     if not f:
         return ""
     for line in f.read_text().splitlines():
@@ -431,7 +431,7 @@ async def avatar(name: str):
     from fastapi.responses import FileResponse
     if not _NAME.match(name):
         return deny(404, "no such agent")
-    charter = next((f for f in (REPO / "agents").rglob(f"{name}.md") if ".example" not in str(f)), None)
+    charter = next((f for f in (ESTATE / "agents").rglob(f"{name}.md") if ".example" not in str(f)), None)
     pic = next((charter.parent / f"avatar{ext}" for ext in _AVATAR_TYPES
                 if charter and (charter.parent / f"avatar{ext}").is_file()), None)
     if not pic:
@@ -573,11 +573,11 @@ def _never_served(path: Path) -> bool:
     home = Path.home()
     # the host's credential stores too: the Claude OAuth token every resident runs on (~/.claude), the
     # GitHub token and astryx's own config (~/.config), keyrings (steward #37779)
-    dirs = [REPO / "agents", REPO / "triggers", REPO / "memory", home / ".ssh", home / ".gnupg",
+    dirs = [ESTATE / "agents", ESTATE / "triggers", ESTATE / "memory", home / ".ssh", home / ".gnupg",
             home / ".claude", home / ".config", home / ".local" / "share" / "keyrings",
             home / "genesis", home / ".astryx-quarantine"]          # secretset scan roots that are whole trees
-    dirs += [d for d in (REPO / "homes").glob("*/.people")]
-    files = {REPO / ".env", REPO / "local.md", REPO / "relations.md", REPO / "owner.md", home / ".pgpass"}
+    dirs += [d for d in (ESTATE / "homes").glob("*/.people")]
+    files = {ESTATE / ".env", ESTATE / "local.md", ESTATE / "relations.md", ESTATE / "owner.md", home / ".pgpass"}
     try:
         from astryx.security import secretset
         for h in secretset.holders().get("holders", []):

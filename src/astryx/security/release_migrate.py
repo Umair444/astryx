@@ -126,7 +126,7 @@ def route_of(agent: str, channel: str, tier: str, routes=None) -> dict:
 
 
 def _transcript_dir(agent: str) -> Path:
-    home = (R.REPO / "homes" / agent).resolve()
+    home = (R._estate() / "homes" / agent).resolve()
     return Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(home))
 
 
@@ -139,11 +139,11 @@ def residuals(agent: str, tier: str) -> dict:
     mem = Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(R.REPO.resolve())) / "memory"
     memf = [p for p in mem.glob("*") if p.is_file() and (agent in p.name.lower() or tier in p.name.lower())] \
         if mem.is_dir() else []
-    chron = R.REPO / "memory" / "library" / "chronicle"
+    chron = R._estate() / "memory" / "library" / "chronicle"
     eds = sum(1 for p in chron.glob("*.md") if agent in p.read_text(errors="replace")) if chron.is_dir() else 0
     # scripts/refresh.sh MOVES the transcript here (seed #57083): the same history, out of the live dir, so a census
     # reading only the live dir lost 38 MB at canopus's first refresh. Not a live sink: it counts against history_clean
-    aside = R.REPO / "homes" / agent / ".transcript-aside"
+    aside = R._estate() / "homes" / agent / ".transcript-aside"
     af = [p for p in aside.rglob("*") if p.is_file() and not p.is_symlink()] if aside.is_dir() else []
     return {"transcript_files": len(files), "transcript_bytes": sum(p.stat().st_size for p in files),
             "aside_files": len(af), "aside_bytes": sum(p.stat().st_size for p in af),

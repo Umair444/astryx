@@ -22,7 +22,7 @@ fails = []
 OK_TEST = """import os, sys
 from pathlib import Path
 Path(sys.argv[0]).resolve().parent.parent.joinpath("ran.txt").write_text(
-    "agent=" + os.environ.get("ASTRYX_AGENT", "<absent>"))
+    "agent=" + os.environ.get("ASTRYX_AGENT", "<absent>"))  # org-home: inspection: the child reports the env it was given
 print("1/1 passed")
 """
 

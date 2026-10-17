@@ -71,7 +71,7 @@ CLASSES = {
 }
 _CLASS_RE = {k: re.compile(p) for k, (_, p) in CLASSES.items()}
 ENV_RE = re.compile(r"os\.environ(\.get)?\W+ASTRYX_DSN|process\.env\.ASTRYX_DSN|\$\{?ASTRYX_DSN\b|getenv\(\W*ASTRYX_DSN")
-FILE_RE = re.compile(r"""['"/]\.env['"]|\.env\b['"]?\)|live_dsn\(|grep\s+['"]?\^ASTRYX_DSN=""")
+FILE_RE = re.compile(r"""['"/]\.env['"]|\.env\b['"]?\)|live_dsn\(|grep\s+['"]?\^ASTRYX_DSN=""")  # org-home: a census pattern over the scanned tree, not a read
 
 
 def surface(rel: str):
@@ -192,10 +192,12 @@ def main(argv) -> int:
     c = census()
     lv = None
     if "--live" in argv:
-        dsn = os.environ.get("ASTRYX_DSN") or next(
-            (l.split("=", 1)[1].strip() for l in ((REPO / ".env").read_text().splitlines()
-                                                  if (REPO / ".env").is_file() else ())
-             if l.startswith("ASTRYX_DSN=")), None)     # the scanned root's own .env, never printed
+        from astryx import config, paths     # the ONE resolver (plan-11324 S3a): the environment, else the .env of
+        root = REPO if os.environ.get("ASTRYX_CENSUS_ROOT") else paths.estate(__file__)   # the scanned root's org
+        try:
+            dsn = config.dsn(root / ".env")      # never printed
+        except LookupError:
+            dsn = None
         lv = live(dsn) if dsn else {"error": "no ASTRYX_DSN"}
     if "--json" in argv:
         print(json.dumps({**c, "live": lv}, indent=1, sort_keys=True, default=str))

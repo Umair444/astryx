@@ -15,6 +15,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 
 import argparse  # noqa: E402
 import os  # noqa: E402
@@ -50,9 +51,7 @@ VALUE_ADD = ("INSERT INTO influence_value (scope, view, agent, value, unmapped, 
 
 
 def _dsn() -> str:
-    return os.environ.get("ASTRYX_DSN") or next(
-        line.split("=", 1)[1].strip() for line in (REPO / ".env").read_text().splitlines()
-        if line.startswith("ASTRYX_DSN="))
+    return config.dsn(paths.estate(__file__) / ".env")
 
 
 def connect(dsn=None, readonly=True):

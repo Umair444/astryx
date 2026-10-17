@@ -14,6 +14,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 import json
 import os
 import re
@@ -25,10 +26,7 @@ import psycopg
 import requests
 
 REPO = repo_root(__file__)
-DSN = os.environ.get("ASTRYX_DSN") or next(           # env first: an oracle's fixture DB (S1c)
-    l.split("=", 1)[1].strip()
-    for l in (REPO / ".env").read_text().splitlines()
-    if l.startswith("ASTRYX_DSN="))
+DSN = config.dsn(paths.estate(__file__) / ".env")    # env first: an oracle's fixture DB (S1c)
 _COMMENT = re.compile(r"--[^\n]*|/\*.*?\*/", re.S)
 _WAKE_WRITE = re.compile(r'\bINSERT\s+INTO\s+(?:"?public"?\s*\.\s*)?"?messages"?(?![\w"])', re.I)
 

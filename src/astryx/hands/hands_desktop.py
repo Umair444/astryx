@@ -53,6 +53,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 
 import json
 import os
@@ -515,10 +516,10 @@ CAPS_DIR = STATE_ROOT / ".caps"            # a name the desktop list never shows
 
 
 def _env_int(key: str, default: int) -> int:
-    v = os.environ.get(key)
+    v = config.org_env(key)
     if v is None:
         try:
-            for line in (repo_root(__file__) / ".env").read_text().splitlines():
+            for line in (paths.estate(__file__) / ".env").read_text().splitlines():
                 if line.startswith(f"{key}="):
                     v = line.split("=", 1)[1].strip()
         except OSError:

@@ -21,6 +21,18 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 sys.path.insert(0, str(REPO))
 
 from astryx.security.sqlguard.estate import gate  # noqa: E402
@@ -55,10 +67,14 @@ def check(name, ok, detail=""):
 
 
 def admin_dsn():
-    for line in (REPO / ".env").read_text().splitlines():
-        if line.startswith("ASTRYX_DSN="):
-            return line.split("=", 1)[1].strip()
-    return os.environ.get("ASTRYX_DSN", "")
+    try:                     # the ONE resolver (astryx.config.dsn): the .env FIRST as before, then the environment
+        return _astryx("config", "dsn", ESTATE / ".env", None, False)
+    except LookupError:
+        pass
+    try:
+        return _astryx("config", "dsn", ESTATE / ".env")
+    except LookupError:
+        return ""
 
 
 def _gone(pid):

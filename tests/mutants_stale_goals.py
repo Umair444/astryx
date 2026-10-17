@@ -18,8 +18,20 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
+
 # STALE_GOALS_STAGED: a staged copy of the gitignored body, probed before apply_receipt applies it
-SUBJECT = Path(os.environ.get("STALE_GOALS_STAGED") or REPO / "triggers" / "steward" / "stale_goals.py")
+SUBJECT = Path(os.environ.get("STALE_GOALS_STAGED") or ESTATE / "triggers" / "steward" / "stale_goals.py")
 ORACLE = REPO / "tests" / "test_stale_goals.py"
 ENV = "STALE_GOALS_SRC"
 

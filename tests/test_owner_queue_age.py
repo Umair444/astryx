@@ -29,6 +29,18 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 EXIT_SKIP = 77
 fails = []
 
@@ -40,7 +52,7 @@ sys.path.insert(0, str(REPO))
 # a STATIC AST scan). Path-load is invisible to that scan and matches the real precedent
 # (test_spawn_drift), while still SKIP-77-ing cleanly when the gitignored body is absent.
 import importlib.util
-BODY = REPO / "triggers" / "steward" / "owner_queue_age.py"
+BODY = ESTATE / "triggers" / "steward" / "owner_queue_age.py"
 if not BODY.exists():
     print("SKIP: owner_queue_age trigger absent (gitignored body, fresh clone) — nothing asserted.")
     sys.exit(EXIT_SKIP)

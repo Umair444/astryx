@@ -64,6 +64,18 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 # Selects the SUBJECT (mutation_probe hands this oracle deliberately-broken copies);
 # it never selects the axis — every fixture below is built explicitly by this file.
 SERVER = Path(os.environ.get("CHANNEL_SERVER_SRC", REPO / "channel" / "server.mjs"))
@@ -88,15 +100,10 @@ except ModuleNotFoundError:
 
 
 def dsn() -> str | None:
-    if os.environ.get("ASTRYX_DSN"):
-        return os.environ["ASTRYX_DSN"].strip()
-    env = REPO / ".env"
-    if not env.exists():
+    try:                     # the ONE resolver (astryx.config.dsn): the environment first, else the estate's .env
+        return _astryx("config", "dsn", ESTATE / ".env")
+    except LookupError:
         return None
-    for line in env.read_text().splitlines():
-        if line.startswith("ASTRYX_DSN="):
-            return line[len("ASTRYX_DSN="):].strip().strip('"').strip("'")
-    return None
 
 
 def node_bin() -> str | None:

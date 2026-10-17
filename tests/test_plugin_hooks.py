@@ -45,7 +45,7 @@ try:
     (home / ".env").write_text("ASTRYX_DSN=postgresql://x@127.0.0.1:1/x\n")
     ran = tmp / "step-ran"
     stub = home / "venv" / "bin" / "python"
-    stub.write_text(f"#!/bin/sh\n{{ echo \"argv=$*\"; echo \"agent=$ASTRYX_AGENT\"; cat; }} > '{ran}'\n")
+    stub.write_text(f"#!/bin/sh\n{{ echo \"argv=$*\"; echo \"agent=$ASTRYX_AGENT\"; cat; }} > '{ran}'\n")  # org-home: inspection: a stub reports the env it was given
     stub.chmod(0o755)
     for s in ("step.py", "usage.py", "nudge.py"):
         (home / "hooks" / s).write_text("# stub\n")
@@ -246,7 +246,8 @@ try:
     for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
         (root / _d).mkdir(parents=True, exist_ok=True)
     for f in ("scripts/spawn.sh", "src/astryx/core/charter.py", "astryx.py", "src/astryx/__init__.py",
-              "src/astryx/paths.py", "src/astryx/_version.py"):    # the moved tree (goal 10224 S4)
+              "src/astryx/paths.py", "src/astryx/_version.py",    # the moved tree (goal 10224 S4)
+              "src/astryx/orgs.py", "src/astryx/config.py"):        # spawn asks THE org predicate and the resolver (S3a)
         (root / f).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPO / f, root / f)
     (root / "venv" / "bin").mkdir(parents=True)

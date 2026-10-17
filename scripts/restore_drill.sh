@@ -24,12 +24,9 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 . scripts/pgcontainer.sh
-dump=${1:?usage: restore_drill.sh <backups/astryx-*.dump>}
+dump=${1:?usage: restore_drill.sh <backups/astryx-*.dump>}   # org-home: a usage message; the dump path is the caller's
 PY=venv/bin/python
 IMAGE=$(awk '$1=="image:"{print $2; exit}' infra/pg/docker-compose.yml)
-DSN=$(grep '^ASTRYX_DSN=' .env 2>/dev/null | cut -d= -f2-)
-ROLE=$(pg_dsn_user "${DSN:-postgresql://genesis@x/astryx}")
-DB=$(pg_dsn_db "${DSN:-postgresql://genesis@x/astryx}")
 
 notrun() { echo "  ✗ restore-drill: NOT RUN: $1. The empty-data-dir restore path is UNPROVEN." >&2; exit 2; }
 command -v docker >/dev/null || notrun "no docker on this host"
@@ -37,6 +34,13 @@ command -v docker >/dev/null || notrun "no docker on this host"
 docker image inspect "$IMAGE" >/dev/null 2>&1 || notrun "the declared image $IMAGE is not on this host"
 [ -x "$PY" ] || notrun "no venv python (psycopg is needed to observe logins)"
 command -v psql >/dev/null || notrun "no host psql (the row counts read through the synced role over TCP, as restore_verify does)"
+# The drill server carries THIS org's role and database names, read through the ONE resolver (plan-11324 S3a, a2 #58452):
+# the org's own .env, pair-checked against the host registry when the host runs several orgs, so a drill never runs
+# under another org's name. No DSN is NOT RUN: there is no literal fallback name to drill under any more.
+DSN=$("$PY" src/astryx/config.py dsn --file 2>/dev/null || true)
+[ -n "$DSN" ] || notrun "no ASTRYX_DSN for this org (its settings, through astryx.config)"
+ROLE=$(pg_dsn_user "$DSN")
+DB=$(pg_dsn_db "$DSN")
 
 name="astryx-restore-drill-$$"
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/astryx-restore-drill.XXXXXX")
@@ -133,8 +137,8 @@ else
 fi
 # counts over TCP through the synced role (PGPASSFILE above), by host psql as restore_verify reads: the drill runs no
 # python SQL of its own, so it adds no site the sqlguard inventory would have to know
-for t in steps messages goals triggers; do
-  n=$(psql -X "$ASTRYX_DSN" -tAc "SELECT count(*) FROM $t" 2>/dev/null | tr -d '[:space:]')
+for t in steps messages goals triggers; do   # org-home: SQL table names, not paths
+  n=$(psql -X "$ASTRYX_DSN" -tAc "SELECT count(*) FROM $t" 2>/dev/null | tr -d '[:space:]')   # org-home: the drill's OWN throwaway server, exported at the PGPASSFILE line above
   if [ -n "$n" ] && [ "$n" -gt 0 ] 2>/dev/null; then echo "  ✓ restore-drill: $t restored $n rows, read through the synced role"
   else echo "  ✗ restore-drill: $t did not restore onto the drill server" >&2; fail=1; fi
 done

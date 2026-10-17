@@ -34,6 +34,18 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 sys.path.insert(0, str(REPO))
 from astryx.paths import Checkouts  # noqa: E402
 FAIL, SKIP = [], []
@@ -253,7 +265,7 @@ def main():
 def roles_arm():
     import re
     import tempfile
-    dumps = sorted((REPO / "backups").glob("astryx-*.dump"), key=lambda p: p.stat().st_mtime)
+    dumps = sorted((ESTATE / "backups").glob("astryx-*.dump"), key=lambda p: p.stat().st_mtime)
     if not dumps:
         skip("the newest dump's roles file carries every role its grants name", "no dump on disk")
         return

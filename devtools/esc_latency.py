@@ -58,10 +58,13 @@ sys.path.insert(0, str(REPO))
 
 
 def _dsn():
-    for line in (REPO / ".env").read_text().splitlines():
-        if line.startswith("ASTRYX_DSN="):
-            return line.split("=", 1)[1].strip()
-    return None
+    from astryx import config, paths     # the ONE resolver (plan-11324 S3a): the file only, as before
+    f = paths.estate(__file__) / ".env"
+    try:
+        return config.dsn(f, env_first=False)
+    except LookupError:
+        f.read_text()       # an absent .env raises, as before; a .env without the line is None
+        return None
 
 
 def episodes(cur, days: int):

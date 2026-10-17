@@ -45,6 +45,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 
 import re
 import sys
@@ -56,8 +57,8 @@ sys.path.insert(0, str(REPO))
 
 from astryx.memory import okf                                        # noqa: E402
 
-ONTOLOGY_MD = REPO / "memory" / "ontology.md"
-WIKI = REPO / "memory" / "wiki"
+ONTOLOGY_MD = paths.estate(__file__) / "memory" / "ontology.md"
+WIKI = paths.estate(__file__) / "memory" / "wiki"
 
 # A relation is EXPECTED for a type when this proportion of that type's pages carry it.
 # 0.6 rather than 1.0 deliberately: a field on every page is already conformant and tells

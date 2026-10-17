@@ -14,12 +14,19 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 . scripts/pgcontainer.sh                     # PG_CONTAINER: the one declared postgres (infra/pg)
 SCRATCH=astryx_restorecheck
+# plan-11324 S3a: the dumps and the stamp are the ORG's (its HOME's backups/), the DSN its own .env through the ONE
+# resolver. One org (no host registry): BK is backups/ in this checkout, exactly as before; several orgs: the HOME's.
+ROOT="$PWD"
+BK=backups   # org-home: one org, this checkout IS the HOME (several: the HOME, below)
+if [ -e "${ASTRYX_ORG_REGISTRY:-/etc/astryx/orgs.json}" ]; then
+  BK="$("$ROOT/venv/bin/python" "$ROOT/src/astryx/config.py" estate)/backups" || { echo "restore-verify: no org HOME" >&2; exit 1; }
+fi
 
-DSN=$(grep '^ASTRYX_DSN=' .env 2>/dev/null | cut -d= -f2-)
-[ -n "$DSN" ] || { echo "restore-verify: no ASTRYX_DSN in .env" >&2; exit 1; }
+DSN=$("$ROOT/venv/bin/python" "$ROOT/src/astryx/config.py" dsn --file 2>/dev/null || true)
+[ -n "$DSN" ] || { echo "restore-verify: no ASTRYX_DSN in .env" >&2; exit 1; }   # org-home: a message
 SCRATCH_DSN="${DSN%/*}/$SCRATCH"
 
-newest=$(ls -1t backups/astryx-*.dump 2>/dev/null | head -1)
+newest=$(ls -1t "$BK"/astryx-*.dump 2>/dev/null | head -1)
 [ -n "$newest" ] || { echo "restore-verify: no backup to verify (run scripts/backup.sh first)" >&2; exit 1; }
 
 # host psql/pg_restore if present (the norm — init.sh/backup.sh use host tools), else the container's
@@ -41,7 +48,7 @@ q_live -c "CREATE DATABASE $SCRATCH" >/dev/null || { echo "restore-verify: canno
 do_restore >/dev/null 2>&1 || echo "restore-verify: pg_restore reported issues — checking tables anyway" >&2
 
 fail=0
-for t in steps messages goals triggers; do
+for t in steps messages goals triggers; do   # org-home: SQL table names, not paths
   live=$(q_live -tAc "SELECT count(*) FROM $t" 2>/dev/null | tr -d '[:space:]')
   got=$(q_scratch -tAc "SELECT count(*) FROM $t" 2>/dev/null | tr -d '[:space:]')
   if [ -z "$got" ]; then echo "  ✗ $t: table did NOT restore — the dump is not restorable" >&2; fail=1; continue; fi
@@ -68,7 +75,7 @@ if [ ! -f "$state" ]; then
 else
   members=$(tar -tzf "$state" 2>/dev/null | sed 's#^\./##')
   # the distinct file paths the RESTORED db's enabled python triggers point at (from scratch, not live)
-  need=$(q_scratch -tAc "SELECT DISTINCT split_part(check_src,'::',1) FROM triggers WHERE enabled AND check_src ~ '\.py::'" 2>/dev/null)
+  need=$(q_scratch -tAc "SELECT DISTINCT split_part(check_src,'::',1) FROM triggers WHERE enabled AND check_src ~ '\.py::'" 2>/dev/null)   # org-home: SQL, the triggers table
   missing=""
   # HERE-STRING, NOT A PIPE, and this is a correctness fix rather than style.
   # `printf ... | grep -qxF` under `set -o pipefail` is a RACE: grep -q exits the instant
@@ -116,9 +123,9 @@ esac
 # but "who reads its side effects, and what do they conclude from the runs that failed?"
 # A stamp, a cache, a state row, a green tick — each inherits NONE of the check's safety.
 if [ "$fail" -ne 0 ]; then
-  echo "FAILED $(date -u +%Y-%m-%dT%H:%M:%SZ)" > backups/.last-restore-ok
+  echo "FAILED $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$BK/.last-restore-ok"
   echo "restore-verify: FAILED — the newest backup does NOT restore cleanly. Fix the backup BEFORE trusting it." >&2
   exit 1
 fi
-echo "OK $(date -u +%Y-%m-%dT%H:%M:%SZ)" > backups/.last-restore-ok
+echo "OK $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$BK/.last-restore-ok"
 echo "restore-verify: OK — ${newest##*/} restores into a working DB; stamped backups/.last-restore-ok"

@@ -29,6 +29,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 
 import argparse
 import hashlib
@@ -61,9 +62,10 @@ def _env(repo: Path) -> dict:
 
 def setting(name: str, default: str = "", repo: Path = REPO) -> str:
     """Env first, then the repo's .env."""
-    if os.environ.get(name):
-        return os.environ[name]
-    f = repo / ".env"
+    v = config.org_env(name)
+    if v:
+        return v
+    f = (paths.estate(__file__) if Path(repo).resolve() == REPO.resolve() else Path(repo)) / ".env"
     for line in (f.read_text(errors="replace").splitlines() if f.is_file() else []):
         if line.startswith(name + "="):
             return line.split("=", 1)[1].strip().strip('"').strip("'")

@@ -39,8 +39,14 @@
 # against a stub suite without touching the live stamp.
 set -uo pipefail
 cd "$(dirname "$0")/.."
-STAMP=${CHECK_WATCH_STAMP:-backups/.last-check}
-LOG=${CHECK_WATCH_LOG:-backups/.last-check.log}
+# the stamp and log are the ORG's (its backups/): one org (no host registry) this checkout's, exactly as before;
+# several orgs the HOME's, through the ONE resolver (plan-11324 S3a), or the run refuses
+BK=backups   # org-home: one org, this checkout IS the HOME (several: the HOME, below)
+if [ -e "${ASTRYX_ORG_REGISTRY:-/etc/astryx/orgs.json}" ]; then
+  BK="$(venv/bin/python src/astryx/config.py estate)/backups" || { echo "check-watch: no org HOME" >&2; exit 1; }
+fi
+STAMP=${CHECK_WATCH_STAMP:-$BK/.last-check}
+LOG=${CHECK_WATCH_LOG:-$BK/.last-check.log}
 CGROUP=${CHECK_WATCH_CGROUP:-/proc/self/cgroup}
 mkdir -p "$(dirname "$STAMP")" "$(dirname "$LOG")"
 
@@ -64,7 +70,7 @@ if [ -n "${CHECK_WATCH_SUITE:-}${CHECK_WATCH_CGROUP:-}" ]; then
     b=$(readlink -f -- "$2" 2>/dev/null || echo "$2")
     [ "$a" = "$b" ]
   }
-  if _same "$STAMP" backups/.last-check || _same "$LOG" backups/.last-check.log; then
+  if _same "$STAMP" "$BK/.last-check" || _same "$LOG" "$BK/.last-check.log"; then
     echo "check-watch: REFUSING TO RUN — a test seam is set (CHECK_WATCH_SUITE and/or" >&2
     echo "  CHECK_WATCH_CGROUP) while CHECK_WATCH_STAMP/CHECK_WATCH_LOG still resolve to" >&2
     echo "  the production stamp or log. A stubbed run must never write the files the" >&2

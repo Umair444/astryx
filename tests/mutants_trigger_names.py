@@ -88,8 +88,8 @@ MUTANTS = {
         ("    if rows is None:\n        return \"deferred\", \"the triggers table can't be read, so a legacy row for it can't be ruled out\"\n",
          "    rows = rows or []\n"),
     "needs .env at import (a4 #49617): no DSN is a crash":
-        ("    except OSError:\n        pass\n    return None\n",
-         "    except OSError:\n        raise\n    return None\n"),
+        ("    except (LookupError, OSError):\n        return None\n",
+         "    except (LookupError, OSError):\n        raise\n"),
     "a blind deferral doesn't name its exit (a4 #50070)":
         ("f\"there: {'; '.join(blind[:3])}. Exit: fix or move that file (or \"",
          "f\"there: {'; '.join(blind[:3])}. (or \""),

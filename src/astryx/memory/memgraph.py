@@ -49,6 +49,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 
 import hashlib
 import json
@@ -65,7 +66,7 @@ sys.path.insert(0, str(REPO))
 from astryx.memory import okf                                    # noqa: E402
 from astryx.core.charter import roster, resolve, Collision, AGENTS  # noqa: E402
 
-MEM = REPO / "memory"
+MEM = paths.estate(__file__) / "memory"
 WIKI = MEM / "wiki"
 CONTEXT = MEM / "context"
 
@@ -617,14 +618,10 @@ def build_system1(g: Graph, dsn: str | None = None) -> None:
 
 
 def _dsn() -> str | None:
-    if os.environ.get("ASTRYX_DSN"):
-        return os.environ["ASTRYX_DSN"]
-    env = REPO / ".env"
-    if env.is_file():
-        for line in env.read_text().splitlines():
-            if line.startswith("ASTRYX_DSN="):
-                return line.split("=", 1)[1].strip()
-    return None
+    try:
+        return config.dsn(paths.estate(__file__) / ".env")
+    except LookupError:
+        return None
 
 
 # ─────────────────────────────────────────────────────── regions + layout
