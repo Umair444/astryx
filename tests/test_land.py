@@ -10,7 +10,9 @@ main's own run printed every failing line B's does.
 
     venv/bin/python tests/test_land.py      (LAND_SRC: mutation_probe's channel)
 """
+import atexit
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -61,6 +63,9 @@ class Fx:
 
     def __init__(self, feat_files, base_files=None):
         root = Path(tempfile.mkdtemp(prefix="land-"))
+        # removed at exit: each run makes ~25 repos, and the probe runs this once per mutant, so a leak of these
+        # filled /tmp's inodes on 10-18 (8,930 dirs, 100% IUse%: every mkdtemp on the host failed)
+        atexit.register(shutil.rmtree, root, True)
         self.origin, self.w = root / "origin.git", root / "w"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.origin)], env=ENV, check=True)
         subprocess.run(["git", "init", "-q", "-b", "main", str(self.w)], env=ENV, check=True)
