@@ -17,6 +17,15 @@ done
 cd "$(dirname "$_self")"
 unset _self _t _hops
 # <<< self dir
+# >>> org-home guard (plan-11324 S3a): this script sets up ONE org from its checkout, and reads that org's estate
+# (.env, agents/, bridges/routes-*.json, …) relative to it. On a host that runs SEVERAL orgs the checkout carries no
+# estate, so it REFUSES before any of it: a multi-org setup is seed's estate move (#58435 item 7) and S3b's per-org
+# units, never this script guessing which org it means. units() below already serves a HOME (ORGH); the rest doesn't.
+if [ -e "${ASTRYX_ORG_REGISTRY:-/etc/astryx/orgs.json}" ]; then
+  _g=0; venv/bin/python src/astryx/orgs.py multi || _g=$?
+  [ "$_g" = 1 ] || { echo "init.sh: this host runs several orgs (or its org registry refuses): init.sh sets up one org, refusing" >&2; exit 3; }
+fi
+# <<< org-home guard
 
 say() { echo -e "\033[36m[astryx]\033[0m $*"; }
 die() { echo -e "\033[31m[astryx]\033[0m $*" >&2; exit 1; }
@@ -60,6 +69,22 @@ units() {  # GENERATE systemd units from the org's declared sources of truth.
   # doctor reconciles the enabled set against this same derivation, bidirectionally.
   local UD=${UNITS_DIR:-units}
   mkdir -p "$UD"
+  # plan-11324 S3a: ORGH is the org these units serve (its HOME), UEXEC the built-environment prefix. One org (no host
+  # registry): ORGH=$PWD and UEXEC is empty, so every unit is byte-identical. Several orgs: ORGH is the HOME the ONE
+  # resolver gives (ASTRYX_HOME naming a registered org), and every ExecStart runs through astryx.orgenv, so the
+  # process's environment is built from that HOME, never inherited (BC-S1(1), BC-S3(1)): no PassEnvironment, no
+  # ImportEnvironment, and the only EnvironmentFile is the org's own .env.
+  # No registry file at all (orgs.path(): ASTRYX_ORG_REGISTRY, else /etc/astryx/orgs.json) is a one-org host with no
+  # question to ask; a present one is judged by THE predicate, and a missing interpreter then fails closed.
+  local ORGH="$PWD" UEXEC="" _mrc=1
+  [ -e "${ASTRYX_ORG_REGISTRY:-/etc/astryx/orgs.json}" ] && { _mrc=0; venv/bin/python src/astryx/orgs.py multi || _mrc=$?; }
+  case "$_mrc" in
+    0) ORGH=$(venv/bin/python -c 'import sys; sys.path.insert(0, "src"); from astryx import paths; print(paths.home())') \
+         || die "units: several orgs on this host and ASTRYX_HOME names no registered one"
+       UEXEC="$PWD/venv/bin/python $PWD/src/astryx/orgenv.py exec --home $ORGH -- " ;;
+    1) ;;
+    *) die "units: the org registry refuses (python src/astryx/orgs.py multi)" ;;
+  esac
 
   # ── 1. shipped-set — always present ─────────────────────────────────────────
   cat > "$UD/astryx-observatory.service" <<EOF
@@ -68,11 +93,11 @@ Description=astryx observatory — public live view on :8090
 After=network.target
 [Service]
 WorkingDirectory=$PWD/observatory/api
-ExecStart=$PWD/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8090
+ExecStart=${UEXEC}$PWD/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8090
 Restart=always
 RestartSec=5
 User=$USER
-Environment=ASTRYX_HOME=$PWD
+Environment=ASTRYX_HOME=$ORGH
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -82,11 +107,11 @@ Description=astryx canvas — the owner's front door: chat with agents, live age
 After=network.target
 [Service]
 WorkingDirectory=$PWD
-ExecStart=$PWD/venv/bin/uvicorn bridges.canvas:root --host 127.0.0.1 --port 8091
+ExecStart=${UEXEC}$PWD/venv/bin/uvicorn bridges.canvas:root --host 127.0.0.1 --port 8091
 Restart=always
 RestartSec=5
 User=$USER
-Environment=ASTRYX_HOME=$PWD
+Environment=ASTRYX_HOME=$ORGH
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -96,9 +121,9 @@ Description=astryx pulse — one tick of the trigger clock
 [Service]
 Type=oneshot
 WorkingDirectory=$PWD
-ExecStart=$PWD/venv/bin/python -m astryx.pulse.pulse
+ExecStart=${UEXEC}$PWD/venv/bin/python -m astryx.pulse.pulse
 User=$USER
-Environment=ASTRYX_HOME=$PWD
+Environment=ASTRYX_HOME=$ORGH
 # KillMode=process, NOT the default control-group: this oneshot BY DESIGN spawns detached
 # long jobs (org_runners _launch: backup/check/restore-verify/mutant-battery) that must
 # outlive the ~seconds tick. control-group kill reaps the whole cgroup when pulse.py exits,
@@ -134,11 +159,11 @@ Description=astryx gateway — the org's one door to other orgs (:8845)
 After=network.target
 [Service]
 WorkingDirectory=$PWD/bridges
-ExecStart=$PWD/venv/bin/uvicorn gateway:app --host 0.0.0.0 --port 8845 --proxy-headers --forwarded-allow-ips 127.0.0.1
+ExecStart=${UEXEC}$PWD/venv/bin/uvicorn gateway:app --host 0.0.0.0 --port 8845 --proxy-headers --forwarded-allow-ips 127.0.0.1
 Restart=always
 RestartSec=5
 User=$USER
-Environment=ASTRYX_HOME=$PWD
+Environment=ASTRYX_HOME=$ORGH
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -155,10 +180,10 @@ Wants=network-online.target docker.service
 Type=oneshot
 RemainAfterExit=yes
 User=$USER
-Environment=ASTRYX_HOME=$PWD
+Environment=ASTRYX_HOME=$ORGH
 Environment=HOME=$HOME
 Environment=PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=$PWD/scripts/spawn-all.sh
+ExecStart=${UEXEC}$PWD/scripts/spawn-all.sh
 
 [Install]
 WantedBy=multi-user.target
@@ -166,45 +191,45 @@ EOF
 
   # ── 2. channels — one service per present routes-<name>.json ─────────────────
   # Presence signal = the channel's routing file exists (the org has wired it).
-  [ -f bridges/routes-whatsapp.json ] && cat > "$UD/astryx-whatsapp.service" <<EOF
+  [ -f "$ORGH/bridges/routes-whatsapp.json" ] && cat > "$UD/astryx-whatsapp.service" <<EOF
 [Unit]
 Description=astryx whatsapp bridge — owner surface on the wire
 After=network.target docker.service
 [Service]
 WorkingDirectory=$PWD
-ExecStart=$PWD/venv/bin/uvicorn bridges.whatsapp:app --host $(_docker_host_ip) --port 8477
+ExecStart=${UEXEC}$PWD/venv/bin/uvicorn bridges.whatsapp:app --host $(_docker_host_ip) --port 8477
 Restart=always
 RestartSec=5
 User=$USER
-Environment=ASTRYX_HOME=$PWD
+Environment=ASTRYX_HOME=$ORGH
 [Install]
 WantedBy=multi-user.target
 EOF
-  [ -f bridges/routes-discord.json ] && cat > "$UD/astryx-discord.service" <<EOF
+  [ -f "$ORGH/bridges/routes-discord.json" ] && cat > "$UD/astryx-discord.service" <<EOF
 [Unit]
 Description=astryx discord bridge — owner surface on the wire
 After=network.target
 [Service]
 WorkingDirectory=$PWD
-ExecStart=$PWD/venv/bin/uvicorn bridges.discord:app --host 127.0.0.1 --port 8479
+ExecStart=${UEXEC}$PWD/venv/bin/uvicorn bridges.discord:app --host 127.0.0.1 --port 8479
 Restart=always
 RestartSec=5
 User=$USER
-Environment=ASTRYX_HOME=$PWD
+Environment=ASTRYX_HOME=$ORGH
 [Install]
 WantedBy=multi-user.target
 EOF
-  [ -f bridges/routes-telegram.json ] && cat > "$UD/astryx-telegram.service" <<EOF
+  [ -f "$ORGH/bridges/routes-telegram.json" ] && cat > "$UD/astryx-telegram.service" <<EOF
 [Unit]
 Description=astryx telegram bridge — owner surface on the wire
 After=network.target
 [Service]
 WorkingDirectory=$PWD
-ExecStart=$PWD/venv/bin/uvicorn bridges.telegram:app --host 127.0.0.1 --port 8478
+ExecStart=${UEXEC}$PWD/venv/bin/uvicorn bridges.telegram:app --host 127.0.0.1 --port 8478
 Restart=always
 RestartSec=5
 User=$USER
-Environment=ASTRYX_HOME=$PWD
+Environment=ASTRYX_HOME=$ORGH
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -230,9 +255,9 @@ After=network.target docker.service
 [Service]
 Type=simple
 User=$USER
-Environment=ASTRYX_HOME=$PWD
+Environment=ASTRYX_HOME=$ORGH
 WorkingDirectory=$PWD
-ExecStart=$PWD/venv/bin/python -m astryx.pulse.senses
+ExecStart=${UEXEC}$PWD/venv/bin/python -m astryx.pulse.senses
 Restart=always
 RestartSec=3
 
@@ -245,7 +270,7 @@ EOF
   # Declared 10-10 (seed #43920). Presence signal = the bridge module (gitignored: its rows are location history, the
   # personal tier) + its env file outside the repo (the token and the DSN it writes with). It binds 0.0.0.0 on
   # purpose: the phone posts to it over the LAN/tailnet, which is the service. The design is declared; the values never.
-  if [ -f bridges/geoloc.py ] && [ -f "$HOME/.config/astryx/geoloc.env" ]; then
+  if [ -f "$ORGH/bridges/geoloc.py" ] && [ -f "$HOME/.config/astryx/geoloc.env" ]; then
     cat > "$UD/astryx-geoloc.service" <<EOF
 [Unit]
 Description=astryx geoloc bridge — phone location intake on :8766
@@ -253,11 +278,11 @@ After=network.target
 [Service]
 WorkingDirectory=$PWD/bridges
 EnvironmentFile=$HOME/.config/astryx/geoloc.env
-ExecStart=$PWD/venv/bin/uvicorn geoloc:app --host 0.0.0.0 --port 8766
+ExecStart=${UEXEC}$PWD/venv/bin/uvicorn geoloc:app --host 0.0.0.0 --port 8766
 Restart=always
 RestartSec=5
 User=$USER
-Environment=ASTRYX_HOME=$PWD
+Environment=ASTRYX_HOME=$ORGH
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -266,7 +291,7 @@ EOF
   # ── 3a. the ear — hearing (plan-8674 S1): browser speech segments → local STT → `utterances` ───────────────
   # Presence signal = EAR_ENABLED=1 in .env. An always-on microphone is a DELIBERATE owner act, so no fresh clone
   # grows one by default. Loopback only: the observatory proxies <host>/ear/ to it.
-  ear_on=$(grep -m1 '^EAR_ENABLED=' .env 2>/dev/null | cut -d= -f2- || true)
+  ear_on=$(grep -m1 '^EAR_ENABLED=' "$ORGH/.env" 2>/dev/null | cut -d= -f2- || true)
   if [ "$ear_on" = 1 ] && [ -f bridges/ear.py ]; then
     cat > "$UD/astryx-ear.service" <<EOF
 [Unit]
@@ -274,11 +299,11 @@ Description=astryx ear — hearing: VAD speech segments from the observatory →
 After=network.target docker.service
 [Service]
 WorkingDirectory=$PWD
-ExecStart=$PWD/venv/bin/uvicorn bridges.ear:app --host 127.0.0.1 --port 8092
+ExecStart=${UEXEC}$PWD/venv/bin/uvicorn bridges.ear:app --host 127.0.0.1 --port 8092
 Restart=always
 RestartSec=5
 User=$USER
-Environment=ASTRYX_HOME=$PWD
+Environment=ASTRYX_HOME=$ORGH
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -295,12 +320,12 @@ EOF
   # `set -eo pipefail` a bare assignment from that pipe would abort the whole script. This is
   # the ONE bare (set-e-active) units() call path — `./init.sh doctor` on a fresh clone — so
   # the maintainer never saw it (their .env has GROWBOT_BODY_URL). Empty = no URL = local body.
-  gb_url=$(grep -m1 '^GROWBOT_BODY_URL=' .env 2>/dev/null | cut -d= -f2- || true)
+  gb_url=$(grep -m1 '^GROWBOT_BODY_URL=' "$ORGH/.env" 2>/dev/null | cut -d= -f2- || true)
   # The unit is DECLARED whenever the module and a live grant exist (seed #43920: it sat on disk and in systemd with
   # nothing generating it). WHERE the body runs decides only its STATE: a local body's unit must be enabled; a remote
   # body (GROWBOT_BODY_URL elsewhere: the chip serves the protocol itself) must leave it installed and NOT enabled.
   if [ -f src/astryx/contrib/growbot_body.py ] && \
-     grep -rqsE '^Grants:.*\bgrowbot\b' --exclude='*.example.md' agents/; then
+     grep -rqsE '^Grants:.*\bgrowbot\b' --exclude='*.example.md' "$ORGH/agents/"; then
     { [ -z "$gb_url" ] || echo "$gb_url" | grep -qE '127\.0\.0\.1|localhost'; } \
       || UNITS_EXPECT_DISABLED="$UNITS_EXPECT_DISABLED astryx-growbot.service"
     cat > "$UD/astryx-growbot.service" <<EOF
@@ -309,12 +334,12 @@ Description=astryx growbot body — the open GrowBot body protocol over the USB-
 After=network.target
 [Service]
 WorkingDirectory=$PWD
-EnvironmentFile=-$PWD/.env
-ExecStart=$PWD/venv/bin/python -m astryx.contrib.growbot_body
+EnvironmentFile=-$ORGH/.env
+ExecStart=${UEXEC}$PWD/venv/bin/python -m astryx.contrib.growbot_body
 Restart=always
 RestartSec=3
 User=$USER
-Environment=ASTRYX_HOME=$PWD
+Environment=ASTRYX_HOME=$ORGH
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -326,13 +351,13 @@ EOF
   # a departed agent generates nothing. agent="org" is ORG-INFRA (backup, etc.) — always
   # generated, no per-agent gate. A .py exec runs under venv python; a .sh exec runs
   # directly (executable + shebang), so org-infra bash jobs (pg_dump) are first-class.
-  if [ -f nucleus/runners.conf ]; then
+  if [ -f "$ORGH/nucleus/runners.conf" ]; then
     while IFS='|' read -r stem agent oncal execp desc; do
       stem=$(echo "$stem" | xargs); [ -z "$stem" ] && continue
       case "$stem" in \#*) continue;; esac
       agent=$(echo "$agent" | xargs); oncal=$(echo "$oncal" | xargs)
       execp=$(echo "$execp" | xargs); desc=$(echo "$desc" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-      if [ "$agent" != org ] && ! venv/bin/python src/astryx/core/charter.py "$agent" >/dev/null 2>&1; then
+      if [ "$agent" != org ] && ! ASTRYX_HOME="$ORGH" venv/bin/python src/astryx/core/charter.py "$agent" >/dev/null 2>&1; then
         echo "  runner '$stem': agent '$agent' not in roster — no unit generated" >&2; continue
       fi
       case "$execp" in
@@ -345,9 +370,9 @@ Description=astryx $stem — $desc
 [Service]
 Type=oneshot
 WorkingDirectory=$PWD
-ExecStart=$rexec
+ExecStart=${UEXEC}$rexec
 User=$USER
-Environment=ASTRYX_HOME=$PWD
+Environment=ASTRYX_HOME=$ORGH
 EOF
       cat > "$UD/astryx-$stem.timer" <<EOF
 [Unit]
@@ -359,7 +384,7 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 EOF
-    done < nucleus/runners.conf
+    done < "$ORGH/nucleus/runners.conf"
   fi
 }
 

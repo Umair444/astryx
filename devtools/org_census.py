@@ -145,8 +145,9 @@ def estate_sites(rel: str, lines, toks, cd_base: bool) -> list:
             out.append((n, raw, "literal DSN default"))
             continue
         hit = next((e for e, t in toks if re.search(BASE + JOIN + t, code)), None)
+        bare = re.sub(r'"[^"]*\s[^"]*"', '""', code)       # a quoted label or message (it has a space) is not a path
         if hit is None and cd_base:
-            hit = next((e for e, t in toks if re.search(r"""(?:^|[\s"'=(<>|;])(?:\./)?""" + t + r"""(?:/|\b)""", code)
+            hit = next((e for e, t in toks if re.search(r"""(?:^|[\s"'=(<>|;])(?:\./)?""" + t + r"""(?:/|\b)""", bare)
                         and not re.search(r"""^\s*(?:echo|say|printf|warn|note)\b""", code)), None)
         if hit:
             out.append((n, raw, hit))
@@ -227,21 +228,36 @@ def env_sites(rel: str, lines, readers, names) -> list:
     return out
 
 
+# A shell file that REFUSES on a multi-org host before any estate read (THE predicate, then a non-zero exit, within
+# its first lines): its checkout-relative reads only ever run where the checkout IS the org's HOME. Listed as
+# `guarded`, never silent, and tests/test_org_home_census.py RUNS each one under a two-org registry to prove it.
+GUARD = re.compile(r"""orgs\.py\s+multi""")
+GUARD_LINES = 40
+
+
+def guarded(p: Path, lines) -> bool:
+    return (p.suffix == ".sh" or p.name == "init.sh") and any(GUARD.search(c) for n, c, _ in lines if n <= GUARD_LINES)
+
+
 def census(root: Path) -> dict:
     toks = [(e, estate_token(e)) for e in estate_entries(root)]
     names = org_names(root)
     readers = [(n, env_read(n)) for n in sorted(names) if n != "ASTRYX_DSN"]
-    res = {"dsn": [], "estate": [], "env": [], "declared": [], "org_names": sorted(names)}
+    res = {"dsn": [], "estate": [], "env": [], "declared": [], "guarded": [], "guarded_files": [],
+           "org_names": sorted(names)}
     for p in walk(root):
         rel = p.relative_to(root).as_posix()
         lines = code_lines(p)
         cd_base = p.suffix == ".sh" and any(CD_BASE.search(c) for _, c, _ in lines) or rel == "init.sh"
+        g = guarded(p, lines)
+        if g:
+            res["guarded_files"].append(rel)
         for kind, sites in (("dsn", dsn_sites(rel, lines)),
                             ("estate", estate_sites(rel, lines, toks, cd_base)),
                             ("env", env_sites(rel, lines, readers, names))):
             for n, raw, what in sites:
                 row = {"kind": kind, "file": rel, "line": n, "what": what}
-                (res["declared"] if DECLARE.search(raw) else res[kind]).append(row)
+                (res["declared"] if DECLARE.search(raw) else res["guarded"] if g else res[kind]).append(row)
     return res
 
 
@@ -259,6 +275,8 @@ def main(argv=None) -> int:
             print(f"{k}: {len(res[k])} finding(s)")
             for r in res[k]:
                 print(f"  {r['file']}:{r['line']}  {r['what']}")
+        print(f"guarded (the file refuses on a multi-org host first): {len(res['guarded'])} site(s) in "
+              f"{len(res['guarded_files'])} file(s): {', '.join(res['guarded_files'])}")
         print(f"declared (org-home: …): {len(res['declared'])}")
         for r in res["declared"]:
             print(f"  {r['kind']:6} {r['file']}:{r['line']}  {r['what']}")
