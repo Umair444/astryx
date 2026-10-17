@@ -39,6 +39,13 @@
 # line carrying run-specific detail (a pid, a tmp path, check()'s [detail] tail) never matches across sides, so that
 # test can't be known-red at all (refused: closed, not open). An honest range that narrows AND retires an arm is
 # refused on the count; that one lands with a reviewer's measurement, not here. Both sides' lines are printed.
+# A new failure in a spelling outside FAIL*/ERROR/SURVIVED/✗/✘/NOT RUN, with the arm count kept, still reads as known
+# (a4 #59280 B1): the whitelist is measured, not assumed. Re-run the census of the helpers' spellings when it matters:
+#   command grep -rhoE "'[A-Z✓✗✘ ]{2,12}' if [a-z_]+ else '[A-Z✓✗✘ ]{2,12}'" tests/test_*.py | sort | uniq -c
+# (10-18: PASS|FAIL x175, FAIL|OK x3, KILLED|SURVIVED x1). Tracebacks are compared by COUNT, so where main's red is
+# itself a crash, B crashing differently is guarded only by the failing lines and the verdict count. A FAIL line that
+# names a rotating artifact (test_backup_inputs names the newest backup) changes if the 04:00 backup lands between the
+# base run and B's: that land is refused (closed), and re-running it is the fix.
 set -uo pipefail
 die() { echo "land: $*"; exit 2; }
 refuse() { echo "land: REFUSED: $*"; exit 1; }
@@ -94,8 +101,8 @@ for t in ${EXTRA[@]+"${EXTRA[@]}"}; do
 done
 [ ${#TESTS[@]} -gt 0 ] || refuse "the range touches no tests/test_*.py or tests/mutants_*.py and no --test was given"
 
-failset() { printf '%s\n' "$1" | grep -E '^[[:space:]]*(FAIL[A-Za-z]*|✗|✘|NOT RUN)([[:space:]:(]|$)' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | sort -u; }
-verdicts() { printf '%s\n' "$1" | grep -cE '^[[:space:]]*(PASS|FAIL[A-Za-z]*|SKIP|✓|✗|✘|NOT RUN)([[:space:]:(]|$)'; }
+failset() { printf '%s\n' "$1" | grep -E '^[[:space:]]*(FAIL[A-Za-z]*|ERROR|SURVIVED|✗|✘|NOT RUN)([[:space:]:(]|$)' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | sort -u; }
+verdicts() { printf '%s\n' "$1" | grep -cE '^[[:space:]]*(PASS|OK|KILLED|FAIL[A-Za-z]*|ERROR|SURVIVED|SKIP|✓|✗|✘|NOT RUN)([[:space:]:(]|$)'; }
 crashes() { printf '%s\n' "$1" | grep -c '^Traceback (most recent call last)'; }
 declare -A BASE_RC=() BASE_FAILS=() BASE_N=() BASE_TB=()
 for k in ${KNOWN[@]+"${KNOWN[@]}"}; do

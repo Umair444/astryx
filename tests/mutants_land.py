@@ -58,5 +58,7 @@ MUTANTS = {
     "N24 fewer verdict lines than main is not a refusal (a deleted arm reads as fixed: a4 #59276 R2b)":
         ('elif [ "$nv" -lt "${BASE_N[$t]}" ]; then', 'elif false; then'),
     "N25 failset sees only FAIL/✗/NOT RUN (FAILED, FAIL:, ✘ pass as absent: a4 #59276 A3)":
-        ("(FAIL[A-Za-z]*|✗|✘|NOT RUN)([[:space:]:(]|$)' | sed", "(FAIL|✗|NOT RUN)([[:space:]:(]|$)' | sed"),
+        ("(FAIL[A-Za-z]*|ERROR|SURVIVED|✗|✘|NOT RUN)([[:space:]:(]|$)' | sed", "(FAIL|✗|NOT RUN)([[:space:]:(]|$)' | sed"),
+    "N26 ERROR and SURVIVED aren't failing lines (a new failure in the repo's other spellings reads as known: a4 #59280 B1)":
+        ("|ERROR|SURVIVED|✗|✘|NOT RUN)([[:space:]:(]|$)' | sed", "|✗|✘|NOT RUN)([[:space:]:(]|$)' | sed"),
 }

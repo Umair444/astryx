@@ -254,6 +254,10 @@ def main():
             ("A1 a crash at import (a Traceback, no FAIL line)", (tb, "  File x", "ImportError: boom"), "B crashed"),
             ("A2 a crash mid-run, after a known failing line", ("  PASS  fine", "  FAIL  a", tb, "KeyError: b"), "B crashed"),
             ("A3 a new failure spelled FAILED", ("  PASS  fine", "  FAIL  a", "FAILED c-new"), "FAILED c-new"),
+            ("B1 a new failure spelled ERROR, arm count kept", ("  PASS  fine", "  FAIL  a", "  PASS  b", "  ERROR c-new"),
+             "ERROR c-new"),
+            ("B1 a new SURVIVED (the mutants-style helper's spelling)", ("  PASS  fine", "  FAIL  a", "  PASS  b",
+             "  SURVIVED m-new"), "SURVIVED m-new"),
             ("A4 an arm DELETED, not fixed", ("  PASS  fine", "  FAIL  a"), "B ran 2 verdict line(s), main ran 3"),
             ("R1 every arm passes yet B exits 1 (base HAD failing lines)", ("  PASS  fine", "  PASS  a", "  PASS  b"),
              "no failing line at B")):
