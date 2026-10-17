@@ -5,7 +5,8 @@ arm gets a throwaway work repo with a bare origin, so a push and a refused push 
 Arms: a green range lands, pushes and prints a receipt read from git; the child test runs WITHOUT ASTRYX_AGENT (measured
 by the test itself); a red test rolls main back and pushes nothing; a non-ff range, a dirty tracked tree, a wrong live
 body sha and a range with no test are refused with main untouched; an A that isn't B's ancestor is refused; a push that
-fails exits 3 and says NOT PUSHED.
+fails exits 3 and says NOT PUSHED; --known-red passes a test red on main only when
+main's own run printed every failing line B's does.
 
     venv/bin/python tests/test_land.py      (LAND_SRC: mutation_probe's channel)
 """
@@ -228,6 +229,50 @@ def main():
     f = Fx({"tests/test_ok.py": OK_TEST})
     rc, out = f.land(f"{f.base}..{f.head}", "--test", "./tests/test_ok.py", "--no-push")
     check("L14 a --test already in the range runs once, even spelled ./tests/…", rc == 0 and out.count("test_ok.py: rc 0") == 1, out)
+
+    # L15 --known-red: a test already red on MAIN, measured on main before the merge (seed night-review 10-18)
+    def red(*lines, rc=1):
+        return "import sys\n" + "".join(f"print({l!r})\n" for l in lines) + f"sys.exit({rc})\n"
+    base_red = {"tests/test_k.py": red("  PASS  fine", "  FAIL  a", "  FAIL  b")}
+    f = Fx({"tests/test_k.py": red("  FAIL  a"), "tests/test_ok.py": OK_TEST}, base_red)
+    rc, out = f.land(f"{f.base}..{f.head}", "--no-push")
+    check("L15 without --known-red, a range that NARROWS a test red on main is red (status quo, a4 #56861)",
+          rc == 1 and f.main() == f.base, out)
+    rc, out = f.land(f"{f.base}..{f.head}", "--known-red", "./tests/test_k.py", "--no-push")
+    check("L15 with --known-red, the narrowing range lands: measured on main first, KNOWN-RED in the RECEIPT",
+          rc == 0 and f.main() == f.head and "known-red tests/test_k.py on main" in out and "2 failing line(s)" in out
+          and "KNOWN-RED (main rc 1)" in [l for l in out.splitlines() if l.startswith("RECEIPT:")][0], out)
+    f = Fx({"tests/test_k.py": red("  FAIL  a", "  FAIL  c")}, base_red)
+    rc, out = f.land(f"{f.base}..{f.head}", "--known-red", "tests/test_k.py", "--no-push")
+    check("L15 a known-red test that gains a failing line is RED, naming the new line; rolled back",
+          rc == 1 and f.main() == f.base and "KNOWN-RED refused" in out and "FAIL  c" in out
+          and "FAIL  a" not in out.split("KNOWN-RED refused", 1)[1], out)
+    f = Fx({"tests/test_k.py": red("  ✗ c")}, {"tests/test_k.py": red("  FAIL  a")})
+    rc, out = f.land(f"{f.base}..{f.head}", "--known-red", "tests/test_k.py", "--no-push")
+    check("L15 a ✗ line counts as failing too (a different failure is new)", rc == 1 and f.main() == f.base, out)
+    f = Fx({"tests/test_k.py": red("  FAIL  a")}, {"tests/test_k.py": red("ok", rc=0)})
+    rc, out = f.land(f"{f.base}..{f.head}", "--known-red", "tests/test_k.py", "--no-push")
+    check("L15 a known-red test GREEN on main is refused before any merge (the range made it red)",
+          rc == 1 and "GREEN on main" in out and f.main() == f.base, out)
+    f = Fx({"tests/test_k.py": red("  FAIL  a")})
+    rc, out = f.land(f"{f.base}..{f.head}", "--known-red", "tests/test_k.py", "--no-push")
+    check("L15 a known-red test with no version on main is refused (nothing to measure)",
+          rc == 1 and "no version on main" in out and f.main() == f.base, out)
+    skip = {"tests/test_k.py": red("SKIP: on request only", rc=77)}
+    f = Fx({"tests/test_k.py": red("SKIP: on request only, reworded", rc=77)}, skip)
+    rc, out = f.land(f"{f.base}..{f.head}", "--known-red", "tests/test_k.py", "--no-push")
+    check("L15 a skip (rc 77, no failing line) on BOTH sides is known-red", rc == 0 and f.main() == f.head, out)
+    f = Fx({"tests/test_k.py": red("crashed", rc=2)}, skip)
+    rc, out = f.land(f"{f.base}..{f.head}", "--known-red", "tests/test_k.py", "--no-push")
+    check("L15 …but a DIFFERENT rc with no failing line is red (a crash isn't the base's skip)",
+          rc == 1 and f.main() == f.base and "KNOWN-RED refused" in out, out)
+    f = Fx({"tests/test_ok.py": OK_TEST}, base_red)
+    rc, out = f.land(f"{f.base}..{f.head}", "--known-red", "tests/test_k.py", "--no-push")
+    check("L15 a --known-red naming a test this land doesn't run is a usage error", rc == 2 and f.main() == f.base, out)
+    sub = {"sub.py": "VALUE = 1\nOTHER = 5\n", "tests/test_sub.py": SUB_ORACLE}
+    f = Fx({"tests/mutants_sub.py": mutants("VALUE = 1", "VALUE = 2")}, sub)
+    rc, out = f.land(f"{f.base}..{f.head}", "--known-red", "tests/mutants_sub.py", "--no-push")
+    check("L15 a mutants file can't be known-red (usage error)", rc == 2 and "only a tests/test_*.py" in out, out)
 
     print(f"\n{'PASS' if not fails else 'FAIL'}: land ({len(fails)} failing)")
     return 1 if fails else 0

@@ -43,4 +43,14 @@ MUTANTS = {
         ("✗' | tail -12 |", "✗' | head -12 |"),
     "N17 a --test isn't normalised (./tests/x.py runs twice)":
         ('  t=$(realpath -m --relative-to=. "$t")', '  :'),
+    "N18 a known-red test may ADD failing lines (any red passes once it is named)":
+        ('if [ -z "$new" ] && {', 'if true && {'),
+    "N19 a known-red test GREEN on main isn't refused (the range's own red gets named known)":
+        ('[ $rc -ne 0 ] || refuse "--known-red', 'true || refuse "--known-red'),
+    "N20 a mutants file can be known-red (a NOT PROBED mutant waved through)":
+        ('case "$(basename "$k")" in test_*.py) ;;', 'case "$(basename "$k")" in *) ;;'),
+    "N21 a different rc with no failing line passes (a crash read as the base's skip)":
+        ('{ [ -n "$now" ] || [ "$rc" -eq "${BASE_RC[$t]}" ]; }', 'true'),
+    "N22 a known-red naming a test the land doesn't run is accepted":
+        ('*" $k "*) ;; *) die', '*) ;; *) die'),
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# land.sh <A>..<B> [--body <path>=<sha256-prefix>]... [--test <file>]... [--no-push]
+# land.sh <A>..<B> [--body <path>=<sha256-prefix>]... [--test <file>]... [--known-red <test>]... [--no-push]
 #
 # The merger's half of a merge-ready marker, as one command (seed night-review 10-16). By hand it was six steps, done
 # six times on 10-15 alone, and each one has a failure on record:
@@ -25,24 +25,30 @@
 # push failed (main is ahead of origin: the merge_ready watch shows it as MERGED, NOT PUSHED; the refused push's gate
 # lines are printed as "push gate:"); 4 RED and the rollback
 # FAILED: main is at the red B, unpushed (a4 #56483 R3; reset it by hand, the RECEIPT line says to what).
-# LIMIT (a4 #56861, seen twice on 10-16): every range test must be rc 0, so a range that NARROWS a test already red on
-# main (fixes one cause of several) can't land here. Land it by hand after measuring the failing set on both sides.
+# KNOWN-RED (seed night-review 10-18; a4 #56861's LIMIT, hit on 10-16 and again on S3a 10-18, both landed by an unreviewed
+# hand script): `--known-red tests/test_x.py` names a test_*.py already red on MAIN. It is MEASURED, never declared: the
+# base's version runs on main BEFORE the merge (green there = refused: the range would be what made it red), and after
+# the merge B's run passes as KNOWN-RED only if every failing line it prints (FAIL / ✗ / NOT RUN, trimmed) was also
+# printed by the base run, so a range may NARROW a red test but never add a failure to it. A mutants file can't be
+# known-red (a NOT PROBED mutant is the range's own debt). LIMIT: it compares the verdict LINES, not detail printed
+# under them (a FAIL whose list grew reads unchanged); both sides' failing lines are printed for the reviewer.
 set -uo pipefail
 die() { echo "land: $*"; exit 2; }
 refuse() { echo "land: REFUSED: $*"; exit 1; }
 sha() { git rev-parse --verify -q "$1^{commit}" 2>/dev/null; }
 
-RANGE=""; BODIES=(); EXTRA=(); PUSH=1
+RANGE=""; BODIES=(); EXTRA=(); KNOWN=(); PUSH=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --body) [ $# -ge 2 ] || die "--body needs <path>=<sha256-prefix>"; BODIES+=("$2"); shift 2;;
     --test) [ $# -ge 2 ] || die "--test needs a file"; EXTRA+=("$2"); shift 2;;
+    --known-red) [ $# -ge 2 ] || die "--known-red needs a tests/test_*.py"; KNOWN+=("$2"); shift 2;;
     --no-push) PUSH=0; shift;;
     *..*) [ -z "$RANGE" ] || die "one range only"; RANGE=$1; shift;;
-    *) die "usage: land.sh <A>..<B> [--body <path>=<sha256-prefix>]... [--test <file>]... [--no-push]";;
+    *) die "usage: land.sh <A>..<B> [--body <path>=<sha256-prefix>]... [--test <file>]... [--known-red <test>]... [--no-push]";;
   esac
 done
-[ -n "$RANGE" ] || die "usage: land.sh <A>..<B> [--body <path>=<sha256-prefix>]... [--test <file>]... [--no-push]"
+[ -n "$RANGE" ] || die "usage: land.sh <A>..<B> [--body <path>=<sha256-prefix>]... [--test <file>]... [--known-red <test>]... [--no-push]"
 cd "$(git rev-parse --show-toplevel 2>/dev/null)" || die "not in a git repo"
 PY=${PY:-venv/bin/python}; [ -x "$PY" ] || PY=python3
 PROBE=${LAND_PROBE:-devtools/mutation_probe.py}
@@ -81,6 +87,19 @@ for t in ${EXTRA[@]+"${EXTRA[@]}"}; do
 done
 [ ${#TESTS[@]} -gt 0 ] || refuse "the range touches no tests/test_*.py or tests/mutants_*.py and no --test was given"
 
+failset() { printf '%s\n' "$1" | grep -E '^[[:space:]]*(FAIL|✗|NOT RUN)([[:space:]:(]|$)' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | sort -u; }
+declare -A BASE_RC=() BASE_FAILS=()
+for k in ${KNOWN[@]+"${KNOWN[@]}"}; do
+  k=$(realpath -m --relative-to=. "$k")                             # spelled as TESTS are
+  case "$(basename "$k")" in test_*.py) ;; *) die "--known-red $k: only a tests/test_*.py can be known-red (a mutant NOT PROBED is the range's own debt)";; esac
+  case " ${TESTS[*]} " in *" $k "*) ;; *) die "--known-red $k is not a test this land runs (not in the range, no --test)";; esac
+  [ -f "$k" ] || refuse "--known-red $k has no version on main: red on main can't be measured"
+  out=$(env -u ASTRYX_AGENT timeout "$TEST_TIMEOUT" "$PY" "$k" 2>&1); rc=$?
+  [ $rc -ne 0 ] || refuse "--known-red $k is GREEN on main ${OLD:0:12}: if it is red at B, the range made it red"
+  BASE_RC[$k]=$rc; BASE_FAILS[$k]=$(failset "$out")
+  echo "land: known-red $k on main ${OLD:0:12}: rc $rc, $(printf '%s' "${BASE_FAILS[$k]}" | grep -c .) failing line(s)"
+done
+
 git merge -q --ff-only "$B_SHA" || refuse "git merge --ff-only failed"
 echo "land: main ${OLD:0:12} -> ${B_SHA:0:12}"
 RED=0; RESULTS=()
@@ -94,6 +113,17 @@ for t in "${TESTS[@]}"; do
     mutants_*.py) summary="$(printf '%s\n' "$out" | grep -c '^\s*CAUGHT') CAUGHT by the probe";;
     *)            summary=$(printf '%s\n' "$out" | grep -v '^\s*$' | tail -1 | cut -c1-80);;
   esac
+  if [ $rc -ne 0 ] && [ -n "${BASE_RC[$t]+x}" ]; then
+    now=$(failset "$out"); new=$(comm -23 <(printf '%s\n' "$now" | grep .) <(printf '%s\n' "${BASE_FAILS[$t]}" | grep .))
+    if [ -z "$new" ] && { [ -n "$now" ] || [ "$rc" -eq "${BASE_RC[$t]}" ]; }; then
+      echo "  ⚠ $t: rc $rc KNOWN-RED (main ${OLD:0:12}: rc ${BASE_RC[$t]}; every failing line was red there too):"
+      printf '%s\n' "$now" | grep . | sed 's/^/      /'
+      RESULTS+=("$(basename "$t") rc $rc KNOWN-RED (main rc ${BASE_RC[$t]})"); continue
+    fi
+    echo "  ✗ $t: rc $rc, KNOWN-RED refused: failing lines main did not print:"
+    printf '%s\n' "${new:-<none: a different rc with no failing line>}" | sed 's/^/      /'; RED=1
+    RESULTS+=("$(basename "$t") rc $rc"); continue
+  fi
   if [ $rc -eq 0 ]; then echo "  ✓ $t: rc 0 ($summary)"
   else echo "  ✗ $t: rc $rc"; printf '%s\n' "$out" | tail -15 | sed 's/^/      /'; RED=1; fi
   RESULTS+=("$(basename "$t") rc $rc")
