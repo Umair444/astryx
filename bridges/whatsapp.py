@@ -44,6 +44,7 @@ from fastapi import FastAPI, Request, Response
 from .embed_root import Refused, owner_only, read_checked
 from .common import (HERE, MEDIA_DIR, Outcome, route_target, describe_media,
                      env, listen, load_routes,
+                     reacted_message, reaction_signal,
                      record_poll, resolve_quoted_body, split_files, split_polls,
                      step_line, update_poll_votes, vote_body, vote_changes, wire_insert,
                      door_open, door_org_ok, live_steps_ok, released)
@@ -339,6 +340,34 @@ async def hook(request: Request):
 
     if m.get("FromMe"):
         return {"ok": True}                       # our own sends echo back; drop
+
+    # ---- reactions (goal 15, owner-added): wacli flattens a whatsmeow reaction to
+    # ReactionToID (the id of the message reacted TO) + ReactionEmoji (empty string = the
+    # reaction was REMOVED). A reaction carries no Text, so it must be handled HERE, before
+    # the `if not text` drop below that would otherwise discard it (why 0 intent='reaction'
+    # rows ever existed on wa: threads). FromMe is already dropped above — we don't signal
+    # our own reactions. Mirrors the Discord/Telegram branches: resolve the reacted-to
+    # message's agent + snippet from what we stored when we SENT it (delivery.message_id),
+    # then deliver one wire signal (intent='reaction') to that agent.
+    rt = m.get("ReactionToID") or ""
+    if rt:
+        remoji = (m.get("ReactionEmoji") or "").strip()
+        if not remoji:
+            return {"ok": True}                   # a removal — nothing to signal
+        if msgid and msgid in seen_msgids:
+            return {"ok": True}                   # wacli re-posted this reaction event; signal once
+        r_jid = jid_str(m.get("SenderJID"))
+        r_trusted = r_jid in route.get("trusted_jids", [])
+        if not r_trusted and not route.get("open"):
+            return {"ok": True}                   # closed surface: trusted reactors only
+        if msgid:
+            seen_msgids[msgid] = now
+        who = "owner" if r_trusted else \
+            f"wa-{''.join(c for c in r_jid.split('@')[0] if c.isdigit()) or 'unknown'}"
+        agent, snippet = await reacted_message(pool, f"wa:{chat}", rt)
+        await reaction_signal(pool, "whatsapp", f"wa:{chat}", who,
+                              remoji, agent or route["agent"], snippet)
+        return {"ok": True}
 
     text = (m.get("Text") or "").strip()
     # media rides as a nested object in the webhook payload: Media.Type
