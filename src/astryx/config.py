@@ -110,6 +110,10 @@ def _check_pair(v: str, src: str, path, environ) -> None:
     db = info.get("dbname") or info.get("user")
     if not db or db in orgs.NEVER_ORG_DB or db == info.get("user"):
         raise ForeignDSN(f"the DSN in {src} binds {db!r}: libpq's default database, never an org's (correction 1)")
+    if any(e["db"] == info.get("user") for e in reg.values()):
+        # correction 1(ii): an org whose database is the superuser's NAME is what `psql ""` + PGHOST/PGUSER binds
+        raise ForeignDSN("the org registry names a database called after the database user: libpq's default "
+                         "database, which an empty DSN reaches (correction 1(ii))")
     home = Path(path).parent if path else paths.home()
     mine = orgs.org_of(home, environ)
     owner = next((o for o, e in reg.items() if e["db"] == db), None)
