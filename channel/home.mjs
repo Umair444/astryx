@@ -27,12 +27,23 @@ export function registry(env = process.env) {
   try { text = readFileSync(p, 'utf8') } catch (e) { if (e.code === 'ENOENT') return null; throw new Error(`org registry ${p} unreadable`) }
   let orgs
   try { orgs = JSON.parse(text).orgs } catch { orgs = null }
-  if (!orgs || typeof orgs !== 'object' || !Object.keys(orgs).length) throw new Error(`org registry ${p} is malformed`)
-  const out = {}
+  if (!orgs || typeof orgs !== 'object' || Array.isArray(orgs) || !Object.keys(orgs).length)
+    throw new Error(`org registry ${p} is malformed`)
+  // orgs.load's rules, each one (a2 #58917 A-1: a registry python refuses, node must refuse too; tests/org_registry_cases.json
+  // holds the cases both runtimes must classify identically)
+  const out = {}, homes = Object.create(null), dbs = Object.create(null)   // no prototype: a db named "constructor" is a name
   for (const [o, e] of Object.entries(orgs)) {
-    if (!e || typeof e.home !== 'string' || !e.home.startsWith('/') || typeof e.db !== 'string' || !e.db)
+    if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(o) || !e || typeof e !== 'object' || Array.isArray(e))
+      throw new Error(`org registry ${p}: bad entry ${JSON.stringify(o)}`)
+    if (typeof e.home !== 'string' || !e.home.startsWith('/') || typeof e.db !== 'string' || !e.db)
       throw new Error(`org registry ${p}: ${o} needs an absolute home and a db`)
-    out[o] = { home: real(e.home), db: e.db }
+    const h = real(e.home)
+    if (e.db === 'postgres' || e.db.startsWith('astryx_fx_'))
+      throw new Error(`org registry ${p}: ${o}'s database '${e.db}' is libpq's fallback or a fixture's`)
+    if (h in homes || e.db in dbs)
+      throw new Error(`org registry ${p}: ${o} shares a home or database with ${homes[h] || dbs[e.db]}`)
+    homes[h] = o; dbs[e.db] = o
+    out[o] = { home: h, db: e.db }
   }
   return out
 }

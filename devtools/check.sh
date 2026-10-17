@@ -693,6 +693,7 @@ run "init.sh trigger installs: by NAME through the helper, never over a retireme
 run "org home: each org process binds its own HOME, DSN and law; the backup is the org's; one org is unchanged" "$PY" tests/test_org_home.py
 run "org home pane: an org-B resident's environment is built from HOME-B, none of org A's names" "$PY" tests/test_org_home_pane.py
 run "org census: no org-state read outside the resolvers; the estate and environment partitions are total" "$PY" tests/test_org_home_census.py
+run "org registry parity: orgs.py and home.mjs reach the same written verdict on every registry case (a2 A-1)" "$PY" tests/test_org_registry_parity.py
 
 run "A2A card canonicalisation (JCS)" "$PY" tests/test_card_canon.py
 # the org economy: G = W/(Φ·K), value enters only at the boundary (goals.done_at),

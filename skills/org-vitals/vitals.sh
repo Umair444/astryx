@@ -23,6 +23,9 @@
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# org-home guard (plan-11324 S3a, a2 #58917 R-2): one-org only (every panel reads this checkout's estate: .env, backups/);
+# on a multi-org host it refuses first (exit 3: the one exception to "exit 0 always", a panel it cannot read honestly).
+if [ -e "${ASTRYX_ORG_REGISTRY:-/etc/astryx/orgs.json}" ]; then _g=0; "$ROOT"/venv/bin/python "$ROOT"/src/astryx/orgs.py multi || _g=$?; [ "$_g" = 1 ] || { echo "vitals.sh: this host runs several orgs (or its org registry refuses): one-org only, refusing" >&2; exit 3; }; fi
 cd "$ROOT" || { echo "cannot cd to repo root $ROOT"; exit 2; }
 DSN="$(grep -E '^ASTRYX_DSN=' .env | cut -d= -f2- | tr -d '"'\''')"
 q() { psql "$DSN" -tAc "$1" 2>&1; }

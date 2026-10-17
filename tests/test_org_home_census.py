@@ -76,10 +76,22 @@ def main():
         (t / ".gitignore").write_text("bridges/estate_reader.py\n")
         for f in ("estate_reader.py", "new_reader.py"):
             (t / "bridges" / f).write_text('import os\nDSN = os.environ.get("ASTRYX_DSN")\n')   # org-home: a fixture reader the control plants
+        # the walk is DERIVED (a2 #58917 R-1): a top-level directory nobody listed is read, by default
+        (t / "newroot").mkdir()
+        (t / "newroot" / "reader.py").write_text('import os\nDSN = os.environ.get("ASTRYX_DSN")\n')   # org-home: a fixture reader the control plants
+        # two shell forms the grammar must read (R-2's vitals.sh): a QUOTED command substitution, and a `:-` default
+        (t / "newroot" / "panel.sh").write_text('#!/bin/bash\ncd "$ROOT"\nD="$(ls -t backups/*.dump 2>/dev/null)"\n'
+                                                'S="${STAMP:-backups/.last-check}"\n')
         subprocess.run(["git", "init", "-q", str(t)], check=True)
-        hit = sorted(r["file"] for r in oc.census(t)["dsn"])
+        res_t = oc.census(t)
+        hit = sorted(r["file"] for r in res_t["dsn"])
         check("a gitignored (estate) file is not read; a new, not-ignored one is (control)",
-              hit == ["bridges/new_reader.py"], str(hit))
+              "bridges/new_reader.py" in hit and "bridges/estate_reader.py" not in hit, str(hit))
+        check("a NEW top-level directory is read by default (the walk is derived from git, never a list of roots)",
+              "newroot/reader.py" in hit, str(hit))
+        sh = sorted(r["line"] for r in res_t["estate"] if r["file"] == "newroot/panel.sh")
+        check("a quoted command substitution (\"$(ls backups/…)\") is code, not a label", 3 in sh, str(sh))
+        check("a `${X:-backups/…}` default is a path", 4 in sh, str(sh))
 
     print("\nC2 IT SEES THE CLASS (the tree before S3a):")
     if subprocess.run(["git", "-C", str(REPO), "cat-file", "-e", PRE_S3A + "^{commit}"], capture_output=True).returncode:

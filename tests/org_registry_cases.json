@@ -1,0 +1,23 @@
+{
+ "_": "plan-11324 S3a (a2 #58917 A-1): org registries, each with the verdict BOTH runtimes must reach: src/astryx/orgs.py load() and channel/home.mjs registry(). The expectation is written here, from orgs.py's stated rules, never computed from either reader. {T} is the oracle's temp dir. Verdicts: none (no registry: one org), orgs:N (N registered), refused.",
+ "cases": [
+  {"name": "absent file", "absent": true, "expect": "none"},
+  {"name": "two valid orgs", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a"}, "fxb": {"home": "{T}/b", "db": "fxorg_b"}}}, "expect": "orgs:2"},
+  {"name": "one org", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a"}}}, "expect": "orgs:1"},
+  {"name": "not json", "text": "{not json", "expect": "refused"},
+  {"name": "no orgs key", "registry": {"org": {}}, "expect": "refused"},
+  {"name": "empty orgs", "registry": {"orgs": {}}, "expect": "refused"},
+  {"name": "orgs is an array", "registry": {"orgs": [{"home": "{T}/a", "db": "fxorg_a"}]}, "expect": "refused"},
+  {"name": "an entry is an array", "registry": {"orgs": {"fxa": ["{T}/a", "fxorg_a"]}}, "expect": "refused"},
+  {"name": "bad name (upper case)", "registry": {"orgs": {"FxA": {"home": "{T}/a", "db": "fxorg_a"}}}, "expect": "refused"},
+  {"name": "bad name (leading dash)", "registry": {"orgs": {"-fxa": {"home": "{T}/a", "db": "fxorg_a"}}}, "expect": "refused"},
+  {"name": "relative home", "registry": {"orgs": {"fxa": {"home": "a", "db": "fxorg_a"}}}, "expect": "refused"},
+  {"name": "no db", "registry": {"orgs": {"fxa": {"home": "{T}/a"}}}, "expect": "refused"},
+  {"name": "empty db", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": ""}}}, "expect": "refused"},
+  {"name": "db is libpq's postgres", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "postgres"}}}, "expect": "refused"},
+  {"name": "db is a fixture's", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "astryx_fx_x"}}}, "expect": "refused"},
+  {"name": "two orgs share a db", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_s"}, "fxb": {"home": "{T}/b", "db": "fxorg_s"}}}, "expect": "refused"},
+  {"name": "two orgs share a home (one spelled with a trailing slash)", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a"}, "fxb": {"home": "{T}/a/", "db": "fxorg_b"}}}, "expect": "refused"},
+  {"name": "a db named like an object property", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "constructor"}, "fxb": {"home": "{T}/b", "db": "toString"}}}, "expect": "orgs:2"}
+ ]
+}

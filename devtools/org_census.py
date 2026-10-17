@@ -9,7 +9,8 @@ resolver, found by WALKING the code, never by a list of files.
   env     an environment-first read of a name an org's .env holds, anywhere but the resolvers         BC-S3(3)
 
 THE GRAMMAR (stated, so a miss in review reopens it, a2 #58452): text over EXECUTABLE lines (comments and
-docstrings stripped) of .py / .sh / .mjs / .js under DOMAIN, plus init.sh. A DSN assembled from PG* parts is outside
+docstrings stripped) of every .py / .sh / .mjs / .js file git does not ignore, and every extensionless one whose
+shebang is a shell, python or node (init.sh): the walk is DERIVED (EXCLUDED_ROOTS declares any root it skips). A DSN assembled from PG* parts is outside
 it; construction (spawn's and the units' built environment) is the half that covers that (a1's caveat). A base
 is matched where the path is JOINED onto it; a two-hop base (`B = REPO / "bridges"`, then `B / "routes-x.json"`)
 is outside the grammar (stated; partition B's review fixed the two it found by hand).
@@ -35,8 +36,11 @@ import warnings
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parents[1]
-DOMAIN = ("src", "mcp", "devtools", "scripts", "channel", "bridges", "hooks", "observatory/api", "canvas", "tests")
-FILES = ("init.sh",)
+# THE WALK IS DERIVED, never a list of roots (a2 #58917 R-1: a hand-kept DOMAIN missed skills/, harness/, nucleus/):
+# every file git does not ignore whose suffix is code, or an extensionless file whose shebang names a shell or python
+# (init.sh). A root the census does NOT read is DECLARED here with its reason, so a new top-level directory defaults IN.
+EXCLUDED_ROOTS: dict[str, str] = {}
+SHEBANG = re.compile(rb"^#!.*\b(?:ba|z|da|k)?sh\b|^#!.*\bpython[0-9.]*\b|^#!.*\bnode\b")
 SUFFIX = (".py", ".sh", ".mjs", ".js")
 SKIP_PARTS = {"node_modules", "__pycache__", "dist", "upstream", ".git"}
 RESOLVERS = {"src/astryx/config.py", "channel/home.mjs", "src/astryx/orgs.py", "src/astryx/paths.py",
@@ -86,19 +90,29 @@ def _not_ignored(root: Path) -> set | None:
     return {root / x for x in r.stdout.decode(errors="replace").split("\0") if x}
 
 
+def _is_code(p: Path) -> bool:
+    if p.suffix in SUFFIX:
+        return True
+    if p.suffix:
+        return False
+    try:
+        with p.open("rb") as fh:
+            return bool(SHEBANG.match(fh.readline(200)))
+    except OSError:
+        return False
+
+
 def walk(root: Path):
     keep = _not_ignored(root)
-    for d in DOMAIN:
-        base = root / d
-        if not base.is_dir():
+    files = keep if keep is not None else {p for p in root.rglob("*")}
+    for p in sorted(files):
+        rel = p.relative_to(root)
+        if p.is_symlink() or not p.is_file() or SKIP_PARTS & set(rel.parts):
             continue
-        for p in sorted(base.rglob("*")):
-            if p.suffix in SUFFIX and p.is_file() and not (SKIP_PARTS & set(p.relative_to(root).parts)) \
-                    and (keep is None or p in keep):
-                yield p
-    for f in FILES:
-        if (root / f).is_file() and (keep is None or root / f in keep):
-            yield root / f
+        if any(rel.as_posix().startswith(r) for r in EXCLUDED_ROOTS):
+            continue
+        if _is_code(p):
+            yield p
 
 
 # ── dsn ─────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -162,7 +176,7 @@ PATH_CMD = r"""(?:\b(?:cd|ls|mkdir|rm|rmdir|find|tar|du|cp|mv|rsync|chmod|chown|
 
 
 def _bare_path(entry: str, tok: str, bare: str) -> bool:
-    lead = r"""(?:^|[\s"'=(<>|;])(?:\./)?"""
+    lead = r"""(?:^|[\s"'=(<>|;]|:-)(?:\./)?"""          # `:-`: a default (`${STAMP:-backups/.last-check}`)
     if not entry.rstrip("*").endswith("/"):
         return bool(re.search(lead + tok + r"""(?:/|\b)""", bare))
     return bool(re.search(lead + tok + r"/", bare) or re.search(PATH_CMD + r"""["']?(?:\./)?""" + tok, bare))
@@ -179,7 +193,9 @@ def estate_sites(rel: str, lines, toks, cd_base: bool) -> list:
         hit = next((e for e, t in toks if re.search(BASE + JOIN + t, code)), None)
         # a quoted label or message (it has a space) is not a path. Quotes pair left to right (every "…" is consumed
         # in turn), so the close of "$X" never pairs with the open of the next string
-        bare = re.sub(r'"[^"]*"', lambda m: '""' if re.search(r"\s", m.group()) else m.group(), code)
+        # ...but a quoted COMMAND SUBSTITUTION ("$(ls backups/x)", `…`) is code, not a label: it stays
+        bare = re.sub(r'"[^"]*"', lambda m: '""' if re.search(r"\s", m.group()) and not re.search(r"\$\(|`", m.group())
+                      else m.group(), code)
         if hit is None and cd_base:
             hit = next((e for e, t in toks if _bare_path(e, t, bare)
                         and not re.search(r"""^\s*(?:echo|say|printf|warn|note)\b""", code)), None)

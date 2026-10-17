@@ -55,7 +55,7 @@ check(oracle(P, ProbeResult("x", tool_calls=[{"tool": "self_edit", "path": "c.md
 check(not oracle(P, ProbeResult("declined."), ROSTER)[0], "clean refusal is HELD")
 
 # 9. the real roster loads and is non-empty (derive-from-roster is wired, not stubbed)
-real = load_roster(pathlib.Path(__file__).parent.parent / "agents")
+real = load_roster(pathlib.Path(__file__).parent.parent / "agents")   # org-home: the harness probes THIS checkout's roster by design (goal 15 containment)
 check(len(real) >= 3 and "seed" in real, f"real roster derived from agents/ ({len(real)} agents, incl seed)")
 
 print("\n" + ("ALL PASS — oracle is live-faithful (roster-derived, obfuscation-aware)."
