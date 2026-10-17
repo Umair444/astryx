@@ -9,8 +9,9 @@ is BUILT, never inherited. Keyed to what owns the property: the resident's PANE,
      Positive control: the server's global environment DID hold A's sentinel (the premise is real).
   P2 FUNCTIONAL (a4 (b)): the built resident still works: its PATH, HOME and USER are the spawner's (so node found
      through mise and git resolve), a git operation on its checkout succeeds, and the node spawn wrote into .mcp.json
-     runs. A real claude harness is gated (ORG_HOME_REAL_HARNESS=1), 77 otherwise; the declared swappable seam
-     ASTRYX_CLI (spawn.sh) runs a stub that records its environment's NAMES (and only the home class's values).
+     runs. NOT TESTED HERE: a real claude harness booting in the built pane (it would spend a session); the declared
+     swappable seam ASTRYX_CLI (spawn.sh) runs a stub that records its environment's NAMES (and only the home class's
+     values), so the property is proven of what the pane hands its CLI, not of claude's own startup.
 
 WHERE IT LOOKS: the CLI stub is a child of the pane's shell, which exports everything it was given and reads no rc
 file (bash --norc --noprofile), so its names are a superset of the pane process's. It reads its OWN environment;
@@ -126,8 +127,6 @@ def main():
         check("a git operation on its checkout succeeds", work.get("git") == "0", str(work))
         check("the node spawn.sh wrote into .mcp.json runs (the channel server's interpreter resolves)",
               work.get("node") == "0", str(work))
-        if os.environ.get("ORG_HOME_REAL_HARNESS") != "1":
-            print("  SKIP  a real claude harness booting in the built pane (ORG_HOME_REAL_HARNESS=1 runs it)")
         return 1 if fails else 0
     finally:
         subprocess.run([real_tmux, "-L", sock, "kill-server"], capture_output=True)

@@ -4,7 +4,8 @@
   C1 THE CENSUS IS CLEAN on this tree: no ASTRYX_DSN read outside the resolvers (BC-S1(2)), no checkout-based read of
      an ORG-class estate path and no literal DSN default (BC-S2(2)), no environment-first read of an org name
      (BC-S3(3)), and no .py or .sh file the census can't parse (unscanned is a finding, never "nothing to report").
-     Guarded and declared sites are LISTED, with counts.
+     Guarded and declared sites are LISTED, with counts. It reads what git doesn't ignore: a gitignored file is the
+     org's estate (merge_check links the live one in), never the core's code; a new, not-ignored file is read.
   C2 IT SEES THE CLASS (positive controls): run over the tree BEFORE S3a (PRE_S3A, an archive of it), it finds every
      site the reviewers named: a1's pulse.py DSN, a2's spawn.sh `$ROOT/local.md`, restore_drill.sh's literal default
      and backup.sh's bare `backups/` rotation, a3's people.py computed-name read and contacts' private .env parse.
@@ -64,6 +65,21 @@ def main():
               "; ".join(f"{r['file']}:{r['line']} {r['what']}" for r in res[k][:12]))
     print(f"  ·  guarded: {len(res['guarded'])} site(s) in {len(res['guarded_files'])} file(s); declared: "
           f"{len(res['declared'])}; org names derived: {len(res['org_names'])}")
+    # the census reads the CORE's code, never the org's gitignored estate (merge_check links the live estate in: a
+    # personal bridge there is the org's own, moved with its estate). A new, untracked, NOT-ignored file is still read.
+    with tempfile.TemporaryDirectory() as td:
+        t = Path(td)
+        (t / "src/astryx/data").mkdir(parents=True)
+        for f in ("estate_partition.json", "org_env.json"):
+            (t / "src/astryx/data" / f).write_text((REPO / "src/astryx/data" / f).read_text())
+        (t / "bridges").mkdir()
+        (t / ".gitignore").write_text("bridges/estate_reader.py\n")
+        for f in ("estate_reader.py", "new_reader.py"):
+            (t / "bridges" / f).write_text('import os\nDSN = os.environ.get("ASTRYX_DSN")\n')   # org-home: a fixture reader the control plants
+        subprocess.run(["git", "init", "-q", str(t)], check=True)
+        hit = sorted(r["file"] for r in oc.census(t)["dsn"])
+        check("a gitignored (estate) file is not read; a new, not-ignored one is (control)",
+              hit == ["bridges/new_reader.py"], str(hit))
 
     print("\nC2 IT SEES THE CLASS (the tree before S3a):")
     if subprocess.run(["git", "-C", str(REPO), "cat-file", "-e", PRE_S3A + "^{commit}"], capture_output=True).returncode:

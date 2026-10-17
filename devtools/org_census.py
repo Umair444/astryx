@@ -74,16 +74,30 @@ def code_lines(path: Path) -> list[tuple[int, str, str]]:
     return [(i, code[i], raw[i - 1]) for i in sorted(code) if i not in drop and code[i].strip()]
 
 
+def _not_ignored(root: Path) -> set | None:
+    """The tree's files that are NOT gitignored (tracked, or new and not ignored), or None outside a git checkout (an
+    archive of a commit, C2's tree: tracked files only by construction). A gitignored file is the ORG's estate (its
+    triggers/, a personal bridge): its code is the org's own, moved with the estate (seed's step, not S3a), and the
+    census reads only the core's. merge_check links the live estate into its tree; without this it read it."""
+    r = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+                       capture_output=True)
+    if r.returncode:
+        return None
+    return {root / x for x in r.stdout.decode(errors="replace").split("\0") if x}
+
+
 def walk(root: Path):
+    keep = _not_ignored(root)
     for d in DOMAIN:
         base = root / d
         if not base.is_dir():
             continue
         for p in sorted(base.rglob("*")):
-            if p.suffix in SUFFIX and p.is_file() and not (SKIP_PARTS & set(p.relative_to(root).parts)):
+            if p.suffix in SUFFIX and p.is_file() and not (SKIP_PARTS & set(p.relative_to(root).parts)) \
+                    and (keep is None or p in keep):
                 yield p
     for f in FILES:
-        if (root / f).is_file():
+        if (root / f).is_file() and (keep is None or root / f in keep):
             yield root / f
 
 
