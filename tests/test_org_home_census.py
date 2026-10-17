@@ -57,16 +57,9 @@ def partition_gaps(root: Path) -> list:
 
 def main():
     print("C1 THE CENSUS IS CLEAN:")
-    res = oc.census(REPO, seam_overrides())
-    for k, what in (("dsn", "ASTRYX_DSN read outside the resolvers"), ("estate", "checkout-based estate read / literal "
-                    "DSN default"), ("env", "environment-first read of an org name"),
-                   ("unparsed", "file the census can't parse (unscanned: fails closed)")):
-        check(f"no {what}: {len(res[k])}", not res[k],
-              "; ".join(f"{r['file']}:{r['line']} {r['what']}" for r in res[k][:12]))
-    print(f"  ·  guarded: {len(res['guarded'])} site(s) in {len(res['guarded_files'])} file(s); declared: "
-          f"{len(res['declared'])}; org names derived: {len(res['org_names'])}")
-    # the census reads the CORE's code, never the org's gitignored estate (merge_check links the live estate in: a
-    # personal bridge there is the org's own, moved with its estate). A new, untracked, NOT-ignored file is still read.
+    # FIRST, on a planted tree: the census reads the CORE's code, never the org's gitignored estate (merge_check links
+    # the live estate in: a personal bridge there is the org's own, moved with its estate). A new, untracked,
+    # NOT-ignored file is still read.
     with tempfile.TemporaryDirectory() as td:
         t = Path(td)
         (t / "src/astryx/data").mkdir(parents=True)
@@ -85,13 +78,27 @@ def main():
         subprocess.run(["git", "init", "-q", str(t)], check=True)
         res_t = oc.census(t)
         hit = sorted(r["file"] for r in res_t["dsn"])
-        check("a gitignored (estate) file is not read; a new, not-ignored one is (control)",
-              "bridges/new_reader.py" in hit and "bridges/estate_reader.py" not in hit, str(hit))
+        walk_ok = "bridges/new_reader.py" in hit and "bridges/estate_reader.py" not in hit
+        check("a gitignored (estate) file is not read; a new, not-ignored one is (control)", walk_ok, str(hit))
         check("a NEW top-level directory is read by default (the walk is derived from git, never a list of roots)",
               "newroot/reader.py" in hit, str(hit))
         sh = sorted(r["line"] for r in res_t["estate"] if r["file"] == "newroot/panel.sh")
         check("a quoted command substitution (\"$(ls backups/…)\") is code, not a label", 3 in sh, str(sh))
         check("a `${X:-backups/…}` default is a path", 4 in sh, str(sh))
+
+    if not walk_ok:
+        # a walk that reads gitignored files would point the live census at the org's estate (homes/, memory/, tier/:
+        # personal files, and minutes of walking: seed #59151). It is never run through a broken walk.
+        print("  ·  the live census is NOT run: its walk reads the org's gitignored estate")
+        return 1
+    res = oc.census(REPO, seam_overrides())
+    for k, what in (("dsn", "ASTRYX_DSN read outside the resolvers"), ("estate", "checkout-based estate read / literal "
+                    "DSN default"), ("env", "environment-first read of an org name"),
+                   ("unparsed", "file the census can't parse (unscanned: fails closed)")):
+        check(f"no {what}: {len(res[k])}", not res[k],
+              "; ".join(f"{r['file']}:{r['line']} {r['what']}" for r in res[k][:12]))
+    print(f"  ·  guarded: {len(res['guarded'])} site(s) in {len(res['guarded_files'])} file(s); declared: "
+          f"{len(res['declared'])}; org names derived: {len(res['org_names'])}")
 
     print("\nC2 IT SEES THE CLASS (the tree before S3a):")
     if subprocess.run(["git", "-C", str(REPO), "cat-file", "-e", PRE_S3A + "^{commit}"], capture_output=True).returncode:
