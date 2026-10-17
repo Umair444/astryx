@@ -762,6 +762,7 @@ run "library_compile + compile_lag: SQL in a fixture"  "$PY" tests/test_library_
 run "library passages + BM25 search: tier-clean, derive-at-use, DELETE-not-TRUNCATE, hand-oracle scores" "$PY" tests/test_library_passage.py
 run "library search endpoint: book/wiki mapping, plain-text marks, blank q, unavailable not 500" "$PY" tests/test_library_search_api.py
 run "people_essence: SQL in a fixture"  "$PY" tests/test_people_essence.py
+run "influence_compute: SQL in a fixture"  "$PY" tests/test_influence_compute.py
 # Class-1 of the prove-family oracle (scout, plan-15): drives all seven containment
 # verdicts BOTH ways against synthetic trees via G15_ENVF/G15_SCAN_ROOTS. Its output
 # states its own limit — decision logic only, not the real cell.
