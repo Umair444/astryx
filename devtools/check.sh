@@ -686,6 +686,13 @@ run "launch flags: a body missing the channel flag or its charter's permission m
 run "upstream PR tool: instance paths and privacy hits refused, dedup to a comment, the cap, fork or not, 77 without gh" "$PY" tests/test_upstream_pr.py
 run "upstream PR watch: each outside PR reaches medic once per head, fenced as DATA; gh trouble said once per change" "$PY" tests/test_upstream_prs.py
 run "init.sh trigger installs: by NAME through the helper, never over a retirement or a legacy row; --reinstall; census" "$PY" tests/test_init_trigger_names.py
+# plan-11324 S3a: THE ORG IS ITS HOME. On a two-org fixture registry and an estate-free checkout, every process binds
+# its own org's HOME, database and law (H1-H9); an org-B resident's pane carries none of org A's names (P1-P2); and the
+# census finds no org-state read outside the resolvers, sees the pre-S3a class, and keeps both partitions total (C1-C5).
+# Mutants: tests/mutants_org_home_*.py. With no registry (this host), nothing they test changes a byte.
+run "org home: each org process binds its own HOME, DSN and law; the backup is the org's; one org is unchanged" "$PY" tests/test_org_home.py
+run "org home pane: an org-B resident's environment is built from HOME-B, none of org A's names" "$PY" tests/test_org_home_pane.py
+run "org census: no org-state read outside the resolvers; the estate and environment partitions are total" "$PY" tests/test_org_home_census.py
 
 run "A2A card canonicalisation (JCS)" "$PY" tests/test_card_canon.py
 # the org economy: G = W/(Φ·K), value enters only at the boundary (goals.done_at),

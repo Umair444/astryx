@@ -162,13 +162,25 @@ def set_env(key: str, value: str, path: Path | None = None) -> None:
     os.chmod(p, 0o600)
 
 
+def _cli_estate(invoked: str) -> Path:
+    """The estate of a `"$ROOT/src/astryx/config.py"` call. One org: the tree the caller named, its symlinks NOT
+    followed (a fixture tree links this file from the real checkout, and `"$ROOT/.env"` was the fixture's). Several
+    orgs: the HOME (paths.estate), whoever's checkout runs the code."""
+    if _multi(os.environ):
+        return paths.estate()
+    for a in Path(os.path.abspath(invoked)).parents:
+        if (a / "src" / "astryx").is_dir():
+            return a
+    return paths.estate()
+
+
 def _main(argv) -> int:
     """`python -m astryx.config dsn|get KEY|estate`: the shell's way to the ONE resolver (spawn.sh, backup.sh, …).
     `dsn` and `get` print the value on stdout for `$(…)` capture, the way `grep '^K=' .env | cut -d= -f2-` did;
     `estate` prints the org's estate root (paths.estate())."""
     import sys
     try:
-        f = paths.estate() / ".env"      # this checkout's estate on one org (what `"$ROOT/.env"` was), else the HOME's
+        f = _cli_estate(sys.argv[0]) / ".env"   # the invoking tree's on one org (what `"$ROOT/.env"` was), else the HOME's
         if argv[:1] == ["dsn"]:
             print(dsn(f, env_first="--file" not in argv))
         elif argv[:1] == ["get"] and len(argv) >= 2:
