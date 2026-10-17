@@ -75,6 +75,8 @@ REGENERABLE = {
     "canvas/web/node_modules/":       "npm install (init.sh _act_obs)",
     "canvas/web/dist/":               "npm run build in canvas/web (init.sh _act_obs; includes the vendored kit)",
     "canvas/web/tsconfig.tsbuildinfo": "tsc build artifact",
+    "mcp/phone/upstream/node_modules/": "npm ci --ignore-scripts from the tracked package-lock.json "
+                                        "(scripts/android_setup.sh install)",
     "units/":                         "init.sh units() regenerates from runners.conf",
     "backups/":                       "the artifact itself — capturing it would recurse",
     "homes/":                         "spawn.sh regenerates .mcp.json/settings.json; "
