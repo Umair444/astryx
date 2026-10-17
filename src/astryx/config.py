@@ -57,6 +57,17 @@ def get(key: str, default: str = "", path: Path | None = None, environ: dict | N
     return read_env(path).get(key, default)
 
 
+def org_env(key: str, default=None, path: Path | None = None, environ: dict | None = None):
+    """An org name a reader took from the ENVIRONMENT only (`os.environ.get(key, default)`), routed (BC-S3(3)).
+    One org: exactly `environ.get(key, default)`, byte for byte (no .env read is added). Several orgs: the HOME's .env
+    (`path`, else the HOME's) or `default`, never the environment, which may be another org's (a3 #58597)."""
+    environ = os.environ if environ is None else environ
+    if not _multi(environ):
+        return environ.get(key, default)
+    v = read_env(path).get(key)
+    return v if v else default
+
+
 def _multi(environ) -> bool:
     from astryx import orgs
     return orgs.multi(environ)
