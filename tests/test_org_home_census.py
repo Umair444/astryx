@@ -3,7 +3,8 @@
 
   C1 THE CENSUS IS CLEAN on this tree: no ASTRYX_DSN read outside the resolvers (BC-S1(2)), no checkout-based read of
      an ORG-class estate path and no literal DSN default (BC-S2(2)), no environment-first read of an org name
-     (BC-S3(3)). Guarded and declared sites are LISTED, with counts.
+     (BC-S3(3)), and no .py or .sh file the census can't parse (unscanned is a finding, never "nothing to report").
+     Guarded and declared sites are LISTED, with counts.
   C2 IT SEES THE CLASS (positive controls): run over the tree BEFORE S3a (PRE_S3A, an archive of it), it finds every
      site the reviewers named: a1's pulse.py DSN, a2's spawn.sh `$ROOT/local.md`, restore_drill.sh's literal default
      and backup.sh's bare `backups/` rotation, a3's people.py computed-name read and contacts' private .env parse.
@@ -56,7 +57,8 @@ def main():
     print("C1 THE CENSUS IS CLEAN:")
     res = oc.census(REPO, seam_overrides())
     for k, what in (("dsn", "ASTRYX_DSN read outside the resolvers"), ("estate", "checkout-based estate read / literal "
-                    "DSN default"), ("env", "environment-first read of an org name")):
+                    "DSN default"), ("env", "environment-first read of an org name"),
+                   ("unparsed", "file the census can't parse (unscanned: fails closed)")):
         check(f"no {what}: {len(res[k])}", not res[k],
               "; ".join(f"{r['file']}:{r['line']} {r['what']}" for r in res[k][:12]))
     print(f"  ·  guarded: {len(res['guarded'])} site(s) in {len(res['guarded_files'])} file(s); declared: "

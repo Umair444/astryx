@@ -23,12 +23,15 @@ test's fixture-bound read (a4 #58439 precision 2). Everything else is a finding.
 from __future__ import annotations
 
 import argparse
+import ast
 import fnmatch
 import io
 import json
 import re
+import subprocess
 import sys
 import tokenize
+import warnings
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parents[1]
@@ -259,16 +262,37 @@ def guarded(p: Path, lines) -> bool:
     return (p.suffix == ".sh" or p.name == "init.sh") and any(GUARD.search(c) for n, c, _ in lines if n <= GUARD_LINES)
 
 
+def unparsed(path: Path, suffix: str) -> str | None:
+    """Why a file can't be READ as code, or None. The grammar scans executable lines; a file that doesn't parse has
+    none it can trust, so it is a finding of its own (fail closed), never a file with nothing to report."""
+    if suffix == ".py":
+        try:
+            with warnings.catch_warnings():          # a subject's own invalid escape is its linter's, not the census's
+                warnings.simplefilter("ignore")
+                ast.parse(path.read_text(errors="replace"))
+        except (SyntaxError, ValueError) as e:
+            return f"not python ({type(e).__name__}: line {getattr(e, 'lineno', '?')})"
+    elif suffix == ".sh":
+        r = subprocess.run(["bash", "-n", str(path)], capture_output=True, text=True)
+        if r.returncode:
+            return f"bash -n: {r.stderr.strip()[:80]}"
+    return None
+
+
 def census(root: Path, overrides: dict | None = None) -> dict:
     """`overrides` {repo-relative path: file}: read that file's text in place of the tree's (mutation seams)."""
     toks = [(e, estate_token(e)) for e in estate_entries(root)]
     names = org_names(root)
     readers = [(n, env_read(n)) for n in sorted(names)]
-    res = {"dsn": [], "estate": [], "env": [], "declared": [], "guarded": [], "guarded_files": [],
+    res = {"dsn": [], "estate": [], "env": [], "unparsed": [], "declared": [], "guarded": [], "guarded_files": [],
            "org_names": sorted(names)}
     for p in walk(root):
         rel = p.relative_to(root).as_posix()
-        lines = code_lines(Path((overrides or {}).get(rel, p)))
+        src = Path((overrides or {}).get(rel, p))
+        bad = unparsed(src, p.suffix)
+        if bad:
+            res["unparsed"].append({"kind": "unparsed", "file": rel, "line": 0, "what": bad})
+        lines = code_lines(src)
         cd_base = p.suffix == ".sh" and any(CD_BASE.search(c) for _, c, _ in lines) or rel == "init.sh"
         g = guarded(p, lines)
         if g:
@@ -292,7 +316,7 @@ def main(argv=None) -> int:
         print(json.dumps(res, indent=1))
     else:
         print(f"org names derived from the code's .env writers and readers: {len(res['org_names'])}")
-        for k in ("dsn", "estate", "env"):
+        for k in ("dsn", "estate", "env", "unparsed"):
             print(f"{k}: {len(res[k])} finding(s)")
             for r in res[k]:
                 print(f"  {r['file']}:{r['line']}  {r['what']}")
@@ -301,7 +325,7 @@ def main(argv=None) -> int:
         print(f"declared (org-home: …): {len(res['declared'])}")
         for r in res["declared"]:
             print(f"  {r['kind']:6} {r['file']}:{r['line']}  {r['what']}")
-    return 1 if any(res[k] for k in ("dsn", "estate", "env")) else 0
+    return 1 if any(res[k] for k in ("dsn", "estate", "env", "unparsed")) else 0
 
 
 if __name__ == "__main__":
