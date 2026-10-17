@@ -46,6 +46,15 @@ from pathlib import Path
 from astryx import trigger
 
 REPO = repo_root(__file__)
+
+
+def _estate():
+    """The org's estate, read at CALL time: REPO on one org (exactly what it was, an oracle's `H.REPO = tmp` rebinding
+    included: save() then writes the tmp tree, never the live homes/), the HOME on a multi-org host (plan-11324 S3a)."""
+    from astryx import orgs
+    return paths.home() if orgs.multi() else REPO
+
+
 HEAL_PER_TICK = 4
 CRASH_MAX = 3
 CRASH_WINDOW_S = 1800
@@ -92,7 +101,7 @@ def spawn(name: str, script: Path | None = None) -> tuple[bool, str]:
     """LAUNCH spawn.sh detached and return at once: a boot waits up to a minute on its dialogs, and pulse kills any check
     past 30s, taking this tick's crash-loop count with it (10-14: 4 spawns a tick timed out every tick). A launch that
     dies leaves no body; the next tick sees that and the crash-loop guard counts it. Its output is in the log named."""
-    log = paths.estate(__file__) / "var" / "agent_heal" / f"{name}.spawn.log"
+    log = _estate() / "var" / "agent_heal" / f"{name}.spawn.log"
     try:
         log.parent.mkdir(parents=True, exist_ok=True)
         with open(log, "wb") as f:
@@ -154,7 +163,7 @@ def ears(proc: str = "/proc") -> dict[str, int] | None:
 
 def _dsn() -> str:
     try:
-        return config.dsn(paths.estate(__file__) / ".env")
+        return config.dsn(_estate() / ".env")
     except LookupError:
         return ""
 
@@ -201,7 +210,7 @@ def idle(text: str) -> bool:
 def pane_file(name: str, now: float) -> Path:
     """Where a deaf body's pane is kept: its own (gitignored) home, DOT-named so no [[file:]] embed can carry it to any
     surface (bridges/embed_root refuses every dot-path under a home; a pane can show tier content, steward MC-1)."""
-    return paths.estate(__file__) / "homes" / name / f".deaf-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime(now))}.pane"
+    return _estate() / "homes" / name / f".deaf-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime(now))}.pane"
 
 
 def save(name: str, text: str, now: float) -> Path:

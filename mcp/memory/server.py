@@ -127,6 +127,11 @@ def window(text: str, query: str, width: int = 2400) -> str:
 
 # ── config ───────────────────────────────────────────────────────────────────────────
 def _env(key: str) -> str | None:
+    if key == "ASTRYX_DSN":          # the ONE resolver (plan-11324 S3a): the pair checked on a multi-org host
+        try:
+            return config.dsn(paths.estate(__file__) / ".env")
+        except LookupError:
+            return None
     v = config.org_env(key)          # the environment on one org, exactly; the HOME's .env on several (plan-11324 S3a)
     if v:
         return v.strip()
@@ -143,10 +148,7 @@ def retrieve(query: str, topk: int = 5, hop: int = 4) -> tuple[list[dict], list[
     """-> (cited_pages, synthesis_context). cited = the top scored pages; context = those
     plus their admitted one-hop neighbours (bodies resolved from the corpus, which carries
     every admitted body). Returns ([], []) on no match."""
-    try:
-        dsn = config.dsn(paths.estate(__file__) / ".env")     # the ONE resolver (plan-11324 S3a)
-    except LookupError:
-        dsn = None
+    dsn = _env("ASTRYX_DSN")
     if not (psycopg and dsn):
         return [], []
     # read-only BY CONSTRUCTION, not only by content (a3 #39182 BC-1): a write verb here fails in postgres.

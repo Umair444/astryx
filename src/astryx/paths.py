@@ -101,13 +101,26 @@ def home() -> Path:
 
 def estate(file: str | Path | None = None) -> Path:
     """The root of the ORG's estate (.env, local.md, agents/, homes/, triggers/, …: data/estate_partition.json's org
-    class), for a module at `file` (plan-11324 S3a BC-S2). One org: exactly `repo_root(file)`, what every
-    `REPO / ".env"` meant until now, a fake tree loaded by path included. Several orgs: the HOME, because the core
-    checkout carries no estate there. Every estate read builds on THIS (devtools/org_census.py)."""
+    class), for a module at `file` (plan-11324 S3a BC-S2). One org: the root of the FILE's own tree, what every
+    `REPO / ".env"` (REPO = `parents[n]`) meant until now, a fake tree loaded by path included: the nearest ancestor
+    holding src/astryx/ (repo_root's rule), else, for a copy in a tree with no package (an oracle's bare tree), the
+    ancestor whose path down to the file is the file's own path in the code tree. Never ANOTHER tree's estate (the
+    package's, as repo_root falls back to): a copy that matches neither raises NoHome. Several orgs: the HOME, because
+    the core checkout carries no estate there. Every estate read builds on THIS (devtools/org_census.py)."""
     from astryx import orgs
     if orgs.multi():
         return home()
-    return repo_root(file)
+    if file is None:
+        return repo_root()
+    f = Path(file).resolve()
+    for a in f.parents:
+        if (a / "src" / "astryx").is_dir() or (a / "astryx.py").is_file():
+            return a
+    base = repo_root()
+    for k in range(len(f.parts) - 1, 0, -1):         # the LONGEST tail that is a code-tree file (mcp/gmail/server.py,
+        if (base / Path(*f.parts[-k:])).is_file():    # never a top-level server.py)
+            return f.parents[k - 1]
+    raise NoHome(f"{f} is in no astryx tree: no estate to read")
 
 
 def code() -> Path:

@@ -23,7 +23,9 @@
   H9 BACKUP IS THE ORG'S (BC-S2 arm b): scripts/backup.sh run for org A (pg_dump/pg_dumpall/pg_isready are PATH
      shims: no real dump) dumps A's DSN into HOME-A/backups and rotates ONLY A's: B's dumps are untouched (names,
      sizes, mtimes), and the checkout gets no backups/. Positive control: A's own old dumps WERE rotated.
-Seams: org_home_fixture.SEAMS (a mutant subject copied over its file in the checkout). Exit 0 · 1 · 77 (no DB / no git).
+Seams: org_home_fixture.SEAMS (a mutant subject copied over its file in the checkout): ORG_HOME_CONFIG_SRC,
+ORG_HOME_PATHS_SRC, ORG_HOME_ORGS_SRC, ORG_HOME_MJS_SRC, ORG_HOME_SPAWN_SRC, ORG_HOME_INIT_SRC, ORG_HOME_BACKUP_SRC.
+Exit 0 · 1 · 77 (no DB / no git).
 """
 import json
 import os

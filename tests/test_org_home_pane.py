@@ -17,8 +17,8 @@ file (bash --norc --noprofile), so its names are a superset of the pane process'
 nothing here reads another process's /proc/<pid>/environ (a standing rule of this builder), and the sentinels and
 fixture DSNs carry no secret.
 
-Seams: org_home_fixture.SEAMS (spawn.sh, orgenv.py, data/org_env.json, …: a mutant copied over its file in the
-fixture checkout). Exit 0 · 1 · 77 (no DB, no git, no tmux).
+Seams: org_home_fixture.SEAMS (a mutant copied over its file in the fixture checkout): ORG_HOME_SPAWN_SRC,
+ORG_HOME_ORGENV_SRC, ORG_HOME_CLASSES_SRC. Exit 0 · 1 · 77 (no DB, no git, no tmux).
 """
 import json
 import os

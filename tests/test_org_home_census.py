@@ -15,7 +15,8 @@
      no derived org name sits in a PASS class; an unclassed name FAILS (a mutant environment goes red).
   C5 GUARDS RUN FIRST: each guarded file's prefix (through its guard) exits non-zero under a two-org registry and 0
      with none, and nothing executable precedes the guard but the declared preamble.
-Seams: ORG_CENSUS_SRC (a mutant census) and org_home_fixture.SEAMS (a mutant subject the census reads in place). Exit 0 · 1 · 77 (PRE_S3A absent from this clone: C2 only).
+Seams: ORG_CENSUS_SRC (a mutant census) and org_home_fixture.SEAMS (a mutant subject the census reads in place:
+ORG_HOME_PULSE_SRC, ORG_HOME_SPAWN_SRC). Exit 0 · 1 · 77 (PRE_S3A absent from this clone: C2 only).
 """
 import importlib.util
 import json
