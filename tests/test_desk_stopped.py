@@ -5,8 +5,10 @@ the viewer count (the substrate the guard reads), and the trigger's one wake to 
 The body is gitignored: DESK_STOPPED_SRC names a staged copy. Absent both, this SKIPS LOUDLY (77)."""
 from __future__ import annotations
 
+import atexit
 import os
 import runpy
+import shutil
 import socket
 import sys
 import tempfile
@@ -114,6 +116,7 @@ check("an empty log: the flag's mtime", stop_since([], T0 + 7) == T0 + 7)
 
 print("read_desks (a fake hands_desktop):")
 tmp = Path(tempfile.mkdtemp(prefix="desk_stopped."))
+atexit.register(shutil.rmtree, tmp, True)           # every exit path through sys.exit; /tmp is tmpfs (medic #59287)
 
 
 class HD:
@@ -165,6 +168,7 @@ srv.listen(4)
 port = srv.getsockname()[1]
 n0 = viewers(port)
 seatdir = Path(tempfile.mkdtemp(prefix="desk_seat."))
+atexit.register(shutil.rmtree, seatdir, True)
 SEAT_FILE = seatdir / M["SEAT"]                    # the guard's own constant, not a second spelling of the name
 SEAT_FILE.write_text(                              # the desk's own seat: a permanent client that is never a watcher
     "import socket, sys, time\ns = socket.create_connection(('127.0.0.1', int(sys.argv[1])))\nprint('up', flush=True)\n"
