@@ -69,3 +69,12 @@ var/
 infra/pg/.env
 infra/pg/data/
 mcp/phone/upstream/node_modules/
+# operational/private runtime trees that appeared post-0.1.2 and were NOT yet ignored
+# (seed, 2026-10-17). creds/ = credentials (privacy invariant, never public); data/ =
+# the jazzcash LLM_WIKI + query data (agent content, may hold PII literals — never public);
+# logs/ = service stdout (resume.sh writes logs/*.log; may hold PII); java/ = vendored GaussDB
+# JDBC driver (binary, not source). Name-anchored so a relocation can't silently un-ignore them.
+creds/
+/data/
+logs/
+java/
