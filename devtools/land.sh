@@ -28,10 +28,17 @@
 # KNOWN-RED (seed night-review 10-18; a4 #56861's LIMIT, hit on 10-16 and again on S3a 10-18, both landed by an unreviewed
 # hand script): `--known-red tests/test_x.py` names a test_*.py already red on MAIN. It is MEASURED, never declared: the
 # base's version runs on main BEFORE the merge (green there = refused: the range would be what made it red), and after
-# the merge B's run passes as KNOWN-RED only if every failing line it prints (FAIL / ✗ / NOT RUN, trimmed) was also
-# printed by the base run, so a range may NARROW a red test but never add a failure to it. A mutants file can't be
-# known-red (a NOT PROBED mutant is the range's own debt). LIMIT: it compares the verdict LINES, not detail printed
-# under them (a FAIL whose list grew reads unchanged); both sides' failing lines are printed for the reviewer.
+# the merge B's run passes as KNOWN-RED only if every failing line it prints (FAIL*, ✗, ✘, NOT RUN; trimmed) was also
+# printed by the base run, so a range may NARROW a red test but never add a failure to it. A whitelist of failure
+# spellings fails OPEN on any other shape (a4 #59276), so three more refusals close it: B printed a Traceback main
+# didn't (a crash, at import or mid-run, prints no FAIL line); B printed FEWER verdict lines (PASS/FAIL*/SKIP/✓/✗/✘/
+# NOT RUN) than main (an arm that crashed or was deleted looks exactly like one that was fixed); and B printing NO
+# failing line while still non-zero passes only where main printed none either and the rc is the same (the skip). A
+# mutants file can't be known-red (a NOT PROBED mutant is the range's own debt).
+# LIMIT: verdict LINES are compared, not detail printed under them (a FAIL whose list grew reads unchanged), and a FAIL
+# line carrying run-specific detail (a pid, a tmp path, check()'s [detail] tail) never matches across sides, so that
+# test can't be known-red at all (refused: closed, not open). An honest range that narrows AND retires an arm is
+# refused on the count; that one lands with a reviewer's measurement, not here. Both sides' lines are printed.
 set -uo pipefail
 die() { echo "land: $*"; exit 2; }
 refuse() { echo "land: REFUSED: $*"; exit 1; }
@@ -87,8 +94,10 @@ for t in ${EXTRA[@]+"${EXTRA[@]}"}; do
 done
 [ ${#TESTS[@]} -gt 0 ] || refuse "the range touches no tests/test_*.py or tests/mutants_*.py and no --test was given"
 
-failset() { printf '%s\n' "$1" | grep -E '^[[:space:]]*(FAIL|✗|NOT RUN)([[:space:]:(]|$)' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | sort -u; }
-declare -A BASE_RC=() BASE_FAILS=()
+failset() { printf '%s\n' "$1" | grep -E '^[[:space:]]*(FAIL[A-Za-z]*|✗|✘|NOT RUN)([[:space:]:(]|$)' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | sort -u; }
+verdicts() { printf '%s\n' "$1" | grep -cE '^[[:space:]]*(PASS|FAIL[A-Za-z]*|SKIP|✓|✗|✘|NOT RUN)([[:space:]:(]|$)'; }
+crashes() { printf '%s\n' "$1" | grep -c '^Traceback (most recent call last)'; }
+declare -A BASE_RC=() BASE_FAILS=() BASE_N=() BASE_TB=()
 for k in ${KNOWN[@]+"${KNOWN[@]}"}; do
   k=$(realpath -m --relative-to=. "$k")                             # spelled as TESTS are
   case "$(basename "$k")" in test_*.py) ;; *) die "--known-red $k: only a tests/test_*.py can be known-red (a mutant NOT PROBED is the range's own debt)";; esac
@@ -96,8 +105,8 @@ for k in ${KNOWN[@]+"${KNOWN[@]}"}; do
   [ -f "$k" ] || refuse "--known-red $k has no version on main: red on main can't be measured"
   out=$(env -u ASTRYX_AGENT timeout "$TEST_TIMEOUT" "$PY" "$k" 2>&1); rc=$?
   [ $rc -ne 0 ] || refuse "--known-red $k is GREEN on main ${OLD:0:12}: if it is red at B, the range made it red"
-  BASE_RC[$k]=$rc; BASE_FAILS[$k]=$(failset "$out")
-  echo "land: known-red $k on main ${OLD:0:12}: rc $rc, $(printf '%s' "${BASE_FAILS[$k]}" | grep -c .) failing line(s)"
+  BASE_RC[$k]=$rc; BASE_FAILS[$k]=$(failset "$out"); BASE_N[$k]=$(verdicts "$out"); BASE_TB[$k]=$(crashes "$out")
+  echo "land: known-red $k on main ${OLD:0:12}: rc $rc, $(printf '%s' "${BASE_FAILS[$k]}" | grep -c .) failing line(s) of ${BASE_N[$k]} verdict line(s)"
 done
 
 git merge -q --ff-only "$B_SHA" || refuse "git merge --ff-only failed"
@@ -115,13 +124,20 @@ for t in "${TESTS[@]}"; do
   esac
   if [ $rc -ne 0 ] && [ -n "${BASE_RC[$t]+x}" ]; then
     now=$(failset "$out"); new=$(comm -23 <(printf '%s\n' "$now" | grep .) <(printf '%s\n' "${BASE_FAILS[$t]}" | grep .))
-    if [ -z "$new" ] && { [ -n "$now" ] || [ "$rc" -eq "${BASE_RC[$t]}" ]; }; then
+    nv=$(verdicts "$out"); tb=$(crashes "$out"); why=""
+    if [ -n "$new" ]; then why="failing lines main did not print:"$'\n'"$new"
+    elif [ "$tb" -gt "${BASE_TB[$t]}" ]; then why="B crashed: a Traceback main did not print"
+    elif [ "$nv" -lt "${BASE_N[$t]}" ]; then why="B ran $nv verdict line(s), main ran ${BASE_N[$t]}: an arm crashed or was deleted, not fixed"
+    elif [ -z "$now" ] && { [ -n "${BASE_FAILS[$t]}" ] || [ "$rc" -ne "${BASE_RC[$t]}" ]; }; then
+      why="no failing line at B, yet rc $rc (main: rc ${BASE_RC[$t]}, $(printf '%s' "${BASE_FAILS[$t]}" | grep -c .) failing line(s))"
+    fi
+    if [ -z "$why" ]; then
       echo "  ⚠ $t: rc $rc KNOWN-RED (main ${OLD:0:12}: rc ${BASE_RC[$t]}; every failing line was red there too):"
       printf '%s\n' "$now" | grep . | sed 's/^/      /'
       RESULTS+=("$(basename "$t") rc $rc KNOWN-RED (main rc ${BASE_RC[$t]})"); continue
     fi
-    echo "  ✗ $t: rc $rc, KNOWN-RED refused: failing lines main did not print:"
-    printf '%s\n' "${new:-<none: a different rc with no failing line>}" | sed 's/^/      /'; RED=1
+    echo "  ✗ $t: rc $rc, KNOWN-RED refused:"
+    printf '%s\n' "$why" | sed 's/^/      /'; printf '%s\n' "$out" | tail -8 | sed 's/^/      | /'; RED=1
     RESULTS+=("$(basename "$t") rc $rc"); continue
   fi
   if [ $rc -eq 0 ]; then echo "  ✓ $t: rc 0 ($summary)"

@@ -44,13 +44,19 @@ MUTANTS = {
     "N17 a --test isn't normalised (./tests/x.py runs twice)":
         ('  t=$(realpath -m --relative-to=. "$t")', '  :'),
     "N18 a known-red test may ADD failing lines (any red passes once it is named)":
-        ('if [ -z "$new" ] && {', 'if true && {'),
+        ('if [ -n "$new" ]; then why=', 'if false; then why='),
     "N19 a known-red test GREEN on main isn't refused (the range's own red gets named known)":
         ('[ $rc -ne 0 ] || refuse "--known-red', 'true || refuse "--known-red'),
     "N20 a mutants file can be known-red (a NOT PROBED mutant waved through)":
         ('case "$(basename "$k")" in test_*.py) ;;', 'case "$(basename "$k")" in *) ;;'),
-    "N21 a different rc with no failing line passes (a crash read as the base's skip)":
-        ('{ [ -n "$now" ] || [ "$rc" -eq "${BASE_RC[$t]}" ]; }', 'true'),
+    "N21 an equal rc with no failing line passes though main HAD failing lines (a crash reads as a fix: a4 #59276 R1)":
+        ('{ [ -n "${BASE_FAILS[$t]}" ] || [ "$rc" -ne', '{ [ "$rc" -ne'),
     "N22 a known-red naming a test the land doesn't run is accepted":
         ('*" $k "*) ;; *) die', '*) ;; *) die'),
+    "N23 a Traceback B printed is not a refusal (a crash prints no FAIL line: a4 #59276 R2a)":
+        ('elif [ "$tb" -gt "${BASE_TB[$t]}" ]; then', 'elif false; then'),
+    "N24 fewer verdict lines than main is not a refusal (a deleted arm reads as fixed: a4 #59276 R2b)":
+        ('elif [ "$nv" -lt "${BASE_N[$t]}" ]; then', 'elif false; then'),
+    "N25 failset sees only FAIL/✗/NOT RUN (FAILED, FAIL:, ✘ pass as absent: a4 #59276 A3)":
+        ("(FAIL[A-Za-z]*|✗|✘|NOT RUN)([[:space:]:(]|$)' | sed", "(FAIL|✗|NOT RUN)([[:space:]:(]|$)' | sed"),
 }

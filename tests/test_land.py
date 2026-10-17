@@ -234,7 +234,7 @@ def main():
     def red(*lines, rc=1):
         return "import sys\n" + "".join(f"print({l!r})\n" for l in lines) + f"sys.exit({rc})\n"
     base_red = {"tests/test_k.py": red("  PASS  fine", "  FAIL  a", "  FAIL  b")}
-    f = Fx({"tests/test_k.py": red("  FAIL  a"), "tests/test_ok.py": OK_TEST}, base_red)
+    f = Fx({"tests/test_k.py": red("  PASS  fine", "  PASS  b", "  FAIL  a"), "tests/test_ok.py": OK_TEST}, base_red)
     rc, out = f.land(f"{f.base}..{f.head}", "--no-push")
     check("L15 without --known-red, a range that NARROWS a test red on main is red (status quo, a4 #56861)",
           rc == 1 and f.main() == f.base, out)
@@ -242,11 +242,25 @@ def main():
     check("L15 with --known-red, the narrowing range lands: measured on main first, KNOWN-RED in the RECEIPT",
           rc == 0 and f.main() == f.head and "known-red tests/test_k.py on main" in out and "2 failing line(s)" in out
           and "KNOWN-RED (main rc 1)" in [l for l in out.splitlines() if l.startswith("RECEIPT:")][0], out)
-    f = Fx({"tests/test_k.py": red("  FAIL  a", "  FAIL  c")}, base_red)
+    f = Fx({"tests/test_k.py": red("  PASS  fine", "  FAIL  a", "  FAIL  b", "  FAIL  c")}, base_red)
     rc, out = f.land(f"{f.base}..{f.head}", "--known-red", "tests/test_k.py", "--no-push")
-    check("L15 a known-red test that gains a failing line is RED, naming the new line; rolled back",
-          rc == 1 and f.main() == f.base and "KNOWN-RED refused" in out and "FAIL  c" in out
-          and "FAIL  a" not in out.split("KNOWN-RED refused", 1)[1], out)
+    why = out.split("KNOWN-RED refused:", 1)[-1].split("|", 1)[0]
+    check("L15 a known-red test that gains a failing line is RED, naming ONLY the new line; rolled back",
+          rc == 1 and f.main() == f.base and "failing lines main did not print" in why and "FAIL  c" in why
+          and "FAIL  a" not in why, out)
+    # a4 #59276's attacks: a whitelist of failure spellings fails OPEN on every other shape
+    tb = "Traceback (most recent call last)"
+    for name, lines, want in (
+            ("A1 a crash at import (a Traceback, no FAIL line)", (tb, "  File x", "ImportError: boom"), "B crashed"),
+            ("A2 a crash mid-run, after a known failing line", ("  PASS  fine", "  FAIL  a", tb, "KeyError: b"), "B crashed"),
+            ("A3 a new failure spelled FAILED", ("  PASS  fine", "  FAIL  a", "FAILED c-new"), "FAILED c-new"),
+            ("A4 an arm DELETED, not fixed", ("  PASS  fine", "  FAIL  a"), "B ran 2 verdict line(s), main ran 3"),
+            ("R1 every arm passes yet B exits 1 (base HAD failing lines)", ("  PASS  fine", "  PASS  a", "  PASS  b"),
+             "no failing line at B")):
+        f = Fx({"tests/test_k.py": red(*lines)}, base_red)
+        rc, out = f.land(f"{f.base}..{f.head}", "--known-red", "tests/test_k.py", "--no-push")
+        check(f"L15 {name} is refused, naming why (a4 #59276)",
+              rc == 1 and f.main() == f.base and "KNOWN-RED refused" in out and want in out, out)
     f = Fx({"tests/test_k.py": red("  ✗ c")}, {"tests/test_k.py": red("  FAIL  a")})
     rc, out = f.land(f"{f.base}..{f.head}", "--known-red", "tests/test_k.py", "--no-push")
     check("L15 a ✗ line counts as failing too (a different failure is new)", rc == 1 and f.main() == f.base, out)
