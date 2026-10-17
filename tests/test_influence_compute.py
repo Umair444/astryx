@@ -7,8 +7,8 @@ The subject is gitignored (triggers/), so it's path-loaded; absent → SKIP 77. 
 replaced, so nothing here computes a graph or touches the live estate. Arms:
   1. compute raises, NO GLOBAL row in influence_value → loud, "no compute has ever succeeded", and state NOT marked
      (the next firing retries).
-  2. compute raises, ≥1 GLOBAL row (plus a newer non-GLOBAL row that must not count) → loud, names the newest
-     GLOBAL row's age, state not marked.
+  2. compute raises, ≥1 GLOBAL row (plus a newer routing row and a newer non-local GLOBAL row, neither of which may
+     count) → loud, names the newest local GLOBAL row's age IN UTC under a non-UTC session, state not marked.
   3. compute succeeds → silent, state marked today.
   4. state already marked today → silent, and compute is NOT called (once per day).
 Exit 0 pass · 1 fail · 77 could-not-run.
@@ -103,10 +103,12 @@ try:
     conn.execute("INSERT INTO influence_value (scope, view, agent, value, unmapped, computed_at) VALUES "
                  "('local', 'global', 'seed', 0.2, 0, '2026-10-16 02:45+00'), "
                  "('local', 'global', 'seed', 0.2, 0, '2026-10-15 02:45+00'), "
-                 "('local', 'routing', 'seed', 0.2, 0, '2026-10-17 09:00+00')")
+                 "('local', 'routing', 'seed', 0.2, 0, '2026-10-17 09:00+00'), "
+                 "('group', 'global', 'seed', 0.2, 0, '2026-10-17 10:00+00')")   # a3 #58589 M2: S3's scopes
+    conn.execute("SET timezone = 'Asia/Karachi'")   # a3 #58589 advisory 2: the Z label must not lean on the server's TZ
     st = {}
     out = run(boom, st) or ""
-    check("2. raise, GLOBAL rows → names the NEWEST GLOBAL row's age (not the routing row)",
+    check("2. raise, GLOBAL rows → names the NEWEST local GLOBAL row's age in UTC (not the routing or group row)",
           "the last good compute was 2026-10-16 02:45Z" in out, repr(out))
     check("2. … state not marked", "rang" not in st, repr(st))
 
