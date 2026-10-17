@@ -24,6 +24,9 @@ MUTANTS = {
     "T1 a condemned template is not un-templated (DROP refuses it: a killed batch run's template is kept forever)":
         ("                admin.execute('ALTER DATABASE \"{}\" IS_TEMPLATE false'.format(name.replace('\"', '\"\"')))\n",
          ""),
+    "T2 a refused un-template is reported as a refused DROP, and the DROP is attempted anyway":
+        ("        if act == \"reap\":\n            try:\n                _drop(admin, name)",
+         "        if True:\n            try:\n                _drop(admin, name)"),
     "D-A the drop never falls back (an autovacuum worker fails a run role's teardown again, steward #55022)":
         ("    except psycopg.errors.InsufficientPrivilege:\n        admin.execute(f\"DROP DATABASE IF EXISTS {q}\")",
          "    except NotImplementedError:\n        admin.execute(f\"DROP DATABASE IF EXISTS {q}\")"),
@@ -43,8 +46,8 @@ MUTANTS = {
         ('    except (PermissionError, OverflowError, ValueError):\n        return True',
          '    except (PermissionError, OverflowError, ValueError):\n        return False'),
     "R5 reap() drops on KEEP (the verdict is inverted at the actuator)":
-        ('        if act == "reap":\n            try:',
-         '        if act == "keep":\n            try:'),
+        ('        act, why = verdict(name, comment)\n',          # re-anchored: reap() now has two `if act == "reap"`
+         '        act, why = verdict(name, comment)\n        act = "keep" if act == "reap" else "reap"\n'),
     "R6 no reap at fixture_db entry (the leak stays)":
         ('    reap(admin, keep=name)  ',
          '    pass  '),

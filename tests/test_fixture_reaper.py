@@ -102,11 +102,13 @@ import psycopg  # noqa: E402
 
 class Rec:
     """A connection that records statements and raises a chosen error on the FORCE drop (and, optionally, the plain one)."""
-    def __init__(self, on_force=None, on_plain=None, rows=()):
-        self.q, self.on_force, self.on_plain, self.rows = [], on_force, on_plain, list(rows)
+    def __init__(self, on_force=None, on_plain=None, rows=(), on_alter=None):
+        self.q, self.on_force, self.on_plain, self.rows, self.on_alter = [], on_force, on_plain, list(rows), on_alter
 
     def execute(self, q, *a):
         self.q.append(q)
+        if q.startswith("ALTER DATABASE") and self.on_alter:
+            raise self.on_alter("refused")
         if q.startswith("DROP DATABASE") and "WITH (FORCE)" in q and self.on_force:
             raise self.on_force("refused")
         if q.startswith("DROP DATABASE") and "WITH (FORCE)" not in q and self.on_plain:
@@ -146,6 +148,11 @@ r = Rec(on_force=psycopg.errors.ObjectInUse, rows=[(dead_name, stamp(D))])
 got = fxm.reap(r)
 check("D6 ...while any other refusal still KEEPS it, named", [g[1] for g in got] == ["keep"]
       and "drop refused (ObjectInUse)" in got[0][2], str(got))
+r = Rec(on_alter=psycopg.errors.InsufficientPrivilege, rows=[(dead_name, stamp(D))])
+got = fxm.reap(r)
+check("D7 a refused UN-TEMPLATE keeps it, says so (never 'drop refused'), and never attempts the DROP (a4 #58605)",
+      [g[1] for g in got] == ["keep"] and "un-template refused (InsufficientPrivilege)" in got[0][2]
+      and not any(q.startswith("DROP") for q in r.q), str(got) + str(r.q))
 
 print("\nB. the lifetime seam (pure: refused before any connect):")
 for kw, why in (({"lifetime": "retire"}, "an unknown lifetime (\"retire\" is plan-11254's)"),
@@ -243,6 +250,10 @@ try:
           member.startswith(fxm.PREFIX) and row is not None and (fxm._parse_stamp(row[0]) or {}).get("pid") == L
           and dict((n, a) for n, a, _ in fxm.reap(admin)).get(member) == "keep", str(row))
     live_members = [member, B.enroll(raw()), B.enroll(raw())]
+    st = fxm._parse_stamp(admin.execute("SELECT shobj_description(oid, 'pg_database') FROM pg_database WHERE datname=%s",
+                                        (live_members[1],)).fetchone()[0])
+    check("raw()'s members are owner-stamped with THIS pid, so a killed run's are reap()able (steward #58601, a4 #58605)",
+          st is not None and st["pid"] == os.getpid(), str(st))
     by_arm = B.enroll(raw())
     admin.execute(f'DROP DATABASE "{by_arm}"')       # an ARM dropped it before the close
     never = B.enroll(fxm.fresh_name())               # a stale sweep took it (never present at the close)

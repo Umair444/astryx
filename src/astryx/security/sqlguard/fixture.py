@@ -145,6 +145,10 @@ def reap(admin, keep: str = "") -> list[tuple[str, str, str]]:
                 # a dead creator's TEMPLATE is garbage too, and DROP refuses a template: a killed run of the batch arm
                 # left one kept forever (steward #58601). Un-template only what the verdict already condemned.
                 admin.execute('ALTER DATABASE "{}" IS_TEMPLATE false'.format(name.replace('"', '""')))
+            except psycopg.Error as e:
+                act, why = "keep", f"un-template refused ({type(e).__name__}): {why}"   # a4 #58605: nothing dropped
+        if act == "reap":
+            try:
                 _drop(admin, name)
             except psycopg.Error as e:
                 act, why = "keep", f"drop refused ({type(e).__name__}): {why}"
