@@ -21,6 +21,9 @@ ORACLE = REPO / "tests" / "test_fixture_reaper.py"
 ENV = "SQLGUARD_FIXTURE_SRC"
 TIMEOUT = 300
 MUTANTS = {
+    "T1 a condemned template is not un-templated (DROP refuses it: a killed batch run's template is kept forever)":
+        ("                admin.execute('ALTER DATABASE \"{}\" IS_TEMPLATE false'.format(name.replace('\"', '\"\"')))\n",
+         ""),
     "D-A the drop never falls back (an autovacuum worker fails a run role's teardown again, steward #55022)":
         ("    except psycopg.errors.InsufficientPrivilege:\n        admin.execute(f\"DROP DATABASE IF EXISTS {q}\")",
          "    except NotImplementedError:\n        admin.execute(f\"DROP DATABASE IF EXISTS {q}\")"),

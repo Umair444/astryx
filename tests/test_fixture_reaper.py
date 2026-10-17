@@ -12,7 +12,7 @@ collected by the next fixture_db() entry, and nothing a LIVE run owns is ever dr
      plain run id); an unparseable name → None. Report-only.
   L. live, on the real server: a child enters fixture_db and is SIGKILLed → its database survives the kill,
      stamped with the child's pid → the next fixture_db() entry drops it. A database stamped with a LIVE pid, and
-     an unstamped database, are both kept. Only PREFIX names are ever considered. Every live arm runs under a
+     an unstamped database, are both kept; a dead-stamped TEMPLATE is dropped too. Only PREFIX names are ever considered. Every live arm runs under a
      PRIVATE prefix, so neither the reaper nor any mutant of it can touch another run's database.
   B. the LIFETIME seam (plan-11253 S3, a4 #57171; one seam with 11254 #57439 §1): an unknown lifetime, or "batch"
      without a Batch, refuses before any connect. The DEFAULT ("immediate") is GONE at block exit. A "batch" member
@@ -193,6 +193,11 @@ try:
         admin.execute(f'CREATE DATABASE "{n}" ALLOW_CONNECTIONS false')
         made.append(n)
     admin.execute(f"COMMENT ON DATABASE \"{live_name}\" IS '{stamp(L)}'")
+    dead_tpl = f"{fxm.PREFIX}tpl_{D}_0"               # steward #58601: a killed run's template member
+    admin.execute(f'DROP DATABASE IF EXISTS "{dead_tpl}"')
+    admin.execute(f'CREATE DATABASE "{dead_tpl}" ALLOW_CONNECTIONS false IS_TEMPLATE true')
+    made.append(dead_tpl)
+    admin.execute(f"COMMENT ON DATABASE \"{dead_tpl}\" IS '{stamp(D)}'")
 
     with fxm.fixture_db() as fx:                     # the entry under test: it reaps before it creates
         made.append(fx["dbname"])
@@ -200,6 +205,8 @@ try:
         check("the next fixture_db() entry DROPPED the killed holder's database", killed not in names, killed)
         check("a database stamped with a LIVE pid is kept", live_name in names)
         check("an UNSTAMPED astryx_fx_* database is kept (unattributable)", bare_name in names)
+        check("a dead-stamped TEMPLATE is dropped too (un-templated first; DROP refuses a template, steward #58601)",
+              dead_tpl not in names, dead_tpl)
         check("the entry's own new database is stamped with this pid",
               fxm._parse_stamp(admin.execute("SELECT shobj_description(oid, 'pg_database') FROM pg_database "
                                              "WHERE datname=%s", (fx["dbname"],)).fetchone()[0])["pid"] == L)
@@ -217,6 +224,9 @@ try:
         n = fxm.fresh_name()
         made.append(n)
         admin.execute(f'CREATE DATABASE "{n}" ALLOW_CONNECTIONS false' + (" IS_TEMPLATE true" if template else ""))
+        # stamped like fixture_db's own, so a KILLED run's members are reap()able once this pid is dead: unstamped,
+        # verdict() keeps them forever (steward #58601: 2 of 3 standing R-LEAKs were this arm's, one its template)
+        admin.execute(f'COMMENT ON DATABASE "{n}" IS \'{fxm.owner_stamp()}\'')
         return n
 
     real_drop = fxm._drop
