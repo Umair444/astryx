@@ -8,8 +8,9 @@
   H2 THE RUNGS: the env rung binds B; the marker rung binds B from a non-git cwd; an UNregistered ASTRYX_HOME is
      refused; the checkout rung is never taken.
   H3 CORRECTION 2 (the disagreeing pair): ASTRYX_HOME=B with ASTRYX_DSN = A's database → non-zero, refused before
-     any connection, in config.dsn(), in home.mjs, AND in two private resolvers' replacements (pulse's import-time
-     DSN, econ._dsn: BC-S1(2)'s arm). The same pair with a FIXTURE DSN connects (a real fixture database).
+     any connection, in config.dsn(), in home.mjs, AND in a private resolver's replacement (pulse's import-time DSN:
+     BC-S1(2)'s arm); a file-only one (econ._dsn) never consults the environment and binds B's own database. The same
+     pair with a FIXTURE DSN connects (a real fixture database).
   H4 CORRECTION 1: (ii) an org whose database is the superuser's NAME is refused; (iii) with ASTRYX_DSN unset and
      PGHOST+PGUSER set, `psql ""` reaches no registry org's database; (i) the built environment holds no PG* name.
   H5 THE LAW IS THE ORG'S (BC-S2 arm a): spawn.sh --render for an org-B agent writes a CLAUDE.md whose law section
@@ -112,8 +113,12 @@ def arms(fx):
     check("...pulse.py's DSN (a1's private resolver, now routed) refuses it at import",
           r.returncode != 0 and "ForeignDSN" in r.stderr, (r.stdout + r.stderr)[-400:])
     r = py(fx, "from astryx.econ import econ\nprint('DSN-OF', econ._dsn())", bad, "/")
-    check("...econ._dsn (a second census site) refuses it", r.returncode != 0 and "ForeignDSN" in r.stderr
-          and "DSN-OF" not in r.stdout, (r.stdout + r.stderr)[-400:])
+    # econ never read the environment (main: the checkout's .env only) and still doesn't (env_first=False): A's DSN in
+    # its environment is never consulted, so the pair can't disagree. Its census site was the CHECKOUT read; routed, it
+    # binds the HOME's own database (the estate-free checkout has no .env: a checkout read fails here)
+    check("...econ._dsn (a file-only census site) binds HOME-B's database, never the environment's A",
+          r.returncode == 0 and f"DSN-OF {fx.dsn['b']}" in r.stdout and fx.db["a"] not in r.stdout,
+          (r.stdout + r.stderr)[-400:])
     from astryx.security.sqlguard.fixture import fixture_db
     with fixture_db() as f:
         code = DSN_PROBE + "\nimport psycopg\nwith psycopg.connect(config.dsn(), connect_timeout=5) as c:\n" \
