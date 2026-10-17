@@ -9,6 +9,7 @@ import atexit
 import os
 import runpy
 import shutil
+import signal
 import socket
 import sys
 import tempfile
@@ -117,6 +118,7 @@ check("an empty log: the flag's mtime", stop_since([], T0 + 7) == T0 + 7)
 print("read_desks (a fake hands_desktop):")
 tmp = Path(tempfile.mkdtemp(prefix="desk_stopped."))
 atexit.register(shutil.rmtree, tmp, True)           # every exit path through sys.exit; /tmp is tmpfs (medic #59287)
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))   # a timeout's TERM exits through atexit too (medic #59290)
 
 
 class HD:
