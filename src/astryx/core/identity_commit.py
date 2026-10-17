@@ -132,6 +132,16 @@ def main() -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(content)
     rel = str(target.relative_to(AGENTS))
+    # agents/ is gitignored in the SHARED repo in this deployment (charters kept private via
+    # .gitignore rather than their own repo). There is then no repo to commit identity into, and
+    # `git add` of an ignored path EXITS NON-ZERO — crashing every self_edit — while `git add -f`
+    # would stage a private charter into the pushable genome and LEAK it. The write above IS the
+    # commit here: stay working-tree-only. (Re-applied 2026-10-16: the upstream re-baseline dropped
+    # this guard, breaking all self_edit — avatars, personas, charters — on this gitignored layout.)
+    if subprocess.run(["git", "check-ignore", rel], cwd=AGENTS,
+                      capture_output=True).returncode == 0:
+        print(f"committed: {rel} (working-tree-only; agents/ is gitignored, no repo to commit into)")
+        return
     author = "owner <owner@astryx.local>" if owner_act else f"{agent} <{agent}@astryx.local>"
     subprocess.run(["git", "add", rel], cwd=AGENTS, check=True, capture_output=True)
     r = subprocess.run(["git", "commit", "--author", author, "-m",

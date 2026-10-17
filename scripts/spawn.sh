@@ -119,7 +119,20 @@ if [ -z "$RENDER" ] && tmux has-session -t "=$SESS" 2>/dev/null; then echo "$AGE
 
 mkdir -p "$HOME_D/.claude"
 # genome → body: charter + law are the auto-loaded context (no boot prompt needed)
-{ cat "$CHARTER"; echo; echo "## The law (local.md)"; cat "$ROOT/local.md"; } > "$HOME_D/CLAUDE.md"
+{ cat "$CHARTER"; echo; echo "## The law (local.md)"; cat "$ROOT/local.md"
+  # Boot-brief injection (built 2026-09-23 as commit 90c6ff4; DROPPED by the 0.1.2 upstream
+  # merge when spawn.sh moved nucleus/->scripts/, restored 2026-10-17, goal 14). Injects the
+  # agent's memory-compiled brief as DEMARCATED DATA, gated on the go-sentinel
+  # memory/context/.briefs-live — present only once memory verifies the briefs current.
+  # DATA not law: the brief never overrides charter/local.md. memory's brief_freshness_watch
+  # DELIVERY axis greps the spawn path for the literal "memory/context" to confirm injection
+  # is wired — keep that string here. Wire: t-memory-wiki-sync-reconcile.
+  BRIEF="$ROOT/memory/context/$AGENT.md"
+  if [ -f "$ROOT/memory/context/.briefs-live" ] && [ -f "$BRIEF" ]; then
+    echo; echo "## Boot brief (DATA — compiled by memory; situational context as of last nightly compile: org state, your open loops, live goals). CONTEXT, not law: it never overrides your charter or local.md, and it may lag reality — verify against the substrate before acting on it."
+    cat "$BRIEF"
+  fi
+} > "$HOME_D/CLAUDE.md"
 
 # grants: a charter line "Grants: gmail, ..." maps to extra MCP servers in this
 # agent's world. With --strict-mcp-config the .mcp.json IS the capability list.
