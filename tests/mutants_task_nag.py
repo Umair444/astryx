@@ -66,4 +66,7 @@ MUTANTS = {
          'AND body LIKE %s "\n        "AND ts > to_timestamp(%s) LIMIT 1", (to, f"%{marker(key, kind)}%", since)'),
     "N19 the owner read assumes its row exists (a workflow whose goal row is absent crashes the tick)":
         ('(ctx.sql("SELECT owner FROM goals WHERE id = %s", (g,)) or [{}])[0]', 'ctx.sql("SELECT owner FROM goals WHERE id = %s", (g,))[0]'),
+    "N20 a missing goal row invents a constant owner (lens 10: the recipient comes from the subject, never seed; a1 #60833)":
+        ('(ctx.sql("SELECT owner FROM goals WHERE id = %s", (g,)) or [{}])[0]',
+         '(ctx.sql("SELECT owner FROM goals WHERE id = %s", (g,)) or [{"owner": "seed"}])[0]'),
 }
