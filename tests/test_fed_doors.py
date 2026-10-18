@@ -26,6 +26,9 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO))
+from astryx.security.sqlguard.estate import gate  # noqa: E402
+gate('test_fed_doors', REPO, deps=('asyncpg', 'fastapi', 'nacl', 'httpx'), env=False)   # the gateway's imports: a committed-only tree without them is 77, a live host 1 (seed #60760)
 SRC = Path(os.environ.get("FED_GATEWAY_SRC") or REPO / "bridges" / "gateway.py")
 fails = []
 
