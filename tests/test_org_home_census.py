@@ -87,6 +87,13 @@ def main():
                                                     'tmux ls\nexec tmux attach\n'
                                                     'exec tmux ${AX_SOCK:+-L "$AX_SOCK"} attach\n')
         (t / "newroot" / "ns_spawn.mjs").write_text("import { spawn } from 'node:child_process'\nspawn('tmux', ['ls'])\n")
+        # kind unit (4/n): a one-org unit name written out, beside a message that mentions one and a test's expectation
+        (t / "newroot" / "ns_unit.py").write_text('TIMER = "astryx-pulse.timer"\n'
+                                                  'MSG = "start astryx-pulse.timer when it stops"\n')
+        (t / "newroot" / "ns_unit.sh").write_text('#!/bin/bash\nsystemctl start astryx-pulse.timer\n'
+                                                  'echo "run: systemctl start astryx-pulse.timer"\n')
+        (t / "tests").mkdir()
+        (t / "tests" / "test_fx_units.py").write_text('WANT = "astryx-pulse.timer"\n')
         (t / "newroot" / "reader.ts").write_text('const d = process.env.ASTRYX_DSN\n')   # org-home: a planted node-side reader (.ts, a2 #59037)
         subprocess.run(["git", "init", "-q", str(t)], check=True)
         res_t = oc.census(t)
@@ -103,6 +110,10 @@ def main():
               "spells the socket", {f_l for f_l in ns if f_l[0] == "newroot/ns_routed.sh"}
               == {("newroot/ns_routed.sh", 3), ("newroot/ns_routed.sh", 6)}, str(sorted(ns)))
         check("namespace: a js spawn('tmux') is found", ("newroot/ns_spawn.mjs", 2) in ns, str(sorted(ns)))
+        check("namespace/unit: a unit name written out is found (python and shell); a message and a test's "
+              "expectation are not", {("newroot/ns_unit.py", 1), ("newroot/ns_unit.sh", 2)} <= ns
+              and not {("newroot/ns_unit.py", 2), ("newroot/ns_unit.sh", 3), ("tests/test_fx_units.py", 1)} & ns,
+              str(sorted(ns)))
         check("a .ts file is read (a2 #59037: a node-side reader)",
               any(r["file"] == "newroot/reader.ts" for r in res_t["dsn"]), str(sorted(r["file"] for r in res_t["dsn"])))
         hit = sorted(r["file"] for r in res_t["dsn"])

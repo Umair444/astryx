@@ -11,6 +11,7 @@ host-scoped, and the port it binds) is declared once in src/astryx/data/org_unit
      routes) is NOT written, each with its reason on stderr
   U3 orgs A and B rendered into ONE directory: disjoint file sets, and A's files survive B's run byte for byte
   U4 every timer has its same-named service (systemd activates `<x>.service` for `<x>.timer`)
+  U6 systemd-analyze verify accepts every @<B> file (positive control: a broken one is rejected); NOT RUN without it
   U5 the resolver: orgs.unit() is `astryx-pulse.timer` on one org, `astryx-pulse@<A>.timer` under HOME-A, and raises
      with no HOME carried; pulse_witness.timer_unit() follows it
 
@@ -126,6 +127,21 @@ def main():
             fs = set(files(fx.t / d))
             orphans = sorted(t for t in fs if t.endswith(".timer") and t[:-6] + ".service" not in fs)
             check(f"{d}: every <x>.timer has <x>.service", not orphans, str(orphans))
+
+        print("\nU6 SYSTEMD ACCEPTS THE INSTANCE FILES")
+        import shutil
+        if not shutil.which("systemd-analyze"):
+            print("  ·  NOT RUN: no systemd-analyze here (U2's names are unverified by systemd itself)")
+        else:
+            def verify(paths):
+                return subprocess.run(["systemd-analyze", "verify", "--man=no", *map(str, paths)],
+                                      capture_output=True, text=True, timeout=60)
+            r = verify(sorted((fx.t / "u_b").glob("*")))
+            check("systemd-analyze verify: every @<B> file is a valid unit", r.returncode == 0, (r.stdout + r.stderr)[-400:])
+            bad = fx.t / "sv-bad" / f"astryx-fxbad@{ob}.service"
+            bad.parent.mkdir()
+            bad.write_text("[Service]\nExecStart=relative/path\n")
+            check("positive control: it rejects a broken instance file", verify([bad]).returncode != 0)
 
         print("\nU5 THE RESOLVER")
         probe = ("import sys; sys.path.insert(0, sys.argv[1] + '/src'); sys.path.insert(0, sys.argv[1] + '/bridges')\n"
