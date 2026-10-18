@@ -29,15 +29,18 @@ MUTANTS = {
     "F14 a kind's coverage comes from the window's rows (7d calls a kind unmeasured that the ranks weigh: a4 #60129 A-1)":
         ('    cov = {r["kind"]: r["coverage"] for r in await pool.fetch(INFLUENCE_COVERAGE_SQL)}\n',
          '    cov = {r["kind"]: r["coverage"] for r in rows}\n'),
-    "F8 no room is marked as ours":
-        ('"this": o == me,', '"this": False,'),
-    "F9 a room carries its org's HOME out":
-        ('"badge": badge if o == me else None}', '"badge": badge if o == me else None, "home": str(reg[o]["home"])}'),
+    "F8 a backend in a cog names no room (its registry name is dropped)":
+        ('me = None if reg is None else orgs.org_of(ESTATE)', 'me = None'),
+    "F9 a backend lists its cog's other orgs (the front's job, #60439)":
+        ('"orgs": [{"org": me, "name": me_name, "base": "/", "badge": badge}]}',
+         '"orgs": [{"org": me, "name": me_name, "base": "/", "badge": badge}] + [{"org": o} for o in sorted(reg or {}) if o != me]}'),
     "F10 the badge is not the gateway's key":
         ('badge = (ident.get("pubkey") or "")[:8] or None', 'badge = None'),
     "F11 an unknown window is served (as the default) instead of 400":
         ("    if window not in INFLUENCE_WINDOWS:\n        return Response(status_code=400)\n",
          "    if window not in INFLUENCE_WINDOWS:\n        window = \"14d\"\n"),
+    "F15 a registry that doesn't name our home answers as an unnamed room":
+        ("    if reg is not None and me is None:", "    if False:"),
     "F12 a refused registry is a bare 500 (the floor can't say why)":
         ('JSONResponse({"error": f"cog registry refused: {e}"}, status_code=500)', 'Response(status_code=500)'),
     "F13 the kinds' coverage is dropped (an unmeasured kind can't say how close it is)":

@@ -120,9 +120,10 @@ def main(url, tmp):
             obs._identity_cache.clear()
             obs._identity_cache["v"] = {"org": "gw.example", "pubkey": "6f8e6e10be228806"}
             j = cl.get("/api/cog", headers=O).json()
-            arm("COG: an ABSENT registry is a cog of one room, this org's, named",
-                j.get("registry") is False and [(r["org"], r["this"]) for r in j["rooms"]] == [("fixture.example", True)], j)
-            arm("COG: …with the gateway pubkey's badge", j["rooms"][0].get("badge") == "6f8e6e10", j)
+            arm("COG: an ABSENT registry is one org, the root, named by its federation name",
+                j.get("cog") is False and j.get("home") is None
+                and [(r["org"], r["name"], r["base"]) for r in j.get("orgs", [])] == [(None, "fixture.example", "/")], j)
+            arm("COG: …with the gateway pubkey's badge", (j.get("orgs") or [{}])[0].get("badge") == "6f8e6e10", j)
 
             reg = tmp / "cog.json"
             reg.write_text(json.dumps({"orgs": {"zeta": {"home": str(tmp / "zeta"), "db": "zeta_db"},
@@ -130,10 +131,17 @@ def main(url, tmp):
             os.environ["ASTRYX_COG_REGISTRY"] = str(reg)
             r = cl.get("/api/cog", headers=O)
             j = r.json() if r.status_code == 200 else {}
-            rooms = [(x["org"], x["this"]) for x in j.get("rooms", [])]
-            arm("COG: a two-org registry is two rooms, ours marked this", rooms == [("alpha", True), ("zeta", False)], (r.status_code, j))
-            arm("COG: …and no home or database leaves", r.status_code == 200 and str(tmp) not in r.text
-                and "zeta_db" not in r.text and "alpha_db" not in r.text, r.text)
+            arm("COG: in a cog, a backend answers for its OWN org only, by its registry name (the front lists the cog, #60439)",
+                j.get("cog") is False and j.get("home") == "alpha"
+                and [(x["org"], x["name"], x["base"]) for x in j.get("orgs", [])] == [("alpha", obs._env("ASTRYX_ORG") or "gw.example", "/")]
+                and bool(j["orgs"][0]["name"]), (r.status_code, j))   # in a cog the name is the HOME's .env's (config.org_env)
+            arm("COG: …and no sibling, home or database leaves", r.status_code == 200 and "zeta" not in r.text
+                and str(tmp) not in r.text and "alpha_db" not in r.text, r.text)
+
+            reg.write_text(json.dumps({"orgs": {"zeta": {"home": str(tmp / "zeta"), "db": "zeta_db"}}}))
+            r = cl.get("/api/cog", headers=O)
+            arm("COG: a registry that doesn't name this observatory's home is refused, never a room with no name",
+                r.status_code == 500 and r.json().get("error", "").startswith("cog registry refused: "), (r.status_code, r.text))
 
             reg.write_text("{not json")
             r = cl.get("/api/cog", headers=O)

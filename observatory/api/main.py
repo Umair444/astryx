@@ -3203,10 +3203,13 @@ async def _gateway_identity() -> dict:
 
 @app.get("/api/cog")
 async def cog(request: Request):
-    """The cog this observatory sits in (owner ruling #60083: several orgs on one install are a COG), as rooms for the
-    floor (seed #60078, design #58435). orgs.load() reads the host registry at request time: ABSENT is a cog of one
-    org, this one; present, one room per registered org, `this` marking ours. A registry that refuses is a 500, never
-    a quiet one-room answer (orgs.py: an unreadable registry fails closed), and its reason is given so the floor can say it. Homes and databases never leave.
+    """This org as one room of its cog (owner ruling #60083; the API forge fixed for the floor, #60437/#60439). A backend
+    answers for its OWN org only: in a cog the front lists the cog (cog: true, every org with its /o/<org>/ base), and
+    this route is what the front pipes through under each room's base, so the floor reads each room's badge here.
+    {"cog": false, "home": <registry name | null>, "orgs": [{"org", "name", "base": "/", "badge"}]}: `org` is the
+    registry name (null with no registry: one org, the root is this observatory), `name` the federation name that
+    to_org/from_org carry. orgs.load() still decides which registry name is ours, and a registry that refuses is a 500
+    that says why, never a quiet one-room answer (orgs.py fails closed). Homes and databases never leave.
     Owner-only, by omission from PUBLIC_PATHS and checked here as well."""
     if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
         return Response(status_code=403)
@@ -3220,11 +3223,10 @@ async def cog(request: Request):
     ident = await _gateway_identity()
     me_name = _env("ASTRYX_ORG") or ident.get("org") or ORG
     badge = (ident.get("pubkey") or "")[:8] or None
-    if reg is None:
-        return {"registry": False, "rooms": [{"org": me_name, "this": True, "badge": badge}]}
-    me = orgs.org_of(ESTATE)          # the HOME this observatory serves (paths.estate, resolved once at start)
-    return {"registry": True,
-            "rooms": [{"org": o, "this": o == me, "badge": badge if o == me else None} for o in sorted(reg)]}
+    me = None if reg is None else orgs.org_of(ESTATE)   # the HOME this observatory serves (paths.estate, resolved once)
+    if reg is not None and me is None:           # a registry that doesn't name our home: which room this is can't be said
+        return JSONResponse({"error": "cog registry refused: this observatory's home is not a registered org"}, status_code=500)
+    return {"cog": False, "home": me, "orgs": [{"org": me, "name": me_name, "base": "/", "badge": badge}]}
 
 
 class MemoryProposal(BaseModel):
