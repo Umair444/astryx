@@ -21,12 +21,13 @@ MUTANTS = {
     "T5 the block is not capped":
         ('    return keep[:n]', '    return keep'),
     "T6 the oracle's stdout is block-buffered again (a timeout's kill discards it: a3 #57897 R-1)":
-        ('    env = dict(os.environ, PYTHONUNBUFFERED="1", **{env_var: str(subject_path)})',
-         '    env = dict(os.environ, **{env_var: str(subject_path)})'),
+        ('[sys.executable, "-u", str(oracle)]', '[sys.executable, str(oracle)]'),
     "T7 failures aren't ranked above keyword mentions (30 PASS labels crowd the real FAIL out)":
         ('    for ln in first + hot + lines[-n:]:', '    for ln in hot + first + lines[-n:]:'),
     "T8 no relocated baseline (an unmutated copy that dies at the mutant location grades every mutant CAUGHT: a4 #60129)":
         ('        if rb != 0:\n', '        if False:\n'),
     "T9 every copy shares one path again (a same-size copy in the same mtime second runs the previous copy's .pyc: memory #60378)":
         ('            p = Path(td) / slot / rel\n', '            p = Path(td) / rel\n'),
+    "T10 the probe adds a name to the oracle's environment again (every org-census baseline refused: seed #60425)":
+        ('    env = dict(os.environ, **{env_var: str(subject_path)})', '    env = dict(os.environ, PYTHONUNBUFFERED="1", **{env_var: str(subject_path)})'),
 }

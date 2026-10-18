@@ -108,9 +108,11 @@ def _run_oracle(oracle: Path, env_var: str, subject_path: Path, timeout: int = D
 
 def _run_oracle_out(oracle: Path, env_var: str, subject_path: Path, timeout: int = DEFAULT_TIMEOUT) -> tuple:
     """(rc, the oracle's combined output). TIMED_OUT keeps whatever it printed before the kill."""
-    # PYTHONUNBUFFERED: a Python oracle block-buffers stdout into this pipe, and a timeout's kill discards that buffer,
-    # so without it a timed-out oracle "printed nothing" though it did (a3 #57897 R-1, measured). Buffering only.
-    env = dict(os.environ, PYTHONUNBUFFERED="1", **{env_var: str(subject_path)})
+    # `-u` below: a Python oracle block-buffers stdout into this pipe, and a timeout's kill discards that buffer, so
+    # without it a timed-out oracle "printed nothing" though it did (a3 #57897 R-1, measured). A FLAG, never an
+    # environment name: the probe adds NOTHING to the oracle's environment but its ENV seam. PYTHONUNBUFFERED=1 here
+    # failed every org-census baseline, whose C4 refuses an unclassed name in its own environment (seed #60425).
+    env = dict(os.environ, **{env_var: str(subject_path)})
     with tempfile.TemporaryDirectory() as trace:
         # A mutant (or the canary) is NOT the inventoried code, so its SQL is not estate evidence: under check.sh's
         # sqlguard it read BLIND (126 lines, seed #33150, when the smoke family became one with SQL mutants). The
@@ -118,7 +120,7 @@ def _run_oracle_out(oracle: Path, env_var: str, subject_path: Path, timeout: int
         if "ASTRYX_SQLGUARD_DIR" in env:
             env["ASTRYX_SQLGUARD_DIR"] = trace
         try:
-            r = subprocess.run([sys.executable, str(oracle)], env=env,
+            r = subprocess.run([sys.executable, "-u", str(oracle)], env=env,
                                capture_output=True, text=True, timeout=timeout)
         except subprocess.TimeoutExpired as e:
             # It used to RAISE, crashing the whole probe after SIGKILLing the oracle mid-run (its finally never ran,

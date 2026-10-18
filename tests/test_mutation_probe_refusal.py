@@ -13,8 +13,10 @@ Hermetic: each arm writes a tiny subject, oracle and spec into a temp dir and ru
   R5  a line that IS a failure beats lines that only mention a keyword (no crowd-out at the cap)
   R6  a subject that can't load from the mutant location REFUSES (the relocated baseline), never grades a no-op CAUGHT
   R7  a same-size mutant right after the baseline is CAUGHT: no cached bytecode of the previous copy stands in for it
+  R8  the probe adds no name to the oracle's environment but its ENV seam (unbuffered by `-u`, a flag)
   C1  control: a passing baseline prints no tail block, and its mutant is CAUGHT
 """
+import json
 import os
 import subprocess
 import sys
@@ -39,13 +41,14 @@ def probe(td: Path, oracle_body: str, timeout: int = 20, mutants=None, subject: 
     (td / "spec.py").write_text(
         f"SUBJECT = {str(td / 'subj.py')!r}\nORACLE = {str(td / 'oracle.py')!r}\nENV = 'FIX_SRC'\n"
         f"TIMEOUT = {timeout}\nMUTANTS = {m!r}\n")
-    # PYTHONUNBUFFERED out too: an outer mutation_probe sets it for ITS oracle (this file), and inherited here it would
-    # make the subject's own setting unobservable (mutant T6 read NOT PROBED until this line)
+    # PYTHONUNBUFFERED out too: an older outer mutation_probe set it for ITS oracle (this file), and inherited here it
+    # would make the subject's own buffering unobservable (mutant T6 read NOT PROBED until this line)
     env = {k: v for k, v in os.environ.items() if k not in ("FIX_SRC", "ASTRYX_SQLGUARD_DIR", "PYTHONUNBUFFERED",
                                                          "PYTHONDONTWRITEBYTECODE")}
     # the subject finds `astryx` by its OWN path (dirname(dirname(file))), and mutation_probe writes each mutant into a
     # temp dir: without this every mutant of the probe would die at import and read CAUGHT vacuously
     env["PYTHONPATH"] = str(REPO / "src") + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    (td / "probe_env.json").write_text(json.dumps(sorted(env)))   # the names the PROBE was given (arm R8)
     r = subprocess.run([sys.executable, str(SUBJECT), str(td / "spec.py")], capture_output=True, text=True,
                        timeout=120, env=env, cwd=td)
     return r.returncode, r.stdout + r.stderr
@@ -109,6 +112,17 @@ with tempfile.TemporaryDirectory() as t:
                        "m = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nsys.exit(0 if m.X == 1 else 1)\n",
                     mutants={"M same size": ("X = 1", "X = 2")})
     check("R7 a SAME-SIZE mutant right after the baseline is CAUGHT (no stale bytecode stands in for it)",
+          rc == 0 and any(ln.lstrip().startswith("CAUGHT") for ln in out.splitlines()), out)
+
+    d = t / "r8"; d.mkdir()
+    # the probe adds NO name to its oracle's environment but the ENV seam: org-census's C4 refuses an unclassed name in
+    # its own environment, and PYTHONUNBUFFERED=1 from the probe failed every census baseline (seed #60425)
+    rc, out = probe(d, "import json, os, sys\n"
+                       f"given = set(json.load(open({str(d / 'probe_env.json')!r})))\n"
+                       "extra = sorted(set(os.environ) - given - {'FIX_SRC'})\n"
+                       "if extra:\n    print('  FAIL  added by the probe:', extra)\n    sys.exit(1)\n"
+                       "sys.exit(0 if 'X = 1' in open(os.environ['FIX_SRC']).read() else 1)\n")
+    check("R8 the oracle's environment gains no name from the probe but its ENV seam (baseline passes, mutant CAUGHT)",
           rc == 0 and any(ln.lstrip().startswith("CAUGHT") for ln in out.splitlines()), out)
 
     d = t / "c1"; d.mkdir()
