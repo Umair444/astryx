@@ -6,13 +6,17 @@ cog-scoped, and the port it binds) is declared once in src/astryx/data/org_units
   U0 THE PARTITION IS TOTAL: every stem init.sh units() writes is declared, every declared stem is written, and
      every write goes through _uw (no `cat > "$UD/…"` left). RED control: a planted extra stem is accused
   U1 one org (no registry): plain names, exactly as before (no `@` anywhere)
-  U2 several orgs, org B: ONLY B's port-free units, each `@<B>` (pulse+timer, residents, its runner+timer); the
-     cog-scoped ones (observatory, canvas, gateway) are NOT written, and a port-binding one (whatsapp: B has its
-     routes) is NOT written, each with its reason on stderr
+  U2 several orgs, org B: ONLY B's own units, each `@<B>` (pulse+timer, residents, its runner+timer, and the
+     port-binding ones whose presence signal fires: whatsapp, B has its routes; senses, B has a sensor); the
+     cog-scoped ones (observatory, canvas, gateway) are NOT written, each with its reason on stderr
   U3 orgs A and B rendered into ONE directory: disjoint file sets, and A's files survive B's run byte for byte
   U4 every timer has its same-named service (systemd activates `<x>.service` for `<x>.timer`)
   U6 systemd-analyze verify accepts every @<B> file (positive control: a broken one is rejected); NOT RUN without it
-  U5 the resolver: orgs.unit() is `astryx-pulse.timer` on one org, `astryx-pulse@<A>.timer` under HOME-A, and raises
+  U7 PORTS (S3b 5/n, seed #59954 ruling 3): B's port units bind B's REGISTRY ports (never the fixed literal); A's
+     and B's differ in one directory; an org whose wanted unit has no registry port REFUSES (rc != 0, the stem named,
+     no file of it written); a port it doesn't want needs no declaration. Every `${_UP:-<n>}` default in units() is
+     org_units.json's port for that stem, and no per-org port unit binds a bare literal
+  U5 the resolver: orgs.port() is None on one org, the registry's under HOME-A, NoHome with none; orgs.unit() is `astryx-pulse.timer` on one org, `astryx-pulse@<A>.timer` under HOME-A, and raises
      with no HOME carried; pulse_witness.timer_unit() follows it
 
 Seams (org_home_fixture.SEAMS): ORG_HOME_INIT_SRC, ORG_HOME_ORGS_SRC, ORG_HOME_UNITS_DATA_SRC. Exit 0 · 1 · 77.
@@ -49,6 +53,26 @@ def partition_gap(init_text: str, doc: dict) -> tuple[set, set, list]:
     return written - declared, declared - written, raw
 
 
+def defaults_gap(init_text: str, doc: dict) -> list:
+    """Each per-org port unit's block in units(): every `${_UP:-<n>}` names the stem's declared port, at least one is
+    there, and no `--port <digits>` or `:<port>` literal of it is left bare (a bare one is the fixed port in a cog)."""
+    block = re.search(r"^units\(\) \{.*?^\}$", init_text, re.S | re.M).group(0)
+    out = []
+    for m in WRITE.finditer(block):
+        stem = m.group(1)
+        u = doc["units"].get(stem, {})
+        if u.get("scope") != "org" or "port" not in u:
+            continue
+        body = block[m.end():block.index("\nEOF\n", m.end())]
+        got = [int(n) for n in re.findall(r"\$\{_UP:-(\d+)\}", body)]
+        if not got:
+            out.append(f"{stem}: no ${{_UP:-…}} in its unit")
+        out += [f"{stem}: default {n} is not its declared {u['port']}" for n in got if n != u["port"]]
+        bare = re.findall(r"(?:--port\s+|:)" + str(u["port"]) + r"\b", body)
+        out += [f"{stem}: a bare {b!r}" for b in bare]
+    return out
+
+
 def main():
     try:
         fx = OrgHomes().__enter__()
@@ -76,6 +100,8 @@ def main():
         # B carries a chat route (a port-binding unit it would get) and a runner (a per-org port-free one)
         (B / "bridges").mkdir(exist_ok=True)
         (B / "bridges" / "routes-whatsapp.json").write_text("{}\n")
+        (B / "sensors" / "fxagent").mkdir(parents=True, exist_ok=True)   # a sensor: senses' presence signal
+        (B / "sensors" / "fxagent" / "fxsense.py").write_text("def read():\n    return {}\n")
         (B / "nucleus").mkdir(exist_ok=True)
         (B / "nucleus" / "runners.conf").write_text("fxjob | org | *-*-* 03:00:00 | scripts/backup.sh | a fixture job\n")
 
@@ -99,15 +125,13 @@ def main():
         r = render(fx.env(ASTRYX_HOME=str(B)), fx.t / "u_b")
         got = set(files(fx.t / "u_b"))
         want = {f"astryx-pulse@{ob}.service", f"astryx-pulse@{ob}.timer", f"astryx-residents@{ob}.service",
-                f"astryx-fxjob@{ob}.service", f"astryx-fxjob@{ob}.timer"}
-        check("rc 0, and exactly B's port-free units, each @<B>", r.returncode == 0 and got == want,
+                f"astryx-fxjob@{ob}.service", f"astryx-fxjob@{ob}.timer", f"astryx-whatsapp@{ob}.service",
+                f"astryx-senses@{ob}.service"}
+        check("rc 0, and exactly B's own units, each @<B>", r.returncode == 0 and got == want,
               f"rc {r.returncode} got {sorted(got)} {r.stderr[-300:]}")
         for stem in ("astryx-observatory", "astryx-canvas", "astryx-gateway"):
             check(f"{stem}: not written, COG-scoped (said on stderr)", f"{stem} is COG-scoped" in r.stderr
                   and not any(n.startswith(stem) for n in got), r.stderr[-300:])
-        check("astryx-whatsapp (B has its routes): not written, it needs its registry port (said on stderr)",
-              "astryx-whatsapp binds a port" in r.stderr and not any(n.startswith("astryx-whatsapp") for n in got),
-              r.stderr[-300:])
 
         print("\nU3 TWO ORGS, ONE DIRECTORY: DISJOINT")
         both = fx.t / "u_ab"
@@ -143,23 +167,67 @@ def main():
             bad.write_text("[Service]\nExecStart=relative/path\n")
             check("positive control: it rejects a broken instance file", verify([bad]).returncode != 0)
 
+        print("\nU7 PORTS: EACH ORG'S OWN, FROM THE REGISTRY")
+        bf = files(fx.t / "u_b")
+        wa = bf.get(f"astryx-whatsapp@{ob}.service", b"").decode()
+        pb = fx.ports["b"]
+        check(f"whatsapp@B binds B's registry port --port {pb['astryx-whatsapp']}",
+              f"--port {pb['astryx-whatsapp']}\n" in wa and "--port 8477" not in wa, wa[-300:])
+        se = bf.get(f"astryx-senses@{ob}.service", b"").decode()
+        check(f"senses@B's description names B's port :{pb['astryx-senses']}", f":{pb['astryx-senses']})" in se, se[:200])
+        pa = fx.ports["a"]
+        (A / "bridges").mkdir(exist_ok=True)
+        (A / "bridges" / "routes-whatsapp.json").write_text("{}\n")
+        both2 = fx.t / "u_ab2"
+        ra, rb = render(fx.env(ASTRYX_HOME=str(A)), both2), render(fx.env(ASTRYX_HOME=str(B)), both2)
+        ab2 = files(both2)
+        wa_a = ab2.get(f"astryx-whatsapp@{fx.org['a']}.service", b"").decode()
+        wa_b = ab2.get(f"astryx-whatsapp@{ob}.service", b"").decode()
+        check("one directory: A's whatsapp on A's port, B's on B's, never one port",
+              f"--port {pa['astryx-whatsapp']}\n" in wa_a and f"--port {pb['astryx-whatsapp']}\n" in wa_b,
+              (wa_a[-120:] + " | " + wa_b[-120:] + (ra.stderr + rb.stderr)[-200:]))
+        (A / "bridges" / "routes-whatsapp.json").unlink()
+        # B's entry without its whatsapp port: B wants whatsapp (its routes), so units() REFUSES
+        reg = json.loads(fx.reg.read_text())
+        reg["orgs"][ob]["ports"].pop("astryx-whatsapp")
+        reg["orgs"][fx.org["a"]]["ports"] = {}          # A wants none of these: an org declares only what it runs
+        noport = fx.t / "noport.json"
+        noport.write_text(json.dumps(reg))
+        r = render(fx.env(ASTRYX_HOME=str(B), ASTRYX_COG_REGISTRY=str(noport)), fx.t / "u_np")
+        np_files = files(fx.t / "u_np")
+        check("B wants whatsapp and declares no port: REFUSED (rc != 0, the stem named), no whatsapp file",
+              r.returncode != 0 and "astryx-whatsapp is wanted" in r.stderr
+              and not any(n.startswith("astryx-whatsapp") for n in np_files), f"rc {r.returncode} {r.stderr[-300:]}")
+        r = render(fx.env(ASTRYX_HOME=str(A), ASTRYX_COG_REGISTRY=str(noport)), fx.t / "u_na")
+        check("A wants no port unit and declares no ports: rc 0 (only what it runs needs a port)",
+              r.returncode == 0 and not any(n.startswith(("astryx-whatsapp", "astryx-senses")) for n in files(fx.t / "u_na")),
+              f"rc {r.returncode} {r.stderr[-300:]}")
+        dflt = defaults_gap((co / "init.sh").read_text(), doc)
+        check("every ${_UP:-<n>} default is org_units.json's port, and no per-org port unit binds a bare literal",
+              not dflt, str(dflt))
+        planted = (co / "init.sh").read_text().replace("--port ${_UP:-8478}", "--port 8478", 1)
+        check("RED control: a planted bare --port 8478 in telegram's unit is accused",
+              any("astryx-telegram" in d for d in defaults_gap(planted, doc)), str(defaults_gap(planted, doc)))
+
         print("\nU5 THE RESOLVER")
         probe = ("import sys; sys.path.insert(0, sys.argv[1] + '/src'); sys.path.insert(0, sys.argv[1] + '/bridges')\n"
                  "from astryx import orgs; import pulse_witness as pw\n"
-                 "print(orgs.unit('astryx-pulse', 'timer'), pw.timer_unit(), orgs.unit('astryx-residents'))")
+                 "print(orgs.unit('astryx-pulse', 'timer'), pw.timer_unit(), orgs.unit('astryx-residents'), "
+                 "orgs.port('astryx-growbot'))")
         py = str(co / "venv" / "bin" / "python")
 
         def ask(env):
             return subprocess.run([py, "-c", probe, str(co)], env=env, cwd="/", capture_output=True, text=True,
                                   timeout=30)
         r = ask(one)
-        check("one org: astryx-pulse.timer (pulse_witness the same), astryx-residents.service",
-              r.stdout.split() == ["astryx-pulse.timer", "astryx-pulse.timer", "astryx-residents.service"],
+        check("one org: astryx-pulse.timer (pulse_witness the same), astryx-residents.service, port None",
+              r.stdout.split() == ["astryx-pulse.timer", "astryx-pulse.timer", "astryx-residents.service", "None"],
               r.stdout + r.stderr[-200:])
         oa = fx.org["a"]
         r = ask(fx.env(ASTRYX_HOME=str(A)))
-        check(f"HOME-A: astryx-pulse@{oa}.timer, and pulse_witness follows it",
-              r.stdout.split() == [f"astryx-pulse@{oa}.timer"] * 2 + [f"astryx-residents@{oa}.service"],
+        check(f"HOME-A: astryx-pulse@{oa}.timer, pulse_witness follows it, growbot on A's {pa['astryx-growbot']}",
+              r.stdout.split() == [f"astryx-pulse@{oa}.timer"] * 2 + [f"astryx-residents@{oa}.service",
+                                                                      str(pa["astryx-growbot"])],
               r.stdout + r.stderr[-200:])
         r = ask(fx.env())
         check("no HOME carried: it raises (NoHome), never a plain name as a guess",

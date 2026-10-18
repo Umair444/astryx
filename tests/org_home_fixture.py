@@ -9,7 +9,7 @@ host's host, port and user (read in Python, never printed), so libpq would reach
 
     with OrgHomes() as fx:
         fx.co      the estate-free checkout (venv linked in: host class)
-        fx.home["a"], fx.home["b"], fx.db["a"], fx.dsn["a"], fx.reg (the registry file), fx.org["a"] (its name)
+        fx.home["a"], fx.home["b"], fx.db["a"], fx.dsn["a"], fx.reg (the registry file), fx.org["a"] (its name), fx.ports["a"] (its unit ports)
         fx.tmux("a")     argv prefix for org a's own tmux server (-L ax-<org>); __exit__ kills both servers
         fx.env(**over)   a clean environment for a child: the host names only, plus ASTRYX_COG_REGISTRY
 """
@@ -124,9 +124,14 @@ class OrgHomes:
         # org NAMES are per run (S3b): each org's tmux server is `-L ax-<org>`, a host-wide socket name, so two runs
         # (a merge_check beside the live stamp) must never share one
         self.org = {o: f"fx{o}-{os.getpid()}" for o in ("a", "b")}
+        # each org's ports (S3b 5/n) are its own and NEVER the fixed ones (A: +10000, B: +20000), so a unit that kept
+        # its literal reads as the literal, never as a coincidence. Declared here, never bound by any oracle.
+        fixed = {"astryx-whatsapp": 8477, "astryx-telegram": 8478, "astryx-discord": 8479, "astryx-senses": 8460,
+                 "astryx-geoloc": 8766, "astryx-ear": 8092, "astryx-growbot": 8470}
+        self.ports = {o: {k: v + off for k, v in fixed.items()} for o, off in (("a", 10000), ("b", 20000))}
         self.reg = self.t / "orgs.json"
-        self.reg.write_text(json.dumps({"orgs": {self.org[o]: {"home": str(self.home[o]), "db": self.db[o]}
-                                                 for o in ("a", "b")}}))
+        self.reg.write_text(json.dumps({"orgs": {self.org[o]: {"home": str(self.home[o]), "db": self.db[o],
+                                                               "ports": self.ports[o]} for o in ("a", "b")}}))
         return self
 
     def env(self, **over) -> dict:

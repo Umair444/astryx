@@ -19,7 +19,15 @@ const given = v => (v && !/^\$\{.*\}$/.test(v.trim()) ? v.trim() : '')
 
 const real = p => { try { return realpathSync(p) } catch { return resolvePath(p) } }
 
-/** The registered orgs {org: {home, db}}, or null when this host has no registry (one org). A present but malformed
+// S3b 5/n (seed #59954 ruling 3): a registry entry's optional `ports` {unit stem: port}. The stems that may carry one
+// and the COG-scoped ports no org may take are src/astryx/data/org_units.json's; they are LITERALS here because this
+// file also runs from the plugin's cache with no src/ beside it. tests/test_org_registry_parity.py pins both to the
+// data file, so the two readers can't drift.
+export const ORG_PORT_STEMS = ['astryx-whatsapp', 'astryx-telegram', 'astryx-discord', 'astryx-senses', 'astryx-geoloc',
+  'astryx-ear', 'astryx-growbot']
+export const COG_PORTS = [8090, 8091, 8845]
+
+/** The registered orgs {org: {home, db, ports}}, or null when this host has no registry (one org). A present but malformed
  *  registry THROWS: it fails closed, never as absent. */
 export function registry(env = process.env) {
   const p = given(env.ASTRYX_COG_REGISTRY) || '/etc/astryx/cog.json'
@@ -32,6 +40,7 @@ export function registry(env = process.env) {
   // orgs.load's rules, each one (a2 #58917 A-1: a registry python refuses, node must refuse too; tests/org_registry_cases.json
   // holds the cases both runtimes must classify identically)
   const out = {}, homes = Object.create(null), dbs = Object.create(null)   // no prototype: a db named "constructor" is a name
+  const ports = new Map()
   for (const [o, e] of Object.entries(orgs)) {
     if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(o) || !e || typeof e !== 'object' || Array.isArray(e))
       throw new Error(`org registry ${p}: bad entry ${JSON.stringify(o)}`)
@@ -42,8 +51,20 @@ export function registry(env = process.env) {
       throw new Error(`org registry ${p}: ${o}'s database '${e.db}' is libpq's fallback or a fixture's`)
     if (h in homes || e.db in dbs)
       throw new Error(`org registry ${p}: ${o} shares a home or database with ${homes[h] || dbs[e.db]}`)
+    const pe = e.ports === undefined ? {} : e.ports
+    if (!pe || typeof pe !== 'object' || Array.isArray(pe))
+      throw new Error(`org registry ${p}: ${o}'s ports must be an object {unit stem: port}`)
+    for (const [stem, n] of Object.entries(pe)) {
+      if (!ORG_PORT_STEMS.includes(stem))
+        throw new Error(`org registry ${p}: ${o} gives a port to ${JSON.stringify(stem)}, not a per-org unit that binds one`)
+      if (!Number.isInteger(n) || n < 1 || n > 65535)
+        throw new Error(`org registry ${p}: ${o}'s ${stem} port ${JSON.stringify(n)} is not a port number`)
+      if (COG_PORTS.includes(n)) throw new Error(`org registry ${p}: ${o}'s ${stem} port ${n} is a COG-scoped unit's`)
+      if (ports.has(n)) throw new Error(`org registry ${p}: ${o}'s ${stem} port ${n} is already ${ports.get(n)}'s`)
+      ports.set(n, `${o} ${stem}`)
+    }
     homes[h] = o; dbs[e.db] = o
-    out[o] = { home: h, db: e.db }
+    out[o] = { home: h, db: e.db, ports: { ...pe } }
   }
   return out
 }

@@ -21,12 +21,14 @@ REPO = Path(__file__).resolve().parents[1]
 CASES = json.loads((REPO / "tests" / "org_registry_cases.json").read_text())["cases"]
 ORGS_SRC = Path(os.environ.get("ORG_HOME_ORGS_SRC") or REPO / "src" / "astryx" / "orgs.py")
 MJS_SRC = Path(os.environ.get("ORG_HOME_MJS_SRC") or REPO / "channel" / "home.mjs")
+UNITS = REPO / "src" / "astryx" / "data" / "org_units.json"
 fails = []
 
 PY = r"""
 import importlib.util, json, sys
 s = importlib.util.spec_from_file_location("orgs_under_test", sys.argv[1]); m = importlib.util.module_from_spec(s)
 s.loader.exec_module(m)
+m.UNITS = __import__("pathlib").Path(sys.argv[3])      # the copy under test reads the checkout's partition data
 try:
     r = m.load({"ASTRYX_COG_REGISTRY": sys.argv[2]})
     print("none" if r is None else f"orgs:{len(r)}")
@@ -70,12 +72,28 @@ def main():
                 text = c["text"] if "text" in c else json.dumps(c["registry"]).replace("{T}", str(t))
                 reg.write_text(text)
             env = {k: os.environ[k] for k in ("PATH", "HOME") if k in os.environ}
-            py = subprocess.run([sys.executable, "-B", "-c", PY, str(ORGS_SRC), str(reg)], capture_output=True,
+            py = subprocess.run([sys.executable, "-B", "-c", PY, str(ORGS_SRC), str(reg), str(UNITS)], capture_output=True,
                                 text=True, timeout=60, env=env).stdout.strip()
             js = subprocess.run(["node", "--input-type=module", "-e", JS, mjs.as_uri(), str(reg)], capture_output=True,
                                 text=True, timeout=60, env=env, cwd=t)
             check(f"{c['name']}: orgs.py {py!r}, home.mjs {js.stdout.strip()!r}, expected {c['expect']!r}",
                   py == c["expect"] and js.stdout.strip() == c["expect"], js.stderr.strip()[-200:])
+        # home.mjs carries the port partition as LITERALS (it runs from the plugin cache with no src/): they must be
+        # org_units.json's, read here from the data file, never from either reader
+        u = json.loads(UNITS.read_text())["units"]
+        want = {"stems": sorted(k for k, v in u.items() if v["scope"] == "org" and "port" in v),
+                "cog": sorted(v["port"] for v in u.values() if v["scope"] == "cog" and "port" in v)}
+        lit = subprocess.run(["node", "--input-type=module", "-e", "const m = await import(process.argv[1]); console.log("
+                              "JSON.stringify({stems: [...m.ORG_PORT_STEMS].sort(), cog: [...m.COG_PORTS].sort()}))",
+                              mjs.as_uri()], capture_output=True, text=True, timeout=60, cwd=t,
+                             env={**{k: os.environ[k] for k in ("PATH", "HOME") if k in os.environ},
+                                  "ASTRYX_COG_REGISTRY": str(t / "absent.json")})
+        try:
+            got = json.loads(lit.stdout)
+        except ValueError:
+            got = None
+        check("home.mjs's ORG_PORT_STEMS and COG_PORTS are org_units.json's (per-org port stems; cog ports "
+              f"{want['cog']})", got == want, f"{got} != {want} {lit.stderr[-200:]}")
     return 1 if fails else 0
 
 

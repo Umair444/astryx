@@ -76,7 +76,7 @@ units() {  # GENERATE systemd units from the org's declared sources of truth.
   # ImportEnvironment, and the only EnvironmentFile is the org's own .env.
   # No registry file at all (orgs.path(): ASTRYX_COG_REGISTRY, else /etc/astryx/cog.json) is a one-org host with no
   # question to ask; a present one is judged by THE predicate, and a missing interpreter then fails closed.
-  local ORGH="$PWD" UEXEC="" _mrc=1 UORG="" UCOG="" UPORT="" _UF=""
+  local ORGH="$PWD" UEXEC="" _mrc=1 UORG="" UCOG="" UPORT="" _UF="" _UP=""
   [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ] && { _mrc=0; venv/bin/python src/astryx/orgs.py multi || _mrc=$?; }
   case "$_mrc" in
     0) ORGH=$(venv/bin/python -c 'import sys; sys.path.insert(0, "src"); from astryx import paths; print(paths.home())') \
@@ -92,14 +92,18 @@ print(" ".join(k for k, v in d.items() if v["scope"] == "org" and "port" in v))'
     *) die "units: the org registry refuses (python src/astryx/orgs.py multi)" ;;
   esac
 
-  # S3b (data/org_units.json, seed #59954): the FILE a unit is written to. One org: "$UD/<stem>.<suffix>", exactly as
-  # before, and no process is asked. Several: "$UD/<stem>@<org>.<suffix>" (two orgs never write one file); a
-  # COG-scoped unit is never an org's (S3c), and a unit that binds a port waits for its registry port (5/n): both are
-  # NOT written, each with its reason on stderr.
+  # S3b (data/org_units.json, seed #59954): the FILE a unit is written to, and the port it binds. One org:
+  # "$UD/<stem>.<suffix>" and _UP empty, so every `${_UP:-<port>}` below is the fixed port: byte for byte as before,
+  # and no process is asked. Several: "$UD/<stem>@<org>.<suffix>" (two orgs never write one file); a COG-scoped unit
+  # is never an org's (S3c: NOT written, its reason on stderr); a unit that binds a port binds the org's REGISTRY port
+  # (5/n), and an org whose unit is wanted (its presence signal fired) but whose entry declares no port REFUSES:
+  # never a default, never a skip that leaves the org silently without the unit (ruling 3).
   _uw() {
+    _UP=""
     if [ -z "$UORG" ]; then _UF="$UD/$1.$2"; return 0; fi
     case " $UCOG " in *" $1 "*) echo "  units: $1 is COG-scoped (one per cog, S3c): not an org's unit" >&2; return 1 ;; esac
-    case " $UPORT " in *" $1 "*) echo "  units: $1 binds a port: in a cog of several orgs it needs its registry port (S3b 5/n), not written" >&2; return 1 ;; esac
+    case " $UPORT " in *" $1 "*) _UP=$(venv/bin/python src/astryx/orgs.py port "$1") \
+      || die "units: $1 is wanted, and org $UORG's registry entry (${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}) declares no port for it" ;; esac
     _UF="$UD/$1@$UORG.$2"
   }
 
@@ -214,7 +218,7 @@ Description=astryx whatsapp bridge — owner surface on the wire
 After=network.target docker.service
 [Service]
 WorkingDirectory=$PWD
-ExecStart=${UEXEC}$PWD/venv/bin/uvicorn bridges.whatsapp:app --host $(_docker_host_ip) --port 8477
+ExecStart=${UEXEC}$PWD/venv/bin/uvicorn bridges.whatsapp:app --host $(_docker_host_ip) --port ${_UP:-8477}
 Restart=always
 RestartSec=5
 User=$USER
@@ -228,7 +232,7 @@ Description=astryx discord bridge — owner surface on the wire
 After=network.target
 [Service]
 WorkingDirectory=$PWD
-ExecStart=${UEXEC}$PWD/venv/bin/uvicorn bridges.discord:app --host 127.0.0.1 --port 8479
+ExecStart=${UEXEC}$PWD/venv/bin/uvicorn bridges.discord:app --host 127.0.0.1 --port ${_UP:-8479}
 Restart=always
 RestartSec=5
 User=$USER
@@ -242,7 +246,7 @@ Description=astryx telegram bridge — owner surface on the wire
 After=network.target
 [Service]
 WorkingDirectory=$PWD
-ExecStart=${UEXEC}$PWD/venv/bin/uvicorn bridges.telegram:app --host 127.0.0.1 --port 8478
+ExecStart=${UEXEC}$PWD/venv/bin/uvicorn bridges.telegram:app --host 127.0.0.1 --port ${_UP:-8478}
 Restart=always
 RestartSec=5
 User=$USER
@@ -263,10 +267,10 @@ EOF
   # Declared 10-10 (seed #43920: it ran, enabled and active, while nothing generated it). Presence signal = the server
   # module + at least one sensor: writing sensors/<agent>/<name>.py IS deploying (senses.py's own law), so an org with
   # no sensor grows no service.
-  if [ -f src/astryx/pulse/senses.py ] && compgen -G "sensors/*/*.py" >/dev/null; then
+  if [ -f src/astryx/pulse/senses.py ] && compgen -G "$ORGH/sensors/*/*.py" >/dev/null; then   # the org's sensors (S3b)
     _uw astryx-senses service && cat > "$_UF" <<EOF
 [Unit]
-Description=astryx senses — the afferent API layer (sensors/<agent>/*.py served on :8460)
+Description=astryx senses — the afferent API layer (sensors/<agent>/*.py served on :${_UP:-8460})
 After=network.target docker.service
 
 [Service]
@@ -290,12 +294,12 @@ EOF
   if [ -f "$ORGH/bridges/geoloc.py" ] && [ -f "$HOME/.config/astryx/geoloc.env" ]; then
     _uw astryx-geoloc service && cat > "$_UF" <<EOF
 [Unit]
-Description=astryx geoloc bridge — phone location intake on :8766
+Description=astryx geoloc bridge — phone location intake on :${_UP:-8766}
 After=network.target
 [Service]
 WorkingDirectory=$PWD/bridges
 EnvironmentFile=$HOME/.config/astryx/geoloc.env
-ExecStart=${UEXEC}$PWD/venv/bin/uvicorn geoloc:app --host 0.0.0.0 --port 8766
+ExecStart=${UEXEC}$PWD/venv/bin/uvicorn geoloc:app --host 0.0.0.0 --port ${_UP:-8766}
 Restart=always
 RestartSec=5
 User=$USER
@@ -312,11 +316,11 @@ EOF
   if [ "$ear_on" = 1 ] && [ -f bridges/ear.py ]; then
     _uw astryx-ear service && cat > "$_UF" <<EOF
 [Unit]
-Description=astryx ear — hearing: VAD speech segments from the observatory → local STT → the ear store (:8092, via /ear/)
+Description=astryx ear — hearing: VAD speech segments from the observatory → local STT → the ear store (:${_UP:-8092}, via /ear/)
 After=network.target docker.service
 [Service]
 WorkingDirectory=$PWD
-ExecStart=${UEXEC}$PWD/venv/bin/uvicorn bridges.ear:app --host 127.0.0.1 --port 8092
+ExecStart=${UEXEC}$PWD/venv/bin/uvicorn bridges.ear:app --host 127.0.0.1 --port ${_UP:-8092}
 Restart=always
 RestartSec=5
 User=$USER
@@ -343,11 +347,10 @@ EOF
   # body (GROWBOT_BODY_URL elsewhere: the chip serves the protocol itself) must leave it installed and NOT enabled.
   if [ -f src/astryx/contrib/growbot_body.py ] && \
      grep -rqsE '^Grants:.*\bgrowbot\b' --exclude='*.example.md' "$ORGH/agents/"; then
-    { [ -z "$gb_url" ] || echo "$gb_url" | grep -qE '127\.0\.0\.1|localhost'; } \
-      || UNITS_EXPECT_DISABLED="$UNITS_EXPECT_DISABLED astryx-growbot.service"
+    gb_off=""; { [ -z "$gb_url" ] || echo "$gb_url" | grep -qE '127\.0\.0\.1|localhost'; } || gb_off=1
     _uw astryx-growbot service && cat > "$_UF" <<EOF
 [Unit]
-Description=astryx growbot body — the open GrowBot body protocol over the USB-serial Pico (:8470)
+Description=astryx growbot body — the open GrowBot body protocol over the USB-serial Pico (:${_UP:-8470})
 After=network.target
 [Service]
 WorkingDirectory=$PWD
@@ -360,6 +363,8 @@ Environment=ASTRYX_HOME=$ORGH
 [Install]
 WantedBy=multi-user.target
 EOF
+    # the unit's FILE name (S3b: `@<org>` in a cog of several orgs), so doctor checks the file this org has
+    [ -z "$gb_off" ] || UNITS_EXPECT_DISABLED="$UNITS_EXPECT_DISABLED ${_UF##*/}"
   fi
 
   # ── 4. runners — periodic jobs from nucleus/runners.conf ─────────────────────

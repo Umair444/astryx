@@ -18,6 +18,26 @@
   {"name": "db is a fixture's", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "astryx_fx_x"}}}, "expect": "refused"},
   {"name": "two orgs share a db", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_s"}, "fxb": {"home": "{T}/b", "db": "fxorg_s"}}}, "expect": "refused"},
   {"name": "two orgs share a home (one spelled with a trailing slash)", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a"}, "fxb": {"home": "{T}/a/", "db": "fxorg_b"}}}, "expect": "refused"},
-  {"name": "a db named like an object property", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "constructor"}, "fxb": {"home": "{T}/b", "db": "toString"}}}, "expect": "orgs:2"}
+  {"name": "a db named like an object property", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "constructor"}, "fxb": {"home": "{T}/b", "db": "toString"}}}, "expect": "orgs:2"},
+  {"name": "ports (S3b 5/n): two orgs, each its own ports", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "ports": {"astryx-whatsapp": 18477, "astryx-senses": 18460}}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "ports": {"astryx-whatsapp": 28477}}}}, "expect": "orgs:2"},
+  {"name": "ports: an org with none declared (absent at load is valid; port() refuses at use)", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a"}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "ports": {"astryx-whatsapp": 28477}}}}, "expect": "orgs:2"},
+  {"name": "ports: empty object", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "ports": {}}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "ports": {}}}}, "expect": "orgs:2"},
+  {"name": "ports: two orgs share one (a port is host-wide)", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "ports": {"astryx-whatsapp": 18477}}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "ports": {"astryx-telegram": 18477}}}}, "expect": "refused"},
+  {"name": "ports: one org gives two units one port", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "ports": {"astryx-whatsapp": 18477, "astryx-ear": 18477}}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "ports": {}}}}, "expect": "refused"},
+  {"name": "ports: the observatory's 8090 (ruling 3(a))", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "ports": {"astryx-senses": 8090}}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "ports": {}}}}, "expect": "refused"},
+  {"name": "ports: canvas's 8091 (ruling 3(a))", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "ports": {}}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "ports": {"astryx-ear": 8091}}}}, "expect": "refused"},
+  {"name": "ports: the gateway's 8845 (ruling 3(a))", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "ports": {"astryx-whatsapp": 8845}}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "ports": {}}}}, "expect": "refused"},
+  {"name": "ports: a COG-scoped stem given a port", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "ports": {"astryx-observatory": 18090}}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "ports": {}}}}, "expect": "refused"},
+  {"name": "ports: a port-free stem given a port", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "ports": {"astryx-pulse": 18001}}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "ports": {}}}}, "expect": "refused"},
+  {"name": "ports: an unknown stem", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "ports": {"astryx-whatsap": 18477}}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "ports": {}}}}, "expect": "refused"},
+  {"name": "ports: a string port", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "ports": {"astryx-whatsapp": "18477"}}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "ports": {}}}}, "expect": "refused"},
+  {"name": "ports: a float port", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "ports": {"astryx-whatsapp": 18477.5}}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "ports": {}}}}, "expect": "refused"},
+  {"name": "ports: a boolean port", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "ports": {"astryx-whatsapp": true}}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "ports": {}}}}, "expect": "refused"},
+  {"name": "ports: an integral float (18477.0: node reads the integer 18477, so python must too)", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "ports": {"astryx-whatsapp": 18477.0}}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "ports": {}}}}, "expect": "orgs:2"},
+  {"name": "ports: 0", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "ports": {"astryx-whatsapp": 0}}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "ports": {}}}}, "expect": "refused"},
+  {"name": "ports: 65536", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "ports": {"astryx-whatsapp": 65536}}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "ports": {}}}}, "expect": "refused"},
+  {"name": "ports: an array, not an object", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "ports": [18477]}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "ports": {}}}}, "expect": "refused"},
+  {"name": "ports: null", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "ports": null}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "ports": {}}}}, "expect": "refused"},
+  {"name": "ports: a stem named like an object property", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "ports": {"constructor": 18477}}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "ports": {}}}}, "expect": "refused"}
  ]
 }

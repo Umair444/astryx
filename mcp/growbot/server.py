@@ -30,7 +30,7 @@ from mcp.server.fastmcp import FastMCP
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))   # astryx.paths: the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
-from astryx import config, paths  # noqa: E402
+from astryx import config, orgs, paths  # noqa: E402
 
 
 def _body_url() -> str:
@@ -45,7 +45,7 @@ def _body_url() -> str:
                 return line.split("=", 1)[1].strip().rstrip("/")
     except OSError:
         pass
-    return "http://127.0.0.1:8470"
+    return f"http://127.0.0.1:{orgs.port('astryx-growbot') or 8470}"     # the org's own body host (S3b 5/n)
 
 
 # no module-level pin: the Wi-Fi body's IP is a DHCP lease; resolve per call

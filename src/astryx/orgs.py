@@ -16,7 +16,12 @@ fixture seam the oracles use, and it is a DECLARED host-class name (data/org_env
 environment. Under R1 (one owner, one superuser) it isn't a security boundary: an org process that sets it to a
 missing file reads a one-org host. That is correctness isolation, declared, not containment (a1 §6).
 
-The file:  {"orgs": {"<org>": {"home": "/abs/HOME", "db": "<its database>"}, ...}}
+The file:  {"orgs": {"<org>": {"home": "/abs/HOME", "db": "<its database>", "ports": {"<unit stem>": <port>}}, ...}}
+`ports` (S3b 5/n, seed #59954 ruling 3) is optional at load: it holds the port of each per-org unit that binds one
+(data/org_units.json, scope org with a port), keyed by the unit's stem. A port is a HOST-wide name like a tmux socket,
+so the registry refuses one two orgs share, and one equal to a COG-scoped unit's port (8090/8091/8845, ruling 3(a)).
+In a cog of several orgs there is no default: port() REFUSES a missing one (ruling 3(b): the primary org declares its
+ports like any other).
 `db` is the org's main database by name, so a process can tell "another org's database" WITHOUT reading another
 org's .env (no cross-org read outside the declared cog-scoped set, a2 E). Its own .env must name the same database:
 config.dsn checks that pair for its own org only.
@@ -37,6 +42,13 @@ NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 # is every cluster's maintenance database. An org there could be reached by an empty DSN plus two PG* names.
 NEVER_ORG_DB = ("postgres",)
 FIXTURE_DB = "astryx_fx_"       # sqlguard.fixture.PREFIX, re-read there by the oracle, never imported here
+
+
+UNITS = Path(__file__).resolve().parent / "data" / "org_units.json"
+
+
+def _units() -> dict:
+    return json.loads(UNITS.read_text())["units"]
 
 
 class RegistryError(RuntimeError):
@@ -63,7 +75,10 @@ def load(env=None) -> dict | None:
         assert isinstance(raw, dict) and raw
     except (ValueError, KeyError, TypeError, AssertionError):
         raise RegistryError(f"org registry {p}: expected {{\"orgs\": {{name: {{home, db}}}}}}") from None
-    out, homes, dbs = {}, {}, {}
+    out, homes, dbs, ports = {}, {}, {}, {}
+    units = _units()
+    cog_ports = {u["port"] for u in units.values() if u["scope"] == "cog" and "port" in u}
+    org_stems = {k for k, u in units.items() if u["scope"] == "org" and "port" in u}
     for org, e in raw.items():
         if not isinstance(org, str) or not NAME.fullmatch(org) or not isinstance(e, dict):
             raise RegistryError(f"org registry {p}: bad entry {org!r}")
@@ -75,8 +90,23 @@ def load(env=None) -> dict | None:
             raise RegistryError(f"org registry {p}: {org}'s database {db!r} is libpq's fallback or a fixture's")
         if h in homes or db in dbs:
             raise RegistryError(f"org registry {p}: {org} shares a home or database with {homes.get(h) or dbs[db]}")
+        pe = e.get("ports", {})
+        if not isinstance(pe, dict):
+            raise RegistryError(f"org registry {p}: {org}'s ports must be an object {{unit stem: port}}")
+        pe = {k: int(v) if type(v) is float and v.is_integer() else v for k, v in pe.items()}   # JSON's 18477.0 is
+        # node's integer 18477 (home.mjs can't tell them apart): one number, one verdict in both readers
+        for stem, port in pe.items():
+            if stem not in org_stems:
+                raise RegistryError(f"org registry {p}: {org} gives a port to {stem!r}, not a per-org unit that binds one")
+            if type(port) is not int or not 1 <= port <= 65535:
+                raise RegistryError(f"org registry {p}: {org}'s {stem} port {port!r} is not a port number")
+            if port in cog_ports:
+                raise RegistryError(f"org registry {p}: {org}'s {stem} port {port} is a COG-scoped unit's")
+            if port in ports:
+                raise RegistryError(f"org registry {p}: {org}'s {stem} port {port} is already {ports[port]}'s")
+            ports[port] = f"{org} {stem}"
         homes[h], dbs[db] = org, org
-        out[org] = {"home": h, "db": db}
+        out[org] = {"home": h, "db": db, "ports": dict(pe)}
     return out
 
 
@@ -126,6 +156,19 @@ def unit(stem: str, suffix: str = "service", env=None, cwd=None) -> str:
     return f"{stem}.{suffix}" if o is None else f"{stem}@{o}.{suffix}"
 
 
+def port(stem: str, env=None, cwd=None) -> int | None:
+    """The port THIS org's unit `stem` binds (S3b 5/n): None on one org (the caller keeps its fixed port, byte for byte
+    as before); in a cog of several orgs the org's registry `ports[stem]`, and a missing one RAISES, never a default."""
+    o = name(env, cwd)
+    if o is None:
+        return None
+    got = load(env)[o]["ports"].get(stem)
+    if got is None:
+        raise RegistryError(f"org registry {path(env)}: {o} declares no port for {stem} (this cog runs several orgs: "
+                            f"every org's port is in its registry entry, there is no default)")
+    return got
+
+
 def conninfo(dsn: str) -> dict:
     """libpq's own reading of a DSN (URI or key=value), through psycopg: never a second parser of the grammar."""
     from psycopg.conninfo import conninfo_to_dict
@@ -145,8 +188,8 @@ def is_fixture(dsn: str) -> bool:
 
 def _main(argv) -> int:
     """`python -m astryx.orgs multi` exits 0 in a cog of several orgs, 1 otherwise, 2 when the registry refuses.
-    `socket` prints this org's tmux socket (`name` its name) and exits 0 on several orgs, exits 1 on one, 2 when no
-    registered HOME is carried. spawn.sh and init.sh ask THIS, so a shell copy of the predicate can never drift from it."""
+    `socket` prints this org's tmux socket (`name` its name, `port <stem>` its unit's port) and exits 0 on several
+    orgs, exits 1 on one, 2 when no registered HOME is carried (or, for `port`, the org declares none). spawn.sh and init.sh ask THIS, so a shell copy of the predicate can never drift from it."""
     import sys
     try:
         if argv[:1] == ["multi"]:
@@ -156,6 +199,12 @@ def _main(argv) -> int:
             if o is None:
                 return 1
             print(o)
+            return 0
+        if argv[:1] == ["port"] and len(argv) == 2:   # init.sh units(): this org's port for a unit (exit 0); 1 on one
+            n = port(argv[1])
+            if n is None:
+                return 1
+            print(n)
             return 0
         if argv[:1] == ["socket"]:            # scripts/org_tmux.sh: prints ax-<org> (exit 0) on several orgs; 1 on one
             s = socket()
@@ -170,7 +219,7 @@ def _main(argv) -> int:
         # guard reads as "one org, proceed" (a registry nested past the parser's recursion limit did exactly that)
         print(f"astryx.orgs: the registry could not be judged ({type(e).__name__}): refusing", file=sys.stderr)
         return 2
-    print("usage: python -m astryx.orgs multi|name|socket", file=sys.stderr)
+    print("usage: python -m astryx.orgs multi|name|socket|port <unit stem>", file=sys.stderr)
     return 2
 
 

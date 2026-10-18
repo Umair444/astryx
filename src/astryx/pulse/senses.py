@@ -40,7 +40,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
-from astryx import config, paths  # noqa: E402
+from astryx import config, orgs, paths  # noqa: E402
 import importlib.util
 import json
 import sys
@@ -50,7 +50,7 @@ from pathlib import Path
 REPO = repo_root(__file__)
 sys.path.insert(0, str(REPO))
 SENSORS = paths.estate(__file__) / "sensors"
-PORT = 8460
+PORT = 8460                         # one org; in a cog of several orgs the org's registry port (orgs.port, S3b 5/n)
 
 from fastapi import FastAPI, Request, Response  # noqa: E402
 
@@ -196,4 +196,5 @@ async def dispatch(agent: str, name: str, request: Request):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="warning")
+    # resolved at SERVE time, never at import: a module that imports senses for another reason must not need a HOME
+    uvicorn.run(app, host="0.0.0.0", port=orgs.port("astryx-senses") or PORT, log_level="warning")
