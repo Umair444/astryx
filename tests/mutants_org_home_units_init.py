@@ -17,8 +17,8 @@ TIMEOUT = 300
 
 MUTANTS = {
     'V1 in a cog of several orgs the file is the plain name (two orgs write one file)':
-        ('    _UF="$UD/$1@$UORG.$2"\n',
-         '    _UF="$UD/$1.$2"\n'),
+        ('    _UF="$UD/$(venv/bin/python src/astryx/orgs.py unit "$1" "$2")" || die "units: orgs.unit can\'t name $1.$2 for org $UORG"',
+         '    _UF="$UD/$1.$2"'),
     "V2 a COG-scoped unit is written by an org's run":
         ('    case " $UCOG " in *" $1 "*) echo "  units: $1 is COG-scoped (one per cog',
          '    case " " in *" $1 "*) echo "  units: $1 is COG-scoped (one per cog'),
@@ -56,4 +56,12 @@ MUTANTS = {
         ('bridges.canvas:root --host 127.0.0.1 --port ${_UP:-8091}', 'bridges.canvas:root --host 127.0.0.1 --port 8091'),
     "V16 an org's canvas binds every interface (its observatory is the one way in)":
         ('bridges.canvas:root --host 127.0.0.1 --port ${_UP:-8091}', 'bridges.canvas:root --host 0.0.0.0 --port ${_UP:-8091}'),
+    "V17 _uw rebuilds the name in bash (<stem>@<org> for every org: the primary's live plain units orphaned, a2 #60794)":
+        ('    _UF="$UD/$(venv/bin/python src/astryx/orgs.py unit "$1" "$2")" || die "units: orgs.unit can\'t name $1.$2 for org $UORG"', '    _UF="$UD/$1@$UORG.$2"'),
+    "V18 the primary's units gain the orgenv prefix (every one of its services rewritten and restarted)":
+        ('then UPRIM=1 UEXEC=""; fi', 'then UPRIM=1; fi'),
+    "V19 `./init.sh units` refuses in a cog like every other verb (no production way to write a cog's units)":
+        ('if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ] && [ "${1:-}" != units ]; then', 'if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ]; then'),
+    "V20 every verb runs in a cog (setup re-inits whichever org it guesses)":
+        ('if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ] && [ "${1:-}" != units ]; then', 'if false; then'),
 }

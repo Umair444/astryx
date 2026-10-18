@@ -228,6 +228,7 @@ def is_fixture(dsn: str) -> bool:
 
 def _main(argv) -> int:
     """`python -m astryx.orgs multi` exits 0 in a cog of several orgs, 1 otherwise, 2 when the registry refuses.
+    `primary` prints the registry's primary org (exit 1 when none); `unit <stem> [suffix]` THIS org's unit file name.
     `socket` prints this org's tmux socket (`name` its name, `port <stem>` its unit's port) and exits 0 on several
     orgs, exits 1 on one, 2 when no registered HOME is carried (or, for `port`, the org declares none). spawn.sh and init.sh ask THIS, so a shell copy of the predicate can never drift from it."""
     import sys
@@ -246,6 +247,15 @@ def _main(argv) -> int:
                 return 1
             print(n)
             return 0
+        if argv[:1] == ["unit"] and len(argv) in (2, 3):   # init.sh units(): THIS org's unit file name (exit 0)
+            print(unit(argv[1], *argv[2:]))              # the ONE authority for it (a2 #60794): never rebuilt in bash
+            return 0
+        if argv[:1] == ["primary"]:           # init.sh units(): the registry's primary org (exit 0); 1 when none
+            o = primary()
+            if o is None:
+                return 1
+            print(o)
+            return 0
         if argv[:1] == ["socket"]:            # scripts/org_tmux.sh: prints ax-<org> (exit 0) on several orgs; 1 on one
             s = socket()
             if s is None:
@@ -259,7 +269,7 @@ def _main(argv) -> int:
         # guard reads as "one org, proceed" (a registry nested past the parser's recursion limit did exactly that)
         print(f"astryx.orgs: the registry could not be judged ({type(e).__name__}): refusing", file=sys.stderr)
         return 2
-    print("usage: python -m astryx.orgs multi|name|socket|port <unit stem>", file=sys.stderr)
+    print("usage: python -m astryx.orgs multi|name|primary|socket|port <unit stem>|unit <stem> [suffix]", file=sys.stderr)
     return 2
 
 

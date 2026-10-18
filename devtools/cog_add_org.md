@@ -34,8 +34,9 @@ installed, a2 #60783) and every resident's channel server carries it too (spawn.
 resolves them unchanged.
 
 What does change (a2 #60783 A-3): anything run INSIDE the checkout WITHOUT ASTRYX_HOME gets NoHome in a cog. That covers
-the owner's own shell, any `venv/bin/python …` tool, and wall.sh. It fails closed and loud. The `READY`, reversible step
-that keeps them resolving to our org, done before the registry:
+the owner's own shell, any `venv/bin/python …` tool, and wall.sh. It fails closed and loud, and the NoHome names the
+marker. A HARD PREREQUISITE of the registry step (§4 step 2; seed #60792), `READY` and reversible, keeps the Python
+tools resolving to our org (a node tool still refuses: home.mjs has no marker rung, a2 #60785):
 
     touch /home/umair/astryx/.astryx        # the marker rung (paths.find_marker); /.astryx is gitignored (.gitignore)
     # rollback: rm /home/umair/astryx/.astryx
@@ -90,6 +91,9 @@ COG-scoped, no org may take one: 8090 (the front), 8845 (the gateway).
 In order, each line the owner's:
 
 1. The gates first (S3 landed and deployed), so no land runs its oracles under the new registry.
+   And the marker (§1, a hard prerequisite): `touch /home/umair/astryx/.astryx`, then `test -f /home/umair/astryx/.astryx`
+   must pass before step 2. Its proof: test_org_home_units U12, where no ASTRYX_HOME and no marker gives a NoHome naming
+   it, and the marker resolves to the primary.
 2. `sudo install -d -m 755 /etc/astryx && sudo install -m 644 <the file cog_add_org.sh printed> /etc/astryx/cog.json`
 3. The units, written to `units/` only (S2):
    - ours: `ASTRYX_HOME=/home/umair/astryx ./init.sh units`. As the primary its units stay plain-named and byte-identical, except that `astryx-observatory.service` is no longer ours, and ours gains `astryx-observatory-org.service` on 8190.

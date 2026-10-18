@@ -28,6 +28,14 @@ cog-scoped, and the port it binds) is declared once in src/astryx/data/org_units
      cog-scoped units (the gateway) under their plain names, its environment the registry and never a HOME, no orgenv
      prefix; canvas is no longer the cog's (each org's own, S3c canvas): the cog's run neither writes it nor names
      it; a HOME named but unregistered still refuses; systemd-analyze accepts the file
+  U12 THE PRIMARY (S3f S1/S2, seed #60780: the primary moves as little as possible). The fixture checkout itself is
+     registered as the primary's HOME, as the live host's is: its cog render is its one-org render BYTE FOR BYTE,
+     except the observatory (:8090 is the front's, the cog's run writes it) and the gateway (cog-scoped), and it gains
+     astryx-observatory-org.service (plain, main:app on 127.0.0.1 at its registry port, no orgenv); B is unchanged.
+     Every primary service carries ASTRYX_HOME; a process WITHOUT it in the checkout gets a NoHome naming the
+     .astryx marker, and with the marker resolves to the primary (seed #60792)
+  U13 `./init.sh units` (S3f S2): the one verb a cog may run writes exactly what units() writes, for B and for the
+     primary, into UNITS_DIR; `./init.sh` (setup) and `./init.sh doctor` still refuse in a cog (exit 3, nothing written)
   U5 the resolver: orgs.port() is None on one org, the registry's under HOME-A, NoHome with none; orgs.unit() is `astryx-pulse.timer` on one org, `astryx-pulse@<A>.timer` under HOME-A, and raises
      with no HOME carried; pulse_witness.timer_unit() follows it
 
@@ -331,6 +339,70 @@ def main():
             v = subprocess.run(["systemd-analyze", "verify", "--man=no", str(fx.t / "u_cog" / "astryx-gateway.service")],
                                capture_output=True, text=True, timeout=60)
             check("systemd-analyze verify accepts the cog's gateway unit", v.returncode == 0, (v.stdout + v.stderr)[-300:])
+
+        print("\nU12 THE PRIMARY: ITS ONE-ORG UNITS, BYTE FOR BYTE, BUT THE OBSERVATORY")
+        pkey, pport = f"fxprim-{fx.org['a']}", 18190
+        preg = json.loads(fx.reg.read_text())
+        preg["orgs"] = {pkey: {"home": str(co), "db": f"fxorg_prim_{fx.org['a'].replace('-', '_')}", "primary": True,
+                               "ports": {"astryx-canvas": 8091, "astryx-observatory-org": pport}},
+                        fx.org["b"]: preg["orgs"][fx.org["b"]]}
+        (fx.t / "primary.json").write_text(json.dumps(preg))
+        penv = fx.env(ASTRYX_HOME=str(co), ASTRYX_COG_REGISTRY=str(fx.t / "primary.json"))
+        r = render(penv, fx.t / "u_prim")
+        prim, one_files = files(fx.t / "u_prim"), files(fx.t / "u_one")
+        want = (set(one_files) - {"astryx-observatory.service", "astryx-gateway.service"}) | {"astryx-observatory-org.service"}
+        check("rc 0, and exactly the one-org set, the observatory and gateway out, astryx-observatory-org in (plain names)",
+              r.returncode == 0 and set(prim) == want, f"rc {r.returncode} got {sorted(prim)} want {sorted(want)} "
+              f"{r.stderr[-300:]}")
+        same = sorted(n for n in set(prim) & set(one_files) if prim[n] == one_files[n])
+        check("every other unit is its one-org file BYTE FOR BYTE (no orgenv prefix, no @, today's ports)",
+              same == sorted(set(prim) & set(one_files)) and same, f"differ: {sorted(set(prim) & set(one_files) - set(same))}")
+        po = prim.get("astryx-observatory-org.service", b"").decode()
+        check(f"its observatory: main:app on 127.0.0.1:{pport} (its registry port), its HOME, no orgenv",
+              f"uvicorn main:app --host 127.0.0.1 --port {pport}\n" in po and f"Environment=ASTRYX_HOME={co}\n" in po
+              and "orgenv" not in po, po[-400:])
+        rb = render(fx.env(ASTRYX_HOME=str(B), ASTRYX_COG_REGISTRY=str(fx.t / "primary.json")), fx.t / "u_pb")
+        nb = files(fx.t / "u_pb")
+        check("B, not the primary, beside it: still its own @<B> files through orgenv",
+              rb.returncode == 0 and nb and all("@" + fx.org["b"] + "." in n for n in nb)
+              and all("orgenv.py exec --home" in v.decode() for k, v in nb.items() if k.endswith(".service")),
+              f"rc {rb.returncode} {sorted(nb)} {rb.stderr[-200:]}")
+
+        svc = [k for k in prim if k.endswith(".service")]
+        check("every primary service unit carries ASTRYX_HOME (its processes resolve by the env rung, never the marker; "
+              "seed #60792)", svc and all(f"Environment=ASTRYX_HOME={co}\n" in prim[k].decode() for k in svc),
+              str([k for k in svc if f"Environment=ASTRYX_HOME={co}" not in prim[k].decode()]))
+        # a process WITHOUT ASTRYX_HOME, its cwd in the primary's checkout (the owner's shell, a tool): the marker rung
+        res = ("import sys; sys.path.insert(0, sys.argv[1] + '/src'); from astryx import paths\n"
+               "try:\n    print(*paths.resolve_home())\nexcept paths.NoHome as e:\n    print('NoHome', e)")
+        noh = {k: v for k, v in penv.items() if k != "ASTRYX_HOME"}
+        (co / "homes" / "fxshell").mkdir(parents=True, exist_ok=True)
+        r = subprocess.run([str(co / "venv" / "bin" / "python"), "-c", res, str(co)], env=noh, cwd=co / "homes" / "fxshell", capture_output=True,
+                           text=True, timeout=30)
+        check("no ASTRYX_HOME, no .astryx marker: a loud NoHome that names the marker (seed #60792 (b))",
+              r.stdout.startswith("NoHome") and ".astryx marker" in r.stdout, r.stdout + r.stderr[-200:])
+        (co / ".astryx").write_text("")
+        try:
+            r = subprocess.run([str(co / "venv" / "bin" / "python"), "-c", res, str(co)], env=noh, cwd=co / "homes" / "fxshell", capture_output=True,
+                               text=True, timeout=30)
+            check("no ASTRYX_HOME, the checkout's .astryx marker: resolves to the PRIMARY's home (seed #60792 (a))",
+                  r.stdout.split() == [str(co), "marker"], r.stdout + r.stderr[-200:])
+        finally:
+            (co / ".astryx").unlink()
+
+        print("\nU13 ./init.sh units: THE ONE VERB A COG RUNS")
+        for who, e, ref in (("B", fx.env(ASTRYX_HOME=str(B)), files(fx.t / "u_b")), ("the primary", penv, prim)):
+            out = fx.t / f"u_verb_{who[-1]}"
+            r = subprocess.run(["bash", "init.sh", "units"], env={**e, "UNITS_DIR": str(out)}, cwd=co,
+                               capture_output=True, text=True, timeout=120)
+            check(f"`./init.sh units` for {who}: rc 0, the very files units() writes", r.returncode == 0
+                  and files(out) == ref, f"rc {r.returncode} {sorted(files(out))} {(r.stdout + r.stderr)[-300:]}")
+        for verb in ([], ["doctor"]):
+            out = fx.t / f"u_refuse_{'_'.join(verb) or 'setup'}"
+            r = subprocess.run(["bash", "init.sh", *verb], env={**fx.env(ASTRYX_HOME=str(B)), "UNITS_DIR": str(out)},
+                               cwd=co, capture_output=True, text=True, timeout=120)
+            check(f"`./init.sh {' '.join(verb) or '(setup)'}` still refuses in a cog: exit 3, nothing written",
+                  r.returncode == 3 and not files(out) and "refusing" in r.stderr, f"rc {r.returncode} {r.stderr[-200:]}")
 
         print("\nU9 PORT LITERALS ARE DECLARED")
         decl = json.loads((co / "tests" / "org_port_literals.json").read_text())["files"]

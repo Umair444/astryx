@@ -21,7 +21,9 @@ unset _self _t _hops
 # (.env, agents/, bridges/routes-*.json, …) relative to it. On a host that runs SEVERAL orgs the checkout carries no
 # estate, so it REFUSES before any of it: a multi-org setup is seed's estate move (#58435 item 7) and S3b's per-org
 # units, never this script guessing which org it means. units() below already serves a HOME (ORGH); the rest doesn't.
-if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ]; then
+# The ONE verb a cog may run is `units` (S3f S2): units() resolves its own org (ASTRYX_HOME; none carried is the cog's
+# run) and writes unit FILES into units/ only, nothing installed, nothing started; the registry is judged inside it.
+if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ] && [ "${1:-}" != units ]; then
   _g=0; venv/bin/python src/astryx/orgs.py multi || _g=$?
   [ "$_g" = 1 ] || { echo "init.sh: this cog runs several orgs (or its org registry refuses): init.sh sets up one org, refusing" >&2; exit 3; }
 fi
@@ -76,7 +78,7 @@ units() {  # GENERATE systemd units from the org's declared sources of truth.
   # ImportEnvironment, and the only EnvironmentFile is the org's own .env.
   # No registry file at all (orgs.path(): ASTRYX_COG_REGISTRY, else /etc/astryx/cog.json) is a one-org host with no
   # question to ask; a present one is judged by THE predicate, and a missing interpreter then fails closed.
-  local ORGH="$PWD" UEXEC="" _mrc=1 UORG="" UCOG="" UPORT="" _UF="" _UP="" UCOGRUN="" UREADY=""
+  local ORGH="$PWD" UEXEC="" _mrc=1 UORG="" UCOG="" UPORT="" _UF="" _UP="" UCOGRUN="" UREADY="" UPRIM=""
   [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ] && { _mrc=0; venv/bin/python src/astryx/orgs.py multi || _mrc=$?; }
   case "$_mrc" in
     0) if [ -z "${ASTRYX_HOME:-}" ]; then
@@ -88,6 +90,11 @@ units() {  # GENERATE systemd units from the org's declared sources of truth.
            || die "units: several orgs in this cog and ASTRYX_HOME names no registered one"
          UEXEC="$PWD/venv/bin/python $PWD/src/astryx/orgenv.py exec --home $ORGH -- "
          UORG=$(venv/bin/python src/astryx/orgs.py name) || die "units: this org's HOME is not a registered org"
+         # S3f (seed #60780): the PRIMARY org moves as little as possible when a cog forms. Its units are today's, byte
+         # for byte: plain names, no orgenv prefix (they ran without one before the cog, and its residents keep the
+         # default tmux socket, orgs.socket), each binding its registry port (today's, declared). Only the observatory
+         # moves: :8090 is the cog's front, so the primary's runs as its astryx-observatory-org backend
+         if [ "$(venv/bin/python src/astryx/orgs.py primary)" = "$UORG" ]; then UPRIM=1 UEXEC=""; fi
        fi
        { read -r UCOG; read -r UPORT; read -r UREADY; } < <(venv/bin/python -c 'import json, sys
 d = json.load(open(sys.argv[1]))["units"]
@@ -120,7 +127,8 @@ print(" ".join(k for k, v in d.items() if v["scope"] == "cog" and v.get("cog_rea
     case " $UCOG " in *" $1 "*) echo "  units: $1 is COG-scoped (one per cog, S3c): not an org's unit" >&2; return 1 ;; esac
     case " $UPORT " in *" $1 "*) _UP=$(venv/bin/python src/astryx/orgs.py port "$1") \
       || die "units: $1 is wanted, and org $UORG's registry entry (${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}) declares no port for it" ;; esac
-    _UF="$UD/$1@$UORG.$2"
+    # the file NAME is orgs.unit's (the one authority: `<stem>@<org>`, the primary's plain), never rebuilt here
+    _UF="$UD/$(venv/bin/python src/astryx/orgs.py unit "$1" "$2")" || die "units: orgs.unit can't name $1.$2 for org $UORG"
   }
 
   # ── 1. shipped-set — always present ─────────────────────────────────────────
@@ -1401,6 +1409,9 @@ case "${1:-setup}" in
   # send-keys — read-only preserves that invariant while you watch it think.
   connect)  a=${2:?usage: ./init.sh connect <agent>}; exec tmux attach -r -t "=ax-$a" ;;
   join)     u=${2:?usage: ./init.sh join <peer-url>}; exec venv/bin/python src/astryx/federation/introduce.py "$u" ;;
+  # units writes this org's systemd unit FILES into units/ (or UNITS_DIR) and nothing else: no install, no start.
+  # In a cog it serves the org ASTRYX_HOME names (none carried: the cog's own units), S3f S2.
+  units)    units; say "units: wrote ${UNITS_DIR:-units}/ ($(ls "${UNITS_DIR:-units}" | wc -l) files); installing them is a sudo step" ;;
   --reinstall|reinstall) reinstall_trigger "${2:?usage: ./init.sh --reinstall <trigger>}" ;;
-  *) die "unknown command '$1' — usage: ./init.sh [setup|doctor|wall|connect <agent>|channels|join <url>|--reinstall <trigger>]" ;;
+  *) die "unknown command '$1' — usage: ./init.sh [setup|doctor|wall|connect <agent>|channels|join <url>|units|--reinstall <trigger>]" ;;
 esac
