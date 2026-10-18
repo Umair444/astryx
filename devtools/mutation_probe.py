@@ -137,6 +137,15 @@ def _print_tail(oracle: Path, out: str, when: str) -> None:
         print(f"    | {ln[:220]}")
 
 
+def _tree_rel(subject: Path) -> Path:
+    """The subject's path below its git root (observatory/api/main.py), or its bare name outside any tree."""
+    f = subject.resolve()
+    for a in f.parents:
+        if (a / ".git").exists():
+            return f.relative_to(a)
+    return Path(f.name)
+
+
 def probe(spec_path: Path, verbose: bool = True) -> int:
     spec = _load(spec_path)
     subject, oracle = Path(spec.SUBJECT), Path(spec.ORACLE)
@@ -183,7 +192,12 @@ def probe(spec_path: Path, verbose: bool = True) -> int:
     # looking. Refuse to grade; every verdict after that point is meaningless BOTH ways.
     caught, survived, skipped = [], [], []
     with tempfile.TemporaryDirectory() as td:
-        canary = Path(td) / subject.name
+        # Every copy (canary, relocated baseline, mutant) sits at the subject's path RELATIVE TO ITS TREE, never as a bare
+        # file: a subject that resolves its own tree (main.py's `paths.estate(__file__)`) finds a copy only by that tail,
+        # and a bare-named copy died at import, so every mutant read CAUGHT, a no-op one included (a4 #60129).
+        rel = _tree_rel(subject)
+        canary = Path(td) / rel
+        canary.parent.mkdir(parents=True, exist_ok=True)
         canary.write_text("def ( this file is deliberately not python — the canary\n")
         if _run_oracle(oracle, spec.ENV, canary, timeout) == 0:
             print(f"WIRING FAULT: {oracle.name} PASSED against a syntactically destroyed "
@@ -191,6 +205,15 @@ def probe(spec_path: Path, verbose: bool = True) -> int:
                   f"likely a bare import or a\n  hardcoded subject. Every mutant verdict "
                   f"would be meaningless in both directions;\n  refusing to grade. Fix the "
                   f"oracle's subject wiring first.")
+            return 1
+        # THE RELOCATED BASELINE: the canary proves the oracle FAILS a broken copy; this proves it PASSES an unbroken
+        # one at the place every mutant runs from. Without it, a copy that can't load there reads as a catch.
+        canary.write_text(src)
+        rb, rb_out = _run_oracle_out(oracle, spec.ENV, canary, timeout)
+        if rb != 0:
+            print(f"REFUSING: {oracle.name} fails the UNMUTATED subject copied to the mutant location ({rel}; "
+                  f"exit {rb}), though it passes it in place. Every mutant would read CAUGHT for that reason alone.")
+            _print_tail(oracle, rb_out, "before the kill" if rb == TIMED_OUT else f"exit {rb}")
             return 1
         for name, (old, new) in spec.MUTANTS.items():
             if old not in src:
@@ -202,7 +225,7 @@ def probe(spec_path: Path, verbose: bool = True) -> int:
             if src.count(old) > 1:
                 skipped.append(f"{name} (pattern is not unique — {src.count(old)} matches)")
                 continue
-            mpath = Path(td) / subject.name
+            mpath = Path(td) / rel
             mpath.write_text(src.replace(old, new, 1))
             rc = _run_oracle(oracle, spec.ENV, mpath, timeout)
             if rc == TIMED_OUT:

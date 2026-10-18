@@ -11,6 +11,7 @@ Hermetic: each arm writes a tiny subject, oracle and spec into a temp dir and ru
   R3  a baseline that prints nothing: the refusal says so, never an empty block
   R4  the shown block is capped (≤ REFUSAL_TAIL lines)
   R5  a line that IS a failure beats lines that only mention a keyword (no crowd-out at the cap)
+  R6  a subject that can't load from the mutant location REFUSES (the relocated baseline), never grades a no-op CAUGHT
   C1  control: a passing baseline prints no tail block, and its mutant is CAUGHT
 """
 import os
@@ -30,8 +31,8 @@ def check(name, ok, detail=""):
         fails.append(name)
 
 
-def probe(td: Path, oracle_body: str, timeout: int = 20, mutants=None) -> tuple:
-    (td / "subj.py").write_text("X = 1\n")
+def probe(td: Path, oracle_body: str, timeout: int = 20, mutants=None, subject: str = "X = 1\n") -> tuple:
+    (td / "subj.py").write_text(subject)
     (td / "oracle.py").write_text(oracle_body)
     m = mutants or {"M one": ("X = 1", "X = 2")}
     (td / "spec.py").write_text(
@@ -85,6 +86,17 @@ with tempfile.TemporaryDirectory() as t:
     rc, out = probe(d, crowd + "print('  FAIL  real-broken-arm-7')\nprint('FAIL: 1 failing')\nraise SystemExit(1)\n")
     check("R5 a real FAIL is shown even after 30 PASS lines that merely MENTION a keyword (no crowd-out)",
           any("real-broken-arm-7" in ln for ln in shown(out)), out)
+
+    d = t / "r6"; d.mkdir()
+    # a subject that reads a file BESIDE itself loads in place and dies at the mutant location: every mutant, a no-op
+    # one too, would read CAUGHT (a4 #60129: main.py's paths.estate(__file__) raised NoHome for a tempdir copy)
+    (d / "beside.txt").write_text("ok\n")
+    rc, out = probe(d, "import os, sys\nsrc = open(os.environ['FIX_SRC']).read()\n"
+                       "exec(compile(src, os.environ['FIX_SRC'], 'exec'), {'__file__': os.environ['FIX_SRC']})\n",
+                    mutants={"N0 a no-op": ("X = 1", "X = 1 ")},
+                    subject="import os\nopen(os.path.join(os.path.dirname(__file__), 'beside.txt')).read()\nX = 1\n")
+    check("R6 an unmutated copy that can't load at the mutant location REFUSES (rc 1), never grades a no-op CAUGHT",
+          rc == 1 and "REFUSING" in out and not any(ln.lstrip().startswith("CAUGHT") for ln in out.splitlines()), out)
 
     d = t / "c1"; d.mkdir()
     rc, out = probe(d, "import os, sys\nsys.exit(0 if 'X = 1' in open(os.environ['FIX_SRC']).read() else 1)\n")

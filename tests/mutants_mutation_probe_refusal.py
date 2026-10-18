@@ -25,4 +25,6 @@ MUTANTS = {
          '    env = dict(os.environ, **{env_var: str(subject_path)})'),
     "T7 failures aren't ranked above keyword mentions (30 PASS labels crowd the real FAIL out)":
         ('    for ln in first + hot + lines[-n:]:', '    for ln in hot + first + lines[-n:]:'),
+    "T8 no relocated baseline (an unmutated copy that dies at the mutant location grades every mutant CAUGHT: a4 #60129)":
+        ('        if rb != 0:\n', '        if False:\n'),
 }
