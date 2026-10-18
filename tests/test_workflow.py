@@ -3,8 +3,9 @@
     venv/bin/python tests/test_workflow.py        (also run by devtools/check.sh)
     WORKFLOW_SRC=<path> …                          (the subject; default src/astryx/workflow.py)
 
-  V1-V8  the validator: a valid body passes; a cycle, two sinks, a sink not owned by converge, an unknown agent, a
-         self-review, a need naming no task, and (C) deleting a task with history are each refused
+  V1-V10 the validator: a valid body passes; a cycle, two sinks, a sink not owned by converge, an unknown agent, a
+         self-review, a need naming no task, (C) deleting a task with history, claimed (V8) or only measured (V9), and a live task needing a dropped one (V10)
+         are each refused
   A1-A4  attribution: the Task trailer wins; the backlog spellings the org uses resolve ("plan-11324 S3b",
          "goal 11324 S1", "Merge memory/plan-11324-s2"); "plan-11324:" alone is UNATTRIBUTED; 113240 is not 11324
   B1     a commit on a branch that never reached main does not count (S3a was PASSed, then rolled back: #59151)
@@ -73,8 +74,19 @@ prev = body(); task(prev, "S3")["done"] = True
 b = body(); b["tasks"] = [t for t in b["tasks"] if t["id"] != "S3"]; task(b, "ship")["needs"] = ["S2"]
 check("V8 (C) deleting a task with history is refused; marking it dropped is not",
       any("dropped" in e for e in wf.validate(b, ROSTER, prev)) and
-      wf.validate({**body(), "tasks": [dict(t, dropped=True) if t["id"] == "S3" else t for t in body()["tasks"]]},
+      wf.validate({**body(), "tasks": [dict(t, dropped=True) if t["id"] == "S3" else
+                                        dict(t, needs=["S2"]) if t["id"] == "ship" else t for t in body()["tasks"]]},
                   ROSTER, prev) == [], f"{wf.validate(b, ROSTER, prev)}")
+
+prev = {"goal": 11324, "converge": "seed", "tasks": [
+    {"id": "S3b", "agent": "forge", "needs": []}, {"id": "ship", "agent": "seed", "needs": ["S3b"]}]}
+nxt = {"goal": 11324, "converge": "seed", "tasks": [{"id": "ship", "agent": "seed", "needs": []}]}
+check("V9 (C) a task with MEASURED commits, never claimed done, cannot be deleted (a1 #60116 R-1)",
+      any("dropped" in e for e in wf.validate(nxt, ROSTER, prev, {"S3b"})) and wf.validate(nxt, ROSTER, prev, set()) == [],
+      f"{wf.validate(nxt, ROSTER, prev, {'S3b'})}")
+b = body(); task(b, "S3")["dropped"] = True
+check("V10 a live task needing a DROPPED task is refused (it would be blocked forever; a1 #60116 R-2)",
+      any("needs dropped task S3" in e for e in wf.validate(b, ROSTER)), f"{wf.validate(b, ROSTER)}")
 
 # ---- A: attribution
 ids = ["S1", "S2", "S3a", "S3b", "ship"]
@@ -137,7 +149,7 @@ counts = {}
 for _, _, s, tr in live:
     a = wf.attribute(11324, ["S1", "S2", "S3a", "S3b", "S3c", "S3d", "S3e", "S4"], s, tr)
     counts[a] = counts.get(a, 0) + 1
-print(f"  live {live_ref}: {len(live)} commits name 11324 · " + " ".join(f"{k}={v}" for k, v in sorted(counts.items(), key=str)))
+print(f"  live {live_ref}: {len(live)} commits name 11324, UNATTRIBUTED {counts.get(wf.UNATTRIBUTED, 0)}/{len(live)} · " + " ".join(f"{k}={v}" for k, v in sorted(counts.items(), key=str)))
 check("L1 on the live history S1, S2, S3a and S3b each resolve, and UNATTRIBUTED > 0 is counted",
       all(counts.get(k, 0) >= 1 for k in ("S1", "S2", "S3a", "S3b")) and counts.get(wf.UNATTRIBUTED, 0) > 0, f"{counts}")
 

@@ -49,8 +49,9 @@ def _ts(s):
     return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
 
 
-def validate(body: dict, roster, prev: dict | None = None) -> list[str]:
-    """Every violation, as a sentence. [] means valid. `prev` is the revision this one replaces (rule C)."""
+def validate(body: dict, roster, prev: dict | None = None, measured=frozenset()) -> list[str]:
+    """Every violation, as a sentence. [] means valid. `prev` is the revision this one replaces, and `measured` the ids
+    that have attributed commits on main (rule C protects MEASURED history, not only claimed history: a1 #60116 R-1)."""
     errs = []
     tasks = body.get("tasks")
     if not isinstance(tasks, list) or not tasks:
@@ -95,6 +96,11 @@ def validate(body: dict, roster, prev: dict | None = None) -> list[str]:
     if seen != len(needs):
         errs.append("the workflow has a cycle")
     live = [t for t in tasks if not t.get("dropped")]
+    dropped = {t["id"] for t in tasks if t.get("dropped")}
+    for t in live:
+        for n in t.get("needs", []):
+            if n in dropped:
+                errs.append(f"{t['id']} needs dropped task {n}: rewire the need, or drop {t['id']} too")
     sinks = [t for t in live if not any(t["id"] in u.get("needs", []) for u in live)]
     if len(sinks) != 1:
         errs.append(f"everything must converge on ONE final task; this has {len(sinks)}: {sorted(s['id'] for s in sinks)}")
@@ -103,7 +109,7 @@ def validate(body: dict, roster, prev: dict | None = None) -> list[str]:
                     f"{body.get('converge')!r}")
     if prev:
         for t in prev.get("tasks", []):
-            if t["id"] not in idset and (t.get("measured") or t.get("done")):
+            if t["id"] not in idset and (t["id"] in measured or t.get("done")):
                 errs.append(f"{t['id']} has measured history: mark it \"dropped\": true instead of deleting it")
     return errs
 
@@ -250,13 +256,17 @@ def goals(conn) -> list[int]:
     return [r[0] for r in conn.execute("SELECT DISTINCT goal_id FROM goal_workflow ORDER BY 1").fetchall()]
 
 
-def save(conn, goal: int, body: dict, author: str, roster) -> int:
+def save(conn, goal: int, body: dict, author: str, roster, repo) -> int:
     """Validate against the roster and the previous revision (rule C), then append. Returns the new rev."""
     import json
     if body.get("goal") != goal:
         raise WorkflowError(f"the body names goal {body.get('goal')!r}, not {goal}")
     prev = load(conn, goal)
-    errs = validate(body, roster, prev[1] if prev else None)
+    measured = set()
+    if prev:
+        ids = [t["id"] for t in prev[1].get("tasks", [])]
+        measured = {a for _, _, sub, tr in main_commits(repo, goal) if (a := attribute(goal, ids, sub, tr)) in ids}
+    errs = validate(body, roster, prev[1] if prev else None, measured)
     if errs:
         raise WorkflowError("; ".join(errs))
     rev = (prev[0] + 1) if prev else 1
@@ -285,7 +295,7 @@ def _main(argv) -> int:
         if argv[:1] == ["set"] and len(argv) in (3, 4):
             body = json.loads(Path(argv[2]).read_text())
             try:
-                rev = save(conn, int(argv[1]), body, argv[3] if len(argv) == 4 else os.environ.get("ASTRYX_AGENT", "owner"), roster())
+                rev = save(conn, int(argv[1]), body, argv[3] if len(argv) == 4 else os.environ.get("ASTRYX_AGENT", "owner"), roster(), repo)
             except WorkflowError as e:
                 print(f"refused: {e}", file=sys.stderr)
                 return 1

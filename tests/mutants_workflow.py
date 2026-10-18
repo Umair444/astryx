@@ -18,8 +18,12 @@ MUTANTS = {
         ("        return UNATTRIBUTED\n    return None", "        return None\n    return None"),
     "W5 the goal number matches inside a longer number":
         ('rf"(?i)(?<![0-9])(?:plan-)?{goal}(?![0-9])[ /:_-]+([a-z][a-z0-9]*)"', 'rf"(?i)(?:plan-)?{goal}[ /:_-]+([a-z][a-z0-9]*)"'),
-    "W6 a deleted task with history passes (rule C)":
-        ('if t["id"] not in idset and (t.get("measured") or t.get("done")):', 'if False:'),
+    "W6 a deleted task CLAIMED done passes (rule C, the claimed half)":
+        ('(t["id"] in measured or t.get("done"))', '(t["id"] in measured)'),
+    "W10 a deleted task with MEASURED commits passes (rule C, the measured half; a1 #60116 R-1)":
+        ('(t["id"] in measured or t.get("done"))', '(t.get("done"))'),
+    "W11 a live task may need a dropped one (blocked forever; a1 #60116 R-2)":
+        ("            if n in dropped:\n", "            if False:\n"),
     "W7 the trailer is ignored":
         ("    if trailer:\n", "    if False:\n"),
     "W8 a self-review passes":
