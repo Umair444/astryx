@@ -21,9 +21,9 @@ unset _self _t _hops
 # (.env, agents/, bridges/routes-*.json, …) relative to it. On a host that runs SEVERAL orgs the checkout carries no
 # estate, so it REFUSES before any of it: a multi-org setup is seed's estate move (#58435 item 7) and S3b's per-org
 # units, never this script guessing which org it means. units() below already serves a HOME (ORGH); the rest doesn't.
-if [ -e "${ASTRYX_ORG_REGISTRY:-/etc/astryx/orgs.json}" ]; then
+if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ]; then
   _g=0; venv/bin/python src/astryx/orgs.py multi || _g=$?
-  [ "$_g" = 1 ] || { echo "init.sh: this host runs several orgs (or its org registry refuses): init.sh sets up one org, refusing" >&2; exit 3; }
+  [ "$_g" = 1 ] || { echo "init.sh: this cog runs several orgs (or its org registry refuses): init.sh sets up one org, refusing" >&2; exit 3; }
 fi
 # <<< org-home guard
 
@@ -74,18 +74,18 @@ units() {  # GENERATE systemd units from the org's declared sources of truth.
   # resolver gives (ASTRYX_HOME naming a registered org), and every ExecStart runs through astryx.orgenv, so the
   # process's environment is built from that HOME, never inherited (BC-S1(1), BC-S3(1)): no PassEnvironment, no
   # ImportEnvironment, and the only EnvironmentFile is the org's own .env.
-  # No registry file at all (orgs.path(): ASTRYX_ORG_REGISTRY, else /etc/astryx/orgs.json) is a one-org host with no
+  # No registry file at all (orgs.path(): ASTRYX_COG_REGISTRY, else /etc/astryx/cog.json) is a one-org host with no
   # question to ask; a present one is judged by THE predicate, and a missing interpreter then fails closed.
-  local ORGH="$PWD" UEXEC="" _mrc=1 UORG="" UHOST="" UPORT="" _UF=""
-  [ -e "${ASTRYX_ORG_REGISTRY:-/etc/astryx/orgs.json}" ] && { _mrc=0; venv/bin/python src/astryx/orgs.py multi || _mrc=$?; }
+  local ORGH="$PWD" UEXEC="" _mrc=1 UORG="" UCOG="" UPORT="" _UF=""
+  [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ] && { _mrc=0; venv/bin/python src/astryx/orgs.py multi || _mrc=$?; }
   case "$_mrc" in
     0) ORGH=$(venv/bin/python -c 'import sys; sys.path.insert(0, "src"); from astryx import paths; print(paths.home())') \
-         || die "units: several orgs on this host and ASTRYX_HOME names no registered one"
+         || die "units: several orgs in this cog and ASTRYX_HOME names no registered one"
        UEXEC="$PWD/venv/bin/python $PWD/src/astryx/orgenv.py exec --home $ORGH -- "
        UORG=$(venv/bin/python src/astryx/orgs.py name) || die "units: this org's HOME is not a registered org"
-       { read -r UHOST; read -r UPORT; } < <(venv/bin/python -c 'import json, sys
+       { read -r UCOG; read -r UPORT; } < <(venv/bin/python -c 'import json, sys
 d = json.load(open(sys.argv[1]))["units"]
-print(" ".join(k for k, v in d.items() if v["scope"] == "host"))
+print(" ".join(k for k, v in d.items() if v["scope"] == "cog"))
 print(" ".join(k for k, v in d.items() if v["scope"] == "org" and "port" in v))' src/astryx/data/org_units.json) \
          || die "units: src/astryx/data/org_units.json can't be read" ;;
     1) ;;
@@ -94,12 +94,12 @@ print(" ".join(k for k, v in d.items() if v["scope"] == "org" and "port" in v))'
 
   # S3b (data/org_units.json, seed #59954): the FILE a unit is written to. One org: "$UD/<stem>.<suffix>", exactly as
   # before, and no process is asked. Several: "$UD/<stem>@<org>.<suffix>" (two orgs never write one file); a
-  # HOST-scoped unit is never an org's (S3c), and a unit that binds a port waits for its registry port (5/n): both are
+  # COG-scoped unit is never an org's (S3c), and a unit that binds a port waits for its registry port (5/n): both are
   # NOT written, each with its reason on stderr.
   _uw() {
     if [ -z "$UORG" ]; then _UF="$UD/$1.$2"; return 0; fi
-    case " $UHOST " in *" $1 "*) echo "  units: $1 is HOST-scoped (one per host, S3c): not an org's unit" >&2; return 1 ;; esac
-    case " $UPORT " in *" $1 "*) echo "  units: $1 binds a port: on a multi-org host it needs its registry port (S3b 5/n), not written" >&2; return 1 ;; esac
+    case " $UCOG " in *" $1 "*) echo "  units: $1 is COG-scoped (one per cog, S3c): not an org's unit" >&2; return 1 ;; esac
+    case " $UPORT " in *" $1 "*) echo "  units: $1 binds a port: in a cog of several orgs it needs its registry port (S3b 5/n), not written" >&2; return 1 ;; esac
     _UF="$UD/$1@$UORG.$2"
   }
 

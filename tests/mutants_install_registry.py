@@ -18,9 +18,9 @@ ENV = "INSTALL_SRC"
 
 MUTANTS = {
     "I1 the registry refusal is gone (the blind tmux check is the only guard)":
-        ('  if [ -e "${ASTRYX_ORG_REGISTRY:-/etc/astryx/orgs.json}" ]; then\n    die "this host has an org registry',
-         '  if false; then\n    die "this host has an org registry'),
-    "I2 the refusal fires only when the checkout already exists (a FRESH clone onto a multi-org host proceeds)":
-        ('  if [ -e "${ASTRYX_ORG_REGISTRY:-/etc/astryx/orgs.json}" ]; then\n    die "this host has an org registry',
-         '  if [ -e "${ASTRYX_ORG_REGISTRY:-/etc/astryx/orgs.json}" ] && [ -e "$ASTRYX_DIR/.git" ]; then\n    die "this host has an org registry'),
+        ('  if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ]; then\n    die "this install is a cog',
+         '  if false; then\n    die "this install is a cog'),
+    "I2 the refusal fires only when the checkout already exists (a FRESH clone onto a cog of several orgs proceeds)":
+        ('  if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ]; then\n    die "this install is a cog',
+         '  if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ] && [ -e "$ASTRYX_DIR/.git" ]; then\n    die "this install is a cog'),
 }

@@ -45,7 +45,7 @@ from .common import (HERE, Outcome, agent_exists, reacted_message, reaction_sign
 
 DSN = env("ASTRYX_DSN")
 TOKEN = env("DISCORD_BOT_TOKEN")
-from .common import ESTATE  # noqa: E402  the org's estate (its HOME on a multi-org host), plan-11324 S3a
+from .common import ESTATE  # noqa: E402  the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
 ROUTES_FILE = ESTATE / "bridges" / "routes-discord.json"
 
 pool: asyncpg.Pool | None = None

@@ -100,7 +100,7 @@ def arms(fx):
     check("an UNregistered ASTRYX_HOME (and its marker) is refused", r.returncode != 0 and "NoHome" in r.stderr,
           (r.stdout + r.stderr)[-300:])
     r = py(fx, HOME_PROBE, fx.env(ASTRYX_HOME=str(co)), str(co))
-    check("ASTRYX_HOME = the checkout itself is refused (the checkout rung never serves a multi-org host)",
+    check("ASTRYX_HOME = the checkout itself is refused (the checkout rung never serves a cog of several orgs)",
           r.returncode != 0 and "NoHome" in r.stderr, (r.stdout + r.stderr)[-300:])
 
     print("\nH3 CORRECTION 2 (an environment DSN that disagrees with the HOME):")
@@ -233,7 +233,7 @@ def arms(fx):
     one.write_text(json.dumps({"orgs": {"fxa": {"home": str(A), "db": fx.db["a"]}}}))
     for label, regpath in (("no registry file", fx.t / "absent.json"), ("a ONE-entry registry", one)):
         r = py(fx, "from astryx import orgs\nprint('MULTI', orgs.multi())\n" + HOME_PROBE,
-               fx.env(ASTRYX_ORG_REGISTRY=str(regpath)), str(co))
+               fx.env(ASTRYX_COG_REGISTRY=str(regpath)), str(co))
         check(f"[{label}] multi is false and the checkout rung serves, as before",
               "MULTI False" in r.stdout and f"HOME {co} checkout" in r.stdout, (r.stdout + r.stderr)[-300:])
 
@@ -295,5 +295,5 @@ if __name__ == "__main__":
     if rc == 1:
         print(f"FAILED ({len(fails)}): " + "; ".join(fails))
     elif rc == 0:
-        print("org home: a multi-org host binds each process to ITS org's HOME, database and law, and refuses the rest")
+        print("org home: a cog of several orgs binds each process to ITS org's HOME, database and law, and refuses the rest")
     sys.exit(rc)

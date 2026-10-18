@@ -51,7 +51,7 @@ API_BASE = env("TG_API_BASE", "https://api.telegram.org")
 PROXY = env("TG_PROXY") or None
 API = f"{API_BASE}/bot{TOKEN}"
 FILE_API = f"{API_BASE}/file/bot{TOKEN}"
-from .common import ESTATE  # noqa: E402  the org's estate (its HOME on a multi-org host), plan-11324 S3a
+from .common import ESTATE  # noqa: E402  the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
 ROUTES_FILE = ESTATE / "bridges" / "routes-telegram.json"
 
 pool: asyncpg.Pool | None = None

@@ -336,7 +336,7 @@ def names(path: Path | str, repo: Path | None = None) -> Read:
 
 # ── the row side: read ONLY to tell a legacy row-only name, restricted to kind='python' (a2 G3) ──────────────────
 def _dsn(repo: Path) -> str | None:
-    # this module's own tree reads the ORG's .env (its estate: the HOME on a multi-org host); another tree, its own
+    # this module's own tree reads the ORG's .env (its estate: the HOME in a cog of several orgs); another tree, its own
     env = (paths.estate(__file__) if Path(repo).resolve() == REPO.resolve() else Path(repo)) / ".env"
     try:
         return config.dsn(env)

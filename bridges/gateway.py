@@ -61,7 +61,7 @@ ESTATE = paths.estate(__file__)          # the org's estate: this checkout on on
 def _env(key: str, default: str = "") -> str:
     if key == "ASTRYX_DSN":
         try:
-            return config.dsn(ESTATE / ".env")   # checked against the HOME on a multi-org host
+            return config.dsn(ESTATE / ".env")   # checked against the HOME in a cog of several orgs
         except LookupError:
             return default
     v = config.org_env(key)                      # set, even to empty, beats the file (NAT = empty URL): one org reads

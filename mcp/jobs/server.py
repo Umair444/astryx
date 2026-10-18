@@ -37,7 +37,7 @@ from mcp.server.fastmcp import FastMCP
 logging.getLogger("httpx").setLevel(logging.WARNING)  # no per-request URL lines on stderr
 
 REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO / "src"))   # astryx.paths: the org's estate (its HOME on a multi-org host), plan-11324 S3a
+sys.path.insert(0, str(REPO / "src"))   # astryx.paths: the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
 from astryx import config, paths  # noqa: E402
 
 

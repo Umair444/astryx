@@ -84,7 +84,7 @@ AUDIO_KINDS = {"voice", "audio", "ptt"}
 def env(key: str, default: str = "") -> str:
     """`key` from the environment first, else the org's .env: astryx.config.get, whose semantics are exactly this
     reader's (plan-11324 S3a routes it; every bridge's config goes through here). ASTRYX_DSN goes through
-    config.dsn, which checks an environment DSN against the HOME on a multi-org host."""
+    config.dsn, which checks an environment DSN against the HOME in a cog of several orgs."""
     f = ESTATE / ".env"
     if key == "ASTRYX_DSN":
         try:

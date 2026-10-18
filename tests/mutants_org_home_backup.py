@@ -17,7 +17,7 @@ ENV = "ORG_HOME_BACKUP_SRC"
 MUTANTS = {
     "B1 the backup runs from the checkout (the HOME resolved, never entered)":
         ('cd "$ORGH"\n', 'cd "$ROOT"\n'),
-    "B2 the HOME is never resolved on a multi-org host":
+    "B2 the HOME is never resolved in a cog of several orgs":
         ('then ORGH=$("$ROOT/venv/bin/python" "$ROOT/src/astryx/config.py" estate); fi', 'then :; fi'),
     "B3 the DSN read from the checkout's .env, not the HOME's":
         ('DSN=$("$ROOT/venv/bin/python" "$ROOT/src/astryx/config.py" dsn --file 2>/dev/null || true)',

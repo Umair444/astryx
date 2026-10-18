@@ -112,7 +112,7 @@ def main():
                                    "lib", str(root)], env=e, cwd="/", capture_output=True, text=True, timeout=30)
 
         print("R1 ONE ORG: THE DEFAULT SOCKET, BYTE FOR BYTE")
-        one = fx.env(ASTRYX_ORG_REGISTRY=str(fx.t / "no-registry.json"))
+        one = fx.env(ASTRYX_COG_REGISTRY=str(fx.t / "no-registry.json"))
         r = subprocess.run([py, "-c", PROBE, str(co)], env=one, cwd=str(co), capture_output=True, text=True, timeout=30)
         check("orgs.tmux() is exactly ['tmux']", r.stdout.strip() == "tmux", r.stdout + r.stderr[-200:])
         r = socket_door(one)

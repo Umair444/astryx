@@ -292,7 +292,7 @@ def wake_body(hid: int) -> str:
 hearing = Hearing(MAIN_DSN)
 
 
-MISSES = paths.estate(__file__) / "var" / "ear" / "wake_misses"    # the org's state: its HOME on a multi-org host
+MISSES = paths.estate(__file__) / "var" / "ear" / "wake_misses"    # the org's state: its HOME in a cog of several orgs
 
 
 def _keep_miss(pcm, keep: int = 20):

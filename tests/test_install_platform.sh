@@ -234,14 +234,14 @@ arm   "(D12) no say/echo in the whatsapp block expands a \$..SECRET variable" "$
 for c in git curl; do printf '#!/bin/sh\necho "%s $*" >> "%s/RAN13"\n' "$c" "$T" > "$T/trap/$c"; chmod +x "$T/trap/$c"; done
 printf '{"orgs": {}}\n' > "$T/orgs.json"
 # INSTALL_SRC: a mutant installer (tests/mutants_install_registry.py); this arm and its control run it, the rest ./install.sh
-out=$(PATH="$T/trap:$PATH" ASTRYX_ORG_REGISTRY="$T/orgs.json" ASTRYX_PYPI_URL="file://$T/absent.json" \
+out=$(PATH="$T/trap:$PATH" ASTRYX_COG_REGISTRY="$T/orgs.json" ASTRYX_PYPI_URL="file://$T/absent.json" \
       bash "${INSTALL_SRC:-./install.sh}" --yes --no-init --dir "$T/h13/astryx" </dev/null 2>&1); rc=$?
 arm   "(D13) a host with an org registry: a real run is refused (rc != 0)" "$( [ "$rc" != 0 ] && echo refused)" refused
-has   "(D13) ...naming the registry" "$out" "this host has an org registry"
+has   "(D13) ...naming the registry" "$out" "this install is a cog"
 arm   "(D13) ...before ANY write: no git, no pipx, no sudo, no clone" "$( [ -e "$T/RAN13" ] || [ -e "$T/RAN" ] || [ -e "$T/h13" ]; echo $?)" 1
-out=$(PATH="$T/trap:$PATH" ASTRYX_ORG_REGISTRY="$T/no-registry.json" ASTRYX_PYPI_URL="file://$T/absent.json" \
+out=$(PATH="$T/trap:$PATH" ASTRYX_COG_REGISTRY="$T/no-registry.json" ASTRYX_PYPI_URL="file://$T/absent.json" \
       bash "${INSTALL_SRC:-./install.sh}" --dry-run --dir "$T/h13b/astryx" </dev/null 2>&1)
-hasnt "(D13) positive control: no registry file, the guard stays out of the way" "$out" "this host has an org registry"
+hasnt "(D13) positive control: no registry file, the guard stays out of the way" "$out" "this install is a cog"
 has   "(D13) ...and the run reaches its install step" "$out" "git clone https://github.com/Umair444/astryx $T/h13b/astryx"
 rm -f "$T/trap/git" "$T/trap/curl"
 

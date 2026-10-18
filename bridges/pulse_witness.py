@@ -81,7 +81,7 @@ PAUSE_RENAG_SEC = 24 * 3600   # a DECLARED pause re-rings daily: visible, never 
 CHECK_SEC = 60           # throttle: read the DB at most this often, whatever the loop rate
 
 def pause_file() -> Path:
-    """The org's pause declaration (var/ is org estate: its HOME on a multi-org host, plan-11324 S3a). Read at use:
+    """The org's pause declaration (var/ is org estate: its HOME in a cog of several orgs, plan-11324 S3a). Read at use:
     importing this module needs no astryx (the bridges put src/ on sys.path first, bridges/common.py)."""
     from astryx import paths
     return paths.estate(__file__) / "var" / "org_pause.json"

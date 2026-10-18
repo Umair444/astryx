@@ -19,7 +19,7 @@ MUTANTS = {
     'S1 the law is read from the CHECKOUT again (a2 BC-S2 (c))':
         ('cat "$ORGH/local.md"; }',
          'cat "$ROOT/local.md"; }'),   # org-home: mutant pattern
-    'S2 ORGH is never resolved on a multi-org host':
+    'S2 ORGH is never resolved in a cog of several orgs':
         ('  ORGH=$("$PY" -c \'import sys',
          '  : ORGH=$("$PY" -c \'import sys'),
     'S3 settings.json carries the checkout as ASTRYX_HOME':

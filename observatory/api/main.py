@@ -46,7 +46,7 @@ from astryx.core import charter as _charter  # noqa: E402 — the one roster rul
 from bridges.owner_surfaces import OWNER_ROW_BRIDGED_SQL  # noqa: E402 — the rows a bridge delivers, not the pane
 from astryx import config, orgs, paths  # noqa: E402 — the ONE resolver (plan-11324 S3a; S3b: its tmux server)
 # The org's estate (.env, agents/, triggers/, units/, …): this checkout on one org, the HOME on several. The observatory
-# is in the declared host-scoped set (#58435 S3c); until S3c it serves ONE org, the HOME it was started for.
+# is in the declared cog-scoped set (#58435 S3c); until S3c it serves ONE org, the HOME it was started for.
 ESTATE = paths.estate(__file__)
 
 def _dsn() -> str:

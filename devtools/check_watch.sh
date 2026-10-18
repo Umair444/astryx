@@ -42,7 +42,7 @@ cd "$(dirname "$0")/.."
 # the stamp and log are the ORG's (its backups/): one org (no host registry) this checkout's, exactly as before;
 # several orgs the HOME's, through the ONE resolver (plan-11324 S3a), or the run refuses
 BK=backups   # org-home: one org, this checkout IS the HOME (several: the HOME, below)
-if [ -e "${ASTRYX_ORG_REGISTRY:-/etc/astryx/orgs.json}" ]; then
+if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ]; then
   BK="$(venv/bin/python src/astryx/config.py estate)/backups" || { echo "check-watch: no org HOME" >&2; exit 1; }
 fi
 STAMP=${CHECK_WATCH_STAMP:-$BK/.last-check}

@@ -50,7 +50,7 @@ REPO = repo_root(__file__)
 
 def _estate():
     """The org's estate, read at CALL time: REPO on one org (exactly what it was, an oracle's `H.REPO = tmp` rebinding
-    included: save() then writes the tmp tree, never the live homes/), the HOME on a multi-org host (plan-11324 S3a)."""
+    included: save() then writes the tmp tree, never the live homes/), the HOME in a cog of several orgs (plan-11324 S3a)."""
     return paths.home() if orgs.multi() else REPO
 
 

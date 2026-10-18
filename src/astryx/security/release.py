@@ -43,7 +43,7 @@ REPO = repo_root(__file__)
 
 def _estate() -> Path:
     """The org's estate, read at CALL time: REPO on one org (exactly what it was, an oracle's `R.REPO = root` rebinding
-    included), the HOME on a multi-org host (plan-11324 S3a)."""
+    included), the HOME in a cog of several orgs (plan-11324 S3a)."""
     from astryx import orgs
     return paths.home() if orgs.multi() else REPO
 

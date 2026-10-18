@@ -56,7 +56,7 @@ def find_marker(start: Path | None = None) -> Path | None:
 
 
 class NoHome(LookupError):
-    """A multi-org host where neither ASTRYX_HOME nor a marker names a REGISTERED org's HOME."""
+    """A cog of several orgs where neither ASTRYX_HOME nor a marker names a REGISTERED org's HOME."""
 
 
 def resolve_home(env: dict | None = None, cwd: Path | None = None, package: Path = PACKAGE,
@@ -80,7 +80,7 @@ def resolve_home(env: dict | None = None, cwd: Path | None = None, package: Path
 
 
 def _resolve_multi(env, cwd, orgs) -> tuple[Path, str]:
-    """plan-11324 S3a (#58435 item 2): on a multi-org host the core checkout carries no estate, so its rung and the
+    """plan-11324 S3a (#58435 item 2): in a cog of several orgs the core checkout carries no estate, so its rung and the
     default (~/.astryx) REFUSE. The env rung takes any REGISTERED HOME (whatever checkout runs the code: the HOME is
     carried, so a worktree serves the org that launched it); the marker rung stays as a fallback, registered homes
     only. It can't see through a worktree (find_marker stops at the first git root), which is why the HOME is carried."""
@@ -91,7 +91,7 @@ def _resolve_multi(env, cwd, orgs) -> tuple[Path, str]:
     m = find_marker(cwd)
     if m is not None and orgs.org_of(m, env):
         return m, "marker"
-    raise NoHome(f"this host runs several orgs ({orgs.path(env)}) and neither ASTRYX_HOME nor a .astryx marker "
+    raise NoHome(f"this cog runs several orgs ({orgs.path(env)}) and neither ASTRYX_HOME nor a .astryx marker "
                  "names a registered one's HOME: refusing the checkout and ~/.astryx")
 
 

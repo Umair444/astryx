@@ -77,7 +77,7 @@ def _alarm(*_):
 def env_file() -> dict:
     out = {}
     try:
-        from astryx import paths            # the org's .env (its HOME's on a multi-org host), plan-11324 S3a
+        from astryx import paths            # the org's .env (its HOME's in a cog of several orgs), plan-11324 S3a
         with open(paths.estate(__file__) / ".env") as f:
             for line in f:
                 if "=" in line and not line.lstrip().startswith("#"):

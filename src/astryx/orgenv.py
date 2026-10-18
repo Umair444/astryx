@@ -1,6 +1,6 @@
 """An org process's environment is BUILT, never inherited (plan-11324 S3a, a3 BC-S3 #58597, a1 BC-S1(1) #58437).
 
-On a host that runs several orgs (orgs.multi), spawn's pane and every generated unit exec through this:
+On a cog of several orgs (orgs.multi), spawn's pane and every generated unit exec through this:
 
     python src/astryx/orgenv.py exec --home <HOME> [--agent <name>] -- <command> [args...]
 

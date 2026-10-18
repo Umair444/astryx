@@ -39,7 +39,7 @@ REPO = repo_root(__file__)
 PY = str(REPO / "venv" / "bin" / "python")
 # ASTRYX_DSN from the environment first (goal 4227 S1c: an oracle binds the pulse, and the pulse_run
 # subprocesses that inherit its env, to a throwaway fixture database), else .env as before.
-ESTATE = paths.estate(__file__)       # the org's .env and triggers/ (its HOME on a multi-org host, plan-11324 S3a)
+ESTATE = paths.estate(__file__)       # the org's .env and triggers/ (its HOME in a cog of several orgs, plan-11324 S3a)
 DSN = config.dsn(ESTATE / ".env")
 CHECK_TIMEOUT = 30
 PRESSURE_PCT = 85        # 5h gauge at/above this: non-survival wakes are held, not sent

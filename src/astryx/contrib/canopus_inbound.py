@@ -58,7 +58,7 @@ from pathlib import Path
 import psycopg
 
 REPO = repo_root(__file__)
-ESTATE = paths.estate(__file__)       # the org's .env and homes/ (plan-11324 S3a: the HOME on a multi-org host)
+ESTATE = paths.estate(__file__)       # the org's .env and homes/ (plan-11324 S3a: the HOME in a cog of several orgs)
 _env = {k: v for k, v in
         (l.split("=", 1) for l in (ESTATE / ".env").read_text().splitlines() if "=" in l)}
 ADDR = _env["GMAIL_ADDRESS"].strip()

@@ -16,7 +16,7 @@ resolver, found by WALKING the code, never by a list of files.
           'tmux'. Outside it (stated; a2 #59955 A-1 planted the last four): a tmux reached through a variable
           (`T = "tmux"; [T, …]`), a TUPLE argv (`run(("tmux", "ls"))`), an absolute path (`["/usr/bin/tmux", …]`),
           a shell wrapper (`["sh", "-c", "tmux ls"]`) and concatenation (`"tmux" + " ls"`).
-          Kind `unit`: a unit name written out (`"astryx-pulse.timer"`), one org's name; a multi-org host's is
+          Kind `unit`: a unit name written out (`"astryx-pulse.timer"`), one org's name; a cog of several orgs's is
           `<stem>@<org>.<suffix>` (orgs.unit(); init.sh units() writes through _uw). Python: a string literal that IS
           one; shell: one in code (quoted messages stripped). Not in tests/: a test's one-org unit name is the one-org
           contract it asserts, not a consumer of a running org's unit.
@@ -290,7 +290,7 @@ def _py_tmux_shell(src: Path) -> list[int]:
 
 # THE ORG'S TRIGGER BODIES (plan-11324 S3b, a2 #59697 via seed #59699): agents write pulse triggers into the org's
 # estate (HOME/triggers/, gitignored), outside the walk above by construction. A unit-run pulse has no $TMUX, so a bare
-# tmux there reads the DEFAULT socket: on a multi-org host it sees no residents (agent_dark alarms every tick) or
+# tmux there reads the DEFAULT socket: in a cog of several orgs it sees no residents (agent_dark alarms every tick) or
 # another org's. This reads HOME/triggers/**/*.py ONLY, read-only, and reports file:line, never a line's text; a HOME
 # with no triggers/ is skipped (stated, never a pass of an empty set).
 def trigger_sites(home: Path) -> tuple[list, bool]:
@@ -317,7 +317,7 @@ UNIT_NAME = re.compile(r"astryx-[a-z0-9-]+\.(?:service|timer)")
 
 
 def _py_unit(src: Path) -> list[int]:
-    """Lines where a string literal IS a unit name (`"astryx-pulse.timer"`): one org's name, wrong on a multi-org host,
+    """Lines where a string literal IS a unit name (`"astryx-pulse.timer"`): one org's name, wrong in a cog of several orgs,
     where the org's unit is `<stem>@<org>.<suffix>` (orgs.unit()). A message that mentions one (it has a space) is not."""
     try:
         toks = list(tokenize.generate_tokens(io.StringIO(src.read_text(errors="replace")).readline))
@@ -444,7 +444,7 @@ def env_sites(rel: str, lines, readers, names) -> list:
     return out
 
 
-# A shell file that REFUSES on a multi-org host before any estate read (THE predicate, then a non-zero exit, within
+# A shell file that REFUSES in a cog of several orgs before any estate read (THE predicate, then a non-zero exit, within
 # its first lines): its checkout-relative reads only ever run where the checkout IS the org's HOME. Listed as
 # `guarded`, never silent, and tests/test_org_home_census.py RUNS each one under a two-org registry to prove it.
 GUARD = re.compile(r"""orgs\.py\s+multi""")
@@ -517,7 +517,7 @@ def main(argv=None) -> int:
             print(f"{k}: {len(res[k])} finding(s)")
             for r in res[k]:
                 print(f"  {r['file']}:{r['line']}  {r['what']}")
-        print(f"guarded (the file refuses on a multi-org host first): {len(res['guarded'])} site(s) in "
+        print(f"guarded (the file refuses in a cog of several orgs first): {len(res['guarded'])} site(s) in "
               f"{len(res['guarded_files'])} file(s): {', '.join(res['guarded_files'])}")
         print(f"declared (org-home: …): {len(res['declared'])}")
         for r in res["declared"]:

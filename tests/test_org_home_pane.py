@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle for a3's HARD BC-S3 (#58597) with a4's precision (#58598): on a multi-org host an org process's environment
+"""Oracle for a3's HARD BC-S3 (#58597) with a4's precision (#58598): in a cog of several orgs an org process's environment
 is BUILT, never inherited. Keyed to what owns the property: the resident's PANE, not spawn's process.
 
   P1 A tmux server on org B's OWN socket (-L ax-<org>, S3b) is started from an "org-A operator shell" (WA_CLI,

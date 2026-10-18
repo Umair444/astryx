@@ -232,7 +232,7 @@ def amend_charter(agent: str, directive: str, section: str = "Standing directive
             text = text[:i] + bullet + "\n" + text[i:]
         else:
             text = text.rstrip() + f"\n\n{header}\n{bullet}\n"
-        from astryx import paths     # the org's agents/ (its HOME on a multi-org host), plan-11324 S3a
+        from astryx import paths     # the org's agents/ (its HOME in a cog of several orgs), plan-11324 S3a
         rel = str(charter.relative_to(paths.estate(__file__) / "agents"))
         commit = subprocess.run([PY, str(REPO / "nucleus/identity_commit.py"), agent, rel],
                                 input=text, capture_output=True, text=True, timeout=30)

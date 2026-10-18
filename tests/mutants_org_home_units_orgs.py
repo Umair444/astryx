@@ -2,7 +2,7 @@
 
     venv/bin/python devtools/mutation_probe.py tests/mutants_org_home_units_orgs.py
 
-The resolver giving one org's plain name on a multi-org host.
+The resolver giving one org's plain name in a cog of several orgs.
 The oracle runs every child from an estate-free fixture checkout; the fixture writes the mutant over this subject
 there (tests/org_home_fixture.py SEAMS), so a mutant is executed where the arms execute, never from a temp path.
 """

@@ -2,7 +2,7 @@
 
     venv/bin/python devtools/mutation_probe.py tests/mutants_org_home_units_data.py
 
-Each is the partition declared wrong: a host-scoped unit called per-org, a port-binding unit's port forgotten.
+Each is the partition declared wrong: a cog-scoped unit called per-org, a port-binding unit's port forgotten.
 The oracle runs every child from an estate-free fixture checkout; the fixture writes the mutant over this subject
 there (tests/org_home_fixture.py SEAMS), so a mutant is executed where the arms execute, never from a temp path.
 """
@@ -17,7 +17,7 @@ TIMEOUT = 300
 
 MUTANTS = {
     'D1 the observatory is declared per-org (every org writes one on :8090)':
-        ('"astryx-observatory": {"scope": "host", "port": 8090}',
+        ('"astryx-observatory": {"scope": "cog", "port": 8090}',
          '"astryx-observatory": {"scope": "org", "port": 8090}'),
     "D2 whatsapp's port is forgotten (an org writes it on the fixed 8477)":
         ('"astryx-whatsapp":    {"scope": "org", "port": 8477}',

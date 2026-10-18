@@ -28,7 +28,7 @@ import importlib.util, json, sys
 s = importlib.util.spec_from_file_location("orgs_under_test", sys.argv[1]); m = importlib.util.module_from_spec(s)
 s.loader.exec_module(m)
 try:
-    r = m.load({"ASTRYX_ORG_REGISTRY": sys.argv[2]})
+    r = m.load({"ASTRYX_COG_REGISTRY": sys.argv[2]})
     print("none" if r is None else f"orgs:{len(r)}")
 except m.RegistryError:
     print("refused")
@@ -36,9 +36,9 @@ except m.RegistryError:
 
 JS = r"""
 const [src, reg] = process.argv.slice(1)
-process.env.ASTRYX_ORG_REGISTRY = reg + '.absent-at-import'      // home.mjs resolves its HOME at import: no registry then
+process.env.ASTRYX_COG_REGISTRY = reg + '.absent-at-import'      // home.mjs resolves its HOME at import: no registry then
 const m = await import(src)
-try { const r = m.registry({ ASTRYX_ORG_REGISTRY: reg }); console.log(r === null ? 'none' : `orgs:${Object.keys(r).length}`) }
+try { const r = m.registry({ ASTRYX_COG_REGISTRY: reg }); console.log(r === null ? 'none' : `orgs:${Object.keys(r).length}`) }
 catch (e) { console.log('refused') }
 """
 

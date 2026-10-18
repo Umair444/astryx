@@ -29,7 +29,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 if str(REPO / "src") not in sys.path:
-    sys.path.insert(0, str(REPO / "src"))   # astryx.paths: the org's estate (its HOME on a multi-org host), S3a
+    sys.path.insert(0, str(REPO / "src"))   # astryx.paths: the org's estate (its HOME in a cog of several orgs), S3a
 from astryx import paths  # noqa: E402
 ESTATE = paths.estate(__file__)
 HOMES = ESTATE / "homes"

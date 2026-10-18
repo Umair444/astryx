@@ -24,6 +24,6 @@ MUTANTS = {
         ('       exit 2 ;;\n',
          '       AX_SOCK="" ;;\n'),
     'Z3 one org asks python too (a host with no registry still needs one)':
-        ('if [ -e "${ASTRYX_ORG_REGISTRY:-/etc/astryx/orgs.json}" ]; then\n',
+        ('if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ]; then\n',
          'if true; then\n'),
 }

@@ -22,7 +22,7 @@ const real = p => { try { return realpathSync(p) } catch { return resolvePath(p)
 /** The registered orgs {org: {home, db}}, or null when this host has no registry (one org). A present but malformed
  *  registry THROWS: it fails closed, never as absent. */
 export function registry(env = process.env) {
-  const p = given(env.ASTRYX_ORG_REGISTRY) || '/etc/astryx/orgs.json'
+  const p = given(env.ASTRYX_COG_REGISTRY) || '/etc/astryx/cog.json'
   let text
   try { text = readFileSync(p, 'utf8') } catch (e) { if (e.code === 'ENOENT') return null; throw new Error(`org registry ${p} unreadable`) }
   let orgs
@@ -56,7 +56,7 @@ export function homeUrl(env = process.env) {
   const reg = registry(env)
   if (reg && Object.keys(reg).length > 1) {
     if (!h || !Object.values(reg).some(e => e.home === real(h)))
-      throw new Error('this host runs several orgs and ASTRYX_HOME names no registered HOME: refusing the checkout')
+      throw new Error('this cog runs several orgs and ASTRYX_HOME names no registered HOME: refusing the checkout')
   }
   if (!h) return new URL('../', import.meta.url)
   return pathToFileURL(h.endsWith('/') ? h : h + '/')

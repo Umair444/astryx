@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """plan-11324 S3b 4/n (#58435; seed #59953/#59954): a systemd unit NAME is host-wide, so on a host that runs several
 orgs each org's units are instance FILES `<stem>@<org>.<suffix>`, and the partition of every unit (per-org or
-host-scoped, and the port it binds) is declared once in src/astryx/data/org_units.json.
+cog-scoped, and the port it binds) is declared once in src/astryx/data/org_units.json.
 
   U0 THE PARTITION IS TOTAL: every stem init.sh units() writes is declared, every declared stem is written, and
      every write goes through _uw (no `cat > "$UD/…"` left). RED control: a planted extra stem is accused
   U1 one org (no registry): plain names, exactly as before (no `@` anywhere)
   U2 several orgs, org B: ONLY B's port-free units, each `@<B>` (pulse+timer, residents, its runner+timer); the
-     host-scoped ones (observatory, canvas, gateway) are NOT written, and a port-binding one (whatsapp: B has its
+     cog-scoped ones (observatory, canvas, gateway) are NOT written, and a port-binding one (whatsapp: B has its
      routes) is NOT written, each with its reason on stderr
   U3 orgs A and B rendered into ONE directory: disjoint file sets, and A's files survive B's run byte for byte
   U4 every timer has its same-named service (systemd activates `<x>.service` for `<x>.timer`)
@@ -87,7 +87,7 @@ def main():
             return {p.name: p.read_bytes() for p in Path(d).glob("*")} if Path(d).is_dir() else {}
 
         print("\nU1 ONE ORG: PLAIN NAMES, AS BEFORE")
-        one = fx.env(ASTRYX_ORG_REGISTRY=str(fx.t / "no-registry.json"))
+        one = fx.env(ASTRYX_COG_REGISTRY=str(fx.t / "no-registry.json"))
         r = render(one, fx.t / "u_one")
         names = sorted(files(fx.t / "u_one"))
         check("units() renders (rc 0) with the shipped set", r.returncode == 0 and "astryx-pulse.timer" in names
@@ -103,7 +103,7 @@ def main():
         check("rc 0, and exactly B's port-free units, each @<B>", r.returncode == 0 and got == want,
               f"rc {r.returncode} got {sorted(got)} {r.stderr[-300:]}")
         for stem in ("astryx-observatory", "astryx-canvas", "astryx-gateway"):
-            check(f"{stem}: not written, HOST-scoped (said on stderr)", f"{stem} is HOST-scoped" in r.stderr
+            check(f"{stem}: not written, COG-scoped (said on stderr)", f"{stem} is COG-scoped" in r.stderr
                   and not any(n.startswith(stem) for n in got), r.stderr[-300:])
         check("astryx-whatsapp (B has its routes): not written, it needs its registry port (said on stderr)",
               "astryx-whatsapp binds a port" in r.stderr and not any(n.startswith("astryx-whatsapp") for n in got),

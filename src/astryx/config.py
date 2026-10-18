@@ -82,7 +82,7 @@ def dsn(path: Path | None = None, environ: dict | None = None, env_first: bool =
     """ASTRYX_DSN: the environment first (an oracle binds a run to a fixture DB this way), else .env.
     env_first=False reads the file only (the readers that never consulted the environment keep doing exactly that).
 
-    On a multi-org host (and only there) the pair is checked against the registry, so the HOME and the DSN can't
+    In a cog of several orgs (and only there) the pair is checked against the registry, so the HOME and the DSN can't
     disagree (a2 B(1), correction 2 of #58435):
       a fixture database (astryx_fx_*)                          allowed (the oracles bind through the environment)
       the environment's DSN binds ANOTHER registered org's db   refused

@@ -17,7 +17,7 @@ ENV = "ORG_HOME_ORGS_SRC"
 TIMEOUT = 300
 
 MUTANTS = {
-    'X1 socket() is None on a multi-org host too (every org on the default socket)':
+    'X1 socket() is None in a cog of several orgs too (every org on the default socket)':
         ('    return None if o is None else f"ax-{o}"\n',
          '    return None\n'),
     'X2 tmux() ignores the socket (python callers on the default socket)':

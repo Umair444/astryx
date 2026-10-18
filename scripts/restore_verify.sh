@@ -18,7 +18,7 @@ SCRATCH=astryx_restorecheck
 # resolver. One org (no host registry): BK is backups/ in this checkout, exactly as before; several orgs: the HOME's.
 ROOT="$PWD"
 BK=backups   # org-home: one org, this checkout IS the HOME (several: the HOME, below)
-if [ -e "${ASTRYX_ORG_REGISTRY:-/etc/astryx/orgs.json}" ]; then
+if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ]; then
   BK="$("$ROOT/venv/bin/python" "$ROOT/src/astryx/config.py" estate)/backups" || { echo "restore-verify: no org HOME" >&2; exit 1; }
 fi
 

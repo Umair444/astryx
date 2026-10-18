@@ -2,7 +2,7 @@
 ESTATE-FREE fixture checkout (a detached git worktree of this tree's HEAD: no .env, no local.md, no agents/, no
 homes/), so a reader that falls back to the checkout finds nothing (#58435 item 2).
 
-It never writes the host's registry (/etc/astryx/orgs.json): every process it starts carries ASTRYX_ORG_REGISTRY,
+It never writes the host's registry (/etc/astryx/cog.json): every process it starts carries ASTRYX_COG_REGISTRY,
 the declared fixture seam, pointing into its own temp dir. The two orgs' databases are NAMES only (fxorg_a_<pid>,
 fxorg_b_<pid>): they never exist, so a refusal is proven to happen before any connection. The DSNs reuse this
 host's host, port and user (read in Python, never printed), so libpq would reach them if a resolver let one through.
@@ -11,7 +11,7 @@ host's host, port and user (read in Python, never printed), so libpq would reach
         fx.co      the estate-free checkout (venv linked in: host class)
         fx.home["a"], fx.home["b"], fx.db["a"], fx.dsn["a"], fx.reg (the registry file), fx.org["a"] (its name)
         fx.tmux("a")     argv prefix for org a's own tmux server (-L ax-<org>); __exit__ kills both servers
-        fx.env(**over)   a clean environment for a child: the host names only, plus ASTRYX_ORG_REGISTRY
+        fx.env(**over)   a clean environment for a child: the host names only, plus ASTRYX_COG_REGISTRY
 """
 from __future__ import annotations
 
@@ -131,7 +131,7 @@ class OrgHomes:
 
     def env(self, **over) -> dict:
         e = {k: os.environ[k] for k in HOST_KEEP if os.environ.get(k)}
-        e["ASTRYX_ORG_REGISTRY"] = str(self.reg)
+        e["ASTRYX_COG_REGISTRY"] = str(self.reg)
         e.update({k: v for k, v in over.items() if v is not None})
         return e
 

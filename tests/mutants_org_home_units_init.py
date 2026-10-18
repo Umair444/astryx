@@ -16,13 +16,13 @@ ENV = "ORG_HOME_INIT_SRC"
 TIMEOUT = 300
 
 MUTANTS = {
-    'V1 on a multi-org host the file is the plain name (two orgs write one file)':
+    'V1 in a cog of several orgs the file is the plain name (two orgs write one file)':
         ('    _UF="$UD/$1@$UORG.$2"\n',
          '    _UF="$UD/$1.$2"\n'),
-    "V2 a HOST-scoped unit is written by an org's run":
-        ('    case " $UHOST " in *" $1 "*) echo',
+    "V2 a COG-scoped unit is written by an org's run":
+        ('    case " $UCOG " in *" $1 "*) echo',
          '    case " " in *" $1 "*) echo'),
-    'V3 a port-binding unit is written with its fixed port on a multi-org host':
+    'V3 a port-binding unit is written with its fixed port in a cog of several orgs':
         ('    case " $UPORT " in *" $1 "*) echo',
          '    case " " in *" $1 "*) echo'),
     'V4 a unit write bypasses _uw (the pulse timer, plain name, every org)':

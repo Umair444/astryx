@@ -3,7 +3,7 @@
     venv/bin/python devtools/mutation_probe.py tests/mutants_org_home_paths.py
 
 Each is a plausible wrong rung: an unregistered ASTRYX_HOME taken, the checkout taken when nothing names a HOME,
-the estate read from the checkout on a multi-org host.
+the estate read from the checkout in a cog of several orgs.
 The oracle runs every child from an estate-free fixture checkout; the fixture writes the mutant over this subject
 there (tests/org_home_fixture.py SEAMS), so a mutant is executed where the arms execute, never from a temp path.
 """
@@ -20,9 +20,9 @@ MUTANTS = {
         ('        if orgs.org_of(h, env):\n            return h, "env"',
          '        if True:\n            return h, "env"'),
     'R2 nothing names a HOME and the checkout is taken':
-        ('    raise NoHome(f"this host runs several orgs',
-         '    return Path.cwd(), "checkout"\n    raise NoHome(f"this host runs several orgs'),
-    'R3 the estate is the checkout on a multi-org host too':
+        ('    raise NoHome(f"this cog runs several orgs',
+         '    return Path.cwd(), "checkout"\n    raise NoHome(f"this cog runs several orgs'),
+    'R3 the estate is the checkout in a cog of several orgs too':
         ('    if orgs.multi():\n        return home()',
          '    if False:\n        return home()'),
 }

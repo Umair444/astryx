@@ -6,8 +6,8 @@
 # 2026-07-22 — the owner's capability-over-constraint steer, applied to myself).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# org-home guard (plan-11324 S3a): one-org only (it reads this checkout's estate); on a multi-org host it refuses first.
-if [ -e "${ASTRYX_ORG_REGISTRY:-/etc/astryx/orgs.json}" ]; then _g=0; "$ROOT"/venv/bin/python "$ROOT"/src/astryx/orgs.py multi || _g=$?; [ "$_g" = 1 ] || { echo "deploy.sh: this host runs several orgs (or its org registry refuses): one-org only, refusing" >&2; exit 3; }; fi
+# org-home guard (plan-11324 S3a): one-org only (it reads this checkout's estate); in a cog of several orgs it refuses first.
+if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ]; then _g=0; "$ROOT"/venv/bin/python "$ROOT"/src/astryx/orgs.py multi || _g=$?; [ "$_g" = 1 ] || { echo "deploy.sh: this cog runs several orgs (or its org registry refuses): one-org only, refusing" >&2; exit 3; }; fi
 what=${1:-all}
 
 build_web() {

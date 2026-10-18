@@ -375,8 +375,8 @@ main() {
   # several, each on its own tmux server, so the "is an org running here" check below can't see them; and a pull or a
   # reinstall of the core checkout changes code under every live org (a deploy without the deploy path). Refuse
   # before ANY write, on the same test init.sh's guard uses: a host's further orgs are seed's estate move.
-  if [ -e "${ASTRYX_ORG_REGISTRY:-/etc/astryx/orgs.json}" ]; then
-    die "this host has an org registry (${ASTRYX_ORG_REGISTRY:-/etc/astryx/orgs.json}): it runs several orgs, and this installer sets up one. Adding an org to it is the registry's step, not this script's; refusing before any change."
+  if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ]; then
+    die "this install is a cog (${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}): several orgs, and this installer sets up one. Adding an org to a cog is the cog registry's step, not this script's; refusing before any change."
   fi
 
   if [ "$DRY" = 1 ]; then say "astryx installer — DRY RUN: printing every command, running none"

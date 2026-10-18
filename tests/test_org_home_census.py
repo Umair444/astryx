@@ -276,14 +276,14 @@ def main():
             pre_exec = [ln for ln in text[:gi] if ln.strip() and not ln.lstrip().startswith("#")]
             bad = [ln.strip() for ln in pre_exec if not re.match(
                 r"\s*(set -[euo]+|set -euo pipefail|ROOT=|REPO=|PY=|HERE=|_self=|_hops=|_t=|while |done|case |esac|"
-                r"cd |unset |\[ |\{|\}|.*\) _self=|if \[ -e \"\$\{ASTRYX_ORG_REGISTRY)", ln)]
+                r"cd |unset |\[ |\{|\}|.*\) _self=|if \[ -e \"\$\{ASTRYX_COG_REGISTRY)", ln)]
             with tempfile.TemporaryDirectory() as wd:
                 f = Path(wd) / "prefix.sh"
                 f.write_text(prefix.replace("cd \"$(dirname \"$_self\")\"", f"cd {REPO}"))
                 env = {k: os.environ[k] for k in ("PATH", "HOME", "USER") if k in os.environ}
-                r_multi = subprocess.run(["bash", str(f)], env={**env, "ASTRYX_ORG_REGISTRY": str(reg)}, cwd=REPO,
+                r_multi = subprocess.run(["bash", str(f)], env={**env, "ASTRYX_COG_REGISTRY": str(reg)}, cwd=REPO,
                                          capture_output=True, text=True, timeout=30)
-                r_one = subprocess.run(["bash", str(f)], env={**env, "ASTRYX_ORG_REGISTRY": str(Path(wd) / "none")},
+                r_one = subprocess.run(["bash", str(f)], env={**env, "ASTRYX_COG_REGISTRY": str(Path(wd) / "none")},
                                        cwd=REPO, capture_output=True, text=True, timeout=30)
             check(f"{rel}: refuses under two orgs ({r_multi.returncode}), passes with none ({r_one.returncode}), "
                   "nothing but preamble before it", r_multi.returncode != 0 and r_one.returncode == 0 and not bad,

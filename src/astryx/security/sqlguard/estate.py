@@ -16,7 +16,7 @@ import sys
 
 
 def _estate(repo):
-    """This module's own tree is the ORG's estate (its HOME on a multi-org host, plan-11324 S3a); another tree, itself."""
+    """This module's own tree is the ORG's estate (its HOME in a cog of several orgs, plan-11324 S3a); another tree, itself."""
     from pathlib import Path
     from astryx import paths
     if Path(repo).resolve() == paths.repo_root(__file__).resolve():

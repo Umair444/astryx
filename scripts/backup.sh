@@ -20,7 +20,7 @@ cd "$(dirname "$0")/.."
 # A's rotation below lists and removes only A's dumps, never B's.
 ROOT="$PWD"
 ORGH="$ROOT"
-if [ -e "${ASTRYX_ORG_REGISTRY:-/etc/astryx/orgs.json}" ]; then ORGH=$("$ROOT/venv/bin/python" "$ROOT/src/astryx/config.py" estate); fi
+if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ]; then ORGH=$("$ROOT/venv/bin/python" "$ROOT/src/astryx/config.py" estate); fi
 cd "$ORGH"
 KEEP=${1:-14}
 

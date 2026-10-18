@@ -1,4 +1,6 @@
-"""The HOST's org registry (plan-11324 S3a, design #58435 item 1): which orgs this host runs, and where each one's HOME is.
+"""The COG's org registry (plan-11324 S3a, design #58435 item 1): which orgs this astryx install runs, and where each
+one's HOME is. Vocabulary (owner ruling, seed #60082): agent → group → org → COG (several orgs in one install) →
+FEDERATION (across installs). This module is about the orgs within a cog.
 
 ONE predicate decides every multi-org rule, `multi()`. The resolver's refusals (paths.resolve_home), the environment
 DSN's check (config.dsn, correction 2), spawn's built environment (BC-S3) and the units' HOME all key off it, never
@@ -8,15 +10,15 @@ off anything else, so a host without a registry runs today's code byte for byte 
   one entry             one org, still today's behaviour (a registry naming only the primary changes nothing)
   two or more entries   multi-org: the HOME is CARRIED (ASTRYX_HOME) or marked, never the checkout or ~/.astryx
 
-Its place is HOST-level, inside neither the checkout nor any HOME: `/etc/astryx/orgs.json` (writing it is a sudo
-step, which is what adding an org to a host should cost). `ASTRYX_ORG_REGISTRY` names another file; it is the
+Its place is HOST-level, inside neither the checkout nor any HOME: `/etc/astryx/cog.json` (writing it is a sudo
+step, which is what adding an org to a host should cost). `ASTRYX_COG_REGISTRY` names another file; it is the
 fixture seam the oracles use, and it is a DECLARED host-class name (data/org_env.json) so it survives spawn's built
 environment. Under R1 (one owner, one superuser) it isn't a security boundary: an org process that sets it to a
 missing file reads a one-org host. That is correctness isolation, declared, not containment (a1 §6).
 
 The file:  {"orgs": {"<org>": {"home": "/abs/HOME", "db": "<its database>"}, ...}}
 `db` is the org's main database by name, so a process can tell "another org's database" WITHOUT reading another
-org's .env (no cross-org read outside the declared host-scoped set, a2 E). Its own .env must name the same database:
+org's .env (no cross-org read outside the declared cog-scoped set, a2 E). Its own .env must name the same database:
 config.dsn checks that pair for its own org only.
 
 A registry that is present but malformed RAISES (RegistryError): an unreadable registry fails closed, never as absent.
@@ -28,8 +30,8 @@ import os
 import re
 from pathlib import Path
 
-DEFAULT_PATH = Path("/etc/astryx/orgs.json")
-ENV = "ASTRYX_ORG_REGISTRY"
+DEFAULT_PATH = Path("/etc/astryx/cog.json")
+ENV = "ASTRYX_COG_REGISTRY"
 NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 # libpq's last-resort databases (correction 1(ii)): with no dbname anywhere it binds the USER's name, and `postgres`
 # is every cluster's maintenance database. An org there could be reached by an empty DSN plus two PG* names.
@@ -142,7 +144,7 @@ def is_fixture(dsn: str) -> bool:
 
 
 def _main(argv) -> int:
-    """`python -m astryx.orgs multi` exits 0 on a multi-org host, 1 otherwise, 2 when the registry refuses.
+    """`python -m astryx.orgs multi` exits 0 in a cog of several orgs, 1 otherwise, 2 when the registry refuses.
     `socket` prints this org's tmux socket (`name` its name) and exits 0 on several orgs, exits 1 on one, 2 when no
     registered HOME is carried. spawn.sh and init.sh ask THIS, so a shell copy of the predicate can never drift from it."""
     import sys

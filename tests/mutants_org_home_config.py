@@ -16,7 +16,7 @@ ORACLE = REPO / "tests" / "test_org_home.py"
 ENV = "ORG_HOME_CONFIG_SRC"
 
 MUTANTS = {
-    'F1 the pair is never checked on a multi-org host':
+    'F1 the pair is never checked in a cog of several orgs':
         ('    if _multi(environ):\n        _check_pair(v, src, path, environ)',
          '    if False:\n        _check_pair(v, src, path, environ)'),
     "F2 every DSN passes as a fixture's":
