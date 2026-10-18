@@ -3125,6 +3125,83 @@ async def thread_read(r: ThreadRead, request: Request):
     return {"marked": sorted(x["id"] for x in rows)}
 
 
+# ------------------------------------------------------------ the floor: who knows whom, and the cog's rooms
+from astryx.influence import graph as _influence  # noqa: E402 — the ONE weighting rule (plan-11324 S2)
+
+INFLUENCE_EDGES_SQL = "SELECT kind, src, dst, ts, coverage FROM influence_edge WHERE scope = 'local'"
+# ONE compute's snapshot, never each agent's own latest: two runs' values are not one ranking
+INFLUENCE_VALUES_SQL = ("SELECT agent, value FROM influence_value WHERE scope = 'local' AND view = 'global' "
+                        "AND computed_at = (SELECT max(computed_at) FROM influence_value "
+                        "WHERE scope = 'local' AND view = 'global')")
+
+
+@app.get("/api/influence")
+async def influence(request: Request):
+    """Who knows whom, for the floor (seed #60078, goal 11324 S2): the cached influence edges, each pair's weight under
+    the GLOBAL view's own rules (graph.kind_weights: a kind under the coverage floor weighs 0, and is named in
+    `unmeasured`; graph.weighted: the 14-day half-life), summed per src→dst, plus the latest GLOBAL rank. Refs and
+    topics never leave: a pair and a number. Owner-only, by omission from PUBLIC_PATHS and checked here as well."""
+    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+        return Response(status_code=403)
+    rows = [dict(r) for r in await pool.fetch(INFLUENCE_EDGES_SQL)]
+    cov = {}
+    for r in rows:
+        cov[r["kind"]] = r["coverage"]
+    w = _influence.kind_weights(cov)
+    now = datetime.now(timezone.utc)
+    pair: dict = {}
+    for s, d, x in _influence.weighted(rows, _influence.view("floor", w, {}), now):
+        pair[(s, d)] = pair.get((s, d), 0.0) + x
+    vals = await pool.fetch(INFLUENCE_VALUES_SQL + " ORDER BY value DESC, agent")
+    at = await pool.fetchval("SELECT max(computed_at) FROM influence_edge WHERE scope = 'local'")
+    return {"edges": [{"src": s, "dst": d, "w": round(x, 6)} for (s, d), x in sorted(pair.items())],
+            "values": [{"agent": v["agent"], "value": v["value"], "rank": i + 1} for i, v in enumerate(vals)],
+            "unmeasured": sorted(k for k, x in w.items() if x <= 0),
+            "computed_at": at.isoformat() if at else None}
+
+
+_identity_cache: dict = {}
+
+
+async def _gateway_identity() -> dict:
+    """The org's PUBLIC identity as its gateway publishes it (/astryx/identity: name and Ed25519 pubkey), fetched once
+    and kept; {} while the gateway is down. The observatory never loads the org's secret key to derive it."""
+    if "v" in _identity_cache:
+        return _identity_cache["v"]
+    url = f"http://127.0.0.1:{_env('ASTRYX_GATEWAY_PORT') or 8845}/astryx/identity"
+    try:
+        async with httpx.AsyncClient(timeout=2) as c:
+            j = (await c.get(url)).json()
+        v = {"org": j.get("org"), "pubkey": j.get("pubkey")} if isinstance(j, dict) else {}
+    except Exception:  # noqa: BLE001 — a down gateway is a missing badge, not a broken floor
+        return {}
+    _identity_cache["v"] = v
+    return v
+
+
+@app.get("/api/cog")
+async def cog(request: Request):
+    """The cog this observatory sits in (owner ruling #60083: several orgs on one install are a COG), as rooms for the
+    floor (seed #60078, design #58435). orgs.load() reads the host registry at request time: ABSENT is a cog of one
+    org, this one; present, one room per registered org, `this` marking ours. A registry that refuses is a 500, never
+    a quiet one-room answer (orgs.py: an unreadable registry fails closed). Homes and databases never leave.
+    Owner-only, by omission from PUBLIC_PATHS and checked here as well."""
+    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+        return Response(status_code=403)
+    try:
+        reg = orgs.load()
+    except orgs.RegistryError:
+        return Response(status_code=500)
+    ident = await _gateway_identity()
+    me_name = _env("ASTRYX_ORG") or ident.get("org") or ORG
+    badge = (ident.get("pubkey") or "")[:8] or None
+    if reg is None:
+        return {"registry": False, "rooms": [{"org": me_name, "this": True, "badge": badge}]}
+    me = orgs.org_of(ESTATE)          # the HOME this observatory serves (paths.estate, resolved once at start)
+    return {"registry": True,
+            "rooms": [{"org": o, "this": o == me, "badge": badge if o == me else None} for o in sorted(reg)]}
+
+
 class MemoryProposal(BaseModel):
     # deleted with the memory chat rework (0c3c450, 08-14) while this route kept it; on Python 3.14 annotations are
     # lazy, so the live observatory never noticed, but on 3.12 (CI, many installs) main.py failed to import at all
