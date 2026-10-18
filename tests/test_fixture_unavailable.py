@@ -13,6 +13,7 @@ triggers/), with ASTRYX_DSN unset:
      a real RED read as NOT SEARCHED on CI)
   U5 the admin DSN passed by env (ASTRYX_FIXTURE_ADMIN_DSN), still no .env → the gate RUNS, 0 (medic, seed #60093)
   U6 a FIXTURE DSN in that variable → 1, refused by name: it never becomes the admin, and never reads as 77
+  U7 a present .env wins over that variable: it's the no-.env path only (steward #60156 A1)
 ESTATE_SRC points at a mutant estate.py (tests/mutants_fixture_unavailable.py). Exit 0 pass · 1 fail · 77 not run (no psycopg).
 """
 import os
@@ -95,6 +96,18 @@ with tempfile.TemporaryDirectory(prefix="fxu-") as td:
               rc == 0 and "NOT SEARCHED" not in out, f"rc {rc}: {out[-300:]}")
     else:
         print("  NOTE  U5 not run: no admin DSN on this host (the U6 refusal above still decides its half)")
+    # U7: a present .env wins over the variable (steward #60156 A1: a stale export must not re-point a live tree's
+    # admin). Asked of live_dsn() itself, with placeholder DSNs on port 1: no database is touched, no real DSN is copied.
+    (tree / ".env").write_text("ASTRYX_DSN=postgresql://u7@127.0.0.1:1/from_the_file\n")
+    try:
+        r = subprocess.run([sys.executable, "-c", "from astryx.security.sqlguard import fixture; print(fixture.live_dsn())"],
+                           cwd=tree, env={**env, "PYTHONPATH": str(tree / "src"),
+                                          "ASTRYX_FIXTURE_ADMIN_DSN": "postgresql://u7@127.0.0.1:1/from_the_variable"},
+                           capture_output=True, text=True, timeout=60)
+    finally:
+        (tree / ".env").unlink()
+    check("U7 a present .env wins over ASTRYX_FIXTURE_ADMIN_DSN (the variable is the no-.env path only)",
+          r.stdout.strip().endswith("/from_the_file"), f"rc {r.returncode}: {(r.stdout + r.stderr)[-300:]}")
     (tree / "triggers").mkdir()
     for gate in GATES:
         rc, out = run(gate)
