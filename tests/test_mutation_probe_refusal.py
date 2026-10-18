@@ -17,6 +17,8 @@ Hermetic: each arm writes a tiny subject, oracle and spec into a temp dir and ru
   R9  outside any git tree, a subject that resolves by its code-tree tail (pkg/subj.py, its oracle in tests/) loads at
       the mutant location: the baseline passes and its mutant is CAUGHT, never a REFUSE (a3 #60145, a4 10-19)
   R10 inside a git tree, the git root decides the tail, never the oracle: an oracle OUTSIDE the tree gives pkg/subj.py
+  R11 no .git but the estate's marker (astryx.py): a subject in tests/ BESIDE its oracle keeps tests/subj.py, as a
+      worktree places it, never the bare name the shared directory gives (a3 #60809: 4 specs of 166 live there)
   C1  control: a passing baseline prints no tail block, and its mutant is CAUGHT
 """
 import json
@@ -152,6 +154,14 @@ with tempfile.TemporaryDirectory() as t:
                    env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
     rc, out = probe(d, runs, subject=tail, subj_rel="gitroot-r10/pkg/subj.py", oracle_rel="outside/oracle.py")
     check("R10 a git tree: the git root decides the tail (pkg/subj.py), never the oracle's shared directory",
+          rc == 0 and "REFUSING" not in out and any(ln.lstrip().startswith("CAUGHT") for ln in out.splitlines()), out)
+
+    d = t / "r11"; d.mkdir()
+    (d / "tree").mkdir(); (d / "tree" / "astryx.py").write_text("")
+    beside = ("import sys\nfrom pathlib import Path\n"
+              "if Path(__file__).parent.name != 'tests':\n    sys.exit(f'  no tree tail: {__file__}')\nX = 1\n")
+    rc, out = probe(d, runs, subject=beside, subj_rel="tree/tests/subj.py", oracle_rel="tree/tests/oracle.py")
+    check("R11 no .git, the marker decides: a subject beside its oracle in tests/ keeps tests/subj.py (mutant CAUGHT)",
           rc == 0 and "REFUSING" not in out and any(ln.lstrip().startswith("CAUGHT") for ln in out.splitlines()), out)
 
     d = t / "c1"; d.mkdir()

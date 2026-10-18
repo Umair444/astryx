@@ -140,14 +140,20 @@ def _print_tail(oracle: Path, out: str, when: str) -> None:
 
 
 def _tree_rel(subject: Path, oracle: Path) -> Path:
-    """The subject's path below its git root (observatory/api/main.py). Outside any git tree (a git-archive extract),
-    its path below the deepest directory it shares with its oracle (bridges/gateway.py beside tests/), so a subject
-    that resolves by its code-tree tail loads where the mutants go (a4 10-19: an extract's bare gateway.py raised at
-    paths.estate and the relocated baseline REFUSED a battery that passes in a worktree; a3 #60145). An oracle beside
-    its subject gives the bare name, as before."""
+    """The subject's path below its tree's root, so a subject that resolves by its code-tree tail loads where the
+    mutants go (a4 10-19: an extract's bare gateway.py raised at paths.estate and the relocated baseline REFUSED a
+    battery that passes in a worktree; a3 #60145). The root, first that holds:
+      its git root                                    (observatory/api/main.py), as always;
+      the nearest ancestor holding src/astryx/ or astryx.py   repo_root's own marker, so a git-archive extract places
+                                                      every copy as a worktree does (a3 #60809: 166 of 166 specs);
+      the deepest directory it shares with its oracle  a tree with neither (an oracle beside its subject: the bare name).
+    Not repo_root() itself: with no marker it answers this package's tree, which a temp subject is not below."""
     f = subject.resolve()
     for a in f.parents:
         if (a / ".git").exists():
+            return f.relative_to(a)
+    for a in f.parents:
+        if (a / "src" / "astryx").is_dir() or (a / "astryx.py").is_file():
             return f.relative_to(a)
     return f.relative_to(os.path.commonpath([f.parent, oracle.resolve().parent]))
 

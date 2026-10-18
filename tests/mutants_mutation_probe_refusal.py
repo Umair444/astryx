@@ -34,4 +34,6 @@ MUTANTS = {
         ('    return f.relative_to(os.path.commonpath([f.parent, oracle.resolve().parent]))\n', '    return Path(f.name)\n'),
     "T12 the git root no longer decides the tail (the oracle's shared directory does, inside a tree too)":
         ('        if (a / ".git").exists():\n            return f.relative_to(a)\n', '        if False:\n            return f.relative_to(a)\n'),
+    "T13 the estate's marker no longer decides outside git (a subject beside its oracle in tests/ is the bare name: a3 #60809)":
+        ('        if (a / "src" / "astryx").is_dir() or (a / "astryx.py").is_file():\n', '        if False:\n'),
 }
