@@ -44,7 +44,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 from astryx.core import charter as _charter  # noqa: E402 — the one roster rule
 from bridges.owner_surfaces import OWNER_ROW_BRIDGED_SQL  # noqa: E402 — the rows a bridge delivers, not the pane
-from astryx import config, paths  # noqa: E402 — the ONE resolver (plan-11324 S3a)
+from astryx import config, orgs, paths  # noqa: E402 — the ONE resolver (plan-11324 S3a; S3b: its tmux server)
 # The org's estate (.env, agents/, triggers/, units/, …): this checkout on one org, the HOME on several. The observatory
 # is in the declared host-scoped set (#58435 S3c); until S3c it serves ONE org, the HOME it was started for.
 ESTATE = paths.estate(__file__)
@@ -351,7 +351,7 @@ def goal(r) -> dict:
 def tmux_alive() -> set[str]:
     """Which ax-* sessions exist right now. Empty set if tmux is absent."""
     try:
-        out = subprocess.run(["tmux", "ls", "-F", "#{session_name}"],
+        out = subprocess.run([*orgs.tmux(), "ls", "-F", "#{session_name}"],
                              capture_output=True, text=True, timeout=3).stdout
         return {s[3:] for s in out.split() if s.startswith("ax-")}
     except Exception:
@@ -1154,7 +1154,7 @@ async def agent_retire(name: str, request: Request):
     if name in tmux_alive():
         # "=ax-<name>" is an EXACT match: a bare target falls back to a prefix match, and kill-session then kills
         # ax-<name>x if ax-<name> died between the tmux_alive() check and here (a3 #44075, measured)
-        k = subprocess.run(["tmux", "kill-session", "-t", f"=ax-{name}"],
+        k = subprocess.run([*orgs.tmux(), "kill-session", "-t", f"=ax-{name}"],
                            capture_output=True, text=True, timeout=10)
         killed = k.returncode == 0
     return {"ok": True, "name": name, "retired": True, "body_stopped": killed}

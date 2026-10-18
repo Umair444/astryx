@@ -34,7 +34,7 @@ from __future__ import annotations
 # imported as a module only (a trigger shim imports it), never run by path, so no sys.path preamble: an import
 # inside a top-level conditional makes the trigger_names static reader defer every lookup (reorg 10-14)
 from astryx.paths import repo_root
-from astryx import config, paths  # noqa: E402
+from astryx import config, orgs, paths  # noqa: E402
 
 import os
 import re
@@ -51,7 +51,6 @@ REPO = repo_root(__file__)
 def _estate():
     """The org's estate, read at CALL time: REPO on one org (exactly what it was, an oracle's `H.REPO = tmp` rebinding
     included: save() then writes the tmp tree, never the live homes/), the HOME on a multi-org host (plan-11324 S3a)."""
-    from astryx import orgs
     return paths.home() if orgs.multi() else REPO
 
 
@@ -88,7 +87,7 @@ def bodies() -> set[str] | None:
     """Live ax-* tmux sessions, the prefix stripped. No tmux server at all (a cold boot) is the EMPTY set; None only
     when tmux itself can't answer, and then nothing is spawned (a blind healer would double-spawn)."""
     try:
-        r = subprocess.run(["tmux", "ls", "-F", "#{session_name}"], capture_output=True, text=True, timeout=10)
+        r = subprocess.run([*orgs.tmux(), "ls", "-F", "#{session_name}"], capture_output=True, text=True, timeout=10)
     except Exception:                                      # noqa: BLE001
         return None
     if r.returncode != 0:
@@ -185,9 +184,9 @@ def stale(min_age: int = DEAF_PENDING_S, dsn: str | None = None) -> dict[str, tu
 def pane(name: str) -> tuple[str, float] | None:
     """(the pane's text, the session's age in s), or None when there is no body or tmux can't say."""
     try:
-        t = subprocess.run(["tmux", "capture-pane", "-p", "-S", "-400", "-t", f"=ax-{name}:"],
+        t = subprocess.run([*orgs.tmux(), "capture-pane", "-p", "-S", "-400", "-t", f"=ax-{name}:"],
                            capture_output=True, text=True, timeout=10)
-        b = subprocess.run(["tmux", "display-message", "-p", "-t", f"=ax-{name}:", "#{session_created}"],
+        b = subprocess.run([*orgs.tmux(), "display-message", "-p", "-t", f"=ax-{name}:", "#{session_created}"],
                            capture_output=True, text=True, timeout=10)
         born = int(b.stdout.strip())
     except Exception:                                      # noqa: BLE001
@@ -225,7 +224,7 @@ def save(name: str, text: str, now: float) -> Path:
 
 def kill(name: str) -> bool:
     try:
-        return subprocess.run(["tmux", "kill-session", "-t", f"=ax-{name}"], capture_output=True,
+        return subprocess.run([*orgs.tmux(), "kill-session", "-t", f"=ax-{name}"], capture_output=True,
                               timeout=10).returncode == 0
     except Exception:                                      # noqa: BLE001
         return False

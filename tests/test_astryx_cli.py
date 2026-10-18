@@ -40,7 +40,7 @@ class Fake:
     def __call__(self, cmd, cwd=None, env=None, timeout=None, text=True, capture_output=False, check=False):
         self.calls.append({"cmd": list(cmd), "cwd": cwd, "env": env})
         c, rc, so = list(cmd), 0, ""
-        if c[:2] == ["tmux", "ls"]:
+        if c[:2] == ["tmux", "ls"]:   # org-home: matches a MOCKED call's argv (one org: orgs.tmux() is ["tmux"])
             so = "ax-seed\nax-forge\nscratch\n"
         elif c[:2] == ["systemctl", "list-units"]:
             so = ("astryx-observatory.service loaded active running obs\n"

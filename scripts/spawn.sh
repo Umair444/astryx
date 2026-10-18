@@ -17,6 +17,7 @@ if [ -n "$MULTI" ]; then
   ORGH=$("$PY" -c 'import sys; sys.path.insert(0, sys.argv[1] + "/src")
 from astryx import paths; print(paths.home())' "$ROOT") || { echo "spawn: no registered org HOME (set ASTRYX_HOME)"; exit 1; }
 fi
+. "$ROOT/scripts/org_tmux.sh"   # `tmux` is THIS org's server (S3b): the default socket on one org, -L ax-<org> on several
 # RENDER MODE: `spawn.sh --render <agent> <outdir>` writes the home files a spawn would write
 # (CLAUDE.md, .mcp.json, .claude/settings.json) into <outdir>, then exits BEFORE any side
 # effect: no DB write, no tmux, no claude, no residency refusal. It is THIS script, one code
@@ -88,7 +89,9 @@ fi
 # (ASTRYX_AGENT is ENV, invisible to pgrep -f — read /proc/<pid>/environ)
 if [ -z "$RENDER" ] && ! tmux has-session -t "=ax-$AGENT" 2>/dev/null; then
   for pid in $(pgrep -f 'channel/server.mjs' 2>/dev/null); do
-    if tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -qx "ASTRYX_AGENT=$AGENT"; then
+    # several orgs: an agent NAME is per org (S3b), so only a body of THIS org's agent (its HOME carried) counts
+    if tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -qx "ASTRYX_AGENT=$AGENT" \
+       && { [ -z "$MULTI" ] || tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -qxF "ASTRYX_HOME=$ORGH"; }; then
       echo "'$AGENT' already has a live body outside tmux (channel server pid $pid) — refusing a second one"
       exit 1
     fi

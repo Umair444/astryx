@@ -62,7 +62,7 @@ try:
         root = Path(tempfile.mkdtemp(dir=tmp, prefix="proc-"))
         chain = [(300, mode_names[0], ["/bin/sh", "-c", "python3 hook"], 200),
                  (200, "claude", argv, 100) if argv is not None else (200, "node", ["node", "x.js"], 100),
-                 (100, mode_names[1], ["tmux", "new-session"], 1)]
+                 (100, mode_names[1], ["tmux", "new-session"], 1)]   # org-home: a FAKE process table's argv, never run
         for pid, name, av, ppid in chain:
             d = root / str(pid)
             d.mkdir()

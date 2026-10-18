@@ -2,8 +2,8 @@
 """Oracle for a3's HARD BC-S3 (#58597) with a4's precision (#58598): on a multi-org host an org process's environment
 is BUILT, never inherited. Keyed to what owns the property: the resident's PANE, not spawn's process.
 
-  P1 A tmux server on a PRIVATE socket is started from an "org-A operator shell" (WA_CLI, PEOPLE_SALT, ASTRYX_ORG,
-     ASTRYX_DSN = A's, PGHOST: sentinels) and given PEOPLE_SALT in its GLOBAL environment too; spawn.sh (whose own
+  P1 A tmux server on org B's OWN socket (-L ax-<org>, S3b) is started from an "org-A operator shell" (WA_CLI,
+     PEOPLE_SALT, ASTRYX_ORG, ASTRYX_DSN = A's, PGHOST: sentinels) and given PEOPLE_SALT in its GLOBAL environment too; spawn.sh (whose own
      environment carries the same sentinels) then creates an org-B resident on that socket. What the resident's CLI
      runs with holds NONE of A's names, ASTRYX_HOME = HOME-B, ASTRYX_DSN = B's own DSN.
      Positive control: the server's global environment DID hold A's sentinel (the premise is real).
@@ -69,20 +69,18 @@ def main():
     except FixtureUnavailable as e:
         print(f"SKIP (77): {e}")
         return 77
-    sock = f"ax-fxorghome-{os.getpid()}"
+    # org B's OWN server (S3b): spawn.sh reaches it by itself (-L ax-<org>, src/astryx/orgs.py socket), so the
+    # resident is on a private socket with no PATH shim, and the premise's server below is that same one
+    sock = f"ax-{fx.org['b']}"
     try:
         co, A, B = fx.co, fx.home["a"], fx.home["b"]
         (B / "agents" / f"{AGENT}.md").write_text(f"# {AGENT}\nA fixture resident of fixture org b.\n")
-        shim = fx.t / "shim"
-        shim.mkdir()
-        (shim / "tmux").write_text(f"#!/bin/sh\nexec {real_tmux} -L {sock} \"$@\"\n")
-        (shim / "tmux").chmod(0o755)
         out = fx.t / "stub-out"
         out.mkdir()
         stub = fx.t / "cli_stub.sh"
         stub.write_text(STUB.replace("$ORG_HOME_STUB_OUT_DIR_PLACEHOLDER", str(out)).replace("$CO_PLACEHOLDER", str(co)))
         stub.chmod(0o755)
-        path = f"{shim}:{os.environ.get('PATH', '/usr/bin:/bin')}"
+        path = os.environ.get("PATH", "/usr/bin:/bin")
         sentinels = {"WA_CLI": "SENTINEL-A", "PEOPLE_SALT": "SENTINEL-A", "ASTRYX_ORG": "SENTINEL-A",
                      "PGHOST": "sentinel-a.invalid", "ASTRYX_DSN": fx.dsn["a"]}
         # the org-A operator shell starts the server; the server's global environment is what panes inherit
@@ -98,6 +96,8 @@ def main():
                            capture_output=True, text=True, timeout=150)
         check("spawn.sh brings the org-B resident up on the private socket", r.returncode == 0
               and "resident" in r.stdout, (r.stdout + r.stderr)[-400:])
+        check("...on org B's OWN server (-L ax-<org>, S3b), found with no shim", subprocess.run(
+            [real_tmux, "-L", sock, "has-session", "-t", f"=ax-{AGENT}"], capture_output=True).returncode == 0)
         deadline = time.time() + 30
         while time.time() < deadline and not ((out / "names").is_file() and (out / "work").is_file()
                                               and len((out / "work").read_text().splitlines()) >= 2):

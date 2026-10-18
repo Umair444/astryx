@@ -7,9 +7,16 @@ resolver, found by WALKING the code, never by a list of files.
   estate  a path to an ORG-class .gitignore entry (data/estate_partition.json) built on a CHECKOUT base
           (REPO, ROOT, repo_root(), parents[n], $PWD in init.sh), and a literal DSN                       BC-S2(2)
   env     an environment-first read of a name an org's .env holds, anywhere but the resolvers         BC-S3(3)
+  namespace  a name the HOST shares, built from an agent name (#58435 S3b). Kind `tmux`: a tmux call on the
+          default socket, where `ax-<agent>` means every org's agent of that name. It must go through the org's
+          server: python `[*orgs.tmux(), …]`; shell, a file that sources scripts/org_tmux.sh before the call
+          (`exec tmux` / `command tmux` bypass that function, so they spell `${AX_SOCK:+-L "$AX_SOCK"}`); or an
+          explicit -L/-S (a private test server). Grammar: a python LIST display whose first element is the
+          literal "tmux" (an argv; a tuple of tool names is not one); a shell `tmux` in command position (quoted messages stripped); a js spawn/exec of
+          'tmux'. A tmux reached through a variable (`T = "tmux"; [T, …]`) is outside it (stated).
 
 THE GRAMMAR (stated, so a miss in review reopens it, a2 #58452): text over EXECUTABLE lines (comments and
-docstrings stripped) of every .py / .sh / .mjs / .js file git does not ignore, and every extensionless one whose
+docstrings stripped) of every .py / .sh / .mjs / .js / .cjs / .ts file git does not ignore, and every extensionless one whose
 shebang is a shell, python or node (init.sh): the walk is DERIVED (EXCLUDED_ROOTS declares any root it skips). A DSN assembled from PG* parts is outside
 it; construction (spawn's and the units' built environment) is the half that covers that (a1's caveat). A base
 is matched where the path is JOINED onto it; a two-hop base (`B = REPO / "bridges"`, then `B / "routes-x.json"`)
@@ -41,7 +48,7 @@ HERE = Path(__file__).resolve().parents[1]
 # (init.sh). A root the census does NOT read is DECLARED here with its reason, so a new top-level directory defaults IN.
 EXCLUDED_ROOTS: dict[str, str] = {}
 SHEBANG = re.compile(rb"^#!.*\b(?:ba|z|da|k)?sh\b|^#!.*\bpython[0-9.]*\b|^#!.*\bnode\b")
-SUFFIX = (".py", ".sh", ".mjs", ".js")
+SUFFIX = (".py", ".sh", ".mjs", ".js", ".cjs", ".ts")   # .cjs/.ts: a2 #59037 (a node-side reader)
 SKIP_PARTS = {"node_modules", "__pycache__", "dist", "upstream", ".git"}
 RESOLVERS = {"src/astryx/config.py", "channel/home.mjs", "src/astryx/orgs.py", "src/astryx/paths.py",
              "devtools/org_census.py"}
@@ -204,6 +211,74 @@ def estate_sites(rel: str, lines, toks, cd_base: bool) -> list:
     return out
 
 
+# ── namespace ───────────────────────────────────────────────────────────────────────────────────────────────────
+SOURCES_ORG_TMUX = re.compile(r"""^\s*(?:\.|source)\s+["']?\$\{?ROOT\}?/scripts/org_tmux\.sh\b""")
+SH_TMUX = re.compile(r"""(?:^|[;&|({`]|\$\(|\b(?:then|do|else|if|while|until|time)\s|!\s)\s*"""
+                     r"""(?P<pre>(?:exec|command|nohup|sudo|setsid)\s+|env\s+(?:\w+=\S*\s+)*|timeout\s+\S+\s+)?"""
+                     r"""tmux(?!\s*\(\))(?=\s|$|;|\)|&|\|)(?P<rest>.*)""")
+SOCKET_ARG = re.compile(r"""^\s*(?:\$\{AX_SOCK:\+-L\s+"\$AX_SOCK"\}|-[LS]\b)""")
+JS_TMUX = re.compile(r"""\b(?:spawn|spawnSync|execFile|execFileSync)\s*\(\s*['"`]tmux['"`]|"""
+                     r"""\b(?:exec|execSync)\s*\(\s*['"`]tmux\s""")
+
+
+def _py_tmux(src: Path) -> list[int]:
+    """Lines where a python LIST display starts with the literal "tmux" and no -L/-S follows it (an argv; a tuple of
+    tool names, `for t in ("tmux", "psql")`, is not one)."""
+    try:
+        toks = [t for t in tokenize.generate_tokens(io.StringIO(src.read_text(errors="replace")).readline)
+                if t.type not in (tokenize.NL, tokenize.NEWLINE, tokenize.COMMENT, tokenize.INDENT, tokenize.DEDENT)]
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        return []
+    out = []
+    for i in range(1, len(toks)):
+        t, prev = toks[i], toks[i - 1]
+        if t.type != tokenize.STRING or prev.type != tokenize.OP or prev.string != "[":
+            continue
+        try:
+            if ast.literal_eval(t.string) != "tmux":
+                continue
+        except (ValueError, SyntaxError):
+            continue
+        nxt = toks[i + 1] if i + 1 < len(toks) else None
+        if nxt is None or nxt.type != tokenize.OP or nxt.string not in (",", "]", ")"):
+            continue                                    # "tmux" + x, ("tmux" in y): not an argv's first element
+        arg = toks[i + 2] if i + 2 < len(toks) and nxt.string == "," else None
+        try:
+            if arg is not None and arg.type == tokenize.STRING and ast.literal_eval(arg.string) in ("-L", "-S"):
+                continue
+        except (ValueError, SyntaxError):
+            pass
+        out.append(t.start[0])
+    return out
+
+
+def namespace_sites(rel: str, src: Path, lines) -> list:
+    if rel in RESOLVERS:
+        return []
+    out = []
+    if src.suffix == ".py" or (rel.endswith(".py")):
+        raw = {n: r for n, _, r in lines}
+        allraw = src.read_text(errors="replace").splitlines()
+        for n in _py_tmux(src):
+            out.append((n, raw.get(n, allraw[n - 1] if n <= len(allraw) else ""), "tmux on the default socket"))
+        return out
+    if rel.endswith((".mjs", ".js", ".cjs", ".ts")):
+        return [(n, raw, "tmux spawned on the default socket") for n, code, raw in lines if JS_TMUX.search(code)]
+    sourced_at = next((n for n, c, _ in lines if SOURCES_ORG_TMUX.search(c)), None)
+    for n, code, raw in lines:
+        bare = re.sub(r'"[^"]*"', lambda m: '""' if re.search(r"\s", m.group()) and not re.search(r"\$\(|`", m.group())
+                      else m.group(), code)
+        for m in SH_TMUX.finditer(bare):
+            if SOCKET_ARG.search(m.group("rest")):
+                continue
+            if not m.group("pre") and sourced_at is not None and sourced_at < n:
+                continue
+            out.append((n, raw, "tmux on the default socket" + (f" ({m.group('pre').strip()} bypasses org_tmux's "
+                                                                 "function)" if m.group("pre") else "")))
+            break
+    return out
+
+
 # ── env ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 def org_names(root: Path) -> dict:
     """The names an org's .env holds, DERIVED from the code (a3 BC-S3(3)): every name a .env WRITER sets (config.
@@ -314,7 +389,8 @@ def census(root: Path, overrides: dict | None = None) -> dict:
     toks = [(e, estate_token(e)) for e in estate_entries(root)]
     names = org_names(root)
     readers = [(n, env_read(n)) for n in sorted(names)]
-    res = {"dsn": [], "estate": [], "env": [], "unparsed": [], "declared": [], "guarded": [], "guarded_files": [],
+    res = {"dsn": [], "estate": [], "env": [], "namespace": [], "unparsed": [], "declared": [], "guarded": [],
+           "guarded_files": [],
            "org_names": sorted(names)}
     for p in walk(root):
         rel = p.relative_to(root).as_posix()
@@ -329,7 +405,8 @@ def census(root: Path, overrides: dict | None = None) -> dict:
             res["guarded_files"].append(rel)
         for kind, sites in (("dsn", dsn_sites(rel, lines)),
                             ("estate", estate_sites(rel, lines, toks, cd_base)),
-                            ("env", env_sites(rel, lines, readers, names))):
+                            ("env", env_sites(rel, lines, readers, names)),
+                            ("namespace", namespace_sites(rel, src if src.suffix else p, lines))):
             for n, raw, what in sites:
                 row = {"kind": kind, "file": rel, "line": n, "what": what}
                 (res["declared"] if DECLARE.search(raw) else res["guarded"] if g else res[kind]).append(row)
@@ -346,7 +423,7 @@ def main(argv=None) -> int:
         print(json.dumps(res, indent=1))
     else:
         print(f"org names derived from the code's .env writers and readers: {len(res['org_names'])}")
-        for k in ("dsn", "estate", "env", "unparsed"):
+        for k in ("dsn", "estate", "env", "namespace", "unparsed"):
             print(f"{k}: {len(res[k])} finding(s)")
             for r in res[k]:
                 print(f"  {r['file']}:{r['line']}  {r['what']}")
@@ -355,7 +432,7 @@ def main(argv=None) -> int:
         print(f"declared (org-home: …): {len(res['declared'])}")
         for r in res["declared"]:
             print(f"  {r['kind']:6} {r['file']}:{r['line']}  {r['what']}")
-    return 1 if any(res[k] for k in ("dsn", "estate", "env", "unparsed")) else 0
+    return 1 if any(res[k] for k in ("dsn", "estate", "env", "namespace", "unparsed")) else 0
 
 
 if __name__ == "__main__":

@@ -24,7 +24,7 @@ import urllib.request
 from pathlib import Path
 
 import astryx
-from astryx import config, paths, tree
+from astryx import config, orgs, paths, tree
 from astryx.ui import UI
 
 RUNNER = subprocess.run            # seam: tests replace it
@@ -227,7 +227,7 @@ def cmd_init(ctx: Ctx, a) -> int:
     ui.step("ok", "bootstrap complete")
 
     ui.section("5  Handoff")
-    if run(["tmux", "has-session", "-t", "=ax-seed"], capture=True).returncode == 0:
+    if run([*orgs.tmux(), "has-session", "-t", "=ax-seed"], capture=True).returncode == 0:
         ui.step("ok", "the seed is up; it will walk you through the rest")
     else:
         ui.step("skip", "the seed isn't up yet", fix="astryx spawn seed")
@@ -251,7 +251,7 @@ def cmd_doctor(ctx: Ctx, a) -> int:
 
 
 def _residents() -> list[str]:
-    names = out(["tmux", "ls", "-F", "#{session_name}"]).splitlines()
+    names = out([*orgs.tmux(), "ls", "-F", "#{session_name}"]).splitlines()
     return sorted(n[3:] for n in names if n.startswith("ax-"))
 
 

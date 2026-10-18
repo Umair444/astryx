@@ -282,7 +282,7 @@ install_astryx() {
   local link="$HOME/.local/bin/astryx"
   say "installing astryx from git into $ASTRYX_DIR"
   if [ -d "$ASTRYX_DIR/.git" ] && [ -d "$ASTRYX_DIR/homes/seed" ] && [ "$UPGRADE" = 0 ] \
-     && tmux has-session -t "=ax-seed" 2>/dev/null; then
+     && tmux has-session -t "=ax-seed" 2>/dev/null; then   # org-home: the installer stands up ONE org in a checkout (no registry yet); a host's further orgs are seed's estate move
     die "an org is running from $ASTRYX_DIR (ax-seed is up). Re-running here pulls and re-inits a live org; if you mean that, add --upgrade. To start a second org, pick another place with --dir."
   fi
   if [ -d "$ASTRYX_DIR/.git" ]; then

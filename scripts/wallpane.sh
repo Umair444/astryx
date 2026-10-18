@@ -10,8 +10,8 @@ A="${1:?agent}"
 export PGTZ="$(timedatectl show -p Timezone --value 2>/dev/null || echo UTC)"
 
 while :; do
-  H=$(tmux display -p -t "$TMUX_PANE" '#{pane_height}' 2>/dev/null || echo 20)
-  W=$(tmux display -p -t "$TMUX_PANE" '#{pane_width}' 2>/dev/null || echo 80)
+  H=$(tmux display -p -t "$TMUX_PANE" '#{pane_height}' 2>/dev/null || echo 20)   # org-home: runs INSIDE a wall pane: $TMUX is that pane's own (org) server
+  W=$(tmux display -p -t "$TMUX_PANE" '#{pane_width}' 2>/dev/null || echo 80)   # org-home: inside a wall pane, as above
   out=$(psql "$DSN" -At -F'|' -c \
     "SELECT to_char(ts,'HH24:MI'), kind,
             left(regexp_replace(coalesce(content,''), E'[\\n\\r\\t ]+', ' ', 'g'), $((W - 9)))

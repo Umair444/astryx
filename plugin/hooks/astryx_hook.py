@@ -281,7 +281,7 @@ def cmd_relay(a) -> int:
 
 def live_resident(agent: str) -> bool:
     try:
-        return subprocess.run(["tmux", "has-session", "-t", f"=ax-{agent}"], capture_output=True,
+        return subprocess.run(["tmux", "has-session", "-t", f"=ax-{agent}"], capture_output=True,  # org-home: a plugin join's HOME is a CHECKOUT (it execs HOME/venv, HOME/hooks): one org; a multi-org join is S3c's door
                               timeout=5).returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False

@@ -9,7 +9,8 @@ host's host, port and user (read in Python, never printed), so libpq would reach
 
     with OrgHomes() as fx:
         fx.co      the estate-free checkout (venv linked in: host class)
-        fx.home["a"], fx.home["b"], fx.db["a"], fx.dsn["a"], fx.reg (the registry file)
+        fx.home["a"], fx.home["b"], fx.db["a"], fx.dsn["a"], fx.reg (the registry file), fx.org["a"] (its name)
+        fx.tmux("a")     argv prefix for org a's own tmux server (-L ax-<org>); __exit__ kills both servers
         fx.env(**over)   a clean environment for a child: the host names only, plus ASTRYX_ORG_REGISTRY
 """
 from __future__ import annotations
@@ -36,6 +37,9 @@ SEAMS = {
     "ORG_HOME_INIT_SRC": "init.sh",
     "ORG_HOME_PULSE_SRC": "src/astryx/pulse/pulse.py",
     "ORG_HOME_BACKUP_SRC": "scripts/backup.sh",
+    "ORG_HOME_ORGTMUX_SRC": "scripts/org_tmux.sh",
+    "ORG_HOME_COMPACT_SRC": "src/astryx/pulse/shipped_triggers/context_compact.py",
+    "ORG_HOME_HEAL_SRC": "src/astryx/pulse/shipped_triggers/agent_heal.py",
 }
 
 
@@ -99,8 +103,11 @@ class OrgHomes:
                 (h / "local.md").write_text(f"# the law of fixture org {o}\nonly org {o} is bound by this.\n")
             (h / "agents").mkdir()
             self.home[o], self.db[o] = h, db
+        # org NAMES are per run (S3b): each org's tmux server is `-L ax-<org>`, a host-wide socket name, so two runs
+        # (a merge_check beside the live stamp) must never share one
+        self.org = {o: f"fx{o}-{os.getpid()}" for o in ("a", "b")}
         self.reg = self.t / "orgs.json"
-        self.reg.write_text(json.dumps({"orgs": {f"fx{o}": {"home": str(self.home[o]), "db": self.db[o]}
+        self.reg.write_text(json.dumps({"orgs": {self.org[o]: {"home": str(self.home[o]), "db": self.db[o]}
                                                  for o in ("a", "b")}}))
         return self
 
@@ -110,7 +117,13 @@ class OrgHomes:
         e.update({k: v for k, v in over.items() if v is not None})
         return e
 
+    def tmux(self, o) -> list[str]:
+        return ["tmux", "-L", f"ax-{self.org[o]}"]
+
     def __exit__(self, *exc):
+        if hasattr(self, "org"):
+            for o in self.org:                   # only the fixture's OWN servers, never the default socket
+                subprocess.run([*self.tmux(o), "kill-server"], capture_output=True)
         subprocess.run(["git", "-C", str(REPO), "worktree", "remove", "--force", str(self.co)], capture_output=True)
         subprocess.run(["git", "-C", str(REPO), "worktree", "prune"], capture_output=True)
         shutil.rmtree(self.t, ignore_errors=True)

@@ -93,6 +93,30 @@ def org_of(home, env=None) -> str | None:
     return None
 
 
+def name(env=None, cwd=None) -> str | None:
+    """THIS process's org: None on a one-org host, else the registered org whose HOME the ONE resolver gives
+    (paths.resolve_home, which refuses an unregistered or uncarried HOME: NoHome)."""
+    if not multi(env):
+        return None
+    from astryx import paths
+    return org_of(paths.resolve_home(env, cwd)[0], env)
+
+
+def socket(env=None, cwd=None) -> str | None:
+    """The tmux socket this org's residents live on (plan-11324 S3b, #58435: `ax-<agent>` is a HOST-wide name, so
+    two orgs' `seed` would be one session). None on a one-org host: tmux's default socket, byte for byte as before.
+    Several orgs: `ax-<org>`, a server of its own (-L), so a session name only ever means this org's resident."""
+    o = name(env, cwd)
+    return None if o is None else f"ax-{o}"
+
+
+def tmux(env=None, cwd=None) -> list[str]:
+    """The argv prefix every tmux call starts with: ["tmux"] on one org, ["tmux", "-L", "ax-<org>"] on several.
+    -L wins over an inherited $TMUX, so a caller inside another org's pane still reaches its own org's server."""
+    s = socket(env, cwd)
+    return ["tmux"] if s is None else ["tmux", "-L", s]
+
+
 def conninfo(dsn: str) -> dict:
     """libpq's own reading of a DSN (URI or key=value), through psycopg: never a second parser of the grammar."""
     from psycopg.conninfo import conninfo_to_dict
@@ -112,11 +136,18 @@ def is_fixture(dsn: str) -> bool:
 
 def _main(argv) -> int:
     """`python -m astryx.orgs multi` exits 0 on a multi-org host, 1 otherwise, 2 when the registry refuses.
-    spawn.sh and init.sh ask THIS, so a shell copy of the predicate can never drift from it."""
+    `socket` prints this org's tmux socket and exits 0 on several orgs, exits 1 on one, 2 when no registered HOME is
+    carried. spawn.sh and init.sh ask THIS, so a shell copy of the predicate can never drift from it."""
     import sys
     try:
         if argv[:1] == ["multi"]:
             return 0 if multi() else 1
+        if argv[:1] == ["socket"]:            # scripts/org_tmux.sh: prints ax-<org> (exit 0) on several orgs; 1 on one
+            s = socket()
+            if s is None:
+                return 1
+            print(s)
+            return 0
     except RegistryError as e:
         print(f"astryx.orgs: {e}", file=sys.stderr)
         return 2
@@ -124,7 +155,7 @@ def _main(argv) -> int:
         # guard reads as "one org, proceed" (a registry nested past the parser's recursion limit did exactly that)
         print(f"astryx.orgs: the registry could not be judged ({type(e).__name__}): refusing", file=sys.stderr)
         return 2
-    print("usage: python -m astryx.orgs multi", file=sys.stderr)
+    print("usage: python -m astryx.orgs multi|socket", file=sys.stderr)
     return 2
 
 

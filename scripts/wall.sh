@@ -16,6 +16,7 @@
 # touch a pane (the lesson is law). Ctrl-b d leaves.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/org_tmux.sh"   # `tmux` is THIS org's server (S3b): the wall and its residents' sessions
 
 REBUILD=""
 [ "${1:-}" = "--rebuild" ] && { REBUILD=1; shift; }
@@ -38,8 +39,8 @@ if [ -z "$REBUILD" ] && tmux has-session -t =wall 2>/dev/null; then
   have=$(tmux list-panes -t wall -F '#{pane_title}' 2>/dev/null | sort | xargs)
   want=$(echo "$AGENTS" | xargs -n1 | sort | xargs)
   if [ "$have" = "$want" ]; then
-    if [ -n "${TMUX:-}" ]; then exec tmux switch-client -t wall
-    else exec tmux attach -t wall; fi
+    if [ -n "${TMUX:-}" ]; then exec tmux ${AX_SOCK:+-L "$AX_SOCK"} switch-client -t wall
+    else exec tmux ${AX_SOCK:+-L "$AX_SOCK"} attach -t wall; fi
   fi
 fi
 
@@ -78,7 +79,7 @@ tmux kill-pane -t "$placeholder" 2>/dev/null || true
 tmux select-layout -t wall tiled >/dev/null
 
 if [ -n "${TMUX:-}" ]; then
-  exec tmux switch-client -t wall     # already inside tmux: switch, never nest
+  exec tmux ${AX_SOCK:+-L "$AX_SOCK"} switch-client -t wall     # already inside tmux: switch, never nest
 else
-  exec tmux attach -t wall
+  exec tmux ${AX_SOCK:+-L "$AX_SOCK"} attach -t wall
 fi

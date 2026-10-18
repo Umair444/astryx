@@ -43,6 +43,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from astryx import orgs  # the org's tmux server (plan-11324 S3b)
 from astryx.core import canvas as cv
 from astryx.core import presence as pres
 from .canvas_shell import render
@@ -394,7 +395,7 @@ def _blurb(name: str) -> str:
 
 def _alive() -> set[str]:
     try:
-        out = subprocess.run(["tmux", "ls", "-F", "#{session_name}"], capture_output=True,
+        out = subprocess.run([*orgs.tmux(), "ls", "-F", "#{session_name}"], capture_output=True,
                              text=True, timeout=3).stdout
         return {s[3:] for s in out.split() if s.startswith("ax-")}
     except Exception:

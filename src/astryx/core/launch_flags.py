@@ -15,6 +15,7 @@ CLI: python -m astryx.core.launch_flags   one line per body; exit 0 EVERY body w
 if not __package__:  # run by path: the checkout root goes first on sys.path so `astryx` resolves (goal 10224 S4)
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
+from astryx import orgs  # noqa: E402 — the org's tmux server (plan-11324 S3b)
 from astryx.paths import repo_root  # noqa: E402
 import subprocess
 import sys
@@ -89,7 +90,7 @@ def claude_argv(pane_pid: int, proc: Path = Path("/proc")) -> list[str] | None:
 def bodies(run=subprocess.run) -> dict[str, int] | None:
     """{agent: pane pid} for every ax-<agent> tmux session; None when tmux can't answer."""
     try:
-        r = run(["tmux", "list-panes", "-a", "-F", "#{session_name} #{pane_pid}"],
+        r = run([*orgs.tmux(), "list-panes", "-a", "-F", "#{session_name} #{pane_pid}"],
                            capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
         return None
