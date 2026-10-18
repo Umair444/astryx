@@ -188,6 +188,8 @@ check("U1 a commit naming a workflow goal but none of its tasks is flagged; name
       got == ["b2"], f"{got}")
 check("U2 a goal WITHOUT a workflow is never flagged (only goals that carry one are judged)",
       wf.unattributed([("f6", "plan-9000: x", None)], wfs) == [])
+check("U3 a message id that happens to equal a goal id (\"a3 #11324\") is a citation, not a goal mention: never flagged",
+      wf.unattributed([("g7", "sqlguard: fix the ledger (a3 #11324)", None)], wfs) == [])
 
 # ---- L: the live history (anti-vacuity)
 live_ref = "origin/main" if subprocess.run(["git", "-C", str(REPO), "rev-parse", "-q", "--verify", "origin/main"],

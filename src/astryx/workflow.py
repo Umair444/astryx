@@ -241,7 +241,8 @@ def unattributed(commits, workflows: dict) -> list[tuple[str, int, str]]:
     out = []
     for sha, subject, trailer in commits:
         for goal, ids in sorted(workflows.items()):
-            if attribute(goal, ids, subject, trailer) == UNATTRIBUTED:
+            if (attribute(goal, ids, subject, trailer) == UNATTRIBUTED
+                    and re.search(rf"(?i)(?:plan-|goal |\(|^){goal}(?![0-9])", subject)):   # never a cited "#<msg id>"
                 out.append((sha, goal, subject))
     return out
 

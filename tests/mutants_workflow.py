@@ -29,7 +29,9 @@ MUTANTS = {
     "W13 a non-boolean done passes (Python and SQL read two different values; a1 #60186)":
         ('            if flag in t and not isinstance(t[flag], bool):', '            if False:'),
     "W14 land-time attribution flags nothing (off-form subjects land and their bars never see the work)":
-        ("            if attribute(goal, ids, subject, trailer) == UNATTRIBUTED:", "            if False:"),
+        ("            if (attribute(goal, ids, subject, trailer) == UNATTRIBUTED\n", "            if (False\n"),
+    "W15 a cited '#<msg id>' equal to a goal id is flagged (a false refusal at land)":
+        ('re.search(rf"(?i)(?:plan-|goal |\\(|^){goal}(?![0-9])", subject)', 'True'),
     "W7 the trailer is ignored":
         ("    if trailer:\n", "    if False:\n"),
     "W8 a self-review passes":
