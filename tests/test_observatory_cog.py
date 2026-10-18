@@ -16,7 +16,8 @@ build) behind the real front (uvicorn front:app, ephemeral port), a fixture regi
   O5 no authority added: a caller with no x-obs-key reaches the backend with none; a Set-Cookie from a backend is
      never replayed to the next caller (the front's jar stores nothing)
   O6 /api/cog/stream fans in both backends' /api/events, each event wrapped {org, name, event}, ?key= forwarded to
-     each; a backend that dies is announced {"type": "cog_backend", "up": false} for its org
+     each; a backend that dies is announced {"type": "cog_backend", "up": false} for its org, and a call to it is
+     REFUSED at once (502), never left in a listen backlog the oracle still holds (a2 #60728 A-1)
   O7 the client a backend's per-visitor cap counts (a2 #60582 A-1): the front names the client IT saw in
      x-astryx-front-client, overwriting one the caller sent
   O8 main.py's _client (read from the source, run alone): one org, the peer exactly as before (the header ignored);
@@ -282,6 +283,14 @@ def main():
         q = [x["query"] for o in (oa, ob) for x in lines(logs[o]) if x.get("path") == "/api/events"]
         check("?key= forwarded to each backend's /api/events", q.count({"key": "K-stream"}) >= 2, str(q))
         check("a backend that dies is announced: cog_backend up=false for its org", saw_down, str(got[-3:]))
+        t0 = time.time()
+        try:
+            code = call(pf, f"/o/{ob}/api/x")[0]
+        except OSError as e:                         # a connect queued in a backlog nobody accepts: the timeout
+            code = type(e).__name__
+        took = time.time() - t0
+        check("a call to the dead backend is refused at once: 502 in under 5s", code == 502 and took < 5,
+              f"{code} after {took:.1f}s")
         return 1 if fails else 0
     finally:
         for pr in procs:
