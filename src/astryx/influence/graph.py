@@ -493,6 +493,13 @@ def group_scores(edges, coverages, nodes, group_id, members, now):
     return scores(edges, group_view(kind_weights(coverages), group_id, members), nodes, now)
 
 
+def group_measured(edges, members) -> bool:
+    """Does any cached edge touch the group (a member as src or dst)? When none does, its view is pure teleport, a
+    flat split over the members with nothing measured behind it, and every reader must SAY so (a3 #60189)."""
+    m = set(members)
+    return any(e["src"] in m or e["dst"] in m for e in edges)
+
+
 def weighted(edges, v, now):
     """[(src, dst, w)] for edges strictly before `now`: kind weight x 0.5^(age / half-life)."""
     out = []

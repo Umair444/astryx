@@ -203,7 +203,8 @@ def ask(conn, asker, topic=None, k=5, now=None, roster=None, liveness=None):
 
 
 def group_views(conn, now=None, roster=None, agents_dir=None):
-    """Every group's view at READ time (plan-11324 S3d): {group id: {"members": [...], "scores": {agent: score}}},
+    """Every group's view at READ time (plan-11324 S3d): {group id: {"members", "measured", "scores": {agent: score}}},
+    measured False when no cached edge touches the group (its scores are then teleport only, nothing measured);
     over the SAME cache read as ask() (no new SQL, nothing written, no per-group row). The groups come from
     charter.groups(): the agents/ tree, the one authority. Read-only: the floor's zones and `view` call this."""
     now = now or datetime.now(timezone.utc)
@@ -211,7 +212,7 @@ def group_views(conn, now=None, roster=None, agents_dir=None):
     roster = sorted(roster if roster is not None else charter.roster(agents_dir))
     edges = read_cache(conn)
     cov = {e["kind"]: e["coverage"] for e in edges}
-    return {gid: {"members": g["members"],
+    return {gid: {"members": g["members"], "measured": graph.group_measured(edges, g["members"]),
                   "scores": graph.group_scores(edges, cov, roster, gid, g["members"], now)}
             for gid, g in charter.groups(agents_dir).items()}
 
@@ -296,6 +297,9 @@ def main(argv=None):
         else:
             for gid, g in views.items():
                 print(f"group {gid} (members {', '.join(g['members'])}; teleport on the members, read-time)")
+                if not g["measured"]:
+                    print("  (no edge touches this group: teleport only, nothing measured)")
+                    continue
                 ranked = sorted(((x, s) for x, s in g["scores"].items() if s > 0), key=lambda kv: (-kv[1], kv[0]))
                 for i, (ag, sc) in enumerate(ranked[:a.k], 1):
                     print(f"  {i}. {ag}  {sc:.4f}{'' if ag in g['members'] else '  (outside the group)'}")

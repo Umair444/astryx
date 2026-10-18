@@ -27,4 +27,8 @@ MUTANTS = {
         ("    if not members:\n        raise ValueError(f\"group {group_id!r} has no members: a view needs teleport mass\")\n", ""),
     "V5 the view is named like GLOBAL":
         ("view(f\"group:{group_id}\", weights,", "view(\"global\", weights,"),
+    "V6 a group no edge touches reads as measured (pure teleport passed off as evidence, a3 #60189)":
+        ("    return any(e[\"src\"] in m or e[\"dst\"] in m for e in edges)", "    return True"),
+    "V7 only an edge's src counts as touching the group":
+        ("    return any(e[\"src\"] in m or e[\"dst\"] in m for e in edges)", "    return any(e[\"src\"] in m for e in edges)"),
 }

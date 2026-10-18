@@ -136,6 +136,8 @@ def views(G):
     check("views: a group view is named group:<id> and teleports on its members only",
           v["name"] == "group:team/sub" and v["teleport"] == {"w": 1.0, "z": 1.0} and v["dangling"] == "teleport",
           json.dumps(v["teleport"]))
+    check("views: group_measured is true for an edge's src or dst member, false for a group no edge touches",
+          G.group_measured(e, ["A"]) and G.group_measured(e, ["B"]) and not G.group_measured(e, ["C"]))
     try:
         G.group_view({}, "empty", [])
         check("views: an empty group refuses (no teleport mass)", False)
@@ -166,6 +168,9 @@ def shell_reads(C):
         check("shell: group_views keys exactly the groups charter.groups() gives, with their members",
               {k: g["members"] for k, g in got.items()} == {k: g["members"] for k, g in WANT.items()},
               json.dumps({k: g["members"] for k, g in got.items()}))
+        check("shell: a group a cached edge touches is measured (team: x→y), one no edge touches is not (pair)",
+              got["team"]["measured"] is True and got["pair"]["measured"] is False and got["team/sub"]["measured"] is False,
+              json.dumps({k: g["measured"] for k, g in got.items()}))
         check("shell: in team's view the cached edge's target y outranks w, which nothing points at",
               got["team"]["scores"]["y"] > got["team"]["scores"]["w"], json.dumps(got["team"]["scores"]))
 
