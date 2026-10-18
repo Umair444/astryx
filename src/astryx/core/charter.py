@@ -15,6 +15,7 @@ refused (plan-17 build-confirm).
 
 Library:  resolve(name) -> Path | None      (raises Collision on a dup stem)
           roster() -> list[str]             (every real charter name, any depth)
+          groups() -> {id: {...}}           (the org's groups, derived from the tree: S3d)
 CLI:      python src/astryx/core/charter.py NAME     prints the path, or errors nonzero.
 """
 if not __package__:  # run by path: the checkout root goes first on sys.path so `astryx` resolves (goal 10224 S4)
@@ -87,6 +88,43 @@ def roster(agents_dir: Path = AGENTS) -> list[str]:
     return sorted(p.stem for p in charter_files(agents_dir))
 
 
+# ── GROUPS (plan-11324 S3d, design #58435) ───────────────────────────────────────────
+# agent → group → org → cog → federation. A GROUP is a directory of agents/ that holds at least one charter
+# below it, and it is DERIVED here at read time, never stored (a1 #58431 §3: the tree is the one authority, so an
+# agent that moves takes its history with it). A self-folder (agents/<x>/<x>.md) is that agent's home, not a group.
+# A group scopes ATTENTION only (influence views, routing, the floor's zones), never reach: no read tool filters on
+# it (a2 #58433 A, a3 #58434 Q2).
+
+def group_path(charter_path: Path, agents_dir: Path = AGENTS) -> list[str]:
+    """The chain of groups from the agents/ root down to this charter's own group: [outer, ..., inner], [] at the
+    root. The ONE rule the observatory's zones and the influence group views both read."""
+    parts = charter_path.relative_to(agents_dir).parts
+    if len(parts) >= 2 and parts[-2] == charter_path.stem:     # self-folder: the agent's home drops out
+        parts = parts[:-1]
+    return list(parts[:-1])
+
+
+def groups(agents_dir: Path = AGENTS) -> dict[str, dict]:
+    """{group id: {"name", "parent", "depth", "members", "direct"}} for every group in the tree.
+    id is the slash path from agents/ ("abstractors", "a/b"); parent is the enclosing group's id or None (the org);
+    members is every agent at any depth below it, direct the ones whose innermost group it is. Sorted, so equal
+    trees give equal answers. A directory with no charter below it is not a group."""
+    out: dict[str, dict] = {}
+    for p in charter_files(agents_dir):
+        chain = group_path(p, agents_dir)
+        for i in range(len(chain)):
+            gid = "/".join(chain[:i + 1])
+            g = out.setdefault(gid, {"name": chain[i], "parent": "/".join(chain[:i]) or None, "depth": i + 1,
+                                     "members": [], "direct": []})
+            g["members"].append(p.stem)
+            if i == len(chain) - 1:
+                g["direct"].append(p.stem)
+    for g in out.values():
+        g["members"].sort()
+        g["direct"].sort()
+    return dict(sorted(out.items()))
+
+
 def resolve(name: str, agents_dir: Path = AGENTS) -> Path | None:
     """The charter for `name`, or None if absent. Raises Collision on a
     duplicated stem. Same rule everywhere: any depth, examples/.git excluded,
@@ -132,6 +170,9 @@ def roster_of_type(kind: str, agents_dir: Path = AGENTS) -> list[str]:
 if __name__ == "__main__":
     if sys.argv[1:] == ["--roster"]:                 # for shell callers (spawn-all.sh)
         print("\n".join(roster())); sys.exit(0)
+    if sys.argv[1:] == ["--groups"]:                 # the org's groups as JSON (S3d), for any non-python reader
+        import json
+        print(json.dumps(groups(), indent=1)); sys.exit(0)
     if len(sys.argv) not in (2, 3):
         print("usage: charter.py <name> [--type]", file=sys.stderr)
         sys.exit(2)

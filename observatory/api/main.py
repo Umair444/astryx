@@ -393,14 +393,9 @@ def agent_meta() -> dict[str, dict]:
     root = ESTATE / "agents"
     out: dict[str, dict] = {}
     for f in root.rglob("*.md"):
-        parts = f.relative_to(root).parts
         if not _charter.is_charter(f, root):
             continue                    # the ONE rule (src/astryx/core/charter.py): examples, structural
                                         # files, and documents beside a self-folder charter
-        # self-folder form: agents/<name>/<name>.md — the folder is the agent's own
-        # home, not a composite level, so it drops out of the group path
-        if len(parts) >= 2 and parts[-2] == f.stem:
-            parts = parts[:-1]
         rank = None
         model_pin = None
         for line in f.read_text().splitlines():
@@ -409,7 +404,7 @@ def agent_meta() -> dict[str, dict]:
                 rank = int(v) if v.lstrip("-").isdigit() else None
             elif line.startswith("Model:") and model_pin is None:
                 model_pin = line.split(":", 1)[1].split()[0].strip() or None
-        out[f.stem] = {"group_path": list(parts[:-1]), "rank": rank,
+        out[f.stem] = {"group_path": _charter.group_path(f, root), "rank": rank,   # S3d: the one group rule
                        "model_pin": model_pin}
     return out
 
