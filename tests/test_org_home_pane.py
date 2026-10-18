@@ -31,7 +31,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "tests"))
-from org_home_fixture import FixtureUnavailable, OrgHomes, kill_server  # noqa: E402
+from org_home_fixture import FixtureUnavailable, OrgHomes, kill_server, private_tmux  # noqa: E402
 
 fails = []
 A_NAMES = ("WA_CLI", "PEOPLE_SALT", "ASTRYX_ORG", "PGHOST")
@@ -64,9 +64,11 @@ def main():
     if not real_tmux:
         print("SKIP (77): no tmux")
         return 77
-    try:
+    tdir = private_tmux()          # every server here, the "default" one included, is private: a mutant that drops the
+    try:                           # socket reaches THIS directory's default server, never the host's residents
         fx = OrgHomes().__enter__()
     except FixtureUnavailable as e:
+        shutil.rmtree(tdir, ignore_errors=True)
         print(f"SKIP (77): {e}")
         return 77
     # org B's OWN server (S3b): spawn.sh reaches it by itself (-L ax-<org>, src/astryx/orgs.py socket), so the
@@ -131,6 +133,10 @@ def main():
     finally:
         kill_server(sock)
         fx.__exit__(None, None, None)
+        # THIS test's private default server, by its PATH: a bare `tmux kill-server` would follow an inherited $TMUX
+        # (a test run from inside a resident's pane) to the host's real server
+        subprocess.run(["tmux", "-S", str(tdir / f"tmux-{os.getuid()}" / "default"), "kill-server"], capture_output=True)
+        shutil.rmtree(tdir, ignore_errors=True)
 
 
 if __name__ == "__main__":

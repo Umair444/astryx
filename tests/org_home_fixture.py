@@ -23,7 +23,7 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-HOST_KEEP = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "TERM", "XDG_RUNTIME_DIR", "TMPDIR")
+HOST_KEEP = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "TERM", "XDG_RUNTIME_DIR", "TMPDIR", "TMUX_TMPDIR")
 # mutation_probe's seams: each names a mutant copy of ONE subject, which the fixture writes over that file in the
 # estate-free checkout (every child runs the checkout's code), and which the census reads in place of the file
 SEAMS = {
@@ -48,10 +48,18 @@ def seam_overrides() -> dict:
     return {rel: Path(os.environ[k]) for k, rel in SEAMS.items() if os.environ.get(k)}
 
 
+def private_tmux() -> Path:
+    """Point THIS process (and every child given fx.env) at a private tmux directory: the fixture's servers, and any
+    `tmux` a mutant sends to the "default" socket, live there, never on the host's real server. Call before OrgHomes."""
+    d = Path(tempfile.mkdtemp(prefix="astryx-tmux-")).resolve()
+    os.environ["TMUX_TMPDIR"] = str(d)
+    return d
+
+
 def kill_server(sock: str) -> None:
     """Stop a fixture's private tmux server AND remove its socket file: tmux leaves the file behind, and a gate that
     runs on every check would fill /tmp/tmux-<uid>/ (the 10-18 inode exhaustion was this class)."""
-    subprocess.run(["tmux", "-L", sock, "kill-server"], capture_output=True)
+    subprocess.run(["tmux", "-L", sock, "kill-server"], capture_output=True)   # -L: never an inherited $TMUX's server
     f = Path(os.environ.get("TMUX_TMPDIR") or "/tmp") / f"tmux-{os.getuid()}" / sock
     if f.is_socket() and subprocess.run(["tmux", "-L", sock, "has-session"], capture_output=True).returncode:
         f.unlink(missing_ok=True)

@@ -16,8 +16,9 @@ resolver; shell callers source scripts/org_tmux.sh). One org (no registry): the 
      it DOES stop A's (positive control)
 
 The residents are fixture ones: an ASTRYX_CLI stub (it prints spawn's boot marker, then echoes what it's typed),
-on the fixture orgs' own servers, which the fixture kills at exit. The default socket is only ever ASKED
-(has-session, read-only), never written. The stand-in body is a `sleep` named like a channel server; nothing here
+on the fixture orgs' own servers, which the fixture kills at exit. All of it runs under a PRIVATE TMUX_TMPDIR, so the
+"default socket" the arms ask about is this test's own: a mutant that drops the socket spawns there, never beside the
+host's residents. The stand-in body is a `sleep` named like a channel server; nothing here
 reads another process's /proc/<pid>/environ (spawn.sh does, as it always has).
 
 Seams (org_home_fixture.SEAMS): ORG_HOME_SPAWN_SRC, ORG_HOME_ORGS_SRC, ORG_HOME_ORGTMUX_SRC,
@@ -32,7 +33,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "tests"))
-from org_home_fixture import FixtureUnavailable, OrgHomes  # noqa: E402
+from org_home_fixture import FixtureUnavailable, OrgHomes, private_tmux  # noqa: E402
 
 fails = []
 AGENT = f"fxns-{os.getpid()}"
@@ -77,9 +78,11 @@ def main():
     if not shutil.which("tmux"):
         print("SKIP (77): no tmux")
         return 77
-    try:
+    tdir = private_tmux()          # every server here, the "default" one included, is private: a mutant that drops the
+    try:                           # socket reaches THIS directory's default server, never the host's residents
         fx = OrgHomes().__enter__()
     except FixtureUnavailable as e:
+        shutil.rmtree(tdir, ignore_errors=True)
         print(f"SKIP (77): {e}")
         return 77
     body = None
@@ -167,7 +170,7 @@ def main():
               (ra.stdout + ra.stderr)[-400:])
         check(f"ax-{AGENT} is live on A's server", has("a") == 0)
         check(f"ax-{AGENT} is live on B's server", has("b") == 0)
-        d = subprocess.run(["tmux", "has-session", "-t", f"=ax-{AGENT}"], capture_output=True).returncode   # org-home: a read-only ASK of the default socket: the fixture's residents must NOT be there
+        d = subprocess.run(["tmux", "has-session", "-t", f"=ax-{AGENT}"], env=fx.env(), capture_output=True).returncode   # org-home: the PRIVATE default socket (fx.env: TMUX_TMPDIR, and no inherited $TMUX)
         check("...and on neither org's behalf on the default socket", d != 0)
         again = spawn("a")
         check("positive control: a second spawn in the SAME org reads 'already resident'",
@@ -202,6 +205,10 @@ def main():
             body.kill()
             body.wait()
         fx.__exit__(None, None, None)
+        # THIS test's private default server, by its PATH: a bare `tmux kill-server` would follow an inherited $TMUX
+        # (a test run from inside a resident's pane) to the host's real server
+        subprocess.run(["tmux", "-S", str(tdir / f"tmux-{os.getuid()}" / "default"), "kill-server"], capture_output=True)
+        shutil.rmtree(tdir, ignore_errors=True)
 
 
 if __name__ == "__main__":
