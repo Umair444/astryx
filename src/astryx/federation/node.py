@@ -1,8 +1,10 @@
 """The cog as ONE federation node (plan-11324 S3e, design #58435): one gateway (:8845) speaks for every org in the cog.
 
 agent → group → org → cog → federation. A COG is several orgs in one install; FEDERATION is traffic across installs.
-This module is the node's ADDRESSING, pure (no database, no key, no network), so the gateway's routes and the oracle
-read one rule:
+This module is the node's ADDRESSING, pure (no database, no key, no network). route() is the rule's SPECIFICATION,
+read by the oracle; the gateway IMPLEMENTS it with FastAPI paths (`/o/{name}/…` plus at(), and root() for the bare
+path), which never call route(). `{name}` cannot span '/', so the gateway has no dot-dot door; route()'s dot-dot refusal
+specifies the rule rather than guarding a live path (a4 #60422 A-1). The doors DO read split_to and addressed_to.
 
   one org (no registry)   every path is the org's own, byte for byte as before: `/astryx/inbox`, `/astryx/identity`, …
   a cog                   org X's public base is `<ASTRYX_URL>/o/<X>`. A peer appends `/astryx/inbox` to a stored
