@@ -59,9 +59,9 @@ check("LATE goes to the TASK'S agent, with the hours past its end and the critic
       and "critical path" in f[0]["line"], f)
 check("planned / active / done / dropped: nobody", judge(1, "seed", [T("a", "x", status=s) for s in
       ("planned", "active", "done", "dropped")], T0 + 99 * H) == [])
-w = [T("S1", "forge", status="active", plan=(0, 10)), T("S2", "memory", ["S1"], status="blocked", plan=(10, 20))]
+w = [T("S1", "forge", status="planned", plan=(0, 10)), T("S2", "memory", ["S1"], status="blocked", plan=(10, 20))]
 f = judge(1, "seed", w, T0 + 12 * H)
-check("BLOCKED behind a predecessor past its start: the PREDECESSOR'S agent (forge), not the task's, told what it holds",
+check("BLOCKED behind a predecessor past its start that NEVER BEGAN: the PREDECESSOR'S agent (forge), told what it holds",
       len(f) == 1 and f[0]["to"] == "forge" and f[0]["kind"] == "holds" and f[0]["key"] == "1/S1"
       and "holds S2" in f[0]["line"] and "Finishing S1" in f[0]["line"], f)
 check("…and never seed (the converge agent) as a constant", all(x["to"] != "seed" for x in f), f)
@@ -79,7 +79,7 @@ f = judge(11324, "seed", w, T0 + 30 * H)
 check("N-1: ONE cause, ONE message: S3b's late nag to forge names all three it holds (not 4 nags)",
       len(f) == 1 and f[0]["to"] == "forge" and f[0]["kind"] == "late" and f[0]["key"] == "11324/S3b"
       and all(x in f[0]["line"] for x in ("S4", "views", "floor")), f)
-w = [T("X", "scout", status="active", plan=(0, 5)), T("Y", "forge", status="active", plan=(0, 5), critical=True),
+w = [T("X", "scout", status="planned", plan=(0, 5)), T("Y", "forge", status="planned", plan=(0, 5), critical=True),
      T("Z", "memory", ["X", "Y"], status="blocked", plan=(5, 10), critical=True)]
 f = judge(1, "seed", w, T0 + 6 * H)
 check("two open needs: filed under the CRITICAL one (forge, not scout)", len(f) == 1 and f[0]["to"] == "forge"
@@ -90,7 +90,13 @@ f = judge(7, "canopus", w, T0 + 6 * H)
 check("N-2: a blocker on schedule is never blamed: the goal's OWNER hears 'replan', with both dates",
       len(f) == 1 and f[0]["to"] == "canopus" and f[0]["kind"] == "replan" and "replan" in f[0]["line"]
       and "isn't behind" in f[0]["line"], f)
-w = [T("S1", None, status="active", plan=(0, 5)), T("S2", "memory", ["S1"], status="blocked", plan=(5, 10))]
+# a1 #60134: an ACTIVE blocker inside its window is on schedule; the plan started its dependent too early. This is
+# the live 11324 pilot on 10-18 (S4 seed active, planned start 1h ago, holds floor): the owner hears replan
+w = [T("S4", "forge", status="active", plan=(-1, 30)), T("floor", "painter", ["S4"], status="blocked", plan=(0, 20))]
+f = judge(11324, "canopus", w, T0)
+check("an ACTIVE blocker inside its window is never blamed: the owner hears 'replan' (a1 #60134, the live pilot)",
+      len(f) == 1 and f[0]["to"] == "canopus" and f[0]["kind"] == "replan", f)
+w = [T("S1", None, status="planned", plan=(0, 5)), T("S2", "memory", ["S1"], status="blocked", plan=(5, 10))]
 check("a behind blocker with no agent: the GOAL'S OWNER (from the subject), not a constant",
       judge(7, "canopus", w, T0 + 6 * H)[0]["to"] == "canopus", judge(7, "canopus", w, T0 + 6 * H))
 w = [T("S1", "forge", status="dropped"), T("S2", "memory", ["S1"], status="blocked", plan=(5, 10))]
@@ -174,7 +180,7 @@ task_nag(c, wf=wf, repo="/nonexistent", now=c.now)
 check("recovered, then late again inside 12h: told at once (re-armed)", len(c.said) == 3, c.said)
 c2 = Ctx()
 c2.now = T0 + 12 * H
-task_nag(c2, wf=WF({5: [T("S1", "forge", status="active"), T("S2", "memory", ["S1"], status="blocked")]}),
+task_nag(c2, wf=WF({5: [T("S1", "forge", status="planned"), T("S2", "memory", ["S1"], status="blocked")]}),
          repo="/nonexistent", now=c2.now)
 check("BLOCKED through the trigger: forge is told it holds S2, memory is not", [s[0] for s in c2.said] == ["forge"]
       and marker("5/S1", "holds") in c2.said[0][1], c2.said)

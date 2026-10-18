@@ -56,7 +56,11 @@ MUTANTS = {
     "N15 ungrouped: a late blocker's held tasks get their own nags too (one cause, N messages; a1 N-1)":
         ('        hold = held.pop(t["id"], [])', '        hold = held.get(t["id"], [])'),
     "N16 an on-schedule blocker is blamed for the plan (a1 N-2)":
-        ("        if b and s is not None and now > s:", "        if b:"),
+        ('        if b and s is not None and now > s and tasks[b].get("status") == "planned":   # never began (a1 #60134)',
+         "        if b:"),
+    "N18 an ACTIVE blocker inside its window is blamed (a1 #60134: the live pilot's S4 holding floor)":
+        ('        if b and s is not None and now > s and tasks[b].get("status") == "planned":   # never began (a1 #60134)',
+         "        if b and s is not None and now > s:"),
     "N17 LIKE, not position: a task id's _ is a wildcard":
         ('AND position(%s in body) > 0 "\n        "AND ts > to_timestamp(%s) LIMIT 1", (to, marker(key, kind), since)',
          'AND body LIKE %s "\n        "AND ts > to_timestamp(%s) LIMIT 1", (to, f"%{marker(key, kind)}%", since)'),
