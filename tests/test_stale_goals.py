@@ -428,7 +428,8 @@ if fx is not None:
         wf = lambda gid, rev, tasks: conn.execute(
             "INSERT INTO goal_workflow (goal_id, rev, body, author) VALUES (%s, %s, %s::jsonb, 'seed')",
             (gid, rev, __import__("json").dumps({"goal": gid, "tasks": tasks})))
-        wf(g_old, 1, [{"id": "S1", "done": True}, {"id": "S2"}])
+        P = ["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"]
+        wf(g_old, 1, [{"id": "S1", "done": True}, {"id": "S2", "plan": P}])
         cap.clear()
         fire(SpyCtx({}, conn))
         check("REAL SQL: a goal whose latest workflow rev has a live task is NOT read here (task_nag owns it)",
@@ -438,11 +439,30 @@ if fx is not None:
         fire(SpyCtx({}, conn))
         check("REAL SQL: …its LATEST rev all done or dropped: back here (shipped-and-unclosed must still read)",
               g_old in {r["id"] for r in cap}, sorted(r["id"] for r in cap))
-        wf(g_old, 3, [{"id": "S1", "done": True}, {"id": "S3"}])
+        wf(g_old, 3, [{"id": "S1", "done": True}, {"id": "S3", "plan": P}])
         cap.clear()
         fire(SpyCtx({}, conn))
         check("REAL SQL: …and the LATEST rev decides, not any rev (rev 3 adds a live task: stands down again)",
               g_old not in {r["id"] for r in cap}, sorted(r["id"] for r in cap))
+        wf(g_old, 4, [{"id": "S3", "plan": P}, {"id": "S4"}])
+        cap.clear()
+        fire(SpyCtx({}, conn))
+        check("REAL SQL: an open task with NO plan keeps the goal HERE (task_nag can't judge it; a1 #60185 G-1)",
+              g_old in {r["id"] for r in cap}, sorted(r["id"] for r in cap))
+        wf(g_old, 5, [{"id": "S3", "plan": P, "done": "x"}, {"id": "S4", "plan": "soon"}])
+        cap.clear()
+        try:
+            fire(SpyCtx({}, conn))
+            ran = True
+        except Exception as e:  # noqa: BLE001
+            ran = f"{type(e).__name__}: {e}"
+        check("REAL SQL: done \"x\" and a non-array plan never raise (G-2: one bad body must not blind the guard org-wide)",
+              ran is True and g_old in {r["id"] for r in cap}, ran)
+        wf(g_old, 6, {"S1": {"done": True}})
+        cap.clear()
+        fire(SpyCtx({}, conn))
+        check("REAL SQL: a non-array tasks reads as no tasks: back HERE, not an error", g_old in {r["id"] for r in cap},
+              sorted(r["id"] for r in cap))
     finally:
         conn.close()
         _fx.__exit__(None, None, None)

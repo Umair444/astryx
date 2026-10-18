@@ -113,7 +113,16 @@ MUTANTS = {
     "W1 a workflow goal is nagged here too (the same silence told twice, to two recipients; seed #60111)":
         ('"WHERE g.state <> ALL(%s) "\n        "AND NOT EXISTS', '"WHERE g.state <> ALL(%s) "\n        "AND true OR NOT EXISTS'),
     "W2 ANY revision decides, not the latest (an old rev's live task keeps a finished workflow silent forever)":
-        ('"                              ORDER BY w.rev DESC LIMIT 1) lw, "', '"                              ) lw, "'),
-    "W3 a dropped task counts as live (a workflow whose rest is done never returns: shipped-and-unclosed unseen)":
-        ('"                  AND NOT coalesce((t->>\'dropped\')::boolean, false))",', '"                  )",'),
+        ('"                              ORDER BY w.rev DESC LIMIT 1) lw "', '"                              ) lw "'),
+    "W3 a dropped task counts as open (a workflow whose rest is done never returns: shipped-and-unclosed unseen)":
+        ("WHERE coalesce(t->'done' <> 'true'::jsonb, true) AND coalesce(t->'dropped' <> 'true'::jsonb, true)) \"",
+         "WHERE coalesce(t->'done' <> 'true'::jsonb, true)) \""),
+    "W4 a plan-less open task stands the goal down (watched by nobody; a1 #60185 G-1)":
+        ('"  AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements', '"  AND true OR NOT EXISTS (SELECT 1 FROM jsonb_array_elements'),
+    "W5 done is cast ::boolean (a body with done \"x\" raises for EVERY goal; G-2)":
+        ("WHERE coalesce(t->'done' <> 'true'::jsonb, true) AND coalesce(t->'dropped' <> 'true'::jsonb, true)) \"",
+         "WHERE NOT coalesce((t->>'done')::boolean, false) AND coalesce(t->'dropped' <> 'true'::jsonb, true)) \""),
+    "W6 a non-array tasks errors (jsonb_array_elements on an object)":
+        ("jsonb_array_elements(CASE WHEN jsonb_typeof(lw.body->'tasks') = 'array' THEN lw.body->'tasks' ELSE '[]' END) t \"\n        \"                WHERE coalesce(t->'done' <> 'true'::jsonb, true) AND coalesce(t->'dropped' <> 'true'::jsonb, true)) \"",
+         "jsonb_array_elements(lw.body->'tasks') t \"\n        \"                WHERE coalesce(t->'done' <> 'true'::jsonb, true) AND coalesce(t->'dropped' <> 'true'::jsonb, true)) \""),
 }
