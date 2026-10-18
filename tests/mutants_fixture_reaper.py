@@ -23,7 +23,7 @@ TIMEOUT = 300
 MUTANTS = {
     "T1 a condemned template is not un-templated (DROP refuses it: a killed batch run's template is kept forever)":
         ("                admin.execute('ALTER DATABASE \"{}\" IS_TEMPLATE false'.format(name.replace('\"', '\"\"')))\n",
-         ""),
+         "                pass\n"),   # a valid body: an empty try is an IndentationError, a vacuous catch (a4 #60380)
     "T2 a refused un-template is reported as a refused DROP, and the DROP is attempted anyway":
         ("        if act == \"reap\":\n            try:\n                _drop(admin, name)",
          "        if True:\n            try:\n                _drop(admin, name)"),

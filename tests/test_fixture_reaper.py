@@ -121,7 +121,11 @@ r = Rec()
 check("D1 a drop nothing refuses takes FORCE, once", fxm._drop(r, 'a"b') == "force"
       and r.q == ['DROP DATABASE IF EXISTS "a""b" WITH (FORCE)'], str(r.q))
 r = Rec(on_force=psycopg.errors.InsufficientPrivilege)
-check("D2 FORCE refused for privilege (an autovacuum worker, PG 18) → the PLAIN drop runs", fxm._drop(r, "x") == "plain"
+try:                                    # a drop that never falls back RAISES here: a FAIL line, never a crash (a4 #60380)
+    got = fxm._drop(r, "x")
+except Exception as e:  # noqa: BLE001
+    got = f"raised {type(e).__name__}"
+check("D2 FORCE refused for privilege (an autovacuum worker, PG 18) → the PLAIN drop runs", got == "plain"
       and r.q == ['DROP DATABASE IF EXISTS "x" WITH (FORCE)', 'DROP DATABASE IF EXISTS "x"'], str(r.q))
 for err in (psycopg.errors.ObjectInUse, psycopg.errors.WrongObjectType):
     r = Rec(on_force=err)
