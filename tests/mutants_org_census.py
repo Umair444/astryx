@@ -12,6 +12,7 @@ REPO = Path(__file__).resolve().parent.parent
 
 SUBJECT = REPO / "devtools/org_census.py"
 ORACLE = REPO / "tests" / "test_org_home_census.py"
+TIMEOUT = 360   # the census oracle reads the whole tree: ~130 s at load 8 (10-18), past the 120 s default
 ENV = "ORG_CENSUS_SRC"
 
 MUTANTS = {
