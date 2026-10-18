@@ -247,7 +247,8 @@ try:
         (root / _d).mkdir(parents=True, exist_ok=True)
     for f in ("scripts/spawn.sh", "src/astryx/core/charter.py", "astryx.py", "src/astryx/__init__.py",
               "src/astryx/paths.py", "src/astryx/_version.py",    # the moved tree (goal 10224 S4)
-              "src/astryx/orgs.py", "src/astryx/config.py"):        # spawn asks THE org predicate and the resolver (S3a)
+              "src/astryx/orgs.py", "src/astryx/config.py",         # spawn asks THE org predicate and the resolver (S3a)
+              "scripts/org_tmux.sh"):                              # ...and sources the org's tmux (S3b)
         (root / f).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPO / f, root / f)
     (root / "venv" / "bin").mkdir(parents=True)

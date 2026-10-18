@@ -182,6 +182,14 @@ LITERAL_DSN = re.compile(r"""(?::-|\bor\s+|\|\|\s*|\?\?\s*|default\s*=\s*|\.get\
 PATH_CMD = r"""(?:\b(?:cd|ls|mkdir|rm|rmdir|find|tar|du|cp|mv|rsync|chmod|chown|cat|touch|ln)\s+(?:-\S+\s+)*|-[defrswx]\s+)"""
 
 
+def _unlabel(code: str) -> str:
+    """A quoted label or message (it has a space) is not code: it becomes "". Quotes pair left to right (every "…" is
+    consumed in turn), so the close of "$X" never pairs with the open of the next string. A quoted COMMAND
+    SUBSTITUTION ("$(ls backups/x)", `…`) is code, not a label: it stays."""
+    return re.sub(r'"[^"]*"', lambda m: '""' if re.search(r"\s", m.group()) and not re.search(r"\$\(|`", m.group())
+                  else m.group(), code)
+
+
 def _bare_path(entry: str, tok: str, bare: str) -> bool:
     lead = r"""(?:^|[\s"'=(<>|;]|:-)(?:\./)?"""          # `:-`: a default (`${STAMP:-backups/.last-check}`)
     if not entry.rstrip("*").endswith("/"):
@@ -198,11 +206,7 @@ def estate_sites(rel: str, lines, toks, cd_base: bool) -> list:
             out.append((n, raw, "literal DSN default"))
             continue
         hit = next((e for e, t in toks if re.search(BASE + JOIN + t, code)), None)
-        # a quoted label or message (it has a space) is not a path. Quotes pair left to right (every "…" is consumed
-        # in turn), so the close of "$X" never pairs with the open of the next string
-        # ...but a quoted COMMAND SUBSTITUTION ("$(ls backups/x)", `…`) is code, not a label: it stays
-        bare = re.sub(r'"[^"]*"', lambda m: '""' if re.search(r"\s", m.group()) and not re.search(r"\$\(|`", m.group())
-                      else m.group(), code)
+        bare = _unlabel(code)
         if hit is None and cd_base:
             hit = next((e for e, t in toks if _bare_path(e, t, bare)
                         and not re.search(r"""^\s*(?:echo|say|printf|warn|note)\b""", code)), None)
@@ -266,8 +270,7 @@ def namespace_sites(rel: str, src: Path, lines) -> list:
         return [(n, raw, "tmux spawned on the default socket") for n, code, raw in lines if JS_TMUX.search(code)]
     sourced_at = next((n for n, c, _ in lines if SOURCES_ORG_TMUX.search(c)), None)
     for n, code, raw in lines:
-        bare = re.sub(r'"[^"]*"', lambda m: '""' if re.search(r"\s", m.group()) and not re.search(r"\$\(|`", m.group())
-                      else m.group(), code)
+        bare = _unlabel(code)
         for m in SH_TMUX.finditer(bare):
             if SOCKET_ARG.search(m.group("rest")):
                 continue
