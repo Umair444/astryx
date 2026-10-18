@@ -75,8 +75,36 @@ def main():
         # two shell forms the grammar must read (R-2's vitals.sh): a QUOTED command substitution, and a `:-` default
         (t / "newroot" / "panel.sh").write_text('#!/bin/bash\ncd "$ROOT"\nD="$(ls -t backups/*.dump 2>/dev/null)"\n'
                                                 'S="${STAMP:-backups/.last-check}"\n')
+        # the namespace axis, kind tmux (S3b): a default-socket tmux in each language, beside its routed twin
+        (t / "newroot" / "ns_bare.py").write_text('import subprocess\nsubprocess.run(["tmux", "ls"])\n'   # org-home: a planted default-socket call
+                                                  'subprocess.run(["tmux", "-L", "fx", "ls"])\n'
+                                                  'TOOLS = ("tmux", "psql")\n')
+        (t / "newroot" / "ns_routed.py").write_text('import subprocess\nfrom astryx import orgs\n'
+                                                    'subprocess.run([*orgs.tmux(), "ls"])\n')
+        (t / "newroot" / "ns_bare.sh").write_text('#!/bin/bash\ntmux ls\necho "run tmux attach -t ax-x"\n'
+                                                  'tmux -L fx ls\n')
+        (t / "newroot" / "ns_routed.sh").write_text('#!/bin/bash\nROOT=/x\ntmux ls\n. "$ROOT/scripts/org_tmux.sh"\n'
+                                                    'tmux ls\nexec tmux attach\n'
+                                                    'exec tmux ${AX_SOCK:+-L "$AX_SOCK"} attach\n')
+        (t / "newroot" / "ns_spawn.mjs").write_text("import { spawn } from 'node:child_process'\nspawn('tmux', ['ls'])\n")
+        (t / "newroot" / "reader.ts").write_text('const d = process.env.ASTRYX_DSN\n')   # org-home: a planted node-side reader (.ts, a2 #59037)
         subprocess.run(["git", "init", "-q", str(t)], check=True)
         res_t = oc.census(t)
+        ns = {(r["file"], r["line"]) for r in res_t["namespace"]}
+        check("namespace: a python argv on the default socket is found; -L and a tuple of tool names are not",
+              ("newroot/ns_bare.py", 2) in ns and not {("newroot/ns_bare.py", 3), ("newroot/ns_bare.py", 4)} & ns,
+              str(sorted(ns)))
+        check("namespace: `[*orgs.tmux(), …]` is routed", not any(f == "newroot/ns_routed.py" for f, _ in ns),
+              str(sorted(ns)))
+        check("namespace: a shell `tmux` is found; a quoted message and an explicit -L are not",
+              ("newroot/ns_bare.sh", 2) in ns and not {("newroot/ns_bare.sh", 3), ("newroot/ns_bare.sh", 4)} & ns,
+              str(sorted(ns)))
+        check("namespace: org_tmux.sh routes only the calls AFTER it is sourced; `exec tmux` bypasses it unless it "
+              "spells the socket", {f_l for f_l in ns if f_l[0] == "newroot/ns_routed.sh"}
+              == {("newroot/ns_routed.sh", 3), ("newroot/ns_routed.sh", 6)}, str(sorted(ns)))
+        check("namespace: a js spawn('tmux') is found", ("newroot/ns_spawn.mjs", 2) in ns, str(sorted(ns)))
+        check("a .ts file is read (a2 #59037: a node-side reader)",
+              any(r["file"] == "newroot/reader.ts" for r in res_t["dsn"]), str(sorted(r["file"] for r in res_t["dsn"])))
         hit = sorted(r["file"] for r in res_t["dsn"])
         walk_ok = "bridges/new_reader.py" in hit and "bridges/estate_reader.py" not in hit
         check("a gitignored (estate) file is not read; a new, not-ignored one is (control)", walk_ok, str(hit))
@@ -94,6 +122,7 @@ def main():
     res = oc.census(REPO, seam_overrides())
     for k, what in (("dsn", "ASTRYX_DSN read outside the resolvers"), ("estate", "checkout-based estate read / literal "
                     "DSN default"), ("env", "environment-first read of an org name"),
+                   ("namespace", "host-wide name (a tmux call on the default socket)"),
                    ("unparsed", "file the census can't parse (unscanned: fails closed)")):
         check(f"no {what}: {len(res[k])}", not res[k],
               "; ".join(f"{r['file']}:{r['line']} {r['what']}" for r in res[k][:12]))
