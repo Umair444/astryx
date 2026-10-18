@@ -15,7 +15,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from astryx.security.sqlguard.estate import gate  # noqa: E402
-gate('test_gateway_surface', REPO, deps=('psycopg', 'asyncpg', 'fastapi', 'nacl', 'httpx'))   # a committed-only tree: 77, not a crash
+gate('test_gateway_surface', REPO, deps=('psycopg', 'asyncpg', 'fastapi', 'nacl', 'httpx'), env=False)   # no .env needed: the admin DSN may come by env (fixture.live_dsn)   # a committed-only tree: 77, not a crash
 from astryx.security.sqlguard.fixture import fixture_db  # noqa: E402
 
 fails = 0
@@ -58,8 +58,13 @@ async def main(url):
 
 if __name__ == "__main__":
     os.environ.setdefault("ASTRYX_SECRET_KEY", "11" * 32)
-    with fixture_db() as fx:
-        os.environ["ASTRYX_DSN"] = fx["url"]
-        asyncio.run(main(fx["url"]))
+    from astryx.security.sqlguard.estate import unavailable
+    from astryx.security.sqlguard.fixture import FixtureUnavailable
+    try:
+        with fixture_db() as fx:
+            os.environ["ASTRYX_DSN"] = fx["url"]
+            asyncio.run(main(fx["url"]))
+    except FixtureUnavailable as e:
+        unavailable("test_gateway_surface", REPO, e)
     print(f"{'PASS' if not fails else 'FAIL'}: gateway surface re-address ({fails} failing)")
     sys.exit(1 if fails else 0)

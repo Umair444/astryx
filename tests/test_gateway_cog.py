@@ -37,8 +37,8 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "tests"))
 from astryx.security.sqlguard.estate import gate  # noqa: E402
-gate('test_gateway_cog', REPO, deps=('psycopg', 'asyncpg', 'fastapi', 'nacl', 'httpx'))
-from astryx.security.sqlguard.fixture import fixture_db  # noqa: E402
+gate('test_gateway_cog', REPO, deps=('psycopg', 'asyncpg', 'fastapi', 'nacl', 'httpx'), env=False)   # no .env needed: the admin DSN may come by env (fixture.live_dsn)
+from astryx.security.sqlguard.fixture import FixtureUnavailable as FixtureDBUnavailable, fixture_db  # noqa: E402
 from org_home_fixture import FixtureUnavailable, OrgHomes  # noqa: E402
 
 fails = []
@@ -295,6 +295,9 @@ def main():
             check("two orgs, one federation name: CogError", "COGERROR" in r.stdout and "share" in r.stdout,
                   (r.stdout + r.stderr)[-300:])
         return 1 if fails else 0
+    except FixtureDBUnavailable as e:                     # no admin DSN (no .env, no ASTRYX_FIXTURE_ADMIN_DSN)
+        from astryx.security.sqlguard.estate import unavailable
+        unavailable("test_gateway_cog", REPO, e)
     finally:
         fx.__exit__(None, None, None)
 

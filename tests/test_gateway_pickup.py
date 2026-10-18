@@ -32,7 +32,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from astryx.security.sqlguard.estate import gate  # noqa: E402
-gate('test_gateway_pickup', REPO, deps=('psycopg', 'asyncpg', 'fastapi', 'nacl', 'httpx'))
+gate('test_gateway_pickup', REPO, deps=('psycopg', 'asyncpg', 'fastapi', 'nacl', 'httpx'), env=False)   # no .env needed: the admin DSN may come by env (fixture.live_dsn)
 from astryx.security.sqlguard.fixture import fixture_db  # noqa: E402
 
 fails = []
@@ -134,9 +134,14 @@ async def main(url):
 if __name__ == "__main__":
     os.environ.update({"ASTRYX_SECRET_KEY": "5c" * 32, "ASTRYX_ORG": f"fxpick-{os.getpid()}", "ASTRYX_URL": "",
                        "ASTRYX_RELAY": "", "ASTRYX_RELAY_BACKOFF": "1"})
-    with fixture_db() as fx:
-        os.environ["ASTRYX_DSN"] = fx["url"]
-        asyncio.run(main(fx["url"]))
+    from astryx.security.sqlguard.estate import unavailable
+    from astryx.security.sqlguard.fixture import FixtureUnavailable
+    try:
+        with fixture_db() as fx:
+            os.environ["ASTRYX_DSN"] = fx["url"]
+            asyncio.run(main(fx["url"]))
+    except FixtureUnavailable as e:
+        unavailable("test_gateway_pickup", REPO, e)
     print()
     print(f"FAILED ({len(fails)}): " + "; ".join(fails) if fails else
           "gateway pickup: what a NAT'd org collects passes the one inbound door")

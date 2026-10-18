@@ -73,11 +73,14 @@ class FixtureUnavailable(Exception):
 
 
 def live_parts() -> dict:
-    """host/port/user of this host's org DSN, through the ONE resolver; never the password, never printed."""
+    """host/port/user of this host's org DSN, through the ONE resolver; never the password, never printed. The same
+    admin rule as the fixture databases' (sqlguard.fixture.live_dsn): the estate's .env, else ASTRYX_FIXTURE_ADMIN_DSN
+    when the tree holds none, so a reviewer's worktree runs these oracles with no .env linked into it (a2 #60442)."""
     import sys
     sys.path.insert(0, str(REPO / "src"))
-    from astryx import config, orgs, paths
-    d = orgs.conninfo(config.dsn(paths.estate(__file__) / ".env"))
+    from astryx import orgs
+    from astryx.security.sqlguard.fixture import live_dsn
+    d = orgs.conninfo(live_dsn())
     return {k: d[k] for k in ("host", "port", "user") if d.get(k)}
 
 
