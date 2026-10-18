@@ -10,6 +10,7 @@ import { THEMES } from '../theme'
 import { deskOf, useDesks } from '../ui/hands'
 import { pilot } from '../pilot'
 import type { Json, Outcome } from '../pilot/core'
+import { canvasBase } from '../cog'
 
 /* Ctrl/⌘ K — go anywhere: a view, an agent, a theme, a desktop, or ask for the numbers. Keyboard first (↑ ↓ ⏎ esc).
 
@@ -92,13 +93,13 @@ export default function Palette() {
     ]
     const talk: Item[] = agents.map((a) => ({
       id: `t:${a.agent}`, label: `Talk to ${displayName(a.agent)}`, hint: 'new chat in Canvas', icon: glyph('✎'),
-      href: `/canvas/#/new/${encodeURIComponent(a.agent)}`,
+      href: `${canvasBase()}#/new/${encodeURIComponent(a.agent)}`,
     }))
     const themes: Item[] = THEMES.map((t) => ({
       id: `th:${t.id}`, label: `Theme: ${t.name}`, hint: t.dark ? 'dark' : 'light', icon: glyph('◐'), call: ['set_theme', { theme: t.id }],
     }))
     return [...views, ...people, ...watch, ...numbers,
-      { id: 'canvas', label: 'Open Canvas', hint: 'talk to agents, build together', icon: glyph('↗'), href: '/canvas/' },
+      { id: 'canvas', label: 'Open Canvas', hint: 'talk to agents, build together', icon: glyph('↗'), href: canvasBase() },
       { id: 'th:next', label: 'Next theme', hint: 'T', icon: glyph('◐'), call: ['cycle_theme', { direction: 'next' }] },
       { id: 'x:close', label: 'Close panel', hint: 'profile or desktop', icon: glyph('✕'), call: ['close_panel', {}] },
       ...talk, ...themes]

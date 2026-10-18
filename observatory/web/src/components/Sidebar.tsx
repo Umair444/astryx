@@ -10,6 +10,7 @@ import ThemePicker from './ThemePicker'
 import { LiveDot, Orb, useNow } from '../ui/kit'
 import { moodOf, nowLine } from '../ui/life'
 import { HandBadge } from '../ui/hands'
+import { canvasBase } from '../cog'
 
 export const LINKS: { tab: Route['tab']; label: string; icon: string; hint: string }[] = [
   { tab: 'floor', label: 'Floor', icon: '◉', hint: 'the org as a room' },
@@ -51,7 +52,7 @@ export default function Sidebar({ route, onOpenAgent }: { route: Route; onOpenAg
       <ScrollArea className="flex-1" type="scroll">
         <div className="px-3 pb-3">
           {/* the front door: talk to agents, watch them paint (bridges/canvas.py, proxied at /canvas/) */}
-          <a href="/canvas/" className="ax-action mb-4 flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-[13px] font-medium no-underline">
+          <a href={canvasBase()} className="ax-action mb-4 flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-[13px] font-medium no-underline">
             <span className="w-4 text-center">✎</span>
             <span className="flex-1">Open Canvas</span>
             <span className="opacity-80">↗</span>

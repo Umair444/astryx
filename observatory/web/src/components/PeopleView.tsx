@@ -22,6 +22,7 @@ import AgentFace from './AgentFace'
 import RuntimeEditor from './RuntimeEditor'
 import { Action, Empty, FaceStack, LiveDot, Panel, SectionHead, Skeleton, Spark, ViewHeader, useNow } from '../ui/kit'
 import { moodOf, nowLine, type Mood } from '../ui/life'
+import { canvasBase } from '../cog'
 
 /* The People experience: an astryx agent is a PERSON. This is the org's cast page —
    every agent a character card, grouped into departments (the composite folders), with a
@@ -87,7 +88,7 @@ function CharacterCard({ a, mood, beat, now, onOpen }: { a: AgentRow; mood: Mood
           <div className="text-[10px] uppercase tracking-[0.12em] text-ink-mute">steps · 24h</div>
         </div>
       </div>
-      <a href={`/canvas/#/new/${encodeURIComponent(a.agent)}`} onClick={(e) => e.stopPropagation()}
+      <a href={`${canvasBase()}#/new/${encodeURIComponent(a.agent)}`} onClick={(e) => e.stopPropagation()}
         className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity ax-action !px-2.5 !py-1 !text-[11px] !rounded-lg no-underline">
         Talk ↗
       </a>

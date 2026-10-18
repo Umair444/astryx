@@ -17,7 +17,7 @@ const NONE: Cog = { cog: false, home: null, orgs: [] }
 
 /* A base is the server's word, and the owner key rides every read under it: only a same-origin path of the one shape the
    front serves ("/" or "/o/<registry name>/") is ever used, so a base can never carry the key to another host. */
-export const safeBase = (b: unknown): b is string => typeof b === 'string' && /^\/(o\/[a-z0-9][a-z0-9._-]*\/)?$/i.test(b)
+export const safeBase = (b: unknown): b is string => typeof b === 'string' && /^\/(o\/[a-z0-9][a-z0-9._-]*\/)?$/.test(b)
 
 export function chosenOrg(): string | null {
   const m = document.cookie.match(/(?:^|;\s*)astryx_org=([^;]*)/)
@@ -45,6 +45,12 @@ async function fetchCog(): Promise<Cog> {
   return { cog: j.cog === true && orgs.length > 0, home: j.home ?? null, orgs }
 }
 
+/* Canvas is each org's own in a cog (forge #60765): served at /o/<org>/canvas/ with its session cookie on that Path, so a
+   link to the bare /canvas/ goes nowhere there and a relayed one would loop on login. Fixed for the page's life: a room
+   switch reloads. One org: /canvas/, as always. */
+let CANVAS = '/canvas/'
+export const canvasBase = () => CANVAS
+
 const Ctx = createContext<Cog>(NONE)
 export const useCog = () => useContext(Ctx)
 
@@ -54,6 +60,8 @@ export function CogProvider({ children }: { children: ReactNode }) {
   if (!cog) return null                                        // one request: never a flash of 409s
   const pick = chosenOrg()
   if (cog.cog && !cog.orgs.some(o => o.org === pick)) return <CogChooser cog={cog} />
+  const base = cog.cog ? cog.orgs.find(o => o.org === pick)?.base : undefined
+  CANVAS = base && safeBase(base) ? `${base}canvas/` : '/canvas/'
   return <Ctx.Provider value={cog}>{children}</Ctx.Provider>
 }
 

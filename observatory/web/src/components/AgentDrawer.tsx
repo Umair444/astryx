@@ -8,6 +8,7 @@ import TurnPeek from './TurnPeek'
 import RuntimeEditor from './RuntimeEditor'
 import { Count, Empty, LiveDot, Panel, Skeleton, Spark, Tabs, useNow } from '../ui/kit'
 import { moodOf, nowLine, surfaceLabel, type Mood } from '../ui/life'
+import { canvasBase } from '../cog'
 
 /* step/turn kinds as quiet tinted pills (theme tokens, so every palette carries them) */
 const KIND_TONE: Record<string, string> = {
@@ -130,7 +131,7 @@ export default function AgentDrawer({ name, onClose }: { name: string; onClose: 
         {profile?.bio && <div className="relative mt-4 text-[13.5px] text-ink-dim italic leading-relaxed">{profile.bio}</div>}
         {!profile && <Skeleton className="relative mt-4 h-4 w-3/4" />}
         <div className="relative mt-4 flex gap-2">
-          <a href={`/canvas/#/new/${encodeURIComponent(name)}`} target="_blank" rel="noreferrer"
+          <a href={`${canvasBase()}#/new/${encodeURIComponent(name)}`} target="_blank" rel="noreferrer"
             className="ax-action inline-flex items-center gap-2 px-4 py-2 rounded-xl text-[13px] font-medium no-underline">
             Talk to {displayName(name)} ↗
           </a>
