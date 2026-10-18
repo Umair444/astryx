@@ -55,4 +55,6 @@ MUTANTS = {
         ("        del state[mp]", "        pass"),
     "F15 each mount gets its own walk budget (3 alarmed mounts walk 30s: the pulse kills it before it speaks)":
         ("mp: attr(mp, deadline=deadline)", "mp: attr(mp, deadline=None)"),
+    "F16 the age survives a dip under the line (the hours line claims time spent below it; medic A1)":
+        ('            else:\n                s.pop("since", None)', '            else:\n                pass'),
 }

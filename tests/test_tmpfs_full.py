@@ -34,7 +34,13 @@ SRC = os.environ.get("TMPFS_FULL_SRC") or str(ESTATE / "triggers" / "steward" / 
 if not Path(SRC).exists():
     print("SKIP: triggers/steward/tmpfs_full.py not present (gitignored body): the tmpfs guard was NOT verified this run")
     sys.exit(77)
-M = runpy.run_path(SRC)
+try:
+    M = runpy.run_path(SRC)
+except ModuleNotFoundError as e:   # a review extract (git archive) has the body but no triggers/ package (medic A2)
+    if not (e.name or "").startswith("triggers"):
+        raise
+    print(f"SKIP: the body imports {e.name}, which this tree lacks (a gitignored estate module): NOT verified this run")
+    sys.exit(77)
 mounts, usage, tick, attribute, body, prefix = (M[k] for k in ("mounts", "usage", "tick", "attribute", "body", "prefix"))
 tmpfs_full = M["tmpfs_full"]
 
@@ -115,6 +121,16 @@ check("dip to 78% (inside the margin): state kept, and back at 81% is NOT a fres
 tick(st, {"/tmp": U(70.0)}, T0 + 180)
 check("below 75%: cleared, so the next climb is told from the first rung",
       len(tick(st, {"/tmp": U(81.0)}, T0 + 240)) == 1, st)
+
+st = {}
+tick(st, {"/tmp": U(85.0)}, T0)
+tick(st, {"/tmp": U(77.0)}, T0 + 0.5 * H)
+tick(st, {"/tmp": U(77.0)}, T0 + 2 * H)
+check("A1 (medic #60161): above 0.5h, under the line (77%) to 4.1h, back at 85%: NOT 'above 80% for 4h'",
+      tick(st, {"/tmp": U(85.0)}, T0 + 4.1 * H) == [], st)
+out = tick(st, {"/tmp": U(85.0)}, T0 + 5.2 * H)
+check("…the age counts from the return: 1.1h later the 1h rung says 'for 1h'",
+      len(out) == 1 and "for 1h" in out[0][1], out)
 
 print("unknown never silences:")
 st = {}
