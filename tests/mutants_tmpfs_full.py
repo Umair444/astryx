@@ -43,7 +43,7 @@ MUTANTS = {
     "F9 PRIVACY: small prefixes are named (a lone file's name goes on the line)":
         ('        big = [r for r in rows if r[1] >= MIN_SHOWN]', '        big = list(rows)'),
     "F10 a truncated walk reads as exact":
-        ('                if clock() - t0 > budget:', '                if False:'),
+        ('                if clock() > end:', '                if False:'),
     "F11 the mkdtemp suffix is kept (8,930 land-* dirs read as 8,930 one-dir prefixes)":
         ('    p = re.sub(r"[._-]?[A-Za-z0-9_]{8}$", "", name)       # mkdtemp\'s 8-char suffix', '    p = name'),
     "F12 no age on the line (a live run can't be told from a dead one)":
@@ -53,4 +53,6 @@ MUTANTS = {
         ('TO = "medic"', 'TO = "steward"'),
     "F14 a dropped mount's state is never forgotten":
         ("        del state[mp]", "        pass"),
+    "F15 each mount gets its own walk budget (3 alarmed mounts walk 30s: the pulse kills it before it speaks)":
+        ("mp: attr(mp, deadline=deadline)", "mp: attr(mp, deadline=None)"),
 }

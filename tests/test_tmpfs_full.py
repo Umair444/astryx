@@ -164,6 +164,8 @@ tick_n = iter(range(10 ** 6))
 rows2, cut2 = attribute(str(tmp), budget=2, clock=lambda: next(tick_n), now=T0)
 check("a walk past its budget says so (>= on the line)", cut2 and ">=" in body([("/tmp", "x")], {"/tmp": (rows2, cut2)}),
       (rows2, cut2))
+rows3, cut3 = attribute(str(tmp), clock=lambda: 100.0, now=T0, deadline=99.0)
+check("a deadline already spent (an earlier mount used the tick's budget): no walk, and it says >=", cut3, (rows3, cut3))
 check("prefix: a mkdtemp name loses its suffix; a plain name keeps its stem",
       prefix("sqlguard.ab_c1234") == "sqlguard" and prefix("wa-retry-x") == "wa-retry", (prefix("sqlguard.ab_c1234"),
                                                                                          prefix("wa-retry-x")))
@@ -186,14 +188,19 @@ class Ctx:
 
 c = Ctx()
 full = sv(1000, 10, 1000, 900)
-r1 = tmpfs_full(c, proc_mounts=PM, statvfs=sv(), now=T0, attr=lambda mp: ([], False))
-r2 = tmpfs_full(c, proc_mounts=PM, statvfs=full, now=T0 + 300, attr=lambda mp: ([("land", 900, 50.0)], False))
+r1 = tmpfs_full(c, proc_mounts=PM, statvfs=sv(), now=T0, attr=lambda mp, **k: ([], False))
+r2 = tmpfs_full(c, proc_mounts=PM, statvfs=full, now=T0 + 300, attr=lambda mp, **k: ([("land", 900, 50.0)], False))
 check("healthy: nothing; then ONE wake to medic, from steward, naming the mount, the prefix and the remedy",
       r1 is None and r2 is None and len(c.said) == 1 and c.said[0][0] == "medic"
       and c.said[0][2].get("from_agent") == "steward" and "/tmp: INODES at 99%" in c.said[0][1]
       and "land: 900 inodes, oldest 50.0h" in c.said[0][1] and "DEAD runs" in c.said[0][1], c.said)
+seen = []
+c3 = Ctx()
+tmpfs_full(c3, proc_mounts=PM + f"tmpfs {REPO} tmpfs rw 0 0\n", statvfs=full, now=T0, attr=lambda mp, **k: (seen.append(k.get("deadline")), ([], False))[1])
+check("two mounts alarmed in one tick share ONE walk deadline (N mounts walk the budget once, not N times)",
+      len(seen) >= 2 and seen[0] is not None and len(set(seen)) == 1, seen)
 c2 = Ctx()
-tmpfs_full(c2, proc_mounts=PM, statvfs=boom, now=T0, attr=lambda mp: ([], False))
+tmpfs_full(c2, proc_mounts=PM, statvfs=boom, now=T0, attr=lambda mp, **k: ([], False))
 check("statvfs failing everywhere: the /tmp line still goes out", len(c2.said) == 1
       and "couldn't read" in c2.said[0][1], c2.said)
 
