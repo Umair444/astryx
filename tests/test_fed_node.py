@@ -9,7 +9,7 @@ DB-FREE. node.py is loaded from FED_NODE_SRC (mutation_probe's seam), never by a
     no agent, no @, a non-dict refused).
   SCOPED: a cog's rate and replay keys are per org; one org's keys are byte for byte today's.
   THE DOOR (seed #60376): a registry may name ONE door org (orgs.py, loaded from ORGS_SRC); two claimants refuse, a
-    non-boolean refuses, none means no door. The door org answers at the bare root AND at /o/<door>; with no door a
+    non-boolean refuses, a door on an org that isn't the primary refuses (seed #60780), none means no door. The door org answers at the bare root AND at /o/<door>; with no door a
     bare path reaches nothing; another org is never reached at the bare root.
 Exit 0 pass · 1 fail.
 """
@@ -41,11 +41,15 @@ def registry(N):
         reg = Path(d) / "orgs.json"
         env = {O.ENV: str(reg)}
 
-        def write(a_door, b_door):
+        def write(a_door, b_door, primary=True):
+            # a door is the primary's (seed #60780): an org given a door is the primary too, unless an arm says not,
+            # so each refusal below is the one it names, never "a door that isn't the primary"
             e = {"a": {"home": f"{d}/a", "db": "org_a"}, "b": {"home": f"{d}/b", "db": "org_b"}}
             for k, v in (("a", a_door), ("b", b_door)):
                 if v is not None:
                     e[k]["door"] = v
+                    if v and primary:
+                        e[k]["primary"] = True
             reg.write_text(json.dumps({"orgs": e}))
 
         write(True, None)
@@ -54,8 +58,9 @@ def registry(N):
         check("door: a registry naming none gives None", O.door(env) is None)
         write(False, False)
         check("door: door false everywhere gives None", O.door(env) is None)
-        for a, b, why in ((True, True, "two orgs claim the door"), ("yes", None, "a non-boolean door")):
-            write(a, b)
+        for a, b, why, pr in ((True, True, "two orgs claim the door", True), ("yes", None, "a non-boolean door", True),
+                              (True, None, "a door on an org that isn't the primary", False)):
+            write(a, b, pr)
             try:
                 O.load(env)
                 check(f"door: {why} REFUSES (fail closed)", False, "loaded")

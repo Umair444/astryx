@@ -42,9 +42,13 @@
   {"name": "ports: an empty string", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "ports": ""}, "fxb": {"home": "{T}/b", "db": "fxorg_b"}}}, "expect": "refused"},
   {"name": "ports: null", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "ports": null}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "ports": {}}}}, "expect": "refused"},
   {"name": "ports: a stem named like an object property", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "ports": {"constructor": 18477}}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "ports": {}}}}, "expect": "refused"},
-  {"name": "the door org with its ports (S3e on S3b 5/n)", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "ports": {"astryx-whatsapp": 18477}, "door": true}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "ports": {"astryx-whatsapp": 28477}}}}, "expect": "orgs:2"},
-  {"name": "one door org (S3e)", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "door": true}, "fxb": {"home": "{T}/b", "db": "fxorg_b"}}}, "expect": "orgs:2"},
-  {"name": "two orgs claim the door (S3e)", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "door": true}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "door": true}}}, "expect": "refused"},
-  {"name": "a non-boolean door (S3e)", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "door": "yes"}}}, "expect": "refused"}
+  {"name": "the door org with its ports (S3e on S3b 5/n)", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "ports": {"astryx-whatsapp": 18477}, "door": true, "primary": true}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "ports": {"astryx-whatsapp": 28477}}}}, "expect": "orgs:2"},
+  {"name": "one door org (S3e), the primary (seed #60780)", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "door": true, "primary": true}, "fxb": {"home": "{T}/b", "db": "fxorg_b"}}}, "expect": "orgs:2"},
+  {"name": "a door on an org that isn't the primary (seed #60780)", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "door": true}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "primary": true}}}, "expect": "refused"},
+  {"name": "a primary with no door (seed #60780)", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "primary": true}, "fxb": {"home": "{T}/b", "db": "fxorg_b"}}}, "expect": "orgs:2"},
+  {"name": "two orgs claim to be the primary (seed #60780)", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "primary": true}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "primary": true}}}, "expect": "refused"},
+  {"name": "a non-boolean primary (seed #60780)", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "primary": "yes"}, "fxb": {"home": "{T}/b", "db": "fxorg_b"}}}, "expect": "refused"},
+  {"name": "two orgs claim the door (S3e), each its primary", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "door": true, "primary": true}, "fxb": {"home": "{T}/b", "db": "fxorg_b", "door": true, "primary": true}}}, "expect": "refused"},
+  {"name": "a non-boolean door (S3e)", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a", "door": "yes", "primary": true}}}, "expect": "refused"}
 ]
 }

@@ -29,4 +29,10 @@ MUTANTS = {
         ("            if type(port) is not int or not 1 <= port <= 65535:\n", "            if False:\n"),
     "Y8 JSON's 18477.0 is refused (node reads the integer: the two readers split)":
         ("        pe = {k: int(v) if type(v) is float and v.is_integer() else v for k, v in pe.items()}", "        pass"),
+    "Y9 two orgs may both be the primary (two orgs on the default socket, seed #60780)":
+        ("    if len(prims) > 1:", "    if len(prims) > 99:"),
+    "Y10 a non-boolean primary is read as truthy":
+        ("        if not isinstance(primary, bool):\n", "        if False:\n"),
+    "Y11 a door on an org that isn't the primary loads":
+        ("        if door and not primary:", "        if False:"),
 }

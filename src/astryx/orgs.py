@@ -23,6 +23,10 @@ so the registry refuses one two orgs share, and one equal to a COG-scoped unit's
 In a cog of several orgs there is no default: port() REFUSES a missing one (ruling 3(b): the primary org declares its
 ports like any other).
 `door` (optional, at most one entry true) names the org the cog's gateway serves at its bare root (S3e).
+`primary` (optional, at most one entry true; seed #60780: the primary org moves as little as possible when a cog forms)
+names the org that was this host's one org before the cog: it keeps tmux's DEFAULT socket and its PLAIN unit names
+(socket() and unit() answer for it as on one org), so its residents, its pulse and every tool see nothing move. A
+door, if named, is the primary's: the bare root was the primary's before the cog existed.
 `db` is the org's main database by name, so a process can tell "another org's database" WITHOUT reading another
 org's .env (no cross-org read outside the declared cog-scoped set, a2 E). Its own .env must name the same database:
 config.dsn checks that pair for its own org only.
@@ -106,14 +110,21 @@ def load(env=None) -> dict | None:
             if port in ports:
                 raise RegistryError(f"org registry {p}: {org}'s {stem} port {port} is already {ports[port]}'s")
             ports[port] = f"{org} {stem}"
-        door = e.get("door", False)
+        door, primary = e.get("door", False), e.get("primary", False)
         if not isinstance(door, bool):
             raise RegistryError(f"org registry {p}: {org}'s door must be true or false")
+        if not isinstance(primary, bool):
+            raise RegistryError(f"org registry {p}: {org}'s primary must be true or false")
+        if door and not primary:                        # the bare root was the primary's before the cog (seed #60780)
+            raise RegistryError(f"org registry {p}: {org} claims the door but is not the primary; the door is the "
+                                "primary's")
         homes[h], dbs[db] = org, org
-        out[org] = {"home": h, "db": db, "ports": dict(pe), "door": door}
-    doors = [o for o, e in out.items() if e["door"]]
-    if len(doors) > 1:                                  # the cog's bare root answers for ONE org (S3e, seed #60376)
-        raise RegistryError(f"org registry {p}: {' and '.join(doors)} both claim the door; one org owns it")
+        out[org] = {"home": h, "db": db, "ports": dict(pe), "door": door, "primary": primary}
+    # ONE primary (it alone keeps the default socket and plain unit names); a door is the primary's, so there is at
+    # most one door too (S3e, seed #60376), by construction
+    prims = [o for o, e in out.items() if e["primary"]]
+    if len(prims) > 1:
+        raise RegistryError(f"org registry {p}: {' and '.join(prims)} both claim to be the primary; one org is")
     return out
 
 
@@ -121,6 +132,16 @@ def door(env=None) -> str | None:
     """The org whose door is the cog's BARE root (S3e, seed #60376), or None: then a bare path names no org and
     refuses. It answers at /o/<org> as well, so its peers move to the explicit path at their own pace."""
     return next((o for o, e in (load(env) or {}).items() if e["door"]), None)
+
+
+def primary(env=None) -> str | None:
+    """The org that keeps the one-org names in a cog (seed #60780), or None."""
+    return next((o for o, e in (load(env) or {}).items() if e["primary"]), None)
+
+
+def _plain(o, env) -> bool:
+    """True when THIS process's org answers as on one org: no org (one-org host), or the primary."""
+    return o is None or load(env)[o]["primary"]
 
 
 def multi(env=None) -> bool:
@@ -150,9 +171,10 @@ def name(env=None, cwd=None) -> str | None:
 def socket(env=None, cwd=None) -> str | None:
     """The tmux socket this org's residents live on (plan-11324 S3b, #58435: `ax-<agent>` is a HOST-wide name, so
     two orgs' `seed` would be one session). None on a one-org host: tmux's default socket, byte for byte as before.
-    Several orgs: `ax-<org>`, a server of its own (-L), so a session name only ever means this org's resident."""
+    Several orgs: `ax-<org>`, a server of its own (-L), so a session name only ever means this org's resident. The
+    PRIMARY keeps the default socket (seed #60780): its residents were there before the cog, and stay."""
     o = name(env, cwd)
-    return None if o is None else f"ax-{o}"
+    return None if _plain(o, env) else f"ax-{o}"
 
 
 def tmux(env=None, cwd=None) -> list[str]:
@@ -164,9 +186,10 @@ def tmux(env=None, cwd=None) -> list[str]:
 
 def unit(stem: str, suffix: str = "service", env=None, cwd=None) -> str:
     """THIS org's systemd unit name (plan-11324 S3b, data/org_units.json): `<stem>.<suffix>` on one org, exactly as
-    before; `<stem>@<org>.<suffix>` on several, the instance FILE init.sh units() writes for this org."""
+    before; `<stem>@<org>.<suffix>` on several, the instance FILE init.sh units() writes for this org. The PRIMARY keeps
+    its plain names (seed #60780)."""
     o = name(env, cwd)
-    return f"{stem}.{suffix}" if o is None else f"{stem}@{o}.{suffix}"
+    return f"{stem}.{suffix}" if _plain(o, env) else f"{stem}@{o}.{suffix}"
 
 
 def port(stem: str, env=None, cwd=None) -> int | None:

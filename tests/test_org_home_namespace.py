@@ -14,6 +14,10 @@ resolver; shell callers source scripts/org_tmux.sh). One org (no registry): the 
      pane and not in B's; agent_heal's body listing from A holds A's extra body, from B it doesn't
   N3 the one-body guard is per org: a channel-server body of the agent carrying HOME-A does NOT stop B's spawn;
      it DOES stop A's (positive control)
+  R3 THE PRIMARY (seed #60780: the primary org moves as little as possible), the same registry with A `primary`:
+     HOME-A's tmux is the DEFAULT socket (orgs.tmux() ['tmux'], `orgs.py socket` exit 1, org_tmux.sh no socket) and
+     its units keep their plain names (orgs.unit); HOME-B's are still its own (-L ax-<B>, `@<B>`); and A's spawn
+     comes up on the default server, never on -L ax-<A>
 
 The residents are fixture ones: an ASTRYX_CLI stub (it prints spawn's boot marker, then echoes what it's typed),
 on the fixture orgs' own servers, which the fixture kills at exit. All of it runs under a PRIVATE TMUX_TMPDIR, so the
@@ -199,6 +203,42 @@ def main():
         la, lb = act("a", "bodies").stdout.split(), act("b", "bodies").stdout.split()
         check("agent_heal's bodies() from A: both A bodies", set(la) == {AGENT, ONLY_A}, str(la))
         check("agent_heal's bodies() from B: B's one body, never A's", set(lb) == {AGENT}, str(lb))
+
+        print("\nR3 THE PRIMARY KEEPS THE ONE-ORG NAMES")
+        import json
+        reg = json.loads(fx.reg.read_text())
+        reg["orgs"][fx.org["a"]]["primary"] = True
+        preg = fx.t / "primary.json"
+        preg.write_text(json.dumps(reg))
+        P = {"ASTRYX_COG_REGISTRY": str(preg)}
+        ta = subprocess.run([py, "-c", PROBE, str(co)], env=env("a", **P), cwd="/", capture_output=True, text=True,
+                            timeout=30)
+        tb = subprocess.run([py, "-c", PROBE, str(co)], env=env("b", **P), cwd="/", capture_output=True, text=True,
+                            timeout=30)
+        check("the primary A: orgs.tmux() is exactly ['tmux'] (the default socket)", ta.stdout.strip() == "tmux",
+              ta.stdout + ta.stderr[-200:])
+        check(f"B, not the primary: still -L ax-{fx.org['b']}", tb.stdout.split() == fx.tmux("b"),
+              tb.stdout + tb.stderr[-200:])
+        r = socket_door(env("a", **P))
+        check("the primary A: `orgs.py socket` exits 1 and prints nothing (org_tmux.sh's one-org answer)",
+              r.returncode == 1 and not r.stdout, f"{r.returncode} {r.stdout!r} {r.stderr[-200:]}")
+        r = lib(env("a", **P), co)
+        check("the primary A: org_tmux.sh sets no socket", r.returncode == 0 and "sock=[]" in r.stdout,
+              r.stdout + r.stderr[-200:])
+        u = "import sys; sys.path.insert(0, sys.argv[1] + '/src'); from astryx import orgs; print(orgs.unit('astryx-pulse', 'timer'))"
+        ua = subprocess.run([py, "-c", u, str(co)], env=env("a", **P), cwd="/", capture_output=True, text=True, timeout=30)
+        ub = subprocess.run([py, "-c", u, str(co)], env=env("b", **P), cwd="/", capture_output=True, text=True, timeout=30)
+        check("the primary A's units keep their plain names (astryx-pulse.timer)", ua.stdout.strip() == "astryx-pulse.timer",
+              ua.stdout + ua.stderr[-200:])
+        check(f"B's are still its instances (astryx-pulse@{fx.org['b']}.timer)",
+              ub.stdout.strip() == f"astryx-pulse@{fx.org['b']}.timer", ub.stdout + ub.stderr[-200:])
+        (A / "agents" / f"{ONLY_A}.md").write_text(f"# {ONLY_A}\nA fixture resident of org A only.\n")
+        rp = subprocess.run(["bash", str(co / "scripts" / "spawn.sh"), ONLY_A], env=env("a", **P), cwd="/",
+                            capture_output=True, text=True, timeout=150)
+        dflt = subprocess.run(["tmux", "has-session", "-t", f"=ax-{ONLY_A}"], env=fx.env(), capture_output=True).returncode   # org-home: the PRIVATE default socket (fx.env: TMUX_TMPDIR, and no inherited $TMUX)
+        check("the primary A's spawn comes up resident on the DEFAULT server (not read as N2's -L ax-<A> session)",
+              rp.returncode == 0 and "resident" in rp.stdout and "already resident" not in rp.stdout and dflt == 0,
+              (rp.stdout + rp.stderr)[-300:] + f" default={dflt}")
         return 1 if fails else 0
     finally:
         if body is not None:

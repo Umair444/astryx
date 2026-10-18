@@ -33,4 +33,10 @@ MUTANTS = {
         ("export const COG_PORTS = [8090, 8845]", "export const COG_PORTS = [8090]"),
     "M10 `ports` that isn't an object reads as none":
         ("    if (!pe || typeof pe !== 'object' || Array.isArray(pe))\n", "    if (false)\n"),
+    "M11 node lets two orgs both be the primary (seed #60780)":
+        ("  if (prims.length > 1)\n", "  if (prims.length > 99)\n"),
+    "M12 node reads a non-boolean primary as truthy":
+        ("    if (e.primary !== undefined && typeof e.primary !== 'boolean')\n", "    if (false)\n"),
+    "M13 node lets a door sit on an org that isn't the primary":
+        ("    if (e.door === true && e.primary !== true)", "    if (false)"),
 }

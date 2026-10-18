@@ -65,12 +65,17 @@ export function registry(env = process.env) {
     }
     if (e.door !== undefined && typeof e.door !== 'boolean')
       throw new Error(`org registry ${p}: ${o}'s door must be true or false`)
+    if (e.primary !== undefined && typeof e.primary !== 'boolean')
+      throw new Error(`org registry ${p}: ${o}'s primary must be true or false`)
+    if (e.door === true && e.primary !== true)    // the bare root was the primary's before the cog (seed #60780)
+      throw new Error(`org registry ${p}: ${o} claims the door but is not the primary; the door is the primary's`)
     homes[h] = o; dbs[e.db] = o
-    out[o] = { home: h, db: e.db, ports: { ...pe }, door: e.door === true }
+    out[o] = { home: h, db: e.db, ports: { ...pe }, door: e.door === true, primary: e.primary === true }
   }
-  const doors = Object.keys(out).filter(o => out[o].door)
-  if (doors.length > 1)                       // the cog's bare root answers for ONE org (S3e, seed #60376)
-    throw new Error(`org registry ${p}: ${doors.join(' and ')} both claim the door; one org owns it`)
+  // ONE primary (it keeps the default socket and plain unit names); a door is the primary's, so one door by construction
+  const prims = Object.keys(out).filter(o => out[o].primary)
+  if (prims.length > 1)
+    throw new Error(`org registry ${p}: ${prims.join(' and ')} both claim to be the primary; one org is`)
   return out
 }
 

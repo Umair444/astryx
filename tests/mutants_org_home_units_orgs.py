@@ -17,7 +17,7 @@ TIMEOUT = 300
 
 MUTANTS = {
     'R1 orgs.unit() ignores the org':
-        ('    return f"{stem}.{suffix}" if o is None else f"{stem}@{o}.{suffix}"\n',
+        ('    return f"{stem}.{suffix}" if _plain(o, env) else f"{stem}@{o}.{suffix}"\n',
          '    return f"{stem}.{suffix}"\n'),
     'R2 `orgs.py name` answers one org on several (units() writes plain names)':
         ('            o = name()\n            if o is None:\n                return 1\n',

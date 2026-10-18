@@ -18,11 +18,17 @@ TIMEOUT = 300
 
 MUTANTS = {
     'X1 socket() is None in a cog of several orgs too (every org on the default socket)':
-        ('    return None if o is None else f"ax-{o}"\n',
+        ('    return None if _plain(o, env) else f"ax-{o}"\n',
          '    return None\n'),
     'X2 tmux() ignores the socket (python callers on the default socket)':
         ('    return ["tmux"] if s is None else ["tmux", "-L", s]\n',
          '    return ["tmux"]\n'),
+    'X4 the primary gets a socket of its own too (its residents leave the default server: the double spawn, seed #60780)':
+        ('    return None if _plain(o, env) else f"ax-{o}"\n',
+         '    return None if o is None else f"ax-{o}"\n'),
+    'X5 the primary\'s units are instance-named (astryx-pulse@<org>.timer: its live units orphaned)':
+        ('    return f"{stem}.{suffix}" if _plain(o, env) else f"{stem}@{o}.{suffix}"',
+         '    return f"{stem}.{suffix}" if o is None else f"{stem}@{o}.{suffix}"'),
     'X3 `orgs.py socket` answers one org (exit 1) on several':
         ('            if s is None:\n                return 1\n',
          '            if True:\n                return 1\n'),
