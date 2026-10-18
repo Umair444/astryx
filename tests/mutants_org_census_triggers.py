@@ -16,13 +16,13 @@ ORACLE = REPO / "tests" / "test_org_home_census.py"
 ENV = "ORG_CENSUS_SRC"
 
 MUTANTS = {
-    "T1 a `tmux …` shell line in a trigger body is not read":
+    "TB1 a `tmux …` shell line in a trigger body is not read":
         ('        for n in _py_tmux_shell(p):\n', '        for n in []:\n'),
-    "T2 a trigger body's tmux argv is not read":
+    "TB2 a trigger body's tmux argv is not read":
         ('        for n in _py_tmux(p):\n            out.append({"kind": "triggers"',
          '        for n in []:\n            out.append({"kind": "triggers"'),
-    "T3 a HOME with no triggers/ reads as read (an empty set passed off as a pass)":
+    "TB3 a HOME with no triggers/ reads as read (an empty set passed off as a pass)":
         ('    if not d.is_dir():\n        return [], False\n', '    if not d.is_dir():\n        return [], True\n'),
-    "T4 __pycache__ copies are read as bodies":
+    "TB4 __pycache__ copies are read as bodies":
         ('        if "__pycache__" in p.parts or p.is_symlink()', '        if p.is_symlink()'),
 }
