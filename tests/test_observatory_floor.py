@@ -74,7 +74,7 @@ def main(url, tmp):
 
         for days, topic in ((1, "t-1"), (2, "t-1"), (3, "t-3"), (4, "t-2"), (5, "t-4"), (5, None)):
             edge("delegation", "ann", "bob", days, 0.9, topic)
-        edge("pass_land", "ann", "bob", 2, 0.8, "plan-1")       # same pair, another kind: its own edge
+        edge("pass_land", "ann", "bob", 9, 0.8, "plan-1")       # same pair, another kind: its own edge (outside 7d)
         edge("pass_land", "ann", "cid", 10, 0.8, "plan-1")      # inside 14d, outside 7d
         edge("tool_call", "cid", "ann", 1, 0.4, None)           # under the 50% coverage floor
         value("ann", 0.9, 30)                          # an OLDER compute, where ann led
@@ -98,6 +98,10 @@ def main(url, tmp):
             arm("INFLUENCE: …its last_ts is the newest edge's", ab.get("last_ts", "") > e.get(("ann", "cid", "pass_land"), {}).get("last_ts", "~"), ab)
             arm("INFLUENCE: the 14d window keeps a 10-day edge, 7d drops it",
                 ("ann", "cid", "pass_land") in e and not any((x["src"], x["dst"]) == ("ann", "cid") for x in day["edges"]), day["edges"])
+            dk = {x["kind"]: x for x in day["kinds"]}
+            arm("INFLUENCE: a kind with no edge inside 7d is still measured, with the compute's coverage (a4 #60129 A-1)",
+                not any(x["kind"] == "pass_land" for x in day["edges"]) and dk.get("pass_land", {}).get("measured") is True
+                and dk["pass_land"]["coverage"] == 0.8, (dk, day["edges"]))
             arm("INFLUENCE: any other window is 400", cl.get("/api/influence?window=30d", headers=O).status_code == 400)
             k = {x["kind"]: x for x in j["kinds"]}
             arm("INFLUENCE: a kind under the coverage floor is listed measured=false, with its coverage (shown, not hidden)",

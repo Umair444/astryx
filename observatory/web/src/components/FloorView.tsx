@@ -349,7 +349,7 @@ export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) =>
           return (
             <motion.button key={a.agent} onClick={() => onOpenAgent(a.agent)}
               onMouseEnter={() => setHover(a.agent)} onMouseLeave={() => setHover(h => (h === a.agent ? null : h))}
-              className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-1 z-10 group"
+              className={`absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-1 group ${hover === a.agent ? 'z-30' : 'z-10'}`}
               initial={false} animate={{ left: s.x, top: s.y }} transition={{ type: 'spring', damping: 22, stiffness: 120 }}>
               <motion.span className="relative rounded-full"
                 animate={mood === 'working' ? { y: [0, -4, 0] } : { y: 0 }}
@@ -373,7 +373,7 @@ export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) =>
                   const il = influenceLine(a.agent, inf!, kinds!)
                   const g = a.group_path?.[0]
                   return (il || rankOf[a.agent] || g) && (
-                    <span className="text-[10.5px] leading-snug w-[176px] text-center rounded-md px-1.5 py-0.5 text-ink-dim bg-deck-2/90">
+                    <span className="text-[10.5px] leading-snug w-[176px] text-center rounded-md px-1.5 py-0.5 text-ink-dim bg-deck-2 shadow-lg">
                       {rankOf[a.agent] && <span className="text-ink">#{rankOf[a.agent]} </span>}{g && <span className="text-ink-mute">group {g} · </span>}{il}
                     </span>
                   )

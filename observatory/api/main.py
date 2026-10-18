@@ -3128,6 +3128,9 @@ async def thread_read(r: ThreadRead, request: Request):
 # ------------------------------------------------------------ the floor: who knows whom, and the cog's rooms
 from astryx.influence import graph as _influence  # noqa: E402 — the ONE weighting rule (plan-11324 S2)
 
+# a kind's coverage is the COMPUTE's (one value per kind per compute; the cache holds one compute), never the window's:
+# a kind with no edge in the last 7 days is still measured, and the GLOBAL ranks weigh it (a4 #60129 A-1)
+INFLUENCE_COVERAGE_SQL = "SELECT DISTINCT kind, coverage FROM influence_edge WHERE scope = 'local'"
 INFLUENCE_EDGES_SQL = ("SELECT kind, src, dst, ts, topic, coverage FROM influence_edge "
                        "WHERE scope = 'local' AND ts >= now() - make_interval(days => $1)")
 # ONE compute's snapshot, never each agent's own latest: two runs' values are not one ranking
@@ -3150,10 +3153,9 @@ async def influence(request: Request, window: str = "14d"):
     if window not in INFLUENCE_WINDOWS:
         return Response(status_code=400)
     rows = await pool.fetch(INFLUENCE_EDGES_SQL, INFLUENCE_WINDOWS[window])
-    cov: dict = {}
+    cov = {r["kind"]: r["coverage"] for r in await pool.fetch(INFLUENCE_COVERAGE_SQL)}
     agg: dict = {}
     for r in rows:
-        cov[r["kind"]] = r["coverage"]
         e = agg.setdefault((r["src"], r["dst"], r["kind"]), {"n": 0, "last": r["ts"], "threads": {}})
         e["n"] += 1
         e["last"] = max(e["last"], r["ts"])

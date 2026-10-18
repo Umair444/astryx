@@ -26,6 +26,9 @@ MUTANTS = {
         ("key=lambda x: (-x[1], x[0]))[:3]]", "key=lambda x: (-x[1], x[0]))[:9]]"),
     "F7 a registry that refuses reads as a cog of one (unreachable fail-open: _env re-loads the registry and raises out of the route; caught as a 500 crash, not an arm, a4 #60129)":
         ('        return JSONResponse({"error": f"cog registry refused: {e}"}, status_code=500)\n', '        reg = None\n'),
+    "F14 a kind's coverage comes from the window's rows (7d calls a kind unmeasured that the ranks weigh: a4 #60129 A-1)":
+        ('    cov = {r["kind"]: r["coverage"] for r in await pool.fetch(INFLUENCE_COVERAGE_SQL)}\n',
+         '    cov = {r["kind"]: r["coverage"] for r in rows}\n'),
     "F8 no room is marked as ours":
         ('"this": o == me,', '"this": False,'),
     "F9 a room carries its org's HOME out":
