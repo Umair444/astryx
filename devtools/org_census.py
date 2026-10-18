@@ -14,6 +14,8 @@ resolver, found by WALKING the code, never by a list of files.
           explicit -L/-S (a private test server). Grammar: a python LIST display whose first element is the
           literal "tmux" (an argv; a tuple of tool names is not one); a shell `tmux` in command position (quoted messages stripped); a js spawn/exec of
           'tmux'. A tmux reached through a variable (`T = "tmux"; [T, …]`) is outside it (stated).
+  triggers   the same tmux rule over the org's OWN trigger bodies, HOME/triggers/**/*.py (gitignored, so outside
+          the walk): an argv list, or a call whose first argument is a `tmux …` shell line. Read-only, file:line only.
 
 THE GRAMMAR (stated, so a miss in review reopens it, a2 #58452): text over EXECUTABLE lines (comments and
 docstrings stripped) of every .py / .sh / .mjs / .js / .cjs / .ts file git does not ignore, and every extensionless one whose
@@ -256,6 +258,51 @@ def _py_tmux(src: Path) -> list[int]:
     return out
 
 
+_LIT_PREFIX = re.compile(r"""^[rbfuRBFU]*(?:\"\"\"|'''|"|')""")
+
+
+def _py_tmux_shell(src: Path) -> list[int]:
+    """Lines where a CALL's first argument is a string literal (f-strings too) that starts with `tmux ` (a shell line:
+    `os.system("tmux ls")`, `run(f"tmux send-keys …", shell=True)`). An advice string inside a message is not a call's
+    first argument, or doesn't start with it ("    tmux kill-session …")."""
+    try:
+        toks = [t for t in tokenize.generate_tokens(io.StringIO(src.read_text(errors="replace")).readline)
+                if t.type not in (tokenize.NL, tokenize.NEWLINE, tokenize.COMMENT, tokenize.INDENT, tokenize.DEDENT)]
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        return []
+    lit = (tokenize.STRING, getattr(tokenize, "FSTRING_START", -1))
+    out = []
+    for i in range(2, len(toks)):
+        t = toks[i]
+        if t.type not in lit or toks[i - 1].string != "(" or toks[i - 2].type != tokenize.NAME:
+            continue
+        text = t.string if t.type == tokenize.STRING else t.string + (toks[i + 1].string if i + 1 < len(toks) else "")
+        if _LIT_PREFIX.sub("", text, count=1).startswith("tmux "):
+            out.append(t.start[0])
+    return out
+
+
+# THE ORG'S TRIGGER BODIES (plan-11324 S3b, a2 #59697 via seed #59699): agents write pulse triggers into the org's
+# estate (HOME/triggers/, gitignored), outside the walk above by construction. A unit-run pulse has no $TMUX, so a bare
+# tmux there reads the DEFAULT socket: on a multi-org host it sees no residents (agent_dark alarms every tick) or
+# another org's. This reads HOME/triggers/**/*.py ONLY, read-only, and reports file:line, never a line's text; a HOME
+# with no triggers/ is skipped (stated, never a pass of an empty set).
+def trigger_sites(home: Path) -> tuple[list, bool]:
+    d = home / "triggers"
+    if not d.is_dir():
+        return [], False
+    out = []
+    for p in sorted(d.rglob("*.py")):
+        if "__pycache__" in p.parts or p.is_symlink() or not p.is_file():
+            continue
+        rel = p.relative_to(home).as_posix()
+        for n in _py_tmux(p):
+            out.append({"kind": "triggers", "file": rel, "line": n, "what": "tmux argv on the default socket"})
+        for n in _py_tmux_shell(p):
+            out.append({"kind": "triggers", "file": rel, "line": n, "what": "tmux shell line on the default socket"})
+    return out, True
+
+
 def namespace_sites(rel: str, src: Path, lines) -> list:
     if rel in RESOLVERS:
         return []
@@ -387,8 +434,9 @@ def unparsed(path: Path, suffix: str) -> str | None:
     return None
 
 
-def census(root: Path, overrides: dict | None = None) -> dict:
-    """`overrides` {repo-relative path: file}: read that file's text in place of the tree's (mutation seams)."""
+def census(root: Path, overrides: dict | None = None, home: Path | None = None) -> dict:
+    """`overrides` {repo-relative path: file}: read that file's text in place of the tree's (mutation seams).
+    `home`: the org HOME whose trigger bodies are read (default `root`: one org's HOME is its checkout)."""
     toks = [(e, estate_token(e)) for e in estate_entries(root)]
     names = org_names(root)
     readers = [(n, env_read(n)) for n in sorted(names)]
@@ -413,6 +461,7 @@ def census(root: Path, overrides: dict | None = None) -> dict:
             for n, raw, what in sites:
                 row = {"kind": kind, "file": rel, "line": n, "what": what}
                 (res["declared"] if DECLARE.search(raw) else res["guarded"] if g else res[kind]).append(row)
+    res["triggers"], res["triggers_read"] = trigger_sites(home or root)
     return res
 
 
@@ -426,7 +475,7 @@ def main(argv=None) -> int:
         print(json.dumps(res, indent=1))
     else:
         print(f"org names derived from the code's .env writers and readers: {len(res['org_names'])}")
-        for k in ("dsn", "estate", "env", "namespace", "unparsed"):
+        for k in ("dsn", "estate", "env", "namespace", "triggers", "unparsed"):
             print(f"{k}: {len(res[k])} finding(s)")
             for r in res[k]:
                 print(f"  {r['file']}:{r['line']}  {r['what']}")
@@ -435,7 +484,9 @@ def main(argv=None) -> int:
         print(f"declared (org-home: …): {len(res['declared'])}")
         for r in res["declared"]:
             print(f"  {r['kind']:6} {r['file']}:{r['line']}  {r['what']}")
-    return 1 if any(res[k] for k in ("dsn", "estate", "env", "namespace", "unparsed")) else 0
+        if not res["triggers_read"]:
+            print("triggers: NOT READ (this HOME has no triggers/)")
+    return 1 if any(res[k] for k in ("dsn", "estate", "env", "namespace", "triggers", "unparsed")) else 0
 
 
 if __name__ == "__main__":

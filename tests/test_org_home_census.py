@@ -114,6 +114,29 @@ def main():
         check("a quoted command substitution (\"$(ls backups/…)\") is code, not a label", 3 in sh, str(sh))
         check("a `${X:-backups/…}` default is a path", 4 in sh, str(sh))
 
+    # the org's TRIGGER BODIES (S3b, a2 #59697 / seed #59699): a planted HOME, the RED control FIRST (#59151's order)
+    with tempfile.TemporaryDirectory() as td:
+        h = Path(td)
+        tdir = h / "triggers" / "fxagent"
+        (tdir / "__pycache__").mkdir(parents=True)
+        (tdir / "bare.py").write_text('import subprocess\nsubprocess.run(["tmux", "ls"])\n')   # org-home: a planted default-socket trigger
+        (tdir / "shell.py").write_text('import os, subprocess\nos.system("tmux ls")\n'
+                                       'subprocess.run(f"tmux send-keys -t {x} Enter", shell=True)\n')
+        (tdir / "routed.py").write_text('import subprocess\nfrom astryx import orgs\nsubprocess.run([*orgs.tmux(), "ls"])\n')
+        (tdir / "advice.py").write_text('print(f"    tmux kill-session -t =ax-{n} && spawn.sh {n}")\n'
+                                        'MSG = "restart: tmux kill-session"\n')
+        (tdir / "__pycache__" / "bare.py").write_text('import subprocess\nsubprocess.run(["tmux", "ls"])\n')   # org-home: a planted cache copy (skipped)
+        (tdir / "notes.sh").write_text("tmux ls\n")
+        got, read = oc.trigger_sites(h)
+        hits = sorted((r["file"], r["line"]) for r in got)
+        want = [("triggers/fxagent/bare.py", 2), ("triggers/fxagent/shell.py", 2), ("triggers/fxagent/shell.py", 3)]
+        check("RED control: a planted trigger body's bare argv and its two shell lines are found, nothing else "
+              "(routed, advice text, __pycache__, a non-.py file)", read and hits == want, str(hits))
+        (h / "empty").mkdir()
+        got, read = oc.trigger_sites(h / "empty")
+        check("a HOME with no triggers/ is SKIPPED (not read), never a pass of an empty set", not read and not got,
+              f"{read} {got}")
+
     if not walk_ok:
         # a walk that reads gitignored files would point the live census at the org's estate (homes/, memory/, tier/:
         # personal files, and minutes of walking: seed #59151). It is never run through a broken walk.
@@ -123,9 +146,14 @@ def main():
     for k, what in (("dsn", "ASTRYX_DSN read outside the resolvers"), ("estate", "checkout-based estate read / literal "
                     "DSN default"), ("env", "environment-first read of an org name"),
                    ("namespace", "host-wide name (a tmux call on the default socket)"),
+                   ("triggers", "default-socket tmux in the org's trigger bodies (HOME/triggers)"),
                    ("unparsed", "file the census can't parse (unscanned: fails closed)")):
+        if k == "triggers" and not res["triggers_read"]:
+            continue                            # nothing read is not a pass: stated below instead
         check(f"no {what}: {len(res[k])}", not res[k],
               "; ".join(f"{r['file']}:{r['line']} {r['what']}" for r in res[k][:12]))
+    if not res["triggers_read"]:
+        print("  ·  the org's trigger bodies: NOT READ (this HOME has no triggers/: a worktree; merge_check links them)")
     print(f"  ·  guarded: {len(res['guarded'])} site(s) in {len(res['guarded_files'])} file(s); declared: "
           f"{len(res['declared'])}; org names derived: {len(res['org_names'])}")
 
