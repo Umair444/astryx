@@ -44,6 +44,7 @@ from fastapi import FastAPI, Request, Response
 from .embed_root import Refused, owner_only, read_checked
 from .common import (HERE, MEDIA_DIR, Outcome, route_target, describe_media,
                      env, listen, load_routes,
+                     reacted_message, reaction_signal,
                      record_poll, resolve_quoted_body, split_files, split_polls,
                      step_line, update_poll_votes, vote_body, vote_changes, wire_insert,
                      door_open, door_org_ok, live_steps_ok, released)
@@ -340,6 +341,29 @@ async def hook(request: Request):
 
     if m.get("FromMe"):
         return {"ok": True}                       # our own sends echo back; drop
+
+    # ---- reactions: a reaction has no text, so the empty-text drop below discarded every one (owner
+    # 10-18: "does whatsapp chat reactions respond back to u?"). Discord and Telegram already deliver
+    # them through reaction_signal; this is the same path. Only a reaction to a message an agent SENT
+    # here is delivered (we stored its WhatsApp id as delivery.message_id): a reaction between humans
+    # in an open group is not addressed to anyone. A removal carries no emoji and says nothing.
+    if m.get("ReactionToID"):
+        emoji = (m.get("ReactionEmoji") or "").strip()
+        if not emoji or (msgid and msgid in seen_msgids):
+            return {"ok": True}
+        sender_jid = jid_str(m.get("SenderJID"))
+        trusted = sender_jid in route.get("trusted_jids", [])
+        if not trusted and not route.get("open"):
+            return {"ok": True}
+        agent, snippet = await reacted_message(pool, f"wa:{chat}", m["ReactionToID"])
+        if agent is None:
+            return {"ok": True}
+        if msgid:
+            seen_msgids[msgid] = now
+        digits = "".join(c for c in sender_jid.split("@")[0] if c.isdigit())
+        who = "owner" if trusted else f"wa-{digits or 'unknown'}"
+        await reaction_signal(pool, "whatsapp", f"wa:{chat}", who, emoji, agent, snippet)
+        return {"ok": True}
 
     text = (m.get("Text") or "").strip()
     # media rides as a nested object in the webhook payload: Media.Type
