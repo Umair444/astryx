@@ -511,6 +511,7 @@ run "steps doorbell resolves only the named agent's step" "$PY" tests/test_step_
 run "bridge replies route to who the thread is talking with" "$PY" tests/test_bridge_routing.py
 run "whatsapp /hook: one message, one wire row, however its webhooks arrive" "$PY" tests/test_wa_hook_dedup.py
 run "whatsapp: wacli retries only transient errors (store locked, 429), bounded" "$PY" tests/test_wa_retry.py
+run "whatsapp /hook: a reaction to an agent's message reaches that agent" "$PY" tests/test_wa_reactions.py
 # the registry door (goal 4227, S4): find + run, and never a new capability. run() executes
 # registered SCRIPTS only, as an argv list (no shell), with a clamped timeout, and never starts
 # an MCP server, because that would walk past its charter grant. Mutants: tests/mutants_tools_door.py.
