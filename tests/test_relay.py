@@ -234,9 +234,11 @@ def run(fr, fa, fb, tmp):
         arm(f"R1: {len(burst)} envelopes against an inbox cap of {B_RATE} all land, eventually (429 = keep, back off)",
             codes == [200] * len(burst) and bool(allin),
             (codes, [landed(B, "orga.test", b) for b in burst], B.tail()))
-        # R2: an item that RAISES (a dict thread breaks the INSERT) must not jam the mailbox
-        bad = A.envelope("seed@orgb.test", f"raises {uuid.uuid4().hex[:6]}")
-        bad["thread"] = {"not": "text"}
+        # R2: an item that RAISES must not jam the mailbox. A NUL in the body breaks B's INSERT (postgres text holds no
+        # NUL); the relay keeps it, escaped, in its JSON text. (A dict thread no longer raises: inbox coerces it to
+        # text since a2 #60449 A-1, so it would land, and this arm would test nothing.)
+        tag = f"raises {uuid.uuid4().hex[:6]}"
+        bad = A.envelope("seed@orgb.test", tag + "\x00")
         bad = relay.signed(bad, A.key)
         good = f"after the raiser {uuid.uuid4().hex[:6]}"
         c1 = httpx.post(f"{rel}/relay/send", json={"to": "orgb.test", "kind": "msg", "envelope": bad}).status_code
@@ -244,7 +246,8 @@ def run(fr, fa, fb, tmp):
                                               "envelope": A.envelope("seed@orgb.test", good)})
         through = wait(lambda: landed(B, "orga.test", good), 40, "the good envelope behind the raiser lands")
         arm("R2: a validly signed item that raises is retried, then skipped; the one behind it lands",
-            c1 == 200 and bool(through) and landed(B, "orga.test", bad["body"]) == 0
+            c1 == 200 and bool(through)
+            and q(B.dsn, "SELECT count(*) FROM messages WHERE body LIKE %s", tag + "%")[0][0] == 0
             and f"(attempt {3}/3)" in B.log.read_text(), (c1, B.tail()))
         left = q(R.dsn, "SELECT count(*) FROM relay_mail WHERE to_org='orgb.test'")[0][0]
         arm("collected mail is acked off the relay", bool(wait(

@@ -242,13 +242,15 @@ def main():
             import time
             import urllib.error
             import urllib.request
-            with socket.socket() as so:
-                so.bind(("127.0.0.1", 0))
-                port = so.getsockname()[1]
+            so = socket.socket()                      # held and inherited (--fd): never released for another gate
+            so.bind(("127.0.0.1", 0))
+            so.listen(64)
+            port = so.getsockname()[1]
             uenv = {k: v for k, v in env.items() if k not in ("ASTRYX_DSN", "ASTRYX_INBOX_RATE")}
-            srv = subprocess.Popen([py, "-m", "uvicorn", "gateway:app", "--host", "127.0.0.1", "--port", str(port)],
-                                   env=uenv, cwd=fx.co / "bridges", stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            srv = subprocess.Popen([py, "-m", "uvicorn", "gateway:app", "--fd", str(so.fileno())],
+                                   pass_fds=(so.fileno(),), env=uenv, cwd=fx.co / "bridges", stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                    text=True)
+            so.close()                                # the child holds it now
             try:
                 code, end = None, time.time() + 60
                 while time.time() < end and srv.poll() is None:

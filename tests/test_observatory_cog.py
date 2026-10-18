@@ -84,10 +84,13 @@ def check(name, ok, detail=""):
             print(f"        {detail}")
 
 
-def free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+def listener() -> socket.socket:
+    """A loopback socket, bound and LISTENING, that its uvicorn inherits (--fd): the port is never released for a
+    concurrent gate to take (the gate census, plan-10108 D4 (b))."""
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    s.listen(64)
+    return s
 
 
 def wait_up(port: int, proc, t: float = 30) -> bool:
@@ -130,7 +133,9 @@ def main():
         pid = os.getpid()
         oa, ob = f"fxobs-a-{pid}", f"fxobs-b-{pid}"
         na, nb = f"fxobs-fed-a-{pid}", f"fxobs-fed-b-{pid}"
-        pa, pb, pf = free_port(), free_port(), free_port()
+        socks = [listener() for _ in range(3)]
+        sa, sb, sf = socks
+        pa, pb, pf = (s.getsockname()[1] for s in socks)
         (t / "app.py").write_text(BACKEND)
         reg = {"orgs": {}}
         for o, n, p in ((oa, na, pa), (ob, nb, pb)):
@@ -143,9 +148,9 @@ def main():
         logs = {oa: t / "a.log", ob: t / "b.log"}
         env = {k: os.environ[k] for k in ("PATH", "HOME") if k in os.environ}
         backs = {}
-        for o, p in ((oa, pa), (ob, pb)):
-            backs[o] = subprocess.Popen([PY, "-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", str(p)],
-                                        cwd=t, env={**env, "PYTHONPATH": str(t), "FX_TAG": o, "FX_LOG": str(logs[o])},
+        for o, s in ((oa, sa), (ob, sb)):
+            backs[o] = subprocess.Popen([PY, "-m", "uvicorn", "app:app", "--fd", str(s.fileno())],
+                                        pass_fds=(s.fileno(),), cwd=t, env={**env, "PYTHONPATH": str(t), "FX_TAG": o, "FX_LOG": str(logs[o])},
                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             procs.append(backs[o])
         front_src = os.environ.get("OBS_FRONT_SRC")          # a mutant front.py (tests/mutants_observatory_cog.py)
@@ -155,10 +160,12 @@ def main():
             fdir.mkdir()
             (fdir / "front.py").write_text(Path(front_src).read_text().replace(
                 'ROOT = Path(__file__).resolve().parent', f'ROOT = Path({str(REPO / "observatory")!r})'))
-        front = subprocess.Popen([PY, "-m", "uvicorn", "front:app", "--host", "127.0.0.1", "--port", str(pf)],
-                                 cwd=fdir, env={**env, "ASTRYX_COG_REGISTRY": str(t / "cog.json")},
+        front = subprocess.Popen([PY, "-m", "uvicorn", "front:app", "--fd", str(sf.fileno())],
+                                 pass_fds=(sf.fileno(),), cwd=fdir, env={**env, "ASTRYX_COG_REGISTRY": str(t / "cog.json")},
                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         procs.append(front)
+        for s in socks:          # the children hold them now; a backend that dies must REFUSE, not queue (O-stream)
+            s.close()
         up = wait_up(pf, front)
         for o, p in ((oa, pa), (ob, pb)):
             end = time.time() + 20
