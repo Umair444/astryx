@@ -3,6 +3,7 @@ import { AppShell, Burger, Group, Popover, Text, TextInput, Tooltip } from '@man
 import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import { saveObsKey } from './api'
 import { StoreProvider, useStore } from './store'
+import { CogProvider } from './cog'
 import Sidebar from './components/Sidebar'
 import NetworkView from './components/NetworkView'
 import FloorView from './components/FloorView'
@@ -327,8 +328,10 @@ function Shell() {
 
 export default function App() {
   return (
-    <StoreProvider>
-      <Shell />
-    </StoreProvider>
+    <CogProvider>
+      <StoreProvider>
+        <Shell />
+      </StoreProvider>
+    </CogProvider>
   )
 }

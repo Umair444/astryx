@@ -11,6 +11,8 @@ export interface Flash {
   to: string | null
   from_org: string | null
   to_org: string | null
+  thread?: string | null // the floor pairs a message's two copies in a cog (sender's outbound, receiver's inbound) on these
+  body?: string
 }
 
 interface Store {
@@ -138,7 +140,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (e.type === 'message') {
         const { type: _t, ...m } = e
         setMessages((cur) => (cur.some((x) => x.id === m.id) ? cur : [...cur, m as Msg]))
-        setFlash({ key: m.id, from: m.from, to: m.to, from_org: m.from_org, to_org: m.to_org })
+        setFlash({ key: m.id, from: m.from, to: m.to, from_org: m.from_org, to_org: m.to_org, thread: m.thread, body: m.body })
         return
       }
       if (e.type === 'presence') {
