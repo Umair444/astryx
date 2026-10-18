@@ -5,6 +5,7 @@
     venv/bin/python src/astryx/influence/shell.py compute  [--days 14]      # the nightly job: edge cache + GLOBAL values
     venv/bin/python src/astryx/influence/shell.py ask <asker> [--topic T] [--k 5]   # who should I ask (advisory)
     venv/bin/python src/astryx/influence/shell.py backtest [--days 14]      # read-only: routing vs GLOBAL vs uniform
+    venv/bin/python src/astryx/influence/shell.py view [--group G] [--json] # read-only: each group's view (S3d)
 
 IO, all of it: ONE `git log` pass over main (the parent map, the merges and their subjects); ONE messages read of
 exactly the read tools' columns (graph.MSG_COLS, BC-R); econ's tool-ledger reader (econ._v2_tool_rows, per day so
@@ -201,6 +202,20 @@ def ask(conn, asker, topic=None, k=5, now=None, roster=None, liveness=None):
     return out
 
 
+def group_views(conn, now=None, roster=None, agents_dir=None):
+    """Every group's view at READ time (plan-11324 S3d): {group id: {"members": [...], "scores": {agent: score}}},
+    over the SAME cache read as ask() (no new SQL, nothing written, no per-group row). The groups come from
+    charter.groups(): the agents/ tree, the one authority. Read-only: the floor's zones and `view` call this."""
+    now = now or datetime.now(timezone.utc)
+    agents_dir = Path(agents_dir) if agents_dir else charter.AGENTS
+    roster = sorted(roster if roster is not None else charter.roster(agents_dir))
+    edges = read_cache(conn)
+    cov = {e["kind"]: e["coverage"] for e in edges}
+    return {gid: {"members": g["members"],
+                  "scores": graph.group_scores(edges, cov, roster, gid, g["members"], now)}
+            for gid, g in charter.groups(agents_dir).items()}
+
+
 def backtest(conn, days=DAYS, repo=REPO, ref="main", now=None, roster=None, history_days=DAYS):
     """For each answered delegation and each landed review in the last `days`: the routing view from edges strictly
     BEFORE the ask (teleport on the asker) ranks the agent who delivered; baselines uniform and GLOBAL."""
@@ -231,11 +246,13 @@ def backtest(conn, days=DAYS, repo=REPO, ref="main", now=None, roster=None, hist
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    p.add_argument("verb", choices=("report", "compute", "ask", "backtest"))
+    p.add_argument("verb", choices=("report", "compute", "ask", "backtest", "view"))
     p.add_argument("asker", nargs="?")
     p.add_argument("--days", type=int, default=DAYS)
     p.add_argument("--topic")
     p.add_argument("--k", type=int, default=5)
+    p.add_argument("--group", help="view: one group's id (charter.groups()); every group when omitted")
+    p.add_argument("--json", action="store_true", help="view: the groups and scores as JSON")
     p.add_argument("--dsn")
     p.add_argument("--repo", default=str(REPO))
     p.add_argument("--ref", default="main")
@@ -265,6 +282,23 @@ def main(argv=None):
             p.error("ask needs <asker>")
         with connect(a.dsn, readonly=False) as conn:
             print("\n".join(ask(conn, a.asker, a.topic, a.k, roster=roster)["lines"]))
+    elif a.verb == "view":
+        with connect(a.dsn) as conn:
+            views = group_views(conn, roster=roster, agents_dir=a.agents)
+        if a.group is not None:
+            if a.group not in views:
+                print(f"no group {a.group!r} in {a.agents} (groups: {', '.join(views) or 'none'})", file=sys.stderr)
+                return 2
+            views = {a.group: views[a.group]}
+        if a.json:
+            import json
+            print(json.dumps(views, indent=1, sort_keys=True))
+        else:
+            for gid, g in views.items():
+                print(f"group {gid} (members {', '.join(g['members'])}; teleport on the members, read-time)")
+                ranked = sorted(((x, s) for x, s in g["scores"].items() if s > 0), key=lambda kv: (-kv[1], kv[0]))
+                for i, (ag, sc) in enumerate(ranked[:a.k], 1):
+                    print(f"  {i}. {ag}  {sc:.4f}{'' if ag in g['members'] else '  (outside the group)'}")
     else:
         with connect(a.dsn) as conn:
             print("\n".join(backtest(conn, a.days, a.repo, a.ref, roster=roster)))

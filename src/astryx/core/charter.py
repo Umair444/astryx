@@ -170,9 +170,9 @@ def roster_of_type(kind: str, agents_dir: Path = AGENTS) -> list[str]:
 if __name__ == "__main__":
     if sys.argv[1:] == ["--roster"]:                 # for shell callers (spawn-all.sh)
         print("\n".join(roster())); sys.exit(0)
-    if sys.argv[1:] == ["--groups"]:                 # the org's groups as JSON (S3d), for any non-python reader
-        import json
-        print(json.dumps(groups(), indent=1)); sys.exit(0)
+    if sys.argv[1:2] == ["--groups"] and len(sys.argv) <= 3:   # the org's groups as JSON (S3d), for any non-python
+        import json                                                 # reader; an agents/ dir may follow (fixtures)
+        print(json.dumps(groups(Path(sys.argv[2]) if len(sys.argv) == 3 else AGENTS), indent=1)); sys.exit(0)
     if len(sys.argv) not in (2, 3):
         print("usage: charter.py <name> [--type]", file=sys.stderr)
         sys.exit(2)

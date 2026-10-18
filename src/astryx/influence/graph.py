@@ -478,6 +478,21 @@ def routing_view(weights, asker, topic_agents=()):
     return view("routing", weights, tp)
 
 
+def group_view(weights, group_id, members):
+    """GROUP (plan-11324 S3d): uniform teleport over ONE group's members (charter.groups(), derived from the agents/
+    tree at read time). The edge set is the org's, whole: a group view moves ATTENTION (whose work this group's
+    walk reaches), never what an edge may cite, so an agent outside the group still scores when the group relies
+    on it. Dangling mass returns to the group (DANGLING 'teleport'), so the view stays the group's."""
+    if not members:
+        raise ValueError(f"group {group_id!r} has no members: a view needs teleport mass")
+    return view(f"group:{group_id}", weights, {a: 1.0 for a in members})
+
+
+def group_scores(edges, coverages, nodes, group_id, members, now):
+    """{agent: score} under the group's view, over the cached edges, at READ time: nothing is stored per group."""
+    return scores(edges, group_view(kind_weights(coverages), group_id, members), nodes, now)
+
+
 def weighted(edges, v, now):
     """[(src, dst, w)] for edges strictly before `now`: kind weight x 0.5^(age / half-life)."""
     out = []

@@ -864,6 +864,9 @@ run "tool census: the known-answer fixture reads back as its domain, fixes, inst
 # rows of exactly the read tools' columns; ONE fixture arm drives the shell's reads and cache write empty and populated.
 # Mutants: tests/mutants_influence.py.
 run "influence graph: SHA-joined PASSes, BC-D delegation, coverage-gated kinds, PPR known answers, the tool (11324 S2)" "$PY" tests/test_influence.py
+# group scopes (11324 S3d): groups derived from the agents/ tree (charter.groups), their read-time influence views, and
+# reach unchanged (the read tools name no group). DB-free. Mutants: tests/mutants_groups_charter.py, mutants_groups_graph.py.
+run "group scopes: groups from the tree, read-time group views, reach unchanged (11324 S3d)" "$PY" tests/test_groups.py
 # econ PROVENANCE (steward): a2's trip (#21969) evaluated, not remembered — every v2.1+ econ row's
 # built_from.sha must be an ancestor of main with dirty=false; missing/unknown/foreign/dirty rows are
 # reported with their own remedies (report-only trigger, gitignored body; SKIPs where it is absent).
