@@ -20,7 +20,7 @@ MUTANTS = {
     "I1 the registry refusal is gone (the blind tmux check is the only guard)":
         ('  if [ -e "${ASTRYX_ORG_REGISTRY:-/etc/astryx/orgs.json}" ]; then\n    die "this host has an org registry',
          '  if false; then\n    die "this host has an org registry'),
-    "I2 the refusal sits AFTER the first write (inside install_astryx, past the clone)":
+    "I2 the refusal fires only when the checkout already exists (a FRESH clone onto a multi-org host proceeds)":
         ('  if [ -e "${ASTRYX_ORG_REGISTRY:-/etc/astryx/orgs.json}" ]; then\n    die "this host has an org registry',
          '  if [ -e "${ASTRYX_ORG_REGISTRY:-/etc/astryx/orgs.json}" ] && [ -e "$ASTRYX_DIR/.git" ]; then\n    die "this host has an org registry'),
 }

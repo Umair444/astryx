@@ -281,7 +281,7 @@ def cmd_relay(a) -> int:
 
 def live_resident(agent: str) -> bool:
     try:
-        return subprocess.run(["tmux", "has-session", "-t", f"=ax-{agent}"], capture_output=True,  # org-home: a plugin join's HOME is a CHECKOUT (it execs HOME/venv, HOME/hooks): one org; a multi-org join is S3c's door
+        return subprocess.run(["tmux", "has-session", "-t", f"=ax-{agent}"], capture_output=True,  # org-home: a plugin join's HOME is a CHECKOUT (it execs HOME/venv, HOME/hooks): one org; a multi-org join is S3c's door. Blind to a resident on another org's server, it is BACKED by the charter check below (every org agent has a charter; a2 #59696 A-2)
                               timeout=5).returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False
