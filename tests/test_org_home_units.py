@@ -22,6 +22,7 @@ cog-scoped, and the port it binds) is declared once in src/astryx/data/org_units
   U9 PORT LITERALS ARE DECLARED (tests/org_port_literals.json): every tracked file whose executable text names a
      per-org fixed port is declared with its reason, and every declared file still has one; RED control: a planted
      file is accused. The `s3c` entries are the S3c trip (the observatory's ear/growbot proxies)
+  U10 a runners.conf stem that is a declared unit's (`gateway` -> astryx-gateway) refuses (a2 #60394 A-2)
   U5 the resolver: orgs.port() is None on one org, the registry's under HOME-A, NoHome with none; orgs.unit() is `astryx-pulse.timer` on one org, `astryx-pulse@<A>.timer` under HOME-A, and raises
      with no HOME carried; pulse_witness.timer_unit() follows it
 
@@ -277,6 +278,15 @@ def main():
         else:
             check(f"growbot MCP, HOME-A: http://127.0.0.1:{pa['astryx-growbot']}",
                   r.stdout.strip() == f"http://127.0.0.1:{pa['astryx-growbot']}", (r.stdout + r.stderr)[-300:])
+
+        print("\nU10 A RUNNER CAN'T TAKE A DECLARED UNIT'S NAME (a2 #60394 A-2)")
+        keep = (B / "nucleus" / "runners.conf").read_text()
+        (B / "nucleus" / "runners.conf").write_text("gateway | org | *-*-* 03:00:00 | scripts/backup.sh | collides\n")
+        r = render(fx.env(ASTRYX_HOME=str(B)), fx.t / "u_rc")
+        check("a runner named `gateway` (astryx-gateway): REFUSED, nothing written under that name",
+              r.returncode != 0 and "runner 'gateway'" in r.stderr
+              and not any("gateway" in n for n in files(fx.t / "u_rc")), f"rc {r.returncode} {r.stderr[-300:]}")
+        (B / "nucleus" / "runners.conf").write_text(keep)
 
         print("\nU9 PORT LITERALS ARE DECLARED")
         decl = json.loads((co / "tests" / "org_port_literals.json").read_text())["files"]

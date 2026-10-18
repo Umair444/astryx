@@ -381,6 +381,9 @@ EOF
       stem=$(echo "$stem" | xargs); [ -z "$stem" ] && continue
       agent=$(echo "$agent" | xargs); oncal=$(echo "$oncal" | xargs)
       execp=$(echo "$execp" | xargs); desc=$(echo "$desc" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+      # a runner's unit is astryx-<stem>: a stem that is a declared unit's (gateway, whatsapp, …) would overwrite it
+      grep -q "\"astryx-$stem\"" src/astryx/data/org_units.json \
+        && die "units: runner '$stem' in nucleus/runners.conf is a declared unit's name (src/astryx/data/org_units.json)"
       if [ "$agent" != org ] && ! ASTRYX_HOME="$ORGH" venv/bin/python src/astryx/core/charter.py "$agent" >/dev/null 2>&1; then
         echo "  runner '$stem': agent '$agent' not in roster — no unit generated" >&2; continue
       fi

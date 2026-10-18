@@ -39,4 +39,7 @@ MUTANTS = {
     "V8 the remote body's growbot is declared off by its PLAIN name (doctor checks a file this org doesn't have)":
         ('UNITS_EXPECT_DISABLED="$UNITS_EXPECT_DISABLED ${_UF##*/}"',
          'UNITS_EXPECT_DISABLED="$UNITS_EXPECT_DISABLED astryx-growbot.service"'),
+    "V9 a runner may take a declared unit's name (a runner `gateway` overwrites astryx-gateway, a2 #60394 A-2)":
+        ('        && die "units: runner \'$stem\' in nucleus/runners.conf is a declared unit\'s name',
+         '        && : "units: runner \'$stem\' in nucleus/runners.conf is a declared unit\'s name'),
 }
