@@ -13,12 +13,15 @@ Hermetic: each arm writes a tiny subject, oracle and spec into a temp dir and ru
   R5  a line that IS a failure beats lines that only mention a keyword (no crowd-out at the cap)
   R6  a subject that can't load from the mutant location REFUSES (the relocated baseline), never grades a no-op CAUGHT
   R7  a same-size mutant right after the baseline is CAUGHT: no cached bytecode of the previous copy stands in for it
-  R8  the probe adds no name to the oracle's environment but its ENV seam (unbuffered by `-u`, a flag)
+  R8  the probe adds no name to the oracle's environment but its ENV seam (unbuffered by `-u`, a flag) and its pinned
+      ASTRYX_COG_REGISTRY
   R9  outside any git tree, a subject that resolves by its code-tree tail (pkg/subj.py, its oracle in tests/) loads at
       the mutant location: the baseline passes and its mutant is CAUGHT, never a REFUSE (a3 #60145, a4 10-19)
   R10 inside a git tree, the git root decides the tail, never the oracle: an oracle OUTSIDE the tree gives pkg/subj.py
   R11 no .git but the estate's marker (astryx.py): a subject in tests/ BESIDE its oracle keeps tests/subj.py, as a
       worktree places it, never the bare name the shared directory gives (a3 #60809: 4 specs of 166 live there)
+  R12 the oracle never sees the HOST's org registry (plan-11324 S3f S3, a2 #60815): handed a REAL two-org registry by
+      its caller (the pulse's probe_all on a cog host), the oracle's ASTRYX_COG_REGISTRY names no file
   C1  control: a passing baseline prints no tail block, and its mutant is CAUGHT
 """
 import json
@@ -127,7 +130,7 @@ with tempfile.TemporaryDirectory() as t:
     # its own environment, and PYTHONUNBUFFERED=1 from the probe failed every census baseline (seed #60425)
     rc, out = probe(d, "import json, os, sys\n"
                        f"given = set(json.load(open({str(d / 'probe_env.json')!r})))\n"
-                       "extra = sorted(set(os.environ) - given - {'FIX_SRC'})\n"
+                       "extra = sorted(set(os.environ) - given - {'FIX_SRC', 'ASTRYX_COG_REGISTRY'})\n"
                        "if extra:\n    print('  FAIL  added by the probe:', extra)\n    sys.exit(1)\n"
                        "sys.exit(0 if 'X = 1' in open(os.environ['FIX_SRC']).read() else 1)\n")
     check("R8 the oracle's environment gains no name from the probe but its ENV seam (baseline passes, mutant CAUGHT)",
@@ -163,6 +166,27 @@ with tempfile.TemporaryDirectory() as t:
     rc, out = probe(d, runs, subject=beside, subj_rel="tree/tests/subj.py", oracle_rel="tree/tests/oracle.py")
     check("R11 no .git, the marker decides: a subject beside its oracle in tests/ keeps tests/subj.py (mutant CAUGHT)",
           rc == 0 and "REFUSING" not in out and any(ln.lstrip().startswith("CAUGHT") for ln in out.splitlines()), out)
+
+    d = t / "r12"; d.mkdir()
+    host = d / "host-cog.json"                         # the caller's REAL two-org registry, as the pulse would read /etc
+    host.write_text(json.dumps({"orgs": {"fxqa": {"home": str(d / "a"), "db": "fxprobe_a"},
+                                         "fxqb": {"home": str(d / "b"), "db": "fxprobe_b"}}}))
+    old = os.environ.get("ASTRYX_COG_REGISTRY")
+    os.environ["ASTRYX_COG_REGISTRY"] = str(host)
+    try:
+        rc, out = probe(d, "import os, sys\nfrom pathlib import Path\n"
+                           "reg = os.environ.get('ASTRYX_COG_REGISTRY', '')\n"
+                           f"if not reg or reg == {str(host)!r} or Path(reg).exists():\n"
+                           "    print('  FAIL  the oracle sees the host registry:', reg)\n    sys.exit(1)\n"
+                           "sys.exit(0 if 'X = 1' in open(os.environ['FIX_SRC']).read() else 1)\n")
+    finally:
+        if old is None:
+            os.environ.pop("ASTRYX_COG_REGISTRY", None)
+        else:
+            os.environ["ASTRYX_COG_REGISTRY"] = old
+    check("R12 handed a REAL two-org registry, the oracle's ASTRYX_COG_REGISTRY names no file (baseline passes, mutant "
+          "CAUGHT)", rc == 0 and "REFUSING" not in out and any(ln.lstrip().startswith("CAUGHT") for ln in out.splitlines()),
+          out)
 
     d = t / "c1"; d.mkdir()
     rc, out = probe(d, "import os, sys\nsys.exit(0 if 'X = 1' in open(os.environ['FIX_SRC']).read() else 1)\n")

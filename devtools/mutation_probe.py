@@ -112,7 +112,12 @@ def _run_oracle_out(oracle: Path, env_var: str, subject_path: Path, timeout: int
     # without it a timed-out oracle "printed nothing" though it did (a3 #57897 R-1, measured). A FLAG, never an
     # environment name: the probe adds NOTHING to the oracle's environment but its ENV seam. PYTHONUNBUFFERED=1 here
     # failed every org-census baseline, whose C4 refuses an unclassed name in its own environment (seed #60425).
+    # One pinned exception (plan-11324 S3f S3, a2 #60815 R-1): the oracle never sees the HOST's org registry. A battery
+    # the pulse launches (probe_all.sh) or a builder's shell runs reads /etc/astryx/cog.json, so on a cog host every
+    # family would run under multi; pinned to a path that names no file, the oracle runs as the checkout's own org,
+    # exactly as under check.sh (ASTRYX_COG_REGISTRY is a declared host-class name: data/org_env.json)
     env = dict(os.environ, **{env_var: str(subject_path)})
+    env["ASTRYX_COG_REGISTRY"] = f"{tempfile.gettempdir()}/astryx-probe-{os.getpid()}-no-registry/cog.json"
     with tempfile.TemporaryDirectory() as trace:
         # A mutant (or the canary) is NOT the inventoried code, so its SQL is not estate evidence: under check.sh's
         # sqlguard it read BLIND (126 lines, seed #33150, when the smoke family became one with SQL mutants). The
