@@ -13,8 +13,8 @@ Nothing here touches `/etc` until the fixture rehearsal (S6) is green.
 
 | | slice | why |
 |---|---|---|
-| S1 | `primary: true` in the registry (orgs.py, home.mjs, parity cases): at most one; it keeps the DEFAULT tmux socket, PLAIN unit names and today's ports; `door`, if set, must be the primary | without it, every tmux caller moves to `-L ax-<key>` the moment the registry has two entries (orgs.tmux), and agent_heal sees zero bodies (agent_heal.bodies: "no server running" is the empty set) |
-| S2 | a cog-safe `init.sh units` (writes `units/`, nothing else) | init.sh exits 3 at its top in a cog (init.sh:7-9); only the oracle's extracted `units_fx.sh` runs units() there today |
+| S1 | `primary: true` in the registry (orgs.py, home.mjs, parity cases): at most one; it keeps the DEFAULT tmux socket, PLAIN unit names and today's ports; `door`, if set, must be the primary | without it, every tmux caller moves to `-L ax-<key>` the moment the registry has two entries (orgs.tmux). agent_heal.bodies reads "no server running" as the EMPTY set, the cold-boot answer, and agent_heal spawns every missing seat: all 17 of our agents would start a SECOND time on `-L ax-astryx` while the originals live on the default socket, two residents per name on one wire (a2 #60783 A-2). So the registry waits for S1 DEPLOYED (agent_heal runs on the live pulse), never merely landed |
+| S2 | a cog-safe `init.sh units` (writes `units/`, nothing else) | init.sh exits 3 at its top in a cog (its `# >>> org-home guard` block); only the oracle's extracted `units_fx.sh` runs units() there today |
 | S3 | check.sh pins a missing registry for the gates | `/etc/astryx/cog.json` is a host FILE: every gate would run under multi, and pushed_tree_check's env scrub can't remove it |
 | S4 | deploy.sh, pause.sh, refresh.sh, smoke.sh, vitals.sh learn `@<key>` names for NON-primary orgs; the primary keeps today's verbs | each refuses in a cog today ("one-org only, refusing") |
 | S5 | `devtools/cog_add_org.sh <key> --dry-run` | lab's own setup path; it never calls this checkout's init.sh (see the trap in step 2) |
@@ -29,8 +29,19 @@ orgenv, spawn.sh and config hold no other check. The registry names `/home/umair
 - `db`: `astryx` (`orgs.db_of` on our `.env` DSN; `config.dsn` checks that pair in a cog)
 - `primary: true` (S1), `door: true`
 
-No file moves, no link changes. Every unit already carries `Environment=ASTRYX_HOME=/home/umair/astryx` and every
-resident's channel server carries it too (spawn.sh:256), so the env rung resolves them unchanged.
+No file moves, no link changes. Every unit already carries `Environment=ASTRYX_HOME=/home/umair/astryx` (12 of 12
+installed, a2 #60783) and every resident's channel server carries it too (spawn.sh's channel config), so the env rung
+resolves them unchanged.
+
+What does change (a2 #60783 A-3): anything run INSIDE the checkout WITHOUT ASTRYX_HOME gets NoHome in a cog. That covers
+the owner's own shell, any `venv/bin/python …` tool, and wall.sh. It fails closed and loud. The `READY`, reversible step
+that keeps them resolving to our org, done before the registry:
+
+    touch /home/umair/astryx/.astryx        # the marker rung (paths.find_marker); /.astryx is gitignored (.gitignore)
+    # rollback: rm /home/umair/astryx/.astryx
+
+a2 measured it on a fixture. With the marker, a shell in `homes/x` resolves to our org. A worktree (its `.git` is a
+FILE) still gets NoHome, because find_marker stops at the first git root, so worktrees stay fail-closed.
 
 ## 2. Create org #2, `lab`: `BLOCKED(S5)`
 
@@ -97,6 +108,9 @@ In order, each line the owner's:
 lab's agent_heal can only ever heal seed.
 
 ## 6. Verify: `BLOCKED(S6)` on a fixture first, then live
+
+S6's rehearsal holds an arm for the double spawn (a2 #60783): with the registry at two entries and S1 reverted, the
+rehearsal must SEE agent_heal plan to spawn our org's seats; with S1, agent_heal spawns nothing on our org.
 
 | check | command | pass |
 |---|---|---|
