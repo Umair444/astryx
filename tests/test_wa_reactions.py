@@ -12,8 +12,10 @@ what the real one would put on the wire.
   R2 wacli re-posting the same reaction id → still one
   R3 a removal (no emoji) → nothing
   R4 a reaction to a message no agent sent (a human's) → nothing
-  R5 a stranger on a CLOSED surface → nothing; on an OPEN surface → one, from wa-<digits>
+  R5 a stranger → nothing, on a closed surface AND on an open one (a family thumbs-up is not for an agent)
   R6 control: a reaction never reaches the chat path (no chat row, no store read)
+  R7 a reaction from the LINKED phone (FromMe) is the owner's → one signal, from 'owner' (a4 #60086 R-1)
+  R8 reaction_signal caps the emoji: a client can send any string as one (a4 A-1)
 """
 import asyncio
 import hashlib
@@ -127,11 +129,36 @@ async def main():
     check("R5 a stranger on a CLOSED surface says nothing", w.signals == [], f"{w.signals}")
     w = World({**ROUTE, "open": True}).install()
     await wa.hook(Req(event("ID-R5b", SenderJID=STRANGER, ReactionToID="ID-SEED-SENT", ReactionEmoji="❤️")))
-    check("R5 a stranger on an OPEN surface → one signal, from wa-<digits>, never 'owner'",
-          len(w.signals) == 1 and w.signals[0][2].startswith("wa-") and w.signals[0][2] != "owner", f"{w.signals}")
+    check("R5 a stranger on an OPEN surface says nothing either", w.signals == [], f"{w.signals}")
 
     check("R6 control: no reaction reached the chat path (no chat row, no store read)",
           w.rows == [] and w.store_reads == 0, f"{w.rows} {w.store_reads}")
+
+    w = World(ROUTE).install()
+    await wa.hook(Req(event("ID-R7", SenderJID="", FromMe=True, ReactionToID="ID-SEED-SENT", ReactionEmoji="🙏")))
+    check("R7 a reaction from the linked phone (FromMe) → one signal to seed, from 'owner'",
+          w.signals == [("whatsapp", f"wa:{CHAT}", "owner", "🙏", "seed", "synthetic agent message")], f"{w.signals}")
+    w.rows.clear()
+    await wa.hook(Req(event("ID-R7b", FromMe=True, Text="our own send echoing back")))
+    check("R7 control: a FromMe TEXT event is still dropped (our sends echo back)", w.rows == [], f"{w.rows}")
+
+    # the subject's own common.py (beside it), so WA_SRC=<a branch> tests that branch's cap, not main's
+    cspec = importlib.util.spec_from_file_location("bridges._common_subject", SUBJECT.parent / "common.py")
+    common = importlib.util.module_from_spec(cspec)
+    cspec.loader.exec_module(common)
+    got = []
+
+    async def fake_insert(pool, frm, org, to, thread, intent, body, meta=None, route=None, said=None):
+        got.append(body)
+    real, common.wire_insert = common.wire_insert, fake_insert
+    try:
+        await common.reaction_signal(None, "whatsapp", "wa:x", "owner", "👍" * 5000, "seed", "hi")
+        await common.reaction_signal(None, "whatsapp", "wa:x", "owner", "👩🏽‍💻", "seed", "hi")
+    finally:
+        common.wire_insert = real
+    check("R8 a 5000-char 'emoji' is capped at 32 code points on the wire",
+          len(got) == 2 and got[0] == f'reacted {"👍" * 32} to: "hi"', f"{len(got[0]) if got else None}")
+    check("R8 control: a ZWJ sequence passes whole", len(got) == 2 and got[1] == 'reacted 👩🏽‍💻 to: "hi"', f"{got[1:]}")
 
 asyncio.run(main())
 print()

@@ -339,31 +339,29 @@ async def hook(request: Request):
             + " | ".join(pc.get("Options", [])), route=route)
         return {"ok": True}
 
-    if m.get("FromMe"):
-        return {"ok": True}                       # our own sends echo back; drop
-
     # ---- reactions: a reaction has no text, so the empty-text drop below discarded every one (owner
     # 10-18: "does whatsapp chat reactions respond back to u?"). Discord and Telegram already deliver
-    # them through reaction_signal; this is the same path. Only a reaction to a message an agent SENT
-    # here is delivered (we stored its WhatsApp id as delivery.message_id): a reaction between humans
-    # in an open group is not addressed to anyone. A removal carries no emoji and says nothing.
+    # them through reaction_signal; this is the same path. It runs BEFORE the FromMe drop: the bridge
+    # never sends a reaction, so a FromMe reaction is the linked account's holder, the owner (the poll
+    # branch above reasons the same way). Only the OWNER's reaction, to a message an agent SENT here
+    # (its WhatsApp id stored as delivery.message_id), is delivered: a family thumbs-up on an open
+    # surface is not addressed to an agent. A removal carries no emoji and says nothing.
     if m.get("ReactionToID"):
         emoji = (m.get("ReactionEmoji") or "").strip()
         if not emoji or (msgid and msgid in seen_msgids):
             return {"ok": True}
-        sender_jid = jid_str(m.get("SenderJID"))
-        trusted = sender_jid in route.get("trusted_jids", [])
-        if not trusted and not route.get("open"):
+        if not (m.get("FromMe") or jid_str(m.get("SenderJID")) in route.get("trusted_jids", [])):
             return {"ok": True}
         agent, snippet = await reacted_message(pool, f"wa:{chat}", m["ReactionToID"])
         if agent is None:
             return {"ok": True}
         if msgid:
             seen_msgids[msgid] = now
-        digits = "".join(c for c in sender_jid.split("@")[0] if c.isdigit())
-        who = "owner" if trusted else f"wa-{digits or 'unknown'}"
-        await reaction_signal(pool, "whatsapp", f"wa:{chat}", who, emoji, agent, snippet)
+        await reaction_signal(pool, "whatsapp", f"wa:{chat}", "owner", emoji, agent, snippet)
         return {"ok": True}
+
+    if m.get("FromMe"):
+        return {"ok": True}                       # our own sends echo back; drop
 
     text = (m.get("Text") or "").strip()
     # media rides as a nested object in the webhook payload: Media.Type

@@ -297,6 +297,7 @@ async def reaction_signal(pool, channel: str, thread: str, reactor: str,
     to. A pure formatter: the bridge resolves who sent the message and what it said
     from its platform (the source of truth), since that differs per channel."""
     quoted = (snippet or "a message").strip().replace("\n", " ")[:100]
+    emoji = emoji[:32]                            # an emoji is a few code points; a client can send any string (a4 A-1)
     await wire_insert(pool, reactor, channel, agent, thread, "reaction",
                       f'reacted {emoji} to: "{quoted}"')
 
