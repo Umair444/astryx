@@ -12,7 +12,8 @@
   S6     save() is the wiring: it computes MEASURED from main and refuses a deletion with it (a1 #60120)
   S1-S5  status: done needs the claim AND the substrate; blocked / late / active / dropped; the critical path
   O1     the overlay's three classes
-  U1-U2  land-time attribution: a commit naming a workflow goal but no task is flagged (land.sh refuses it)
+  U1-U6  land-time attribution (U4-U6: a crash, a missing table or a bad range is rc 2, never the findings rc)
+         land-time attribution: a commit naming a workflow goal but no task is flagged (land.sh refuses it)
   L1     LIVE HISTORY (anti-vacuity, a1 #60109 A): on this checkout's origin/main, S1, S2, S3a and S3b each resolve to
          >= 1 commit and the UNATTRIBUTED count is > 0 (printed)
 Hermetic except L1, which reads this checkout's git log (no DB, no network).
@@ -190,6 +191,19 @@ check("U2 a goal WITHOUT a workflow is never flagged (only goals that carry one 
       wf.unattributed([("f6", "plan-9000: x", None)], wfs) == [])
 check("U3 a message id that happens to equal a goal id (\"a3 #11324\") is a citation, not a goal mention: never flagged",
       wf.unattributed([("g7", "sqlguard: fix the ledger (a3 #11324)", None)], wfs) == [])
+
+class BrokenConn:
+    def execute(s, sql, args=()):
+        raise RuntimeError('relation "goal_workflow" does not exist')
+
+
+rc, lines = wf.lint(BrokenConn(), root, "main")
+check("U4 a database without goal_workflow is rc 2 (cannot judge), never the findings rc (a1 #60239 L-1)",
+      rc == 2 and lines and lines[0].startswith("lint crashed"), f"{rc} {lines}")
+rc, lines = wf.lint(FakeConn((1, {"goal": 11324, "converge": "seed", "tasks": [{"id": "S1", "agent": "forge", "needs": []}]})),
+                    root, "0000000000000000000000000000000000000000..main")
+check("U5 a bad range is rc 2, never the findings rc", rc == 2, f"{rc} {lines}")
+check("U6 the findings rc is distinct from Python's uncaught-exception exit", wf.LINT_FINDINGS not in (0, 1, 2))
 
 # ---- L: the live history (anti-vacuity)
 live_ref = "origin/main" if subprocess.run(["git", "-C", str(REPO), "rev-parse", "-q", "--verify", "origin/main"],

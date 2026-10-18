@@ -32,6 +32,10 @@ MUTANTS = {
         ("            if (attribute(goal, ids, subject, trailer) == UNATTRIBUTED\n", "            if (False\n"),
     "W15 a cited '#<msg id>' equal to a goal id is flagged (a false refusal at land)":
         ('re.search(rf"(?i)(?:plan-|goal |\\(|^){goal}(?![0-9])", subject)', 'True'),
+    "W16 findings exit 1, colliding with a crash (land.sh refuses on a traceback; a1 #60239)":
+        ("LINT_FINDINGS = 3", "LINT_FINDINGS = 1"),
+    "W17 the lint's try is gone (a missing table or a bad range escapes as a crash)":
+        ("    except Exception as e:\n        return 2, [f\"lint crashed", "    except ZeroDivisionError as e:\n        return 2, [f\"lint crashed"),
     "W7 the trailer is ignored":
         ("    if trailer:\n", "    if False:\n"),
     "W8 a self-review passes":

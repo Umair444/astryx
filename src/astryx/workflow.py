@@ -262,6 +262,32 @@ def main_commits(repo, goal: int, ref: str = "origin/main"):
     return rows
 
 
+LINT_FINDINGS = 3   # distinct from Python's uncaught-exception exit (1): land.sh refuses only on 3 WITH finding lines
+
+
+def lint(conn, repo, rng: str) -> tuple[int, list[str]]:
+    """(rc, lines) for `workflow.py lint A..B`: LINT_FINDINGS and one `UNATTRIBUTED …` line per finding; 0 clean;
+    2 when the lint itself cannot judge (a bad range, a database without goal_workflow, any bug). A crash is NEVER a
+    finding: land.sh would refuse every land on it (a1 #60239 L-1)."""
+    try:
+        import subprocess
+        log = subprocess.run(["git", "-C", str(repo), "log", rng,
+                              "--format=%H%x1f%s%x1f%(trailers:key=Task,valueonly,separator=%x2c)%x1e"],
+                             capture_output=True, text=True, check=True).stdout
+        commits = [tuple(r.strip("\n").split("\x1f")) for r in log.split("\x1e") if r.strip()]
+        commits = [(c[0], c[1], c[2].strip() or None) for c in commits if len(c) == 3]
+        wfs = {}
+        for g in goals(conn):
+            got = load(conn, g)
+            if got:
+                wfs[g] = [t["id"] for t in got[1]["tasks"]]
+        bad = unattributed(commits, wfs)
+    except Exception as e:
+        return 2, [f"lint crashed: {type(e).__name__}: {str(e)[:120]}"]
+    lines = [f"UNATTRIBUTED {sha[:12]} names goal {g} but none of its tasks {wfs[g]}: {subj[:90]}" for sha, g, subj in bad]
+    return (LINT_FINDINGS if bad else 0), lines
+
+
 def load(conn, goal: int):
     """(rev, body) of the goal's latest workflow revision, or None."""
     r = conn.execute("SELECT rev, body FROM goal_workflow WHERE goal_id=%s ORDER BY rev DESC LIMIT 1", (goal,)).fetchone()
@@ -296,7 +322,7 @@ def _main(argv) -> int:
     """python -m astryx.workflow set <goal> <body.json> [author]   validate + append a revision
        python -m astryx.workflow check <body.json>                 validate only (no DB)
        python -m astryx.workflow show <goal>                       the measured reading, as JSON
-       python -m astryx.workflow lint <A>..<B>                     rc 1 if a commit names a workflow goal but no task"""
+       python -m astryx.workflow lint <A>..<B>                     rc 3 if a commit names a workflow goal but no task; 2 if it cannot judge"""
     import json
     import os
     import sys
@@ -325,17 +351,9 @@ def _main(argv) -> int:
             print(f"goal {argv[1]} workflow rev {rev}")
             return 0
         if argv[:1] == ["lint"] and len(argv) == 2:
-            import subprocess
-            log = subprocess.run(["git", "-C", str(repo), "log", argv[1],
-                                  "--format=%H%x1f%s%x1f%(trailers:key=Task,valueonly,separator=%x2c)%x1e"],
-                                 capture_output=True, text=True, check=True).stdout
-            commits = [tuple(r.strip("\n").split("\x1f")) for r in log.split("\x1e") if r.strip()]
-            commits = [(c[0], c[1], c[2].strip() or None) for c in commits if len(c) == 3]
-            wfs = {g: [t["id"] for t in load(conn, g)[1]["tasks"]] for g in goals(conn)}
-            bad = unattributed(commits, wfs)
-            for sha, g, subj in bad:
-                print(f"UNATTRIBUTED {sha[:12]} names goal {g} but none of its tasks {wfs[g]}: {subj[:90]}")
-            return 1 if bad else 0
+            rc, lines = lint(conn, repo, argv[1])
+            print("\n".join(lines))
+            return rc
         if argv[:1] == ["show"] and len(argv) == 2:
             got = load(conn, int(argv[1]))
             if not got:
