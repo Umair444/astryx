@@ -449,7 +449,12 @@ def main():
             body = (f'CHECK_LIB_ONLY=1 source "{REPO / "devtools" / "check.sh"}"\nunset CHECK_LIB_ONLY\n'
                     f'run --cap=8 "rider" "{sys.executable}" "{gate_py}" "{where}"\nverdict\n')
             env = {**os.environ, "ASTRYX_DSN": dsn, "RIDER_RS": rs_src}
-            out = subprocess.run(["bash", "-c", body], capture_output=True, text=True, timeout=60, cwd=REPO,
+            # The cap kill is this fixture's point, so its `rider 124` row and its traces go to a scratch sqlguard dir.
+            # In the run's own dir, `rider` joined RunScope.open's covering set and the site was never complete:
+            # NOT SEARCHED every run, then R-CLOCK (medic #59692).
+            if env.get("ASTRYX_SQLGUARD_DIR"):
+                env["ASTRYX_SQLGUARD_DIR"] = tempfile.mkdtemp(prefix="sg.", dir=gate_py.parent)
+            out =subprocess.run(["bash", "-c", body], capture_output=True, text=True, timeout=60, cwd=REPO,
                                  env=env).stdout
             val = lambda k: next((ln.split("=", 1)[1] for ln in out.splitlines() if ln.startswith(k + "=")), None)
             return out, val("ROLE"), val("LOCK")
