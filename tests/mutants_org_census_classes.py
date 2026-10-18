@@ -26,4 +26,6 @@ MUTANTS = {
         ('"LISTEN_*", ', ''),
     "T4 the unit's directories are unclassed":
         ('"RUNTIME_DIRECTORY", "STATE_DIRECTORY", ', ''),
+    "T5 land.sh's LAND_* knobs are unclassed again (seed #60411: LAND_TEST_TIMEOUT turned every census land red)":
+        ('"LAND_*", ', ''),
 }

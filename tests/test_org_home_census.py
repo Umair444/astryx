@@ -246,6 +246,13 @@ def main():
     check("C4 under a timer's environment: TRIGGER_* adds no unclassed name",
           set(unclassed({**os.environ, **timer})) == set(unclassed(os.environ)),
           str(sorted(set(unclassed({**os.environ, **timer})) - set(unclassed(os.environ)))))
+    # land.sh's own knobs (seed #60411: LAND_TEST_TIMEOUT, its documented knob, turned C4 red on every census-touching
+    # land that set it). Typed from devtools/land.sh, never read from the classes: each is harness (dropped, never
+    # passed into an org's pane)
+    bad = sorted(n for n in ("LAND_TEST_TIMEOUT", "LAND_PROBE") if orgenv.class_of(n, cls) != "harness")
+    check("land.sh's knobs (LAND_TEST_TIMEOUT, LAND_PROBE) are harness", not bad, str(bad))
+    check("C4 under land.sh's environment: LAND_TEST_TIMEOUT adds no unclassed name",
+          set(unclassed({**os.environ, "LAND_TEST_TIMEOUT": "2400"})) == set(unclassed(os.environ)))
     for shape, names in (("a timer-started service", ("TRIGGER_UNIT", "TRIGGER_TIMER_REALTIME_USEC",
                                                        "TRIGGER_TIMER_MONOTONIC_USEC", "INVOCATION_ID", "JOURNAL_STREAM",
                                                        "SYSTEMD_EXEC_PID")),
