@@ -116,6 +116,15 @@ for k in ${KNOWN[@]+"${KNOWN[@]}"}; do
   echo "land: known-red $k on main ${OLD:0:12}: rc $rc, $(printf '%s' "${BASE_FAILS[$k]}" | grep -c .) failing line(s) of ${BASE_N[$k]} verdict line(s)"
 done
 
+# WORKFLOW ATTRIBUTION (plan-11324 S4, steward #60232): a commit naming a goal that carries a workflow must name one of
+# its tasks ("plan-<goal> <task>:" or a `Task: <goal>/<id>` trailer), or the task's Gantt bar never sees the work.
+# Refused BEFORE the merge, so the author re-words it while it is still a branch. No database: said, not passed.
+wl=$(env -u ASTRYX_AGENT "${PY:-venv/bin/python}" src/astryx/workflow.py lint "$A_SHA..$B_SHA" 2>&1); wrc=$?
+case $wrc in
+  0) ;;
+  1) printf '%s\n' "$wl" | sed 's/^/land: /'; refuse "the range has commits naming a workflow goal but none of its tasks (re-word them: plan-<goal> <task>: …)";;
+  *) echo "land: workflow attribution NOT CHECKED (rc $wrc): $(printf '%s' "$wl" | tail -1)";;
+esac
 git merge -q --ff-only "$B_SHA" || refuse "git merge --ff-only failed"
 echo "land: main ${OLD:0:12} -> ${B_SHA:0:12}"
 RED=0; RESULTS=()

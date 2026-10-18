@@ -233,6 +233,19 @@ def overlay(body: dict, measured) -> dict:
     return {"thread": f"plan-{body['goal']}", "edges": edges}
 
 
+def unattributed(commits, workflows: dict) -> list[tuple[str, int, str]]:
+    """Commits that name a goal carrying a workflow but resolve to none of its tasks: [(sha, goal, subject)].
+    land.sh refuses a range holding one, so a task's work is attributed before it lands, never after (steward #60232:
+    two shipped tasks read late because their subjects were off-form). `commits` = [(sha, subject, trailer)],
+    `workflows` = {goal: [task ids]}."""
+    out = []
+    for sha, subject, trailer in commits:
+        for goal, ids in sorted(workflows.items()):
+            if attribute(goal, ids, subject, trailer) == UNATTRIBUTED:
+                out.append((sha, goal, subject))
+    return out
+
+
 # ------------------------------------------------------------------------------------------------- shell (IO only)
 def main_commits(repo, goal: int, ref: str = "origin/main"):
     """[(sha, ts, subject, Task-trailer)] of every commit on `ref` whose subject or trailer names the goal."""
@@ -281,7 +294,8 @@ def save(conn, goal: int, body: dict, author: str, roster, repo) -> int:
 def _main(argv) -> int:
     """python -m astryx.workflow set <goal> <body.json> [author]   validate + append a revision
        python -m astryx.workflow check <body.json>                 validate only (no DB)
-       python -m astryx.workflow show <goal>                       the measured reading, as JSON"""
+       python -m astryx.workflow show <goal>                       the measured reading, as JSON
+       python -m astryx.workflow lint <A>..<B>                     rc 1 if a commit names a workflow goal but no task"""
     import json
     import os
     import sys
@@ -294,7 +308,12 @@ def _main(argv) -> int:
     import psycopg
     from astryx import config
     repo = Path(__file__).resolve().parents[2]
-    with psycopg.connect(config.dsn(), autocommit=True) as conn:
+    try:
+        conn = psycopg.connect(config.dsn(), autocommit=True)
+    except Exception as e:                    # no database is NOT a finding: rc 2, which land.sh reports as NOT CHECKED
+        print(f"no database: {type(e).__name__}", file=sys.stderr)
+        return 2
+    with conn:
         if argv[:1] == ["set"] and len(argv) in (3, 4):
             body = json.loads(Path(argv[2]).read_text())
             try:
@@ -304,6 +323,18 @@ def _main(argv) -> int:
                 return 1
             print(f"goal {argv[1]} workflow rev {rev}")
             return 0
+        if argv[:1] == ["lint"] and len(argv) == 2:
+            import subprocess
+            log = subprocess.run(["git", "-C", str(repo), "log", argv[1],
+                                  "--format=%H%x1f%s%x1f%(trailers:key=Task,valueonly,separator=%x2c)%x1e"],
+                                 capture_output=True, text=True, check=True).stdout
+            commits = [tuple(r.strip("\n").split("\x1f")) for r in log.split("\x1e") if r.strip()]
+            commits = [(c[0], c[1], c[2].strip() or None) for c in commits if len(c) == 3]
+            wfs = {g: [t["id"] for t in load(conn, g)[1]["tasks"]] for g in goals(conn)}
+            bad = unattributed(commits, wfs)
+            for sha, g, subj in bad:
+                print(f"UNATTRIBUTED {sha[:12]} names goal {g} but none of its tasks {wfs[g]}: {subj[:90]}")
+            return 1 if bad else 0
         if argv[:1] == ["show"] and len(argv) == 2:
             got = load(conn, int(argv[1]))
             if not got:

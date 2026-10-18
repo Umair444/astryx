@@ -28,6 +28,8 @@ MUTANTS = {
         ("    errs = validate(body, roster, prev[1] if prev else None, measured)", "    errs = validate(body, roster, prev[1] if prev else None)"),
     "W13 a non-boolean done passes (Python and SQL read two different values; a1 #60186)":
         ('            if flag in t and not isinstance(t[flag], bool):', '            if False:'),
+    "W14 land-time attribution flags nothing (off-form subjects land and their bars never see the work)":
+        ("            if attribute(goal, ids, subject, trailer) == UNATTRIBUTED:", "            if False:"),
     "W7 the trailer is ignored":
         ("    if trailer:\n", "    if False:\n"),
     "W8 a self-review passes":

@@ -12,6 +12,7 @@
   S6     save() is the wiring: it computes MEASURED from main and refuses a deletion with it (a1 #60120)
   S1-S5  status: done needs the claim AND the substrate; blocked / late / active / dropped; the critical path
   O1     the overlay's three classes
+  U1-U2  land-time attribution: a commit naming a workflow goal but no task is flagged (land.sh refuses it)
   L1     LIVE HISTORY (anti-vacuity, a1 #60109 A): on this checkout's origin/main, S1, S2, S3a and S3b each resolve to
          >= 1 commit and the UNATTRIBUTED count is > 0 (printed)
 Hermetic except L1, which reads this checkout's git log (no DB, no network).
@@ -177,6 +178,16 @@ cls = {(e["src"], e["dst"]): e["class"] for e in o["edges"]}
 check("O1 planned+happened, planned-unused and unplanned are told apart",
       cls.get(("forge", "abstractor-2")) == "planned_happened" and cls.get(("seed", "memory")) == "planned_unused"
       and cls.get(("forge", "seed")) == "unplanned", f"{cls}")
+
+# ---- U: land-time attribution (steward #60232: two shipped tasks read late from off-form subjects)
+wfs = {11324: ["S3b", "floor"]}
+cs = [("a1", "plan-11324 floor: bundled light", None), ("b2", "floor (11324): bundled light", None),
+      ("c3", "x", "11324/S3b"), ("d4", "plan-9000 S1: another goal, no workflow", None), ("e5", "medic: unrelated", None)]
+got = [s for s, _, _ in wf.unattributed(cs, wfs)]
+check("U1 a commit naming a workflow goal but none of its tasks is flagged; named, trailered and unrelated ones pass",
+      got == ["b2"], f"{got}")
+check("U2 a goal WITHOUT a workflow is never flagged (only goals that carry one are judged)",
+      wf.unattributed([("f6", "plan-9000: x", None)], wfs) == [])
 
 # ---- L: the live history (anti-vacuity)
 live_ref = "origin/main" if subprocess.run(["git", "-C", str(REPO), "rev-parse", "-q", "--verify", "origin/main"],
