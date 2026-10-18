@@ -173,7 +173,16 @@ class FixtureUnavailable(Exception):
 
 def live_dsn() -> str:
     """The org's DSN (the .env FILE: the admin connection is the org's own, never a fixture's), through the ONE resolver.
-    The .env is the ASTRYX_SQLGUARD_ROOT tree's when one is named (as REPO's was), else the org's estate."""
+    The .env is the ASTRYX_SQLGUARD_ROOT tree's when one is named (as REPO's was), else the org's estate.
+    ASTRYX_FIXTURE_ADMIN_DSN, when set, is that DSN passed by env instead: a worktree holds no .env, and the live one is
+    never linked into it (seed #59548). It's a name of its own, never ASTRYX_DSN, which an oracle binds to a fixture;
+    a fixture DSN in it is refused loud, not used as the admin."""
+    v = os.environ.get("ASTRYX_FIXTURE_ADMIN_DSN")
+    if v:
+        from astryx import orgs
+        if orgs.is_fixture(v):
+            raise ValueError("ASTRYX_FIXTURE_ADMIN_DSN names a fixture database: the admin connection is the org's own")
+        return v
     base = REPO if os.environ.get("ASTRYX_SQLGUARD_ROOT") else paths.estate(__file__)
     return config.dsn(base / ".env", env_first=False)
 

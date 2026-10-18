@@ -24,7 +24,7 @@
 # Writes nothing outside its temp dir: no admit, no shrink, no sqlguard_seen (judge only, never enforce).
 # Records are attributed to sites by judge's own frame rule (judge.attribute), never by text substring.
 #
-# rc: 0 clean · 1 a finding (--ledger) or the oracle failed · 2 usage · 77 SKIP (no .env: fixture_db can't run)
+# rc: 0 clean · 1 a finding (--ledger) or the oracle failed · 2 usage · 77 SKIP (no .env and no ASTRYX_FIXTURE_ADMIN_DSN)
 # SQLSITE_ROOT picks the checkout (default: this script's); SQLGUARD_LEDGER overrides the ledger file and
 # SQLSITE_REPORT a judge report (JSON) in place of judge's own, so the verdict table can be driven (tests only).
 set -euo pipefail
@@ -35,7 +35,13 @@ T="${1:-}"
 shift
 cd "${SQLSITE_ROOT:-$(dirname "$0")/..}"
 ROOT=$PWD
-[ -e .env ] || { echo "SKIP: no .env in $ROOT (fixture_db reads the DSN from it; in a worktree, link it for the run)"; exit 77; }
+# A worktree holds no .env, and the live one is never linked into it (seed #59548): pass fixture_db's admin DSN by env
+# instead. That reaches only an oracle whose estate gate doesn't need the .env (estate.gate env=False); one gated on it
+# still says NOT SEARCHED (.env absent) in its tail. Run that one from the main checkout.
+[ -e .env ] || [ -n "${ASTRYX_FIXTURE_ADMIN_DSN:-}" ] || {
+  echo "SKIP: no .env in $ROOT (fixture_db's admin DSN). In a worktree pass it by env, ASTRYX_FIXTURE_ADMIN_DSN=<dsn>"
+  echo "  (an oracle whose estate gate needs the .env still won't run there: use the main checkout; never link the live .env)"
+  exit 77; }
 PY=${PY:-$ROOT/venv/bin/python}
 if [ ! -x "$PY" ]; then                                  # a worktree has no venv: use the main checkout's
   C=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \

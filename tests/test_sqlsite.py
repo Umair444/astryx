@@ -179,8 +179,16 @@ try:
 
     bare = tmp / "bare"
     bare.mkdir()
-    rc, out = run("--ledger", ORACLE, PREFIX, root=bare)
-    arm("SKIP: no .env is 77 with a SKIP line", rc == 77 and out.startswith("SKIP"), (rc, out))
+    rc, out = run("--ledger", ORACLE, PREFIX, root=bare, env={"ASTRYX_FIXTURE_ADMIN_DSN": ""})
+    arm("SKIP: no .env and no ASTRYX_FIXTURE_ADMIN_DSN is 77 with a SKIP line that never says to link the .env",
+        rc == 77 and out.startswith("SKIP") and "ASTRYX_FIXTURE_ADMIN_DSN" in out and "link it" not in out, (rc, out))
+    # the DSN passed by env opens the same door (a worktree, seed #59548): past the SKIP, onto the next precondition
+    e = {k: v for k, v in os.environ.items() if k != "PY"}
+    p = subprocess.run(["bash", str(SUBJECT), "--ledger", ORACLE, PREFIX], capture_output=True, text=True, timeout=60,
+                       env={**e, "SQLSITE_ROOT": str(bare), "GIT_CEILING_DIRECTORIES": str(tmp),
+                            "ASTRYX_FIXTURE_ADMIN_DSN": "postgresql://nobody@127.0.0.1:1/none"})
+    arm("BY ENV: no .env but ASTRYX_FIXTURE_ADMIN_DSN set is not the SKIP (it reaches the venv check, rc 2)",
+        p.returncode == 2 and "SKIP" not in p.stdout and "set PY" in p.stdout, (p.returncode, p.stdout, p.stderr))
 finally:
     shutil.rmtree(tmp, ignore_errors=True)
 

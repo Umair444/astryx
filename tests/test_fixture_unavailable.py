@@ -11,6 +11,8 @@ triggers/), with ASTRYX_DSN unset:
      guard off quietly)
   U4 the chokepoint with its A24 control already RED, no database, committed-only tree → 1, names it (a4 #55279:
      a real RED read as NOT SEARCHED on CI)
+  U5 the admin DSN passed by env (ASTRYX_FIXTURE_ADMIN_DSN), still no .env → the gate RUNS, 0 (medic, seed #60093)
+  U6 a FIXTURE DSN in that variable → 1, refused by name: it never becomes the admin, and never reads as 77
 ESTATE_SRC points at a mutant estate.py (tests/mutants_fixture_unavailable.py). Exit 0 pass · 1 fail · 77 not run (no psycopg).
 """
 import os
@@ -49,11 +51,11 @@ with tempfile.TemporaryDirectory(prefix="fxu-") as td:
     if os.environ.get("ESTATE_SRC"):                            # a mutant estate.py (tests/mutants_fixture_unavailable.py)
         shutil.copy2(os.environ["ESTATE_SRC"], tree / "src/astryx/security/sqlguard/estate.py")
     env = {k: v for k, v in os.environ.items()
-           if not k.startswith(("ASTRYX_DSN", "ASTRYX_SQLGUARD", "GIT_")) and k != "ESTATE_SRC"}
+           if not k.startswith(("ASTRYX_DSN", "ASTRYX_SQLGUARD", "ASTRYX_FIXTURE_ADMIN_DSN", "GIT_")) and k != "ESTATE_SRC"}
 
-    def run(gate):
-        r = subprocess.run([sys.executable, str(tree / gate)], cwd=tree, env=env, capture_output=True, text=True,
-                           timeout=300)
+    def run(gate, extra=None):
+        r = subprocess.run([sys.executable, str(tree / gate)], cwd=tree, env={**env, **(extra or {})},
+                           capture_output=True, text=True, timeout=300)
         return r.returncode, r.stdout + r.stderr
 
     check("the copy is a committed-only tree (no .env, no triggers/)",
@@ -76,6 +78,19 @@ with tempfile.TemporaryDirectory(prefix="fxu-") as td:
     check("U4 an arm already RED, then no database, on a committed-only tree → 1, names it, no traceback",
           rc == 1 and "RED before the fixture" in out and "A24 control" in out.split("RED before the fixture")[-1]
           and "Traceback" not in out, f"rc {rc}: {out[-300:]}")
+    # U5/U6: the admin DSN passed by env, ASTRYX_FIXTURE_ADMIN_DSN (a worktree holds no .env, and the live one is never
+    # linked into it, seed #59548). U6 first: a fixture DSN there is refused loud (1, named), never used as the admin.
+    rc, out = run(GATES[0], {"ASTRYX_FIXTURE_ADMIN_DSN": "postgresql://nobody@127.0.0.1:1/astryx_fx_nobody"})
+    check("U6 a fixture DSN in ASTRYX_FIXTURE_ADMIN_DSN, no .env → 1, refused by name, never 77",
+          rc == 1 and "ASTRYX_FIXTURE_ADMIN_DSN names a fixture database" in out, f"rc {rc}: {out[-300:]}")
+    admin = subprocess.run([sys.executable, str(REPO / "src/astryx/config.py"), "get", "ASTRYX_DSN"], cwd=REPO,
+                           capture_output=True, text=True).stdout.strip()   # the ONE resolver: env first, then the .env
+    if admin:
+        rc, out = run(GATES[0], {"ASTRYX_FIXTURE_ADMIN_DSN": admin})
+        check(f"U5 {GATES[0]} with the admin DSN by env and no .env → it RUNS (0), not NOT SEARCHED",
+              rc == 0 and "NOT SEARCHED" not in out, f"rc {rc}: {out[-300:]}")
+    else:
+        print("  NOTE  U5 not run: no admin DSN on this host (the U6 refusal above still decides its half)")
     (tree / "triggers").mkdir()
     for gate in GATES:
         rc, out = run(gate)
