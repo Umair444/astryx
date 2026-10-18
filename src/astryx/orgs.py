@@ -172,14 +172,18 @@ def socket(env=None, cwd=None) -> str | None:
     """The tmux socket this org's residents live on (plan-11324 S3b, #58435: `ax-<agent>` is a HOST-wide name, so
     two orgs' `seed` would be one session). None on a one-org host: tmux's default socket, byte for byte as before.
     Several orgs: `ax-<org>`, a server of its own (-L), so a session name only ever means this org's resident. The
-    PRIMARY keeps the default socket (seed #60780): its residents were there before the cog, and stay."""
+    PRIMARY keeps the default socket (seed #60780): its residents were there before the cog, and stay. In a cog it NAMES
+    it, `default` (tmux's own default socket, $TMUX_TMPDIR/tmux-<uid>/default: the same server), never the bare
+    form: a bare `tmux` follows an inherited $TMUX, so a primary tool run from another org's pane would spawn on
+    THAT org's server and the primary's healer would start the seat again (a2 #60794 R-1). One org: None, as before."""
     o = name(env, cwd)
-    return None if _plain(o, env) else f"ax-{o}"
+    return None if o is None else "default" if _plain(o, env) else f"ax-{o}"
 
 
 def tmux(env=None, cwd=None) -> list[str]:
-    """The argv prefix every tmux call starts with: ["tmux"] on one org, ["tmux", "-L", "ax-<org>"] on several.
-    -L wins over an inherited $TMUX, so a caller inside another org's pane still reaches its own org's server."""
+    """The argv prefix every tmux call starts with: ["tmux"] on one org, ["tmux", "-L", "ax-<org>"] on several (the
+    primary's: ["tmux", "-L", "default"]). -L wins over an inherited $TMUX, so a caller inside another org's pane still
+    reaches its own org's server, the primary's included."""
     s = socket(env, cwd)
     return ["tmux"] if s is None else ["tmux", "-L", s]
 

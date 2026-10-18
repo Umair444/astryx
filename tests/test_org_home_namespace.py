@@ -15,7 +15,8 @@ resolver; shell callers source scripts/org_tmux.sh). One org (no registry): the 
   N3 the one-body guard is per org: a channel-server body of the agent carrying HOME-A does NOT stop B's spawn;
      it DOES stop A's (positive control)
   R3 THE PRIMARY (seed #60780: the primary org moves as little as possible), the same registry with A `primary`:
-     HOME-A's tmux is the DEFAULT socket (orgs.tmux() ['tmux'], `orgs.py socket` exit 1, org_tmux.sh no socket) and
+     HOME-A's tmux is the DEFAULT socket, NAMED (orgs.tmux() ['tmux', '-L', 'default'], `orgs.py socket` prints
+     `default`, org_tmux.sh AX_SOCK=default: a bare `tmux` would follow an inherited $TMUX, a2 #60794 R-1) and
      its units keep their plain names (orgs.unit); HOME-B's are still its own (-L ax-<B>, `@<B>`); and A's spawn
      comes up on the default server, never on -L ax-<A>
 
@@ -215,15 +216,16 @@ def main():
                             timeout=30)
         tb = subprocess.run([py, "-c", PROBE, str(co)], env=env("b", **P), cwd="/", capture_output=True, text=True,
                             timeout=30)
-        check("the primary A: orgs.tmux() is exactly ['tmux'] (the default socket)", ta.stdout.strip() == "tmux",
+        check("the primary A: orgs.tmux() is ['tmux', '-L', 'default'] (the default socket, NAMED)",
+              ta.stdout.split() == ["tmux", "-L", "default"],
               ta.stdout + ta.stderr[-200:])
         check(f"B, not the primary: still -L ax-{fx.org['b']}", tb.stdout.split() == fx.tmux("b"),
               tb.stdout + tb.stderr[-200:])
         r = socket_door(env("a", **P))
-        check("the primary A: `orgs.py socket` exits 1 and prints nothing (org_tmux.sh's one-org answer)",
-              r.returncode == 1 and not r.stdout, f"{r.returncode} {r.stdout!r} {r.stderr[-200:]}")
+        check("the primary A: `orgs.py socket` prints `default` (exit 0)",
+              r.returncode == 0 and r.stdout.strip() == "default", f"{r.returncode} {r.stdout!r} {r.stderr[-200:]}")
         r = lib(env("a", **P), co)
-        check("the primary A: org_tmux.sh sets no socket", r.returncode == 0 and "sock=[]" in r.stdout,
+        check("the primary A: org_tmux.sh's socket is `default`", r.returncode == 0 and "sock=[default]" in r.stdout,
               r.stdout + r.stderr[-200:])
         u = "import sys; sys.path.insert(0, sys.argv[1] + '/src'); from astryx import orgs; print(orgs.unit('astryx-pulse', 'timer'))"
         ua = subprocess.run([py, "-c", u, str(co)], env=env("a", **P), cwd="/", capture_output=True, text=True, timeout=30)
@@ -239,6 +241,18 @@ def main():
         check("the primary A's spawn comes up resident on the DEFAULT server (not read as N2's -L ax-<A> session)",
               rp.returncode == 0 and "resident" in rp.stdout and "already resident" not in rp.stdout and dflt == 0,
               (rp.stdout + rp.stderr)[-300:] + f" default={dflt}")
+        # a2 #60794 R-1: the owner, attached to ANOTHER org's pane, runs one of the primary's tools: $TMUX names B's
+        # server. The primary's spawn must still land on the default server, never on B's
+        sp = subprocess.run([*fx.tmux("b"), "display-message", "-p", "-t", f"=ax-{AGENT}:", "#{socket_path}"],
+                            capture_output=True, text=True).stdout.strip()
+        (A / "agents" / f"{ONLY_A}-t.md").write_text(f"# {ONLY_A}-t\nA fixture resident of org A only.\n")
+        rt = subprocess.run(["bash", str(co / "scripts" / "spawn.sh"), f"{ONLY_A}-t"], env={**env("a", **P),
+                            "TMUX": f"{sp},1,0"}, cwd="/", capture_output=True, text=True, timeout=150)
+        on_d = subprocess.run(["tmux", "has-session", "-t", f"=ax-{ONLY_A}-t"], env=fx.env(), capture_output=True).returncode   # org-home: the PRIVATE default socket (fx.env: TMUX_TMPDIR, and no inherited $TMUX)
+        on_b = subprocess.run([*fx.tmux("b"), "has-session", "-t", f"=ax-{ONLY_A}-t"], capture_output=True).returncode
+        check("...and with $TMUX inherited from B's server, still on the DEFAULT server, never on B's (a2 #60794 R-1)",
+              bool(sp) and rt.returncode == 0 and on_d == 0 and on_b != 0,
+              f"sock={sp!r} default={on_d} b={on_b} " + (rt.stdout + rt.stderr)[-200:])
         return 1 if fails else 0
     finally:
         if body is not None:

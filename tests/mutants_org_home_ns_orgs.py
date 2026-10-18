@@ -18,14 +18,17 @@ TIMEOUT = 300
 
 MUTANTS = {
     'X1 socket() is None in a cog of several orgs too (every org on the default socket)':
-        ('    return None if _plain(o, env) else f"ax-{o}"\n',
+        ('    return None if o is None else "default" if _plain(o, env) else f"ax-{o}"\n',
          '    return None\n'),
     'X2 tmux() ignores the socket (python callers on the default socket)':
         ('    return ["tmux"] if s is None else ["tmux", "-L", s]\n',
          '    return ["tmux"]\n'),
     'X4 the primary gets a socket of its own too (its residents leave the default server: the double spawn, seed #60780)':
-        ('    return None if _plain(o, env) else f"ax-{o}"\n',
+        ('    return None if o is None else "default" if _plain(o, env) else f"ax-{o}"\n',
          '    return None if o is None else f"ax-{o}"\n'),
+    'X6 the primary\'s socket is the BARE default (an inherited $TMUX steers its tools to another org, a2 #60794 R-1)':
+        ('    return None if o is None else "default" if _plain(o, env) else f"ax-{o}"\n',
+         '    return None if _plain(o, env) else f"ax-{o}"\n'),
     'X5 the primary\'s units are instance-named (astryx-pulse@<org>.timer: its live units orphaned)':
         ('    return f"{stem}.{suffix}" if _plain(o, env) else f"{stem}@{o}.{suffix}"',
          '    return f"{stem}.{suffix}" if o is None else f"{stem}@{o}.{suffix}"'),
