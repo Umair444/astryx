@@ -48,6 +48,11 @@ def main(url, tmp):
     spec.loader.exec_module(obs)
     from fastapi.testclient import TestClient
 
+    with TestClient(obs.app) as cl0:
+        j = cl0.get("/api/influence", headers=O).json()
+        arm("INFLUENCE: an empty cache is no edges, no nodes, no computed_at (the floor's honest empty state)",
+            j["edges"] == [] and j["nodes"] == [] and j["computed_at"] is None, j)
+
     with psycopg.connect(url, autocommit=True) as c:
         def edge(kind, src, dst, days, cov, topic):
             c.execute("INSERT INTO influence_edge (scope, kind, src, dst, ts, ask_ts, ref, topic, coverage, computed_at) "

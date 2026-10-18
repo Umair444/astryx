@@ -3133,7 +3133,7 @@ INFLUENCE_EDGES_SQL = ("SELECT kind, src, dst, ts, topic, coverage FROM influenc
 # ONE compute's snapshot, never each agent's own latest: two runs' values are not one ranking
 INFLUENCE_VALUES_SQL = ("SELECT agent, value FROM influence_value WHERE scope = 'local' AND view = 'global' "
                         "AND computed_at = (SELECT max(computed_at) FROM influence_value "
-                        "WHERE scope = 'local' AND view = 'global')")
+                        "WHERE scope = 'local' AND view = 'global') ORDER BY value DESC, agent")
 INFLUENCE_WINDOWS = {"7d": 7, "14d": 14}     # the cache IS the compute's window (influence.shell.DAYS): no 30d
 
 
@@ -3160,7 +3160,7 @@ async def influence(request: Request, window: str = "14d"):
         if r["topic"]:
             e["threads"][r["topic"]] = e["threads"].get(r["topic"], 0) + 1
     w = _influence.kind_weights(cov)
-    vals = await pool.fetch(INFLUENCE_VALUES_SQL + " ORDER BY value DESC, agent")
+    vals = await pool.fetch(INFLUENCE_VALUES_SQL)
     at = await pool.fetchval("SELECT max(computed_at) FROM influence_edge WHERE scope = 'local'")
     return {
         "computed_at": at.isoformat() if at else None, "window": window, "cache_days": max(INFLUENCE_WINDOWS.values()),

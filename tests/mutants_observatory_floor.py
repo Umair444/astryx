@@ -21,7 +21,7 @@ MUTANTS = {
         ('"AND computed_at = (SELECT max(computed_at) FROM influence_value "',
          '"AND computed_at >= (SELECT min(computed_at) FROM influence_value "'),
     "F5 the ranks are not ordered by value":
-        ('INFLUENCE_VALUES_SQL + " ORDER BY value DESC, agent"', 'INFLUENCE_VALUES_SQL + " ORDER BY agent"'),
+        ('''view = 'global') ORDER BY value DESC, agent")''', '''view = 'global') ORDER BY agent")'''),
     "F6 the top threads aren't capped at 3":
         ("key=lambda x: (-x[1], x[0]))[:3]]", "key=lambda x: (-x[1], x[0]))[:9]]"),
     "F7 a registry that refuses reads as a cog of one (fails open)":
