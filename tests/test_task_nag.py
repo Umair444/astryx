@@ -244,6 +244,21 @@ if fx is not None:
         fc.say = lambda to, body, **kw: said.append(to)
         task_nag(fc, wf=WF0(), repo="/nonexistent", now=now)
         check("REAL SQL: the goal's owner is read from goals (a blocker with no agent -> canopus)", said == ["canopus"], said)
+        # goal_workflow carries no FK to goals, so a workflow can outlive (or predate) its goal row: the owner read
+        # returns NO row. Nobody is invented for the owner's nags (they're skipped), and the agents' own nags still go.
+        orphan = conn.execute("SELECT coalesce(max(id), 0) + 1000 FROM goals").fetchone()[0]
+
+        class WF1(WF0):
+            def goals(self, c):
+                return [orphan]
+
+            def status(self, body, commits, now):
+                return {"tasks": [T("S1", None, status="active"), T("S2", "memory", ["S1"], status="blocked"),
+                                  T("S9", "forge", status="late")]}
+        said.clear()
+        task_nag(fc, wf=WF1(), repo="/nonexistent", now=now)
+        check("REAL SQL: a workflow whose goal row is absent: no owner, so the replan is skipped; forge's late nag still goes",
+              said == ["forge"], said)
     finally:
         conn.close()
         _fx.__exit__(None, None, None)

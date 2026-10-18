@@ -64,4 +64,6 @@ MUTANTS = {
     "N17 LIKE, not position: a task id's _ is a wildcard":
         ('AND position(%s in body) > 0 "\n        "AND ts > to_timestamp(%s) LIMIT 1", (to, marker(key, kind), since)',
          'AND body LIKE %s "\n        "AND ts > to_timestamp(%s) LIMIT 1", (to, f"%{marker(key, kind)}%", since)'),
+    "N19 the owner read assumes its row exists (a workflow whose goal row is absent crashes the tick)":
+        ('(ctx.sql("SELECT owner FROM goals WHERE id = %s", (g,)) or [{}])[0]', 'ctx.sql("SELECT owner FROM goals WHERE id = %s", (g,))[0]'),
 }
