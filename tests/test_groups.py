@@ -93,7 +93,10 @@ def tree(C):
         check("tree: every grouped member is a roster name, and the roster is what the groups cover",
               members == C.roster(root), f"{members} vs {C.roster(root)}")
         # the CLI's JSON, for non-python readers
-        out = subprocess.run([sys.executable, str(CHARTER), "--groups", str(root)], capture_output=True, text=True)
+        # the subject may be a relocated copy (mutation_probe's td/src/astryx/core/charter.py): its `astryx` imports
+        # resolve to this checkout's package, as the in-process load's do (a bare copy has no astryx beside it)
+        env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [str(REPO / "src"), os.environ.get("PYTHONPATH")]))}
+        out = subprocess.run([sys.executable, str(CHARTER), "--groups", str(root)], capture_output=True, text=True, env=env)
         try:
             cli = json.loads(out.stdout)
         except ValueError:
