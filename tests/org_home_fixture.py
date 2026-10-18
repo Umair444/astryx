@@ -41,6 +41,8 @@ SEAMS = {
     "ORG_HOME_COMPACT_SRC": "src/astryx/pulse/shipped_triggers/context_compact.py",
     "ORG_HOME_HEAL_SRC": "src/astryx/pulse/shipped_triggers/agent_heal.py",
     "ORG_HOME_UNITS_DATA_SRC": "src/astryx/data/org_units.json",
+    "ORG_HOME_GATEWAY_SRC": "bridges/gateway.py",
+    "ORG_HOME_CHARTER_SRC": "src/astryx/core/charter.py",
 }
 
 

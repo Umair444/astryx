@@ -26,7 +26,18 @@ from astryx import config, paths  # noqa: E402
 import sys
 from pathlib import Path
 
-AGENTS = paths.estate(__file__) / "agents"     # the org's roster (plan-11324 S3a: its HOME's agents/)
+try:
+    AGENTS = paths.estate(__file__) / "agents"     # the org's roster (plan-11324 S3a: its HOME's agents/)
+except paths.NoHome:
+    # plan-11324 S3c: a COG-scoped process (the gateway) serves several orgs and carries no one HOME. Importing
+    # this module must not need one; a call that leans on the default then refuses (NoHome), never guesses a tree.
+    AGENTS = None
+
+
+def _tree(agents_dir: Path | None) -> Path:
+    if agents_dir is None:
+        raise paths.NoHome("no org HOME is carried here (a cog-scoped process): name the agents/ tree")
+    return agents_dir
 
 # ── AGENT TYPES ──────────────────────────────────────────────────────────────────────
 # The org has more than one KIND of agent. The type is declared by a `Type:` directive
@@ -59,6 +70,7 @@ NON_CHARTERS = (".organ.md", "README.md")
 
 
 def is_charter(p: Path, agents_dir: Path = AGENTS) -> bool:
+    agents_dir = _tree(agents_dir)
     """Is this .md an AGENT? The one rule, structural rather than a list of names:
     examples, .git and a composite's structural files are not; and a SELF-FOLDER
     (agents/<x>/<x>.md) is that agent's home, so any OTHER .md beside its charter is a
@@ -73,7 +85,7 @@ def is_charter(p: Path, agents_dir: Path = AGENTS) -> bool:
 
 
 def charter_files(agents_dir: Path = AGENTS) -> list[Path]:
-    return sorted(p for p in agents_dir.rglob("*.md") if is_charter(p, agents_dir))
+    return sorted(p for p in _tree(agents_dir).rglob("*.md") if is_charter(p, agents_dir))
 
 
 def roster(agents_dir: Path = AGENTS) -> list[str]:
@@ -132,7 +144,7 @@ def resolve(name: str, agents_dir: Path = AGENTS) -> Path | None:
     safe = "".join(c for c in name if c.isalnum() or c in "-_").lower()
     if not safe:
         return None
-    hits = [p for p in agents_dir.rglob(f"{safe}.md") if is_charter(p, agents_dir)]
+    hits = [p for p in _tree(agents_dir).rglob(f"{safe}.md") if is_charter(p, agents_dir)]
     if len(hits) > 1:
         raise Collision(
             f"REGISTRY COLLISION: '{name}' has {len(hits)} charters:\n"
