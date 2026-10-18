@@ -161,4 +161,5 @@ def _main(argv) -> int:
 
 if __name__ == "__main__":
     import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # run as a script: `socket` reaches astryx.paths
     sys.exit(_main(sys.argv[1:]))
