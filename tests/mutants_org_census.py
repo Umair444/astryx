@@ -38,4 +38,10 @@ MUTANTS = {
     'N4 .ts is not read again (a2 #59037)':
         (', ".cjs", ".ts")   # .cjs/.ts',
          ', ".cjs")   # .cjs/.ts'),
+    "N5 python's unit-name kind is not read":
+        ('        for n in ([] if rel.startswith("tests/") else _py_unit(src)):',
+         '        for n in []:'),
+    "N6 shell's unit-name kind is not read":
+        ('        if UNIT_NAME.search(bare) and not rel.startswith("tests/"):',
+         '        if False:'),
 }
