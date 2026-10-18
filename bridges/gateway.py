@@ -74,7 +74,7 @@ def _env(key: str, default: str = "") -> str:
     """One org: today's read (the environment, set even to empty, beats ESTATE/.env). In a cog of several orgs only
     the process environment (the cog unit's tunables): no org's .env is the process's."""
     if ESTATE is None:
-        return os.environ.get(key, default)
+        return os.environ.get(key, default)  # org-home: a cog's own tunables (its unit's env); no org's .env is the process's
     if key == "ASTRYX_DSN":
         try:
             return config.dsn(ESTATE / ".env")

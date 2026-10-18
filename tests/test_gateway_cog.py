@@ -18,7 +18,8 @@ lifespan run (pools, per-org outbound listeners on real NOTIFY), nothing bound t
   G5 B -> A, a chat A never granted B: refused at A's door, B's row dead and B's sender told, nothing in A
   G6 a cog org whose .env names no ASTRYX_ORG, or two orgs one federation name: cog() refuses (CogError)
 
-Seams (org_home_fixture.SEAMS): ORG_HOME_GATEWAY_SRC (bridges/gateway.py). Exit 0 · 1 · 77.
+Seams (org_home_fixture.SEAMS): ORG_HOME_GATEWAY_SRC (bridges/gateway.py), ORG_HOME_CHARTER_SRC
+(src/astryx/core/charter.py). Exit 0 · 1 · 77.
 """
 import json
 import os
@@ -78,6 +79,8 @@ async def main():
         r = await B.pool.fetchrow("SELECT from_agent, from_org, to_agent, to_org, body, sig FROM messages "
                                   "WHERE from_org=$1 ORDER BY id LIMIT 1", na)
         out["landed"] = dict(r) if r else None
+        # push marks A's row only after B's door returned: wait for it, never read it in the gap
+        await wait(lambda: A.pool.fetchval("SELECT count(*) FROM messages WHERE id=$1 AND status='delivered'", first))
         out["first_status"] = await A.pool.fetchval("SELECT status FROM messages WHERE id=$1", first)
         for i in range(3):
             await A.pool.fetchval(ins, "seed", nb, f"burst {i}")
