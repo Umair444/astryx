@@ -16,8 +16,7 @@ TIMEOUT = 60
 
 MUTANTS = {
     "N1 a bare path on a cog is served (as no org) instead of refused":
-        ("        return (door, path) if door in orgs else None    # a bare path on a cog: the door org's, or no org's\n",
-         "        return (door, path)\n"),
+        ("        if door not in orgs or \"..\" in path.split(\"/\"):", "        if False:"),
     "N2 an org the cog does not hold is reached":
         ("    if org not in orgs or \"..\" in rest.split(\"/\"):", "    if \"..\" in rest.split(\"/\"):"),
     "N3 the envelope's org is unchecked (any agent@org lands at this door)":
@@ -29,6 +28,8 @@ MUTANTS = {
          "    if not isinstance(to, str) or \"@\" not in to:\n        return None\n    agent, _, org = to.rpartition(\"@\")\n"),
     "N9 a dot-dot segment is routed":
         ("    if org not in orgs or \"..\" in rest.split(\"/\"):", "    if org not in orgs:"),
+    "N10 a dot-dot segment on a bare path is routed to the door org (a4 #60384)":
+        ("        if door not in orgs or \"..\" in path.split(\"/\"):", "        if door not in orgs:"),
     "N5 a cog's rate and replay keys are shared by every org":
         ("    return key if org is None else f\"{org}|{key}\"\n", "    return key\n"),
     "N6 one org's public url gains the /o/ prefix":

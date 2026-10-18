@@ -36,7 +36,9 @@ def route(path: str, orgs, door: str | None = None) -> tuple[str | None, str] | 
     if orgs is None:
         return None, path
     if not path.startswith(PREFIX):
-        return (door, path) if door in orgs else None    # a bare path on a cog: the door org's, or no org's
+        if door not in orgs or ".." in path.split("/"):   # a bare path on a cog: the door org's, or no org's
+            return None                                  # (a dot-dot segment is no org's path there too, a4 #60384)
+        return door, path
     org, sep, rest = path[len(PREFIX):].partition("/")
     if org not in orgs or ".." in rest.split("/"):       # a dot-dot segment is no org's path (a4 #60377)
         return None

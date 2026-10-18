@@ -29,7 +29,8 @@ MUTANTS = {
     "Q5 a cog org's DSN is read environment-first (the cog process's DSN becomes every org's)":
         ("dsn=config.dsn(f, env_first=False)", "dsn=config.dsn(f)"),
     "Q6 the bare root serves the first org of a cog (a primary by dict order)":
-        ("    return next(iter(c.values())) if len(c) == 1 else None\n", "    return next(iter(c.values()))\n"),
+        ("    return next((x for x in c.values() if x.org == _DOOR), None) if _DOOR else None\n",
+         "    return next(iter(c.values()))\n"),   # re-anchored on S3e 2/n's door root (memory)
     "Q7 a sibling's 429 kills the row (a rate cap read as a refusal)":
         ("        if r.status_code == 429:\n            return False", "        if False:\n            return False"),
     "Q8 cog() keyed by REGISTRY name (to_org is the federation name: no sibling is ever found)":

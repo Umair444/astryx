@@ -66,6 +66,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 sys.path.insert(0, str(REPO / "src"))   # astryx.config/paths: the ONE resolver (plan-11324 S3a)
 from astryx import config, orgs, paths  # noqa: E402
+from astryx.federation import node  # noqa: E402
 # A cog of several orgs has no one HOME, so the estate is per Ctx; one org keeps the resolver's (the checkout).
 ESTATE = None if orgs.multi() else paths.estate(__file__)
 
@@ -138,18 +139,20 @@ def _ctx_cog(org: str, home: Path) -> Ctx:
     if e.get("ASTRYX_RELAY_HOST") == "1":
         raise CogError(f"cog org {org}: ASTRYX_RELAY_HOST in a cog of several orgs is not served yet (S3e)")
     return Ctx(org=org, name=name, home=home, dsn=config.dsn(f, env_first=False),
-               key=SigningKey(sk.encode(), encoder=HexEncoder), url=e.get("ASTRYX_URL", ""),
+               key=SigningKey(sk.encode(), encoder=HexEncoder),
+               url=node.public_url(e.get("ASTRYX_URL", ""), name, True),   # what a peer stores: <base>/o/<name> (S3e)
                relay=e.get("ASTRYX_RELAY", "").rstrip("/"), relay_listed=e.get("ASTRYX_RELAY_LISTED") == "1",
                relay_host=False)
 
 
 _COG: dict[str, Ctx] | None = None
+_DOOR: str | None = None                # the registry's door org, read with the cog (never per request)
 
 
 def cog() -> dict[str, Ctx]:
     """Every org this gateway serves, by FEDERATION name, built once. One org: one Ctx from today's reads. A cog of
     several orgs: one Ctx per registry entry (orgs.load iterated: the gateway is in the declared cog-scoped set)."""
-    global _COG
+    global _COG, _DOOR
     if _COG is None:
         if ESTATE is not None:
             one = _ctx_one()
@@ -161,7 +164,7 @@ def cog() -> dict[str, Ctx]:
                 if c.name in out:
                     raise CogError(f"cog orgs {out[c.name].org} and {org} share the federation name {c.name!r}")
                 out[c.name] = c
-            _COG = out
+            _COG, _DOOR = out, orgs.door()
     return _COG
 
 
@@ -171,9 +174,18 @@ def route(name: str) -> Ctx | None:
 
 
 def root() -> Ctx | None:
-    """The org the bare root paths serve: the one org; in a cog of several orgs nobody (they refuse: no primary)."""
+    """The org the bare root paths serve: the one org; in a cog of several, the registry's DOOR org (orgs.door(), seed
+    #60376), else nobody (they refuse: the door never guesses which org a stranger meant)."""
     c = cog()
-    return next(iter(c.values())) if len(c) == 1 else None
+    if ESTATE is not None:
+        return next(iter(c.values()))
+    return next((x for x in c.values() if x.org == _DOOR), None) if _DOOR else None
+
+
+def at(name: str) -> Ctx | None:
+    """The org a cog's /o/<name>/… door serves (S3e): its federation name, as its public url names it. One org has
+    no /o/ doors: every path there is the org's own, byte for byte as before."""
+    return route(name) if ESTATE is None else None
 
 # the ONE tier oracle (plan-18) — the card's roster is exactly content_public_agents,
 # fail-closed, so a tier-private agent can never be advertised to the world.
@@ -458,6 +470,20 @@ async def agent_card_door():
     return agent_card(ctx) if ctx else Response(status_code=404)
 
 
+# A cog's per-org doors (plan-11324 S3e): org X answers at <ASTRYX_URL>/o/<X>/… (node.public_url, what its peers
+# store), through the SAME door functions as the root, on X's Ctx. An org this cog doesn't hold is a 404.
+@app.get("/o/{name}/astryx/identity")
+async def identity_at(name: str):
+    ctx = at(name)
+    return identity(ctx) if ctx else Response(status_code=404)
+
+
+@app.get("/o/{name}/.well-known/agent-card.json")
+async def agent_card_at(name: str):
+    ctx = at(name)
+    return agent_card(ctx) if ctx else Response(status_code=404)
+
+
 @app.post("/astryx/introduce")
 async def introduce_door(request: Request):
     ip = request.client.host if request.client else "?"
@@ -468,6 +494,19 @@ async def introduce_door(request: Request):
     except Exception:
         return Response(status_code=400)
     ctx = root()
+    return await introduce(ctx, d) if ctx else Response(status_code=404)
+
+
+@app.post("/o/{name}/astryx/introduce")
+async def introduce_at(name: str, request: Request):
+    ip = request.client.host if request.client else "?"
+    if rated(f"intro:{ip}", INTRO_RATE):          # the per-IP cap is the DOOR's: one count across every org
+        return Response(status_code=429)
+    try:
+        d = await request.json()
+    except Exception:
+        return Response(status_code=400)
+    ctx = at(name)
     return await introduce(ctx, d) if ctx else Response(status_code=404)
 
 
@@ -546,11 +585,23 @@ async def inbox_door(request: Request):
     return await inbox(ctx, e) if ctx else Response(status_code=404)
 
 
+@app.post("/o/{name}/astryx/inbox")
+async def inbox_at(name: str, request: Request):
+    try:
+        e = await request.json()
+    except Exception:
+        return Response(status_code=400)
+    ctx = at(name)
+    return await inbox(ctx, e) if ctx else Response(status_code=404)
+
+
 async def inbox(ctx: Ctx, e: dict, window: float = SKEW):
     """One verification and insert path for every inbound envelope: a direct POST, or one
     collected from a relay mailbox (`window` = how long it may have waited there)."""
     if not isinstance(e, dict):
         return Response(status_code=400)
+    if ctx.org is not None and not node.addressed_to(e, ctx.name):
+        return Response(status_code=403)         # a cog: the signed `to` names THIS org, or it lands nowhere (S3e)
     from_agent, _, from_org = str(e.get("from", "")).partition("@")
     peer = await ctx.pool.fetchrow(
         "SELECT pubkey, status, caps_granted FROM peers WHERE org=$1", from_org)
@@ -569,7 +620,7 @@ async def inbox(ctx: Ctx, e: dict, window: float = SKEW):
             "SELECT count(*) FROM messages WHERE from_org=$1 AND sig=$2", from_org, e.get("sig")):
         return {"ok": True}                      # a relayed copy outlives seen_ids: the row is the memory
     # Rung 1 — per-peer capability attenuation, enforced at the one off-uid door.
-    req_to = str(e.get("to", "")).partition("@")[0]
+    req_to = node.split_to(e["to"])[0] if ctx.org is not None else str(e.get("to", "")).partition("@")[0]
     if len(req_to.encode()) > AGENT_MAX:
         return Response(status_code=400)         # past the doorbell's channel name (a2 #60413): refused, never cut
     to_agent, intent, rate, intent_ok = reach(
@@ -605,6 +656,12 @@ async def inbox(ctx: Ctx, e: dict, window: float = SKEW):
 @app.get("/astryx/pickup")
 async def pickup_door(request: Request, org: str, since: int = 0, ts: str = "", sig: str = ""):
     ctx = root()
+    return await pickup(ctx, org, since, ts, sig) if ctx else Response(status_code=404)
+
+
+@app.get("/o/{name}/astryx/pickup")
+async def pickup_at(name: str, org: str, since: int = 0, ts: str = "", sig: str = ""):
+    ctx = at(name)
     return await pickup(ctx, org, since, ts, sig) if ctx else Response(status_code=404)
 
 

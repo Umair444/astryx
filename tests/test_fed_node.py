@@ -108,6 +108,7 @@ def main():
     check("door: the other org is still reached only at its own /o/", N.route("/o/b/astryx/inbox", cog, "a") == ("b", "/astryx/inbox"))
     check("door: no door, a bare path reaches nothing", N.route("/astryx/inbox", cog, None) is None)
     check("door: a door the cog does not hold reaches nothing", N.route("/astryx/inbox", cog, "c") is None)
+    check("door: a dot-dot segment on a bare path reaches nothing (a4 #60384)", N.route("/../x", cog, "a") is None)
     registry(N)
     print(f"{'FAIL' if fails else 'PASS'}: {len(fails)} failing")
     return 1 if fails else 0

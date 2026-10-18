@@ -874,6 +874,7 @@ run "influence graph: SHA-joined PASSes, BC-D delegation, coverage-gated kinds, 
 # reach unchanged (the read tools name no group). DB-free. Mutants: tests/mutants_groups_charter.py, mutants_groups_graph.py.
 run "group scopes: groups from the tree, read-time group views, reach unchanged (11324 S3d)" "$PY" tests/test_groups.py
 run "federation node addressing: one org unchanged, a cog's /o/<org> doors, envelopes held to their org (11324 S3e)" "$PY" tests/test_fed_node.py
+run "the cog's per-org doors on the gateway: /o/<org>, the door org at the root, per-org trust, addressed envelopes (11324 S3e)" "$PY" tests/test_fed_doors.py
 # econ PROVENANCE (steward): a2's trip (#21969) evaluated, not remembered — every v2.1+ econ row's
 # built_from.sha must be an ancestor of main with dirty=false; missing/unknown/foreign/dirty rows are
 # reported with their own remedies (report-only trigger, gitignored body; SKIPs where it is absent).
