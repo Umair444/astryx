@@ -26,4 +26,16 @@ MUTANTS = {
         (' and not re.search(r"\\$\\(|`", m.group())', ""),
     "G2 a `:-` default is not a lead (vitals.sh:87)":
         ('|:-)(?:\\./)?"""', ')(?:\\./)?"""'),
+    "N1 python's argv kind is not read":
+        ('        for n in _py_tmux(src):\n',
+         '        for n in []:\n'),
+    'N2 org_tmux.sh routes calls made BEFORE it is sourced':
+        ('sourced_at is not None and sourced_at < n:',
+         'sourced_at is not None:'),
+    'N3 `exec tmux` is routed by the function it bypasses':
+        ('            if not m.group("pre") and sourced_at',
+         '            if sourced_at'),
+    'N4 .ts is not read again (a2 #59037)':
+        (', ".cjs", ".ts")   # .cjs/.ts',
+         ', ".cjs")   # .cjs/.ts'),
 }
