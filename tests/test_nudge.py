@@ -102,6 +102,7 @@ check("N1 no non-zero exit anywhere in the hook (exit 2 blocks the prompt)", not
 # decides absent (77) vs broken (1), as for every sqlguard oracle; a failed N1 still reads RED.
 sys.path.insert(0, str(REPO))
 from astryx.security.sqlguard.estate import absent  # noqa: E402
+from astryx.security.sqlguard import propagate  # noqa: E402  (the hook child is traced under check.sh's sqlguard)
 _gone = absent(REPO, deps=("psycopg",))
 if _gone:
     print(f"  {'NOT SEARCHED' if _gone[0] == EXIT_SKIP else 'BROKEN'}: {_gone[1]} (static arm only)")
@@ -206,7 +207,7 @@ def run(root, dsn, url=None, prompt="refactor the ledger", agent="zzpub", extra=
     r = subprocess.run([PY, str(root / "hooks" / "nudge.py")],
                        input=json.dumps({"hook_event_name": "UserPromptSubmit",
                                          "session_id": "s1", "prompt": prompt}),
-                       text=True, capture_output=True, env=env, timeout=20)
+                       text=True, capture_output=True, env=propagate.env_for_child(env), timeout=20)
     return r, time.monotonic() - t0
 
 

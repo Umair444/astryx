@@ -86,6 +86,12 @@ ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on
 EXIT_SKIP = 77
 SUBJECT = Path(os.environ.get("STEP_SRC") or REPO / "hooks" / "step.py")
 TOOLREG = Path(os.environ.get("TOOLREG_SRC") or REPO / "src" / "astryx" / "core" / "toolreg.py")
+import importlib.util as _ilu  # noqa: E402
+# By path, for the reason fixture.py is below; propagate.py imports only os. It lets check.sh's sqlguard trace the
+# hook child (else every hooks/step.py site grades NOT SEARCHED, then R-CLOCK), and is a no-op outside a trace.
+_ps = _ilu.spec_from_file_location("_tl_propagate", REPO / "src" / "astryx" / "security" / "sqlguard" / "propagate.py")
+propagate = _ilu.module_from_spec(_ps)
+_ps.loader.exec_module(propagate)
 ENV = ESTATE / ".env"
 PY = sys.executable
 
@@ -157,7 +163,7 @@ def hook(root, sch, payload, agent="alice"):
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "ASTRYX_AGENT": agent,
            "PGOPTIONS": f"-c search_path={sch}"}
     r = subprocess.run([PY, str(root / "hooks" / "step.py")], input=json.dumps(payload),
-                       text=True, capture_output=True, env=env, timeout=30)
+                       text=True, capture_output=True, env=propagate.env_for_child(env), timeout=30)
     return r
 
 

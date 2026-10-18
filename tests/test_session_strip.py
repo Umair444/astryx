@@ -30,6 +30,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "tests"))
+from astryx.security.sqlguard import propagate  # noqa: E402  (the hook child is traced under check.sh's sqlguard)
 SUBJECT = Path(os.environ.get("STEP_SRC") or REPO / "hooks" / "step.py")
 SPAWN = Path(os.environ.get("SPAWN_SRC") or REPO / "scripts" / "spawn.sh")
 PY = sys.executable
@@ -66,7 +67,7 @@ def tree(subject: Path, dsn: str) -> Path:
 def hook(root: Path, agent: str, payload: dict, env_extra=None):
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "ASTRYX_AGENT": agent, **(env_extra or {})}
     return subprocess.run([PY, str(root / "hooks" / "step.py")], input=json.dumps(payload), text=True,
-                          capture_output=True, env=env, timeout=60)
+                          capture_output=True, env=propagate.env_for_child(env), timeout=60)
 
 
 def denied(r) -> bool:

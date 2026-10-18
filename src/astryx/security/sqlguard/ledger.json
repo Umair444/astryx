@@ -69,9 +69,6 @@
   "hooks/step.py::handle_stop\u001fupdate messages set turn_id=? where from_agent=? and from_org='local' and turn_id is null and ts >= ?::timestamptz": [
    "doctor units-drift: a live orphan is not told to self-delete"
   ],
-  "hooks/step.py::main\u001finsert into steps (agent, kind, content, turn_id, tokens_in, tokens_out) values (?,'response',?,?,?,?)": [
-   "doctor units-drift: a live orphan is not told to self-delete"
-  ],
   "mcp/memory/resolvers.py::_run_cypher\u001f*": [
    "memory ask() hides tier-private data"
   ],
@@ -615,7 +612,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 295,
+  "debt_rows": 299,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 5,
@@ -867,11 +864,47 @@
    "reason": "people library 1a: a pg_catalog read (pg_roles/pg_database/pg_attribute), so RESPONSIVE is unreachable by the judge's relation rule; executed by test_people_gate / test_privilege_census",
    "tk": "sha256t:046b20c0dabd11548bae9814467a482cc75a8bc3ba33df01baa1bf6468820550"
   },
+  "hooks/nudge.py::log_error\u001finsert into steps (agent, kind, content) values (?,'error',?)": {
+   "admitted": "2026-10-18",
+   "debt": "UNEXECUTED",
+   "reason": "test_nudge runs its logic arms on a copy of nudge.py with HARD_S raised to RELAXED_S, and the shim credits only a byte-identical copy, so this site runs but is never observed. It can climb once the deadline is relaxable without editing the subject (a goal, via steward; medic 10-18)",
+   "tk": "sha256t:fe74fe92ee9f91ad008d0408484fff1ba9e304920cf25983be89ad562470eb3e"
+  },
+  "hooks/nudge.py::log_error\u001fselect 1 from steps where agent=? and kind='error' and content like ? and ts > now() - interval '1 hour' limit 1": {
+   "admitted": "2026-10-18",
+   "debt": "UNEXECUTED",
+   "reason": "test_nudge runs its logic arms on a copy of nudge.py with HARD_S raised to RELAXED_S, and the shim credits only a byte-identical copy, so this site runs but is never observed. It can climb once the deadline is relaxable without editing the subject (a goal, via steward; medic 10-18)",
+   "tk": "sha256t:566b1b753678df569c8dfd509767e33340d86d8e6ef5fb2d421d17146c96e24d"
+  },
+  "hooks/nudge.py::record\u001finsert into classifications (agent, session_id, family, tier, classifier, nudged) values (?,?,?,?,?,?)": {
+   "admitted": "2026-10-18",
+   "debt": "UNEXECUTED",
+   "reason": "test_nudge runs its logic arms on a copy of nudge.py with HARD_S raised to RELAXED_S, and the shim credits only a byte-identical copy, so this site runs but is never observed. It can climb once the deadline is relaxable without editing the subject (a goal, via steward; medic 10-18)",
+   "tk": "sha256t:c133c4853305a713ad5e6dbf3205fd08c6260552f2f4f6dec660862d8bdfa4a3"
+  },
+  "hooks/nudge.py::record\u001fselect 1 from classifications where agent=? and family=? and nudged and ts > now() - make_interval(days => ?) limit 1": {
+   "admitted": "2026-10-18",
+   "debt": "UNEXECUTED",
+   "reason": "test_nudge runs its logic arms on a copy of nudge.py with HARD_S raised to RELAXED_S, and the shim credits only a byte-identical copy, so this site runs but is never observed. It can climb once the deadline is relaxable without editing the subject (a goal, via steward; medic 10-18)",
+   "tk": "sha256t:f1d412c4871813062e244ebcb299dcf3d67a5b7be952536e4a9ba81fd14d09d7"
+  },
+  "hooks/nudge.py::record\u001fselect count(*) from classifications where family=? and ts > now() - make_interval(days => ?)": {
+   "admitted": "2026-10-18",
+   "debt": "UNEXECUTED",
+   "reason": "test_nudge runs its logic arms on a copy of nudge.py with HARD_S raised to RELAXED_S, and the shim credits only a byte-identical copy, so this site runs but is never observed. It can climb once the deadline is relaxable without editing the subject (a goal, via steward; medic 10-18)",
+   "tk": "sha256t:aa4428fafcc8a3683ee268a0264af725b06e426daffdd307a7e68f578d9837ec"
+  },
   "hooks/step.py::_labelled_auto_deliver\u001fupdate messages set turn_id=? where id=?": {
    "admitted": "2026-10-11",
    "debt": "EXECUTED",
    "reason": "plan-9139 S1b: stamps turn_id on the row send_row just inserted (its RETURNING id, same savepoint), so exactly 1 row by construction; driven in a stamped fixture by tests/test_release_seats.py",
    "tk": "sha256t:49ee6a665c1289aa4d72b3ff31f8ed59208e53f00a28a67731e17be21dee12ff"
+  },
+  "hooks/step.py::handle_stop\u001finsert into steps (agent, kind, content) values (?,'error',?)": {
+   "admitted": "2026-10-18",
+   "debt": "UNEXECUTED",
+   "reason": "fault path: written only when the secret cleaner is unavailable (clean_ok false, plan-5497 S1a); no traced gate makes redaction unavailable inside the hook (medic 10-18)",
+   "tk": "sha256t:dcbb15d14a78c48ddaeb6a0c8c94f21395d9ba1050c10e325801178dc7693c83"
   },
   "hooks/step.py::handle_stop\u001fselect (regexp_match(thread, '^(?:plan|goal)-(\\d+)$'))[1]::bigint from messages where id=?": {
    "debt": "NOT-SEARCHED-AT-SEED",
@@ -893,30 +926,21 @@
    "reason": "seed",
    "tk": "sha256t:f09629621bb079493a9acd454057f9546e912b7a3e064a5752838f16ab02f466"
   },
+  "hooks/step.py::main\u001finsert into steps (agent, kind, content) values (?,'error',?)": {
+   "admitted": "2026-10-18",
+   "debt": "UNEXECUTED",
+   "reason": "fault path: written only when a PreToolUse guard (secret_guard or grep_guard) reports an error (guard_err); no traced gate makes a guard error inside the hook (medic 10-18)",
+   "tk": "sha256t:dcbb15d14a78c48ddaeb6a0c8c94f21395d9ba1050c10e325801178dc7693c83"
+  },
   "hooks/step.py::main\u001finsert into steps (agent, kind, content) values (?,'response',?)": {
    "debt": "NOT-SEARCHED-AT-SEED",
    "reason": "seed",
    "tk": "sha256t:64b95efe9e7fac5530e14ef4547b8e361f5adfcc40a8fdb3b90114fb5e08887c"
   },
-  "hooks/step.py::main\u001finsert into steps (agent, kind, content, meta) values (?,'error',?,?)": {
-   "debt": "NOT-SEARCHED-AT-SEED",
-   "reason": "seed",
-   "tk": "sha256t:515cd3731d2387ea77418ac2d990ecaa7b17952fc725a79e6c3e856a380f7800"
-  },
-  "hooks/step.py::main\u001finsert into steps (agent, kind, content, meta) values (?,'tool',?,?)": {
-   "debt": "NOT-SEARCHED-AT-SEED",
-   "reason": "seed",
-   "tk": "sha256t:2e981781463eee623a047ffc0b8a965ec404e1bcb0fa80519c8d9d7b7d23e2ac"
-  },
   "hooks/step.py::main\u001finsert into steps (agent, kind, content, meta) values (?,'tool_done',?,?)": {
    "debt": "NOT-SEARCHED-AT-SEED",
    "reason": "seed",
    "tk": "sha256t:1407d4c855a59c28a74f5c0dc16ac9a2a87fba7cf47195094b5faa167e119f47"
-  },
-  "hooks/step.py::main\u001finsert into steps (agent, kind, content, turn_id, tokens_in, tokens_out) values (?,'response',?,?,?,?)": {
-   "debt": "EXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:ef9b4d50690bc80791e620f4d09f359fce22df06f02956d370adc376790d5db9"
   },
   "hooks/usage.py::<module>\u001fselect coalesce(max((raw_payload->'usage'->>'context')::bigint),0) from (select raw_payload from turns where agent=? order by id desc limit 200) t": {
    "admitted": "2026-10-11",
