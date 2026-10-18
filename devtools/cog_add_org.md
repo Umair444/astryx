@@ -17,7 +17,7 @@ Nothing here touches `/etc` until the fixture rehearsal (S6) is green.
 | S2 | a cog-safe `init.sh units` (writes `units/`, nothing else) | init.sh exits 3 at its top in a cog (its `# >>> org-home guard` block); only the oracle's extracted `units_fx.sh` runs units() there today |
 | S3 | check.sh pins a missing registry for the gates | `/etc/astryx/cog.json` is a host FILE: every gate would run under multi, and pushed_tree_check's env scrub can't remove it |
 | S4 | deploy.sh, pause.sh, refresh.sh, smoke.sh, vitals.sh learn `@<key>` names for NON-primary orgs; the primary keeps today's verbs | each refuses in a cog today ("one-org only, refusing") |
-| S5 | `devtools/cog_add_org.sh <key> --dry-run` | lab's own setup path; it never calls this checkout's init.sh (see the trap in step 2) |
+| S5 | `devtools/cog_add_org.py <key> --home DIR --name FED --dry-run` | lab's own setup path; it never calls this checkout's init.sh (see the trap in step 2) |
 | S6 | the full rehearsal on a fixture registry (`ASTRYX_COG_REGISTRY=<tmp>`) | steps 2 to 6, end to end, before `/etc` |
 
 ## 1. Does our estate move? `READY`: no
@@ -44,13 +44,14 @@ tools resolving to our org (a node tool still refuses: home.mjs has no marker ru
 a2 measured it on a fixture. With the marker, a shell in `homes/x` resolves to our org. A worktree (its `.git` is a
 FILE) still gets NoHome, because find_marker stops at the first git root, so worktrees stay fail-closed.
 
-## 2. Create org #2, `lab`: `BLOCKED(S5)`
+## 2. Create org #2, `lab`: `READY` once S5 lands (`devtools/cog_add_org.py`; its oracle tests/test_cog_add_org.py)
 
 **The trap S5 closes by construction.** Never `ASTRYX_HOME=<lab> ./init.sh` on this checkout. On a one-org host the resolver
 honours ASTRYX_HOME only when it names the checkout itself (paths.py, rung 1), so that line re-initialises OUR org. It
 would also spawn `ax-seed` on the default socket, where ours lives.
 
-What `cog_add_org.sh lab --dry-run` will print, and then do without `--dry-run`:
+What `venv/bin/python devtools/cog_add_org.py lab --home /home/umair/astryx-orgs/lab --name lab.umairfiaz.com --dry-run`
+prints, and then does without `--dry-run` (the registry goes to `--out`, default `<home>.cog.json`, never /etc):
 
 - HOME `/home/umair/astryx-orgs/lab` (outside every checkout, so no marker walk can reach ours), with a `.astryx` marker FILE, `agents/seed.md`, `local.md` (lab's law: a test org) and `homes/`
 - its database `astryx_lab` on genesis-pg, created by our DSN's role (R1: one owner, one superuser), then:
@@ -86,7 +87,7 @@ COG-scoped, no org may take one: 8090 (the front), 8845 (the gateway).
 8190, 18190 and 18091 were free at the measurement. Re-check just before writing the registry:
 `ss -ltnH '( sport = :8190 or sport = :18190 or sport = :18091 )'` must print nothing.
 
-## 4. The registry and the units: `BLOCKED(S1, S2, S3, S4)`, then `OWNER`
+## 4. The registry and the units: `BLOCKED(S6)` (S1-S4 landed: 45617e5, 907c294, c2919b7, 5ae8d03), then `OWNER`
 
 In order, each line the owner's:
 
@@ -94,7 +95,7 @@ In order, each line the owner's:
    And the marker (§1, a hard prerequisite): `touch /home/umair/astryx/.astryx`, then `test -f /home/umair/astryx/.astryx`
    must pass before step 2. Its proof: test_org_home_units U12, where no ASTRYX_HOME and no marker gives a NoHome naming
    it, and the marker resolves to the primary.
-2. `sudo install -d -m 755 /etc/astryx && sudo install -m 644 <the file cog_add_org.sh printed> /etc/astryx/cog.json`
+2. `sudo install -d -m 755 /etc/astryx && sudo install -m 644 <the file cog_add_org.py wrote, its --out> /etc/astryx/cog.json`
 3. The units, written to `units/` only (S2):
    - ours: `ASTRYX_HOME=/home/umair/astryx ./init.sh units`. As the primary its units stay plain-named and byte-identical, except that `astryx-observatory.service` is no longer ours, and ours gains `astryx-observatory-org.service` on 8190.
    - lab's: `ASTRYX_HOME=/home/umair/astryx-orgs/lab ./init.sh units`, giving `astryx-<stem>@lab.*`
@@ -105,7 +106,7 @@ In order, each line the owner's:
    - restart the gateway on its cog unit: `sudo systemctl restart astryx-gateway`
 5. Lab's units: install `astryx-*@lab.*`, then `sudo systemctl enable --now astryx-observatory-org@lab astryx-canvas@lab astryx-pulse@lab.timer`. Residents: step 5, never its residents unit.
 
-## 5. Start lab's seed only: `BLOCKED(S1)`
+## 5. Start lab's seed only: `READY` after step 4 (S1 landed: the primary keeps the default socket)
 
 `ASTRYX_HOME=/home/umair/astryx-orgs/lab scripts/spawn.sh seed`. Its tmux server is `-L ax-lab` (orgs.socket), so
 `tmux -L ax-lab ls` shows `ax-seed` and our default server still shows our 17. Lab's agents/ holds only seed.md, so
@@ -129,7 +130,7 @@ The proofs that exist today, on fixtures: test_observatory_cog (two rooms; the `
 test_gateway_cog (a sibling's row crosses by to_org), test_canvas_cog (each org's session at its own path),
 test_org_home_units (each org's units disjoint).
 
-## 7. Rollback: `BLOCKED(S2)` for the render, otherwise `OWNER`
+## 7. Rollback: `READY` (S2 landed: `./init.sh units` renders), otherwise `OWNER`
 
 1. `sudo systemctl disable --now astryx-observatory-org@lab astryx-canvas@lab astryx-pulse@lab.timer`, and kill only lab's server: `tmux -L ax-lab kill-server` (never a bare kill-server)
 2. `sudo systemctl stop astryx-observatory astryx-observatory-org`, then `sudo rm /etc/astryx/cog.json`
