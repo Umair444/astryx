@@ -959,3 +959,15 @@ CREATE TABLE IF NOT EXISTS influence_query (
   liveness  text NOT NULL                     -- which filter ran, as the reply printed it
 );
 CREATE INDEX IF NOT EXISTS influence_query_ts ON influence_query (ts);
+
+-- plan-11324 S4 · WORKFLOWS: a goal's planned coordination (a DAG of tasks converging on one agent), append-only
+-- revisions. The body's rules live in src/astryx/workflow.py (validate); actuals are MEASURED from origin/main there,
+-- never stored here. A revision never deletes a task with history: it marks it dropped (a1 #60109 C).
+CREATE TABLE IF NOT EXISTS goal_workflow (
+  goal_id  integer NOT NULL,
+  rev      integer NOT NULL,
+  body     jsonb NOT NULL,
+  author   text NOT NULL,
+  ts       timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (goal_id, rev)
+);

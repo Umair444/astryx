@@ -584,6 +584,27 @@ async def goal_detail(gid: int):
             "steps": [step(x) for x in steps]}
 
 
+@app.get("/api/goals/{gid}/workflow")
+async def goal_workflow(gid: int):
+    """plan-11324 S4: the goal's workflow (latest revision) with its MEASURED reading: each task's planned span beside
+    its measured one (commits reachable from origin/main, attributed by trailer or the backlog normaliser), status,
+    the critical path, the UNATTRIBUTED commits, and the planned-vs-measured influence overlay on plan-<goal>. All rules
+    live in astryx.workflow. Owner-only by the privacy gate (not a PUBLIC_PATH)."""
+    import asyncio
+    import json as _json
+    from datetime import datetime as _dt, timezone as _tz
+    from astryx import workflow as wf
+    r = await pool.fetchrow("SELECT rev, body FROM goal_workflow WHERE goal_id=$1 ORDER BY rev DESC LIMIT 1", gid)
+    if not r:
+        return Response(status_code=404)
+    body = r["body"] if isinstance(r["body"], dict) else _json.loads(r["body"])
+    commits = await asyncio.to_thread(wf.main_commits, REPO, gid)
+    edges = await pool.fetch(
+        "SELECT src, dst, count(*) AS n FROM influence_edge WHERE topic=$1 GROUP BY src, dst", f"plan-{gid}")
+    return {"rev": r["rev"], **wf.status(body, commits, _dt.now(_tz.utc)),
+            "overlay": wf.overlay(body, [(e["src"], e["dst"], e["n"]) for e in edges])}
+
+
 #  BILLABLE, NOT RAW. steps.tokens_in / turns.tokens_in count cache reads at face value and
 #  overstate real cost ~7x (this org runs ~96% cache-read at 0.1x). The honest number is
 #  billable_equiv_in, written per turn in raw_payload.usage (hooks/step.py). Turns before the
