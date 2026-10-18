@@ -40,7 +40,11 @@ if subprocess.run([sys.executable, "-c", "import psycopg"], capture_output=True)
     sys.exit(77)
 
 ge = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-tracked = subprocess.run(["git", "-C", str(REPO), "ls-files", "-z"], capture_output=True, env=ge, check=True).stdout
+ls = subprocess.run(["git", "-C", str(REPO), "ls-files", "-z"], capture_output=True, env=ge)
+if ls.returncode != 0:      # a `git archive` extract: no index to copy the committed-only tree from, so nothing to verify
+    print(f"NOT RUN: {REPO} is not a git checkout, so there's no tracked set to build the test tree from. Nothing was verified here.")
+    sys.exit(77)
+tracked = ls.stdout
 with tempfile.TemporaryDirectory(prefix="fxu-") as td:
     tree = Path(td) / "tree"
     for rel in tracked.decode(errors="replace").split("\0"):
