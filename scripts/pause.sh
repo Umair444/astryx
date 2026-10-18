@@ -17,9 +17,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # org-home guard (plan-11324 S3a): one-org only (it reads this checkout's estate); in a cog of several orgs it refuses first.
-if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ]; then _g=0; "$PWD"/venv/bin/python "$PWD"/src/astryx/orgs.py multi || _g=$?; [ "$_g" = 1 ] || { echo "pause.sh: this cog runs several orgs (or its org registry refuses): one-org only, refusing" >&2; exit 3; }; fi
-DECL=var/org_pause.json
-UNIT=astryx-pulse.timer
+if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ]; then ROOT=$PWD; _g=0; "$ROOT"/venv/bin/python "$ROOT"/src/astryx/orgs.py multi || _g=$?; case "$_g" in 1) ;; 0) . "$ROOT/scripts/org_here.sh" || { echo "pause.sh: refusing" >&2; exit 3; } ;; *) echo "pause.sh: this host's org registry refuses: refusing" >&2; exit 3 ;; esac; fi
+# plan-11324 S3f S4: in a cog THIS org's pause (org_here.sh): its declaration in its own estate, its own pulse timer
+DECL=var/org_pause.json            # org-home: one org (the checkout IS its HOME); a cog: $ORGH below
+UNIT=astryx-pulse.timer            # org-home: one org's name; a cog: orgs.unit below
+[ -n "${COGH:-}" ] && { DECL="$ORGH/var/org_pause.json"; UNIT=$(org_unit astryx-pulse timer); }
 
 case "${1:-}" in
   on)
@@ -29,8 +31,8 @@ case "${1:-}" in
     if [ -n "${3:-}" ]; then
       until=$(date -u -d "$3" +%FT%TZ 2>/dev/null) || { echo "pause: can't read until='$3'" >&2; exit 2; }
     fi
-    mkdir -p var
-    tmp=$(mktemp var/.org_pause.XXXXXX)
+    mkdir -p "$(dirname "$DECL")"
+    tmp=$(mktemp "$(dirname "$DECL")/.org_pause.XXXXXX")
     python3 -I -c 'import json, sys
 by, reason, at, until = sys.argv[1:5]
 d = {"by": by, "reason": reason, "at": at}

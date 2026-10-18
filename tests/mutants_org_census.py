@@ -45,4 +45,9 @@ MUTANTS = {
     "N6 shell's unit-name kind is not read":
         ('        if UNIT_NAME.search(bare) and not rel.startswith("tests/"):',
          '        if False:'),
+    "N7 a guard that SERVES a cog is exempt like one that refuses (its checkout reads run for another org: a2 #60858)":
+        ('        sv = g and serves(lines)\n', '        sv = False\n'),
+    "N8 every site of a serving file is exempt (not only those relative to the org's HOME)":
+        ('                    (res["guarded"] if ORGH_REL.search(raw) else res[kind]).append(row)',
+         '                    res["guarded"].append(row)'),
 }

@@ -476,6 +476,7 @@ run "install + platform: WSL/systemd doctor checks, docker host address order, i
 run "turns retention: old images stripped, words kept, recent untouched, idempotent" "$PY" tests/test_turns_retention.py
 # deploy.sh restart's failure paths, all side effects stubbed: a refusing spawn is a named ✗, the run continues,
 # ends INCOMPLETE, and the pulse is started again (a2 #42367)
+run "ops cog: pause, smoke, refresh and vitals act on THIS org in a cog (plan-11324 S3f S4)" "$PY" tests/test_ops_cog.py
 run "deploy cog: each org's own units, only the primary touches the database, the cog's gateway and front say so (plan-11324 S3f S4)" "$PY" tests/test_deploy_cog.py
 run "deploy restart: a failed resident is named, the run continues, the pulse comes back" bash tests/test_deploy_restart.sh
 run "context compact: /compact reaches only the named session (exact tmux target, no prefix fallback)" "$PY" tests/test_compact_exact_target.py

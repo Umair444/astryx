@@ -23,11 +23,12 @@
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-# org-home guard (plan-11324 S3a, a2 #58917 R-2): one-org only (every panel reads this checkout's estate: .env, backups/);
-# in a cog of several orgs it refuses first (exit 3: the one exception to "exit 0 always", a panel it cannot read honestly).
-if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ]; then _g=0; "$ROOT"/venv/bin/python "$ROOT"/src/astryx/orgs.py multi || _g=$?; [ "$_g" = 1 ] || { echo "vitals.sh: this cog runs several orgs (or its org registry refuses): one-org only, refusing" >&2; exit 3; }; fi
+# org-home guard (plan-11324 S3a, a2 #58917 R-2; S3f S4b): one org reads this checkout's estate (.env, backups/); a cog of
+# several orgs reads THE org ASTRYX_HOME or the marker names (org_here.sh: $ORGH), and with none refuses (exit 3: the one
+# exception to "exit 0 always", a panel it cannot read honestly).
+if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ]; then _g=0; "$ROOT"/venv/bin/python "$ROOT"/src/astryx/orgs.py multi || _g=$?; case "$_g" in 1) ;; 0) . "$ROOT/scripts/org_here.sh" || { echo "vitals.sh: refusing" >&2; exit 3; } ;; *) echo "vitals.sh: this host's org registry refuses: refusing" >&2; exit 3 ;; esac; fi
 cd "$ROOT" || { echo "cannot cd to repo root $ROOT"; exit 2; }
-DSN="$(grep -E '^ASTRYX_DSN=' .env | cut -d= -f2- | tr -d '"'\''')"
+DSN="$(grep -E '^ASTRYX_DSN=' "${ORGH:-$ROOT}/.env" | cut -d= -f2- | tr -d '"'\''')"   # a cog: THIS org's (org_here.sh)
 q() { psql "$DSN" -tAc "$1" 2>&1; }
 hr() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
 
@@ -87,7 +88,7 @@ hr "gate suite — steward's run_check STAMP (not a re-run; read CONTENT, not th
 # stamp for a glance so the heartbeat covers the gate axis without re-running the suite. Read the
 # VERDICT line, not the mtime — a FAILED run writes a fresh stamp, so age never means health. The
 # >26h note is a soft glance-prompt (is run_check alive?), NOT a competing gate.
-_stamp="${CHECK_WATCH_STAMP:-backups/.last-check}"
+_stamp="${CHECK_WATCH_STAMP:-${ORGH:-.}/backups/.last-check}"   # a cog: THIS org's (a2 #60858 R-1)
 if [ -f "$_stamp" ]; then
   _age_h=$(( ( $(date +%s) - $(stat -c %Y "$_stamp") ) / 3600 ))
   head -1 "$_stamp"
@@ -137,7 +138,7 @@ hr "messages — stuck outbound (pending/dead), meta only"
 _stuck="$(q "SELECT id||'  '||status||'  age='||round(EXTRACT(EPOCH FROM (now()-ts))/3600.0,1)||'h' FROM messages WHERE status NOT IN ('delivered','abandoned') ORDER BY ts")"
 [ -n "$_stuck" ] && printf '%s\n' "$_stuck" || echo "  (none — nothing stuck)"
 
-hr "services — astryx-* coughing (last 60 lines)"
+hr "services — astryx-* coughing (last 60 lines${COGH:+; in a cog, the units of EVERY org})"
 journalctl -u 'astryx-*' -n 60 --no-pager 2>&1 | grep -iE 'error|traceback|exception|crash|fatal' | tail -12 || true
 echo "  (above empty = no errors in window)"
 
@@ -147,7 +148,7 @@ hr "backup axis — proven-restorable & fresh (restore_verify owns the 9-day ala
 # trips at 9 days. But a guard cannot watch its OWN silence, so this is the independent glance:
 # read the stamp's CONTENT (its own ISO ts, not mtime) for the age, and glance the
 # newest dump's freshness (is run_backup still producing daily?). Read-only — never re-runs a restore.
-_newest_dump="$(ls -t backups/*.dump 2>/dev/null | head -1)"
+_newest_dump="$(ls -t "${ORGH:-.}"/backups/*.dump 2>/dev/null | head -1)"
 if [ -n "$_newest_dump" ]; then
   _dump_age_h=$(( ( $(date +%s) - $(stat -c %Y "$_newest_dump") ) / 3600 ))
   printf 'newest dump: %s  (%sh old%s)\n' "$(basename "$_newest_dump")" "$_dump_age_h" \
@@ -155,7 +156,7 @@ if [ -n "$_newest_dump" ]; then
 else
   echo "  ⚠ NO .dump in backups/ — run_backup has produced nothing"
 fi
-_rok="backups/.last-restore-ok"
+_rok="${ORGH:-.}/backups/.last-restore-ok"
 if [ -f "$_rok" ]; then
   _rok_body="$(cat "$_rok")"
   _rok_ts="$(printf '%s' "$_rok_body" | awk '{print $2}')"

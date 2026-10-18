@@ -7,9 +7,14 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 # org-home guard (plan-11324 S3a): one-org only (it reads this checkout's estate); in a cog of several orgs it refuses first.
-if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ]; then _g=0; "$PWD"/venv/bin/python "$PWD"/src/astryx/orgs.py multi || _g=$?; [ "$_g" = 1 ] || { echo "smoke.sh: this cog runs several orgs (or its org registry refuses): one-org only, refusing" >&2; exit 3; }; fi
+if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ]; then ROOT=$PWD; _g=0; "$ROOT"/venv/bin/python "$ROOT"/src/astryx/orgs.py multi || _g=$?; case "$_g" in 1) ;; 0) . "$ROOT/scripts/org_here.sh" || { echo "smoke.sh: refusing" >&2; exit 3; } ;; *) echo "smoke.sh: this host's org registry refuses: refusing" >&2; exit 3 ;; esac; fi
+# plan-11324 S3f S4: in a cog THIS org (org_here.sh): its residents' server, its .env, its observatory BACKEND's port
+# (:8090 is the cog's front, which answers no org's /api/overview)
+ENVF=.env                          # org-home: one org (the checkout IS its HOME); a cog: $ORGH below
+[ -n "${COGH:-}" ] && ENVF="$ORGH/.env"
 
 PORT="${1:-8090}"
+[ -n "${COGH:-}" ] && [ -z "${1:-}" ] && PORT=$("$ROOT"/venv/bin/python "$ROOT"/src/astryx/orgs.py port astryx-observatory-org)
 say() { echo -e "\033[36m[astryx]\033[0m $*"; }
 ok()  { echo -e "  \033[32m✓\033[0m $*"; }
 bad() { echo -e "  \033[31m✗\033[0m $*"; FAIL=1; }
@@ -19,12 +24,11 @@ FAIL=""
 say "smoke test — is the org metabolizing?"
 
 # body present: the seed lives in tmux
-tmux has-session -t =ax-seed 2>/dev/null && ok "seed resident alive (ax-seed)" \
-  || bad "seed not resident — scripts/spawn.sh seed"
+tmux has-session -t =ax-seed 2>/dev/null && ok "seed resident alive (ax-seed)" || bad "seed not resident — scripts/spawn.sh seed"   # org-home: a cog's `tmux` is org_tmux.sh's (org_here.sh)
 
 # the wire's truth: postgres reachable and stepping
-if [ -f .env ]; then
-  DSN=$(grep '^ASTRYX_DSN=' .env | cut -d= -f2-)
+if [ -f "$ENVF" ]; then
+  DSN=$(grep '^ASTRYX_DSN=' "$ENVF" | cut -d= -f2-)   # org-home: $ENVF is the org's .env ($ORGH in a cog)
 else
   DSN=""; bad ".env missing — run ./init.sh"
 fi

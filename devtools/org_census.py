@@ -449,10 +449,21 @@ def env_sites(rel: str, lines, readers, names) -> list:
 # `guarded`, never silent, and tests/test_org_home_census.py RUNS each one under a two-org registry to prove it.
 GUARD = re.compile(r"""orgs\.py\s+multi""")
 GUARD_LINES = 40
+# A guard that SERVES a cog instead of refusing (plan-11324 S3f S4/S4b: it sources scripts/org_here.sh, or resolves the
+# org inline and sets COGH=1, as deploy.sh does) runs its estate reads FOR whichever org ASTRYX_HOME names, so the
+# `guarded` exemption (whose proof is a refusal) does not cover it (a2 #60858 R-2): each of its estate sites must be
+# relative to that org's HOME ($ORGH), or declared (org-home: …), else it is a finding
+SERVES = re.compile(r"""org_here\.sh|\bCOGH=1\b""")
+ORGH_REL = re.compile(r"""\$\{?ORGH\b""")
 
 
 def guarded(p: Path, lines) -> bool:
     return (p.suffix == ".sh" or p.name == "init.sh") and any(GUARD.search(c) for n, c, _ in lines if n <= GUARD_LINES)
+
+
+def serves(lines) -> bool:
+    """A guarded file whose guard serves a cog (SERVES within its first lines): its sites are judged, not exempted."""
+    return any(SERVES.search(c) for n, c, _ in lines if n <= GUARD_LINES)
 
 
 def unparsed(path: Path, suffix: str) -> str | None:
@@ -479,7 +490,7 @@ def census(root: Path, overrides: dict | None = None, home: Path | None = None) 
     names = org_names(root)
     readers = [(n, env_read(n)) for n in sorted(names)]
     res = {"dsn": [], "estate": [], "env": [], "namespace": [], "unparsed": [], "declared": [], "guarded": [],
-           "guarded_files": [],
+           "guarded_files": [], "serving_files": [],
            "org_names": sorted(names)}
     for p in walk(root):
         rel = p.relative_to(root).as_posix()
@@ -492,13 +503,21 @@ def census(root: Path, overrides: dict | None = None, home: Path | None = None) 
         g = guarded(p, lines)
         if g:
             res["guarded_files"].append(rel)
+        sv = g and serves(lines)
+        if sv:
+            res["serving_files"].append(rel)
         for kind, sites in (("dsn", dsn_sites(rel, lines)),
                             ("estate", estate_sites(rel, lines, toks, cd_base)),
                             ("env", env_sites(rel, lines, readers, names)),
                             ("namespace", namespace_sites(rel, src if src.suffix else p, lines))):
             for n, raw, what in sites:
                 row = {"kind": kind, "file": rel, "line": n, "what": what}
-                (res["declared"] if DECLARE.search(raw) else res["guarded"] if g else res[kind]).append(row)
+                if DECLARE.search(raw):
+                    res["declared"].append(row)
+                elif sv:                          # it serves a cog: only a site relative to the org's HOME is exempt
+                    (res["guarded"] if ORGH_REL.search(raw) else res[kind]).append(row)
+                else:
+                    (res["guarded"] if g else res[kind]).append(row)
     res["triggers"], res["triggers_read"] = trigger_sites(home or root)
     return res
 

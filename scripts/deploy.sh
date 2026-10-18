@@ -19,11 +19,13 @@ if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ]; then
        ORGH=$(cd "$ROOT" && venv/bin/python -c 'import sys; sys.path.insert(0, "src"); from astryx import paths; print(paths.home())') \
          || { echo "deploy.sh: this cog runs several orgs and neither ASTRYX_HOME nor the checkout's .astryx marker names one: refusing" >&2; exit 3; }
        UKEY=$("$ROOT"/venv/bin/python "$ROOT"/src/astryx/orgs.py name) || { echo "deploy.sh: $ORGH is not a registered org: refusing" >&2; exit 3; }
-       [ "$("$ROOT"/venv/bin/python "$ROOT"/src/astryx/orgs.py primary)" = "$UKEY" ] || UPRIM="" ;;
+       [ "$("$ROOT"/venv/bin/python "$ROOT"/src/astryx/orgs.py primary)" = "$UKEY" ] || UPRIM=""
+       # the cog's OWN units (org_units.json scope cog: the front, the gateway): no org's, the primary restarts them
+       UCOGS=$(cd "$ROOT" && venv/bin/python -c 'import json; print(" ".join(k for k, v in json.load(open("src/astryx/data/org_units.json"))["units"].items() if v["scope"] == "cog"))') ;;
     *) echo "deploy.sh: this host's org registry refuses: refusing" >&2; exit 3 ;;
   esac
 fi
-ORGH=${ORGH:-$ROOT} COGH=${COGH:-} UKEY=${UKEY:-} UPRIM=${UPRIM-1}   # one org: the checkout, no cog, the primary by definition
+ORGH=${ORGH:-$ROOT} COGH=${COGH:-} UKEY=${UKEY:-} UPRIM=${UPRIM-1} UCOGS=${UCOGS:-}   # one org: the checkout, no cog, the primary by definition
 if [ -n "$COGH" ]; then
   export ASTRYX_HOME="$ORGH"          # every child (spawn.sh, charter.py, org_tmux.sh) resolves THIS org
   . "$ROOT/scripts/org_tmux.sh"       # `tmux` is THIS org's server (the primary's: -L default), never an inherited $TMUX's
@@ -32,6 +34,7 @@ fi
 un() { if [ -z "$COGH" ]; then echo "$1"; else "$ROOT"/venv/bin/python "$ROOT"/src/astryx/orgs.py unit "$1" "${2:-service}"; fi; }
 mine() {   # is unit $1 THIS org's? one org: every unit; a cog: the primary's are the plain names, another's its @<key>
   [ -z "$COGH" ] && return 0
+  case " $UCOGS " in *" ${1%.*} "*) return 1 ;; esac      # the cog's own (front, gateway) are no org's (a2 #60837 A-2)
   case "$1" in *@"$UKEY".*) [ -z "$UPRIM" ] ;; *@*) return 1 ;; *) [ -n "$UPRIM" ] ;; esac
 }
 cogwide() { [ -n "$COGH" ] && echo "  · $1 restarted: affects every org in the cog"; return 0; }
@@ -77,7 +80,7 @@ restart() {
 # then verify /health on the NEW pid — so a reload can't be reported done while a
 # bridge is still down or running stale code.
 . "$ROOT/scripts/docker_host_ip.sh"   # the whatsapp bridge binds the docker host address (172.17.0.1 on docker-ce Linux)
-declare -A BADDR=( [whatsapp]="$(_docker_host_ip "$ROOT/.env"):8477" [telegram]="127.0.0.1:8478" [discord]="127.0.0.1:8479" )
+declare -A BADDR=( [whatsapp]="$(_docker_host_ip "$ROOT/.env"):8477" [telegram]="127.0.0.1:8478" [discord]="127.0.0.1:8479" )   # org-home: `reload`'s only (one-org only: it refuses in a cog)
 reload() {
   local b=$1 addr=${BADDR[$1]:-} old="" new=""
   [ -z "$addr" ] && { echo "  ✗ unknown bridge: $b"; return 1; }
@@ -169,7 +172,7 @@ restart_org() {
     psql "$DSN" -qc 'SELECT 1' >/dev/null 2>&1 && echo "  ✓ database accepting" || { echo "  ✗ database not accepting"; return 1; }
   fi
   echo "· pausing the pulse (its watchers would race the resident restarts)…"
-  local PT=astryx-pulse.timer; [ -n "${COGH:-}" ] && PT=$(un astryx-pulse timer)
+  local PT=astryx-pulse.timer; [ -n "${COGH:-}" ] && PT=$(un astryx-pulse timer)   # org-home: one org's name; a cog: orgs.unit
   sudo systemctl stop "$PT" && echo "  ✓ pulse paused"
   # ANY exit from here (an abort under set -e, a Ctrl-C, a return) starts the pulse again: a paused
   # pulse left behind would sit with every trigger dark, silently (a2 #42367)
@@ -178,10 +181,17 @@ restart_org() {
   [ "$only" = residents ] || echo "· restarting services…"
   local u
   for u in $( [ "$only" = residents ] || systemctl list-unit-files 'astryx-*' --no-legend | awk '$2=="enabled" {print $1}'); do
-    case "$u" in astryx-residents.service|astryx-pulse.timer|astryx-pulse.service) continue ;; esac
+    case "$u" in astryx-residents.service|astryx-pulse.timer|astryx-pulse.service|astryx-residents@*.service|astryx-pulse@*.timer|astryx-pulse@*.service) continue ;; esac   # org-home: a cog's instance forms too (a2 #60858 R-2)
     [ -n "${COGH:-}" ] && { mine "$u" || continue; }              # another org's unit is never ours to restart
     if sudo systemctl restart "$u"; then echo "  ✓ $u $(systemctl is-active "$u")"; else echo "  ✗ $u failed to restart"; bad=1; fi
   done
+  # the cog's own units go with the primary's restart (the gateway holds a pool on every org's db, just bounced), and
+  # each one SAYS it affects every org (seed #60805, a2 #60837 A-2)
+  if [ -n "${COGH:-}" ] && [ -n "${UPRIM:-}" ] && [ "$only" != residents ]; then
+    for u in $UCOGS; do
+      if sudo systemctl restart "$u"; then echo "  ✓ $u $(systemctl is-active "$u")"; cogwide "$u"; else echo "  ✗ $u failed to restart"; bad=1; fi
+    done
+  fi
   echo "· restarting residents (each resumes its own session)…"
   local a pending=() deadline=$((SECONDS + 900)) t0
   declare -A spawned_at=()
@@ -221,7 +231,7 @@ restart_org() {
   done
   echo "· verifying (set membership: every resident has exactly one ear and a ready session)…"
   for u in $(systemctl list-unit-files 'astryx-*' --no-legend | awk '$2=="enabled" {print $1}'); do
-    case "$u" in astryx-residents.service|astryx-pulse.timer|astryx-pulse.service) continue ;; esac
+    case "$u" in astryx-residents.service|astryx-pulse.timer|astryx-pulse.service|astryx-residents@*.service|astryx-pulse@*.timer|astryx-pulse@*.service) continue ;; esac   # org-home: a cog's instance forms too (a2 #60858 R-2)
     [ -n "${COGH:-}" ] && { mine "$u" || continue; }
     systemctl is-active --quiet "$u" || { echo "  ✗ $u $(systemctl is-active "$u")"; bad=1; }
   done
@@ -243,6 +253,10 @@ restart_org() {
   local OBS=localhost:8090                          # in a cog :8090 is the front: THIS org's backend at its registry port
   [ -n "${COGH:-}" ] && OBS="localhost:$("$ROOT"/venv/bin/python "$ROOT"/src/astryx/orgs.py port astryx-observatory-org)"
   curl -sf -m 5 "$OBS/api/overview" >/dev/null && echo "  ✓ observatory answering" || { echo "  ✗ observatory not answering"; bad=1; }
+  if [ -n "${COGH:-}" ] && [ -n "${UPRIM:-}" ] && [ "$only" != residents ]; then
+    curl -sf -m 5 -o /dev/null localhost:8090/api/cog && echo "  ✓ the cog's front answering /api/cog" \
+      || { echo "  ✗ the cog's front not answering /api/cog"; bad=1; }
+  fi
   echo "· resuming the pulse…"
   sudo systemctl start "$PT" && systemctl is-active --quiet "$PT" \
     && echo "  ✓ pulse running" || { echo "  ✗ pulse timer not active"; bad=1; }
@@ -258,9 +272,9 @@ case "$what" in
   api)    if [ -z "$COGH" ]; then restart astryx-observatory; else restart "$(un astryx-observatory-org)"; fi ;;
   front)  [ -n "$COGH" ] || { echo "deploy.sh front: no cog here; the observatory is astryx-observatory (deploy.sh api)" >&2; exit 1; }
           front ;;
-  bridge) restart "$(un astryx-whatsapp)" ;;                      # routes.json / whatsapp.py change
-  tg)     restart "$(un astryx-telegram)" ;;                      # routes-telegram.json / telegram.py change
-  dc)     restart "$(un astryx-discord)" ;;                       # routes-discord.json / discord.py change
+  bridge) restart "$(un astryx-whatsapp)" ;;                      # the whatsapp bridge's routes or code changed
+  tg)     restart "$(un astryx-telegram)" ;;                      # the telegram bridge's routes or code changed
+  dc)     restart "$(un astryx-discord)" ;;                       # the discord bridge's routes or code changed
   gw)     # gateway.py / orgname.py / charter-resolver change. This verb exists because
           # its absence cost six days: the gateway ran pre-commit federation code
           # 08-13→08-19 and the operator reaching for the sanctioned actuator found no
@@ -270,7 +284,7 @@ case "$what" in
           sleep 2 && curl -sf -m 5 localhost:8845/.well-known/agent-card.json >/dev/null \
             && echo "  ✓ gateway serving the A2A card" \
             || { echo "  ✗ gateway restarted but the card is NOT answering"; exit 1; } ;;
-  units)  # units/*.{service,timer} changed — /etc holds COPIES, not symlinks: /home is a
+  units)  # the unit files changed — /etc holds COPIES, not symlinks: /home is a
           # separate subvolume mounted after systemd loads units, so symlinks dangle at
           # boot and the whole org orphans (found the hard way, reboot of 2026-07-23).
           if [ -z "$COGH" ]; then

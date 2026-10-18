@@ -15,7 +15,12 @@
      session, home) or is an org name (derived from the code's .env writers and readers, or a key of the HOME's .env);
      no derived org name sits in a PASS class; an unclassed name FAILS (a mutant environment goes red).
   C5 GUARDS RUN FIRST: each guarded file's prefix (through its guard) exits non-zero under a two-org registry and 0
-     with none, and nothing executable precedes the guard but the declared preamble.
+     with none, and nothing executable precedes the guard but the declared preamble. Both directions (a2 #60858 R-2):
+     with ASTRYX_HOME naming a registered org, a SERVING guard (org_here.sh, or COGH=1 inline) passes and every other
+     still refuses
+  C1b SERVING GUARDS ARE JUDGED, NOT EXEMPTED (a2 #60858 R-2): the census names exactly the five serving files, and a
+     serving file's checkout-relative read with no $ORGH and no declaration is a FINDING (pause.sh, its declaration
+     stripped, through the census's own overrides seam)
 Seams: ORG_CENSUS_SRC (a mutant census), ORG_HOME_CLASSES_SRC (a mutant org_env.json, for C4) and org_home_fixture.SEAMS (a mutant subject the census reads in place:
 ORG_HOME_PULSE_SRC, ORG_HOME_SPAWN_SRC). Exit 0 · 1 · 77 (PRE_S3A absent from this clone: C2 only).
 """
@@ -167,6 +172,18 @@ def main():
               "; ".join(f"{r['file']}:{r['line']} {r['what']}" for r in res[k][:12]))
     if not res["triggers_read"]:
         print("  ·  the org's trigger bodies: NOT READ (this HOME has no triggers/: a worktree; merge_check links them)")
+    print("\nC1b SERVING GUARDS ARE JUDGED, NOT EXEMPTED:")
+    want_sv = {"scripts/deploy.sh", "scripts/pause.sh", "scripts/refresh.sh", "scripts/smoke.sh", "skills/org-vitals/vitals.sh"}
+    check("the census names exactly the five serving files", set(res.get("serving_files", [])) == want_sv,
+          str(sorted(res.get("serving_files", []))))
+    with tempfile.TemporaryDirectory() as td:
+        bare = Path(td) / "pause.sh"
+        bare.write_text("\n".join(ln.split("   # org-home:")[0].split("            # org-home:")[0]
+                                  for ln in (REPO / "scripts" / "pause.sh").read_text().split("\n")))
+        rb = oc.census(REPO, {**seam_overrides(), "scripts/pause.sh": bare})
+        hit = [r for r in rb["estate"] + rb["namespace"] if r["file"] == "scripts/pause.sh"]
+        check("pause.sh, its declarations stripped: its checkout-relative read is a FINDING (never `guarded`)",
+              any(r["what"] == "var/" for r in hit), str(hit))
     print(f"  ·  guarded: {len(res['guarded'])} site(s) in {len(res['guarded_files'])} file(s); declared: "
           f"{len(res['declared'])}; org names derived: {len(res['org_names'])}")
 
@@ -286,15 +303,33 @@ def main():
                 r"cd |unset |\[ |\{|\}|.*\) _self=|if \[ -e \"\$\{ASTRYX_COG_REGISTRY)", ln)]
             with tempfile.TemporaryDirectory() as wd:
                 f = Path(wd) / "prefix.sh"
-                f.write_text(prefix.replace("cd \"$(dirname \"$_self\")\"", f"cd {REPO}"))
+                # the prefix runs in a FAKE root of this tree (its src/ and scripts/, and a venv/bin/python that is THIS
+                # interpreter), so a guard's interpreter exists wherever the oracle runs (a pushed-tree clone has no
+                # venv: the serving arm read a missing python as a refusal). Every self-locating line (init.sh's
+                # `cd "$(dirname "$_self")"`, pause/smoke's `cd "$(dirname "$0")/.."`, a `ROOT=`) is pinned to it
+                fr = Path(wd) / "root"
+                (fr / "venv" / "bin").mkdir(parents=True)
+                (fr / "venv" / "bin" / "python").write_text(f'#!/usr/bin/env bash\nexec "{sys.executable}" "$@"\n')
+                (fr / "venv" / "bin" / "python").chmod(0o755)
+                for n in ("src", "scripts"):
+                    (fr / n).symlink_to(REPO / n)
+                pre = prefix.replace("cd \"$(dirname \"$_self\")\"", f"cd {fr}").replace(
+                    "cd \"$(dirname \"$0\")/..\"", f"cd {fr}")
+                f.write_text(re.sub(r"^ROOT=.*$", f"ROOT={fr}", pre, count=1, flags=re.M))
                 env = {k: os.environ[k] for k in ("PATH", "HOME", "USER") if k in os.environ}
-                r_multi = subprocess.run(["bash", str(f)], env={**env, "ASTRYX_COG_REGISTRY": str(reg)}, cwd=REPO,
+                r_multi = subprocess.run(["bash", str(f)], env={**env, "ASTRYX_COG_REGISTRY": str(reg)}, cwd=fr,
                                          capture_output=True, text=True, timeout=30)
                 r_one = subprocess.run(["bash", str(f)], env={**env, "ASTRYX_COG_REGISTRY": str(Path(wd) / "none")},
-                                       cwd=REPO, capture_output=True, text=True, timeout=30)
+                                       cwd=fr, capture_output=True, text=True, timeout=30)
+                r_home = subprocess.run(["bash", str(f)], env={**env, "ASTRYX_COG_REGISTRY": str(reg),
+                                                               "ASTRYX_HOME": str(Path(td) / "a")},
+                                        cwd=fr, capture_output=True, text=True, timeout=60)
             check(f"{rel}: refuses under two orgs ({r_multi.returncode}), passes with none ({r_one.returncode}), "
                   "nothing but preamble before it", r_multi.returncode != 0 and r_one.returncode == 0 and not bad,
                   f"{bad} {r_multi.stderr[-200:]} {r_one.stderr[-200:]}")
+            sv = rel in res.get("serving_files", [])
+            check(f"{rel}: with ASTRYX_HOME naming a registered org it {'SERVES (0)' if sv else 'still refuses'} "
+                  f"({r_home.returncode})", (r_home.returncode == 0) == sv, r_home.stderr[-300:])
     return 1 if fails else (0 if pre_ok else 77)
 
 

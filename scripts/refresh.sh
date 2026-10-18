@@ -17,7 +17,8 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # org-home guard (plan-11324 S3a): one-org only (it reads this checkout's estate); in a cog of several orgs it refuses first.
-if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ]; then _g=0; "$ROOT"/venv/bin/python "$ROOT"/src/astryx/orgs.py multi || _g=$?; [ "$_g" = 1 ] || { echo "refresh.sh: this cog runs several orgs (or its org registry refuses): one-org only, refusing" >&2; exit 3; }; fi
+if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ]; then _g=0; "$ROOT"/venv/bin/python "$ROOT"/src/astryx/orgs.py multi || _g=$?; case "$_g" in 1) ;; 0) . "$ROOT/scripts/org_here.sh" || { echo "refresh.sh: refusing" >&2; exit 3; } ;; *) echo "refresh.sh: this host's org registry refuses: refusing" >&2; exit 3 ;; esac; fi
+# plan-11324 S3f S4: in a cog THIS org's agent (org_here.sh): its HOME's homes/, its server, its channel bodies only
 
 # Naive-path guard: accept a bare name OR a tree/home path (an uninstructed caller may
 # pass 'agents/canopus/canopus.md' or the stem). Normalise to a stem, then resolve
@@ -45,18 +46,19 @@ if [ "$AGENT" = "seed" ] && [ -z "${REFRESH_SEED_BY_OWNER:-}" ]; then
 fi
 
 SESS="ax-$AGENT"
-HOME_D="$ROOT/homes/$AGENT"
+HOME_D="${ORGH:-$ROOT}/homes/$AGENT"
 TDIR="$HOME/.claude/projects/$(echo "$HOME_D" | tr / -)"
 ASIDE="$HOME_D/.transcript-aside"
 
 echo "refresh: $AGENT"
 
 # 1. kill the tmux session (may already be dead — fine, this doubles as a resurrect)
-if tmux kill-session -t "=$SESS" 2>/dev/null; then echo "  killed $SESS"; else echo "  no live session (already down)"; fi
+if tmux kill-session -t "=$SESS" 2>/dev/null; then echo "  killed $SESS"; else echo "  no live session (already down)"; fi   # org-home: a cog's `tmux` is org_tmux.sh's (org_here.sh)
 
 # 2. WAIT for the claude process to fully exit — THE race fix. ASTRYX_AGENT is env
 #    (invisible to pgrep), so match this agent's unique .mcp.json path in argv.
-PAT="homes/$AGENT/.mcp.json"
+PAT="homes/$AGENT/.mcp.json"      # org-home: one org's; a cog: the HOME's full path below
+[ -n "${COGH:-}" ] && PAT="$HOME_D/.mcp.json"           # an agent NAME is per org: another org's same name never matches
 for _ in $(seq 1 20); do
   pgrep -f "$PAT" >/dev/null 2>&1 || { echo "  process fully exited"; break; }
   sleep 1
@@ -87,7 +89,9 @@ cnt=0
 for _ in $(seq 1 10); do
   cnt=0
   for pid in $(pgrep -f 'channel/server.mjs' 2>/dev/null); do
-    tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -qx "ASTRYX_AGENT=$AGENT" && cnt=$((cnt+1))
+    tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -qx "ASTRYX_AGENT=$AGENT" \
+      && { [ -z "${COGH:-}" ] || tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -qxF "ASTRYX_HOME=$ORGH"; } \
+      && cnt=$((cnt+1))
   done
   [ "$cnt" -ge 1 ] && break
   sleep 1

@@ -140,7 +140,6 @@ EXEMPT = {
     "devtools/esc_latency.py":  "manual: MIN_QUIET_H calibration measurement, run on demand; reports and never recommends, so a timer would only manufacture noise",
     "scripts/doorbell.sh":    "manual: operator notify helper, self-declared Usage line",
     "scripts/wallpane.sh":    "manual: single-pane variant of wall.sh, invoked by an operator",
-    "scripts/refresh.sh":     "manual: operator session refresh",
     "scripts/growbot_flash.sh": "manual: operator flash step — copies the body firmware "
         "onto the Pico over USB; run once per firmware change, documented in docs/growbot.md",
     "src/astryx/contrib/growbot_firmware.py":
@@ -173,9 +172,6 @@ EXEMPT = {
     # spec, and their `Run:` lines reached it back — a mutual-citation ring. Making them
     # visible is the fix working; whether they should instead be WIRED is a call for
     # whoever owns them, and the exemption is what forces that call to be made out loud.
-    "scripts/smoke.sh":
-        "manual: doctor-class post-deploy probe, self-declared (`# Usage: scripts/smoke.sh "
-        "[observatory-port]`) and already classified as manual by test_check_coverage.py:56",
     # invoked by scripts/spawn.sh (per-agent provider/auth override, read at each spawn) — a
     # SHELL invocation, outside this scanner's committed-python view. charter.py sits in the
     # same spawn.sh line and passes ONLY because python files (mcp/org, observatory) also call
