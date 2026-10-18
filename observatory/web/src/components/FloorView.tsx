@@ -361,21 +361,24 @@ export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) =>
                 <HandBadge agent={a.agent} size={13} className="absolute -right-2 -bottom-1 z-10" />
               </motion.span>
               <span className="text-[12px] font-medium text-ink leading-tight">{displayName(a.agent)}</span>
-              {(mood === 'working' || freshP || hover === a.agent) && (
-                <span className={`text-[10.5px] leading-snug w-[132px] text-center line-clamp-2 rounded-md px-1.5 py-0.5 ${hover === a.agent ? 'text-ink-dim bg-deck-2/90' : 'text-ink-mute'} ${mood === 'working' ? 'font-mono' : ''}`}>
-                  {where && <span className="text-cyan">{where} · </span>}{line}
-                </span>
-              )}
-              {/* below the button, out of its flow: the face never moves when the caption opens (its edges stay on it) */}
-              {hover === a.agent && showInf && (() => {
-                const il = influenceLine(a.agent, inf!, kinds!)
-                const g = a.group_path?.[0]
-                return (il || rankOf[a.agent] || g) && (
-                  <span className="absolute top-full left-1/2 -translate-x-1/2 mt-1 text-[10.5px] leading-snug w-[176px] text-center rounded-md px-1.5 py-0.5 text-ink-dim bg-deck-2/90 pointer-events-none">
-                    {rankOf[a.agent] && <span className="text-ink">#{rankOf[a.agent]} </span>}{g && <span className="text-ink-mute">group {g} · </span>}{il}
+              {/* the captions hang BELOW the button, out of its flow: the face always sits on its seat, so the
+                  influence edges anchored there stay on it, and a caption opening never moves anyone (#60089) */}
+              <span className="absolute top-full left-1/2 -translate-x-1/2 mt-0.5 flex flex-col items-center gap-1 pointer-events-none">
+                {(mood === 'working' || freshP || hover === a.agent) && (
+                  <span className={`text-[10.5px] leading-snug w-[132px] text-center line-clamp-2 rounded-md px-1.5 py-0.5 ${hover === a.agent ? 'text-ink-dim bg-deck-2/90' : 'text-ink-mute'} ${mood === 'working' ? 'font-mono' : ''}`}>
+                    {where && <span className="text-cyan">{where} · </span>}{line}
                   </span>
-                )
-              })()}
+                )}
+                {hover === a.agent && showInf && (() => {
+                  const il = influenceLine(a.agent, inf!, kinds!)
+                  const g = a.group_path?.[0]
+                  return (il || rankOf[a.agent] || g) && (
+                    <span className="text-[10.5px] leading-snug w-[176px] text-center rounded-md px-1.5 py-0.5 text-ink-dim bg-deck-2/90">
+                      {rankOf[a.agent] && <span className="text-ink">#{rankOf[a.agent]} </span>}{g && <span className="text-ink-mute">group {g} · </span>}{il}
+                    </span>
+                  )
+                })()}
+              </span>
             </motion.button>
           )
         })}

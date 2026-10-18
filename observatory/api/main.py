@@ -3205,6 +3205,9 @@ async def cog(request: Request):
         reg = orgs.load()
     except orgs.RegistryError as e:              # fails closed, and SAYS so: the floor names it (seed #60095)
         return JSONResponse({"error": f"cog registry refused: {e}"}, status_code=500)
+    except Exception as e:  # noqa: BLE001 — orgs.py's own CLI refuses on ANY failure (a registry nested past the
+        # parser's recursion limit raised RecursionError): unjudgeable is refused too, and named
+        return JSONResponse({"error": f"cog registry could not be judged ({type(e).__name__})"}, status_code=500)
     ident = await _gateway_identity()
     me_name = _env("ASTRYX_ORG") or ident.get("org") or ORG
     badge = (ident.get("pubkey") or "")[:8] or None
