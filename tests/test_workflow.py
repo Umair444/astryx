@@ -89,6 +89,10 @@ b = body(); task(b, "S3")["dropped"] = True
 check("V10 a live task needing a DROPPED task is refused (it would be blocked forever; a1 #60116 R-2)",
       any("needs dropped task S3" in e for e in wf.validate(b, ROSTER)), f"{wf.validate(b, ROSTER)}")
 
+b = body(); task(b, "S1")["done"] = "false"
+check("V11 done/dropped must be booleans: \"false\" (a string, truthy in Python, false in SQL) is refused (a1 #60186)",
+      any("must be true or false" in e for e in wf.validate(b, ROSTER)), f"{wf.validate(b, ROSTER)}")
+
 # ---- A: attribution
 ids = ["S1", "S2", "S3a", "S3b", "ship"]
 check("A1 the Task trailer wins over the subject", wf.attribute(11324, ids, "plan-11324 S3b: x", "11324/S3a") == "S3a")

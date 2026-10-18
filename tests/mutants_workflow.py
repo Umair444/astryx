@@ -26,6 +26,8 @@ MUTANTS = {
         ("            if n in dropped:\n", "            if False:\n"),
     "W12 save() drops `measured` (validate still honours it; nobody passes it; a1 #60120 R-1b)":
         ("    errs = validate(body, roster, prev[1] if prev else None, measured)", "    errs = validate(body, roster, prev[1] if prev else None)"),
+    "W13 a non-boolean done passes (Python and SQL read two different values; a1 #60186)":
+        ('            if flag in t and not isinstance(t[flag], bool):', '            if False:'),
     "W7 the trailer is ignored":
         ("    if trailer:\n", "    if False:\n"),
     "W8 a self-review passes":

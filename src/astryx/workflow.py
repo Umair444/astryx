@@ -69,6 +69,9 @@ def validate(body: dict, roster, prev: dict | None = None, measured=frozenset())
                 errs.append(f"{t.get('id')}: reviewer {t['review']!r} is not in the roster")
             if t["review"] == t.get("agent"):
                 errs.append(f"{t.get('id')}: the reviewer is the task's own agent")
+        for flag in ("done", "dropped"):
+            if flag in t and not isinstance(t[flag], bool):
+                errs.append(f"{t.get('id')}: {flag} must be true or false, not {t[flag]!r}")
         for n in t.get("needs", []):
             if n not in idset:
                 errs.append(f"{t.get('id')}: needs {n!r}, which is no task")
