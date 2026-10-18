@@ -282,7 +282,7 @@ install_astryx() {
   local link="$HOME/.local/bin/astryx"
   say "installing astryx from git into $ASTRYX_DIR"
   if [ -d "$ASTRYX_DIR/.git" ] && [ -d "$ASTRYX_DIR/homes/seed" ] && [ "$UPGRADE" = 0 ] \
-     && tmux has-session -t "=ax-seed" 2>/dev/null; then   # org-home: the installer stands up ONE org in a checkout (no registry yet); a host's further orgs are seed's estate move
+     && tmux has-session -t "=ax-seed" 2>/dev/null; then   # org-home: ONE org, no registry: main() refused a host with one before any write (a2 #59696)
     die "an org is running from $ASTRYX_DIR (ax-seed is up). Re-running here pulls and re-inits a live org; if you mean that, add --upgrade. To start a second org, pick another place with --dir."
   fi
   if [ -d "$ASTRYX_DIR/.git" ]; then
@@ -371,6 +371,13 @@ main() {
   done
 
   [ "$(id -u)" = 0 ] && die "don't run this as root. Run it as the user the org will live under; it asks for sudo only for package installs, and shows each line first."
+  # plan-11324 S3b (a2 #59696 R-1): this installer stands up ONE org in a checkout. A host with an org registry runs
+  # several, each on its own tmux server, so the "is an org running here" check below can't see them; and a pull or a
+  # reinstall of the core checkout changes code under every live org (a deploy without the deploy path). Refuse
+  # before ANY write, on the same test init.sh's guard uses: a host's further orgs are seed's estate move.
+  if [ -e "${ASTRYX_ORG_REGISTRY:-/etc/astryx/orgs.json}" ]; then
+    die "this host has an org registry (${ASTRYX_ORG_REGISTRY:-/etc/astryx/orgs.json}): it runs several orgs, and this installer sets up one. Adding an org to it is the registry's step, not this script's; refusing before any change."
+  fi
 
   if [ "$DRY" = 1 ]; then say "astryx installer — DRY RUN: printing every command, running none"
   else say "astryx installer"; fi
