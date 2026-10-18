@@ -21,7 +21,7 @@ export const safeBase = (b: unknown): b is string => typeof b === 'string' && /^
 
 export function chosenOrg(): string | null {
   const m = document.cookie.match(/(?:^|;\s*)astryx_org=([^;]*)/)
-  return m ? decodeURIComponent(m[1]) : null
+  try { return m ? decodeURIComponent(m[1]) : null } catch { return null }   // a malformed cookie is no choice: the chooser shows
 }
 
 /* a room switch is a cookie change plus a reload: every tab reads the root store, which now answers for that org */

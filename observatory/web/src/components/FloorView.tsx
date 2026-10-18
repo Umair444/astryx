@@ -62,9 +62,14 @@ function seatRing(clusters: [string, AgentRow[]][], cx: number, cy: number, rx: 
 }
 
 /* a message between two rooms of the cog arrives TWICE, the sender's outbound copy and the receiver's inbound one, from
-   two backends in either order, with no shared id (forge #60439): it flies once, paired on (thread, body) in a window */
+   two backends in either order, with no shared id (forge #60439): it flies once, paired in a window on its sender, the
+   org it went to, its thread and body, each 'local' read as the reporting room's own name so both copies agree. Never on
+   the recipient: the receiver may clamp it (introduced → seed). A different message (same body to another org) differs. */
 const PAIR_MS = 5000
-const crossKey = (m: Wire) => `${m.thread ?? ''}\u0000${m.body ?? ''}`
+const crossKey = (m: Wire, here: string) => {
+  const o = (x: string | null) => (!x || x === 'local' ? here : x)
+  return [o(m.from_org), m.from, o(m.to_org), m.thread ?? '', m.body ?? ''].join('\u0000')
+}
 type Mode = 'live' | 'influence' | 'both'
 
 export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) => void }) {
@@ -240,7 +245,7 @@ export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) =>
   const fly = (ri: number, key: number | string, m: Wire) => {
     const rj = [m.from_org, m.to_org].map(o => (o && o !== 'local' ? roomOf(o) : -1)).find(x => x >= 0 && x !== ri)
     if (rj !== undefined) {                       // between two rooms: once, whichever copy comes first
-      const k = crossKey(m), now0 = Date.now(), seen = paired.current.get(k)
+      const k = crossKey(m, rooms[ri].name), now0 = Date.now(), seen = paired.current.get(k)
       for (const [x, t0] of paired.current) if (now0 - t0 > PAIR_MS) paired.current.delete(x)
       if (seen && now0 - seen <= PAIR_MS) { paired.current.delete(k); return }
       paired.current.set(k, now0)
