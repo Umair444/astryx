@@ -1,0 +1,33 @@
+"""Authored mutants for src/astryx/federation/node.py (plan-11324 S3e addressing), run by devtools/mutation_probe.py.
+
+    venv/bin/python devtools/mutation_probe.py tests/mutants_fed_node.py
+
+Each is a plausible wrong door: a bare path on a cog served as some org, an unknown org reached, the envelope's org
+unchecked, a cog's counters shared across its orgs, a one-org url rewritten.
+"""
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+
+SUBJECT = REPO / "src" / "astryx" / "federation" / "node.py"
+ORACLE = REPO / "tests" / "test_fed_node.py"
+ENV = "FED_NODE_SRC"
+TIMEOUT = 60
+
+MUTANTS = {
+    "N1 a bare path on a cog is served (as no org) instead of refused":
+        ("        return None                                      # a bare path on a cog names no org\n",
+         "        return None, path\n"),
+    "N2 an org the cog does not hold is reached":
+        ("    if org not in orgs:\n        return None\n", ""),
+    "N3 the envelope's org is unchecked (any agent@org lands at this door)":
+        ("    return bool(at) and bool(agent) and named == org\n", "    return bool(at) and bool(agent)\n"),
+    "N4 the envelope's agent may be empty":
+        ("    return bool(at) and bool(agent) and named == org\n", "    return bool(at) and named == org\n"),
+    "N5 a cog's rate and replay keys are shared by every org":
+        ("    return key if org is None else f\"{org}|{key}\"\n", "    return key\n"),
+    "N6 one org's public url gains the /o/ prefix":
+        ("    if not base or not cog:\n", "    if not base:\n"),
+    "N7 the org-relative path keeps the org segment":
+        ("    return org, \"/\" + rest if sep else \"/\"\n", "    return org, path\n"),
+}
