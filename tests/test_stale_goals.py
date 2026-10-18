@@ -422,6 +422,27 @@ if fx is not None:
               a_f is not None and -0.05 < a_f < 0.1, f"age_h={a_f}")
         check("REAL SQL: with no merges, the same goal reads its full age (the term is the merge, nothing else)",
               a_m0 is not None and a_m0 > 100 and by[g_m].get("merged") is None, f"age_h={a_m0}")
+        # a goal with a WORKFLOW is nagged per task by task_nag (plan-11324 S4, seed #60111): while its LATEST revision
+        # has a live task, the goal-level nag stands down; once every task is declared done or dropped it is back, so
+        # shipped-and-unclosed still reads
+        wf = lambda gid, rev, tasks: conn.execute(
+            "INSERT INTO goal_workflow (goal_id, rev, body, author) VALUES (%s, %s, %s::jsonb, 'seed')",
+            (gid, rev, __import__("json").dumps({"goal": gid, "tasks": tasks})))
+        wf(g_old, 1, [{"id": "S1", "done": True}, {"id": "S2"}])
+        cap.clear()
+        fire(SpyCtx({}, conn))
+        check("REAL SQL: a goal whose latest workflow rev has a live task is NOT read here (task_nag owns it)",
+              g_old not in {r["id"] for r in cap} and g_new in {r["id"] for r in cap}, sorted(r["id"] for r in cap))
+        wf(g_old, 2, [{"id": "S1", "done": True}, {"id": "S2", "dropped": True}])
+        cap.clear()
+        fire(SpyCtx({}, conn))
+        check("REAL SQL: …its LATEST rev all done or dropped: back here (shipped-and-unclosed must still read)",
+              g_old in {r["id"] for r in cap}, sorted(r["id"] for r in cap))
+        wf(g_old, 3, [{"id": "S1", "done": True}, {"id": "S3"}])
+        cap.clear()
+        fire(SpyCtx({}, conn))
+        check("REAL SQL: …and the LATEST rev decides, not any rev (rev 3 adds a live task: stands down again)",
+              g_old not in {r["id"] for r in cap}, sorted(r["id"] for r in cap))
     finally:
         conn.close()
         _fx.__exit__(None, None, None)

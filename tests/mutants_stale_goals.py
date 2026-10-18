@@ -54,8 +54,7 @@ MUTANTS = {
     # The positive allowlist over a free-text column with no CHECK constraint: a typo'd or
     # newly-invented state exits the patrol entirely instead of arriving loud.
     "M3 the state filter becomes a positive allowlist (unknown states vanish)":
-        ('"WHERE g.state <> ALL(%s)", (list(merged), list(merged.values()), list(TERMINAL)))',
-         '"WHERE g.state = ANY(%s)", (list(merged), list(merged.values()), ["active", "proposed"]))'),
+        ('"WHERE g.state <> ALL(%s) "', '"WHERE g.state = ANY(ARRAY[\'active\',\'proposed\']) AND %s IS NOT NULL "'),
 
     # Recovery no longer re-arms: the stored level is the high-water mark rather than the
     # current one, so a goal that heals and relapses is deduped against its own history.
@@ -111,4 +110,10 @@ MUTANTS = {
     "G9 the clamp is least(), which IGNORES NULLs: a goal with no merges reads now(), every goal fresh":
         ('"    SELECT CASE WHEN max(m.t) > now() THEN now() ELSE max(m.t) END AS merged "',
          '"    SELECT least(max(m.t), now()) AS merged "'),
+    "W1 a workflow goal is nagged here too (the same silence told twice, to two recipients; seed #60111)":
+        ('"WHERE g.state <> ALL(%s) "\n        "AND NOT EXISTS', '"WHERE g.state <> ALL(%s) "\n        "AND true OR NOT EXISTS'),
+    "W2 ANY revision decides, not the latest (an old rev's live task keeps a finished workflow silent forever)":
+        ('"                              ORDER BY w.rev DESC LIMIT 1) lw, "', '"                              ) lw, "'),
+    "W3 a dropped task counts as live (a workflow whose rest is done never returns: shipped-and-unclosed unseen)":
+        ('"                  AND NOT coalesce((t->>\'dropped\')::boolean, false))",', '"                  )",'),
 }
