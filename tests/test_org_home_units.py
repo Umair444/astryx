@@ -19,6 +19,9 @@ cog-scoped, and the port it binds) is declared once in src/astryx/data/org_units
   U8 SERVE-TIME PORTS: senses and the growbot body serve on 8460/8470 on one org and on the org's registry port under
      HOME-A (uvicorn.run captured, nothing bound; the growbot's serial a missing fixture path, a virtual body); a
      GROWBOT_PORT naming another port refuses; the growbot MCP reaches A's body host on A's port
+  U9 PORT LITERALS ARE DECLARED (tests/org_port_literals.json): every tracked file whose executable text names a
+     per-org fixed port is declared with its reason, and every declared file still has one; RED control: a planted
+     file is accused. The `s3c` entries are the S3c trip (the observatory's ear/growbot proxies)
   U5 the resolver: orgs.port() is None on one org, the registry's under HOME-A, NoHome with none; orgs.unit() is `astryx-pulse.timer` on one org, `astryx-pulse@<A>.timer` under HOME-A, and raises
      with no HOME carried; pulse_witness.timer_unit() follows it
 
@@ -73,6 +76,24 @@ def defaults_gap(init_text: str, doc: dict) -> list:
         out += [f"{stem}: default {n} is not its declared {u['port']}" for n in got if n != u["port"]]
         bare = re.findall(r"(?:--port\s+|:)" + str(u["port"]) + r"\b", body)
         out += [f"{stem}: a bare {b!r}" for b in bare]
+    return out
+
+
+def port_literal_files(co: Path, ports: list) -> dict:
+    """{tracked file: [line numbers]} whose EXECUTABLE text (devtools/org_census.code_lines: comments and docstrings
+    out) names one of `ports` as a number (not inside a longer number, a hex colour or a word). tests/ excluded."""
+    sys.path.insert(0, str(co / "devtools"))
+    from org_census import code_lines
+    pat = re.compile(r"(?<![\w.#])(?:" + "|".join(ports) + r")(?![\w.])")
+    ls = subprocess.run(["git", "-C", str(co), "ls-files"], capture_output=True, text=True).stdout.split()
+    out = {}
+    for f in ls:
+        p = co / f
+        if f.startswith("tests/") or p.suffix not in (".py", ".sh", ".mjs", ".js", ".ts", ".cjs") or not p.is_file():
+            continue
+        hits = [n for n, code, _ in code_lines(p) if pat.search(code)]
+        if hits:
+            out[f] = hits
     return out
 
 
@@ -256,6 +277,22 @@ def main():
         else:
             check(f"growbot MCP, HOME-A: http://127.0.0.1:{pa['astryx-growbot']}",
                   r.stdout.strip() == f"http://127.0.0.1:{pa['astryx-growbot']}", (r.stdout + r.stderr)[-300:])
+
+        print("\nU9 PORT LITERALS ARE DECLARED")
+        decl = json.loads((co / "tests" / "org_port_literals.json").read_text())["files"]
+        fixed = sorted({str(u["port"]) for u in doc["units"].values() if u["scope"] == "org" and "port" in u})
+        found = port_literal_files(co, fixed)
+        check("every file with a per-org port literal is declared", not set(found) - set(decl),
+              str({f: found[f] for f in set(found) - set(decl)}))
+        check("every declared file still has one (no stale declaration)", not set(decl) - set(found),
+              str(sorted(set(decl) - set(found))))
+        (co / "bridges" / "fxport.py").write_text("PORT = 8478\n")
+        subprocess.run(["git", "-C", str(co), "add", "-N", "bridges/fxport.py"], capture_output=True)
+        check("RED control: a planted bridges/fxport.py (PORT = 8478) is found",
+              "bridges/fxport.py" in port_literal_files(co, fixed), "")
+        (co / "bridges" / "fxport.py").unlink()
+        subprocess.run(["git", "-C", str(co), "rm", "-q", "--cached", "bridges/fxport.py"], capture_output=True)
+        print("  ·  the S3c trip: " + ", ".join(sorted(f for f, d in decl.items() if d.get("s3c"))))
 
         print("\nU5 THE RESOLVER")
         probe = ("import sys; sys.path.insert(0, sys.argv[1] + '/src'); sys.path.insert(0, sys.argv[1] + '/bridges')\n"
