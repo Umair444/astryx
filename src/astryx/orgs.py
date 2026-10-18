@@ -78,7 +78,7 @@ def load(env=None) -> dict | None:
     out, homes, dbs, ports = {}, {}, {}, {}
     units = _units()
     cog_ports = {u["port"] for u in units.values() if u["scope"] == "cog" and "port" in u}
-    org_stems = {k for k, u in units.items() if u["scope"] == "org" and "port" in u}
+    org_stems = {k for k, u in units.items() if u["scope"] == "org" and ("port" in u or u.get("registry_port"))}
     for org, e in raw.items():
         if not isinstance(org, str) or not NAME.fullmatch(org) or not isinstance(e, dict):
             raise RegistryError(f"org registry {p}: bad entry {org!r}")

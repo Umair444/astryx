@@ -92,7 +92,7 @@ units() {  # GENERATE systemd units from the org's declared sources of truth.
        { read -r UCOG; read -r UPORT; read -r UREADY; } < <(venv/bin/python -c 'import json, sys
 d = json.load(open(sys.argv[1]))["units"]
 print(" ".join(k for k, v in d.items() if v["scope"] == "cog"))
-print(" ".join(k for k, v in d.items() if v["scope"] == "org" and "port" in v))
+print(" ".join(k for k, v in d.items() if v["scope"] == "org" and ("port" in v or v.get("registry_port"))))
 print(" ".join(k for k, v in d.items() if v["scope"] == "cog" and v.get("cog_ready")))' src/astryx/data/org_units.json) \
          || die "units: src/astryx/data/org_units.json can't be read" ;;
     1) ;;
@@ -124,7 +124,40 @@ print(" ".join(k for k, v in d.items() if v["scope"] == "cog" and v.get("cog_rea
   }
 
   # ── 1. shipped-set — always present ─────────────────────────────────────────
-  _uw astryx-observatory service && cat > "$_UF" <<EOF
+  # S3c 3/n (seed #60433, design B): in a cog of several orgs the observatory is the cog's FRONT (observatory/front.py,
+  # :8090, the cog's run writes it) plus each org's own observatory behind it (astryx-observatory-org@<org>, loopback,
+  # its registry port, an org's run writes it). One org: the block below, exactly as before.
+  if [ -n "$UCOGRUN" ]; then
+    _uw astryx-observatory service && cat > "$_UF" <<EOF
+[Unit]
+Description=astryx observatory — the cog's front on :8090: every org's room, each its own observatory behind it
+After=network.target
+[Service]
+WorkingDirectory=$PWD/observatory
+ExecStart=$PWD/venv/bin/uvicorn front:app --host 0.0.0.0 --port 8090
+Restart=always
+RestartSec=5
+User=$USER
+${UGWENV}
+[Install]
+WantedBy=multi-user.target
+EOF
+  fi
+  [ -n "$UORG" ] && _uw astryx-observatory-org service && cat > "$_UF" <<EOF
+[Unit]
+Description=astryx observatory — org $UORG's own, behind the cog's front (127.0.0.1:${_UP})
+After=network.target
+[Service]
+WorkingDirectory=$PWD/observatory/api
+ExecStart=${UEXEC}$PWD/venv/bin/uvicorn main:app --host 127.0.0.1 --port ${_UP}
+Restart=always
+RestartSec=5
+User=$USER
+Environment=ASTRYX_HOME=$ORGH
+[Install]
+WantedBy=multi-user.target
+EOF
+  [ -z "$UCOGRUN" ] && _uw astryx-observatory service && cat > "$_UF" <<EOF
 [Unit]
 Description=astryx observatory — public live view on :8090
 After=network.target

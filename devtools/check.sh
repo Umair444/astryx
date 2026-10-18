@@ -701,6 +701,7 @@ run "org home units: each org's units are its own @<org> instance files, the par
 run "gateway cog: one door serves every org of a cog by federation name; a sibling's row goes in process through its own door's checks" "$PY" tests/test_gateway_cog.py
 run "gateway pickup: what a NAT'd org collects by long-polling passes the one inbound door (reach, intent, cap, replay)" "$PY" tests/test_gateway_pickup.py
 run "cog scope: every registry iterator is declared (tests/cog_scope.json); only the design's cog-scoped set opens every org" "$PY" tests/test_cog_scope.py
+run "observatory cog: the cog's front lists every org and pipes each to its own observatory, adding no authority" "$PY" tests/test_observatory_cog.py
 run "org home namespace: each org's residents live on its own tmux server (two orgs, one agent name, two residents); one org is the default socket" "$PY" tests/test_org_home_namespace.py
 run "org census: no org-state read outside the resolvers; the estate and environment partitions are total" "$PY" tests/test_org_home_census.py
 run "org registry parity: orgs.py and home.mjs reach the same written verdict on every registry case (a2 A-1)" "$PY" tests/test_org_registry_parity.py

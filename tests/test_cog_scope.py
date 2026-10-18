@@ -25,8 +25,8 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "devtools"))
 from org_census import code_lines  # noqa: E402
 
-DESIGN_COG = {"bridges/gateway.py", "observatory/api/main.py", "init.sh", "devtools/org_apply.py",
-              "devtools/org_parity.py"}
+DESIGN_COG = {"bridges/gateway.py", "observatory/api/main.py", "observatory/front.py", "init.sh",
+              "devtools/org_apply.py", "devtools/org_parity.py"}   # observatory: its front too (seed #60433 design B)
 ITER = re.compile(r"\borgs\.load\(|(?<![\w.])registry\(|(?<![\w.])cog\(\)")
 fails = []
 

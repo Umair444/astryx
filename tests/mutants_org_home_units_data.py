@@ -25,6 +25,8 @@ MUTANTS = {
     "D3 the gateway is not cog_ready (a cog of several orgs has no door)":
         ('"astryx-gateway":     {"scope": "cog", "port": 8845, "cog_ready": true}',
          '"astryx-gateway":     {"scope": "cog", "port": 8845}'),
-    "D4 the observatory is declared cog_ready before it serves a cog":
-        ('"astryx-observatory": {"scope": "cog", "port": 8090}', '"astryx-observatory": {"scope": "cog", "port": 8090, "cog_ready": true}'),
+    "D4 the observatory is not cog_ready (a cog of several orgs has no front)":
+        ('"astryx-observatory": {"scope": "cog", "port": 8090, "cog_ready": true}', '"astryx-observatory": {"scope": "cog", "port": 8090}'),
+    "D5 the org's own observatory is declared cog-scoped (no org runs its backend)":
+        ('"astryx-observatory-org": {"scope": "org", "registry_port": true}', '"astryx-observatory-org": {"scope": "cog", "registry_port": true}'),
 }

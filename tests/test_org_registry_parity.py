@@ -81,7 +81,7 @@ def main():
         # home.mjs carries the port partition as LITERALS (it runs from the plugin cache with no src/): they must be
         # org_units.json's, read here from the data file, never from either reader
         u = json.loads(UNITS.read_text())["units"]
-        want = {"stems": sorted(k for k, v in u.items() if v["scope"] == "org" and "port" in v),
+        want = {"stems": sorted(k for k, v in u.items() if v["scope"] == "org" and ("port" in v or v.get("registry_port"))),
                 "cog": sorted(v["port"] for v in u.values() if v["scope"] == "cog" and "port" in v)}
         lit = subprocess.run(["node", "--input-type=module", "-e", "const m = await import(process.argv[1]); console.log("
                               "JSON.stringify({stems: [...m.ORG_PORT_STEMS].sort(), cog: [...m.COG_PORTS].sort()}))",

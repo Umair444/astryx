@@ -2398,7 +2398,8 @@ class RouteSet(BaseModel):
 # would need a service restart for every lease change (2026-08-24: .7 became .2
 # overnight and the tab read "host down").
 def growbot_body() -> str:
-    return (_env("GROWBOT_BODY_URL") or "http://127.0.0.1:8470").rstrip("/")
+    # the org's own body host: its registry port in a cog of several orgs (S3b 5/n), the fixed one on one org
+    return (_env("GROWBOT_BODY_URL") or f"http://127.0.0.1:{orgs.port('astryx-growbot') or 8470}").rstrip("/")
 GROWBOT_PATHS = {"stats", "act", "stop", "pose", "set", "routine", "servo", "seq"}
 
 
@@ -3329,7 +3330,7 @@ async def canvas_proxy(path: str, request: Request):
 # this same origin (the secure context getUserMedia needs, no new hostname). Unlike canvas, the ear has no session of
 # its own: its gate IS the observatory owner key, so x-obs-key is forwarded, and the ear service checks it itself
 # (401 without it). This proxy adds no authority: an unauthenticated request reaches the ear and is refused there.
-EAR_UP = "http://127.0.0.1:8092"
+EAR_UP = f"http://127.0.0.1:{orgs.port('astryx-ear') or 8092}"   # this org's ear (its registry port in a cog, S3c)
 
 
 @app.api_route("/ear/{path:path}", methods=["GET", "POST"])

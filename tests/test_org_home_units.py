@@ -162,14 +162,20 @@ def main():
         got = set(files(fx.t / "u_b"))
         want = {f"astryx-pulse@{ob}.service", f"astryx-pulse@{ob}.timer", f"astryx-residents@{ob}.service",
                 f"astryx-fxjob@{ob}.service", f"astryx-fxjob@{ob}.timer", f"astryx-whatsapp@{ob}.service",
-                f"astryx-senses@{ob}.service", f"astryx-growbot@{ob}.service"}
+                f"astryx-senses@{ob}.service", f"astryx-growbot@{ob}.service",
+                f"astryx-observatory-org@{ob}.service"}
         check("rc 0, and exactly B's own units, each @<B>", r.returncode == 0 and got == want,
               f"rc {r.returncode} got {sorted(got)} {r.stderr[-300:]}")
         check(f"the remote body's growbot is declared off by its FILE name astryx-growbot@{ob}.service",
               f"UED=[ astryx-growbot@{ob}.service]" in r.stdout, r.stdout[-200:])
         for stem in ("astryx-observatory", "astryx-canvas", "astryx-gateway"):
             check(f"{stem}: not written, COG-scoped (said on stderr)", f"{stem} is COG-scoped" in r.stderr
-                  and not any(n.startswith(stem) for n in got), r.stderr[-300:])
+                  and not any(n.startswith((stem + "@", stem + ".")) for n in got), r.stderr[-300:])
+        ow = files(fx.t / "u_b").get(f"astryx-observatory-org@{ob}.service", b"").decode()
+        po = fx.ports["b"]["astryx-observatory-org"]
+        check(f"B's own observatory (S3c 3/n): main:app on 127.0.0.1:{po} (its registry port), B's HOME, behind the front",
+              f"uvicorn main:app --host 127.0.0.1 --port {po}\n" in ow and f"Environment=ASTRYX_HOME={B}\n" in ow
+              and "0.0.0.0" not in ow, ow[-400:])
 
         print("\nU3 TWO ORGS, ONE DIRECTORY: DISJOINT")
         both = fx.t / "u_ab"
@@ -298,12 +304,18 @@ def main():
         r = render(cenv, fx.t / "u_cog")
         cf = files(fx.t / "u_cog")
         gw = cf.get("astryx-gateway.service", b"").decode()
-        check("rc 0, and exactly astryx-gateway.service (plain name: one per cog)",
-              r.returncode == 0 and set(cf) == {"astryx-gateway.service"}, f"rc {r.returncode} {sorted(cf)} {r.stderr[-300:]}")
+        check("rc 0, and exactly the gateway and the observatory FRONT (plain names: one per cog)",
+              r.returncode == 0 and set(cf) == {"astryx-gateway.service", "astryx-observatory.service"},
+              f"rc {r.returncode} {sorted(cf)} {r.stderr[-300:]}")
+        fr = cf.get("astryx-observatory.service", b"").decode()
+        check("the front: uvicorn front:app on :8090 from observatory/, the registry in its env, no HOME, no orgenv",
+              "uvicorn front:app --host 0.0.0.0 --port 8090\n" in fr and f"WorkingDirectory={co}/observatory\n" in fr
+              and f"Environment=ASTRYX_COG_REGISTRY={fx.reg}\n" in fr and "ASTRYX_HOME" not in fr
+              and "orgenv" not in fr and "main:app" not in fr, fr)
         check("its environment names the registry, never a HOME; no orgenv prefix",
               f"Environment=ASTRYX_COG_REGISTRY={fx.reg}\n" in gw and "ASTRYX_HOME" not in gw and "orgenv" not in gw
               and "uvicorn gateway:app --host 0.0.0.0 --port 8845" in gw, gw)
-        for stem in ("astryx-observatory", "astryx-canvas"):
+        for stem in ("astryx-canvas",):
             check(f"{stem}: not served in a cog yet, said on stderr", f"{stem} is COG-scoped and not served in a cog yet"
                   in r.stderr, r.stderr[-300:])
         r = render(fx.env(ASTRYX_HOME=str(fx.t / "not-a-registered-home")), fx.t / "u_unreg")

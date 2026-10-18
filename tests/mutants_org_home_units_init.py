@@ -48,4 +48,8 @@ MUTANTS = {
         ('[ -n "$UCOGRUN" ] && UGWENV=', '[ -n "" ] && UGWENV='),
     "V12 no HOME carried in a cog dies again (the cog has no run that writes its gateway)":
         ('    0) if [ -z "${ASTRYX_HOME:-}" ]; then', '    0) if false; then'),
+    "V13 the cog's run writes the ORG observatory (main:app, one org's database) as the cog's :8090":
+        ('  if [ -n "$UCOGRUN" ]; then\n    _uw astryx-observatory service', '  if false; then\n    _uw astryx-observatory service'),
+    "V14 an org's backend binds every interface (the front is the one public door)":
+        ('uvicorn main:app --host 127.0.0.1 --port ${_UP}', 'uvicorn main:app --host 0.0.0.0 --port ${_UP}'),
 }

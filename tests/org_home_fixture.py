@@ -131,6 +131,8 @@ class OrgHomes:
         fixed = {"astryx-whatsapp": 8477, "astryx-telegram": 8478, "astryx-discord": 8479, "astryx-senses": 8460,
                  "astryx-geoloc": 8766, "astryx-ear": 8092, "astryx-growbot": 8470}
         self.ports = {o: {k: v + off for k, v in fixed.items()} for o, off in (("a", 10000), ("b", 20000))}
+        for o, off in (("a", 10000), ("b", 20000)):        # the org's own observatory behind the cog's front (S3c 3/n)
+            self.ports[o]["astryx-observatory-org"] = 8100 + off
         self.reg = self.t / "orgs.json"
         self.reg.write_text(json.dumps({"orgs": {self.org[o]: {"home": str(self.home[o]), "db": self.db[o],
                                                                "ports": self.ports[o]} for o in ("a", "b")}}))
