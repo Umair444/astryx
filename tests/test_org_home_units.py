@@ -16,6 +16,9 @@ cog-scoped, and the port it binds) is declared once in src/astryx/data/org_units
      and B's differ in one directory; an org whose wanted unit has no registry port REFUSES (rc != 0, the stem named,
      no file of it written); a port it doesn't want needs no declaration. Every `${_UP:-<n>}` default in units() is
      org_units.json's port for that stem, and no per-org port unit binds a bare literal
+  U8 SERVE-TIME PORTS: senses and the growbot body serve on 8460/8470 on one org and on the org's registry port under
+     HOME-A (uvicorn.run captured, nothing bound; the growbot's serial a missing fixture path, a virtual body); a
+     GROWBOT_PORT naming another port refuses; the growbot MCP reaches A's body host on A's port
   U5 the resolver: orgs.port() is None on one org, the registry's under HOME-A, NoHome with none; orgs.unit() is `astryx-pulse.timer` on one org, `astryx-pulse@<A>.timer` under HOME-A, and raises
      with no HOME carried; pulse_witness.timer_unit() follows it
 
@@ -210,6 +213,39 @@ def main():
         planted = (co / "init.sh").read_text().replace("--port ${_UP:-8478}", "--port 8478", 1)
         check("RED control: a planted bare --port 8478 in telegram's unit is accused",
               any("astryx-telegram" in d for d in defaults_gap(planted, doc)), str(defaults_gap(planted, doc)))
+
+        print("\nU8 SERVE-TIME PORTS (uvicorn.run captured, nothing bound)")
+        serve = ("import runpy, sys, types; sys.path.insert(0, sys.argv[1] + '/src')\n"
+                 "u = types.ModuleType('uvicorn'); u.run = lambda app, **kw: print('PORT', kw['port']); "
+                 "sys.modules['uvicorn'] = u\n"
+                 "runpy.run_module(sys.argv[2], run_name='__main__')")
+        py5 = str(co / "venv" / "bin" / "python")
+        nodev = str(fx.t / "no-such-serial-device")
+
+        def served(mod, env):
+            return subprocess.run([py5, "-c", serve, str(co), mod], env={**env, "GROWBOT_SERIAL": nodev}, cwd=co,
+                                  capture_output=True, text=True, timeout=60)
+        for mod, stem, fixed in (("astryx.pulse.senses", "astryx-senses", 8460),
+                                 ("astryx.contrib.growbot_body", "astryx-growbot", 8470)):
+            r = served(mod, one)
+            check(f"{mod}, one org: serves on {fixed}", f"PORT {fixed}" in r.stdout, (r.stdout + r.stderr)[-300:])
+            r = served(mod, fx.env(ASTRYX_HOME=str(A)))
+            check(f"{mod}, HOME-A: serves on A's registry port {pa[stem]}", f"PORT {pa[stem]}" in r.stdout,
+                  (r.stdout + r.stderr)[-300:])
+        r = served("astryx.contrib.growbot_body", fx.env(ASTRYX_HOME=str(A), GROWBOT_PORT="8470"))
+        check("growbot body, HOME-A with GROWBOT_PORT=8470 (not A's): refuses, binds nothing",
+              r.returncode != 0 and "PORT" not in r.stdout and "not this org's registry port" in r.stderr,
+              (r.stdout + r.stderr)[-300:])
+        mcp_probe = ("import sys; sys.argv[1:1] = []; import importlib.util as u\n"
+                     "s = u.spec_from_file_location('gb_mcp', sys.argv[1] + '/mcp/growbot/server.py'); "
+                     "m = u.module_from_spec(s); s.loader.exec_module(m); print(m._body_url())")
+        r = subprocess.run([py5, "-c", mcp_probe, str(co)], env={**fx.env(ASTRYX_HOME=str(A))}, cwd="/",
+                           capture_output=True, text=True, timeout=60)
+        if "ModuleNotFoundError: No module named 'mcp'" in r.stderr:
+            print("  ·  NOT RUN: no `mcp` package in this venv (the growbot MCP's URL is unverified)")
+        else:
+            check(f"growbot MCP, HOME-A: http://127.0.0.1:{pa['astryx-growbot']}",
+                  r.stdout.strip() == f"http://127.0.0.1:{pa['astryx-growbot']}", (r.stdout + r.stderr)[-300:])
 
         print("\nU5 THE RESOLVER")
         probe = ("import sys; sys.path.insert(0, sys.argv[1] + '/src'); sys.path.insert(0, sys.argv[1] + '/bridges')\n"
