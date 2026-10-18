@@ -9,6 +9,7 @@
   A1-A4  attribution: the Task trailer wins; the backlog spellings the org uses resolve ("plan-11324 S3b",
          "goal 11324 S1", "Merge memory/plan-11324-s2"); "plan-11324:" alone is UNATTRIBUTED; 113240 is not 11324
   B1     a commit on a branch that never reached main does not count (S3a was PASSed, then rolled back: #59151)
+  S6     save() is the wiring: it computes MEASURED from main and refuses a deletion with it (a1 #60120)
   S1-S5  status: done needs the claim AND the substrate; blocked / late / active / dropped; the critical path
   O1     the overlay's three classes
   L1     LIVE HISTORY (anti-vacuity, a1 #60109 A): on this checkout's origin/main, S1, S2, S3a and S3b each resolve to
@@ -115,6 +116,38 @@ git("checkout", "-q", "-b", "side")
 git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "plan-11324 S3a: PASSed, rolled back")
 rows = wf.main_commits(root, 11324, ref="main")
 check("B1 a commit that never reached main does not count", [r[2] for r in rows] == ["plan-11324 S1: on main"], f"{rows}")
+
+# ---- S6: save() is the wiring that computes MEASURED (a1 #60120 R-1b): exercised through a fake connection
+git("update-ref", "refs/remotes/origin/main", "main")      # the temp repo's main plays origin/main for main_commits()
+
+
+class FakeConn:
+    def __init__(s, prev):
+        s.prev, s.ins = prev, []
+
+    def execute(s, sql, args=()):
+        if sql.lstrip().startswith("INSERT"):
+            s.ins.append(args)
+
+        class R:
+            fetchone = staticmethod(lambda: s.prev)
+        return R()
+
+
+prevb = {"goal": 11324, "converge": "seed", "tasks": [
+    {"id": "S1", "agent": "forge", "needs": []}, {"id": "ship", "agent": "seed", "needs": ["S1"]}]}
+newb = {"goal": 11324, "converge": "seed", "tasks": [{"id": "ship", "agent": "seed", "needs": []}]}
+fc = FakeConn((1, prevb))
+try:
+    wf.save(fc, 11324, newb, "t", ROSTER, root)
+    refused = False
+except wf.WorkflowError as e:
+    refused = "S1" in str(e)
+ok_ctrl = wf.save(FakeConn((1, prevb)), 11324, {**prevb, "tasks": [dict(prevb["tasks"][0], dropped=True),
+                                                                   {"id": "ship", "agent": "seed", "needs": []}]},
+                  "t", ROSTER, root) == 2
+check("S6 save() computes MEASURED from main: deleting S1 (1 commit on main, never claimed) is refused; dropping it saves rev 2",
+      refused and not fc.ins and ok_ctrl, f"refused={refused} inserts={fc.ins} ctrl={ok_ctrl}")
 
 # ---- S: status
 NOW = "2026-10-19T12:00:00+00:00"

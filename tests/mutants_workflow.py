@@ -24,6 +24,8 @@ MUTANTS = {
         ('(t["id"] in measured or t.get("done"))', '(t.get("done"))'),
     "W11 a live task may need a dropped one (blocked forever; a1 #60116 R-2)":
         ("            if n in dropped:\n", "            if False:\n"),
+    "W12 save() drops `measured` (validate still honours it; nobody passes it; a1 #60120 R-1b)":
+        ("    errs = validate(body, roster, prev[1] if prev else None, measured)", "    errs = validate(body, roster, prev[1] if prev else None)"),
     "W7 the trailer is ignored":
         ("    if trailer:\n", "    if False:\n"),
     "W8 a self-review passes":
