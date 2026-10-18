@@ -42,4 +42,10 @@ MUTANTS = {
     "V9 a runner may take a declared unit's name (a runner `gateway` overwrites astryx-gateway, a2 #60394 A-2)":
         ('        && die "units: runner \'$stem\' in nucleus/runners.conf is a declared unit\'s name',
          '        && : "units: runner \'$stem\' in nucleus/runners.conf is a declared unit\'s name'),
+    "V10 the cog's run writes every unit under its plain name (an org's units written by nobody's run)":
+        ('    if [ -n "$UCOGRUN" ]; then\n      case " $UREADY "', '    if false; then\n      case " $UREADY "'),
+    "V11 the cog's gateway carries a HOME (the run's nonexistent marker), not the registry":
+        ('[ -n "$UCOGRUN" ] && UGWENV=', '[ -n "" ] && UGWENV='),
+    "V12 no HOME carried in a cog dies again (the cog has no run that writes its gateway)":
+        ('    0) if [ -z "${ASTRYX_HOME:-}" ]; then', '    0) if false; then'),
 }

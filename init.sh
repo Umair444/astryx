@@ -76,17 +76,24 @@ units() {  # GENERATE systemd units from the org's declared sources of truth.
   # ImportEnvironment, and the only EnvironmentFile is the org's own .env.
   # No registry file at all (orgs.path(): ASTRYX_COG_REGISTRY, else /etc/astryx/cog.json) is a one-org host with no
   # question to ask; a present one is judged by THE predicate, and a missing interpreter then fails closed.
-  local ORGH="$PWD" UEXEC="" _mrc=1 UORG="" UCOG="" UPORT="" _UF="" _UP=""
+  local ORGH="$PWD" UEXEC="" _mrc=1 UORG="" UCOG="" UPORT="" _UF="" _UP="" UCOGRUN="" UREADY=""
   [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ] && { _mrc=0; venv/bin/python src/astryx/orgs.py multi || _mrc=$?; }
   case "$_mrc" in
-    0) ORGH=$(venv/bin/python -c 'import sys; sys.path.insert(0, "src"); from astryx import paths; print(paths.home())') \
-         || die "units: several orgs in this cog and ASTRYX_HOME names no registered one"
-       UEXEC="$PWD/venv/bin/python $PWD/src/astryx/orgenv.py exec --home $ORGH -- "
-       UORG=$(venv/bin/python src/astryx/orgs.py name) || die "units: this org's HOME is not a registered org"
-       { read -r UCOG; read -r UPORT; } < <(venv/bin/python -c 'import json, sys
+    0) if [ -z "${ASTRYX_HOME:-}" ]; then
+         # S3c 2/n: no HOME carried in a cog of several orgs is the COG's run: it writes the cog-scoped units only
+         # (org_units.json `cog_ready`), never an org's; ORGH names no estate, so no presence signal below can fire
+         UCOGRUN=1 ORGH=/nonexistent-cog-run
+       else
+         ORGH=$(venv/bin/python -c 'import sys; sys.path.insert(0, "src"); from astryx import paths; print(paths.home())') \
+           || die "units: several orgs in this cog and ASTRYX_HOME names no registered one"
+         UEXEC="$PWD/venv/bin/python $PWD/src/astryx/orgenv.py exec --home $ORGH -- "
+         UORG=$(venv/bin/python src/astryx/orgs.py name) || die "units: this org's HOME is not a registered org"
+       fi
+       { read -r UCOG; read -r UPORT; read -r UREADY; } < <(venv/bin/python -c 'import json, sys
 d = json.load(open(sys.argv[1]))["units"]
 print(" ".join(k for k, v in d.items() if v["scope"] == "cog"))
-print(" ".join(k for k, v in d.items() if v["scope"] == "org" and "port" in v))' src/astryx/data/org_units.json) \
+print(" ".join(k for k, v in d.items() if v["scope"] == "org" and "port" in v))
+print(" ".join(k for k, v in d.items() if v["scope"] == "cog" and v.get("cog_ready")))' src/astryx/data/org_units.json) \
          || die "units: src/astryx/data/org_units.json can't be read" ;;
     1) ;;
     *) die "units: the org registry refuses (python src/astryx/orgs.py multi)" ;;
@@ -98,8 +105,17 @@ print(" ".join(k for k, v in d.items() if v["scope"] == "org" and "port" in v))'
   # is never an org's (S3c: NOT written, its reason on stderr); a unit that binds a port binds the org's REGISTRY port
   # (5/n), and an org whose unit is wanted (its presence signal fired) but whose entry declares no port REFUSES:
   # never a default, never a skip that leaves the org silently without the unit (ruling 3).
+  # The cog's run (UCOGRUN): a `cog_ready` cog-scoped unit under its plain name; every other is not the cog's to write.
+  # The gateway's environment names the registry, never a HOME (it serves every org of the cog, bridges/gateway.py).
+  UGWENV="Environment=ASTRYX_HOME=$ORGH"
+  [ -n "$UCOGRUN" ] && UGWENV="Environment=ASTRYX_COG_REGISTRY=${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}"
   _uw() {
     _UP=""
+    if [ -n "$UCOGRUN" ]; then
+      case " $UREADY " in *" $1 "*) _UF="$UD/$1.$2"; return 0 ;; esac
+      case " $UCOG " in *" $1 "*) echo "  units: $1 is COG-scoped and not served in a cog yet (S3c): not written" >&2 ;; esac
+      return 1
+    fi
     if [ -z "$UORG" ]; then _UF="$UD/$1.$2"; return 0; fi
     case " $UCOG " in *" $1 "*) echo "  units: $1 is COG-scoped (one per cog, S3c): not an org's unit" >&2; return 1 ;; esac
     case " $UPORT " in *" $1 "*) _UP=$(venv/bin/python src/astryx/orgs.py port "$1") \
@@ -184,7 +200,7 @@ ExecStart=${UEXEC}$PWD/venv/bin/uvicorn gateway:app --host 0.0.0.0 --port 8845 -
 Restart=always
 RestartSec=5
 User=$USER
-Environment=ASTRYX_HOME=$ORGH
+${UGWENV}
 [Install]
 WantedBy=multi-user.target
 EOF

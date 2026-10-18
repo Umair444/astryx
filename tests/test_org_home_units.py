@@ -23,6 +23,10 @@ cog-scoped, and the port it binds) is declared once in src/astryx/data/org_units
      per-org fixed port is declared with its reason, and every declared file still has one; RED control: a planted
      file is accused. The `s3c` entries are the S3c trip (the observatory's ear/growbot proxies)
   U10 a runners.conf stem that is a declared unit's (`gateway` -> astryx-gateway) refuses (a2 #60394 A-2)
+  U11 THE COG'S RUN (S3c 2/n): units() in a cog of several orgs with NO HOME carried writes exactly the `cog_ready`
+     cog-scoped units (the gateway) under their plain names, its environment the registry and never a HOME, no orgenv
+     prefix; the cog-scoped units not served in a cog yet (observatory, canvas) say so on stderr; a HOME named but
+     unregistered still refuses; systemd-analyze accepts the file
   U5 the resolver: orgs.port() is None on one org, the registry's under HOME-A, NoHome with none; orgs.unit() is `astryx-pulse.timer` on one org, `astryx-pulse@<A>.timer` under HOME-A, and raises
      with no HOME carried; pulse_witness.timer_unit() follows it
 
@@ -30,6 +34,7 @@ Seams (org_home_fixture.SEAMS): ORG_HOME_INIT_SRC, ORG_HOME_ORGS_SRC, ORG_HOME_U
 """
 import json
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -186,7 +191,6 @@ def main():
             check(f"{d}: every <x>.timer has <x>.service", not orphans, str(orphans))
 
         print("\nU6 SYSTEMD ACCEPTS THE INSTANCE FILES")
-        import shutil
         if not shutil.which("systemd-analyze"):
             print("  ·  NOT RUN: no systemd-analyze here (U2's names are unverified by systemd itself)")
         else:
@@ -287,6 +291,28 @@ def main():
               r.returncode != 0 and "runner 'gateway'" in r.stderr
               and not any("gateway" in n for n in files(fx.t / "u_rc")), f"rc {r.returncode} {r.stderr[-300:]}")
         (B / "nucleus" / "runners.conf").write_text(keep)
+
+        print("\nU11 THE COG'S RUN: NO HOME CARRIED")
+        cenv = fx.env()
+        cenv.pop("ASTRYX_HOME", None)
+        r = render(cenv, fx.t / "u_cog")
+        cf = files(fx.t / "u_cog")
+        gw = cf.get("astryx-gateway.service", b"").decode()
+        check("rc 0, and exactly astryx-gateway.service (plain name: one per cog)",
+              r.returncode == 0 and set(cf) == {"astryx-gateway.service"}, f"rc {r.returncode} {sorted(cf)} {r.stderr[-300:]}")
+        check("its environment names the registry, never a HOME; no orgenv prefix",
+              f"Environment=ASTRYX_COG_REGISTRY={fx.reg}\n" in gw and "ASTRYX_HOME" not in gw and "orgenv" not in gw
+              and "uvicorn gateway:app --host 0.0.0.0 --port 8845" in gw, gw)
+        for stem in ("astryx-observatory", "astryx-canvas"):
+            check(f"{stem}: not served in a cog yet, said on stderr", f"{stem} is COG-scoped and not served in a cog yet"
+                  in r.stderr, r.stderr[-300:])
+        r = render(fx.env(ASTRYX_HOME=str(fx.t / "not-a-registered-home")), fx.t / "u_unreg")
+        check("a HOME named but not registered still refuses (rc != 0, nothing written)",
+              r.returncode != 0 and not files(fx.t / "u_unreg"), f"rc {r.returncode} {r.stderr[-200:]}")
+        if shutil.which("systemd-analyze"):
+            v = subprocess.run(["systemd-analyze", "verify", "--man=no", str(fx.t / "u_cog" / "astryx-gateway.service")],
+                               capture_output=True, text=True, timeout=60)
+            check("systemd-analyze verify accepts the cog's gateway unit", v.returncode == 0, (v.stdout + v.stderr)[-300:])
 
         print("\nU9 PORT LITERALS ARE DECLARED")
         decl = json.loads((co / "tests" / "org_port_literals.json").read_text())["files"]

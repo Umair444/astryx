@@ -22,4 +22,9 @@ MUTANTS = {
     "D2 whatsapp's port is forgotten (an org writes it on the fixed 8477)":
         ('"astryx-whatsapp":    {"scope": "org", "port": 8477}',
          '"astryx-whatsapp":    {"scope": "org"}'),
+    "D3 the gateway is not cog_ready (a cog of several orgs has no door)":
+        ('"astryx-gateway":     {"scope": "cog", "port": 8845, "cog_ready": true}',
+         '"astryx-gateway":     {"scope": "cog", "port": 8845}'),
+    "D4 the observatory is declared cog_ready before it serves a cog":
+        ('"astryx-observatory": {"scope": "cog", "port": 8090}', '"astryx-observatory": {"scope": "cog", "port": 8090, "cog_ready": true}'),
 }
