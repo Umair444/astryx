@@ -31,7 +31,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "tests"))
-from org_home_fixture import FixtureUnavailable, OrgHomes  # noqa: E402
+from org_home_fixture import FixtureUnavailable, OrgHomes, kill_server  # noqa: E402
 
 fails = []
 A_NAMES = ("WA_CLI", "PEOPLE_SALT", "ASTRYX_ORG", "PGHOST")
@@ -129,7 +129,7 @@ def main():
               work.get("node") == "0", str(work))
         return 1 if fails else 0
     finally:
-        subprocess.run([real_tmux, "-L", sock, "kill-server"], capture_output=True)
+        kill_server(sock)
         fx.__exit__(None, None, None)
 
 

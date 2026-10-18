@@ -48,6 +48,15 @@ def seam_overrides() -> dict:
     return {rel: Path(os.environ[k]) for k, rel in SEAMS.items() if os.environ.get(k)}
 
 
+def kill_server(sock: str) -> None:
+    """Stop a fixture's private tmux server AND remove its socket file: tmux leaves the file behind, and a gate that
+    runs on every check would fill /tmp/tmux-<uid>/ (the 10-18 inode exhaustion was this class)."""
+    subprocess.run(["tmux", "-L", sock, "kill-server"], capture_output=True)
+    f = Path(os.environ.get("TMUX_TMPDIR") or "/tmp") / f"tmux-{os.getuid()}" / sock
+    if f.is_socket() and subprocess.run(["tmux", "-L", sock, "has-session"], capture_output=True).returncode:
+        f.unlink(missing_ok=True)
+
+
 class FixtureUnavailable(Exception):
     pass
 
@@ -123,7 +132,7 @@ class OrgHomes:
     def __exit__(self, *exc):
         if hasattr(self, "org"):
             for o in self.org:                   # only the fixture's OWN servers, never the default socket
-                subprocess.run([*self.tmux(o), "kill-server"], capture_output=True)
+                kill_server(f"ax-{self.org[o]}")
         subprocess.run(["git", "-C", str(REPO), "worktree", "remove", "--force", str(self.co)], capture_output=True)
         subprocess.run(["git", "-C", str(REPO), "worktree", "prune"], capture_output=True)
         shutil.rmtree(self.t, ignore_errors=True)
