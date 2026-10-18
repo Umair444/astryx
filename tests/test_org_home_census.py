@@ -16,7 +16,7 @@
      no derived org name sits in a PASS class; an unclassed name FAILS (a mutant environment goes red).
   C5 GUARDS RUN FIRST: each guarded file's prefix (through its guard) exits non-zero under a two-org registry and 0
      with none, and nothing executable precedes the guard but the declared preamble.
-Seams: ORG_CENSUS_SRC (a mutant census) and org_home_fixture.SEAMS (a mutant subject the census reads in place:
+Seams: ORG_CENSUS_SRC (a mutant census), ORG_HOME_CLASSES_SRC (a mutant org_env.json, for C4) and org_home_fixture.SEAMS (a mutant subject the census reads in place:
 ORG_HOME_PULSE_SRC, ORG_HOME_SPAWN_SRC). Exit 0 · 1 · 77 (PRE_S3A absent from this clone: C2 only).
 """
 import importlib.util
@@ -150,6 +150,9 @@ def main():
     print("\nC4 THE ENVIRONMENT'S CLASSES:")
     from astryx import config, orgenv, paths
     cls = orgenv.classes()
+    if os.environ.get("ORG_HOME_CLASSES_SRC"):   # a mutant org_env.json (tests/mutants_org_census_classes.py)
+        doc = json.loads(Path(os.environ["ORG_HOME_CLASSES_SRC"]).read_text())
+        cls = {"classes": doc["classes"], "pass": tuple(doc["pass"])}
     derived = set(res["org_names"])
     try:
         held = set(config.read_env(paths.estate(__file__) / ".env"))
@@ -162,8 +165,32 @@ def main():
           str(unclassed(os.environ)))
     clash = sorted(n for n in derived if orgenv.class_of(n, cls) in cls["pass"])
     check("no org name sits in a PASS class (it would ride into another org's pane)", not clash, str(clash))
+    # sets, not ordered lists: an unclassed name already present that sorts after FX_ must not break the control
     check("RED control: an unclassed name in the environment fails",
-          unclassed({**os.environ, "FX_NOBODY_CLASSED_THIS": "1"}) == unclassed(os.environ) + ["FX_NOBODY_CLASSED_THIS"])
+          set(unclassed({**os.environ, "FX_NOBODY_CLASSED_THIS": "1"})) == set(unclassed(os.environ)) |
+          {"FX_NOBODY_CLASSED_THIS"})
+    # the environments the gate really runs in, pinned on every tree (medic #59415: the census stamp went red under its
+    # own timer, whose TRIGGER_* no class held). The names are systemd.exec(5)'s, typed here, never read from the
+    # classes; the ambient environment adds nothing to this arm.
+    timer = {"TRIGGER_UNIT": "astryx-fx.timer", "TRIGGER_TIMER_REALTIME_USEC": "1", "TRIGGER_TIMER_MONOTONIC_USEC": "1"}
+    check("C4 under a timer's environment: TRIGGER_* adds no unclassed name",
+          set(unclassed({**os.environ, **timer})) == set(unclassed(os.environ)),
+          str(sorted(set(unclassed({**os.environ, **timer})) - set(unclassed(os.environ)))))
+    for shape, names in (("a timer-started service", ("TRIGGER_UNIT", "TRIGGER_TIMER_REALTIME_USEC",
+                                                       "TRIGGER_TIMER_MONOTONIC_USEC", "INVOCATION_ID", "JOURNAL_STREAM",
+                                                       "SYSTEMD_EXEC_PID")),
+                         ("a path-started service", ("TRIGGER_UNIT", "TRIGGER_PATH")),
+                         ("an OnFailure= service", ("MONITOR_SERVICE_RESULT", "MONITOR_EXIT_CODE", "MONITOR_EXIT_STATUS",
+                                                    "MONITOR_INVOCATION_ID", "MONITOR_UNIT")),
+                         ("a notify / watchdog / socket service", ("NOTIFY_SOCKET", "WATCHDOG_PID", "WATCHDOG_USEC",
+                                                                    "LISTEN_FDS", "LISTEN_PID", "LISTEN_FDNAMES",
+                                                                    "MAINPID", "MANAGERPID")),
+                         ("a unit with directories", ("RUNTIME_DIRECTORY", "STATE_DIRECTORY", "CACHE_DIRECTORY",
+                                                      "LOGS_DIRECTORY", "CONFIGURATION_DIRECTORY",
+                                                      "CREDENTIALS_DIRECTORY"))):
+        bad = sorted(n for n in names if orgenv.class_of(n, cls) != "session")
+        check(f"{shape}'s names are session (dropped, never passed): {len(names) - len(bad)}/{len(names)}", not bad,
+              str(bad))
 
     print("\nC5 GUARDS RUN FIRST:")
     with tempfile.TemporaryDirectory() as td:
