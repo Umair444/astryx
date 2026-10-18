@@ -7,8 +7,9 @@ cog-scoped, and the port it binds) is declared once in src/astryx/data/org_units
      every write goes through _uw (no `cat > "$UD/…"` left). RED control: a planted extra stem is accused
   U1 one org (no registry): plain names, exactly as before (no `@` anywhere)
   U2 several orgs, org B: ONLY B's own units, each `@<B>` (pulse+timer, residents, its runner+timer, and the
-     port-binding ones whose presence signal fires: whatsapp, B has its routes; senses, B has a sensor); the
-     cog-scoped ones (observatory, canvas, gateway) are NOT written, each with its reason on stderr
+     port-binding ones whose presence signal fires: whatsapp, B has its routes; senses, B has a sensor; its own
+     canvas on loopback at its registry port, S3c canvas); the cog-scoped ones (observatory, gateway) are NOT
+     written, each with its reason on stderr
   U3 orgs A and B rendered into ONE directory: disjoint file sets, and A's files survive B's run byte for byte
   U4 every timer has its same-named service (systemd activates `<x>.service` for `<x>.timer`)
   U6 systemd-analyze verify accepts every @<B> file (positive control: a broken one is rejected); NOT RUN without it
@@ -25,8 +26,8 @@ cog-scoped, and the port it binds) is declared once in src/astryx/data/org_units
   U10 a runners.conf stem that is a declared unit's (`gateway` -> astryx-gateway) refuses (a2 #60394 A-2)
   U11 THE COG'S RUN (S3c 2/n): units() in a cog of several orgs with NO HOME carried writes exactly the `cog_ready`
      cog-scoped units (the gateway) under their plain names, its environment the registry and never a HOME, no orgenv
-     prefix; the cog-scoped units not served in a cog yet (observatory, canvas) say so on stderr; a HOME named but
-     unregistered still refuses; systemd-analyze accepts the file
+     prefix; canvas is no longer the cog's (each org's own, S3c canvas): the cog's run neither writes it nor names
+     it; a HOME named but unregistered still refuses; systemd-analyze accepts the file
   U5 the resolver: orgs.port() is None on one org, the registry's under HOME-A, NoHome with none; orgs.unit() is `astryx-pulse.timer` on one org, `astryx-pulse@<A>.timer` under HOME-A, and raises
      with no HOME carried; pulse_witness.timer_unit() follows it
 
@@ -163,14 +164,19 @@ def main():
         want = {f"astryx-pulse@{ob}.service", f"astryx-pulse@{ob}.timer", f"astryx-residents@{ob}.service",
                 f"astryx-fxjob@{ob}.service", f"astryx-fxjob@{ob}.timer", f"astryx-whatsapp@{ob}.service",
                 f"astryx-senses@{ob}.service", f"astryx-growbot@{ob}.service",
-                f"astryx-observatory-org@{ob}.service"}
+                f"astryx-observatory-org@{ob}.service", f"astryx-canvas@{ob}.service"}
         check("rc 0, and exactly B's own units, each @<B>", r.returncode == 0 and got == want,
               f"rc {r.returncode} got {sorted(got)} {r.stderr[-300:]}")
         check(f"the remote body's growbot is declared off by its FILE name astryx-growbot@{ob}.service",
               f"UED=[ astryx-growbot@{ob}.service]" in r.stdout, r.stdout[-200:])
-        for stem in ("astryx-observatory", "astryx-canvas", "astryx-gateway"):
+        for stem in ("astryx-observatory", "astryx-gateway"):
             check(f"{stem}: not written, COG-scoped (said on stderr)", f"{stem} is COG-scoped" in r.stderr
                   and not any(n.startswith((stem + "@", stem + ".")) for n in got), r.stderr[-300:])
+        cw = files(fx.t / "u_b").get(f"astryx-canvas@{ob}.service", b"").decode()
+        pc = fx.ports["b"]["astryx-canvas"]
+        check(f"B's own canvas (S3c canvas): bridges.canvas:root on 127.0.0.1:{pc} (its registry port), B's HOME",
+              f"uvicorn bridges.canvas:root --host 127.0.0.1 --port {pc}\n" in cw and f"Environment=ASTRYX_HOME={B}\n" in cw
+              and " --port 8091\n" not in cw, cw[-400:])
         ow = files(fx.t / "u_b").get(f"astryx-observatory-org@{ob}.service", b"").decode()
         po = fx.ports["b"]["astryx-observatory-org"]
         check(f"B's own observatory (S3c 3/n): main:app on 127.0.0.1:{po} (its registry port), B's HOME, behind the front",
@@ -233,8 +239,8 @@ def main():
         # B's entry without its whatsapp port: B wants whatsapp (its routes), so units() REFUSES
         reg = json.loads(fx.reg.read_text())
         reg["orgs"][ob]["ports"].pop("astryx-whatsapp")
-        # A runs none of these but its own observatory (every org in a cog does): it declares only what it runs
-        reg["orgs"][fx.org["a"]]["ports"] = {"astryx-observatory-org": fx.ports["a"]["astryx-observatory-org"]}
+        # A runs none of these but its own observatory and canvas (every org in a cog does): it declares only what it runs
+        reg["orgs"][fx.org["a"]]["ports"] = {k: fx.ports["a"][k] for k in ("astryx-observatory-org", "astryx-canvas")}
         noport = fx.t / "noport.json"
         noport.write_text(json.dumps(reg))
         r = render(fx.env(ASTRYX_HOME=str(B), ASTRYX_COG_REGISTRY=str(noport)), fx.t / "u_np")
@@ -243,7 +249,7 @@ def main():
               r.returncode != 0 and "astryx-whatsapp is wanted" in r.stderr
               and not any(n.startswith("astryx-whatsapp") for n in np_files), f"rc {r.returncode} {r.stderr[-300:]}")
         r = render(fx.env(ASTRYX_HOME=str(A), ASTRYX_COG_REGISTRY=str(noport)), fx.t / "u_na")
-        check("A declares only its own observatory's port: rc 0 (only what it runs needs a port)",
+        check("A declares only its own observatory's and canvas's ports: rc 0 (only what it runs needs a port)",
               r.returncode == 0 and not any(n.startswith(("astryx-whatsapp", "astryx-senses")) for n in files(fx.t / "u_na")),
               f"rc {r.returncode} {r.stderr[-300:]}")
         dflt = defaults_gap((co / "init.sh").read_text(), doc)
@@ -316,9 +322,8 @@ def main():
         check("its environment names the registry, never a HOME; no orgenv prefix",
               f"Environment=ASTRYX_COG_REGISTRY={fx.reg}\n" in gw and "ASTRYX_HOME" not in gw and "orgenv" not in gw
               and "uvicorn gateway:app --host 0.0.0.0 --port 8845" in gw, gw)
-        for stem in ("astryx-canvas",):
-            check(f"{stem}: not served in a cog yet, said on stderr", f"{stem} is COG-scoped and not served in a cog yet"
-                  in r.stderr, r.stderr[-300:])
+        check("canvas is each org's own (S3c canvas): the cog's run neither writes it nor calls it the cog's",
+              not any(n.startswith("astryx-canvas") for n in cf) and "astryx-canvas" not in r.stderr, r.stderr[-300:])
         r = render(fx.env(ASTRYX_HOME=str(fx.t / "not-a-registered-home")), fx.t / "u_unreg")
         check("a HOME named but not registered still refuses (rc != 0, nothing written)",
               r.returncode != 0 and not files(fx.t / "u_unreg"), f"rc {r.returncode} {r.stderr[-200:]}")

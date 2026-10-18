@@ -52,4 +52,8 @@ MUTANTS = {
         ('  if [ -n "$UCOGRUN" ]; then\n    _uw astryx-observatory service', '  if false; then\n    _uw astryx-observatory service'),
     "V14 an org's backend binds every interface (the front is the one public door)":
         ('uvicorn main:app --host 127.0.0.1 --port ${_UP}', 'uvicorn main:app --host 0.0.0.0 --port ${_UP}'),
+    "V15 an org's canvas binds the fixed 8091 in a cog (two orgs' canvases on one port; S3c canvas)":
+        ('bridges.canvas:root --host 127.0.0.1 --port ${_UP:-8091}', 'bridges.canvas:root --host 127.0.0.1 --port 8091'),
+    "V16 an org's canvas binds every interface (its observatory is the one way in)":
+        ('bridges.canvas:root --host 127.0.0.1 --port ${_UP:-8091}', 'bridges.canvas:root --host 0.0.0.0 --port ${_UP:-8091}'),
 }

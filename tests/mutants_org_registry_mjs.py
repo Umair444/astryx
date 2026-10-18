@@ -29,8 +29,8 @@ MUTANTS = {
         ("      if (!ORG_PORT_STEMS.includes(stem))\n", "      if (false)\n"),
     "M8 any value is a port":
         ("      if (!Number.isInteger(n) || n < 1 || n > 65535)\n", "      if (false)\n"),
-    "M9 node's COG_PORTS drifts from org_units.json (canvas's 8091 dropped)":
-        ("export const COG_PORTS = [8090, 8091, 8845]", "export const COG_PORTS = [8090, 8845]"),
+    "M9 node's COG_PORTS drifts from org_units.json (the gateway's 8845 dropped)":
+        ("export const COG_PORTS = [8090, 8845]", "export const COG_PORTS = [8090]"),
     "M10 `ports` that isn't an object reads as none":
         ("    if (!pe || typeof pe !== 'object' || Array.isArray(pe))\n", "    if (false)\n"),
 }

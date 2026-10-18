@@ -177,7 +177,7 @@ Description=astryx canvas — the owner's front door: chat with agents, live age
 After=network.target
 [Service]
 WorkingDirectory=$PWD
-ExecStart=${UEXEC}$PWD/venv/bin/uvicorn bridges.canvas:root --host 127.0.0.1 --port 8091
+ExecStart=${UEXEC}$PWD/venv/bin/uvicorn bridges.canvas:root --host 127.0.0.1 --port ${_UP:-8091}
 Restart=always
 RestartSec=5
 User=$USER

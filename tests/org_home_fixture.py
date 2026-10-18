@@ -132,7 +132,7 @@ class OrgHomes:
         # each org's ports (S3b 5/n) are its own and NEVER the fixed ones (A: +10000, B: +20000), so a unit that kept
         # its literal reads as the literal, never as a coincidence. Declared here, never bound by any oracle.
         fixed = {"astryx-whatsapp": 8477, "astryx-telegram": 8478, "astryx-discord": 8479, "astryx-senses": 8460,
-                 "astryx-geoloc": 8766, "astryx-ear": 8092, "astryx-growbot": 8470}
+                 "astryx-geoloc": 8766, "astryx-ear": 8092, "astryx-growbot": 8470, "astryx-canvas": 8091}
         self.ports = {o: {k: v + off for k, v in fixed.items()} for o, off in (("a", 10000), ("b", 20000))}
         for o, off in (("a", 10000), ("b", 20000)):        # the org's own observatory behind the cog's front (S3c 3/n)
             self.ports[o]["astryx-observatory-org"] = 8100 + off

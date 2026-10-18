@@ -29,4 +29,6 @@ MUTANTS = {
         ('"astryx-observatory": {"scope": "cog", "port": 8090, "cog_ready": true}', '"astryx-observatory": {"scope": "cog", "port": 8090}'),
     "D5 the org's own observatory is declared cog-scoped (no org runs its backend)":
         ('"astryx-observatory-org": {"scope": "org", "registry_port": true}', '"astryx-observatory-org": {"scope": "cog", "registry_port": true}'),
+    "D6 canvas is declared cog-scoped again (no org in a cog runs its canvas; S3c canvas)":
+        ('"astryx-canvas":      {"scope": "org", "port": 8091}', '"astryx-canvas":      {"scope": "cog", "port": 8091}'),
 }

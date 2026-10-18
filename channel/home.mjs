@@ -24,8 +24,8 @@ const real = p => { try { return realpathSync(p) } catch { return resolvePath(p)
 // file also runs from the plugin's cache with no src/ beside it. tests/test_org_registry_parity.py pins both to the
 // data file, so the two readers can't drift.
 export const ORG_PORT_STEMS = ['astryx-whatsapp', 'astryx-telegram', 'astryx-discord', 'astryx-senses', 'astryx-geoloc',
-  'astryx-ear', 'astryx-growbot', 'astryx-observatory-org']
-export const COG_PORTS = [8090, 8091, 8845]
+  'astryx-ear', 'astryx-growbot', 'astryx-observatory-org', 'astryx-canvas']
+export const COG_PORTS = [8090, 8845]
 
 /** The registered orgs {org: {home, db, ports}}, or null when this host has no registry (one org). A present but malformed
  *  registry THROWS: it fails closed, never as absent. */

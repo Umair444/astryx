@@ -21,7 +21,7 @@ MUTANTS = {
         ("not NAME.fullmatch(org) or ", ""),
     "Y4 two orgs may share a port (S3b 5/n)":
         ("            if port in ports:\n", "            if False:\n"),
-    "Y5 an org may take a COG-scoped unit's port (8090/8091/8845, ruling 3(a))":
+    "Y5 an org may take a COG-scoped unit's port (8090/8845, ruling 3(a))":
         ("            if port in cog_ports:\n", "            if False:\n"),
     "Y6 any stem may carry a port":
         ("            if stem not in org_stems:\n", "            if False:\n"),

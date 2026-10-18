@@ -19,7 +19,7 @@ missing file reads a one-org host. That is correctness isolation, declared, not 
 The file:  {"orgs": {"<org>": {"home": "/abs/HOME", "db": "<its database>", "ports": {"<unit stem>": <port>}, "door": false}, ...}}
 `ports` (S3b 5/n, seed #59954 ruling 3) is optional at load: it holds the port of each per-org unit that binds one
 (data/org_units.json, scope org with a port), keyed by the unit's stem. A port is a HOST-wide name like a tmux socket,
-so the registry refuses one two orgs share, and one equal to a COG-scoped unit's port (8090/8091/8845, ruling 3(a)).
+so the registry refuses one two orgs share, and one equal to a COG-scoped unit's port (8090/8845, ruling 3(a)).
 In a cog of several orgs there is no default: port() REFUSES a missing one (ruling 3(b): the primary org declares its
 ports like any other).
 `door` (optional, at most one entry true) names the org the cog's gateway serves at its bare root (S3e).

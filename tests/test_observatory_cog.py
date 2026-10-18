@@ -19,7 +19,8 @@ build) behind the real front (uvicorn front:app, ephemeral port), a fixture regi
      each; a backend that dies is announced {"type": "cog_backend", "up": false} for its org, and a call to it is
      REFUSED at once (502), never left in a listen backlog the oracle still holds (a2 #60728 A-1)
   O7 the client a backend's per-visitor cap counts (a2 #60582 A-1): the front names the client IT saw in
-     x-astryx-front-client, overwriting one the caller sent
+     x-astryx-front-client, overwriting one the caller sent; and every header the front SETS (x-forwarded-prefix:
+     /o/<org>) is the backend's only copy, never behind a caller's (S3c canvas)
   O8 main.py's _client (read from the source, run alone): one org, the peer exactly as before (the header ignored);
      in a cog, the front's header, and only from 127.0.0.1
 Seams: OBS_FRONT_SRC (a mutant front.py), OBS_MAIN_SRC (a mutant main.py, O8). Exit 0 · 1 · 77 (no uvicorn/httpx).
@@ -237,6 +238,10 @@ def main():
         e = lines(logs[oa])[-1]
         check("a caller's own x-astryx-front-client is overwritten with the address the front saw (127.0.0.1 here)",
               e.get("path") == "/who" and e.get("client") == "127.0.0.1", str(e))
+        call(pf, f"/o/{oa}/pre", headers={"x-forwarded-prefix": "/o/evil"})
+        e = lines(logs[oa])[-1]
+        check(f"a caller's own x-forwarded-prefix never reaches the backend: it reads the front's /o/{oa}",
+              e.get("path") == "/pre" and e.get("prefix") == f"/o/{oa}", str(e))
 
         print("\nO8 main.py's _client")
         import ast

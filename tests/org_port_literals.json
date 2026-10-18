@@ -7,6 +7,7 @@
   "mcp/growbot/server.py": {"why": "the one-org body host's port; several orgs: orgs.port (U8)"},
   "scripts/deploy.sh": {"why": "BADDR's bridge addresses: deploy.sh refuses in a cog of several orgs (one-org only, its first line)"},
   "observatory/web/src/types.ts": {"why": "a /* */ comment naming senses' port (the census grammar strips // and leading * only)"},
-  "observatory/api/main.py": {"why": "the ear (EAR_UP) and growbot-body defaults: one org's fixed ports; in a cog each org's own observatory (astryx-observatory-org@<org>) proxies ITS org's ear and body at orgs.port (S3c 3/n resolved the trip a2 #60394 named)"}
+  "canvas/web/vite.config.ts": {"why": "the dev server's proxy to one org's canvas (`npm run dev` is one-org development; the built app is relative, served by each org's canvas at its registry port)"},
+  "observatory/api/main.py": {"why": "the ear (EAR_UP), canvas (CANVAS_UP) and growbot-body defaults: one org's fixed ports; in a cog each org's own observatory (astryx-observatory-org@<org>) proxies ITS org's ear, canvas and body at orgs.port (S3c 3/n resolved the trip a2 #60394 named)"}
  }
 }

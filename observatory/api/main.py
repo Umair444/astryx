@@ -3320,7 +3320,10 @@ import http.cookiejar  # noqa: E402
 import httpx  # noqa: E402
 from fastapi import BackgroundTasks  # noqa: E402
 
-CANVAS_UP = "http://127.0.0.1:8091"
+CANVAS_UP = f"http://127.0.0.1:{orgs.port('astryx-canvas') or 8091}"   # this org's canvas (its registry port in a cog)
+# In a cog the viewer reaches this observatory under the front's /o/<org>/ (S3c canvas): the prefix is THIS org's
+# registry name, computed, never read from a request (nothing a caller sends can move a redirect). One org: "".
+CANVAS_PRE = f"/o/{orgs.name()}" if _COG else ""
 _HOP = {"connection", "keep-alive", "transfer-encoding", "te", "trailer", "upgrade",
         "proxy-authorization", "proxy-authenticate", "host"}
 _canvas_http: httpx.AsyncClient | None = None
@@ -3328,7 +3331,7 @@ _canvas_http: httpx.AsyncClient | None = None
 
 @app.api_route("/canvas", methods=["GET", "HEAD"])
 async def canvas_root():
-    return Response(status_code=308, headers={"location": "/canvas/"})
+    return Response(status_code=308, headers={"location": f"{CANVAS_PRE}/canvas/"})
 
 
 @app.api_route("/canvas/{path:path}", methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"])

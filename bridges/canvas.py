@@ -54,11 +54,18 @@ from .transcribe import transcribe
 DSN = env("ASTRYX_DSN")
 OBS_KEY = env("OBS_KEY")
 DIST = REPO / "canvas" / "web" / "dist"
-COOKIE = "cv_session"
 HOME_AGENT = env("CANVAS_HOME_AGENT", "seed")      # the owner's default chat partner
 PAINTER = env("CANVAS_PAINTER", "painter")         # default author of new canvases
 ORG = "canvas"                                     # from_org of everything this surface inserts
 PREFIX = "/canvas"                                 # served at <host>/canvas/ (observatory proxies it)
+# plan-11324 S3c canvas (a2 #60582 A-2): in a cog of several orgs each org runs its own canvas, and the viewer reaches
+# it under the cog front's /o/<org>/: its cookie lives at THAT path, under a name of its own, so one browser holds each
+# org's session apart (a cookie name on one host is host-wide, like a tmux socket) and never sends one org's session
+# to another's canvas. The org is THIS process's registry name, computed, never read from a request. One org: the
+# public path is PREFIX and the cookie `cv_session`, exactly as before.
+_ORG = orgs.name()
+PUBLIC = f"/o/{_ORG}{PREFIX}" if _ORG else PREFIX
+COOKIE = f"cv_session-{_ORG}" if _ORG else "cv_session"
 
 pool: asyncpg.Pool | None = None
 clients: dict[str, set[asyncio.Queue]] = {}        # viewer name -> open SSE queues
@@ -119,7 +126,7 @@ def public_base(request: Request) -> str:
     """The URL the VIEWER reached us at, through the observatory proxy or the tunnel in front of it."""
     proto = request.headers.get("x-forwarded-proto") or request.url.scheme
     host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
-    return f"{proto.split(',')[0].strip()}://{host.split(',')[0].strip()}{PREFIX}"
+    return f"{proto.split(',')[0].strip()}://{host.split(',')[0].strip()}{PUBLIC}"
 
 
 def deny(code=403, msg="forbidden"):
@@ -364,7 +371,7 @@ async def login(body: Login, request: Request):
     await pool.execute("INSERT INTO canvas_sessions (token_hash, user_name) VALUES ($1,$2)", _h(tok), name)
     resp = JSONResponse({"ok": True, "name": name})
     resp.set_cookie(COOKIE, tok, max_age=30 * 86400, httponly=True, samesite="strict",
-                    secure=public_base(request).startswith("https:"), path=PREFIX)
+                    secure=public_base(request).startswith("https:"), path=PUBLIC)
     return resp
 
 
@@ -373,7 +380,7 @@ async def logout(request: Request):
     tok = request.cookies.get(COOKIE, "")
     await pool.execute("DELETE FROM canvas_sessions WHERE token_hash=$1", _h(tok))
     resp = JSONResponse({"ok": True})
-    resp.delete_cookie(COOKIE, path=PREFIX)
+    resp.delete_cookie(COOKIE, path=PUBLIC)
     return resp
 
 
@@ -1127,7 +1134,7 @@ class _Prefixed:
             path = scope["path"]
             if path == PREFIX:
                 await send({"type": "http.response.start", "status": 308,
-                            "headers": [(b"location", (PREFIX + "/").encode())]})
+                            "headers": [(b"location", (PUBLIC + "/").encode())]})
                 await send({"type": "http.response.body", "body": b""})
                 return
             if path.startswith(PREFIX + "/"):
