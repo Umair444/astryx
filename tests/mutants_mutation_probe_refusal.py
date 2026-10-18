@@ -30,4 +30,8 @@ MUTANTS = {
         ('            p = Path(td) / slot / rel\n', '            p = Path(td) / rel\n'),
     "T10 the probe adds a name to the oracle's environment again (every org-census baseline refused: seed #60425)":
         ('    env = dict(os.environ, **{env_var: str(subject_path)})', '    env = dict(os.environ, PYTHONUNBUFFERED="1", **{env_var: str(subject_path)})'),
+    "T11 outside a git tree the copy is the bare name again (an extract's gateway.py REFUSED a passing battery: a3 #60145)":
+        ('    return f.relative_to(os.path.commonpath([f.parent, oracle.resolve().parent]))\n', '    return Path(f.name)\n'),
+    "T12 the git root no longer decides the tail (the oracle's shared directory does, inside a tree too)":
+        ('        if (a / ".git").exists():\n            return f.relative_to(a)\n', '        if False:\n            return f.relative_to(a)\n'),
 }

@@ -14,6 +14,9 @@ Hermetic: each arm writes a tiny subject, oracle and spec into a temp dir and ru
   R6  a subject that can't load from the mutant location REFUSES (the relocated baseline), never grades a no-op CAUGHT
   R7  a same-size mutant right after the baseline is CAUGHT: no cached bytecode of the previous copy stands in for it
   R8  the probe adds no name to the oracle's environment but its ENV seam (unbuffered by `-u`, a flag)
+  R9  outside any git tree, a subject that resolves by its code-tree tail (pkg/subj.py, its oracle in tests/) loads at
+      the mutant location: the baseline passes and its mutant is CAUGHT, never a REFUSE (a3 #60145, a4 10-19)
+  R10 inside a git tree, the git root decides the tail, never the oracle: an oracle OUTSIDE the tree gives pkg/subj.py
   C1  control: a passing baseline prints no tail block, and its mutant is CAUGHT
 """
 import json
@@ -34,12 +37,15 @@ def check(name, ok, detail=""):
         fails.append(name)
 
 
-def probe(td: Path, oracle_body: str, timeout: int = 20, mutants=None, subject: str = "X = 1\n") -> tuple:
-    (td / "subj.py").write_text(subject)
-    (td / "oracle.py").write_text(oracle_body)
+def probe(td: Path, oracle_body: str, timeout: int = 20, mutants=None, subject: str = "X = 1\n",
+          subj_rel: str = "subj.py", oracle_rel: str = "oracle.py") -> tuple:
+    sp, op = td / subj_rel, td / oracle_rel
+    for f, body in ((sp, subject), (op, oracle_body)):
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(body)
     m = mutants or {"M one": ("X = 1", "X = 2")}
     (td / "spec.py").write_text(
-        f"SUBJECT = {str(td / 'subj.py')!r}\nORACLE = {str(td / 'oracle.py')!r}\nENV = 'FIX_SRC'\n"
+        f"SUBJECT = {str(sp)!r}\nORACLE = {str(op)!r}\nENV = 'FIX_SRC'\n"
         f"TIMEOUT = {timeout}\nMUTANTS = {m!r}\n")
     # PYTHONUNBUFFERED out too: an older outer mutation_probe set it for ITS oracle (this file), and inherited here it
     # would make the subject's own buffering unobservable (mutant T6 read NOT PROBED until this line)
@@ -124,6 +130,29 @@ with tempfile.TemporaryDirectory() as t:
                        "sys.exit(0 if 'X = 1' in open(os.environ['FIX_SRC']).read() else 1)\n")
     check("R8 the oracle's environment gains no name from the probe but its ENV seam (baseline passes, mutant CAUGHT)",
           rc == 0 and any(ln.lstrip().startswith("CAUGHT") for ln in out.splitlines()), out)
+
+    # R9/R10: the subject resolves by its TAIL, as paths.estate's bare-tree rule does (a copy is known by its code-tree
+    # tail): it loads only as .../pkg/subj.py. In R10 the tree's own root (gitroot-r10) above pkg/ is right only in place
+    # (under r10/); a COPY carrying it under a probe slot was placed by the oracle's directory, not the git root
+    tail = ("import sys\nfrom pathlib import Path\nf = Path(__file__)\n"
+            "if f.parent.name != 'pkg' or (f.parent.parent.name == 'gitroot-r10' and f.parents[2].name != 'r10'):\n"
+            "    sys.exit(f'  no tree tail: {f}')\nX = 1\n")
+    runs = ("import os, sys\nsrc = open(os.environ['FIX_SRC']).read()\n"
+            "g = {'__file__': os.environ['FIX_SRC'], '__name__': 'subj'}\n"
+            "exec(compile(src, os.environ['FIX_SRC'], 'exec'), g)\nsys.exit(0 if g['X'] == 1 else 1)\n")
+
+    d = t / "r9"; d.mkdir()
+    rc, out = probe(d, runs, subject=tail, subj_rel="tree/pkg/subj.py", oracle_rel="tree/tests/oracle.py")
+    check("R9 no .git: a tail-resolved subject loads at the mutant location (baseline passes, mutant CAUGHT)",
+          rc == 0 and "REFUSING" not in out and any(ln.lstrip().startswith("CAUGHT") for ln in out.splitlines()), out)
+
+    d = t / "r10"; d.mkdir()
+    g = d / "gitroot-r10"; g.mkdir()
+    subprocess.run(["git", "init", "-q", str(g)], check=True, capture_output=True,
+                   env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
+    rc, out = probe(d, runs, subject=tail, subj_rel="gitroot-r10/pkg/subj.py", oracle_rel="outside/oracle.py")
+    check("R10 a git tree: the git root decides the tail (pkg/subj.py), never the oracle's shared directory",
+          rc == 0 and "REFUSING" not in out and any(ln.lstrip().startswith("CAUGHT") for ln in out.splitlines()), out)
 
     d = t / "c1"; d.mkdir()
     rc, out = probe(d, "import os, sys\nsys.exit(0 if 'X = 1' in open(os.environ['FIX_SRC']).read() else 1)\n")

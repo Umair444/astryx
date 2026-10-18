@@ -139,13 +139,17 @@ def _print_tail(oracle: Path, out: str, when: str) -> None:
         print(f"    | {ln[:220]}")
 
 
-def _tree_rel(subject: Path) -> Path:
-    """The subject's path below its git root (observatory/api/main.py), or its bare name outside any tree."""
+def _tree_rel(subject: Path, oracle: Path) -> Path:
+    """The subject's path below its git root (observatory/api/main.py). Outside any git tree (a git-archive extract),
+    its path below the deepest directory it shares with its oracle (bridges/gateway.py beside tests/), so a subject
+    that resolves by its code-tree tail loads where the mutants go (a4 10-19: an extract's bare gateway.py raised at
+    paths.estate and the relocated baseline REFUSED a battery that passes in a worktree; a3 #60145). An oracle beside
+    its subject gives the bare name, as before."""
     f = subject.resolve()
     for a in f.parents:
         if (a / ".git").exists():
             return f.relative_to(a)
-    return Path(f.name)
+    return f.relative_to(os.path.commonpath([f.parent, oracle.resolve().parent]))
 
 
 def probe(spec_path: Path, verbose: bool = True) -> int:
@@ -197,7 +201,7 @@ def probe(spec_path: Path, verbose: bool = True) -> int:
         # Every copy (canary, relocated baseline, mutant) sits at the subject's path RELATIVE TO ITS TREE, never as a bare
         # file: a subject that resolves its own tree (main.py's `paths.estate(__file__)`) finds a copy only by that tail,
         # and a bare-named copy died at import, so every mutant read CAUGHT, a no-op one included (a4 #60129).
-        rel = _tree_rel(subject)
+        rel = _tree_rel(subject, oracle)
 
         def seat(slot: str, text: str) -> Path:
             """A fresh directory per copy. One path for every copy let an oracle that IMPORTS its subject run the
