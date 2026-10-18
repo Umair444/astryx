@@ -76,18 +76,35 @@ units() {  # GENERATE systemd units from the org's declared sources of truth.
   # ImportEnvironment, and the only EnvironmentFile is the org's own .env.
   # No registry file at all (orgs.path(): ASTRYX_ORG_REGISTRY, else /etc/astryx/orgs.json) is a one-org host with no
   # question to ask; a present one is judged by THE predicate, and a missing interpreter then fails closed.
-  local ORGH="$PWD" UEXEC="" _mrc=1
+  local ORGH="$PWD" UEXEC="" _mrc=1 UORG="" UHOST="" UPORT="" _UF=""
   [ -e "${ASTRYX_ORG_REGISTRY:-/etc/astryx/orgs.json}" ] && { _mrc=0; venv/bin/python src/astryx/orgs.py multi || _mrc=$?; }
   case "$_mrc" in
     0) ORGH=$(venv/bin/python -c 'import sys; sys.path.insert(0, "src"); from astryx import paths; print(paths.home())') \
          || die "units: several orgs on this host and ASTRYX_HOME names no registered one"
-       UEXEC="$PWD/venv/bin/python $PWD/src/astryx/orgenv.py exec --home $ORGH -- " ;;
+       UEXEC="$PWD/venv/bin/python $PWD/src/astryx/orgenv.py exec --home $ORGH -- "
+       UORG=$(venv/bin/python src/astryx/orgs.py name) || die "units: this org's HOME is not a registered org"
+       { read -r UHOST; read -r UPORT; } < <(venv/bin/python -c 'import json, sys
+d = json.load(open(sys.argv[1]))["units"]
+print(" ".join(k for k, v in d.items() if v["scope"] == "host"))
+print(" ".join(k for k, v in d.items() if v["scope"] == "org" and "port" in v))' src/astryx/data/org_units.json) \
+         || die "units: src/astryx/data/org_units.json can't be read" ;;
     1) ;;
     *) die "units: the org registry refuses (python src/astryx/orgs.py multi)" ;;
   esac
 
+  # S3b (data/org_units.json, seed #59954): the FILE a unit is written to. One org: "$UD/<stem>.<suffix>", exactly as
+  # before, and no process is asked. Several: "$UD/<stem>@<org>.<suffix>" (two orgs never write one file); a
+  # HOST-scoped unit is never an org's (S3c), and a unit that binds a port waits for its registry port (5/n): both are
+  # NOT written, each with its reason on stderr.
+  _uw() {
+    if [ -z "$UORG" ]; then _UF="$UD/$1.$2"; return 0; fi
+    case " $UHOST " in *" $1 "*) echo "  units: $1 is HOST-scoped (one per host, S3c): not an org's unit" >&2; return 1 ;; esac
+    case " $UPORT " in *" $1 "*) echo "  units: $1 binds a port: on a multi-org host it needs its registry port (S3b 5/n), not written" >&2; return 1 ;; esac
+    _UF="$UD/$1@$UORG.$2"
+  }
+
   # ── 1. shipped-set — always present ─────────────────────────────────────────
-  cat > "$UD/astryx-observatory.service" <<EOF
+  _uw astryx-observatory service && cat > "$_UF" <<EOF
 [Unit]
 Description=astryx observatory — public live view on :8090
 After=network.target
@@ -101,7 +118,7 @@ Environment=ASTRYX_HOME=$ORGH
 [Install]
 WantedBy=multi-user.target
 EOF
-  cat > "$UD/astryx-canvas.service" <<EOF
+  _uw astryx-canvas service && cat > "$_UF" <<EOF
 [Unit]
 Description=astryx canvas — the owner's front door: chat with agents, live agent-painted canvases (proxied by the observatory at /canvas/)
 After=network.target
@@ -115,7 +132,7 @@ Environment=ASTRYX_HOME=$ORGH
 [Install]
 WantedBy=multi-user.target
 EOF
-  cat > "$UD/astryx-pulse.service" <<EOF
+  _uw astryx-pulse service && cat > "$_UF" <<EOF
 [Unit]
 Description=astryx pulse — one tick of the trigger clock
 [Service]
@@ -133,7 +150,7 @@ Environment=ASTRYX_HOME=$ORGH
 # nothing here relies on cgroup cleanup; only the detached jobs linger, and they should.
 KillMode=process
 EOF
-  cat > "$UD/astryx-pulse.timer" <<EOF
+  _uw astryx-pulse timer && cat > "$_UF" <<EOF
 [Unit]
 Description=astryx pulse — every minute (cron resolution; the OS owns the clock)
 [Timer]
@@ -153,7 +170,7 @@ EOF
   # --proxy-headers: cloudflared (relay.umairfiaz.com) reaches the gateway from localhost, so without it every
   # client is 127.0.0.1 and the per-IP introduce cap is one global bucket. X-Forwarded-For is trusted ONLY from
   # 127.0.0.1; a direct client from anywhere else keeps its own address (tests/test_relay.py).
-  cat > "$UD/astryx-gateway.service" <<EOF
+  _uw astryx-gateway service && cat > "$_UF" <<EOF
 [Unit]
 Description=astryx gateway — the org's one door to other orgs (:8845)
 After=network.target
@@ -169,7 +186,7 @@ WantedBy=multi-user.target
 EOF
   # residents: reboot-safety by DEFAULT — spawns every charter in the tree as a
   # tmux body at boot (the "please respawn the residents" gap this closes).
-  cat > "$UD/astryx-residents.service" <<EOF
+  _uw astryx-residents service && cat > "$_UF" <<EOF
 [Unit]
 Description=astryx residents — spawn every agent in the tree as a tmux body at boot
 # docker: the org's postgres runs in a container the residents connect to.
@@ -191,7 +208,7 @@ EOF
 
   # ── 2. channels — one service per present routes-<name>.json ─────────────────
   # Presence signal = the channel's routing file exists (the org has wired it).
-  [ -f "$ORGH/bridges/routes-whatsapp.json" ] && cat > "$UD/astryx-whatsapp.service" <<EOF
+  [ -f "$ORGH/bridges/routes-whatsapp.json" ] && _uw astryx-whatsapp service && cat > "$_UF" <<EOF
 [Unit]
 Description=astryx whatsapp bridge — owner surface on the wire
 After=network.target docker.service
@@ -205,7 +222,7 @@ Environment=ASTRYX_HOME=$ORGH
 [Install]
 WantedBy=multi-user.target
 EOF
-  [ -f "$ORGH/bridges/routes-discord.json" ] && cat > "$UD/astryx-discord.service" <<EOF
+  [ -f "$ORGH/bridges/routes-discord.json" ] && _uw astryx-discord service && cat > "$_UF" <<EOF
 [Unit]
 Description=astryx discord bridge — owner surface on the wire
 After=network.target
@@ -219,7 +236,7 @@ Environment=ASTRYX_HOME=$ORGH
 [Install]
 WantedBy=multi-user.target
 EOF
-  [ -f "$ORGH/bridges/routes-telegram.json" ] && cat > "$UD/astryx-telegram.service" <<EOF
+  [ -f "$ORGH/bridges/routes-telegram.json" ] && _uw astryx-telegram service && cat > "$_UF" <<EOF
 [Unit]
 Description=astryx telegram bridge — owner surface on the wire
 After=network.target
@@ -247,7 +264,7 @@ EOF
   # module + at least one sensor: writing sensors/<agent>/<name>.py IS deploying (senses.py's own law), so an org with
   # no sensor grows no service.
   if [ -f src/astryx/pulse/senses.py ] && compgen -G "sensors/*/*.py" >/dev/null; then
-    cat > "$UD/astryx-senses.service" <<EOF
+    _uw astryx-senses service && cat > "$_UF" <<EOF
 [Unit]
 Description=astryx senses — the afferent API layer (sensors/<agent>/*.py served on :8460)
 After=network.target docker.service
@@ -271,7 +288,7 @@ EOF
   # personal tier) + its env file outside the repo (the token and the DSN it writes with). It binds 0.0.0.0 on
   # purpose: the phone posts to it over the LAN/tailnet, which is the service. The design is declared; the values never.
   if [ -f "$ORGH/bridges/geoloc.py" ] && [ -f "$HOME/.config/astryx/geoloc.env" ]; then
-    cat > "$UD/astryx-geoloc.service" <<EOF
+    _uw astryx-geoloc service && cat > "$_UF" <<EOF
 [Unit]
 Description=astryx geoloc bridge — phone location intake on :8766
 After=network.target
@@ -293,7 +310,7 @@ EOF
   # grows one by default. Loopback only: the observatory proxies <host>/ear/ to it.
   ear_on=$(grep -m1 '^EAR_ENABLED=' "$ORGH/.env" 2>/dev/null | cut -d= -f2- || true)
   if [ "$ear_on" = 1 ] && [ -f bridges/ear.py ]; then
-    cat > "$UD/astryx-ear.service" <<EOF
+    _uw astryx-ear service && cat > "$_UF" <<EOF
 [Unit]
 Description=astryx ear — hearing: VAD speech segments from the observatory → local STT → the ear store (:8092, via /ear/)
 After=network.target docker.service
@@ -328,7 +345,7 @@ EOF
      grep -rqsE '^Grants:.*\bgrowbot\b' --exclude='*.example.md' "$ORGH/agents/"; then
     { [ -z "$gb_url" ] || echo "$gb_url" | grep -qE '127\.0\.0\.1|localhost'; } \
       || UNITS_EXPECT_DISABLED="$UNITS_EXPECT_DISABLED astryx-growbot.service"
-    cat > "$UD/astryx-growbot.service" <<EOF
+    _uw astryx-growbot service && cat > "$_UF" <<EOF
 [Unit]
 Description=astryx growbot body — the open GrowBot body protocol over the USB-serial Pico (:8470)
 After=network.target
@@ -364,7 +381,7 @@ EOF
         *.sh) rexec="$PWD/$execp" ;;
         *)    rexec="$PWD/venv/bin/python $PWD/$execp" ;;
       esac
-      cat > "$UD/astryx-$stem.service" <<EOF
+      _uw astryx-$stem service && cat > "$_UF" <<EOF
 [Unit]
 Description=astryx $stem — $desc
 [Service]
@@ -374,7 +391,7 @@ ExecStart=${UEXEC}$rexec
 User=$USER
 Environment=ASTRYX_HOME=$ORGH
 EOF
-      cat > "$UD/astryx-$stem.timer" <<EOF
+      _uw astryx-$stem timer && cat > "$_UF" <<EOF
 [Unit]
 Description=astryx $stem — poll on $oncal
 [Timer]

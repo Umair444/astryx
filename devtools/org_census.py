@@ -13,7 +13,13 @@ resolver, found by WALKING the code, never by a list of files.
           (`exec tmux` / `command tmux` bypass that function, so they spell `${AX_SOCK:+-L "$AX_SOCK"}`); or an
           explicit -L/-S (a private test server). Grammar: a python LIST display whose first element is the
           literal "tmux" (an argv; a tuple of tool names is not one); a shell `tmux` in command position (quoted messages stripped); a js spawn/exec of
-          'tmux'. A tmux reached through a variable (`T = "tmux"; [T, …]`) is outside it (stated).
+          'tmux'. Outside it (stated; a2 #59955 A-1 planted the last four): a tmux reached through a variable
+          (`T = "tmux"; [T, …]`), a TUPLE argv (`run(("tmux", "ls"))`), an absolute path (`["/usr/bin/tmux", …]`),
+          a shell wrapper (`["sh", "-c", "tmux ls"]`) and concatenation (`"tmux" + " ls"`).
+          Kind `unit`: a unit name written out (`"astryx-pulse.timer"`), one org's name; a multi-org host's is
+          `<stem>@<org>.<suffix>` (orgs.unit(); init.sh units() writes through _uw). Python: a string literal that IS
+          one; shell: one in code (quoted messages stripped). Not in tests/: a test's one-org unit name is the one-org
+          contract it asserts, not a consumer of a running org's unit.
   triggers   the same tmux rule over the org's OWN trigger bodies, HOME/triggers/**/*.py (gitignored, so outside
           the walk): an argv list, or a call whose first argument is a `tmux …` shell line. Read-only, file:line only.
 
@@ -296,11 +302,38 @@ def trigger_sites(home: Path) -> tuple[list, bool]:
         if "__pycache__" in p.parts or p.is_symlink() or not p.is_file():
             continue
         rel = p.relative_to(home).as_posix()
+        bad = unparsed(p, ".py")
+        if bad:                                         # fails closed, as the walk's own `unparsed` axis (a2 A-2)
+            out.append({"kind": "triggers", "file": rel, "line": 0, "what": f"unparsed trigger body: {bad}"})
+            continue
         for n in _py_tmux(p):
             out.append({"kind": "triggers", "file": rel, "line": n, "what": "tmux argv on the default socket"})
         for n in _py_tmux_shell(p):
             out.append({"kind": "triggers", "file": rel, "line": n, "what": "tmux shell line on the default socket"})
     return out, True
+
+
+UNIT_NAME = re.compile(r"astryx-[a-z0-9-]+\.(?:service|timer)")
+
+
+def _py_unit(src: Path) -> list[int]:
+    """Lines where a string literal IS a unit name (`"astryx-pulse.timer"`): one org's name, wrong on a multi-org host,
+    where the org's unit is `<stem>@<org>.<suffix>` (orgs.unit()). A message that mentions one (it has a space) is not."""
+    try:
+        toks = list(tokenize.generate_tokens(io.StringIO(src.read_text(errors="replace")).readline))
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        return []
+    out = []
+    for t in toks:
+        if t.type != tokenize.STRING:
+            continue
+        try:
+            v = ast.literal_eval(t.string)
+        except (ValueError, SyntaxError):
+            continue
+        if isinstance(v, str) and UNIT_NAME.fullmatch(v):
+            out.append(t.start[0])
+    return out
 
 
 def namespace_sites(rel: str, src: Path, lines) -> list:
@@ -312,12 +345,17 @@ def namespace_sites(rel: str, src: Path, lines) -> list:
         allraw = src.read_text(errors="replace").splitlines()
         for n in _py_tmux(src):
             out.append((n, raw.get(n, allraw[n - 1] if n <= len(allraw) else ""), "tmux on the default socket"))
+        for n in ([] if rel.startswith("tests/") else _py_unit(src)):   # a test's one-org name IS the one-org contract
+            if n in raw:                                 # a docstring's mention is not code
+                out.append((n, raw[n], "a one-org unit name (orgs.unit() gives this org's)"))
         return out
     if rel.endswith((".mjs", ".js", ".cjs", ".ts")):
         return [(n, raw, "tmux spawned on the default socket") for n, code, raw in lines if JS_TMUX.search(code)]
     sourced_at = next((n for n, c, _ in lines if SOURCES_ORG_TMUX.search(c)), None)
     for n, code, raw in lines:
         bare = _unlabel(code)
+        if UNIT_NAME.search(bare) and not rel.startswith("tests/"):
+            out.append((n, raw, "a one-org unit name"))
         for m in SH_TMUX.finditer(bare):
             if SOCKET_ARG.search(m.group("rest")):
                 continue

@@ -189,7 +189,8 @@ def arms(fx):
                        capture_output=True, text=True, timeout=60)
     units = {p.name: p.read_text() for p in (co / "units_fx_out").glob("*")} if (co / "units_fx_out").is_dir() else {}
     svc = {n: u for n, u in units.items() if n.endswith(".service")}
-    check("units() renders for B (rc 0, the shipped set present)", r.returncode == 0 and len(svc) >= 4,
+    check("units() renders for B (rc 0, its own pulse and residents: S3b's @<org> files)", r.returncode == 0
+          and {f"astryx-pulse@{fx.org['b']}.service", f"astryx-residents@{fx.org['b']}.service"} <= set(svc),
           f"rc {r.returncode} {sorted(units)} {r.stderr[-300:]}")
     exe = [ln for u in svc.values() for ln in u.splitlines() if ln.startswith("ExecStart=")]
     check("every ExecStart runs through the builder (orgenv exec --home B)",

@@ -40,6 +40,7 @@ SEAMS = {
     "ORG_HOME_ORGTMUX_SRC": "scripts/org_tmux.sh",
     "ORG_HOME_COMPACT_SRC": "src/astryx/pulse/shipped_triggers/context_compact.py",
     "ORG_HOME_HEAL_SRC": "src/astryx/pulse/shipped_triggers/agent_heal.py",
+    "ORG_HOME_UNITS_DATA_SRC": "src/astryx/data/org_units.json",
 }
 
 

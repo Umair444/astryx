@@ -127,11 +127,13 @@ def main():
                                         'MSG = "restart: tmux kill-session"\n')
         (tdir / "__pycache__" / "bare.py").write_text('import subprocess\nsubprocess.run(["tmux", "ls"])\n')   # org-home: a planted cache copy (skipped)
         (tdir / "notes.sh").write_text("tmux ls\n")
+        (tdir / "broken.py").write_text("def x(:\n")          # a body that won't parse fails closed (a2 #59955 A-2)
         got, read = oc.trigger_sites(h)
         hits = sorted((r["file"], r["line"]) for r in got)
-        want = [("triggers/fxagent/bare.py", 2), ("triggers/fxagent/shell.py", 2), ("triggers/fxagent/shell.py", 3)]
-        check("RED control: a planted trigger body's bare argv and its two shell lines are found, nothing else "
-              "(routed, advice text, __pycache__, a non-.py file)", read and hits == want, str(hits))
+        want = [("triggers/fxagent/bare.py", 2), ("triggers/fxagent/broken.py", 0), ("triggers/fxagent/shell.py", 2),
+                ("triggers/fxagent/shell.py", 3)]
+        check("RED control: a planted trigger body's bare argv, its two shell lines and an unparseable body are found, "
+              "nothing else (routed, advice text, __pycache__, a non-.py file)", read and hits == want, str(hits))
         (h / "empty").mkdir()
         got, read = oc.trigger_sites(h / "empty")
         check("a HOME with no triggers/ is SKIPPED (not read), never a pass of an empty set", not read and not got,

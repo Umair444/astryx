@@ -1,0 +1,18 @@
+{
+ "_": "plan-11324 S3b (#58435; seed #59953/#59954): the SCOPE of every unit init.sh units() writes, declared once. `org`: each org on a host runs its own; on a multi-org host its file is instance-named `<stem>@<org>.<suffix>` (an instance FILE, not a %i template: each org's content differs, its HOME and its .env), so two orgs never write the same unit. `host`: one per host (the gateway routes by to_org, the observatory lists every org, canvas rides the observatory's /canvas/: #58435 S3c's declared host-scoped set); an ORG's units() run never writes one on a multi-org host. `port`: the fixed port a unit binds, a host-wide name like a tmux socket. On a multi-org host a per-org unit that binds a port takes it from its registry entry (S3b 5/n); until then it is NOT written there, with its reason. One org: nothing here is read, every unit is what it was. A stem units() writes that is absent here fails the oracle (tests/test_org_home_units_scope.py).",
+ "units": {
+  "astryx-observatory": {"scope": "host", "port": 8090},
+  "astryx-canvas":      {"scope": "host", "port": 8091},
+  "astryx-gateway":     {"scope": "host", "port": 8845},
+  "astryx-pulse":       {"scope": "org"},
+  "astryx-residents":   {"scope": "org"},
+  "astryx-whatsapp":    {"scope": "org", "port": 8477},
+  "astryx-telegram":    {"scope": "org", "port": 8478},
+  "astryx-discord":     {"scope": "org", "port": 8479},
+  "astryx-senses":      {"scope": "org", "port": 8460},
+  "astryx-geoloc":      {"scope": "org", "port": 8766},
+  "astryx-ear":         {"scope": "org", "port": 8092},
+  "astryx-growbot":     {"scope": "org", "port": 8470}
+ },
+ "runners": {"scope": "org"}
+}

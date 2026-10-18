@@ -117,6 +117,13 @@ def tmux(env=None, cwd=None) -> list[str]:
     return ["tmux"] if s is None else ["tmux", "-L", s]
 
 
+def unit(stem: str, suffix: str = "service", env=None, cwd=None) -> str:
+    """THIS org's systemd unit name (plan-11324 S3b, data/org_units.json): `<stem>.<suffix>` on one org, exactly as
+    before; `<stem>@<org>.<suffix>` on several, the instance FILE init.sh units() writes for this org."""
+    o = name(env, cwd)
+    return f"{stem}.{suffix}" if o is None else f"{stem}@{o}.{suffix}"
+
+
 def conninfo(dsn: str) -> dict:
     """libpq's own reading of a DSN (URI or key=value), through psycopg: never a second parser of the grammar."""
     from psycopg.conninfo import conninfo_to_dict
@@ -136,12 +143,18 @@ def is_fixture(dsn: str) -> bool:
 
 def _main(argv) -> int:
     """`python -m astryx.orgs multi` exits 0 on a multi-org host, 1 otherwise, 2 when the registry refuses.
-    `socket` prints this org's tmux socket and exits 0 on several orgs, exits 1 on one, 2 when no registered HOME is
-    carried. spawn.sh and init.sh ask THIS, so a shell copy of the predicate can never drift from it."""
+    `socket` prints this org's tmux socket (`name` its name) and exits 0 on several orgs, exits 1 on one, 2 when no
+    registered HOME is carried. spawn.sh and init.sh ask THIS, so a shell copy of the predicate can never drift from it."""
     import sys
     try:
         if argv[:1] == ["multi"]:
             return 0 if multi() else 1
+        if argv[:1] == ["name"]:              # init.sh units(): this org's name (exit 0) on several orgs; 1 on one
+            o = name()
+            if o is None:
+                return 1
+            print(o)
+            return 0
         if argv[:1] == ["socket"]:            # scripts/org_tmux.sh: prints ax-<org> (exit 0) on several orgs; 1 on one
             s = socket()
             if s is None:
@@ -155,7 +168,7 @@ def _main(argv) -> int:
         # guard reads as "one org, proceed" (a registry nested past the parser's recursion limit did exactly that)
         print(f"astryx.orgs: the registry could not be judged ({type(e).__name__}): refusing", file=sys.stderr)
         return 2
-    print("usage: python -m astryx.orgs multi|socket", file=sys.stderr)
+    print("usage: python -m astryx.orgs multi|name|socket", file=sys.stderr)
     return 2
 
 

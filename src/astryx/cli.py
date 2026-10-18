@@ -36,11 +36,11 @@ FULL_CONTROL = ("Agents get full control of this machine: sudo, and Claude Code 
 
 CHANNELS = {
     "telegram": {"key": "TG_BOT_TOKEN", "ask": "Telegram bot token (from @BotFather)",
-                 "routes": "bridges/routes-telegram.json", "unit": "astryx-telegram.service"},
+                 "routes": "bridges/routes-telegram.json", "unit": "astryx-telegram"},
     "discord": {"key": "DISCORD_BOT_TOKEN", "ask": "Discord bot token (Developer Portal → Bot → Reset Token)",
-                "routes": "bridges/routes-discord.json", "unit": "astryx-discord.service"},
+                "routes": "bridges/routes-discord.json", "unit": "astryx-discord"},
     "whatsapp": {"key": "WA_WEBHOOK_SECRET", "ask": "WhatsApp webhook secret (press Enter to generate one)",
-                 "routes": "bridges/routes-whatsapp.json", "unit": "astryx-whatsapp.service", "generate": True},
+                 "routes": "bridges/routes-whatsapp.json", "unit": "astryx-whatsapp", "generate": True},
 }
 
 
@@ -265,7 +265,7 @@ def _services() -> list[tuple[str, str]]:
 
 
 def _pulse_next() -> str:
-    raw = out(["systemctl", "list-timers", "astryx-pulse.timer", "--all", "-o", "json"])
+    raw = out(["systemctl", "list-timers", orgs.unit("astryx-pulse", "timer"), "--all", "-o", "json"])
     try:
         t = json.loads(raw)[0]
     except (ValueError, IndexError, KeyError):
@@ -311,7 +311,7 @@ def cmd_status(ctx: Ctx, a) -> int:
         except ValueError:
             ui.step("skip", "pulse pause declared", fix="astryx pause status")
     nxt = _pulse_next()
-    timer_on = dict(svcs).get("astryx-pulse.timer", "").startswith("active")
+    timer_on = dict(svcs).get(orgs.unit("astryx-pulse", "timer"), "").startswith("active")
     ui.step("ok" if timer_on and nxt else "skip", f"pulse timer: {nxt or 'not installed'}",
             fix=None if timer_on or not nxt else "astryx up")
     ov = _overview()
@@ -329,10 +329,13 @@ def _can_sudo() -> bool:
 
 
 def _unit_files() -> list[str]:
+    """THIS org's installed units: the plain names on one org (no `@`), its own `<stem>@<org>.*` instances on several
+    (plan-11324 S3b: never another org's)."""
+    o = orgs.name()
     names = []
     for line in out(["systemctl", "list-unit-files", "astryx-*", "--no-legend"]).splitlines():
         n = line.split()[0] if line.split() else ""
-        if n and "@" not in n:
+        if n and ("@" not in n if o is None else n.rsplit(".", 1)[0].endswith(f"@{o}")):
             names.append(n)
     return names
 
@@ -361,14 +364,14 @@ def cmd_up(ctx: Ctx, a) -> int:
     root = ctx.need_root()
     ctx.ui.header("up")
     units = _unit_files()
-    svcs = [u for u in units if u.endswith(".service") and u != "astryx-pulse.service"]
+    svcs = [u for u in units if u.endswith(".service") and u != orgs.unit("astryx-pulse")]
     if not units:
         raise CliError("no astryx units are installed yet", fix="astryx init   (it prints the install lines)")
     lines = [["sudo", "systemctl", "start", *svcs]] if svcs else []
     if (ctx.home / "var" / "org_pause.json").is_file():
         lines.append([str(root / "scripts" / "pause.sh"), "off"])
     else:
-        lines.append(["sudo", "systemctl", "start", "astryx-pulse.timer"])
+        lines.append(["sudo", "systemctl", "start", orgs.unit("astryx-pulse", "timer")])
     return _do(ctx, lines, a)
 
 
@@ -376,7 +379,7 @@ def cmd_down(ctx: Ctx, a) -> int:
     root = ctx.need_root()
     ctx.ui.header("down", "the pulse is paused WITH a declared reason, so the witness reads PAUSED, not DOWN")
     reason = a.reason or f"astryx down by {getpass.getuser()}"
-    svcs = [u for u in _unit_files() if u.endswith(".service") and u != "astryx-pulse.service"]
+    svcs = [u for u in _unit_files() if u.endswith(".service") and u != orgs.unit("astryx-pulse")]
     lines = [[str(root / "scripts" / "pause.sh"), "on", reason]]
     if svcs:
         lines.append(["sudo", "systemctl", "stop", *svcs])
@@ -487,7 +490,7 @@ def cmd_channels(ctx: Ctx, a) -> int:
     env = config.read_env(_env_file(ctx))
     rows = []
     for name, ch in CHANNELS.items():
-        state = out(["systemctl", "is-active", ch["unit"]]) or "inactive"
+        state = out(["systemctl", "is-active", orgs.unit(ch["unit"])]) or "inactive"   # this org's (S3b)
         rows.append((name, "set" if env.get(ch["key"]) else "missing",
                      "yes" if (root / ch["routes"]).is_file() else "no", state))
     ctx.ui.table("", ["channel", "credential", "routes", "bridge"], rows)
