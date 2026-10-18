@@ -16,8 +16,8 @@ ENV = "ORG_HOME_INIT_SRC"
 
 MUTANTS = {
     "U1 units() doesn't build the environment":
-        ('       UEXEC="$PWD/venv/bin/python $PWD/src/astryx/orgenv.py exec --home $ORGH -- " ;;',
-         '       UEXEC="" ;;'),
+        ('       UEXEC="$PWD/venv/bin/python $PWD/src/astryx/orgenv.py exec --home $ORGH -- "\n',
+         '       UEXEC=""\n'),   # re-anchored at S3b 4/n (the `;;` moved to the case arm's last line)
     'U2 units() never resolves the HOME: the checkout stays the org':
         ('    0) ORGH=$(venv/bin/python -c', '    0) : ORGH=$(venv/bin/python -c'),
 }
