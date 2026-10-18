@@ -6,8 +6,40 @@
 # 2026-07-22 — the owner's capability-over-constraint steer, applied to myself).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# org-home guard (plan-11324 S3a): one-org only (it reads this checkout's estate); in a cog of several orgs it refuses first.
-if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ]; then _g=0; "$ROOT"/venv/bin/python "$ROOT"/src/astryx/orgs.py multi || _g=$?; [ "$_g" = 1 ] || { echo "deploy.sh: this cog runs several orgs (or its org registry refuses): one-org only, refusing" >&2; exit 3; }; fi
+# org-home guard (plan-11324 S3a; S3f S4, seed #60804/#60805). One org (no registry): the checkout's estate, every verb
+# byte for byte as before (COGH empty, nothing asked). A cog of several orgs: THIS org is the one ASTRYX_HOME or the
+# checkout's .astryx marker names (the ONE resolver, paths.home), its units named by orgs.unit (the primary's plain,
+# another's @<key>), its residents on its own tmux server (org_tmux.sh). Only the PRIMARY touches the shared database;
+# the gateway and the front are the cog's, and restarting them says it affects every org.
+if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ]; then
+  _g=0; "$ROOT"/venv/bin/python "$ROOT"/src/astryx/orgs.py multi || _g=$?
+  case "$_g" in
+    1) ;;
+    0) COGH=1
+       ORGH=$(cd "$ROOT" && venv/bin/python -c 'import sys; sys.path.insert(0, "src"); from astryx import paths; print(paths.home())') \
+         || { echo "deploy.sh: this cog runs several orgs and neither ASTRYX_HOME nor the checkout's .astryx marker names one: refusing" >&2; exit 3; }
+       UKEY=$("$ROOT"/venv/bin/python "$ROOT"/src/astryx/orgs.py name) || { echo "deploy.sh: $ORGH is not a registered org: refusing" >&2; exit 3; }
+       [ "$("$ROOT"/venv/bin/python "$ROOT"/src/astryx/orgs.py primary)" = "$UKEY" ] || UPRIM="" ;;
+    *) echo "deploy.sh: this host's org registry refuses: refusing" >&2; exit 3 ;;
+  esac
+fi
+ORGH=${ORGH:-$ROOT} COGH=${COGH:-} UKEY=${UKEY:-} UPRIM=${UPRIM-1}   # one org: the checkout, no cog, the primary by definition
+if [ -n "$COGH" ]; then
+  export ASTRYX_HOME="$ORGH"          # every child (spawn.sh, charter.py, org_tmux.sh) resolves THIS org
+  . "$ROOT/scripts/org_tmux.sh"       # `tmux` is THIS org's server (the primary's: -L default), never an inherited $TMUX's
+fi
+# THIS org's unit: one org, the bare stem exactly as before; a cog, orgs.unit's name (the one authority)
+un() { if [ -z "$COGH" ]; then echo "$1"; else "$ROOT"/venv/bin/python "$ROOT"/src/astryx/orgs.py unit "$1" "${2:-service}"; fi; }
+mine() {   # is unit $1 THIS org's? one org: every unit; a cog: the primary's are the plain names, another's its @<key>
+  [ -z "$COGH" ] && return 0
+  case "$1" in *@"$UKEY".*) [ -z "$UPRIM" ] ;; *@*) return 1 ;; *) [ -n "$UPRIM" ] ;; esac
+}
+cogwide() { [ -n "$COGH" ] && echo "  · $1 restarted: affects every org in the cog"; return 0; }
+front() {   # the cog's observatory FRONT (cog-scoped, :8090), health-verified: /api/cog answers 200 by a deadline
+  restart astryx-observatory
+  for _ in $(seq 1 30); do curl -sf -m 2 -o /dev/null localhost:8090/api/cog && { echo "  ✓ front answering /api/cog"; cogwide front; return 0; }; sleep 1; done
+  echo "  ✗ front not answering /api/cog after 30s" >&2; echo "deploy: $what ABORTED at the front." >&2; exit 1
+}
 what=${1:-all}
 
 build_web() {
@@ -69,7 +101,8 @@ reload() {
 # exit 1, never a green summary (a2 #42364). The body running this ($ASTRYX_AGENT) can't restart
 # itself and is reported as skipped.
 ears() {   # "<agent> <pid>" per live channel server: exe=node + server.mjs argv (dsn_census), never pgrep
-  ( cd "$ROOT" && venv/bin/python - <<'PY'
+  ( cd "$ROOT" && DEPLOY_COG="${COGH:-}" venv/bin/python - <<'PY'
+import os
 from astryx.security.dsn_census import channel_server_pids
 for pid in channel_server_pids():
     try:
@@ -77,7 +110,8 @@ for pid in channel_server_pids():
     except OSError:
         continue
     a = next((e[13:].decode() for e in env if e.startswith(b"ASTRYX_AGENT=")), "")
-    if a:
+    h = next((e[12:].decode() for e in env if e.startswith(b"ASTRYX_HOME=")), "")
+    if a and (not os.environ.get("DEPLOY_COG") or h == os.environ["ASTRYX_HOME"]):
         print(a, pid)
 PY
   )
@@ -111,9 +145,13 @@ restart_org() {
   local only="${1:-}" force=""
   [ "$only" = force ] && { only=""; force=1; }
   [ "${2:-}" = force ] && force=1
-  local DSN; DSN=$(grep '^ASTRYX_DSN=' "$ROOT/.env" | cut -d= -f2-)
+  local DSN; DSN=$(grep '^ASTRYX_DSN=' "${ORGH:-$ROOT}/.env" | cut -d= -f2-)
   local me="${ASTRYX_AGENT:-}" bad=0
   local pgc=""
+  if [ -n "${COGH:-}" ] && [ -z "${UPRIM:-}" ] && [ "$only" != residents ]; then
+    echo "  ✗ refusing: only the cog's primary org restarts the shared database (seed #60805); deploy.sh residents rolls this org's residents"
+    return 1
+  fi
   [ "$only" = residents ] || pgc=$(docker ps --format '{{.Names}}\t{{.Ports}}' | awk -F'\t' '/->5432\/tcp/ {print $1; exit}')
   if [ -n "$pgc" ] && [ -z "$force" ]; then
     # a database bounce under a running check or drill turns its verdicts into noise (10-11, seed #45236). Refuse while
@@ -131,21 +169,23 @@ restart_org() {
     psql "$DSN" -qc 'SELECT 1' >/dev/null 2>&1 && echo "  ✓ database accepting" || { echo "  ✗ database not accepting"; return 1; }
   fi
   echo "· pausing the pulse (its watchers would race the resident restarts)…"
-  sudo systemctl stop astryx-pulse.timer && echo "  ✓ pulse paused"
+  local PT=astryx-pulse.timer; [ -n "${COGH:-}" ] && PT=$(un astryx-pulse timer)
+  sudo systemctl stop "$PT" && echo "  ✓ pulse paused"
   # ANY exit from here (an abort under set -e, a Ctrl-C, a return) starts the pulse again: a paused
   # pulse left behind would sit with every trigger dark, silently (a2 #42367)
-  trap 'sudo systemctl start astryx-pulse.timer >/dev/null 2>&1 || true' RETURN EXIT INT TERM
+  trap 'sudo systemctl start "$PT" >/dev/null 2>&1 || true' RETURN EXIT INT TERM
   [ "$only" = residents ] && echo "· residents only: the database and the services are left running"
   [ "$only" = residents ] || echo "· restarting services…"
   local u
   for u in $( [ "$only" = residents ] || systemctl list-unit-files 'astryx-*' --no-legend | awk '$2=="enabled" {print $1}'); do
     case "$u" in astryx-residents.service|astryx-pulse.timer|astryx-pulse.service) continue ;; esac
+    [ -n "${COGH:-}" ] && { mine "$u" || continue; }              # another org's unit is never ours to restart
     if sudo systemctl restart "$u"; then echo "  ✓ $u $(systemctl is-active "$u")"; else echo "  ✗ $u failed to restart"; bad=1; fi
   done
   echo "· restarting residents (each resumes its own session)…"
   local a pending=() deadline=$((SECONDS + 900)) t0
   declare -A spawned_at=()
-  mapfile -t pending < <(cd "$ROOT" && venv/bin/python src/astryx/core/charter.py --roster)
+  mapfile -t pending < <(cd "$ROOT" && env ${COGH:+ASTRYX_HOME="$ORGH"} venv/bin/python src/astryx/core/charter.py --roster)
   while [ ${#pending[@]} -gt 0 ]; do
     local next=()
     for a in "${pending[@]}"; do
@@ -182,11 +222,12 @@ restart_org() {
   echo "· verifying (set membership: every resident has exactly one ear and a ready session)…"
   for u in $(systemctl list-unit-files 'astryx-*' --no-legend | awk '$2=="enabled" {print $1}'); do
     case "$u" in astryx-residents.service|astryx-pulse.timer|astryx-pulse.service) continue ;; esac
+    [ -n "${COGH:-}" ] && { mine "$u" || continue; }
     systemctl is-active --quiet "$u" || { echo "  ✗ $u $(systemctl is-active "$u")"; bad=1; }
   done
   local all n
   all=$(ears || true)
-  for a in $(cd "$ROOT" && venv/bin/python src/astryx/core/charter.py --roster); do
+  for a in $(cd "$ROOT" && env ${COGH:+ASTRYX_HOME="$ORGH"} venv/bin/python src/astryx/core/charter.py --roster); do
     [ "$a" = "$me" ] && continue
     n=$(awk -v a="$a" '$1==a' <<<"$all" | wc -l)
     [ "$n" = 1 ] || { echo "  ✗ $a has $n ear(s) (want exactly 1)"; bad=1; continue; }
@@ -199,9 +240,11 @@ restart_org() {
     done
     [ $ok = 1 ] || { echo "  ✗ $a: spawned, but its session never reached the ready prompt"; bad=1; }
   done
-  curl -sf -m 5 localhost:8090/api/overview >/dev/null && echo "  ✓ observatory answering" || { echo "  ✗ observatory not answering"; bad=1; }
+  local OBS=localhost:8090                          # in a cog :8090 is the front: THIS org's backend at its registry port
+  [ -n "${COGH:-}" ] && OBS="localhost:$("$ROOT"/venv/bin/python "$ROOT"/src/astryx/orgs.py port astryx-observatory-org)"
+  curl -sf -m 5 "$OBS/api/overview" >/dev/null && echo "  ✓ observatory answering" || { echo "  ✗ observatory not answering"; bad=1; }
   echo "· resuming the pulse…"
-  sudo systemctl start astryx-pulse.timer && systemctl is-active --quiet astryx-pulse.timer \
+  sudo systemctl start "$PT" && systemctl is-active --quiet "$PT" \
     && echo "  ✓ pulse running" || { echo "  ✗ pulse timer not active"; bad=1; }
   [ -n "$me" ] && echo "  · $me was NOT restarted: it is the body running this (restart its session yourself)"
   [ $bad = 0 ] && echo "restart: the org is back" || { echo "restart: INCOMPLETE — see ✗ above"; return 1; }
@@ -209,30 +252,53 @@ restart_org() {
 
 case "$what" in
   web)    build_web ;;                                             # build only, no restart
-  obs)    build_web && restart astryx-observatory ;;              # frontend or full change
-  api)    restart astryx-observatory ;;                           # backend main.py only, no web rebuild
-  bridge) restart astryx-whatsapp ;;                              # routes.json / whatsapp.py change
-  tg)     restart astryx-telegram ;;                              # routes-telegram.json / telegram.py change
-  dc)     restart astryx-discord ;;                               # routes-discord.json / discord.py change
+  # in a cog the org's observatory BACKEND is astryx-observatory-org (main.py) and the front is the cog's: `obs` rebuilds
+  # the shared web dist the front serves, so it restarts the front too (seed #60805)
+  obs)    if [ -z "$COGH" ]; then build_web && restart astryx-observatory; else build_web && restart "$(un astryx-observatory-org)" && front; fi ;;
+  api)    if [ -z "$COGH" ]; then restart astryx-observatory; else restart "$(un astryx-observatory-org)"; fi ;;
+  front)  [ -n "$COGH" ] || { echo "deploy.sh front: no cog here; the observatory is astryx-observatory (deploy.sh api)" >&2; exit 1; }
+          front ;;
+  bridge) restart "$(un astryx-whatsapp)" ;;                      # routes.json / whatsapp.py change
+  tg)     restart "$(un astryx-telegram)" ;;                      # routes-telegram.json / telegram.py change
+  dc)     restart "$(un astryx-discord)" ;;                       # routes-discord.json / discord.py change
   gw)     # gateway.py / orgname.py / charter-resolver change. This verb exists because
           # its absence cost six days: the gateway ran pre-commit federation code
           # 08-13→08-19 and the operator reaching for the sanctioned actuator found no
           # case covering it (gemini, msg 11785). Verified serving after restart — the
           # A2A card answering is the gateway's own health surface.
-          restart astryx-gateway
+          restart astryx-gateway; cogwide gateway
           sleep 2 && curl -sf -m 5 localhost:8845/.well-known/agent-card.json >/dev/null \
             && echo "  ✓ gateway serving the A2A card" \
             || { echo "  ✗ gateway restarted but the card is NOT answering"; exit 1; } ;;
   units)  # units/*.{service,timer} changed — /etc holds COPIES, not symlinks: /home is a
           # separate subvolume mounted after systemd loads units, so symlinks dangle at
           # boot and the whole org orphans (found the hard way, reboot of 2026-07-23).
+          if [ -z "$COGH" ]; then
           sudo cp "$ROOT"/units/astryx-*.service "$ROOT"/units/astryx-*.timer /etc/systemd/system/
-          sudo systemctl daemon-reload && echo "  ✓ units synced + daemon reloaded" ;;
-  all)    build_web && restart astryx-observatory && restart astryx-whatsapp ;;
+          sudo systemctl daemon-reload && echo "  ✓ units synced + daemon reloaded"
+          else   # a cog: THIS org's files only (`--cog`: the cog-scoped ones, the cog's own run), never another org's
+            mapfile -t files < <(cd "$ROOT" && venv/bin/python -c '
+import json, sys
+from pathlib import Path
+mode, key, prim = sys.argv[1], sys.argv[2], sys.argv[3]
+cog = {k for k, v in json.loads(Path("src/astryx/data/org_units.json").read_text())["units"].items() if v["scope"] == "cog"}
+for f in sorted(Path("units").glob("astryx-*")):
+    stem = f.name.rsplit(".", 1)[0]
+    if f.suffix in (".service", ".timer") and (stem in cog if mode == "--cog" else
+                                               "@" not in stem and stem not in cog if prim else stem.endswith("@" + key)):
+        print(f)
+' "${2:-}" "$UKEY" "$UPRIM")
+            [ ${#files[@]} -gt 0 ] || { echo "  ✗ no unit files of ${2:-this org} in units/ (./init.sh units first)" >&2; exit 1; }
+            sudo cp "${files[@]}" /etc/systemd/system/
+            sudo systemctl daemon-reload && echo "  ✓ ${#files[@]} unit file(s) of $([ "${2:-}" = --cog ] && echo the cog || echo "org $UKEY") synced + daemon reloaded"
+          fi ;;
+  all)    if [ -z "$COGH" ]; then build_web && restart astryx-observatory && restart astryx-whatsapp
+          else build_web && restart "$(un astryx-observatory-org)" && front && restart "$(un astryx-whatsapp)"; fi ;;
   restart) if [ "${2:-}" = --force ]; then restart_org force; else restart_org; fi ;;                                         # the WHOLE org: db, services, residents
   residents) if [ "${2:-}" = --force ]; then restart_org residents force; else restart_org residents; fi ;;                             # ONLY the residents: no db, no services
-  reload) shift; bs=("$@"); [ ${#bs[@]} -eq 0 ] && bs=(whatsapp telegram discord)
+  reload) [ -z "$COGH" ] || { echo "deploy.sh reload: one-org only (it finds a bridge by its process name and fixed port, which a cog's orgs share); use deploy.sh bridge|tg|dc" >&2; exit 1; }
+          shift; bs=("$@"); [ ${#bs[@]} -eq 0 ] && bs=(whatsapp telegram discord)
           rc=0; for b in "${bs[@]}"; do reload "$b" || rc=1; done; exit $rc ;;
-  *) echo "usage: deploy.sh [web|obs|api|bridge|tg|dc|gw|units|all|restart|residents|reload [bridge...]]  (default: all)"; exit 1 ;;
+  *) echo "usage: deploy.sh [web|obs|api|front|bridge|tg|dc|gw|units [--cog]|all|restart|residents|reload [bridge...]]  (default: all)"; exit 1 ;;
 esac
 echo "deploy: $what done."

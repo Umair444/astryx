@@ -78,7 +78,7 @@ units() {  # GENERATE systemd units from the org's declared sources of truth.
   # ImportEnvironment, and the only EnvironmentFile is the org's own .env.
   # No registry file at all (orgs.path(): ASTRYX_COG_REGISTRY, else /etc/astryx/cog.json) is a one-org host with no
   # question to ask; a present one is judged by THE predicate, and a missing interpreter then fails closed.
-  local ORGH="$PWD" UEXEC="" _mrc=1 UORG="" UCOG="" UPORT="" _UF="" _UP="" UCOGRUN="" UREADY="" UPRIM=""
+  local ORGH="$PWD" UEXEC="" _mrc=1 UORG="" UCOG="" UPORT="" _UF="" _UP="" UCOGRUN="" UREADY=""
   [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ] && { _mrc=0; venv/bin/python src/astryx/orgs.py multi || _mrc=$?; }
   case "$_mrc" in
     0) if [ -z "${ASTRYX_HOME:-}" ]; then
@@ -94,7 +94,7 @@ units() {  # GENERATE systemd units from the org's declared sources of truth.
          # for byte: plain names, no orgenv prefix (they ran without one before the cog, and its residents keep the
          # default tmux socket, orgs.socket), each binding its registry port (today's, declared). Only the observatory
          # moves: :8090 is the cog's front, so the primary's runs as its astryx-observatory-org backend
-         if [ "$(venv/bin/python src/astryx/orgs.py primary)" = "$UORG" ]; then UPRIM=1 UEXEC=""; fi
+         if [ "$(venv/bin/python src/astryx/orgs.py primary)" = "$UORG" ]; then UEXEC=""; fi
        fi
        { read -r UCOG; read -r UPORT; read -r UREADY; } < <(venv/bin/python -c 'import json, sys
 d = json.load(open(sys.argv[1]))["units"]
