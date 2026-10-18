@@ -249,8 +249,11 @@ export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) =>
     if (!from || !to || (from.x === to.x && from.y === to.y)) return
     const f: Flight = { key, from, to, intent: null }
     setFlights(cur => [...cur.slice(-24), f])
-    setTimeout(() => setFlights(cur => cur.filter(x => x.key !== f.key)), 1700)
+    const t = setTimeout(() => { timers.current.delete(t); setFlights(cur => cur.filter(x => x.key !== f.key)) }, 1700)
+    timers.current.add(t)
   }
+  const timers = useRef(new Set<ReturnType<typeof setTimeout>>())
+  useEffect(() => () => timers.current.forEach(clearTimeout), [])
   const flyRef = useRef(fly); flyRef.current = fly
 
   // the cog's other rooms live: the front's merged stream, every backend's /api/events tagged with its org. The open

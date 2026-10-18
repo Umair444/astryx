@@ -30,10 +30,15 @@ export function chooseOrg(org: string) {
   location.reload()
 }
 
+/* whoami first, as the store does, so a visitor to one org never fires the owner-only /api/cog (zero 403s): a 409 is a
+   cog's front with no org chosen yet (its /api/cog is public), an owner reads /api/cog, and a visitor is one room. */
 async function fetchCog(): Promise<Cog> {
   const key = obsKey()
-  const r = await fetch('/api/cog', { headers: key ? { 'x-obs-key': key } : {} })
-  if (r.status === 403 || r.status === 404) return NONE       // one org, a visitor (the observatory's own route is owner-only)
+  const headers: Record<string, string> = key ? { 'x-obs-key': key } : {}
+  const w = await fetch('/api/whoami', { headers })
+  if (w.status !== 409 && !(await w.json().catch(() => ({}))).owner) return NONE
+  const r = await fetch('/api/cog', { headers })
+  if (r.status === 403 || r.status === 404) return NONE
   const j = await r.json().catch(() => ({}))
   if (!r.ok) return { ...NONE, error: j.error ?? `cog registry unreadable (HTTP ${r.status})` }   // fails closed, and SAYS so
   const orgs = (Array.isArray(j.orgs) ? j.orgs : []).filter((o: CogOrg) => o && typeof o.name === 'string' && safeBase(o.base))
