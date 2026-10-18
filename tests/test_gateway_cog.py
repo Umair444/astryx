@@ -11,11 +11,11 @@ lifespan run (pools, per-org outbound listeners on real NOTIFY), nothing bound t
   G1 cog() holds both orgs by FEDERATION name, each Ctx on its own HOME's database (never the process's ASTRYX_DSN,
      which names A's), distinct keys; the bare root serves nobody (identity / card: 404)
   G2 siblings are seeded as `introduced` peers with the sibling's key, url NULL; an existing row is NEVER touched
-     (A's pre-revoked B stays revoked)
+     (A's own grant for B: trusted, intents [task], stays exactly that)
   G3 A -> B: the row lands in B's database (from_org = A, signed), A's row is delivered; reach is not widened: an
      introduced sibling's message to B's forge reaches B's seed
   G4 B's door caps A (ASTRYX_INBOX_RATE=3): the 4th of 4 stays pending in A, never dead
-  G5 B -> A, which A revoked: refused at A's door, B's row dead and B's sender told (an error row), nothing in A
+  G5 B -> A, a chat A never granted B: refused at A's door, B's row dead and B's sender told, nothing in A
   G6 a cog org whose .env names no ASTRYX_ORG, or two orgs one federation name: cog() refuses (CogError)
 
 Seams (org_home_fixture.SEAMS): ORG_HOME_GATEWAY_SRC (bridges/gateway.py). Exit 0 · 1 · 77.
@@ -65,7 +65,7 @@ async def main():
     async with gw.lifespan(gw.app):
         out["root_identity"] = getattr(await gw.identity_door(), "status_code", 200)
         out["root_card"] = getattr(await gw.agent_card_door(), "status_code", 200)
-        pa = await A.pool.fetchrow("SELECT url, pubkey, status FROM peers WHERE org=$1", nb)
+        pa = await A.pool.fetchrow("SELECT url, pubkey, status, caps_granted::text AS caps FROM peers WHERE org=$1", nb)
         pb = await B.pool.fetchrow("SELECT url, pubkey, status FROM peers WHERE org=$1", na)
         out["peer_a_of_b"] = dict(pa) if pa else None
         out["peer_b_of_a"] = dict(pb) if pb else None
@@ -133,8 +133,14 @@ def main():
             for h, n, d, k in ((A, na, da, "a1"), (B, nb, db, "b2")):
                 (h / ".env").write_text(f"ASTRYX_DSN={d['url']}\nASTRYX_ORG={n}\nASTRYX_SECRET_KEY={k * 32}\n"
                                         "ASTRYX_URL=\n")
-            with psycopg.connect(da["url"], autocommit=True) as c:   # A revoked B before the gateway ever ran
-                c.execute("INSERT INTO peers (org, status, notes) VALUES (%s, 'revoked', 'fixture: revoked')", (nb,))
+            from nacl.encoding import HexEncoder
+            from nacl.signing import SigningKey
+            pub_b = SigningKey(("b2" * 32).encode(), encoder=HexEncoder).verify_key.encode(HexEncoder).decode()
+            # before the gateway ever ran, A widened B to trusted and granted it ONE intent (task): seeding must not
+            # touch that row, A -> B is open, and B's chat to A is refused at A's door (intent not granted)
+            with psycopg.connect(da["url"], autocommit=True) as c:
+                c.execute("INSERT INTO peers (org, pubkey, status, caps_granted, notes) VALUES "
+                          "(%s, %s, 'trusted', '{\"intents\": [\"task\"]}', 'fixture: a local grant')", (nb, pub_b))
             env = fx.env(ASTRYX_INBOX_RATE="3", ASTRYX_DSN=da["url"])   # the process DSN names A's: never read
             env.pop("ASTRYX_HOME", None)
             py = str(fx.co / "venv" / "bin" / "python")
@@ -162,8 +168,9 @@ def main():
                   pb.get("status") == "introduced" and pb.get("pubkey") == o.get("pub", {}).get("a")
                   and pb.get("url") is None, str(pb))
             pa = o.get("peer_a_of_b") or {}
-            check("A's pre-revoked B stays revoked (insert-only: no widening, no un-revoking)",
-                  pa.get("status") == "revoked", str(pa))
+            check("A's own grant for B is untouched (insert-only: trusted, intents [task])",
+                  pa.get("status") == "trusted" and json.loads(pa.get("caps") or "null") == {"intents": ["task"]},
+                  str(pa))
 
             print("\nG3 A -> B, IN PROCESS, THROUGH B'S DOOR")
             ld = o.get("landed") or {}
@@ -179,7 +186,7 @@ def main():
                   o.get("b_count") == 3 and o.get("a_states") == ["delivered"] * 3 + ["pending"],
                   f"{o.get('b_count')} {o.get('a_states')}")
 
-            print("\nG5 B -> A, WHICH A REVOKED")
+            print("\nG5 B -> A: A GRANTED B ONLY `task`, B SENDS A CHAT")
             check("refused at A's door: B's row dead, B's sender told, nothing lands in A",
                   o.get("back_status") == "dead" and o.get("back_told") == 1 and o.get("a_from_b") == 0,
                   f"{o.get('back_status')} told={o.get('back_told')} a_from_b={o.get('a_from_b')}")
