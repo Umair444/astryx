@@ -737,11 +737,15 @@ async def listen_task(ctx: Ctx):
 
 
 async def pickup_task(ctx: Ctx):
-    """When WE are NAT'd (no ASTRYX_URL), long-poll every push-capable peer."""
+    """When WE are NAT'd (no ASTRYX_URL), long-poll every push-capable peer. Every collected envelope goes through
+    inbox(), the ONE inbound door (a2 #60443: this path inserted rows past reach, the intent gate, the rate cap and the
+    replay set): only the peer we polled may speak in its batch, and our own 429 leaves the rest of the batch at the
+    peer (the watermark stops before it) and pauses that peer for RELAY_BACKOFF."""
     if ctx.url:
         return
     pool = ctx.pool
     watermarks: dict[str, int] = {}
+    paused: dict[str, float] = {}
     while True:
         try:
             peers = await pool.fetch(
@@ -751,6 +755,8 @@ async def pickup_task(ctx: Ctx):
                 await asyncio.sleep(30)
                 continue
             for p in peers:
+                if paused.get(p["org"], 0) > time.time():
+                    continue
                 since = watermarks.get(p["org"], 0)
                 claim = {"op": "pickup", "org": ctx.name, "since": since,
                          "ts": str(time.time())}
@@ -764,22 +770,15 @@ async def pickup_task(ctx: Ctx):
                         continue
                     for item in r.json().get("envelopes", []):
                         e = item.get("envelope", {})
-                        if not verify(e, p["pubkey"]) or not fresh(e.get("ts")):
-                            continue
-                        from_agent = str(e.get("from", "")).partition("@")[0][:64]
-                        to_agent = str(e.get("to", "")).partition("@")[0]
-                        if len(to_agent.encode()) > AGENT_MAX:   # its doorbell can't exist: skipped, never cut
-                            watermarks[p["org"]] = max(watermarks.get(p["org"], 0), int(item.get("row_id", 0)))
-                            continue
-                        await pool.execute(
-                            """INSERT INTO messages (from_agent, from_org, to_agent,
-                                   to_org, thread, intent, body, sig)
-                               VALUES ($1, $2, $3, 'local', $4, $5, $6, $7)""",
-                            from_agent, p["org"], to_agent, e.get("thread"),
-                            str(e.get("intent", "chat"))[:32],
-                            str(e.get("body", ""))[:BODY_MAX], e.get("sig"))
-                        watermarks[p["org"]] = max(watermarks.get(p["org"], 0),
-                                                   int(item.get("row_id", 0)))
+                        rid = int(item.get("row_id", 0))
+                        if isinstance(e, dict) and str(e.get("from", "")).partition("@")[2] == p["org"]:
+                            res = await inbox(ctx, e)
+                            if isinstance(res, Response) and res.status_code == 429:
+                                paused[p["org"]] = time.time() + RELAY_BACKOFF
+                                break            # our own cap: the rest stays at the peer, collected later
+                        # landed, a replay, or refused for good (and another org's envelope in this peer's batch):
+                        # it is settled here, so the watermark passes it
+                        watermarks[p["org"]] = max(watermarks.get(p["org"], 0), rid)
                 except Exception:
                     continue
         except Exception:
