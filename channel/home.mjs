@@ -63,9 +63,14 @@ export function registry(env = process.env) {
       if (ports.has(n)) throw new Error(`org registry ${p}: ${o}'s ${stem} port ${n} is already ${ports.get(n)}'s`)
       ports.set(n, `${o} ${stem}`)
     }
+    if (e.door !== undefined && typeof e.door !== 'boolean')
+      throw new Error(`org registry ${p}: ${o}'s door must be true or false`)
     homes[h] = o; dbs[e.db] = o
-    out[o] = { home: h, db: e.db, ports: { ...pe } }
+    out[o] = { home: h, db: e.db, ports: { ...pe }, door: e.door === true }
   }
+  const doors = Object.keys(out).filter(o => out[o].door)
+  if (doors.length > 1)                       // the cog's bare root answers for ONE org (S3e, seed #60376)
+    throw new Error(`org registry ${p}: ${doors.join(' and ')} both claim the door; one org owns it`)
   return out
 }
 

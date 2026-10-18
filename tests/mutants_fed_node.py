@@ -16,14 +16,19 @@ TIMEOUT = 60
 
 MUTANTS = {
     "N1 a bare path on a cog is served (as no org) instead of refused":
-        ("        return None                                      # a bare path on a cog names no org\n",
-         "        return None, path\n"),
+        ("        return (door, path) if door in orgs else None    # a bare path on a cog: the door org's, or no org's\n",
+         "        return (door, path)\n"),
     "N2 an org the cog does not hold is reached":
-        ("    if org not in orgs:\n        return None\n", ""),
+        ("    if org not in orgs or \"..\" in rest.split(\"/\"):", "    if \"..\" in rest.split(\"/\"):"),
     "N3 the envelope's org is unchecked (any agent@org lands at this door)":
-        ("    return bool(at) and bool(agent) and named == org\n", "    return bool(at) and bool(agent)\n"),
+        ("    return got is not None and got[1] == org\n", "    return got is not None\n"),
     "N4 the envelope's agent may be empty":
-        ("    return bool(at) and bool(agent) and named == org\n", "    return bool(at) and named == org\n"),
+        ("    return (agent, org) if agent and org else None\n", "    return (agent, org) if org else None\n"),
+    "N8 the org is read from the LAST '@' (two parsers, two readings: a4 #60377 R-1)":
+        ("    if not isinstance(to, str) or to.count(\"@\") != 1:\n        return None\n    agent, _, org = to.partition(\"@\")\n",
+         "    if not isinstance(to, str) or \"@\" not in to:\n        return None\n    agent, _, org = to.rpartition(\"@\")\n"),
+    "N9 a dot-dot segment is routed":
+        ("    if org not in orgs or \"..\" in rest.split(\"/\"):", "    if org not in orgs:"),
     "N5 a cog's rate and replay keys are shared by every org":
         ("    return key if org is None else f\"{org}|{key}\"\n", "    return key\n"),
     "N6 one org's public url gains the /o/ prefix":

@@ -16,12 +16,13 @@ fixture seam the oracles use, and it is a DECLARED host-class name (data/org_env
 environment. Under R1 (one owner, one superuser) it isn't a security boundary: an org process that sets it to a
 missing file reads a one-org host. That is correctness isolation, declared, not containment (a1 §6).
 
-The file:  {"orgs": {"<org>": {"home": "/abs/HOME", "db": "<its database>", "ports": {"<unit stem>": <port>}}, ...}}
+The file:  {"orgs": {"<org>": {"home": "/abs/HOME", "db": "<its database>", "ports": {"<unit stem>": <port>}, "door": false}, ...}}
 `ports` (S3b 5/n, seed #59954 ruling 3) is optional at load: it holds the port of each per-org unit that binds one
 (data/org_units.json, scope org with a port), keyed by the unit's stem. A port is a HOST-wide name like a tmux socket,
 so the registry refuses one two orgs share, and one equal to a COG-scoped unit's port (8090/8091/8845, ruling 3(a)).
 In a cog of several orgs there is no default: port() REFUSES a missing one (ruling 3(b): the primary org declares its
 ports like any other).
+`door` (optional, at most one entry true) names the org the cog's gateway serves at its bare root (S3e).
 `db` is the org's main database by name, so a process can tell "another org's database" WITHOUT reading another
 org's .env (no cross-org read outside the declared cog-scoped set, a2 E). Its own .env must name the same database:
 config.dsn checks that pair for its own org only.
@@ -105,9 +106,21 @@ def load(env=None) -> dict | None:
             if port in ports:
                 raise RegistryError(f"org registry {p}: {org}'s {stem} port {port} is already {ports[port]}'s")
             ports[port] = f"{org} {stem}"
+        door = e.get("door", False)
+        if not isinstance(door, bool):
+            raise RegistryError(f"org registry {p}: {org}'s door must be true or false")
         homes[h], dbs[db] = org, org
-        out[org] = {"home": h, "db": db, "ports": dict(pe)}
+        out[org] = {"home": h, "db": db, "ports": dict(pe), "door": door}
+    doors = [o for o, e in out.items() if e["door"]]
+    if len(doors) > 1:                                  # the cog's bare root answers for ONE org (S3e, seed #60376)
+        raise RegistryError(f"org registry {p}: {' and '.join(doors)} both claim the door; one org owns it")
     return out
+
+
+def door(env=None) -> str | None:
+    """The org whose door is the cog's BARE root (S3e, seed #60376), or None: then a bare path names no org and
+    refuses. It answers at /o/<org> as well, so its peers move to the explicit path at their own pace."""
+    return next((o for o, e in (load(env) or {}).items() if e["door"]), None)
 
 
 def multi(env=None) -> bool:
