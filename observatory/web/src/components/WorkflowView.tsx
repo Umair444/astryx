@@ -135,7 +135,10 @@ function Gantt({ wf, now }: { wf: Workflow; now: number }) {
         {order.map(t => {
           const tone = STATUS_TONE[t.status]
           const open = t.status === 'active' || t.status === 'late' || t.status === 'blocked'
+          // the measured bar ends at the last attributed commit (seed's shape always carries it, a4 #60237); a task
+          // still OPEN gets a faint tail from that commit to now, so "still running" reaches the now line honestly
           const end = t0(t.actual?.end) || (open ? now : NaN)
+          const tail = open && t.actual?.start && Number.isFinite(end) && end < now
           return (
             <div key={t.id} className="flex items-center gap-2 h-8 border-b border-line/50">
               <div className="w-[124px] sm:w-[160px] shrink-0 flex items-center gap-1.5 min-w-0">
@@ -148,6 +151,10 @@ function Gantt({ wf, now }: { wf: Workflow; now: number }) {
                 {t.plan && (
                   <div className="absolute top-1/2 -translate-y-1/2 h-4 rounded" title={`planned ${fmtDay(t0(t.plan[0]))} → ${fmtDay(t0(t.plan[1]))}`}
                     style={{ ...span(t0(t.plan[0]), t0(t.plan[1])), background: `color-mix(in srgb, ${tone} 16%, transparent)`, border: `1px dashed color-mix(in srgb, ${tone} 45%, transparent)` }} />
+                )}
+                {tail && (
+                  <div className="absolute top-1/2 -translate-y-1/2 h-2 rounded-r-full pointer-events-none" title={`still ${t.status}: no commit since ${fmtDay(end)}`}
+                    style={{ ...span(end, now), background: `repeating-linear-gradient(90deg, color-mix(in srgb, ${tone} 55%, transparent) 0 3px, transparent 3px 6px)` }} />
                 )}
                 {t.actual?.start && Number.isFinite(end) && (
                   <div className="absolute top-1/2 -translate-y-1/2 h-2 rounded-full" title={`measured ${fmtDay(t0(t.actual.start))} → ${t.actual.end ? fmtDay(end) : 'now'} · ${t.actual.commits} commits`}
@@ -168,7 +175,7 @@ function Gantt({ wf, now }: { wf: Workflow; now: number }) {
                 style={{ ...span(t0(wf.unattributed.first), t0(wf.unattributed.last ?? wf.unattributed.first)), background: 'repeating-linear-gradient(90deg, var(--t-dim) 0 4px, transparent 4px 7px)' }} />
             )}
           </div>
-          <span className="w-[58px] shrink-0 text-right text-[10.5px] text-ink-dim tabular-nums whitespace-nowrap">{wf.unattributed.commits} commit{wf.unattributed.commits === 1 ? '' : 's'}</span>
+          <span className="min-w-[58px] shrink-0 text-right text-[10.5px] text-ink-dim tabular-nums whitespace-nowrap">{wf.unattributed.commits} commit{wf.unattributed.commits === 1 ? '' : 's'}</span>
         </div>
       </div>
     </div>
@@ -177,7 +184,7 @@ function Gantt({ wf, now }: { wf: Workflow; now: number }) {
 
 function Overlay({ wf }: { wf: Workflow }) {
   const tot = { planned_happened: 0, planned_unused: 0, unplanned: 0 }
-  wf.overlay.edges.forEach(e => { if (e.class in tot) tot[e.class] += e.n })   // a class this view doesn't know is never NaN (a4 #60149 A-2)
+  wf.overlay.edges.forEach(e => { if (Object.hasOwn(tot, e.class)) tot[e.class] += e.n })   // a class this view doesn't know is never NaN, nor an inherited member (a4 #60149 A-2, #60233)
   const top = [...wf.overlay.edges].sort((a, b) => b.n - a.n || a.src.localeCompare(b.src)).slice(0, 8)
   return (
     <div className="text-[11.5px]">
