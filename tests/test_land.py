@@ -24,8 +24,10 @@ fails = []
 
 OK_TEST = """import os, sys
 from pathlib import Path
+reg = os.environ.get("ASTRYX_COG_REGISTRY", "")  # org-home: inspection: the child reports the env it was given
 Path(sys.argv[0]).resolve().parent.parent.joinpath("ran.txt").write_text(
     "agent=" + os.environ.get("ASTRYX_AGENT", "<absent>"))  # org-home: inspection: the child reports the env it was given
+Path(sys.argv[0]).resolve().parent.parent.joinpath("reg.txt").write_text(f"{reg}\\n{Path(reg).exists() if reg else 'unset'}")
 print("1/1 passed")
 """
 
@@ -39,6 +41,13 @@ def check(name, ok, detail=""):
 ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 ENV.update(GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t",
            PY=sys.executable, ASTRYX_AGENT="seed", LAND_PROBE=str(REPO / "devtools" / "mutation_probe.py"))
+# the caller lives on a COG host (plan-11324 S3f S3): it hands land.sh a real two-org registry, which no range test may see
+_COGDIR = Path(tempfile.mkdtemp(prefix="land-cog-"))
+atexit.register(shutil.rmtree, _COGDIR, True)
+COG_REG = _COGDIR / "cog.json"
+COG_REG.write_text('{"orgs": {"fxla": {"home": "%s/a", "db": "fxland_a"}, "fxlb": {"home": "%s/b", "db": "fxland_b"}}}'
+                   % (_COGDIR, _COGDIR))
+ENV["ASTRYX_COG_REGISTRY"] = str(COG_REG)
 
 SUB_ORACLE = """import os, sys
 from pathlib import Path
@@ -112,6 +121,10 @@ def main():
     check("L1 the range's test RAN (anti-vacuity: it wrote its marker)", ran.exists(), out)
     check("L1 the child ran WITHOUT ASTRYX_AGENT (the caller's was 'seed')",
           ran.exists() and ran.read_text() == "agent=<absent>", ran.read_text() if ran.exists() else "no marker")
+    reg = (f.w / "reg.txt").read_text().split("\n") if (f.w / "reg.txt").exists() else ["<no marker>"]
+    check("L1 the child sees NO org registry: the caller's two-org one replaced by a path that names no file "
+          "(plan-11324 S3f S3)", len(reg) == 2 and reg[0] and reg[0] != str(COG_REG) and reg[1] == "False"
+          and COG_REG.is_file(), str(reg))
 
     # L2 red: rolled back, nothing pushed
     f = Fx({"tests/test_red.py": "import sys; print('boom'); sys.exit(1)\n"})

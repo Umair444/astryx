@@ -64,6 +64,11 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$RANGE" ] || die "usage: land.sh <A>..<B> [--body <path>=<sha256-prefix>]... [--test <file>]... [--known-red <test>]... [--no-push]"
 cd "$(git rev-parse --show-toplevel 2>/dev/null)" || die "not in a git repo"
+# No gate sees the HOST's org registry either (plan-11324 S3f S3, seed #60778 item 4). /etc/astryx/cog.json is a host
+# FILE that no env scrub removes, so in a cog every range test would run under multi. Pinned to a path that names no file, a
+# gate runs as this checkout's own org, which in a cog is the PRIMARY's (its HOME is the checkout), exactly as before the
+# cog; an oracle that needs a cog builds its own registry and names it, as every one does. Before the first estate read.
+export ASTRYX_COG_REGISTRY="${TMPDIR:-/tmp}/astryx-gate-$$-no-registry/cog.json"
 PY=${PY:-venv/bin/python}; [ -x "$PY" ] || PY=python3
 PROBE=${LAND_PROBE:-devtools/mutation_probe.py}
 TEST_TIMEOUT=${LAND_TEST_TIMEOUT:-900}

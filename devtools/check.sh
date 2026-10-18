@@ -44,6 +44,11 @@ for v in $(compgen -e | grep "^GIT_"); do unset "$v"; done
 # fake turns to it (a2 #53059), and so would any future probe (a stationed call now names ITSELF: station.py). The pulse's run_check already runs
 # every gate with no name (systemd env), so no gate needs one. Oracle: tests/test_check_noagent.py.
 unset ASTRYX_AGENT
+# No gate sees the HOST's org registry either (plan-11324 S3f S3, seed #60778 item 4). /etc/astryx/cog.json is a host
+# FILE that no env scrub removes, so in a cog every gate would run under multi. Pinned to a path that names no file, a
+# gate runs as this checkout's own org, which in a cog is the PRIMARY's (its HOME is the checkout), exactly as before the
+# cog; an oracle that needs a cog builds its own registry and names it, as every one does. Before the first estate read.
+export ASTRYX_COG_REGISTRY="${TMPDIR:-/tmp}/astryx-gate-$$-no-registry/cog.json"
 cd "$(dirname "$0")/.."
 PY=${PY:-venv/bin/python}; [ -x "$PY" ] || PY=python3
 
@@ -575,6 +580,7 @@ run "a skip is not a pass (verdict accounting)" "$PY" tests/test_check_verdict.p
 # per-gate wall clock (seed #45252): an expired gate is ✗ TIMED OUT and its whole process group dies; a signal to
 # check.sh reaches the running gate. Driven through the REAL run() with stub gates and 1-2s caps.
 run "check.sh gate cap: an expired gate is TIMED OUT and its group killed" "$PY" tests/test_check_gate_cap.py
+run "check.sh registry pin: no gate sees the host's org registry; each runs as the checkout's own org (plan-11324 S3f S3)" "$PY" tests/test_check_registry_pin.py
 run "check.sh gate dir: each gate gets its own short TMPDIR, and nothing of it outlives the gate (plan-10108 D1)" "$PY" tests/test_gate_dir.py
 run "gate census: no literal port, probe-then-release or shared-root write in any gate's reach, unless declared (plan-10108 D4)" "$PY" tests/test_gate_census.py
 # The gate on the OTHER actuator. .git/hooks/pre-push is a COPY of the tracked hooks/pre-push,

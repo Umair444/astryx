@@ -61,4 +61,6 @@ MUTANTS = {
         ("(FAIL[A-Za-z]*|ERROR|SURVIVED|✗|✘|NOT RUN)([[:space:]:(]|$)' | sed", "(FAIL|✗|NOT RUN)([[:space:]:(]|$)' | sed"),
     "N26 ERROR and SURVIVED aren't failing lines (a new failure in the repo's other spellings reads as known: a4 #59280 B1)":
         ("|ERROR|SURVIVED|✗|✘|NOT RUN)([[:space:]:(]|$)' | sed", "|✗|✘|NOT RUN)([[:space:]:(]|$)' | sed"),
+    "N27 no registry pin (on a cog host every range test runs under multi: plan-11324 S3f S3)":
+        ('export ASTRYX_COG_REGISTRY="${TMPDIR:-/tmp}/astryx-gate-$$-no-registry/cog.json"\n', ''),
 }
