@@ -27,4 +27,6 @@ MUTANTS = {
         ('    for ln in first + hot + lines[-n:]:', '    for ln in hot + first + lines[-n:]:'),
     "T8 no relocated baseline (an unmutated copy that dies at the mutant location grades every mutant CAUGHT: a4 #60129)":
         ('        if rb != 0:\n', '        if False:\n'),
+    "T9 every copy shares one path again (a same-size copy in the same mtime second runs the previous copy's .pyc: memory #60378)":
+        ('            p = Path(td) / slot / rel\n', '            p = Path(td) / rel\n'),
 }

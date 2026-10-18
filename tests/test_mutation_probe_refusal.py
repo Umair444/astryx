@@ -12,6 +12,7 @@ Hermetic: each arm writes a tiny subject, oracle and spec into a temp dir and ru
   R4  the shown block is capped (≤ REFUSAL_TAIL lines)
   R5  a line that IS a failure beats lines that only mention a keyword (no crowd-out at the cap)
   R6  a subject that can't load from the mutant location REFUSES (the relocated baseline), never grades a no-op CAUGHT
+  R7  a same-size mutant right after the baseline is CAUGHT: no cached bytecode of the previous copy stands in for it
   C1  control: a passing baseline prints no tail block, and its mutant is CAUGHT
 """
 import os
@@ -40,7 +41,8 @@ def probe(td: Path, oracle_body: str, timeout: int = 20, mutants=None, subject: 
         f"TIMEOUT = {timeout}\nMUTANTS = {m!r}\n")
     # PYTHONUNBUFFERED out too: an outer mutation_probe sets it for ITS oracle (this file), and inherited here it would
     # make the subject's own setting unobservable (mutant T6 read NOT PROBED until this line)
-    env = {k: v for k, v in os.environ.items() if k not in ("FIX_SRC", "ASTRYX_SQLGUARD_DIR", "PYTHONUNBUFFERED")}
+    env = {k: v for k, v in os.environ.items() if k not in ("FIX_SRC", "ASTRYX_SQLGUARD_DIR", "PYTHONUNBUFFERED",
+                                                         "PYTHONDONTWRITEBYTECODE")}
     # the subject finds `astryx` by its OWN path (dirname(dirname(file))), and mutation_probe writes each mutant into a
     # temp dir: without this every mutant of the probe would die at import and read CAUGHT vacuously
     env["PYTHONPATH"] = str(REPO / "src") + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
@@ -97,6 +99,17 @@ with tempfile.TemporaryDirectory() as t:
                     subject="import os\nopen(os.path.join(os.path.dirname(__file__), 'beside.txt')).read()\nX = 1\n")
     check("R6 an unmutated copy that can't load at the mutant location REFUSES (rc 1), never grades a no-op CAUGHT",
           rc == 1 and "REFUSING" in out and not any(ln.lstrip().startswith("CAUGHT") for ln in out.splitlines()), out)
+
+    d = t / "r7"; d.mkdir()
+    # an oracle that IMPORTS its subject reads a cached .pyc when the next copy has the same SIZE and lands in the same
+    # mtime second at the same path: the mutant below ran as the unmutated copy and read NOT PROBED (memory #60378, D1)
+    # the oracle PINS the copy's mtime first, so "the same second" is certain, not a race (2 of 3 runs RED without it)
+    rc, out = probe(d, "import importlib.util, os, sys\nos.utime(os.environ['FIX_SRC'], (1e9, 1e9))\n"
+                       "s = importlib.util.spec_from_file_location('subj', os.environ['FIX_SRC'])\n"
+                       "m = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nsys.exit(0 if m.X == 1 else 1)\n",
+                    mutants={"M same size": ("X = 1", "X = 2")})
+    check("R7 a SAME-SIZE mutant right after the baseline is CAUGHT (no stale bytecode stands in for it)",
+          rc == 0 and any(ln.lstrip().startswith("CAUGHT") for ln in out.splitlines()), out)
 
     d = t / "c1"; d.mkdir()
     rc, out = probe(d, "import os, sys\nsys.exit(0 if 'X = 1' in open(os.environ['FIX_SRC']).read() else 1)\n")

@@ -196,9 +196,17 @@ def probe(spec_path: Path, verbose: bool = True) -> int:
         # file: a subject that resolves its own tree (main.py's `paths.estate(__file__)`) finds a copy only by that tail,
         # and a bare-named copy died at import, so every mutant read CAUGHT, a no-op one included (a4 #60129).
         rel = _tree_rel(subject)
-        canary = Path(td) / rel
-        canary.parent.mkdir(parents=True, exist_ok=True)
-        canary.write_text("def ( this file is deliberately not python — the canary\n")
+
+        def seat(slot: str, text: str) -> Path:
+            """A fresh directory per copy. One path for every copy let an oracle that IMPORTS its subject run the
+            previous copy's cached .pyc whenever the next one had the same size in the same mtime second: memory's D1
+            read NOT PROBED (#60378), and a no-op after a caught mutant would read CAUGHT. Oracle arm R7, mutant T9."""
+            p = Path(td) / slot / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(text)
+            return p
+
+        canary = seat("canary", "def ( this file is deliberately not python — the canary\n")
         if _run_oracle(oracle, spec.ENV, canary, timeout) == 0:
             print(f"WIRING FAULT: {oracle.name} PASSED against a syntactically destroyed "
                   f"subject.\n  The oracle is not reading the path {spec.ENV} hands it — "
@@ -208,14 +216,13 @@ def probe(spec_path: Path, verbose: bool = True) -> int:
             return 1
         # THE RELOCATED BASELINE: the canary proves the oracle FAILS a broken copy; this proves it PASSES an unbroken
         # one at the place every mutant runs from. Without it, a copy that can't load there reads as a catch.
-        canary.write_text(src)
-        rb, rb_out = _run_oracle_out(oracle, spec.ENV, canary, timeout)
+        rb, rb_out = _run_oracle_out(oracle, spec.ENV, seat("base", src), timeout)
         if rb != 0:
             print(f"REFUSING: {oracle.name} fails the UNMUTATED subject copied to the mutant location ({rel}; "
                   f"exit {rb}), though it passes it in place. Every mutant would read CAUGHT for that reason alone.")
             _print_tail(oracle, rb_out, "before the kill" if rb == TIMED_OUT else f"exit {rb}")
             return 1
-        for name, (old, new) in spec.MUTANTS.items():
+        for i, (name, (old, new)) in enumerate(spec.MUTANTS.items()):
             if old not in src:
                 # The mutation did not apply — the subject moved under the mutant list.
                 # This is UNKNOWN, never a pass: a stale mutant that silently no-ops would
@@ -225,8 +232,7 @@ def probe(spec_path: Path, verbose: bool = True) -> int:
             if src.count(old) > 1:
                 skipped.append(f"{name} (pattern is not unique — {src.count(old)} matches)")
                 continue
-            mpath = Path(td) / rel
-            mpath.write_text(src.replace(old, new, 1))
+            mpath = seat(f"m{i}", src.replace(old, new, 1))
             rc = _run_oracle(oracle, spec.ENV, mpath, timeout)
             if rc == TIMED_OUT:
                 skipped.append(f"{name} (oracle TIMED OUT after {timeout}s — it verified nothing)")
