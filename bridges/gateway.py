@@ -27,6 +27,14 @@ envelope: dual, non-repudiable history.
             mailbox; what it collects goes through the same introduce/inbox checks
             as a direct POST. With ASTRYX_RELAY_HOST=1 it also HOSTS a relay.
 
+  cog       plan-11324 S3c: the gateway is COG-scoped, one per install. Every org it serves is a Ctx (its name,
+            key, database, pool and in-memory state); cog() holds them by FEDERATION name (each org's
+            ASTRYX_ORG), and route(name) answers "is that org one of ours". One org (no registry, or one
+            entry): one Ctx from exactly today's reads. A cog of several orgs: one Ctx per registry entry,
+            each from its own HOME/.env; a row in org A addressed to org B of the same cog is delivered in
+            process, envelope(A) -> inbox(B), through B's peers / reach / rate checks unchanged (loopback
+            federation: siblings start as `introduced` peers, rate-capped, never widened automatically).
+
 Run: uvicorn gateway:app --host 0.0.0.0 --port 8845   (from bridges/)
 Env: ASTRYX_ORG (name), ASTRYX_SECRET_KEY (hex seed), ASTRYX_URL (public base,
      empty when NAT'd), ASTRYX_DSN, ASTRYX_RELAY (relay base url, optional),
@@ -38,11 +46,13 @@ import asyncio
 import base64
 import hashlib
 import json
+import os
 import re
 import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import asyncpg
@@ -55,17 +65,23 @@ from nacl.signing import SigningKey, VerifyKey
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 sys.path.insert(0, str(REPO / "src"))   # astryx.config/paths: the ONE resolver (plan-11324 S3a)
-from astryx import config, paths  # noqa: E402
-ESTATE = paths.estate(__file__)          # the org's estate: this checkout on one org, the HOME on several
+from astryx import config, orgs, paths  # noqa: E402
+# A cog of several orgs has no one HOME, so the estate is per Ctx; one org keeps the resolver's (the checkout).
+ESTATE = None if orgs.multi() else paths.estate(__file__)
+
 
 def _env(key: str, default: str = "") -> str:
+    """One org: today's read (the environment, set even to empty, beats ESTATE/.env). In a cog of several orgs only
+    the process environment (the cog unit's tunables): no org's .env is the process's."""
+    if ESTATE is None:
+        return os.environ.get(key, default)
     if key == "ASTRYX_DSN":
         try:
-            return config.dsn(ESTATE / ".env")   # checked against the HOME in a cog of several orgs
+            return config.dsn(ESTATE / ".env")
         except LookupError:
             return default
-    v = config.org_env(key)                      # set, even to empty, beats the file (NAT = empty URL): one org reads
-    if v is not None:                            # the environment exactly so; several orgs read the HOME's .env
+    v = config.org_env(key)                      # set, even to empty, beats the file (NAT = empty URL)
+    if v is not None:
         return v
     env = ESTATE / ".env"
     if env.is_file():
@@ -74,14 +90,90 @@ def _env(key: str, default: str = "") -> str:
                 return line.split("=", 1)[1].strip()
     return default
 
-DSN = _env("ASTRYX_DSN")
-ORG = _env("ASTRYX_ORG", "local")
-URL = _env("ASTRYX_URL")
-KEY = SigningKey(_env("ASTRYX_SECRET_KEY").encode(), encoder=HexEncoder)
-PUB = KEY.verify_key.encode(HexEncoder).decode()
-RELAY = _env("ASTRYX_RELAY").rstrip("/")
-RELAY_LISTED = _env("ASTRYX_RELAY_LISTED") == "1"
-RELAY_HOST = _env("ASTRYX_RELAY_HOST") == "1"
+
+@dataclass
+class Ctx:
+    """One org this gateway serves (plan-11324 S3c): everything a door or a task needs, never a module global."""
+    org: str | None                     # its registry name; None on one org
+    name: str                           # its FEDERATION name (ASTRYX_ORG): what to_org and `@org` carry
+    home: Path
+    dsn: str
+    key: SigningKey
+    url: str
+    relay: str
+    relay_listed: bool
+    relay_host: bool
+    pool: "asyncpg.Pool | None" = None
+    bell: asyncio.Queue = field(default_factory=asyncio.Queue)   # wakes this org's pickup long-polls
+    rates: dict = field(default_factory=dict)
+    seen_ids: dict = field(default_factory=dict)
+    card_bytes: bytes = b""
+    card_key: str = ""
+
+    @property
+    def pub(self) -> str:
+        return self.key.verify_key.encode(HexEncoder).decode()
+
+
+class CogError(RuntimeError):
+    """The cog can't be served: an org with no federation name or key, two orgs one name, a reserved name."""
+
+
+def _ctx_one() -> Ctx:
+    return Ctx(org=None, name=_env("ASTRYX_ORG", "local"), home=ESTATE, dsn=_env("ASTRYX_DSN"),
+               key=SigningKey(_env("ASTRYX_SECRET_KEY").encode(), encoder=HexEncoder), url=_env("ASTRYX_URL"),
+               relay=_env("ASTRYX_RELAY").rstrip("/"), relay_listed=_env("ASTRYX_RELAY_LISTED") == "1",
+               relay_host=_env("ASTRYX_RELAY_HOST") == "1")
+
+
+def _ctx_cog(org: str, home: Path) -> Ctx:
+    """One registry org, read from ITS HOME's .env only (config.dsn checks the pair against the registry)."""
+    f = home / ".env"
+    e = config.read_env(f)
+    name, sk = e.get("ASTRYX_ORG", ""), e.get("ASTRYX_SECRET_KEY", "")
+    if not name or not sk:
+        raise CogError(f"cog org {org}: its .env names no ASTRYX_ORG or ASTRYX_SECRET_KEY")
+    if name == "local" or not org_ok(name):
+        raise CogError(f"cog org {org}: federation name {name!r} is reserved or illegal")
+    if e.get("ASTRYX_RELAY_HOST") == "1":
+        raise CogError(f"cog org {org}: ASTRYX_RELAY_HOST in a cog of several orgs is not served yet (S3e)")
+    return Ctx(org=org, name=name, home=home, dsn=config.dsn(f, env_first=False),
+               key=SigningKey(sk.encode(), encoder=HexEncoder), url=e.get("ASTRYX_URL", ""),
+               relay=e.get("ASTRYX_RELAY", "").rstrip("/"), relay_listed=e.get("ASTRYX_RELAY_LISTED") == "1",
+               relay_host=False)
+
+
+_COG: dict[str, Ctx] | None = None
+
+
+def cog() -> dict[str, Ctx]:
+    """Every org this gateway serves, by FEDERATION name, built once. One org: one Ctx from today's reads. A cog of
+    several orgs: one Ctx per registry entry (orgs.load iterated: the gateway is in the declared cog-scoped set)."""
+    global _COG
+    if _COG is None:
+        if ESTATE is not None:
+            one = _ctx_one()
+            _COG = {one.name: one}
+        else:
+            out: dict[str, Ctx] = {}
+            for org, entry in orgs.load().items():
+                c = _ctx_cog(org, entry["home"])
+                if c.name in out:
+                    raise CogError(f"cog orgs {out[c.name].org} and {org} share the federation name {c.name!r}")
+                out[c.name] = c
+            _COG = out
+    return _COG
+
+
+def route(name: str) -> Ctx | None:
+    """This cog's org called `name` (its federation name), or None: not ours, a peer elsewhere."""
+    return cog().get(name)
+
+
+def root() -> Ctx | None:
+    """The org the bare root paths serve: the one org; in a cog of several orgs nobody (they refuse: no primary)."""
+    c = cog()
+    return next(iter(c.values())) if len(c) == 1 else None
 
 # the ONE tier oracle (plan-18) — the card's roster is exactly content_public_agents,
 # fail-closed, so a tier-private agent can never be advertised to the world.
@@ -105,10 +197,7 @@ RELAY_WINDOW = 3 * 86400        # a relayed envelope may wait in a mailbox this 
 RELAY_BACKOFF = float(_env("ASTRYX_RELAY_BACKOFF", "60"))  # seconds to wait when our own door says 429
 RELAY_TRIES = 3                 # a mailbox item that raises is retried this often, then skipped
 
-pool: asyncpg.Pool | None = None
-outbound_bell: asyncio.Queue = asyncio.Queue()
-seen_ids: dict[str, float] = {}
-rates: dict[str, list[float]] = {}
+rates: dict[str, list[float]] = {}      # the DOOR's caps (per IP); each org's inbox caps live in its Ctx
 
 
 def canonical(d: dict) -> bytes:
@@ -116,8 +205,8 @@ def canonical(d: dict) -> bytes:
                       sort_keys=True, separators=(",", ":")).encode()
 
 
-def sign(d: dict) -> dict:
-    d["sig"] = KEY.sign(canonical(d)).signature.hex()
+def sign(ctx: Ctx, d: dict) -> dict:
+    d["sig"] = ctx.key.sign(canonical(d)).signature.hex()
     return d
 
 
@@ -137,21 +226,22 @@ def fresh(ts, window: float = SKEW) -> bool:
         return False
 
 
-def rated(key: str, per_hour: int) -> bool:
+def rated(key: str, per_hour: int, store: dict | None = None) -> bool:
+    store = rates if store is None else store
     now = time.time()
-    hits = [t for t in rates.get(key, []) if now - t < RATE_WINDOW]
+    hits = [t for t in store.get(key, []) if now - t < RATE_WINDOW]
     if len(hits) >= per_hour:
-        rates[key] = hits
+        store[key] = hits
         return True
     hits.append(now)
-    rates[key] = hits
+    store[key] = hits
     return False
 
 
-def envelope(row) -> dict:
-    return sign({
+def envelope(ctx: Ctx, row) -> dict:
+    return sign(ctx, {
         "astryx": 0, "id": str(uuid.uuid4()),
-        "from": f"{row['from_agent']}@{ORG}",
+        "from": f"{row['from_agent']}@{ctx.name}",
         "to": f"{row['to_agent']}@{row['to_org']}",
         "thread": row["thread"], "intent": row["intent"],
         "body": row["body"], "ts": time.time(),
@@ -162,9 +252,14 @@ def envelope(row) -> dict:
 app = FastAPI()
 
 
+def identity(ctx: Ctx) -> dict:
+    return {"astryx": 0, "org": ctx.name, "pubkey": ctx.pub, "url": ctx.url or None}
+
+
 @app.get("/astryx/identity")
-async def identity():
-    return {"astryx": 0, "org": ORG, "pubkey": PUB, "url": URL or None}
+async def identity_door():
+    ctx = root()
+    return identity(ctx) if ctx else Response(status_code=404)
 
 
 # --------------------------------------------- A2A discovery card (plan-20, v0.3.0)
@@ -190,12 +285,12 @@ def _b64u(b: bytes) -> str:
     return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
 
 
-def _public_roster() -> list:
+def _public_roster(ctx: Ctx) -> list:
     """PUBLIC-tier agents only (content_public_agents, fail-closed), METADATA-CLASS fields
     only — name/group/rank, the plan-18 metadata line (existence/structure, never content).
     A tier-private agent cannot pass the oracle, so it can never reach the card."""
-    agents_dir = ESTATE / "agents"
-    valid = set(charter.roster())            # the single source of the exclusion rule
+    agents_dir = ctx.home / "agents"
+    valid = set(charter.roster(agents_dir))  # the single source of the exclusion rule
     meta = {}
     for p in agents_dir.rglob("*.md"):
         if p.stem not in valid:              # not an agent per the ONE authority (drops
@@ -210,15 +305,15 @@ def _public_roster() -> list:
                 rank = int(v) if v.lstrip("-").isdigit() else None
                 break
         meta[p.stem] = {"group": list(parts[:-1]), "rank": rank}
-    pub = content_public_agents(meta.keys())
+    pub = content_public_agents(meta.keys(), agents_dir)
     return sorted(({"name": n, "group": meta[n]["group"], "rank": meta[n]["rank"]}
                    for n in pub),
                   key=lambda a: (a["group"], a["rank"] if a["rank"] is not None else 999, a["name"]))
 
 
-def _jwk() -> dict:
+def _jwk(ctx: Ctx) -> dict:
     """The org pubkey as an RFC 8037 OKP/Ed25519 JWK — advertised-key == PUB == introduce key."""
-    return {"kty": "OKP", "crv": "Ed25519", "x": _b64u(KEY.verify_key.encode())}
+    return {"kty": "OKP", "crv": "Ed25519", "x": _b64u(ctx.key.verify_key.encode())}
 
 
 def _kid(jwk: dict) -> str:
@@ -263,7 +358,7 @@ def _assert_jcs_safe(node, path: str = "card") -> None:
             _assert_jcs_safe(v, f"{path}[{i}]")
 
 
-def _sign_card(card: dict) -> list:
+def _sign_card(ctx: Ctx, card: dict) -> list:
     """One A2A AgentCardSignature = a JWS (RFC 7515) over the card, EdDSA (RFC 8037).
 
     The payload is the card WITHOUT the signatures field (A2A §8.4.1 rule 3), canonicalised
@@ -277,22 +372,22 @@ def _sign_card(card: dict) -> list:
     using the producer's own serialiser can only ever prove conformance-to-self.
 
     The key's secrecy is the .env-readable ceiling (detection-vs-same-uid), stated honestly above."""
-    jwk = _jwk()
+    jwk = _jwk(ctx)
     protected = {"alg": "EdDSA", "typ": "JOSE", "kid": _kid(jwk), "jwk": jwk}
     ph = _b64u(json.dumps(protected, sort_keys=True, separators=(",", ":")).encode())
     _assert_jcs_safe(card)
     payload = _b64u(json.dumps(card, sort_keys=True, separators=(",", ":"),
                                ensure_ascii=False).encode("utf-8"))
-    sig = _b64u(KEY.sign(f"{ph}.{payload}".encode()).signature)
+    sig = _b64u(ctx.key.sign(f"{ph}.{payload}".encode()).signature)
     return [{"protected": ph, "signature": sig}]
 
 
-def _build_card() -> bytes:
-    base = (URL.rstrip("/") if URL else "http://localhost:8845")
+def _build_card(ctx: Ctx) -> bytes:
+    base = (ctx.url.rstrip("/") if ctx.url else "http://localhost:8845")
     intro_url = f"{base}/astryx/introduce"
     card = {
         "protocolVersion": _A2A_VERSION,
-        "name": ORG,
+        "name": ctx.name,
         "description": (
             "An astryx org — a node in the internet of agents. DISCOVERY-ONLY: this card "
             "names the introduce door (a signed, self-serve, rate-capped federation hello) "
@@ -317,7 +412,7 @@ def _build_card() -> bytes:
                 # a sent `false` breaks reconstruction. (capabilities.streaming and
                 # .pushNotifications are the opposite case — `optional bool`, so an explicit
                 # false MUST be kept — and they stay below. Same rule, opposite answers.)
-                "params": {"agents": _public_roster()},
+                "params": {"agents": _public_roster(ctx)},
             }],
         },
         "defaultInputModes": ["application/json"],
@@ -325,40 +420,40 @@ def _build_card() -> bytes:
         # honest floor: v1 accepts NO A2A tasks, so it advertises none (advertise ⊆ accept).
         # skills=[] is schema-valid (v0.3.0 sets no minItems) — the truthful discovery-only card.
         "skills": [],
-        "provider": {"organization": ORG, "url": "https://github.com/Umair444/astryx"},
+        "provider": {"organization": ctx.name, "url": "https://github.com/Umair444/astryx"},
         "additionalInterfaces": [{"url": intro_url, "transport": _INTRO_TRANSPORT}],
     }
-    card["signatures"] = _sign_card(card)
+    card["signatures"] = _sign_card(ctx, card)
     # serve the bytes we signed: same JCS serialisation, so the document a peer reads is
     # byte-identical to the canonical form it must reconstruct (modulo the signatures field).
     return json.dumps(card, sort_keys=True, separators=(",", ":"),
                       ensure_ascii=False).encode("utf-8")
 
 
-_card_bytes: bytes = b""
-_card_key: str = ""
-
-
-def _card_source_key() -> str:
+def _card_source_key(ctx: Ctx) -> str:
     """A fingerprint of everything the card derives from — roster+ranks, org, pubkey, url —
     so the refresh task regenerates ONLY on a real change (event-invalidated materialized view)."""
-    src = json.dumps({"r": _public_roster(), "org": ORG, "pub": PUB, "url": URL}, sort_keys=True)
+    src = json.dumps({"r": _public_roster(ctx), "org": ctx.name, "pub": ctx.pub, "url": ctx.url}, sort_keys=True)
     return hashlib.sha256(src.encode()).hexdigest()
 
 
-def _regen_card() -> None:
-    global _card_bytes, _card_key
-    _card_bytes = _build_card()
-    _card_key = _card_source_key()
+def _regen_card(ctx: Ctx) -> None:
+    ctx.card_bytes = _build_card(ctx)
+    ctx.card_key = _card_source_key(ctx)
+
+
+def agent_card(ctx: Ctx) -> Response:
+    if not ctx.card_bytes:
+        _regen_card(ctx)
+    return Response(content=ctx.card_bytes, media_type="application/json")
 
 
 @app.get("/.well-known/agent-card.json")
-async def agent_card():
+async def agent_card_door():
     # request-invariant: serve PRE-GENERATED signed bytes — no Request arg, no per-request
     # compute, so a crawler storm can't amplify load and every reader gets identical bytes.
-    if not _card_bytes:
-        _regen_card()
-    return Response(content=_card_bytes, media_type="application/json")
+    ctx = root()
+    return agent_card(ctx) if ctx else Response(status_code=404)
 
 
 @app.post("/astryx/introduce")
@@ -370,16 +465,17 @@ async def introduce_door(request: Request):
         d = await request.json()
     except Exception:
         return Response(status_code=400)
-    return await introduce(d)
+    ctx = root()
+    return await introduce(ctx, d) if ctx else Response(status_code=404)
 
 
-async def introduce(d: dict, window: float = SKEW):
+async def introduce(ctx: Ctx, d: dict, window: float = SKEW):
     """A signed hello, from the door or from a relay mailbox: one set of checks for both.
     `window` widens freshness for a hello that waited in a mailbox."""
     if not isinstance(d, dict):
         return Response(status_code=400)
     org, pub = str(d.get("org", ""))[:80], str(d.get("pubkey", ""))
-    if not org or not pub or org == ORG or not fresh(d.get("ts"), window):
+    if not org or not pub or org == ctx.name or not fresh(d.get("ts"), window):
         return Response(status_code=400)
     if not org_ok(org):
         return Response(status_code=400)         # reserved name or illegal charset
@@ -388,23 +484,23 @@ async def introduce(d: dict, window: float = SKEW):
         return Response(status_code=400)
     if not verify(d, pub):                       # they prove they hold their key
         return Response(status_code=403)
-    existing = await pool.fetchrow("SELECT pubkey, status FROM peers WHERE org=$1", org)
+    existing = await ctx.pool.fetchrow("SELECT pubkey, status FROM peers WHERE org=$1", org)
     if existing and existing["pubkey"] and existing["pubkey"] != pub:
         return Response(status_code=409)         # name held by a different key
     if existing and existing["status"] == "revoked":
         return Response(status_code=403)
-    await pool.execute(
+    await ctx.pool.execute(
         """INSERT INTO peers (org, url, pubkey, status, notes)
            VALUES ($1, $2, $3, 'introduced', 'introduced itself')
            ON CONFLICT (org) DO UPDATE SET url=$2, pubkey=$3""",
         org, url, pub)
-    await pool.execute(
+    await ctx.pool.execute(
         "INSERT INTO messages (from_agent, from_org, to_agent, intent, body) "
         "VALUES ('gateway', 'local', 'seed', 'introduce', $1)",
         f"org '{org}' introduced itself (url: {url or 'NAT, will pickup'}). "
         f"It may now write to seed, rate-capped. Widen or revoke via the peers table.")
-    return sign({"astryx": 0, "org": ORG, "pubkey": PUB, "url": URL or None,
-                 "ts": time.time()})
+    return sign(ctx, {"astryx": 0, "org": ctx.name, "pubkey": ctx.pub, "url": ctx.url or None,
+                      "ts": time.time()})
 
 
 def reach(caps_raw, status: str, req_to: str, req_intent: str):
@@ -444,16 +540,17 @@ async def inbox_door(request: Request):
         e = await request.json()
     except Exception:
         return Response(status_code=400)
-    return await inbox(e)
+    ctx = root()
+    return await inbox(ctx, e) if ctx else Response(status_code=404)
 
 
-async def inbox(e: dict, window: float = SKEW):
+async def inbox(ctx: Ctx, e: dict, window: float = SKEW):
     """One verification and insert path for every inbound envelope: a direct POST, or one
     collected from a relay mailbox (`window` = how long it may have waited there)."""
     if not isinstance(e, dict):
         return Response(status_code=400)
     from_agent, _, from_org = str(e.get("from", "")).partition("@")
-    peer = await pool.fetchrow(
+    peer = await ctx.pool.fetchrow(
         "SELECT pubkey, status, caps_granted FROM peers WHERE org=$1", from_org)
     if not peer or peer["status"] in ("stranger", "revoked"):
         return Response(status_code=403)
@@ -461,11 +558,12 @@ async def inbox(e: dict, window: float = SKEW):
         return Response(status_code=403)
     eid = str(e.get("id", ""))
     now = time.time()
+    seen_ids = ctx.seen_ids
     for k in [k for k, t in seen_ids.items() if now - t > max(SKEW, window) * 2]:
         del seen_ids[k]
     if not eid or eid in seen_ids:
         return {"ok": True}                      # replay: acknowledged, ignored
-    if window > SKEW and await pool.fetchval(
+    if window > SKEW and await ctx.pool.fetchval(
             "SELECT count(*) FROM messages WHERE from_org=$1 AND sig=$2", from_org, e.get("sig")):
         return {"ok": True}                      # a relayed copy outlives seen_ids: the row is the memory
     # Rung 1 — per-peer capability attenuation, enforced at the one off-uid door.
@@ -475,7 +573,7 @@ async def inbox(e: dict, window: float = SKEW):
         str(e.get("intent", "chat"))[:32])
     if not intent_ok:
         return Response(status_code=403)         # intent not granted to this peer
-    if rated(f"inbox:{from_org}", rate):
+    if rated(f"inbox:{from_org}", rate, ctx.rates):
         return Response(status_code=429)
     body = str(e.get("body", ""))[:BODY_MAX]
     if not body:
@@ -483,7 +581,7 @@ async def inbox(e: dict, window: float = SKEW):
     # seen only once it is past the caps: a 429'd relay item comes back with the SAME id
     seen_ids[eid] = now
     try:
-        await pool.execute(
+        await ctx.pool.execute(
             """INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread,
                                      intent, body, sig)
                VALUES ($1, $2, $3, 'local', $4, $5, $6, $7)""",
@@ -496,7 +594,13 @@ async def inbox(e: dict, window: float = SKEW):
 
 
 @app.get("/astryx/pickup")
-async def pickup(request: Request, org: str, since: int = 0, ts: str = "", sig: str = ""):
+async def pickup_door(request: Request, org: str, since: int = 0, ts: str = "", sig: str = ""):
+    ctx = root()
+    return await pickup(ctx, org, since, ts, sig) if ctx else Response(status_code=404)
+
+
+async def pickup(ctx: Ctx, org: str, since: int = 0, ts: str = "", sig: str = ""):
+    pool = ctx.pool
     peer = await pool.fetchrow("SELECT pubkey, status FROM peers WHERE org=$1", org)
     if not peer or peer["status"] in ("stranger", "revoked"):
         return Response(status_code=403)
@@ -515,21 +619,22 @@ async def pickup(request: Request, org: str, since: int = 0, ts: str = "", sig: 
             "ORDER BY id LIMIT 50", org, since)
         if rows or time.time() > deadline:
             # row_id rides OUTSIDE the envelope: the envelope's bytes are signed
-            return {"envelopes": [{"row_id": r["id"], "envelope": envelope(r)}
+            return {"envelopes": [{"row_id": r["id"], "envelope": envelope(ctx, r)}
                                   for r in rows]}
         try:
-            await asyncio.wait_for(outbound_bell.get(), timeout=max(1, deadline - time.time()))
+            await asyncio.wait_for(ctx.bell.get(), timeout=max(1, deadline - time.time()))
         except asyncio.TimeoutError:
             pass
 
 
 # ----------------------------------------------------------------- outbound
-async def push(row) -> bool:
+async def push(ctx: Ctx, row) -> bool:
     # name@<surface> is a LOCAL person on one of the owner's surfaces, never a peer. The channel ear
     # renders surface senders as `cv-x@canvas` / `owner@telegram` (federation syntax), agents reply to
     # what they see, and those replies used to die here as "not an introduced peer" (forge #35629).
     # Surface names are reserved at the door (orgname.RESERVED_ORGS), so no peer can hold one: re-address
     # the row locally and ring the local doorbells the insert trigger skipped. One fix, every surface.
+    pool = ctx.pool
     if row["to_org"] in RESERVED_ORGS:
         await pool.execute("UPDATE messages SET to_org='local' WHERE id=$1 AND status='pending'", row["id"])
         await pool.execute("SELECT pg_notify('astryx_msg_' || $1, $2), pg_notify('astryx_wire', $2)",
@@ -549,8 +654,26 @@ async def push(row) -> bool:
                     f"cannot deliver to {row['to_org']}: not an introduced peer "
                     f"(run src/astryx/federation/introduce.py first)")
         return True
+    sib = route(row["to_org"])
+    if sib is not None and sib is not ctx:
+        # loopback federation (S3c): a sibling in this cog, delivered in process through ITS door's checks
+        r = await inbox(sib, envelope(ctx, row))
+        if not isinstance(r, Response):
+            await pool.execute(
+                "UPDATE messages SET status='delivered', delivered_at=now() WHERE id=$1", row["id"])
+            return True
+        if r.status_code == 429:
+            return False                         # the sibling's cap: stays pending, retried on the next bell
+        async with pool.acquire() as c:          # refused for good (403/400): the same loud death as a peer's
+            async with c.transaction():
+                await c.execute("UPDATE messages SET status='dead' WHERE id=$1", row["id"])
+                await c.execute(
+                    "INSERT INTO messages (from_agent, to_agent, intent, body) "
+                    "VALUES ('gateway', $1, 'error', $2)", row["from_agent"],
+                    f"cannot deliver to {row['to_org']}: its door refused ({r.status_code})")
+        return True
     if not peer["url"]:
-        if RELAY and await relay_send(row["to_org"], "msg", envelope(row)):
+        if ctx.relay and await relay_send(ctx, row["to_org"], "msg", envelope(ctx, row)):
             await pool.execute(
                 "UPDATE messages SET status='delivered', delivered_at=now() WHERE id=$1",
                 row["id"])                       # delivered = the relay accepted it into their mailbox
@@ -559,7 +682,7 @@ async def push(row) -> bool:
     try:
         async with httpx.AsyncClient(timeout=15) as c:
             r = await c.post(f"{peer['url'].rstrip('/')}/astryx/inbox",
-                             json=envelope(row))
+                             json=envelope(ctx, row))
         if r.status_code == 200:
             await pool.execute(
                 "UPDATE messages SET status='delivered', delivered_at=now() WHERE id=$1",
@@ -570,10 +693,11 @@ async def push(row) -> bool:
     return False                                 # stays pending; retried on next bell
 
 
-async def listen_task():
+async def listen_task(ctx: Ctx):
+    """This org's outbound doorbell: NOTIFY is per database, so one listener per Ctx."""
     while True:
         try:
-            conn = await asyncpg.connect(DSN)
+            conn = await asyncpg.connect(ctx.dsn)
             q: asyncio.Queue = asyncio.Queue()
             await conn.add_listener("astryx_outbound",
                                     lambda c, p, ch, payload: q.put_nowait(payload))
@@ -581,7 +705,7 @@ async def listen_task():
             # drain anything that queued while we were down
             for r in await conn.fetch(
                     "SELECT * FROM messages WHERE to_org <> 'local' AND status='pending'"):
-                await push(r)
+                await push(ctx, r)
             while True:
                 try:
                     payload = await asyncio.wait_for(q.get(), timeout=60)
@@ -591,20 +715,21 @@ async def listen_task():
                     continue
                 if payload == "__dead__":
                     raise ConnectionError("pg terminated")
-                outbound_bell.put_nowait(1)      # wake long-poll holders
+                ctx.bell.put_nowait(1)           # wake long-poll holders
                 row = await conn.fetchrow(
                     "SELECT * FROM messages WHERE id=$1 AND status='pending'",
                     int(payload))
                 if row:
-                    await push(row)
+                    await push(ctx, row)
         except Exception:
             await asyncio.sleep(5)
 
 
-async def pickup_task():
+async def pickup_task(ctx: Ctx):
     """When WE are NAT'd (no ASTRYX_URL), long-poll every push-capable peer."""
-    if URL:
+    if ctx.url:
         return
+    pool = ctx.pool
     watermarks: dict[str, int] = {}
     while True:
         try:
@@ -616,13 +741,13 @@ async def pickup_task():
                 continue
             for p in peers:
                 since = watermarks.get(p["org"], 0)
-                claim = {"op": "pickup", "org": ORG, "since": since,
+                claim = {"op": "pickup", "org": ctx.name, "since": since,
                          "ts": str(time.time())}
-                signed = sign(dict(claim))
+                signed = sign(ctx, dict(claim))
                 try:
                     async with httpx.AsyncClient(timeout=HOLD + 10) as c:
                         r = await c.get(f"{p['url'].rstrip('/')}/astryx/pickup",
-                                        params={"org": ORG, "since": since,
+                                        params={"org": ctx.name, "since": since,
                                                 "ts": claim["ts"], "sig": signed["sig"]})
                     if r.status_code != 200:
                         continue
@@ -648,26 +773,26 @@ async def pickup_task():
 
 
 # -------------------------------------------------------------- relay client
-async def relay_send(to: str, kind: str, e: dict) -> bool:
+async def relay_send(ctx: Ctx, to: str, kind: str, e: dict) -> bool:
     try:
         async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.post(f"{RELAY}/relay/send", json={"to": to, "kind": kind, "envelope": e})
+            r = await c.post(f"{ctx.relay}/relay/send", json={"to": to, "kind": kind, "envelope": e})
         return r.status_code == 200
     except Exception:
         return False
 
 
-async def relay_register() -> bool:
+async def relay_register(ctx: Ctx) -> bool:
     try:
         async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.post(f"{RELAY}/relay/register",
-                             json=relay_mod.register_claim(KEY, ORG, URL, RELAY_LISTED))
+            r = await c.post(f"{ctx.relay}/relay/register",
+                             json=relay_mod.register_claim(ctx.key, ctx.name, ctx.url, ctx.relay_listed))
         return r.status_code == 200
     except Exception:
         return False
 
 
-async def relay_take(item: dict) -> bool:
+async def relay_take(ctx: Ctx, item: dict) -> bool:
     """One collected mailbox item, through the SAME checks a direct POST gets. A hello is
     answered once with our own signed hello, marked reply, so the exchange ends there.
     True = settled (landed, or refused for good: ack it). False = our door said 429: the
@@ -678,34 +803,34 @@ async def relay_take(item: dict) -> bool:
     if kind == "hello":
         if str(e.get("org", "")) != item.get("from_org"):
             return True
-        r = await introduce(e, window=RELAY_WINDOW)
+        r = await introduce(ctx, e, window=RELAY_WINDOW)
         if not isinstance(r, Response) and not e.get("reply"):
-            await relay_send(e["org"], "hello", sign({
-                "astryx": 0, "org": ORG, "pubkey": PUB, "url": URL or None,
+            await relay_send(ctx, e["org"], "hello", sign(ctx, {
+                "astryx": 0, "org": ctx.name, "pubkey": ctx.pub, "url": ctx.url or None,
                 "ts": time.time(), "reply": True}))
     elif kind == "msg":
-        r = await inbox(e, window=RELAY_WINDOW)
+        r = await inbox(ctx, e, window=RELAY_WINDOW)
         if isinstance(r, Response) and r.status_code == 429:
             return False
     return True
 
 
-async def relay_task():
+async def relay_task(ctx: Ctx):
     """With ASTRYX_RELAY set: register (hourly), then long-poll our mailbox. `since` is the ack."""
-    if not RELAY:
+    if not ctx.relay:
         return
     since, registered_at = 0, 0.0
     tries: dict[int, int] = {}                   # mailbox id -> times it raised
     while True:
         try:
             if time.time() - registered_at > 3600:
-                if not await relay_register():
+                if not await relay_register(ctx):
                     await asyncio.sleep(15)
                     continue
                 registered_at = time.time()
             async with httpx.AsyncClient(timeout=relay_mod.HOLD + 15) as c:
-                r = await c.get(f"{RELAY}/relay/pickup",
-                                params=relay_mod.pickup_claim(KEY, ORG, since))
+                r = await c.get(f"{ctx.relay}/relay/pickup",
+                                params=relay_mod.pickup_claim(ctx.key, ctx.name, since))
             if r.status_code == 403:
                 registered_at = 0.0              # the relay forgot us: register again
                 continue
@@ -716,7 +841,7 @@ async def relay_task():
             for item in r.json().get("mail", []):
                 iid = int(item.get("id", 0))
                 try:
-                    settled = await relay_take(item)
+                    settled = await relay_take(ctx, item)
                 except Exception as ex:
                     # one bad item must not head every batch until the TTL: retry it a few times
                     # (a transient DB error heals), then skip it, loudly
@@ -739,39 +864,59 @@ async def relay_task():
             await asyncio.sleep(5)
 
 
-async def card_refresh_task():
+async def card_refresh_task(ctx: Ctx):
     """Event-invalidated materialized view: regenerate the card only when its source
     (roster ∪ tier ∪ key) actually changes. Bounded staleness = the poll interval."""
     while True:
         try:
-            if _card_source_key() != _card_key:
-                _regen_card()
+            if _card_source_key(ctx) != ctx.card_key:
+                _regen_card(ctx)
         except Exception:
             pass
         await asyncio.sleep(300)
 
 
+async def seed_siblings(ctxs: dict[str, Ctx]) -> None:
+    """S3c: every org of a cog of several is its siblings' `introduced` peer (rate-capped, url NULL: delivery is in
+    process). Insert-only: an existing row (a widened, revoked or differently-keyed peer) is never touched, so
+    widening is a deliberate local act, as for any peer (a2 E)."""
+    if len(ctxs) < 2:
+        return
+    for c in ctxs.values():
+        for s in ctxs.values():
+            if s is not c:
+                await c.pool.execute(
+                    """INSERT INTO peers (org, url, pubkey, status, notes)
+                       VALUES ($1, NULL, $2, 'introduced', 'a sibling in this cog (S3c)')
+                       ON CONFLICT (org) DO NOTHING""", s.name, s.pub)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global pool
-    pool = await asyncpg.create_pool(DSN, min_size=1, max_size=3)
-    _regen_card()                                    # serve pre-generated bytes from the first request
-    if RELAY_HOST:                                   # the host is findable by name on its own relay
+    ctxs = cog()
+    for c in ctxs.values():
+        c.pool = await asyncpg.create_pool(c.dsn, min_size=1, max_size=3)
+        _regen_card(c)                               # serve pre-generated bytes from the first request
+    await seed_siblings(ctxs)
+    one = root()
+    if one is not None and one.relay_host:           # the host is findable by name on its own relay
         try:
-            await relay_mod.self_register(pool, ORG, PUB, URL)
+            await relay_mod.self_register(one.pool, one.name, one.pub, one.url)
         except Exception as ex:
             print(f"gateway relay: host self-registration failed: {type(ex).__name__}", file=sys.stderr)
-    tasks = [asyncio.create_task(listen_task()), asyncio.create_task(pickup_task()),
-             asyncio.create_task(card_refresh_task()), asyncio.create_task(relay_task())]
+    tasks = [asyncio.create_task(t(c)) for c in ctxs.values()
+             for t in (listen_task, pickup_task, card_refresh_task, relay_task)]
     yield
     for t in tasks:
         t.cancel()
-    await pool.close()
+    for c in ctxs.values():
+        await c.pool.close()
 
 app.router.lifespan_context = lifespan
 
-if RELAY_HOST:
+_ONE = root() if ESTATE is not None else None
+if _ONE is not None and _ONE.relay_host:
     # the relay is its own surface (relay_orgs, relay_mail): it never writes peers or messages
     app.include_router(relay_mod.make_router(
-        lambda: pool, org_ok, lambda: {"org": ORG, "pubkey": PUB, "url": URL or None}, rated,
+        lambda: _ONE.pool, org_ok, lambda: {"org": _ONE.name, "pubkey": _ONE.pub, "url": _ONE.url or None}, rated,
         allow_private_reach=_env("ASTRYX_RELAY_REACH_PRIVATE") == "1"))
