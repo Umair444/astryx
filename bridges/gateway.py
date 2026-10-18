@@ -189,6 +189,7 @@ from bridges import relay as relay_mod  # noqa: E402
 
 SKEW = 600                      # seconds of envelope timestamp tolerance
 BODY_MAX = 16000
+AGENT_MAX = 63 - len("astryx_msg_")   # postgres caps a NOTIFY channel at 63 bytes; the doorbell is astryx_msg_<agent>
 INBOX_RATE = int(_env("ASTRYX_INBOX_RATE", "60"))   # envelopes/hour per introduced org
 RATE_WINDOW = float(_env("ASTRYX_RATE_WINDOW", "3600"))  # seconds a rate cap counts over (tests shorten it)
 INTRO_RATE = 5                  # introductions/hour per IP
@@ -567,9 +568,12 @@ async def inbox(ctx: Ctx, e: dict, window: float = SKEW):
             "SELECT count(*) FROM messages WHERE from_org=$1 AND sig=$2", from_org, e.get("sig")):
         return {"ok": True}                      # a relayed copy outlives seen_ids: the row is the memory
     # Rung 1 — per-peer capability attenuation, enforced at the one off-uid door.
+    req_to = str(e.get("to", "")).partition("@")[0]
+    if len(req_to.encode()) > AGENT_MAX:
+        return Response(status_code=400)         # past the doorbell's channel name (a2 #60413): refused, never cut
     to_agent, intent, rate, intent_ok = reach(
         peer["caps_granted"], peer["status"],
-        str(e.get("to", "")).partition("@")[0][:64],
+        req_to,
         str(e.get("intent", "chat"))[:32])
     if not intent_ok:
         return Response(status_code=403)         # intent not granted to this peer
@@ -656,8 +660,15 @@ async def push(ctx: Ctx, row) -> bool:
         return True
     sib = route(row["to_org"])
     if sib is not None and sib is not ctx:
-        # loopback federation (S3c): a sibling in this cog, delivered in process through ITS door's checks
-        r = await inbox(sib, envelope(ctx, row))
+        # loopback federation (S3c): a sibling in this cog, delivered in process through ITS door's checks.
+        # A raise at the sibling's door (its pool, its database restarting) is the http path's 500: the row stays
+        # pending and push() returns, so the sender's drain moves on (a2 #60413 R-1: one raising row froze it)
+        try:
+            r = await inbox(sib, envelope(ctx, row))
+        except Exception as ex:
+            print(f"gateway: sibling {sib.name}'s door raised {type(ex).__name__} for row {row['id']}: left pending",
+                  file=sys.stderr, flush=True)
+            return False
         if not isinstance(r, Response):
             await pool.execute(
                 "UPDATE messages SET status='delivered', delivered_at=now() WHERE id=$1", row["id"])
@@ -756,7 +767,10 @@ async def pickup_task(ctx: Ctx):
                         if not verify(e, p["pubkey"]) or not fresh(e.get("ts")):
                             continue
                         from_agent = str(e.get("from", "")).partition("@")[0][:64]
-                        to_agent = str(e.get("to", "")).partition("@")[0][:64]
+                        to_agent = str(e.get("to", "")).partition("@")[0]
+                        if len(to_agent.encode()) > AGENT_MAX:   # its doorbell can't exist: skipped, never cut
+                            watermarks[p["org"]] = max(watermarks.get(p["org"], 0), int(item.get("row_id", 0)))
+                            continue
                         await pool.execute(
                             """INSERT INTO messages (from_agent, from_org, to_agent,
                                    to_org, thread, intent, body, sig)

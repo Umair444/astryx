@@ -20,8 +20,8 @@ MUTANTS = {
         ('    _UF="$UD/$1@$UORG.$2"\n',
          '    _UF="$UD/$1.$2"\n'),
     "V2 a COG-scoped unit is written by an org's run":
-        ('    case " $UCOG " in *" $1 "*) echo',
-         '    case " " in *" $1 "*) echo'),
+        ('    case " $UCOG " in *" $1 "*) echo "  units: $1 is COG-scoped (one per cog',
+         '    case " " in *" $1 "*) echo "  units: $1 is COG-scoped (one per cog'),
     'V3 a port-binding unit is written with its fixed port in a cog of several orgs (the registry never asked)':
         ('    case " $UPORT " in *" $1 "*) _UP=',
          '    case " " in *" $1 "*) _UP='),

@@ -16,6 +16,12 @@ lifespan run (pools, per-org outbound listeners on real NOTIFY), nothing bound t
      introduced sibling's message to B's forge reaches B's seed
   G4 B's door caps A (ASTRYX_INBOX_RATE=3): the 4th of 4 stays pending in A, never dead
   G5 B -> A, a chat A never granted B: refused at A's door, B's row dead and B's sender told, nothing in A
+  G7 UNDER UVICORN (S3c 2/n): the cog's gateway as its unit runs it (uvicorn gateway:app, the registry in its
+     environment, no HOME; an ephemeral loopback port, never 8845): it starts, its bare root refuses (404), and a
+     row in A addressed to B lands in B through the process's own listeners
+  G8 a sibling whose door RAISES (its pool gone) leaves that row pending and stalls nothing: A's next row is handled
+     (a2 #60413 R-1)
+  G9 a to_agent past the doorbell's channel name (52 bytes after astryx_msg_) is refused at the door (400), never cut
   G6 a cog org whose .env names no ASTRYX_ORG, or two orgs one federation name: cog() refuses (CogError)
 
 Seams (org_home_fixture.SEAMS): ORG_HOME_GATEWAY_SRC (bridges/gateway.py), ORG_HOME_CHARTER_SRC
@@ -95,6 +101,32 @@ async def main():
         out["back_told"] = await B.pool.fetchval(
             "SELECT count(*) FROM messages WHERE from_agent='gateway' AND intent='error' AND to_agent='fxsender'")
         out["a_from_b"] = await A.pool.fetchval("SELECT count(*) FROM messages WHERE from_org=$1", nb)
+
+        # G9: a to_agent past the doorbell's 52-byte channel name is refused at B's door (400), never cut
+        long_ = await A.pool.fetchval(ins, "x" * 53, nb, "to a name no channel can carry")
+        await wait(lambda: A.pool.fetchval("SELECT count(*) FROM messages WHERE id=$1 AND status='dead'", long_))
+        out["long_status"] = await A.pool.fetchval("SELECT status FROM messages WHERE id=$1", long_)
+        out["long_told"] = await A.pool.fetchval(
+            "SELECT count(*) FROM messages WHERE from_agent='gateway' AND intent='error' AND body LIKE '%refused (400)%'")
+
+        # G8 (a2 #60413 R-1): B's door RAISES (its pool gone: a restart, an exhausted pool). A's row to B stays
+        # pending, and A's NEXT row (to a surface, handled by the same listener) is still handled
+        class Gone:
+            def __getattr__(self, k):
+                raise ConnectionError("fixture: B's pool is gone")
+        keep, B.pool = B.pool, Gone()
+        try:
+            poison = await A.pool.fetchval(ins, "seed", nb, "while B's door raises")
+            await asyncio.sleep(1)
+            after = await A.pool.fetchval(
+                "INSERT INTO messages (from_agent, to_agent, to_org, intent, body) "
+                "VALUES ('fxsender', 'fxguest', 'canvas', 'chat', 'the next row') RETURNING id")
+            await wait(lambda: A.pool.fetchval(
+                "SELECT count(*) FROM messages WHERE id=$1 AND to_org='local'", after))
+            out["poison_status"] = await A.pool.fetchval("SELECT status FROM messages WHERE id=$1", poison)
+            out["after_local"] = await A.pool.fetchval("SELECT to_org FROM messages WHERE id=$1", after)
+        finally:
+            B.pool = keep
 
 asyncio.run(main())
 print("OUT " + json.dumps(out, default=str))
@@ -193,6 +225,63 @@ def main():
             check("refused at A's door: B's row dead, B's sender told, nothing lands in A",
                   o.get("back_status") == "dead" and o.get("back_told") == 1 and o.get("a_from_b") == 0,
                   f"{o.get('back_status')} told={o.get('back_told')} a_from_b={o.get('a_from_b')}")
+
+            print("\nG8 A SIBLING WHOSE DOOR RAISES STALLS NOTHING (a2 #60413 R-1)")
+            check("A's row to B stays PENDING while B's door raises (retried, never dead)",
+                  o.get("poison_status") == "pending", str(o.get("poison_status")))
+            check("A's next row is still handled by the same listener (re-addressed local)",
+                  o.get("after_local") == "local", str(o.get("after_local")))
+
+            print("\nG9 A NAME NO DOORBELL CAN CARRY")
+            check("a 53-byte to_agent: refused at B's door (400), A's row dead, its sender told",
+                  o.get("long_status") == "dead" and o.get("long_told") == 1,
+                  f"{o.get('long_status')} told={o.get('long_told')}")
+
+            print("\nG7 THE COG'S GATEWAY UNDER UVICORN")
+            import socket
+            import time
+            import urllib.error
+            import urllib.request
+            with socket.socket() as so:
+                so.bind(("127.0.0.1", 0))
+                port = so.getsockname()[1]
+            uenv = {k: v for k, v in env.items() if k not in ("ASTRYX_DSN", "ASTRYX_INBOX_RATE")}
+            srv = subprocess.Popen([py, "-m", "uvicorn", "gateway:app", "--host", "127.0.0.1", "--port", str(port)],
+                                   env=uenv, cwd=fx.co / "bridges", stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                   text=True)
+            try:
+                code, end = None, time.time() + 60
+                while time.time() < end and srv.poll() is None:
+                    try:
+                        urllib.request.urlopen(f"http://127.0.0.1:{port}/astryx/identity", timeout=2)
+                        code = 200
+                    except urllib.error.HTTPError as e:
+                        code = e.code
+                    except OSError:
+                        time.sleep(0.5)
+                        continue
+                    break
+                check("it starts, and its bare root refuses in a cog of several orgs (404)", code == 404,
+                      f"code {code} rc {srv.poll()}")
+                with psycopg.connect(da["url"], autocommit=True) as c:
+                    c.execute("INSERT INTO messages (from_agent, to_agent, to_org, thread, intent, body) "
+                              "VALUES ('fxuvicorn', 'seed', %s, 'fx-cog', 'chat', 'over uvicorn')", (nb,))
+                got, end = 0, time.time() + 30
+                with psycopg.connect(db["url"], autocommit=True) as c:
+                    while time.time() < end and not got:
+                        got = c.execute("SELECT count(*) FROM messages WHERE from_org=%s AND body='over uvicorn'",
+                                        (na,)).fetchone()[0]
+                        time.sleep(0.5)
+                check("a row in A to B lands in B through the uvicorn process's listeners", got == 1, str(got))
+            finally:
+                srv.terminate()
+                try:
+                    out_, _ = srv.communicate(timeout=20)
+                except subprocess.TimeoutExpired:
+                    srv.kill()
+                    out_, _ = srv.communicate()
+            if fails and out_:
+                print("        gateway output: " + out_[-400:].replace("\n", " | "))
 
             print("\nG6 A COG THAT CAN'T BE SERVED REFUSES")
             (B / ".env").write_text(f"ASTRYX_DSN={db['url']}\nASTRYX_SECRET_KEY={'b2' * 32}\n")

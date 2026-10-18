@@ -38,4 +38,8 @@ MUTANTS = {
         ("                if c.name in out:\n", "                if False:\n"),
     "Q10 an org with no ASTRYX_ORG is served under a guessed name":
         ("    if not name or not sk:\n", "    name = name or org\n    if not sk:\n"),
+    "Q11 a raise at the sibling's door escapes push (the sender's whole drain stalls on that row, a2 #60413 R-1)":
+        ("        except Exception as ex:\n            print(f\"gateway: sibling", "        except ZeroDivisionError as ex:\n            print(f\"gateway: sibling"),
+    "Q12 a to_agent past the doorbell's channel name is not refused":
+        ("    if len(req_to.encode()) > AGENT_MAX:\n", "    if False:\n"),
 }
