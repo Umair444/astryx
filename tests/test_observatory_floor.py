@@ -42,7 +42,15 @@ def arm(name, ok, detail=""):
 def main(url, tmp):
     import psycopg
     sys.path.insert(0, str(REPO / "observatory" / "api"))
-    spec = importlib.util.spec_from_file_location("main", SUBJECT)
+    subject = SUBJECT
+    if os.environ.get("OBS_MAIN_SRC"):
+        # a mutant copy sits wherever the probe wrote it, and paths.estate() places a file only by its path in the code
+        # tree (a bare copy is NoHome, and every mutant "died" at import: a4 #60129 R-1). Seat it at
+        # <tmp>/observatory/api/main.py, a tree the resolver accepts, so the mutant itself is what runs.
+        subject = tmp / "subject" / "observatory" / "api" / "main.py"
+        subject.parent.mkdir(parents=True)
+        subject.write_text(SUBJECT.read_text())
+    spec = importlib.util.spec_from_file_location("main", subject)
     obs = importlib.util.module_from_spec(spec)
     sys.modules["main"] = obs
     spec.loader.exec_module(obs)

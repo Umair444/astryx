@@ -24,7 +24,7 @@ MUTANTS = {
         ('''view = 'global') ORDER BY value DESC, agent")''', '''view = 'global') ORDER BY agent")'''),
     "F6 the top threads aren't capped at 3":
         ("key=lambda x: (-x[1], x[0]))[:3]]", "key=lambda x: (-x[1], x[0]))[:9]]"),
-    "F7 a registry that refuses reads as a cog of one (fails open)":
+    "F7 a registry that refuses reads as a cog of one (unreachable fail-open: _env re-loads the registry and raises out of the route; caught as a 500 crash, not an arm, a4 #60129)":
         ('        return JSONResponse({"error": f"cog registry refused: {e}"}, status_code=500)\n', '        reg = None\n'),
     "F8 no room is marked as ours":
         ('"this": o == me,', '"this": False,'),
