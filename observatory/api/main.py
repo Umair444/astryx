@@ -3128,36 +3128,49 @@ async def thread_read(r: ThreadRead, request: Request):
 # ------------------------------------------------------------ the floor: who knows whom, and the cog's rooms
 from astryx.influence import graph as _influence  # noqa: E402 — the ONE weighting rule (plan-11324 S2)
 
-INFLUENCE_EDGES_SQL = "SELECT kind, src, dst, ts, coverage FROM influence_edge WHERE scope = 'local'"
+INFLUENCE_EDGES_SQL = ("SELECT kind, src, dst, ts, topic, coverage FROM influence_edge "
+                       "WHERE scope = 'local' AND ts >= now() - make_interval(days => $1)")
 # ONE compute's snapshot, never each agent's own latest: two runs' values are not one ranking
 INFLUENCE_VALUES_SQL = ("SELECT agent, value FROM influence_value WHERE scope = 'local' AND view = 'global' "
                         "AND computed_at = (SELECT max(computed_at) FROM influence_value "
                         "WHERE scope = 'local' AND view = 'global')")
+INFLUENCE_WINDOWS = {"7d": 7, "14d": 14}     # the cache IS the compute's window (influence.shell.DAYS): no 30d
 
 
 @app.get("/api/influence")
-async def influence(request: Request):
-    """Who knows whom, for the floor (seed #60078, goal 11324 S2): the cached influence edges, each pair's weight under
-    the GLOBAL view's own rules (graph.kind_weights: a kind under the coverage floor weighs 0, and is named in
-    `unmeasured`; graph.weighted: the 14-day half-life), summed per src→dst, plus the latest GLOBAL rank. Refs and
-    topics never leave: a pair and a number. Owner-only, by omission from PUBLIC_PATHS and checked here as well."""
+async def influence(request: Request, window: str = "14d"):
+    """Who knows whom, for the floor (seed #60078, design #60089; goal 11324 S2), read from the two influence tables
+    only, never a message body. Per (src, dst, kind): n edges, the last one's time and its top threads (<= 3, by
+    count). Per kind: its coverage and whether the GLOBAL view measures it (graph.kind_weights: under the coverage
+    floor, or hard-UNMEASURED, it weighs 0 and the floor must say so, never hide it). Per agent: the LATEST compute's
+    GLOBAL value and rank. A → B means A relied on B: credit flows to B. Owner-only, by omission from PUBLIC_PATHS
+    and checked here as well."""
     if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
         return Response(status_code=403)
-    rows = [dict(r) for r in await pool.fetch(INFLUENCE_EDGES_SQL)]
-    cov = {}
+    if window not in INFLUENCE_WINDOWS:
+        return Response(status_code=400)
+    rows = await pool.fetch(INFLUENCE_EDGES_SQL, INFLUENCE_WINDOWS[window])
+    cov: dict = {}
+    agg: dict = {}
     for r in rows:
         cov[r["kind"]] = r["coverage"]
+        e = agg.setdefault((r["src"], r["dst"], r["kind"]), {"n": 0, "last": r["ts"], "threads": {}})
+        e["n"] += 1
+        e["last"] = max(e["last"], r["ts"])
+        if r["topic"]:
+            e["threads"][r["topic"]] = e["threads"].get(r["topic"], 0) + 1
     w = _influence.kind_weights(cov)
-    now = datetime.now(timezone.utc)
-    pair: dict = {}
-    for s, d, x in _influence.weighted(rows, _influence.view("floor", w, {}), now):
-        pair[(s, d)] = pair.get((s, d), 0.0) + x
     vals = await pool.fetch(INFLUENCE_VALUES_SQL + " ORDER BY value DESC, agent")
     at = await pool.fetchval("SELECT max(computed_at) FROM influence_edge WHERE scope = 'local'")
-    return {"edges": [{"src": s, "dst": d, "w": round(x, 6)} for (s, d), x in sorted(pair.items())],
-            "values": [{"agent": v["agent"], "value": v["value"], "rank": i + 1} for i, v in enumerate(vals)],
-            "unmeasured": sorted(k for k, x in w.items() if x <= 0),
-            "computed_at": at.isoformat() if at else None}
+    return {
+        "computed_at": at.isoformat() if at else None, "window": window, "cache_days": max(INFLUENCE_WINDOWS.values()),
+        "kinds": [{"kind": k, "coverage": cov.get(k), "measured": w[k] > 0,
+                   "why": _influence.HARD_UNMEASURED.get(k)} for k in _influence.KINDS],
+        "nodes": [{"agent": v["agent"], "value": v["value"], "rank": i + 1} for i, v in enumerate(vals)],
+        "edges": [{"src": s, "dst": d, "kind": k, "n": e["n"], "last_ts": e["last"].isoformat(),
+                   "top_threads": [t for t, _ in sorted(e["threads"].items(), key=lambda x: (-x[1], x[0]))[:3]]}
+                  for (s, d, k), e in sorted(agg.items())],
+    }
 
 
 _identity_cache: dict = {}
@@ -3184,14 +3197,14 @@ async def cog(request: Request):
     """The cog this observatory sits in (owner ruling #60083: several orgs on one install are a COG), as rooms for the
     floor (seed #60078, design #58435). orgs.load() reads the host registry at request time: ABSENT is a cog of one
     org, this one; present, one room per registered org, `this` marking ours. A registry that refuses is a 500, never
-    a quiet one-room answer (orgs.py: an unreadable registry fails closed). Homes and databases never leave.
+    a quiet one-room answer (orgs.py: an unreadable registry fails closed), and its reason is given so the floor can say it. Homes and databases never leave.
     Owner-only, by omission from PUBLIC_PATHS and checked here as well."""
     if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
         return Response(status_code=403)
     try:
         reg = orgs.load()
-    except orgs.RegistryError:
-        return Response(status_code=500)
+    except orgs.RegistryError as e:              # fails closed, and SAYS so: the floor names it (seed #60095)
+        return JSONResponse({"error": f"cog registry refused: {e}"}, status_code=500)
     ident = await _gateway_identity()
     me_name = _env("ASTRYX_ORG") or ident.get("org") or ORG
     badge = (ident.get("pubkey") or "")[:8] or None

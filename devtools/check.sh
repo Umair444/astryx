@@ -918,6 +918,9 @@ run "observatory: a late desk reply is served once, never stranded" "$PY" tests/
 # Opening a thread's pane marks the agent→owner replies on it read; the feed showing them never does.
 # Mutants: tests/mutants_observatory_thread_read.py, tests/mutants_owner_surfaces.py (a bridge's threads are never marked).
 run "observatory: an opened thread pane marks its replies read" "$PY" tests/test_observatory_thread_read.py
+# The floor's owner routes: who knows whom (influence edges per kind, the coverage floor shown, one compute's ranks) and
+# the cog's rooms (absent registry = one org; a refused one says why). Mutants: tests/mutants_observatory_floor.py.
+run "observatory: the floor's influence and cog routes (goal 11324)" "$PY" tests/test_observatory_floor.py
 # devtools/sqlsite.sh: one oracle's sqlguard view (rungs + why; --ledger: what enforce would say), advisory, writes
 # nothing. Mutants: tests/mutants_sqlsite.py.
 run "sqlsite: one oracle's sqlguard view, and the ledger diff, write nothing" "$PY" tests/test_sqlsite.py

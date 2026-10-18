@@ -11,27 +11,32 @@ SUBJECT = REPO / "observatory" / "api" / "main.py"
 ORACLE = REPO / "tests" / "test_observatory_floor.py"
 ENV = "OBS_MAIN_SRC"
 MUTANTS = {
-    "F1 the coverage floor is dropped (a kind measured on 40% of its domain draws edges)":
-        ("    w = _influence.kind_weights(cov)\n", "    w = {k: 1.0 for k in _influence.KINDS}\n"),
-    "F2 no decay (a 60-day edge weighs what yesterday's does)":
-        ('_influence.view("floor", w, {})', '_influence.view("floor", w, {}, half_life_days=1e9)'),
-    "F3 a pair's edges don't sum (the last one wins)":
-        ("pair[(s, d)] = pair.get((s, d), 0.0) + x", "pair[(s, d)] = x"),
+    "F1 the coverage floor is ignored (a kind measured on 40% of its domain reads measured)":
+        ('"measured": w[k] > 0,', '"measured": True,'),
+    "F2 the window is ignored (7d draws a 10-day edge)":
+        ("AND ts >= now() - make_interval(days => $1)", "AND $1::int > 0"),
+    "F3 a pair's edges aren't counted (each one reads n=1)":
+        ('        e["n"] += 1\n', '        e["n"] = 1\n'),
     "F4 the ranks mix compute runs (every snapshot, not the latest)":
         ('"AND computed_at = (SELECT max(computed_at) FROM influence_value "',
          '"AND computed_at >= (SELECT min(computed_at) FROM influence_value "'),
     "F5 the ranks are not ordered by value":
         ('INFLUENCE_VALUES_SQL + " ORDER BY value DESC, agent"', 'INFLUENCE_VALUES_SQL + " ORDER BY agent"'),
-    "F6 an edge carries its topic out":
-        ('[{"src": s, "dst": d, "w": round(x, 6)} for (s, d), x in sorted(pair.items())]',
-         '[{"src": s, "dst": d, "w": round(x, 6), "topic": [r["kind"] for r in rows]} for (s, d), x in sorted(pair.items())]'),
+    "F6 the top threads aren't capped at 3":
+        ("key=lambda x: (-x[1], x[0]))[:3]]", "key=lambda x: (-x[1], x[0]))[:9]]"),
     "F7 a registry that refuses reads as a cog of one (fails open)":
-        ("    except orgs.RegistryError:\n        return Response(status_code=500)\n",
-         "    except orgs.RegistryError:\n        reg = None\n"),
+        ('        return JSONResponse({"error": f"cog registry refused: {e}"}, status_code=500)\n', '        reg = None\n'),
     "F8 no room is marked as ours":
         ('"this": o == me,', '"this": False,'),
     "F9 a room carries its org's HOME out":
         ('"badge": badge if o == me else None}', '"badge": badge if o == me else None, "home": str(reg[o]["home"])}'),
     "F10 the badge is not the gateway's key":
         ('badge = (ident.get("pubkey") or "")[:8] or None', 'badge = None'),
+    "F11 an unknown window is served (as the default) instead of 400":
+        ("    if window not in INFLUENCE_WINDOWS:\n        return Response(status_code=400)\n",
+         "    if window not in INFLUENCE_WINDOWS:\n        window = \"14d\"\n"),
+    "F12 a refused registry is a bare 500 (the floor can't say why)":
+        ('JSONResponse({"error": f"cog registry refused: {e}"}, status_code=500)', 'Response(status_code=500)'),
+    "F13 the kinds' coverage is dropped (an unmeasured kind can't say how close it is)":
+        ('"coverage": cov.get(k),', '"coverage": None,'),
 }
