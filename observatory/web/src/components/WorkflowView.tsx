@@ -71,7 +71,7 @@ function Dag({ wf }: { wf: Workflow }) {
     // deterministic order within a column: by id
     ;[...wf.tasks].sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true })).forEach(t => cols[dep[t.id]].push(t))
     const RH = 64, PAD = 20
-    const CW = Math.max(72, Math.min(118, (bw - PAD - 36 - 96) / (maxD + 1)))   // W = PAD + 36 + (maxD+1)·CW + 56, and the converge label overhangs its node
+    const CW = Math.max(58, Math.min(118, (bw - PAD - 36 - 96) / (maxD + 1)))   // W = PAD + 36 + (maxD+1)·CW + 56, and the converge label overhangs its node
     const rows = Math.max(1, ...cols.map(c => c.length))
     const H = rows * RH + PAD * 2
     const nodes: { t: WfTask | null; x: number; y: number }[] = []
@@ -106,7 +106,7 @@ function Dag({ wf }: { wf: Workflow }) {
             <span className="rounded-full" style={{ boxShadow: `0 0 0 2px ${STATUS_TONE[t.status]}${t.critical ? ', 0 0 14px -2px var(--t-accent)' : ''}`, opacity: t.status === 'dropped' ? 0.45 : 1 }}>
               <AgentFace name={t.agent} size={28} />
             </span>
-            <span className={`mt-1 text-[10.5px] leading-tight text-center line-clamp-2 w-full [overflow-wrap:anywhere] ${t.status === 'dropped' ? 'line-through text-ink-mute' : 'text-ink-dim'}`}>{t.title}</span>
+            <span className={`mt-1 leading-tight text-center w-full [overflow-wrap:anywhere] ${CW < 90 ? 'text-[9.5px] line-clamp-1' : 'text-[10.5px] line-clamp-2'} ${t.status === 'dropped' ? 'line-through text-ink-mute' : 'text-ink-dim'}`}>{t.title}</span>
           </div>
         ) : (
           <div key="__converge" className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center" style={{ left: x, top: y }}
@@ -168,7 +168,7 @@ function Gantt({ wf, now }: { wf: Workflow; now: number }) {
                 style={{ ...span(t0(wf.unattributed.first), t0(wf.unattributed.last ?? wf.unattributed.first)), background: 'repeating-linear-gradient(90deg, var(--t-dim) 0 4px, transparent 4px 7px)' }} />
             )}
           </div>
-          <span className="w-[58px] shrink-0 text-right text-[10.5px] text-ink-dim tabular-nums">{wf.unattributed.commits} commit{wf.unattributed.commits === 1 ? '' : 's'}</span>
+          <span className="w-[58px] shrink-0 text-right text-[10.5px] text-ink-dim tabular-nums whitespace-nowrap">{wf.unattributed.commits} commit{wf.unattributed.commits === 1 ? '' : 's'}</span>
         </div>
       </div>
     </div>
@@ -177,7 +177,7 @@ function Gantt({ wf, now }: { wf: Workflow; now: number }) {
 
 function Overlay({ wf }: { wf: Workflow }) {
   const tot = { planned_happened: 0, planned_unused: 0, unplanned: 0 }
-  wf.overlay.edges.forEach(e => { tot[e.class] += e.n })
+  wf.overlay.edges.forEach(e => { if (e.class in tot) tot[e.class] += e.n })   // a class this view doesn't know is never NaN (a4 #60149 A-2)
   const top = [...wf.overlay.edges].sort((a, b) => b.n - a.n || a.src.localeCompare(b.src)).slice(0, 8)
   return (
     <div className="text-[11.5px]">
