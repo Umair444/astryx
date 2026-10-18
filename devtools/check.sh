@@ -822,6 +822,10 @@ run "stopped Hands desk, nobody watching"  "$PY" tests/test_desk_stopped.py
 # hours-above ladders, an unreadable /tmp is a line, attribution names top-level prefixes only. Mutants:
 # tests/mutants_tmpfs_full.py.
 run "tmpfs filling on inodes or bytes is told" "$PY" tests/test_tmpfs_full.py
+# task_nag (plan-11324 S4, a1 #60109 D): workflow.py is the authority on late/blocked; this decides who hears it
+# (late: the task's agent; blocked: the critical-path predecessor holding the chain, never seed), per task per
+# 12h against its own rows, re-armed on recovery. Mutants: tests/mutants_task_nag.py.
+run "workflow task nag reaches whoever can move it" "$PY" tests/test_task_nag.py
 # market_decay O3 (goal 4227 S1b, owner law 2026-09-29: no trigger killing): market_decay was the
 # org's sole economic actuator; its retire verb is now GONE BY CONSTRUCTION and it reports rent.
 # Two arms: _decide over the full input grid never yields 'retire', and the body's executable
