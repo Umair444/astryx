@@ -103,7 +103,9 @@ def main():
         (B / "sensors" / "fxagent").mkdir(parents=True, exist_ok=True)   # a sensor: senses' presence signal
         (B / "sensors" / "fxagent" / "fxsense.py").write_text("def read():\n    return {}\n")
         (B / "nucleus").mkdir(exist_ok=True)
-        (B / "nucleus" / "runners.conf").write_text("fxjob | org | *-*-* 03:00:00 | scripts/backup.sh | a fixture job\n")
+        # a comment with an apostrophe first: units() must skip it before xargs (which refuses an unmatched quote)
+        (B / "nucleus" / "runners.conf").write_text("# the org's fixture runners\n  # an indented one's too\n"
+                                                    "fxjob | org | *-*-* 03:00:00 | scripts/backup.sh | a fixture job\n")
 
         def render(env, out):
             return subprocess.run(["bash", "-euo", "pipefail", "units_fx.sh", str(out)], env=env, cwd=co,
@@ -120,7 +122,7 @@ def main():
               and "astryx-observatory.service" in names, f"rc {r.returncode} {names} {r.stderr[-300:]}")
         check("no instance name anywhere (no `@`)", names and not any("@" in n for n in names), str(names))
 
-        print("\nU2 SEVERAL ORGS: B'S OWN PORT-FREE UNITS, NOTHING ELSE")
+        print("\nU2 SEVERAL ORGS: B'S OWN UNITS, NOTHING ELSE (its runners.conf opens with a comment that has an apostrophe)")
         ob = fx.org["b"]
         r = render(fx.env(ASTRYX_HOME=str(B)), fx.t / "u_b")
         got = set(files(fx.t / "u_b"))

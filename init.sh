@@ -375,8 +375,10 @@ EOF
   # directly (executable + shebang), so org-infra bash jobs (pg_dump) are first-class.
   if [ -f "$ORGH/nucleus/runners.conf" ]; then
     while IFS='|' read -r stem agent oncal execp desc; do
+      # a comment is skipped BEFORE xargs reads it: xargs refuses an unmatched quote, so a comment with an apostrophe
+      # (the live tombstone's "the org's ONE timer") killed units() under set -e, after every unit above was written
+      [[ $stem =~ ^[[:space:]]*# ]] && continue
       stem=$(echo "$stem" | xargs); [ -z "$stem" ] && continue
-      case "$stem" in \#*) continue;; esac
       agent=$(echo "$agent" | xargs); oncal=$(echo "$oncal" | xargs)
       execp=$(echo "$execp" | xargs); desc=$(echo "$desc" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
       if [ "$agent" != org ] && ! ASTRYX_HOME="$ORGH" venv/bin/python src/astryx/core/charter.py "$agent" >/dev/null 2>&1; then
