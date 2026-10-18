@@ -43,9 +43,13 @@ sys.path.insert(0, str(REPO / "src"))
 from astryx import config, orgs  # noqa: E402
 
 BACKEND = "astryx-observatory-org"     # the per-org backend's stem (data/org_units.json): its port is the registry's
+CLIENT = "x-astryx-front-client"
 HOP = {"connection", "keep-alive", "transfer-encoding", "te", "trailer", "upgrade", "proxy-authorization",
        "proxy-authenticate", "host"}
 RETRY = 5.0
+# Behind the front every backend's peer is 127.0.0.1, so a per-visitor cap (VEGA's) would be ONE bucket for the cog
+# (a2 #60582 A-1). The front names the client it saw in this header, OVERWRITING any the caller sent; a backend reads
+# it only in a cog and only from 127.0.0.1 (main.py _client)
 
 
 def rooms(env=None) -> list[dict]:
@@ -153,8 +157,9 @@ async def _relay(org: str, path: str, request: Request):
     r = _cog().get(org)
     if r is None or r["port"] is None:
         return JSONResponse({"error": f"no org {org!r} in this cog"}, status_code=404)
-    headers = [(k, v) for k, v in request.headers.items() if k.lower() not in HOP]
-    headers += [("x-forwarded-host", request.headers.get("x-forwarded-host") or request.headers.get("host", "")),
+    headers = [(k, v) for k, v in request.headers.items() if k.lower() not in HOP | {CLIENT}]
+    headers += [(CLIENT, request.client.host if request.client else ""),   # what WE saw, never what the caller said
+                ("x-forwarded-host", request.headers.get("x-forwarded-host") or request.headers.get("host", "")),
                 ("x-forwarded-proto", request.headers.get("x-forwarded-proto") or request.url.scheme),
                 ("x-forwarded-prefix", f"/o/{org}")]
     up = client().build_request(request.method, f"http://127.0.0.1:{r['port']}/{path}",

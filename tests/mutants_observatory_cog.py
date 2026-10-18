@@ -35,4 +35,6 @@ MUTANTS = {
         ("    r = _cog().get(org)\n    if r is None", "    r = _cog().get(org) or next(iter(_cog().values()))\n    if r is None"),
     "F9 the stream's ?key= is not forwarded (owner rooms read as anonymous)":
         ('        params = {"key": key} if key else {}', '        params = {}'),
+    "F10 the caller's own x-astryx-front-client passes through (a visitor names itself to the cap)":
+        ("if k.lower() not in HOP | {CLIENT}]", "if k.lower() not in HOP]"),
 }

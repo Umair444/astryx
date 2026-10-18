@@ -1710,6 +1710,17 @@ class VegaMsg(BaseModel):
     history: list[dict] = []       # [{role: 'visitor'|'vega', text}], client-kept
 
 vega_hits: dict[str, list[float]] = {}
+_COG = orgs.multi()          # resolved once at start, as ESTATE is
+
+
+def _client(request: Request) -> str:
+    """The visitor a per-visitor cap counts. One org: the peer address, exactly as before. In a cog this observatory
+    sits behind the cog's front (observatory/front.py), so its peer is always 127.0.0.1: the front's own
+    x-astryx-front-client (the address IT saw; it overwrites any a caller sends) is read, and only from 127.0.0.1."""
+    peer = request.client.host if request.client else "?"
+    if _COG and peer == "127.0.0.1":
+        return request.headers.get("x-astryx-front-client") or peer
+    return peer
 
 
 from astryx.core.claude_bin import claude_bin  # noqa: E402
@@ -1720,7 +1731,7 @@ async def vega(m: VegaMsg, request: Request):
     vega_md = _charter_path("vega")
     if vega_md is None:
         return Response(status_code=404)
-    ip = request.client.host if request.client else "?"
+    ip = _client(request)
     now = time.time()
     hits = [t for t in vega_hits.get(ip, []) if now - t < 3600]
     if len(hits) >= 30:

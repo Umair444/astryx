@@ -17,7 +17,11 @@ build) behind the real front (uvicorn front:app, ephemeral port), a fixture regi
      never replayed to the next caller (the front's jar stores nothing)
   O6 /api/cog/stream fans in both backends' /api/events, each event wrapped {org, name, event}, ?key= forwarded to
      each; a backend that dies is announced {"type": "cog_backend", "up": false} for its org
-Exit 0 · 1 · 77 (no uvicorn/httpx).
+  O7 the client a backend's per-visitor cap counts (a2 #60582 A-1): the front names the client IT saw in
+     x-astryx-front-client, overwriting one the caller sent
+  O8 main.py's _client (read from the source, run alone): one org, the peer exactly as before (the header ignored);
+     in a cog, the front's header, and only from 127.0.0.1
+Seams: OBS_FRONT_SRC (a mutant front.py), OBS_MAIN_SRC (a mutant main.py, O8). Exit 0 · 1 · 77 (no uvicorn/httpx).
 """
 import json
 import os
@@ -62,7 +66,8 @@ async def events(request: Request):
 async def echo(path: str, request: Request):
     d = {"tag": tag, "method": request.method, "path": "/" + path, "query": dict(request.query_params),
          "body": (await request.body()).decode(), "key": request.headers.get("x-obs-key"),
-         "cookie": request.headers.get("cookie"), "prefix": request.headers.get("x-forwarded-prefix")}
+         "cookie": request.headers.get("cookie"), "prefix": request.headers.get("x-forwarded-prefix"),
+         "client": request.headers.get("x-astryx-front-client")}
     note(d)
     r = JSONResponse(d, status_code=201 if path == "made" else 200, headers={"x-backend": tag})
     if path == "login":
@@ -218,6 +223,33 @@ def main():
         e = lines(logs[oa])[-1]
         check("a backend's Set-Cookie is never replayed to the next caller (the jar stores nothing)",
               e.get("path") == "/after" and not (e.get("cookie") or ""), str(e))
+
+        print("\nO7 THE FRONT NAMES THE CLIENT IT SAW")
+        call(pf, f"/o/{oa}/who", headers={"x-astryx-front-client": "203.0.113.66"})
+        e = lines(logs[oa])[-1]
+        check("a caller's own x-astryx-front-client is overwritten with the address the front saw (127.0.0.1 here)",
+              e.get("path") == "/who" and e.get("client") == "127.0.0.1", str(e))
+
+        print("\nO8 main.py's _client")
+        import ast
+        src = Path(os.environ.get("OBS_MAIN_SRC") or REPO / "observatory" / "api" / "main.py").read_text()
+        fn = next(n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef) and n.name == "_client")
+
+        class Req:
+            def __init__(self, peer, hdr=None):
+                self.client = type("C", (), {"host": peer})()
+                self.headers = hdr or {}
+
+        def client_of(cog, peer, hdr=None):
+            ns = {"Request": object, "_COG": cog}
+            exec(compile(ast.Module([fn], []), "main.py", "exec"), ns)
+            return ns["_client"](Req(peer, hdr))
+        H = {"x-astryx-front-client": "198.51.100.4"}
+        check("one org: the peer, the header ignored", client_of(False, "127.0.0.1", H) == "127.0.0.1"
+              and client_of(False, "192.0.2.9", H) == "192.0.2.9")
+        check("a cog, from 127.0.0.1: the front's header", client_of(True, "127.0.0.1", H) == "198.51.100.4")
+        check("a cog, from anywhere else: the peer (a direct caller can't name itself)",
+              client_of(True, "192.0.2.9", H) == "192.0.2.9")
 
         print("\nO6 ONE MERGED STREAM")
         got, saw_down = [], False
