@@ -99,12 +99,16 @@ def main():
 
         block = re.search(r"^units\(\) \{.*?^\}$", (co / "init.sh").read_text(), re.S | re.M).group(0)
         (co / "units_fx.sh").write_text("die() { echo \"$*\" >&2; exit 1; }\n_docker_host_ip() { echo 172.17.0.1; }\n"
-                                        + block + "\nUNITS_DIR=\"$1\" units\n")
+                                        + block + "\nUNITS_DIR=\"$1\" units\necho \"UED=[$UNITS_EXPECT_DISABLED]\"\n")
         # B carries a chat route (a port-binding unit it would get) and a runner (a per-org port-free one)
         (B / "bridges").mkdir(exist_ok=True)
         (B / "bridges" / "routes-whatsapp.json").write_text("{}\n")
         (B / "sensors" / "fxagent").mkdir(parents=True, exist_ok=True)   # a sensor: senses' presence signal
         (B / "sensors" / "fxagent" / "fxsense.py").write_text("def read():\n    return {}\n")
+        # a growbot grant with a REMOTE body: the unit is written and declared installed-but-NOT-enabled, by its FILE name
+        (B / "agents" / "fxbot.md").write_text("# fxbot\nGrants: growbot\n")
+        with open(B / ".env", "a") as f:
+            f.write("GROWBOT_BODY_URL=http://192.0.2.7\n")
         (B / "nucleus").mkdir(exist_ok=True)
         # a comment with an apostrophe first: units() must skip it before xargs (which refuses an unmatched quote)
         (B / "nucleus" / "runners.conf").write_text("# the org's fixture runners\n  # an indented one's too\n"
@@ -131,9 +135,11 @@ def main():
         got = set(files(fx.t / "u_b"))
         want = {f"astryx-pulse@{ob}.service", f"astryx-pulse@{ob}.timer", f"astryx-residents@{ob}.service",
                 f"astryx-fxjob@{ob}.service", f"astryx-fxjob@{ob}.timer", f"astryx-whatsapp@{ob}.service",
-                f"astryx-senses@{ob}.service"}
+                f"astryx-senses@{ob}.service", f"astryx-growbot@{ob}.service"}
         check("rc 0, and exactly B's own units, each @<B>", r.returncode == 0 and got == want,
               f"rc {r.returncode} got {sorted(got)} {r.stderr[-300:]}")
+        check(f"the remote body's growbot is declared off by its FILE name astryx-growbot@{ob}.service",
+              f"UED=[ astryx-growbot@{ob}.service]" in r.stdout, r.stdout[-200:])
         for stem in ("astryx-observatory", "astryx-canvas", "astryx-gateway"):
             check(f"{stem}: not written, COG-scoped (said on stderr)", f"{stem} is COG-scoped" in r.stderr
                   and not any(n.startswith(stem) for n in got), r.stderr[-300:])
@@ -235,6 +241,10 @@ def main():
         r = served("astryx.contrib.growbot_body", fx.env(ASTRYX_HOME=str(A), GROWBOT_PORT="8470"))
         check("growbot body, HOME-A with GROWBOT_PORT=8470 (not A's): refuses, binds nothing",
               r.returncode != 0 and "PORT" not in r.stdout and "not this org's registry port" in r.stderr,
+              (r.stdout + r.stderr)[-300:])
+        r = served("astryx.pulse.senses", fx.env(ASTRYX_HOME=str(A), ASTRYX_COG_REGISTRY=str(noport)))
+        check("senses, HOME-A whose entry declares no senses port: refuses, never the fixed 8460",
+              r.returncode != 0 and "PORT" not in r.stdout and "declares no port for astryx-senses" in r.stderr,
               (r.stdout + r.stderr)[-300:])
         mcp_probe = ("import sys; sys.argv[1:1] = []; import importlib.util as u\n"
                      "s = u.spec_from_file_location('gb_mcp', sys.argv[1] + '/mcp/growbot/server.py'); "

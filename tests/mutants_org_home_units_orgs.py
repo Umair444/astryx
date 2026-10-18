@@ -22,4 +22,10 @@ MUTANTS = {
     'R2 `orgs.py name` answers one org on several (units() writes plain names)':
         ('            o = name()\n            if o is None:\n                return 1\n',
          '            o = name()\n            if True:\n                return 1\n'),
+    'R3 orgs.port() ignores the org (every unit and server on the fixed port)':
+        ('    o = name(env, cwd)\n    if o is None:\n        return None\n    got =',
+         '    o = name(env, cwd)\n    if True:\n        return None\n    got ='),
+    'R4 orgs.port() gives None for a missing port (a server falls back to its fixed one)':
+        ('    if got is None:\n        raise RegistryError(f"org registry {path(env)}: {o} declares no port',
+         '    if got is None:\n        return None\n        raise RegistryError(f"org registry {path(env)}: {o} declares no port'),
 }

@@ -19,4 +19,14 @@ MUTANTS = {
         ("        if db in NEVER_ORG_DB or db.startswith(FIXTURE_DB):\n", "        if False:\n"),
     "Y3 any org name passes":
         ("not NAME.fullmatch(org) or ", ""),
+    "Y4 two orgs may share a port (S3b 5/n)":
+        ("            if port in ports:\n", "            if False:\n"),
+    "Y5 an org may take a COG-scoped unit's port (8090/8091/8845, ruling 3(a))":
+        ("            if port in cog_ports:\n", "            if False:\n"),
+    "Y6 any stem may carry a port":
+        ("            if stem not in org_stems:\n", "            if False:\n"),
+    "Y7 any value is a port":
+        ("            if type(port) is not int or not 1 <= port <= 65535:\n", "            if False:\n"),
+    "Y8 JSON's 18477.0 is refused (node reads the integer: the two readers split)":
+        ("        pe = {k: int(v) if type(v) is float and v.is_integer() else v for k, v in pe.items()}", "        pass"),
 }

@@ -21,4 +21,16 @@ MUTANTS = {
         ("    if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(o) || !e", "    if (!e"),
     "M4 an array of orgs reads as a registry":
         ("Array.isArray(orgs) || ", ""),
+    "M5 two orgs may share a port (S3b 5/n)":
+        ("      if (ports.has(n)) throw", "      if (false) throw"),
+    "M6 an org may take a COG-scoped unit's port (ruling 3(a))":
+        ("      if (COG_PORTS.includes(n)) throw", "      if (false) throw"),
+    "M7 any stem may carry a port":
+        ("      if (!ORG_PORT_STEMS.includes(stem))\n", "      if (false)\n"),
+    "M8 any value is a port":
+        ("      if (!Number.isInteger(n) || n < 1 || n > 65535)\n", "      if (false)\n"),
+    "M9 node's COG_PORTS drifts from org_units.json (canvas's 8091 dropped)":
+        ("export const COG_PORTS = [8090, 8091, 8845]", "export const COG_PORTS = [8090, 8845]"),
+    "M10 `ports` that isn't an object reads as none":
+        ("    if (!pe || typeof pe !== 'object' || Array.isArray(pe))\n", "    if (false)\n"),
 }
