@@ -10,7 +10,7 @@
     two-org registry is two rooms, ours marked `this`, with no home or database in the answer; a registry that
     refuses is a 500, never a quiet one-room answer;
   - GATE: no key or a wrong key is 403 on both.
-The registry is planted PER REQUEST (ASTRYX_ORG_REGISTRY), never at import: a two-org registry at import makes
+The registry is planted PER REQUEST (ASTRYX_COG_REGISTRY), never at import: a two-org registry at import makes
 orgs.multi() true and paths.estate() refuses the unregistered checkout before main.py loads.
 The subject is OBS_MAIN_SRC (a mutated copy; tests/mutants_observatory_floor.py), else the real main.py.
 """
@@ -116,7 +116,7 @@ def main(url, tmp):
             arm("INFLUENCE: …and never an older run's agent (dee)", "dee" not in dict(ranks), ranks)
             arm("INFLUENCE: computed_at is given", bool(j["computed_at"]), j)
 
-            os.environ["ASTRYX_ORG_REGISTRY"] = str(tmp / "absent.json")
+            os.environ["ASTRYX_COG_REGISTRY"] = str(tmp / "absent.json")
             obs._identity_cache.clear()
             obs._identity_cache["v"] = {"org": "gw.example", "pubkey": "6f8e6e10be228806"}
             j = cl.get("/api/cog", headers=O).json()
@@ -127,7 +127,7 @@ def main(url, tmp):
             reg = tmp / "cog.json"
             reg.write_text(json.dumps({"orgs": {"zeta": {"home": str(tmp / "zeta"), "db": "zeta_db"},
                                                 "alpha": {"home": str(obs.ESTATE), "db": "alpha_db"}}}))
-            os.environ["ASTRYX_ORG_REGISTRY"] = str(reg)
+            os.environ["ASTRYX_COG_REGISTRY"] = str(reg)
             r = cl.get("/api/cog", headers=O)
             j = r.json() if r.status_code == 200 else {}
             rooms = [(x["org"], x["this"]) for x in j.get("rooms", [])]
@@ -140,7 +140,7 @@ def main(url, tmp):
             arm("COG: a registry that refuses is a 500, never a quiet one-room answer", r.status_code == 500, (r.status_code, r.text))
             arm("COG: …and it says why, for the floor to show (seed #60095)",
                 r.headers.get("content-type", "").startswith("application/json") and r.json().get("error", "").startswith("cog registry refused: "), r.text)
-            os.environ.pop("ASTRYX_ORG_REGISTRY", None)
+            os.environ.pop("ASTRYX_COG_REGISTRY", None)
 
 
 if __name__ == "__main__":
@@ -149,7 +149,7 @@ if __name__ == "__main__":
         os.environ["OBS_KEY"] = "test-owner-key"
         os.environ["ASTRYX_ORG"] = "fixture.example"
         os.environ["ASTRYX_GATEWAY_PORT"] = "9"          # discard: a real gateway is never asked
-        os.environ.pop("ASTRYX_ORG_REGISTRY", None)
+        os.environ.pop("ASTRYX_COG_REGISTRY", None)
         main(fx["url"], Path(td))
     print(f"{'PASS' if not fails else 'FAIL'}: observatory floor ({fails} failing)")
     sys.exit(1 if fails else 0)
