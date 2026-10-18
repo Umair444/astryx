@@ -324,16 +324,30 @@ try:
     check("...after the droppable member WAS dropped (collect all, then raise)", not exists(ok1) and exists(stuck)
           and exists(tpl), f"ok1={exists(ok1)} stuck={exists(stuck)} tpl={exists(tpl)}")
 finally:
+    # Through the REAL module's _drop, never fxm's (it may be the mutant): FORCE alone meets the PG 18 autovacuum race
+    # (steward #55022, arm D2) and a swallowed refusal leaked this oracle's unstamped bare plant, which reap() keeps
+    # forever by design (a4 #60207). A plant that survives is named and fails the run.
+    _rs = importlib.util.spec_from_file_location("fixture_real", REPO / "src" / "astryx" / "security" / "sqlguard" / "fixture.py")
+    fx_real = importlib.util.module_from_spec(_rs)
+    _rs.loader.exec_module(fx_real)
+    leaked = []
     for n in made:
         try:
             admin.execute(f'ALTER DATABASE "{n}" IS_TEMPLATE false')   # the batch arm's template (no-op otherwise)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 (absent, or already not a template: the drop below judges)
             pass
+        err = None
         try:
-            admin.execute(f'DROP DATABASE IF EXISTS "{n}" WITH (FORCE)')
-        except Exception:  # noqa: BLE001
-            pass
+            fx_real._drop(admin, n)
+        except Exception as e:  # noqa: BLE001
+            err = f"{type(e).__name__}: {e}".strip()
+        if admin.execute("SELECT 1 FROM pg_database WHERE datname=%s", (n,)).fetchone() is not None:
+            leaked.append(f"{n} ({err or 'drop returned, database still exists'})")
     admin.close()
+    for n in leaked:
+        print(f"  LEAK  {n}")
+    if leaked:
+        fails.append(f"teardown leaked {len(leaked)} plant(s)")
 
 if fails:
     print(f"\nFAIL: {len(fails)} arm(s)")
