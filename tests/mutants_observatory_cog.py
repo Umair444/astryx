@@ -25,8 +25,8 @@ MUTANTS = {
     "F4 the front's jar stores cookies (one viewer's session replayed to the next)":
         ("policy=http.cookiejar.DefaultCookiePolicy(allowed_domains=[])", "policy=http.cookiejar.DefaultCookiePolicy()"),
     "F5 the front adds an owner key of its own":
-        ("    headers = [(k, v) for k, v in request.headers.items() if k.lower() not in HOP]\n",
-         "    headers = [(k, v) for k, v in request.headers.items() if k.lower() not in HOP] + [(\"x-obs-key\", \"front\")]\n"),
+        ("    headers = [(k, v) for k, v in request.headers.items() if k.lower() not in HOP | {CLIENT}]\n",
+         "    headers = [(k, v) for k, v in request.headers.items() if k.lower() not in HOP | {CLIENT}] + [(\"x-obs-key\", \"front\")]\n"),
     "F6 the merged stream drops the org tag":
         ('                            await q.put({**tag, "event": ev})', '                            await q.put(ev)'),
     "F7 a dead backend is never announced":
