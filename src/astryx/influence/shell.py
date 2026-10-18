@@ -212,7 +212,7 @@ def group_views(conn, now=None, roster=None, agents_dir=None):
     roster = sorted(roster if roster is not None else charter.roster(agents_dir))
     edges = read_cache(conn)
     cov = {e["kind"]: e["coverage"] for e in edges}
-    return {gid: {"members": g["members"], "measured": graph.group_measured(edges, g["members"]),
+    return {gid: {"members": g["members"], "measured": graph.group_measured(edges, cov, gid, g["members"], now),
                   "scores": graph.group_scores(edges, cov, roster, gid, g["members"], now)}
             for gid, g in charter.groups(agents_dir).items()}
 

@@ -493,11 +493,14 @@ def group_scores(edges, coverages, nodes, group_id, members, now):
     return scores(edges, group_view(kind_weights(coverages), group_id, members), nodes, now)
 
 
-def group_measured(edges, members) -> bool:
-    """Does any cached edge touch the group (a member as src or dst)? When none does, its view is pure teleport, a
+def group_measured(edges, coverages, group_id, members, now) -> bool:
+    """Does any edge the group's VIEW actually weighs touch the group (a member as src or dst)? Read through
+    weighted() itself, so the flag agrees with the scores by construction: a coverage-gated kind, an edge at or after
+    `now`, a decayed one carry nothing, and touch nothing (a3 #60194). When none does, the view is pure teleport, a
     flat split over the members with nothing measured behind it, and every reader must SAY so (a3 #60189)."""
     m = set(members)
-    return any(e["src"] in m or e["dst"] in m for e in edges)
+    return any(s in m or t in m
+               for s, t, _ in weighted(edges, group_view(kind_weights(coverages), group_id, members), now))
 
 
 def weighted(edges, v, now):

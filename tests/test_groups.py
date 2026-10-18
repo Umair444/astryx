@@ -137,7 +137,16 @@ def views(G):
           v["name"] == "group:team/sub" and v["teleport"] == {"w": 1.0, "z": 1.0} and v["dangling"] == "teleport",
           json.dumps(v["teleport"]))
     check("views: group_measured is true for an edge's src or dst member, false for a group no edge touches",
-          G.group_measured(e, ["A"]) and G.group_measured(e, ["B"]) and not G.group_measured(e, ["C"]))
+          G.group_measured(e, cov, "g", ["A"], now) and G.group_measured(e, cov, "g", ["B"], now)
+          and not G.group_measured(e, cov, "g", ["C"], now))
+    gated = [{"kind": "tool_call", "src": "P", "dst": "X", "ts": now - timedelta(hours=1)},
+             {"kind": "tool_call", "src": "X", "dst": "Q", "ts": now - timedelta(hours=1)}]
+    gcov = {"pass_land": 1.0, "delegation": 1.0, "tool_call": 0.419}
+    check("views: a group touched ONLY by a coverage-gated kind is not measured (a3 #60194: its scores are teleport)",
+          not G.group_measured(gated + e, gcov, "g", ["P", "Q"], now), "measured True")
+    late = [{"kind": "pass_land", "src": "P", "dst": "Q", "ts": now}]
+    check("views: an edge at `now` (weighted() skips it) does not make a group measured",
+          not G.group_measured(late, cov, "g", ["P", "Q"], now))
     try:
         G.group_view({}, "empty", [])
         check("views: an empty group refuses (no teleport mass)", False)

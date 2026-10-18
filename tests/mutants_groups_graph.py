@@ -22,13 +22,17 @@ MUTANTS = {
         ("    return view(f\"group:{group_id}\", weights, {a: 1.0 for a in members})",
          "    return view(f\"group:{group_id}\", weights, {a: 1.0 for a in members}, dangling=\"uniform\")"),
     "V3 the coverage gate is skipped (raw coverages used as weights)":
-        ("group_view(kind_weights(coverages), group_id, members)", "group_view(dict(coverages), group_id, members)"),
+        ("    return scores(edges, group_view(kind_weights(coverages), group_id, members), nodes, now)",
+         "    return scores(edges, group_view(dict(coverages), group_id, members), nodes, now)"),
     "V4 an empty group is ranked anyway (no refusal)":
         ("    if not members:\n        raise ValueError(f\"group {group_id!r} has no members: a view needs teleport mass\")\n", ""),
     "V5 the view is named like GLOBAL":
         ("view(f\"group:{group_id}\", weights,", "view(\"global\", weights,"),
     "V6 a group no edge touches reads as measured (pure teleport passed off as evidence, a3 #60189)":
-        ("    return any(e[\"src\"] in m or e[\"dst\"] in m for e in edges)", "    return True"),
+        ("    return any(s in m or t in m\n", "    return True or any(s in m or t in m\n"),
     "V7 only an edge's src counts as touching the group":
-        ("    return any(e[\"src\"] in m or e[\"dst\"] in m for e in edges)", "    return any(e[\"src\"] in m for e in edges)"),
+        ("    return any(s in m or t in m\n", "    return any(s in m\n"),
+    "V8 the weight test dropped: a coverage-gated or future edge counts as measured (a3 #60194)":
+        ("               for s, t, _ in weighted(edges, group_view(kind_weights(coverages), group_id, members), now))",
+         "               for s, t in ((e[\"src\"], e[\"dst\"]) for e in edges))"),
 }
