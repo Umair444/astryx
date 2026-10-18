@@ -88,7 +88,7 @@ getent() { printf 'fe80::1  host.docker.internal\n'; }
 arm "(C8) an IPv6-only answer is not used → 172.17.0.1" "$(_docker_host_ip "$T/env")" 172.17.0.1
 unset -f ip getent
 arm "(C9) init.sh's generated whatsapp unit binds the resolved address, not a literal" \
-  "$(grep -c 'bridges.whatsapp:app --host $(_docker_host_ip) --port 8477' init.sh)" 1
+  "$(grep -cF 'bridges.whatsapp:app --host $(_docker_host_ip) --port ${_UP:-8477}' init.sh)" 1   # S3b 5/n: the org's port
 # every remaining mention is inside a comment (the text after a '#')
 arm "(C10) no hardcoded 172.17.0.1 left in init.sh's or deploy.sh's commands" \
   "$(grep -h '172\.17\.0\.1' init.sh scripts/deploy.sh | grep -vc '#.*172\.17\.0\.1')" 0
