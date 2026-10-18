@@ -1,26 +1,12 @@
 {
  "_": "plan-11324 S3b 5/n (seed #59954 ruling 3): every tracked file whose EXECUTABLE text still names a per-org unit's fixed port (data/org_units.json, scope org with a port), and why that is right in a cog of several orgs. tests/test_org_home_units.py U9 reads the tree (tests/ excluded): a literal in an undeclared file fails, and so does a declaration whose file no longer has one (a stale entry is a lie about the code). `s3c` entries are the TRIP: they are wrong in a cog of several orgs today and S3c must remove them (the entry goes when the literal does).",
  "files": {
-  "init.sh": {
-   "why": "units()' `${_UP:-<port>}` defaults (one org; several: the registry port, U7 checks every default) and the one-org `./init.sh whatsapp` wizard's webhook text (it writes the CHECKOUT's .env: one-org setup)"
-  },
-  "src/astryx/pulse/senses.py": {
-   "why": "PORT, the one-org port; several orgs: orgs.port at serve time (U8)"
-  },
-  "src/astryx/contrib/growbot_body.py": {
-   "why": "PORT, the one-org port; several orgs: orgs.port at serve time, a GROWBOT_PORT naming another refuses (U8)"
-  },
-  "mcp/growbot/server.py": {
-   "why": "the one-org body host's port; several orgs: orgs.port (U8)"
-  },
-  "scripts/deploy.sh": {
-   "why": "BADDR's bridge addresses: deploy.sh refuses in a cog of several orgs (one-org only, its first line)"
-  },
-  "observatory/web/src/types.ts": {
-   "why": "a /* */ comment naming senses' port (the census grammar strips // and leading * only)"
-  },
-  "observatory/api/main.py": {
-   "why": "the ear (EAR_UP) and growbot-body defaults: one org's fixed ports; in a cog each org's own observatory (astryx-observatory-org@<org>) proxies ITS org's ear and body at orgs.port (S3c 3/n resolved the trip a2 #60394 named)"
-  }
+  "init.sh": {"why": "units()' `${_UP:-<port>}` defaults (one org; several: the registry port, U7 checks every default) and the one-org `./init.sh whatsapp` wizard's webhook text (it writes the CHECKOUT's .env: one-org setup)"},
+  "src/astryx/pulse/senses.py": {"why": "PORT, the one-org port; several orgs: orgs.port at serve time (U8)"},
+  "src/astryx/contrib/growbot_body.py": {"why": "PORT, the one-org port; several orgs: orgs.port at serve time, a GROWBOT_PORT naming another refuses (U8)"},
+  "mcp/growbot/server.py": {"why": "the one-org body host's port; several orgs: orgs.port (U8)"},
+  "scripts/deploy.sh": {"why": "BADDR's bridge addresses: deploy.sh refuses in a cog of several orgs (one-org only, its first line)"},
+  "observatory/web/src/types.ts": {"why": "a /* */ comment naming senses' port (the census grammar strips // and leading * only)"},
+  "observatory/api/main.py": {"why": "the ear (EAR_UP) and growbot-body defaults: one org's fixed ports; in a cog each org's own observatory (astryx-observatory-org@<org>) proxies ITS org's ear and body at orgs.port (S3c 3/n resolved the trip a2 #60394 named)"}
  }
 }

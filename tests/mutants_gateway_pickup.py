@@ -23,4 +23,6 @@ MUTANTS = {
          '                        if isinstance(e, dict):\n'),
     "PK3 our own 429 settles the envelope (the watermark passes it: dropped at the peer)":
         ("                                break            # our own cap", "                                pass             # our own cap"),
+    "PK4 a peer's thread reaches the insert as it came (a signed dict raises there: a 500, a stuck batch)":
+        ("    thread = None if thread is None else str(thread)[:THREAD_MAX]\n", "    pass\n"),
 }

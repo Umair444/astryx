@@ -189,6 +189,7 @@ from bridges import relay as relay_mod  # noqa: E402
 
 SKEW = 600                      # seconds of envelope timestamp tolerance
 BODY_MAX = 16000
+THREAD_MAX = 200
 AGENT_MAX = 63 - len("astryx_msg_")   # postgres caps a NOTIFY channel at 63 bytes; the doorbell is astryx_msg_<agent>
 INBOX_RATE = int(_env("ASTRYX_INBOX_RATE", "60"))   # envelopes/hour per introduced org
 RATE_WINDOW = float(_env("ASTRYX_RATE_WINDOW", "3600"))  # seconds a rate cap counts over (tests shorten it)
@@ -582,6 +583,10 @@ async def inbox(ctx: Ctx, e: dict, window: float = SKEW):
     body = str(e.get("body", ""))[:BODY_MAX]
     if not body:
         return Response(status_code=400)
+    # a peer's thread is text like the rest (a2 #60449 A-1: a signed dict or int raised at the insert: a 500 at the
+    # door, and a pickup batch stuck on that row for good)
+    thread = e.get("thread")
+    thread = None if thread is None else str(thread)[:THREAD_MAX]
     # seen only once it is past the caps: a 429'd relay item comes back with the SAME id
     seen_ids[eid] = now
     try:
@@ -589,7 +594,7 @@ async def inbox(ctx: Ctx, e: dict, window: float = SKEW):
             """INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread,
                                      intent, body, sig)
                VALUES ($1, $2, $3, 'local', $4, $5, $6, $7)""",
-            from_agent[:64], from_org, to_agent, e.get("thread"),
+            from_agent[:64], from_org, to_agent, thread,
             intent, body, e.get("sig"))
     except Exception:
         seen_ids.pop(eid, None)                  # not landed: a retry must not read as a replay

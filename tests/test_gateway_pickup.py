@@ -13,6 +13,8 @@ A fixture database for our org (NAT: no ASTRYX_URL), one introduced peer with a 
   P4 an intent the grant doesn't hold (task) lands nothing
   P5 over the rate cap (the 4th that would land): refused, and it stays AT THE PEER: the next poll's since stops
      before it, and it is offered again
+  P7 a signed envelope whose thread is not text (a dict) lands, its thread as text, and the batch moves on past it
+     (a2 #60449 A-1: it raised at the insert, so the peer's batch stuck on that row for good)
   P6 an envelope from ANOTHER known peer (trusted, genuinely signed by it) inside this peer's batch, or one with a
      forged signature, lands nothing: a polled peer speaks only for itself
 Seam: GATEWAY_PICKUP_SRC (a mutant bridges/gateway.py, executed as the real module).
@@ -67,16 +69,16 @@ async def main(url):
     other = f"fxother-{os.getpid()}"                  # a second, TRUSTED peer: its envelope must come from it, not via fxpeer
     ok_ = SigningKey.generate()
 
-    def env(to, intent="chat", body="", frm=None, eid=None, key=pk):
+    def env(to, intent="chat", body="", frm=None, eid=None, key=pk, thread="fx-pickup"):
         d = {"astryx": 0, "id": eid or str(uuid.uuid4()), "from": frm or f"fxsender@{peer}", "to": f"{to}@{ctx.name}",
-             "thread": "fx-pickup", "intent": intent, "body": body, "ts": time.time()}
+             "thread": thread, "intent": intent, "body": body, "ts": time.time()}
         d["sig"] = key.sign(gw.canonical(d)).signature.hex()
         return d
     legit = env("seed", body="legit")
     batch = [legit, legit, env("seed", body="spoofed", frm=f"x@{other}", key=ok_),
              {**env("seed", body="forged"), "body": "forged-after-signing"},
              env("forge", body="to forge"), env("seed", intent="task", body="a task"),
-             env("seed", body="third"), env("seed", body="over the cap")]
+             env("seed", body="dict thread", thread={"not": "text"}), env("seed", body="over the cap")]
     items = [{"row_id": i + 1, "envelope": e} for i, e in enumerate(batch)]
     sinces = []
 
@@ -99,7 +101,7 @@ async def main(url):
         await asyncio.sleep(4)
         task.cancel()
         rows = [dict(r) for r in await ctx.pool.fetch(
-            "SELECT to_agent, intent, body, from_org FROM messages WHERE from_org IN ($1, $2) OR body IN ('spoofed', "
+            "SELECT to_agent, intent, body, from_org, thread FROM messages WHERE from_org IN ($1, $2) OR body IN ('spoofed', "
             "'forged', 'forged-after-signing') ORDER BY id", peer, other)]
     finally:
         gw.httpx.AsyncClient = real
@@ -117,10 +119,13 @@ async def main(url):
     print("\nP4 THE INTENT GATE")
     check("intent task, not granted: nothing lands", "a task" not in bodies, str(bodies))
     print("\nP5 THE RATE CAP")
-    check("3 land (legit, to forge, third); the 4th is refused", "third" in bodies and "over the cap" not in bodies
-          and len(rows) == 3, str(bodies))
+    check("3 land (legit, to forge, dict thread); the 4th is refused", "dict thread" in bodies
+          and "over the cap" not in bodies and len(rows) == 3, str(bodies))
     check("it stays at the peer: later polls ask since=7 (before it), so it is offered again",
           len(sinces) >= 2 and sinces[0] == 0 and all(s == 7 for s in sinces[1:]), str(sinces[:6]))
+    print("\nP7 A THREAD THAT ISN'T TEXT")
+    check("a signed dict thread lands as text, and the batch moved past it (the 4th was reached)",
+          [r["thread"] for r in rows if r["body"] == "dict thread"] == [str({"not": "text"})], str(rows))
     print("\nP6 ONLY THE POLLED PEER, ONLY ITS KEY")
     check("another org's envelope in this peer's batch, and a forged signature: nothing lands",
           not ({"spoofed", "forged", "forged-after-signing"} & set(bodies)), str(bodies))

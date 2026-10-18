@@ -17,8 +17,8 @@ TIMEOUT = 300
 
 MUTANTS = {
     'D1 the observatory is declared per-org (every org writes one on :8090)':
-        ('"astryx-observatory": {"scope": "cog", "port": 8090}',
-         '"astryx-observatory": {"scope": "org", "port": 8090}'),
+        ('"astryx-observatory": {"scope": "cog", "port": 8090, "cog_ready": true}',
+         '"astryx-observatory": {"scope": "org", "port": 8090, "cog_ready": true}'),
     "D2 whatsapp's port is forgotten (an org writes it on the fixed 8477)":
         ('"astryx-whatsapp":    {"scope": "org", "port": 8477}',
          '"astryx-whatsapp":    {"scope": "org"}'),

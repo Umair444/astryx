@@ -233,7 +233,8 @@ def main():
         # B's entry without its whatsapp port: B wants whatsapp (its routes), so units() REFUSES
         reg = json.loads(fx.reg.read_text())
         reg["orgs"][ob]["ports"].pop("astryx-whatsapp")
-        reg["orgs"][fx.org["a"]]["ports"] = {}          # A wants none of these: an org declares only what it runs
+        # A runs none of these but its own observatory (every org in a cog does): it declares only what it runs
+        reg["orgs"][fx.org["a"]]["ports"] = {"astryx-observatory-org": fx.ports["a"]["astryx-observatory-org"]}
         noport = fx.t / "noport.json"
         noport.write_text(json.dumps(reg))
         r = render(fx.env(ASTRYX_HOME=str(B), ASTRYX_COG_REGISTRY=str(noport)), fx.t / "u_np")
@@ -242,7 +243,7 @@ def main():
               r.returncode != 0 and "astryx-whatsapp is wanted" in r.stderr
               and not any(n.startswith("astryx-whatsapp") for n in np_files), f"rc {r.returncode} {r.stderr[-300:]}")
         r = render(fx.env(ASTRYX_HOME=str(A), ASTRYX_COG_REGISTRY=str(noport)), fx.t / "u_na")
-        check("A wants no port unit and declares no ports: rc 0 (only what it runs needs a port)",
+        check("A declares only its own observatory's port: rc 0 (only what it runs needs a port)",
               r.returncode == 0 and not any(n.startswith(("astryx-whatsapp", "astryx-senses")) for n in files(fx.t / "u_na")),
               f"rc {r.returncode} {r.stderr[-300:]}")
         dflt = defaults_gap((co / "init.sh").read_text(), doc)
