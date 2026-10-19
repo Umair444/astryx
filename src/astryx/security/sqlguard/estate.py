@@ -47,6 +47,12 @@ def absent(repo, deps=("psycopg",), env=True):
 
 
 def gate(name, repo, deps=("psycopg",), env=True):
+    # check.sh's registry pin, for a gate run BY HAND (seed 10-19: the relay oracle, run bare on the cog host, started
+    # its fixture gateways under /etc/astryx/cog.json, and 'orga.test' introduced itself to our LIVE seed). A path naming
+    # no file, set before the first estate read; a value already in the env (check.sh's, or an oracle's own) stands.
+    import os
+    import tempfile
+    os.environ.setdefault("ASTRYX_COG_REGISTRY", f"{tempfile.gettempdir()}/astryx-gate-{os.getpid()}-no-registry/cog.json")
     got = absent(repo, deps, env)
     if got:
         rc, why = got

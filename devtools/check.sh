@@ -827,6 +827,7 @@ run "brief-silence duty floor"        "$PY" tests/test_brief_silence.py
 # found (0), searched-and-empty (1), NOT SEARCHED (2) — because a bare 0 collapses the last
 # two, and 0 is the most convincing possible answer. Fully hermetic (builds its own corpus).
 run "estate-grep coverage states"     "$PY" tests/test_estate_grep.py
+run "gate() pins the cog registry for a gate run by hand" "$PY" tests/test_gate_registry_pin.py
 # Pure stdlib (rows are injected), but the trigger BODY is gitignored, so it SKIPS loudly
 # on a fresh clone. Carries a counterexample arm: the allowlist polarity is proven to be
 # load-bearing by showing the blocklist version go silent on the same fixture.
