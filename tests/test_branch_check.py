@@ -3,10 +3,13 @@
 the tool's own), FLAKY is not REGRESSED, a prod-reaching statement fails the run, and on an UNHARDENED host the run
 REFUSES (rc 77, naming seed's P0-a) and leaves nothing behind. Exits 77 without a DSN.
 """
+import atexit
 import contextlib
 import io
 import json
 import os
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -28,6 +31,14 @@ LOG = ("\x1b[36m▶\x1b[0m gate a\n  ✓ gate a\n"
        "FAILED (2):\n  \x1b[31m✗\x1b[0m gate b\n  ✗ gate c\n"
        "UNVERIFIED (1) — this run did NOT check these; they are not evidence of anything:\n  ○ gate d\n"
        "\ncheck: 40 verified, 2 FAILED, 1 UNVERIFIED\n")
+
+
+
+def _tmpdir(prefix):
+    """A scratch dir removed at exit: six bare mkdtemps here leaked 24 bc-* dirs a day into tmpfs /tmp (goal 11580)."""
+    d = Path(tempfile.mkdtemp(prefix=prefix))
+    atexit.register(shutil.rmtree, d, True)
+    return d
 
 
 def main():
@@ -162,7 +173,7 @@ def main():
           len(reps) == 1 and any(k.arg == "touched" and "touched_files" in ast.dump(k.value)
                                  and "'branch'" in ast.unparse(k.value) for k in reps[0].keywords),
           ast.dump(reps[0]) if reps else "no report call in run()")
-    tsc = Path(tempfile.mkdtemp(prefix="bc-scope-"))
+    tsc = _tmpdir("bc-scope-")
     (tsc / "tests").mkdir()
     (tsc / "tests" / "test_x.py").write_text("from astryx.hearing import voice_mint as V\nimport nucleus.other\n")
     real = subprocess.run
@@ -187,7 +198,7 @@ def main():
           "still RED in the branch's scope (files it changes, modules they import): 2" in out, out)
     # a2 night-review 10-12: a DARK gate whose oracle references a file the branch changes is named, to be run directly
     # (10-11: seed/trigger-name-guard PASSed while the ear/wake/doorbell oracles, which stage channel/server.mjs, were dark)
-    dk = Path(tempfile.mkdtemp(prefix="bc-dark-"))
+    dk = _tmpdir("bc-dark-")
     for d in ("nucleus", "tests", "channel", "devtools"):
         (dk / d).mkdir()
     (dk / "devtools" / "check.sh").write_text(
@@ -230,7 +241,7 @@ def main():
     # a2 night-review 10-14: a CENSUS oracle reaches files by ENUMERATING (git ls-files, a dir glob), not by name;
     # only a MEMBERSHIP change (add/delete/rename) changes its set. 10-12: reachability was dark when review_range.sh
     # was ADDED invoked-by-nothing.
-    cz = Path(tempfile.mkdtemp(prefix="bc-census-"))
+    cz = _tmpdir("bc-census-")
     for d in ("nucleus", "tests", "units", "devtools"):
         (cz / d).mkdir()
     (cz / "devtools" / "check.sh").write_text('run "repo census" "$PY" tests/test_rw.py\n'
@@ -313,7 +324,7 @@ def main():
     check("a gate NEWLY unverified on the branch (a2 #37112: CREATEROLE missing) counts as dark → UNVERIFIABLE, rc 0",
           rc == 0 and "← dark gate: prep gate" in out and "REGRESSED" not in out, out)
     # the relation, read statically from a repo's check.sh and oracle files
-    tdr = Path(tempfile.mkdtemp(prefix="bc-refs-"))
+    tdr = _tmpdir("bc-refs-")
     (tdr / "nucleus").mkdir()
     for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
         (tdr / _d).mkdir(parents=True, exist_ok=True)
@@ -362,13 +373,13 @@ def main():
     check("C4: enforce keys an R-BLIND by path/function/text, never its LINE (same id at line 10 and 99)",
           len(a_) == 1 and a_ == b_, f"{a_} {b_}")
     check("…and different SQL at the same place is a different identity", a_ != c_, f"{a_} {c_}")
-    td = Path(tempfile.mkdtemp())
+    td = _tmpdir("bc-red-")
     check("sqlguard_red: no red.json (enforce didn't run) → None, never an empty 'no findings'",
           bc.sqlguard_red(td) is None)
     (td / "red.json").write_text(json.dumps([{"id": "x", "line": "R-NEW …"}]))
     check("sqlguard_red: red.json → {id: line}", bc.sqlguard_red(td) == {"x": "R-NEW …"})
 
-    t = Path(tempfile.mkdtemp())
+    t = _tmpdir("bc-witness-")
     (t / "trace-1.jsonl").write_text("\n".join(json.dumps({"db": d}) for d in ("astryx", "astryx_fx_1", "astryx")) + "\n")
     check("the prod witness counts only statements whose db IS the prod database", bc.prod_statements(t, "astryx") == 2)
 
@@ -403,4 +414,5 @@ def main():
 
 
 if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))   # a gate cap's TERM exits through atexit too
     sys.exit(main())
