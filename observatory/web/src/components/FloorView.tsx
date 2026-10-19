@@ -369,6 +369,8 @@ export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) =>
         <span className="flex items-center gap-1.5 text-ink-dim"><i className="w-2 h-2 rounded-full bg-good" />{awake} awake</span>
         <span className="text-ink-mute">{agents.length - awake} asleep</span>
         {overview && <span className="text-ink-mute hidden md:inline">· {overview.messages_24h} messages today</span>}
+        {cross.length > 0 && <span className="text-ink-mute hidden md:inline" title="messages between this org and the other rooms of its cog in the last 14 days: the lines in the companion hue">
+          · {cross.reduce((s, t) => s + t.n, 0)} across the cog</span>}
         <span className="ml-auto text-[11px] text-ink-mute hidden sm:inline">every message on the wire travels across the room as it happens</span>
       </div>
       {who.owner && (inf || cogErr) && (

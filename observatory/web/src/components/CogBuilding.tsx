@@ -80,7 +80,15 @@ export function CogSwitcher() {
             <RoomChip key={r.org} r={r} here={r.org === here} onClick={() => (r.org === here ? setOpen(true) : chooseOrg(r.org))} />
           ))}
         </span>
-        {cur && <span className="sm:hidden"><RoomChip r={cur} here onClick={() => setOpen(true)} /></span>}
+        {/* a phone's header has room for one icon, not a name (a long registry key wrapped it to two rows, seen at 390px):
+            the building, with the focused room's state dot; its name is one tap away */}
+        {cur && (
+          <button onClick={() => setOpen(true)} title={`${cur.org}: you are here · open the building`} aria-label={`open the building (focused: ${cur.org})`}
+            className="sm:hidden relative grid place-items-center w-10 h-10 rounded-lg border border-cyan/35 bg-cyan/10 text-ink">
+            <BuildingIcon />
+            <span className="absolute top-1.5 right-1.5"><RoomDot r={cur} working={0} live={cur.overview?.live ?? 0} /></span>
+          </button>
+        )}
         <button onClick={() => setOpen(true)} title="The building: every org of this cog" aria-label="open the building"
           className="hidden sm:grid place-items-center w-8 h-8 rounded-lg text-ink-mute hover:text-ink hover:bg-ink/[.06]">
           <BuildingIcon />

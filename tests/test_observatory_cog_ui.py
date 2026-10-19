@@ -13,9 +13,17 @@ several rooms: the header's room chips, the building sheet, the chooser. Read fr
      (reading, down, private, empty as a promise); a looping motion checks reduced motion; icon-only buttons carry an
      aria-label and a title; the sheet is portalled (the header is its own stacking context: inside it the sheet sat
      under the sidebar, seen in chromium 10-19)
+  K4 a new org from the Agents view: the owner's only, one same-origin POST /api/cog/orgs, the client's key rule the
+     server's, the pending room a promise with seed's face (still under reduced motion), every phase in words
   K5 the floor's camera frames the FOCUSED org (owner 10-19: "the center of floor to the focused org only, not the
-     overall cog center"): fit() centres on the chosen room's own centre (one.w * me + one.w / 2) at a one-room scale,
-     the floor's first framing is that, and only the ⤢ control frames every room
+     overall cog center"): fit() centres on the chosen room's own centre (its slot's, slots[me].cx: one org, one.w / 2)
+     at a one-room scale, the floor's first framing is that, and only the ⤢ control frames every room
+  K6 the conglomerate (owner 10-19: "a single obs key … switch is seamless … the whole coglomerate with focused org"):
+     a focus switch sets the cookie before the reload and keeps the URL, never a key prompt; locked only on a refused
+     key; the cross-org ties read through the focused base. FLOOR: one org is one slot one.w wide; a sibling's people
+     get seats only when it is open; hover peeks, Esc closes; its orb casts no glow; its peers row is never a rim peer.
+     NETWORK: a sibling collapses to its orb, opens in place without a remount, closes on Esc or the pane; its
+     messages are placed before the owner branch; the sibling edge is weighted and agent ties drawn when open
 Seam: OBS_SRC_DIR (a mutant observatory/web/src). Exit 0 · 1 · 77.
 """
 import os
@@ -110,8 +118,8 @@ def main():
           str([k for k, w in words.items() if w not in b]))
     check("a looping motion checks reduced motion", "repeat: Infinity" in b and "useReducedMotion()" in b
           and re.search(r"working && !still \? \{ duration: 2\.2, repeat: Infinity", b) is not None)
-    icon_buttons = [x for x in re.findall(r"<button\b(?:(?!</button>).)*?<(?:BuildingIcon|CloseIcon) />", b, re.S) if x.count("<button") == 1]
-    check("icon-only buttons carry an aria-label and a title", len(icon_buttons) == 2
+    icon_buttons = [x for x in re.findall(r"<button\b(?:(?!</button>).)*?<(?:BuildingIcon|CloseIcon) />", b, re.S) if x.count("<button") == 1]   # the header's, the phone's, the sheet's close
+    check("icon-only buttons carry an aria-label and a title", len(icon_buttons) == 3
           and all("aria-label=" in x and "title=" in x for x in icon_buttons), str(len(icon_buttons)))
     check("the building sheet is portalled to the body", "createPortal(" in src["building"]
           and "document.body," in src["building"])

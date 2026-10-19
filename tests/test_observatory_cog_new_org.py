@@ -118,14 +118,19 @@ def main(url, tmp):
 
 
 if __name__ == "__main__":
+    from astryx.security.sqlguard.estate import unavailable
+    from astryx.security.sqlguard.fixture import FixtureUnavailable
     with tempfile.TemporaryDirectory() as td:
         # never the host's /etc registry (a host in a cog has one): one org, before anything resolves a HOME
         os.environ["ASTRYX_COG_REGISTRY"] = str(Path(td) / "absent.json")
-        with fixture_db() as fx:
-            os.environ["ASTRYX_DSN"] = fx["url"]
-            os.environ["OBS_KEY"] = "test-owner-key"
-            os.environ["ASTRYX_ORG"] = "fixture.example"
-            os.environ["ASTRYX_GATEWAY_PORT"] = "9"          # discard: a real gateway is never asked
-            main(fx["url"], Path(td))
+        try:
+            with fixture_db() as fx:
+                os.environ["ASTRYX_DSN"] = fx["url"]
+                os.environ["OBS_KEY"] = "test-owner-key"
+                os.environ["ASTRYX_ORG"] = "fixture.example"
+                os.environ["ASTRYX_GATEWAY_PORT"] = "9"          # discard: a real gateway is never asked
+                main(fx["url"], Path(td))
+        except FixtureUnavailable as e:                          # no admin DSN here: NOT SEARCHED, or BROKEN on a live host
+            unavailable("test_observatory_cog_new_org", REPO, e)
     print(f"{'PASS' if not fails else 'FAIL'}: observatory cog new org ({fails} failing)")
     sys.exit(1 if fails else 0)

@@ -652,13 +652,47 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
           {siblings.length > 0 && (
             <div className="mt-6">
               <div className="text-[11px] uppercase tracking-[0.14em] text-ink-dim mb-2">In this cog · this machine</div>
-              {siblings.map((o) => (
-                <button key={o.name} type="button" onClick={() => o.org && chooseOrg(o.org)}
-                  className="w-full h-11 flex items-center gap-2.5 text-[13px] text-ink-dim border-b border-line/40 text-left">
-                  <Orb size={16} /> {o.name}
-                  <span className="ml-auto font-mono text-[10px] text-ink-mute">sibling · in process</span>
-                </button>
-              ))}
+              {/* a phone: each sibling collapsed to its row (orb, name, life); a tap opens its people below it, and
+                  Focus walks in. The same shape as the map's sibling room */}
+              {siblings.map((o) => {
+                const room = sibRooms[o.name]
+                const ms = (room?.agents ?? []).map((a) => ({ a, mood: moodOf(a, room!.presence[a.agent], now) }))
+                  .sort((x, y) => MOOD_RANK[x.mood] - MOOD_RANK[y.mood] || x.a.agent.localeCompare(y.a.agent))
+                const isOpen = openSib === o.name
+                const awake = ms.filter((m) => m.mood !== 'asleep').length
+                const word = !room || room.state === 'reading' ? 'reading…' : room.state === 'down' ? 'down · retrying'
+                  : room.state === 'locked' ? 'refused your key' : `${awake} awake · ${ms.length} agents`
+                const tieN = cogTies.filter((t) => t.room === o.name).reduce((s, t) => s + t.n, 0)
+                return (
+                  <div key={o.name} className="border-b border-line/40">
+                    <div className="flex items-center gap-2.5">
+                      <button type="button" onClick={() => setOpenSib(isOpen ? null : o.name)} aria-expanded={isOpen}
+                        aria-label={isOpen ? `close ${o.org ?? o.name}` : `open ${o.org ?? o.name} here`}
+                        className="flex-1 min-w-0 h-11 flex items-center gap-2.5 text-[13px] text-ink-dim text-left">
+                        <RoomOrb size={18} working={ms.some((m) => m.mood === 'working')} />
+                        <span className="truncate"><span className="text-ink">{o.org ?? o.name}</span> · same cog</span>
+                        <span className={`ml-auto shrink-0 text-[10.5px] tabular-nums ${room?.state === 'down' ? 'text-bad' : 'text-ink-mute'}`}>
+                          {word}{tieN ? ` · ${tieN} across` : ''}
+                        </span>
+                      </button>
+                      <button type="button" onClick={() => o.org && chooseOrg(o.org)} title={`Focus ${o.name}: every tab then reads this org`}
+                        className="shrink-0 h-9 px-3 rounded-full border border-line text-[12px] text-ink-dim hover:text-ink">Focus</button>
+                    </div>
+                    {isOpen && ms.length > 0 && (
+                      <div className="flex flex-wrap gap-2 pb-3">
+                        {ms.slice(0, 12).map((m) => (
+                          <span key={m.a.agent} className="flex flex-col items-center gap-0.5 w-12" title={`${displayName(m.a.agent)} · ${m.mood}`}>
+                            <span className="rounded-full" style={{ boxShadow: m.mood === 'working' ? '0 0 0 2px var(--t-accent)' : m.mood === 'awake' ? '0 0 0 2px color-mix(in srgb, var(--t-good) 70%, transparent)' : '0 0 0 1px var(--t-line)' }}>
+                              <AgentFace name={m.a.agent} base={o.base} size={30} dim={m.mood === 'asleep'} />
+                            </span>
+                            <span className="text-[9.5px] text-ink-dim truncate max-w-full">{displayName(m.a.agent)}</span>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           )}
           {fedPeers.length > 0 && (
