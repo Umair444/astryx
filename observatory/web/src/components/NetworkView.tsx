@@ -11,6 +11,7 @@ import { useTheme } from '../theme'
 import type { AgentRow, Presence } from '../types'
 import { LiveDot, Orb, Panel, Tabs, ViewHeader, useNow } from '../ui/kit'
 import { moodOf, nowLine, type Mood } from '../ui/life'
+import { chooseOrg, useCog } from '../cog'
 
 /* bodies in space: an agent is its face, an org is a glowing orb, a peer is a smaller one */
 const AGENT_W = 132
@@ -19,6 +20,8 @@ const ORG_W = 200
 const ORG_H = 200
 const PEER_W = 150
 const PEER_H = 130
+const SIB_W = 160
+const SIB_H = 120
 
 /* composite organ geometry */
 const GROUP_PAD_X = 22
@@ -170,6 +173,14 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
 
   const known = useMemo(() => new Set(agents.map((a) => a.agent)), [agents])
   const peerOrgs = useMemo(() => new Set(peers.map((p) => p.org)), [peers])
+  /* A cog's other orgs are SIBLINGS, not federation: they run on this machine and the gateway hands their messages over
+     in process, never over the network. Their peers rows exist (the gateway seeds them `introduced`, url NULL) only so
+     the door checks run, so the picture splits them by the cog's own list (/api/cog), never by that row: siblings are
+     rooms inside this org's cog, federation peers stay out on the orbit. One org: no siblings, the picture as before. */
+  const cog = useCog()
+  const siblings = useMemo(() => (cog.cog ? cog.orgs.filter((o) => o.name !== overview?.org) : []), [cog, overview?.org])
+  const sibNames = useMemo(() => new Set(siblings.map((o) => o.name)), [siblings])
+  const fedPeers = useMemo(() => peers.filter((p) => !sibNames.has(p.org)), [peers, sibNames])
 
   // a message on the wire → light an edge for ~3s. Owner sees agent→agent;
   // anonymous only ever receives boundary traffic and animates org<->peer.
@@ -359,8 +370,56 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
       gy += item.h + GROUP_COL_GAP
     }
 
-    // peer orgs on the outer ring — drawn as an orbit around the org
-    if (peers.length) {
+    // the cog's other orgs: rooms on an inner ring (solid, accent: the same building), inside the federation orbit
+    if (siblings.length) {
+      const rc = r1 + 115
+      nodes.push({
+        id: 'cogring',
+        position: { x: -rc, y: -rc },
+        data: { label: null },
+        style: { ...bare(rc * 2, rc * 2), borderRadius: '50%', border: `1px solid ${c.accent}26`, pointerEvents: 'none' },
+        selectable: false,
+        draggable: false,
+        zIndex: -31,
+      })
+      nodes.push({
+        id: 'cogring-label',
+        position: { x: -110, y: -rc - 26 },
+        data: { label: <div className="w-full text-center text-[10.5px] uppercase tracking-[0.12em] text-ink-mute">the cog · this machine</div> },
+        style: bare(220, 20),
+        selectable: false,
+        draggable: false,
+      })
+      const ns = siblings.length
+      siblings.forEach((o, i) => {
+        // the top arc, centred: the departments hold the right side, the federation peers the left
+        const ang = -Math.PI / 2 + (i - (ns - 1) / 2) * 0.42
+        const id = `peer:${o.name}`                     // the flash edges address a remote org by this id
+        nodes.push({
+          id,
+          position: { x: rc * Math.cos(ang) - SIB_W / 2, y: rc * Math.sin(ang) - SIB_H / 2 },
+          data: {
+            label: (
+              <button type="button" onClick={() => o.org && chooseOrg(o.org)} title={`Open ${o.name}'s room`}
+                aria-label={`Open ${o.name}'s room`}
+                className="w-full h-full flex flex-col items-center gap-1.5 pt-1 rounded-2xl hover:bg-fg/[.06] transition-colors">
+                <Orb size={52} />
+                <span className="text-center max-w-full px-1">
+                  <span className="block text-[12px] font-medium text-ink truncate">{o.name}</span>
+                  <span className="block text-[9.5px] text-ink-mute">same cog · this machine</span>
+                </span>
+              </button>
+            ),
+          },
+          style: bare(SIB_W, SIB_H),
+          selectable: false,
+        })
+        edges.push({ id: `e-org-${id}`, source: 'org', target: id, style: { stroke: c.accent + '55', strokeWidth: 1.4 } })
+      })
+    }
+
+    // federation peers on the outer ring — drawn as an orbit around the org
+    if (fedPeers.length) {
       nodes.push({
         id: 'orbit',
         position: { x: -r2, y: -r2 },
@@ -371,8 +430,8 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
         zIndex: -30,
       })
     }
-    const np = Math.max(peers.length, 1)
-    peers.forEach((p, i) => {
+    const np = Math.max(fedPeers.length, 1)
+    fedPeers.forEach((p, i) => {
       // departments hold the right side, so peers take the left arc; with none, the full orbit
       const ang = items.length
         ? Math.PI / 2 + ((i + 1) / (np + 1)) * Math.PI
@@ -403,7 +462,7 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
     })
 
     return { nodes, edges }
-  }, [overview, agents, peers, onOpenAgent, who.owner, c, moods, presence, now])
+  }, [overview, agents, fedPeers, siblings, onOpenAgent, who.owner, c, moods, presence, now])
 
   // Re-fit whenever the graph's shape changes (agents/peers/groups arrive
   // async after mount). Without this, fitView runs once on the lone org node
@@ -418,7 +477,7 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
       )}
       <span className="flex items-center gap-1.5"><LiveDot state="awake" />{overview?.live ?? '—'} live</span>
       <span className="text-ink-mute">
-        · {overview ? `${overview.agents} agents · ${overview.peers} peers · ${overview.messages_24h} messages today` : 'connecting…'}
+        · {overview ? `${overview.agents} agents · ${siblings.length ? `${siblings.length} in this cog · ${fedPeers.length}` : overview.peers} peers · ${overview.messages_24h} messages today` : 'connecting…'}
       </span>
     </>
   )
@@ -442,7 +501,13 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
               <Orb size={72} />
               <span className="text-[11px] text-ink-dim">this org</span>
             </div>
-            {peers.slice(0, 3).map((p) => (
+            {siblings.map((o) => (
+              <div key={o.name} className="flex flex-col items-center gap-2 min-w-0">
+                <Orb size={48} />
+                <span className="text-[10px] text-ink-mute truncate max-w-[80px]">{o.name}</span>
+              </div>
+            ))}
+            {fedPeers.slice(0, 3).map((p) => (
               <div key={p.org} className="flex flex-col items-center gap-2 min-w-0">
                 <Orb size={40} tone="accent2" />
                 <span className="text-[10px] text-ink-mute truncate max-w-[80px]">{p.org}</span>
@@ -477,10 +542,22 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
               })}
             </div>
           )}
-          {peers.length > 0 && (
+          {siblings.length > 0 && (
             <div className="mt-6">
-              <div className="text-[11px] uppercase tracking-[0.14em] text-ink-dim mb-2">Peer orgs</div>
-              {peers.map((p) => (
+              <div className="text-[11px] uppercase tracking-[0.14em] text-ink-dim mb-2">In this cog · this machine</div>
+              {siblings.map((o) => (
+                <button key={o.name} type="button" onClick={() => o.org && chooseOrg(o.org)}
+                  className="w-full h-11 flex items-center gap-2.5 text-[13px] text-ink-dim border-b border-line/40 text-left">
+                  <Orb size={16} /> {o.name}
+                  <span className="ml-auto font-mono text-[10px] text-ink-mute">sibling · in process</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {fedPeers.length > 0 && (
+            <div className="mt-6">
+              <div className="text-[11px] uppercase tracking-[0.14em] text-ink-dim mb-2">Federation peers</div>
+              {fedPeers.map((p) => (
                 <div key={p.org} className="flex items-center gap-2.5 py-2 text-[13px] text-ink-dim border-b border-line/40">
                   <Orb size={16} tone="accent2" /> {p.org}
                   <span className="ml-auto font-mono text-[10px] text-ink-mute">
