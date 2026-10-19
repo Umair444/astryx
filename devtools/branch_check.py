@@ -336,6 +336,15 @@ SCOPE_NOISE = frozenset({"devtools/check.sh"})
 # decode) and may carry run()'s one flag, `--cap=<s>` (check.sh's run(): test_relay's): either form missed was a gate
 # no dark list and no census saw (a4, 10-19: the census never reached test_relay.py's probe-then-release)
 _GATE_RX = re.compile(r'^[ \t]*run (?:--cap=\S+\s+)?"((?:[^"\\]|\\.)+)"\s+(.*)$', re.M)
+# every run() INVOCATION, by COMMAND POSITION, not line start (a3 #61173: `x && run …` and `then run …` were dark to
+# _GATE_RX and to a line-start census alike). A line it finds that _GATE_RX doesn't parse is a gate nobody sees: the
+# oracle fails on it, so an unparseable form is rewritten, never silently skipped. A comment line is not a call.
+_RUN_CALL_RX = re.compile(r"(?:^|[;&|(]|\b(?:then|do|else|elif))\s*run\s")
+
+
+def run_calls(text: str) -> list:
+    """Every line of a check.sh text that invokes run() (comments excluded)."""
+    return [ln for ln in text.splitlines() if _RUN_CALL_RX.search(ln) and not ln.lstrip().startswith("#")]
 _ORACLE_SUFFIXES = (".py", ".sh", ".mjs", ".js", ".ts")
 
 

@@ -149,4 +149,6 @@ MUTANTS = {
         ('_GATE_RX = re.compile(r\'^[ \\t]*run (?:--cap=\\S+\\s+)?"((?:[^"\\\\]|\\\\.)+)"\\s+(.*)$\', re.M)', '_GATE_RX = re.compile(r\'^[ \\t]*run "((?:[^"\\\\]|\\\\.)+)"\\s+(.*)$\', re.M)'),
     "O49 an INDENTED run line is no gate again (a gate inside an `if`: check.sh's media decode)":
         ('_GATE_RX = re.compile(r\'^[ \\t]*run (?:--cap=\\S+\\s+)?"((?:[^"\\\\]|\\\\.)+)"\\s+(.*)$\', re.M)', '_GATE_RX = re.compile(r\'^run (?:--cap=\\S+\\s+)?"((?:[^"\\\\]|\\\\.)+)"\\s+(.*)$\', re.M)'),
+    "O50 run_calls finds a call only at LINE START again (a chained `&& run` or `then run` gate goes dark silently)":
+        ('_RUN_CALL_RX = re.compile(r"(?:^|[;&|(]|\\b(?:then|do|else|elif))\\s*run\\s")', '_RUN_CALL_RX = re.compile(r"^[ \\t]*run\\s")'),
 }

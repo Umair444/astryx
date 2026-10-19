@@ -8,7 +8,6 @@ import contextlib
 import io
 import json
 import os
-import re
 import shutil
 import signal
 import subprocess
@@ -266,10 +265,17 @@ def main():
           and of.get("own gate") == {"tests/test_own.py"} and 'quoted "=ax" gate' in of, of)
     check("…a run line with run()'s --cap=<s> flag, and an INDENTED one (a gate inside an `if`), are gates too",
           of.get("capped gate") == {"tests/test_capped.py"} and of.get("indented gate") == {"tests/test_ind.py"}, of)
-    # the LIVE grammar: every invocation of run() in the real check.sh, read by a pattern WIDER than _GATE_RX (any
-    # leading blanks, any arguments), is a gate gate_files parses. A new form of run line can't go dark silently.
+    # the LIVE grammar: every invocation of run() in the real check.sh, found by COMMAND POSITION (run_calls: line
+    # start, after ; & | ( or then/do/else/elif), is a gate gate_files parses. A new form can't go dark silently.
+    rc_text = ('true && run "chained" "$PY" tests/x.py\nif a; then run "same-line" "$PY" tests/x.py; fi\n'
+               '  run --cap=9 "capped" "$PY" tests/x.py\n# run "a comment" x\necho "we run tests"\nrun() {\n')
+    rc = [ln.strip()[:24] for ln in bc.run_calls(rc_text)]
+    check("run_calls: a chained (&&) and a same-line (then) call are calls; a comment, an echo and run()'s definition "
+          "aren't", rc == ['true && run "chained" "$', 'if a; then run "same-lin', 'run --cap=9 "capped" "$P'], rc)
+    check("…and _GATE_RX doesn't parse the chained form, so the live arm below FAILS on one (never skips it)",
+          not bc._GATE_RX.match(bc.run_calls(rc_text)[0]), bc.run_calls(rc_text)[0])
     live = (REPO / "devtools" / "check.sh").read_text()
-    calls = [ln for ln in live.splitlines() if re.match(r"[ \t]*run\s", ln)]
+    calls = bc.run_calls(live)
     unparsed = [ln.strip()[:80] for ln in calls if not bc._GATE_RX.match(ln)]
     check(f"the live check.sh: each of its {len(calls)} run() invocations parses as a gate", calls and not unparsed,
           unparsed)
