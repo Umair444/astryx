@@ -26,8 +26,8 @@ step consuming what the step before it WROTE, so the seams between them are what
      the negative control that shows the arm can see the double spawn it guards against.
   R6 the drift gates on a registry host: seed's service_deploy_drift resolves lab's REAL @lab observatory ExecStart
      (orgenv-prefixed) to the service's own module, never orgenv.py (seed #61005/#61007), and the primary's plain one
-     likewise (positive control); `./init.sh doctor` still refuses in a cog (exit 3): recorded here, S7 makes it
-     cog-safe (seed #61003), and this arm flips with it.
+     likewise (positive control); `./init.sh doctor` serves the primary (S7, seed #61003/#61017) and refuses lab,
+     naming lab's own vitals.sh and smoke.sh (tests/test_doctor_cog.py holds S7's arms).
 
 The HTTP checks of §6 (/api/cog, /o/<org>/, the gateway's to_org) are test_observatory_cog's and test_gateway_cog's,
 on fixtures; this file starts no service and binds no port (lab's ports are free ones, declared only).
@@ -348,10 +348,19 @@ def main():
                   le[0] == want_main, str(le))
         else:
             print(f"  SKIP  service_deploy_drift: {trig} absent (gitignored seed body; a clone): NOT verified here")
+        shim = fx.t / "shim"                  # doctor's login check is a model call: a stub answers it
+        shim.mkdir(exist_ok=True)
+        (shim / "claude").write_text("#!/bin/sh\necho ok\n")
+        (shim / "claude").chmod(0o755)
+        dpath = f"{shim}{os.pathsep}{os.environ.get('PATH', '')}"
+        r = subprocess.run(["bash", "init.sh", "doctor"], cwd=co, capture_output=True, text=True, timeout=600,
+                           env=fx.env(ASTRYX_HOME=str(co), ASTRYX_COG_REGISTRY=str(etc), PATH=dpath))
+        check("`./init.sh doctor` in the cog serves the PRIMARY (S7): it runs (no exit 3)", r.returncode != 3
+              and "refusing" not in r.stderr, f"rc {r.returncode} {r.stderr[-200:]}")
         r = subprocess.run(["bash", "init.sh", "doctor"], cwd=co, capture_output=True, text=True, timeout=180,
-                           env=fx.env(ASTRYX_HOME=str(co), ASTRYX_COG_REGISTRY=str(etc)))
-        check("`./init.sh doctor` in the cog still REFUSES (exit 3): recorded; S7 makes it cog-safe and flips this arm",
-              r.returncode == 3 and "refusing" in r.stderr, f"rc {r.returncode} {r.stderr[-200:]}")
+                           env=fx.env(ASTRYX_HOME=str(home), ASTRYX_COG_REGISTRY=str(etc), PATH=dpath))
+        check("...and refuses lab (exit 3), naming lab's own vitals.sh and smoke.sh (S7b, lab's doctor, is a stated limit)",
+              r.returncode == 3 and "vitals.sh" in r.stderr and "smoke.sh" in r.stderr, f"rc {r.returncode} {r.stderr[-200:]}")
     finally:
         kill_server("default")
         for h in HELD:

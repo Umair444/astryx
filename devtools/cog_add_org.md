@@ -19,7 +19,7 @@ Nothing here touches `/etc` until the fixture rehearsal (S6) is green.
 | S4 | deploy.sh, pause.sh, refresh.sh, smoke.sh, vitals.sh learn `@<key>` names for NON-primary orgs; the primary keeps today's verbs | each refuses in a cog today ("one-org only, refusing") |
 | S5 | `devtools/cog_add_org.py <key> --home DIR --name FED --dry-run` | lab's own setup path; it never calls this checkout's init.sh (see the trap in step 2) |
 | S6 | the full rehearsal on a fixture registry (`ASTRYX_COG_REGISTRY=<tmp>`): tests/test_cog_rehearsal.py | steps 2 to 6, end to end, before `/etc`. The positive CREATE DATABASE is not a gate, by law (no gate makes a non-fixture database; orgs.load refuses a fixture's as an org db): step 2 itself proves it, then `--verify-lab` (seed #61011) |
-| S7 | a cog-safe `./init.sh doctor`: on a registry host it resolves THIS org (ASTRYX_HOME, or the primary's checkout marker) and judges only its units (seed #61003) | `./init.sh doctor` refuses in a cog today (exit 3), and it is the first line of every breakage path: the primary must not lose it on the cog's first day |
+| S7 | a cog-safe `./init.sh doctor`: on a registry host it serves the PRIMARY (ASTRYX_HOME, or the checkout's marker) and judges only its units, its seats on its own server; any other org refuses, naming its vitals.sh and smoke.sh (seed #61003, #61017): tests/test_doctor_cog.py. STATED LIMIT, S7b (after plan-11324, not blocking /etc): a doctor for a non-primary org, its ~60 checkout-relative reads made `$ORGH`-relative | `./init.sh doctor` refuses in a cog today (exit 3), and it is the first line of every breakage path: the primary must not lose it on the cog's first day |
 
 ## 1. Does our estate move? `READY`: no
 

@@ -478,6 +478,7 @@ run "turns retention: old images stripped, words kept, recent untouched, idempot
 # ends INCOMPLETE, and the pulse is started again (a2 #42367)
 run "cog_add_org: an org's own setup path, every step judged first, nothing made on a dry-run (plan-11324 S3f S5)" "$PY" tests/test_cog_add_org.py
 run "cog rehearsal: the runbook's steps 2-6 end to end on a fixture registry, the double spawn seen and refused (plan-11324 S3f S6)" "$PY" tests/test_cog_rehearsal.py
+run "doctor in a cog: the primary served, its units-drift its own units only, its seats on its own server; another org refused (plan-11324 S3f S7)" "$PY" tests/test_doctor_cog.py
 run "ops cog: pause, smoke, refresh and vitals act on THIS org in a cog (plan-11324 S3f S4)" "$PY" tests/test_ops_cog.py
 run "deploy cog: each org's own units, only the primary touches the database, the cog's gateway and front say so (plan-11324 S3f S4)" "$PY" tests/test_deploy_cog.py
 run "deploy restart: a failed resident is named, the run continues, the pulse comes back" bash tests/test_deploy_restart.sh
