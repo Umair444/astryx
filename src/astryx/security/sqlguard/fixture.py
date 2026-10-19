@@ -352,6 +352,10 @@ def fixture_db(extra: tuple = (), lifetime: str = "immediate", batch: Batch | No
     try:
         admin = psycopg.connect(live_dsn(), autocommit=True)
     except (OSError, StopIteration, LookupError, psycopg.OperationalError) as e:
+        if lifetime == "batch":
+            # no CREATE ran, so the name leaves the batch: a member no admin DSN can judge would make close() raise
+            # LookupError from a caller's finally, masking its NOT SEARCHED (77) as a crash (seed #61038, CI)
+            batch.members.remove(name)
         raise FixtureUnavailable(f"no reachable admin DSN ({type(e).__name__})") from e
     t0 = time.monotonic()
     reap(admin, keep=name)                           # the dead runs' leftovers first (never raises; keep is default)
