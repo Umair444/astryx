@@ -525,6 +525,7 @@ run "whatsapp: wacli retries only transient errors (store locked, 429), bounded"
 run "whatsapp /hook: a reaction to an agent's message reaches that agent" "$PY" tests/test_wa_reactions.py
 run "workflows: one DAG converging on one agent, actuals measured from main (plan-11324 S4)" "$PY" tests/test_workflow.py
 run "workflow SQL: load, goals, save and the observatory endpoint against a fixture database" "$PY" tests/test_workflow_sql.py
+run "observatory overview: the header counts the tree's agents, never a charterless name" "$PY" tests/test_observatory_overview_roster.py
 # the registry door (goal 4227, S4): find + run, and never a new capability. run() executes
 # registered SCRIPTS only, as an argv list (no shell), with a clamped timeout, and never starts
 # an MCP server, because that would walk past its charter grant. Mutants: tests/mutants_tools_door.py.

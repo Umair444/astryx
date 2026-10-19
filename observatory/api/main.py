@@ -376,10 +376,13 @@ async def overview():
           (SELECT count(*) FROM goals WHERE state IN {_SQL_DONE})            AS goals_done,
           (SELECT count(*) FROM peers WHERE status <> 'revoked')             AS peers
     """)
-    alive = tmux_alive()
-    # an agent is an agent whether it has logged steps yet or not: union of
-    # everyone who ever stepped and every body alive right now
-    return {"org": ORG, "live": len(alive), "agents": len(stepped | alive), **dict(r)}
+    # an agent is an agent whether it has logged steps yet or not: union of everyone who ever stepped and every body
+    # alive right now, and only names THE TREE holds (charter.roster(), as /api/agents reads it): a name that once
+    # wrote a step without a charter (seed's onboard.md body, 10-09) counted as an 18th agent in the header (owner 10-19)
+    from astryx.core import charter
+    registry = set(charter.roster())
+    alive = {a for a in tmux_alive() if a in registry}
+    return {"org": ORG, "live": len(alive), "agents": len((stepped & registry) | alive), **dict(r)}
 
 
 def agent_meta() -> dict[str, dict]:
