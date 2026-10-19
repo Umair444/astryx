@@ -106,7 +106,7 @@ COG-scoped, no org may take one: 8090 (the front), 8845 (the gateway).
 8190, 18190 and 18091 were free at the measurement. Re-check just before writing the registry:
 `ss -ltnH '( sport = :8190 or sport = :18190 or sport = :18091 )'` must print nothing.
 
-## 4. The registry and the units: `BLOCKED(S7)` (S1-S6: 45617e5, 907c294, c2919b7, 5ae8d03, 73c9479, d3c1714, S6), then step 2 + `--verify-lab`, then `OWNER`
+## 4. The registry and the units: `OWNER` (S1-S7 landed: 45617e5, 907c294, c2919b7, 5ae8d03, 73c9479, d3c1714, 27d1aa3; step 2 done and `--verify-lab` ALL PASS, seed #61076)
 
 In order, each line the owner's:
 
@@ -115,10 +115,33 @@ In order, each line the owner's:
    must pass before step 2. Its proof: test_org_home_units U12, where no ASTRYX_HOME and no marker gives a NoHome naming
    it, and the marker resolves to the primary.
 2. `sudo install -d -m 755 /etc/astryx && sudo install -m 644 <the file cog_add_org.py wrote, its --out> /etc/astryx/cog.json`
-3. The units, written to `units/` only (S2):
-   - ours: `ASTRYX_HOME=/home/umair/astryx ./init.sh units`. As the primary its units stay plain-named and byte-identical, except that `astryx-observatory.service` is no longer ours, and ours gains `astryx-observatory-org.service` on 8190.
-   - lab's: `ASTRYX_HOME=/home/umair/orgs/lab ./init.sh units`, giving `astryx-<stem>@lab.*`
-   - the cog's: `env -u ASTRYX_HOME ./init.sh units`, giving the gateway (with the registry in its env) and the front as `astryx-observatory.service`
+3. The units, written to `units/` only (S2), each under `env -u ASTRYX_COG_REGISTRY`, so all three read the registry
+   step 2 just installed. The cog's units BAKE IN the registry path of the shell that renders them
+   (`Environment=ASTRYX_COG_REGISTRY=${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}`, init.sh units()): a shell still
+   exporting a scratch registry from a pre-check would install a gateway and a front that read the scratch file, not
+   /etc (forge #61077, found rendering from the real `--out`):
+   - ours: `env -u ASTRYX_COG_REGISTRY ASTRYX_HOME=/home/umair/astryx ./init.sh units`. As the primary its units stay plain-named and byte-identical, except that `astryx-observatory.service` is no longer ours, and ours gains `astryx-observatory-org.service` on 8190.
+   - lab's: `env -u ASTRYX_COG_REGISTRY ASTRYX_HOME=/home/umair/orgs/lab ./init.sh units`, giving `astryx-<stem>@lab.*`
+   - the cog's: `env -u ASTRYX_COG_REGISTRY -u ASTRYX_HOME ./init.sh units`, giving the gateway (with the registry in its env) and the front as `astryx-observatory.service`
+
+   THE CHECK, before ANY install (this step's own, or `scripts/deploy.sh units --cog`, which copies these files from
+   `units/` verbatim and renders nothing):
+
+       grep -H '^Environment=ASTRYX_COG_REGISTRY=' units/astryx-gateway.service units/astryx-observatory.service
+
+   must print exactly these two lines (in either order), and anything else means STOP: re-render with the `env -u` above,
+   never install:
+
+       units/astryx-gateway.service:Environment=ASTRYX_COG_REGISTRY=/etc/astryx/cog.json
+       units/astryx-observatory.service:Environment=ASTRYX_COG_REGISTRY=/etc/astryx/cog.json
+
+   And ours against what is installed, measured on the real `--out` before the owner session (forge #61077): 11
+   IDENTICAL byte for byte (canvas, discord, ear, geoloc, growbot, pulse.service, pulse.timer, residents, senses,
+   telegram, whatsapp), 1 NEW (`astryx-observatory-org.service`: main:app on 127.0.0.1:8190, our ASTRYX_HOME), and
+   `astryx-observatory.service` and `astryx-gateway.service` the cog's. Re-check it here: each of ours must `cmp` equal
+   to its `/etc/systemd/system` copy, but for the one NEW file:
+
+       for f in units/astryx-*.service units/astryx-*.timer; do b=${f#units/}; case $b in *@*|astryx-gateway.service|astryx-observatory.service|astryx-observatory-org.service) continue ;; esac; cmp -s "$f" "/etc/systemd/system/$b" || echo "DIFFERS: $b"; done
 4. The one migrated service, owner present:
    - `sudo systemctl stop astryx-observatory`
    - install the front's `astryx-observatory.service` and our `astryx-observatory-org.service`, then `sudo systemctl daemon-reload && sudo systemctl enable --now astryx-observatory-org astryx-observatory`
