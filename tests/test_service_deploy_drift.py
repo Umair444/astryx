@@ -223,6 +223,25 @@ check("a module that resolves to no repo file returns a reason — the exact sha
       "false all-clear this guard was born from", absent is None and "resolve" in why,
       f"{absent} {why}")
 
+# plan-11324 S3f (forge #61005): on a cog host a non-primary org's unit runs under init.sh's UEXEC prefix,
+# `<venv>/python <co>/src/astryx/orgenv.py exec --home <org> -- <command>`. The wrapper is a .py file in the repo,
+# so a parser that takes the first resolvable token judges every @<org> service by orgenv.py's closure: a lab
+# observatory holding week-old code reads CURRENT. The entry is the WRAPPED command's, never the wrapper's.
+(TMP / "src" / "astryx").mkdir(parents=True, exist_ok=True)
+(TMP / "src" / "astryx" / "orgenv.py").write_text("import os\n")
+wrapped = dict(real, ExecStart=(
+    "{ path=/home/umair/astryx/venv/bin/python ; argv[]=/home/umair/astryx/venv/bin/python "
+    f"{TMP}/src/astryx/orgenv.py exec --home /srv/lab -- /home/umair/astryx/venv/bin/python -m uvicorn "
+    "alpha:app --host 127.0.0.1 --port 18190 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; "
+    "pid=0 ; code=(null) ; status=0/0 }"))
+entry, why = MOD["_entry_file"](wrapped)
+check("an orgenv-wrapped ExecStart (a cog's non-primary org) resolves the WRAPPED module, never orgenv.py",
+      entry == (TMP / "bridges" / "alpha.py"), f"{entry} {why}")
+bare = dict(wrapped, ExecStart=wrapped["ExecStart"].replace(" -- /home/umair/astryx/venv/bin/python -m uvicorn alpha:app", ""))
+entry, why = MOD["_entry_file"](bare)
+check("a wrapper with no `--` command returns a reason, never the wrapper itself",
+      entry is None, f"{entry} {why}")
+
 print("MUST FIRE — a service holding replaced code:")
 
 install(Estate(two, {**ALL_OLD, "bridges/alpha.py": NEW}))
