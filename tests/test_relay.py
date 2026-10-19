@@ -25,9 +25,13 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
+# ONE-ORG gateways, never the host's cog: on a cog host (/etc/astryx/cog.json) each child would serve the LIVE registry's
+# orgs on their live databases (10-19: a direct run registered orga.test in the live relay and peers). Set before any
+# astryx import, never inherited; every child takes it with os.environ. Never created: no registry, whatever the host.
+os.environ["ASTRYX_COG_REGISTRY"] = str(Path(tempfile.gettempdir()) / f"test-relay-{os.getpid()}-no-registry" / "cog.json")
 
 from astryx.security.sqlguard.estate import gate  # noqa: E402
-gate('test_relay', REPO, deps=('psycopg', 'asyncpg', 'fastapi', 'nacl', 'httpx', 'uvicorn'))
+gate('test_relay', REPO, deps=('psycopg', 'asyncpg', 'fastapi', 'nacl', 'httpx', 'uvicorn'), env=False)   # no .env needed: the admin DSN may come by env (fixture.live_dsn)
 import httpx  # noqa: E402
 import psycopg  # noqa: E402
 from nacl.encoding import HexEncoder  # noqa: E402
@@ -63,10 +67,19 @@ def wait(cond, deadline_s, what):
     return None
 
 
-def free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+HELD: list[socket.socket] = []      # every fixture port, held for the whole run (closed in run's finally)
+
+
+def held(listening: bool) -> socket.socket:
+    """A loopback port this run HOLDS, never probed and released for a concurrent gate to take (the gate census,
+    plan-10108 D4 (b)): bound and LISTENING for a gateway to inherit (--fd, across its restart too), or bound and
+    never listening, a port nothing answers on (a connect is refused)."""
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    if listening:
+        s.listen(64)
+    HELD.append(s)
+    return s
 
 
 def q(dsn, sql, *args):
@@ -75,8 +88,9 @@ def q(dsn, sql, *args):
 
 
 class Org:
-    def __init__(self, name, fx, port, logdir, url="", relay_url="", listed=False, host=False, extra=None):
-        self.name, self.dsn, self.port = name, fx["dsn"], port
+    def __init__(self, name, fx, sock, logdir, url="", relay_url="", listed=False, host=False, extra=None):
+        self.name, self.dsn, self.sock = name, fx["dsn"], sock
+        port = sock.getsockname()[1]
         self.base = f"http://127.0.0.1:{port}"
         self.key = SigningKey.generate()
         self.pub = self.key.verify_key.encode(HexEncoder).decode()
@@ -92,7 +106,7 @@ class Org:
     def start(self):
         with open(self.log, "a") as log:
             self.proc = subprocess.Popen(
-                [PY, "-m", "uvicorn", "gateway:app", "--host", "127.0.0.1", "--port", str(self.port)],
+                [PY, "-m", "uvicorn", "gateway:app", "--fd", str(self.sock.fileno())], pass_fds=(self.sock.fileno(),),
                 cwd=REPO / "bridges", env={**os.environ, **self.env},
                 stdout=log, stderr=subprocess.STDOUT)
 
@@ -121,15 +135,15 @@ def landed(org, frm, body):
 
 
 def run(fr, fa, fb, tmp):
-    port = free_port()                           # the relay host is the one org WITH a public URL
-    R = Org("relayhost.test", fr, port, tmp, url=f"http://127.0.0.1:{port}", host=True)
+    sock = held(True)                            # the relay host is the one org WITH a public URL
+    R = Org("relayhost.test", fr, sock, tmp, url=f"http://127.0.0.1:{sock.getsockname()[1]}", host=True)
     orgs = [R]
     try:
         rel = R.base
-        A = Org("orga.test", fa, free_port(), tmp, relay_url=rel, listed=True)
+        A = Org("orga.test", fa, held(True), tmp, relay_url=rel, listed=True)
         orgs.append(A)
         # B's own door is capped small and fast, so the over-the-cap arm runs in seconds
-        B = Org("orgb.test", fb, free_port(), tmp, relay_url=rel, listed=False,
+        B = Org("orgb.test", fb, held(True), tmp, relay_url=rel, listed=False,
                 extra={"ASTRYX_INBOX_RATE": str(B_RATE), "ASTRYX_RATE_WINDOW": "4", "ASTRYX_RELAY_BACKOFF": "1"})
         orgs.append(B)
         for o in orgs:
@@ -319,7 +333,7 @@ def run(fr, fa, fb, tmp):
         # --- reach
         rr = httpx.get(f"{rel}/relay/reach", params={"url": A.base}).json()
         arm("reach answers with the target gateway's identity", rr.get("reachable") and rr.get("pubkey") == A.pub, rr)
-        closed = f"http://127.0.0.1:{free_port()}"
+        closed = f"http://127.0.0.1:{held(False).getsockname()[1]}"   # held, never listening: refused
         rr = httpx.get(f"{rel}/relay/reach", params={"url": closed}).json()
         arm("reach reports a closed port as unreachable", rr.get("reachable") is False, rr)
         arm("reach refuses private and loopback targets by default",
@@ -397,6 +411,8 @@ def run(fr, fa, fb, tmp):
     finally:
         for o in orgs:
             o.stop()
+        for so in HELD:                          # released only once no gateway serves on them
+            so.close()
 
 
 async def proxy_arms():
