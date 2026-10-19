@@ -3322,7 +3322,17 @@ import http.cookiejar  # noqa: E402
 import httpx  # noqa: E402
 from fastapi import BackgroundTasks  # noqa: E402
 
-CANVAS_UP = f"http://127.0.0.1:{orgs.port('astryx-canvas') or 8091}"   # this org's canvas (its registry port in a cog)
+def _upstream(stem: str, fixed: int) -> str | None:
+    """This org's own `stem` service on loopback: its fixed port on one org, its registry port in a cog. None when this
+    org, in a cog, runs no such unit (its registry entry declares no port for it: lab has no ear), so its proxy answers
+    503 instead of the import raising and the whole observatory crash-looping (step 4 live, 10-19)."""
+    o = orgs.name()
+    if o is not None and stem not in orgs.load()[o]["ports"]:
+        return None
+    return f"http://127.0.0.1:{orgs.port(stem) or fixed}"
+
+
+CANVAS_UP = _upstream("astryx-canvas", 8091)   # this org's canvas (its registry port in a cog)
 # In a cog the viewer reaches this observatory under the front's /o/<org>/ (S3c canvas): the prefix is THIS org's
 # registry name, computed, never read from a request (nothing a caller sends can move a redirect). One org: "".
 CANVAS_PRE = f"/o/{orgs.name()}" if _COG else ""
@@ -3338,6 +3348,8 @@ async def canvas_root():
 
 @app.api_route("/canvas/{path:path}", methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"])
 async def canvas_proxy(path: str, request: Request):
+    if CANVAS_UP is None:
+        return Response("this org runs no canvas", status_code=503, media_type="text/plain")
     return await _pipe(f"{CANVAS_UP}/canvas/{path}", request, owner_key=False,
                        down="canvas is not running (astryx-canvas.service)")
 
@@ -3346,11 +3358,13 @@ async def canvas_proxy(path: str, request: Request):
 # this same origin (the secure context getUserMedia needs, no new hostname). Unlike canvas, the ear has no session of
 # its own: its gate IS the observatory owner key, so x-obs-key is forwarded, and the ear service checks it itself
 # (401 without it). This proxy adds no authority: an unauthenticated request reaches the ear and is refused there.
-EAR_UP = f"http://127.0.0.1:{orgs.port('astryx-ear') or 8092}"   # this org's ear (its registry port in a cog, S3c)
+EAR_UP = _upstream("astryx-ear", 8092)   # this org's ear (its registry port in a cog, S3c)
 
 
 @app.api_route("/ear/{path:path}", methods=["GET", "POST"])
 async def ear_proxy(path: str, request: Request):
+    if EAR_UP is None:
+        return Response("this org runs no ear", status_code=503, media_type="text/plain")
     return await _pipe(f"{EAR_UP}/ear/{path}", request, owner_key=True,
                        down="ear offline (astryx-ear.service is not running)")
 

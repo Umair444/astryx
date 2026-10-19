@@ -23,6 +23,9 @@ build) behind the real front (uvicorn front:app, ephemeral port), a fixture regi
      /o/<org>) is the backend's only copy, never behind a caller's (S3c canvas)
   O8 main.py's _client (read from the source, run alone): one org, the peer exactly as before (the header ignored);
      in a cog, the front's header, and only from 127.0.0.1
+  O9 main.py's _upstream (read from the source, run with the REAL orgs module): one org, the fixed loopback port; in a
+     cog, the org's registry port, and None for a unit its entry declares no port for, never a raise at import (step 4
+     live, 10-19: lab declares no ear and its observatory crash-looped on EAR_UP)
 Seams: OBS_FRONT_SRC (a mutant front.py), OBS_MAIN_SRC (a mutant main.py, O8). Exit 0 · 1 · 77 (no uvicorn/httpx).
 """
 import json
@@ -263,6 +266,26 @@ def main():
         check("a cog, from 127.0.0.1: the front's header", client_of(True, "127.0.0.1", H) == "198.51.100.4")
         check("a cog, from anywhere else: the peer (a direct caller can't name itself)",
               client_of(True, "192.0.2.9", H) == "192.0.2.9")
+
+        print("\nO9 main.py's _upstream: A UNIT AN ORG DOESN'T RUN")
+        up = next(n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef) and n.name == "_upstream")
+        probe = ("import ast, json, sys\nsys.path.insert(0, sys.argv[1])\nfrom astryx import orgs\nns = {'orgs': orgs}\n"
+                 "exec(compile(ast.Module([ast.parse(sys.argv[2]).body[0]], []), 'main.py', 'exec'), ns)\n"
+                 "print(json.dumps([ns['_upstream'](s, f) for s, f in (('astryx-observatory-org', 1), ('astryx-ear', 8092))]))")
+
+        def upstream(extra):
+            r = subprocess.run([PY, "-c", probe, str(REPO / "src"), ast.unparse(up)], capture_output=True, text=True,
+                               timeout=60, env={**env, **extra})
+            try:
+                return json.loads(r.stdout.strip().splitlines()[-1])
+            except (ValueError, IndexError):
+                return (r.stdout + r.stderr)[-300:]
+        one = upstream({"ASTRYX_COG_REGISTRY": str(t / "no-registry.json"), "ASTRYX_HOME": str(t / oa)})
+        check("one org: the fixed loopback port, as before", one == ["http://127.0.0.1:1", "http://127.0.0.1:8092"],
+              str(one))
+        cog = upstream({"ASTRYX_COG_REGISTRY": str(t / "cog.json"), "ASTRYX_HOME": str(t / oa)})
+        check("a cog: the org's registry port, and None (never a raise) for the ear its entry declares no port for",
+              cog == [f"http://127.0.0.1:{pa}", None], str(cog))
 
         print("\nO6 ONE MERGED STREAM")
         got, saw_down = [], False
