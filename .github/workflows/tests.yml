@@ -34,4 +34,7 @@ jobs:
       # default: a gate that verifies nothing is RED. A CI clone is the one environment where skipping is
       # legitimate (triggers/, memory/ and the database are absent by construction), so those read amber; check.sh
       # still NAMES every unverified gate and never prints ALL CODE INVARIANTS PASS. Read that list.
-      - run: CHECK_ALLOW_SKIP=1 PY=python3 bash devtools/check.sh
+      # Under env -i (seed #61038, forge #61043): the org census judges OUR process environment, and the runner's own
+      # names (ACTIONS_*, ANDROID_*, …) are a vendor's, never classed to fit. HOME, PATH (setup-python's python3), USER
+      # (dsn_census reads it) and LANG are host names the fixtures already keep (org_home_fixture.HOST_KEEP).
+      - run: env -i HOME="$HOME" PATH="$PATH" USER="${USER:-runner}" LANG=C.UTF-8 CHECK_ALLOW_SKIP=1 PY=python3 bash devtools/check.sh
