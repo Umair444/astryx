@@ -26,7 +26,19 @@ import psycopg
 import requests
 
 REPO = repo_root(__file__)
-DSN = config.dsn(paths.estate(__file__) / ".env")    # env first: an oracle's fixture DB (S1c)
+
+
+def _dsn() -> str:
+    # env first: an oracle's fixture DB (S1c). Read when used, never at import (seed #61038: CI has no DSN)
+    return config.dsn(paths.estate(__file__) / ".env")
+
+
+def __getattr__(name):            # `pulse_run.DSN` still reads it, lazily
+    if name == "DSN":
+        return _dsn()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 _COMMENT = re.compile(r"--[^\n]*|/\*.*?\*/", re.S)
 _WAKE_WRITE = re.compile(r'\bINSERT\s+INTO\s+(?:"?public"?\s*\.\s*)?"?messages"?(?![\w"])', re.I)
 
@@ -60,7 +72,7 @@ class Ctx:
                                   "thread=, intent=, from_agent=) and the pulse delivers or holds it "
                                   "(goal 4227 S1c)")
         if self._conn is None:
-            self._conn = psycopg.connect(DSN, autocommit=True)
+            self._conn = psycopg.connect(_dsn(), autocommit=True)
         with self._conn.cursor() as cur:
             cur.execute(query, params)
             if cur.description is None:      # INSERT/UPDATE/etc. — no result set

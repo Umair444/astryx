@@ -40,7 +40,19 @@ PY = str(REPO / "venv" / "bin" / "python")
 # ASTRYX_DSN from the environment first (goal 4227 S1c: an oracle binds the pulse, and the pulse_run
 # subprocesses that inherit its env, to a throwaway fixture database), else .env as before.
 ESTATE = paths.estate(__file__)       # the org's .env and triggers/ (its HOME in a cog of several orgs, plan-11324 S3a)
-DSN = config.dsn(ESTATE / ".env")
+
+
+def _dsn() -> str:
+    # read when used, never at import: a tree with no DSN (CI, a fresh clone) must still import the pulse (seed #61038)
+    return config.dsn(ESTATE / ".env")
+
+
+def __getattr__(name):            # `pulse.DSN` and `from astryx.pulse.pulse import DSN` still read it, lazily
+    if name == "DSN":
+        return _dsn()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 CHECK_TIMEOUT = 30
 PRESSURE_PCT = 85        # 5h gauge at/above this: non-survival wakes are held, not sent
 HOLD_K = 5               # per held key, the newest K are delivered; older ones are elided (kept, marked)
@@ -423,7 +435,7 @@ def tick():
     # "3am review" is 3am wherever this org lives — never UTC (owner decree
     # 2026-07-25; the night-review fired at 7-9am PKT for two days).
     now = datetime.now().astimezone()
-    with psycopg.connect(DSN, autocommit=True) as conn:
+    with psycopg.connect(_dsn(), autocommit=True) as conn:
         py_ok = reconcile(conn)
         with conn.transaction():
             due = conn.execute(
