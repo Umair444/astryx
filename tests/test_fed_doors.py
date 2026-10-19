@@ -142,7 +142,7 @@ def run(d, door):
             (h / "agents").mkdir(parents=True, exist_ok=True)
             (h / ".env").write_text(f"ASTRYX_DSN=postgresql://fx@127.0.0.1:1/fxdoor_{o}\nASTRYX_ORG=fxd-{o}\n"
                                     f"ASTRYX_SECRET_KEY={keys[o] * 32}\nASTRYX_URL=https://cog.example/\n")
-            reg["orgs"][o] = {"home": str(h), "db": f"fxdoor_{o}", "door": door == o}
+            reg["orgs"][o] = {"home": str(h), "db": f"fxdoor_{o}", "door": door == o, "primary": door == o}
         (d / "cog.json").write_text(json.dumps(reg))
         env["ASTRYX_COG_REGISTRY"] = str(d / "cog.json")
     r = subprocess.run([sys.executable, "-B", "-c", CHILD, str(SRC)], env=env, cwd=d, capture_output=True, text=True,
