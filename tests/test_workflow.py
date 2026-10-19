@@ -16,7 +16,7 @@
          land-time attribution: a commit naming a workflow goal but no task is flagged (land.sh refuses it)
   L1     LIVE HISTORY (anti-vacuity, a1 #60109 A): on this checkout's origin/main, S1, S2, S3a and S3b each resolve to
          >= 1 commit and the UNATTRIBUTED count is > 0 (printed)
-Hermetic except L1, which reads this checkout's git log (no DB, no network).
+Hermetic except L1, which reads this checkout's git log (no DB, no network); on a shallow clone L1 is NOT CHECKED (exit 77).
 """
 import importlib.util
 import os
@@ -214,10 +214,16 @@ for _, _, s, tr in live:
     a = wf.attribute(11324, ["S1", "S2", "S3a", "S3b", "S3c", "S3d", "S3e", "S4"], s, tr)
     counts[a] = counts.get(a, 0) + 1
 print(f"  live {live_ref}: {len(live)} commits name 11324, UNATTRIBUTED {counts.get(wf.UNATTRIBUTED, 0)}/{len(live)} · " + " ".join(f"{k}={v}" for k, v in sorted(counts.items(), key=str)))
-check("L1 on the live history S1, S2, S3a and S3b each resolve, and UNATTRIBUTED > 0 is counted",
-      all(counts.get(k, 0) >= 1 for k in ("S1", "S2", "S3a", "S3b")) and counts.get(wf.UNATTRIBUTED, 0) > 0, f"{counts}")
+# a shallow clone (CI's default checkout) holds no history to judge: L1 is NOT CHECKED there, never a pass or a fail
+shallow = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--is-shallow-repository"], capture_output=True, text=True,
+                         env=env).stdout.strip() == "true"
+if shallow:
+    print("  NOT CHECKED  L1: this checkout is shallow (no history to measure); every other arm above ran")
+else:
+    check("L1 on the live history S1, S2, S3a and S3b each resolve, and UNATTRIBUTED > 0 is counted",
+          all(counts.get(k, 0) >= 1 for k in ("S1", "S2", "S3a", "S3b")) and counts.get(wf.UNATTRIBUTED, 0) > 0, f"{counts}")
 
 print()
 print(f"FAILED ({len(fails)}): " + "; ".join(fails) if fails else
       "workflows: one DAG converging on one agent; its actuals measured from main, never self-reported")
-sys.exit(1 if fails else 0)
+sys.exit(1 if fails else (77 if shallow else 0))

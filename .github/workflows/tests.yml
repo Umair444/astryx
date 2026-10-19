@@ -13,7 +13,10 @@ jobs:
   invariants:
     runs-on: ubuntu-latest
     steps:
+      # full history: test_workflow L1 and the census arms that name a commit measure main itself (seed, CI red 10-16..19)
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
