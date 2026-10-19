@@ -8,7 +8,7 @@ S6's rehearsal (stated limit); here its statement is printed by the dry-run, and
   A1 dry-run: rc 0, it prints CREATE DATABASE astryx_<key>, and NOTHING is made (no HOME, no registry file, no database)
   A2 the real path, --dsn a fixture: the HOME tree (marker, local.md = local.template.md, the shipped seed charter,
      homes/, var/); .env mode 600 with ASTRYX_ORG, the fixture's ASTRYX_DSN, a 64-hex ASTRYX_SECRET_KEY, an OBS_KEY,
-     ASTRYX_URL empty; schema_applied's sha = sha256(schema.sql); PUBLIC CONNECT revoked; the registry written reads back
+     ASTRYX_URL empty, the OBS_KEY the primary's (one owner key for the cog); schema_applied's sha = sha256(schema.sql); PUBLIC CONNECT revoked; the registry written reads back
      (orgs.load) as two orgs, the derived primary (`primary` and `door`, its HOME this checkout) and the new org neither
   A3 onto an EXISTING registry: the primary's entry kept byte for byte, the new org added
   A4 refusals, each rc 2 with nothing made: a bad key; a HOME inside a git tree; a non-empty HOME; a database that
@@ -24,6 +24,7 @@ COG_ADD_SRC: a mutant devtools/cog_add_org.py (tests/mutants_cog_add_org.py). Ex
 import hashlib
 import json
 import os
+import secrets
 import shutil
 import stat
 import subprocess
@@ -69,10 +70,24 @@ def main():
     for n in ("src", "local.template.md", "agents"):
         (t / n).symlink_to(REPO / n)
 
+    owner = f"fx-owner-key-{pid}-{secrets.token_hex(6)}"   # the primary's OBS_KEY, by env (a one-org primary)
+
+    # the new org's ports, HELD for the run (bound, never listening: nothing answers there, and no other process can
+    # take them), never the runbook's defaults: a live cog on this host serves its lab on 18190/18091 (10-19)
+    import socket
+    held = []
+    for _ in range(3):                       # [2]: the existing registry's primary, an org's port that nothing answers
+        so = socket.socket()
+        so.bind(("127.0.0.1", 0))
+        held.append(so)
+    own_ports = f"astryx-observatory-org={held[0].getsockname()[1]},astryx-canvas={held[1].getsockname()[1]}"
+
     def run(*args, dsn=admin):
+        if "--ports" not in args:
+            args = (*args, "--ports", own_ports)
         p = subprocess.run([sys.executable, str(tool), *args], capture_output=True, text=True, timeout=180,
                            env={"PATH": os.environ["PATH"], "HOME": os.environ.get("HOME", str(t)), "ASTRYX_DSN": dsn,
-                                "ASTRYX_COG_REGISTRY": str(t / "no-host-registry.json")})
+                                "ASTRYX_COG_REGISTRY": str(t / "no-host-registry.json"), "OBS_KEY": owner})
         return p.returncode, p.stdout + p.stderr
 
     def db_exists(name):
@@ -117,6 +132,8 @@ def main():
                   and len(e.get("ASTRYX_SECRET_KEY", "")) == 64 and all(ch in "0123456789abcdef" for ch in
                                                                         e.get("ASTRYX_SECRET_KEY", "x"))
                   and len(e.get("OBS_KEY", "")) >= 20 and e.get("ASTRYX_URL") == "", str(sorted(e)))
+            check(".env: OBS_KEY is the PRIMARY's (one owner key opens every room of the cog, owner 10-19)",
+                  e.get("OBS_KEY") == owner, "a key of its own")
             with psycopg.connect(fx["url"], autocommit=True) as c:
                 stamp = c.execute("SELECT sha FROM schema_applied WHERE id = 1").fetchone()
                 pub = c.execute("SELECT has_database_privilege('public', current_database(), 'CONNECT')").fetchone()[0]
@@ -133,7 +150,7 @@ def main():
             print("\nA3 ONTO AN EXISTING REGISTRY")
             ex = t / "existing.json"
             prim = {"home": str(t / "prim-home"), "db": "fxorg_existing_p", "primary": True, "door": True,
-                    "ports": {"astryx-observatory-org": 8190, "astryx-canvas": 8091}}
+                    "ports": {"astryx-observatory-org": held[2].getsockname()[1], "astryx-canvas": 8091}}
             ex.write_text(json.dumps({"orgs": {"astryx": prim}}))
             h3, o3 = t / "h3", t / "h3.cog.json"
             rc, out = run(key, "--home", str(h3), "--name", "lab.fixture.test", "--dsn", fx["url"], "--db",
@@ -172,7 +189,7 @@ def main():
                 ("a database that exists (no --dsn)", "already exists", [key, "--home", str(t / "r4"), "--name", "x", "--db", fx["dbname"]],
                  t / "r4"),
                 ("a port another org holds (the authority refuses it)", "refused by the authority", [key, "--home", str(t / "r5"), "--name", "x", "--dsn", fx["url"],
-                                              "--registry", str(ex), "--ports", "astryx-observatory-org=8190"], t / "r5"),   # held, and nothing answers there
+                                              "--registry", str(ex), "--ports", f"astryx-observatory-org={held[2].getsockname()[1]}"], t / "r5"),   # held, and nothing answers there
                 ("a key already registered", "already registered", ["astryx", "--home", str(t / "r6"), "--name", "x", "--dsn", fx["url"],
                                               "--registry", str(ex)], t / "r6"),
             ]
@@ -221,6 +238,8 @@ def main():
         except Exception:  # noqa: BLE001
             pass
         shutil.rmtree(t, ignore_errors=True)
+        for so in held:
+            so.close()
 
 
 if __name__ == "__main__":

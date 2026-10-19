@@ -78,6 +78,18 @@ def with_db(dsn: str, db: str) -> str:
     return f"postgresql://{auth}{'@' if auth else ''}{host}{':' + port if port else ''}/{quote(db, safe='')}{q}"
 
 
+def owner_key() -> str:
+    """The cog's ONE owner key (owner 10-19: "a single obs key manages both and switch is seamless"): the primary's
+    OBS_KEY (config.get: its environment on one org, else its HOME's .env), so the viewer's one key opens every room
+    behind the front. Each org's observatory still checks its own .env's key; they are equal by construction. A
+    primary with none (or none readable) gives a fresh key, as before."""
+    try:
+        k = config.get("OBS_KEY")
+    except Exception:  # noqa: BLE001 — an unresolvable HOME reads as no key, never a crash mid-setup
+        k = ""
+    return k or secrets.token_urlsafe(18)
+
+
 def in_git_tree(p: Path) -> Path | None:
     for a in (p, *p.parents):
         if (a / ".git").exists():
@@ -187,7 +199,7 @@ def make_home(p: dict, a, dry: bool) -> None:
     say(dry, f"create HOME {home}: .astryx marker, local.md (from local.template.md), agents/seed/seed.md (the "
              "shipped seed), homes/, var/")
     say(dry, f"write {home}/.env (mode 600): ASTRYX_ORG={a.name}, ASTRYX_DSN ({shown(p['lab_dsn'])}), "
-             "ASTRYX_SECRET_KEY (fresh), OBS_KEY (fresh), ASTRYX_URL= (empty)")
+             "ASTRYX_SECRET_KEY (fresh), OBS_KEY (the primary's: one owner key for the cog), ASTRYX_URL= (empty)")
     if dry:
         return
     from nacl.encoding import HexEncoder
@@ -202,7 +214,7 @@ def make_home(p: dict, a, dry: bool) -> None:
     with os.fdopen(fd, "w") as f:
         f.write(f"ASTRYX_ORG={a.name}\nASTRYX_DSN={p['lab_dsn']}\n"
                 f"ASTRYX_SECRET_KEY={SigningKey.generate().encode(HexEncoder).decode()}\n"
-                f"OBS_KEY={secrets.token_urlsafe(18)}\nASTRYX_URL=\n")
+                f"OBS_KEY={owner_key()}\nASTRYX_URL=\n")
     os.chmod(envf, 0o600)
 
 
