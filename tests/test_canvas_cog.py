@@ -18,8 +18,11 @@ its own cookie name and under another's, an invite link, a logout. Every call ca
   C3 HOME B: its own name and path, neither equal to A's nor under it
 Seams: CANVAS_SRC (a mutant bridges/canvas.py), CANVAS_MAIN_SRC (a mutant observatory/api/main.py). Exit 0 · 1 · 77.
 """
+import atexit
 import json
 import os
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -133,6 +136,8 @@ def one(got, name):
 
 def main():
     t = Path(tempfile.mkdtemp(prefix="astryx-cvcog-")).resolve()
+    atexit.register(shutil.rmtree, t, True)            # /tmp is tmpfs: 79 of these a day leaked (goal 11580, #61225)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))   # a gate cap's TERM exits through atexit too
     pid = os.getpid()
     oa, ob = f"fxcva-{pid}", f"fxcvb-{pid}"
     with fixture_db() as da, fixture_db() as db:
