@@ -3229,6 +3229,57 @@ async def cog(request: Request):
     return {"cog": False, "home": me, "orgs": [{"org": me, "name": me_name, "base": "/", "badge": badge}]}
 
 
+class NewOrg(BaseModel):
+    key: str
+    name: str | None = None
+    purpose: str | None = None
+
+
+NEW_ORG_KEY = re.compile(r"[a-z][a-z0-9-]{1,30}")
+NEW_ORG_THREAD = "cog-new-org-"
+
+
+@app.post("/api/cog/orgs")
+async def cog_new_org(m: NewOrg, request: Request):
+    """The owner asks for a new org in this install's cog (the owner's ask 10-19: "in agents view make sure we can also
+    create a new org in cog too"). This route BUILDS NOTHING: no sudo, no init.sh, no devtools/cog_add_org.py. It
+    judges the request and puts ONE wire message to seed (from owner, intent task, thread cog-new-org-<key>), the way
+    the composer does; seed runs the org's setup path (devtools/cog_add_org.md) and the owner's sudo steps from there.
+      key       [a-z][a-z0-9-]{1,30}, a legal registry name (orgs.NAME), not already an org of this cog
+      name      the federation name, default <key>.<our ASTRYX_ORG>; core.orgname.org_ok, and never ours
+      purpose   optional, one line (whitespace folded, 200 characters)
+    One open request per key: a row on its thread younger than a day refuses (409), under an advisory lock so two
+    taps can't both pass. Owner-only. Reads the registry's NAMES only (orgs.load), like /api/cog."""
+    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+        return Response(status_code=403)
+    from astryx.core.orgname import org_ok
+    key = (m.key or "").strip()
+    if not NEW_ORG_KEY.fullmatch(key) or not orgs.NAME.fullmatch(key):
+        return JSONResponse({"error": "a key is lowercase: a letter, then 1-30 letters, digits or dashes"}, status_code=400)
+    try:
+        reg = orgs.load() or {}
+    except orgs.RegistryError as e:              # fails closed, and says so (before anything else reads the registry)
+        return JSONResponse({"error": f"cog registry refused: {e}"}, status_code=500)
+    if key in reg:
+        return JSONResponse({"error": f"{key} is already an org of this cog"}, status_code=409)
+    me_name = _env("ASTRYX_ORG") or ORG
+    name = (m.name or "").strip() or f"{key}.{me_name}"
+    if not org_ok(name) or name == me_name:
+        return JSONResponse({"error": f"{name!r} is not a federation name a new org can take"}, status_code=400)
+    purpose = " ".join((m.purpose or "").split())[:200]
+    thread = NEW_ORG_THREAD + key
+    body = f"COG NEW ORG key={key} name={name} purpose={purpose or '-'}"
+    async with pool.acquire() as c, c.transaction():
+        await c.execute("SELECT pg_advisory_xact_lock(hashtext($1))", thread)
+        if await c.fetchval("SELECT id FROM messages WHERE thread = $1 AND ts > now() - interval '1 day' "
+                            "ORDER BY id DESC LIMIT 1", thread):
+            return JSONResponse({"error": f"a request for {key} is already open", "thread": thread}, status_code=409)
+        row = await c.fetchrow(
+            "INSERT INTO messages (from_agent, to_agent, thread, intent, body) "
+            "VALUES ('owner', 'seed', $1, 'task', $2) RETURNING id", thread, body)
+    return {"queued": True, "thread": thread, "id": row["id"]}
+
+
 class MemoryProposal(BaseModel):
     # deleted with the memory chat rework (0c3c450, 08-14) while this route kept it; on Python 3.14 annotations are
     # lazy, so the live observatory never noticed, but on 3.12 (CI, many installs) main.py failed to import at all

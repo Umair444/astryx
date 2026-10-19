@@ -23,6 +23,7 @@ import RuntimeEditor from './RuntimeEditor'
 import { Action, Empty, FaceStack, LiveDot, Panel, SectionHead, Skeleton, Spark, ViewHeader, useNow } from '../ui/kit'
 import { moodOf, nowLine, type Mood } from '../ui/life'
 import { canvasBase } from '../cog'
+import { CogPending, NewOrgButton } from './CogNewOrg'
 
 /* The People experience: an astryx agent is a PERSON. This is the org's cast page —
    every agent a character card, grouped into departments (the composite folders), with a
@@ -617,6 +618,7 @@ export default function PeopleView() {
   }, [who.owner])
   const [profile, setProfile] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
+  const [orgTick, setOrgTick] = useState(0)             // a new org asked for: the rooms in the making re-read now
   // a private mirror so an action (retire/create) can refresh the cast without waiting
   // for the store's 30s poll; seeded from the store and re-synced whenever it changes.
   const [roster, setRoster] = useState<AgentRow[]>(agents)
@@ -669,8 +671,13 @@ export default function PeopleView() {
             <span className="text-ink-mute">· {roster.length} in all — each a charter, a face, a place on the wire</span>
           </>}
           faces={workingNames}
-          actions={who.owner && <Action onClick={() => setCreating(true)}><span className="text-base leading-none">+</span> Bring an agent into the world</Action>}
+          actions={who.owner && <>
+            <NewOrgButton onQueued={() => setOrgTick((t) => t + 1)} />
+            <Action onClick={() => setCreating(true)}><span className="text-base leading-none">+</span> Bring an agent into the world</Action>
+          </>}
         />
+
+        {who.owner && <CogPending tick={orgTick} />}
 
         {!roster.length && (
           agents.length === 0

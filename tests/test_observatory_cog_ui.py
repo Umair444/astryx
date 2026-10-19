@@ -111,6 +111,28 @@ def main():
           and all("aria-label=" in x and "title=" in x for x in icon_buttons), str(len(icon_buttons)))
     check("the building sheet is portalled to the body", "createPortal(" in src["building"]
           and "document.body," in src["building"])
+
+    print("\nK4 A NEW ORG FROM THE AGENTS VIEW")
+    no, people = SRC / "components" / "CogNewOrg.tsx", SRC / "components" / "PeopleView.tsx"
+    if not no.is_file() or not people.is_file():
+        check("CogNewOrg.tsx and PeopleView.tsx present", False, str(no))
+        return 1
+    n, pv = code(no.read_text()), code(people.read_text())
+    check("the Agents view offers New org and the rooms in the making to the owner only",
+          "actions={who.owner && <>" in pv and "<NewOrgButton " in pv and "{who.owner && <CogPending " in pv)
+    check("its one request is the same-origin root, POST /api/cog/orgs, and nothing else is fetched by hand",
+          re.findall(r"\bfetch\(([^,)]*)", n) == ["'/api/cog/orgs'"] and "method: 'POST'" in n, str(re.findall(r"\bfetch\(([^,)]*)", n)))
+    m = re.search(r"export const NEW_ORG_KEY = /(.+?)/\n", n)
+    kre = re.compile(m.group(1)) if m else None
+    check("the client's key rule is the server's: [a-z][a-z0-9-]{1,30}",
+          bool(kre) and all(kre.search(k) for k in ("lab", "a1", "ops-2")) and not any(
+              kre.search(k) for k in ("Lab", "1lab", "l", "a" * 32, "lab.x", "-lab", "la b")))
+    check("no hex colour; the pending room is a promise with seed's face and a still frame under reduced motion",
+          not re.findall(r"#[0-9a-fA-F]{3,8}\b", n) and "seed is building" in no.read_text()
+          and 'AgentFace name="seed"' in n and "useReducedMotion()" in n)
+    check("the sheet is portalled, and every phase has its words (asking, refused in the server's words, done)",
+          "createPortal(" in n and "Asking seed…" in no.read_text() and "seed has it" in no.read_text()
+          and "j.error ??" in n)
     return 1 if fails else 0
 
 
