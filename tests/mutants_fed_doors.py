@@ -34,4 +34,12 @@ MUTANTS = {
          "    if not node.addressed_to(e, ctx.name):\n"),
     "W10 /o/<X>/astryx/pickup serves the root's org, not X's":
         ("    ctx = at(name)\n    return await pickup(", "    ctx = root()\n    return await pickup("),
+    "W11 a cog's relay host is dropped: the door's ASTRYX_RELAY_HOST=1 mounts nothing (the 10-19 live gap)":
+        ("               relay_host=host, relay_reach_private", "               relay_host=False, relay_reach_private"),
+    "W12 a NON-door org may host the relay (its /relay/* would be served as the door's bare root)":
+        ("    if host and org != orgs.door():\n", "    if False:\n"),
+    "W13 the relay mounts on one org only again (a cog's door never hosts)":
+        ("    _ONE = root()                       # one org", "    _ONE = root() if ESTATE is not None else None  # one org"),
+    "W14 the relay reads the cog's FIRST org's database, not the door's":
+        ("        lambda: _ONE.pool, org_ok,", "        lambda: next(iter(cog().values())).pool, org_ok,"),
 }

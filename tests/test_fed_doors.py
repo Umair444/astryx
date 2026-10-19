@@ -13,9 +13,15 @@ that org's own peers and messages, so per-org trust is exactly "which pool the d
     F4 ADDRESSED: P's envelope to seed@B, posted to A's door, is 403 and lands nowhere (A trusts P; the `to` decides);
        a `to` with two '@' is 403 at the door of the org it ends in
     F5 the per-IP intro cap is the door's, ONE count across orgs: the 6th hello from one IP is 429 whichever /o/
+    R0 no org hosts a relay: every /relay/* path is 404 (and on one org that hosts nothing)
+  COG, door b hosts the relay (S3e, step 4 live 10-19: the primary's .env sets ASTRYX_RELAY_HOST=1). The door is the
+                registry's SECOND org, so "the door" never reads as "the first org".
+    R1 /relay/host answers as B with <base>/o/fxd-b; the relay reads B's database only; no /o/<X>/relay/* path
+    R2 a non-door org's ASTRYX_RELAY_HOST=1, or any host in a cog with no door, refuses (CogError naming the org)
   COG, no door  the bare root is 404 (identity, inbox); /o/<X> still answers
   ONE ORG       no registry: /o/<name>/… is 404, the root answers as before with the url unchanged, and an envelope
                 whose `to` names no '@' still lands at seed (the historic reading, byte for byte)
+    R3 one org hosting a relay: /relay/host's url is its bare base (no /o/), on its own database
 Exit 0 pass · 1 fail.
 """
 import json
@@ -45,7 +51,7 @@ from nacl.signing import SigningKey
 
 class Pool:
     def __init__(self, peers):
-        self.peers, self.msgs = dict(peers), []
+        self.peers, self.msgs, self.relay = dict(peers), [], []
     async def fetchrow(self, q, *a):
         if "FROM peers" in q:
             return self.peers.get(a[0])
@@ -53,6 +59,8 @@ class Pool:
     async def fetchval(self, q, *a):
         return 0
     async def fetch(self, q, *a):
+        if "relay_orgs" in q:
+            self.relay.append(q.split()[0])        # which org's database the relay read (R1: the door's)
         return []
     async def execute(self, q, *a):
         if q.lstrip().startswith("INSERT INTO messages"):
@@ -116,6 +124,9 @@ claim = gw.sign(SimpleNamespace(key=pk), {"op": "pickup", "org": "fxpeer", "sinc
 for n in ("fxd-a", "fxd-b", "fxd-c"):
     r = cl.get(f"/o/{n}/astryx/pickup", params={"org": "fxpeer", "since": 0, "ts": ts, "sig": claim["sig"]})
     out["pickup " + n] = [r.status_code, r.json() if r.status_code == 200 else None]
+for p in ("/relay/host", "/relay/directory", "/o/fxd-a/relay/host", "/o/fxd-b/relay/host"):
+    out["get " + p] = get(p)
+out["relay read"] = {n: x.pool.relay for n, x in c.items()}
 print("OUT " + json.dumps(out, default=str))
 """
 
@@ -126,8 +137,9 @@ def check(name, ok, detail=""):
         fails.append(name)
 
 
-def run(d, door):
-    """One child: door 'a' / None (a cog of two), or 'one' (no registry)."""
+def run(d, door, host=None):
+    """One child: door 'a' / None (a cog of two), or 'one' (no registry). `host`: the org ('a', 'b', 'one') whose
+    .env (the one org: its environment) sets ASTRYX_RELAY_HOST=1. A child that refuses returns {"refused": tail}."""
     d = Path(d)
     env = {k: v for k, v in os.environ.items() if not k.startswith("ASTRYX_")}
     env["PYTHONPATH"] = os.pathsep.join([str(REPO / "src"), str(REPO), str(REPO / "bridges")])
@@ -135,13 +147,16 @@ def run(d, door):
     if door == "one":
         env.update(ASTRYX_ORG="fxone", ASTRYX_SECRET_KEY="d4" * 32, ASTRYX_URL="https://one.example/",
                    ASTRYX_DSN="postgresql://fx@127.0.0.1:1/fxdoor_one", ASTRYX_COG_REGISTRY=str(d / "absent.json"))
+        if host == "one":
+            env["ASTRYX_RELAY_HOST"] = "1"
     else:
         reg = {"orgs": {}}
         for o in ("a", "b"):
             h = d / f"home-{o}"
             (h / "agents").mkdir(parents=True, exist_ok=True)
             (h / ".env").write_text(f"ASTRYX_DSN=postgresql://fx@127.0.0.1:1/fxdoor_{o}\nASTRYX_ORG=fxd-{o}\n"
-                                    f"ASTRYX_SECRET_KEY={keys[o] * 32}\nASTRYX_URL=https://cog.example/\n")
+                                    f"ASTRYX_SECRET_KEY={keys[o] * 32}\nASTRYX_URL=https://cog.example/\n"
+                                    + ("ASTRYX_RELAY_HOST=1\n" if host == o else ""))
             reg["orgs"][o] = {"home": str(h), "db": f"fxdoor_{o}", "door": door == o, "primary": door == o}
         (d / "cog.json").write_text(json.dumps(reg))
         env["ASTRYX_COG_REGISTRY"] = str(d / "cog.json")
@@ -150,6 +165,8 @@ def run(d, door):
                        timeout=120)
     line = next((ln for ln in r.stdout.splitlines() if ln.startswith("OUT ")), None)
     if not line:
+        if host is not None:
+            return {"refused": (r.stdout + r.stderr)[-800:]}
         check(f"{door}: the child serves", False, (r.stdout + r.stderr)[-800:])
         return {}
     return json.loads(line[4:])
@@ -192,9 +209,41 @@ def main():
                   str(o["inbox /o/a to a@b"]))
             check("F5 the per-IP intro cap is ONE count across orgs: 5 answered, the 6th is 429",
                   o["intro codes"][-1] == 429 and 429 not in o["intro codes"][:5], str(o["intro codes"]))
+            check("R0 no org hosts a relay: every /relay/* path is 404 (bare and /o/)",
+                  [o[f"get {p}"][0] for p in ("/relay/host", "/relay/directory", "/o/fxd-a/relay/host")] == [404] * 3,
+                  str([o[f"get {p}"] for p in ("/relay/host", "/relay/directory")]))
             check("F3 pickup: P collects at /o/fxd-a (200, nothing pending), is 403 at /o/fxd-b, 404 at /o/fxd-c",
                   o["pickup fxd-a"] == [200, {"envelopes": []}] and o["pickup fxd-b"][0] == 403
                   and o["pickup fxd-c"][0] == 404, f'{o["pickup fxd-a"]} {o["pickup fxd-b"]} {o["pickup fxd-c"]}')
+        os.mkdir(f"{t}/host")
+        o = run(f"{t}/host", "b", host="b")       # the door is the registry's SECOND org: never "the first one"
+        print("COG, door b hosts the relay (its .env: ASTRYX_RELAY_HOST=1, the live primary's)")
+        if "refused" in o:
+            check("R1 the cog serves a relay-hosting door org", False, o["refused"])
+        else:
+            h = o["get /relay/host"]
+            check("R1 the cog serves a relay-hosting door org: /relay/host answers as B, url <base>/o/fxd-b",
+                  h[0] == 200 and h[1] == {"org": "fxd-b", "pubkey": o["get /o/fxd-b/astryx/identity"][1]["pubkey"],
+                                           "url": "https://cog.example/o/fxd-b"}, str(h))
+            check("R1 the relay reads the DOOR's database, never the sibling's (A, the registry's first)",
+                  o["get /relay/directory"] == [200, {"orgs": []}] and o["relay read"] == {"fxd-a": [],
+                                                                                            "fxd-b": ["SELECT"]},
+                  f'{o["get /relay/directory"]} {o["relay read"]}')
+            check("R1 the relay is the bare root's: no /o/<X>/relay/* path (404)",
+                  o["get /o/fxd-a/relay/host"][0] == 404 and o["get /o/fxd-b/relay/host"][0] == 404,
+                  f'{o["get /o/fxd-a/relay/host"]} {o["get /o/fxd-b/relay/host"]}')
+            check("R1 the doors are unchanged beside it (B's identity at the root, A's at /o/fxd-a)",
+                  o["get /astryx/identity"][1]["org"] == "fxd-b" and o["get /o/fxd-a/astryx/identity"][1]["org"]
+                  == "fxd-a", str(o["get /astryx/identity"]))
+        os.mkdir(f"{t}/hostb")
+        o = run(f"{t}/hostb", "b", host="a")
+        check("R2 a NON-door org's ASTRYX_RELAY_HOST=1 refuses (CogError naming the org and the rule)",
+              "CogError" in o.get("refused", "") and "cog org a:" in o["refused"] and "door org" in o["refused"],
+              str(o)[-300:])
+        os.mkdir(f"{t}/hostnodoor")
+        o = run(f"{t}/hostnodoor", None, host="a")
+        check("R2 a cog with NO door refuses a relay host (no bare path to serve it on)",
+              "CogError" in o.get("refused", "") and "cog org a:" in o["refused"] and "door" in o["refused"], str(o)[-300:])
         os.mkdir(f"{t}/nodoor")
         o = run(f"{t}/nodoor", None)
         if o:
@@ -215,6 +264,19 @@ def main():
             check("a `to` naming no '@' still lands at seed (the historic reading)",
                   o["inbox root to one"] == 200 and o["landed"].get("fxone", [])[:2] == ["seed", "seed"],
                   f'{o["inbox root to one"]} {o["landed"]}')
+            check("R0 one org that hosts nothing mounts no relay (404)", o["get /relay/host"][0] == 404,
+                  str(o["get /relay/host"]))
+        os.mkdir(f"{t}/onehost")
+        o = run(f"{t}/onehost", "one", host="one")
+        if "refused" in o:
+            check("R3 one org hosting a relay serves it", False, o["refused"])
+        else:
+            print("ONE ORG hosting a relay")
+            check("R3 /relay/host answers as the org, the url its base unchanged (no /o/)",
+                  o["get /relay/host"] == [200, {"org": "fxone", "pubkey": o["get /astryx/identity"][1]["pubkey"],
+                                                 "url": "https://one.example/"}], str(o["get /relay/host"]))
+            check("R3 the relay reads the org's database", o["get /relay/directory"] == [200, {"orgs": []}]
+                  and o["relay read"] == {"fxone": ["SELECT"]}, f'{o["get /relay/directory"]} {o["relay read"]}')
     print(f"{'FAIL' if fails else 'PASS'}: {len(fails)} failing")
     return 1 if fails else 0
 
