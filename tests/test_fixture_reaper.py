@@ -21,10 +21,15 @@ collected by the next fixture_db() entry, and nothing a LIVE run owns is ever dr
      #57352): a member already gone (dropped by an arm, never made, or whose drop ERRORED after it vanished) counts
      as dropped. A member that STILL EXISTS and fails (a stubbed ObjectInUse, a real template database) is raised BY
      NAME, every one, once, after the others were dropped.
+  S. the oracle's OWN leaked plants (seed #61024/#61026): L's unstamped bare plant, kept by reap() forever by design,
+     leaks when a run is killed before its finally. Each run first sweeps EARLIER runs' bare plants: this oracle's exact
+     name shape, unstamped, both its pids dead, over an hour old. Its arm: of five planted names only the dead-pid
+     unstamped bare one is swept (a live run's, a stamped one, another shape and a fresh one are kept).
   Mutants: tests/mutants_fixture_reaper.py (mutation_probe, via SQLGUARD_FIXTURE_SRC).
 Exit 0 pass · 1 fail · 77 no reachable server (nothing verified).
 """
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -36,7 +41,7 @@ for _k in [k for k in os.environ if k.startswith("GIT_")]:
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 from astryx.security.sqlguard.estate import gate  # noqa: E402
-gate("test_fixture_reaper", REPO, deps=("psycopg",))   # a committed-only tree (no venv): 77, not an import crash
+gate("test_fixture_reaper", REPO, deps=("psycopg",), env=False)   # no venv: 77; the admin DSN may come by env (a2 #60442)
 SRC = os.environ.get("SQLGUARD_FIXTURE_SRC") or str(REPO / "src" / "astryx" / "security" / "sqlguard" / "fixture.py")  # mutation_probe swaps it
 import importlib.util  # noqa: E402
 os.environ.setdefault("ASTRYX_SQLGUARD_ROOT", str(REPO))   # a mutant COPY lives outside the repo: keep REPO (and .env) real
@@ -47,6 +52,38 @@ _sp.loader.exec_module(fxm)
 # aggressive: ignore the namespace, trust the name …) can only ever see databases THIS oracle made, never another
 # run's. PREFIX is read at call time by both reap() and fixture_db()'s naming.
 fxm.PREFIX = f"astryx_fx_rptest{os.getpid()}_"
+# the REAL module, never fxm (it may be the mutant): the teardown's drops and S's sweep go through it
+_rs0 = importlib.util.spec_from_file_location("fixture_real_top", REPO / "src" / "astryx" / "security" / "sqlguard" / "fixture.py")
+fx_real = importlib.util.module_from_spec(_rs0)
+_rs0.loader.exec_module(fx_real)
+
+# S. THE ORACLE'S OWN LEAKED PLANTS (seed #61024/#61026). L's bare plant is UNSTAMPED on purpose (reap() keeps it, by
+# design) and this oracle drops it in its finally, which a run KILLED mid-arm skips (a land cut off with its session's
+# scratch, 10-18 17:37 and 17:49 UTC): nothing ever collected those. So each run first sweeps EARLIER runs' bare plants:
+# this oracle's exact shape, unstamped, BOTH its pids dead, and older than an hour (a bwrap run's pids read dead from
+# here while it lives, and no run of this oracle lasts an hour). An age the server won't tell sweeps nothing.
+BARE = re.compile(r"astryx_fx_rptest(\d+)_bare_(\d+)_0")
+SWEEP_AGE_S = 3600
+
+
+def sweep_bare(admin, alive=fx_real._alive, min_age_s=SWEEP_AGE_S, only=None) -> tuple[list, str]:
+    """Drop the leaked bare plants (above); `only` limits it to those names (S's arm). Returns (dropped, a note)."""
+    try:
+        rows = admin.execute("SELECT datname, shobj_description(oid, 'pg_database'), extract(epoch FROM now() - "
+                             "(pg_stat_file('base/' || oid || '/PG_VERSION')).modification) FROM pg_database "
+                             "WHERE starts_with(datname, 'astryx_fx_rptest')").fetchall()
+    except Exception as e:  # noqa: BLE001 (no pg_stat_file grant: no age, so nothing is swept)
+        return [], f" (no creation age readable: {type(e).__name__}; nothing swept)"
+    out = []
+    for n, comment, age in rows:
+        m = BARE.fullmatch(n)
+        if (not m or comment is not None or (only is not None and n not in only) or age is None or age < min_age_s
+                or alive(int(m.group(1))) or alive(int(m.group(2)))):
+            continue
+        fx_real._drop(admin, n)
+        out.append(n)
+    return out, ""
+
 
 fails = []
 
@@ -180,6 +217,29 @@ except Exception as e:  # noqa: BLE001
 
 made = []                                            # every database this oracle creates directly, dropped in finally
 try:
+    print("S. the oracle's own leaked bare plants (seed #61026):")
+    swept, note = sweep_bare(admin)
+    print(f"  ·  swept {len(swept)} earlier run's plant(s){': ' + ', '.join(swept) if swept else ''}{note}")
+    P1, P2, P3 = dead_pid(), dead_pid(), dead_pid()
+    plants = {"dead": f"astryx_fx_rptest{P1}_bare_{P2}_0",            # both pids dead, unstamped: swept
+              "live": f"astryx_fx_rptest{os.getpid()}_bare_{P3}_0",   # its run is alive (this one): kept
+              "stamped": f"astryx_fx_rptest{P2}_bare_{P3}_0",          # stamped: the reaper's, never the sweep's
+              "shape": f"astryx_fx_rptest{P1}_live_{P2}_0",            # not the bare shape: kept
+              "fresh": f"astryx_fx_rptest{P3}_bare_{P1}_0"}            # dead, but under an hour old: kept by default
+    for n in plants.values():
+        admin.execute(f'DROP DATABASE IF EXISTS "{n}"')
+        admin.execute(f'CREATE DATABASE "{n}" ALLOW_CONNECTIONS false')
+        made.append(n)
+    admin.execute(f"COMMENT ON DATABASE \"{plants['stamped']}\" IS '{stamp(D)}'")
+    fresh, _ = sweep_bare(admin, only={plants["fresh"]})
+    check("a dead-pid bare plant UNDER an hour old is kept (a sandboxed run's pids read dead from here)", fresh == [],
+          str(fresh))
+    got, note = sweep_bare(admin, min_age_s=0, only=set(plants.values()) - {plants["fresh"]})
+    if note:
+        print(f"  SKIP  the sweep's arm: {note.strip(' ()')}: NOT verified")
+    else:
+        check("the sweep drops exactly the dead-pid unstamped bare plant: a live run's, a stamped one and another "
+              "shape are kept", got == [plants["dead"]], str(got))
     child = subprocess.Popen(
         [sys.executable, "-c",
          "import sys, time, importlib.util\n"
