@@ -140,6 +140,63 @@ out, rc = drive('run "g" bash -c "exit 77"', env='CHECK_ALLOW_SKIP=')
 check("an EMPTY CHECK_ALLOW_SKIP is not an opt-out (only a set value is)",
       rc == 1, "an unset-vs-empty confusion would silently disarm the default")
 
+# ── 7. KEEP ON RED ONLY: the sqlguard trace dir check.sh MADE (seed #61226, goal 11580) ──
+# It leaked 129 dirs (45 MB) a day into tmpfs /tmp. On a green verdict it's removed; on a red one it's kept and its
+# path is named on the line just above the verdict line, which stays the LAST `check:` line every parser keys on.
+# Only a dir check.sh itself created is touched: branch_check, mutation_probe, sqlsite and oracles pass their own.
+import shutil  # noqa: E402
+import tempfile  # noqa: E402
+
+
+def owned(body: str, own: bool = True, env: str = "", outer: dict | None = None):
+    d = Path(tempfile.mkdtemp(prefix="cv-sg-"))
+    flag = "_SQLGUARD_OWNED=1; " if own else ""
+    if outer is None:
+        out, rc = drive(body, env=f'export ASTRYX_SQLGUARD_DIR="{d}"; {flag}{env}')
+    else:                                            # a flag arriving from the ENVIRONMENT, never set by this run
+        child = {k: v for k, v in os.environ.items() if k != "CHECK_ALLOW_SKIP"}
+        child.update(outer, ASTRYX_SQLGUARD_DIR=str(d))
+        script = f'CHECK_LIB_ONLY=1 source "{CHECK}"\nunset CHECK_LIB_ONLY\n{env}\n{body}\nverdict\n'
+        p = subprocess.run(["bash", "-c", script], capture_output=True, text=True, cwd=REPO, env=child)
+        out, rc = p.stdout + p.stderr, p.returncode
+    alive = d.exists()
+    shutil.rmtree(d, True)
+    return out, rc, alive, str(d)
+
+
+def last_check_line(out: str) -> str:
+    return next((ln for ln in reversed(out.splitlines()) if ln.startswith("check:")), "")
+
+
+out, rc, alive, d = owned('run "g" bash -c "exit 0"')
+check("a GREEN verdict removes the trace dir this run made", rc == 0 and not alive, out)
+check("…and names no kept path", "traces kept" not in out, out)
+
+out, rc, alive, d = owned('run "g" bash -c "exit 3"')
+lines = out.splitlines()
+vi = max((i for i, ln in enumerate(lines) if ln.startswith("check:")), default=-1)
+check("a RED verdict KEEPS the trace dir this run made", rc == 1 and alive, out)
+check("…and names its path on the line just above the verdict line",
+      vi > 0 and lines[vi - 1] == f"sqlguard traces kept (red verdict): {d}", out)
+check("…and the verdict line is still the LAST `check:` line (merge_check/branch_check key on it)",
+      last_check_line(out).startswith("check: FAILURES above"), out)
+
+out, rc, alive, d = owned('run "g" bash -c "exit 77"')
+check("a strict-mode UNVERIFIED verdict is red too: kept and named", rc == 1 and alive and d in out, out)
+out, rc, alive, d = owned('run "g" bash -c "exit 77"', env="CHECK_ALLOW_SKIP=1")
+check("a CHECK_ALLOW_SKIP pass is green (rc 0): removed", rc == 0 and not alive, out)
+
+out, rc, alive, d = owned('run "g" bash -c "exit 0"', own=False)
+check("a dir this run did NOT make (inherited ASTRYX_SQLGUARD_DIR) is never removed on green",
+      rc == 0 and alive, out)
+out, rc, alive, d = owned('run "g" bash -c "exit 0"', own=False, outer={"_SQLGUARD_OWNED": "1"})
+check("an ownership flag arriving from the ENVIRONMENT is ignored (the lib unsets it): the dir survives",
+      rc == 0 and alive, out)
+src = CHECK.read_text()
+check("the ownership flag is never exported (a sourced child would otherwise delete the parent's dir mid-suite)",
+      "export _SQLGUARD_OWNED" not in src and "declare -x _SQLGUARD_OWNED" not in src
+      and "set -a" not in src, "")
+
 print()
 if fails:
     print(f"CHECK-VERDICT ORACLE FAILED ({len(fails)}):", file=sys.stderr)

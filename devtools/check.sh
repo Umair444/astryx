@@ -212,6 +212,22 @@ run() {
 skip() { [ -n "${ASTRYX_SQLGUARD_DIR:-}" ] && printf '%s\t77\n' "$1" >> "$ASTRYX_SQLGUARD_DIR/gates.tsv"
   UNVERIFIED+=("$1"); printf '\033[33m○\033[0m %s — VERIFIED NOTHING (%s)\n' "$1" "$2"; }
 
+# KEEP ON RED ONLY (seed #61226, goal 11580): the sqlguard trace dir this run MADE is removed on a green verdict and
+# kept on a red one, its path named on the line above the verdict line, for a reviewer to read the traces. Each
+# run used to leave it in tmpfs /tmp: 129 a day, 45 MB (steward #61225). Only a dir check.sh itself created is
+# ever removed: branch_check, mutation_probe, sqlsite and several oracles pass their OWN dir and read it after.
+# So the ownership flag is set in the mktemp branch alone, unset here first (never inherited from the
+# environment), and NEVER exported. test_check_verdict sources this file inside a real run and drives green
+# verdicts, and an exported flag would let that child delete the parent's dir mid-suite.
+unset _SQLGUARD_OWNED
+_sqlguard_settle() {
+  [ -n "${_SQLGUARD_OWNED:-}" ] && [ -n "${ASTRYX_SQLGUARD_DIR:-}" ] && [ -d "$ASTRYX_SQLGUARD_DIR" ] || return 0
+  if [ "$1" = 0 ]; then
+    rm -rf -- "$ASTRYX_SQLGUARD_DIR"
+  else
+    echo "sqlguard traces kept (red verdict): $ASTRYX_SQLGUARD_DIR"
+  fi
+}
 verdict() {
   echo
   for l in "${LIARS[@]}"; do
@@ -226,17 +242,22 @@ verdict() {
   fi
   echo
   # The verdict may never out-claim its parts. "ALL" is spoken only when nothing skipped.
+  # The rc is decided FIRST so the trace dir is settled before the verdict line, which stays the LAST `check:`
+  # line every reader keys on (merge_check, branch_check, pushed_tree_check, check_watch, check_stamp).
+  local rc=1
+  if [ "$fail" = 0 ] && { [ "${#UNVERIFIED[@]}" = 0 ] || [ -n "${CHECK_ALLOW_SKIP:-}" ]; }; then rc=0; fi
+  _sqlguard_settle "$rc"
   if [ "$fail" != 0 ]; then
-    echo "check: FAILURES above — a committed invariant regressed"; return 1
+    echo "check: FAILURES above — a committed invariant regressed"
   elif [ "${#UNVERIFIED[@]}" = 0 ]; then
-    echo "check: ALL CODE INVARIANTS PASS ($verified gates verified)"; return 0
+    echo "check: ALL CODE INVARIANTS PASS ($verified gates verified)"
   elif [ -n "${CHECK_ALLOW_SKIP:-}" ]; then
-    echo "check: $verified verified, ${#UNVERIFIED[@]} UNVERIFIED (skips allowed here) — NOT a full pass"; return 0
+    echo "check: $verified verified, ${#UNVERIFIED[@]} UNVERIFIED (skips allowed here) — NOT a full pass"
   else
     echo "check: $verified verified, ${#UNVERIFIED[@]} UNVERIFIED — a gate that observes nothing is RED here."
     echo "       Set CHECK_ALLOW_SKIP=1 only where the missing prerequisites are expected (a bare CI clone)."
-    return 1
   fi
+  return "$rc"
 }
 
 # Sourcing hook for tests/test_check_verdict.py, which drives run()/skip()/verdict()
@@ -256,7 +277,10 @@ run "identity gate: this tree's python imports only this tree's astryx" "$PY" te
 # its own prefix.
 export ASTRYX_RUNSCOPE_TEST=1                # every run role a gate makes is a TEST role (runscope TEST_STAMP)
 export ASTRYX_SQLGUARD_RUN="${ASTRYX_SQLGUARD_RUN:-r$(date +%s)x$$}"
-export ASTRYX_SQLGUARD_DIR="${ASTRYX_SQLGUARD_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/sqlguard.XXXXXX")}"
+if [ -z "${ASTRYX_SQLGUARD_DIR:-}" ]; then
+  ASTRYX_SQLGUARD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sqlguard.XXXXXX")"; _SQLGUARD_OWNED=1   # ours: settled at verdict
+fi
+export ASTRYX_SQLGUARD_DIR
 export PYTHONPATH="$PWD/src/astryx/security/sqlguard/shim${PYTHONPATH:+:$PYTHONPATH}"
 echo "$ASTRYX_SQLGUARD_RUN" > "$ASTRYX_SQLGUARD_DIR/run_id"
 # The canary proves THIS run's shim can observe: one statement through the REAL pulse_run.Ctx.sql. If it isn't
