@@ -13,6 +13,9 @@ several rooms: the header's room chips, the building sheet, the chooser. Read fr
      (reading, down, private, empty as a promise); a looping motion checks reduced motion; icon-only buttons carry an
      aria-label and a title; the sheet is portalled (the header is its own stacking context: inside it the sheet sat
      under the sidebar, seen in chromium 10-19)
+  K5 the floor's camera frames the FOCUSED org (owner 10-19: "the center of floor to the focused org only, not the
+     overall cog center"): fit() centres on the chosen room's own centre (one.w * me + one.w / 2) at a one-room scale,
+     the floor's first framing is that, and only the ⤢ control frames every room
 Seam: OBS_SRC_DIR (a mutant observatory/web/src). Exit 0 · 1 · 77.
 """
 import os
@@ -133,6 +136,16 @@ def main():
     check("the sheet is portalled, and every phase has its words (asking, refused in the server's words, done)",
           "createPortal(" in n and "Asking seed…" in no.read_text() and "seed has it" in no.read_text()
           and "j.error ??" in n)
+
+    print("\nK5 THE FLOOR CENTRES ON THE FOCUSED ORG")
+    fl = (SRC / "components" / "FloorView.tsx").read_text()
+    m = re.search(r"const fit = \(min = 0, whole = false\) => \{(.*?)\n  \}", fl, re.S)
+    body = m.group(1) if m else ""
+    check("fit() centres on the focused room (one.w * me + one.w / 2) at one room's scale unless asked for the whole",
+          "const w = whole ? room.w : one.w" in body and "whole ? room.w / 2 : one.w * me + one.w / 2" in body
+          and "x: size.w / 2 - cx * k" in body, body[:300])
+    check("the first framing is the focused room; only the ⤢ control frames the whole floor",
+          "fit(0.6)\n" in fl and "() => fit(0, true)]" in fl and fl.count("fit(0, true)") == 1)
     return 1 if fails else 0
 
 

@@ -115,9 +115,14 @@ export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) =>
     const nk = Math.min(2.5, Math.max(0.35, k))
     return { k: nk, x: px - (px - c.x) * (nk / c.k), y: py - (py - c.y) * (nk / c.k) }
   })
-  const fit = (min = 0) => {
-    const k = Math.max(min, Math.min(1, size.w / room.w, size.h / room.h))
-    setCam({ k, x: (size.w - room.w * k) / 2, y: (size.h - room.h * k) / 2 })
+  /* the camera frames the FOCUSED org's room, centred on it (owner 10-19: "the center of floor to the focused org only,
+     not the overall cog center"); its siblings sit beside it, a pan away. `whole` frames every room (the ⤢ control).
+     One org: the one room, exactly as before. */
+  const fit = (min = 0, whole = false) => {
+    const w = whole ? room.w : one.w
+    const k = Math.max(min, Math.min(1, size.w / w, size.h / room.h))
+    const cx = whole ? room.w / 2 : one.w * me + one.w / 2
+    setCam({ k, x: size.w / 2 - cx * k, y: (size.h - room.h * k) / 2 })
   }
 
   useEffect(() => {
@@ -519,7 +524,7 @@ export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) =>
          onPointerDown={(e) => { e.stopPropagation(); drag.current.moved = 0 }}>
          {([['+', 'zoom in', () => zoomAt(cam.k * 1.25, size.w / 2, size.h / 2)],
             ['−', 'zoom out', () => zoomAt(cam.k / 1.25, size.w / 2, size.h / 2)],
-            ['⤢', 'fit the whole floor', () => fit()]] as const).map(([g, t, f]) => (
+            ['⤢', 'fit the whole floor', () => fit(0, true)]] as const).map(([g, t, f]) => (
            <button key={t} title={t} aria-label={t} onClick={f}
              className="w-8 h-8 grid place-items-center text-ink-dim hover:text-ink hover:bg-deck text-[15px] border-b border-line last:border-b-0">{g}</button>
          ))}
