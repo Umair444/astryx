@@ -138,8 +138,6 @@ EXEMPT = {
     # --ro-bind argument, so no committed launcher names it. tests/test_hearing.py runs it through the pool.
     "src/astryx/hearing/hear_worker.py":  "invoked by src/astryx/hearing/hear_pool.py at runtime (bwrap, one per opted-in agent's hear.py); runs no SQL",
     "devtools/esc_latency.py":  "manual: MIN_QUIET_H calibration measurement, run on demand; reports and never recommends, so a timer would only manufacture noise",
-    "scripts/doorbell.sh":    "manual: operator notify helper, self-declared Usage line",
-    "scripts/wallpane.sh":    "manual: single-pane variant of wall.sh, invoked by an operator",
     "scripts/growbot_flash.sh": "manual: operator flash step — copies the body firmware "
         "onto the Pico over USB; run once per firmware change, documented in docs/growbot.md",
     "src/astryx/contrib/growbot_firmware.py":

@@ -14,5 +14,5 @@ TIMEOUT = 600
 
 MUTANTS = {
     "O1 S1 reverted IN CODE: the primary's socket is ax-<org> (agent_heal starts every seat a second time)":
-        ('"default" if _plain(o, env) else f"ax-{o}"', 'f"ax-{o}"'),
+        ('"default" if load(env)[o]["primary"] else f"ax-{o}"', 'f"ax-{o}"'),
 }

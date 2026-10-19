@@ -25,7 +25,10 @@ MUTANTS = {
     "F6 the top threads aren't capped at 3":
         ("key=lambda x: (-x[1], x[0]))[:3]]", "key=lambda x: (-x[1], x[0]))[:9]]"),
     "F7 a registry that refuses reads as a cog of one (unreachable fail-open: _env re-loads the registry and raises out of the route; caught as a 500 crash, not an arm, a4 #60129)":
-        ('        return JSONResponse({"error": f"cog registry refused: {e}"}, status_code=500)\n', '        reg = None\n'),
+        ('    except orgs.RegistryError as e:              # fails closed, and SAYS so: the floor names it (seed #60095)\n'
+         '        return JSONResponse({"error": f"cog registry refused: {e}"}, status_code=500)\n',
+         '    except orgs.RegistryError as e:              # fails closed, and SAYS so: the floor names it (seed #60095)\n'
+         '        reg = None\n'),
     "F14 a kind's coverage comes from the window's rows (7d calls a kind unmeasured that the ranks weigh: a4 #60129 A-1)":
         ('    cov = {r["kind"]: r["coverage"] for r in await pool.fetch(INFLUENCE_COVERAGE_SQL)}\n',
          '    cov = {r["kind"]: r["coverage"] for r in rows}\n'),
@@ -42,7 +45,8 @@ MUTANTS = {
     "F15 a registry that doesn't name our home answers as an unnamed room":
         ("    if reg is not None and me is None:", "    if False:"),
     "F12 a refused registry is a bare 500 (the floor can't say why)":
-        ('JSONResponse({"error": f"cog registry refused: {e}"}, status_code=500)', 'Response(status_code=500)'),
+        ('the floor names it (seed #60095)\n        return JSONResponse({"error": f"cog registry refused: {e}"}, status_code=500)',
+         'the floor names it (seed #60095)\n        return Response(status_code=500)'),
     "F13 the kinds' coverage is dropped (an unmeasured kind can't say how close it is)":
         ('"coverage": cov.get(k),', '"coverage": None,'),
 }

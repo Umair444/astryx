@@ -67,6 +67,11 @@ def until(what, test, secs=30):
 
 
 def main():
+    try:
+        import psycopg  # noqa: F401  (the panes' renderer and the bell read each org's database through it)
+    except ImportError:
+        print("SKIP (77): psycopg not importable by this python")
+        return 77
     if not shutil.which("tmux"):
         print("SKIP (77): no tmux")
         return 77
