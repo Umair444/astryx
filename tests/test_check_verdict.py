@@ -197,6 +197,38 @@ check("the ownership flag is never exported (a sourced child would otherwise del
       "export _SQLGUARD_OWNED" not in src and "declare -x _SQLGUARD_OWNED" not in src
       and "set -a" not in src, "")
 
+# …and the flag's ASSIGNMENT, at its real site (a3 #61231). CHECK_LIB_ONLY returns before it, so the arms above
+# prove only that settle honours the flag. Dropping it would bring the leak back; raising it unconditionally would
+# let a green check.sh delete branch_check's OWN trace dir, so its zero-prod-statements witness reads clean on
+# nothing. The block is cut from the REAL file (its `if` line through the line that exports the dir) and executed.
+import re  # noqa: E402
+
+lines_ = src.splitlines()
+i0 = next((i for i, ln in enumerate(lines_) if ln.startswith('if [ -z "${ASTRYX_SQLGUARD_DIR:-}" ]; then')), None)
+i1 = next((i for i in range(i0 or 0, len(lines_)) if "export ASTRYX_SQLGUARD_DIR" in lines_[i]), None) \
+    if i0 is not None else None
+check("check.sh makes its trace dir in ONE block: `if [ -z \"${ASTRYX_SQLGUARD_DIR:-}\" ]` … export",
+      i0 is not None and i1 is not None and i1 - i0 <= 4, f"{i0} {i1}")
+if i0 is not None and i1 is not None:
+    blk = "\n".join(lines_[i0:i1 + 1])
+    tmp = Path(tempfile.mkdtemp(prefix="cv-own-"))
+    probe = 'unset _SQLGUARD_OWNED\n' + blk + '\necho "OWNED=${_SQLGUARD_OWNED:-}"; echo "DIR=$ASTRYX_SQLGUARD_DIR"\n'
+    base = {k: v for k, v in os.environ.items() if k not in ("ASTRYX_SQLGUARD_DIR", "_SQLGUARD_OWNED")}
+    made = subprocess.run(["bash", "-c", probe], capture_output=True, text=True, env={**base, "TMPDIR": str(tmp)})
+    got = dict(ln.split("=", 1) for ln in made.stdout.splitlines() if "=" in ln)
+    check("…with no dir given, it MAKES one under $TMPDIR and raises the ownership flag",
+          got.get("OWNED") == "1" and got.get("DIR", "").startswith(str(tmp) + "/sqlguard."), made.stdout + made.stderr)
+    theirs = tmp / "theirs"
+    theirs.mkdir()
+    kept = subprocess.run(["bash", "-c", probe], capture_output=True, text=True,
+                          env={**base, "TMPDIR": str(tmp), "ASTRYX_SQLGUARD_DIR": str(theirs)})
+    got = dict(ln.split("=", 1) for ln in kept.stdout.splitlines() if "=" in ln)
+    check("…with a dir GIVEN (branch_check, mutation_probe, sqlsite), it keeps that dir and raises NO flag",
+          got.get("OWNED") == "" and got.get("DIR") == str(theirs), kept.stdout + kept.stderr)
+    shutil.rmtree(tmp, True)
+check("…and nothing else in check.sh raises the flag (exactly one assignment)",
+      len(re.findall(r"_SQLGUARD_OWNED=1", src)) == 1, str(len(re.findall(r"_SQLGUARD_OWNED=1", src))))
+
 print()
 if fails:
     print(f"CHECK-VERDICT ORACLE FAILED ({len(fails)}):", file=sys.stderr)
