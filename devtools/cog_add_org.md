@@ -169,6 +169,13 @@ negative control (and mutant O1 reverts S1 in orgs.py itself: caught).
 | our residents unmoved | `tmux ls` | our 17, on the default socket |
 | our units | a units() render diffed against `/etc/systemd/system` | identical, except `astryx-observatory.service` (now the front) and the new `astryx-observatory-org.service` |
 
+**LIVE, 2026-10-19** (step 4 run by seed under the owner's sudo grant; every row above curled after the S3f fixes
+c21a5ca, eb4a4b0, 9b4c37c, at origin/main 507aa38): `/api/cog` lists `astryx` (`/o/astryx/`) and `lab` (`/o/lab/`);
+both overviews 200 through the front; `/relay/host` 200 on the cog's gateway; a lab→seed row in our `messages` with
+`from_org='lab.umairfiaz.com'`; our 17 on the default socket, lab's seed alone on `-L ax-lab`; the front, ours and
+lab's units all active. One OBS_KEY opens both rooms (cog_add_org.owner_key); a registry or .env change needs every
+import-time reader restarted (canvas, observatory-org, gateway, front), then a browser-path check, not `is-active`.
+
 The proofs that exist today, on fixtures: test_observatory_cog (two rooms; the `/o/<org>/` pipe adds no authority),
 test_gateway_cog (a sibling's row crosses by to_org), test_canvas_cog (each org's session at its own path),
 test_org_home_units (each org's units disjoint).
