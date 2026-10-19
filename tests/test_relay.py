@@ -39,7 +39,8 @@ from nacl.signing import SigningKey  # noqa: E402
 
 from bridges import relay  # noqa: E402
 from astryx.federation import federate, introduce as intro  # noqa: E402
-from astryx.security.sqlguard.fixture import fixture_db  # noqa: E402
+from astryx.security.sqlguard.estate import unavailable  # noqa: E402
+from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db  # noqa: E402
 
 PY = sys.executable
 B_RATE = 5                                   # B's inbox cap per window (ASTRYX_INBOX_RATE)
@@ -446,9 +447,12 @@ async def proxy_arms():
 
 
 if __name__ == "__main__":
-    with tempfile.TemporaryDirectory(prefix="test-relay-") as tmp, \
-            fixture_db() as fr, fixture_db() as fa, fixture_db() as fb:
-        run(fr, fa, fb, Path(tmp))
+    try:
+        with tempfile.TemporaryDirectory(prefix="test-relay-") as tmp, \
+                fixture_db() as fr, fixture_db() as fa, fixture_db() as fb:
+            run(fr, fa, fb, Path(tmp))
+    except FixtureUnavailable as e:              # no admin DSN (env=False: no .env needed): 77 committed-only, 1 live
+        unavailable("test_relay", REPO, e)       # no arm is graded before the fixture opens
     asyncio.run(proxy_arms())
     print(f"{'ALL PASS' if not fails else 'FAIL'}: relay federation ({fails} failing)")
     sys.exit(1 if fails else 0)
