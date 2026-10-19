@@ -32,7 +32,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "src"))
 
-from astryx.security.sqlguard.estate import gate  # noqa: E402
+from astryx.security.sqlguard.estate import gate, unavailable  # noqa: E402
 gate('test_cog_add_org', REPO, deps=('psycopg', 'nacl'), env=False)   # the admin DSN may come by env (fixture.live_dsn)
 from astryx.security.sqlguard.fixture import fixture_db, live_dsn  # noqa: E402
 
@@ -52,7 +52,10 @@ def main():
     import psycopg
     from psycopg import sql
     from astryx import orgs
-    admin = live_dsn()
+    try:
+        admin = live_dsn()
+    except LookupError as e:                     # no admin DSN: 77 on a committed-only tree, 1 on a live one (seed #61038)
+        unavailable("test_cog_add_org", REPO, e)
     pid = os.getpid()
     key = f"fxlab{pid}"
     created = "astryx_" + key                    # the name A1's CREATE would take: dropped in finally if a mutant made it
