@@ -90,10 +90,15 @@ def check(name, ok, detail=""):
             print(f"        {detail}")
 
 
+HELD = []      # the fixture's ports, HELD for the whole run (bound, never listening): no concurrent gate can take one,
+#                and a connect is refused, so cog_add_org's "answering" probe reads it free. Closed in main's finally.
+
+
 def free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    HELD.append(s)
+    return s.getsockname()[1]
 
 
 def files(d: Path) -> dict:
@@ -349,6 +354,8 @@ def main():
               r.returncode == 3 and "refusing" in r.stderr, f"rc {r.returncode} {r.stderr[-200:]}")
     finally:
         kill_server("default")
+        for h in HELD:
+            h.close()
         stack.close()                 # fixture_db drops its database (and its stamp lets the reaper collect a kill's)
         fx.__exit__(None, None, None)
         shutil.rmtree(tdir, ignore_errors=True)
