@@ -413,7 +413,7 @@ export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) =>
                     className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-1 z-10" style={{ left: s0.x, top: s0.y }}>
                     <span className="relative rounded-full" style={{ boxShadow: mood === 'working' ? '0 0 0 2px var(--t-accent), 0 0 28px -4px var(--t-accent)'
                       : mood === 'awake' ? '0 0 0 2px color-mix(in srgb, var(--t-good) 70%, transparent)' : '0 0 0 1px var(--t-line)' }}>
-                      <AgentFace name={a.agent} size={52} dim={mood === 'asleep'} />
+                      <AgentFace name={a.agent} size={52} dim={mood === 'asleep'} base={r.base} />
                     </span>
                     <span className="text-[12px] font-medium text-ink leading-tight">{displayName(a.agent)}</span>
                   </div>

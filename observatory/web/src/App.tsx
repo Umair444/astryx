@@ -3,7 +3,8 @@ import { AppShell, Burger, Group, Popover, Text, TextInput, Tooltip } from '@man
 import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import { saveObsKey } from './api'
 import { StoreProvider, useStore } from './store'
-import { CogProvider } from './cog'
+import { CogProvider, useCog } from './cog'
+import { CogChooser, CogSwitcher } from './components/CogBuilding'
 import Sidebar from './components/Sidebar'
 import NetworkView from './components/NetworkView'
 import FloorView from './components/FloorView'
@@ -211,6 +212,7 @@ function Shell() {
     })
   const isDesktop = useMediaQuery('(min-width: 48em)', true)
   const { overview, who, whoChecked } = useStore()
+  const cog = useCog()
   // the Floor and the Network are the org's public faces; everything else is the owner's
   const tabs = who.owner ? TABS : TABS.filter((t) => t.key === 'network' || t.key === 'floor')
   const locked = !who.owner && route.tab !== 'network' && route.tab !== 'floor'
@@ -245,7 +247,9 @@ function Shell() {
           <a href="#/" className="flex items-center gap-2 no-underline sm:hidden"><Orb size={20} /><span className="text-[14px] font-semibold text-ink">astryx</span></a>
           <div className="flex-1 min-w-0 flex justify-center"><PulseStrip /></div>
           <span className="flex items-center gap-2 text-[11px] text-ink-mute shrink-0">
-            {overview && (
+            {/* a cog: every org as a room chip (its own live count, the open one marked) and the building. One org: its
+                name and live count, as always */}
+            {cog.cog ? <CogSwitcher /> : overview && (
               <>
                 <span className="hidden sm:inline font-mono text-ink-dim">{overview.org}</span>
                 <span className="flex items-center gap-1">
@@ -328,7 +332,7 @@ function Shell() {
 
 export default function App() {
   return (
-    <CogProvider>
+    <CogProvider chooser={(cog) => <CogChooser cog={cog} />}>
       <StoreProvider>
         <Shell />
       </StoreProvider>

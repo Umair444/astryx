@@ -1,7 +1,7 @@
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { obsKey } from './api'
-import type { AgentRow, Presence } from './types'
+import type { AgentRow, Overview, Presence } from './types'
 
 /* THE COG (owner ruling #60083: several orgs on one install are a cog; forge's API #60437/#60439/#60441).
    One org: /api/cog is the observatory's own answer, {cog: false} with the one entry, and nothing below changes a thing.
@@ -54,35 +54,63 @@ export const canvasBase = () => CANVAS
 const Ctx = createContext<Cog>(NONE)
 export const useCog = () => useContext(Ctx)
 
-export function CogProvider({ children }: { children: ReactNode }) {
+/* `chooser` is what a cog shows before the viewer has chosen a room (components/CogBuilding.tsx: the building itself,
+   every room with its people, so the choice is made looking at them). It is passed in, never imported here, so this
+   module stays below every component that reads it. One org never calls it. */
+export function CogProvider({ children, chooser }: { children: ReactNode; chooser: (cog: Cog) => ReactNode }) {
   const [cog, setCog] = useState<Cog | null>(null)
   useEffect(() => { fetchCog().then(setCog).catch(() => setCog(NONE)) }, [])
   if (!cog) return null                                        // one request: never a flash of 409s
   const pick = chosenOrg()
-  if (cog.cog && !cog.orgs.some(o => o.org === pick)) return <CogChooser cog={cog} />
+  const choosing = cog.cog && !cog.orgs.some(o => o.org === pick)
   const base = cog.cog ? cog.orgs.find(o => o.org === pick)?.base : undefined
   CANVAS = base && safeBase(base) ? `${base}canvas/` : '/canvas/'
-  return <Ctx.Provider value={cog}>{children}</Ctx.Provider>
+  return (
+    <Ctx.Provider value={cog}>
+      <BuildingProvider cog={cog}>{choosing ? chooser(cog) : children}</BuildingProvider>
+    </Ctx.Provider>
+  )
 }
 
-function CogChooser({ cog }: { cog: Cog }) {
-  return (
-    <div className="min-h-dvh grid place-items-center bg-deck text-ink px-4">
-      <div className="w-full max-w-md">
-        <div className="text-[13px] text-ink-mute mb-1">a cog of {cog.orgs.length} orgs</div>
-        <h1 className="text-xl font-semibold mb-1">Which org do you want to open?</h1>
-        <p className="text-[13px] text-ink-dim mb-5">The Floor shows every org at once. The other tabs show the org you open here, and you can switch from the Floor at any time.</p>
-        <div className="flex flex-col gap-2">
-          {cog.orgs.map(o => (
-            <button key={o.name} onClick={() => o.org && chooseOrg(o.org)}
-              className="flex items-baseline justify-between rounded-xl border border-line bg-deck-2 px-4 py-3 text-left hover:border-line-2">
-              <span className="font-medium">{o.name}</span><span className="font-mono text-[11px] text-ink-mute">{o.org}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
-  )
+/* THE BUILDING (the owner's ask 10-19: "make the cog well integrated in observatory"): every room of the cog, read
+   through its OWN base (its backend checks its OWN key), shared by the header's room chips and the building sheet so
+   one read serves both. A room is `reading` until its first answer, then `open`, `locked` (its people are private to
+   this key) or `down` (its observatory didn't answer: the next read retries). One org: nothing is read, ever. */
+export type RoomState = 'reading' | 'open' | 'locked' | 'down'
+export interface RoomLive extends RoomData { org: string; name: string; base: string; state: RoomState; overview: Overview | null; at: number | null }
+interface Building { rooms: RoomLive[]; refresh: () => void }
+const BuildingCtx = createContext<Building>({ rooms: [], refresh: () => {} })
+export const useBuilding = () => useContext(BuildingCtx)
+const READ_MS = 30_000                                         // the store's and the Floor's cadence
+
+export async function readLive(o: CogOrg): Promise<RoomLive> {
+  const [room, ov] = await Promise.allSettled([readRoom(o.base), roomGet<Overview>(o.base, '/overview')])
+  const data = room.status === 'fulfilled' ? room.value : { agents: [], presence: {}, badge: null, locked: true }
+  // /overview is public on every backend: no answer at all, or the front's 502, is a room whose observatory is down
+  const st = ov.status === 'rejected' ? (ov.reason as { status?: number }).status : 200
+  const state: RoomState = ov.status === 'rejected' && (st === undefined || st >= 500) ? 'down' : data.locked ? 'locked' : 'open'
+  return { org: o.org ?? '', name: o.name, base: o.base, ...data, state,
+           overview: ov.status === 'fulfilled' ? ov.value : null, at: Date.now() }
+}
+
+function BuildingProvider({ cog, children }: { cog: Cog; children: ReactNode }) {
+  const orgs = cog.cog ? cog.orgs.filter(o => o.org && safeBase(o.base)) : []
+  const key = orgs.map(o => o.org + o.base).join('|')
+  const [rooms, setRooms] = useState<RoomLive[]>(() => orgs.map(o => ({
+    org: o.org!, name: o.name, base: o.base, state: 'reading', overview: null, at: null,
+    agents: [], presence: {}, badge: o.badge ?? null, locked: false })))
+  const [tick, setTick] = useState(0)
+  const refresh = useCallback(() => setTick(t => t + 1), [])
+  useEffect(() => {
+    if (!orgs.length) return
+    let live = true
+    const read = () => orgs.forEach(o => readLive(o).then(r => live && setRooms(cur => cur.map(x => (x.org === r.org ? r : x)))))
+    read()
+    const t = setInterval(read, READ_MS)
+    return () => { live = false; clearInterval(t) }
+  }, [key, tick])
+  if (!cog.cog) return <>{children}</>
+  return <BuildingCtx.Provider value={{ rooms, refresh }}>{children}</BuildingCtx.Provider>
 }
 
 /* one sibling room's people, read through its own base; its backend checks its OWN key, so a key that isn't valid there
