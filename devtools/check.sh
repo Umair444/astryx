@@ -716,6 +716,7 @@ run "gateway pickup: what a NAT'd org collects by long-polling passes the one in
 run "cog scope: every registry iterator is declared (tests/cog_scope.json); only the design's cog-scoped set opens every org" "$PY" tests/test_cog_scope.py
 run "observatory cog: the cog's front lists every org and pipes each to its own observatory, adding no authority" "$PY" tests/test_observatory_cog.py
 run "observatory cog UI: the building and its room chips, the key only to safe bases, one org as before" "$PY" tests/test_observatory_cog_ui.py
+run "observatory influence across orgs: owner only, crossing traffic aggregated per pair, no body or thread leaves" "$PY" tests/test_observatory_influence_cross.py
 run "observatory cog new org: owner only, a legal key and name not already in the cog, one wire message to seed, one open request per key" "$PY" tests/test_observatory_cog_new_org.py
 run "canvas cog: each org's canvas session at its own path under its own name; one org as before" "$PY" tests/test_canvas_cog.py
 run "org home namespace: each org's residents live on its own tmux server (two orgs, one agent name, two residents); one org is the default socket" "$PY" tests/test_org_home_namespace.py

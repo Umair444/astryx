@@ -24,11 +24,37 @@ export function chosenOrg(): string | null {
   try { return m ? decodeURIComponent(m[1]) : null } catch { return null }   // a malformed cookie is no choice: the chooser shows
 }
 
-/* a room switch is a cookie change plus a reload: every tab reads the root store, which now answers for that org */
+/* FOCUS (the owner, 10-19: "a single obs key manages both and switch is seamless"). The focused org is the one every tab
+   reads. A switch is a cookie change plus a reload, and that is a choice, not a shortcut: the page holds per-org state
+   at module level (the hands desks, a live voice session, the pilot's context) and the browser caches every root
+   /api/... URL across orgs (an avatar is public, max-age 300), so an in-place swap would show one org's state under
+   another's name. A reload drops all of it, the URL keeps the open tab (the hash), the cookie is set before the reload
+   so the chooser never shows, and the one owner key (every org of the cog has the same OBS_KEY) opens the new room
+   with no prompt. What the viewer sees is a walk, not a blink: the page fades to the room's name first. */
 export function chooseOrg(org: string) {
+  if (org === chosenOrg()) return
   document.cookie = `${COOKIE}=${encodeURIComponent(org)}; Path=/; SameSite=Strict; Max-Age=31536000`
+  walkTo(org)
   location.reload()
 }
+
+function walkTo(org: string) {
+  try {
+    const d = document.createElement('div')
+    d.setAttribute('role', 'status')
+    d.setAttribute('aria-live', 'polite')
+    d.style.cssText = 'position:fixed;inset:0;z-index:1000;display:grid;place-items:center;background:var(--t-bg);' +
+      'color:var(--t-dim);font-size:13px;opacity:0;transition:opacity .18s ease-out'
+    d.textContent = `Walking to ${org}…`
+    document.body.appendChild(d)
+    requestAnimationFrame(() => { d.style.opacity = '1' })
+  } catch { /* the reload is the switch; the fade is only its manners */ }
+}
+
+/* the focused org's own base in a cog ("/o/<org>/"), else "/": a face read under it is that org's, never a cached one
+   of the same name from another org (the root URL is the same for every org) */
+let FOCUS = '/'
+export const focusBase = () => FOCUS
 
 /* whoami first, as the store does, so a visitor to one org never fires the owner-only /api/cog (zero 403s): a 409 is a
    cog's front with no org chosen yet (its /api/cog is public), an owner reads /api/cog, and a visitor is one room. */
@@ -65,6 +91,7 @@ export function CogProvider({ children, chooser }: { children: ReactNode; choose
   const choosing = cog.cog && !cog.orgs.some(o => o.org === pick)
   const base = cog.cog ? cog.orgs.find(o => o.org === pick)?.base : undefined
   CANVAS = base && safeBase(base) ? `${base}canvas/` : '/canvas/'
+  FOCUS = base && safeBase(base) ? base : '/'
   return (
     <Ctx.Provider value={cog}>
       <BuildingProvider cog={cog}>{choosing ? chooser(cog) : children}</BuildingProvider>
@@ -78,14 +105,33 @@ export function CogProvider({ children, chooser }: { children: ReactNode; choose
    this key) or `down` (its observatory didn't answer: the next read retries). One org: nothing is read, ever. */
 export type RoomState = 'reading' | 'open' | 'locked' | 'down'
 export interface RoomLive extends RoomData { org: string; name: string; base: string; state: RoomState; overview: Overview | null; at: number | null }
-interface Building { rooms: RoomLive[]; refresh: () => void }
-const BuildingCtx = createContext<Building>({ rooms: [], refresh: () => {} })
+/* the focused org's traffic across its boundary (GET /api/influence/cross, owner-only, aggregate-only), read through the
+   focused base: the floor and the network draw the cog's org <-> org and agent <-> agent influence from it */
+export interface CrossEdge { from: string; from_org: string; to: string; to_org: string; n: number; last_ts: string }
+export interface Cross { org: string; edges: CrossEdge[] }
+interface Building { rooms: RoomLive[]; cross: Cross | null; refresh: () => void }
+const BuildingCtx = createContext<Building>({ rooms: [], cross: null, refresh: () => {} })
+
+/** The focused org's ties to its siblings: per (agent here, room, agent there) the messages either way. */
+export interface Tie { here: string; room: string; there: string; n: number }
+export function ties(cross: Cross | null, siblings: Set<string>): Tie[] {
+  if (!cross) return []
+  const m = new Map<string, Tie>()
+  for (const e of cross.edges) {
+    const t = e.from_org === cross.org && siblings.has(e.to_org) ? { here: e.from, room: e.to_org, there: e.to }
+      : e.to_org === cross.org && siblings.has(e.from_org) ? { here: e.to, room: e.from_org, there: e.from } : null
+    if (!t) continue
+    const k = `${t.here}|${t.room}|${t.there}`
+    m.set(k, { ...t, n: (m.get(k)?.n ?? 0) + e.n })
+  }
+  return [...m.values()]
+}
 export const useBuilding = () => useContext(BuildingCtx)
 const READ_MS = 30_000                                         // the store's and the Floor's cadence
 
 export async function readLive(o: CogOrg): Promise<RoomLive> {
   const [room, ov] = await Promise.allSettled([readRoom(o.base), roomGet<Overview>(o.base, '/overview')])
-  const data = room.status === 'fulfilled' ? room.value : { agents: [], presence: {}, badge: null, locked: true }
+  const data = room.status === 'fulfilled' ? room.value : { agents: [], presence: {}, badge: null, locked: false }
   // /overview is public on every backend: no answer at all, or the front's 502, is a room whose observatory is down
   const st = ov.status === 'rejected' ? (ov.reason as { status?: number }).status : 200
   const state: RoomState = ov.status === 'rejected' && (st === undefined || st >= 500) ? 'down' : data.locked ? 'locked' : 'open'
@@ -99,18 +145,22 @@ function BuildingProvider({ cog, children }: { cog: Cog; children: ReactNode }) 
   const [rooms, setRooms] = useState<RoomLive[]>(() => orgs.map(o => ({
     org: o.org!, name: o.name, base: o.base, state: 'reading', overview: null, at: null,
     agents: [], presence: {}, badge: o.badge ?? null, locked: false })))
+  const [cross, setCross] = useState<Cross | null>(null)
   const [tick, setTick] = useState(0)
   const refresh = useCallback(() => setTick(t => t + 1), [])
   useEffect(() => {
     if (!orgs.length) return
     let live = true
-    const read = () => orgs.forEach(o => readLive(o).then(r => live && setRooms(cur => cur.map(x => (x.org === r.org ? r : x)))))
+    const read = () => {
+      orgs.forEach(o => readLive(o).then(r => live && setRooms(cur => cur.map(x => (x.org === r.org ? r : x)))))
+      roomGet<Cross>(focusBase(), '/influence/cross').then(c => live && setCross(c)).catch(() => {})
+    }
     read()
     const t = setInterval(read, READ_MS)
     return () => { live = false; clearInterval(t) }
   }, [key, tick])
   if (!cog.cog) return <>{children}</>
-  return <BuildingCtx.Provider value={{ rooms, refresh }}>{children}</BuildingCtx.Provider>
+  return <BuildingCtx.Provider value={{ rooms, cross, refresh }}>{children}</BuildingCtx.Provider>
 }
 
 /* one sibling room's people, read through its own base; its backend checks its OWN key, so a key that isn't valid there
@@ -132,7 +182,9 @@ export async function readRoom(base: string): Promise<RoomData> {
     agents: agents.status === 'fulfilled' && Array.isArray(agents.value) ? agents.value : [],
     presence: presence.status === 'fulfilled' && Array.isArray(presence.value) ? Object.fromEntries(presence.value.map(p => [p.agent, p])) : {},
     badge: me.status === 'fulfilled' ? me.value.orgs?.[0]?.badge ?? null : null,
-    locked: agents.status === 'rejected',
+    // locked is a key that room genuinely REFUSED (401/403), never a room that's down or slow: every org of a cog has
+    // the owner's one key, so a working key never meets a second prompt
+    locked: [agents, presence].some(x => x.status === 'rejected' && [401, 403].includes((x.reason as { status?: number }).status ?? 0)),
   }
 }
 

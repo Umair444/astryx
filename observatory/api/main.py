@@ -3182,6 +3182,34 @@ async def influence(request: Request, window: str = "14d"):
     }
 
 
+# ACROSS ORGS (the owner, 10-19: "in cogs orgs can also communicate with each other … connect those too via influence
+# graph"). The influence compute keeps this org's own agents only (graph.is_node: a remote party is no node), so the
+# traffic that crosses the org's boundary is read here, aggregated: who here talked with which org's agent, how often,
+# and when last. Never a body or a thread. `local` is this org (both columns are NOT NULL); any other value is the
+# remote org's federation name, a cog's sibling or a federation peer alike, and the floor/network keep the cog's own.
+INFLUENCE_CROSS_SQL = (
+    "SELECT from_agent, from_org, to_agent, to_org, count(*) AS n, max(ts) AS last FROM messages "
+    "WHERE ts >= now() - make_interval(days => $1) AND (from_org <> 'local' OR to_org <> 'local') "
+    "GROUP BY 1, 2, 3, 4 ORDER BY 5 DESC, 1, 3 LIMIT 500")
+
+
+@app.get("/api/influence/cross")
+async def influence_cross(request: Request, window: str = "14d"):
+    """Messages across this org's boundary, aggregated per (from agent, from org, to agent, to org): {org, window,
+    edges: [{from, from_org, to, to_org, n, last_ts}]}, `local` read as this org's federation name. Owner-only (by
+    omission from PUBLIC_PATHS, and checked here), read-only, aggregate-only: no body, thread or id leaves."""
+    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+        return Response(status_code=403)
+    if window not in INFLUENCE_WINDOWS:          # the same two windows as /api/influence
+        return Response(status_code=400)
+    me = _env("ASTRYX_ORG") or ORG
+    rows = await pool.fetch(INFLUENCE_CROSS_SQL, INFLUENCE_WINDOWS[window])
+    here = lambda o: me if o == "local" else o   # noqa: E731
+    return {"org": me, "window": window,
+            "edges": [{"from": r["from_agent"], "from_org": here(r["from_org"]), "to": r["to_agent"],
+                       "to_org": here(r["to_org"]), "n": r["n"], "last_ts": r["last"].isoformat()} for r in rows]}
+
+
 _identity_cache: dict = {}
 
 

@@ -85,8 +85,9 @@ def main():
           and 0 <= body.find("if (!safeBase(base)) throw") < body.find("fetch("), body[:200])
     check("CogBuilding.tsx fetches nothing itself (every room read is cog.tsx's)",
           not re.search(r"\bfetch\(|EventSource\(", src["building"]))
-    check("AgentFace's room base is safeBase-checked, else /",
-          "base && safeBase(base) ? base : '/'" in src["face"] and "`${room}api/agents/" in src["face"])
+    check("AgentFace's room base is safeBase-checked, else the focused org's own base (/ on one org)",
+          "base && safeBase(base) ? base : focusBase()" in src["face"] and "`${room}api/agents/" in src["face"]
+          and "FOCUS = base && safeBase(base) ? base : '/'" in src["cog"])
     check("the building reads every room through readLive (readRoom + roomGet)",
           re.search(r"readRoom\(o\.base\), roomGet<Overview>\(o\.base, '/overview'\)", src["cog"]) is not None)
 
@@ -141,11 +142,48 @@ def main():
     fl = (SRC / "components" / "FloorView.tsx").read_text()
     m = re.search(r"const fit = \(min = 0, whole = false\) => \{(.*?)\n  \}", fl, re.S)
     body = m.group(1) if m else ""
-    check("fit() centres on the focused room (one.w * me + one.w / 2) at one room's scale unless asked for the whole",
-          "const w = whole ? room.w : one.w" in body and "whole ? room.w / 2 : one.w * me + one.w / 2" in body
+    # the focused room's own centre is its SLOT's (the conglomerate puts it first, siblings collapsed beside it): one
+    # org, one slot one.w wide, so slots[me].cx is one.w / 2, exactly one.w * me + one.w / 2 with me = 0
+    check("fit() centres on the focused room (its slot's centre) at one room's scale unless asked for the whole",
+          "const w = whole ? room.w : one.w" in body and "whole ? room.w / 2 : slots[me].cx" in body
           and "x: size.w / 2 - cx * k" in body, body[:300])
     check("the first framing is the focused room; only the ⤢ control frames the whole floor",
           "fit(0.6)\n" in fl and "() => fit(0, true)]" in fl and fl.count("fit(0, true)") == 1)
+
+    print("\nK6 THE CONGLOMERATE: FOCUS, FLOOR, NETWORK")
+    flp, nw = SRC / "components" / "FloorView.tsx", SRC / "components" / "NetworkView.tsx"
+    f, w, cg = code(flp.read_text()), code(nw.read_text()), src["cog"]
+    fn = re.search(r"export function chooseOrg\(org: string\) \{(.*?)\n\}", cg, re.S)
+    body = fn.group(1) if fn else ""
+    check("a focus switch sets the cookie BEFORE the reload, keeps the URL (the open tab), and never prompts for a key",
+          bool(fn) and 0 <= body.find("document.cookie =") < body.find("location.reload()")
+          and "location.href" not in body and "location.hash" not in body and "obs_key" not in body, body[:300])
+    check("a room is locked only when it REFUSED the key (401/403), never when it is down or slow",
+          "[401, 403].includes(" in cg and "locked: agents.status === 'rejected'" not in cg)
+    check("the cross-org ties are read through the focused base (safeBase-checked roomGet), owner route /influence/cross",
+          "roomGet<Cross>(focusBase(), '/influence/cross')" in cg)
+    check("FLOOR one org: one slot, one.w wide (the room as before); the focused room is first, so nothing in it moves",
+          "const order = [me, ...rooms.map((_, i) => i).filter(i => i !== me)]" in f
+          and "const w = i === me ? one.w :" in f and "const cx = slots[me].cx" in f)
+    check("FLOOR a sibling is collapsed: its people get seats only when it is the open one; hover previews, Esc closes",
+          re.search(r"out\[`@org:\$\{r\.name\}`\] = \{ x: scx, y: cy \}\s*if \(r\.name !== open\) return\s*const sr = seatRing", f) is not None
+          and "setPeek(r.name)" in f and "if (e.key === 'Escape') setOpen(null)" in f)
+    check("FLOOR the sibling's orb casts no glow (RoomOrb), its people ring without the 28px halo; Focus walks in",
+          "<RoomOrb size={64}" in f and (lambda t, a, b: 0 < t.find(a) < t.find(b) and "0 0 28px -4px" not in t[t.find(a):t.find(b)])(
+              flp.read_text(), "the cog's other rooms", "you, the owner")   # raw text: the markers are JSX comments
+          and "const focusIt = () => r.org && chooseOrg(r.org)" in f)
+    check("FLOOR a sibling's peers row is a room, never a rim peer; ties drawn only in a cog with traffic",
+          "allPeers.filter(p => !sibs.some(r => r.name === p.org))" in f and "{cross.length > 0 && mode !== 'live' && (" in f)
+    check("NETWORK a sibling is collapsed to its orb (RoomOrb), opened in place, one at a time, Esc or the pane closes it",
+          "<RoomOrb size={52}" in w and "setOpenSib(isOpen ? null : o.name)" in w and "onPaneClick={() => setOpenSib(null)}" in w
+          and "if (e.key === 'Escape') setOpenSib(null)" in w and "if (!isOpen) return" in w)
+    check("NETWORK opening a sibling never remounts the map (its people are not in the layout key)",
+          "flow.nodes.filter((n) => !n.id.startsWith('sib:'))" in w)
+    sib_at, own_at = w.find("const sib = sibOf(flash.from_org) ?? sibOf(flash.to_org)"), w.find("} else if (who.owner) {")
+    check("NETWORK a sibling's message is placed BEFORE the owner branch (its seed never lights ours) on the sibling edge",
+          0 <= sib_at < own_at and "`peer:${sib}`" in w)
+    check("NETWORK the org <-> sibling edge is weighted by the ties, and agent <-> agent ties are drawn when it is open",
+          "const cogTies = useMemo(() => ties(cross, sibNames)" in w and "id: `e-tie-${t.here}-${o.name}-${t.there}`" in w)
     return 1 if fails else 0
 
 

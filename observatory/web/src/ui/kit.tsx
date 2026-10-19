@@ -167,6 +167,18 @@ export function Orb({ size = 64, tone = 'accent' }: { size?: number; tone?: Tone
   )
 }
 
+/** A cog sibling's room, collapsed: an orb that is STILL and casts no glow (the screen's one glow belongs to the focused
+ *  org), in the companion hue (the other room); an accent ring when someone in it is working. */
+export function RoomOrb({ size = 64, working = false }: { size?: number; working?: boolean }) {
+  return (
+    <span className="inline-block rounded-full" aria-hidden style={{
+      width: size, height: size,
+      background: 'radial-gradient(circle at 34% 30%, color-mix(in srgb, var(--t-fg) 30%, var(--t-accent2)) 0%, transparent 34%), '
+        + 'radial-gradient(circle at 50% 55%, color-mix(in srgb, var(--t-accent2) 70%, var(--t-panel)) 0%, color-mix(in srgb, var(--t-accent2) 22%, var(--t-panel)) 72%)',
+      boxShadow: working ? '0 0 0 2px var(--t-accent)' : '0 0 0 1px var(--t-line2)' }} />
+  )
+}
+
 export function Empty({ title, hint, tone = 'accent' }: { title: string; hint?: ReactNode; tone?: Tone }) {
   return (
     <div className="flex flex-col items-center justify-center text-center py-14 gap-4">

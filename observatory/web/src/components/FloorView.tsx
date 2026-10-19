@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
+import { RoomOrb } from '../ui/kit'
 import { useStore } from '../store'
 import { api, displayName, fmtAgo } from '../api'
 import type { AgentRow, Msg, Presence } from '../types'
-import { chooseOrg, chosenOrg, cogStreamUrl, readRoom, roomGet, useCog, type Cog, type RoomData } from '../cog'
+import { chooseOrg, chosenOrg, cogStreamUrl, readRoom, roomGet, ties, useBuilding, useCog, type Cog, type RoomData } from '../cog'
 import AgentFace from './AgentFace'
 import { HandBadge } from '../ui/hands'
 import { FRESH_PRESENCE, moodOf, nowLine } from '../ui/life'
@@ -66,6 +67,10 @@ function seatRing(clusters: [string, AgentRow[]][], cx: number, cy: number, rx: 
    org it went to, its thread and body, each 'local' read as the reporting room's own name so both copies agree. Never on
    the recipient: the receiver may clamp it (introduced → seed). A different message (same body to another org) differs. */
 const PAIR_MS = 5000
+// a cog's other rooms adjoin the focused one, a size smaller (the owner, 10-19: "the whole conglomerate with focused
+// org should be visualized properly"): the focused room is full, its siblings are rooms you can see into and walk to
+const SIB = 0.72
+const SIB_SLOT = 380            // a collapsed sibling's width on the floor: its orb, its name, a preview of its people
 const crossKey = (m: Wire, here: string) => {
   const o = (x: string | null) => (!x || x === 'local' ? here : x)
   return [o(m.from_org), m.from, o(m.to_org), m.thread ?? '', m.body ?? ''].join('\u0000')
@@ -73,7 +78,7 @@ const crossKey = (m: Wire, here: string) => {
 type Mode = 'live' | 'influence' | 'both'
 
 export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) => void }) {
-  const { agents, presence, flash, peers, overview, who } = useStore()
+  const { agents, presence, flash, peers: allPeers, overview, who } = useStore()
   const box = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
   const [now, setNow] = useState(Date.now())
@@ -121,7 +126,7 @@ export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) =>
   const fit = (min = 0, whole = false) => {
     const w = whole ? room.w : one.w
     const k = Math.max(min, Math.min(1, size.w / w, size.h / room.h))
-    const cx = whole ? room.w / 2 : one.w * me + one.w / 2
+    const cx = whole ? room.w / 2 : slots[me].cx   // the focused room is the first slot (one org: one.w / 2, as before)
     setCam({ k, x: size.w / 2 - cx * k, y: (size.h - room.h * k) / 2 })
   }
 
@@ -191,8 +196,30 @@ export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) =>
   const me = cog.cog ? Math.max(0, rooms.findIndex(r => r.org === chosenOrg())) : 0
   const sibs = cog.cog ? rooms.filter((_, i) => i !== me) : []
   const sibKey = sibs.map(r => r.name + r.base).join('|')
+  // a sibling's peers row (introduced, url NULL) exists only for the door checks: it is a room here, never on the rim
+  const peers = useMemo(() => (sibs.length ? allPeers.filter(p => !sibs.some(r => r.name === p.org)) : allPeers), [allPeers, sibKey])
+  // who here talked with whom in a sibling room (the focused org's crossing traffic): drawn org to org, seat to seat
+  const { cross: crossAll } = useBuilding()
+  const cross = useMemo(() => ties(crossAll, new Set(sibs.map(r => r.name))), [crossAll, sibKey])
   const one = { w: Math.max(size.w, 900), h: Math.max(size.h, 760) }
-  const room = { w: one.w * rooms.length, h: one.h }
+  /* THE CONGLOMERATE (the owner, 10-19: "to avoid clutter dont show agents of unfocused org unless someone hovers over
+     it or click it"). The focused room is the floor as it always was, and leftmost so nothing it holds ever moves. Each
+     other room of the cog stands beside it COLLAPSED: one orb, its name, its life; hovering previews its people,
+     a click opens it IN PLACE (one at a time; Esc or a click on the floor closes it), and its Focus button walks you
+     in. One org: one slot, one.w wide, exactly the room as before. */
+  const [open, setOpen] = useState<string | null>(null)
+  const plane = useRef<HTMLDivElement>(null)
+  const [peek, setPeek] = useState<string | null>(null)
+  const order = [me, ...rooms.map((_, i) => i).filter(i => i !== me)]
+  const slots: Record<number, { cx: number; w: number }> = {}
+  let slotEnd = 0
+  for (const i of order) {
+    const w = i === me ? one.w : rooms[i].name === open ? Math.round(one.w * 0.86) : SIB_SLOT
+    slots[i] = { cx: slotEnd + w / 2, w }
+    slotEnd += w
+  }
+  const slotKey = order.map(i => `${i}:${slots[i].cx}`).join('|')
+  const room = { w: slotEnd, h: one.h }
   useEffect(() => {
     if (placed.current || !size.w) return   // wait for the real measurement
     placed.current = true
@@ -212,7 +239,7 @@ export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) =>
   const sibClusters = useMemo(() => Object.fromEntries(sibs.map(r => [r.name, clustersOf(sib[r.name]?.agents ?? [])])), [sib, sibKey])
 
   const { pos, arcs, ring, geo, sibArcs } = useMemo(() => {
-    const cx = one.w * me + one.w / 2, cy = one.h / 2 - 6
+    const cx = slots[me].cx, cy = one.h / 2 - 6
     const rx = one.w / 2 - 120, ry = one.h / 2 - 110
     const { out, arcs, groupOf, groupMid } = seatRing(clusters, cx, cy, rx, ry)
     out.__owner = { x: cx, y: cy }
@@ -220,19 +247,44 @@ export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) =>
       const a = Math.PI * 0.15 + (i / Math.max(1, peers.length)) * Math.PI * 0.7
       out[`@peer:${p.org}`] = { x: cx + Math.cos(a) * (rx * 0.42), y: cy + Math.sin(a) * (ry * 0.42) }
     })
-    // a sibling org's room: its centre, and its own people on its own ring
+    // a sibling org's room: its centre (its orb, collapsed), and its own people on its own ring only when it's open
     const sibArcs: Record<string, { dept: string; a0: number; a1: number }[]> = {}
     rooms.forEach((r, i) => {
       if (i === me) return
-      const scx = one.w * i + one.w / 2
+      const scx = slots[i].cx
       out[`@org:${r.name}`] = { x: scx, y: cy }
-      const sr = seatRing(sibClusters[r.name] ?? [], scx, cy, rx, ry, `${r.name}:`)
+      if (r.name !== open) return
+      const sr = seatRing(sibClusters[r.name] ?? [], scx, cy, rx * SIB, ry * SIB, `${r.name}:`)
       Object.assign(out, sr.out)
       sibArcs[r.name] = sr.arcs
     })
     const geo: Geometry = { pos: out, centre: { x: cx, y: cy }, groupOf, groupMid }
     return { pos: out, arcs, ring: { cx, cy, rx, ry }, geo, sibArcs }
-  }, [clusters, sibClusters, one.w, one.h, peers, rooms.length, me])
+  }, [clusters, sibClusters, one.w, one.h, peers, rooms.length, me, open, slotKey])
+
+  // opening a room glides the camera to it (its people are its whole point); Esc closes it
+  const [glide, setGlide] = useState(false)
+  const wasOpen = useRef(false)
+  useEffect(() => {
+    if (!open) {
+      // closing a room glides the camera home: the focused org is always the floor's centre
+      if (!wasOpen.current) return
+      wasOpen.current = false
+      setGlide(true)
+      fit(0.6)
+      const t = setTimeout(() => setGlide(false), 520)
+      return () => clearTimeout(t)
+    }
+    wasOpen.current = true
+    const i = rooms.findIndex(r => r.name === open)
+    if (i < 0 || !size.w) return
+    setGlide(true)
+    setCam(c => ({ ...c, x: size.w / 2 - slots[i].cx * c.k }))
+    const t = setTimeout(() => setGlide(false), 520)
+    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(null) }
+    addEventListener('keydown', k)
+    return () => { clearTimeout(t); setGlide(false); removeEventListener('keydown', k) }
+  }, [open])
 
   // where a party of a message stands: room `ri` is the room whose backend reported it
   const roomOf = (name: string | null) => (name ? rooms.findIndex(r => r.name === name) : -1)
@@ -352,8 +404,10 @@ export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) =>
       )}
       <div ref={box} className="relative flex-1 min-h-0 overflow-hidden floor-bg select-none touch-none cursor-grab active:cursor-grabbing"
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}
-        onClickCapture={swallowDragClick} onDoubleClick={(e) => { if (e.target === e.currentTarget) fit() }}>
-       <div className="absolute left-0 top-0 origin-top-left" style={{ width: room.w, height: room.h, transform: `translate(${cam.x}px, ${cam.y}px) scale(${cam.k})` }}>
+        onClickCapture={swallowDragClick} onDoubleClick={(e) => { if (e.target === e.currentTarget) fit() }}
+        onClick={(e) => { if (open && (e.target === e.currentTarget || e.target === plane.current)) setOpen(null) }}>
+       <div ref={plane} className="absolute left-0 top-0 origin-top-left" style={{ width: room.w, height: room.h, transform: `translate(${cam.x}px, ${cam.y}px) scale(${cam.k})`,
+         transition: glide ? 'transform .5s cubic-bezier(.2,.8,.2,1)' : undefined }}>
         {/* the ring itself, and each department as a band along it */}
         <svg className="absolute left-0 top-0 pointer-events-none" width={room.w} height={room.h}>
           <ellipse cx={ring.cx} cy={ring.cy} rx={ring.rx} ry={ring.ry} fill="none" stroke="var(--t-line)" strokeDasharray="2 7" />
@@ -377,56 +431,122 @@ export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) =>
           })}
         </svg>
 
-        {/* the cog's other rooms (S3c): each sibling org on its own ring, its people read through its own backend. They
-            aren't clickable here: an agent opens in its own org, one tap on the room's name away. */}
+        {/* the cog's other rooms (S3c; the conglomerate, 10-19): each sibling org COLLAPSED to its orb beside the focused
+            room, read through its own backend. Hover previews its people; a click opens it in place (its people on its own
+            ring, smaller and quieter than the focused room's); Focus walks you in. */}
         {rooms.map((r, i) => {
           if (i === me) return null
           const d = sib[r.name]
-          const scx = one.w * i + one.w / 2
-          const pt = (a: number, k = 1) => [scx + Math.cos(a) * ring.rx * k, ring.cy + Math.sin(a) * ring.ry * k]
+          const scx = slots[i].cx
+          const isOpen = open === r.name
+          const focusIt = () => r.org && chooseOrg(r.org)
+          const ms = (d?.agents ?? []).map(a => ({ a, mood: moodOf(a, d!.presence[a.agent], now) }))
+          const working = ms.filter(m => m.mood === 'working').length, awake = ms.filter(m => m.mood !== 'asleep').length
+          const word = !d ? `knocking on ${r.org ?? r.name}'s door…` : d.down ? 'its observatory is down · retrying'
+            : d.locked ? 'this room refused your key: focus it and enter its key'
+            : !d.agents.length ? 'no one has moved in yet' : `${working ? `${working} working · ` : ''}${awake} awake · ${d.agents.length} agents`
+          const status = (
+            <span className={`text-[10.5px] text-center max-w-[220px] ${d?.down ? 'text-bad' : 'text-ink-mute'}`} role="status">{word}</span>
+          )
+          if (!isOpen) {
+            // collapsed: one orb, its name, its life. Hover: its people preview on a small arc; click: open it here
+            const preview = peek === r.name ? ms.filter(m => m.mood !== 'asleep').concat(ms.filter(m => m.mood === 'asleep')).slice(0, 8) : []
+            return (
+              <div key={r.name} className="absolute -translate-x-1/2 -translate-y-1/2 z-10" style={{ left: scx, top: ring.cy }}
+                onMouseEnter={() => setPeek(r.name)} onMouseLeave={() => setPeek(p => (p === r.name ? null : p))}>
+                <AnimatePresence>
+                  {preview.map((m, k) => {
+                    const ang = -Math.PI / 2 + (k - (preview.length - 1) / 2) * 0.42
+                    return (
+                      <motion.span key={m.a.agent} className="absolute left-1/2 top-[44px] rounded-full pointer-events-none"
+                        initial={{ opacity: 0, scale: 0.9, x: -14, y: -14 }} animate={{ opacity: m.mood === 'asleep' ? 0.55 : 0.95, scale: 1,
+                          x: Math.cos(ang) * 104 - 14, y: Math.sin(ang) * 104 - 14 }}
+                        exit={{ opacity: 0, transition: { duration: 0.15 } }} transition={{ type: 'spring', damping: 26, stiffness: 300 }}
+                        style={{ boxShadow: m.mood === 'working' ? '0 0 0 2px var(--t-accent)' : m.mood === 'awake' ? '0 0 0 2px color-mix(in srgb, var(--t-good) 70%, transparent)' : '0 0 0 1px var(--t-line)' }}>
+                        <AgentFace name={m.a.agent} size={28} base={r.base} dim={m.mood === 'asleep'} />
+                      </motion.span>
+                    )
+                  })}
+                </AnimatePresence>
+                <div className="flex flex-col items-center gap-1.5">
+                  <button onClick={() => setOpen(r.name)} title={`Open ${r.name} here: its people on the floor`} aria-label={`open ${r.org ?? r.name} here`} aria-expanded={false}
+                    className={`grid place-items-center w-[88px] h-[88px] rounded-full border border-line-2 bg-deck-2 transition-opacity ${d && !d.down ? '' : 'opacity-60'}`}>
+                    <RoomOrb size={64} working={working > 0} />
+                  </button>
+                  <span className="text-[13px] font-medium text-ink">{r.org ?? r.name} <span className="text-ink-mute font-normal">· same cog</span></span>
+                  {status}
+                  <button onClick={focusIt} title={`Focus ${r.name}: every tab then reads this org`}
+                    className="h-11 sm:h-8 px-3 rounded-full border border-line text-[12px] text-ink-dim hover:text-ink hover:border-cyan/45 transition-colors">Focus</button>
+                </div>
+              </div>
+            )
+          }
+          const srx = ring.rx * SIB, sry = ring.ry * SIB
+          const pt = (a: number, k = 1) => [scx + Math.cos(a) * srx * k, ring.cy + Math.sin(a) * sry * k]
           return (
-            <div key={r.name}>
+            <motion.div key={r.name} initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }}
+              transition={{ type: 'spring', damping: 28, stiffness: 300 }} style={{ transformOrigin: `${scx}px ${ring.cy}px` }}>
               <svg className="absolute left-0 top-0 pointer-events-none" width={room.w} height={room.h}>
-                <ellipse cx={scx} cy={ring.cy} rx={ring.rx} ry={ring.ry} fill="none" stroke="var(--t-line)" strokeDasharray="2 7" />
+                <ellipse cx={scx} cy={ring.cy} rx={srx} ry={sry} fill="none" stroke="var(--t-line)" strokeDasharray="2 7" />
                 {(sibArcs[r.name] ?? []).map(({ dept, a0, a1 }) => {
                   const [x0, y0] = pt(a0), [x1, y1] = pt(a1), [lx, ly] = pt((a0 + a1) / 2, 1.16)
                   return (
                     <g key={dept}>
-                      <path d={`M ${x0} ${y0} A ${ring.rx} ${ring.ry} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${x1} ${y1}`} fill="none"
-                        stroke="color-mix(in srgb, var(--t-accent) 14%, var(--t-panel))" strokeWidth={84} strokeLinecap="round" opacity={0.4} />
+                      <path d={`M ${x0} ${y0} A ${srx} ${sry} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${x1} ${y1}`} fill="none"
+                        stroke="color-mix(in srgb, var(--t-accent) 14%, var(--t-panel))" strokeWidth={60} strokeLinecap="round" opacity={0.3} />
                       <text x={lx} y={Math.min(Math.max(ly, 18), room.h - 12)} textAnchor="middle" fontSize={10} letterSpacing="0.14em" fill="var(--t-mute)">{dept.toUpperCase()}</text>
                     </g>
                   )
                 })}
               </svg>
-              <div className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-1 z-10" style={{ left: scx, top: ring.cy }}>
-                <button onClick={() => r.org && chooseOrg(r.org)} title={`open ${r.name}: every tab then reads this org`}
-                  className="w-14 h-14 rounded-full border border-line-2 bg-panel grid place-items-center text-[10px] text-ink-dim hover:text-ink hover:border-accent">open</button>
-                <span className="text-[11px] text-ink-dim">org {r.name}
-                  {d?.badge && <span className="font-mono opacity-70" title="the org's Ed25519 identity, from its gateway"> · {d.badge}</span>}
+              {/* the open room's door: its name and Focus (walk in), or close it back to its orb */}
+              <div className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-1.5 z-10" style={{ left: scx, top: ring.cy }}>
+                <span className="text-[13px] font-medium text-ink">{r.org ?? r.name} <span className="text-ink-mute font-normal">· same cog</span></span>
+                <span className="text-[10.5px] text-ink-mute font-mono">{r.name}
+                  {d?.badge && <span className="opacity-70" title="the org's Ed25519 identity, from its gateway"> · {d.badge}</span>}
                 </span>
-                {d?.down && <span className="text-[10.5px] text-bad" role="status">its observatory is down · retrying</span>}
-                {!d?.down && d?.locked && <span className="text-[10.5px] text-ink-mute max-w-[180px] text-center">its people are private: your key isn't this org's</span>}
-                {!d?.down && d && !d.locked && d.agents.length === 0 && <span className="text-[10.5px] text-ink-mute">no agents yet</span>}
+                {status}
+                <span className="flex items-center gap-2">
+                  <button onClick={focusIt} title={`Focus ${r.name}: every tab then reads this org`} aria-label={`focus ${r.org ?? r.name}`}
+                    className="h-11 sm:h-9 px-4 rounded-full border border-cyan/45 bg-cyan/10 text-[12px] text-ink transition-colors">Focus {r.org ?? r.name}</button>
+                  <button onClick={() => setOpen(null)} title="Close this room (Esc)" aria-label={`close ${r.org ?? r.name}`} aria-expanded
+                    className="h-11 sm:h-9 px-3 rounded-full border border-line text-[12px] text-ink-dim hover:text-ink">Close</button>
+                </span>
               </div>
-              {(d?.agents ?? []).map(a => {
+              {ms.map(({ a, mood }) => {
                 const s0 = pos[`${r.name}:${a.agent}`]
                 if (!s0) return null
-                const mood = moodOf(a, d!.presence[a.agent], now)
+                // a sibling's people: smaller and quieter than the focused room's, a ring for their life and no glow
+                // (the screen's one glow is the focused room's owner)
                 return (
                   <div key={a.agent} title={`${displayName(a.agent)} · ${r.name} · ${mood === 'asleep' ? `asleep · ${fmtAgo(a.last_seen)}` : mood}`}
-                    className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-1 z-10" style={{ left: s0.x, top: s0.y }}>
-                    <span className="relative rounded-full" style={{ boxShadow: mood === 'working' ? '0 0 0 2px var(--t-accent), 0 0 28px -4px var(--t-accent)'
+                    className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-1 z-10 opacity-85" style={{ left: s0.x, top: s0.y }}>
+                    <span className="relative rounded-full" style={{ boxShadow: mood === 'working' ? '0 0 0 2px var(--t-accent)'
                       : mood === 'awake' ? '0 0 0 2px color-mix(in srgb, var(--t-good) 70%, transparent)' : '0 0 0 1px var(--t-line)' }}>
-                      <AgentFace name={a.agent} size={52} dim={mood === 'asleep'} base={r.base} />
+                      <AgentFace name={a.agent} size={38} dim={mood === 'asleep'} base={r.base} />
                     </span>
-                    <span className="text-[12px] font-medium text-ink leading-tight">{displayName(a.agent)}</span>
+                    <span className="text-[11px] text-ink-dim leading-tight">{displayName(a.agent)}</span>
                   </div>
                 )
               })}
-            </div>
+            </motion.div>
           )
         })}
+
+        {/* across the cog (influence between orgs): who here talked with whom there, a line per pair weighted by how
+            often; to a closed room's orb, or seat to seat when it's open. The companion hue: the other voice */}
+        {cross.length > 0 && mode !== 'live' && (
+          <svg className="absolute left-0 top-0 pointer-events-none" width={room.w} height={room.h} aria-hidden>
+            {cross.map(x => {
+              const a = pos[x.here] ?? pos.__owner
+              const b = pos[`${x.room}:${x.there}`] ?? pos[`@org:${x.room}`]
+              if (!a || !b) return null
+              const mx = (a.x + b.x) / 2, my = Math.min(a.y, b.y) - 60
+              return <path key={`${x.here}|${x.room}|${x.there}`} d={`M ${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}`} fill="none"
+                stroke="var(--t-accent2)" strokeOpacity={0.45} strokeWidth={1 + Math.log2(1 + x.n)} strokeLinecap="round" />
+            })}
+          </svg>
+        )}
 
         {showInf && <InfluenceLayer inf={inf!} kinds={kinds!} geo={geo} focus={focus} flowing width={room.w} height={room.h} />}
 

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import Avatar, { type AvatarStatus } from './Avatar'
 import { displayName } from '../api'
-import { safeBase } from '../cog'
+import { focusBase, safeBase } from '../cog'
 
 /* An agent's FACE: the avatar it authored for itself (agents/<x>/avatar.svg, mandatory since
    2026-10-09), served at /api/agents/<x>/avatar. Anyone without one — a human on a channel, a
@@ -35,7 +35,7 @@ export default function AgentFace({ name, size = 32, radius = '9999px', dim = fa
     )
   }
   // every org has a seed: a face missing in one room is not missing in another
-  const room = base && safeBase(base) ? base : '/'
+  const room = base && safeBase(base) ? base : focusBase()   // in a cog the focused org's own base; one org: /
   const mk = room === '/' ? name : room + name
   const [failed, setFailed] = useState(() => missing.has(mk))
   const style = { width: size, height: size, borderRadius: radius, opacity: dim ? 0.55 : 1 }
