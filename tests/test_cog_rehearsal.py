@@ -70,6 +70,7 @@ from org_estate import astryx_call  # noqa: E402
 ESTATE = astryx_call(REPO, "paths", "estate", __file__)   # this tree on one org, its HOME on several (S3a)
 
 fails = []
+unverified = []          # arms that could not run here: with nothing failed, the exit is 77, never ALL PASS (a2 #61069 A-1)
 
 HEAL = r"""
 import importlib.util, json, sys
@@ -161,6 +162,7 @@ def verify_lab(home: Path, out: Path, key: str, admin: str, outs: list, regdb: s
               and not any(s in o for s in secrets_ for o in outs), f"{len(secrets_)} secrets known")
     else:
         print("  SKIP  no secret on the output: no output given (pass step 2's teed output): NOT verified")
+        unverified.append("no secret on the output (no output given)")
     return raw
 
 
@@ -178,6 +180,9 @@ def verify_main(argv) -> int:
     if fails:
         print(f"FAILED ({len(fails)}): " + "; ".join(fails))
         return 1
+    if unverified:
+        print(f"NOT VERIFIED (77): {'; '.join(unverified)}; every other arm passed")
+        return 77
     print("ALL PASS")
     return 0
 
@@ -348,6 +353,7 @@ def main():
                   le[0] == want_main, str(le))
         else:
             print(f"  SKIP  service_deploy_drift: {trig} absent (gitignored seed body; a clone): NOT verified here")
+            unverified.append("R6 service_deploy_drift (its gitignored body is absent here)")
         shim = fx.t / "shim"                  # doctor's login check is a model call: a stub answers it
         shim.mkdir(exist_ok=True)
         (shim / "claude").write_text("#!/bin/sh\necho ok\n")
@@ -372,6 +378,9 @@ def main():
     if fails:
         print(f"FAILED ({len(fails)}): " + "; ".join(fails))
         return 1
+    if unverified:
+        print(f"NOT VERIFIED (77): {'; '.join(unverified)}; every other arm passed")
+        return 77
     print("ALL PASS")
     return 0
 
