@@ -3,7 +3,7 @@
 
     venv/bin/python devtools/mutation_probe.py tests/mutants_wedge_watch.py
     venv/bin/python devtools/mutation_probe.py --self-test
-    venv/bin/python devtools/mutation_probe.py tests/mutants_wedge_watch.py --only M3   # one mutant, to read its why
+    venv/bin/python devtools/mutation_probe.py tests/mutants_wedge_watch.py --only M3   # M3 alone, to read its why
 
 An authoring-time instrument, NOT a check.sh gate (steward's ruling, msg 5934: gating taxes
 every future oracle for one night of evidence; revisit once this has caught something in a
@@ -141,12 +141,16 @@ def _why(out: str) -> str:
     """The line a CAUGHT came from, so a catch names its arm without a second, by-hand run (a4 night 10-19: twice in one
     day I re-applied a mutant by hand only to read WHICH check failed). The oracle's first CHECK line (first token FAIL
     or ✗, never a `FAIL:` summary); else its summary; else, after a Traceback, the exception it ended with, marked a
-    CRASH: the mutant broke the run and no check judged it, the weak catch; else the bare exit."""
+    CRASH: the mutant broke the run and no check judged it, the weak catch; else the bare exit. `(+k more failing)`
+    counts the OTHER check lines (a3 #61207 (a)): k near the oracle's whole count is a collapse, not a targeted catch."""
     lines = [ln.strip() for ln in (out or "").splitlines() if ln.strip()]
-    check = next((ln for ln in lines if ln.split()[0] in ("FAIL", "✗")), None)
+    checks = [ln for ln in lines if ln.split()[0] in ("FAIL", "✗")]
     summary = next((ln for ln in lines if ln.split()[0] == "FAIL:"), None)
-    if check or summary:
-        return (check or summary)[:200]
+    if checks:
+        more = f" (+{len(checks) - 1} more failing)" if len(checks) > 1 else ""
+        return checks[0][:200] + more
+    if summary:
+        return summary[:200]
     if any(ln.startswith("Traceback") for ln in lines):
         return f"a CRASH, not a check: {lines[-1][:180]}"
     return "no failing line printed (the exit code alone)"
@@ -182,9 +186,12 @@ def _tree_rel(subject: Path, oracle: Path) -> Path:
 
 def probe(spec_path: Path, verbose: bool = True, only=()) -> int:
     spec = _load(spec_path)
-    # --only: the named mutants alone (a name PREFIX, e.g. "O48"), every phase before them unchanged. A prefix naming
-    # none is an error, never an empty run that reads as "nothing survived"
-    mutants = {k: v for k, v in spec.MUTANTS.items() if not only or any(k.startswith(o) for o in only)}
+    # --only: the named mutants alone, every phase before them unchanged. A name is a mutant's FIRST TOKEN, exactly
+    # ("T1" is T1, never T10-T19: a3 #61207 (c), measured 11 of 20); a trailing * is a deliberate family ("O4*"). A
+    # selector naming none is an error, never an empty run that reads as "nothing survived"
+    def named(k, o):
+        return k.startswith(o[:-1]) if o.endswith("*") else k.split()[0] == o
+    mutants = {k: v for k, v in spec.MUTANTS.items() if not only or any(named(k, o) for o in only)}
     if not mutants:
         print(f"no mutant in {spec_path.name} is named by --only {' '.join(only)}")
         return 1
@@ -324,6 +331,11 @@ def probe(spec_path: Path, verbose: bool = True, only=()) -> int:
         else:
             print("Every authored mutant was caught. This says nothing about mutations that\n"
                   "were never authored — coverage is bounded by the list, not by the oracle.")
+        crashed = [n for n, _, why in caught if why.startswith("a CRASH")]
+        if crashed:
+            # a3 #61207 (b): the headline is what a reader carries away; a crash-caught mutant is CAUGHT (the verdict and
+            # rc are unchanged) but no check judged it
+            print(f"\n{len(crashed)} of the {len(caught)} CAUGHT were a CRASH, not a check: read their why.")
         if skipped:
             print(f"\n{len(skipped)} mutant(s) were NOT PROBED — the mutation did not apply, "
                   f"or the oracle\nskipped and verified nothing against it. Neither is a pass "
@@ -497,8 +509,9 @@ def self_test() -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("spec", nargs="?", help="a tests/mutants_<oracle>.py declaration")
-    ap.add_argument("--only", action="append", default=[], metavar="PREFIX",
-                    help="run only the mutants whose name starts with PREFIX (repeatable), to read each one's why")
+    ap.add_argument("--only", action="append", default=[], metavar="NAME",
+                    help="run only the mutant whose name's first token is NAME (repeatable; NAME* for a family), "
+                         "to read each one's why")
     ap.add_argument("--self-test", action="store_true",
                     help="prove the probe's own RED and GREEN arms")
     a = ap.parse_args()

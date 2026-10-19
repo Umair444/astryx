@@ -22,9 +22,12 @@ Hermetic: each arm writes a tiny subject, oracle and spec into a temp dir and ru
       worktree places it, never the bare name the shared directory gives (a3 #60809: 4 specs of 166 live there)
   R12 the oracle never sees the HOST's org registry (plan-11324 S3f S3, a2 #60815): handed a REAL two-org registry by
       its caller (the pulse's probe_all on a cog host), the oracle's ASTRYX_COG_REGISTRY names no file
-  R13 a CAUGHT names WHY: its oracle's first CHECK line (never the `FAIL:` summary), and how long it took
-  R14 a mutant caught by a CRASH (a Traceback, no check line) says so: the weak catch is never dressed as a check's
-  R15 --only PREFIX runs the named mutants alone and the headline never claims the set; a prefix naming none is rc 1
+  R13 a CAUGHT names WHY: its oracle's first CHECK line (never the `FAIL:` summary), how many OTHER checks failed
+      with it (a collapse vs a targeted catch, a3 #61207), and how long it took
+  R14 a mutant caught by a CRASH (a Traceback, no check line) says so in its why AND in the headline: the weak catch
+      is never dressed as a check's
+  R15 --only NAME runs the named mutants alone and the headline never claims the set; a name naming none is rc 1; a
+      NAME is a first token exactly (T1 is not T10), NAME* a family (a3 #61207, measured 11 of 20)
   C1  control: a passing baseline prints no tail block, and its mutant is CAUGHT
 """
 import json
@@ -206,6 +209,12 @@ with tempfile.TemporaryDirectory() as t:
     caught_ln = next((ln for ln in out.splitlines() if ln.lstrip().startswith("CAUGHT")), "")
     check("R13 a CAUGHT is followed by its why: the oracle's first CHECK line, not its `FAIL:` summary",
           rc == 0 and after_caught(out) == ["why: FAIL  arm-why-13 the arm that judged it"], out)
+    d = t / "r13b"; d.mkdir()
+    rc, out = probe(d, "import os, sys\nsrc = open(os.environ['FIX_SRC']).read()\n"
+                       "if 'X = 1' not in src:\n"
+                       "    for a in ('one', 'two', 'three'):\n        print(f'  FAIL  arm-{a}')\n    sys.exit(1)\n")
+    check("R13 …a catch that fails 3 checks says `(+2 more failing)`: a collapse is told from a targeted catch",
+          rc == 0 and after_caught(out) == ["why: FAIL  arm-one (+2 more failing)"], out)
     check("R13 …and the CAUGHT line ends with its elapsed seconds", caught_ln.rstrip().endswith("s)")
           and caught_ln.rstrip().rsplit("(", 1)[-1][:-2].isdigit(), caught_ln)
 
@@ -215,6 +224,8 @@ with tempfile.TemporaryDirectory() as t:
     w = after_caught(out)
     check("R14 a mutant caught by a CRASH says so, naming the exception (never dressed as a check's catch)",
           rc == 0 and len(w) == 1 and w[0].startswith("why: a CRASH, not a check:") and "ZeroDivisionError" in w[0], out)
+    check("R14 …and the HEADLINE counts it (the verdict and rc unchanged)",
+          "1 of the 1 CAUGHT were a CRASH, not a check" in out, out)
 
     d = t / "r15"; d.mkdir()
     two = {"M one": ("X = 1", "X = 2"), "N two": ("X = 1", "X = 3")}
@@ -227,6 +238,12 @@ with tempfile.TemporaryDirectory() as t:
     rc, out = probe(d, body, mutants=two, args=("--only", "Z"))
     check("R15 …a prefix naming no mutant is rc 1, never an empty run read as clean",
           rc == 1 and "named by --only" in out and "CAUGHT" not in out, out)
+    fam = {"T1 a": ("X = 1", "X = 2"), "T10 b": ("X = 1", "X = 3")}
+    rc, out = probe(d, body, mutants=fam, args=("--only", "T1"))
+    check("R15 …--only T1 is T1 alone, never T10 too (a name is the first token, exactly)",
+          rc == 0 and "1 of 2 authored" in out and "T10 b" not in out, out)
+    rc, out = probe(d, body, mutants=fam, args=("--only", "T1*"))
+    check("R15 …and --only 'T1*' is the family (T1 and T10)", rc == 0 and "2 of 2 authored" in out, out)
 
     d = t / "c1"; d.mkdir()
     rc, out = probe(d, "import os, sys\nsys.exit(0 if 'X = 1' in open(os.environ['FIX_SRC']).read() else 1)\n")
