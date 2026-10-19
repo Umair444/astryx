@@ -612,7 +612,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 299,
+  "debt_rows": 298,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 5,
@@ -771,11 +771,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:ce1341bac7735ad204261bf132cd2a50ced43a7302bc6e25db8ce7e62a16176e"
-  },
-  "bridges/gateway.py::pickup_task\u001finsert into messages (from_agent, from_org, to_agent, to_org, thread, intent, body, sig) values (?, ?, ?, 'local', ?, ?, ?, ?)": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:a029539220696570e452cc3152da7c2fc1d9715e06a6c8b905103bd753b4a2a1"
   },
   "bridges/gateway.py::push\u001fupdate messages set status='dead' where id=?": {
    "debt": "UNEXECUTED",
