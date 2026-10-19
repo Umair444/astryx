@@ -18,7 +18,8 @@ Nothing here touches `/etc` until the fixture rehearsal (S6) is green.
 | S3 | check.sh pins a missing registry for the gates | `/etc/astryx/cog.json` is a host FILE: every gate would run under multi, and pushed_tree_check's env scrub can't remove it |
 | S4 | deploy.sh, pause.sh, refresh.sh, smoke.sh, vitals.sh learn `@<key>` names for NON-primary orgs; the primary keeps today's verbs | each refuses in a cog today ("one-org only, refusing") |
 | S5 | `devtools/cog_add_org.py <key> --home DIR --name FED --dry-run` | lab's own setup path; it never calls this checkout's init.sh (see the trap in step 2) |
-| S6 | the full rehearsal on a fixture registry (`ASTRYX_COG_REGISTRY=<tmp>`) | steps 2 to 6, end to end, before `/etc` |
+| S6 | the full rehearsal on a fixture registry (`ASTRYX_COG_REGISTRY=<tmp>`): tests/test_cog_rehearsal.py | steps 2 to 6, end to end, before `/etc`. The positive CREATE DATABASE is not a gate, by law (no gate makes a non-fixture database; orgs.load refuses a fixture's as an org db): step 2 itself proves it, then `--verify-lab` (seed #61011) |
+| S7 | a cog-safe `./init.sh doctor`: on a registry host it resolves THIS org (ASTRYX_HOME, or the primary's checkout marker) and judges only its units (seed #61003) | `./init.sh doctor` refuses in a cog today (exit 3), and it is the first line of every breakage path: the primary must not lose it on the cog's first day |
 
 ## 1. Does our estate move? `READY`: no
 
@@ -44,16 +45,34 @@ tools resolving to our org (a node tool still refuses: home.mjs has no marker ru
 a2 measured it on a fixture. With the marker, a shell in `homes/x` resolves to our org. A worktree (its `.git` is a
 FILE) still gets NoHome, because find_marker stops at the first git root, so worktrees stay fail-closed.
 
-## 2. Create org #2, `lab`: `READY` once S5 lands (`devtools/cog_add_org.py`; its oracle tests/test_cog_add_org.py)
+## 2. Create org #2, `lab`: `SEED`, after the S6 and S7 markers (`devtools/cog_add_org.py`, S5 landed d3c1714; oracles tests/test_cog_add_org.py, tests/test_cog_rehearsal.py)
 
 **The trap S5 closes by construction.** Never `ASTRYX_HOME=<lab> ./init.sh` on this checkout. On a one-org host the resolver
 honours ASTRYX_HOME only when it names the checkout itself (paths.py, rung 1), so that line re-initialises OUR org. It
 would also spawn `ax-seed` on the default socket, where ours lives.
 
-What `venv/bin/python devtools/cog_add_org.py lab --home /home/umair/astryx-orgs/lab --name lab.umairfiaz.com --dry-run`
-prints, and then does without `--dry-run` (the registry goes to `--out`, default `<home>.cog.json`, never /etc):
+Seed runs it (#61011), from this checkout, on a one-org host (no `/etc/astryx/cog.json` yet), in this order. It is
+reversible, touches no `/etc`, installs and starts no unit, and our org does not move; seed reads our live tmux count
+(17) before and after. Exactly what test_cog_rehearsal R1/R2 rehearse:
 
-- HOME `/home/umair/astryx-orgs/lab` (outside every checkout, so no marker walk can reach ours), with a `.astryx` marker FILE, `agents/seed.md`, `local.md` (lab's law: a test org) and `homes/`
+    mkdir -p /home/umair/orgs && test ! -e /home/umair/orgs/lab
+    venv/bin/python devtools/cog_add_org.py lab --home /home/umair/orgs/lab --name lab.umairfiaz.com \
+        --ports astryx-observatory-org=18190,astryx-canvas=18091 --out /home/umair/orgs/lab.cog.json --dry-run
+    venv/bin/python devtools/cog_add_org.py lab --home /home/umair/orgs/lab --name lab.umairfiaz.com \
+        --ports astryx-observatory-org=18190,astryx-canvas=18091 --out /home/umair/orgs/lab.cog.json \
+        2>&1 | tee /home/umair/orgs/lab.step2.log
+    venv/bin/python tests/test_cog_rehearsal.py --verify-lab /home/umair/orgs/lab /home/umair/orgs/lab.cog.json \
+        /home/umair/orgs/lab.step2.log          # ALL PASS: the made database, its stamp, the REVOKE, the .env, the registry
+
+The undo (lab's alone; our database, units and residents are never touched):
+
+    venv/bin/python -c 'import sys; sys.path.insert(0, "src"); import psycopg; from astryx import config; psycopg.connect(config.dsn(), autocommit=True).execute("DROP DATABASE astryx_lab")'
+    rm -rf /home/umair/orgs/lab /home/umair/orgs/lab.cog.json /home/umair/orgs/lab.step2.log
+
+What it prints (`--dry-run`) and then does (the registry goes to `--out`, never /etc; our entry is DERIVED: this
+checkout, `astryx`, its database, primary + door, today's ports and 8190):
+
+- HOME `/home/umair/orgs/lab` (outside every checkout, so no marker walk can reach ours), with a `.astryx` marker FILE, `agents/seed.md`, `local.md` (lab's law: a test org) and `homes/`
 - its database `astryx_lab` on genesis-pg, created by our DSN's role (R1: one owner, one superuser), then:
   - schema.sql applied and stamped exactly as init.sh's `_act_schema` does (`schema_applied`)
   - `REVOKE CONNECT ON DATABASE astryx_lab FROM PUBLIC` (init.sh's harden)
@@ -87,7 +106,7 @@ COG-scoped, no org may take one: 8090 (the front), 8845 (the gateway).
 8190, 18190 and 18091 were free at the measurement. Re-check just before writing the registry:
 `ss -ltnH '( sport = :8190 or sport = :18190 or sport = :18091 )'` must print nothing.
 
-## 4. The registry and the units: `BLOCKED(S6)` (S1-S4 landed: 45617e5, 907c294, c2919b7, 5ae8d03), then `OWNER`
+## 4. The registry and the units: `BLOCKED(S7)` (S1-S6: 45617e5, 907c294, c2919b7, 5ae8d03, 73c9479, d3c1714, S6), then step 2 + `--verify-lab`, then `OWNER`
 
 In order, each line the owner's:
 
@@ -98,7 +117,7 @@ In order, each line the owner's:
 2. `sudo install -d -m 755 /etc/astryx && sudo install -m 644 <the file cog_add_org.py wrote, its --out> /etc/astryx/cog.json`
 3. The units, written to `units/` only (S2):
    - ours: `ASTRYX_HOME=/home/umair/astryx ./init.sh units`. As the primary its units stay plain-named and byte-identical, except that `astryx-observatory.service` is no longer ours, and ours gains `astryx-observatory-org.service` on 8190.
-   - lab's: `ASTRYX_HOME=/home/umair/astryx-orgs/lab ./init.sh units`, giving `astryx-<stem>@lab.*`
+   - lab's: `ASTRYX_HOME=/home/umair/orgs/lab ./init.sh units`, giving `astryx-<stem>@lab.*`
    - the cog's: `env -u ASTRYX_HOME ./init.sh units`, giving the gateway (with the registry in its env) and the front as `astryx-observatory.service`
 4. The one migrated service, owner present:
    - `sudo systemctl stop astryx-observatory`
@@ -108,14 +127,15 @@ In order, each line the owner's:
 
 ## 5. Start lab's seed only: `READY` after step 4 (S1 landed: the primary keeps the default socket)
 
-`ASTRYX_HOME=/home/umair/astryx-orgs/lab scripts/spawn.sh seed`. Its tmux server is `-L ax-lab` (orgs.socket), so
+`ASTRYX_HOME=/home/umair/orgs/lab scripts/spawn.sh seed`. Its tmux server is `-L ax-lab` (orgs.socket), so
 `tmux -L ax-lab ls` shows `ax-seed` and our default server still shows our 17. Lab's agents/ holds only seed.md, so
 lab's agent_heal can only ever heal seed.
 
-## 6. Verify: `BLOCKED(S6)` on a fixture first, then live
+## 6. Verify: on a fixture, tests/test_cog_rehearsal.py (S6); then live, `OWNER` after step 4
 
-S6's rehearsal holds an arm for the double spawn (a2 #60783): with the registry at two entries and S1 reverted, the
-rehearsal must SEE agent_heal plan to spawn our org's seats; with S1, agent_heal spawns nothing on our org.
+S6's rehearsal holds the arm for the double spawn (a2 #60783), R5: on our seats alive on the default socket, with the
+registry step 2 wrote agent_heal plans NOTHING on our org; with S1 reverted (no primary) it plans every seat again, the
+negative control (and mutant O1 reverts S1 in orgs.py itself: caught).
 
 | check | command | pass |
 |---|---|---|
@@ -136,7 +156,7 @@ test_org_home_units (each org's units disjoint).
 2. `sudo systemctl stop astryx-observatory astryx-observatory-org`, then `sudo rm /etc/astryx/cog.json`
 3. `./init.sh units` (one org again), then reinstall our plain `astryx-observatory.service` (main:app on :8090) and `sudo systemctl restart astryx-observatory astryx-gateway`
 4. Verify byte-identity: the render equals the pre-cog `/etc/systemd/system` copies (13 files, as measured after the S3b+S3c land, #60734)
-5. Lab's data stays until the owner says otherwise: `/home/umair/astryx-orgs/lab` and database `astryx_lab` (dropping them is a separate, deliberate act)
+5. Lab's data stays until the owner says otherwise: `/home/umair/orgs/lab` and database `astryx_lab` (dropping them is a separate, deliberate act)
 
 Rollback restores one-org byte-identity. That invariant holds for the ROLLBACK, not for the cog: inside a cog our
 observatory is a backend behind the front.

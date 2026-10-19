@@ -48,6 +48,8 @@ MUTANTS = {
     "N7 a guard that SERVES a cog is exempt like one that refuses (its checkout reads run for another org: a2 #60858)":
         ('        sv = g and serves(lines)\n', '        sv = False\n'),
     "N8 every site of a serving file is exempt (not only those relative to the org's HOME)":
-        ('                    (res["guarded"] if ORGH_REL.search(raw) else res[kind]).append(row)',
+        ('                    (res["guarded"] if ORGH_REL.search(sh_code(raw)) else res[kind]).append(row)',
          '                    res["guarded"].append(row)'),
+    "N9 the $ORGH exemption reads the RAW line, so `$ORGH` in a trailing comment exempts a checkout read (a2 #60989 A-1)":
+        ('ORGH_REL.search(sh_code(raw))', 'ORGH_REL.search(raw)'),
 }

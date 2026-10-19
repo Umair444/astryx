@@ -457,6 +457,22 @@ SERVES = re.compile(r"""org_here\.sh|\bCOGH=1\b""")
 ORGH_REL = re.compile(r"""\$\{?ORGH\b""")
 
 
+def sh_code(line: str) -> str:
+    """A shell line without its trailing comment: the text before the first `#` that is outside quotes and starts a
+    word (`$#`, `${#x}` and `a#b` are not comments). ORGH_REL reads only this, so an `$ORGH` in a trailing comment
+    exempts nothing (a2 #60989 A-1); a declaration (`# org-home:`) is a comment and is read on the raw line."""
+    q = None
+    for i, ch in enumerate(line):
+        if q:
+            if ch == q and not (q == '"' and i and line[i - 1] == "\\"):
+                q = None
+        elif ch in "'\"":
+            q = ch
+        elif ch == "#" and (i == 0 or line[i - 1] in " \t;|&("):
+            return line[:i]
+    return line
+
+
 def guarded(p: Path, lines) -> bool:
     return (p.suffix == ".sh" or p.name == "init.sh") and any(GUARD.search(c) for n, c, _ in lines if n <= GUARD_LINES)
 
@@ -515,7 +531,7 @@ def census(root: Path, overrides: dict | None = None, home: Path | None = None) 
                 if DECLARE.search(raw):
                     res["declared"].append(row)
                 elif sv:                          # it serves a cog: only a site relative to the org's HOME is exempt
-                    (res["guarded"] if ORGH_REL.search(raw) else res[kind]).append(row)
+                    (res["guarded"] if ORGH_REL.search(sh_code(raw)) else res[kind]).append(row)
                 else:
                     (res["guarded"] if g else res[kind]).append(row)
     res["triggers"], res["triggers_read"] = trigger_sites(home or root)

@@ -184,6 +184,19 @@ def main():
         hit = [r for r in rb["estate"] + rb["namespace"] if r["file"] == "scripts/pause.sh"]
         check("pause.sh, its declarations stripped: its checkout-relative read is a FINDING (never `guarded`)",
               any(r["what"] == "var/" for r in hit), str(hit))
+        # a2 #60989 A-1: `$ORGH` only in a TRAILING COMMENT exempts nothing (the exemption reads the code, sh_code);
+        # a2's exact probe line, planted in a serving file, beside its positive control (the same read under $ORGH)
+        vsrc = (REPO / "skills" / "org-vitals" / "vitals.sh").read_text().rstrip("\n").split("\n")
+        for tag, line, finding in (("probe", '_rok="backups/.last-restore-ok"   # not $ORGH', True),   # org-home: a2's A-1 probe line, planted
+                                   ("control", '_rok="${ORGH:-$ROOT}/backups/.last-restore-ok"', False)):   # org-home: its planted control
+            pv = Path(td) / f"vitals_{tag}.sh"
+            pv.write_text("\n".join(vsrc + [line]) + "\n")
+            rv = oc.census(REPO, {**seam_overrides(), "skills/org-vitals/vitals.sh": pv})
+            at = [k for k in ("estate", "guarded") for r in rv[k]
+                  if r["file"] == "skills/org-vitals/vitals.sh" and r["line"] == len(vsrc) + 1]
+            check(f"vitals.sh + {line!r}: " + ("a FINDING ($ORGH only in its trailing comment)" if finding
+                                                else "a site, exempt: relative to $ORGH (refresh.sh:49's shape; the control)"),
+                  at == (["estate"] if finding else ["guarded"]), str(at))
     print(f"  ·  guarded: {len(res['guarded'])} site(s) in {len(res['guarded_files'])} file(s); declared: "
           f"{len(res['declared'])}; org names derived: {len(res['org_names'])}")
 
