@@ -86,6 +86,7 @@ def sweep_bare(admin, alive=fx_real._alive, min_age_s=SWEEP_AGE_S, only=None) ->
 
 
 fails = []
+unverified = []                                       # arms that could not run here: the exit is 77, never ALL PASS
 
 
 def check(name, ok, detail=""):
@@ -231,13 +232,14 @@ try:
         admin.execute(f'CREATE DATABASE "{n}" ALLOW_CONNECTIONS false')
         made.append(n)
     admin.execute(f"COMMENT ON DATABASE \"{plants['stamped']}\" IS '{stamp(D)}'")
-    fresh, _ = sweep_bare(admin, only={plants["fresh"]})
-    check("a dead-pid bare plant UNDER an hour old is kept (a sandboxed run's pids read dead from here)", fresh == [],
-          str(fresh))
+    fresh, fnote = sweep_bare(admin, only={plants["fresh"]})
     got, note = sweep_bare(admin, min_age_s=0, only=set(plants.values()) - {plants["fresh"]})
-    if note:
-        print(f"  SKIP  the sweep's arm: {note.strip(' ()')}: NOT verified")
+    if note or fnote:                  # no age readable: both arms would pass by sweeping nothing (a2 #61048 A-1)
+        print(f"  SKIP  the sweep's arms: {(note or fnote).strip(' ()')}: NOT verified")
+        unverified.append("S (no creation age readable)")
     else:
+        check("a dead-pid bare plant UNDER an hour old is kept (a sandboxed run's pids read dead from here)",
+              fresh == [], str(fresh))
         check("the sweep drops exactly the dead-pid unstamped bare plant: a live run's, a stamped one and another "
               "shape are kept", got == [plants["dead"]], str(got))
     child = subprocess.Popen(
@@ -416,4 +418,7 @@ finally:
 if fails:
     print(f"\nFAIL: {len(fails)} arm(s)")
     sys.exit(1)
+if unverified:
+    print(f"\nNOT VERIFIED (77): {'; '.join(unverified)}; every other arm passed")
+    sys.exit(77)
 print("\nALL PASS")
