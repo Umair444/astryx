@@ -50,10 +50,15 @@ def check(name, ok, detail=""):
             print(f"        {detail}")
 
 
+HELD = []      # the fixture's ports, HELD for the whole run (bound, never listening): no concurrent gate can take one,
+#                and a connect is refused, so cog_add_org's "answering" probe reads it free. Closed in main's finally.
+
+
 def free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    HELD.append(s)
+    return s.getsockname()[1]
 
 
 def main():
@@ -173,6 +178,8 @@ def main():
     finally:
         for s in ("default", f"ax-{fx.org['a']}"):
             kill_server(s)
+        for h in HELD:
+            h.close()
         fx.__exit__(None, None, None)
         shutil.rmtree(tdir, ignore_errors=True)
     print()
