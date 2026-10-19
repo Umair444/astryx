@@ -24,6 +24,9 @@ several rooms: the header's room chips, the building sheet, the chooser. Read fr
      get seats only when it is open; hover peeks, Esc closes; its orb casts no glow; its peers row is never a rim peer.
      NETWORK: a sibling collapses to its orb, opens in place without a remount, closes on Esc or the pane; its
      messages are placed before the owner branch; the sibling edge is weighted and agent ties drawn when open
+  K7 the ear is the FOCUSED org's: EarControl reaches it at focusBase() + "ear/api/", never the bare /ear/ (the front
+     routes none: the ear read "offline" in a cog, owner 10-19); the network scrolls like the floor (pans on a
+     two-finger scroll, pinch zooms, off-screen nodes not rendered)
 Seam: OBS_SRC_DIR (a mutant observatory/web/src). Exit 0 · 1 · 77.
 """
 import os
@@ -192,6 +195,14 @@ def main():
           0 <= sib_at < own_at and "`peer:${sib}`" in w)
     check("NETWORK the org <-> sibling edge is weighted by the ties, and agent <-> agent ties are drawn when it is open",
           "const cogTies = useMemo(() => ties(cross, sibNames)" in w and "id: `e-tie-${t.here}-${o.name}-${t.there}`" in w)
+
+    print("\nK7 THE EAR IS THE FOCUSED ORG'S; THE NETWORK SCROLLS LIKE THE FLOOR")
+    ec = (SRC / "components" / "EarControl.tsx").read_text()
+    check("EarControl fetches the focused org's ear (focusBase()), never the bare /ear/",
+          ec.count("${focusBase()}ear/api/") == 2 and "'/ear/api" not in ec and "`/ear/api" not in ec)
+    nv = (SRC / "components" / "NetworkView.tsx").read_text()
+    check("the network pans on a scroll, zooms on a pinch, renders only what is on screen",
+          "panOnScroll\n" in nv and "zoomOnPinch" in nv and "onlyRenderVisibleElements" in nv)
     return 1 if fails else 0
 
 

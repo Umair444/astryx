@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Popover } from '@mantine/core'
 import { motion } from 'motion/react'
 import { obsKey } from '../api'
+import { focusBase } from '../cog'
 import { EnergyVad, wav } from '../ear/vad'
 import { earLook, type Mic } from '../ear/look'
 import AgentFace from './AgentFace'
@@ -47,7 +48,8 @@ const PREF = 'ear_on'
 
 async function ear(path: string, body?: unknown, raw?: Blob, q = ''): Promise<Response> {
   const key = obsKey()
-  return fetch(`/ear/api/${path}${q}`, {
+  // the FOCUSED org's ear (its /o/<org>/ base in a cog: the front routes no bare /ear/, which read as "offline", 10-19)
+  return fetch(`${focusBase()}ear/api/${path}${q}`, {
     method: body !== undefined || raw ? 'POST' : 'GET',
     headers: {
       ...(key ? { 'x-obs-key': key } : {}),
@@ -173,7 +175,7 @@ export default function EarControl({ view }: { view: string }) {
     const bye = () => {
       if (media.current) {
         const key = obsKey()
-        fetch('/ear/api/release', {
+        fetch(`${focusBase()}ear/api/release`, {
           method: 'POST', keepalive: true, body: JSON.stringify({ holder: HOLDER }),
           headers: { 'content-type': 'application/json', ...(key ? { 'x-obs-key': key } : {}) },
         }).catch(() => {})

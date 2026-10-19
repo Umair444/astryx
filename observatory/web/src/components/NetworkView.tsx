@@ -739,6 +739,12 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
           fitViewOptions={{ padding: 0.2 }}
           minZoom={0.15}
           maxZoom={1.6}
+          // the floor's hands (owner 10-19: "the scroll in network tab is a little slow"): a two-finger scroll PANS at
+          // the floor's pace, a pinch (or ctrl/cmd + wheel) zooms; nodes off screen aren't rendered while it moves
+          panOnScroll
+          panOnScrollSpeed={1.1}
+          zoomOnPinch
+          onlyRenderVisibleElements
           nodesDraggable={false}
           nodesConnectable={false}
           proOptions={{ hideAttribution: true }}
