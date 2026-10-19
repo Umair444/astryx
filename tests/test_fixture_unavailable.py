@@ -14,6 +14,9 @@ triggers/), with ASTRYX_DSN unset:
   U5 the admin DSN passed by env (ASTRYX_FIXTURE_ADMIN_DSN), still no .env → the gate RUNS, 0 (medic, seed #60093)
   U6 a FIXTURE DSN in that variable → 1, refused by name: it never becomes the admin, and never reads as 77
   U7 a present .env wins over that variable: it's the no-.env path only (steward #60156 A1)
+  U8 a batch fixture whose admin connect fails leaves NO member, so the batch closes without a DSN (e52acd4: the
+     never-created member made close() raise LookupError from an oracle's finally, masking its 77; seed #61038)
+  U9 test_schema_parity, that finally's oracle, on a committed-only tree → 77, no traceback (CI's symptom)
 ESTATE_SRC points at a mutant estate.py (tests/mutants_fixture_unavailable.py). Exit 0 pass · 1 fail · 77 not run (no psycopg).
 """
 import os
@@ -108,6 +111,22 @@ with tempfile.TemporaryDirectory(prefix="fxu-") as td:
         (tree / ".env").unlink()
     check("U7 a present .env wins over ASTRYX_FIXTURE_ADMIN_DSN (the variable is the no-.env path only)",
           r.stdout.strip().endswith("/from_the_file"), f"rc {r.returncode}: {(r.stdout + r.stderr)[-300:]}")
+    # U8/U9 (seed #61038, steward #61051): pinned here so a revert of e52acd4 goes red at land, not first in public CI
+    r = subprocess.run([sys.executable, "-c",
+                        "from astryx.security.sqlguard import fixture as F\n"
+                        "B = F.Batch()\n"
+                        "try:\n"
+                        "    with F.fixture_db(lifetime='batch', batch=B): pass\n"
+                        "except F.FixtureUnavailable: pass\n"
+                        "print('members', len(B.members)); B.close(); print('closed')"],
+                       cwd=tree, env={**env, "PYTHONPATH": str(tree / "src")}, capture_output=True, text=True, timeout=60)
+    out = r.stdout + r.stderr
+    check("U8 a batch fixture whose admin connect failed leaves no member, and the batch closes with no DSN",
+          r.returncode == 0 and "members 0" in out and "closed" in out and "Traceback" not in out,
+          f"rc {r.returncode}: {out[-300:]}")
+    rc, out = run("tests/test_schema_parity.py")
+    check("U9 tests/test_schema_parity.py with no database on a committed-only tree → 77, NOT SEARCHED, no traceback",
+          rc == 77 and "NOT SEARCHED" in out and "Traceback" not in out, f"rc {rc}: {out[-300:]}")
     (tree / "triggers").mkdir()
     for gate in GATES:
         rc, out = run(gate)
