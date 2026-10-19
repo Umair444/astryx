@@ -218,6 +218,21 @@ def main():
           "the code-location exclusion swallowed a colon-free address — over-broad, the "
           "UNDER-detection direction a PII guard must never take")
 
+    # ---- 3b2) a systemd unit instance is NOT an email ------------------------------
+    # The plan-11324 cog names one unit instance per org (`pulse@lab.timer`), and `<org>.<unit type>` reads as
+    # `domain.tld`: it flagged #61115 and step#128427 in its first week. Both directions: every exempt suffix is
+    # dropped, and the two real TLDs closest to a unit type (`.target`, a delegated brand TLD, and `.services`) still
+    # flag. If either were added to the exemption, a real address there would go unseen.
+    check("a systemd unit instance (pulse@lab.timer, observatory-org@lab.service, …) is NOT flagged as an email",
+          not _emails("units: pulse@lab.timer, observatory-org@lab.service, canvas@lab.socket, x@lab.path, "
+                      "y@lab.mount, z@lab.slice, w@lab.scope, v@lab.swap, u@lab.device, t@lab.automount"),
+          "a `<unit>@<org>.<type>` systemd instance matched as owner-email: the cog-era false positive (#61115)")
+    check("...and the real TLDs nearest a unit type (.target, .services) still flag (shape, not a mute)",
+          sorted(_emails("mail qa@shop.target and ops@acme.services now"))
+          == ["ops@acme.services", "qa@shop.target"],
+          "the unit-suffix exemption swallowed a delegated TLD: .target and .services are real, so an address "
+          "there could be the owner's, the UNDER-detection direction a PII guard must never take")
+
     # ---- 3c) a CI run id cited as one is NOT a phone ------------------------------
     # CI runs on every push since 10-15 (seed #55672) and agents cite its 11-digit run ids as evidence; the first sweep
     # after flagged 8 rows, each "run <id>". Three directions: the run shapes don't flag; the SAME digits after other

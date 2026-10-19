@@ -36,6 +36,17 @@ ORACLE = REPO / "tests" / "test_pii_sweep_ledger.py"
 ENV = "PII_SWEEP_SRC"
 
 MUTANTS = {
+    # The unit-suffix exemption widened to a delegated TLD. `.target` is a real brand TLD, so an address there could
+    # be the owner's: the over-broad, under-detection direction (steward 10-19, the cog-era unit-instance class).
+    "M_unit1 the systemd-unit exemption also swallows .target (a real TLD)":
+        ('_SYSTEMD_UNIT_SUFFIXES = frozenset(("service", "timer",',
+         '_SYSTEMD_UNIT_SUFFIXES = frozenset(("target", "service", "timer",'),
+
+    # The exemption dropped from the scan. Every cog unit instance cries owner-email again.
+    "M_unit2 the systemd-unit exemption is not consulted":
+        ("                                     or _is_systemd_unit(m.group(1))\n",
+         ""),
+
     # The pre-fix rendering. `messages.thread` is a routing address, so the alarm text and
     # the durable ledger carry a group JID or a phone number — the detector emitting the
     # shape it hunts. Live instance: msg#344.
