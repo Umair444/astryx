@@ -64,10 +64,18 @@ def shown(dsn: str) -> str:
 
 
 def with_db(dsn: str, db: str) -> str:
-    from psycopg.conninfo import make_conninfo
+    """`dsn` on database `db`, as a postgresql:// URL: the org's .env DSN feeds asyncpg too (the gateway's pools, the
+    observatory's), which reads no libpq key=value form (step 4 live, 10-19: a key=value DSN crash-looped the cog's
+    gateway). Every other parameter rides the query string; a socket-directory host is a `host=` parameter."""
+    from urllib.parse import quote, urlencode
     d = orgs.conninfo(dsn)
-    d["dbname"] = db
-    return make_conninfo(**d)
+    d.pop("dbname", None)
+    user, pw, host, port = (d.pop(k, "") for k in ("user", "password", "host", "port"))
+    if host.startswith("/"):
+        d["host"], host = host, ""
+    auth = quote(user, safe="") + (":" + quote(pw, safe="") if pw else "")
+    q = "?" + urlencode(d) if d else ""
+    return f"postgresql://{auth}{'@' if auth else ''}{host}{':' + port if port else ''}/{quote(db, safe='')}{q}"
 
 
 def in_git_tree(p: Path) -> Path | None:

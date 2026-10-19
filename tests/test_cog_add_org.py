@@ -16,6 +16,9 @@ S6's rehearsal (stated limit); here its statement is printed by the dry-run, and
   A5 no secret VALUE on any output (the admin DSN's password, the new keys); each org's key its own
   A6 a registry the authority refuses (a port for a stem that binds none) is refused at PLAN time, rc 2, with NOTHING
      made: no HOME (no .env, no key), no registry file, the brought database unstamped (a2 #60860 R-1)
+  A7 the DSN the tool derives for a CREATEd org (with_db) is a postgresql:// URL that asyncpg connects with, from a
+     key=value primary DSN too, on the named database, every other parameter kept (step 4 live, 10-19: a key=value
+     DSN in lab's .env crash-looped the cog's gateway)
 COG_ADD_SRC: a mutant devtools/cog_add_org.py (tests/mutants_cog_add_org.py). Exit 0 · 1 · 77 (no database here).
 """
 import hashlib
@@ -33,7 +36,7 @@ sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "src"))
 
 from astryx.security.sqlguard.estate import gate, unavailable  # noqa: E402
-gate('test_cog_add_org', REPO, deps=('psycopg', 'nacl'), env=False)   # the admin DSN may come by env (fixture.live_dsn)
+gate('test_cog_add_org', REPO, deps=('psycopg', 'nacl', 'asyncpg'), env=False)   # the admin DSN may come by env (fixture.live_dsn)
 from astryx.security.sqlguard.fixture import fixture_db, live_dsn  # noqa: E402
 
 SRC = Path(os.environ.get("COG_ADD_SRC") or REPO / "devtools" / "cog_add_org.py")
@@ -184,6 +187,33 @@ def main():
             secrets_ = [v for v in (pw, e.get("ASTRYX_SECRET_KEY", ""), e.get("OBS_KEY", "")) if len(v) >= 8]
             check("the admin DSN's password and the new org's keys appear in no output", secrets_
                   and not any(s in o for s in secrets_ for o in outs), "a secret value was printed")
+
+            print("\nA7 THE DERIVED DSN IS A URL ASYNCPG CONNECTS WITH")
+            import asyncio
+            import importlib.util
+            import asyncpg
+            spec = importlib.util.spec_from_file_location("cog_add_org_a7", tool)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            base = orgs.conninfo(admin)
+            for form, src in (("a URL", admin), ("key=value", make_conninfo(**base))):
+                u = mod.with_db(src, fx["dbname"])
+                got = orgs.conninfo(u)
+                want = dict(base, dbname=fx["dbname"])
+
+                async def cur(u=u):
+                    c = await asyncpg.connect(u)
+                    try:
+                        return await c.fetchval("SELECT current_database()")
+                    finally:
+                        await c.close()
+                try:
+                    db_now = asyncio.run(cur())
+                except Exception as ex:  # noqa: BLE001
+                    db_now = f"{type(ex).__name__}"
+                check(f"from {form}: a postgresql:// URL, every parameter kept, asyncpg connects on the named database",
+                      u.startswith("postgresql://") and got == want and db_now == fx["dbname"],
+                      f"url-form={u.startswith('postgresql://')} same={got == want} db={db_now}")
     finally:
         try:
             with psycopg.connect(admin, autocommit=True) as c:      # only THIS run's unique name, if a mutant made it
