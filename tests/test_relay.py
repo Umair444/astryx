@@ -15,6 +15,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -100,7 +101,11 @@ class Org:
                     "ASTRYX_DSN": fx["url"], "ASTRYX_URL": url, "ASTRYX_RELAY": relay_url,
                     "ASTRYX_RELAY_LISTED": "1" if listed else "0",
                     "ASTRYX_RELAY_HOST": "1" if host else "0",
-                    "ASTRYX_RELAY_REACH_PRIVATE": "1" if host else "0", **(extra or {})}
+                    "ASTRYX_RELAY_REACH_PRIVATE": "1" if host else "0",
+                    # the gateway's tunables at its defaults, set: an unset key falls back to the checkout's .env (one
+                    # org), so in the MAIN checkout it would be the LIVE org's value (10-19, test_fed_doors R0)
+                    "ASTRYX_INBOX_RATE": "60", "ASTRYX_RATE_WINDOW": "3600", "ASTRYX_RELAY_BACKOFF": "60",
+                    **(extra or {})}
         self.log = Path(logdir) / f"{name}.log"
         self.start()
 
@@ -147,6 +152,10 @@ def run(fr, fa, fb, tmp):
         B = Org("orgb.test", fb, held(True), tmp, relay_url=rel, listed=False,
                 extra={"ASTRYX_INBOX_RATE": str(B_RATE), "ASTRYX_RATE_WINDOW": "4", "ASTRYX_RELAY_BACKOFF": "1"})
         orgs.append(B)
+        read = set(re.findall(r'_env\("([A-Z_]+)"', (REPO / "bridges" / "gateway.py").read_text()))
+        arm("every key the gateway reads through _env is set for each gateway (an unset one falls back to the "
+            "checkout's .env: in the main checkout, the LIVE org's)",
+            bool(read) and all(read <= set(o.env) for o in orgs), {o.name: sorted(read - set(o.env)) for o in orgs})
         for o in orgs:
             if not o.up():
                 arm(f"{o.name} gateway starts", False, o.tail())

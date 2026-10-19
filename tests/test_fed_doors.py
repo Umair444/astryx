@@ -26,6 +26,7 @@ Exit 0 pass · 1 fail.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -37,6 +38,14 @@ from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate('test_fed_doors', REPO, deps=('asyncpg', 'fastapi', 'nacl', 'httpx'), env=False)   # the gateway's imports: a committed-only tree without them is 77, a live host 1 (seed #60760)
 SRC = Path(os.environ.get("FED_GATEWAY_SRC") or REPO / "bridges" / "gateway.py")
 fails = []
+# EVERY key the gateway reads through _env, set explicitly in each child. On ONE org _env falls back to the checkout's
+# .env for an unset key (ESTATE: the tree gateway.py sits in), so in the MAIN checkout an unset key is the LIVE org's
+# (10-19 land: ours sets ASTRYX_RELAY_HOST=1, and R0's "one org hosts nothing" read 200). A worktree has no .env, so it
+# passed there. Checked against the subject (ONE_ENV, the env each one-org child got): a key the gateway adds and no
+# child is given is a FAIL, never a guess.
+AXES = {"ASTRYX_RELAY": "", "ASTRYX_RELAY_LISTED": "0", "ASTRYX_RELAY_HOST": "0", "ASTRYX_RELAY_REACH_PRIVATE": "0",
+        "ASTRYX_INBOX_RATE": "60", "ASTRYX_RATE_WINDOW": "3600", "ASTRYX_RELAY_BACKOFF": "60"}
+ONE_ENV = []                                    # the ASTRYX_* keys of each one-org child's env, as run() built it
 
 CHILD = r"""
 import importlib.util, json, sys, time, uuid
@@ -145,10 +154,10 @@ def run(d, door, host=None):
     env["PYTHONPATH"] = os.pathsep.join([str(REPO / "src"), str(REPO), str(REPO / "bridges")])
     keys = {"a": "a1", "b": "b2"}
     if door == "one":
-        env.update(ASTRYX_ORG="fxone", ASTRYX_SECRET_KEY="d4" * 32, ASTRYX_URL="https://one.example/",
-                   ASTRYX_DSN="postgresql://fx@127.0.0.1:1/fxdoor_one", ASTRYX_COG_REGISTRY=str(d / "absent.json"))
-        if host == "one":
-            env["ASTRYX_RELAY_HOST"] = "1"
+        env.update(AXES, ASTRYX_ORG="fxone", ASTRYX_SECRET_KEY="d4" * 32, ASTRYX_URL="https://one.example/",
+                   ASTRYX_DSN="postgresql://fx@127.0.0.1:1/fxdoor_one", ASTRYX_COG_REGISTRY=str(d / "absent.json"),
+                   ASTRYX_RELAY_HOST="1" if host == "one" else "0")
+        ONE_ENV.append({k for k in env if k.startswith("ASTRYX_")})
     else:
         reg = {"orgs": {}}
         for o in ("a", "b"):
@@ -174,6 +183,7 @@ def run(d, door, host=None):
 
 def main():
     print("S3e 2/n the cog's per-org doors (gateway, DB-free)")
+
     with tempfile.TemporaryDirectory() as t:
         os.mkdir(f"{t}/door")
         o = run(f"{t}/door", "a")
@@ -277,6 +287,10 @@ def main():
                                                  "url": "https://one.example/"}], str(o["get /relay/host"]))
             check("R3 the relay reads the org's database", o["get /relay/directory"] == [200, {"orgs": []}]
                   and o["relay read"] == {"fxone": ["SELECT"]}, f'{o["get /relay/directory"]} {o["relay read"]}')
+    read = set(re.findall(r'_env\("([A-Z_]+)"', SRC.read_text()))
+    check("every key the gateway reads through _env is set in each one-org child (none falls back to a checkout .env)",
+          bool(read) and len(ONE_ENV) == 2 and all(read <= e for e in ONE_ENV),
+          f"unset: {[sorted(read - e) for e in ONE_ENV]}")
     print(f"{'FAIL' if fails else 'PASS'}: {len(fails)} failing")
     return 1 if fails else 0
 
