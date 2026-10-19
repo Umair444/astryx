@@ -193,7 +193,7 @@ def arms_step(tmp: Path):
     spec = importlib.util.spec_from_file_location("step_s1b", REPO / "hooks/step.py")
     step = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(step)
-    step.DSN_FILE = str(tmp / ".env")
+    step.dsn = lambda: "dbname=unused"    # connect is stubbed; never the estate .env (DSN_FILE died at cafd7bc, seed #61038)
     os.environ["ASTRYX_AGENT"] = "abstractor-1"
 
     out, writes = run_step(step, "PreToolUse", "Read", {"file_path": str(tmp / ".env")},

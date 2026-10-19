@@ -290,7 +290,7 @@ def arms_s1a(tmp):
 
     try:
         psycopg.connect = lambda *a, **k: Conn()
-        step.DSN_FILE = str(envf)
+        step.dsn = lambda: "dbname=unused"    # connect is stubbed; never the estate .env (DSN_FILE died at cafd7bc)
         sys.stdin = io.StringIO(json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
                                             "tool_input": {"command": "true",
                                                            "description": f"use {TOK}"}}))
