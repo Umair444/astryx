@@ -27,21 +27,21 @@ unset _self _t _hops
 # marker. Its HOME IS this checkout, so every checkout-relative read doctor makes is that org's own estate, by identity.
 # Any other org refuses here, before a check (its estate is elsewhere: its own vitals.sh and smoke.sh serve it; a doctor
 # for it is S7b, a stated limit), and so does a process no org of the cog resolves.
-DOCTOR_COG=""
+unset DOCTOR_COG                     # set below only (never inherited: an env DOCTOR_COG would scope a one-org doctor)
 if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ] && [ "${1:-}" != units ]; then
   _g=0; venv/bin/python src/astryx/orgs.py multi || _g=$?
-  if [ "$_g" = 0 ] && [ "${1:-}" = doctor ]; then
+  case "$_g:${1:-}" in
+  0:doctor)
     _dorg=$(venv/bin/python src/astryx/orgs.py name 2>/dev/null) || _dorg=""
     [ -n "$_dorg" ] || { echo "init.sh doctor: no org of this cog resolves here (set ASTRYX_HOME, or touch this checkout's .astryx marker): refusing" >&2; exit 3; }
     _dhome=$(venv/bin/python -c 'import sys; sys.path.insert(0, "src"); from astryx import paths; print(paths.home())' 2>/dev/null) || _dhome=""
-    if [ "$_dorg" != "$(venv/bin/python src/astryx/orgs.py primary 2>/dev/null)" ] || [ "$_dhome" != "$(pwd -P)" ]; then
+    [ "$_dorg" = "$(venv/bin/python src/astryx/orgs.py primary 2>/dev/null)" ] && [ "$_dhome" = "$(pwd -P)" ] || {
       echo "init.sh doctor: $_dorg is not this checkout's org (the cog's primary): doctor reads this checkout's estate, and $_dorg's HOME ($_dhome) is elsewhere. Use its own: ASTRYX_HOME=$_dhome skills/org-vitals/vitals.sh, and ASTRYX_HOME=$_dhome scripts/smoke.sh, which serve it: refusing" >&2
-      exit 3
-    fi
-    export ASTRYX_HOME="$_dhome"; DOCTOR_COG=1
-  elif [ "$_g" != 1 ]; then
-    echo "init.sh: this cog runs several orgs (or its org registry refuses): init.sh sets up one org, refusing" >&2; exit 3
-  fi
+      exit 3; }
+    export ASTRYX_HOME="$_dhome"; DOCTOR_COG=1 ;;
+  1:*) ;;
+  *) echo "init.sh: this cog runs several orgs (or its org registry refuses): init.sh sets up one org, refusing" >&2; exit 3 ;;
+  esac
 fi
 # <<< org-home guard
 
@@ -1090,7 +1090,7 @@ if [ "${1:-}" = "doctor" ]; then
   # A doctor that stops early is the worst not-run: it reports nothing past the crash.
   set +e +o pipefail
   # in a cog (S7): `tmux` is the primary's server (org_tmux.sh: the named default socket), never an inherited $TMUX's
-  if [ -n "$DOCTOR_COG" ]; then ROOT="$PWD"; . scripts/org_tmux.sh; fi
+  if [ -n "${DOCTOR_COG:-}" ]; then ROOT="$PWD"; . scripts/org_tmux.sh; fi
   ok() { echo -e "  \033[32m✓\033[0m $*"; }
   bad() { echo -e "  \033[31m✗\033[0m $*"; FAIL=1; }
   warn() { echo -e "  \033[33m○\033[0m $*"; }
@@ -1228,7 +1228,7 @@ if [ "${1:-}" = "doctor" ]; then
     # DELETE it" (seed #61017 (a)). So in a cog the disk side is the primary's files only. One org: every file, as before.
     _cogstems=$(venv/bin/python -c 'import json; print("|".join(k for k, v in json.load(open("src/astryx/data/org_units.json"))["units"].items() if v["scope"] == "cog"))' 2>/dev/null)
     disk_list=$(cd units 2>/dev/null && ls | sort)
-    [ -n "$DOCTOR_COG" ] && disk_list=$(echo "$disk_list" | grep -v '@' | grep -vE "^(${_cogstems:-^$})\.")
+    [ -n "${DOCTOR_COG:-}" ] && disk_list=$(echo "$disk_list" | grep -v '@' | grep -vE "^(${_cogstems:-^$})\.")
     # (i) generated_set ≡ units/ on disk — an orphan (on disk, not derived) or a
     # missing unit is the drift that hid telegram/discord/gateway/canopus-inbound.
     if diff <(echo "$gen_list") <(echo "$disk_list") >/dev/null 2>&1; then
