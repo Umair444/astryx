@@ -3,6 +3,7 @@
 # table. No terminal scraping, no attaching, no sizing wars: the wire already
 # records everything, this just renders the last pane-height lines of it.
 # Zoom (C-b z) shows more lines automatically: height is re-read every cycle.
+# On the cog wall (wall.sh --cog) a pane runs this under ITS org's ASTRYX_HOME, so the DSN below is that org's.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DSN=$("$ROOT/venv/bin/python" "$ROOT/src/astryx/config.py" dsn --file)   # the ONE resolver (plan-11324 S3a)

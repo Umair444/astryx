@@ -177,7 +177,12 @@ def socket(env=None, cwd=None) -> str | None:
     form: a bare `tmux` follows an inherited $TMUX, so a primary tool run from another org's pane would spawn on
     THAT org's server and the primary's healer would start the seat again (a2 #60794 R-1). One org: None, as before."""
     o = name(env, cwd)
-    return None if o is None else "default" if _plain(o, env) else f"ax-{o}"
+    return None if o is None else socket_of(o, env)
+
+
+def socket_of(o: str, env=None) -> str:
+    """Org `o`'s tmux socket in a cog of several orgs: the primary's is the default socket, named; any other's ax-<o>."""
+    return "default" if load(env)[o]["primary"] else f"ax-{o}"
 
 
 def tmux(env=None, cwd=None) -> list[str]:
@@ -267,7 +272,7 @@ def _main(argv) -> int:
             if not multi():                   # (exit 0) on several orgs; 1 on one. Names and homes only, as socket()
                 return 1                      # reads them: it opens no org's DSN or key (each pane resolves its own)
             for o, e in sorted(load().items()):
-                print(f"{o}\t{e['home']}\t{'default' if e['primary'] else f'ax-{o}'}")
+                print(f"{o}\t{e['home']}\t{socket_of(o)}")
             return 0
     except RegistryError as e:
         print(f"astryx.orgs: {e}", file=sys.stderr)
