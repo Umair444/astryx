@@ -17,6 +17,6 @@ ENV = "ORG_HOME_PULSE_SRC"
 
 MUTANTS = {
     "CP1 pulse.py's private resolver restored":
-        ('DSN = config.dsn(ESTATE / ".env")',
-         'DSN = os.environ.get("ASTRYX_DSN") or next(\n    l.split("=", 1)[1].strip() for l in (REPO / ".env").read_text().splitlines() if l.startswith("ASTRYX_DSN="))'),  # org-home: mutant pattern (the resolver this mutant restores)
+        ('    return config.dsn(ESTATE / ".env")',   # pulse reads it lazily since seed #61038 (_dsn)
+         '    return os.environ.get("ASTRYX_DSN") or next(\n    l.split("=", 1)[1].strip() for l in (REPO / ".env").read_text().splitlines() if l.startswith("ASTRYX_DSN="))'),  # org-home: mutant pattern (the resolver this mutant restores)
 }
