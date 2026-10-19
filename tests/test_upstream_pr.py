@@ -33,6 +33,9 @@ UP = "acme-up/astryx"                    # a fictional upstream: nothing here na
 LOGIN = "outsider-medic"
 ROOT = Path(tempfile.mkdtemp(prefix="test-upstream-pr-"))
 ENV0 = {k: v for k, v in os.environ.items() if not k.startswith(("GIT_", "ASTRYX_", "GH_", "GITHUB_"))}
+# host-independent: the ASTRYX_* scrub drops check.sh's registry pin, so name an absent registry (a cog host's
+# /etc/astryx/cog.json would make the tool's HOME resolution refuse this throwaway repo)
+ENV0["ASTRYX_COG_REGISTRY"] = str(ROOT / "no-registry" / "cog.json")
 
 
 def arm(name, ok, detail=""):

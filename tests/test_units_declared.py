@@ -47,7 +47,8 @@ def gen(files: dict, env_text: str = "OBS_KEY=x\n") -> dict:
         (t / ".env").write_text(env_text)
         (t / "units.sh").write_text(block.group(0) + '\nUNITS_DIR=out units\necho "EXPECT=[${UNITS_EXPECT_DISABLED:-}]"\n')
         r = subprocess.run(["bash", "-euo", "pipefail", "units.sh"], cwd=t, capture_output=True, text=True,
-                           env={"HOME": str(home), "USER": "tester", "PATH": "/usr/bin:/bin"})
+                           env={"HOME": str(home), "USER": "tester", "PATH": "/usr/bin:/bin",
+                                "ASTRYX_COG_REGISTRY": str(Path(td) / "no-registry" / "cog.json")})   # never the host's
         out = t / "out"
         m = re.search(r"EXPECT=\[(.*)\]", r.stdout)
         norm = lambda x: x.replace(str(t), "<ORG>").replace(str(home), "<HOME>")   # noqa: E731 (per-tree paths)

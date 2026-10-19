@@ -226,7 +226,8 @@ kill $PA $PB
 """
             r = subprocess.run([bwrap, "--dev-bind", "/", "/", "--unshare-pid", "--proc", "/proc", "--die-with-parent",
                                 "bash", "-c", script], capture_output=True, text=True, timeout=120,
-                               env={"PATH": os.environ["PATH"], "HOME": str(t), "PYTHONPATH": str(REPO / "src")})
+                               env={"PATH": os.environ["PATH"], "HOME": str(t), "PYTHONPATH": str(REPO / "src"),
+                                    "ASTRYX_COG_REGISTRY": str(t / "no-registry.json")})   # never the host's
             got = {ln.split()[0]: ln.split()[1:] for ln in r.stdout.splitlines() if ln.strip()}
             pa, pb = (got.get("PIDS") or ["?", "?"])[:2]
             check("both dummy channel servers ran (anti-vacuity: one org lists both)",

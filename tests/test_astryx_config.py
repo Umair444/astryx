@@ -28,6 +28,8 @@ def arm(name, ok, detail=""):
 def main():
     t = Path(tempfile.mkdtemp(prefix="astryx-cfg-"))
     f = t / ".env"
+    # host-independent: every environ names an absent registry, so a cog host's /etc/astryx/cog.json is never read
+    E = {"ASTRYX_COG_REGISTRY": str(t / "no-registry" / "cog.json")}
     body = ("# a comment\nASTRYX_DSN=postgresql://u:p=q@127.0.0.1:5432/astryx  \n\nQUOTED=\"x\"\n"
             "DUP=first\nDUP=second\n  INDENTED=1\nnoequals\n")
     f.write_text(body)
@@ -39,12 +41,12 @@ def main():
         "# a comment" not in e and "  INDENTED" not in e and "noequals" not in e, str(sorted(e)))
     arm("a missing file reads as empty", config.read_env(t / "nope") == {})
     arm("get: a non-empty environment variable wins",
-        config.get("ASTRYX_DSN", path=f, environ={"ASTRYX_DSN": "env-dsn"}) == "env-dsn")
+        config.get("ASTRYX_DSN", path=f, environ={**E, "ASTRYX_DSN": "env-dsn"}) == "env-dsn")
     arm("get: an EMPTY environment variable falls through to the file",
-        config.get("DUP", path=f, environ={"DUP": ""}) == "first")
-    arm("dsn(): from the file", config.dsn(path=f, environ={}) == "postgresql://u:p=q@127.0.0.1:5432/astryx")
+        config.get("DUP", path=f, environ={**E, "DUP": ""}) == "first")
+    arm("dsn(): from the file", config.dsn(path=f, environ={**E}) == "postgresql://u:p=q@127.0.0.1:5432/astryx")
     try:
-        config.dsn(path=t / "nope", environ={})
+        config.dsn(path=t / "nope", environ={**E})
         arm("dsn(): absent everywhere raises LookupError", False)
     except LookupError:
         arm("dsn(): absent everywhere raises LookupError", True)

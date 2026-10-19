@@ -148,7 +148,7 @@ def main(url, tmp):
             arm("COG: a registry that refuses is a 500, never a quiet one-room answer", r.status_code == 500, (r.status_code, r.text))
             arm("COG: …and it says why, for the floor to show (seed #60095)",
                 r.headers.get("content-type", "").startswith("application/json") and r.json().get("error", "").startswith("cog registry refused: "), r.text)
-            os.environ.pop("ASTRYX_COG_REGISTRY", None)
+            os.environ["ASTRYX_COG_REGISTRY"] = str(tmp / "absent.json")
 
 
 if __name__ == "__main__":
@@ -157,7 +157,7 @@ if __name__ == "__main__":
         os.environ["OBS_KEY"] = "test-owner-key"
         os.environ["ASTRYX_ORG"] = "fixture.example"
         os.environ["ASTRYX_GATEWAY_PORT"] = "9"          # discard: a real gateway is never asked
-        os.environ.pop("ASTRYX_COG_REGISTRY", None)
+        os.environ["ASTRYX_COG_REGISTRY"] = str(Path(td) / "absent.json")   # no registry at import, never the host's
         main(fx["url"], Path(td))
     print(f"{'PASS' if not fails else 'FAIL'}: observatory floor ({fails} failing)")
     sys.exit(1 if fails else 0)

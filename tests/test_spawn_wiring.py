@@ -106,7 +106,9 @@ def make_tree() -> Path:
 def render(root: Path, agent: str, out: Path, resident=False):
     log = root / "shim.log"
     env = {"PATH": f"{root / 'shims'}:/usr/bin:/bin", "HOME": str(root), "SHIM_LOG": str(log),
-           "ASTRYX_NODE": "/N/node", "RESIDENT": "1" if resident else ""}
+           "ASTRYX_NODE": "/N/node", "RESIDENT": "1" if resident else "",
+           # host-independent: a registry that names no file (a cog host's /etc/astryx/cog.json is never read)
+           "ASTRYX_COG_REGISTRY": str(root / "no-registry" / "cog.json")}
     r = subprocess.run(["bash", str(root / "scripts" / "spawn.sh"), "--render", agent, str(out)],
                        env=env, capture_output=True, text=True, timeout=60)
     calls = log.read_text().splitlines() if log.exists() else []

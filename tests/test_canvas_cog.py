@@ -93,6 +93,8 @@ keep = []
 for n in ast.parse(msrc).body:
     if isinstance(n, ast.Assign) and any(getattr(t, "id", "") in ("CANVAS_UP", "CANVAS_PRE") for t in n.targets):
         keep.append(n)
+    elif isinstance(n, ast.FunctionDef) and n.name == "_upstream":     # CANVAS_UP's one source (9b4c37c)
+        keep.append(n)
     elif isinstance(n, ast.AsyncFunctionDef) and n.name == "canvas_root":
         n.decorator_list = []
         keep.append(n)
