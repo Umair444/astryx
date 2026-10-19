@@ -23,6 +23,9 @@ lifespan run (pools, per-org outbound listeners on real NOTIFY), nothing bound t
      (a2 #60413 R-1)
   G9 a to_agent past the doorbell's channel name (52 bytes after astryx_msg_) is refused at the door (400), never cut
   G6 a cog org whose .env names no ASTRYX_ORG, or two orgs one federation name: cog() refuses (CogError)
+  G10 the relay in a cog (S3e, the live step 4 of 10-19: our org hosts one): the registry's DOOR org may host it,
+     ASTRYX_RELAY_HOST=1 in its .env: cog() serves, the relay's routes mount at the bare root, and UNDER UVICORN it
+     starts and /relay/host names the door org; a non-door org that hosts, or a host in a cog with no door, refuses
 
 Seams (org_home_fixture.SEAMS): ORG_HOME_GATEWAY_SRC (bridges/gateway.py), ORG_HOME_CHARTER_SRC
 (src/astryx/core/charter.py). Exit 0 · 1 · 77.
@@ -142,6 +145,20 @@ try:
     print("NOERROR")
 except gw.CogError as e:
     print("COGERROR " + str(e))
+"""
+
+RELAYCHK = r"""
+import json, sys
+co = sys.argv[1]
+sys.path.insert(0, co); sys.path.insert(0, co + "/bridges")
+import gateway as gw
+try:
+    c = gw.cog()
+except gw.CogError as e:
+    print("COGERROR " + str(e))
+    raise SystemExit(0)
+r = gw.root()
+print("OUT " + json.dumps({"root": r.name if r else None, "host": [n for n, x in c.items() if x.relay_host]}))
 """
 
 
@@ -296,6 +313,73 @@ def main():
                                capture_output=True, text=True, timeout=60)
             check("two orgs, one federation name: CogError", "COGERROR" in r.stdout and "share" in r.stdout,
                   (r.stdout + r.stderr)[-300:])
+
+            print("\nG10 THE RELAY IN A COG: ONLY THE DOOR ORG HOSTS IT")
+            reg = json.loads(fx.reg.read_text())
+            oa, ob = fx.org["a"], fx.org["b"]
+            (A / ".env").write_text(f"ASTRYX_DSN={da['url']}\nASTRYX_ORG={na}\nASTRYX_SECRET_KEY={'a1' * 32}\n"
+                                    "ASTRYX_URL=\nASTRYX_RELAY_HOST=1\n")
+            (B / ".env").write_text(f"ASTRYX_DSN={db['url']}\nASTRYX_ORG={nb}\nASTRYX_SECRET_KEY={'b2' * 32}\n"
+                                    "ASTRYX_URL=\n")
+            r = subprocess.run([py, "-B", "-c", RELAYCHK, str(fx.co)], env=env, cwd=fx.co / "bridges",
+                               capture_output=True, text=True, timeout=60)
+            check("no door in the registry: a relay host refuses (CogError naming the door)",
+                  "COGERROR" in r.stdout and "door" in r.stdout, (r.stdout + r.stderr)[-300:])
+            reg["orgs"][oa].update(primary=True, door=True)
+            fx.reg.write_text(json.dumps(reg))
+            r = subprocess.run([py, "-B", "-c", RELAYCHK, str(fx.co)], env=env, cwd=fx.co / "bridges",
+                               capture_output=True, text=True, timeout=60)
+            line = next((ln for ln in r.stdout.splitlines() if ln.startswith("OUT ")), None)
+            ro = json.loads(line[4:]) if line else {}
+            check("the door org hosts: cog() serves, the door is the root and the only host",
+                  ro.get("root") == na and ro.get("host") == [na], (r.stdout + r.stderr)[-300:])
+            so = socket.socket()
+            so.bind(("127.0.0.1", 0))
+            so.listen(64)
+            port = so.getsockname()[1]
+            srv = subprocess.Popen([py, "-m", "uvicorn", "gateway:app", "--fd", str(so.fileno())],
+                                   pass_fds=(so.fileno(),), env=uenv, cwd=fx.co / "bridges", stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, text=True)
+            so.close()
+            try:
+                body, code, end = None, None, time.time() + 60
+                while time.time() < end and srv.poll() is None:
+                    try:
+                        with urllib.request.urlopen(f"http://127.0.0.1:{port}/relay/host", timeout=2) as resp:
+                            code, body = resp.status, json.loads(resp.read())
+                    except urllib.error.HTTPError as e:
+                        code = e.code
+                    except OSError:
+                        time.sleep(0.5)
+                        continue
+                    break
+                check("under uvicorn it starts, and /relay/host names the door org",
+                      code == 200 and (body or {}).get("org") == na, f"code {code} body {body} rc {srv.poll()}")
+                rq = urllib.request.Request(f"http://127.0.0.1:{port}/relay/register", data=b"{}",
+                                            headers={"Content-Type": "application/json"}, method="POST")
+                try:
+                    rcode = urllib.request.urlopen(rq, timeout=5).status
+                except urllib.error.HTTPError as e:
+                    rcode = e.code
+                except OSError as e:
+                    rcode = repr(e)
+                check("the relay's routes are mounted at the bare root: an unsigned register is REFUSED, never 404",
+                      rcode not in (404, 200) and isinstance(rcode, int), str(rcode))
+            finally:
+                srv.terminate()
+                try:
+                    out_, _ = srv.communicate(timeout=20)
+                except subprocess.TimeoutExpired:
+                    srv.kill()
+                    out_, _ = srv.communicate()
+            if fails and out_:
+                print("        gateway output: " + out_[-400:].replace("\n", " | "))
+            (B / ".env").write_text(f"ASTRYX_DSN={db['url']}\nASTRYX_ORG={nb}\nASTRYX_SECRET_KEY={'b2' * 32}\n"
+                                    "ASTRYX_URL=\nASTRYX_RELAY_HOST=1\n")
+            r = subprocess.run([py, "-B", "-c", RELAYCHK, str(fx.co)], env=env, cwd=fx.co / "bridges",
+                               capture_output=True, text=True, timeout=60)
+            check("a non-door org that hosts refuses (CogError naming the door)",
+                  "COGERROR" in r.stdout and ob in r.stdout and "door" in r.stdout, (r.stdout + r.stderr)[-300:])
         return 1 if fails else 0
     except FixtureDBUnavailable as e:                     # no admin DSN (no .env, no ASTRYX_FIXTURE_ADMIN_DSN)
         from astryx.security.sqlguard.estate import unavailable

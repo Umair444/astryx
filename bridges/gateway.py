@@ -104,6 +104,7 @@ class Ctx:
     relay: str
     relay_listed: bool
     relay_host: bool
+    relay_reach_private: bool = False
     pool: "asyncpg.Pool | None" = None
     bell: asyncio.Queue = field(default_factory=asyncio.Queue)   # wakes this org's pickup long-polls
     rates: dict = field(default_factory=dict)
@@ -124,7 +125,8 @@ def _ctx_one() -> Ctx:
     return Ctx(org=None, name=_env("ASTRYX_ORG", "local"), home=ESTATE, dsn=_env("ASTRYX_DSN"),
                key=SigningKey(_env("ASTRYX_SECRET_KEY").encode(), encoder=HexEncoder), url=_env("ASTRYX_URL"),
                relay=_env("ASTRYX_RELAY").rstrip("/"), relay_listed=_env("ASTRYX_RELAY_LISTED") == "1",
-               relay_host=_env("ASTRYX_RELAY_HOST") == "1")
+               relay_host=_env("ASTRYX_RELAY_HOST") == "1",
+               relay_reach_private=_env("ASTRYX_RELAY_REACH_PRIVATE") == "1")
 
 
 def _ctx_cog(org: str, home: Path) -> Ctx:
@@ -136,13 +138,15 @@ def _ctx_cog(org: str, home: Path) -> Ctx:
         raise CogError(f"cog org {org}: its .env names no ASTRYX_ORG or ASTRYX_SECRET_KEY")
     if name == "local" or not org_ok(name):
         raise CogError(f"cog org {org}: federation name {name!r} is reserved or illegal")
-    if e.get("ASTRYX_RELAY_HOST") == "1":
-        raise CogError(f"cog org {org}: ASTRYX_RELAY_HOST in a cog of several orgs is not served yet (S3e)")
+    # the relay's routes are the bare root's (/relay/*): only the door org can host it, in a cog as on one org
+    host = e.get("ASTRYX_RELAY_HOST") == "1"
+    if host and org != orgs.door():
+        raise CogError(f"cog org {org}: ASTRYX_RELAY_HOST is served only for the registry's door org (the bare root)")
     return Ctx(org=org, name=name, home=home, dsn=config.dsn(f, env_first=False),
                key=SigningKey(sk.encode(), encoder=HexEncoder),
                url=node.public_url(e.get("ASTRYX_URL", ""), name, True),   # what a peer stores: <base>/o/<name> (S3e)
                relay=e.get("ASTRYX_RELAY", "").rstrip("/"), relay_listed=e.get("ASTRYX_RELAY_LISTED") == "1",
-               relay_host=False)
+               relay_host=host, relay_reach_private=e.get("ASTRYX_RELAY_REACH_PRIVATE") == "1")
 
 
 _COG: dict[str, Ctx] | None = None
@@ -989,9 +993,12 @@ async def lifespan(app: FastAPI):
 
 app.router.lifespan_context = lifespan
 
-_ONE = root() if ESTATE is not None else None
+try:
+    _ONE = root()                       # one org: the org; a cog: its door org (the relay is a bare-root surface)
+except CogError:
+    _ONE = None                         # an unservable cog refuses in lifespan, where cog() runs again
 if _ONE is not None and _ONE.relay_host:
     # the relay is its own surface (relay_orgs, relay_mail): it never writes peers or messages
     app.include_router(relay_mod.make_router(
         lambda: _ONE.pool, org_ok, lambda: {"org": _ONE.name, "pubkey": _ONE.pub, "url": _ONE.url or None}, rated,
-        allow_private_reach=_env("ASTRYX_RELAY_REACH_PRIVATE") == "1"))
+        allow_private_reach=_ONE.relay_reach_private))
