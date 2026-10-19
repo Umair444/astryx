@@ -139,6 +139,17 @@ mkdir -p "$HOME_D/.claude"
 EXTRA=""
 for g in $(grep -m1 '^Grants:' "$CHARTER" 2>/dev/null | cut -d: -f2- | tr ',' ' '); do
   case "$g" in
+    # chat-sql + ocr: the estate-query MCP (42 tools over the 10.50.15.226 tunnel; bootstraps its
+    # OWN venv via run.sh, so /bin/bash — NOT $ROOT/venv/python) and the OCR server. BOTH arms were
+    # dropped by the 0.1.2 merge (upstream spawn.sh carries no estate grants), silently stripping
+    # chat-sql from every data seat on its NEXT respawn — latent, since agents kept their pre-merge
+    # .mcp.json until respawned. Restored 2026-10-19 after a one-agent validation respawn (insurance)
+    # surfaced it: goal-14 follow-on — the merge dropped MORE spawn.sh customizations than the brief
+    # injection alone, and the brief-only audit missed these (feedback-post-merge-reorg-audit).
+    chat-sql) EXTRA="$EXTRA,
+  \"chat-sql\": { \"command\": \"/bin/bash\", \"args\": [\"$ROOT/mcp/chat-sql/run.sh\"] }";;
+    ocr) EXTRA="$EXTRA,
+  \"ocr\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/ocr/server.py\"] }";;
     gmail) EXTRA="$EXTRA,
   \"gmail\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/gmail/server.py\"] }";;
     compose) EXTRA="$EXTRA,
