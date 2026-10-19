@@ -332,7 +332,10 @@ def changed_files(sha: dict) -> set:
 # a touched python module it imports, or the touched file's path or file name (extension included, never a bare stem)
 # in its text. devtools/check.sh is left out: nearly every branch touches it to add its own gate.
 SCOPE_NOISE = frozenset({"devtools/check.sh"})
-_GATE_RX = re.compile(r'^run "((?:[^"\\]|\\.)+)"\s+(.*)$', re.M)     # a label may carry \" (the tmux gate's does)
+# a label may carry \" (the tmux gate's does). A run line may be INDENTED (a gate inside an `if`, check.sh's media
+# decode) and may carry run()'s one flag, `--cap=<s>` (check.sh's run(): test_relay's): either form missed was a gate
+# no dark list and no census saw (a4, 10-19: the census never reached test_relay.py's probe-then-release)
+_GATE_RX = re.compile(r'^[ \t]*run (?:--cap=\S+\s+)?"((?:[^"\\]|\\.)+)"\s+(.*)$', re.M)
 _ORACLE_SUFFIXES = (".py", ".sh", ".mjs", ".js", ".ts")
 
 

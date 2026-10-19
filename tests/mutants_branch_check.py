@@ -145,4 +145,8 @@ MUTANTS = {
         ('                stdout, stderr, rc = run_suite(a + ["bash", "devtools/check.sh"], env)',
          '                stdout, stderr, rc = (lambda p: (p.stdout, p.stderr, p.returncode))(subprocess.run(a + ["bash", '
          '"devtools/check.sh"], env=env, capture_output=True, text=True, timeout=SUITE_TIMEOUT))'),
+    "O48 a run line with run()'s --cap=<s> flag is no gate again (test_relay.py dark to every dark list and the census)":
+        ('_GATE_RX = re.compile(r\'^[ \\t]*run (?:--cap=\\S+\\s+)?"((?:[^"\\\\]|\\\\.)+)"\\s+(.*)$\', re.M)', '_GATE_RX = re.compile(r\'^[ \\t]*run "((?:[^"\\\\]|\\\\.)+)"\\s+(.*)$\', re.M)'),
+    "O49 an INDENTED run line is no gate again (a gate inside an `if`: check.sh's media decode)":
+        ('_GATE_RX = re.compile(r\'^[ \\t]*run (?:--cap=\\S+\\s+)?"((?:[^"\\\\]|\\\\.)+)"\\s+(.*)$\', re.M)', '_GATE_RX = re.compile(r\'^run (?:--cap=\\S+\\s+)?"((?:[^"\\\\]|\\\\.)+)"\\s+(.*)$\', re.M)'),
 }

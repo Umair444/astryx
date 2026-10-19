@@ -8,6 +8,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -244,7 +245,9 @@ def main():
         'run "bash gate" bash tests/t_sh.sh\n'
         'run "word gate" "$PY" tests/test_word.py\n'
         'run "own gate" "$PY" -m tests.test_own\n'
-        'run "quoted \\"=ax\\" gate" "$PY" tests/test_word.py\n')
+        'run "quoted \\"=ax\\" gate" "$PY" tests/test_word.py\n'
+        'run --cap=300 "capped gate" "$PY" tests/test_capped.py\n'
+        'if true; then\n  run "indented gate" "$PY" tests/test_ind.py\nfi\n')
     (dk / "tests" / "test_ear.py").write_text("from nucleus import subj\n")
     (dk / "nucleus" / "subj.py").write_text("from nucleus import deep\n")
     (dk / "nucleus" / "deep.py").write_text("x = 1\n")
@@ -255,10 +258,21 @@ def main():
     (dk / "tests" / "t_sh.sh").write_text("grep -c ^run devtools/check.sh\n")   # names check.sh, as many oracles do
     (dk / "tests" / "test_word.py").write_text("# the server answers; reserver.mjs is another file\n")
     (dk / "tests" / "test_own.py").write_text("x = 1\n")
+    (dk / "tests" / "test_capped.py").write_text("x = 1\n")
+    (dk / "tests" / "test_ind.py").write_text("x = 1\n")
     of = bc.gate_files(dk)
     check("gate_files: every run line maps to its oracle file(s), any language, -m included, a \\\" label unescaped",
           of.get("ear gate") == {"tests/test_ear.py"} and of.get("node gate") == {"tests/t_node.mjs"}
           and of.get("own gate") == {"tests/test_own.py"} and 'quoted "=ax" gate' in of, of)
+    check("…a run line with run()'s --cap=<s> flag, and an INDENTED one (a gate inside an `if`), are gates too",
+          of.get("capped gate") == {"tests/test_capped.py"} and of.get("indented gate") == {"tests/test_ind.py"}, of)
+    # the LIVE grammar: every invocation of run() in the real check.sh, read by a pattern WIDER than _GATE_RX (any
+    # leading blanks, any arguments), is a gate gate_files parses. A new form of run line can't go dark silently.
+    live = (REPO / "devtools" / "check.sh").read_text()
+    calls = [ln for ln in live.splitlines() if re.match(r"[ \t]*run\s", ln)]
+    unparsed = [ln.strip()[:80] for ln in calls if not bc._GATE_RX.match(ln)]
+    check(f"the live check.sh: each of its {len(calls)} run() invocations parses as a gate", calls and not unparsed,
+          unparsed)
     gates = ["ear gate", "node gate", "bash gate", "word gate", "own gate"]
     ds = {g: f for g, f, _ in bc.dark_scope(gates, of, {"nucleus/subj.py", "channel/server.mjs", "tests/test_own.py"}, dk)}
     check("dark_scope: a python oracle IMPORTING a changed module, a node oracle NAMING a changed file, and a changed "
