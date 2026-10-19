@@ -237,6 +237,15 @@ wrapped = dict(real, ExecStart=(
 entry, why = MOD["_entry_file"](wrapped)
 check("an orgenv-wrapped ExecStart (a cog's non-primary org) resolves the WRAPPED module, never orgenv.py",
       entry == (TMP / "bridges" / "alpha.py"), f"{entry} {why}")
+# the form init.sh's UEXEC units actually carry: the wrapped command is the `uvicorn` console script (a2 #61009)
+console = dict(real, ExecStart=(
+    "{ path=/home/umair/astryx/venv/bin/python ; argv[]=/home/umair/astryx/venv/bin/python "
+    f"{TMP}/src/astryx/orgenv.py exec --home /srv/lab -- /home/umair/astryx/venv/bin/uvicorn "
+    "alpha:app --host 127.0.0.1 --port 18190 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; "
+    "pid=0 ; code=(null) ; status=0/0 }"))
+entry, why = MOD["_entry_file"](console)
+check("an orgenv-wrapped uvicorn CONSOLE SCRIPT (init.sh's real UEXEC form) resolves the wrapped module",
+      entry == (TMP / "bridges" / "alpha.py"), f"{entry} {why}")
 bare = dict(wrapped, ExecStart=wrapped["ExecStart"].replace(" -- /home/umair/astryx/venv/bin/python -m uvicorn alpha:app", ""))
 entry, why = MOD["_entry_file"](bare)
 check("a wrapper with no `--` command returns a reason, never the wrapper itself",
