@@ -17,6 +17,8 @@ and is checked against the PULSE's own discover() (`pulse.py --names`), the sema
   E  import-safe with no .env and no ASTRYX_DSN (a4 #49617): it answers (deferred), never crashes
   B  a1 BC-1: every construct the model doesn't positively understand makes the file BLIND → DEFERRED (17 fixtures,
      one at a time, each named in the detail with its exits, a4 #50070; `names` exits 3), with a control beside them
+  H  a cog org's triggers are its HOME's (the pulse's ESTATE): a name only its HOME defines reads installed under that
+     HOME, one only the code tree defines reads absent, with no registry the tree is the estate (control), and a registry with no HOME carried defers (never a crash)
   P  parity: names == discover for every non-blind fixture AND for the live corpus (triggers/*/*.py, where present)
 Needs a fixture database, else 77.
 """
@@ -194,6 +196,38 @@ try:
             rc, out, _ = state("zz_mem", dsn=DSN)
             want("S2 ...an untombstoned copy anywhere → installed (the duplicate check stays global)",
                  rc == 0 and out == "installed triggers/umair/mem_copy.py", f"{rc} {out}")
+            # ── H: a cog org's triggers are its HOME's, never the code tree's (the pulse's ESTATE; S7b) ──────────────
+            reg_d = Path(tempfile.mkdtemp(prefix="tnames-cog-"))
+            try:
+                homes = {}
+                for o in ("fxh", "fxh2"):
+                    h = reg_d / f"home-{o}"
+                    (h / "triggers" / "seed").mkdir(parents=True)
+                    (h / ".astryx").write_text("astryx home\n")
+                    (h / ".env").write_text(f"ASTRYX_DSN={NODSN}\nASTRYX_ORG={o}\n")
+                    homes[o] = h
+                (homes["fxh"] / "triggers" / "seed" / "home_only.py").write_text(TRIG + DEF.format("zz_homeonly"))
+                put("triggers/seed/tree_only.py", TRIG + DEF.format("zz_treeonly"))
+                (reg_d / "cog.json").write_text(json.dumps({"orgs": {o: {"home": str(h), "db": f"fxtn_{o}"}
+                                                                     for o, h in homes.items()}}))
+                henv = {**{k: v for k, v in os.environ.items() if k != "ASTRYX_DSN"},
+                        "ASTRYX_COG_REGISTRY": str(reg_d / "cog.json"), "ASTRYX_HOME": str(homes["fxh"])}
+                rc, out, err = state("zz_homeonly", dsn=DSN, env=dict(henv))
+                want("H1 a name only the org's HOME/triggers defines → installed, naming its file (the pulse's ESTATE)",
+                     rc == 0 and out == "installed triggers/seed/home_only.py", f"rc={rc} {out} {err}")
+                rc, out, err = state("zz_treeonly", dsn=DSN, env=dict(henv))
+                want("H2 ...and one only the CODE tree's triggers/ defines is NOT the org's (absent)",
+                     rc == 2 and out.startswith("absent"), f"rc={rc} {out} {err}")
+                rc, out, err = state("zz_treeonly", dsn=DSN)
+                want("H3 control: with no registry (one org) the tree IS the estate → installed", rc == 0
+                     and out == "installed triggers/seed/tree_only.py", f"rc={rc} {out} {err}")
+                rc, out, err = state("zz_homeonly", dsn=DSN, env={k: v for k, v in henv.items() if k != "ASTRYX_HOME"})
+                want("H4 the registry and NO HOME carried: whose triggers is unknown → deferred (exit 3), never a crash",
+                     rc == 3 and out.startswith("deferred") and "ASTRYX_HOME" in out, f"rc={rc} {out} {err}")
+            finally:
+                import shutil as _sh
+                _sh.rmtree(reg_d, ignore_errors=True)
+                (T / "triggers" / "seed" / "tree_only.py").unlink(missing_ok=True)
             # ── L: legacy rows ──────────────────────────────────────────────────────────────────────────────────────
             c.execute("INSERT INTO triggers (agent, name, schedule, kind, check_src, next_fire) VALUES "
                       "('ghost', 'zz_legacy', '* * * * *', 'python', 'triggers/ghost/gone.py::zz_legacy', now()), "

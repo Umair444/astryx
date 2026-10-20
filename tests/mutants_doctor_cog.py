@@ -1,4 +1,4 @@
-"""Authored mutants for init.sh's cog-safe doctor (plan-11324 S3f S7), run by devtools/mutation_probe.py.
+"""Authored mutants for init.sh's cog-safe doctor (plan-11324 S3f S7; S7b, goal 10224), run by devtools/mutation_probe.py.
 
     venv/bin/python devtools/mutation_probe.py tests/mutants_doctor_cog.py
 """
@@ -13,17 +13,35 @@ TIMEOUT = 1500
 
 MUTANTS = {
     "M1 the disk side is every file of units/ (another org's and the cog's read as the primary's orphans: 'delete')":
-        ('    [ -n "${DOCTOR_COG:-}" ] && disk_list=$(echo "$disk_list" | grep -v \'@\' | grep -vE "^(${_cogstems:-^$})\\.")',
-         '    :'),
+        ('    [ -n "${DOCTOR_COG:-}" ] && disk_list=$(echo "$disk_list" | _mine)', '    :'),
     "M2 only @ files are filtered (the cog's gateway and front read as the primary's orphans)":
-        ('| grep -v \'@\' | grep -vE "^(${_cogstems:-^$})\\.")', '| grep -v \'@\')'),
+        ('grep -v \'@\' | grep -vE "^(${_cogstems:-^$})\\."', "grep -v '@'"),
     "M3 doctor's tmux is bare (an inherited $TMUX's server answers for the primary's seats)":
         ('if [ -n "${DOCTOR_COG:-}" ]; then ROOT="$PWD"; . scripts/org_tmux.sh; fi', ':'),
-    "M4 any org that resolves gets doctor (lab's run reads the PRIMARY's estate as its own)":
-        ('    [ "$_dorg" = "$(venv/bin/python src/astryx/orgs.py primary 2>/dev/null)" ] && [ "$_dhome" = "$(pwd -P)" ] || {',
-         '    true || {'),
+    "M4 the primary runs from any checkout (its estate read from a tree that isn't its HOME)":
+        ('    [ "$_dorg" != "$_dprim" ] || [ "$_dhome" = "$(pwd -P)" ] || {', '    true || {'),
     "M5 ASTRYX_HOME is not carried (by the marker, doctor's units() renders the COG's set as the primary's)":
         ('    export ASTRYX_HOME="$_dhome"; DOCTOR_COG=1', '    DOCTOR_COG=1'),
-    "M6 the filter applies on one org too (an @-named stray is no longer anyone's orphan)":
-        ('    [ -n "${DOCTOR_COG:-}" ] && disk_list=', '    true && disk_list='),
+    "M6 the filter applies on one org too (an @-named stray is no longer anyone's orphan): _mine's one-org branch":
+        ('  _mine() { if [ -z "${DOCTOR_COG:-}" ]; then cat', '  _mine() { if false; then cat'),
+    "M7 another org's estate root is this checkout (S7b's reads all land on the primary's)":
+        ('{ DOCTOR_ORG="$_dorg"; DOCTOR_ORGH="$_dhome"; }', '{ DOCTOR_ORG="$_dorg"; }'),
+    "M8 .env read from the checkout":
+        ('  if [ -f "$ORGH/.env" ]; then', '  if [ -f .env ]; then'),
+    "M9 local.md read from the checkout":
+        ('  [ -f "$ORGH/local.md" ] && ok', '  [ -f local.md ] && ok'),
+    "M10 backups/ read from the checkout":
+        ('ls -1t "$ORGH"/backups/astryx-*.dump', 'ls -1t backups/astryx-*.dump'),
+    "M11 the restore-verify stamp read from the checkout":
+        ('  if [ -f "$ORGH/backups/.last-restore-ok" ]; then', '  if [ -f backups/.last-restore-ok ]; then'),
+    "M12 the routes read from the checkout":
+        ('  for rf in "$ORGH"/bridges/routes-*.json; do', '  for rf in bridges/routes-*.json; do'),
+    "M13 the dep groups derived from the checkout's channels":
+        ('    DGROUPS=$(active_dep_groups "$ORGH")', '    DGROUPS=$(active_dep_groups)'),
+    "M14 the docker host address read from the checkout's .env":
+        ('  _dhip=$(_docker_host_ip "$ORGH/.env")', '  _dhip=$(_docker_host_ip)'),
+    "M15 (iii) undeclared is unscoped (the 10-20 live false RED: another org's and the cog's units are the primary's)":
+        ("awk '{print $1}' | _mine); do", "awk '{print $1}'); do"),
+    "M16 another org's units are every file (the primary's and the cog's read as its own)":
+        ('            else grep -F "@$DOCTOR_ORG."; fi; }', '            else cat; fi; }'),
 }

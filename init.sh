@@ -23,11 +23,11 @@ unset _self _t _hops
 # units, never this script guessing which org it means. units() below already serves a HOME (ORGH); the rest doesn't.
 # The ONE verb a cog may run is `units` (S3f S2): units() resolves its own org (ASTRYX_HOME; none carried is the cog's
 # run) and writes unit FILES into units/ only, nothing installed, nothing started; the registry is judged inside it.
-# `doctor` (S3f S7, seed #61003/#61017) serves the cog's PRIMARY: ASTRYX_HOME naming it, or this checkout's .astryx
-# marker. Its HOME IS this checkout, so every checkout-relative read doctor makes is that org's own estate, by identity.
-# Any other org refuses here, before a check (its estate is elsewhere: its own vitals.sh and smoke.sh serve it; a doctor
-# for it is S7b, a stated limit), and so does a process no org of the cog resolves.
-unset DOCTOR_COG                     # set below only (never inherited: an env DOCTOR_COG would scope a one-org doctor)
+# `doctor` (S3f S7, seed #61003/#61017; S7b, goal 10224) serves ANY org of the cog: ASTRYX_HOME naming it, or this
+# checkout's .astryx marker. The PRIMARY's HOME is this checkout (refused from anywhere else), so its estate reads are
+# checkout-relative by identity. Another org's estate is its HOME: DOCTOR_ORGH, which doctor reads it from ($ORGH), while
+# the CODE it runs (venv, channel, observatory, the hook) stays this checkout's. A process no org resolves refuses.
+unset DOCTOR_COG DOCTOR_ORG DOCTOR_ORGH   # set below only (never inherited: an env one would scope a one-org doctor)
 if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ] && [ "${1:-}" != units ]; then
   _g=0; venv/bin/python src/astryx/orgs.py multi || _g=$?
   case "$_g:${1:-}" in
@@ -35,9 +35,12 @@ if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ] && [ "${1:-}" != units 
     _dorg=$(venv/bin/python src/astryx/orgs.py name 2>/dev/null) || _dorg=""
     [ -n "$_dorg" ] || { echo "init.sh doctor: no org of this cog resolves here (set ASTRYX_HOME, or touch this checkout's .astryx marker): refusing" >&2; exit 3; }
     _dhome=$(venv/bin/python -c 'import sys; sys.path.insert(0, "src"); from astryx import paths; print(paths.home())' 2>/dev/null) || _dhome=""
-    [ "$_dorg" = "$(venv/bin/python src/astryx/orgs.py primary 2>/dev/null)" ] && [ "$_dhome" = "$(pwd -P)" ] || {
-      echo "init.sh doctor: $_dorg is not this checkout's org (the cog's primary): doctor reads this checkout's estate, and $_dorg's HOME ($_dhome) is elsewhere. Use its own: ASTRYX_HOME=$_dhome skills/org-vitals/vitals.sh, and ASTRYX_HOME=$_dhome scripts/smoke.sh, which serve it: refusing" >&2
+    [ -n "$_dhome" ] || { echo "init.sh doctor: $_dorg's HOME doesn't resolve: refusing" >&2; exit 3; }
+    _dprim=$(venv/bin/python src/astryx/orgs.py primary 2>/dev/null)
+    [ "$_dorg" != "$_dprim" ] || [ "$_dhome" = "$(pwd -P)" ] || {
+      echo "init.sh doctor: $_dorg is the cog's primary, and its HOME ($_dhome) is not this checkout: run doctor from that checkout: refusing" >&2
       exit 3; }
+    [ "$_dorg" = "$_dprim" ] || { DOCTOR_ORG="$_dorg"; DOCTOR_ORGH="$_dhome"; }   # another org (S7b): its estate, its HOME
     export ASTRYX_HOME="$_dhome"; DOCTOR_COG=1 ;;
   1:*) ;;
   *) echo "init.sh: this cog runs several orgs (or its org registry refuses): init.sh sets up one org, refusing" >&2; exit 3 ;;
@@ -493,9 +496,9 @@ active_dep_groups() {  # which manifest groups this org needs, from the channel 
   # channels-present authority the units-generator gates on — one authority).
   local g="core"
   for ch in whatsapp discord telegram; do
-    [ -f "bridges/routes-$ch.json" ] && { g="$g media"; break; }
+    [ -f "${1:-.}/bridges/routes-$ch.json" ] && { g="$g media"; break; }
   done
-  [ -f bridges/routes-discord.json ] && g="$g discord"   # discord.py: the discord bridge only
+  [ -f "${1:-.}/bridges/routes-discord.json" ] && g="$g discord"   # discord.py: the discord bridge only
   echo "$g"
 }
 
@@ -1089,8 +1092,19 @@ if [ "${1:-}" = "doctor" ]; then
   # hiding every check after it. The maintainer never saw it (their box has those files).
   # A doctor that stops early is the worst not-run: it reports nothing past the crash.
   set +e +o pipefail
-  # in a cog (S7): `tmux` is the primary's server (org_tmux.sh: the named default socket), never an inherited $TMUX's
+  # in a cog (S7): `tmux` is the org's server (org_tmux.sh, from ASTRYX_HOME: the primary's named default socket, another
+  # org's -L ax-<org>), never an inherited $TMUX's
   if [ -n "${DOCTOR_COG:-}" ]; then ROOT="$PWD"; . scripts/org_tmux.sh; fi
+  # whose ESTATE (S7b): one org and the cog's primary, this checkout ($ORGH/x is x, by identity); another org of the cog,
+  # its HOME. Only the estate moves (.env, local.md, bridges/, backups/): the code it runs is this checkout's.
+  ORGH=${DOCTOR_ORGH:-$PWD}
+  dsn() { grep '^ASTRYX_DSN=' "$ORGH/.env" 2>/dev/null | cut -d= -f2-; }   # psql_q's (schema, harden): the org's DSN
+  # a unit name list (stdin) → this org's units only. One org: all of them. In a cog, units/ and systemd hold every org's
+  # @<org> files and the cog's own (the gateway, the front), which no org's derivation emits: the primary's are its
+  # plain files, another org's its @<org> files (seed #61017 (a), for disk and systemd alike)
+  _mine() { if [ -z "${DOCTOR_COG:-}" ]; then cat
+            elif [ -z "${DOCTOR_ORGH:-}" ]; then grep -v '@' | grep -vE "^(${_cogstems:-^$})\."
+            else grep -F "@$DOCTOR_ORG."; fi; }
   ok() { echo -e "  \033[32m✓\033[0m $*"; }
   bad() { echo -e "  \033[31m✗\033[0m $*"; FAIL=1; }
   warn() { echo -e "  \033[33m○\033[0m $*"; }
@@ -1128,8 +1142,8 @@ if [ "${1:-}" = "doctor" ]; then
     fi
     rm -f "$_login_err"
   fi
-  if [ -f .env ]; then
-    DSN=$(grep '^ASTRYX_DSN=' .env | cut -d= -f2-)
+  if [ -f "$ORGH/.env" ]; then
+    DSN=$(grep '^ASTRYX_DSN=' "$ORGH/.env" | cut -d= -f2-)
     psql "$DSN" -c 'SELECT 1' >/dev/null 2>&1 && ok "postgres reachable" || bad "postgres unreachable (docker start $PG_CONTAINER? the design is infra/pg)"
     # every org's database is LOCALHOST-ONLY (owner, 2026-10-10): any listener on the DSN's port
     # that isn't loopback is a database a LAN (or the world) can knock on. An instrument that can't
@@ -1151,7 +1165,7 @@ if [ "${1:-}" = "doctor" ]; then
   else
     bad ".env missing — run ./init.sh"
   fi
-  [ -f local.md ] && ok "local.md exists" || bad "local.md missing — the owner's law; run ./init.sh"
+  [ -f "$ORGH/local.md" ] && ok "local.md exists" || bad "local.md missing — the owner's law; run ./init.sh"
   # every live resident body carries the flags the org depends on (owner 10-14): the wire's channel flag (without it
   # the doorbell is dropped silently) and its charter's permission mode (bypassPermissions, or default for relay)
   _lf=$("${PY:-venv/bin/python}" -m astryx.core.launch_flags 2>&1); _lf_rc=$?
@@ -1189,7 +1203,7 @@ if [ "${1:-}" = "doctor" ]; then
   # AST coverage assert must find no undeclared third-party import (catches the next
   # faster_whisper — a function-local import a grep would miss).
   if [ -d venv ]; then
-    DGROUPS=$(active_dep_groups)
+    DGROUPS=$(active_dep_groups "$ORGH")
     venv/bin/python src/astryx/core/deps.py check $DGROUPS >/dev/null 2>&1 \
       && ok "python deps ($DGROUPS import OK)" \
       || bad "python deps missing — rerun ./init.sh  (venv/bin/python src/astryx/core/deps.py check $DGROUPS)"
@@ -1228,7 +1242,7 @@ if [ "${1:-}" = "doctor" ]; then
     # DELETE it" (seed #61017 (a)). So in a cog the disk side is the primary's files only. One org: every file, as before.
     _cogstems=$(venv/bin/python -c 'import json; print("|".join(k for k, v in json.load(open("src/astryx/data/org_units.json"))["units"].items() if v["scope"] == "cog"))' 2>/dev/null)
     disk_list=$(cd units 2>/dev/null && ls | sort)
-    [ -n "${DOCTOR_COG:-}" ] && disk_list=$(echo "$disk_list" | grep -v '@' | grep -vE "^(${_cogstems:-^$})\.")
+    [ -n "${DOCTOR_COG:-}" ] && disk_list=$(echo "$disk_list" | _mine)
     # (i) generated_set ≡ units/ on disk — an orphan (on disk, not derived) or a
     # missing unit is the drift that hid telegram/discord/gateway/canopus-inbound.
     if diff <(echo "$gen_list") <(echo "$disk_list") >/dev/null 2>&1; then
@@ -1280,7 +1294,7 @@ if [ "${1:-}" = "doctor" ]; then
     # (iii) reverse — no astryx unit systemd knows that the derivation did NOT
     # produce (an undeclared runner/service: the blind spot that started plan-17).
     undeclared=""
-    for u in $(systemctl list-unit-files --no-legend 'astryx-*.service' 'astryx-*.timer' 2>/dev/null | awk '{print $1}'); do
+    for u in $(systemctl list-unit-files --no-legend 'astryx-*.service' 'astryx-*.timer' 2>/dev/null | awk '{print $1}' | _mine); do
       echo "$gen_list" | grep -qx "$u" || undeclared="$undeclared $u"
     done
     [ -z "$undeclared" ] && ok "no undeclared astryx units (nothing runs off-book)" \
@@ -1315,7 +1329,7 @@ if [ "${1:-}" = "doctor" ]; then
   fi
   # the address containers reach this host by (wacli's webhook → the whatsapp bridge). It must be an address this host
   # holds, since the bridge binds it: a Docker Desktop answer (host.docker.internal) may not be bindable from inside WSL.
-  _dhip=$(_docker_host_ip)
+  _dhip=$(_docker_host_ip "$ORGH/.env")
   if ip -4 addr 2>/dev/null | grep -q "inet $_dhip/"; then
     ok "docker host address $_dhip (held by this host; override with ASTRYX_DOCKER_HOST_IP in .env)"
   elif command -v ip >/dev/null; then
@@ -1337,7 +1351,7 @@ if [ "${1:-}" = "doctor" ]; then
   # leg (does the JID/chat still exist on the platform) needs the platform API and
   # stays a live reconciler; this is the org-authored half we CAN assert offline.
   routebad=""
-  for rf in bridges/routes-*.json; do
+  for rf in "$ORGH"/bridges/routes-*.json; do
     [ -f "$rf" ] || continue
     while read -r a; do
       [ -z "$a" ] && continue
@@ -1349,7 +1363,7 @@ if [ "${1:-}" = "doctor" ]; then
   # durability: the org's whole state is one docker volume — a recent dump is the only
   # thing that makes "production ready" true. Terminal observable = a fresh backup on
   # disk (reads local file mtimes only, never the dump's PII content). Red if stale/absent.
-  newest_bk=$(ls -1t backups/astryx-*.dump 2>/dev/null | head -1)
+  newest_bk=$(ls -1t "$ORGH"/backups/astryx-*.dump 2>/dev/null | head -1)
   if [ -z "$newest_bk" ]; then
     bad "NO database backup — org state is a single docker volume (run ./scripts/backup.sh; enable astryx-backup.timer)"
   elif [ "$(( $(date +%s) - $(stat -c %Y "$newest_bk") ))" -gt 90000 ]; then
@@ -1360,17 +1374,17 @@ if [ "${1:-}" = "doctor" ]; then
   # restore-verify: a fresh dump that won't pg_restore is backup THEATER — this asserts
   # the newest dump was proven-restorable recently (weekly), so a silently-unrestorable
   # backup goes RED instead of freshness-green. Reads the stamp only (never restores here).
-  if [ -f backups/.last-restore-ok ]; then
+  if [ -f "$ORGH/backups/.last-restore-ok" ]; then
     # Read the OUTCOME first, then the age. A stamp whose freshness was the only thing
     # checked reported "proven-restorable" for 8 days after verification began failing,
     # because a failing run left the previous success's stamp untouched. Unknown content
     # falls through to RED — detector polarity: a stamp we cannot interpret is not evidence.
-    if [ "$(cut -d" " -f1 backups/.last-restore-ok)" = "FAILED" ]; then
-      bad "backup restore-verify FAILED on its last run ($(cut -d" " -f2 backups/.last-restore-ok)) — the newest dump does NOT restore"
-    elif [ "$(( $(date +%s) - $(stat -c %Y backups/.last-restore-ok) ))" -gt 691200 ]; then
+    if [ "$(cut -d" " -f1 "$ORGH/backups/.last-restore-ok")" = "FAILED" ]; then
+      bad "backup restore-verify FAILED on its last run ($(cut -d" " -f2 "$ORGH/backups/.last-restore-ok")) — the newest dump does NOT restore"
+    elif [ "$(( $(date +%s) - $(stat -c %Y "$ORGH/backups/.last-restore-ok") ))" -gt 691200 ]; then
       bad "backup restore-verify STALE (>8d): a dump may have stopped restoring (scripts/restore_verify.sh)"
     else
-      ok "backup restore-verified ($(cat backups/.last-restore-ok), <8d — proven-restorable)"
+      ok "backup restore-verified ($(cat "$ORGH/backups/.last-restore-ok"), <8d — proven-restorable)"
     fi
   elif [ -n "$newest_bk" ]; then
     warn "backup never restore-verified — run scripts/restore_verify.sh (a dump you can't restore is a hope, not a backup)"
@@ -1380,7 +1394,10 @@ if [ "${1:-}" = "doctor" ]; then
   # the introduce key. Runs against the live gateway on the SERVED bytes — the grade-1 check
   # that a new public endpoint can't silently leak a tier-private agent to the world.
   if [ -d venv ]; then
-    rc=0; venv/bin/python src/astryx/federation/card_assert.py http://127.0.0.1:8845 >/dev/null 2>&1 || rc=$?
+    # another org of the cog answers at /o/<its FEDERATION name> (its .env's ASTRYX_ORG, what node.public_url writes into
+    # peers), never its registry key (seed #61496); card_assert judges it against that org's own key (ASTRYX_HOME)
+    _door=""; [ -n "${DOCTOR_ORGH:-}" ] && _door="/o/$(grep -m1 '^ASTRYX_ORG=' "$ORGH/.env" 2>/dev/null | cut -d= -f2-)"
+    rc=0; venv/bin/python src/astryx/federation/card_assert.py "http://127.0.0.1:8845$_door" >/dev/null 2>&1 || rc=$?
     if [ "$rc" = 0 ]; then ok "A2A card: roster ≡ public oracle, zero tier-private, signed"
     elif [ "$rc" = 2 ]; then warn "A2A card not served yet — gateway not redeployed with plan-20"
     else bad "A2A card LEAK/mismatch — tier-private agent or wrong key on the PUBLIC card (src/astryx/federation/card_assert.py :8845)"; fi

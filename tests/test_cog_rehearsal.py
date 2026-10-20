@@ -363,10 +363,11 @@ def main():
                            env=fx.env(ASTRYX_HOME=str(co), ASTRYX_COG_REGISTRY=str(etc), PATH=dpath))
         check("`./init.sh doctor` in the cog serves the PRIMARY (S7): it runs (no exit 3)", r.returncode != 3
               and "refusing" not in r.stderr, f"rc {r.returncode} {r.stderr[-200:]}")
-        r = subprocess.run(["bash", "init.sh", "doctor"], cwd=co, capture_output=True, text=True, timeout=180,
+        r = subprocess.run(["bash", "init.sh", "doctor"], cwd=co, capture_output=True, text=True, timeout=600,
                            env=fx.env(ASTRYX_HOME=str(home), ASTRYX_COG_REGISTRY=str(etc), PATH=dpath))
-        check("...and refuses lab (exit 3), naming lab's own vitals.sh and smoke.sh (S7b, lab's doctor, is a stated limit)",
-              r.returncode == 3 and "vitals.sh" in r.stderr and "smoke.sh" in r.stderr, f"rc {r.returncode} {r.stderr[-200:]}")
+        check("...and serves lab (S7b): it runs (no exit 3) on LAB's estate (its .env: the checkout has none)",
+              r.returncode != 3 and "refusing" not in r.stderr and "postgres reachable" in r.stdout
+              and ".env missing" not in r.stdout, f"rc {r.returncode} {r.stderr[-200:]}")
     finally:
         kill_server("default")
         for h in HELD:

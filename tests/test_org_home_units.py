@@ -35,13 +35,15 @@ cog-scoped, and the port it binds) is declared once in src/astryx/data/org_units
      Every primary service carries ASTRYX_HOME; a process WITHOUT it in the checkout gets a NoHome naming the
      .astryx marker, and with the marker resolves to the primary (seed #60792)
   U13 `./init.sh units` (S3f S2): the one verb a cog may run writes exactly what units() writes, for B and for the
-     primary, into UNITS_DIR; `./init.sh` (setup) and `./init.sh doctor` still refuse in a cog (exit 3, nothing written)
+     primary, into UNITS_DIR; `./init.sh` (setup) still refuses in a cog (exit 3, nothing written), and `./init.sh doctor`
+     for B RUNS (S7b, goal 10224) and writes nothing
   U5 the resolver: orgs.port() is None on one org, the registry's under HOME-A, NoHome with none; orgs.unit() is `astryx-pulse.timer` on one org, `astryx-pulse@<A>.timer` under HOME-A, and raises
      with no HOME carried; pulse_witness.timer_unit() follows it
 
 Seams (org_home_fixture.SEAMS): ORG_HOME_INIT_SRC, ORG_HOME_ORGS_SRC, ORG_HOME_UNITS_DATA_SRC. Exit 0 · 1 · 77.
 """
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -397,12 +399,22 @@ def main():
                                capture_output=True, text=True, timeout=120)
             check(f"`./init.sh units` for {who}: rc 0, the very files units() writes", r.returncode == 0
                   and files(out) == ref, f"rc {r.returncode} {sorted(files(out))} {(r.stdout + r.stderr)[-300:]}")
-        for verb in ([], ["doctor"]):
-            out = fx.t / f"u_refuse_{'_'.join(verb) or 'setup'}"
-            r = subprocess.run(["bash", "init.sh", *verb], env={**fx.env(ASTRYX_HOME=str(B)), "UNITS_DIR": str(out)},
-                               cwd=co, capture_output=True, text=True, timeout=120)
-            check(f"`./init.sh {' '.join(verb) or '(setup)'}` still refuses in a cog: exit 3, nothing written",
-                  r.returncode == 3 and not files(out) and "refusing" in r.stderr, f"rc {r.returncode} {r.stderr[-200:]}")
+        out = fx.t / "u_refuse_setup"
+        r = subprocess.run(["bash", "init.sh"], env={**fx.env(ASTRYX_HOME=str(B)), "UNITS_DIR": str(out)},
+                           cwd=co, capture_output=True, text=True, timeout=120)
+        check("`./init.sh (setup)` still refuses in a cog: exit 3, nothing written",
+              r.returncode == 3 and not files(out) and "refusing" in r.stderr, f"rc {r.returncode} {r.stderr[-200:]}")
+        # doctor serves any org of the cog (S7b, goal 10224: B's estate, its HOME), and a doctor writes nothing
+        shim = fx.t / "u_shim"
+        shim.mkdir(exist_ok=True)
+        (shim / "claude").write_text("#!/bin/sh\necho ok\n")         # the login check is a model call: a stub answers
+        (shim / "claude").chmod(0o755)
+        out = fx.t / "u_doctor"
+        r = subprocess.run(["bash", "init.sh", "doctor"], cwd=co, capture_output=True, text=True, timeout=600,
+                           env={**fx.env(ASTRYX_HOME=str(B), PATH=f"{shim}{os.pathsep}{os.environ.get('PATH', '')}"),
+                                "UNITS_DIR": str(out)})
+        check("`./init.sh doctor` for B runs in a cog (S7b): no exit 3, no refusal, nothing written",
+              r.returncode != 3 and "refusing" not in r.stderr and not files(out), f"rc {r.returncode} {r.stderr[-200:]}")
 
         print("\nU9 PORT LITERALS ARE DECLARED")
         decl = json.loads((co / "tests" / "org_port_literals.json").read_text())["files"]

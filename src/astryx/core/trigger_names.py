@@ -361,7 +361,13 @@ def _python_rows(name: str, repo: Path) -> list[str] | None:
 def state(name: str, target: str = "seed", repo: Path | None = None) -> tuple[str, str]:
     """(state, detail) for trigger `name`, whose shipped installer targets `target`."""
     repo = (repo or REPO).resolve()
-    root = repo / "triggers"
+    # the triggers the PULSE registers are its ESTATE's (pulse.py: paths.estate(__file__) / "triggers"): this module's own
+    # tree reads the ORG's (its HOME in a cog of several orgs; on one org, this tree), the rule _dsn uses. Imports still
+    # resolve against the CODE tree (Walk(repo)). Another tree, its own (S7b: a cog org's doctor read the primary's).
+    try:
+        root = (paths.estate(__file__) if repo == REPO.resolve() else repo) / "triggers"
+    except paths.NoHome as e:                  # a cog of several orgs and no HOME carried: whose triggers is unknown
+        return "deferred", f"no org HOME is carried here, so whose triggers/ this asks is unknown: set ASTRYX_HOME ({e})"
     retired = lambda a: (root / a / ".retired" / name).exists()   # noqa: E731
     blind, defined_by = [], []
     for f in sorted(root.glob("*/*.py")):

@@ -18,10 +18,21 @@ three renders write there (the primary's, another org's @<org> files, the cog's 
   K4 its seat check asks the primary's server (orgs.tmux, the named default socket), never an inherited $TMUX's:
      run from another org's pane (TMUX naming that org's server, where an `ax-seed` lives), the primary's seed is
      "not resident"; alive on the primary's server, "alive" (seed #61017 (b); a2 #60794's class)
-  K5 another org (ASTRYX_HOME naming it): exit 3 before any check, naming its vitals.sh and smoke.sh (S7b, a doctor
-     for a non-primary org, is a stated limit: seed #61017)
+  K5 another org (ASTRYX_HOME naming it; S7b, goal 10224): doctor RUNS and reads ITS estate, its HOME: its .env (the
+     checkout has none: its DSN is probed, never ".env missing"), its local.md and backups/ (the checkout's present
+     ones are not its: removed from its HOME, "local.md missing" and "NO database backup"; given, "exists" and "fresh"),
+     its units (its @<org> files only, no drift; the primary's plain files and the cog's never its orphans) and its
+     server (-L ax-<org>: "not resident" while only the primary's ax-seed lives; alive on its own, "alive")
   K6 no org resolves (no ASTRYX_HOME, no marker): exit 3, refusing
-  K7 one org (no registry): the filter is the COG's only: an @-named stray in units/ is an orphan, as before
+  K7 one org (no registry): the filter is the COG's only: an @-named stray in units/ is an orphan, and an @-named
+     unit systemd knows is undeclared, as before
+  K8 (iii) "undeclared", the units SYSTEMD knows, is scoped as the disk side is: the primary's names its own plain stray
+     and never another org's @ unit nor the cog's gateway and front (the 10-20 live false RED: forge #61494 (1));
+     another org's names its own @<org> stray and never the primary's, the cog's, or a third org's. systemctl is a PATH
+     shim whose list-unit-files answers a fixed list (every other verb is the host's, read-only), so no arm depends on
+     what this host has installed
+  K9 the cog's primary from a checkout that isn't its HOME: exit 3 before any check (its estate reads are checkout-
+     relative by identity)
 
 `claude` is a PATH shim (doctor's login check would otherwise be a model call per run); tmux is private
 (org_home_fixture.private_tmux). Seams: ORG_HOME_INIT_SRC (org_home_fixture writes the mutant over the fixture
@@ -89,6 +100,12 @@ def main():
         shim.mkdir()
         (shim / "claude").write_text("#!/bin/sh\necho ok\n")
         (shim / "claude").chmod(0o755)
+        known = [f"astryx-fxoff.service", f"astryx-fxoff@{other}.service", f"astryx-canvas@{other}.service",
+                 "astryx-fxzz@fxelse.service", "astryx-gateway.service", "astryx-observatory.service"]
+        (shim / "systemctl").write_text("#!/bin/sh\n[ \"$1\" = list-unit-files ] && { printf '%s enabled\\n' "
+                                        + " ".join(known) + "; exit 0; }\n"
+                                        f"exec {shutil.which('systemctl') or '/usr/bin/systemctl'} \"$@\"\n")
+        (shim / "systemctl").chmod(0o755)
         path = f"{shim}{os.pathsep}{os.environ.get('PATH', '')}"
 
         def env(**over):
@@ -156,10 +173,63 @@ def main():
         rc, out, err = doctor(pane_env)
         check("alive on the primary's server: 'seed resident alive'", "seed resident alive" in out, f"rc {rc}")
 
-        print("\nK5 ANOTHER ORG: REFUSED BEFORE ANY CHECK, ITS OWN TOOLS NAMED")
-        rc, out, err = doctor(env(ASTRYX_HOME=str(A)))
-        check("exit 3, naming vitals.sh and smoke.sh, and no check ran", rc == 3 and "vitals.sh" in err
-              and "smoke.sh" in err and "✓" not in out and "✗" not in out, f"rc {rc} {err[-300:]}")
+        print("\nK5 ANOTHER ORG (S7b): doctor RUNS, reading ITS estate (its HOME), its units, its server")
+        mine_not = [n for n in names if "@" not in n]           # the primary's plain files and the cog's: never its
+        (co / "local.md").write_text("# the checkout's own law: another org's doctor must not read it\n")
+        (co / "backups").mkdir(exist_ok=True)
+        (co / "backups" / "astryx-fxprim.dump").write_text("")
+        (co / "backups" / ".last-restore-ok").write_text("FAILED 2026-10-20\n")
+        route = json.dumps([{"agent": "fxnobody", "enabled": True}])
+        (co / "bridges" / "routes-discord.json").write_text(route)   # the checkout's channel: not the other org's
+        aenv = (A / ".env").read_text()
+        (A / ".env").write_text(aenv + "ASTRYX_DOCKER_HOST_IP=10.250.250.250\n")
+        subprocess.run(["tmux", "-L", osock, "kill-session", "-t", "=ax-seed"], capture_output=True)
+
+        def deps_line(out):
+            return next((ln for ln in out.splitlines() if "python deps" in ln), "")
+        try:
+            rc, out, err = doctor(env(ASTRYX_HOME=str(A)))
+            dl = drift_lines(out)
+            check("doctor runs (no exit 3, no refusal)", rc != 3 and "refusing" not in err, f"rc {rc} {err[-300:]}")
+            check("its .env is read: its DSN is probed (the checkout has none: '.env missing' would be the checkout's)",
+                  ("postgres reachable" in out or "postgres unreachable" in out) and ".env missing" not in out,
+                  "\n".join(ln for ln in out.splitlines() if "postgres" in ln or ".env" in ln))
+            check("its local.md exists (its HOME's)", "local.md exists" in out)
+            check("its backups/: none (the checkout's fresh dump is not its)",
+                  "NO database backup" in out and "backup fresh" not in out)
+            check("its units: its @ files only, no drift", any("no drift" in ln for ln in dl), "\n".join(dl))
+            named = [n for n in mine_not if any(n in ln for ln in dl)]
+            check("...and no file of the primary's nor the cog's is named its orphan", not named, str(named))
+            check("its server: only the primary's ax-seed lives, so its seed is NOT resident",
+                  "seed not resident" in out and "seed resident alive" not in out)
+            check("its routes: the checkout's route to an unknown agent is not its", "UNKNOWN agents" not in out)
+            check("its dep groups: the checkout's discord channel adds none", "discord" not in deps_line(out),
+                  deps_line(out))
+            check("its .env's ASTRYX_DOCKER_HOST_IP is the docker host address", "10.250.250.250" in out)
+            (A / "local.md").rename(A / "local.md.fxoff")
+            (A / "backups").mkdir(exist_ok=True)
+            (A / "backups" / "astryx-fxother.dump").write_text("")
+            (A / "bridges").mkdir(exist_ok=True)
+            (A / "bridges" / "routes-discord.json").write_text(route)
+            subprocess.run(["tmux", "-L", osock, "new-session", "-d", "-s", "ax-seed", "sleep 600"], capture_output=True)
+            rc, out, err = doctor(env(ASTRYX_HOME=str(A)))
+            check("positive control: its local.md gone, 'local.md missing' (the checkout's is present)",
+                  "local.md missing" in out and "local.md exists" not in out)
+            check("...its own fresh dump: 'database backup fresh'", "database backup fresh" in out)
+            check("...its seed alive on ITS server: 'seed resident alive'", "seed resident alive" in out)
+            check("...its dump never restore-verified (the checkout's FAILED stamp is not its)",
+                  "never restore-verified" in out and "restore-verify FAILED" not in out)
+            check("...its own route to an unknown agent IS named", "UNKNOWN agents" in out)
+            check("...and its own discord channel adds the group", "discord" in deps_line(out), deps_line(out))
+        finally:
+            (A / ".env").write_text(aenv)
+            shutil.rmtree(A / "bridges", ignore_errors=True)
+            (co / "bridges" / "routes-discord.json").unlink(missing_ok=True)
+            if (A / "local.md.fxoff").exists():
+                (A / "local.md.fxoff").rename(A / "local.md")
+            shutil.rmtree(A / "backups", ignore_errors=True)
+            shutil.rmtree(co / "backups", ignore_errors=True)
+            (co / "local.md").unlink(missing_ok=True)
 
         print("\nK6 NO ORG RESOLVES")
         rc, out, err = doctor(env())
@@ -175,6 +245,32 @@ def main():
         check("an @-named stray is an orphan on one org, as before", r.returncode == 0 and any(
             "orphan" in ln and "astryx-canvas@fxstray.service" in ln for ln in out.splitlines()),
             "\n".join(drift_lines(out)))
+        und = next((ln for ln in out.splitlines() if "undeclared" in ln), "")
+        check("...and (iii) on one org: an @-named unit systemd knows is undeclared, as before (no cog scoping)",
+              f"astryx-fxoff@{other}.service" in und and "astryx-fxzz@fxelse.service" in und, und)
+
+        print("\nK8 (iii) UNDECLARED, THE UNITS SYSTEMD KNOWS: EACH ORG JUDGES ITS OWN")
+        rc_p, out_p, _ = doctor(env(ASTRYX_HOME=str(co)))
+        rc_o, out_o, _ = doctor(env(ASTRYX_HOME=str(A)))
+
+        def undeclared(out):
+            return next((ln for ln in out.splitlines() if "undeclared" in ln), "")
+        up, uo = undeclared(out_p), undeclared(out_o)
+        check("the primary: its own plain stray is undeclared (positive control)", "astryx-fxoff.service" in up, up)
+        check("...and no other org's @ unit, nor the cog's gateway or front", not [n for n in known[1:] if n in up], up)
+        check("another org: its own @ stray is undeclared (positive control)", f"astryx-fxoff@{other}.service" in uo, uo)
+        check("...and not the primary's, the cog's, nor a third org's (nor its own derived canvas)",
+              not [n for n in known if n != f"astryx-fxoff@{other}.service" and n in uo], uo)
+
+        print("\nK9 THE PRIMARY FROM ANOTHER CHECKOUT: REFUSED (its estate is the checkout it runs from)")
+        reg2 = json.loads(cog.read_text())
+        reg2["orgs"][prim]["primary"] = reg2["orgs"][prim]["door"] = False
+        reg2["orgs"][other].update(primary=True, door=True)
+        cog2 = fx.t / "cog2.json"
+        cog2.write_text(json.dumps(reg2))
+        rc, out, err = doctor(fx.env(ASTRYX_COG_REGISTRY=str(cog2), PATH=path, ASTRYX_HOME=str(A)))
+        check("exit 3 before any check, naming it the cog's primary", rc == 3 and "primary" in err and "✓" not in out,
+              f"rc {rc} {err[-300:]}")
     finally:
         for s in ("default", f"ax-{fx.org['a']}"):
             kill_server(s)
