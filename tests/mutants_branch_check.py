@@ -22,6 +22,11 @@ MUTANTS = {
         ('    if not trace_dir.is_dir() or not (trace_dir / "run_id").is_file():\n        return None\n', ""),
     "U2 a clean differential over an unwitnessed side PASSes (rc 0)":
         ("    return 77 if unwitnessed else 0", "    return 0"),
+    "U4 an unwitnessed rerun erases the first run's known prod write (a4 #61241)":
+        ("    return sum(known) if any(known) or len(known) == 2 else None",
+         "    return None if w1 is None or w2 is None else w1 + w2"),
+    "U5 an unwitnessed part with no known write reads as a clean 0":
+        ("    return sum(known) if any(known) or len(known) == 2 else None", "    return sum(known)"),
     "U3 an unwitnessed side is never named":
         ("    gone = [side for side, n in witness.items() if n is None]", "    gone = []"),
     "O1 a statement reaching PROD doesn't fail the run":

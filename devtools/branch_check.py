@@ -198,6 +198,14 @@ def prod_statements(trace_dir: Path, prod_db: str):
     return n
 
 
+def combine_witness(w1, w2):
+    """The branch side's witness over its first run and its rerun. A KNOWN prod write dominates: an unwitnessed rerun
+    (None) must never erase statements the first run saw (a4 #61241: 3 + None read None, so a known prod write fell
+    to rc 77). Otherwise any unwitnessed part makes the whole None, and two witnessed zeros are 0."""
+    known = [n for n in (w1, w2) if n is not None]
+    return sum(known) if any(known) or len(known) == 2 else None
+
+
 def run(branch: str, main_ref: str = "main") -> int:
     dsn = admin_dsn()
     prod_db = conninfo_to_dict(dsn).get("dbname", "astryx")
@@ -287,7 +295,7 @@ def run(branch: str, main_ref: str = "main") -> int:
         first = set(sums["branch"]["failed"]) - set(sums["main"]["failed"])
         if first:
             again, w2 = suite("branch", 2)
-            witness["branch"] = None if witness["branch"] is None or w2 is None else witness["branch"] + w2
+            witness["branch"] = combine_witness(witness["branch"], w2)
             sums["branch"]["flaky"] = sorted(first - set(again["failed"]))
             sums["branch"]["failed"] = sorted(set(sums["branch"]["failed"]) - set(sums["branch"]["flaky"]))
             r1, r2 = sums["branch"]["sqlguard_red"], again["sqlguard_red"]

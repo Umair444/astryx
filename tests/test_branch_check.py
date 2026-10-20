@@ -129,6 +129,17 @@ def main():
           rc == 77 and "NO VERDICT from the branch suite" in out and "UNWITNESSED: the branch run" in out, out)
     rc, out = rep(base, dict(base))
     check("…and two witnessed zero sides still PASS (rc 0, no UNWITNESSED line)", rc == 0 and "UNWITNESSED" not in out, out)
+    # a4 #61241: the rerun's sum. A KNOWN prod write dominates an unwitnessed part; otherwise None is contagious.
+    cw = {(a, b): bc.combine_witness(a, b) for a, b in ((3, None), (None, 2), (None, 0), (0, None), (None, None),
+                                                         (0, 0), (0, 2), (1, 2))}
+    check("combine_witness: a known prod write survives an unwitnessed rerun (3+None → 3, None+2 → 2)",
+          cw[(3, None)] == 3 and cw[(None, 2)] == 2, cw)
+    check("…an unwitnessed part with no known write is None (never a clean 0); two zeros are 0; counts add",
+          cw[(None, 0)] is None and cw[(0, None)] is None and cw[(None, None)] is None and cw[(0, 0)] == 0
+          and cw[(0, 2)] == 2 and cw[(1, 2)] == 3, cw)
+    rc, out = rep(base, dict(base), {"main": 0, "branch": bc.combine_witness(3, None)})
+    check("…so a first run's 3 prod statements over a dead rerun is still RED → rc 1 with the WITNESS line",
+          rc == 1 and "WITNESS: 3 statement(s) reached the PROD database from the branch run" in out, out)
     import time
     t0 = time.monotonic()
     so, se, src = bc.run_suite(["bash", "-c", "echo partial-out; echo partial-err >&2; sleep 30"], dict(os.environ),
