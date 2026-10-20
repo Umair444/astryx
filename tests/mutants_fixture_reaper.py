@@ -21,6 +21,13 @@ ORACLE = REPO / "tests" / "test_fixture_reaper.py"
 ENV = "SQLGUARD_FIXTURE_SRC"
 TIMEOUT = 300
 MUTANTS = {
+    "S1 nothing is held across CREATE → COMMENT (a gate cap's kill leaves the database UNSTAMPED, kept forever)":
+        ("_HELD = (signal.SIGTERM, signal.SIGHUP)\n", "_HELD = ()\n"),
+    "S2 the main thread holds by a per-thread MASK only (a live daemon thread takes the TERM mid-window, a3 #61239)":
+        ("    if threading.current_thread() is threading.main_thread():\n        got = []\n",
+         "    if False:\n        got = []\n"),
+    "S3 a recorded TERM is never raised again (the caller's kill is swallowed: the run lives on past its cap)":
+        ("                signal.raise_signal(n)\n", "                pass\n"),
     "T1 a condemned template is not un-templated (DROP refuses it: a killed batch run's template is kept forever)":
         ("                admin.execute('ALTER DATABASE \"{}\" IS_TEMPLATE false'.format(name.replace('\"', '\"\"')))\n",
          "                pass\n"),   # a valid body: an empty try is an IndentationError, a vacuous catch (a4 #60380)

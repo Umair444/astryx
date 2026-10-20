@@ -25,6 +25,10 @@ collected by the next fixture_db() entry, and nothing a LIVE run owns is ever dr
      leaks when a run is killed before its finally. Each run first sweeps EARLIER runs' bare plants: this oracle's exact
      name shape, unstamped, both its pids dead, over an hour old. Its arm: of five planted names only the dead-pid
      unstamped bare one is swept (a live run's, a stamped one, another shape and a fresh one are kept).
+  T. a TERM landing between fixture_db's CREATE and its owner COMMENT (steward #61229: a gate cap's kill is a TERM):
+     the signal is held until the stamp is written, so the dead child's database is stamped and the next reap drops it.
+  T2. the same with a live daemon thread started before the fixture (a3 #61239): the kernel may hand the TERM to that
+     thread, so a per-thread mask does not hold it; the main-thread recording handler does.
   Mutants: tests/mutants_fixture_reaper.py (mutation_probe, via SQLGUARD_FIXTURE_SRC).
 Exit 0 pass · 1 fail · 77 no reachable server (nothing verified).
 """
@@ -389,6 +393,38 @@ try:
           str(err))
     check("...after the droppable member WAS dropped (collect all, then raise)", not exists(ok1) and exists(stuck)
           and exists(tpl), f"ok1={exists(ok1)} stuck={exists(stuck)} tpl={exists(tpl)}")
+
+    for arm, thread in (("T", False), ("T2", True)):
+        print(f"{arm}. a TERM inside CREATE → COMMENT" + (", with a live daemon thread started first (a3 #61239: a per-thread "
+              "mask let the kernel hand it to that thread mid-window; test_nudge's shape)" if thread else
+              " (steward #61229: a gate cap's kill left a database UNSTAMPED, kept forever)") + ":")
+        before = {r[0] for r in admin.execute("SELECT datname FROM pg_database WHERE starts_with(datname, %s)",
+                                              (fxm.PREFIX,)).fetchall()}
+        child = subprocess.Popen(
+            [sys.executable, "-c",
+             "import os, signal, threading, time, importlib.util, psycopg\n"
+             + ("threading.Thread(target=lambda: [time.sleep(0.01) for _ in iter(int, 1)], daemon=True).start()\n"
+                if thread else "")
+             + "real = psycopg.Connection.execute\n"
+             "def ex(self, q, *a, **k):\n"
+             "    r = real(self, q, *a, **k)\n"
+             "    if str(q).startswith('CREATE DATABASE'):\n        os.kill(os.getpid(), signal.SIGTERM)   # the cap's kill, mid-window\n"
+             "    return r\n"
+             "psycopg.Connection.execute = ex\n"
+             "s = importlib.util.spec_from_file_location('fx_child', %r); f = importlib.util.module_from_spec(s)\n"
+             "s.loader.exec_module(f); f.PREFIX = %r\n"
+             "with f.fixture_db() as fx:\n    pass\n" % (SRC, fxm.PREFIX)])
+        child.wait(60)
+        new = [r for r in admin.execute("SELECT datname, shobj_description(oid, 'pg_database') FROM pg_database "
+                                        "WHERE starts_with(datname, %s)", (fxm.PREFIX,)).fetchall() if r[0] not in before]
+        made.extend(n for n, _ in new)
+        check(f"{arm}: the TERMed child died by the TERM", child.returncode == -signal.SIGTERM, str(child.returncode))
+        check(f"{arm}: ...its database is STAMPED with its pid (the TERM waited out the stamp), so reap() can judge it",
+              len(new) == 1 and fxm._parse_stamp(new[0][1]) == {"pid": child.pid, "pidns": HERE[0], "host": HERE[1]},
+              str(new))
+        fxm.reap(admin)
+        check(f"{arm}: ...and the next reap drops it", all(not exists(n) for n, _ in new),
+              str([n for n, _ in new if exists(n)]))
 finally:
     # Through the REAL module's _drop, never fxm's (it may be the mutant): FORCE alone meets the PG 18 autovacuum race
     # (steward #55022, arm D2) and a swallowed refusal leaked this oracle's unstamped bare plant, which reap() keeps

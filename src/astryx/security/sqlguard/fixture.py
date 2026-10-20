@@ -28,6 +28,8 @@ import contextlib
 import hashlib
 import itertools
 import os
+import signal
+import threading
 import time
 from pathlib import Path
 from urllib.parse import quote
@@ -331,6 +333,37 @@ class Batch:
         return self.report
 
 
+_HELD = (signal.SIGTERM, signal.SIGHUP)
+
+
+@contextlib.contextmanager
+def _hold_kills():
+    """TERM and HUP wait out the block, then act as the caller's own disposition says (steward #61229: a gate cap's kill
+    is a TERM, and one landing between CREATE and the owner COMMENT left the database UNSTAMPED, which reap() keeps
+    forever: a name-tail pid is never trusted). On the MAIN thread the disposition is swapped for one that only RECORDS,
+    process-wide, so whichever thread the kernel hands the signal to it waits (a3 #61239: a per-thread mask let a live
+    daemon thread take it mid-window, test_nudge's shape); the block ends, the caller's handlers come back, and each
+    recorded signal is raised again. Off the main thread signal.signal can't be called: the per-thread mask is the
+    fallback, and a TERM another unblocked thread takes still lands mid-window there. Not held: KILL (can't be) and INT
+    (gates run in their own process group, so a terminal ^C never reaches one; an interactive ^C is the residual)."""
+    if threading.current_thread() is threading.main_thread():
+        got = []
+        prev = {s: signal.signal(s, lambda n, _f: got.append(n)) for s in _HELD}
+        try:
+            yield
+        finally:
+            for s, h in prev.items():
+                signal.signal(s, signal.SIG_DFL if h is None else h)   # None: a handler set outside Python
+            for n in dict.fromkeys(got):
+                signal.raise_signal(n)
+    else:
+        old = signal.pthread_sigmask(signal.SIG_BLOCK, set(_HELD))
+        try:
+            yield
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, old)
+
+
 @contextlib.contextmanager
 def fixture_db(extra: tuple = (), lifetime: str = "immediate", batch: Batch | None = None):
     """A fresh database, schema.sql applied whole, every relation stamped; at block exit, its LIFETIME decides
@@ -367,19 +400,20 @@ def fixture_db(extra: tuple = (), lifetime: str = "immediate", batch: Batch | No
         # Hardened at the CREATOR with NO window (plan-4918 #28982, a3 BC-5): born with connections DISALLOWED (nobody,
         # superuser included, can connect, and P0-b's datallowconn listing never sees it), PUBLIC CONNECT revoked,
         # THEN opened. A REVOKE after an open CREATE wouldn't evict a session a concurrent run role got in the gap.
-        try:
-            admin.execute(f'CREATE DATABASE "{name}" ALLOW_CONNECTIONS false'
-                          + (f' TEMPLATE "{tpl}"' if tpl and tpl.replace("_", "").isalnum() else ""))
-        except psycopg.errors.InsufficientPrivilege as e:
-            raise FixtureUnavailable("this role can't CREATE DATABASE") from e
-        admin.execute(f'REVOKE CONNECT ON DATABASE "{name}" FROM PUBLIC')
-        admin.execute(f'ALTER DATABASE "{name}" ALLOW_CONNECTIONS true')
-        # the OWNER STAMP the reaper judges by, AFTER BC-5's CREATE → REVOKE → ALTER (that order is an access
-        # invariant, armed in test_branch_check_prep). Unstamped for an instant → the reaper KEEPS it (safe).
-        try:
-            admin.execute(f'COMMENT ON DATABASE "{name}" IS \'{owner_stamp()}\'')    # inline: digits/hex only
-        except psycopg.Error:
-            pass                                     # unstamped → kept; never fail a fixture for this
+        with _hold_kills():                          # CREATE → COMMENT never ends unstamped (steward #61229)
+            try:
+                admin.execute(f'CREATE DATABASE "{name}" ALLOW_CONNECTIONS false'
+                              + (f' TEMPLATE "{tpl}"' if tpl and tpl.replace("_", "").isalnum() else ""))
+            except psycopg.errors.InsufficientPrivilege as e:
+                raise FixtureUnavailable("this role can't CREATE DATABASE") from e
+            admin.execute(f'REVOKE CONNECT ON DATABASE "{name}" FROM PUBLIC')
+            admin.execute(f'ALTER DATABASE "{name}" ALLOW_CONNECTIONS true')
+            # the OWNER STAMP the reaper judges by, AFTER BC-5's CREATE → REVOKE → ALTER (that order is an access
+            # invariant, armed in test_branch_check_prep). Unstamped for an instant → the reaper KEEPS it (safe).
+            try:
+                admin.execute(f'COMMENT ON DATABASE "{name}" IS \'{owner_stamp()}\'')    # inline: digits/hex only
+            except psycopg.Error:
+                pass                                 # unstamped → kept; never fail a fixture for this
         dsn = make_conninfo(live_dsn(), dbname=name)
         sha = file_sha()
         with psycopg.connect(dsn, autocommit=True) as c:
