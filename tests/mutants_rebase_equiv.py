@@ -48,6 +48,9 @@ MUTANTS = {
          "            out.append(f\"ONTO {onto}@{o[:7]}: {d[:7]} CONFLICTS in {paths}, so it does not land as it stands\")"),
     "R14 HAND-RESOLVED returns rc 0 (unproven placement reads as SAME WORK)":
         ("        return 3, out", "        return 0, out"),
+    "R16 the range's file set is a verdict again (a main-side rename under unchanged work reads DIFFERS)":
+        ("        out.append(f\"  files (information): only reviewed",
+         "        bad.append(f\"  files (information): only reviewed"),
     "R15 a bad ref reads as rc 1 (a difference), not rc 2 (usage)":
         ("        return 2, [f\"rebase_equiv: {e if str(e) else 'want two ranges A..B C..D'}\"]",
          "        return 1, [f\"rebase_equiv: {e if str(e) else 'want two ranges A..B C..D'}\"]"),

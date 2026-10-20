@@ -23,8 +23,11 @@ refused (positional pairing can't place one). --onto (default main) adds "it lan
 ref without conflict.
 
 rc 0 SAME WORK, every commit PROVEN; rc 1 DIFFERS, naming each difference; rc 3 no difference found, but some commit
-was hand-resolved (read the printed hunks: that is what the reviewer re-reviews); rc 2 a bad ref, usage, or a merge.
-Blob equality and patch-ids are printed as information, never as the verdict.
+was hand-resolved; rc 2 a bad ref, usage, or a merge. rc 3 is NOT the same work and never carries a PASS forward on its
+own: a person reads the printed hunks (that is what the reviewer re-reviews) and the marker follows THAT review (a3
+#61585). Blob equality, patch-ids and the range's file set are printed as information, never as the verdict: the
+replay already compares every commit's whole tree, and a file set compared by path reads a main-side RENAME under an
+unchanged commit as a difference (a3 #61585).
 """
 import argparse
 import subprocess
@@ -163,8 +166,9 @@ def compare(reviewed: str, rebased: str, onto: str = "main") -> tuple:
         except LookupError as e:
             return 2, out + [f"rebase_equiv: {e}"]
     fo, fn = files(a, b), files(c, d)
-    if fo != fn:
-        bad.append(f"FILES: only reviewed {sorted(set(fo) - set(fn))}, only rebased {sorted(set(fn) - set(fo))}")
+    if fo != fn:            # information: the replay proved or refuted each commit's whole tree (a rename moves a path)
+        out.append(f"  files (information): only reviewed {sorted(set(fo) - set(fn))}, "
+                   f"only rebased {sorted(set(fn) - set(fo))}")
     for f in sorted(set(fo) & set(fn)):
         ob, nb = entry(b, f).split(" ")[-1][:10] or "(deleted)", entry(d, f).split(" ")[-1][:10] or "(deleted)"
         pid = patch_id(a, b, f), patch_id(c, d, f)

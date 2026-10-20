@@ -104,8 +104,26 @@ def main():
                               [dict(files={"a.py": five}), dict(files={"b.py": "b\nmore\n"}, msg="add to b\n")],
                               [dict(files={"a.py": five})])
         rc, out = rp.tool(rv, rb, "--onto", "")
-        check("a rebase that dropped a commit DIFFERS on the count AND the file set",
-              rc == 1 and "COMMITS: 2 reviewed vs 1 rebased" in out and "FILES:" in out, out)
+        check("a rebase that dropped a commit DIFFERS on the count (the file set is information only)",
+              rc == 1 and "COMMITS: 2 reviewed vs 1 rebased" in out and "files (information):" in out, out)
+        # a3 #61585: main RENAMED the file the commit edits. The replay follows the rename and proves it; a file set
+        # compared by path would read r.py vs s.py as a difference, a false alarm on unchanged work
+        body = "".join(f"row {i} of a file long enough for rename detection\n" for i in range(1, 21))
+        edited = body.replace("row 10 ", "row TEN ")
+        rp = Repo(Path(tempfile.mkdtemp(dir=t)))
+        b0 = rp.commit({"r.py": body}, "base\n")
+        rp.git("checkout", "-q", "-b", "rev")
+        tip = rp.commit({"r.py": edited})
+        rp.git("checkout", "-q", "main")
+        rp.git("mv", "r.py", "s.py")
+        m1 = rp.commit(msg="main renames r.py to s.py\n")
+        rp.git("checkout", "-q", "-b", "reb")
+        rtip = rp.commit({"s.py": edited})
+        rp.git("checkout", "-q", "main")
+        rc, out = rp.tool(f"{b0}..{tip}", f"{m1}..{rtip}", "--onto", "")
+        check("a commit over a main-side RENAME is SAME WORK, rc 0 (the replay follows it; the file set is information)",
+              rc == 0 and ": PROVEN (" in out and "files (information): only reviewed ['r.py'], only rebased ['s.py']"
+              in out, out)
 
         # ── a3 #61571's six bypasses of the first cut: each does DIFFERENT work with identical messages ─────────────
         for name, base, rev, reb in (
