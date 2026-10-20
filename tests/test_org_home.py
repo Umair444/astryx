@@ -111,9 +111,14 @@ def arms(fx):
     r = node(fx, mjs_read, bad, "/")
     check("...home.mjs refuses the same pair", r.returncode != 0 and "correction 2" in r.stderr,
           (r.stdout + r.stderr)[-300:])
-    r = py(fx, "import astryx.pulse.pulse", bad, "/")
-    check("...pulse.py's DSN (a1's private resolver, now routed) refuses it at import",
-          r.returncode != 0 and "ForeignDSN" in r.stderr, (r.stdout + r.stderr)[-400:])
+    # pulse reads its DSN when used, never at import (a4154b8: a tree with no DSN must still import it), so the refusal
+    # is at first use; the bare import succeeding under the same pair keeps the probe below from passing vacuously.
+    r = py(fx, "import astryx.pulse.pulse\nprint('IMPORTED')", bad, "/")
+    check("...pulse.py still IMPORTS under the pair (its DSN is read when used, not at import)",
+          r.returncode == 0 and "IMPORTED" in r.stdout, (r.stdout + r.stderr)[-400:])
+    r = py(fx, "import astryx.pulse.pulse as p\nprint('DSN-OF', p.DSN)", bad, "/")
+    check("...pulse.py's DSN (a1's private resolver, now routed) refuses it at first use",
+          r.returncode != 0 and "ForeignDSN" in r.stderr and "DSN-OF" not in r.stdout, (r.stdout + r.stderr)[-400:])
     r = py(fx, "from astryx.econ import econ\nprint('DSN-OF', econ._dsn())", bad, "/")
     # econ never read the environment (main: the checkout's .env only) and still doesn't (env_first=False): A's DSN in
     # its environment is never consulted, so the pair can't disagree. Its census site was the CHECKOUT read; routed, it
