@@ -17,6 +17,13 @@ ENV = "BRANCH_CHECK_SRC"
 # DECLARED, not authored: the rerun's sqlguard intersection in run() (a branch-only finding must reproduce).
 # run() is exercised end to end only by a real run, never by this oracle; its arm is the next e2e run's report.
 MUTANTS = {
+    # a3 #61231 / seed #61236: a missing or unvouched trace dir is UNWITNESSED, never a clean zero
+    "U1 a trace dir without run_id (or no dir at all) reads as a clean zero":
+        ('    if not trace_dir.is_dir() or not (trace_dir / "run_id").is_file():\n        return None\n', ""),
+    "U2 a clean differential over an unwitnessed side PASSes (rc 0)":
+        ("    return 77 if unwitnessed else 0", "    return 0"),
+    "U3 an unwitnessed side is never named":
+        ("    gone = [side for side, n in witness.items() if n is None]", "    gone = []"),
     "O1 a statement reaching PROD doesn't fail the run":
         ("    return any(witness.values())", "    return False"),
     "O2 FLAKY is counted as REGRESSED":

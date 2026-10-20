@@ -180,8 +180,13 @@ def summary(log: str) -> dict:
     return out
 
 
-def prod_statements(trace_dir: Path, prod_db: str) -> int:
-    """The psycopg-path witness (a1 #24435): statements the run's sqlguard trace saw against the PROD database."""
+def prod_statements(trace_dir: Path, prod_db: str):
+    """The psycopg-path witness (a1 #24435): statements the run's sqlguard trace saw against the PROD database. None
+    when the trace can't vouch for the run: no dir, or no run_id (check.sh writes it into the dir it's handed before
+    any gate runs). That is UNWITNESSED, never "nothing seen" (a3 #61231, seed #61236): a deleter, a check.sh that
+    never reached its sqlguard block, or a path that drifted would otherwise read as a clean zero."""
+    if not trace_dir.is_dir() or not (trace_dir / "run_id").is_file():
+        return None
     n = 0
     for f in glob.glob(str(trace_dir / "trace-*.jsonl")):
         for line in open(f):
@@ -282,7 +287,7 @@ def run(branch: str, main_ref: str = "main") -> int:
         first = set(sums["branch"]["failed"]) - set(sums["main"]["failed"])
         if first:
             again, w2 = suite("branch", 2)
-            witness["branch"] += w2
+            witness["branch"] = None if witness["branch"] is None or w2 is None else witness["branch"] + w2
             sums["branch"]["flaky"] = sorted(first - set(again["failed"]))
             sums["branch"]["failed"] = sorted(set(sums["branch"]["failed"]) - set(sums["branch"]["flaky"]))
             r1, r2 = sums["branch"]["sqlguard_red"], again["sqlguard_red"]
@@ -512,6 +517,7 @@ def report(sha: dict, sums: dict, witness: dict, est: dict, refs: dict = None, t
                   f"BRANCH_CHECK_KEEP_LOGS=1 to keep <run>-<side>N.log.")
         # the WITNESS is read from the sqlguard trace, not the verdict line: a suite that wrote to prod and then died
         # is still RED (a4 #53077), and NO VERDICT must never hide it
+        _unwitnessed(witness)
         return 1 if _estate_and_witness(est, witness) else 77
     regressed = sorted(set(b["failed"]) - set(m["failed"]))
     mr, br = m.get("sqlguard_red"), b.get("sqlguard_red")
@@ -578,9 +584,22 @@ def report(sha: dict, sums: dict, witness: dict, est: dict, refs: dict = None, t
                   f"in a worktree before a PASS: {len(ds)}")
             for g, f, via in ds:
                 print(f"    ○ {g}\n      ← {f}" + (f" ({via})" if via and " " in via else f" (via {via})" if via else ""))
+    unwitnessed = _unwitnessed(witness)
     if _estate_and_witness(est, witness):
         return 1
-    return 1 if regressed else 0
+    if regressed:
+        return 1
+    return 77 if unwitnessed else 0                  # a clean differential over an unwitnessed side is not a PASS
+
+
+def _unwitnessed(witness: dict) -> bool:
+    """A side whose prod witness is None (no trace dir, or no run_id in it) proves nothing about PROD. Named, and
+    never read as zero. True if any side is unwitnessed."""
+    gone = [side for side, n in witness.items() if n is None]
+    for side in gone:
+        print(f"  UNWITNESSED: the {side} run's sqlguard trace dir is missing or has no run_id, so whether it reached "
+              f"the PROD database is UNKNOWN (never 'nothing seen'). Not a PASS: rc 77 unless something is RED.")
+    return bool(gone)
 
 
 def _estate_and_witness(est: dict, witness: dict) -> bool:

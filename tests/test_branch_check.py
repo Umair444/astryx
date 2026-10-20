@@ -114,6 +114,21 @@ def main():
     rc, out = rep(base, dict(dead), {"main": 0, "branch": 3})
     check("a dead side that WROTE TO PROD is still RED → rc 1, NO VERDICT and WITNESS both printed",
           rc == 1 and "NO VERDICT from the branch suite" in out and "WITNESS: 3 statement(s)" in out, out)
+    # a3 #61231 / seed #61236: an UNWITNESSED side (prod_statements None) is not "nothing seen"
+    rc, out = rep(base, dict(base), {"main": 0, "branch": None})
+    check("identical sides but the branch UNWITNESSED → rc 77 and named, never rc 0",
+          rc == 77 and "UNWITNESSED: the branch run" in out, out)
+    rc, out = rep(base, {"failed": ["x", "y"], "unverified": ["u"], "line": "check: b"}, {"main": None, "branch": 0})
+    check("…a regression over an unwitnessed side is still RED → rc 1", rc == 1 and "UNWITNESSED: the main run" in out
+          and "REGRESSED" in out, out)
+    rc, out = rep(base, dict(base), {"main": None, "branch": 3})
+    check("…a real PROD write on one side is RED → rc 1 whatever the other side's witness",
+          rc == 1 and "WITNESS: 3 statement(s)" in out and "UNWITNESSED: the main run" in out, out)
+    rc, out = rep(base, dict(dead), {"main": 0, "branch": None})
+    check("…a dead AND unwitnessed side is NO VERDICT → rc 77, both named",
+          rc == 77 and "NO VERDICT from the branch suite" in out and "UNWITNESSED: the branch run" in out, out)
+    rc, out = rep(base, dict(base))
+    check("…and two witnessed zero sides still PASS (rc 0, no UNWITNESSED line)", rc == 0 and "UNWITNESSED" not in out, out)
     import time
     t0 = time.monotonic()
     so, se, src = bc.run_suite(["bash", "-c", "echo partial-out; echo partial-err >&2; sleep 30"], dict(os.environ),
@@ -381,7 +396,16 @@ def main():
 
     t = _tmpdir("bc-witness-")
     (t / "trace-1.jsonl").write_text("\n".join(json.dumps({"db": d}) for d in ("astryx", "astryx_fx_1", "astryx")) + "\n")
+    check("a trace dir with NO run_id is UNWITNESSED (None), never a clean zero (a3 #61231)",
+          bc.prod_statements(t, "astryx") is None)
+    (t / "run_id").write_text("r1x1\n")
     check("the prod witness counts only statements whose db IS the prod database", bc.prod_statements(t, "astryx") == 2)
+    check("a MISSING trace dir is UNWITNESSED (None): a deleter can't make the witness read clean",
+          bc.prod_statements(t / "gone", "astryx") is None)
+    e = _tmpdir("bc-witness-")
+    (e / "run_id").write_text("r1x1\n")
+    check("…while a vouched dir with no trace files is a real zero (check.sh ran; nothing reached PROD)",
+          bc.prod_statements(e, "astryx") == 0)
 
     # ── real estate: today's host is UNHARDENED (default PUBLIC CONNECT), so the run must refuse cleanly ─────
     from test_branch_check_prep import admin_dsn
