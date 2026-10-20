@@ -31,6 +31,10 @@ def check(label, cond, detail=""):
         fails.append(label)
 
 
+# the SUBJECT's _run inherits os.environ: scrub GIT_* there too, or a hand run under a linked worktree's GIT_DIR reads
+# the real repo (medic #61499 A2; check.sh:41 scrubs it for the gate)
+for _k in [k for k in os.environ if k.startswith("GIT_")]:
+    del os.environ[_k]
 GE = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 GE.update(GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t",
           GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_SYSTEM="/dev/null")
@@ -58,7 +62,8 @@ try:
     commit("c", "c\n")
     half_left = commit("d", "d\n")
     git("checkout", "-q", "main")
-    git("cherry-pick", "medic/half~1")     # one of medic/half's two commits lands
+    commit("more", "m\n")                       # main moves FIRST, so the pick is a real replay (medic #61499: a pick onto
+    git("cherry-pick", "medic/half~1")           # its own parent in the same second is the SAME sha, a fast-forward)
     git("checkout", "-q", "main")
 
     real_run = m._run
@@ -71,8 +76,16 @@ try:
           "medic/landed" not in joined and git("rev-list", "--count", "main..medic/landed").strip() == "1", joined)
     check("a branch with an unlanded commit IS listed, counted by patch", "branch medic/open (1 commits not on main" in
           joined, joined)
-    check("a partly landed branch counts only what's left (1 of 2)", "branch medic/half (1 commits not on main" in joined,
-          joined)
+    check("a partly landed branch counts only what's left (1 of 2), though rev-list still counts both",
+          "branch medic/half (1 commits not on main" in joined
+          and git("rev-list", "--count", "main..medic/half").strip() == "2", joined)
+    # medic #61499 A1: a branch git can't answer for is listed as UNOBSERVED, never dropped
+    m.REPO = td
+    m._run = lambda cmd, timeout=15: None if cmd[0] == "gh" or cmd[:2] == ["git", "cherry"] else real_run(cmd, timeout)
+    blind = m._open_items()
+    m._run = real_run
+    check("a branch whose `git cherry` fails is listed as unobserved, never dropped",
+          any("unobserved" in i and "medic/open" in i for i in (blind or [])), str(blind))
     check("the fixture is what it claims (medic/half's tip is the unlanded commit)", bool(half_left))
 finally:
     shutil.rmtree(td, ignore_errors=True)

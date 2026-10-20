@@ -17,4 +17,7 @@ MUTANTS = {
          "        left = len(cherry.splitlines())"),
     "R2 nothing counts: every branch reads landed (the queue goes silent on real work)":
         ('        left = sum(1 for ln in cherry.splitlines() if ln.startswith("+"))', "        left = 0"),
+    "R3 a branch git can't answer for is dropped silently (no unobserved line)":
+        ('            items.append(f"branch {b} (unobserved: git cherry failed)")\n            continue',
+         "            continue"),
 }
