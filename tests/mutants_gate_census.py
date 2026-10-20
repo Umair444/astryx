@@ -56,11 +56,30 @@ MUTANTS = {
         ("    names = (\"psycopg\", \"psycopg.conninfo\", \"psycopg.sql\", \"psycopg.errors\", \"psycopg.rows\", \"psycopg.types\")\n",
          "    names = ()\n"),
     "(r) an unpinned service start is never reported":
-        ("            if any(_pins(t) for t in side.values()):\n", "            if True:\n"),
-    "(r) the subject's own reads pin it: the whole reach, not its tests/ side, is asked (orgs.py names the registry)":
-        ("                    if f.startswith(\"tests/\") and f.endswith(\".py\")}", "                    if f.endswith(\".py\")}"),
+        ("            if _pins((repo / o).read_text(errors=\"replace\")):\n", "            if True:\n"),
+    "(r) any file in the reach pins the oracle (a filename in a comment, a helper it never imports; a2 #61467 P2)":
+        ("            if _pins((repo / o).read_text(errors=\"replace\")):\n",
+         "            if any(_pins(t) for t in side.values()):\n"),
     "(r) a call to gate() is not a pin (every hand-run gate since seed's estate pin reads as unpinned)":
-        ('(isinstance(n, ast.Call) and _callee(n) == "gate") or ', ""),
+        ("            if (isinstance(f, ast.Name) and f.id in gates) or", "            if (isinstance(f, ast.Name) and f.id in ()) or"),
+    "(r) estate.gate() through the module is not a pin":
+        ("and isinstance(f.value, ast.Name) and f.value.id in mods):", "and isinstance(f.value, ast.Name) and f.value.id in ()):"),
+    "(r) ANY function named gate pins (a local stub, not estate's)":
+        ("            if (isinstance(f, ast.Name) and f.id in gates) or", "            if (isinstance(f, ast.Name) and f.id == \"gate\") or"),
+    "(r) a MENTION of the key pins (an unpin, a print; a2 #61467 P1/P3)":
+        ("    for n in ast.walk(tree):\n        if isinstance(n, (ast.Assign, ast.AugAssign, ast.AnnAssign)):\n",
+         "    for n in ast.walk(tree):\n        if isinstance(n, ast.Constant) and n.value == REGISTRY:\n            return True\n"
+         "        if isinstance(n, (ast.Assign, ast.AugAssign, ast.AnnAssign)):\n"),
+    "(r) the host's live registry under /etc is a pin":
+        ('    live = lambda v: isinstance(v, ast.Constant) and isinstance(v.value, str) and v.value.startswith("/etc/")\n',
+         "    live = lambda v: False\n"),
+    "(r) setdefault is not a pin":
+        ('f.attr == "setdefault" and n.args and key(n.args[0])', 'f.attr == "setdefault" and False'),
+    "(r) a keyword write is not a pin":
+        ("            if any(k.arg == REGISTRY and not live(k.value) for k in n.keywords):\n",
+         "            if False:\n"),
+    "(r) a dict literal's key is not a pin":
+        ("            if any(key(k) and not live(v) for k, v in zip(n.keys, n.values)):\n", "            if False:\n"),
     "(r) uvicorn run in process is no service":
         ('                and f.attr in ("run", "Server"):\n', '                and f.attr in ():\n'),
     "(r) a -c body importing uvicorn is no service":

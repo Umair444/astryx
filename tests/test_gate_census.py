@@ -179,8 +179,22 @@ R_TREE = {
     "r_helper": {"tests/test_r.py": "# drives r_helper.py\nimport r_helper\n", "tests/r_helper.py": SPAWN},
     "g_gate": {"tests/test_r.py": "from astryx.security.sqlguard.estate import gate\ngate('test_r', REPO)\n" + SPAWN},
     "g_named": {"tests/test_r.py": "import os\nos.environ['ASTRYX_COG_REGISTRY'] = '/tmp/x/none.json'\n" + SPAWN},
-    "g_helper_pins": {"tests/test_r.py": "# drives r_helper.py and r_pin.py\n" + SPAWN,
+    # a2 #61467 R-1: a pin is a WRITE of the key IN THE ORACLE; a mention, an unpin, a file in the reach pin nothing
+    "r_helper_pins": {"tests/test_r.py": "# drives r_helper.py and r_pin.py\n" + SPAWN,
                       "tests/r_pin.py": "E = {'ASTRYX_COG_REGISTRY': 'absent'}\n"},
+    "r_pop": {"tests/test_r.py": "import os\nos.environ.pop('ASTRYX_COG_REGISTRY', None)\n" + SPAWN},
+    "r_comment_named": {"tests/test_r.py": "# compare test_q.py\n" + SPAWN,
+                        "tests/test_q.py": "from astryx.security.sqlguard.estate import gate\ngate('test_q', REPO)\n"},
+    "r_mention": {"tests/test_r.py": "print('ASTRYX_COG_REGISTRY')\n" + SPAWN},
+    "r_etc": {"tests/test_r.py": "import os\nos.environ['ASTRYX_COG_REGISTRY'] = '/etc/astryx/cog.json'\n" + SPAWN},
+    "r_gate_other": {"tests/test_r.py": "def gate(*a):\n    pass\ngate('test_r')\n" + SPAWN},
+    "g_setdefault": {"tests/test_r.py": "import os\nos.environ.setdefault('ASTRYX_COG_REGISTRY', '/tmp/x/n')\n" + SPAWN},
+    "g_update_kw": {"tests/test_r.py": "import os\nos.environ.update(ASTRYX_COG_REGISTRY='/tmp/x/n')\n" + SPAWN},
+    "g_dict": {"tests/test_r.py": "import os\nos.environ |= {'ASTRYX_COG_REGISTRY': '/tmp/x/n'}\n" + SPAWN},
+    "g_estate_mod": {"tests/test_r.py": "from astryx.security.sqlguard import estate as es\nes.gate('test_r', R)\n"
+                                        + SPAWN},
+    "g_gate_alias": {"tests/test_r.py": "from astryx.security.sqlguard.estate import gate as g\ng('test_r', R)\n"
+                                        + SPAWN},
     "g_noise": {"tests/test_r.py": "# subprocess.Popen(['uvicorn', 'gateway:app'])\n"
                                    "def f():\n    \"\"\"subprocess.Popen(['uvicorn'])\"\"\"\n"
                                    "assert 'bridges.ear:app' in unit\nprint('uvicorn', 'gateway:app')\n"},
@@ -201,10 +215,14 @@ for nm, tree in R_TREE.items():
         r_got[nm] = [(f["class"], f["file"], f["line"]) for f in gc.unpinned(t, bc=_bcr)]
 for nm, want in (("r_spawn", [("r", "tests/test_r.py", 2)]), ("r_target", [("r", "tests/test_r.py", 2)]),
                  ("r_inproc", [("r", "tests/test_r.py", 2)]), ("r_runner", [("r", "tests/test_r.py", 2)]),
-                 ("r_helper", [("r", "tests/r_helper.py", 2)]),
+                 ("r_helper", [("r", "tests/r_helper.py", 2)]), ("r_helper_pins", [("r", "tests/test_r.py", 3)]),
+                 ("r_pop", [("r", "tests/test_r.py", 4)]), ("r_comment_named", [("r", "tests/test_r.py", 3)]),
+                 ("r_mention", [("r", "tests/test_r.py", 3)]), ("r_etc", [("r", "tests/test_r.py", 4)]),
+                 ("r_gate_other", [("r", "tests/test_r.py", 5)]),
                  ("g_src_names", [("r", "tests/test_r.py", 3)])):    # the SUBJECT naming the registry pins nothing
     check(f"RED {nm}: the unpinned service start is found at its line", r_got[nm] == want, str(r_got[nm]))
-for nm in ("g_gate", "g_named", "g_helper_pins", "g_noise", "g_allow"):
+for nm in ("g_gate", "g_named", "g_setdefault", "g_update_kw", "g_dict", "g_estate_mod", "g_gate_alias", "g_noise",
+           "g_allow"):
     check(f"GREEN {nm}: no (r) finding", r_got[nm] == [], str(r_got[nm]))
 with tempfile.TemporaryDirectory() as td:                         # not a gate: no run line names it, nothing found
     (Path(td) / "devtools").mkdir()
