@@ -84,8 +84,51 @@ for label, body in (
         ("an imported spawner (from subprocess import run)",
          'from subprocess import run\nrun([sys.executable, "x.py"], env={})\n'),
         ("an aliased module (import subprocess as sp)", 'import subprocess as sp\nsp.run([sys.executable], env={})\n'),
+        # a3 #61413's bypass fixtures, each green at ea6023f
+        ("B1 a green copy that POPS the registry",
+         'e = os.environ.copy()\ne.pop("ASTRYX_COG_REGISTRY", None)\nsubprocess.run([sys.executable], env=e)\n'),
+        ("B2 a green copy that DELETES the registry",
+         'e = dict(os.environ)\ndel e["ASTRYX_COG_REGISTRY"]\nsubprocess.run([sys.executable], env=e)\n'),
+        ("B3 a green copy whose ASTRYX_ keys a loop deletes",
+         'e = dict(os.environ)\nfor k in list(e):\n    if k.startswith("ASTRYX_"):\n        del e[k]\n'
+         'subprocess.run([sys.executable], env=e)\n'),
+        ("B4 `not (k in SCRUB)`: an unseen set, negated (unknown is never proven)",
+         'SCRUB = set()\nsubprocess.run([sys.executable], env={k: v for k, v in os.environ.items() '
+         'if not (k in SCRUB)})\n'),
+        ("B5 `not (k == R)` with R a name", 'R = "x"\nsubprocess.run([sys.executable], env={k: v for k, v in '
+         'os.environ.items() if not (k == R)})\n'),
+        ("B6 a filter that tests something other than the key (k[:6])",
+         'subprocess.run([sys.executable], env={k: v for k, v in os.environ.items() if k[:6] not in ("ASTRYX",)})\n'),
+        ("B7 `os.environ | {REGISTRY: '/etc/…'}`: the right side wins the key",
+         'subprocess.run([sys.executable], env=os.environ | {"ASTRYX_COG_REGISTRY": "/etc/astryx/cog.json"})\n'),
+        ("B8 `e[REGISTRY] = '/etc/…'`", 'e = {"PATH": "/usr/bin"}\ne["ASTRYX_COG_REGISTRY"] = "/etc/astryx/cog.json"\n'
+         'subprocess.run([sys.executable], env=e)\n'),
+        ("B9 node on a runtime path (an interpreter, not a data consumer)",
+         'mjs = "x"\nsubprocess.run(["node", str(mjs)], env={"PATH": "/usr/bin"})\n'),
+        ("B10 tmux running a python command string",
+         'subprocess.run(["tmux", "new-session", "-d", "venv/bin/python -m astryx.pulse.pulse"], '
+         'env={"PATH": "/usr/bin"})\n'),
+        ("B11 npm run (package.json scripts run repo code)", 'subprocess.run(["npm", "run", "build"], env={})\n'),
+        ("B12 git fetch (gc --auto runs pre-auto-gc)", 'subprocess.run(["git", "fetch", "origin"], env={})\n'),
+        ("B13 git clone (post-checkout)", 'subprocess.run(["git", "clone", "a", "b"], env={})\n'),
+        ("B15 a git ALIAS (the host's alias.ci is a commit)", 'subprocess.run(["git", "ci", "-m", "x"], env={})\n'),
+        ("B16 a registry set inside an `if`, then an unconditional spawn",
+         'e = {"PATH": "/usr/bin"}\nif sys.argv:\n    e["ASTRYX_COG_REGISTRY"] = "/tmp/r"\n'
+         'subprocess.run([sys.executable], env=e)\n'),
+        ("a git subcommand built at runtime", 'a = "log"\nsubprocess.run(["git", a], env={})\n'),
+        ("an __enter__ that returns ANOTHER object: the receiver isn't a C",
+         'class D:\n    def env(self):\n        return {"PATH": "/bin"}\nclass C:\n    def __enter__(self):\n'
+         '        return D()\n    def env(self):\n        return {**os.environ}\n'
+         'fx = C().__enter__()\nsubprocess.run([sys.executable], env=fx.env())\n'),
+        ("a receiver bound to two different classes (it can't be judged as either)",
+         'class C:\n    def env(self):\n        return {**os.environ}\nclass D:\n    def env(self):\n'
+         '        return {"PATH": "/bin"}\nfx = C()\nfx = D()\nsubprocess.run([sys.executable], env=fx.env())\n'),
+        ("`|` with a right side the gate can't see",
+         'x = {}\nsubprocess.run([sys.executable], env=os.environ | x)\n'),
 ):
     check(f"RED {label}", len(red(body)) == 1, str(red(body)))
+check("RED a file that doesn't parse is a finding, never \"no sites\" (its sites would vanish)",
+      len(g.scan_text("def (:\n", "tests/fx.py")) == 1)
 
 print("\nGREEN: the env provably carries the pin, or the child provably reads none")
 for label, body, want in (
@@ -136,6 +179,25 @@ for label, body, want in (
          'subprocess.run(["systemctl", "--user", "is-active", "astryx-x"], env={})\n', ["child"]),
         ("a literal bash -c body that runs no repo code", 'subprocess.run(["bash", "-c", "echo hi"], env={})\n',
          ["child"]),
+        ("a mutation that drops ANOTHER literal key keeps the pin (B1's control)",
+         'e = os.environ.copy()\ne.pop("ASTRYX_HOME", None)\ndel e["LANGUAGE"]\n'
+         'subprocess.run([sys.executable], env=e)\n', ["inherit"]),
+        ("a registry set earlier in the SAME block (B16's control)",
+         'e = {"PATH": "/usr/bin"}\ne["ASTRYX_COG_REGISTRY"] = "/tmp/r"\nsubprocess.run([sys.executable], env=e)\n',
+         ["own-registry"]),
+        ("`os.environ | {REGISTRY: <own path>}` (B7's control)",
+         'subprocess.run([sys.executable], env=os.environ | {"ASTRYX_COG_REGISTRY": "/tmp/r"})\n', ["own-registry"]),
+        ("a filter on the key, negated and decided (B4's control)",
+         'subprocess.run([sys.executable], env={k: v for k, v in os.environ.items() if not (k in ("X",))})\n',
+         ["inherit"]),
+        ("a receiver built by C().__enter__() when C.__enter__ returns self",
+         'class C:\n    def __enter__(self):\n        return self\n    def env(self):\n        return {**os.environ}\n'
+         'fx = C().__enter__()\nsubprocess.run([sys.executable], env=fx.env())\n', ["inherit"]),
+        ("a receiver that is a parameter, every caller passing C()",
+         'class C:\n    def env(self):\n        return {**os.environ}\n'
+         'def arms(fx):\n    subprocess.run([sys.executable], env=fx.env())\narms(C())\n', ["inherit"]),
+        ("git log, a read-only subcommand after -C <path>", 'r = "/tmp"\nsubprocess.run(["git", "-C", r, "log"], '
+         'env={})\n', ["child"]),
         ("a `# own-env: <why>` on the line above", '# own-env: asserts its own env\n' + PY, ["declared"]),
         ("a `# own-env: <why>` on the call's own line",
          'subprocess.run([sys.executable], env={})  # own-env: the arm\n', ["declared"]),
@@ -154,6 +216,17 @@ with tempfile.TemporaryDirectory(prefix="ceg-") as d:
           [f["bucket"] for f in g.classify_text(HEAD + body, "tests/fx.py", td, {})] == ["own-registry"])
     body = 'from fxlib import H\nfx = H()\nsubprocess.run([sys.executable], env=fx.bare())\n'
     check("…and one that returns a scratch env is RED", len(g.scan_text(HEAD + body, "tests/fx.py", td, {})) == 1)
+    # B14 (a3 #61413): a builder is reached through the name IMPORTED, never by its bare method name on any receiver
+    (td / "fxenv.py").write_text('import os\nOTHER = 1\ndef env():\n    return dict(os.environ)\n')
+    body = 'from fxenv import OTHER\nimport x as sb\nsubprocess.run([sys.executable], env=sb.env())\n'
+    check("B14 importing ANY name from a module that defines env() doesn't make sb.env() green",
+          len(g.scan_text(HEAD + body, "tests/fx.py", td, {})) == 1)
+    body = 'from fxenv import OTHER\nsubprocess.run([sys.executable], env=env())\n'
+    check("…nor does a bare env() the file never imported (only OTHER came in)",
+          len(g.scan_text(HEAD + body, "tests/fx.py", td, {})) == 1)
+    body = 'from fxenv import env\nsubprocess.run([sys.executable], env=env())\n'
+    check("…while the IMPORTED function itself is followed (green)",
+          [f["bucket"] for f in g.classify_text(HEAD + body, "tests/fx.py", td, {})] == ["inherit"])
 
 print("\nTHIS TREE")
 cen = g.census(REPO)

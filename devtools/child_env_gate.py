@@ -7,31 +7,37 @@ every gate's ASTRYX_COG_REGISTRY to a path naming no file. A child launched with
 pin, reads the host's LIVE registry from a fake tree, and either refuses or looks for its org in the live estate. On
 10-20 that was tool ledger, session strip and tool nudge ("0 rows") and spawn.sh --render ("no charter for 'member'"),
 the last hidden on main behind the first's crash. Each fix is one call; this gate is the partition that keeps the next
-one from hiding behind a crash, a SKIP, or a host that isn't a cog.
+one from hiding behind a crash, a SKIP, or a host that isn't a cog. GREEN MEANS PROVEN: a shape the gate can't decide
+reads red, never green (a3 #61413).
 
 Every `env=` handed to a subprocess spawner in tests/*.py is in exactly one bucket:
-  GREEN inherit   the env starts from os.environ (os.environ, .copy(), dict(os.environ, …), {**os.environ, …}, or a
-                  name whose EVERY assignment is one of those). Green BECAUSE THE PARENT CARRIES THE PIN: check.sh:51
-                  and estate.gate() set it, and an inheriting env passes it on. If that parent pin ever goes, this
-                  bucket stops being safe, and the gate can't see it.
+  GREEN inherit   the env starts from os.environ (os.environ, .copy(), dict(os.environ, …), {**os.environ, …},
+                  `os.environ | {…}`, a `{k: v for k, v in os.environ.items() if …}` whose filter PROVABLY keeps the
+                  registry, or a name whose every assignment is one of those and that is never popped/deleted/cleared
+                  of the registry). Green BECAUSE THE PARENT CARRIES THE PIN: check.sh:51 and estate.gate() set it, and
+                  an inheriting env passes it on. If that parent pin ever goes, this bucket stops being safe, and the
+                  gate can't see it.
   GREEN helper    propagate.env_for_child(...): it carries the parent's pin (b3d04c5).
-  GREEN own-reg   the env NAMES its own ASTRYX_COG_REGISTRY (a dict key, a dict(...) keyword, or `env[...] = …` on
-                  the name): it decided which cog its child sees instead of dropping the pin. A literal under /etc
-                  (the host's live registry) is never green.
-  (an env-builder defined in the same file, `def env(...)` / `fx.env(...)`, is followed to its returns: green when
-   every return is green)
-  GREEN child     the spawned program provably never imports astryx: an all-literal argv whose program is a plain tool
-                  (git, node, tmux, psql, …) and no argument names a repo path, including inside a `bash -c` body. A
-                  repo script is never green this way: spawn.sh is bash that calls orgs.py.
+  GREEN own-reg   the env NAMES its own ASTRYX_COG_REGISTRY: a dict key, a keyword, the right side of `|`, or
+                  `env[REGISTRY] = …` set earlier in the same block as the spawn. A literal under /etc (the host's
+                  live registry) is never green, on any of those paths.
+  (an env-builder is followed to its returns: a function by its name, a method through its receiver, `with
+   OrgHomes(…) as fx` … `fx.env()`, in this file or in a tests/ module it imports the class or function from)
+  GREEN child     the spawned program provably never imports astryx. A literal plain tool (psql, docker, curl, …) with
+                  no repo path in a literal argument; an INTERPRETER (bash, sh, node, tmux) only with an all-literal
+                  argv that names no repo path and runs no repo code; git only with a READ-ONLY subcommand from an
+                  allowlist (a hook-running one, or an alias like the host's `ci`, is never plain); systemctl never
+                  with a verb that starts something. npm/npx run package.json scripts, so they're never plain.
   DECLARED        `# own-env: <why>` on the call's lines or the line above: a REAL reason a human wrote (the oracle
                   asserts its own env; the child provably reads no registry; …). The ONLY allowlist.
-  RED             anything else: a scratch dict, a mixed or unresolved name, an env-builder call (fx.env, sb.env).
+  RED             anything else: a scratch dict, a mixed or unresolved name, a builder it can't follow.
 
-It reads python by AST and under-reports by construction: a spawner it doesn't recognise, or an env passed through
-**kwargs, is quiet. STATED RESIDUAL, out of domain: devtools/branch_check.py and devtools/mutation_probe.py build child
-envs for check.sh itself (mutation_probe pins the registry on its own). NON-OVERLAP: forge's gate_census class (r)
-(census-unpinned-spawn, #61182) reports a SERVICE start in a gate whose files never pin; it names "a pin that a
-scratch-built env drops" as its residual, and this gate is that residual at the call site.
+It reads python by AST and under-reports by construction. STATED RESIDUAL: a spawner it doesn't recognise (os.exec*,
+pty.spawn: 0 in tests/ on 10-20, a3 #61413) and an env reaching a function through **kwargs are quiet; devtools/
+branch_check.py and devtools/mutation_probe.py build child envs for check.sh itself and are out of domain
+(mutation_probe pins the registry on its own). NON-OVERLAP: forge's gate_census class (r) (census-unpinned-spawn,
+#61182) reports a SERVICE start in a gate whose files never pin; it names "a pin that a scratch-built env drops" as its
+residual, and this gate is that residual at the call site.
 
   venv/bin/python devtools/child_env_gate.py [--root <repo>]     # 0 clean · 1 findings, each named
 """
@@ -47,18 +53,25 @@ from pathlib import Path
 DECLARE = re.compile(r"#\s*own-env:\s*\S")
 SPAWNERS = {"run", "Popen", "call", "check_call", "check_output", "create_subprocess_exec", "create_subprocess_shell"}
 SPAWN_MODULES = {"subprocess", "asyncio"}
-# programs that never import astryx on their own; a repo path anywhere in the argv still disqualifies them
-PLAIN = {"git", "node", "npm", "npx", "tmux", "psql", "pg_dump", "pg_restore", "docker", "curl", "openssl", "ssh-keygen",
-         "sleep", "true", "false", "cat", "echo", "ls", "grep", "sed", "awk", "tar", "chromium", "bash", "sh",
-         "systemctl"}
-# systemctl verbs that START something (a unit may run astryx): never provably plain
-SYSTEMCTL_STARTS = {"start", "restart", "reload", "reload-or-restart", "try-restart", "enable", "isolate", "kill"}
-SHELLS = {"bash", "sh"}
 REGISTRY = "ASTRYX_COG_REGISTRY"
+# programs that never import astryx on their own; a repo path in a literal argument still disqualifies them
+PLAIN = {"psql", "pg_dump", "pg_restore", "docker", "curl", "openssl", "ssh-keygen", "sleep", "true", "false", "cat",
+         "echo", "ls", "grep", "sed", "awk", "tar", "chromium", "systemctl", "git"}
+# programs that RUN what their arguments say: plain only when every argument is literal, names no repo path and runs
+# no repo code (tmux's command strings and node's -e bodies included, a3 #61413)
+INTERPRETERS = {"bash", "sh", "node", "tmux"}
+# git subcommands that never run a hook or a configured command: an ALLOWLIST, so an alias (`git ci`) or a new
+# subcommand is never plain (a3 #61413: fetch → gc --auto, clone → post-checkout, the host's alias.ci → pre-commit)
+GIT_READONLY = ("archive", "rev-parse", "log", "show", "status", "diff", "ls-files", "ls-tree", "cat-file",
+                "for-each-ref", "merge-base", "init", "hash-object", "rev-list", "symbolic-ref", "describe",
+                "name-rev", "shortlog", "blame", "grep", "check-ignore", "var", "version")
+# systemctl verbs that START something (a unit may run astryx): never provably plain
+SYSTEMCTL_STARTS = ("start", "restart", "reload", "reload-or-restart", "try-restart", "enable", "isolate", "kill")
 # a token that names a repo path: in ANY literal argument it makes the child not provably plain
-PATH_HINT = re.compile(r"\.py\b|\.sh\b|\.mjs\b|scripts/|devtools/|src/|hooks/|init\.sh|\./")
-# a token that may RUN repo code: checked in a shell's body only (a git ref or a unit named astryx-… is just data)
-CODE_HINT = re.compile(r"python|astryx|orgs\b|venv|\$PY\b|spawn")
+PATH_HINT = re.compile(r"\.py\b|\.sh\b|\.mjs\b|\.js\b|scripts/|devtools/|src/|hooks/|channel/|init\.sh|\./")
+# a token that may RUN repo code or read the env: checked in an interpreter's arguments
+CODE_HINT = re.compile(r"python|astryx|orgs\b|venv|\$PY\b|spawn|process\.env|import|require|\$ROOT|\$REPO")
+GREEN = ("inherit", "helper", "own-registry")
 
 
 def _finding(rel, line, why):
@@ -70,29 +83,46 @@ def _declared(lines: list[str], node: ast.AST) -> bool:
     return any(0 < n <= len(lines) and DECLARE.search(lines[n - 1]) for n in range(lo, hi + 1))
 
 
+def _bodies(p) -> list[list]:
+    return [getattr(p, f) for f in ("body", "orelse", "finalbody") if isinstance(getattr(p, f, None), list)]
+
+
 class _Scopes:
-    """name -> the expressions assigned to it, per function and at module level."""
+    """name -> the expressions assigned to it, per function and at module level; registry sets and mutations; builders."""
 
     def __init__(self, tree):
+        self.module = tree
         self.parent = {}
         for n in ast.walk(tree):
             for c in ast.iter_child_nodes(n):
                 self.parent[id(c)] = n
         self.assigns: dict = {}
-        self.sets_registry: set = set()                                  # (scope, name) with `name[REGISTRY] = …`
-        self.defs: dict = {}                     # function name -> [(its FunctionDef, the _Scopes it lives in)] (builders)
+        self.reg_sets: dict = {}           # (scope, name) -> [(the Assign stmt, its value)] for `name[REGISTRY] = …`
+        self.mutations: dict = {}          # (scope, name) -> [why] for a pop/del/clear/popitem that can drop the pin
+        self.funcs: dict = {}              # function name -> [(def, home)]: module-level and nested functions
+        self.classes: dict = {}            # class name -> {method name: [(def, home)]}
         for n in ast.walk(tree):
-            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                self.defs.setdefault(n.name, []).append((n, self))
+            if isinstance(n, ast.ClassDef):
+                meths = self.classes.setdefault(n.name, {})
+                for b in n.body:
+                    if isinstance(b, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        meths.setdefault(b.name, []).append((b, self))
+            elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                    and not isinstance(self.parent.get(id(n)), ast.ClassDef):
+                self.funcs.setdefault(n.name, []).append((n, self))
             if isinstance(n, ast.Assign):
                 for t in n.targets:
                     if isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name) \
                             and isinstance(t.slice, ast.Constant) and t.slice.value == REGISTRY:
-                        self.sets_registry.add((id(self.scope(n)), t.value.id))
+                        self.reg_sets.setdefault((id(self.scope(n)), t.value.id), []).append((n, n.value))
             if isinstance(n, (ast.Assign, ast.AnnAssign)) and n.value is not None:
                 for t in (n.targets if isinstance(n, ast.Assign) else [n.target]):
                     if isinstance(t, ast.Name):
                         self.assigns.setdefault((id(self.scope(n)), t.id), []).append(n.value)
+            elif isinstance(n, (ast.With, ast.AsyncWith)):
+                for it in n.items:
+                    if isinstance(it.optional_vars, ast.Name):
+                        self.assigns.setdefault((id(self.scope(n)), it.optional_vars.id), []).append(it.context_expr)
             elif isinstance(n, (ast.For, ast.AsyncFor)) and isinstance(n.target, ast.Tuple) \
                     and isinstance(n.iter, (ast.Tuple, ast.List)):
                 # `for who, e in ((a, fx.env(…)), (b, penv))`: each loop name sees its column of the literal rows
@@ -102,8 +132,23 @@ class _Scopes:
                             if isinstance(row, (ast.Tuple, ast.List)) and i < len(row.elts):
                                 self.assigns.setdefault((id(self.scope(n)), t.id), []).append(row.elts[i])
             elif isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Name):
-                self.assigns.setdefault((id(self.scope(n)), n.target.id), []).append(n)   # `env |= {...}`: keeps its base
-        self.module = tree
+                self.assigns.setdefault((id(self.scope(n)), n.target.id), []).append(n)   # `env |= {...}`: judged
+            # MUTATIONS (a3 #61413 B1–B3): a green name that loses the registry key is not green
+            why = None
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name):
+                m, tgt = n.func.attr, n.func.value.id
+                if m in ("clear", "popitem"):
+                    why = f"{tgt}.{m}()"
+                elif m == "pop" and n.args and not (isinstance(n.args[0], ast.Constant) and n.args[0].value != REGISTRY):
+                    why = f"{tgt}.pop({ast.unparse(n.args[0])[:30]})"
+                if why:
+                    self.mutations.setdefault((id(self.scope(n)), tgt), []).append(why)
+            if isinstance(n, ast.Delete):
+                for t in n.targets:
+                    if isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name) and not (
+                            isinstance(t.slice, ast.Constant) and t.slice.value != REGISTRY):
+                        self.mutations.setdefault((id(self.scope(n)), t.value.id), []).append(
+                            f"del {ast.unparse(t)[:40]}")
 
     def scope(self, n):
         p = self.parent.get(id(n))
@@ -111,16 +156,53 @@ class _Scopes:
             p = self.parent.get(id(p))
         return p
 
-    def values(self, name: str, at) -> list:
-        """The assignments the name sees from `at`: its own scope, then each ENCLOSING one (a lambda or nested def
-        reads its outer function's names), then the module."""
+    def _chain(self, at):
+        """at's own scope, then each ENCLOSING one, then the module (None)."""
         s = self.scope(at)
         while s is not None:
+            yield s
+            s = self.scope(s)
+        yield None
+
+    def values(self, name: str, at) -> list:
+        """The assignments the name sees from `at` (a lambda or nested def reads its outer function's names)."""
+        for s in self._chain(at):
             got = self.assigns.get((id(s), name), [])
             if got:
                 return got
-            s = self.scope(s)
-        return self.assigns.get((id(None), name), [])
+        return []
+
+    def mutated(self, name: str, at) -> list:
+        for s in self._chain(at):
+            if (id(s), name) in self.mutations:
+                return self.mutations[(id(s), name)]
+            if (id(s), name) in self.assigns:
+                return []
+        return []
+
+    def registry_set_before(self, name: str, at):
+        """The value of a `name[REGISTRY] = …` that DOMINATES `at`: a statement earlier in the same block as one of
+        at's enclosing statements (a3 #61413 B16: a set inside an `if` doesn't cover the unconditional spawn)."""
+        sets = []
+        for s in self._chain(at):
+            sets = self.reg_sets.get((id(s), name), [])
+            if sets:
+                break
+        if not sets:
+            return None
+        cur = at
+        while cur is not None:
+            p = self.parent.get(id(cur))
+            if p is None:
+                break
+            for body in _bodies(p):
+                if cur in body:
+                    i = body.index(cur)
+                    for stmt, val in sets:
+                        if stmt in body and body.index(stmt) < i:
+                            return val
+            cur = p
+        return None
 
 
 def _is_environ(n) -> bool:
@@ -132,12 +214,10 @@ def _callee(n: ast.Call) -> str:
     return f.attr if isinstance(f, ast.Attribute) else f.id if isinstance(f, ast.Name) else ""
 
 
-GREEN = ("inherit", "helper", "own-registry")
-
-
-def _own_registry_value(v) -> bool:
+def _own_registry(v) -> str:
     """A registry value the gate accepts as the env's own choice: anything but a literal under /etc (the live host's)."""
-    return not (isinstance(v, ast.Constant) and isinstance(v.value, str) and v.value.startswith("/etc"))
+    live = isinstance(v, ast.Constant) and isinstance(v.value, str) and v.value.startswith("/etc")
+    return "red:the host's live registry, by name" if live else "own-registry"
 
 
 def _prefixes(call: ast.Call) -> list[str] | None:
@@ -152,34 +232,103 @@ def _prefixes(call: ast.Call) -> list[str] | None:
     return out or None
 
 
-def _filter_keeps_registry(cond) -> bool:
-    """True when a comprehension's `if` provably KEEPS ASTRYX_COG_REGISTRY. Shapes it can judge:
-    `k not in (lits)` / `k in (lits)` (an allowlist keeps only what it names), `k != lit` / `k == lit`,
-    `[not] k.startswith(lits)`, and `and`/`or`/`not` over those. Anything else (a set the gate can't see, a call
-    it doesn't know) can't be proven and reads as dropping it."""
+def _is_key(n, key: str) -> bool:
+    return isinstance(n, ast.Name) and n.id == key
+
+
+def _keeps(cond, key: str):
+    """TRI-STATE (a3 #61413 B4/B5/B6): True when a comprehension's `if` provably KEEPS ASTRYX_COG_REGISTRY, False when
+    it provably DROPS it, None when the gate can't decide. Shapes it decides, on the comprehension's OWN key name:
+    `key not in (lits)` / `key in (lits)` (an allowlist keeps only what it names), `key != lit` / `key == lit`,
+    `key.startswith(lits)`, and and/or/not over those. `not` negates only a DECIDED result; anything else is None."""
     if isinstance(cond, ast.BoolOp):
-        parts = [_filter_keeps_registry(v) for v in cond.values]
-        return all(parts) if isinstance(cond.op, ast.And) else any(parts)
+        parts = [_keeps(v, key) for v in cond.values]
+        if isinstance(cond.op, ast.And):
+            return False if False in parts else True if all(p is True for p in parts) else None
+        return True if True in parts else False if all(p is False for p in parts) else None
     if isinstance(cond, ast.UnaryOp) and isinstance(cond.op, ast.Not):
-        inner = cond.operand
-        if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Attribute) and inner.func.attr == "startswith":
-            ps = _prefixes(inner)
-            return ps is not None and not any(REGISTRY.startswith(p) for p in ps)
-        return not _filter_keeps_registry(inner) if isinstance(inner, ast.Compare) else False
-    if isinstance(cond, ast.Call) and isinstance(cond.func, ast.Attribute) and cond.func.attr == "startswith":
+        r = _keeps(cond.operand, key)
+        return None if r is None else not r
+    if isinstance(cond, ast.Call) and isinstance(cond.func, ast.Attribute) and cond.func.attr == "startswith" \
+            and _is_key(cond.func.value, key):
         ps = _prefixes(cond)
-        return ps is not None and any(REGISTRY.startswith(p) for p in ps)
-    if isinstance(cond, ast.Compare) and len(cond.ops) == 1:
+        return None if ps is None else any(REGISTRY.startswith(p) for p in ps)
+    if isinstance(cond, ast.Compare) and len(cond.ops) == 1 and _is_key(cond.left, key):
         op, col = cond.ops[0], cond.comparators[0]
         if isinstance(op, (ast.In, ast.NotIn)):
             if not isinstance(col, (ast.Tuple, ast.List, ast.Set)) or \
                     not all(isinstance(e, ast.Constant) for e in col.elts):
-                return False
+                return None                                              # a set the gate can't see
             named = REGISTRY in {e.value for e in col.elts}
             return named if isinstance(op, ast.In) else not named
         if isinstance(op, (ast.Eq, ast.NotEq)) and isinstance(col, ast.Constant):
             return (col.value == REGISTRY) if isinstance(op, ast.Eq) else (col.value != REGISTRY)
-    return False
+    return None
+
+
+def _comp_keeps(v: ast.DictComp) -> bool:
+    """A comprehension that emits `k: v` UNCHANGED over a mapping's items() and whose every filter provably keeps the
+    registry (a3 #61413 B6: the filter must test the comprehension's own key)."""
+    g = v.generators[0]
+    if not (isinstance(g.target, ast.Tuple) and len(g.target.elts) == 2
+            and all(isinstance(e, ast.Name) for e in g.target.elts)):
+        return False
+    k, val = g.target.elts[0].id, g.target.elts[1].id
+    if not (_is_key(v.key, k) and _is_key(v.value, val)):
+        return False
+    return all(_keeps(c, k) is True for c in g.ifs)
+
+
+def _merge(kinds: set) -> str | None:
+    if kinds and kinds <= set(GREEN):
+        return "own-registry" if "own-registry" in kinds else "inherit" if "inherit" in kinds else "helper"
+    return None
+
+
+def _class_of(e, sc: "_Scopes", depth: int):
+    """The class an expression provably builds: `C(...)`, or `C(...).__enter__()` when C.__enter__ returns self, or a
+    name/parameter every binding of which is one of those for one class C known here."""
+    if depth > 12 or e is None:
+        return None
+    if isinstance(e, ast.Call) and isinstance(e.func, ast.Name) and e.func.id in sc.classes:
+        return e.func.id                                                 # C(...), `with C(...) as fx`
+    if isinstance(e, ast.Call) and isinstance(e.func, ast.Attribute) and e.func.attr == "__enter__" \
+            and isinstance(e.func.value, ast.Call) and isinstance(e.func.value.func, ast.Name) \
+            and _returns_self(sc.classes.get(e.func.value.func.id, {}).get("__enter__", [])):
+        return e.func.value.func.id                                      # C(...).__enter__(), when it returns self
+    if isinstance(e, ast.Name):
+        return _receiver_class(e, sc, depth + 1)
+    return None
+
+
+def _receiver_class(recv, sc: "_Scopes", depth: int):
+    """`fx` in `fx.env()` → the class it was built from (_class_of on every binding, or on what every caller here
+    passes when it's a parameter, `arms(fx)`), when all agree on one class known here."""
+    if not isinstance(recv, ast.Name) or depth > 12:
+        return None
+    vals = sc.values(recv.id, recv)
+    if not vals:
+        fn = sc.scope(recv)
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return None
+        params = [a.arg for a in fn.args.args]
+        if recv.id not in params:
+            return None
+        pos = params.index(recv.id)
+        vals = []
+        for c in ast.walk(sc.module):
+            if isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == fn.name:
+                vals.append(next((k.value for k in c.keywords if k.arg == recv.id),
+                                 c.args[pos] if pos < len(c.args) else None))
+        if not vals:
+            return None
+    got = {_class_of(v, sc, depth + 1) for v in vals}
+    return got.pop() if len(got) == 1 and None not in got else None
+
+
+def _returns_self(defs) -> bool:
+    rets = [r.value for d, _ in defs for r in ast.walk(d) if isinstance(r, ast.Return)]
+    return bool(rets) and all(isinstance(r, ast.Name) and r.id == "self" for r in rets)
 
 
 def env_kind(v, sc: _Scopes, depth=0, busy=frozenset()) -> str:
@@ -196,65 +345,77 @@ def env_kind(v, sc: _Scopes, depth=0, busy=frozenset()) -> str:
             return "helper"
         reg = next((k.value for k in v.keywords if k.arg == REGISTRY), None)
         if reg is not None:                  # dict(…, ASTRYX_COG_REGISTRY=…) or a builder handed one explicitly
-            return "own-registry" if _own_registry_value(reg) else "red:the host's live registry, by name"
+            return _own_registry(reg)
         if name == "copy" and isinstance(v.func, ast.Attribute) and _is_environ(v.func.value):
             return "inherit"
-        if name == "dict" and v.args and _is_environ(v.args[0]):
-            return "inherit"
-        if name == "dict" and v.args and isinstance(v.args[0], ast.Name):
-            return env_kind(v.args[0], sc, depth + 1, busy)                    # dict(base, X=…) inherits what base does
-        if name in sc.defs:                  # a builder defined here or in a tests/ module this file imports: its returns
-            rets = [(r.value, home, d) for d, home in sc.defs[name] if id(d) not in busy for r in ast.walk(d)
-                    if isinstance(r, ast.Return) and r.value]
-            kinds = [env_kind(r, home, depth + 1, busy | {id(d)}) for r, home, d in rets]
-            if kinds and all(k in GREEN for k in kinds):
-                return "own-registry" if "own-registry" in kinds else "inherit"
-        return f"red:an env-builder call {ast.unparse(v.func)}()"
+        if name == "dict" and isinstance(v.func, ast.Name) and v.args:
+            return env_kind(v.args[0], sc, depth + 1, busy)               # dict(base, X=…) is what base is
+        defs = []
+        if isinstance(v.func, ast.Name):
+            defs = sc.funcs.get(v.func.id, [])
+        elif isinstance(v.func, ast.Attribute):
+            c = _receiver_class(v.func.value, sc, depth + 1)
+            if c is not None:
+                defs = sc.classes[c].get(v.func.attr, [])
+        rets = [(r.value, home, d) for d, home in defs if id(d) not in busy for r in ast.walk(d)
+                if isinstance(r, ast.Return) and r.value]
+        kind = _merge({env_kind(r, home, depth + 1, busy | {id(d)}) for r, home, d in rets})
+        return kind or f"red:an env-builder call {ast.unparse(v.func)}() the gate can't follow"
     if isinstance(v, ast.Dict):
         reg = next((val for k, val in zip(v.keys, v.values) if isinstance(k, ast.Constant) and k.value == REGISTRY), None)
         if reg is not None:
-            return "own-registry" if _own_registry_value(reg) else "red:the host's live registry, by name"
-        bases = [val for k, val in zip(v.keys, v.values) if k is None]   # the `**x` unpacks
-        if any(_is_environ(b) for b in bases):
-            return "inherit"
-        for b in bases:
+            return _own_registry(reg)
+        for b in [val for k, val in zip(v.keys, v.values) if k is None]:   # the `**x` unpacks
             k = env_kind(b, sc, depth + 1, busy)
             if k in GREEN:
                 return k
         return "red:a dict built from scratch"
     if isinstance(v, ast.DictComp) and len(v.generators) == 1:
-        g = v.generators[0]
-        it = g.iter
+        it = v.generators[0].iter
         if isinstance(it, ast.Call) and isinstance(it.func, ast.Attribute) and it.func.attr == "items" \
-                and _is_environ(it.func.value):
-            # {k: v for k, v in os.environ.items() if …}: a FILTERED copy keeps the pin unless the filter can drop it
-            return "inherit" if all(_filter_keeps_registry(c) for c in g.ifs) else \
-                "red:an os.environ copy whose filter can drop ASTRYX_COG_REGISTRY"
-        if isinstance(it, ast.Call) and isinstance(it.func, ast.Attribute) and it.func.attr == "items" \
-                and isinstance(it.func.value, ast.Name):
-            base = env_kind(it.func.value, sc, depth + 1, busy)          # a filtered copy of a GREEN env
-            if base in GREEN and all(_filter_keeps_registry(c) for c in g.ifs):
+                and _comp_keeps(v):
+            base = env_kind(it.func.value, sc, depth + 1, busy)
+            if base in GREEN:
                 return base
-        return "red:a dict comprehension that doesn't copy a green env"
+        return "red:a comprehension the gate can't prove keeps ASTRYX_COG_REGISTRY"
     if isinstance(v, ast.IfExp):                                         # `a if c else b`: green only if BOTH are
-        kinds = {env_kind(v.body, sc, depth + 1, busy), env_kind(v.orelse, sc, depth + 1, busy)}
-        if kinds <= set(GREEN):
-            return "own-registry" if "own-registry" in kinds else "inherit" if "inherit" in kinds else "helper"
-        return "red:a conditional env with a non-inheriting branch"
-    if isinstance(v, ast.BinOp) and isinstance(v.op, ast.BitOr):        # `os.environ | {...}`, `base | {...}`
-        return env_kind(v.left, sc, depth + 1, busy)
+        kind = _merge({env_kind(v.body, sc, depth + 1, busy), env_kind(v.orelse, sc, depth + 1, busy)})
+        return kind or "red:a conditional env with a non-inheriting branch"
+    if isinstance(v, ast.BinOp) and isinstance(v.op, ast.BitOr):        # `base | {...}`: the RIGHT side wins a key
+        right = v.right
+        if isinstance(right, ast.Dict) and None not in right.keys:
+            reg = next((val for k, val in zip(right.keys, right.values)
+                        if isinstance(k, ast.Constant) and k.value == REGISTRY), None)
+            if reg is not None:
+                return _own_registry(reg)
+            return env_kind(v.left, sc, depth + 1, busy)
+        return "red:a `|` whose right side the gate can't see"
     if isinstance(v, ast.Name):
-        if (id(sc.scope(v)), v.id) in sc.sets_registry or (id(None), v.id) in sc.sets_registry:
-            return "own-registry"
+        cut = sc.mutated(v.id, v)
+        if cut:
+            return f"red:the name {v.id!r} can lose the registry ({cut[0]})"
+        reg = sc.registry_set_before(v.id, v)
+        if reg is not None:
+            return _own_registry(reg)
         vals = sc.values(v.id, v)
         if not vals:
             return _param_kind(v, sc, depth, busy)
         kinds = set()
         for x in vals:
-            kinds.add("inherit" if isinstance(x, ast.AugAssign) else env_kind(x, sc, depth + 1, busy))
-        if kinds <= set(GREEN):
-            return "own-registry" if "own-registry" in kinds else "inherit" if "inherit" in kinds else "helper"
-        return f"red:the name {v.id!r} has a non-inheriting assignment"
+            if isinstance(x, ast.AugAssign):
+                # `env |= {...}`: a literal dict that names the registry decides it; one that doesn't is neutral (the
+                # name keeps what its other assignments are); anything else can't be seen
+                r = x.value
+                if isinstance(x.op, ast.BitOr) and isinstance(r, ast.Dict) and None not in r.keys:
+                    reg = next((val for k, val in zip(r.keys, r.values)
+                                if isinstance(k, ast.Constant) and k.value == REGISTRY), None)
+                    if reg is not None:
+                        kinds.add(_own_registry(reg))
+                else:
+                    kinds.add("red:an augmented assignment the gate can't see")
+            else:
+                kinds.add(env_kind(x, sc, depth + 1, busy))
+        return _merge(kinds) or f"red:the name {v.id!r} has a non-inheriting assignment"
     return f"red:a {type(v).__name__} the gate can't classify"
 
 
@@ -269,8 +430,8 @@ def _param_kind(v: ast.Name, sc: _Scopes, depth: int, busy) -> str:
     if v.id not in params and v.id not in kwonly:
         return f"red:the name {v.id!r} doesn't resolve here"
     pos = params.index(v.id) if v.id in params else 10 ** 6             # keyword-only: never positional
-    tree = sc.module
-    calls = [c for c in ast.walk(tree) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == fn.name]
+    calls = [c for c in ast.walk(sc.module) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+             and c.func.id == fn.name]
     if not calls:
         return f"red:the parameter {v.id!r} of {fn.name}() has no caller here"
     kinds = set()
@@ -281,9 +442,7 @@ def _param_kind(v: ast.Name, sc: _Scopes, depth: int, busy) -> str:
         if arg is None:
             return f"red:a call of {fn.name}() passes no {v.id!r}"
         kinds.add(env_kind(arg, sc, depth + 1, busy | {id(fn)}))
-    if kinds <= set(GREEN):
-        return "own-registry" if "own-registry" in kinds else "inherit" if "inherit" in kinds else "helper"
-    return f"red:the parameter {v.id!r} of {fn.name}() is passed a non-inheriting env"
+    return _merge(kinds) or f"red:the parameter {v.id!r} of {fn.name}() is passed a non-inheriting env"
 
 
 def _argv(call: ast.Call):
@@ -299,34 +458,31 @@ def _argv(call: ast.Call):
 
 
 def plain_child(call: ast.Call) -> bool:
-    """True when the spawned program provably never imports astryx (seed #61406 bucket 2): its program is a literal
-    plain tool, no literal argument names a repo path, and a SHELL's whole argv is literal (its body is visible, and a
-    body naming a repo path, `bash -c "… spawn.sh …"`, is never plain). For a non-shell tool a runtime argument is
-    data (a path git reads), so it's allowed; git's literal subcommand must not be one that runs hooks."""
+    """True when the spawned program provably never imports astryx (seed #61406 bucket 2; a3 #61413)."""
     argv = _argv(call)
     if not argv or argv[0] is None:
         return False
     prog = argv[0].rsplit("/", 1)[-1]
-    if prog not in PLAIN:
-        return False
     rest = argv[1:]
-    if prog in SHELLS and any(x is None for x in rest):
+    if prog in INTERPRETERS:
+        return all(x is not None for x in rest) and not any(PATH_HINT.search(x) or CODE_HINT.search(x) for x in rest)
+    if prog not in PLAIN:
         return False
     if any(x is not None and PATH_HINT.search(x) for x in rest):
         return False
-    if prog in SHELLS and any(CODE_HINT.search(x) for x in rest):
-        return False
-    if prog == "systemctl" and any(x in SYSTEMCTL_STARTS for x in rest if x is not None):
-        return False
+    if prog == "systemctl":
+        return not any(x in SYSTEMCTL_STARTS for x in rest if x is not None)
     if prog == "git":
         lits = [x for x in rest if x is not None]
-        sub = next((x for x in lits if not x.startswith("-")), None)    # `-C <path>` and other options skipped
-        # subcommands that can run a repository's hooks (core.hooksPath may point into this repo): never plain. The
-        # tuple stays inline, the right side of `in`: "merge" is also a SQL verb, and sqlguard's site forms (D5) read a
-        # bare verb as safe only by that USE
-        if sub is None or "-c" in lits or any(x in ("commit", "push", "merge", "rebase", "am", "checkout", "switch",
-                                                    "pull", "worktree", "cherry-pick", "revert", "gc") for x in lits):
+        if "-c" in lits:
             return False
+        # the subcommand is the first LITERAL non-option after git's own options (`-C <path>` skipped); an argument
+        # built at runtime before it means the gate can't see which subcommand runs
+        i = 0
+        while i < len(rest) and rest[i] is not None and rest[i].startswith("-"):
+            i += 2 if rest[i] in ("-C", "--git-dir", "--work-tree") else 1
+        sub = rest[i] if i < len(rest) else None
+        return sub in GIT_READONLY
     return True
 
 
@@ -346,34 +502,40 @@ def _parse(text: str):
             return None
 
 
-def _sibling_defs(tree, tests_dir: Path | None, cache: dict) -> dict:
-    """Builders defined in the tests/ modules this file from-imports (org_home_fixture's OrgHomes.env), judged in THEIR
-    module's scope: a fixture helper that sets its own registry is green wherever it's called."""
-    out: dict = {}
+def _import_siblings(sc: _Scopes, tests_dir: Path | None, cache: dict) -> None:
+    """Builders from the tests/ modules this file from-imports, keyed by the IMPORTED NAME (a3 #61413 B14): `from
+    org_home_fixture import OrgHomes` brings the class OrgHomes and its methods, judged in THEIR module's scope; a
+    function brings itself. Nothing else of that module is visible here."""
     if tests_dir is None:
-        return out
-    for n in ast.walk(tree):
-        if isinstance(n, ast.ImportFrom) and n.module and not n.level:
-            f = tests_dir / f"{n.module}.py"
-            if not f.is_file():
-                continue
-            if f not in cache:
-                t = _parse(f.read_text(errors="replace"))
-                cache[f] = _Scopes(t) if t is not None else None
-            if cache[f] is not None:
-                for k, v in cache[f].defs.items():
-                    out.setdefault(k, []).extend(v)
-    return out
+        return
+    for n in ast.walk(sc.module):
+        if not (isinstance(n, ast.ImportFrom) and n.module and not n.level):
+            continue
+        f = tests_dir / f"{n.module}.py"
+        if not f.is_file():
+            continue
+        if f not in cache:
+            t = _parse(f.read_text(errors="replace"))
+            cache[f] = _Scopes(t) if t is not None else None
+        other = cache[f]
+        if other is None:
+            continue
+        for a in n.names:
+            local = a.asname or a.name
+            if a.name in other.classes:
+                sc.classes.setdefault(local, {})
+                for m, ds in other.classes[a.name].items():
+                    sc.classes[local].setdefault(m, []).extend(ds)
+            if a.name in other.funcs:
+                sc.funcs.setdefault(local, []).extend(other.funcs[a.name])
 
 
 def classify_text(text: str, rel: str, tests_dir: Path | None = None, cache: dict | None = None) -> list[dict]:
     """Every spawner env= site with its bucket: inherit | helper | own-registry | child | declared | red."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", SyntaxWarning)
-        try:
-            tree = ast.parse(text)
-        except SyntaxError:
-            return []
+    tree = _parse(text)
+    if tree is None:                       # a file the gate can't read is never "no sites": its sites would vanish
+        return [{**_finding(rel, 1, "the file doesn't parse, so none of its subprocess envs can be judged"),
+                 "bucket": "red"}]
     lines = text.splitlines()
     aliases, bare = set(), set()
     for n in ast.walk(tree):
@@ -386,8 +548,7 @@ def classify_text(text: str, rel: str, tests_dir: Path | None = None, cache: dic
                 if a.name in SPAWNERS:
                     bare.add(a.asname or a.name)
     sc = _Scopes(tree)
-    for k, v in _sibling_defs(tree, tests_dir, {} if cache is None else cache).items():
-        sc.defs.setdefault(k, []).extend(v)
+    _import_siblings(sc, tests_dir, {} if cache is None else cache)
     out = []
     for n in ast.walk(tree):
         if not (isinstance(n, ast.Call) and _spawner(n, aliases, bare)):
