@@ -13,6 +13,14 @@ everything those import, transitively):
   (d') a WRITE to a root that is provably SHARED: an absolute literal, Path.home()/`~`, or HOME/XDG_* (also as the
        fallback of an env lookup), by open-for-write, write_text/write_bytes, mkdir/makedirs/touch, or a
        --user-data-dir=/--cache-dir= argument. OWNED means derived from tempfile, TMPDIR or __file__ (the run's root).
+  (r)  a SERVICE started on the HOST's registry: a gate whose test-side reach (its tests/ files) spawns uvicorn or an
+       ASGI target (`gateway:app`), or runs uvicorn in process, and never pins the registry: no call to gate() (estate's
+       pin, seed 10-19) and no ASTRYX_COG_REGISTRY in a string. check.sh pins it for its own runs, but a gate run BY
+       HAND on a cog host (/etc/astryx/cog.json, a host file) starts that service on the LIVE orgs and their live
+       databases (10-19 17:02: test_relay's gateways wrote orga.test into the live peers). The two halves of one guard:
+       child_env_gate holds that a spawn's env never DROPS the parent's pin (and greens an inheriting env because the
+       parent carries it); this holds that the parent carries it. Residual, named: a runner the test writes to a file
+       and then executes.
 
 It reads what EXECUTES (python by AST; js/sh with comments stripped, sh heredoc bodies dropped), and a root it can't
 classify is quiet: the census under-reports by construction, it never guesses. The ONLY allowlist is an explicit
@@ -288,6 +296,71 @@ JS_WRITE = re.compile(r"""\b(?:writeFileSync|appendFileSync|mkdirSync|createWrit
 JS_DIRFLAG = re.compile(r"""--(?:user-data-dir|cache-dir)=(?:/[^'"`\s$]+|\$\{(?:homedir\(\)|process\.env\.(?:HOME|XDG_\w+)))""")
 
 
+APP_TARGET = re.compile(r"^[\w.]+:app$")        # the ASGI target a server is told to serve: gateway:app, main:app
+REGISTRY = "ASTRYX_COG_REGISTRY"
+
+
+def _parse(text: str):
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return ast.parse(text)
+    except (SyntaxError, ValueError):
+        return None
+
+
+def _services(text: str) -> list[int]:
+    """(r) The lines that START A SERVICE: a spawn whose argv names uvicorn (`-m uvicorn`, a `-c` body importing it) or
+    an ASGI target, or uvicorn.run / uvicorn.Server in process."""
+    tree, out = _parse(text), []
+    for n in ast.walk(tree) if tree else ():
+        if not isinstance(n, ast.Call):
+            continue
+        f = n.func
+        if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "uvicorn" \
+                and f.attr in ("run", "Server"):
+            out.append(n.lineno)
+        elif _callee(n) in SPAWNERS:
+            argv = n.args[0] if n.args and isinstance(n.args[0], (ast.List, ast.Tuple)) else None
+            for e in list(argv.elts) if argv is not None else list(n.args):
+                t = _str_text(e)
+                if t is not None and (t == "uvicorn" or APP_TARGET.match(t) or "import uvicorn" in t):
+                    out.append(n.lineno)
+                    break
+    return out
+
+
+def _pins(text: str) -> bool:
+    """(r) Does this file pin the registry: a call to gate() (estate.gate's setdefault pin) or ASTRYX_COG_REGISTRY named
+    in a string constant (an oracle naming its own absent or fixture registry)."""
+    tree = _parse(text)
+    return tree is not None and any(
+        (isinstance(n, ast.Call) and _callee(n) == "gate") or (isinstance(n, ast.Constant) and n.value == REGISTRY)
+        for n in ast.walk(tree))
+
+
+def unpinned(repo: Path, bc=None) -> list:
+    """(r), per GATE: the service starts in each oracle's test-side reach when none of those files pins the registry.
+    Test-side only: the subject's own modules name the registry to READ it (orgs.py), which pins nothing."""
+    if bc is None:
+        bc = load_branch_check(repo)
+    mine, idx, out, seen = tracked(repo), bc._file_index(repo), [], set()
+    for files in bc.gate_files(repo).values():
+        for o in files:
+            side = {f: (repo / f).read_text(errors="replace") for f in _reach(repo, bc, mine, idx, [o])
+                    if f.startswith("tests/") and f.endswith(".py")}
+            if any(_pins(t) for t in side.values()):
+                continue
+            for f, t in sorted(side.items()):
+                lines = t.splitlines()
+                for ln in _services(t):
+                    if (f, ln) not in seen and not _allowed(lines, ln):
+                        seen.add((f, ln))
+                        out.append(_finding(f, ln, "r", f"{o} starts a service and never pins the registry (gate(), "
+                                            f"or {REGISTRY} in a string): run by hand on a cog host it serves the LIVE orgs"))
+    return out
+
+
 def _keep_lines(text: str, stripped: str) -> list:
     return stripped.split("\n") if stripped.count("\n") == text.count("\n") else text.split("\n")
 
@@ -385,14 +458,18 @@ def domain(repo: Path, bc=None) -> set:
     Residual, named: gitignored code a gate EXECUTES (triggers/) is outside this census."""
     if bc is None:
         bc = load_branch_check(repo)
-    mine = tracked(repo)
-    idx, reach, todo = bc._file_index(repo), set(), []
-    for files in bc.gate_files(repo).values():
-        for o in files:
-            todo.append(o)
-            t = (repo / o).read_text(errors="replace")
-            for nm in bc._NAMED_RX.findall(t):
-                todo.extend(idx.get(nm, ()))
+    mine, idx = tracked(repo), bc._file_index(repo)
+    return _reach(repo, bc, mine, idx, [o for files in bc.gate_files(repo).values() for o in files])
+
+
+def _reach(repo: Path, bc, mine, idx, oracles) -> set:
+    """The TRACKED files these oracles reach: themselves, the files they name, and everything those import."""
+    reach, todo = set(), []
+    for o in oracles:
+        todo.append(o)
+        t = (repo / o).read_text(errors="replace")
+        for nm in bc._NAMED_RX.findall(t):
+            todo.extend(idx.get(nm, ()))
     while todo:
         f = todo.pop()
         if f in reach or not (repo / f).is_file() or (mine is not None and f not in mine):
@@ -425,7 +502,7 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     repo = Path(a.root).resolve()
     files = a.files or domain(repo)
-    found = scan(repo, files)
+    found = scan(repo, files) + ([] if a.files else unpinned(repo))
     for f in found:
         print(f"  ✗ ({f['class']}) {f['file']}:{f['line']}: {f['what']}")
     print(f"gate census: {len(files)} file(s), {len(found)} finding(s)"

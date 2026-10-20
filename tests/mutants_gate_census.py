@@ -55,4 +55,20 @@ MUTANTS = {
     "branch_check is imported plainly (under a bare python3 without psycopg the census crashes: pre-push 10-15)":
         ("    names = (\"psycopg\", \"psycopg.conninfo\", \"psycopg.sql\", \"psycopg.errors\", \"psycopg.rows\", \"psycopg.types\")\n",
          "    names = ()\n"),
+    "(r) an unpinned service start is never reported":
+        ("            if any(_pins(t) for t in side.values()):\n", "            if True:\n"),
+    "(r) the subject's own reads pin it: the whole reach, not its tests/ side, is asked (orgs.py names the registry)":
+        ("                    if f.startswith(\"tests/\") and f.endswith(\".py\")}", "                    if f.endswith(\".py\")}"),
+    "(r) a call to gate() is not a pin (every hand-run gate since seed's estate pin reads as unpinned)":
+        ('(isinstance(n, ast.Call) and _callee(n) == "gate") or ', ""),
+    "(r) uvicorn run in process is no service":
+        ('                and f.attr in ("run", "Server"):\n', '                and f.attr in ():\n'),
+    "(r) a -c body importing uvicorn is no service":
+        (' or "import uvicorn" in t)', ")"),
+    "(r) an ASGI target is no service (only a literal `uvicorn` argv)":
+        ('(t == "uvicorn" or APP_TARGET.match(t) or', '(t == "uvicorn" or'),
+    "(r) a file the oracle NAMES is outside its reach (a helper's spawn is never seen)":
+        ("        for nm in bc._NAMED_RX.findall(t):\n", "        for nm in ():\n"),
+    "(r) `# shared-on-purpose:` does not silence it":
+        ("                    if (f, ln) not in seen and not _allowed(lines, ln):\n", "                    if (f, ln) not in seen:\n"),
 }

@@ -168,6 +168,51 @@ check("with psycopg ABSENT the domain still loads and reaches >100 files",
       probe.returncode == 0 and probe.stdout.strip().isdigit() and int(probe.stdout.strip()) > 100,
       (probe.stdout + probe.stderr)[-300:])
 
+print("(r) a SERVICE started on the host's registry, per gate (its tests/ reach), beside a pinned control")
+SPAWN = "import subprocess, sys\nsubprocess.Popen([sys.executable, '-m', 'uvicorn', 'gateway:app', '--fd', '3'])\n"
+R_TREE = {
+    "r_spawn": {"tests/test_r.py": SPAWN},
+    "r_target": {"tests/test_r.py": "import subprocess\nsubprocess.run(['venv/bin/uvicorn', 'main:app'])\n"},
+    "r_inproc": {"tests/test_r.py": "import uvicorn\nuvicorn.Server(uvicorn.Config(app)).run(sockets=[s])\n"},
+    "r_runner": {"tests/test_r.py": "import subprocess, sys\nsubprocess.run([sys.executable, '-c', "
+                                    "'import uvicorn; uvicorn.run(app)'])\n"},
+    "r_helper": {"tests/test_r.py": "# drives r_helper.py\nimport r_helper\n", "tests/r_helper.py": SPAWN},
+    "g_gate": {"tests/test_r.py": "from astryx.security.sqlguard.estate import gate\ngate('test_r', REPO)\n" + SPAWN},
+    "g_named": {"tests/test_r.py": "import os\nos.environ['ASTRYX_COG_REGISTRY'] = '/tmp/x/none.json'\n" + SPAWN},
+    "g_helper_pins": {"tests/test_r.py": "# drives r_helper.py and r_pin.py\n" + SPAWN,
+                      "tests/r_pin.py": "E = {'ASTRYX_COG_REGISTRY': 'absent'}\n"},
+    "g_noise": {"tests/test_r.py": "# subprocess.Popen(['uvicorn', 'gateway:app'])\n"
+                                   "def f():\n    \"\"\"subprocess.Popen(['uvicorn'])\"\"\"\n"
+                                   "assert 'bridges.ear:app' in unit\nprint('uvicorn', 'gateway:app')\n"},
+    "g_allow": {"tests/test_r.py": "import subprocess, sys\n# shared-on-purpose: a fixture registry by construction\n"
+                                   "subprocess.Popen([sys.executable, '-m', 'uvicorn', 'gateway:app'])\n"},
+    "g_src_names": {"tests/test_r.py": "# drives orgs.py\n" + SPAWN, "orgs.py": "ENV = 'ASTRYX_COG_REGISTRY'\n"},
+}
+_bcr = gc.load_branch_check(REPO)
+r_got = {}
+for nm, tree in R_TREE.items():
+    with tempfile.TemporaryDirectory() as td:
+        t = Path(td)
+        (t / "devtools").mkdir()
+        (t / "devtools" / "check.sh").write_text('run "fx" "$PY" tests/test_r.py\n')
+        for rel, text in tree.items():
+            (t / rel).parent.mkdir(parents=True, exist_ok=True)
+            (t / rel).write_text(text)
+        r_got[nm] = [(f["class"], f["file"], f["line"]) for f in gc.unpinned(t, bc=_bcr)]
+for nm, want in (("r_spawn", [("r", "tests/test_r.py", 2)]), ("r_target", [("r", "tests/test_r.py", 2)]),
+                 ("r_inproc", [("r", "tests/test_r.py", 2)]), ("r_runner", [("r", "tests/test_r.py", 2)]),
+                 ("r_helper", [("r", "tests/r_helper.py", 2)]),
+                 ("g_src_names", [("r", "tests/test_r.py", 3)])):    # the SUBJECT naming the registry pins nothing
+    check(f"RED {nm}: the unpinned service start is found at its line", r_got[nm] == want, str(r_got[nm]))
+for nm in ("g_gate", "g_named", "g_helper_pins", "g_noise", "g_allow"):
+    check(f"GREEN {nm}: no (r) finding", r_got[nm] == [], str(r_got[nm]))
+with tempfile.TemporaryDirectory() as td:                         # not a gate: no run line names it, nothing found
+    (Path(td) / "devtools").mkdir()
+    (Path(td) / "devtools" / "check.sh").write_text("# no gates\n")
+    (Path(td) / "tests").mkdir()
+    (Path(td) / "tests" / "test_r.py").write_text(SPAWN)
+    check("GREEN a file no gate runs: no (r) finding", gc.unpinned(Path(td), bc=_bcr) == [])
+
 print("LIVE: the census over the real gate domain")
 dom = gc.domain(REPO)
 check(f"the domain is the gates' reach ({len(dom)} files), the pilot and voice-orb gates in it",
@@ -183,7 +228,8 @@ beyond = sorted(dom - seeds)
 check(f"...TRANSITIVELY: {len(beyond)} file(s) no gate names, reached only by import, are in it", len(beyond) >= 10,
       str(beyond[:5]))
 live = gc.scan(REPO, dom)
-check("no unmarked host-global resource in any gate's reach", not live,
+live += gc.unpinned(REPO)
+check("no unmarked host-global resource in any gate's reach, no gate starting a service on the host's registry", not live,
       "; ".join(f"({f['class']}) {f['file']}:{f['line']}" for f in live[:6]))
 for rel, needle in (("src/astryx/pg/runscope.py", "SCOPE_ROOT = "), ("tests/_oracle_debris.py", "ORACLE_BASE = ")):
     text = (REPO / rel).read_text().splitlines()
