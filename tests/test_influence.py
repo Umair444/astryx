@@ -82,6 +82,7 @@ class Git:
         self.n = 0
 
     def __call__(self, *a):
+        # own-env: git only, in this oracle's temp repo (self.env is its scrubbed git env)
         return subprocess.run(["git", "-C", self.d, *a], capture_output=True, text=True, check=True,
                               env=self.env).stdout.strip()
 

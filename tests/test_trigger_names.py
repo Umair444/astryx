@@ -76,6 +76,7 @@ def state(name, target="seed", dsn=None, env=None):
     e = {k: v for k, v in os.environ.items() if k != "ASTRYX_DSN"} if env is None else env
     if dsn:
         e["ASTRYX_DSN"] = dsn
+    # own-env: no caller here passes env, so e is os.environ minus ASTRYX_DSN (the pin kept)
     r = subprocess.run([PY, "-m", "astryx.core.trigger_names", "state", name, "--target", target], cwd=T,
                        capture_output=True, text=True, timeout=120, env=e)
     return r.returncode, r.stdout.strip(), r.stderr.strip()[-300:]

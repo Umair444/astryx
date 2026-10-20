@@ -289,6 +289,7 @@ import tempfile as _tf
 _real_git_log = mod["git_log"]
 _gr = Path(_tf.mkdtemp(prefix="t_sg_git_"))
 def _g(*a):
+    # own-env: git only, in this oracle's temp repo (a scratch author/committer env)
     return subprocess.run(["git", "-C", str(_gr), *a], capture_output=True, text=True,
                           env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(_gr),
                                "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t",

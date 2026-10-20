@@ -105,6 +105,7 @@ def main():
         def run(rel, *args, **env):
             log.write_text("")
             e = {**base, **{k: v for k, v in env.items() if v is not None}}
+            # own-env: every run() names its fixture registry (one/cogp/cogl or ASTRYX_COG_REGISTRY=…)
             p = subprocess.run(["bash", str(root / rel), *args], env=e, cwd=str(root), capture_output=True, text=True,
                                timeout=120)
             return p, log.read_text().splitlines()

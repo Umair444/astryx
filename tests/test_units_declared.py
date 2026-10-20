@@ -116,6 +116,7 @@ def state(table: dict, expect_off: str):
         (t / "bin" / "systemctl").chmod(0o755)
         (t / "s.sh").write_text(helpers + f'\nUNITS_EXPECT_DISABLED="{expect_off}"\n_units_state {" ".join(table)}\n'
                                 'echo "NE=[$notenabled] WO=[$wrongly_on] OM=[$off_missing] OK=[$off_ok]"\n')
+        # own-env: runs a script this oracle wrote (t/s.sh) against stub binaries only
         r = subprocess.run(["bash", "-euo", "pipefail", str(t / "s.sh")], capture_output=True, text=True,
                            env={"PATH": f"{t / 'bin'}:/usr/bin:/bin"})
         m = re.search(r"NE=\[(.*?)\] WO=\[(.*?)\] OM=\[(.*?)\] OK=\[(.*?)\]", r.stdout)

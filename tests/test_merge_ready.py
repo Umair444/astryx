@@ -280,6 +280,7 @@ _orig_run = m.Git.run
 
 
 def _hermetic_run(self, *args, stdin=None, check=False):      # the body's git sees the scrubbed env too
+    # own-env: git only, in this oracle's temp repo (the subject's git_env, or ENV)
     r = subprocess.run(["git", "-C", str(self.repo), *args], input=stdin, capture_output=True, text=True,
                        timeout=20, env=m.git_env(ENV) if hasattr(m, "git_env") else ENV)   # the body's own locale pin
     return r

@@ -154,6 +154,7 @@ def main():
         env = {k: os.environ[k] for k in ("PATH", "HOME") if k in os.environ}
         backs = {}
         for o, s in ((oa, sa), (ob, sb)):
+            # own-env: a fixture stub app this oracle wrote (t/app.py), not repo code
             backs[o] = subprocess.Popen([PY, "-m", "uvicorn", "app:app", "--fd", str(s.fileno())],
                                         pass_fds=(s.fileno(),), cwd=t, env={**env, "PYTHONPATH": str(t), "FX_TAG": o, "FX_LOG": str(logs[o])},
                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

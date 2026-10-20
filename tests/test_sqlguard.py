@@ -842,6 +842,7 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
     t2.mkdir()
     envi = {"PYTHONPATH": str(tmp / "src" / "astryx" / "security" / "sqlguard" / "shim"), "ASTRYX_SQLGUARD_DIR": str(t2),
             "ASTRYX_SQLGUARD_GATE": "g-envi"}
+    # own-env: asserts its own env: the shim harness's env (PYTHONPATH, SQLGUARD vars) is the arm
     rc_e = subprocess.run([sys.executable, "-m", "astryx.security.sqlguard.canary"], cwd=tmp, env=envi,
                           capture_output=True).returncode
     (t2 / "gates.tsv").write_text(f"g-envi\t{rc_e}\n")
@@ -873,6 +874,7 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
             envf.write_text("SOMETHING_ELSE=1\n")
         (bare / "triggers").mkdir(exist_ok=True) if live else shutil.rmtree(bare / "triggers", ignore_errors=True)
         for mod, extra in (("canary", []), ("enforce", [str(bare / "t")])):
+            # own-env: the bare-tree arm: a child with no estate and no inherited env is the subject
             p = subprocess.run([sys.executable, *flags, "-m", f"astryx.security.sqlguard.{mod}", *extra], cwd=bare,
                                env=benv, capture_output=True, text=True)
             arm(f"{name}: {mod} exits {rc} and names {tag}",
@@ -886,6 +888,7 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
     bare_case("no-DSN", "nodsn", False, [], 1, "ASTRYX_DSN", "BROKEN")                  # misconfigured even when bare
     # positive control: .env and deps present, on a live-shaped tree, runs the canary for real (absence only)
     _dsn_env(envf)
+    # own-env: the bare-tree arm: a child with no estate and no inherited env is the subject
     p = subprocess.run([sys.executable, "-m", "astryx.security.sqlguard.canary"], cwd=bare, env=benv,
                        capture_output=True, text=True)
     arm("estate control: with .env and deps the canary runs (rc 0)", p.returncode == 0,

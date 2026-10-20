@@ -72,6 +72,7 @@ def main():
                 text = c["text"] if "text" in c else json.dumps(c["registry"]).replace("{T}", str(t))
                 reg.write_text(text)
             env = {k: os.environ[k] for k in ("PATH", "HOME") if k in os.environ}
+            # own-env: orgs.py is handed its registry as an argv path (reg), never through env
             py = subprocess.run([sys.executable, "-B", "-c", PY, str(ORGS_SRC), str(reg), str(UNITS)], capture_output=True,
                                 text=True, timeout=60, env=env).stdout.strip()
             js = subprocess.run(["node", "--input-type=module", "-e", JS, mjs.as_uri(), str(reg)], capture_output=True,

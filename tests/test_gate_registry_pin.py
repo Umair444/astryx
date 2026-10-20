@@ -20,6 +20,7 @@ fails = []
 def child(extra):
     env = {k: v for k, v in os.environ.items() if k != "ASTRYX_COG_REGISTRY"}
     env.update(extra)
+    # own-env: asserts gate()'s OWN pin: the parent's registry is stripped on purpose
     r = subprocess.run([sys.executable, "-B", "-c", CHILD, str(REPO / "src"), str(REPO)], env=env,
                        capture_output=True, text=True, timeout=60)
     return r.returncode, r.stdout.strip().splitlines()[-1:] or [r.stderr[-300:]]

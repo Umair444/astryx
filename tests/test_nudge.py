@@ -224,6 +224,7 @@ def interp_baseline() -> float:
     ts = []
     for _ in range(3):
         t0 = time.monotonic()
+        # own-env: a timing baseline of a stdlib-only import prelude; no astryx is imported
         subprocess.run([PY, "-c", HOOK_PRELUDE], capture_output=True, timeout=30,
                        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")})
         ts.append(time.monotonic() - t0)

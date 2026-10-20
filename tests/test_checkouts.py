@@ -41,6 +41,7 @@ GE = {k: v for k, v in os.environ.items() if not k.startswith("GIT_") and k != c
 
 
 def git(*a, cwd=None):
+    # own-env: git only, in this oracle's temp repos (GE scrubs GIT_* and the checkout-source key)
     subprocess.run(["git", *a], cwd=cwd, env=GE, capture_output=True, check=True)
 
 

@@ -32,6 +32,7 @@ with tempfile.TemporaryDirectory() as td:
     env = {"PATH": os.environ["PATH"], "HOME": td, "REPO": td, "KEEP_ME": "1", "PY": "python3",
            "ASTRYX_DSN": "postgres://x", "ASTRYX_AGENT": "seed", "PGPASSFILE": "/x", "PGHOST": "h",
            "OPENAI_DSN": "x", "OBS_KEY": "s", "SOME_TOKEN": "s", "COMMENTED": "stays"}
+    # own-env: asserts its own env (the pushed tree's exported names, compgen -e)
     r = subprocess.run(["bash", "-c", f'{line}\ncompgen -e'], env=env, capture_output=True, text=True, timeout=20)
     left = set(r.stdout.split())
 for v in ("ASTRYX_DSN", "ASTRYX_AGENT", "PGPASSFILE", "PGHOST", "OPENAI_DSN"):

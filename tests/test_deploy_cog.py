@@ -98,6 +98,7 @@ def main():
         def run(*verb, **env):
             log.write_text("")
             e = {**base, **{k: v for k, v in env.items() if v is not None}}
+            # own-env: every run() names its fixture registry (one/cogp/cogl or ASTRYX_COG_REGISTRY=…)
             p = subprocess.run(["bash", str(root / "scripts" / "deploy.sh"), *verb], env=e, cwd=str(t), capture_output=True,
                                text=True, timeout=120)
             calls = log.read_text().splitlines()

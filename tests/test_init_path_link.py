@@ -43,6 +43,7 @@ def main():
 
         def run():
             env = {"HOME": str(home), "PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+            # own-env: runs init.sh's _link_path alone (readlink/ln, no python, no orgs.py)
             return subprocess.run(["bash", "-c", "say() { echo \"$*\"; }\n" + m.group(0) + "\n_link_path\n"],
                                   cwd=repo, env=env, capture_output=True, text=True, timeout=30)
 
