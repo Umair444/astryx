@@ -28,6 +28,16 @@ def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-e
 
 
 ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
+
+
+def _dsn_env(path: Path):
+    """A .env holding ONLY the estate's ASTRYX_DSN line, mode 0600, owned by the arm's tmp tree. Never a link to the
+    LIVE .env: that made every other secret in it reachable from a scratch tree for the arm's length (a3 #61413)."""
+    dsn = _astryx("config", "read_env", ESTATE / ".env").get("ASTRYX_DSN", "")
+    path.unlink(missing_ok=True)
+    fd = __import__("os").open(path, __import__("os").O_WRONLY | __import__("os").O_CREAT | __import__("os").O_EXCL, 0o600)
+    with open(fd, "w") as f:
+        f.write(f"ASTRYX_DSN={dsn}\n")
 fails = []
 
 
@@ -653,7 +663,7 @@ def _build_tree(tmp: Path, rev=None):
                         ignore=shutil.ignore_patterns("__pycache__", "ledger.json"))
     from _astryx_skel import skeleton                # goal 10224 S4: astryx.* needs its spine in the fake repo
     skeleton(tmp, "src/astryx/security/__init__.py", "src/astryx/pulse/pulse_run.py", "src/astryx/sql/schema.sql")
-    (tmp / ".env").symlink_to((ESTATE / ".env").resolve())
+    _dsn_env(tmp / ".env")
     (tmp / "triggers").mkdir()
     (tmp / "subj").mkdir()
     (tmp / "subj" / "__init__.py").write_text("")
@@ -854,7 +864,7 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
     def bare_case(name, env, live, flags, rc, tag, word):
         envf.unlink(missing_ok=True)
         if env == "real":
-            envf.symlink_to((ESTATE / ".env").resolve())
+            _dsn_env(envf)
         elif env == "nodsn":
             envf.write_text("SOMETHING_ELSE=1\n")
         (bare / "triggers").mkdir(exist_ok=True) if live else shutil.rmtree(bare / "triggers", ignore_errors=True)
@@ -871,8 +881,7 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
     bare_case("live-broken deps", "real", True, ["-S"], 1, "psycopg", "BROKEN")         # a runner lost its interpreter
     bare_case("no-DSN", "nodsn", False, [], 1, "ASTRYX_DSN", "BROKEN")                  # misconfigured even when bare
     # positive control: .env and deps present, on a live-shaped tree, runs the canary for real (absence only)
-    envf.unlink(missing_ok=True)
-    envf.symlink_to((ESTATE / ".env").resolve())
+    _dsn_env(envf)
     p = subprocess.run([sys.executable, "-m", "astryx.security.sqlguard.canary"], cwd=bare, env=benv,
                        capture_output=True, text=True)
     arm("estate control: with .env and deps the canary runs (rc 0)", p.returncode == 0,
