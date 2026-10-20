@@ -399,6 +399,18 @@ finally:
 time.sleep(0.2)
 check("P8 the loopback listener received ZERO requests", HITS == [], HITS)
 srv.shutdown()
+def _try(f):
+    try:
+        return f()
+    except Exception as e:  # noqa: BLE001 (the old _slug raised ApiError on a dotted slug: a FAIL, not a crash)
+        return f"{type(e).__name__}: {e}"
+
+
+check("D1 a bare DOTTED board slug is the slug, never parsed as a URL (canopus #61574)",
+      _try(lambda: S._slug("acme.com", "ashby")) == "acme.com", _try(lambda: S._slug("acme.com", "ashby")))
+check("D2 a board URL still yields its slug", S._slug("https://jobs.ashbyhq.com/acme.com", "ashby") == "acme.com"
+      and S._slug("jobs.ashbyhq.com/acme", "ashby") == "acme")
+check("D3 a plain bare slug is unchanged", S._slug("acme", "greenhouse") == "acme")
 s = S._scrub("ConnectError: GET https://h.example/p?token=abc&x=1 failed")
 check("P3 scrub strips query strings", "token=abc" not in s and "https://h.example/p" in s, s)
 check("P4 scrub caps length", len(S._scrub("x" * 5000)) <= 240)

@@ -385,7 +385,7 @@ def ats_job(url: str) -> str:
 
 def _slug(board: str, ats: str) -> str:
     b = board.strip()
-    if "/" not in b and "." not in b:
+    if "/" not in b:                    # a bare slug, dotted ones too (Ashby has "acme.com"); a URL always has a "/"
         return b
     u = urlparse(b if "://" in b else "https://" + b)
     q = parse_qs(u.query)
