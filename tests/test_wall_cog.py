@@ -145,6 +145,7 @@ def main():
               f"rc {p.returncode} {p.stdout + p.stderr}")
 
         print("\nW2 --cog: EVERY ORG'S AGENTS, EACH FROM ITS OWN TABLE")
+        # own-env: tmux `sleep 600` on this oracle's private fixture socket; base holds only its PATH/HOME/log keys
         subprocess.run(["tmux", "-L", "ax-fxl", "new-session", "-d", "-s", "ax-gamma", "sleep 600"], env=base,
                        check=True, timeout=20)      # a lab resident with no steps yet: read from LAB's server
         p = wall("--cog", env=cog)

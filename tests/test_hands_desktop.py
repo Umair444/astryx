@@ -125,6 +125,7 @@ def missing():
     gone = [t for t in need if not shutil.which(t)]
     if not (shutil.which("chromium") or shutil.which("google-chrome-stable")):
         gone.append("chromium")
+    # own-env: systemctl --user query, the user manager's env (hd._user_env); a unit gets the manager's env, not this one
     if subprocess.run(["systemctl", "--user", "is-system-running"], capture_output=True,
                       env=hd._user_env()).returncode not in (0, 1):
         gone.append("a user systemd manager")
@@ -381,6 +382,7 @@ def pool_arms():
 
 
 def real_pool_untouched_arm():
+    # own-env: systemctl --user query, the user manager's env (hd._user_env); a unit gets the manager's env, not this one
     r = subprocess.run(["systemctl", "--user", "is-active", "astryx-hands-desk-1"],
                        capture_output=True, text=True, env=hd._user_env())
     arm("(n) the real desk-1 was not stopped by the suite",
@@ -388,6 +390,7 @@ def real_pool_untouched_arm():
 
 
 def never_laptop_arm():
+    # own-env: systemctl --user query, the user manager's env (hd._user_env); a unit gets the manager's env, not this one
     r = subprocess.run(["systemctl", "--user", "is-active", "astryx-hands-laptop"],
                        capture_output=True, text=True, env=hd._user_env())
     arm("(m) the suite never attached to the owner's real screen",
@@ -403,8 +406,10 @@ def down_arms():
         (hd.home_dir(AGENT) / "browser").is_dir())
 
 
+# own-env: systemctl --user query, the user manager's env (hd._user_env); a unit gets the manager's env, not this one
 REAL_DESK1_UP = subprocess.run(["systemctl", "--user", "is-active", "--quiet",
                                 "astryx-hands-desk-1"], env=hd._user_env()).returncode == 0
+# own-env: systemctl --user query, the user manager's env (hd._user_env); a unit gets the manager's env, not this one
 LAPTOP_WAS_UP = subprocess.run(["systemctl", "--user", "is-active", "--quiet",
                                 "astryx-hands-laptop"], env=hd._user_env()).returncode == 0
 
@@ -431,6 +436,7 @@ if __name__ == "__main__":
         never_laptop_arm()
         real_pool_untouched_arm()
     finally:
+        # own-env: systemctl --user stop, the user manager's env (hd._user_env); stopping starts nothing
         subprocess.run(["systemctl", "--user", "stop", hd.unit(AGENT)], capture_output=True,
                        env=hd._user_env())
         shutil.rmtree(TMP, ignore_errors=True)

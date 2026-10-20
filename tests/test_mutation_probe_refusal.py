@@ -60,6 +60,7 @@ def probe(td: Path, oracle_body: str, timeout: int = 20, mutants=None, subject: 
     # temp dir: without this every mutant of the probe would die at import and read CAUGHT vacuously
     env["PYTHONPATH"] = str(REPO / "src") + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     (td / "probe_env.json").write_text(json.dumps(sorted(env)))   # the names the PROBE was given (arm R8)
+    # own-env: inherits; this file's one registry pop (:184) restores an ABSENT parent value in a finally
     r = subprocess.run([sys.executable, str(SUBJECT), str(td / "spec.py")], capture_output=True, text=True,
                        timeout=120, env=env, cwd=td)
     return r.returncode, r.stdout + r.stderr
@@ -153,6 +154,7 @@ with tempfile.TemporaryDirectory() as t:
 
     d = t / "r10"; d.mkdir()
     g = d / "gitroot-r10"; g.mkdir()
+    # own-env: inherits; this file's one registry pop (:184) restores an ABSENT parent value in a finally
     subprocess.run(["git", "init", "-q", str(g)], check=True, capture_output=True,
                    env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
     rc, out = probe(d, runs, subject=tail, subj_rel="gitroot-r10/pkg/subj.py", oracle_rel="outside/oracle.py")

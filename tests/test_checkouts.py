@@ -95,6 +95,7 @@ with tempfile.TemporaryDirectory() as td:
     print("C3: a git-archive tree (no .git), undeclared and declared")
     A = td / "A"
     A.mkdir()
+    # own-env: git archive (read-only) with the parent's env minus GIT_* and one checkout key; no astryx runs
     arch = subprocess.run(["git", "-C", str(R), "archive", "HEAD"], env=GE, capture_output=True, check=True).stdout
     subprocess.run(["tar", "-x", "-C", str(A)], input=arch, check=True)
     awt = A / ".claude" / "worktrees" / "agent-y"
