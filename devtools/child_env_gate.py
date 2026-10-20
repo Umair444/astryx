@@ -27,13 +27,23 @@ Every `env=` handed to a subprocess spawner in tests/*.py is in exactly one buck
                   no repo path in a literal argument; an INTERPRETER (bash, sh, node, tmux) only with an all-literal
                   argv that names no repo path and runs no repo code; git only with a READ-ONLY subcommand from an
                   allowlist (a hook-running one, or an alias like the host's `ci`, is never plain); systemctl never
-                  with a verb that starts something. npm/npx run package.json scripts, so they're never plain.
+                  with a verb that starts something. npm/npx run package.json scripts, so they're never plain. AND its
+                  env must provably carry only SAFE keys (PATH, HOME, LANG/LC_*, TMPDIR, TZ, …): a scratch env can
+                  carry code into a plain program (BASH_ENV, NODE_OPTIONS, GIT_CONFIG_*, a $CMD its body expands; a3
+                  #61422), so an env the gate can't see, or an unclassed key, is not plain. git's options before the
+                  subcommand come from an allowlist too (--exec-path, --config-env and -c never).
   DECLARED        `# own-env: <why>` on the call's lines or the line above: a REAL reason a human wrote (the oracle
                   asserts its own env; the child provably reads no registry; …). The ONLY allowlist.
   RED             anything else: a scratch dict, a mixed or unresolved name, a builder it can't follow.
 
-It reads python by AST and under-reports by construction. STATED RESIDUAL: a spawner it doesn't recognise (os.exec*,
-pty.spawn: 0 in tests/ on 10-20, a3 #61413) and an env reaching a function through **kwargs are quiet; devtools/
+`inherit` also stops being green in a file that pops or deletes the PARENT's registry from os.environ (or clears it):
+a3 #61422 R5/R6. A scrub that provably can't reach it (a GIT_* loop, a literal tuple of other keys) doesn't count.
+
+It reads python by AST and under-reports by construction. STATED RESIDUALS (a3 #61413/#61422): a spawner it doesn't
+recognise (os.exec*, pty.spawn: 0 in tests/ on 10-20); an env reaching a function through **kwargs; a registry arriving
+inside a mapping the gate can't read (`e.update(over)`, an unseen `**spread`); an ALIAS of a copy that's scrubbed
+(`f = e; del f[REGISTRY]`, R13); a helper that takes the env and pops the key (R14). The last two are
+interprocedural. devtools/
 branch_check.py and devtools/mutation_probe.py build child envs for check.sh itself and are out of domain
 (mutation_probe pins the registry on its own). NON-OVERLAP: forge's gate_census class (r) (census-unpinned-spawn,
 #61182) reports a SERVICE start in a gate whose files never pin; it names "a pin that a scratch-built env drops" as its
@@ -65,6 +75,15 @@ INTERPRETERS = {"bash", "sh", "node", "tmux"}
 GIT_READONLY = ("archive", "rev-parse", "log", "show", "status", "diff", "ls-files", "ls-tree", "cat-file",
                 "for-each-ref", "merge-base", "init", "hash-object", "rev-list", "symbolic-ref", "describe",
                 "name-rev", "shortlog", "blame", "grep", "check-ignore", "var", "version")
+# keys a `child` env may carry (a3 #61422): a plain program is only plain if its env can't carry code into it
+# (BASH_ENV, NODE_OPTIONS, GIT_CONFIG_*, LD_PRELOAD, a $CMD its body expands). An ALLOWLIST: an unclassed key = not plain
+SAFE_ENV = ("PATH", "HOME", "LANG", "LANGUAGE", "TMPDIR", "TZ", "TERM", "USER", "LOGNAME", "XDG_RUNTIME_DIR",
+            "TMUX_TMPDIR", "NO_COLOR")
+# git's GLOBAL options a plain git may carry before its subcommand (a3 #61422 R10/R11: --exec-path, --config-env and
+# -c are never plain). The ones taking a separate argument are skipped with it
+GIT_OPTS_ARG = ("-C", "--git-dir", "--work-tree")
+GIT_OPTS = ("--no-pager", "-P", "--bare", "--no-optional-locks", "--literal-pathspecs", "--no-replace-objects",
+            "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs")
 # systemctl verbs that START something (a unit may run astryx): never provably plain
 SYSTEMCTL_STARTS = ("start", "restart", "reload", "reload-or-restart", "try-restart", "enable", "isolate", "kill")
 # a token that names a repo path: in ANY literal argument it makes the child not provably plain
@@ -99,6 +118,7 @@ class _Scopes:
         self.assigns: dict = {}
         self.reg_sets: dict = {}           # (scope, name) -> [(the Assign stmt, its value)] for `name[REGISTRY] = …`
         self.mutations: dict = {}          # (scope, name) -> [why] for a pop/del/clear/popitem that can drop the pin
+        self.writes: dict = {}             # (scope, name) -> [key or None] written by `name[k] =` / update / setdefault
         self.funcs: dict = {}              # function name -> [(def, home)]: module-level and nested functions
         self.classes: dict = {}            # class name -> {method name: [(def, home)]}
         for n in ast.walk(tree):
@@ -133,20 +153,53 @@ class _Scopes:
                                 self.assigns.setdefault((id(self.scope(n)), t.id), []).append(row.elts[i])
             elif isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Name):
                 self.assigns.setdefault((id(self.scope(n)), n.target.id), []).append(n)   # `env |= {...}`: judged
+            if isinstance(n, ast.Assign):
+                for t in n.targets:
+                    if isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name):
+                        self.writes.setdefault((id(self.scope(n)), t.value.id), []).append(
+                            t.slice.value if isinstance(t.slice, ast.Constant) else None)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name) \
+                    and n.func.attr in ("update", "setdefault"):
+                ks = [k.arg for k in n.keywords]
+                if n.func.attr == "setdefault":
+                    ks = [n.args[0].value if n.args and isinstance(n.args[0], ast.Constant) else None]
+                for a in n.args if n.func.attr == "update" else ():
+                    ks += [k.value if isinstance(k, ast.Constant) else None for k in a.keys] \
+                        if isinstance(a, ast.Dict) else [None]
+                self.writes.setdefault((id(self.scope(n)), n.func.value.id), []).extend(ks)
+            # WRITES through update()/setdefault() (a3 #61422 R4), recorded with the subscript sets
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name) \
+                    and n.func.attr in ("update", "setdefault"):
+                stmt = self.parent.get(id(n))
+                vals = []
+                if n.func.attr == "setdefault":
+                    if n.args and isinstance(n.args[0], ast.Constant) and n.args[0].value == REGISTRY:
+                        vals.append(n.args[1] if len(n.args) > 1 else ast.Constant(value=None))
+                else:
+                    vals += [k.value for k in n.keywords if k.arg == REGISTRY]
+                    for a in n.args:
+                        if isinstance(a, ast.Dict):
+                            vals += [val for k, val in zip(a.keys, a.values)
+                                     if isinstance(k, ast.Constant) and k.value == REGISTRY]
+                    for k in n.keywords:
+                        if k.arg is None and isinstance(k.value, ast.Dict):
+                            vals += [val for kk, val in zip(k.value.keys, k.value.values)
+                                     if isinstance(kk, ast.Constant) and kk.value == REGISTRY]
+                for val in vals:
+                    self.reg_sets.setdefault((id(self.scope(n)), n.func.value.id), []).append((stmt, val))
             # MUTATIONS (a3 #61413 B1–B3): a green name that loses the registry key is not green
             why = None
             if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name):
                 m, tgt = n.func.attr, n.func.value.id
                 if m in ("clear", "popitem"):
                     why = f"{tgt}.{m}()"
-                elif m == "pop" and n.args and not (isinstance(n.args[0], ast.Constant) and n.args[0].value != REGISTRY):
+                elif m == "pop" and n.args and not _never_registry(n.args[0], self):
                     why = f"{tgt}.pop({ast.unparse(n.args[0])[:30]})"
                 if why:
                     self.mutations.setdefault((id(self.scope(n)), tgt), []).append(why)
             if isinstance(n, ast.Delete):
                 for t in n.targets:
-                    if isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name) and not (
-                            isinstance(t.slice, ast.Constant) and t.slice.value != REGISTRY):
+                    if isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name) and not _never_registry(t.slice, self):
                         self.mutations.setdefault((id(self.scope(n)), t.value.id), []).append(
                             f"del {ast.unparse(t)[:40]}")
 
@@ -179,6 +232,22 @@ class _Scopes:
             if (id(s), name) in self.assigns:
                 return []
         return []
+
+    def key_writes(self, name: str, at) -> list:
+        for s in self._chain(at):
+            if (id(s), name) in self.writes:
+                return self.writes[(id(s), name)]
+            if (id(s), name) in self.assigns:
+                return []
+        return []
+
+    def live_registry_write(self, name: str, at) -> bool:
+        """Any write of a literal under /etc to name[REGISTRY] in its scope, dominating or not (a3 #61422 R4)."""
+        for s in self._chain(at):
+            sets = self.reg_sets.get((id(s), name), [])
+            if sets:
+                return any(_own_registry(val) != "own-registry" for _, val in sets)
+        return False
 
     def registry_set_before(self, name: str, at):
         """The value of a `name[REGISTRY] = …` that DOMINATES `at`: a statement earlier in the same block as one of
@@ -266,6 +335,33 @@ def _keeps(cond, key: str):
     return None
 
 
+def _never_registry(key, sc: "_Scopes") -> bool:
+    """True when a deleted key provably isn't ASTRYX_COG_REGISTRY: another literal, or the target of a loop over
+    `[k for k in os.environ if <filter>]` whose filter provably DROPS the registry (`k.startswith("GIT_")`: the GIT_*
+    scrub of merge_ready/release_server)."""
+    if isinstance(key, ast.Constant):
+        return key.value != REGISTRY
+    if not isinstance(key, ast.Name):
+        return False
+    p = sc.parent.get(id(key))
+    while p is not None:
+        if isinstance(p, (ast.For, ast.AsyncFor)) and isinstance(p.target, ast.Name) and p.target.id == key.id:
+            it = p.iter
+            lits = it if isinstance(it, (ast.Tuple, ast.List)) else None
+            if isinstance(it, ast.Name):                                 # `for _v in LOCATORS:` a literal tuple
+                vals = sc.values(it.id, it)
+                lits = vals[0] if len(vals) == 1 and isinstance(vals[0], (ast.Tuple, ast.List)) else None
+            if lits is not None:
+                return all(isinstance(e, ast.Constant) and e.value != REGISTRY for e in lits.elts)
+            if isinstance(it, ast.ListComp) and len(it.generators) == 1 and _is_environ(it.generators[0].iter) \
+                    and isinstance(it.generators[0].target, ast.Name) and _is_key(it.elt, it.generators[0].target.id):
+                k = it.generators[0].target.id
+                return any(_keeps(c, k) is False for c in it.generators[0].ifs)
+            return False
+        p = sc.parent.get(id(p))
+    return False
+
+
 def _comp_keeps(v: ast.DictComp) -> bool:
     """A comprehension that emits `k: v` UNCHANGED over a mapping's items() and whose every filter provably keeps the
     registry (a3 #61413 B6: the filter must test the comprehension's own key)."""
@@ -277,6 +373,27 @@ def _comp_keeps(v: ast.DictComp) -> bool:
     if not (_is_key(v.key, k) and _is_key(v.value, val)):
         return False
     return all(_keeps(c, k) is True for c in g.ifs)
+
+
+def _fold(pairs: list, sc: "_Scopes", depth: int, busy) -> str | None:
+    """A dict built from (key, value) entries IN ORDER, `None` keys being `**spreads` (a3 #61422 R1/R2): the LAST writer
+    of ASTRYX_COG_REGISTRY wins. A literal key or a literal-dict spread decides it (/etc never green); a spread that's
+    green (an inheriting or own-registry env) carries its pin; an unseen spread that isn't green changes nothing the gate
+    can see (STATED RESIDUAL: a registry arriving inside a mapping the gate can't read). None when nothing gave a pin."""
+    state = None
+    for k, val in pairs:
+        if k is None:
+            if isinstance(val, ast.Dict):
+                inner = _fold(list(zip(val.keys, val.values)), sc, depth, busy)
+                if inner is not None:
+                    state = inner
+                continue
+            kind = env_kind(val, sc, depth + 1, busy)
+            if kind in GREEN or kind.startswith("red:the host's live registry"):
+                state = kind
+        elif isinstance(k, ast.Constant) and k.value == REGISTRY:
+            state = _own_registry(val)
+    return state if state is None or state in GREEN else state
 
 
 def _merge(kinds: set) -> str | None:
@@ -344,12 +461,14 @@ def env_kind(v, sc: _Scopes, depth=0, busy=frozenset()) -> str:
         if name == "env_for_child":
             return "helper"
         reg = next((k.value for k in v.keywords if k.arg == REGISTRY), None)
-        if reg is not None:                  # dict(…, ASTRYX_COG_REGISTRY=…) or a builder handed one explicitly
+        if reg is not None and name != "dict":   # a builder handed the registry explicitly: that value decides
             return _own_registry(reg)
         if name == "copy" and isinstance(v.func, ast.Attribute) and _is_environ(v.func.value):
             return "inherit"
-        if name == "dict" and isinstance(v.func, ast.Name) and v.args:
-            return env_kind(v.args[0], sc, depth + 1, busy)               # dict(base, X=…) is what base is
+        if name == "dict" and isinstance(v.func, ast.Name):                # dict(base, X=…, **{…}): base, then keys
+            pairs = [(None, v.args[0])] if v.args else []
+            pairs += [(ast.Constant(value=k.arg) if k.arg else None, k.value) for k in v.keywords]
+            return _fold(pairs, sc, depth, busy) or "red:a dict() built from scratch"
         defs = []
         if isinstance(v.func, ast.Name):
             defs = sc.funcs.get(v.func.id, [])
@@ -362,14 +481,7 @@ def env_kind(v, sc: _Scopes, depth=0, busy=frozenset()) -> str:
         kind = _merge({env_kind(r, home, depth + 1, busy | {id(d)}) for r, home, d in rets})
         return kind or f"red:an env-builder call {ast.unparse(v.func)}() the gate can't follow"
     if isinstance(v, ast.Dict):
-        reg = next((val for k, val in zip(v.keys, v.values) if isinstance(k, ast.Constant) and k.value == REGISTRY), None)
-        if reg is not None:
-            return _own_registry(reg)
-        for b in [val for k, val in zip(v.keys, v.values) if k is None]:   # the `**x` unpacks
-            k = env_kind(b, sc, depth + 1, busy)
-            if k in GREEN:
-                return k
-        return "red:a dict built from scratch"
+        return _fold(list(zip(v.keys, v.values)), sc, depth, busy) or "red:a dict built from scratch"
     if isinstance(v, ast.DictComp) and len(v.generators) == 1:
         it = v.generators[0].iter
         if isinstance(it, ast.Call) and isinstance(it.func, ast.Attribute) and it.func.attr == "items" \
@@ -394,6 +506,9 @@ def env_kind(v, sc: _Scopes, depth=0, busy=frozenset()) -> str:
         cut = sc.mutated(v.id, v)
         if cut:
             return f"red:the name {v.id!r} can lose the registry ({cut[0]})"
+        live = sc.live_registry_write(v.id, v)
+        if live:
+            return "red:the host's live registry, written to the name"
         reg = sc.registry_set_before(v.id, v)
         if reg is not None:
             return _own_registry(reg)
@@ -415,6 +530,9 @@ def env_kind(v, sc: _Scopes, depth=0, busy=frozenset()) -> str:
                     kinds.add("red:an augmented assignment the gate can't see")
             else:
                 kinds.add(env_kind(x, sc, depth + 1, busy))
+        live = next((k for k in kinds if k.startswith("red:the host's live registry")), None)
+        if live:
+            return live                      # kept as-is, so a `**spread` of this name still decides the key
         return _merge(kinds) or f"red:the name {v.id!r} has a non-inheriting assignment"
     return f"red:a {type(v).__name__} the gate can't classify"
 
@@ -457,8 +575,33 @@ def _argv(call: ast.Call):
     return None
 
 
-def plain_child(call: ast.Call) -> bool:
-    """True when the spawned program provably never imports astryx (seed #61406 bucket 2; a3 #61413)."""
+def _safe_key(k) -> bool:
+    return isinstance(k, str) and (k in SAFE_ENV or k.startswith("LC_"))
+
+
+def env_keys_safe(v, sc: "_Scopes", depth=0) -> bool:
+    """True when the env provably carries ONLY safe keys (a3 #61422): a literal dict with no spreads, or a name every
+    assignment of which is one, written only with safe keys. Anything the gate can't see is not safe."""
+    if depth > 8:
+        return False
+    if isinstance(v, ast.Dict):
+        return None not in v.keys and all(isinstance(k, ast.Constant) and _safe_key(k.value) for k in v.keys)
+    if isinstance(v, ast.Name):
+        vals = sc.values(v.id, v)
+        if not vals or any(isinstance(x, ast.AugAssign) for x in vals):
+            return False
+        if any(k is None or not _safe_key(k) for k in sc.key_writes(v.id, v)):
+            return False
+        return all(env_keys_safe(x, sc, depth + 1) for x in vals)
+    return False
+
+
+def plain_child(call: ast.Call, sc: "_Scopes | None" = None) -> bool:
+    """True when the spawned program provably never imports astryx (seed #61406 bucket 2; a3 #61413, #61422): the
+    program is plain by its argv AND its env carries only safe keys (a scratch env can't smuggle code in)."""
+    env = next((k.value for k in call.keywords if k.arg == "env"), None)
+    if env is not None and not (sc is not None and env_keys_safe(env, sc)):
+        return False
     argv = _argv(call)
     if not argv or argv[0] is None:
         return False
@@ -473,14 +616,17 @@ def plain_child(call: ast.Call) -> bool:
     if prog == "systemctl":
         return not any(x in SYSTEMCTL_STARTS for x in rest if x is not None)
     if prog == "git":
-        lits = [x for x in rest if x is not None]
-        if "-c" in lits:
-            return False
-        # the subcommand is the first LITERAL non-option after git's own options (`-C <path>` skipped); an argument
-        # built at runtime before it means the gate can't see which subcommand runs
+        # git's own options before the subcommand, from an ALLOWLIST (`-C <path>` skipped with its argument); an
+        # unknown option, or an argument built at runtime before the subcommand, means it isn't provably plain
         i = 0
         while i < len(rest) and rest[i] is not None and rest[i].startswith("-"):
-            i += 2 if rest[i] in ("-C", "--git-dir", "--work-tree") else 1
+            o = rest[i]
+            if o in GIT_OPTS_ARG:
+                i += 2
+            elif o in GIT_OPTS or any(o.startswith(x + "=") for x in ("--git-dir", "--work-tree")):
+                i += 1
+            else:
+                return False
         sub = rest[i] if i < len(rest) else None
         return sub in GIT_READONLY
     return True
@@ -549,6 +695,15 @@ def classify_text(text: str, rel: str, tests_dir: Path | None = None, cache: dic
                     bare.add(a.asname or a.name)
     sc = _Scopes(tree)
     _import_siblings(sc, tests_dir, {} if cache is None else cache)
+    # a3 #61422 R5/R6: `inherit` is green only because the PARENT carries the pin; a file that pops or deletes it from
+    # os.environ (or clears os.environ) can hand that loss on, so none of its inherit sites is green
+    cuts_parent = any(
+        (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and _is_environ(n.func.value)
+         and (n.func.attr in ("clear", "popitem") or (n.func.attr == "pop" and n.args
+                                                       and not _never_registry(n.args[0], sc))))
+        or (isinstance(n, ast.Delete) and any(isinstance(t, ast.Subscript) and _is_environ(t.value)
+                                              and not _never_registry(t.slice, sc) for t in n.targets))
+        for n in ast.walk(tree))
     out = []
     for n in ast.walk(tree):
         if not (isinstance(n, ast.Call) and _spawner(n, aliases, bare)):
@@ -557,7 +712,10 @@ def classify_text(text: str, rel: str, tests_dir: Path | None = None, cache: dic
         if env is None:
             continue                                                     # no env= inherits the parent's
         kind = env_kind(env, sc)
-        bucket = kind if kind in GREEN else "child" if plain_child(n) else "declared" if _declared(lines, n) else "red"
+        if cuts_parent and kind == "inherit":
+            kind = "red:this file pops or deletes the PARENT's registry (os.environ), so inheriting carries no pin"
+        bucket = kind if kind in GREEN else "child" if plain_child(n, sc) else "declared" if _declared(lines, n) \
+            else "red"
         out.append({**_finding(rel, n.lineno, kind.split(":", 1)[1] if bucket == "red" else bucket), "bucket": bucket})
     return out
 

@@ -125,6 +125,44 @@ for label, body in (
          '        return {"PATH": "/bin"}\nfx = C()\nfx = D()\nsubprocess.run([sys.executable], env=fx.env())\n'),
         ("`|` with a right side the gate can't see",
          'x = {}\nsubprocess.run([sys.executable], env=os.environ | x)\n'),
+        # a3 #61422 round 2
+        ("R1 dict(os.environ, **{REGISTRY: '/etc/…'})",
+         'subprocess.run([sys.executable], env=dict(os.environ, **{"ASTRYX_COG_REGISTRY": "/etc/astryx/cog.json"}))\n'),
+        ("R2 a later ** spread wins the key: {**os.environ, **{REGISTRY: '/etc/…'}}",
+         'subprocess.run([sys.executable], env={**os.environ, **{"ASTRYX_COG_REGISTRY": "/etc/astryx/cog.json"}})\n'),
+        ("R4 e.update(REGISTRY='/etc/…')", 'e = os.environ.copy()\ne.update(ASTRYX_COG_REGISTRY="/etc/astryx/cog.json")\n'
+         'subprocess.run([sys.executable], env=e)\n'),
+        ("R5 the PARENT's os.environ popped, then inherited",
+         'os.environ.pop("ASTRYX_COG_REGISTRY", None)\nsubprocess.run([sys.executable], env=os.environ.copy())\n'),
+        ("R6 del os.environ[REGISTRY], then env=os.environ",
+         'del os.environ["ASTRYX_COG_REGISTRY"]\nsubprocess.run([sys.executable], env=os.environ)\n'),
+        ("R7 a plain shell body expanding $CMD from its env",
+         'subprocess.run(["bash", "-c", "$CMD"], env={"PATH": "/usr/bin", "CMD": "python3 -m astryx.orgs"})\n'),
+        ("R8 BASH_ENV sources a repo script into `bash -c true`",
+         'subprocess.run(["bash", "-c", "true"], env={"PATH": "/usr/bin", "BASH_ENV": "scripts/spawn.sh"})\n'),
+        ("R9 NODE_OPTIONS requires repo JS into `node -e 1`",
+         'subprocess.run(["node", "-e", "1"], env={"PATH": "/usr/bin", "NODE_OPTIONS": "--require ./x.mjs"})\n'),
+        ("R10 git --exec-path=", 'subprocess.run(["git", "--exec-path=/tmp/x", "log"], env={"PATH": "/usr/bin"})\n'),
+        ("R11 git --config-env", 'subprocess.run(["git", "--config-env=core.fsmonitor=FM", "status"], '
+         'env={"PATH": "/usr/bin", "FM": "x"})\n'),
+        ("R12 GIT_CONFIG_* in a plain git's env", 'subprocess.run(["git", "status"], env={"PATH": "/usr/bin", '
+         '"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.fsmonitor", "GIT_CONFIG_VALUE_0": "x"})\n'),
+        ("a ** spread of a NAME that writes the live registry",
+         'e = {"ASTRYX_COG_REGISTRY": "/etc/astryx/cog.json"}\n'
+         'subprocess.run([sys.executable], env={**os.environ, **e})\n'),
+        ("the LAST writer wins: an own path, then the live one by keyword",
+         'subprocess.run([sys.executable], env=dict({"ASTRYX_COG_REGISTRY": "/tmp/r"}, '
+         'ASTRYX_COG_REGISTRY="/etc/astryx/cog.json"))\n'),
+        ("a live registry update() inside an `if` (it doesn't dominate, but it may run)",
+         'e = os.environ.copy()\nif sys.argv:\n    e.update(ASTRYX_COG_REGISTRY="/etc/astryx/cog.json")\n'
+         'subprocess.run([sys.executable], env=e)\n'),
+        ("a pop loop over a literal tuple that INCLUDES the registry",
+         'L = ("GIT_DIR", "ASTRYX_COG_REGISTRY")\nfor _v in L:\n    os.environ.pop(_v, None)\n'
+         'subprocess.run([sys.executable], env=os.environ.copy())\n'),
+        ("a plain program handed an env the gate can't see", 'def mk():\n    return {}\n'
+         'subprocess.run(["git", "status"], env=mk())\n'),
+        ("a loop over os.environ that deletes keys the gate can't bound",
+         'for k in list(os.environ):\n    del os.environ[k]\nsubprocess.run([sys.executable], env=os.environ)\n'),
 ):
     check(f"RED {label}", len(red(body)) == 1, str(red(body)))
 check("RED a file that doesn't parse is a finding, never \"no sites\" (its sites would vanish)",
@@ -198,6 +236,24 @@ for label, body, want in (
          'def arms(fx):\n    subprocess.run([sys.executable], env=fx.env())\narms(C())\n', ["inherit"]),
         ("git log, a read-only subcommand after -C <path>", 'r = "/tmp"\nsubprocess.run(["git", "-C", r, "log"], '
          'env={})\n', ["child"]),
+        ("a plain git with a SAFE-keyed literal env (PATH, HOME, LC_*)",
+         'subprocess.run(["git", "--no-pager", "status"], env={"PATH": "/usr/bin", "HOME": "/tmp", "LC_ALL": "C"})\n',
+         ["child"]),
+        ("R1's control: dict(os.environ, **{REGISTRY: <own path>})",
+         'subprocess.run([sys.executable], env=dict(os.environ, **{"ASTRYX_COG_REGISTRY": "/tmp/r"}))\n',
+         ["own-registry"]),
+        ("R2's control: the LAST writer wins, an own path after /etc",
+         'subprocess.run([sys.executable], env={"ASTRYX_COG_REGISTRY": "/etc/astryx/cog.json", '
+         '**{"ASTRYX_COG_REGISTRY": "/tmp/r"}})\n', ["own-registry"]),
+        ("R4's control: e.update(REGISTRY=<own path>)",
+         'e = {"PATH": "/bin"}\ne.update(ASTRYX_COG_REGISTRY="/tmp/r")\nsubprocess.run([sys.executable], env=e)\n',
+         ["own-registry"]),
+        ("R5's control: a GIT_* scrub of os.environ (merge_ready's shape) keeps inherit green",
+         'for _k in [k for k in os.environ if k.startswith("GIT_")]:\n    del os.environ[_k]\n'
+         'subprocess.run([sys.executable], env=os.environ.copy())\n', ["inherit"]),
+        ("…and a pop over a literal tuple of other keys (git_env_isolation's LOCATORS)",
+         'L = ("GIT_DIR", "GIT_WORK_TREE")\nfor _v in L:\n    os.environ.pop(_v, None)\n'
+         'subprocess.run([sys.executable], env=os.environ.copy())\n', ["inherit"]),
         ("a `# own-env: <why>` on the line above", '# own-env: asserts its own env\n' + PY, ["declared"]),
         ("a `# own-env: <why>` on the call's own line",
          'subprocess.run([sys.executable], env={})  # own-env: the arm\n', ["declared"]),
@@ -234,8 +290,10 @@ reds = [c for c in cen if c["bucket"] == "red"]
 check("every subprocess env in tests/ is classified: 0 RED", not reds,
       "; ".join(f"{c['file']}:{c['line']} {c['why']}" for c in reds[:8]))
 by = {b: sum(1 for c in cen if c["bucket"] == b) for b in ("inherit", "helper", "own-registry", "child", "declared")}
-check("anti-vacuity: the gate saw the tree (≥150 sites, every green bucket non-empty)",
-      len(cen) >= 150 and all(by.values()), f"{len(cen)} {by}")
+# `child` may be empty on the live tree: since a3 #61422 a plain program also needs a provably safe-keyed env, and no
+# live site hands one a literal env; the bucket is proven both ways by the fixtures above
+check("anti-vacuity: the gate saw the tree (≥150 sites, every green bucket but `child` non-empty)",
+      len(cen) >= 150 and all(n for b, n in by.items() if b != "child"), f"{len(cen)} {by}")
 dec = [c for c in cen if c["bucket"] == "declared"]
 check("…and the declared bucket stays the SMALL one (fewer than a sixth of all sites)", len(dec) * 6 < len(cen),
       f"{len(dec)} of {len(cen)}")

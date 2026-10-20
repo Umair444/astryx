@@ -42,8 +42,7 @@ MUTANTS = {
     "C11 a registry set anywhere in scope counts, dominating or not (B16)":
         ("                        if stmt in body and body.index(stmt) < i:", "                        if True:"),
     "C12 a pop of the registry is ignored (B1)":
-        ('                elif m == "pop" and n.args and not (isinstance(n.args[0], ast.Constant) '
-         'and n.args[0].value != REGISTRY):',
+        ('                elif m == "pop" and n.args and not _never_registry(n.args[0], self):',
          '                elif m == "pop" and False:'),
     "C13 a del of the registry is ignored (B2, B3)":
         ("            if isinstance(n, ast.Delete):", "            if False:"),
@@ -64,4 +63,31 @@ MUTANTS = {
     "C19 a sibling module's every builder comes in, imported or not (B14: keyed by bare name)":
         ("            if a.name in other.funcs:\n                sc.funcs.setdefault(local, []).extend(other.funcs[a.name])",
          "            for fn_, ds_ in other.funcs.items():\n                sc.funcs.setdefault(fn_, []).extend(ds_)"),
+    "C20 a plain program's env isn't checked (R7–R9, R12: BASH_ENV, NODE_OPTIONS, GIT_CONFIG_* ride in)":
+        ("    if env is not None and not (sc is not None and env_keys_safe(env, sc)):",
+         "    if False:"),
+    "C21 any key counts as safe":
+        ("        return None not in v.keys and all(isinstance(k, ast.Constant) and _safe_key(k.value) for k in v.keys)",
+         "        return None not in v.keys"),
+    "C22 git's unknown global options pass (R10 --exec-path, R11 --config-env)":
+        ("            else:\n                return False\n        sub = rest[i] if i < len(rest) else None",
+         "            else:\n                i += 1\n        sub = rest[i] if i < len(rest) else None"),
+    "C23 a ** spread never decides the key (R1/R2: the /etc literal inside it is missed)":
+        ('            if kind in GREEN or kind.startswith("red:the host\'s live registry"):',
+         "            if kind in GREEN:"),
+    "C24 the FIRST writer wins, not the last (R2's control)":
+        ("            state = _own_registry(val)", "            state = state or _own_registry(val)"),
+    "C25 update()/setdefault() writes of the registry are never recorded (R4)":
+        ("                for val in vals:\n                    self.reg_sets.setdefault(",
+         "                for val in ():\n                    self.reg_sets.setdefault("),
+    "C26 a live registry written to a name is ignored (R4: the dominance check alone decides)":
+        ("        if live:\n            return \"red:the host's live registry, written to the name\"",
+         "        if False:\n            return \"red:the host's live registry, written to the name\""),
+    "C27 the PARENT's registry popped or deleted never matters (R5/R6)":
+        ('        if cuts_parent and kind == "inherit":', '        if False:'),
+    "C28 a loop over ANY literal tuple is trusted, the registry in it or not":
+        ("                return all(isinstance(e, ast.Constant) and e.value != REGISTRY for e in lits.elts)",
+         "                return True"),
+    "C29 a GIT_* scrub loop is distrusted (merge_ready's shape reads red: a false positive)":
+        ("                return any(_keeps(c, k) is False for c in it.generators[0].ifs)", "                return False"),
 }
