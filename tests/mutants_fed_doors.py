@@ -42,4 +42,12 @@ MUTANTS = {
         ("    _ONE = root()                       # one org", "    _ONE = root() if ESTATE is not None else None  # one org"),
     "W14 the relay reads the cog's FIRST org's database, not the door's":
         ("        lambda: _ONE.pool, org_ok,", "        lambda: next(iter(cog().values())).pool, org_ok,"),
+    "W15 a new _env key spelled with single quotes reaches the checkout .env unset (a2 #61438 A-1)":
+        ('RELAY_BACKOFF = float(_env("ASTRYX_RELAY_BACKOFF", "60"))', "RELAY_BACKOFF = float(_env('ASTRYX_PROBE_X', \"60\"))"),
+    "W16 an _env key held in a name, not a literal, is unseen":
+        ('RELAY_BACKOFF = float(_env("ASTRYX_RELAY_BACKOFF", "60"))',
+         'RELAY_BACKOFF = float(_env(_K := "ASTRYX_PROBE_Y", "60"))'),
+    "W17 _env passed on as a value (the read happens through another name)":
+        ('RELAY_BACKOFF = float(_env("ASTRYX_RELAY_BACKOFF", "60"))',
+         'RELAY_BACKOFF = float((lambda f: f("ASTRYX_PROBE_Z", "60"))(_env))'),
 }

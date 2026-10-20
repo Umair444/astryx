@@ -10,12 +10,12 @@ the mailbox past the relay), a duplicate is dropped, the directory is opt-in, re
 the target's key, and the wizard's .env edits hold for each choice (temp .env files).
 Every wait is on a condition with a named deadline. The live database is never touched.
 """
+import ast
 import asyncio
 import contextlib
 import io
 import json
 import os
-import re
 import socket
 import subprocess
 import sys
@@ -42,6 +42,26 @@ from bridges import relay  # noqa: E402
 from astryx.federation import federate, introduce as intro  # noqa: E402
 from astryx.security.sqlguard.estate import unavailable  # noqa: E402
 from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db  # noqa: E402
+
+
+def env_keys(src):
+    """(keys, bad) of the gateway's _env reads, from its AST, never its spelling (a2 #61438 A-1): every call to the
+    name _env whose first argument is a str literal is a key; a call with any other first argument (a variable, an
+    f-string, a starred list) and any use of _env that isn't a call (passed on, aliased) is bad, by line. Bad is a
+    FAIL, never a skip: a key the test can't name is one no fixture can set."""
+    keys, bad, called, tree = set(), [], set(), ast.parse(src)
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "_env":
+            called.add(id(n.func))
+            a = n.args[0] if n.args else None
+            if isinstance(a, ast.Constant) and isinstance(a.value, str):
+                keys.add(a.value)
+            else:
+                bad.append(n.lineno)
+    bad += [n.lineno for n in ast.walk(tree)
+            if isinstance(n, ast.Name) and n.id == "_env" and id(n) not in called]
+    return keys, sorted(bad)
+
 
 PY = sys.executable
 B_RATE = 5                                   # B's inbox cap per window (ASTRYX_INBOX_RATE)
@@ -152,10 +172,10 @@ def run(fr, fa, fb, tmp):
         B = Org("orgb.test", fb, held(True), tmp, relay_url=rel, listed=False,
                 extra={"ASTRYX_INBOX_RATE": str(B_RATE), "ASTRYX_RATE_WINDOW": "4", "ASTRYX_RELAY_BACKOFF": "1"})
         orgs.append(B)
-        read = set(re.findall(r'_env\("([A-Z_]+)"', (REPO / "bridges" / "gateway.py").read_text()))
+        read, bad = env_keys((REPO / "bridges" / "gateway.py").read_text())
         arm("every key the gateway reads through _env is set for each gateway (an unset one falls back to the "
-            "checkout's .env: in the main checkout, the LIVE org's)",
-            bool(read) and all(read <= set(o.env) for o in orgs), {o.name: sorted(read - set(o.env)) for o in orgs})
+            "checkout's .env: in the main checkout, the LIVE org's)", bool(read) and not bad
+            and all(read <= set(o.env) for o in orgs), {**{o.name: sorted(read - set(o.env)) for o in orgs}, "bad": bad})
         for o in orgs:
             if not o.up():
                 arm(f"{o.name} gateway starts", False, o.tail())

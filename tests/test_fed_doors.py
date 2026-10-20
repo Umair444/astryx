@@ -24,9 +24,9 @@ that org's own peers and messages, so per-org trust is exactly "which pool the d
     R3 one org hosting a relay: /relay/host's url is its bare base (no /o/), on its own database
 Exit 0 pass · 1 fail.
 """
+import ast
 import json
 import os
-import re
 import subprocess
 import sys
 import tempfile
@@ -46,6 +46,25 @@ fails = []
 AXES = {"ASTRYX_RELAY": "", "ASTRYX_RELAY_LISTED": "0", "ASTRYX_RELAY_HOST": "0", "ASTRYX_RELAY_REACH_PRIVATE": "0",
         "ASTRYX_INBOX_RATE": "60", "ASTRYX_RATE_WINDOW": "3600", "ASTRYX_RELAY_BACKOFF": "60"}
 ONE_ENV = []                                    # the ASTRYX_* keys of each one-org child's env, as run() built it
+
+
+def env_keys(src):
+    """(keys, bad) of the gateway's _env reads, from its AST, never its spelling (a2 #61438 A-1): every call to the
+    name _env whose first argument is a str literal is a key; a call with any other first argument (a variable, an
+    f-string, a starred list) and any use of _env that isn't a call (passed on, aliased) is bad, by line. Bad is a
+    FAIL, never a skip: a key the test can't name is one no fixture can set."""
+    keys, bad, called, tree = set(), [], set(), ast.parse(src)
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "_env":
+            called.add(id(n.func))
+            a = n.args[0] if n.args else None
+            if isinstance(a, ast.Constant) and isinstance(a.value, str):
+                keys.add(a.value)
+            else:
+                bad.append(n.lineno)
+    bad += [n.lineno for n in ast.walk(tree)
+            if isinstance(n, ast.Name) and n.id == "_env" and id(n) not in called]
+    return keys, sorted(bad)
 
 CHILD = r"""
 import importlib.util, json, sys, time, uuid
@@ -287,10 +306,10 @@ def main():
                                                  "url": "https://one.example/"}], str(o["get /relay/host"]))
             check("R3 the relay reads the org's database", o["get /relay/directory"] == [200, {"orgs": []}]
                   and o["relay read"] == {"fxone": ["SELECT"]}, f'{o["get /relay/directory"]} {o["relay read"]}')
-    read = set(re.findall(r'_env\("([A-Z_]+)"', SRC.read_text()))
+    read, bad = env_keys(SRC.read_text())
     check("every key the gateway reads through _env is set in each one-org child (none falls back to a checkout .env)",
-          bool(read) and len(ONE_ENV) == 2 and all(read <= e for e in ONE_ENV),
-          f"unset: {[sorted(read - e) for e in ONE_ENV]}")
+          bool(read) and not bad and len(ONE_ENV) == 2 and all(read <= e for e in ONE_ENV),
+          f"unset: {[sorted(read - e) for e in ONE_ENV]}, _env not on a literal key at lines {bad}")
     print(f"{'FAIL' if fails else 'PASS'}: {len(fails)} failing")
     return 1 if fails else 0
 
