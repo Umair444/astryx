@@ -1077,7 +1077,7 @@ def propagate_arms():
     import os
     sys.path.insert(0, str(REPO))
     from astryx.security.sqlguard import propagate
-    saved = {k: v for k, v in os.environ.items() if k.startswith("ASTRYX_SQLGUARD_")}
+    saved = {k: v for k, v in os.environ.items() if k.startswith("ASTRYX_SQLGUARD_") or k == "ASTRYX_COG_REGISTRY"}
     try:
         for k in saved:
             del os.environ[k]
@@ -1092,8 +1092,32 @@ def propagate_arms():
         check("F-a ...puts the shim FIRST and keeps the oracle's own PYTHONPATH",
               pp[0].endswith(os.path.join("sqlguard", "shim")) and pp[1:] == ["/oracle/own"], out["PYTHONPATH"])
         check("F-a ...and never mutates the dict it was given", base == {"PATH": "/usr/bin", "PYTHONPATH": "/oracle/own"})
-    finally:
+        # the COG REGISTRY pin (steward #61378, seed #61381): carried from the parent, never invented, never overriding
         for k in ("ASTRYX_SQLGUARD_DIR", "ASTRYX_SQLGUARD_GATE", "ASTRYX_SQLGUARD_RUN"):
+            os.environ.pop(k, None)
+        check("F-c no parent pin: nothing is invented (the stated env comes back unchanged)",
+              propagate.env_for_child(base) == base)
+        pin = "/tmp/astryx-gate-probe-no-registry/cog.json"
+        os.environ["ASTRYX_COG_REGISTRY"] = pin
+        check("F-c outside a trace, the parent's pin is CARRIED and nothing else is added (a hand run = a gate run)",
+              propagate.env_for_child(base) == {**base, "ASTRYX_COG_REGISTRY": pin}, str(propagate.env_for_child(base)))
+        own = {**base, "ASTRYX_COG_REGISTRY": "/oracle/own/cog.json"}
+        check("F-c an oracle's OWN registry (test_canvas_cog's) is kept, never overridden by the parent's",
+              propagate.env_for_child(own)["ASTRYX_COG_REGISTRY"] == "/oracle/own/cog.json")
+        os.environ.update(ASTRYX_SQLGUARD_DIR="/tmp/sg-probe", ASTRYX_SQLGUARD_GATE="g", ASTRYX_SQLGUARD_RUN="r")
+        extra = set(propagate.env_for_child(base)) - set(base)
+        check("F-c inside a trace: the sqlguard variables and the parent's pin, nothing else",
+              extra == {"ASTRYX_SQLGUARD_DIR", "ASTRYX_SQLGUARD_GATE", "ASTRYX_SQLGUARD_RUN", "ASTRYX_COG_REGISTRY"},
+              str(extra))
+        # a tool-ledger-shaped child: a FRESH env (PATH, agent) through the helper still reads the parent's registry
+        import subprocess as _sp
+        r = _sp.run([sys.executable, "-c", "import os; print(os.environ.get('ASTRYX_COG_REGISTRY'))"],
+                    env=propagate.env_for_child({"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "ASTRYX_AGENT": "alice"}),
+                    capture_output=True, text=True)
+        check("F-c a fresh-env child launched through the helper reads the PARENT's registry pin, never the host's",
+              r.stdout.strip() == pin, r.stdout + r.stderr)
+    finally:
+        for k in ("ASTRYX_SQLGUARD_DIR", "ASTRYX_SQLGUARD_GATE", "ASTRYX_SQLGUARD_RUN", "ASTRYX_COG_REGISTRY"):
             os.environ.pop(k, None)
         os.environ.update(saved)
 
