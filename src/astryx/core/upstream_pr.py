@@ -65,7 +65,7 @@ def setting(name: str, default: str = "", repo: Path = REPO) -> str:
     v = config.org_env(name)
     if v:
         return v
-    f = (paths.estate(__file__) if Path(repo).resolve() == REPO.resolve() else Path(repo)) / ".env"
+    f = (paths.estate(__file__) if Path(repo).resolve() == REPO.resolve() else Path(repo)) / ".env"   # org-home: this tree reads its ESTATE (paths.estate); another tree, its own
     for line in (f.read_text(errors="replace").splitlines() if f.is_file() else []):
         if line.startswith(name + "="):
             return line.split("=", 1)[1].strip().strip('"').strip("'")

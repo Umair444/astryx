@@ -46,8 +46,8 @@ def marketplace(repo: Path = REPO) -> str:
 
 def seed_agent(repo: Path = REPO) -> str:
     head = (repo / "plugin" / "templates" / "seed-agent.md").read_text()
-    seed = (repo / "agents" / "seed" / "seed.md").read_text()
-    onboard = (repo / "agents" / "seed" / "onboard.md").read_text()
+    seed = (repo / "agents" / "seed" / "seed.md").read_text()   # org-home: the SHIPPED seed charter (tracked, the code tree's), never an org's roster
+    onboard = (repo / "agents" / "seed" / "onboard.md").read_text()   # org-home: the SHIPPED onboard page (tracked)
     return head + seed.rstrip("\n") + "\n\n---\n\n" + onboard.rstrip("\n") + "\n"
 
 
@@ -65,7 +65,7 @@ def files(repo: Path = REPO) -> dict[str, bytes]:
     out["package.json"] = (repo / "channel" / "package.json").read_bytes()
     out["package-lock.json"] = (repo / "channel" / "package-lock.json").read_bytes()
     out["agents/seed.md"] = seed_agent(repo).encode()
-    out["skills/onboard/onboard.md"] = (repo / "agents" / "seed" / "onboard.md").read_bytes()
+    out["skills/onboard/onboard.md"] = (repo / "agents" / "seed" / "onboard.md").read_bytes()   # org-home: the SHIPPED onboard page (tracked)
     out[".claude-plugin/marketplace.json"] = marketplace(repo).encode()
     return out
 

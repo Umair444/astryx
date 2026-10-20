@@ -339,7 +339,7 @@ def main():
               v.get("have") == [] and sorted(v.get("healed") or []) == sorted(seats)[:4], str(v))
 
         print("\nR6 THE DRIFT GATES ON A REGISTRY HOST")
-        trig = Path(os.environ.get("SERVICE_DEPLOY_DRIFT_SRC") or ESTATE / "triggers" / "seed" / "service_deploy_drift.py")
+        trig = Path(os.environ.get("SERVICE_DEPLOY_DRIFT_SRC") or ESTATE / "triggers" / "seed" / "service_deploy_drift.py")   # org-home: ESTATE is paths.estate()'s (the org's HOME in a cog)
         if trig.exists():
             g = runpy.run_path(str(trig), run_name="sdd_rehearsal")
             g["ROOT"] = co

@@ -119,7 +119,7 @@ def main(argv=None) -> int:
     if extract == LIVE:
         print("review_live: the extract IS the live repo; run the command directly", file=sys.stderr)
         return 2
-    if not (LIVE / "triggers").is_dir():
+    if not (LIVE / "triggers").is_dir():   # org-home: LIVE is the live repo by name (the review's subject)
         print(f"review_live: WARNING {LIVE} holds no triggers/: it is not the live host's tree", file=sys.stderr)
     try:
         env = child_env()

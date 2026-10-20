@@ -189,7 +189,7 @@ LIVE = Path(os.environ.get("ASTRYX_LIVE_REPO") or live_root(REPO))
 
 def census():
     try:                     # the LIVE org's DSN through the ONE resolver (astryx.config.dsn), its .env only as before
-        dsn = _astryx("config", "dsn", LIVE / ".env", None, False)
+        dsn = _astryx("config", "dsn", LIVE / ".env", None, False)   # org-home: LIVE is the live repo by name (ASTRYX_LIVE_REPO or live_root)
     except LookupError:
         dsn = ""
     try:
@@ -247,7 +247,7 @@ shutil_.rmtree(_g, ignore_errors=True)
 
 searched = True
 if "--census" in sys.argv:            # its own check.sh line, so a no-DSN tree reads only the CENSUS as NOT SEARCHED
-    E.HOMES, E.MEDIA, E.TIER = LIVE / "homes", LIVE / "media", LIVE / "tier"
+    E.HOMES, E.MEDIA, E.TIER = LIVE / "homes", LIVE / "media", LIVE / "tier"   # org-home: LIVE is the live repo by name (ASTRYX_LIVE_REPO or live_root)
     E.SCRATCH_BASE = Path(f"/tmp/claude-{os.getuid()}")
     res = census()
 else:

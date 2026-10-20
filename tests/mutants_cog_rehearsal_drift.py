@@ -14,7 +14,7 @@ from org_estate import astryx_call  # noqa: E402
 
 ESTATE = astryx_call(REPO, "paths", "estate", __file__)
 
-SUBJECT = Path(os.environ.get("SERVICE_DEPLOY_DRIFT_SRC", ESTATE / "triggers" / "seed" / "service_deploy_drift.py"))
+SUBJECT = Path(os.environ.get("SERVICE_DEPLOY_DRIFT_SRC", ESTATE / "triggers" / "seed" / "service_deploy_drift.py"))   # org-home: ESTATE is paths.estate()'s (the org's HOME in a cog)
 ORACLE = REPO / "tests" / "test_cog_rehearsal.py"
 ENV = "SERVICE_DEPLOY_DRIFT_SRC"
 TIMEOUT = 600

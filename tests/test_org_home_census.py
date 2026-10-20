@@ -180,7 +180,7 @@ def main():
         bare = Path(td) / "pause.sh"
         bare.write_text("\n".join(ln.split("   # org-home:")[0].split("            # org-home:")[0]
                                   for ln in (REPO / "scripts" / "pause.sh").read_text().split("\n")))
-        rb = oc.census(REPO, {**seam_overrides(), "scripts/pause.sh": bare})
+        rb = oc.census(REPO, {**seam_overrides(), "scripts/pause.sh": bare}, only={"scripts/pause.sh"})
         hit = [r for r in rb["estate"] + rb["namespace"] if r["file"] == "scripts/pause.sh"]
         check("pause.sh, its declarations stripped: its checkout-relative read is a FINDING (never `guarded`)",
               any(r["what"] == "var/" for r in hit), str(hit))
@@ -191,12 +191,64 @@ def main():
                                    ("control", '_rok="${ORGH:-$ROOT}/backups/.last-restore-ok"', False)):   # org-home: its planted control
             pv = Path(td) / f"vitals_{tag}.sh"
             pv.write_text("\n".join(vsrc + [line]) + "\n")
-            rv = oc.census(REPO, {**seam_overrides(), "skills/org-vitals/vitals.sh": pv})
+            rv = oc.census(REPO, {**seam_overrides(), "skills/org-vitals/vitals.sh": pv},
+                           only={"skills/org-vitals/vitals.sh"})
             at = [k for k in ("estate", "guarded") for r in rv[k]
                   if r["file"] == "skills/org-vitals/vitals.sh" and r["line"] == len(vsrc) + 1]
             check(f"vitals.sh + {line!r}: " + ("a FINDING ($ORGH only in its trailing comment)" if finding
                                                 else "a site, exempt: relative to $ORGH (refresh.sh:49's shape; the control)"),
                   at == (["estate"] if finding else ["guarded"]), str(at))
+    print("\nC1c A GUARDED FILE'S SERVING REGIONS ARE JUDGED (a2 #61513 G1: init.sh's doctor and units())")
+    regs = {r["file"]: r["lines"] for r in res.get("serving_regions", [])}
+    check("init.sh declares two serving regions (units(), doctor), and it is NOT a serving file", len(regs.get(
+        "init.sh", [])) == 2 and "init.sh" not in res.get("serving_files", []), str(regs))
+    isrc = (REPO / "init.sh").read_text().rstrip("\n").split("\n")
+    dopen = next(i for i, ln in enumerate(isrc) if ln.startswith("# >>> org-serving: doctor"))
+    dclose = next(i for i in range(dopen, len(isrc)) if isrc[i].startswith("# <<< org-serving"))
+    uopen = next(i for i, ln in enumerate(isrc) if ln.startswith("# >>> org-serving: units()"))
+
+    def planted(tag, at, line, src=None):
+        s = list(src if src is not None else isrc)
+        s.insert(at, line)
+        f = Path(td) / f"init_{tag}.sh"
+        f.write_text("\n".join(s) + "\n")
+        r = oc.census(REPO, {**seam_overrides(), "init.sh": f}, only={"init.sh"})
+        return [k for k in ("estate", "guarded", "namespace") for x in r[k] if x["file"] == "init.sh" and x["line"] == at + 1]
+    with tempfile.TemporaryDirectory() as td:
+        probe = '  cat .env >/dev/null'   # org-home: the planted probe line (its own copy is undeclared)
+        check("a checkout-relative .env read planted INSIDE the doctor region is a FINDING",
+              planted("in", dopen + 2, probe.split("   #")[0]) == ["estate"])
+        check("...the same line OUTSIDE any region (a setup path) stays guarded (the file refuses in a cog)",
+              planted("out", dopen, probe.split("   #")[0]) == ["guarded"])
+        unclosed = [ln for i, ln in enumerate(isrc) if i != dclose]
+        check("an UNCLOSED region runs to the end of the file (it judges more): a line at the end is a FINDING",
+              planted("open", len(unclosed), probe.split("   #")[0], unclosed) == ["estate"])
+        check("in units(): a unit file's Description= naming sensors/ is prose, never a read",
+              planted("desc", uopen + 2, "Description=served from sensors/<agent>/*.py") == [])   # org-home: probe text
+        check("...and `cat sensors/x` there is a FINDING (the control)",
+              planted("cat", uopen + 2, "  cat sensors/x >/dev/null") == ["estate"])   # org-home: probe text
+        bare = Path(td) / "init_bare.sh"
+        bare.write_text("\n".join(ln.split("   # org-home:")[0] for ln in isrc) + "\n")
+        rb = oc.census(REPO, {**seam_overrides(), "init.sh": bare}, only={"init.sh"})
+        hit = [x for x in rb["estate"] + rb["namespace"] if x["file"] == "init.sh"]
+        check("init.sh, its declarations stripped: the regions' 4 declared reads (units/ x2, tmux x2) are FINDINGS",
+              len(hit) == 4 and {x["what"] for x in hit} == {"units/", "tmux on the default socket"}, str(hit))
+    print("\nC1d A PYTHON READ THROUGH AN ALIAS OF A BASE IS JUDGED (a2 #61513 G2: trigger_names' `repo`)")
+    with tempfile.TemporaryDirectory() as td:
+        head = "from pathlib import Path\nfrom astryx import paths\nREPO = Path(__file__).resolve().parents[3]\n"
+        for tag, body, want in (
+                ("default", "def f(repo: Path = REPO):\n    return repo / \"local.md\"\n", True),
+                ("assign", "base = REPO\nENV = base / \".env\"\n", True),
+                ("or", "def g(root=None):\n    root = root or REPO\n    return root / \"triggers\" / \"x\"\n", True),
+                ("estate", "est = paths.estate(__file__)\nENV = est / \".env\"\n", False),
+                ("declared", "base = REPO\nENV = base / \".env\"   # org-home: a probe's declared read\n", False)):
+            f = Path(td) / f"alias_{tag}.py"
+            f.write_text(head + body)
+            r = oc.census(REPO, {**seam_overrides(), "src/astryx/core/upstream_pr.py": f}, only={"src/astryx/core/upstream_pr.py"})
+            hit = [x for x in r["estate"] if x["file"] == "src/astryx/core/upstream_pr.py"]
+            check(f"{tag}: " + ("a FINDING through the alias" if want else "no finding (" + (
+                "an estate-derived name is no base" if tag == "estate" else "declared") + ")"),
+                  bool(hit) == want, str(hit))
     print(f"  ·  guarded: {len(res['guarded'])} site(s) in {len(res['guarded_files'])} file(s); declared: "
           f"{len(res['declared'])}; org names derived: {len(res['org_names'])}")
 

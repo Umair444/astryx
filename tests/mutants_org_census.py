@@ -12,7 +12,7 @@ REPO = Path(__file__).resolve().parent.parent
 
 SUBJECT = REPO / "devtools/org_census.py"
 ORACLE = REPO / "tests" / "test_org_home_census.py"
-TIMEOUT = 360   # the census oracle reads the whole tree: ~130 s at load 8 (10-18), past the 120 s default
+TIMEOUT = 900   # the census walks the whole tree (~95 s on this host), and the oracle runs it once plus per-file arms
 ENV = "ORG_CENSUS_SRC"
 
 MUTANTS = {
@@ -52,4 +52,19 @@ MUTANTS = {
          '                    res["guarded"].append(row)'),
     "N9 the $ORGH exemption reads the RAW line, so `$ORGH` in a trailing comment exempts a checkout read (a2 #60989 A-1)":
         ('ORGH_REL.search(sh_code(raw))', 'ORGH_REL.search(raw)'),
+    "G1a a serving region is ignored (init.sh's doctor body judged by no gate again: a2 #61513)":
+        ("                elif sv or any(a <= n <= b for a, b in regions):", "                elif sv:"),
+    "G1b a region serves the WHOLE file (init.sh's refusing setup verbs read as serving)":
+        ("                elif sv or any(a <= n <= b for a, b in regions):", "                elif sv or bool(regions):"),
+    "G1c an unclosed region is dropped (it judges less, never more)":
+        ("    if start is not None:\n        out.append((start, 10 ** 9))\n", ""),
+    "G1d a unit file's Description= line is read as a path":
+        ('|^\\s*Description=""", code)), None)', '""", code)), None)'),
+    "G2a no alias is a base (a python read through `repo = repo or REPO` unseen again: trigger_names' miss)":
+        ('estate_sites(rel, lines, toks, cd_base, base_aliases(src))', 'estate_sites(rel, lines, toks, cd_base)'),
+    "G2b a parameter's BASE default makes no alias (`def f(repo=REPO)`)":
+        ("            for arg, d in zip(pos[len(pos) - len(a.defaults):], a.defaults):\n                if base.search(seg(d)):\n"
+         "                    out.add(arg.arg)\n", ""),
+    "G2c an assignment from a BASE makes no alias (`base = REPO`, `root = root or REPO`)":
+        ("                if isinstance(tg, ast.Name):\n                    out.add(tg.id)\n", "                pass\n"),
 }

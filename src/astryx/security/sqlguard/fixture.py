@@ -210,12 +210,12 @@ def live_dsn() -> str:
     which an oracle binds to a fixture; a fixture DSN in it is refused loud, not used as the admin."""
     base = REPO if os.environ.get("ASTRYX_SQLGUARD_ROOT") else paths.estate(__file__)
     v = os.environ.get("ASTRYX_FIXTURE_ADMIN_DSN")
-    if v and not (base / ".env").is_file():
+    if v and not (base / ".env").is_file():   # org-home: base is paths.estate() unless ASTRYX_SQLGUARD_ROOT names a tree
         from astryx import orgs
         if orgs.is_fixture(v):
             raise ValueError("ASTRYX_FIXTURE_ADMIN_DSN names a fixture database: the admin connection is the org's own")
         return v
-    return config.dsn(base / ".env", env_first=False)
+    return config.dsn(base / ".env", env_first=False)   # org-home: base is paths.estate() unless ASTRYX_SQLGUARD_ROOT names a tree
 
 
 def file_sha() -> str:

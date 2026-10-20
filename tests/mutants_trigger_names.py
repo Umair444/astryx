@@ -94,8 +94,8 @@ MUTANTS = {
         ("f\"there: {'; '.join(blind[:3])}. Exit: fix or move that file (or \"",
          "f\"there: {'; '.join(blind[:3])}. (or \""),
     "a cog org's triggers are the CODE tree's, not its HOME's (S7b: lab's doctor read the primary's triggers)":
-        ('        root = (paths.estate(__file__) if repo == REPO.resolve() else repo) / "triggers"\n',
-         '        root = repo / "triggers"\n'),
+        ('        root = (paths.estate(__file__) if repo == REPO.resolve() else repo) / "triggers"',
+         '        root = repo / "triggers"'),
     "a cog with no HOME carried crashes (NoHome), never defers":
         ("    except paths.NoHome as e:                  # a cog of several orgs", "    except ImportError as e:                  # a cog of several orgs"),
 }

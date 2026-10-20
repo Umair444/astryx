@@ -195,7 +195,7 @@ def main(argv) -> int:
         from astryx import config, paths     # the ONE resolver (plan-11324 S3a): the environment, else the .env of
         root = REPO if os.environ.get("ASTRYX_CENSUS_ROOT") else paths.estate(__file__)   # the scanned root's org
         try:
-            dsn = config.dsn(root / ".env")      # never printed
+            dsn = config.dsn(root / ".env")      # never printed   # org-home: root is paths.estate() unless ASTRYX_CENSUS_ROOT names a tree
         except LookupError:
             dsn = None
         lv = live(dsn) if dsn else {"error": "no ASTRYX_DSN"}

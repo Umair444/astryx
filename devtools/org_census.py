@@ -39,6 +39,7 @@ test's fixture-bound read (a4 #58439 precision 2). Everything else is a finding.
 from __future__ import annotations
 
 import argparse
+import functools
 import ast
 import fnmatch
 import io
@@ -205,19 +206,64 @@ def _bare_path(entry: str, tok: str, bare: str) -> bool:
     return bool(re.search(lead + tok + r"/", bare) or re.search(PATH_CMD + r"""["']?(?:\./)?""" + tok, bare))
 
 
-def estate_sites(rel: str, lines, toks, cd_base: bool) -> list:
+# A python read through an ALIAS of a base (a2 #61513 G2): BASE matches a base by its SPELLING, so trigger_names'
+# `repo = (repo or REPO).resolve()` then `repo / "triggers"` read the code tree's triggers/ for every org unseen (S7b).
+# A name bound in a file from an expression BASE matches (an assignment, `x = x or BASE`, a default argument) is that
+# file's base too. Dataflow-lite: one hop, per file, never across calls; a canonical base name needs no alias.
+_CANON = {"REPO", "ROOT", "ROOT_DIR", "REPO_ROOT", "CHECKOUT", "HERE"}
+
+
+def base_aliases(src: Path) -> set[str]:
+    """Names this python file binds from a BASE expression (assigned, or a parameter's default)."""
+    if src.suffix != ".py":
+        return set()
+    try:
+        text = src.read_text(errors="replace")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            tree = ast.parse(text)
+    except (SyntaxError, ValueError, OSError):
+        return set()
+    seg = lambda n: ast.get_source_segment(text, n) or ""   # noqa: E731
+    base = re.compile(BASE)
+    out = set()
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.Assign, ast.AnnAssign)) and n.value is not None and base.search(seg(n.value)):
+            for tg in (n.targets if isinstance(n, ast.Assign) else [n.target]):
+                if isinstance(tg, ast.Name):
+                    out.add(tg.id)
+        elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            a = n.args
+            pos = a.posonlyargs + a.args
+            for arg, d in zip(pos[len(pos) - len(a.defaults):], a.defaults):
+                if base.search(seg(d)):
+                    out.add(arg.arg)
+            for arg, d in zip(a.kwonlyargs, a.kw_defaults):
+                if d is not None and base.search(seg(d)):
+                    out.add(arg.arg)
+    return out - _CANON
+
+
+@functools.lru_cache(maxsize=None)
+def _site_rx(base: str, tok: str):
+    return re.compile(base + JOIN + tok)
+
+
+def estate_sites(rel: str, lines, toks, cd_base: bool, aliases: set | None = None) -> list:
     if rel in RESOLVERS:
         return []
     out = []
+    b = BASE if not aliases else f"(?:{BASE}|\\b(?:{'|'.join(sorted(map(re.escape, aliases)))})\\b)"
+    pats = [(e, _site_rx(b, t)) for e, t in toks]   # compiled once per (base, token): never per line
     for n, code, raw in lines:
         if LITERAL_DSN.search(code):
             out.append((n, raw, "literal DSN default"))
             continue
-        hit = next((e for e, t in toks if re.search(BASE + JOIN + t, code)), None)
+        hit = next((e for e, rx in pats if rx.search(code)), None)
         bare = _unlabel(code)
         if hit is None and cd_base:
             hit = next((e for e, t in toks if _bare_path(e, t, bare)
-                        and not re.search(r"""^\s*(?:echo|say|printf|warn|note)\b""", code)), None)
+                        and not re.search(r"""^\s*(?:echo|say|printf|warn|note)\b|^\s*Description=""", code)), None)
         if hit:
             out.append((n, raw, hit))
     return out
@@ -477,6 +523,29 @@ def guarded(p: Path, lines) -> bool:
     return (p.suffix == ".sh" or p.name == "init.sh") and any(GUARD.search(c) for n, c, _ in lines if n <= GUARD_LINES)
 
 
+# A guarded file that SERVES a cog in part (a2 #61513 G1): init.sh refuses every setup verb in a cog, yet `doctor` serves
+# any org of it (S7b) and units() renders each org's units. A whole-file serving mark would read the refusing verbs as
+# serving (test_org_home_census C5: setup still refuses with ASTRYX_HOME set). So a REGION is declared, between
+# `# >>> org-serving: <why>` and `# <<< org-serving`, and its sites are judged as a serving file's: only a site
+# relative to the org's HOME ($ORGH) is exempt. An unclosed region runs to the end of the file (it judges MORE).
+REGION_OPEN = re.compile(r"""^\s*#\s*>>>\s*org-serving:\s*\S""")
+REGION_CLOSE = re.compile(r"""^\s*#\s*<<<\s*org-serving\b""")
+
+
+def serving_regions(src: Path) -> list[tuple[int, int]]:
+    """[(first line, last line)] of the file's declared serving regions (1-based, markers inclusive)."""
+    out, start = [], None
+    for i, ln in enumerate(src.read_text(errors="replace").splitlines(), 1):
+        if start is None and REGION_OPEN.search(ln):
+            start = i
+        elif start is not None and REGION_CLOSE.search(ln):
+            out.append((start, i))
+            start = None
+    if start is not None:
+        out.append((start, 10 ** 9))
+    return out
+
+
 def serves(lines) -> bool:
     """A guarded file whose guard serves a cog (SERVES within its first lines): its sites are judged, not exempted."""
     return any(SERVES.search(c) for n, c, _ in lines if n <= GUARD_LINES)
@@ -499,17 +568,21 @@ def unparsed(path: Path, suffix: str) -> str | None:
     return None
 
 
-def census(root: Path, overrides: dict | None = None, home: Path | None = None) -> dict:
+def census(root: Path, overrides: dict | None = None, home: Path | None = None, only: set | None = None) -> dict:
     """`overrides` {repo-relative path: file}: read that file's text in place of the tree's (mutation seams).
+    `only` {repo-relative path}: judge just those files (an oracle's planted-line arms; the derived context, the estate
+    entries and the org names, is still the whole tree's).
     `home`: the org HOME whose trigger bodies are read (default `root`: one org's HOME is its checkout)."""
     toks = [(e, estate_token(e)) for e in estate_entries(root)]
     names = org_names(root)
     readers = [(n, env_read(n)) for n in sorted(names)]
     res = {"dsn": [], "estate": [], "env": [], "namespace": [], "unparsed": [], "declared": [], "guarded": [],
-           "guarded_files": [], "serving_files": [],
+           "guarded_files": [], "serving_files": [], "serving_regions": [],
            "org_names": sorted(names)}
     for p in walk(root):
         rel = p.relative_to(root).as_posix()
+        if only is not None and rel not in only:
+            continue
         src = Path((overrides or {}).get(rel, p))
         bad = unparsed(src, p.suffix)
         if bad:
@@ -522,15 +595,19 @@ def census(root: Path, overrides: dict | None = None, home: Path | None = None) 
         sv = g and serves(lines)
         if sv:
             res["serving_files"].append(rel)
+        regions = serving_regions(src) if g and not sv else []
+        if regions:
+            res["serving_regions"].append({"file": rel, "lines": regions})
         for kind, sites in (("dsn", dsn_sites(rel, lines)),
-                            ("estate", estate_sites(rel, lines, toks, cd_base)),
+                            ("estate", estate_sites(rel, lines, toks, cd_base, base_aliases(src))),
                             ("env", env_sites(rel, lines, readers, names)),
                             ("namespace", namespace_sites(rel, src if src.suffix else p, lines))):
             for n, raw, what in sites:
                 row = {"kind": kind, "file": rel, "line": n, "what": what}
                 if DECLARE.search(raw):
                     res["declared"].append(row)
-                elif sv:                          # it serves a cog: only a site relative to the org's HOME is exempt
+                elif sv or any(a <= n <= b for a, b in regions):   # it (or this region) serves a cog: only a
+                    #                                                     site relative to the org's HOME is exempt
                     (res["guarded"] if ORGH_REL.search(sh_code(raw)) else res[kind]).append(row)
                 else:
                     (res["guarded"] if g else res[kind]).append(row)

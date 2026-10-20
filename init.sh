@@ -78,6 +78,7 @@ _units_state() { local u st; notenabled="" wrongly_on="" off_missing="" off_ok="
     esac
   done; }
 
+# >>> org-serving: units() renders EACH org's units (ORGH, its HOME, S3b): its estate reads are judged as a serving file's
 units() {  # GENERATE systemd units from the org's declared sources of truth.
   # units/ is generated output (gitignored), never hand-edited: this is the ONE
   # writer, so no unit can silently drift from what the org actually runs (the
@@ -490,6 +491,7 @@ EOF
     done < "$ORGH/nucleus/runners.conf"
   fi
 }
+# <<< org-serving
 
 active_dep_groups() {  # which manifest groups this org needs, from the channel authority
   # core always; media when any channel that can carry voice is wired (same
@@ -1088,6 +1090,7 @@ setup() {
   say "whatsapp surface: astryx channels"
 }
 
+# >>> org-serving: doctor serves ANY org of the cog (S7b): its estate reads are its HOME's ($ORGH), judged as a serving file's
 if [ "${1:-}" = "doctor" ]; then
   # A DIAGNOSTIC MUST COMPLETE. Every check below is explicitly guarded (ok/bad + FAIL),
   # so errexit buys no safety here — it only TRUNCATES the report: a bare `x=$(ls … | head)`
@@ -1254,12 +1257,12 @@ if [ "${1:-}" = "doctor" ]; then
     # the front), which the primary's derivation never emits; judged as its orphans they would read "regenerate would
     # DELETE it" (seed #61017 (a)). So in a cog the disk side is the primary's files only. One org: every file, as before.
     _cogstems=$(venv/bin/python -c 'import json; print("|".join(k for k, v in json.load(open("src/astryx/data/org_units.json"))["units"].items() if v["scope"] == "cog"))' 2>/dev/null)
-    disk_list=$(cd units 2>/dev/null && ls | sort)
+    disk_list=$(cd units 2>/dev/null && ls | sort)   # org-home: units/ is the CHECKOUT's render dir, every org's (scoped by _mine)
     [ -n "${DOCTOR_COG:-}" ] && disk_list=$(echo "$disk_list" | _mine)
     # (i) generated_set ≡ units/ on disk — an orphan (on disk, not derived) or a
     # missing unit is the drift that hid telegram/discord/gateway/canopus-inbound.
     if diff <(echo "$gen_list") <(echo "$disk_list") >/dev/null 2>&1; then
-      ok "units/ ≡ generated set ($(echo "$gen_list" | grep -c .) units, no drift)"
+      ok "units/ ≡ generated set ($(echo "$gen_list" | grep -c .) units, no drift)"   # org-home: a message
     else
       orphans=$(comm -23 <(echo "$disk_list") <(echo "$gen_list"))
       missing=$(comm -13 <(echo "$disk_list") <(echo "$gen_list"))
@@ -1353,7 +1356,7 @@ if [ "${1:-}" = "doctor" ]; then
   # (iii, cont.) every running body maps to a charter — a ax-* tmux session with no
   # charter is an orphan mind (the resolution goes through the ONE resolver).
   orphanbody=""
-  for s in $(tmux ls 2>/dev/null | sed -n 's/^ax-\([^:]*\):.*/\1/p'); do
+  for s in $(tmux ls 2>/dev/null | sed -n 's/^ax-\([^:]*\):.*/\1/p'); do   # org-home: tmux is org_tmux.sh's (the org's server) in a cog; one org, the default
     venv/bin/python src/astryx/core/charter.py "$s" >/dev/null 2>&1 || orphanbody="$orphanbody $s"
   done
   [ -z "$orphanbody" ] && ok "every ax-* tmux body maps to a charter" \
@@ -1428,10 +1431,11 @@ if [ "${1:-}" = "doctor" ]; then
       bad "pre-push privacy hook missing/stale — privacy_gate won't run on push (./init.sh installs it)"
     fi
   fi
-  tmux has-session -t =ax-seed 2>/dev/null && ok "seed resident alive" || warn "seed not resident — scripts/spawn.sh seed"
+  tmux has-session -t =ax-seed 2>/dev/null && ok "seed resident alive" || warn "seed not resident — scripts/spawn.sh seed"   # org-home: org_tmux.sh's tmux in a cog
   [ -z "$FAIL" ] && say "doctor: healthy" || say "doctor: fix the ✗ lines above (sudo lines are for your human)"
   exit 0
 fi
+# <<< org-serving
 
 if [ "${1:-}" = "whatsapp" ] || [ "${1:-}" = "channels" ]; then
   command -v docker >/dev/null || die "whatsapp surface needs docker (wacli container)"

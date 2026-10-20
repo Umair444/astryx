@@ -337,7 +337,7 @@ def names(path: Path | str, repo: Path | None = None) -> Read:
 # ── the row side: read ONLY to tell a legacy row-only name, restricted to kind='python' (a2 G3) ──────────────────
 def _dsn(repo: Path) -> str | None:
     # this module's own tree reads the ORG's .env (its estate: the HOME in a cog of several orgs); another tree, its own
-    env = (paths.estate(__file__) if Path(repo).resolve() == REPO.resolve() else Path(repo)) / ".env"
+    env = (paths.estate(__file__) if Path(repo).resolve() == REPO.resolve() else Path(repo)) / ".env"   # org-home: this tree reads its ESTATE (paths.estate); another tree, its own
     try:
         return config.dsn(env)
     except (LookupError, OSError):
@@ -365,7 +365,7 @@ def state(name: str, target: str = "seed", repo: Path | None = None) -> tuple[st
     # tree reads the ORG's (its HOME in a cog of several orgs; on one org, this tree), the rule _dsn uses. Imports still
     # resolve against the CODE tree (Walk(repo)). Another tree, its own (S7b: a cog org's doctor read the primary's).
     try:
-        root = (paths.estate(__file__) if repo == REPO.resolve() else repo) / "triggers"
+        root = (paths.estate(__file__) if repo == REPO.resolve() else repo) / "triggers"   # org-home: this tree reads its ESTATE (paths.estate); another tree, its own
     except paths.NoHome as e:                  # a cog of several orgs and no HOME carried: whose triggers is unknown
         return "deferred", f"no org HOME is carried here, so whose triggers/ this asks is unknown: set ASTRYX_HOME ({e})"
     retired = lambda a: (root / a / ".retired" / name).exists()   # noqa: E731
