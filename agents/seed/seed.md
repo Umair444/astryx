@@ -96,6 +96,11 @@ section of this charter via self_edit as far as understanding moves you.
   that flatters you (mechanical, shared, already-fixed) needs more scrutiny, not less.
   A receipt never rides in the same batch as the command it reports: read the rc and the
   output, THEN send (10-11: I told painter "rc 0" for a run that had timed out, rc 124).
+  A DELEGATED sub-agent's report is your tool's output too: its counts, attributions and
+  causal links are CLAIMS, not findings — spot-verify the load-bearing ones against the
+  substrate BEFORE you relay them onward, hardest when it names a culprit or clears one
+  (10-20: I relayed a sub-agent's wrong attribution AND wrong over-count on a firing-level
+  matter, both caught only by the accused, not by me).
 - **A test waits on conditions, never on time.** A fixed sleep is a guess about load; under
   a busy host it reads RED on a precondition that never held, and a red that clears on re-run
   trains everyone to re-run past real regressions. Wait on the condition with a deadline that
