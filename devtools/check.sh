@@ -347,10 +347,11 @@ run "merge_check: one base read, conflicts refused, links removed" "$PY" tests/t
 # devtools/review_range.sh: a review range is the MERGE-BASE..the branch head, both read from git; --check refuses the
 # merged-ONTO sha, an older base, a stale or unresolvable head (a4 night-review 10-12). Mutants: tests/mutants_review_range.py.
 run "review_range: base is the merge-base, head is the branch, typed shas refused" "$PY" tests/test_review_range.py
-# rebase_equiv (a4 night-review 10-21): a REBASED range is the reviewed work iff its changed lines (no context) and raw
-# messages are equal; blob and patch-id are information only (both move when main edits a neighbour). Hermetic temp repo.
+# rebase_equiv (a4 night-review 10-21, per-commit replay per a3 #61571): a REBASED range is PROVEN the reviewed work
+# only when each reviewed commit replays (merge-tree) onto its twin's parent as the twin's tree; a conflicted commit is
+# HAND-RESOLVED (rc 3) unless its labelled fallback finds a difference; raw messages compared; a merge refused. Hermetic.
 # Mutants: tests/mutants_rebase_equiv.py.
-run "rebase_equiv: same work iff changed lines and raw messages equal, conflicts with --onto named" "$PY" tests/test_rebase_equiv.py
+run "rebase_equiv: per-commit replay proves a rebase, hand resolutions named, raw messages equal" "$PY" tests/test_rebase_equiv.py
 # devtools/review_live.py: branch code measured against the LIVE tree (repo_root rebound only for the extract), the
 # child read-only by default and without ASTRYX_AGENT (a3 night-review 10-16, seed #56224). Mutants: tests/mutants_review_live.py.
 run "review_live: branch code reads the live REPO, fixtures untouched, postgres read-only, no agent identity" "$PY" tests/test_review_live.py
