@@ -27,6 +27,8 @@ collected by the next fixture_db() entry, and nothing a LIVE run owns is ever dr
      unstamped bare one is swept (a live run's, a stamped one, another shape and a fresh one are kept).
   T. a TERM landing between fixture_db's CREATE and its owner COMMENT (steward #61229: a gate cap's kill is a TERM):
      the signal is held until the stamp is written, so the dead child's database is stamped and the next reap drops it.
+  I. an INVALID condemned database (datconnlimit -2, an interrupted DROP's): reap() leaves its caller's connection
+     open (its writes run on a side connection) and drops it; fixture_db's CREATE after such a reap succeeds.
   T2. the same with a live daemon thread started before the fixture (a3 #61239): the kernel may hand the TERM to that
      thread, so a per-thread mask does not hold it; the main-thread recording handler does.
   Mutants: tests/mutants_fixture_reaper.py (mutation_probe, via SQLGUARD_FIXTURE_SRC).
@@ -187,15 +189,15 @@ except psycopg.errors.ObjectInUse:
 check("D4 the plain drop still fails LOUDLY when a real session is connected", got == "raised", got)
 dead_name = "astryx_fx_drop_1_0"
 r = Rec(on_force=psycopg.errors.InsufficientPrivilege, rows=[(dead_name, stamp(D))])
-got = fxm.reap(r)
+got = fxm.reap(r, side=r)                         # the recorder takes the writes too
 check("D5 reap() through the autovacuum race DROPS the dead run's db (was kept as 'drop refused')",
       [g[1] for g in got] == ["reap"] and r.q[-1] == f'DROP DATABASE IF EXISTS "{dead_name}"', str(got))
 r = Rec(on_force=psycopg.errors.ObjectInUse, rows=[(dead_name, stamp(D))])
-got = fxm.reap(r)
+got = fxm.reap(r, side=r)                         # the recorder takes the writes too
 check("D6 ...while any other refusal still KEEPS it, named", [g[1] for g in got] == ["keep"]
       and "drop refused (ObjectInUse)" in got[0][2], str(got))
 r = Rec(on_alter=psycopg.errors.InsufficientPrivilege, rows=[(dead_name, stamp(D))])
-got = fxm.reap(r)
+got = fxm.reap(r, side=r)                         # the recorder takes the writes too
 check("D7 a refused UN-TEMPLATE keeps it, says so (never 'drop refused'), and never attempts the DROP (a4 #58605)",
       [g[1] for g in got] == ["keep"] and "un-template refused (InsufficientPrivilege)" in got[0][2]
       and not any(q.startswith("DROP") for q in r.q), str(got) + str(r.q))
@@ -425,6 +427,42 @@ try:
         fxm.reap(admin)
         check(f"{arm}: ...and the next reap drops it", all(not exists(n) for n, _ in new),
               str([n for n, _ in new if exists(n)]))
+
+    print("I. an INVALID condemned database (steward #61372: ALTER on one draws a FATAL, which closed the CALLER's "
+          "connection under fixture_db's CREATE):")
+    def plant_invalid(tag):
+        n = f"{fxm.PREFIX}inv{tag}_{D}_0"
+        admin.execute(f'DROP DATABASE IF EXISTS "{n}"')
+        admin.execute(f'CREATE DATABASE "{n}" ALLOW_CONNECTIONS false')
+        made.append(n)
+        admin.execute(f"COMMENT ON DATABASE \"{n}\" IS '{stamp(D)}'")       # a dead creator's: condemned
+        admin.execute("UPDATE pg_database SET datconnlimit = -2 WHERE datname = %s", (n,))   # what a killed DROP leaves
+        return n
+    try:
+        inv = plant_invalid("a")
+    except Exception as e:  # noqa: BLE001 (no catalog write: not a superuser)
+        print(f"  SKIP  I: can't plant an invalid database ({type(e).__name__}): NOT verified")
+        unverified.append("I (no invalid plant)")
+    else:
+        got = fxm.reap(admin)
+        try:
+            alive = admin.execute("SELECT 1").fetchone() == (1,)
+        except Exception as e:  # noqa: BLE001
+            alive = f"{type(e).__name__}: {e}"
+        check("I: reap() meeting an invalid condemned DB leaves the CALLER's connection open", alive is True, str(alive))
+        if alive is not True:                              # the rest of the run needs a live admin
+            admin = psycopg.connect(fxm.live_dsn(), autocommit=True, connect_timeout=5)
+        check("I: ...and drops it (a plain DROP is what the server allows an invalid database)", not exists(inv),
+              str([g for g in got if g[0] == inv]))
+        inv2 = plant_invalid("b")
+        try:
+            with fxm.fixture_db() as fx:
+                created = fx["dbname"]
+            err = None
+        except Exception as e:  # noqa: BLE001
+            err = f"{type(e).__name__}: {e}"
+        check("I: fixture_db's CREATE still succeeds after its reap met an invalid DB", err is None, str(err))
+        check("I: ...and that invalid DB is gone", not exists(inv2))
 finally:
     # Through the REAL module's _drop, never fxm's (it may be the mutant): FORCE alone meets the PG 18 autovacuum race
     # (steward #55022, arm D2) and a swallowed refusal leaked this oracle's unstamped bare plant, which reap() keeps
@@ -433,11 +471,15 @@ finally:
     fx_real = importlib.util.module_from_spec(_rs)
     _rs.loader.exec_module(fx_real)
     leaked = []
+    if admin.closed:                                 # an arm whose subject closed it (I's RED) must not leak the rest
+        admin = psycopg.connect(fx_real.live_dsn(), autocommit=True, connect_timeout=5)
     for n in made:
         try:
             admin.execute(f'ALTER DATABASE "{n}" IS_TEMPLATE false')   # the batch arm's template (no-op otherwise)
         except Exception:  # noqa: BLE001 (absent, or already not a template: the drop below judges)
             pass
+        if admin.closed:                             # ALTER on I's INVALID plant draws a FATAL (steward #61372)
+            admin = psycopg.connect(fx_real.live_dsn(), autocommit=True, connect_timeout=5)
         err = None
         try:
             fx_real._drop(admin, n)

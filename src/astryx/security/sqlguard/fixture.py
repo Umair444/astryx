@@ -130,31 +130,52 @@ def _drop(admin, name: str) -> str:
         return "plain"
 
 
-def reap(admin, keep: str = "") -> list[tuple[str, str, str]]:
-    """Drop every astryx_fx_* database whose verdict is 'reap'. Never raises: a reaper that fails keeps."""
+def _side_admin(admin):
+    """A short connection of the caller's own role and server, for reap's writes (steward #61372): a statement that
+    draws a FATAL ends its SESSION, so one run on the caller's connection left fixture_db's next statement, its CREATE,
+    on a closed connection ("the connection is closed", six live-suite reds at 01:42Z)."""
+    return psycopg.connect(make_conninfo(admin.info.dsn, password=admin.info.password or None), autocommit=True,
+                           connect_timeout=5)
+
+
+def reap(admin, keep: str = "", side=None) -> list[tuple[str, str, str]]:
+    """Drop every astryx_fx_* database whose verdict is 'reap'. Never raises: a reaper that fails keeps. The caller's
+    `admin` only LISTS; every write runs on `side` (by default a fresh _side_admin connection, reopened if a FATAL
+    closed it, and closed on return), so nothing reap meets can close the caller's."""
     out = []
     try:
-        rows = admin.execute("SELECT datname, shobj_description(oid, 'pg_database') FROM pg_database "
+        rows = admin.execute("SELECT datname, shobj_description(oid, 'pg_database'), datconnlimit = -2 FROM pg_database "
                              "WHERE starts_with(datname, %s)", (PREFIX,)).fetchall()
     except psycopg.Error:
         return out
-    for name, comment in rows:
-        if name == keep:            # belt and braces: fixture_db reaps BEFORE its CREATE, so its own name is never
-            continue                # listed yet (a3 #39195 M7: dropping this line is an EQUIVALENT mutant)
-        act, why = verdict(name, comment)
-        if act == "reap":
-            try:
-                # a dead creator's TEMPLATE is garbage too, and DROP refuses a template: a killed run of the batch arm
-                # left one kept forever (steward #58601). Un-template only what the verdict already condemned.
-                admin.execute('ALTER DATABASE "{}" IS_TEMPLATE false'.format(name.replace('"', '""')))
-            except psycopg.Error as e:
-                act, why = "keep", f"un-template refused ({type(e).__name__}): {why}"   # a4 #58605: nothing dropped
-        if act == "reap":
-            try:
-                _drop(admin, name)
-            except psycopg.Error as e:
-                act, why = "keep", f"drop refused ({type(e).__name__}): {why}"
-        out.append((name, act, why))
+    own = side is None
+    try:
+        for row in rows:
+            name, comment, invalid = row[0], row[1], len(row) > 2 and row[2]
+            if name == keep:        # belt and braces: fixture_db reaps BEFORE its CREATE, so its own name is never
+                continue            # listed yet (a3 #39195 M7: dropping this line is an EQUIVALENT mutant)
+            act, why = verdict(name, comment)
+            if act == "reap":
+                try:
+                    if own and (side is None or side.closed):
+                        side = _side_admin(admin)
+                    # a dead creator's TEMPLATE is garbage too, and DROP refuses a template: a killed run of the batch
+                    # arm left one kept forever (steward #58601). Un-template only what the verdict already condemned.
+                    # An INVALID database (an interrupted DROP leaves datconnlimit = -2) refuses ALTER with a FATAL,
+                    # and a plain DROP is what the server allows it: it goes straight to the drop.
+                    if not invalid:
+                        side.execute('ALTER DATABASE "{}" IS_TEMPLATE false'.format(name.replace('"', '""')))
+                except psycopg.Error as e:
+                    act, why = "keep", f"un-template refused ({type(e).__name__}): {why}"   # a4 #58605: nothing dropped
+            if act == "reap":
+                try:
+                    _drop(side, name)
+                except psycopg.Error as e:
+                    act, why = "keep", f"drop refused ({type(e).__name__}): {why}"
+            out.append((name, act, why))
+    finally:
+        if own and side is not None:
+            side.close()
     return out
 
 
