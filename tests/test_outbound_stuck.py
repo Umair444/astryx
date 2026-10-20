@@ -684,6 +684,12 @@ def test_superseded_identical_delivered_copy_is_reported_once_never_resent():
         assert st["warned"][str(a1)] >= 10 ** 6 and st["warned"][str(a2)] >= 10 ** 6, st
         again = _MOD["outbound_stuck"](C(st)) or ""
         assert f"#{a1}" not in again and f"#{a2}" not in again, again          # reported once, never re-nagged
+        # a4 #61466: the band must SURVIVE the tick (classify rebuilds it from the age band), and the rows must stay
+        # silent past the next rung, not merely until it
+        assert st["warned"][str(a1)] >= 10 ** 6 and st["warned"][str(a2)] >= 10 ** 6, st
+        conn.execute("UPDATE messages SET ts = now() - interval '200 hours' WHERE id = ANY(%s)", ([a1, a2],))
+        later = _MOD["outbound_stuck"](C(st)) or ""
+        assert f"#{a1}" not in later and f"#{a2}" not in later, later         # past 168 h: still not raised
         # an identical pair with NO delivered copy is not superseded (a dead copy delivers nothing), and the
         # near-miss shape (same opening, different tail, delivered later) supersedes nothing either
         d1, d2 = put("ASTRYX: a second alarm, never delivered.", "dead", 30, "t-other"), \

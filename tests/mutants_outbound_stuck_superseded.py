@@ -31,8 +31,12 @@ MUTANTS = {
         ("                \"AND x.status = 'delivered' AND x.from_agent = s.from_agent AND x.to_agent = s.to_agent \"",
          "                \"AND x.from_agent = s.from_agent AND x.to_agent = s.to_agent \""),
     "S3 a superseded row keeps its band (it re-nags at the next one)":
-        ("        next_warned[mid] = SUPERSEDED_BAND", "        pass"),
+        ("    for mid in superseded:\n        next_warned[mid] = SUPERSEDED_BAND",
+         "    for mid in superseded:\n        pass"),
     "S4 superseded rows are dropped silently (never reported, not even once)":
         ("        return (f\"OUTBOUND STUCK — SUPERSEDED ({len(sup)}): an IDENTICAL copy",
          "        return None and (f\"OUTBOUND STUCK — SUPERSEDED ({len(sup)}): an IDENTICAL copy"),
+    "S5 the superseded band isn't carried (classify gives the age band back: it re-raises at every later rung)":
+        ("        if b == SUPERSEDED_BAND and mid in next_warned:\n            next_warned[mid] = SUPERSEDED_BAND",
+         "        if False:\n            next_warned[mid] = SUPERSEDED_BAND"),
 }
