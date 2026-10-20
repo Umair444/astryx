@@ -127,7 +127,7 @@ EXEMPT = {
     # GITIGNORED — a git-derived reachability scan is blind exactly there (the oracle-split
     # class), so the edge is declared here by hand, with its location.
     "devtools/check_watch.sh":    "invoked by triggers/steward/org_runners.py (gitignored estate; pulse trigger, daily 05:20)",
-    "scripts/restore_verify.sh": "invoked by triggers/steward/org_runners.py (gitignored estate; pulse trigger, weekly Sun 03:00)",
+    # scripts/restore_verify.sh: no longer here. The tracked shipped org_backup trigger invokes it (plan-10224 add-org-parity)
     "src/astryx/federation/fedtest.py":     "manual: federation end-to-end probe; CLAUDE.md documents the human command",
     # Hands (plan-7862): both are started by the per-desktop sway config that src/astryx/hands/hands_desktop.py
     # GENERATES (an `exec <venv python> <path>` line written into the state dir at runtime), so the edge
@@ -389,6 +389,31 @@ def _is_loader_call(func):
     return False
 
 
+# THE SHIPPED TRIGGERS' SHIMS ARE PYTHON WRITTEN AS DATA (plan-10224 add-org-parity, seed #61534). An installer writes
+# each SHIMS value of this ONE file into triggers/seed/<x>.py, where the pulse runs it: its import IS the edge that
+# reaches the shipped module. While init.sh held the texts as heredocs, its shell lines carried them; in shims.py they
+# are string constants, which the AST rightly reads as no import. So for this file, and only for the values of its
+# SHIMS dict, the text is parsed as the module it becomes. A python snippet anywhere else stays a string.
+SHIM_SOURCE = "src/astryx/pulse/shipped_triggers/shims.py"
+
+
+def _shim_imports(tree):
+    """The imports of every SHIMS value (a str written as a trigger file), parsed as the module it becomes."""
+    out = set()
+    for node in ast.walk(tree):
+        tgt = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
+        if any(isinstance(x, ast.Name) and x.id == "SHIMS" for x in tgt) and isinstance(node.value, ast.Dict):
+            for v in node.value.values:
+                if isinstance(v, ast.Constant) and isinstance(v.value, str):
+                    for n in ast.walk(ast.parse(v.value)):
+                        if isinstance(n, ast.ImportFrom):
+                            out.add(n.module or "")
+                            out.update(f"{n.module}.{a.name}" for a in n.names)
+                        elif isinstance(n, ast.Import):
+                            out.update(a.name for a in n.names)
+    return out
+
+
 def _py_index(label, text):
     """-> ({imported dotted names}, [(lineno, (string constants,))]) for one .py surface.
 
@@ -434,6 +459,8 @@ def _py_index(label, text):
                                if isinstance(s, ast.Constant) and isinstance(s.value, str))
                 if consts:
                     calls.append((node.lineno, consts, "subprocess"))
+        if label == SHIM_SOURCE:
+            imports |= _shim_imports(tree)
         _PY_INDEX[label] = (imports, calls)
     return _PY_INDEX[label]
 
@@ -786,6 +813,15 @@ FIXTURES = [
     ("a name imported FROM a dotted submodule", True,
      [("src/astryx/security/sqlguard/enforce.py", "from astryx.security.sqlguard.normalize import norm\n")],
      "src/astryx/security/sqlguard/normalize.py"),
+    ("a shim's text in shims.py's SHIMS reaches its shipped module (the installers write it as a trigger)", True,
+     [(SHIM_SOURCE, 'SHIMS = {"x": "from astryx.pulse.shipped_triggers.fxshim import fxshim  # noqa: F401\\n"}\n')],
+     "src/astryx/pulse/shipped_triggers/fxshim.py"),
+    ("...the same text in a string of ANY OTHER file is prose", False,
+     [("tests/test_x.py", 'SHIMS = {"x": "from astryx.pulse.shipped_triggers.fxshim import fxshim\\n"}\n')],
+     "src/astryx/pulse/shipped_triggers/fxshim.py"),
+    ("...and in shims.py, a string that is not a SHIMS value is prose", False,
+     [(SHIM_SOURCE, 'NOTE = "from astryx.pulse.shipped_triggers.fxshim import fxshim\\n"\n')],
+     "src/astryx/pulse/shipped_triggers/fxshim.py"),
     ("a dotted import in a docstring is prose", False,
      [("nucleus/x.py", '"""use it as: from astryx.security.sqlguard import inventory"""\n')],
      "src/astryx/security/sqlguard/inventory.py"),
@@ -886,6 +922,7 @@ def self_test():
     seen_blind = set(UNPARSEABLE)
     _PY_INDEX.clear()             # fixtures reuse labels with DIFFERENT text; see below
     for name, want, texts, path in FIXTURES:
+        _PY_INDEX.clear()         # each fixture its own index: two may share a label (shims.py's) with different text
         got = bool(invocations(path, texts))
         if got != want:
             bad.append(f"  {'MISSED' if want else 'FALSE POSITIVE'}: {name}")

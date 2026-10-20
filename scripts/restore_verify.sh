@@ -13,7 +13,6 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 . scripts/pgcontainer.sh                     # PG_CONTAINER: the one declared postgres (infra/pg)
-SCRATCH=astryx_restorecheck
 # plan-11324 S3a: the dumps and the stamp are the ORG's (its HOME's backups/), the DSN its own .env through the ONE
 # resolver. One org (no host registry): BK is backups/ in this checkout, exactly as before; several orgs: the HOME's.
 ROOT="$PWD"
@@ -24,6 +23,10 @@ fi
 
 DSN=$("$ROOT/venv/bin/python" "$ROOT/src/astryx/config.py" dsn --file 2>/dev/null || true)
 [ -n "$DSN" ] || { echo "restore-verify: no ASTRYX_DSN in .env" >&2; exit 1; }   # org-home: a message
+# the scratch is named for THIS org's database (plan-10224 add-org-parity): astryx → astryx_restorecheck, as it always
+# was; a cog org's astryx_lab → astryx_lab_restorecheck. One fixed name was every org's, and each run starts by
+# DROPping it: two orgs' weekly verifies would drop each other's restore mid-check
+SCRATCH="$(pg_dsn_db "$DSN")_restorecheck"
 SCRATCH_DSN="${DSN%/*}/$SCRATCH"
 
 newest=$(ls -1t "$BK"/astryx-*.dump 2>/dev/null | head -1)

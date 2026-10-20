@@ -37,6 +37,7 @@ SEAMS = {
     "ORG_HOME_INIT_SRC": "init.sh",
     "ORG_HOME_PULSE_SRC": "src/astryx/pulse/pulse.py",
     "ORG_HOME_BACKUP_SRC": "scripts/backup.sh",
+    "ORG_HOME_RESTORE_SRC": "scripts/restore_verify.sh",
     "ORG_HOME_ORGTMUX_SRC": "scripts/org_tmux.sh",
     "ORG_HOME_COMPACT_SRC": "src/astryx/pulse/shipped_triggers/context_compact.py",
     "ORG_HOME_HEAL_SRC": "src/astryx/pulse/shipped_triggers/agent_heal.py",

@@ -22,7 +22,8 @@ three renders write there (the primary's, another org's @<org> files, the cog's 
      checkout has none: its DSN is probed, never ".env missing"), its local.md and backups/ (the checkout's present
      ones are not its: removed from its HOME, "local.md missing" and "NO database backup"; given, "exists" and "fresh"),
      its units (its @<org> files only, no drift; the primary's plain files and the cog's never its orphans) and its
-     server (-L ax-<org>: "not resident" while only the primary's ax-seed lives; alive on its own, "alive")
+     server (-L ax-<org>: "not resident" while only the primary's ax-seed lives; alive on its own, "alive"); its
+     remedy names ITS reconcile (cog_add_org --reconcile <key>), the primary's stays ./init.sh's
   K6 no org resolves (no ASTRYX_HOME, no marker): exit 3, refusing
   K7 one org (no registry): the filter is the COG's only: an @-named stray in units/ is an orphan, and an @-named
      unit systemd knows is undeclared, as before
@@ -137,6 +138,9 @@ def main():
         dl = drift_lines(out)
         check("doctor runs (no exit 3, no refusal)", rc != 3 and "refusing" not in err, f"rc {rc} {err[-300:]}")
         check("its units-drift: the primary's units, no drift", any("no drift" in ln for ln in dl), "\n".join(dl))
+        bl = next((ln for ln in out.splitlines() if "NO database backup" in ln), "")
+        check("its backup remedy is the one-org line, byte for byte (run ./scripts/backup.sh; the timer)",
+              bl.endswith("(run ./scripts/backup.sh; enable astryx-backup.timer)") and "--reconcile" not in bl, bl)
         named = [n for n in foreign if any(n in ln for ln in dl)]
         check("...and no other org's file, nor the cog's, is named an orphan (none would be 'deleted')", not named,
               str(named))
@@ -197,6 +201,10 @@ def main():
             check("its local.md exists (its HOME's)", "local.md exists" in out)
             check("its backups/: none (the checkout's fresh dump is not its)",
                   "NO database backup" in out and "backup fresh" not in out)
+            bl = next((ln for ln in out.splitlines() if "NO database backup" in ln), "")
+            check("...and its remedy is ITS reconcile (cog_add_org --reconcile <its key>, a dump now under its HOME), "
+                  "never ./init.sh", f"cog_add_org.py --reconcile {other}" in bl and f"ASTRYX_HOME={A}" in bl
+                  and "./init.sh" not in bl and "./scripts/backup.sh" not in bl, bl)
             check("its units: its @ files only, no drift", any("no drift" in ln for ln in dl), "\n".join(dl))
             named = [n for n in mine_not if any(n in ln for ln in dl)]
             check("...and no file of the primary's nor the cog's is named its orphan", not named, str(named))

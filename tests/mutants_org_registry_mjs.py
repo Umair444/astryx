@@ -39,4 +39,6 @@ MUTANTS = {
         ("    if (e.primary !== undefined && typeof e.primary !== 'boolean')\n", "    if (false)\n"),
     "M13 node lets a door sit on an org that isn't the primary":
         ("    if (e.door === true && e.primary !== true)", "    if (false)"),
+    "M14 a db named <X>_restorecheck may be an org's (a2 #61527 R-1: restore_verify DROPs it weekly)":
+        ("    if (e.db.endsWith('_restorecheck'))", '    if (false)'),
 }

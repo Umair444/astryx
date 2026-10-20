@@ -38,4 +38,23 @@ MUTANTS = {
         ("    if home.exists() and any(home.iterdir()):\n", "    if False:\n"),
     "G12 the merged registry is judged only at write time (a refused run leaves a HOME with a fresh key: a2 #60860)":
         ("            orgs.load({orgs.ENV: str(probe)})\n", "            pass\n"),
+    "T1 the reconcile installs over an installed name (a duplicated actuator: two run_backups)":
+        ('        if all(s == "absent" for s, _ in st.values()):', '        if True:'),
+    "T2 a shim stands down only when ALL its names are owned (an org's own run_backup gets a second one)":
+        ('        if all(s == "absent" for s, _ in st.values()):', '        if any(s == "absent" for s, _ in st.values()):'),
+    "T3 each shim is written as it is judged (a blind shim written first defers every later answer)":
+        ('            plan_.append((shim, "install", "every name it registers is absent"))\n',
+         '            plan_.append((shim, "install", "every name it registers is absent"))\n'
+         '            if not dry:\n                tdir.mkdir(parents=True, exist_ok=True)\n                shims.write(shim, tdir)\n'),
+    "T4 the state child inherits ASTRYX_* (the primary's DSN asks the primary's triggers table about the org)":
+        ('    env = {k: v for k, v in os.environ.items() if not k.startswith("ASTRYX_")}\n', '    env = dict(os.environ)\n'),
+    "T5 windows_idle_stop is installed where no Windows container is":
+        ('    if shim != "windows_idle_stop":\n        return True\n', '    return True\n'),
+    "T6 a new org gets no backup trigger":
+        ('COG_SHIMS = ("context_compact", "pr_review", "windows_idle_stop", "agent_heal", "org_backup")',
+         'COG_SHIMS = ("context_compact", "pr_review", "windows_idle_stop", "agent_heal")'),
+    "T7 the reconcile serves the primary (whose checkout ./init.sh reconciles)":
+        ('    if e["primary"]:\n', '    if False:\n'),
+    "T8 a dry-run reconcile writes":
+        ('        if act == "install" and not dry:\n', '        if act == "install":\n'),
 }

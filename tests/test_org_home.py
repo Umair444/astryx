@@ -23,8 +23,13 @@
   H9 BACKUP IS THE ORG'S (BC-S2 arm b): scripts/backup.sh run for org A (pg_dump/pg_dumpall/pg_isready are PATH
      shims: no real dump) dumps A's DSN into HOME-A/backups and rotates ONLY A's: B's dumps are untouched (names,
      sizes, mtimes), and the checkout gets no backups/. Positive control: A's own old dumps WERE rotated.
+  H10 RESTORE-VERIFY IS THE ORG'S (plan-10224 add-org-parity, seed #61511): scripts/restore_verify.sh for org A (psql
+     and pg_restore are logging PATH shims, docker absent: the drill reads NOT RUN) connects ONLY to A's database and
+     its scratch, named for A's (<A's db>_restorecheck, which it CREATEs and DROPs), never B's, never the primary's
+     fixed astryx_restorecheck; it reads A's newest dump and stamps HOME-A/backups/.last-restore-ok
 Seams: org_home_fixture.SEAMS (a mutant subject copied over its file in the checkout): ORG_HOME_CONFIG_SRC,
-ORG_HOME_PATHS_SRC, ORG_HOME_ORGS_SRC, ORG_HOME_MJS_SRC, ORG_HOME_SPAWN_SRC, ORG_HOME_INIT_SRC, ORG_HOME_BACKUP_SRC.
+ORG_HOME_PATHS_SRC, ORG_HOME_ORGS_SRC, ORG_HOME_MJS_SRC, ORG_HOME_SPAWN_SRC, ORG_HOME_INIT_SRC, ORG_HOME_BACKUP_SRC,
+ORG_HOME_RESTORE_SRC (H10).
 Exit 0 · 1 · 77 (no DB / no git).
 """
 import json
@@ -283,6 +288,33 @@ def arms(fx):
     check("B's dumps are untouched (every name, size and mtime)", now_b == olds["b"],
           f"{len(now_b)} vs {len(olds['b'])}")
     check("the checkout gets no backups/ (it holds no org's state)", not (co / "backups").exists())
+
+    print("\nH10 RESTORE-VERIFY IS THE ORG'S (scripts/restore_verify.sh for org A)")
+    rlog = fx.t / "pg.calls"
+    for name, body in (("psql", f'printf "%s\\n" "$*" >> {str(rlog)!r}; case "$*" in *count*) echo 5 ;; esac; exit 0'),
+                       ("pg_restore", f'printf "pg_restore %s\\n" "$*" >> {str(rlog)!r}; exit 0'),
+                       ("docker", "exit 1")):
+        (shim / name).write_text(f"#!/bin/sh\n{body}\n")
+        (shim / name).chmod(0o755)
+    r = subprocess.run(["bash", str(co / "scripts" / "restore_verify.sh")], cwd="/", capture_output=True, text=True,
+                       timeout=300, env=fx.env(ASTRYX_HOME=str(A), HOME=str(userhome),
+                                               PATH=f"{shim}:{os.environ.get('PATH', '/usr/bin:/bin')}"))
+    calls = rlog.read_text().splitlines() if rlog.is_file() else []
+    da, db_ = fx.db["a"], fx.db["b"]
+    scratch = f"{da}_restorecheck"
+    targets = {w.rsplit("/", 1)[1] for c in calls for w in c.split() if w.startswith("postgresql://")}
+    check("it connects ONLY to A's database and A's scratch", bool(calls) and targets == {da, scratch},
+          f"{sorted(targets)} rc {r.returncode} {(r.stdout + r.stderr)[-300:]}")
+    check("...the scratch is named for A's database: CREATEd and DROPped as <A's db>_restorecheck",
+          any(f"CREATE DATABASE {scratch}" in c for c in calls) and any(f"DROP DATABASE IF EXISTS {scratch}" in c
+                                                                         for c in calls), "\n".join(calls[:4]))
+    check("...never B's database, never the fixed astryx_restorecheck",
+          not any(db_ in c or "astryx_restorecheck" in c for c in calls), "\n".join(calls[:6]))
+    check("...it restored A's newest dump, and stamped HOME-A/backups/.last-restore-ok",
+          any(c.startswith("pg_restore") and str(fx.home["a"] / "backups") in c for c in calls)
+          and (fx.home["a"] / "backups" / ".last-restore-ok").is_file()
+          and not (fx.home["b"] / "backups" / ".last-restore-ok").exists(), "\n".join(c for c in calls
+                                                                                    if c.startswith("pg_restore")))
 
 def main():
     try:

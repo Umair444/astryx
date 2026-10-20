@@ -44,4 +44,8 @@ MUTANTS = {
         ("awk '{print $1}' | _mine); do", "awk '{print $1}'); do"),
     "M16 another org's units are every file (the primary's and the cog's read as its own)":
         ('            else grep -F "@$DOCTOR_ORG."; fi; }', '            else cat; fi; }'),
+    "M17 another org's remedy is ./init.sh (which serves only the primary's checkout)":
+        ('  _fix="./init.sh"; [ -n "${DOCTOR_ORGH:-}" ] && _fix=', '  _fix="./init.sh"; false && _fix='),
+    "M18 another org's backup remedy is the one-org line (./scripts/backup.sh in the checkout, a retired timer)":
+        ('    if [ -n "${DOCTOR_ORGH:-}" ]; then\n      bad "NO database backup', '    if false; then\n      bad "NO database backup'),
 }

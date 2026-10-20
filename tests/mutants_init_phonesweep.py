@@ -20,9 +20,8 @@ MUTANTS = {
     "the node isn't in the reconciler's order":
         ('"android|interior" "phonesweep|interior" ',
          '"android|interior" '),
-    'the shim imports something else':
-        ('from astryx.pulse.shipped_triggers.phone_resume_sweep import phone_resume_sweep  # noqa: F401\nEOF',
-         'from astryx.pulse.shipped_triggers.context_compact import context_compact  # noqa: F401\nEOF'),
+    'the shim is another shipped trigger\'s (its text lives in shims.py, one source; init.sh names which)':
+        ('shims write phone_resume_sweep triggers/seed', 'shims write context_compact triggers/seed'),
     "the opt-in is read from .env only (an org opted in by env gets phones without the detector)":
         ('_android_on() { [ "${ANDROID_ENABLED:-$(grep -m1 \'^ANDROID_ENABLED=\' .env 2>/dev/null | cut -d= -f2-)}" = 1 ]; }',  # org-home: mutant pattern (init.sh's text, matched as data)
          '_android_on() { [ "$(grep -m1 \'^ANDROID_ENABLED=\' .env 2>/dev/null | cut -d= -f2-)" = 1 ]; }'),

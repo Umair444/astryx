@@ -824,14 +824,7 @@ _trigger_chk() {
 _chk_ccompact() { _trigger_chk context_compact; }
 _act_ccompact() {
   mkdir -p triggers/seed
-  cat > triggers/seed/context_compact.py <<'EOF'
-"""Live install of the shipped context-compact trigger. The logic lives TRACKED in
-src/astryx/pulse/shipped_triggers/context_compact.py (one writer; this shim only deploys it).
-Installed by init.sh at founding; the org may replace it with an agent-authored one.
-To retire it: `trigger_rm context_compact` (a tombstone the pulse honours). Deleting this file
-does NOT retire it: init.sh would install it again."""
-from astryx.pulse.shipped_triggers.context_compact import context_compact  # noqa: F401
-EOF
+  venv/bin/python -m astryx.pulse.shipped_triggers.shims write context_compact triggers/seed   # one source (shims.py)
   say "installed context-compact trigger (seed) — /compact for any session past 80% of its window"
 }
 
@@ -842,14 +835,7 @@ EOF
 _chk_prreview() { _trigger_chk pr_review; }
 _act_prreview() {
   mkdir -p triggers/seed
-  cat > triggers/seed/pr_review.py <<'EOF'
-"""Live install of the shipped pr-review trigger (one writer:
-src/astryx/pulse/shipped_triggers/pr_review.py). Reviewer seat at founding is the seed; move this
-file to the immune-system agent (steward) once one exists — proposer and reviewer must
-never be the same mind. To retire it: `trigger_rm pr_review` (a tombstone the pulse honours).
-Deleting this file does NOT retire it: init.sh would install it again."""
-from astryx.pulse.shipped_triggers.pr_review import pr_review  # noqa: F401
-EOF
+  venv/bin/python -m astryx.pulse.shipped_triggers.shims write pr_review triggers/seed   # one source (shims.py)
   say "installed pr-review trigger (seed) — open PRs / medic branches wake the reviewer"
 }
 
@@ -889,11 +875,7 @@ _android_on() { [ "${ANDROID_ENABLED:-$(grep -m1 '^ANDROID_ENABLED=' .env 2>/dev
 _chk_phonesweep() { _android_on || return 0; _trigger_chk phone_resume_sweep; }
 _act_phonesweep() {
   mkdir -p triggers/seed
-  cat > triggers/seed/phone_resume_sweep.py <<'EOF'
-"""Live install of the shipped phone resume sweep (one writer: src/astryx/pulse/shipped_triggers/phone_resume_sweep.py).
-Installed by init.sh where ANDROID_ENABLED=1; move it to another agent if one should own the alarm."""
-from astryx.pulse.shipped_triggers.phone_resume_sweep import phone_resume_sweep  # noqa: F401
-EOF
+  venv/bin/python -m astryx.pulse.shipped_triggers.shims write phone_resume_sweep triggers/seed   # one source (shims.py)
   say "installed the phone resume sweep (seed): flags a phone resume near an agent's act on your laptop"
 }
 # <<< phone sweep install
@@ -906,11 +888,7 @@ _windows_here() { command -v docker >/dev/null 2>&1 && docker inspect "${WINDOWS
 _chk_winidle() { _windows_here || return 0; _trigger_chk windows_idle_stop; }
 _act_winidle() {
   mkdir -p triggers/seed
-  cat > triggers/seed/windows_idle_stop.py <<'EOF'
-"""Live install of the shipped Windows idle stop (one writer: src/astryx/pulse/shipped_triggers/windows_idle_stop.py).
-Installed by init.sh where a Windows container exists; move it to another agent if one should own it."""
-from astryx.pulse.shipped_triggers.windows_idle_stop import windows_idle_stop  # noqa: F401
-EOF
+  venv/bin/python -m astryx.pulse.shipped_triggers.shims write windows_idle_stop triggers/seed   # one source (shims.py)
   say "installed the Windows idle stop (seed): an agent-started Windows VM stops after HANDS_WINDOWS_IDLE_S idle"
 }
 # <<< windows idle install
@@ -920,11 +898,7 @@ EOF
 _chk_agentheal() { _trigger_chk agent_heal; }
 _act_agentheal() {
   mkdir -p triggers/seed
-  cat > triggers/seed/agent_heal.py <<'EOF2'
-"""Live install of the shipped agent heal (one writer: src/astryx/pulse/shipped_triggers/agent_heal.py). To retire it:
-`trigger_rm agent_heal` (a tombstone the pulse honours). Deleting this file does NOT retire it: init.sh would reinstall."""
-from astryx.pulse.shipped_triggers.agent_heal import agent_heal  # noqa: F401
-EOF2
+  venv/bin/python -m astryx.pulse.shipped_triggers.shims write agent_heal triggers/seed   # one source (shims.py)
   say "installed agent heal (seed): a resident whose body dies is respawned within a minute"
 }
 # upstream_prs (goal 10224 S6, owner 10-14): in the org that IS the upstream astryx repo, each outside PR (new, or a new
@@ -934,11 +908,7 @@ _upstream_here() { venv/bin/python -m astryx.core.upstream_pr --is-upstream >/de
 _chk_upstreamprs() { _upstream_here || return 0; _trigger_chk upstream_prs; }
 _act_upstreamprs() {
   mkdir -p triggers/seed
-  cat > triggers/seed/upstream_prs.py <<'EOF2'
-"""Live install of the shipped upstream PR watch (one writer: src/astryx/pulse/shipped_triggers/upstream_prs.py). To retire it:
-`trigger_rm upstream_prs` (a tombstone the pulse honours). Deleting this file does NOT retire it: init.sh would reinstall."""
-from astryx.pulse.shipped_triggers.upstream_prs import upstream_prs  # noqa: F401
-EOF2
+  venv/bin/python -m astryx.pulse.shipped_triggers.shims write upstream_prs triggers/seed   # one source (shims.py)
   say "installed the upstream PR watch (seed): each outside PR to this repo reaches medic for triage"
 }
 
@@ -1098,6 +1068,9 @@ if [ "${1:-}" = "doctor" ]; then
   # whose ESTATE (S7b): one org and the cog's primary, this checkout ($ORGH/x is x, by identity); another org of the cog,
   # its HOME. Only the estate moves (.env, local.md, bridges/, backups/): the code it runs is this checkout's.
   ORGH=${DOCTOR_ORGH:-$PWD}
+  # the remedy that serves THIS org: ./init.sh reconciles one org's checkout (and the cog's primary); another org of the
+  # cog is reconciled by cog_add_org (plan-10224 add-org-parity), which init.sh never is for it
+  _fix="./init.sh"; [ -n "${DOCTOR_ORGH:-}" ] && _fix="venv/bin/python devtools/cog_add_org.py --reconcile $DOCTOR_ORG"
   dsn() { grep '^ASTRYX_DSN=' "$ORGH/.env" 2>/dev/null | cut -d= -f2-; }   # psql_q's (schema, harden): the org's DSN
   # a unit name list (stdin) → this org's units only. One org: all of them. In a cog, units/ and systemd hold every org's
   # @<org> files and the cog's own (the gateway, the front), which no org's derivation emits: the primary's are its
@@ -1191,7 +1164,7 @@ if [ "${1:-}" = "doctor" ]; then
         installed) ok "trigger $_tn installed (${_ts#installed })" ;;
         retired)   ok "trigger $_tn retired (${_ts#retired })" ;;
         absent)    if _chk_"$_tnode" >/dev/null 2>&1; then ok "trigger $_tn: not used on this host"
-                   else bad "trigger $_tn absent: ./init.sh installs it"; fi ;;
+                   else bad "trigger $_tn absent: $_fix installs it"; fi ;;
         deferred)  warn "trigger $_tn DEFERRED, so init.sh won't install it: ${_ts#deferred }" ;;
         *)         bad "trigger $_tn: src/astryx/core/trigger_names.py gave no answer: ${_ts:0:200}" ;;
       esac
@@ -1365,7 +1338,11 @@ if [ "${1:-}" = "doctor" ]; then
   # disk (reads local file mtimes only, never the dump's PII content). Red if stale/absent.
   newest_bk=$(ls -1t "$ORGH"/backups/astryx-*.dump 2>/dev/null | head -1)
   if [ -z "$newest_bk" ]; then
-    bad "NO database backup — org state is a single docker volume (run ./scripts/backup.sh; enable astryx-backup.timer)"
+    if [ -n "${DOCTOR_ORGH:-}" ]; then
+      bad "NO database backup — org state is a single docker volume ($_fix installs its org_backup trigger; one now: ASTRYX_HOME=$ORGH scripts/backup.sh)"
+    else
+      bad "NO database backup — org state is a single docker volume (run ./scripts/backup.sh; enable astryx-backup.timer)"
+    fi
   elif [ "$(( $(date +%s) - $(stat -c %Y "$newest_bk") ))" -gt 90000 ]; then
     bad "database backup STALE (>25h): ${newest_bk##*/} — is astryx-backup.timer enabled & firing?"
   else

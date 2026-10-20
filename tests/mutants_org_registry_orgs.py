@@ -35,4 +35,6 @@ MUTANTS = {
         ("        if not isinstance(primary, bool):\n", "        if False:\n"),
     "Y11 a door on an org that isn't the primary loads":
         ("        if door and not primary:", "        if False:"),
+    "Y12 a db named <X>_restorecheck may be an org's (a2 #61527 R-1: restore_verify DROPs it weekly)":
+        ('        if db.endswith(SCRATCH_SUFFIX):', '        if False:'),
 }

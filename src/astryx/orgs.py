@@ -46,6 +46,7 @@ NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 # libpq's last-resort databases (correction 1(ii)): with no dbname anywhere it binds the USER's name, and `postgres`
 # is every cluster's maintenance database. An org there could be reached by an empty DSN plus two PG* names.
 NEVER_ORG_DB = ("postgres",)
+SCRATCH_SUFFIX = "_restorecheck"           # restore_verify.sh's scratch is <the org's db>_restorecheck, created and DROPped
 FIXTURE_DB = "astryx_fx_"       # sqlguard.fixture.PREFIX, re-read there by the oracle, never imported here
 
 
@@ -93,6 +94,9 @@ def load(env=None) -> dict | None:
         h = Path(home).resolve()
         if db in NEVER_ORG_DB or db.startswith(FIXTURE_DB):
             raise RegistryError(f"org registry {p}: {org}'s database {db!r} is libpq's fallback or a fixture's")
+        if db.endswith(SCRATCH_SUFFIX):            # a2 #61527 R-1: every org's weekly restore-verify DROPs <its db>_restorecheck
+            raise RegistryError(f"org registry {p}: {org}'s database {db!r} ends in {SCRATCH_SUFFIX}, the scratch "
+                                "scripts/restore_verify.sh DROPs (another org's verify would drop it)")
         if h in homes or db in dbs:
             raise RegistryError(f"org registry {p}: {org} shares a home or database with {homes.get(h) or dbs[db]}")
         pe = e.get("ports", {})

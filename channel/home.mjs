@@ -49,6 +49,8 @@ export function registry(env = process.env) {
     const h = real(e.home)
     if (e.db === 'postgres' || e.db.startsWith('astryx_fx_'))
       throw new Error(`org registry ${p}: ${o}'s database '${e.db}' is libpq's fallback or a fixture's`)
+    if (e.db.endsWith('_restorecheck'))   // restore_verify.sh DROPs <an org's db>_restorecheck weekly (orgs.py SCRATCH_SUFFIX)
+      throw new Error(`org registry ${p}: ${o}'s database '${e.db}' ends in _restorecheck, the scratch restore_verify DROPs`)
     if (h in homes || e.db in dbs)
       throw new Error(`org registry ${p}: ${o} shares a home or database with ${homes[h] || dbs[e.db]}`)
     const pe = e.ports === undefined ? {} : e.ports

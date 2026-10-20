@@ -19,6 +19,14 @@ S6's rehearsal (stated limit); here its statement is printed by the dry-run, and
   A7 the DSN the tool derives for a CREATEd org (with_db) is a postgresql:// URL that asyncpg connects with, from a
      key=value primary DSN too, on the named database, every other parameter kept (step 4 live, 10-19: a key=value
      DSN in lab's .env crash-looped the cog's gateway)
+  A8 its shipped triggers (plan-10224 add-org-parity), with no Windows container named (the gate off; a PATH docker
+     shim turns it on): A2's new HOME holds context_compact, pr_review, agent_heal and org_backup in triggers/seed, each
+     the one source's text (astryx.pulse.shipped_triggers.shims). --reconcile: on A2's org every shim stands down and no
+     file changes (idempotent); --dry-run writes nothing; on a HOME with no triggers, the gate on, all five go in (every
+     state read BEFORE any write: windows_idle_stop's shim reads blind, and a blind file defers the next answers); a
+     name another agent owns stands its shim down, and org_backup stands down when EITHER of its names is owned (an org
+     with its own run_backup gets no second one); a blind file stands every shim down (deferred, never a guess); the
+     primary, an unknown key, and an add's flags beside --reconcile are refused (rc 2)
 COG_ADD_SRC: a mutant devtools/cog_add_org.py (tests/mutants_cog_add_org.py). Exit 0 · 1 · 77 (no database here).
 """
 import hashlib
@@ -82,12 +90,13 @@ def main():
         held.append(so)
     own_ports = f"astryx-observatory-org={held[0].getsockname()[1]},astryx-canvas={held[1].getsockname()[1]}"
 
-    def run(*args, dsn=admin):
-        if "--ports" not in args:
+    def run(*args, dsn=admin, path=None, windows=f"fx-no-windows-{pid}"):
+        if "--ports" not in args and "--reconcile" not in args:
             args = (*args, "--ports", own_ports)
-        p = subprocess.run([sys.executable, str(tool), *args], capture_output=True, text=True, timeout=180,
-                           env={"PATH": os.environ["PATH"], "HOME": os.environ.get("HOME", str(t)), "ASTRYX_DSN": dsn,
-                                "ASTRYX_COG_REGISTRY": str(t / "no-host-registry.json"), "OBS_KEY": owner})
+        p = subprocess.run([sys.executable, str(tool), *args], capture_output=True, text=True, timeout=300,
+                           env={"PATH": path or os.environ["PATH"], "HOME": os.environ.get("HOME", str(t)),
+                                "ASTRYX_DSN": dsn, "ASTRYX_COG_REGISTRY": str(t / "no-host-registry.json"),
+                                "OBS_KEY": owner, "WINDOWS_CONTAINER": windows})
         return p.returncode, p.stdout + p.stderr
 
     def db_exists(name):
@@ -231,6 +240,67 @@ def main():
                 check(f"from {form}: a postgresql:// URL, every parameter kept, asyncpg connects on the named database",
                       u.startswith("postgresql://") and got == want and db_now == fx["dbname"],
                       f"url-form={u.startswith('postgresql://')} same={got == want} db={db_now}")
+
+            print("\nA8 ITS SHIPPED TRIGGERS: ONE SOURCE, INSTALLED, RECONCILED DEFERENTIALLY")
+            from astryx.pulse.shipped_triggers import shims
+            trig = 'from astryx import trigger\n\n\n@trigger("*/5 * * * *", note="x")\ndef {}(ctx):\n    return None\n'
+            four = {"context_compact", "pr_review", "agent_heal", "org_backup"}
+            sd2 = h2 / "triggers" / "seed"
+            got2 = {f.stem: f.read_text() for f in sd2.glob("*.py")} if sd2.is_dir() else {}
+            check("A2's new HOME: triggers/seed holds context_compact, pr_review, agent_heal, org_backup (no Windows "
+                  "container named), each the one source's text", set(got2) == four
+                  and all(got2[s] == shims.SHIMS[s] for s in got2), str(sorted(got2)))
+            before = {f.name: (f.read_bytes(), f.stat().st_mtime_ns) for f in sd2.glob("*.py")}
+            rc, out = run("--reconcile", key, "--registry", str(o2))
+            outs.append(out)
+            check("--reconcile on A2's org: rc 0, every shim stands down (installed), no file changes (idempotent)",
+                  rc == 0 and out.count("stand down trigger") == 4 and "install trigger" not in out
+                  and {f.name: (f.read_bytes(), f.stat().st_mtime_ns) for f in sd2.glob("*.py")} == before, out[-500:])
+            sd3 = h3 / "triggers"
+
+            def clear():
+                shutil.rmtree(sd3, ignore_errors=True)
+
+            def seed3():
+                d = sd3 / "seed"
+                return {f.stem for f in d.glob("*.py")} if d.is_dir() else set()
+            clear()
+            rc, out = run("--reconcile", key, "--registry", str(o3), "--dry-run")
+            check("--dry-run: rc 0, the plan printed, NOTHING written", rc == 0 and "would install trigger org_backup"
+                  in out and not sd3.exists(), out[-300:])
+            dshim = t / "dockershim"
+            dshim.mkdir()
+            (dshim / "docker").write_text('#!/bin/sh\n[ "$1" = inspect ] && [ "$2" = fxwin ] && exit 0\nexit 1\n')
+            (dshim / "docker").chmod(0o755)
+            rc, out = run("--reconcile", key, "--registry", str(o3), path=f"{dshim}:{os.environ['PATH']}",
+                          windows="fxwin")
+            outs.append(out)
+            check("no triggers, a Windows container here: all FIVE go in (every state read before any write)",
+                  rc == 0 and seed3() == four | {"windows_idle_stop"}, f"{sorted(seed3())} {out[-300:]}")
+            clear()
+            (sd3 / "steward").mkdir(parents=True)
+            (sd3 / "steward" / "own_backup.py").write_text(trig.format("run_backup"))   # its OWN backup, no verify
+            (sd3 / "medic").mkdir()
+            (sd3 / "medic" / "heal.py").write_text(trig.format("agent_heal"))
+            rc, out = run("--reconcile", key, "--registry", str(o3))
+            outs.append(out)
+            check("another agent's agent_heal stands its shim down, and org_backup stands down on EITHER name "
+                  "(run_backup owned, run_restore_verify not): only context_compact and pr_review go in",
+                  rc == 0 and seed3() == {"context_compact", "pr_review"} and "stand down trigger org_backup" in out
+                  and "run_backup installed" in out, f"{sorted(seed3())} {out[-400:]}")
+            clear()
+            (sd3 / "x").mkdir(parents=True)
+            (sd3 / "x" / "blind.py").write_text("if True:\n    import os\n")
+            rc, out = run("--reconcile", key, "--registry", str(o3))
+            check("a blind file: every shim stands down (deferred), none written", rc == 0 and not seed3()
+                  and "deferred" in out and "install trigger" not in out, f"{sorted(seed3())} {out[-300:]}")
+            clear()
+            for why, args, reason in (("the primary", ["--reconcile", "astryx", "--registry", str(o3)], "primary"),
+                                      ("an unknown key", ["--reconcile", "nosuch", "--registry", str(o3)], "not an org"),
+                                      ("an add's flags beside it", ["--reconcile", key, "--home", str(h3)], "takes only")):
+                rc, out = run(*args)
+                check(f"--reconcile refuses {why}: rc 2 ('{reason}'), nothing written", rc == 2 and reason in out
+                      and not sd3.exists(), f"rc {rc} {out[-200:]}")
     finally:
         try:
             with psycopg.connect(admin, autocommit=True) as c:      # only THIS run's unique name, if a mutant made it

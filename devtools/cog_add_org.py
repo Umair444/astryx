@@ -5,6 +5,7 @@ never calls this checkout's init.sh, whose one-org resolver would re-initialise 
     venv/bin/python devtools/cog_add_org.py <key> --home DIR --name FED [--dry-run]
         [--db NAME] [--dsn DSN] [--ports stem=port,...] [--registry PATH] [--out PATH]
         [--primary-key astryx] [--primary-obs-port 8190]
+    venv/bin/python devtools/cog_add_org.py --reconcile <key> [--registry PATH] [--dry-run]
 
 It makes, in order (--dry-run prints each step and does NONE of them):
   1. the org's DATABASE on the primary's server, as the primary's role (R1: one owner, one superuser): CREATE DATABASE
@@ -16,6 +17,11 @@ It makes, in order (--dry-run prints each step and does NONE of them):
   3. its .env (mode 600): ASTRYX_ORG (the federation name), ASTRYX_DSN (its database), a fresh ASTRYX_SECRET_KEY (an
      Ed25519 seed, init.sh's org_identity) and OBS_KEY, ASTRYX_URL empty (it is reached through the cog's gateway); no
      channel lines, so no bridge unit is ever wanted. No secret's VALUE is ever printed
+  3b. its SHIPPED TRIGGERS (plan-10224 add-org-parity), the one-org reconcile init.sh gives its checkout: the shims
+     of context_compact, pr_review, agent_heal and org_backup (its own daily dump into ITS HOME's backups/ and weekly
+     restore-verify), and windows_idle_stop where this host has a Windows container, into HOME/triggers/seed/, from
+     ONE source (astryx.pulse.shipped_triggers.shims, the text init.sh writes). A new HOME is empty by precondition,
+     so no trigger can exist there yet: each is installed
   4. the REGISTRY: the host's current one (orgs.load, the authority) plus this org, written to --out (never /etc), and
      validated by orgs.load. With no registry yet, the primary's entry is derived: --primary-key, the checkout as its
      HOME, its database by orgs.db_of, `primary` and `door` true, today's ports (org_units.json) plus its observatory
@@ -26,6 +32,10 @@ Ports default to the runbook's table (astryx-observatory-org 18190, astryx-canva
 cog port, or one something already answers on (a connect attempt; nothing is bound) REFUSES: pass --ports.
 STATED LIMIT: the positive CREATE DATABASE path is exercised by S6's rehearsal, not by a gate (tests/test_cog_add_org.py
 proves the statement, the refusal of an existing name, and every other step through --dsn on a fixture database).
+`--reconcile <key>` brings an EXISTING org of the registry (not the primary: ./init.sh reconciles that one) to the
+same set, idempotently: every shim's names are asked of trigger_names under ITS HOME and the registry, ALL before any
+file is written, and a shim is installed only when every name it registers is absent. Installed anywhere, retired, or
+deferred (unreadable) stands it down, named. No unit, so no sudo line: the org's pulse runs its triggers.
 Exit 0 done (or planned) · 2 refused, with the reason · 3 a step failed.
 """
 from __future__ import annotations
@@ -37,6 +47,7 @@ import os
 import secrets
 import shutil
 import socket
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -45,6 +56,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from astryx import config, orgs  # noqa: E402
+from astryx.pulse.shipped_triggers import shims  # noqa: E402
 
 DEFAULT_PORTS = {"astryx-observatory-org": 18190, "astryx-canvas": 18091}
 
@@ -218,6 +230,90 @@ def make_home(p: dict, a, dry: bool) -> None:
     os.chmod(envf, 0o600)
 
 
+def make_triggers(p: dict, a, dry: bool) -> None:
+    install_triggers(p["home"], dry)
+
+
+# the shipped triggers a cog org gets (init.sh's one-org set, minus what serves only a checkout: phone_resume_sweep needs
+# ANDROID_ENABLED in the org's .env, which a new org never has; upstream_prs is the upstream REPO's own watch)
+COG_SHIMS = ("context_compact", "pr_review", "windows_idle_stop", "agent_heal", "org_backup")
+
+
+def _wanted(shim: str) -> bool:
+    """init.sh's gates, for what a cog org gets: windows_idle_stop only where this host has a Windows container."""
+    if shim != "windows_idle_stop":
+        return True
+    return shutil.which("docker") is not None and subprocess.run(
+        ["docker", "inspect", os.environ.get("WINDOWS_CONTAINER") or "windows"], capture_output=True).returncode == 0
+
+
+def _state(name: str, home: Path, registry: Path) -> tuple[str, str]:
+    """trigger_names' answer for `name` in the org at `home` (the ONE helper; its registry named explicitly). No
+    ASTRYX_* name is inherited: this tool runs with the PRIMARY's ASTRYX_DSN (env-first), and trigger_names reads its
+    legacy rows through config.dsn, env-first too, so an inherited DSN asked the primary's triggers table about the org
+    (its org_runners rows read "deferred" for run_backup). Only the org's HOME and the registry are named."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("ASTRYX_")}
+    r = subprocess.run([sys.executable, "-m", "astryx.core.trigger_names", "state", name, "--target", "seed"], cwd=ROOT,
+                       capture_output=True, text=True, timeout=120,
+                       env={**env, "ASTRYX_HOME": str(home), orgs.ENV: str(registry), "PYTHONPATH": str(ROOT / "src")})
+    out = (r.stdout.strip() or r.stderr.strip()[-200:] or "no answer").split(" ", 1)
+    return (out[0] if out[0] in ("installed", "retired", "absent", "deferred") else "deferred"), " ".join(out[1:])
+
+
+def install_triggers(home: Path, dry: bool, registry: Path | None = None) -> list:
+    """The shipped shims into home/triggers/seed. registry None: a NEW home (empty by precondition: install every
+    wanted one). Else the deferential reconcile: every state is read BEFORE any file is written (a written shim must
+    not change the next one's answer), and a shim goes in only when ALL the names it registers are absent."""
+    tdir = home / "triggers" / "seed"
+    plan_ = []
+    for shim in COG_SHIMS:
+        if not _wanted(shim):
+            plan_.append((shim, "skip", "not used on this host"))
+            continue
+        if registry is None:
+            plan_.append((shim, "install", "a new HOME has no triggers"))
+            continue
+        st = {n: _state(n, home, registry) for n in shims.NAMES[shim]}
+        if all(s == "absent" for s, _ in st.values()):
+            plan_.append((shim, "install", "every name it registers is absent"))
+        else:
+            plan_.append((shim, "stand down", "; ".join(f"{n} {s} {d}".strip() for n, (s, d) in st.items()
+                                                       if s != "absent")))
+    for shim, act, why in plan_:
+        say(dry, f"{'install' if act == 'install' else act} trigger {shim} in {tdir}" + (f" ({why})" if why else ""))
+        if act == "install" and not dry:
+            tdir.mkdir(parents=True, exist_ok=True)
+            shims.write(shim, tdir)
+    return plan_
+
+
+def reconcile(a) -> int:
+    env = {orgs.ENV: a.registry} if a.registry else None
+    reg_path = orgs.path(env)
+    try:
+        got = orgs.load(env)
+    except orgs.RegistryError as e:
+        print(f"cog_add_org: refusing: {e}", file=sys.stderr)
+        return 2
+    if not got or a.reconcile not in got:
+        print(f"cog_add_org: refusing: '{a.reconcile}' is not an org of the registry {reg_path}", file=sys.stderr)
+        return 2
+    e = got[a.reconcile]
+    if e["primary"]:
+        print(f"cog_add_org: refusing: '{a.reconcile}' is the cog's primary, whose checkout ./init.sh reconciles",
+              file=sys.stderr)
+        return 2
+    home = Path(e["home"])
+    if not (home / ".env").is_file():
+        print(f"cog_add_org: refusing: {home} holds no .env (not a set-up org HOME)", file=sys.stderr)
+        return 2
+    print(f"cog_add_org: reconcile '{a.reconcile}' ({home})" + ("; NOTHING is changed" if a.dry_run else ""))
+    install_triggers(home, a.dry_run, reg_path)
+    print(f"\nIts pulse runs them (no unit, no sudo line). Its first dump lands at 04:00 in {home}/backups/; to run one "
+          f"now: ASTRYX_HOME={home} scripts/backup.sh")
+    return 0
+
+
 def write_registry(p: dict, a, dry: bool) -> None:
     out = Path(a.out)
     say(dry, f"write the registry ({', '.join(sorted(p['merged']))}) to {out}, never /etc, and validate it by orgs.load")
@@ -248,9 +344,10 @@ def owner_lines(p: dict, a) -> None:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="add an org to this host's cog (plan-11324 S3f S5)")
-    ap.add_argument("key")
-    ap.add_argument("--home", required=True)
-    ap.add_argument("--name", required=True, help="its federation name (ASTRYX_ORG)")
+    ap.add_argument("key", nargs="?")
+    ap.add_argument("--home")
+    ap.add_argument("--name", help="its federation name (ASTRYX_ORG)")
+    ap.add_argument("--reconcile", metavar="KEY", help="bring an EXISTING org's shipped triggers to the set (no add)")
     ap.add_argument("--db")
     ap.add_argument("--dsn", help="an EXISTING database to bring (no CREATE)")
     ap.add_argument("--ports")
@@ -260,6 +357,12 @@ def main(argv=None) -> int:
     ap.add_argument("--primary-obs-port", type=int, default=8190)
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
+    if a.reconcile:
+        if a.key or a.home or a.name or a.db or a.dsn or a.ports or a.out:
+            ap.error("--reconcile KEY takes only --registry and --dry-run")
+        return reconcile(a)
+    if not (a.key and a.home and a.name):
+        ap.error("adding an org needs <key>, --home and --name")
     a.out = a.out or str(Path(a.home).resolve()) + ".cog.json"
     try:
         p = plan(a)
@@ -274,6 +377,7 @@ def main(argv=None) -> int:
     try:
         make_db(p, a, a.dry_run)
         make_home(p, a, a.dry_run)
+        make_triggers(p, a, a.dry_run)
         write_registry(p, a, a.dry_run)
     except Exception as e:  # noqa: BLE001 — a failed step is named, with its type; never a value
         print(f"cog_add_org: a step FAILED ({type(e).__name__}: {e})", file=sys.stderr)
