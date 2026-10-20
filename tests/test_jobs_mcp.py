@@ -417,6 +417,10 @@ check("D4 a bare host with a query is a URL, not a slug (forge #61577 R-1)",
 check("D5 a bare ATS host names no board: the clear error, never the host as a slug (forge A-1)",
       "could not read a board slug" in str(_try(lambda: S._slug("jobs.ashbyhq.com", "ashby"))),
       _try(lambda: S._slug("jobs.ashbyhq.com", "ashby")))
+check("D6 a dotted slug that merely ENDS in an ATS domain is still a slug; the real host still refuses (forge R-3)",
+      _try(lambda: S._slug("clever.co", "ashby")) == "clever.co"
+      and "could not read a board slug" in str(_try(lambda: S._slug("jobs.lever.co", "lever"))),
+      (_try(lambda: S._slug("clever.co", "ashby")), _try(lambda: S._slug("jobs.lever.co", "lever"))))
 s = S._scrub("ConnectError: GET https://h.example/p?token=abc&x=1 failed")
 check("P3 scrub strips query strings", "token=abc" not in s and "https://h.example/p" in s, s)
 check("P4 scrub caps length", len(S._scrub("x" * 5000)) <= 240)
