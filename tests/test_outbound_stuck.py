@@ -282,7 +282,7 @@ def _run_with_roster(roster, sender="seed", to="abstractor-3", to_org="local", c
     ch.roster = lambda *a, **k: list(roster)
     try:
         return _MOD["outbound_stuck"](types.SimpleNamespace(
-            state={}, sql=lambda q, p=(): list(cands) if "AS cand" in q else rows)) or ""
+            state={}, sql=lambda q, p=(): [] if "AS copy" in q else list(cands) if "AS cand" in q else rows)) or ""
     finally:
         ch.roster_of_type, ch.roster = real_t, real_r
 
@@ -411,7 +411,7 @@ def test_refused_render_says_do_not_resend_through_the_real_entrypoint():
     rows = [{"id": 902, "ts": _dt.now(_tz.utc) - _td(hours=2), "to_agent": "owner", "to_org": "local",
              "status": "refused", "from_agent": "seed", "external_handle": False, "bridge_delivered": True,
              "sheet_delivered": False, "awaiting_peer_pickup": False, "last_pickup": None}]
-    out = _MOD["outbound_stuck"](types.SimpleNamespace(state={}, sql=lambda q, p=(): [] if "AS cand" in q else rows))
+    out = _MOD["outbound_stuck"](types.SimpleNamespace(state={}, sql=lambda q, p=(): [] if "AS cand" in q or "AS copy" in q else rows))
     assert out and "REFUSED BY THE DOOR (1)" in out and "DO NOT RESEND" in out and "#902" in out, out
     assert "ACTIONABLE" not in out and "BRIDGE-DELIVERED" not in out and "fix the addressing, RESEND" not in out, out
 
@@ -458,7 +458,7 @@ def _entry_rows(*specs):
 
 def _entry(rows):
     import types
-    return _MOD["outbound_stuck"](types.SimpleNamespace(state={}, sql=lambda q, p=(): [] if "AS cand" in q else rows))
+    return _MOD["outbound_stuck"](types.SimpleNamespace(state={}, sql=lambda q, p=(): [] if "AS cand" in q or "AS copy" in q else rows))
 
 
 def test_a_desk_thread_from_a_sender_the_desk_does_not_serve_is_uncarried():
@@ -633,6 +633,65 @@ def test_desk_predicate_on_a_real_db_reads_the_consumers_prefixes_and_who():
         for h, ids in want.items():
             for i in ids:
                 assert f"#{i} " in sec[h] and not any(f"#{i} " in v for k, v in sec.items() if k != h), (h, i, out)
+        conn.close()
+    finally:
+        fxc.__exit__(None, None, None)
+
+def test_superseded_identical_delivered_copy_is_reported_once_never_resent():
+    """steward 10-20 (#61464): seed's two dead "the org has gone quiet" owner alarms had an IDENTICAL third copy that WAS
+    delivered, and the guard said RESEND, which would re-deliver a stale alarm. A row whose identical copy (sender,
+    recipient, org, thread, normalised body) was delivered later is reported ONCE as SUPERSEDED and never raised again.
+    A later delivered row that only shares the opening stays stuck (it stays a candidate, never a verdict). Real SQL:
+    the superseded site reads both 0 and >=1 rows (sqlguard's W rung)."""
+    try:
+        import psycopg
+        import importlib.util
+        from astryx.security.sqlguard.fixture import fixture_db
+        sp = importlib.util.spec_from_file_location("pulse_run_os2", REPO / "src" / "astryx" / "pulse" / "pulse_run.py")
+        pr = importlib.util.module_from_spec(sp)
+        sp.loader.exec_module(pr)
+        fxc = fixture_db()
+        fx = fxc.__enter__()
+    except Exception as e:  # noqa: BLE001
+        print(f"    (skipped: no fixture DB — {type(e).__name__})")
+        return
+    try:
+        conn = psycopg.connect(fx["dsn"], autocommit=True)
+
+        class C(pr.Ctx):
+            def __init__(s, st):
+                super().__init__(st)
+                s._conn = conn
+
+        def put(body, status, hours, thread="t-org-dark-escalation", to="owner"):
+            return conn.execute("INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, body, status, ts) "
+                                "VALUES ('seed','local',%s,'local',%s,%s,%s, now() - make_interval(hours => %s)) "
+                                "RETURNING id", (to, thread, body, status, hours)).fetchone()[0]
+        alarm = "ASTRYX: the org has gone quiet  —  1 agent(s) stopped taking turns."
+        near = put("ASTRYX: the org has gone quiet — 2 agent(s) stopped. A DIFFERENT tail.", "dead", 30)
+        st = {}
+        out = _MOD["outbound_stuck"](C(st)) or ""
+        # the superseded site at 0 rows first: one stuck row, no identical delivered copy
+        assert "SUPERSEDED" not in out and f"#{near} " in out, out
+        conn.execute("UPDATE messages SET status = 'delivered' WHERE id = %s", (near,))   # settled: off the board
+        a1, a2 = put(alarm, "dead", 72), put(alarm, "dead", 71)
+        put(alarm.replace("  ", " "), "delivered", 70)            # the identical copy, whitespace aside, delivered
+        st = {}
+        out = _MOD["outbound_stuck"](C(st)) or ""
+        # ONLY superseded rows fire: they're still reported, once (never dropped silently)
+        assert out.startswith("OUTBOUND STUCK — SUPERSEDED (2)") and f"#{a1} (→ delivered" in out \
+            and f"#{a2} (→ delivered" in out, out
+        assert st["warned"][str(a1)] >= 10 ** 6 and st["warned"][str(a2)] >= 10 ** 6, st
+        again = _MOD["outbound_stuck"](C(st)) or ""
+        assert f"#{a1}" not in again and f"#{a2}" not in again, again          # reported once, never re-nagged
+        # an identical pair with NO delivered copy is not superseded (a dead copy delivers nothing), and the
+        # near-miss shape (same opening, different tail, delivered later) supersedes nothing either
+        d1, d2 = put("ASTRYX: a second alarm, never delivered.", "dead", 30, "t-other"), \
+            put("ASTRYX: a second alarm, never delivered.", "dead", 29, "t-other")
+        n2 = put(alarm + " (a different tail)", "dead", 28)
+        put(alarm + " (yet another tail)", "delivered", 27)
+        out = _MOD["outbound_stuck"](C(st)) or ""
+        assert "SUPERSEDED" not in out and all(f"#{i} " in out for i in (d1, d2, n2)), out
         conn.close()
     finally:
         fxc.__exit__(None, None, None)
