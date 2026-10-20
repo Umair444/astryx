@@ -71,8 +71,11 @@ MUTANTS = {
          "    for n in ast.walk(tree):\n        if isinstance(n, ast.Constant) and n.value == REGISTRY:\n            return True\n"
          "        if isinstance(n, (ast.Assign, ast.AugAssign, ast.AnnAssign)):\n"),
     "(r) the host's live registry under /etc is a pin":
-        ('    live = lambda v: isinstance(v, ast.Constant) and isinstance(v.value, str) and v.value.startswith("/etc/")\n',
-         "    live = lambda v: False\n"),
+        ("    live = lambda v: v is not None and any(etc(c) or key(c) for c in ast.walk(v))", "    live = lambda v: False"),
+    "(r) only a top-level /etc constant is live (a concat, a Path(), a forwarded get pin; a2 R-2)":
+        ("    live = lambda v: v is not None and any(etc(c) or key(c) for c in ast.walk(v))", "    live = lambda v: etc(v)"),
+    "(r) reading the key back is no forward (os.environ.get(K, '') pins)":
+        ("any(etc(c) or key(c) for c in ast.walk(v))", "any(etc(c) for c in ast.walk(v))"),
     "(r) setdefault is not a pin":
         ('f.attr == "setdefault" and n.args and key(n.args[0])', 'f.attr == "setdefault" and False'),
     "(r) a keyword write is not a pin":

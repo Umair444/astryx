@@ -188,6 +188,17 @@ R_TREE = {
     "r_mention": {"tests/test_r.py": "print('ASTRYX_COG_REGISTRY')\n" + SPAWN},
     "r_etc": {"tests/test_r.py": "import os\nos.environ['ASTRYX_COG_REGISTRY'] = '/etc/astryx/cog.json'\n" + SPAWN},
     "r_gate_other": {"tests/test_r.py": "def gate(*a):\n    pass\ngate('test_r')\n" + SPAWN},
+    # a2 R-2: the VALUE is judged whole: an /etc path anywhere in it, or the key read back (forwarding the host's)
+    "r_fwd_get": {"tests/test_r.py": "import os\nos.environ['ASTRYX_COG_REGISTRY'] = os.environ.get("
+                                     "'ASTRYX_COG_REGISTRY', '/etc/astryx/cog.json')\n" + SPAWN},
+    "r_concat": {"tests/test_r.py": "import os\nos.environ['ASTRYX_COG_REGISTRY'] = '/etc/astryx/' + 'cog.json'\n"
+                                    + SPAWN},
+    "r_path": {"tests/test_r.py": "import os\nfrom pathlib import Path\n"
+                                  "os.environ['ASTRYX_COG_REGISTRY'] = str(Path('/etc/astryx/cog.json'))\n" + SPAWN},
+    "r_fwd_update": {"tests/test_r.py": "import os\nos.environ.update({'ASTRYX_COG_REGISTRY': os.environ.get("
+                                        "'ASTRYX_COG_REGISTRY', '')})\n" + SPAWN},
+    "g_tempdir": {"tests/test_r.py": "import os, tempfile\nfrom pathlib import Path\nos.environ['ASTRYX_COG_REGISTRY']"
+                                     " = str(Path(tempfile.gettempdir()) / 'x' / 'cog.json')\n" + SPAWN},
     "g_setdefault": {"tests/test_r.py": "import os\nos.environ.setdefault('ASTRYX_COG_REGISTRY', '/tmp/x/n')\n" + SPAWN},
     "g_update_kw": {"tests/test_r.py": "import os\nos.environ.update(ASTRYX_COG_REGISTRY='/tmp/x/n')\n" + SPAWN},
     "g_dict": {"tests/test_r.py": "import os\nos.environ |= {'ASTRYX_COG_REGISTRY': '/tmp/x/n'}\n" + SPAWN},
@@ -219,9 +230,11 @@ for nm, want in (("r_spawn", [("r", "tests/test_r.py", 2)]), ("r_target", [("r",
                  ("r_pop", [("r", "tests/test_r.py", 4)]), ("r_comment_named", [("r", "tests/test_r.py", 3)]),
                  ("r_mention", [("r", "tests/test_r.py", 3)]), ("r_etc", [("r", "tests/test_r.py", 4)]),
                  ("r_gate_other", [("r", "tests/test_r.py", 5)]),
+                 ("r_fwd_get", [("r", "tests/test_r.py", 4)]), ("r_concat", [("r", "tests/test_r.py", 4)]),
+                 ("r_path", [("r", "tests/test_r.py", 5)]), ("r_fwd_update", [("r", "tests/test_r.py", 4)]),
                  ("g_src_names", [("r", "tests/test_r.py", 3)])):    # the SUBJECT naming the registry pins nothing
     check(f"RED {nm}: the unpinned service start is found at its line", r_got[nm] == want, str(r_got[nm]))
-for nm in ("g_gate", "g_named", "g_setdefault", "g_update_kw", "g_dict", "g_estate_mod", "g_gate_alias", "g_noise",
+for nm in ("g_gate", "g_named", "g_tempdir", "g_setdefault", "g_update_kw", "g_dict", "g_estate_mod", "g_gate_alias", "g_noise",
            "g_allow"):
     check(f"GREEN {nm}: no (r) finding", r_got[nm] == [], str(r_got[nm]))
 with tempfile.TemporaryDirectory() as td:                         # not a gate: no run line names it, nothing found

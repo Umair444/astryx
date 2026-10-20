@@ -21,7 +21,8 @@ everything those import, transitively):
        databases (10-19 17:02: test_relay's gateways wrote orga.test into the live peers). The two halves of one guard:
        child_env_gate holds that a spawn's env never DROPS the parent's pin (and greens an inheriting env because the
        parent carries it); this holds that the parent carries it. Residual, named: a runner the test writes to a file
-       and then executes, and a pin written AFTER the spawn (order is not read).
+       and then executes, a pin written AFTER the spawn (order is not read), and a value through a name bound
+       elsewhere (LIVE = "/etc/…"; env[K] = LIVE): the value is judged by a denylist, not a positive OWNED class.
 
 It reads what EXECUTES (python by AST; js/sh with comments stripped, sh heredoc bodies dropped), and a root it can't
 classify is quiet: the census under-reports by construction, it never guesses. The ONLY allowlist is an explicit
@@ -334,14 +335,16 @@ def _services(text: str) -> list[int]:
 def _pins(text: str) -> bool:
     """(r) Does this file WRITE the registry pin (a2 #61467 R-1: a mention is no pin, and neither is an unpin): the key
     ASTRYX_COG_REGISTRY as a subscript-assignment target (os.environ[K] = …, env[K] = …), a dict literal's key, the
-    first argument of .setdefault, or a keyword (env.update(K=…), dict(…, K=…)), with a value that isn't a literal
-    under /etc (the host's live registry); or a call to the gate imported from sqlguard.estate (its setdefault pin).
+    first argument of .setdefault, or a keyword (env.update(K=…), dict(…, K=…)), with a value that names no /etc
+    literal ANYWHERE in it (the host's live registry, concatenated or wrapped in Path) and never reads the key itself
+    (`os.environ.get(K, …)` forwards what the host has: a2 #61467 R-2); or a call to the gate imported from sqlguard.estate (its setdefault pin).
     pop/del/get, a comment and any other constant equal to the key pin nothing."""
     tree = _parse(text)
     if tree is None:
         return False
     key = lambda e: isinstance(e, ast.Constant) and e.value == REGISTRY
-    live = lambda v: isinstance(v, ast.Constant) and isinstance(v.value, str) and v.value.startswith("/etc/")
+    etc = lambda c: isinstance(c, ast.Constant) and isinstance(c.value, str) and c.value.startswith("/etc/")
+    live = lambda v: v is not None and any(etc(c) or key(c) for c in ast.walk(v))   # anywhere in the value (a2 R-2)
     gates, mods = set(), set()                  # local names of estate's gate, and of the estate module itself
     for n in ast.walk(tree):
         if isinstance(n, ast.ImportFrom) and (n.module or "").endswith("sqlguard.estate"):
