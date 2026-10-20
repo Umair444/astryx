@@ -614,6 +614,10 @@ run "check.sh gate cap: an expired gate is TIMED OUT and its group killed" "$PY"
 run "check.sh registry pin: no gate sees the host's org registry; each runs as the checkout's own org (plan-11324 S3f S3)" "$PY" tests/test_check_registry_pin.py
 run "check.sh gate dir: each gate gets its own short TMPDIR, and nothing of it outlives the gate (plan-10108 D1)" "$PY" tests/test_gate_dir.py
 run "gate census: no literal port, probe-then-release or shared-root write in any gate's reach, unless declared (plan-10108 D4)" "$PY" tests/test_gate_census.py
+# plan-10224 child-env-gate (seed #61406): no oracle hands a subprocess an env that silently drops the parent's cog
+# registry pin (10-20: three reds and a masked fourth read /etc/astryx/cog.json). Hermetic AST. Mutants:
+# tests/mutants_child_env_gate.py.
+run "child-env gate: every subprocess env in tests/ carries the registry pin, provably plain, or declared (plan-10224)" "$PY" tests/test_child_env_gate.py
 # The gate on the OTHER actuator. .git/hooks/pre-push is a COPY of the tracked hooks/pre-push,
 # so the reviewed artifact and the executed one are two writers of one fact with no reconciler
 # — and privacy_gate already rides on that copy. Proves the installed hook matches byte for
