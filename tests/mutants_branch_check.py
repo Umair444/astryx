@@ -27,6 +27,9 @@ MUTANTS = {
          "    return None if w1 is None or w2 is None else w1 + w2"),
     "U5 an unwitnessed part with no known write reads as a clean 0":
         ("    return sum(known) if any(known) or len(known) == 2 else None", "    return sum(known)"),
+    "U6 run() bypasses combine_witness at the call site (07ab603's inline sum back: a4 #61241 advisory)":
+        ('            witness["branch"] = combine_witness(witness["branch"], w2)',
+         '            witness["branch"] = None if witness["branch"] is None or w2 is None else witness["branch"] + w2'),
     "U3 an unwitnessed side is never named":
         ("    gone = [side for side, n in witness.items() if n is None]", "    gone = []"),
     "O1 a statement reaching PROD doesn't fail the run":

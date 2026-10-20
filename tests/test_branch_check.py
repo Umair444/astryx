@@ -199,6 +199,17 @@ def main():
           len(reps) == 1 and any(k.arg == "touched" and "touched_files" in ast.dump(k.value)
                                  and "'branch'" in ast.unparse(k.value) for k in reps[0].keywords),
           ast.dump(reps[0]) if reps else "no report call in run()")
+    # a4 #61241 advisory: the rerun sum's CALL SITE. The oracle can't reach run()'s rerun, and 07ab603's defect lived
+    # exactly there, so pin it statically: run() writes witness["branch"] only through combine_witness(...)
+    def _wb(t):
+        return isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name) and t.value.id == "witness" \
+            and isinstance(t.slice, ast.Constant) and t.slice.value == "branch"
+    wb_set = [n for n in ast.walk(runfn) if isinstance(n, ast.Assign) and any(_wb(t) for t in n.targets)]
+    wb_aug = [n for n in ast.walk(runfn) if isinstance(n, ast.AugAssign) and _wb(n.target)]
+    check("run() assigns witness['branch'] once, from combine_witness(...), and never with += (a4 #61241)",
+          len(wb_set) == 1 and not wb_aug and isinstance(wb_set[0].value, ast.Call)
+          and isinstance(wb_set[0].value.func, ast.Name) and wb_set[0].value.func.id == "combine_witness",
+          f"{[ast.unparse(n) for n in wb_set + wb_aug]}")
     tsc = _tmpdir("bc-scope-")
     (tsc / "tests").mkdir()
     (tsc / "tests" / "test_x.py").write_text("from astryx.hearing import voice_mint as V\nimport nucleus.other\n")
