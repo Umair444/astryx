@@ -249,7 +249,11 @@ roots.append(outs)
 got = {}
 for name in ("member", "plain", "bad"):
     r = subprocess.run(["bash", str(rt / "scripts" / "spawn.sh"), "--render", name, str(outs / name)],
-                       env={"PATH": f"{shims}:/usr/bin:/bin", "HOME": str(rt), "ASTRYX_NODE": "/N/node"},
+                       # through the helper, so the parent's cog registry pin reaches spawn.sh: a fresh env dropped
+                       # it, spawn.sh's orgs.py read the host's LIVE registry and looked for agents/ there, never in
+                       # this tree ("no charter for 'member' under agents/", hidden on main behind the hook arms' crash)
+                       env=propagate.env_for_child({"PATH": f"{shims}:/usr/bin:/bin", "HOME": str(rt),
+                                                    "ASTRYX_NODE": "/N/node"}),
                        capture_output=True, text=True, timeout=60)
     sp = outs / name / ".claude" / "settings.json"
     got[name] = (r.returncode, sp.read_text() if sp.exists() else None, (r.stdout + r.stderr)[-300:])
