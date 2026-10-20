@@ -48,6 +48,10 @@ def files(a: str, b: str) -> list:
     return sorted(git("diff", "--no-renames", "--name-only", a, b).split("\n")[:-1])
 
 
+def binary(a: str, b: str, f: str) -> bool:
+    return git("diff", "--no-renames", "--numstat", a, b, "--", f).startswith("-\t-\t")
+
+
 def changed_lines(a: str, b: str, f: str) -> list:
     """The +/- lines of f's diff a..b with NO context and no hunk headers: what the change IS, wherever it sits."""
     out = git("diff", "--no-renames", "-U0", "--no-color", a, b, "--", f)
@@ -87,9 +91,17 @@ def compare(reviewed: str, rebased: str, onto: str = "main") -> tuple:
     if fo != fn:
         bad.append(f"FILES: only reviewed {sorted(set(fo) - set(fn))}, only rebased {sorted(set(fn) - set(fo))}")
     for f in sorted(set(fo) & set(fn)):
-        same = changed_lines(a, b, f) == changed_lines(c, d, f)
+        if binary(a, b, f) or binary(c, d, f):
+            # a binary diff has no +/- lines ("Binary files … differ"), so ANY two changes would compare equal. A
+            # binary is the same work only byte for byte at both ends; otherwise a reader can't separate the rebase
+            # from main's own edit, and it DIFFERS (fail closed)
+            ends = [git("rev-parse", f"{x}:{f}", check=False).strip() for x in (a, c, b, d)]
+            same = ends[0] == ends[1] and ends[2] == ends[3]
+        else:
+            same = changed_lines(a, b, f) == changed_lines(c, d, f)
         if not same:
-            bad.append(f"CHANGE in {f}: its +/- lines differ (the rebase changed what the commit does here)")
+            bad.append(f"CHANGE in {f}: its +/- lines differ (the rebase changed what the commit does here)"
+                       if not binary(c, d, f) else f"CHANGE in {f}: a BINARY whose ends aren't byte-equal (read it)")
         ob = git("rev-parse", f"{b}:{f}", check=False).strip()[:10] or "(deleted)"
         nb = git("rev-parse", f"{d}:{f}", check=False).strip()[:10] or "(deleted)"
         blob = "blob EQUAL" if ob == nb else f"blob {ob}→{nb}"

@@ -110,6 +110,21 @@ def main():
         check("…and onto a main that moved on, elsewhere, still clean (not 'IS it')",
               rc == 0 and f"onto main@{m2[:7]}: merges clean\n" in out, out)
 
+        # a BINARY diff has no +/- lines: two different binary changes must not read as the same work (a4 10-21)
+        git("checkout", "-q", "-b", "bin1", base)
+        (r / "x.bin").write_bytes(b"a\0CHANGE1"); git("add", "-A"); git("commit", "-q", "-m", "bin")
+        git("checkout", "-q", "-b", "bin2", base)
+        (r / "x.bin").write_bytes(b"a\0OTHER2"); git("add", "-A"); git("commit", "-q", "-m", "bin")
+        git("checkout", "-q", "-b", "bin3", base)
+        (r / "x.bin").write_bytes(b"a\0CHANGE1"); git("add", "-A"); git("commit", "-q", "-m", "bin")
+        git("checkout", "-q", "main")
+        b1, b2, b3 = (git("rev-parse", n) for n in ("bin1", "bin2", "bin3"))
+        rc, out = tool(f"{base}..{b1}", f"{base}..{b2}", "--onto", "")
+        check("two DIFFERENT binary changes DIFFER (a binary diff has no +/- lines to compare)",
+              rc == 1 and "CHANGE in x.bin: a BINARY" in out, out)
+        rc, out = tool(f"{base}..{b1}", f"{base}..{b3}", "--onto", "")
+        check("…and the byte-identical binary change, re-committed, is SAME WORK", rc == 0 and "SAME WORK" in out, out)
+
         rc, out = tool("nope..x", f"{m1}..{good}")
         check("a ref that doesn't resolve is rc 2, named", rc == 2 and "no such commit: nope" in out, out)
         rc, out = tool(f"{base}", f"{m1}..{good}")

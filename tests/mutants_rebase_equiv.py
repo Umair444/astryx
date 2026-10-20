@@ -36,6 +36,8 @@ MUTANTS = {
     "Q8 a bad ref reads as rc 1 (a difference), not rc 2 (usage)":
         ("        return 2, [f\"rebase_equiv: {e if str(e) else 'want two ranges A..B C..D'}\"]",
          "        return 1, [f\"rebase_equiv: {e if str(e) else 'want two ranges A..B C..D'}\"]"),
+    "Q10 a binary file is compared by its (empty) +/- lines, so any two binary changes read equal":
+        ("        if binary(a, b, f) or binary(c, d, f):", "        if False:"),
     "Q9 the file set isn't compared (a dropped file passes if the rest is equal)":
         ("    if fo != fn:", "    if False:"),
 }
