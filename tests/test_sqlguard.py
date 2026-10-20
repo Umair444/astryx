@@ -674,7 +674,10 @@ def _build_tree(tmp: Path, rev=None):
 
 def _env(tmp: Path, run: str, trace=None, gate=""):
     import os
+    # A registry naming no file (check.sh's pin, which this fresh env would drop): on a cog host the subject's
+    # pulse_run._dsn would otherwise read /etc/astryx/cog.json, the LIVE orgs, from this fake tree (10-20).
     e = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": os.environ.get("HOME", "/tmp"),
+         "ASTRYX_COG_REGISTRY": str(tmp / "no-cog-registry" / "cog.json"),
          "ASTRYX_SQLGUARD_ROOT": str(tmp), "ASTRYX_SQLGUARD_RUN": run}
     if trace is not None:
         e.update(ASTRYX_SQLGUARD_DIR=str(trace), ASTRYX_SQLGUARD_GATE=gate,
