@@ -50,15 +50,22 @@ q_live -c "CREATE DATABASE $SCRATCH" >/dev/null || { echo "restore-verify: canno
 # AUTHORITATIVE gate — a truly-broken dump leaves the core tables absent or empty.
 do_restore >/dev/null 2>&1 || echo "restore-verify: pg_restore reported issues — checking tables anyway" >&2
 
+# >>> verify row counts
 fail=0
+LIVE_COUNTS=""   # handed to the drill: a table it restores with 0 rows is genuine only where live has 0 too
 for t in steps messages goals triggers; do   # org-home: SQL table names, not paths
   live=$(q_live -tAc "SELECT count(*) FROM $t" 2>/dev/null | tr -d '[:space:]')
   got=$(q_scratch -tAc "SELECT count(*) FROM $t" 2>/dev/null | tr -d '[:space:]')
+  LIVE_COUNTS="$LIVE_COUNTS $t=${live:-?}"
   if [ -z "$got" ]; then echo "  ✗ $t: table did NOT restore — the dump is not restorable" >&2; fail=1; continue; fi
-  if [ "$got" -eq 0 ]; then echo "  ✗ $t: restored EMPTY (0 rows) — truncated/corrupt dump" >&2; fail=1; continue; fi
+  # 0 rows is EMPTY, not truncated, only where the LIVE table is empty too (a new org's goals, seed #61553): a table
+  # that exists with 0 rows while live holds rows is still a truncated/corrupt dump
+  if [ "$got" -eq 0 ] && [ "${live:-x}" = 0 ]; then echo "  ✓ $t: restored, empty (live has 0 rows too)"; continue; fi
+  if [ "$got" -eq 0 ]; then echo "  ✗ $t: restored EMPTY (0 rows) while live has ${live:-?} — truncated/corrupt dump" >&2; fail=1; continue; fi
   if [ "$got" -gt $(( ${live:-0} * 2 + 100 )) ]; then echo "  ✗ $t: restored $got rows but live has $live — implausible" >&2; fail=1; continue; fi
   echo "  ✓ $t: restored $got rows (live $live)"
 done
+# <<< verify row counts
 
 # ---- trigger-body resolution: the tables restoring is NOT the org restoring --------------
 # The dump brings back the `triggers` TABLE, but its python-pointer rows (shape
@@ -106,7 +113,7 @@ fi
 # seam an empty-data-dir restore has. scripts/restore_drill.sh rehearses that world on a throwaway server (docs/restore.md).
 # Its NOT RUN (no docker, no image) fails this run like any other step: an unproven path never earns the OK stamp.
 DRILL_CAP=${RESTORE_DRILL_CAP:-1800}
-timeout "$DRILL_CAP" bash scripts/restore_drill.sh "$newest"; drc=$?
+RESTORE_LIVE_COUNTS="$LIVE_COUNTS" timeout "$DRILL_CAP" bash scripts/restore_drill.sh "$newest"; drc=$?
 case "$drc" in
   0) ;;
   124) echo "  ✗ restore-drill: TIMED OUT after ${DRILL_CAP}s (the drill's own trap tears it down)" >&2; fail=1 ;;

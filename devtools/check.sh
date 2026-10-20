@@ -744,6 +744,7 @@ run "init.sh trigger installs: by NAME through the helper, never over a retireme
 # census finds no org-state read outside the resolvers, sees the pre-S3a class, and keeps both partitions total (C1-C5).
 # Mutants: tests/mutants_org_home_*.py. With no registry (this host), nothing they test changes a byte.
 run "org home: each org process binds its own HOME, DSN and law; the backup is the org's; one org is unchanged" "$PY" tests/test_org_home.py
+run "restore row counts: an empty table restores as empty only where live is empty (seed 61553)" "$PY" tests/test_restore_counts.py
 run "org home pane: an org-B resident's environment is built from HOME-B, none of org A's names" "$PY" tests/test_org_home_pane.py
 run "org home units: each org's units are its own @<org> instance files, the partition (org_units.json) is total, one org is plain" "$PY" tests/test_org_home_units.py
 run "gateway cog: one door serves every org of a cog by federation name; a sibling's row goes in process through its own door's checks" "$PY" tests/test_gateway_cog.py

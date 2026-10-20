@@ -22,4 +22,6 @@ MUTANTS = {
     "B3 the DSN read from the checkout's .env, not the HOME's":
         ('DSN=$("$ROOT/venv/bin/python" "$ROOT/src/astryx/config.py" dsn --file 2>/dev/null || true)',
          'DSN=$(grep -m1 "^ASTRYX_DSN=" "$ROOT/.env" 2>/dev/null | cut -d= -f2- || true)'),   # org-home: mutant pattern
+    "the turns retention runs without the code tree's src (a non-primary org's HOME holds no astryx: skipped, seed #61553)":
+        ('ASTRYX_DSN="$DSN" PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}" timeout 600', 'ASTRYX_DSN="$DSN" timeout 600'),   # org-home: mutant pattern
 }

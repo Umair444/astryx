@@ -22,7 +22,8 @@
   H8 ONE ORG: with no registry (and with a ONE-entry registry) orgs.multi is false and the resolver is the old one.
   H9 BACKUP IS THE ORG'S (BC-S2 arm b): scripts/backup.sh run for org A (pg_dump/pg_dumpall/pg_isready are PATH
      shims: no real dump) dumps A's DSN into HOME-A/backups and rotates ONLY A's: B's dumps are untouched (names,
-     sizes, mtimes), and the checkout gets no backups/. Positive control: A's own old dumps WERE rotated.
+     sizes, mtimes), and the checkout gets no backups/. Positive control: A's own old dumps WERE rotated. Its
+     turns retention runs with the code tree's astryx from HOME-A's cwd (seed #61553: it was skipped)
   H10 RESTORE-VERIFY IS THE ORG'S (plan-10224 add-org-parity, seed #61511): scripts/restore_verify.sh for org A (psql
      and pg_restore are logging PATH shims, docker absent: the drill reads NOT RUN) connects ONLY to A's database and
      its scratch, named for A's (<A's db>_restorecheck, which it CREATEs and DROPs), never B's, never the primary's
@@ -273,6 +274,12 @@ def arms(fx):
                        timeout=300, env=fx.env(ASTRYX_HOME=str(A), HOME=str(userhome), BACKUP_DB_WAIT_S="0",
                                                PATH=f"{shim}:{os.environ.get('PATH', '/usr/bin:/bin')}"))
     check("backup.sh for A exits 0", r.returncode == 0, (r.stdout + r.stderr)[-400:])
+    check("its turns retention RAN with the code tree's astryx (from HOME-A's cwd, never \"No module named 'astryx'\": "
+          "a non-primary org silently skipped retention, seed #61553): the module itself ran (its fixture database is "
+          "never created, so it may fail INSIDE turns_retention.py, never before it)", "No module named" not in
+          r.stdout + r.stderr and ("turns retention failed" not in r.stdout + r.stderr
+                                   or "astryx/core/turns_retention.py" in r.stdout + r.stderr),
+          "\n".join(ln for ln in (r.stdout + r.stderr).splitlines() if "retention" in ln or "No module" in ln)[-400:])
     check("it dumped A's database (the DSN it handed pg_dump is HOME-A's)",
           rec.is_file() and rec.read_text() == fx.dsn["a"], "differs" if rec.is_file() else "pg_dump never ran")
     bka = fx.home["a"] / "backups"

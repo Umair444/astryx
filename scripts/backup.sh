@@ -203,7 +203,9 @@ fi
 # retention BEFORE the dump, so the dump shrinks with it: turns older than 7 days lose their image bytes
 # (words, tool calls and usage stay). Never blocks a backup: a failure OR a hang (lock wait, dead DB)
 # is reported and skipped — the timeout bounds it (a1 #42351 R2).
-ASTRYX_DSN="$DSN" timeout 600 "$ROOT/venv/bin/python" -m astryx.core.turns_retention --days "${TURNS_IMAGE_DAYS:-7}" \
+# `-m` resolves astryx from the cwd, and the cwd is the org's HOME (cd above), which holds no astryx: the CODE tree's
+# src goes first, or every non-primary org skipped retention ("No module named 'astryx'", seed #61553)
+ASTRYX_DSN="$DSN" PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}" timeout 600 "$ROOT/venv/bin/python" -m astryx.core.turns_retention --days "${TURNS_IMAGE_DAYS:-7}" \
   2>&1 | sed 's/^/backup: /' || echo "backup: turns retention failed — continuing with the dump" >&2
 
 # host pg_dump if present, else the container's (mirrors init.sh's psql/docker split)
