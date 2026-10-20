@@ -38,4 +38,16 @@ MUTANTS = {
         ('        if (a / "src" / "astryx").is_dir() or (a / "astryx.py").is_file():\n', '        if False:\n'),
     "T14 no registry pin (on a cog host the pulse's monthly battery refuses family after family: a2 #60815)":
         ('    env["ASTRYX_COG_REGISTRY"] = f"{tempfile.gettempdir()}/astryx-probe-{os.getpid()}-no-registry/cog.json"\n', ''),
+    'T15 why prefers the `FAIL:` summary over the check line (R13)':
+        ('        return (check or summary)[:200]', '        return (summary or check)[:200]'),
+    "T16 a crash's why is dressed as a plain exit (R14)":
+        ('        return f"a CRASH, not a check: {lines[-1][:180]}"', '        return "no failing line printed (the exit code alone)"'),
+    'T17 --only is ignored: every mutant runs (R15)':
+        ('    mutants = {k: v for k, v in spec.MUTANTS.items() if not only or any(k.startswith(o) for o in only)}', '    mutants = dict(spec.MUTANTS)'),
+    'T18 a prefix naming no mutant runs nothing and passes (R15)':
+        ('    if not mutants:\n        print(f"no mutant in', '    if False:\n        print(f"no mutant in'),
+    "T19 a subset's headline claims the authored set (R15)":
+        ('        elif only:\n', '        elif False:\n'),
+    'T20 the CAUGHT line drops its elapsed seconds (R13)':
+        ('            print(f"  CAUGHT                     {n}  ({took})")', '            print(f"  CAUGHT                     {n}")'),
 }

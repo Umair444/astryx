@@ -22,6 +22,9 @@ Hermetic: each arm writes a tiny subject, oracle and spec into a temp dir and ru
       worktree places it, never the bare name the shared directory gives (a3 #60809: 4 specs of 166 live there)
   R12 the oracle never sees the HOST's org registry (plan-11324 S3f S3, a2 #60815): handed a REAL two-org registry by
       its caller (the pulse's probe_all on a cog host), the oracle's ASTRYX_COG_REGISTRY names no file
+  R13 a CAUGHT names WHY: its oracle's first CHECK line (never the `FAIL:` summary), and how long it took
+  R14 a mutant caught by a CRASH (a Traceback, no check line) says so: the weak catch is never dressed as a check's
+  R15 --only PREFIX runs the named mutants alone and the headline never claims the set; a prefix naming none is rc 1
   C1  control: a passing baseline prints no tail block, and its mutant is CAUGHT
 """
 import json
@@ -43,7 +46,7 @@ def check(name, ok, detail=""):
 
 
 def probe(td: Path, oracle_body: str, timeout: int = 20, mutants=None, subject: str = "X = 1\n",
-          subj_rel: str = "subj.py", oracle_rel: str = "oracle.py") -> tuple:
+          subj_rel: str = "subj.py", oracle_rel: str = "oracle.py", args=()) -> tuple:
     sp, op = td / subj_rel, td / oracle_rel
     for f, body in ((sp, subject), (op, oracle_body)):
         f.parent.mkdir(parents=True, exist_ok=True)
@@ -61,7 +64,7 @@ def probe(td: Path, oracle_body: str, timeout: int = 20, mutants=None, subject: 
     env["PYTHONPATH"] = str(REPO / "src") + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     (td / "probe_env.json").write_text(json.dumps(sorted(env)))   # the names the PROBE was given (arm R8)
     # own-env: inherits; this file's one registry pop (:184) restores an ABSENT parent value in a finally
-    r = subprocess.run([sys.executable, str(SUBJECT), str(td / "spec.py")], capture_output=True, text=True,
+    r = subprocess.run([sys.executable, str(SUBJECT), str(td / "spec.py"), *args], capture_output=True, text=True,
                        timeout=120, env=env, cwd=td)
     return r.returncode, r.stdout + r.stderr
 
@@ -189,6 +192,41 @@ with tempfile.TemporaryDirectory() as t:
     check("R12 handed a REAL two-org registry, the oracle's ASTRYX_COG_REGISTRY names no file (baseline passes, mutant "
           "CAUGHT)", rc == 0 and "REFUSING" not in out and any(ln.lstrip().startswith("CAUGHT") for ln in out.splitlines()),
           out)
+
+    def after_caught(out):
+        ls = out.splitlines()
+        return [ls[i + 1].strip() for i, ln in enumerate(ls[:-1]) if ln.lstrip().startswith("CAUGHT")]
+
+    d = t / "r13"; d.mkdir()
+    # each fixture oracle FAILS anything but X = 1 (the canary's destroyed copy too), and reaches its arm on X = 2
+    rc, out = probe(d, "import os, sys\nsrc = open(os.environ['FIX_SRC']).read()\nprint('  PASS  arm-ok')\n"
+                       "if 'X = 1' not in src:\n"
+                       "    print('  FAIL  arm-why-13 the arm that judged it')\n    print('FAIL: 1 failing')\n"
+                       "    sys.exit(1)\nprint('PASS: 0 failing')\n")
+    caught_ln = next((ln for ln in out.splitlines() if ln.lstrip().startswith("CAUGHT")), "")
+    check("R13 a CAUGHT is followed by its why: the oracle's first CHECK line, not its `FAIL:` summary",
+          rc == 0 and after_caught(out) == ["why: FAIL  arm-why-13 the arm that judged it"], out)
+    check("R13 …and the CAUGHT line ends with its elapsed seconds", caught_ln.rstrip().endswith("s)")
+          and caught_ln.rstrip().rsplit("(", 1)[-1][:-2].isdigit(), caught_ln)
+
+    d = t / "r14"; d.mkdir()
+    rc, out = probe(d, "import os, sys\nsrc = open(os.environ['FIX_SRC']).read()\nif 'X = 2' in src:\n    1 / 0\n"
+                       "sys.exit(0 if 'X = 1' in src else 1)\n")
+    w = after_caught(out)
+    check("R14 a mutant caught by a CRASH says so, naming the exception (never dressed as a check's catch)",
+          rc == 0 and len(w) == 1 and w[0].startswith("why: a CRASH, not a check:") and "ZeroDivisionError" in w[0], out)
+
+    d = t / "r15"; d.mkdir()
+    two = {"M one": ("X = 1", "X = 2"), "N two": ("X = 1", "X = 3")}
+    body = "import os, sys\nsys.exit(0 if 'X = 1' in open(os.environ['FIX_SRC']).read() else 1)\n"
+    rc, out = probe(d, body, mutants=two, args=("--only", "N"))
+    cl = [ln.strip() for ln in out.splitlines() if ln.lstrip().startswith("CAUGHT")]
+    check("R15 --only N runs N two alone, and the headline names the subset (1 of 2), never the authored set",
+          rc == 0 and len(cl) == 1 and "N two" in cl[0] and "1 of 2 authored" in out
+          and "Every authored mutant was caught" not in out, out)
+    rc, out = probe(d, body, mutants=two, args=("--only", "Z"))
+    check("R15 …a prefix naming no mutant is rc 1, never an empty run read as clean",
+          rc == 1 and "named by --only" in out and "CAUGHT" not in out, out)
 
     d = t / "c1"; d.mkdir()
     rc, out = probe(d, "import os, sys\nsys.exit(0 if 'X = 1' in open(os.environ['FIX_SRC']).read() else 1)\n")

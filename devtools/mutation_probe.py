@@ -3,6 +3,7 @@
 
     venv/bin/python devtools/mutation_probe.py tests/mutants_wedge_watch.py
     venv/bin/python devtools/mutation_probe.py --self-test
+    venv/bin/python devtools/mutation_probe.py tests/mutants_wedge_watch.py --only M3   # one mutant, to read its why
 
 An authoring-time instrument, NOT a check.sh gate (steward's ruling, msg 5934: gating taxes
 every future oracle for one night of evidence; revisit once this has caught something in a
@@ -66,6 +67,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 REPO = repo_root(__file__)
@@ -135,6 +137,21 @@ def _run_oracle_out(oracle: Path, env_var: str, subject_path: Path, timeout: int
     return r.returncode, (r.stdout or "") + (r.stderr or "")
 
 
+def _why(out: str) -> str:
+    """The line a CAUGHT came from, so a catch names its arm without a second, by-hand run (a4 night 10-19: twice in one
+    day I re-applied a mutant by hand only to read WHICH check failed). The oracle's first CHECK line (first token FAIL
+    or ✗, never a `FAIL:` summary); else its summary; else, after a Traceback, the exception it ended with, marked a
+    CRASH: the mutant broke the run and no check judged it, the weak catch; else the bare exit."""
+    lines = [ln.strip() for ln in (out or "").splitlines() if ln.strip()]
+    check = next((ln for ln in lines if ln.split()[0] in ("FAIL", "✗")), None)
+    summary = next((ln for ln in lines if ln.split()[0] == "FAIL:"), None)
+    if check or summary:
+        return (check or summary)[:200]
+    if any(ln.startswith("Traceback") for ln in lines):
+        return f"a CRASH, not a check: {lines[-1][:180]}"
+    return "no failing line printed (the exit code alone)"
+
+
 def _print_tail(oracle: Path, out: str, when: str) -> None:
     """The baseline's own failing lines, so a refusal names its arm (a one-off loaded refusal is otherwise lost)."""
     tail = _tail(out)
@@ -163,8 +180,14 @@ def _tree_rel(subject: Path, oracle: Path) -> Path:
     return f.relative_to(os.path.commonpath([f.parent, oracle.resolve().parent]))
 
 
-def probe(spec_path: Path, verbose: bool = True) -> int:
+def probe(spec_path: Path, verbose: bool = True, only=()) -> int:
     spec = _load(spec_path)
+    # --only: the named mutants alone (a name PREFIX, e.g. "O48"), every phase before them unchanged. A prefix naming
+    # none is an error, never an empty run that reads as "nothing survived"
+    mutants = {k: v for k, v in spec.MUTANTS.items() if not only or any(k.startswith(o) for o in only)}
+    if not mutants:
+        print(f"no mutant in {spec_path.name} is named by --only {' '.join(only)}")
+        return 1
     subject, oracle = Path(spec.SUBJECT), Path(spec.ORACLE)
     src = subject.read_text()
 
@@ -239,7 +262,7 @@ def probe(spec_path: Path, verbose: bool = True) -> int:
                   f"exit {rb}), though it passes it in place. Every mutant would read CAUGHT for that reason alone.")
             _print_tail(oracle, rb_out, "before the kill" if rb == TIMED_OUT else f"exit {rb}")
             return 1
-        for i, (name, (old, new)) in enumerate(spec.MUTANTS.items()):
+        for i, (name, (old, new)) in enumerate(mutants.items()):
             if old not in src:
                 # The mutation did not apply — the subject moved under the mutant list.
                 # This is UNKNOWN, never a pass: a stale mutant that silently no-ops would
@@ -250,7 +273,9 @@ def probe(spec_path: Path, verbose: bool = True) -> int:
                 skipped.append(f"{name} (pattern is not unique — {src.count(old)} matches)")
                 continue
             mpath = seat(f"m{i}", src.replace(old, new, 1))
-            rc = _run_oracle(oracle, spec.ENV, mpath, timeout)
+            t0 = time.monotonic()
+            rc, mout = _run_oracle_out(oracle, spec.ENV, mpath, timeout)
+            took = f"{time.monotonic() - t0:.0f}s"
             if rc == TIMED_OUT:
                 skipped.append(f"{name} (oracle TIMED OUT after {timeout}s — it verified nothing)")
                 continue
@@ -262,15 +287,17 @@ def probe(spec_path: Path, verbose: bool = True) -> int:
             if rc == EXIT_SKIP:
                 skipped.append(f"{name} (oracle SKIPPED — it verified nothing)")
             elif rc != 0:
-                caught.append(name)
+                caught.append((name, took, _why(mout)))
             else:
                 survived.append(name)
 
     if verbose:
         print(f"mutation-probe · {oracle.name} vs {subject.name}")
-        print(f"  baseline passes; {len(spec.MUTANTS)} authored mutant(s)\n")
-        for n in caught:
-            print(f"  CAUGHT                     {n}")
+        sel = f" ({len(mutants)} selected by --only)" if only else ""
+        print(f"  baseline passes; {len(spec.MUTANTS)} authored mutant(s){sel}\n")
+        for n, took, why in caught:
+            print(f"  CAUGHT                     {n}  ({took})")
+            print(f"      why: {why}")
         for n in survived:
             print(f"  NOT PROBED BY THIS SET     {n}")
         for n in skipped:
@@ -290,6 +317,10 @@ def probe(spec_path: Path, verbose: bool = True) -> int:
             print(f"Every PROBED mutant was caught, but {len(skipped)} of "
                   f"{len(caught) + len(skipped)} were NOT PROBED,\nso this run does NOT show "
                   f"the authored set is caught.")
+        elif only:
+            # a SUBSET run may never out-claim the set: the headline names what was run, and what was not
+            print(f"Every SELECTED mutant was caught ({len(mutants)} of {len(spec.MUTANTS)} authored; --only ran no "
+                  f"other).\nThis is not a verdict on the authored set.")
         else:
             print("Every authored mutant was caught. This says nothing about mutations that\n"
                   "were never authored — coverage is bounded by the list, not by the oracle.")
@@ -466,6 +497,8 @@ def self_test() -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("spec", nargs="?", help="a tests/mutants_<oracle>.py declaration")
+    ap.add_argument("--only", action="append", default=[], metavar="PREFIX",
+                    help="run only the mutants whose name starts with PREFIX (repeatable), to read each one's why")
     ap.add_argument("--self-test", action="store_true",
                     help="prove the probe's own RED and GREEN arms")
     a = ap.parse_args()
@@ -473,7 +506,7 @@ def main() -> int:
         return self_test()
     if not a.spec:
         ap.error("give a mutants spec, or --self-test")
-    return probe(Path(a.spec))
+    return probe(Path(a.spec), only=tuple(a.only))
 
 
 if __name__ == "__main__":
