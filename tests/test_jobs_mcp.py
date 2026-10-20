@@ -411,6 +411,12 @@ check("D1 a bare DOTTED board slug is the slug, never parsed as a URL (canopus #
 check("D2 a board URL still yields its slug", S._slug("https://jobs.ashbyhq.com/acme.com", "ashby") == "acme.com"
       and S._slug("jobs.ashbyhq.com/acme", "ashby") == "acme")
 check("D3 a plain bare slug is unchanged", S._slug("acme", "greenhouse") == "acme")
+check("D4 a bare host with a query is a URL, not a slug (forge #61577 R-1)",
+      _try(lambda: S._slug("boards.greenhouse.io?for=acme", "greenhouse")) == "acme",
+      _try(lambda: S._slug("boards.greenhouse.io?for=acme", "greenhouse")))
+check("D5 a bare ATS host names no board: the clear error, never the host as a slug (forge A-1)",
+      "could not read a board slug" in str(_try(lambda: S._slug("jobs.ashbyhq.com", "ashby"))),
+      _try(lambda: S._slug("jobs.ashbyhq.com", "ashby")))
 s = S._scrub("ConnectError: GET https://h.example/p?token=abc&x=1 failed")
 check("P3 scrub strips query strings", "token=abc" not in s and "https://h.example/p" in s, s)
 check("P4 scrub caps length", len(S._scrub("x" * 5000)) <= 240)

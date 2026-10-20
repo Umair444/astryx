@@ -383,10 +383,14 @@ def ats_job(url: str) -> str:
 
 # ── boards ───────────────────────────────────────────────────────────────────
 
+_ATS_HOSTS = ("greenhouse.io", "lever.co", "ashbyhq.com")
+
+
 def _slug(board: str, ats: str) -> str:
     b = board.strip()
-    if "/" not in b:                    # a bare slug, dotted ones too (Ashby has "acme.com"); a URL always has a "/"
-        return b
+    host = b.split("?", 1)[0].lower()
+    if "/" not in b and "?" not in b and not host.endswith(_ATS_HOSTS):   # a bare slug, dotted ones too (Ashby has
+        return b                        # "acme.com"); a URL has a "/" or a "?", and a bare ATS host names no board
     u = urlparse(b if "://" in b else "https://" + b)
     q = parse_qs(u.query)
     if ats == "greenhouse" and q.get("for"):
