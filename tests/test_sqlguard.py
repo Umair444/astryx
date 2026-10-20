@@ -11,6 +11,8 @@ P1 (a3 #22368, privacy): the TRACKED ledger may carry NO plaintext key whose pat
 committing it. Such keys must be sha256 digests. "Ignored" is asked of git, never listed by hand.
 """
 import json
+import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -35,7 +37,7 @@ def _dsn_env(path: Path):
     LIVE .env: that made every other secret in it reachable from a scratch tree for the arm's length (a3 #61413)."""
     dsn = _astryx("config", "read_env", ESTATE / ".env").get("ASTRYX_DSN", "")
     path.unlink(missing_ok=True)
-    fd = __import__("os").open(path, __import__("os").O_WRONLY | __import__("os").O_CREAT | __import__("os").O_EXCL, 0o600)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with open(fd, "w") as f:
         f.write(f"ASTRYX_DSN={dsn}\n")
 fails = []
@@ -861,6 +863,8 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
     benv = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": os.environ.get("HOME", "/tmp")}
     envf = bare / ".env"
 
+    # rc alone does NOT tell these cases apart (77 and 1 come out alike for a missing .env and missing deps): the TAG
+    # and WORD checks carry the polarity (a3 #61416: a "real" case writing no .env fails only on the tag)
     def bare_case(name, env, live, flags, rc, tag, word):
         envf.unlink(missing_ok=True)
         if env == "real":
@@ -1176,4 +1180,7 @@ def main():
 
 
 if __name__ == "__main__":
+    # a gate cap's TERM unwinds through every TemporaryDirectory, so no _dsn_env copy of the DSN outlives the run
+    # (a3 #61416; the 22a3d72 idiom)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     sys.exit(main())
