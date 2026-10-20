@@ -13,7 +13,9 @@ THE COG REGISTRY PIN is carried too, in AND out of a trace, but only when the pa
 didn't name its own (steward #61378, seed #61381). check.sh:51 and estate.gate() pin the parent to a registry naming
 no file; a fresh child env dropped it, so on a cog host the child read /etc/astryx/cog.json, the LIVE orgs, from a
 fake tree: tool ledger, session strip and tool nudge read "0 rows" on 10-20. It is carried, never invented, so a
-child can't disagree with its parent about the cog, and an oracle that sets its own registry (test_canvas_cog) keeps it.
+child launched THROUGH this helper can't disagree with its parent about the cog (a3 #61387: a fresh env handed straight
+to subprocess still drops it; devtools/child_env_gate.py is the gate on those), and an oracle that sets its own
+registry (test_canvas_cog) keeps it.
 """
 import os
 
