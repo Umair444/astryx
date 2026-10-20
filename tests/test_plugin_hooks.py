@@ -80,7 +80,7 @@ try:
             proc = proc_tree(argv)
         e["ASTRYX_HOOK_PROC"], e["ASTRYX_HOOK_PPID"] = str(proc[0]), str(proc[1])
         e.update(env or {})
-        # own-env: a plugin hook runs in a person's session: no ASTRYX_ env at all is the subject
+        # own-env: the hook is stdlib-only and never resolves an org; its relay target is this oracle's stub (home/venv/bin/python)
         return subprocess.run([sys.executable, str(HOOK), *args], input=json.dumps(stdin or {}),
                               capture_output=True, text=True, env=e, timeout=30)
 

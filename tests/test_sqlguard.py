@@ -861,7 +861,10 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
     shutil.copy2(tmp / "astryx.py", bare / "astryx.py")
     shutil.copy2(REPO / "src" / "astryx" / "security" / "sqlguard" / "ledger.json", bare / "src" / "astryx" / "security" / "sqlguard" / "ledger.json")
     (bare / "t").mkdir()
-    benv = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": os.environ.get("HOME", "/tmp")}
+    # a registry naming no file keeps the bare tree ONE org on a cog host, where the child would otherwise read the live
+    # /etc/astryx/cog.json (a3 #61413)
+    benv = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": os.environ.get("HOME", "/tmp"),
+            "ASTRYX_COG_REGISTRY": str(bare / "no-registry" / "cog.json")}
     envf = bare / ".env"
 
     # rc alone does NOT tell these cases apart (77 and 1 come out alike for a missing .env and missing deps): the TAG
@@ -874,7 +877,6 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
             envf.write_text("SOMETHING_ELSE=1\n")
         (bare / "triggers").mkdir(exist_ok=True) if live else shutil.rmtree(bare / "triggers", ignore_errors=True)
         for mod, extra in (("canary", []), ("enforce", [str(bare / "t")])):
-            # own-env: the bare-tree arm: a child with no estate and no inherited env is the subject
             p = subprocess.run([sys.executable, *flags, "-m", f"astryx.security.sqlguard.{mod}", *extra], cwd=bare,
                                env=benv, capture_output=True, text=True)
             arm(f"{name}: {mod} exits {rc} and names {tag}",
@@ -888,7 +890,6 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
     bare_case("no-DSN", "nodsn", False, [], 1, "ASTRYX_DSN", "BROKEN")                  # misconfigured even when bare
     # positive control: .env and deps present, on a live-shaped tree, runs the canary for real (absence only)
     _dsn_env(envf)
-    # own-env: the bare-tree arm: a child with no estate and no inherited env is the subject
     p = subprocess.run([sys.executable, "-m", "astryx.security.sqlguard.canary"], cwd=bare, env=benv,
                        capture_output=True, text=True)
     arm("estate control: with .env and deps the canary runs (rc 0)", p.returncode == 0,

@@ -145,6 +145,7 @@ def run(d, door):
             reg["orgs"][o] = {"home": str(h), "db": f"fxdoor_{o}", "door": door == o, "primary": door == o}
         (d / "cog.json").write_text(json.dumps(reg))
         env["ASTRYX_COG_REGISTRY"] = str(d / "cog.json")
+    # own-env: both branches of `if door` set ASTRYX_COG_REGISTRY (env.update(…) / env[…] =); the gate can't see a set that only dominates by covering every branch
     r = subprocess.run([sys.executable, "-B", "-c", CHILD, str(SRC)], env=env, cwd=d, capture_output=True, text=True,
                        timeout=120)
     line = next((ln for ln in r.stdout.splitlines() if ln.startswith("OUT ")), None)

@@ -73,7 +73,7 @@ def main():
                 a = [x for x in a]
                 i = a.index("--setenv")
                 a[i + 2] = str(home)                                  # HOME
-            # own-env: the branch_check sandbox's env (sb.env) IS this oracle's subject
+            # own-env: the branch_check sandbox's env (sb.env) is this oracle's subject; the suites it runs are check.sh, which pins its own registry (:51)
             r = subprocess.run(a + [py, sb.PROBE_AT], input=json.dumps(c), env=sb.env(c["own_dsn"]),
                                capture_output=True, text=True, timeout=120)
             return json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else {"error": r.stderr[-400:]}
@@ -86,17 +86,17 @@ def main():
             check("D3: node resolves on this host", False, str(e))
         if nb:
             na = sb.argv(repo, run_tmp, live=live, node=nb)
-            # own-env: the branch_check sandbox's env (sb.env) IS this oracle's subject
+            # own-env: the branch_check sandbox's env (sb.env) is this oracle's subject; the suites it runs are check.sh, which pins its own registry (:51)
             ran = subprocess.run(na + [str(nb), "-e", "process.stdout.write(process.version)"],
                                  env=sb.env(scope.dsn(own), nb), capture_output=True, text=True, timeout=60)
             check("D3: the resolved node RUNS inside the sandbox", ran.returncode == 0 and ran.stdout.startswith("v"),
                   (ran.stdout + ran.stderr)[-200:])
             inst = sb.MISE_INSTALLS
             if sb.node_dir(nb):
-                # own-env: the branch_check sandbox's env (sb.env) IS this oracle's subject
+                # own-env: the branch_check sandbox's env (sb.env) is this oracle's subject; the suites it runs are check.sh, which pins its own registry (:51)
                 seen = subprocess.run(na + ["/usr/bin/ls", "-A", str(inst)], env=sb.env(scope.dsn(own), nb),
                                       capture_output=True, text=True, timeout=60)
-                # own-env: the branch_check sandbox's env (sb.env) IS this oracle's subject
+                # own-env: the branch_check sandbox's env (sb.env) is this oracle's subject; the suites it runs are check.sh, which pins its own registry (:51)
                 shims = subprocess.run(na + ["/usr/bin/ls", str(inst.parent / "shims")], env=sb.env(scope.dsn(own), nb),
                                        capture_output=True, text=True, timeout=60)
                 check("C3: inside, the mise installs tree shows ONLY node (no other tool's install, no shims)",

@@ -105,6 +105,7 @@ def main():
         cog = {**base, "ASTRYX_COG_REGISTRY": str(reg), "ASTRYX_HOME": str(root)}
 
         def tmux(*args, sock="default"):
+            # own-env: a private fixture tmux server (-L <fixture socket>); every call queries or kills it, none starts a command
             p = subprocess.run(["tmux", "-L", sock, *args], env=base, capture_output=True, text=True, timeout=20)
             return p.stdout
 
@@ -201,6 +202,7 @@ def main():
         return 1 if fails else 0
     finally:
         for sock in ("default", "ax-fxl"):
+            # own-env: kill-server on this oracle's private fixture socket; it starts nothing
             subprocess.run(["tmux", "-L", sock, "kill-server"], env={"PATH": os.environ["PATH"], "TMUX_TMPDIR": str(tmx)},
                            capture_output=True, timeout=20)
         shutil.rmtree(t, ignore_errors=True)

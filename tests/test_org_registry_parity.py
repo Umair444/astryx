@@ -75,6 +75,7 @@ def main():
             # own-env: orgs.py is handed its registry as an argv path (reg), never through env
             py = subprocess.run([sys.executable, "-B", "-c", PY, str(ORGS_SRC), str(reg), str(UNITS)], capture_output=True,
                                 text=True, timeout=60, env=env).stdout.strip()
+    # own-env: home.mjs reads ASTRYX_COG_REGISTRY (else /etc/astryx/cog.json), but here it's handed the registry as an argv path (reg)
             js = subprocess.run(["node", "--input-type=module", "-e", JS, mjs.as_uri(), str(reg)], capture_output=True,
                                 text=True, timeout=60, env=env, cwd=t)
             check(f"{c['name']}: orgs.py {py!r}, home.mjs {js.stdout.strip()!r}, expected {c['expect']!r}",
