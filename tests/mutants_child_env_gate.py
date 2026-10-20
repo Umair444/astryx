@@ -21,8 +21,9 @@ MUTANTS = {
     "C4 a runtime shell body is trusted (the invisible body reads plain)":
         ("    if prog in SHELLS and any(x is None for x in rest):\n        return False\n", ""),
     "C5 git's hook-running subcommands read plain":
-        ('        if sub is None or "-c" in lits or any(x in GIT_HOOKED for x in lits):',
-         '        if sub is None:'),
+        ('        if sub is None or "-c" in lits or any(x in ("commit", "push", "merge", "rebase", "am", "checkout", '
+         '"switch",',
+         '        if sub is None or False and any(x in ("commit", "push", "merge", "rebase", "am", "checkout", "switch",'),
     "C6 systemctl start reads plain":
         ("    if prog == \"systemctl\" and any(x in SYSTEMCTL_STARTS for x in rest if x is not None):",
          "    if False:"),

@@ -298,11 +298,6 @@ def _argv(call: ast.Call):
     return None
 
 
-# git subcommands that can run a repository's hooks (core.hooksPath may point into this repo): never provably plain
-GIT_HOOKED = {"commit", "push", "merge", "rebase", "am", "checkout", "switch", "pull", "worktree", "cherry-pick",
-              "revert", "gc", "-c"}
-
-
 def plain_child(call: ast.Call) -> bool:
     """True when the spawned program provably never imports astryx (seed #61406 bucket 2): its program is a literal
     plain tool, no literal argument names a repo path, and a SHELL's whole argv is literal (its body is visible, and a
@@ -326,7 +321,11 @@ def plain_child(call: ast.Call) -> bool:
     if prog == "git":
         lits = [x for x in rest if x is not None]
         sub = next((x for x in lits if not x.startswith("-")), None)    # `-C <path>` and other options skipped
-        if sub is None or "-c" in lits or any(x in GIT_HOOKED for x in lits):
+        # subcommands that can run a repository's hooks (core.hooksPath may point into this repo): never plain. The
+        # tuple stays inline, the right side of `in`: "merge" is also a SQL verb, and sqlguard's site forms (D5) read a
+        # bare verb as safe only by that USE
+        if sub is None or "-c" in lits or any(x in ("commit", "push", "merge", "rebase", "am", "checkout", "switch",
+                                                    "pull", "worktree", "cherry-pick", "revert", "gc") for x in lits):
             return False
     return True
 
