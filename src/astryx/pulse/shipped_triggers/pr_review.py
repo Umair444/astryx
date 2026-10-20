@@ -62,11 +62,19 @@ def _open_items() -> list[str] | None:
     out = _run(["git", "branch", "--list", "medic/*", "--format=%(refname:short)"])
     if out is None:
         return None
+    # COUNTED BY PATCH, never by sha (steward 10-20): seed lands by REPLAYING a branch onto main, so a fully landed
+    # branch stays "N commits ahead" by rev-list forever. On 10-20 the queue read 7 open, and every one of its medic/*
+    # branches was on main by patch-id. `git cherry main <b>` marks a commit `+` only when no commit on main carries
+    # its patch, so a replayed branch drops out and a partly landed one counts only what's left.
     items = []
     for b in out.split():
-        ahead = _run(["git", "rev-list", "--count", f"main..{b}"])
-        if ahead and int(ahead.strip() or 0) > 0:
-            items.append(f"branch {b} ({ahead.strip()} commits ahead, no PR)")
+        cherry = _run(["git", "cherry", "main", b])
+        if cherry is None:
+            items.append(f"branch {b} (unobserved: git cherry failed)")
+            continue
+        left = sum(1 for ln in cherry.splitlines() if ln.startswith("+"))
+        if left:
+            items.append(f"branch {b} ({left} commits not on main by patch, no PR)")
     return items
 
 

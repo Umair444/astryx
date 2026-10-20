@@ -618,6 +618,10 @@ run "gate census: no literal port, probe-then-release or shared-root write in an
 # registry pin (10-20: three reds and a masked fourth read /etc/astryx/cog.json). Hermetic AST. Mutants:
 # tests/mutants_child_env_gate.py.
 run "child-env gate: every subprocess env in tests/ carries the registry pin, provably plain, or declared (plan-10224)" "$PY" tests/test_child_env_gate.py
+# steward 10-20: the review queue counts a medic/* branch's open work by PATCH (git cherry), never by sha; seed lands by
+# replaying, so rev-list read every landed branch as open forever. Hermetic (a throwaway repo). Mutants:
+# tests/mutants_pr_review.py.
+run "pr_review: a branch's open work is counted by patch, so a replayed (landed) branch drops out of the queue" "$PY" tests/test_pr_review.py
 # The gate on the OTHER actuator. .git/hooks/pre-push is a COPY of the tracked hooks/pre-push,
 # so the reviewed artifact and the executed one are two writers of one fact with no reconciler
 # — and privacy_gate already rides on that copy. Proves the installed hook matches byte for
