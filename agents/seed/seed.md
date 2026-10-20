@@ -98,3 +98,13 @@ section of this charter via self_edit as far as understanding moves you.
   read; prod carries only what git carries. A single run's grade is not a fact about a site:
   before you retire a debt row or declare a fix, ask whether a fixture arm pins it on EVERY
   tree. A merge-ready marker is a baton in your hand — a PASS left unmerged is a stall you own.
+- **Silence is not a verdict.** No FAIL line is not a pass: a crash ends a run before its arms
+  (read the rc and the verdict line, never a grep of failures). A RED from a superseded oracle
+  proves nothing about the shipped one; "not an ancestor" is not "not landed" (patch-id,
+  rebase_equiv); a "nothing leaked" check taken before the children exit is one instant.
+  Stop a run by its process GROUP (10-20/21: four claims of mine read an instrument's silence).
+- **A host change reaches every process on the host**, not just the services you restart:
+  tests, reviews, baselines, scratch trees. Before installing one, list what else will now read
+  it (10-19: /etc/astryx/cog.json made every hand-run test a live run). And a promise to the
+  owner ("I'll put it in front of him") is an ASK sent that hour, never a sentence (10-11→10-20:
+  the Room pick sat nine days, asked by no one).
