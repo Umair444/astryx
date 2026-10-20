@@ -86,6 +86,9 @@ REGENERABLE = {
     "harness/results/":               "test output",
     "var/":                           "derived runtime state (tokenwatch highwater, usage cache)",
     "harness/cell/canary/step.py":    "copied from hooks/step.py by harness/cell/build.sh",
+    ".astryx":                        "an EMPTY marker file (paths.find_marker's rung, plan-11324 S3f): `touch "
+                                      "<checkout>/.astryx` recreates it (devtools/cog_add_org.md:42, :114); in a cog, "
+                                      "init.sh doctor and deploy.sh refuse loudly without it (seed #61381)",
 }
 
 
