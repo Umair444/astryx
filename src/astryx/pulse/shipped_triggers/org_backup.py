@@ -12,11 +12,10 @@ restore_verify.sh resolve their org's .env, database and backups/ from it. A lau
 pulse's 30 s check cap); its log is <estate>/var/runners/<name>.log. A stale artifact alarms naming the ORG (its .env's
 ASTRYX_ORG), so two orgs' alarms are told apart.
 
-Install (devtools/cog_add_org.py does, from astryx.pulse.shipped_triggers.shims):
+Install (init.sh's orgbackup node and devtools/cog_add_org.py do, from astryx.pulse.shipped_triggers.shims):
   from astryx.pulse.shipped_triggers.org_backup import run_backup, run_restore_verify  # noqa: F401
 """
 from __future__ import annotations
-# shipped-optional: a cog org's, installed by devtools/cog_add_org.py (the one-org init.sh node is seed #61526's follow-up)
 # imported as a module only (a trigger shim imports it), never run by path: no sys.path preamble, and no import inside
 # a top-level conditional (either makes trigger_names' static reader defer every lookup). Not astryx.config either: its
 # run-by-path preamble is such a conditional, so a shim importing this would read BLIND, and a blind file in an org's

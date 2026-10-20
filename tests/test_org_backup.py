@@ -143,9 +143,9 @@ def main():
     print("\nB6 ONE SOURCE: init.sh WRITES EVERY SHIM THROUGH shims.py")
     init = (REPO / "init.sh").read_text()
     written = set(re.findall(r"astryx\.pulse\.shipped_triggers\.shims write (\w+) triggers/seed", init))
-    check("init.sh writes exactly the six one-org shims, each through `shims write`",
+    check("init.sh writes exactly the seven shims, each through `shims write` (org_backup: seed #61526)",
           written == {"context_compact", "pr_review", "phone_resume_sweep", "windows_idle_stop", "agent_heal",
-                      "upstream_prs"}, str(sorted(written)))
+                      "upstream_prs", "org_backup"}, str(sorted(written)))
     check("...and no heredoc of its own writes a triggers/seed shim",
           not re.search(r"cat > triggers/seed/\w+\.py", init), "a heredoc is left")
     print()

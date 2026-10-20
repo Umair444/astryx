@@ -901,6 +901,25 @@ _act_agentheal() {
   venv/bin/python -m astryx.pulse.shipped_triggers.shims write agent_heal triggers/seed   # one source (shims.py)
   say "installed agent heal (seed): a resident whose body dies is respawned within a minute"
 }
+# >>> org backup install
+# org_backup (seed #61526): the org's daily dump and weekly restore-verify as pulse triggers (run_backup,
+# run_restore_verify; the shipped module launches scripts/backup.sh and restore_verify.sh for its estate). A fresh one-org
+# install otherwise schedules NO backup at all. Deferential by NAME, either one: an org owning run_backup or
+# run_restore_verify under any agent (ours: triggers/steward/org_runners.py) stands the installer down, so it never gets a
+# second. `--reinstall run_backup` (or run_restore_verify) is the owner's exit from a deferral, for the pair.
+_chk_orgbackup() {
+  case "${_REINSTALL:-}" in
+    run_backup|run_restore_verify)
+      _REINSTALL=run_backup _trigger_chk run_backup || _REINSTALL=run_restore_verify _trigger_chk run_restore_verify ;;
+    *) _trigger_chk run_backup || _trigger_chk run_restore_verify ;;
+  esac
+}
+_act_orgbackup() {
+  mkdir -p triggers/seed
+  venv/bin/python -m astryx.pulse.shipped_triggers.shims write org_backup triggers/seed   # one source (shims.py)
+  say "installed the org backup (seed): a daily dump into backups/ and a weekly restore-verify, alarmed when stale"
+}
+# <<< org backup install
 # upstream_prs (goal 10224 S6, owner 10-14): in the org that IS the upstream astryx repo, each outside PR (new, or a new
 # head) reaches medic once, its body fenced as DATA. Gated: origin == ASTRYX_UPSTREAM and ASTRYX_UPSTREAM_ROLE=upstream
 # (env or .env; a plain clone has the same origin, so the role is the owner's declaration). Deferential like ccompact.
@@ -917,23 +936,38 @@ RECONCILE_NODES=(
   "pg|interior" "pgready|wait" "schema|interior" "harden|interior" "hardencut|halt" "venv|interior" "deps|interior"
   "peoplegate|interior" "derivedgraphs|interior" "geoschema|interior" "model|interior" "chan|interior" "obs|interior" "obskey|interior" "ident|interior"
   "units|interior" "law|interior" "prehook|interior" "ccompact|interior" "prreview|interior" "androidlic|halt"
-  "android|interior" "phonesweep|interior" "winidle|interior" "agentheal|interior" "upstreamprs|interior" "login|halt"
+  "android|interior" "phonesweep|interior" "winidle|interior" "agentheal|interior" "orgbackup|interior" "upstreamprs|interior" "login|halt"
   "seed|interior" "prompt|interior")
 
 # >>> trigger reinstall
 # The shipped triggers init.sh installs, name|node. `./init.sh --reinstall N` is the owner's exit from a DEFERRED name
 # (doctor says when): it clears seed's tombstone for N (a creator of (seed, N) erases it, a3 BC-2) and installs N unless
 # it is installed already or this host doesn't use it (the node's own gate).
-TRIGGER_NODES=("context_compact|ccompact" "pr_review|prreview" "phone_resume_sweep|phonesweep" "windows_idle_stop|winidle" "agent_heal|agentheal" "upstream_prs|upstreamprs")
+TRIGGER_NODES=("context_compact|ccompact" "pr_review|prreview" "phone_resume_sweep|phonesweep" "windows_idle_stop|winidle" "agent_heal|agentheal" "run_backup|orgbackup" "run_restore_verify|orgbackup" "upstream_prs|upstreamprs")
+# A node shared by several names (orgbackup: run_backup and run_restore_verify) stands down when ANY of them is not
+# absent. "<name> <state…>" of the first such OTHER name of node $2, else rc 1 (a2 #61535: an absent name standing down
+# for its sibling is not "not used on this host", and doctor must not read green for it).
+_trigger_sibling() {
+  local n=$1 node=$2 e s
+  for e in "${TRIGGER_NODES[@]}"; do
+    [ "${e##*|}" = "$node" ] && [ "${e%%|*}" != "$n" ] || continue
+    s=$(_trigger_state "${e%%|*}" 2>/dev/null)
+    [ "${s%% *}" != absent ] && { echo "${e%%|*} ${s}"; return 0; }
+  done
+  return 1
+}
 reinstall_trigger() {
-  local n=$1 node="" e st
+  local n=$1 node="" e st sib
   for e in "${TRIGGER_NODES[@]}"; do [ "${e%%|*}" = "$n" ] && node=${e##*|}; done
   [ -n "$node" ] || die "--reinstall: '$n' is not a trigger init.sh installs (one of: ${TRIGGER_NODES[*]%%|*})"
-  rm -f "triggers/seed/.retired/$n"
+  # the node's every name: one shim registers them all, so the owner's reinstall of one is of the pair (a2 #61535)
+  for e in "${TRIGGER_NODES[@]}"; do [ "${e##*|}" = "$node" ] && rm -f "triggers/seed/.retired/${e%%|*}"; done
   if _REINSTALL=$n _chk_"$node"; then
     st=$(_trigger_state "$n" 2>&1)
     case "$st" in
-      absent*) say "$n: this host doesn't use it (the $node node's gate is off); nothing installed" ;;
+      absent*) if sib=$(_trigger_sibling "$n" "$node"); then
+                 say "$n: nothing installed: ${sib%% *} (the $node node's other name) is ${sib#* }, and one shim registers both"
+               else say "$n: this host doesn't use it (the $node node's gate is off); nothing installed"; fi ;;
       *)       say "$n: nothing installed — ${st}" ;;
     esac
     return 0
@@ -1163,8 +1197,14 @@ if [ "${1:-}" = "doctor" ]; then
       case "$_tk" in
         installed) ok "trigger $_tn installed (${_ts#installed })" ;;
         retired)   ok "trigger $_tn retired (${_ts#retired })" ;;
-        absent)    if _chk_"$_tnode" >/dev/null 2>&1; then ok "trigger $_tn: not used on this host"
-                   else bad "trigger $_tn absent: $_fix installs it"; fi ;;
+        absent)    if _chk_"$_tnode" >/dev/null 2>&1; then
+                     if _ts2=$(_trigger_sibling "$_tn" "$_tnode"); then
+                       case "${_ts2#* }" in
+                         installed*) warn "trigger $_tn absent, and ${_ts2%% *} (the same node's other name) is ${_ts2#* }: the shipped shim would register a second ${_ts2%% *}, so define $_tn beside it there" ;;
+                         *)          warn "trigger $_tn absent, and ${_ts2%% *} (the same node's other name) is ${_ts2#* }: nothing installs it until ./init.sh --reinstall $_tn (the pair)" ;;
+                       esac
+                     else ok "trigger $_tn: not used on this host"; fi
+                   else bad "trigger $_tn absent: ${_fix:-./init.sh} installs it"; fi ;;
         deferred)  warn "trigger $_tn DEFERRED, so init.sh won't install it: ${_ts#deferred }" ;;
         *)         bad "trigger $_tn: src/astryx/core/trigger_names.py gave no answer: ${_ts:0:200}" ;;
       esac

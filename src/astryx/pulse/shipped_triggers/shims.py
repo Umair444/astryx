@@ -48,7 +48,7 @@ from astryx.pulse.shipped_triggers.upstream_prs import upstream_prs  # noqa: F40
 ''',
     'org_backup': '''"""Live install of the shipped org backup (one writer: src/astryx/pulse/shipped_triggers/org_backup.py): the daily
 dump and the weekly restore-verify of THIS org (its database, its HOME's backups/). Installed by
-devtools/cog_add_org.py into a cog org's seed. To retire it: `trigger_rm run_backup` and `trigger_rm
+init.sh (one org) and devtools/cog_add_org.py (a cog org) into the seed. To retire it: `trigger_rm run_backup` and `trigger_rm
 run_restore_verify` (tombstones the pulse honours). Deleting this file does NOT retire it: the reconcile would
 reinstall."""
 from astryx.pulse.shipped_triggers.org_backup import run_backup, run_restore_verify  # noqa: F401

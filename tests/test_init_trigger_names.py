@@ -9,6 +9,8 @@ trees (tests/trigger_tree) against a fixture database, as the reconciler runs a 
   N3 seed's tombstone (trigger_rm) → green, nothing added
   N4 a3 BC-1: ANOTHER agent's tombstoned copy → seed's install still happens, once
   N5 a LEGACY row (a python row no file defines) → green and nothing installed; doctor names it, DEFERRED, with both exits
+  N10 the org backup (seed #61526): no backup trigger at all → doctor ✗ for both names; the org's own pair → ✓; one
+      name owned or retired → the other is a WARN naming it (never ✓ "not used"); one reinstall restores the pair
   N6 `--reinstall N` on a legacy name installs it (the owner's exit); on seed's tombstone it CLEARS it and installs (a3
      BC-2); when N is installed elsewhere it adds nothing; an unknown name is refused
   N7 the table unreadable → green, nothing installed; a file the model can't read (BLIND) → the same
@@ -18,6 +20,7 @@ trees (tests/trigger_tree) against a fixture database, as the reconciler runs a 
      census (b): every src/astryx/pulse/shipped_triggers/*.py has an init.sh install through the helper, or `# shipped-optional:`
 Needs a fixture database, else 77.
 """
+import importlib.util
 import os
 import re
 import subprocess
@@ -185,6 +188,41 @@ try:
             want("N8 doctor: retired → ✓ naming the tombstone",
                  ln["windows_idle_stop"].startswith("OK") and ".retired/windows_idle_stop" in ln["windows_idle_stop"],
                  ln["windows_idle_stop"])
+            # N10 (seed #61526): the org backup's two names, in a fresh tree and beside the org's own pair
+            t = tree()
+            bk = ("run_backup", "run_restore_verify")
+            d = doctor(t, DSN)
+            bl = [next((x for x in d.splitlines() if f"trigger {n} " in x or f"trigger {n}:" in x), "") for n in bk]
+            want("N10 doctor: no backup trigger at all → ✗ absent for BOTH names, naming ./init.sh",
+                 all(x.startswith("BAD") and "absent" in x and "./init.sh" in x for x in bl), str(bl))
+            put(t, "triggers/steward/runners.py", 'from astryx import trigger\n\n\n'
+                + "".join(f'@trigger("0 4 * * *", note="x")\ndef {n}(ctx):\n    return None\n\n\n' for n in bk))
+            d = doctor(t, DSN)
+            bl = [next((x for x in d.splitlines() if f"trigger {n} " in x or f"trigger {n}:" in x), "") for n in bk]
+            want("N10 ...the org's own pair under another agent → ✓ installed, naming its file, no ✗",
+                 all(x.startswith("OK") and "triggers/steward/runners.py" in x for x in bl), str(bl))
+            # a2 #61535 A-1: ONE name owned, its sibling absent, is never a green "not used on this host"
+            def bline(d, n):
+                return next((x for x in d.splitlines() if f"trigger {n} " in x or f"trigger {n}:" in x), "")
+            t = tree()
+            put(t, "triggers/steward/own.py", 'from astryx import trigger\n\n\n@trigger("0 4 * * *", note="x")\n'
+                'def run_backup(ctx):\n    return None\n')
+            ln = bline(doctor(t, DSN), "run_restore_verify")
+            want("N10 ...only run_backup owned: run_restore_verify is a WARN naming its installed sibling and where to "
+                 "define it (the shim would register a second run_backup), never ✓",
+                 ln.startswith("WARN") and "run_backup" in ln and "installed" in ln and "beside it" in ln
+                 and "not used on this host" not in ln, ln)
+            t = tree()
+            put(t, "triggers/seed/.retired/run_backup", "retired by trigger_rm\n")
+            ln = bline(doctor(t, DSN), "run_restore_verify")
+            want("N10 ...run_backup RETIRED at seed: run_restore_verify is a WARN naming the retirement and the pair's "
+                 "reinstall", ln.startswith("WARN") and "retired" in ln and "--reinstall run_restore_verify" in ln, ln)
+            put(t, "triggers/seed/.retired/run_restore_verify", "retired by trigger_rm\n")
+            rc, out = bash(t, "reinstall_trigger run_backup", DSN)
+            want("N10 ...both retired: ONE `--reinstall run_backup` clears BOTH tombstones and installs the pair's shim",
+                 not (t / SEED / ".retired" / "run_backup").exists()
+                 and not (t / SEED / ".retired" / "run_restore_verify").exists()
+                 and (t / SEED / "org_backup.py").is_file(), out[-300:])
 except FixtureUnavailable as e:
     print(f"SKIP: no fixture database ({e}). Nothing was verified here.")
     sys.exit(77)
@@ -197,7 +235,14 @@ want(f"N9 (a) every _chk_ that tests a trigger ({len(testing)}) calls the helper
      len(testing) >= 4 and all("_trigger_chk" in v for v in testing.values()),
      str({k: v.strip()[:60] for k, v in testing.items() if "_trigger_chk" not in v}))
 want("N9 (a) no filename glob over triggers/ decides an install any more", not re.search(r"ls triggers/\*", src))
-missing = [s for s in shipped if not re.search(rf"_trigger_chk {s}\b", src)
+# a module's trigger NAMES, read by the one helper's own reader (org_backup's are run_backup and run_restore_verify, not
+# its stem): it installs through the helper when init.sh asks _trigger_chk about any of them
+_tn = importlib.util.spec_from_file_location("tn_n9", REPO / "src/astryx/core/trigger_names.py")
+_tnm = importlib.util.module_from_spec(_tn)
+_tn.loader.exec_module(_tnm)
+def _names(s):
+    return _tnm.names(REPO / f"src/astryx/pulse/shipped_triggers/{s}.py", REPO).names or {s}
+missing = [s for s in shipped if not any(re.search(rf"_trigger_chk {n}\b", src) for n in _names(s))
            and "# shipped-optional:" not in (REPO / f"src/astryx/pulse/shipped_triggers/{s}.py").read_text()]
 want(f"N9 (b) every shipped trigger ({len(shipped)}) installs through the helper or declares # shipped-optional:",
      not missing, str(missing))
