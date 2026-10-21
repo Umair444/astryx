@@ -35,6 +35,7 @@ sys.path.insert(0, str(REPO))
 from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate("test_wa_reactions", REPO, deps=("fastapi", "asyncpg"))   # a committed-only tree: 77, not an import crash
 import bridges  # noqa: E402  (the package, so the subject's relative imports resolve)
+from bridges.routing import Routes  # noqa: E402 — what a bridge's routes() returns (plan-11860 E2)
 
 spec = importlib.util.spec_from_file_location("bridges._wa_subject", SUBJECT)
 wa = importlib.util.module_from_spec(spec)
@@ -42,7 +43,7 @@ spec.loader.exec_module(wa)
 
 CHAT = "wa-test-group@g.us"               # fake-in-shape ids (no digit run: privacy_gate (c)); /hook only compares them
 OWNER = "wa-test-owner@lid"
-ROUTE = {"chat": CHAT, "agent": "seed", "open": False, "trusted_jids": [OWNER]}
+ROUTE = {"chat": CHAT, "agent": "seed", "enabled": True, "open": False, "trusted_jids": [OWNER]}
 fails = []
 
 
@@ -84,7 +85,7 @@ class World:
 
     def install(self):
         wa.seen_msgids.clear()
-        wa.routes = lambda: [self.route]
+        wa.routes = lambda: Routes([self.route] if self.route else [])   # the resolved table (plan-11860 E2)
 
         async def wacli(*args):
             self.store_reads += 1

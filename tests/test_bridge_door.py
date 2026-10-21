@@ -53,6 +53,7 @@ if os.environ.get("RELEASE_SRC"):
 else:
     from astryx.security import release as R  # noqa: E402
 import bridges  # noqa: E402
+from bridges.routing import Routes  # noqa: E402 — what a bridge's routes() returns (plan-11860 E2)
 if os.environ.get("BRIDGE_COMMON_SRC"):
     bridges.common = _load("bridges.common", os.environ["BRIDGE_COMMON_SRC"])
 SEAM = {"whatsapp": "WA_SRC", "telegram": "TG_SRC", "discord": "DC_SRC"}
@@ -180,7 +181,7 @@ class World:
         self.on_send = on_send
         m = BR[ch]
         m.pool = self.pool
-        m.routes = lambda: [r for r in ROUTES[ch] if r.get("enabled")]
+        m.routes = lambda: Routes(ROUTES[ch])        # the resolved table, enabled rows only (plan-11860 E2)
         m.jobs.clear()
         w = self
 

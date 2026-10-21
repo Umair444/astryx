@@ -33,7 +33,7 @@ sys.path.insert(0, str(REPO / "src"))
 from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate('test_floor_f0', REPO, deps=('psycopg', 'asyncpg', 'fastapi'), env=False)   # fixture_db only: a worktree passes
 #   its admin DSN as ASTRYX_FIXTURE_ADMIN_DSN (devtools/sqlsite.sh), never a linked .env
-from astryx.security.sqlguard.fixture import fixture_db  # noqa: E402
+from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db  # noqa: E402
 
 fails = 0
 O = {"x-obs-key": "test-owner-key"}
@@ -103,6 +103,49 @@ def resolver_arms(tmp: Path):
         rf = [n for n in ast.walk(t) if isinstance(n, ast.FunctionDef) and n.name == "routes"]
         arm(f"BC-2: {b}.routes() reads through load_routes", bool(rf) and any(
             isinstance(c, ast.Call) and getattr(c.func, "id", None) == "load_routes" for c in ast.walk(rf[0])))
+
+    # doctor, BEHAVIORAL (a3 #62025 R2): cli.org_checks on fixture estates, its failures counted and named
+    import io
+    from types import SimpleNamespace
+    from astryx import cli
+    from astryx.ui import UI
+
+    def doctor(routes, env="A=1\n"):
+        d = tmp / f"est{len(list(tmp.glob('est*')))}"
+        (d / "bridges").mkdir(parents=True)
+        (d / "agents").mkdir()
+        for a in ("seed", "ledger"):
+            (d / "agents" / f"{a}.md").write_text(f"# {a}\n")
+        (d / "bridges" / "routes-whatsapp.json").write_text(json.dumps(routes))
+        (d / ".env").write_text(env)
+        buf = io.StringIO()
+        n = cli.org_checks(SimpleNamespace(root=d, home=d, ui=UI(stream=buf)))
+        return n, buf.getvalue()
+    n, out = doctor([{"chat": G1, "agent": "seed", "enabled": True, "note": "Zeta group -> seed"}])
+    arm("DOCTOR: a clean estate fails nothing", n == 0 and "✗" not in out, (n, out))
+    n, out = doctor([{"chat": G1, "agent": "seed", "enabled": True, "note": "Zeta group -> seed"},
+                     {"chat": G1, "agent": "ledger", "enabled": True}])
+    arm("DOCTOR: a duplicate chat fails the routes step, naming its label and both agents (never the chat id)",
+        n >= 1 and "✗ routes: bridges/routes-whatsapp.json" in out and "Zeta group" in out and "seed" in out
+        and "ledger" in out and G1 not in out, out)
+    n, out = doctor([{"chat": G1, "agent": "seed", "enabled": True}, {"chat": G2, "agent": "seed", "enabled": True}])
+    arm("DOCTOR: an agent with two routes and no home fails", n >= 1 and "home" in out, out)
+    n, out = doctor([{"chat": G1, "agent": "seed", "enabled": True}], env="K=a\nB=2\nK=b\n")
+    arm("DOCTOR: a key held twice in the .env fails, naming the key and never a value",
+        n >= 1 and "✗ .env holds each key once" in out and "K" in out and "=a" not in out and "=b" not in out, out)
+
+    # the mutant runner's baseline (a1 #62023 R-1): an oracle that can't reach a fixture makes the runner 77, never 0.
+    # On a scratch tree whose two oracles are 77 stubs, and no triggers/ (the runner refuses a live tree)
+    import shutil
+    import subprocess
+    sc = tmp / "runner"
+    (sc / "tests").mkdir(parents=True)
+    shutil.copy(REPO / "tests" / "mutants_floor_f0.py", sc / "tests" / "mutants_floor_f0.py")
+    for o in ("test_floor_f0.py", "test_floor_s3.py"):
+        (sc / "tests" / o).write_text("import sys\nprint('NOT SEARCHED: no fixture database')\nsys.exit(77)\n")
+    rr = subprocess.run([sys.executable, str(sc / "tests" / "mutants_floor_f0.py")], capture_output=True, text=True, timeout=120)
+    arm("R-1: with no reachable fixture the mutant runner says NOT CHECKED and exits 77, never a PASS",
+        rr.returncode == 77 and "NOT CHECKED" in rr.stdout, (rr.returncode, rr.stdout[-300:]))
 
     # BC-3
     f = tmp / "routes-x.json"
@@ -330,16 +373,20 @@ def app_arms(tmp: Path):
 
 
 if __name__ == "__main__":
-    with fixture_db() as fx, tempfile.TemporaryDirectory() as td:
-        os.environ["ASTRYX_DSN"] = fx["url"]
-        os.environ["OBS_KEY"] = "test-owner-key"
-        os.environ["ASTRYX_ORG"] = "fixture.example"
-        os.environ["ASTRYX_GATEWAY_PORT"] = "9"
-        os.environ.setdefault("ASTRYX_COG_REGISTRY", str(Path(td) / "absent.json"))
-        tmp = Path(td)
-        for name, fn in (("resolver", resolver_arms), ("hostwrite", hostwrite_arms), ("env", env_arms), ("app", app_arms)):
-            d = tmp / name
-            d.mkdir()
-            fn(d)
+    try:
+        with fixture_db() as fx, tempfile.TemporaryDirectory() as td:
+            os.environ["ASTRYX_DSN"] = fx["url"]
+            os.environ["OBS_KEY"] = "test-owner-key"
+            os.environ["ASTRYX_ORG"] = "fixture.example"
+            os.environ["ASTRYX_GATEWAY_PORT"] = "9"
+            os.environ.setdefault("ASTRYX_COG_REGISTRY", str(Path(td) / "absent.json"))
+            tmp = Path(td)
+            for name, fn in (("resolver", resolver_arms), ("hostwrite", hostwrite_arms), ("env", env_arms), ("app", app_arms)):
+                d = tmp / name
+                d.mkdir()
+                fn(d)
+    except FixtureUnavailable as e:                     # no admin DSN reachable: 77 on a committed-only tree, 1 live
+        from astryx.security.sqlguard.estate import unavailable
+        unavailable("test_floor_f0", REPO, e)
     print(f"{'PASS' if not fails else 'FAIL'}: floor F0 ({fails} failing)")
     sys.exit(1 if fails else 0)

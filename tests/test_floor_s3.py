@@ -7,9 +7,10 @@ the bridge and wacli are stubbed at their seams (main._bridge, main._wa_link). N
     token or one carrying a newline is refused before any call; the value is written by config.set_env, once; a set
     key is replaced only with replace=true (409 needs_confirm otherwise, file untouched).
   - E6: for each failure the channel can give (invalid, unreachable, rate-limited) and for success, neither the token
-    nor its last 6 characters appears in the response body or in ANY captured log line (httpx's request log, which
-    renders the token-bearing URL, included); logredact scrubs a bot token and a webhook URL; the channel handlers
-    never touch the database, so no token can reach the wire or /api/events.
+    nor its last 6 characters appears in the response body, in ANY captured log line (httpx's request log, which
+    renders the token-bearing URL, included), or in ANY row of the fixture's messages or steps (the wire /api/events
+    streams; checked live with the app's lifespan running, and the instrument is shown to fire on a planted tail);
+    logredact scrubs a bot token and a webhook URL; and no channel handler names the pool.
   - E7: CONNECTED only from the bridge's own /health (and discord's connected flag); a bridge that started before the
     token was written, or isn't running, is ACTIVATION NEEDED with the exact command.
   - E8: pairing refuses a LINKED phone and an UNKNOWN link state (409, nothing started); both wacli argvs are constants.
@@ -31,7 +32,7 @@ sys.path.insert(0, str(REPO / "src"))
 
 from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate('test_floor_s3', REPO, deps=('psycopg', 'asyncpg', 'fastapi', 'httpx'), env=False)   # fixture_db only (sqlsite.sh)
-from astryx.security.sqlguard.fixture import fixture_db  # noqa: E402
+from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db  # noqa: E402
 
 fails = 0
 O = {"x-obs-key": "test-owner-key"}
@@ -45,7 +46,8 @@ def arm(name, ok, detail=""):
     print(f"  {'PASS' if ok else 'FAIL'}  {name}" + ("" if ok else f"\n        {detail}"))
 
 
-def main(tmp: Path):
+def main(tmp: Path, url: str):
+    import psycopg
     import httpx
     spec = importlib.util.spec_from_file_location("main", REPO / "observatory" / "api" / "main.py")
     obs = importlib.util.module_from_spec(spec)
@@ -81,6 +83,20 @@ def main(tmp: Path):
     obs._bridge = lambda ch: {"unit": f"astryx-{ch}.service", "active": True, "started": time.time() - 3600,
                               "health": {"ok": True, "connected": True}}
     cl = TestClient(obs.app)
+    cl.__enter__()                      # the lifespan runs: the pool, the LISTEN task, the wire as /api/events reads it
+
+    def wire_clean(tok):
+        # E6's third sink, DYNAMIC (a4 #62022 R2): every row of the wire's two tables, whole, as text
+        with psycopg.connect(url, autocommit=True) as c:
+            rows = [r[0] for r in c.execute("SELECT row_to_json(m)::text FROM messages m UNION ALL "
+                                            "SELECT row_to_json(s)::text FROM steps s").fetchall()]
+        return not [r for r in rows if tok in r or tok[-6:] in r]
+
+    with psycopg.connect(url, autocommit=True) as c:
+        c.execute("INSERT INTO steps (agent, kind, content) VALUES ('probe', 'milestone', %s)", ("tail " + "zz9" + TG[-6:],))
+    arm("E6: the wire instrument fires on a planted tail (a control)", not wire_clean(TG))
+    with psycopg.connect(url, autocommit=True) as c:
+        c.execute("DELETE FROM steps WHERE agent = 'probe'")
 
     for m, p in (("GET", "/api/channels"), ("POST", "/api/channels/telegram/token"),
                  ("GET", "/api/channels/whatsapp/link"), ("POST", "/api/channels/whatsapp/pair")):
@@ -106,6 +122,7 @@ def main(tmp: Path):
             and "TG_BOT_TOKEN" not in env.read_text(), (r.status_code, r.text))
         arm(f"E6: {outcome}: no token (nor its tail) in the body or the logs",
             clean(r.text, TG) and clean(logs.getvalue()[before:], TG), logs.getvalue()[before:][-400:])
+        arm(f"E6: {outcome}: no token (nor its tail) in any row of messages or steps", wire_clean(TG))
     mode["v"] = "ok"
     r = cl.post("/api/channels/telegram/token", json={"token": TG, "key": "WA_CLI"}, headers=O)
     j = r.json()
@@ -114,6 +131,7 @@ def main(tmp: Path):
     arm("E7: the answer is WRITTEN, names the account and the activation command",
         j.get("state") == "written" and j.get("account") == "@astryx_bot" and "systemctl restart astryx-telegram" in (j.get("activate") or ""), j)
     arm("E6: success: no token in the body or the logs", clean(r.text, TG) and clean(logs.getvalue(), TG), logs.getvalue()[-400:])
+    arm("E6: success: no token (nor its tail) in any row of messages or steps", wire_clean(TG))
     arm("E6: httpx's own request log was emitted and scrubbed (the instrument saw it)",
         "api.telegram.org/bot123456789:<redacted>" in logs.getvalue(), logs.getvalue()[-400:])
 
@@ -151,6 +169,9 @@ def main(tmp: Path):
     arm("E7: a bridge never started: ACTIVATION NEEDED, the deploy-and-enable command",
         j["telegram"]["state"] == "activation-needed" and "enable --now astryx-telegram.service" in j["telegram"]["activate"], j["telegram"])
 
+    arm("E6: after the replace, the discord connect and the status reads: neither token in messages or steps",
+        wire_clean(TG2) and wire_clean(DC))
+
     # E8
     r = cl.post("/api/channels/whatsapp/pair", headers=O)
     arm("E8: a LINKED phone is never replaced from here (409, nothing started)", r.status_code == 409 and r.json()["state"] == "linked", r.text)
@@ -177,12 +198,16 @@ def main(tmp: Path):
 
 
 if __name__ == "__main__":
-    with fixture_db() as fx, tempfile.TemporaryDirectory() as td:
-        os.environ["ASTRYX_DSN"] = fx["url"]
-        os.environ["OBS_KEY"] = "test-owner-key"
-        os.environ["ASTRYX_ORG"] = "fixture.example"
-        os.environ["ASTRYX_GATEWAY_PORT"] = "9"
-        os.environ.setdefault("ASTRYX_COG_REGISTRY", str(Path(td) / "absent.json"))
-        main(Path(td))
+    try:
+        with fixture_db() as fx, tempfile.TemporaryDirectory() as td:
+            os.environ["ASTRYX_DSN"] = fx["url"]
+            os.environ["OBS_KEY"] = "test-owner-key"
+            os.environ["ASTRYX_ORG"] = "fixture.example"
+            os.environ["ASTRYX_GATEWAY_PORT"] = "9"
+            os.environ.setdefault("ASTRYX_COG_REGISTRY", str(Path(td) / "absent.json"))
+            main(Path(td), fx["url"])
+    except FixtureUnavailable as e:                     # no admin DSN reachable: 77 on a committed-only tree, 1 live
+        from astryx.security.sqlguard.estate import unavailable
+        unavailable("test_floor_s3", REPO, e)
     print(f"{'PASS' if not fails else 'FAIL'}: floor S3 ({fails} failing)")
     sys.exit(1 if fails else 0)

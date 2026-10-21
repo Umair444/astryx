@@ -50,6 +50,16 @@ MUTANTS = {
     "S3 a set key is replaced without confirm": (API, "    if config.is_set(key, ENV_FILE) and not body.replace:", "    if False:", S3),
     "S4 CONNECTED without the bridge's /health":
         (API, '                     "connected" if healthy else "written")', '                     "connected")', S3),
+    "S6 a connect posts a wire milestone naming the token's tail (outside the pool, so only the dynamic arm sees it)":
+        (API, "    config.set_env(key, token, ENV_FILE)\n",
+         "    config.set_env(key, token, ENV_FILE)\n    __import__('psycopg').connect(DSN, autocommit=True).execute("
+         "\"INSERT INTO steps (agent, kind, content) VALUES ('seed', 'milestone', %s)\", (f'{channel} connected (\u2026{token[-6:]})',))\n", S3),
+    "M13 the runner drops its baseline (an unreachable fixture would read as 17 kills)":
+        (Path(__file__).resolve(), "        if b.returncode != 0:\n            print(f\"NOT CHECKED", "        if False:\n            print(f\"NOT CHECKED"),
+    "D1 doctor stops counting a bad routes file": (REPO / "src" / "astryx" / "cli.py", "        bad += bool(probs)\n", "        bad += 0\n"),
+    "D2 doctor stops counting a duplicate .env key": (REPO / "src" / "astryx" / "cli.py", "    bad += bool(dups)\n", "    bad += 0\n"),
+    "D3 doctor's routes check short-circuits": (REPO / "src" / "astryx" / "cli.py",
+        "            probs = routing.validate(rows,", "            probs = [] or [] if True else routing.validate(rows,"),
     "S5 pairing runs over a linked phone": (API, '    if link["state"] != "unlinked":', '    if link["state"] == "unknown":', S3),
 }
 
@@ -57,6 +67,13 @@ MUTANTS = {
 def main():
     if (REPO / "triggers").is_dir():
         sys.exit("mutants_floor_f0: refusing to mutate a live tree (triggers/ present): run it on a worktree")
+    # the BASELINE (a1 #62023 R-1): a mutant "killed" by an oracle that is red, or 77, without it means nothing. Both
+    # unmutated oracles must pass first, or nothing is checked: 77, never a PASS built on a crashed instrument
+    for o in (ORACLE, S3):
+        b = subprocess.run([sys.executable, str(o)], capture_output=True, text=True, timeout=600, env=os.environ)
+        if b.returncode != 0:
+            print(f"NOT CHECKED: the unmutated {o.name} is rc {b.returncode}, so no mutant's verdict would mean anything")
+            sys.exit(77)
     survived = []
     for name, (f, old, new, *rest) in MUTANTS.items():
         oracle = rest[0] if rest else ORACLE

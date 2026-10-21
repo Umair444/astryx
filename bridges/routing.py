@@ -61,7 +61,10 @@ def validate(rows, agents=None) -> list[str]:
         if agents is not None and agent not in agents:
             out.append(f"no such agent: {agent}")
         if chat in seen:
-            out.append(f"chat {chat} is routed twice ({seen[chat]} and {agent}); a chat reaches one agent")
+            # named by its label and its two agents, never by the chat id (a3 #62025 N3: doctor prints this)
+            label = next((str(x.get("note")).split(" -> ")[0].strip() for x in rows
+                          if isinstance(x, dict) and str(x.get("chat")) == chat and x.get("note")), "")
+            out.append(f"{repr(label) if label else 'a chat'} is routed twice ({seen[chat]} and {agent}); a chat reaches one agent")
         else:
             seen[chat] = agent
         if r.get("enabled"):
@@ -105,7 +108,10 @@ _alarmed: dict[str, float] = {}
 def read_table(path: Path) -> list:
     """The raw rows of a routes file. An unreadable or unparseable file keeps the LAST GOOD table this process read
     (never [] = "nothing routed", which would drop every chat on a hand-edit typo) and alarms on stderr, once per
-    file version. A file that was never good reads []."""
+    file version. A file that was never good reads [].
+    THE LIMIT (a1 #62023): the last-good table is per PROCESS. A bridge restarted while the file is broken has none,
+    so it reads [] (nothing routed) until the file is fixed. That case is DETECTION-grade only: the journal alarm here
+    and `astryx doctor` (which validates the live files) say so; nothing prevents it."""
     key = str(path)
     try:
         rows = json.loads(Path(path).read_text())
