@@ -63,6 +63,7 @@ def run(tmp: Path, mise=None, install=False, later_real=False, cli=None):
     env = {"HOME": str(home), "PATH": ":".join(path)}
     if cli:
         env["ASTRYX_CLI"] = cli
+    # own-env: the hermetic HOME+PATH is this oracle's subject; `spawn.sh --which-cli` exits before orgs.py or any org read (spawn.sh, resolve_cli), so no registry is consulted
     r = subprocess.run(["/bin/bash", str(SPAWN), "--which-cli"], capture_output=True, text=True, env=env, timeout=30)
     return r.returncode, r.stdout.strip(), r.stderr.strip(), wrapper, real, home
 
