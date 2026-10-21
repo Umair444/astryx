@@ -13,7 +13,7 @@ plan-11859's F8 and I9). The screens are built against forge's U1U2 contract (PO
   A3 /auth/me, run: 401 is signed out, 200 with a user is signed in (malformed orgs dropped), 404 and a network
      failure are `unavailable` (the app then runs as it does without sign-in, never behind a dead form)
   A4 membership, not the building: the org list is switchable(me.orgs, …), run here: in a cog only the account's orgs
-     the cog serves, on one org the account's own; the cog's room list is never the list. Picking walks (chooseOrg)
+     the cog serves (an EMPTY cog list serves none: a1 #61932), on one org the account's own; the cog's room list is never the list. Picking walks (chooseOrg)
   A5 the way back is this app's: nextHash(), run under a fake location, returns '#/<route>' for a hash route and '#/'
      for an absolute URL, a protocol-relative one, a javascript: one, a sign-in loop or a malformed escape
   A6 the bar (#61877): visible labels tied to their inputs, autocomplete username/current-password, the error is a
@@ -100,7 +100,8 @@ SWITCH_DRIVER = r"""
 import { switchable } from './switchable.ts'
 const mine = [{ org: 'astryx', name: 'umairfiaz.com', role: 'owner' }, { org: 'elsewhere', name: 'other.example', role: 'member' }]
 console.log(JSON.stringify({ cog: switchable(mine, ['astryx', 'lab']).map(o => o.org),
-                             one: switchable(mine, null).map(o => o.org), none: switchable(mine, ['lab']).map(o => o.org) }))
+                             one: switchable(mine, null).map(o => o.org), none: switchable(mine, ['lab']).map(o => o.org),
+                             empty: switchable(mine, []).map(o => o.org) }))
 """
 
 
@@ -175,7 +176,9 @@ def main():
                                           "export function switchable(mine: AuthOrg[], cogOrgs: string[] | null): AuthOrg[] " + sw)
         s2, err = run_node(tmp, SWITCH_DRIVER)
         check("switchable: a cog lists only your orgs it serves; one org lists yours",
-              s2 == {"cog": ["astryx"], "one": ["astryx", "elsewhere"], "none": []}, s2 or err)
+              s2 is not None and {k: s2[k] for k in ("cog", "one", "none")} == {"cog": ["astryx"], "one": ["astryx", "elsewhere"], "none": []}, s2 or err)
+        check("a cog whose org list is EMPTY lists none of yours, never all of them (a1 #61932 M-a)",
+              s2 is not None and s2["empty"] == [], s2 or err)
         ol = fn_body(screens, "function OrgList(")
         check("the org list is switchable(me.orgs, …), and picking an org walks (chooseOrg)",
               re.findall(r"const orgs = (.*)", ol) == ["switchable(me.orgs, cog.cog ? cog.orgs.map((o) => o.org ?? '').filter(Boolean) : null)"]
