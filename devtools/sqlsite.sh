@@ -54,7 +54,9 @@ export PYTHONPATH="$ROOT/src/astryx/security/sqlguard/shim${PYTHONPATH:+:$PYTHON
 echo "$ASTRYX_SQLGUARD_RUN" > "$D/run_id"
 [ -z "${SQLSITE_REPORT:-}" ] || echo "! SQLSITE_REPORT=$SQLSITE_REPORT: verdicts are graded from this file, not this run"
 TR=$(realpath -m --relative-to=. "$T")                   # ./tests/x.py and /abs/…/tests/x.py are tests/x.py
-if [ "$LEDGER_MODE" = 1 ] && ! command grep -E '^[[:space:]]*run ' devtools/check.sh | command grep -qF " $TR"; then
+# The consumer reads to EOF, never `grep -q`: -q exits at its first match, the producer then takes SIGPIPE (141), and
+# pipefail fails the whole pipeline, so a registered oracle drew this warning ~23% of runs (466/2000; the 10-21 timer red).
+if [ "$LEDGER_MODE" = 1 ] && ! command grep -E '^[[:space:]]*run ' devtools/check.sh | command grep -F " $TR" >/dev/null; then
   echo "! $TR has no run line in devtools/check.sh (the coverage gate goes red, and nothing drives its sites)"
 fi
 rc=0; env -u ASTRYX_AGENT "$PY" "$T" >"$D/test.out" 2>&1 || rc=$?

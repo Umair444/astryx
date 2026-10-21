@@ -134,6 +134,24 @@ try:
     arm("REGISTRATION: an oracle check.sh only mentions in a comment is warned about",
         any("no run line in devtools/check.sh" in l for l in lines(out, "!")), out)
 
+    # A registered oracle's run line followed by more run lines than a pipe holds: a `grep -q` consumer exits at the match,
+    # the producer takes SIGPIPE, and pipefail reads that as "no run line" (the 10-21 timer red, ~23% of runs on the real
+    # check.sh). Past 1 MB the race is a certainty, so 5 runs are a deterministic arm.
+    big = tmp / "bigcheck"
+    (big / "devtools").mkdir(parents=True)
+    (big / "tests").mkdir()
+    (big / "tests" / "test_reg.py").write_text("pass\n")
+    (big / "devtools" / "check.sh").write_text('run "reg" "$PY" tests/test_reg.py\n'
+                                               + "".join(f'run "pad {i}" "$PY" tests/test_pad_{i}.py\n' for i in range(20000)))
+    be = {"ASTRYX_FIXTURE_ADMIN_DSN": "postgresql://nobody@127.0.0.1:1/none", "PY": sys.executable}
+    warned = [o for _, o in (run("--ledger", "./tests/test_reg.py", "nothing::", root=big, env=be) for _ in range(5))
+              if any("no run line" in l for l in lines(o, "!"))]
+    arm("REGISTRATION: a registered oracle draws no warning when check.sh outgrows a pipe (5 of 5 runs)", not warned,
+        warned[:1])
+    rc, out = run("--ledger", "./tests/test_unreg.py", "nothing::", root=big, env=be)
+    arm("REGISTRATION: …and in that same root an unregistered oracle is still warned about",
+        any("no run line in devtools/check.sh" in l for l in lines(out, "!")), out)
+
     ok_py = tmp / "ok.py"
     ok_py.write_text("pass\n")
     X = "src/astryx/x.py::f\x1f"
