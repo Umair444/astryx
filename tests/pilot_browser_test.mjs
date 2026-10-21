@@ -155,7 +155,8 @@ const room0 = await ev(`(async () => {
   const w = await fetch('/api/whoami', { headers: h })
   if (w.status !== 409) return { cog: false }
   const c = await fetch('/api/cog', { headers: h }).then((r) => r.json()).catch(() => ({}))
-  const o = (c.orgs || []).find((x) => x.name === ${JSON.stringify(ORG_NAME)})
+  const m = (c.orgs || []).filter((x) => x.name === ${JSON.stringify(ORG_NAME)})   // exactly one: a shared name is a collision, never a pick
+  const o = m.length === 1 ? m[0] : null
   if (!o || !o.org) return { cog: true, org: null, names: (c.orgs || []).map((x) => x.name) }
   document.cookie = 'astryx_org=' + encodeURIComponent(o.org) + '; Path=/; SameSite=Strict'
   return { cog: true, org: o.org }
