@@ -668,7 +668,10 @@ async def message_file(msg: int, n: int, request: Request, inline: int = 0):
     if inline and ext in INLINE_TYPES:
         return FileResponse(path, content_disposition_type="inline", filename=path.name,
                             headers={"X-Content-Type-Options": "nosniff"})
-    return FileResponse(path, filename=path.name)
+    # a DOWNLOAD (Content-Disposition: attachment), its type guessed from the agent's or uploader's filename: nosniff and a
+    # CSP sandbox too, so a browser that renders it anyway can't run it on this origin (plan-11859 D6, the owner key's)
+    return FileResponse(path, filename=path.name, headers={"X-Content-Type-Options": "nosniff",
+                                                           "Content-Security-Policy": "sandbox"})
 
 
 @app.get("/api/file/preview")

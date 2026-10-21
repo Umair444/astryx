@@ -776,6 +776,10 @@ run "observatory cog: the cog's front lists every org and pipes each to its own 
 # destination's own cookie, never the caller's x-forwarded-* or X-Forwarded-For, the relay's observed view set; the
 # observatory units pin their proxy trust. Hermetic (stub backends). Mutants: tests/mutants_relay_headers.py.
 run "relay headers: one allowlist for every relay, the destination's own cookie only, the relay's observed view (plan-11859 D3)" "$PY" tests/test_relay_headers.py
+# plan-11859 U0 (D6, BLOCKING from U0: a2 BC-1): no agent-/org-authored active content runs on the front's origin,
+# which holds the owner key in localStorage. Client census (iframes sandboxed or EXEMPT with a reason, no allow-same-origin,
+# no raw HTML sink, every dangerouslySetInnerHTML DOMPurify'd) + canvas's file serving. Mutants: tests/mutants_active_content.py.
+run "active content: nothing an agent authored runs on the front's origin (plan-11859 D6)" "$PY" tests/test_active_content.py
 run "observatory cog UI: the building and its room chips, the key only to safe bases, one org as before" "$PY" tests/test_observatory_cog_ui.py
 run "observatory sign-in UI: inert behind its flag, one answer for any failed sign-in (F8), your orgs not every room" "$PY" tests/test_observatory_auth_ui.py
 run "observatory influence across orgs: owner only, crossing traffic aggregated per pair, no body or thread leaves" "$PY" tests/test_observatory_influence_cross.py
