@@ -162,7 +162,7 @@ Description=astryx observatory — the cog's front on :8090: every org's room, e
 After=network.target
 [Service]
 WorkingDirectory=$PWD/observatory
-ExecStart=$PWD/venv/bin/uvicorn front:app --host 0.0.0.0 --port 8090
+ExecStart=$PWD/venv/bin/uvicorn front:app --host 0.0.0.0 --port 8090 --proxy-headers --forwarded-allow-ips 127.0.0.1
 Restart=always
 RestartSec=5
 User=$USER
@@ -177,7 +177,7 @@ Description=astryx observatory — org $UORG's own, behind the cog's front (127.
 After=network.target
 [Service]
 WorkingDirectory=$PWD/observatory/api
-ExecStart=${UEXEC}$PWD/venv/bin/uvicorn main:app --host 127.0.0.1 --port ${_UP}
+ExecStart=${UEXEC}$PWD/venv/bin/uvicorn main:app --host 127.0.0.1 --port ${_UP} --proxy-headers --forwarded-allow-ips 127.0.0.1
 Restart=always
 RestartSec=5
 User=$USER
@@ -191,7 +191,7 @@ Description=astryx observatory — public live view on :8090
 After=network.target
 [Service]
 WorkingDirectory=$PWD/observatory/api
-ExecStart=${UEXEC}$PWD/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8090
+ExecStart=${UEXEC}$PWD/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8090 --proxy-headers --forwarded-allow-ips 127.0.0.1
 Restart=always
 RestartSec=5
 User=$USER

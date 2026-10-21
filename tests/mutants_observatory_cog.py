@@ -25,8 +25,8 @@ MUTANTS = {
     "F4 the front's jar stores cookies (one viewer's session replayed to the next)":
         ("policy=http.cookiejar.DefaultCookiePolicy(allowed_domains=[])", "policy=http.cookiejar.DefaultCookiePolicy()"),
     "F5 the front adds an owner key of its own":
-        ("    headers = [(k, v) for k, v in request.headers.items() if k.lower() not in HOP | SET]\n",
-         "    headers = [(k, v) for k, v in request.headers.items() if k.lower() not in HOP | SET] + [(\"x-obs-key\", \"front\")]\n"),
+        ('                                   ("x-forwarded-prefix", f"/o/{org}")])',
+         '                                   ("x-forwarded-prefix", f"/o/{org}"), ("x-obs-key", "front")])'),
     "F6 the merged stream drops the org tag":
         ('                            await q.put({**tag, "event": ev})', '                            await q.put(ev)'),
     "F7 a dead backend is never announced":
@@ -36,7 +36,8 @@ MUTANTS = {
     "F9 the stream's ?key= is not forwarded (owner rooms read as anonymous)":
         ('        params = {"key": key} if key else {}', '        params = {}'),
     "F10 the caller's own x-astryx-front-client passes through (a visitor names itself to the cap)":
-        ('SET = {CLIENT, "x-forwarded-host"', 'SET = {"x-forwarded-host"'),
+        ('extra=[(CLIENT, request.client.host if request.client else ""),',
+         'extra=[(CLIENT, request.headers.get(CLIENT) or (request.client.host if request.client else "")),'),
     "F11 the caller's own x-forwarded-prefix passes through (the backend reads the caller's, first, not the front's)":
-        ('"x-forwarded-proto", "x-forwarded-prefix"}', '"x-forwarded-proto"}'),
+        ('("x-forwarded-prefix", f"/o/{org}")])', '("x-forwarded-prefix", request.headers.get("x-forwarded-prefix") or f"/o/{org}")])'),
 }

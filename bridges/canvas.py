@@ -44,6 +44,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from astryx import orgs  # the org's tmux server (plan-11324 S3b)
+from astryx.security import relay  # noqa: E402   canvas_cookie(): the session cookie's one name (plan-11859 D3)
 from astryx.core import canvas as cv
 from astryx.core import presence as pres
 from .canvas_shell import render
@@ -65,7 +66,7 @@ PREFIX = "/canvas"                                 # served at <host>/canvas/ (o
 # public path is PREFIX and the cookie `cv_session`, exactly as before.
 _ORG = orgs.name()
 PUBLIC = f"/o/{_ORG}{PREFIX}" if _ORG else PREFIX
-COOKIE = f"cv_session-{_ORG}" if _ORG else "cv_session"
+COOKIE = relay.canvas_cookie(_ORG)                 # ONE name, read by both relays too (src/astryx/security/relay.py)
 
 pool: asyncpg.Pool | None = None
 clients: dict[str, set[asyncio.Queue]] = {}        # viewer name -> open SSE queues

@@ -42,10 +42,10 @@ REPO = ROOT.parent
 DIST = ROOT / "web" / "dist"
 sys.path.insert(0, str(REPO / "src"))
 from astryx import config, orgs  # noqa: E402
+from astryx.security import relay  # noqa: E402   the ONE relay header policy (plan-11859 D3)
 
 BACKEND = "astryx-observatory-org"     # the per-org backend's stem (data/org_units.json): its port is the registry's
 CLIENT = "x-astryx-front-client"
-SET = {CLIENT, "x-forwarded-host", "x-forwarded-proto", "x-forwarded-prefix"}   # the front's own, never passed through
 HOP = {"connection", "keep-alive", "transfer-encoding", "te", "trailer", "upgrade", "proxy-authorization",
        "proxy-authenticate", "host"}
 RETRY = 5.0
@@ -161,12 +161,13 @@ async def _relay(org: str, path: str, request: Request):
     r = _cog().get(org)
     if r is None or r["port"] is None:
         return JSONResponse({"error": f"no org {org!r} in this cog"}, status_code=404)
-    # the headers the front SETS are never the caller's too: a backend reads the first copy, so an appended one lost
-    headers = [(k, v) for k, v in request.headers.items() if k.lower() not in HOP | SET]
-    headers += [(CLIENT, request.client.host if request.client else ""),   # what WE saw, never what the caller said
-                ("x-forwarded-host", request.headers.get("x-forwarded-host") or request.headers.get("host", "")),
-                ("x-forwarded-proto", request.headers.get("x-forwarded-proto") or request.url.scheme),
-                ("x-forwarded-prefix", f"/o/{org}")]
+    # ONE allowlist (src/astryx/security/relay.py): the caller's allowed headers, only this org's own canvas cookie,
+    # and the view the front OBSERVED: the Host it was reached at, the scheme its uvicorn resolved from its pinned
+    # trusted peer, the client it saw. Never the caller's x-forwarded-* or X-Forwarded-For (plan-11859 X1/X2).
+    headers = relay.headers(request.headers.items(), host=request.headers.get("host", ""), proto=request.url.scheme,
+                            cookies={relay.canvas_cookie(org)},
+                            extra=[(CLIENT, request.client.host if request.client else ""),
+                                   ("x-forwarded-prefix", f"/o/{org}")])
     up = client().build_request(request.method, f"http://127.0.0.1:{r['port']}/{path}",
                                 params=request.query_params, headers=headers, content=await request.body())
     try:

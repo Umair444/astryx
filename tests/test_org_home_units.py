@@ -190,7 +190,7 @@ def main():
         ow = files(fx.t / "u_b").get(f"astryx-observatory-org@{ob}.service", b"").decode()
         po = fx.ports["b"]["astryx-observatory-org"]
         check(f"B's own observatory (S3c 3/n): main:app on 127.0.0.1:{po} (its registry port), B's HOME, behind the front",
-              f"uvicorn main:app --host 127.0.0.1 --port {po}\n" in ow and f"Environment=ASTRYX_HOME={B}\n" in ow
+              f"uvicorn main:app --host 127.0.0.1 --port {po} --proxy-headers --forwarded-allow-ips 127.0.0.1\n" in ow and f"Environment=ASTRYX_HOME={B}\n" in ow
               and "0.0.0.0" not in ow, ow[-400:])
 
         print("\nU3 TWO ORGS, ONE DIRECTORY: DISJOINT")
@@ -326,7 +326,7 @@ def main():
               f"rc {r.returncode} {sorted(cf)} {r.stderr[-300:]}")
         fr = cf.get("astryx-observatory.service", b"").decode()
         check("the front: uvicorn front:app on :8090 from observatory/, the registry in its env, no HOME, no orgenv",
-              "uvicorn front:app --host 0.0.0.0 --port 8090\n" in fr and f"WorkingDirectory={co}/observatory\n" in fr
+              "uvicorn front:app --host 0.0.0.0 --port 8090 --proxy-headers --forwarded-allow-ips 127.0.0.1\n" in fr and f"WorkingDirectory={co}/observatory\n" in fr
               and f"Environment=ASTRYX_COG_REGISTRY={fx.reg}\n" in fr and "ASTRYX_HOME" not in fr
               and "orgenv" not in fr and "main:app" not in fr, fr)
         check("its environment names the registry, never a HOME; no orgenv prefix",
@@ -361,7 +361,7 @@ def main():
               same == sorted(set(prim) & set(one_files)) and same, f"differ: {sorted(set(prim) & set(one_files) - set(same))}")
         po = prim.get("astryx-observatory-org.service", b"").decode()
         check(f"its observatory: main:app on 127.0.0.1:{pport} (its registry port), its HOME, no orgenv",
-              f"uvicorn main:app --host 127.0.0.1 --port {pport}\n" in po and f"Environment=ASTRYX_HOME={co}\n" in po
+              f"uvicorn main:app --host 127.0.0.1 --port {pport} --proxy-headers --forwarded-allow-ips 127.0.0.1\n" in po and f"Environment=ASTRYX_HOME={co}\n" in po
               and "orgenv" not in po, po[-400:])
         rb = render(fx.env(ASTRYX_HOME=str(B), ASTRYX_COG_REGISTRY=str(fx.t / "primary.json")), fx.t / "u_pb")
         nb = files(fx.t / "u_pb")

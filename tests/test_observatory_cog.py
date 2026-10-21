@@ -8,8 +8,9 @@ build) behind the real front (uvicorn front:app, ephemeral port), a fixture regi
 
   O1 /api/cog lists both orgs (sorted), each its federation name (its HOME's ASTRYX_ORG) and /o/<org>/ base, home
      null, no port leaked; it is the front's own (no backend saw it)
-  O2 /o/<a>/… reaches A's backend ONLY, as /…: method, query, body, the caller's x-obs-key and cookie exactly; the
-     backend's status and headers come back
+  O2 /o/<a>/… reaches A's backend ONLY, as /…: method, query, body, the caller's x-obs-key, and of the caller's
+     cookies ONLY A's own canvas session (plan-11859 D3: the front's astryx_org and any other cookie are stripped);
+     the backend's status and headers come back
   O3 an org the registry doesn't hold is a 404 (no backend hit); a dotted path under /o/<a>/ never reaches B
   O4 the root /api/* goes to the org the viewer chose: header x-astryx-org, else cookie astryx_org (the header wins);
      none, or one not in the cog: 409 naming /api/cog, no backend hit
@@ -195,13 +196,15 @@ def main():
 
         print("\nO2 /o/<a>/ IS A'S BACKEND, AND ONLY A'S")
         st, hd, body = call(pf, f"/o/{oa}/made?x=1&y=two", "POST", b"payload-bytes",
-                            {"x-obs-key": "the-callers-key", "cookie": "astryx_org=zzz; other=1"})
+                            {"x-obs-key": "the-callers-key",
+                             "cookie": f"astryx_org=zzz; cv_session-{oa}=mine; cv_session-{ob}=theirs; other=1"})
         la, lb = lines(logs[oa]), lines(logs[ob])
         e = la[-1] if la else {}
-        check("A's backend got POST /made?x=1&y=two with the body, the caller's x-obs-key and cookie exactly",
+        check("A's backend got POST /made?x=1&y=two with the body, the caller's x-obs-key, and of its cookies only "
+              "A's own canvas session (astryx_org, B's session and a stray one stripped: plan-11859 D3)",
               e.get("method") == "POST" and e.get("path") == "/made" and e.get("query") == {"x": "1", "y": "two"}
               and e.get("body") == "payload-bytes" and e.get("key") == "the-callers-key"
-              and e.get("cookie") == "astryx_org=zzz; other=1" and e.get("prefix") == f"/o/{oa}", str(e))
+              and e.get("cookie") == f"cv_session-{oa}=mine" and e.get("prefix") == f"/o/{oa}", str(e))
         check("the backend's status (201) and header come back", st == 201 and hd.get("x-backend") == oa, f"{st} {hd}")
         check("B's backend saw nothing", not lb, str(lb))
 

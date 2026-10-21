@@ -3461,6 +3461,7 @@ async def events(request: Request):
 # own session); x-forwarded-* tell canvas the URL the viewer actually used.
 import http.cookiejar  # noqa: E402
 import httpx  # noqa: E402
+from astryx.security import relay as _relay  # noqa: E402   the ONE relay header policy (plan-11859 D3)
 from fastapi import BackgroundTasks  # noqa: E402
 
 def _upstream(stem: str, fixed: int) -> str | None:
@@ -3521,10 +3522,16 @@ async def _pipe(url: str, request: Request, owner_key: bool, down: str):
         _canvas_http = httpx.AsyncClient(
             timeout=httpx.Timeout(30, read=None),
             cookies=http.cookiejar.CookieJar(policy=http.cookiejar.DefaultCookiePolicy(allowed_domains=[])))
-    headers = [(k, v) for k, v in request.headers.items()
-               if k.lower() not in _HOP and (owner_key or k.lower() != "x-obs-key")]
-    headers += [("x-forwarded-host", request.headers.get("x-forwarded-host") or request.headers.get("host", "")),
-                ("x-forwarded-proto", request.headers.get("x-forwarded-proto") or request.url.scheme)]
+    # ONE allowlist (src/astryx/security/relay.py, plan-11859 D3). The view passed on is what THIS hop observed: in a
+    # cog the front's x-forwarded-host, read only from the front itself (127.0.0.1); on one org the Host it was
+    # reached at. The scheme is uvicorn's, resolved from its pinned trusted peer. Canvas gets only its own session
+    # cookie, never the observatory's owner key (it has its own session); the ear gets the key and no cookie.
+    front = _COG and (request.client.host if request.client else "") == "127.0.0.1"
+    host = (request.headers.get("x-forwarded-host") if front else None) or request.headers.get("host", "")
+    headers = [(k, v) for k, v in _relay.headers(
+        request.headers.items(), host=host, proto=request.url.scheme,
+        cookies=() if owner_key else {_relay.canvas_cookie(orgs.name())})
+        if owner_key or k.lower() != "x-obs-key"]
     upstream = _canvas_http.build_request(
         request.method, url, params=request.query_params,
         headers=headers, content=await request.body())

@@ -16,11 +16,11 @@ MUTANTS = {
     "N1 the cookie's path ignores the org (every org's session at /canvas: the browser sends A's to B)":
         ('PUBLIC = f"/o/{_ORG}{PREFIX}" if _ORG else PREFIX\n', 'PUBLIC = PREFIX\n'),
     "N2 the cookie's name ignores the org (one host-wide name: logging in to B replaces A's session)":
-        ('COOKIE = f"cv_session-{_ORG}" if _ORG else "cv_session"\n', 'COOKIE = "cv_session"\n'),
+        ('COOKIE = relay.canvas_cookie(_ORG)', 'COOKIE = "cv_session"'),
     "N3 one org gets the cog's path too (/o/None/canvas: a one-org browser never sends its session)":
         ('PUBLIC = f"/o/{_ORG}{PREFIX}" if _ORG else PREFIX\n', 'PUBLIC = f"/o/{_ORG}{PREFIX}"\n'),
     "N4 one org gets the cog's name too (every one-org owner logged out)":
-        ('COOKIE = f"cv_session-{_ORG}" if _ORG else "cv_session"\n', 'COOKIE = f"cv_session-{_ORG}"\n'),
+        ('COOKIE = relay.canvas_cookie(_ORG)', 'COOKIE = f"cv_session-{_ORG}"'),
     "N5 the cookie is SET at the routing prefix, not the public path":
         ('secure=public_base(request).startswith("https:"), path=PUBLIC)', 'secure=public_base(request).startswith("https:"), path=PREFIX)'),
     "N6 logout clears the routing prefix's cookie (the cog's session survives a logout)":

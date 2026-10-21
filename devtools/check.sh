@@ -772,6 +772,10 @@ run "gateway cog: one door serves every org of a cog by federation name; a sibli
 run "gateway pickup: what a NAT'd org collects by long-polling passes the one inbound door (reach, intent, cap, replay)" "$PY" tests/test_gateway_pickup.py
 run "cog scope: every registry iterator is declared (tests/cog_scope.json); only the design's cog-scoped set opens every org" "$PY" tests/test_cog_scope.py
 run "observatory cog: the cog's front lists every org and pipes each to its own observatory, adding no authority" "$PY" tests/test_observatory_cog.py
+# plan-11859 U0 (D3+D4): every relay applies ONE allowlist header policy (src/astryx/security/relay.py): only the
+# destination's own cookie, never the caller's x-forwarded-* or X-Forwarded-For, the relay's observed view set; the
+# observatory units pin their proxy trust. Hermetic (stub backends). Mutants: tests/mutants_relay_headers.py.
+run "relay headers: one allowlist for every relay, the destination's own cookie only, the relay's observed view (plan-11859 D3)" "$PY" tests/test_relay_headers.py
 run "observatory cog UI: the building and its room chips, the key only to safe bases, one org as before" "$PY" tests/test_observatory_cog_ui.py
 run "observatory sign-in UI: inert behind its flag, one answer for any failed sign-in (F8), your orgs not every room" "$PY" tests/test_observatory_auth_ui.py
 run "observatory influence across orgs: owner only, crossing traffic aggregated per pair, no body or thread leaves" "$PY" tests/test_observatory_influence_cross.py
