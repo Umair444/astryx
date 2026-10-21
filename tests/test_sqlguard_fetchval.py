@@ -7,6 +7,10 @@ fetchrow and takes the column itself.
   F1 the value a fetchval returns under the shim equals plain asyncpg's, for a hit, a miss and column=1.
   F2 its trace records rows 1 for the hit and 0 for the miss (RED on the old shim: -1 for both).
   F3 one fetchval writes ONE trace record (fetchrow is called unwrapped: nothing is counted twice).
+  F4 a hit whose value is NULL records rows=1: counting from the value would read it as a miss, a FALSE climb to
+     RESPONSIVE (a site whose only "zero" was a NULL hit), the one direction sqlguard must never err in (a3 #61863).
+Residual, named: asyncpg PreparedStatement methods (conn.prepare(...).fetch*) are unwrapped for every method, as
+before; the one such site is the observatory's SQL console over user-typed SQL, which the inventory can't key.
 Exit 0 pass · 1 fail · 77 no reachable server or asyncpg (nothing verified).
 """
 import json
@@ -32,8 +36,9 @@ async def main(dsn):
     hit = await c.fetchval("SELECT i FROM fv_probe WHERE i = $1", 1)
     miss = await c.fetchval("SELECT i FROM fv_probe WHERE i = $1", 2)
     col = await c.fetchval("SELECT i, s FROM fv_probe WHERE i = $1", 1, column=1)
+    nullhit = await c.fetchval("SELECT NULL::int AS v FROM fv_probe WHERE i = $1", 1)   # a HIT whose value is NULL
     await c.close()
-    print(json.dumps({"hit": hit, "miss": miss, "col": col}))
+    print(json.dumps({"hit": hit, "miss": miss, "col": col, "nullhit": nullhit}))
 asyncio.run(main(sys.argv[1]))
 '''
 fails = []
@@ -65,7 +70,7 @@ try:
         with fixture_db() as fx:
             shimmed, err2 = run(fx["url"], True, tmp)
         check("F1 the shimmed fetchval returns plain asyncpg's values (hit, miss, column=1)",
-              plain is not None and shimmed == plain == {"hit": 1, "miss": None, "col": "one"},
+              plain is not None and shimmed == plain == {"hit": 1, "miss": None, "col": "one", "nullhit": None},
               f"plain={plain or err} shimmed={shimmed or err2}")
         recs = []
         for f in Path(tmp).glob("trace-*.jsonl"):
@@ -73,8 +78,11 @@ try:
         fv = [r for r in recs if "from fv_probe where" in r.get("t", "")]
         rows = sorted(r.get("rows") for r in fv if r.get("t", "").startswith("select i from"))
         check("F2 the trace counts a fetchval's rows: 1 for the hit, 0 for the miss", rows == [0, 1], str(rows))
-        check("F3 one record per fetchval (3 calls, 3 records: the unwrapped fetchrow is never counted twice)",
-              len(fv) == 3, str([(r.get("t", "")[:40], r.get("rows")) for r in fv]))
+        nulls = [r.get("rows") for r in fv if r.get("t", "").startswith("select null")]
+        check("F4 a hit whose VALUE is NULL records rows=1, never 0 (rows come from the ROW, not the value: a3 #61863)",
+              nulls == [1], str(nulls))
+        check("F3 one record per fetchval (4 calls, 4 records: the unwrapped fetchrow is never counted twice)",
+              len(fv) == 4, str([(r.get("t", "")[:40], r.get("rows")) for r in fv]))
 except FixtureUnavailable as e:
     unavailable("test_sqlguard_fetchval", REPO, e, failed=fails)
 
