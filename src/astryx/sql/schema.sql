@@ -971,3 +971,10 @@ CREATE TABLE IF NOT EXISTS goal_workflow (
   ts       timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (goal_id, rev)
 );
+
+-- THE STORE (owner 10-21): every agent's own durable data, by DOMAIN, in one schema and one directory with one name.
+-- A domain's tables are `store.<domain>_<noun>` (finance_payslip, finance_txn, finance_account …): the prefix IS the
+-- owner, so `\dt store.finance_*` lists one domain whole. Its files live under the org HOME's `store/<domain>/`
+-- (gitignored, captured by scripts/backup.sh). The ledger and dump capture the tables like any other. A domain creates
+-- its own tables (CREATE TABLE IF NOT EXISTS store.<domain>_…); this file only declares the namespace. docs/store.md.
+CREATE SCHEMA IF NOT EXISTS store;
