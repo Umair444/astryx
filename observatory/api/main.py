@@ -1045,15 +1045,16 @@ async def agent_runtime(name: str):
 
 
 def _org_login() -> dict:
-    """The ORG's login beneath every agent's entry (plan-10224 ORGAUTH), NAMES only: {cli, key, supported, source}.
-    key = the .env key that holds the org's credential (spawn splices it into an agent with no base_url of its own),
-    or None: the ambient login. runtime_env.org_login is the one rule; never a value."""
+    """The ORG's login beneath every agent's entry (plan-10224 ORGAUTH), NAMES only: {cli, key, billing, supported,
+    note, source}. key = the .env key spliced into an agent with no base_url of its own, or None (the ambient login);
+    source says the billing in words. runtime_env.org_login is the one rule; never a value."""
     from astryx.core import runtime_env
     try:
         d = runtime_env.org_login(config.read_env(ESTATE / ".env"))
     except OSError:
-        return {"cli": "claude", "key": None, "supported": True, "source": "unreadable"}
-    return {**d, "source": "org token" if d["key"] else "ambient"}
+        return {"cli": "claude", "key": None, "billing": "ambient", "supported": True, "note": None,
+                "source": "unreadable"}
+    return {**d, "source": runtime_env.BILLING_WORDS[d["billing"]]}
 
 
 @app.put("/api/agents/{name}/runtime")

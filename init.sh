@@ -1190,6 +1190,16 @@ if [ "${1:-}" = "doctor" ]; then
       *) warn "federation names UNVERIFIED: $(printf '%s' "$_dn" | tail -1)" ;;
     esac
   fi
+  # this org's agents' login and its BILLING, in words (plan-10224 ORGAUTH): a metered API key is used only when the
+  # .env opts in (ASTRYX_ORG_LOGIN), and a key set without it is named here, never its value
+  _ol=$(ASTRYX_HOME="$ORGH" venv/bin/python src/astryx/core/runtime_env.py --org-words 2>&1); _olrc=$?
+  case $_olrc in
+    0) ok "$(printf '%s\n' "$_ol" | head -1)" ;;
+    1) warn "$(printf '%s\n' "$_ol" | head -1): every agent with no base_url of its own bills per token" ;;
+    3) bad "$(printf '%s\n' "$_ol" | head -1): no launcher for that CLI here, so spawn refuses (this org's .env ASTRYX_ORG_CLI)" ;;
+    *) warn "this org's login UNVERIFIED: $(printf '%s' "$_ol" | tail -1)" ;;
+  esac
+  printf '%s\n' "$_ol" | sed -n 's/^note: /        /p' | while IFS= read -r _n; do warn "login:$_n"; done
   # every live resident body carries the flags the org depends on (owner 10-14): the wire's channel flag (without it
   # the doorbell is dropped silently) and its charter's permission mode (bypassPermissions, or default for relay)
   _lf=$("${PY:-venv/bin/python}" -m astryx.core.launch_flags 2>&1); _lf_rc=$?

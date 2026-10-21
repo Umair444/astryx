@@ -5,8 +5,8 @@ ANTHROPIC_API_KEY, by the CLIS row of its ASTRYX_ORG_CLI) beneath the per-agent 
 
 Fixture: a registry of two orgs (fxa, fxb), each HOME with its own .env holding DUMMY tokens only. Every arm asserts on
 key NAMES and on WHICH org's dummy landed; no value is ever printed (a detail names keys, or says "A's"/"B's").
-  O1 org token used: an agent with no entry gets its org's CLAUDE_CODE_OAUTH_TOKEN; ANTHROPIC_API_KEY when it is the
-     only one; the OAuth token first when both are set
+  O1 org token used: an agent with no entry gets its org's CLAUDE_CODE_OAUTH_TOKEN; an ANTHROPIC_API_KEY not opted
+     in is ignored (with a note), so with both set only the token
   O2 the agent entry wins: an entry with its own base_url gets its ANTHROPIC_AUTH_TOKEN and NO org key; an entry with
      only a model map or an effort gets the org key beside them
   O3 no token, unchanged: an org whose .env holds no login key renders the fragment the pre-ORGAUTH code did, byte for
@@ -15,6 +15,9 @@ key NAMES and on WHICH org's dummy landed; no value is ever printed (a detail na
   O5 the parent env: fxa's credential in the PARENT process env, fxb rendered: fxb's fragment holds none of it, and
      fxb's pane environment (orgenv.py exec, what spawn's tmux pane runs) carries neither name
   O6 never a value out of band: `--org` prints NAMES only; stderr never holds a dummy
+  O8 a METERED key only when opted in (ASTRYX_ORG_LOGIN=ANTHROPIC_API_KEY, seed #61907; local.md's spend gate): unset,
+     the key is ignored and noted by NAME; opted in, it wins over a token; an opt-in naming no set key or no metered
+     key is noted and falls to the token. O1's API-key arms read this way; `--org-words` says the billing in words
   O7 a CLI with no launcher (ASTRYX_ORG_CLI=gemini): exit 3, "cli gemini not yet supported", nothing on stdout
 Seams: ORGAUTH_SRC (a mutant runtime_env.py, tests/mutants_org_auth.py). Exit 0 · 1 · 77 (no psycopg: O5's pane
 arm can't run).
@@ -37,6 +40,9 @@ skipped = []
 
 
 def check(name, ok, detail=""):
+    detail = str(detail)
+    for label, v in DUMMY.items():          # a detail never carries a value, even a mutant's (it says whose)
+        detail = detail.replace(v, f"<{label}'s value>")
     print(f"  {'PASS' if ok else 'FAIL'}  {name}" + (f"  [{detail}]" if detail and not ok else ""))
     if not ok:
         fails.append(name)
@@ -98,15 +104,44 @@ with tempfile.TemporaryDirectory() as td:
     dotenv("a", f"ANTHROPIC_API_KEY={DUMMY['ka']}")
     rc, out, err = run("a")
     got = parse(out)
-    check("only ANTHROPIC_API_KEY in the .env: that key", rc == 0 and got is not None
-          and got.get("ANTHROPIC_API_KEY") == DUMMY["ka"] and "CLAUDE_CODE_OAUTH_TOKEN" not in got,
-          f"rc {rc} keys {sorted(got or {})}")
+    check("only ANTHROPIC_API_KEY, NOT opted in: ignored (the ambient login: never metered billing unsigned)",
+          rc == 0 and out == "", f"rc {rc} keys {sorted(got or {})}")
+    check("...and stderr names the key and the missing opt-in line, never its value",
+          "ANTHROPIC_API_KEY is set but not opted in (ASTRYX_ORG_LOGIN=ANTHROPIC_API_KEY)" in err and whose(err) == [],
+          f"{err[-200:] if not whose(err) else 'a value leaked'}")
     dotenv("a", f"ANTHROPIC_API_KEY={DUMMY['ka']}", f"CLAUDE_CODE_OAUTH_TOKEN={DUMMY['a']}")
     rc, out, err = run("a")
     got = parse(out)
-    check("both set: the OAuth token (CLIS order), and only it", rc == 0 and got is not None
+    check("both set, not opted in: the OAuth token (the subscription), and only it", rc == 0 and got is not None
           and got.get("CLAUDE_CODE_OAUTH_TOKEN") == DUMMY["a"] and "ANTHROPIC_API_KEY" not in got,
           f"rc {rc} keys {sorted(got or {})}")
+
+    print("\nO8 THE METERED KEY, OPTED IN (ASTRYX_ORG_LOGIN, seed #61907)")
+    dotenv("a", f"ANTHROPIC_API_KEY={DUMMY['ka']}", "ASTRYX_ORG_LOGIN=ANTHROPIC_API_KEY")
+    rc, out, err = run("a")
+    got = parse(out)
+    check("opted in: ANTHROPIC_API_KEY lands, no note", rc == 0 and got is not None
+          and got.get("ANTHROPIC_API_KEY") == DUMMY["ka"] and set(got) == {"ANTHROPIC_API_KEY"} and "not opted" not in err,
+          f"rc {rc} keys {sorted(got or {})}")
+    dotenv("a", f"ANTHROPIC_API_KEY={DUMMY['ka']}", f"CLAUDE_CODE_OAUTH_TOKEN={DUMMY['a']}",
+           "ASTRYX_ORG_LOGIN=ANTHROPIC_API_KEY")
+    rc, out, err = run("a")
+    got = parse(out)
+    check("opted in beside a token: the opted-in key, and only it (the owner's signed choice)", rc == 0
+          and got is not None and set(got) == {"ANTHROPIC_API_KEY"} and whose(out) == ["ka"],
+          f"rc {rc} keys {sorted(got or {})}")
+    dotenv("a", f"CLAUDE_CODE_OAUTH_TOKEN={DUMMY['a']}", "ASTRYX_ORG_LOGIN=ANTHROPIC_API_KEY")
+    rc, out, err = run("a")
+    got = parse(out)
+    check("opted in, the key unset: the token, and a note that the opt-in names no key that is set", rc == 0
+          and got is not None and set(got) == {"CLAUDE_CODE_OAUTH_TOKEN"} and "names no key that is set" in err,
+          f"rc {rc} keys {sorted(got or {})} {err[-160:] if not whose(err) else ''}")
+    dotenv("a", f"CLAUDE_CODE_OAUTH_TOKEN={DUMMY['a']}", f"FX_OTHER={DUMMY['entry']}", "ASTRYX_ORG_LOGIN=FX_OTHER")
+    rc, out, err = run("a")
+    got = parse(out)
+    check("an opt-in naming a key that is no metered key claude reads: ignored, noted, the token used", rc == 0
+          and got is not None and set(got) == {"CLAUDE_CODE_OAUTH_TOKEN"} and "no metered key claude reads" in err
+          and whose(out) == ["a"], f"rc {rc} keys {sorted(got or {})}")
 
     print("\nO2 THE AGENT ENTRY WINS")
     dotenv("a", f"CLAUDE_CODE_OAUTH_TOKEN={DUMMY['a']}", f"FX_ENTRY_TOKEN={DUMMY['entry']}")
@@ -176,14 +211,33 @@ with tempfile.TemporaryDirectory() as td:
         org = json.loads(r.stdout)
     except ValueError:
         org = None
-    check("`--org` names the CLI and the key, never its value", r.returncode == 0 and org == {
-        "cli": "claude", "key": "CLAUDE_CODE_OAUTH_TOKEN", "supported": True} and whose(r.stdout + r.stderr) == [],
+    check("`--org` names the CLI, the key and the billing, never its value", r.returncode == 0 and org == {
+        "cli": "claude", "key": "CLAUDE_CODE_OAUTH_TOKEN", "billing": "subscription", "supported": True, "note": None}
+        and whose(r.stdout + r.stderr) == [],
         f"rc {r.returncode} {sorted(org) if isinstance(org, dict) else org!r} whose {whose(r.stdout + r.stderr)}")
     dotenv("b")
     r = subprocess.run([sys.executable, str(SRC), "--org"], capture_output=True, text=True,
                        env={**env, "ASTRYX_HOME": str(H["b"])}, timeout=60)
     check("no key: `--org` says the ambient login (key null)", r.returncode == 0
-          and r.stdout.strip() == json.dumps({"cli": "claude", "key": None, "supported": True}), r.stdout[-200:])
+          and r.stdout.strip() == json.dumps({"cli": "claude", "key": None, "billing": "ambient", "supported": True,
+                                              "note": None}), r.stdout[-200:])
+    for label, lines, wrc, words in (
+            ("a token", [f"CLAUDE_CODE_OAUTH_TOKEN={DUMMY['a']}"], 0,
+             "claude agents run on: subscription (org token) via CLAUDE_CODE_OAUTH_TOKEN"),
+            ("no key", [], 0, "claude agents run on: ambient login"),
+            ("the key opted in", [f"ANTHROPIC_API_KEY={DUMMY['ka']}", "ASTRYX_ORG_LOGIN=ANTHROPIC_API_KEY"], 1,
+             "claude agents run on: metered API billing (opted in) via ANTHROPIC_API_KEY"),
+            ("the key NOT opted in", [f"ANTHROPIC_API_KEY={DUMMY['ka']}"], 0, "claude agents run on: ambient login")):
+        dotenv("b", *lines)
+        r = subprocess.run([sys.executable, str(SRC), "--org-words"], capture_output=True, text=True,
+                           env={**env, "ASTRYX_HOME": str(H["b"])}, timeout=60)
+        first = r.stdout.splitlines()[0] if r.stdout else ""
+        check(f"`--org-words` ({label}): exit {wrc}, the billing in words", r.returncode == wrc and first == words
+              and whose(r.stdout + r.stderr) == [],
+              f"rc {r.returncode} " + (f"{first!r}" if not whose(first) else f"a value in it: {whose(first)}"))
+    check("...the key NOT opted in: a `note:` line naming the opt-in", "note: ANTHROPIC_API_KEY is set but not opted in"
+          in r.stdout, r.stdout[-200:] if not whose(r.stdout) else "a value leaked")
+    dotenv("b")
     rc, out, err = run("a")
     check("a spawn's fragment: stderr holds no value", rc == 0 and whose(err) == [], f"whose {whose(err)}")
 

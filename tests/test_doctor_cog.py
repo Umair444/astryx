@@ -36,6 +36,8 @@ three renders write there (the primary's, another org's @<org> files, the cog's 
       line withheld), with that org's own render as the remedy; another org's stale unit is never this one's
   K11 each org under its own federation name (10224 NAMES): distinct → ✓; the primary taking the other org's name (in
       another case) → ✗ naming the name and both orgs; a .env line not UTF-8 → still ✓, and ⚠ naming its file:line (ENVREAD)
+  K12 the org's login in words (10224 ORGAUTH): ✓ ambient with no key or a key not opted in (plus a ○ naming the
+      opt-in), ○ metered API billing when opted in; the dummy key never in the output
   K9 the cog's primary from a checkout that isn't its HOME: exit 3 before any check (its estate reads are checkout-
      relative by identity)
 
@@ -325,6 +327,25 @@ def main():
                   " | ".join(ln.strip() for ln in out.splitlines() if "federation name" in ln or "UTF-8" in ln))
         finally:
             (co / ".env").unlink()
+
+        print("\nK12 THE ORG'S LOGIN AND ITS BILLING, IN WORDS (10224 ORGAUTH)")
+        dk = "fx-dummy-apikey-doctor-0005"                      # a DUMMY: never printed, asserted absent from out
+        for label, body, want, sign in (
+                ("no key", "", "claude agents run on: ambient login", "✓"),
+                ("ANTHROPIC_API_KEY, not opted in", f"ANTHROPIC_API_KEY={dk}\n", "claude agents run on: ambient login", "✓"),
+                ("ANTHROPIC_API_KEY, opted in", f"ANTHROPIC_API_KEY={dk}\nASTRYX_ORG_LOGIN=ANTHROPIC_API_KEY\n",
+                 "claude agents run on: metered API billing (opted in) via ANTHROPIC_API_KEY", "○")):
+            (co / ".env").write_text(body)
+            try:
+                rc, out, err = doctor(env(ASTRYX_HOME=str(co)))
+            finally:
+                (co / ".env").unlink()
+            ln = next((x for x in out.splitlines() if "claude agents run on:" in x), "")
+            check(f"{label}: {sign} {want!r}", sign in ln and want in ln and dk not in out + err, ln.strip()[:200])
+            if "not opted in" in label:
+                check("...and a ○ naming the key and the missing opt-in, never its value",
+                      any("login:" in x and "ANTHROPIC_API_KEY is set but not opted in" in x for x in out.splitlines()),
+                      " | ".join(x.strip() for x in out.splitlines() if "login" in x)[:300])
 
         print("\nK9 THE PRIMARY FROM ANOTHER CHECKOUT: REFUSED (its estate is the checkout it runs from)")
         reg2 = json.loads(cog.read_text())

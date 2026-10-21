@@ -58,4 +58,6 @@ MUTANTS = {
         ('      1) bad "orgs of this cog SHARE a federation name', '      9) bad "orgs of this cog SHARE a federation name'),
     "M23 a .env line skipped as not UTF-8 goes unsaid (doctor swallows read_env's word: 10224 ENVREAD)":
         ('         [ -n "$_dn" ] && { warn', '         [ -z "$_dn" ] && { warn'),
+    "M23o metered billing reads as a plain check (the doctor never says per-token billing: 10224 ORGAUTH)":
+        ('    1) warn "$(printf \'%s\\n\' "$_ol" | head -1): every agent', '    1) ok "$(printf \'%s\\n\' "$_ol" | head -1): every agent'),
 }

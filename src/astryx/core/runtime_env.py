@@ -35,7 +35,8 @@ worse than one that falls back to the working default. Configure fully or not at
 THE ORG'S LOGIN (plan-10224 ORGAUTH, owner 10-21: "each org will work on its own claude login"). Beneath the
 per-agent entry sits an ORG-level credential: the org's HOME .env (paths.estate: the HOME in a cog, never the
 checkout's; read by config.read_env, never the process env) names which CLI the org runs (`ASTRYX_ORG_CLI=`,
-default claude) and CLIS lists the .env keys that CLI reads its credential from, first present wins. An agent whose entry
+default claude) and CLIS lists the .env keys that CLI reads, by billing class: a subscription login (the OAuth
+token) is automatic; a metered API key only when the .env opts in, `ASTRYX_ORG_LOGIN=<that key>`. An agent whose entry
 sets no base_url of its own gets the org's key spliced into ITS settings.json env; an entry with a base_url wins
 and gets none. No key: nothing is added (the ambient login, as before). A CLI with no launcher here yet refuses
 (exit 3, spawn.sh stops) rather than running claude under another CLI's name. ASTRYX_CLI (process env) is a
@@ -58,10 +59,16 @@ import sys
 REPO = repo_root(__file__)
 
 
-# The credential keys each CLI reads, in order (first present wins). A new CLI is a row here plus a launcher in
+# The credential keys each CLI reads, by BILLING class. A subscription login is automatic (first present wins); a
+# metered key bills per token, so it is used ONLY when the org's .env opts in by naming it (ASTRYX_ORG_LOGIN=<key>):
+# local.md makes external spend above zero an owner-signed act, and a key present for another reason must never move
+# agents onto metered billing silently (a2 #61902 A-1, seed #61907). A new CLI is a row here plus a launcher in
 # spawn.sh; until it has one, LAUNCHERS refuses it. gemini: GEMINI_API_KEY; codex: OPENAI_API_KEY (not yet built).
-CLIS = {"claude": ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")}
+CLIS = {"claude": {"subscription": ("CLAUDE_CODE_OAUTH_TOKEN",), "metered": ("ANTHROPIC_API_KEY",)}}
 LAUNCHERS = {"claude"}
+OPT_IN = "ASTRYX_ORG_LOGIN"
+BILLING_WORDS = {"subscription": "subscription (org token)", "metered": "metered API billing (opted in)",
+                 "ambient": "ambient login"}
 
 
 class UnsupportedCLI(RuntimeError):
@@ -69,12 +76,28 @@ class UnsupportedCLI(RuntimeError):
 
 
 def org_login(env: dict | None = None) -> dict:
-    """The org's login, NAMES only: {"cli": <ASTRYX_ORG_CLI or claude>, "key": <the .env key that holds its credential,
-    or None (the ambient login)>, "supported": <spawn.sh can launch it>}. Never a value."""
+    """The org's login, NAMES only: {"cli": <ASTRYX_ORG_CLI or claude>, "key": <the .env key spliced, or None>,
+    "billing": "subscription" | "metered" | "ambient", "supported": <spawn.sh can launch it>, "note": <why a key that
+    is set was NOT used, or None>}. A metered key is used only when OPT_IN names it; else a subscription key; else the
+    ambient login. Never a value."""
     env = config.read_env(paths.estate(__file__) / ".env") if env is None else env
     cli = env.get("ASTRYX_ORG_CLI") or "claude"
-    key = next((k for k in CLIS.get(cli, ()) if env.get(k)), None)
-    return {"cli": cli, "key": key, "supported": cli in LAUNCHERS}
+    row = CLIS.get(cli, {})
+    metered, subscription = row.get("metered", ()), row.get("subscription", ())
+    opt = env.get(OPT_IN) or ""
+    notes = []
+    if opt and opt in metered and env.get(opt):
+        key, billing = opt, "metered"
+    else:
+        if opt:
+            notes.append(f"{OPT_IN}={opt} names " + ("no key that is set" if opt in metered else
+                                                      f"no metered key {cli} reads") + ": not opted in")
+        key = next((k for k in subscription if env.get(k)), None)
+        billing = "subscription" if key else "ambient"
+        notes += [f"{k} is set but not opted in ({OPT_IN}={k}): ignored, so no metered billing" for k in metered
+                  if env.get(k)]
+    return {"cli": cli, "key": key, "billing": billing, "supported": cli in LAUNCHERS,
+            "note": "; ".join(notes) or None}
 
 
 def fragment(agent: str) -> str:
@@ -102,6 +125,8 @@ def _pairs(agent: str, entry: dict, env: dict) -> str:
     base_url = entry.get("base_url")
     if not base_url:
         login = org_login(env)                   # beneath the entry: the org's own credential, by NAME from its .env
+        if login["note"]:
+            print(f"runtime_env: agent '{agent}': {login['note']}", file=sys.stderr)
         if login["key"]:
             pairs.append((login["key"], env[login["key"]]))
     if base_url:
@@ -139,9 +164,15 @@ if __name__ == "__main__":
     if not agent:
         print("usage: runtime_env.py <agent>", file=sys.stderr)
         sys.exit(2)
-    if agent == "--org":                         # the org's login, NAMES only (observatory, doctor, an operator)
+    if agent == "--org":                         # the org's login, NAMES only (observatory, an operator)
         print(json.dumps(org_login()))
         sys.exit(0)
+    if agent == "--org-words":                   # init.sh doctor: the billing in words; exit 0 · 1 metered · 3 no launcher
+        d = org_login()
+        print(f"{d['cli']} agents run on: {BILLING_WORDS[d['billing']]}" + (f" via {d['key']}" if d["key"] else ""))
+        if d["note"]:
+            print(f"note: {d['note']}")
+        sys.exit(3 if not d["supported"] else 1 if d["billing"] == "metered" else 0)
     try:
         sys.stdout.write(fragment(agent))
     except UnsupportedCLI as e:

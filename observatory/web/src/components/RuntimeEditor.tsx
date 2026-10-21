@@ -17,7 +17,14 @@ export type RuntimeCfg = {
   env_keys: string[]
   configured: boolean
   // the ORG's login beneath this entry (plan-10224 ORGAUTH): the .env key NAME, never its value
-  org_login?: { cli: string; key: string | null; supported: boolean; source: string }
+  org_login?: {
+    cli: string
+    key: string | null
+    billing: 'subscription' | 'metered' | 'ambient'
+    supported: boolean
+    note: string | null
+    source: string
+  }
 }
 
 export default function RuntimeEditor({ name, live }: { name: string; live: boolean }) {
@@ -105,17 +112,19 @@ export default function RuntimeEditor({ name, live }: { name: string; live: bool
         <div className="text-[11px] text-ink-mute">
           <span className={labelCls}>{cfg.org_login.cli} login</span>{' '}
           {cfg.org_login.supported ? (
-            cfg.org_login.key ? (
-              <span className="text-good">
-                org token (<span className="font-mono">{cfg.org_login.key}</span>
-                {baseUrl ? ', unused: this agent sets its own base url' : ''})
-              </span>
-            ) : (
-              <span>ambient (this org's .env holds no login key)</span>
-            )
+            <span className={cfg.org_login.billing === 'metered' ? 'text-bad' : cfg.org_login.key ? 'text-good' : ''}>
+              {cfg.org_login.source}
+              {cfg.org_login.key && (
+                <>
+                  {' '}(<span className="font-mono">{cfg.org_login.key}</span>
+                  {baseUrl ? ', unused: this agent sets its own base url' : ''})
+                </>
+              )}
+            </span>
           ) : (
             <span className="text-bad">cli {cfg.org_login.cli} not yet supported: spawn refuses</span>
           )}
+          {cfg.org_login.note && <div className="text-bad">{cfg.org_login.note}</div>}
         </div>
       )}
 
