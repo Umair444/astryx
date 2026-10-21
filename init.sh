@@ -1176,6 +1176,17 @@ if [ "${1:-}" = "doctor" ]; then
     bad ".env missing — run ./init.sh"
   fi
   [ -f "$ORGH/local.md" ] && ok "local.md exists" || bad "local.md missing — the owner's law; run ./init.sh"
+  # every org of the cog under its OWN federation name (10224 NAMES): a peer addresses an org by it, so two orgs holding
+  # one name are one address. orgs.py reads each HOME's ASTRYX_ORG line, never a DSN or key (the census region holds)
+  if [ -n "${DOCTOR_COG:-}" ]; then
+    _dn=$(venv/bin/python src/astryx/orgs.py dupnames 2>&1); _dnrc=$?
+    case $_dnrc in
+      0) ok "every org of the cog has its own federation name" ;;
+      1) bad "orgs of this cog SHARE a federation name (one address to every peer): rename one (its HOME's .env ASTRYX_ORG; peers that introduced it must re-introduce):"
+         printf '%s\n' "$_dn" | sed 's/^/        /' ;;
+      *) warn "federation names UNVERIFIED: $(printf '%s' "$_dn" | tail -1)" ;;
+    esac
+  fi
   # every live resident body carries the flags the org depends on (owner 10-14): the wire's channel flag (without it
   # the doorbell is dropped silently) and its charter's permission mode (bypassPermissions, or default for relay)
   _lf=$("${PY:-venv/bin/python}" -m astryx.core.launch_flags 2>&1); _lf_rc=$?

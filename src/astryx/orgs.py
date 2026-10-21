@@ -235,6 +235,29 @@ def is_fixture(dsn: str) -> bool:
     return (db_of(dsn) or "").startswith(FIXTURE_DB)
 
 
+def fed_name(home) -> str | None:
+    """An org's FEDERATION name: the first `ASTRYX_ORG=` line of its HOME's .env FILE (never the process env, never
+    another key: a name, no DSN or secret is read). None when the file or the line is absent."""
+    try:
+        for ln in (Path(home) / ".env").read_text(errors="replace").splitlines():
+            if ln.startswith("ASTRYX_ORG="):
+                return ln.split("=", 1)[1].strip() or None
+    except OSError:
+        pass
+    return None
+
+
+def name_clashes(env=None) -> dict[str, list[str]]:
+    """{federation name (lowercased): [org keys]} for every name TWO or more orgs of the cog hold (a2 #61769 F-1: a
+    peer addresses an org by that name, so two orgs under one name are one address). {} on one org or no clash."""
+    by: dict[str, list[str]] = {}
+    for o, e in sorted((load(env) or {}).items()):
+        n = fed_name(e["home"])
+        if n:
+            by.setdefault(n.lower(), []).append(o)
+    return {n: ks for n, ks in by.items() if len(ks) > 1}
+
+
 def _main(argv) -> int:
     """`python -m astryx.orgs multi` exits 0 in a cog of several orgs, 1 otherwise, 2 when the registry refuses.
     `primary` prints the registry's primary org (exit 1 when none); `unit <stem> [suffix]` THIS org's unit file name.
@@ -272,6 +295,11 @@ def _main(argv) -> int:
                 return 1
             print(s)
             return 0
+        if argv[:1] == ["dupnames"]:          # init.sh doctor: `<name>\t<org> <org>…` per clash; exit 1 on any, 0 none
+            c = name_clashes()
+            for n, ks in sorted(c.items()):
+                print(f"{n}\t{' '.join(ks)}")
+            return 1 if c else 0
         if argv[:1] == ["rooms"]:             # scripts/wall.sh --cog: every org, sorted, as `<org>\t<HOME>\t<socket>`
             if not multi():                   # (exit 0) on several orgs; 1 on one. Names and homes only, as socket()
                 return 1                      # reads them: it opens no org's DSN or key (each pane resolves its own)
@@ -285,7 +313,8 @@ def _main(argv) -> int:
         # guard reads as "one org, proceed" (a registry nested past the parser's recursion limit did exactly that)
         print(f"astryx.orgs: the registry could not be judged ({type(e).__name__}): refusing", file=sys.stderr)
         return 2
-    print("usage: python -m astryx.orgs multi|name|primary|socket|rooms|port <unit stem>|unit <stem> [suffix]", file=sys.stderr)
+    print("usage: python -m astryx.orgs multi|name|primary|socket|rooms|dupnames|port <unit stem>|unit <stem> [suffix]",
+          file=sys.stderr)
     return 2
 
 

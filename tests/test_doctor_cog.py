@@ -34,6 +34,8 @@ three renders write there (the primary's, another org's @<org> files, the cog's 
      what this host has installed
   K10 content drift (10224 UDRIFT): a unit on both sides whose BODY differs from its render is named STALE (the ✓ no-drift
       line withheld), with that org's own render as the remedy; another org's stale unit is never this one's
+  K11 each org under its own federation name (10224 NAMES): distinct → ✓; the primary taking the other org's name (in
+      another case) → ✗ naming the name and both orgs
   K9 the cog's primary from a checkout that isn't its HOME: exit 3 before any check (its estate reads are checkout-
      relative by identity)
 
@@ -299,6 +301,21 @@ def main():
         check("another org: its own @ stray is undeclared (positive control)", f"astryx-fxoff@{other}.service" in uo, uo)
         check("...and not the primary's, the cog's, nor a third org's (nor its own derived canvas)",
               not [n for n in known if n != f"astryx-fxoff@{other}.service" and n in uo], uo)
+
+        print("\nK11 EACH ORG UNDER ITS OWN FEDERATION NAME (10224 NAMES)")
+        aname = next(ln.split("=", 1)[1] for ln in (A / ".env").read_text().splitlines() if ln.startswith("ASTRYX_ORG="))
+        rc, out, err = doctor(env(ASTRYX_HOME=str(co)))
+        check("distinct names (the primary's checkout names none): ✓ every org has its own federation name",
+              "every org of the cog has its own federation name" in out and "SHARE a federation name" not in out,
+              out[-300:])
+        (co / ".env").write_text(f"ASTRYX_ORG={aname.upper()}\n")   # the OTHER org's name, in another case
+        try:
+            rc, out, err = doctor(env(ASTRYX_HOME=str(co)))
+            check("the primary takes the other org's name (another case): ✗ SHARE a federation name, naming both orgs",
+                  "SHARE a federation name" in out and any(aname in ln and prim in ln and other in ln
+                                                           for ln in out.splitlines()), out[-400:])
+        finally:
+            (co / ".env").unlink()
 
         print("\nK9 THE PRIMARY FROM ANOTHER CHECKOUT: REFUSED (its estate is the checkout it runs from)")
         reg2 = json.loads(cog.read_text())

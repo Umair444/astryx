@@ -27,6 +27,8 @@ S6's rehearsal (stated limit); here its statement is printed by the dry-run, and
      name another agent owns stands its shim down, and org_backup stands down when EITHER of its names is owned (an org
      with its own run_backup gets no second one); a blind file stands every shim down (deferred, never a guess); the
      primary, an unknown key, and an add's flags beside --reconcile are refused (rc 2)
+  A9 its federation name (10224 NAMES): a name another org of the cog holds is refused (rc 2, nothing made), a
+     malformed one too, and a free one plans
 COG_ADD_SRC: a mutant devtools/cog_add_org.py (tests/mutants_cog_add_org.py). Exit 0 · 1 · 77 (no database here).
 """
 import hashlib
@@ -301,6 +303,26 @@ def main():
                 rc, out = run(*args)
                 check(f"--reconcile refuses {why}: rc 2 ('{reason}'), nothing written", rc == 2 and reason in out
                       and not sd3.exists(), f"rc {rc} {out[-200:]}")
+
+            print("\nA9 ITS FEDERATION NAME (10224 NAMES): ONE ADDRESS PER ORG")
+            h9 = t / "h9"
+            for _ in range(2):                    # A9's own held ports: A2's are its org's in o2, the authority refuses a reuse
+                so = socket.socket()
+                so.bind(("127.0.0.1", 0))
+                held.append(so)
+            p9 = f"astryx-observatory-org={held[-2].getsockname()[1]},astryx-canvas={held[-1].getsockname()[1]}"
+            rc, out = run(key + "x", "--home", str(h9), "--name", "lab.fixture.test", "--dsn", fx["url"], "--db",
+                          f"fxorg_lab9_{pid}", "--registry", str(o2), "--ports", p9)
+            check("a name ANOTHER org of the cog holds (A2's lab.fixture.test): rc 2, refused naming that org, "
+                  "nothing made", rc == 2 and "already the federation name of" in out and key in out
+                  and not h9.exists(), f"rc {rc} {out[-200:]}")
+            rc, out = run(key + "x", "--home", str(h9), "--name", "Lab.Fixture.Test", "--dsn", fx["url"], "--db",
+                          f"fxorg_lab9_{pid}", "--registry", str(o2), "--ports", p9)
+            check("...its uppercase spelling: refused too (not a federation name)", rc == 2
+                  and "not a federation name" in out and not h9.exists(), f"rc {rc} {out[-200:]}")
+            rc, out = run(key + "x", "--home", str(h9), "--name", "lab9.fixture.test", "--registry", str(o2), "--dry-run",
+                          "--ports", p9)
+            check("control: a name no org holds plans (rc 0, dry-run)", rc == 0, f"rc {rc} {out[-200:]}")
     finally:
         try:
             with psycopg.connect(admin, autocommit=True) as c:      # only THIS run's unique name, if a mutant made it

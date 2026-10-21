@@ -57,4 +57,8 @@ MUTANTS = {
         ('    if e["primary"]:\n', '    if False:\n'),
     "T8 a dry-run reconcile writes":
         ('        if act == "install" and not dry:\n', '        if act == "install":\n'),
+    "T9 a federation name another org holds is accepted (two orgs, one address: 10224 NAMES)":
+        ("    if clash:\n", "    if False:\n"),
+    "T10 a malformed federation name is accepted":
+        ("    if not orgname.org_ok(a.name):\n", "    if False:\n"),
 }

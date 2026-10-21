@@ -54,4 +54,6 @@ MUTANTS = {
         ('      [ -z "$stale" ] && ok "units/ ≡ generated set', '      ok "units/ ≡ generated set'),
     "M21 another org's stale-content remedy renders the PRIMARY's units (no ASTRYX_HOME)":
         ('${DOCTOR_ORGH:+ASTRYX_HOME=$ORGH }./init.sh units, then', './init.sh units, then'),
+    "M22 a shared federation name reads green (doctor never asks: 10224 NAMES)":
+        ('      1) bad "orgs of this cog SHARE a federation name', '      9) bad "orgs of this cog SHARE a federation name'),
 }

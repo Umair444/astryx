@@ -56,6 +56,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from astryx import config, orgs  # noqa: E402
+from astryx.core import orgname  # noqa: E402
 from astryx.pulse.shipped_triggers import shims  # noqa: E402
 
 DEFAULT_PORTS = {"astryx-observatory-org": 18190, "astryx-canvas": 18091}
@@ -177,6 +178,16 @@ def plan(a) -> dict:
             orgs.load({orgs.ENV: str(probe)})
         except orgs.RegistryError as e:
             raise Refused(f"the merged registry is refused by the authority: {e}") from None
+    # its FEDERATION name (10224 NAMES, a2 #61769 F-1): a peer addresses an org by it, so two orgs of one cog under one
+    # name are one address. Judged last, so every other refusal keeps its own reason; read from each existing HOME's
+    # .env FILE (orgs.fed_name), the derived primary's (this checkout) included, case-insensitively
+    if not orgname.org_ok(a.name):
+        raise Refused(f"--name {a.name!r} is not a federation name ([a-z0-9][a-z0-9._-]{{0,79}}, not reserved)")
+    held = {o: orgs.fed_name(e["home"]) for o, e in raw.items()}
+    clash = sorted(o for o, n in held.items() if n and n.lower() == a.name.lower())
+    if clash:
+        raise Refused(f"--name {a.name} is already the federation name of {', '.join(clash)} in this cog: two orgs under "
+                      "one name are one address to every peer")
     return {"home": home, "db": db, "lab_dsn": lab_dsn, "primary_dsn": primary_dsn, "entry": entry, "merged": merged,
             "reg_path": reg_path, "had_registry": bool(current)}
 
