@@ -20,9 +20,12 @@ trees (tests/trigger_tree) against a fixture database, as the reconciler runs a 
      census (b): every src/astryx/pulse/shipped_triggers/*.py has an init.sh install through the helper, or `# shipped-optional:`
 Needs a fixture database, else 77.
 """
+import atexit
 import importlib.util
 import os
 import re
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -61,8 +64,13 @@ NODSN = "postgresql://nobody@127.0.0.1:1/none"
 SEED = Path("triggers/seed")
 
 
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))   # a gate cap's TERM exits through atexit too
+
+
 def tree():
-    return trigger_tree.build(Path(tempfile.mkdtemp(prefix="init-tnames-")))
+    t = Path(tempfile.mkdtemp(prefix="init-tnames-"))
+    atexit.register(shutil.rmtree, t, True)   # /tmp is tmpfs: 755 of these (~324 inodes each) leaked in a day (goal 11580)
+    return trigger_tree.build(t)
 
 
 def bash(t: Path, body: str, dsn: str):

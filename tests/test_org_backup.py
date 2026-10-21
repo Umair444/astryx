@@ -16,9 +16,12 @@ src/astryx/pulse/shipped_triggers/org_backup.py in a child with subprocess.Popen
 Seams: ORG_BACKUP_SRC (a mutant org_backup.py, tests/mutants_org_backup.py), SHIMS_SRC (a mutant shims.py, run by path
 and loaded from it; tests/mutants_shims.py). Exit 0 · 1.
 """
+import atexit
 import json
 import os
 import re
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -64,6 +67,8 @@ def child(cwd, env):
 
 def main():
     t = Path(tempfile.mkdtemp(prefix="orgbackup-")).resolve()
+    atexit.register(shutil.rmtree, t, True)            # /tmp is tmpfs: 157 of these leaked in a day (goal 11580)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))   # a gate cap's TERM exits through atexit too
     homes = {}
     for o in ("a", "b"):
         h = t / f"home-{o}"
