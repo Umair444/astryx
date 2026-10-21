@@ -32,6 +32,8 @@ three renders write there (the primary's, another org's @<org> files, the cog's 
      another org's names its own @<org> stray and never the primary's, the cog's, or a third org's. systemctl is a PATH
      shim whose list-unit-files answers a fixed list (every other verb is the host's, read-only), so no arm depends on
      what this host has installed
+  K10 content drift (10224 UDRIFT): a unit on both sides whose BODY differs from its render is named STALE (the ✓ no-drift
+      line withheld), with that org's own render as the remedy; another org's stale unit is never this one's
   K9 the cog's primary from a checkout that isn't its HOME: exit 3 before any check (its estate reads are checkout-
      relative by identity)
 
@@ -164,6 +166,34 @@ def main():
                                                                     for ln in out.splitlines()), "\n".join(drift_lines(out)))
         finally:
             stray.unlink()
+
+        print("\nK10 CONTENT DRIFT (10224 UDRIFT): A UNIT WHOSE NAME MATCHES BUT WHOSE BODY IS STALE")
+        prim_files = [n for n in names if "@" not in n and n not in ("astryx-gateway.service", "astryx-observatory.service")]
+        oth_files = [n for n in names if f"@{other}." in n]
+        for who, e, f, notf in (("the primary", env(ASTRYX_HOME=str(co)), prim_files[0], oth_files[0]),
+                                (other, env(ASTRYX_HOME=str(A)), oth_files[0], prim_files[0])):
+            body = (units / f).read_bytes()
+            (units / f).write_bytes(body + b"# a stale line the render no longer emits\n")
+            try:
+                rc, out, err = doctor(e)
+                lines = out.splitlines()
+                stale = [ln for ln in lines if "stale (the name matches" in ln]
+                head = next((ln for ln in lines if "content is STALE" in ln), "")
+                check(f"{who}: its unit {f} with a stale body is named STALE, and the ✓ no-drift line is withheld",
+                      any(f in ln for ln in stale) and not any("no drift" in ln for ln in lines), "\n".join(stale) or out[-300:])
+                check(f"...{who}'s remedy is ITS render" + (" (ASTRYX_HOME=<its HOME> ./init.sh units)" if who != "the primary"
+                                                             else " (./init.sh units, no foreign HOME)"),
+                      (f"ASTRYX_HOME={A} ./init.sh units" in head) if who != "the primary"
+                      else ("./init.sh units" in head and "ASTRYX_HOME=" not in head), head)
+            finally:
+                (units / f).write_bytes(body)
+            (units / notf).write_bytes((units / notf).read_bytes() + b"# another org's stale line\n")
+            try:
+                rc, out, err = doctor(e)
+                check(f"...and another org's stale unit ({notf}) is not {who}'s to name: no drift",
+                      any("no drift" in ln for ln in out.splitlines()) and "content is STALE" not in out, out[-300:])
+            finally:
+                (units / notf).write_bytes((units / notf).read_bytes().replace(b"# another org's stale line\n", b""))
 
         print("\nK4 ITS SEAT CHECK ASKS THE PRIMARY'S SERVER, NEVER AN INHERITED $TMUX's")
         osock = f"ax-{other}"

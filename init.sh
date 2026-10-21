@@ -1261,8 +1261,14 @@ if [ "${1:-}" = "doctor" ]; then
     [ -n "${DOCTOR_COG:-}" ] && disk_list=$(echo "$disk_list" | _mine)
     # (i) generated_set ≡ units/ on disk — an orphan (on disk, not derived) or a
     # missing unit is the drift that hid telegram/discord/gateway/canopus-inbound.
+    # (i-b) CONTENT (10224 UDRIFT): a unit on BOTH sides is compared byte for byte with its fresh render. A name match
+    # with a stale body read "no drift", and a deploy installs that old body: names alone prove nothing about content.
+    stale=""
+    for u in $(comm -12 <(echo "$gen_list") <(echo "$disk_list")); do
+      cmp -s "$GEN/$u" "units/$u" 2>/dev/null || stale="$stale $u"   # org-home: units/ is the CHECKOUT's render dir, every org's (scoped by _mine)
+    done
     if diff <(echo "$gen_list") <(echo "$disk_list") >/dev/null 2>&1; then
-      ok "units/ ≡ generated set ($(echo "$gen_list" | grep -c .) units, no drift)"   # org-home: a message
+      [ -z "$stale" ] && ok "units/ ≡ generated set ($(echo "$gen_list" | grep -c .) units, no drift)"   # org-home: a message
     else
       orphans=$(comm -23 <(echo "$disk_list") <(echo "$gen_list"))
       missing=$(comm -13 <(echo "$disk_list") <(echo "$gen_list"))
@@ -1287,6 +1293,10 @@ if [ "${1:-}" = "doctor" ]; then
         esac
       done
       echo "$missing" | grep . | sed 's/^/        missing (derived but not on disk): /'
+    fi
+    if [ -n "$stale" ]; then
+      bad "units/ content is STALE: a unit's name matches but its body differs from the fresh render, so a deploy installs the old one: ${DOCTOR_ORGH:+ASTRYX_HOME=$ORGH }./init.sh units, then sudo ./scripts/deploy.sh units:"
+      for u in $stale; do echo "        stale (the name matches, the body differs): $u"; done
     fi
     # (ii) every derived unit is ENABLED (survives reboot) — a present-but-disabled
     # unit is the invisible-dead-service footgun; residents.service enabled IS the

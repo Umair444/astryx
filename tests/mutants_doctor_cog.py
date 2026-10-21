@@ -48,4 +48,10 @@ MUTANTS = {
         ('  _fix="./init.sh"; [ -n "${DOCTOR_ORGH:-}" ] && _fix=', '  _fix="./init.sh"; false && _fix='),
     "M18 another org's backup remedy is the one-org line (./scripts/backup.sh in the checkout, a retired timer)":
         ('    if [ -n "${DOCTOR_ORGH:-}" ]; then\n      bad "NO database backup', '    if false; then\n      bad "NO database backup'),
+    "M19 a unit's content is never compared (a stale body under a matching name reads \"no drift\": UDRIFT)":
+        ('      cmp -s "$GEN/$u" "units/$u" 2>/dev/null || stale="$stale $u"', '      true'),
+    "M20 the ✓ no-drift line ignores a stale body":
+        ('      [ -z "$stale" ] && ok "units/ ≡ generated set', '      ok "units/ ≡ generated set'),
+    "M21 another org's stale-content remedy renders the PRIMARY's units (no ASTRYX_HOME)":
+        ('${DOCTOR_ORGH:+ASTRYX_HOME=$ORGH }./init.sh units, then', './init.sh units, then'),
 }

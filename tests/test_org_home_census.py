@@ -231,8 +231,10 @@ def main():
         bare.write_text("\n".join(ln.split("   # org-home:")[0] for ln in isrc) + "\n")
         rb = oc.census(REPO, {**seam_overrides(), "init.sh": bare}, only={"init.sh"})
         hit = [x for x in rb["estate"] + rb["namespace"] if x["file"] == "init.sh"]
-        check("init.sh, its declarations stripped: the regions' 4 declared reads (units/ x2, tmux x2) are FINDINGS",
-              len(hit) == 4 and {x["what"] for x in hit} == {"units/", "tmux on the default socket"}, str(hit))
+        spans = regs.get("init.sh", [])                 # derived, never a hand count: each declared line in a region
+        declared = [i + 1 for i, ln in enumerate(isrc) if "   # org-home:" in ln and any(a <= i + 1 <= z for a, z in spans)]
+        check(f"init.sh, its declarations stripped: EVERY declared read in its regions ({len(declared)}) is a FINDING, "
+              "at its own line", len(declared) >= 4 and sorted(x["line"] for x in hit) == declared, f"{declared} {hit}")
     print("\nC1d A PYTHON READ THROUGH AN ALIAS OF A BASE IS JUDGED (a2 #61513 G2: trigger_names' `repo`)")
     with tempfile.TemporaryDirectory() as td:
         head = "from pathlib import Path\nfrom astryx import paths\nREPO = Path(__file__).resolve().parents[3]\n"
