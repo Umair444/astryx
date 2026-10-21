@@ -699,7 +699,7 @@ run "referral_guard oracle: a leaked or fetched referral FAILs on any producer s
 # the CLASS (plan-10224 S2F): no `producer | grep -q` in a tracked shell file that turns pipefail on. grep -q exits at its
 # first match, the producer takes SIGPIPE, and pipefail reads the match as a failure (restore_verify 08-14, check.sh's
 # belt, sqlsite 10-21). Capture, then grep -q <<<"$v". The race itself is measured, and a parser arm pairs every shape.
-run "pipefail grep -q: no pipe into grep -q where pipefail is on (SIGPIPE reads a match as a failure)" "$PY" tests/test_pipefail_grep_q.py
+run "pipefail early-exit readers: no grep -q/-m/-l, head or sed q whose pipeline status is a condition (SIGPIPE reads a match as a failure)" "$PY" tests/test_pipefail_grep_q.py
 # OKF frontmatter for the memory estate. The invariant is ADDITIVITY: attaching metadata
 # must change nothing the three live lints read. Pure stdlib; the arms that touch the real
 # estate skip on a clean checkout (memory/ is gitignored), and the PyYAML cross-check arm
