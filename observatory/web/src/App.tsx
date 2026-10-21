@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import { AppShell, Burger, Group, Popover, Text, TextInput, Tooltip } from '@mantine/core'
 import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import { saveObsKey } from './api'
+import { LOGIN, signInHref } from './auth'
 import { StoreProvider, useStore } from './store'
 import { CogProvider, useCog } from './cog'
 import { CogChooser, CogSwitcher } from './components/CogBuilding'
@@ -29,6 +30,24 @@ import Palette from './components/Palette'
 import { PilotHost } from './pilot'
 import PilotConfirm from './pilot/Confirm'
 import { Orb } from './ui/kit'
+
+/* SIGN-IN (goal 11859 U3), behind the LOGIN build flag until forge's U1U2 lands: off, none of it is in the build (the
+   imports below are never made, so no /auth request exists), and the key door below is the only way in, as before. */
+const Auth = LOGIN ? {
+  SignIn: lazy(() => import('./components/AuthScreens').then((m) => ({ default: m.SignInScreen }))),
+  SignedOut: lazy(() => import('./components/AuthScreens').then((m) => ({ default: m.SignedOutScreen }))),
+  Orgs: lazy(() => import('./components/AuthScreens').then((m) => ({ default: m.OrgListScreen }))),
+  Account: lazy(() => import('./components/AuthScreens').then((m) => ({ default: m.AccountMenu }))),
+  Chooser: lazy(() => import('./components/AuthScreens').then((m) => ({ default: m.AuthChooser }))),
+} : null
+
+/* the sign-in pages are whole screens, outside the shell (as the face is) */
+function authPage() {
+  if (!Auth) return null
+  const p = location.hash.replace(/^#\/?/, '').split(/[/?]/)[0]
+  const Page = p === 'sign-in' ? Auth.SignIn : p === 'signed-out' ? Auth.SignedOut : p === 'orgs' ? Auth.Orgs : null
+  return Page ? <Suspense fallback={<div className="min-h-dvh bg-deck" />}><Page /></Suspense> : null
+}
 
 export type Route =
   | { tab: 'network' }
@@ -167,6 +186,12 @@ function LockPanel() {
           This room belongs to the org's owner. The public face of the org — its floor, its network
           and the motion of its wire — is open to everyone.
         </p>
+        {Auth ? (
+          <div className="mt-7">
+            <a href={signInHref()} className="auth-primary w-full">Sign in</a>
+            <p className="mt-3 text-[12px] text-ink-mute">or step back to the <a href="#/" className="auth-link">Floor</a> · <a href="#/network" className="auth-link">Network</a></p>
+          </div>
+        ) : (<>
         <form
           className="mt-7 flex items-center gap-2 ax-panel rounded-2xl p-1.5 pl-4"
           onSubmit={async (e) => {
@@ -195,6 +220,7 @@ function LockPanel() {
           {wrong ? <span className="text-bad">that key didn't open it</span>
             : <span className="text-ink-mute">or step back to the <a href="#/" className="text-cyan-soft hover:underline">Floor</a> · <a href="#/network" className="text-cyan-soft hover:underline">Network</a></span>}
         </div>
+        </>)}
       </div>
     </div>
   )
@@ -229,6 +255,8 @@ function Shell() {
   // The creature face is a MODE, not a tab: fullscreen, no chrome — the whole
   // phone becomes the robot's face (it does its own key gate).
   if (route.tab === 'face') return <FaceView />
+  const page = authPage()
+  if (page) return page
 
   return (
     <AppShell
@@ -260,6 +288,7 @@ function Shell() {
             )}
             {who.owner && <VoicePilot hidden />}
             {who.owner && <EarControl view={route.tab} />}
+            {Auth && <Suspense fallback={null}><Auth.Account /></Suspense>}
             <KeyBadge />
           </span>
         </Group>
@@ -332,7 +361,9 @@ function Shell() {
 
 export default function App() {
   return (
-    <CogProvider chooser={(cog) => <CogChooser cog={cog} />}>
+    <CogProvider chooser={(cog) => Auth
+      ? <Suspense fallback={null}><Auth.Chooser cog={cog} fallback={<CogChooser cog={cog} />} /></Suspense>
+      : <CogChooser cog={cog} />}>
       <StoreProvider>
         <Shell />
       </StoreProvider>
