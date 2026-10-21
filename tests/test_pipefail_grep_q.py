@@ -16,8 +16,10 @@ Arms: the race itself, measured (RED for the pipe form, never for the here-strin
 early-exit reader in a condition, a pipe split across a continuation, and the lookalikes it must not flag: `||`, a here-
 string, a comment, a $( ) assignment, a file without pipefail); then the LIVE tree, every tracked shell file, zero
 findings. A tree git can't list (a no-.git extract) is 77 NOT SEARCHED, never a pass or a fail.
-RESIDUAL (declared): pipefail shell embedded in another language (python's `bash -c '…set -o pipefail…'`) is outside
-this file domain.
+RESIDUALS (declared): pipefail shell embedded in another language (python's `bash -c '…set -o pipefail…'`) is outside
+this file domain; an INTERPRETER that exits early (awk's exit, perl -ne 'exit…', python -c) has an exit this parser
+can't read; and a reader reached through a variable, alias or function (`G='grep -q'; a | $G x`) is not resolved
+(a3 #61818 P4/P11/P12). All three: 0 live sites, 10-21.
 """
 import re
 import subprocess
@@ -36,7 +38,12 @@ def check(name, ok, detail=""):
 
 PIPEFAIL_ON = re.compile(r"\bset\s+(?:-[A-Za-z]*o|-o)\s+pipefail\b")
 # a SINGLE pipe (never ||), then grep with -q in any short-option cluster or --quiet, before the command ends
-PIPE_GREP_Q = re.compile(r"(?<!\|)\|(?!\|)\s*grep\b(?P<opts>(?:\s+-[-A-Za-z]+)*)")
+# a single pipe or |& (never ||), then any WRAPPER that runs the reader as its own child: `command grep` is this org's own
+# idiom (grep is a shell function in our panes), so it is the likeliest live shape (a3 #61818 P3/P5/P6)
+PIPE = r"(?<!\|)\|(?:&|(?!\|))\s*"
+WRAP = (r"(?:(?:command|builtin|exec|nice(?:\s+-n\s*-?\d+|\s+-\d+)?|env(?:\s+-\S+|\s+[A-Za-z_]\w*=\S*)*"
+        r"|timeout(?:\s+-\S+)*\s+\d\S*|stdbuf(?:\s+-\S+)+)\s+)*")
+PIPE_GREP_Q = re.compile(PIPE + WRAP + r"grep\b(?P<opts>(?:\s+-[-A-Za-z]+(?:=\S+)?)*)")
 
 
 def strip_comment(line):
@@ -75,7 +82,7 @@ def code_lines(text):
 
 
 # the other early-exit readers: a single pipe into head or sed (its script's last command a q), or grep -m/-l/-L
-PIPE_READER = re.compile(r"(?<!\|)\|(?!\|)\s*(?P<cmd>head|sed)\b")
+PIPE_READER = re.compile(PIPE + WRAP + r"(?P<cmd>head|sed)\b")
 SED_QUIT = re.compile(r"(?:^|[;{}\s/\d])[qQ]\d*\s*}*\s*$")       # the script's LAST command is q/Q (`5q`, `/x/q`, `{p;q}`)
 
 
@@ -194,6 +201,12 @@ def main():
         "head in an if": "if a | head -1 >/dev/null; then :; fi", "head with !": "! a | head -n1 && x",
         "sed q in an if": "if a | sed -n '/x/{p;q}'; then :; fi", "sed 5q && ": "a | sed 5q && x",
     }
+    stop_flagged.update({
+        "|& into grep -q": "if a |& grep -q x; then :; fi", "command grep -q": "if a | command grep -q x; then :; fi",
+        "timeout 5 grep -q": "if a | timeout 5 grep -q x; then :; fi", "env LC_ALL=C grep -q": "a | env LC_ALL=C grep -q x && y",
+        "stdbuf -oL head": "if a | stdbuf -oL head -1; then :; fi", "nice -n 5 grep -m1": "a | nice -n 5 grep -m1 x || y",
+        "grep -iq": "if a | grep -iq x; then :; fi", "--max-count=1": "if a | grep --max-count=1 x; then :; fi",
+    })
     for name, body in stop_flagged.items():
         check(f"parser flags an early-exit reader in a condition: {name}", len(findings(pf + body)) == 1,
               str(findings(pf + body)))
@@ -201,6 +214,9 @@ def main():
         "head inside a $( ) assignment": "v=$(a | head -1)", "grep -m1 inside $( ) in an if": 'if [ -n "$(a | grep -m1 b)" ]; then :; fi',
         "a bare head statement (not a condition)": "a | head -5", "sed without q": "if a | sed 's/q/x/' >f; then :; fi",
         "plain grep in a condition": "if a | grep b >/dev/null; then :; fi",
+        "command grep -F that reads everything (sqlsite.sh:59's shape)": 'if a | command grep -F " $TR" >/dev/null; then :; fi',
+        "|| then command grep -q on a here-string": '[ $x ] || command grep -q y <<<"$v"',
+        "a timeout of the PRODUCER, not the reader": "if timeout 5 a | sort >/dev/null; then :; fi",
     })
     for name, body in clean.items():
         check(f"parser leaves alone: {name}", findings(pf + body) == [], str(findings(pf + body)))
