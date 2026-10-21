@@ -35,7 +35,7 @@ three renders write there (the primary's, another org's @<org> files, the cog's 
   K10 content drift (10224 UDRIFT): a unit on both sides whose BODY differs from its render is named STALE (the ✓ no-drift
       line withheld), with that org's own render as the remedy; another org's stale unit is never this one's
   K11 each org under its own federation name (10224 NAMES): distinct → ✓; the primary taking the other org's name (in
-      another case) → ✗ naming the name and both orgs; a .env line not UTF-8 → still ✓, and ⚠ naming its file:line (ENVREAD)
+      another case) → ✗ naming the name and both orgs; a .env line not UTF-8 → still ✓, and ⚠ naming its file:line (ENVREAD); any other stderr → no ⚠
   K12 the org's login in words (10224 ORGAUTH): ✓ ambient with no key or a key not opted in (plus a ○ naming the
       opt-in), ○ metered API billing when opted in; the dummy key never in the output
   K9 the cog's primary from a checkout that isn't its HOME: exit 3 before any check (its estate reads are checkout-
@@ -327,6 +327,14 @@ def main():
                   " | ".join(ln.strip() for ln in out.splitlines() if "federation name" in ln or "UTF-8" in ln))
         finally:
             (co / ".env").unlink()
+        sc = co.parent / "k11-sitecustomize"        # every python the doctor runs says one line on stderr that is NOT
+        sc.mkdir(exist_ok=True)                     # read_env's (a2 #61867 A-1): the ⚠ must not take it for one
+        (sc / "sitecustomize.py").write_text("import sys\nprint('DeprecationWarning: fx-unrelated', file=sys.stderr)\n")
+        rc, out, err = doctor(env(ASTRYX_HOME=str(co), PYTHONPATH=str(sc)))
+        check("another stderr line from orgs.py, every .env valid: ✓ and NO ⚠ (only read_env's lines carry that label)",
+              "every org of the cog has its own federation name" in out and "not UTF-8 (every reader skips it" not in out,
+              " | ".join(ln.strip() for ln in out.splitlines() if "federation name" in ln or "UTF-8" in ln
+                         or "fx-unrelated" in ln)[:400])
 
         print("\nK12 THE ORG'S LOGIN AND ITS BILLING, IN WORDS (10224 ORGAUTH)")
         dk = "fx-dummy-apikey-doctor-0005"                      # a DUMMY: never printed, asserted absent from out

@@ -1183,8 +1183,10 @@ if [ "${1:-}" = "doctor" ]; then
     case $_dnrc in
       0) ok "every org of the cog has its own federation name"
          # config.read_env said a skipped line (file:line, never its value): every reader skips it, so name it here
-         [ -n "$_dn" ] && { warn "an org's .env has a line that is not UTF-8 (every reader skips it; fix the line):"
-                            printf '%s\n' "$_dn" | sed 's/^/        /'; } ;;
+         # only read_env's own lines under that label (a2 #61867 A-1): any other stderr is not a skipped line
+         _dnw=$(printf '%s\n' "$_dn" | sed -n 's/^config\.read_env: /        /p')
+         [ -n "$_dnw" ] && { warn "an org's .env has a line that is not UTF-8 (every reader skips it; fix the line):"
+                             printf '%s\n' "$_dnw"; } ;;
       1) bad "orgs of this cog SHARE a federation name (one address to every peer): rename one (its HOME's .env ASTRYX_ORG; peers that introduced it must re-introduce):"
          printf '%s\n' "$_dn" | sed 's/^/        /' ;;
       *) warn "federation names UNVERIFIED: $(printf '%s' "$_dn" | tail -1)" ;;

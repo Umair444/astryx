@@ -57,7 +57,10 @@ MUTANTS = {
     "M22 a shared federation name reads green (doctor never asks: 10224 NAMES)":
         ('      1) bad "orgs of this cog SHARE a federation name', '      9) bad "orgs of this cog SHARE a federation name'),
     "M23 a .env line skipped as not UTF-8 goes unsaid (doctor swallows read_env's word: 10224 ENVREAD)":
-        ('         [ -n "$_dn" ] && { warn', '         [ -z "$_dn" ] && { warn'),
+        ('         [ -n "$_dnw" ] && { warn', '         [ -z "$_dnw" ] && { warn'),
     "M23o metered billing reads as a plain check (the doctor never says per-token billing: 10224 ORGAUTH)":
         ('    1) warn "$(printf \'%s\\n\' "$_ol" | head -1): every agent', '    1) ok "$(printf \'%s\\n\' "$_ol" | head -1): every agent'),
+    "M24 any stderr from orgs.py reads as a skipped .env line (the ⚠'s label lies: a2 #61867 A-1)":
+        ("""         _dnw=$(printf '%s\\n' "$_dn" | sed -n 's/^config\\.read_env: /        /p')""",
+         """         _dnw=$(printf '%s\\n' "$_dn" | sed 's/^/        /')"""),
 }
