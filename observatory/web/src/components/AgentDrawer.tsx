@@ -39,7 +39,7 @@ type Tab = 'self' | 'turns' | 'steps' | 'history' | 'charter' | 'runtime'
    italic one-liner, sections from ## headings, avatar from its own folder, identity
    history from the private git log, and its turns as a peekable timeline. Opens on the
    person: face, mood, what it is doing right now, its day as a heartbeat. */
-export default function AgentDrawer({ name, onClose }: { name: string; onClose: () => void }) {
+export default function AgentDrawer({ name, onClose, onTalk }: { name: string; onClose: () => void; onTalk?: () => void }) {
   const [steps, setSteps] = useState<Step[] | null>(null)
   const [charter, setCharter] = useState<string | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
@@ -131,9 +131,15 @@ export default function AgentDrawer({ name, onClose }: { name: string; onClose: 
         {profile?.bio && <div className="relative mt-4 text-[13.5px] text-ink-dim italic leading-relaxed">{profile.bio}</div>}
         {!profile && <Skeleton className="relative mt-4 h-4 w-3/4" />}
         <div className="relative mt-4 flex gap-2">
+          {onTalk && (
+            <button onClick={onTalk} className="ax-action inline-flex items-center gap-2 px-4 py-2 rounded-xl text-[13px] font-medium">
+              Talk to {displayName(name)}
+            </button>
+          )}
           <a href={`${canvasBase()}#/new/${encodeURIComponent(name)}`} target="_blank" rel="noreferrer"
-            className="ax-action inline-flex items-center gap-2 px-4 py-2 rounded-xl text-[13px] font-medium no-underline">
-            Talk to {displayName(name)} ↗
+            className={onTalk ? 'inline-flex items-center px-3 py-2 rounded-xl text-[13px] text-ink-dim hover:text-ink border border-line no-underline'
+              : 'ax-action inline-flex items-center gap-2 px-4 py-2 rounded-xl text-[13px] font-medium no-underline'}>
+            Build on a canvas
           </a>
         </div>
       </div>

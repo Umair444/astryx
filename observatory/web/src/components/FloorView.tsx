@@ -81,7 +81,7 @@ const crossKey = (m: Wire, here: string) => {
 }
 type Mode = 'live' | 'influence' | 'both'
 
-export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) => void }) {
+export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent: (n: string) => void; talking?: string | null }) {
   const { agents, presence, flash, peers: allPeers, overview, who } = useStore()
   const box = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
@@ -630,7 +630,8 @@ export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) =>
               onMouseEnter={() => setHover(a.agent)} onMouseLeave={() => setHover(h => (h === a.agent ? null : h))}
               className={`absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-1 group ${hover === a.agent ? 'z-30' : 'z-10'}`}
               initial={false} animate={{ left: s.x, top: s.y }} transition={{ type: 'spring', damping: 22, stiffness: 120 }}>
-              <motion.span className="relative rounded-full"
+              {talking === a.agent ? <span className="block w-[52px] h-[52px] rounded-full border border-dashed border-line-2" aria-hidden /> : (
+              <motion.span className="relative rounded-full" layoutId={`face-${a.agent}`}
                 animate={mood === 'working' ? { y: [0, -4, 0] } : { y: 0 }}
                 transition={{ duration: 2.4, repeat: mood === 'working' ? Infinity : 0, ease: 'easeInOut' }}
                 style={{ boxShadow: dropOn === a.agent || (who.owner && wiring.armed && hover === a.agent) ? '0 0 0 3px var(--t-accent2), 0 0 32px -2px var(--t-accent2)'
@@ -644,7 +645,7 @@ export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) =>
                     <GlyphStack glyphs={glyphsOf[a.agent]} chats={chatsOf[a.agent]} size={15} />
                   </span>
                 )}
-              </motion.span>
+              </motion.span>)}
               <span className="text-[12px] font-medium text-ink leading-tight">{displayName(a.agent)}</span>
               {/* the captions hang BELOW the button, out of its flow: the face always sits on its seat, so the
                   influence edges anchored there stay on it, and a caption opening never moves anyone (#60089) */}

@@ -21,6 +21,8 @@ import MemoryView from './components/MemoryView'
 import GrowbotView from './components/GrowbotView'
 import FaceView from './components/FaceView'
 import AgentDrawer from './components/AgentDrawer'
+import ChatSheet from './components/ChatSheet'
+import { AnimatePresence } from 'motion/react'
 import VegaChat from './components/VegaChat'
 import PulseStrip from './components/PulseStrip'
 import EarControl from './components/EarControl'
@@ -229,6 +231,14 @@ function LockPanel() {
 function Shell() {
   const [route, setRoute] = useState<Route>(parseHash())
   const [agentOpen, setAgentOpen] = useState<string | null>(null)
+  // plan-11860 S2: clicking an agent opens a conversation with it in place (?agent=<name>); a visitor gets its profile
+  const [talking, setTalking] = useState<string | null>(() => new URLSearchParams(location.search).get('agent'))
+  useEffect(() => {
+    const u = new URL(location.href)
+    if (talking) u.searchParams.set('agent', talking)
+    else u.searchParams.delete('agent')
+    if (u.href !== location.href) history.replaceState(history.state, '', u.href)
+  }, [talking])
   const [navOpened, { toggle, close }] = useDisclosure()
   const [deskNav, setDeskNav] = useState(() => localStorage.getItem('nav_hidden') !== '1')
   const toggleDeskNav = () =>
@@ -242,6 +252,7 @@ function Shell() {
   // the Floor and the Network are the org's public faces; everything else is the owner's
   const tabs = who.owner ? TABS : TABS.filter((t) => t.key === 'network' || t.key === 'floor')
   const locked = !who.owner && route.tab !== 'network' && route.tab !== 'floor'
+  const openAgent = (n: string) => (who.owner ? setTalking(n) : setAgentOpen(n))
 
   useEffect(() => {
     const f = () => {
@@ -295,7 +306,7 @@ function Shell() {
       </AppShell.Header>
 
       <AppShell.Navbar className="!bg-deck-2 !border-line">
-        <Sidebar route={route} onOpenAgent={setAgentOpen} />
+        <Sidebar route={route} onOpenAgent={openAgent} />
       </AppShell.Navbar>
 
       <AppShell.Main className="h-dvh relative" style={{ display: 'flex', flexDirection: 'column' }}>
@@ -307,10 +318,10 @@ function Shell() {
             ) : null
           ) : (
             <>
-              {route.tab === 'floor' && <FloorView onOpenAgent={setAgentOpen} />}
-              {route.tab === 'network' && <NetworkView onOpenAgent={setAgentOpen} />}
+              {route.tab === 'floor' && <FloorView onOpenAgent={openAgent} talking={talking} />}
+              {route.tab === 'network' && <NetworkView onOpenAgent={openAgent} />}
               {route.tab === 'agents' && <PeopleView />}
-              {route.tab === 'wire' && <WireView route={route} onOpenAgent={setAgentOpen} />}
+              {route.tab === 'wire' && <WireView route={route} onOpenAgent={openAgent} />}
               {route.tab === 'goals' && <GoalsView />}
               {route.tab === 'economy' && <EconomyView />}
               {route.tab === 'tools' && <ToolsView />}
@@ -347,7 +358,13 @@ function Shell() {
       <PilotHost route={route} agentOpen={agentOpen} setAgentOpen={setAgentOpen} />
       <Palette />
       {who.owner && <PilotConfirm />}
-      {agentOpen && <AgentDrawer name={agentOpen} onClose={() => setAgentOpen(null)} />}
+      <AnimatePresence>
+        {who.owner && talking && (
+          <ChatSheet key={talking} name={talking} onClose={() => setTalking(null)} onProfile={() => setAgentOpen(talking)} />
+        )}
+      </AnimatePresence>
+      {agentOpen && <AgentDrawer name={agentOpen} onClose={() => setAgentOpen(null)}
+        onTalk={who.owner ? () => { setTalking(agentOpen); setAgentOpen(null) } : undefined} />}
       {who.owner && <DesktopOverlay />}
       {who.owner && <RoomLayer />}
       {/* VEGA is the PUBLIC concierge and floats bottom-right on every view; the Memory
