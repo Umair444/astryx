@@ -252,10 +252,19 @@ if _DIR:
 
     _STATUS_N = re.compile(r"(\d+)\s*$")
 
-    def _wrap_asyncpg(name, orig):
+    def _wrap_asyncpg(name, orig, row_of=None):
+        # fetchval is answered through the UNWRAPPED fetchrow (`row_of`): asyncpg's fetchval is "the first row's column,
+        # or None", so the value is identical while the row count is exact. Measured on fetchval itself it read rows=-1,
+        # so a fetchval under a WHERE could never show both sides and was capped at EXECUTED (a3 #61777: 17 sites).
         async def method(self, query, *a, **k):
             try:
-                r = await orig(self, query, *a, **k)
+                if name == "fetchval" and row_of is not None:
+                    column = k.pop("column", 0)
+                    row = await row_of(self, query, *a, **k)
+                    r = None if row is None else row[column]
+                else:
+                    row = None
+                    r = await orig(self, query, *a, **k)
             except Exception as e:
                 try:
                     _emit({"t": _norm(query), "db": getattr(getattr(self, "_params", None), "database", "?"),
@@ -269,6 +278,8 @@ if _DIR:
                     rows = len(r)
                 elif name == "fetchrow":
                     rows = 0 if r is None else 1
+                elif name == "fetchval" and row_of is not None:
+                    rows = 0 if row is None else 1
                 elif name == "execute" and isinstance(r, str):
                     m = _STATUS_N.search(r)
                     rows = int(m.group(1)) if m else -1
@@ -297,9 +308,10 @@ if _DIR:
     def _patch_asyncpg(mod):
         cls = getattr(mod, "Connection", None)
         if cls is not None and not getattr(cls, "_sqlguard", False):
+            raw_fetchrow = getattr(cls, "fetchrow", None)       # the unwrapped one: fetchval's rows come from it
             for n in ("execute", "executemany", "fetch", "fetchrow", "fetchval"):
                 if hasattr(cls, n):
-                    setattr(cls, n, _wrap_asyncpg(n, getattr(cls, n)))
+                    setattr(cls, n, _wrap_asyncpg(n, getattr(cls, n), raw_fetchrow if n == "fetchval" else None))
             cls._sqlguard = True
 
     # Lazy: patch when (and only if) the process imports a driver, so a python process that never touches
