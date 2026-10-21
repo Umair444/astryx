@@ -9,6 +9,10 @@ import AgentFace from './AgentFace'
 import { HandBadge } from '../ui/hands'
 import { FRESH_PRESENCE, moodOf, nowLine } from '../ui/life'
 import InfluenceLayer, { KIND_HUE, KIND_LABEL, influenceLine, type Geometry, type Influence } from './InfluenceLayer'
+import ChannelDock from './ChannelDock'
+import RouteToast from './RouteToast'
+import { GlyphStack } from '../ui/glyphs'
+import { arm as armChat, chatsByAgent, DRAG_MIME, glyphsByAgent, routeChat, toast, useRoutes, type ChatRef } from '../ui/routes'
 
 /* THE FLOOR — the org as a place, its agents as people in it (owner vision, 2026-10-09:
    "agents are like people… a ready player one feel"). Departments are the agents/ tree;
@@ -95,6 +99,15 @@ export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) =>
   const [sib, setSib] = useState<Record<string, RoomData & { down?: boolean }>>({})   // the cog's other rooms, by name
   const [homeBadge, setHomeBadge] = useState<string | null>(null)
   const paired = useRef(new Map<string, number>())
+  // plan-11860 S1/S5: the channels each agent wears (public glyphs; the owner also sees which chats), and routing by drop
+  const wiring = useRoutes(who.owner)
+  const glyphsOf = useMemo(() => glyphsByAgent(wiring.glyphs), [wiring.glyphs])
+  const chatsOf = useMemo(() => (who.owner ? chatsByAgent(wiring.data) : {}), [who.owner, wiring.data])
+  const [dropOn, setDropOn] = useState<string | null>(null)
+  const routeTo = (c: ChatRef, agent: string) => {
+    armChat(null)
+    routeChat(c, agent).catch((e) => toast((e as Error).message))
+  }
 
   // both reads are the owner's: a visitor's floor is the floor as it always was
   useEffect(() => {
@@ -602,18 +615,35 @@ export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) =>
           const line = mood === 'asleep' ? `asleep · ${fmtAgo(a.last_seen)}` : nl.line
           const where = nl.where
           return (
-            <motion.button key={a.agent} onClick={() => onOpenAgent(a.agent)}
+            <motion.button key={a.agent}
+              onClick={() => (who.owner && wiring.armed ? routeTo(wiring.armed, a.agent) : onOpenAgent(a.agent))}
+              onDragOver={(e) => { if (who.owner && e.dataTransfer.types.includes(DRAG_MIME)) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDropOn(a.agent) } }}
+              onDragLeave={() => setDropOn((d) => (d === a.agent ? null : d))}
+              onDrop={(e) => {
+                setDropOn(null)
+                const raw = e.dataTransfer.getData(DRAG_MIME)
+                if (!who.owner || !raw) return
+                e.preventDefault()
+                try { routeTo(JSON.parse(raw) as ChatRef, a.agent) } catch { /* not a chat */ }
+              }}
+              aria-label={who.owner && wiring.armed ? `Route ${wiring.armed.label} to ${displayName(a.agent)}` : `Talk to ${displayName(a.agent)}`}
               onMouseEnter={() => setHover(a.agent)} onMouseLeave={() => setHover(h => (h === a.agent ? null : h))}
               className={`absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-1 group ${hover === a.agent ? 'z-30' : 'z-10'}`}
               initial={false} animate={{ left: s.x, top: s.y }} transition={{ type: 'spring', damping: 22, stiffness: 120 }}>
               <motion.span className="relative rounded-full"
                 animate={mood === 'working' ? { y: [0, -4, 0] } : { y: 0 }}
                 transition={{ duration: 2.4, repeat: mood === 'working' ? Infinity : 0, ease: 'easeInOut' }}
-                style={{ boxShadow: mood === 'working' ? '0 0 0 2px var(--t-accent), 0 0 28px -4px var(--t-accent)'
+                style={{ boxShadow: dropOn === a.agent || (who.owner && wiring.armed && hover === a.agent) ? '0 0 0 3px var(--t-accent2), 0 0 32px -2px var(--t-accent2)'
+                  : mood === 'working' ? '0 0 0 2px var(--t-accent), 0 0 28px -4px var(--t-accent)'
                   : mood === 'awake' ? '0 0 0 2px color-mix(in srgb, var(--t-good) 70%, transparent)' : '0 0 0 1px var(--t-line)' }}>
                 <AgentFace name={a.agent} size={52} dim={mood === 'asleep'} />
                 {mood === 'working' && <span className="absolute -inset-1.5 rounded-full border-2 border-cyan/60 border-t-transparent animate-spin" style={{ animationDuration: '2.4s' }} />}
                 <HandBadge agent={a.agent} size={13} className="absolute -right-2 -bottom-1 z-10" />
+                {glyphsOf[a.agent] && (
+                  <span className="absolute -left-2.5 -bottom-1 z-10 pointer-events-auto">
+                    <GlyphStack glyphs={glyphsOf[a.agent]} chats={chatsOf[a.agent]} size={15} />
+                  </span>
+                )}
               </motion.span>
               <span className="text-[12px] font-medium text-ink leading-tight">{displayName(a.agent)}</span>
               {/* the captions hang BELOW the button, out of its flow: the face always sits on its seat, so the
@@ -642,6 +672,8 @@ export default function FloorView({ onOpenAgent }: { onOpenAgent: (n: string) =>
           <div className="absolute inset-0 grid place-items-center text-ink-mute text-sm">the floor is empty — no agents yet</div>
         )}
        </div>
+       {who.owner && <ChannelDock />}
+       <RouteToast />
        <div className="absolute left-3 bottom-3 flex flex-col rounded-xl border border-line bg-deck-2/90 backdrop-blur overflow-hidden z-30 cursor-default"
          onPointerDown={(e) => { e.stopPropagation(); drag.current.moved = 0 }}>
          {([['+', 'zoom in', () => zoomAt(cam.k * 1.25, size.w / 2, size.h / 2)],
