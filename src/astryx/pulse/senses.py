@@ -43,6 +43,7 @@ from astryx.paths import repo_root  # noqa: E402
 from astryx import config, orgs, paths  # noqa: E402
 import importlib.util
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -197,4 +198,8 @@ async def dispatch(agent: str, name: str, request: Request):
 if __name__ == "__main__":
     import uvicorn
     # resolved at SERVE time, never at import: a module that imports senses for another reason must not need a HOME
-    uvicorn.run(app, host="0.0.0.0", port=orgs.port("astryx-senses") or PORT, log_level="warning")
+    # LOOPBACK by default (plan-11859 D5, seed #62033): 7 days of its journal show one client, 127.0.0.1 (the host's
+    # notify-forward), and GET /seed/notifications serves the owner's SMS, OTPs included. The LAN bind was exposure with no
+    # user. SENSES_HOST opens it again, as a deliberate act the exposure census then accuses.
+    uvicorn.run(app, host=os.environ.get("SENSES_HOST", "127.0.0.1"), port=orgs.port("astryx-senses") or PORT,
+                log_level="warning")

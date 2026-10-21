@@ -10,6 +10,7 @@ Each non-loopback listener is classed:
   federation  the gateway (astryx-gateway, scope cog: signed envelopes, its own auth)
   intake      a service that binds the DOCKER BRIDGE only and checks its own secret (INTAKE, each with a reason)
   host        a host-owned service, not astryx (HOST, by port, each with a reason)
+  ruled       an astryx unit whose public bind was RULED (OWNER_RULED: the ruling's message id and its evidence)
 and anything else is ACCUSED: an org-scoped astryx service on a LAN address reaches the org without the front, and an
 UNKNOWN listener is accused too (an exemption manifest's unknown member defaults to accused, never to fine).
 Each forwarder target must be a loopback port whose listener is the front, the gateway, or TUNNEL_OK's (with a reason);
@@ -38,6 +39,11 @@ HOST = {
     22: "sshd (the host's own)", 139: "samba (the host's own)", 445: "samba (the host's own)",
     53: "a DNS stub (the host's resolver)", 8096: "the host's docker media stack (not astryx)",
     9091: "the host's docker media stack (not astryx)", 51413: "the host's docker media stack (not astryx)",
+}
+# exempt by a RULING, not by a class: the unit, the ruling's message id, and its evidence (an unknown unit stays accused)
+OWNER_RULED = {
+    "astryx-geoloc": "seed #62033 (10-22, from the evidence): its clients are the owner's phone over the internet (carrier "
+                     "IPs) posting location, so the intake needs the public bind. A token check on its POST is a goal of its own",
 }
 TUNNEL_OK = {8767: "the genesis observer: the public visitor surface (VEGA), loopback, not an org backend"}
 
@@ -77,6 +83,8 @@ def census(listeners, targets, decl: dict, registry: dict | None = None) -> list
         if cls and (decl.get(unit) or {}).get("scope") == "cog":
             continue
         if bridge(addr) and unit in INTAKE:
+            continue
+        if unit in OWNER_RULED:
             continue
         if (unit is None or not unit.startswith("astryx-")) and port in HOST:
             continue

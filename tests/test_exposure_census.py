@@ -12,6 +12,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 SRC = os.environ.get("EXPOSURE_SRC") or str(REPO / "devtools" / "exposure_census.py")
+SENSES = Path(os.environ.get("SENSES_SRC") or REPO / "src" / "astryx" / "pulse" / "senses.py")   # mutation_probe's channel
 fails = []
 
 
@@ -47,6 +48,15 @@ def main():
     check("a1 BC-1: an ORG-scoped service on 0.0.0.0 is ACCUSED (it reaches the org without the front)",
           len(f) == 1 and "ACCUSED 0.0.0.0:8460 astryx-senses" in f[0] and "ORG-scoped" in f[0], str(f))
     check("…the same service on loopback is fine", run([("127.0.0.1", 8460, "astryx-senses")]) == [])
+    check("geoloc on 0.0.0.0 is exempt by its RULING (seed #62033), which names a message id and its evidence",
+          run([("0.0.0.0", 8766, "astryx-geoloc")]) == [] and "#62033" in ec.OWNER_RULED.get("astryx-geoloc", ""))
+    import ast
+    t = ast.parse(SENSES.read_text())
+    runs = [c for c in ast.walk(t) if isinstance(c, ast.Call) and ast.unparse(c.func) == "uvicorn.run"]
+    host = next((k.value for c in runs for k in c.keywords if k.arg == "host"), None)
+    check("senses binds LOOPBACK by default (seed #62033): uvicorn.run(host=os.environ.get('SENSES_HOST', '127.0.0.1'))",
+          host is not None and ast.unparse(host) == "os.environ.get('SENSES_HOST', '127.0.0.1')",
+          ast.unparse(host) if host is not None else "no uvicorn.run host")
     f = run([("0.0.0.0", 31337, None)])
     check("an UNKNOWN listener is ACCUSED (an exemption manifest's unknown member defaults to accused)",
           len(f) == 1 and "UNKNOWN listener" in f[0], str(f))

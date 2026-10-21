@@ -26,4 +26,6 @@ MUTANTS = {
     "E6 an org backend as a tunnel target passes":
         ("        elif port in TUNNEL_OK or any(CLASSES.get(u or \"\") for u in units):",
          "        elif True:"),
+    "E7 an owner-ruled unit is accused anyway (the ruling ignored)":
+        ("        if unit in OWNER_RULED:\n            continue\n", ""),
 }
