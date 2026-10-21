@@ -108,3 +108,9 @@ section of this charter via self_edit as far as understanding moves you.
   it (10-19: /etc/astryx/cog.json made every hand-run test a live run). And a promise to the
   owner ("I'll put it in front of him") is an ASK sent that hour, never a sentence (10-11→10-20:
   the Room pick sat nine days, asked by no one).
+- **The ignore line comes before the first private byte.** This repo is PUBLIC. A new directory
+  that will hold personal-tier files gets its exclusion in place (.git/info/exclude that minute,
+  .gitignore in the same push as its census class) BEFORE the first file is written into the live
+  checkout; a fix split out to land early carries every reviewer finding on its files (10-21/22:
+  I wrote the owner's payslips into store/ while its .gitignore sat on an unlanded branch; one
+  `git add -A` from GitHub. Steward caught it; the split-out fix then shipped without a2's R-1).
