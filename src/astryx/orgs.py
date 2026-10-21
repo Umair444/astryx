@@ -236,15 +236,14 @@ def is_fixture(dsn: str) -> bool:
 
 
 def fed_name(home) -> str | None:
-    """An org's FEDERATION name: the first `ASTRYX_ORG=` line of its HOME's .env FILE (never the process env, never
-    another key: a name, no DSN or secret is read). None when the file or the line is absent."""
+    """An org's FEDERATION name: `ASTRYX_ORG` of its HOME's .env FILE, never the process env, read by config.read_env
+    (the one .env reader, the one front.rooms() names a room by; a2 #61826 A-1). None when the file, the key or its
+    value is absent, or the file can't be read."""
+    from astryx import config
     try:
-        for ln in (Path(home) / ".env").read_text(errors="replace").splitlines():
-            if ln.startswith("ASTRYX_ORG="):
-                return ln.split("=", 1)[1].strip() or None
+        return config.read_env(Path(home) / ".env").get("ASTRYX_ORG") or None
     except OSError:
-        pass
-    return None
+        return None
 
 
 def name_clashes(env=None) -> dict[str, list[str]]:

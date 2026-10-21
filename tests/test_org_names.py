@@ -29,6 +29,7 @@ def check(name, ok, detail=""):
         fails.append(name)
 
 
+sys.path.insert(0, str(REPO / "src"))   # fed_name reads through astryx.config (the one .env reader)
 spec = importlib.util.spec_from_file_location("orgs_under_test", SRC)
 orgs = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(orgs)

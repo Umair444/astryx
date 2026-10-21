@@ -13,8 +13,8 @@ TIMEOUT = 120
 
 MUTANTS = {
     "K1 the name is read from the PROCESS env (a pane carrying another org's name)":
-        ('        for ln in (Path(home) / ".env").read_text(errors="replace").splitlines():',
-         '        for ln in [f"ASTRYX_ORG={os.environ.get(\'ASTRYX_ORG\', \'\')}"]:'),
+        ('        return config.read_env(Path(home) / ".env").get("ASTRYX_ORG") or None',
+         '        return os.environ.get("ASTRYX_ORG") or None'),   # org-home: mutant pattern (the env-first read K1 plants, matched as data)
     "K2 names compare case-SENSITIVELY (A.Fixture.Test and a.fixture.test, one address, read as two)":
         ("            by.setdefault(n.lower(), []).append(o)", "            by.setdefault(n, []).append(o)"),
     "K3 `dupnames` exits 0 on a clash (doctor reads it as each its own name)":

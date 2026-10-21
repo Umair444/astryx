@@ -73,6 +73,7 @@ def main():
     pid = os.getpid()
     key = f"fxlab{pid}"
     created = "astryx_" + key                    # the name A1's CREATE would take: dropped in finally if a mutant made it
+    made9 = [f"fxorg_lab9{s}_{pid}" for s in "ab"]   # A9's refused arms, one database each: dropped if a mutant made one
     t = Path(tempfile.mkdtemp(prefix="cogadd-")).resolve()
     tool = t / "devtools" / "cog_add_org.py"     # the tool runs from a copy beside THIS tree's src/ (a mutant's seam)
     tool.parent.mkdir()
@@ -305,28 +306,30 @@ def main():
                       and not sd3.exists(), f"rc {rc} {out[-200:]}")
 
             print("\nA9 ITS FEDERATION NAME (10224 NAMES): ONE ADDRESS PER ORG")
-            h9 = t / "h9"
+            h9a, h9b, h9c = (t / f"h9{s}" for s in "abc")   # one home per arm: an arm a mutant lets through makes
+            # ITS home, so the next arm (the control above all) still asks its own question (a2 #61826 A-2)
             for _ in range(2):                    # A9's own held ports: A2's are its org's in o2, the authority refuses a reuse
                 so = socket.socket()
                 so.bind(("127.0.0.1", 0))
                 held.append(so)
             p9 = f"astryx-observatory-org={held[-2].getsockname()[1]},astryx-canvas={held[-1].getsockname()[1]}"
-            rc, out = run(key + "x", "--home", str(h9), "--name", "lab.fixture.test", "--dsn", fx["url"], "--db",
-                          f"fxorg_lab9_{pid}", "--registry", str(o2), "--ports", p9)
+            rc, out = run(key + "x", "--home", str(h9a), "--name", "lab.fixture.test", "--dsn", fx["url"], "--db",
+                          made9[0], "--registry", str(o2), "--ports", p9)
             check("a name ANOTHER org of the cog holds (A2's lab.fixture.test): rc 2, refused naming that org, "
                   "nothing made", rc == 2 and "already the federation name of" in out and key in out
-                  and not h9.exists(), f"rc {rc} {out[-200:]}")
-            rc, out = run(key + "x", "--home", str(h9), "--name", "Lab.Fixture.Test", "--dsn", fx["url"], "--db",
-                          f"fxorg_lab9_{pid}", "--registry", str(o2), "--ports", p9)
+                  and not h9a.exists(), f"rc {rc} {out[-200:]}")
+            rc, out = run(key + "x", "--home", str(h9b), "--name", "Lab.Fixture.Test", "--dsn", fx["url"], "--db",
+                          made9[1], "--registry", str(o2), "--ports", p9)
             check("...its uppercase spelling: refused too (not a federation name)", rc == 2
-                  and "not a federation name" in out and not h9.exists(), f"rc {rc} {out[-200:]}")
-            rc, out = run(key + "x", "--home", str(h9), "--name", "lab9.fixture.test", "--registry", str(o2), "--dry-run",
+                  and "not a federation name" in out and not h9b.exists(), f"rc {rc} {out[-200:]}")
+            rc, out = run(key + "x", "--home", str(h9c), "--name", "lab9.fixture.test", "--registry", str(o2), "--dry-run",
                           "--ports", p9)
             check("control: a name no org holds plans (rc 0, dry-run)", rc == 0, f"rc {rc} {out[-200:]}")
     finally:
         try:
-            with psycopg.connect(admin, autocommit=True) as c:      # only THIS run's unique name, if a mutant made it
-                c.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(created)))
+            with psycopg.connect(admin, autocommit=True) as c:      # only THIS run's unique names, if a mutant made one
+                for db in (created, *made9):
+                    c.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(db)))
         except Exception:  # noqa: BLE001
             pass
         shutil.rmtree(t, ignore_errors=True)
