@@ -262,7 +262,14 @@ TENV=""
 # then falls through to the org's ambient default: "default = settings.json"). settings.json's
 # env WINS over process env, so this per-home file is the ONE correct seam; a shell export
 # before launch would be silently ignored. Token stays in .env; only its NAME is in runtime.json.
-RENV=$("$ROOT/venv/bin/python" "$ROOT/src/astryx/core/runtime_env.py" "$AGENT") || RENV=""
+# Beneath the entry, the ORG's login (plan-10224 ORGAUTH): its .env's CLAUDE_CODE_OAUTH_TOKEN | ANTHROPIC_API_KEY.
+# Exit 3 = the org's .env names a CLI with no launcher yet: refuse, never run claude in its place.
+RENV=$("$ROOT/venv/bin/python" "$ROOT/src/astryx/core/runtime_env.py" "$AGENT") && RRC=0 || RRC=$?
+if [ "$RRC" -eq 3 ]; then
+  echo "spawn: $AGENT not spawned: its org's CLI has no launcher here (runtime_env said why above)" >&2
+  exit 1
+fi
+[ "$RRC" -eq 0 ] || RENV=""
 
 # plan-9139 S1d (S0 D4, seed #45086): a TIER member's auto-memory goes to its own dir under tier/, never the shared
 # one, set in THIS template because every spawn rewrites settings.json (so --resume reads it too). The label comes from

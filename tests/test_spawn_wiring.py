@@ -33,6 +33,8 @@ as a logged side effect, never as a session.
      `--render seed ~` truncates the owner's own ~/.claude/settings.json)
   R10 ANDROID_ENABLED=1 in .env adds the phone server (plan-8675), named for the agent; without it,
       R2's exact set shows it absent
+  R12 the ORG's login (plan-10224 ORGAUTH): the .env's CLAUDE_CODE_OAUTH_TOKEN lands in a no-entry agent's settings.json
+      env, never in a base_url entry's, never on the render's stdout/stderr; ASTRYX_ORG_CLI=gemini refuses the render
   R8 a stationed agent renders nothing (it has no home), exit 0: no influence, no door, no hands
   S5 station.py never references the door, influence, the registry, or --mcp-config
 """
@@ -244,6 +246,33 @@ try:
     check("R9 ...its settings.json is byte-identical, and nothing was added",
           (existing / ".claude" / "settings.json").read_bytes() == sentinel
           and files_under(existing) == {".claude/settings.json"}, str(sorted(files_under(existing))))
+
+    # ── R12: the ORG's login (plan-10224 ORGAUTH) through the real render ─────────────────
+    org_tok = "tok-fixture-orgauth-render"
+    envf.write_text(plain + f"CLAUDE_CODE_OAUTH_TOKEN={org_tok}\n")
+    rr, calls_r = render(root, "zzres", outs / "zzres-org")
+    rg, calls_g = render(root, "zzgrant", outs / "zzgrant-org")
+    envf.write_text(plain + "ASTRYX_ORG_CLI=gemini\n")
+    rx, calls_x = render(root, "zzres", outs / "zzres-gemini")
+    envf.write_text(plain)
+
+    def _env_of(d):
+        try:
+            return json.loads((d / ".claude" / "settings.json").read_text())["env"]
+        except Exception:  # noqa: BLE001
+            return {}
+    er, eg = _env_of(outs / "zzres-org"), _env_of(outs / "zzgrant-org")
+    check("R12 an agent with no entry: the org's CLAUDE_CODE_OAUTH_TOKEN lands in its settings.json env",
+          rr.returncode == 0 and er.get("CLAUDE_CODE_OAUTH_TOKEN") == org_tok, f"rc {rr.returncode} {sorted(er)}")
+    check("R12 ...an agent whose entry sets a base_url: its own token, no org key",
+          rg.returncode == 0 and "CLAUDE_CODE_OAUTH_TOKEN" not in eg and eg.get("ANTHROPIC_AUTH_TOKEN") == TOKEN,
+          f"rc {rg.returncode} {sorted(eg)}")
+    check("R12 ...and the render's stdout/stderr never hold the org token",
+          org_tok not in rr.stdout + rr.stderr + rg.stdout + rg.stderr)
+    check("R12 ASTRYX_ORG_CLI=gemini: the render REFUSES (rc != 0, says why), writes no settings.json, no side effect",
+          rx.returncode != 0 and "cli gemini not yet supported" in rx.stderr
+          and not (outs / "zzres-gemini" / ".claude" / "settings.json").exists() and calls_x == [],
+          f"rc {rx.returncode} {rx.stderr[-200:]} calls {calls_x}")
 
     # ── R8: stationed ────────────────────────────────────────────────────────────────────
     out = outs / "zzstat"

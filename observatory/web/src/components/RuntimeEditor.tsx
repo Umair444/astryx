@@ -16,6 +16,8 @@ export type RuntimeCfg = {
   effort: string
   env_keys: string[]
   configured: boolean
+  // the ORG's login beneath this entry (plan-10224 ORGAUTH): the .env key NAME, never its value
+  org_login?: { cli: string; key: string | null; supported: boolean; source: string }
 }
 
 export default function RuntimeEditor({ name, live }: { name: string; live: boolean }) {
@@ -98,6 +100,24 @@ export default function RuntimeEditor({ name, live }: { name: string; live: bool
         <span className="font-mono">.env</span> — here you only name the key that holds it. Applies
         on the agent's next respawn{live ? ' (it is live now).' : '.'}
       </div>
+
+      {cfg.org_login && (
+        <div className="text-[11px] text-ink-mute">
+          <span className={labelCls}>{cfg.org_login.cli} login</span>{' '}
+          {cfg.org_login.supported ? (
+            cfg.org_login.key ? (
+              <span className="text-good">
+                org token (<span className="font-mono">{cfg.org_login.key}</span>
+                {baseUrl ? ', unused: this agent sets its own base url' : ''})
+              </span>
+            ) : (
+              <span>ambient (this org's .env holds no login key)</span>
+            )
+          ) : (
+            <span className="text-bad">cli {cfg.org_login.cli} not yet supported: spawn refuses</span>
+          )}
+        </div>
+      )}
 
       <div>
         <div className={labelCls}>base url (custom provider — blank = Anthropic default)</div>

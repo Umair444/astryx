@@ -171,11 +171,7 @@ EXEMPT = {
     # spec, and their `Run:` lines reached it back — a mutual-citation ring. Making them
     # visible is the fix working; whether they should instead be WIRED is a call for
     # whoever owns them, and the exemption is what forces that call to be made out loud.
-    # invoked by scripts/spawn.sh (per-agent provider/auth override, read at each spawn) — a
-    # SHELL invocation, outside this scanner's committed-python view. charter.py sits in the
-    # same spawn.sh line and passes ONLY because python files (mcp/org, observatory) also call
-    # it; runtime_env.py has no python caller by design, so the shell invoker is its only one.
-    "src/astryx/core/runtime_env.py": "invoked by scripts/spawn.sh:133 (shell; outside the committed-python scan)",
+    # runtime_env.py left this list (plan-10224 ORGAUTH): observatory/api/main.py now calls its org_login.
 }
 
 INTERP = r"(?:bash|sh|zsh|exec|source|\.|python3?|\$PY|\$\{PY\}|venv/bin/python3?|uv\s+run|/usr/bin/env\s+\S+)"
