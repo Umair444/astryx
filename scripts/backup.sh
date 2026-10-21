@@ -47,7 +47,7 @@ state_dirs=""
 # sensors/ ADDED 2026-08-21 with the senses layer (the afferent twin of triggers/):
 # agent-authored endpoint code, gitignored by the same law, unbacked by the same defect
 # class the day it was born — this line is the fix landing WITH the feature, not after it.
-for d in triggers sensors memory agents; do   # org-home: relative to $ORGH, the org's HOME (cd above)
+for d in triggers sensors memory agents store; do   # org-home: relative to $ORGH, the org's HOME (cd above); store/ (10-21): agents' durable files, docs/store.md
   if [ -d "$d" ]; then state_dirs="$state_dirs $d"; fi
 done
 # AUTHORED FILES ADDED 2026-08-20 — the same defect a THIRD time, and the loop above is
