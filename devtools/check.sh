@@ -365,6 +365,10 @@ run "review_range: base is the merge-base, head is the branch, typed shas refuse
 # HAND-RESOLVED (rc 3) unless its labelled fallback finds a difference; raw messages compared; a merge refused. Hermetic.
 # Mutants: tests/mutants_rebase_equiv.py.
 run "rebase_equiv: per-commit replay proves a rebase, hand resolutions named, raw messages equal" "$PY" tests/test_rebase_equiv.py
+# devtools/marker.sh (a4 night-review 10-22): the author's pushed_tree_check clause for a merge-ready marker, read from
+# git and the check, never typed: full shas, no timeout, refused when the branch moved or the check printed no verdict.
+# Hermetic (stub checks). Mutants: tests/mutants_marker.py.
+run "marker: the author's pushed_tree_check clause read from git and the check, never typed" "$PY" tests/test_marker.py
 # devtools/review_live.py: branch code measured against the LIVE tree (repo_root rebound only for the extract), the
 # child read-only by default and without ASTRYX_AGENT (a3 night-review 10-16, seed #56224). Mutants: tests/mutants_review_live.py.
 run "review_live: branch code reads the live REPO, fixtures untouched, postgres read-only, no agent identity" "$PY" tests/test_review_live.py

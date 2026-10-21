@@ -154,6 +154,7 @@ EXEMPT = {
     "devtools/sqlsite.sh": "manual: the pre-flight an agent TYPES before a merge_check on a branch with new SQL (seed #56477, "
                            "medic #56480); its oracle test_sqlsite.py is what check.sh runs",
     "devtools/review_range.sh": "manual: the range an agent TYPES for a review-request or merge-ready marker (a4 night-review 10-12); its oracle test_review_range.py is what check.sh runs",
+    "devtools/marker.sh": "manual: the author TYPES it on a branch tip to get the pushed_tree_check clause a reviewer's merge-ready marker quotes (a4 night-review 10-22); its oracle test_marker.py is what check.sh runs",
     "devtools/rebase_equiv.py": "manual: the check a lander or reviewer TYPES after rebasing a reviewed range, before re-marking or landing it (a4 night-review 10-21; seed uses it at each rebase-before-land, #61599); its oracle test_rebase_equiv.py is what check.sh runs (a2 #61613)",
     "devtools/apply_receipt.py": "manual: operator-run at deploy — seed applies a PASSed gitignored body with it and posts the "
                                 "`applied:` receipt it prints (plan-5791 staging protocol, a3 BC-3); its oracle "
