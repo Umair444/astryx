@@ -613,6 +613,10 @@ run "mutants files still point at something real" "$PY" tests/test_mutants_wellf
 # mutation_probe REFUSING names its arm: the baseline oracle's own failing lines are printed, so a one-off loaded refusal
 # is attributable (a4 night 10-16, memory #57741). Hermetic. Mutants: tests/mutants_mutation_probe_refusal.py.
 run "mutation_probe: a refusing baseline prints its own failing lines (never a bare exit code)" "$PY" tests/test_mutation_probe_refusal.py
+# mutation_probe's TREE form (a1 #62024, a4 #62026): a spec whose mutants span several files names each mutant's file, and
+# every run happens in a fresh copy of the tree, never the checkout; the same baseline/canary/skip refusals as the single
+# form. Hermetic (temp git trees). Mutants: tests/mutants_mutation_probe_tree.py.
+run "mutation_probe tree form: multi-file specs, graded in a copy, with every refusal" "$PY" tests/test_mutation_probe_tree.py
 # ...and the probe MACHINERY demonstrably runs (one family, ~4s). The full battery is the
 # monthly steward trigger; this edge is what keeps probe_all/mutation_probe auto-reached.
 run "mutant machinery smoke (one family)" bash devtools/probe_all.sh --smoke

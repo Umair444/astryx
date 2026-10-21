@@ -64,6 +64,8 @@ from astryx.paths import repo_root  # noqa: E402
 import argparse
 import importlib.util
 import os
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -195,6 +197,8 @@ def probe(spec_path: Path, verbose: bool = True, only=()) -> int:
     if not mutants:
         print(f"no mutant in {spec_path.name} is named by --only {' '.join(only)}")
         return 1
+    if not hasattr(spec, "SUBJECT"):   # the TREE form: each mutant names its own file (below, _probe_tree)
+        return _probe_tree(spec, spec_path, mutants, verbose, bool(only))
     subject, oracle = Path(spec.SUBJECT), Path(spec.ORACLE)
     src = subject.read_text()
 
@@ -340,6 +344,239 @@ def probe(spec_path: Path, verbose: bool = True, only=()) -> int:
             print(f"\n{len(skipped)} mutant(s) were NOT PROBED — the mutation did not apply, "
                   f"or the oracle\nskipped and verified nothing against it. Neither is a pass "
                   f"and neither is a catch.")
+    return 2 if survived or skipped else 0
+
+
+# ═══ THE TREE FORM (a1 #62024, a4 #62026) ═══
+# A spec whose mutants span several files has no ONE subject an ENV seam can redirect: the oracle imports them from its
+# own tree (floor-v2's resolver is imported by three bridges, the API and doctor). Such a spec declares no SUBJECT and no
+# ENV, and each MUTANTS value names its file: (path, old, new[, oracle]); a 3-tuple means the spec's ORACLE.
+# The probe never writes the checkout. Every run (canary, relocated baseline, each mutant) gets a FRESH copy of the
+# spec's tree (its git-listed files, tracked and untracked-not-ignored), the mutation applied in the copy, and the oracle
+# run from the copy. A fresh copy per run is also what keeps a previous run's bytecode from standing in (R7's cause).
+# The refusals are the single form's: a baseline per distinct oracle, in place and relocated, before any mutant; a
+# canary per oracle; a skip or a timeout is NOT PROBED; an anchor not exactly once in ITS file is NOT PROBED. floor-v2's
+# hand runner had none of these and scored its oracle's crash as 17/17 killed (a1 #62023 R-1).
+
+def _tree_root(spec_path: Path):
+    """The git toplevel the spec sits in, or None (the tree form copies a TREE; with none, it refuses)."""
+    try:
+        r = subprocess.run(["git", "-C", str(spec_path.resolve().parent), "rev-parse", "--show-toplevel"],
+                           capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return Path(r.stdout.strip()).resolve() if r.returncode == 0 and r.stdout.strip() else None
+
+
+def _tree_files(root: Path):
+    """Every file the copy carries: tracked plus untracked-not-ignored (an uncommitted spec or oracle travels too).
+    Gitignored estate never does, exactly as in a worktree. None when git can't list them."""
+    try:
+        r = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+                           capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0:
+        return None
+    return sorted({f for f in r.stdout.decode(errors="surrogateescape").split("\0") if f})
+
+
+def _tree_copy(root: Path, files: list, dest: Path, edits: dict) -> Path:
+    """A fresh copy of the tree at dest, with edits {relative path: text} written over it. copy2 FOLLOWS a symlink, so
+    the copy never links back into the checkout (a mutation can only ever land in the copy)."""
+    for f in files:
+        src = root / f
+        if not src.is_file():          # listed but deleted in the working tree, or a link to a directory
+            continue
+        out = dest / f
+        out.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, out)
+    for rel, text in edits.items():
+        (dest / rel).write_text(text)
+    return dest
+
+
+def _run_tree_out(oracle: Path, cwd: Path, timeout: int) -> tuple:
+    """(rc, output) for an oracle run from a tree copy. The single form's environment rule, with no ENV seam at all:
+    the oracle gets this process's environment, the pinned no-file registry and a private sqlguard trace, nothing else
+    (arm P8 holds the parity, since the single form's lines can't be shared without moving its mutants' anchors)."""
+    env = dict(os.environ)
+    env.update(ASTRYX_COG_REGISTRY=str(Path(tempfile.gettempdir()) / f"astryx-probe-{os.getpid()}-no-registry"
+                                       / "cog.json"))
+    with tempfile.TemporaryDirectory() as trace:
+        if "ASTRYX_SQLGUARD_DIR" in env:
+            env.update(ASTRYX_SQLGUARD_DIR=trace)
+        try:
+            done = subprocess.run([sys.executable, "-u", oracle.as_posix()], env=env, cwd=str(cwd),
+                                  capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired as e:
+            got = [x.decode(errors="replace") if isinstance(x, bytes) else (x or "") for x in (e.stdout, e.stderr)]
+            return TIMED_OUT, "".join(got)
+    return done.returncode, (done.stdout or "") + (done.stderr or "")
+
+
+class _TermExits:
+    """SIGTERM raises SystemExit(143) inside the block, so every temporary copy is removed on the way out (a TERM'd run
+    leaves nothing behind; subprocess.run kills its oracle child on the way). The previous handler comes back after."""
+
+    def __enter__(self):
+        try:
+            self.prev = signal.signal(signal.SIGTERM, self._exit)
+        except ValueError:             # not the main thread: nothing to install, nothing to restore
+            self.prev = None
+        return self
+
+    @staticmethod
+    def _exit(signum, frame):
+        raise SystemExit(143)
+
+    def __exit__(self, *exc):
+        if self.prev is not None:
+            signal.signal(signal.SIGTERM, self.prev)
+        return False
+
+
+def _probe_tree(spec, spec_path: Path, mutants: dict, verbose: bool, selected: bool) -> int:
+    timeout = int(getattr(spec, "TIMEOUT", DEFAULT_TIMEOUT))
+    root = _tree_root(spec_path)
+    if root is None:
+        print(f"REFUSING: {spec_path.name} is a tree-form spec (no SUBJECT), and it is not inside a git tree, so there "
+              f"is no tree to copy. The probe never mutates a checkout in place.")
+        return 1
+    files = _tree_files(root)
+    if files is None:
+        print(f"REFUSING: git could not list {root}'s files, so no faithful copy can be made.")
+        return 1
+    listed = set(files)
+    default = getattr(spec, "ORACLE", None)
+    plan, bad = [], []
+    for name, value in mutants.items():
+        if not (isinstance(value, tuple) and len(value) in (3, 4)):
+            bad.append(f"{name}: a tree-form mutant is (path, old, new[, oracle]), not {type(value).__name__}")
+            continue
+        path, old, new = value[:3]
+        orc = value[3] if len(value) == 4 else default
+        if orc is None:
+            bad.append(f"{name}: names no oracle and the spec declares no ORACLE")
+            continue
+        rels = []
+        for what, p in (("subject", path), ("oracle", orc)):
+            full = Path(p) if Path(p).is_absolute() else root / p
+            try:
+                rel = full.resolve().relative_to(root)
+            except ValueError:
+                bad.append(f"{name}: its {what} {p} is outside the tree {root}: it cannot be relocated into the "
+                           f"copy, and a mutant is never run in place")
+                break
+            if rel.as_posix() not in listed:
+                bad.append(f"{name}: its {what} {rel} is not a file git lists in {root} (gitignored, or absent): "
+                           f"the copy cannot carry it")
+                break
+            rels.append(rel)
+        else:
+            plan.append((name, rels[0], old, new, rels[1]))
+    if bad:
+        print(f"REFUSING: {spec_path.name} names files the probe cannot relocate. Every verdict would be a guess:")
+        for line in bad:
+            print(f"  {line}")
+        return 1
+    oracles = sorted({o for *_, o in plan}, key=str)
+
+    # BASELINE, in place: each distinct oracle passes against the unmutated checkout, before any mutant
+    for o in oracles:
+        rc0, out0 = _run_tree_out(root / o, root, timeout)
+        if rc0 != 0:
+            how = "did not finish within " + f"{timeout}s" if rc0 == TIMED_OUT else f"does not pass (exit {rc0})"
+            print(f"REFUSING: {o} {how} against the unmutated tree. No mutant was run: every one would be scored as "
+                  f"caught for that reason alone.")
+            _print_tail(root / o, out0, "before the kill" if rc0 == TIMED_OUT else f"exit {rc0}")
+            return 1
+
+    caught, survived, skipped = [], [], []
+    with _TermExits(), tempfile.TemporaryDirectory(prefix="astryx-probe-tree-") as td:
+        def fresh(slot: str, edits: dict) -> Path:
+            return _tree_copy(root, files, Path(td) / slot, edits)
+
+        def drop(d: Path) -> None:
+            shutil.rmtree(d, ignore_errors=True)
+
+        for k, o in enumerate(oracles):
+            # THE CANARY: every file this oracle's mutants name, destroyed at once. An oracle that passes that reads
+            # none of them, and grading it would mean nothing in either direction
+            mine = sorted({str(s) for _, s, _, _, oo in plan if oo == o})
+            d = fresh(f"canary{k}", {s: "def ( this file is deliberately not python — the canary\n" for s in mine})
+            rc_c, _ = _run_tree_out(d / o, d, timeout)
+            drop(d)
+            if rc_c == 0:
+                print(f"WIRING FAULT: {o} PASSED with every subject it is graded on destroyed ({', '.join(mine)}).\n"
+                      f"  It does not read the files its mutants name (a bare import from another tree, or the wrong "
+                      f"files listed). Refusing to grade.")
+                return 1
+            # THE RELOCATED BASELINE: the unmutated copy passes from where every mutant runs
+            d = fresh(f"base{k}", {})
+            rc_r, out_r = _run_tree_out(d / o, d, timeout)
+            drop(d)
+            if rc_r != 0:
+                print(f"REFUSING: {o} passes the checkout but fails its unmutated COPY (exit {rc_r}): the copy is "
+                      f"missing something the oracle reads (a gitignored file, an absolute path into the checkout). "
+                      f"Every mutant would be scored as caught for that reason alone.")
+                _print_tail(d / o, out_r, "before the kill" if rc_r == TIMED_OUT else f"exit {rc_r}")
+                return 1
+
+        for i, (name, s, old, new, o) in enumerate(plan):
+            text = (root / s).read_text()
+            hits = text.count(old)
+            if hits != 1:
+                skipped.append((s, f"{name} (its anchor occurs {hits}x in {s}, needs exactly 1)"))
+                continue
+            d = fresh(f"m{i}", {str(s): text.replace(old, new, 1)})
+            t0 = time.monotonic()
+            rc_m, out_m = _run_tree_out(d / o, d, timeout)
+            took = f"{time.monotonic() - t0:.0f}s"
+            drop(d)
+            if rc_m == TIMED_OUT:
+                skipped.append((s, f"{name} (oracle TIMED OUT after {timeout}s — it verified nothing)"))
+            elif rc_m == EXIT_SKIP:
+                skipped.append((s, f"{name} (oracle SKIPPED — it verified nothing)"))
+            elif rc_m != 0:
+                caught.append((s, name, took, _why(out_m)))
+            else:
+                survived.append((s, name))
+
+    if verbose:
+        subjects = sorted({str(s) for _, s, *_ in plan})
+        print(f"mutation-probe (tree form) · {spec_path.name} · {len(subjects)} file(s), oracle(s) "
+              f"{', '.join(str(o) for o in oracles)}")
+        print(f"  each baseline passes, in place and from a fresh copy; {len(spec.MUTANTS)} authored mutant(s)"
+              + (f" ({len(mutants)} selected by --only)" if selected else "") + "\n")
+        for subj in subjects:
+            print(f"  {subj}")
+            for s, n, took, why in caught:
+                if str(s) == subj:
+                    print(f"    CAUGHT                   {n}  ({took})")
+                    print(f"        why: {why}")
+            for s, n in survived:
+                if str(s) == subj:
+                    print(f"    NOT PROBED BY THIS SET   {n}")
+            for s, n in skipped:
+                if str(s) == subj:
+                    print(f"    NOT PROBED               {n}")
+        print()
+        if survived:
+            print(f"{len(survived)} mutant(s) changed the implementation and every assertion still passed. That locates "
+                  f"a HOLE IN THIS MUTANT SET's coverage; which assertion should have caught it is the author's call.")
+        elif skipped:
+            print(f"Every PROBED mutant was caught, but {len(skipped)} of {len(caught) + len(skipped)} were NOT PROBED,"
+                  f"\nso this run does NOT show the authored set is caught.")
+        elif selected:
+            print(f"Every SELECTED mutant was caught ({len(mutants)} of {len(spec.MUTANTS)} authored; --only ran no "
+                  f"other).\nThis is not a verdict on the authored set.")
+        else:
+            print("Every authored mutant was caught. This says nothing about mutations that\n"
+                  "were never authored — coverage is bounded by the list, not by the oracle.")
+        by_crash = [n for _, n, _, why in caught if why.startswith("a CRASH")]
+        if by_crash:
+            print(f"\n{len(by_crash)} of the {len(caught)} CAUGHT were a CRASH, not a check: read their why.")
     return 2 if survived or skipped else 0
 
 
