@@ -16,6 +16,7 @@ if not __package__:  # run by path (`python src/astryx/config.py dsn` from a she
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))
 
 import os  # noqa: E402
+import sys  # noqa: E402
 import tempfile  # noqa: E402
 from pathlib import Path  # noqa: E402
 
@@ -27,20 +28,51 @@ def env_path(home: Path | None = None) -> Path:
 
 
 def read_env(path: Path | None = None) -> dict[str, str]:
-    """Every KEY=value in the file, first occurrence wins. Missing file -> {}."""
+    """Every KEY=value in the file, first occurrence wins. Missing file -> {}.
+
+    Decoded PER LINE (plan-10224 ENVREAD, seed #61855): a line that is not UTF-8 is skipped and said on stderr as
+    file:line, never its bytes or value, and every other key reads. A key whose FIRST line is the bad one reads as
+    absent (a later line of it is not taken in its place), which is the caller's own missing-key path. A valid file
+    reads exactly as before, so nothing is printed for it. set_env still reads strictly: a writer that skipped a line
+    would drop it on the rewrite, so a non-UTF-8 .env makes it raise and the file is left as it was.
+    Residuals, not migrated here: the shell readers (`grep '^KEY=' .env`) and channel/home.mjs."""
     p = Path(path) if path else env_path()
     out: dict[str, str] = {}
+    lost: set[str] = set()
     try:
-        text = p.read_text()
+        raw = p.read_bytes()
     except (FileNotFoundError, NotADirectoryError):
         return out
-    for line in text.splitlines():
-        if not line or line.lstrip().startswith("#") or "=" not in line:
+    for n, chunk in enumerate(raw.split(b"\n"), 1):
+        try:
+            text = chunk.decode("utf-8")
+        except UnicodeDecodeError:
+            if chunk.lstrip().startswith(b"#"):
+                continue
+            k = _bad_key(chunk)
+            if k and k not in out:
+                lost.add(k)
+            print(f"config.read_env: {p}:{n}: not UTF-8, line skipped"
+                  + (f" ({k} reads as absent)" if k and k not in out else ""), file=sys.stderr)
             continue
-        k, v = line.split("=", 1)
-        if k and k == k.strip() and k not in out:
-            out[k] = v.strip()
+        for line in text.splitlines():      # str.splitlines' line breaks, as before (a valid file reads the same)
+            if not line or line.lstrip().startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            if k and k == k.strip() and k not in out and k not in lost:
+                out[k] = v.strip()
     return out
+
+
+def _bad_key(chunk: bytes) -> str | None:
+    """The KEY of a line that is not UTF-8, when the key itself reads (the value is never decoded)."""
+    if b"=" not in chunk:
+        return None
+    try:
+        k = chunk.split(b"=", 1)[0].decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    return k if k and k == k.strip() else None
 
 
 def get(key: str, default: str = "", path: Path | None = None, environ: dict | None = None,
@@ -197,5 +229,4 @@ def _main(argv) -> int:
 
 
 if __name__ == "__main__":
-    import sys
     sys.exit(_main(sys.argv[1:]))

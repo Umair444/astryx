@@ -55,15 +55,10 @@ class AndroidError(Exception):
 
 
 def _env_file() -> dict:
-    out = {}
     try:
-        for line in (paths.estate(__file__) / ".env").read_text().splitlines():
-            if "=" in line and not line.lstrip().startswith("#"):
-                k, v = line.split("=", 1)
-                out[k.strip()] = v.strip()
+        return config.read_env(paths.estate(__file__) / ".env")   # the one .env reader (plan-10224 ENVREAD)
     except OSError:
-        pass
-    return out
+        return {}
 
 
 def sdk() -> Path:

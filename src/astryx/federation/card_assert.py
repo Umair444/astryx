@@ -36,10 +36,7 @@ TIER_PRIVATE = {"canopus", "gemini", "p1", "p2"}
 
 
 def _env(key: str) -> str:
-    for line in (paths.estate(__file__) / ".env").read_text().splitlines():
-        if line.startswith(key + "="):
-            return line.split("=", 1)[1].strip()
-    return ""
+    return config.read_env(paths.estate(__file__) / ".env").get(key, "")   # the one .env reader (plan-10224 ENVREAD)
 
 
 def _b64u_dec(s: str) -> bytes:

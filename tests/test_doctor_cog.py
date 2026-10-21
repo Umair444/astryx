@@ -35,7 +35,7 @@ three renders write there (the primary's, another org's @<org> files, the cog's 
   K10 content drift (10224 UDRIFT): a unit on both sides whose BODY differs from its render is named STALE (the ✓ no-drift
       line withheld), with that org's own render as the remedy; another org's stale unit is never this one's
   K11 each org under its own federation name (10224 NAMES): distinct → ✓; the primary taking the other org's name (in
-      another case) → ✗ naming the name and both orgs
+      another case) → ✗ naming the name and both orgs; a .env line not UTF-8 → still ✓, and ⚠ naming its file:line (ENVREAD)
   K9 the cog's primary from a checkout that isn't its HOME: exit 3 before any check (its estate reads are checkout-
      relative by identity)
 
@@ -314,6 +314,15 @@ def main():
             check("the primary takes the other org's name (another case): ✗ SHARE a federation name, naming both orgs",
                   "SHARE a federation name" in out and any(aname in ln and prim in ln and other in ln
                                                            for ln in out.splitlines()), out[-400:])
+        finally:
+            (co / ".env").unlink()
+        (co / ".env").write_bytes(b"NOTE=\xff\xfe fx-PLANTED-77a1\n")   # not UTF-8 (10224 ENVREAD): skipped, said
+        try:
+            rc, out, err = doctor(env(ASTRYX_HOME=str(co)))
+            check("a .env line that is not UTF-8: still ✓ (never blinded), and ⚠ naming its file:line, never its value",
+                  "every org of the cog has its own federation name" in out and "not UTF-8 (every reader skips it" in out
+                  and f"{co / '.env'}:1: not UTF-8" in out and "fx-PLANTED-77a1" not in out,
+                  " | ".join(ln.strip() for ln in out.splitlines() if "federation name" in ln or "UTF-8" in ln))
         finally:
             (co / ".env").unlink()
 

@@ -20,8 +20,8 @@ MUTANTS = {
     "O3 the estate is always the checkout (a cog org backs up the primary's tree)":
         ('    return paths.home() if orgs.multi() else REPO\n', '    return REPO\n'),
     "O4 the alarm names the org from the PROCESS env (a pane carrying another org's name mislabels it)":
-        ('        for ln in (estate / ".env").read_text().splitlines():',
-         '        for ln in [f"ASTRYX_ORG={os.environ.get(\'ASTRYX_ORG\', \'\')}"]:'),
+        ('        return config.read_env(estate / ".env").get("ASTRYX_ORG") or estate.name',
+         '        return os.environ.get("ASTRYX_ORG") or estate.name'),   # org-home: mutant pattern (the env-first read O4 plants, matched as data)
     "O5 the alarm names no org":
         ('f"[{_org(est)}] org backup is STALE"', '"org backup is STALE"'),
     "O6 the dump age is read from the checkout's backups/ (another org's fresh dump silences this one's alarm)":

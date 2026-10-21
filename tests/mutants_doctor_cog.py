@@ -56,4 +56,6 @@ MUTANTS = {
         ('${DOCTOR_ORGH:+ASTRYX_HOME=$ORGH }./init.sh units, then', './init.sh units, then'),
     "M22 a shared federation name reads green (doctor never asks: 10224 NAMES)":
         ('      1) bad "orgs of this cog SHARE a federation name', '      9) bad "orgs of this cog SHARE a federation name'),
+    "M23 a .env line skipped as not UTF-8 goes unsaid (doctor swallows read_env's word: 10224 ENVREAD)":
+        ('         [ -n "$_dn" ] && { warn', '         [ -z "$_dn" ] && { warn'),
 }

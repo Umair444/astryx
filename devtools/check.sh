@@ -507,6 +507,7 @@ run "turns retention: old images stripped, words kept, recent untouched, idempot
 # ends INCOMPLETE, and the pulse is started again (a2 #42367)
 run "cog_add_org: an org's own setup path, every step judged first, nothing made on a dry-run (plan-11324 S3f S5)" "$PY" tests/test_cog_add_org.py
 run "org names: each org of a cog under its own federation name (10224 NAMES)" "$PY" tests/test_org_names.py
+run "env reader: every Python .env read goes through config.read_env, per line, a bad line skipped loudly (10224 ENVREAD)" "$PY" tests/test_envread.py
 run "org backup: a cog org's own dump and restore-verify triggers, the shims' one source (plan-10224 add-org-parity)" "$PY" tests/test_org_backup.py
 run "init.sh schedules a one-org backup, deferentially by either name (seed 61526)" "$PY" tests/test_init_orgbackup.py
 run "cog rehearsal: the runbook's steps 2-6 end to end on a fixture registry, the double spawn seen and refused (plan-11324 S3f S6)" "$PY" tests/test_cog_rehearsal.py

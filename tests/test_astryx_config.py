@@ -76,6 +76,34 @@ def main():
             arm(f"set_env refuses {bad!r}", g.read_text() == "A=1\nB=2\n")
     arm("no temp files are left beside .env", sorted(p.name for p in t.iterdir()) == [".env", "nonl"],
         str(sorted(p.name for p in t.iterdir())))
+    # ENVREAD (plan-10224, seed #61855): decoded per line; a line that is not UTF-8 is skipped LOUDLY, never its value
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        e = config.read_env(f)
+    arm("a valid file reads with NOTHING on stderr", buf.getvalue() == "" and e.get("DUP") == "new", buf.getvalue())
+    planted = "pw-PLANTED-4c3b"
+    h = t / "bad"
+    h.write_bytes(b"ASTRYX_ORG=a.fixture.test\nNOTE=\xff\xfe " + planted.encode() + b"\n# \xff a comment\n"
+                  b"GMAIL_APP_PASSWORD=\xfe" + planted.encode() + b"\nGMAIL_APP_PASSWORD=second\nTAIL=1\n")
+    raw = h.read_bytes()
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        e = config.read_env(h)
+    w = buf.getvalue()
+    arm("a bad byte on an UNRELATED line: the asked keys before and after it read",
+        e.get("ASTRYX_ORG") == "a.fixture.test" and e.get("TAIL") == "1", str(sorted(e)))
+    arm("a bad byte on the ASKED key's first line: it reads as ABSENT (its later line is not taken in its place)",
+        "GMAIL_APP_PASSWORD" not in e and "NOTE" not in e, str(sorted(e)))
+    arm("each bad line is said on stderr as file:line, and the absent key named",
+        f"{h}:2: not UTF-8" in w and f"{h}:4: not UTF-8" in w and "(GMAIL_APP_PASSWORD reads as absent)" in w
+        and ":3:" not in w, w)
+    arm("...never the line's bytes or value", planted not in w and "\ufffd" not in w, w)
+    try:
+        config.set_env("TAIL", "2", h)
+        arm("set_env on a non-UTF-8 .env raises (a skipping writer would drop the line)", False)
+    except UnicodeDecodeError:
+        arm("set_env on a non-UTF-8 .env raises (a skipping writer would drop the line), the file unchanged",
+            h.read_bytes() == raw)
     print(f"\n{'FAIL' if fails else 'ALL PASS'}: astryx config ({len(fails)} failing)")
     return 1 if fails else 0
 

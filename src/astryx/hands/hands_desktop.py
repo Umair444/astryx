@@ -519,9 +519,7 @@ def _env_int(key: str, default: int) -> int:
     v = config.org_env(key)
     if v is None:
         try:
-            for line in (paths.estate(__file__) / ".env").read_text().splitlines():
-                if line.startswith(f"{key}="):
-                    v = line.split("=", 1)[1].strip()
+            v = config.read_env(paths.estate(__file__) / ".env").get(key)   # the one .env reader (plan-10224 ENVREAD)
         except OSError:
             pass
     try:

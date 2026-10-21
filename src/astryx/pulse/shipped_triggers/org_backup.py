@@ -41,14 +41,12 @@ def _estate() -> Path:
 
 def _org(estate: Path) -> str:
     """The org's federation name, from its .env FILE (never the process env: a pane may carry another org's). The first
-    `ASTRYX_ORG=` line, as config.read_env reads it; the HOME's name if there is none."""
-    try:
-        for ln in (estate / ".env").read_text().splitlines():
-            if ln.startswith("ASTRYX_ORG="):
-                return ln.split("=", 1)[1].strip() or estate.name
+    `ASTRYX_ORG=` line, read BY config.read_env (plan-10224 ENVREAD); the HOME's name if there is none."""
+    from astryx import config      # at call time: trigger_names follows a shim's top-level imports, and config.py's
+    try:                           # run-by-path `if` block would read as an import inside a top-level if (blind)
+        return config.read_env(estate / ".env").get("ASTRYX_ORG") or estate.name
     except OSError:
-        pass
-    return estate.name
+        return estate.name
 
 
 def _launch(estate: Path, name: str, script: str) -> None:
