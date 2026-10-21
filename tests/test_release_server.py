@@ -106,10 +106,16 @@ except Exception as e:                                          # noqa: BLE001
     skip(f"database unreachable ({type(e).__name__})")
 if not admin.execute("SELECT rolcreatedb OR rolsuper FROM pg_roles WHERE rolname=current_user").fetchone()[0]:
     skip("this role cannot CREATE DATABASE; a throwaway is the only safe substrate")
-PROBE_DB = f"astryx_relserver_{os.getpid()}"
-PROBE_DSN = re.sub(r"/[^/?]+(\?|$)", f"/{PROBE_DB}\\1", ADMIN, count=1)
-if PROBE_DB not in PROBE_DSN:
-    skip("could not derive a throwaway DSN")
+# The throwaway is a fixture_db(): PREFIX-named and owner-stamped, so reap() collects a killed run's. A hand-made
+# astryx_relserver_<pid> had neither, and 7 killed runs' leaked for good on 10-14 (a2 #61827, seed #61829).
+sys.path.insert(0, str(REPO))
+from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db  # noqa: E402
+_fx = fixture_db()                       # schema.sql applied whole, as this oracle used to apply it by hand
+try:
+    FX = _fx.__enter__()
+except FixtureUnavailable as e:
+    skip(f"no fixture database ({e})")
+PROBE_DB, PROBE_DSN = FX["dbname"], FX["url"]   # a URL: node-pg reads it from the fixture .env and ASTRYX_DSN
 
 home = Path(tempfile.mkdtemp(prefix="relserver."))
 procs: list[subprocess.Popen] = []
@@ -124,7 +130,7 @@ def cleanup() -> None:
             except Exception:                                   # noqa: BLE001
                 pass
     try:
-        admin.execute(f'DROP DATABASE IF EXISTS "{PROBE_DB}" WITH (FORCE)')
+        _fx.__exit__(None, None, None)                          # fixture_db drops it WITH (FORCE)
     except Exception:                                           # noqa: BLE001
         pass
     admin.close()
@@ -225,14 +231,7 @@ try:
     if failures:
         raise SystemExit(1)
 
-    admin.execute(f'CREATE DATABASE "{PROBE_DB}" ALLOW_CONNECTIONS false')
-    admin.execute(f'REVOKE CONNECT ON DATABASE "{PROBE_DB}" FROM PUBLIC')
-    admin.execute(f'ALTER DATABASE "{PROBE_DB}" ALLOW_CONNECTIONS true')
-    subprocess.run([sys.executable, "-c", "import sys,psycopg;"
-                    "psycopg.connect(sys.argv[1],autocommit=True).execute(open(sys.argv[2]).read())",
-                    PROBE_DSN, str(REPO / "src" / "astryx" / "sql" / "schema.sql")],
-                   check=True, capture_output=True, timeout=120)
-    db = psycopg.connect(PROBE_DSN, autocommit=True, connect_timeout=5)
+    db = psycopg.connect(FX["dsn"], autocommit=True, connect_timeout=5)
 
     def nrows() -> int:
         return db.execute("SELECT count(*) FROM messages").fetchone()[0]
