@@ -24,10 +24,12 @@ The database is a throwaway created for this run and dropped after it; the org's
   U   the unlabelled control's send is today's row, column for column, delivery NULL
 Exit 0 pass · 1 fail · 77 skipped (no node, no node_modules, no database, no CREATEDB).
 """
+import atexit
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -118,6 +120,8 @@ except FixtureUnavailable as e:
 PROBE_DB, PROBE_DSN = FX["dbname"], FX["url"]   # a URL: node-pg reads it from the fixture .env and ASTRYX_DSN
 
 home = Path(tempfile.mkdtemp(prefix="relserver."))
+atexit.register(shutil.rmtree, home, True)   # it holds the fixture .env with PROBE_DSN; a TERM'd run left it (a2 A-1 #61835)
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))   # a TERM exits through the finally's cleanup() and atexit
 procs: list[subprocess.Popen] = []
 
 
