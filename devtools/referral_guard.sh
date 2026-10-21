@@ -18,7 +18,7 @@ out=$(printf '' | bash -c '
   say() { echo "$*"; }
   REFERRAL_ID="TESTCODE123"
   referral_optin' 2>/dev/null || true)
-if printf '%s' "$out" | grep -qi 'referral'; then
+if grep -qi 'referral' <<<"$out"; then   # a here-string: `printf | grep -q` under pipefail passes on SIGPIPE (seed #61794)
   bad "referral appeared on the non-interactive path (must be TTY-gated opt-in): [$out]"
 else
   ok "default / non-interactive path shows no referral (grade-1 off-by-default)"
@@ -36,7 +36,7 @@ fi
 # how an id would be pulled at runtime). Interpolating the static $REFERRAL_ID into the
 # URL string is fine — check (b) above already proved that id is a pure literal, so the
 # only thing left to forbid is fetching: curl / wget / $(...) / backticks.
-if grep -niE 'referral' init.sh | grep -qE 'curl|wget|\$\(|`'; then
+if grep -qE 'curl|wget|\$\(|`' <<<"$(grep -niE 'referral' init.sh)"; then   # captured, not piped (seed #61794)
   bad "a referral line fetches its id/url at runtime (curl/wget/\$()/backtick) — not auditable"
 else
   ok "referral id/url is never curl'd, wget'd, or command-substituted"

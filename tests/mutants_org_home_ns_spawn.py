@@ -20,6 +20,6 @@ MUTANTS = {
         ('. "$ROOT/scripts/org_tmux.sh"   #',
          ': "$ROOT/scripts/org_tmux.sh"   #'),
     "P2 the one-body guard counts another org's body (A's founder CLI stops B's spawn)":
-        ('       && { [ -z "$MULTI" ] || tr',
-         '       && { true || tr'),
+        ('       && { [ -z "$MULTI" ] || grep',
+         '       && { true || grep'),
 }

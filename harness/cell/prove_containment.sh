@@ -47,7 +47,7 @@ else pass "A real DB identifier absent from entire cell filesystem"; fi
 echo "== ESCAPE B — astryx MCP DSN resolution (server.mjs:15 logic, unconditional grant) =="
 BDSN=$(node /home/umair/astryx/channel/resolve_dsn.mjs 2>&1 || echo ERR)
 echo "     resolved: $BDSN"
-if echo "$BDSN" | grep -q 'astryx-sandbox-pg' && ! echo "$BDSN" | grep -Eq 'genesis|127\.0\.0\.1'; then
+if grep -q 'astryx-sandbox-pg' <<<"$BDSN" && ! grep -Eq 'genesis|127\.0\.0\.1' <<<"$BDSN"; then
   pass "B server.mjs sibling-\.env resolution yields SANDBOX dsn"
 else bad "B server.mjs resolution did not yield sandbox dsn"; fi
 if psql "$BDSN" -tc "INSERT INTO messages (from_agent,from_org,to_agent,to_org,thread,intent,body) VALUES ('cell-probe','local','seed','local','g15-containment','chat','canary-write') RETURNING id" >/dev/null 2>&1; then
@@ -57,7 +57,7 @@ else bad "B could not write to sandbox pg (proof inconclusive)"; fi
 echo "== ESCAPE C — hooks/step.py hardcoded DSN_FILE =="
 CDSN=$(python3 -c "import sys; sys.path.insert(0,'/home/umair/astryx/hooks'); import step; print(step.dsn())" 2>&1 || echo ERR)
 echo "     resolved: $CDSN"
-if echo "$CDSN" | grep -q 'astryx-sandbox-pg' && ! echo "$CDSN" | grep -Eq 'genesis|127\.0\.0\.1'; then
+if grep -q 'astryx-sandbox-pg' <<<"$CDSN" && ! grep -Eq 'genesis|127\.0\.0\.1' <<<"$CDSN"; then
   pass "C step.py dsn() yields SANDBOX dsn (hardcoded path now reads canary)"
 else bad "C step.py dsn() did not yield sandbox dsn"; fi
 

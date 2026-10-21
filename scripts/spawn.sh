@@ -90,8 +90,9 @@ fi
 if [ -z "$RENDER" ] && ! tmux has-session -t "=ax-$AGENT" 2>/dev/null; then
   for pid in $(pgrep -f 'channel/server.mjs' 2>/dev/null); do
     # several orgs: an agent NAME is per org (S3b), so only a body of THIS org's agent (its HOME carried) counts
-    if tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -qx "ASTRYX_AGENT=$AGENT" \
-       && { [ -z "$MULTI" ] || tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -qxF "ASTRYX_HOME=$ORGH"; }; then
+    envl=$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null || true)
+    if grep -qx "ASTRYX_AGENT=$AGENT" <<<"$envl" \
+       && { [ -z "$MULTI" ] || grep -qxF "ASTRYX_HOME=$ORGH" <<<"$envl"; }; then
       echo "'$AGENT' already has a live body outside tmux (channel server pid $pid) — refusing a second one"
       exit 1
     fi
@@ -349,9 +350,9 @@ tmux send-keys -t "=$SESS:" "$CLI ${RESUME}--model $MODEL $PERMFLAG --disallowed
 for i in $(seq 1 30); do
   sleep 2
   pane=$(tmux capture-pane -t "=$SESS:" -p 2>/dev/null || true)
-  if echo "$pane" | grep -qE '❯ 1\.|Do you want|Yes, I accept'; then
+  if grep -qE '❯ 1\.|Do you want|Yes, I accept' <<<"$pane"; then
     tmux send-keys -t "=$SESS:" "1" ; sleep 1; tmux send-keys -t "=$SESS:" Enter
-  elif echo "$pane" | grep -qE '^\s*❯\s*$|bypass permissions'; then
+  elif grep -qE '^\s*❯\s*$|bypass permissions' <<<"$pane"; then
     break
   fi
 done

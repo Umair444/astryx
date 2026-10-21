@@ -219,7 +219,7 @@ fi
 # the case it can actually see — pg_dump exiting 0 over truncated/garbage bytes — because
 # the error exit above is handled by `set -e` plus the trap, which is what an error exit
 # needs. Either way nothing named *.dump exists yet.
-if [ ! -s "$part" ] || ! head -c 5 "$part" | grep -q 'PGDMP'; then
+if [ ! -s "$part" ] || ! grep -q 'PGDMP' <<<"$(head -c 5 "$part")"; then
   echo "backup: dump looks invalid (truncated or not a pg_dump archive) — discarding" >&2
   exit 1
 fi

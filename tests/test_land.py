@@ -362,6 +362,20 @@ def main():
     check("L16 …a domain query that FAILS runs the gate anyway and says so (fail closed)",
           rc == 0 and (f.w / "reach-ran.txt").exists() and "its domain query failed, rc 2, so it runs anyway" in out, out)
 
+    # L17 S2F (seed #61794): the workflow lint's refusal reads its UNATTRIBUTED line from a here-string, never
+    # `printf | grep -q`. Under pipefail that pipe read a MATCH as a failure once the producer outran the pipe buffer
+    # (grep -q exits, printf takes SIGPIPE), so a big enough list skipped the refusal: fail OPEN. Here the lint prints
+    # its UNATTRIBUTED line FIRST, then ~1.2 MB more, and exits 3; the land must be refused every time.
+    lint = ("import sys\nprint('UNATTRIBUTED abc1234 plan-10224: no task named')\n"
+            "sys.stdout.write(''.join(f'UNATTRIBUTED f{i:07d} filler\\n' for i in range(40000)))\nsys.exit(3)\n")
+    refused = 0
+    for _ in range(3):
+        f = Fx({"tests/test_ok.py": OK_TEST}, base_files={"src/astryx/workflow.py": lint})
+        rc, out = f.land(f"{f.base}..{f.head}")
+        refused += rc == 1 and f.main() == f.base and "re-word them" in out
+    check("L17 a workflow lint naming an UNATTRIBUTED commit refuses the land even when its list is ~1.2 MB "
+          "(3 of 3: the SIGPIPE path can't skip the refusal)", refused == 3, f"{refused}/3 refused; last: {out[-300:]}")
+
     print(f"\n{'PASS' if not fails else 'FAIL'}: land ({len(fails)} failing)")
     return 1 if fails else 0
 

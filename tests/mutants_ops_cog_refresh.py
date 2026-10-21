@@ -13,5 +13,5 @@ TIMEOUT = 360
 
 MUTANTS = {
     "R1 refresh counts every org's channel body of the name (lab's refresh reads 2 bodies, a false ERROR)":
-        ('      && { [ -z "${COGH:-}" ] || tr', '      && { true || tr'),
+        ('      && { [ -z "${COGH:-}" ] || grep', '      && { true || grep'),
 }

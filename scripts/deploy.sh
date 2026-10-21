@@ -245,7 +245,7 @@ restart_org() {
     # "=name:" — a bare "=name" is a SESSION target; capture-pane wants a pane, so it never resolved
     local ok=0
     for _ in $(seq 1 60); do
-      tmux capture-pane -pt "=ax-$a:" 2>/dev/null | grep -q 'bypass permissions' && { ok=1; break; }
+      grep -q 'bypass permissions' <<<"$(tmux capture-pane -pt "=ax-$a:" 2>/dev/null)" && { ok=1; break; }
       sleep 2
     done
     [ $ok = 1 ] || { echo "  ✗ $a: spawned, but its session never reached the ready prompt"; bad=1; }

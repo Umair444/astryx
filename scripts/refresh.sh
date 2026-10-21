@@ -81,7 +81,7 @@ if [ "$n" -ne 0 ]; then echo "  ERROR: transcripts remain — a resume could hap
 out=$("$ROOT/scripts/spawn.sh" "$AGENT" 2>&1); echo "  spawn: $out"
 
 # 5. ASSERT boot=fresh (if it resumed, a transcript survived somewhere — a real failure)
-if ! echo "$out" | grep -q 'boot=fresh'; then echo "  ERROR: did not boot fresh"; exit 1; fi
+if ! grep -q 'boot=fresh' <<<"$out"; then echo "  ERROR: did not boot fresh"; exit 1; fi
 
 # 6. verify EXACTLY ONE channel body under ASTRYX_AGENT=<agent> (no split doorbell).
 #    Poll: the channel server starts as claude loads its MCP, a beat after spawn.
@@ -89,8 +89,9 @@ cnt=0
 for _ in $(seq 1 10); do
   cnt=0
   for pid in $(pgrep -f 'channel/server.mjs' 2>/dev/null); do
-    tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -qx "ASTRYX_AGENT=$AGENT" \
-      && { [ -z "${COGH:-}" ] || tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -qxF "ASTRYX_HOME=$ORGH"; } \
+    envl=$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null)
+    grep -qx "ASTRYX_AGENT=$AGENT" <<<"$envl" \
+      && { [ -z "${COGH:-}" ] || grep -qxF "ASTRYX_HOME=$ORGH" <<<"$envl"; } \
       && cnt=$((cnt+1))
   done
   [ "$cnt" -ge 1 ] && break

@@ -55,7 +55,7 @@ fi
 
 # the window: observatory answers with live counts
 OV=$(curl -fsS --max-time 5 "http://localhost:$PORT/api/overview" 2>/dev/null)
-if [ -n "$OV" ] && printf '%s' "$OV" | grep -q '"agents"'; then
+if [ -n "$OV" ] && grep -q '"agents"' <<<"$OV"; then
   ok "observatory serving live data on :$PORT"
 else
   warn "observatory not answering on :$PORT (systemctl status astryx-observatory)"

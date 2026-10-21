@@ -693,6 +693,13 @@ run "pulse witness: clock death stays learnable" "$PY" tests/test_pulse_witness.
 # a planted defect reports "none dormant" in exactly the same words as a clean estate.
 run "glob-vacuity can still find a planted dormant glob" "$PY" devtools/glob_vacuity.py --selftest
 run "referral opt-in + static-literal" bash devtools/referral_guard.sh
+# its ORACLE (plan-10224 S2F, seed #61794): the guard on ~1 MB producers, the offending line first, 3 runs each, because
+# its pipe-into-grep -q form passed on SIGPIPE under pipefail. Hermetic fixture trees. Mutants: tests/mutants_referral_guard.py.
+run "referral_guard oracle: a leaked or fetched referral FAILs on any producer size" "$PY" tests/test_referral_guard.py
+# the CLASS (plan-10224 S2F): no `producer | grep -q` in a tracked shell file that turns pipefail on. grep -q exits at its
+# first match, the producer takes SIGPIPE, and pipefail reads the match as a failure (restore_verify 08-14, check.sh's
+# belt, sqlsite 10-21). Capture, then grep -q <<<"$v". The race itself is measured, and a parser arm pairs every shape.
+run "pipefail grep -q: no pipe into grep -q where pipefail is on (SIGPIPE reads a match as a failure)" "$PY" tests/test_pipefail_grep_q.py
 # OKF frontmatter for the memory estate. The invariant is ADDITIVITY: attaching metadata
 # must change nothing the three live lints read. Pure stdlib; the arms that touch the real
 # estate skip on a clean checkout (memory/ is gitignored), and the PyYAML cross-check arm

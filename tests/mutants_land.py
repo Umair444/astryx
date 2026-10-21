@@ -74,4 +74,7 @@ MUTANTS = {
     "F5 S2F: the domain is a copy here (every .py/.sh anywhere), not the gate's own rule":
         ('            | env -u ASTRYX_AGENT timeout "$TEST_TIMEOUT" "$PY" "$REACH" --in-domain 2>/dev/null); mrc=$?',
          "            | grep -E '[.](py|sh)$'); mrc=$?"),
+    "F6 S2F: the workflow refusal pipes its lint output into grep -q again (a big UNATTRIBUTED list lands)":
+        ("if [ $wrc -eq 3 ] && grep -q '^UNATTRIBUTED ' <<<\"$wl\"; then",
+         "if [ $wrc -eq 3 ] && printf '%s\\n' \"$wl\" | grep -q '^UNATTRIBUTED '; then"),
 }

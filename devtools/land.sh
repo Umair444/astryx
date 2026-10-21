@@ -147,7 +147,7 @@ done
 wl=$(env -u ASTRYX_AGENT timeout "$TEST_TIMEOUT" "$PY" src/astryx/workflow.py lint "$A_SHA..$B_SHA" 2>&1); wrc=$?
 # Refused only when the two instruments agree: rc 3 (findings) AND at least one UNATTRIBUTED line. A crash (1), no
 # database (2), a timeout (124), or rc 3 with no line all read NOT CHECKED, said, never a refusal (a1 #60239).
-if [ $wrc -eq 3 ] && printf '%s\n' "$wl" | grep -q '^UNATTRIBUTED '; then
+if [ $wrc -eq 3 ] && grep -q '^UNATTRIBUTED ' <<<"$wl"; then   # a here-string, never `printf | grep -q` (pipefail + SIGPIPE: S2F, seed #61794)
   printf '%s\n' "$wl" | grep '^UNATTRIBUTED ' | sed 's/^/land: /'
   refuse "the range has commits naming a workflow goal but none of its tasks (re-word them: plan-<goal> <task>: …)"
 elif [ $wrc -ne 0 ]; then

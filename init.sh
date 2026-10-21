@@ -424,7 +424,7 @@ EOF
   # body (GROWBOT_BODY_URL elsewhere: the chip serves the protocol itself) must leave it installed and NOT enabled.
   if [ -f src/astryx/contrib/growbot_body.py ] && \
      grep -rqsE '^Grants:.*\bgrowbot\b' --exclude='*.example.md' "$ORGH/agents/"; then
-    gb_off=""; { [ -z "$gb_url" ] || echo "$gb_url" | grep -qE '127\.0\.0\.1|localhost'; } || gb_off=1
+    gb_off=""; { [ -z "$gb_url" ] || grep -qE '127\.0\.0\.1|localhost' <<<"$gb_url"; } || gb_off=1
     _uw astryx-growbot service && cat > "$_UF" <<EOF
 [Unit]
 Description=astryx growbot body — the open GrowBot body protocol over the USB-serial Pico (:${_UP:-8470})
@@ -576,7 +576,7 @@ _act_pg() {
   # THE DECLARED SERVER (steward F4, seed #42759): infra/pg is the design (pg18 + pgvector + postgis + AGE pinned,
   # loopback only, max_connections in the compose file). Never a stock image: AGE, pgvector and postgis are part of
   # the org's design, and a stock postgres:18 carries none of them.
-  if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$PG_CONTAINER"; then
+  if grep -qx "$PG_CONTAINER" <<<"$(docker ps -a --format '{{.Names}}' 2>/dev/null)"; then
     docker start "$PG_CONTAINER" >/dev/null
     [ -f .env ] || die "$PG_CONTAINER exists but no .env — write ASTRYX_DSN=... to .env"
   elif command -v docker >/dev/null; then
@@ -771,8 +771,8 @@ _act_law() { cp local.template.md local.md; say "created local.md from template 
 # succeeding (not reachability). A human logs in; halt-report, converge around it.
 # env -u ASTRYX_AGENT: the probe's claude runs the Stop hook (hooks/step.py), which with an inherited agent name
 # wrote a fake 'reply with exactly: ok' turn + steps to prod under the caller's name (a2 #53059); unnamed, it writes nothing.
-_chk_login() { printf 'reply with exactly: ok' | env -u ASTRYX_AGENT timeout 30 claude -p --model haiku \
-  --strict-mcp-config --tools "" 2>/dev/null | grep -q .; }
+_chk_login() { [ -n "$(printf 'reply with exactly: ok' | env -u ASTRYX_AGENT timeout 30 claude -p --model haiku \
+  --strict-mcp-config --tools "" 2>/dev/null)" ]; }
 
 # seed: interior but NON-PERSISTENT (the body can crash) → re-checked & re-spawned every
 # pass. spawn.sh is idempotent (has-session guard), so re-actuation is safe.
@@ -847,7 +847,7 @@ _act_prreview() {
 # local_files_only=True, so it never fetches at runtime — the runtime-silent path the
 # design forbids). Re-checked every pass → re-fetched if evicted. Needs the media deps.
 _chk_model() {
-  echo " $(active_dep_groups) " | grep -q ' media ' || return 0   # no voice channel → nothing to cache
+  grep -q ' media ' <<<" $(active_dep_groups) " || return 0   # no voice channel → nothing to cache
   venv/bin/python -c 'from faster_whisper import WhisperModel; WhisperModel("small", device="cpu", compute_type="int8", local_files_only=True)' 2>/dev/null \
     && venv/bin/python -c 'import hashlib, sys; from astryx.hearing import voiceprint as v; sys.exit(0 if v.MODEL.is_file() and hashlib.sha256(v.MODEL.read_bytes()).hexdigest() == v.MODEL_SHA else 1)' 2>/dev/null \
     && venv/bin/python -c 'import hashlib, sys; from astryx.hearing import wake as w; sys.exit(0 if all((w.DIR / f).is_file() and hashlib.sha256((w.DIR / f).read_bytes()).hexdigest() == h for f, h in w.FILES.items()) else 1)' 2>/dev/null; }
@@ -1228,7 +1228,7 @@ if [ "${1:-}" = "doctor" ]; then
       || bad "UNDECLARED third-party import — add it to src/astryx/data/deps.conf (venv/bin/python src/astryx/core/deps.py coverage)"
     # media TERMINAL observable: real in-process decode, not `import av` — a half-broken
     # wheel imports fine and decodes nothing, which is the silent-None-on-first-voice gap.
-    if echo " $DGROUPS " | grep -q ' media '; then
+    if grep -q ' media ' <<<" $DGROUPS "; then
       venv/bin/python src/astryx/core/media_probe.py >/dev/null 2>&1 \
         && ok "media: in-process decode works (libav, no ffmpeg shell-out)" \
         || bad "media stack can't decode — voice notes would SILENTLY drop (src/astryx/core/media_probe.py)"
@@ -1311,7 +1311,7 @@ if [ "${1:-}" = "doctor" ]; then
     # produce (an undeclared runner/service: the blind spot that started plan-17).
     undeclared=""
     for u in $(systemctl list-unit-files --no-legend 'astryx-*.service' 'astryx-*.timer' 2>/dev/null | awk '{print $1}' | _mine); do
-      echo "$gen_list" | grep -qx "$u" || undeclared="$undeclared $u"
+      grep -qx "$u" <<<"$gen_list" || undeclared="$undeclared $u"
     done
     [ -z "$undeclared" ] && ok "no undeclared astryx units (nothing runs off-book)" \
       || bad "astryx units systemd knows but NOTHING generates (undeclared):$undeclared"
@@ -1346,7 +1346,7 @@ if [ "${1:-}" = "doctor" ]; then
   # the address containers reach this host by (wacli's webhook → the whatsapp bridge). It must be an address this host
   # holds, since the bridge binds it: a Docker Desktop answer (host.docker.internal) may not be bindable from inside WSL.
   _dhip=$(_docker_host_ip "$ORGH/.env")
-  if ip -4 addr 2>/dev/null | grep -q "inet $_dhip/"; then
+  if grep -q "inet $_dhip/" <<<"$(ip -4 addr 2>/dev/null)"; then
     ok "docker host address $_dhip (held by this host; override with ASTRYX_DOCKER_HOST_IP in .env)"
   elif command -v ip >/dev/null; then
     warn "docker host address $_dhip is not an address of this host — the whatsapp bridge can't bind it; set ASTRYX_DOCKER_HOST_IP in .env if you use whatsapp"

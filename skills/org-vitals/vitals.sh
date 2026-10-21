@@ -64,9 +64,9 @@ _gap="$(q "WITH g AS (SELECT prev, ts FROM (SELECT ts, coalesce(lag(ts) OVER (OR
  SELECT CASE WHEN sil > interval '6 hours' THEN 'HOST/PULSE DARK          ' ELSE 'PULSE UP, NO AGENT TURNED' END||'  '||to_char(prev AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI\"Z\"')||' → '||to_char(ts AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI\"Z\"')||'  no steps '||round(EXTRACT(EPOCH FROM ts-prev)/3600.0,1)||'h, longest message silence '||round(EXTRACT(EPOCH FROM sil)/3600.0,1)||'h  (resumed '||round(EXTRACT(EPOCH FROM now()-ts)/3600.0,1)||'h ago)' FROM c ORDER BY ts DESC")"
 if [ -n "$_gap" ]; then
   printf '%s\n' "$_gap"
-  printf '%s\n' "$_gap" | grep -q '^HOST/PULSE DARK' && \
+  grep -q '^HOST/PULSE DARK' <<<"$_gap" && \
     echo "  ⚠ HOST/PULSE DARK: expect boot backlog and vacuous live-window gates; still reproduce each red before calling it an artifact"
-  printf '%s\n' "$_gap" | grep -q '^PULSE UP, NO AGENT TURNED' && \
+  grep -q '^PULSE UP, NO AGENT TURNED' <<<"$_gap" && \
     echo "  ⚠ PULSE UP, NO AGENT TURNED: the pulse ran and nobody turned (wedged sessions, quota shed?). That is a FINDING to investigate, not boot noise"
   true
 else
