@@ -54,10 +54,14 @@ def main(url, tmp):
     from fastapi.testclient import TestClient
 
     with psycopg.connect(url, autocommit=True) as c, TestClient(obs.app) as cl:
-        def rows(thread=None):
-            q = "SELECT from_agent, to_agent, intent, thread, body FROM messages WHERE starts_with(thread, 'cog-new-org-')"
-            return [tuple(r) for r in c.execute(q + (" AND thread = %s" if thread else "") + " ORDER BY id",
-                                                 (thread,) if thread else ()).fetchall()]
+        def rows(thread=None):           # two literal statements: sqlguard's inventory reads SQL it can see (steward #61761 D)
+            if thread:
+                return [tuple(r) for r in c.execute(
+                    "SELECT from_agent, to_agent, intent, thread, body FROM messages"
+                    " WHERE starts_with(thread, 'cog-new-org-') AND thread = %s ORDER BY id", (thread,)).fetchall()]
+            return [tuple(r) for r in c.execute(
+                "SELECT from_agent, to_agent, intent, thread, body FROM messages"
+                " WHERE starts_with(thread, 'cog-new-org-') ORDER BY id").fetchall()]
 
         def post(body, headers=O):
             r = cl.post("/api/cog/orgs", json=body, headers=headers)

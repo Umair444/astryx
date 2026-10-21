@@ -612,7 +612,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 298,
+  "debt_rows": 296,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 5,
@@ -1181,16 +1181,6 @@
    "debt": "UNEXECUTED",
    "reason": "people library 1a cutover: the owner-gated endpoint LEFT JOINs social_relation for the details; no oracle drives the FastAPI app, so this re-texted read stays UNEXECUTED",
    "tk": "sha256t:b001e563955803e31de2c9016b585fa3193106f45184777d38c8fc9e882d17da"
-  },
-  "observatory/api/main.py::overview\u001f*": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:51aee8803385dca2630884b747ab7565d4a2b8b2bd20de88ed3d2593a3d4ca74"
-  },
-  "observatory/api/main.py::overview\u001fselect distinct agent from steps": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:f64ef54f6cd44cbdea881d24ac76addfd46855af54b1a6ea6705c0b94ae087e3"
   },
   "observatory/api/main.py::owner_send\u001finsert into messages (from_agent, to_agent, thread, intent, body) values ('owner', ?, ?, 'chat', ?) returning *": {
    "debt": "UNEXECUTED",

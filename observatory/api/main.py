@@ -3302,7 +3302,9 @@ async def cog_new_org(m: NewOrg, request: Request):
     body = f"COG NEW ORG key={key} name={name} purpose={purpose or '-'}"
     async with pool.acquire() as c, c.transaction():
         await c.execute("SELECT pg_advisory_xact_lock(hashtext($1))", thread)
-        if await c.fetchval("SELECT id FROM messages WHERE thread = $1 AND ts > now() - interval '1 day' "
+        # fetchrow, not fetchval: sqlguard's shim counts a fetchrow's rows, so this WHERE can show both sides and climb to
+        # RESPONSIVE; a fetchval reads rows=-1 and is capped at EXECUTED (a3 #61777). A row is truthy, None isn't.
+        if await c.fetchrow("SELECT id FROM messages WHERE thread = $1 AND ts > now() - interval '1 day' "
                             "ORDER BY id DESC LIMIT 1", thread):
             return JSONResponse({"error": f"a request for {key} is already open", "thread": thread}, status_code=409)
         row = await c.fetchrow(
