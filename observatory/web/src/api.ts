@@ -35,17 +35,27 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
 }
 
 /* PUT/DELETE with the owner key — for the SQL workbench's saved files */
-export async function apiSend<T>(method: string, path: string, body?: unknown): Promise<T> {
+/* An API refusal that carries the server's own words ({"error": "..."}) and its status, so a 409 can be told apart */
+export class ApiError extends Error {
+  constructor(message: string, public status: number, public data: Record<string, unknown> | null) { super(message) }
+}
+
+export async function apiSend<T>(method: string, path: string, body?: unknown, headers?: Record<string, string>): Promise<T> {
   const key = obsKey()
   const r = await fetch('/api' + path, {
     method,
     headers: {
       ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
       ...(key ? { 'x-obs-key': key } : {}),
+      ...(headers ?? {}),
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
-  if (!r.ok) throw new Error(`${path}: ${r.status}`)
+  if (!r.ok) {
+    let data: Record<string, unknown> | null = null
+    try { data = await r.json() } catch { /* not json */ }
+    throw new ApiError(typeof data?.error === 'string' ? data.error : `${path}: ${r.status}`, r.status, data)
+  }
   return r.json()
 }
 

@@ -62,8 +62,9 @@ def main():
     arm("set_env prints nothing", buf.getvalue() == "", buf.getvalue())
     config.set_env("DUP", "new", f)
     lines = f.read_text().splitlines()
-    arm("set_env replaces the FIRST occurrence in place (same line number)",
-        lines[4] == "DUP=new" and lines[5] == "DUP=second" and config.read_env(f)["DUP"] == "new", str(lines[3:7]))
+    arm("set_env replaces the FIRST occurrence in place (same line number) and drops the later one (plan-11860 BC-1)",
+        lines[4] == "DUP=new" and "DUP=second" not in lines and sum(ln.startswith("DUP=") for ln in lines) == 1
+        and config.read_env(f)["DUP"] == "new", str(lines[3:7]))
     g = t / "nonl"
     g.write_text("A=1")
     config.set_env("B", "2", g)

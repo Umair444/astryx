@@ -35,18 +35,10 @@ RESTART = "sudo systemctl restart astryx-gateway"
 
 # ------------------------------------------------------------------ .env, in place
 def set_env(path: Path, values: dict) -> None:
-    """Rewrite KEY=... lines in place, append the missing keys, keep every other line."""
-    lines = path.read_text().splitlines() if path.exists() else []
-    left = dict(values)
-    out = []
-    for line in lines:
-        k = line.split("=", 1)[0].strip() if "=" in line and not line.lstrip().startswith("#") else None
-        if k in left:
-            out.append(f"{k}={left.pop(k)}")
-        else:
-            out.append(line)
-    out += [f"{k}={v}" for k, v in left.items()]
-    path.write_text("\n".join(out) + "\n")
+    """Set each KEY=value through config.set_env, the ONE .env writer (plan-11860 E5): atomic, 0600, a single-line
+    value only, and the key written exactly once."""
+    for k, v in values.items():
+        config.set_env(k, str(v), path)
 
 
 def _pubkey(env: dict) -> str:

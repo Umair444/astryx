@@ -196,7 +196,7 @@ async def send_files(chat: str, files: list[str], out: Outcome | None = None, *,
         return
     outbox = Path(DATA_HOST) / "astryx-outbox"
     outbox.mkdir(exist_ok=True)
-    route = next((r for r in routes() if str(r.get("chat")) == chat), None)
+    route = routes().chat(chat)
     for f in files:
         try:                              # never silent: the body may still say "attached"
             name, data = read_checked(f, agent, owner_only("whatsapp", route))
@@ -289,7 +289,7 @@ async def hook(request: Request):
         return Response(status_code=400)
 
     chat = jid_str(m.get("Chat"))
-    route = next((r for r in routes() if r.get("chat") == chat), None)
+    route = routes().chat(chat)
     if route is None:
         return {"ok": True}                       # not a surface we serve
 
@@ -577,8 +577,8 @@ async def deliver(row):
                   f"un-threaded or wa:<jid> to reach WhatsApp)", flush=True)
         return
     else:                            # UNTHREADED: the owner doorbell, by design.
-        route = next((r for r in routes() if r["agent"] == row["from_agent"]), None) \
-            or next((r for r in routes() if r["agent"] == HOME_AGENT), None)
+        rt = routes()
+        route = rt.doorbell(row["from_agent"]) or rt.doorbell(HOME_AGENT)
         chat = route and route["chat"]
         if not chat and row["id"] not in _skipped_threads:
             _skipped_threads.add(row["id"])

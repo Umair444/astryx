@@ -1014,6 +1014,10 @@ run "observatory: an opened thread pane marks its replies read" "$PY" tests/test
 # The floor's owner routes: who knows whom (influence edges per kind, the coverage floor shown, one compute's ranks) and
 # the cog's rooms (absent registry = one org; a refused one says why). Mutants: tests/mutants_observatory_floor.py.
 run "observatory: the floor's influence and cog routes (goal 11324)" "$PY" tests/test_observatory_floor.py
+# plan-11860 F0: the gate is (METHOD, path) pairs, routes have ONE resolver/validator (bridges, PUT, doctor), host files
+# ONE atomic writer, .env ONE writer with no duplicate keys, the routes PUT needs If-Match and answers the effective
+# diff, and the public glyphs are an allowlisted projection. Mutants: tests/mutants_floor_f0.py (run on a worktree).
+run "floor F0: method-aware gate, one route resolver, one host writer, one .env writer, public glyphs projected" "$PY" tests/test_floor_f0.py
 # devtools/sqlsite.sh: one oracle's sqlguard view (rungs + why; --ledger: what enforce would say), advisory, writes
 # nothing. Mutants: tests/mutants_sqlsite.py.
 run "sqlsite: one oracle's sqlguard view, and the ledger diff, write nothing" "$PY" tests/test_sqlsite.py

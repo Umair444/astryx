@@ -122,7 +122,7 @@ function ChannelBlock({ data, onSaved }: { data: ChannelRoutes; onSaved: () => v
     setSaving(true)
     setMsg(null)
     try {
-      const r = await apiSend<{ count: number }>('PUT', `/wire/routes/${data.channel}`, { routes })
+      const r = await apiSend<{ count: number }>('PUT', `/wire/routes/${data.channel}`, { routes }, { 'if-match': data.etag })
       setMsg(`saved ${r.count} route${r.count === 1 ? '' : 's'} — live now`)
       onSaved()
     } catch (e) {
@@ -153,6 +153,11 @@ function ChannelBlock({ data, onSaved }: { data: ChannelRoutes; onSaved: () => v
         </div>
       </div>
 
+      {data.problems?.length > 0 && (
+        <div className="mb-3 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-[12px] text-warn">
+          {data.problems.map((p) => <div key={p}>{p}</div>)}
+        </div>
+      )}
       <div className="space-y-2">
         {routes.map((r, i) => (
           <RouteRow

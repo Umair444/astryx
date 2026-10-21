@@ -156,6 +156,22 @@ def _check_pair(v: str, src: str, path, environ) -> None:
         raise ForeignDSN(f"{src} names database {db!r}, and the registry gives {mine} {reg[mine]['db']!r}")
 
 
+def duplicate_keys(path: Path | None = None) -> list[str]:
+    """Keys a .env holds more than once (plan-11860 E5): read_env is first-wins and systemd's EnvironmentFile is
+    last-wins, so each one is a value two readers disagree on. Names only, never a value."""
+    p = Path(path) if path else env_path()
+    try:
+        text = p.read_text()
+    except (FileNotFoundError, NotADirectoryError):
+        return []
+    seen: dict[str, int] = {}
+    for line in text.splitlines():
+        if "=" in line and not line.lstrip().startswith("#"):
+            k = line.split("=", 1)[0]
+            seen[k] = seen.get(k, 0) + 1
+    return sorted(k for k, n in seen.items() if n > 1)
+
+
 def is_set(key: str, path: Path | None = None) -> bool:
     return bool(read_env(path).get(key))
 
@@ -170,10 +186,14 @@ def set_env(key: str, value: str, path: Path | None = None) -> None:
         text = ""
     lines = text.splitlines(keepends=True)
     new = f"{key}={value}\n"
-    for i, line in enumerate(lines):
-        if line.split("=", 1)[0] == key and "=" in line:
-            lines[i] = new
-            break
+    # the key is written EXACTLY ONCE, at its first position, and every later occurrence is dropped in the same replace
+    # (plan-11860 BC-1): read_env is first-wins but a bridge's systemd EnvironmentFile is last-wins, so a duplicate
+    # left behind would hand the two readers different values
+    hits = [i for i, line in enumerate(lines) if "=" in line and line.split("=", 1)[0] == key]
+    if hits:
+        lines[hits[0]] = new
+        for i in reversed(hits[1:]):
+            del lines[i]
     else:
         if lines and not lines[-1].endswith("\n"):
             lines[-1] += "\n"

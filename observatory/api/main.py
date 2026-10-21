@@ -85,9 +85,15 @@ VEGA_HOME = Path(tempfile.gettempdir()) / "astryx-vega-conjure"
 # An agent's FACE is metadata (it exists, it looks like this), public like its name in /api/agents;
 # an <img> cannot send the owner header, so the avatar route is the one parameterised public path.
 _PUBLIC_AVATAR = re.compile(r"^/api/agents/[a-z][a-z0-9_-]{0,40}/avatar$")
-PUBLIC_PATHS = {"/api/overview", "/api/peers", "/api/vega", "/api/whoami",
-                "/api/events", "/api/messages", "/api/agents",
-                "/favicon.svg"}
+# The anonymous allowlist is (METHOD, path) PAIRS (plan-11860 E1): a path being public for GET never opens its POST.
+# A public non-GET is declared here by name, with its reason: today only POST /api/vega (the public concierge, which
+# reaches no actuator by construction; see its handler). HEAD is judged as GET. Everything else is owner-only.
+PUBLIC = {("GET", "/api/overview"), ("GET", "/api/peers"), ("GET", "/api/whoami"),
+          ("GET", "/api/events"), ("GET", "/api/messages"), ("GET", "/api/agents"),
+          ("GET", "/api/floor/glyphs"),     # the wiring's allowlisted projection (owner ruling, poll #61982)
+          ("POST", "/api/vega"),            # the public concierge: a visitor must be able to talk to it
+          ("GET", "/favicon.svg")}
+PUBLIC_PATHS = {p for _, p in PUBLIC}    # the paths alone, for readers that only name a path (the census, comments)
 # /api/steps REMOVED from the anonymous allowlist 2026-08-13, on Umair's explicit
 # instruction ("gate it for now; we will discuss why it is public tomorrow").
 # WHY, so the decision is legible rather than silent: step CONTENT is the verbatim body
@@ -292,6 +298,8 @@ app = FastAPI(lifespan=lifespan)
 # imported through the repo package (REPO is on sys.path), so main.py loads the same way under uvicorn and when an
 # oracle loads it by path; the pool is handed over, never re-imported (steward #44464)
 from observatory.api import pilot_voice as _pilot_voice  # noqa: E402
+from observatory.api.hostfile import Conflict, atomic_write, etag  # noqa: E402 — the ONE host-file writer (plan-11860 E3)
+from bridges import routing as _routing  # noqa: E402 — the ONE route resolver/validator (plan-11860 E2)
 _pilot_voice.bind(lambda: pool)
 app.include_router(_pilot_voice.router)
 
@@ -311,7 +319,8 @@ app.include_router(_room.router)
 @app.middleware("http")
 async def privacy_gate(request: Request, call_next):
     p = request.url.path
-    if (p.startswith("/api/") and p not in PUBLIC_PATHS and not _PUBLIC_AVATAR.match(p)
+    m = "GET" if request.method == "HEAD" else request.method
+    if (p.startswith("/api/") and (m, p) not in PUBLIC and not (m == "GET" and _PUBLIC_AVATAR.match(p))
             and not is_owner(request)):
         return Response(status_code=403)
     return await call_next(request)
@@ -974,7 +983,7 @@ async def charter_put(name: str, edit: CharterEdit, request: Request):
         return Response("no such charter", status_code=404)
     if not edit.content.strip():
         return Response("an empty charter would erase the agent — refused", status_code=400)
-    f.write_text(edit.content)
+    atomic_write(f, edit.content)
     live = f.stem in tmux_alive()
     return {"ok": True, "name": f.stem, "live": live,
             "note": ("saved — respawn the agent to apply" if live
@@ -1088,7 +1097,7 @@ async def agent_runtime_put(name: str, edit: RuntimeEdit, request: Request):
         data[f.stem] = entry
     else:
         data.pop(f.stem, None)          # all-empty → this agent reverts to the org default
-    RUNTIME_PATH.write_text(json.dumps(data, indent=2) + "\n")
+    atomic_write(RUNTIME_PATH, json.dumps(data, indent=2) + "\n")
     live = f.stem in tmux_alive()
     return {"ok": True, "name": f.stem, "configured": bool(entry), "live": live,
             "note": ("saved — respawn the agent to apply" if live
@@ -1156,7 +1165,7 @@ async def agent_create(body: AgentCreate, request: Request):
     else:
         target = agents_dir / f"{name}.md"
     try:
-        target.write_text(body.charter)
+        atomic_write(target, body.charter)
     except Exception as e:
         return Response(f"could not write charter: {e}", status_code=500)
     r = subprocess.run(["bash", str(REPO / "scripts" / "spawn.sh"), name],
@@ -1181,7 +1190,7 @@ async def agent_retire(name: str, request: Request):
     text = f.read_text()
     if not re.search(r"^## Tombstone", text, re.M):
         stamp = datetime.now(timezone.utc).date().isoformat()
-        f.write_text(text.rstrip() + f"\n\n## Tombstone\nRetired via the observatory "
+        atomic_write(f, text.rstrip() + f"\n\n## Tombstone\nRetired via the observatory "
                      f"{stamp}. The name rests; remove this section to revive.\n")
     killed = False
     if name in tmux_alive():
@@ -2351,7 +2360,7 @@ async def sqlfile_get(path: str):
 async def sqlfile_put(f: SqlFile):
     p = _safe_asset(f.path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(f.content)
+    atomic_write(p, f.content)
     return {"ok": True, "path": f.path}
 
 
@@ -2363,7 +2372,7 @@ async def sqlfile_new(f: SqlFile):
     else:
         p.parent.mkdir(parents=True, exist_ok=True)
         if not p.exists():
-            p.write_text(f.content or "-- new query\n")
+            atomic_write(p, f.content or "-- new query\n")
     return {"ok": True, "path": f.path}
 
 
@@ -2644,33 +2653,66 @@ async def growbot_proxy(path: str, request: Request):
 async def wire_routes():
     """Every channel's full route table (enabled AND disabled — the owner manages
     both). trusted_key names the per-channel sender-trust field (jids vs numeric
-    ids) so the editor renders the right control."""
+    ids) so the editor renders the right control. `etag` is the file's sha256: the PUT's If-Match (plan-11860 E4);
+    `problems` is the one validator's verdict on the table as it stands (E2), so a hand edit shows here."""
     out = []
     for ch in _wire_channels():
         routes = _read_routes(ch)
         key = "trusted_jids" if (ch == "whatsapp"
                                  or any("trusted_jids" in r for r in routes)) else "trusted_ids"
-        out.append({"channel": ch, "routes": routes, "trusted_key": key})
+        out.append({"channel": ch, "routes": routes, "trusted_key": key, "etag": etag(_routes_file(ch)),
+                    "problems": _routing.validate(routes, set(agent_meta()))})
     return out
 
 
 @app.put("/api/wire/routes/{channel}")
 async def wire_routes_put(channel: str, body: RouteSet, request: Request):
-    """Replace a channel's route table. Validates every route names a chat and a
-    real agent; unknown keys (a discord webhook, a note) are preserved verbatim."""
+    """Replace a channel's route table: THE one write path for routing (the Wiring tab and the floor both call it).
+    plan-11860 E4: the caller names the version it read (If-Match: the GET's etag; absent is 428, stale is 409), the
+    table passes the ONE validator every bridge resolves by (bridges/routing.py: a chat routes once, an agent with
+    several routes names its home), it is written atomically (E3), and the answer is the change AS THE BRIDGES WILL
+    SEE IT (added / removed / moved / doorbell), read from the same resolver. Unknown keys (a discord webhook, a note)
+    are preserved verbatim."""
     if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
         return Response(status_code=403)
     f = _routes_file(channel)
     if not f or channel not in _wire_channels():
         return Response("unknown channel", status_code=404)
-    meta = agent_meta()
-    for r in body.routes:
-        if not isinstance(r, dict) or not str(r.get("chat", "")).strip() or not r.get("agent"):
-            return Response("every route needs a chat and an agent", status_code=400)
-        if r["agent"] not in meta:
-            return Response(f"no such agent: {r['agent']}", status_code=400)
-    f.write_text(json.dumps(body.routes, indent=2, ensure_ascii=False) + "\n")
-    return {"ok": True, "channel": channel, "count": len(body.routes)}
+    want = request.headers.get("if-match", "").strip().strip('"')
+    if not want:
+        return JSONResponse({"error": "If-Match is required: send the etag the routes GET gave you"}, status_code=428)
+    problems = _routing.validate(body.routes, set(agent_meta()))
+    if problems:
+        return JSONResponse({"error": problems[0], "problems": problems}, status_code=400)
+    before = _read_routes(channel)
+    try:
+        tag = atomic_write(f, json.dumps(body.routes, indent=2, ensure_ascii=False) + "\n", if_match=want)
+    except Conflict:
+        return JSONResponse({"error": "the routes changed since you loaded them; reload and try again",
+                             "etag": etag(f)}, status_code=409)
+    return {"ok": True, "channel": channel, "count": len(body.routes), "etag": tag,
+            "diff": _routing.diff(before, body.routes)}
+
+
+# The PUBLIC projection of the wiring (plan-11860 E9, owner ruling poll #61982: the channel icons show publicly).
+# ALLOWLISTED: each output row is built from four named fields and nothing else, so a chat id, a jid, a number, a
+# name, a note or a webhook in the route table can never reach it. Counted per (agent, channel, kind) over ENABLED
+# routes. /api/wire/routes itself stays owner-only.
+def glyphs_of(tables: dict[str, list]) -> list[dict]:
+    counts: dict[tuple[str, str, str], int] = {}
+    for ch, rows in tables.items():
+        for r in _routing.resolve(rows):
+            agent = str(r.get("agent") or "")
+            if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,40}", agent):
+                continue
+            k = (agent, ch, _routing.kind_of(ch, str(r.get("chat", ""))))
+            counts[k] = counts.get(k, 0) + 1
+    return [{"agent": a, "channel": c, "kind": k, "count": n} for (a, c, k), n in sorted(counts.items())]
+
+
+@app.get("/api/floor/glyphs")
+async def floor_glyphs():
+    return glyphs_of({ch: _read_routes(ch) for ch in _wire_channels() if re.fullmatch(r"[a-z]{2,20}", ch)})
 
 
 @app.get("/api/wire/contacts")

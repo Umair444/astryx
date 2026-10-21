@@ -23,6 +23,7 @@ from fastapi import APIRouter
 from fastapi.responses import FileResponse, JSONResponse
 
 from astryx.hearing import voice_mint as V
+from observatory.api.hostfile import atomic_write
 
 router = APIRouter()
 REPO = Path(__file__).resolve().parents[2]
@@ -56,8 +57,7 @@ def speak(text: str, voice: str, out: Path) -> str | None:
         headers={"authorization": f"Bearer {V.env('OPENAI_API_KEY')}", "content-type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
-            out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_bytes(r.read())
+            atomic_write(out, r.read())          # the one host writer (plan-11860 E3): never a torn mp3
         return None
     except urllib.error.HTTPError as e:
         return f"tts http {e.code}"

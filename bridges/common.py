@@ -47,6 +47,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 sys.path.insert(0, str(REPO / "src"))   # astryx.config/paths: the ONE resolver, this bridge's own tree (plan-11324 S3a)
 from astryx import config, paths  # noqa: E402
+from .routing import Routes, read_table, resolve  # noqa: E402,F401 — the one route resolver (plan-11860 E2)
 ESTATE = paths.estate(__file__)          # the org's estate: this checkout on one org, the HOME on several
 MEDIA_DIR = ESTATE / "media"
 
@@ -94,12 +95,11 @@ def env(key: str, default: str = "") -> str:
     return config.get(key, default, f)
 
 
-def load_routes(path: Path) -> list[dict]:
-    """Re-read per use so routes can be edited live, no restart."""
-    try:
-        return [r for r in json.loads(path.read_text()) if r.get("enabled")]
-    except Exception:
-        return []
+def load_routes(path: Path) -> Routes:
+    """Re-read per use so routes can be edited live, no restart. The ENABLED rows, resolved by the one resolver
+    (bridges/routing.py, plan-11860 E2): look a chat up with .chat(id) and a doorbell with .doorbell(agent), never a
+    loop of your own. A file that stops parsing keeps the last good table and alarms (BC-3), never [] silently."""
+    return resolve(read_table(path))
 
 
 # --------------------------------------------------------------------- routing

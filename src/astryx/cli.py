@@ -247,7 +247,40 @@ def cmd_doctor(ctx: Ctx, a) -> int:
         ctx.ui.blank()
         ctx.ui.note("  next: astryx init" if ok else "  fix the ✗ lines, then: astryx init")
         return 0 if ok else 1
-    return init_sh(ctx, "doctor")
+    bad = org_checks(ctx)
+    rc = init_sh(ctx, "doctor")
+    return rc or (1 if bad else 0)
+
+
+def org_checks(ctx: Ctx) -> int:
+    """The org's two shared tables, judged by their ONE authorities (plan-11860 E2/E5): every routes file by the
+    validator every bridge resolves through, and the .env for a key held twice (read_env is first-wins, systemd's
+    EnvironmentFile last-wins: a duplicate is a value two readers disagree on). Names and problems only, never a value.
+    Returns how many failed."""
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))      # this tree's repo root: its bridges/ package
+    from bridges import routing                                         # the SAME validator the bridges and the PUT use
+    ui, bad = ctx.ui, 0
+    ui.section("org tables")
+    for name, ch in CHANNELS.items():
+        f = ctx.root / ch["routes"]
+        if not f.is_file():
+            continue
+        try:
+            rows = json.loads(f.read_text())
+            probs = routing.validate(rows, {p.stem for p in (ctx.home / "agents").rglob("*.md")
+                                            if not p.name.endswith(".example.md")} or None)
+        except ValueError as e:
+            probs = [f"does not parse ({type(e).__name__}): the bridges keep their last good table until it does"]
+        bad += bool(probs)
+        ui.step("fail" if probs else "ok", f"routes: {ch['routes']}", detail="; ".join(probs) or None,
+                fix="edit it in the observatory's Wiring tab (it validates), or by hand" if probs else None)
+    dups = config.duplicate_keys(_env_file(ctx))
+    bad += bool(dups)
+    ui.step("fail" if dups else "ok", ".env holds each key once",
+            detail=("held twice: " + ", ".join(dups)) if dups else None,
+            fix="keep one line per key (the bridges read the LAST, everything else the FIRST)" if dups else None)
+    return bad
 
 
 def _residents() -> list[str]:

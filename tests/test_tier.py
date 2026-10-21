@@ -116,18 +116,24 @@ def _main_ast():
     return src, ast.parse(src)
 
 
-def _public_paths(tree):
+def _public_pairs(tree):
+    """The anonymous allowlist: (METHOD, path) pairs (plan-11860 E1), read from the literal PUBLIC set."""
     for n in ast.walk(tree):
         if isinstance(n, ast.Assign) and any(
-                getattr(t, "id", None) == "PUBLIC_PATHS" for t in n.targets):
-            return {e.value for e in n.value.elts if isinstance(e, ast.Constant)}
-    raise AssertionError("PUBLIC_PATHS not found in main.py — the allowlist moved or "
+                getattr(t, "id", None) == "PUBLIC" for t in n.targets):
+            return {(e.elts[0].value, e.elts[1].value) for e in n.value.elts
+                    if isinstance(e, ast.Tuple) and all(isinstance(x, ast.Constant) for x in e.elts)}
+    raise AssertionError("PUBLIC not found in main.py — the allowlist moved or "
                          "was renamed; this check is blind until it is re-pointed")
 
 
+def _public_paths(tree):
+    return {p for _, p in _public_pairs(tree)}
+
+
 def _public_handlers(src, tree):
-    """(path, method, funcnode) for every route registered on a PUBLIC_PATHS path."""
-    pub = _public_paths(tree)
+    """(path, method, funcnode) for every route registered on a PUBLIC (METHOD, path) pair."""
+    pub = _public_pairs(tree)
     out = []
     for n in ast.walk(tree):
         if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -137,7 +143,8 @@ def _public_handlers(src, tree):
                 continue
             if getattr(d.func.value, "id", None) != "app":
                 continue
-            if d.args and isinstance(d.args[0], ast.Constant) and d.args[0].value in pub:
+            if (d.args and isinstance(d.args[0], ast.Constant)
+                    and (d.func.attr.upper(), d.args[0].value) in pub):
                 out.append((d.args[0].value, d.func.attr, n))
     return out
 
