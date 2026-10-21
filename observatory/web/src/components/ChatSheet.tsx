@@ -101,12 +101,18 @@ export default function ChatSheet({ name, onClose, onProfile }: { name: string; 
               style={{ boxShadow: mood === 'working' ? '0 0 0 2px var(--t-accent), 0 0 30px -6px var(--t-accent)'
                 : mood === 'awake' ? '0 0 0 2px color-mix(in srgb, var(--t-good) 70%, transparent)' : '0 0 0 1px var(--t-line)' }}>
               <AgentFace name={name} size={56} dim={mood === 'asleep'} />
+              {/* S4, client-only: while you write, the agent is shown listening (nothing is sent until you press send) */}
+              {body.trim() && !reduce && (
+                <motion.span aria-hidden className="absolute -inset-1.5 rounded-full border-2 pointer-events-none"
+                  style={{ borderColor: 'var(--t-accent2)' }} initial={{ opacity: 0, scale: 0.92 }}
+                  animate={{ opacity: [0.25, 0.7, 0.25], scale: 1 }} transition={{ opacity: { duration: 1.8, repeat: Infinity }, scale: { duration: 0.2 } }} />
+              )}
             </motion.span>
             <div className="min-w-0 flex-1 pt-0.5">
               <h2 className="text-[28px] leading-none text-ink truncate" style={{ fontFamily: '"Instrument Serif", serif' }}>{displayName(name)}</h2>
               <p className="mt-1.5 text-[12.5px] text-ink-dim leading-snug line-clamp-2">
                 <StateWord mood={mood} />{' '}
-                {mood === 'asleep' ? `last seen ${fmtAgo(row?.last_seen ?? null)}` : nl.line}
+                {body.trim() ? 'listening' : mood === 'asleep' ? `last seen ${fmtAgo(row?.last_seen ?? null)}` : nl.line}
               </p>
             </div>
             <button onClick={onClose} aria-label="Close" className="w-8 h-8 -mr-1 -mt-1 grid place-items-center rounded-full text-ink-dim hover:text-ink hover:bg-deck-3 text-lg">×</button>

@@ -12,6 +12,7 @@ import InfluenceLayer, { KIND_HUE, KIND_LABEL, influenceLine, type Geometry, typ
 import ChannelDock from './ChannelDock'
 import RouteToast from './RouteToast'
 import { GlyphStack } from '../ui/glyphs'
+import { useAttention } from '../ui/attend'
 import { arm as armChat, chatsByAgent, DRAG_MIME, glyphsByAgent, routeChat, toast, useRoutes, type ChatRef } from '../ui/routes'
 
 /* THE FLOOR — the org as a place, its agents as people in it (owner vision, 2026-10-09:
@@ -101,6 +102,7 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
   const paired = useRef(new Map<string, number>())
   // plan-11860 S1/S5: the channels each agent wears (public glyphs; the owner also sees which chats), and routing by drop
   const wiring = useRoutes(who.owner)
+  const attend = useAttention(box)          // S4: faces lean toward the pointer (client-only)
   const glyphsOf = useMemo(() => glyphsByAgent(wiring.glyphs), [wiring.glyphs])
   const chatsOf = useMemo(() => (who.owner ? chatsByAgent(wiring.data) : {}), [who.owner, wiring.data])
   const [dropOn, setDropOn] = useState<string | null>(null)
@@ -637,7 +639,7 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
                 style={{ boxShadow: dropOn === a.agent || (who.owner && wiring.armed && hover === a.agent) ? '0 0 0 3px var(--t-accent2), 0 0 32px -2px var(--t-accent2)'
                   : mood === 'working' ? '0 0 0 2px var(--t-accent), 0 0 28px -4px var(--t-accent)'
                   : mood === 'awake' ? '0 0 0 2px color-mix(in srgb, var(--t-good) 70%, transparent)' : '0 0 0 1px var(--t-line)' }}>
-                <AgentFace name={a.agent} size={52} dim={mood === 'asleep'} />
+                <span ref={attend(a.agent)} className="block rounded-full"><AgentFace name={a.agent} size={52} dim={mood === 'asleep'} /></span>
                 {mood === 'working' && <span className="absolute -inset-1.5 rounded-full border-2 border-cyan/60 border-t-transparent animate-spin" style={{ animationDuration: '2.4s' }} />}
                 <HandBadge agent={a.agent} size={13} className="absolute -right-2 -bottom-1 z-10" />
                 {glyphsOf[a.agent] && (

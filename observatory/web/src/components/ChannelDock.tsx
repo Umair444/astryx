@@ -32,7 +32,7 @@ export default function ChannelDock() {
   }, [open])
 
   return (
-    <div ref={panel} className="absolute left-1/2 -translate-x-1/2 bottom-4 z-40 flex flex-col items-center gap-2 cursor-default"
+    <div ref={panel} className="absolute left-14 bottom-3 sm:left-1/2 sm:-translate-x-1/2 sm:bottom-4 z-40 flex flex-col items-start sm:items-center gap-2 cursor-default"
       onPointerDown={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
       <AnimatePresence>
         {open && (
@@ -42,7 +42,7 @@ export default function ChannelDock() {
             style={{ background: 'color-mix(in srgb, var(--t-panel) 94%, transparent)', backdropFilter: 'blur(16px)', overscrollBehavior: 'contain' }}>
             <ChannelPanel channel={open} chats={(data?.find((c) => c.channel === open)?.routes ?? []).map((r) => refOf(r, open))}
               hasFile={!!data?.some((c) => c.channel === open)}
-              connect={<ChannelConnect s={ch.rows?.find((r) => r.channel === open)} onChanged={ch.reload} />} />
+              connect={<ChannelConnect s={ch.rows?.find((r) => r.channel === open)} loaded={ch.rows !== null} onChanged={ch.reload} />} />
           </motion.div>
         )}
       </AnimatePresence>

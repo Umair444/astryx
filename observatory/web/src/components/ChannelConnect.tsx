@@ -34,8 +34,8 @@ export function useChannels(enabled: boolean) {
   return { rows, reload }
 }
 
-export default function ChannelConnect({ s, onChanged }: { s: ChannelState | undefined; onChanged: () => void }) {
-  if (!s) return <div className="text-[12px] text-ink-mute px-1 py-2">Reading the channel…</div>
+export default function ChannelConnect({ s, loaded, onChanged }: { s: ChannelState | undefined; loaded: boolean; onChanged: () => void }) {
+  if (!s) return <div className="text-[12px] text-ink-mute px-1 py-2">{loaded ? "Couldn't read this channel's connection state." : 'Reading the channel…'}</div>
   const tone = s.state === 'connected' ? 'var(--t-good)' : s.state === 'activation-needed' || s.state === 'written' ? 'var(--t-warn)' : 'var(--t-mute)'
   return (
     <div className="rounded-xl border border-line bg-deck-3/40 p-2.5 mb-2">
