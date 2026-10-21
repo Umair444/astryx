@@ -63,4 +63,15 @@ MUTANTS = {
         ("|ERROR|SURVIVED|✗|✘|NOT RUN)([[:space:]:(]|$)' | sed", "|✗|✘|NOT RUN)([[:space:]:(]|$)' | sed"),
     "N27 no registry pin (on a cog host every range test runs under multi: plan-11324 S3f S3)":
         ('export ASTRYX_COG_REGISTRY="${TMPDIR:-/tmp}/astryx-gate-$$-no-registry/cog.json"\n', ''),
+    "F1 S2F: a range changing the reachability gate's population never runs it":
+        ('  if [ -n "$REACH_WHY" ]; then', '  if false; then'),
+    "F2 S2F: a DELETED script doesn't count (only adds trigger the gate)":
+        ('git diff --name-only --no-renames --diff-filter=AD', 'git diff --name-only --no-renames --diff-filter=A'),
+    "F3 S2F: the receipt doesn't say why the gate ran":
+        ('[ -n "$REACH_WHY" ] && TAIL=', 'false && TAIL='),
+    "F4 S2F: a failed domain query skips the gate (fail OPEN)":
+        ('    REACH_WHY="its domain query failed, rc $mrc, so it runs anyway"', '    REACH_WHY=""'),
+    "F5 S2F: the domain is a copy here (every .py/.sh anywhere), not the gate's own rule":
+        ('            | env -u ASTRYX_AGENT timeout "$TEST_TIMEOUT" "$PY" "$REACH" --in-domain 2>/dev/null); mrc=$?',
+         "            | grep -E '[.](py|sh)$'); mrc=$?"),
 }

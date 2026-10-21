@@ -212,9 +212,18 @@ def population():
     # goal 10224 S4: nucleus/ moved into src/astryx/, devtools/ and scripts/. What stays in nucleus/ is the compat
     # stubs, whose callers are gitignored or external by construction (their census: var/reorg_stubs/), so a
     # stub is not a population member; nucleus/__init__.py still is.
-    return sorted(p for p in _git("ls-tree", "-r", "--name-only", "HEAD", "nucleus/", "src/astryx/", "devtools/",
-                                  "scripts/")
-                  if p.endswith((".py", ".sh")) and not _is_reorg_stub(p))
+    return sorted(p for p in _git("ls-tree", "-r", "--name-only", "HEAD", *POPULATION_ROOTS) if in_domain(p))
+
+
+# The population's DOMAIN, one source: population() above and `--in-domain` below (land.sh's S2F trigger, seed #61742)
+POPULATION_ROOTS = ("nucleus/", "src/astryx/", "devtools/", "scripts/")
+POPULATION_SUFFIXES = (".py", ".sh")
+
+
+def in_domain(p):
+    """A path the population would hold: under a root, a .py or .sh, and not a reorg stub. A path with no file (a
+    DELETE, read after the fact) can't be read as a stub, so it counts: deleting a member can stale an EXEMPT entry."""
+    return p.startswith(POPULATION_ROOTS) and p.endswith(POPULATION_SUFFIXES) and not _is_reorg_stub(p)
 
 
 def _is_reorg_stub(p):
@@ -957,6 +966,11 @@ def self_test():
 
 
 def main():
+    if "--in-domain" in sys.argv:          # paths on stdin -> those in the population's domain (land.sh S2F)
+        for p in sys.stdin.read().split("\n"):
+            if p.strip() and in_domain(p.strip()):
+                print(p.strip())
+        return 0
     report = "--report" in sys.argv
     bad = self_test()
     if bad:

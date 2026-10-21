@@ -104,6 +104,26 @@ for t in ${EXTRA[@]+"${EXTRA[@]}"}; do
   t=$(realpath -m --relative-to=. "$t")                             # ./tests/x.py and tests/x.py are one test
   case " ${TESTS[*]-} " in *" $t "*) ;; *) TESTS+=("$t");; esac    # a --test the range already names runs once
 done
+# S2F (seed #61742, goal 10224): a range that changes the REACHABILITY gate's population (adds or deletes a script in its
+# domain; a rename is both) also runs that gate, though it touches no test of it. A range's own tests never judge a new
+# script's reachability, and pushed_tree_check reads the gate as 77 (no triggers/, units/, runners.conf), so main went
+# RED on the live tree twice on 10-21 (add-org-parity's shims, a4's rebase_equiv). The DOMAIN is the gate's own
+# (`--in-domain` filters paths by test_reachability's rule), never a copy here; a query that fails runs the gate anyway.
+# LIMIT: an edit that drops a script's only invoker (check.sh no longer runs it) changes no membership: not caught here.
+REACH=tests/test_reachability.py; REACH_WHY=""
+if [ -f "$REACH" ]; then
+  members=$(git diff --name-only --no-renames --diff-filter=AD "$A_SHA" "$B_SHA" \
+            | env -u ASTRYX_AGENT timeout "$TEST_TIMEOUT" "$PY" "$REACH" --in-domain 2>/dev/null); mrc=$?
+  if [ $mrc -ne 0 ]; then
+    REACH_WHY="its domain query failed, rc $mrc, so it runs anyway"
+  elif [ -n "$members" ]; then
+    REACH_WHY="the range adds or deletes $(printf '%s\n' "$members" | grep -c .) script(s) in its population: $(echo $members)"
+  fi
+  if [ -n "$REACH_WHY" ]; then
+    case " ${TESTS[*]-} " in *" $REACH "*) ;; *) TESTS+=("$REACH");; esac
+    echo "land: + $REACH: $REACH_WHY"
+  fi
+fi
 [ ${#TESTS[@]} -gt 0 ] || refuse "the range touches no tests/test_*.py or tests/mutants_*.py and no --test was given"
 
 failset() { printf '%s\n' "$1" | grep -E '^[[:space:]]*(FAIL[A-Za-z]*|ERROR|SURVIVED|✗|✘|NOT RUN)([[:space:]:(]|$)' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | sort -u; }
@@ -179,6 +199,7 @@ if [ $RED -ne 0 ]; then
 fi
 
 TAIL="range tests (not check.sh): $(IFS=';'; echo "${RESULTS[*]}")"
+[ -n "$REACH_WHY" ] && TAIL="$TAIL; $(basename "$REACH") ran because $REACH_WHY"
 [ ${#BODY_LINES[@]} -gt 0 ] && TAIL="$TAIL; live body sha256: $(IFS=','; echo "${BODY_LINES[*]}")"
 if [ $PUSH -eq 0 ]; then
   echo "RECEIPT: LANDED (not pushed, --no-push): ${A_SHA:0:12}..${B_SHA:0:12} fast-forwarded main ${OLD:0:12}..${B_SHA:0:12}; $TAIL"

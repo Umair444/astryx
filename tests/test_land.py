@@ -49,6 +49,22 @@ COG_REG.write_text('{"orgs": {"fxla": {"home": "%s/a", "db": "fxland_a"}, "fxlb"
                    % (_COGDIR, _COGDIR))
 ENV["ASTRYX_COG_REGISTRY"] = str(COG_REG)
 
+# a fixture tests/test_reachability.py: its --in-domain is the REAL gate's (so the domain rule is the gate's, never a
+# copy); run as a test it writes a marker and exits REACH_RC. REACH_DOMAIN_RC makes the domain query itself fail.
+REAL_REACH = str(REPO / "tests" / "test_reachability.py")
+ENV["REAL_REACH"] = REAL_REACH
+REACH_STUB = """import os, runpy, sys
+from pathlib import Path
+if "--in-domain" in sys.argv:
+    if os.environ.get("REACH_DOMAIN_RC"):
+        sys.exit(int(os.environ["REACH_DOMAIN_RC"]))
+    sys.argv = [os.environ["REAL_REACH"], "--in-domain"]
+    runpy.run_path(os.environ["REAL_REACH"], run_name="__main__")
+Path(__file__).resolve().parent.parent.joinpath("reach-ran.txt").write_text("ran")
+print("reachability: fixture gate ran")
+sys.exit(int(os.environ.get("REACH_RC", "0")))
+"""
+
 SUB_ORACLE = """import os, sys
 from pathlib import Path
 src = Path(os.environ.get("SUB_SRC") or Path(__file__).resolve().parent.parent / "sub.py")
@@ -70,7 +86,7 @@ def mutants(old, new):
 class Fx:
     """A work repo on main (1 commit, pushed to a bare origin) with branch feat forked from it."""
 
-    def __init__(self, feat_files, base_files=None):
+    def __init__(self, feat_files, base_files=None, feat_delete=()):
         root = Path(tempfile.mkdtemp(prefix="land-"))
         # removed at exit: each run makes ~25 repos, and the probe runs this once per mutant, so a leak of these
         # filled /tmp's inodes on 10-18 (8,930 dirs, 100% IUse%: every mkdtemp on the host failed)
@@ -78,7 +94,7 @@ class Fx:
         self.origin, self.w = root / "origin.git", root / "w"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.origin)], env=ENV, check=True)
         subprocess.run(["git", "init", "-q", "-b", "main", str(self.w)], env=ENV, check=True)
-        (self.w / ".gitignore").write_text("ran.txt\nbody.py\n__pycache__/\n")
+        (self.w / ".gitignore").write_text("ran.txt\nreach-ran.txt\nbody.py\n__pycache__/\n")
         (self.w / "README").write_text("r\n")
         for rel, body in (base_files or {}).items():
             p = self.w / rel; p.parent.mkdir(parents=True, exist_ok=True); p.write_text(body)
@@ -88,15 +104,18 @@ class Fx:
         self.git("checkout", "-qb", "feat")
         for rel, body in feat_files.items():
             p = self.w / rel; p.parent.mkdir(parents=True, exist_ok=True); p.write_text(body)
-        self.git("add", "."); self.git("commit", "-qm", "feat")
+        for rel in feat_delete:
+            (self.w / rel).unlink()
+        self.git("add", "-A"); self.git("commit", "-qm", "feat")
         self.head = self.git("rev-parse", "HEAD")
         self.git("checkout", "-q", "main")
 
     def git(self, *a):
         return subprocess.run(["git", *a], cwd=self.w, env=ENV, capture_output=True, text=True, check=True).stdout.strip()
 
-    def land(self, *a):
-        p = subprocess.run(["bash", str(SRC), *a], cwd=self.w, env=ENV, capture_output=True, text=True, timeout=120)
+    def land(self, *a, env=None):
+        p = subprocess.run(["bash", str(SRC), *a], cwd=self.w, env={**ENV, **(env or {})}, capture_output=True,
+                           text=True, timeout=120)
         return p.returncode, p.stdout + p.stderr
 
     def main(self):
@@ -309,6 +328,39 @@ def main():
     f = Fx({"tests/mutants_sub.py": mutants("VALUE = 1", "VALUE = 2")}, sub)
     rc, out = f.land(f"{f.base}..{f.head}", "--known-red", "tests/mutants_sub.py", "--no-push")
     check("L15 a mutants file can't be known-red (usage error)", rc == 2 and "only a tests/test_*.py" in out, out)
+
+    # L16 S2F (seed #61742): a range that changes the reachability gate's POPULATION runs that gate, by the gate's own
+    # domain rule (the stub hands --in-domain to the REAL tests/test_reachability.py), and the receipt says why
+    reach = {"tests/test_reachability.py": REACH_STUB}
+    f = Fx({"tests/test_ok.py": OK_TEST, "devtools/new_tool.py": "print('t')\n"}, base_files=reach)
+    rc, out = f.land(f"{f.base}..{f.head}")
+    rec = next((l for l in out.splitlines() if l.startswith("RECEIPT:")), "")
+    check("L16 a range ADDING a script runs test_reachability, which it never touched (rc 0, the gate's marker written)",
+          rc == 0 and (f.w / "reach-ran.txt").exists() and "test_reachability.py rc 0" in rec, out)
+    check("L16 …the receipt names why: the script(s) it adds, read by the gate's own domain rule",
+          "test_reachability.py ran because the range adds or deletes 1 script(s) in its population: devtools/new_tool.py"
+          in rec, out)
+    f = Fx({"tests/test_ok.py": OK_TEST, "devtools/new_tool.py": "print('t')\n"}, base_files=reach)
+    rc, out = f.land(f"{f.base}..{f.head}", env={"REACH_RC": "1"})
+    check("L16 …and a RED reachability gate rolls the land back (it is a range test, not a note)",
+          rc == 1 and f.main() == f.base and "rolled back" in out, out)
+    f = Fx({"tests/test_ok.py": OK_TEST}, base_files={**reach, "devtools/old_tool.sh": "echo o\n"},
+           feat_delete=["devtools/old_tool.sh"])
+    rc, out = f.land(f"{f.base}..{f.head}")
+    check("L16 …a range DELETING a script runs it too (a delete can stale an EXEMPT entry)",
+          rc == 0 and (f.w / "reach-ran.txt").exists() and "population: devtools/old_tool.sh" in out, out)
+    f = Fx({"tests/test_ok.py": OK_TEST, "docs/note.md": "n\n", "tests/helper.py": "x = 1\n"}, base_files=reach)
+    rc, out = f.land(f"{f.base}..{f.head}")
+    check("L16 …a range adding only files OUTSIDE the domain (docs, a tests/ helper) doesn't run it (no marker, no why)",
+          rc == 0 and not (f.w / "reach-ran.txt").exists() and "ran because" not in out, out)
+    f = Fx({"devtools/new_tool.py": "print('t')\n"}, base_files=reach)
+    rc, out = f.land(f"{f.base}..{f.head}")
+    check("L16 …a range adding a script and NO test isn't refused: the gate that judges it is what ran",
+          rc == 0 and (f.w / "reach-ran.txt").exists() and "touches no tests" not in out, out)
+    f = Fx({"tests/test_ok.py": OK_TEST}, base_files=reach)
+    rc, out = f.land(f"{f.base}..{f.head}", env={"REACH_DOMAIN_RC": "2"})
+    check("L16 …a domain query that FAILS runs the gate anyway and says so (fail closed)",
+          rc == 0 and (f.w / "reach-ran.txt").exists() and "its domain query failed, rc 2, so it runs anyway" in out, out)
 
     print(f"\n{'PASS' if not fails else 'FAIL'}: land ({len(fails)} failing)")
     return 1 if fails else 0
