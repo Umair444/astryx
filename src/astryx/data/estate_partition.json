@@ -40,6 +40,7 @@
   "**/*.toxic.*": "org",
   "mcp/contacts/test_server.py": "org",
   "tier/": "org",
+  "store/": "org",
   "**/career/": "org",
   "var/": "org",
   "infra/pg/.env": "host",
