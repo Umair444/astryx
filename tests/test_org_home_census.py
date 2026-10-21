@@ -317,6 +317,13 @@ def main():
         return sorted(n for n in names if orgenv.class_of(n, cls) is None and n not in derived and n not in held)
     check("every name in this process's environment is classed or an org name", not unclassed(os.environ),
           str(unclassed(os.environ)))
+    # mise's release-age setting rides every post-reboot session (10-21: all 11 residents' environments; it made C4 RED
+    # in every marker's pushed_tree_check). It is a host tool setting, so it is classed host by its EXACT name: never a
+    # MISE_* glob, which would make mise's own secret (MISE_GITHUB_TOKEN) a PASS name carried into every org's pane.
+    check("mise's release-age setting is host, by exact name",
+          orgenv.class_of("MISE_MINIMUM_RELEASE_AGE", cls) == "host", str(orgenv.class_of("MISE_MINIMUM_RELEASE_AGE", cls)))
+    check("...and mise's token is NOT a pass name (no MISE_* glob)",
+          orgenv.class_of("MISE_GITHUB_TOKEN", cls) not in cls["pass"], str(orgenv.class_of("MISE_GITHUB_TOKEN", cls)))
     clash = sorted(n for n in derived if orgenv.class_of(n, cls) in cls["pass"])
     check("no org name sits in a PASS class (it would ride into another org's pane)", not clash, str(clash))
     # sets, not ordered lists: an unclassed name already present that sorts after FX_ must not break the control

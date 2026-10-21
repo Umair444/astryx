@@ -5,6 +5,33 @@
 # exception, and only until the CLI ships non-interactive acceptance.)
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# THE HARNESS BINARY (steward 10-21; seed #61942). On the 10-21 boot six residents died in their panes on
+# `bash: claude: command not found`: the first claude on the tmux PATH was ~/.local/bin/claude, omarchy's bootstrap
+# WRAPPER (`mise use -g claude && exec mise x claude …`), which fails before mise is ready, and the launch line typed
+# the bare name. Resolve it the way NODE is resolved below: ASTRYX_CLI as given (the harness is swappable), else
+# `mise which claude`, else mise's install path, else the first claude on PATH that is not the wrapper. Never the
+# wrapper: it is also what put MISE_MINIMUM_RELEASE_AGE into every pane's environment.
+resolve_cli() {
+  if [ -n "${ASTRYX_CLI:-}" ]; then CLI=$ASTRYX_CLI; return 0; fi
+  local m c wrap
+  wrap=$(realpath -m "$HOME/.local/bin/claude")
+  for m in mise "$HOME/.local/bin/mise"; do
+    command -v "$m" >/dev/null 2>&1 && c=$(cd "$ROOT" && "$m" which claude 2>/dev/null) && [ -x "$c" ] \
+      && [ "$(realpath -m "$c")" != "$wrap" ] && { CLI=$c; return 0; }
+  done
+  c="$HOME/.local/share/mise/installs/claude/latest/claude"
+  [ -x "$c" ] && { CLI=$c; return 0; }
+  for c in $(type -ap claude); do
+    [ "$(realpath -m "$c")" != "$wrap" ] && { CLI=$c; return 0; }
+  done
+  return 1
+}
+CLI_REFUSED="spawn: no claude binary via ASTRYX_CLI, mise, its install path or PATH (never the ~/.local/bin bootstrap wrapper): set ASTRYX_CLI"
+# `spawn.sh --which-cli`: print the binary a spawn would launch, then exit before ANY side effect (tests/test_spawn_cli.py)
+if [ "${1:-}" = "--which-cli" ]; then
+  resolve_cli && { echo "$CLI"; exit 0; }
+  echo "$CLI_REFUSED" >&2; exit 1
+fi
 # ROOT is the CODE; ORGH is the ORG (its HOME: .env, local.md, agents/, homes/, tier/), plan-11324 S3a #58435 item 5.
 # One org (no host registry, src/astryx/orgs.py): ORGH is ROOT and every line below is what it was. Several orgs: the
 # HOME comes from the ONE resolver (astryx.paths: ASTRYX_HOME naming a REGISTERED home, or its marker; never the
@@ -338,7 +365,7 @@ fi
 # that deafened the whole org once; the explicit flag is load-bearing.)
 # ASTRYX_CLI: the harness is swappable — any CLI that speaks the same flags (claude,
 # a fork, a wrapper that maps them). The org is agents-on-terminals, not a framework.
-CLI=${ASTRYX_CLI:-claude}
+resolve_cli || { echo "$CLI_REFUSED"; exit 1; }
 # --disallowedTools AskUserQuestion: a resident lives in a headless tmux pane no human
 # watches, and AskUserQuestion is elicitation-class — it renders a terminal picker that
 # BLOCKS on stdin and cannot be relayed to a channel, so an agent that calls it LATCHES

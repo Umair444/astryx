@@ -588,6 +588,7 @@ run "tool nudge (O5): never blocks, never leaks, recurrence-gated" "$PY" tests/t
 # effect, and every resident gets the door and the nudge (own UserPromptSubmit group, timeout 3
 # < usage.py's 5); stationed agents never get the door. Mutants: tests/mutants_spawn_wiring.py.
 run "spawn --render: real generation, no side effect; S4 wiring" "$PY" tests/test_spawn_wiring.py
+run "spawn --which-cli: the harness binary is resolved (mise, its install, PATH), never the boot wrapper" "$PY" tests/test_spawn_cli.py
 # This suite's own blind spot: the list below is hand-maintained, so a newly committed
 # tests/test_*.py was silently never run and this still printed ALL PASS (reproduced
 # 08-13). Derives the expected set from the tests/test_*.py glob — a new oracle must
