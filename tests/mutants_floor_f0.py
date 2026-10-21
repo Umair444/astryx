@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Mutants for plan-11860 F0. The oracle is tests/test_floor_f0.py; every mutant must turn it RED.
+"""Mutants for plan-11860 F0 and S3. The oracles are tests/test_floor_f0.py and (S-mutants) tests/test_floor_s3.py;
+every mutant must turn its oracle RED.
 Its subjects span several files (the resolver, the bridges, the PUT, doctor, the .env writer), so this probe mutates IN
 PLACE on the tree it sits in and restores each file in a finally: run it on a worktree, never the live checkout.
 a3's review list (#61993) is M1..M5; a1's BC-1/BC-2 mutants are M6/M7; M8..M10 are the gate, the writer and doctor."""
@@ -10,6 +11,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 ORACLE = REPO / "tests" / "test_floor_f0.py"
+S3 = REPO / "tests" / "test_floor_s3.py"
+LR = REPO / "src" / "astryx" / "security" / "logredact.py"
 B, API, CFG = REPO / "bridges" / "routing.py", REPO / "observatory" / "api" / "main.py", REPO / "src" / "astryx" / "config.py"
 MUTANTS = {
     "M1 a duplicate chat is accepted": (B, "        if chat in seen:\n", "        if False:\n"),
@@ -38,6 +41,16 @@ MUTANTS = {
          ' for (a, c, k), n in sorted(counts.items())]'),
     "M12 a routes file that stops parsing reads [] (BC-3)":
         (B, "        return _last_good.get(key, [])", "        return []"),
+    "S1 logredact stops scrubbing a bot token (httpx's request log leaks it)":
+        (LR, '    return _HOOK.sub(r"\\1<redacted>", _TG.sub(r"\\1<redacted>", _KEY.sub(r"\\1<redacted>", text)))',
+         '    return _HOOK.sub(r"\\1<redacted>", _KEY.sub(r"\\1<redacted>", text))', S3),
+    "S2 a probe failure echoes the upstream error text":
+        (API, '                            status_code=400 if outcome == "invalid" else 503)',
+         '                            status_code=400 if outcome == "invalid" else 503) if False else JSONResponse({"error": f"{outcome}: {token}", "outcome": outcome}, status_code=400 if outcome == "invalid" else 503)', S3),
+    "S3 a set key is replaced without confirm": (API, "    if config.is_set(key, ENV_FILE) and not body.replace:", "    if False:", S3),
+    "S4 CONNECTED without the bridge's /health":
+        (API, '                     "connected" if healthy else "written")', '                     "connected")', S3),
+    "S5 pairing runs over a linked phone": (API, '    if link["state"] != "unlinked":', '    if link["state"] == "unknown":', S3),
 }
 
 
@@ -45,7 +58,8 @@ def main():
     if (REPO / "triggers").is_dir():
         sys.exit("mutants_floor_f0: refusing to mutate a live tree (triggers/ present): run it on a worktree")
     survived = []
-    for name, (f, old, new) in MUTANTS.items():
+    for name, (f, old, new, *rest) in MUTANTS.items():
+        oracle = rest[0] if rest else ORACLE
         src = f.read_text()
         if src.count(old) != 1:
             print(f"  STALE  {name}: the anchor is not exactly once in {f.name}")
@@ -53,7 +67,7 @@ def main():
             continue
         try:
             f.write_text(src.replace(old, new))
-            r = subprocess.run([sys.executable, str(ORACLE)], capture_output=True, text=True, timeout=600, env=os.environ)
+            r = subprocess.run([sys.executable, str(oracle)], capture_output=True, text=True, timeout=600, env=os.environ)
         finally:
             f.write_text(src)
         killed = r.returncode != 0

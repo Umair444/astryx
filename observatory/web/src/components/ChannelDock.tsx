@@ -6,17 +6,19 @@ import { BRAND } from '../ui/brands'
 import { ChannelMark } from '../ui/glyphs'
 import { arm, DRAG_MIME, dismissToast, refOf, unrouteChat, useRoutes, type ChatRef } from '../ui/routes'
 import AgentFace from './AgentFace'
+import ChannelConnect, { useChannels } from './ChannelConnect'
 
 /* THE CHANNEL DOCK (plan-11860 S5, owner-only): the org's doors, at the foot of the floor. Each channel is a mark; open
    one and its chats are there to pick up. Drag a chat onto an agent (or tap it, then tap the agent) and the chat routes
    there, through the one routes write. Find a group or person you haven't routed yet by name. Connecting a channel
-   lives here too (S3, ChannelConnect). */
+   lives here too (S3, ChannelConnect): its state shows as a dot on its mark. */
 
 const SPRING = { type: 'spring' as const, visualDuration: 0.3, bounce: 0.12 }
 const CHANNELS = ['whatsapp', 'telegram', 'discord']
 
-export default function ChannelDock({ connect }: { connect?: (channel: string) => React.ReactNode }) {
+export default function ChannelDock() {
   const { data, armed } = useRoutes(true)
+  const ch = useChannels(true)
   const [open, setOpen] = useState<string | null>(null)
   const panel = useRef<HTMLDivElement>(null)
 
@@ -39,22 +41,27 @@ export default function ChannelDock({ connect }: { connect?: (channel: string) =
             className="w-[min(380px,calc(100vw-32px))] max-h-[min(460px,60dvh)] overflow-y-auto rounded-2xl border border-line-2 shadow-2xl"
             style={{ background: 'color-mix(in srgb, var(--t-panel) 94%, transparent)', backdropFilter: 'blur(16px)', overscrollBehavior: 'contain' }}>
             <ChannelPanel channel={open} chats={(data?.find((c) => c.channel === open)?.routes ?? []).map((r) => refOf(r, open))}
-              hasFile={!!data?.some((c) => c.channel === open)} connect={connect?.(open)} />
+              hasFile={!!data?.some((c) => c.channel === open)}
+              connect={<ChannelConnect s={ch.rows?.find((r) => r.channel === open)} onChanged={ch.reload} />} />
           </motion.div>
         )}
       </AnimatePresence>
       <div className="flex items-center gap-1 rounded-full border border-line px-1.5 py-1.5 shadow-lg"
         style={{ background: 'color-mix(in srgb, var(--t-panel) 88%, transparent)', backdropFilter: 'blur(14px)' }}
         role="toolbar" aria-label="Channels">
-        {CHANNELS.map((ch) => {
-          const n = data?.find((c) => c.channel === ch)?.routes.filter((r) => r.enabled !== false).length ?? 0
+        {CHANNELS.map((name) => {
+          const n = data?.find((c) => c.channel === name)?.routes.filter((r) => r.enabled !== false).length ?? 0
+          const st = ch.rows?.find((r) => r.channel === name)?.state
           return (
-            <button key={ch} onClick={() => { setOpen((o) => (o === ch ? null : ch)); arm(null); dismissToast() }}
-              aria-pressed={open === ch} aria-label={`${BRAND[ch].title}: ${n} chat${n === 1 ? '' : 's'} routed`}
+            <button key={name} onClick={() => { setOpen((o) => (o === name ? null : name)); arm(null); dismissToast() }}
+              aria-pressed={open === name} aria-label={`${BRAND[name].title}: ${n} chat${n === 1 ? '' : 's'} routed`}
               className={`relative flex items-center gap-1.5 rounded-full pl-1.5 pr-2.5 h-9 text-[12.5px] transition-colors duration-150 ${
-                open === ch ? 'bg-deck-3 text-ink' : 'text-ink-dim hover:text-ink hover:bg-deck-3/60'}`}>
-              <ChannelMark channel={ch} size={22} ring="transparent" />
-              <span className="hidden sm:inline">{BRAND[ch].title}</span>
+                open === name ? 'bg-deck-3 text-ink' : 'text-ink-dim hover:text-ink hover:bg-deck-3/60'}`}>
+              <span className="relative">
+                <ChannelMark channel={name} size={22} ring="transparent" />
+                {st && st !== 'connected' && <span className="absolute -right-0.5 -top-0.5 w-2 h-2 rounded-full bg-warn ring-2 ring-[var(--t-panel)]" title="Needs a step to connect" />}
+              </span>
+              <span className="hidden sm:inline">{BRAND[name].title}</span>
               <span className="tabular-nums text-ink-mute">{n}</span>
             </button>
           )

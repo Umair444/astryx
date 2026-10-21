@@ -299,6 +299,7 @@ app = FastAPI(lifespan=lifespan)
 # oracle loads it by path; the pool is handed over, never re-imported (steward #44464)
 from observatory.api import pilot_voice as _pilot_voice  # noqa: E402
 from observatory.api.hostfile import Conflict, atomic_write, etag  # noqa: E402 — the ONE host-file writer (plan-11860 E3)
+import hashlib  # noqa: E402
 from bridges import routing as _routing  # noqa: E402 — the ONE route resolver/validator (plan-11860 E2)
 _pilot_voice.bind(lambda: pool)
 app.include_router(_pilot_voice.router)
@@ -3655,6 +3656,232 @@ async def hands_vnc(ws: WebSocket, agent: str):
         await ws.close()
     except RuntimeError:
         pass
+
+
+# ---------------------------------------------------------------- channels: connect one from the floor (plan-11860 S3)
+# The floor's channel dock asks: is each channel connected, and (a bot channel) here is its token. Owner-only (the gate
+# and an explicit check). The design (a4 #61976) binds it:
+#   E5  the .env KEY comes from CHANNEL_TOKEN_KEY, never the body; the value is shape-checked, then validated with the
+#       channel itself, then written by config.set_env (the one writer: atomic, 0600, one line, the key once). A key
+#       already set is replaced only with an explicit confirm (replace=true); is_set is a bool, never the value.
+#   E6  a token-bearing URL is called ONLY through _channel_probe, whose outcome is one of ok / invalid / unreachable /
+#       rate-limited and whose log line names the outcome, never the URL; logredact scrubs bot<id>: tokens and
+#       discord webhook URLs from every log it filters (httpx's request log included). No token in any answer.
+#   E7  the state is read from the effect's owner: WRITTEN (saved), ACTIVATION NEEDED (the bridge started before the
+#       token was written, or isn't running: the exact privileged command is shown, the human runs it), CONNECTED (only
+#       when the bridge's own /health answers, and for discord says connected).
+#   E8  WhatsApp has no token: wacli pairs by QR. The link state is read first (a constant, read-only argv); unknown
+#       means refuse; a linked phone is never replaced from here. Pairing streams over a fetch carrying x-obs-key.
+ENV_FILE = ESTATE / ".env"                     # the org's .env (a seam: the oracle points it at a fixture file)
+CHANNEL_TOKEN_KEY = {"telegram": "TG_BOT_TOKEN", "discord": "DISCORD_BOT_TOKEN"}
+_TOKEN_SHAPE = {"telegram": re.compile(r"^\d{5,16}:[A-Za-z0-9_-]{30,64}$"),
+                "discord": re.compile(r"^[A-Za-z0-9_-]{20,40}\.[A-Za-z0-9_-]{4,10}\.[A-Za-z0-9_-]{20,60}$")}
+_PROBE_TRANSPORT = None                         # a seam: the oracle hands httpx a MockTransport
+_account_cache: dict[str, tuple[float, str, dict | None]] = {}
+ACCOUNT_TTL = 300
+WA_LINK_ARGV = ("docker", "exec", "wacli-sync", "wacli", "doctor", "--json", "--read-only")
+WA_PAIR_ARGV = ("docker", "exec", "wacli-sync", "wacli", "auth", "--qr-format", "terminal", "--idle-exit", "120s")
+_chlog = __import__("logging").getLogger("astryx.channels")
+
+
+async def _channel_probe(channel: str, token: str) -> tuple[str, dict | None]:
+    """THE one caller of a token-bearing URL. (outcome, account): outcome is ok | invalid | unreachable | rate-limited.
+    No exception text, URL or token leaves: Telegram's URL carries the token, and an httpx error's text carries the URL."""
+    outcome, acct = "unreachable", None
+    try:
+        async with httpx.AsyncClient(timeout=8, transport=_PROBE_TRANSPORT) as c:
+            if channel == "telegram":
+                r = await c.get(f"https://api.telegram.org/bot{token}/getMe")
+            else:
+                r = await c.get("https://discord.com/api/v10/users/@me", headers={"Authorization": f"Bot {token}"})
+        if r.status_code == 429:
+            outcome = "rate-limited"
+        elif r.status_code in (401, 403, 404):
+            outcome = "invalid"
+        elif r.status_code == 200:
+            j = r.json()
+            u = j.get("result") if channel == "telegram" else j
+            if isinstance(u, dict) and (channel != "telegram" or j.get("ok")):
+                outcome = "ok"
+                acct = {"name": ("@" if channel == "telegram" else "") + str(u.get("username") or ""), "id": str(u.get("id") or "")}
+            else:
+                outcome = "invalid"
+    except Exception:  # noqa: BLE001 — never its text
+        outcome = "unreachable"
+    _chlog.info("channels: %s token probe -> %s", channel, outcome)
+    return outcome, acct
+
+
+def _discord_invite(app_id: str) -> str | None:
+    # View Channels + Send Messages + Read Message History + Attach Files: what bridges/discord.py uses
+    return f"https://discord.com/oauth2/authorize?client_id={app_id}&scope=bot&permissions=101376" if app_id.isdigit() else None
+
+
+async def _account(channel: str, token: str) -> dict | None:
+    fp = hashlib.sha256(token.encode()).hexdigest()[:12]      # the cache keys on a fingerprint, never the token
+    hit = _account_cache.get(channel)
+    if hit and hit[1] == fp and time.time() - hit[0] < ACCOUNT_TTL:
+        return hit[2]
+    outcome, acct = await _channel_probe(channel, token)
+    if outcome in ("ok", "invalid"):
+        _account_cache[channel] = (time.time(), fp, acct)
+    return acct
+
+
+def _bridge(channel: str) -> dict:
+    """The bridge as systemd and its own /health report it: {unit, active, started (unix), health}. A seam for the oracle."""
+    unit = f"astryx-{channel}.service"
+    out = {"unit": unit, "active": False, "started": 0.0, "health": None}
+    try:
+        r = subprocess.run(["systemctl", "show", unit, "-p", "ActiveState", "-p", "ExecMainStartTimestamp",
+                            "-p", "ExecStart", "--timestamp=unix"], capture_output=True, text=True, timeout=5)
+        props = dict(l.split("=", 1) for l in r.stdout.splitlines() if "=" in l)
+        out["active"] = props.get("ActiveState") == "active"
+        ts = props.get("ExecMainStartTimestamp", "")
+        out["started"] = float(ts[1:]) if ts.startswith("@") else 0.0
+        m = re.search(r"--host (\S+) --port (\d+)", props.get("ExecStart", ""))
+        if out["active"] and m:
+            import urllib.request
+            with urllib.request.urlopen(f"http://{m.group(1)}:{m.group(2)}/health", timeout=2) as h:
+                out["health"] = json.loads(h.read() or b"{}")
+    except Exception:  # noqa: BLE001 — unknown health is "not connected", never an error page
+        pass
+    return out
+
+
+def _activate_cmd(channel: str, bridge: dict) -> str:
+    unit = bridge["unit"]
+    return f"sudo systemctl restart {unit}" if bridge["started"] else \
+        f"sudo ./scripts/deploy.sh units && sudo systemctl enable --now {unit}"
+
+
+def _wa_link() -> dict:
+    """WhatsApp's link state, from wacli itself (a constant, read-only argv): linked | unlinked | unknown."""
+    try:
+        r = subprocess.run(list(WA_LINK_ARGV), capture_output=True, text=True, timeout=15)
+        d = (json.loads(r.stdout) or {}).get("data") or {}
+        if d.get("authenticated") is True:
+            jid = str(d.get("linked_jid") or "")
+            num = jid.split("@")[0]
+            return {"state": "linked", "account": f"…{num[-4:]}" if num[-4:].isdigit() else None}
+        if d.get("authenticated") is False:
+            return {"state": "unlinked", "account": None}
+    except Exception:  # noqa: BLE001
+        pass
+    return {"state": "unknown", "account": None}
+
+
+@app.get("/api/channels")
+async def channels_status(request: Request):
+    """Each channel the dock shows: its state (E7), the account behind it, and the command that activates it."""
+    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+        return Response(status_code=403)
+    env = config.read_env(ENV_FILE)
+    try:
+        env_mtime = ENV_FILE.stat().st_mtime
+    except OSError:
+        env_mtime = 0.0
+    out = []
+    for ch in ("whatsapp", "telegram", "discord"):
+        b = await asyncio.to_thread(_bridge, ch)
+        row = {"channel": ch, "routes": ch in _wire_channels()}
+        if ch == "whatsapp":
+            link = await asyncio.to_thread(_wa_link)
+            state = ("connected" if link["state"] == "linked" and b["health"] else
+                     "activation-needed" if link["state"] == "linked" else
+                     "not-linked" if link["state"] == "unlinked" else "unknown")
+            row.update(state=state, account=link["account"], link=link["state"],
+                       activate=_activate_cmd(ch, b) if state == "activation-needed" else None)
+        else:
+            tok = env.get(CHANNEL_TOKEN_KEY[ch], "")
+            acct = await _account(ch, tok) if tok else None
+            healthy = bool(b["health"]) and (ch != "discord" or bool((b["health"] or {}).get("connected")))
+            state = ("not-set" if not tok else
+                     "activation-needed" if not b["active"] or b["started"] < env_mtime else
+                     "connected" if healthy else "written")
+            row.update(state=state, account=acct["name"] if acct else None,
+                       activate=_activate_cmd(ch, b) if state in ("activation-needed", "written") else None,
+                       invite=_discord_invite(acct["id"]) if (ch == "discord" and acct) else None)
+        out.append(row)
+    return out
+
+
+class ChannelToken(BaseModel):
+    token: str
+    replace: bool = False
+
+
+_PROBE_WORDS = {"invalid": "{t} didn't accept that token. Check you copied the current one (resetting a token replaces the old one).",
+                "unreachable": "Couldn't reach {t} to check the token. Nothing was saved; try again in a minute.",
+                "rate-limited": "{t} asked us to slow down. Nothing was saved; try again in a minute."}
+
+
+@app.post("/api/channels/{channel}/token")
+async def channel_token(channel: str, body: ChannelToken, request: Request):
+    """Connect a bot channel: shape, then the channel's own word on the token, then the one .env writer (E5)."""
+    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+        return Response(status_code=403)
+    key = CHANNEL_TOKEN_KEY.get(channel)
+    if not key:
+        return JSONResponse({"ok": False, "error": "This channel connects without a token."}, status_code=404)
+    title, token = channel.capitalize(), body.token.strip()
+    if not _TOKEN_SHAPE[channel].match(token):
+        return JSONResponse({"ok": False, "error": f"That doesn't look like a {title} bot token. Copy the whole token and paste it again."},
+                            status_code=400)
+    if config.is_set(key, ENV_FILE) and not body.replace:
+        return JSONResponse({"ok": False, "needs_confirm": True,
+                             "error": f"{title} already has a token. Confirm to replace it."}, status_code=409)
+    outcome, acct = await _channel_probe(channel, token)
+    if outcome != "ok":
+        return JSONResponse({"ok": False, "error": _PROBE_WORDS[outcome].format(t=title), "outcome": outcome},
+                            status_code=400 if outcome == "invalid" else 503)
+    config.set_env(key, token, ENV_FILE)
+    del token
+    _account_cache.pop(channel, None)
+    b = await asyncio.to_thread(_bridge, channel)
+    return {"ok": True, "channel": channel, "state": "written", "account": acct["name"], "activate": _activate_cmd(channel, b),
+            "invite": _discord_invite(acct["id"]) if channel == "discord" else None}
+
+
+@app.get("/api/channels/whatsapp/link")
+async def whatsapp_link(request: Request):
+    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+        return Response(status_code=403)
+    return await asyncio.to_thread(_wa_link)
+
+
+@app.post("/api/channels/whatsapp/pair")
+async def whatsapp_pair(request: Request):
+    """Stream wacli's pairing QR (terminal blocks) to the owner. Only when wacli says UNLINKED: a linked phone is never
+    replaced from here (unlink it on the phone, or with wacli auth logout, by hand), and an unknown state refuses."""
+    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+        return Response(status_code=403)
+    link = await asyncio.to_thread(_wa_link)
+    if link["state"] != "unlinked":
+        why = ("WhatsApp is already linked ({a}). To link a different phone, unlink this one first, on the phone "
+               "(Linked devices) or with: docker exec -it wacli-sync wacli auth logout").format(a=link["account"] or "a phone") \
+            if link["state"] == "linked" else "Couldn't read WhatsApp's link state, so nothing was started. Is the wacli-sync container running?"
+        return JSONResponse({"ok": False, "state": link["state"], "error": why}, status_code=409)
+
+    async def lines():
+        p = await asyncio.create_subprocess_exec(*WA_PAIR_ARGV, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        try:
+            deadline = time.time() + 180
+            while time.time() < deadline:
+                if await request.is_disconnected():
+                    break
+                try:
+                    ln = await asyncio.wait_for(p.stdout.readline(), timeout=2)
+                except asyncio.TimeoutError:
+                    continue
+                if not ln:
+                    break
+                yield ln
+        finally:
+            if p.returncode is None:
+                p.kill()
+                await p.wait()
+    return StreamingResponse(lines(), media_type="text/plain; charset=utf-8", headers={"cache-control": "no-store"})
 
 
 # ---------------------------------------------------------------- static SPA

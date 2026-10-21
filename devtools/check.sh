@@ -1018,6 +1018,10 @@ run "observatory: the floor's influence and cog routes (goal 11324)" "$PY" tests
 # ONE atomic writer, .env ONE writer with no duplicate keys, the routes PUT needs If-Match and answers the effective
 # diff, and the public glyphs are an allowlisted projection. Mutants: tests/mutants_floor_f0.py (run on a worktree).
 run "floor F0: method-aware gate, one route resolver, one host writer, one .env writer, public glyphs projected" "$PY" tests/test_floor_f0.py
+# plan-11860 S3: a channel connects from the floor. The .env key is the server's, a token is checked by its channel
+# and written by the one writer, never echoed or logged; the state comes from the bridge's own /health; WhatsApp
+# pairing refuses a linked phone or an unknown state. Mutants: tests/mutants_floor_f0.py (S1..S5).
+run "floor S3: connect a channel without a token ever leaving (E5 E6 E7 E8)" "$PY" tests/test_floor_s3.py
 # devtools/sqlsite.sh: one oracle's sqlguard view (rungs + why; --ledger: what enforce would say), advisory, writes
 # nothing. Mutants: tests/mutants_sqlsite.py.
 run "sqlsite: one oracle's sqlguard view, and the ledger diff, write nothing" "$PY" tests/test_sqlsite.py
