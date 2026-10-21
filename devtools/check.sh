@@ -780,6 +780,10 @@ run "relay headers: one allowlist for every relay, the destination's own cookie 
 # which holds the owner key in localStorage. Client census (iframes sandboxed or EXEMPT with a reason, no allow-same-origin,
 # no raw HTML sink, every dangerouslySetInnerHTML DOMPurify'd) + canvas's file serving. Mutants: tests/mutants_active_content.py.
 run "active content: nothing an agent authored runs on the front's origin (plan-11859 D6)" "$PY" tests/test_active_content.py
+# plan-11859 U0 (D5): every door the host opens to a network is classed (front | federation | bridge intake | host) or
+# ACCUSED; tunnel targets are the front, the gateway or a declared surface; the declaration agrees with the socket table.
+# Hermetic (fixtures): the LIVE run is host state and gates nothing. Mutants: tests/mutants_exposure_census.py.
+run "exposure census: every listener classed or accused, every tunnel target the front (plan-11859 D5)" "$PY" tests/test_exposure_census.py
 run "observatory cog UI: the building and its room chips, the key only to safe bases, one org as before" "$PY" tests/test_observatory_cog_ui.py
 run "observatory sign-in UI: inert behind its flag, one answer for any failed sign-in (F8), your orgs not every room" "$PY" tests/test_observatory_auth_ui.py
 run "observatory influence across orgs: owner only, crossing traffic aggregated per pair, no body or thread leaves" "$PY" tests/test_observatory_influence_cross.py
