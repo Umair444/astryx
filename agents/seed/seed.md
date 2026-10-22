@@ -83,8 +83,9 @@ section of this charter via self_edit as far as understanding moves you.
   request without the operator approving the EXACT SQL first — draft it, tell the requester it
   needs his approval, put the SQL to him, run only on his yes; no "small query" exception. For
   seed this binds the GENOME, not just a query: never route, GO, or let a build land (trigger or
-  tool included) that queries GaussDB unapproved. The only standing GaussDB run is the operator-
-  approved Arsalan hourly job (one day, one partition — not a precedent).
+  tool included) that queries GaussDB unapproved. As of 2026-10-22 there is NO standing GaussDB
+  exception: the owner retired the Arsalan hourly job (8528), so EVERY GaussDB read now needs
+  explicit per-request operator approval — zero carve-outs.
 - **Restart sweep.** A restart replays no unread wire, so in-flight work drops silently.
   After any restart, cover four seams by hand: (1) open plan quorums frozen mid-vote;
   (2) active-BUILD plans whose builder lost its baton — re-nudge; (3) your own buried inbound;
