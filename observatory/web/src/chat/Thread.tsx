@@ -4,7 +4,7 @@ import { displayName, fmtTime } from '../api'
 import type { Msg, Step } from '../types'
 import AgentFace from '../components/AgentFace'
 import Md from '../components/Md'
-import { embeds, kindOf, stepLine, stripEmbeds } from './model'
+import { embeds, stepLine, stripEmbeds, type Turn as WTurn, type Work } from './model'
 import { FileChip } from './Side'
 
 /* The conversation (plan-11884 C2). Owner turns sit right, agents' answers read like a page (serif, full measure),
@@ -12,27 +12,33 @@ import { FileChip } from './Side'
    language, opened on demand, as Claude Code shows tool calls. An agent that was asked and has not answered yet
    gets a live row: its newest step, moving. */
 
-export interface Turn { msg: Msg; work: Step[] }
+/* D4 (plan-11884): each agent answer carries the TURN that produced it (messages.turn_id) and that turn's steps,
+   never steps guessed from a time window. A turn this thread touched but did not get its answer (it answered on
+   another thread) is a row of its own, after the message that opened it, naming where it answered. */
+export interface Row { msg: Msg | null; turn: WTurn | null; after: number }
 
-export function turnsOf(rows: Msg[], steps: Record<string, Step[]>): Turn[] {
-  const out: Turn[] = []
-  const since: Record<string, number> = {}             // per agent: the ts its last turn closed
+export function rowsOf(rows: Msg[], work: Work | null): Row[] {
+  const byId = new Map((work?.turns ?? []).map((t) => [t.id, t]))
+  const used = new Set<number>()
+  const out: Row[] = []
   for (const m of rows) {
-    if (m.from === 'owner') { out.push({ msg: m, work: [] }); continue }
-    const t = Date.parse(m.ts)
-    const from = since[m.from] ?? (rows.length ? Date.parse(rows[0].ts) - 1000 : 0)
-    const work = (steps[m.from] ?? []).filter((s) => { const x = Date.parse(s.ts); return x > from && x <= t && s.kind !== 'response' })
-    since[m.from] = t
-    out.push({ msg: m, work })
+    const t = m.from !== 'owner' && m.turn_id ? byId.get(m.turn_id) ?? null : null
+    if (t) used.add(t.id)
+    out.push({ msg: m, turn: t, after: m.id })
   }
-  return out
+  for (const t of work?.turns ?? []) {
+    if (used.has(t.id) || !t.steps.length) continue
+    const at = t.input_msg_id && rows.some((m) => m.id === t.input_msg_id) ? t.input_msg_id : rows.at(-1)?.id ?? 0
+    out.push({ msg: null, turn: t, after: at + 0.5 })
+  }
+  return out.sort((x, y) => x.after - y.after)
 }
 
 const SPRING = { type: 'spring' as const, visualDuration: 0.25, bounce: 0.2 }
 
-export default function Thread({ rows, steps, pending, onOpenFile, onEdit, loading }: {
+export default function Thread({ rows, work, pending, onOpenFile, onEdit, loading }: {
   rows: Msg[]
-  steps: Record<string, Step[]>
+  work: Work | null
   pending: { agent: string; step: Step | null }[]
   onOpenFile: (path: string) => void
   onEdit: (m: Msg) => void
@@ -40,16 +46,17 @@ export default function Thread({ rows, steps, pending, onOpenFile, onEdit, loadi
 }) {
   const reduce = useReducedMotion()
   const end = useRef<HTMLDivElement>(null)
-  const turns = useMemo(() => turnsOf(rows, steps), [rows, steps])
+  const items = useMemo(() => rowsOf(rows, work), [rows, work])
   const last = rows.at(-1)?.id ?? 0
   useEffect(() => { end.current?.scrollIntoView({ block: 'end', behavior: reduce ? 'auto' : 'smooth' }) }, [last, pending.length, reduce])
 
   if (loading) return <div className="px-8 py-10 text-ink-mute text-[14px]">Reading the thread…</div>
   return (
     <div className="mx-auto w-full max-w-[760px] px-6 pt-8 pb-4 flex flex-col gap-6" role="log" aria-live="polite" aria-label="conversation">
-      {turns.map(({ msg, work }) => (
-        <motion.div key={msg.id} initial={reduce ? false : { opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={SPRING}>
-          {msg.from === 'owner' ? <Mine m={msg} onEdit={onEdit} onOpenFile={onOpenFile} /> : <Theirs m={msg} work={work} onOpenFile={onOpenFile} />}
+      {items.map(({ msg, turn }) => (
+        <motion.div key={msg ? `m${msg.id}` : `t${turn!.id}`} initial={reduce ? false : { opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={SPRING}>
+          {msg ? (msg.from === 'owner' ? <Mine m={msg} onEdit={onEdit} onOpenFile={onOpenFile} /> : <Theirs m={msg} turn={turn} onOpenFile={onOpenFile} />)
+            : <Elsewhere turn={turn!} />}
         </motion.div>
       ))}
       {pending.map((p) => <Working key={p.agent} agent={p.agent} step={p.step} />)}
@@ -64,7 +71,7 @@ function Mine({ m, onEdit, onOpenFile }: { m: Msg; onEdit: (m: Msg) => void; onO
     <div className="flex flex-col items-end gap-1.5 group">
       <div className="max-w-[85%] rounded-2xl rounded-br-md bg-deck-3 border border-line px-4 py-2.5 text-[14.5px] leading-relaxed text-ink whitespace-pre-wrap">
         {stripEmbeds(m.body)}
-        {files.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{files.map((f) => <FileChip key={f} path={f} onOpen={onOpenFile} />)}</div>}
+        {files.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{files.map((f) => <FileChip key={f.path} path={f.path} label={f.label} onOpen={onOpenFile} />)}</div>}
       </div>
       <div className="flex items-center gap-2 text-[11px] text-ink-mute">
         {m.to && <span>to {displayName(m.to)}</span>}
@@ -75,7 +82,7 @@ function Mine({ m, onEdit, onOpenFile }: { m: Msg; onEdit: (m: Msg) => void; onO
   )
 }
 
-function Theirs({ m, work, onOpenFile }: { m: Msg; work: Step[]; onOpenFile: (p: string) => void }) {
+function Theirs({ m, turn, onOpenFile }: { m: Msg; turn: WTurn | null; onOpenFile: (p: string) => void }) {
   const files = embeds(m.body)
   const text = stripEmbeds(m.body)
   return (
@@ -87,16 +94,29 @@ function Theirs({ m, work, onOpenFile }: { m: Msg; work: Step[]; onOpenFile: (p:
           {m.to && m.to !== 'owner' && <span className="text-[12px] text-ink-mute">to {displayName(m.to)}</span>}
           <span className="text-[11px] text-ink-mute">{fmtTime(m.ts)}</span>
         </div>
-        {work.length > 0 && <Work steps={work} />}
+        {turn && turn.steps.length > 0 && <WorkTrace steps={turn.steps} elsewhere={turn.elsewhere} />}
         {text && <div className="chat-prose mt-1.5"><Md text={text} /></div>}
-        {files.length > 0 && <div className="mt-2.5 flex flex-wrap gap-1.5">{files.map((f) => <FileChip key={f} path={f} onOpen={onOpenFile} />)}</div>}
+        {files.length > 0 && <div className="mt-2.5 flex flex-wrap gap-1.5">{files.map((f) => <FileChip key={f.path} path={f.path} label={f.label} onOpen={onOpenFile} />)}</div>}
       </div>
     </div>
   )
 }
 
-/* the work between two answers: one line, then the trace */
-function Work({ steps }: { steps: Step[] }) {
+/* a turn this thread opened but whose answer went elsewhere */
+function Elsewhere({ turn }: { turn: WTurn }) {
+  return (
+    <div className="flex gap-3.5">
+      <AgentFace name={turn.agent} size={30} />
+      <div className="min-w-0 flex-1">
+        <div className="text-[13.5px] font-semibold text-ink">{displayName(turn.agent)}</div>
+        <WorkTrace steps={turn.steps} elsewhere={turn.elsewhere} answered={false} />
+      </div>
+    </div>
+  )
+}
+
+/* a turn's work: one line, then the trace */
+function WorkTrace({ steps, elsewhere, answered = true }: { steps: Step[]; elsewhere: string[]; answered?: boolean }) {
   const [open, setOpen] = useState(false)
   const tools = steps.filter((s) => s.kind === 'tool').length
   const errs = steps.filter((s) => s.kind === 'error').length
@@ -109,6 +129,11 @@ function Work({ steps }: { steps: Step[] }) {
         Worked for {secs < 90 ? `${secs}s` : `${Math.round(secs / 60)} min`}, {tools} tool {tools === 1 ? 'call' : 'calls'}
         {errs > 0 && <span className="text-bad">, {errs} {errs === 1 ? 'error' : 'errors'}</span>}
       </button>
+      {elsewhere.length > 0 && (
+        <div className="text-[12px] text-ink-mute mt-0.5">{answered ? 'This turn also touched' : 'Answered in'} {elsewhere.map((t) => (
+          <a key={t} href={t.startsWith('chat:') ? `#/chat/${encodeURIComponent(t)}` : `#/wire/${encodeURIComponent(t)}`} className="text-ink-dim hover:text-ink underline underline-offset-2 mr-1.5">{t}</a>))}
+        </div>
+      )}
       {open && (
         <ol className="mt-1 ml-1 border-l border-line pl-3 flex flex-col gap-0.5 max-h-[320px] overflow-y-auto">
           {steps.map((s) => (
@@ -129,11 +154,10 @@ function Working({ agent, step }: { agent: string; step: Step | null }) {
       <div className="min-w-0 flex-1 pt-1">
         <div className="text-[13.5px] font-semibold text-ink">{displayName(agent)}</div>
         <div className="mt-0.5 font-mono text-[12px] text-ink-dim truncate" aria-live="polite">
-          {step ? stepLine(step) : 'reading your message'}<span className="chat-caret" aria-hidden />
+          {step ? <>{stepLine(step)} <span className="text-ink-mute">(current work, any thread)</span></> : 'reading your message'}<span className="chat-caret" aria-hidden />
         </div>
       </div>
     </div>
   )
 }
 
-export function kindLabel(path: string) { return kindOf(path) }

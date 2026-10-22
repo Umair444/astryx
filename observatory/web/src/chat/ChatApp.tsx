@@ -10,8 +10,8 @@ import Thread from './Thread'
 import { Viewer, Workforce } from './Side'
 import { startDictation } from './dictate'
 import {
-  bodyFor, isChat, loadCommands, loadProjects, newThread, participants, saveProjects, slug, stepsOf, stripEmbeds,
-  type McpTool, type Project, type Projects, type Skill, type Uploaded,
+  bodyFor, isChat, loadCommands, loadWork, loadProjects, newThread, participants, saveProjects, slug, stepsOf, stripEmbeds,
+  type McpTool, type Project, type Projects, type Skill, type Uploaded, type Work,
 } from './model'
 
 /* /chat (plan-11884): the long-form workspace on the org. The floor's sheet is for a word with one agent; this is for
@@ -40,6 +40,7 @@ export default function ChatApp({ thread, go }: { thread: string | null; go: (t:
   const [threads, setThreads] = useState<ThreadRow[]>([])
   const [history, setHistory] = useState<Msg[] | null>(null)
   const [steps, setSteps] = useState<Record<string, Step[]>>({})
+  const [work, setWork] = useState<Work | null>(null)
   const [side, setSide] = useState<Side>({ kind: 'workforce' })
   const [palette, setPalette] = useState(false)
   const [help, setHelp] = useState(false)
@@ -74,16 +75,29 @@ export default function ChatApp({ thread, go }: { thread: string | null; go: (t:
   useEffect(() => { if (newest) loadThreads() }, [newest, loadThreads])
 
   const activeProject = proj.projects.find((p) => p.id === project) ?? null
-  const inChat = useMemo(() => participants(rows), [rows])
+  const inChat = useMemo(() => participants(rows, names), [rows, names])
   const lanes = activeProject && !current ? activeProject.agents : inChat
 
-  // each lane's steps: fetched when it appears, and again whenever the live feed says that agent moved
+  // D4: in a chat, the work comes filed by turn (/api/chat/work), refetched when the thread moves or one of its
+  // agents does; a project's lanes (no thread open) show each agent's recent steps from any thread
   const pulse = roster.filter((a) => lanes.includes(a.agent)).map((a) => `${a.agent}:${a.steps}`).join(',')
   useEffect(() => {
     let live = true
-    for (const a of lanes) stepsOf(a).then((s) => live && setSteps((cur) => ({ ...cur, [a]: s }))).catch(() => {})
+    if (current) loadWork(current).then((w) => live && setWork(w)).catch(() => {})
+    else for (const a of lanes) stepsOf(a).then((s) => live && setSteps((cur) => ({ ...cur, [a]: s }))).catch(() => {})
     return () => { live = false }
-  }, [pulse]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pulse, current, newest]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setWork(null) }, [current])
+  // the lanes' steps: a chat's are its agents' live (unlinked) steps, then their newest filed turn's
+  const laneSteps = useMemo(() => {
+    if (!current) return steps
+    const out: Record<string, Step[]> = {}
+    for (const a of lanes) {
+      const filed = (work?.turns ?? []).filter((t) => t.agent === a).at(-1)?.steps ?? []
+      out[a] = [...filed, ...(work?.live[a] ?? [])]
+    }
+    return out
+  }, [current, steps, work, lanes.join(',')]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // asked and not yet answered: an agent whose newest row here is older than the owner's newest row to it
   const pending = useMemo(() => {
@@ -91,14 +105,14 @@ export default function ChatApp({ thread, go }: { thread: string | null; go: (t:
     for (const a of inChat) {
       const askedAt = Math.max(0, ...rows.filter((m) => m.from === 'owner' && m.to === a).map((m) => m.id))
       const saidAt = Math.max(0, ...rows.filter((m) => m.from === a).map((m) => m.id))
-      if (askedAt > saidAt) out.push({ agent: a, step: (steps[a] ?? []).filter((s) => Date.parse(s.ts) >= Date.parse(rows.find((m) => m.id === askedAt)!.ts)).at(-1) ?? null })
+      if (askedAt > saidAt) out.push({ agent: a, step: (work?.live[a] ?? []).filter((s) => Date.parse(s.ts) >= Date.parse(rows.find((m) => m.id === askedAt)!.ts)).at(-1) ?? null })
     }
     return out
-  }, [inChat, rows, steps])
+  }, [inChat, rows, work])
 
   async function onSend(text: string, files: Uploaded[], to: string[]) {
     const t = current || newThread()
-    const body = [text, ...files.map((f) => `[[file:${f.path}]]`)].filter(Boolean).join('\n')
+    const body = [text, ...files.map((f) => `[[file:${f.path}]] (${f.name})`)].filter(Boolean).join('\n')
     for (const a of to) await send(a, bodyFor(body, to, a), t)        // R4: one row per recipient, one thread
     if (!current) go(t)
     if (activeProject && !activeProject.threads.includes(t)) await saveProject({ ...activeProject, threads: [...activeProject.threads, t] })
@@ -172,7 +186,8 @@ export default function ChatApp({ thread, go }: { thread: string | null; go: (t:
     </div>
   )
 
-  const title = current ? (threads.find((t) => t.thread === current)?.preview ? stripEmbeds(threads.find((t) => t.thread === current)!.preview) : 'New chat') : activeProject ? activeProject.name : 'New chat'
+  const first = rows.find((m) => m.from === 'owner') ?? rows[0]
+  const title = current ? (first ? stripEmbeds(first.body).split('\n')[0].slice(0, 90) || 'Attachment' : 'New chat') : activeProject ? activeProject.name : 'New chat'
   return (
     <div className="h-dvh flex bg-deck text-ink overflow-hidden">
       {/* ── the rail ─────────────────────────────────────────────────────────────────────── */}
@@ -222,7 +237,7 @@ export default function ChatApp({ thread, go }: { thread: string | null; go: (t:
           {!current && !activeProject && <Empty names={names} onPick={(n) => composer.current?.set(`@${n} `)} />}
           {!current && activeProject && <ProjectHome p={activeProject} threads={threads} go={go} run={() => runProject(activeProject)}
             onBrief={(brief) => saveProject({ ...activeProject, brief })} onRemove={() => { saveProject(activeProject, true); setProject(null) }} />}
-          {current && <Thread rows={rows} steps={steps} pending={pending} loading={history === null}
+          {current && <Thread rows={rows} work={work} pending={pending} loading={history === null}
             onOpenFile={(p) => setSide({ kind: 'file', path: p })} onEdit={(m) => composer.current?.set(stripEmbeds(m.body))} />}
         </div>
         {note && <div className="mx-auto max-w-[760px] w-full px-6 pb-1 text-[12.5px] text-ink-dim" role="status" onClick={() => setNote('')}>{note}</div>}
@@ -239,7 +254,7 @@ export default function ChatApp({ thread, go }: { thread: string | null; go: (t:
             transition={{ type: 'spring', visualDuration: 0.3, bounce: 0 }}>
             {side.kind === 'file'
               ? <Viewer path={side.path} onClose={() => setSide({ kind: 'workforce' })} onAttach={(u) => composer.current?.attach(u)} />
-              : <Workforce agents={lanes} steps={steps} title={activeProject && !current ? `${activeProject.name}: the workforce` : 'The workforce'} />}
+              : <Workforce agents={lanes} steps={laneSteps} unlinked={current ? work?.unlinked ?? {} : {}} title={activeProject && !current ? `${activeProject.name}: the workforce` : 'The workforce'} />}
           </motion.aside>
         )}
       </AnimatePresence>
@@ -265,6 +280,7 @@ function Empty({ names, onPick }: { names: string[]; onPick: (n: string) => void
       <h2 className="chat-display text-[44px] leading-[1.05] text-ink">Who should work on this?</h2>
       <p className="mt-3 text-[15px] text-ink-dim max-w-[520px]">Mention one agent, or several: they share this thread, split the work, and you watch it happen in the workforce.</p>
       <div className="mt-7 flex flex-wrap gap-2">
+        {names.length === 0 && <span className="text-[13px] text-ink-mute">Finding the agents…</span>}
         {names.map((n) => (
           <button key={n} onClick={() => onPick(n)} className="inline-flex items-center gap-2 rounded-full border border-line hover:border-line-2 bg-deck-2 pl-1 pr-3 py-1 text-[13px] text-ink-dim hover:text-ink">
             <AgentFace name={n} size={22} />{displayName(n)}

@@ -26,9 +26,10 @@ export function mentions(body: string, roster: string[]): string[] {
 }
 
 /* who is in a chat: every non-owner party of its rows, first-seen order */
-export function participants(rows: Msg[]): string[] {
+export function participants(rows: Msg[], roster: string[]): string[] {
+  const known = new Set(roster)                     // agents only: pulse, a canvas, a federation peer never join
   const out: string[] = []
-  for (const m of rows) for (const n of [m.from, m.to]) if (n && n !== 'owner' && !n.includes('@') && !out.includes(n)) out.push(n)
+  for (const m of rows) for (const n of [m.from, m.to]) if (n && known.has(n) && !out.includes(n)) out.push(n)
   return out
 }
 
@@ -39,27 +40,44 @@ export function bodyFor(text: string, to: string[], me: string): string {
   return `[chat with ${to.filter((n) => n !== me).map((n) => '@' + n).join(' ')} — everyone here reads this thread; reply on it]\n${text}`
 }
 
-export const FILE_EMBED = /\[\[file:([^\]\n]+)\]\]/g
-export function embeds(body: string): string[] { return [...body.matchAll(FILE_EMBED)].map((m) => m[1].trim()) }
+export const FILE_EMBED = /\[\[file:([^\]\n]+)\]\](?: \(([^)\n]{1,120})\))?/g    // an upload adds its display name
+export interface Embed { path: string; label?: string }
+export function embeds(body: string): Embed[] { return [...body.matchAll(FILE_EMBED)].map((m) => ({ path: m[1].trim(), label: m[2] })) }
 export function stripEmbeds(body: string): string { return body.replace(FILE_EMBED, '').replace(/^\[chat with [^\]]*\]\n/, '').trim() }
 export const fileUrl = (path: string) => `/api/chat/file?path=${encodeURIComponent(path)}`
-export function kindOf(path: string): 'image' | 'pdf' | 'audio' | 'video' | 'text' {
+export function kindOf(path: string): 'image' | 'pdf' | 'audio' | 'video' | 'text' | 'other' {
   const e = path.toLowerCase().split('.').pop() ?? ''
-  if (['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(e)) return 'image'
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif'].includes(e)) return 'image'
   if (e === 'pdf') return 'pdf'
-  if (['mp3', 'm4a', 'ogg', 'wav'].includes(e)) return 'audio'
-  if (['mp4', 'webm'].includes(e)) return 'video'
-  return 'text'
+  if (['mp3', 'm4a', 'ogg', 'wav', 'flac'].includes(e)) return 'audio'
+  if (['mp4', 'webm', 'mov'].includes(e)) return 'video'
+  if (['txt', 'md', 'csv', 'json', 'log', 'py', 'ts', 'tsx', 'sql', 'yaml', 'yml', 'toml', 'sh', 'html'].includes(e)) return 'text'
+  return 'other'
 }
 
-/* file fetches carry the owner key as a header, so a file is fetched into a blob URL, never linked with ?key= */
-export async function blobUrl(path: string): Promise<string> {
+/* D1/D2 (plan-11884): a file is FETCHED with the owner key as a header (the file route refuses ?key=, so no URL this
+   page builds ever carries the key), and its type is the RESPONSE's (serve_untrusted sniffed it), never one this page
+   names. What the page then does with it is one of three shapes the active-content census (C5) accepts: an image or a
+   media element's src, a text node, or a download. */
+export async function fetchFile(path: string): Promise<Response> {
   const r = await fetch(fileUrl(path), { headers: { 'x-obs-key': obsKey() } })
   if (!r.ok) throw new Error(r.status === 404 ? 'that file is not readable from here' : `the file did not load (${r.status})`)
-  return URL.createObjectURL(await r.blob())
+  return r
+}
+export function showMedia(el: HTMLImageElement | HTMLAudioElement | HTMLVideoElement, b: Blob) {
+  if (el.src.startsWith('blob:')) URL.revokeObjectURL(el.src)
+  el.src = URL.createObjectURL(b)
+}
+export function download(b: Blob, name: string) {
+  const url = URL.createObjectURL(b)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 2000)
 }
 
-export interface Uploaded { path: string; name: string; size: number; type: string }
+export interface Uploaded { path: string; name: string; size: number; type: string }   // name: display only (D3)
 export async function upload(file: Blob, name: string): Promise<Uploaded> {
   const r = await fetch(`/api/chat/upload?name=${encodeURIComponent(name)}`, {
     method: 'POST', body: file, headers: { 'x-obs-key': obsKey(), 'content-type': 'application/octet-stream' },
@@ -97,18 +115,30 @@ export async function loadCommands(): Promise<{ skills: Skill[]; tools: McpTool[
   return { skills: c.skills, tools }
 }
 
+/* ------------------------------------------------------------------------------------------------- work */
+/* D4: the thread's work at TURN level (server: /api/chat/work). A turn belongs to every thread it touched; its other
+   threads come named. `live` is each agent's newest unlinked steps ("current work, any thread"); `unlinked` counts
+   the older ones that were never filed. */
+export interface Turn { id: number; agent: string; started_at: string | null; ended_at: string | null; input_msg_id: number | null; elsewhere: string[]; steps: Step[] }
+export interface Work { turns: Turn[]; live: Record<string, Step[]>; unlinked: Record<string, number> }
+export const loadWork = (thread: string) => api<Work>(`/chat/work?thread=${encodeURIComponent(thread)}`)
+
 /* ------------------------------------------------------------------------------------------------- steps */
 export async function stepsOf(agent: string, limit = 120): Promise<Step[]> {
   const rows = await api<Step[]>(`/steps?agent=${encodeURIComponent(agent)}&limit=${limit}`)
   return [...rows].sort((a, b) => a.id - b.id)
 }
 
-/* a step in domain language: what the agent DID, in a few words, never a dump */
+/* a step in domain language: what the agent DID, in a few words, never a dump. Tool steps arrive as
+   "Bash: <its own description>" or "mcp__server__tool: <args>"; the tool's done-marks carry nothing and are dropped. */
 export function stepLine(s: Step): string {
   const c = (s.content ?? '').replace(/\s+/g, ' ').trim()
   if (s.kind === 'tool') {
-    const tool = c.match(/^([\w.:-]+)/)?.[1] ?? 'a tool'
-    return `${tool.replace(/^mcp__\w+__/, '')}${c.length > tool.length ? ' · ' + c.slice(tool.length).trim().slice(0, 90) : ''}`
+    const m = /^([\w.:-]+?):\s*(?:·\s*)?(.*)$/.exec(c)
+    if (!m) return c.replace(/^mcp__\w+?__/, '').slice(0, 120)
+    const tool = m[1].replace(/^mcp__\w+?__/, '')
+    return m[2] ? `${tool}  ${m[2].slice(0, 110)}` : tool
   }
   return c.slice(0, 140)
 }
+export const visible = (s: Step) => s.kind !== 'tool_done' && s.kind !== 'response' && s.kind !== 'heartbeat'
