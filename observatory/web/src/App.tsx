@@ -21,6 +21,7 @@ import MemoryView from './components/MemoryView'
 import GrowbotView from './components/GrowbotView'
 import FaceView from './components/FaceView'
 import AgentDrawer from './components/AgentDrawer'
+import ChatApp from './chat/ChatApp'
 import ChatSheet from './components/ChatSheet'
 import { AnimatePresence } from 'motion/react'
 import VegaChat from './components/VegaChat'
@@ -64,6 +65,7 @@ export type Route =
   | { tab: 'growbot' }
   | { tab: 'face' }
   | { tab: 'floor' }
+  | { tab: 'chat'; thread?: string }
 
 function parseHash(): Route {
   const h = location.hash.replace(/^#\/?/, '')
@@ -79,17 +81,20 @@ function parseHash(): Route {
   if (tab === 'growbot') return { tab: 'growbot' }
   if (tab === 'face') return { tab: 'face' }
   if (tab === 'network') return { tab: 'network' }
+  if (tab === 'chat') return { tab: 'chat', thread: a || undefined }
   return { tab: 'floor' }          // the Floor is home: the org as a place
 }
 
 export function nav(r: Route) {
   if (r.tab === 'floor') location.hash = '#/'
   else if (r.tab === 'wire') location.hash = `#/wire${r.thread ? '/' + encodeURIComponent(r.thread) : ''}`
+  else if (r.tab === 'chat') location.hash = `#/chat${r.thread ? '/' + encodeURIComponent(r.thread) : ''}`
   else location.hash = `#/${r.tab}`
 }
 
 const TABS: { key: Route['tab']; label: string; icon: string }[] = [
   { key: 'floor', label: 'Floor', icon: '◉' },
+  { key: 'chat', label: 'Chat', icon: '❖' },
   { key: 'network', label: 'Network', icon: '☉' },
   { key: 'agents', label: 'Agents', icon: '◍' },
   { key: 'wire', label: 'Wire', icon: '✦' },
@@ -266,6 +271,8 @@ function Shell() {
   // The creature face is a MODE, not a tab: fullscreen, no chrome — the whole
   // phone becomes the robot's face (it does its own key gate).
   if (route.tab === 'face') return <FaceView />
+  // /chat is a WORKSPACE, not a tab (plan-11884): fullscreen, its own rail, its own keys
+  if (route.tab === 'chat') return <ChatApp thread={route.thread ?? null} go={(t) => nav({ tab: 'chat', thread: t ?? undefined })} />
   const page = authPage()
   if (page) return page
 

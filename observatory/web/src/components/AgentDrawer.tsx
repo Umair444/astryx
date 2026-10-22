@@ -136,6 +136,10 @@ export default function AgentDrawer({ name, onClose, onTalk }: { name: string; o
               Talk to {displayName(name)}
             </button>
           )}
+          <a href={`#/chat/${encodeURIComponent(`obs:${name}`)}`}
+            className="inline-flex items-center px-3 py-2 rounded-xl text-[13px] text-ink-dim hover:text-ink border border-line no-underline">
+            Open in Chat
+          </a>
           <a href={`${canvasBase()}#/new/${encodeURIComponent(name)}`} target="_blank" rel="noreferrer"
             className={onTalk ? 'inline-flex items-center px-3 py-2 rounded-xl text-[13px] text-ink-dim hover:text-ink border border-line no-underline'
               : 'ax-action inline-flex items-center gap-2 px-4 py-2 rounded-xl text-[13px] font-medium no-underline'}>

@@ -120,6 +120,8 @@ export default function ChatSheet({ name, onClose, onProfile }: { name: string; 
           <div className="mt-3 flex items-center gap-3 text-[12px]">
             {glyphsByAgent(wiring.glyphs)[name] && <GlyphStack glyphs={glyphsByAgent(wiring.glyphs)[name]} chats={chatsByAgent(wiring.data)[name]} size={17} />}
             <button onClick={onProfile} className="text-ink-dim hover:text-ink underline-offset-2 hover:underline">Profile</button>
+            <a href={`#/chat/${encodeURIComponent(thread)}`} title="The same conversation, in the full chat workspace"
+              className="text-ink-dim hover:text-ink underline-offset-2 hover:underline">Continue in Chat</a>
             <a href={`${canvasBase()}#/new/${encodeURIComponent(name)}`} target="_blank" rel="noreferrer"
               className="text-ink-dim hover:text-ink underline-offset-2 hover:underline">Build on a canvas</a>
           </div>
