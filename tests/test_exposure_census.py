@@ -62,6 +62,9 @@ def main():
           len(f) == 1 and "UNKNOWN listener" in f[0], str(f))
     f = run([("0.0.0.0", 22, "astryx-shell")], decl={**DECL, "astryx-shell": {"scope": "org"}})
     check("a host-owned PORT doesn't excuse an astryx unit that binds it", len(f) == 1 and "ACCUSED" in f[0], str(f))
+    f = run([("0.0.0.0", 9091, "pid:4242")])
+    check("a3 N2: a listener whose pid we can see is OURS, so a host port can't excuse it (pid:<n>, never host)",
+          len(f) == 1 and "ACCUSED 0.0.0.0:9091 pid:4242" in f[0], str(f))
     f = run([("0.0.0.0", 8477, "astryx-whatsapp")])
     check("the intake on 0.0.0.0, not the docker bridge, is ACCUSED (its exemption is bridge-only)",
           len(f) == 1 and "ACCUSED 0.0.0.0:8477" in f[0], str(f))

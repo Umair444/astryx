@@ -66,6 +66,39 @@ def element(src, at):
     return src[at:]
 
 
+OBJ = re.compile(r"(?:URL\.)?createObjectURL\s*\(")
+MEDIA_SRC = re.compile(r"(?:^|[^\w.])((?:this\.)?\w+)\.src\s*=\s*$")
+MEDIA_DECL = r"\b{name}\s*(?::\s*HTML(?:Audio|Video|Image)Element\b|=\s*(?:new\s+(?:Audio|Image)\s*\(|document\.createElement\(\s*['\"](?:audio|video|img)['\"]))"
+
+
+def object_url_class(src, at):
+    """C5 (a3 #62226 R2): an object URL made on the front's page carries the front's ORIGIN and NO response header, so it
+    is safe only as (a) the src of an element the file shows to be audio/video/img, or (b) the href of an anchor that is
+    also given `download`. Anything else is accused. -> 'media' | 'download' | None."""
+    head = src[max(0, at - 200):at]
+    line_start = src.rfind("\n", 0, at) + 1
+    before = src[line_start:at]
+    jsx = src.rfind("<", 0, at)
+    tag = re.match(r"<\s*(\w+)", src[jsx:at]) if jsx >= 0 and ">" not in src[jsx:at] else None
+    if tag and tag.group(1) in ("audio", "video", "img", "source") and re.search(r"\bsrc\s*=\s*\{[^}]*$", src[jsx:at]):
+        return "media"
+    m = MEDIA_SRC.search(before)
+    if m:
+        name = m.group(1).split(".")[-1]
+        if re.search(MEDIA_DECL.format(name=re.escape(name)), src):
+            return "media"
+        return None
+    v = re.search(r"(?:const|let|var)\s+(\w+)\s*=\s*$", before)
+    if v:
+        rest = src[at:at + 500]
+        a = re.search(rf"\b(\w+)\.href\s*=\s*{re.escape(v.group(1))}\b", rest)
+        if a and re.search(rf"\b{re.escape(a.group(1))}\.download\s*=", rest) \
+                and re.search(rf"\b{re.escape(a.group(1))}\s*=\s*document\.createElement\(\s*['\"]a['\"]", src[max(0, at - 50):at + 500]):
+            return "download"
+    del head
+    return None
+
+
 RAW = re.compile(r"\.(?:innerHTML|outerHTML)\s*=(?!=)|insertAdjacentHTML\s*\(|document\.write(?:ln)?\s*\(|<object\b|"
                  r"<embed\b|(?<![\w.])eval\s*\(|new\s+Function\s*\(")
 
@@ -94,7 +127,7 @@ def sanitized(src, at, ident, hops=2):
 
 def client_findings(files):
     """{rule: [file:line ...]} over (relpath, text) pairs."""
-    out = {"C1": [], "C2": [], "C3": [], "C4": []}
+    out = {"C1": [], "C2": [], "C3": [], "C4": [], "C5": []}
     for rel, src in files:
         line = lambda i: src.count("\n", 0, i) + 1      # noqa: E731
         for m in re.finditer(r"<iframe\b", src):
@@ -105,6 +138,9 @@ def client_findings(files):
             out["C2"].append(f"{rel}:{line(m.start())}")
         for m in RAW.finditer(src):
             out["C3"].append(f"{rel}:{line(m.start())} {m.group(0).strip()}")
+        for m in OBJ.finditer(src):
+            if object_url_class(src, m.start()) is None:
+                out["C5"].append(f"{rel}:{line(m.start())} an object URL neither a media src nor a download href")
         for m in re.finditer(r"dangerouslySetInnerHTML\s*=\s*\{\{\s*__html\s*:\s*(.*?)\s*\}\}", src, re.S):
             v = m.group(1)
             if not re.fullmatch(r"[A-Za-z_]\w*", v):
@@ -142,6 +178,21 @@ def fixtures():
         "C4 sanitized one call away (a local render())": (
             "a.tsx", "function render(md) {\n  const x = marked.parse(md)\n  return DOMPurify.sanitize(x)\n}\n"
                      "const h = useMemo(() => render(t), [t])\nreturn <div dangerouslySetInnerHTML={{ __html: h }} />", "C4", 0),
+        "C5 window.open of an object URL (a3's PlantBlob)": ("a.tsx",
+            "const b = new Blob([html], {type: 'text/html'})\nwindow.open(URL.createObjectURL(b))", "C5", 1),
+        "C5 an anchor to an object URL WITHOUT download": ("a.tsx",
+            "<a href={URL.createObjectURL(b)} target=\"_blank\">open</a>", "C5", 1),
+        "C5 an iframe src of an object URL": ("a.tsx", "<iframe sandbox='' src={URL.createObjectURL(b)} />", "C5", 1),
+        "C5 an audio element's src (room.tsx's shape)": ("a.ts",
+            "class R {\n  private el = new Audio()\n  async p(r) { this.el.src = URL.createObjectURL(await r.blob()) }\n}", "C5", 0),
+        "C5 a .src on an element NOT shown to be media": ("a.ts", "frame.src = URL.createObjectURL(b)", "C5", 1),
+        "C5 a JSX <img src> of an object URL": ("a.tsx", "<img alt='' src={URL.createObjectURL(b)} />", "C5", 0),
+        "C5 a download anchor (SqlView's shape)": ("a.ts",
+            "function d(n, t) {\n  const url = URL.createObjectURL(new Blob([t], { type: 'text/csv' }))\n"
+            "  const a = document.createElement('a')\n  a.href = url\n  a.download = n\n  a.click()\n}", "C5", 0),
+        "C5 the same anchor without download": ("a.ts",
+            "function d(n, t) {\n  const url = URL.createObjectURL(b)\n  const a = document.createElement('a')\n"
+            "  a.href = url\n  a.click()\n}", "C5", 1),
         "C4 an inline expression, not a sanitized name": ("a.tsx", "<div dangerouslySetInnerHTML={{ __html: marked.parse(t) }} />",
                                                          "C4", 1),
     }
@@ -196,7 +247,8 @@ def main():
     for rule, what in (("C1", "every iframe is sandboxed or EXEMPT with its reason"),
                        ("C2", "no sandbox grants allow-same-origin"),
                        ("C3", "no raw HTML sink (innerHTML=, insertAdjacentHTML, document.write, object/embed, eval)"),
-                       ("C4", "every dangerouslySetInnerHTML is DOMPurify.sanitize's output")):
+                       ("C4", "every dangerouslySetInnerHTML is DOMPurify.sanitize's output"),
+                       ("C5", "every object URL is a media src or a download href (it carries the origin, no headers)")):
         check(f"LIVE {rule}: {what}", not found[rule], "; ".join(found[rule]))
     stale = [f for f in EXEMPT if not (ROOT / f).exists()]
     check("EXEMPT names only files that exist (a stale exemption is a finding)", not stale, str(stale))

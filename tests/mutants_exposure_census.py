@@ -15,8 +15,7 @@ MUTANTS = {
     "E2 an unknown listener is fine (the exemption manifest's polarity flipped)":
         ('        what = "an ORG-scoped astryx service"', '        continue\n        what = "an ORG-scoped astryx service"'),
     "E3 a host-owned PORT excuses an astryx unit too":
-        ('        if (unit is None or not unit.startswith("astryx-")) and port in HOST:',
-         '        if port in HOST:'),
+        ('        if unit is None and port in HOST:', '        if port in HOST:'),
     "E4 the declaration is never checked against the socket table (a1 BC-2)":
         ("        if unit and unit.startswith(\"astryx-\"):\n            d = decl.get(unit)",
          "        if False:\n            d = decl.get(unit)"),

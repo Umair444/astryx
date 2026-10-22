@@ -29,10 +29,24 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 DECL = REPO / "src" / "astryx" / "data" / "org_units.json"
-TUNNEL = Path("/etc/cloudflared/config.yml")
+TUNNEL = Path("/etc/cloudflared/config.yml")      # the default; tunnel_config() prefers the RUNNING cloudflared's --config
+
+
+def tunnel_config() -> Path:
+    """The config the running cloudflared was started with (its own argv, the effect's owner: a3 #62226 N3), else TUNNEL."""
+    for p in Path("/proc").glob("[0-9]*/cmdline"):
+        try:
+            argv = p.read_bytes().split(b"\0")
+        except OSError:
+            continue
+        if argv and argv[0].endswith(b"cloudflared") and b"--config" in argv:
+            i = argv.index(b"--config")
+            if i + 1 < len(argv) and argv[i + 1]:
+                return Path(argv[i + 1].decode())
+    return TUNNEL
 CLASSES = {"astryx-observatory": "front", "astryx-gateway": "federation"}
 INTAKE = {
-    "astryx-whatsapp": "the wacli webhook (CLAUDE.md: <docker host>:8477/hook), bound to the docker bridge only and "
+    "astryx-whatsapp": "the wacli webhook (CLAUDE.md's <docker host> hook port), bound to the docker bridge only and "
                        "checked against WA_WEBHOOK_SECRET",
 }
 HOST = {
@@ -86,7 +100,7 @@ def census(listeners, targets, decl: dict, registry: dict | None = None) -> list
             continue
         if unit in OWNER_RULED:
             continue
-        if (unit is None or not unit.startswith("astryx-")) and port in HOST:
+        if unit is None and port in HOST:      # only a process `ss` can't show us (another uid's) can be the HOST's
             continue
         what = "an ORG-scoped astryx service" if (decl.get(unit or "") or {}).get("scope") == "org" else \
             "an astryx service" if (unit or "").startswith("astryx-") else "an UNKNOWN listener"
@@ -124,14 +138,16 @@ def parse_tunnel(text: str) -> list:
 
 
 def unit_of(pid) -> str | None:
-    """The systemd unit a pid runs in, instance kept (`astryx-canvas@lab`), from /proc/<pid>/cgroup (no secret there)."""
+    """The systemd unit a pid runs in, instance kept (`astryx-canvas@lab`), from /proc/<pid>/cgroup (no secret there).
+    A pid `ss` shows us is OUR uid's, so it is never a host service (a3 #62226 N2): with no unit it reads `pid:<n>`, never
+    None, and HOST (by port) can't excuse it. None means `ss` showed no process: another uid's."""
     if pid is None:
         return None
     try:
         m = re.search(r"/([^/]+)\.service", Path(f"/proc/{pid}/cgroup").read_text())
     except OSError:
-        return None
-    return m.group(1) if m else None
+        return f"pid:{pid}"
+    return m.group(1) if m else f"pid:{pid}"
 
 
 def registry_ports() -> dict | None:
@@ -156,17 +172,18 @@ def main() -> int:
         print(f"exposure census: NOT SEARCHED, `ss -ltnpH` gave rc {ss.returncode} and {len(rows)} listener(s)")
         return 77
     listeners = [(a, p, unit_of(pid)) for a, p, pid in rows]
+    cfg = tunnel_config()
     try:
-        targets = parse_tunnel(TUNNEL.read_text()) if TUNNEL.exists() else []
-        tunnel_note = f"{len(targets)} tunnel target(s) from {TUNNEL}" if TUNNEL.exists() else f"no {TUNNEL}: no tunnel"
+        targets = parse_tunnel(cfg.read_text()) if cfg.exists() else []
+        tunnel_note = f"{len(targets)} tunnel target(s) from {cfg}" if cfg.exists() else f"no {cfg}: no tunnel"
     except OSError as e:
-        print(f"exposure census: NOT SEARCHED, the tunnel config {TUNNEL} can't be read ({e})")
+        print(f"exposure census: NOT SEARCHED, the tunnel config {cfg} can't be read ({e})")
         return 77
     decl = json.loads(DECL.read_text())["units"]
     reg = registry_ports()
     bad = census(listeners, targets, decl, reg)
     public = sorted({(a, p) for a, p, _ in listeners if not loopback(a)}, key=lambda x: x[1])
-    print(f"exposure census: {len(listeners)} listener(s), {len(public)} non-loopback; {tunnel_note}; "
+    print(f"exposure census: {len(listeners)} TCP listener(s) (UDP not searched), {len(public)} non-loopback; {tunnel_note}; "
           f"{'cog registry: ' + str(len(reg)) + ' org port(s)' if reg else 'no cog registry (instance ports unchecked)'}")
     for f in bad:
         print(f"  {f}")
