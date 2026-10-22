@@ -11,7 +11,8 @@ to none is a FAILURE, never a silent drop. The unit maps to its module through i
 
   G2 WRITES (a1 #62307): the class is "a CALL that reaches an insert", not where SQL text sits. WRITERS are derived
      repo-wide (every tracked non-test .py: the functions whose own body holds an INSERT INTO messages string, closed
-     ONE level over the functions calling them). The domain's SITES are its own SQL plus its calls that resolve
+     ONE level over the functions calling them). The domain's SITES are its own SQL plus every LOAD (a call, a
+     rebinding like `_W = wire_insert`, a functools.partial: a1 #62309) that resolves
      (`from M import f [as a]`, `import M [as R]` -> R.f) to a writer in another module: EXACTLY the expected 13
      (unique (file, function); main.py's growbot_event holds two inserts and is one site), including canvas_error ->
      common.wire_insert and ear.route_room -> hearing.room.route. The domain is ONE IMPORT LEVEL; a dynamic getattr
@@ -209,32 +210,46 @@ def writers_repo():
     return closed, mods, trees
 
 
-def _target(call, imp, mod, mods):
-    """The (module, function) a call resolves to, None for a non-repo or non-function call, 'UNKNOWN' for a repo-internal
-    import that doesn't resolve."""
-    f = call.func
-    if isinstance(f, ast.Name):
-        if f.id in imp and imp[f.id][0] == "from":
-            _, m, name = imp[f.id]
-            if f"{m}.{name}" in mods:                   # `from P import m` used as m(...): not a function call target
+def _resolve(e, imp, mod, mods):
+    """The (module, function) a LOADED name or R.attr resolves to, None for a non-repo name, 'UNKNOWN' for a
+    repo-internal import that doesn't resolve. A load counts whether it is called, rebound (`_W = wire_insert`) or
+    handed on (`functools.partial(wire_insert, pool)`): a1 #62309."""
+    if isinstance(e, ast.Name):
+        if e.id in imp and imp[e.id][0] == "from":
+            _, m, name = imp[e.id]
+            if f"{m}.{name}" in mods:                   # `from P import m`: m is a module, not a function
                 return None
             if m in mods:
                 return (m, name)
             return "UNKNOWN" if m.split(".")[0] in REPO_PKGS else None
-        return (mod, f.id)
-    if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id in imp:
-        e = imp[f.value.id]
-        m = e[1] if e[0] == "mod" else f"{e[1]}.{e[2]}"
+        return (mod, e.id)
+    if isinstance(e, ast.Attribute) and isinstance(e.value, ast.Name) and e.value.id in imp:
+        en = imp[e.value.id]
+        m = en[1] if en[0] == "mod" else f"{en[1]}.{en[2]}"
         if m in mods:
-            return (m, f.attr)
-        if e[0] == "from" and e[1] in mods:             # `from P import obj` then obj.method(): not a module function
+            return (m, e.attr)
+        if en[0] == "from" and en[1] in mods:           # `from P import obj` then obj.attr: not a module function
             return None
         return "UNKNOWN" if m.split(".")[0] in REPO_PKGS and m not in ("astryx",) else None
     return None
 
 
+def _target(call, imp, mod, mods):
+    return _resolve(call.func, imp, mod, mods)
+
+
+def _loads(node):
+    """Every loaded name or R.attr directly under `node`'s subtree, attribute chains read once at their base."""
+    for n in ast.walk(node):
+        if isinstance(n, ast.Attribute) and isinstance(n.ctx, ast.Load) and isinstance(n.value, ast.Name):
+            yield n
+        elif isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
+            yield n
+
+
 def g2_sites(files, writers, mods):
-    """The domain's G2 sites: its own SQL, and its calls that resolve to a writer. Plus the UNKNOWN calls."""
+    """The domain's G2 sites: its own SQL, and every LOAD (a call, a rebinding, a partial) of a writer in another
+    module, filed under the function that holds it (a module-level one at <module>). Plus the UNKNOWN loads."""
     own, calls, unknown = [], [], []
     for f in files:
         rel = _rel(f)
@@ -246,15 +261,18 @@ def g2_sites(files, writers, mods):
         def walk(node, fn):
             for ch in ast.iter_child_nodes(node):
                 inner = ch.name if isinstance(ch, (ast.FunctionDef, ast.AsyncFunctionDef)) else fn
-                if isinstance(ch, ast.Call):
-                    t = _target(ch, imp, mod, mods)
+                if isinstance(ch, (ast.Name, ast.Attribute)) and isinstance(getattr(ch, "ctx", None), ast.Load) \
+                        and (isinstance(ch, ast.Name) or isinstance(ch.value, ast.Name)):
+                    t = _resolve(ch, imp, mod, mods)
                     if t == "UNKNOWN":
-                        unknown.append(f"{rel}:{ch.lineno} {ast.unparse(ch.func)}")
+                        unknown.append(f"{rel}:{ch.lineno} {ast.unparse(ch)}")
                     elif t and t in writers and t[0] != mod:   # a writer in ANOTHER module, reached from here
                         calls.append((rel, fn))
+                    if isinstance(ch, ast.Attribute):
+                        continue                         # its base Name is the module alias, not a writer: read once
                 walk(ch, inner)
         walk(tree, "<module>")
-    return sorted(set(own) | set(calls)), sorted(set(calls) - set(own)), unknown
+    return sorted(set(own) | set(calls)), sorted(set(calls) - set(own)), sorted(set(unknown))
 
 
 def writers(files) -> list[tuple[str, str]]:            # the SQL-text sites alone (the RED control's instrument)
@@ -354,12 +372,12 @@ def main():
 
     W, mods, _ = writers_repo()
     got, via, unknown = g2_sites(files, W, mods)
-    check(f"G2 the domain's messages-writer SITES (its own SQL + its calls that reach a writer) are EXACTLY the "
+    check(f"G2 the domain's messages-writer SITES (its own SQL + every load of a writer: a call, a rebinding, a partial) are EXACTLY the "
           f"expected {len(EXPECTED_SITES)} (one import level)", got == EXPECTED_SITES,
           f"new: {sorted(set(got) - set(EXPECTED_SITES))}; gone: {sorted(set(EXPECTED_SITES) - set(got))}")
     check("G2 the call-reached writers are found (canvas_error -> wire_insert, route_room -> room.route)",
           {("bridges/canvas.py", "canvas_error"), ("bridges/ear.py", "route_room")} <= set(via), via)
-    check("G2 no domain call through a repo-internal import is UNKNOWN (an unresolved import is never a pass)",
+    check("G2 no domain load through a repo-internal import is UNKNOWN (an unresolved import is never a pass)",
           not unknown, unknown[:8])
     sql_sites = writers(files)
     with tempfile.TemporaryDirectory() as td:            # RED control: a sibling module's lowercase writer is caught
