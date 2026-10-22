@@ -140,10 +140,10 @@ def resolver_arms(tmp: Path):
     import subprocess
     sc = tmp / "runner"
     (sc / "tests").mkdir(parents=True)
-    shutil.copy(REPO / "tests" / "mutants_floor_f0.py", sc / "tests" / "mutants_floor_f0.py")
+    shutil.copy(REPO / "tests" / "floor_mutants.py", sc / "tests" / "floor_mutants.py")
     for o in ("test_floor_f0.py", "test_floor_s3.py"):
         (sc / "tests" / o).write_text("import sys\nprint('NOT SEARCHED: no fixture database')\nsys.exit(77)\n")
-    rr = subprocess.run([sys.executable, str(sc / "tests" / "mutants_floor_f0.py")], capture_output=True, text=True, timeout=120)
+    rr = subprocess.run([sys.executable, str(sc / "tests" / "floor_mutants.py")], capture_output=True, text=True, timeout=120)
     arm("R-1: with no reachable fixture the mutant runner says NOT CHECKED and exits 77, never a PASS",
         rr.returncode == 77 and "NOT CHECKED" in rr.stdout, (rr.returncode, rr.stdout[-300:]))
 
@@ -271,9 +271,9 @@ def app_arms(tmp: Path):
     h = cl.head("/api/floor/glyphs").status_code
     arm("E1: HEAD on a public GET passes the gate as that GET (the route answers it, 200, or refuses it, 405), "
         "and on an owner path the gate refuses it", h in (200, 405) and cl.head("/api/wire/routes").status_code == 403, h)
-    arm("E1: a public GET never opens its POST (POST /api/messages, POST /api/agents are 403 anonymously)",
+    arm("E1: a public GET never opens its POST (POST /api/messages, POST /api/agents are 403 anonymously)",   # org-home: an API path in words, not the estate's agents/
         cl.post("/api/messages", json={"to": "seed", "body": "x"}).status_code == 403
-        and cl.post("/api/agents", json={}).status_code == 403)
+        and cl.post("/api/agents", json={}).status_code == 403)   # org-home: an API route, not the estate's agents/
     arm("E1: the only public non-GET is POST /api/vega", {m for m, _ in obs.PUBLIC} <= {"GET", "POST"}
         and [p for m, p in obs.PUBLIC if m != "GET"] == ["/api/vega"], obs.PUBLIC)
     ws = sorted(r.path for r in obs.app.routes if isinstance(r, APIWebSocketRoute))

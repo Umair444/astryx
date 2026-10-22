@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Mutants for plan-11860 F0 and S3. The oracles are tests/test_floor_f0.py and (S-mutants) tests/test_floor_s3.py;
+"""Mutants for plan-11860 F0 and S3, a SELF-RUNNING probe (named off the mutants_*.py pattern on purpose: that pattern
+is devtools/mutation_probe.py's one-SUBJECT/one-ENV spec, and these mutants span nine files, so they run here instead). The oracles are tests/test_floor_f0.py and (S-mutants) tests/test_floor_s3.py;
 every mutant must turn its oracle RED.
 Its subjects span several files (the resolver, the bridges, the PUT, doctor, the .env writer), so this probe mutates IN
 PLACE on the tree it sits in and restores each file in a finally: run it on a worktree, never the live checkout.
@@ -65,8 +66,8 @@ MUTANTS = {
 
 
 def main():
-    if (REPO / "triggers").is_dir():
-        sys.exit("mutants_floor_f0: refusing to mutate a live tree (triggers/ present): run it on a worktree")
+    if (REPO / "triggers").is_dir():   # org-home: REPO is the tree this probe mutates; triggers/ present means a live tree, which it refuses
+        sys.exit("floor_mutants: refusing to mutate a live tree (triggers/ present): run it on a worktree")
     # the BASELINE (a1 #62023 R-1): a mutant "killed" by an oracle that is red, or 77, without it means nothing. Both
     # unmutated oracles must pass first, or nothing is checked: 77, never a PASS built on a crashed instrument
     for o in (ORACLE, S3):
