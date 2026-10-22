@@ -269,8 +269,11 @@ def app_arms(tmp: Path):
                     served.append(f"{m} {r.path} -> {code}")
     arm("E1 CENSUS: HEAD and OPTIONS on every non-public path are 403 too", not served, served)
     h = cl.head("/api/floor/glyphs").status_code
-    arm("E1: HEAD on a public GET passes the gate as that GET (the route answers it, 200, or refuses it, 405), "
-        "and on an owner path the gate refuses it", h in (200, 405) and cl.head("/api/wire/routes").status_code == 403, h)
+    # past the gate, HEAD is whatever the app does with it: FastAPI's GET route doesn't add HEAD, so it is 405 with no
+    # built SPA and 404 where observatory/web/dist is mounted at / (the live checkout, land RED 10-22). The arm judges
+    # the GATE only: a public GET's HEAD is never refused by it, an owner path's always is.
+    arm("E1: HEAD on a public GET passes the gate as that GET (any answer but the gate's 401/403), "
+        "and on an owner path the gate refuses it", h not in (401, 403) and cl.head("/api/wire/routes").status_code == 403, h)
     arm("E1: a public GET never opens its POST (POST /api/messages, POST /api/agents are 403 anonymously)",   # org-home: an API path in words, not the estate's agents/
         cl.post("/api/messages", json={"to": "seed", "body": "x"}).status_code == 403
         and cl.post("/api/agents", json={}).status_code == 403)   # org-home: an API route, not the estate's agents/
