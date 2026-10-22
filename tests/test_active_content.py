@@ -147,6 +147,15 @@ def client_findings(files):
         for m in OBJ.finditer(src):
             if object_url_class(src, m.start()) is None:
                 out["C5"].append(f"{rel}:{line(m.start())} an object URL neither a media src nor a download href")
+            elif re.match(r"createObjectURL\s*\(\s*new\s+Blob\b", src[m.start():]) and object_url_class(src, m.start()) == "media":
+                out["C5"].append(f"{rel}:{line(m.start())} a rendered object URL whose Blob the PAGE typed (G4)")
+        # G4 (plan-11884, a2 (f)): a blob that's RENDERED takes its type only from the response (await r.blob()), and
+        # no page ever types a Blob as markup or script: `new Blob(..., {type: 'text/html' | svg | xml | javascript})`
+        for m in re.finditer(r"new\s+Blob\s*\(", src):
+            opts = src[m.end():m.end() + 300].split("\n)")[0]
+            if re.search(r"type\s*:\s*['\"`](?:text/html|image/svg|application/xhtml|text/xml|application/xml|"
+                         r"text/javascript|application/javascript)", opts):
+                out["C5"].append(f"{rel}:{line(m.start())} a Blob the page types as markup or script (G4)")
         for m in re.finditer(r"dangerouslySetInnerHTML\s*=\s*\{\{\s*__html\s*:\s*(.*?)\s*\}\}", src, re.S):
             v = m.group(1)
             if not re.fullmatch(r"[A-Za-z_]\w*", v):
@@ -184,8 +193,8 @@ def fixtures():
         "C4 sanitized one call away (a local render())": (
             "a.tsx", "function render(md) {\n  const x = marked.parse(md)\n  return DOMPurify.sanitize(x)\n}\n"
                      "const h = useMemo(() => render(t), [t])\nreturn <div dangerouslySetInnerHTML={{ __html: h }} />", "C4", 0),
-        "C5 window.open of an object URL (a3's PlantBlob)": ("a.tsx",
-            "const b = new Blob([html], {type: 'text/html'})\nwindow.open(URL.createObjectURL(b))", "C5", 1),
+        "C5 window.open of an object URL (a3's PlantBlob; G4 also accuses its html-typed Blob)": ("a.tsx",
+            "const b = new Blob([html], {type: 'text/html'})\nwindow.open(URL.createObjectURL(b))", "C5", 2),
         "C5 an anchor to an object URL WITHOUT download": ("a.tsx",
             "<a href={URL.createObjectURL(b)} target=\"_blank\">open</a>", "C5", 1),
         "C5 an iframe src of an object URL": ("a.tsx", "<iframe sandbox='' src={URL.createObjectURL(b)} />", "C5", 1),
@@ -208,6 +217,13 @@ def fixtures():
         "C5 a bound createObjectURL (a3's PlantBlob2 ii)": ("a.ts",
             "const mk = URL.createObjectURL.bind(URL)\nwindow.open(mk(b))", "C5", 1),
         "C5 a destructured createObjectURL": ("a.ts", "const { createObjectURL } = URL\nwindow.open(createObjectURL(b))", "C5", 2),
+        # G4 (plan-11884): the page never types what gets rendered
+        "C5/G4 a media src from a Blob the page typed": ("a.tsx", "<img alt='' src={URL.createObjectURL(new Blob([s], {type: 'image/png'}))} />", "C5", 1),
+        "C5/G4 a media src from the response's blob is left": ("a.ts",
+            "function s(el: HTMLImageElement, b: Blob) {\n  el.src = URL.createObjectURL(b)\n}", "C5", 0),
+        "C5/G4 a Blob typed text/html": ("a.ts", "const b = new Blob([page], { type: 'text/html' })", "C5", 1),
+        "C5/G4 a Blob typed image/svg+xml": ("a.ts", "const b = new Blob([svg], { type: \"image/svg+xml\" })", "C5", 1),
+        "C5/G4 a csv download Blob is left (SqlView's shape)": ("a.ts", "const b = new Blob([t], { type: 'text/csv' })", "C5", 0),
         "C4 an inline expression, not a sanitized name": ("a.tsx", "<div dangerouslySetInnerHTML={{ __html: marked.parse(t) }} />",
                                                          "C4", 1),
     }
@@ -230,13 +246,22 @@ def server(root):
           "INLINE_TYPES" in sets and not (sets["INLINE_TYPES"] & ACTIVE), str(sets.get("INLINE_TYPES")))
     fn = next((n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "message_file"), None)
     calls = [c for c in ast.walk(fn) if isinstance(c, ast.Call) and getattr(c.func, "id", "") == "FileResponse"] if fn else []
-    text_ok = any("TEXT_TYPES" in ast.unparse(i.test) and "text/plain" in ast.unparse(i)
-                  for i in ast.walk(fn) if isinstance(i, ast.If)) if fn else False
-    check("S1: TEXT_TYPES are served forced to text/plain", text_ok)
-    last = max(calls, key=lambda c: c.lineno) if calls else None      # the fall-through, by SOURCE order
+    # plan-11884 G3 (a2 BC-2): /api/file answers through serve_untrusted, which SNIFFS the type (text is text/plain by
+    # its bytes, whatever its name) and sends nosniff + the CSP sandbox on every answer. So S1's text rule and S3's
+    # attachment rule are now properties of that one function, read from its source (src/astryx/security/serve.py).
+    sv = Path(os.environ.get("ACTIVE_SERVE_SRC") or root / "src" / "astryx" / "security" / "serve.py").read_text()
+    su = [c for c in ast.walk(fn) if isinstance(c, ast.Call) and getattr(c.func, "id", "") == "serve_untrusted"] if fn else []
+    text_ok = any("TEXT_TYPES" in ast.unparse(i.test) and any(getattr(c.func, "id", "") == "serve_untrusted"
+                  for c in ast.walk(i) if isinstance(c, ast.Call)) for i in ast.walk(fn) if isinstance(i, ast.If)) if fn else False
+    check("S1: TEXT_TYPES are served through serve_untrusted, which types text as text/plain by its bytes",
+          text_ok and not calls and 'return "text/plain; charset=utf-8"' in sv, f"FileResponse calls: {len(calls)}")
+    last = max(su, key=lambda c: c.lineno) if su else None           # the fall-through, by SOURCE order
     lt = ast.unparse(last) if last else ""
-    check("S3: /api/file's attachment branch (a type guessed from an agent's filename) sends nosniff AND a CSP sandbox",
-          last is not None and "content_disposition_type" not in lt and "nosniff" in lt and "sandbox" in lt, lt)
+    head = re.search(r'headers = \{[^}]*\}', sv)
+    check("S3: /api/file's attachment branch goes through serve_untrusted (inline=False), whose every answer sends "
+          "nosniff AND the CSP sandbox",
+          last is not None and "inline=False" in lt and head is not None and "nosniff" in head.group(0)
+          and "Content-Security-Policy" in head.group(0) and 'CSP = "sandbox' in sv, lt)
     bad = []
     for path in ("bridges/canvas.py", "observatory/api/main.py"):
         t = ast.parse(cv if path == "bridges/canvas.py" else (root / path).read_text())

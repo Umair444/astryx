@@ -45,6 +45,7 @@ from pydantic import BaseModel
 
 from astryx import orgs  # the org's tmux server (plan-11324 S3b)
 from astryx.security import relay  # noqa: E402   canvas_cookie(): the session cookie's one name (plan-11859 D3)
+from astryx.security.serve import serve_untrusted  # noqa: E402   the ONE server of untrusted bytes (plan-11884 G3)
 from astryx.core import canvas as cv
 from astryx.core import presence as pres
 from .canvas_shell import render
@@ -656,29 +657,23 @@ _convert_lock = asyncio.Lock()          # one soffice at a time: it is heavy, an
 async def message_file(msg: int, n: int, request: Request, inline: int = 0):
     """A file an agent or the viewer embedded in a message the viewer can see. `inline=1` asks to
     VIEW it in the page — granted only for INLINE_TYPES / TEXT_TYPES; anything else downloads."""
-    from fastapi.responses import FileResponse
     v = V(request)
     path = await _message_file(v, msg, n)
     if not path:
         return deny(404, "file not found")
     ext = path.suffix.lower()
-    if inline and ext in TEXT_TYPES:
-        return FileResponse(path, media_type="text/plain; charset=utf-8", content_disposition_type="inline",
-                            filename=path.name, headers={"X-Content-Type-Options": "nosniff"})
-    if inline and ext in INLINE_TYPES:
-        return FileResponse(path, content_disposition_type="inline", filename=path.name,
-                            headers={"X-Content-Type-Options": "nosniff"})
-    # a DOWNLOAD (Content-Disposition: attachment), its type guessed from the agent's or uploader's filename: nosniff and a
-    # CSP sandbox too, so a browser that renders it anyway can't run it on this origin (plan-11859 D6, the owner key's)
-    return FileResponse(path, filename=path.name, headers={"X-Content-Type-Options": "nosniff",
-                                                           "Content-Security-Policy": "sandbox"})
+    # plan-11884 G3 (a2 BC-2): through serve_untrusted, the ONE server of untrusted bytes. INLINE_TYPES / TEXT_TYPES still
+    # decide what the page may ASK to view; the bytes decide what it gets (sniffed: an "x.png" that is markup downloads).
+    # frame_pdf: Media.tsx shows a PDF in a frame, and a sandboxed frame can't run the browser's PDF viewer.
+    if inline and (ext in TEXT_TYPES or ext in INLINE_TYPES):
+        return serve_untrusted(path, inline=True, frame_pdf=ext == ".pdf")
+    return serve_untrusted(path, inline=False)
 
 
 @app.get("/api/file/preview")
 async def message_file_preview(msg: int, n: int, request: Request):
     """An Office document rendered to PDF for viewing in the page. Converted once (LibreOffice,
     headless, its own throwaway profile) and cached by the file's content hash."""
-    from fastapi.responses import FileResponse
     v = V(request)
     path = await _message_file(v, msg, n)
     if not path:
@@ -710,8 +705,7 @@ async def message_file_preview(msg: int, n: int, request: Request):
                     if not made.is_file():
                         return deny(422, "this document could not be rendered")
                     shutil.move(str(made), out)
-    return FileResponse(out, media_type="application/pdf", content_disposition_type="inline",
-                        filename=f"{path.stem}.pdf", headers={"X-Content-Type-Options": "nosniff"})
+    return serve_untrusted(out, inline=True, filename=f"{path.stem}.pdf", frame_pdf=True)   # plan-11884 G3 (a2 BC-2 ii)
 
 
 @app.post("/api/upload")

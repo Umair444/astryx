@@ -14,13 +14,12 @@ ENV = "ACTIVE_CANVAS_SRC"
 MUTANTS = {
     "A1 an SVG is served inline with its guessed type (an agent's script runs on the owner key's origin)":
         ('INLINE_TYPES = {".pdf", ', 'INLINE_TYPES = {".svg", ".pdf", '),
-    "A2 the download branch drops its CSP sandbox":
-        ('                                                           "Content-Security-Policy": "sandbox"})',
-         '                                                           })'),
-    "A3 the download branch drops nosniff":
-        ('    return FileResponse(path, filename=path.name, headers={"X-Content-Type-Options": "nosniff",',
-         '    return FileResponse(path, filename=path.name, headers={'),
-    "A4 TEXT_TYPES are served with their guessed type, not text/plain":
-        ('        return FileResponse(path, media_type="text/plain; charset=utf-8", content_disposition_type="inline",',
-         '        return FileResponse(path, content_disposition_type="inline",'),
+    # plan-11884 G3: the branches now answer through serve_untrusted; each mutant is a branch that slips past it
+    "A2 the download branch bypasses serve_untrusted (a bare FileResponse, nosniff only)":
+        ("    return serve_untrusted(path, inline=False)",
+         '    return FileResponse(path, filename=path.name, headers={"X-Content-Type-Options": "nosniff"})'),
+    "A4 TEXT_TYPES are served with their guessed type, outside serve_untrusted":
+        ("    if inline and (ext in TEXT_TYPES or ext in INLINE_TYPES):",
+         '    if inline and ext in TEXT_TYPES:\n        return FileResponse(path, content_disposition_type="inline", '
+         'headers={"X-Content-Type-Options": "nosniff"})\n    if inline and (ext in TEXT_TYPES or ext in INLINE_TYPES):'),
 }
