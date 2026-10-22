@@ -59,9 +59,11 @@ import psycopg
 
 REPO = repo_root(__file__)
 ESTATE = paths.estate(__file__)       # the org's .env and homes/ (plan-11324 S3a: the HOME in a cog of several orgs)
-_env = config.read_env(ESTATE / ".env")        # the one .env reader (plan-10224 ENVREAD): a missing key still fails here
-ADDR = _env["GMAIL_ADDRESS"]
-PASS = _env["GMAIL_APP_PASSWORD"]
+# the mailbox login is read when the scan RUNS, never at import (a1 #62275/#62276): a tree with no .env (every
+# pushed-tree clone) must still import this module; a run with the keys missing still fails loudly, at login
+def _login_creds() -> tuple[str, str]:
+    env = config.read_env(ESTATE / ".env")      # the one .env reader (plan-10224 ENVREAD)
+    return env["GMAIL_ADDRESS"], env["GMAIL_APP_PASSWORD"]
 DSN = config.dsn(ESTATE / ".env", env_first=False)
 
 AGENT = "canopus"
@@ -119,7 +121,7 @@ URGENT_TOKENS = (
 
 def imap() -> imaplib.IMAP4_SSL:
     m = imaplib.IMAP4_SSL("imap.gmail.com")
-    m.login(ADDR, PASS)
+    m.login(*_login_creds())
     return m
 
 
