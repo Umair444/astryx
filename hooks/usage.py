@@ -59,7 +59,7 @@ try:
         sys.path.insert(0, REPO)
         from astryx import config, paths       # the ONE resolver (plan-11324 S3a); the file only, as before
         dsn = config.dsn(paths.estate(__file__) / ".env", env_first=False)
-        # every statement is capped (worst path 1s connect + 3 x 0.9s, under 5s): this runs inside a 5s prompt-hook budget, on every prompt, for every
+        # every statement is capped (worst path 1s connect + 3 x 0.9s, ~3.7s of DB, plus interpreter start-up under spawn.sh's 15s cap): this runs on every prompt, for every
         # agent, and a slow DB must cost the line, never the wake (owner 10-10: the hook timed out)
         with psycopg.connect(dsn, connect_timeout=1, options="-c statement_timeout=900") as conn:
             if agent:
@@ -79,7 +79,7 @@ try:
                         + (f" (resets {reset}Z)" if reset else "")
                         + (f" · 7d {g[1]:.0f}%" if g[1] is not None else ""))
             # ── [econ] line: the v2 MIRROR (goal 4227 S2) — this agent's OWN tools' use by
-            # other agents, one precomputed econ row read (never an aggregate in the 5s
+            # other agents, one precomputed econ row read (never an aggregate in the per-prompt
             # prompt budget), version-gated, no rank. Its OWN fail-open try — a meter must
             # never break the wake for every agent on the org.
             try:
