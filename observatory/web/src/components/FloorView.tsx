@@ -126,8 +126,21 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
 
   // the camera: the room is a place you move around in — drag to pan, wheel/trackpad or pinch to
   // zoom about the pointer, buttons for the same. A drag that starts on a face never opens it.
-  const [cam, setCam] = useState({ x: 0, y: 0, k: 1 })
-  const camRef = useRef(cam); camRef.current = cam
+  /* The camera is a REF painted straight onto the plane (owner 10-22: "lags are bad"). A pan, pinch or wheel used to
+     setState per pointer event, re-rendering every agent on the floor 60+ times a second. Now a gesture writes the
+     plane's transform directly, and React's copy settles 140 ms after the last move (for the zoom controls). camRef
+     is the one truth: a re-render mid-gesture paints from it, never from a stale state. */
+  const [, setCamState] = useState({ x: 0, y: 0, k: 1 })
+  const camRef = useRef({ x: 0, y: 0, k: 1 })
+  const camCommit = useRef(0)
+  const camTransform = (c: { x: number; y: number; k: number }) => `translate3d(${c.x}px, ${c.y}px, 0) scale(${c.k})`
+  const setCam = (u: { x: number; y: number; k: number } | ((c: { x: number; y: number; k: number }) => { x: number; y: number; k: number })) => {
+    const n = typeof u === 'function' ? u(camRef.current) : u
+    camRef.current = n
+    if (plane.current) plane.current.style.transform = camTransform(n)
+    clearTimeout(camCommit.current)
+    camCommit.current = window.setTimeout(() => setCamState(n), 140)
+  }
   const placed = useRef(false)
   const drag = useRef<{ pts: Map<number, { x: number; y: number }>; moved: number; pinch0?: { d: number; k: number } }>({ pts: new Map(), moved: 0 })
 
@@ -424,7 +437,7 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}
         onClickCapture={swallowDragClick} onDoubleClick={(e) => { if (e.target === e.currentTarget) fit() }}
         onClick={(e) => { if (open && (e.target === e.currentTarget || e.target === plane.current)) setOpen(null) }}>
-       <div ref={plane} className="absolute left-0 top-0 origin-top-left" style={{ width: room.w, height: room.h, transform: `translate(${cam.x}px, ${cam.y}px) scale(${cam.k})`,
+       <div ref={plane} className="absolute left-0 top-0 origin-top-left" style={{ width: room.w, height: room.h, transform: camTransform(camRef.current), willChange: 'transform',
          transition: glide ? 'transform .5s cubic-bezier(.2,.8,.2,1)' : undefined }}>
         {/* the ring itself, and each department as a band along it */}
         <svg className="absolute left-0 top-0 pointer-events-none" width={room.w} height={room.h}>
@@ -683,8 +696,8 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
        <RouteToast />
        <div className="absolute left-3 bottom-3 flex flex-col rounded-xl border border-line bg-deck-2/90 backdrop-blur overflow-hidden z-30 cursor-default"
          onPointerDown={(e) => { e.stopPropagation(); drag.current.moved = 0 }}>
-         {([['+', 'zoom in', () => zoomAt(cam.k * 1.25, size.w / 2, size.h / 2)],
-            ['−', 'zoom out', () => zoomAt(cam.k / 1.25, size.w / 2, size.h / 2)],
+         {([['+', 'zoom in', () => zoomAt(camRef.current.k * 1.25, size.w / 2, size.h / 2)],
+            ['−', 'zoom out', () => zoomAt(camRef.current.k / 1.25, size.w / 2, size.h / 2)],
             ['⤢', 'fit the whole floor', () => fit(0, true)]] as const).map(([g, t, f]) => (
            <button key={t} title={t} aria-label={t} onClick={f}
              className="w-8 h-8 grid place-items-center text-ink-dim hover:text-ink hover:bg-deck text-[15px] border-b border-line last:border-b-0">{g}</button>

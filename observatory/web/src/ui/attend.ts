@@ -27,8 +27,12 @@ export function useAttention(box: React.RefObject<HTMLElement | null>) {
     const frame = () => {
       raf = 0
       let moving = false
-      for (const f of faces.current.values()) {
-        const seat = (f.el.parentElement ?? f.el).getBoundingClientRect()
+      // READ every seat first, then WRITE every face: interleaving a rect read with a transform write forces one layout
+      // per face per frame (owner 10-22: "lags are bad")
+      const all = [...faces.current.values()]
+      const seats = all.map(f => (f.el.parentElement ?? f.el).getBoundingClientRect())
+      for (let i = 0; i < all.length; i++) {
+        const f = all[i], seat = seats[i]
         const dx = px - (seat.left + seat.width / 2), dy = py - (seat.top + seat.height / 2)
         const d = Math.hypot(dx, dy)
         const w = d > 1 && d < REACH ? Math.pow(1 - d / REACH, 1.5) : 0     // eases in: no step at the edge
@@ -54,8 +58,7 @@ export function useAttention(box: React.RefObject<HTMLElement | null>) {
       cb = (node: HTMLElement | null) => {
         if (!node) { faces.current.delete(name); return }
         node.style.willChange = 'transform'
-        const had = faces.current.get(name)          // a re-attach keeps its eased state; a new node starts at rest
-        faces.current.set(name, had && had.el === node ? had : { el: node, x: 0, y: 0, r: 0 })
+        faces.current.set(name, { el: node, x: 0, y: 0, r: 0 })   // the ref is stable, so this runs only for a NEW node
       }
       refs.current.set(name, cb)
     }
