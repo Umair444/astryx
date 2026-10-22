@@ -151,7 +151,7 @@ def main():
 
     print("\nK5 THE FLOOR CENTRES ON THE FOCUSED ORG")
     fl = (SRC / "components" / "FloorView.tsx").read_text()
-    m = re.search(r"const fit = \(min = 0, whole = false\) => \{(.*?)\n  \}", fl, re.S)
+    m = re.search(r"const fit = \(min = 0, whole = false(?:, glide = false)?\) => \{(.*?)\n  \}", fl, re.S)   # glide: a room open/close
     body = m.group(1) if m else ""
     # the focused room's own centre is its SLOT's (the conglomerate puts it first, siblings collapsed beside it): one
     # org, one slot one.w wide, so slots[me].cx is one.w / 2, exactly one.w * me + one.w / 2 with me = 0
