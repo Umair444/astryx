@@ -22,4 +22,10 @@ MUTANTS = {
         ('$PTC "$HEAD_SHA" >"$LOG" 2>&1; rc=$?', '$PTC "${HEAD_SHA:0:12}" >"$LOG" 2>&1; rc=$?'),
     "K6 the clause prints a merge-ready line itself (self-marking)":
         ('echo "marker clause: $BR', 'echo "merge-ready: $BR'),
+    "K7 PY unset falls back to a bare python3 (every DSN/venv suite hides as a 77 skip)":
+        ('export PY=${PY:-$(dirname "$here")/venv/bin/python}', 'export PY=${PY:-python3}'),
+    "K8 --by is parsed but the clause still says (author)":
+        ('pushed_tree_check ${HEAD_SHA:0:12} ($BY): rc', 'pushed_tree_check ${HEAD_SHA:0:12} (author): rc'),
+    "K9 --by takes any string (a clause can name a non-agent)":
+        ('[[ $2 =~ ^[a-z0-9][a-z0-9-]*$ ]]', 'true'),
 }

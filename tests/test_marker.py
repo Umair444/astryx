@@ -22,7 +22,7 @@ def check(name, ok, detail=""):
         fails.append(name)
 
 
-ENV = {**{k: v for k, v in os.environ.items() if not k.startswith("GIT_")}, "GIT_AUTHOR_NAME": "t",
+ENV = {**{k: v for k, v in os.environ.items() if not k.startswith("GIT_") and k != "PY"}, "GIT_AUTHOR_NAME": "t",
        "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t", "GIT_CONFIG_NOSYSTEM": "1",
        "GIT_CONFIG_GLOBAL": os.devnull}
 # each verdict line copied from check.sh's printer (devtools/check.sh:251-257), never recalled: marker.sh's first real
@@ -41,10 +41,10 @@ def main():
         def git(*a):
             return subprocess.run(["git", *a], cwd=r, env=ENV, capture_output=True, text=True, check=True).stdout.strip()
 
-        def run(stub, *a):
+        def run(stub, *a, env=None):
             s = Path(t) / "ptc.sh"
             s.write_text("#!/bin/bash\n" + stub + "\n")
-            p = subprocess.run(["bash", SRC, *a], cwd=r, env={**ENV, "MARKER_PTC": f"bash {s}"},
+            p = subprocess.run(["bash", SRC, *a], cwd=r, env={**ENV, "MARKER_PTC": f"bash {s}", **(env or {})},
                                capture_output=True, text=True, timeout=60)
             return p.returncode, p.stdout + p.stderr
 
@@ -87,6 +87,19 @@ def main():
         rc, out = run(moved, "feat")
         check("a branch that MOVED during the check gets NO clause, rc 2 (a marker names the tip that was checked)",
               rc == 2 and "moved during the check" in out and "marker clause" not in out, out)
+        py = Path(t) / "py"
+        rc, out = run(f'echo "$PY" > {py}; ' + GREEN, "feat")
+        check("PY unset: the check is handed THIS tree's venv python, never a bare python3 (U0 10-22: 77s hid as skips)",
+              rc == 0 and py.read_text().strip() == str(Path(SRC).resolve().parent.parent / "venv" / "bin" / "python"),
+              py.read_text() if py.exists() else out)
+        rc, out = run(f'echo "$PY" > {py}; ' + GREEN, "feat", env={"PY": "/x/python"})
+        check("PY set: the caller's choice is passed through unchanged", rc == 0 and py.read_text().strip() == "/x/python",
+              py.read_text())
+        rc, out = run(GREEN, "--by", "abstractor-3", "feat")
+        check("--by names who ran the check in the clause", rc == 0 and " (abstractor-3): rc 0, FAILED none"
+              in out and "(author)" not in out, out)
+        rc, out = run(GREEN, "--by", "Bad Name", "feat")
+        check("--by with a non-agent name is rc 2, no clause", rc == 2 and "marker clause" not in out, out)
         rc, out = run(GREEN, "nope")
         check("an unknown branch is rc 2", rc == 2 and "unknown branch" in out, out)
         rc, out = run(GREEN, "main")

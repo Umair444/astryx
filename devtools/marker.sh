@@ -18,12 +18,21 @@
 #      own output.
 # It writes no `merge-ready:` line itself: the marker is a REVIEWER's (never self-mark). The reviewer pastes the clause.
 #
+# --by <name>: who ran the check, printed in the clause (default `author`; a reviewer who re-runs it names itself).
+# PY: pushed_tree_check runs check.sh under ${PY:-python3}, and on a bare python3 every DSN/venv suite reads 77 and
+# hides as UNVERIFIED (U0, 10-22). So marker.sh defaults PY to this tree's venv python and refuses a real run without
+# one; set PY to choose another.
 # Env: MARKER_PTC overrides the check command (the oracle's stubs). Exit 0 printed (the clause states the check's rc,
 # red included), 2 usage, a bad ref, or a refusal (no clause printed).
 set -uo pipefail
 die() { echo "marker: $*"; exit 2; }
 sha() { git rev-parse --verify -q "$1^{commit}" 2>/dev/null; }
-[ $# -ge 1 ] || die "usage: marker.sh <branch> [<base-ref>]"
+BY=author
+if [ "${1:-}" = "--by" ]; then
+  [ $# -ge 2 ] && [[ $2 =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "--by takes an agent name ([a-z0-9-])"
+  BY=$2; shift 2
+fi
+[ $# -ge 1 ] || die "usage: marker.sh [--by <name>] <branch> [<base-ref>]"
 BR=$1; BASE_REF=${2:-main}
 HEAD_SHA=$(sha "$BR") || die "unknown branch: $BR"
 BASE_SHA=$(sha "$BASE_REF") || die "unknown base ref: $BASE_REF"
@@ -31,8 +40,10 @@ MB=$(git merge-base "$HEAD_SHA" "$BASE_SHA") || die "no merge-base between $BR a
 [ "$MB" != "$HEAD_SHA" ] || die "$BR has no commit beyond $BASE_REF@${BASE_SHA:0:12}: nothing to mark"
 here="$(cd "$(dirname "$0")" && pwd)"
 PTC=${MARKER_PTC:-"bash $here/pushed_tree_check.sh"}
+export PY=${PY:-$(dirname "$here")/venv/bin/python}
+[ -n "${MARKER_PTC:-}" ] || [ -x "$PY" ] || die "REFUSED: no python at $PY (a bare python3 hides every DSN/venv suite as 77); set PY"
 LOG=$(mktemp "${TMPDIR:-/tmp}/marker.XXXXXX"); trap 'rm -f "$LOG"' EXIT
-echo "marker: running pushed_tree_check on $BR ${HEAD_SHA:0:12} (no timeout: it takes as long as it takes)"
+echo "marker: running pushed_tree_check on $BR ${HEAD_SHA:0:12} under PY=$PY (no timeout: it takes as long as it takes)"
 $PTC "$HEAD_SHA" >"$LOG" 2>&1; rc=$?
 NOW=$(sha "$BR") || die "$BR vanished during the check"
 [ "$NOW" = "$HEAD_SHA" ] || die "REFUSED: $BR moved during the check (${HEAD_SHA:0:12} -> ${NOW:0:12}); re-run on the new tip"
@@ -52,6 +63,6 @@ esac
 failed=$(sed -n '/^FAILED (/,/^UNVERIFIED (/p' "$LOG" | sed -n 's/^  ✗ //p' | awk 'NR > 1 { printf "; " } { printf "%s", $0 }')
 [ $rc -eq 0 ] || [ -n "$failed" ] || failed="(none listed, yet rc $rc: read the check's output)"
 echo "range (full): $BR $MB..$HEAD_SHA"
-echo "marker clause: $BR ${MB:0:12}..${HEAD_SHA:0:12} · pushed_tree_check ${HEAD_SHA:0:12} (author): rc $rc, FAILED ${failed:-none}, $counts"
+echo "marker clause: $BR ${MB:0:12}..${HEAD_SHA:0:12} · pushed_tree_check ${HEAD_SHA:0:12} ($BY): rc $rc, FAILED ${failed:-none}, $counts"
 echo "  (paste it into the REVIEWER's marker line; an author never marks their own branch)"
 exit 0
