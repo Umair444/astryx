@@ -297,7 +297,7 @@ cat > "$HOME_D/.claude/settings.json" <<EOF
     "Stop": [ { "hooks": [
       { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/step.py", "timeout": 10 } ] } ],
     "UserPromptSubmit": [ { "hooks": [
-      { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/usage.py", "timeout": 5 } ] },
+      { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/usage.py", "timeout": 15 } ] },
       { "hooks": [
       { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/nudge.py", "timeout": 3 } ] } ]
   }$MEMDIR
