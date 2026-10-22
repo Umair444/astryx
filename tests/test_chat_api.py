@@ -227,15 +227,28 @@ def main(tmp: Path, url: str):
     arm("D4 the older unlinked step is COUNTED, never dropped", body.get("unlinked", {}).get("zeta") == 1, body.get("unlinked"))
 
     # ── R6 dictation ─────────────────────────────────────────────────────────────────────────────────────────
-    os.environ.pop("OPENAI_API_KEY", None)
+    # HERMETIC AGAINST THE ESTATE (land RED 10-23): voice_mint.env() reads os.environ, then the estate's .env, so on the
+    # live checkout a real key made unavailable() pass and the route reached mint. The key is decided HERE, for the
+    # arm, by a stub on voice_mint.env (restored after); the live .env is never read for it, and never touched.
     called = []
 
-    async def spy(cfg):                     # never the real provider: a mutant that skips the key check is only counted
+    async def spy(cfg):                     # never the real provider: a mint is only counted
         called.append(cfg)
         return 500, {}
+    real_env, real_mint = chat.V.env, chat.V.mint
     chat.V.mint = spy
-    dd = cl.post("/api/chat/dictate/session", headers=O)
-    arm("R6 with no OpenAI key the session is refused (503) and nothing is minted", dd.status_code == 503 and not called, (dd.status_code, dd.text))
+    try:
+        chat.V.env = lambda k, d="": "sk-test-fixture" if k == "OPENAI_API_KEY" else real_env(k, d)
+        present = cl.post("/api/chat/dictate/session", headers=O)
+        arm("R6 control: with a key PRESENT (the live estate's case) the route goes on to mint; the spy sees it",
+            len(called) == 1 and present.status_code == 502, (present.status_code, len(called)))
+        called.clear()
+        chat.V.env = lambda k, d="": "" if k == "OPENAI_API_KEY" else real_env(k, d)
+        dd = cl.post("/api/chat/dictate/session", headers=O)
+        arm("R6 with NO key (decided by the stub, not by the host's .env) the session is refused (503), nothing minted",
+            dd.status_code == 503 and not called, (dd.status_code, dd.text))
+    finally:
+        chat.V.env, chat.V.mint = real_env, real_mint
 
     # ── commands ─────────────────────────────────────────────────────────────────────────────────────────────
     cm = cl.get("/api/chat/commands", headers=O).json()
