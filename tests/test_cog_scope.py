@@ -7,7 +7,7 @@ cog-scoped set may open more than one org's DSN or key.
   S2 every declared file still iterates it (no stale entry)
   S3 every `cog` role is in the design's declared cog-scoped set, written HERE from #58435's text (never read from
      the data file it judges): {bridges/gateway.py, observatory/api/main.py, init.sh, devtools/org_apply.py,
-     devtools/org_parity.py}
+     devtools/org_parity.py}, plus plan-11859 D8's host CLI src/astryx/cogauth.py (the one writer of a members row)
   S4 RED controls: a planted bridges/fxcog.py calling orgs.load() is accused; a `cog` role outside the set is accused
 
 STATED LIMITS: a file that iterates the registry by reading the JSON itself (json.load of the registry path) or through
@@ -26,7 +26,8 @@ sys.path.insert(0, str(REPO / "devtools"))
 from org_census import code_lines  # noqa: E402
 
 DESIGN_COG = {"bridges/gateway.py", "observatory/api/main.py", "observatory/front.py", "init.sh",
-              "devtools/org_apply.py", "devtools/org_parity.py"}   # observatory: its front too (seed #60433 design B)
+              "devtools/org_apply.py", "devtools/org_parity.py",   # observatory: its front too (seed #60433 design B)
+              "src/astryx/cogauth.py"}     # plan-11859 D8 (a2 I8): the host CLI, the ONE writer of an org's members row
 ITER = re.compile(r"\borgs\.load\(|(?<![\w.])registry\(|(?<![\w.])cog\(\)")
 fails = []
 

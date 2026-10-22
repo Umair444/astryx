@@ -4,6 +4,7 @@
   {"name": "absent file", "absent": true, "expect": "none"},
   {"name": "two valid orgs", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a"}, "fxb": {"home": "{T}/b", "db": "fxorg_b"}}}, "expect": "orgs:2"},
   {"name": "one org", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a"}}}, "expect": "orgs:1"},
+  {"name": "two orgs beside a cog sign-in block (plan-11859 U1+U2: the orgs readers never read it)", "registry": {"orgs": {"fxa": {"home": "{T}/a", "db": "fxorg_a"}, "fxb": {"home": "{T}/b", "db": "fxorg_b"}}, "cog": {"id": "fxcog-00000001", "home": "{T}/cog"}}, "expect": "orgs:2"},
   {"name": "not json", "text": "{not json", "expect": "refused"},
   {"name": "no orgs key", "registry": {"org": {}}, "expect": "refused"},
   {"name": "empty orgs", "registry": {"orgs": {}}, "expect": "refused"},

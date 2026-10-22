@@ -792,6 +792,13 @@ run "observatory sign-in UI: inert behind its flag, one answer for any failed si
 run "observatory influence across orgs: owner only, crossing traffic aggregated per pair, no body or thread leaves" "$PY" tests/test_observatory_influence_cross.py
 run "observatory cog new org: owner only, a legal key and name not already in the cog, one wire message to seed, one open request per key" "$PY" tests/test_observatory_cog_new_org.py
 run "canvas cog: each org's canvas session at its own path under its own name; one org as before" "$PY" tests/test_canvas_cog.py
+# plan-11859 U1+U2: one sign-in for the cog (the front: argon2id, server sessions, a configured origin, one answer for
+# any failed sign-in), a 60 s Ed25519 identity per request naming WHO, and each org deciding WHAT from its own members
+# table (D1 D2 D7 D8 D9, a3 N1). Mutants: tests/mutants_cog_identity.py, mutants_relay_response.py,
+# mutants_cog_signin.py, mutants_backend_identity.py, mutants_cogauth_session.py, mutants_cogauth_cli.py.
+run "cog identity: the signed token verified against its spec, the response-cookie rule, ONE owner predicate (U1+U2)" "$PY" tests/test_cog_identity.py
+run "cog sign-in: the owner signs in and reaches his rooms with no key, the key still works, each org decides (U1+U2)" "$PY" tests/test_cog_signin.py
+run "cog CLI: the one writer of accounts and memberships; the cog store's backup restores (U1+U2 D7 D8 D9)" "$PY" tests/test_cogauth_cli.py
 run "org home namespace: each org's residents live on its own tmux server (two orgs, one agent name, two residents); one org is the default socket" "$PY" tests/test_org_home_namespace.py
 run "org census: no org-state read outside the resolvers; the estate and environment partitions are total" "$PY" tests/test_org_home_census.py
 run "org registry parity: orgs.py and home.mjs reach the same written verdict on every registry case (a2 A-1)" "$PY" tests/test_org_registry_parity.py

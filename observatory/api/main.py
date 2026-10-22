@@ -92,6 +92,7 @@ PUBLIC = {("GET", "/api/overview"), ("GET", "/api/peers"), ("GET", "/api/whoami"
           ("GET", "/api/events"), ("GET", "/api/messages"), ("GET", "/api/agents"),
           ("GET", "/api/floor/glyphs"),     # the wiring's allowlisted projection (owner ruling, poll #61982)
           ("POST", "/api/vega"),            # the public concierge: a visitor must be able to talk to it
+          ("GET", "/api/auth/role"),        # the signed-in viewer's role HERE, for the front's /auth/me (U1+U2)
           ("GET", "/favicon.svg")}
 PUBLIC_PATHS = {p for _, p in PUBLIC}    # the paths alone, for readers that only name a path (the census, comments)
 # /api/steps REMOVED from the anonymous allowlist 2026-08-13, on Umair's explicit
@@ -218,10 +219,62 @@ def anonymous_can_see(from_org, to_org, peers: frozenset) -> bool:
     return any(row[c] in peers for c in ANON_PEER_COLUMNS)
 
 
+# ---------------------------------------------------------------- who is asking (plan-11859 U1+U2, D2)
+# THE owner predicate, ONE definition (tests/test_backend_identity.py's census: no handler compares the key itself).
+# The owner is either the holder of the owner key (OBS_KEY, kept by owner ruling 10-21 until U7), or, in a cog with
+# sign-in, an account this org's OWN members table names `owner`, carried by the front's signed identity. The token
+# says only WHO (the front's fact); the role is read here (this org's fact, a2 I1). Verification is MANDATORY: no
+# valid token for THIS org means the public face, whatever path the request took (D2). Today `member` and `viewer`
+# open nothing beyond the public face (recorded, shown by /auth/me; a later slice gives them a meaning).
+from astryx.security import identity as _identity  # noqa: E402
+_COGAUTH = orgs.cog() if orgs.multi() else None    # the cog's sign-in: {id, home}, or None (one org; no `cog` block)
+_AUD = orgs.name() if _COGAUTH else None           # this org's registry name: the only aud this backend accepts
+_verifiers: dict = {}
+_verifiers_at = 0.0
+
+
+def _keys(kid_missing: bool = False) -> dict:
+    """The cog's public keys (keys/<kid>.pub), re-read at most once a minute when a token names an unknown kid."""
+    global _verifiers, _verifiers_at
+    if _COGAUTH and (not _verifiers_at or (kid_missing and time.monotonic() - _verifiers_at > 60)):
+        _verifiers, _verifiers_at = _identity.load_verifiers(_COGAUTH["home"]), time.monotonic()
+    return _verifiers
+
+
+async def _who(request: Request) -> tuple[str | None, str | None]:
+    """(uid, role here) of the signed-in viewer the front vouched for, else (None, None). Read only from the front
+    (127.0.0.1): every org backend is loopback-bound (the D5 census), and the token is checked whatever the peer."""
+    tok = request.headers.get(_identity.HEADER)
+    peer = request.client.host if request.client else ""
+    if not (_COGAUTH and tok and peer == "127.0.0.1"):
+        return None, None
+    uid = _identity.verify(tok, _keys(), _AUD)
+    if uid is None:
+        before = _verifiers
+        if _keys(kid_missing=True) is not before:       # a rotated key, read once
+            uid = _identity.verify(tok, _verifiers, _AUD)
+    if uid is None or pool is None:
+        return None, None
+    try:
+        return uid, await pool.fetchval("SELECT role FROM members WHERE uid = $1", uid)
+    except (asyncpg.PostgresError, OSError) as e:   # no members table yet (schema.sql not re-applied), a DB blip:
+        print(f"observatory: a signed-in viewer reads as public: {type(e).__name__}", file=sys.stderr)
+        return uid, None                              # the public face (D2), never a 500 on it
+
+
+def _signed_owner(request: Request) -> bool:
+    return getattr(request.state, "role", None) == "owner"
+
+
+def owner_call(request: Request) -> bool:
+    """A fetch() from the owner: the x-obs-key header, or a signed-in owner of THIS org."""
+    return (bool(OBS_KEY) and request.headers.get("x-obs-key", "") == OBS_KEY) or _signed_owner(request)
+
+
 def is_owner(request: Request) -> bool:
-    # header for fetch(); ?key= for elements that cannot send headers (img, EventSource)
+    # header for fetch(); ?key= for elements that cannot send headers (img, EventSource); or a signed-in owner
     supplied = request.headers.get("x-obs-key", "") or request.query_params.get("key", "")
-    return bool(OBS_KEY) and supplied == OBS_KEY
+    return (bool(OBS_KEY) and supplied == OBS_KEY) or _signed_owner(request)
 
 pool: asyncpg.Pool | None = None
 sse_clients: set[asyncio.Queue] = set()
@@ -324,6 +377,7 @@ app.include_router(_room.router)
 
 @app.middleware("http")
 async def privacy_gate(request: Request, call_next):
+    request.state.uid, request.state.role = await _who(request)
     p = request.url.path
     m = "GET" if request.method == "HEAD" else request.method
     if (p.startswith("/api/") and (m, p) not in PUBLIC and not (m == "GET" and _PUBLIC_AVATAR.match(p))
@@ -982,7 +1036,7 @@ async def charter_put(name: str, edit: CharterEdit, request: Request):
     the file; a running body only inherits the change when it RESPAWNS (spawn.sh
     rebuilds homes/<name>/CLAUDE.md from charter + law at boot), so the response says
     whether it's live now. Owner-only; charters stay gitignored, never leave here."""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     f = _charter_path(name)
     if not f:
@@ -1077,7 +1131,7 @@ async def agent_runtime_put(name: str, edit: RuntimeEdit, request: Request):
     """Owner sets an agent's provider/key/model map from the UI. Writes runtime.json
     (gitignored); the token stays in .env, we store only token_env's NAME. An all-empty edit
     REMOVES the entry (revert to the org default). Applies on the agent's next respawn."""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     f = _charter_path(name)
     if not f:
@@ -1153,7 +1207,7 @@ async def agent_create(body: AgentCreate, request: Request):
     """Bring a new agent into the world: write its charter into the agents/ tree, then
     spawn its body. Owner-only. The stem is the GLOBAL key — validated hard (no traversal,
     no collision) because the tree IS the registry."""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     name = (body.name or "").strip().lower()
     if not _valid_name(name):
@@ -1188,7 +1242,7 @@ async def agent_retire(name: str, request: Request):
     stop its body. REVERSIBLE — the name rests, the history stays; remove the tombstone to
     bring it back. Owner-only. (The org never hard-deletes a charter; identity is not
     trash.)"""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     f = _charter_path(name)
     if not f:
@@ -1212,7 +1266,7 @@ async def agent_retire(name: str, request: Request):
 async def agent_spawn(name: str, request: Request):
     """(Re)spawn a body — apply a charter edit, or revive a dormant agent. Refuses a
     tombstoned charter (remove the tombstone first). Owner-only."""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     f = _charter_path(name)
     if not f:
@@ -1420,7 +1474,7 @@ async def services():
 
 @app.post("/api/services/{unit}/{action}")
 async def service_action(unit: str, action: str, request: Request):
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     if unit not in service_units() or action not in SERVICE_ACTIONS:
         return Response(status_code=400)
@@ -1458,7 +1512,7 @@ async def network_people(request: Request, min_shared: int = 1):
     anonymized shape public is a separate decision that goes through steward's tier
     assert, not a default.
     """
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     # The details come from social_relation (people library 1a); this endpoint is OWNER-GATED above.
     people = await pool.fetch(
@@ -1609,7 +1663,7 @@ async def network_cypher(q: CypherQ, request: Request):
     SEPARATE database (astryx_social) so the org's own dump never depends on a
     source-compiled extension. Degrades honestly: without AGE this says so instead of
     pretending an empty graph."""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     text = (q.query or "").strip().rstrip(";")
     if not text or len(text) > 2000:
@@ -1677,7 +1731,7 @@ class NewGoal(BaseModel):
 
 @app.post("/api/goals")
 async def goal_create(g: NewGoal, request: Request):
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     if not g.title.strip() or not g.assignee.strip():
         return Response(status_code=400)
@@ -1704,16 +1758,24 @@ class OwnerMsg(BaseModel):
     thread: str | None = None
 
 
+@app.get("/api/auth/role")
+async def auth_role(request: Request):
+    """The role this org's members table gives the signed-in viewer the front vouched for: {"role"}, or a 401 with no
+    word on why (no token, a bad one, or no membership read the same)."""
+    if request.state.role is None:
+        return JSONResponse({"error": "no role here"}, status_code=401)
+    return {"role": request.state.role}
+
+
 @app.get("/api/whoami")
 async def whoami(request: Request):
-    key = request.headers.get("x-obs-key", "")
-    return {"owner": bool(OBS_KEY) and key == OBS_KEY,
+    return {"owner": owner_call(request),
             "vega": _charter_path("vega") is not None}
 
 
 @app.post("/api/messages")
 async def owner_send(m: OwnerMsg, request: Request):
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     if not m.body.strip() or not m.to.strip():
         return Response(status_code=400)
@@ -2679,7 +2741,7 @@ async def wire_routes_put(channel: str, body: RouteSet, request: Request):
     several routes names its home), it is written atomically (E3), and the answer is the change AS THE BRIDGES WILL
     SEE IT (added / removed / moved / doorbell), read from the same resolver. Unknown keys (a discord webhook, a note)
     are preserved verbatim."""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     f = _routes_file(channel)
     if not f or channel not in _wire_channels():
@@ -3086,7 +3148,7 @@ async def memory_chat(ask: MemoryAsk, request: Request):
     finds nothing the question still goes to memory — the agent may know the estate
     better than the ranking function does.
     """
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     text = str(ask.message or "").strip()
     if not text:
@@ -3118,7 +3180,7 @@ async def memory_chat_replies(thread: str, after: int = 0, request: Request = No
     """Poll for memory's replies on an estate-chat thread. The wire is async — a resident
     answers on its own clock — so the UI polls rather than the API holding a connection
     open against an agent's think time."""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     if not thread.startswith(("obs:estate", "obs:person-", "obs:library-")):
         return Response(status_code=400)          # estate, "ask memory about this person" (pid-keyed), the Library's desk
@@ -3149,7 +3211,7 @@ async def memory_late_replies(prefix: str, request: Request = None):
     only (to_org='local', as outbound_stuck's DESK_ROW: an owner@peer row is the gateway's, not this screen's). memory is the
     only one that answers on them today, but a person or library desk may be answered by another.
     At most 20 per visit, oldest first; only the rows served are marked, so the rest wait for the next."""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     if prefix not in ("obs:estate", "obs:person-", "obs:library-"):
         return Response(status_code=400)
@@ -3185,7 +3247,7 @@ async def thread_read(r: ThreadRead, request: Request):
     (upto), so a reply that lands between render and this call is not marked unseen. NEVER a row a bridge
     delivers (t-, wa:, threadless, tg:, dc:, cv:, tier releases, ear-; bridges/owner_surfaces.py, a4 #57418):
     marking it here would stop the bridge from ever sending it to his phone."""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     if not r.thread.strip():
         return Response(status_code=400)
@@ -3220,7 +3282,7 @@ async def influence(request: Request, window: str = "14d"):
     floor, or hard-UNMEASURED, it weighs 0 and the floor must say so, never hide it). Per agent: the LATEST compute's
     GLOBAL value and rank. A → B means A relied on B: credit flows to B. Owner-only, by omission from PUBLIC_PATHS
     and checked here as well."""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     if window not in INFLUENCE_WINDOWS:
         return Response(status_code=400)
@@ -3263,7 +3325,7 @@ async def influence_cross(request: Request, window: str = "14d"):
     """Messages across this org's boundary, aggregated per (from agent, from org, to agent, to org): {org, window,
     edges: [{from, from_org, to, to_org, n, last_ts}]}, `local` read as this org's federation name. Owner-only (by
     omission from PUBLIC_PATHS, and checked here), read-only, aggregate-only: no body, thread or id leaves."""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     if window not in INFLUENCE_WINDOWS:          # the same two windows as /api/influence
         return Response(status_code=400)
@@ -3304,7 +3366,7 @@ async def cog(request: Request):
     to_org/from_org carry. orgs.load() still decides which registry name is ours, and a registry that refuses is a 500
     that says why, never a quiet one-room answer (orgs.py fails closed). Homes and databases never leave.
     Owner-only, by omission from PUBLIC_PATHS and checked here as well."""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     try:
         reg = orgs.load()
@@ -3343,7 +3405,7 @@ async def cog_new_org(m: NewOrg, request: Request):
       purpose   optional, one line (whitespace folded, 200 characters)
     One open request per key: a row on its thread younger than a day refuses (409), under an advisory lock so two
     taps can't both pass. Owner-only. Reads the registry's NAMES only (orgs.load), like /api/cog."""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     from astryx.core.orgname import org_ok
     key = (m.key or "").strip()
@@ -3385,7 +3447,7 @@ class MemoryProposal(BaseModel):
 @app.post("/api/memory/propose")
 async def memory_propose(p: MemoryProposal, request: Request):
     """Route a proposal to the memory agent OVER THE WIRE. Never writes memory/."""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     body = ("proposal from the owner via the Memory tab chat — yours to judge, file or "
             "refuse under your own SCHEMA law; nothing was written to the estate.\n\n"
@@ -3424,7 +3486,7 @@ async def events(request: Request):
     # EventSource cannot send headers, so owner mode rides ?key=. Anonymous
     # streams carry ONLY boundary-crossing message events; steps/dags are the
     # agents' insides and stay owner-only.
-    owner = bool(OBS_KEY) and request.query_params.get("key", "") == OBS_KEY
+    owner = (bool(OBS_KEY) and request.query_params.get("key", "") == OBS_KEY) or _signed_owner(request)
 
     async def visible(data: dict) -> bool:
         if owner:
@@ -3483,8 +3545,6 @@ CANVAS_UP = _upstream("astryx-canvas", 8091)   # this org's canvas (its registry
 # In a cog the viewer reaches this observatory under the front's /o/<org>/ (S3c canvas): the prefix is THIS org's
 # registry name, computed, never read from a request (nothing a caller sends can move a redirect). One org: "".
 CANVAS_PRE = f"/o/{orgs.name()}" if _COG else ""
-_HOP = {"connection", "keep-alive", "transfer-encoding", "te", "trailer", "upgrade",
-        "proxy-authorization", "proxy-authenticate", "host"}
 _canvas_http: httpx.AsyncClient | None = None
 
 
@@ -3547,7 +3607,7 @@ async def _pipe(url: str, request: Request, owner_key: bool, down: str):
     done = BackgroundTasks()
     done.add_task(r.aclose)
     resp = StreamingResponse(r.aiter_raw(), status_code=r.status_code, background=done)
-    resp.raw_headers = [(k, v) for k, v in r.headers.raw if k.decode().lower() not in _HOP]
+    resp.raw_headers = _relay.response_headers(r.headers.raw, orgs.name())   # its own canvas cookie only (N1)
     return resp
 
 
@@ -3786,7 +3846,7 @@ def _wa_link() -> dict:
 @app.get("/api/channels")
 async def channels_status(request: Request):
     """Each channel the dock shows: its state (E7), the account behind it, and the command that activates it."""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     env = config.read_env(ENV_FILE)
     try:
@@ -3831,7 +3891,7 @@ _PROBE_WORDS = {"invalid": "{t} didn't accept that token. Check you copied the c
 @app.post("/api/channels/{channel}/token")
 async def channel_token(channel: str, body: ChannelToken, request: Request):
     """Connect a bot channel: shape, then the channel's own word on the token, then the one .env writer (E5)."""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     key = CHANNEL_TOKEN_KEY.get(channel)
     if not key:
@@ -3857,7 +3917,7 @@ async def channel_token(channel: str, body: ChannelToken, request: Request):
 
 @app.get("/api/channels/whatsapp/link")
 async def whatsapp_link(request: Request):
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     return await asyncio.to_thread(_wa_link)
 
@@ -3866,7 +3926,7 @@ async def whatsapp_link(request: Request):
 async def whatsapp_pair(request: Request):
     """Stream wacli's pairing QR (terminal blocks) to the owner. Only when wacli says UNLINKED: a linked phone is never
     replaced from here (unlink it on the phone, or with wacli auth logout, by hand), and an unknown state refuses."""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     link = await asyncio.to_thread(_wa_link)
     if link["state"] != "unlinked":

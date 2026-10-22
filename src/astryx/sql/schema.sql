@@ -978,3 +978,14 @@ CREATE TABLE IF NOT EXISTS goal_workflow (
 -- (gitignored, captured by scripts/backup.sh). The ledger and dump capture the tables like any other. A domain creates
 -- its own tables (CREATE TABLE IF NOT EXISTS store.<domain>_…); this file only declares the namespace. docs/store.md.
 CREATE SCHEMA IF NOT EXISTS store;
+
+-- plan-11859 U1U2 (D2, D8; a2 I1, I8): who may do what IN THIS ORG. uid is the cog front's signed identity
+-- (src/astryx/security/identity.py: "<user id>@<cog id>"); role is decided HERE, never carried in the token. An empty
+-- table opens this org to nobody (only the owner key, OBS_KEY, until U7 retires it). ONE writer of a row:
+-- astryx.cogauth.grant (the host CLI, and devtools/cog_add_org.py --owner when it makes an org). Today only `owner`
+-- opens the observatory's owner gate; member and viewer are recorded and shown, and unlock nothing more yet.
+CREATE TABLE IF NOT EXISTS members (
+  uid    text PRIMARY KEY CHECK (uid LIKE '%@%'),
+  role   text NOT NULL CHECK (role IN ('owner', 'member', 'viewer')),
+  added  timestamptz NOT NULL DEFAULT now()
+);

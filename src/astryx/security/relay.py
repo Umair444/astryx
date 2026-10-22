@@ -13,9 +13,17 @@ authority issued, and every hop strips what it didn't mint.
   x-forwarded-* are dropped (X1: ear.py's Origin check and canvas's public_base were built on them). So is
   X-Forwarded-For (X2: a backend's uvicorn trusts its 127.0.0.1 peer, the front, so a forwarded caller XFF became the
   backend's client address and outranked the front's own client header).
-- KNOWN PRE-LOGIN EXCEPTION (a3 BC-2, plan-11859): x-obs-key, authorization and x-api-key still pass. The owner's UI
-  sends x-obs-key on every call (observatory/web/src/api.ts), and stripping it before U1+U2 give the owner a login
-  would end his access. They leave this list in U1+U2, with F4's retire arm (every backend refuses x-obs-key).
+- THE OWNER KEY STAYS (owner ruling 10-21, seed #61925, narrowing a3 BC-2): x-obs-key, authorization and x-api-key
+  still pass. U1+U2 add the sign-in ALONGSIDE the key; it leaves this list only with U7 ("OBS_KEY retire", seed
+  #61943), whose arm is that every backend refuses x-obs-key. Until then outsider prevention also rests on the key's
+  secrecy (a3 #61941).
+- The front's SIGNED IDENTITY (x-astryx-identity, U1+U2) is not on this list, so a caller's copy never passes: the
+  front adds its own through `extra`, minted from the session it verified (src/astryx/security/identity.py).
+
+RESPONSES (plan-11859 U1+U2, a3 #62226 N1 via a4 #62231): the mirror of the cookie rule. Once the front mints its own
+session cookie, a backend that could set it could fix a viewer's session (session fixation through a compromised or
+hosted org). So a backend's Set-Cookie passes ONLY for its own canvas_cookie(org), path-scoped to /o/<org>; every
+other one, the front's session included, is dropped. `response_headers` is that rule, and every relay calls it.
 """
 
 # what a caller may send through a relay: standard request semantics, plus the app's own named headers
@@ -24,7 +32,7 @@ FORWARD = frozenset({
     "if-match", "if-none-match", "if-modified-since", "if-unmodified-since", "if-range", "range", "last-event-id",
     "origin", "referer", "user-agent",
     "x-astryx", "x-kind", "x-filename",            # canvas: its CSRF header (canvas.py:324) and an upload's metadata
-    "x-obs-key", "authorization", "x-api-key",     # the pre-login exception above (a3 BC-2): retired in U1+U2
+    "x-obs-key", "authorization", "x-api-key",     # the owner key stays (owner ruling 10-21): retired in U7
 })
 # the headers a relay SETS from its own observation (the caller's copies never pass)
 SET = ("x-forwarded-host", "x-forwarded-proto")
@@ -61,4 +69,40 @@ def headers(incoming, *, host: str, proto: str, cookies=(), extra=()) -> list:
             out.append((k, v))
     out += [("x-forwarded-host", host), ("x-forwarded-proto", proto)]
     out += list(extra)
+    return out
+
+
+# a response header no relay passes back (hop-by-hop, RFC 9110 §7.6.1, plus host)
+HOP = frozenset({"connection", "keep-alive", "transfer-encoding", "te", "trailer", "upgrade", "proxy-authorization",
+                 "proxy-authenticate", "host"})
+
+
+def _cookie_scope(value: str) -> tuple[str, str | None]:
+    """A Set-Cookie value's (name, Path attribute or None)."""
+    parts = value.split(";")
+    name = parts[0].split("=", 1)[0].strip()
+    path = None
+    for a in parts[1:]:
+        k, _, v = a.partition("=")
+        if k.strip().lower() == "path":
+            path = v.strip()
+    return name, path
+
+
+def response_headers(raw, org: str | None) -> list:
+    """The headers a relay passes back from `org`'s backend: every one but the hop-by-hop, and a Set-Cookie ONLY when
+    it names that org's own canvas_cookie(org) with a Path inside /o/<org> (one org: the plain name, any path). `raw`
+    is (name, value) pairs, bytes or str, returned in their own type and order."""
+    out = []
+    mine = canvas_cookie(org)
+    base = f"/o/{org}" if org else ""
+    for k, v in raw:
+        lk = (k.decode("latin-1") if isinstance(k, bytes) else k).lower()
+        if lk in HOP:
+            continue
+        if lk == "set-cookie":
+            name, path = _cookie_scope(v.decode("latin-1") if isinstance(v, bytes) else v)
+            if name != mine or (base and not (path == base or (path or "").startswith(base + "/"))):
+                continue
+        out.append((k, v))
     return out

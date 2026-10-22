@@ -64,6 +64,10 @@ reversible, touches no `/etc`, installs and starts no unit, and our org does not
     venv/bin/python tests/test_cog_rehearsal.py --verify-lab /home/umair/orgs/lab /home/umair/orgs/lab.cog.json \
         /home/umair/orgs/lab.step2.log          # ALL PASS: the made database, its stamp, the REVOKE, the .env, the registry
 
+Once the cog has sign-in (plan-11859 U1+U2: the registry's `cog` block, made by `src/astryx/cogauth.py init`), every
+add names its owner, `--owner <account email>`: the org is made with that account as its owner in the same act (D8),
+and the tool refuses without one. Existing orgs get their owner by `src/astryx/cogauth.py grant <org> <email> owner`.
+
 The undo (lab's alone; our database, units and residents are never touched):
 
     venv/bin/python -c 'import sys; sys.path.insert(0, "src"); import psycopg; from astryx import config; psycopg.connect(config.dsn(), autocommit=True).execute("DROP DATABASE astryx_lab")'

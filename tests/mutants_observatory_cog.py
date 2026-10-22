@@ -25,8 +25,8 @@ MUTANTS = {
     "F4 the front's jar stores cookies (one viewer's session replayed to the next)":
         ("policy=http.cookiejar.DefaultCookiePolicy(allowed_domains=[])", "policy=http.cookiejar.DefaultCookiePolicy()"),
     "F5 the front adds an owner key of its own":
-        ('                                   ("x-forwarded-prefix", f"/o/{org}")])',
-         '                                   ("x-forwarded-prefix", f"/o/{org}"), ("x-obs-key", "front")])'),
+        ('                                   ("x-forwarded-prefix", f"/o/{org}"), *signed])',
+         '                                   ("x-forwarded-prefix", f"/o/{org}"), *signed, ("x-obs-key", "front")])'),
     "F6 the merged stream drops the org tag":
         ('                            await q.put({**tag, "event": ev})', '                            await q.put(ev)'),
     "F7 a dead backend is never announced":
@@ -39,5 +39,5 @@ MUTANTS = {
         ('extra=[(CLIENT, request.client.host if request.client else ""),',
          'extra=[(CLIENT, request.headers.get(CLIENT) or (request.client.host if request.client else "")),'),
     "F11 the caller's own x-forwarded-prefix passes through (the backend reads the caller's, first, not the front's)":
-        ('("x-forwarded-prefix", f"/o/{org}")])', '("x-forwarded-prefix", request.headers.get("x-forwarded-prefix") or f"/o/{org}")])'),
+        ('("x-forwarded-prefix", f"/o/{org}"), *signed])', '("x-forwarded-prefix", request.headers.get("x-forwarded-prefix") or f"/o/{org}"), *signed])'),
 }

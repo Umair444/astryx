@@ -29,6 +29,10 @@ S6's rehearsal (stated limit); here its statement is printed by the dry-run, and
      primary, an unknown key, and an add's flags beside --reconcile are refused (rc 2)
   A9 its federation name (10224 NAMES): a name another org of the cog holds is refused (rc 2, nothing made), a
      malformed one too, and a free one plans
+  A10 a cog WITH sign-in (the registry's `cog` block, plan-11859 D8): no --owner, or one the cog store has no account
+     for, is refused (rc 2, nothing made); a known --owner (any case) makes the org with exactly that account as its
+     owner in members (uid@cog id), and the registry it writes carries the cog block unchanged; --owner in a cog with
+     no sign-in is refused
 COG_ADD_SRC: a mutant devtools/cog_add_org.py (tests/mutants_cog_add_org.py). Exit 0 · 1 · 77 (no database here).
 """
 import hashlib
@@ -174,6 +178,46 @@ def main():
             k3 = dict(ln.split("=", 1) for ln in (h3 / ".env").read_text().splitlines() if "=" in ln) if (h3 / ".env").exists() else {}
             check("each org's key is its OWN (A2's and A3's ASTRYX_SECRET_KEY differ: generated, never a constant)",
                   k3.get("ASTRYX_SECRET_KEY") and k3.get("ASTRYX_SECRET_KEY") != e.get("ASTRYX_SECRET_KEY"))
+
+            print("\nA10 A COG WITH SIGN-IN: THE ORG IS MADE WITH ITS OWNER (plan-11859 D8)")
+            cid = f"fxcog-{pid:08d}"
+            with fixture_db(extra=((REPO / "src/astryx/sql/cog_schema.sql").read_text(),)) as fxc:
+                with psycopg.connect(fxc["url"], autocommit=True) as c:   # the account, as the host CLI would add it
+                    uid = c.execute("INSERT INTO users (email, pw) VALUES ('owner@fx-cogadd.invalid', 'fx-not-a-hash') "
+                                    "RETURNING id").fetchone()[0]
+                ch = t / "cog-home"
+                ch.mkdir()
+                (ch / ".env").write_text(f"ASTRYX_DSN={fxc['url']}\n")
+                cogreg = t / "cog-existing.json"
+                cogblock = {"id": cid, "home": str(ch)}
+                cogreg.write_text(json.dumps({"orgs": {"astryx": prim}, "cog": cogblock}))
+                base10 = (key, "--name", "lab.fixture.test", "--dsn", fx["url"], "--db", f"fxorg_lab10_{pid}",
+                          "--registry", str(cogreg))
+                h10a = t / "h10a"
+                rc_a, out_a = run(*base10[:1], "--home", str(h10a), *base10[1:])
+                h10b = t / "h10b"
+                rc_b, out_b = run(*base10[:1], "--home", str(h10b), *base10[1:], "--owner", "nobody@fx-cogadd.invalid")
+                outs.extend([out_a, out_b])
+                check("no --owner in a cog with sign-in: refused (rc 2), nothing made",
+                      rc_a == 2 and "--owner" in out_a and not h10a.exists(), out_a[-300:])
+                check("an --owner the cog has no account for: refused (rc 2), nothing made",
+                      rc_b == 2 and "no such account" in out_b and not h10b.exists(), out_b[-300:])
+                h10, o10 = t / "h10", t / "h10.cog.json"
+                rc, out = run(*base10[:1], "--home", str(h10), *base10[1:], "--owner", "Owner@FX-CogAdd.invalid")
+                outs.append(out)
+                with psycopg.connect(fx["url"]) as c:
+                    rows = c.execute("SELECT uid, role FROM members").fetchall()
+                check("an --owner with an account: rc 0, and the new org's members holds exactly it, as owner",
+                      rc == 0 and rows == [(f"{uid}@{cid}", "owner")], f"rc {rc} {rows} {out[-300:]}")
+                kept = json.loads(o10.read_text()) if o10.exists() else {}
+                check("the registry it writes carries the cog block unchanged", kept.get("cog") == cogblock,
+                      str(kept.get("cog")))
+            h10c = t / "h10c"
+            rc, out = run(key, "--home", str(h10c), "--name", "lab.fixture.test", "--dsn", fx["url"], "--db",
+                          f"fxorg_lab10c_{pid}", "--registry", str(ex), "--owner", "owner@fx-cogadd.invalid")
+            outs.append(out)
+            check("--owner in a cog without sign-in: refused (rc 2), nothing made", rc == 2 and not h10c.exists(),
+                  out[-300:])
 
             print("\nA6 A REGISTRY THE AUTHORITY REFUSES: REFUSED BEFORE ANYTHING IS MADE")
             h6, o6 = t / "h6", t / "h6.cog.json"

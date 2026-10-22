@@ -2,7 +2,7 @@
 """Add an org to this host's cog (plan-11324 S3f S5; devtools/cog_add_org.md step 2). The new org's OWN setup path: it
 never calls this checkout's init.sh, whose one-org resolver would re-initialise the PRIMARY (the runbook's trap).
 
-    venv/bin/python devtools/cog_add_org.py <key> --home DIR --name FED [--dry-run]
+    venv/bin/python devtools/cog_add_org.py <key> --home DIR --name FED [--owner EMAIL] [--dry-run]
         [--db NAME] [--dsn DSN] [--ports stem=port,...] [--registry PATH] [--out PATH]
         [--primary-key astryx] [--primary-obs-port 8190]
     venv/bin/python devtools/cog_add_org.py --reconcile <key> [--registry PATH] [--dry-run]
@@ -11,7 +11,9 @@ It makes, in order (--dry-run prints each step and does NONE of them):
   1. the org's DATABASE on the primary's server, as the primary's role (R1: one owner, one superuser): CREATE DATABASE
      <db> (default astryx_<key>), then schema.sql applied whole and stamped (schema_applied, init.sh's _act_schema), and
      PUBLIC CONNECT revoked (init.sh's harden). --dsn brings an EXISTING database instead (one the owner created or
-     restored by hand): no CREATE, the schema, stamp and revoke still applied (each is idempotent)
+     restored by hand): no CREATE, the schema, stamp and revoke still applied (each is idempotent). In a cog with
+     sign-in (the registry's `cog` block, plan-11859 U1+U2) --owner EMAIL is REQUIRED and that account is made the
+     org's owner (members) in the same connection (D8: never an org that opens to nobody, one writer of that row)
   2. its HOME: absolute, outside every git tree, absent or empty. A `.astryx` marker FILE, local.md from the shipped
      local.template.md, the shipped seed charter (agents/seed/seed.md), homes/ and var/
   3. its .env (mode 600): ASTRYX_ORG (the federation name), ASTRYX_DSN (its database), a fresh ASTRYX_SECRET_KEY (an
@@ -22,7 +24,7 @@ It makes, in order (--dry-run prints each step and does NONE of them):
      restore-verify), and windows_idle_stop where this host has a Windows container, into HOME/triggers/seed/, from
      ONE source (astryx.pulse.shipped_triggers.shims, the text init.sh writes). A new HOME is empty by precondition,
      so no trigger can exist there yet: each is installed
-  4. the REGISTRY: the host's current one (orgs.load, the authority) plus this org, written to --out (never /etc), and
+  4. the REGISTRY: the host's current one (orgs.load, the authority, its `cog` block carried) plus this org, written to --out (never /etc), and
      validated by orgs.load. With no registry yet, the primary's entry is derived: --primary-key, the checkout as its
      HOME, its database by orgs.db_of, `primary` and `door` true, today's ports (org_units.json) plus its observatory
      backend's (--primary-obs-port)
@@ -147,6 +149,23 @@ def plan(a) -> dict:
     reg_path = orgs.path(env)
     current = orgs.load(env)                      # the authority: a malformed registry RAISES (RegistryError)
     raw = json.loads(reg_path.read_text())["orgs"] if current else {}
+    # the cog's sign-in block (plan-11859 U1+U2) rides through untouched; with one, the org is made with its OWNER
+    # (D8, a2 I8: one writer of the first membership row, in the same act), so it never opens to nobody but the key
+    cog_block = json.loads(reg_path.read_text()).get("cog") if current else None
+    cog = orgs.cog(env) if cog_block is not None else None
+    owner_sub = None
+    if cog is not None:
+        if not a.owner:
+            raise Refused("this cog has sign-in (its registry's `cog` block): name the new org's owner, --owner EMAIL")
+        import psycopg
+        from astryx import cogauth
+        with psycopg.connect(cogauth.store_dsn(cog["home"])) as c:
+            uid = cogauth.uid_of(c, a.owner)
+        if uid is None:
+            raise Refused(f"--owner: the cog has no such account (add it first: src/astryx/cogauth.py user add)")
+        owner_sub = cogauth.sub(uid, cog["id"])
+    elif a.owner:
+        raise Refused("--owner needs a cog with sign-in (the registry's `cog` block); this one has none")
     primary_dsn = config.dsn()                    # the primary's: the env first, else its estate's .env (never printed)
     if not current:
         units = json.loads((ROOT / "src" / "astryx" / "data" / "org_units.json").read_text())["units"]
@@ -189,7 +208,7 @@ def plan(a) -> dict:
         raise Refused(f"--name {a.name} is already the federation name of {', '.join(clash)} in this cog: two orgs under "
                       "one name are one address to every peer")
     return {"home": home, "db": db, "lab_dsn": lab_dsn, "primary_dsn": primary_dsn, "entry": entry, "merged": merged,
-            "reg_path": reg_path, "had_registry": bool(current)}
+            "reg_path": reg_path, "had_registry": bool(current), "cog": cog_block, "owner_sub": owner_sub}
 
 
 def make_db(p: dict, a, dry: bool) -> None:
@@ -206,6 +225,8 @@ def make_db(p: dict, a, dry: bool) -> None:
     sha = hashlib.sha256(schema).hexdigest()
     say(dry, f"apply schema.sql ({sha[:12]}) whole to {shown(p['lab_dsn'])} and stamp schema_applied")
     say(dry, f"REVOKE CONNECT ON DATABASE {orgs.db_of(p['lab_dsn'])} FROM PUBLIC")
+    if p["owner_sub"]:
+        say(dry, f"make {p['owner_sub']} its owner (members), in the same act (D8)")
     if dry:
         return
     with psycopg.connect(p["lab_dsn"], autocommit=True) as c:
@@ -215,6 +236,9 @@ def make_db(p: dict, a, dry: bool) -> None:
         c.execute("INSERT INTO schema_applied (id, sha) VALUES (1, %s) ON CONFLICT (id) DO UPDATE SET sha = "
                   "EXCLUDED.sha, applied_at = now()", (sha,))
         c.execute(sql.SQL("REVOKE CONNECT ON DATABASE {} FROM PUBLIC").format(sql.Identifier(orgs.db_of(p["lab_dsn"]))))
+        if p["owner_sub"]:
+            from astryx import cogauth
+            cogauth.grant(c, p["owner_sub"], "owner")
 
 
 def make_home(p: dict, a, dry: bool) -> None:
@@ -331,7 +355,8 @@ def write_registry(p: dict, a, dry: bool) -> None:
     if dry:
         return
     tmp = out.with_name(out.name + ".tmp")
-    tmp.write_text(json.dumps({"orgs": p["merged"]}, indent=1) + "\n")
+    tmp.write_text(json.dumps({"orgs": p["merged"], **({"cog": p["cog"]} if p["cog"] is not None else {})},
+                              indent=1) + "\n")
     try:                                          # judged BEFORE it is the registry: a refused one is never left behind
         got = orgs.load({orgs.ENV: str(tmp)})     # RAISES on anything the authority refuses
         prims = [o for o, e in got.items() if e["primary"]]
@@ -366,10 +391,11 @@ def main(argv=None) -> int:
     ap.add_argument("--out", default=None, help="where the new registry is written (default: <home>.cog.json)")
     ap.add_argument("--primary-key", default="astryx")
     ap.add_argument("--primary-obs-port", type=int, default=8190)
+    ap.add_argument("--owner", help="the new org's owner, by account email (required when the cog has sign-in)")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
     if a.reconcile:
-        if a.key or a.home or a.name or a.db or a.dsn or a.ports or a.out:
+        if a.key or a.home or a.name or a.db or a.dsn or a.ports or a.out or a.owner:
             ap.error("--reconcile KEY takes only --registry and --dry-run")
         return reconcile(a)
     if not (a.key and a.home and a.name):

@@ -61,4 +61,12 @@ MUTANTS = {
         ("    if clash:\n", "    if False:\n"),
     "T10 a malformed federation name is accepted":
         ("    if not orgname.org_ok(a.name):\n", "    if False:\n"),
+    "O1 a cog with sign-in makes an org with no owner (D8: it opens to nobody but the key)":
+        ("        if not a.owner:\n            raise Refused(", "        if False:\n            raise Refused("),
+    "O2 the owner is named but never granted (the row is not written in the same act)":
+        ('            cogauth.grant(c, p["owner_sub"], "owner")\n', "            pass\n"),
+    "O3 the written registry drops the cog block (the cog loses its sign-in)":
+        ('**({"cog": p["cog"]} if p["cog"] is not None else {})', ""),
+    "O4 an --owner the cog has no account for is let through (and granted as None@...)":
+        ("        if uid is None:\n            raise Refused(", "        if False:\n            raise Refused("),
 }

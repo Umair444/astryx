@@ -138,6 +138,32 @@ def door(env=None) -> str | None:
     return next((o for o, e in (load(env) or {}).items() if e["door"]), None)
 
 
+COG_ID = re.compile(r"[a-z0-9][a-z0-9-]{7,63}")
+
+
+def cog(env=None) -> dict | None:
+    """The cog's own estate (plan-11859 U1U2, D9 / a2 I6, I7): {"id": <its stable id>, "home": Path}, from the
+    registry's optional top-level `"cog": {"id", "home"}`, or None when the registry has none (or there is no
+    registry): then the cog has no login, and every backend answers to its key alone, as before.
+    `id` is minted ONCE (devtools/cogauth.py init) and qualifies every uid (uid@id), so it never changes. `home` holds
+    the cog's .env (its user store's ASTRYX_DSN, the public origins it signs in on), its signing key and the public
+    keys every backend verifies with. It is no org's HOME. A malformed block RAISES, as the rest of the file does."""
+    reg = load(env)
+    if reg is None:
+        return None
+    p = path(env)
+    e = json.loads(p.read_text()).get("cog")
+    if e is None:
+        return None
+    if not isinstance(e, dict) or not isinstance(e.get("id"), str) or not COG_ID.fullmatch(e["id"]) \
+            or not isinstance(e.get("home"), str) or not os.path.isabs(e["home"]):
+        raise RegistryError(f"org registry {p}: cog needs an id ({COG_ID.pattern}) and an absolute home")
+    h = Path(e["home"]).resolve()
+    if any(h == o["home"] for o in reg.values()):
+        raise RegistryError(f"org registry {p}: the cog's home is an org's HOME; it is the cog's own")
+    return {"id": e["id"], "home": h}
+
+
 def primary(env=None) -> str | None:
     """The org that keeps the one-org names in a cog (seed #60780), or None."""
     return next((o for o, e in (load(env) or {}).items() if e["primary"]), None)
