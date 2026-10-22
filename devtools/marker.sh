@@ -36,14 +36,22 @@ echo "marker: running pushed_tree_check on $BR ${HEAD_SHA:0:12} (no timeout: it 
 $PTC "$HEAD_SHA" >"$LOG" 2>&1; rc=$?
 NOW=$(sha "$BR") || die "$BR vanished during the check"
 [ "$NOW" = "$HEAD_SHA" ] || die "REFUSED: $BR moved during the check (${HEAD_SHA:0:12} -> ${NOW:0:12}); re-run on the new tip"
-verdict=$(grep -E '^check: [0-9]+ verified, [0-9]+ UNVERIFIED' "$LOG" | tail -1)
+# check.sh's THREE verdict lines, read from its printer (devtools/check.sh verdict()), never recalled:
+#   "check: FAILURES above — a committed invariant regressed"         red: no counts
+#   "check: ALL CODE INVARIANTS PASS (N gates verified)"               full pass
+#   "check: N verified, M UNVERIFIED …"                                a pass with skips
+verdict=$(grep -E '^check: (FAILURES above|ALL CODE INVARIANTS PASS \([0-9]+ gates verified\)|[0-9]+ verified, [0-9]+ UNVERIFIED)' \
+  "$LOG" | tail -1)
 [ -n "$verdict" ] || die "REFUSED: pushed_tree_check printed no verdict line (rc $rc): nothing to quote. Its last lines:
 $(tail -5 "$LOG" | sed 's/^/  | /')"
-ver=$(sed -E 's/^check: ([0-9]+) verified.*/\1/' <<<"$verdict")
-unv=$(sed -E 's/^check: [0-9]+ verified, ([0-9]+) UNVERIFIED.*/\1/' <<<"$verdict")
+case "$verdict" in
+  "check: FAILURES above"*) counts="no counts (check.sh prints none on red)";;
+  "check: ALL CODE INVARIANTS PASS"*) counts="$(sed -E 's/.*\(([0-9]+) gates verified\).*/\1/' <<<"$verdict") verified, 0 UNVERIFIED";;
+  *) counts="$(sed -E 's/^check: ([0-9]+) verified, ([0-9]+) UNVERIFIED.*/\1 verified, \2 UNVERIFIED/' <<<"$verdict")";;
+esac
 failed=$(sed -n '/^FAILED (/,/^UNVERIFIED (/p' "$LOG" | sed -n 's/^  ✗ //p' | awk 'NR > 1 { printf "; " } { printf "%s", $0 }')
 [ $rc -eq 0 ] || [ -n "$failed" ] || failed="(none listed, yet rc $rc: read the check's output)"
 echo "range (full): $BR $MB..$HEAD_SHA"
-echo "marker clause: $BR ${MB:0:12}..${HEAD_SHA:0:12} · pushed_tree_check ${HEAD_SHA:0:12} (author): rc $rc, FAILED ${failed:-none}, $ver verified, $unv UNVERIFIED"
+echo "marker clause: $BR ${MB:0:12}..${HEAD_SHA:0:12} · pushed_tree_check ${HEAD_SHA:0:12} (author): rc $rc, FAILED ${failed:-none}, $counts"
 echo "  (paste it into the REVIEWER's marker line; an author never marks their own branch)"
 exit 0

@@ -25,9 +25,12 @@ def check(name, ok, detail=""):
 ENV = {**{k: v for k, v in os.environ.items() if not k.startswith("GIT_")}, "GIT_AUTHOR_NAME": "t",
        "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t", "GIT_CONFIG_NOSYSTEM": "1",
        "GIT_CONFIG_GLOBAL": os.devnull}
+# each verdict line copied from check.sh's printer (devtools/check.sh:251-257), never recalled: marker.sh's first real
+# use (U0 d7e4a5b) refused a RED run because this file's red fixture had been written from memory
 GREEN = "echo \"$1\" > \"$(dirname \"$0\")/got\"; echo; echo 'check: 99 verified, 172 UNVERIFIED (skips allowed here) — NOT a full pass'; exit 0"
+FULL = "echo; echo 'check: ALL CODE INVARIANTS PASS (271 gates verified)'; exit 0"
 RED = ("echo 'FAILED (2):'; echo '  ✗ gate census: no literal port'; echo '  ✗ mutants files point at something real';"
-       " echo 'UNVERIFIED (172) — …'; echo '  ○ x'; echo; echo 'check: 97 verified, 172 UNVERIFIED'; exit 1")
+       " echo 'UNVERIFIED (172) — …'; echo '  ○ x'; echo; echo 'check: FAILURES above — a committed invariant regressed'; exit 1")
 SILENT = "echo 'started'; exit 124"
 
 
@@ -66,8 +69,16 @@ def main():
         check("no `merge-ready:` line is ever printed (the marker is the reviewer's)", "merge-ready:" not in out, out)
         rc, out = run(RED, "feat")
         check("red: the clause states rc 1 and the FAILED set copied verbatim, in order",
-              rc == 0 and "rc 1, FAILED gate census: no literal port; mutants files point at something real, 97 verified"
-              in out, out)
+              rc == 0 and "rc 1, FAILED gate census: no literal port; mutants files point at something real, no counts "
+              "(check.sh prints none on red)" in out, out)
+        rc, out = run(FULL, "feat")
+        check("a full pass: N verified, 0 UNVERIFIED, read from check.sh's ALL PASS line",
+              rc == 0 and "rc 0, FAILED none, 271 verified, 0 UNVERIFIED" in out, out)
+        src = (REPO / "devtools" / "check.sh").read_text()
+        check("the three verdict shapes the stubs print are check.sh's OWN (its printer, not a recollection)",
+              'echo "check: FAILURES above — a committed invariant regressed"' in src
+              and 'echo "check: ALL CODE INVARIANTS PASS ($verified gates verified)"' in src
+              and 'echo "check: $verified verified, ${#UNVERIFIED[@]} UNVERIFIED (skips allowed here)' in src)
         rc, out = run(SILENT, "feat")
         check("a check that printed no verdict line (killed: rc 124) gets NO clause, rc 2, naming why",
               rc == 2 and "marker clause" not in out and "printed no verdict line (rc 124)" in out, out)
