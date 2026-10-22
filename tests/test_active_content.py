@@ -66,7 +66,7 @@ def element(src, at):
     return src[at:]
 
 
-OBJ = re.compile(r"(?:URL\.)?createObjectURL\s*\(")
+OBJ = re.compile(r"createObjectURL")     # every MENTION (a3 #62247): URL['createObjectURL'], .bind(URL), a destructure
 MEDIA_SRC = re.compile(r"(?:^|[^\w.])((?:this\.)?\w+)\.src\s*=\s*$")
 MEDIA_DECL = r"\b{name}\s*(?::\s*HTML(?:Audio|Video|Image)Element\b|=\s*(?:new\s+(?:Audio|Image)\s*\(|document\.createElement\(\s*['\"](?:audio|video|img)['\"]))"
 
@@ -75,6 +75,9 @@ def object_url_class(src, at):
     """C5 (a3 #62226 R2): an object URL made on the front's page carries the front's ORIGIN and NO response header, so it
     is safe only as (a) the src of an element the file shows to be audio/video/img, or (b) the href of an anchor that is
     also given `download`. Anything else is accused. -> 'media' | 'download' | None."""
+    if not re.match(r"createObjectURL\s*\(", src[at:]) or not re.search(r"\bURL\.\s*$", src[max(0, at - 8):at]):
+        return None                              # only the plain call `URL.createObjectURL(` can be classed at all
+    at = src.rfind("URL.", 0, at)                # classify from the call's start, as its context reads it
     head = src[max(0, at - 200):at]
     line_start = src.rfind("\n", 0, at) + 1
     before = src[line_start:at]
@@ -100,7 +103,10 @@ def object_url_class(src, at):
 
 
 RAW = re.compile(r"\.(?:innerHTML|outerHTML)\s*=(?!=)|insertAdjacentHTML\s*\(|document\.write(?:ln)?\s*\(|<object\b|"
-                 r"<embed\b|(?<![\w.])eval\s*\(|new\s+Function\s*\(")
+                 r"<embed\b|(?<![\w.])eval\s*\(|new\s+Function\s*\(|"
+                 # a3 #62247: HTML parsed into live nodes. createContextualFragment runs its scripts once appended;
+                 # DOMParser's nodes fire <img onerror> once adopted; setHTMLUnsafe/setHTML write markup
+                 r"createContextualFragment\s*\(|\bDOMParser\b|\.setHTMLUnsafe\s*\(|\.setHTML\s*\(")
 
 
 def sanitized(src, at, ident, hops=2):
@@ -193,6 +199,15 @@ def fixtures():
         "C5 the same anchor without download": ("a.ts",
             "function d(n, t) {\n  const url = URL.createObjectURL(b)\n  const a = document.createElement('a')\n"
             "  a.href = url\n  a.click()\n}", "C5", 1),
+        "C3 createContextualFragment (its scripts run when appended)": ("a.ts",
+            "document.body.append(document.createRange().createContextualFragment(html))", "C3", 1),
+        "C3 DOMParser HTML adopted into the page": ("a.ts",
+            "const d = new DOMParser().parseFromString(html, 'text/html'); el.append(...d.body.childNodes)", "C3", 1),
+        "C3 setHTMLUnsafe / setHTML": ("a.ts", "el.setHTMLUnsafe(h); el.setHTML(h)", "C3", 2),
+        "C5 a bracketed URL['createObjectURL'](b) (a3's PlantBlob2 i)": ("a.ts", "window.open(URL['createObjectURL'](b))", "C5", 1),
+        "C5 a bound createObjectURL (a3's PlantBlob2 ii)": ("a.ts",
+            "const mk = URL.createObjectURL.bind(URL)\nwindow.open(mk(b))", "C5", 1),
+        "C5 a destructured createObjectURL": ("a.ts", "const { createObjectURL } = URL\nwindow.open(createObjectURL(b))", "C5", 2),
         "C4 an inline expression, not a sanitized name": ("a.tsx", "<div dangerouslySetInnerHTML={{ __html: marked.parse(t) }} />",
                                                          "C4", 1),
     }
