@@ -23,26 +23,21 @@ from __future__ import annotations
 
 import json
 import re
-import secrets
 import time
+import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from astryx.hearing import voice_mint as V
+from astryx.security.serve import EXT, serve_untrusted, sniff
 from observatory.api.hostfile import Conflict, atomic_write, etag
 
 router = APIRouter()
 
 MAX_UPLOAD = 20 * 1024 * 1024                      # 20 MiB: a phone photo, a PDF, a short clip
-UPLOAD_TYPES = {                                   # the allowlist (R2): extension -> served type
-    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
-    ".pdf": "application/pdf", ".txt": "text/plain", ".md": "text/markdown", ".csv": "text/csv",
-    ".json": "application/json", ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".ogg": "audio/ogg",
-    ".wav": "audio/wav", ".mp4": "video/mp4", ".webm": "video/webm",
-}
 TRANSCRIBE = V.env("CHAT_DICTATE_MODEL", V.env("CANVAS_VOICE_TRANSCRIBE", "gpt-4o-mini-transcribe"))
 USER = "observatory-chat"
 _mints: list[float] = []
@@ -51,12 +46,15 @@ _get_pool = None
 ESTATE: Path | None = None
 MEDIA: Path | None = None
 REPO: Path | None = None
+_roster = lambda: set()                            # noqa: E731 — the live agent names (main.agent_meta)
 
 
-def bind(get_pool, estate: Path, media: Path, repo: Path) -> None:
-    """The host app hands over its pool getter and its estate (read at call time: the pool opens in the lifespan)."""
-    global _get_pool, ESTATE, MEDIA, REPO
+def bind(get_pool, estate: Path, media: Path, repo: Path, roster=None) -> None:
+    """The host app hands over its pool getter, its estate and its roster (read at call time)."""
+    global _get_pool, ESTATE, MEDIA, REPO, _roster
     _get_pool, ESTATE, MEDIA, REPO = get_pool, Path(estate), Path(media), Path(repo)
+    if roster is not None:
+        _roster = roster
 
 
 def roots() -> list[Path]:
@@ -119,30 +117,33 @@ async def commands():
 # ------------------------------------------------------------------------------------------------------- upload
 @router.post("/api/chat/upload")
 async def upload(request: Request, name: str = "file"):
-    clean = safe_name(name)
-    ext = Path(clean).suffix.lower()
-    if ext not in UPLOAD_TYPES:
-        return JSONResponse({"error": f"{ext or 'this file type'} isn't accepted here"}, status_code=415)
+    """D3: the bytes decide the type (sniffed, the same allowlist serve_untrusted uses); the server mints the stored
+    name (a uuid plus the sniffed extension, under media/upload/, a namespace no bridge writes); the client's
+    filename is display metadata only, returned as `name` and never part of a path."""
     data = await request.body()
     if not data:
         return JSONResponse({"error": "the file is empty"}, status_code=400)
     if len(data) > MAX_UPLOAD:
         return JSONResponse({"error": "the file is over 20 MB"}, status_code=413)
-    dest = MEDIA / "chat" / f"chat-{secrets.token_hex(12)}-{clean}"   # common.media_path's shape, random token
+    kind = sniff(data[:4096])
+    if not kind:
+        return JSONResponse({"error": "this kind of file isn't accepted here (images, PDF, text, audio and video are)"},
+                            status_code=415)
+    dest = MEDIA / "upload" / f"{uuid.uuid4().hex}{EXT[kind]}"
     atomic_write(dest, data, mode=0o640)
-    return {"path": str(dest), "name": clean, "size": len(data), "type": UPLOAD_TYPES[ext],
-            "url": f"/api/chat/file?path={dest}"}
+    return {"path": str(dest), "name": safe_name(name), "size": len(data), "type": kind}
 
 
 @router.get("/api/chat/file")
-async def file(path: str = ""):
+async def file(request: Request, path: str = ""):
+    """D1: a ?key= never authenticates this route (a navigation that carries the key is refused, so stranger bytes
+    are never a document opened as the owner; the panel fetches with the header). G3: served by serve_untrusted."""
+    if "key" in request.query_params:
+        return Response(status_code=403)
     p = readable(path)
     if p is None:
         return Response(status_code=404)
-    # only the allowlisted types are served as themselves; anything else (an agent's .html, .svg, .js) is PLAIN TEXT,
-    # so nothing an agent wrote ever runs on the observatory's origin, where the owner key lives
-    ctype = UPLOAD_TYPES.get(p.suffix.lower(), "text/plain; charset=utf-8")
-    return FileResponse(p, media_type=ctype, headers={"cache-control": "no-store", "x-content-type-options": "nosniff"})
+    return serve_untrusted(p, inline=True)
 
 
 # ----------------------------------------------------------------------------------------------------- projects
@@ -152,6 +153,7 @@ class Project(BaseModel):
     brief: str = ""
     agents: list[str] = []
     threads: list[str] = []
+    missing: list[str] = []          # D6': read-side only; never stored
 
 
 def _valid(projects: list[Project]) -> str:
@@ -180,7 +182,14 @@ def _read_projects() -> list[dict]:
 
 @router.get("/api/chat/projects")
 async def projects_get():
-    return {"etag": etag(projects_file()), "projects": _read_projects()}
+    """D6': every read is checked against the LIVE roster: an agent retired since the project was made is named in
+    `missing`, so the page shows the gap instead of a project that quietly fans out to nobody."""
+    live = _roster()
+    out = []
+    for p in _read_projects():
+        if isinstance(p, dict):
+            out.append({**p, "missing": [a for a in p.get("agents", []) if a not in live]})
+    return {"etag": etag(projects_file()), "projects": out}
 
 
 @router.put("/api/chat/projects")
@@ -191,13 +200,77 @@ async def projects_put(body: list[Project], request: Request):
     why = _valid(body)
     if why:
         return JSONResponse({"error": why}, status_code=400)
-    text = json.dumps({"projects": [p.model_dump() for p in body]}, indent=2) + "\n"
+    keep = [p.model_dump(exclude={"missing"}) for p in body]
+    text = json.dumps({"projects": keep}, indent=2) + "\n"
     try:
         new = atomic_write(projects_file(), text, if_match=tag)
     except Conflict:
         return JSONResponse({"error": "projects changed since you loaded them", "etag": etag(projects_file()),
                              "projects": _read_projects()}, status_code=409)
-    return {"etag": new, "projects": [p.model_dump() for p in body]}
+    return {"etag": new, "projects": [{**p, "missing": []} for p in keep]}
+
+
+# --------------------------------------------------------------------------------------------------------- work
+QUIET = ("tool_done", "heartbeat", "response")      # the done-marks and echoes: they say nothing a person reads
+
+
+@router.get("/api/chat/work")
+async def work(request: Request, thread: str = ""):
+    """D4 (a3 #62264, a4 #62268): the work behind a thread, at TURN level. A turn belongs to EVERY thread it touched:
+    the one whose message opened it (turns.input_msg_id) and every one it wrote to (messages.turn_id), since 10% of
+    turns read a message mid-turn and many answer on another thread. Each turn comes with its steps and the OTHER
+    threads it touched, never split by step. Steps are linked to their turn only when the turn ends (the Stop hook
+    back-fills steps.turn_id), so an agent's newest unlinked steps are its LIVE lane, "current work (any thread)", and
+    the unlinked steps older than its last turn end are COUNTED (never dropped). Residual, named: a message read
+    mid-turn and not answered leaves no marker, so that turn isn't filed here."""
+    if not thread or len(thread) > 200:
+        return JSONResponse({"error": "thread required"}, status_code=400)
+    pool = _pool(request)
+    turns = await pool.fetch(
+        """WITH th AS (SELECT id FROM messages WHERE thread = $1),
+                ids AS (SELECT DISTINCT turn_id AS id FROM messages WHERE thread = $1 AND turn_id IS NOT NULL
+                        UNION SELECT id FROM turns WHERE input_msg_id IN (SELECT id FROM th))
+           SELECT t.id, t.agent, t.started_at, t.ended_at, t.input_msg_id,
+                  ARRAY(SELECT DISTINCT x FROM (SELECT thread AS x FROM messages WHERE turn_id = t.id AND thread IS NOT NULL
+                                                 UNION SELECT thread FROM messages WHERE id = t.input_msg_id AND thread IS NOT NULL) q
+                        WHERE x <> $1) AS elsewhere
+             FROM turns t JOIN ids ON ids.id = t.id ORDER BY t.ended_at LIMIT 300""", thread)
+    tids = [r["id"] for r in turns]
+    steps = await pool.fetch(
+        "SELECT id, ts, agent, kind, left(content, 300) AS content, turn_id FROM steps "
+        "WHERE turn_id = ANY($1::bigint[]) AND kind <> ALL($2::text[]) ORDER BY id LIMIT 6000", tids, list(QUIET)) if tids else []
+    by_turn: dict[int, list] = {}
+    for st in steps:
+        by_turn.setdefault(st["turn_id"], []).append(_step(st))
+    live_names = _roster()
+    parties = [r["a"] for r in await pool.fetch(
+        "SELECT DISTINCT x AS a FROM messages, LATERAL (VALUES (from_agent), (to_agent)) v(x) WHERE thread = $1", thread)
+        if r["a"] in live_names]
+    first = await pool.fetchval("SELECT min(ts) FROM messages WHERE thread = $1", thread)
+    live, unlinked = {}, {}
+    for a in parties:
+        end = await pool.fetchval("SELECT max(ended_at) FROM turns WHERE agent = $1", a)
+        rows = await pool.fetch(
+            "SELECT id, ts, agent, kind, left(content, 300) AS content, turn_id FROM steps WHERE agent = $1 "
+            "AND turn_id IS NULL AND ($2::timestamptz IS NULL OR ts > $2) AND kind <> ALL($3::text[]) "
+            "ORDER BY id DESC LIMIT 30", a, end, list(QUIET))
+        live[a] = [_step(r) for r in reversed(rows)]
+        unlinked[a] = (await pool.fetchrow(
+            "SELECT count(*) AS n FROM steps WHERE agent = $1 AND turn_id IS NULL AND ts <= coalesce($2, now()) "
+            "AND ts >= coalesce($3, now())", a, end, first))["n"] if end else 0
+    return {"turns": [{"id": r["id"], "agent": r["agent"], "started_at": _iso(r["started_at"]),
+                       "ended_at": _iso(r["ended_at"]), "input_msg_id": r["input_msg_id"],
+                       "elsewhere": list(r["elsewhere"]), "steps": by_turn.get(r["id"], [])} for r in turns],
+            "live": live, "unlinked": unlinked}
+
+
+def _iso(t):
+    return t.isoformat() if t else None
+
+
+def _step(r) -> dict:
+    return {"id": r["id"], "ts": _iso(r["ts"]), "agent": r["agent"], "kind": r["kind"], "content": r["content"],
+            "turn_id": r["turn_id"]}
 
 
 # ------------------------------------------------------------------------------------------------------ dictate

@@ -306,7 +306,7 @@ app.include_router(_pilot_voice.router)
 
 # plan-11884: /chat's server half (uploads, the side panel's file read, projects, dictation); owner-only by omission
 from observatory.api import chat as _chat  # noqa: E402
-_chat.bind(lambda: pool, ESTATE, ESTATE / "media", REPO)   # media/: where every channel lands inbound files (bridges/common.py)
+_chat.bind(lambda: pool, ESTATE, ESTATE / "media", REPO, roster=lambda: set(agent_meta()))   # media/: every channel's inbound files
 app.include_router(_chat.router)
 
 # the Room's speaker: agents answer the room with send(to='room'); spoken in their voice, or run on the screen

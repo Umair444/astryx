@@ -23,17 +23,17 @@ MUTANTS = {
     "F3 an .env file is served":
         ("return None if any(x.startswith(\".\") for x in rel) or p.name.endswith(\".env\") else p",
          "return None if any(x.startswith(\".\") for x in rel) else p"),
-    "F4 an agent's page is served as a page":
-        ('UPLOAD_TYPES.get(p.suffix.lower(), "text/plain; charset=utf-8")', 'UPLOAD_TYPES.get(p.suffix.lower(), "text/html")'),
     "F5 the NUL guard is dropped":
         ('if not raw or "\\x00" in raw:', "if not raw:"),
-    "U1 any type is accepted":
-        ("if ext not in UPLOAD_TYPES:", "if False:"),
+    "K1 (D1) a ?key= authenticates the file route again":
+        ('    if "key" in request.query_params:\n        return Response(status_code=403)\n', ""),
+    "U1 (D3) the bytes don't decide: anything is accepted as text":
+        ("kind = sniff(data[:4096])", 'kind = sniff(data[:4096]) or "text/plain; charset=utf-8"'),
     "U2 no size cap":
         ("if len(data) > MAX_UPLOAD:", "if False:"),
-    "U3 no random token in the stored name":
-        ('f"chat-{secrets.token_hex(12)}-{clean}"', 'f"chat-{clean}"'),
-    "U4 the name is not sanitized":
+    "U3 (D3) the stored name is the client's, not server-minted":
+        ('dest = MEDIA / "upload" / f"{uuid.uuid4().hex}{EXT[kind]}"', 'dest = MEDIA / "upload" / safe_name(name)'),
+    "U4 the display name is not sanitized":
         ('stem = re.sub(r"[^A-Za-z0-9._-]+", "-", Path(name or "file").name).strip(".-") or "file"', 'stem = name or "file"'),
     "P1 If-Match is optional":
         ("if tag is None:", "if False:"),
@@ -41,6 +41,16 @@ MUTANTS = {
         ("new = atomic_write(projects_file(), text, if_match=tag)", "new = atomic_write(projects_file(), text, if_match=None)"),
     "P3 projects are not validated":
         ("why = _valid(body)", 'why = ""'),
+    "P4 (D6') a read doesn't check the roster":
+        ('"missing": [a for a in p.get("agents", []) if a not in live]', '"missing": []'),
+    "W1 (D4, a3) a turn is filed by input_msg_id only":
+        ("ids AS (SELECT DISTINCT turn_id AS id FROM messages WHERE thread = $1 AND turn_id IS NOT NULL\n"
+         "                        UNION SELECT id FROM turns WHERE input_msg_id IN (SELECT id FROM th))",
+         "ids AS (SELECT id FROM turns WHERE input_msg_id IN (SELECT id FROM th))"),
+    "W2 (D4) never-linked steps are dropped, not counted":
+        ('unlinked[a] = (await pool.fetchrow(', 'unlinked[a] = 0 and (await pool.fetchrow('),
+    "W3 (D4) the done-marks are shown as work":
+        ('QUIET = ("tool_done", "heartbeat", "response")', 'QUIET = ("heartbeat",)'),
     "D1 dictation mints without asking whether it may":
         ("why = await V.unavailable(pool)", 'why = ""'),
 }
