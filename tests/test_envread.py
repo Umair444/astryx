@@ -7,7 +7,7 @@ The package is copied into a temp tree T (T/src/astryx/…), so paths.estate() o
 is the fixture's. Each arm runs in a child under a pinned absent registry, with no ASTRYX_*/HANDS_*/ANDROID_* inherited.
   E0 read_env itself: an unrelated bad line → the other keys read; the asked key's bad line → absent (its later line
      not taken); stderr names file:line, never the planted value
-  E1 contrib/canopus_inbound.py   GMAIL_ADDRESS at import          E2 federation/card_assert.py   _env("ASTRYX_ORG")
+  E1 contrib/canopus_inbound.py   GMAIL_ADDRESS at login          E2 federation/card_assert.py   _env("ASTRYX_ORG")
   E3 hands/android.py             sdk() from ANDROID_SDK_ROOT       E4 hands/hands_desktop.py      _env_int("HANDS_STEP_CAP")
   E5 pulse/shipped_triggers/org_backup.py   _org(estate)
      each: the asked key reads past a non-UTF-8 line, and the skip is said on stderr without the value
@@ -61,7 +61,7 @@ ENV = (b"ASTRYX_DSN=postgresql://nobody@127.0.0.1:1/astryx_fx_envread\n" + BAD
        b"GMAIL_APP_PASSWORD=fx-not-a-password\nANDROID_SDK_ROOT=/fx/sdk\nHANDS_STEP_CAP=7\n")
 SITES = [
     ("E1", "contrib/canopus_inbound.py", "import sys, types; sys.modules.setdefault('psycopg', types.ModuleType('psycopg'));"
-     " import astryx.contrib.canopus_inbound as m; print(m.ADDR)",   # psycopg is only main()'s: a stub where it's absent
+     " import astryx.contrib.canopus_inbound as m; print(m._login_creds()[0])",   # psycopg is only main()'s: a stub where it's absent
      "fixture@example.invalid"),
     ("E2", "federation/card_assert.py", "import astryx.federation.card_assert as m; print(m._env('ASTRYX_ORG'))",
      "envread.fixture.test"),
