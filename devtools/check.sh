@@ -1041,6 +1041,12 @@ run "floor F0: method-aware gate, one route resolver, one host writer, one .env 
 # and written by the one writer, never echoed or logged; the state comes from the bridge's own /health; WhatsApp
 # pairing refuses a linked phone or an unknown state. Mutants: tests/floor_mutants.py (S1..S5).
 run "floor S3: connect a channel without a token ever leaving (E5 E6 E7 E8)" "$PY" tests/test_floor_s3.py
+# plan-11884: /chat's server half. Every /api/chat route is owner-only (none a PUBLIC pair, HEAD and OPTIONS too);
+# uploads are allowlisted, capped, sanitized, randomly named; the side panel's file read refuses every escape (.., an
+# outside path, a symlink out, NUL, a home's dot-paths, .env) with the 404 a missing file gets, and serves an agent's
+# page as plain text; projects have one If-Match writer; dictation mints nothing it may not. Hermetic (no pool, no
+# key). Mutants: tests/mutants_chat_api.py.
+run "chat: the server half stays owner-only, and the side panel reads nothing outside its roots" "$PY" tests/test_chat_api.py
 # devtools/sqlsite.sh: one oracle's sqlguard view (rungs + why; --ledger: what enforce would say), advisory, writes
 # nothing. Mutants: tests/mutants_sqlsite.py.
 run "sqlsite: one oracle's sqlguard view, and the ledger diff, write nothing" "$PY" tests/test_sqlsite.py

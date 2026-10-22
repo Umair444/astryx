@@ -304,6 +304,11 @@ from bridges import routing as _routing  # noqa: E402 — the ONE route resolver
 _pilot_voice.bind(lambda: pool)
 app.include_router(_pilot_voice.router)
 
+# plan-11884: /chat's server half (uploads, the side panel's file read, projects, dictation); owner-only by omission
+from observatory.api import chat as _chat  # noqa: E402
+_chat.bind(lambda: pool, ESTATE, ESTATE / "media", REPO)   # media/: where every channel lands inbound files (bridges/common.py)
+app.include_router(_chat.router)
+
 # the Room's speaker: agents answer the room with send(to='room'); spoken in their voice, or run on the screen
 from observatory.api import room as _room  # noqa: E402
 
