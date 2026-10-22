@@ -17,7 +17,7 @@ Owner ruling, 2026-10-21. Every agent that needs durable data, whether files or 
   10-21, local.md: "in org it is open"). It must never leave the org: no federation peer, no public surface, no group
   chat. GRADE, measured by a2 (10-21): under R1 (one DB superuser, one uid) a COG SIBLING's agents and observatory CAN
   read another org's store, both the DB and the files, so a cog holding a store is single-owner until plan-11859 U6
-  isolates orgs. This is convention plus detection, not a boundary.
+  isolates orgs. This is convention only: no boundary and no detector, until plan-11859 U6.
 - `store/` is gitignored and captured by `scripts/backup.sh` with the org state; the schema is in the nightly dump.
 - A domain creates its own tables with `CREATE TABLE IF NOT EXISTS store.<domain>_…`. `src/astryx/sql/schema.sql`
   declares only the `store` namespace.
