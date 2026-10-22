@@ -228,7 +228,7 @@ try:
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
     shutil.copy2(COMMON, pkg / "common.py")
-    for sib in ("transcribe.py",):
+    for sib in ("transcribe.py", "routing.py"):   # common.py imports its sibling resolver (plan-11860 E2)
         if (REPO / "bridges" / sib).exists():
             (pkg / sib).symlink_to(REPO / "bridges" / sib)
     sys.path.insert(0, str(stage))

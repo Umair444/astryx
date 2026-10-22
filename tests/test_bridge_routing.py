@@ -102,7 +102,7 @@ try:
     (stage / "bridges").mkdir()
     (stage / "bridges" / "__init__.py").write_text("")
     shutil.copy2(SUBJECT, stage / "bridges" / "common.py")
-    for sib in ("transcribe.py",):
+    for sib in ("transcribe.py", "routing.py"):   # common.py imports its sibling resolver (plan-11860 E2)
         if (REPO / "bridges" / sib).exists():
             (stage / "bridges" / sib).symlink_to(REPO / "bridges" / sib)
     for a in ("canopus", "seed", "forge", "insurance", "readycash"):            # the fixture roster; 'pulse' has no charter
