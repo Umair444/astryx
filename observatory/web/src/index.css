@@ -285,3 +285,8 @@ a.auth-chip { padding: 0 12px; }
 .auth-seat { position: relative; width: 22px; height: 22px; border-radius: 999px; border: 1px dashed var(--t-line2); flex: none; }
 .auth-seat::after { content: ""; position: absolute; right: -3px; top: 50%; width: 8px; height: 8px; margin-top: -4px; border-radius: 999px; background: var(--t-dim); }
 .auth-seat[data-current]::after { background: var(--t-accent); }
+
+/* a working agent's halo (plan-11860 follow-up, owner 10-22): opacity + scale only, one symmetric sine, never a jump */
+@keyframes ax-halo { 0%, 100% { opacity: .25; transform: scale(.98); } 50% { opacity: .7; transform: scale(1.05); } }
+.ax-halo { box-shadow: 0 0 22px 2px var(--t-accent); animation: ax-halo 3.6s cubic-bezier(.45,0,.55,1) infinite; }
+@media (prefers-reduced-motion: reduce) { .ax-halo { animation: none; opacity: .5; } }

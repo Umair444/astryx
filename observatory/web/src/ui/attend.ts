@@ -1,35 +1,52 @@
 import { useEffect, useRef } from 'react'
 
-/* The agents notice you (plan-11860 S4, CLIENT-ONLY: nothing about the pointer leaves the page). Every face that
-   registers leans a few pixels toward the pointer when it comes near, and settles back when it leaves, so the floor
-   reads as a room of people who see you arrive. One rAF loop for all faces; reduced motion turns it off. */
-const REACH = 240     // px: how near the pointer must come before a face turns to it
-const LEAN = 4        // px: the most a face moves
+/* The agents notice you (plan-11860 S4, CLIENT-ONLY: nothing about the pointer leaves the page). A face near the
+   pointer turns a few pixels toward it and settles back when it leaves.
+
+   Owner 10-22: the first cut jittered and "tilted to new positions". Two causes, both fixed here:
+   - each face measured ITS OWN rect, which already carried its lean, so it chased itself. The seat is measured
+     instead: the face's parent, which the lean never moves;
+   - a CSS transition restarted on every pointer event. Now one rAF loop eases each face toward its target
+     (critically damped: no overshoot) and stops when every face has settled. Reduced motion turns it off. */
+const REACH = 220     // px: how near the pointer must come before a face turns to it
+const LEAN = 3        // px: the most a face moves
+const TILT = 4        // deg: the most a face turns
+const EASE = 0.16     // per frame: the share of the remaining distance covered (~250 ms to settle)
+
+interface Face { el: HTMLElement; x: number; y: number; r: number }
 
 export function useAttention(box: React.RefObject<HTMLElement | null>) {
-  const faces = useRef(new Map<string, HTMLElement>())
+  const faces = useRef(new Map<string, Face>())
   useEffect(() => {
     const el = box.current
     if (!el || matchMedia('(prefers-reduced-motion: reduce)').matches) return
     let px = -1e6, py = -1e6, raf = 0
     const frame = () => {
       raf = 0
+      let moving = false
       for (const f of faces.current.values()) {
-        const r = f.getBoundingClientRect()
-        const dx = px - (r.left + r.width / 2), dy = py - (r.top + r.height / 2)
+        const seat = (f.el.parentElement ?? f.el).getBoundingClientRect()
+        const dx = px - (seat.left + seat.width / 2), dy = py - (seat.top + seat.height / 2)
         const d = Math.hypot(dx, dy)
-        const k = d > 1 && d < REACH ? (1 - d / REACH) * LEAN / d : 0
-        f.style.transform = k ? `translate(${(dx * k).toFixed(2)}px, ${(dy * k).toFixed(2)}px)` : ''
+        const w = d > 1 && d < REACH ? Math.pow(1 - d / REACH, 1.5) : 0     // eases in: no step at the edge
+        const tx = w ? (dx / d) * LEAN * w : 0, ty = w ? (dy / d) * LEAN * w : 0, tr = w ? (dx / d) * TILT * w : 0
+        f.x += (tx - f.x) * EASE; f.y += (ty - f.y) * EASE; f.r += (tr - f.r) * EASE
+        if (Math.abs(tx - f.x) + Math.abs(ty - f.y) + Math.abs(tr - f.r) > 0.02) moving = true
+        else { f.x = tx; f.y = ty; f.r = tr }
+        f.el.style.transform = f.x || f.y || f.r
+          ? `translate3d(${f.x.toFixed(2)}px, ${f.y.toFixed(2)}px, 0) rotate(${f.r.toFixed(2)}deg)` : ''
       }
+      if (moving) raf = requestAnimationFrame(frame)
     }
-    const move = (e: PointerEvent) => { px = e.clientX; py = e.clientY; if (!raf) raf = requestAnimationFrame(frame) }
-    const leave = () => { px = py = -1e6; if (!raf) raf = requestAnimationFrame(frame) }
+    const kick = () => { if (!raf) raf = requestAnimationFrame(frame) }
+    const move = (e: PointerEvent) => { px = e.clientX; py = e.clientY; kick() }
+    const leave = () => { px = py = -1e6; kick() }
     el.addEventListener('pointermove', move)
     el.addEventListener('pointerleave', leave)
     return () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerleave', leave); if (raf) cancelAnimationFrame(raf) }
   }, [box])
   return (name: string) => (node: HTMLElement | null) => {
-    if (node) { node.style.transition = 'transform 240ms cubic-bezier(.2,.8,.2,1)'; faces.current.set(name, node) }
+    if (node) { node.style.willChange = 'transform'; faces.current.set(name, { el: node, x: 0, y: 0, r: 0 }) }
     else faces.current.delete(name)
   }
 }

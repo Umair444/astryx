@@ -631,16 +631,19 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
               aria-label={who.owner && wiring.armed ? `Route ${wiring.armed.label} to ${displayName(a.agent)}` : `Talk to ${displayName(a.agent)}`}
               onMouseEnter={() => setHover(a.agent)} onMouseLeave={() => setHover(h => (h === a.agent ? null : h))}
               className={`absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-1 group ${hover === a.agent ? 'z-30' : 'z-10'}`}
-              initial={false} animate={{ left: s.x, top: s.y }} transition={{ type: 'spring', damping: 22, stiffness: 120 }}>
+              initial={false} animate={{ left: s.x, top: s.y }} transition={{ type: 'spring', visualDuration: 0.5, bounce: 0 }}>
+              {/* no idle bob (owner 10-22: a keyframe animate re-created each render restarted mid-cycle, "up fast down
+                  slow"): working reads as a still face with a slow halo and a turning arc, both CSS, both symmetric */}
               {talking === a.agent ? <span className="block w-[52px] h-[52px] rounded-full border border-dashed border-line-2" aria-hidden /> : (
               <motion.span className="relative rounded-full" layoutId={`face-${a.agent}`}
-                animate={mood === 'working' ? { y: [0, -4, 0] } : { y: 0 }}
-                transition={{ duration: 2.4, repeat: mood === 'working' ? Infinity : 0, ease: 'easeInOut' }}
                 style={{ boxShadow: dropOn === a.agent || (who.owner && wiring.armed && hover === a.agent) ? '0 0 0 3px var(--t-accent2), 0 0 32px -2px var(--t-accent2)'
                   : mood === 'working' ? '0 0 0 2px var(--t-accent), 0 0 28px -4px var(--t-accent)'
                   : mood === 'awake' ? '0 0 0 2px color-mix(in srgb, var(--t-good) 70%, transparent)' : '0 0 0 1px var(--t-line)' }}>
                 <span ref={attend(a.agent)} className="block rounded-full"><AgentFace name={a.agent} size={52} dim={mood === 'asleep'} /></span>
-                {mood === 'working' && <span className="absolute -inset-1.5 rounded-full border-2 border-cyan/60 border-t-transparent animate-spin" style={{ animationDuration: '2.4s' }} />}
+                {mood === 'working' && <>
+                  <span className="ax-halo absolute -inset-2 rounded-full pointer-events-none" aria-hidden />
+                  <span className="absolute -inset-1.5 rounded-full border-2 border-cyan/60 border-t-transparent animate-spin pointer-events-none" style={{ animationDuration: '3.6s' }} aria-hidden />
+                </>}
                 <HandBadge agent={a.agent} size={13} className="absolute -right-2 -bottom-1 z-10" />
                 {glyphsOf[a.agent] && (
                   <span className="absolute -left-2.5 -bottom-1 z-10 pointer-events-auto">
