@@ -17,6 +17,9 @@ interface Face { el: HTMLElement; x: number; y: number; r: number }
 
 export function useAttention(box: React.RefObject<HTMLElement | null>) {
   const faces = useRef(new Map<string, Face>())
+  // ONE ref callback per name, made once (a3 #62258 R1): a fresh callback each render makes React detach and re-attach
+  // the node every render, which would reset the eased state and snap the face whenever a poll re-renders the floor
+  const refs = useRef(new Map<string, (node: HTMLElement | null) => void>())
   useEffect(() => {
     const el = box.current
     if (!el || matchMedia('(prefers-reduced-motion: reduce)').matches) return
@@ -45,8 +48,17 @@ export function useAttention(box: React.RefObject<HTMLElement | null>) {
     el.addEventListener('pointerleave', leave)
     return () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerleave', leave); if (raf) cancelAnimationFrame(raf) }
   }, [box])
-  return (name: string) => (node: HTMLElement | null) => {
-    if (node) { node.style.willChange = 'transform'; faces.current.set(name, { el: node, x: 0, y: 0, r: 0 }) }
-    else faces.current.delete(name)
+  return (name: string) => {
+    let cb = refs.current.get(name)
+    if (!cb) {
+      cb = (node: HTMLElement | null) => {
+        if (!node) { faces.current.delete(name); return }
+        node.style.willChange = 'transform'
+        const had = faces.current.get(name)          // a re-attach keeps its eased state; a new node starts at rest
+        faces.current.set(name, had && had.el === node ? had : { el: node, x: 0, y: 0, r: 0 })
+      }
+      refs.current.set(name, cb)
+    }
+    return cb
   }
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AnimatePresence, motion } from 'motion/react'
+import { AnimatePresence, MotionConfig, motion } from 'motion/react'
 import { RoomOrb } from '../ui/kit'
 import { useStore } from '../store'
 import { api, displayName, fmtAgo } from '../api'
@@ -377,6 +377,7 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
   const toggleKind = (k: string) => setKinds(cur => { const n = new Set(cur ?? []); n.has(k) ? n.delete(k) : n.add(k); return n })
 
   return (
+    <MotionConfig reducedMotion="user">{/* seat and face moves honour reduced motion too (a3 #62258) */}
     <div className="h-full flex flex-col">
       <div className="h-12 shrink-0 flex items-center gap-4 px-5 border-b border-line text-[13px]">
         <span className="font-semibold text-ink">The Floor</span>
@@ -691,5 +692,6 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
        </div>
       </div>
     </div>
+    </MotionConfig>
   )
 }
