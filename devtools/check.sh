@@ -1049,10 +1049,12 @@ run "floor S3: connect a channel without a token ever leaving (E5 E6 E7 E8)" "$P
 run "chat: the server half stays owner-only, and the side panel reads nothing outside its roots" "$PY" tests/test_chat_api.py
 # plan-11884 G2/G3 (a4 #62268, a1/a2 BC-1/BC-2): the OWNER-SURFACE census over ONE derived domain (observatory/**.py
 # plus the service behind each proxy route, read off main.py's catch-all routes and init.sh's units). An owner
-# surface adds routes and readers, never a writer of the wire (the INSERT INTO messages set is exact, a planted
-# sibling's lowercase writer is caught, the sqlguard ledger agrees) and never a second server of untrusted bytes
+# surface adds routes and readers, never a writer of the wire (its SQL AND its calls that reach a repo-wide writer,
+# one import level, are an exact set; unresolved imports are UNKNOWN; three instruments that fail differently) and
+# never a second server of untrusted bytes
 # (every FileResponse/StreamingResponse/StaticFiles classified; serve_untrusted answers the stranger-byte routes).
-# Mutants: tests/mutants_owner_surface.py; serve_untrusted's own: tests/mutants_serve_untrusted.py.
+# Mutants: tests/mutants_owner_surface.py, tests/mutants_owner_surface_chat.py (a1's W-H, aliased, via module,
+# UNKNOWN); serve_untrusted's own: tests/mutants_serve_untrusted.py.
 run "owner surface: no new writer of the wire, no second server of untrusted bytes, over the derived domain" "$PY" tests/test_owner_surface.py
 # devtools/sqlsite.sh: one oracle's sqlguard view (rungs + why; --ledger: what enforce would say), advisory, writes
 # nothing. Mutants: tests/mutants_sqlsite.py.

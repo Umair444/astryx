@@ -6,10 +6,11 @@ observatory's /api/chat/file, canvas's /api/file and /api/file/preview) answers 
 tests/test_owner_surface.py holds the census: no other FileResponse of a non-build file in the owner-origin domain.
 
 THE RULE. The type is SNIFFED from the bytes, never taken from a filename:
-  - an allowlisted passive type is served as itself: png, jpeg, gif, webp, pdf, plain text (valid UTF-8, no NUL), and
-    the media containers (mp4/m4a, webm, ogg, mp3, wav), which a browser plays and never runs;
-  - anything else is application/octet-stream with Content-Disposition: attachment (an .svg, an .html, a .js: nothing
-    an agent names "report.html" ever renders);
+  - an allowlisted passive type is served as itself: png, jpeg, gif, webp, avif, pdf, and the media containers
+    (mp4/m4a/mov, webm, ogg, mp3, wav, flac), which a browser plays and never runs;
+  - valid UTF-8 text (no NUL) asked for INLINE is served as text/plain: SHOWN, never parsed. An agent's .html or .svg
+    is therefore a page of characters, not a document (nosniff + the sandbox keep it so);
+  - only an ATTACHMENT, or bytes off the allowlist, is application/octet-stream with Content-Disposition: attachment;
   - ALWAYS X-Content-Type-Options: nosniff and Content-Security-Policy: sandbox; default-src 'none'.
 ONE NAMED EXEMPTION, `frame_pdf` (canvas's in-page PDF viewer only, canvas/web/src/Media.tsx): a sandboxed document
 can't run the browser's PDF viewer, so a MAGIC-VERIFIED PDF asked for in a frame drops the CSP sandbox (nosniff stays).
