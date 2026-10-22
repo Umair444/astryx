@@ -64,7 +64,10 @@ ESTATE = paths.estate(__file__)       # the org's .env and homes/ (plan-11324 S3
 def _login_creds() -> tuple[str, str]:
     env = config.read_env(ESTATE / ".env")      # the one .env reader (plan-10224 ENVREAD)
     return env["GMAIL_ADDRESS"], env["GMAIL_APP_PASSWORD"]
-DSN = config.dsn(ESTATE / ".env", env_first=False)
+
+
+def _dsn() -> str:   # read when the scan connects, never at import (a1 #62279): the module has no import-time .env read
+    return config.dsn(ESTATE / ".env", env_first=False)
 
 AGENT = "canopus"
 STATE = ESTATE / "homes" / "canopus" / ".inbound_state.json"   # 0600, gitignored, integers only
@@ -190,7 +193,7 @@ def main() -> int:
         if not fresh:
             return 0
 
-        with psycopg.connect(DSN, autocommit=True) as conn:
+        with psycopg.connect(_dsn(), autocommit=True) as conn:
             for u in fresh:
                 scanned += 1
                 _, d = m.uid("fetch", str(u),

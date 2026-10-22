@@ -16,6 +16,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+# R1 must see what a pushed-tree clone sees: config.dsn() falls back to the ENVIRONMENT, so a caller's exported DSN would
+# let a module that reads it at import pass here and fail every clone (a1 #62279). Drop it before any import.
+for _k in ("ASTRYX_DSN", "ASTRYX_FIXTURE_ADMIN_DSN"):
+    os.environ.pop(_k, None)
+
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 PY = sys.executable
