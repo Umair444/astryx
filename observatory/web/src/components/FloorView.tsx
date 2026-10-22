@@ -134,12 +134,25 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
   const camRef = useRef({ x: 0, y: 0, k: 1 })
   const camCommit = useRef(0)
   const camTransform = (c: { x: number; y: number; k: number }) => `translate3d(${c.x}px, ${c.y}px, 0) scale(${c.k})`
-  const setCam = (u: { x: number; y: number; k: number } | ((c: { x: number; y: number; k: number }) => { x: number; y: number; k: number })) => {
+  const camGlide = useRef(0)
+  // glide: the transition is written onto the plane BEFORE the transform, in the same frame, so a room open/close
+  // glides; a React-state transition would land a render too late and the move would snap (a3 #62258 R1).
+  // will-change is held only while the camera moves, so a zoom re-rasterises crisp when it settles (a3 N1).
+  const setCam = (u: { x: number; y: number; k: number } | ((c: { x: number; y: number; k: number }) => { x: number; y: number; k: number }), glide = false) => {
     const n = typeof u === 'function' ? u(camRef.current) : u
     camRef.current = n
-    if (plane.current) plane.current.style.transform = camTransform(n)
+    const p = plane.current
+    if (p) {
+      if (glide) {
+        p.style.transition = 'transform .5s cubic-bezier(.2,.8,.2,1)'
+        clearTimeout(camGlide.current)
+        camGlide.current = window.setTimeout(() => { if (plane.current) plane.current.style.transition = '' }, 520)
+      }
+      p.style.willChange = 'transform'
+      p.style.transform = camTransform(n)
+    }
     clearTimeout(camCommit.current)
-    camCommit.current = window.setTimeout(() => setCamState(n), 140)
+    camCommit.current = window.setTimeout(() => { setCamState(n); if (plane.current) plane.current.style.willChange = '' }, glide ? 560 : 140)
   }
   const placed = useRef(false)
   const drag = useRef<{ pts: Map<number, { x: number; y: number }>; moved: number; pinch0?: { d: number; k: number } }>({ pts: new Map(), moved: 0 })
@@ -151,11 +164,11 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
   /* the camera frames the FOCUSED org's room, centred on it (owner 10-19: "the center of floor to the focused org only,
      not the overall cog center"); its siblings sit beside it, a pan away. `whole` frames every room (the ⤢ control).
      One org: the one room, exactly as before. */
-  const fit = (min = 0, whole = false) => {
+  const fit = (min = 0, whole = false, glide = false) => {
     const w = whole ? room.w : one.w
     const k = Math.max(min, Math.min(1, size.w / w, size.h / room.h))
     const cx = whole ? room.w / 2 : slots[me].cx   // the focused room is the first slot (one org: one.w / 2, as before)
-    setCam({ k, x: size.w / 2 - cx * k, y: (size.h - room.h * k) / 2 })
+    setCam({ k, x: size.w / 2 - cx * k, y: (size.h - room.h * k) / 2 }, glide)
   }
 
   useEffect(() => {
@@ -212,7 +225,7 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
     const ro = new ResizeObserver(() => setSize({ w: el.clientWidth, h: el.clientHeight }))
     ro.observe(el)
     const t = setInterval(() => setNow(Date.now()), 3000)
-    return () => { ro.disconnect(); clearInterval(t) }
+    return () => { ro.disconnect(); clearInterval(t); clearTimeout(camCommit.current); clearTimeout(camGlide.current) }
   }, [])
 
   const clusters = useMemo(() => clustersOf(agents), [agents])
@@ -299,7 +312,7 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
       if (!wasOpen.current) return
       wasOpen.current = false
       setGlide(true)
-      fit(0.6)
+      fit(0.6, false, true)
       const t = setTimeout(() => setGlide(false), 520)
       return () => clearTimeout(t)
     }
@@ -307,7 +320,7 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
     const i = rooms.findIndex(r => r.name === open)
     if (i < 0 || !size.w) return
     setGlide(true)
-    setCam(c => ({ ...c, x: size.w / 2 - slots[i].cx * c.k }))
+    setCam(c => ({ ...c, x: size.w / 2 - slots[i].cx * c.k }), true)
     const t = setTimeout(() => setGlide(false), 520)
     const k = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(null) }
     addEventListener('keydown', k)
@@ -437,7 +450,7 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}
         onClickCapture={swallowDragClick} onDoubleClick={(e) => { if (e.target === e.currentTarget) fit() }}
         onClick={(e) => { if (open && (e.target === e.currentTarget || e.target === plane.current)) setOpen(null) }}>
-       <div ref={plane} className="absolute left-0 top-0 origin-top-left" style={{ width: room.w, height: room.h, transform: camTransform(camRef.current), willChange: 'transform',
+       <div ref={plane} className="absolute left-0 top-0 origin-top-left" style={{ width: room.w, height: room.h, transform: camTransform(camRef.current),
          transition: glide ? 'transform .5s cubic-bezier(.2,.8,.2,1)' : undefined }}>
         {/* the ring itself, and each department as a band along it */}
         <svg className="absolute left-0 top-0 pointer-events-none" width={room.w} height={room.h}>
