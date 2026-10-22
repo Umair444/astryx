@@ -20,6 +20,7 @@ from pathlib import Path
 # let a module that reads it at import pass here and fail every clone (a1 #62279). Drop it before any import.
 for _k in ("ASTRYX_DSN", "ASTRYX_FIXTURE_ADMIN_DSN"):
     os.environ.pop(_k, None)
+os.environ["ASTRYX_COG_REGISTRY"] = "/nonexistent/cog.json"   # and the host's registry can't point ESTATE at a live HOME (a1 #62283)
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
