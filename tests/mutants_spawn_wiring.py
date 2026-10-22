@@ -40,10 +40,10 @@ MUTANTS = {
          r'\"args\": [\"$ROOT/mcp/influence/server.py\"] }";;'),
     # Same group as usage.py: the nudge then shares usage.py's entry, the layout a4 excluded (W1).
     "P3 the nudge shares usage.py's group":
-        ('"timeout": 5 } ] },\n      { "hooks": [\n      { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/nudge.py"',
-         '"timeout": 5 },\n      { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/nudge.py"'),
+        ('"timeout": 15 } ] },\n      { "hooks": [\n      { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/nudge.py"',
+         '"timeout": 15 },\n      { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/nudge.py"'),
     "P4 the nudge gets usage.py's timeout":
-        ('hooks/nudge.py", "timeout": 3 }', 'hooks/nudge.py", "timeout": 5 }'),
+        ('hooks/nudge.py", "timeout": 3 }', 'hooks/nudge.py", "timeout": 15 }'),
 
     "Q1 render writes the heartbeat trigger row":
         ('[ -z "$RENDER" ] && psql "$DSN" -qc "INSERT INTO triggers (agent, name, schedule, kind)\n',

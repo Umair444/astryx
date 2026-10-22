@@ -22,7 +22,7 @@ as a logged side effect, never as a session.
   R11 influence (who_should_i_ask, plan-11324, seed #58432) is the tree's mcp/influence/server.py with
       ASTRYX_AGENT = the agent written into its env (never inherited); `Grants: memory` mounts mcp/memory (ask)
       and adds ONLY memory to the resident set (the tool left that server; the grant gained nothing)
-  R3 settings.json: the nudge in its OWN UserPromptSubmit group at timeout 3, usage.py at 5;
+  R3 settings.json: the nudge in its OWN UserPromptSubmit group at timeout 3, usage.py at 15;
      Think: off and the provider token splice both land, as in a real spawn
   R4 CLAUDE.md = charter + "## The law (local.md)" + local.md
   R5 NO side effect: zero tmux/psql/claude/pgrep invocations, and the real home path
@@ -161,8 +161,8 @@ try:
     nudge_groups = [g for g in groups if any(c.endswith("hooks/nudge.py") for c in g)]
     check("R3 the nudge is ALONE in its own UserPromptSubmit group",
           len(nudge_groups) == 1 and len(nudge_groups[0]) == 1, str(groups))
-    check("R3 nudge timeout 3 < usage.py's 5",
-          timeouts.get("nudge.py") == 3 and timeouts.get("usage.py") == 5, str(timeouts))
+    check("R3 nudge timeout 3 < usage.py's 15",
+          timeouts.get("nudge.py") == 3 and timeouts.get("usage.py") == 15, str(timeouts))
     law = (out / "CLAUDE.md").read_text() if (out / "CLAUDE.md").exists() else ""
     check("R4 CLAUDE.md = charter + the law",
           law.startswith("# zzres\nfixture resident\n") and "## The law (local.md)" in law
