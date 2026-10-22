@@ -174,11 +174,24 @@ def main():
     import astryx.security
     astryx.security.relay = relay
     policy(relay)
-    t = Path(tempfile.mkdtemp(prefix="relay-hdr-"))
-    try:
-        through_front(t)
-    finally:
-        shutil.rmtree(t, ignore_errors=True)
+    # the front arm needs the front's deps: an estate-absent tree (pushed_tree_check: system python3, no venv) has none,
+    # and that is NOT SEARCHED for this arm, never a FAIL (test_branch_check's psycopg probe, seed #33386)
+    missing = []
+    for mod in ("fastapi", "httpx"):
+        try:
+            __import__(mod)
+        except ModuleNotFoundError as e:
+            if e.name != mod:
+                raise
+            missing.append(mod)
+    if missing:
+        print(f"  NOT SEARCHED  the front arm: {', '.join(missing)} not importable by {sys.executable}")
+    else:
+        t = Path(tempfile.mkdtemp(prefix="relay-hdr-"))
+        try:
+            through_front(t)
+        finally:
+            shutil.rmtree(t, ignore_errors=True)
     bad = census()
     check("census: no code copies a request's headers except through relay.headers() (one policy, every relay)",
           not bad, "; ".join(f"{p}:{n} {s}" for p, n, s in bad))
@@ -187,8 +200,8 @@ def main():
              if ln.startswith("ExecStart=") and ("uvicorn front:app" in ln or "uvicorn main:app" in ln)]
     check(f"D4: each of init.sh's {len(lines)} observatory units pins `{pin}` (never uvicorn's default)",
           len(lines) == 3 and all(ln.endswith(pin) for ln in lines), "\n".join(lines))
-    print(f"\n{'FAIL' if fails else 'PASS'}: relay headers ({len(fails)} failing)")
-    return 1 if fails else 0
+    print(f"\n{'FAIL' if fails else 'NOT SEARCHED (77)' if missing else 'PASS'}: relay headers ({len(fails)} failing)")
+    return 1 if fails else 77 if missing else 0
 
 
 if __name__ == "__main__":
