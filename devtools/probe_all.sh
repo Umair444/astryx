@@ -66,7 +66,14 @@ for spec in "${SPECS[@]}"; do
        printf '%s\n' "$out" | sed -n 's/^  NOT PROBED */      /p' ;;
     *) REFUSED+=("$(basename "$spec")"); [ "$fail" -eq 0 ] && fail=1
        printf '\033[31m  ✗ %s — probe refused (exit %s)\033[0m\n' "$(basename "$spec")" "$rc"
-       printf '%s\n' "$out" | tail -3 ;;
+       # The probe's HEADER says which refusal ("did not finish" = a timeout, "does not pass" = a red baseline,
+       # WIRING FAULT), and the oracle's own lines follow it, so a bare tail cut it off: 10-22's one smoke refusal
+       # stayed undetermined between load and a real red (a1 #62229, a4 #62230). Header first, then the last lines;
+       # here-strings, never `printf | grep`, under pipefail (check.sh's SIGPIPE note). tests/test_probe_all.py.
+       hdr=$(grep -E '^(REFUSING|WIRING FAULT):' <<<"$out" | head -2)
+       last=$(tail -8 <<<"$out")
+       if [ -n "$hdr" ] && ! grep -qF -- "$hdr" <<<"$last"; then printf '%s\n' "$hdr"; fi
+       printf '%s\n' "$last" ;;
   esac
 done
 

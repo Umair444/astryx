@@ -619,6 +619,9 @@ run "mutation_probe: a refusing baseline prints its own failing lines (never a b
 run "mutation_probe tree form: multi-file specs, graded in a copy, with every refusal" "$PY" tests/test_mutation_probe_tree.py
 # ...and the probe MACHINERY demonstrably runs (one family, ~4s). The full battery is the
 # monthly steward trigger; this edge is what keeps probe_all/mutation_probe auto-reached.
+# probe_all's REFUSED block keeps the probe's refusal HEADER (timeout vs red vs wiring fault), never only its tail
+# (a1 #62229, a4 #62230). Hermetic: a stub probe in a temp tree. Mutants: tests/mutants_probe_all.py.
+run "probe_all: a refused set shows the refusal's own header, then its last lines" "$PY" tests/test_probe_all.py
 run "mutant machinery smoke (one family)" bash devtools/probe_all.sh --smoke
 # The SECOND blind spot in this file, the same shape one level down: the gate above proves
 # every oracle is INVOKED; this one proves an invoked oracle actually RAN. Drives this
