@@ -33,6 +33,7 @@ Run: uvicorn front:app --host 0.0.0.0 --port 8090   (from observatory/), registr
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import http.cookiejar
 import json
 import sys
@@ -98,6 +99,16 @@ SESSION = "astryx_session"
 FAILED = b'{"error":"sign-in failed"}'        # ONE body for every failed sign-in, whatever failed (F8, I9)
 WINDOW, PER_CLIENT, PER_ACCOUNT = 300.0, 20, 5    # failed sign-ins in WINDOW s before a 429, by client AND account
 _fails: dict[str, deque] = defaultdict(deque)
+# THE COST OF A SIGN-IN, bounded (plan-11859 U1U2-F, seed #62578, a2's global form). One argon2id check is ~0.5 s of a
+# core and 64 MiB. So at most CHECKS run at once, on an executor of their own (never asyncio's default pool, which
+# every other to_thread shares), and at most INFLIGHT sign-ins wait for one: past that, a 503 at once, before any hash
+CHECKS, INFLIGHT = 2, 8
+_checks = concurrent.futures.ThreadPoolExecutor(max_workers=CHECKS, thread_name_prefix="astryx-pwcheck")
+_inflight = 0
+
+
+async def _check(fn, *args):
+    return await asyncio.get_running_loop().run_in_executor(_checks, fn, *args)
 
 
 class _Auth:
@@ -205,18 +216,31 @@ async def login(request: Request):
         assert isinstance(email, str) and isinstance(pw, str)
     except Exception:  # noqa: BLE001 — any malformed body is the same refusal
         return _nope(400, b'{"error":"send {email, password}"}')
+    global _inflight
     ck, ak = "c:" + (request.client.host if request.client else "?"), "a:" + cogauth.norm_email(email)
     if _limited(ck, ak):
         return _nope(429, b'{"error":"too many tries"}')
+    if _inflight >= INFLIGHT:            # the host is busy checking passwords: say so now, never queue a hash
+        return _nope(503, b'{"error":"sign-in is busy, try again in a moment"}')
+    # the attempt counts from its START: a concurrent burst on one client or account stops at its limit, never
+    # after every request of it has passed the check above; a success takes its own count back
+    now = time.monotonic()
+    _fails[ck].append(now)
+    _fails[ak].append(now)
+    _inflight += 1
     try:
-        got = await cogauth.sign_in(a.db, email, pw)
+        got = await cogauth.sign_in(a.db, email, pw, check=_check)
     except Exception:  # noqa: BLE001 — the store is down: no session, and no word on the account
         return _nope(503, b'{"error":"sign-in is unavailable"}')
+    finally:
+        _inflight -= 1
     if got is None:
-        now = time.monotonic()
-        _fails[ck].append(now)
-        _fails[ak].append(now)
         return _nope()
+    for k in (ck, ak):
+        try:
+            _fails[k].remove(now)
+        except (KeyError, ValueError):
+            pass
     r = Response(b'{"ok":true}', media_type="application/json", headers={"cache-control": "no-store"})
     r.set_cookie(SESSION, got[1], max_age=cogauth.SESSION_DAYS * 86400, path="/", httponly=True,
                  samesite="strict", secure=o.startswith("https://"))

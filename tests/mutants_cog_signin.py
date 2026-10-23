@@ -18,7 +18,7 @@ MUTANTS = {
     "F2 no rate limit":
         ("    if _limited(ck, ak):", "    if False:"),
     "F3 failures counted per client only (an account is guessed from many addresses)":
-        ("        _fails[ak].append(now)\n", ""),
+        ("    _fails[ak].append(now)\n    _inflight += 1\n", "    _inflight += 1\n"),
     "F4 the session cookie is never Secure":
         ('secure=o.startswith("https://")', "secure=False"),
     "F5 the session cookie is SameSite=Lax":

@@ -95,12 +95,14 @@ def digest(token: str) -> bytes:
 
 
 # ------------------------------------------------------------------ the front's sessions (async: psycopg)
-async def sign_in(run, email: str, pw: str) -> tuple[int, str] | None:
-    """(uid, a new session token), or None. `run(fn, *args)` runs fn on the store's connection (the front's lock). An
-    unknown email and a wrong password are the same None, and each pays one argon2id check, in a thread and OUTSIDE
-    the store's lock: a sign-in never stalls another viewer's session lookup."""
+async def sign_in(run, email: str, pw: str, check=None) -> tuple[int, str] | None:
+    """(uid, a new session token), or None. `run(fn, *args)` runs fn on the store's connection (the front's lock);
+    `check(fn, *args)` runs the password check off the event loop (the front's own bounded executor; asyncio's default
+    pool when not given). An unknown email and a wrong password are the same None, and each pays one argon2id check,
+    OUTSIDE the store's lock: a sign-in never stalls another viewer's session lookup."""
     row = await run(_account, norm_email(email))
-    ok = await asyncio.to_thread(check_password, pw, row[1] if row else dummy())
+    check = check or asyncio.to_thread
+    ok = await check(check_password, pw, row[1] if row else dummy())
     if not (row and ok):
         return None
     token = secrets.token_urlsafe(32)

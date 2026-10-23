@@ -807,6 +807,7 @@ run "cog CLI: the one writer of accounts and memberships; the cog store's backup
 # the billing confirmed, or neither), through the one .env writer, never a value back. Mutants: tests/mutants_org_login.py,
 # tests/mutants_config_unset.py.
 run "org login: the owner sets this org's agent login; metered only with the billing confirmed; no value back (U4)" "$PY" tests/test_org_login.py
+run "sign-in burst: at most 2 password checks at once, 8 waiting, attempts counted from their start (U1U2-F)" "$PY" tests/test_signin_burst.py
 run "org home namespace: each org's residents live on its own tmux server (two orgs, one agent name, two residents); one org is the default socket" "$PY" tests/test_org_home_namespace.py
 run "org census: no org-state read outside the resolvers; the estate and environment partitions are total" "$PY" tests/test_org_home_census.py
 run "org registry parity: orgs.py and home.mjs reach the same written verdict on every registry case (a2 A-1)" "$PY" tests/test_org_registry_parity.py

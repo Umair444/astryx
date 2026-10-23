@@ -12,8 +12,8 @@ ENV = "COGAUTH_SRC"
 
 MUTANTS = {
     "C1 an unknown email pays no password check (its latency says the account doesn't exist)":
-        ("    ok = await asyncio.to_thread(check_password, pw, row[1] if row else dummy())",
-         "    ok = bool(row) and await asyncio.to_thread(check_password, pw, row[1])"),
+        ("    ok = await check(check_password, pw, row[1] if row else dummy())",
+         "    ok = bool(row) and await check(check_password, pw, row[1])"),
     "C2 a wrong password signs in":
         ("    if not (row and ok):", "    if not row:"),
     "C3 a revoked session still signs in (sign-out and reset revoke nothing)":
