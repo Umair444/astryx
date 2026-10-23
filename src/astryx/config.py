@@ -179,18 +179,35 @@ def is_set(key: str, path: Path | None = None) -> bool:
 def set_env(key: str, value: str, path: Path | None = None) -> None:
     if not key or "=" in key or "\n" in key or "\n" in value or "\r" in value:
         raise ValueError("set_env: key must be a bare name and value a single line")
+    _write_env(key, f"{key}={value}\n", path)
+
+
+def unset_env(key: str, path: Path | None = None) -> bool:
+    """The key REMOVED, every occurrence of it (plan-11859 U4). `KEY=` is not an unset: a unit's EnvironmentFile would
+    export the empty value. True when a line was removed."""
+    if not key or "=" in key or "\n" in key:
+        raise ValueError("unset_env: key must be a bare name")
+    return _write_env(key, None, path)
+
+
+def _write_env(key: str, new: str | None, path: Path | None) -> bool:
+    """The ONE .env writer: `new` replaces the key's first line (or is appended), or None removes the key."""
     p = Path(path) if path else env_path()
     try:
         text = p.read_text()
     except FileNotFoundError:
         text = ""
     lines = text.splitlines(keepends=True)
-    new = f"{key}={value}\n"
     # the key is written EXACTLY ONCE, at its first position, and every later occurrence is dropped in the same replace
     # (plan-11860 BC-1): read_env is first-wins but a bridge's systemd EnvironmentFile is last-wins, so a duplicate
     # left behind would hand the two readers different values
     hits = [i for i, line in enumerate(lines) if "=" in line and line.split("=", 1)[0] == key]
-    if hits:
+    if new is None:
+        if not hits:
+            return False
+        for i in reversed(hits):
+            del lines[i]
+    elif hits:
         lines[hits[0]] = new
         for i in reversed(hits[1:]):
             del lines[i]
@@ -212,6 +229,7 @@ def set_env(key: str, value: str, path: Path | None = None) -> None:
             pass
         raise
     os.chmod(p, 0o600)
+    return True
 
 
 def _cli_estate(invoked: str) -> Path:

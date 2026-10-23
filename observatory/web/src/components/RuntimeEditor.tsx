@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import OrgLogin from './OrgLogin'
 import { api, apiSend, displayName } from '../api'
 
 /* Owner-only per-agent provider/auth, SHARED by the agent side-drawer and the Agents-tab
@@ -125,6 +126,7 @@ export default function RuntimeEditor({ name, live }: { name: string; live: bool
             <span className="text-bad">cli {cfg.org_login.cli} not yet supported: spawn refuses</span>
           )}
           {cfg.org_login.note && <div className="text-bad">{cfg.org_login.note}</div>}
+          {cfg.org_login.supported && <OrgLogin onChanged={load} />}
         </div>
       )}
 

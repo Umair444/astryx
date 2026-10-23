@@ -799,6 +799,10 @@ run "canvas cog: each org's canvas session at its own path under its own name; o
 run "cog identity: the signed token verified against its spec, the response-cookie rule, ONE owner predicate (U1+U2)" "$PY" tests/test_cog_identity.py
 run "cog sign-in: the owner signs in and reaches his rooms with no key, the key still works, each org decides (U1+U2)" "$PY" tests/test_cog_signin.py
 run "cog CLI: the one writer of accounts and memberships; the cog store's backup restores (U1+U2 D7 D8 D9)" "$PY" tests/test_cogauth_cli.py
+# plan-11859 U4: the owner sets this org's agent login from the observatory (a subscription token, a metered key only with
+# the billing confirmed, or neither), through the one .env writer, never a value back. Mutants: tests/mutants_org_login.py,
+# tests/mutants_config_unset.py.
+run "org login: the owner sets this org's agent login; metered only with the billing confirmed; no value back (U4)" "$PY" tests/test_org_login.py
 run "org home namespace: each org's residents live on its own tmux server (two orgs, one agent name, two residents); one org is the default socket" "$PY" tests/test_org_home_namespace.py
 run "org census: no org-state read outside the resolvers; the estate and environment partitions are total" "$PY" tests/test_org_home_census.py
 run "org registry parity: orgs.py and home.mjs reach the same written verdict on every registry case (a2 A-1)" "$PY" tests/test_org_registry_parity.py

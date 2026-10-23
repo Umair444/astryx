@@ -3915,6 +3915,82 @@ async def channel_token(channel: str, body: ChannelToken, request: Request):
             "invite": _discord_invite(acct["id"]) if channel == "discord" else None}
 
 
+# ---------------------------------------------------------------- the org's agent login (plan-11859 U4)
+# The ONE place the owner sets the login this org's agents run on, the org-level half of ORGAUTH (goal 10224):
+# runtime_env.CLIS names the keys, runtime_env.org_login reads them back, spawn splices them. This backend serves ONE
+# org, so it writes ITS org's .env (ESTATE): per-org by construction, no org parameter to get wrong. Every body reads
+# it at its next spawn; running bodies keep the login they started with. A metered key bills per token, and local.md
+# makes any spend above zero the owner's signed act: it needs confirm_billing, and is the only path that writes the
+# opt-in. No live probe: an OAuth token can't be tried against the API plainly, and a probe is a call out of the org.
+_LOGIN_SHAPE = {"subscription": re.compile(r"sk-ant-oat\d{2}-[A-Za-z0-9_-]{20,}"),    # judged by fullmatch: the WHOLE
+                "metered": re.compile(r"sk-ant-api\d{2}-[A-Za-z0-9_-]{20,}")}         # token, one guard, no anchors
+_LOGIN_WORDS = {"subscription": "a Claude subscription token (from `claude setup-token`)",
+                "metered": "an Anthropic API key (from the console)"}
+
+
+class OrgLogin(BaseModel):
+    choice: str                     # subscription | metered | ambient
+    token: str = ""
+    replace: bool = False           # the org already holds a key of this class: say so to overwrite it
+    confirm_billing: bool = False   # metered only: the owner's signature on per-token spend (local.md)
+
+
+def _org_login_view() -> dict:
+    from astryx.core import runtime_env
+    d = runtime_env.org_login(config.read_env(ENV_FILE))
+    return {**d, "source": runtime_env.BILLING_WORDS[d["billing"]]}
+
+
+@app.get("/api/org/login")
+async def org_login_get(request: Request):
+    if not owner_call(request):
+        return Response(status_code=403)
+    return _org_login_view()
+
+
+@app.post("/api/org/login")
+async def org_login_set(body: OrgLogin, request: Request):
+    """Set this org's agent login: a subscription token, a metered API key (opted in, with the billing confirmed), or
+    neither (the ambient login). The answer names keys and the billing, never a value."""
+    if not owner_call(request):
+        return Response(status_code=403)
+    from astryx.core import runtime_env
+    cli = config.read_env(ENV_FILE).get("ASTRYX_ORG_CLI") or "claude"
+    if cli not in runtime_env.LAUNCHERS:
+        return JSONResponse({"ok": False, "error": f"This org runs {cli}, which has no launcher here yet: spawn refuses "
+                             "it. Its login can be set once its launcher exists."}, status_code=409)
+    row = runtime_env.CLIS[cli]
+    if body.choice == "ambient":
+        for k in (*row["subscription"], *row["metered"], runtime_env.OPT_IN):
+            config.unset_env(k, ENV_FILE)
+        return {"ok": True, "login": _org_login_view(), "applies": "at each agent's next spawn"}
+    if body.choice not in ("subscription", "metered"):
+        return JSONResponse({"ok": False, "error": "Choose a subscription token, a metered API key, or neither."},
+                            status_code=400)
+    token = "".join(body.token.split())      # a terminal wraps the token it prints: a pasted line break is no part of it
+    if not _LOGIN_SHAPE[body.choice].fullmatch(token):    # the WHOLE token: nothing after it reaches the .env
+        return JSONResponse({"ok": False, "error": f"That doesn't look like {_LOGIN_WORDS[body.choice]}. Copy the whole "
+                             "token and paste it again."}, status_code=400)
+    key = row[body.choice][0]
+    if body.choice == "metered" and not body.confirm_billing:
+        return JSONResponse({"ok": False, "needs_billing": True, "error": "A metered API key bills every agent's work "
+                             "per token. Confirm the billing to use it."}, status_code=409)
+    if config.is_set(key, ENV_FILE) and not body.replace:
+        return JSONResponse({"ok": False, "needs_confirm": True,
+                             "error": f"This org already has {_LOGIN_WORDS[body.choice]}. Confirm to replace it."},
+                            status_code=409)
+    # FAIL-SAFE ORDER (a2 #62549 F-2): every crash point between the two writes leaves a login no more metered than
+    # what the owner chose. A subscription withdraws the old opt-in BEFORE its token lands; a metered key lands
+    # BEFORE its opt-in
+    if body.choice == "subscription":
+        config.unset_env(runtime_env.OPT_IN, ENV_FILE)          # a subscription: any old opt-in is withdrawn
+    config.set_env(key, token, ENV_FILE)
+    del token
+    if body.choice == "metered":
+        config.set_env(runtime_env.OPT_IN, key, ENV_FILE)       # the opt-in, written ONLY with the billing confirmed
+    return {"ok": True, "login": _org_login_view(), "applies": "at each agent's next spawn"}
+
+
 @app.get("/api/channels/whatsapp/link")
 async def whatsapp_link(request: Request):
     if not owner_call(request):
