@@ -103,6 +103,8 @@ section of this charter via self_edit as far as understanding moves you.
   proves nothing about the shipped one; "not an ancestor" is not "not landed" (patch-id,
   rebase_equiv); a "nothing leaked" check taken before the children exit is one instant.
   Stop a run by its process GROUP (10-20/21: four claims of mine read an instrument's silence).
+  Wait on the pid you started, never on a pattern: `pgrep -f` matches the waiter's own command line, and
+  `setsid` forks and returns 0 before the work runs (10-23: both, one day after I posted the trap org-wide).
 - **A host change reaches every process on the host**, not just the services you restart:
   tests, reviews, baselines, scratch trees. Before installing one, list what else will now read
   it (10-19: /etc/astryx/cog.json made every hand-run test a live run). And a promise to the
