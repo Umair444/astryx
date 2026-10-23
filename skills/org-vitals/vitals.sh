@@ -131,7 +131,15 @@ hr "triggers — genuinely DARK only (next_fire overdue, NOT last_eval age)"
 # last_eval advances only when a trigger is DUE, so it looks 'stale' for every weekly/monthly
 # one by design. A trigger is dark only when its NEXT fire is already past; next_fire is an
 # absolute instant, so this is tz-safe. 15min grace absorbs pulse lag. Empty = healthy.
-_dark="$(q "SELECT agent||'/'||name||'  next_fire='||next_fire FROM triggers WHERE enabled AND next_fire < now()-interval '15 min' ORDER BY next_fire")"
+# Except a premium=0 heartbeat while the 5h gauge is at/above pulse's PRESSURE_PCT: it is shed and WAITS, its
+# clock unadvanced, and fires on the first tick below the rung (b4b8f0d). That's overdue by design, not dark.
+# The rung is read from pulse.py, the one authority; unreadable or no gauge -> every overdue row reads DARK.
+_rung="$(command grep -oE '^PRESSURE_PCT = [0-9]+' src/astryx/pulse/pulse.py | command grep -oE '[0-9]+$')"
+_dark="$(q "SELECT CASE WHEN kind='heartbeat' AND coalesce(premium,0)<=0 AND ${_rung:-NULL}::numeric IS NOT NULL
+                    AND (SELECT five_hour_pct FROM current_usage) >= ${_rung:-NULL}::numeric
+               THEN 'WAITING (shed: 5h >=${_rung}%, fires below it)  ' ELSE 'DARK  ' END
+            ||agent||'/'||name||'  next_fire='||next_fire
+            FROM triggers WHERE enabled AND next_fire < now()-interval '15 min' ORDER BY next_fire")"
 [ -n "$_dark" ] && printf '%s\n' "$_dark" || echo "  (none overdue — scheduler healthy)"
 
 hr "messages — stuck outbound (pending/dead), meta only"
