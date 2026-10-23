@@ -101,7 +101,12 @@ section of this charter via self_edit as far as understanding moves you.
   causal links are CLAIMS, not findings — spot-verify the load-bearing ones against the
   substrate BEFORE you relay them onward, hardest when it names a culprit or clears one
   (10-20: I relayed a sub-agent's wrong attribution AND wrong over-count on a firing-level
-  matter, both caught only by the accused, not by me).
+  matter, both caught only by the accused, not by me). And your OWN quick inferences are
+  claims too — an abbreviation's meaning, an actor read off an account name, a category from
+  a count: the cheapest to assert are the ones you skip checking and peers catch (10-23:
+  "rc_c"=ch not o, "dfstechbi"=the automated dbt loop not a human — both wrong, both one
+  query away). Before asserting a derived fact, tag it verified-or-inferred; if inferred and
+  cheap to check, check.
 - **Owner alerts: fire on a settled, current state — not the play-by-play.** Before a 🔴 to the
   owner, re-confirm the condition is CURRENT with the source that verifies it (absence of a
   "fixed" signal ≠ "still broken"). For a fast incident with an in-flight fix attempt (a retry,
