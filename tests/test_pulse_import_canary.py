@@ -12,6 +12,11 @@ trigger files.
   C3  a second broken tick coalesces: still one pending alarm
   C4  tick() while broken leaves a DUE python check unclaimed (no "check crashed" wake, next_fire not advanced)
   C5  astryx imports again: reconcile registers, the due check is claimed
+  C6  a premium=0 heartbeat due under 5h pressure (90%): tick() leaves it UNCLAIMED, next_fire and last_eval
+      untouched, so it waits (R3) instead of losing its day (medic #62336)
+  C7  the gauge drops (50%): the next tick claims the waiting heartbeat, and its clock advances
+  C6b the gauge CROSSES the rung inside one tick (below at its first read, above at any later one): a heartbeat the
+      claim took (clock advanced) is also EVALUATED (its wake sent), never claimed-and-dropped (a4 #62398 R1)
 
 Needs a fixture database, else 77. Mutants: tests/mutants_pulse_import_canary.py.
 """
@@ -118,6 +123,58 @@ def main():
             row = c.execute("SELECT last_eval FROM triggers WHERE agent='zzagent' AND name='zz_canary_a'").fetchone()
             arm("C5 astryx imports again: still enabled, and the due check is claimed",
                 enabled() == {"zz_canary_a": True, "zz_canary_b": True} and row[0] is not None, f"{enabled()} {row}")
+
+            # C6/C7: a shed heartbeat waits. Its clock must not move while it is shed (medic #62336)
+            def gauge(pct):
+                import json
+                from datetime import datetime
+                c.execute("DELETE FROM usage_polls")
+                c.execute("DELETE FROM turns WHERE usage_snapshot IS NOT NULL")
+                snap = {"state": "fresh", "fetched_at": datetime.now().astimezone().isoformat(),
+                        "data": {"five_hour_utilization": pct}}
+                c.execute("INSERT INTO usage_polls (state, snapshot) VALUES ('fresh', %s::jsonb)", (json.dumps(snap),))
+
+            c.execute("INSERT INTO triggers (agent, name, schedule, kind, state, enabled, note, premium, next_fire) "
+                      "VALUES ('zzagent', 'zz_daily_hb', '0 3 * * *', 'heartbeat', '{}'::jsonb, true, 'daily', 0, "
+                      "now() - interval '1 minute')")
+
+            def hb():
+                return c.execute("SELECT last_eval, next_fire <= now() FROM triggers WHERE agent='zzagent' "
+                                 "AND name='zz_daily_hb'").fetchone()
+            gauge(90)
+            pulse.tick()
+            row = hb()
+            arm("C6 at 90% a due premium=0 heartbeat stays unclaimed: last_eval untouched, still due (it waits)",
+                row is not None and row[0] is None and row[1] is True, str(row))
+            gauge(50)
+            pulse.tick()
+            row = hb()
+            arm("C7 at 50% the next tick claims it: last_eval set, next_fire moved to its next cron instant",
+                row is not None and row[0] is not None and row[1] is False, str(row))
+
+            # C6b: the gauge crosses the rung mid-tick. Reads after the first one say "hot"; a tick that reads it once
+            # agrees with itself (claimed AND evaluated), one that re-reads it drops what it claimed
+            c.execute("UPDATE triggers SET next_fire = now() - interval '1 minute', last_eval = NULL, last_fired = NULL "
+                      "WHERE agent='zzagent' AND name='zz_daily_hb'")
+            # evaluated = FIRED (last_fired stamped). say() coalesces onto a still-pending wake of the same trigger and
+            # then stamps nothing, so C7's wake is marked delivered first: a fire here is this tick's own
+            c.execute("UPDATE messages SET status='delivered' WHERE to_agent='zzagent' AND status='pending'")
+            fired = lambda: c.execute("SELECT last_fired FROM triggers WHERE agent='zzagent' "
+                                      "AND name='zz_daily_hb'").fetchone()[0]
+            reads, real_pressure = [], pulse.pressure
+
+            def crossing(conn):
+                reads.append(1)
+                return len(reads) > 1                       # below on the first read, above on every later one
+            pulse.pressure = crossing
+            try:
+                pulse.tick()
+            finally:
+                pulse.pressure = real_pressure
+            row = hb()
+            claimed = row is not None and row[0] is not None
+            arm("C6b a gauge crossing the rung mid-tick: a heartbeat the claim took is also evaluated (fired)",
+                (not claimed) or fired() is not None, f"claimed={claimed} last_fired={fired()} reads={len(reads)}")
     finally:
         fxcm.__exit__(None, None, None)
         shutil.rmtree(TREE, ignore_errors=True)

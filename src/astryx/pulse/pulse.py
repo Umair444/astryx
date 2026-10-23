@@ -253,7 +253,10 @@ def pressure(conn) -> bool | None:
         return None
 
 
-def shed(due: list[dict], conn) -> list[dict]:
+_UNREAD = object()   # "no caller read the gauge": distinct from pressure()'s None (no gauge), which is itself a reading
+
+
+def shed(due: list[dict], conn, hot=_UNREAD) -> list[dict]:
     """LOAD SHEDDING under quota pressure (plan-4227 S1c: R1 + R3).
 
     Quota is spent by WAKES, not by evaluation. So under pressure a python/sql check is ALWAYS
@@ -261,9 +264,16 @@ def shed(due: list[dict], conn) -> list[dict]:
     trigger's wakes in held_wakes instead of sending them. A detection under pressure is delayed
     and visible, never skipped. That's derived from `kind` — no list, no flag, nothing to forget
     (it also closes 17080: run_check/run_backup/econ_rollup act inside evaluation).
-    A heartbeat's evaluation IS its wake, so a premium=0 heartbeat waits, as before (R3).
+    A heartbeat's evaluation IS its wake, so a premium=0 heartbeat waits, as before (R3): tick() sheds it inside the
+    claim, before any clock moves, so it stays due and fires on the first tick below the rung (medic #62336). The
+    "shed" line below is its trace, once per tick while it waits. `hot` is the tick's ONE gauge read, passed to both
+    this claim-time shed and process(): two reads let the gauge cross the rung between them, so a heartbeat kept (and
+    clock-advanced) by the claim was then dropped by process(), the same lost day (a4 #62398 R1). Read here only
+    when no caller passes it (tests driving shed() or process() directly).
     Reads NO value number (S1a). Fail-open: no gauge = no shedding."""
-    if not pressure(conn):
+    if hot is _UNREAD:
+        hot = pressure(conn)
+    if not hot:
         return due
     kept = [t for t in due
             if t.get("kind") != "heartbeat" or int(t.get("premium") or 0) > 0]
@@ -381,7 +391,7 @@ def release(conn):
         conn.execute("DELETE FROM held_wakes WHERE elided AND released_at < now() - interval '7 days'")
 
 
-def process(conn, due: list[dict], now):
+def process(conn, due: list[dict], now, hot=_UNREAD):
     """Evaluate the claimed triggers and route their wakes: the one path every trigger wake takes.
 
     Held = the 5h gauge reads >=PRESSURE_PCT, the trigger has no survival flag (premium=0), AND the
@@ -390,13 +400,14 @@ def process(conn, due: list[dict], now):
     check re-detects next tick (at-least-once, the duplicate direction). A held wake is persisted,
     never rewound, so no side effect of the evaluation re-runs. Returned fire strings take the same
     path, keeping say()'s header and its pending-coalesce when they are sent."""
-    hot = pressure(conn)
+    if hot is _UNREAD:
+        hot = pressure(conn)
     if not hot:
         try:
             release(conn)
         except Exception as e:
             print(f"release failed (held wakes kept): {e}", file=sys.stderr)
-    for t in shed(due, conn):                      # evaluate outside the claim's lock
+    for t in shed(due, conn, hot):                 # evaluate outside the claim's lock
         try:
             fired, state, wakes = evaluate(t, conn)
         except Exception as e:
@@ -437,6 +448,7 @@ def tick():
     now = datetime.now().astimezone()
     with psycopg.connect(_dsn(), autocommit=True) as conn:
         py_ok = reconcile(conn)
+        hot = pressure(conn)           # ONE gauge read per tick: the claim's shed and process() must agree (a4 #62398)
         with conn.transaction():
             due = conn.execute(
                 """SELECT id, agent, name, schedule, kind, check_src, state, note, premium
@@ -448,6 +460,11 @@ def tick():
             if not py_ok:              # astryx won't import: python checks stay unclaimed, clocks unadvanced (each
                 due = [t for t in due if t["kind"] != "python"]   # would crash on the same ImportError); they fire
                                                                    # on the first tick it imports again
+            # A shed heartbeat stays unclaimed the same way, BEFORE its clock moves (medic #62336): shed() ran only in
+            # process(), after this loop had advanced it to its next cron instant, so a daily heartbeat shed under
+            # pressure lost its whole day, with no held row and no message. Now it waits, as R3 says.
+            due = shed(due, conn, hot)             # waiting rows lead ORDER BY next_fire: a LIMIT on this claim would
+                                                   # let them starve every other trigger (a4 #62398 b)
             for t in due:                          # advance clocks inside the claim
                 try:
                     nxt = croniter(t["schedule"], now).get_next(datetime)
@@ -458,7 +475,7 @@ def tick():
                     continue
                 conn.execute("UPDATE triggers SET next_fire=%s, last_eval=%s WHERE id=%s",
                              (nxt, now, t["id"]))
-        process(conn, due, now)
+        process(conn, due, now, hot)
 
 
 if __name__ == "__main__":
