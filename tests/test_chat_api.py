@@ -18,7 +18,9 @@ no OpenAI key is set, so nothing leaves the host.
   - D4 WORK: a turn is filed under EVERY thread it touched: opened here, OR answered here from a turn another thread
     opened (the mutant that files by input_msg_id only loses it); each turn names its other threads; the done-marks
     are dropped; an unrelated turn never appears; the newest unlinked steps are the live lane; older unlinked steps
-    are counted, never dropped.
+    are counted, never dropped. The other side, so each work() statement also returns zero rows (sqlguard RESPONSIVE):
+    a turn with no steps is filed with none, a party with nothing unlinked has an empty lane, and a thread nobody
+    wrote to answers empty.
   - R6 DICTATE: with no OpenAI key the session is refused (503) and nothing is minted.
   - COMMANDS: the / list is the org's real skills.
 CHAT_SRC names another chat.py, SERVE_SRC another serve.py (devtools/mutation_probe.py: tests/mutants_chat_api.py,
@@ -51,10 +53,15 @@ def arm(name, ok, detail=""):
     print(f"  {'PASS' if ok else 'FAIL'}  {name}" + ("" if ok else f"\n        {detail}"))
 
 
+QUIET_THREAD = "chat:20990101-quiet"
+EMPTY_THREAD = "chat:20990101-nobody-wrote-here"
+
+
 def seed_work(url: str):
     """D4's fixture: one chat thread, its agent 'zeta', four turns, steps linked and unlinked."""
     import psycopg
     T = "chat:20990101-fixture"
+    Q = QUIET_THREAD
     with psycopg.connect(url, autocommit=True) as c:
         def msg(frm, to, thread, turn=None):
             return c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body, turn_id) "
@@ -86,7 +93,14 @@ def seed_work(url: str):
         step("tool", "Bash: lost before the last turn end", None, 26)   # unlinked, older than the last end: COUNTED
         step("tool", "Bash: working right now", None, 1)                # unlinked, newer: the LIVE lane
         c.execute("UPDATE messages SET ts = now() - interval '2 hours' WHERE thread = %s", (T,))   # the chat began first
-    return T, (a, b, cc, d)
+        # QUIET: a thread whose one turn (fixture-agent's) has no steps, and whose party has nothing unlinked since that
+        # turn ended. Every work() statement then also returns ZERO rows once, the other side of the fixture above
+        # (sqlguard's RESPONSIVE needs both: medic #62524, goal 4243)
+        qm = msg("owner", "fixture-agent", Q)
+        q = c.execute("INSERT INTO turns (agent, started_at, ended_at, input_msg_id) VALUES "
+                      "('fixture-agent', now() - interval '20 minutes', now() - interval '19 minutes', %s) RETURNING id",
+                      (qm,)).fetchone()[0]
+    return T, (a, b, cc, d, q)
 
 
 def main(tmp: Path, url: str):
@@ -211,7 +225,7 @@ def main(tmp: Path, url: str):
     arm("D6' `missing` is never stored", "missing" not in before, before)
 
     # ── D4 the work ──────────────────────────────────────────────────────────────────────────────────────────
-    T, (a, b, c, d) = seed_work(url)
+    T, (a, b, c, d, q) = seed_work(url)
     wk = cl.get("/api/chat/work", params={"thread": T}, headers=O)
     body = wk.json() if wk.status_code == 200 else {}
     got = {x["id"]: x for x in body.get("turns", [])}
@@ -225,6 +239,14 @@ def main(tmp: Path, url: str):
     live = body.get("live", {}).get("zeta", [])
     arm("D4 the newest unlinked step is the live lane", [s["content"] for s in live] == ["Bash: working right now"], live)
     arm("D4 the older unlinked step is COUNTED, never dropped", body.get("unlinked", {}).get("zeta") == 1, body.get("unlinked"))
+    qk = cl.get("/api/chat/work", params={"thread": QUIET_THREAD}, headers=O).json()
+    qt = {t["id"]: t for t in qk.get("turns", [])}
+    arm("D4 a turn with no steps is still filed, with an empty step list", list(qt) == [q] and qt[q]["steps"] == [], qk)
+    arm("D4 a party with nothing unlinked since its last turn has an empty live lane",
+        qk.get("live") == {"fixture-agent": []} and qk.get("unlinked") == {"fixture-agent": 0}, qk)
+    ek = cl.get("/api/chat/work", params={"thread": EMPTY_THREAD}, headers=O)
+    arm("D4 a thread nobody wrote to answers empty, never an error",
+        ek.status_code == 200 and ek.json() == {"turns": [], "live": {}, "unlinked": {}}, (ek.status_code, ek.text[:200]))
 
     # ── R6 dictation ─────────────────────────────────────────────────────────────────────────────────────────
     # HERMETIC AGAINST THE ESTATE (land RED 10-23): voice_mint.env() reads os.environ, then the estate's .env, so on the

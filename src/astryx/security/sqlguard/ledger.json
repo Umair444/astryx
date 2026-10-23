@@ -9,9 +9,6 @@
   "bridges/canvas.py::canvas_share\u001fupdate canvases set shared_with=? where id=?": [
    "canvas: trust lines, claim, shell"
   ],
-  "bridges/canvas.py::crew_remove\u001fupdate canvases set crew = array_remove(crew, ?) where id=? and ? = any(crew) returning id": [
-   "canvas: trust lines, claim, shell"
-  ],
   "bridges/canvas.py::logout\u001fdelete from canvas_sessions where token_hash=?": [
    "canvas: trust lines, claim, shell"
   ],
@@ -24,9 +21,6 @@
   ],
   "bridges/canvas.py::viewer\u001fupdate canvas_users set last_seen=now() where name=?": [
    "canvas: trust lines, claim, shell"
-  ],
-  "bridges/canvas_voice.py::voice_session\u001finsert into canvas_voice_usage (user_name, model) values (?,?) returning id": [
-   "canvas voice: cap, tier fence, owner"
   ],
   "bridges/ear.py::Hearing.record\u001fselect count(*) from hearings where agent = ? and woke and ts > now() - interval '1 hour'": [
    "hearing: hear() workers, pointer, span-fetch, fence"
@@ -74,9 +68,6 @@
   ],
   "observatory/api/main.py::agent_profile\u001fselect mode() within group (order by model) from turns where agent=? and model is not null and ended_at > now() - interval '2 days'": [
    "observatory: agents as people"
-  ],
-  "observatory/api/main.py::goal_create\u001finsert into goals (title, owner, state, scope_note) values (?, ?, 'proposed', ?) returning id": [
-   "goal budgets frozen, writers retired (4227 S3)"
   ],
   "observatory/api/main.py::people_answer\u001finsert into social_relation (org, pid, kind, closeness, confidence, updated_at) values (coalesce((select org from social_person where id=? limit 1), 'local'), ?, ?, ?, 'owner', now()) on conflict (org, pid) do update set kind=excluded.kind, closeness=excluded.closeness, confidence='owner', updated_at=now()": [
    "observatory: agents as people"
@@ -251,9 +242,6 @@
   ],
   "src/astryx/hearing/ear_store.py::ttl_findings\u001fselect to_regclass('public.utterances')": [
    "hearing store"
-  ],
-  "src/astryx/hearing/voice_mint.py::record\u001finsert into canvas_voice_usage (user_name, model) values (?,?) returning id": [
-   "observatory pilot voice: owner-only routes, one ledger and one cap across canvas and the observatory (plan-9000 S2, C4)"
   ],
   "src/astryx/memory/agelib.py::prepare\u001fselect rolsuper from pg_roles where rolname = current_user": [
    "branch_check prep: hardening precondition, template, repo, estate, env"
@@ -612,7 +600,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 296,
+  "debt_rows": 298,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 5,
@@ -647,12 +635,6 @@
    "reason": "seed 10-09 canvas: runs only after _canvas_for() found the canvas (404 otherwise), so 0 rows is unreachable; \u22651 observed",
    "tk": "sha256t:f6069fe213608d246e73445b404a3a73c37ea70cb2f5aaba47b6cd276836274c"
   },
-  "bridges/canvas.py::crew_remove\u001fupdate canvases set crew = array_remove(crew, ?) where id=? and ? = any(crew) returning id": {
-   "admitted": "2026-10-09",
-   "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas crew removal: executed in a stamped fixture by tests/test_canvas.py with BOTH arms (a crew member removed \u2192 1 row, the same removal again \u2192 0 rows), but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create).",
-   "tk": "sha256t:0fd2880df649df0f5a9ba53bd994ca35e771653c83a5727adfa0f557bd8ce413"
-  },
   "bridges/canvas.py::logout\u001fdelete from canvas_sessions where token_hash=?": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
@@ -676,12 +658,6 @@
    "debt": "EXECUTED",
    "reason": "seed 10-09 canvas: runs only for a session whose JOIN just found the non-revoked user, so 0 rows is unreachable; \u22651 observed",
    "tk": "sha256t:ba79ef9cf28c18ca2b3e0c53def19db9bff0525f912560d4fb5ee5c73cd44b1b"
-  },
-  "bridges/canvas_voice.py::voice_session\u001finsert into canvas_voice_usage (user_name, model) values (?,?) returning id": {
-   "admitted": "2026-10-09",
-   "debt": "EXECUTED",
-   "reason": "seed 10-09: INSERT \u2026 RETURNING always affects exactly one row; the 0-row arm does not exist",
-   "tk": "sha256t:3c7a03b454af33ce666876001b7bc99b1b7b81b62d76d74efbec95002e3b38de"
   },
   "bridges/common.py::listen\u001f*": {
    "debt": "UNEXECUTED",
@@ -1129,12 +1105,6 @@
    "reason": "seed",
    "tk": "sha256t:6f7a871eae56bf224f0c59c044d99601bc41da5560294a628f58564f5bb8e1e0"
   },
-  "observatory/api/main.py::goal_create\u001finsert into goals (title, owner, state, scope_note) values (?, ?, 'proposed', ?) returning id": {
-   "admitted": "2026-09-29",
-   "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "goal 4227 S3: executed in a stamped fixture by tests/test_goal_budget_frozen.py, but asyncpg exposes no table OID, so the stamp cannot be credited (declared FIXTURE-DDL cap). Shrinks when the observatory moves to psycopg or the cap lifts.",
-   "tk": "sha256t:a916f9172621e07e7e52863a720b467bf01af22f3a147f138735410fc8fcb24e"
-  },
   "observatory/api/main.py::goals\u001fselect * from goals order by id desc limit 200": {
    "debt": "UNEXECUTED",
    "reason": "seed",
@@ -1317,6 +1287,12 @@
    "reason": "seed",
    "tk": "sha256t:29869134e6a5f52c208e58203e7d6ee799b80d58bd28a31696a32400b14ccd07"
   },
+  "sha256:240dd9541c4ebeb89a67dd9b720fa233ef4940dfcacce1297194d3f569280813": {
+   "admitted": "2026-10-23",
+   "debt": "UNEXECUTED",
+   "reason": "estate site (gitignored, hashed): a sensor run by a live service on its own cadence, never by a check.sh gate; no fixture reaches it (seed, goal 4243, medic #62524)",
+   "tk": "sha256t:3f47bf7f804a3e2dae7c12fb9dc471f8b606b83fde4f60ede7771dc8612701b8"
+  },
   "sha256:270094954664f77ba34a84f8f8f0e08cf49f5ba4c30de70af1822a699c5eeef2": {
    "debt": "UNEXECUTED",
    "reason": "seed",
@@ -1458,6 +1434,12 @@
    "reason": "seed",
    "tk": "sha256t:429ddbe8ccd55c711077227da105616314338aee72939a172c78697338d82fdb"
   },
+  "sha256:7ecf118494871a5f3a034373c15ea3d64d0164f5d07ed5445a936a44ede18d80": {
+   "admitted": "2026-10-23",
+   "debt": "UNEXECUTED",
+   "reason": "estate site (gitignored, hashed, personal tier): a by-hand import against the org's own tables, executed for real 10-22/10-23 by its owner; no fixture exists or should (seed, goal 4243)",
+   "tk": "sha256t:bbe4b9de7ea470e84145d960f89bb65020dccdb7192859bf2005672cb855cc68"
+  },
   "sha256:8144027438a5006aad7309f2489dc4f77cc956984b8d90b24a9fc6c78775c72f": {
    "debt": "UNEXECUTED",
    "reason": "seed",
@@ -1561,6 +1543,12 @@
    "reason": "seed",
    "tk": "sha256t:b3132cda47e153d1b2e23f22624d6e4af393123766dc1c3236dcfe12af406d8d"
   },
+  "sha256:b8aacab0a1b22d2bcb1dac9fb129c005a87b1ccee3d51789d6a79e5072a00734": {
+   "admitted": "2026-10-23",
+   "debt": "UNEXECUTED",
+   "reason": "estate site (gitignored, hashed): a sensor run by a live service on its own cadence, never by a check.sh gate; no fixture reaches it (seed, goal 4243, medic #62524)",
+   "tk": "sha256t:386d36b3cedb069e5f3a93860056e36c7e47c656eef728af307de43d13058172"
+  },
   "sha256:bb7bd6e0d676c7cacd903adfb44e21e01bfef638d016fc6e901e9eb330fd5591": {
    "debt": "EXECUTED",
    "reason": "seed",
@@ -1622,10 +1610,22 @@
    "reason": "seed",
    "tk": "sha256t:2631c5dd4c53cdd3b131b5378483f8cfe50ce88200521ec50c79da042263b36c"
   },
+  "sha256:dabd08786f5f0b3110d6537fc3f2805295109c63a3d915088cf7641eea52747e": {
+   "admitted": "2026-10-23",
+   "debt": "UNEXECUTED",
+   "reason": "estate site (gitignored, hashed, personal tier): a by-hand import against the org's own tables, executed for real 10-22/10-23 by its owner; no fixture exists or should (seed, goal 4243)",
+   "tk": "sha256t:a26374dbe89982fb68014f3919e6618c6858cd253f0dd49a411fce7a0f3ef04a"
+  },
   "sha256:e15d9f816eff10a84831892fba320c06f5b176ce84f02c03c43140df970dcfcb": {
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:e209300e10a51cfaf6be9cd121375b3fc047fe25ab22d0c78ce501a32b34813b"
+  },
+  "sha256:e1d17b791ec175c866b6e0781b9aeaa0d95b0107c8a540d182bfd01d76597d19": {
+   "admitted": "2026-10-23",
+   "debt": "UNEXECUTED",
+   "reason": "estate site (gitignored, hashed, personal tier): a by-hand import against the org's own tables, executed for real 10-22/10-23 by its owner; no fixture exists or should (seed, goal 4243)",
+   "tk": "sha256t:9f4c58aa8ceca9568f11c310a63ccaa92d032bbd337f3eacfe54f15794d38bd0"
   },
   "sha256:e96daa49e862f04c51f1933f1ba90a2108f7ba7694c41bcd6ae570d7657c33ec": {
    "debt": "EXECUTED/FIXTURE-DDL",
@@ -1656,6 +1656,12 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:dab1b557ebc2885ed0aa257afae2e96a5cad76f6aa1915c10db81050ae655902"
+  },
+  "sha256:f94a02ea94057598400eda141ee2ba803b68dcb25fe46c8f1dde2639130bb342": {
+   "admitted": "2026-10-23",
+   "debt": "UNEXECUTED",
+   "reason": "estate site (gitignored, hashed, personal tier): a by-hand import against the org's own tables, executed for real 10-22/10-23 by its owner; no fixture exists or should (seed, goal 4243)",
+   "tk": "sha256t:2ba5b07309fdc4921ad611ecf3fe4afe321048b7d3028dc6142f59b0502710d2"
   },
   "sha256:fa6fa3d04421bbfec0588059d7b9b7a00300a565e250c4c134d6f8a9a5dd6575": {
    "debt": "UNEXECUTED",
@@ -1753,12 +1759,6 @@
    "debt": "EXECUTED/FIXTURE-DDL",
    "reason": "hearing S1 (plan-8674): a catalog-only read (pg_catalog / to_regclass / now()); it reads no org relation, so no schema.sql stamp can credit it. Exercised with RED controls on fixture DBs by tests/test_ear_store.py.",
    "tk": "sha256t:1afb0b418d96c7b4fbd894921b32f343281d6f2329c16dcac7a7ffc227c4dab9"
-  },
-  "src/astryx/hearing/voice_mint.py::record\u001finsert into canvas_voice_usage (user_name, model) values (?,?) returning id": {
-   "admitted": "2026-10-11",
-   "debt": "EXECUTED",
-   "reason": "the one voice-spend ledger write (plan-9000 C4): an INSERT ... RETURNING with no predicate, so no fixture can make it RESPONSIVE; EXECUTED on a fixture schema by tests/test_pilot_voice_server.py (e), which reads its row back through minutes_today (floor, sum, monotonic and foreign-row arms)",
-   "tk": "sha256t:690713ec2935d00da75ece03b48953a643a812706601c3980e33a301ce7163d6"
   },
   "src/astryx/memory/agelib.py::aprepare\u001fselect rolsuper from pg_roles where rolname = current_user": {
    "admitted": "2026-09-30",
