@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Oracle: the observatory's sign-in screens (goal 11859 U3, seed #61921; the bar is seed's #61877, the security arms are
 plan-11859's F8 and I9). The screens are built against forge's U1U2 contract (POST /auth/login, POST /auth/logout, GET
-/auth/me) behind a build flag, so they are inert until that lands.
+/auth/me) behind a build flag. U1U2 is live, so the flag is ON in every production build (seed #62607).
 
-  A1 inert by default: LOGIN is VITE_AUTH_UI === '1' and nothing else; AuthScreens is reached only through App.tsx's
-     LOGIN-gated lazy imports (no static import anywhere), and no other module names /auth, so a default build carries
-     no sign-in request at all. The owner-key door stays as it is (a3 BC-2: its retirement is U1U2's)
+  A1 one flag, on in production: LOGIN is VITE_AUTH_UI === '1' and nothing else; AuthScreens is reached only through
+     App.tsx's LOGIN-gated lazy imports (no static import anywhere), and no other module names /auth, so a build
+     without the flag carries no sign-in request at all. The tracked observatory/web/.env.production sets
+     VITE_AUTH_UI=1 and NO other key (every VITE_ value is baked into the public bundle), so `npm run build` and
+     init.sh keep the sign-in on. The owner-key door stays as it is (owner 10-21, seed #61925: U7 retires it)
   A2 F8, run: auth.ts's real signIn() under node with a stubbed fetch. Two 401s whose bodies differ ("no such user",
      "wrong password", and an empty body) give ONE outcome, and its words are one constant that names how to fix it;
      signIn never reads a response body (no .json()/.text() on its path); 429 has its own words; 5xx and a network
@@ -20,7 +22,7 @@ plan-11859's F8 and I9). The screens are built against forge's U1U2 contract (PO
      role=alert; "Sign in" → "Signing in…" → "Signed in"; sentence case (no uppercase utility); every control class
      has a :focus-visible ring and no outline-none; tokens only (no hex in AuthScreens or the auth CSS); nothing moves
      on its own (no animate-, ax-orb, transition or motion import in the screens: the walk is the one motion)
-Seam: OBS_SRC_DIR (a mutant observatory/web/src). Exit 0 · 1 · 77 (no node).
+Seams: OBS_SRC_DIR (a mutant observatory/web/src), OBS_PROD_ENV (a mutant .env.production). Exit 0 · 1 · 77 (no node).
 """
 import json
 import os
@@ -33,6 +35,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 SRC = Path(os.environ.get("OBS_SRC_DIR") or REPO / "observatory" / "web" / "src")
+PROD_ENV = Path(os.environ.get("OBS_PROD_ENV") or REPO / "observatory" / "web" / ".env.production")
 fails = []
 
 
@@ -122,7 +125,7 @@ def main():
     app = (SRC / "App.tsx").read_text()
     css = (SRC / "index.css").read_text()
 
-    print("A1 inert by default")
+    print("A1 one flag, on in production")
     flag = re.findall(r"export const LOGIN = (.*)", auth)
     check("LOGIN is VITE_AUTH_UI === '1' and nothing else",
           len(flag) == 1 and flag[0].strip().endswith(".env.VITE_AUTH_UI === '1'") and flag[0].count("||") == 0, flag)
@@ -137,7 +140,10 @@ def main():
     named = [p.relative_to(SRC).as_posix() for p in SRC.rglob("*.ts*")
              if p.name not in ("auth.ts", "AuthScreens.tsx") and re.search(r"['\"`]/auth/", p.read_text())]
     check("no other module names /auth", named == [], named)
-    check("the owner-key door is still there (a3 BC-2: retired in U1U2, not here)",
+    keys = ([ln.strip() for ln in PROD_ENV.read_text().splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
+            if PROD_ENV.is_file() else None)
+    check(".env.production sets VITE_AUTH_UI=1 and no other key", keys == ["VITE_AUTH_UI=1"], keys)
+    check("the owner-key door is still there (U7 retires it, not here)",
           "function KeyBadge()" in app and "<KeyBadge />" in app and "saveObsKey(val.trim())" in app)
 
     tmp = Path(tempfile.mkdtemp(prefix="authui-"))

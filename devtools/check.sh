@@ -792,7 +792,7 @@ run "active content: nothing an agent authored runs on the front's origin (plan-
 # Hermetic (fixtures): the LIVE run is host state and gates nothing. Mutants: tests/mutants_exposure_census.py.
 run "exposure census: every listener classed or accused, every tunnel target the front (plan-11859 D5)" "$PY" tests/test_exposure_census.py
 run "observatory cog UI: the building and its room chips, the key only to safe bases, one org as before" "$PY" tests/test_observatory_cog_ui.py
-run "observatory sign-in UI: inert behind its flag, one answer for any failed sign-in (F8), your orgs not every room" "$PY" tests/test_observatory_auth_ui.py
+run "observatory sign-in UI: one flag, on in production builds, one answer for any failed sign-in (F8), your orgs not every room" "$PY" tests/test_observatory_auth_ui.py
 run "observatory influence across orgs: owner only, crossing traffic aggregated per pair, no body or thread leaves" "$PY" tests/test_observatory_influence_cross.py
 run "observatory cog new org: owner only, a legal key and name not already in the cog, one wire message to seed, one open request per key" "$PY" tests/test_observatory_cog_new_org.py
 run "canvas cog: each org's canvas session at its own path under its own name; one org as before" "$PY" tests/test_canvas_cog.py
