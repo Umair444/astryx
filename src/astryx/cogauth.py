@@ -30,6 +30,10 @@ THE RULES IT HOLDS:
   same act that makes an org.
 - The cog store's DSN is the cog HOME's .env (ASTRYX_DSN), never an org's. `grant` reaches an org's database by that
   org's own .env DSN, the declared cog-scoped read the gateway already makes (config.dsn, env_first=False).
+THE STORE'S DATABASE, before `init` (seed's turn-on, 10-23): its own database on the declared server, named UNLIKE its
+role (a database named after its user is libpq's default, which config.dsn refuses, and every sign-in would read 503),
+with PUBLIC CONNECT revoked. For `restore-verify` the role needs CREATEDB (it makes <db>_restorecheck), and a .pgpass
+line for it must match that scratch database too (its db field `*`).
 Exit 0 done · 1 refused or failed, named (never a value) · 2 usage.
 """
 from __future__ import annotations
@@ -183,6 +187,9 @@ def store_dsn(home: Path) -> str:
         dsn = config.dsn(Path(home) / ".env", env_first=False)
     except LookupError:
         raise SystemExit("cogauth: the cog HOME's .env names no ASTRYX_DSN (its user store)") from None
+    except config.DefaultDB:           # the turn-on trap (seed #62608), said plainly: the resolver's own judgement
+        raise SystemExit("cogauth: the cog store's database is libpq's default (no name, `postgres`, or named like "
+                         "its role); give it a name of its own") from None
     except config.ForeignDSN as e:
         raise SystemExit(f"cogauth: the cog store's DSN is refused: {e}") from None
     if orgs.db_of(dsn) in {e["db"] for e in (orgs.load() or {}).values()}:
@@ -286,7 +293,11 @@ def cmd_restore_verify(a) -> int:
     scratch_dsn = psycopg.conninfo.make_conninfo(dsn, dbname=scratch)
     with psycopg.connect(dsn, autocommit=True) as live:
         live.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(scratch)))
-        live.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(scratch)))
+        try:
+            live.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(scratch)))
+        except psycopg.errors.InsufficientPrivilege:
+            raise SystemExit(f"cogauth: the store's role can't create {scratch}: grant it CREATEDB to verify a "
+                             "restore") from None
         try:
             r = subprocess.run(["pg_restore", "--no-owner", "-d", scratch_dsn, str(dumps[-1])],
                                capture_output=True, text=True)

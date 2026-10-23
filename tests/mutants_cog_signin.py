@@ -43,6 +43,8 @@ MUTANTS = {
     "F13 the identity rides with no session (a caller's own x-astryx-identity is relayed)":
         ("    signed = [(identity.HEADER, identity.mint(a.key, who, org))] if who else []",
          "    signed = [(identity.HEADER, identity.mint(a.key, who, org))] if who else [(identity.HEADER, request.headers.get(identity.HEADER, ''))]"),
+    "F16 an unusable store is a silent 503 (a2 #62616: the journal never says why)":
+        ('            print(f"front: the cog\'s sign-in store is unusable: {e}", file=sys.stderr)', "            pass"),
     "F14 a same-site page's request is signed in (a2 #62390 R-1: SameSite=Strict is a site rule; a writing GET runs)":
         ('    if request.headers.get("sec-fetch-site") not in ("same-origin", "none"):\n        return None\n', ""),
     "F15 a typed URL or a bookmark (Sec-Fetch-Site none) is not signed in (the owner's own navigation refused)":

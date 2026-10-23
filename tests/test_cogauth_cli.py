@@ -7,7 +7,8 @@ extra DDL) and one org's. A fixture registry names the org and the cog block. Du
 password, a hash or a session token.
 
   K1 init: rc 0; the cog HOME holds identity.key (mode 600) and keys/<kid>.pub; the store's tables exist; the printed
-     registry block names the id and HOME. A second init keeps the key (never overwrites it)
+     registry block names the id and HOME. A second init keeps the key (never overwrites it). A store database named
+     like its role (libpq's default, which every reader refuses: seed's turn-on, 10-23) is refused, saying so
   K2 user add: the password comes from stdin, never argv (a password as an argument is a usage error, rc 2); the row's
      email is lowercased, its pw an argon2id PHC string, never the password; a short password, a duplicate email and
      an add with no cog block are refused (rc 1)
@@ -111,6 +112,13 @@ def main():
             before = key.read_bytes()
             rc, out = cog("init", "--home", str(home), "--id", cid)
             check("a second init keeps the key", rc == 0 and key.read_bytes() == before, out[-200:])
+
+            rh = t / "cog-rolenamed"
+            rh.mkdir()
+            (rh / ".env").write_text("ASTRYX_DSN=postgresql://fxcogrole@127.0.0.1:5432/fxcogrole\n")
+            rc, out = cog("init", "--home", str(rh), "--id", cid)
+            check("a store database named like its role: refused (rc 1), saying so, before anything is applied",
+                  rc == 1 and "named like its role" in out and "libpq's default" in out, out[-300:])
 
             print("\nK2 USER ADD")
             rc, out = cog("user", "add", "One@FX-CogCli.invalid", stdin=PW["one"] + "\n")

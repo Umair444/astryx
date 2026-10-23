@@ -37,6 +37,8 @@ passwords and keys only; every assertion is on a status, a name or whose value a
      same-site, cross-site or absent: 403 and the reply stays pending; same-origin: 200 and it is claimed
   S13 an org whose database lacks the members table (schema.sql not re-applied yet): a valid identity is the public
      face, never a 500
+  S15 a front whose cog store DSN names a database like its role (seed's turn-on, 10-23): sign-in is 503, and its
+     stderr (the journal) names why
   S12 AN ORG'S OWN STREAM: signed in, no key, A's /api/events (an EventSource: no header) streams an agent's step,
      the owner-only content
 Seams: OBS_FRONT_SRC (a mutant front.py), OBS_MAIN_SRC (a mutant main.py), COGAUTH_SRC (a mutant cogauth.py).
@@ -212,7 +214,7 @@ def run(t, da, dbb, procs):
     pid = os.getpid()
     oa, ob, oc = f"fxsi-a-{pid}", f"fxsi-b-{pid}", f"fxsi-c-{pid}"
     cid = f"fxcog-{pid:08d}"
-    socks = {k: listener() for k in ("a", "b", "c", "c2", "front", "bare")}
+    socks = {k: listener() for k in ("a", "b", "c", "c2", "front", "bare", "badstore")}
     port = {k: s.getsockname()[1] for k, s in socks.items()}
     reg = {"orgs": {}}
     for o, d, k in ((oa, da, "a"), (ob, dbb, "b"), (oc, None, "c")):
@@ -248,6 +250,12 @@ def run(t, da, dbb, procs):
     check("cogauth init: a signing key and the store's schema (rc 0)", r.returncode == 0, r.stderr[-300:])
     reg["cog"] = {"id": cid, "home": str(home)}
     regf.write_text(json.dumps(reg))
+    # S15's cog: the same key, a store DSN whose database is named like its role (libpq's default: config refuses it)
+    bad = t / "cog-badstore"
+    shutil.copytree(home / "keys", bad / "keys")
+    shutil.copy2(home / "identity.key", bad / "identity.key")
+    (bad / ".env").write_text(f"ASTRYX_DSN=postgresql://fxsirole@127.0.0.1:5432/fxsirole\nASTRYX_COG_ORIGINS={ORIGIN}\n")
+    (t / "badstore.json").write_text(json.dumps({**reg, "cog": {"id": cid, "home": str(bad)}}))
     users = {"owner": "Owner@FX-Signin.invalid", "lone": "lone@fx-signin.invalid", "slow": "slow@fx-signin.invalid",
              "lock": "lock@fx-signin.invalid"}
     for who, email in users.items():
@@ -289,7 +297,7 @@ def run(t, da, dbb, procs):
             'ROOT = Path(__file__).resolve().parent', f'ROOT = Path({str(REPO / "observatory")!r})'))
     # COGAUTH_SRC reaches the front too: its cogauth is the mutant, loaded before uvicorn imports front.py
     launch = [PY, "-m", "uvicorn"] if not cli_src else [PY, "-c", PRELOAD, str(REPO / "src"), cli_src]
-    for k, rf in (("front", regf), ("bare", t / "bare.json")):
+    for k, rf in (("front", regf), ("bare", t / "bare.json"), ("badstore", t / "badstore.json")):
         s = socks[k]
         procs.append(subprocess.Popen(
             [*launch, "front:app", "--fd", str(s.fileno())], pass_fds=(s.fileno(),), cwd=fdir,
@@ -299,7 +307,7 @@ def run(t, da, dbb, procs):
         s.close()
     F = port["front"]
     up = all(wait(port[k], "/api/whoami" if k in "ab" else "/api/cog" if k in ("front", "bare") else "/api/auth/role",
-                  procs[i]) for i, k in enumerate(("a", "b", "c", "c2", "front", "bare")))
+                  procs[i]) for i, k in enumerate(("a", "b", "c", "c2", "front", "bare", "badstore")))
     check("every server starts", up, " | ".join((t / f"{k}.err").read_text()[-300:] for k in ("a", "b", "front")
                                                  if (t / f"{k}.err").exists()))
     if not up:
@@ -531,6 +539,13 @@ def run(t, da, dbb, procs):
     st_p, _, _, _ = call(A, "/api/presence", headers={"x-astryx-identity": token(real, owner_sub, oa)})
     check("a valid identity reads as the public face (whoami 200, not owner; an owner route 403), never a 500",
           st_w == 200 and json.loads(w13).get("owner") is False and st_p == 403, f"{st_w} {st_p}")
+
+    print("\nS15 A STORE THE FRONT CAN'T USE")
+    st_b, _, _, _ = call(port["badstore"], "/auth/login", "POST", {"email": users["owner"], "password": PW["owner"]},
+                         headers=O)
+    err = (t / "badstore.err").read_text() if (t / "badstore.err").exists() else ""
+    check("a store database named like its role: the sign-in is 503, AND the front's stderr says why",
+          st_b == 503 and "sign-in store is unusable" in err, f"{st_b} {err[-200:]}")
 
     print("\nS10 NO SIGN-IN")
     st_n = [call(port["bare"], p, m, b, headers=O)[0] for p, m, b in

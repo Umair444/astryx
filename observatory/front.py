@@ -121,8 +121,11 @@ class _Auth:
         self.origins = {o.strip().rstrip("/") for o in env.get("ASTRYX_COG_ORIGINS", "").split(",") if o.strip()}
         try:     # the cog store's DSN, through the ONE resolver (file only; it refuses an org's database)
             self.dsn = config.dsn(c["home"] / ".env", env_first=False)
-        except (LookupError, config.ForeignDSN):
+        except (LookupError, config.ForeignDSN) as e:
             self.dsn = ""          # no store: every sign-in is a 503, and the owner key still works
+            # ...and the journal says why, at the first sign-in (a2 #62616: at turn-on a store named like its role
+            # read as a bare 503, its reason nowhere)
+            print(f"front: the cog's sign-in store is unusable: {e}", file=sys.stderr)
         self.conn = None
         self.lock = asyncio.Lock()
         cogauth.dummy()          # made NOW, so the first unknown email doesn't pay for making it (its latency, F8)

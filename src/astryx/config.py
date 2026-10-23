@@ -110,6 +110,11 @@ class ForeignDSN(RuntimeError):
     corrections 1 and 2). A RuntimeError, never a LookupError: an oracle reads LookupError as "no DB, skip"."""
 
 
+class DefaultDB(ForeignDSN):
+    """The ForeignDSN case where the DSN binds libpq's own default: no database named, `postgres`, or one named like its
+    user. Its own class so a caller can name the fix (rename the database) without reading the DSN itself (U1U2)."""
+
+
 def dsn(path: Path | None = None, environ: dict | None = None, env_first: bool = True) -> str:
     """ASTRYX_DSN: the environment first (an oracle binds a run to a fixture DB this way), else .env.
     env_first=False reads the file only (the readers that never consulted the environment keep doing exactly that).
@@ -141,7 +146,7 @@ def _check_pair(v: str, src: str, path, environ) -> None:
     info = orgs.conninfo(v)
     db = info.get("dbname") or info.get("user")
     if not db or db in orgs.NEVER_ORG_DB or db == info.get("user"):
-        raise ForeignDSN(f"the DSN in {src} binds {db!r}: libpq's default database, never an org's (correction 1)")
+        raise DefaultDB(f"the DSN in {src} binds {db!r}: libpq's default database, never an org's (correction 1)")
     if any(e["db"] == info.get("user") for e in reg.values()):
         # correction 1(ii): an org whose database is the superuser's NAME is what `psql ""` + PGHOST/PGUSER binds
         raise ForeignDSN("the org registry names a database called after the database user: libpq's default "
