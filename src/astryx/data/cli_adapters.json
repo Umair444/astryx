@@ -1,0 +1,26 @@
+{
+ "_": "plan-11859 U5 (D10, a1 F7): the CLI ADAPTER TABLE, one row per CLI an org may run its agents on, the ONE source of every fact about it. src/astryx/core/cli_adapters.py is its only reader (runtime_env derives CLIS and LAUNCHERS from it, launch_flags the flags doctor checks, spawn.sh types `runtime_env.py --launch`). `credentials`: the .env keys that CLI reads, by billing class (subscription: used when present; metered: only on the org's ASTRYX_ORG_LOGIN opt-in). `launcher: false` refuses loudly with its `why` (spawn exits; never claude in its place). A launcher's `launch` is the argv, `{name}` slots filled by spawn and every value shell-quoted ({resume} is 0 or 2 elements); it must carry `channel_flag channel_server` (without it the wire's doorbell is dropped silently) and `{mcp}`, and its `permission_flag` must take `{perm}`.",
+ "adapters": {
+  "claude": {
+   "launcher": true,
+   "binary": "claude",
+   "credentials": {"subscription": ["CLAUDE_CODE_OAUTH_TOKEN"], "metered": ["ANTHROPIC_API_KEY"]},
+   "channel_flag": "--dangerously-load-development-channels",
+   "channel_server": "server:astryx",
+   "permission_flag": "--permission-mode",
+   "launch": ["{cli}", "{resume}", "--model", "{model}", "--permission-mode", "{perm}",
+              "--disallowedTools", "AskUserQuestion", "--strict-mcp-config", "--mcp-config", "{mcp}",
+              "--dangerously-load-development-channels", "server:astryx"]
+  },
+  "gemini": {
+   "launcher": false,
+   "why": "gemini-cli has no launcher here yet: its channel (the wire's doorbell) and MCP wiring aren't built",
+   "credentials": {"subscription": [], "metered": ["GEMINI_API_KEY"]}
+  },
+  "codex": {
+   "launcher": false,
+   "why": "codex-cli has no launcher here yet: its channel (the wire's doorbell) and MCP wiring aren't built",
+   "credentials": {"subscription": [], "metered": ["OPENAI_API_KEY"]}
+  }
+ }
+}

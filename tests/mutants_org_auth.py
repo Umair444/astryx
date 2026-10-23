@@ -32,7 +32,7 @@ MUTANTS = {
         ('        sys.exit(3 if not d["supported"] else 1 if d["billing"] == "metered" else 0)',
          '        sys.exit(3 if not d["supported"] else 0)'),
     "A5 a CLI with no launcher runs as claude (no refusal)":
-        ('LAUNCHERS = {"claude"}', 'LAUNCHERS = {"claude", "gemini"}'),
+        ("LAUNCHERS = _adapters.launchers(_ROWS)", 'LAUNCHERS = _adapters.launchers(_ROWS) | {"gemini"}'),
     "A6 `--org` prints the value with the name":
         ('        print(json.dumps(org_login()))',
          '        d = org_login(); e = config.read_env(paths.estate(__file__) / ".env"); print(json.dumps({**d, "v": e.get(d["key"] or "")}))'),

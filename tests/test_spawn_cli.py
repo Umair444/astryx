@@ -15,7 +15,7 @@ and claude stubs), so the host's real mise and claude are never consulted.
   C3 no mise, no install, the wrapper first and a real claude later on PATH: the real one
   C4 only the wrapper: rc 1, refused loudly, nothing printed on stdout
   C5 ASTRYX_CLI is honoured as given
-  C6 spawn.sh's launch line types the RESOLVED binary, never the bare name
+  C6 spawn.sh's launch line types the RESOLVED binary, never the bare name (handed to runtime_env --launch, U5)
 """
 import os
 import shutil
@@ -84,10 +84,12 @@ def main():
         rc, out, err, *_ = run(t, mise="ok", cli="/opt/fork/claude-like")
         check("C5 ASTRYX_CLI is honoured as given", rc == 0 and out == "/opt/fork/claude-like", (rc, out, err))
     src = SPAWN.read_text()
-    launch = [ln for ln in src.splitlines() if ln.lstrip().startswith("tmux send-keys") and "--strict-mcp-config" in ln]
+    # the line is the CLI adapter table's since plan-11859 U5 (runtime_env.py --launch builds it): the binary it names
+    # is the one spawn RESOLVED, handed over as --cli "$CLI"
+    launch = [ln for ln in src.splitlines() if "runtime_env.py\" --launch" in ln]
     check("C6 the launch line types the RESOLVED binary, never the bare name",
-          len(launch) == 1 and '"$CLI ' in launch[0] and "resolve_cli ||" in src and "CLI=${ASTRYX_CLI:-claude}" not in src,
-          launch)
+          len(launch) == 1 and '--cli "$CLI"' in launch[0] and "resolve_cli ||" in src
+          and "CLI=${ASTRYX_CLI:-claude}" not in src, launch)
     print("ALL PASS" if not fails else f"FAIL ({fails})")
     return 1 if fails else 0
 

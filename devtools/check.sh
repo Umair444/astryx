@@ -758,6 +758,10 @@ run "trigger names: the pulse's registration model (closure, blind → defer, re
 run "agent heal: a dead resident body is respawned, a DEAF idle one restarted (busy never cut), live ones never touched, crash loops stop, a blind tmux or db acts on nothing" "$PY" tests/test_agent_heal.py
 run "agent heal arm two: its pending-rows SQL in a fixture" "$PY" tests/test_agent_heal_sql.py
 run "launch flags: a body missing the channel flag or its charter's permission mode is named" "$PY" tests/test_launch_flags.py
+# plan-11859 U5 (D10): the CLI adapter table is the one source of a resident's launch: spawn types its line, every value
+# quoted; a CLI with no launcher refuses; a table that can't launch on the wire is refused at load. Mutants:
+# tests/mutants_cli_adapters.py, tests/mutants_spawn_launch.py.
+run "cli adapters: spawn types the table's line, today's argv for every live value, one argument for any other (U5)" "$PY" tests/test_cli_adapters.py
 # goal 10224 S6: medic sends a framework fix upstream (fork + PR, never instance data, privacy-gated, deduped, capped,
 # 77 without gh), and the upstream org's medic hears each outside PR once per head, fenced as DATA. A fake gh; no GitHub.
 run "upstream PR tool: instance paths and privacy hits refused, dedup to a comment, the cap, fork or not, 77 without gh" "$PY" tests/test_upstream_pr.py

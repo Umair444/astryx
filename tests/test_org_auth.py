@@ -34,7 +34,11 @@ REPO = Path(__file__).resolve().parents[1]
 SRC = Path(os.environ.get("ORGAUTH_SRC") or REPO / "src" / "astryx" / "core" / "runtime_env.py")
 DUMMY = {"a": "fx-dummy-oauth-a-0001", "b": "fx-dummy-oauth-b-0002", "ka": "fx-dummy-apikey-a-0003",
          "entry": "fx-dummy-entry-a-0004"}
-LOGIN_KEYS = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
+# EVERY CLI's credential keys, read from the adapter TABLE as data (plan-11859 U5, D10: a new CLI's keys join these
+# leak arms by derivation), never through runtime_env, the subject
+_ADAPTERS = json.loads((REPO / "src" / "astryx" / "data" / "cli_adapters.json").read_text())["adapters"]
+SUB_KEYS = tuple(k for r in _ADAPTERS.values() for k in r["credentials"]["subscription"])
+LOGIN_KEYS = SUB_KEYS + tuple(k for r in _ADAPTERS.values() for k in r["credentials"]["metered"])
 fails = []
 skipped = []
 
@@ -184,7 +188,7 @@ with tempfile.TemporaryDirectory() as td:
 
     print("\nO5 THE PARENT ENV CARRIES fxa's CREDENTIAL; fxb IS RENDERED")
     dotenv("b")
-    parent = {"CLAUDE_CODE_OAUTH_TOKEN": DUMMY["a"], "ANTHROPIC_API_KEY": DUMMY["ka"]}
+    parent = {k: DUMMY["a"] if k in SUB_KEYS else DUMMY["ka"] for k in LOGIN_KEYS}   # every CLI's keys (U5)
     rc, out, err = run("b", parent=parent)
     check("fxb's fragment holds none of it (the .env FILE is read, never the process env)", rc == 0 and out == ""
           and whose(out + err) == [], f"rc {rc} whose {whose(out + err)}")

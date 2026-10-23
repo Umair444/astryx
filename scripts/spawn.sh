@@ -342,7 +342,7 @@ fi
 # never dies — it compacts and goes on (owner ruling 2026-10-09; a 10MB gate booted the
 # seed fresh over a 48MB life after a 9-day outage). Size is compaction's problem, not
 # a reason to forget.
-if [ -n "$latest" ]; then RESUME="--resume $(basename "$latest" .jsonl) "; fi
+if [ -n "$latest" ]; then RESUME=$(basename "$latest" .jsonl); fi
 
 # model: charter line "Model: haiku|sonnet|opus" (default opus — owner's call;
 # philosophers pin haiku in their charters, idle residents cost nothing anyway)
@@ -355,10 +355,10 @@ MODEL=${MODEL:-opus}
 # claude/channel/permission in server.mjs). Default remains bypassPermissions:
 # the full-trust fleet is the owner's ratified baseline, relay is per-charter.
 PERM=$(grep -m1 '^Permissions:' "$CHARTER" | cut -d: -f2- | xargs || true)
-PERMFLAG="--permission-mode bypassPermissions"
+PERMMODE=bypassPermissions
 # must be EXPLICIT default, not merely omitted: the owner's user-level settings
 # set defaultMode=bypassPermissions, and an absent flag inherits that
-[ "$PERM" = "relay" ] && PERMFLAG="--permission-mode default"
+[ "$PERM" = "relay" ] && PERMMODE=default
 
 if [ -n "$MULTI" ]; then
   # BUILT, never inherited (a3 BC-S3): `-e` can only add names, so the pane's command is the builder, which execs a
@@ -379,7 +379,13 @@ resolve_cli || { echo "$CLI_REFUSED"; exit 1; }
 # BLOCKS on stdin and cannot be relayed to a channel, so an agent that calls it LATCHES
 # its own body until someone opens the pane (cost the seed ~6h once). Deny it org-wide;
 # agents ask the owner through the wire (a channel poll), never a local picker.
-tmux send-keys -t "=$SESS:" "$CLI ${RESUME}--model $MODEL $PERMFLAG --disallowedTools AskUserQuestion --strict-mcp-config --mcp-config $HOME_D/.mcp.json --dangerously-load-development-channels server:astryx" Enter
+# THE LINE is the CLI adapter table's (plan-11859 U5, src/astryx/data/cli_adapters.json): its flags (the wire's channel,
+# the permission mode, the strict MCP config, the AskUserQuestion deny) live in ONE row, and every value is shell-quoted,
+# so a charter's Model: with a space, `;` or `$(…)` is one argument, never split or run (a2 #62560). No line, no spawn:
+# a malformed table or a CLI with no launcher refuses here, never a line nobody declared.
+LINE=$("$PY" "$ROOT/src/astryx/core/runtime_env.py" --launch --cli "$CLI" --model "$MODEL" --perm "$PERMMODE" \
+  --mcp "$HOME_D/.mcp.json" ${RESUME:+--resume "$RESUME"}) || { echo "spawn: $AGENT not spawned: no launch line (runtime_env said why above)" >&2; exit 1; }
+tmux send-keys -t "=$SESS:" "$LINE" Enter
 
 # boot-dialog drain (research-preview channel confirmation + any first-run dialogs)
 for i in $(seq 1 30); do

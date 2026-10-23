@@ -62,10 +62,13 @@ REPO = repo_root(__file__)
 # The credential keys each CLI reads, by BILLING class. A subscription login is automatic (first present wins); a
 # metered key bills per token, so it is used ONLY when the org's .env opts in by naming it (ASTRYX_ORG_LOGIN=<key>):
 # local.md makes external spend above zero an owner-signed act, and a key present for another reason must never move
-# agents onto metered billing silently (a2 #61902 A-1, seed #61907). A new CLI is a row here plus a launcher in
-# spawn.sh; until it has one, LAUNCHERS refuses it. gemini: GEMINI_API_KEY; codex: OPENAI_API_KEY (not yet built).
-CLIS = {"claude": {"subscription": ("CLAUDE_CODE_OAUTH_TOKEN",), "metered": ("ANTHROPIC_API_KEY",)}}
-LAUNCHERS = {"claude"}
+# agents onto metered billing silently (a2 #61902 A-1, seed #61907). Both are DERIVED from the CLI adapter table
+# (src/astryx/data/cli_adapters.json, plan-11859 U5): a new CLI is a row there, and until its row is a launcher,
+# LAUNCHERS refuses it (gemini, codex: their keys are declared, their launchers aren't built).
+from astryx.core import cli_adapters as _adapters  # noqa: E402
+_ROWS = _adapters.load()
+CLIS = _adapters.credentials(_ROWS)
+LAUNCHERS = _adapters.launchers(_ROWS)
 OPT_IN = "ASTRYX_ORG_LOGIN"
 BILLING_WORDS = {"subscription": "subscription (org token)", "metered": "metered API billing (opted in)",
                  "ambient": "ambient login"}
@@ -166,6 +169,21 @@ if __name__ == "__main__":
         sys.exit(2)
     if agent == "--org":                         # the org's login, NAMES only (observatory, an operator)
         print(json.dumps(org_login()))
+        sys.exit(0)
+    if agent == "--launch":                      # spawn.sh: the line it types, for THIS org's CLI (U5); 3 no launcher
+        import argparse
+        ap = argparse.ArgumentParser(prog="runtime_env.py --launch")
+        for a in ("--cli", "--model", "--perm", "--mcp"):
+            ap.add_argument(a, required=True)
+        ap.add_argument("--resume")
+        a = ap.parse_args(sys.argv[2:])
+        cli = org_login()["cli"]
+        try:
+            print(_adapters.line(_adapters.launch(cli, binary=a.cli, model=a.model, perm=a.perm, mcp=a.mcp,
+                                                  resume=a.resume, rows=_ROWS)))
+        except _adapters.AdapterError as e:
+            print(f"runtime_env: {e}", file=sys.stderr)
+            sys.exit(3)
         sys.exit(0)
     if agent == "--org-words":                   # init.sh doctor: the billing in words; exit 0 · 1 metered · 3 no launcher
         d = org_login()

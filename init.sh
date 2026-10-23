@@ -1204,7 +1204,7 @@ if [ "${1:-}" = "doctor" ]; then
   # the doorbell is dropped silently) and its charter's permission mode (bypassPermissions, or default for relay)
   _lf=$("${PY:-venv/bin/python}" -m astryx.core.launch_flags 2>&1); _lf_rc=$?
   case $_lf_rc in
-    0)  ok "every resident body runs with --dangerously-load-development-channels and its charter's permission mode" ;;
+    0)  ok "every resident body runs with the wire's channel flag and its charter's permission mode" ;;
     77) warn "launch flags NOT PROVEN: $(printf '%s' "$_lf" | tail -1)"; printf '%s\n' "$_lf" | command grep '^  ?' ;;
     *)  bad "a resident body is missing a launch flag ($(printf '%s' "$_lf" | tail -1)):"; printf '%s\n' "$_lf" | command grep -E '^  (✗|\?)' ;;
   esac

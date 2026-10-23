@@ -21,8 +21,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-CHANNELS = "--dangerously-load-development-channels"
-CHANNEL_SERVER = "server:astryx"
+# the flags, from the CLI adapter table's claude row (plan-11859 U5): spawn types that row's line, so doctor reads the
+# same tokens it judges against, and the two can't drift. The relay/bypass RULE stays code below: it's what a
+# charter's `Permissions: relay` means, not a fact about a CLI (a2 #62560)
+from astryx.core import cli_adapters as _adapters  # noqa: E402
+_ROW = _adapters.load()["claude"]
+CHANNELS = _ROW["channel_flag"]
+CHANNEL_SERVER = _ROW["channel_server"]
+PERMISSION = _ROW["permission_flag"]
 
 
 def _opt(argv: list[str], flag: str) -> str | None:
@@ -42,9 +48,9 @@ def missing(argv: list[str], perm: str | None) -> list[str]:
     if chan is None or CHANNEL_SERVER not in chan.split(","):
         out.append(f"{CHANNELS} {CHANNEL_SERVER} (the wire's doorbell is dropped without it)")
     want = "default" if (perm or "").strip() == "relay" else "bypassPermissions"   # spawn.sh's exact test
-    mode = _opt(argv, "--permission-mode")
+    mode = _opt(argv, PERMISSION)
     if mode != want:
-        out.append(f"--permission-mode {want} (running with {mode or 'no --permission-mode'})"
+        out.append(f"{PERMISSION} {want} (running with {mode or 'no ' + PERMISSION})"
                    + (" per its charter's Permissions: relay" if want == "default" else ""))
     return out
 
