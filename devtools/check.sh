@@ -301,6 +301,10 @@ run "sqlguard rekey: a re-texted listed literal needs its ledger move" "$PY" tes
 run "sqlguard seal: a grade is judged from sealed evidence, and every reader reads that seal" "$PY" tests/test_sqlguard_seal.py
 # plan-11908 D5: only the timer advances sqlguard_seen. Mutants: tests/mutants_sqlguard_seen.py.
 run "sqlguard seen: enforce is read-only on the seen-set clocks unless it is the timer" "$PY" tests/test_sqlguard_seen.py
+# plan-11908 D6: the land judge (hermetic half; the f46eb3e5 replay needs the fixture DB).
+# Mutants: tests/mutants_sqlguard_landjudge.py.
+run "sqlguard land judge: a range that adds SQL sites is graded before it pushes" "$PY" tests/test_sqlguard_landjudge.py
+run "sqlguard land judge replay: f46eb3e5 without its D4 arms is refused, with them it passes" "$PY" tests/test_sqlguard_landjudge_replay.py
 # seed #56874 / a3 #56878: a hashed absent row's R-STALE says its own admitted date and reason, every path-shaped
 # token masked when private. Hermetic. Mutants: tests/mutants_sqlguard_stale_reason.py.
 run "sqlguard stale reason: a hashed absent row names its ledger text, never a private path" "$PY" tests/test_sqlguard_stale_reason.py

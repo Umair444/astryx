@@ -156,10 +156,16 @@ fi
 git merge -q --ff-only "$B_SHA" || refuse "git merge --ff-only failed"
 echo "land: main ${OLD:0:12} -> ${B_SHA:0:12}"
 RED=0; RESULTS=()
+# A DB-needing mutants file probes a fresh COPY of the tree, which has no .env, so its oracle read 77 and the probe
+# refused (plan-11908 D5's first land). The fixture admin DSN is derived from this checkout's .env, never printed, and
+# handed to the PROBE INVOCATION ALONE as a prefix (a3 #62868): never exported, so no range test, gate or child of
+# land.sh sees a superuser DSN, and no report written here carries it in its stamp. tests/test_land.py L18 holds it.
+PROBE_ENV=()
+[ -f .env ] && PROBE_ENV=("ASTRYX_FIXTURE_ADMIN_DSN=$("$PY" src/astryx/config.py dsn --file 2>/dev/null)")   # the ONE resolver
 for t in "${TESTS[@]}"; do
   [ -f "$t" ] || { echo "  ✗ $t: no such file at B"; RESULTS+=("$t missing"); RED=1; continue; }
   case "$(basename "$t")" in
-    mutants_*.py) out=$(env -u ASTRYX_AGENT timeout "$TEST_TIMEOUT" "$PY" "$PROBE" "$t" 2>&1); rc=$?;;
+    mutants_*.py) out=$(env -u ASTRYX_AGENT ${PROBE_ENV[@]+"${PROBE_ENV[@]}"} timeout "$TEST_TIMEOUT" "$PY" "$PROBE" "$t" 2>&1); rc=$?;;
     *)            out=$(env -u ASTRYX_AGENT timeout "$TEST_TIMEOUT" "$PY" "$t" 2>&1); rc=$?;;
   esac
   case "$(basename "$t")" in
@@ -190,6 +196,18 @@ for t in "${TESTS[@]}"; do
 done
 dirtied=$( { git diff --name-only HEAD --; git status --porcelain --untracked-files=all -- tests devtools src | grep '^??' | cut -c4-; } | sort -u | head -10)
 if [ -n "$dirtied" ]; then echo "  ✗ the tests DIRTIED the tracked tree (a test that writes what git carries is a finding): $(echo $dirtied)"; RED=1; fi
+# THE LAND JUDGE (plan-11908 D6): a range that adds SQL sites is graded before it pushes: the range's test_*.py re-run
+# under the sqlguard shim here, at B, and every site the range introduced must be RESPONSIVE or listed. Not triggered
+# (no inventory built) when no .py outside tests/ changed. rc 77 (couldn't judge) is red, like every skip here.
+JUDGE_LINE=""
+LJ=src/astryx/security/sqlguard/landjudge.py
+if [ $RED -eq 0 ] && [ -f "$LJ" ]; then
+  ORACLES=(); for t in "${TESTS[@]}"; do case "$(basename "$t")" in test_*.py) ORACLES+=(--oracle "$t");; esac; done
+  jout=$(env -u ASTRYX_AGENT timeout "$TEST_TIMEOUT" "$PY" "$LJ" "$A_SHA" "$B_SHA" --tree . ${ORACLES[@]+"${ORACLES[@]}"} 2>&1); jrc=$?
+  printf '%s\n' "$jout" | sed 's/^/  /'
+  JUDGE_LINE=$(printf '%s\n' "$jout" | grep '^land judge:' | tail -1 | cut -c1-160)
+  [ $jrc -eq 0 ] || { echo "  ✗ land judge rc $jrc"; RED=1; }
+fi
 if [ $RED -ne 0 ]; then
   if git reset -q --keep "$OLD" 2>/dev/null; then
     echo "land: RED: main rolled back to ${OLD:0:12}; nothing pushed"; exit 1
@@ -200,6 +218,7 @@ fi
 
 TAIL="range tests (not check.sh): $(IFS=';'; echo "${RESULTS[*]}")"
 [ -n "$REACH_WHY" ] && TAIL="$TAIL; $(basename "$REACH") ran because $REACH_WHY"
+[ -n "$JUDGE_LINE" ] && TAIL="$TAIL; $JUDGE_LINE"
 [ ${#BODY_LINES[@]} -gt 0 ] && TAIL="$TAIL; live body sha256: $(IFS=','; echo "${BODY_LINES[*]}")"
 if [ $PUSH -eq 0 ]; then
   echo "RECEIPT: LANDED (not pushed, --no-push): ${A_SHA:0:12}..${B_SHA:0:12} fast-forwarded main ${OLD:0:12}..${B_SHA:0:12}; $TAIL"

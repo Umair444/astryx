@@ -94,7 +94,7 @@ class Fx:
         self.origin, self.w = root / "origin.git", root / "w"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.origin)], env=ENV, check=True)
         subprocess.run(["git", "init", "-q", "-b", "main", str(self.w)], env=ENV, check=True)
-        (self.w / ".gitignore").write_text("ran.txt\nreach-ran.txt\nbody.py\n__pycache__/\n")
+        (self.w / ".gitignore").write_text("ran.txt\nreach-ran.txt\nbody.py\n__pycache__/\n.env\n")
         (self.w / "README").write_text("r\n")
         for rel, body in (base_files or {}).items():
             p = self.w / rel; p.parent.mkdir(parents=True, exist_ok=True); p.write_text(body)
@@ -375,6 +375,70 @@ def main():
         refused += rc == 1 and f.main() == f.base and "re-word them" in out
     check("L17 a workflow lint naming an UNATTRIBUTED commit refuses the land even when its list is ~1.2 MB "
           "(3 of 3: the SIGPIPE path can't skip the refusal)", refused == 3, f"{refused}/3 refused; last: {out[-300:]}")
+
+    # L18 plan-11908 D6 / a3 #62868: a DB-needing mutants file probes a fresh COPY (no .env), so the probe gets the
+    # fixture admin DSN from this checkout's .env as a PREFIX on its own invocation: never exported, so a range test
+    # never sees it. The fake probe passes only when handed exactly the .env's ASTRYX_DSN.
+    probe = _COGDIR / "probe_needs_db.py"
+    probe.write_text("import os, sys\nok = os.environ.get('ASTRYX_FIXTURE_ADMIN_DSN') == 'postgresql://sentinel@h/db'\n"
+                     "print('  CAUGHT m' if ok else '  NOT PROBED m: no reachable admin DSN')\nsys.exit(0 if ok else 1)\n")
+    sees = ("import os\nfrom pathlib import Path\nPath(__file__).resolve().parent.parent.joinpath('ran.txt').write_text("
+            "'admin=' + ('SEEN' if 'ASTRYX_FIXTURE_ADMIN_DSN' in os.environ else '<absent>'))\nprint('1/1 passed')\n")
+
+    def db_land(src=None):
+        # the resolver stands in for src/astryx/config.py's `dsn --file` (land.sh calls the ONE resolver, never a grep)
+        resolver = ("import sys\nif sys.argv[1:] == ['dsn', '--file']:\n    print(next(l.split('=', 1)[1].strip() "
+                    "for l in open('.env') if l.startswith('ASTRYX' + '_DSN=')))\n")
+        f = Fx({"tests/mutants_db.py": "MUTANTS = {}\n", "tests/test_sees.py": sees},
+               base_files={"src/astryx/config.py": resolver})
+        (f.w / ".env").write_text("OTHER=1\nASTRYX_DSN=postgresql://sentinel@h/db\n")
+        env = {"LAND_PROBE": str(probe)}
+        if src is None:
+            return f, f.land(f"{f.base}..{f.head}", env=env)
+        p = subprocess.run(["bash", str(src), f"{f.base}..{f.head}"], cwd=f.w, env={**ENV, **env},
+                           capture_output=True, text=True, timeout=120)
+        return f, (p.returncode, p.stdout + p.stderr)
+    f, (rc, out) = db_land()
+    check("L18 a DB-needing mutants file lands by a bare land.sh: the probe is handed the .env's ASTRYX_DSN as its "
+          "admin DSN", rc == 0 and f.main() == f.head and "1 CAUGHT" in out, out[-400:])
+    check("L18 ...scoped to the probe: the range's test_*.py never sees it",
+          (f.w / "ran.txt").read_text() == "admin=<absent>" if (f.w / "ran.txt").exists() else False,
+          (f.w / "ran.txt").read_text() if (f.w / "ran.txt").exists() else "no marker")
+    check("L18 ...and it is never printed", "sentinel" not in out, out[-300:])
+    body = SRC.read_text()
+    unfixed = _COGDIR / "land_unfixed.sh"
+    unfixed.write_text(body.replace('${PROBE_ENV[@]+"${PROBE_ENV[@]}"} ', ""))
+    f, (rc, out) = db_land(unfixed)
+    check("L18 RED control: the same land without the prefix is REFUSED (the probe's copy reaches no DB)",
+          unfixed.read_text() != body and rc == 1 and f.main() == f.base, out[-300:])
+    code = [ln for ln in body.splitlines() if not ln.lstrip().startswith("#")]
+    named = [ln for ln in code if "ASTRYX_FIXTURE_ADMIN_DSN" in ln]
+    carried = [ln for ln in code if "PROBE_ENV[@]" in ln]
+    check("L18 census: the admin DSN is named on ONE code line (its derivation), never exported, and carried on ONE "
+          "line, the mutation_probe invocation",
+          len(named) == 1 and named[0].lstrip().startswith("[ -f .env ] && PROBE_ENV=(")
+          and not any("export" in ln and "ASTRYX_FIXTURE_ADMIN_DSN" in ln for ln in code)
+          and len(carried) == 1 and '"$PROBE"' in carried[0], f"named={named} carried={carried}")
+
+    # L19 plan-11908 D6: the land judge runs after green range tests, with the range's test_*.py as its oracles; its
+    # refusal (or a 77) rolls main back, and its verdict line rides the RECEIPT. A stub judge stands in (the real one is
+    # tests/test_sqlguard_landjudge.py's).
+    stub = ("import os, sys\nfrom pathlib import Path\nPath('judge-args.txt').write_text(' '.join(sys.argv[1:]))\n"
+            "rc = int(os.environ.get('JUDGE_RC', '0'))\nprint('land judge: ' + ('PASS stub' if rc == 0 else 'REFUSED stub'))\n"
+            "sys.exit(rc)\n")
+    lj = {"src/astryx/security/sqlguard/landjudge.py": stub}
+    f = Fx({"tests/test_ok.py": OK_TEST}, base_files=lj)
+    rc, out = f.land(f"{f.base}..{f.head}", env={"JUDGE_RC": "1"})
+    args = (f.w / "judge-args.txt").read_text() if (f.w / "judge-args.txt").exists() else ""
+    check("L19 a land-judge REFUSAL rolls main back and pushes nothing",
+          rc == 1 and f.main() == f.base and f.origin_main() == f.base and "REFUSED stub" in out, out[-300:])
+    check("L19 ...the judge was handed A, B, --tree . and the range's test_*.py as --oracle",
+          args == f"{f.base} {f.head} --tree . --oracle tests/test_ok.py", args)
+    f = Fx({"tests/test_ok.py": OK_TEST}, base_files=lj)
+    rc, out = f.land(f"{f.base}..{f.head}", env={"JUDGE_RC": "0"})
+    rec = [l for l in out.splitlines() if l.startswith("RECEIPT:")]
+    check("L19 a land-judge PASS lands, and its verdict line rides the RECEIPT",
+          rc == 0 and f.main() == f.head and len(rec) == 1 and "land judge: PASS stub" in rec[0], out[-300:])
 
     print(f"\n{'PASS' if not fails else 'FAIL'}: land ({len(fails)} failing)")
     return 1 if fails else 0

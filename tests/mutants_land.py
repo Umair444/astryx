@@ -77,4 +77,11 @@ MUTANTS = {
     "F6 S2F: the workflow refusal pipes its lint output into grep -q again (a big UNATTRIBUTED list lands)":
         ("if [ $wrc -eq 3 ] && grep -q '^UNATTRIBUTED ' <<<\"$wl\"; then",
          "if [ $wrc -eq 3 ] && printf '%s\\n' \"$wl\" | grep -q '^UNATTRIBUTED '; then"),
+    # plan-11908 D6 / a3 #62868: the probe's admin DSN is a prefix on its invocation alone (L18)
+    "P1 the admin DSN is exported land-wide (every range test and child sees a superuser DSN)":
+        ('[ -f .env ] && PROBE_ENV=(', '[ -f .env ] && export "ASTRYX_FIXTURE_ADMIN_DSN=$("$PY" src/astryx/config.py dsn --file 2>/dev/null)" && PROBE_ENV=('),
+    "P2 the probe gets no admin DSN (a DB-needing mutants file is unlandable)":
+        ('${PROBE_ENV[@]+"${PROBE_ENV[@]}"} timeout', 'timeout'),
+    "P3 the land judge's refusal doesn't stop the land":
+        ('[ $jrc -eq 0 ] || { echo "  ✗ land judge rc $jrc"; RED=1; }', 'true'),
 }
