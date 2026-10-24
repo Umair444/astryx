@@ -69,7 +69,11 @@ def main():
     reap(adm)
     a, b, c = (f"astryx_hardenprobe_{x}_{os.getpid()}" for x in "abc")
     dep = f"astryx_hardendep_{os.getpid()}"
+    # A FOREIGN login role, standing in for any the server gains (astryx_cog, 5e01c07e, read every probe DB as "cut"
+    # and turned 8 arms red on 10-24, medic #62806). Planted before the DBs so every tree runs with one present.
+    foreign = f"astryx_hardenforeign_{os.getpid()}"
     pub = lambda d: adm.execute("SELECT has_database_privilege('public', %s, 'CONNECT')", (d,)).fetchone()[0]
+    adm.execute(sql.SQL("CREATE ROLE {} LOGIN NOSUPERUSER").format(sql.Identifier(foreign)))
     try:
         try:
             for d in (a, b, c):
@@ -78,6 +82,17 @@ def main():
             print("NOT SEARCHED: this role can't CREATE DATABASE; no arm ran.")
             return 77
         check("control: a database born with the default ACL grants PUBLIC CONNECT", pub(a) and pub(b))
+        r = sh("_cut_dbs", a)
+        check("control: a foreign login role reaching a probe DB through PUBLIC alone makes it CUT, not open",
+              r.returncode == 0 and r.stdout.startswith(f"{a}|") and foreign in r.stdout, r.stdout + r.stderr)
+        # So scope the dependents to this oracle's own: every login role the harden SQL would count, except the one
+        # this oracle plants below (dep), gets an explicit CONNECT on the probe DBs only. They die with the DBs.
+        for (role,) in adm.execute("SELECT rolname FROM pg_roles WHERE rolcanlogin AND NOT rolsuper "
+                                   "AND NOT pg_has_role(oid, current_user, 'MEMBER') AND rolname NOT LIKE 'bc\\_%%'").fetchall():
+            for d in (a, b, c):
+                adm.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(sql.Identifier(d), sql.Identifier(role)))
+        check("…and once the foreign roles hold their own CONNECT, the probe DBs read OPEN again", pub(a) and pub(b)
+              and sh("_cut_dbs", a, b, c).stdout.strip() == "", sh("_cut_dbs", a, b, c).stdout)
         r = sh("_open_dbs", a)
         check("_open_dbs names the open scratch DB", r.returncode == 0 and r.stdout.split() == [a], r.stdout + r.stderr)
         check("RED: _chk_harden fails while it is open", sh("_chk_harden", a).returncode != 0)
@@ -119,9 +134,10 @@ def main():
     finally:
         for d in (a, b, c):
             adm.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(d)))
-        adm.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(dep)))
+        for role in (dep, foreign):
+            adm.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)))
         left = adm.execute("SELECT count(*) FROM pg_database WHERE datname IN (%s, %s, %s)", (a, b, c)).fetchone()[0]
-        left += adm.execute("SELECT count(*) FROM pg_roles WHERE rolname = %s", (dep,)).fetchone()[0]
+        left += adm.execute("SELECT count(*) FROM pg_roles WHERE rolname IN (%s, %s)", (dep, foreign)).fetchone()[0]
         adm.close()
     check("teardown: the scratch databases and the scratch role are gone", left == 0)
     print(f"\n{'FAIL' if fails else 'PASS'}: init.sh harden ({len(fails)} failing)")
