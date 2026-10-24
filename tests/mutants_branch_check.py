@@ -40,7 +40,8 @@ MUTANTS = {
     "O3 check.sh's ANSI colour isn't stripped (a red ✗ line is missed)":
         ("    lines = re.sub(r\"\\x1b\\[[0-9;]*m\", \"\", log).splitlines()", "    lines = log.splitlines()"),
     "O4 the witness counts every statement, not just the prod database's":
-        ("                if json.loads(line).get(\"db\") == prod_db:", "                if json.loads(line).get(\"db\"):"),
+        ("    return sum(1 for r in witness_traces(str(trace_dir)) if r.get(\"db\") == prod_db)",
+         "    return sum(1 for r in witness_traces(str(trace_dir)) if r.get(\"db\"))"),
     "O5 summary reads any 'FAILED (' line (a gate's own output injects names)":
         ("        kind = next((k for k, rx in _HEAD.items() if rx.match(ln)), None)\n        if kind is None:\n            break",
          "        kind = next((k for k, rx in _HEAD.items() if rx.match(ln)), None)\n        if kind is None:\n            continue"),
