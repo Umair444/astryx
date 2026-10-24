@@ -73,8 +73,8 @@ def main():
     # and turned 8 arms red on 10-24, medic #62806). Planted before the DBs so every tree runs with one present.
     foreign = f"astryx_hardenforeign_{os.getpid()}"
     pub = lambda d: adm.execute("SELECT has_database_privilege('public', %s, 'CONNECT')", (d,)).fetchone()[0]
-    adm.execute(sql.SQL("CREATE ROLE {} LOGIN NOSUPERUSER").format(sql.Identifier(foreign)))
     try:
+        adm.execute(sql.SQL("CREATE ROLE {} LOGIN NOSUPERUSER").format(sql.Identifier(foreign)))   # inside: finally drops it
         try:
             for d in (a, b, c):
                 adm.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(d)))   # born OPEN: the default ACL
@@ -140,6 +140,19 @@ def main():
         left += adm.execute("SELECT count(*) FROM pg_roles WHERE rolname IN (%s, %s)", (dep, foreign)).fetchone()[0]
         adm.close()
     check("teardown: the scratch databases and the scratch role are gone", left == 0)
+    # A KILLED run skips that teardown, and a leaked foreign LOGIN role reads every default-ACL DB as CUT: astryx_cog's
+    # red, minted by this oracle (a2 F-1 #62810). So reap() must own it: plant one under a dead pid and reap.
+    p = subprocess.Popen(["true"]); p.wait()
+    ghost = f"astryx_hardenforeign_{p.pid}"
+    adm = psycopg.connect(dsn, autocommit=True)
+    try:
+        adm.execute(sql.SQL("CREATE ROLE {} LOGIN NOSUPERUSER").format(sql.Identifier(ghost)))
+        got = reap(adm)
+        gone = not adm.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (ghost,)).fetchone()
+    finally:
+        adm.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(ghost)))
+        adm.close()
+    check("reap() drops a dead run's leaked foreign role", gone and ghost in got, f"gone={gone} {ghost}")
     print(f"\n{'FAIL' if fails else 'PASS'}: init.sh harden ({len(fails)} failing)")
     return 1 if fails else 0
 

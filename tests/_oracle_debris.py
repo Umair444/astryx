@@ -23,7 +23,7 @@ ORACLE_BASE = Path(os.environ.get("ASTRYX_RUNSCOPE_ORACLE_ROOT", "/tmp/astryx-ru
 from devtools.branch_check_prep import TEST_DB                    # noqa: E402 (ONE definition, P0-b's refusal reads it too)
 from astryx.pg.runscope import TEST_STAMP                       # noqa: E402 (the stamp an oracle's run role carries)
 DIRLESS_GRACE_S = 3600                                         # see reap()'s dir-less pass
-TEST_ROLE = re.compile(r"^astryx_hardendep_(\d+)$"
+TEST_ROLE = re.compile(r"^astryx_hardendep_(\d+)$|^astryx_hardenforeign_(\d+)$"   # test_init_harden's two planted LOGIN roles
                        r"|^bc_(\d+)x100[0-3]$")    # runscope's synthetic orphans (reused / outside / foreign / unstamped)        # a LOGIN role test_init_harden plants
 
 
