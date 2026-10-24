@@ -22,10 +22,12 @@ Exit 0 pass · 1 fail.
   L1 ledger admit/shrink act only on a report stamped at their own tuple: unstamped and another commit are NOT
      SEARCHED; a VOLATILE env difference (the gate) is not a mismatch
 """
+import contextlib
 import glob
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -61,6 +63,29 @@ def rec(t, frame, rows, gate):
 def grades(rep):
     return json.dumps({"sites": rep["sites"], "counts": rep["counts"], "gates": rep["gates"],
                        "records": rep["records"]}, sort_keys=True, default=sorted)
+
+
+@contextlib.contextmanager
+def own_privacy_repo(root=None):
+    """Every arm that reaches a ledger verb runs in THIS (a3 R-4/R-5 #62849): privacy classifies through git
+    check-ignore in its own repo (a fresh init, or the arm's), never the subject tree, which is off-git in an extract
+    (rc 128: privacy rightly fails closed). On exit privacy.REPO is restored and ERRORS cleared, so no arm leaks a
+    classification error into the next."""
+    with tempfile.TemporaryDirectory() as td:
+        r = Path(root) if root else Path(td)
+        if root is None:
+            subprocess.run(["git", "init", "-q"], cwd=r, check=True,
+                           env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
+        real = privacy.REPO
+        privacy.REPO = r
+        privacy.ignored.cache_clear()
+        privacy.ERRORS.clear()
+        try:
+            yield r
+        finally:
+            privacy.REPO = real
+            privacy.ignored.cache_clear()
+            privacy.ERRORS.clear()
 
 
 def glob_reader(d, sl, untraced=None):
@@ -209,7 +234,7 @@ def main():
     # L2: ledger.seed refuses a report with no seal, NOT SEARCHED, and writes nothing (a3 #62846: never a KeyError,
     # never a silently unsealed header)
     real_judge, real_led = ledger.judge.judge, ledger.LEDGER
-    with tempfile.TemporaryDirectory() as d:
+    with tempfile.TemporaryDirectory() as d, own_privacy_repo():
         ledger.LEDGER = Path(d, "ledger.json")
         ledger.judge.judge = lambda _d: {"sites": {"subj/a.py::f\x1fselect 1": {"rung": "UNEXECUTED"}},
                                          "run_not_searched": [], "extractors": {}, "covering": {}, "counts": {},
@@ -227,7 +252,6 @@ def main():
             "NOT SEARCHED" in got and "no seal" in got and not wrote, got)
 
     # R1 / R2, in a throwaway git repo with a gitignored estate (ledger.REPO pointed at it)
-    import subprocess
     real_repo = ledger.REPO
     with tempfile.TemporaryDirectory() as tr, tempfile.TemporaryDirectory() as d:
         r = Path(tr)
@@ -246,8 +270,8 @@ def main():
         (r / "var").mkdir()
         (r / "var" / "run.log").write_text("start\n")
         ledger.REPO = r
-        real_priv = privacy.REPO
-        privacy.REPO = r                  # privacy asks git check-ignore in the arm's own repo, not the subject tree
+        priv = contextlib.ExitStack()
+        priv.enter_context(own_privacy_repo(r))   # privacy asks git check-ignore in the arm's own repo
         try:
             s0 = evidence.stamp(r)
             site = "subj/a.py::f\x1fselect 1"
@@ -296,7 +320,7 @@ def main():
                 ok == "ok" and len(json.loads(led.read_text())["rows"]) == 1, ok)
         finally:
             ledger.REPO = real_repo
-            privacy.REPO = real_priv
+            priv.close()
 
     print(("PASS: sqlguard seal" if not fails else f"FAIL: {len(fails)} arm(s)") + " (0 failing)" * (not fails))
     return 1 if fails else 0
