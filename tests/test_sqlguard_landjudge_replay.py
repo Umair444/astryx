@@ -61,7 +61,10 @@ def main():
         git(c, "commit", "-qm", "the oracle before fb4800b", "--allow-empty")
         b = git(c, "rev-parse", "HEAD")
         lines = []
+        start = set(Path(tempfile.gettempdir()).glob("landjudge-trace-*"))
         rc = lj.land_judge(a, b, c, [ORACLE], log=lines.append)
+        for d in set(Path(tempfile.gettempdir()).glob("landjudge-trace-*")) - start:   # R1's kept trace: ours, by design
+            __import__("shutil").rmtree(d, ignore_errors=True)
         out = "\n".join(lines)
         print("\n".join(f"    | {x}" for x in lines))
         work = [x for x in lines if "R-NEW-introduced observatory/api/chat.py::work" in x]
@@ -72,10 +75,13 @@ def main():
         git(c, "commit", "-qm", "fb4800b's D4 arms")
         bp = git(c, "rev-parse", "HEAD")
         lines = []
+        traces = lambda: set(Path(tempfile.gettempdir()).glob("landjudge-trace-*"))
+        before = traces()
         rc2 = lj.land_judge(a, bp, c, [ORACLE], log=lines.append)
         print("\n".join(f"    | {x}" for x in lines))
         arm("R2 f46eb3e5 + fb4800b's D4 arms PASSES the land judge", rc2 == 0 and "land judge: PASS" in lines[-1],
             f"rc={rc2}: {lines[-1] if lines else ''}")
+        arm("R2 ...and its trace dir is gone (removed on green)", not (traces() - before), sorted(traces() - before))
 
         t = time.monotonic()
         bare = subprocess.run([sys.executable, ORACLE], cwd=c, env={k: v for k, v in os.environ.items()

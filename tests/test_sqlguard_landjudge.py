@@ -118,6 +118,25 @@ def main():
         arm("J7 a child with cwd = a tree that ships its own root `astryx` imports the JUDGE's sqlguard, not the tree's",
             p.stdout.strip().startswith(str(lj.PKG_SRC)), p.stdout.strip() or p.stderr.strip()[-200:])
 
+    # J8: the trace dir is removed on EVERY green verdict and kept on a refusal or a 77 (the live replay at 3f4df1cc
+    # kept landjudge-trace-* dirs on green runs)
+    real = lj._land_judge
+    kept = {}
+    try:
+        for rc in (0, 1, 77):
+            def fake(a, b, tree, oracles, timeout, log, made, rc=rc):
+                made.append(Path(tempfile.mkdtemp(prefix="landjudge-trace-")))
+                kept[rc] = made[-1]
+                return rc
+            lj._land_judge = fake
+            lj.land_judge("a", "b", ".", [])
+    finally:
+        lj._land_judge = real
+    arm("J8 a green verdict removes its trace dir; a refusal and a 77 keep theirs",
+        not kept[0].exists() and kept[1].exists() and kept[77].exists(), {k: v.exists() for k, v in kept.items()})
+    for d in (kept[1], kept[77]):
+        __import__("shutil").rmtree(d, ignore_errors=True)
+
     print(("PASS: sqlguard land judge" if not fails else f"FAIL: {len(fails)} arm(s)") + " (0 failing)" * (not fails))
     return 1 if fails else 0
 

@@ -163,6 +163,17 @@ def _short(st) -> str:
 
 
 def land_judge(a, b, tree, oracles, timeout=900, log=print) -> int:
+    """The verdict. A trace dir is KEPT only on a refusal or a 77 (to reproduce or admit from); on every rc 0 it is
+    removed, whichever path passed (the design's "removed on green")."""
+    made = []
+    rc = _land_judge(a, b, tree, oracles, timeout, log, made)
+    if rc == 0:
+        for d in made:
+            shutil.rmtree(d, ignore_errors=True)
+    return rc
+
+
+def _land_judge(a, b, tree, oracles, timeout, log, made) -> int:
     tree = Path(tree).resolve()
     t0 = time.monotonic()
     cost = {}
@@ -193,6 +204,7 @@ def land_judge(a, b, tree, oracles, timeout=900, log=print) -> int:
             log(f"land judge: REFUSED, the range adds {len(intro)} SQL site(s) and no test_*.py oracle to grade them")
             return 1
         tdir = Path(tempfile.mkdtemp(prefix="landjudge-trace-"))
+        made.append(tdir)
         t = time.monotonic()
         rcs = run_oracles(tree, oracles, tdir, timeout)
         cost[f"oracles under the shim ({len(oracles)})"] = time.monotonic() - t
@@ -235,7 +247,6 @@ def land_judge(a, b, tree, oracles, timeout=900, log=print) -> int:
             return 1
         log(f"land judge: PASS: {len(intro)} introduced site(s) graded (certified: {CERTIFIES}; NOT certified: "
             f"{NOT_CERTIFIED}); {len(mv)} moved. {UNTOUCHED}")
-        shutil.rmtree(tdir, ignore_errors=True)
         return 0
     except (RuntimeError, OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
         log(f"land judge: COULD NOT JUDGE: {type(e).__name__}: {str(e)[-300:]}")

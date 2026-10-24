@@ -82,6 +82,10 @@ MUTANTS = {
         ('[ -f .env ] && PROBE_ENV=(', '[ -f .env ] && export "ASTRYX_FIXTURE_ADMIN_DSN=$("$PY" src/astryx/config.py dsn --file 2>/dev/null)" && PROBE_ENV=('),
     "P2 the probe gets no admin DSN (a DB-needing mutants file is unlandable)":
         ('${PROBE_ENV[@]+"${PROBE_ENV[@]}"} timeout', 'timeout'),
+    "P4 the land judge runs from the TREE at B (the range grades itself)":
+        ('"$PY" "$JT/$LJ" "$A_SHA"', '"$PY" "$LJ" "$A_SHA"'),
+    "P5 an ambient admin DSN is not removed (it reaches every range test)":
+        ("\nunset ASTRYX_FIXTURE_ADMIN_DSN\n", "\n"),
     "P3 the land judge's refusal doesn't stop the land":
         ('[ $jrc -eq 0 ] || { echo "  ✗ land judge rc $jrc"; RED=1; }', 'true'),
 }

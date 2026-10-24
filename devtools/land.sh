@@ -69,6 +69,10 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null)" || die "not in a git repo"
 # gate runs as this checkout's own org, which in a cog is the PRIMARY's (its HOME is the checkout), exactly as before the
 # cog; an oracle that needs a cog builds its own registry and names it, as every one does. Before the first estate read.
 export ASTRYX_COG_REGISTRY="${TMPDIR:-/tmp}/astryx-gate-$$-no-registry/cog.json"
+# An AMBIENT fixture admin DSN (a caller's shell exported it) would reach every range test, the land judge's oracles and
+# every child: removed here, before anything runs. The mutation probe gets it back from .env alone (PROBE_ENV below),
+# check.sh's read-and-unset shape (a3 R-10 #62871).
+unset ASTRYX_FIXTURE_ADMIN_DSN
 PY=${PY:-venv/bin/python}; [ -x "$PY" ] || PY=python3
 PROBE=${LAND_PROBE:-devtools/mutation_probe.py}
 TEST_TIMEOUT=${LAND_TEST_TIMEOUT:-900}
@@ -199,14 +203,24 @@ if [ -n "$dirtied" ]; then echo "  ✗ the tests DIRTIED the tracked tree (a tes
 # THE LAND JUDGE (plan-11908 D6): a range that adds SQL sites is graded before it pushes: the range's test_*.py re-run
 # under the sqlguard shim here, at B, and every site the range introduced must be RESPONSIVE or listed. Not triggered
 # (no inventory built) when no .py outside tests/ changed. rc 77 (couldn't judge) is red, like every skip here.
+# The judge is MAIN's (OLD, before the merge), never the range's (a3 R-9 #62871): run from the tree after the ff it
+# would be B's own decide/judge/inventory/shim grading B, so a range editing the judge, or deleting it, graded itself.
+# OLD's src/astryx is extracted to a dir of its own and its landjudge runs over this tree at B; its children run with
+# -P, so A's sqlguard grades both sides. OLD without one (the land that ships it) says so: bootstrap.
 JUDGE_LINE=""
 LJ=src/astryx/security/sqlguard/landjudge.py
-if [ $RED -eq 0 ] && [ -f "$LJ" ]; then
-  ORACLES=(); for t in "${TESTS[@]}"; do case "$(basename "$t")" in test_*.py) ORACLES+=(--oracle "$t");; esac; done
-  jout=$(env -u ASTRYX_AGENT timeout "$TEST_TIMEOUT" "$PY" "$LJ" "$A_SHA" "$B_SHA" --tree . ${ORACLES[@]+"${ORACLES[@]}"} 2>&1); jrc=$?
-  printf '%s\n' "$jout" | sed 's/^/  /'
-  JUDGE_LINE=$(printf '%s\n' "$jout" | grep '^land judge:' | tail -1 | cut -c1-160)
-  [ $jrc -eq 0 ] || { echo "  ✗ land judge rc $jrc"; RED=1; }
+if [ $RED -eq 0 ]; then
+  if git cat-file -e "$OLD:$LJ" 2>/dev/null; then
+    JT=$(mktemp -d "${TMPDIR:-/tmp}/land-judge.XXXXXX"); trap 'rm -rf "$JT"' EXIT
+    git archive "$OLD" src/astryx | tar -x -C "$JT"
+    ORACLES=(); for t in "${TESTS[@]}"; do case "$(basename "$t")" in test_*.py) ORACLES+=(--oracle "$t");; esac; done
+    jout=$(env -u ASTRYX_AGENT timeout "$TEST_TIMEOUT" "$PY" "$JT/$LJ" "$A_SHA" "$B_SHA" --tree . ${ORACLES[@]+"${ORACLES[@]}"} 2>&1); jrc=$?
+    printf '%s\n' "$jout" | sed 's/^/  /'
+    JUDGE_LINE=$(printf '%s\n' "$jout" | grep '^land judge:' | tail -1 | cut -c1-160)
+    [ $jrc -eq 0 ] || { echo "  ✗ land judge rc $jrc"; RED=1; }
+  else
+    JUDGE_LINE="land judge: absent at A (bootstrap)"; echo "  $JUDGE_LINE"
+  fi
 fi
 if [ $RED -ne 0 ]; then
   if git reset -q --keep "$OLD" 2>/dev/null; then

@@ -385,14 +385,14 @@ def main():
     sees = ("import os\nfrom pathlib import Path\nPath(__file__).resolve().parent.parent.joinpath('ran.txt').write_text("
             "'admin=' + ('SEEN' if 'ASTRYX_FIXTURE_ADMIN_DSN' in os.environ else '<absent>'))\nprint('1/1 passed')\n")
 
-    def db_land(src=None):
+    def db_land(src=None, extra=None):
         # the resolver stands in for src/astryx/config.py's `dsn --file` (land.sh calls the ONE resolver, never a grep)
         resolver = ("import sys\nif sys.argv[1:] == ['dsn', '--file']:\n    print(next(l.split('=', 1)[1].strip() "
                     "for l in open('.env') if l.startswith('ASTRYX' + '_DSN=')))\n")
         f = Fx({"tests/mutants_db.py": "MUTANTS = {}\n", "tests/test_sees.py": sees},
                base_files={"src/astryx/config.py": resolver})
         (f.w / ".env").write_text("OTHER=1\nASTRYX_DSN=postgresql://sentinel@h/db\n")
-        env = {"LAND_PROBE": str(probe)}
+        env = {"LAND_PROBE": str(probe), **(extra or {})}
         if src is None:
             return f, f.land(f"{f.base}..{f.head}", env=env)
         p = subprocess.run(["bash", str(src), f"{f.base}..{f.head}"], cwd=f.w, env={**ENV, **env},
@@ -411,13 +411,20 @@ def main():
     f, (rc, out) = db_land(unfixed)
     check("L18 RED control: the same land without the prefix is REFUSED (the probe's copy reaches no DB)",
           unfixed.read_text() != body and rc == 1 and f.main() == f.base, out[-300:])
+    f, (rc, out) = db_land(extra={"ASTRYX_FIXTURE_ADMIN_DSN": "postgresql://ambient@h/db"})
+    check("L18 an AMBIENT admin DSN (the caller exported one) never reaches a range test, and the probe still gets the "
+          ".env's (a3 R-10 #62871)",
+          rc == 0 and (f.w / "ran.txt").exists() and (f.w / "ran.txt").read_text() == "admin=<absent>" and "1 CAUGHT" in out,
+          ((f.w / "ran.txt").read_text() if (f.w / "ran.txt").exists() else "no marker") + out[-200:])
     code = [ln for ln in body.splitlines() if not ln.lstrip().startswith("#")]
-    named = [ln for ln in code if "ASTRYX_FIXTURE_ADMIN_DSN" in ln]
+    named = [ln.strip() for ln in code if "ASTRYX_FIXTURE_ADMIN_DSN" in ln]
+    derive = [ln for ln in named if ln.startswith("[ -f .env ] && PROBE_ENV=(")]
+    unset = [ln for ln in named if ln == "unset ASTRYX_FIXTURE_ADMIN_DSN"]
     carried = [ln for ln in code if "PROBE_ENV[@]" in ln]
-    check("L18 census: the admin DSN is named on ONE code line (its derivation), never exported, and carried on ONE "
-          "line, the mutation_probe invocation",
-          len(named) == 1 and named[0].lstrip().startswith("[ -f .env ] && PROBE_ENV=(")
-          and not any("export" in ln and "ASTRYX_FIXTURE_ADMIN_DSN" in ln for ln in code)
+    check("L18 census: the admin DSN's code lines are classed, derivation 1 + unset 1 (nothing else, never an export), "
+          "and it is carried on ONE line, the mutation_probe invocation",
+          len(derive) == 1 and len(unset) == 1 and len(named) == 2
+          and body.index("unset ASTRYX_FIXTURE_ADMIN_DSN") < body.index("[ -f .env ] && PROBE_ENV=(")
           and len(carried) == 1 and '"$PROBE"' in carried[0], f"named={named} carried={carried}")
 
     # L19 plan-11908 D6: the land judge runs after green range tests, with the range's test_*.py as its oracles; its
@@ -439,6 +446,20 @@ def main():
     rec = [l for l in out.splitlines() if l.startswith("RECEIPT:")]
     check("L19 a land-judge PASS lands, and its verdict line rides the RECEIPT",
           rc == 0 and f.main() == f.head and len(rec) == 1 and "land judge: PASS stub" in rec[0], out[-300:])
+
+    # L20 a3 R-9 #62871: the judge is MAIN's, never the range's. A's judge refuses; B ships one that always passes (and
+    # the range deletes nothing): the land is REFUSED, because B's copy is never what runs.
+    lj_path = "src/astryx/security/sqlguard/landjudge.py"
+    refuser = "import sys\nprint('land judge: REFUSED by A')\nsys.exit(1)\n"
+    passer = "import sys\nprint('land judge: PASS by B')\nsys.exit(0)\n"
+    f = Fx({"tests/test_ok.py": OK_TEST, lj_path: passer}, base_files={lj_path: refuser})
+    rc, out = f.land(f"{f.base}..{f.head}")
+    check("L20 the land judge that runs is MAIN's: B's always-PASS copy doesn't grade B (REFUSED, rolled back)",
+          rc == 1 and f.main() == f.base and "REFUSED by A" in out and "PASS by B" not in out, out[-300:])
+    f = Fx({"tests/test_ok.py": OK_TEST, lj_path: passer})
+    rc, out = f.land(f"{f.base}..{f.head}")
+    check("L20 ...and main without a judge says so (the land that ships it): 'absent at A (bootstrap)'",
+          rc == 0 and "land judge: absent at A (bootstrap)" in out and "PASS by B" not in out, out[-300:])
 
     print(f"\n{'PASS' if not fails else 'FAIL'}: land ({len(fails)} failing)")
     return 1 if fails else 0
