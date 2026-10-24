@@ -11,7 +11,8 @@ lifespan run (pools, per-org outbound listeners on real NOTIFY), nothing bound t
   G1 cog() holds both orgs by FEDERATION name, each Ctx on its own HOME's database (never the process's ASTRYX_DSN,
      which names A's), distinct keys; the bare root serves nobody (identity / card: 404)
   G2 siblings are seeded as `introduced` peers with the sibling's key, url NULL; an existing row is NEVER touched
-     (A's own grant for B: trusted, intents [task], stays exactly that)
+     (A's own grant for B: trusted, intents [task], stays exactly that); under a sqlguard run the child is traced and
+     the insert is seen at 0 rows and at 1, so the site can climb (its R-CLOCK, medic #62808)
   G3 A -> B: the row lands in B's database (from_org = A, signed), A's row is delivered; reach is not widened: an
      introduced sibling's message to B's forge reaches B's seed
   G4 B's door caps A (ASTRYX_INBOX_RATE=3): the 4th of 4 stays pending in A, never dead
@@ -42,6 +43,7 @@ sys.path.insert(0, str(REPO / "tests"))
 from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate('test_gateway_cog', REPO, deps=('psycopg', 'asyncpg', 'fastapi', 'nacl', 'httpx'), env=False)   # no .env needed: the admin DSN may come by env (fixture.live_dsn)
 from astryx.security.sqlguard.fixture import FixtureUnavailable as FixtureDBUnavailable, fixture_db  # noqa: E402
+from astryx.security.sqlguard.propagate import env_for_child  # noqa: E402
 from org_home_fixture import FixtureUnavailable, OrgHomes  # noqa: E402
 
 fails = []
@@ -196,7 +198,8 @@ def main():
             env = fx.env(ASTRYX_INBOX_RATE="3", ASTRYX_DSN=da["url"])   # the process DSN names A's: never read
             env.pop("ASTRYX_HOME", None)
             py = str(fx.co / "venv" / "bin" / "python")
-            r = subprocess.run([py, "-B", "-c", CHILD, str(fx.co), na, nb, da["url"], db["url"]], env=env,
+            # traced (env_for_child): G2 is the arm that runs seed_siblings to 0 rows (A's own grant) and 1 (B's new peer)
+            r = subprocess.run([py, "-B", "-c", CHILD, str(fx.co), na, nb, da["url"], db["url"]], env=env_for_child(env),
                                cwd=fx.co / "bridges", capture_output=True, text=True, timeout=180)
             line = next((ln for ln in r.stdout.splitlines() if ln.startswith("OUT ")), None)
             o = json.loads(line[4:]) if line else {}
@@ -223,6 +226,20 @@ def main():
             check("A's own grant for B is untouched (insert-only: trusted, intents [task])",
                   pa.get("status") == "trusted" and json.loads(pa.get("caps") or "null") == {"intents": ["task"]},
                   str(pa))
+            sg = os.environ.get("ASTRYX_SQLGUARD_DIR")
+            if sg:   # under a sqlguard run the child is observed (env_for_child), or seed_siblings is NOT SEARCHED
+                seen = set()
+                for t in Path(sg).glob("trace-*.jsonl"):
+                    for ln in t.read_text(errors="replace").splitlines():
+                        try:
+                            rec = json.loads(ln)
+                        except ValueError:
+                            continue
+                        if rec.get("ok") and rec.get("gate") == os.environ.get("ASTRYX_SQLGUARD_GATE", "") and any(
+                                f[:2] == ["bridges/gateway.py", "seed_siblings"] for f in rec.get("frames") or []):
+                            seen.add(rec.get("rows"))
+                check("traced: sqlguard saw the child's seed_siblings insert at 0 rows (A's grant) and 1 (B's new peer)",
+                      {0, 1} <= seen, str(sorted(seen, key=str)))
 
             print("\nG3 A -> B, IN PROCESS, THROUGH B'S DOOR")
             ld = o.get("landed") or {}
