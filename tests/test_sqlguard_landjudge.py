@@ -103,6 +103,21 @@ def main():
             arm(f"J6 inv(HEAD) from the extract equals this checkout's inventory on tracked files ({len(ext)} sites)",
                 ext == live and len(ext) > 100, f"extract-only {sorted(ext - live)[:3]} live-only {sorted(live - ext)[:3]}")
 
+    # J7: the inventory/judge children grade with the JUDGE's sqlguard even when the graded tree ships its own at its
+    # root (f46eb3e5's `astryx` symlink: the live replay at 309d8c23 read KeyError 'seal' from the old judge)
+    # A graded tree that ships its OWN astryx package at its root (planted here, git-free, so it runs in every copy)
+    with tempfile.TemporaryDirectory() as td:
+        x = Path(td)
+        pkg = x / "astryx" / "security" / "sqlguard"
+        pkg.mkdir(parents=True)
+        for d in (x / "astryx", x / "astryx" / "security", pkg):
+            (d / "__init__.py").write_text("")
+        (pkg / "judge.py").write_text("OLD = True\n")
+        p = subprocess.run(lj.PYC + ["-c", "import astryx.security.sqlguard.judge as j; print(j.__file__)"], cwd=x,
+                           env=lj._child_env(x, x), capture_output=True, text=True)
+        arm("J7 a child with cwd = a tree that ships its own root `astryx` imports the JUDGE's sqlguard, not the tree's",
+            p.stdout.strip().startswith(str(lj.PKG_SRC)), p.stdout.strip() or p.stderr.strip()[-200:])
+
     print(("PASS: sqlguard land judge" if not fails else f"FAIL: {len(fails)} arm(s)") + " (0 failing)" * (not fails))
     return 1 if fails else 0
 

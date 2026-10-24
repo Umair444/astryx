@@ -43,6 +43,11 @@ CERTIFIES = "RESPONSIVE (the WHERE and every computed bool responded)"
 NOT_CERTIFIED = "CORRECT (the mutant battery's rung)"
 UNTOUCHED = "untouched sites: the timer's"
 ESTATE_ONLY = ("triggers/ absent", "nested checkouts")   # run-level items about the ESTATE: no range site is in it
+# The inventory and judge children run with cwd = the tree they grade, so `-c` would put that tree FIRST on sys.path,
+# and a tree that ships a root `astryx` (f46eb3e5 does: a symlink to src/astryx) graded itself with its OWN, older
+# sqlguard: the live replay at 309d8c23 read KeyError 'seal'. -P drops that entry, so the judge's PYTHONPATH wins:
+# the tree is the subject, never the grader. (The oracles run WITHOUT it: they are the tree's own code.)
+PYC = [sys.executable, "-P"]
 
 
 def _scrub(drop) -> dict:
@@ -87,7 +92,7 @@ INV = ("import json, sys\nfrom astryx.security.sqlguard import inventory\nfns = 
 
 
 def inv_keys(root, estate_src) -> set:
-    p = subprocess.run([sys.executable, "-c", INV], cwd=root, env=_child_env(root, estate_src), capture_output=True,
+    p = subprocess.run(PYC + ["-c", INV], cwd=root, env=_child_env(root, estate_src), capture_output=True,
                        text=True, timeout=600)
     if p.returncode:
         raise RuntimeError(f"inventory of {root} failed rc {p.returncode}: {p.stderr.strip()[-300:]}")
@@ -194,9 +199,11 @@ def land_judge(a, b, tree, oracles, timeout=900, log=print) -> int:
         Path(work, "intro.json").write_text(json.dumps(sorted(intro)))
         led = tree / "src" / "astryx" / "security" / "sqlguard" / "ledger.json"
         t = time.monotonic()
-        p = subprocess.run([sys.executable, "-c", JUDGE, str(tdir), str(work / "intro.json"), str(led)], cwd=tree,
+        p = subprocess.run(PYC + ["-c", JUDGE, str(tdir), str(work / "intro.json"), str(led)], cwd=tree,
                            env=_child_env(tree, tree), capture_output=True, text=True, timeout=1200)
         cost["judge (seal + tree inventory)"] = time.monotonic() - t
+        cost["total"] = time.monotonic() - t0
+        log("  cost (D8): " + ", ".join(f"{k} {v:.1f}s" for k, v in cost.items()))   # every judged path, red ones too
         if p.returncode:
             log(f"land judge: COULD NOT JUDGE (rc {p.returncode}): {p.stderr.strip()[-300:]}; trace kept at {tdir}")
             return 77
@@ -208,8 +215,7 @@ def land_judge(a, b, tree, oracles, timeout=900, log=print) -> int:
         seal_sha = hashlib.sha256(json.dumps(j["seal"], sort_keys=True).encode()).hexdigest()
         cite = (f"stamps: A {_short(st_a)} | B {_short(st_b)}; judged seal {seal_sha[:12]} "
                 f"({len(j['seal']['files'])} files, {j['seal']['lines']} lines); trace {tdir}")
-        cost["total"] = time.monotonic() - t0
-        log("  cost (D8): " + ", ".join(f"{k} {v:.1f}s" for k, v in cost.items()) + f"; seal {j['seal']['lines']} records")
+        log(f"  seal (D8): {j['seal']['lines']} records hashed")
         if live_b != inv_b:
             log(f"land judge: REFUSED, inventory drift: the extract at B and the tree at B disagree on "
                 f"{len(live_b ^ inv_b)} tracked site(s), so the trigger is not about the tree that runs. {cite}")
