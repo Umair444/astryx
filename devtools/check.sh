@@ -568,6 +568,7 @@ run "steps doorbell resolves only the named agent's step" "$PY" tests/test_step_
 # agent's own last message); the surface default only when none. Synthetic threads, stamped fixture.
 run "bridge replies route to who the thread is talking with" "$PY" tests/test_bridge_routing.py
 run "whatsapp /hook: one message, one wire row, however its webhooks arrive" "$PY" tests/test_wa_hook_dedup.py
+run "whatsapp /hook: every inbound file arrives as a path beside its caption, or says why not" "$PY" tests/test_wa_media.py
 run "whatsapp: wacli retries only transient errors (store locked, 429), bounded" "$PY" tests/test_wa_retry.py
 run "whatsapp /hook: a reaction to an agent's message reaches that agent" "$PY" tests/test_wa_reactions.py
 run "workflows: one DAG converging on one agent, actuals measured from main (plan-11324 S4)" "$PY" tests/test_workflow.py
