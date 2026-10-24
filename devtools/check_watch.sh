@@ -85,6 +85,9 @@ now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 # STRICT: no CHECK_ALLOW_SKIP here. This is the live tree — a gate that observes nothing
 # on the host where every prerequisite exists is a real finding, and the whole reason this
 # runner exists is that the two blind invokers have to allow skips.
+# plan-11908 D5: the timer is the ONE run that advances sqlguard's seen-set clocks (R-CLOCK, R-LEAK); every other
+# check.sh (merge checks, hand runs, pushed-tree checks) is read-only on them by construction.
+export ASTRYX_SQLGUARD_WRITE_SEEN=1
 if [ -n "${CHECK_WATCH_SUITE:-}" ]; then
   sh -c "$CHECK_WATCH_SUITE" > "$LOG" 2>&1
 else

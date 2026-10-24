@@ -545,7 +545,11 @@ def lg(rows=None, extractors=None):
 
 
 def run(name, r, led, dsn):
-    out = enforce.enforce("", ledger=led, dsn=dsn, rep=r)
+    # plan-11908 D5: these arms ARE the timer's semantics (R-CLOCK / R-LEAK need the clocks to advance), so they run
+    # with the timer's write; an older package has no such parameter and always wrote
+    import inspect
+    kw = {"write_seen": True} if "write_seen" in inspect.signature(enforce.enforce).parameters else {}
+    out = enforce.enforce("", ledger=led, dsn=dsn, rep=r, **kw)
     OUT[name] = {"rc": out["rc"], "red": out["red"], "report": out["report"], "ns": out["not_searched"]}
 
 

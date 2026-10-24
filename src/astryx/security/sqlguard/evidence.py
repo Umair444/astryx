@@ -43,12 +43,13 @@ SEALED = ("trace-*.jsonl", "gates.tsv")
 
 STAMP_ENV = ("ASTRYX_COG_REGISTRY", "ASTRYX_FIXTURE_ADMIN_DSN", "ASTRYX_FIXTURE_TEMPLATE", "ASTRYX_HOME",
              "ASTRYX_REPO_COMMON", "ASTRYX_SQLGUARD_DIR", "ASTRYX_SQLGUARD_ESTATE_SRC", "ASTRYX_SQLGUARD_GATE",
-             "ASTRYX_SQLGUARD_ROOT", "ASTRYX_SQLGUARD_RUN", "PGOPTIONS")
+             "ASTRYX_SQLGUARD_ROOT", "ASTRYX_SQLGUARD_RUN", "ASTRYX_SQLGUARD_WRITE_SEEN", "PGOPTIONS")
 # Stamped, never compared: per-process identity. ASTRYX_HOME and ASTRYX_COG_REGISTRY select the HOME (a resident's
 # shell carries its own); they stay safe only because the estate CODE they select is compared (estate_code_hash, a3
-# #62830 call 1).
+# #62830 call 1). ASTRYX_SQLGUARD_WRITE_SEEN (D5) is the timer's role, not an input of a grade: it decides whether
+# enforce advances the seen-set clocks, never what judge grades, and a hand admit after a timer run must not mismatch.
 VOLATILE = frozenset({"ASTRYX_SQLGUARD_DIR", "ASTRYX_SQLGUARD_GATE", "ASTRYX_SQLGUARD_RUN", "ASTRYX_COG_REGISTRY",
-                      "ASTRYX_HOME", "PGOPTIONS"})
+                      "ASTRYX_HOME", "ASTRYX_SQLGUARD_WRITE_SEEN", "PGOPTIONS"})
 # Read in the import closure but never an input of a grade, each with its reason. A census name in neither STAMP_ENV nor
 # here turns tests/test_sqlguard_seal.py RED (a3 R-3).
 NOT_INPUT = {
