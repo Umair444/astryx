@@ -206,6 +206,26 @@ def main():
         arm("W2 write_report stamps report.json, and that stamp passes compare() against stamp(REPO)",
             bool(st) and "seal" in st and evidence.compare(st, evidence.stamp(judge.REPO)) == [], str(st)[:200])
 
+    # L2: ledger.seed refuses a report with no seal, NOT SEARCHED, and writes nothing (a3 #62846: never a KeyError,
+    # never a silently unsealed header)
+    real_judge, real_led = ledger.judge.judge, ledger.LEDGER
+    with tempfile.TemporaryDirectory() as d:
+        ledger.LEDGER = Path(d, "ledger.json")
+        ledger.judge.judge = lambda _d: {"sites": {"subj/a.py::f\x1fselect 1": {"rung": "UNEXECUTED"}},
+                                         "run_not_searched": [], "extractors": {}, "covering": {}, "counts": {},
+                                         "untraced_children": {}}
+        try:
+            ledger.seed(d)
+            got = "no refusal"
+        except SystemExit as e:
+            got = str(e)
+        except Exception as e:                                   # a crash is not a refusal
+            got = f"raised {type(e).__name__}: {e}"
+        finally:
+            ledger.judge.judge, wrote, ledger.LEDGER = real_judge, ledger.LEDGER.exists(), real_led
+        arm("L2 ledger.seed on a seal-less report is refused NOT SEARCHED and writes no ledger",
+            "NOT SEARCHED" in got and "no seal" in got and not wrote, got)
+
     # R1 / R2, in a throwaway git repo with a gitignored estate (ledger.REPO pointed at it)
     import subprocess
     real_repo = ledger.REPO

@@ -104,6 +104,11 @@ def seed(trace_dir: str) -> dict:
         if s["rung"] != "RESPONSIVE":
             rung = "NOT-SEARCHED-AT-SEED" if s["rung"] == "NOT SEARCHED" else s["rung"]
             rows[ledger_key(key)] = {"debt": rung, "reason": "seed", "tk": text_key(key)}     # P1: a gitignored origin → a digest
+    if privacy.ERRORS:                       # a3 D-P, FIRST: the rows above are the keys it couldn't classify
+        raise SystemExit(f"refusing to write the ledger: privacy classification failed "
+                         f"({len(privacy.ERRORS)}): {privacy.ERRORS[:3]}")
+    if "seal" not in rep:                    # never a header with no seal: that is the unsealed grade D2 refuses
+        raise SystemExit("refusing to seed: NOT SEARCHED: report carries no seal")
     st = evidence.stamp(REPO, sl=rep["seal"])            # the ONE stamp (plan-11908 D1), the report's own shape
     st["covering_sha"] = rep.get("covering_sha")
     header = {**st, "generated_at": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),

@@ -98,7 +98,8 @@ def dp_arms():
             ledger.LEDGER = out
             ledger.judge.judge = lambda d: {"sites": {"triggers/zz/c.py::f\x1fselect 1": {"rung": "UNEXECUTED"}},
                                             "run_not_searched": [], "extractors": {}, "covering": {},
-                                            "counts": {}, "untraced_children": {}}
+                                            "counts": {}, "untraced_children": {},
+                                            "seal": {"files": [], "lines": 0}}   # the real judge's shape (plan-11908 D2)
             refused = False
             try:
                 ledger.seed(nonrepo)
