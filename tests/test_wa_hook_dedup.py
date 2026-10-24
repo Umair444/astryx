@@ -139,7 +139,7 @@ async def main():
     await wa.hook(Req(event("ID-H4", "synthetic text four")))
     await wa.hook(Req(event("ID-H4", "synthetic text four")))
     check("H4 control: a text event lands once; wacli re-posting it adds nothing", len(w.rows) == 1, f"{len(w.rows)} rows")
-    check("H4 control: a text event never queries the store", w.store_reads == 0, f"{w.store_reads} reads")
+    check("H4 control: a text event reads the store once (for media), never polls it for text", w.store_reads == 1, f"{w.store_reads} reads")
 
     # H5: control, an empty reaction
     w = World().install()

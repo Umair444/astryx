@@ -123,7 +123,9 @@ async def fetch_media(chat: str, msgid: str, media: str) -> Path | str:
     base = Path(DATA_HOST) / rel
     for _ in range(20):
         try:
-            files = [p for p in base.rglob("message-*") if os.access(p, os.R_OK)]
+            # ANY file under the message's dir: wacli names a photo message-*, but a document keeps
+            # its own filename (store/media/<chat>/<msgid>/document/resume.pdf, msg 62886)
+            files = [p for p in base.rglob("*") if p.is_file() and os.access(p, os.R_OK)]
         except PermissionError:
             files = []
         if files:
@@ -132,13 +134,13 @@ async def fetch_media(chat: str, msgid: str, media: str) -> Path | str:
             try:
                 proc = await asyncio.create_subprocess_exec(
                     "docker", "exec", WA_DOCKER, "sh", "-c",
-                    f"ls {DATA_CTR}/{rel}/*/message-* 2>/dev/null | head -1",
+                    f"find '{DATA_CTR}/{rel}' -type f 2>/dev/null | head -1",
                     stdout=asyncio.subprocess.PIPE)
                 out, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
                 ctr_path = out.decode().strip()
                 if ctr_path:
                     MEDIA_DIR.mkdir(exist_ok=True)
-                    dst = MEDIA_DIR / Path(ctr_path).name
+                    dst = MEDIA_DIR / f"{msgid}-{Path(ctr_path).name}"   # two resume.pdf never collide
                     with open(dst, "wb") as f:
                         proc = await asyncio.create_subprocess_exec(
                             "docker", "exec", WA_DOCKER, "cat", ctr_path, stdout=f)
@@ -251,6 +253,17 @@ async def stored_text(chat: str, msgid: str, waits=(2, 5, 12)) -> str:
     return ""
 
 
+async def stored_media(chat: str, msgid: str) -> str:
+    """The media type wacli's store holds for an event whose payload named none. Its webhook omits
+    Media for a captioned document (msg 62886: the caption arrived, the PDF did not), its store
+    does not. wacli stores before it posts, so one read and no wait."""
+    try:
+        d = json.loads(await wacli("messages", "show", "--chat", chat, "--id", msgid, "--json"))
+    except Exception:
+        return ""
+    return ((d.get("data") or {}).get("MediaType") or "").strip()
+
+
 @app.post("/hook")
 async def hook(request: Request):
     body = await request.body()
@@ -341,6 +354,8 @@ async def hook(request: Request):
     text = (m.get("Text") or "").strip()
     # media rides as a nested object in the webhook payload: Media.Type
     media = ((m.get("Media") or {}).get("Type") or m.get("MediaType") or "").strip()
+    if not media and msgid and not m.get("ReactionToID") and not m.get("ReactionEmoji") and not m.get("Revoked"):
+        media = await stored_media(chat, msgid)
     if media and msgid:
         got = await fetch_media(chat, msgid, media)
         got = await describe_media(got, media) if isinstance(got, Path) else got
