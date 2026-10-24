@@ -71,10 +71,25 @@ def estate_hash(root: Path = REPO, source_root: Path = None) -> dict:
         elif p.is_dir():
             files += [f for f in p.rglob("*") if f.is_file() and "__pycache__" not in f.parts
                       and not f.name.endswith(".pyc")]
-    h = hashlib.sha256()
+    h, code, n_code = hashlib.sha256(), hashlib.sha256(), 0
     for f in sorted(files, key=lambda x: str(x.relative_to(root))):
-        h.update(f"{f.relative_to(root)}\0{hashlib.sha256(f.read_bytes()).hexdigest()}\n".encode())
-    return {"estate_hash": h.hexdigest(), "estate_files": len(files)}
+        rel = f.relative_to(root)
+        line = f"{rel}\0{hashlib.sha256(f.read_bytes()).hexdigest()}\n".encode()
+        h.update(line)
+        if _inventoried(rel):
+            code.update(line)
+            n_code += 1
+    # estate_code_hash: only the estate files the INVENTORY reads, the grade's estate inputs. The whole-estate hash moves
+    # with every runner log and store row (a3 R-1 #62830: 13 files in 30 min of a stand-down), so it's informational.
+    return {"estate_hash": h.hexdigest(), "estate_files": len(files),
+            "estate_code_hash": code.hexdigest(), "estate_code_files": n_code}
+
+
+def _inventoried(rel: Path) -> bool:
+    """inventory._py_files' predicate on one estate path, without walking: a .py outside SKIP_DIRS and EXCLUDED_ROOTS."""
+    from astryx.security.sqlguard import inventory
+    return (rel.suffix == ".py" and not (set(rel.parts[:-1]) & inventory.SKIP_DIRS)
+            and rel.parts[0] not in inventory.EXCLUDED_ROOTS)
 
 
 def seed(trace_dir: str) -> dict:

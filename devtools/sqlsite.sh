@@ -76,7 +76,10 @@ seen = collections.defaultdict(list)                     # site key -> its recor
 if "seal" not in rep:
     print("NOT SEARCHED: the report carries no seal (written before plan-11908 D2), so its records can't be re-read")
     sys.exit(1)
-for r in judge.load_traces(d, rep["seal"])[0]:
+recs, _, changed, _ = judge.load_traces(d, rep["seal"])
+if changed:                                              # a3 N-1: the grades name records this read can no longer show
+    print(f"NOT SEARCHED: sealed evidence changed since the verdict: {changed}; the rows/stamped/p columns below omit them")
+for r in recs:
     if not judge.is_site(r["t"], form="statement"):
         continue
     key, text, kind = judge.attribute(r, inv["functions"], inv.get("oracle"))

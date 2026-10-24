@@ -78,15 +78,28 @@ def glob_reader(d, sl, untraced=None):
 def main():
     # E1
     census = evidence.env_census()
-    arm("E1 the env census of sqlguard equals the stamp's env set", census == set(evidence.STAMP_ENV),
-        f"census-only {sorted(census - set(evidence.STAMP_ENV))} stamp-only {sorted(set(evidence.STAMP_ENV) - census)}")
+    classed = set(evidence.STAMP_ENV) | set(evidence.NOT_INPUT)
+    arm("E1 every env name read in sqlguard's import closure is classed: STAMP_ENV or NOT_INPUT (with a reason)",
+        set(census) <= classed and not (set(evidence.STAMP_ENV) & set(evidence.NOT_INPUT))
+        and all(evidence.NOT_INPUT.values()),
+        f"unclassed {[(k, census[k]) for k in sorted(set(census) - classed)]}")
+    arm("E1 the closure reaches paths.py and config.py (ASTRYX_REPO_COMMON via an alias, ASTRYX_HOME, ASTRYX_DSN)",
+        {"ASTRYX_REPO_COMMON", "ASTRYX_HOME", "ASTRYX_DSN"} <= set(census), str(sorted(census)))
+    arm("E1 no stale class: every STAMP_ENV / NOT_INPUT name is still read somewhere in the closure",
+        classed <= set(census), str(sorted(classed - set(census))))
     with tempfile.TemporaryDirectory() as td:
-        Path(td, "m.py").write_text('import os\nK = "ASTRYX_SQLGUARD_PLANTED"\nos.environ.get(K)\n'
-                                    'x = os.environ["ASTRYX_B"]\ny = "ASTRYX_C" in os.environ\nos.getenv("ASTRYX_D")\n'
-                                    'os.environ["ASTRYX_WRITE_ONLY"] = "1"\n')
-        got = evidence.env_census(Path(td))
-        arm("E1 control: the census sees a planted read (a constant, a subscript, `in`, getenv), never a write",
-            got == {"ASTRYX_SQLGUARD_PLANTED", "ASTRYX_B", "ASTRYX_C", "ASTRYX_D"}, str(sorted(got)))
+        src = Path(td, "src")
+        pkg = src / "astryx" / "security" / "sqlguard"
+        pkg.mkdir(parents=True)
+        (src / "astryx" / "helper.py").write_text('import os\n\ndef f():\n    env = dict(os.environ)\n'
+                                                  '    return env.get("ASTRYX_VIA_ALIAS")\n')
+        (pkg / "m.py").write_text('import os\nK = "ASTRYX_SQLGUARD_PLANTED"\nos.environ.get(K)\n'
+                                  'x = os.environ["ASTRYX_B"]\ny = "ASTRYX_C" in os.environ\nos.getenv("ASTRYX_D")\n'
+                                  'os.environ["ASTRYX_WRITE_ONLY"] = "1"\n\ndef g():\n    from astryx import helper\n')
+        got = set(evidence.env_census(pkg, src))
+        arm("E1 control: the census sees a planted read (a constant, a subscript, `in`, getenv, an alias in a module "
+            "imported inside a function), never a write",
+            got == {"ASTRYX_SQLGUARD_PLANTED", "ASTRYX_B", "ASTRYX_C", "ASTRYX_D", "ASTRYX_VIA_ALIAS"}, str(sorted(got)))
 
     # E2
     secret = "postgresql://sentinel-user:sentinel-pw@127.0.0.1/sentinel_db"
@@ -158,7 +171,9 @@ def main():
             for m in re.finditer(r"\bload_traces\(([^()]*)\)", code):
                 if "," not in m.group(1) and not code.lstrip().startswith("def "):
                     accused.append(f"{rel}:{i} load_traces without a seal")
-    arm("C1 every trace-dir read in src/ and devtools/ is classed: a seal (grader) or witness_traces (witness)",
+    # a3 N-3: a REGEX domain (glob/open of trace-* or gates.tsv, load_traces' arity): a listdir/iterdir reader passes it
+    arm("C1 every trace-dir read in src/ and devtools/ is classed: a seal (grader) or witness_traces (witness); "
+        "regex domain, a listdir/iterdir reader is not seen",
         not accused, str(accused))
 
     # L1
@@ -180,6 +195,83 @@ def main():
             "evidence from commit 000000000000" in res["other commit"], res["other commit"])
         arm("L1 the same tuple, and a VOLATILE env difference, are accepted",
             res["same"] == "ok" and res["volatile gate"] == "ok", str(res))
+
+    # W2: write_report's stamp is the one a consumer accepts (a3 R-2, M8)
+    with tempfile.TemporaryDirectory() as d:
+        Path(d, "trace-1-0-1.jsonl").write_text(rec(OTHER_T, ["subj/a.py", "f", 3], 1, "g1"))
+        judge.write_report(d, judge.judge(d, inv=INV, covering={}))
+        st = json.loads(Path(d, "report.json").read_text()).get("stamp")
+        arm("W2 write_report stamps report.json, and that stamp passes compare() against stamp(REPO)",
+            bool(st) and "seal" in st and evidence.compare(st, evidence.stamp(judge.REPO)) == [], str(st)[:200])
+
+    # R1 / R2, in a throwaway git repo with a gitignored estate (ledger.REPO pointed at it)
+    import subprocess
+    real_repo = ledger.REPO
+    with tempfile.TemporaryDirectory() as tr, tempfile.TemporaryDirectory() as d:
+        r = Path(tr)
+        genv = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=r, env=genv,
+                                        capture_output=True, text=True, check=True)
+        git("init", "-q")
+        (r / ".gitignore").write_text("subj/ign_*.py\nstore/\nvar/\n")
+        (r / "subj").mkdir()
+        (r / "subj" / "a.py").write_text("x = 1\n")
+        git("add", "-A")
+        git("commit", "-qm", "base")
+        (r / "subj" / "ign_a.py").write_text('def f(c):\n    return c.execute("select 1")\n')
+        (r / "store").mkdir()
+        (r / "store" / "rows.json").write_text("[]\n")
+        (r / "var").mkdir()
+        (r / "var" / "run.log").write_text("start\n")
+        ledger.REPO = r
+        try:
+            s0 = evidence.stamp(r)
+            site = "subj/a.py::f\x1fselect 1"
+
+            def report(stamp):
+                Path(d, "report.json").write_text(json.dumps({"sites": {site: {"rung": "UNEXECUTED"}},
+                                                              "run_not_searched": [], "covering": {},
+                                                              **({"stamp": stamp} if stamp is not None else {})}))
+
+            def refused(fn):
+                try:
+                    fn()
+                    return "ok"
+                except SystemExit as e:
+                    return str(e)
+
+            report(s0)
+            (r / "store" / "rows.json").write_text('[{"id": 1}]\n')        # data moves: a store row, a runner log
+            (r / "var" / "run.log").write_text("start\nmore\n")
+            moved = evidence.stamp(r)
+            arm("R1 a touched NON-code estate file: estate_hash moves (informational), the report is still accepted",
+                moved["estate_hash"] != s0["estate_hash"] and refused(lambda: ledger._report(d)) == "ok",
+                refused(lambda: ledger._report(d)))
+            (r / "subj" / "ign_a.py").write_text('def f(c):\n    return c.execute("select 2")\n')
+            got = refused(lambda: ledger._report(d))
+            arm("R1 an edited estate .py is refused NOT SEARCHED 'evidence from estate_code_hash X'",
+                "NOT SEARCHED" in got and "estate_code_hash" in got, got)
+
+            led = Path(d, "ledger.json")
+            new_ledger = lambda: led.write_text(json.dumps({"header": {}, "rows": {}, "covering": {}}))
+            s1 = evidence.stamp(r)
+            res = {}
+            for name, stamp in (("unstamped", None), ("other commit", {**s1, "commit": "0" * 40})):
+                for verb, fn in (("admit", lambda: ledger.admit(d, site, "harness reason", led)),
+                                 ("shrink", lambda: ledger.shrink(d, led))):
+                    report(stamp)
+                    new_ledger()
+                    res[f"{verb} {name}"] = refused(fn)
+            for k, v in res.items():
+                arm(f"R2 ledger.{k} → SystemExit NOT SEARCHED (the refusal takes effect at the verb, a3 M6/M7)",
+                    "NOT SEARCHED" in v, v)
+            report(s1)
+            new_ledger()
+            ok = refused(lambda: ledger.admit(d, site, "harness reason", led))
+            arm("R2 control: the same tuple admits (the gate refuses a mismatch, not everything)",
+                ok == "ok" and len(json.loads(led.read_text())["rows"]) == 1, ok)
+        finally:
+            ledger.REPO = real_repo
 
     print(("PASS: sqlguard seal" if not fails else f"FAIL: {len(fails)} arm(s)") + " (0 failing)" * (not fails))
     return 1 if fails else 0
