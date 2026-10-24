@@ -127,7 +127,7 @@ else
   echo "  (no stamp at $_stamp — steward's run_check may never have run on this host)"
 fi
 
-hr "triggers — genuinely DARK only (next_fire overdue, NOT last_eval age)"
+hr "triggers — overdue: DARK, or WAITING when a shed heartbeat (next_fire past, NOT last_eval age)"
 # last_eval advances only when a trigger is DUE, so it looks 'stale' for every weekly/monthly
 # one by design. A trigger is dark only when its NEXT fire is already past; next_fire is an
 # absolute instant, so this is tz-safe. 15min grace absorbs pulse lag. Empty = healthy.
