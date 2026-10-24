@@ -26,7 +26,6 @@ That is attack surface prod doesn't have (prod runs AGE as a superuser already),
 """
 import argparse
 import ast
-import glob
 import json
 import os
 import re
@@ -187,15 +186,10 @@ def prod_statements(trace_dir: Path, prod_db: str):
     never reached its sqlguard block, or a path that drifted would otherwise read as a clean zero."""
     if not trace_dir.is_dir() or not (trace_dir / "run_id").is_file():
         return None
-    n = 0
-    for f in glob.glob(str(trace_dir / "trace-*.jsonl")):
-        for line in open(f):
-            try:
-                if json.loads(line).get("db") == prod_db:
-                    n += 1
-            except ValueError:
-                pass
-    return n
+    # A WITNESS, not a grader (plan-11908 D3): it reads the WHOLE dir, post-seal included, because a guard's own
+    # post-verdict SQL against the live DB is still a prod statement.
+    from astryx.security.sqlguard.evidence import witness_traces
+    return sum(1 for r in witness_traces(str(trace_dir)) if r.get("db") == prod_db)
 
 
 def combine_witness(w1, w2):

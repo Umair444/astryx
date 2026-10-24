@@ -451,6 +451,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from astryx.security.sqlguard import ledger, privacy  # noqa: E402
+try:                    # plan-11908 D1: shrink acts only on a report judged at its own tuple (an older package: none)
+    from astryx.security.sqlguard import evidence  # noqa: E402
+    STAMP = {"stamp": evidence.stamp(ledger.REPO)}
+except ImportError:
+    STAMP = {}
 
 OUT = {}
 try:
@@ -474,7 +479,7 @@ try:
         t = Path(t)
         led = t / "ledger.json"
         led.write_text(json.dumps(doc))
-        (t / "report.json").write_text(json.dumps({"sites": {k: {"rung": v, "live_only": k == "a.py::lv\x1fselect 7"}
+        (t / "report.json").write_text(json.dumps({**STAMP, "sites": {k: {"rung": v, "live_only": k == "a.py::lv\x1fselect 7"}
                                                              for k, v in sites.items()},
                                                    "run_not_searched": [], "covering": {}}))
         removed, moved = ledger.shrink(str(t), led)
@@ -490,7 +495,7 @@ try:
         again = ledger.shrink(str(t), led)
         OUT["idempotent"] = again == ([], []) and json.loads(led.read_text()) == after
         led.write_text(json.dumps(doc))
-        (t / "report.json").write_text(json.dumps({"sites": {}, "run_not_searched": ["triggers/ absent"]}))
+        (t / "report.json").write_text(json.dumps({**STAMP, "sites": {}, "run_not_searched": ["triggers/ absent"]}))
         try:
             ledger.shrink(str(t), led)
             OUT["refused"] = False
@@ -520,8 +525,15 @@ S2 = "subj/arms.py::gone\x1fselect 2"
 OUT = {}
 
 
+try:                    # plan-11908 D1: admit acts only on a report judged at its own tuple (an older package: none)
+    from astryx.security.sqlguard import evidence  # noqa: E402
+    STAMP = {"stamp": evidence.stamp(ledger.REPO)}
+except ImportError:
+    STAMP = {}
+
+
 def rep(sites, gates=None, covering=None, extractors=None):
-    return {"sites": {CAN: {"rung": "RESPONSIVE"}, **{k: {"rung": v} for k, v in sites.items()}},
+    return {**STAMP, "sites":{CAN: {"rung": "RESPONSIVE"}, **{k: {"rung": v} for k, v in sites.items()}},
             "run_not_searched": [], "gates": gates or {}, "covering": covering or {},
             "extractors": extractors or {}, "blind": []}
 

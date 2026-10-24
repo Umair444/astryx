@@ -293,6 +293,7 @@ run "sqlguard site forms: a bare verb is no statement, every caller names its fo
 # merge, statically (plan-4918 was backed out twice for exactly that). Hermetic, ~2s. Reviewers run the tool:
 #   venv/bin/python -m astryx.security.sqlguard.rekey <base> <head>
 run "sqlguard rekey: a re-texted listed literal needs its ledger move" "$PY" tests/test_sqlguard_rekey.py
+run "sqlguard seal: a grade is judged from sealed evidence, and every reader reads that seal" "$PY" tests/test_sqlguard_seal.py
 # seed #56874 / a3 #56878: a hashed absent row's R-STALE says its own admitted date and reason, every path-shaped
 # token masked when private. Hermetic. Mutants: tests/mutants_sqlguard_stale_reason.py.
 run "sqlguard stale reason: a hashed absent row names its ledger text, never a private path" "$PY" tests/test_sqlguard_stale_reason.py

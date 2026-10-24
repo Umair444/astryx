@@ -71,7 +71,12 @@ d, ledger_mode, ledger_path, test_rc, args = sys.argv[1], sys.argv[2] == "1", sy
 inv = inventory.build()
 rep = json.load(open(os.environ["SQLSITE_REPORT"])) if os.environ.get("SQLSITE_REPORT") else judge.judge(d, inv=inv)
 seen = collections.defaultdict(list)                     # site key -> its records, by judge's own attribution
-for r in judge.load_traces(d)[0]:
+# The records come from the SEAL the verdicts were graded from (plan-11908 D3), never a second read of the dir: a
+# re-read after the verdict sees appends the grades never did (a3 H1 #62644, the AmjN2L shape).
+if "seal" not in rep:
+    print("NOT SEARCHED: the report carries no seal (written before plan-11908 D2), so its records can't be re-read")
+    sys.exit(1)
+for r in judge.load_traces(d, rep["seal"])[0]:
     if not judge.is_site(r["t"], form="statement"):
         continue
     key, text, kind = judge.attribute(r, inv["functions"], inv.get("oracle"))
