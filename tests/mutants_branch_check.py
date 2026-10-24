@@ -37,18 +37,14 @@ MUTANTS = {
     "O2 FLAKY is counted as REGRESSED":
         ("    regressed = sorted(set(b[\"failed\"]) - set(m[\"failed\"]))",
          "    regressed = sorted((set(b[\"failed\"]) | set(b.get(\"flaky\", []))) - set(m[\"failed\"]))"),
-    "O3 check.sh's ANSI colour isn't stripped (a red ✗ line is missed)":
-        ("    lines = re.sub(r\"\\x1b\\[[0-9;]*m\", \"\", log).splitlines()", "    lines = log.splitlines()"),
+    # O3 (ANSI strip) and O5 (the walk stops at a non-header line) moved with summary() to devtools/check_verdict.py
+    # (a4 10-25, a1 #62905): see tests/mutants_check_verdict.py, which declares both EQUIVALENT on check.sh's printer
     "O4 the witness counts every statement, not just the prod database's":
         ("    return sum(1 for r in witness_traces(str(trace_dir)) if r.get(\"db\") == prod_db)",
          "    return sum(1 for r in witness_traces(str(trace_dir)) if r.get(\"db\"))"),
-    "O5 summary reads any 'FAILED (' line (a gate's own output injects names)":
-        ("        kind = next((k for k, rx in _HEAD.items() if rx.match(ln)), None)\n        if kind is None:\n            break",
-         "        kind = next((k for k, rx in _HEAD.items() if rx.match(ln)), None)\n        if kind is None:\n            continue"),
     "O6 gates failing on BOTH sides aren't reported":
         ('    dead = sorted((set(m["failed"]) & set(b["failed"])) - ({SQLGUARD_GATE} if judged else set()))', '    dead = []'),
-    "O7 the walk has no TOP edge (skips verdict()'s leading blank and reads the last gate's output)":
-        ("            if out[\"failed\"] or out[\"unverified\"]:\n                break", "            if False:\n                break"),
+    # O7 (the walk has no top edge) moved to tests/mutants_check_verdict.py as V4, with summary()
     "O8 sqlguard's branch-only findings are ignored (a new R-NEW on the branch reads clean)":
         ("        sg_new = sorted(l for i, l in br.items() if i not in mr)", "        sg_new = []"),
     "O9 sqlguard is still listed dead when it WAS judged differentially":

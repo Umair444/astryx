@@ -136,7 +136,8 @@ def admin_dsn() -> str:
         raise prep.Refuse("no admin DSN (ASTRYX_DSN or the live .env)") from None
 
 
-_HEAD = {"failed": re.compile(r"^FAILED \(\d+\):$"), "unverified": re.compile(r"^UNVERIFIED \(\d+\) — ")}
+# check.sh's verdict parser lives in devtools/check_verdict.py (stdlib only, so marker.sh can call it too)
+from devtools.check_verdict import _HEAD, summary  # noqa: E402,F401
 
 
 def run_suite(argv: list, env: dict, timeout: int = None) -> tuple:
@@ -149,34 +150,6 @@ def run_suite(argv: list, env: dict, timeout: int = None) -> tuple:
     except subprocess.TimeoutExpired as e:
         dec = lambda b: b.decode(errors="replace") if isinstance(b, bytes) else (b or "")   # bytes even with text=True
         return dec(e.stdout), dec(e.stderr), "timeout"
-
-
-def summary(log: str) -> dict:
-    """check.sh's OWN verdict sets, parsed from the block it prints LAST (check.sh:109-124): {failed, unverified, line}.
-    Only that trailing block counts. A gate's own output can print a "FAILED (3): …" line and "  ✗ …" items (the
-    econ provenance oracle does, first end-to-end run #33638), and reading those would let a gate inject or mask a
-    name. So: the LAST `check: ` line, and walking UP from it, only its headers (their exact shape) and their items."""
-    lines = re.sub(r"\x1b\[[0-9;]*m", "", log).splitlines()
-    out = {"failed": [], "unverified": [], "line": ""}
-    end = max((i for i, ln in enumerate(lines) if ln.startswith("check: ")), default=None)
-    if end is None:
-        return out
-    out["line"] = lines[end]
-    items = []
-    for ln in reversed(lines[:end]):
-        if not ln.strip():
-            if out["failed"] or out["unverified"]:
-                break                                      # verdict()'s leading `echo` (check.sh:104): the TOP edge
-            continue                                       # its trailing `echo` (check.sh:115), below the block
-        if ln.startswith("  ") and ln.strip()[:1] in ("✗", "○"):
-            items.append(ln.strip()[1:].strip())
-            continue
-        kind = next((k for k, rx in _HEAD.items() if rx.match(ln)), None)
-        if kind is None:
-            break                                          # above the summary block: gate output, never read
-        out[kind] = list(reversed(items)) + out[kind]
-        items = []
-    return out
 
 
 def prod_statements(trace_dir: Path, prod_db: str):

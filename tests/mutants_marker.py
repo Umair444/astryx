@@ -15,9 +15,11 @@ MUTANTS = {
     "K2 a branch that moved during the check still gets a clause (it names a tip nobody checked)":
         ('[ "$NOW" = "$HEAD_SHA" ] || die', 'true || die'),
     "K3 a check with no verdict line still gets a clause (a killed run reads like a result)":
-        ('[ -n "$verdict" ] || die', 'true || die'),
+        ('  <<<"$verdict" || die "REFUSED: pushed_tree_check printed no verdict line',
+         '  <<<"$verdict" || echo "REFUSED: pushed_tree_check printed no verdict line'),
     "K4 the FAILED set is never copied (every clause says FAILED none)":
-        ("sed -n 's/^  ✗ //p'", "sed -n 's/^NEVER //p'"),
+        ('verdict=$(sed -n 1p <<<"$parsed"); failed=$(sed -n 2p <<<"$parsed")',
+         'verdict=$(sed -n 1p <<<"$parsed"); failed="FAILED none"'),
     "K5 the check is handed a 12-hex prefix, not the full sha":
         ('$PTC "$HEAD_SHA" >"$LOG" 2>&1; rc=$?', '$PTC "${HEAD_SHA:0:12}" >"$LOG" 2>&1; rc=$?'),
     "K6 the clause prints a merge-ready line itself (self-marking)":
@@ -28,4 +30,9 @@ MUTANTS = {
         ('pushed_tree_check ${HEAD_SHA:0:12} ($BY): rc', 'pushed_tree_check ${HEAD_SHA:0:12} (author): rc'),
     "K9 --by takes any string (a clause can name a non-agent)":
         ('[[ $2 =~ ^[a-z0-9][a-z0-9-]*$ ]]', 'true'),
+    "K10 the FAILED set is the old sed RANGE over the whole log (a gate's own lines become entries, a1 #62905 R1)":
+        ('failed=$(sed -n 2p <<<"$parsed")',
+         'failed="FAILED $(sed -n \'/^FAILED (/,/^UNVERIFIED (/p\' "$LOG" | sed -n \'s/^  ✗ //p\' | paste -sd\';\' -)"'),
+    "K11 a red run's log is deleted (the reviewer loses the source of the FAILED set)":
+        ('$PTC "$HEAD_SHA" >"$LOG" 2>&1; rc=$?\nKEEP=1\n', '$PTC "$HEAD_SHA" >"$LOG" 2>&1; rc=$?\nKEEP=0\n'),
 }

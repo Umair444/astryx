@@ -13,6 +13,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 SRC = os.environ.get("MARKER_SRC") or str(REPO / "devtools" / "marker.sh")
+VERDICT = os.environ.get("CHECK_VERDICT_SRC") or str(REPO / "devtools" / "check_verdict.py")
 fails = []
 
 
@@ -32,6 +33,15 @@ FULL = "echo; echo 'check: ALL CODE INVARIANTS PASS (271 gates verified)'; exit 
 RED = ("echo 'FAILED (2):'; echo '  ✗ gate census: no literal port'; echo '  ✗ mutants files point at something real';"
        " echo 'UNVERIFIED (172) — …'; echo '  ○ x'; echo; echo 'check: FAILURES above — a committed invariant regressed'; exit 1")
 SILENT = "echo 'started'; exit 124"
+# a1 #62905 R1: gates print "FAILED (n):" and "  ✗ " themselves (test_backup_inputs, gate_census…); only check.sh's
+# trailing block counts. And R2: a check.sh label can hold "; ". And check.sh's own settle line sits between its block
+# and the verdict line on a red run that kept its traces (check.sh verdict(): _sqlguard_settle before the `check:` echo).
+INJECT = ("echo 'check: 3 verified, 0 UNVERIFIED (a gate running its own sub-check)';"
+          " echo 'FAILED (1): a gate prints this header itself'; echo '  ✗ (inline) src/x.py:3: a census finding, not a gate';"
+          " echo 'FAILED (1):'; echo '  ✗ a gate running check.sh as its own subject prints the exact shape';"
+          " echo; echo 'FAILED (1):'; echo '  ✗ doctor in a cog: one org; another org refused'; echo 'UNVERIFIED (1) — …';"
+          " echo '  ○ y'; echo; echo 'sqlguard traces kept (red verdict): /tmp/sqlguard.X'; "
+          "echo 'check: FAILURES above — a committed invariant regressed'; exit 1")
 
 
 def main():
@@ -44,7 +54,8 @@ def main():
         def run(stub, *a, env=None):
             s = Path(t) / "ptc.sh"
             s.write_text("#!/bin/bash\n" + stub + "\n")
-            p = subprocess.run(["bash", SRC, *a], cwd=r, env={**ENV, "MARKER_PTC": f"bash {s}", **(env or {})},
+            p = subprocess.run(["bash", SRC, *a], cwd=r, env={**ENV, "MARKER_PTC": f"bash {s}", "MARKER_VERDICT": VERDICT,
+                                                    "TMPDIR": t, **(env or {})},
                                capture_output=True, text=True, timeout=60)
             return p.returncode, p.stdout + p.stderr
 
@@ -65,12 +76,23 @@ def main():
               f"marker clause: feat {base[:12]}..{tip[:12]} · pushed_tree_check {tip[:12]} (author): rc 0, FAILED none, "
               "99 verified, 172 UNVERIFIED" in out, out)
         got = (Path(t) / "got").read_text().strip() if (Path(t) / "got").exists() else ""
+        check("green rc 0: the check's log is deleted", not list(Path(t).glob("marker.*")), out)
         check("green: the stub was handed the FULL head sha (the check runs on the exact tip)", got == tip, got)
         check("no `merge-ready:` line is ever printed (the marker is the reviewer's)", "merge-ready:" not in out, out)
         rc, out = run(RED, "feat")
         check("red: the clause states rc 1 and the FAILED set copied verbatim, in order",
-              rc == 0 and "rc 1, FAILED gate census: no literal port; mutants files point at something real, no counts "
-              "(check.sh prints none on red)" in out, out)
+              rc == 0 and 'rc 1, FAILED (2): ["gate census: no literal port", "mutants files point at something real"], no '
+              "counts (check.sh prints none on red)" in out, out)
+        check("red: the check's log is KEPT and its path printed (a reviewer re-derives the FAILED set from it)",
+              "the check log is kept: " in out and len(list(Path(t).glob("marker.*"))) == 1, out)
+        for f in Path(t).glob("marker.*"):
+            f.unlink()
+        rc, out = run(INJECT, "feat")
+        check("a gate's own FAILED header and ✗ finding are never FAILED entries; a label's '; ' stays one entry; the "
+              "settle line between block and verdict doesn't hide the block (a1 #62905)",
+              rc == 0 and 'rc 1, FAILED (1): ["doctor in a cog: one org; another org refused"], no counts' in out, out)
+        for f in Path(t).glob("marker.*"):
+            f.unlink()
         rc, out = run(FULL, "feat")
         check("a full pass: N verified, 0 UNVERIFIED, read from check.sh's ALL PASS line",
               rc == 0 and "rc 0, FAILED none, 271 verified, 0 UNVERIFIED" in out, out)

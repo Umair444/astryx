@@ -22,7 +22,7 @@
 # PY: pushed_tree_check runs check.sh under ${PY:-python3}, and on a bare python3 every DSN/venv suite reads 77 and
 # hides as UNVERIFIED (U0, 10-22). So marker.sh defaults PY to this tree's venv python and refuses a real run without
 # one; set PY to choose another.
-# Env: MARKER_PTC overrides the check command (the oracle's stubs). Exit 0 printed (the clause states the check's rc,
+# Env: MARKER_PTC overrides the check command (the oracle's stubs); MARKER_VERDICT the parser's path (the probe's copy). Exit 0 printed (the clause states the check's rc,
 # red included), 2 usage, a bad ref, or a refusal (no clause printed).
 set -uo pipefail
 die() { echo "marker: $*"; exit 2; }
@@ -42,27 +42,37 @@ here="$(cd "$(dirname "$0")" && pwd)"
 PTC=${MARKER_PTC:-"bash $here/pushed_tree_check.sh"}
 export PY=${PY:-$(dirname "$here")/venv/bin/python}
 [ -n "${MARKER_PTC:-}" ] || [ -x "$PY" ] || die "REFUSED: no python at $PY (a bare python3 hides every DSN/venv suite as 77); set PY"
-LOG=$(mktemp "${TMPDIR:-/tmp}/marker.XXXXXX"); trap 'rm -f "$LOG"' EXIT
+# The check's log is KEPT on a red or refused run and its path printed: a reviewer re-deriving the FAILED set needs the
+# source (a1 #62905). Only a clean rc 0 deletes it.
+LOG=$(mktemp "${TMPDIR:-/tmp}/marker.XXXXXX"); KEEP=0
+trap 'if [ "$KEEP" = 1 ]; then echo "marker: the check log is kept: $LOG"; else rm -f "$LOG"; fi' EXIT
 echo "marker: running pushed_tree_check on $BR ${HEAD_SHA:0:12} under PY=$PY (no timeout: it takes as long as it takes)"
 $PTC "$HEAD_SHA" >"$LOG" 2>&1; rc=$?
+KEEP=1
 NOW=$(sha "$BR") || die "$BR vanished during the check"
 [ "$NOW" = "$HEAD_SHA" ] || die "REFUSED: $BR moved during the check (${HEAD_SHA:0:12} -> ${NOW:0:12}); re-run on the new tip"
+# The verdict line and the FAILED set come from check.sh's OWN trailing block, through the ONE parser
+# (devtools/check_verdict.py, which branch_check imports too; stdlib only, so any python3 runs it). Never a sed range:
+# gates print "FAILED (n):" and "  ✗ " lines themselves, and a range opened at the first one turned a gate's finding
+# into a FAILED entry (a1 #62905 R1). The FAILED set prints as a count and a JSON list, because check.sh's labels hold
+# "; " (R2).
+parsed=$(python3 -I "${MARKER_VERDICT:-$here/check_verdict.py}" "$LOG") || die "REFUSED: check_verdict.py could not parse the check's log (rc $rc)"
+verdict=$(sed -n 1p <<<"$parsed"); failed=$(sed -n 2p <<<"$parsed")
 # check.sh's THREE verdict lines, read from its printer (devtools/check.sh verdict()), never recalled:
 #   "check: FAILURES above — a committed invariant regressed"         red: no counts
 #   "check: ALL CODE INVARIANTS PASS (N gates verified)"               full pass
 #   "check: N verified, M UNVERIFIED …"                                a pass with skips
-verdict=$(grep -E '^check: (FAILURES above|ALL CODE INVARIANTS PASS \([0-9]+ gates verified\)|[0-9]+ verified, [0-9]+ UNVERIFIED)' \
-  "$LOG" | tail -1)
-[ -n "$verdict" ] || die "REFUSED: pushed_tree_check printed no verdict line (rc $rc): nothing to quote. Its last lines:
+grep -qE '^check: (FAILURES above|ALL CODE INVARIANTS PASS \([0-9]+ gates verified\)|[0-9]+ verified, [0-9]+ UNVERIFIED)' \
+  <<<"$verdict" || die "REFUSED: pushed_tree_check printed no verdict line (rc $rc): nothing to quote. Its last lines:
 $(tail -5 "$LOG" | sed 's/^/  | /')"
 case "$verdict" in
   "check: FAILURES above"*) counts="no counts (check.sh prints none on red)";;
   "check: ALL CODE INVARIANTS PASS"*) counts="$(sed -E 's/.*\(([0-9]+) gates verified\).*/\1/' <<<"$verdict") verified, 0 UNVERIFIED";;
   *) counts="$(sed -E 's/^check: ([0-9]+) verified, ([0-9]+) UNVERIFIED.*/\1 verified, \2 UNVERIFIED/' <<<"$verdict")";;
 esac
-failed=$(sed -n '/^FAILED (/,/^UNVERIFIED (/p' "$LOG" | sed -n 's/^  ✗ //p' | awk 'NR > 1 { printf "; " } { printf "%s", $0 }')
-[ $rc -eq 0 ] || [ -n "$failed" ] || failed="(none listed, yet rc $rc: read the check's output)"
+[ $rc -eq 0 ] || [ "$failed" != "FAILED none" ] || failed="FAILED (none listed, yet rc $rc: read the check's log)"
+[ $rc -ne 0 ] || KEEP=0
 echo "range (full): $BR $MB..$HEAD_SHA"
-echo "marker clause: $BR ${MB:0:12}..${HEAD_SHA:0:12} · pushed_tree_check ${HEAD_SHA:0:12} ($BY): rc $rc, FAILED ${failed:-none}, $counts"
+echo "marker clause: $BR ${MB:0:12}..${HEAD_SHA:0:12} · pushed_tree_check ${HEAD_SHA:0:12} ($BY): rc $rc, $failed, $counts"
 echo "  (paste it into the REVIEWER's marker line; an author never marks their own branch)"
 exit 0
