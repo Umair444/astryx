@@ -8,6 +8,9 @@ Arms:
   W2  a label's script is the first PATH word of its run line (tests/…), with its last commit on the ref
   W3  a `-m a.b.c` run line maps to src/a/b/c.py
   W4  a label holding a `"` (check.sh source writes \\") still finds its run line
+  W5  check.sh's OWN suffix on a FAILED entry (" (TIMED OUT after Ns)", check.sh's run()) still maps, also when the
+      label itself ends in "(…)" (a1 #62937)
+  W6  a parser that can't answer prints one line saying so; the list never silently vanishes (a1 #62937)
   C1  control: a green stub prints no WHO block
 """
 import os
@@ -39,13 +42,15 @@ cat <<'GATES' >/dev/null
 run "alpha: the first gate" "$PY" tests/test_alpha.py
 run "beta: a module gate" "$PY" -m astryx.beta.gate "$D"
 run "gamma: says \"hi\"" bash tests/test_gamma.sh
+run "delta: a slow gate (plan-1 S2)" "$PY" tests/test_delta.py
 GATES
 [ -f GREEN ] && { echo; echo; echo 'check: ALL CODE INVARIANTS PASS (3 gates verified)'; exit 0; }
 echo
-echo 'FAILED (3):'
+echo 'FAILED (4):'
 echo '  ✗ alpha: the first gate'
 echo '  ✗ beta: a module gate'
 echo '  ✗ gamma: says "hi"'
+echo '  ✗ delta: a slow gate (plan-1 S2) (TIMED OUT after 600s)'
 echo
 echo 'sqlguard traces kept (red verdict): /tmp/sqlguard.X'
 echo 'check: FAILURES above — a committed invariant regressed'
@@ -68,11 +73,12 @@ def main():
         git("init", "-q", "-b", "main")
         git("add", "."); git("commit", "-qm", "base")
         for f, msg in (("tests/test_alpha.py", "alpha lands"), ("src/astryx/beta/gate.py", "beta lands"),
-                       ("tests/test_gamma.sh", "gamma lands")):
+                       ("tests/test_gamma.sh", "gamma lands"), ("tests/test_delta.py", "delta lands")):
             (r / f).write_text("x\n"); git("add", f); git("commit", "-qm", msg)
         last = {m: git("log", "-1", "--format=%h", "--", f) for f, m in (("tests/test_alpha.py", "a"),
                                                                        ("src/astryx/beta/gate.py", "b"),
-                                                                       ("tests/test_gamma.sh", "g"))}
+                                                                       ("tests/test_gamma.sh", "g"),
+                                                                       ("tests/test_delta.py", "d"))}
 
         def ptc():
             p = subprocess.run(["bash", SRC, "HEAD"], cwd=r, env={**ENV, "PY": sys.executable}, capture_output=True,
@@ -89,7 +95,15 @@ def main():
               "      src/astryx/beta/gate.py" in who and f"{last['b']}  t  beta lands" in who, who)
         check('W4 a label holding " finds its run line (source writes \\")',
               "      tests/test_gamma.sh" in who and f"{last['g']}  t  gamma lands" in who, who)
+        check("W5 an entry with check.sh's TIMED OUT suffix, on a label ending in (…), maps to its script",
+              "      tests/test_delta.py" in who and f"{last['d']}  t  delta lands" in who, who)
         check("no gate reads 'could not map'", "could not map" not in who, who)
+        good = (r / "devtools" / "check_verdict.py").read_text()
+        (r / "devtools" / "check_verdict.py").write_text("raise SystemExit('parser broke')\n")   # the pusher's copy
+        rc, out = ptc()
+        check("W6 a parser that can't answer is SAID (one line, its rc), never a silently missing list",
+              rc == 1 and "could not read the FAILED block (check_verdict.py rc 1): parser broke" in out, out)
+        (r / "devtools" / "check_verdict.py").write_text(good)
         (r / "GREEN").write_text(""); git("add", "GREEN"); git("commit", "-qm", "green")
         rc, out = ptc()
         check("C1 control: a green run prints no WHO block", rc == 0 and "WHO LAST TOUCHED" not in out, out)

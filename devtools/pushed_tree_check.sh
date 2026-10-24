@@ -121,14 +121,29 @@ if [ "$rc" -ne 0 ]; then
   # whatever the run line names (tests/, src/, devtools/; `-m a.b` is src/a/b.py). Until 10-25 this took only a
   # `nucleus/` word, and since goal 10224 moved every script no run line names one: the list said "could not map"
   # for every gate. Oracle: tests/test_ptc_who.py.
-  fails=$(python3 -I "$REPO/devtools/check_verdict.py" --failed "$LOG" 2>/dev/null)
+  fails=$(python3 -I "$REPO/devtools/check_verdict.py" --failed "$LOG" 2>&1); frc=$?
+  if [ "$frc" -ne 0 ]; then                # a parser that can't answer is said, never a vanished list (a1 #62937)
+    echo
+    echo "WHO LAST TOUCHED: could not read the FAILED block (check_verdict.py rc $frc): ${fails##*$'\n'}"
+    fails=""
+  fi
   if [ -n "$fails" ]; then
     echo
     echo "WHO LAST TOUCHED EACH FAILING GATE (usually the only person who can fix it):"
     printf '%s\n' "$fails" | while IFS= read -r label; do
       [ -n "$label" ] || continue
       echo "  ✗ $label"
-      line=$(grep -F -- "run \"${label//\"/\\\"}\"" "$TREE/devtools/check.sh" | head -1)
+      # A FAILED entry is not always a label: check.sh appends its own " (TIMED OUT after Ns)", " (bad cap …)",
+      # " (no gate dir under …)" (a1 #62937). The entry is tried AS IS first (a label may itself end in "(…)"), then
+      # with one trailing " (…)" group stripped at a time, outermost first. Only a miss is retried, so a hit never
+      # changes, and a fourth suffix shape needs no list to keep mapping.
+      key=$label; line=""
+      for _ in 1 2 3; do
+        line=$(grep -F -- "run \"${key//\"/\\\"}\"" "$TREE/devtools/check.sh" | head -1)
+        [ -n "$line" ] && break
+        [[ $key == *" ("*")" ]] || break
+        key=${key% (*}
+      done
       script=$(tr ' "' '\n\n' <<<"${line#*\" }" | grep -m1 -E '^(tests|src|devtools|scripts|nucleus|bridges|observatory)/')
       if [ -z "$script" ]; then
         mod=$(sed -nE 's/.* -m ([A-Za-z0-9_.]+).*/\1/p' <<<"$line")
