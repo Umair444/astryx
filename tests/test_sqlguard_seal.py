@@ -35,6 +35,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 from astryx.security.sqlguard import evidence, privacy, judge, ledger  # noqa: E402
+from tests._privacy_repo import own_privacy_repo  # noqa: E402
 
 fails = []
 
@@ -63,29 +64,6 @@ def rec(t, frame, rows, gate):
 def grades(rep):
     return json.dumps({"sites": rep["sites"], "counts": rep["counts"], "gates": rep["gates"],
                        "records": rep["records"]}, sort_keys=True, default=sorted)
-
-
-@contextlib.contextmanager
-def own_privacy_repo(root=None):
-    """Every arm that reaches a ledger verb runs in THIS (a3 R-4/R-5 #62849): privacy classifies through git
-    check-ignore in its own repo (a fresh init, or the arm's), never the subject tree, which is off-git in an extract
-    (rc 128: privacy rightly fails closed). On exit privacy.REPO is restored and ERRORS cleared, so no arm leaks a
-    classification error into the next."""
-    with tempfile.TemporaryDirectory() as td:
-        r = Path(root) if root else Path(td)
-        if root is None:
-            subprocess.run(["git", "init", "-q"], cwd=r, check=True,
-                           env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
-        real = privacy.REPO
-        privacy.REPO = r
-        privacy.ignored.cache_clear()
-        privacy.ERRORS.clear()
-        try:
-            yield r
-        finally:
-            privacy.REPO = real
-            privacy.ignored.cache_clear()
-            privacy.ERRORS.clear()
 
 
 def glob_reader(d, sl, untraced=None):

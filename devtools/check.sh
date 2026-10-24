@@ -44,6 +44,10 @@ for v in $(compgen -e | grep "^GIT_"); do unset "$v"; done
 # fake turns to it (a2 #53059), and so would any future probe (a stationed call now names ITSELF: station.py). The pulse's run_check already runs
 # every gate with no name (systemd env), so no gate needs one. Oracle: tests/test_check_noagent.py.
 unset ASTRYX_AGENT
+# The timer's seen-set role reaches ONE gate (plan-11908 D5, a3 BC-1 #62652): check_watch.sh exports it, it's read once
+# here and unset, and only the enforce line below carries it back. Every other gate (and anything it spawns) runs
+# without it, so no second process can become a writer of the live sqlguard_seen. Oracle: tests/test_sqlguard_seen.py N6.
+SQLGUARD_WRITE_SEEN=${ASTRYX_SQLGUARD_WRITE_SEEN:-}; unset ASTRYX_SQLGUARD_WRITE_SEEN
 # No gate sees the HOST's org registry either (plan-11324 S3f S3, seed #60778 item 4). /etc/astryx/cog.json is a host
 # FILE that no env scrub removes, so in a cog every gate would run under multi. Pinned to a path that names no file, a
 # gate runs as this checkout's own org, which in a cog is the PRIMARY's (its HOME is the checkout), exactly as before the
@@ -1146,6 +1150,6 @@ fi
 # clock, a leaked fixture DB, or an extractor-list mismatch. 77 (UNVERIFIED) when the run can't observe: shim
 # errors, the canary not RESPONSIVE, triggers/ absent. Its controls are tests/test_sqlguard.py, above.
 # It runs LAST so it sees every gate's trace, and its own rc lands in gates.tsv after it has read the file.
-run "sqlguard: every SQL site is observed, or listed debt" "$PY" -m astryx.security.sqlguard.enforce "$ASTRYX_SQLGUARD_DIR"
+ASTRYX_SQLGUARD_WRITE_SEEN=$SQLGUARD_WRITE_SEEN run "sqlguard: every SQL site is observed, or listed debt" "$PY" -m astryx.security.sqlguard.enforce "$ASTRYX_SQLGUARD_DIR"
 
 verdict

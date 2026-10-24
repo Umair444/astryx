@@ -4,6 +4,7 @@ devtools/mutation_probe.py:
     venv/bin/python devtools/mutation_probe.py tests/mutants_sqlguard_seen.py
 """
 EN = "src/astryx/security/sqlguard/enforce.py"
+CS = "devtools/check.sh"
 ORACLE = "tests/test_sqlguard_seen.py"
 MUTANTS = {
     "S1 enforce() defaults to writing the seen set":
@@ -20,4 +21,12 @@ MUTANTS = {
     "S5 a read-only run masks a RED as rc 77":
         (EN, "    rc = 77 if hard else (1 if red else (77 if not_searched else 0))",
              "    rc = 77 if not_searched else (1 if red else 0)"),
+    # a3 R-7 #62860: the flag is read once and UNSET in check.sh, carried back on the enforce line alone (N6)
+    "B1 check.sh never unsets the flag (every gate inherits the timer's role)":
+        (CS, "SQLGUARD_WRITE_SEEN=${ASTRYX_SQLGUARD_WRITE_SEEN:-}; unset ASTRYX_SQLGUARD_WRITE_SEEN",
+             "SQLGUARD_WRITE_SEEN=${ASTRYX_SQLGUARD_WRITE_SEEN:-}"),
+    "B2 a second gate carries the flag":
+        (CS, 'run "sqlguard seal: a grade', 'ASTRYX_SQLGUARD_WRITE_SEEN=$SQLGUARD_WRITE_SEEN run "sqlguard seal: a grade'),
+    "B3 the enforce line drops the flag (the timer never writes)":
+        (CS, 'ASTRYX_SQLGUARD_WRITE_SEEN=$SQLGUARD_WRITE_SEEN run "sqlguard: every', 'run "sqlguard: every'),
 }

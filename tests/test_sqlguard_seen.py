@@ -28,6 +28,7 @@ import psycopg  # noqa: E402
 from astryx.security.sqlguard import enforce as enf  # noqa: E402
 from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db  # noqa: E402
 from astryx.security.sqlguard.privacy import text_key  # noqa: E402
+from tests._privacy_repo import own_privacy_repo  # noqa: E402
 
 fails = []
 
@@ -56,7 +57,7 @@ LED = {"rows": {}, "extractors": {}, "covering": {}}
 def main():
     run_id = os.environ.get("ASTRYX_SQLGUARD_RUN") or f"seen{os.getpid()}"
     os.environ["ASTRYX_SQLGUARD_RUN"] = f"st{os.getpid()}"       # the state DB must not be "this run's" (R-LEAK)
-    with fixture_db() as fx:
+    with own_privacy_repo(), fixture_db() as fx:      # privacy classifies in its own repo, on or off git
         os.environ["ASTRYX_SQLGUARD_RUN"] = run_id
         dsn = fx["dsn"]
         with psycopg.connect(dsn, autocommit=True) as st:
@@ -92,6 +93,29 @@ def main():
             check("N5 control: write_seen=True advances the clocks (runs +1, the unlisted key deleted), no ○ line",
                   rows == {text_key(AGED): 100} and enf.READ_ONLY not in out5["not_searched"], f"{rows} {out5['not_searched']}")
 
+
+def scoping():
+    """N6 (a3 BC-1 (iii)): in check.sh the flag is read once and unset BEFORE the first gate, and the enforce line is the
+    only one that carries it back. Every live occurrence is classed; an unclassed one is RED (a new reader or exporter)."""
+    lines = (REPO / "devtools" / "check.sh").read_text().splitlines()
+    first_run = next(i for i, l in enumerate(lines) if l.startswith("run "))
+    cls, other = {"read+unset": [], "enforce": []}, []
+    for i, l in enumerate(lines):
+        code = l.split("#", 1)[0]
+        if "ASTRYX_SQLGUARD_WRITE_SEEN" not in code:
+            continue
+        if code.strip() == "SQLGUARD_WRITE_SEEN=${ASTRYX_SQLGUARD_WRITE_SEEN:-}; unset ASTRYX_SQLGUARD_WRITE_SEEN":
+            cls["read+unset"].append(i)
+        elif code.startswith("ASTRYX_SQLGUARD_WRITE_SEEN=$SQLGUARD_WRITE_SEEN run ") and "sqlguard.enforce" in code:
+            cls["enforce"].append(i)
+        else:
+            other.append(f"check.sh:{i + 1}")
+    check("N6 check.sh reads the timer flag once and unsets it before the first gate; only the enforce line carries it",
+          len(cls["read+unset"]) == 1 and cls["read+unset"][0] < first_run and len(cls["enforce"]) == 1 and not other,
+          f"{cls} unclassed={other}")
+
+
+scoping()                          # static: runs with or without a fixture DB
 
 try:
     main()
