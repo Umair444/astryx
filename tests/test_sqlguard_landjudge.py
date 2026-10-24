@@ -113,6 +113,7 @@ def main():
         for d in (x / "astryx", x / "astryx" / "security", pkg):
             (d / "__init__.py").write_text("")
         (pkg / "judge.py").write_text("OLD = True\n")
+        # own-env: the arm IS the judge's child env (lj._child_env); the child only imports and prints a path
         p = subprocess.run(lj.PYC + ["-c", "import astryx.security.sqlguard.judge as j; print(j.__file__)"], cwd=x,
                            env=lj._child_env(x, x), capture_output=True, text=True)
         arm("J7 a child with cwd = a tree that ships its own root `astryx` imports the JUDGE's sqlguard, not the tree's",
