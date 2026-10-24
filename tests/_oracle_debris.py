@@ -23,8 +23,14 @@ ORACLE_BASE = Path(os.environ.get("ASTRYX_RUNSCOPE_ORACLE_ROOT", "/tmp/astryx-ru
 from devtools.branch_check_prep import TEST_DB                    # noqa: E402 (ONE definition, P0-b's refusal reads it too)
 from astryx.pg.runscope import TEST_STAMP                       # noqa: E402 (the stamp an oracle's run role carries)
 DIRLESS_GRACE_S = 3600                                         # see reap()'s dir-less pass
+# The ONE list of pid-tagged roles an oracle may plant and leave behind when killed. A killed run's LOGIN NOSUPERUSER role
+# reads every default-ACL database as CUT to init.sh harden (astryx_cog's red, #62806), so each oracle that plants one
+# calls reap() at start. tests/test_planted_roles.py derives every CREATE ROLE site in tests/ and goes RED on a name
+# this regex (or that census's named other reaper) does not match (a2 #62900, seed #62901).
 TEST_ROLE = re.compile(r"^astryx_hardendep_(\d+)$|^astryx_hardenforeign_(\d+)$"   # test_init_harden's two planted LOGIN roles
-                       r"|^bc_(\d+)x100[0-3]$")    # runscope's synthetic orphans (reused / outside / foreign / unstamped)        # a LOGIN role test_init_harden plants
+                       r"|^astryx_fx_rot_(\d+)$|^astryx_fx_rot_sync_(\d+)$"     # test_rotate_db_password, test_pg_role_sync
+                       r"|^astryx_fx_drill_(\d+)$"                              # test_restore_drill's NOLOGIN group
+                       r"|^bc_(\d+)x100[0-3]$")    # runscope's synthetic orphans (reused / outside / foreign / unstamped)
 
 
 def _gone(pid: int) -> bool:
@@ -69,7 +75,14 @@ def reap(adm) -> list:
                                     "WHERE o.rolname = %s", (r,)).fetchall():
                 _drop_db(adm, d)                            # by OWNERSHIP first: a role owning a DB can't be dropped
                 reaped.append(d)
-            adm.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(r)))
+            try:
+                # a database-level grant blocks DROP ROLE too (rotate's CONNECT on astryx, pg_role_sync's on postgres)
+                for (d,) in adm.execute("SELECT DISTINCT d.datname FROM pg_database d, aclexplode(d.datacl) a "
+                                        "JOIN pg_roles g ON g.oid = a.grantee WHERE g.rolname = %s", (r,)).fetchall():
+                    adm.execute(sql.SQL("REVOKE ALL ON DATABASE {} FROM {}").format(sql.Identifier(d), sql.Identifier(r)))
+                adm.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(r)))
+            except errors.DependentObjectsStillExist:      # a grant inside a database still standing (a dead run's
+                continue                                   # fixture DB): kept for a later reap, never a crash at start
             reaped.append(r)
     # Scopes sit at ORACLE_BASE/<run id>, or one level down at ORACLE_BASE/o<pid>/<run id> (test_runscope's per-oracle
     # subdir). Reading only the top level missed every killed test_runscope's real-epoch role and its databases

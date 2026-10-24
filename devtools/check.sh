@@ -331,6 +331,7 @@ run "branch_check: differential verdict, prod witness, clean refusal" "$PY" test
 # init.sh's harden node (plan-4918 P0-a): a fresh org is born with no PUBLIC CONNECT on the databases it
 # administers. Run against the oracle's own scratch DBs only, by name. Mutants: tests/mutants_init_harden.py.
 run "init.sh harden: no PUBLIC CONNECT on the org's databases" "$PY" tests/test_init_harden.py
+run "every role a test plants is reapable after a killed run: a derived census of CREATE ROLE (a2 msg 62900)" "$PY" tests/test_planted_roles.py
 # init.sh's schema node (seed #38258): GREEN iff the database carries the stamp of the EXACT schema.sql last applied
 # in full, so a pulled NEW table is applied, and a failed apply never reads green. On a scratch DB. Mutants:
 # tests/mutants_init_schema.py.

@@ -104,6 +104,8 @@ def can(**kw) -> bool:
 
 def main():
     admin = psycopg.connect(DSN, autocommit=True)
+    from _oracle_debris import reap     # a KILLED run skips the finally: its LOGIN role is a harden-cut dependent (a2 #62900)
+    reap(admin)
     started = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     time.sleep(1)
     try:
