@@ -231,7 +231,7 @@ VERB_ONLY = re.compile(r"\s*CREATE\s+(?:ROLE|USER|GROUP)\s*", re.I)
 NAME_IN_TEXT = re.compile(r"\s*CREATE\s+(?:ROLE|USER|GROUP)\s+\"?([A-Za-z0-9_]+)", re.I)
 # The backstop: any source line that reads like a role-creating statement. Outside a resolved site it is RED unless
 # declared below (a2 F-1 #62913: six shapes the AST pass didn't know passed SILENT; a source-level net catches those)
-BACKSTOP = re.compile(r"\bcreate\s+(?:role|user|group)\s+[\"'{\w]", re.I)
+BACKSTOP = re.compile(r"\bcreate\s+(?:role|user|group)\s+[\"'{\w%]", re.I)     # % too: "CREATE ROLE %s" % n (a2 #62922)
 NOT_PLANTED = {   # {file: {stripped line text: why it plants nothing}}: keyed by text, so a moved line still matches
     "test_backup_inputs.py": {"""created = set(re.findall(r'^CREATE ROLE "?([^";]+)"?;$', text, re.M))""":
                               "a regex over a dump's text"},
@@ -274,6 +274,13 @@ def _sql_text(node, f):
             if VERB_ONLY.fullmatch(parts[0].value) and len(parts) > 1:
                 return parts[0].value, parts[1], span
             return parts[0].value, None, span
+        return None, None, span
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):     # "CREATE ROLE %s LOGIN" % n
+        if isinstance(node.left, ast.Constant) and isinstance(node.left.value, str):
+            if re.match(r"\s*CREATE\s+(?:ROLE|USER|GROUP)\s+%s", node.left.value, re.I):
+                arg = node.right.elts[0] if isinstance(node.right, ast.Tuple) and node.right.elts else node.right
+                return node.left.value, arg, span
+            return node.left.value, None, span
         return None, None, span
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "format":
         inner, lead = node.func.value, None
@@ -400,6 +407,8 @@ SHAPES = {
     "executemany": 'c.executemany(f"CREATE ROLE {n} LOGIN", [()])\n',
     # the CREATE text on a line that starts no node: a site covered by its first line alone would flag itself
     "sql_text_on_line_two": 'c.execute(sql.SQL(\n    "CREATE ROLE {} LOGIN").format(sql.Identifier(n)))\n',
+    "percent_format": 'c.execute("CREATE ROLE %s LOGIN" % n)\n',              # a2 #62922
+    "percent_tuple": 'c.execute("CREATE ROLE %s LOGIN PASSWORD \'%s\'" % (n, pw))\n',
 }
 
 
@@ -419,6 +428,9 @@ for shape, body in SHAPES.items():
 psql = rows_of('subprocess.run(["psql", "-c", f"CREATE ROLE {n} LOGIN"])\n')
 check("a shape no resolver reads (psql in argv) goes RED through the source backstop",
       len(psql) == 1 and not psql[0][0] and "no resolved site covers" in psql[0][1], str(psql))
+pct = rows_of('subprocess.run(["psql", "-c", "CREATE ROLE %s LOGIN" % n])\n')
+check("a %-formatted shape no resolver reads goes RED through the backstop (its tail admits %)",
+      len(pct) == 1 and not pct[0][0] and "no resolved site covers" in pct[0][1], str(pct))
 decl = rows_of('x = "CREATE ROLE fixture_text"\n', not_planted={"s.py": {'x = "CREATE ROLE fixture_text"': "text"}})
 check("a declared NOT_PLANTED line passes, named", decl == [(True, "declared NOT_PLANTED: text")], str(decl))
 stale = rows_of('x = 1\n', not_planted={"s.py": {'x = "CREATE ROLE gone"': "text"}})
