@@ -86,7 +86,10 @@ def estate_hash(root: Path = REPO, source_root: Path = None) -> dict:
 
 
 def _inventoried(rel: Path) -> bool:
-    """inventory._py_files' predicate on one estate path, without walking: a .py outside SKIP_DIRS and EXCLUDED_ROOTS."""
+    """inventory._py_files' predicate on one estate path, without walking: a .py outside SKIP_DIRS and EXCLUDED_ROOTS.
+    Differs from the walk in two ways (a3 N-5 #62836): estate_hash's rglob doesn't follow a symlinked dir, which the
+    inventory's os.walk(followlinks=True) does (0 under the estate, measured 10-24), and it doesn't prune nested
+    checkouts, which only makes the hash stricter."""
     from astryx.security.sqlguard import inventory
     return (rel.suffix == ".py" and not (set(rel.parts[:-1]) & inventory.SKIP_DIRS)
             and rel.parts[0] not in inventory.EXCLUDED_ROOTS)

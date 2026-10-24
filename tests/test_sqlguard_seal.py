@@ -32,7 +32,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
-from astryx.security.sqlguard import evidence, judge, ledger  # noqa: E402
+from astryx.security.sqlguard import evidence, privacy, judge, ledger  # noqa: E402
 
 fails = []
 
@@ -95,11 +95,13 @@ def main():
                                                   '    return env.get("ASTRYX_VIA_ALIAS")\n')
         (pkg / "m.py").write_text('import os\nK = "ASTRYX_SQLGUARD_PLANTED"\nos.environ.get(K)\n'
                                   'x = os.environ["ASTRYX_B"]\ny = "ASTRYX_C" in os.environ\nos.getenv("ASTRYX_D")\n'
-                                  'os.environ["ASTRYX_WRITE_ONLY"] = "1"\n\ndef g():\n    from astryx import helper\n')
+                                  'os.environ["ASTRYX_WRITE_ONLY"] = "1"\n\ndef g():\n    from astryx import helper\n'
+                                  '\ndef f(env): return env.get("ASTRYX_P")\n')   # a3 N-6: the parameter-name rule
         got = set(evidence.env_census(pkg, src))
         arm("E1 control: the census sees a planted read (a constant, a subscript, `in`, getenv, an alias in a module "
-            "imported inside a function), never a write",
-            got == {"ASTRYX_SQLGUARD_PLANTED", "ASTRYX_B", "ASTRYX_C", "ASTRYX_D", "ASTRYX_VIA_ALIAS"}, str(sorted(got)))
+            "imported inside a function, a parameter named env), never a write",
+            got == {"ASTRYX_SQLGUARD_PLANTED", "ASTRYX_B", "ASTRYX_C", "ASTRYX_D", "ASTRYX_VIA_ALIAS", "ASTRYX_P"},
+            str(sorted(got)))
 
     # E2
     secret = "postgresql://sentinel-user:sentinel-pw@127.0.0.1/sentinel_db"
@@ -224,6 +226,8 @@ def main():
         (r / "var").mkdir()
         (r / "var" / "run.log").write_text("start\n")
         ledger.REPO = r
+        real_priv = privacy.REPO
+        privacy.REPO = r                  # privacy asks git check-ignore in the arm's own repo, not the subject tree
         try:
             s0 = evidence.stamp(r)
             site = "subj/a.py::f\x1fselect 1"
@@ -272,6 +276,7 @@ def main():
                 ok == "ok" and len(json.loads(led.read_text())["rows"]) == 1, ok)
         finally:
             ledger.REPO = real_repo
+            privacy.REPO = real_priv
 
     print(("PASS: sqlguard seal" if not fails else f"FAIL: {len(fails)} arm(s)") + " (0 failing)" * (not fails))
     return 1 if fails else 0
