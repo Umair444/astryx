@@ -210,7 +210,8 @@ async def hostile(tmp):
 
     # M9: an id that walks out of the store
     w = World(f"{tmp}/m9").install()
-    leak = w.root / "store" / "x"
+    (w.root / "store" / "media" / CHAT.replace("@", "_")).mkdir(parents=True)   # the chat's dir exists live,
+    leak = w.root / "store" / "x"                                                # so ".." can walk through it
     leak.mkdir(parents=True)
     (leak / "secret.txt").write_bytes(b"synthetic secret")
     await wa.hook(Req(event("../../x", CAPTION, media="document")))
