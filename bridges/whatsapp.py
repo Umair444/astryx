@@ -113,34 +113,52 @@ def find_id(obj) -> str | None:
 
 
 # ---------------------------------------------------------------------- media
+# A message id is the SENDING client's string (a1 #62931), and it becomes a path under the store and an
+# argv element. Every live store dir name fits this (10 215 measured 10-25: 18-34 alphanumerics, one
+# with an inner hyphen): no "/", no ".", no quote, no leading "-". Anything else is refused, never fetched.
+MSGID_OK = re.compile(r"[0-9A-Za-z][0-9A-Za-z-]{0,127}")
+
+
+def _under(p: Path, root: Path) -> bool:
+    """p, resolved, sits inside root (a belt under MSGID_OK: a symlink in the store can't walk out)."""
+    try:
+        return p.resolve().is_relative_to(root.resolve())
+    except OSError:
+        return False
+
+
 async def fetch_media(chat: str, msgid: str, media: str) -> Path | str:
     """Inbound attachment -> host Path (or an excuse string). sync
     --download-media already saves every file under store/media/<chat>/<msgid>/,
     so no second download (and no store-lock contention): we wait for it."""
     if not DATA_HOST:
         return f"<{media} attached, media dir not configured>"
+    if not MSGID_OK.fullmatch(msgid):
+        return f"<{media} attached, refused: its message id is not a WhatsApp id>"
     rel = f"store/media/{chat.replace('@', '_')}/{msgid}"
     base = Path(DATA_HOST) / rel
     for _ in range(20):
         try:
             # ANY file under the message's dir: wacli names a photo message-*, but a document keeps
             # its own filename (store/media/<chat>/<msgid>/document/resume.pdf, msg 62886)
-            files = [p for p in base.rglob("*") if p.is_file() and os.access(p, os.R_OK)]
+            files = [p for p in base.rglob("*") if p.is_file() and os.access(p, os.R_OK)
+                     and _under(p, base)]
         except PermissionError:
             files = []
         if files:
             return files[0]
         if WA_DOCKER:                      # store unreadable from host: copy out
             try:
-                proc = await asyncio.create_subprocess_exec(
-                    "docker", "exec", WA_DOCKER, "sh", "-c",
-                    f"find '{DATA_CTR}/{rel}' -type f 2>/dev/null | head -1",
-                    stdout=asyncio.subprocess.PIPE)
+                proc = await asyncio.create_subprocess_exec(      # argv, never a shell (a1 #62931 R1)
+                    "docker", "exec", WA_DOCKER, "find", f"{DATA_CTR}/{rel}", "-type", "f",
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
                 out, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-                ctr_path = out.decode().strip()
+                ctr_path = (out.decode().splitlines() or [""])[0].strip()
                 if ctr_path:
                     MEDIA_DIR.mkdir(exist_ok=True)
                     dst = MEDIA_DIR / f"{msgid}-{Path(ctr_path).name}"   # two resume.pdf never collide
+                    if not _under(dst, MEDIA_DIR):
+                        return f"<{media} attached, refused: its stored name leaves the media dir>"
                     with open(dst, "wb") as f:
                         proc = await asyncio.create_subprocess_exec(
                             "docker", "exec", WA_DOCKER, "cat", ctr_path, stdout=f)
@@ -256,7 +274,10 @@ async def stored_text(chat: str, msgid: str, waits=(2, 5, 12)) -> str:
 async def stored_media(chat: str, msgid: str) -> str:
     """The media type wacli's store holds for an event whose payload named none. Its webhook omits
     Media for a captioned document (msg 62886: the caption arrived, the PDF did not), its store
-    does not. wacli stores before it posts, so one read and no wait."""
+    does not. wacli stores before it posts, so one read and no wait. The price: one `wacli messages
+    show` per inbound TEXT event (every non-media, non-reaction one), fine at a household's volume."""
+    if not MSGID_OK.fullmatch(msgid):
+        return ""
     try:
         d = json.loads(await wacli("messages", "show", "--chat", chat, "--id", msgid, "--json"))
     except Exception:

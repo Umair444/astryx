@@ -18,6 +18,9 @@ wacli's `messages show` is a fake over a dict, and fetch_media's one-second poll
   M5 the file never lands → the caption AND a line saying so, one row, nothing silent
   M6 control: plain text whose store row holds no media → one row, the text alone, no file line
   M7 control: an empty reaction reads nothing from the store
+  M8 a message id is the SENDER's string (a1 #62931 R1): one carrying a quote and $(…) runs no
+     shell and is refused in the body; a valid id's docker copy-out is argv, never `sh -c`
+  M9 an id that walks (../../x) returns and writes nothing outside the store, and says it refused
 """
 import asyncio
 import hashlib
@@ -92,10 +95,21 @@ class World:
         self.store[msgid] = {"Text": text, "MediaType": kind}
         return d / name
 
-    def install(self):
+    def install(self, docker=""):
         wa.seen_msgids.clear()
+        self.execs = []
+
+        async def exec_(*argv, **kw):              # the docker copy-out: record argv, find no file
+            self.execs.append(argv)
+
+            class P:
+                async def communicate(self):
+                    return b"", b""
+            return P()
+        wa.asyncio.create_subprocess_exec = exec_
         wa.routes = lambda: Routes([ROUTE])
-        wa.DATA_HOST, wa.WA_DOCKER = str(self.root), ""
+        self.root.mkdir(parents=True, exist_ok=True)
+        wa.DATA_HOST, wa.WA_DOCKER = str(self.root), docker
 
         async def wacli(*args):
             self.reads += 1
@@ -175,8 +189,40 @@ async def main(tmp):
     await wa.hook(Req(event("ID-M7", ReactionToID="ID-M6", ReactionEmoji="")))
     check("M7 control: an empty reaction reads nothing from the store", w.reads == 0, f"{w.reads} reads")
 
+async def hostile(tmp):
+    # M8a: a hostile id on the docker branch
+    w = World(f"{tmp}/m8").install(docker="wacli-sync")
+    bad = "IDx'; echo INJECTED-$(id -u) >&2; echo '"
+    await wa.hook(Req(event(bad, CAPTION, media="document")))
+    body = w.rows[0] if len(w.rows) == 1 else ""
+    check("M8 a hostile id (quote, $(…)) → ONE row: the caption and a line saying it was REFUSED",
+          body.startswith(CAPTION) and "refused" in body, f"{w.rows}")
+    check("M8 ...and nothing was executed for it (no copy-out, no store read)",
+          w.execs == [] and w.reads == 0, f"{w.execs} {w.reads} reads")
+    # M8b: a valid id's copy-out is argv (no file lands: the fake finds none)
+    w = World(f"{tmp}/m8b").install(docker="wacli-sync")
+    got = await wa.fetch_media(CHAT, "IDM8b", "document")
+    flat = [a for argv in w.execs for a in argv]
+    check("M8b a valid id's docker copy-out is argv: `find <path> -type f`, never `sh -c`",
+          bool(w.execs) and "sh" not in flat and "-c" not in flat
+          and all(argv[3] == "find" and argv[4].endswith("/IDM8b") for argv in w.execs), f"{w.execs[:1]}")
+    check("M8b ...and when no file lands the body says so", "never landed" in str(got), str(got))
+
+    # M9: an id that walks out of the store
+    w = World(f"{tmp}/m9").install()
+    leak = w.root / "store" / "x"
+    leak.mkdir(parents=True)
+    (leak / "secret.txt").write_bytes(b"synthetic secret")
+    await wa.hook(Req(event("../../x", CAPTION, media="document")))
+    body = w.rows[0] if len(w.rows) == 1 else ""
+    check("M9 an id that walks (../../x) → no path outside the store reaches the body",
+          "secret.txt" not in body and attached(body) is None, body)
+    check("M9 ...and the body says it was refused", "refused" in body, body)
+
+
 with tempfile.TemporaryDirectory(prefix="wa-media-") as tmp:
     asyncio.run(main(tmp))
+    asyncio.run(hostile(tmp))
 print()
 print(f"FAILED ({len(fails)}): " + "; ".join(fails) if fails else "/hook: every inbound file arrives as a path beside its caption, or says why not")
 sys.exit(1 if fails else 0)
