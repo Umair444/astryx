@@ -17,6 +17,9 @@ MUTANTS = {
         (LJ, 'PYC = [sys.executable, "-P"]', "PYC = [sys.executable]"),
     "J-M7 a green verdict keeps its trace dir":
         (LJ, "    if rc == 0:\n        for d in made:", "    if False:\n        for d in made:"),
+    "J-M8 run by path, the header inserts the CHECKOUT ROOT (dirname^5), not the judge's own src/":
+        (LJ, "    _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))",
+             "    _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__)))))))"),
     "J-M5 a range that adds a site with no oracle passes":
         (LJ, '            log(f"land judge: REFUSED, the range adds {len(intro)} SQL site(s) and no test_*.py oracle to grade them")\n            return 1',
              '            log(f"land judge: REFUSED, the range adds {len(intro)} SQL site(s) and no test_*.py oracle to grade them")\n            return 0'),

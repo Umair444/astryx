@@ -23,9 +23,9 @@ it can be reproduced from the receipt alone.
 GRADE (D7): PREVENTION for lands through land.sh; a direct `git push` is the timer's to DETECT. Each verdict line names
 the rung it certifies and the rung above it that it does not. Sites the range didn't add are the timer's.
 """
-if not __package__:  # run by path: the checkout root goes first on sys.path so `astryx` resolves (as enforce does)
-    import sys as _sys, os as _os
-    _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__)))))))
+if not __package__:  # run by path: its OWN src/ goes first, so `astryx` is the judge's package even from a bare
+    import sys as _sys, os as _os   # extract of src/astryx (land.sh's $JT, which has no checkout root: a3 R-11 #62875)
+    _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))   # its OWN src/
 import argparse  # noqa: E402
 import hashlib  # noqa: E402
 import json  # noqa: E402
@@ -182,6 +182,7 @@ def _land_judge(a, b, tree, oracles, timeout, log, made) -> int:
             f"nothing about SQL; {UNTOUCHED}")
         return 0
     from astryx.security.sqlguard import evidence
+    log(f"  judged by: {Path(evidence.__file__).resolve().parent}")   # whose sqlguard grades (R-9/R-11: main's)
     work = Path(tempfile.mkdtemp(prefix="landjudge-"))
     try:
         t = time.monotonic()

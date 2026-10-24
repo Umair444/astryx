@@ -138,6 +138,22 @@ def main():
     for d in (kept[1], kept[77]):
         __import__("shutil").rmtree(d, ignore_errors=True)
 
+    # J9 a3 R-11 #62875: land.sh runs MAIN's judge BY PATH from an extract holding only src/astryx (no checkout root,
+    # no root astryx shim). That file must import its OWN package and reach a verdict over a TRIGGERED range. A copy
+    # of src/astryx stands in for land.sh's git archive (same shape, and it runs in a .git-less copy too).
+    with tempfile.TemporaryDirectory() as jt, tempfile.TemporaryDirectory() as td:
+        __import__("shutil").copytree(REPO / "src" / "astryx", Path(jt) / "src" / "astryx",
+                                      ignore=__import__("shutil").ignore_patterns("__pycache__"))
+        r, a, b = repo(td, {"subj/b.py": NEW})
+        p = subprocess.run([sys.executable, str(Path(jt) / "src/astryx/security/sqlguard/landjudge.py"), a, b,
+                            "--tree", str(r)], cwd=r, env={k: v for k, v in ENV.items() if k != "PYTHONPATH"},
+                           capture_output=True, text=True, timeout=600)
+        out = p.stdout + p.stderr
+        by = next((ln.split("judged by:", 1)[1].strip() for ln in out.splitlines() if "judged by:" in ln), "")
+        arm("J9 main's judge run BY PATH from a src/-only extract reaches a verdict over a triggered range (no Traceback)",
+            p.returncode in (0, 1) and "land judge: " in out and "Traceback" not in out, out[-400:])
+        arm("J9 ...graded by the EXTRACT's own sqlguard", by.startswith(str(Path(jt).resolve())), by or out[-200:])
+
     print(("PASS: sqlguard land judge" if not fails else f"FAIL: {len(fails)} arm(s)") + " (0 failing)" * (not fails))
     return 1 if fails else 0
 
