@@ -3,6 +3,7 @@ devtools/marker.sh runs it under any python (moved verbatim out of branch_check.
 read gate output, the injection this parser was built against, #33638).
 
     python3 -I devtools/check_verdict.py <log>    # line 1: the verdict line; line 2: FAILED (n): [json] | FAILED none
+    python3 -I devtools/check_verdict.py --failed <log>    # one FAILED label per line
 """
 import json
 import re
@@ -46,6 +47,9 @@ def summary(log: str) -> dict:
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["--failed"]:    # one FAILED label per line (pushed_tree_check's WHO LAST TOUCHED list)
+        print("\n".join(summary(open(sys.argv[2], errors="replace").read())["failed"]))
+        sys.exit(0)
     s = summary(open(sys.argv[1], errors="replace").read())
     print(s["line"])
     print(f"FAILED ({len(s['failed'])}): {json.dumps(s['failed'], ensure_ascii=False)}" if s["failed"] else "FAILED none")

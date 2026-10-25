@@ -541,6 +541,7 @@ run "the Room: addressing, the wire message, voiceprint lines, every reply kind 
 run "the Room's SQL on a fixture schema: voiceprints, the router, the ear's speaker stamp, the speaker's claim/voice/ask" "$PY" tests/test_room_db.py
 run "channel oracles: none stages server.mjs without its sibling modules (10-11)" "$PY" tests/test_stage_channel_users.py
 run "pushed_tree_check: the committed tree inherits no database or credential env (a4, 10-11)" "$PY" tests/test_pushed_tree_env.py
+run "pushed_tree_check: WHO LAST TOUCHED names each failing gate's script from check.sh's own block (a4, 10-25)" "$PY" tests/test_ptc_who.py
 run "trigger_set: a python trigger name can never write outside triggers/<agent>/ (a2 #45063)" node tests/test_trigger_name.mjs
 run "send: a malformed [[poll:]]/[[file:]] to a human surface is refused before the INSERT, in parity with the bridge grammar" node tests/test_send_embeds.mjs
 run "bridges: a [[file:]] embed is read only from the SENDER's roots (home, scratchpad, media/; tier/ to the owner alone), realpath + O_NOFOLLOW + /proc" "$PY" tests/test_embed_root.py
