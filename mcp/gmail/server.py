@@ -26,14 +26,13 @@ from mcp.server.fastmcp import FastMCP
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))   # astryx.paths: the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
-from astryx import paths  # noqa: E402
+from astryx import config, paths  # noqa: E402
 
 
 def creds() -> tuple[str, str]:
     """GMAIL_ADDRESS / GMAIL_APP_PASSWORD from the org's .env, read at use, not import."""
-    env = {k: v for k, v in
-           (l.split("=", 1) for l in (paths.estate(__file__) / ".env").read_text().splitlines() if "=" in l)}
-    return env["GMAIL_ADDRESS"].strip(), env["GMAIL_APP_PASSWORD"].strip()
+    env = config.read_env(paths.estate(__file__) / ".env")      # the ONE .env reader, per line (plan-10224 ENVREAD)
+    return env["GMAIL_ADDRESS"], env["GMAIL_APP_PASSWORD"]
 
 
 mcp = FastMCP("astryx-gmail")

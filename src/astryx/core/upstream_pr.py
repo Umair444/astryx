@@ -66,10 +66,8 @@ def setting(name: str, default: str = "", repo: Path = REPO) -> str:
     if v:
         return v
     f = (paths.estate(__file__) if Path(repo).resolve() == REPO.resolve() else Path(repo)) / ".env"   # org-home: this tree reads its ESTATE (paths.estate); another tree, its own
-    for line in (f.read_text(errors="replace").splitlines() if f.is_file() else []):
-        if line.startswith(name + "="):
-            return line.split("=", 1)[1].strip().strip('"').strip("'")
-    return default
+    e = config.read_env(f)          # the ONE .env reader: a non-UTF-8 line is skipped and said (plan-10224 ENVREAD)
+    return e[name].strip('"').strip("'") if name in e else default
 
 
 def upstream(repo: Path = REPO) -> str:

@@ -1072,15 +1072,7 @@ def _load_runtime() -> dict:
 
 def _env_key_names() -> list[str]:
     """NAMES only of .env keys (never values) — lets the UI pick which key holds the token."""
-    f = ESTATE / ".env"
-    if not f.exists():
-        return []
-    out: list[str] = []
-    for ln in f.read_text().splitlines():
-        ln = ln.strip()
-        if ln and not ln.startswith("#") and "=" in ln:
-            out.append(ln.split("=", 1)[0].strip())
-    return out
+    return list(config.read_env(ESTATE / ".env"))    # the ONE .env reader, per line (plan-10224 ENVREAD)
 
 
 class RuntimeEdit(BaseModel):

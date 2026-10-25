@@ -63,7 +63,7 @@ def _dsn():
     try:
         return config.dsn(f, env_first=False)
     except LookupError:
-        f.read_text()       # an absent .env raises, as before; a .env without the line is None
+        f.read_bytes()      # an absent .env raises, as before; a .env without the line is None
         return None
 
 

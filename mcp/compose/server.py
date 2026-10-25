@@ -49,7 +49,7 @@ _ENV = paths.estate(__file__) / ".env"
 try:
     DSN = config.dsn(_ENV, env_first=False)      # the file only, as before
 except LookupError:
-    _ENV.read_text()        # an absent .env still fails at import, as the read it replaces did; no line reads ""
+    _ENV.read_bytes()       # an absent .env still fails at import, as the read it replaces did; no line reads ""
     DSN = ""
 
 MAX_DEPTH = 5

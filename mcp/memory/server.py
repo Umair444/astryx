@@ -135,12 +135,8 @@ def _env(key: str) -> str | None:
     v = config.org_env(key)          # the environment on one org, exactly; the HOME's .env on several (plan-11324 S3a)
     if v:
         return v.strip()
-    env = paths.estate(__file__) / ".env"
-    if env.exists():
-        for line in env.read_text().splitlines():
-            if line.startswith(key + "="):
-                return line[len(key) + 1:].strip().strip('"').strip("'")
-    return None
+    v = config.read_env(paths.estate(__file__) / ".env").get(key)   # the ONE .env reader, per line (plan-10224 ENVREAD)
+    return None if v is None else v.strip('"').strip("'")
 
 
 # ── retrieval (page + one-hop = the exp-001 round-trip unit) ───────────────────────────

@@ -33,12 +33,7 @@ def env(key: str, default: str = "") -> str:
     v = config.org_env(key)
     if v:
         return v
-    f = paths.estate(__file__) / ".env"
-    if f.is_file():
-        for line in f.read_text().splitlines():
-            if line.startswith(key + "="):
-                return line.split("=", 1)[1].strip()
-    return default
+    return config.read_env(paths.estate(__file__) / ".env").get(key, default)   # the ONE .env reader (plan-10224)
 
 
 def cap_minutes() -> float:

@@ -39,12 +39,9 @@ def _body_url() -> str:
     v = config.org_env("GROWBOT_BODY_URL")       # the environment on one org, exactly; the HOME's .env on several
     if v:
         return v.rstrip("/")
-    try:
-        for line in (paths.estate(__file__) / ".env").read_text().splitlines():
-            if line.startswith("GROWBOT_BODY_URL="):
-                return line.split("=", 1)[1].strip().rstrip("/")
-    except OSError:
-        pass
+    v = config.read_env(paths.estate(__file__) / ".env").get("GROWBOT_BODY_URL")   # the ONE .env reader (plan-10224)
+    if v is not None:
+        return v.rstrip("/")
     return f"http://127.0.0.1:{orgs.port('astryx-growbot') or 8470}"     # the org's own body host (S3b 5/n)
 
 

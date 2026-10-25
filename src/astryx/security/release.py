@@ -156,11 +156,7 @@ def mac_key(env: dict | None = None) -> bytes:
     """The release key, from the process env or .env. Absent → Refused: no key, no door (fails closed)."""
     v = (env if env is not None else os.environ).get(MAC_KEY_ENV)
     if not v and env is None:
-        f = _estate() / ".env"
-        if f.exists():
-            for ln in f.read_text().splitlines():
-                if ln.startswith(MAC_KEY_ENV + "="):
-                    v = ln.split("=", 1)[1].strip()
+        v = config.read_env(_estate() / ".env").get(MAC_KEY_ENV, v)   # the ONE .env reader (plan-10224 ENVREAD)
     if not v or len(v) < 32:
         raise Refused(f"no {MAC_KEY_ENV} (or shorter than 32 chars): nothing can be released or stamped")
     return v.encode()

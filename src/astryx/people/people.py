@@ -81,12 +81,12 @@ def _salt() -> str:
         v = config.org_env(k)
         if v:
             return v
-    env = paths.estate(__file__) / ".env"
-    if env.is_file():
-        for line in env.read_text().splitlines():
-            for k in ("PEOPLE_SALT=", "ASTRYX_ORG="):
-                if line.startswith(k):
-                    return line.split("=", 1)[1].strip()
+    e = config.read_env(paths.estate(__file__) / ".env")    # the ONE .env reader, per line (plan-10224 ENVREAD)
+    salt, org = e.get("PEOPLE_SALT"), e.get("ASTRYX_ORG")
+    if salt is not None and org is not None:            # both: whichever the file names FIRST, as before
+        return salt if list(e).index("PEOPLE_SALT") < list(e).index("ASTRYX_ORG") else org
+    if salt is not None or org is not None:
+        return salt if salt is not None else org
     return "astryx-unsalted"        # last resort; scan() warns loudly when this is hit
 
 
@@ -228,12 +228,7 @@ def _org() -> str:
     v = config.org_env("ASTRYX_ORG")
     if v:
         return v
-    env = paths.estate(__file__) / ".env"
-    if env.is_file():
-        for line in env.read_text().splitlines():
-            if line.startswith("ASTRYX_ORG="):
-                return line.split("=", 1)[1].strip()
-    return "local"
+    return config.read_env(paths.estate(__file__) / ".env").get("ASTRYX_ORG", "local")   # the ONE reader (plan-10224)
 
 
 def _dsn() -> str | None:

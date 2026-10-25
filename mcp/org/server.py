@@ -39,7 +39,7 @@ def _dsn() -> str:
     try:
         return config.dsn(f, env_first=False)        # the file only, as before
     except LookupError:
-        f.read_text()       # an absent .env raises FileNotFoundError, as before
+        f.read_bytes()      # an absent .env raises FileNotFoundError, as before
         raise RuntimeError("ASTRYX_DSN not in .env") from None
 
 

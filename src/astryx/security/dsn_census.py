@@ -50,12 +50,9 @@ def passwordless(dsn: str) -> str:
 def dsns() -> dict[str, str]:
     out = {}
     for f in DSN_FILES:
-        if not f.exists():
-            continue
-        for line in f.read_text().splitlines():
-            k, _, v = line.partition("=")
-            if k.strip().endswith("_DSN") and "://" in v:
-                out[f"{f.parent.name}/{k.strip()}"] = passwordless(v.strip())
+        for k, v in config.read_env(f).items():         # the ONE .env reader, per line (plan-10224 ENVREAD)
+            if k.endswith("_DSN") and "://" in v:
+                out[f"{f.parent.name}/{k}"] = passwordless(v)
     return out
 
 
@@ -110,13 +107,7 @@ def runners() -> dict[str, dict]:
 
 
 def _node() -> str:
-    env = paths.estate(__file__) / ".env"
-    if not env.exists():                                  # a bare clone: PATH's node
-        return "node"
-    for line in env.read_text().splitlines():
-        if line.startswith("ASTRYX_NODE="):
-            return line.split("=", 1)[1].strip()
-    return "node"
+    return config.read_env(paths.estate(__file__) / ".env").get("ASTRYX_NODE", "node")   # a bare clone: PATH's node
 
 
 def clients(dsn: str) -> dict[str, list[str]]:

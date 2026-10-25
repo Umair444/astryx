@@ -34,8 +34,9 @@ REPO = repo_root(__file__)
 
 def load_env(path=None) -> dict:
     p = Path(path) if path else paths.estate(__file__) / ".env"
-    return {k.strip(): v.strip() for k, v in (l.split("=", 1)
-            for l in p.read_text().splitlines() if "=" in l and not l.lstrip().startswith("#"))}
+    if not p.exists():          # an absent .env raises, as the read it replaces did (read_env alone reads {})
+        raise FileNotFoundError(2, "No such file or directory", str(p))
+    return config.read_env(p)   # the ONE .env reader, per line (plan-10224 ENVREAD)
 
 
 def canonical(d):

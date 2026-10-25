@@ -43,9 +43,7 @@ from astryx import config, paths  # noqa: E402
 
 def _env() -> dict[str, str]:
     try:
-        return {k.strip(): v.strip() for k, v in
-                (l.split("=", 1) for l in (paths.estate(__file__) / ".env").read_text().splitlines()
-                 if "=" in l and not l.lstrip().startswith("#"))}
+        return config.read_env(paths.estate(__file__) / ".env")     # the ONE .env reader, per line (plan-10224 ENVREAD)
     except OSError:
         return {}
 

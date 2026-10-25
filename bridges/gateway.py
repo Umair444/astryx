@@ -84,12 +84,7 @@ def _env(key: str, default: str = "") -> str:
     v = config.org_env(key)                      # set, even to empty, beats the file (NAT = empty URL)
     if v is not None:
         return v
-    env = ESTATE / ".env"
-    if env.is_file():
-        for line in env.read_text().splitlines():
-            if line.startswith(key + "="):
-                return line.split("=", 1)[1].strip()
-    return default
+    return config.read_env(ESTATE / ".env").get(key, default)   # the ONE .env reader, per line (plan-10224 ENVREAD)
 
 
 @dataclass
