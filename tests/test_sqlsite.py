@@ -161,6 +161,14 @@ try:
                       X + "select 4": {"rung": "EXECUTED"},                          # unlisted: R-NEW
                       X + "select 5": {"rung": "RESPONSIVE"}}}                       # listed, climbed: R-STALE
     (tmp / "rep.json").write_text(json.dumps(stub))
+    rc, out = run("--ledger", str(ok_py), "src/astryx/x.py::", env={"SQLSITE_REPORT": str(tmp / "rep.json")})
+    arm("SEAL: a report with no seal (pre-plan-11908 D2) is NOT SEARCHED, rc 1, and no verdict line",
+        rc == 1 and "NOT SEARCHED: the report carries no seal" in out
+        and not [l for l in out.splitlines() if "x.py::f :: select " in l], (rc, out))
+    # the stub carries the seal the D2 writer makes for a dir with no traces: the arms below grade, not refuse
+    (tmp / "empty-traces").mkdir()
+    stub["seal"] = _astryx("security.sqlguard.evidence", "seal", str(tmp / "empty-traces"))
+    (tmp / "rep.json").write_text(json.dumps(stub))
     (tmp / "stub_ledger.json").write_text(json.dumps({"rows": {X + "select 3": {"debt": "EXECUTED"},
                                                                 X + "select 5": {"debt": "EXECUTED"}}}))
     rc, out = run("--ledger", str(ok_py), "src/astryx/x.py::",
