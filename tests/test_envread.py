@@ -100,6 +100,15 @@ def child(t: Path, code: str, *args, reg=None):
 NO_PG = ("import importlib.util, sys, types\nif importlib.util.find_spec('psycopg') is None:\n"
          "    m = sys.modules['psycopg'] = types.ModuleType('psycopg'); m.sql = sys.modules['psycopg.sql'] = "
          "types.ModuleType('psycopg.sql')\n")
+# federation/introduce imports httpx, psycopg and nacl at module level; the arm only reads its .env. Stubbed where the
+# interpreter has none, so E14 grades under the push gate's PY=python3 too (land 563a81f0: "No module named 'httpx'")
+NO_FED = NO_PG + ("_absent = [p for p in ('httpx', 'nacl') if importlib.util.find_spec(p) is None]\n"
+                  "if 'httpx' in _absent:\n    sys.modules['httpx'] = types.ModuleType('httpx')\n"
+                  "if 'nacl' in _absent:\n"
+                  "    for _n in ('nacl', 'nacl.encoding', 'nacl.signing'):\n"
+                  "        sys.modules[_n] = types.ModuleType(_n)\n"
+                  "    sys.modules['nacl.encoding'].HexEncoder = object\n"
+                  "    sys.modules['nacl.signing'].SigningKey = sys.modules['nacl.signing'].VerifyKey = object\n")
 SITES = [
     ("E1", "contrib/canopus_inbound.py", "import sys, types; sys.modules.setdefault('psycopg', types.ModuleType('psycopg'));"
      " import astryx.contrib.canopus_inbound as m; print(m._login_creds()[0])",   # psycopg is only main()'s: a stub where it's absent
@@ -129,7 +138,7 @@ SITES = [
      "import astryx.security.dsn_census as m; print(m._node(), sorted(m.dsns().values()))",
      "/fx/bin/node ['postgresql://nobody@127.0.0.1:1/astryx_fx_envread']"),
     ("E14", "federation/introduce.py",
-     "import astryx.federation.introduce as m, pathlib\ne = m.load_env()\n"
+     NO_FED + "import astryx.federation.introduce as m, pathlib\ne = m.load_env()\n"
      "try:\n    m.load_env(pathlib.Path.cwd() / 'absent.env'); gone = 'read'\nexcept FileNotFoundError:\n    gone = 'raised'\n"
      "print(e['ASTRYX_ORG'], e['HANDS_STEP_CAP'], 'NOTE' in e, gone)", "envread.fixture.test 7 False raised"),
 ]
