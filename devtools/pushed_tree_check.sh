@@ -121,10 +121,12 @@ if [ "$rc" -ne 0 ]; then
   # whatever the run line names (tests/, src/, devtools/; `-m a.b` is src/a/b.py). Until 10-25 this took only a
   # `nucleus/` word, and since goal 10224 moved every script no run line names one: the list said "could not map"
   # for every gate. Oracle: tests/test_ptc_who.py.
-  fails=$(python3 -I "$REPO/devtools/check_verdict.py" --failed "$LOG" 2>&1); frc=$?
+  # stderr goes to a file read only on a non-zero rc: folded into $fails, a warning on rc 0 became a "gate".
+  fails=$(python3 -I "$REPO/devtools/check_verdict.py" --failed "$LOG" 2>"$TMP/verdict.err"); frc=$?
   if [ "$frc" -ne 0 ]; then                # a parser that can't answer is said, never a vanished list (a1 #62937)
+    err=$(cat "$TMP/verdict.err" 2>/dev/null); err=${err:-$fails}
     echo
-    echo "WHO LAST TOUCHED: could not read the FAILED block (check_verdict.py rc $frc): ${fails##*$'\n'}"
+    echo "WHO LAST TOUCHED: could not read the FAILED block (check_verdict.py rc $frc): ${err##*$'\n'}"
     fails=""
   fi
   if [ -n "$fails" ]; then

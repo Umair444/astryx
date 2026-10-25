@@ -12,7 +12,7 @@ ENV = "PTC_SRC"
 
 MUTANTS = {
     "P1 the FAILED labels are the old sed range over the whole log (a gate's own ✗ is listed, a1 #62905)":
-        ('  fails=$(python3 -I "$REPO/devtools/check_verdict.py" --failed "$LOG" 2>&1); frc=$?',
+        ('  fails=$(python3 -I "$REPO/devtools/check_verdict.py" --failed "$LOG" 2>"$TMP/verdict.err"); frc=$?',
          "  fails=$(sed -n '/^FAILED (/,/^UNVERIFIED (/p' \"$LOG\" | sed -n 's/^  ✗ //p'); frc=$?"),
     "P2 only a nucleus/ word maps (every gate since goal 10224 reads 'could not map')":
         ("grep -m1 -E '^(tests|src|devtools|scripts|nucleus|bridges|observatory)/')", "grep -m1 '^nucleus/')"),
@@ -24,5 +24,7 @@ MUTANTS = {
     "P5 a FAILED entry is looked up only as is (check.sh's own TIMED OUT suffix reads 'could not map', a1 #62937)":
         ("        key=${key% (*}\n", "        break\n"),
     "P6 a parser that can't answer leaves no trace (the WHO list silently vanishes on a red run)":
-        ('    echo "WHO LAST TOUCHED: could not read the FAILED block (check_verdict.py rc $frc): ${fails##*$\'\\n\'}"\n', ""),
+        ('    echo "WHO LAST TOUCHED: could not read the FAILED block (check_verdict.py rc $frc): ${err##*$\'\\n\'}"\n', ""),
+    "P7 the parser's stderr is folded into the label list (a warning on rc 0 is listed as a failing gate)":
+        ('--failed "$LOG" 2>"$TMP/verdict.err"); frc=$?', '--failed "$LOG" 2>&1); frc=$?'),
 }

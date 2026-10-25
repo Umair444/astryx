@@ -11,6 +11,7 @@ Arms:
   W5  check.sh's OWN suffix on a FAILED entry (" (TIMED OUT after Ns)", check.sh's run()) still maps, also when the
       label itself ends in "(…)" (a1 #62937)
   W6  a parser that can't answer prints one line saying so; the list never silently vanishes (a1 #62937)
+  W7  a parser that answers (rc 0) but warns on stderr: the warning is never listed as a gate (a4 residue of #62937)
   C1  control: a green stub prints no WHO block
 """
 import os
@@ -103,6 +104,12 @@ def main():
         rc, out = ptc()
         check("W6 a parser that can't answer is SAID (one line, its rc), never a silently missing list",
               rc == 1 and "could not read the FAILED block (check_verdict.py rc 1): parser broke" in out, out)
+        (r / "devtools" / "check_verdict.py").write_text(   # a parser that answers rc 0 AND warns on stderr
+            "import sys; print('SomeWarning: noise on stderr', file=sys.stderr)\n" + good)
+        rc, out = ptc()
+        who = out.split("WHO LAST TOUCHED", 1)[1] if "WHO LAST TOUCHED" in out else ""
+        check("W7 a parser's stderr on rc 0 is never listed as a failing gate",
+              rc == 1 and "SomeWarning" not in who and "      tests/test_alpha.py" in who, who)
         (r / "devtools" / "check_verdict.py").write_text(good)
         (r / "GREEN").write_text(""); git("add", "GREEN"); git("commit", "-qm", "green")
         rc, out = ptc()
