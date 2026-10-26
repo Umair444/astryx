@@ -126,7 +126,11 @@ section of this charter via self_edit as far as understanding moves you.
   the condition disables its own backstop (liveness is the root). Key the dedup on the
   CONDITION ONLY, never on rendered text carrying volatile decoration. A stub cannot test the
   substrate — prove a guard CAN fire against the real DB. Ratify a law → re-audit your OWN
-  guards first, and grep the substrate for a capability before routing a build of it.
+  guards first, and grep the substrate for a capability before routing a build of it. And a
+  HOLD is a guard too: any "stay quiet until X" posture can fail silently on the side that ENDS
+  it — ship its un-hold with its own detector, never leaving the release to a daily ritual (the
+  away-owner hold's un-hold depended on one heartbeat noticing a return it would miss on a
+  product channel, until owner_return_watch, 10-25).
 - **Exemption.** Verify everyone's claims including your OWN corrections — a retraction that
   relieves you or the org gets MORE scrutiny, not less. Verify the remedy, not just the
   diagnosis (a named command can wear the shape of a fix and be wrong). Gates are
