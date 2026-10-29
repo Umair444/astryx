@@ -419,6 +419,24 @@ def process(conn, due: list[dict], now):
                   file=sys.stderr)
 
 
+def _next_fire(schedule, now, prev_next_fire):
+    """The slot STRICTLY AFTER the one just claimed. Floor the base at prev_next_fire so a tick that
+    STRADDLES a cron boundary can't re-arm to the slot it just fired (goal 18 double-fire): `now` is the
+    python wall clock captured at tick() start, BEFORE reconcile() widens the gap to the DB clock that the
+    `next_fire <= now()` claim uses — so at a boundary `now` can sit just BEFORE the slot the DB-now claimed
+    as due, and croniter(now) would hand back that same slot. max(now, prev_next_fire) makes the base at
+    least the claimed slot; get_next then always moves strictly past it. Normal ticks (now >= next_fire)
+    are unchanged.
+
+    prev_next_fire is normalized to server-local tz (.astimezone()) to match `now` = datetime.now().
+    astimezone(): croniter reads cron fields in the BASE datetime's own tz, and next_fire comes back from
+    the timestamptz column as UTC — so without this, a boundary-straddle re-arm on a non-UTC host would
+    shift a local-time cron by the UTC offset (the exact "3am wherever this org lives" promise tick()
+    makes), intermittently. Both paths now feed croniter a server-local base."""
+    base = max(now, prev_next_fire.astimezone()) if prev_next_fire else now
+    return croniter(schedule, base).get_next(datetime)
+
+
 def tick():
     # LOCAL time, tz-aware: cron fields mean the server's own wall clock, so a
     # "3am review" is 3am wherever this org lives — never UTC (owner decree
@@ -428,18 +446,18 @@ def tick():
         py_ok = reconcile(conn)
         with conn.transaction():
             due = conn.execute(
-                """SELECT id, agent, name, schedule, kind, check_src, state, note, premium
+                """SELECT id, agent, name, schedule, kind, check_src, state, note, premium, next_fire
                    FROM triggers WHERE enabled AND next_fire <= now()
                    ORDER BY next_fire FOR UPDATE SKIP LOCKED""").fetchall()
             cols = ["id", "agent", "name", "schedule", "kind", "check_src", "state",
-                    "note", "premium"]
+                    "note", "premium", "next_fire"]
             due = [dict(zip(cols, r)) for r in due]
             if not py_ok:              # astryx won't import: python checks stay unclaimed, clocks unadvanced (each
                 due = [t for t in due if t["kind"] != "python"]   # would crash on the same ImportError); they fire
                                                                    # on the first tick it imports again
             for t in due:                          # advance clocks inside the claim
                 try:
-                    nxt = croniter(t["schedule"], now).get_next(datetime)
+                    nxt = _next_fire(t["schedule"], now, t["next_fire"])
                 except Exception:
                     conn.execute("UPDATE triggers SET enabled=false WHERE id=%s", (t["id"],))
                     say(t["agent"], f"[trigger {t['name']}] bad schedule "
