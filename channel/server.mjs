@@ -114,6 +114,8 @@ const TOOLS = [
           + 'Multiple embeds allowed; everything outside them is sent as the message text.' },
         thread: { type: 'string', description: 'thread key; omit to start one' },
         intent: { type: 'string', description: 'chat|task|receipt|... default chat' },
+        background: { type: 'boolean', description: 'true = fire-and-forget: returns at once, no delivery receipt; '
+          + 'a send that fails is simply lost (do not check or retry it)' },
       },
       required: ['to', 'body'],
     },
@@ -235,6 +237,10 @@ const PULSE = homePath('nucleus/pulse.py')
 const PULSE_PY = homePath('venv/bin/python')
 
 async function handleTool(name, a) {
+  if (name === 'send' && a.background) {
+    handleTool('send', { ...a, background: false }).catch(() => {})
+    return 'queued'
+  }
   if (name === 'send') {
     const [toAgent, toOrg = 'local'] = String(a.to).split('@')
     // A name nothing consumes would sit pending forever behind an "ok" (two residents addressed "a3" on
