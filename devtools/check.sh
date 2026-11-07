@@ -381,6 +381,7 @@ run "land: ff only, clean tree, body sha, tests without agent identity, red roll
 # table, column by column, with types. Catches a column added inside an existing CREATE TABLE IF NOT EXISTS (a no-op
 # on a live host) and a hand DROP. Live read is read-only. Mutants: tests/mutants_schema_parity.py.
 run "schema parity: the live catalog has every table and column the schema files define" "$PY" tests/test_schema_parity.py
+run "schema current: every org of this host carries this schema.sql's stamp (a2 #65100 B3, plan-12214)" "$PY" tests/test_schema_current.py
 # people library 1a: relation details readable only by people_cleared, the network layer by the resident role;
 # the move's receipt; the writers' cutover. ACCIDENT-GRADE (a same-uid resident can read the superuser credential),
 # proven on scratch roles and DBs. Mutants: tests/mutants_people_gate.py, tests/mutants_people_move.py.
@@ -543,7 +544,7 @@ run "channel oracles: none stages server.mjs without its sibling modules (10-11)
 run "pushed_tree_check: the committed tree inherits no database or credential env (a4, 10-11)" "$PY" tests/test_pushed_tree_env.py
 run "pushed_tree_check: WHO LAST TOUCHED names each failing gate's script from check.sh's own block (a4, 10-25)" "$PY" tests/test_ptc_who.py
 run "trigger: the sql watch's memory and wake (new, while, renag, over cap, storm; a4 plan-12214)" "$PY" tests/test_trigger_watch.py
-run "trigger: migration, lagging schema, guarded read, one-shots, the tool's naive path (a4 plan-12214)" "$PY" tests/test_trigger_tool.py
+run "trigger: the expand, normalize, guarded read, one-shots, the tool's naive path (a4 plan-12214)" "$PY" tests/test_trigger_tool.py
 run "send: a malformed [[poll:]]/[[file:]] to a human surface is refused before the INSERT, in parity with the bridge grammar" node tests/test_send_embeds.mjs
 run "bridges: a [[file:]] embed is read only from the SENDER's roots (home, scratchpad, media/; tier/ to the owner alone), realpath + O_NOFOLLOW + /proc" "$PY" tests/test_embed_root.py
 run "bridges: every real [[file:]] ever sent to a human, through the root rule (933 /tmp + 19814 tier/-to-group + 2 home dot-path embeds refused)" "$PY" tests/test_embed_root.py --census

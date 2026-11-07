@@ -13,7 +13,8 @@ TIMEOUT = 300
 MUTANTS = {
     "the pulse ignores the tombstone (a python retire is undone within a minute)":
         ('            if tomb.exists():\n'
-         '                conn.execute("UPDATE triggers SET off_reason=\'retired\' WHERE agent=%s AND name=%s AND kind=\'python\'",\n'
+         '                conn.execute("UPDATE triggers SET off_reason=\'retired\', enabled=false WHERE agent=%s AND name=%s "\n'
+         '                             "AND kind=\'python\'",\n'
          '                             (agent, t["name"]))\n'
          '                retired_notice(conn, agent, t["name"], f.name, tomb)\n'
          '                seen.add((agent, t["name"]))\n'

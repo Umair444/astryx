@@ -120,6 +120,25 @@ def astryx_canary() -> str | None:
     return None if r.returncode == 0 else (r.stderr.strip()[-500:] or f"exit {r.returncode}")
 
 
+# A python row's reason after its file loads and defines it: what the file's return clears, and what it doesn't.
+_PY_REASON = """CASE WHEN triggers.off_reason IN ('vanished', 'retired') THEN NULL
+                           WHEN triggers.off_reason = 'bad_schedule' AND triggers.schedule <> %(s)s THEN NULL
+                           ELSE triggers.off_reason END"""
+
+
+def normalize(conn):
+    """plan-12214 slice 1 (a2 #65100 B4/B5): `enabled` alone decides firing, and writers from before the land (an
+    unrespawned resident's old set and rm tools, an old pulse) write it without off_reason. Each tick brings the
+    reason back to agree: on clears it; off with none gets the backfill's class. Polarity: this never turns a row on.
+    Goes at the contract land, when `enabled` is generated from off_reason."""
+    conn.execute("UPDATE triggers SET off_reason=NULL, off_why=NULL WHERE enabled AND off_reason IS NOT NULL")
+    conn.execute(f"UPDATE triggers SET off_reason={BACKFILL} WHERE NOT enabled AND off_reason IS NULL")
+
+
+BACKFILL = """CASE WHEN kind = 'python' THEN 'vanished' WHEN note ILIKE '%stand%down%' THEN 'standdown'
+                    ELSE 'unknown' END"""
+
+
 def reconcile(conn) -> bool:
     """Upsert every trigger file's registry; False (and nothing touched) when astryx itself can't be imported."""
     # THE CANARY. When `import astryx` fails, EVERY file below fails to load, and the loop would read each one as
@@ -166,7 +185,8 @@ def reconcile(conn) -> bool:
             # RETIRED (plan-9853 D2): the tool's tombstone, per (agent, name), the durable authority for a python row.
             tomb = ESTATE / "triggers" / agent / ".retired" / t["name"]
             if tomb.exists():
-                conn.execute("UPDATE triggers SET off_reason='retired' WHERE agent=%s AND name=%s AND kind='python'",
+                conn.execute("UPDATE triggers SET off_reason='retired', enabled=false WHERE agent=%s AND name=%s "
+                             "AND kind='python'",
                              (agent, t["name"]))
                 retired_notice(conn, agent, t["name"], f.name, tomb)
                 seen.add((agent, t["name"]))
@@ -177,17 +197,14 @@ def reconcile(conn) -> bool:
                    VALUES (%(a)s, %(n)s, %(s)s, 'python', %(src)s, %(note)s, now())
                    ON CONFLICT (agent, name) DO UPDATE
                      SET schedule = %(s)s, check_src = %(src)s, note = %(note)s,
-                         off_reason = CASE
-                           WHEN triggers.off_reason IN ('vanished', 'retired') THEN NULL
-                           WHEN triggers.off_reason = 'bad_schedule' AND triggers.schedule <> %(s)s THEN NULL
-                           ELSE triggers.off_reason END""",
+                         off_reason = {_ON}, enabled = ({_ON}) IS NULL""".format(_ON=_PY_REASON),
                 {"a": agent, "n": t["name"], "s": t["schedule"],
                  "src": f"triggers/{agent}/{f.name}::{t['name']}", "note": t["note"]})
     # a python trigger whose function vanished from its file, or whose file won't load, is off until it loads
     for a, n in conn.execute(
             "SELECT agent, name FROM triggers WHERE kind='python' AND enabled").fetchall():
         if (a, n) not in seen:
-            conn.execute("UPDATE triggers SET off_reason='vanished' WHERE agent=%s AND name=%s",
+            conn.execute("UPDATE triggers SET off_reason='vanished', enabled=false WHERE agent=%s AND name=%s",
                          (a, n))
     return True
 
@@ -459,8 +476,8 @@ def process(conn, due: list[dict], now, hot=_UNREAD):
             with conn.transaction():
                 # Retired FIRST, in this transaction: no row back means another claim already fired it. A one-shot's
                 # clock doesn't move at the claim (tick()), so a crash before here leaves it due, never a year away.
-                if once and not conn.execute("UPDATE triggers SET off_reason='fired' WHERE id=%s AND off_reason IS NULL "
-                                             "RETURNING id", (t["id"],)).fetchone():
+                if once and not conn.execute("UPDATE triggers SET off_reason='fired', enabled=false WHERE id=%s "
+                                             "AND enabled RETURNING id", (t["id"],)).fetchone():
                     continue
                 conn.execute("UPDATE triggers SET state=%s WHERE id=%s",
                              (json.dumps(state or {}), t["id"]))
@@ -478,7 +495,7 @@ def process(conn, due: list[dict], now, hot=_UNREAD):
                             conn.execute("UPDATE triggers SET state=%s WHERE id=%s",
                                          (json.dumps(t["_swallowed"]), t["id"]))
                     if t.get("_off") and "_swallowed" in t:
-                        conn.execute("UPDATE triggers SET off_reason=%s WHERE id=%s", (t["_off"], t["id"]))
+                        conn.execute("UPDATE triggers SET off_reason=%s, enabled=false WHERE id=%s", (t["_off"], t["id"]))
                 for w in wakes:
                     if held_here and costs_quota(w):
                         hold(conn, t, w)
@@ -495,28 +512,13 @@ def process(conn, due: list[dict], now, hot=_UNREAD):
                   file=sys.stderr)
 
 
-def schema_ready(conn) -> bool:
-    """Has this database had plan-12214's migration? The same predicate as the migration block in schema.sql."""
-    r = conn.execute("SELECT is_generated FROM information_schema.columns WHERE table_schema = current_schema() "
-                     "AND table_name = 'triggers' AND column_name = 'enabled'").fetchone()
-    return bool(r) and r[0] == "ALWAYS"
-
-
 def tick():
     # LOCAL time, tz-aware: cron fields mean the server's own wall clock, so a
     # "3am review" is 3am wherever this org lives — never UTC (owner decree
     # 2026-07-25; the night-review fired at 7-9am PKT for two days).
     now = datetime.now().astimezone()
     with psycopg.connect(_dsn(), autocommit=True) as conn:
-        if not schema_ready(conn):
-            # This code on a database that hasn't had plan-12214's migration: every org's pulse runs this one checkout,
-            # and land.sh applies no schema. The tick waits with every clock unmoved, so a due trigger fires late, never
-            # lost, and it says so where this org's seed reads it; the journal alone is how an org goes dark unseen.
-            say(CANARY_TO, "[trigger schema pending] this org's database hasn't had the migration its pulse's code needs, "
-                           "so NO trigger is evaluated; clocks are unmoved and they fire when it lands. Apply it: "
-                           "venv/bin/python devtools/apply_schema.py --all", conn, coalesce_key="schema pending")
-            print("pulse: schema pending, tick skipped", file=sys.stderr)
-            return
+        normalize(conn)
         py_ok = reconcile(conn)
         hot = pressure(conn)           # ONE gauge read per tick: the claim's shed and process() must agree (a4 #62398)
         with conn.transaction():
@@ -543,7 +545,7 @@ def tick():
                 try:
                     nxt = croniter(t["schedule"], now).get_next(datetime)
                 except Exception:
-                    conn.execute("UPDATE triggers SET off_reason='bad_schedule' WHERE id=%s", (t["id"],))
+                    conn.execute("UPDATE triggers SET off_reason='bad_schedule', enabled=false WHERE id=%s", (t["id"],))
                     say(t["agent"], f"[trigger {t['name']}] bad schedule "
                                     f"'{t['schedule']}', disabled", conn)
                     continue

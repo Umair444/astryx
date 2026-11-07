@@ -3,18 +3,20 @@
 and its stamped agent name on stdin, as JSON. rc 0 prints the reply, rc 1 the refusal, and every refusal states the fix.
 Cron and python files are judged by what the pulse itself uses (croniter, discover), so there is no second parser.
 
-A row's lifecycle. off_reason NULL = on; `enabled` is generated from it. Each reason names who sets it and what clears it:
+A row's lifecycle. off_reason NULL = on. Until the contract land `enabled` is still its own column and alone decides
+firing (a2 #65100 B4): every writer here sets both in one statement, and the pulse's normalize() brings the reason back
+in line after a writer from before the land. Each reason names who sets it and what clears it:
   held          disable                  enable
   standdown     seed's act, as SQL       seed's lift; enable refuses. The tool only touches its caller's own rows, so:
-                                           UPDATE triggers SET off_reason='standdown', off_why='<why>' WHERE off_reason IS NULL AND <rows>
-                                           UPDATE triggers SET off_reason=NULL, off_why=NULL WHERE off_reason='standdown' AND <rows>
+                                           UPDATE triggers SET off_reason='standdown', off_why='<why>', enabled=false WHERE enabled AND <rows>
+                                           UPDATE triggers SET off_reason=NULL, off_why=NULL, enabled=true WHERE off_reason='standdown' AND <rows>
                                          Never seed/tool_ship_watch: it is the census guard, and held off it goes dark.
   retired       retire (python: a tombstone too)   set, enable; reconcile, if the tombstone is gone
   fired         a `once` or `at` firing  a set changing the check, schedule or at
   vanished      reconcile: function absent or file won't load      reconcile, when it loads
   bad_schedule  tick                     a set with a good schedule; python: reconcile, on a changed decorator
   storm         the evaluator            enable
-  unknown       the migration            enable
+  unknown       normalize(): off, written by a writer from before the land       enable
 Grade: validation holds on this path only. Same-uid agents can write rows and files directly, and sometimes should.
 """
 if not __package__:  # run by path: the checkout root goes first on sys.path so `astryx` resolves
@@ -132,7 +134,14 @@ def _tomb_clear(agent: str, names) -> None:
 def _row(conn, agent: str, name: str) -> dict | None:
     cur = conn.execute("SELECT * FROM triggers WHERE agent=%s AND name=%s", (agent, name))
     r = cur.fetchone()
-    return dict(zip([d.name for d in cur.description], r)) if r else None
+    return _seen(dict(zip([d.name for d in cur.description], r))) if r else None
+
+
+def _seen(t: dict) -> dict:
+    """The reason as firing sees it: `enabled` decides, so a row a writer from before the land turned off or on reads
+    as it will behave, never as a stale reason says (until the pulse's normalize() catches up)."""
+    t["off_reason"] = None if t["enabled"] else (t["off_reason"] or "unknown")
+    return t
 
 
 def _kind_of(a: dict, row: dict | None) -> str:
@@ -260,15 +269,15 @@ def _set(conn, agent: str, a: dict) -> str:
     state = {} if state_reset else (row["state"] if row else {})
     next_fire = at or (_now() if check_changed or clock_changed else row["next_fire"])
     conn.execute(
-        """INSERT INTO triggers (agent, name, schedule, kind, check_src, note, next_fire, state, off_reason, watch, renag,
-                                 after_for, once)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """INSERT INTO triggers (agent, name, schedule, kind, check_src, note, next_fire, state, off_reason, enabled,
+                                 watch, renag, after_for, once)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
            ON CONFLICT (agent, name) DO UPDATE
              SET schedule=EXCLUDED.schedule, check_src=EXCLUDED.check_src, note=EXCLUDED.note,
-                 next_fire=EXCLUDED.next_fire, state=EXCLUDED.state, off_reason=EXCLUDED.off_reason,
+                 next_fire=EXCLUDED.next_fire, state=EXCLUDED.state, off_reason=EXCLUDED.off_reason, enabled=EXCLUDED.enabled,
                  off_why=CASE WHEN EXCLUDED.off_reason IS NULL THEN NULL ELSE triggers.off_why END,
                  watch=EXCLUDED.watch, renag=EXCLUDED.renag, after_for=EXCLUDED.after_for, once=EXCLUDED.once""",
-        (agent, name, schedule, kind, sql, note, next_fire, Jsonb(state), reason, on, renag, after, once))
+        (agent, name, schedule, kind, sql, note, next_fire, Jsonb(state), reason, reason is None, on, renag, after, once))
     _tomb_clear(agent, [name]) if NAME.match(name) else None
     return _echo(_row(conn, agent, name), count) + warn
 
@@ -305,7 +314,8 @@ def _echo(t: dict, count=None) -> str:
 
 def _show(conn, agent: str, a: dict) -> str:
     if not a.get("name"):
-        rows = conn.execute("SELECT name, kind, schedule, off_reason, last_fired, next_fire, note FROM triggers "
+        rows = conn.execute("SELECT name, kind, schedule, CASE WHEN enabled THEN NULL ELSE COALESCE(off_reason, "
+                            "'unknown') END, last_fired, next_fire, note FROM triggers "
                             "WHERE agent=%s ORDER BY name", (agent,)).fetchall()
         if not rows:
             return "(no triggers; nothing wakes you by itself. action=set creates one)"
@@ -349,7 +359,7 @@ def _enable(conn, agent: str, a: dict) -> str:
     if t["kind"] == "python":
         _tomb_clear(agent, [t["name"]])
     state = {k: v for k, v in (t["state"] or {}).items() if k != "churn"}
-    conn.execute("UPDATE triggers SET off_reason=NULL, off_why=NULL, state=%s WHERE id=%s", (Jsonb(state), t["id"]))
+    conn.execute("UPDATE triggers SET off_reason=NULL, off_why=NULL, enabled=true, state=%s WHERE id=%s", (Jsonb(state), t["id"]))
     return f"{t['name']} is on (was {r})"
 
 
@@ -366,7 +376,7 @@ def _disable(conn, agent: str, a: dict) -> str:
     t = _need(conn, agent, a)
     if t["off_reason"]:
         return f"{t['name']} is already off, reason {t['off_reason']}. Nothing changed"
-    conn.execute("UPDATE triggers SET off_reason='held', off_why=%s WHERE id=%s", (a.get("why") or None, t["id"]))
+    conn.execute("UPDATE triggers SET off_reason='held', off_why=%s, enabled=false WHERE id=%s", (a.get("why") or None, t["id"]))
     return f"{t['name']} is off (held). action=enable turns it back on, and the pulse won't"
 
 
@@ -378,7 +388,7 @@ def _retire(conn, agent: str, a: dict) -> str:
         tomb = _tombstone(agent, t["name"])
         tomb.parent.mkdir(parents=True, exist_ok=True)
         tomb.write_text(f"{_now().isoformat()} retired by the trigger tool\n")
-    conn.execute("UPDATE triggers SET off_reason='retired', off_why=%s WHERE id=%s", (a.get("why") or None, t["id"]))
+    conn.execute("UPDATE triggers SET off_reason='retired', off_why=%s, enabled=false WHERE id=%s", (a.get("why") or None, t["id"]))
     return f"{t['name']} retired. It stays off, and the row is kept. action=enable or set brings it back"
 
 

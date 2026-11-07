@@ -11,6 +11,12 @@ reached them with nothing to say so.
 No registry (one org): that org. Each org runs under its own env (orgenv.py exec), so its own DSN is the only one read.
 schema.sql is idempotent. Refuses a schema.sql that differs from HEAD, as init.sh does (a4 #41136). rc 0 all current,
 1 one lags or failed, 2 refused.
+
+Why not init.sh's schema node (a2 #65100 B2): on a host with a cog registry init.sh refuses every verb but doctor and
+units (its org-home guard; `orgs.py multi` is rc 0 here, read 11-08). Same bytes, same commit-first refusal, same stamp,
+written only after a clean apply; one difference, in its favour: the whole file is one implicit transaction, so a failed
+apply leaves that org's database as it was (measured on a fixture: a 1/0 after a CREATE TABLE and an ADD COLUMN left
+neither). tests/test_schema_current.py is the land's refusal while an org lags.
 """
 import hashlib
 import os
@@ -73,7 +79,7 @@ def main(argv) -> int:
     reg = orgs.load()
     if not reg:
         return _one(mode == "--all")
-    return _fan_out(reg["orgs"], one)
+    return _fan_out(reg, one)
 
 
 def _launch(key: str, o: dict, one: str) -> subprocess.CompletedProcess:

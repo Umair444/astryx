@@ -419,6 +419,7 @@ CREATE TABLE IF NOT EXISTS triggers (
   kind       text NOT NULL DEFAULT 'heartbeat',
   check_src  text,                        -- SQL text, or python file path
   state      jsonb NOT NULL DEFAULT '{}',
+  enabled    boolean NOT NULL DEFAULT true,
   last_eval  timestamptz,
   last_fired timestamptz,
   next_fire  timestamptz NOT NULL DEFAULT now(),
@@ -431,46 +432,20 @@ CREATE TABLE IF NOT EXISTS triggers (
   -- REPORTS premium=0 + negative ROI as rent, and premium is the SURVIVAL FLAG pulse.shed
   -- reads under quota scarcity. Not a budget: excluded from the S3 budget deprecation.
   premium    bigint NOT NULL DEFAULT 0,
-  -- plan-12214: every state a row can be in has one named reason. NULL = on, and `enabled` is DERIVED from it, so a
-  -- writer can't leave the two disagreeing. Reasons, setters and clearers: src/astryx/pulse/trigger_tool.py.
-  off_reason text CONSTRAINT triggers_off_reason_known CHECK (off_reason IN
-    ('held','standdown','retired','fired','vanished','bad_schedule','storm','unknown')),
-  off_why    text,
-  watch      text NOT NULL DEFAULT 'new' CONSTRAINT triggers_watch_known CHECK (watch IN ('new','while')),
-  renag      interval,
-  after_for  interval,
-  once       boolean NOT NULL DEFAULT false,
-  enabled    boolean NOT NULL GENERATED ALWAYS AS (off_reason IS NULL) STORED,
-  CONSTRAINT triggers_kind_known CHECK (kind IN ('heartbeat','sql','python')),
   UNIQUE (agent, name)
 );
--- An existing table: one transaction, backfilled BEFORE `enabled` goes, or every off row comes back on and a stood-down
--- fleet wakes. A python row's reason is reconcile's to derive (it reads the tombstones): `vanished` until then, and a
--- file that returns turns it back on. NOT `unknown`, which only `enable` clears, so a restored file would stay off.
-DO $$ BEGIN
-  IF (SELECT is_generated FROM information_schema.columns WHERE table_schema = current_schema()
-        AND table_name = 'triggers' AND column_name = 'enabled') = 'NEVER' THEN
-    ALTER TABLE triggers
-      ADD COLUMN off_reason text,
-      ADD COLUMN off_why text,
-      ADD COLUMN watch text NOT NULL DEFAULT 'new',
-      ADD COLUMN renag interval,
-      ADD COLUMN after_for interval,
-      ADD COLUMN once boolean NOT NULL DEFAULT false;
-    UPDATE triggers SET off_reason = CASE WHEN enabled THEN NULL
-                                          WHEN kind = 'python' THEN 'vanished'
-                                          WHEN note ILIKE '%stand%down%' THEN 'standdown'
-                                          ELSE 'unknown' END;
-    DROP INDEX IF EXISTS triggers_due;
-    ALTER TABLE triggers DROP COLUMN enabled;
-    ALTER TABLE triggers
-      ADD COLUMN enabled boolean NOT NULL GENERATED ALWAYS AS (off_reason IS NULL) STORED,
-      ADD CONSTRAINT triggers_off_reason_known CHECK (off_reason IN
-        ('held','standdown','retired','fired','vanished','bad_schedule','storm','unknown')),
-      ADD CONSTRAINT triggers_watch_known CHECK (watch IN ('new','while')),
-      ADD CONSTRAINT triggers_kind_known CHECK (kind IN ('heartbeat','sql','python'));
-  END IF;
-END $$;
+-- plan-12214 slice 1: every state a row can be in has one named reason, NULL = on. EXPAND only (a2 #65100 B1): the new
+-- columns are added beside `enabled`, which still alone decides firing, so code from before the land runs unchanged on
+-- this shape. Every new writer sets both in one statement; pulse.normalize() repairs an old writer's. The contract land
+-- makes `enabled` GENERATED from off_reason, with triggers_kind_known. Reasons, setters, clearers: pulse/trigger_tool.py.
+ALTER TABLE triggers ADD COLUMN IF NOT EXISTS off_reason text CONSTRAINT triggers_off_reason_known CHECK (off_reason IN
+  ('held','standdown','retired','fired','vanished','bad_schedule','storm','unknown'));
+ALTER TABLE triggers ADD COLUMN IF NOT EXISTS off_why text;
+ALTER TABLE triggers ADD COLUMN IF NOT EXISTS watch text NOT NULL DEFAULT 'new'
+  CONSTRAINT triggers_watch_known CHECK (watch IN ('new','while'));
+ALTER TABLE triggers ADD COLUMN IF NOT EXISTS renag interval;
+ALTER TABLE triggers ADD COLUMN IF NOT EXISTS after_for interval;
+ALTER TABLE triggers ADD COLUMN IF NOT EXISTS once boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS triggers_due ON triggers (next_fire) WHERE enabled;
 
 -- plan-12214 part 2: every job an agent can't do from a tool's schema alone, one row per problem. The unit is the JOB,

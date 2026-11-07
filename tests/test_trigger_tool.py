@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""plan-12214 slice 1, against a fixture database: the migration from the real table's shape, the pulse's one-shot and
+"""plan-12214 slice 1, against a fixture database: the expand from the real table's shape (a2 #65100), the pulse's one-shot and
 wake-acceptance rules, the guarded read, and the `trigger` tool's naive-path table. The design and its conditions:
 a4 #65062, #65072, #65074; a3 #65066, #65081; a1 #65068, #65079; a2 #65070, #65078. Pure watch logic is
 tests/test_trigger_watch.py. Needs a fixture database, else 77."""
@@ -60,17 +60,22 @@ CREATE TABLE triggers (
   next_fire timestamptz NOT NULL DEFAULT now(), note text, premium bigint NOT NULL DEFAULT 0, UNIQUE (agent, name));
 CREATE INDEX triggers_due ON triggers (next_fire) WHERE enabled;
 """
-OLD_RM = "UPDATE triggers SET enabled=false WHERE agent='a' AND name='h0'"
+OLD_RM = "UPDATE triggers SET enabled=false WHERE agent='a' AND name='h45'"         # an on row
 OLD_SET = ("INSERT INTO triggers (agent, name, schedule, kind, check_src, note, next_fire) "
            "VALUES ('a','brand_new','* * * * *','heartbeat',null,null, now()) ON CONFLICT (agent, name) DO UPDATE "
            "SET schedule='* * * * *', enabled=true, next_fire=now()")
+OLD_REENABLE = "UPDATE triggers SET enabled=true WHERE agent='a' AND name='h1'"     # an old trigger_set on a retired row
 
 
 def schema_block() -> str:
-    """The migration block, exactly as schema.sql carries it."""
-    s = (REPO / "src/astryx/sql/schema.sql").read_text()
-    a = s.index("DO $$ BEGIN\n  IF (SELECT is_generated")
-    return s[a:s.index("END $$;", a) + len("END $$;")] + "\nCREATE INDEX IF NOT EXISTS triggers_due ON triggers (next_fire) WHERE enabled;"
+    """schema.sql whole: the bytes the apply runs."""
+    return (REPO / "src/astryx/sql/schema.sql").read_text()
+
+
+def agree(c, label):
+    """a2 #65100 B4: every new writer sets both columns in one statement, so straight after it they agree."""
+    bad = c.execute("SELECT name, enabled, off_reason FROM triggers WHERE enabled <> (off_reason IS NULL)").fetchall()
+    check(f"AG {label}: enabled = (off_reason IS NULL) on every row, before any normalize", not bad, bad)
 
 
 def columns(c):
@@ -97,61 +102,50 @@ def migration(fx):
                           "('a',%s,'* * * * *',%s,%s,%s,%s)",
                           (f"{kind[0]}{i}", kind, i >= off, note, "select 1" if kind == "sql" else None))
         c.execute("INSERT INTO triggers (agent,name,schedule,note) VALUES ('a','on_with_note','* * * * *','mentions the stand-down')")
-        # This code on a database that lags (a sibling org, or the land's own window; a4 #65062's blocker)
-        c.execute("UPDATE triggers SET next_fire = now() - interval '1 minute' WHERE kind='heartbeat'")
-        clocks = c.execute("SELECT sum(extract(epoch from next_fire)) FROM triggers").fetchone()
-        pulse.tick()
-        said = c.execute("SELECT to_agent, body FROM messages WHERE body LIKE '[trigger schema pending]%'").fetchall()
-        check("B1 the new pulse on an old table: no trigger evaluated, every clock unmoved",
-              c.execute("SELECT sum(extract(epoch from next_fire)) FROM triggers").fetchone() == clocks
-              and c.execute("SELECT count(*) FROM triggers WHERE last_eval IS NOT NULL").fetchone()[0] == 0)
-        check("B2 ...and it says so to its seed, with the command, never journal-only",
-              len(said) == 1 and said[0][0] == "seed" and "apply_schema.py --all" in said[0][1], said)
-        pulse.tick()
-        check("B3 ...once while that wake is unread",
-              c.execute("SELECT count(*) FROM messages WHERE body LIKE '[trigger schema pending]%'").fetchone()[0] == 1)
-        c.execute("DELETE FROM messages")
+        before = c.execute("SELECT name, enabled, next_fire, state FROM triggers ORDER BY name").fetchall()
         c.execute(schema_block())
-        check("B4 once applied, the same predicate reads ready", pulse.schema_ready(c))
-        r = dict(c.execute("SELECT enabled, count(*) FROM triggers GROUP BY 1").fetchall())
-        check("M1 72+1 on and 59 off survive exactly (backfill before the drop, a2 #65070 BC-3)", r == {True: 73, False: 59}, r)
-        rs = dict(c.execute("SELECT off_reason, count(*) FROM triggers WHERE NOT enabled GROUP BY 1").fetchall())
-        check("M2 stood-down rows are standdown, python off rows are derived, the rest unknown (a3 BC-2)",
-              rs == {"standdown": 9, "vanished": 14, "unknown": 36}, rs)
-        check("M3 a row that is on stays on, whatever its note says",
-              c.execute("SELECT enabled FROM triggers WHERE name='on_with_note'").fetchone()[0] is True)
-        due = c.execute("SELECT indexdef FROM pg_indexes WHERE tablename='triggers' AND indexname='triggers_due'").fetchone()
-        check("M4 triggers_due is back, on the new column", due and "WHERE enabled" in due[0], due)
-        check("M5 the migrated table has the columns and constraints a fresh one has",
+        check("X1 the expand moves nothing: every row's enabled, clock and state as it was (a2 #65100 B1)",
+              c.execute("SELECT name, enabled, next_fire, state FROM triggers ORDER BY name").fetchall() == before)
+        check("X2 the expanded table has the columns and constraints a fresh one has",
               columns(c) == fresh_cols and constraints(c) == fresh_cons, (columns(c), constraints(c)))
-        check("M6 ...and in the same order (a2's open question: schema_parity reads a map, but a fresh and a migrated "
-              "table should still read alike)",
+        check("X3 ...and in the same order (schema_parity reads a map, but a fresh and an expanded table read alike)",
               [r[0] for r in c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='triggers' "
                                        "AND table_schema=current_schema() ORDER BY ordinal_position").fetchall()] == order)
-        before = c.execute("SELECT count(*) FILTER (WHERE enabled), count(*) FROM triggers").fetchone()
         c.execute(schema_block())
-        check("M7 a re-apply is a no-op", c.execute("SELECT count(*) FILTER (WHERE enabled), count(*) FROM triggers").fetchone() == before)
+        check("X4 a re-apply is a no-op", c.execute("SELECT name, enabled, next_fire, state FROM triggers ORDER BY name").fetchall() == before)
         for label, q in (("trigger_rm", OLD_RM), ("trigger_set, on a brand-new name", OLD_SET)):
             try:
                 c.execute(q)
-                check(f"M8 an old body's {label} is refused", False)
+                check(f"X5 an old body's {label} still works in the window (gap 2: today's behaviour)", True)
             except psycopg.Error as e:
-                check(f"M8 an old body's {label} is refused, with the error org-news quotes",
-                      "can only be updated to DEFAULT" in str(e), e)
-        try:
-            c.execute("INSERT INTO triggers (agent,name,schedule,kind) VALUES ('a','typo','* * * * *','cron')")
-            check("M9 a kind typo is refused at the table", False)
-        except psycopg.Error:
-            check("M9 a kind typo is refused at the table, from any writer", True)
+                check(f"X5 an old body's {label} still works in the window", False, e)
         c.execute("INSERT INTO triggers (agent,name,schedule,kind) VALUES ('a','spawned','0 9 * * *','heartbeat') "
                   "ON CONFLICT (agent,name) DO NOTHING")
-        check("M10 spawn.sh's insert still works", c.execute("SELECT enabled FROM triggers WHERE name='spawned'").fetchone()[0] is True)
+        check("X6 spawn.sh's insert still works", c.execute("SELECT enabled FROM triggers WHERE name='spawned'").fetchone()[0] is True)
+        # normalize (B5): the backfill's classes, from `enabled` alone; it never turns a row on
+        pulse.normalize(c)
+        r = dict(c.execute("SELECT enabled, count(*) FROM triggers GROUP BY 1").fetchall())
+        check("N1 73 on +brand_new +spawned -h45 (an old trigger_rm), 59+1 off: normalize turned nothing on or off",
+              r == {True: 74, False: 60}, r)
+        rs = dict(c.execute("SELECT off_reason, count(*) FROM triggers WHERE NOT enabled GROUP BY 1").fetchall())
+        check("N2 stood-down rows are standdown, python off rows vanished, the rest unknown (a2 B5, a3 BC-2)",
+              rs == {"standdown": 9, "vanished": 14, "unknown": 37}, rs)
+        check("N3 every on row has no reason; on_with_note stays on whatever its note says",
+              c.execute("SELECT count(*) FROM triggers WHERE enabled AND off_reason IS NOT NULL").fetchone()[0] == 0
+              and c.execute("SELECT enabled FROM triggers WHERE name='on_with_note'").fetchone()[0] is True)
+        c.execute("UPDATE triggers SET off_reason='retired', enabled=false WHERE name='h1'")
+        c.execute(OLD_REENABLE)
+        pulse.normalize(c)
+        check("N4 an old writer's re-enable of a retired row wins, and the reason clears: it fires, as today (gap 2)",
+              c.execute("SELECT enabled, off_reason FROM triggers WHERE name='h1'").fetchone() == (True, None))
         c.execute("DELETE FROM triggers")
 
 
 def guarded(c):
     for label, sql in (("multi-statement", "SELECT 1; CREATE TEMP TABLE g1(a int)"), ("DDL", "CREATE TEMP TABLE g2(a int)"),
-                       ("a write", "WITH d AS (DELETE FROM triggers RETURNING 1) SELECT * FROM d")):
+                       ("a write", "WITH d AS (DELETE FROM triggers RETURNING 1) SELECT * FROM d"),
+                       ("a sequence bump, which a write-free SELECT can do (the read-only survivor)",
+                        "SELECT nextval('triggers_id_seq')")):
         try:
             pulse.guarded_rows(c, sql)
             check(f"G1 {label} is refused", False)
@@ -278,6 +272,7 @@ def lifecycle(c, tree):
     tool.run("a", {"action": "disable", "name": "w", "why": "busy"}, c)
     t = tool._row(c, "a", "w")
     check("L1 disable holds, with its why", t["off_reason"] == "held" and t["off_why"] == "busy" and not t["enabled"], t)
+    agree(c, "held, by disable")
     set_ok(c, name="w", note="edited")
     check("L2 a note edit doesn't revive a disabled row (a2 #65055)", tool._row(c, "a", "w")["off_reason"] == "held")
     tool.run("a", {"action": "enable", "name": "w"}, c)
@@ -285,35 +280,48 @@ def lifecycle(c, tree):
     tool.run("a", {"action": "retire", "name": "w", "why": "done"}, c)
     t = tool._row(c, "a", "w")
     check("L4 retire keeps the row (spawn.sh would recreate a deleted one)", t and t["off_reason"] == "retired", t)
+    agree(c, "retired, by retire")
+    set_ok(c, name="w", note="back")
+    agree(c, "on, by set")
+    tool.run("a", {"action": "disable", "name": "w"}, c)
+    tool.run("a", {"action": "enable", "name": "w"}, c)
+    agree(c, "on, by enable")
+    tool.run("a", {"action": "retire", "name": "w"}, c)
     set_ok(c, name="w", note="back")
     check("L5 set revives retired", tool._row(c, "a", "w")["enabled"] is True)
     for reason in ("standdown", "fired", "vanished", "bad_schedule"):
-        c.execute("UPDATE triggers SET off_reason=%s WHERE name='w'", (reason,))
+        c.execute("UPDATE triggers SET off_reason=%s, enabled=false WHERE name='w'", (reason,))
         r = refused(c, "stays off", action="enable", name="w")
         check(f"L6 enable refuses {reason}, with the fix", r == "", r)
-    c.execute("UPDATE triggers SET off_reason='standdown' WHERE name='w'")
+    c.execute("UPDATE triggers SET off_reason='standdown', enabled=false WHERE name='w'")
     check("L7 show says who lifts a stand-down", "seed lifts" in tool.run("a", {"action": "show", "name": "w"}, c))
     r = refused(c, "stand-down", action="retire", name="w")
     check("L8 retire can't quietly end a stand-down hold", r == "", r)
-    c.execute("UPDATE triggers SET off_reason='fired' WHERE name='w'")
+    c.execute("UPDATE triggers SET off_reason='fired', enabled=false WHERE name='w'")
     set_ok(c, name="w", note="note only")
     check("L9 a note edit leaves a fired row off", tool._row(c, "a", "w")["off_reason"] == "fired")
     set_ok(c, name="w", sql="SELECT 2 AS id")
     check("L10 a set changing the check re-arms a fired row", tool._row(c, "a", "w")["enabled"] is True)
-    c.execute("UPDATE triggers SET off_reason='storm', state='{\"churn\":9}' WHERE name='w'")
+    c.execute("UPDATE triggers SET off_reason='storm', enabled=false, state='{\"churn\":9}' WHERE name='w'")
     tool.run("a", {"action": "enable", "name": "w"}, c)
     t = tool._row(c, "a", "w")
     check("L11 enable clears storm, and its count", t["enabled"] and "churn" not in t["state"], t)
-    c.execute("UPDATE triggers SET off_reason='bad_schedule', schedule='nonsense' WHERE name='w'")
+    c.execute("UPDATE triggers SET off_reason='bad_schedule', enabled=false, schedule='nonsense' WHERE name='w'")
     set_ok(c, name="w", schedule="0 9 * * *")
     check("L12 a good schedule clears bad_schedule", tool._row(c, "a", "w")["enabled"] is True)
     listing = tool.run("a", {"action": "show"}, c)
     check("L13 show lists yours, on and off", "w [sql]" in listing, listing)
     c.execute("INSERT INTO triggers (agent,name,schedule) VALUES ('other','theirs','0 9 * * *')")
     check("L14 another agent's row isn't yours", "theirs" not in listing and "no trigger named" in refused(c, "zzz", action="show", name="theirs"))
-    c.execute("UPDATE triggers SET off_reason='unknown' WHERE name='w'")
+    c.execute("UPDATE triggers SET off_reason='unknown', enabled=false WHERE name='w'")
     tool.run("a", {"action": "enable", "name": "w"}, c)
     check("L15 enable clears unknown", tool._row(c, "a", "w")["enabled"] is True)
+    c.execute("UPDATE triggers SET off_reason='held', enabled=true WHERE name='w'")     # an old set's re-enable
+    check("L16 a row a writer from before the land re-enabled reads on, as it fires (B4: `enabled` decides)",
+          tool.run("a", {"action": "enable", "name": "w"}, c) == "w is already on")
+    c.execute("UPDATE triggers SET off_reason=NULL, enabled=false WHERE name='w'")       # an old rm
+    check("L17 ...and one it turned off reads off, reason unknown, until normalize names it",
+          "unknown" in tool.run("a", {"action": "disable", "name": "w"}, c))
 
 
 PY_FILE = '''from astryx import trigger
@@ -354,9 +362,11 @@ def python_path(c, tree):
     check("Y6 drop= says you mean it", "zt_one" in r and "zt_two" not in r, r)
     pulse.reconcile(c)
     check("Y7 the dropped function's row goes off as vanished", tool._row(c, "a", "zt_two")["off_reason"] == "vanished")
+    agree(c, "vanished, by reconcile")
     set_ok(c, name="zt", code=PY_FILE)
     pulse.reconcile(c)
     check("Y8 a restored file turns it back on (a3 BC-2)", tool._row(c, "a", "zt_two")["enabled"] is True)
+    agree(c, "on, by reconcile's upsert")
     tool.run("a", {"action": "disable", "name": "zt_two"}, c)
     pulse.reconcile(c)
     check("Y9 a held python row stays held through reconcile: the stand-down gap", tool._row(c, "a", "zt_two")["off_reason"] == "held")
@@ -364,14 +374,18 @@ def python_path(c, tree):
     tool.run("a", {"action": "retire", "name": "zt_one"}, c)
     pulse.reconcile(c)
     check("Y10 a tombstone holds through reconcile", tool._row(c, "a", "zt_one")["off_reason"] == "retired")
+    c.execute("UPDATE triggers SET off_reason=NULL, enabled=true WHERE name='zt_one'")    # an old trigger_set's re-enable
+    pulse.reconcile(c)
+    check("Y10b ...and turns a row back off that a writer from before the land re-enabled", not tool._row(c, "a", "zt_one")["enabled"])
+    agree(c, "retired, by reconcile's tombstone")
     tool.run("a", {"action": "enable", "name": "zt_one"}, c)
     pulse.reconcile(c)
     check("Y11 enable clears the tombstone, so reconcile leaves it on", tool._row(c, "a", "zt_one")["enabled"] is True)
     (tree / "triggers/a/.retired").mkdir(exist_ok=True)
-    c.execute("UPDATE triggers SET off_reason='retired' WHERE name='zt_two'")
+    c.execute("UPDATE triggers SET off_reason='retired', enabled=false WHERE name='zt_two'")
     pulse.reconcile(c)
     check("Y12 a retired row whose tombstone is gone comes back: the tombstone is the authority", tool._row(c, "a", "zt_two")["enabled"] is True)
-    c.execute("UPDATE triggers SET off_reason='bad_schedule' WHERE name='zt_two'")
+    c.execute("UPDATE triggers SET off_reason='bad_schedule', enabled=false WHERE name='zt_two'")
     pulse.reconcile(c)
     check("Y13 reconcile leaves bad_schedule off while the decorator is unchanged", tool._row(c, "a", "zt_two")["off_reason"] == "bad_schedule")
     c.execute("UPDATE triggers SET schedule='nonsense' WHERE name='zt_two'")
@@ -382,6 +396,7 @@ def python_path(c, tree):
     (tree / "triggers/a/broken.py").write_text("def (\n")
     pulse.reconcile(c)
     check("Y15 a file that won't load: its row is vanished, not forgotten", tool._row(c, "a", "zt_b")["off_reason"] == "vanished")
+    agree(c, "vanished, by a file that won't load")
     (tree / "triggers/a/broken.py").unlink()
     (tree / "marker").write_text("")
     r = set_ok(c, name="rooted", code=TOP_LEVEL)
@@ -432,6 +447,7 @@ def tick_rules(c):
     _tick(c)
     t = row("dl")
     check("A4 the next tick fires it and retires it as fired", t["off_reason"] == "fired" and wakes("dl") == 1, (t["off_reason"], wakes("dl")))
+    agree(c, "fired, by a one-shot time wake")
     body = c.execute("SELECT body FROM messages WHERE body LIKE '[trigger dl]%'").fetchone()[0]
     check("A5 the wake says the note, the due time and how late (a1 BC-2)", "pay the rent" in body and "min late" in body and "due " in body, body)
     _tick(c)
@@ -441,13 +457,19 @@ def tick_rules(c):
     c.execute("INSERT INTO messages (from_agent,to_agent,intent,body) VALUES ('pulse','a','trigger','[trigger dl2] earlier, unread')")
     _tick(c)
     check("A7 an unread earlier wake never swallows a deadline", wakes("dl2") == 2)
-    c.execute("UPDATE triggers SET off_reason=NULL WHERE name='dl'")
-    c.execute("UPDATE triggers SET off_reason='held' WHERE name='dl2'")
+    c.execute("UPDATE triggers SET off_reason=NULL, enabled=true WHERE name='dl'")
+    c.execute("UPDATE triggers SET off_reason='held', enabled=false WHERE name='dl2'")
     t = dict(_due_row(c, "dl"))
-    c.execute("UPDATE triggers SET off_reason='fired' WHERE name='dl'")
+    c.execute("UPDATE triggers SET off_reason='fired', enabled=false WHERE name='dl'")
     n = wakes("dl")
     pulse.process(c, [t], tool._now(), hot=False)
     check("A8 a row another claim already fired doesn't fire twice", wakes("dl") == n, wakes("dl"))
+    c.execute("UPDATE triggers SET off_reason=NULL, enabled=true WHERE name='dl'")
+    t = dict(_due_row(c, "dl"))
+    c.execute("UPDATE triggers SET enabled=false WHERE name='dl'")        # an old trigger_rm: enabled only
+    pulse.process(c, [t], tool._now(), hot=False)
+    check("A9 the one-shot's retire reads `enabled`, never off_reason (a2 B4's trip): an old writer's off holds",
+          wakes("dl") == n, wakes("dl"))
 
     # F1h, through process()
     set_ok(c, name="fh", sql="SELECT 'a' AS id")
@@ -469,6 +491,7 @@ def tick_rules(c):
     _tick(c)
     t = row("os")
     check("C1 once on a watch fires and retires as fired, and its clock had advanced", t["off_reason"] == "fired" and wakes("os") == 1, t["off_reason"])
+    agree(c, "fired, by a one-shot watch")
     set_ok(c, name="oq", sql="SELECT 1 AS id WHERE false", once=True)
     _tick(c)
     t = row("oq")
@@ -494,6 +517,14 @@ def tick_rules(c):
         _tick(c)
     check("E1 storm turns the row off, and tells the author", row("st")["off_reason"] == "storm"
           and c.execute("SELECT count(*) FROM messages WHERE body LIKE '[trigger st] storm%'").fetchone()[0] == 1)
+    agree(c, "storm, by the evaluator")
+
+    # bad_schedule, by the claim
+    set_ok(c, name="bs", schedule="0 9 * * *")
+    c.execute("UPDATE triggers SET schedule='nonsense', next_fire=now() WHERE name='bs'")
+    _tick(c)
+    check("E2 a bad schedule at the claim turns the row off as bad_schedule", row("bs")["off_reason"] == "bad_schedule")
+    agree(c, "bad_schedule, by the claim")
 
     # shed: a late reminder stays visible
     set_ok(c, name="sh", at="2099-01-01T17:00", note="n")
@@ -509,14 +540,23 @@ def tick_rules(c):
     body = c.execute("SELECT body FROM messages WHERE body LIKE '[trigger sh]%'").fetchone()
     check("F3 gauge cools: it fires, naming both times", body and "due " in body[0] and "min late" in body[0], body)
 
+    # normalize runs in the tick
+    set_ok(c, name="nz", schedule="0 9 * * *")
+    c.execute("UPDATE triggers SET enabled=false WHERE name='nz'")                      # an old rm: enabled only
+    _tick(c)
+    check("I1 the tick normalizes: an old writer's off gets its class",
+          c.execute("SELECT off_reason FROM triggers WHERE name='nz'").fetchone()[0] == "unknown")
+
     # the stand-down lift
     set_ok(c, name="sd", schedule="0 9 * * *")
-    c.execute("UPDATE triggers SET off_reason='held' WHERE name='sd'")
+    c.execute("UPDATE triggers SET off_reason='held', enabled=false WHERE name='sd'")
     set_ok(c, name="sd2", schedule="0 9 * * *")
-    c.execute("UPDATE triggers SET off_reason='standdown', off_why='owner' WHERE name='sd2'")
-    c.execute("UPDATE triggers SET off_reason=NULL, off_why=NULL WHERE off_reason='standdown'")
+    c.execute("UPDATE triggers SET off_reason='standdown', enabled=false, off_why='owner' WHERE name='sd2'")
+    c.execute("UPDATE triggers SET off_reason=NULL, enabled=true, off_why=NULL WHERE off_reason='standdown'")
     check("G1 seed's lift revives stood-down rows and never an author's hold",
           row("sd2")["enabled"] is True and row("sd")["off_reason"] == "held")
+    check("G2 the lift and the act the tool's docstring gives seed are the ones this arm ran",
+          "enabled=true WHERE off_reason='standdown'" in tool.__doc__ and "enabled=false WHERE enabled AND" in tool.__doc__)
 
 
 def _due_row(c, name):
@@ -577,17 +617,26 @@ def apply_schema():
         rc, out = fan("--one-check")
         check("S1 a check names each org and says it lags", rc == 1 and "first: LAGGING" in out and "second: LAGGING" in out, out)
         with psycopg.connect(two["dsn"], autocommit=True) as c:
-            check("S2 ...and changes nothing", not pulse.schema_ready(c))
+            check("S2 ...and changes nothing", "off_reason" not in columns(c))
         rc, out = fan("--one-apply")
         check("S3 an org that fails is said, rc 1, and the org after it still gets its turn",
               rc == 1 and "first: applied" in out and "second: applied" in out and "broken: " in out and "(rc " in out, out)
         for fx in (one, two):
             with psycopg.connect(fx["dsn"], autocommit=True) as c:
-                check("S4 each org's own database is migrated and stamped",
-                      pulse.schema_ready(c) and c.execute("SELECT count(*) FROM schema_applied").fetchone()[0] == 1)
+                check("S4 each org's own database is expanded and stamped",
+                      "off_reason" in columns(c) and c.execute("SELECT count(*) FROM schema_applied").fetchone()[0] == 1)
         del dsns["broken"]
         rc, out = fan("--one-check")
         check("S5 a check then reads current", rc == 0 and "first: current" in out and "second: current" in out, out)
+    got, saved = [], (tool_.orgs.load, tool_._fan_out)
+    tool_.orgs.load = lambda: {"astryx": {"home": Path("/h/a"), "db": "astryx"}, "lab": {"home": Path("/h/l"), "db": "lab"}}
+    tool_._fan_out = lambda org_map, one: (got.append((sorted(org_map), one)), 0)[1]
+    try:
+        tool_.main(["--check"])
+    finally:
+        tool_.orgs.load, tool_._fan_out = saved
+    check("S6r main hands the registry's org map, as orgs.load returns it, to the fan-out (a KeyError here once read SKIP)",
+          got == [(["astryx", "lab"], "--one-check")], got)
 
 
 def surviving_names():

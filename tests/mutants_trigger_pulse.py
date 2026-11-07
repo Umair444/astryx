@@ -8,17 +8,33 @@ ENV = "PULSE_SRC"
 TIMEOUT = 400
 
 MUTANTS = {
-    "this code ticks on a lagging database":
-        ('        if not schema_ready(conn):\n', '        if False:\n'),
-    "a lagging database is journal-only":
-        ('            say(CANARY_TO, "[trigger schema pending]', '            (lambda *a, **k: 0)(CANARY_TO, "[trigger schema pending]'),
     "a one-shot's clock moves at the claim (a crash loses the deadline)":
         ('                if t["once"] and t["kind"] == "heartbeat":     # its evaluation', '                if False:     # its evaluation'),
     "a one-shot isn't retired":
-        ("""if once and not conn.execute("UPDATE triggers SET off_reason='fired' WHERE id=%s AND off_reason IS NULL \"""",
-         """if once and not conn.execute("UPDATE triggers SET note=note WHERE id=%s AND off_reason IS NULL \""""),
+        ("""if once and not conn.execute("UPDATE triggers SET off_reason='fired', enabled=false WHERE id=%s \"""",
+         """if once and not conn.execute("UPDATE triggers SET note=note WHERE id=%s \""""),
     "the double-fire guard is gone":
-        ("WHERE id=%s AND off_reason IS NULL \"\n", "WHERE id=%s \"\n"),
+        ('"AND enabled RETURNING id", (t["id"],)', '"RETURNING id", (t["id"],)'),
+    "the one-shot's retire reads off_reason, not enabled (a2 B4's trip)":
+        ('"AND enabled RETURNING id", (t["id"],)', '"AND off_reason IS NULL RETURNING id", (t["id"],)'),
+    "a fired one-shot's enabled is left on":
+        ("SET off_reason='fired', enabled=false WHERE id=%s", "SET off_reason='fired' WHERE id=%s"),
+    "storm leaves enabled on":
+        ('SET off_reason=%s, enabled=false WHERE id=%s", (t["_off"]', 'SET off_reason=%s WHERE id=%s", (t["_off"]'),
+    "bad_schedule leaves enabled on":
+        ("SET off_reason='bad_schedule', enabled=false WHERE id=%s", "SET off_reason='bad_schedule' WHERE id=%s"),
+    "the tombstone's retire leaves enabled on":
+        ("SET off_reason='retired', enabled=false WHERE agent=%s", "SET off_reason='retired' WHERE agent=%s"),
+    "reconcile's upsert leaves enabled behind its reason":
+        ("off_reason = {_ON}, enabled = ({_ON}) IS NULL", "off_reason = {_ON}"),
+    "normalize doesn't clear a re-enabled row's reason":
+        ('    conn.execute("UPDATE triggers SET off_reason=NULL, off_why=NULL WHERE enabled AND off_reason IS NOT NULL")\n', ''),
+    "normalize classes every off row unknown":
+        ("CASE WHEN kind = 'python' THEN 'vanished' WHEN note ILIKE", "CASE WHEN false THEN 'vanished' WHEN false AND note ILIKE"),
+    "normalize turns rows on":
+        ("WHERE NOT enabled AND off_reason IS NULL\")", "WHERE NOT enabled AND off_reason IS NULL\"); conn.execute(\"UPDATE triggers SET enabled=true WHERE off_reason='unknown'\")"),
+    "the tick never normalizes":
+        ("        normalize(conn)\n        py_ok = reconcile(conn)", "        py_ok = reconcile(conn)"),
     "an unread wake swallows a deadline":
         ('                    elif once:                     # a one-shot', '                    elif False:                     # a one-shot'),
     "a swallowed wake's rows are recorded as told (F1h)":
@@ -46,6 +62,8 @@ MUTANTS = {
     "reconcile clears bad_schedule on an unchanged decorator":
         ("AND triggers.schedule <> %(s)s THEN NULL", "THEN NULL"),
     "a vanished function's row stays on":
-        ("""conn.execute("UPDATE triggers SET off_reason='vanished' WHERE agent=%s AND name=%s",""",
+        ("""conn.execute("UPDATE triggers SET off_reason='vanished', enabled=false WHERE agent=%s AND name=%s",""",
          """conn.execute("UPDATE triggers SET note=note WHERE agent=%s AND name=%s","""),
+    "a vanished function's enabled is left on":
+        ("SET off_reason='vanished', enabled=false WHERE agent=%s", "SET off_reason='vanished' WHERE agent=%s"),
 }

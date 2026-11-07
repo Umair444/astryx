@@ -68,4 +68,14 @@ MUTANTS = {
         ('        if a.get("run"):\n', '        if True:\n'),
     "the template is missing from the refusal":
         ('A trigger file looks like:\\n{TEMPLATE}")\n        for t', 'A trigger file looks like nothing")\n        for t'),
+    "set leaves enabled behind its reason":
+        ("off_reason=EXCLUDED.off_reason, enabled=EXCLUDED.enabled,", "off_reason=EXCLUDED.off_reason,"),
+    "disable leaves enabled on":
+        ("SET off_reason='held', off_why=%s, enabled=false WHERE", "SET off_reason='held', off_why=%s WHERE"),
+    "retire leaves enabled on":
+        ("SET off_reason='retired', off_why=%s, enabled=false WHERE", "SET off_reason='retired', off_why=%s WHERE"),
+    "enable leaves enabled off":
+        ("SET off_reason=NULL, off_why=NULL, enabled=true, state=%s", "SET off_reason=NULL, off_why=NULL, state=%s"),
+    "the tool trusts a stale reason over `enabled`":
+        ('    t["off_reason"] = None if t["enabled"] else (t["off_reason"] or "unknown")\n', ''),
 }
