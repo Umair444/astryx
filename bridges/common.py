@@ -147,11 +147,13 @@ async def route_target(pool, thread: str, text: str, default: str) -> tuple[str,
            - an agent's message TO THE HUMAN (ANY intent: chat, poll, receipt, permission…),
              counted as its from_agent, or
            - the human's ANSWER to an agent (ANSWER_INTENTS: a poll vote), counted as its
-             to_agent. Free-text chat and reactions (which can point at any old message) don't
-             count.
-         A bare reply answers the most recent agent message the human saw: that's how people
-         reply in chat. The human's own free-text chats don't count, so a past @mention can't
-         pull the next plain reply away from whoever spoke to them since;
+             to_agent, or
+           - the human's own CHAT, counted as its to_agent: a bare follow-up goes on to whoever
+             the human last addressed, even before that agent has answered (owner 10-27:
+             "@b …" then "…" while b was still working went back to a).
+         Newest wins, so a past @mention still can't pull the next plain reply away from an
+         agent that spoke to the human since. Reactions (which can point at any old message)
+         don't count;
       3. otherwise `default` (the surface's own agent).
     "To the human" means to a non-agent: the registry of agents is the one authority, so
     'owner' and every wa-/dc-/tg- person qualify with no name typed here. That's also what
@@ -169,10 +171,10 @@ async def route_target(pool, thread: str, text: str, default: str) -> tuple[str,
         "SELECT from_org, from_agent, to_agent, intent FROM messages WHERE thread=$1 "
         "ORDER BY id DESC LIMIT 50", thread)
     for r in rows:                               # 2. newest first
-        if r["from_org"] != "local":             # the human's own message: only an ANSWER counts
-            if r["intent"] not in ANSWER_INTENTS:  # chat (a past @mention) / a reaction: no
+        if r["from_org"] != "local":             # the human's own message: an ANSWER, or a chat
+            if r["intent"] not in ANSWER_INTENTS and r["intent"] != "chat":  # a reaction: no
                 continue
-            who = r["to_agent"]
+            who = r["to_agent"]                  # whoever the human last addressed (owner 10-27)
         elif not agent_exists(r["to_agent"]):    # an agent speaking TO the human
             who = r["from_agent"]
         else:                                    # agent-to-agent: not the conversation

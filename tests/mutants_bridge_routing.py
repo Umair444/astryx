@@ -41,10 +41,10 @@ MUTANTS = {
         ('"SELECT from_org, from_agent, to_agent, intent FROM messages WHERE thread=$1 "',
          '"SELECT from_org, from_agent, to_agent, intent FROM messages WHERE $1::text IS NOT NULL "'),
 
-    # seed #33262: a mention must NOT stick. Counting ALL the human's inbound makes it stick.
-    "B7 every human inbound counts (a past @mention sticks)":
-        ('            if r["intent"] not in ANSWER_INTENTS:  # chat (a past @mention) / a reaction: no\n'
-         '                continue\n', ''),
+    # owner 10-27 (reverses seed #33262): the human's own chat counts, so "@b …" then a bare "…"
+    # stays with b even before b answers. Dropping chat from the count sends it back to a.
+    "B7 the human's own chat stops counting (a bare follow-up goes back to the earlier speaker)":
+        (' and r["intent"] != "chat":  # a reaction: no', ':  # a reaction: no'),
     # abstractor-2 #33265: a reaction to an OLD message steals the next reply.
     "B8 reactions count as answers":
         ('ANSWER_INTENTS = frozenset({"poll"})', 'ANSWER_INTENTS = frozenset({"poll", "reaction"})'),

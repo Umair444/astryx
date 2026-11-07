@@ -190,8 +190,8 @@ try:
           who["r2"])
     check("R3 control: a fresh thread → the surface default (seed)", who["r3"] == "seed", who["r3"])
     check("R4 an @mention wins over the thread", who["r4"] == "forge", who["r4"])
-    check("R5 a past @mention does NOT stick: plain reply → canopus (the last agent he saw)",
-          who["r5"] == "canopus", who["r5"])
+    check("R5 a newer @mention sticks: canopus spoke, then @forge → plain reply → forge (owner 10-27)",
+          who["r5"] == "forge", who["r5"])
     check("R6 a newest non-agent sender is skipped → the next real agent", who["r6"] == "canopus",
           who["r6"])
     check("R7 another thread's speaker never leaks in", who["r7"] == "canopus", who["r7"])
@@ -199,8 +199,8 @@ try:
           who["r15"] == "readycash", who["r15"])
     check("R13 seed's case: @forge, forge silent, canopus posts to the owner → bare reply → canopus",
           who["r13"] == "canopus", who["r13"])
-    check("R14 only the human's own chats on the thread → the default (a mention doesn't stick)",
-          who["r14"] == "seed", who["r14"])
+    check("R14 only the human's own chat (@forge) on the thread → forge (whom he last addressed)",
+          who["r14"] == "forge", who["r14"])
     check("R9 an agent-to-agent handoff (seed → canopus) doesn't steal the reply → canopus",
           who["r9"] == "canopus", who["r9"])
     check("R10 a receipt to the human counts as the agent speaking → canopus", who["r10"] == "canopus",
@@ -224,8 +224,8 @@ try:
             await conn.close()
 
     r8b = asyncio.run(follow_up())[0]
-    check("R8 an UNADDRESSED follow-up after the mention goes to readycash, the last agent the "
-          "owner SAW (a mention routes only its own message)", r8b == "readycash", r8b)
+    check("R8 an UNADDRESSED follow-up after @insurance, before insurance answers, goes to insurance, "
+          "not readycash who spoke earlier (owner 10-27: '@b …' then '…' went back to a)", r8b == "insurance", r8b)
     db.close()
 finally:
     _fx.__exit__(None, None, None)

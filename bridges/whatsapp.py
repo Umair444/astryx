@@ -469,7 +469,8 @@ async def worker(agent: str):
     job["busy"] = True
     try:
         while job is jobs.get(agent) and job["latest"] != job["sent"]:
-            line = job["latest"]
+            raw = job["latest"]
+            line = signed(agent, raw)
             await typing(job["chat"])
             try:
                 if job["ph_id"] is None:
@@ -484,12 +485,19 @@ async def worker(agent: str):
                                 "--id", job["ph_id"], "--message", line)
             except Exception:
                 pass
-            job["sent"] = line
+            job["sent"] = raw
     finally:
         job["busy"] = False
 
 
 # ------------------------------------------------------------------- outbound
+def signed(agent: str, text: str) -> str:
+    """WhatsApp shows one number for every agent, so the text names its sender: a bold
+    label line, then the body. Idempotent (an edited bubble is never signed twice)."""
+    label = f"▸ *{agent}*\n"
+    return text if not text or text.startswith(label) else label + text
+
+
 _skipped_threads: set = set()
 
 # The owner doorbell's HOME surface, pinned by NAME (forge, plan-2457 msg 13041). The
@@ -603,6 +611,7 @@ async def deliver(row):
     agent = row["from_agent"]
     text, files = split_files(stamped[1] if stamped else row["body"])
     text, polls = split_polls(text, max_options=12)
+    text = signed(agent, text)
     out = Outcome()
     try:
         job = jobs.pop(agent, None)

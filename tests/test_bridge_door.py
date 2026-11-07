@@ -61,6 +61,11 @@ BR = {ch: _load(f"bridges.{ch}", os.environ.get(SEAM[ch]) or str(REPO / "bridges
 
 fails = []
 SENT = "S1C-SENTINEL-private-body-7a31"
+
+
+def said(ch, frm, text):
+    """What the human sees: WhatsApp shows one number for every agent, so its bridge signs the text."""
+    return f"\u25b8 *{frm}*\n{text}" if ch == "whatsapp" else text
 KEY = "d" * 40
 
 
@@ -241,7 +246,7 @@ async def bridge_arms():
         got = await w.deliver(r)
         check(f"{ch}: the same row to a DECLARED ORG ROUTE is delivered and carries the census mark",
               got["status"] == "delivered" and got["delivery"].get("door") == "org-unstamped"
-              and (org[ch][1], "org text") in w.sends, repr((got, w.sends)))
+              and (org[ch][1], said(ch, "seed", "org text")) in w.sends, repr((got, w.sends)))
         if ch in tiered:
             r = plain_row(tiered[ch])
             w = World(ch, [r])
@@ -253,7 +258,7 @@ async def bridge_arms():
             w = World(ch, [s])
             got = await w.deliver(s)
             check(f"{ch}: a STAMPED row reaches its stamp's chat (never its thread's) with the resolved body",
-                  got["status"] == "delivered" and w.sends == [(str(route["chat"]), SENT)], repr((got, w.sends)))
+                  got["status"] == "delivered" and w.sends == [(str(route["chat"]), said(ch, "member", SENT))], repr((got, w.sends)))
             check(f"{ch}: …its receipt carries the marker, names no chat, keeps the release record, holds no body",
                   got["delivery"].get("rendered") == s["body"] and got["delivery"].get("handle") == f"{ch}:release"
                   and got["delivery"].get("door") == "released" and "stamp" in got["delivery"].get("release", {})
@@ -293,7 +298,7 @@ async def bridge_arms():
             got = await w.deliver(r)
             check(f"an unthreaded owner row from {frm!r} (thread {th!r}) lands on a DECLARED route and is marked",
                   got["status"] == "delivered" and got["delivery"].get("door") == "org-unstamped"
-                  and (chat, "org text") in w.sends, repr((got, w.sends)))
+                  and (chat, said("whatsapp", frm, "org text")) in w.sends, repr((got, w.sends)))
     # discord routes are channels (groups with no live membership read): no audience releases to one
     s = stamped_row("whatsapp", WA_TIER)
     rel = json.loads(s["delivery"])["release"]
@@ -445,7 +450,7 @@ try:
                     row_text = c.execute("SELECT m::text FROM messages m WHERE id=%s", (i,)).fetchone()[0]
                     check(f"{ch} (db): send_row's stamped row is delivered to its stamp's chat; the receipt MERGED "
                           f"into the release record; no body and no chat id in the row",
-                          st == "delivered" and w.sends == [(str(route["chat"]), SENT)] and "stamp" in d.get("release", {})
+                          st == "delivered" and w.sends == [(str(route["chat"]), said(ch, "member", SENT))] and "stamp" in d.get("release", {})
                           and d.get("door") == "released" and SENT not in row_text and str(route["chat"]) not in row_text,
                           (st, d, w.sends))
                 # a released send that FAILS: the platform's own error text (a CLI's stderr, an API description)
