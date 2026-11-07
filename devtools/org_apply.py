@@ -5,8 +5,8 @@ Every org's pulse runs one checkout, and land.sh applies no schema: its database
 schema node covers one org when somebody runs it. A cog's other orgs have no such step, so code that needs a new shape
 reached them with nothing to say so.
 
-    venv/bin/python devtools/apply_schema.py --check   each org's stamp against schema.sql, read-only; rc 1 if one lags
-    venv/bin/python devtools/apply_schema.py --all     apply where it differs, the bytes init.sh applies; stamp after
+    venv/bin/python devtools/org_apply.py --check   each org's stamp against schema.sql, read-only; rc 1 if one lags
+    venv/bin/python devtools/org_apply.py --all     apply where it differs, the bytes init.sh applies; stamp after
 
 No registry (one org): that org. Each org runs under its own env (orgenv.py exec), so its own DSN is the only one read.
 schema.sql is idempotent. Refuses a schema.sql that differs from HEAD, as init.sh does (a4 #41136). rc 0 all current,

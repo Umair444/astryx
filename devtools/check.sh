@@ -381,7 +381,7 @@ run "land: ff only, clean tree, body sha, tests without agent identity, red roll
 # table, column by column, with types. Catches a column added inside an existing CREATE TABLE IF NOT EXISTS (a no-op
 # on a live host) and a hand DROP. Live read is read-only. Mutants: tests/mutants_schema_parity.py.
 run "schema parity: the live catalog has every table and column the schema files define" "$PY" tests/test_schema_parity.py
-run "schema current: every org of this host carries this schema.sql's stamp (a2 #65100 B3, plan-12214)" "$PY" tests/test_schema_current.py
+run "schema current: every org of this host carries this schema.sql's stamp (a2 msg 65100 B3, plan-12214)" "$PY" tests/test_schema_current.py
 # people library 1a: relation details readable only by people_cleared, the network layer by the resident role;
 # the move's receipt; the writers' cutover. ACCIDENT-GRADE (a same-uid resident can read the superuser credential),
 # proven on scratch roles and DBs. Mutants: tests/mutants_people_gate.py, tests/mutants_people_move.py.

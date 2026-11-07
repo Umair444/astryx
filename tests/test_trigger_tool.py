@@ -590,14 +590,14 @@ def _tick(c):
     pulse.tick()
 
 
-def apply_schema():
-    """devtools/apply_schema.py over several orgs, each lagging: a4 #65062's land blocker. Fixture database names can't
+def org_apply():
+    """devtools/org_apply.py over several orgs, each lagging: a4 #65062's land blocker. Fixture database names can't
     enter a real registry, so the launch is the arm's; what runs in each org is the real --one modes."""
     import importlib.util
-    spec = importlib.util.spec_from_file_location("apply_schema", REPO / "devtools" / "apply_schema.py")
+    spec = importlib.util.spec_from_file_location("org_apply", REPO / "devtools" / "org_apply.py")
     tool_ = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(tool_)
-    script = str(REPO / "devtools" / "apply_schema.py")
+    script = str(REPO / "devtools" / "org_apply.py")
     with fixture_db() as one, fixture_db() as two:
         dsns = {"first": one["dsn"], "broken": "postgresql://nobody@127.0.0.1:1/none", "second": two["dsn"]}
         for fx in (one, two):
@@ -681,7 +681,7 @@ def main() -> int:
                 python_path(c, tree)
                 clean()
                 tick_rules(c)
-            apply_schema()
+            org_apply()
             surviving_names()
     except FixtureUnavailable as e:
         shutil.rmtree(tree, ignore_errors=True)
