@@ -542,7 +542,8 @@ run "the Room's SQL on a fixture schema: voiceprints, the router, the ear's spea
 run "channel oracles: none stages server.mjs without its sibling modules (10-11)" "$PY" tests/test_stage_channel_users.py
 run "pushed_tree_check: the committed tree inherits no database or credential env (a4, 10-11)" "$PY" tests/test_pushed_tree_env.py
 run "pushed_tree_check: WHO LAST TOUCHED names each failing gate's script from check.sh's own block (a4, 10-25)" "$PY" tests/test_ptc_who.py
-run "trigger_set: a python trigger name can never write outside triggers/<agent>/ (a2 #45063)" node tests/test_trigger_name.mjs
+run "trigger: the sql watch's memory and wake (new, while, renag, over cap, storm; a4 plan-12214)" "$PY" tests/test_trigger_watch.py
+run "trigger: migration, lagging schema, guarded read, one-shots, the tool's naive path (a4 plan-12214)" "$PY" tests/test_trigger_tool.py
 run "send: a malformed [[poll:]]/[[file:]] to a human surface is refused before the INSERT, in parity with the bridge grammar" node tests/test_send_embeds.mjs
 run "bridges: a [[file:]] embed is read only from the SENDER's roots (home, scratchpad, media/; tier/ to the owner alone), realpath + O_NOFOLLOW + /proc" "$PY" tests/test_embed_root.py
 run "bridges: every real [[file:]] ever sent to a human, through the root rule (933 /tmp + 19814 tier/-to-group + 2 home dot-path embeds refused)" "$PY" tests/test_embed_root.py --census
@@ -767,9 +768,9 @@ run "no undefined name in any tracked .py (pyflakes; a deleted class under a laz
 # ...and the half of that family pyflakes can't see: a name bound somewhere, but not yet when an import-time annotation
 # runs (a later class, a class naming itself, a TYPE_CHECKING-only import). Fixtures checked against a real 3.12.
 run "no import-time annotation names a not-yet-bound name (3.12 NameError, hidden by lazy 3.14)" "$PY" tests/test_eager_annotations.py
-# plan-9853 D2: a python trigger's retirement is trigger_rm's per-(agent, name) TOMBSTONE, which the pulse honours (it
-# used to re-enable the row within a minute); trigger_set clears it. Runs tests/test_tombstone.mjs (the wiring) too.
-run "trigger tombstone: trigger_rm retires a python trigger for good, per agent and name" "$PY" tests/test_trigger_tombstone.py
+# plan-9853 D2: a python trigger's retirement is the trigger tool's retire's per-(agent, name) TOMBSTONE, which the pulse honours (it
+# used to re-enable the row within a minute); the trigger tool clears it. 
+run "trigger tombstone: the trigger tool's retire retires a python trigger for good, per agent and name" "$PY" tests/test_trigger_tombstone.py
 run "fixture gates with no database: 77 on a committed-only tree, 1 on a live host, never a traceback (seed 54113)" "$PY" tests/test_fixture_unavailable.py
 # plan-9853 D1/D3/D4: "is trigger N installed?" is ONE helper modelling the pulse (checked against discover()), and
 # every init.sh trigger install asks it by NAME

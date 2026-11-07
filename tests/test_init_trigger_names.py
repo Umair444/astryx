@@ -6,7 +6,7 @@ trees (tests/trigger_tree) against a fixture database, as the reconciler runs a 
   N1 THE GOAL: an owner's copy under ANOTHER agent and filename → ccompact reads green, nothing added under seed;
      also in the submodule form (`from astryx.pulse.shipped_triggers import context_compact`, a2 R2)
   N2 nothing anywhere → the node installs seed's shim, then reads green; a second pass adds nothing (convergence)
-  N3 seed's tombstone (trigger_rm) → green, nothing added
+  N3 seed's tombstone (the trigger tool's retire) → green, nothing added
   N4 a3 BC-1: ANOTHER agent's tombstoned copy → seed's install still happens, once
   N5 a LEGACY row (a python row no file defines) → green and nothing installed; doctor names it, DEFERRED, with both exits
   N10 the org backup (seed #61526): no backup trigger at all → doctor ✗ for both names; the org's own pair → ✓; one
@@ -124,14 +124,14 @@ try:
                  a2 == "0" and sorted(p.relative_to(t) for p in (t / "triggers").rglob("*")) == before, f"chk={a2}")
             # N3 seed's tombstone
             t = tree()
-            put(t, "triggers/seed/.retired/context_compact", "retired by trigger_rm\n")
+            put(t, "triggers/seed/.retired/context_compact", "retired by the trigger tool\n")
             a, _ = node(t, "ccompact", DSN)
             want("N3 seed's tombstone → green, nothing added", a == "0" and not (t / SEED / "context_compact.py").exists(),
                  f"chk={a}")
             # N4 another agent's tombstoned copy
             t = tree()
             put(t, "triggers/memory/context_compact.py", CC)
-            put(t, "triggers/memory/.retired/context_compact", "retired by trigger_rm\n")
+            put(t, "triggers/memory/.retired/context_compact", "retired by the trigger tool\n")
             a, b = node(t, "ccompact", DSN)
             want("N4 another agent's TOMBSTONED copy → seed's install still happens, once (a3 BC-1)",
                  a != "0" and b == "0" and (t / SEED / "context_compact.py").exists(), f"chk={a},{b}")
@@ -146,7 +146,7 @@ try:
             d = doctor(t, DSN)
             line = next((ln for ln in d.splitlines() if "pr_review" in ln), "")
             want("N5 ...doctor names it: DEFERRED, the agent, and both exits",
-                 line.startswith("WARN") and "DEFERRED" in line and "ghost" in line and "trigger_rm pr_review" in line
+                 line.startswith("WARN") and "DEFERRED" in line and "ghost" in line and "trigger action=retire name=pr_review" in line
                  and "./init.sh --reinstall pr_review" in line, line[:200])
             # N6 --reinstall
             rc, out = bash(t, "reinstall_trigger pr_review", DSN)
@@ -155,7 +155,7 @@ try:
                  out[-200:])
             c.execute("DELETE FROM triggers")
             t = tree()
-            put(t, "triggers/seed/.retired/context_compact", "retired by trigger_rm\n")
+            put(t, "triggers/seed/.retired/context_compact", "retired by the trigger tool\n")
             rc, out = bash(t, "reinstall_trigger context_compact", DSN)
             want("N6 --reinstall on seed's tombstone CLEARS it and installs (a3 BC-2)",
                  rc == 0 and not (t / "triggers/seed/.retired/context_compact").exists()
@@ -182,7 +182,7 @@ try:
             c.execute("DELETE FROM triggers")
             t = tree()
             put(t, "triggers/steward/review.py", trigger_tree.shim("pr_review"))
-            put(t, "triggers/seed/.retired/windows_idle_stop", "retired by trigger_rm\n")
+            put(t, "triggers/seed/.retired/windows_idle_stop", "retired by the trigger tool\n")
             d = doctor(t, DSN)
             ln = {n: next((x for x in d.splitlines() if f"trigger {n}" in x), "")
                   for n in ("context_compact", "pr_review", "phone_resume_sweep", "windows_idle_stop")}
@@ -221,11 +221,11 @@ try:
                  ln.startswith("WARN") and "run_backup" in ln and "installed" in ln and "beside it" in ln
                  and "not used on this host" not in ln, ln)
             t = tree()
-            put(t, "triggers/seed/.retired/run_backup", "retired by trigger_rm\n")
+            put(t, "triggers/seed/.retired/run_backup", "retired by the trigger tool\n")
             ln = bline(doctor(t, DSN), "run_restore_verify")
             want("N10 ...run_backup RETIRED at seed: run_restore_verify is a WARN naming the retirement and the pair's "
                  "reinstall", ln.startswith("WARN") and "retired" in ln and "--reinstall run_restore_verify" in ln, ln)
-            put(t, "triggers/seed/.retired/run_restore_verify", "retired by trigger_rm\n")
+            put(t, "triggers/seed/.retired/run_restore_verify", "retired by the trigger tool\n")
             rc, out = bash(t, "reinstall_trigger run_backup", DSN)
             want("N10 ...both retired: ONE `--reinstall run_backup` clears BOTH tombstones and installs the pair's shim",
                  not (t / SEED / ".retired" / "run_backup").exists()

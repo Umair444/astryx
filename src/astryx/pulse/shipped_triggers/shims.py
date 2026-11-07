@@ -19,14 +19,14 @@ SHIMS: dict[str, str] = {
     'context_compact': '''"""Live install of the shipped context-compact trigger. The logic lives TRACKED in
 src/astryx/pulse/shipped_triggers/context_compact.py (one writer; this shim only deploys it).
 Installed by init.sh at founding; the org may replace it with an agent-authored one.
-To retire it: `trigger_rm context_compact` (a tombstone the pulse honours). Deleting this file
+To retire it: `trigger action=retire name=context_compact` (a tombstone the pulse honours). Deleting this file
 does NOT retire it: init.sh would install it again."""
 from astryx.pulse.shipped_triggers.context_compact import context_compact  # noqa: F401
 ''',
     'pr_review': '''"""Live install of the shipped pr-review trigger (one writer:
 src/astryx/pulse/shipped_triggers/pr_review.py). Reviewer seat at founding is the seed; move this
 file to the immune-system agent (steward) once one exists — proposer and reviewer must
-never be the same mind. To retire it: `trigger_rm pr_review` (a tombstone the pulse honours).
+never be the same mind. To retire it: `trigger action=retire name=pr_review` (a tombstone the pulse honours).
 Deleting this file does NOT retire it: init.sh would install it again."""
 from astryx.pulse.shipped_triggers.pr_review import pr_review  # noqa: F401
 ''',
@@ -39,16 +39,16 @@ Installed by init.sh where a Windows container exists; move it to another agent 
 from astryx.pulse.shipped_triggers.windows_idle_stop import windows_idle_stop  # noqa: F401
 ''',
     'agent_heal': '''"""Live install of the shipped agent heal (one writer: src/astryx/pulse/shipped_triggers/agent_heal.py). To retire it:
-`trigger_rm agent_heal` (a tombstone the pulse honours). Deleting this file does NOT retire it: init.sh would reinstall."""
+`trigger action=retire name=agent_heal` (a tombstone the pulse honours). Deleting this file does NOT retire it: init.sh would reinstall."""
 from astryx.pulse.shipped_triggers.agent_heal import agent_heal  # noqa: F401
 ''',
     'upstream_prs': '''"""Live install of the shipped upstream PR watch (one writer: src/astryx/pulse/shipped_triggers/upstream_prs.py). To retire it:
-`trigger_rm upstream_prs` (a tombstone the pulse honours). Deleting this file does NOT retire it: init.sh would reinstall."""
+`trigger action=retire name=upstream_prs` (a tombstone the pulse honours). Deleting this file does NOT retire it: init.sh would reinstall."""
 from astryx.pulse.shipped_triggers.upstream_prs import upstream_prs  # noqa: F401
 ''',
     'org_backup': '''"""Live install of the shipped org backup (one writer: src/astryx/pulse/shipped_triggers/org_backup.py): the daily
 dump and the weekly restore-verify of THIS org (its database, its HOME's backups/). Installed by
-init.sh (one org) and devtools/cog_add_org.py (a cog org) into the seed. To retire it: `trigger_rm run_backup` and `trigger_rm
+init.sh (one org) and devtools/cog_add_org.py (a cog org) into the seed. To retire it: `trigger action=retire name=run_backup` and `the trigger tool's retire
 run_restore_verify` (tombstones the pulse honours). Deleting this file does NOT retire it: the reconcile would
 reinstall."""
 from astryx.pulse.shipped_triggers.org_backup import run_backup, run_restore_verify  # noqa: F401

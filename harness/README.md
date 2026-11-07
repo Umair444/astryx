@@ -31,7 +31,7 @@ non-isolated body.** The escapes, each grounded first-hand against the live subs
   the **server script's own sibling** = `/home/umair/astryx/.env` (real), **ignoring
   `process.env`**. `scripts/spawn.sh:96-100` wires the `astryx` MCP **unconditionally**
   (every agent, Grants-less included). So a base-MCP test agent's `send` / `self_edit` /
-  `trigger_set` write to **real postgres**.
+  `trigger` write to **real postgres**.
 - **ESCAPE C — hooks → real postgres.** `hooks/step.py:21` — `DSN_FILE =
   "/home/umair/astryx/.env"` is a **hardcoded absolute path**; `spawn.sh:107-112` wires
   it as PreToolUse/PostToolUse/Stop. Every tool call the test agent makes writes a `steps`

@@ -24,9 +24,9 @@ tests/test_trigger_names.py checks the model against discover() itself (parity) 
 
 STATES of (N, target agent), in this order:
   installed  some triggers/<a>/*.py's closure has N, and (a, N) has no tombstone   (global: any agent's copy counts)
-  retired    triggers/<target>/.retired/N exists (trigger_rm's tombstone; per TARGET agent, a3 BC-1)
+  retired    triggers/<target>/.retired/N exists (the trigger tool's tombstone; per TARGET agent, a3 BC-1)
   deferred   N might exist where this can't see: a blind file; a LEGACY python row for N with no file and no tombstone
-             (a removal, a departed agent or a lossy restore: indistinguishable, so the owner chooses: `trigger_rm N`
+             (a removal, a departed agent or a lossy restore: indistinguishable, so the owner chooses: `trigger action=retire name=N`
              or `init.sh --reinstall N`); or the triggers table can't be read
   absent     none of the above: init.sh installs it
 
@@ -380,7 +380,7 @@ def state(name: str, target: str = "seed", repo: Path | None = None) -> tuple[st
         if r.blind:
             blind.append(r.blind[0])
     if retired(target):
-        return "retired", f"triggers/{target}/.retired/{name} (trigger_rm's tombstone)"
+        return "retired", f"triggers/{target}/.retired/{name} (the trigger tool's tombstone)"
     if blind:                                       # global scope: one unreadable file defers EVERY absent install,
         return "deferred", (f"{len(blind)} trigger file(s) this can't read statically, so {name} may be defined "
                             f"there: {'; '.join(blind[:3])}. Exit: fix or move that file (or "
@@ -392,7 +392,7 @@ def state(name: str, target: str = "seed", repo: Path | None = None) -> tuple[st
     if legacy:
         return "deferred", (f"LEGACY: a python row for {name} under {', '.join(legacy)} with no file defining it and "
                             f"no tombstone (a removal, a departed agent or a lossy restore). Choose: "
-                            f"`trigger_rm {name}` to retire it, or `./init.sh --reinstall {name}` to install it")
+                            f"`trigger action=retire name={name}` to retire it, or `./init.sh --reinstall {name}` to install it")
     return "absent", "no file defines it, no tombstone, no row"
 
 

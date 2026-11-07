@@ -806,7 +806,7 @@ _act_prehook() {
 # >>> trigger state
 # "Is trigger N installed?" has ONE answer, src/astryx/core/trigger_names.py (plan-9853): the PULSE's registration semantics (a
 # file's import closure, by NAME, under any agent and any filename, so an owner's copy named differently counts), minus
-# trigger_rm's tombstones, with a LEGACY row (a python row no file defines) and anything it can't read statically
+# the trigger tool's tombstones, with a LEGACY row (a python row no file defines) and anything it can't read statically
 # reading DEFERRED. A node installs ONLY on absent. Deferred is never installed and never silent: doctor names it every
 # run. An unreadable answer is not "absent" either: no install. `./init.sh --reinstall N` is the owner's override.
 _trigger_state() { venv/bin/python -m astryx.core.trigger_names state "$1" --target seed; }

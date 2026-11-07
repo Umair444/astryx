@@ -7,7 +7,7 @@ asks) against a fixture database.
      one source's text (shims.py), then reads green
   B2 deferential on EITHER name: another agent owns only run_backup (the org's own backup) → green, nothing under
      seed; owns only run_restore_verify → the same (one name owned is never given a second)
-  B3 a seed-retired run_backup (trigger_rm's tombstone) stays retired: green, nothing installed
+  B3 a seed-retired run_backup (the trigger tool's tombstone) stays retired: green, nothing installed
   B4 the node is in RECONCILE_NODES, after agentheal; TRIGGER_NODES maps BOTH names to it (doctor and --reinstall)
 Seams: INIT_ORGBACKUP_SRC (a mutant init.sh, tests/mutants_init_orgbackup.py). Exit 0 · 1 · 77 (no fixture DB).
 """
@@ -79,7 +79,7 @@ for owned in ("run_backup", "run_restore_verify"):
 with tempfile.TemporaryDirectory() as td:
     d = trigger_tree.build(Path(td))
     (d / "triggers" / "seed" / ".retired").mkdir(parents=True)
-    (d / "triggers" / "seed" / ".retired" / "run_backup").write_text("retired by trigger_rm\n")
+    (d / "triggers" / "seed" / ".retired" / "run_backup").write_text("retired by the trigger tool\n")
     (a, b), err = reconcile(d)
     check("B3 seed's run_backup retired: stays retired (green, nothing installed)", a == "0" and not (d / SHIM).exists(),
           f"chk={a} {err}")

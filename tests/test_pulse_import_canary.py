@@ -134,8 +134,8 @@ def main():
                         "data": {"five_hour_utilization": pct}}
                 c.execute("INSERT INTO usage_polls (state, snapshot) VALUES ('fresh', %s::jsonb)", (json.dumps(snap),))
 
-            c.execute("INSERT INTO triggers (agent, name, schedule, kind, state, enabled, note, premium, next_fire) "
-                      "VALUES ('zzagent', 'zz_daily_hb', '0 3 * * *', 'heartbeat', '{}'::jsonb, true, 'daily', 0, "
+            c.execute("INSERT INTO triggers (agent, name, schedule, kind, state, note, premium, next_fire) "
+                      "VALUES ('zzagent', 'zz_daily_hb', '0 3 * * *', 'heartbeat', '{}'::jsonb, 'daily', 0, "
                       "now() - interval '1 minute')")
 
             def hb():

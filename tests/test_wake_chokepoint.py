@@ -156,8 +156,8 @@ def set_gauge(conn, pct):
 def make_trigger(conn, name, func, checks, premium=0, kind="python", note=None):
     src = f"{checks}::{func}" if kind == "python" else None
     row = conn.execute(
-        "INSERT INTO triggers (agent, name, schedule, kind, check_src, state, enabled, note, premium) "
-        "VALUES ('seed', %s, '* * * * *', %s, %s, '{}'::jsonb, true, %s, %s) "
+        "INSERT INTO triggers (agent, name, schedule, kind, check_src, state, note, premium) "
+        "VALUES ('seed', %s, '* * * * *', %s, %s, '{}'::jsonb, %s, %s) "
         "RETURNING id, agent, name, schedule, kind, check_src, state, note, premium",
         (name, kind, src, note, premium)).fetchone()
     cols = ["id", "agent", "name", "schedule", "kind", "check_src", "state", "note", "premium"]

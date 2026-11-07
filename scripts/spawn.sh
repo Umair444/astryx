@@ -144,7 +144,7 @@ fi
 [ -n "$NODE" ] || { echo "spawn: node not found on PATH or via mise/nvm (set ASTRYX_NODE)"; exit 1; }
 
 # Default heartbeat: every agent wakes on its own rhythm (charter line
-# "Heartbeat: <cron>", default daily 09:00) and retunes it with trigger_set.
+# "Heartbeat: <cron>", default daily 09:00) and retunes it with the trigger tool.
 # Runs before the residency check so existing residents gain it too.
 HB=$(grep -m1 '^Heartbeat:' "$CHARTER" | cut -d: -f2- | xargs || true)
 DSN=$("$PY" "$ROOT/src/astryx/config.py" dsn --file)

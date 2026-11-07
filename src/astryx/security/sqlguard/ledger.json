@@ -476,7 +476,7 @@
    "the org economy is honest",
    "tool ledger: ids only, ledger authorship",
    "trigger names: the pulse's registration model (closure, blind \u2192 defer, retired per target, legacy, parity)",
-   "trigger tombstone: trigger_rm retires a python trigger for good, per agent and name",
+   "trigger tombstone: the trigger tool's retire retires a python trigger for good, per agent and name",
    "turns retention: old images stripped, words kept, recent untouched, idempotent",
    "windows on demand: claim before start, refuse naming the holder, idle stop only of its own starts"
   ],
@@ -529,7 +529,7 @@
    "the org economy is honest",
    "tool ledger: ids only, ledger authorship",
    "trigger names: the pulse's registration model (closure, blind \u2192 defer, retired per target, legacy, parity)",
-   "trigger tombstone: trigger_rm retires a python trigger for good, per agent and name",
+   "trigger tombstone: the trigger tool's retire retires a python trigger for good, per agent and name",
    "turns retention: old images stripped, words kept, recent untouched, idempotent",
    "windows on demand: claim before start, refuse naming the holder, idle stop only of its own starts"
   ]

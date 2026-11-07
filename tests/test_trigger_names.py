@@ -184,11 +184,11 @@ try:
             rc, out, err = state("zz_none", dsn=DSN)
             want("S1 a name nothing defines → absent, exit 2 (control)", rc == 2 and out.startswith("absent"),
                  f"{rc} {out} {err}")
-            put("triggers/memory/.retired/zz_mem", "retired by trigger_rm\n")
+            put("triggers/memory/.retired/zz_mem", "retired by the trigger tool\n")
             rc, out, _ = state("zz_mem", dsn=DSN)
             want("S2 another agent's tombstoned copy retires only THAT copy: seed's answer is absent (a3 BC-1)",
                  rc == 2 and out.startswith("absent"), f"{rc} {out}")
-            put("triggers/seed/.retired/zz_mem", "retired by trigger_rm\n")
+            put("triggers/seed/.retired/zz_mem", "retired by the trigger tool\n")
             rc, out, _ = state("zz_mem", dsn=DSN)
             want("S2 ...seed's own tombstone → retired, exit 1, naming it",
                  rc == 1 and "triggers/seed/.retired/zz_mem" in out, f"{rc} {out}")
@@ -234,9 +234,9 @@ try:
                       "('ghost', 'zz_hb', '* * * * *', 'heartbeat', NULL, now())")
             rc, out, _ = state("zz_legacy", dsn=DSN)
             want("L1 a python row with no file and no tombstone → DEFERRED (exit 3), naming the agent and both exits",
-                 rc == 3 and "LEGACY" in out and "ghost" in out and "trigger_rm zz_legacy" in out
+                 rc == 3 and "LEGACY" in out and "ghost" in out and "trigger action=retire name=zz_legacy" in out
                  and "./init.sh --reinstall zz_legacy" in out, f"{rc} {out}")
-            put("triggers/ghost/.retired/zz_legacy", "retired by trigger_rm\n")
+            put("triggers/ghost/.retired/zz_legacy", "retired by the trigger tool\n")
             rc, out, _ = state("zz_legacy", dsn=DSN)
             want("L1 ...its tombstone settles it: absent", rc == 2 and out.startswith("absent"), f"{rc} {out}")
             rc, out, _ = state("zz_hb", dsn=DSN)

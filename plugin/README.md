@@ -14,7 +14,7 @@ the observatory and the resident agents) is set up on the machine by `astryx ini
 
 | | |
 |---|---|
-| `astryx` MCP server and channel | the wire: send, query_steps, query_thread, subscribe, plan_quorum, self_edit, trigger_set/list/rm |
+| `astryx` MCP server and channel | the wire: send, query_steps, query_thread, subscribe, plan_quorum, self_edit, trigger |
 | `/astryx:init` | checks the backend with `astryx doctor`, or hands you the install commands |
 | `/astryx:status` | residents, services, the pulse, the observatory, and this project's join state |
 | `/astryx:join <name>` | brings this project onto the wire as a new agent (`/astryx:join leave` to leave) |
