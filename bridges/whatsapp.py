@@ -470,7 +470,7 @@ async def worker(agent: str):
     try:
         while job is jobs.get(agent) and job["latest"] != job["sent"]:
             raw = job["latest"]
-            line = signed(agent, raw)
+            line = signed(agent, raw, job["chat"])
             await typing(job["chat"])
             try:
                 if job["ph_id"] is None:
@@ -491,9 +491,13 @@ async def worker(agent: str):
 
 
 # ------------------------------------------------------------------- outbound
-def signed(agent: str, text: str) -> str:
+def signed(agent: str, text: str, chat) -> str:
     """WhatsApp shows one number for every agent, so the text names its sender: a bold
-    label line, then the body. Idempotent (an edited bubble is never signed twice)."""
+    label line, then the body. Idempotent (an edited bubble is never signed twice). A route
+    with `"signed": false` stays unlabelled: an agent speaking there in the owner's voice."""
+    route = routes().chat(chat)
+    if route is not None and route.get("signed") is False:
+        return text
     label = f"▸ *{agent}*\n"
     return text if not text or text.startswith(label) else label + text
 
@@ -611,7 +615,7 @@ async def deliver(row):
     agent = row["from_agent"]
     text, files = split_files(stamped[1] if stamped else row["body"])
     text, polls = split_polls(text, max_options=12)
-    text = signed(agent, text)
+    text = signed(agent, text, chat)
     out = Outcome()
     try:
         job = jobs.pop(agent, None)

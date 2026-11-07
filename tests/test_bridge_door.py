@@ -100,6 +100,17 @@ ROUTES = {"whatsapp": [WA_ORG, WA_PLAIN, WA_TIER], "telegram": [TG_ORG, TG_TIER]
 _next = iter(range(500, 900))
 
 
+_wa, _routes = BR["whatsapp"], BR["whatsapp"].routes
+_wa.routes = lambda: Routes([WA_ORG, {"chat": "70707@g.us", "agent": "twin", "enabled": True, "signed": False}])
+check("whatsapp: a route with signed:false stays unlabelled (the owner's voice)", _wa.signed("twin", "hi", "70707@g.us") == "hi")
+check("whatsapp: every other route is labelled", _wa.signed("seed", "hi", WA_ORG["chat"]) == said("whatsapp", "seed", "hi"))
+check("whatsapp: an unrouted chat is labelled (the default)", _wa.signed("seed", "hi", "1@g.us") == said("whatsapp", "seed", "hi"))
+check("whatsapp: signing twice labels once (an edited bubble)",
+      _wa.signed("seed", _wa.signed("seed", "hi", WA_ORG["chat"]), WA_ORG["chat"]) == said("whatsapp", "seed", "hi"))
+check("whatsapp: an empty text stays empty (a poll-only row)", _wa.signed("seed", "", WA_ORG["chat"]) == "")
+_wa.routes = _routes
+
+
 def plain_row(thread, to="owner", frm="seed", body="org text"):
     return {"id": next(_next), "from_agent": frm, "to_agent": to, "thread": thread, "intent": "chat", "body": body,
             "delivery": None, "status": "pending", "to_org": "local"}
