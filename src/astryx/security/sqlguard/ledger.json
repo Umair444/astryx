@@ -48,6 +48,12 @@
    "branch_check prep: hardening precondition, template, repo, estate, env",
    "branch_check: differential verdict, prod witness, clean refusal"
   ],
+  "devtools/org_apply.py::_one\u001finsert into schema_applied (id, sha) values (1, ?) on conflict (id) do update set sha = excluded.sha, applied_at = now()": [
+   "tests/test_trigger_tool.py"
+  ],
+  "devtools/org_apply.py::_one\u001fselect sha from schema_applied where id = 1": [
+   "tests/test_trigger_tool.py"
+  ],
   "devtools/privilege_census.py::live\u001fselect r.rolname, r.rolsuper, count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace join pg_roles r on r.oid=c.relowner where c.relkind in ('r','p','v','m','s') and n.nspname='public' group by 1,2 order by 3 desc": [
    "privilege census: classes discriminate, surfaces and DSN sources assigned"
   ],
@@ -409,6 +415,12 @@
   "src/astryx/pg/schema_parity.py::shape\u001fselect n.nspname, c.relname, a.attname, format_type(a.atttypid, a.atttypmod) from pg_class c join pg_namespace n on n.oid = c.relnamespace join pg_attribute a on a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped where c.relkind in ('r', 'p') and n.nspname <> all(?) and n.nspname not like 'pg_toast%%' and n.nspname not like 'pg_temp%%' and not exists (select 1 from pg_depend d where d.classid = 'pg_class'::regclass and d.objid = c.oid and d.deptype = 'e') order by 1, 2, 3": [
    "schema parity: the live catalog has every table and column the schema files define"
   ],
+  "src/astryx/pulse/pulse.py::tick\u001fupdate triggers set last_eval=? where id=?": [
+   "tests/test_trigger_tool.py"
+  ],
+  "src/astryx/pulse/pulse.py::tick\u001fupdate triggers set off_reason='bad_schedule', enabled=false where id=?": [
+   "tests/test_trigger_tool.py"
+  ],
   "src/astryx/pulse/shipped_triggers/ear_retention.py::tick\u001fselect to_regclass('public.utterances')": [
    "hearing store"
   ],
@@ -600,7 +612,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 298,
+  "debt_rows": 302,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 5,
@@ -822,6 +834,18 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:e2324b06479c6f439aea3135f78feb018c5e45b75405463b79444d925fa78369"
+  },
+  "devtools/org_apply.py::_one\u001finsert into schema_applied (id, sha) values (1, ?) on conflict (id) do update set sha = excluded.sha, applied_at = now()": {
+   "admitted": "2026-11-08",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "org_apply.py::_one: schema_applied is created by org_apply itself, never by schema.sql, so no fixture stamp covers it and no statement on it can reach RESPONSIVE; its no-table / lagging / current behaviour is driven by test_trigger_tool S1-S5 against real fixture databases (plan-12214, a4)",
+   "tk": "sha256t:bcf70619c18276816b7b7ae95d42bc92d0a18e596acbe6d96260c870d2180ab1"
+  },
+  "devtools/org_apply.py::_one\u001fselect sha from schema_applied where id = 1": {
+   "admitted": "2026-11-08",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "org_apply.py::_one: schema_applied is created by org_apply itself, never by schema.sql, so no fixture stamp covers it and no statement on it can reach RESPONSIVE; its no-table / lagging / current behaviour is driven by test_trigger_tool S1-S5 against real fixture databases (plan-12214, a4)",
+   "tk": "sha256t:6752a511b74c74f8d7342ca32bbe5e216315460c9ad4f17138d1bd6d2e0324c9"
   },
   "devtools/privilege_census.py::live\u001fselect r.rolname, r.rolsuper, count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace join pg_roles r on r.oid=c.relowner where c.relkind in ('r','p','v','m','s') and n.nspname='public' group by 1,2 order by 3 desc": {
    "admitted": "2026-10-09",
@@ -2100,10 +2124,22 @@
    "reason": "seed",
    "tk": "sha256t:eed8856d179911ff9d9708512a26e51954fbd1e5293b5573200debfbb503d645"
   },
+  "src/astryx/pulse/pulse.py::tick\u001fupdate triggers set last_eval=? where id=?": {
+   "admitted": "2026-11-08",
+   "debt": "EXECUTED",
+   "reason": "pulse.py::tick: the write is by the id of a row this same transaction claimed with SELECT ... FOR UPDATE SKIP LOCKED, so no other session can delete it before commit and 0 rows is unreachable; the >=1 side runs in test_trigger_tool A3/E2 (plan-12214, a4)",
+   "tk": "sha256t:5faf0b16e62dc9dff4c5634f7d04dbfa2a7ebfc03800351bac3e2c03ec72dac4"
+  },
   "src/astryx/pulse/pulse.py::tick\u001fupdate triggers set next_fire=?, last_eval=? where id=?": {
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:aca2cbe30c6f7b2d5fb7497de96e37ccd8c19d36c92f0312aae33a84180c53e1"
+  },
+  "src/astryx/pulse/pulse.py::tick\u001fupdate triggers set off_reason='bad_schedule', enabled=false where id=?": {
+   "admitted": "2026-11-08",
+   "debt": "EXECUTED",
+   "reason": "pulse.py::tick: the write is by the id of a row this same transaction claimed with SELECT ... FOR UPDATE SKIP LOCKED, so no other session can delete it before commit and 0 rows is unreachable; the >=1 side runs in test_trigger_tool A3/E2 (plan-12214, a4)",
+   "tk": "sha256t:2ce8bbdfafc59878946f8cd2aecb4bdaa0b080406c770ba47a4390c9f90302f2"
   },
   "src/astryx/pulse/senses.py::_log_call\u001finsert into steps (agent, kind, content) values (?,'sense',?)": {
    "debt": "UNEXECUTED",

@@ -154,8 +154,8 @@ def _kind_of(a: dict, row: dict | None) -> str:
 
 def _set_code(conn, agent: str, a: dict) -> str:
     extra = [k for k in ("schedule", "at", "sql", "on", "after", "renag", "once") if a.get(k) not in (None, "")]
-    if extra:
-        raise Refuse(f"with code, {', '.join(extra)} can't be set here: a python trigger's schedule and note live in "
+    if extra:     # the message never opens with "with": sqlguard reads a string starting so as a CTE (seed #65257)
+        raise Refuse(f"{', '.join(extra)} can't be set here with code: a python trigger's schedule and note live in "
                      "its @trigger decorator, and its logic in its code")
     name = str(a.get("name") or "").strip().removesuffix(".py")
     if not NAME.match(name) or not AGENT.match(agent):

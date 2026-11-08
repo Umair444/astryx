@@ -569,6 +569,76 @@ def _due(c):
     return [r[0] for r in c.execute("SELECT name FROM triggers WHERE enabled AND next_fire <= now()").fetchall()]
 
 
+class Racing:
+    """A connection whose row is deleted by hand (a resident's psql: nothing in the tree deletes trigger rows) just before
+    the write under test, as A23 in test_wake_chokepoint does to process(). The write then matches 0 rows: the land judge
+    needs each new WHERE seen at 0 and at >=1 rows (seed #65257), and the 0 is the race."""
+    def __init__(self, c, needle, name):
+        self._c, self._needle, self._name, self.fired = c, needle, name, False
+
+    def execute(self, q, *a, **k):
+        if not self.fired and self._needle in q:
+            self.fired = True
+            self._c.execute("DELETE FROM triggers WHERE agent='a' AND name=%s", (self._name,))
+        return self._c.execute(q, *a, **k)
+
+    def __getattr__(self, attr):
+        return getattr(self._c, attr)
+
+
+def races(c, tree):
+    """Each by-id or by-name write, raced by a hand delete between its read and its write: no crash, nothing recreated."""
+    reconcile, process = pulse.reconcile, pulse.process
+    gone = lambda n: c.execute("SELECT count(*) FROM triggers WHERE name=%s", (n,)).fetchone()[0] == 0
+    for n, needle, prep, act in (
+            ("rd", "off_reason='held'", None, tool._disable),
+            ("re", "off_reason=NULL, off_why=NULL, enabled=true", "held", tool._enable),
+            ("rr", "off_reason='retired'", None, tool._retire)):
+        set_ok(c, name=n, schedule="0 9 * * *")
+        if prep:
+            c.execute("UPDATE triggers SET off_reason=%s, enabled=false WHERE name=%s", (prep, n))
+        r = Racing(c, needle, n)
+        try:
+            act(r, "a", {"name": n})
+            check(f"RC {act.__name__} raced by a delete: no crash, and the row stays gone", r.fired and gone(n), r.fired)
+        except Exception as e:
+            check(f"RC {act.__name__} raced by a delete: no crash", False, repr(e))
+    # reconcile: an enabled python row whose file is gone, deleted between the SELECT and the vanished write
+    c.execute("INSERT INTO triggers (agent,name,schedule,kind,check_src) VALUES ('a','rv','* * * * *','python','x')")
+    r = Racing(c, "off_reason='vanished'", "rv")
+    reconcile(r)
+    check("RC reconcile raced by a delete: no crash, and the row stays gone", r.fired and gone("rv"))
+    # a tombstone for a function that never had a row: the retire matches nothing and creates nothing
+    (tree / "triggers/a/rt.py").write_text('from astryx import trigger\n@trigger("* * * * *")\ndef zt_rt0(ctx):\n    return None\n')
+    (tree / "triggers/a/.retired").mkdir(exist_ok=True)
+    (tree / "triggers/a/.retired/zt_rt0").write_text("retired\n")
+    reconcile(c)
+    check("RT0 a tombstoned function with no row stays rowless: the retire matches 0 rows and inserts none", gone("zt_rt0"))
+    check("SH0 show lists nothing for an agent with none, and says how to make one",
+          "action=set creates one" in tool.run("nobody", {"action": "show"}, c))
+    # process: a storm's off write, raced
+    set_ok(c, name="rs", sql="SELECT clock_timestamp()")
+    raced = []
+    for i in range(watch.STORM_K + 1):
+        c.execute("UPDATE messages SET status='delivered' WHERE to_agent='a'")
+        c.execute("UPDATE triggers SET next_fire=now() WHERE name='rs'")
+        if i == watch.STORM_K:
+            pulse.process = lambda conn, due, now, hot: process(raced.append(Racing(conn, "SET off_reason=%s, enabled=false WHERE id", "rs"))
+                                                                or raced[-1], due, now, hot)
+        try:
+            _tick(c)
+        finally:
+            pulse.process = process
+    check("RC process's storm write raced by a delete: no crash, and the row stays gone",
+          raced and raced[-1].fired and gone("rs"), raced and raced[-1].fired)
+    # normalize: an on row carrying a reason (a hand write) is cleared, and a second pass matches nothing
+    set_ok(c, name="rn", schedule="0 9 * * *")
+    c.execute("UPDATE triggers SET off_reason='held' WHERE name='rn'")
+    pulse.normalize(c)
+    check("N5 normalize clears a reason left on an on row",
+          c.execute("SELECT enabled, off_reason FROM triggers WHERE name='rn'").fetchone() == (True, None))
+
+
 def _tick_claim_only(c):
     """tick(), stopped dead between its claim and process(): a crash in that gap."""
     saved = pulse.process
@@ -698,11 +768,15 @@ def main() -> int:
     (tree / "triggers").mkdir()
     (tree / "triggers" / "a").mkdir()
     try:
+        pulse.ESTATE, tool.ESTATE = tree, tree
+        pulse.PY = sys.executable
+        # The migration arms drop and rebuild triggers, which strips the fixture's stamp, and the land judge credits no
+        # statement in an unstamped DB (seed #65257: 19 sites read EXECUTED/FIXTURE-DDL). They get a fixture of their own.
+        with fixture_db() as mx:
+            os.environ["ASTRYX_DSN"] = mx["dsn"]
+            migration(mx)
         with fixture_db() as fx:
             os.environ["ASTRYX_DSN"] = fx["dsn"]
-            pulse.ESTATE, tool.ESTATE = tree, tree
-            pulse.PY = sys.executable
-            migration(fx)
             with psycopg.connect(fx["dsn"], autocommit=True) as c:
                 def clean():
                     c.execute("DELETE FROM triggers")
@@ -720,6 +794,8 @@ def main() -> int:
                 lifecycle(c, tree)
                 clean()
                 python_path(c, tree)
+                clean()
+                races(c, tree)
                 clean()
                 tick_rules(c)
             org_apply()
