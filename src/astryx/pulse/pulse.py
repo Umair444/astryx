@@ -130,7 +130,7 @@ def normalize(conn):
     """plan-12214 slice 1 (a2 #65100 B4/B5): `enabled` alone decides firing, and writers from before the land (an
     unrespawned resident's old set and rm tools, an old pulse) write it without off_reason. Each tick brings the
     reason back to agree: on clears it; off with none gets the backfill's class. Polarity: this never turns a row on.
-    Goes at the contract land, when `enabled` is generated from off_reason."""
+    Goes at the contract land, goal 12238, when `enabled` is generated from off_reason."""
     conn.execute("UPDATE triggers SET off_reason=NULL, off_why=NULL WHERE enabled AND off_reason IS NOT NULL")
     conn.execute(f"UPDATE triggers SET off_reason={BACKFILL} WHERE NOT enabled AND off_reason IS NULL")
 

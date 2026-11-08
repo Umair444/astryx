@@ -3,7 +3,7 @@
 and its stamped agent name on stdin, as JSON. rc 0 prints the reply, rc 1 the refusal, and every refusal states the fix.
 Cron and python files are judged by what the pulse itself uses (croniter, discover), so there is no second parser.
 
-A row's lifecycle. off_reason NULL = on. Until the contract land `enabled` is still its own column and alone decides
+A row's lifecycle. off_reason NULL = on. Until the contract land (goal 12238) `enabled` is still its own column and alone decides
 firing (a2 #65100 B4): every writer here sets both in one statement, and the pulse's normalize() brings the reason back
 in line after a writer from before the land. Each reason names who sets it and what clears it:
   held          disable                  enable
@@ -139,7 +139,7 @@ def _row(conn, agent: str, name: str) -> dict | None:
 
 def _seen(t: dict) -> dict:
     """The reason as firing sees it: `enabled` decides, so a row a writer from before the land turned off or on reads
-    as it will behave, never as a stale reason says (until the pulse's normalize() catches up)."""
+    as it will behave, never as a stale reason says (until the pulse's normalize() catches up). Goes with goal 12238."""
     t["off_reason"] = None if t["enabled"] else (t["off_reason"] or "unknown")
     return t
 

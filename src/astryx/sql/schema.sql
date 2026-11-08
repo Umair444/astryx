@@ -437,7 +437,7 @@ CREATE TABLE IF NOT EXISTS triggers (
 -- plan-12214 slice 1: every state a row can be in has one named reason, NULL = on. EXPAND only (a2 #65100 B1): the new
 -- columns are added beside `enabled`, which still alone decides firing, so code from before the land runs unchanged on
 -- this shape. Every new writer sets both in one statement; pulse.normalize() repairs an old writer's. The contract land
--- makes `enabled` GENERATED from off_reason, with triggers_kind_known. Reasons, setters, clearers: pulse/trigger_tool.py.
+-- (goal 12238) makes `enabled` GENERATED from off_reason, with triggers_kind_known. Reasons, setters, clearers: pulse/trigger_tool.py.
 ALTER TABLE triggers ADD COLUMN IF NOT EXISTS off_reason text CONSTRAINT triggers_off_reason_known CHECK (off_reason IN
   ('held','standdown','retired','fired','vanished','bad_schedule','storm','unknown'));
 ALTER TABLE triggers ADD COLUMN IF NOT EXISTS off_why text;
@@ -476,7 +476,10 @@ INSERT INTO capability_census (job, surface, stage, had_to_read, first_call_fail
  ('query the org''s tables', 'table', 'discovery', NULL, 'guessed columns failed 3 times (triggers.owner, messages.created_at, goals.status); mcp__org__goals existed unreached', NULL, 'open', 'reported'),
  ('is this secret set?', 'none', 'discovery', NULL, 'grep on .env is refused even for variable names, and no tool answers this', NULL, 'open', 'reported'),
  ('run a check that needs node outside mise''s shell', 'script', 'contract', NULL, 'pushed_tree_check went red in a non-interactive shell: node is only on mise''s PATH, on base and tip alike', NULL, 'open', 'reported'),
- ('tell me a python trigger''s wake was swallowed', 'tool', 'verify', 'pulse.py process()', 'a python check''s returned wake can be dropped by an unread one while its own state moves on (F1h, fixed for declarative watches only)', NULL, 'open', 'measured')
+ ('tell me a python trigger''s wake was swallowed', 'tool', 'verify', 'pulse.py process()', 'a python check''s returned wake can be dropped by an unread one while its own state moves on (F1h, fixed for declarative watches only)', NULL, 'open', 'measured'),
+ ('know whether a trigger is on, from one column', 'table', 'contract', 'pulse.normalize(), trigger_tool._seen()',
+  'until the contract land, enabled and off_reason are two writers: an unrespawned resident''s old tools write enabled alone, and the reason lags a tick',
+  'goal 12238: enabled generated from off_reason, the kind CHECK, normalize() and the slice-1 shims deleted', 'open', 'derived')
 ON CONFLICT (job) DO NOTHING;
 
 -- polls: every WhatsApp poll seen on a routed surface — agent-embedded
