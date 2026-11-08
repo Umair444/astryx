@@ -601,6 +601,17 @@
     "goal": 4243,
     "state": "done"
    }
+  },
+  "tests/test_trigger_tool.py": {
+   "gates": [
+    "trigger: the expand, normalize, guarded read, one-shots, the tool's naive path (a4 plan-12214)"
+   ],
+   "listed_since": "2026-11-08",
+   "reason": "plan-12214 slice 1 (seed #65397): the expand arms (X1-X6, N1-N4) and org_apply's S1-S5 rebuild triggers in the shape origin/main had before the expand (OLD_TABLE), because the old shape IS their subject: the additive expand over it, and a lagging org. Each runs in a fixture_db() of its own (086e1aa9), so no credited arm shares the unstamped DB. The expand window closes at the contract land, which deletes the old shape and these arms with it",
+   "trip": {
+    "goal": 12238,
+    "state": "done"
+   }
   }
  },
  "header": {
@@ -612,10 +623,10 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 302,
+  "debt_rows": 294,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
-  "extractors_listed": 5,
+  "extractors_listed": 6,
   "generated_at": "2026-09-29T15:30:34+00:00",
   "run": "r1790695741x404760",
   "sites_total": 321,
@@ -1423,11 +1434,6 @@
    "reason": "seed",
    "tk": "sha256t:a8aeafa283f69fcbe645137ee26610994ff37a2542640b9faad41a1fe82984de"
   },
-  "sha256:65d63860f72c863d4827a88c9955f4f8970ad3ad8860d88ebc46c950b5722572": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:37b582827aa319a2434213f29a1a56af361a7c99e593850d32dd7e6ca9940733"
-  },
   "sha256:6a44313ce751b3f3c07ad5b7eaa31263e177746662b2db8f2cf03d9e7e14f8af": {
    "debt": "UNEXECUTED",
    "reason": "seed",
@@ -2099,30 +2105,10 @@
    "reason": "schema parity (a1 #38264): the catalog shape read, run on the fixture AND live by tests/test_schema_parity.py; a pg_catalog read (pg_class/pg_attribute/pg_depend), so RESPONSIVE is unreachable by the judge's relation rule",
    "tk": "sha256t:138d06a73e80673bead0b3ba476e3779662a618592cba9f650ce484ff0646b36"
   },
-  "src/astryx/pulse/pulse.py::reconcile\u001fselect agent, name from triggers where kind='python' and enabled": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:11fa21ad388a221a397d68c1838eb000434135bc285bc83ccdc7cbba15d86e76"
-  },
   "src/astryx/pulse/pulse.py::reconcile\u001fselect name from triggers where kind='python' and enabled and check_src like ? order by name": {
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:6a83c638786c1932508fb11d23c86034b48df938ffa31985fa7d5dea3452c5fc"
-  },
-  "src/astryx/pulse/pulse.py::reconcile\u001fupdate triggers set enabled=false where agent=? and name=?": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:fcf65f5436cd95de6a98d1a0b89086147e59c4dcab1a1f014083e09759ddcacf"
-  },
-  "src/astryx/pulse/pulse.py::tick\u001fselect id, agent, name, schedule, kind, check_src, state, note, premium from triggers where enabled and next_fire <= now() order by next_fire for update skip locked": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:e332f11b2d5052cd2d35be545c7db5537bc49aa0d49bd8f4253ad47f3eb54fd4"
-  },
-  "src/astryx/pulse/pulse.py::tick\u001fupdate triggers set enabled=false where id=?": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:eed8856d179911ff9d9708512a26e51954fbd1e5293b5573200debfbb503d645"
   },
   "src/astryx/pulse/pulse.py::tick\u001fupdate triggers set last_eval=? where id=?": {
    "admitted": "2026-11-08",
@@ -2198,16 +2184,6 @@
    "reason": "plan-5497 S2 at-rest redaction write: replaces only the secret spellings in one turn. Executed on a fixture_db by tests/test_secret_sweep.py (W5, re-scan to 0 with structure and usage intact); live only on --redact after a2 PASS + seed go.",
    "tk": "sha256t:c07af76af722bbef60efb4a73629d6dcd97e5311d9efee01c52e00093a384f26"
   },
-  "src/astryx/security/sqlguard/enforce.py::_clock\u001fdelete from sqlguard_seen where kind=? and not (key = any(?))": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:b1e4618a11b0450decdf7b1d6bfe5d2dcb781ba8e241160718f42cae642fd7ed"
-  },
-  "src/astryx/security/sqlguard/enforce.py::_clock\u001finsert into sqlguard_seen (kind, key) values (?,?) on conflict (kind, key) do update set last_seen=now(), runs=sqlguard_seen.runs+1 returning first_seen, runs": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:b1cb18f92d917454856be2a999c7c123075f1a0b5558ca82fb855fec577a8298"
-  },
   "src/astryx/security/sqlguard/enforce.py::enforce\u001fselect 1 from goals where id=? and state=?": {
    "debt": "UNEXECUTED",
    "reason": "seed",
@@ -2217,11 +2193,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:79978b153539351884fcb4a8b49996e18cf12ba81fc663c86ba7e9b94eeca3b0"
-  },
-  "src/astryx/security/sqlguard/enforce.py::enforce\u001fselect to_regclass('sqlguard_seen')": {
-   "debt": "UNEXECUTED",
-   "reason": "seed (restored 10-09, steward #38027): shrunk in c3aab02 on ONE run's RESPONSIVE grade, but to_regclass returns one row either way (NULL or the oid), so the grade rides whether the run created sqlguard_seen and flaps red on other trees. Listed until a fixture pins table-absent and table-present arms.",
-   "tk": "sha256t:24a70fcf340ff1f032302692bdfe9fe64190e009374dd87482dcde8779a883b3"
   },
   "src/astryx/security/sqlguard/fixture.py::_stamp_rels\u001fselect c.oid, quote_ident(n.nspname)||'.'||quote_ident(c.relname) from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relkind in ('r','p','v','m') and n.nspname not in ('pg_catalog','information_schema','ag_catalog','topology') and n.nspname not like 'pg_toast%%' and not exists (select 1 from pg_depend d where d.classid = 'pg_class'::regclass and d.objid = c.oid and d.deptype = 'e')": {
    "admitted": "2026-09-30",
