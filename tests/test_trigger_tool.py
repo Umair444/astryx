@@ -590,14 +590,55 @@ def _tick(c):
     pulse.tick()
 
 
+def committed(tool_):
+    """org_apply's commit-first refusal is init.sh's, fail-closed (a2 msg 65118 R-1), in a throwaway repo."""
+    repo = Path(tempfile.mkdtemp(prefix="org-apply-git-")).resolve()
+    saved = (tool_.ROOT, tool_.SCHEMA, os.environ.get("GIT_DIR"))
+    try:
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        g = lambda *a: subprocess.run(["git", "-C", str(repo), *a], env=env, capture_output=True, check=True)
+        g("init", "-q"); g("config", "user.email", "t@t"); g("config", "user.name", "t")
+        (repo / "schema.sql").write_text("-- v1\n"); g("add", "schema.sql"); g("commit", "-qm", "s")
+        tool_.ROOT, tool_.SCHEMA = repo, repo / "schema.sql"
+        check("R1a a committed schema.sql passes", tool_._committed())
+        os.environ["GIT_DIR"] = "/nonexistent"
+        check("R1b ...and still passes under a hook's GIT_DIR (scrubbed, as init.sh does)", tool_._committed())
+        (repo / "schema.sql").write_text("-- v2\n")
+        check("R1c a modified one is refused under a hook's GIT_DIR (was: any failed git show passed)", not tool_._committed())
+        ran, real = [], (tool_._one, tool_._fan_out)
+        tool_._one = lambda apply: (ran.append("one"), 0)[1]                 # recorders: this arm can't reach a database
+        tool_._fan_out = lambda *a, **k: (ran.append("fan"), 0)[1]
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                rc = tool_.main(["--all"])
+        finally:
+            tool_._one, tool_._fan_out = real
+        check("R1f --all on it refuses, rc 2, and applies nothing", rc == 2 and not ran, (rc, ran))
+        os.environ.pop("GIT_DIR")
+        (repo / "schema.sql").write_text("-- v1\n")
+        (repo / "other.sql").write_text("-- untracked\n")
+        tool_.SCHEMA = repo / "other.sql"
+        check("R1d an untracked file inside the tree (ASTRYX_SCHEMA) is refused, as init.sh refuses it", not tool_._committed())
+        shutil.rmtree(repo / ".git")
+        tool_.SCHEMA = repo / "schema.sql"
+        check("R1e a tree with no git refuses: fail-closed", not tool_._committed())
+    finally:
+        tool_.ROOT, tool_.SCHEMA = saved[0], saved[1]
+        os.environ.pop("GIT_DIR", None)
+        if saved[2] is not None:
+            os.environ["GIT_DIR"] = saved[2]
+        shutil.rmtree(repo, ignore_errors=True)
+
+
 def org_apply():
     """devtools/org_apply.py over several orgs, each lagging: a4 #65062's land blocker. Fixture database names can't
     enter a real registry, so the launch is the arm's; what runs in each org is the real --one modes."""
     import importlib.util
-    spec = importlib.util.spec_from_file_location("org_apply", REPO / "devtools" / "org_apply.py")
+    spec = importlib.util.spec_from_file_location("org_apply", os.environ.get("ORG_APPLY_SRC") or REPO / "devtools" / "org_apply.py")
     tool_ = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(tool_)
     script = str(REPO / "devtools" / "org_apply.py")
+    committed(tool_)
     with fixture_db() as one, fixture_db() as two:
         dsns = {"first": one["dsn"], "broken": "postgresql://nobody@127.0.0.1:1/none", "second": two["dsn"]}
         for fx in (one, two):

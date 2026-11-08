@@ -57,12 +57,16 @@ def _one(apply: bool) -> int:
 
 
 def _committed() -> bool:
+    """The bytes about to be applied are HEAD's. Fail-closed (a2 msg 65118 R-1): a git that can't answer (no repo, an
+    untracked file, a hook's GIT_DIR pointing elsewhere) refuses, as init.sh's "modified, staged or untracked" does.
+    Every GIT_* is scrubbed, as init.sh does with `env -u GIT_DIR -u GIT_WORK_TREE`."""
     try:
         rel = SCHEMA.resolve().relative_to(ROOT).as_posix()
-        got = subprocess.run(["git", "-C", str(ROOT), "show", f"HEAD:{rel}"], capture_output=True, timeout=30)
     except ValueError:
         return True                # an oracle's file outside the tree (ASTRYX_SCHEMA): no HEAD to compare against
-    return got.returncode != 0 or got.stdout == SCHEMA.read_bytes()
+    got = subprocess.run(["git", "-C", str(ROOT), "show", f"HEAD:{rel}"], capture_output=True, timeout=30,
+                         env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
+    return got.returncode == 0 and got.stdout == SCHEMA.read_bytes()
 
 
 def main(argv) -> int:

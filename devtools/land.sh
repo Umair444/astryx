@@ -128,6 +128,19 @@ if [ -f "$REACH" ]; then
     echo "land: + $REACH: $REACH_WHY"
   fi
 fi
+# plan-12214 R-2 (a2 msg 65118): a range that changes a schema file also runs tests/test_schema_current.py, so code that
+# needs a column never lands on an org whose database lacks it. Every org's pulse runs this checkout and this script
+# applies no schema, so without it a lagging org fails every tick with only a journal line. Apply first:
+# devtools/org_apply.py --all. A list read into a variable, never `| grep -q` (L17: pipefail).
+SCHEMA_GATE=tests/test_schema_current.py; SCHEMA_WHY=""
+if [ -f "$SCHEMA_GATE" ]; then
+  sch=$(git diff --name-only "$A_SHA" "$B_SHA" -- 'src/astryx/sql/*.sql')
+  if [ -n "$sch" ]; then
+    SCHEMA_WHY="the range changes $(echo $sch)"
+    case " ${TESTS[*]-} " in *" $SCHEMA_GATE "*) ;; *) TESTS+=("$SCHEMA_GATE");; esac
+    echo "land: + $SCHEMA_GATE: $SCHEMA_WHY"
+  fi
+fi
 [ ${#TESTS[@]} -gt 0 ] || refuse "the range touches no tests/test_*.py or tests/mutants_*.py and no --test was given"
 
 failset() { printf '%s\n' "$1" | grep -E '^[[:space:]]*(FAIL[A-Za-z]*|ERROR|SURVIVED|✗|✘|NOT RUN)([[:space:]:(]|$)' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | sort -u; }
@@ -232,6 +245,7 @@ fi
 
 TAIL="range tests (not check.sh): $(IFS=';'; echo "${RESULTS[*]}")"
 [ -n "$REACH_WHY" ] && TAIL="$TAIL; $(basename "$REACH") ran because $REACH_WHY"
+[ -n "$SCHEMA_WHY" ] && TAIL="$TAIL; $(basename "$SCHEMA_GATE") ran because $SCHEMA_WHY"
 [ -n "$JUDGE_LINE" ] && TAIL="$TAIL; $JUDGE_LINE"
 [ ${#BODY_LINES[@]} -gt 0 ] && TAIL="$TAIL; live body sha256: $(IFS=','; echo "${BODY_LINES[*]}")"
 if [ $PUSH -eq 0 ]; then

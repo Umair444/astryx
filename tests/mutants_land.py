@@ -88,4 +88,10 @@ MUTANTS = {
         ("\nunset ASTRYX_FIXTURE_ADMIN_DSN\n", "\n"),
     "P3 the land judge's refusal doesn't stop the land":
         ('[ $jrc -eq 0 ] || { echo "  ✗ land judge rc $jrc"; RED=1; }', 'true'),
+    "a range changing a schema file doesn't run test_schema_current (plan-12214 R-2)":
+        ('  if [ -n "$sch" ]; then\n    SCHEMA_WHY=', '  if false; then\n    SCHEMA_WHY='),
+    "the schema gate is said but never run":
+        ('    case " ${TESTS[*]-} " in *" $SCHEMA_GATE "*) ;; *) TESTS+=("$SCHEMA_GATE");; esac\n', ''),
+    "the receipt doesn't say why the schema gate ran":
+        ('[ -n "$SCHEMA_WHY" ] && TAIL="$TAIL; $(basename "$SCHEMA_GATE") ran because $SCHEMA_WHY"\n', ''),
 }

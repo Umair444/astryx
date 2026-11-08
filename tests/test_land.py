@@ -65,6 +65,13 @@ print("reachability: fixture gate ran")
 sys.exit(int(os.environ.get("REACH_RC", "0")))
 """
 
+SCHEMA_STUB = """import os, sys
+from pathlib import Path
+Path(__file__).resolve().parent.parent.joinpath("schema-ran.txt").write_text("ran")
+print("schema current: fixture gate ran")
+sys.exit(int(os.environ.get("SCHEMA_RC", "0")))
+"""
+
 SUB_ORACLE = """import os, sys
 from pathlib import Path
 src = Path(os.environ.get("SUB_SRC") or Path(__file__).resolve().parent.parent / "sub.py")
@@ -94,7 +101,7 @@ class Fx:
         self.origin, self.w = root / "origin.git", root / "w"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.origin)], env=ENV, check=True)
         subprocess.run(["git", "init", "-q", "-b", "main", str(self.w)], env=ENV, check=True)
-        (self.w / ".gitignore").write_text("ran.txt\nreach-ran.txt\nbody.py\n__pycache__/\n.env\n")
+        (self.w / ".gitignore").write_text("ran.txt\nreach-ran.txt\nschema-ran.txt\nbody.py\n__pycache__/\n.env\n")
         (self.w / "README").write_text("r\n")
         for rel, body in (base_files or {}).items():
             p = self.w / rel; p.parent.mkdir(parents=True, exist_ok=True); p.write_text(body)
@@ -361,6 +368,26 @@ def main():
     rc, out = f.land(f"{f.base}..{f.head}", env={"REACH_DOMAIN_RC": "2"})
     check("L16 …a domain query that FAILS runs the gate anyway and says so (fail closed)",
           rc == 0 and (f.w / "reach-ran.txt").exists() and "its domain query failed, rc 2, so it runs anyway" in out, out)
+
+    # L21 plan-12214 R-2 (a2 msg 65118): a range that changes a schema file runs tests/test_schema_current.py, which it
+    # never touched, so code needing a column can't land on an org that lags; a range that doesn't, doesn't
+    sgate = {"tests/test_schema_current.py": SCHEMA_STUB, "src/astryx/sql/schema.sql": "-- v1\n"}
+    f = Fx({"tests/test_ok.py": OK_TEST, "src/astryx/sql/schema.sql": "-- v2\n"}, base_files=sgate)
+    rc, out = f.land(f"{f.base}..{f.head}")
+    rec = next((l for l in out.splitlines() if l.startswith("RECEIPT:")), "")
+    check("L21 a range changing schema.sql runs test_schema_current, which it never touched",
+          rc == 0 and (f.w / "schema-ran.txt").exists() and "test_schema_current.py rc 0" in rec, out)
+    check("L21 ...the receipt names why", "test_schema_current.py ran because the range changes src/astryx/sql/schema.sql" in rec, out)
+    f = Fx({"tests/test_ok.py": OK_TEST, "src/astryx/sql/schema.sql": "-- v2\n"}, base_files=sgate)
+    rc, out = f.land(f"{f.base}..{f.head}", env={"SCHEMA_RC": "1"})
+    check("L21 ...a lagging org (the gate red) rolls the land back", rc == 1 and f.main() == f.base and "rolled back" in out, out)
+    f = Fx({"tests/test_ok.py": OK_TEST, "src/astryx/sql/schema.sql": "-- v2\n"}, base_files=sgate)
+    rc, out = f.land(f"{f.base}..{f.head}", env={"SCHEMA_RC": "77"})
+    check("L21 ...and so does a blind one (77)", rc == 1 and f.main() == f.base, out)
+    f = Fx({"tests/test_ok.py": OK_TEST, "src/x.py": "x = 1\n"}, base_files=sgate)
+    rc, out = f.land(f"{f.base}..{f.head}")
+    check("L21 ...a range touching no schema file doesn't run it", rc == 0 and not (f.w / "schema-ran.txt").exists()
+          and "test_schema_current.py ran because" not in out, out)
 
     # L17 S2F (seed #61794): the workflow lint's refusal reads its UNATTRIBUTED line from a here-string, never
     # `printf | grep -q`. Under pipefail that pipe read a MATCH as a failure once the producer outran the pipe buffer
