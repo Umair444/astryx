@@ -1,0 +1,114 @@
+/* ── the chat WORKSPACE (feat/chat-workspace; brief: homes/seed/chat-rebuild/DESIGN.md) ─────────────────────────────
+   Canvas is the brand anchor: Instrument Serif for the one display line (its italic word in the violet→blue
+   gradient, used ONCE per screen), Inter for the UI, Newsreader for agents' long answers, a lavender radial backdrop,
+   16px radii. Every colour is a theme token (--t-*, canvas/web/src/themes.ts), so all twelve palettes carry it.
+   Boldness is spent in ONE place, the agent presence system (pips, rings, the live bar); the chrome stays quiet. */
+
+/* in the components layer, so a Tailwind utility on the same element (md:hidden, !w-7) always wins */
+@layer components {
+.ws { --ws-rail: 56px; --ws-list: 268px; --ws-ease: cubic-bezier(.22, 1, .36, 1); }
+
+/* the backdrop: canvas's aurora, still (no drift), two soft pools behind the conversation */
+.ws-backdrop {
+  background:
+    radial-gradient(1100px 620px at 18% -8%, color-mix(in srgb, var(--t-accent) 11%, transparent), transparent 62%),
+    radial-gradient(900px 600px at 105% 108%, color-mix(in srgb, var(--t-accent2) 9%, transparent), transparent 60%),
+    var(--t-bg);
+}
+:root[data-theme="dark"] .ws-backdrop {
+  background:
+    radial-gradient(1100px 620px at 18% -8%, color-mix(in srgb, var(--t-accent) 14%, transparent), transparent 62%),
+    radial-gradient(900px 600px at 105% 108%, color-mix(in srgb, var(--t-accent2) 7%, transparent), transparent 60%),
+    var(--t-bg);
+}
+/* the chrome: the rail and the list sit a lightness step off the page, a hairline between, never a shadow */
+.ws-chrome { background: color-mix(in srgb, var(--t-bg2) 82%, transparent); backdrop-filter: blur(16px) saturate(1.1); }
+.ws-rail { background: color-mix(in srgb, var(--t-bg2) 96%, var(--t-fg) 4%); }
+:root[data-theme="dark"] .ws-rail { background: color-mix(in srgb, var(--t-bg2) 90%, #000 10%); }
+
+.ws-display { font-family: "Instrument Serif", Georgia, serif; font-weight: 400; letter-spacing: -0.015em; }
+.ws-sig-text { background: linear-gradient(120deg, var(--t-accent), var(--t-accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.ws-sig { background: linear-gradient(135deg, var(--t-accent), var(--t-accent2)); color: var(--t-on); }
+
+/* quiet controls */
+.ws-icon { display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; color: var(--t-dim);
+  transition: background-color 120ms ease-out, color 120ms ease-out; }
+.ws-icon:hover:not(:disabled) { background: color-mix(in srgb, var(--t-fg) 6%, transparent); color: var(--t-fg); }
+.ws-icon[aria-pressed="true"] { background: color-mix(in srgb, var(--t-accent) 12%, transparent); color: var(--t-accent); }
+.ws-icon:disabled { opacity: .35; }
+.ws-btn { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; border-radius: 11px; font-size: 13px;
+  color: var(--t-fg); border: 1px solid var(--t-line); background: color-mix(in srgb, var(--t-panel) 70%, transparent);
+  transition: border-color 120ms ease-out, background-color 120ms ease-out; }
+.ws-btn:hover { border-color: var(--t-line2); background: var(--t-panel); }
+.ws-row { transition: background-color 120ms ease-out; }
+.ws-row:hover { background: color-mix(in srgb, var(--t-fg) 4.5%, transparent); }
+.ws-row[aria-current="true"] { background: color-mix(in srgb, var(--t-fg) 7.5%, transparent); }
+.ws-label { font-size: 11px; letter-spacing: .02em; color: var(--t-mute); font-weight: 500; }
+.ws-kbd { font-family: var(--font-mono); font-size: 10.5px; color: var(--t-mute); border: 1px solid var(--t-line); border-radius: 5px; padding: 0 4px; line-height: 16px; }
+
+/* the composer: canvas's well, a soft drop, the one gradient button */
+.ws-composer { background: color-mix(in srgb, var(--t-panel) 92%, transparent); border: 1px solid var(--t-line);
+  border-radius: 20px; box-shadow: 0 1px 0 color-mix(in srgb, var(--t-fg) 3%, transparent), 0 14px 40px -18px color-mix(in srgb, var(--t-accent) 30%, rgba(0,0,0,.35));
+  transition: border-color 160ms ease-out, box-shadow 160ms ease-out; }
+.ws-composer:focus-within { border-color: color-mix(in srgb, var(--t-accent) 38%, var(--t-line)); }
+.ws-composer[data-drop="true"] { border-color: var(--t-accent); border-style: dashed; }
+.ws-send { width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; transition: filter 120ms, transform 120ms, opacity 120ms; }
+.ws-send:hover:not(:disabled) { filter: brightness(1.08); }
+.ws-send:active:not(:disabled) { transform: scale(.95); }
+.ws-send:disabled { opacity: .3; filter: grayscale(.6); }
+
+/* turns: owner = a tinted block on the right; agents = prose on the page */
+.ws-mine { background: color-mix(in srgb, var(--t-accent) 7%, var(--t-panel)); border: 1px solid color-mix(in srgb, var(--t-accent) 14%, var(--t-line)); }
+:root[data-theme="dark"] .ws-mine { background: color-mix(in srgb, var(--t-accent) 11%, var(--t-panel)); }
+.ws-prose { font-family: "Newsreader Variable", "Newsreader", Georgia, serif; font-size: 16.5px; line-height: 1.64; color: color-mix(in srgb, var(--t-fg) 92%, var(--t-dim)); overflow-wrap: anywhere; }
+.ws-prose code { font-family: var(--font-mono); font-size: .8em; background: var(--t-panel2); border: 1px solid var(--t-line); border-radius: 5px; padding: .06em .32em; }
+.ws-prose pre { font-family: var(--font-mono); font-size: 12.5px; line-height: 1.55; background: var(--t-panel); border: 1px solid var(--t-line); border-radius: 12px; padding: .9em 1.1em; overflow-x: auto; }
+.ws-prose pre code { background: none; border: 0; padding: 0; }
+.ws-prose a { color: var(--t-accent2); text-decoration: underline; text-underline-offset: 2px; }
+.ws-prose > :first-child { margin-top: 0; } .ws-prose > :last-child { margin-bottom: 0; }
+.ws-prose p { margin: .5em 0; }
+.ws-prose ul, .ws-prose ol { margin: .45em 0; padding-left: 1.35em; } .ws-prose li { margin: .18em 0; }
+.ws-prose ul { list-style: disc; } .ws-prose ol { list-style: decimal; }
+.ws-prose li::marker { color: var(--t-mute); }
+.ws-prose h1, .ws-prose h2, .ws-prose h3, .ws-prose h4 { font-family: "Inter Variable", sans-serif; font-weight: 600; color: var(--t-fg); margin: 1em 0 .35em; line-height: 1.3; }
+.ws-prose h1 { font-size: 1.12em; } .ws-prose h2 { font-size: 1.04em; } .ws-prose h3, .ws-prose h4 { font-size: .95em; }
+.ws-prose strong { color: var(--t-fg); font-weight: 600; }
+.ws-prose blockquote { border-left: 2px solid var(--t-line2); padding-left: 12px; color: var(--t-dim); margin: .6em 0; }
+.ws-prose hr { border: 0; border-top: 1px solid var(--t-line); margin: 1em 0; }
+.ws-prose table { font-family: "Inter Variable", sans-serif; font-size: 13px; font-variant-numeric: tabular-nums; max-width: 100%; border-collapse: collapse; display: block; overflow-x: auto; margin: .6em 0; }
+.ws-prose th, .ws-prose td { border: 1px solid var(--t-line); padding: 4px 10px; text-align: left; white-space: nowrap; }
+.ws-prose th { background: var(--t-panel2); font-weight: 600; }
+
+/* the ONE meaningful rule: a handoff */
+.ws-handoff { display: flex; align-items: center; gap: 12px; color: var(--t-mute); font-size: 12px; }
+.ws-handoff::before, .ws-handoff::after { content: ""; flex: 1; height: 1px; background: var(--t-line); }
+
+/* presence: a status pip and a working agent's breathing ring (0.5 Hz, opacity + scale only) */
+.ws-pip { position: absolute; right: -1px; bottom: -1px; width: 10px; height: 10px; border-radius: 9999px; border: 2px solid var(--ws-pip-bg, var(--t-bg2)); }
+.ws-pip[data-s="working"] { background: var(--t-accent); }
+.ws-pip[data-s="awake"] { background: var(--t-good); }
+.ws-pip[data-s="asleep"] { background: var(--t-mute); opacity: .7; }
+.ws-pip[data-s="down"] { background: transparent; box-shadow: inset 0 0 0 1.5px var(--t-bad); }
+@keyframes ws-breathe { 0%, 100% { opacity: .35; transform: scale(.96); } 50% { opacity: .95; transform: scale(1.08); } }
+.ws-ring { position: absolute; inset: -3px; border-radius: 9999px; box-shadow: 0 0 0 1.5px var(--ws-agent, var(--t-accent)), 0 0 10px -1px var(--ws-agent, var(--t-accent));
+  animation: ws-breathe 2s cubic-bezier(.45,0,.55,1) infinite; pointer-events: none; }
+@keyframes ws-dot { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+.ws-live-dot { width: 7px; height: 7px; border-radius: 9999px; background: var(--ws-agent, var(--t-accent)); animation: ws-dot 2s ease-in-out infinite; }
+.ws-livebar { position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px; border-radius: 2px; background: var(--ws-agent, var(--t-accent)); animation: ws-dot 2s ease-in-out infinite; }
+.ws-shimmer { background: linear-gradient(90deg, var(--t-mute) 0%, var(--t-fg) 45%, var(--t-mute) 90%); background-size: 220% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent; animation: ws-shimmer 2.4s linear infinite; }
+@keyframes ws-shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+
+/* the team cards on the empty state: hairline, no lift, the face carries the colour */
+.ws-card { border: 1px solid var(--t-line); background: color-mix(in srgb, var(--t-panel) 72%, transparent); border-radius: 16px;
+  transition: border-color 140ms ease-out, background-color 140ms ease-out; }
+.ws-card:hover { border-color: color-mix(in srgb, var(--ws-agent, var(--t-accent)) 45%, var(--t-line)); background: var(--t-panel); }
+
+.ws-menu { background: var(--t-panel); border: 1px solid var(--t-line); border-radius: 12px; box-shadow: 0 18px 50px -20px rgba(0,0,0,.45); }
+.ws-scrim { background: color-mix(in srgb, #000 38%, transparent); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ws-ring, .ws-live-dot, .ws-livebar, .ws-shimmer { animation: none; }
+  .ws-shimmer { color: var(--t-dim); background: none; }
+}
+}
