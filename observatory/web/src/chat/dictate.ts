@@ -12,6 +12,14 @@ let st: DictState = { phase: 'idle', partial: '', error: '', level: 0 }
 const subs = new Set<() => void>()
 const patch = (p: Partial<DictState>) => { st = { ...st, ...p }; subs.forEach((f) => f()) }
 export const useDictation = () => useSyncExternalStore((f) => { subs.add(f); return () => { subs.delete(f) } }, () => st)
+/* outside React (chat/talk/engine.ts): every state change, and a mute that keeps the session (the mic's track off while
+   an answer is spoken aloud, so the speaker isn't transcribed as the owner) */
+export function onDictation(f: (s: DictState) => void): () => void {
+  const g = () => f(st)
+  subs.add(g)
+  return () => { subs.delete(g) }
+}
+export function setDictationMuted(muted: boolean) { mic?.getAudioTracks().forEach((t) => { t.enabled = !muted }) }
 
 let pc: RTCPeerConnection | null = null
 let mic: MediaStream | null = null

@@ -6,21 +6,13 @@ import { post } from './api'
 import { addMessage, onMessage, refreshLists, useStore } from './store'
 import type { Msg } from './types'
 import { Avatar, I } from './ui'
+import { pickVoice, speakable } from './voiceKit'
 
 type Phase = 'starting' | 'listening' | 'hearing' | 'transcribing' | 'thinking' | 'speaking' | 'error'
 
 const SPEAK_ON = 0.045        // RMS that counts as speech
 const SILENCE_MS = 1100       // this much quiet ends a turn
 const MIN_TURN_MS = 450       // shorter blips are noise
-
-function speakable(md: string) {
-  return md
-    .replace(/\[\[(file|poll):[^\]]*\]\]/g, '')
-    .replace(/```[\s\S]*?```/g, ' (code omitted) ')
-    .replace(/`([^`]*)`/g, '$1').replace(/\*\*|__|[*_#>]/g, '')
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/\s+/g, ' ').trim()
-}
 
 export function VoiceMode({ thread: initial, onClose }: { thread?: string; onClose: () => void }) {
   const me = useStore(s => s.me)!
@@ -121,7 +113,7 @@ export function VoiceMode({ thread: initial, onClose }: { thread?: string; onClo
       speechSynthesis.cancel()
       const u = new SpeechSynthesisUtterance(text)
       u.rate = 1.03
-      const v = speechSynthesis.getVoices().find(v => /en(-|_)(GB|US)/.test(v.lang) && /natural|neural|google|samantha|daniel/i.test(v.name))
+      const v = pickVoice()
       if (v) u.voice = v
       u.onend = () => alive && setP('listening')
       u.onerror = () => alive && setP('listening')

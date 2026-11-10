@@ -10,6 +10,8 @@ import { KindIcon, KIND_WORD } from '../artifacts/kinds'
 import { Presence, STATUS_WORD } from './AgentRail'
 import { tighten, useMessageSearch, type MessageHit } from '../search'
 import { Snippet } from './MessageHits'
+import type { CanvasRow } from '../canvas/api'
+import { I } from '../icons'
 
 /* The workspace's three dialogs: the ⌘K PALETTE (agents with live status, conversations, projects, commands), the
    keyboard sheet (⌘/), and naming a project. Each closes on Esc or a click outside, and never on its own. */
@@ -25,6 +27,7 @@ export const KEYS: [string, string][] = [
   ['G then P', 'All projects'],
   ['G then N', 'New project'],
   ['⌘.', 'Dictate into the message box'],
+  ['⌘⇧.', 'Talk: a voice conversation with the agent here'],
   ['/', 'Commands, skills and tools (in the box), or focus the box'],
   ['@', 'Mention an agent: it joins the chat'],
   ['↑', 'In an empty box: your last message, to edit and send again'],
@@ -39,10 +42,10 @@ export const KEYS: [string, string][] = [
    8): what the owner's conversations SAID, from the server's full-text search (GET /api/ws/search), newest first and
    unscored here; Enter opens the conversation at that message. */
 interface Item { id: string; label: string; hint: string; group: Group; face?: string; status?: Status; dot?: 'unread' | 'live'; kind?: Kind; act: () => void; score: number; hits: number[]; said?: MessageHit }
-type Group = 'Agents' | 'Conversations' | 'Messages' | 'Files' | 'Projects' | 'Actions'
-const ORDER: Group[] = ['Agents', 'Conversations', 'Messages', 'Files', 'Projects', 'Actions']
-const CAP: Record<Group, number> = { Agents: 14, Conversations: 8, Messages: 6, Files: 6, Projects: 5, Actions: 9 }
-const CAP_EMPTY: Record<Group, number> = { Agents: 6, Conversations: 6, Messages: 0, Files: 4, Projects: 4, Actions: 9 }   // every section in view
+type Group = 'Agents' | 'Conversations' | 'Canvases' | 'Messages' | 'Files' | 'Projects' | 'Actions'
+const ORDER: Group[] = ['Agents', 'Conversations', 'Canvases', 'Messages', 'Files', 'Projects', 'Actions']
+const CAP: Record<Group, number> = { Agents: 14, Conversations: 8, Canvases: 5, Messages: 6, Files: 6, Projects: 5, Actions: 9 }
+const CAP_EMPTY: Record<Group, number> = { Agents: 6, Conversations: 6, Canvases: 3, Messages: 0, Files: 4, Projects: 4, Actions: 9 }   // every section in view
 
 /* the query's characters in order inside `text`: null if they aren't; else a score (word starts and runs win, an
    early first hit wins) and the matched positions */
@@ -72,11 +75,12 @@ function Marked({ text, hits }: { text: string; hits: number[] }) {
   return <>{out}</>
 }
 
-export function Palette({ threads, names, status, projects, commands, onClose, go, openProject, openAgent, lines = {}, files = [], unread, live = {}, onOpenFile, onJump }: {
+export function Palette({ threads, names, status, projects, commands, onClose, go, openProject, openAgent, lines = {}, files = [], unread, live = {}, onOpenFile, onJump, canvases = [], onCanvas }: {
   threads: WsThread[]; names: string[]; status: Record<string, Status>; projects: Project[]; commands: Command[]
   onClose: () => void; go: (t: string) => void; openProject: (id: string) => void; openAgent: (n: string) => void
   lines?: Record<string, string>; files?: MediaItem[]; unread?: Set<string>; live?: Record<string, string>; onOpenFile?: (r: OpenRequest) => void
   onJump?: (h: MessageHit) => void
+  canvases?: CanvasRow[]; onCanvas?: (id: number) => void      // iteration 13: the live pages agents paint
 }) {
   const [q, setQ] = useState('')
   const found = useMessageSearch(onJump ? q : '', CAP.Messages)
@@ -92,6 +96,8 @@ export function Palette({ threads, names, status, projects, commands, onClose, g
       ...threads.map((t) => ({ id: 't:' + t.thread, label: t.title, group: 'Conversations' as Group, face: t.agents[0],
         dot: live[t.thread] ? 'live' as const : unread?.has(t.thread) ? 'unread' as const : undefined,
         hint: live[t.thread] ? `${displayName(live[t.thread])} is working` : fmtAgo(t.last_ts), act: () => go(t.thread) })),
+      ...(onCanvas ? canvases : []).map((c) => ({ id: 'cv:' + c.id, label: c.title, group: 'Canvases' as Group, face: c.agent,
+        hint: `canvas · v${c.version} · ${displayName(c.agent)} · ${fmtAgo(c.updated_at)}`, act: () => onCanvas?.(c.id) })),
       ...files.map((f) => ({ id: 'f:' + f.path, label: f.name, group: 'Files' as Group, kind: f.kind,
         hint: `${KIND_WORD[f.kind]} · ${f.from === 'owner' ? 'you' : displayName(f.from)} · ${fmtAgo(f.ts)}`,
         act: () => onOpenFile?.({ path: f.path, label: f.label, from: f.from }) })),
@@ -115,7 +121,7 @@ export function Palette({ threads, names, status, projects, commands, onClose, g
       const inG = scored.filter((x) => x.group === g)
       return (s ? inG.sort((a, b) => b.score - a.score) : inG).slice(0, (s ? CAP : CAP_EMPTY)[g])
     })
-  }, [q, threads, names, status, projects, commands, lines, files, unread, live, found.hits]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [q, threads, names, status, projects, commands, lines, files, unread, live, found.hits, canvases]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => setSel(0), [q])
   useEffect(() => { list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' }) }, [sel])
   return (
@@ -123,7 +129,7 @@ export function Palette({ threads, names, status, projects, commands, onClose, g
       <div role="dialog" aria-label="jump to" className="ws-menu ws-palette w-full max-w-[640px] !rounded-[18px] overflow-hidden" onMouseDown={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-3 px-5 border-b border-line">
           <span className="text-ink-mute" aria-hidden><svg viewBox="0 0 24 24" className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="11" cy="11" r="6.5" /><path d="M20 20l-4.2-4.2" /></svg></span>
-          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Agents, conversations, messages, files, actions" aria-label="search everything"
+          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Agents, conversations, canvases, messages, files, actions" aria-label="search everything"
             role="combobox" aria-expanded aria-controls="ws-palette-list" aria-activedescendant={items[sel] ? `pal-${sel}` : undefined}
             onKeyDown={(e) => {
               if (e.key === 'ArrowDown') { e.preventDefault(); setSel((x) => Math.min(x + 1, items.length - 1)) }
@@ -142,6 +148,7 @@ export function Palette({ threads, names, status, projects, commands, onClose, g
               <div onMouseMove={() => i !== sel && setSel(i)} onMouseDown={(e) => { e.preventDefault(); it.act() }}
                 className={`flex items-center gap-3 rounded-[10px] px-3 py-[7px] cursor-pointer ${i === sel ? 'bg-[color-mix(in_srgb,var(--t-fg)_7%,transparent)]' : ''}`}>
                 {it.group === 'Agents' ? <Presence agent={it.face!} status={it.status} size={22} />
+                  : it.group === 'Canvases' ? <span className="ws-cvmark !w-[22px] !h-[22px] !rounded-[7px]" aria-hidden>{I.canvas('w-[13px] h-[13px]')}</span>
                   : it.kind ? <span className="w-[22px] h-[22px] grid place-items-center rounded-[7px] ws-chip-icon shrink-0"><KindIcon kind={it.kind} className="w-[13px] h-[13px]" /></span>
                   : it.face ? <AgentFace name={it.face} size={22} />
                   : <span className="w-[22px] text-center text-ink-mute text-[12px] shrink-0" aria-hidden>{it.group === 'Projects' ? '▦' : '›'}</span>}

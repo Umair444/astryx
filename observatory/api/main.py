@@ -374,6 +374,12 @@ from observatory.api import artifacts as _arts  # noqa: E402
 _arts.bind(lambda: pool, ESTATE)
 app.include_router(_arts.router)
 
+# iteration 13: the workspace's READ-ONLY window onto canvas (its canvases, versions, a version through canvas's own shell,
+# the page's live values); owner-only by omission from PUBLIC. The cog prefix is set beside CANVAS_PRE, below.
+from observatory.api import ws_canvas as _wscv  # noqa: E402
+_wscv.bind(lambda: pool)
+app.include_router(_wscv.router)
+
 # the Room's speaker: agents answer the room with send(to='room'); spoken in their voice, or run on the screen
 from observatory.api import room as _room  # noqa: E402
 
@@ -3563,6 +3569,7 @@ CANVAS_UP = _upstream("astryx-canvas", 8091)   # this org's canvas (its registry
 # In a cog the viewer reaches this observatory under the front's /o/<org>/ (S3c canvas): the prefix is THIS org's
 # registry name, computed, never read from a request (nothing a caller sends can move a redirect). One org: "".
 CANVAS_PRE = f"/o/{orgs.name()}" if _COG else ""
+_wscv.CANVAS_PRE = CANVAS_PRE                  # the workspace serves canvas pages with this kit prefix
 _canvas_http: httpx.AsyncClient | None = None
 
 

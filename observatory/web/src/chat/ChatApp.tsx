@@ -51,6 +51,10 @@ import { friendly, toast } from './toast'
 const Library = lazy(() => import('./library/Library'))
 const ProjectHome = lazy(() => import('./projects/ProjectHome'))
 const ProjectsIndex = lazy(() => import('./projects/ProjectsIndex'))
+// iteration 13: a painted canvas in the panel, and Talk (canvas's voice mode): their own chunks, loaded on first use
+const CanvasPanel = lazy(() => import('./canvas/CanvasPanel'))
+const TalkMode = lazy(() => import('./talk/TalkMode'))
+import { canvasIdOf, useCanvases } from './canvas/api'
 import { interruptAgent, loadHandoffs, useTabTitle, useUnread, type Handoff } from './live'
 import ListSeam, { useListWidth } from './shell/ListSeam'
 import MoreMenu from './shell/MoreMenu'
@@ -120,10 +124,17 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   const project = view === 'project' ? thread!.slice(8) : null
   const [listFilter, setListFilter] = useState<string | null>(null)     // the list focused on one project's conversations
   const [annFocus, setAnnFocus] = useState<AnnotateCtx['focus']>(null)
+  // iteration 13: the painted canvas open in the panel (a canvas's conversation, the library, ⌘K), and Talk
+  const canvases = useCanvases()
+  const [canvasOpen, setCanvasOpen] = useState<number | null>(null)
+  const canvasNext = useRef<number | null>(null)               // ⌘K: open this canvas once its conversation is on screen
+  const [talk, setTalk] = useState<{ agent: string; thread: string } | null>(null)
   const composer = useRef<ComposerHandle>(null)
   const current = view === 'thread' ? thread ?? '' : ''
   const panel = usePanel(view === 'thread' ? current : thread ?? '')    // the library and a project keep their own tabs
   const go = useCallback((t: string | null) => { setDrawer(false); nav(t) }, [nav])
+  // a canvas belongs to where it was opened: moving to another conversation or page closes it
+  useEffect(() => { setCanvasOpen(canvasNext.current); canvasNext.current = null }, [thread])
   // a search hit opens its conversation AT that message (thread/focus.ts scrolls to it and pulses it once)
   const [jump, setJump] = useState<Jump | null>(null)
   const onJump = useCallback((h: MessageHit) => { setPalette(false); setJump({ thread: h.thread, id: h.msg_id, n: Date.now() }); go(h.thread) }, [go])
@@ -208,6 +219,13 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   const seedOnly = names.includes('seed') ? ['seed'] : []
   const recipients = current ? inChat : activeProject?.agents.length ? activeProject.agents : seedOnly
   const lanes = activeProject && !current ? activeProject.agents : inChat
+  // Talk: with the agent this box writes to, on this conversation (a new one from the home or a project page)
+  const openTalk = (agent?: string) => {
+    const a = agent ?? recipients[0]
+    if (!a) { setNote('Mention an agent with @ first: Talk speaks with one agent.'); return }
+    setTalk({ agent: a, thread: current || newThread() })
+  }
+  const talkRows = useMemo(() => (!talk ? [] : talk.thread === current ? rows : messages.filter((m) => m.thread === talk.thread)), [talk, current, rows, messages])
 
   // D4: in a chat, the work comes filed by turn (/api/chat/work), refetched when the thread moves or one of its
   // agents does; a project's lanes (no thread open) show each agent's recent steps from any thread
@@ -323,6 +341,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     { key: 'workforce', label: 'Workforce', hint: 'show the agents at work', run: () => setWorkforce(true) },
     { key: 'files', label: 'Files', hint: 'every file in this conversation (⌘⇧E)', run: () => setFilesOpen(true) },
     { key: 'voice', label: 'Dictate', hint: 'speak into the message box (⌘.)', run: () => void startDictation((t) => composer.current?.insert(t)) },
+    { key: 'talk', label: 'Talk', hint: 'a voice conversation with the agent here (⌘⇧.)', run: () => openTalk() },
     { key: 'remember', label: 'Remember', hint: 'propose the rest of the line to the memory agent', run: () => composer.current?.set('/remember ') },
     { key: 'canvas', label: 'Open in canvas', hint: 'build a page with the first agent here', run: () => void window.open(`${canvasBase()}#/new/${encodeURIComponent(inChat[0] ?? 'painter')}`, '_blank') },
     { key: 'keys', label: 'Keyboard', hint: 'every shortcut', run: () => setHelp(true) },
@@ -355,6 +374,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
       if (mod && e.key.toLowerCase() === 'j') { e.preventDefault(); setWorkforce((w) => !w); return }
       if (mod && e.shiftKey && e.key.toLowerCase() === 'e') { e.preventDefault(); setFilesOpen((f) => !f); return }
       if (mod && e.key === '/') { e.preventDefault(); setHelp((h) => !h); return }
+      if (mod && e.shiftKey && e.code === 'Period' && (view === 'thread' || view === 'project')) { e.preventDefault(); openTalk(); return }
       if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
         e.preventDefault()
         const i = chatIds.indexOf(current), j = e.key === 'ArrowUp' ? i - 1 : i + 1
@@ -381,7 +401,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     }
     addEventListener('keydown', k)
     return () => removeEventListener('keydown', k)
-  }, [palette, help, workforce, filesOpen, drawer, current, dirty, panel.tabs.length, chatIds.join('|')]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [palette, help, workforce, filesOpen, drawer, current, dirty, panel.tabs.length, chatIds.join('|'), recipients.join(','), view]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // signed out, offline and a rotated key are the gate's (chat/Gate.tsx): this renders only for the owner
   if (!who.owner) return null
@@ -392,7 +412,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     <Composer ref={composer} hero={hero} roster={names} inChat={recipients} skills={cmds.skills} tools={cmds.tools}
       commands={commands} onSend={onSendOrCommand} draftKey={view === 'thread' ? current : thread ?? ''}
       placeholder={placeholder ?? (hero ? 'Ask the team anything. @mention who should take it; seed routes the rest.' : undefined)}
-      lastMine={() => stripEmbeds([...rows].reverse().find((m) => m.from === 'owner')?.body ?? '')} />
+      lastMine={() => stripEmbeds([...rows].reverse().find((m) => m.from === 'owner')?.body ?? '')} onTalk={openTalk} />
   )
   const list = (phone: boolean) => (
     <ConversationList threads={listThreads} loaded={loaded} current={current || null} live={live} projects={proj.projects} project={project}
@@ -406,12 +426,21 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   )
   const home = view === 'thread' && !current
   const layout: Layout = winW >= 1200 ? 'inline' : winW >= 768 ? 'sheet' : 'full'
-  const showPanel = (!!current || view === 'library' || view === 'project') && panel.tabs.length > 0 && !workforce
+  const canvasHere = (!!current || view === 'library' || view === 'project') && canvasOpen !== null && !workforce
+  const showPanel = (!!current || view === 'library' || view === 'project') && panel.tabs.length > 0 && !workforce && !canvasHere
+  const threadCanvas = canvasIdOf(current)
+  // ⌘K / the library: a canvas opens beside its own conversation when it has one listed, else right where you are
+  const openCanvas = (id: number, toThread: boolean) => {
+    setWorkforce(false)
+    const t = canvases?.find((c) => c.id === id)?.thread
+    if (toThread && t && threads.some((x) => x.thread === t) && t !== current) { canvasNext.current = id; go(t) } else setCanvasOpen(id)
+  }
   const files = media ?? []
   // the drawer docks beside the panel where there is room for rail + chat + panel + drawer; narrower it floats
   const docked = winW >= 1320
   // the list steps aside for the panel below 1440, and for panel + docked drawer below 1720 (⌘\ hides it any time)
-  const listHidden = listW.collapsed || (showPanel && layout === 'inline' && (winW < 1440 || (filesOpen && !!current && docked && winW < 1720)))
+  // a painted page wants room: the list steps aside for a canvas below 1600
+  const listHidden = listW.collapsed || (canvasHere && layout === 'inline' && winW < 1600) || ((showPanel || canvasHere) && layout === 'inline' && (winW < 1440 || (filesOpen && !!current && docked && winW < 1720)))
   const openFile = (r: OpenRequest) => { setWorkforce(false); panel.open(r); if (winW < 1200) setFilesOpen(false) }
   openRef.current = openFile
   // a turn's actions: quote into the composer (to whoever said it, when several share the thread); open as a document
@@ -466,12 +495,15 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
             onRename={(t) => currentRow && setMeta(currentRow, { title: t })}
             onWorkforce={() => setWorkforce((w) => !w)} onMedia={() => setFilesOpen((f) => !f)}
             onMenu={() => setDrawer(true)} onAgent={openAgent} names={names} lines={lines}
-            more={<MoreMenu onExport={() => exportConversation(rows, title, current, names)} />} />
+            more={<MoreMenu onExport={() => exportConversation(rows, title, current, names)} />}
+            canvas={threadCanvas ? { version: canvases?.find((c) => c.id === threadCanvas)?.version ?? 0, open: canvasOpen === threadCanvas,
+              onToggle: () => { setWorkforce(false); setCanvasOpen((o) => (o === threadCanvas ? null : threadCanvas)) } } : null} />
         )}
         <div className="flex-1 min-h-0 overflow-y-auto">
           {home && <TeamHome names={names} status={status} lines={lines} agents={team} threads={threads} composer={box(true)} onAgent={openAgent} onGo={go} />}
           <Suspense fallback={null}>
-          {view === 'library' && <Library projects={proj.projects} activeId={storedActive} onOpen={openStored} onThread={go}
+          {view === 'library' && <Library projects={proj.projects} activeId={canvasHere ? null : storedActive} onOpen={(id, it) => { setCanvasOpen(null); openStored(id, it) }} onThread={go}
+            activeCanvas={canvasHere ? canvasOpen : null} onCanvas={(id) => openCanvas(id, false)}
             onAddToProject={(pid, aid) => void proj.mutate(patchOne(pid, (x) => (x.files.includes(aid) ? x : { ...x, files: [...x.files, aid] })))} />}
           {view === 'projects' && <ProjectsIndex projects={proj.projects} threads={threads} loaded={proj.loaded} onOpen={openProject} onNew={() => setAsking('new')} />}
           {view === 'project' && activeProject && <ProjectHome key={activeProject.id} p={activeProject} threads={threads} names={names} status={status} roles={roles}
@@ -517,6 +549,8 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
 
       {showPanel && <Panel panel={panel} layout={layout} onDirty={setDirty} annotate={current ? annotate : undefined}
         onAttach={(u) => { if (view === 'library') { newChat(); setTimeout(() => composer.current?.attach(u), 80) } else composer.current?.attach(u) }} />}
+      {canvasHere && <Suspense fallback={null}><CanvasPanel key={canvasOpen} id={canvasOpen!} layout={layout} onClose={() => setCanvasOpen(null)}
+        onThread={canvases?.find((c) => c.id === canvasOpen)?.thread === current ? undefined : (t) => { canvasNext.current = canvasOpen; go(t) }} /></Suspense>}
       </div>
 
       {/* wide: the media drawer DOCKS as a column beside the artifact panel (the panel's row narrows; nothing floats
@@ -555,10 +589,21 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
 
       {palette && <Palette threads={listThreads} names={names} status={status} projects={proj.projects} commands={commands} onClose={() => setPalette(false)}
         lines={lines} files={files} unread={unread} live={live} onOpenFile={(f) => { setPalette(false); openFile(f) }} onJump={onJump}
+        canvases={canvases ?? []} onCanvas={(id) => { setPalette(false); openCanvas(id, true) }}
         go={(t) => { setPalette(false); go(t) }}
         openProject={(id) => { setPalette(false); openProject(id) }}
         openAgent={(n) => { setPalette(false); openAgent(n) }} />}
       {help && <Keys onClose={() => setHelp(false)} />}
+      <AnimatePresence>
+        {talk && (
+          <Suspense key="talk" fallback={null}>
+            <TalkMode agent={talk.agent} thread={talk.thread} title={talk.thread === current ? title : null} rows={talkRows}
+              send={async (to, body, t) => { const m = await send(to, body, t); reload(); return m }}
+              onSent={(t) => { if (t !== current) { if (activeProject && view === 'project') void proj.mutate(moveThread(t, activeProject.id)); go(t) } }}
+              onClose={() => setTalk(null)} />
+          </Suspense>
+        )}
+      </AnimatePresence>
       {asking && <NewProject suggest={nextColor(proj.projects)} onClose={() => setAsking(null)}
         seedAgents={asking === 'project' && current ? inChat : []} seedThread={asking === 'project' && current ? title : null}
         onCreate={async (d) => {

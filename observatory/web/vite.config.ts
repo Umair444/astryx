@@ -14,6 +14,8 @@ export default defineConfig({
       // OBS_API points a dev server at another observatory (a fixture-backed one for screenshots)
       // ws: the Hands view's VNC socket (/api/hands/<desk>/vnc) rides the same proxy (devtools/hands_phone.py)
       '/api': { target: process.env.OBS_API || 'http://127.0.0.1:8090', ws: true },
+      // the canvas kit (fonts, chart libraries) a painted canvas loads inside its sandboxed frame (chat/canvas/)
+      '/canvas/kit': { target: process.env.OBS_API || 'http://127.0.0.1:8090' },
     },
   },
 })

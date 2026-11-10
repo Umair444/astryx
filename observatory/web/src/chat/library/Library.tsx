@@ -8,12 +8,16 @@ import { FILTER_OF, type Filter } from '../artifacts/kinds'
 import { ProjectMark } from '../projects/parts'
 import { ensureImported, loadLibrary, type Item } from './api'
 import { FileCard, FileRow, type Action } from './FileCard'
+import { useCanvases, type CanvasRow } from '../canvas/api'
+import { CanvasCard, CanvasRowItem } from '../canvas/CanvasCard'
 
 /* THE LIBRARY (#/chat/library): every file the owner's conversations hold, in one place — what the owner uploaded,
    what agents made, and every version since, newest first. Grid or list; filter by kind, by agent, by project, by
    conversation; search by name. A click opens the file in the artifact panel right here (its versions, diff and
    annotations come along); "Open its conversation" goes to where it was made. A file nobody has opened yet is listed
-   too ("new"): opening it imports it into its own conversation's history, exactly as a chip click would. */
+   too ("new"): opening it imports it into its own conversation's history, exactly as a chip click would.
+   CANVASES (iteration 13): the live pages agents paint sit first, each card the page itself, live; a click opens it
+   in the panel here, beside the library (view only; canvas holds the edits). */
 
 const KINDS: { id: Filter; label: string }[] = [
   { id: 'all', label: 'All' }, { id: 'images', label: 'Images' }, { id: 'docs', label: 'Docs' }, { id: 'data', label: 'Data' }, { id: 'code', label: 'Code' },
@@ -21,9 +25,13 @@ const KINDS: { id: Filter; label: string }[] = [
 const VIEW_KEY = 'ws.library.view'
 type Sort = 'recent' | 'name' | 'versions'
 
-export default function Library({ projects, activeId, onOpen, onThread, onAddToProject }: {
+type Kind = Filter | 'canvases'
+
+export default function Library({ projects, activeId, onOpen, onThread, onAddToProject, activeCanvas = null, onCanvas }: {
   projects: Project[]
   activeId: string | null                          // the artifact open in the panel
+  activeCanvas?: number | null                     // the canvas open in the panel
+  onCanvas?: (id: number) => void
   onOpen: (id: string, it: Item) => void
   onThread: (thread: string) => void
   onAddToProject: (projectId: string, artifactId: string) => void
@@ -32,7 +40,8 @@ export default function Library({ projects, activeId, onOpen, onThread, onAddToP
   const [items, setItems] = useState<Item[] | null>(null)
   const [err, setErr] = useState('')
   const [q, setQ] = useState('')
-  const [kind, setKind] = useState<Filter>('all')
+  const [kind, setKind] = useState<Kind>('all')
+  const canvases = useCanvases()
   const [agent, setAgent] = useState('')
   const [project, setProject] = useState('')
   const [thread, setThread] = useState('')
@@ -54,7 +63,7 @@ export default function Library({ projects, activeId, onOpen, onThread, onAddToP
 
   const all = items ?? []
   // the facets, from what is actually here (a filter never offers an empty choice)
-  const agents = useMemo(() => [...new Set(all.map((i) => i.author))].sort((a, b) => (a === 'owner' ? -1 : b === 'owner' ? 1 : a.localeCompare(b))), [all])
+  const agents = useMemo(() => [...new Set([...all.map((i) => i.author), ...(canvases ?? []).map((c) => c.agent)])].sort((a, b) => (a === 'owner' ? -1 : b === 'owner' ? 1 : a.localeCompare(b))), [all, canvases])
   const threads = useMemo(() => {
     const by = new Map<string, string>()
     for (const i of all) if (!by.has(i.thread)) by.set(i.thread, i.title || i.thread)
@@ -62,10 +71,10 @@ export default function Library({ projects, activeId, onOpen, onThread, onAddToP
   }, [all])
   const inProject = useCallback((i: Item, p: Project) => p.threads.includes(i.thread) || i.thread === `project:${p.id}` || (!!i.id && p.files.includes(i.id)), [])
   const counts = useMemo(() => {
-    const c: Record<Filter, number> = { all: all.length, images: 0, docs: 0, data: 0, code: 0 }
+    const c: Record<Kind, number> = { all: all.length, images: 0, docs: 0, data: 0, code: 0, canvases: canvases?.length ?? 0 }
     for (const i of all) c[FILTER_OF[i.kind]]++
     return c
-  }, [all])
+  }, [all, canvases])
 
   const shown = useMemo(() => {
     const s = q.trim().toLowerCase()
@@ -76,6 +85,16 @@ export default function Library({ projects, activeId, onOpen, onThread, onAddToP
     else if (sort === 'versions') out.sort((a, b) => b.versions - a.versions)
     return out
   }, [all, q, kind, agent, project, thread, sort, projects, inProject])
+  // the canvases the same filters leave (a kind other than All/Canvases leaves none: they aren't files)
+  const cvAll = canvases ?? []
+  const cvShown = useMemo(() => {
+    if (kind !== 'all' && kind !== 'canvases') return [] as CanvasRow[]
+    const s = q.trim().toLowerCase()
+    const p = projects.find((x) => x.id === project)
+    return cvAll.filter((c) => (!agent || c.agent === agent) && (!thread || c.thread === thread) && (!p || p.threads.includes(c.thread))
+      && (!s || c.title.toLowerCase().includes(s) || (c.brief ?? '').toLowerCase().includes(s)))
+  }, [cvAll, kind, q, agent, thread, project, projects])
+  const files = kind === 'canvases' ? [] : shown
   const filtered = kind !== 'all' || !!agent || !!project || !!thread || !!q.trim()
   const clear = () => { setKind('all'); setAgent(''); setProject(''); setThread(''); setQ('') }
 
@@ -104,7 +123,7 @@ export default function Library({ projects, activeId, onOpen, onThread, onAddToP
         <div className="min-w-0">
           <h1 className="ws-display text-[clamp(40px,5.4vw,56px)] leading-[0.95] text-ink">Library</h1>
           <p className="mt-2 text-[13px] text-ink-mute">
-            {items === null ? 'Gathering every file…' : all.length ? <>{all.length} file{all.length === 1 ? '' : 's'} from {nThreads} conversation{nThreads === 1 ? '' : 's'} · every version kept</> : 'Every file your conversations make, in one place'}
+            {items === null ? 'Gathering every file…' : all.length ? <>{all.length} file{all.length === 1 ? '' : 's'} from {nThreads} conversation{nThreads === 1 ? '' : 's'}{cvAll.length > 0 && <> · {cvAll.length} live canvas{cvAll.length === 1 ? '' : 'es'}</>} · every version kept</> : 'Every file your conversations make, in one place'}
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2 w-full @2xl:w-auto">
@@ -124,7 +143,7 @@ export default function Library({ projects, activeId, onOpen, onThread, onAddToP
 
       <div className="mt-6 flex items-center gap-1.5 overflow-x-auto ws-noscroll -mx-4 px-4 md:mx-0 md:px-0 pb-1">
         <div className="flex gap-1 shrink-0" role="radiogroup" aria-label="kind">
-          {KINDS.map((f) => (
+          {[...KINDS.slice(0, 1), ...(cvAll.length ? [{ id: 'canvases' as const, label: 'Canvases' }] : []), ...KINDS.slice(1)].map((f) => (
             <button key={f.id} role="radio" aria-checked={kind === f.id} onClick={() => setKind(f.id)} disabled={f.id !== 'all' && !counts[f.id]} className="ws-filter">
               {f.label}{f.id !== 'all' && counts[f.id] > 0 && <span className="tabular-nums opacity-60 ml-1">{counts[f.id]}</span>}
             </button>
@@ -153,26 +172,42 @@ export default function Library({ projects, activeId, onOpen, onThread, onAddToP
       </div>
       {filtered && (
         <div className="mt-3 flex items-center gap-2 text-[12.5px] text-ink-mute">
-          <span className="tabular-nums">{shown.length} of {all.length}</span>
+          <span className="tabular-nums">{files.length + cvShown.length} of {all.length + cvAll.length}</span>
           <button onClick={clear} className="text-ink-dim hover:text-ink underline-offset-2 hover:underline">Clear filters</button>
         </div>
       )}
       {err && <div className="mt-3 text-[12.5px] text-bad" role="status">{err}</div>}
 
-      <div className="mt-6">
-        {items === null && <Skeleton view={view} />}
-        {items !== null && all.length === 0 && <Empty />}
-        {items !== null && all.length > 0 && shown.length === 0 && (
+      {cvShown.length > 0 && onCanvas && (
+        <section className="mt-6" aria-label="canvases">
+          {kind === 'all' && <h2 className="ws-libhead">Canvases<span>live pages your agents paint</span></h2>}
+          {view === 'grid' ? (
+            <div className="grid grid-cols-1 @xl:grid-cols-2 @4xl:grid-cols-3 gap-x-4 gap-y-6">
+              {cvShown.map((c, i) => <CanvasCard key={c.id} c={c} live={i < 6} active={c.id === activeCanvas} onOpen={() => onCanvas(c.id)} onThread={() => onThread(c.thread)} />)}
+            </div>
+          ) : (
+            <div className="flex flex-col -mx-2">
+              {cvShown.map((c) => <CanvasRowItem key={c.id} c={c} active={c.id === activeCanvas} onOpen={() => onCanvas(c.id)} />)}
+            </div>
+          )}
+        </section>
+      )}
+
+      <div className={cvShown.length > 0 && onCanvas ? 'mt-10' : 'mt-6'}>
+        {kind === 'all' && cvShown.length > 0 && onCanvas && files.length > 0 && <h2 className="ws-libhead">Files<span>every version kept</span></h2>}
+        {kind !== 'canvases' && items === null && <Skeleton view={view} />}
+        {items !== null && all.length === 0 && cvAll.length === 0 && <Empty />}
+        {items !== null && (all.length > 0 || cvAll.length > 0) && files.length === 0 && cvShown.length === 0 && (
           <div className="py-16 text-center text-[13.5px] text-ink-dim">Nothing matches. <button onClick={clear} className="text-ink underline underline-offset-2">Clear filters</button></div>
         )}
-        {view === 'grid' && shown.length > 0 && (
+        {view === 'grid' && files.length > 0 && (
           <div className="grid grid-cols-2 @xl:grid-cols-3 @4xl:grid-cols-4 @6xl:grid-cols-5 gap-x-4 gap-y-6">
-            {shown.map((it) => <FileCard key={it.key} it={it} active={!!it.id && it.id === activeId} actions={actions(it)} onOpen={() => void open(it)} />)}
+            {files.map((it) => <FileCard key={it.key} it={it} active={!!it.id && it.id === activeId} actions={actions(it)} onOpen={() => void open(it)} />)}
           </div>
         )}
-        {view === 'list' && shown.length > 0 && (
+        {view === 'list' && files.length > 0 && (
           <div className="flex flex-col -mx-2">
-            {shown.map((it) => <FileRow key={it.key} it={it} active={!!it.id && it.id === activeId} actions={actions(it)} onOpen={() => void open(it)} />)}
+            {files.map((it) => <FileRow key={it.key} it={it} active={!!it.id && it.id === activeId} actions={actions(it)} onOpen={() => void open(it)} />)}
           </div>
         )}
       </div>
