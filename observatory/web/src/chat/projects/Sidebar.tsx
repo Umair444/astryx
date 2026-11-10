@@ -4,19 +4,19 @@ import { I } from '../icons'
 import { ProjectMark } from './parts'
 
 /* The conversation list's project pieces (shell/ConversationList.tsx places them):
-   - NAV: Projects and Library, the two places that gather across conversations (claude.ai's sidebar shape).
-   - PROJECTS: one row per project (its mark, name, how many conversations); a click opens its home; its funnel
-     focuses the list below on its conversations; + makes a new one.
+   - NAV: Library, the place that gathers every file across conversations (claude.ai's sidebar shape).
+   - PROJECTS: ONE section (iteration 12: it was a "Projects" nav row right above a "Projects" heading): the heading
+     row carries "See all" (the projects page) and + (a new one); then one row per project (its mark, name, how many
+     conversations); a click opens its home; its funnel focuses the list below on its conversations.
    - the FILTER chip while the list is focused on a project ("In Q4 close ×").
    - MOVE: the row menu's "Move to project" items, and "Take out of <project>". */
 
 export type View = 'thread' | 'library' | 'projects' | 'project'
 
-export function Nav({ view, onLibrary, onProjects }: { view: View; onLibrary: () => void; onProjects: () => void }) {
+export function Nav({ view, onLibrary }: { view: View; onLibrary: () => void }) {
   const row = 'ws-row w-full flex items-center gap-2.5 rounded-[10px] px-2.5 py-[6px] text-left text-[13.5px] text-ink'
   return (
     <div className="px-2 pb-1">
-      <button onClick={onProjects} aria-current={view === 'projects'} className={row}><span className="w-6 grid place-items-center text-ink-dim">{I.folder('w-[17px] h-[17px]')}</span>Projects</button>
       <button onClick={onLibrary} aria-current={view === 'library'} className={row} title="Every file, every version (g then l)">
         <span className="w-6 grid place-items-center text-ink-dim"><Shelf /></span>Library
       </button>
@@ -24,16 +24,19 @@ export function Nav({ view, onLibrary, onProjects }: { view: View; onLibrary: ()
   )
 }
 
-export function ProjectRows({ projects, threads, active, filter, onOpen, onNew, onFilter }: {
+export function ProjectRows({ projects, threads, active, filter, all, onOpen, onNew, onFilter, onAll }: {
   projects: Project[]; threads: WsThread[]; active: string | null; filter: string | null
-  onOpen: (id: string) => void; onNew: () => void; onFilter: (id: string | null) => void
+  all?: boolean                    // the projects page is open
+  onOpen: (id: string) => void; onNew: () => void; onFilter: (id: string | null) => void; onAll?: () => void
 }) {
   const known = new Set(threads.map((t) => t.thread))
   return (
-    <section className="mb-1">
-      <div className="group/h flex items-center px-2.5 pt-2 pb-1">
+    <section className="mb-1" aria-label="projects">
+      <div className="group/h flex items-center gap-1 px-2.5 pt-2 pb-1">
         <span className="ws-label">Projects</span>
-        <button onClick={onNew} className="ml-auto ws-icon !w-6 !h-6 opacity-60 group-hover/h:opacity-100 focus:opacity-100" title="New project (g then n)" aria-label="new project">{I.plus('w-3.5 h-3.5')}</button>
+        {onAll && <button onClick={onAll} aria-current={all ? 'page' : undefined} title="Every project (g then p)"
+          className="ml-auto ws-see-all">See all</button>}
+        <button onClick={onNew} className={`${onAll ? '' : 'ml-auto '}ws-icon !w-6 !h-6 opacity-60 group-hover/h:opacity-100 focus:opacity-100`} title="New project (g then n)" aria-label="new project">{I.plus('w-3.5 h-3.5')}</button>
       </div>
       {projects.map((p) => {
         const n = p.threads.filter((t) => known.has(t)).length

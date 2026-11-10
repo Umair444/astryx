@@ -15,6 +15,7 @@ import { parseChanges } from '../artifacts/versions/changes'
 import ChangesCard from './ChangesCard'
 import TurnActions from './TurnActions'
 import { blockMsg, useWindowed, type Focus } from './focus'
+import { useThreadTitles } from '../data'
 
 /* The conversation (plan-11884 C2, reshaped for the workspace per DESIGN.md "turns: flat, not bubbles"). Agents'
    answers read as a page: face + name + role + time, then prose at a reading measure; consecutive answers from the
@@ -271,6 +272,7 @@ function Elsewhere({ turn }: { turn: WTurn }) {
 /* a turn's work: one line ("Worked 42s · 6 tool calls"), then its replay (thread/Replay.tsx) */
 function WorkTrace({ steps, elsewhere, agent, end, answered = true }: { steps: Step[]; elsewhere: string[]; agent: string; end: string | null; answered?: boolean }) {
   const [open, setOpen] = useState(false)
+  const names = useThreadTitles(elsewhere)              // the threads' names (GET /api/ws/thread-titles); ids until then
   const tools = steps.filter((s) => s.kind === 'tool').length
   const errs = steps.filter((s) => s.kind === 'error').length
   const secs = Math.max(1, Math.round((Date.parse(steps.at(-1)!.ts) - Date.parse(steps[0].ts)) / 1000))
@@ -285,7 +287,7 @@ function WorkTrace({ steps, elsewhere, agent, end, answered = true }: { steps: S
       {elsewhere.length > 0 && (
         <div className="text-[12px] text-ink-mute mt-0.5 flex items-center flex-wrap gap-x-1 gap-y-1">{answered ? 'Also worked in' : 'Answered in'} {elsewhere.map((t) => (
           <a key={t} href={/^(chat|obs|cv):/.test(t) ? `#/chat/${encodeURIComponent(t)}` : `#/wire/${encodeURIComponent(t)}`}
-            title={answered ? `This turn also wrote to ${t}: open it` : `The answer went to ${t}: open it`} className="ws-elsewhere">{t}</a>))}
+            title={`${answered ? 'This turn also wrote here' : 'The answer went here'} (${t}): open it`} className={`ws-elsewhere${names[t] ? ' is-named' : ''}`}>{names[t] ?? t}</a>))}
         </div>
       )}
       {open && <Replay steps={steps} agent={agent} end={end} />}

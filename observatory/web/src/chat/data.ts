@@ -104,3 +104,39 @@ export function clock(ms: number): string {
   const p = (n: number) => String(n).padStart(2, '0')
   return h ? `${h}:${p(m)}:${p(x)}` : `${p(m)}:${p(x)}`
 }
+
+/* "Also worked in" names (iteration 12): GET /api/ws/thread-titles, batched across every turn that asks in the same
+   tick and cached for the session (a thread's name rarely changes; a miss keeps the id). */
+const titleCache = new Map<string, string | null>()      // null = asked, nothing names it
+const titleWait = new Set<(() => void)>()
+let titleQueue: string[] = []
+function askTitles(ids: string[]) {
+  const fresh = ids.filter((t) => !titleCache.has(t) && !titleQueue.includes(t))
+  if (!fresh.length) return
+  const first = titleQueue.length === 0
+  titleQueue.push(...fresh)
+  if (!first) return
+  queueMicrotask(() => {
+    const batch = titleQueue.splice(0, titleQueue.length)
+    for (let i = 0; i < batch.length; i += 40) {
+      const part = batch.slice(i, i + 40)
+      part.forEach((t) => titleCache.set(t, null))
+      api<{ titles: Record<string, string> }>(`/ws/thread-titles?ids=${encodeURIComponent(part.join(','))}`)
+        .then((r) => { for (const [t, n] of Object.entries(r.titles ?? {})) titleCache.set(t, n) })
+        .then(() => titleWait.forEach((f) => f()), () => {})          // a failed ask keeps the ids (no retry storm)
+    }
+  })
+}
+export function useThreadTitles(ids: string[]): Record<string, string> {
+  const [, bump] = useState(0)
+  const key = ids.join(',')
+  useEffect(() => {
+    const f = () => bump((n) => n + 1)
+    titleWait.add(f)
+    askTitles(key ? key.split(',') : [])
+    return () => { titleWait.delete(f) }
+  }, [key])
+  const out: Record<string, string> = {}
+  for (const t of ids) { const n = titleCache.get(t); if (n) out[t] = n }
+  return out
+}

@@ -265,6 +265,51 @@ def main():
     arm("the id matches what open makes", A.artifact_id(T, m[1]["name"]) == A.artifact_id(T, A.artifact_name(
         "/h/homes/db/q3.csv")))
 
+    print("version subjects = the carrying message's headline (iteration 12)")
+    hs = home / "wallets.md"
+    hs.write_bytes(b"v1\n")
+    h1 = A.import_source(S, str(hs), T, "db", None, {"id": 501, "ts": "2099-12-31T10:00:00+00:00"},
+                         "Active wallets 6.4% after the September close")
+    arm("v1's message is the headline", h1["versions"][0]["message"] == "Active wallets 6.4% after the September close"
+        and h1["versions"][0]["msg"] == 501, h1["versions"][0])
+    hs.write_bytes(b"v2\n")
+    h2 = A.import_source(S, str(hs), T, "db", None, {"id": 502, "ts": "2099-12-31T11:00:00+00:00"}, "Revised: 6.1%")
+    arm("a new version takes ITS message's headline", h2["versions"][0]["message"] == "Revised: 6.1%"
+        and h2["versions"][0]["msg"] == 502 and h2["versions"][0]["n"] == 2, h2["versions"][0])
+    hs.write_bytes(b"v3\n")
+    h3 = A.import_source(S, str(hs), T, "db", None, {"id": 503, "ts": "2099-12-31T12:00:00+00:00"})
+    arm("no headline -> the generic subject", h3["versions"][0]["message"] == "new version of wallets.md", h3["versions"][0])
+
+    import asyncio
+
+    class Pool:
+        def __init__(self, row):
+            self.row, self.calls = row, []
+
+        async def fetchrow(self, sql, *args):
+            self.calls.append((sql, args))
+            return self.row
+    body = "[[file:/h/homes/db/wallets.md]] (wallets.md)\n## **Active wallets** 6.4% after the _September_ close\n\nmore"
+    p = Pool({"body": body})
+    A.bind(lambda: p, estate)
+    got = asyncio.run(A.msg_headline(None, 501, T))
+    arm("looked up by id: embed dropped, marks dropped", got == "Active wallets 6.4% after the September close", got)
+    arm("scoped to the import's own thread AND the owner's conversations", p.calls and p.calls[0][1] == (501, T)
+        and "thread = $2" in A.HEADLINE_SQL and "owner" in A.HEADLINE_SQL, p.calls)
+    p.calls.clear()
+    arm("a WhatsApp thread names nothing (no query)", asyncio.run(A.msg_headline(None, 501, "wa:1@g.us")) is None and not p.calls)
+    arm("no message id names nothing", asyncio.run(A.msg_headline(None, None, T)) is None)
+    arm("an id from elsewhere (no row) names nothing", (A.bind(lambda: Pool(None), estate), asyncio.run(A.msg_headline(None, 9, T)))[1] is None)
+    arm("a body with no words of its own names nothing",
+        (A.bind(lambda: Pool({"body": "[[file:/h/x.pdf]]"}), estate), asyncio.run(A.msg_headline(None, 9, T)))[1] is None)
+    long = "Wallets " + "x" * 200
+    arm("clipped to 80", len((A.bind(lambda: Pool({"body": long}), estate), asyncio.run(A.msg_headline(None, 9, T)))[1]) == A.HEADLINE_MAX)
+
+    class Broken:
+        async def fetchrow(self, *a):
+            raise RuntimeError("db down")
+    arm("no database -> the generic subject", (A.bind(lambda: Broken(), estate), asyncio.run(A.msg_headline(None, 9, T)))[1] is None)
+
     print("safety")
     outside = tmp / "outside.md"
     outside.write_text("secret")

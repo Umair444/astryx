@@ -20,6 +20,8 @@ A thread is listed only when the owner is a party of it (an invitee's canvas cha
                                 the session, its context and the wire are untouched)
     GET /api/ws/search          ?q=&limit=: full text over the message bodies of the SAME threads the list shows, newest
                                 first, each hit a snippet (markers stripped) with the matched spans
+    GET /api/ws/thread-titles   ?ids=a,b,c (≤40): each thread's name — an owner conversation's list title, any other
+                                thread a ≤60-char label from its first message's first line (WhatsApp: its surface only)
 
 OWNER-ONLY BY OMISSION, like chat.py: none of these paths is in main.PUBLIC, so the default-deny gate answers 403 to
 anyone without the owner key before a handler runs. Writes go through hostfile.atomic_write with the etag read (one
@@ -564,6 +566,40 @@ def plain(text: str) -> str:
     return re.sub(r"\s+", " ", s).strip(" ·")
 
 
+_LINK = re.compile(r"!?\[([^\]\n]*)\]\([^)\n]*\)")                            # [text](url) -> text
+_BULLET = re.compile(r"^\s*(?:[-*+•]|\d{1,3}[.)])\s+")                          # a list item's marker
+_FENCE = re.compile(r"^\s*(?:```|~~~)")
+_HRULE = re.compile(r"^\s*(?:[-*_]\s*){3,}$")
+_UNDER = re.compile(r"(?<![\w_])_{1,2}(?=\S)|(?<=\S)_{1,2}(?![\w_])")             # _em_ / __strong__, not snake_case
+_PHONE = re.compile(r"\+?\d[\d \-]{8,}\d")                                       # a long digit run (an MSISDN's shape)
+
+
+def mask_numbers(s: str) -> str:
+    """A run of ten or more digits (separators allowed) is personal-shaped (local.md's tier: MSISDNs, accounts):
+    a label shows its shape, never its digits. Dates (8 digits) and figures with commas are untouched."""
+    return _PHONE.sub(lambda m: "…" if sum(c.isdigit() for c in m.group(0)) >= 10 else m.group(0), s)
+
+
+def headline(body: str | None, n: int = TITLE_MAX) -> str:
+    """A message's first meaningful line, as a label: routing prefixes, a project's context, file embeds and margin
+    markers gone; code fences, table rows and rules skipped; markdown's marks and list markers dropped, links read as
+    their text; long digit runs masked; clipped to `n`. '' when the message has no words of its own."""
+    s = changes(_TEAM.sub("", _PROJECT.sub("", _EMBED.sub("", body or "").lstrip()).lstrip()))
+    s = _CANVAS.sub("", s)
+    fenced = False
+    for line in s.splitlines():
+        if _FENCE.match(line):
+            fenced = not fenced
+            continue
+        if fenced or line.lstrip().startswith("|") or _HRULE.match(line) or _MD_RULE.fullmatch(line.strip()):
+            continue
+        t = plain(_UNDER.sub("", _LINK.sub(r"\1", _BULLET.sub("", line))))
+        t = t.rstrip(":").strip()
+        if re.search(r"\w", t):
+            return clip(mask_numbers(t), n)
+    return ""
+
+
 def snippet(body: str | None, q: str, width: int = SNIPPET) -> tuple[str, list[list[int]]] | None:
     """A hit as the list shows it: ~`width` characters of the cleaned body around the first match, "…" where cut, and
     the match spans as offsets INTO the returned string. None when the query hits nothing a reader would see."""
@@ -628,3 +664,78 @@ async def ws_search(request: Request, q: str = "", limit: int = SEARCH_LIMIT):
     except Exception:                               # noqa: BLE001 — an estate without canvas: nothing is archived
         archived = set()
     return {"q": q, "results": search_hits(rows, q[:SEARCH_Q_MAX], archived, limit)}
+
+
+# ------------------------------------------------------------------------------------------- thread titles (i12)
+TITLE_IDS_MAX = 40
+LABEL_MAX = 60
+_THREAD_ID = re.compile(r"[\w:.@+\-]{1,200}")
+TITLES_SQL = f"""
+SELECT thread, count(*) AS count, max(ts) AS last_ts,
+       (array_agg(left({_BODY}, 400) ORDER BY id) FILTER (WHERE from_agent = 'owner'))[1] AS first_owner,
+       NULL::text AS last_body, NULL::text AS last_from,
+       array_agg(DISTINCT from_agent) || array_agg(DISTINCT to_agent) AS parties
+  FROM messages
+ WHERE thread = ANY($1::text[]) AND (thread LIKE 'chat:%' OR thread LIKE 'obs:%' OR thread LIKE 'cv:%')
+ GROUP BY thread"""
+FIRST_SQL = ("SELECT DISTINCT ON (thread) thread, left(body, 2000) AS body FROM messages "
+             "WHERE thread = ANY($1::text[]) ORDER BY thread, id")
+
+
+def title_ids(raw: str) -> list[str]:
+    """?ids=a,b,c -> the distinct well-formed thread ids, first-seen order, at most TITLE_IDS_MAX."""
+    out: list[str] = []
+    for t in (raw or "").split(","):
+        t = t.strip()
+        if t and _THREAD_ID.fullmatch(t) and t not in out:
+            out.append(t)
+    return out[:TITLE_IDS_MAX]
+
+
+def thread_label(thread: str, first_body: str | None) -> str:
+    """A humane name for a thread that is not one of the owner's conversations (an agent's t-… work thread, a plan):
+    its first message's first line, cleaned, at most LABEL_MAX chars — never more of any body. WhatsApp is named by
+    its surface only (its first line is a person's words)."""
+    if thread.startswith("wa:"):
+        return "A WhatsApp chat"
+    s = re.sub(r"^\[[\w -]{1,30}\]\s+", "", (first_body or "").lstrip())                       # "[insurance] …" tag
+    s = re.sub(r"^@?[\w-]{1,30} here\s*[.,:;—–-]+\s*", "", s, flags=re.I)                           # "general here. …"
+    s = re.sub(r"^[\w-]{1,30} → [\w-]{1,30}\s*[,:;—–-]+\s*", "", s)                                   # "finance → seed, …"
+    out = headline(s, LABEL_MAX)
+    return out[:1].upper() + out[1:]
+
+
+def titles_of(ids: list[str], owner_rows: list[dict], firsts: dict[str, str | None]) -> dict[str, str]:
+    """The owner's conversations by the list's own derivation (build_rows' titles), every other thread by its label;
+    a thread nothing can name is left out (the client keeps its id)."""
+    out = {r["thread"]: r["title"] for r in owner_rows}
+    for t in ids:
+        if t not in out and t in firsts:
+            label = thread_label(t, firsts[t])
+            if label:
+                out[t] = label
+    return {t: out[t] for t in ids if t in out}
+
+
+@router.get("/api/ws/thread-titles")
+async def ws_thread_titles(request: Request, ids: str = ""):
+    """?ids=a,b,c (≤40): {titles: {id: title}} — the names the "Also worked in" tags show instead of wire ids."""
+    want = title_ids(ids)
+    if not want:
+        return {"titles": {}}
+    pool = _pool(request)
+    aggs = [{**dict(r), "last_ts": r["last_ts"].isoformat() if r["last_ts"] else None}
+            for r in await pool.fetch(TITLES_SQL, want)]
+    canvas: dict[str, dict] = {}
+    if any(t.startswith("cv:") for t in want):
+        try:
+            for r in await pool.fetch("SELECT thread, agent, title, archived FROM canvas_threads "
+                                      "WHERE user_name = 'owner' AND thread = ANY($1::text[])", want):
+                canvas[r["thread"]] = {**dict(r), "archived": False}   # an archived chat still has its name
+        except Exception:                           # noqa: BLE001 — an estate without canvas
+            canvas = {}
+    rows = build_rows(aggs, read_meta(), [], set(_roster()), canvas)
+    named = {r["thread"] for r in rows}
+    firsts = {r["thread"]: r["body"] for r in await pool.fetch(FIRST_SQL, [t for t in want if t not in named])} \
+        if any(t not in named for t in want) else {}
+    return {"titles": titles_of(want, rows, firsts)}

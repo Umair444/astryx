@@ -46,29 +46,19 @@ export default function TeamHome({ names, status, lines, agents, threads, compos
           <h2 className="text-[13px] font-medium text-ink">Your team</h2>
           <span className="text-[12px] text-ink-mute">Open a desk with any of them</span>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-          {names.map((n) => {
-            const a = by.get(n)
-            const s = status[n]
-            const now = s === 'working' ? lines[n] : ''
-            const said = spoken(a?.last_said)
-            return (
-              <button key={n} onClick={() => onAgent(n)} className="ws-card text-left p-3.5 flex flex-col gap-2 min-h-[118px]"
-                style={{ ['--ws-agent' as string]: agentColor(n), ['--ws-pip-bg' as string]: 'var(--t-panel)' }}>
-                <span className="flex items-center gap-2.5">
-                  <Presence agent={n} status={s} size={30} />
-                  <span className="min-w-0">
-                    <span className="block text-[14px] font-medium text-ink leading-tight">{displayName(n)}</span>
-                    <span className={`block text-[11.5px] leading-tight mt-0.5 ${s === 'working' ? 'text-cyan' : 'text-ink-mute'}`}>{STATUS_WORD[s ?? 'down']}{a?.last_ts && s !== 'working' ? ` · spoke ${fmtAgo(a.last_ts)} ago` : ''}</span>
-                  </span>
-                </span>
-                {a?.role && <span className="text-[12.5px] text-ink-dim leading-snug line-clamp-2">{a.role}</span>}
-                <span className="mt-auto text-[12px] leading-snug line-clamp-2 text-ink-mute">
-                  {now ? <span className="ws-shimmer">{now}</span> : said ? <>“{said}”</> : <span className="italic">Nothing said to you lately.</span>}
-                </span>
-              </button>
-            )
-          })}
+        {/* presence is the bold part (iteration 12): who is WORKING gets a card with its live line, first; everyone
+            else is a quiet roster tile (no box until hovered), so twelve agents read as a team, not twelve cards */}
+        {working.length > 0 && (
+          <>
+            <h3 className="ws-label mb-2">Working now</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 mb-6">
+              {working.map((n) => <Mate key={n} n={n} a={by.get(n)} s={status[n]} now={lines[n]} onAgent={onAgent} busy />)}
+            </div>
+            {working.length < names.length && <h3 className="ws-label mb-1">Everyone else</h3>}
+          </>
+        )}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-2.5 gap-y-1 -mx-1">
+          {names.filter((n) => status[n] !== 'working').map((n) => <Mate key={n} n={n} a={by.get(n)} s={status[n]} now="" onAgent={onAgent} />)}
         </div>
       </motion.section>
 
@@ -89,6 +79,28 @@ export default function TeamHome({ names, status, lines, agents, threads, compos
         </motion.section>
       )}
     </div>
+  )
+}
+
+/* one agent: a card while it works (its live line shimmering), else a quiet tile (face + presence, name, a one-line
+   role, its last words to you) that only takes a surface on hover */
+function Mate({ n, a, s, now, onAgent, busy = false }: { n: string; a?: WsAgent; s?: Status; now: string; onAgent: (a: string) => void; busy?: boolean }) {
+  const said = spoken(a?.last_said)
+  return (
+    <button onClick={() => onAgent(n)} className={`text-left flex flex-col ${busy ? 'ws-card p-3.5 gap-2 min-h-[112px]' : 'ws-mate p-3 max-sm:py-2.5 gap-1.5 max-sm:gap-1'}`}
+      style={{ ['--ws-agent' as string]: agentColor(n), ['--ws-pip-bg' as string]: busy ? 'var(--t-panel)' : 'var(--t-bg)' }}>
+      <span className="flex items-center gap-2.5 min-w-0">
+        <Presence agent={n} status={s} size={busy ? 30 : 28} />
+        <span className="min-w-0">
+          <span className="block text-[14px] font-medium text-ink leading-tight">{displayName(n)}</span>
+          <span className={`block text-[11.5px] leading-tight mt-0.5 truncate ${s === 'working' ? 'text-cyan' : 'text-ink-mute'}`}>{STATUS_WORD[s ?? 'down']}{a?.last_ts && s !== 'working' ? ` · spoke ${fmtAgo(a.last_ts)} ago` : ''}</span>
+        </span>
+      </span>
+      {a?.role && <span className={`text-[12px] text-ink-mute leading-snug ${busy ? 'line-clamp-2' : 'truncate'}`} title={a.role}>{a.role}</span>}
+      <span className={`text-[12px] leading-snug line-clamp-2 ${busy ? 'mt-auto text-ink-dim' : 'text-ink-mute max-sm:line-clamp-1'}`}>
+        {now ? <span className="ws-shimmer">{now}</span> : said ? <>“{said}”</> : <span className="italic opacity-80">Nothing said to you lately.</span>}
+      </span>
+    </button>
   )
 }
 

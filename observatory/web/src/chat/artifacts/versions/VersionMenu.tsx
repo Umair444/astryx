@@ -12,6 +12,9 @@ export const when = (v: Version) => v.msg_ts ?? v.ts
 export const who = (author: string) => (author === 'owner' ? 'You' : displayName(author))
 /* the commit message, as the store wrote it ("import x", "new version of x", "restore ab12cd3 (v2)", the owner's words) */
 export const said = (m: string) => m.trim()
+/* the store's own words for a version ("import x", "new version of x", "open as document: x") vs a version NAMED by
+   what was said: since iteration 12 an agent's version carries its message's headline, shown as a quote */
+export const generic = (m: string) => /^(import |new version of |open as document: |source of |restore [0-9a-f]{4,} \(v\d+\)$|edit$|annotate$)/.test(m.trim())
 
 export function VersionLabel({ v, latest }: { v: Version; latest?: boolean }) {
   return (
@@ -44,6 +47,7 @@ export default function VersionMenu({ versions, current, onPick, label = 'Versio
   return (
     <div ref={ref} className="relative min-w-0">
       <button onClick={() => setOpen((o) => !o)} aria-haspopup="listbox" aria-expanded={open} aria-label={`${label}: v${cur.n}`}
+        title={generic(cur.message) || !said(cur.message) ? undefined : `v${cur.n} · ${who(cur.author)} · “${said(cur.message)}”`}
         className="ws-select inline-flex items-center gap-1.5 h-8 pl-2.5 pr-2 rounded-[10px] text-[12.5px] text-ink-dim max-w-[260px]">
         <VersionLabel v={cur} latest={cur.rev === versions[0].rev} />
         <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 shrink-0 text-ink-mute" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="M7 10l5 5 5-5" /></svg>
@@ -60,7 +64,9 @@ export default function VersionMenu({ versions, current, onPick, label = 'Versio
                   <span className="text-ink">{who(v.author)}</span>
                   <span className="text-ink-mute ml-auto whitespace-nowrap">{i === 0 ? 'latest · ' : ''}{ago(when(v))}</span>
                 </span>
-                {said(v.message) && <span className="block mt-0.5 text-[12px] text-ink-dim truncate">{said(v.message)}</span>}
+                {said(v.message) && (generic(v.message)
+                  ? <span className="block mt-0.5 text-[12px] text-ink-mute truncate">{said(v.message)}</span>
+                  : <span className="block mt-0.5 text-[12px] leading-snug text-ink-dim line-clamp-2" title={said(v.message)}>“{said(v.message)}”</span>)}
                 <span className="block mt-0.5 font-mono text-[10.5px] text-ink-mute">{v.short}</span>
               </span>
             </button>

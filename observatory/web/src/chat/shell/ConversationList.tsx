@@ -82,10 +82,11 @@ export default function ConversationList({ threads, loaded, current, live, proje
         </label>
       </div>
 
-      {onLibrary && onProjects && <Nav view={view} onLibrary={onLibrary} onProjects={onProjects} />}
+      {onLibrary && <Nav view={view} onLibrary={onLibrary} />}
       {filter && projects.find((p) => p.id === filter) && <FilterChip p={projects.find((p) => p.id === filter)!} onClear={() => onFilter?.(null)} />}
       <div className="flex-1 min-h-0 overflow-y-auto px-2 pb-4" onScroll={() => menu && setMenu(null)}>
-        {!q && <ProjectRows projects={projects} threads={threads} active={view === 'project' ? project : null} filter={filter} onOpen={onProject} onNew={() => onNewProject?.()} onFilter={(id) => onFilter?.(id)} />}
+        {!q && <ProjectRows projects={projects} threads={threads} active={view === 'project' ? project : null} filter={filter} onOpen={onProject} onNew={() => onNewProject?.()} onFilter={(id) => onFilter?.(id)}
+          all={view === 'projects'} onAll={onProjects} />}
         {groups.map(([g, rows]) => (
           <section key={g} className="mb-1">
             <div className="ws-label px-2.5 pt-3 pb-1">{g}</div>
