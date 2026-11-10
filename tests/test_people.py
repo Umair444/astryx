@@ -72,6 +72,22 @@ def test_the_id_actually_MOVES_with_the_salt(monkeypatch=None):
             os.environ["PEOPLE_SALT"] = old
 
 
+def test_PEOPLE_SALT_wins_whatever_the_env_file_order():
+    """An appended PEOPLE_SALT used to lose to an earlier ASTRYX_ORG line: the salt became the
+    PUBLIC org name, and ids over a ~10^10 number space were reversible. Fixed 10-16, reverted by a
+    merge on 11-10. Line order must never decide it, and an empty value never counts."""
+    cfg = people.config
+    org_env, read_env = cfg.org_env, cfg.read_env
+    try:
+        cfg.org_env = lambda k: None                     # nothing in the process env: the FILE decides
+        cfg.read_env = lambda p: {"ASTRYX_ORG": "public-org", "X": "1", "PEOPLE_SALT": "secret-salt"}
+        assert people._salt() == "secret-salt", "an earlier ASTRYX_ORG line beat PEOPLE_SALT"
+        cfg.read_env = lambda p: {"ASTRYX_ORG": "public-org", "PEOPLE_SALT": ""}
+        assert people._salt() == "public-org", "an empty PEOPLE_SALT was used as the salt"
+    finally:
+        cfg.org_env, cfg.read_env = org_env, read_env
+
+
 def test_a_numeric_contact_NAME_is_masked():
     """THE NON-OBVIOUS LEAK. A contact saved under a bare number would print that number in
     the label — the one field a human reads — while every jid check passed."""
