@@ -1,8 +1,16 @@
 import type { WhoAmI } from './types'
 
+/* A 403 to a request that CARRIED a key: the key may have been rotated under a running page. Announced, never acted
+   on here: whoever listens (the chat workspace's gate, chat/Gate.tsx) re-asks /whoami before it believes it. */
+export const DENIED = 'astryx:denied'
+function denied(r: Response, key: string) {
+  if (r.status === 403 && key) window.dispatchEvent(new CustomEvent(DENIED))
+}
+
 export async function api<T>(path: string): Promise<T> {
   const key = obsKey()
   const r = await fetch('/api' + path, { headers: key ? { 'x-obs-key': key } : {} })
+  denied(r, key)
   if (!r.ok) throw new Error(`${path}: ${r.status}`)
   return r.json()
 }
@@ -30,6 +38,7 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
     headers: { 'content-type': 'application/json', ...(key ? { 'x-obs-key': key } : {}) },
     body: JSON.stringify(body),
   })
+  denied(r, key)
   if (!r.ok) throw new Error(`${path}: ${r.status}`)
   return r.json()
 }
@@ -51,6 +60,7 @@ export async function apiSend<T>(method: string, path: string, body?: unknown, h
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
+  denied(r, key)
   if (!r.ok) {
     let data: Record<string, unknown> | null = null
     try { data = await r.json() } catch { /* not json */ }

@@ -8,10 +8,12 @@ import { bytes, KindIcon, KIND_WORD } from './kinds'
 import type { PanelState, Tab } from './usePanel'
 import ArtifactView from './viewers'
 import { Loading } from './viewers/common'
-import VersionMenu, { ago, who } from './versions/VersionMenu'
+import VersionMenu, { ago, when, who } from './versions/VersionMenu'
 import { comparable } from './versions/extract'
 import type { AnnotateCtx } from './annotate/types'
 import { A } from './annotate/icons'
+import type { Focus } from './versions/awareness'
+import { parseChanges } from './versions/changes'
 
 /* THE ARTIFACT PANEL (DESIGN.md layout): the thing being made, beside the conversation about it. Tabs for every file
    opened in this conversation; for the active one, its versions (git, by author), Diff, Edit (text kinds: a new
@@ -19,9 +21,14 @@ import { A } from './annotate/icons'
    seam (3px on hover; the width is remembered); narrower it is a sheet over the chat; on a phone, the whole screen.
    An old version is read-only with "Restore as new version": history is never rewritten.
    ANNOTATE (iteration 4): any text-bearing kind takes highlights, comments, asks and suggestions; the margin opens in
-   the panel (which widens by its 280px while it is open), or as a sheet where the panel is narrow. */
+   the panel (which widens by its 280px while it is open), or as a sheet where the panel is narrow.
+   THE DIFFERENTIALS LOOP (iteration 7): a chip opens the version its message carried (or straight into the diff from
+   the version before); an agent's new version, in the diff, can be accepted or reverted in one click (a revert is a
+   new version by the owner naming whose change it undid); and once the owner has changed an agent's file, the panel
+   offers to send those changes back to the agent, as one message with the diff and the file. */
 
 const DiffView = lazy(() => import('./versions/DiffView'))
+const SendChanges = lazy(() => import('./versions/SendChanges'))
 const Annotator = lazy(() => import('./annotate/Annotator'))
 const ANNOTATABLE = ['text', 'code', 'table', 'pdf', 'docx', 'sheet']
 const MARGIN = 280
@@ -30,6 +37,7 @@ const MIN = 480
 
 type View = { rev: string | null; diff: { from: string; to: string } | null; edit: { draft: string; base: string; message: string } | null; note: string; ann: boolean | null }
 const FRESH: View = { rev: null, diff: null, edit: null, note: '', ann: null }
+const e0 = (v: View) => !!v.edit
 
 export type Layout = 'inline' | 'sheet' | 'full'
 
@@ -132,7 +140,7 @@ export default function Panel({ panel, layout, onAttach, onDirty, annotate }: {
 
         {tab.err ? <div className="flex-1 grid place-items-center p-8 text-[13px] text-ink-dim text-center">{tab.err}</div>
           : !art ? <div className="flex-1"><Loading /></div>
-          : <Body key={tab.key} art={art} view={view} setView={(f) => setView(tab.key, f)} wide={layout !== 'full' && (fullscreen || (width ?? 0) >= 640)}
+          : <Body key={tab.key} art={art} at={tab.at ?? null} view={view} setView={(f) => setView(tab.key, f)} wide={layout !== 'full' && (fullscreen || (width ?? 0) >= 640)}
               onSaved={(a) => update(tab.key, a)} onAttach={onAttach} saveRef={saveRef} from={tab.req.from} roomy={layout !== 'full'}
               annotate={annotate && annotate.focus?.name === art.name ? annotate : annotate && { ...annotate, focus: null }} />}
       </section>
@@ -158,8 +166,9 @@ function TabButton({ t, active, dirty, onClick, onClose }: { t: Tab; active: boo
 }
 
 /* the active artifact: its toolbar, then the version (or the diff, or the editor) */
-function Body({ art, view, setView, wide, onSaved, onAttach, saveRef, from, annotate, roomy }: {
+function Body({ art, at, view, setView, wide, onSaved, onAttach, saveRef, from, annotate, roomy }: {
   art: Opened
+  at: Focus | null
   view: View
   setView: (f: (v: View) => View) => void
   wide: boolean
@@ -181,6 +190,12 @@ function Body({ art, view, setView, wide, onSaved, onAttach, saveRef, from, anno
   const setAnn = useCallback((o: boolean) => setView((v) => ({ ...v, ann: o })), [setView])
   // a quoted ask in the chat opens the margin even before the layer has loaded
   useEffect(() => { if (annotate?.focus) setView((v) => ({ ...v, ann: true, rev: null, diff: null })) }, [annotate?.focus?.n]) // eslint-disable-line react-hooks/exhaustive-deps
+  // a chip asked for its message's version (or the diff into it)
+  useEffect(() => {
+    if (!at) return
+    const only = art.versions.length === 1 ? `Only one version of ${art.name} is stored: the earlier one was replaced before it was opened here.` : ''
+    setView((v) => (v.edit ? v : { ...v, rev: at.rev, diff: at.diff, note: at.alone ? only : '' }))
+  }, [at?.n]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function startEdit() {
     const text = await textOf(art, art.store ? head?.rev : undefined)
@@ -218,6 +233,20 @@ function Body({ art, view, setView, wide, onSaved, onAttach, saveRef, from, anno
       note((err as { status?: number }).status === 409 ? 'No changes: the latest version already holds this' : `Not restored: ${(err as Error).message}`)
     } finally { setBusy(false) }
   }
+  // an agent's version under review in the diff: keep it, or revert to the version before (a new version by owner)
+  const review = view.diff && head && view.diff.to === head.rev && head.author !== 'owner' && !e0(view)
+    ? art.versions.find((x) => x.rev === view.diff!.from) ?? null : null
+  async function revert(to: NonNullable<typeof review>) {
+    if (busy || !head) return
+    setBusy(true)
+    try {
+      const a = await restoreArtifact(art.id, to.rev, `revert ${head.author}'s v${head.n} (back to v${to.n})`)
+      onSaved({ ...art, ...a, kind: art.kind })
+      setView((v) => ({ ...FRESH, ann: v.ann, note: `Reverted ${who(head.author)}'s change: v${a.versions[0]?.n ?? ''} holds v${to.n} again.` }))
+    } catch (err) {
+      note((err as { status?: number }).status === 409 ? 'Nothing to revert: the latest version already holds that.' : `Not reverted: ${(err as Error).message}`)
+    } finally { setBusy(false) }
+  }
   const toggleDiff = () => setView((v) => {
     if (v.diff) return { ...v, diff: null }
     const to = v.rev ?? art.head
@@ -231,6 +260,14 @@ function Body({ art, view, setView, wide, onSaved, onAttach, saveRef, from, anno
   const dirty = !!e && e.draft !== e.base
   const madeBy = art.versions.at(-1)?.author ?? from
   const annotatable = art.store && ANNOTATABLE.includes(art.kind)
+  // SEND MY CHANGES: the head is the owner's, and an agent (or an earlier version) came before it; offered until a
+  // changes message for this head is on the thread (the rows are the record) or the owner waves it off
+  const base = head?.author === 'owner' ? art.versions.find((x) => x.author !== 'owner') ?? art.versions[1] ?? null : null
+  const sent = !!head && !!annotate?.rows.some((m) => { const c = m.from === 'owner' ? parseChanges(m.body) : null; return !!c && c.name === art.name && c.toN === head.n })
+  const sendTo = annotate ? [...new Set([...(base && base.author !== 'owner' ? [base.author] : []), ...annotate.agents])].filter((a) => annotate.roster.includes(a)) : []
+  const [sending, setSending] = useState(false)
+  const [waved, setWaved] = useState('')
+  const offer = art.store && !!base && !!head && !sent && waved !== head.rev && sendTo.length > 0 && !e && !view.diff
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
@@ -271,12 +308,42 @@ function Body({ art, view, setView, wide, onSaved, onAttach, saveRef, from, anno
 
       {old && !view.diff && !e && shown && (
         <div className="shrink-0 flex items-center gap-3 flex-wrap px-4 py-2 text-[12.5px] ws-oldbar">
-          <span className="text-ink-dim">Viewing <b className="text-ink font-semibold">v{shown.n}</b> by {who(shown.author)}, {ago(shown.ts)}. Read-only.</span>
+          <span className="text-ink-dim">Viewing <b className="text-ink font-semibold">v{shown.n}</b> by {who(shown.author)}, {ago(when(shown))}. Read-only.</span>
           <span className="ml-auto flex gap-1.5">
             <button className="ws-btn !h-7 !text-[12px]" onClick={() => setView((v) => ({ ...v, rev: null }))}>Back to latest</button>
             <button className="ws-btn ws-btn-primary !h-7 !text-[12px]" disabled={busy} onClick={() => void restore()}>Restore as new version</button>
           </span>
         </div>
+      )}
+      {art.note && <div className="shrink-0 px-4 py-1.5 text-[12px] text-ink-dim border-b border-line/60 ws-oldbar">{art.note}</div>}
+      {review && head && (
+        <div className="shrink-0 flex items-center gap-2.5 flex-wrap px-4 py-2 text-[12.5px] ws-reviewbar" role="group" aria-label="review this change">
+          <AgentFace name={head.author} size={18} />
+          <span className="text-ink-dim"><b className="text-ink font-semibold">{who(head.author)}</b> changed this in v{head.n}{review.n !== head.n - 1 ? ` (since v${review.n})` : ''}.</span>
+          <span className="ml-auto flex gap-1.5">
+            <button className="ws-btn !h-7 !text-[12px]" disabled={busy} onClick={() => void revert(review)} title={`A new version holding v${review.n}: ${who(head.author)}'s v${head.n} stays in the history`}>Revert to v{review.n}</button>
+            <button className="ws-btn ws-btn-primary !h-7 !text-[12px]" disabled={busy}
+              onClick={() => setView((v) => ({ ...v, diff: null, rev: null, note: `Accepted ${who(head.author)}'s v${head.n}.` }))}>Accept all</button>
+          </span>
+        </div>
+      )}
+      {offer && base && head && !sending && (
+        <div className="shrink-0 flex items-center gap-2.5 flex-wrap px-4 py-2 text-[12.5px] ws-sendbar">
+          <span className="text-ink-dim">You changed this since {base.author === 'owner' ? `v${base.n}` : `${who(base.author)}'s v${base.n}`}.</span>
+          <span className="ml-auto flex gap-1.5">
+            <button className="ws-btn !h-7 !text-[12px]" onClick={() => setWaved(head.rev)} title="Not now">Not now</button>
+            <button className="ws-btn ws-btn-primary !h-7 !text-[12px]" onClick={() => setSending(true)}>
+              {sendTo.length === 1 || base.author !== 'owner' ? `Send changes to ${who(base.author !== 'owner' ? base.author : sendTo[0])}` : 'Send changes…'}
+            </button>
+          </span>
+        </div>
+      )}
+      {sending && base && head && annotate && (
+        <Suspense fallback={<div className="shrink-0 px-4 py-3 text-[12px] text-ink-mute border-b border-line/60">Preparing…</div>}>
+          <SendChanges art={art} base={base} head={head} agents={sendTo} initial={base.author !== 'owner' && sendTo.includes(base.author) ? base.author : sendTo[0]}
+            send={(a, b) => annotate.ask(a, b)} onClose={() => setSending(false)}
+            onSent={(a) => { setSending(false); note(`Sent your changes to ${who(a)}: v${head.n} and the diff.`) }} />
+        </Suspense>
       )}
       {view.note && <div className="shrink-0 px-4 py-1.5 text-[12px] text-ink-dim border-b border-line/60 cursor-pointer" role="status" onClick={() => note('')}>{view.note}</div>}
 

@@ -81,7 +81,7 @@ export default function PdfView({ blob }: { blob: Blob }) {
       </div>
       <Pill>
         <PillBtn onClick={() => goPage(Math.max(1, page - 1))} label="Previous page" disabled={page <= 1}>‹</PillBtn>
-        <span className="px-1.5">{page} <span className="text-ink-mute">/ {doc.numPages}</span></span>
+        <span className="px-1.5 whitespace-nowrap">{page} <span className="text-ink-mute">/ {doc.numPages}</span></span>
         <PillBtn onClick={() => goPage(Math.min(doc.numPages, page + 1))} label="Next page" disabled={page >= doc.numPages}>›</PillBtn>
         <span className="w-px h-4 bg-line mx-1" aria-hidden />
         <PillBtn onClick={() => step(-1)} label="Zoom out">−</PillBtn>

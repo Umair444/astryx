@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useReducedMotion } from 'motion/react'
 import { agentColor, displayName, fmtDay, fmtTime } from '../../api'
 import type { Msg, Step } from '../../types'
@@ -11,6 +11,10 @@ import Replay from './Replay'
 import { handoffLabel, type Handoff as WHandoff } from '../live'
 import AskChip from '../artifacts/annotate/AskChip'
 import { parseAsk, type ParsedAsk } from '../artifacts/annotate/ask'
+import { parseChanges } from '../artifacts/versions/changes'
+import ChangesCard from './ChangesCard'
+import TurnActions from './TurnActions'
+import { blockMsg, useWindowed, type Focus } from './focus'
 
 /* The conversation (plan-11884 C2, reshaped for the workspace per DESIGN.md "turns: flat, not bubbles"). Agents'
    answers read as a page: face + name + role + time, then prose at a reading measure; consecutive answers from the
@@ -90,8 +94,9 @@ export function blocksOf(items: Row[], roster: Set<string>, handoffs: WHandoff[]
   return out
 }
 
-export default function Turns({ rows, work, pending, roster, roles, onOpenFile, onOpenAsk, onEdit, loading, empty, handoffs, onStop }: {
+export default function Turns({ rows, work, pending, roster, roles, onOpenFile, onOpenAsk, onEdit, loading, empty, handoffs, onStop, focus = null }: {
   rows: Msg[]
+  focus?: Focus | null                         // open AT this message (a search hit): thread/focus.ts
   handoffs?: WHandoff[]
   onStop?: StopFn
   work: Work | null
@@ -108,7 +113,9 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
   const end = useRef<HTMLDivElement>(null)
   const blocks = useMemo(() => blocksOf(rowsOf(rows, work), new Set(roster), handoffs), [rows, work, roster, handoffs])
   const last = rows.at(-1)?.id ?? 0
-  useEffect(() => { end.current?.scrollIntoView({ block: 'end', behavior: reduce ? 'auto' : 'smooth' }) }, [last, pending.length, reduce])
+  // a long thread renders its newest window ("Show earlier" above); a jump widens it and lands on its message
+  const win = useWindowed(blocks, focus, !loading, () => end.current?.parentElement?.parentElement ?? null)
+  useEffect(() => { if (!win.jumping()) end.current?.scrollIntoView({ block: 'end', behavior: reduce ? 'auto' : 'smooth' }) }, [last, pending.length, reduce]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) return (
     <div className="mx-auto w-full max-w-[720px] px-6 pt-10 flex flex-col gap-5" aria-busy>
@@ -118,7 +125,12 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
   return (
     <div className="mx-auto w-full max-w-[720px] px-5 md:px-6 pt-8 pb-6 flex flex-col" role="log" aria-label="conversation">
       {blocks.length === 0 && empty}
-      {blocks.map((b) => {
+      {win.hidden > 0 && (
+        <button onClick={win.earlier} className="ws-earlier w-full mb-2 py-2 hover:text-ink">
+          Show earlier · {win.hidden} more
+        </button>
+      )}
+      {win.shown.map((b) => <Fragment key={b.key}>{blockMsg(b.key) !== null && <span data-msg={blockMsg(b.key)!} hidden />}{(() => {
         switch (b.kind) {
           case 'day': return <div key={b.key} className="text-center text-[11.5px] text-ink-mute pt-4 pb-2">{b.label}</div>
           case 'mine': return <Mine key={b.key} m={b.msg} to={b.to} onEdit={onEdit} onOpenFile={onOpenFile} onOpenAsk={onOpenAsk} />
@@ -127,7 +139,7 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
           case 'note': return <Note key={b.key} m={b.msg} />
           case 'elsewhere': return <Elsewhere key={b.key} turn={b.turn} />
         }
-      })}
+      })()}</Fragment>)}
       {pending.length > 0 && <div className="pt-5"><LiveActivity pending={pending} onStop={onStop} /></div>}
       <div ref={end} />
     </div>
@@ -142,20 +154,23 @@ function Mine({ m, to, onEdit, onOpenFile, onOpenAsk }: { m: Msg; to: string[]; 
   const [more, setMore] = useState(false)
   const files = embeds(m.body)
   const ask = parseAsk(m.body)          // asked from a highlight: the quote is a chip, the question is the text
-  const raw = ask ? ask.question : stripEmbeds(m.body)
+  const ch = ask ? null : parseChanges(m.body)     // "send my changes": a card, never raw diff text
+  const raw = ask ? ask.question : ch ? '' : stripEmbeds(m.body)
   const ctx = CANVAS_CTX.exec(raw)
   const text = ctx ? raw.slice(ctx[0].length) : raw
   const long = text.length > LONG || text.split('\n').length > 9
   return (
-    <div className="flex flex-col items-end gap-1 group mt-6 first:mt-0">
+    <div className="flex flex-col items-end gap-1 group mt-6 first:mt-0" data-turn>
       {ctx && <span className="text-[11px] text-ink-mute border border-line rounded-full px-2 py-[1px] mb-0.5">on canvas #{ctx[1]}{ctx[2] ? ` · ${ctx[2]}` : ''}{ctx[3] ? ` · v${ctx[3]}` : ''}</span>}
       <div className="ws-mine max-w-[80%] rounded-[14px] px-4 py-2.5 text-[15px] leading-[1.55] text-ink whitespace-pre-wrap break-words">
         {ask && <AskChip ask={ask} onOpen={onOpenAsk} />}
-        <div className={long && !more ? 'max-h-[11.5em] overflow-hidden [mask-image:linear-gradient(#000_70%,transparent)]' : ''}>{text}</div>
+        {ch && <ChangesCard ch={ch} />}
+        {!ch && <div className={long && !more ? 'max-h-[11.5em] overflow-hidden [mask-image:linear-gradient(#000_70%,transparent)]' : ''}>{text}</div>}
         {long && <button onClick={() => setMore((x) => !x)} className="mt-1 text-[12px] text-ink-mute hover:text-ink">{more ? 'Show less' : 'Show all'}</button>}
-        {files.length > 0 && <div className={`${text ? 'mt-2' : ''} flex flex-wrap gap-1.5`}>{files.map((f) => <FileChip key={f.path} path={f.path} label={f.label} from={m.from} onOpen={onOpenFile} />)}</div>}
+        {files.length > 0 && <div className={`${text || ch ? 'mt-2' : ''} flex flex-wrap gap-1.5`}>{files.map((f) => <FileChip key={f.path} path={f.path} label={f.label} from={m.from} msg={m} onOpen={onOpenFile} />)}</div>}
       </div>
       <div className="flex items-center gap-2 text-[11px] text-ink-mute pr-1">
+        {!ch && <TurnActions m={m} text={text} inline />}
         <button onClick={() => onEdit(m)} className="opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-ink" title="Send again, edited (↑ in an empty composer)">Edit</button>
         {to.length > 0 && <span>to {to.map(displayName).join(', ')}</span>}
         <span>{fmtTime(m.ts)}</span>
@@ -168,7 +183,8 @@ function Theirs({ m, turn, cont, role, onOpenFile }: { m: Msg; turn: WTurn | nul
   const files = embeds(m.body)
   const text = stripEmbeds(m.body)
   return (
-    <div className={cont ? 'mt-3' : 'mt-7 first:mt-0'}>
+    <div className={`ws-turn ${cont ? 'mt-3' : 'mt-7 first:mt-0'}`} data-turn>
+      <TurnActions m={m} text={text} />
       {!cont && (
         <div className="flex items-center gap-2.5 mb-1.5">
           <AgentFace name={m.from} size={22} />
@@ -180,7 +196,7 @@ function Theirs({ m, turn, cont, role, onOpenFile }: { m: Msg; turn: WTurn | nul
       <div className="md:pl-[32px]">
         {turn && turn.steps.length > 0 && <WorkTrace steps={turn.steps} elsewhere={turn.elsewhere} agent={m.from} end={turn.ended_at} />}
         {text && <Prose text={text} />}
-        {files.length > 0 && <div className="mt-2.5 flex flex-wrap gap-1.5">{files.map((f) => <FileChip key={f.path} path={f.path} label={f.label} from={m.from} onOpen={onOpenFile} />)}</div>}
+        {files.length > 0 && <div className="mt-2.5 flex flex-wrap gap-1.5">{files.map((f) => <FileChip key={f.path} path={f.path} label={f.label} from={m.from} msg={m} onOpen={onOpenFile} />)}</div>}
       </div>
     </div>
   )

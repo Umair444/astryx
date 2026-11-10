@@ -8,12 +8,14 @@ import type { Kind, MediaItem } from '../artifacts/api'
 import type { OpenRequest } from '../artifacts/FileChip'
 import { KindIcon, KIND_WORD } from '../artifacts/kinds'
 import { Presence, STATUS_WORD } from './AgentRail'
+import { tighten, useMessageSearch, type MessageHit } from '../search'
+import { Snippet } from './MessageHits'
 
 /* The workspace's three dialogs: the ⌘K PALETTE (agents with live status, conversations, projects, commands), the
    keyboard sheet (⌘/), and naming a project. Each closes on Esc or a click outside, and never on its own. */
 
 export const KEYS: [string, string][] = [
-  ['⌘K', 'Jump to a chat, an agent, a project or a command'],
+  ['⌘K', 'Jump to a chat, an agent, a project, a message or a command'],
   ['⌘⇧O', 'New chat'],
   ['⌘J', 'Show or hide the workforce'],
   ['⌘\\', 'Hide or show the conversation list'],
@@ -33,12 +35,14 @@ export const KEYS: [string, string][] = [
 /* ⌘K (DESIGN.md "keyboard first"): 640px at 20% from the top; four sections in a fixed order, Agents (with their live
    status pip and what they're doing), Conversations (unread and live marked), Files (this conversation's, from the
    store's media list) and Actions (+ projects). FUZZY: the query's letters in order, scored for word starts and runs,
-   the matched letters underlined. Empty, it shows who's working first and the newest conversations. */
-interface Item { id: string; label: string; hint: string; group: Group; face?: string; status?: Status; dot?: 'unread' | 'live'; kind?: Kind; act: () => void; score: number; hits: number[] }
-type Group = 'Agents' | 'Conversations' | 'Files' | 'Projects' | 'Actions'
-const ORDER: Group[] = ['Agents', 'Conversations', 'Files', 'Projects', 'Actions']
-const CAP: Record<Group, number> = { Agents: 14, Conversations: 8, Files: 6, Projects: 5, Actions: 9 }
-const CAP_EMPTY: Record<Group, number> = { Agents: 6, Conversations: 6, Files: 4, Projects: 4, Actions: 9 }   // every section in view
+   the matched letters underlined. Empty, it shows who's working first and the newest conversations. MESSAGES (iteration
+   8): what the owner's conversations SAID, from the server's full-text search (GET /api/ws/search), newest first and
+   unscored here; Enter opens the conversation at that message. */
+interface Item { id: string; label: string; hint: string; group: Group; face?: string; status?: Status; dot?: 'unread' | 'live'; kind?: Kind; act: () => void; score: number; hits: number[]; said?: MessageHit }
+type Group = 'Agents' | 'Conversations' | 'Messages' | 'Files' | 'Projects' | 'Actions'
+const ORDER: Group[] = ['Agents', 'Conversations', 'Messages', 'Files', 'Projects', 'Actions']
+const CAP: Record<Group, number> = { Agents: 14, Conversations: 8, Messages: 6, Files: 6, Projects: 5, Actions: 9 }
+const CAP_EMPTY: Record<Group, number> = { Agents: 6, Conversations: 6, Messages: 0, Files: 4, Projects: 4, Actions: 9 }   // every section in view
 
 /* the query's characters in order inside `text`: null if they aren't; else a score (word starts and runs win, an
    early first hit wins) and the matched positions */
@@ -68,12 +72,14 @@ function Marked({ text, hits }: { text: string; hits: number[] }) {
   return <>{out}</>
 }
 
-export function Palette({ threads, names, status, projects, commands, onClose, go, openProject, openAgent, lines = {}, files = [], unread, live = {}, onOpenFile }: {
+export function Palette({ threads, names, status, projects, commands, onClose, go, openProject, openAgent, lines = {}, files = [], unread, live = {}, onOpenFile, onJump }: {
   threads: WsThread[]; names: string[]; status: Record<string, Status>; projects: Project[]; commands: Command[]
   onClose: () => void; go: (t: string) => void; openProject: (id: string) => void; openAgent: (n: string) => void
   lines?: Record<string, string>; files?: MediaItem[]; unread?: Set<string>; live?: Record<string, string>; onOpenFile?: (r: OpenRequest) => void
+  onJump?: (h: MessageHit) => void
 }) {
   const [q, setQ] = useState('')
+  const found = useMessageSearch(onJump ? q : '', CAP.Messages)
   const [sel, setSel] = useState(0)
   const list = useRef<HTMLUListElement>(null)
   const items = useMemo(() => {
@@ -100,11 +106,16 @@ export function Palette({ threads, names, status, projects, commands, onClose, g
       if (m) scored.push({ ...it, score: m.score + 20, hits: m.hits })
       else if (h) scored.push({ ...it, score: -30, hits: [] })
     }
+    const said: Item[] = (found.hits ?? []).map((h) => ({
+      id: 'm:' + h.msg_id, label: h.snippet, group: 'Messages', face: h.from, score: 0, hits: [], said: h,
+      hint: `${h.from === 'owner' ? 'You' : displayName(h.from)} · ${threads.find((t) => t.thread === h.thread)?.title ?? 'a conversation'} · ${fmtAgo(h.ts)}`,
+      act: () => onJump?.(h) }))
     return ORDER.flatMap((g) => {
+      if (g === 'Messages') return said.slice(0, (s ? CAP : CAP_EMPTY)[g])
       const inG = scored.filter((x) => x.group === g)
       return (s ? inG.sort((a, b) => b.score - a.score) : inG).slice(0, (s ? CAP : CAP_EMPTY)[g])
     })
-  }, [q, threads, names, status, projects, commands, lines, files, unread, live]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [q, threads, names, status, projects, commands, lines, files, unread, live, found.hits]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => setSel(0), [q])
   useEffect(() => { list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' }) }, [sel])
   return (
@@ -112,7 +123,7 @@ export function Palette({ threads, names, status, projects, commands, onClose, g
       <div role="dialog" aria-label="jump to" className="ws-menu ws-palette w-full max-w-[640px] !rounded-[18px] overflow-hidden" onMouseDown={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-3 px-5 border-b border-line">
           <span className="text-ink-mute" aria-hidden><svg viewBox="0 0 24 24" className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="11" cy="11" r="6.5" /><path d="M20 20l-4.2-4.2" /></svg></span>
-          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Agents, conversations, files, actions" aria-label="search everything"
+          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Agents, conversations, messages, files, actions" aria-label="search everything"
             role="combobox" aria-expanded aria-controls="ws-palette-list" aria-activedescendant={items[sel] ? `pal-${sel}` : undefined}
             onKeyDown={(e) => {
               if (e.key === 'ArrowDown') { e.preventDefault(); setSel((x) => Math.min(x + 1, items.length - 1)) }
@@ -134,9 +145,14 @@ export function Palette({ threads, names, status, projects, commands, onClose, g
                   : it.kind ? <span className="w-[22px] h-[22px] grid place-items-center rounded-[7px] ws-chip-icon shrink-0"><KindIcon kind={it.kind} className="w-[13px] h-[13px]" /></span>
                   : it.face ? <AgentFace name={it.face} size={22} />
                   : <span className="w-[22px] text-center text-ink-mute text-[12px] shrink-0" aria-hidden>{it.group === 'Projects' ? '▦' : '›'}</span>}
-                <span className="text-[13.5px] text-ink truncate min-w-0"><Marked text={it.label} hits={it.hits} /></span>
+                {it.said ? (
+                  <span className="min-w-0 flex-1 ws-hit">
+                    <span className="block ws-hit-snip text-[13px] leading-[1.45] text-ink break-words"><Snippet {...tighten(it.said)} /></span>
+                    <span className="block truncate text-[11.5px] text-ink-mute mt-[1px]">{it.hint}</span>
+                  </span>
+                ) : <span className="text-[13.5px] text-ink truncate min-w-0"><Marked text={it.label} hits={it.hits} /></span>}
                 {it.dot && <span className={it.dot === 'unread' ? 'ws-unread' : 'ws-live-dot'} style={it.dot === 'live' ? { ['--ws-agent' as string]: 'var(--t-accent)' } : undefined} aria-label={it.dot === 'unread' ? 'new reply' : 'working'} />}
-                <span className={`ml-auto pl-3 text-[12px] shrink-0 truncate max-w-[50%] ${it.status === 'working' ? 'text-ink-dim' : 'text-ink-mute'}`}>{it.hint}</span>
+                {!it.said && <span className={`ml-auto pl-3 text-[12px] shrink-0 truncate max-w-[50%] ${it.status === 'working' ? 'text-ink-dim' : 'text-ink-mute'}`}>{it.hint}</span>}
               </div>
             </li>
           ))}

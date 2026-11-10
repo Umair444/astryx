@@ -7,6 +7,8 @@ import type { Version } from '../api'
    who made it (an agent's face, or the owner) and its commit message. History is git's: a version is a commit. */
 
 export const ago = (ts: string) => { const a = fmtAgo(ts); return a === 'now' ? 'just now' : `${a} ago` }
+/* when a version came to be: the message that carried it (provenance), else its commit (an import can be lazy) */
+export const when = (v: Version) => v.msg_ts ?? v.ts
 export const who = (author: string) => (author === 'owner' ? 'You' : displayName(author))
 /* the commit message, as the store wrote it ("import x", "new version of x", "restore ab12cd3 (v2)", the owner's words) */
 export const said = (m: string) => m.trim()
@@ -17,7 +19,7 @@ export function VersionLabel({ v, latest }: { v: Version; latest?: boolean }) {
       <span className="font-medium text-ink tabular-nums">v{v.n}</span>
       <span className="text-ink-mute">·</span>
       <span className="truncate">{who(v.author)}</span>
-      <span className="text-ink-mute whitespace-nowrap max-sm:hidden">· {latest ? 'latest' : ago(v.ts)}</span>
+      <span className="text-ink-mute whitespace-nowrap max-sm:hidden">· {latest ? 'latest' : ago(when(v))}</span>
     </span>
   )
 }
@@ -56,7 +58,7 @@ export default function VersionMenu({ versions, current, onPick, label = 'Versio
                 <span className="flex items-center gap-1.5 text-[12.5px]">
                   <span className="font-semibold text-ink tabular-nums">v{v.n}</span>
                   <span className="text-ink">{who(v.author)}</span>
-                  <span className="text-ink-mute ml-auto whitespace-nowrap">{i === 0 ? 'latest · ' : ''}{ago(v.ts)}</span>
+                  <span className="text-ink-mute ml-auto whitespace-nowrap">{i === 0 ? 'latest · ' : ''}{ago(when(v))}</span>
                 </span>
                 {said(v.message) && <span className="block mt-0.5 text-[12px] text-ink-dim truncate">{said(v.message)}</span>}
                 <span className="block mt-0.5 font-mono text-[10.5px] text-ink-mute">{v.short}</span>

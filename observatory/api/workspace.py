@@ -18,6 +18,8 @@ A thread is listed only when the owner is a party of it (an invitee's canvas cha
                                 (a handoff into the conversation), each with that message (the payload)
     POST /api/ws/agents/{name}/interrupt   Stop: one Escape keystroke into the agent's tmux pane (its turn halts;
                                 the session, its context and the wire are untouched)
+    GET /api/ws/search          ?q=&limit=: full text over the message bodies of the SAME threads the list shows, newest
+                                first, each hit a snippet (markers stripped) with the matched spans
 
 OWNER-ONLY BY OMISSION, like chat.py: none of these paths is in main.PUBLIC, so the default-deny gate answers 403 to
 anyone without the owner key before a handler runs. Writes go through hostfile.atomic_write with the etag read (one
@@ -85,18 +87,32 @@ _TEAM = re.compile(r"^\[chat with [^\]\n]*\]\n?")                  # model.bodyF
 _PROJECT = re.compile(r"^\[project: [^\]\n]{1,80}\]\n(?:[\s\S]*?\n\[/project\]\n?|[\s\S]*$)")
 _CANVAS = re.compile(r"^\[canvas #\d+[^\]\n]*\]\s*")               # the canvas shell's context prefix
 _BRIEF = re.compile(r'^NEW CANVAS #\d+\s*\W\s*"([^"]{1,80})"')     # the canvas bridge's first message to a painter
+# "send my changes" (web/src/chat/artifacts/versions/changes.ts, the one place the format lives):
+# "[changes to <name>: v2 (db) → v4 (owner)]\n<note>\n\n```diff\n…\n```\n(N more diff lines not shown: …)\n[[file:…]]"
+# — a reader sees "Changes to <name> (v2 → v4):" then the owner's note; the fenced diff and its overflow line are the
+# agent's (the chat draws them as a card), never a preview, a title or a search snippet
+_CHANGES = re.compile(r"^\[changes to (.{1,120}?): v(\d+) \([\w-]+\) → v(\d+) \([\w-]+\)\]")
+_DIFF = re.compile(r"\n?```diff\n[\s\S]*?(?:\n```|$)|\(\d+ more diff lines not shown[^)\n]*\)")
+
+
+def changes(s: str) -> str:
+    """A send-changes body's header summarized and its diff dropped; any other body unchanged."""
+    m = _CHANGES.match(s)
+    if not m:
+        return s
+    return f"Changes to {m.group(1)} (v{m.group(2)} → v{m.group(3)}):" + _DIFF.sub("", s[m.end():])
 
 
 def clean(body: str | None) -> str:
     """A body as a person reads it in a list: no file embeds, no routing prefixes, whitespace folded."""
     s = _PROJECT.sub("", _EMBED.sub("", body or "").lstrip())
-    s = _TEAM.sub("", s.lstrip())
+    s = changes(_TEAM.sub("", s.lstrip()))
     s = _CANVAS.sub("", s)
     return re.sub(r"\s+", " ", s).strip()
 
 
 def first_line(body: str | None) -> str:
-    s = _TEAM.sub("", _PROJECT.sub("", _EMBED.sub("", body or "").lstrip()).lstrip())
+    s = changes(_TEAM.sub("", _PROJECT.sub("", _EMBED.sub("", body or "").lstrip()).lstrip()))
     s = _CANVAS.sub("", s)
     for line in s.splitlines():
         if line.strip():
@@ -445,3 +461,170 @@ async def ws_interrupt(name: str, request: Request):
     if r.returncode != 0:                           # no such session: the body is down (tmux's stderr is not echoed)
         return JSONResponse({"error": f"{name} is not running"}, status_code=409)
     return {"ok": True, "agent": name}
+
+
+# -------------------------------------------------------------------------------------------------------- search
+# Full text over the owner's conversations: the bodies of the threads GET /api/ws/threads lists (an owner-party
+# chat:/obs:/cv: thread, an archived canvas chat left out). Two matchers, either one is a hit: Postgres full text as
+# PREFIX terms ('simple' config, every word of the query a `word:*` lexeme, so "quer" finds "query" while the owner is
+# still typing; websearch_to_tsquery has no prefix form) and a plain ILIKE of the whole query, which carries what the
+# parser splits or drops (an IP, "#412", a two-letter query). The match is SQL's; the SNIPPET is Python's, cut from the
+# body as the list reads it (clean(): no file embeds, no [project:] block, no [[ann:]] marker) — a row whose only hit
+# sat inside that hidden markup is dropped, never shown as a snippet with nothing marked. The owner's rows are
+# MATERIALIZED first: left to itself the planner ran to_tsvector over the whole wire (10k rows, 400 ms measured)
+# before joining to the owner's threads; on the candidate set it is a few ms.
+SEARCH_Q_MAX = 200
+SEARCH_LIMIT = 30
+SEARCH_LIMIT_MAX = 100
+SEARCH_SCAN = 4                                     # SQL rows read per result asked for (hidden-only hits, fan-out dups)
+SNIPPET = 160
+SNIPPET_LEAD = 48                                   # context kept before the first match
+SEARCH_TIMEOUT = 5                                  # seconds; a slow search answers 504, never holds a worker
+
+SEARCH_SQL = r"""
+WITH owned AS MATERIALIZED (
+  SELECT thread FROM messages
+   WHERE thread LIKE 'chat:%' OR thread LIKE 'obs:%' OR thread LIKE 'cv:%'
+   GROUP BY thread
+  HAVING bool_or(from_agent = 'owner' OR to_agent = 'owner')
+), cand AS MATERIALIZED (
+  SELECT m.id, m.ts, m.thread, m.from_agent, m.to_agent, m.body
+    FROM messages m
+   WHERE (m.thread LIKE 'chat:%' OR m.thread LIKE 'obs:%' OR m.thread LIKE 'cv:%')
+     AND m.thread IN (SELECT thread FROM owned)
+)
+SELECT id, ts, thread, from_agent, to_agent, left(body, 8000) AS body
+  FROM cand
+ WHERE body ILIKE $1 ESCAPE '\'
+    OR CASE WHEN $2 = '' THEN false ELSE to_tsvector('simple', body) @@ to_tsquery('simple', $2) END
+ ORDER BY id DESC
+ LIMIT $3"""
+
+
+def search_terms(q: str) -> list[str]:
+    """The query's words, lowercased, each once, in order ("Query, the QUERY" -> ['query', 'the'])."""
+    out: list[str] = []
+    for w in re.findall(r"\w+", (q or "").lower()):
+        if w not in out:
+            out.append(w)
+    return out[:12]
+
+
+def search_args(q: str) -> tuple[str, str] | None:
+    """(ILIKE pattern, prefix tsquery) for SEARCH_SQL, or None when there is nothing to look for. The tsquery is built
+    from \\w words only, so nothing the owner types reaches to_tsquery's own syntax (& | ! : * ( ) quotes); it is empty
+    for a query with no word of 2+ characters (one letter as a prefix matches everything; ILIKE carries it)."""
+    q = re.sub(r"\s+", " ", (q or "")).strip()[:SEARCH_Q_MAX]
+    if not q:
+        return None
+    like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    terms = search_terms(q)
+    ts = " & ".join(f"{t}:*" for t in terms) if any(len(t) >= 2 for t in terms) else ""
+    return like, ts
+
+
+def match_spans(text: str, q: str) -> list[tuple[int, int]]:
+    """Where `q` hits `text` (case-insensitive), as sorted, merged [start, end) spans, the first tier that hits: the
+    whole query at a word start, else every word STARTING with a query term (as the prefix search found it), else the
+    query anywhere, else each term anywhere (an ILIKE hit inside a word). A hit that ends inside a word is marked to the
+    word's end ("quer" marks "querying")."""
+    low = text.lower()
+    phrase = re.sub(r"\s+", " ", (q or "")).strip().lower()
+    terms = search_terms(q)
+    tail = lambda s: re.escape(s) + (r"\w*" if re.search(r"\w$", s) else "")      # noqa: E731
+    tiers = [[r"(?<!\w)" + tail(phrase)] if phrase else [],
+             [r"(?<!\w)" + tail(t) for t in terms],
+             [re.escape(phrase)] if phrase else [],
+             [re.escape(t) for t in terms]]
+    spans: list[tuple[int, int]] = []
+    for tier in tiers:
+        spans = [(m.start(), m.end()) for rx in tier for m in re.finditer(rx, low) if m.end() > m.start()]
+        if spans:
+            break
+    spans.sort()
+    out: list[tuple[int, int]] = []
+    for s, e in spans:
+        if out and s <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], e))
+        else:
+            out.append((s, e))
+    return out
+
+
+_MD_RULE = re.compile(r"\|?(?:\s*:?-{3,}:?\s*\|)+\s*(?::?-{3,}:?)?\s*")   # a table's |---|:--:| rule
+_MD_MARK = re.compile(r"\*{1,3}|`+|(?<!\S)#{1,6} |(?<!\S)> ")                    # bold/italic stars, code ticks, #, >
+
+
+def plain(text: str) -> str:
+    """A cleaned body as a snippet reads: markdown's marks gone (a table's rule row, stars, backticks, heading hashes,
+    quote marks), its cell bars as " · ". Underscores stay: snake_case table names are words here."""
+    s = _MD_MARK.sub("", _MD_RULE.sub(" ", text))
+    s = re.sub(r"\s*\|\s*", " · ", s)
+    s = re.sub(r"(?:\s*·\s*){2,}", " · ", s)
+    return re.sub(r"\s+", " ", s).strip(" ·")
+
+
+def snippet(body: str | None, q: str, width: int = SNIPPET) -> tuple[str, list[list[int]]] | None:
+    """A hit as the list shows it: ~`width` characters of the cleaned body around the first match, "…" where cut, and
+    the match spans as offsets INTO the returned string. None when the query hits nothing a reader would see."""
+    text = plain(clean(body))
+    spans = match_spans(text, q)
+    if not spans:
+        return None
+    first = spans[0][0]
+    start = 0 if first <= SNIPPET_LEAD else first - SNIPPET_LEAD
+    if start:                                       # start on a word: the next space after the cut, if one is near
+        sp = text.find(" ", start, first)
+        start = sp + 1 if sp >= 0 else start
+    end = min(len(text), max(start + width, spans[0][1]))
+    if end < len(text):                             # end on a word
+        sp = text.rfind(" ", spans[0][1], end)
+        end = sp if sp > 0 else end
+    lead = "…" if start else ""
+    out = lead + text[start:end] + ("…" if end < len(text) else "")
+    marks = [[s - start + len(lead), min(e, end) - start + len(lead)] for s, e in spans if s >= start and s < end]
+    return out, marks
+
+
+def search_hits(rows: list[dict], q: str, archived: set[str], limit: int) -> list[dict]:
+    """SEARCH_SQL's rows (newest first) -> results: an archived canvas chat out, a hidden-only hit out, the owner's one
+    message to several agents (one row per recipient on the wire) once."""
+    out: list[dict] = []
+    seen: set[tuple] = set()
+    for r in rows:
+        t = r.get("thread") or ""
+        if t in archived or not surface_of(t):
+            continue
+        key = (t, r.get("from_agent"), r.get("body"))
+        if key in seen:
+            continue
+        seen.add(key)
+        cut = snippet(r.get("body"), q)
+        if not cut:
+            continue
+        ts = r.get("ts")
+        out.append({"thread": t, "msg_id": r["id"], "ts": ts.isoformat() if hasattr(ts, "isoformat") else ts,
+                    "from": r.get("from_agent"), "to": r.get("to_agent"), "snippet": cut[0], "marks": cut[1]})
+        if len(out) >= limit:
+            break
+    return out
+
+
+@router.get("/api/ws/search")
+async def ws_search(request: Request, q: str = "", limit: int = SEARCH_LIMIT):
+    args = search_args(q)
+    if not args:
+        return {"q": q, "results": []}
+    limit = max(1, min(int(limit), SEARCH_LIMIT_MAX))
+    pool = _pool(request)
+    try:
+        rows = [dict(r) for r in await pool.fetch(SEARCH_SQL, args[0], args[1], limit * SEARCH_SCAN, timeout=SEARCH_TIMEOUT)]
+    except asyncio.TimeoutError:
+        return JSONResponse({"error": "the search took too long; try more words"}, status_code=504)
+    archived: set[str] = set()
+    try:
+        archived = {r["thread"] for r in await pool.fetch(
+            "SELECT thread FROM canvas_threads WHERE user_name = 'owner' AND archived")}
+    except Exception:                               # noqa: BLE001 — an estate without canvas: nothing is archived
+        archived = set()
+    return {"q": q, "results": search_hits(rows, q[:SEARCH_Q_MAX], archived, limit)}

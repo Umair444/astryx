@@ -5,13 +5,18 @@ import { GROUPS, SURFACE_LABEL, groupOf, type Group, type WsThread } from '../da
 import type { Project } from '../model'
 import { I } from '../icons'
 import { FilterChip, MoveItems, Nav, ProjectRows, type View } from '../projects/Sidebar'
+import { useMessageSearch, type MessageHit } from '../search'
+import MessageHits from './MessageHits'
 
 /* THE CONVERSATION LIST: every conversation the owner has with agents, from any surface (chat, a floor desk, a
    canvas), grouped Pinned / Today / Yesterday / This week / Earlier. A row is its title, its agents' faces and
    "agent · age"; a thread an agent is working on right now carries a 2px bar in that agent's colour. Pin and rename
-   live in the row's menu (and rename on double-click), both stored server-side (PUT /api/ws/threads/meta). */
+   live in the row's menu (and rename on double-click), both stored server-side (PUT /api/ws/threads/meta).
+   SEARCH: titles (and previews, agents) filter the rows as you type; below them, "In messages" lists the messages
+   that say it (GET /api/ws/search), and a hit opens its conversation at that message. */
 
-export default function ConversationList({ threads, loaded, current, live, projects, project, onGo, onNew, onProject, onPin, onRename, onClose, className = '', unread, view = 'thread', filter = null, onFilter, onLibrary, onProjects, onNewProject, onMove }: {
+export default function ConversationList({ threads, loaded, current, live, projects, project, onGo, onNew, onProject, onPin, onRename, onClose, className = '', unread, view = 'thread', filter = null, onFilter, onLibrary, onProjects, onNewProject, onMove, onJump }: {
+  onJump?: (h: MessageHit) => void            // a message search hit: open its conversation at that message
   view?: View                                  // which page is open (the nav marks it)
   filter?: string | null                       // a project the list is focused on
   onFilter?: (id: string | null) => void
@@ -38,6 +43,7 @@ export default function ConversationList({ threads, loaded, current, live, proje
   const [editing, setEditing] = useState<string | null>(null)
   const [menu, setMenu] = useState<string | null>(null)
   const search = useRef<HTMLInputElement>(null)
+  const found = useMessageSearch(onJump ? q : '')
 
   const groups = useMemo(() => {
     const s = q.trim().toLowerCase()
@@ -58,7 +64,7 @@ export default function ConversationList({ threads, loaded, current, live, proje
     return () => removeEventListener('keydown', k)
   }, [])
 
-  const any = groups.length > 0
+  const any = groups.length > 0 || !!found.hits?.length || found.busy
   return (
     <nav className={`ws-chrome w-[var(--ws-list)] shrink-0 h-full flex flex-col border-r border-line ${className}`} aria-label="conversations">
       <div className="h-14 shrink-0 flex items-center gap-2 pl-4 pr-2.5">
@@ -95,6 +101,7 @@ export default function ConversationList({ threads, loaded, current, live, proje
             ))}
           </section>
         ))}
+        {onJump && <MessageHits hits={found.hits} busy={found.busy} threads={threads} onJump={onJump} />}
         {!any && (
           <p className="px-3 pt-6 text-[13px] text-ink-mute leading-relaxed">
             {!loaded ? 'Reading your conversations…' : q ? 'Nothing matches.' : 'No conversations yet. Pick an agent on the left, or start a new chat.'}

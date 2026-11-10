@@ -12,7 +12,12 @@ import { embeds, fetchFile } from '../model'
 
 export type Kind = 'text' | 'table' | 'code' | 'image' | 'pdf' | 'docx' | 'sheet' | 'audio' | 'video' | 'binary'
 
-export interface Version { rev: string; short: string; n: number; author: string; ts: string; message: string }
+/* source/msg/msg_ts: the version's PROVENANCE (iteration 7), the [[file:]] and the message that carried its bytes (null
+   for an owner edit, or a version stored before provenance was recorded) */
+export interface Version {
+  rev: string; short: string; n: number; author: string; ts: string; message: string
+  source?: string | null; msg?: number | null; msg_ts?: string | null
+}
 export interface Artifact {
   id: string
   thread: string
@@ -22,9 +27,13 @@ export interface Artifact {
   size: number
   head: string
   versions: Version[]        // newest first
+  superseded?: boolean       // an open whose bytes came from a message older than a version's: not made the head
 }
-/* what the panel holds: the artifact plus where it came from (the source path re-opens it; `store` = has history) */
-export interface Opened extends Artifact { source: string; store: boolean }
+/* what the panel holds: the artifact plus where it came from (the source path re-opens it; `store` = has history);
+   `note` is a line the panel shows above it (why this copy is not the stored history) */
+export interface Opened extends Artifact { source: string; store: boolean; note?: string }
+/* a message, as provenance names it */
+export interface MsgRef { id: number; ts: string }
 
 export interface MediaItem { path: string; label?: string; name: string; kind: Kind; from: string; ts: string; msg_id: number }
 
@@ -61,7 +70,7 @@ const missing = (e: unknown) => { const s = (e as { status?: number }).status ??
 /* `art:<id>` opens a STORED artifact by id (the library, a project's files): nothing is re-imported, so a file whose
    source is gone still opens with its whole history */
 export const byId = (id: string) => `art:${id}`
-export async function openArtifact(path: string, thread: string, author: string, label?: string): Promise<Opened> {
+export async function openArtifact(path: string, thread: string, author: string, label?: string, msg?: MsgRef): Promise<Opened> {
   if (path.startsWith('art:')) {
     const a = await getArtifact(path.slice(4))
     return { ...a, kind: a.kind === 'binary' ? kindOfName(a.name) : a.kind, source: path, store: true }
@@ -69,8 +78,13 @@ export async function openArtifact(path: string, thread: string, author: string,
   const name = nameOf(path, label)
   if (storeUp !== false) {
     try {
-      const a = await apiSend<Artifact>('POST', '/ws/artifacts/open', { path, thread, author, label: name })
+      const a = await apiSend<Artifact>('POST', '/ws/artifacts/open', { path, thread, author, label: name, ...(msg ? { msg_id: msg.id, msg_ts: msg.ts } : {}) })
       storeUp = true
+      // bytes older than the stored history: shown as the plain file they are, never as a version they are not
+      if (a.superseded) return {
+        id: `file:${path}`, thread, name, kind: kindOfName(name), path_in_store: '', size: 0, head: '', versions: [], source: path, store: false,
+        note: `An earlier copy of ${name}, from before its stored history begins: read-only.`,
+      }
       return { ...a, kind: a.kind === 'binary' ? kindOfName(a.name) : a.kind, source: path, store: true }
     } catch (e) {
       if (!missing(e)) throw e
@@ -104,8 +118,15 @@ export const textOf = async (a: Opened, rev?: string) => (await contentOf(a, rev
 /* ------------------------------------------------------------------------------------------------- writes */
 export const saveArtifact = (id: string, text: string, message?: string) =>
   apiSend<Artifact>('POST', `/ws/artifacts/${encodeURIComponent(id)}/save`, { text, ...(message ? { message } : {}) })
-export const restoreArtifact = (id: string, rev: string) =>
-  apiSend<Artifact>('POST', `/ws/artifacts/${encodeURIComponent(id)}/restore`, { rev })
+export const restoreArtifact = (id: string, rev: string, message?: string) =>
+  apiSend<Artifact>('POST', `/ws/artifacts/${encodeURIComponent(id)}/restore`, { rev, ...(message ? { message } : {}) })
+/* words (a turn) kept as a NEW text artifact, v1 by whoever wrote them; no file is made anywhere but the store */
+export const createArtifact = (b: { thread: string; name: string; text: string; author: string; msg?: MsgRef }) =>
+  apiSend<Artifact>('POST', '/ws/artifacts/create', { thread: b.thread, name: b.name, text: b.text, author: b.author, ...(b.msg ? { msg_id: b.msg.id, msg_ts: b.msg.ts } : {}) })
+/* a path an agent can read holding the head's exact bytes, for a [[file:]] the owner sends */
+export const exportArtifact = (id: string) => apiSend<{ id: string; name: string; path: string }>('POST', `/ws/artifacts/${encodeURIComponent(id)}/export`)
+/* the thread's STORED artifacts (what has been opened): versions without importing anything */
+export const threadArtifacts = (thread: string) => apiSend<Artifact[]>('GET', `/ws/artifacts?thread=${encodeURIComponent(thread)}`)
 export const getArtifact = (id: string) => apiSend<Artifact>('GET', `/ws/artifacts/${encodeURIComponent(id)}`)
 
 /* ------------------------------------------------------------------------------------------------- media */
