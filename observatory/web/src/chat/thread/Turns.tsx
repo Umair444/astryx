@@ -198,7 +198,7 @@ function Theirs({ m, turn, cont, role, onOpenFile }: { m: Msg; turn: WTurn | nul
       )}
       <div className="md:pl-[32px]">
         {turn && turn.steps.length > 0 && <WorkTrace steps={turn.steps} elsewhere={turn.elsewhere} agent={m.from} end={turn.ended_at} />}
-        {text && <Prose text={text} />}
+        {text && <Prose text={text} msg={m} />}
         {files.length > 0 && <div className="mt-2.5 flex flex-wrap gap-1.5">{files.map((f) => <FileChip key={f.path} path={f.path} label={f.label} from={m.from} msg={m} onOpen={onOpenFile} />)}</div>}
       </div>
     </div>

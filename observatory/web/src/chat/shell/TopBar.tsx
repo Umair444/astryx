@@ -10,7 +10,7 @@ import TeamMap, { useMapPopover } from './TeamMap'
    media drawer, with the conversation's file count) and the workforce toggle (⌘J). On a phone it also opens the conversation drawer.
    Hovering the strip (or clicking it, which pins it; ⌘⇧M) opens the LIVE TEAM MAP beneath it (shell/TeamMap.tsx). */
 
-export default function TopBar({ onProject, title, canRename, surface, project, agents, status, workforce, files, media, onRename, onWorkforce, onMedia, onMenu, onAgent, names, lines }: {
+export default function TopBar({ onProject, title, canRename, surface, project, agents, status, workforce, files, media, onRename, onWorkforce, onMedia, onMenu, onAgent, names, lines, more }: {
   names: string[]
   lines: Record<string, string>
   title: string
@@ -28,6 +28,7 @@ export default function TopBar({ onProject, title, canRename, surface, project, 
   onMedia: () => void
   onMenu: () => void
   onAgent: (a: string) => void
+  more?: React.ReactNode                      // the "more" menu (iteration 9: export, notifications, install)
 }) {
   const [edit, setEdit] = useState(false)
   const [v, setV] = useState(title)
@@ -75,6 +76,7 @@ export default function TopBar({ onProject, title, canRename, surface, project, 
           {I.clip('w-4 h-4')}{files > 0 && <span className="text-[12px] tabular-nums font-medium">{files}</span>}
         </button>
         <button className="ws-icon max-lg:hidden" onClick={onWorkforce} aria-pressed={workforce} title="The workforce (⌘J)" aria-label="the workforce">{I.side()}</button>
+        {more}
       </div>
     </header>
   )

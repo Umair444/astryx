@@ -494,8 +494,9 @@ class Store:
             return self.artifact(aid)
 
     def create(self, thread: str, name: str, text: str, author: str, msg: dict | None = None) -> dict:
-        """A NEW text artifact holding `text` (a turn opened as a document: no file anywhere but the store), v1 by
-        `author` (whose words they are). The name is made a text name (.md unless it already names a text kind); if
+        """A NEW text artifact holding `text` (a turn opened as a document, or a table in a turn as CSV: no file anywhere
+        but the store), v1 by `author` (whose words they are). The name is made a text name (.md unless it already
+        names a text or table kind); if
         the thread already has that name with other bytes, the next free "name (2).md". The same words under the same
         name are the existing artifact, not a copy."""
         if not valid_thread(thread):
@@ -508,7 +509,7 @@ class Store:
         if len(data) > self.max_bytes:
             raise StoreError(413, f"the text is over {self.max_bytes // (1024 * 1024)} MB")
         base = safe_name(name or "answer")
-        if kind_of(base) != "text":
+        if kind_of(base) not in ("text", "table"):     # words stay .md; a table (a turn's, as CSV) keeps .csv/.tsv
             base = safe_name(base + ".md")
         stem, ext = (base[: -len(PurePosixPath(base).suffix)], PurePosixPath(base).suffix)
         with self.lock:
