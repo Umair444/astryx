@@ -78,7 +78,7 @@ def lines():
 def shaping():
     rows = [
         row(1, "owner", "lending", "wa:9@g.us", None),
-        row(2, "lending", "owner", "wa:9@g.us", "[lending] Disbursals: 1,204 today. Customer 923001234567 retried.\nfull table follows"),
+        row(2, "lending", "owner", "wa:9@g.us", "[lending] Disbursals: 1,204 today. Customer 923001234567 retried.\nfull table follows\n\nShould I split it by city?"),
         row(3, "lending", "db", "t-x"),
         row(4, "db", "lending", "t-x"),
         row(5, "lending", "db", "t-x"),
@@ -89,10 +89,10 @@ def shaping():
         row(10, "seed", "steward", "org-news", "Shipped: the workspace", "milestone"),
         row(11, "seed", "memory", "org-news", "Shipped: the workspace", "milestone"),  # same post, another recipient
         row(12, "finance", "owner", "cv:ab", "Received. Working.\n[[file:/m/a.pdf]] (P&L)\n[[file:/m/b.png]]"),
-        row(13, "finance", "owner", "cv:ab", "Done, the P&L is ready\n[[file:/m/a.pdf]] (P&L)"),
+        row(13, "finance", "owner", "cv:ab", "Done, the P&L is ready\n[[file:/m/a.pdf]] (P&L)\n\nDo you want the Sep pack too?"),
         row(14, "seed", "owner", "obs:seed", "Morning report: all green"),
         row(15, "owner", "seed", "obs:seed", None),
-        row(16, "db", "owner", "wa:9@g.us", "Loader stopped; needs the network team"),
+        row(16, "db", "owner", "wa:9@g.us", "Loader stopped; needs the network team.\n\nShall I raise it with them?"),
     ]
     idx = {A.artifact_id("cv:ab", "P-L.pdf"): {"name": "P-L.pdf", "thread": "cv:ab", "path": "cv_ab/P-L.pdf"}}
     b = W.brief(rows, {"medic": 4, "lending": 3, "wa-923001234567": 9}, {"medic": {"ts": T0, "content": "Queued the PR for upstream"}},
@@ -106,6 +106,16 @@ def shaping():
     arm("db waits on WhatsApp (16), not on chat:1-a (the owner answered)", by["db"]["waiting"]["id"] == 16 and by["db"]["waiting"]["surface"] == "whatsapp", by["db"]["waiting"])
     arm("seed answered by the owner: not waiting", by["seed"]["waiting"] is None)
     arm("finance waits once (newest on its thread)", by["finance"]["waiting"]["id"] == 13)
+    arm("a waiting row carries the question itself", by["finance"]["waiting"]["ask"] == "Do you want the Sep pack too?", by["finance"]["waiting"])
+    # waiting = an ASK, not "spoke last": a receipt/FYI never raises the pill (first live night: 3 FYIs read as asks)
+    for body, want in [("Received. The finance desk is working.", False), ("Noted. Handed to db.\n\n— lending", False),
+                       ("Done.\n\nSource: o.pg_stat", False), ("```sql\nselect '?'\n```\nDone.", False),
+                       ("Plan below.\n\nReply go and I run it.", True), ("Is GA still to come?\n\n— finance", True),
+                       ("[[poll: run now? | yes | no]]", True)]:
+        arm(f"asks_owner({body[:28]!r}) is {want}", W.asks_owner(body) is want, W.asks_owner(body))
+    live = ("Received. The finance desk is working. One question is still open from 10-23: will Jul and Aug 2026 be "
+            "reloaded with GA cost? Until then, Aug's total margin is overstated. When is the October file expected?")
+    arm("ask_line takes the receipt's LAST question", W.ask_line(live) == "When is the October file expected?", W.ask_line(live))
     arm("headline masked + prefix gone", by["lending"]["said"][0]["headline"].startswith("Disbursals: 1,204 today. Customer …"), by["lending"]["said"][0]["headline"])
     arm("said newest first, with surface", [m["id"] for m in by["finance"]["said"]] == [13, 12] and by["finance"]["said"][0]["surface"] == "canvas")
     arm("handoffs both ways", by["lending"]["to_agents"] == 3 and by["db"]["from_agents"] == 2 and by["db"]["to_agents"] == 1 and by["seed"]["from_agents"] == 1)

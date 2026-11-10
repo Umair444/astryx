@@ -813,6 +813,40 @@ def said_line(body: str | None) -> str:
     return out[:1].upper() + out[1:]
 
 
+# "Waiting on you" must mean an agent is ASKING something: an agent that merely spoke last (an FYI, "Received. The finance
+# desk is working.") raised the pill for 3 agents on the first live night, which teaches the owner to ignore it. The ask
+# has to sit in the message's closing paragraph (where agents put their question), as a "?", an explicit ask, or a poll.
+_ASK = re.compile(r"\?|\[\[poll:|\b(?:reply|confirm|approve|approval|go[- ]ahead|your call|your go|do you want|should i|"
+                  r"shall i|which (?:one|option|do you)|let me know|tell me (?:if|whether|which)|yes or no|say (?:go|yes)|"
+                  r"waiting (?:on|for) (?:you|your))\b", re.I)
+
+
+def asks_owner(body: str | None) -> bool:
+    """The message's closing paragraph (code blocks and file embeds aside) asks the owner something."""
+    s = re.sub(r"```.*?```", " ", body or "", flags=re.S)
+    s = _EMBED.sub(" ", s)
+    paras = [p.strip() for p in re.split(r"\n\s*\n", s) if p.strip()]
+    if not paras:
+        return False
+    tail = paras[-1]
+    if len(paras) > 1 and len(tail) < 60:      # a short sign-off ("— lending", a source footer) hides the real close
+        tail = paras[-2] + "\n" + tail
+    return bool(_ASK.search(tail))
+
+
+def ask_line(body: str | None) -> str:
+    """The question itself, for a waiting row: the closing paragraph's last asking sentence (its first line is often a
+    receipt — "Received. The finance desk is working." — with the real ask at the end), as one masked headline."""
+    s = _EMBED.sub(" ", re.sub(r"```.*?```", " ", body or "", flags=re.S))
+    paras = [p.strip() for p in re.split(r"\n\s*\n", s) if p.strip()]
+    for p in reversed(paras[-2:]):
+        sents = [x.strip() for x in re.split(r"(?<=[.?!])\s+", p) if x.strip()]
+        for sent in reversed(sents):
+            if _ASK.search(sent):
+                return said_line(sent)
+    return ""
+
+
 def brief_surface(thread: str | None) -> str:
     """Where a message lives, as the briefing names it: an owner conversation the workspace opens (chat/floor/canvas),
     WhatsApp (read there; the workspace never opens a group), or elsewhere (a plan thread, no thread)."""
@@ -903,7 +937,7 @@ def brief(rows: list[dict], turns: dict[str, int], did: dict[str, dict], index: 
         newest: dict[str, dict] = {}                # each thread's newest message from this agent to the owner
         for m in said:
             newest[m["thread"] or ""] = m
-        waits = [m for th, m in newest.items() if th and m["id"] > owner_last.get(th, 0)]
+        waits = [m for th, m in newest.items() if th and m["id"] > owner_last.get(th, 0) and asks_owner(m["body"])]
         w = max(waits, key=lambda m: m["id"]) if waits else None
         listed = [{"id": m["id"], "thread": m["thread"], "ts": m["ts"], "headline": said_line(m["body"]) or "Sent a file",
                    "surface": brief_surface(m["thread"])} for m in reversed(said)][:BRIEF_SAID]
@@ -912,7 +946,8 @@ def brief(rows: list[dict], turns: dict[str, int], did: dict[str, dict], index: 
             "said": listed,
             "files": brief_files(said, index, versions)[:BRIEF_FILES],
             "peers": [{"agent": p, "n": k} for p, k in sorted(peers.items(), key=lambda x: (-x[1], x[0]))[:BRIEF_PEERS]],
-            "waiting": {"id": w["id"], "thread": w["thread"], "ts": w["ts"], "surface": brief_surface(w["thread"])} if w else None,
+            "waiting": {"id": w["id"], "thread": w["thread"], "ts": w["ts"], "surface": brief_surface(w["thread"]),
+                        "ask": ask_line(w["body"])} if w else None,
             "did": said_line(d.get("content")) if d else "",
         })
         a["last_ts"] = max([x for x in (a["last_ts"], _iso(d.get("ts")) if d else None,

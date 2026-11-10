@@ -145,7 +145,8 @@ function Row({ a, s, titles, acts }: { a: BriefAgent; s?: Status; titles: Record
           <span className="ml-auto text-[12px] text-ink-mute shrink-0" title={a.last_ts ?? ''}>{fmtAgo(lead?.ts ?? a.last_ts)}</span>
         </div>
         {lead
-          ? <Said m={lead} onJump={acts.onJump} className="text-[14.5px] text-ink leading-snug mt-0.5" />
+          ? <Said m={a.waiting?.ask ? { ...lead, headline: a.waiting.ask } : lead} onJump={acts.onJump}
+              className="text-[14.5px] text-ink leading-snug mt-0.5" />
           : a.did && <p className="text-[14px] text-ink-dim leading-snug mt-0.5 line-clamp-2">{a.did}</p>}
         {meta.length > 0 && <p className="text-[12px] text-ink-mute mt-1">{meta.join(' · ')}</p>}
         {(lead?.thread || a.files.length > 0) && (
