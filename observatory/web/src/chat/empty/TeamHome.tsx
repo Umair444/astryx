@@ -5,14 +5,18 @@ import { greeting, type Status, type WsAgent, type WsThread } from '../data'
 import { Presence, STATUS_WORD } from '../shell/AgentRail'
 import AgentFace from '../../components/AgentFace'
 import { I } from '../icons'
+import Briefing, { type BriefingActions } from './Briefing'
+import WhatsNew, { useWhatsNew, type Feature } from './WhatsNew'
 
 /* THE EMPTY STATE shows the TEAM, not a logo (DESIGN.md): canvas's serif greeting with its one italic gradient line,
    how many agents are awake, the composer as the hero, then "who do you need": one card per agent with its role (its
-   charter's subtitle) and what it last told you or is doing now, and the conversations to pick back up. */
+   charter's subtitle) and what it last told you or is doing now, and the conversations to pick back up. Since
+   iteration 15 the composer is followed by "while you were away" (what the team did since the owner last looked)
+   and, once, "new in your workspace". */
 
 const EASE = [0.22, 1, 0.36, 1] as const
 
-export default function TeamHome({ names, status, lines, agents, threads, composer, onAgent, onGo }: {
+export default function TeamHome({ names, status, lines, agents, threads, composer, onAgent, onGo, since, brief, onShow }: {
   names: string[]
   status: Record<string, Status>
   lines: Record<string, string>           // what each agent is doing now (ui/life nowLine)
@@ -21,7 +25,11 @@ export default function TeamHome({ names, status, lines, agents, threads, compos
   composer: ReactNode
   onAgent: (a: string) => void
   onGo: (t: string) => void
+  since: string | null                    // the start of this visit (empty/visit.ts); null = the server's default
+  brief: BriefingActions
+  onShow: (f: Feature) => void
 }) {
+  const [fresh, dismiss] = useWhatsNew()
   const reduce = useReducedMotion()
   const awake = names.filter((n) => status[n] && status[n] !== 'down').length
   const working = names.filter((n) => status[n] === 'working')
@@ -41,7 +49,11 @@ export default function TeamHome({ names, status, lines, agents, threads, compos
 
       <motion.div {...rise(0.08)} className="mt-8 max-w-[720px]">{composer}</motion.div>
 
-      <motion.section {...rise(0.16)} className="mt-12" aria-label="your team">
+      <motion.div {...rise(0.12)} className="mt-11"><Briefing since={since} status={status} acts={brief} /></motion.div>
+
+      {fresh && <motion.div {...rise(0.16)} className="mt-10"><WhatsNew onShow={onShow} onDismiss={dismiss} /></motion.div>}
+
+      <motion.section {...rise(0.18)} className="mt-12" aria-label="your team">
         <div className="flex items-baseline gap-3 mb-3">
           <h2 className="text-[13px] font-medium text-ink">Your team</h2>
           <span className="text-[12px] text-ink-mute">Open a desk with any of them</span>

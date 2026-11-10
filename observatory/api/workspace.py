@@ -22,6 +22,9 @@ A thread is listed only when the owner is a party of it (an invitee's canvas cha
                                 first, each hit a snippet (markers stripped) with the matched spans
     GET /api/ws/thread-titles   ?ids=a,b,c (≤40): each thread's name — an owner conversation's list title, any other
                                 thread a ≤60-char label from its first message's first line (WhatsApp: its surface only)
+    GET /api/ws/briefing        ?since=<iso> (default 12 h, at most 48 h back): "while you were away" — per agent its
+                                counts, its messages TO THE OWNER as headlines (never bodies), files, top peers, whether
+                                it waits on the owner; org-news headlines
 
 OWNER-ONLY BY OMISSION, like chat.py: none of these paths is in main.PUBLIC, so the default-deny gate answers 403 to
 anyone without the owner key before a handler runs. Writes go through hostfile.atomic_write with the etag read (one
@@ -744,3 +747,229 @@ async def ws_thread_titles(request: Request, ids: str = ""):
     firsts = {r["thread"]: r["body"] for r in await pool.fetch(FIRST_SQL, [t for t in want if t not in named])} \
         if any(t not in named for t in want) else {}
     return {"titles": titles_of(want, rows, firsts)}
+
+
+# ------------------------------------------------------------------------------------- the briefing (iteration 15)
+# "While you were away": what each agent did since the owner last looked, in ONE request. Compact and privacy-safe by
+# construction: counts, and for the messages the agent sent TO THE OWNER only their headline (headline(): one line,
+# markup gone, digit runs of ten or more masked) — never a body. A sender outside the roster (a WhatsApp guest
+# `wa-<number>`, the pulse, a peer org) is never named. Bounded: the window is at most BRIEF_MAX_H hours, and the
+# messages are read from one id boundary (the primary key, walked backwards until a row is older than `since`), so the
+# cost follows the window, never the table; each agent's turn count and last words are one index probe apiece.
+BRIEF_DEFAULT_H = 12
+BRIEF_MAX_H = 48
+BRIEF_ROWS = 6000                                  # rows read past the boundary at most (a 48 h window is ~1-2k today)
+BRIEF_SAID = 6                                     # messages to the owner listed per agent (the count is exact)
+BRIEF_FILES = 8
+BRIEF_PEERS = 3
+BRIEF_NEWS = 8
+BRIEF_LINE = 120
+BRIEF_TIMEOUT = 5
+
+BRIEF_EDGE_SQL = "SELECT id FROM messages WHERE ts < $1 ORDER BY id DESC LIMIT 1"
+BRIEF_MSGS_SQL = """
+SELECT id, ts, from_agent, to_agent, thread, intent,
+       CASE WHEN to_agent = 'owner' OR thread = 'org-news' THEN left(body, 2000) END AS body
+  FROM messages
+ WHERE id > $1 AND ts >= $2
+ ORDER BY id
+ LIMIT $3"""
+BRIEF_TURNS_SQL = """
+SELECT a.agent, (SELECT count(*) FROM turns t WHERE t.agent = a.agent AND t.ended_at >= $2) AS turns
+  FROM unnest($1::text[]) AS a(agent)"""
+# each agent's newest words of its own (a `response` step) in the window: what an agent that never wrote to the owner
+# was doing. One steps_agent_ts probe per agent; a tool-only turn's placeholder is no words
+BRIEF_DID_SQL = """
+SELECT a.agent, s.ts, s.content
+  FROM unnest($1::text[]) AS a(agent)
+  CROSS JOIN LATERAL (
+    SELECT ts, left(content, 1200) AS content FROM steps
+     WHERE agent = a.agent AND ts >= $2 AND kind = 'response' AND content NOT LIKE '(tool-only%'
+     ORDER BY ts DESC LIMIT 1) s"""
+
+
+def brief_window(since: str | None, now) -> tuple:
+    """?since= -> the window's start: an ISO time (a bare one read as UTC), clamped to [now - BRIEF_MAX_H, now];
+    missing or unreadable -> now - BRIEF_DEFAULT_H. Returns (start, clamped)."""
+    from datetime import datetime, timedelta, timezone
+    floor, default = now - timedelta(hours=BRIEF_MAX_H), now - timedelta(hours=BRIEF_DEFAULT_H)
+    try:
+        t = datetime.fromisoformat((since or "").strip().replace("Z", "+00:00"))
+    except ValueError:
+        return default, False
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    if t < floor:
+        return floor, True
+    return (now, True) if t > now else (t, False)
+
+
+def said_line(body: str | None) -> str:
+    """A message to the owner as one line: thread_label's prefix strips (a "[lending]" tag, "general here."), then
+    headline() (markup gone, digit runs masked), at most BRIEF_LINE chars."""
+    s = re.sub(r"^\[[\w -]{1,30}\]\s+", "", (body or "").lstrip())
+    s = re.sub(r"^@?[\w-]{1,30} here\s*[.,:;—–-]+\s*", "", s, flags=re.I)
+    out = headline(s, BRIEF_LINE)
+    return out[:1].upper() + out[1:]
+
+
+def brief_surface(thread: str | None) -> str:
+    """Where a message lives, as the briefing names it: an owner conversation the workspace opens (chat/floor/canvas),
+    WhatsApp (read there; the workspace never opens a group), or elsewhere (a plan thread, no thread)."""
+    s = surface_of(thread)
+    if s:
+        return s
+    return "whatsapp" if (thread or "").startswith("wa:") else "other"
+
+
+def _iso(ts):
+    return ts.isoformat() if hasattr(ts, "isoformat") else ts
+
+
+def brief_files(said: list[dict], index: dict, versions: dict[str, int]) -> list[dict]:
+    """What an agent produced for the owner: the [[file:]] embeds in its messages to the owner, one entry per
+    (thread, name) at its newest mention, newest first. A file the artifact store already holds carries its id (the
+    chip opens it by id) and its version count; else the chip imports it from the embed's path on open.
+    The store itself is NOT a source of news: an agent-authored version there is written when the OWNER opens or
+    keeps an agent's file (an import on view, "Open as document"), so its time is the owner's, not the agent's."""
+    from observatory.api import artifacts as A
+    out: dict[tuple, dict] = {}
+    for m in said:
+        for f in A.FILE_EMBED.finditer(m.get("body") or ""):
+            path, label = f.group(1).strip(), f.group(2)
+            name = A.artifact_name(path, label)
+            aid = A.artifact_id(m.get("thread") or "", name)
+            e = index.get(aid) if isinstance(index.get(aid), dict) else None
+            out[(m.get("thread"), name)] = {"name": name, "kind": A.kind_of(name), "thread": m.get("thread"),
+                                            "ts": m["ts"], "msg_id": m["id"], "path": path, "label": label,
+                                            "artifact": aid if e else None,
+                                            "versions": versions.get(e.get("path"), 0) if e else 0}
+    return sorted(out.values(), key=lambda f: f["msg_id"], reverse=True)
+
+
+def brief(rows: list[dict], turns: dict[str, int], did: dict[str, dict], index: dict, versions: dict[str, int],
+          roster: set[str]) -> dict:
+    """The briefing from the window's rows (BRIEF_MSGS_SQL, oldest first; `body` only on rows to the owner and
+    org-news), each agent's turn count, its newest words (`did`: {ts, content}) and the artifact store's index and
+    version counts (by store path).
+    Agents ordered by what needs the owner first: waiting on the owner, then those who wrote to the owner, then those
+    who only worked; newest activity first within each."""
+    ag: dict[str, dict] = {}
+
+    def one(n: str) -> dict:
+        if n not in ag:
+            ag[n] = {"agent": n, "turns": 0, "to_owner": 0, "to_agents": 0, "from_agents": 0, "_peers": {}, "_said": [],
+                     "last_ts": None}
+        return ag[n]
+
+    owner_last: dict[str, int] = {}
+    news: list[dict] = []
+    seen_news: set[tuple] = set()
+    for r in rows:
+        frm, to, t = r.get("from_agent"), r.get("to_agent"), r.get("thread")
+        ts = _iso(r.get("ts"))
+        if t == "org-news":
+            key = (frm, r.get("body"))
+            if frm in roster and key not in seen_news:
+                seen_news.add(key)
+                line = said_line(r.get("body"))
+                if line:
+                    news.append({"id": r["id"], "ts": ts, "from": frm, "headline": line})
+            continue
+        if frm == "owner":
+            if t:
+                owner_last[t] = max(owner_last.get(t, 0), r["id"])
+            continue
+        if frm not in roster:
+            continue
+        a = one(frm)
+        a["last_ts"] = max(a["last_ts"] or "", ts or "") or None
+        if to == "owner":
+            a["to_owner"] += 1
+            a["_said"].append({"id": r["id"], "thread": t, "ts": ts, "body": r.get("body") or "", "intent": r.get("intent")})
+        elif to in roster and to != frm:
+            a["to_agents"] += 1
+            a["_peers"][to] = a["_peers"].get(to, 0) + 1
+            b = one(to)
+            b["from_agents"] += 1
+            b["_peers"][frm] = b["_peers"].get(frm, 0) + 1
+    for n, k in turns.items():
+        if n in roster and k:
+            one(n)["turns"] = int(k)
+    agents = []
+    for n, a in ag.items():
+        said = a.pop("_said")
+        peers = a.pop("_peers")
+        newest: dict[str, dict] = {}                # each thread's newest message from this agent to the owner
+        for m in said:
+            newest[m["thread"] or ""] = m
+        waits = [m for th, m in newest.items() if th and m["id"] > owner_last.get(th, 0)]
+        w = max(waits, key=lambda m: m["id"]) if waits else None
+        listed = [{"id": m["id"], "thread": m["thread"], "ts": m["ts"], "headline": said_line(m["body"]) or "Sent a file",
+                   "surface": brief_surface(m["thread"])} for m in reversed(said)][:BRIEF_SAID]
+        d = did.get(n) or {}
+        a.update({
+            "said": listed,
+            "files": brief_files(said, index, versions)[:BRIEF_FILES],
+            "peers": [{"agent": p, "n": k} for p, k in sorted(peers.items(), key=lambda x: (-x[1], x[0]))[:BRIEF_PEERS]],
+            "waiting": {"id": w["id"], "thread": w["thread"], "ts": w["ts"], "surface": brief_surface(w["thread"])} if w else None,
+            "did": said_line(d.get("content")) if d else "",
+        })
+        a["last_ts"] = max([x for x in (a["last_ts"], _iso(d.get("ts")) if d else None,
+                                         *(f["ts"] for f in a["files"])) if x] or [None])
+        if a["turns"] or a["said"] or a["files"] or a["to_agents"] or a["from_agents"]:
+            agents.append(a)
+    agents.sort(key=lambda a: a["last_ts"] or "", reverse=True)
+    agents.sort(key=lambda a: 0 if a["waiting"] else 1 if a["to_owner"] else 2)
+    return {
+        "totals": {"agents": len(agents), "to_owner": sum(a["to_owner"] for a in agents),
+                   "files": sum(len(a["files"]) for a in agents), "waiting": sum(1 for a in agents if a["waiting"]),
+                   "handoffs": sum(a["to_agents"] for a in agents), "turns": sum(a["turns"] for a in agents)},
+        "agents": agents,
+        "news": list(reversed(news))[:BRIEF_NEWS],
+    }
+
+
+def version_counts(log: str) -> dict[str, int]:
+    """`git log --format=%x1e --name-only` -> {store path: number of versions}."""
+    out: dict[str, int] = {}
+    for chunk in log.split("\x1e")[1:]:
+        for f in chunk.splitlines():
+            if f.strip():
+                out[f.strip()] = out.get(f.strip(), 0) + 1
+    return out
+
+
+def _store_view() -> tuple[dict, dict]:
+    from observatory.api import artifacts as A
+    st = A.store()
+    if not st.ready():
+        return {}, {}
+    log = st.git("log", "--format=%x1e", "--name-only", "-n", "3000").stdout
+    return st.index(), version_counts(log.decode(errors="replace"))
+
+
+@router.get("/api/ws/briefing")
+async def ws_briefing(request: Request, since: str = ""):
+    """?since=<iso> (default 12 h ago, at most 48 h back): {since, until, clamped, totals, agents, news}."""
+    if not _owner(request):
+        return JSONResponse({"error": "owner only"}, status_code=403)
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    start, clamped = brief_window(since, now)
+    roster = set(_roster())
+    names = sorted(roster)
+    pool = _pool(request)
+    try:
+        edge = await pool.fetchval(BRIEF_EDGE_SQL, start, timeout=BRIEF_TIMEOUT) or 0
+        rows = [dict(r) for r in await pool.fetch(BRIEF_MSGS_SQL, edge, start, BRIEF_ROWS, timeout=BRIEF_TIMEOUT)]
+        turns = {r["agent"]: r["turns"] for r in await pool.fetch(BRIEF_TURNS_SQL, names, start, timeout=BRIEF_TIMEOUT)}
+        did = {r["agent"]: dict(r) for r in await pool.fetch(BRIEF_DID_SQL, names, start, timeout=BRIEF_TIMEOUT)}
+    except asyncio.TimeoutError:
+        return JSONResponse({"error": "the briefing took too long"}, status_code=504)
+    try:
+        index, versions = await asyncio.to_thread(_store_view)
+    except Exception:                               # noqa: BLE001 — no store (or git hiccup): the embeds' paths stand
+        index, versions = {}, {}
+    out = brief(rows, turns, did, index, versions, roster)
+    return {"since": start.isoformat(), "until": now.isoformat(), "clamped": clamped, **out}

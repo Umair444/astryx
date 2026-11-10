@@ -680,6 +680,8 @@ async def thread_titles(request: Request, threads: set[str]) -> dict[str, str]:
     for t in threads:
         if t.startswith("project:") and projects.get(t[8:]):
             out[t] = projects[t[8:]]
+        elif t.startswith("wa:"):                   # a WhatsApp file opened from the briefing: never the group's id
+            out[t] = "A WhatsApp chat"
     convo = sorted(t for t in threads if _ws.surface_of(t))
     if not convo:
         return out
