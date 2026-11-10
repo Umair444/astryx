@@ -368,6 +368,12 @@ from observatory.api import workspace as _ws  # noqa: E402
 _ws.bind(lambda: pool, ESTATE, roster=lambda: set(agent_meta()), charter=lambda n: _charter_path(n))
 app.include_router(_ws.router)
 
+# feat/chat-workspace: the artifact store (a git repo under data/workspace: versions, restore, annotations) and a
+# thread's media list; sources pass chat.readable's gate; owner-only by omission from PUBLIC
+from observatory.api import artifacts as _arts  # noqa: E402
+_arts.bind(lambda: pool, ESTATE)
+app.include_router(_arts.router)
+
 # the Room's speaker: agents answer the room with send(to='room'); spoken in their voice, or run on the screen
 from observatory.api import room as _room  # noqa: E402
 
