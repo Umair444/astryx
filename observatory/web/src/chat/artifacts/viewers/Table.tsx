@@ -50,10 +50,10 @@ export function Grid({ rows }: { rows: string[][] }) {
 
   return (
     <div className="h-full overflow-auto ws-grid">
-      <table>
+      <table data-ann-root>
         <thead>
           <tr>
-            <th className="ws-grid-n" aria-label="row" />
+            <th className="ws-grid-n" aria-label="row" data-ann-skip />
             {Array.from({ length: width }, (_, c) => (
               <th key={c} className={numeric[c] ? 'text-right' : ''} aria-sort={sort?.col === c ? (sort.dir === 1 ? 'ascending' : 'descending') : 'none'}>
                 <button onClick={() => click(c)} className={`inline-flex items-center gap-1 ${numeric[c] ? 'flex-row-reverse' : ''}`} title="Sort">
@@ -67,7 +67,7 @@ export function Grid({ rows }: { rows: string[][] }) {
         <tbody>
           {shown.map((r, i) => (
             <tr key={i}>
-              <td className="ws-grid-n">{i + 1}</td>
+              <td className="ws-grid-n" data-ann-skip>{i + 1}</td>
               {Array.from({ length: width }, (_, c) => <td key={c} className={numeric[c] ? 'text-right' : ''}>{r[c] ?? ''}</td>)}
             </tr>
           ))}

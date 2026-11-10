@@ -5,7 +5,7 @@ import { I } from '../icons'
 import { contentOf, type MediaItem, type Opened } from './api'
 import type { OpenRequest } from './FileChip'
 import { FILTER_OF, KindIcon, KIND_WORD, type Filter } from './kinds'
-import { useObjectUrl } from './viewers/common'
+import { BlobImg } from './viewers/common'
 
 /* THE MEDIA DRAWER: every file this conversation holds, newest first: what the owner uploaded and what the agents
    made, each badged with who. Images as a thumbnail grid, everything else as a list; filters All / Images / Docs /
@@ -98,11 +98,10 @@ function Thumb({ m, on, onClick }: { m: MediaItem; on: boolean; onClick: () => v
     contentOf(plain).then((b) => live && setBlob(b)).catch(() => {})
     return () => { live = false }
   }, [m.path, m.name, m.kind])
-  const url = useObjectUrl(blob)
   return (
     <button onClick={onClick} aria-current={on} className="ws-thumb group text-left" title={m.name}>
       <span className="block aspect-[4/3] rounded-[10px] overflow-hidden ws-checker relative">
-        {url ? <img src={url} alt={m.name} className="w-full h-full object-cover" draggable={false} />
+        {blob ? <BlobImg blob={blob} alt={m.name} className="w-full h-full object-cover" draggable={false} />
           : <span className="absolute inset-0 grid place-items-center text-ink-mute"><KindIcon kind="image" className="w-6 h-6" /></span>}
         <span className="absolute left-1.5 top-1.5">{m.from === 'owner' ? <span className="ws-badge ws-badge-solid">You</span> : <AgentFace name={m.from} size={18} />}</span>
       </span>

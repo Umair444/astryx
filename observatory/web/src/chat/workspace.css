@@ -252,8 +252,99 @@
 .ws-badge { font-size: 10.5px; font-weight: 500; padding: 0 6px; border-radius: 9999px; line-height: 16px; border: 1px solid var(--t-line2); color: var(--t-dim); }
 .ws-badge-solid { background: var(--t-panel); }
 
+/* ── iteration 4: annotation ────────────────────────────────────────────────────────────────────────────────────
+   Highlights are painted by the CSS Custom Highlight API (annotate/paint.ts), so these are ::highlight() rules: four
+   pens tuned per surface (a page in the theme; white paper for PDF and Word, whatever the theme), comments and asks
+   as an underlined wash, a suggestion struck through with its words inserted after. The pens are the only new colours. */
+.ws { --ax-yellow: rgba(250, 204, 21, .36); --ax-green: rgba(52, 211, 153, .30); --ax-blue: rgba(96, 165, 250, .30); --ax-pink: rgba(244, 114, 182, .28);
+  --ax-yellow-ink: #e2b100; --ax-green-ink: #10b981; --ax-blue-ink: #3b82f6; --ax-pink-ink: #ec4899; }
+:root[data-theme="dark"] .ws { --ax-yellow: rgba(253, 224, 71, .27); --ax-green: rgba(110, 231, 183, .24); --ax-blue: rgba(147, 197, 253, .30); --ax-pink: rgba(249, 168, 212, .27);
+  --ax-yellow-ink: #fcd34d; --ax-green-ink: #6ee7b7; --ax-blue-ink: #93c5fd; --ax-pink-ink: #f9a8d4; }
+:root[data-theme="dark"] .ws .ws-paper, :root[data-theme="dark"] .ws .ws-docx { --ax-yellow: rgba(250, 204, 21, .36); --ax-green: rgba(52, 211, 153, .30); --ax-blue: rgba(96, 165, 250, .30); --ax-pink: rgba(244, 114, 182, .28); }
+.ws ::highlight(ax-yellow) { background-color: var(--ax-yellow); }
+.ws ::highlight(ax-green) { background-color: var(--ax-green); }
+.ws ::highlight(ax-blue) { background-color: var(--ax-blue); }
+.ws ::highlight(ax-pink) { background-color: var(--ax-pink); }
+.ws ::highlight(ax-comment) { background-color: color-mix(in srgb, var(--t-warn) 16%, transparent); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--t-warn) 75%, transparent); text-decoration-thickness: 2px; text-underline-offset: 3px; }
+.ws ::highlight(ax-ask) { background-color: color-mix(in srgb, var(--t-accent) 13%, transparent); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--t-accent) 70%, transparent); text-decoration-thickness: 2px; text-underline-offset: 3px; }
+.ws ::highlight(ax-suggest) { background-color: color-mix(in srgb, var(--t-bad) 10%, transparent); text-decoration: line-through; text-decoration-color: var(--t-bad); text-decoration-thickness: 1.5px; }
+.ws ::highlight(ax-active) { background-color: color-mix(in srgb, var(--t-accent) 18%, transparent); }
+.ws ::highlight(ax-focus) { background-color: color-mix(in srgb, var(--t-accent) 38%, transparent); }
+.ws .ws-paper ::highlight(ax-comment), .ws .ws-docx ::highlight(ax-comment) { background-color: rgba(245, 158, 11, .18); text-decoration-color: rgba(217, 119, 6, .8); }
+.ws .ws-paper ::highlight(ax-ask), .ws .ws-docx ::highlight(ax-ask) { background-color: rgba(124, 58, 237, .12); text-decoration-color: rgba(124, 58, 237, .7); }
+.ws .ws-paper ::highlight(ax-active), .ws .ws-docx ::highlight(ax-active) { background-color: rgba(124, 58, 237, .16); }
+.ws .ws-paper ::highlight(ax-focus), .ws .ws-docx ::highlight(ax-focus) { background-color: rgba(124, 58, 237, .32); }
+/* the fallback (no Highlight API): marks with the same pens */
+.ax-mark { color: inherit; border-radius: 2px; background: transparent; }
+.ax-mark-yellow { background: var(--ax-yellow); } .ax-mark-green { background: var(--ax-green); } .ax-mark-blue { background: var(--ax-blue); } .ax-mark-pink { background: var(--ax-pink); }
+.ax-mark-comment { background: color-mix(in srgb, var(--t-warn) 16%, transparent); box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--t-warn) 75%, transparent); }
+.ax-mark-ask { background: color-mix(in srgb, var(--t-accent) 13%, transparent); box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--t-accent) 70%, transparent); }
+.ax-mark-suggest { background: color-mix(in srgb, var(--t-bad) 10%, transparent); text-decoration: line-through; text-decoration-color: var(--t-bad); }
+.ax-mark-active.ax-flash { background: color-mix(in srgb, var(--t-accent) 38%, transparent); }
+/* a suggestion's new words, inline after the struck ones */
+.ax-ins { text-decoration: none; color: var(--t-good); background: color-mix(in srgb, var(--t-good) 13%, transparent); border-radius: 3px; padding: 0 2px; margin-left: 2px;
+  box-shadow: inset 0 -1.5px 0 color-mix(in srgb, var(--t-good) 70%, transparent); cursor: pointer; user-select: none; white-space: pre-wrap; }
+.ws-paper .ax-ins, .ws-docx .ax-ins { color: #047857; }
+
+/* the selection pill */
+.ax-tool { animation: ax-pop-in 140ms var(--ws-ease); }
+@keyframes ax-pop-in { from { opacity: 0; transform: translateY(3px) scale(.98); } to { opacity: 1; transform: none; } }
+.ax-swatch { width: 18px; height: 18px; border-radius: 9999px; position: relative; transition: transform 120ms var(--ws-ease); }
+.ax-swatch:hover { transform: scale(1.12); }
+.ax-swatch::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--t-fg) 14%, transparent); }
+.ax-sw-yellow { background: var(--ax-yellow-ink); } .ax-sw-green { background: var(--ax-green-ink); } .ax-sw-blue { background: var(--ax-blue-ink); } .ax-sw-pink { background: var(--ax-pink-ink); }
+.ax-swatch[data-last="true"], .ax-swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--t-panel), 0 0 0 3.5px color-mix(in srgb, var(--t-fg) 45%, transparent); }
+.ax-tbtn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 9px; border-radius: 9999px; color: var(--t-dim); white-space: nowrap; transition: background-color 120ms, color 120ms; }
+.ax-tbtn:hover { background: color-mix(in srgb, var(--t-fg) 7%, transparent); color: var(--t-fg); }
+.ax-count { min-width: 17px; height: 17px; padding: 0 5px; border-radius: 9999px; font-size: 10.5px; font-weight: 600; line-height: 17px; text-align: center;
+  background: color-mix(in srgb, var(--t-fg) 10%, transparent); color: var(--t-fg); font-variant-numeric: tabular-nums; }
+.ws-tool[aria-pressed="true"] .ax-count { background: var(--t-accent); color: var(--t-on, #fff); }
+
+/* the composer popover */
+.ax-pop { animation: ax-pop-in 160ms var(--ws-ease); }
+.ax-quote { font-family: "Newsreader Variable", Georgia, serif; font-style: italic; font-size: 13.5px; line-height: 1.45; color: var(--t-dim);
+  border-left: 2px solid var(--ax-bar, var(--t-line2)); padding-left: 9px; overflow-wrap: anywhere; }
+.ax-input { width: 100%; resize: none; outline: none; border: 1px solid var(--t-line); border-radius: 10px; padding: 8px 10px; font-size: 13.5px; line-height: 1.5;
+  background: var(--t-bg); color: var(--t-fg); min-height: 40px; transition: border-color 120ms; }
+.ax-input:focus { border-color: color-mix(in srgb, var(--t-accent) 45%, var(--t-line)); }
+.ax-input-doc { font-family: "Newsreader Variable", Georgia, serif; font-size: 15px; }
+.ax-agent { width: 100%; display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 10px 0 8px; border-radius: 10px; font-size: 13px;
+  border: 1px solid var(--t-line); background: color-mix(in srgb, var(--t-fg) 2.5%, transparent); transition: border-color 120ms; }
+.ax-agent:hover, .ax-agent[aria-expanded="true"] { border-color: var(--t-line2); }
+
+/* the margin and its cards: hairline cards on the panel's ground; the passage's pen is the card's one colour */
+.ax-margin { background: color-mix(in srgb, var(--t-bg2) 55%, var(--t-bg)); }
+.ax-card { --ax-bar: var(--t-line2); border: 1px solid var(--t-line); background: var(--t-panel); border-radius: 12px; padding: 10px 11px 11px; cursor: default;
+  transition: border-color 140ms, box-shadow 160ms, transform 200ms var(--ws-ease); }
+.ax-card[data-tone="yellow"] { --ax-bar: var(--ax-yellow-ink); } .ax-card[data-tone="green"] { --ax-bar: var(--ax-green-ink); }
+.ax-card[data-tone="blue"] { --ax-bar: var(--ax-blue-ink); } .ax-card[data-tone="pink"] { --ax-bar: var(--ax-pink-ink); }
+.ax-card[data-tone="comment"] { --ax-bar: var(--t-warn); } .ax-card[data-tone="ask"] { --ax-bar: var(--t-accent); } .ax-card[data-tone="suggest"] { --ax-bar: var(--t-bad); }
+.ax-card:hover { border-color: var(--t-line2); }
+.ax-card-slim { padding: 7px 10px; background: color-mix(in srgb, var(--t-panel) 55%, transparent); border-color: transparent; cursor: pointer; }
+.ax-card-slim .ax-quote { font-size: 12.5px; }
+.ax-card[data-active="true"] { border-color: color-mix(in srgb, var(--t-accent) 40%, var(--t-line)); box-shadow: 0 12px 32px -18px rgba(0,0,0,.45); z-index: 2; }
+.ax-card .ax-acts { opacity: 0; transition: opacity 120ms; }
+.ax-card:hover .ax-acts, .ax-card[data-active="true"] .ax-acts, .ax-card:focus-within .ax-acts { opacity: 1; }
+.ax-mini { width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; color: var(--t-mute); }
+.ax-mini:hover { background: color-mix(in srgb, var(--t-fg) 7%, transparent); color: var(--t-fg); }
+.ax-del { color: var(--t-dim); text-decoration: line-through; text-decoration-color: var(--t-bad); background: color-mix(in srgb, var(--t-bad) 9%, transparent); border-radius: 3px; padding: 0 2px; }
+.ax-ins-card { color: var(--t-fg); text-decoration: none; background: color-mix(in srgb, var(--t-good) 14%, transparent); box-shadow: inset 0 -1.5px 0 color-mix(in srgb, var(--t-good) 70%, transparent); border-radius: 3px; padding: 0 2px; white-space: pre-wrap; }
+.ax-reply { font-size: 13px; line-height: 1.5; color: var(--t-fg); }
+.ax-reply .ws-prose { font-size: 13px; line-height: 1.5; }
+.ax-reply .ws-prose table { font-size: 11.5px; }
+.ax-tray { background: var(--t-bg2); border: 1px solid var(--t-line); border-radius: 12px; box-shadow: 0 -10px 30px -18px rgba(0,0,0,.4); }
+.ax-sheet { background: var(--t-bg2); border-top: 1px solid var(--t-line); border-radius: 16px 16px 0 0; box-shadow: 0 -18px 50px -24px rgba(0,0,0,.45); animation: ax-sheet-in 220ms var(--ws-ease); }
+@keyframes ax-sheet-in { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+.ax-handle { position: absolute; left: 50%; top: 6px; width: 36px; height: 4px; margin-left: -18px; border-radius: 9999px; background: var(--t-line2); }
+/* the ask, in the chat */
+.ax-askchip { background: color-mix(in srgb, var(--t-bg) 55%, transparent); border: 1px solid color-mix(in srgb, var(--t-accent) 18%, var(--t-line)); box-shadow: inset 2px 0 0 var(--t-accent);
+  transition: border-color 120ms, background-color 120ms; }
+.ax-askchip:hover:not(:disabled) { border-color: color-mix(in srgb, var(--t-accent) 40%, var(--t-line)); background: var(--t-bg); }
+.ax-askchip-q { font-family: "Newsreader Variable", Georgia, serif; font-style: italic; font-size: 14.5px; line-height: 1.45; color: var(--t-dim); white-space: normal; }
+
 @media (prefers-reduced-motion: reduce) {
-  .ws-ring, .ws-live-dot, .ws-livebar, .ws-shimmer, .ws-artifact { animation: none; }
+  .ws-ring, .ws-live-dot, .ws-livebar, .ws-shimmer, .ws-artifact, .ax-tool, .ax-pop, .ax-sheet { animation: none; }
+  .ax-card, .ax-swatch { transition: none; }
   .ws-shimmer { color: var(--t-dim); background: none; }
 }
 }

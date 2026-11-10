@@ -10,27 +10,35 @@ import ArtifactView from './viewers'
 import { Loading } from './viewers/common'
 import VersionMenu, { ago, who } from './versions/VersionMenu'
 import { comparable } from './versions/extract'
+import type { AnnotateCtx } from './annotate/types'
+import { A } from './annotate/icons'
 
 /* THE ARTIFACT PANEL (DESIGN.md layout): the thing being made, beside the conversation about it. Tabs for every file
    opened in this conversation; for the active one, its versions (git, by author), Diff, Edit (text kinds: a new
    version by the owner), Download, fullscreen (⌘⇧F) and Close. Wide (≥1200) it sits in the row, resizable on a 1px
    seam (3px on hover; the width is remembered); narrower it is a sheet over the chat; on a phone, the whole screen.
-   An old version is read-only with "Restore as new version": history is never rewritten. */
+   An old version is read-only with "Restore as new version": history is never rewritten.
+   ANNOTATE (iteration 4): any text-bearing kind takes highlights, comments, asks and suggestions; the margin opens in
+   the panel (which widens by its 280px while it is open), or as a sheet where the panel is narrow. */
 
 const DiffView = lazy(() => import('./versions/DiffView'))
+const Annotator = lazy(() => import('./annotate/Annotator'))
+const ANNOTATABLE = ['text', 'code', 'table', 'pdf', 'docx', 'sheet']
+const MARGIN = 280
 const W_KEY = 'ws.artifact.w'
 const MIN = 480
 
-type View = { rev: string | null; diff: { from: string; to: string } | null; edit: { draft: string; base: string; message: string } | null; note: string }
-const FRESH: View = { rev: null, diff: null, edit: null, note: '' }
+type View = { rev: string | null; diff: { from: string; to: string } | null; edit: { draft: string; base: string; message: string } | null; note: string; ann: boolean | null }
+const FRESH: View = { rev: null, diff: null, edit: null, note: '', ann: null }
 
 export type Layout = 'inline' | 'sheet' | 'full'
 
-export default function Panel({ panel, layout, onAttach, onDirty }: {
+export default function Panel({ panel, layout, onAttach, onDirty, annotate }: {
   panel: PanelState
   layout: Layout
   onAttach: (u: Uploaded) => void
   onDirty?: (dirty: boolean) => void
+  annotate?: AnnotateCtx
 }) {
   const { tabs, active, close, closeAll, activate, update } = panel
   const tab = tabs.find((t) => t.key === active) ?? tabs[0]
@@ -53,15 +61,17 @@ export default function Panel({ panel, layout, onAttach, onDirty }: {
     ro.observe(parent)
     return () => ro.disconnect()
   }, [layout])
+  // the margin widens the panel by its own width, never squeezing the chat under 420px
+  const extra = tab?.art && views[tab.key]?.ann && !views[tab.key]?.edit && !views[tab.key]?.diff ? MARGIN : 0
   const clamp = (x: number) => Math.round(Math.max(MIN, Math.min(row * 0.6, x)))
-  const width = layout === 'inline' && row ? clamp(w ?? row * 0.5) : undefined
+  const width = layout === 'inline' && row ? Math.round(Math.max(MIN, Math.min(clamp(w ?? row * 0.5) + extra, row - 420))) : undefined
   const drag = (e: React.PointerEvent) => {
     e.preventDefault()
     const right = self.current!.getBoundingClientRect().right
     const el = e.currentTarget as HTMLElement
     el.setPointerCapture(e.pointerId)
     document.body.style.cursor = 'col-resize'
-    const move = (ev: PointerEvent) => setW(clamp(right - ev.clientX))
+    const move = (ev: PointerEvent) => setW(clamp(right - ev.clientX - extra))
     const up = () => {
       el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up)
       document.body.style.cursor = ''
@@ -77,7 +87,7 @@ export default function Panel({ panel, layout, onAttach, onDirty }: {
       const mod = e.metaKey || e.ctrlKey
       if (mod && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); setFull((f) => !f) }
       else if (mod && e.key.toLowerCase() === 's' && view.edit) { e.preventDefault(); saveRef.current() }
-      else if (e.key === 'Escape' && full) { e.preventDefault(); e.stopImmediatePropagation(); setFull(false) }
+      else if (e.key === 'Escape' && full && !document.querySelector('[data-ann-open]')) { e.preventDefault(); e.stopImmediatePropagation(); setFull(false) }
     }
     addEventListener('keydown', k, true)
     return () => removeEventListener('keydown', k, true)
@@ -92,7 +102,7 @@ export default function Panel({ panel, layout, onAttach, onDirty }: {
   const shell = fullscreen
     ? 'fixed inset-0 z-50 bg-[var(--t-bg)]'
     : layout === 'sheet'
-      ? 'fixed right-0 top-0 bottom-0 z-40 w-[min(760px,94vw)] shadow-[-24px_0_60px_-30px_rgba(0,0,0,.45)] bg-[var(--t-bg)] border-l border-line'
+      ? `fixed right-0 top-0 bottom-0 z-40 ${extra ? 'w-[min(1040px,94vw)]' : 'w-[min(760px,94vw)]'} shadow-[-24px_0_60px_-30px_rgba(0,0,0,.45)] bg-[var(--t-bg)] border-l border-line`
       : 'relative shrink-0 border-l border-line bg-[color-mix(in_srgb,var(--t-bg)_70%,var(--t-bg2))]'
 
   return (
@@ -123,7 +133,8 @@ export default function Panel({ panel, layout, onAttach, onDirty }: {
         {tab.err ? <div className="flex-1 grid place-items-center p-8 text-[13px] text-ink-dim text-center">{tab.err}</div>
           : !art ? <div className="flex-1"><Loading /></div>
           : <Body key={tab.key} art={art} view={view} setView={(f) => setView(tab.key, f)} wide={layout !== 'full' && (fullscreen || (width ?? 0) >= 640)}
-              onSaved={(a) => update(tab.key, a)} onAttach={onAttach} saveRef={saveRef} from={tab.req.from} />}
+              onSaved={(a) => update(tab.key, a)} onAttach={onAttach} saveRef={saveRef} from={tab.req.from} roomy={layout !== 'full'}
+              annotate={annotate && annotate.focus?.name === art.name ? annotate : annotate && { ...annotate, focus: null }} />}
       </section>
     </>
   )
@@ -147,7 +158,7 @@ function TabButton({ t, active, dirty, onClick, onClose }: { t: Tab; active: boo
 }
 
 /* the active artifact: its toolbar, then the version (or the diff, or the editor) */
-function Body({ art, view, setView, wide, onSaved, onAttach, saveRef, from }: {
+function Body({ art, view, setView, wide, onSaved, onAttach, saveRef, from, annotate, roomy }: {
   art: Opened
   view: View
   setView: (f: (v: View) => View) => void
@@ -156,6 +167,8 @@ function Body({ art, view, setView, wide, onSaved, onAttach, saveRef, from }: {
   onAttach: (u: Uploaded) => void
   saveRef: React.MutableRefObject<() => void>
   from: string
+  annotate?: AnnotateCtx
+  roomy: boolean
 }) {
   const head = art.versions[0]
   const rev = view.rev ?? art.head ?? ''
@@ -163,7 +176,11 @@ function Body({ art, view, setView, wide, onSaved, onAttach, saveRef, from }: {
   const old = !!head && !!shown && shown.rev !== head.rev
   const editable = EDITABLE.includes(art.kind)
   const [busy, setBusy] = useState(false)
-  const note = (s: string) => setView((v) => ({ ...v, note: s }))
+  const note = useCallback((s: string) => setView((v) => ({ ...v, note: s })), [setView])
+  const [count, setCount] = useState(0)
+  const setAnn = useCallback((o: boolean) => setView((v) => ({ ...v, ann: o })), [setView])
+  // a quoted ask in the chat opens the margin even before the layer has loaded
+  useEffect(() => { if (annotate?.focus) setView((v) => ({ ...v, ann: true, rev: null, diff: null })) }, [annotate?.focus?.n]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function startEdit() {
     const text = await textOf(art, art.store ? head?.rev : undefined)
@@ -178,7 +195,7 @@ function Body({ art, view, setView, wide, onSaved, onAttach, saveRef, from }: {
       if (art.store) {
         const a = await saveArtifact(art.id, e.draft, e.message.trim() || undefined)
         onSaved({ ...art, ...a, kind: art.kind })
-        setView(() => ({ ...FRESH, note: `Saved as v${a.versions[0]?.n ?? ''}` }))
+        setView((v) => ({ ...FRESH, ann: v.ann, note: `Saved as v${a.versions[0]?.n ?? ''}` }))
       } else {   // no store: the edit becomes a new upload, attached to the next message (the old file is never changed)
         const u = await upload(new Blob([e.draft]), art.name.replace(/(\.[^.]+)?$/, (x) => `-edited${x || '.txt'}`))
         onAttach(u)
@@ -196,7 +213,7 @@ function Body({ art, view, setView, wide, onSaved, onAttach, saveRef, from }: {
     try {
       const a = await restoreArtifact(art.id, shown.rev)
       onSaved({ ...art, ...a, kind: art.kind })
-      setView(() => ({ ...FRESH, note: `Restored v${shown.n} as v${a.versions[0]?.n ?? ''}` }))
+      setView((v) => ({ ...FRESH, ann: v.ann, note: `Restored v${shown.n} as v${a.versions[0]?.n ?? ''}` }))
     } catch (err) {
       note((err as { status?: number }).status === 409 ? 'No changes: the latest version already holds this' : `Not restored: ${(err as Error).message}`)
     } finally { setBusy(false) }
@@ -213,6 +230,7 @@ function Body({ art, view, setView, wide, onSaved, onAttach, saveRef, from }: {
   const e = view.edit
   const dirty = !!e && e.draft !== e.base
   const madeBy = art.versions.at(-1)?.author ?? from
+  const annotatable = art.store && ANNOTATABLE.includes(art.kind)
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
@@ -239,6 +257,12 @@ function Body({ art, view, setView, wide, onSaved, onAttach, saveRef, from }: {
               <VersionMenu versions={art.versions} current={rev} onPick={(r) => setView((v) => ({ ...v, rev: r === art.head ? null : r, note: '' }))} />
             )}
             {canDiff && <button className="ws-tool" aria-pressed={!!view.diff} onClick={toggleDiff} title="Compare versions">{DiffIcon}<span>Diff</span></button>}
+            {annotatable && !view.diff && (
+              <button className="ws-tool" aria-pressed={!!view.ann} onClick={() => setAnn(!view.ann)} title={view.ann ? 'Hide the notes' : 'Annotate: highlight, comment, ask an agent'}>
+                {A.margin()}<span className="max-sm:hidden">Annotate</span>
+                {count > 0 && <span className="ax-count" aria-label={`${count} notes`}>{count}</span>}
+              </button>
+            )}
             {editable && !old && !view.diff && <button className="ws-tool" onClick={() => void startEdit()} title="Edit (saves a new version)">{I.edit('w-[15px] h-[15px]')}<span>Edit</span></button>}
             <button className="ws-tool" onClick={() => void dl()} title="Download this version" aria-label="download">{DownIcon}</button>
           </>}
@@ -266,6 +290,13 @@ function Body({ art, view, setView, wide, onSaved, onAttach, saveRef, from }: {
         ) : e ? (
           <Editor value={e.draft} prose={art.kind === 'text' && isProse(art.name) || extOf(art.name) === 'md'}
             onChange={(t) => setView((v) => ({ ...v, edit: v.edit && { ...v.edit, draft: t } }))} />
+        ) : annotatable ? (
+          <Suspense fallback={<Loading />}>
+            <Annotator art={art} version={shown?.n ?? null} canSuggest={editable && !old} ctx={annotate ?? null}
+              open={view.ann} setOpen={setAnn} onCount={setCount} onSaved={onSaved} note={note} roomy={roomy}>
+              <ArtifactView art={art} rev={art.store ? rev : undefined} />
+            </Annotator>
+          </Suspense>
         ) : <ArtifactView art={art} rev={art.store ? rev : undefined} />}
       </div>
     </div>

@@ -43,7 +43,8 @@ export function bodyFor(text: string, to: string[], me: string): string {
 export const FILE_EMBED = /\[\[file:([^\]\n]+)\]\](?: \(([^)\n]{1,120})\))?/g    // an upload adds its display name
 export interface Embed { path: string; label?: string }
 export function embeds(body: string): Embed[] { return [...body.matchAll(FILE_EMBED)].map((m) => ({ path: m[1].trim(), label: m[2] })) }
-export function stripEmbeds(body: string): string { return body.replace(FILE_EMBED, '').replace(/^\[chat with [^\]]*\]\n/, '').trim() }
+/* an annotation ask's [[ann:<id>]] marker (artifacts/annotate/ask.ts) is the margin's, never the reader's */
+export function stripEmbeds(body: string): string { return body.replace(FILE_EMBED, '').replace(/\s*\[\[ann:[\w.-]{1,80}\]\]/g, '').replace(/^\[chat with [^\]]*\]\n/, '').trim() }
 export const fileUrl = (path: string) => `/api/chat/file?path=${encodeURIComponent(path)}`
 export function kindOf(path: string): 'image' | 'pdf' | 'audio' | 'video' | 'text' | 'other' {
   const e = path.toLowerCase().split('.').pop() ?? ''

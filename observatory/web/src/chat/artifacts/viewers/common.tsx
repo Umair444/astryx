@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { contentOf, type Opened } from '../api'
+import { showMedia } from '../../model'
 
 /* What every viewer shares: the version's bytes (cached per revision by api.ts), a quiet loading line, an error, and
    the floating control pill a viewer puts its own controls in (zoom, page, sheet) so the panel header stays one row. */
@@ -23,16 +24,23 @@ export function useText(art: Opened, rev?: string): { text: string | null; err: 
   return { text, err }
 }
 
-/* an object URL for a blob, revoked when it changes or the viewer goes */
-export function useObjectUrl(blob: Blob | null): string | null {
-  const [url, setUrl] = useState<string | null>(null)
+/* a version's bytes on a media element (img, audio, video): the ref this returns hands the element to model.ts's
+   showMedia, the one object-URL sink the active-content gate admits (a media src, typed by the RESPONSE); the URL is
+   revoked when the blob changes or the element goes. A blob URL never leaves an element, so it never becomes a link. */
+type MediaEl = HTMLImageElement | HTMLAudioElement | HTMLVideoElement
+export function useMediaSrc<T extends MediaEl>(blob: Blob | null): (el: T | null) => void {
+  const [el, setEl] = useState<T | null>(null)
   useEffect(() => {
-    if (!blob) { setUrl(null); return }
-    const u = URL.createObjectURL(blob)
-    setUrl(u)
-    return () => URL.revokeObjectURL(u)
-  }, [blob])
-  return url
+    if (!el || !blob) return
+    showMedia(el, blob)
+    return () => { if (el.src.startsWith('blob:')) URL.revokeObjectURL(el.src); el.removeAttribute('src') }
+  }, [el, blob])
+  return setEl
+}
+/* an <img> of a blob */
+export function BlobImg({ blob, alt, ...p }: { blob: Blob; alt: string } & Omit<React.ImgHTMLAttributes<HTMLImageElement>, 'src'>) {
+  const ref = useMediaSrc<HTMLImageElement>(blob)
+  return <img ref={ref} alt={alt} {...p} />
 }
 
 export function Loading({ what = 'Opening' }: { what?: string }) {

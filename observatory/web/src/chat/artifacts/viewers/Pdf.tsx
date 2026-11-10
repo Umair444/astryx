@@ -4,7 +4,7 @@ import { openPdf, TextLayer, type PdfDoc } from './pdf'
 
 /* A PDF as a continuous column of pages on the panel's backdrop: each page a canvas (rendered at the device's pixel
    ratio when it nears the viewport, released far from it) under pdf.js's TEXT LAYER, so text selects and copies like
-   text, the anchor annotations will hang from (iteration 4). Fit-to-width by default; the pill steps the zoom and
+   text, the anchor annotations hang from (annotate/: one text root per page, data-page names it). Fit-to-width by default; the pill steps the zoom and
    shows the page in view. */
 const STEPS = [0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3]
 
@@ -130,7 +130,7 @@ function Page({ doc, n, dim, scale, root }: { doc: PdfDoc; n: number; dim: Dim; 
     <div ref={el} className="ws-paper relative shrink-0" style={{ width: w, height: h, ['--total-scale-factor' as string]: scale, ['--scale-round-x' as string]: '1px', ['--scale-round-y' as string]: '1px' }}
       data-page={n} aria-label={`page ${n}`}>
       <canvas ref={canvas} className="absolute inset-0" style={{ width: w, height: h }} />
-      <div ref={text} className="textLayer" />
+      <div ref={text} className="textLayer" data-ann-root />
     </div>
   )
 }

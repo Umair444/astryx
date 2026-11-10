@@ -39,7 +39,7 @@ export default function DocxView({ blob }: { blob: Blob }) {
   return (
     <div ref={bed} className="relative h-full overflow-auto ws-paperbed">
       <div ref={styles} hidden />
-      <div ref={host} className="ws-docx" />
+      <div ref={host} className="ws-docx" data-ann-root />
       {state === 'loading' && <div className="absolute inset-0"><Loading what="Rendering the document" /></div>}
       {state !== 'loading' && state !== 'ok' && <div className="absolute inset-0"><Failed err={state} /></div>}
     </div>

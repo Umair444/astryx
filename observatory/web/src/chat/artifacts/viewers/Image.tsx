@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Pill, PillBtn, useObjectUrl } from './common'
+import { Pill, PillBtn, useMediaSrc } from './common'
 
 /* An image on a checkerboard (transparency reads as transparency), fitted by default; a click or the pill toggles
    1:1, +/- step the zoom, ⌘/ctrl-wheel zooms at the pointer. Shown through an <img> from a blob URL: an SVG's script
@@ -7,7 +7,7 @@ import { Pill, PillBtn, useObjectUrl } from './common'
 const STEPS = [0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8]
 
 export default function ImageView({ blob, name }: { blob: Blob; name: string }) {
-  const url = useObjectUrl(blob)
+  const src = useMediaSrc<HTMLImageElement>(blob)
   const box = useRef<HTMLDivElement>(null)
   const [nat, setNat] = useState<{ w: number; h: number } | null>(null)
   const [zoom, setZoom] = useState<number | 'fit'>('fit')
@@ -39,13 +39,11 @@ export default function ImageView({ blob, name }: { blob: Blob; name: string }) 
   return (
     <div ref={box} className="relative h-full overflow-auto ws-checker">
       <div className="min-h-full min-w-full grid place-items-center p-6 pb-20" style={{ width: nat && zoom !== 'fit' ? nat.w * scale + 48 : undefined }}>
-        {url && (
-          <img src={url} alt={name} draggable={false}
-            onLoad={(e) => setNat({ w: e.currentTarget.naturalWidth || 800, h: e.currentTarget.naturalHeight || 600 })}
-            onClick={() => setZoom((z) => (z === 'fit' ? 1 : 'fit'))}
-            className={`max-w-none rounded-[6px] shadow-[0_8px_30px_-12px_rgba(0,0,0,.35)] ${zoom === 'fit' ? 'cursor-zoom-in' : 'cursor-zoom-out'}`}
-            style={nat ? { width: nat.w * scale, height: nat.h * scale } : { opacity: 0 }} />
-        )}
+        <img ref={src} alt={name} draggable={false}
+          onLoad={(e) => setNat({ w: e.currentTarget.naturalWidth || 800, h: e.currentTarget.naturalHeight || 600 })}
+          onClick={() => setZoom((z) => (z === 'fit' ? 1 : 'fit'))}
+          className={`max-w-none rounded-[6px] shadow-[0_8px_30px_-12px_rgba(0,0,0,.35)] ${zoom === 'fit' ? 'cursor-zoom-in' : 'cursor-zoom-out'}`}
+          style={nat ? { width: nat.w * scale, height: nat.h * scale } : { opacity: 0 }} />
       </div>
       {nat && (
         <Pill>

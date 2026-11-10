@@ -33,6 +33,8 @@ import { usePanel } from './artifacts/usePanel'
 import MediaDrawer from './artifacts/MediaDrawer'
 import { distinctMedia, loadMedia, mediaOfRows, type MediaItem } from './artifacts/api'
 import type { OpenRequest } from './artifacts/FileChip'
+import type { AnnotateCtx } from './artifacts/annotate/types'
+import type { ParsedAsk } from './artifacts/annotate/ask'
 import { I } from './icons'
 
 /* /chat, the WORKSPACE (plan-11884; rebuilt on feat/chat-workspace after homes/seed/chat-rebuild/DESIGN.md). Four
@@ -88,6 +90,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   const [project, setProject] = useState<string | null>(null)
   const [asking, setAsking] = useState<null | 'project'>(null)
   const [note, setNote] = useState('')
+  const [annFocus, setAnnFocus] = useState<AnnotateCtx['focus']>(null)
   const composer = useRef<ComposerHandle>(null)
   const current = thread ?? ''
   const panel = usePanel(current)
@@ -302,6 +305,18 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   const showPanel = !!current && panel.tabs.length > 0 && !workforce
   const files = media ?? []
   const openFile = (r: OpenRequest) => { setWorkforce(false); panel.open(r); if (winW < 1200) setFilesOpen(false) }
+  // a quoted ask in the chat: open its file (by name, from this thread's files) at the highlight it came from
+  const openAsk = (a: ParsedAsk) => {
+    const f = files.find((x) => x.name === a.name)
+    if (!f) { setNote(`${a.name} is not among this conversation's files any more.`); return }
+    openFile({ path: f.path, label: f.label, from: f.from })
+    setAnnFocus({ name: a.name, ann: a.ann, n: Date.now() })
+  }
+  // what the annotation layer borrows from the conversation; an ask is one ordinary message on this thread
+  const annotate: AnnotateCtx = {
+    rows, roster: names, agents: inChat, focus: annFocus,
+    ask: async (agent, body) => { const m = await send(agent, body, current); reload(); return m },
+  }
   return (
     <div className="ws h-dvh flex ws-backdrop text-ink overflow-hidden">
       <AgentRail agents={names} status={status} lines={lines} current={current || null} onPick={openAgent}
@@ -329,7 +344,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
           {!current && activeProject && <ProjectHome p={activeProject} threads={threads} go={go} run={() => runProject(activeProject)}
             onBrief={(brief) => saveProject({ ...activeProject, brief })} onRemove={() => { saveProject(activeProject, true); setProject(null) }} />}
           {current && <Turns rows={rows} work={work} pending={pending} roster={names} roles={roles} loading={history === null}
-            onOpenFile={openFile} onEdit={(m) => composer.current?.set(stripEmbeds(m.body))}
+            onOpenFile={openFile} onOpenAsk={openAsk} onEdit={(m) => composer.current?.set(stripEmbeds(m.body))}
             empty={<FreshThread agents={inChat} status={status} roles={roles} lines={lines} />} />}
         </div>
         {note && <div className="mx-auto max-w-[760px] w-full px-6 pb-1 text-[12.5px] text-ink-dim cursor-pointer" role="status" onClick={() => setNote('')}>{note}</div>}
@@ -348,7 +363,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
         </AnimatePresence>
       </main>
 
-      {showPanel && <Panel panel={panel} layout={layout} onAttach={(u) => composer.current?.attach(u)} onDirty={setDirty} />}
+      {showPanel && <Panel panel={panel} layout={layout} onAttach={(u) => composer.current?.attach(u)} onDirty={setDirty} annotate={annotate} />}
       </div>
 
       {/* ── the workforce ────────────────────────────────────────────────────────────────── */}

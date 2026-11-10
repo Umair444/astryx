@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { contentOf, type Opened } from '../api'
-import { Failed, Loading, useObjectUrl } from '../viewers/common'
+import { BlobImg, Failed, Loading } from '../viewers/common'
 import { computeDiff, type Block, type Seg } from './diff'
 import { textForDiff } from './extract'
 import VersionMenu from './VersionMenu'
@@ -137,13 +137,12 @@ const segs = (s: Seg[], k: 'add' | 'del') => s.map((x, j) => (x.hit ? <span key=
 function ImagePair({ art, from, to }: { art: Opened; from: string; to: string }) {
   const [blobs, setBlobs] = useState<[Blob, Blob] | null>(null)
   useEffect(() => { let live = true; Promise.all([contentOf(art, from), contentOf(art, to)]).then((b) => live && setBlobs(b)); return () => { live = false } }, [art, from, to])
-  const a = useObjectUrl(blobs?.[0] ?? null), b = useObjectUrl(blobs?.[1] ?? null)
-  if (!a || !b) return <Loading what="Comparing" />
+  if (!blobs) return <Loading what="Comparing" />
   return (
     <div className="h-full grid grid-cols-2 gap-px bg-line/60">
-      {[a, b].map((u, i) => (
+      {blobs.map((u, i) => (
         <div key={i} className="ws-checker grid place-items-center p-5 overflow-auto">
-          <img src={u} alt={i ? 'the newer version' : 'the older version'} className="max-w-full max-h-full rounded-[6px]" />
+          <BlobImg blob={u} alt={i ? 'the newer version' : 'the older version'} className="max-w-full max-h-full rounded-[6px]" />
         </div>
       ))}
     </div>

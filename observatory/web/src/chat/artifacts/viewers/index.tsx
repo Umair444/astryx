@@ -2,7 +2,7 @@ import { lazy, Suspense } from 'react'
 import { download } from '../../model'
 import { extOf, isProse, type Opened } from '../api'
 import { bytes, KindIcon, KIND_WORD } from '../kinds'
-import { Failed, Loading, useBlob, useObjectUrl, useText } from './common'
+import { Failed, Loading, useBlob, useMediaSrc, useText } from './common'
 import Markdown, { Plain } from './Markdown'
 import ImageView from './Image'
 import Table from './Table'
@@ -48,17 +48,16 @@ function BlobKinds({ art, rev }: { art: Opened; rev?: string }) {
 }
 
 function Player({ blob, kind, name }: { blob: Blob; kind: 'audio' | 'video'; name: string }) {
-  const url = useObjectUrl(blob)
-  if (!url) return <Loading />
+  const video = useMediaSrc<HTMLVideoElement>(blob), audio = useMediaSrc<HTMLAudioElement>(blob)
   return (
     <div className="h-full grid place-items-center p-8">
       {kind === 'video'
-        ? <video src={url} controls className="max-w-full max-h-full rounded-[12px] shadow-[0_12px_40px_-16px_rgba(0,0,0,.5)] bg-black" aria-label={name} />
+        ? <video ref={video} controls className="max-w-full max-h-full rounded-[12px] shadow-[0_12px_40px_-16px_rgba(0,0,0,.5)] bg-black" aria-label={name} />
         : (
           <div className="w-full max-w-[460px] ws-card p-5 flex flex-col gap-4">
             <div className="flex items-center gap-3"><span className="ws-chip-icon w-10 h-10 rounded-[11px] grid place-items-center"><KindIcon kind="audio" className="w-5 h-5" /></span>
               <span className="text-[14px] font-medium text-ink truncate">{name}</span></div>
-            <audio src={url} controls className="w-full" aria-label={name} />
+            <audio ref={audio} controls className="w-full" aria-label={name} />
           </div>
         )}
     </div>
