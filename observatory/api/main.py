@@ -368,6 +368,12 @@ from observatory.api import workspace as _ws  # noqa: E402
 _ws.bind(lambda: pool, ESTATE, roster=lambda: set(agent_meta()), charter=lambda n: _charter_path(n))
 app.include_router(_ws.router)
 
+# feat/chat-workspace: the artifact store (a git repo under data/workspace: versions, restore, annotations) and a
+# thread's media list; sources pass chat.readable's gate; owner-only by omission from PUBLIC
+from observatory.api import artifacts as _arts  # noqa: E402
+_arts.bind(lambda: pool, ESTATE)
+app.include_router(_arts.router)
+
 # the Room's speaker: agents answer the room with send(to='room'); spoken in their voice, or run on the screen
 from observatory.api import room as _room  # noqa: E402
 
@@ -2087,8 +2093,8 @@ async def agent_avatar(name: str):
         ch = None
     pic = next((ch.parent / f"avatar{x}" for x in _AVATAR_TYPES
                 if ch and ch.parent.name == ch.stem and (ch.parent / f"avatar{x}").is_file()), None)
-    if not pic:
-        return Response(status_code=404)
+    if not pic:                                     # no face drawn yet: a quiet, cacheable miss (the <img> falls
+        return Response(status_code=204, headers={"cache-control": "public, max-age=300"})   # back to the portrait)
     return FileResponse(pic, media_type=_AVATAR_TYPES[pic.suffix], headers={
         "cache-control": "public, max-age=300", "x-content-type-options": "nosniff",
         "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox"})

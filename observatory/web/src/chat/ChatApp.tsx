@@ -27,16 +27,30 @@ import Turns from './thread/Turns'
 import { plainLine, type Pending } from './thread/LiveActivity'
 import TeamHome from './empty/TeamHome'
 import ProjectHome from './empty/ProjectHome'
-import { Viewer, Workforce } from './Side'
+import Workforce from './shell/Workforce'
+import Panel, { type Layout } from './artifacts/Panel'
+import { usePanel } from './artifacts/usePanel'
+import MediaDrawer from './artifacts/MediaDrawer'
+import { distinctMedia, loadMedia, mediaOfRows, type MediaItem } from './artifacts/api'
+import type { OpenRequest } from './artifacts/FileChip'
+import type { AnnotateCtx } from './artifacts/annotate/types'
+import type { ParsedAsk } from './artifacts/annotate/ask'
 import { I } from './icons'
 
 /* /chat, the WORKSPACE (plan-11884; rebuilt on feat/chat-workspace after homes/seed/chat-rebuild/DESIGN.md). Four
    columns: the AGENT RAIL (who is here, who is working), the CONVERSATION LIST (every conversation the owner has with
    agents, from any surface: /api/ws/threads), the CONVERSATION (one wire thread, flat turns, the live activity line,
-   the composer), and the SIDE (a file, or the workforce at work). This file only wires state to those modules: the
-   data lives in data.ts/model.ts, the look in shell/, thread/, empty/ and workspace.css. Everything is on a key. */
+   the composer), and beside it the ARTIFACT PANEL (the files this conversation made, with their versions) or the
+   WORKFORCE (its agents at work); the MEDIA DRAWER lists every file in the thread. This file only wires state to those
+   modules: the data lives in data.ts/model.ts, the look in shell/, thread/, artifacts/, empty/ and workspace.css.
+   Everything is on a key. */
 
-type Side = { kind: 'file'; path: string } | { kind: 'workforce' } | null
+/* the window's width, for the layouts DESIGN.md names (the panel inline ≥1200, a sheet below, the screen on a phone) */
+function useWidth() {
+  const [w, setW] = useState(() => innerWidth)
+  useEffect(() => { const f = () => setW(innerWidth); addEventListener('resize', f); return () => removeEventListener('resize', f) }, [])
+  return w
+}
 
 export default function ChatApp({ thread, go: nav }: { thread: string | null; go: (t: string | null) => void }) {
   const { agents: roster, messages, presence, send, who } = useStore()
@@ -63,7 +77,11 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   const [history, setHistory] = useState<Msg[] | null>(null)
   const [steps, setSteps] = useState<Record<string, Step[]>>({})
   const [work, setWork] = useState<Work | null>(null)
-  const [side, setSide] = useState<Side>(null)
+  const [workforce, setWorkforce] = useState(false)
+  const [filesOpen, setFilesOpen] = useState(false)
+  const [media, setMedia] = useState<MediaItem[] | null>(null)
+  const [dirty, setDirty] = useState(false)
+  const winW = useWidth()
   const [drawer, setDrawer] = useState(false)
   const [palette, setPalette] = useState(false)
   const [help, setHelp] = useState(false)
@@ -72,8 +90,10 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   const [project, setProject] = useState<string | null>(null)
   const [asking, setAsking] = useState<null | 'project'>(null)
   const [note, setNote] = useState('')
+  const [annFocus, setAnnFocus] = useState<AnnotateCtx['focus']>(null)
   const composer = useRef<ComposerHandle>(null)
   const current = thread ?? ''
+  const panel = usePanel(current)
   const go = useCallback((t: string | null) => { setDrawer(false); nav(t) }, [nav])
 
   useEffect(() => { loadCommands().then(setCmds); loadProjects().then(setProj).catch(() => {}); loadWsAgents().then(setTeam).catch(() => {}) }, [])
@@ -93,6 +113,17 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     return [...by.values()].sort((a, b) => a.id - b.id)
   }, [history, messages, current])
   const newest = rows.at(-1)?.id ?? 0
+
+  // the thread's files: the store's list (GET /api/ws/media), else the embeds in the rows; refreshed as the thread moves
+  const rowsRef = useRef(rows)
+  rowsRef.current = rows
+  useEffect(() => {
+    let live = true
+    if (!current) { setMedia([]); return }
+    loadMedia(current, rowsRef.current).then((m) => live && setMedia(distinctMedia(m))).catch(() => live && setMedia(distinctMedia(mediaOfRows(rowsRef.current))))
+    return () => { live = false }
+  }, [current, newest])
+  useEffect(() => { setMedia(null) }, [current])
 
   // the open conversation's row; a thread with no rows yet (a fresh desk) gets a provisional one, so it is never
   // missing from the list while it is open
@@ -183,7 +214,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     const kick = `Project "${p.name}" is running.${p.brief ? `\nBrief: ${p.brief}` : ''}\nWork it together and autonomously: split it between you, say who takes what on this thread, and post progress and results here as you go. Ask me only what you can't decide.`
     for (const a of p.agents) await send(a, bodyFor(kick, p.agents, a), t)
     if (!p.threads.includes(t)) await saveProject({ ...p, threads: [t, ...p.threads] })
-    go(t); setSide({ kind: 'workforce' })
+    go(t); setWorkforce(true)
   }
 
   // a title or a pin: optimistic on the row, then the server's list
@@ -200,7 +231,8 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     { key: 'new', label: 'New chat', hint: 'start an empty chat', run: newChat },
     { key: 'project', label: 'Make this a project', hint: 'name it; its agents work it together', run: () => { setAsking('project') } },
     { key: 'run', label: 'Run the project', hint: 'its agents start working it on their own', run: () => (activeProject ? void runProject(activeProject) : 'Open a project first (⌘K).') },
-    { key: 'workforce', label: 'Workforce', hint: 'show the agents at work', run: () => setSide({ kind: 'workforce' }) },
+    { key: 'workforce', label: 'Workforce', hint: 'show the agents at work', run: () => setWorkforce(true) },
+    { key: 'files', label: 'Files', hint: 'every file in this conversation (⌘⇧E)', run: () => setFilesOpen(true) },
     { key: 'voice', label: 'Dictate', hint: 'speak into the message box (⌘.)', run: () => void startDictation((t) => composer.current?.insert(t)) },
     { key: 'remember', label: 'Remember', hint: 'propose the rest of the line to the memory agent', run: () => composer.current?.set('/remember ') },
     { key: 'canvas', label: 'Open in canvas', hint: 'build a page with the first agent here', run: () => void window.open(`${canvasBase()}#/new/${encodeURIComponent(inChat[0] ?? 'painter')}`, '_blank') },
@@ -221,7 +253,8 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
       const typing = (e.target as HTMLElement)?.closest('textarea, input')
       if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); setPalette((p) => !p); return }
       if (mod && e.shiftKey && e.key.toLowerCase() === 'o') { e.preventDefault(); newChat(); return }
-      if (mod && e.key.toLowerCase() === 'j') { e.preventDefault(); setSide((s) => (s?.kind === 'workforce' ? null : { kind: 'workforce' })); return }
+      if (mod && e.key.toLowerCase() === 'j') { e.preventDefault(); setWorkforce((w) => !w); return }
+      if (mod && e.shiftKey && e.key.toLowerCase() === 'e') { e.preventDefault(); setFilesOpen((f) => !f); return }
       if (mod && e.key === '/') { e.preventDefault(); setHelp((h) => !h); return }
       if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
         e.preventDefault()
@@ -229,12 +262,17 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
         if (chatIds[j]) go(chatIds[j])
         return
       }
-      if (e.key === 'Escape') { if (palette) setPalette(false); else if (help) setHelp(false); else if (drawer) setDrawer(false); else if (side) setSide(null); return }
+      if (e.key === 'Escape') {
+        if (palette) setPalette(false); else if (help) setHelp(false); else if (drawer) setDrawer(false)
+        else if (filesOpen) setFilesOpen(false); else if (workforce) setWorkforce(false)
+        else if (panel.tabs.length && !typing && !dirty) panel.closeAll()
+        return
+      }
       if (!typing && !mod && e.key === '/') { e.preventDefault(); composer.current?.focus(); composer.current?.set('/') }
     }
     addEventListener('keydown', k)
     return () => removeEventListener('keydown', k)
-  }, [palette, help, side, drawer, current, chatIds.join('|')]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [palette, help, workforce, filesOpen, drawer, current, dirty, panel.tabs.length, chatIds.join('|')]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!who.owner) return (
     <div className="ws h-dvh grid place-items-center ws-backdrop text-ink p-8">
@@ -259,17 +297,35 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
       onGo={(t) => { setProject(null); go(t) }} onNew={newChat}
       onProject={(id) => { setProject(id); go(null) }}
       onPin={(t) => setMeta(t, { pinned: !t.pinned })} onRename={(t, title) => setMeta(t, { title })}
-      onClose={phone ? () => setDrawer(false) : undefined} className={phone ? '!w-[86vw] max-w-[340px]' : 'max-md:hidden'} />
+      onClose={phone ? () => setDrawer(false) : undefined}
+      className={phone ? '!w-[86vw] max-w-[340px]' : `max-md:hidden ${showPanel && layout === 'inline' && winW < 1440 ? '!hidden' : ''}`} />
   )
   const home = !current && !activeProject
+  const layout: Layout = winW >= 1200 ? 'inline' : winW >= 768 ? 'sheet' : 'full'
+  const showPanel = !!current && panel.tabs.length > 0 && !workforce
+  const files = media ?? []
+  const openFile = (r: OpenRequest) => { setWorkforce(false); panel.open(r); if (winW < 1200) setFilesOpen(false) }
+  // a quoted ask in the chat: open its file (by name, from this thread's files) at the highlight it came from
+  const openAsk = (a: ParsedAsk) => {
+    const f = files.find((x) => x.name === a.name)
+    if (!f) { setNote(`${a.name} is not among this conversation's files any more.`); return }
+    openFile({ path: f.path, label: f.label, from: f.from })
+    setAnnFocus({ name: a.name, ann: a.ann, n: Date.now() })
+  }
+  // what the annotation layer borrows from the conversation; an ask is one ordinary message on this thread
+  const annotate: AnnotateCtx = {
+    rows, roster: names, agents: inChat, focus: annFocus,
+    ask: async (agent, body) => { const m = await send(agent, body, current); reload(); return m },
+  }
   return (
     <div className="ws h-dvh flex ws-backdrop text-ink overflow-hidden">
       <AgentRail agents={names} status={status} lines={lines} current={current || null} onPick={openAgent}
         onHome={() => { setProject(null); go(null) }} onPalette={() => setPalette(true)} onKeys={() => setHelp(true)} />
       {list(false)}
 
-      {/* ── the conversation ─────────────────────────────────────────────────────────────── */}
-      <main className="flex-1 min-w-0 flex flex-col relative">
+      {/* ── the conversation, and beside it the artifact panel ─────────────────────────────── */}
+      <div className="flex-1 min-w-0 flex">
+      <main className="flex-1 min-w-[420px] max-md:min-w-0 flex flex-col relative">
         {home ? (
           <div className="h-12 shrink-0 flex items-center px-3 md:hidden">
             <button className="ws-icon" onClick={() => setDrawer(true)} aria-label="conversations">{I.menu()}</button>
@@ -277,9 +333,10 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
         ) : (
           <TopBar title={title} canRename={!!currentRow} surface={currentRow?.surface ?? null}
             project={(currentRow?.project && proj.projects.find((p) => p.id === currentRow.project)?.name) || (activeProject && !current ? 'Projects' : null)}
-            agents={current ? inChat : activeProject?.agents ?? []} status={status} workforce={side?.kind === 'workforce'}
+            agents={current ? inChat : activeProject?.agents ?? []} status={status} workforce={workforce}
+            files={files.length} media={filesOpen}
             onRename={(t) => currentRow && setMeta(currentRow, { title: t })}
-            onWorkforce={() => setSide((s) => (s?.kind === 'workforce' ? null : { kind: 'workforce' }))}
+            onWorkforce={() => setWorkforce((w) => !w)} onMedia={() => setFilesOpen((f) => !f)}
             onMenu={() => setDrawer(true)} onAgent={openAgent} />
         )}
         <div className="flex-1 min-h-0 overflow-y-auto">
@@ -287,22 +344,35 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
           {!current && activeProject && <ProjectHome p={activeProject} threads={threads} go={go} run={() => runProject(activeProject)}
             onBrief={(brief) => saveProject({ ...activeProject, brief })} onRemove={() => { saveProject(activeProject, true); setProject(null) }} />}
           {current && <Turns rows={rows} work={work} pending={pending} roster={names} roles={roles} loading={history === null}
-            onOpenFile={(p) => setSide({ kind: 'file', path: p })} onEdit={(m) => composer.current?.set(stripEmbeds(m.body))}
+            onOpenFile={openFile} onOpenAsk={openAsk} onEdit={(m) => composer.current?.set(stripEmbeds(m.body))}
             empty={<FreshThread agents={inChat} status={status} roles={roles} lines={lines} />} />}
         </div>
         {note && <div className="mx-auto max-w-[760px] w-full px-6 pb-1 text-[12.5px] text-ink-dim cursor-pointer" role="status" onClick={() => setNote('')}>{note}</div>}
         {!home && box(false)}
+
+        {/* the media drawer: over the conversation's right edge, under the top bar (the whole screen on a phone) */}
+        <AnimatePresence>
+          {filesOpen && current && (
+            <motion.div key="files" className="absolute right-0 top-12 bottom-0 z-20 w-[360px] max-w-full max-md:fixed max-md:inset-0 max-md:w-full max-md:z-50"
+              initial={reduce ? false : { opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={reduce ? undefined : { opacity: 0, x: 16 }}
+              transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}>
+              <MediaDrawer items={files} loading={media === null} onOpen={openFile} onClose={() => setFilesOpen(false)}
+                openKey={showPanel ? panel.active : null} />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </main>
 
-      {/* ── the side ─────────────────────────────────────────────────────────────────────── */}
+      {showPanel && <Panel panel={panel} layout={layout} onAttach={(u) => composer.current?.attach(u)} onDirty={setDirty} annotate={annotate} />}
+      </div>
+
+      {/* ── the workforce ────────────────────────────────────────────────────────────────── */}
       <AnimatePresence initial={false}>
-        {side && (
-          <motion.aside key={side.kind === 'file' ? side.path : 'workforce'} className="ws-chrome w-[380px] shrink-0 border-l border-line max-lg:hidden"
+        {workforce && (
+          <motion.aside key="workforce" className="ws-chrome w-[380px] shrink-0 border-l border-line max-lg:hidden"
             initial={reduce ? false : { opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={reduce ? undefined : { opacity: 0, x: 24 }}
             transition={{ type: 'spring', visualDuration: 0.22, bounce: 0 }}>
-            {side.kind === 'file'
-              ? <Viewer path={side.path} onClose={() => setSide({ kind: 'workforce' })} onAttach={(u) => composer.current?.attach(u)} />
-              : <Workforce agents={lanes} steps={laneSteps} unlinked={current ? work?.unlinked ?? {} : {}} title={activeProject && !current ? `${activeProject.name}: the workforce` : 'The workforce'} />}
+            <Workforce agents={lanes} steps={laneSteps} unlinked={current ? work?.unlinked ?? {} : {}} title={activeProject && !current ? `${activeProject.name}: the workforce` : 'The workforce'} />
           </motion.aside>
         )}
       </AnimatePresence>
