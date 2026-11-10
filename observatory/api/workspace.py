@@ -200,7 +200,10 @@ def build_rows(aggs: list[dict], meta: dict, projects: list[dict], roster: set[s
         if cv.get("archived"):
             continue
         m = meta.get(t) or {}
-        agents = agents_of(t, parties, roster, cv.get("agent"))
+        # recipients = who exchanged messages WITH THE OWNER here (`partners`); an agent→agent row on an owner thread
+        # (seed correcting finance) is history, never a recipient. Rows without `partners` (older callers) use parties
+        partners = a.get("partners") if "partners" in a else parties
+        agents = agents_of(t, list(partners or []), roster, cv.get("agent"))
         out.append({
             "thread": t,
             "title": derive_title(t, m.get("title"), a.get("first_owner"), cv.get("title"), agents),
@@ -309,7 +312,9 @@ SELECT thread, count(*) AS count, max(ts) AS last_ts,
        (array_agg(left({_BODY}, 400) ORDER BY id) FILTER (WHERE from_agent = 'owner'))[1] AS first_owner,
        (array_agg(left({_BODY}, 400) ORDER BY id DESC))[1] AS last_body,
        (array_agg(from_agent ORDER BY id DESC))[1] AS last_from,
-       array_agg(DISTINCT from_agent) || array_agg(DISTINCT to_agent) AS parties
+       array_agg(DISTINCT from_agent) || array_agg(DISTINCT to_agent) AS parties,
+       array_agg(CASE WHEN from_agent = 'owner' THEN to_agent ELSE from_agent END ORDER BY id)
+         FILTER (WHERE from_agent = 'owner' OR to_agent = 'owner') AS partners
   FROM messages
  WHERE thread LIKE 'chat:%' OR thread LIKE 'obs:%' OR thread LIKE 'cv:%'
  GROUP BY thread ORDER BY max(id) DESC LIMIT 400"""

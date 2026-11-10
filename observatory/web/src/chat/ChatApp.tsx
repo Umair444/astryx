@@ -169,11 +169,15 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     if (!current) return null
     if (listed) return listed
     const desk = deskAgent(current, names)
+    // the server names a conversation by the owner's first line (workspace.derive_title); until its list catches up
+    // (a fresh chat, the moment after the first send), name it the same way here instead of "New chat"
+    const first = stripEmbeds(rows.find((m) => m.from === 'owner')?.body ?? '').split('\n').find((l) => l.trim())?.replace(/\s+/g, ' ').trim() ?? ''
+    const said = first.length > 80 ? `${first.slice(0, 79)}…` : first
     return {
-      thread: current, title: desk ? `Desk with ${displayName(desk)}` : 'New chat', custom_title: false, agents: desk ? [desk] : [],
+      thread: current, title: said || (desk ? `Desk with ${displayName(desk)}` : 'New chat'), custom_title: false, agents: desk ? [desk] : participants(rows, names),
       surface: surfaceOf(current), last_ts: new Date().toISOString(), preview: '', last_from: null, count: 0, pinned: false, project: null,
     }
-  }, [current, listed, names])
+  }, [current, listed, names, rows])
   const listThreads = useMemo(() => (currentRow && !listed ? [currentRow, ...threads] : threads), [currentRow, listed, threads])
   // replies the owner hasn't opened (per browser), and the tab's "(n) Chat · astryx"
   const unread = useUnread(threads, current || null)
