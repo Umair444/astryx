@@ -208,8 +208,19 @@ fi
 ASTRYX_DSN="$DSN" PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}" timeout 600 "$ROOT/venv/bin/python" -m astryx.core.turns_retention --days "${TURNS_IMAGE_DAYS:-7}" \
   2>&1 | sed 's/^/backup: /' || echo "backup: turns retention failed — continuing with the dump" >&2
 
-# host pg_dump if present, else the container's (mirrors init.sh's psql/docker split)
-if command -v pg_dump >/dev/null; then
+# host pg_dump if present AND not older than the server, else the container's (mirrors init.sh's
+# psql/docker split). pg_dump refuses a newer server ("server version mismatch"), so a distro
+# client one major behind (Ubuntu 24.04 ships 16; the server runs 17/18) made EVERY backup fail
+# while the container's own client, always version-matched, sat unused.
+host_pg_ok() {
+  command -v "$1" >/dev/null || return 1
+  local cmaj smaj
+  cmaj=$("$1" --version 2>/dev/null | grep -oE '[0-9]+' | head -1)
+  smaj=$(psql -Atq -d "$DSN" -c 'SHOW server_version_num' 2>/dev/null || pg_exec psql -Atq -U "$(pg_dsn_user "$DSN")" -c 'SHOW server_version_num' 2>/dev/null)
+  smaj=$(( ${smaj:-0} / 10000 ))
+  [ -n "$cmaj" ] && [ "$cmaj" -ge "$smaj" ]
+}
+if host_pg_ok pg_dump; then
   pg_dump -Fc "$DSN" > "$part"
 else
   pg_exec pg_dump -Fc -U "$(pg_dsn_user "$DSN")" "$(pg_dsn_db "$DSN")" > "$part"
@@ -230,7 +241,7 @@ fi
 # exist`, and the four-table counts still pass: the rows come back, the access design does not. Globals only, with
 # --no-role-passwords, so this file holds names and attributes and NO password material; the validation below
 # refuses it otherwise. The pair rule holds: dump, state and roles ship together or none does.
-if command -v pg_dumpall >/dev/null; then
+if host_pg_ok pg_dumpall; then
   pg_dumpall --roles-only --no-role-passwords -d "$DSN" > "$rolespart"
 else
   pg_exec pg_dumpall --roles-only --no-role-passwords -U "$(pg_dsn_user "$DSN")" > "$rolespart"
