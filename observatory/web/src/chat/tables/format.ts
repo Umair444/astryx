@@ -21,13 +21,16 @@ function trim(x: number, digits: number): string {
 
 /* a value as its column wrote it: a percentage keeps its %, a currency its prefix */
 /* a header that already names its scale ("PKR mn") keeps the figures as written: 2,273, never "2.27K mn" */
-export function fmtValue(n: number, o: { pct?: boolean; unit?: string; scaled?: boolean } = {}, digits = 3): string {
-  const s = o.scaled ? n.toLocaleString('en-US', { maximumFractionDigits: Math.abs(n) >= 100 ? 0 : 1 }) : compact(n, digits)
+type F = { pct?: boolean; unit?: string; scaled?: boolean; full?: boolean }
+/* written out with separators: a named scale, or figures too small for K/M/B to be anything but a guess */
+const written = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: Math.abs(n) >= 100 ? 0 : Math.abs(n) >= 1 ? 1 : 2 })
+export function fmtValue(n: number, o: F = {}, digits = 3): string {
+  const s = o.scaled || o.full ? written(n) : compact(n, digits)
   return o.pct ? `${s}%` : o.unit ? `${o.unit} ${s}` : s
 }
 /* the exact figure, for a tooltip's strong line */
-export function exact(n: number, o: { pct?: boolean; unit?: string; scaled?: boolean } = {}): string {
-  const s = Math.abs(n) >= 1e4 && !o.scaled ? `${n.toLocaleString('en-US', { maximumFractionDigits: 2 })} (${compact(n)})` : n.toLocaleString('en-US', { maximumFractionDigits: 4 })
+export function exact(n: number, o: F = {}): string {
+  const s = Math.abs(n) >= 1e4 && !o.scaled && !o.full ? `${n.toLocaleString('en-US', { maximumFractionDigits: 2 })} (${compact(n)})` : n.toLocaleString('en-US', { maximumFractionDigits: 4 })
   return o.pct ? `${s}%` : o.unit ? `${o.unit} ${s}` : s
 }
 

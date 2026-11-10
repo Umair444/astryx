@@ -66,7 +66,19 @@ const YEAR_HINT = /(^|[^a-z])(year|yr|fy)([^a-z]|$)/i
 /* ── columns ─────────────────────────────────────────────────────────────────────────────────────────────── */
 const SAMPLE = 600
 const RANK_HINT = /(^|[^a-z])(rank|ranking|position|serial|sr\.?\s?no|s\.?\s?no)([^a-z]|$)/i
-export const SCALE_HINT = /(^|[^a-z])(mn|mln|mio|million|millions|bn|bln|billion|billions|thousand|thousands|k|'000|000s|crore|lakh|(?:rs|pkr|usd)\.?\s?(?:m|b|k))([^a-z]|$)/i
+/* THE SCALE A FIGURE IS ALREADY IN, named by a caption, a header, a file or a sheet title ("PKR mn", "Rs M", "(k)",
+   "USD bn", "'000"): read from the FULL text, before anything truncates it. A chart of figures in a named scale
+   shows them as written (11,521 PKR mn, never "11.5K") and says the scale. Returns the scale as written, cleaned
+   ("PKR mn"), or '' when none is named. A bare "k" counts only as a word of its own ("Revenue (k)"), never "5k". */
+const SCALE_WORD = /(?:^|[\s(\[,;/:])((?:PKR|Rs\.?|USD|US\$|\$)\s*)?(mn|mln|million|millions|bn|bln|billion|billions|k|thousand|thousands|'000|000s|crore|crores|lakh|lakhs)(?=$|[\s)\],;/:.])/i
+const SCALE_CUR = /(?:^|[^A-Za-z])((?:PKR|Rs\.?|USD)\s?)(M|B|K)(?=$|[^A-Za-z])/
+export function scaleOf(text: string): string {
+  const s = (text ?? '').replace(/[\u2009\u202f\u00a0]/g, ' ')
+  const m = SCALE_WORD.exec(s) ?? SCALE_CUR.exec(s)
+  if (!m) return ''
+  return `${m[1] ? m[1].trim() + ' ' : ''}${m[2]}`.replace(/\s+/g, ' ')
+}
+
 export function inferColumns(head: string[], body: string[][]): Column[] {
   const width = Math.max(head.length, ...body.slice(0, 200).map((r) => r.length), 0)
   const sample = body.length > SAMPLE ? body.filter((_, k) => k % Math.ceil(body.length / SAMPLE) === 0) : body
@@ -90,7 +102,7 @@ export function inferColumns(head: string[], body: string[][]): Column[] {
       const rank = RANK_HINT.test(name) || (distinct === vals.length && vals.length > 3 && ints.every((n) => Number.isInteger(n) && n >= 1 && n <= vals.length + 1) && /(^|[^a-z])(no|sr|s\.no|#|n)\.?([^a-z]|$)/i.test(name))
       return {
         ...base, type: 'number' as const, pct: nums.filter(isPct).length >= nums.length * 0.5 || /(%|percent|pct|share|rate)\b/i.test(name) && ints.every((n) => Math.abs(n) <= 100),
-        unit: units.size === 1 ? [...units][0] : '', scaled: SCALE_HINT.test(name), rank,
+        unit: units.size === 1 ? [...units][0] : '', scaled: scaleOf(name) !== '', rank,
       }
     }
     return { ...base, type: 'category' as const }

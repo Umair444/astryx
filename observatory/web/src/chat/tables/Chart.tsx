@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { compact, exact, fmtTime, fmtValue, grainOf, ticks, timeTicks, type Grain } from './format'
+import { exact, fmtTime, fmtValue, grainOf, ticks, timeTicks, type Grain } from './format'
 import type { Plot } from './pick'
 
 /* The chart itself: hand-drawn SVG, no chart library (the whole module is a lazy chunk of a few kB). Mark specs from
@@ -260,7 +260,7 @@ function Scatter({ plot, width, height, svgRef }: { plot: Plot; width: number; h
             <text x={left - 8} y={Y(v)} dy="0.32em" textAnchor="end" className="c-tick">{fmtValue(v, plot.fmt)}</text>
           </g>
         ))}
-        {xt.values.map((v) => <text key={v} x={X(v)} y={top + ih + 19} textAnchor="middle" className="c-tick">{compact(v)}</text>)}
+        {xt.values.map((v) => <text key={v} x={X(v)} y={top + ih + 19} textAnchor="middle" className="c-tick">{fmtValue(v, plot.xFmt)}</text>)}
         {pts.map((q, i) => <circle key={i} cx={X(q.x)} cy={Y(q.y)} r={4} className="c-dot" style={{ fill: color(q.s), fillOpacity: pts.length > 400 ? 0.7 : 0.9 }} />)}
         {p && <circle cx={X(p.x)} cy={Y(p.y)} r={6} className="c-dot" style={{ fill: color(p.s) }} data-x-skip />}
       </svg>

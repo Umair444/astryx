@@ -1,7 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import './chart.css'
 import Chart, { color } from './Chart'
-import { bodyOf, SCALE_HINT } from './infer'
+import { bodyOf, scaleOf } from './infer'
 import { analyse, build, MAX_SERIES, slotOrder, subtitleOf, titleOf, type ChartKind, type Spec } from './pick'
 import { chartPng } from './png'
 import { stemOf } from './files'
@@ -19,7 +19,8 @@ export default function ChartView({ rows, name, memo, source }: { rows: string[]
   const [spec, setSpecRaw] = useState<Spec | null>(() => remembered.get(memo) ?? an.spec)
   const setSpec = (s: Spec) => { remembered.set(memo, s); setSpecRaw(s) }
   // a scale named by the FILE ("… (PKR mn).csv", a turn's table) holds for every figure in it
-  const cols = useMemo(() => (SCALE_HINT.test(name) ? an.cols.map((c) => (c.type === 'number' && !c.pct ? { ...c, scaled: true } : c)) : an.cols), [an, name])
+  const fileScale = useMemo(() => scaleOf(name), [name])
+  const cols = useMemo(() => (fileScale ? an.cols.map((c) => (c.type === 'number' && !c.pct ? { ...c, scaled: true } : c)) : an.cols), [an, fileScale])
   const nums = slotOrder(cols)
   const cats = cols.filter((c) => c.type === 'category' && c.distinct > 1 && c.distinct <= 60)
   const plot = useMemo(() => (spec ? build(spec, cols, body) : null), [spec, cols, body])
@@ -52,7 +53,10 @@ export default function ChartView({ rows, name, memo, source }: { rows: string[]
 
   const title = titleOf(name)
   const splitName = spec.split != null ? cols[spec.split]?.name ?? null : null
-  const subtitle = subtitleOf(plot, splitName, !!spec.wide) + (total ? ' · total row left out' : '')
+  // the scale the figures are in, said once under the title (a file's, else the plotted column's own header)
+  const scale = fileScale || (plot.fmt.scaled ? scaleOf(cols[spec.series[0]]?.name ?? '') : '')
+  const sub0 = subtitleOf(plot, splitName, !!spec.wide)
+  const subtitle = sub0 + (scale && !scaleOf(sub0) ? ` · figures in ${scale}` : '') + (total ? ' · total row left out' : '')
   const legend = plot.series.map((s) => ({ name: s.name, slot: s.slot }))
   const empty = plot.kind === 'scatter' ? plot.points.length === 0 : plot.xs.length === 0 || plot.series.every((s) => s.values.every((v) => v == null))
 

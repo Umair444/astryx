@@ -1,5 +1,5 @@
 import { marked, type Token, type Tokens } from 'marked'
-import { SCALE_HINT } from './infer'
+import { scaleOf } from './infer'
 
 /* The tables in an agent's markdown answer, as rows of plain cell text, in DOCUMENT ORDER (the same order marked
    renders their <table>s in, so the nth table here is the nth <table> in the turn). A cell's inline markdown is
@@ -53,9 +53,9 @@ const decode = (s: string) => s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').rep
 export function tableName(t: MdTable, turn: string, n: number, of: number): string {
   const lead = t.before.replace(/[:：]\s*$/, '').trim()
   const src = lead || turn.replace(/[#>*_`|[\]]/g, ' ').trim().split(/\s+/).slice(0, 12).join(' ')
-  const scale = [/\(([^)]*?)\)/.exec(src)?.[1].split(/[,;:]/)[0].trim() ?? '', /\b((?:Rs|PKR|USD)\.?\s?(?:mn|m|bn|b|k|million|billion))\b/i.exec(src)?.[1] ?? '']
-    .find((x) => x && SCALE_HINT.test(x)) ?? ''
-  const short = src.split(/\s*[(:：,;]\s*|\s+[-–—]\s+/)[0].replace(/[^\w\s&%.'-]+/g, ' ').split(/\s+/).slice(0, 8).join(' ').slice(0, 60).trim() || 'table'
-  const unit = scale && !short.includes(scale) ? ` (${scale.replace(/[^\w\s.'-]+/g, ' ').trim()})` : ''
+  const scale = scaleOf(lead || turn.split('\n').slice(0, 3).join(' '))         // from the WHOLE caption, before any cut
+  const short = src.split(/\s*[(:：;]\s*|\s+[-–—]\s+/)[0].replace(/,/g, ' ').replace(/[^\w\s&%.'-]+/g, ' ').replace(/\s+/g, ' ')
+    .split(' ').slice(0, 8).join(' ').slice(0, 60).trim() || 'table'
+  const unit = scale && !scaleOf(short) ? ` (${scale.replace(/[^\w\s.'$-]+/g, ' ').trim()})` : ''
   return `${short}${unit}${of > 1 && !lead ? ` ${n}` : ''}.csv`
 }

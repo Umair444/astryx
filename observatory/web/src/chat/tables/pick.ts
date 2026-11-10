@@ -13,7 +13,9 @@ import { inferColumns, parseTime, valueOf, type Column } from './infer'
 export type ChartKind = 'line' | 'bar' | 'scatter'
 /* wide: the periods are the COLUMNS (Jan | Feb | Mar …, one row per item): x is the headers' time, a line per row */
 export interface Spec { kind: ChartKind; x: number; series: number[]; split: number | null; wide?: boolean }
-export interface Fmt { pct: boolean; unit: string; scaled?: boolean }
+/* scaled: the figures are in a named scale (shown as written); full: no scale is named and every figure is under
+   100,000, so it is written out (2,000 … 12,000) rather than abbreviated: "12K" would claim a magnitude nobody stated */
+export interface Fmt { pct: boolean; unit: string; scaled?: boolean; full?: boolean }
 export interface PlotSeries { name: string; slot: number; values: (number | null)[] }
 export interface Plot {
   kind: ChartKind
@@ -77,6 +79,12 @@ export function analyse(head: string[], body: string[][]): Analysis {
 
 /* ── the plot ───────────────────────────────────────────────────────────────────────────────────────────── */
 export function build(spec: Spec, cols: Column[], body: string[][]): Plot {
+  const p = buildRaw(spec, cols, body)
+  const small = (vs: number[]) => vs.length > 0 && vs.every((v) => Math.abs(v) < 1e5)
+  const ys = p.kind === 'scatter' ? p.points.map((q) => q.y) : p.series.flatMap((s) => s.values.filter((v): v is number => v != null))
+  return { ...p, fmt: { ...p.fmt, full: small(ys) }, xFmt: { ...p.xFmt, full: small(p.points.map((q) => q.x)) } }
+}
+function buildRaw(spec: Spec, cols: Column[], body: string[][]): Plot {
   const xc = cols[spec.x]
   const ycs = spec.series.map((i) => cols[i]).filter((c) => c && c.type === 'number')
   const splitC = spec.split != null ? cols[spec.split] : null
