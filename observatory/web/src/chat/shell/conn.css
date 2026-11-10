@@ -1,0 +1,18 @@
+/* the stream's health pill (shell/ConnStatus.tsx): centred over the conversation's top edge, out of the reading flow */
+.ws-conn { position: absolute; top: 56px; left: 0; right: 0; display: flex; justify-content: center; pointer-events: none; z-index: 20; height: 0; }
+.ws-conn-pill {
+  display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 12px; border-radius: 999px;
+  font-size: 12.5px; color: var(--t-dim, var(--t-fg)); white-space: nowrap;
+  background: color-mix(in srgb, var(--t-panel) 94%, transparent); border: 1px solid var(--t-line);
+  box-shadow: 0 8px 24px -14px rgba(0,0,0,.35); backdrop-filter: blur(6px);
+  animation: ws-conn-in .25s ease-out both;
+}
+/* a blink of a reconnect never shows: the pill waits two seconds before it appears */
+.ws-conn[data-conn="reconnecting"] .ws-conn-pill, .ws-conn[data-conn="offline"] .ws-conn-pill { animation-delay: 2s; }
+.ws-conn-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--t-mute, #999); }
+.ws-conn[data-conn="reconnecting"] .ws-conn-dot { background: var(--t-warn, #d9a441); animation: ws-conn-breathe 1.6s ease-in-out infinite; }
+.ws-conn[data-conn="back"] .ws-conn-dot { background: var(--t-good, #3fae6a); }
+@keyframes ws-conn-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@keyframes ws-conn-breathe { 50% { opacity: .35; } }
+@media (max-width: 767px) { .ws-conn { top: 52px; } }
+@media (prefers-reduced-motion: reduce) { .ws-conn-pill, .ws-conn-dot { animation: none !important; } .ws-conn[data-conn="reconnecting"] .ws-conn-pill { opacity: 1; } }

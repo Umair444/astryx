@@ -41,7 +41,8 @@ export default forwardRef<ComposerHandle, {
   hero?: boolean
   placeholder?: string
   draftKey?: string           // the conversation the draft belongs to: each keeps its own (iteration 11)
-}>(function Composer({ roster, inChat, skills, tools, commands, lastMine, onSend, hero = false, placeholder, draftKey = '' }, ref) {
+  onTalk?: (agent: string) => void   // iteration 13: Talk, canvas's voice mode, with the agent this box writes to
+}>(function Composer({ roster, inChat, skills, tools, commands, lastMine, onSend, hero = false, placeholder, draftKey = '', onTalk }, ref) {
   const [text, setText] = useState(() => draftOf(draftKey))
   const [files, setFiles] = useState<Uploaded[]>(() => FILES.get(draftKey) ?? [])
   // A DRAFT PER CONVERSATION: the box used to keep its words across a switch, so a line written to finance sat ready
@@ -205,6 +206,9 @@ export default forwardRef<ComposerHandle, {
           <input ref={fileIn} type="file" multiple hidden onChange={(e) => { if (e.target.files) addFiles(e.target.files); e.target.value = '' }} />
           <button className="ws-icon" onClick={() => fileIn.current?.click()} title="Attach files (or paste, or drop)" aria-label="attach files">{I.clip()}</button>
           <button className="ws-icon" onClick={dictate} title="Dictate (⌘.)" aria-pressed={live} aria-label="dictate">{live ? <span className="w-2.5 h-2.5 rounded-sm bg-bad animate-pulse" /> : I.mic()}</button>
+          {onTalk && to.length > 0 && (
+            <button className="ws-icon ws-talk-open" onClick={() => onTalk(to[0])} title={`Talk with ${displayName(to[0])}: a voice conversation (⌘⇧.)`} aria-label={`talk with ${displayName(to[0])}`}>{I.wave()}</button>
+          )}
           {to.length > 0 && (
             <div className="flex items-center gap-1.5 ml-1.5 min-w-0 overflow-hidden text-[12px] text-ink-mute" title={`To ${to.map(displayName).join(', ')}`}>
               <span className="max-sm:hidden">To</span>

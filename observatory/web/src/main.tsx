@@ -13,6 +13,19 @@ import './index.css'
 import App from './App'
 import { ThemeProvider, useTheme } from './theme'
 
+// A tab left open across a deploy (iteration 14, "stamina"): `npm run build` replaces every hashed chunk, so the next
+// lazy view this tab opens asks for a file that is gone, and the page died on "Failed to fetch dynamically imported
+// module" (caught by the 20-minute soak). Vite names that moment (vite:preloadError): load the new build instead,
+// at most once a minute so a chunk that is truly missing can't loop. Drafts live in sessionStorage and survive it.
+addEventListener('vite:preloadError', (e) => {
+  let last = 0
+  try { last = +(sessionStorage.getItem('ax.reloadedForBuild') || 0) } catch { /* private mode */ }
+  if (Date.now() - last < 60_000) return
+  e.preventDefault()
+  try { sessionStorage.setItem('ax.reloadedForBuild', String(Date.now())) } catch { /* */ }
+  location.reload()
+})
+
 // Every Mantine colour points at the active astryx theme (--t-* on <html>, see theme.tsx), so
 // switching themes restyles Mantine with no re-render of the theme object itself.
 const v = (k: string) => `var(--t-${k})`

@@ -4,13 +4,15 @@ import { SURFACE_LABEL, type Status, type Surface } from '../data'
 import { I } from '../icons'
 import { Presence, STATUS_WORD } from './AgentRail'
 import TeamMap, { useMapPopover } from './TeamMap'
+import '../canvas/canvas.css'
 
 /* THE TOP BAR (48px): the conversation's title (click to rename; stored server-side), the surface it lives on and
    its project, and the PRESENCE STRIP: every agent in the thread, the working one ringed. Then the FILES toggle (the
    media drawer, with the conversation's file count) and the workforce toggle (⌘J). On a phone it also opens the conversation drawer.
    Hovering the strip (or clicking it, which pins it; ⌘⇧M) opens the LIVE TEAM MAP beneath it (shell/TeamMap.tsx). */
 
-export default function TopBar({ onProject, title, canRename, surface, project, agents, status, workforce, files, media, onRename, onWorkforce, onMedia, onMenu, onAgent, names, lines, more }: {
+export default function TopBar({ onProject, title, canRename, surface, project, agents, status, workforce, files, media, onRename, onWorkforce, onMedia, onMenu, onAgent, names, lines, more, canvas = null }: {
+  canvas?: { version: number; open: boolean; onToggle: () => void } | null   // a canvas's conversation: its page
   names: string[]
   lines: Record<string, string>
   title: string
@@ -48,8 +50,17 @@ export default function TopBar({ onProject, title, canRename, surface, project, 
           <h1 className={`min-w-0 truncate text-[14.5px] font-medium text-ink ${canRename ? 'cursor-text rounded-md px-1.5 -mx-1.5 py-0.5 hover:bg-[color-mix(in_srgb,var(--t-fg)_5%,transparent)]' : ''}`}
             onClick={() => canRename && setEdit(true)} title={canRename ? 'Rename' : undefined}>{title}</h1>
         )}
-        {surface && surface !== 'chat' && !edit && (
+        {surface && surface !== 'chat' && !edit && !canvas && (
           <span className="shrink-0 text-[11px] text-ink-mute border border-line rounded-full px-2 py-[1px] max-sm:hidden">{SURFACE_LABEL[surface]}</span>
+        )}
+        {/* iteration 13: a canvas's own conversation carries the painted page itself, one click away */}
+        {canvas && !edit && (
+          <button className="ws-cvchip shrink-0" onClick={canvas.onToggle} aria-pressed={canvas.open}
+            title={canvas.open ? 'Close the canvas' : 'Open the painted canvas beside this conversation'}>
+            <span className="ws-cvmark" aria-hidden>{I.canvas('w-3 h-3')}</span>
+            <span className="max-sm:hidden">Canvas</span>
+            {canvas.version > 0 && <span className="tabular-nums text-ink-mute">v{canvas.version}</span>}
+          </button>
         )}
       </div>
       <div className="flex items-center gap-1 shrink-0">
