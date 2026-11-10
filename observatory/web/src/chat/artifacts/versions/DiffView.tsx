@@ -46,7 +46,7 @@ export default function DiffView({ art, from, to, onFrom, onTo, wide }: {
             <span className="ws-diff-del-ink">−{diff.removed}</span>
           </span>
         )}
-        <div className="ml-auto flex items-center gap-0.5 ws-seg" role="radiogroup" aria-label="diff layout">
+        <div className="ml-auto flex items-center gap-0.5 ws-seg shrink-0 whitespace-nowrap" role="radiogroup" aria-label="diff layout">
           {(['split', 'unified'] as const).map((m) => (
             <button key={m} role="radio" aria-checked={mode === m} onClick={() => setMode(m)}>{m === 'split' ? 'Side by side' : 'Unified'}</button>
           ))}

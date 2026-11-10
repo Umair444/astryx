@@ -15,6 +15,11 @@ into chat.readable's gate; no database and no app.
   - SAFETY: a path outside the gate (an outside file, a '..' escape, a dot-path, an .env) is 403 and nothing lands;
     a non-hex id is 404; an oversize source is 413; a binary artifact refuses a save (415).
   - SERVING: the bytes decide the content type (an .html is text/plain; a .png is image/png).
+  - PROVENANCE (iteration 7): an import naming its message records source/msg/msg_ts on the version (trailers); a
+    version without one answers nulls; bytes from a message OLDER than a recorded one never become the head
+    (superseded); restore takes a message (a revert names whose change it undoes).
+  - CREATE: words become a NEW text artifact, v1 by the author, .md added when the name is not text; the same words
+    again are the same artifact; other words under a taken name get "name (2).md"; empty/bad thread/bad author refused.
 ART_SRC names another artifacts.py (a mutant) to run the same arms against."""
 import hashlib
 import importlib.util
@@ -91,7 +96,10 @@ def main():
     arm("artifact shape", set(a1) == {"id", "thread", "name", "kind", "path_in_store", "size", "head", "versions"}
         and a1["id"] == A.artifact_id(T, "report.md") and a1["kind"] == "text" and a1["size"] == 16
         and a1["head"] == a1["versions"][0]["rev"] and len(a1["head"]) == 40, a1)
-    arm("version shape", set(a1["versions"][0]) == {"rev", "short", "n", "author", "ts", "message"})
+    arm("version shape", set(a1["versions"][0]) == {"rev", "short", "n", "author", "ts", "message", "source", "msg", "msg_ts"},
+        a1["versions"][0])
+    arm("no message named -> source recorded, msg null", a1["versions"][0]["source"] == str(src.resolve())
+        and a1["versions"][0]["msg"] is None and a1["versions"][0]["msg_ts"] is None, a1["versions"][0])
     arm("stored under the thread dir", a1["path_in_store"] == "chat_20991231-abc/report.md", a1["path_in_store"])
     a1b = A.import_source(S, str(src), T, "db")
     arm("same bytes again -> no new version", a1b["head"] == a1["head"] and len(a1b["versions"]) == 1)
@@ -142,6 +150,53 @@ def main():
     arm("newest first in the list", [x["id"] for x in S.list(T)][0] == img["id"])
     log = subprocess.run(["git", "-C", str(S.root), "log", "--format=%an <%ae>"], capture_output=True, text=True).stdout
     arm("commit authors are per-commit, @astryx.local", "db <db@astryx.local>" in log and "owner <owner@astryx.local>" in log)
+
+    print("provenance")
+    S2 = A.Store(tmp / "store2", max_bytes=1024 * 1024)   # its own store: the library arms below count S's
+    T2 = "chat:20991231-prov"
+    prov = home / "prov.md"
+    prov.write_bytes(b"one\n")
+    p1 = A.import_source(S2, str(prov), T2, "db", None, {"id": 100, "ts": "2099-12-31T10:00:00+00:00"})
+    arm("v1 records its message", p1["versions"][0]["msg"] == 100 and p1["versions"][0]["msg_ts"] == "2099-12-31T10:00:00+00:00"
+        and p1["versions"][0]["source"] == str(prov.resolve()), p1["versions"][0])
+    arm("the subject stays the subject (trailers are not the message)", p1["versions"][0]["message"] == "import prov.md")
+    prov.write_bytes(b"two\n")
+    p2 = A.import_source(S2, str(prov), T2, "db", None, {"id": 120, "ts": "2099-12-31T11:00:00+00:00"})
+    arm("a newer message's bytes -> v2 recording it", len(p2["versions"]) == 2 and p2["versions"][0]["msg"] == 120
+        and p2["versions"][1]["msg"] == 100, [v["msg"] for v in p2["versions"]])
+    old = home / "older" / "prov.md"
+    old.parent.mkdir()
+    old.write_bytes(b"zero\n")
+    p3 = A.import_source(S2, str(old), T2, "db", None, {"id": 90, "ts": "2099-12-31T09:00:00+00:00"})
+    arm("an OLDER message's other bytes never become the head -> superseded", p3.get("superseded") is True
+        and p3["head"] == p2["head"] and S2.content(p1["id"])[0] == b"two\n", p3.get("superseded"))
+    p4 = A.import_source(S2, str(prov), T2, "db", None, {"id": 90, "ts": "2099-12-31T09:00:00+00:00"})
+    arm("an older message whose bytes ARE the head -> no version, not superseded", p4["head"] == p2["head"]
+        and not p4.get("superseded"))
+    arm("the library carries provenance too", next(x for x in S2.list_all() if x["id"] == p1["id"])["versions"]
+        == S2.artifact(p1["id"])["versions"])
+    arm("a hostile ts is reduced to a timestamp's charset", A.provenance({"id": 5, "ts": "x\nAstryx-Msg: 9"}, None)
+        == "\n\nAstryx-Msg: 5\nAstryx-Msg-Ts: xAstryx-Msg: 9", repr(A.provenance({"id": 5, "ts": "x\nAstryx-Msg: 9"}, None)))
+    rv = S2.restore(p1["id"], p1["versions"][0]["short"], "revert db's v2 (back to v1)")
+    arm("restore with a message -> that subject, by owner", rv["versions"][0]["message"] == "revert db's v2 (back to v1)"
+        and rv["versions"][0]["author"] == "owner" and rv["versions"][0]["msg"] is None and S2.content(p1["id"])[0] == b"one\n",
+        rv["versions"][0])
+
+    print("create")
+    c1 = S2.create(T2, "Q3 answer", "# Q3\nrevenue up\n", "db", {"id": 130, "ts": "2099-12-31T12:00:00+00:00"})
+    arm("words -> a NEW text artifact, .md added, v1 by the author", c1["name"] == "Q3 answer.md" and c1["kind"] == "text"
+        and len(c1["versions"]) == 1 and c1["versions"][0]["author"] == "db" and c1["versions"][0]["msg"] == 130, c1)
+    arm("it holds the words", S2.content(c1["id"])[0] == b"# Q3\nrevenue up\n")
+    arm("the same words again -> the same artifact", S2.create(T2, "Q3 answer", "# Q3\nrevenue up\n", "db")["id"] == c1["id"])
+    c2 = S2.create(T2, "Q3 answer.md", "other words\n", "db")
+    arm("other words under a taken name -> 'name (2).md'", c2["name"] == "Q3 answer (2).md" and c2["id"] != c1["id"], c2["name"])
+    arm("a non-text name gets .md", S2.create(T2, "data.csv", "a,b\n", "seed")["name"] == "data.csv.md")
+    arm("an editable text: the owner can save over it", S2.save(c1["id"], "# Q3\nrevenue up (checked)\n")["versions"][0]["n"] == 2)
+    for label, args in (("empty text", (T2, "x", "  ", "db")), ("no thread", ("", "x", "t", "db")),
+                        ("a bad author", (T2, "x", "t", "../db"))):
+        arm(f"{label} -> 400", code_of(S2.create, *args) == 400)
+    arm("oversize -> 413", code_of(S2.create, T2, "big", "x" * (1024 * 1024 + 1), "db") == 413)
+    arm("a hostile name is reduced", "/" not in S2.create(T2, "../../etc/passwd", "p\n", "db")["path_in_store"].split("/", 1)[1])
 
     print("library")
     lib = S.list_all()

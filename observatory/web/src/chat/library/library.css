@@ -32,9 +32,9 @@
 .ws-select[data-on="true"] { border-color: color-mix(in srgb, var(--t-accent) 50%, var(--t-line)); color: var(--t-fg);
   background-color: color-mix(in srgb, var(--t-accent) 7%, transparent); }
 .ws-select option { background: var(--t-panel); color: var(--t-fg); }
-.ws-seg { display: inline-flex; padding: 2px; border: 1px solid var(--t-line); border-radius: 10px; }
-.ws-seg > button { width: 30px; height: 26px; display: grid; place-items: center; border-radius: 8px; color: var(--t-mute); transition: background-color 120ms, color 120ms; }
-.ws-seg > button[aria-pressed="true"] { background: color-mix(in srgb, var(--t-fg) 8%, transparent); color: var(--t-fg); }
+.ws-seg-icons { display: inline-flex; padding: 2px; border: 1px solid var(--t-line); border-radius: 10px; }
+.ws-seg-icons > button { width: 30px; height: 26px; display: grid; place-items: center; border-radius: 8px; color: var(--t-mute); transition: background-color 120ms, color 120ms; }
+.ws-seg-icons > button[aria-pressed="true"] { background: color-mix(in srgb, var(--t-fg) 8%, transparent); color: var(--t-fg); }
 
 /* projects: the mark (an emoji on a faint tile of its colour, or a dot), swatches, the knowledge cards */
 .ws-pmark { display: inline-grid; place-items: center; background: color-mix(in srgb, var(--pc) 16%, transparent);

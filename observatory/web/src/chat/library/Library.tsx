@@ -115,7 +115,7 @@ export default function Library({ projects, activeId, onOpen, onThread, onAddToP
               className="flex-1 min-w-0 bg-transparent outline-none text-[13px] text-ink placeholder:text-ink-mute" />
             <span className="ws-kbd max-sm:hidden">/</span>
           </label>
-          <div className="ws-seg" role="group" aria-label="layout">
+          <div className="ws-seg-icons" role="group" aria-label="layout">
             <button aria-pressed={view === 'grid'} onClick={() => setView('grid')} aria-label="grid" title="Grid"><Grid /></button>
             <button aria-pressed={view === 'list'} onClick={() => setView('list')} aria-label="list" title="List"><List /></button>
           </div>

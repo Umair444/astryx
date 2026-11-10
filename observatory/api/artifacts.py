@@ -5,14 +5,15 @@ An artifact is a file that reached a thread (an owner upload, an agent's [[file:
 first open so every version stays readable and attributed: an agent re-sending the same name is a commit authored by
 that agent, an owner edit or restore is a commit by owner. History is never rewritten; a restore is a NEW commit.
 
-    POST /api/ws/artifacts/open                {path, thread, author?, label?}  import / re-import -> artifact
+    POST /api/ws/artifacts/open                {path, thread, author?, label?, msg_id?, msg_ts?}  import / re-import
+    POST /api/ws/artifacts/create              {thread, name, text, author}  a NEW text artifact from words (no file)
     GET  /api/ws/artifacts?thread=             the thread's artifacts, newest first
     GET  /api/ws/artifacts                     THE LIBRARY: every artifact, newest first, + title/author/updated
     POST /api/ws/artifacts/{id}/export         a path an agent (and chat.readable) can read holding the head's bytes
     GET  /api/ws/artifacts/{id}                artifact
     GET  /api/ws/artifacts/{id}/content?rev=   the raw bytes of a version (head by default)
     POST /api/ws/artifacts/{id}/save           {text, message?}  text/table/code only; 409 when unchanged
-    POST /api/ws/artifacts/{id}/restore        {rev}  a new commit holding that version's bytes
+    POST /api/ws/artifacts/{id}/restore        {rev, message?}  a new commit holding that version's bytes
     GET  /api/ws/artifacts/{id}/annotations    {etag, items}
     PUT  /api/ws/artifacts/{id}/annotations    If-Match: <etag>; [annotation...]; 412 when stale
     GET  /api/ws/media?thread=                 every [[file:]] embed in the thread, oldest first
@@ -27,6 +28,13 @@ every git call has a timeout. Files land through hostfile.atomic_write (the obse
     <store>/.sources.json                  {id: {source path: sha256}}: what each source held when last imported
     <store>/<thread dir>/<name>            the artifact (thread ':' -> '_', unsafe chars stripped)
     <store>/<thread dir>/<name>.annotations.json
+
+PROVENANCE (iteration 7, the differentials loop). A version imported from a message's [[file:]] carries git trailers
+naming where its bytes came from: `Astryx-Source: <resolved path>`, `Astryx-Msg: <message id>`, `Astryx-Msg-Ts: <the
+message's ts>`. Every version shape answers them as `source`, `msg`, `msg_ts` (null when not recorded: an owner edit, a
+store made before this), so the chat can open an OLD message's chip at THAT message's version and mark a newer one
+"v3 · updated". Ids are the wire's, monotonic: an import attributed to a message OLDER than one a version already
+records never becomes the head (history can't be reordered) and answers `superseded: true` instead.
 
 SAFETY. A source is read ONLY through chat.readable, the gate /api/chat/file uses (the media dir and the agents'
 homes, resolved, never a dot-path or an .env); anything else is 403. Ids are 16 hex chars (sha1 of thread + name)
@@ -212,6 +220,39 @@ def clean_annotations(raw) -> list[dict]:
     return items
 
 
+# ------------------------------------------------------------------------------------------------- provenance
+TRAILERS = ("Astryx-Source", "Astryx-Msg", "Astryx-Msg-Ts")
+# one version per record: rev, short, author, time, subject, then the three trailers (empty when absent)
+LOG_FMT = "%x1e%H%x1f%h%x1f%an%x1f%aI%x1f%s" + "".join(f"%x1f%(trailers:key={k},valueonly,separator=%x1d)" for k in TRAILERS)
+
+
+def provenance(msg: dict | None, source: str | None) -> str:
+    """The trailer block a version's commit message ends with ('' when there is nothing to record). Values are one
+    line each; a message id is an int, its ts at most 40 printable chars."""
+    out = []
+    if source:
+        out.append("Astryx-Source: " + re.sub(r"[\x00-\x1f]", "", source)[:1024])
+    if msg and isinstance(msg.get("id"), int) and msg["id"] > 0:
+        out.append(f"Astryx-Msg: {msg['id']}")
+        ts = re.sub(r"[^0-9A-Za-z:+.\- ]", "", str(msg.get("ts") or ""))[:40]
+        if ts:
+            out.append(f"Astryx-Msg-Ts: {ts}")
+    return ("\n\n" + "\n".join(out)) if out else ""
+
+
+def version_rows(chunks: list[str]) -> list[dict]:
+    """LOG_FMT records (newest first) -> version shapes, numbered oldest = 1."""
+    rows = [c.split("\x1f") for c in chunks]
+    rows = [r for r in rows if len(r) == 5 + len(TRAILERS)]
+    out = []
+    for i, (h, s, a, t, m, src, mid, mts) in enumerate(rows):
+        out.append({"rev": h, "short": s, "n": len(rows) - i, "author": a, "ts": t, "message": m,
+                    "source": src.split("\x1d")[0] or None,
+                    "msg": int(mid.split("\x1d")[0]) if mid.split("\x1d")[0].isdigit() else None,
+                    "msg_ts": mts.split("\x1d")[0] or None})
+    return out
+
+
 # ----------------------------------------------------------------------------------------------------- the store
 class Store:
     """The git repo. Every write holds self.lock (re-entrant) for its whole read-modify-commit."""
@@ -277,10 +318,8 @@ class Store:
 
     # -- reads
     def versions(self, path: str) -> list[dict]:
-        out = self.git("log", "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s", "--", path).stdout.decode(errors="replace")
-        rows = [ln.split("\x1f") for ln in out.splitlines() if ln.count("\x1f") == 4]
-        return [{"rev": h, "short": s, "n": len(rows) - i, "author": a, "ts": t, "message": m}
-                for i, (h, s, a, t, m) in enumerate(rows)]
+        out = self.git("log", f"--format={LOG_FMT}", "--", path).stdout.decode(errors="replace")
+        return version_rows([c.rstrip("\n") for c in out.split("\x1e")[1:]])
 
     def artifact(self, aid: str) -> dict:
         e = self.entry(aid)
@@ -304,25 +343,22 @@ class Store:
         `author` (who made v1), `updated` (the head's time) on top of the artifact shape."""
         if not self.ready():
             return []
-        out = self.git("log", "--format=%x1e%H%x1f%h%x1f%an%x1f%aI%x1f%s", "--name-only").stdout.decode(errors="replace")
-        by: dict[str, list[list[str]]] = {}
+        out = self.git("log", f"--format={LOG_FMT}", "--name-only").stdout.decode(errors="replace")
+        by: dict[str, list[str]] = {}
         order: dict[str, int] = {}
         for chunk in out.split("\x1e")[1:]:
             head, _, files = chunk.partition("\n")
-            parts = head.split("\x1f")
-            if len(parts) != 5:
+            if head.count("\x1f") != 4 + len(TRAILERS):
                 continue
-            order.setdefault(parts[0], len(order))
+            order.setdefault(head.split("\x1f")[0], len(order))
             for f in files.splitlines():
                 if f.strip():
-                    by.setdefault(f.strip(), []).append(parts)
+                    by.setdefault(f.strip(), []).append(head)
         arts = []
         for aid, e in self.index().items():
             if not (ID_RE.fullmatch(aid) and isinstance(e, dict) and e.get("path")):
                 continue
-            rows = by.get(e["path"], [])
-            vs = [{"rev": h, "short": sh, "n": len(rows) - i, "author": a, "ts": t, "message": m}
-                  for i, (h, sh, a, t, m) in enumerate(rows)]
+            vs = version_rows(by.get(e["path"], []))
             try:
                 size = (self.root / e["path"]).stat().st_size
             except OSError:
@@ -382,12 +418,14 @@ class Store:
             return {}
 
     def put(self, thread: str, name: str, data: bytes, author: str, message: str | None = None,
-            source: str | None = None) -> dict:
+            source: str | None = None, msg: dict | None = None) -> dict:
         """Import bytes as (thread, name): new artifact -> v1 by `author`. Re-importing adds a version ONLY when the
         SOURCE changed since it was last imported (its sha256 is recorded per artifact and source path), never because
         the head differs: an owner edit stays current when the owner reopens an untouched source. A source path not
         seen before for this artifact is new only if its bytes match no source this artifact ever imported (an upload
-        of the same file again is not news). Without `source`, identical-to-head bytes are the only no-op."""
+        of the same file again is not news). Without `source`, identical-to-head bytes are the only no-op.
+        `msg` ({id, ts}: the message whose embed carried these bytes) is recorded as provenance; bytes from a message
+        older than one a version already records never become the head: the artifact answers `superseded: true`."""
         if len(data) > self.max_bytes:
             raise StoreError(413, f"the file is over {self.max_bytes // (1024 * 1024)} MB")
         aid = artifact_id(thread, name)
@@ -406,6 +444,10 @@ class Store:
                         atomic_write(self.root / SOURCES, json.dumps(srcs, indent=1, sort_keys=True) + "\n", mode=0o640)
                         self.commit([SOURCES], f"source of {name}", author)
                     return self.artifact(aid)
+            if not new and msg and isinstance(msg.get("id"), int):
+                newest = max((v["msg"] or 0 for v in self.versions(e["path"])), default=0)
+                if newest > msg["id"] and hashlib.sha256((self.root / e["path"]).read_bytes()).hexdigest() != sha:
+                    return {**self.artifact(aid), "superseded": True}
             if new:
                 taken = {x.get("path") for x in idx.values()}
                 path = f"{thread_dir(thread)}/{name}"
@@ -421,8 +463,8 @@ class Store:
                 srcs[aid] = {**seen, source: sha}
                 atomic_write(self.root / SOURCES, json.dumps(srcs, indent=1, sort_keys=True) + "\n", mode=0o640)
                 paths.append(SOURCES)
-            msg = message or (f"import {name}" if new else f"new version of {name}")
-            self.commit(paths, msg, author)
+            subject = message or (f"import {name}" if new else f"new version of {name}")
+            self.commit(paths, subject + provenance(msg, source), author)
             return self.artifact(aid)
 
     def save(self, aid: str, text: str, message: str | None = None) -> dict:
@@ -438,15 +480,47 @@ class Store:
                 raise StoreError(409, "unchanged")
             return self.artifact(aid)
 
-    def restore(self, aid: str, rev: str) -> dict:
+    def restore(self, aid: str, rev: str, message: str | None = None) -> dict:
+        """A new commit by owner holding `rev`'s bytes; `message` names why (a revert of an agent's change says whose),
+        else `restore <short> (v<N>)`."""
         e = self.entry(aid)
         with self.lock:
             v = self.version(e["path"], rev or "")
             data = self.git("show", f"{v['rev']}:{e['path']}").stdout
             atomic_write(self.root / e["path"], data)
-            if not self.commit([e["path"]], f"restore {v['short']} (v{v['n']})", OWNER):
+            subject = re.sub(r"\s+", " ", message or "").strip()[:200] or f"restore {v['short']} (v{v['n']})"
+            if not self.commit([e["path"]], subject, OWNER):
                 raise StoreError(409, "unchanged")
             return self.artifact(aid)
+
+    def create(self, thread: str, name: str, text: str, author: str, msg: dict | None = None) -> dict:
+        """A NEW text artifact holding `text` (a turn opened as a document: no file anywhere but the store), v1 by
+        `author` (whose words they are). The name is made a text name (.md unless it already names a text kind); if
+        the thread already has that name with other bytes, the next free "name (2).md". The same words under the same
+        name are the existing artifact, not a copy."""
+        if not valid_thread(thread):
+            raise StoreError(400, "a thread is required")
+        if not AUTHOR_RE.fullmatch(author or ""):
+            raise StoreError(400, "author must be an agent name or owner")
+        if not (text or "").strip():
+            raise StoreError(400, "there is no text to keep")
+        data = text.encode()
+        if len(data) > self.max_bytes:
+            raise StoreError(413, f"the text is over {self.max_bytes // (1024 * 1024)} MB")
+        base = safe_name(name or "answer")
+        if kind_of(base) != "text":
+            base = safe_name(base + ".md")
+        stem, ext = (base[: -len(PurePosixPath(base).suffix)], PurePosixPath(base).suffix)
+        with self.lock:
+            idx = self.index() if self.ready() else {}
+            for i in range(1, 100):
+                cand = base if i == 1 else safe_name(f"{stem[:110]} ({i}){ext}")
+                aid = artifact_id(thread, cand)
+                if aid not in idx:
+                    return self.put(thread, cand, data, author, f"open as document: {cand}", msg=msg)
+                if self.content(aid)[0] == data:
+                    return self.artifact(aid)
+            raise StoreError(409, "too many documents by that name")
 
     def annotations(self, aid: str) -> dict:
         p = self.root / (self.entry(aid)["path"] + ANN)
@@ -469,7 +543,8 @@ class Store:
             return self.annotations(aid)
 
 
-def import_source(store: Store, path: str, thread: str, author: str = OWNER, label: str | None = None) -> dict:
+def import_source(store: Store, path: str, thread: str, author: str = OWNER, label: str | None = None,
+                  msg: dict | None = None) -> dict:
     """POST open's body: the source is read ONLY if chat.readable (the /api/chat/file gate) admits it."""
     if not valid_thread(thread):
         raise StoreError(400, "a thread is required")
@@ -480,7 +555,7 @@ def import_source(store: Store, path: str, thread: str, author: str = OWNER, lab
         raise StoreError(403, "that file can't be opened here")
     if p.stat().st_size > store.max_bytes:
         raise StoreError(413, f"the file is over {store.max_bytes // (1024 * 1024)} MB")
-    return store.put(thread, artifact_name(str(path), label), p.read_bytes(), author, source=str(p))
+    return store.put(thread, artifact_name(str(path), label), p.read_bytes(), author, source=str(p), msg=msg)
 
 
 # ------------------------------------------------------------------------------------------------------ routes
@@ -512,6 +587,21 @@ class Open(BaseModel):
     thread: str = Field(max_length=200)
     author: str | None = None
     label: str | None = Field(None, max_length=120)
+    msg_id: int | None = Field(None, ge=1)          # the message whose embed carried the bytes (provenance)
+    msg_ts: str | None = Field(None, max_length=40)
+
+
+class Create(BaseModel):
+    thread: str = Field(max_length=200)
+    name: str = Field(max_length=200)
+    text: str
+    author: str = Field(max_length=41)
+    msg_id: int | None = Field(None, ge=1)
+    msg_ts: str | None = Field(None, max_length=40)
+
+
+def _msg(msg_id: int | None, msg_ts: str | None) -> dict | None:
+    return {"id": msg_id, "ts": msg_ts} if msg_id else None
 
 
 class Save(BaseModel):
@@ -521,11 +611,18 @@ class Save(BaseModel):
 
 class Restore(BaseModel):
     rev: str = Field(max_length=40)
+    message: str | None = Field(None, max_length=200)
 
 
 @router.post("/api/ws/artifacts/open")
 async def art_open(body: Open):
-    return await _run(import_source, store(), body.path, body.thread, body.author or OWNER, body.label)
+    return await _run(import_source, store(), body.path, body.thread, body.author or OWNER, body.label,
+                      _msg(body.msg_id, body.msg_ts))
+
+
+@router.post("/api/ws/artifacts/create")
+async def art_create(body: Create):
+    return await _run(store().create, body.thread, body.name, body.text, body.author, _msg(body.msg_id, body.msg_ts))
 
 
 @router.get("/api/ws/artifacts")
@@ -605,7 +702,7 @@ async def art_save(aid: str, body: Save):
 
 @router.post("/api/ws/artifacts/{aid}/restore")
 async def art_restore(aid: str, body: Restore):
-    return await _run(store().restore, aid, body.rev)
+    return await _run(store().restore, aid, body.rev, body.message)
 
 
 @router.get("/api/ws/artifacts/{aid}/annotations")

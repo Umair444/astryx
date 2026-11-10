@@ -35,7 +35,10 @@ import Workforce from './shell/Workforce'
 import Panel, { type Layout } from './artifacts/Panel'
 import { usePanel } from './artifacts/usePanel'
 import MediaDrawer from './artifacts/MediaDrawer'
-import { byId, distinctMedia, loadMedia, mediaOfRows, type MediaItem } from './artifacts/api'
+import { byId, createArtifact, distinctMedia, loadMedia, mediaOfRows, type MediaItem } from './artifacts/api'
+import { ChipCtx, useChipAwareness } from './artifacts/versions/awareness'
+import { quoteText, TurnActionsCtx, type TurnActionsValue } from './thread/TurnActions'
+import Outbox, { type Outgoing } from './thread/Outbox'
 import type { OpenRequest } from './artifacts/FileChip'
 import type { AnnotateCtx } from './artifacts/annotate/types'
 import type { ParsedAsk } from './artifacts/annotate/ask'
@@ -138,6 +141,11 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     return () => { live = false }
   }, [current, newest])
   useEffect(() => { setMedia(null) }, [current])
+  // iteration 7: a chip knows its version ("v3 · updated"); the stored list refreshes when a panel tab's head moves
+  const openRef = useRef<(r: OpenRequest) => void>(() => {})
+  const chipAware = useChipAwareness(current, rows, panel.tabs.map((t) => t.art?.head ?? '').join(','), useCallback((r: OpenRequest) => openRef.current(r), []))
+  // the owner's messages on their way: shown at once, kept with Retry when a send fails (thread/Outbox.tsx)
+  const [outbox, setOutbox] = useState<Outgoing[]>([])
 
   // the open conversation's row; a thread with no rows yet (a fresh desk) gets a provisional one, so it is never
   // missing from the list while it is open
@@ -217,7 +225,28 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     return out
   }, [listThreads, status, presence, pending, current])
 
+  // one outgoing message to its remaining recipients; a failure keeps it, naming who it did not reach
+  async function deliver(o: Outgoing) {
+    setOutbox((xs) => xs.map((x) => (x.key === o.key ? { ...x, failed: null } : x)))
+    const left = [...o.to]
+    try {
+      for (const a of o.to) { await send(a, await o.body(a), o.thread); left.shift() }
+      setOutbox((xs) => xs.filter((x) => x.key !== o.key))
+      reload()
+    } catch (e) {
+      setOutbox((xs) => xs.map((x) => (x.key === o.key ? { ...x, to: left, failed: String((e as Error).message || 'the send failed') } : x)))
+    }
+  }
   async function onSend(text: string, files: Uploaded[], to: string[]) {
+    if (current) {             // an open conversation: optimistic, never blocking the composer
+      const body = [text, ...files.map((f) => `[[file:${f.path}]] (${f.name})`)].filter(Boolean).join('\n')
+      const pj = projectOf(current, proj.projects)
+      const ctx = pj && !rows.some((m) => m.from === 'owner') ? projectContext(pj) : Promise.resolve('')
+      const o: Outgoing = { key: `o${Date.now()}${Math.random()}`, thread: current, text, files, to: [...to], failed: null, body: async (a) => (await ctx) + bodyFor(body, to, a) }
+      setOutbox((xs) => [...xs, o])
+      void deliver(o)
+      return
+    }
     const t = current || newThread()
     const body = [text, ...files.map((f) => `[[file:${f.path}]] (${f.name})`)].filter(Boolean).join('\n')
     // a project chat's FIRST message carries the project's instructions and files (projects/context.ts)
@@ -351,6 +380,15 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   // the list steps aside for the panel below 1440, and for panel + docked drawer below 1720 (⌘\ hides it any time)
   const listHidden = listW.collapsed || (showPanel && layout === 'inline' && (winW < 1440 || (filesOpen && !!current && docked && winW < 1720)))
   const openFile = (r: OpenRequest) => { setWorkforce(false); panel.open(r); if (winW < 1200) setFilesOpen(false) }
+  openRef.current = openFile
+  // a turn's actions: quote into the composer (to whoever said it, when several share the thread); open as a document
+  const turnActs: TurnActionsValue = {
+    quote: (text, m) => composer.current?.insert(quoteText(text, m.from !== 'owner' && inChat.length > 1 ? m.from : null)),
+    openDoc: async (m, text) => {
+      const a = await createArtifact({ thread: current, name: docName(text), text, author: m.from, msg: { id: m.id, ts: m.ts } })
+      openFile({ path: byId(a.id), label: a.name, from: m.from })
+    },
+  }
   // a quoted ask in the chat: open its file (by name, from this thread's files) at the highlight it came from
   const openAsk = (a: ParsedAsk) => {
     const f = files.find((x) => x.name === a.name)
@@ -402,9 +440,14 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
             <div className="pt-[18vh] text-center text-[14px] text-ink-dim">This project is gone. <button className="underline underline-offset-2" onClick={() => go('projects')}>All projects</button></div>
           )}
           </Suspense>
+          <ChipCtx.Provider value={chipAware}><TurnActionsCtx.Provider value={turnActs}>
           {current && <Turns rows={rows} work={work} pending={pending} roster={names} roles={roles} loading={history === null} handoffs={handoffs} onStop={interruptAgent}
             onOpenFile={openFile} onOpenAsk={openAsk} onEdit={(m) => composer.current?.set(stripEmbeds(m.body))}
             empty={<FreshThread agents={inChat} status={status} roles={roles} lines={lines} />} />}
+          {current && <Outbox items={outbox.filter((o) => o.thread === current)} onRetry={(o) => void deliver(o)}
+            onDiscard={(o) => setOutbox((xs) => xs.filter((x) => x.key !== o.key))}
+            onEdit={(o) => { setOutbox((xs) => xs.filter((x) => x.key !== o.key)); composer.current?.set(o.text); o.files.forEach((f) => composer.current?.attach(f)) }} />}
+          </TurnActionsCtx.Provider></ChipCtx.Provider>
         </div>
         {note && <div className="mx-auto max-w-[760px] w-full px-6 pb-1 text-[12.5px] text-ink-dim cursor-pointer" role="status" onClick={() => setNote('')}>{note}</div>}
         {view === 'thread' && !home && box(false)}
@@ -476,6 +519,12 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
         }} />}
     </div>
   )
+}
+
+/* a turn kept as a document is named by its first heading, else its first words */
+function docName(text: string): string {
+  const h = /^#{1,3}\s+(.+)$/m.exec(text)?.[1] ?? text.replace(/[#>*_`|[\]()]/g, ' ').trim().split(/\s+/).slice(0, 7).join(' ')
+  return `${h.replace(/[*_`]/g, '').slice(0, 60).trim() || 'answer'}.md`
 }
 
 /* a conversation with nobody's words in it yet (a fresh desk): who you're talking to, and what they're doing */
